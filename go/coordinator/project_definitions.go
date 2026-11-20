@@ -10,18 +10,25 @@ import (
 	"strings"
 )
 
-func projectWrite(q *Request, create bool) (any, error) {
-	b := body(q)
-	id := astr(b["projectId"])
+// projectWriteArgs: a decoded project_create or project_update; request is recorded under its JSON for idempotent replay.
+type projectWriteArgs struct {
+	id, requestID string
+	content       contract.ProjectBundle
+	baseRevision  int64
+	repoSha       *string
+	request       any
+}
+
+func projectWrite(q *Request, create bool, w projectWriteArgs) (doc, error) {
+	id := w.id
 	op := "project_update"
 	if create {
-		id = astr(b["id"])
 		op = "project_create"
 	}
 	if q.person == nil || (!fullAccess(q.person) && !hasRole(q.person, "operator")) {
 		return nil, fail(403, "Authenticated operator required")
 	}
-	if !idPattern.MatchString(id) || strings.TrimSpace(astr(b["requestId"])) == "" {
+	if !idPattern.MatchString(id) || strings.TrimSpace(w.requestID) == "" {
 		return nil, fail(400, "Expected project identity and requestId")
 	}
 	// GLOBAL also serializes people projection replacement; authenticate again in this transaction.
@@ -30,7 +37,7 @@ func projectWrite(q *Request, create bool) (any, error) {
 	if err := q.tx.QueryRow(q.ctx(), "SELECT roles,owner FROM person WHERE email=$1", q.person.Email).Scan(&roles, &owner); err != nil {
 		return nil, fail(403, "Director is unavailable")
 	}
-	bundle, err := projectBundle(id, mapOf(b["content"]))
+	bundle, err := projectBundle(id, docOf(w.content))
 	if err != nil {
 		return nil, err
 	}
@@ -38,10 +45,10 @@ func projectWrite(q *Request, create bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	payload := sha256Text(js(b))
+	payload := sha256Text(js(body(q))) // the body as sent, keys sorted: a retry matches its stored request
 	var prior []byte
 	var digest string
-	err = q.tx.QueryRow(q.ctx(), "SELECT payload_sha,result FROM project_write_request WHERE directing_email=$1 AND operation=$2 AND request_id=$3", q.person.Email, op, b["requestId"]).Scan(&digest, &prior)
+	err = q.tx.QueryRow(q.ctx(), "SELECT payload_sha,result FROM project_write_request WHERE directing_email=$1 AND operation=$2 AND request_id=$3", q.person.Email, op, w.requestID).Scan(&digest, &prior)
 	if err == nil {
 		if !mayAccessProjectID(q.person, id) {
 			return nil, fail(404, "Unknown project")
@@ -86,10 +93,10 @@ func projectWrite(q *Request, create bool) (any, error) {
 		if head == nil {
 			return nil, fail(404, "Unknown project")
 		}
-		if head.state() == contract.DefinitionStateRepositoryChanged && (head.RepoSha == nil || astr(b["repoSha"]) != *head.RepoSha) {
+		if head.state() == contract.DefinitionStateRepositoryChanged && (head.RepoSha == nil || deref(w.repoSha) != *head.RepoSha) {
 			return nil, fail(409, "Project source changed; reload and review before saving")
 		}
-		if int64(num(b["baseRevision"])) != head.Head {
+		if w.baseRevision != head.Head {
 			return nil, fail(409, "Project revision changed")
 		}
 	}
@@ -185,25 +192,28 @@ func projectWrite(q *Request, create bool) (any, error) {
 		}
 	}
 	out := doc{"projectId": id, "revision": rev.Revision, "contentSha": rev.ContentSha, "configured": true}
-	if err := exec(q, "INSERT INTO project_write_request VALUES($1,$2,$3,$4,$5,$6)", q.person.Email, op, b["requestId"], payload, id, jsonBytes(out)); err != nil {
+	if err := exec(q, "INSERT INTO project_write_request VALUES($1,$2,$3,$4,$5,$6)", q.person.Email, op, w.requestID, payload, id, jsonBytes(out)); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func projectInitialRevoke(q *Request) (any, error) {
-	if q.person == nil || !q.person.Owner {
-		return nil, fail(403, "Only the owner administers access")
+func projectInitialRevoke(q *Request, r *contract.ProjectInitialAccessRevokeRequest) (contract.ProjectInitialAccessRevokeReply, error) {
+	if !q.person.Owner { // the owner only, stricter than the declared owner rule (full access)
+		return contract.ProjectInitialAccessRevokeReply{}, fail(403, "Only the owner administers access")
 	}
-	b := body(q)
-	id := astr(b["projectId"])
+	out, err := projectInitialRevokeDoc(q, r.ProjectId, r.BaseAccessVersion)
+	return replyAs[contract.ProjectInitialAccessRevokeReply](out, err)
+}
+
+func projectInitialRevokeDoc(q *Request, id string, base int64) (doc, error) {
 	var version int64
 	var revoked bool
 	if err := q.tx.QueryRow(q.ctx(), "SELECT access_version,initial_member_revoked_at IS NOT NULL FROM definition WHERE kind='project' AND id=$1 FOR UPDATE", id).Scan(&version, &revoked); err != nil {
 		return nil, fail(404, "Unknown project")
 	}
 	if !revoked {
-		if int64(num(b["baseAccessVersion"])) != version {
+		if base != version {
 			return nil, fail(409, "Access version changed")
 		}
 		if err := exec(q, "UPDATE definition SET initial_member_revoked_at=now(),access_version=access_version+1 WHERE kind='project' AND id=$1", id); err != nil {
@@ -222,11 +232,12 @@ func projectInitialRevoke(q *Request) (any, error) {
 // Step rows count through their run: a finished run leaves unreached steps 'preparing', which is not open work.
 // The GLOBAL write lock of every operation serializes this check with task_create and session_start; afterwards
 // task_create, project_update and project_create refuse the id.
-func projectArchive(q *Request) (any, error) {
-	if err := ownerOnly(q, "Only the owner archives projects"); err != nil {
-		return nil, err
-	}
-	id := astr(body(q)["projectId"])
+func projectArchive(q *Request, r *contract.ProjectArchiveRequest) (contract.ProjectArchiveReply, error) {
+	out, err := projectArchiveDoc(q, r.ProjectId)
+	return replyAs[contract.ProjectArchiveReply](out, err)
+}
+
+func projectArchiveDoc(q *Request, id string) (doc, error) {
 	rows, err := queryRows(q, `SELECT kind,count(*) AS n,min(id) AS example FROM (
 	  SELECT 'task' AS kind,id FROM task WHERE project_id=$1 AND state::text=ANY($2)
 	  UNION ALL SELECT 'session',id FROM document WHERE project_id=$1 AND kind='session' AND NOT data ? 'archivedAt'
@@ -272,10 +283,15 @@ func projectRetired(q *Request, id string) (bool, error) {
 }
 
 func init() {
-	gatedObjOp("project_archive", false, shaped[contract.ProjectArchiveRequest, contract.ProjectArchiveReply](projectArchive))
-	gatedObjOp("project_create", false, shaped[contract.ProjectCreateRequest, contract.ProjectCreateReply](func(q *Request) (any, error) { return projectWrite(q, true) }))
-	gatedObjOp("project_update", false, shaped[contract.ProjectUpdateRequest, contract.ProjectUpdateReply](func(q *Request) (any, error) { return projectWrite(q, false) }))
-	gatedObjOp("project_initial_access_revoke", false, shaped[contract.ProjectInitialAccessRevokeRequest, contract.ProjectInitialAccessRevokeReply](projectInitialRevoke))
+	op("project_archive", projectArchive)
+	op("project_create", func(q *Request, r *contract.ProjectCreateRequest) (contract.ProjectCreateReply, error) {
+		return replyAs[contract.ProjectCreateReply](projectWrite(q, true, projectWriteArgs{id: r.Id, requestID: r.RequestId, content: r.Content, request: r}))
+	})
+	op("project_update", func(q *Request, r *contract.ProjectUpdateRequest) (contract.ProjectUpdateReply, error) {
+		return replyAs[contract.ProjectUpdateReply](projectWrite(q, false, projectWriteArgs{id: r.ProjectId, requestID: r.RequestId, content: r.Content,
+			baseRevision: r.BaseRevision, repoSha: r.RepoSha, request: r}))
+	})
+	op("project_initial_access_revoke", projectInitialRevoke)
 }
 
 func projectContext(q *Request, id string) (doc, error) {

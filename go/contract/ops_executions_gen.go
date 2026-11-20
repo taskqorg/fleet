@@ -152,6 +152,23 @@ func (v *DeliveryBaselineReply) Validate() error {
 
 type DeliveryBaselineRequest struct {
 	Days *int64 `json:"days,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v DeliveryBaselineRequest) MarshalJSON() ([]byte, error) {
+	type plain DeliveryBaselineRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *DeliveryBaselineRequest) UnmarshalJSON(b []byte) error {
+	type plain DeliveryBaselineRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -166,6 +183,23 @@ type DeliveryBaselineSetRequest struct {
 	Remove   *string           `json:"remove,omitempty"`
 	Settings *DeliverySettings `json:"settings,omitempty"`
 	Snapshot *string           `json:"snapshot,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v DeliveryBaselineSetRequest) MarshalJSON() ([]byte, error) {
+	type plain DeliveryBaselineSetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *DeliveryBaselineSetRequest) UnmarshalJSON(b []byte) error {
+	type plain DeliveryBaselineSetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -236,6 +270,23 @@ type DeliveryHistoryRequest struct {
 	Release *string `json:"release,omitempty"`
 	Since   *string `json:"since,omitempty"`
 	Until   *string `json:"until,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v DeliveryHistoryRequest) MarshalJSON() ([]byte, error) {
+	type plain DeliveryHistoryRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *DeliveryHistoryRequest) UnmarshalJSON(b []byte) error {
+	type plain DeliveryHistoryRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -397,6 +448,23 @@ func (v *DeliveryRegressionsReply) Validate() error {
 
 type DeliveryRegressionsRequest struct {
 	Check *bool `json:"check,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v DeliveryRegressionsRequest) MarshalJSON() ([]byte, error) {
+	type plain DeliveryRegressionsRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *DeliveryRegressionsRequest) UnmarshalJSON(b []byte) error {
+	type plain DeliveryRegressionsRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -580,6 +648,23 @@ func (v *DeliveryStatusReply) Validate() error {
 type DeliveryStatusRequest struct {
 	ExcludeProjectIds []string `json:"excludeProjectIds,omitempty"`
 	ProjectIds        []string `json:"projectIds,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v DeliveryStatusRequest) MarshalJSON() ([]byte, error) {
+	type plain DeliveryStatusRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *DeliveryStatusRequest) UnmarshalJSON(b []byte) error {
+	type plain DeliveryStatusRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -658,6 +743,23 @@ func (v *ExecutionDifferencesReply) Validate() error {
 type ExecutionDifferencesRequest struct {
 	ExecutionId string `json:"executionId"`
 	Previous    string `json:"previous"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ExecutionDifferencesRequest) MarshalJSON() ([]byte, error) {
+	type plain ExecutionDifferencesRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ExecutionDifferencesRequest) UnmarshalJSON(b []byte) error {
+	type plain ExecutionDifferencesRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -679,6 +781,23 @@ func (v *ExecutionEventsReply) Validate() error {
 
 type ExecutionEventsRequest struct {
 	ExecutionId string `json:"executionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ExecutionEventsRequest) MarshalJSON() ([]byte, error) {
+	type plain ExecutionEventsRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ExecutionEventsRequest) UnmarshalJSON(b []byte) error {
+	type plain ExecutionEventsRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -728,6 +847,23 @@ func (v *ExecutionStatusReply) Validate() error {
 
 type ExecutionStatusRequest struct {
 	ExecutionId string `json:"executionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ExecutionStatusRequest) MarshalJSON() ([]byte, error) {
+	type plain ExecutionStatusRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ExecutionStatusRequest) UnmarshalJSON(b []byte) error {
+	type plain ExecutionStatusRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -760,6 +896,23 @@ func (v *ExecutionStopReply) Validate() error {
 
 type ExecutionStopRequest struct {
 	ExecutionId string `json:"executionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ExecutionStopRequest) MarshalJSON() ([]byte, error) {
+	type plain ExecutionStopRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ExecutionStopRequest) UnmarshalJSON(b []byte) error {
+	type plain ExecutionStopRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -911,6 +1064,23 @@ type ExecutionsListRequest struct {
 	SessionId         *string         `json:"sessionId,omitempty"`
 	System            *SystemActivity `json:"system,omitempty"`
 	TaskId            *string         `json:"taskId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ExecutionsListRequest) MarshalJSON() ([]byte, error) {
+	type plain ExecutionsListRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ExecutionsListRequest) UnmarshalJSON(b []byte) error {
+	type plain ExecutionsListRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1164,6 +1334,23 @@ func (v *HostsListReply) Validate() error {
 // HostsListRequest: includeRemoved: also hosts removed by hosts_remove (state removed).
 type HostsListRequest struct {
 	IncludeRemoved *bool `json:"includeRemoved,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v HostsListRequest) MarshalJSON() ([]byte, error) {
+	type plain HostsListRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *HostsListRequest) UnmarshalJSON(b []byte) error {
+	type plain HostsListRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1182,6 +1369,23 @@ type HostsRegisterRequest struct {
 	Platform     *string         `json:"platform,omitempty"`
 	Roles        []string        `json:"roles,omitempty"`
 	SecretSha256 *string         `json:"secretSha256,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v HostsRegisterRequest) MarshalJSON() ([]byte, error) {
+	type plain HostsRegisterRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *HostsRegisterRequest) UnmarshalJSON(b []byte) error {
+	type plain HostsRegisterRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1220,6 +1424,23 @@ type HostsRotateSecretReply = HostWriteReply
 type HostsRotateSecretRequest struct {
 	Id           string  `json:"id"`
 	SecretSha256 *string `json:"secretSha256,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v HostsRotateSecretRequest) MarshalJSON() ([]byte, error) {
+	type plain HostsRotateSecretRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *HostsRotateSecretRequest) UnmarshalJSON(b []byte) error {
+	type plain HostsRotateSecretRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1245,6 +1466,23 @@ type HostsUpdateRequest struct {
 	Harnesses  json.RawMessage `json:"harnesses,omitempty"`
 	Id         string          `json:"id"`
 	Intake     *string         `json:"intake,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v HostsUpdateRequest) MarshalJSON() ([]byte, error) {
+	type plain HostsUpdateRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *HostsUpdateRequest) UnmarshalJSON(b []byte) error {
+	type plain HostsUpdateRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1607,6 +1845,23 @@ type PipelineExecutionView struct {
 	StartedAt         json.RawMessage     `json:"startedAt,omitempty"`
 	State             ExecutionState      `json:"state"`
 	Usage             json.RawMessage     `json:"usage,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v PipelineExecutionView) MarshalJSON() ([]byte, error) {
+	type plain PipelineExecutionView
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *PipelineExecutionView) UnmarshalJSON(b []byte) error {
+	type plain PipelineExecutionView
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1656,6 +1911,23 @@ type PipelineGetReply struct {
 	State             ExecutionState           `json:"state"`
 	TaskId            *string                  `json:"taskId,omitempty"`
 	Usage             json.RawMessage          `json:"usage,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v PipelineGetReply) MarshalJSON() ([]byte, error) {
+	type plain PipelineGetReply
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *PipelineGetReply) UnmarshalJSON(b []byte) error {
+	type plain PipelineGetReply
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1690,6 +1962,23 @@ func (v *PipelineGetReply) Validate() error {
 type PipelineGetRequest struct {
 	ProjectId *string `json:"projectId,omitempty"`
 	RunId     string  `json:"runId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v PipelineGetRequest) MarshalJSON() ([]byte, error) {
+	type plain PipelineGetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *PipelineGetRequest) UnmarshalJSON(b []byte) error {
+	type plain PipelineGetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1716,6 +2005,23 @@ func (v *PipelineHistoryReply) Validate() error {
 
 type PipelineHistoryRequest struct {
 	ProjectId string `json:"projectId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v PipelineHistoryRequest) MarshalJSON() ([]byte, error) {
+	type plain PipelineHistoryRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *PipelineHistoryRequest) UnmarshalJSON(b []byte) error {
+	type plain PipelineHistoryRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2043,6 +2349,23 @@ type PipelineRunReply struct {
 	State             ExecutionState           `json:"state"`
 	TaskId            *string                  `json:"taskId,omitempty"`
 	Usage             json.RawMessage          `json:"usage,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v PipelineRunReply) MarshalJSON() ([]byte, error) {
+	type plain PipelineRunReply
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *PipelineRunReply) UnmarshalJSON(b []byte) error {
+	type plain PipelineRunReply
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2086,6 +2409,9 @@ type PipelineRunRequest struct {
 func (v *PipelineRunRequest) Validate() error {
 	return nil
 }
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*PipelineRunRequest) Closed() bool { return true }
 
 // PurgeCount: bytes: stored artifact bytes of the objects (project and experiment). reasons (kept entries): why each id stays.
 type PurgeCount struct {
@@ -2161,6 +2487,23 @@ func (v *QueueListReply) Validate() error {
 
 type QueueListRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QueueListRequest) MarshalJSON() ([]byte, error) {
+	type plain QueueListRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QueueListRequest) UnmarshalJSON(b []byte) error {
+	type plain QueueListRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2226,6 +2569,23 @@ func (v *RouteDecisionsReply) Validate() error {
 
 type RouteDecisionsRequest struct {
 	ExecutionId string `json:"executionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v RouteDecisionsRequest) MarshalJSON() ([]byte, error) {
+	type plain RouteDecisionsRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *RouteDecisionsRequest) UnmarshalJSON(b []byte) error {
+	type plain RouteDecisionsRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2491,7 +2851,7 @@ func init() {
 		"pipeline_get":          {Read: true, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "A pipeline run (runId) with its steps, optionally checked against projectId", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\"],\"type\":\"object\"}")},
 		"pipeline_history":      {Read: true, Long: false, Errors: []int{404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Pipeline runs of a project (projectId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"pipeline_rerun":        {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Rerun a pipeline run (runId) in mode, optionally from its draft, with a requestId", InputSchema: json.RawMessage("{\"properties\":{\"draft\":{\"type\":\"boolean\"},\"mode\":{\"enum\":[\"failed\",\"all\"],\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\",\"mode\"],\"type\":\"object\"}")},
-		"pipeline_run":          {Read: false, Long: true, Errors: []int{}, Auth: "project:projectId", Agent: "tool", Description: "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.", InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":true,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\"}")},
+		"pipeline_run":          {Read: false, Long: true, Errors: []int{}, Auth: "project:projectId", Agent: "tool", Description: "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.", InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":false,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"pipeline_run_create":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Start a stored pipeline by pipelineId with projectId and a stable requestId; read its runId with pipeline_get.", InputSchema: json.RawMessage("{\"$comment\":\"Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha.\",\"properties\":{\"draft\":{\"type\":\"boolean\"},\"example\":{\"additionalProperties\":true,\"type\":\"object\"},\"exampleArtifactId\":{\"type\":\"string\"},\"overrides\":{\"additionalProperties\":true,\"type\":\"object\"},\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"pipelineId\",\"requestId\"],\"type\":\"object\"}")},
 		"queue_list":            {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "bound:session", Description: "Queued messages", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"route_decisions":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Why an execution (executionId) was routed to its host and account", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},

@@ -22,7 +22,7 @@ import (
 //   longRoute    no surrounding transaction (q.tx nil); the handler opens its own through q.app.store.Tx.
 //   publicRoute  matched before the credential check; a plain http.HandlerFunc.
 //   rawRoute     a plain handler of the App: it runs its own credential check and reads its own body (not JSON).
-//   operation    POST /api/ops/{name}: read selects a read snapshot or one GLOBAL write.
+//   op           POST /api/ops/{name} and the MCP servers (runOp): one line on the contract types.
 //   onStart      called by main after the store opens; background tickers stop on ctx.
 // A handler may return a raw value instead of JSON.
 
@@ -44,9 +44,8 @@ type registeredRoute struct {
 }
 
 type registeredOp struct {
-	read     bool
-	h        handler
-	declared bool // registered with op: runOp applies its contract auth rule
+	read bool
+	h    handler
 }
 
 var (
@@ -74,7 +73,6 @@ func publicRoute(pattern string, h http.HandlerFunc) {
 func rawRoute(pattern string, h func(*App, http.ResponseWriter, *http.Request)) {
 	routeTable = append(routeTable, registeredRoute{pattern: pattern, tx: txNone, raw: h})
 }
-func operation(name string, read bool, h handler) { operations[name] = registeredOp{read: read, h: h} }
 
 // op registers an operation on its generated request and reply types with one line: read, long, auth and agent come from
 // its declaration in contracts/ops-*.schema.json. runOp refreshes the caller's access and applies the person gate and the
@@ -92,7 +90,7 @@ func op[Req, Rep any](name string, h func(q *Request, r *Req) (Rep, error)) {
 		longOperations[name] = t
 		t = func(*Request) (any, error) { return nil, fail(500, "long operation "+name+" ran inside a transaction") }
 	}
-	operations[name] = registeredOp{read: c.Read && !c.Long, h: t, declared: true}
+	operations[name] = registeredOp{read: c.Read && !c.Long, h: t}
 }
 
 // typedOp: an operation on its generated request and reply types (contracts/ops*.schema.json). The body decodes into Req:
@@ -128,15 +126,19 @@ func typedOp[Req, Rep any](h func(q *Request, r *Req) (Rep, error)) handler {
 // hostId readBody checked.
 // Required keys are checked at the top only: an operation such as definition_draft_put stores incomplete nested content.
 func exactKeys(body json.RawMessage, t reflect.Type) error {
-	return keysAt(body, t, "", false)
+	return keysAt(body, t, "", false, true)
 }
 
 // hostKeys: exactKeys with required keys checked at every depth (host bodies are whole contract values).
 func hostKeys(body json.RawMessage, t reflect.Type) error {
-	return keysAt(body, t, "", true)
+	return keysAt(body, t, "", true, false)
 }
 
-func keysAt(body json.RawMessage, t reflect.Type, path string, deep bool) error {
+// closedType: a generated closed object (go/gen Closed, unevaluatedProperties false): its unknown keys are refused.
+var closedType = reflect.TypeOf((*interface{ Closed() bool })(nil)).Elem()
+
+// keysAt: deep checks required keys at every depth; closed refuses a key a closed object (Closed) does not name.
+func keysAt(body json.RawMessage, t reflect.Type, path string, deep, closed bool) error {
 	if string(bytes.TrimSpace(body)) == "null" {
 		return nil // an absent optional value: decode leaves it nil
 	}
@@ -149,7 +151,7 @@ func keysAt(body json.RawMessage, t reflect.Type, path string, deep bool) error 
 			return nil // not a list: decode reports it
 		}
 		for _, x := range xs {
-			if err := keysAt(x, t.Elem(), path, deep); err != nil {
+			if err := keysAt(x, t.Elem(), path, deep, closed); err != nil {
 				return err
 			}
 		}
@@ -162,8 +164,23 @@ func keysAt(body json.RawMessage, t reflect.Type, path string, deep bool) error 
 	if json.Unmarshal(body, &m) != nil {
 		return nil // not an object: decode reports it
 	}
+	if closed && reflect.PointerTo(t).Implements(closedType) {
+		named := map[string]bool{}
+		for i := 0; i < t.NumField(); i++ {
+			tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+			named[tag] = true
+		}
+		for k := range m {
+			if !named[k] && !namedFold(named, k) {
+				return fail(400, "Unknown field "+path+k)
+			}
+		}
+	}
 	for i := 0; i < t.NumField(); i++ {
 		tag, opts, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if tag == "-" {
+			continue // Rest of an open object (go/gen)
+		}
 		for k := range m {
 			if k != tag && strings.EqualFold(k, tag) {
 				return fail(400, "Unknown field "+path+k+": use "+tag)
@@ -175,7 +192,7 @@ func keysAt(body json.RawMessage, t reflect.Type, path string, deep bool) error 
 			return fail(400, "Expected "+path+tag)
 		}
 		if ok {
-			if err := keysAt(v, t.Field(i).Type, path+tag+".", deep); err != nil {
+			if err := keysAt(v, t.Field(i).Type, path+tag+".", deep, closed); err != nil {
 				return err
 			}
 		}
@@ -183,18 +200,14 @@ func keysAt(body json.RawMessage, t reflect.Type, path string, deep bool) error 
 	return nil
 }
 
-// checkFirst: a role check before the body is read, so a caller without the role learns nothing from a 400.
-func checkFirst(check func(*Request) error, h handler) handler {
-	return func(q *Request) (any, error) {
-		if err := check(q); err != nil {
-			return nil, err
+// namedFold: k names a field only case-insensitively (the field loop reports it with the right spelling).
+func namedFold(named map[string]bool, k string) bool {
+	for n := range named {
+		if strings.EqualFold(n, k) {
+			return true
 		}
-		return h(q)
 	}
-}
-
-func ownerFirst(msg string, h handler) handler {
-	return checkFirst(func(q *Request) error { return ownerOnly(q, msg) }, h)
+	return false
 }
 
 // docOf: a decoded request as the map a handler not yet on struct fields reads; only the request type's fields reach it.
@@ -212,16 +225,6 @@ func asT[T any](v any) (T, error) {
 	return t, err
 }
 
-// shaped: a handler that still reads the body as a map, on its contract types: the body must decode into Req (required
-// fields, JSON types, no case-variant keys), then the handler reads the body as sent, so its own checks (unknown keys
-// refused, exact bytes kept) still apply; the reply is converted to Rep.
-func shaped[Req, Rep any](h handler) handler {
-	return typedOp(func(q *Request, _ *Req) (Rep, error) {
-		out, err := h(q)
-		return replyAs[Rep](out, err)
-	})
-}
-
 // replyAs: a handler's map reply (keys fixed by the handler) as its contract type.
 func replyAs[T any](v any, err error) (T, error) {
 	var t T
@@ -233,7 +236,7 @@ func replyAs[T any](v any, err error) (T, error) {
 		if rt := reflect.TypeOf(t); rt.Kind() == reflect.Struct {
 			for i := 0; i < rt.NumField(); i++ {
 				tag, opts, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
-				if _, ok := m[tag]; !ok && !strings.Contains(opts, "omitempty") {
+				if _, ok := m[tag]; !ok && tag != "-" && !strings.Contains(opts, "omitempty") {
 					return t, fmt.Errorf("reply misses required %s (contracts/ops*.schema.json)", tag)
 				}
 			}
@@ -372,15 +375,10 @@ func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler
 	}
 }
 
-// guard is the app.ts preHandler person gate on every route and operation, whatever registered it: architect operations and
-// routes need the architect role (or the held subscription), a named project must be granted. gatedObjOp, gatedRoute and gatedOp apply the
-// same gate again; it is idempotent.
+// guard: the person gate of a REST route (routeGate); an operation's only rule is its declared auth, which runOp applies.
 func (a *App) guard(q *Request) error {
-	if q.person == nil || fullAccess(q.person) {
+	if strings.HasPrefix(q.r.URL.Path, "/api/ops/") {
 		return nil
 	}
-	if name, ok := strings.CutPrefix(q.r.URL.Path, "/api/ops/"); ok {
-		return a.guardOp(q, name, q.body)
-	}
-	return a.guardRoute(q)
+	return routeGate(q)
 }

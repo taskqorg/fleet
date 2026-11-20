@@ -2,7 +2,11 @@
 // and the gateway. The generated files are committed; CI fails when go generate changes them.
 package contract
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"reflect"
+	"strings"
+)
 
 //go:generate go run ../gen ../../contracts/host-protocol.schema.json contract host_protocol_gen.go
 //go:generate go run ../gen ../../contracts/gateway.schema.json contract gateway_gen.go
@@ -75,6 +79,44 @@ func Check(v any, name string) error {
 		if !x.Valid() {
 			return &FieldError{Path: name}
 		}
+	}
+	return nil
+}
+
+// marshalRest: an open object (additionalProperties: true) as its named fields plus the keys in rest; a named field wins.
+func marshalRest(named any, rest map[string]json.RawMessage) ([]byte, error) {
+	b, err := json.Marshal(named)
+	if err != nil || len(rest) == 0 {
+		return b, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	for k, v := range rest {
+		if _, ok := m[k]; !ok {
+			m[k] = v
+		}
+	}
+	return json.Marshal(m)
+}
+
+// unmarshalRest: an open object into its named fields, the keys they do not name into rest.
+func unmarshalRest(b []byte, named any, rest *map[string]json.RawMessage) error {
+	if err := json.Unmarshal(b, named); err != nil {
+		return err
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(b, &m) != nil {
+		return nil
+	}
+	t := reflect.TypeOf(named).Elem()
+	for i := 0; i < t.NumField(); i++ {
+		tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		delete(m, tag)
+	}
+	if len(m) > 0 {
+		*rest = m
 	}
 	return nil
 }

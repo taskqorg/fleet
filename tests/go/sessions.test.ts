@@ -40,10 +40,10 @@ test('B2 idempotent submit: a repeated requestId returns the same execution; oth
 
 test('B3 grants: a person without a project grant sees no project and cannot read it (requirement: docs/designs/fleet-people-access.md grants; risk: a person reads a project without its grant)', async () => {
   // Risk: project settings and context (outside row-level security) leak to people without a grant.
-  const own = ok(await call('GET', '/api/projects'));
+  const own = ok(await op('project_list', {}));
   assert.ok(own.projects.some((p: any) => p.id === 'hello-world'));
-  assert.equal(ok(await call('GET', '/api/projects', undefined, OUTSIDER)).projects.length, 0);
-  assert.equal((await call('GET', '/api/projects/hello-world', undefined, OUTSIDER)).status, 404);
+  assert.equal(ok(await op('project_list', {}, OUTSIDER)).projects.length, 0);
+  assert.equal((await op('project_context', {projectId: 'hello-world'}, OUTSIDER)).status, 404);
   assert.equal((await op('project_context', {projectId: 'hello-world'}, OUTSIDER)).status, 404);
 });
 
@@ -63,17 +63,17 @@ test('B5 thread: a session thread pages its execution boundary and the operator 
   // Risk: the conversation view misses or reorders turns, or a page cursor skips a block.
   const sid = await session();
   const e = ok(await send(sid, 'thread text'));
-  const page = ok(await call('GET', `/api/threads/session/${sid}/entries?limit=10`));
+  const page = ok(await op('thread_entries', {key: {session: sid}, limit: 10}));
   assert.deepEqual(page.entries.map((b: any) => b.kind), ['boundary', 'text']);
   assert.equal(page.entries[0].executionId, e.id);
   assert.equal(page.entries[1].markdown, 'thread text');
   assert.equal(page.total, 2);
-  const after = ok(await call('GET', `/api/threads/session/${sid}/entries?limit=10&after=${page.first}`));
+  const after = ok(await op('thread_entries', {key: {session: sid}, limit: 10, after: page.first}));
   assert.deepEqual(after.entries.map((b: any) => b.key), [page.last]);
-  const md = await fetch(BASE + `/api/threads/session/${sid}/export`, {headers: {authorization: 'Bearer ' + SECRET, 'x-fleet-person': OWNER}});
+  const md = ok(await op('thread_export', {key: {session: sid}})).markdown as string;
   // formats.md "Copy": a bold "author · 10 Nov 21:30" line, then the body.
-  assert.match(await md.text(), /\*\*[^*\n]+ · \d{1,2} [A-Z][a-z]{2} \d\d:\d\d\*\*\nthread text/);
-  assert.equal((await call('GET', `/api/threads/session/${randomUUID()}/entries?limit=1`)).status, 404);
+  assert.match(md, /\*\*[^*\n]+ · \d{1,2} [A-Z][a-z]{2} \d\d:\d\d\*\*\nthread text/);
+  assert.equal((await op('thread_entries', {key: {session: randomUUID()}, limit: 1})).status, 404);
 });
 
 test('B6 ask and reply: an answer reaches the asking session as its next message (requirement: docs/system-operations.md agent communication; risk: an answer is recorded but never reaches the session)', async () => {

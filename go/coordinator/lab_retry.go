@@ -410,14 +410,13 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 	return snap, nil
 }
 
-func expRetrySuffix(q *Request, id, cell string, b doc) (doc, error) {
-	for _, key := range []string{"experimentId", "cell", "sourceRunId", "requestId"} {
-		v, ok := b[key].(string)
-		if !ok || strings.TrimSpace(v) == "" {
-			return nil, fail(400, "Expected "+key)
+func expRetrySuffix(q *Request, id, cell, sourceRunID, requestID string) (doc, error) {
+	for i, v := range []string{id, cell, sourceRunID, requestID} {
+		if strings.TrimSpace(v) == "" {
+			return nil, fail(400, "Expected "+[]string{"experimentId", "cell", "sourceRunId", "requestId"}[i])
 		}
 	}
-	identity := suffixIdentity(id, cell, astr(b["sourceRunId"]), astr(b["requestId"]))
+	identity := suffixIdentity(id, cell, sourceRunID, requestID)
 	var snap *suffixSnapshot
 	var result string
 	err := labReadTx(q, func(q *Request) error {

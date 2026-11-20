@@ -349,17 +349,17 @@ test('P3 pipeline_run waits for the run of the project method and is idempotent 
   assert.notEqual(r.state, 'running'); assert.equal(r.projectId, 'hello-world'); assert.equal(typeof r.selectedMethod, 'string');
   assert.equal(ok(await op('pipeline_run', {projectId: 'hello-world', requestId, query: 'fleet'})).id, r.id);
   assert.equal((await op('pipeline_run', {projectId: 'hello-world', requestId, query: 'other'})).status, 409);
-  assert.equal(ok(await call('GET', '/api/pipeline-runs/' + r.id)).id, r.id);
+  assert.equal(ok(await op('pipeline_get', {runId: r.id})).id, r.id);
 });
 
 test('L1 Lab registry and experiment validation (requirement: docs/designs/fleet-lab.md; risk: an experiment created over an unknown example or pipeline)', async () => {
-  const reg = ok(await call('GET', '/api/lab/registry'));
+  const reg = ok(await op('lab_registry'));
   assert.ok(reg.useCases.length > 0 && reg.useCases.every((u: any) => typeof u.id === 'string'));
-  assert.equal((await call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'search-basic', examples: ['nope'], variants: [{label: 'a'}]})).status, 400);
-  assert.equal((await call('POST', '/api/lab/experiments', {kind: 'loop'})).status, 400);
-  assert.equal((await call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'no-such-pipeline', examples: ['x'], variants: [{label: 'a'}]})).status >= 400, true);
-  assert.equal((await call('GET', '/api/lab/experiments/no-such')).status, 404);
-  assert.deepEqual(ok(await call('GET', '/api/lab/ratings?experimentId=no-such')).ratings, []);
+  assert.equal((await op('lab_experiment_create', {kind: 'single', projectId: 'hello-world', pipelineId: 'search-basic', examples: ['nope'], variants: [{label: 'a'}]})).status, 400);
+  assert.equal((await op('lab_experiment_create', {kind: 'loop'})).status, 400);
+  assert.equal((await op('lab_experiment_create', {kind: 'single', projectId: 'hello-world', pipelineId: 'no-such-pipeline', examples: ['x'], variants: [{label: 'a'}]})).status >= 400, true);
+  assert.equal((await op('lab_experiment_get', {experimentId: 'no-such'})).status, 404);
+  assert.deepEqual(ok(await op('lab_ratings_list', {experimentId: 'no-such'})).ratings, []);
 });
 
 test('A1 analytics stage 1: an api step on the typed-decision connection gives the trial output {answer, p, answered_by, tokens} and a tool_run with cost and basis (requirement: docs/designs/fleet-lab.md analytics staging 1; risk: a provider call recorded without its cost basis, or a typed answer the checks cannot read)', async () => {
@@ -386,21 +386,21 @@ test('A1 analytics stage 1: an api step on the typed-decision connection gives t
 test('S4 binary example files: import stores each file from the seed directory by its sha256 and refuses a mismatch (requirement: docs/designs/fleet-asset-pipelines.md §4, Binary example files; risk: an example whose image or GLB differs from the seed, or a run staging bytes nobody checked)', async () => {
   const example = JSON.parse(readFileSync('config/lab/examples/fleet-uc2-crate.json', 'utf8'));
   example.version = 3000000 + Math.floor(Math.random() * 1e6);
-  const {examples: [imported]} = ok(await call('POST', '/api/lab/examples', {examples: [example], approved: true}));
+  const {examples: [imported]} = ok(await op('lab_examples_add', {examples: [example], approved: true}));
   assert.ok(imported.artifactId);
   const tampered = {...example, version: example.version + 1, inputs: [{...example.inputs[0], sha256: '0'.repeat(64)}]};
-  const refused = await call('POST', '/api/lab/examples', {examples: [tampered], approved: true});
+  const refused = await op('lab_examples_add', {examples: [tampered], approved: true});
   assert.equal(refused.status, 400); assert.match(refused.body.message ?? refused.body.error, /does not match its sha256/);
 });
 
 test('A2 analytics stage 2: the experiment record is required at launch, amended visibly, and an automatic or owner stop leaves the decision pending (requirement: docs/designs/fleet-lab.md, Experiment record; risk: an experiment runs without a stated goal and hypothesis, a changed hypothesis hides, or a stop reads as decided)', async () => {
   const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
   example.version = 1000 + Math.floor(Math.random() * 1e6);
-  const {examples: [imported]} = ok(await call('POST', '/api/lab/examples', {examples: [example], approved: true}));
-  const create = (record: object) => call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [imported.artifactId], variants: [{label: 'jev'}],
+  const {examples: [imported]} = ok(await op('lab_examples_add', {examples: [example], approved: true}));
+  const create = (record: object) => op('lab_experiment_create', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [imported.artifactId], variants: [{label: 'jev'}],
     evaluators: [{kind: 'script', ref: 'example.checks', form: 'pass_fail'}], ...record});
   const bare = ok(await create({}));
-  const refused = await call('POST', `/api/lab/experiments/${bare.id}/launch`, {});
+  const refused = await op('lab_experiment_action', {experimentId: bare.id, action: 'launch'});
   assert.equal(refused.status, 400); assert.match(refused.body.message ?? refused.body.error, /goal and hypothesis/);
   const e = ok(await create({goal: 'Decide yes/no questions cheaply', hypothesis: 'Jev answers the smoke question with p >= 0.5', decisionRule: 'adopt when the check passes'}));
   let reached = false, release!: () => void;
@@ -408,14 +408,14 @@ test('A2 analytics stage 2: the experiment record is required at launch, amended
   // Keep the trial in flight until the owner stop commits, regardless of runner speed.
   typedReplyBarrier = {reached: () => { reached = true; }, release: gate};
   try {
-    ok(await call('POST', `/api/lab/experiments/${e.id}/launch`, {}));
+    ok(await op('lab_experiment_action', {experimentId: e.id, action: 'launch'}));
     const amended = ok(await op('lab_experiment_note', {experimentId: e.id, kind: 'amendment', field: 'hypothesis', value: 'Jev answers with p >= 0.8', text: 'tighter after the first trial'}));
     assert.equal(amended.kind, 'amendment');
     assert.equal((await op('lab_experiment_note', {experimentId: e.id, kind: 'amendment', field: 'variants', value: 'x', text: 'no'})).status, 400);
     await until(() => reached || undefined, 'A2 gateway reply held');
-    ok(await call('POST', `/api/lab/experiments/${e.id}/stop`, {}));
+    ok(await op('lab_experiment_action', {experimentId: e.id, action: 'stop'}));
   } finally { typedReplyBarrier = undefined; release(); }
-  const got = ok(await call('GET', `/api/lab/experiments/${e.id}`));
+  const got = ok(await op('lab_experiment_get', {experimentId: e.id}));
   assert.deepEqual([got.state, got.decision, got.hypothesis, got.notes.map((n: any) => [n.kind, n.field, n.old, n.new])],
     ['stopped', 'pending', 'Jev answers with p >= 0.8', [['amendment', 'hypothesis', 'Jev answers the smoke question with p >= 0.5', 'Jev answers with p >= 0.8']]]);
   ok(await op('lab_experiment_decide', {experimentId: e.id, decision: 'inconclusive'}));
@@ -427,11 +427,11 @@ test('A2 analytics stage 2: the experiment record is required at launch, amended
 test('A3 analytics stage 3: a trial cost is usage times the price entry in force, with basis and price id, and unavailable without one (requirement: docs/designs/fleet-analytics.md, Price table; risk: a cost shown as exact or as 0 when it is estimated or unknown)', async () => {
   const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
   example.version = 2000000 + Math.floor(Math.random() * 1e6);
-  const {examples: [imported]} = ok(await call('POST', '/api/lab/examples', {examples: [example], approved: true}));
-  const e = ok(await call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [imported.artifactId], variants: [{label: 'jev'}],
+  const {examples: [imported]} = ok(await op('lab_examples_add', {examples: [example], approved: true}));
+  const e = ok(await op('lab_experiment_create', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [imported.artifactId], variants: [{label: 'jev'}],
     goal: 'Price the smoke', hypothesis: 'One call costs well under a cent'}));
-  ok(await call('POST', `/api/lab/experiments/${e.id}/launch`, {}));
-  const trial = async () => (await until(async () => { const x = ok(await call('GET', `/api/lab/experiments/${e.id}`)); return x.trials?.find((t: any) => t.state === 'succeeded' && t.cost.length) ?? undefined; }, 'a priced trial'));
+  ok(await op('lab_experiment_action', {experimentId: e.id, action: 'launch'}));
+  const trial = async () => (await until(async () => { const x = ok(await op('lab_experiment_get', {experimentId: e.id})); return x.trials?.find((t: any) => t.state === 'succeeded' && t.cost.length) ?? undefined; }, 'a priced trial'));
   // A subject no entry prices yet: the cost is unavailable, never 0.
   const subject = 'typesafe/system_one';
   if (!ok(await op('prices_list', {subject})).prices.length) assert.deepEqual((await trial()).cost.map((c: any) => [c.value, c.basis]), [[null, 'unavailable']]);
@@ -451,15 +451,15 @@ test('A4 analytics stage 4: a typed evaluator scores each trial through its vari
   const examples: any[] = examplesFromExport({schema: 1, project: 'cs', stepId: 'lang', exportedAt: '2026-11-11T00:00:00Z', rows}, 'cs:translate_taxonomy-language', version);
   // One example without a label: its trials are unscored with the reason, never counted.
   examples.push({...examples[0], id: 'cs-lang-nolabel', references: examples[0].references.filter((f: any) => f.path !== 'expected.json'), checks: []});
-  const {examples: imported} = ok(await call('POST', '/api/lab/examples', {examples, approved: true}));
-  const create = (variants: object[]) => call('POST', '/api/lab/experiments', {kind: 'ab', projectId: 'hello-world', pipelineId: 'typed-decision', examples: imported.map((x: any) => x.artifactId),
+  const {examples: imported} = ok(await op('lab_examples_add', {examples, approved: true}));
+  const create = (variants: object[]) => op('lab_experiment_create', {kind: 'ab', projectId: 'hello-world', pipelineId: 'typed-decision', examples: imported.map((x: any) => x.artifactId),
     variants, evaluators: [{kind: 'typed', ref: 'labels', form: 'typed'}], primaryEvaluator: 'typed:labels:typed', goal: 'Bands for the language step', hypothesis: 'Strict bands escalate more'});
   const inverted = await create([{label: 'a', overrides: {bands: {yes: 0.2, no: 0.8}}}, {label: 'b'}]);
   assert.equal(inverted.status, 400); assert.match(inverted.body.message, /0 <= no <= yes <= 1/);
   assert.equal((await call('POST', '/api/pipelines/typed-decision/runs', {requestId: randomUUID(), example: {prompt: 'x'}, overrides: {bands: {yes: 0.9, no: 0.1}}})).status, 400, 'a direct run takes no bands');
   const e = ok(await create([{label: 'wide', overrides: {bands: {yes: 0.8, no: 0.2}}}, {label: 'strict', overrides: {bands: {yes: 0.95, no: 0.05}}}]));
-  ok(await call('POST', `/api/lab/experiments/${e.id}/launch`, {}));
-  const got = await until(async () => { const x = ok(await call('GET', `/api/lab/experiments/${e.id}`)); return x.scores?.filter((s: any) => s.form === 'typed').length === 8 ? x : undefined; }, 'typed scores');
+  ok(await op('lab_experiment_action', {experimentId: e.id, action: 'launch'}));
+  const got = await until(async () => { const x = ok(await op('lab_experiment_get', {experimentId: e.id})); return x.scores?.filter((s: any) => s.form === 'typed').length === 8 ? x : undefined; }, 'typed scores');
   const unscored = got.scores.filter((s: any) => s.value.answer === 'unscored');
   assert.deepEqual(unscored.map((s: any) => s.value.reason), Array(2).fill('the example has no yes/no label in references/expected.json'));
   const stats = Object.fromEntries(got.typed.map((v: any) => [`${v.variant}/${v.split}`, Object.fromEntries(v.stats.map((s: any) => [s.aggregate ? 'all' : s.tag, [s.n, s.coverage, s.selectiveAccuracy]]))]));
@@ -493,7 +493,7 @@ async function suffixFixture(projectId = 'cs', differentOuter = false, checks?: 
   ok(await op('lab_experiment_action', {experimentId: exp.id, action: 'launch'}));
   const view = () => op('lab_experiment_get', {experimentId: exp.id}).then(ok);
   const trial = await until(async () => { const v = await view(); return v.trials[0]?.state === 'running' ? v.trials[0] : undefined; }, 'source trial');
-  const run = await until(async () => { const r = ok(await call('GET', `/api/pipeline-runs/${trial.id}`)); return r.observedSteps[1]?.executionId ? r : undefined; }, 'suffix command');
+  const run = await until(async () => { const r = ok(await op('pipeline_get', {runId: trial.id})); return r.observedSteps[1]?.executionId ? r : undefined; }, 'suffix command');
   const poll = () => host('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}).then(ok);
   const command = (await poll()).commands.find((c: any) => c.executionId === run.observedSteps[1].executionId);
   assert.ok(command);
@@ -514,7 +514,7 @@ async function suffixFixture(projectId = 'cs', differentOuter = false, checks?: 
     return r.artifactId;
   };
   const complete = async (runId: string, scoring = true, received?: any) => {
-    const r = await until(async()=>{const v=ok(await call('GET', `/api/pipeline-runs/${runId}`));return v.observedSteps[1]?.executionId?v:undefined;},'script launch');
+    const r = await until(async()=>{const v=ok(await op('pipeline_get', {runId: runId}));return v.observedSteps[1]?.executionId?v:undefined;},'script launch');
     const cmd = received ?? await until(async()=> (await poll()).commands.find((c: any) => c.executionId === r.observedSteps[1].executionId),'script intake');
     await receipt(cmd, 'started');
     const {mkdtempSync} = await import('node:fs'); const {tmpdir} = await import('node:os'); const {execFileSync} = await import('node:child_process');
@@ -529,7 +529,7 @@ async function suffixFixture(projectId = 'cs', differentOuter = false, checks?: 
       const output = readFileSync(join(dir, 'out/output.json'), 'utf8'); assert.equal(JSON.parse(output).p, 0.93);
       await upload(cmd, output); await receipt(cmd, 'completed', {artifacts: ['output.json']});
     } finally { rmSync(dir, {recursive: true, force: true}); }
-    if (!scoring) return until(async () => { const r = ok(await call('GET', `/api/pipeline-runs/${runId}`)); return r.state === 'succeeded' ? r : undefined; }, 'ordinary rerun completes');
+    if (!scoring) return until(async () => { const r = ok(await op('pipeline_get', {runId: runId})); return r.state === 'succeeded' ? r : undefined; }, 'ordinary rerun completes');
     return until(async () => { const v = await view(); return v.scores.some((s: any) => s.trialIds.includes(runId)) ? v : undefined; }, 'normal recovered score');
   };
   return {exp,trial,run,command,request,host,view,prove,receipt,poll,complete,upload,content,pipelineId,pin,example};
@@ -550,11 +550,11 @@ test('L2 local-suffix retry: real stored bytes, normal scoring and atomic replay
   const recovered = a.trials.find((t: any) => t.id === rid);
   assert.deepEqual(recovered.recovery,{sourceRunId:f.trial.id,reusedStepIds:['decide']});
   assert.equal(recovered.cell.attempt,f.trial.cell.attempt+1);
-  const r = ok(await call('GET',`/api/pipeline-runs/${rid}`));
+  const r = ok(await op('pipeline_get', {runId: rid}));
   assert.equal(r.observedSteps[0].outputArtifactId,f.run.observedSteps[0].outputArtifactId); assert.equal(r.plan.entries[0].executionRef.mode,'reused');
   const done = await f.complete(rid); assert.ok(done.trials.find((t: any) => t.id===rid).comparable);
   assert.equal(done.spend.calls.value,1); assert.equal(seen.length,before);
-  const source = ok(await call('GET',`/api/pipeline-runs/${f.trial.id}`));
+  const source = ok(await op('pipeline_get', {runId: f.trial.id}));
   assert.deepEqual(source.observedSteps[0].calls,f.run.observedSteps[0].calls);
   assert.deepEqual(source.observedSteps[0].usage,f.run.observedSteps[0].usage);
   assert.deepEqual(done.trials.find((t:any)=>t.id===f.trial.id).cost,a.trials.find((t:any)=>t.id===f.trial.id).cost);
@@ -618,14 +618,14 @@ test('L5 ordinary failed rerun preserves immutable API output through transitive
   ok(await op('lab_cell_action',{experimentId:f.exp.id,cell:f.request.cell,action:'cancel'}));
   const before=seen.length;
   const firstReply=ok(await op('pipeline_rerun',{runId:f.trial.id,mode:'failed',requestId:randomUUID(),outputArtifactId:'caller-cannot-override'}));
-  const first=ok(await call('GET',`/api/pipeline-runs/${firstReply.runId}`));
+  const first=ok(await op('pipeline_get', {runId: firstReply.runId}));
   assert.equal(first.observedSteps[0].outputArtifactId,f.run.observedSteps[0].outputArtifactId);
-  const started=await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${first.id}`)); return r.observedSteps[1]?.executionId?r:undefined;},'ordinary rerun starts');
+  const started=await until(async()=>{const r=ok(await op('pipeline_get', {runId: first.id})); return r.observedSteps[1]?.executionId?r:undefined;},'ordinary rerun starts');
   const cmd=(await f.poll()).commands.find((c:any)=>c.executionId===started.observedSteps[1].executionId); assert.ok(cmd);
   await f.receipt(cmd,'started'); await f.receipt(cmd,'failed',{error:'local fixture exit'});
-  await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${first.id}`));return r.state==='failed'?r:undefined;},'local suffix fails');
+  await until(async()=>{const r=ok(await op('pipeline_get', {runId: first.id}));return r.state==='failed'?r:undefined;},'local suffix fails');
   const secondReply=ok(await op('pipeline_rerun',{runId:first.id,mode:'failed',requestId:randomUUID()}));
-  const second=ok(await call('GET',`/api/pipeline-runs/${secondReply.runId}`));
+  const second=ok(await op('pipeline_get', {runId: secondReply.runId}));
   assert.equal(second.observedSteps[0].outputArtifactId,f.run.observedSteps[0].outputArtifactId); assert.equal(second.observedSteps[0].reusedFrom,f.trial.id);
   const finished = await f.complete(second.id,false); assert.equal(seen.length,before);
   // Two child paths normalize to the same name; last stored child output wins over the coordinator fallback.
@@ -634,7 +634,7 @@ test('L5 ordinary failed rerun preserves immutable API output through transitive
   expanded.pipeline.steps.push({id:'tail',kind:'script',command:'cat "$FLEET_INPUT_DIR/combine/output.json" > "$FLEET_OUTPUT_DIR/output.json"'});
   ok(await op('definition_save',{kind:'pipeline',id:f.pipelineId,baseRevision:head.head,content:expanded,message:'append local namespace fixture'}));
   const tail = ok(await op('pipeline_rerun',{runId:second.id,mode:'failed',requestId:randomUUID()}));
-  const tailRun = await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${tail.runId}`));return r.observedSteps[2]?.executionId?r:undefined;},'tail command');
+  const tailRun = await until(async()=>{const r=ok(await op('pipeline_get', {runId: tail.runId}));return r.observedSteps[2]?.executionId?r:undefined;},'tail command');
   const intake = (await f.poll()).commands.find((c:any)=>c.executionId===tailRun.observedSteps[2].executionId);assert.ok(intake);
   const combined = intake.payload.inputs.filter((x:any)=>x.path==='combine/output.json');assert.equal(combined.length,1);assert.equal(combined[0].artifactId,late);
   assert.equal(intake.payload.inputs.find((x:any)=>x.path==='decide/output.json').artifactId,f.run.observedSteps[0].outputArtifactId);
@@ -643,7 +643,7 @@ test('L5 ordinary failed rerun preserves immutable API output through transitive
   const data = await fetch(BASE+'/api/results/'+late,{headers:{authorization:'Bearer '+SECRET,'x-fleet-person':OWNER}});assert.equal(data.status,200);
   const actual = await data.text();assert.equal(JSON.parse(actual).p,0.42);
   await f.upload(intake,actual);await f.receipt(intake,'completed',{artifacts:['output.json']});
-  await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${tail.runId}`));return r.state==='succeeded'?r:undefined;},'tail completes');
+  await until(async()=>{const r=ok(await op('pipeline_get', {runId: tail.runId}));return r.state==='succeeded'?r:undefined;},'tail completes');
   assert.equal(seen.length,before);
 });
 
@@ -659,13 +659,13 @@ test('L8 transitive Lab suffix retains immediate source and original artifact (r
   const f=await suffixFixture();await f.prove();await f.receipt(f.command,'unknown');
   const before=seen.length;
   const first=ok(await op('lab_cell_action',f.request)).recovery.runId;
-  const run=await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${first}`));return r.observedSteps[1]?.executionId?r:undefined;},'first recovery script');
+  const run=await until(async()=>{const r=ok(await op('pipeline_get', {runId: first}));return r.observedSteps[1]?.executionId?r:undefined;},'first recovery script');
   const cmd=await until(async()=>(await f.poll()).commands.find((c:any)=>c.executionId===run.observedSteps[1].executionId),'first recovery intake');
   await f.receipt(cmd,'started');
   ok(await f.host('/api/hosts/events',{executionId:cmd.executionId,events:[{id:cmd.id+'-2',seq:2,type:'process.reconciled',timestamp:Date.now(),data:{ownedProcesses:1,resolved:true,survived:false,launchWindowUnresolved:false}}]}));
   await f.receipt(cmd,'unknown');
   const second=ok(await op('lab_cell_action',{...f.request,sourceRunId:first,requestId:randomUUID()})).recovery.runId;
-  const derived=ok(await call('GET',`/api/pipeline-runs/${second}`));
+  const derived=ok(await op('pipeline_get', {runId: second}));
   assert.equal(derived.observedSteps[0].reusedFrom,f.trial.id);assert.equal(derived.observedSteps[0].outputArtifactId,f.run.observedSteps[0].outputArtifactId);
   const done=await f.complete(second);assert.equal(done.trials.find((t:any)=>t.id===second).recovery.sourceRunId,first);
   assert.equal(done.spend.calls.value,1);assert.equal(seen.length,before);
@@ -679,7 +679,7 @@ test('Lab suffix recovery uses variant pipeline when outer pipeline differs (req
   const done = await f.complete(recovered);
   assert.equal(seen.length, before);
   assert.ok(done.trials.find((t: any) => t.id === recovered).comparable);
-  const run = ok(await call('GET', `/api/pipeline-runs/${recovered}`));
+  const run = ok(await op('pipeline_get', {runId: recovered}));
   assert.equal(run.pipelineId, f.pipelineId);
   assert.equal(run.observedSteps[0].outputArtifactId, f.run.observedSteps[0].outputArtifactId);
 });
@@ -704,8 +704,8 @@ test('L6 preflight never holds the write lock and revalidates lifecycle changes 
 test('A3 Promote saves the method as a catalogue revision (source lab) and sets the recommendation (requirement: fleet-definition-editors.md, Promote; risk: a promote that only returns a patch, so the winner never reaches the catalogue)', async () => {
   const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
   example.version = 2000 + Math.floor(Math.random() * 1e6);
-  const {examples: [imported]} = ok(await call('POST', '/api/lab/examples', {examples: [example], approved: true}));
-  const e = ok(await call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [imported.artifactId], variants: [{label: 'promoted'}],
+  const {examples: [imported]} = ok(await op('lab_examples_add', {examples: [example], approved: true}));
+  const e = ok(await op('lab_experiment_create', {kind: 'single', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [imported.artifactId], variants: [{label: 'promoted'}],
     evaluators: [{kind: 'script', ref: 'example.checks', form: 'pass_fail'}]}));
   const before = ok(await op('definition_get', {kind: 'catalogue', id: 'catalogue'})).head;
   const p = ok(await op('lab_promote', {experimentId: e.id, variant: 'promoted'}));
@@ -795,7 +795,7 @@ test('Catalogue Compare snapshots selected variant pipelines without dispatch (r
   ok(await op('lab_experiment_action', {experimentId: created.experimentId, action: 'launch'}));
   const completed = await until(async () => {const v = ok(await op('lab_experiment_get', {experimentId: created.experimentId})); return v.state === 'done' ? v : undefined;}, 'two variant pipelines complete');
   for (const t of completed.trials) {
-    const r = ok(await call('GET', `/api/pipeline-runs/${t.id}`));
+    const r = ok(await op('pipeline_get', {runId: t.id}));
     const expected = t.cell.variant === 'compare-b' ? pipe : 'typed-decision';
     assert.equal(r.pipelineId, expected);
     assert.ok(r.definitions.some((d: any) => d.kind === 'pipeline' && d.id === expected));
@@ -1046,7 +1046,7 @@ test('Conditional HTTP plan selects one counted API action and omits a false rev
   ok(await op('definition_create',{kind:'pipeline',id:pipelineId,content,message:'conditional protocol fixture'}));
   const before = seen.length;
   const started = ok(await op('pipeline_run_create',{pipelineId,projectId:'hello-world',requestId:randomUUID(),example:{prompt:'Synthetic condition fixture'}}));
-  const read = () => call('GET',`/api/pipeline-runs/${started.runId}`).then(ok);
+  const read = () => op('pipeline_get', {runId: started.runId}).then(ok);
   const run = await until(async()=>{const value=await read();return value.plan.entries[2].execution?.nativeExecutionId ? value : undefined;},'conditional final preparation');
   const skipped = run.plan.entries[1];
   assert.equal(skipped.activation,'not_selected');assert.equal(skipped.executionRef,undefined);assert.equal(skipped.execution,undefined);

@@ -161,6 +161,23 @@ func (v *EntityResolveManyReply) Validate() error {
 
 type EntityResolveManyRequest struct {
 	Text string `json:"text"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v EntityResolveManyRequest) MarshalJSON() ([]byte, error) {
+	type plain EntityResolveManyRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *EntityResolveManyRequest) UnmarshalJSON(b []byte) error {
+	type plain EntityResolveManyRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -173,6 +190,23 @@ type EntityResolveReply = EntityCode
 // EntityResolveRequest: Case-insensitive; unknown and forbidden codes both answer 404.
 type EntityResolveRequest struct {
 	Code string `json:"code"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v EntityResolveRequest) MarshalJSON() ([]byte, error) {
+	type plain EntityResolveRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *EntityResolveRequest) UnmarshalJSON(b []byte) error {
+	type plain EntityResolveRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -251,6 +285,23 @@ func (v *ProjectCodeSetReply) Validate() error {
 type ProjectCodeSetRequest struct {
 	Code      string `json:"code"`
 	ProjectId string `json:"projectId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectCodeSetRequest) MarshalJSON() ([]byte, error) {
+	type plain ProjectCodeSetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectCodeSetRequest) UnmarshalJSON(b []byte) error {
+	type plain ProjectCodeSetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -336,6 +387,23 @@ func (v *ProjectContextReply) Validate() error {
 
 type ProjectContextRequest struct {
 	ProjectId string `json:"projectId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectContextRequest) MarshalJSON() ([]byte, error) {
+	type plain ProjectContextRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectContextRequest) UnmarshalJSON(b []byte) error {
+	type plain ProjectContextRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -453,6 +521,23 @@ func (v *ProjectReadinessReply) Validate() error {
 type ProjectReadinessRequest struct {
 	CallerSessionId *string `json:"callerSessionId,omitempty"`
 	ProjectId       *string `json:"projectId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectReadinessRequest) MarshalJSON() ([]byte, error) {
+	type plain ProjectReadinessRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectReadinessRequest) UnmarshalJSON(b []byte) error {
+	type plain ProjectReadinessRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -517,6 +602,23 @@ type QuestionAnswerRequest struct {
 	Answer      string   `json:"answer"`
 	ArtifactIds []string `json:"artifactIds,omitempty"`
 	QuestionId  string   `json:"questionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QuestionAnswerRequest) MarshalJSON() ([]byte, error) {
+	type plain QuestionAnswerRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QuestionAnswerRequest) UnmarshalJSON(b []byte) error {
+	type plain QuestionAnswerRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -530,6 +632,23 @@ type QuestionAskRequest struct {
 	ProjectId string `json:"projectId"`
 	RequestId string `json:"requestId"`
 	Text      string `json:"text"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QuestionAskRequest) MarshalJSON() ([]byte, error) {
+	type plain QuestionAskRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QuestionAskRequest) UnmarshalJSON(b []byte) error {
+	type plain QuestionAskRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -556,6 +675,23 @@ func (v *QuestionHistoryReply) Validate() error {
 
 type QuestionHistoryRequest struct {
 	ProjectId string `json:"projectId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QuestionHistoryRequest) MarshalJSON() ([]byte, error) {
+	type plain QuestionHistoryRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QuestionHistoryRequest) UnmarshalJSON(b []byte) error {
+	type plain QuestionHistoryRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -634,6 +770,23 @@ type QuestionsAnswerRequest struct {
 	Answer      string   `json:"answer"`
 	ArtifactIds []string `json:"artifactIds,omitempty"`
 	QuestionId  string   `json:"questionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QuestionsAnswerRequest) MarshalJSON() ([]byte, error) {
+	type plain QuestionsAnswerRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QuestionsAnswerRequest) UnmarshalJSON(b []byte) error {
+	type plain QuestionsAnswerRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -664,6 +817,23 @@ type QuestionsListRequest struct {
 	ProjectIds        []string `json:"projectIds,omitempty"`
 	State             *string  `json:"state,omitempty"`
 	TaskId            *string  `json:"taskId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QuestionsListRequest) MarshalJSON() ([]byte, error) {
+	type plain QuestionsListRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QuestionsListRequest) UnmarshalJSON(b []byte) error {
+	type plain QuestionsListRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -686,6 +856,23 @@ func (v *QuestionsReply) Validate() error {
 type QuestionsRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
 	State     *string `json:"state,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QuestionsRequest) MarshalJSON() ([]byte, error) {
+	type plain QuestionsRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QuestionsRequest) UnmarshalJSON(b []byte) error {
+	type plain QuestionsRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1264,6 +1451,23 @@ type TaskCancelReply = TaskDetail
 
 type TaskCancelRequest struct {
 	TaskId string `json:"taskId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskCancelRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskCancelRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskCancelRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskCancelRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1283,6 +1487,23 @@ type TaskCreateRequest struct {
 	ProjectId              *string         `json:"projectId,omitempty"`
 	ResultDestination      *string         `json:"resultDestination,omitempty"`
 	Title                  string          `json:"title"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskCreateRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskCreateRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskCreateRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskCreateRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1436,6 +1657,23 @@ type TaskGetReply = TaskDetail
 
 type TaskGetRequest struct {
 	TaskId string `json:"taskId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskGetRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskGetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskGetRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskGetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1447,6 +1685,23 @@ type TaskHoldReply = TaskDetail
 
 type TaskHoldRequest struct {
 	TaskId string `json:"taskId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskHoldRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskHoldRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskHoldRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskHoldRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1520,6 +1775,23 @@ func (v *TaskListReply) Validate() error {
 type TaskListRequest struct {
 	ProjectId *string `json:"projectId,omitempty"`
 	State     *string `json:"state,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskListRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskListRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskListRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskListRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1569,6 +1841,23 @@ type TaskPageRequest struct {
 	GroupCounts *bool             `json:"groupCounts,omitempty"`
 	Limit       *int64            `json:"limit,omitempty"`
 	Sort        *string           `json:"sort,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskPageRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskPageRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskPageRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskPageRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1602,6 +1891,23 @@ type TaskReleaseReply = TaskDetail
 
 type TaskReleaseRequest struct {
 	TaskId string `json:"taskId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskReleaseRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskReleaseRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskReleaseRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskReleaseRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1616,6 +1922,23 @@ type TaskRequestAcceptanceRequest struct {
 	ArtifactIds []string `json:"artifactIds,omitempty"`
 	TaskId      string   `json:"taskId"`
 	Text        *string  `json:"text,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskRequestAcceptanceRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskRequestAcceptanceRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskRequestAcceptanceRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskRequestAcceptanceRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1653,6 +1976,23 @@ type TaskTakeReply = TaskDetail
 
 type TaskTakeRequest struct {
 	TaskId string `json:"taskId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskTakeRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskTakeRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskTakeRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskTakeRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1670,6 +2010,23 @@ type TaskUpdateRequest struct {
 	ResultDestination *string `json:"resultDestination,omitempty"`
 	TaskId            string  `json:"taskId"`
 	Title             *string `json:"title,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskUpdateRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskUpdateRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskUpdateRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskUpdateRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).

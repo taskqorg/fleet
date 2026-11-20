@@ -69,6 +69,23 @@ func (v *FocusSetReply) Validate() error {
 type FocusSetRequest struct {
 	ProjectIds json.RawMessage `json:"projectIds"`
 	SessionId  string          `json:"sessionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v FocusSetRequest) MarshalJSON() ([]byte, error) {
+	type plain FocusSetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *FocusSetRequest) UnmarshalJSON(b []byte) error {
+	type plain FocusSetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -224,6 +241,23 @@ type MembershipList struct {
 	Group  *string     `json:"group,omitempty"`
 	Name   string      `json:"name"`
 	Sort   *string     `json:"sort,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v MembershipList) MarshalJSON() ([]byte, error) {
+	type plain MembershipList
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *MembershipList) UnmarshalJSON(b []byte) error {
+	type plain MembershipList
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -293,6 +327,23 @@ func (v *PeopleSetReply) Validate() error {
 // PeopleSetRequest: Owner only: the whole people.json list, written atomically and reloaded.
 type PeopleSetRequest struct {
 	People json.RawMessage `json:"people"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v PeopleSetRequest) MarshalJSON() ([]byte, error) {
+	type plain PeopleSetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *PeopleSetRequest) UnmarshalJSON(b []byte) error {
+	type plain PeopleSetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -531,6 +582,23 @@ func (v *ViewLinkReply) Validate() error {
 type ViewLinkRequest struct {
 	Url  json.RawMessage `json:"url,omitempty"`
 	View json.RawMessage `json:"view,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ViewLinkRequest) MarshalJSON() ([]byte, error) {
+	type plain ViewLinkRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ViewLinkRequest) UnmarshalJSON(b []byte) error {
+	type plain ViewLinkRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).

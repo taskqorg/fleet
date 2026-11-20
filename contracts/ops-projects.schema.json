@@ -125,7 +125,7 @@
       "type": "object",
       "additionalProperties": true
     },
-    "ProjectBundle": {
+    "ProjectBundle": {"unevaluatedProperties": false, 
       "type": "object",
       "required": [
         "settings",
@@ -142,9 +142,10 @@
             "$ref": "#/$defs/ProjectContextFile"
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
-    "ProjectContextFile": {
+    "ProjectContextFile": {"unevaluatedProperties": false, 
       "type": "object",
       "required": [
         "path",
@@ -157,7 +158,8 @@
         "text": {
           "type": "string"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "ProjectArchiveRequest": {
       "type": "object",

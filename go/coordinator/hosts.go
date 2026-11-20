@@ -205,9 +205,6 @@ func secretOf(q *Request, b doc, self string) (hash, secret string, err error) {
 }
 
 func hostsRegister(q *Request, b doc) (any, error) {
-	if err := ownerOnly(q, "Only the owner manages hosts"); err != nil {
-		return nil, err
-	}
 	id := astr(b["id"])
 	if !hostID.MatchString(id) {
 		return nil, fail(400, "Expected host id")
@@ -335,9 +332,6 @@ func hostsUpdate(q *Request, b doc) (any, error) {
 }
 
 func hostsRotateSecret(q *Request, b doc) (any, error) {
-	if err := ownerOnly(q, "Only the owner manages hosts"); err != nil {
-		return nil, err
-	}
 	h, err := hostByID(q, b["id"])
 	if err != nil {
 		return nil, err

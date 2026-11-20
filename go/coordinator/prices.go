@@ -216,6 +216,6 @@ func priceEntries(q *Request) ([]db.PriceEntry, error) {
 }
 
 func init() {
-	gatedObjOp("price_add", false, typedOp(priceAdd))
-	gatedObjOp("prices_list", true, typedOp(pricesList))
+	op("price_add", priceAdd)
+	op("prices_list", pricesList)
 }

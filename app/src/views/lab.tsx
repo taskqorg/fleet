@@ -134,7 +134,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const act = <K extends OpName>(name: K, body: Ops[K]['request']) => op(name, body).then(r => { const w = (r as { warnings?: string[] }).warnings; setMsg(w?.length ? { text: w.join('; '), tone: 'warning' } : null); return r; }).catch((x: any) => setMsg({ text: x.message, tone: 'failure' }));
   const trial = (key: string) => e.trials.filter((t: any) => `${t.cell.example}|${t.cell.variant}|${t.cell.repeat}` === key).sort((a: any, b: any) => b.cell.attempt - a.cell.attempt)[0];
   const toggle = (t: string) => setSel(s => s.includes(t) ? s.filter(x => x !== t) : [...s, t]);
-  const rate = (form: string) => act('lab_rating_create', { experimentId: id, form, trialIds: sel }).then((r: any) => { if (r?.id) { setSel([]); location.hash = 'rating-' + r.id; } });
+  const rate = (form: Ops['lab_rating_create']['request']['form']) => act('lab_rating_create', { experimentId: id, form, trialIds: sel }).then((r: any) => { if (r?.id) { setSel([]); location.hash = 'rating-' + r.id; } });
   const budgetOf = (unit: string) => e.budgets.find((b: any) => b.unit === unit);
   const note = (unit: string) => { const b = budgetOf(unit); return b ? `of ${b.limit} · ${b.action}${b.firedAt ? ' · reached' : ''}` : undefined; };
   const cols = `minmax(8rem,14rem) ${e.variants.map(() => 'minmax(12rem,1fr)').join(' ')}`;
@@ -177,13 +177,11 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
                   <span class="muted" data-tip={conf}>r{t.cell.repeat + 1}{t.cell.attempt ? `.${t.cell.attempt}` : ''}</span>
                   <Num m={{ value: t.durationMs === null || t.durationMs === undefined ? null : t.durationMs / 1000, basis: t.durationMs == null ? 'unavailable' : 'measured', reason: 'running' }} kind="duration" />
                   <Num m={{ value: t.spend.credits, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" />
-                  <a class="muted" href={`/api/pipeline-runs/${t.id}`} target="_blank" rel="noopener">Run and definitions</a>
-                  {t.recovery && <a class="muted" href={`/api/pipeline-runs/${t.recovery.sourceRunId}`} target="_blank" rel="noopener" data-tip={`Reuses ${t.recovery.reusedStepIds.join(', ')}; original spend remains in source history`}>source</a>}
+                  {t.recovery && <span data-tip={`Reuses ${t.recovery.reusedStepIds.join(', ')}; original spend remains in source history`}><Button label="Source run" icon="network" kind="quiet" onClick={() => setPlanTrial(t.recovery.sourceRunId)} /></span>}
                   {(t.cost ?? []).map((c: any, i: number) => <Num key={i} m={{ value: c.value, basis: c.basis, currency: c.currency ?? undefined, reason: c.value === null ? c.reason : `${c.prices.length} price${c.prices.length === 1 ? '' : 's'}` }} kind="money" />)}
                   {t.scores.filter((s: any) => s.trialIds.length === 1).map((s: any) => s.form === 'typed'
                     ? <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator)}${s.rationale ? ": " + s.rationale : ""}`}><Icon name={typedIcon(s.value)} label={`${evaluatorLabel(s.evaluator)} ${s.value.answer}, label ${s.value.label ?? 'none'}`} />{s.value.answer}</span>
                     : <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator)}${s.rationale ? ': ' + s.rationale : ''}`}><Icon name={s.form === 'pass_fail' ? (s.value ? 'circle-check' : 'circle-x') : 'sliders-horizontal'} label={`${evaluatorLabel(s.evaluator)} ${String(s.value)}`} />{s.form === 'pass_fail' ? '' : String(s.form === 'metric' ? Number(s.value).toFixed(2) : s.value)}</span>)}
-                  <a class="btn quiet icon-only" href={`/api/pipeline-runs/${t.id}`} target="_blank" rel="noopener" aria-label="Open the run" data-tip="Open the run"><Icon name="external-link" /></a>
                   {t.state === 'running' ? <Button label="Cancel cell" icon="x" iconOnly kind="quiet" onClick={() => act('lab_cell_action', { experimentId: id, cell: key, action: 'cancel' })} />
                     : <Button label="Retry cell" icon="rotate-ccw" iconOnly kind="quiet" onClick={() => act('lab_cell_action', { experimentId: id, cell: key, action: 'retry' })} />}
                 </span>; })}
@@ -191,7 +189,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
         </div>)}
       </div>
     </section>
-    {planTrial && <TrialPlan key={planTrial} id={planTrial} projectId={e.projectId} assessments={e.trials.find((t: any) => t.id === planTrial)?.projectAssessments ?? []} onClose={() => setPlanTrial(undefined)} />}
+    {planTrial && <TrialPlan key={planTrial} id={planTrial} projectId={e.projectId} assessments={e.trials.find((t: any) => t.id === planTrial)?.projectAssessments ?? []} onOpen={setPlanTrial} onClose={() => setPlanTrial(undefined)} />}
     <section class="panel"><header class="panel-h"><Icon name="sliders-horizontal" /><h2>Variants</h2></header>
       <DetailSection title="Spread across repeats">{e.variants.map((v: any) => <KvRow key={v.label} icon="git-merge" label={v.proposalLabel ? `${v.proposalLabel} · ${v.label}` : v.label}
         meta={<><span>{Object.entries(v.summary).map(([k, s]: any) => `${evaluatorLabel(k)} ${scoreText(s)}`).join(' · ') || 'no scores yet'}</span><span> · Pipeline: <a href={`/pipelines/${v.pipelineId ?? e.pipelineId}`}>{v.pipelineId ?? e.pipelineId}</a></span><span class="id"> · Executable digest: {v.config_ref}</span>{v.catalogueConfigRef && <span class="id"> · Catalogue identity: {v.catalogueConfigRef}</span>}{v.catalogueRef && <span> · <a href={`/catalogue/${v.catalogueRef.id}`}>Catalogue r{v.catalogueRef.revision}</a></span>}</>}
@@ -228,7 +226,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
 }
 
 // A scoped server read owns the plan; the matrix never reconstructs omitted work.
-function TrialPlan({ id, projectId, assessments, onClose }: { id: string; projectId: string; assessments: any[]; onClose: () => void }) {
+function TrialPlan({ id, projectId, assessments, onOpen, onClose }: { id: string; projectId: string; assessments: any[]; onOpen: (runId: string) => void; onClose: () => void }) {
   const { data: run, state, error } = useDoc(`pipeline-plan:${projectId}:${id}`, () => op('pipeline_get', { runId: id, projectId }), touches, 5000);
   const items: StepItem[] = (run?.plan.entries ?? []).map(entry => {
     const execution = entry.execution;
@@ -245,7 +243,7 @@ function TrialPlan({ id, projectId, assessments, onClose }: { id: string; projec
     {error && <ProblemRow title="Trial plan unavailable" facts={error} severity="failure" actions={[]} />}
     {run && <KvRow icon="rows-3" label="Plan entries" meta={`${run.planSummary.planned} planned · ${run.planSummary.freshExecutions} fresh · ${run.planSummary.reusedExecutions} reused · ${run.planSummary.notSelected} not selected · ${run.planSummary.pending} pending · ${run.planSummary.blocked} blocked`} />}
     {run ? <StepList label="Trial activation and execution" items={items} /> : <Empty text="Plan unavailable" />}
-    {(run?.plan.entries ?? []).filter(entry => entry.executionRef?.mode === 'reused').map(entry => <KvRow key={entry.id} icon="network" label={`${entry.id} · reused source`} value={<a href={`/api/pipeline-runs/${entry.executionRef!.sourceRunId}`} target="_blank" rel="noopener">Open source run</a>} />)}
+    {(run?.plan.entries ?? []).filter(entry => entry.executionRef?.mode === 'reused').map(entry => <KvRow key={entry.id} icon="network" label={`${entry.id} · reused source`} value={<Button label="Open source run" icon="network" kind="quiet" onClick={() => onOpen(entry.executionRef!.sourceRunId!)} />} />)}
     {run?.canonicalResult && <KvRow icon="file-text" label="Canonical result" value={<a href={`/api/results/${run.canonicalResult.artifact.artifactId}`} target="_blank" rel="noopener">Open result</a>} />}
     {assessments.map(assessment => <KvRow key={`${assessment.checkId}:${assessment.evaluatorSha256}:${assessment.inputSha256}`} icon="file-text" label={`Project assessment · ${assessment.checkId}`} meta={assessment.schemaId} value={<a href={`/api/results/${assessment.artifactId}`} target="_blank" rel="noopener">Open assessment</a>} />)}
   </DetailSection>;

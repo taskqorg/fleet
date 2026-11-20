@@ -463,10 +463,10 @@ func deliveredTeardown(q *Request, taskID string) error {
 	return nil
 }
 
+// errSessionCreateKeys: session_create takes an empty object.
+var errSessionCreateKeys = fail(400, "session_create takes no identity or linkage fields")
+
 func sessionCreate(q *Request) (doc, error) {
-	if !keysOnly(body(q)) {
-		return nil, fail(400, "session_create takes no identity or linkage fields")
-	}
 	s := doc{"id": newID(), "createdAt": nowMs(), "directedBy": director(q)}
 	if callerReadOnly(q) { // an agent of a read-only conversation creates read-only sessions (presets.go)
 		s["access"], s["branch"] = "read", false
@@ -481,14 +481,25 @@ func sessionCreate(q *Request) (doc, error) {
 	return out, nil
 }
 
-func sessionArg(b doc) (string, error) { return strArg(b, "sessionId", "sessionId", 0) }
+// sessionArg: a required sessionId, not empty.
+func sessionArg(sid string) (string, error) {
+	if sid == "" {
+		return "", fail(400, "Expected sessionId")
+	}
+	return sid, nil
+}
 
 func init() {
-	gatedRoute("POST /api/sessions", func(q *Request) (any, error) { return sessionCreate(q) })
-	gatedRoute("GET /api/sessions/{id}", func(q *Request) (any, error) { return sessionGet(q, q.r.PathValue("id")) })
-	gatedRoute("POST /api/sessions/{id}/profile", func(q *Request) (any, error) { return sessionProfile(q, q.r.PathValue("id"), body(q)) })
+	route("POST /api/sessions", func(q *Request) (any, error) {
+		if len(body(q)) > 0 {
+			return nil, errSessionCreateKeys
+		}
+		return sessionCreate(q)
+	})
+	route("GET /api/sessions/{id}", func(q *Request) (any, error) { return sessionGet(q, q.r.PathValue("id")) })
+	route("POST /api/sessions/{id}/profile", func(q *Request) (any, error) { return sessionProfile(q, q.r.PathValue("id"), body(q)) })
 	// POST /api/sessions/{id}/messages: exactly requestId and text (optional delivery); one execution per requestId.
-	gatedLongRoute("POST /api/sessions/{id}/messages", func(q *Request) (any, error) {
+	longRoute("POST /api/sessions/{id}/messages", func(q *Request) (any, error) {
 		sid := q.r.PathValue("id")
 		var b map[string]json.RawMessage
 		if json.Unmarshal(q.body, &b) != nil || b == nil {
@@ -531,7 +542,7 @@ func init() {
 		}
 		return out, nil
 	})
-	gatedRoute("GET /api/executions/{id}/delegations", func(q *Request) (any, error) {
+	route("GET /api/executions/{id}/delegations", func(q *Request) (any, error) {
 		id := q.r.PathValue("id")
 		if _, err := get(q, id, "execution"); err != nil {
 			return nil, err
@@ -539,136 +550,151 @@ func init() {
 		ds, err := delegationsWhere(q, "delegation->>'parentExecutionId'=$1 OR delegation->>'childExecutionId'=$1 OR delegation->>'continuationExecutionId'=$1", id)
 		return doc{"delegations": ds}, err
 	})
-	gatedObjOp("session_create", false, shaped[contract.SessionCreateRequest, contract.SessionCreateReply](func(q *Request) (any, error) { return sessionCreate(q) }))
-	gatedObjOp("session_get", true, shaped[contract.SessionGetRequest, contract.SessionGetReply](func(q *Request) (any, error) {
-		sid, err := sessionArg(body(q))
-		if err != nil {
-			return nil, err
+	op("session_create", func(q *Request, r *contract.SessionCreateRequest) (contract.SessionCreateReply, error) {
+		if len(*r) > 0 {
+			return contract.SessionCreateReply{}, errSessionCreateKeys
 		}
-		return sessionGet(q, sid)
-	}))
-	gatedObjOp("session_profile", false, shaped[contract.SessionProfileRequest, contract.SessionProfileReply](func(q *Request) (any, error) {
-		b := body(q)
-		sid, err := sessionArg(b)
+		return replyAs[contract.SessionCreateReply](sessionCreate(q))
+	})
+	op("session_get", func(q *Request, r *contract.SessionGetRequest) (contract.SessionGetReply, error) {
+		sid, err := sessionArg(r.SessionId)
 		if err != nil {
-			return nil, err
+			return contract.SessionGetReply{}, err
 		}
+		return replyAs[contract.SessionGetReply](sessionGet(q, sid))
+	})
+	op("session_profile", func(q *Request, r *contract.SessionProfileRequest) (contract.SessionProfileReply, error) {
+		sid, err := sessionArg(r.SessionId)
+		if err != nil {
+			return contract.SessionProfileReply{}, err
+		}
+		b := docOf(r)
 		delete(b, "sessionId")
-		return sessionProfile(q, sid, b)
-	}))
-	gatedObjOp("session_archive", false, shaped[contract.SessionArchiveRequest, contract.SessionArchiveReply](func(q *Request) (any, error) {
-		sid, err := sessionArg(body(q))
+		return replyAs[contract.SessionProfileReply](sessionProfile(q, sid, b))
+	})
+	op("session_archive", func(q *Request, r *contract.SessionArchiveRequest) (contract.SessionArchiveReply, error) {
+		sid, err := sessionArg(r.SessionId)
 		if err != nil {
-			return nil, err
+			return contract.SessionArchiveReply{}, err
 		}
-		return sessionArchive(q, sid)
-	}))
-	gatedObjOp("session_unarchive", false, shaped[contract.SessionUnarchiveRequest, contract.SessionUnarchiveReply](sessionUnarchive))
-	gatedObjOp("sessions_list", true, func(q *Request) (any, error) { return sessionsPage(q, body(q)) })
-	gatedObjOp("list_membership", true, func(q *Request) (any, error) {
-		b := body(q)
-		idsAny, ok := b["ids"].([]any)
-		if !ok || len(idsAny) > 1000 {
-			return nil, fail(400, "Expected at most 1000 ids")
-		}
-		lists, ok := b["lists"].([]any)
-		if !ok || len(lists) < 1 || len(lists) > 2 {
-			return nil, fail(400, "Expected one or two lists")
-		}
-		ids := strList(idsAny)
-		out := []doc{}
-		for _, x := range lists {
-			l, _ := x.(map[string]any)
-			f := mapOf(l["filter"])
-			if f == nil {
-				f = doc{}
-			}
-			switch astr(l["name"]) {
-			case "tasks":
-				rs, err := taskMembership(q, f, l["group"], l["sort"], ids)
-				if err != nil {
-					return nil, err
-				}
-				counts, groups, err := taskSummary(q, f, l["group"], false)
-				if err != nil {
-					return nil, err
-				}
-				out = append(out, doc{"name": "tasks", "rows": rs, "counts": counts, "groups": groups})
-			case "sessions":
-				o, err := sessionOrderOf(l["group"], l["sort"])
-				if err != nil {
-					return nil, err
-				}
-				p := []any{}
-				c, err := sessionWhere(f, &p, true)
-				if err != nil {
-					return nil, err
-				}
-				p = append(p, ids)
-				c = append(c, fmt.Sprintf("x.id=ANY($%d)", len(p)))
-				rs, err := rowsOf(q, sessionBase+" SELECT *,"+o.cols()+" FROM x WHERE "+strings.Join(c, " AND ")+" ORDER BY "+o.by(), p...)
-				if err != nil {
-					return nil, err
-				}
-				rows := []doc{}
-				for _, r := range rs {
-					rows = append(rows, sessionRow(r))
-				}
-				counts, groups, err := sessionSummary(q, f, o)
-				if err != nil {
-					return nil, err
-				}
-				out = append(out, doc{"name": "sessions", "rows": rows, "counts": counts, "groups": groups})
-			default:
-				return nil, fail(400, "Unknown list")
-			}
-		}
-		return doc{"lists": out}, nil
+		return replyAs[contract.SessionArchiveReply](sessionArchive(q, sid))
+	})
+	op("session_unarchive", sessionUnarchive)
+	op("sessions_list", func(q *Request, r *contract.SessionsListRequest) (contract.SessionsListReply, error) {
+		// Read as sent: a null projectId item means sessions outside projects, which the typed list cannot hold.
+		return replyAs[contract.SessionsListReply](sessionsPage(q, body(q)))
+	})
+	op("list_membership", func(q *Request, b *contract.ListMembershipRequest) (contract.ListMembershipReply, error) {
+		out, err := listMembership(q, b)
+		return replyAs[contract.ListMembershipReply](out, err)
 	})
 	// /api/tools: the operation table as MCP tools, each call in its own transaction.
-	gatedLongRoute("POST /api/tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet", operations) })
+	longRoute("POST /api/tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet", operations) })
+}
+
+// listMembership: which of ids each named list (tasks, sessions) holds, with the list's counts and groups.
+func listMembership(q *Request, b *contract.ListMembershipRequest) (doc, error) {
+	if len(b.Ids) > 1000 {
+		return nil, fail(400, "Expected at most 1000 ids")
+	}
+	if len(b.Lists) < 1 || len(b.Lists) > 2 {
+		return nil, fail(400, "Expected one or two lists")
+	}
+	ids := b.Ids
+	// Each filter read as sent: a null projectId item means rows outside projects, which the typed list cannot hold.
+	var raw struct {
+		Lists []struct {
+			Filter doc `json:"filter"`
+		} `json:"lists"`
+	}
+	json.Unmarshal(q.body, &raw)
+	out := []doc{}
+	for i, l := range b.Lists {
+		f := doc{}
+		if i < len(raw.Lists) && raw.Lists[i].Filter != nil {
+			f = raw.Lists[i].Filter
+		}
+		group, sort := optAny(l.Group), optAny(l.Sort)
+		switch l.Name {
+		case "tasks":
+			rs, err := taskMembership(q, f, group, sort, ids)
+			if err != nil {
+				return nil, err
+			}
+			counts, groups, err := taskSummary(q, f, group, false)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, doc{"name": "tasks", "rows": rs, "counts": counts, "groups": groups})
+		case "sessions":
+			o, err := sessionOrderOf(group, sort)
+			if err != nil {
+				return nil, err
+			}
+			p := []any{}
+			c, err := sessionWhere(f, &p, true)
+			if err != nil {
+				return nil, err
+			}
+			p = append(p, ids)
+			c = append(c, fmt.Sprintf("x.id=ANY($%d)", len(p)))
+			rs, err := rowsOf(q, sessionBase+" SELECT *,"+o.cols()+" FROM x WHERE "+strings.Join(c, " AND ")+" ORDER BY "+o.by(), p...)
+			if err != nil {
+				return nil, err
+			}
+			rows := []doc{}
+			for _, r := range rs {
+				rows = append(rows, sessionRow(r))
+			}
+			counts, groups, err := sessionSummary(q, f, o)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, doc{"name": "sessions", "rows": rows, "counts": counts, "groups": groups})
+		default:
+			return nil, fail(400, "Unknown list")
+		}
+	}
+	return doc{"lists": out}, nil
 }
 
 // sessionUnarchive: undo session_archive (owner or full access). The teardown already sent is not undone: a removed
 // worktree is prepared again at the next start.
-func sessionUnarchive(q *Request) (any, error) {
-	if err := ownerOnly(q, "Only the owner restores archived sessions"); err != nil {
-		return nil, err
-	}
-	b := body(q)
-	sid, reason := astr(b["sessionId"]), strings.TrimSpace(astr(b["reason"]))
+func sessionUnarchive(q *Request, r *contract.SessionUnarchiveRequest) (contract.SessionUnarchiveReply, error) {
+	var none contract.SessionUnarchiveReply
+	sid, reason := r.SessionId, strings.TrimSpace(r.Reason)
 	if reason == "" {
-		return nil, fail(400, "Expected reason")
+		return none, fail(400, "Expected reason")
 	}
 	s, err := get(q, sid, "session")
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	if s == nil {
-		return nil, fail(404, "Unknown session")
+		return none, fail(404, "Unknown session")
 	}
 	at, archived := s["archivedAt"]
 	if !archived {
-		return nil, fail(409, "Session is not archived")
+		return none, fail(409, "Session is not archived")
 	}
 	delete(s, "archivedAt")
 	s["id"] = sid
 	if err := put(q, "session", s); err != nil {
-		return nil, err
+		return none, err
 	}
 	// A teardown no host has fetched yet would remove the worktree of a live session again.
 	pending, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"})
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	for _, x := range pending {
 		x["status"] = "stopped"
 		if err := put(q, "command", x); err != nil {
-			return nil, err
+			return none, err
 		}
 	}
 	if err := put(q, "setting-change", doc{"id": newID(), "target": "session:" + sid, "field": "archivedAt", "previous": at, "value": nil, "reason": reason, "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
-		return nil, err
+		return none, err
 	}
-	return doc{"sessionId": sid, "teardownsWithdrawn": len(pending)}, nil
+	return contract.SessionUnarchiveReply{SessionId: sid, TeardownsWithdrawn: int64(len(pending))}, nil
 }

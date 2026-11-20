@@ -1,5 +1,5 @@
-// Operation plumbing: runOp, the one dispatcher of operations, the declared auth rule of the contract, and the person gate
-// of legacy registrations.
+// Operation plumbing: runOp, the one dispatcher of operations, and the declared auth rule of the contract (the only
+// authorization rule of an operation).
 package main
 
 import (
@@ -11,22 +11,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// gatedObjOp registers an operation behind the architect gate and the project grant check.
-func gatedObjOp(name string, read bool, h handler) {
-	operation(name, read, func(q *Request) (any, error) {
-		if err := refreshRequestAccess(q); err != nil {
-			return nil, err
-		}
-		if err := q.app.guardOp(q, name, q.body); err != nil {
-			return nil, err
-		}
-		if len(q.body) == 0 || string(q.body) == "null" {
-			q.body = json.RawMessage("{}")
-		}
-		return h(q)
-	})
-}
-
 // toolReceipt: a host agent's tool call identity (agent_receipts.go); its write commits with its acknowledgment.
 type toolReceipt struct {
 	key       *string
@@ -34,11 +18,11 @@ type toolReceipt struct {
 	payload   any // what the receipt hashes: the arguments as the caller bound them (nil: the body)
 }
 
-// runOp is the one dispatcher of operations: POST /api/ops/{name}, /api/project-operations/{name} and the MCP servers
-// (/api/tools, /api/project-tools, /api/hosts/agent-tools). A long operation runs without a surrounding transaction (it
-// opens its own); any other runs in its own transaction in the person's scope. Every call refreshes the person's access
-// and passes the person gate (guardOp); an operation registered with op also passes its declared contract auth rule
-// (declaredAuth) before its body is decoded. rc, when set, records a host agent's write with its receipt.
+// runOp is the one dispatcher of operations: POST /api/ops/{name} and the MCP servers (/api/tools, /api/project-tools,
+// /api/recovery-tools, /api/hosts/agent-tools). A long operation runs without a surrounding transaction (it opens its
+// own); any other runs in its own transaction in the person's scope. Every call refreshes the person's access and passes
+// the operation's declared auth rule (declaredAuth) before its body is decoded. rc, when set, records a host agent's
+// write with its receipt.
 func (a *App) runOp(q *Request, name string, b json.RawMessage, rc *toolReceipt) (any, error) {
 	reg, ok := operations[name]
 	if !ok {
@@ -48,17 +32,15 @@ func (a *App) runOp(q *Request, name string, b json.RawMessage, rc *toolReceipt)
 	sub.body = b
 	if h, ok := longOperations[name]; ok {
 		sub.tx = nil
-		if reg.declared {
-			if err := a.authorizeOp(&sub, name); err != nil {
-				return nil, err
-			}
+		if err := authorizeOp(&sub, name); err != nil {
+			return nil, err
 		}
 		return h(&sub)
 	}
 	var out any
 	err := a.store.Tx(q.ctx(), scopeOf(q.person), !reg.read, "", func(tx pgx.Tx) error {
 		sub.tx = tx
-		err := a.authorizeOp(&sub, name)
+		err := authorizeOp(&sub, name)
 		if err != nil {
 			return err
 		}
@@ -82,46 +64,120 @@ func (a *App) runOp(q *Request, name string, b json.RawMessage, rc *toolReceipt)
 	return out, err
 }
 
-// authorizeOp: the access refresh, the person gate and, for an operation registered with op, its declared auth rule.
-func (a *App) authorizeOp(q *Request, name string) error {
+// opGates: a check of an operation that runs after its auth and before its body is decoded (prepared reads off: 503).
+var opGates = map[string]func(q *Request) error{}
+
+// authorizeOp: the access refresh, the declared auth rule, then the operation's gate.
+func authorizeOp(q *Request, name string) error {
 	if err := refreshRequestAccess(q); err != nil {
 		return err
 	}
-	if err := a.guardOp(q, name, q.body); err != nil {
+	if err := declaredAuth(q, name); err != nil {
 		return err
 	}
-	if operations[name].declared {
-		return declaredAuth(q, name)
+	if g := opGates[name]; g != nil {
+		return g(q)
 	}
 	return nil
 }
 
-// declaredAuth applies an operation's contract auth (contracts/ops-*.schema.json): architect needs the architect role,
-// owner full access, holder:account the architect role or the caller's own subscription, project:<path> a grant of the
-// project the request names at path (not visible: 404). holder:<kind> of another kind is checked by the handler, which
-// reads the object. Full access passes every rule; a call without a person (hosts, timers) keeps full rights until
-// stage 2 of docs/designs/fleet-standard.md refuses it unless the operation is system.
+// declaredAuth is the one authorization rule of an operation: its contract auth (contracts/ops-*.schema.json) and the
+// fixed answers of docs/designs/fleet-standard.md S4.
+//   - No person (a timer, a host): refused unless auth is system.
+//   - An object the person cannot see is 404: a top-level projectId outside the person's grants, a project definition
+//     of an ungranted project, the named object of a holder rule that does not exist.
+//   - A missing role is 403, checked first: architect needs the architect role, owner full access, holder:connection
+//     the architect role too (holderRole). Then the object: holder:<kind> needs full access or the named object's
+//     holder (holder:account also passes the architect role); project:<path> a grant of the project at path (404).
+//
+// Full access passes every role rule. A project's own definitions are read with its grant (fleet-definition-editors.md).
 func declaredAuth(q *Request, name string) error {
+	auth := contract.Operations[name].Auth
+	if kind := jsonPathString(q.body, "kind"); kind == "project" && strings.HasPrefix(name, "definition_") && !projectDefinitionRead(name) {
+		return fail(403, "Use project_create or project_update")
+	}
 	p := q.person
-	if p == nil || fullAccess(p) {
+	if p == nil {
+		if auth == "system" {
+			return nil
+		}
+		return fail(403, "Person required for "+name)
+	}
+	if fullAccess(p) {
 		return nil
 	}
-	auth := contract.Operations[name].Auth
+	// A role the person lacks is 403 before any object is looked at, so the answer says nothing about the object.
+	kind := strings.TrimPrefix(auth, "holder:")
 	switch {
 	case auth == "architect":
-		// A project's own definitions are read with its grant, which guardOp checked (fleet-definition-editors.md).
 		if !hasRole(p, "architect") && !(projectDefinitionRead(name) && jsonPathString(q.body, "kind") == "project") {
 			return fail(403, "Architect role required")
 		}
-	case auth == "owner":
+	case auth == "owner", auth == "system":
 		return fail(403, "Only the owner may call "+name)
-	case auth == "holder:account":
-		if !hasRole(p, "architect") && !q.app.ownAccount(q, name, q.body) {
-			return fail(403, "Architect role required")
+	case strings.HasPrefix(auth, "holder:") && holderRole[kind] != "" && !hasRole(p, holderRole[kind]):
+		return fail(403, "Architect role required")
+	}
+	if err := namedVisible(q, name); err != nil {
+		return err
+	}
+	switch {
+	case strings.HasPrefix(auth, "holder:"):
+		if kind == "account" && hasRole(p, "architect") {
+			return nil
+		}
+		h, ok := holders[kind]
+		if !ok {
+			return fail(500, "No holder rule for "+auth)
+		}
+		holder, found, err := h(q)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fail(404, "Unknown "+kind)
+		}
+		if holder != p.Email {
+			return fail(403, "Only the holder or the owner may call "+name)
 		}
 	case strings.HasPrefix(auth, "project:"):
 		if id := jsonPathString(q.body, strings.TrimPrefix(auth, "project:")); id != "" && !mayAccessProjectID(p, id) {
 			return fail(404, "Unknown project")
+		}
+	}
+	return nil
+}
+
+// holderRole: the role a holder rule needs besides holding the object (connections are the architect's area).
+var holderRole = map[string]string{"connection": "architect"}
+
+// namedVisible: the 404 answer for a named object outside the person's grants: a top-level projectId (an empty one of a
+// prepared resource read is the handler's 400), and the project of a project definition.
+func namedVisible(q *Request, name string) error {
+	p := q.person
+	var b struct {
+		ProjectID any    `json:"projectId"`
+		Kind      string `json:"kind"`
+		ID        string `json:"id"`
+		Keys      []struct {
+			Kind string `json:"kind"`
+			ID   string `json:"id"`
+		} `json:"keys"`
+	}
+	_ = json.Unmarshal(q.body, &b)
+	if id, ok := b.ProjectID.(string); ok && !(isResourceRead(name) && strings.TrimSpace(id) == "") && !mayAccessProjectID(p, id) {
+		return fail(404, "Unknown project")
+	}
+	if strings.HasPrefix(name, "definition_") {
+		if b.Kind == "project" && name != "definition_list" && !mayAccessProjectID(p, b.ID) {
+			return fail(404, "Unknown project")
+		}
+		if name == "definition_export" {
+			for _, k := range b.Keys {
+				if k.Kind == "project" && !mayAccessProjectID(p, k.ID) {
+					return fail(404, "Unknown project")
+				}
+			}
 		}
 	}
 	return nil
@@ -142,29 +198,4 @@ func jsonPathString(body json.RawMessage, path string) string {
 		return ""
 	}
 	return s
-}
-
-// gatedRoute, gatedLongRoute: route and longRoute behind the person gate of routes (architect routes, named project grants).
-func gatedRoute(pattern string, h handler) {
-	route(pattern, func(q *Request) (any, error) {
-		if err := refreshRequestAccess(q); err != nil {
-			return nil, err
-		}
-		if err := q.app.guardRoute(q); err != nil {
-			return nil, err
-		}
-		return h(q)
-	})
-}
-
-func gatedLongRoute(pattern string, h handler) {
-	longRoute(pattern, func(q *Request) (any, error) {
-		if err := refreshRequestAccess(q); err != nil {
-			return nil, err
-		}
-		if err := q.app.guardRoute(q); err != nil {
-			return nil, err
-		}
-		return h(q)
-	})
 }

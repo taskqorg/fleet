@@ -21,7 +21,7 @@ export const freshness = (restored: boolean): Freshness => signedOut.value ? 'si
 
 export type Kind = 'tasks' | 'sessions';
 type Params = ReturnType<typeof toPageParams>;
-type Group = { key: string; label: string; count: number };
+type Group = { key: string; label: string | null; count: number };
 export type ListState = { ids: string[]; keys: Record<string, SortKey>; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; restored: boolean; error: string | null };
 type Saved = Omit<ListState, 'restored' | 'error'> & { rows: Row[] };
 type Entry = { kind: Kind; view: View; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>; seq: number; mounted: number; loading: number; touchedWhileLoading: Set<string>; touchedSeq: number; paging: boolean; cursorReset: boolean; pageError: boolean };

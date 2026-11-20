@@ -365,9 +365,27 @@ func (v *ListFilter) Validate() error {
 }
 
 type ListGroup struct {
-	Count int64  `json:"count"`
-	Key   string `json:"key"`
-	Label string `json:"label"`
+	Count  int64            `json:"count"`
+	Counts map[string]int64 `json:"counts,omitempty"`
+	Key    string           `json:"key"`
+	Label  *string          `json:"label"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ListGroup) MarshalJSON() ([]byte, error) {
+	type plain ListGroup
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ListGroup) UnmarshalJSON(b []byte) error {
+	type plain ListGroup
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -379,6 +397,23 @@ func (v *ListGroup) Validate() error {
 type ListRow struct {
 	Id      string            `json:"id"`
 	SortKey []json.RawMessage `json:"sortKey"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ListRow) MarshalJSON() ([]byte, error) {
+	type plain ListRow
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ListRow) UnmarshalJSON(b []byte) error {
+	type plain ListRow
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).

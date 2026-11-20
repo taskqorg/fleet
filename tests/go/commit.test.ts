@@ -56,7 +56,7 @@ test('M1 a migration applied by another coordinator while this one waited for th
   let exited = false; second.on('exit', () => { exited = true; });
   try {
     let served = false;
-    for (let i = 0; i < 200 && !exited && !served; i++) { try { await fetch(`http://127.0.0.1:${port}/api/profiles`); served = true; } catch { await sleep(100); } }
+    for (let i = 0; i < 200 && !exited && !served; i++) { try { await fetch(`http://127.0.0.1:${port}/api/ops/me`, {method: 'POST'}); served = true; } catch { await sleep(100); } }
     assert.ok(served && !exited, 'the second coordinator failed its migration instead of starting');
   } finally {
     try { process.kill(-second.pid!, 'SIGKILL'); } catch {}

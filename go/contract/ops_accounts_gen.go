@@ -20,6 +20,9 @@ func (v *AccountConnectRequest) Validate() error {
 	return nil
 }
 
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*AccountConnectRequest) Closed() bool { return true }
+
 // AccountCreateReply: A managed-account record: id, name, harness, holder, kind, plan, intake, take, switchPct, comment, bindings and times.
 type AccountCreateReply = map[string]json.RawMessage
 
@@ -37,6 +40,9 @@ func (v *AccountCreateRequest) Validate() error {
 	return nil
 }
 
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*AccountCreateRequest) Closed() bool { return true }
+
 type AccountDiscoverReply = AccountInspection
 
 // AccountDiscoverRequest: Reads the host's native account catalogue. hostId: default the caller's host.
@@ -49,6 +55,9 @@ type AccountDiscoverRequest struct {
 func (v *AccountDiscoverRequest) Validate() error {
 	return nil
 }
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*AccountDiscoverRequest) Closed() bool { return true }
 
 type AccountHostsReply struct {
 	Hosts []map[string]json.RawMessage `json:"hosts"`
@@ -66,6 +75,23 @@ func (v *AccountHostsReply) Validate() error {
 type AccountHostsRequest struct {
 	AccountId *string `json:"accountId,omitempty"`
 	Harness   *string `json:"harness,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v AccountHostsRequest) MarshalJSON() ([]byte, error) {
+	type plain AccountHostsRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *AccountHostsRequest) UnmarshalJSON(b []byte) error {
+	type plain AccountHostsRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -152,6 +178,23 @@ type AccountLoginHandoffRequest struct {
 	AccountId string  `json:"accountId"`
 	Binding   *string `json:"binding,omitempty"`
 	HostId    string  `json:"hostId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v AccountLoginHandoffRequest) MarshalJSON() ([]byte, error) {
+	type plain AccountLoginHandoffRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *AccountLoginHandoffRequest) UnmarshalJSON(b []byte) error {
+	type plain AccountLoginHandoffRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -167,16 +210,38 @@ type AccountUpdateRequest struct {
 	AccountId  string          `json:"accountId"`
 	Comment    *string         `json:"comment,omitempty"`
 	Holder     *string         `json:"holder,omitempty"`
-	Intake     *string         `json:"intake,omitempty"`
+	Intake     *Intake         `json:"intake,omitempty"`
 	LowPct     *float64        `json:"lowPct,omitempty"`
 	Plan       *string         `json:"plan,omitempty"`
 	PlanWeight *float64        `json:"planWeight,omitempty"`
 	SwitchPct  *float64        `json:"switchPct,omitempty"`
 	Take       json.RawMessage `json:"take,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v AccountUpdateRequest) MarshalJSON() ([]byte, error) {
+	type plain AccountUpdateRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *AccountUpdateRequest) UnmarshalJSON(b []byte) error {
+	type plain AccountUpdateRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AccountUpdateRequest) Validate() error {
+	if v.Intake != nil {
+		if err := Check(v.Intake, "intake"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -218,6 +283,23 @@ type BudgetAskRequest struct {
 	BudgetId string  `json:"budgetId"`
 	Limit    float64 `json:"limit"`
 	Reason   *string `json:"reason,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v BudgetAskRequest) MarshalJSON() ([]byte, error) {
+	type plain BudgetAskRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *BudgetAskRequest) UnmarshalJSON(b []byte) error {
+	type plain BudgetAskRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -238,6 +320,23 @@ func (v *BudgetDeleteReply) Validate() error {
 // BudgetDeleteRequest: Owner only.
 type BudgetDeleteRequest struct {
 	Id string `json:"id"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v BudgetDeleteRequest) MarshalJSON() ([]byte, error) {
+	type plain BudgetDeleteRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *BudgetDeleteRequest) UnmarshalJSON(b []byte) error {
+	type plain BudgetDeleteRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -256,6 +355,23 @@ type BudgetSetRequest struct {
 	Scope   string  `json:"scope"`
 	ScopeId string  `json:"scopeId"`
 	Unit    string  `json:"unit"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v BudgetSetRequest) MarshalJSON() ([]byte, error) {
+	type plain BudgetSetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *BudgetSetRequest) UnmarshalJSON(b []byte) error {
+	type plain BudgetSetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -316,6 +432,9 @@ func (v *ConnectionAccess) Validate() error {
 	return nil
 }
 
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ConnectionAccess) Closed() bool { return true }
+
 // ConnectionView: An API connection; keys, spend and history only in connections_list.
 type ConnectionView struct {
 	Access    ConnectionAccess             `json:"access"`
@@ -362,6 +481,9 @@ func (v *ConnectionsCreateRequest) Validate() error {
 	return nil
 }
 
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ConnectionsCreateRequest) Closed() bool { return true }
+
 type ConnectionsDeleteReply struct {
 	Deleted bool   `json:"deleted"`
 	Name    string `json:"name"`
@@ -390,6 +512,23 @@ type ConnectionsKeyAddRequest struct {
 	Connection string  `json:"connection"`
 	QuestionId *string `json:"questionId,omitempty"`
 	Value      string  `json:"value"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ConnectionsKeyAddRequest) MarshalJSON() ([]byte, error) {
+	type plain ConnectionsKeyAddRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ConnectionsKeyAddRequest) UnmarshalJSON(b []byte) error {
+	type plain ConnectionsKeyAddRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -413,17 +552,40 @@ func (v *ConnectionsKeyRequestRequest) Validate() error {
 	return nil
 }
 
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ConnectionsKeyRequestRequest) Closed() bool { return true }
+
 // ConnectionsKeyStateReply: The key row after the change.
 type ConnectionsKeyStateReply = map[string]json.RawMessage
 
 // ConnectionsKeyStateRequest: state active, draining or retired.
 type ConnectionsKeyStateRequest struct {
-	KeyId string `json:"keyId"`
-	State string `json:"state"`
+	KeyId string   `json:"keyId"`
+	State KeyState `json:"state"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ConnectionsKeyStateRequest) MarshalJSON() ([]byte, error) {
+	type plain ConnectionsKeyStateRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ConnectionsKeyStateRequest) UnmarshalJSON(b []byte) error {
+	type plain ConnectionsKeyStateRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsKeyStateRequest) Validate() error {
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -454,14 +616,31 @@ type ConnectionsSetAccessReply = ConnectionView
 
 // ConnectionsSetAccessRequest: access: {people, projects, experiments}, each a list of ids.
 type ConnectionsSetAccessRequest struct {
-	Access     json.RawMessage `json:"access"`
-	Connection string          `json:"connection"`
+	Access     ConnectionAccess `json:"access"`
+	Connection string           `json:"connection"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ConnectionsSetAccessRequest) MarshalJSON() ([]byte, error) {
+	type plain ConnectionsSetAccessRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ConnectionsSetAccessRequest) UnmarshalJSON(b []byte) error {
+	type plain ConnectionsSetAccessRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsSetAccessRequest) Validate() error {
-	if v.Access == nil {
-		return Missing("access")
+	if err := Check(&v.Access, "access"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -471,11 +650,31 @@ type ConnectionsSetIntakeReply = ConnectionView
 // ConnectionsSetIntakeRequest: intake all or paused.
 type ConnectionsSetIntakeRequest struct {
 	Connection string `json:"connection"`
-	Intake     string `json:"intake"`
+	Intake     Intake `json:"intake"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ConnectionsSetIntakeRequest) MarshalJSON() ([]byte, error) {
+	type plain ConnectionsSetIntakeRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ConnectionsSetIntakeRequest) UnmarshalJSON(b []byte) error {
+	type plain ConnectionsSetIntakeRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsSetIntakeRequest) Validate() error {
+	if err := Check(&v.Intake, "intake"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -495,6 +694,9 @@ func (v *ConnectionsSetLimitsRequest) Validate() error {
 	return nil
 }
 
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ConnectionsSetLimitsRequest) Closed() bool { return true }
+
 type ConnectionsSetToolsReply = ConnectionView
 
 // ConnectionsSetToolsRequest: Owner-only explicit recognized provider tool grant; does not change people/project/experiment access.
@@ -510,6 +712,9 @@ func (v *ConnectionsSetToolsRequest) Validate() error {
 	}
 	return nil
 }
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ConnectionsSetToolsRequest) Closed() bool { return true }
 
 // ConnectionsTokenCreateReply: token: the bearer value, shown once; refused: requested connections the owner cannot use.
 type ConnectionsTokenCreateReply struct {
@@ -528,6 +733,23 @@ func (v *ConnectionsTokenCreateReply) Validate() error {
 type ConnectionsTokenCreateRequest struct {
 	Connections []string `json:"connections,omitempty"`
 	Name        string   `json:"name"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ConnectionsTokenCreateRequest) MarshalJSON() ([]byte, error) {
+	type plain ConnectionsTokenCreateRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ConnectionsTokenCreateRequest) UnmarshalJSON(b []byte) error {
+	type plain ConnectionsTokenCreateRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -567,11 +789,71 @@ func (v *ConnectionsTokenRevokeReply) Validate() error {
 // ConnectionsTokenRevokeRequest: Owner only.
 type ConnectionsTokenRevokeRequest struct {
 	Name string `json:"name"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ConnectionsTokenRevokeRequest) MarshalJSON() ([]byte, error) {
+	type plain ConnectionsTokenRevokeRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ConnectionsTokenRevokeRequest) UnmarshalJSON(b []byte) error {
+	type plain ConnectionsTokenRevokeRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsTokenRevokeRequest) Validate() error {
 	return nil
+}
+
+// Intake: Whether new work may use a subscription or API key.
+type Intake string
+
+const (
+	IntakeAll    Intake = "all"
+	IntakePaused Intake = "paused"
+)
+
+// IntakeValues lists every Intake in schema order.
+var IntakeValues = []Intake{IntakeAll, IntakePaused}
+
+// Valid: v is one of the schema's values.
+func (v Intake) Valid() bool {
+	for _, x := range IntakeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// KeyState: A key state a holder sets (disabled is Fleet's own).
+type KeyState string
+
+const (
+	KeyStateActive   KeyState = "active"
+	KeyStateDraining KeyState = "draining"
+	KeyStateRetired  KeyState = "retired"
+)
+
+// KeyStateValues lists every KeyState in schema order.
+var KeyStateValues = []KeyState{KeyStateActive, KeyStateDraining, KeyStateRetired}
+
+// Valid: v is one of the schema's values.
+func (v KeyState) Valid() bool {
+	for _, x := range KeyStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // LimitEmpty: when a line reaches 0: at a time, not before the line ends, or unknown
@@ -1003,6 +1285,9 @@ func (v *TransportAuthorizeRequest) Validate() error {
 	return nil
 }
 
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*TransportAuthorizeRequest) Closed() bool { return true }
+
 // TransportInspectReply: Retained transport of one execution; never reruns native work.
 type TransportInspectReply struct {
 	Audit         []map[string]json.RawMessage `json:"audit"`
@@ -1046,6 +1331,23 @@ func (v *TransportInspectReply) Validate() error {
 
 type TransportInspectRequest struct {
 	ExecutionId *string `json:"executionId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TransportInspectRequest) MarshalJSON() ([]byte, error) {
+	type plain TransportInspectRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TransportInspectRequest) UnmarshalJSON(b []byte) error {
+	type plain TransportInspectRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1055,27 +1357,27 @@ func (v *TransportInspectRequest) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
-		"account_connect":             {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "holder:account", Agent: "tool", Description: "Inspects one native login. hostId: default the caller's host; binding: the native login name.", InputSchema: json.RawMessage("{\"$comment\":\"Inspects one native login. hostId: default the caller's host; binding: the native login name.\",\"additionalProperties\":true,\"properties\":{\"accountId\":{\"type\":\"string\"},\"binding\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"}},\"required\":[\"accountId\",\"binding\"],\"type\":\"object\"}")},
-		"account_create":              {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "harness codex, claude, antigravity or acp; holder: the owner may create one for another person.", InputSchema: json.RawMessage("{\"$comment\":\"harness codex, claude, antigravity or acp; holder: the owner may create one for another person.\",\"additionalProperties\":true,\"properties\":{\"comment\":{\"type\":\"string\"},\"harness\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"plan\":{\"type\":\"string\"}},\"required\":[\"name\",\"harness\"],\"type\":\"object\"}")},
-		"account_discover":            {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "holder:account", Agent: "tool", Description: "Reads the host's native account catalogue. hostId: default the caller's host.", InputSchema: json.RawMessage("{\"$comment\":\"Reads the host's native account catalogue. hostId: default the caller's host.\",\"additionalProperties\":true,\"properties\":{\"accountId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"}},\"required\":[\"accountId\"],\"type\":\"object\"}")},
+		"account_connect":             {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "holder:account", Agent: "tool", Description: "Inspects one native login. hostId: default the caller's host; binding: the native login name.", InputSchema: json.RawMessage("{\"$comment\":\"Inspects one native login. hostId: default the caller's host; binding: the native login name.\",\"additionalProperties\":false,\"properties\":{\"accountId\":{\"type\":\"string\"},\"binding\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"}},\"required\":[\"accountId\",\"binding\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"account_create":              {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "harness codex, claude, antigravity or acp; holder: the owner may create one for another person.", InputSchema: json.RawMessage("{\"$comment\":\"harness codex, claude, antigravity or acp; holder: the owner may create one for another person.\",\"additionalProperties\":false,\"properties\":{\"comment\":{\"type\":\"string\"},\"harness\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"plan\":{\"type\":\"string\"}},\"required\":[\"name\",\"harness\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"account_discover":            {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "holder:account", Agent: "tool", Description: "Reads the host's native account catalogue. hostId: default the caller's host.", InputSchema: json.RawMessage("{\"$comment\":\"Reads the host's native account catalogue. hostId: default the caller's host.\",\"additionalProperties\":false,\"properties\":{\"accountId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"}},\"required\":[\"accountId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"account_hosts":               {Read: true, Long: false, Errors: []int{}, Auth: "holder:account", Agent: "tool", Description: "harness default codex; accountId takes the account's harness.", InputSchema: json.RawMessage("{\"$comment\":\"harness default codex; accountId takes the account's harness.\",\"additionalProperties\":true,\"properties\":{\"accountId\":{\"type\":\"string\"},\"harness\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"account_list":                {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Managed subscription accounts with their inspections, checks and setting history, and each host's native account catalogue", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"account_login_handoff":       {Read: true, Long: false, Errors: []int{409}, Auth: "holder:account", Agent: "tool", Description: "What a person runs on a host to log a binding of an account in (accountId, hostId, binding); Fleet changes no authentication itself", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"accountId\":{\"type\":\"string\"},\"binding\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"}},\"required\":[\"accountId\",\"hostId\"],\"type\":\"object\"}")},
-		"account_update":              {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "holder:account", Agent: "tool", Description: "Holder or owner; switchPct null clears it; take {projects}; holder: owner only.", InputSchema: json.RawMessage("{\"$comment\":\"Holder or owner; switchPct null clears it; take {projects}; holder: owner only.\",\"additionalProperties\":true,\"properties\":{\"accountId\":{\"type\":\"string\"},\"comment\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"intake\":{\"type\":\"string\"},\"lowPct\":{\"$comment\":\"warn when left falls below this percent in any period; null is off (default)\",\"type\":[\"number\",\"null\"]},\"plan\":{\"type\":\"string\"},\"planWeight\":{\"$comment\":\"plan size relative to a base plan (default 1)\",\"type\":\"number\"},\"switchPct\":{\"type\":[\"number\",\"null\"]},\"take\":{}},\"required\":[\"accountId\"],\"type\":\"object\"}")},
+		"account_update":              {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "holder:account", Agent: "tool", Description: "Holder or owner; switchPct null clears it; take {projects}; holder: owner only.", InputSchema: json.RawMessage("{\"$comment\":\"Holder or owner; switchPct null clears it; take {projects}; holder: owner only.\",\"additionalProperties\":true,\"properties\":{\"accountId\":{\"type\":\"string\"},\"comment\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"intake\":{\"$comment\":\"Whether new work may use a subscription or API key.\",\"enum\":[\"all\",\"paused\"],\"type\":\"string\"},\"lowPct\":{\"$comment\":\"warn when left falls below this percent in any period; null is off (default)\",\"type\":[\"number\",\"null\"]},\"plan\":{\"type\":\"string\"},\"planWeight\":{\"$comment\":\"plan size relative to a base plan (default 1)\",\"type\":\"number\"},\"switchPct\":{\"type\":[\"number\",\"null\"]},\"take\":{}},\"required\":[\"accountId\"],\"type\":\"object\"}")},
 		"budget_ask":                  {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Asks the owner to raise a budget above its current limit.", InputSchema: json.RawMessage("{\"$comment\":\"Asks the owner to raise a budget above its current limit.\",\"additionalProperties\":true,\"properties\":{\"budgetId\":{\"type\":\"string\"},\"limit\":{\"type\":\"number\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"budgetId\",\"limit\"],\"type\":\"object\"}")},
 		"budget_delete":               {Read: false, Long: false, Errors: []int{403, 404}, Auth: "owner", Agent: "tool", Description: "Owner only.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only.\",\"additionalProperties\":true,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"budget_set":                  {Read: false, Long: false, Errors: []int{400, 403}, Auth: "owner", Agent: "tool", Description: "Owner only. No id: a new budget. action defaults to warn.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only. No id: a new budget. action defaults to warn.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"limit\":{\"type\":\"number\"},\"period\":{\"type\":[\"string\",\"null\"]},\"scope\":{\"type\":\"string\"},\"scopeId\":{\"type\":\"string\"},\"unit\":{\"type\":\"string\"}},\"required\":[\"scope\",\"scopeId\",\"unit\",\"limit\"],\"type\":\"object\"}")},
 		"budgets_list":                {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Budgets with their current spend", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
-		"connections_create":          {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "architect", Agent: "tool", Description: "holder: the owner may create a key for another person.", InputSchema: json.RawMessage("{\"$comment\":\"holder: the owner may create a key for another person.\",\"additionalProperties\":true,\"properties\":{\"comment\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"provider\":{\"type\":\"string\"}},\"required\":[\"name\",\"provider\"],\"type\":\"object\"}")},
+		"connections_create":          {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "architect", Agent: "tool", Description: "holder: the owner may create a key for another person.", InputSchema: json.RawMessage("{\"$comment\":\"holder: the owner may create a key for another person.\",\"additionalProperties\":false,\"properties\":{\"comment\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"provider\":{\"type\":\"string\"}},\"required\":[\"name\",\"provider\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"connections_delete":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "no", Description: "Owner or full-access person (not agents). Deletes a connection whose keys are all retired: the connection, its key rows, history and value directory; run tokens drop its name; open key requests for it are withdrawn.", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person (not agents). Deletes a connection whose keys are all retired: the connection, its key rows, history and value directory; run tokens drop its name; open key requests for it are withdrawn.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"}},\"required\":[\"connection\"],\"type\":\"object\"}")},
 		"connections_key_add":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "no", Description: "Owner only. The value goes to the secret file; the reply has its fingerprint only. questionId: the open key request (connections_key_request) this value answers with {connection, fingerprint, state}.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only. The value goes to the secret file; the reply has its fingerprint only. questionId: the open key request (connections_key_request) this value answers with {connection, fingerprint, state}.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"questionId\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"connection\",\"value\"],\"type\":\"object\"}")},
-		"connections_key_request":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask the owner to add an API key: projectId, requestId, connection, reason. Never pass a key value; the owner pastes it into Fleet and the answer (question_history) is only {connection, fingerprint, state} or decline", InputSchema: json.RawMessage("{\"$comment\":\"An agent asks the owner for a key value of connection. No argument carries a value; the owner answers through connections_key_add with questionId.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"connection\"],\"type\":\"object\"}")},
-		"connections_key_state":       {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "state active, draining or retired.", InputSchema: json.RawMessage("{\"$comment\":\"state active, draining or retired.\",\"additionalProperties\":true,\"properties\":{\"keyId\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"required\":[\"keyId\",\"state\"],\"type\":\"object\"}")},
+		"connections_key_request":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask the owner to add an API key: projectId, requestId, connection, reason. Never pass a key value; the owner pastes it into Fleet and the answer (question_history) is only {connection, fingerprint, state} or decline", InputSchema: json.RawMessage("{\"$comment\":\"An agent asks the owner for a key value of connection. No argument carries a value; the owner answers through connections_key_add with questionId.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"connection\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"connections_key_state":       {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "state active, draining or retired.", InputSchema: json.RawMessage("{\"$comment\":\"state active, draining or retired.\",\"additionalProperties\":true,\"properties\":{\"keyId\":{\"type\":\"string\"},\"state\":{\"$comment\":\"A key state a holder sets (disabled is Fleet's own).\",\"enum\":[\"active\",\"draining\",\"retired\"],\"type\":\"string\"}},\"required\":[\"keyId\",\"state\"],\"type\":\"object\"}")},
 		"connections_list":            {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Connections visible to the caller: provider, tools, access, intake, limits and key state, never key values", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
-		"connections_set_access":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "access: {people, projects, experiments}, each a list of ids.", InputSchema: json.RawMessage("{\"$comment\":\"access: {people, projects, experiments}, each a list of ids.\",\"additionalProperties\":true,\"properties\":{\"access\":{},\"connection\":{\"type\":\"string\"}},\"required\":[\"connection\",\"access\"],\"type\":\"object\"}")},
-		"connections_set_intake":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "intake all or paused.", InputSchema: json.RawMessage("{\"$comment\":\"intake all or paused.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"intake\":{\"type\":\"string\"}},\"required\":[\"connection\",\"intake\"],\"type\":\"object\"}")},
-		"connections_set_limits":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.", InputSchema: json.RawMessage("{\"$comment\":\"Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"limits\":{\"$comment\":\"File tool limits of a connection (connections_set_limits); an absent field takes its default: fileBytes and replyBytes no cap, stallMs 60000, answerMs 120000.\",\"properties\":{\"answerMs\":{\"$comment\":\"Wait from the last byte sent to the provider's response headers (file tools).\",\"minimum\":1,\"type\":\"integer\"},\"fileBytes\":{\"$comment\":\"Largest upload in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"replyBytes\":{\"$comment\":\"Largest download in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"stallMs\":{\"$comment\":\"Longest time without progress in either direction.\",\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}},\"required\":[\"connection\",\"limits\"],\"type\":\"object\"}")},
-		"connections_set_tools":       {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "owner", Agent: "tool", Description: "Owner-only explicit recognized provider tool grant; does not change people/project/experiment access.", InputSchema: json.RawMessage("{\"$comment\":\"Owner-only explicit recognized provider tool grant; does not change people/project/experiment access.\",\"properties\":{\"connection\":{\"type\":\"string\"},\"tools\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"connection\",\"tools\"],\"type\":\"object\"}")},
+		"connections_set_access":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "access: {people, projects, experiments}, each a list of ids.", InputSchema: json.RawMessage("{\"$comment\":\"access: {people, projects, experiments}, each a list of ids.\",\"additionalProperties\":true,\"properties\":{\"access\":{\"$comment\":\"Who besides the holder may use the API key: people (emails), projects and experiments.\",\"additionalProperties\":false,\"properties\":{\"experiments\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"people\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\",\"unevaluatedProperties\":false},\"connection\":{\"type\":\"string\"}},\"required\":[\"connection\",\"access\"],\"type\":\"object\"}")},
+		"connections_set_intake":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "intake all or paused.", InputSchema: json.RawMessage("{\"$comment\":\"intake all or paused.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"intake\":{\"$comment\":\"Whether new work may use a subscription or API key.\",\"enum\":[\"all\",\"paused\"],\"type\":\"string\"}},\"required\":[\"connection\",\"intake\"],\"type\":\"object\"}")},
+		"connections_set_limits":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.", InputSchema: json.RawMessage("{\"$comment\":\"Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"limits\":{\"$comment\":\"File tool limits of a connection (connections_set_limits); an absent field takes its default: fileBytes and replyBytes no cap, stallMs 60000, answerMs 120000.\",\"additionalProperties\":false,\"properties\":{\"answerMs\":{\"$comment\":\"Wait from the last byte sent to the provider's response headers (file tools).\",\"minimum\":1,\"type\":\"integer\"},\"fileBytes\":{\"$comment\":\"Largest upload in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"replyBytes\":{\"$comment\":\"Largest download in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"stallMs\":{\"$comment\":\"Longest time without progress in either direction.\",\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\",\"unevaluatedProperties\":false}},\"required\":[\"connection\",\"limits\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"connections_set_tools":       {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "owner", Agent: "tool", Description: "Owner-only explicit recognized provider tool grant; does not change people/project/experiment access.", InputSchema: json.RawMessage("{\"$comment\":\"Owner-only explicit recognized provider tool grant; does not change people/project/experiment access.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"tools\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"connection\",\"tools\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"connections_token_create":    {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "owner", Agent: "no", Description: "The owner only (not an agent). The token value is answered once.", InputSchema: json.RawMessage("{\"$comment\":\"The owner only (not an agent). The token value is answered once.\",\"additionalProperties\":true,\"properties\":{\"connections\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"name\":{\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"}")},
 		"connections_token_list":      {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Gateway tokens of connections: id, connection, created and revoked, never the token value", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_token_revoke":    {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner only.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only.\",\"additionalProperties\":true,\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"}")},
@@ -1083,7 +1385,7 @@ func init() {
 		"prices_list":                 {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Recorded prices, optionally of one subject", InputSchema: json.RawMessage("{\"properties\":{\"subject\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"subscription_limits":         {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Subscription limit windows and usage per account: windowHours or from/to, paceMargin", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"from\":{\"$comment\":\"history start, ms (default 7 days back)\",\"type\":\"integer\"},\"paceMargin\":{\"$comment\":\"pace margin in points (default 5)\",\"type\":\"number\"},\"to\":{\"$comment\":\"projection end, ms (default 7 days ahead)\",\"type\":\"integer\"},\"windowHours\":{\"$comment\":\"burn window, hours (screen: 1, 3 or 6; default 3)\",\"type\":\"number\"}},\"required\":[],\"type\":\"object\"}")},
 		"subscription_limits_refresh": {Read: false, Long: false, Errors: []int{403, 404}, Auth: "person", Agent: "tool", Description: "Read subscription limits now, without a run: one subscription (subscriptionId), or every one the caller holds (the owner: all)", InputSchema: json.RawMessage("{\"$comment\":\"fleet-people-access.md section 8 \\\"Read without a run\\\": one subscription, or every one the caller holds (the owner: all)\",\"additionalProperties\":false,\"properties\":{\"subscriptionId\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")},
-		"transport_authorize":         {Read: false, Long: false, Errors: []int{400, 409}, Auth: "architect", Agent: "tool", Description: "Exactly these four keys (the request signature is their hash).", InputSchema: json.RawMessage("{\"$comment\":\"Exactly these four keys (the request signature is their hash).\",\"properties\":{\"conflictId\":{\"type\":\"string\"},\"executionId\":{\"type\":\"string\"},\"frameSha256\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"conflictId\",\"executionId\",\"frameSha256\",\"requestId\"],\"type\":\"object\"}")},
+		"transport_authorize":         {Read: false, Long: false, Errors: []int{400, 409}, Auth: "architect", Agent: "tool", Description: "Exactly these four keys (the request signature is their hash).", InputSchema: json.RawMessage("{\"$comment\":\"Exactly these four keys (the request signature is their hash).\",\"additionalProperties\":false,\"properties\":{\"conflictId\":{\"type\":\"string\"},\"executionId\":{\"type\":\"string\"},\"frameSha256\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"conflictId\",\"executionId\",\"frameSha256\",\"requestId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"transport_inspect":           {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Transport state of an execution's PM conversation (executionId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)

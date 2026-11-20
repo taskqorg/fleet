@@ -3,15 +3,14 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
-	"regexp"
 	"slices"
 	"sort"
-	"strings"
 
 	"fleet/contract"
 
@@ -109,15 +108,6 @@ func director(q *Request) string {
 	return ownerEmail(q)
 }
 
-// ownerOnly fails closed for every caller kind: a browser person or an agent tool call (which acts as its run's
-// director, or as the requester of taken work) needs full access; a call with no person is refused.
-func ownerOnly(q *Request, msg string) error {
-	if q.person == nil || !fullAccess(q.person) {
-		return fail(403, msg)
-	}
-	return nil
-}
-
 // actor: the calling agent execution, else the request person, else the fallback (an execution, 'operator').
 func actor(q *Request, fallback string) string {
 	if q.agent != "" {
@@ -142,15 +132,10 @@ func grantsVersion(p *Person) string {
 	return hex.EncodeToString(h[:])[:16]
 }
 
-var (
-	architectOps    = regexp.MustCompile(`^(account_|lab_|connection|recovery|reconcil|transport_|artifact_rule|profiles_list|price_add|definition_|agent_effective$|agent_compatibility$|agent_test$|harness_models$)`)
-	architectRoutes = regexp.MustCompile(`^/api/(lab|accounts|recovery|reconciliation|recovery-tools|profiles)(/|$)`)
-)
-
 func hasRole(p *Person, r string) bool { return slices.Contains(p.Roles, r) }
 
 // projectDefinitionRead: a definition read that a project grant allows for kind project, without the architect role
-// (guardOp checks the grant; declaredAuth lets it past the declared architect rule).
+// (declaredAuth checks the grant and lets it past the declared architect rule).
 func projectDefinitionRead(name string) bool {
 	switch name {
 	case "definition_list", "definition_get", "definition_history", "definition_diff", "definition_usage":
@@ -159,81 +144,19 @@ func projectDefinitionRead(name string) bool {
 	return false
 }
 
-// guardOp: the architect gate on operation names (a holder's own subscription passes) and the project grant of a named project.
-func (a *App) guardOp(q *Request, name string, body json.RawMessage) error {
-	p := q.person
-	var request doc
-	_ = json.Unmarshal(body, &request)
-	if request["kind"] == "project" && strings.HasPrefix(name, "definition_") && !projectDefinitionRead(name) {
-		return fail(403, "Use project_create or project_update")
-	}
-	if p == nil || fullAccess(p) {
-		return nil
-	}
-	var b map[string]any
-	json.Unmarshal(body, &b)
-	if strings.HasPrefix(name, "definition_") {
-		if b["kind"] == "project" {
-			if name != "definition_list" && !mayAccessProjectID(p, astr(b["id"])) {
-				return fail(404, "Unknown project")
-			}
-			if projectDefinitionRead(name) {
-				return nil
-			}
-			return fail(403, "Use project_create or project_update")
-		}
-		if name == "definition_export" {
-			for _, k := range anys(b["keys"]) {
-				m := mapOf(k)
-				if m["kind"] == "project" && !mayAccessProjectID(p, astr(m["id"])) {
-					return fail(404, "Unknown project")
-				}
-			}
-		}
-	}
-	if architectOps.MatchString(name) && !hasRole(p, "architect") && !a.ownSubscription(q, name, b) {
-		return fail(403, "Architect role required")
-	}
-	if id, ok := b["projectId"].(string); ok && !(isResourceRead(name) && strings.TrimSpace(id) == "") && !mayAccessProjectID(p, id) {
-		return fail(404, "Unknown project")
-	}
-	return nil
-}
-
-// guardRoute: the same gate on routes (architect routes, /api/projects/{id}, ?projectId=, tools/call arguments).
-func (a *App) guardRoute(q *Request) error {
+// routeGate: the person gate of the remaining REST routes: a project named by ?projectId= or a body projectId must be
+// granted (404). Operations are authorized only by their declared auth (declaredAuth).
+func routeGate(q *Request) error {
 	p := q.person
 	if p == nil || fullAccess(p) {
 		return nil
-	}
-	path := q.r.URL.Path
-	if path == "/api/tools" || path == "/api/project-tools" {
-		var rpc struct {
-			Method string `json:"method"`
-			Params struct {
-				Name      string          `json:"name"`
-				Arguments json.RawMessage `json:"arguments"`
-			} `json:"params"`
-		}
-		json.Unmarshal(q.body, &rpc)
-		if rpc.Method == "tools/call" {
-			return a.guardOp(q, rpc.Params.Name, rpc.Params.Arguments)
-		}
-		return nil
-	}
-	if strings.HasPrefix(path, "/api/project-operations/") {
-		return a.guardOp(q, q.r.PathValue("name"), q.body)
-	}
-	if architectRoutes.MatchString(path) && !hasRole(p, "architect") {
-		return fail(403, "Architect role required")
 	}
 	id := q.r.URL.Query().Get("projectId")
-	if strings.HasPrefix(path, "/api/projects/") && q.r.PathValue("id") != "" {
-		id = q.r.PathValue("id")
+	var b struct {
+		ProjectID any `json:"projectId"`
 	}
-	var b map[string]any
 	json.Unmarshal(q.body, &b)
-	if s, ok := b["projectId"].(string); ok && id == "" {
+	if s, ok := b.ProjectID.(string); ok && id == "" {
 		id = s
 	}
 	if id != "" && !mayAccessProjectID(p, id) {
@@ -242,28 +165,41 @@ func (a *App) guardRoute(q *Request) error {
 	return nil
 }
 
-// ownAccount: the declared holder:account rule (declaredAuth), the same test as the architect gate's own subscription.
-func (a *App) ownAccount(q *Request, name string, body json.RawMessage) bool {
-	var b map[string]any
-	json.Unmarshal(body, &b)
-	return a.ownSubscription(q, name, b)
-}
-
-func (a *App) ownSubscription(q *Request, name string, b map[string]any) bool {
-	if !strings.HasPrefix(name, "account_") {
-		return false
-	}
-	if name == "account_list" || name == "account_create" {
-		return true
-	}
-	id, _ := b["accountId"].(string)
-	if id == "" {
-		return false
-	}
-	var holder string
-	ctx := withTx(q) // inside a request transaction, its own connection
-	conn(ctx, q.app).QueryRow(ctx, "SELECT coalesce(data->>'holder','') FROM document WHERE kind='managed-account' AND id=$1", id).Scan(&holder)
-	return holder == q.person.Email
+// holders: for each holder:<kind> rule (declaredAuth), the holder of the object the request names, and whether it exists.
+var holders = map[string]func(q *Request) (holder string, found bool, err error){
+	"account": func(q *Request) (string, bool, error) {
+		id := jsonPathString(q.body, "accountId")
+		if id == "" {
+			return "", false, nil
+		}
+		// Its own read on the request transaction's connection: the account row may be outside the person's scope.
+		var holder string
+		ctx := withTx(q)
+		err := conn(ctx, q.app).QueryRow(ctx, "SELECT coalesce(data->>'holder','') FROM document WHERE kind='managed-account' AND id=$1", id).Scan(&holder)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return holder, err == nil, err
+	},
+	"connection": func(q *Request) (string, bool, error) {
+		n := jsonPathString(q.body, "connection")
+		if n == "" {
+			// connections_key_state names its key: the handler checks the key's connection.
+			return q.person.Email, true, nil
+		}
+		c, err := maybe(q, "connection:"+n, "api-connection")
+		if err != nil || c == nil {
+			return "", false, err
+		}
+		return astr(c["holder"]), true, nil
+	},
+	"host": func(q *Request) (string, bool, error) {
+		h, err := hostByID(q, jsonPathString(q.body, "id"))
+		if err != nil || h == nil {
+			return "", false, err
+		}
+		return astr(h["holder"]), true, nil
+	},
 }
 
 func init() {
@@ -284,62 +220,58 @@ func init() {
 // people_list and people_set: people.json as operations (docs/designs/fleet-pm-agent.md §8). A non-owner sees only
 // themself, as the person row-level policy does; only the owner sets the list, written atomically and reloaded.
 func init() {
-	gatedObjOp("people_list", true, shaped[contract.PeopleListRequest, contract.PeopleListReply](func(q *Request) (any, error) {
-		out := []*Person{}
+	op("people_list", func(q *Request, _ *contract.PeopleListRequest) (contract.PeopleListReply, error) {
+		out := []map[string]json.RawMessage{}
 		for _, p := range q.peopleSnapshot().list() {
-			if q.person == nil || fullAccess(q.person) || p.Email == q.person.Email {
+			if fullAccess(q.person) || p.Email == q.person.Email {
 				c := *p
 				c.AccessCommonName = "" // the service token's client ID stays in the deployed file
-				out = append(out, &c)
+				out = append(out, recOf(&c))
 			}
 		}
-		sort.Slice(out, func(i, j int) bool { return out[i].Email < out[j].Email })
-		return doc{"people": out}, nil
-	}))
+		sort.Slice(out, func(i, j int) bool { return string(out[i]["email"]) < string(out[j]["email"]) })
+		return contract.PeopleListReply{People: out}, nil
+	})
 	// setting_changes: the audit of settings, newest first, optionally of one target (host:<id>, people, ...).
-	gatedObjOp("setting_changes", true, shaped[contract.SettingChangesRequest, contract.SettingChangesReply](func(q *Request) (any, error) {
+	op("setting_changes", func(q *Request, r *contract.SettingChangesRequest) (contract.SettingChangesReply, error) {
 		// The people list is the owner's: its audit (with service-token client IDs) is not shown to architects or site-agents.
-		owner := q.person == nil || q.person.Owner
-		b := body(q)
-		limit := pageLimit(b["limit"], 100)
+		owner := q.person.Owner
+		var given any
+		if r.Limit != nil {
+			given = *r.Limit
+		}
+		limit := pageLimit(given, 100)
 		rs, err := rowsOf(q, "SELECT seq,data FROM document WHERE kind='setting-change' AND ($1='' OR data->>'target'=$1) AND ($2 OR data->>'target'<>'people') AND ($3::bigint IS NULL OR seq<$3) ORDER BY seq DESC LIMIT $4",
-			astr(b["target"]), owner, b["before"], limit+1)
-		out := []any{}
-		var next any
-		for i, r := range rs {
+			deref(r.Target), owner, r.Before, limit+1)
+		out := contract.SettingChangesReply{Changes: []map[string]json.RawMessage{}}
+		for i, row := range rs {
 			if i == limit {
-				next = rs[i-1]["seq"]
+				n := int64(num(rs[i-1]["seq"]))
+				out.NextBefore = &n
 				break
 			}
-			out = append(out, r["data"])
+			out.Changes = append(out.Changes, recOf(row["data"]))
 		}
-		return doc{"changes": out, "nextBefore": next}, err
-	}))
-	longOp("people_set", checkFirst(func(q *Request) error {
-		if q.person != nil && !q.person.Owner {
-			return fail(403, "Only the owner sets people")
-		}
-		return nil
-	}, typedOp(func(q *Request, _ *contract.PeopleSetRequest) (contract.PeopleSetReply, error) {
-		// The handler reads the body as sent: people.json keeps the owner's bytes (the struct only checked them).
-		out, err := peopleSet(q)
-		return replyAs[contract.PeopleSetReply](out, err)
-	})))
+		return out, err
+	})
+	// The owner only (stricter than the declared owner rule, which full access passes); people.json keeps the owner's bytes.
+	op("people_set", func(q *Request, r *contract.PeopleSetRequest) (contract.PeopleSetReply, error) {
+		n, err := peopleSet(q, r.People)
+		return contract.PeopleSetReply{People: int64(n)}, err
+	})
 }
 
-func peopleSet(q *Request) (any, error) {
-	if q.person != nil && !q.person.Owner {
-		return nil, fail(403, "Only the owner sets people")
+func peopleSet(q *Request, people json.RawMessage) (int, error) {
+	if !q.person.Owner {
+		return 0, fail(403, "Only the owner sets people")
 	}
-	var b struct {
-		People json.RawMessage `json:"people"`
-	}
-	if json.Unmarshal(q.body, &b) != nil || len(b.People) == 0 || b.People[0] != '[' {
-		return nil, fail(400, "Expected people: the whole people.json list")
+	b := struct{ People json.RawMessage }{bytes.TrimSpace(people)}
+	if len(b.People) == 0 || b.People[0] != '[' {
+		return 0, fail(400, "Expected people: the whole people.json list")
 	}
 	previous, err := os.ReadFile(q.app.peopleFile)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	// The file first, so a failed write leaves Fleet on the old list; a failed apply puts the old file back.
 	write := func(raw []byte) error {
@@ -350,17 +282,17 @@ func peopleSet(q *Request) (any, error) {
 		return os.Rename(tmp, q.app.peopleFile)
 	}
 	if err := write(b.People); err != nil {
-		return nil, err
+		return 0, err
 	}
 	if _, err := q.app.setPeople(q.ctx(), b.People, true); err != nil {
 		if werr := write(previous); werr != nil {
-			return nil, errors.Join(err, werr)
+			return 0, errors.Join(err, werr)
 		}
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) {
-			return nil, err
+			return 0, err
 		}
-		return nil, fail(400, err.Error())
+		return 0, fail(400, err.Error())
 	}
 	var prev, next any
 	json.Unmarshal(previous, &prev)
@@ -369,5 +301,5 @@ func peopleSet(q *Request) (any, error) {
 		q.tx = tx
 		return put(q, "setting-change", doc{"id": newID(), "target": "people", "field": "people", "previous": prev, "value": next, "actor": actor(q, "operator"), "at": nowMs()})
 	})
-	return doc{"people": q.app.peopleSnapshot().count()}, err
+	return q.app.peopleSnapshot().count(), err
 }

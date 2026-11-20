@@ -148,7 +148,7 @@ The runner is `go/coordinator/pipelines.go`; no version-1 reader exists.
 *   Inputs reach agent and script steps as start-command `inputs` `[{artifactId, path}]`; the executor downloads them into `FLEET_INPUT_DIR` before the step starts, and the host may read exactly those artifacts. Example `inputs` are staged under `example/`; an example's `references` never enter a run.
 *   A failed step stops later steps; the trial keeps its reason.
 *   Profile skills (`config/skills/<id>/SKILL.md`, sent in the start command): Claude gets them as a local plugin (`--plugin-dir` with the `Skill` tool; `--disable-slash-commands` stays only when no skill is granted); Codex gets them in the developer instructions.
-*   Direct start: `POST /api/pipelines/:id/runs` `{requestId, projectId?, exampleArtifactId? | example?, overrides?}`; the same `requestId` returns the same run; an example artifact must be approved. `GET /api/pipeline-runs/:id` reads a run. The `direct_search` and `pipeline_run` project operations use the same runner.
+*   Direct start: `POST /api/pipelines/:id/runs` `{requestId, projectId?, exampleArtifactId? | example?, overrides?}`; the same `requestId` returns the same run; an example artifact must be approved. `pipeline_get {runId}` reads a run. The `direct_search` and `pipeline_run` project operations use the same runner.
 
 Pipelines in `config/pipelines/`: `web-research`, `search-basic`, `draft-examples`, `judge-pass-fail`, `judge-scale`, `typed-decision` (one `api` step on the `typesafe` connection's `system_one`, output `{answer, p, answered_by, tokens}`; analytics stage 1), and for the Cyprus.BZ language pilot (use case `cs:source-audit-language`) `lang-check-jev` (Jev with the project audit's language rules) and `lang-check-claude` (the same rules as the project's Claude audit prompt, an agent step writing `output.json` with `p`); the System One decomposition test adds `lang-decomp-jev` (one call, three questions: alphabet choice, transliteration, language; a script step combines them as `min(P(expected or mixed alphabet), 1 - P(transliteration), P(language))`), `lang-decomp-jev-rev` (the same with the choice options in reverse order), `lang-script-only` (no model: 1 when most letters are of the expected alphabet) and `lang-script-jev` (the alphabet check, then the single Jev question).
 
@@ -177,7 +177,7 @@ Every provider call goes through fleet-gateway, from two entry points; the conne
     *   "Checks pass with no agent": on inputs plus references every check passes; on inputs alone at least one fails. `scripts/lab-examples.ts check` runs this; the test suite runs it on every seed.
     *   Agents never see examples: host artifact routes skip role `example`. A trial receives its example's inputs only.
 *   Owner seeds `config/lab/examples/*.json` are approved by PR review and imported with `scripts/lab-examples.ts import` (sends `$FLEET_ORIGIN`, else `$FLEET_BROWSER_ORIGIN`, as Origin). After import the artifact is the source of truth; an edit needs a new version. Seeds: `fleet:UC1`, `fleet:UC5` (two: web research, and `fleet-typed-decision-smoke` for `typed-decision`, whose check reads `references/expected.json`), `fleet:UC9`, `taskq:UC-07`, `taskq:UC-16`.
-*   Routes: `POST /api/lab/examples` `{examples[], projectId?, approved?}` → `{examples: [{artifactId, id, version, hash, created}]}` (400 invalid or unknown use case, 409 conflict or no store); `GET /api/lab/examples?state=proposed|approved`; `GET /api/lab/examples/:artifactId`.
+*   Operations: `lab_examples_add` `{examples[], projectId?, approved?}` → `{examples: [{artifactId, id, version, hash, created}]}` (400 invalid or unknown use case, 409 conflict or no store); `lab_examples_list {state?: proposed|approved}`; `lab_example_get {artifactId}`.
 *   Drafting (R3.6): a completed `draft-examples` run's `examples/*.json` files become proposed example artifacts, each with a `rating` question `{form: pass_fail, example_artifact_id}` whose text lists every check command; a pass sets `approved_at`. Completed draft runs are imported again on start.
 *   `config/lab` ships in `dist/config/lab`; `FLEET_LAB_DIRECTORY` overrides. Loaders skip dotfiles.
 
@@ -261,14 +261,14 @@ Not built: token and money units, per-iteration or per-trial scope, projected-ov
 
 ## Ratings
 
-`question.kind = 'rating'`, options `{form, experiment_id, trial_ids, seed}`, created by the owner from the matrix (`POST /api/lab/ratings {experimentId, form, trialIds}`); never blocking.
+`question.kind = 'rating'`, options `{form, experiment_id, trial_ids, seed}`, created by the owner from the matrix (`lab_rating_create {experimentId, form, trialIds}`); never blocking.
 
 *   Forms: `pass_fail` (answer `pass|fail[: tags]`, one trial), `scale` (`1..5[: note]`, one trial), `pick_best` (the chosen trial ID, two or more trials shown blind as A, B, … in an order shuffled by `seed`).
 *   The answer hook (`runAnswerChecks`, `go/coordinator/pipelines.go`) checks and applies Lab answers in the answering transaction; reconcile follows.
 *   Evaluators, named `<kind>:<ref>:<form>`: `script:example.checks:pass_fail|metric` (the coordinator runs the example's checks over selected trial files and the hash-bound canonical output.json; internal producer control manifests are omitted); `judge:<pipeline id>:pass_fail|scale|pick_best` (`pick_best` runs twice per example/repeat group, in deterministic shuffled and reverse orders, and scores only agreeing valid trial IDs; other forms use one pipeline run per evaluator and trial; its example is the original prompt plus the trial's files under `trial/`; its last `output.json` is `{value, rationale}`; profile `codex-judge`); `human:owner:<form>`. A failed judge run or invalid value counts as evaluated with no score. Forms are never averaged together.
 *   `lab_rating_withdraw {questionId,reason}` withdraws an open Lab rating without an answer or score. The owner or an agent with owner-equivalent authority supplies the reason; the actor and time stay on the question. Repeating a withdrawal is idempotent; an answered rating is never overwritten. Refusal or an unsuitable comparison is not a tie or a quality label.
 *   Agreement = owner `pass_fail` vs judge `pass_fail` on the same trial, plus owner `pick_best` vs judge `pick_best` over the same trial set (falling back to the single best `scale` score). Report agreement separately per evaluator/rubric version. Judge evaluator `overrides` use pipeline override keys; a prompt containing the rubric and output instructions pins its content into the evaluator version.
-*   Correction: `POST /api/lab/scores/:id/correct {value, rationale}` writes a new score that replaces the old.
+*   Correction: `lab_score_correct {scoreId, value, rationale}` writes a new score that replaces the old.
 
 Order-swapped `pick_best` judgments retain both runs; disagreeing answers produce no score and the view reports `order-dependent` ([asset pipelines §5](fleet-asset-pipelines.md#5-judges-s5)).
 
@@ -278,7 +278,7 @@ Order-swapped `pick_best` judgments retain both runs; disagreeing answers produc
 
 Analytics view on the same screen, dark theme first: the experiment list in plain words (goal, hypothesis, decision, when) and, per Lab group, the variant comparison from [statistics](#statistics): primary evaluator difference with interval and `n`, coverage and escalation share where typed, cost with basis and price source, p50 time, per tag. A row is identified by variant label plus `config_ref`; the kind of variant (model override, other pipeline, `api` step) is shown as text. No combined score, no ranking.
 
-Routes (each also an operation `lab_*`, `go/coordinator/lab.go`): `POST|GET /api/lab/experiments`, `GET /api/lab/experiments/:id` (trials, scores, spend), `POST …/:id/{launch,stop,resume}`, `POST …/:id/cells/:cell/{cancel,retry,retry_suffix}`, `POST …/:id/promote {variant}`, `POST|GET /api/lab/ratings`, `GET /api/lab/ratings/:id`, `POST /api/lab/scores/:id/correct`, `GET /api/lab/registry`. Errors: 400 invalid body, 404 unknown ID, 409 wrong state.
+Operations (`POST /api/ops/<name>`, `go/coordinator/lab.go`): `lab_experiment_create`, `lab_experiments_list`, `lab_experiment_get` (trials, scores, spend), `lab_experiment_action {experimentId, action: launch|stop|resume}`, `lab_cell_action {experimentId, cell, action: cancel|retry|retry_suffix}`, `lab_promote {experimentId, variant}`, `lab_rating_create`, `lab_ratings_list`, `lab_rating_get`, `lab_rating_withdraw` (owner), `lab_score_correct`, `lab_registry`. Errors: 400 invalid body, 404 unknown ID, 409 wrong state.
 
 Promote saves the variant as a catalogue method (pipeline, overrides, `config_ref`, source experiment) in a new catalogue revision with source `lab` ([definition editors](fleet-definition-editors.md)), unless a method already carries the variant's `configRef`, and sets the project's recommendation to it, in one transaction. It returns `{method, catalogue, recommendation}` (`cataloguePatch` is null). Nothing promotes automatically.
 
@@ -305,7 +305,7 @@ Host setting `FLEET_CLAUDE_PLACEMENT` (`mac | windows-wsl`, [configuration.md](.
 
 ## Removal in one cut (R3.1)
 
-The old lab (its pages, its `/api/lab/*` and `/api/experiments` routes and stored documents) is gone. Profile code lives in `go/contract/profile.go` (the one validator, used by coordinator and executor), `go/coordinator/projects.go` and `go/executor/profile.go`; profiles are listed by `GET /api/profiles`. Paired delegation is an `ab` experiment; delivery comparison is removed.
+The old lab (its pages, its `/api/lab/*` and `/api/experiments` routes and stored documents) is gone. Profile code lives in `go/contract/profile.go` (the one validator, used by coordinator and executor), `go/coordinator/projects.go` and `go/executor/profile.go`; profiles are listed by `profiles_list`. Paired delegation is an `ab` experiment; delivery comparison is removed.
 
 AssetQ was deleted in one cut on 2026-11-11 (service, database, route, Access app, repository archived); only the `fleet:UC2` crate seed `fleet-uc2-crate` remains ([asset pipelines §2](fleet-asset-pipelines.md#2-deleting-assetq-s2-after-s1)).
 

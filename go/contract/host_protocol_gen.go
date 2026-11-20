@@ -58,6 +58,23 @@ type AccountInspectPayload struct {
 	Harness      string  `json:"harness"`
 	Mode         *string `json:"mode,omitempty"`
 	NativeHostId *string `json:"nativeHostId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v AccountInspectPayload) MarshalJSON() ([]byte, error) {
+	type plain AccountInspectPayload
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *AccountInspectPayload) UnmarshalJSON(b []byte) error {
+	type plain AccountInspectPayload
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -307,6 +324,23 @@ func (v *ArtifactStateReply) Validate() error {
 type ArtifactTransferPayload struct {
 	ArtifactId *string `json:"artifactId,omitempty"`
 	StoreId    *string `json:"storeId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ArtifactTransferPayload) MarshalJSON() ([]byte, error) {
+	type plain ArtifactTransferPayload
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ArtifactTransferPayload) UnmarshalJSON(b []byte) error {
+	type plain ArtifactTransferPayload
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -450,6 +484,23 @@ type Command struct {
 	Run         *CommandRun     `json:"run,omitempty"`
 	SessionId   *string         `json:"sessionId,omitempty"`
 	Traceparent *string         `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v Command) MarshalJSON() ([]byte, error) {
+	type plain Command
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *Command) UnmarshalJSON(b []byte) error {
+	type plain Command
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -542,6 +593,23 @@ type EventData struct {
 	FleetNormalized *Normalized       `json:"fleetNormalized,omitempty"`
 	HarnessVersion  *string           `json:"harnessVersion,omitempty"`
 	Item            *Item             `json:"item,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v EventData) MarshalJSON() ([]byte, error) {
+	type plain EventData
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *EventData) UnmarshalJSON(b []byte) error {
+	type plain EventData
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -776,6 +844,23 @@ type Item struct {
 	Status  *string `json:"status,omitempty"`
 	Text    *string `json:"text,omitempty"`
 	Type    *string `json:"type,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v Item) MarshalJSON() ([]byte, error) {
+	type plain Item
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *Item) UnmarshalJSON(b []byte) error {
+	type plain Item
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -792,6 +877,23 @@ type LimitReading struct {
 	Source         *LimitSource    `json:"source,omitempty"`
 	SubscriptionId *string         `json:"subscriptionId,omitempty"`
 	Type           *string         `json:"type,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LimitReading) MarshalJSON() ([]byte, error) {
+	type plain LimitReading
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LimitReading) UnmarshalJSON(b []byte) error {
+	type plain LimitReading
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -850,6 +952,23 @@ type Normalized struct {
 	DeltaOf    *string         `json:"deltaOf,omitempty"`
 	Usage      json.RawMessage `json:"usage,omitempty"`
 	UsageScope *string         `json:"usageScope,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v Normalized) MarshalJSON() ([]byte, error) {
+	type plain Normalized
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *Normalized) UnmarshalJSON(b []byte) error {
+	type plain Normalized
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1070,6 +1189,23 @@ type ProjectPayload struct {
 	Branch       *bool                      `json:"branch,omitempty"`
 	DeleteBranch *bool                      `json:"deleteBranch,omitempty"`
 	Project      map[string]json.RawMessage `json:"project,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectPayload) MarshalJSON() ([]byte, error) {
+	type plain ProjectPayload
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectPayload) UnmarshalJSON(b []byte) error {
+	type plain ProjectPayload
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1128,6 +1264,23 @@ type ProtocolFailed struct {
 	Error  string  `json:"error"`
 	Reason *string `json:"reason,omitempty"`
 	Type   *string `json:"type,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProtocolFailed) MarshalJSON() ([]byte, error) {
+	type plain ProtocolFailed
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProtocolFailed) UnmarshalJSON(b []byte) error {
+	type plain ProtocolFailed
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1240,6 +1393,23 @@ type ScriptPayload struct {
 	Project   map[string]json.RawMessage `json:"project,omitempty"`
 	Repo      *string                    `json:"repo,omitempty"`
 	TimeoutMs *int64                     `json:"timeout_ms,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ScriptPayload) MarshalJSON() ([]byte, error) {
+	type plain ScriptPayload
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ScriptPayload) UnmarshalJSON(b []byte) error {
+	type plain ScriptPayload
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1302,6 +1472,23 @@ type StartAttachment struct {
 	Name       string `json:"name"`
 	Path       string `json:"path"`
 	Size       int64  `json:"size"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v StartAttachment) MarshalJSON() ([]byte, error) {
+	type plain StartAttachment
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *StartAttachment) UnmarshalJSON(b []byte) error {
+	type plain StartAttachment
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1336,6 +1523,23 @@ type StartPayload struct {
 	WebRoute         *string                    `json:"webRoute,omitempty"`
 	WorkingDirectory *string                    `json:"workingDirectory,omitempty"`
 	WorkspaceKey     *string                    `json:"workspaceKey,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v StartPayload) MarshalJSON() ([]byte, error) {
+	type plain StartPayload
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *StartPayload) UnmarshalJSON(b []byte) error {
+	type plain StartPayload
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1355,6 +1559,23 @@ func (v *StartPayload) Validate() error {
 
 type SteerPayload struct {
 	Text string `json:"text"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SteerPayload) MarshalJSON() ([]byte, error) {
+	type plain SteerPayload
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SteerPayload) UnmarshalJSON(b []byte) error {
+	type plain SteerPayload
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).

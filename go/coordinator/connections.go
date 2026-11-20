@@ -58,20 +58,6 @@ func connDir(name string) (string, error) {
 	return filepath.Join(secretDir(), "connections", name), nil
 }
 
-func connOwner(q *Request) error {
-	if q.person != nil && !fullAccess(q.person) {
-		return fail(403, "Only the owner handles key values")
-	}
-	return nil
-}
-
-func connHolderOrOwner(q *Request, c doc) error {
-	if q.person != nil && !fullAccess(q.person) && q.person.Email != c["holder"] {
-		return fail(403, "Only the holder or the owner changes this API key")
-	}
-	return nil
-}
-
 func connByName(q *Request, name any) (doc, error) {
 	n, ok := name.(string)
 	if !ok || !connName.MatchString(n) {
@@ -332,544 +318,546 @@ func idList(v any, field string) ([]any, error) {
 
 func init() {
 	// Agent dispatch mints the run token for the profile's connections (dispatch.go).
-	gatedOp("connections_list", true, shaped[contract.ConnectionsListRequest, contract.ConnectionsListReply](func(q *Request) (any, error) {
-		keys, err := all(q, "connection-key", nil)
+	op("connections_list", func(q *Request, _ *contract.ConnectionsListRequest) (contract.ConnectionsListReply, error) {
+		out, err := connectionsList(q)
+		return replyAs[contract.ConnectionsListReply](out, err)
+	})
+	op("connections_create", func(q *Request, r *contract.ConnectionsCreateRequest) (contract.ConnectionsCreateReply, error) {
+		out, err := connectionsCreate(q, r)
+		return replyAs[contract.ConnectionsCreateReply](out, err)
+	})
+	op("connections_key_add", func(q *Request, r *contract.ConnectionsKeyAddRequest) (contract.ConnectionsKeyAddReply, error) {
+		out, err := connectionsKeyAdd(q, r)
+		return replyAs[contract.ConnectionsKeyAddReply](out, err)
+	})
+	op("connections_key_request", func(q *Request, r *contract.ConnectionsKeyRequestRequest) (contract.ConnectionsKeyRequestReply, error) {
+		out, err := connectionsKeyRequest(q, r)
+		return replyAs[contract.ConnectionsKeyRequestReply](out, err)
+	})
+	op("connections_delete", connectionsDelete)
+	op("connections_key_state", func(q *Request, r *contract.ConnectionsKeyStateRequest) (contract.ConnectionsKeyStateReply, error) {
+		out, err := connectionsKeyState(q, r)
+		return replyAs[contract.ConnectionsKeyStateReply](out, err)
+	})
+	op("connections_set_tools", func(q *Request, r *contract.ConnectionsSetToolsRequest) (contract.ConnectionsSetToolsReply, error) {
+		out, err := connectionsSetTools(q, r)
+		return replyAs[contract.ConnectionsSetToolsReply](out, err)
+	})
+	op("connections_set_access", func(q *Request, r *contract.ConnectionsSetAccessRequest) (contract.ConnectionsSetAccessReply, error) {
+		out, err := connectionsSetAccess(q, r)
+		return replyAs[contract.ConnectionsSetAccessReply](out, err)
+	})
+	op("connections_set_intake", func(q *Request, r *contract.ConnectionsSetIntakeRequest) (contract.ConnectionsSetIntakeReply, error) {
+		out, err := connectionsSetIntake(q, r)
+		return replyAs[contract.ConnectionsSetIntakeReply](out, err)
+	})
+	op("connections_set_limits", func(q *Request, r *contract.ConnectionsSetLimitsRequest) (contract.ConnectionsSetLimitsReply, error) {
+		out, err := connectionsSetLimits(q, r)
+		return replyAs[contract.ConnectionsSetLimitsReply](out, err)
+	})
+	op("connections_token_create", func(q *Request, r *contract.ConnectionsTokenCreateRequest) (contract.ConnectionsTokenCreateReply, error) {
+		out, err := connectionsTokenCreate(q, r)
+		return replyAs[contract.ConnectionsTokenCreateReply](out, err)
+	})
+	op("connections_token_list", func(q *Request, _ *contract.ConnectionsTokenListRequest) (contract.ConnectionsTokenListReply, error) {
+		out, err := connectionsTokenList(q)
+		return replyAs[contract.ConnectionsTokenListReply](out, err)
+	})
+	op("connections_token_revoke", connectionsTokenRevoke)
+}
+
+func connectionsList(q *Request) (any, error) {
+	keys, err := all(q, "connection-key", nil)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(keys, func(i, j int) bool {
+		a, _ := numOK(keys[i]["addedAt"])
+		b, _ := numOK(keys[j]["addedAt"])
+		return a < b
+	})
+	hist, err := rows(q, "SELECT data FROM document WHERE kind='setting-change' AND data->>'target' LIKE 'connection:%' ORDER BY seq")
+	if err != nil {
+		return nil, err
+	}
+	connections, err := all(q, "api-connection", nil)
+	if err != nil {
+		return nil, err
+	}
+	out := []any{}
+	for _, c := range connections {
+		ks, hs := []any{}, []any{}
+		for _, k := range keys {
+			if k["connectionId"] == c["name"] {
+				ks = append(ks, k)
+			}
+		}
+		for _, h := range hist {
+			if h["target"] == "connection:"+astr(c["name"]) {
+				hs = append(hs, h)
+			}
+		}
+		c["keys"], c["spend"], c["history"] = ks, doc{"basis": "unavailable"}, hs
+		out = append(out, c)
+	}
+	return doc{"providers": providers, "connections": out}, nil
+}
+
+func connectionsCreate(q *Request, r *contract.ConnectionsCreateRequest) (any, error) {
+	name, provider := r.Name, r.Provider
+	if !connName.MatchString(name) || providers[provider] == nil {
+		return nil, fail(400, "Expected name and a known provider")
+	}
+	if slices.Contains(contract.ExecutorMCPServers, name) {
+		return nil, fail(400, "Connection name "+name+" is an executor MCP server name")
+	}
+	if old, err := maybe(q, "connection:"+name, "api-connection"); err != nil {
+		return nil, err
+	} else if old != nil {
+		return nil, fail(409, "API key name exists")
+	}
+	holder := directorOf(q)
+	if r.Holder != nil {
+		holder = strings.ToLower(*r.Holder)
+	}
+	if q.person != nil && !fullAccess(q.person) && holder != q.person.Email {
+		return nil, fail(403, "Only the owner creates an API key for another person")
+	}
+	comment := deref(r.Comment)
+	if len(comment) > 2000 {
+		comment = comment[:2000]
+	}
+	c := doc{"id": "connection:" + name, "name": name, "provider": provider, "holder": holder, "access": doc{"people": []any{}, "projects": []any{}, "experiments": []any{}},
+		"intake": "all", "tools": toolNames(provider), "comment": comment, "createdAt": nowMs()}
+	if err := put(q, "api-connection", c); err != nil {
+		return nil, err
+	}
+	publish(q)
+	return c, nil
+}
+
+// connectionsKeyAdd (owner): writes the value file and the row; answers with the fingerprint only.
+func connectionsKeyAdd(q *Request, r *contract.ConnectionsKeyAddRequest) (any, error) {
+	c, err := connByName(q, r.Connection)
+	if err != nil {
+		return nil, err
+	}
+	value := r.Value
+	if len(value) < 8 || len(value) > 4096 || !keyValue.MatchString(value) {
+		return nil, fail(400, "Expected one key value without spaces")
+	}
+	qid, fp := deref(r.QuestionId), fingerprint(value)
+	if qid != "" {
+		// A retry of an add that already answered this request (its reply was lost) passes here and replays below.
+		if _, err := keyRequestOf(q, qid, astr(c["name"]), keyAnswer(astr(c["name"]), fp, "active")); err != nil {
+			return nil, err
+		}
+	}
+	if old, err := maybe(q, "key:"+fp, "connection-key"); err != nil {
+		return nil, err
+	} else if old != nil {
+		if qid != "" && old["connectionId"] == c["name"] && old["state"] == "active" { // Fleet already holds it: answer with it
+			if _, err := answerQuestion(q, qid, keyAnswer(astr(c["name"]), fp, "active"), actor(q, "operator"), nil); err != nil {
+				return nil, err
+			}
+			return old, nil
+		}
+		return nil, fail(409, "Key already added")
+	}
+	dir, err := connDir(astr(c["name"]))
+	if err != nil {
+		return nil, err
+	}
+	k := doc{"id": "key:" + fp, "connectionId": c["name"], "fingerprint": fp, "state": "active", "addedAt": nowMs(), "addedBy": actor(q, "operator")}
+	if err := put(q, "connection-key", k); err != nil {
+		return nil, err
+	}
+	// The value is staged before commit and takes its key name only after the row committed; a rolled-back add removes
+	// it, and connSync settles a stage a crash left behind against the committed row.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	staged, final := filepath.Join(dir, "."+fp+".add"), filepath.Join(dir, fp)
+	if err := os.WriteFile(staged, []byte(value+"\n"), 0o600); err != nil {
+		return nil, err
+	}
+	os.Chmod(staged, 0o600)
+	onEnd(q.tx, func(committed bool) {
+		if !committed {
+			os.Remove(staged)
+		} else if err := os.Rename(staged, final); err != nil {
+			log.Printf("key %s: %v", fp, err)
+		}
+	})
+	if qid != "" { // the agent's question gets the fingerprint only, never the value
+		if _, err := answerQuestion(q, qid, keyAnswer(astr(c["name"]), fp, "active"), actor(q, "operator"), nil); err != nil {
+			return nil, err
+		}
+	}
+	publish(q)
+	return k, nil
+}
+
+// connectionsKeyRequest: an agent (or a person) asks the owner for a key value (docs/designs/fleet-connections.md §1,
+// key requests): a secret question the owner answers through connections_key_add with questionId. No argument carries a
+// value (the request is closed: an extra key is 400).
+func connectionsKeyRequest(q *Request, r *contract.ConnectionsKeyRequestRequest) (any, error) {
+	if _, err := projectContext(q, r.ProjectId); err != nil {
+		return nil, err
+	}
+	c, err := connByName(q, r.Connection)
+	if err != nil {
+		return nil, err
+	}
+	rid, reason := r.RequestId, deref(r.Reason)
+	if rid == "" || len(rid) > 200 || len([]rune(reason)) > 500 {
+		return nil, fail(400, "Expected requestId and a reason of at most 500 characters")
+	}
+	text := fmt.Sprintf("Add a %s key for connection %s", c["provider"], c["name"])
+	if reason != "" {
+		text += ": " + reason
+	}
+	d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE kind='secret' AND project_id=$1 AND request_id=$2", r.ProjectId, rid)
+	if err != nil {
+		return nil, err
+	}
+	if d != nil {
+		if d = mapOf(d["v"]); astr(d["text"]) != text {
+			return nil, fail(409, "Question identity conflict")
+		}
+		return d, nil
+	}
+	v := doc{"id": newID(), "projectId": r.ProjectId, "requestId": rid, "text": text, "state": "waiting", "createdAt": nowMs(), "actor": actor(q, "operator")}
+	ask := doc{"id": v["id"], "kind": "secret", "text": text, "projectId": r.ProjectId, "askedBy": v["actor"], "requestId": rid, "askedAt": v["createdAt"],
+		"options": doc{"connection": c["name"]}}
+	if strings.HasPrefix(q.agent, "execution:") { // a host agent: the question shows in its conversation
+		eid := strings.TrimPrefix(q.agent, "execution:")
+		e, err := first(q, "SELECT session_id FROM execution WHERE id=$1", eid)
 		if err != nil {
 			return nil, err
 		}
-		sort.SliceStable(keys, func(i, j int) bool {
-			a, _ := numOK(keys[i]["addedAt"])
-			b, _ := numOK(keys[j]["addedAt"])
-			return a < b
+		ask["executionId"] = eid
+		if e != nil {
+			ask["sessionId"] = e["session_id"]
+		}
+	}
+	_, err = askQuestion(q, ask)
+	return v, err
+}
+
+// connectionsDelete (§1, owner) once every key is retired (no value file left), so a test connection can go. Run tokens
+// drop the name (a new connection with it is not granted to them), open key requests are withdrawn, the history moves to
+// an audit row that a new connection of the same name does not inherit.
+func connectionsDelete(q *Request, r *contract.ConnectionsDeleteRequest) (contract.ConnectionsDeleteReply, error) {
+	var no contract.ConnectionsDeleteReply
+	c, err := connByName(q, r.Connection)
+	if err != nil {
+		return no, err
+	}
+	name := astr(c["name"])
+	if err := exec(q, "SELECT 1 FROM document WHERE id=$1 AND kind='api-connection' FOR UPDATE", c["id"]); err != nil {
+		return no, err
+	}
+	keys, err := connKeys(q, name)
+	if err != nil {
+		return no, err
+	}
+	for _, k := range keys {
+		if k["state"] != "retired" {
+			return no, fail(409, "Retire every key of "+name+" first")
+		}
+	}
+	toks, err := all(q, "run-token", nil)
+	if err != nil {
+		return no, err
+	}
+	for _, t := range toks {
+		if names := strs(t["connections"]); slices.Contains(names, name) {
+			t["connections"] = slices.DeleteFunc(names, func(n string) bool { return n == name })
+			if err := put(q, "run-token", t); err != nil {
+				return no, err
+			}
+		}
+	}
+	for _, x := range []string{
+		"DELETE FROM document WHERE (kind='api-connection' AND id=$1) OR (kind='connection-key' AND data->>'connectionId'=$2) OR (kind='setting-change' AND data->>'target'=$1)",
+		"UPDATE question SET state='withdrawn' WHERE kind='secret' AND state='open' AND options->>'connection'=$2 AND $1<>''",
+	} {
+		if err := exec(q, x, c["id"], name); err != nil {
+			return no, err
+		}
+	}
+	if err := put(q, "setting-change", doc{"id": newID(), "target": "deleted-connection:" + name, "field": "connection", "value": "deleted", "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
+		return no, err
+	}
+	if dir, err := connDir(name); err == nil {
+		onEnd(q.tx, func(committed bool) {
+			if committed { // every key is retired: only stale stages can remain, and connSync must not re-register them
+				if err := os.RemoveAll(dir); err != nil {
+					log.Printf("connection %s: %v", name, err)
+				}
+			}
 		})
-		hist, err := rows(q, "SELECT data FROM document WHERE kind='setting-change' AND data->>'target' LIKE 'connection:%' ORDER BY seq")
-		if err != nil {
-			return nil, err
-		}
-		connections, err := all(q, "api-connection", nil)
-		if err != nil {
-			return nil, err
-		}
-		out := []any{}
-		for _, c := range connections {
-			ks, hs := []any{}, []any{}
-			for _, k := range keys {
-				if k["connectionId"] == c["name"] {
-					ks = append(ks, k)
+	}
+	publish(q)
+	return contract.ConnectionsDeleteReply{Name: name, Deleted: true}, nil
+}
+
+// connectionsKeyState: rotation (§2): active <-> draining, any -> retired (the value file is deleted; the row stays);
+// disabled -> active is the owner's.
+func connectionsKeyState(q *Request, r *contract.ConnectionsKeyStateRequest) (any, error) {
+	id := r.KeyId
+	if id != "" && !strings.HasPrefix(id, "key:") {
+		id = "key:" + id
+	}
+	k, err := maybe(q, id, "connection-key")
+	if err != nil {
+		return nil, err
+	}
+	if k == nil {
+		return nil, fail(404, "Unknown key")
+	}
+	c, err := connByName(q, k["connectionId"])
+	if err != nil {
+		return nil, err
+	}
+	// The request names the key, not the connection: the holder rule is checked on the key's connection here.
+	if q.person != nil && !fullAccess(q.person) && q.person.Email != c["holder"] {
+		return nil, fail(403, "Only the holder or the owner changes this API key")
+	}
+	to := string(r.State)
+	if k["state"] == "retired" {
+		return nil, fail(409, "A retired key stays retired")
+	}
+	if k["state"] == "disabled" && to != "retired" && q.person != nil && !fullAccess(q.person) {
+		return nil, fail(403, "Only the owner handles key values")
+	}
+	if to == k["state"] {
+		return k, nil
+	}
+	if err := connChange(q, c, "key:"+astr(k["fingerprint"]), k["state"], to); err != nil {
+		return nil, err
+	}
+	k["state"], k["updatedAt"] = to, nowMs()
+	if to == "active" {
+		delete(k, "disabledReason")
+		delete(k, "disabledAt")
+		delete(k, "problem")
+		k["enabledAt"] = nowMs()
+	}
+	if err := put(q, "connection-key", k); err != nil {
+		return nil, err
+	}
+	// The key left disabled (enabled again or retired): its refused-key question no longer needs the owner.
+	if err := problemClose(q, "key:"+astr(k["fingerprint"])+":disabled"); err != nil {
+		return nil, err
+	}
+	if to == "retired" {
+		if dir, err := connDir(astr(c["name"])); err == nil {
+			// The value goes only once the retirement committed; connSync removes it if a crash came in between.
+			path := filepath.Join(dir, astr(k["fingerprint"]))
+			onEnd(q.tx, func(committed bool) {
+				if committed {
+					os.Remove(path)
 				}
-			}
-			for _, h := range hist {
-				if h["target"] == "connection:"+astr(c["name"]) {
-					hs = append(hs, h)
-				}
-			}
-			c["keys"], c["spend"], c["history"] = ks, doc{"basis": "unavailable"}, hs
-			out = append(out, c)
+			})
 		}
-		return doc{"providers": providers, "connections": out}, nil
-	}))
-	gatedOp("connections_create", false, checkFirst(func(q *Request) error {
-		if !keysOnly(q.obj(), "name", "provider", "holder", "comment") {
-			return fail(400, "Expected name and a known provider")
+	}
+	publish(q)
+	return k, nil
+}
+
+// connectionsSetTools (owner): the explicit provider tool grant.
+func connectionsSetTools(q *Request, r *contract.ConnectionsSetToolsRequest) (any, error) {
+	if err := exec(q, "SELECT 1 FROM document WHERE id=$1 AND kind='api-connection' FOR UPDATE", "connection:"+r.Connection); err != nil {
+		return nil, err
+	}
+	c, err := connByName(q, r.Connection)
+	if err != nil {
+		return nil, err
+	}
+	seen, tools := map[string]bool{}, []any{}
+	for _, name := range r.Tools {
+		if name == "" || seen[name] || providerTools(astr(c["provider"]))[name] == nil {
+			return nil, fail(400, "tools must be unique recognized provider tool names")
 		}
-		return nil
-	}, shaped[contract.ConnectionsCreateRequest, contract.ConnectionView](func(q *Request) (any, error) {
-		b := body(q)
-		name, provider := astr(b["name"]), astr(b["provider"])
-		if !connName.MatchString(name) || providers[provider] == nil || !keysOnly(b, "name", "provider", "holder", "comment") {
-			return nil, fail(400, "Expected name and a known provider")
-		}
-		if slices.Contains(contract.ExecutorMCPServers, name) {
-			return nil, fail(400, "Connection name "+name+" is an executor MCP server name")
-		}
-		if old, err := maybe(q, "connection:"+name, "api-connection"); err != nil {
+		seen[name] = true
+		tools = append(tools, name)
+	}
+	if canonical(tools) != canonical(c["tools"]) {
+		if err := connChange(q, c, "tools", c["tools"], tools); err != nil {
 			return nil, err
-		} else if old != nil {
-			return nil, fail(409, "API key name exists")
 		}
-		holder := directorOf(q)
-		if h, ok := b["holder"].(string); ok {
-			holder = strings.ToLower(h)
-		}
-		if q.person != nil && !fullAccess(q.person) && holder != q.person.Email {
-			return nil, fail(403, "Only the owner creates an API key for another person")
-		}
-		comment := astr(b["comment"])
-		if len(comment) > 2000 {
-			comment = comment[:2000]
-		}
-		c := doc{"id": "connection:" + name, "name": name, "provider": provider, "holder": holder, "access": doc{"people": []any{}, "projects": []any{}, "experiments": []any{}},
-			"intake": "all", "tools": toolNames(provider), "comment": comment, "createdAt": nowMs()}
+		c["tools"], c["updatedAt"] = tools, nowMs()
 		if err := put(q, "api-connection", c); err != nil {
 			return nil, err
 		}
 		publish(q)
-		return c, nil
-	})))
-	// Owner only. Writes the value file and the row; answers with the fingerprint only.
-	gatedOp("connections_key_add", false, checkFirst(connOwner, shaped[contract.ConnectionsKeyAddRequest, contract.ConnectionsKeyAddReply](func(q *Request) (any, error) {
-		if err := connOwner(q); err != nil {
-			return nil, err
-		}
-		b := body(q)
-		c, err := connByName(q, b["connection"])
-		if err != nil {
-			return nil, err
-		}
-		value, ok := b["value"].(string)
-		if !ok || len(value) < 8 || len(value) > 4096 || !keyValue.MatchString(value) {
-			return nil, fail(400, "Expected one key value without spaces")
-		}
-		qid, fp := astr(b["questionId"]), fingerprint(value)
-		if qid != "" {
-			// A retry of an add that already answered this request (its reply was lost) passes here and replays below.
-			if _, err := keyRequestOf(q, qid, astr(c["name"]), keyAnswer(astr(c["name"]), fp, "active")); err != nil {
-				return nil, err
-			}
-		}
-		if old, err := maybe(q, "key:"+fp, "connection-key"); err != nil {
-			return nil, err
-		} else if old != nil {
-			if qid != "" && old["connectionId"] == c["name"] && old["state"] == "active" { // Fleet already holds it: answer with it
-				if _, err := answerQuestion(q, qid, keyAnswer(astr(c["name"]), fp, "active"), actor(q, "operator"), nil); err != nil {
-					return nil, err
-				}
-				return old, nil
-			}
-			return nil, fail(409, "Key already added")
-		}
-		dir, err := connDir(astr(c["name"]))
-		if err != nil {
-			return nil, err
-		}
-		k := doc{"id": "key:" + fp, "connectionId": c["name"], "fingerprint": fp, "state": "active", "addedAt": nowMs(), "addedBy": actor(q, "operator")}
-		if err := put(q, "connection-key", k); err != nil {
-			return nil, err
-		}
-		// The value is staged before commit and takes its key name only after the row committed; a rolled-back add removes
-		// it, and connSync settles a stage a crash left behind against the committed row.
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, err
-		}
-		staged, final := filepath.Join(dir, "."+fp+".add"), filepath.Join(dir, fp)
-		if err := os.WriteFile(staged, []byte(value+"\n"), 0o600); err != nil {
-			return nil, err
-		}
-		os.Chmod(staged, 0o600)
-		onEnd(q.tx, func(committed bool) {
-			if !committed {
-				os.Remove(staged)
-			} else if err := os.Rename(staged, final); err != nil {
-				log.Printf("key %s: %v", fp, err)
-			}
-		})
-		if qid != "" { // the agent's question gets the fingerprint only, never the value
-			if _, err := answerQuestion(q, qid, keyAnswer(astr(c["name"]), fp, "active"), actor(q, "operator"), nil); err != nil {
-				return nil, err
-			}
-		}
-		publish(q)
-		return k, nil
-	})))
-	// An agent (or a person) asks the owner for a key value (docs/designs/fleet-connections.md §1, key requests): a
-	// secret question the owner answers through connections_key_add with questionId. No argument carries a value.
-	projectOp("connections_key_request", false, shaped[contract.ConnectionsKeyRequestRequest, contract.ConnectionsKeyRequestReply](func(q *Request) (any, error) {
-		b := body(q)
-		for k := range b {
-			if !inList([]string{"projectId", "requestId", "connection", "reason"}, k) {
-				return nil, fail(400, "Unexpected argument "+k+"; a key value goes only into the owner's field")
-			}
-		}
-		if _, err := projectContext(q, astr(b["projectId"])); err != nil {
-			return nil, err
-		}
-		c, err := connByName(q, b["connection"])
-		if err != nil {
-			return nil, err
-		}
-		rid, reason := astr(b["requestId"]), astr(b["reason"])
-		if rid == "" || len(rid) > 200 || len([]rune(reason)) > 500 {
-			return nil, fail(400, "Expected requestId and a reason of at most 500 characters")
-		}
-		text := fmt.Sprintf("Add a %s key for connection %s", c["provider"], c["name"])
-		if reason != "" {
-			text += ": " + reason
-		}
-		d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE kind='secret' AND project_id=$1 AND request_id=$2", b["projectId"], rid)
-		if err != nil {
-			return nil, err
-		}
-		if d != nil {
-			if d = mapOf(d["v"]); astr(d["text"]) != text {
-				return nil, fail(409, "Question identity conflict")
-			}
-			return d, nil
-		}
-		v := doc{"id": newID(), "projectId": b["projectId"], "requestId": rid, "text": text, "state": "waiting", "createdAt": nowMs(), "actor": actor(q, "operator")}
-		ask := doc{"id": v["id"], "kind": "secret", "text": text, "projectId": b["projectId"], "askedBy": v["actor"], "requestId": rid, "askedAt": v["createdAt"],
-			"options": doc{"connection": c["name"]}}
-		if strings.HasPrefix(q.agent, "execution:") { // a host agent: the question shows in its conversation
-			eid := strings.TrimPrefix(q.agent, "execution:")
-			e, err := first(q, "SELECT session_id FROM execution WHERE id=$1", eid)
-			if err != nil {
-				return nil, err
-			}
-			ask["executionId"] = eid
-			if e != nil {
-				ask["sessionId"] = e["session_id"]
-			}
-		}
-		_, err = askQuestion(q, ask)
-		return v, err
-	}))
-	// Delete (§1): owner or full-access person, once every key is retired (no value file left), so a test connection can
-	// go. Run tokens drop the name (a new connection with it is not granted to them), open key requests are withdrawn,
-	// the history moves to an audit row that a new connection of the same name does not inherit.
-	gatedOp("connections_delete", false, checkFirst(connOwner, shaped[contract.ConnectionsDeleteRequest, contract.ConnectionsDeleteReply](func(q *Request) (any, error) {
-		c, err := connByName(q, body(q)["connection"])
-		if err != nil {
-			return nil, err
-		}
-		name := astr(c["name"])
-		if err := exec(q, "SELECT 1 FROM document WHERE id=$1 AND kind='api-connection' FOR UPDATE", c["id"]); err != nil {
-			return nil, err
-		}
-		keys, err := connKeys(q, name)
-		if err != nil {
-			return nil, err
-		}
-		for _, k := range keys {
-			if k["state"] != "retired" {
-				return nil, fail(409, "Retire every key of "+name+" first")
-			}
-		}
-		toks, err := all(q, "run-token", nil)
-		if err != nil {
-			return nil, err
-		}
-		for _, t := range toks {
-			if names := strs(t["connections"]); slices.Contains(names, name) {
-				t["connections"] = slices.DeleteFunc(names, func(n string) bool { return n == name })
-				if err := put(q, "run-token", t); err != nil {
-					return nil, err
-				}
-			}
-		}
-		for _, x := range []string{
-			"DELETE FROM document WHERE (kind='api-connection' AND id=$1) OR (kind='connection-key' AND data->>'connectionId'=$2) OR (kind='setting-change' AND data->>'target'=$1)",
-			"UPDATE question SET state='withdrawn' WHERE kind='secret' AND state='open' AND options->>'connection'=$2 AND $1<>''",
-		} {
-			if err := exec(q, x, c["id"], name); err != nil {
-				return nil, err
-			}
-		}
-		if err := put(q, "setting-change", doc{"id": newID(), "target": "deleted-connection:" + name, "field": "connection", "value": "deleted", "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
-			return nil, err
-		}
-		if dir, err := connDir(name); err == nil {
-			onEnd(q.tx, func(committed bool) {
-				if committed { // every key is retired: only stale stages can remain, and connSync must not re-register them
-					if err := os.RemoveAll(dir); err != nil {
-						log.Printf("connection %s: %v", name, err)
-					}
-				}
-			})
-		}
-		publish(q)
-		return contract.ConnectionsDeleteReply{Name: name, Deleted: true}, nil
-	})))
-	// Rotation (§2): active <-> draining, any -> retired (the value file is deleted; the row stays); disabled -> active is the owner's.
-	gatedOp("connections_key_state", false, shaped[contract.ConnectionsKeyStateRequest, contract.ConnectionsKeyStateReply](func(q *Request) (any, error) {
-		b := body(q)
-		id := astr(b["keyId"])
-		if id != "" && !strings.HasPrefix(id, "key:") {
-			id = "key:" + id
-		}
-		k, err := maybe(q, id, "connection-key")
-		if err != nil {
-			return nil, err
-		}
-		if k == nil {
-			return nil, fail(404, "Unknown key")
-		}
-		c, err := connByName(q, k["connectionId"])
-		if err != nil {
-			return nil, err
-		}
-		if err := connHolderOrOwner(q, c); err != nil {
-			return nil, err
-		}
-		to := astr(b["state"])
-		if to != "active" && to != "draining" && to != "retired" {
-			return nil, fail(400, "state: active, draining or retired")
-		}
-		if k["state"] == "retired" {
-			return nil, fail(409, "A retired key stays retired")
-		}
-		if k["state"] == "disabled" && to != "retired" {
-			if err := connOwner(q); err != nil {
-				return nil, err
-			}
-		}
-		if to == k["state"] {
-			return k, nil
-		}
-		if err := connChange(q, c, "key:"+astr(k["fingerprint"]), k["state"], to); err != nil {
-			return nil, err
-		}
-		k["state"], k["updatedAt"] = to, nowMs()
-		if to == "active" {
-			delete(k, "disabledReason")
-			delete(k, "disabledAt")
-			delete(k, "problem")
-			k["enabledAt"] = nowMs()
-		}
-		if err := put(q, "connection-key", k); err != nil {
-			return nil, err
-		}
-		// The key left disabled (enabled again or retired): its refused-key question no longer needs the owner.
-		if err := problemClose(q, "key:"+astr(k["fingerprint"])+":disabled"); err != nil {
-			return nil, err
-		}
-		if to == "retired" {
-			if dir, err := connDir(astr(c["name"])); err == nil {
-				// The value goes only once the retirement committed; connSync removes it if a crash came in between.
-				path := filepath.Join(dir, astr(k["fingerprint"]))
-				onEnd(q.tx, func(committed bool) {
-					if committed {
-						os.Remove(path)
-					}
-				})
-			}
-		}
-		publish(q)
-		return k, nil
-	}))
+	}
+	return c, nil
+}
 
-	gatedOp("connections_set_tools", false, checkFirst(connOwner, shaped[contract.ConnectionsSetToolsRequest, contract.ConnectionView](func(q *Request) (any, error) {
-		b := body(q)
-		if !keysOnly(b, "connection", "tools") {
-			return nil, fail(400, "Expected connection and tools")
-		}
-		if err := exec(q, "SELECT 1 FROM document WHERE id=$1 AND kind='api-connection' FOR UPDATE", "connection:"+astr(b["connection"])); err != nil {
+func connectionsSetAccess(q *Request, r *contract.ConnectionsSetAccessRequest) (any, error) {
+	c, err := connByName(q, r.Connection)
+	if err != nil {
+		return nil, err
+	}
+	a := docOf(r.Access)
+	people, err := idList(a["people"], "people")
+	if err != nil {
+		return nil, err
+	}
+	for i, p := range people {
+		people[i] = strings.ToLower(p.(string))
+	}
+	projects, err := idList(a["projects"], "projects")
+	if err != nil {
+		return nil, err
+	}
+	exps, err := idList(a["experiments"], "experiments")
+	if err != nil {
+		return nil, err
+	}
+	next := doc{"people": people, "projects": projects, "experiments": exps}
+	if canonical(next) != canonical(c["access"]) {
+		if err := connChange(q, c, "access", c["access"], next); err != nil {
 			return nil, err
 		}
-		c, err := connByName(q, b["connection"])
-		if err != nil {
+		c["access"], c["updatedAt"] = next, nowMs()
+		if err := put(q, "api-connection", c); err != nil {
 			return nil, err
-		}
-		tools, ok := b["tools"].([]any)
-		if !ok {
-			return nil, fail(400, "tools must be an explicit array")
-		}
-		seen := map[string]bool{}
-		for _, value := range tools {
-			name, ok := value.(string)
-			if !ok || name == "" || seen[name] || providerTools(astr(c["provider"]))[name] == nil {
-				return nil, fail(400, "tools must be unique recognized provider tool names")
-			}
-			seen[name] = true
-		}
-		if canonical(tools) != canonical(c["tools"]) {
-			if err := connChange(q, c, "tools", c["tools"], tools); err != nil {
-				return nil, err
-			}
-			c["tools"], c["updatedAt"] = tools, nowMs()
-			if err := put(q, "api-connection", c); err != nil {
-				return nil, err
-			}
-			publish(q)
-		}
-		return c, nil
-	})))
-	gatedOp("connections_set_access", false, shaped[contract.ConnectionsSetAccessRequest, contract.ConnectionView](func(q *Request) (any, error) {
-		b := body(q)
-		c, err := connByName(q, b["connection"])
-		if err != nil {
-			return nil, err
-		}
-		if err := connHolderOrOwner(q, c); err != nil {
-			return nil, err
-		}
-		a := mapOf(b["access"])
-		if a == nil {
-			a = doc{}
-		}
-		if !keysOnly(a, "people", "projects", "experiments") {
-			return nil, fail(400, "access: {people, projects, experiments}")
-		}
-		people, err := idList(a["people"], "people")
-		if err != nil {
-			return nil, err
-		}
-		for i, p := range people {
-			people[i] = strings.ToLower(p.(string))
-		}
-		projects, err := idList(a["projects"], "projects")
-		if err != nil {
-			return nil, err
-		}
-		exps, err := idList(a["experiments"], "experiments")
-		if err != nil {
-			return nil, err
-		}
-		next := doc{"people": people, "projects": projects, "experiments": exps}
-		if canonical(next) != canonical(c["access"]) {
-			if err := connChange(q, c, "access", c["access"], next); err != nil {
-				return nil, err
-			}
-			c["access"], c["updatedAt"] = next, nowMs()
-			if err := put(q, "api-connection", c); err != nil {
-				return nil, err
-			}
-			publish(q)
-		}
-		return c, nil
-	}))
-	gatedOp("connections_set_intake", false, shaped[contract.ConnectionsSetIntakeRequest, contract.ConnectionView](func(q *Request) (any, error) {
-		b := body(q)
-		c, err := connByName(q, b["connection"])
-		if err != nil {
-			return nil, err
-		}
-		if err := connHolderOrOwner(q, c); err != nil {
-			return nil, err
-		}
-		in := astr(b["intake"])
-		if in != "all" && in != "paused" {
-			return nil, fail(400, "intake: all or paused")
-		}
-		if c["intake"] != in {
-			if err := connChange(q, c, "intake", c["intake"], in); err != nil {
-				return nil, err
-			}
-			c["intake"], c["updatedAt"] = in, nowMs()
-			if err := put(q, "api-connection", c); err != nil {
-				return nil, err
-			}
-			publish(q)
-		}
-		return c, nil
-	}))
-	// File tool limits (§9): the stored object is replaced as a whole; an omitted field takes the gateway's default.
-	gatedOp("connections_set_limits", false, shaped[contract.ConnectionsSetLimitsRequest, contract.ConnectionView](func(q *Request) (any, error) {
-		b := body(q)
-		c, err := connByName(q, b["connection"])
-		if err != nil {
-			return nil, err
-		}
-		if err := connHolderOrOwner(q, c); err != nil {
-			return nil, err
-		}
-		given := mapOf(b["limits"])
-		if !keysOnly(b, "connection", "limits") || given == nil || !keysOnly(given, "fileBytes", "replyBytes", "stallMs", "answerMs") {
-			return nil, fail(400, "limits: {fileBytes, replyBytes, stallMs, answerMs}")
-		}
-		next := doc{}
-		for k, v := range given {
-			n, ok := v.(float64)
-			if !ok || n < 1 || n > 1<<53 || n != float64(int64(n)) {
-				return nil, fail(400, "limits."+k+" must be a positive integer")
-			}
-			next[k] = n
-		}
-		previous, _ := c["limits"].(map[string]any)
-		if previous == nil {
-			previous = doc{}
-		}
-		if canonical(next) != canonical(previous) {
-			if err := connChange(q, c, "limits", previous, next); err != nil {
-				return nil, err
-			}
-			c["limits"], c["updatedAt"] = next, nowMs()
-			if len(next) == 0 {
-				delete(c, "limits")
-			}
-			if err := put(q, "api-connection", c); err != nil {
-				return nil, err
-			}
-			publish(q)
-		}
-		return c, nil
-	}))
-	// Owner connection tokens (§4): a long-lived bearer for the owner's interactive sessions; the value is answered once.
-	gatedOp("connections_token_create", false, checkFirst(connOwner, shaped[contract.ConnectionsTokenCreateRequest, contract.ConnectionsTokenCreateReply](func(q *Request) (any, error) {
-		// Full access (owner, grant "*" such as site-agents) mints during development; directedBy records the real actor.
-		if err := connOwner(q); err != nil {
-			return nil, err
-		}
-		b := body(q)
-		name, ok := b["name"].(string)
-		if !ok || !connName.MatchString(name) {
-			return nil, fail(400, "Expected token name")
-		}
-		toks, err := all(q, "run-token", nil)
-		if err != nil {
-			return nil, err
-		}
-		for _, t := range toks {
-			if t["personal"] == name && t["revokedAt"] == nil {
-				return nil, fail(409, "Token name in use")
-			}
-		}
-		requested := []string{}
-		for _, x := range anys(b["connections"]) {
-			if s, ok := x.(string); ok {
-				requested = append(requested, s)
-			}
-		}
-		m, err := mint(q, doc{"executionId": "token:" + name, "directedBy": directorOf(q), "personal": name}, requested)
-		if err != nil {
-			return nil, err
-		}
-		if m["token"] == nil {
-			r := []string{}
-			for _, x := range m["refused"].([]string) {
-				r = append(r, x)
-			}
-			return nil, fail(409, "No usable connection: "+strings.Join(r, ", "))
-		}
-		m["name"] = name
-		return m, nil
-	})))
-	gatedOp("connections_token_list", true, shaped[contract.ConnectionsTokenListRequest, contract.ConnectionsTokenListReply](func(q *Request) (any, error) {
-		toks, err := all(q, "run-token", nil)
-		if err != nil {
-			return nil, err
-		}
-		out := []any{}
-		for _, t := range toks {
-			if t["personal"] != nil {
-				out = append(out, doc{"name": t["personal"], "connections": t["connections"], "createdAt": t["createdAt"], "revokedAt": t["revokedAt"], "directedBy": t["directedBy"]})
-			}
-		}
-		return doc{"tokens": out}, nil
-	}))
-	gatedOp("connections_token_revoke", false, checkFirst(connOwner, shaped[contract.ConnectionsTokenRevokeRequest, contract.ConnectionsTokenRevokeReply](func(q *Request) (any, error) {
-		if err := connOwner(q); err != nil {
-			return nil, err
-		}
-		b := body(q)
-		toks, err := all(q, "run-token", nil)
-		if err != nil {
-			return nil, err
-		}
-		n := 0
-		for _, t := range toks {
-			if t["personal"] == b["name"] && b["name"] != nil && t["revokedAt"] == nil {
-				t["revokedAt"] = nowMs()
-				if err := put(q, "run-token", t); err != nil {
-					return nil, err
-				}
-				n++
-			}
-		}
-		if n == 0 {
-			return nil, fail(404, "Unknown token")
 		}
 		publish(q)
-		return doc{"name": b["name"], "revoked": true}, nil
-	})))
+	}
+	return c, nil
+}
+
+func connectionsSetIntake(q *Request, r *contract.ConnectionsSetIntakeRequest) (any, error) {
+	c, err := connByName(q, r.Connection)
+	if err != nil {
+		return nil, err
+	}
+	in := string(r.Intake)
+	if c["intake"] != in {
+		if err := connChange(q, c, "intake", c["intake"], in); err != nil {
+			return nil, err
+		}
+		c["intake"], c["updatedAt"] = in, nowMs()
+		if err := put(q, "api-connection", c); err != nil {
+			return nil, err
+		}
+		publish(q)
+	}
+	return c, nil
+}
+
+// connectionsSetLimits: file tool limits (§9); the stored object is replaced as a whole; an omitted field takes the
+// gateway's default.
+func connectionsSetLimits(q *Request, r *contract.ConnectionsSetLimitsRequest) (any, error) {
+	c, err := connByName(q, r.Connection)
+	if err != nil {
+		return nil, err
+	}
+	next := doc{}
+	for k, v := range map[string]*int64{"fileBytes": r.Limits.FileBytes, "replyBytes": r.Limits.ReplyBytes, "stallMs": r.Limits.StallMs, "answerMs": r.Limits.AnswerMs} {
+		if v == nil {
+			continue
+		}
+		if *v < 1 || *v > 1<<53 {
+			return nil, fail(400, "limits."+k+" must be a positive integer")
+		}
+		next[k] = float64(*v)
+	}
+	previous, _ := c["limits"].(map[string]any)
+	if previous == nil {
+		previous = doc{}
+	}
+	if canonical(next) != canonical(previous) {
+		if err := connChange(q, c, "limits", previous, next); err != nil {
+			return nil, err
+		}
+		c["limits"], c["updatedAt"] = next, nowMs()
+		if len(next) == 0 {
+			delete(c, "limits")
+		}
+		if err := put(q, "api-connection", c); err != nil {
+			return nil, err
+		}
+		publish(q)
+	}
+	return c, nil
+}
+
+// connectionsTokenCreate (owner, §4): a long-lived bearer for the owner's interactive sessions; the value is answered
+// once. Full access (owner, grant "*" such as site-agents) mints during development; directedBy records the real actor.
+func connectionsTokenCreate(q *Request, r *contract.ConnectionsTokenCreateRequest) (any, error) {
+	name := r.Name
+	if !connName.MatchString(name) {
+		return nil, fail(400, "Expected token name")
+	}
+	toks, err := all(q, "run-token", nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range toks {
+		if t["personal"] == name && t["revokedAt"] == nil {
+			return nil, fail(409, "Token name in use")
+		}
+	}
+	requested := append([]string{}, r.Connections...)
+	m, err := mint(q, doc{"executionId": "token:" + name, "directedBy": directorOf(q), "personal": name}, requested)
+	if err != nil {
+		return nil, err
+	}
+	if m["token"] == nil {
+		r := []string{}
+		for _, x := range m["refused"].([]string) {
+			r = append(r, x)
+		}
+		return nil, fail(409, "No usable connection: "+strings.Join(r, ", "))
+	}
+	m["name"] = name
+	return m, nil
+}
+
+func connectionsTokenList(q *Request) (any, error) {
+	toks, err := all(q, "run-token", nil)
+	if err != nil {
+		return nil, err
+	}
+	out := []any{}
+	for _, t := range toks {
+		if t["personal"] != nil {
+			out = append(out, doc{"name": t["personal"], "connections": t["connections"], "createdAt": t["createdAt"], "revokedAt": t["revokedAt"], "directedBy": t["directedBy"]})
+		}
+	}
+	return doc{"tokens": out}, nil
+}
+
+func connectionsTokenRevoke(q *Request, r *contract.ConnectionsTokenRevokeRequest) (contract.ConnectionsTokenRevokeReply, error) {
+	var no contract.ConnectionsTokenRevokeReply
+	toks, err := all(q, "run-token", nil)
+	if err != nil {
+		return no, err
+	}
+	n := 0
+	for _, t := range toks {
+		if t["personal"] == r.Name && t["revokedAt"] == nil {
+			t["revokedAt"] = nowMs()
+			if err := put(q, "run-token", t); err != nil {
+				return no, err
+			}
+			n++
+		}
+	}
+	if n == 0 {
+		return no, fail(404, "Unknown token")
+	}
+	publish(q)
+	return contract.ConnectionsTokenRevokeReply{Name: r.Name, Revoked: true}, nil
+}
+
+func init() {
 
 	onStart(func(ctx context.Context, a *App) {
 		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {

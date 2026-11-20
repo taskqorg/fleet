@@ -19,6 +19,23 @@ func (v *ArtifactCopyRetryReply) Validate() error {
 type ArtifactCopyRetryRequest struct {
 	ArtifactId string `json:"artifactId"`
 	StoreId    string `json:"storeId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ArtifactCopyRetryRequest) MarshalJSON() ([]byte, error) {
+	type plain ArtifactCopyRetryRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ArtifactCopyRetryRequest) UnmarshalJSON(b []byte) error {
+	type plain ArtifactCopyRetryRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -40,6 +57,23 @@ type ArtifactGetReply = ArtifactView
 
 type ArtifactGetRequest struct {
 	ArtifactId string `json:"artifactId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ArtifactGetRequest) MarshalJSON() ([]byte, error) {
+	type plain ArtifactGetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ArtifactGetRequest) UnmarshalJSON(b []byte) error {
+	type plain ArtifactGetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -102,6 +136,23 @@ type ArtifactPurgeRequest struct {
 	ProjectId   *string `json:"projectId,omitempty"`
 	Reason      string  `json:"reason"`
 	Scope       *string `json:"scope,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ArtifactPurgeRequest) MarshalJSON() ([]byte, error) {
+	type plain ArtifactPurgeRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ArtifactPurgeRequest) UnmarshalJSON(b []byte) error {
+	type plain ArtifactPurgeRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -110,16 +161,25 @@ func (v *ArtifactPurgeRequest) Validate() error {
 }
 
 type ArtifactRow struct {
-	CreatedAt   float64 `json:"createdAt"`
-	ExecutionId *string `json:"executionId"`
-	Id          string  `json:"id"`
-	MediaType   string  `json:"mediaType"`
-	Name        string  `json:"name"`
-	ProjectId   *string `json:"projectId"`
-	Seq         int64   `json:"seq"`
-	Size        int64   `json:"size"`
-	State       string  `json:"state"`
-	TaskId      *string `json:"taskId"`
+	CreatedAt             float64 `json:"createdAt"`
+	DerivedFromArtifactId *string `json:"derivedFromArtifactId"`
+	Error                 *string `json:"error"`
+	ExecutionId           *string `json:"executionId"`
+	Id                    string  `json:"id"`
+	LegacyId              *string `json:"legacyId"`
+	MediaType             string  `json:"mediaType"`
+	Name                  string  `json:"name"`
+	PreviousArtifactId    *string `json:"previousArtifactId"`
+	ProjectId             *string `json:"projectId"`
+	Required              bool    `json:"required"`
+	Role                  string  `json:"role"`
+	Scope                 string  `json:"scope"`
+	Seq                   int64   `json:"seq"`
+	Sha256                string  `json:"sha256"`
+	Size                  int64   `json:"size"`
+	State                 string  `json:"state"`
+	TaskCode              *string `json:"taskCode,omitempty"`
+	TaskId                *string `json:"taskId"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -142,6 +202,23 @@ type ArtifactRuleConfirmRequest struct {
 	ProjectId *string         `json:"projectId,omitempty"`
 	Rule      json.RawMessage `json:"rule"`
 	RuleHash  *string         `json:"ruleHash,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ArtifactRuleConfirmRequest) MarshalJSON() ([]byte, error) {
+	type plain ArtifactRuleConfirmRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ArtifactRuleConfirmRequest) UnmarshalJSON(b []byte) error {
+	type plain ArtifactRuleConfirmRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -172,6 +249,23 @@ func (v *ArtifactRulePreviewReply) Validate() error {
 type ArtifactRulePreviewRequest struct {
 	ProjectId *string         `json:"projectId,omitempty"`
 	Rule      json.RawMessage `json:"rule"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ArtifactRulePreviewRequest) MarshalJSON() ([]byte, error) {
+	type plain ArtifactRulePreviewRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ArtifactRulePreviewRequest) UnmarshalJSON(b []byte) error {
+	type plain ArtifactRulePreviewRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -201,6 +295,23 @@ type ArtifactUploadBeginRequest struct {
 	ProjectId *string `json:"projectId,omitempty"`
 	SessionId *string `json:"sessionId,omitempty"`
 	Size      int64   `json:"size"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ArtifactUploadBeginRequest) MarshalJSON() ([]byte, error) {
+	type plain ArtifactUploadBeginRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ArtifactUploadBeginRequest) UnmarshalJSON(b []byte) error {
+	type plain ArtifactUploadBeginRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -258,6 +369,23 @@ func (v *StoreSetFreeSpaceWarningReply) Validate() error {
 type StoreSetFreeSpaceWarningRequest struct {
 	Bytes   *float64 `json:"bytes,omitempty"`
 	StoreId string   `json:"storeId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v StoreSetFreeSpaceWarningRequest) MarshalJSON() ([]byte, error) {
+	type plain StoreSetFreeSpaceWarningRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *StoreSetFreeSpaceWarningRequest) UnmarshalJSON(b []byte) error {
+	type plain StoreSetFreeSpaceWarningRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).

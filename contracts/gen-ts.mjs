@@ -4,7 +4,7 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 
 const dir = new URL('./', import.meta.url);
-const KEYS = new Set(['$comment', 'type', 'properties', 'required', 'additionalProperties', 'items', 'enum', '$ref', 'minimum', 'const', 'oneOf']);
+const KEYS = new Set(['$comment', 'type', 'properties', 'required', 'additionalProperties', 'unevaluatedProperties', 'items', 'enum', '$ref', 'minimum', 'const', 'oneOf']);
 const SCALAR = { string: 'string', integer: 'number', number: 'number', boolean: 'boolean', null: 'null' };
 
 function type(s, at) {

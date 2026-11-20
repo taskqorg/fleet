@@ -16,10 +16,10 @@ import (
 )
 
 func init() {
-	operation("budget_set", false, ownerFirst("Only the owner sets budgets", typedOp(budgetSet)))
-	operation("budget_ask", false, typedOp(budgetAsk))
-	operation("budget_delete", false, ownerFirst("Only the owner deletes budgets", typedOp(budgetDelete)))
-	operation("budgets_list", true, typedOp(budgetsList))
+	op("budget_set", budgetSet)
+	op("budget_ask", budgetAsk)
+	op("budget_delete", budgetDelete)
+	op("budgets_list", budgetsList)
 }
 
 var (

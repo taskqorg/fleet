@@ -1,5 +1,5 @@
 // Trusted agent profiles and project definitions (docs/configuration.md): read from config files,
-// validated; routes /api/profiles, /api/projects*, /api/project-operations/{name}, /api/project-tools.
+// validated; the project operations and the projects MCP server POST /api/project-tools.
 package main
 
 import (
@@ -465,35 +465,45 @@ func catalogueBase(q *Request, id string) (doc, error) {
 	return doc{"projectId": id, "capability": c["capability"], "sharedDefault": c["sharedDefault"], "recommendedMethod": method, "recommendationSource": source, "methods": methods}, nil
 }
 
-// projectOps: the project operation table without the pipeline runs (pipelines area).
+// projectOps: the operations of the projects MCP server (/api/project-tools) and of a native agent's project operations
+// (host_receipts.go); each is registered with op first and listed here with addProjectOps.
 var projectOps = map[string]registeredOp{}
 
-func projectOp(name string, read bool, h handler) {
-	projectOps[name] = registeredOp{read: read, h: h}
-	gatedObjOp(name, read, h)
+// addProjectOps lists registered operations in projectOps; a long one carries its own handler (it opens its own
+// transaction).
+func addProjectOps(names ...string) {
+	for _, n := range names {
+		r, ok := operations[n]
+		if !ok {
+			panic("addProjectOps " + n + ": not registered")
+		}
+		if h, long := longOperations[n]; long {
+			r.h = h
+		}
+		projectOps[n] = r
+	}
 }
 
 func init() {
-	projectOp("project_detail", true, resourceReadGate(typedOp(projectDetail)))
-	projectOp("project_resources", true, resourceReadGate(typedOp(projectPreparedResources)))
-	projectOp("project_resource_items", true, resourceReadGate(typedOp(projectPreparedItems)))
-	gatedRoute("GET /api/profiles", func(q *Request) (any, error) {
-		ps, err := listProfiles(q)
-		return doc{"profiles": ps}, err
-	})
+	op("project_detail", projectDetail)
+	opGates["project_detail"] = resourceGate
+	op("project_resources", projectPreparedResources)
+	opGates["project_resources"] = resourceGate
+	op("project_resource_items", projectPreparedItems)
+	opGates["project_resource_items"] = resourceGate
 	op("profiles_list", func(q *Request, _ *contract.ProfilesListRequest) (contract.ProfilesListReply, error) {
 		ps, err := listProfiles(q)
 		return contract.ProfilesListReply{Profiles: recsOf(ps)}, err
 	})
-	projectOp("project_list", true, shaped[contract.ProjectListRequest, contract.ProjectListReply](func(q *Request) (any, error) {
+	op("project_list", func(q *Request, _ *contract.ProjectListRequest) (contract.ProjectListReply, error) {
 		out := []doc{}
 		ids, err := projectIDs(q)
 		if err != nil {
-			return nil, err
+			return contract.ProjectListReply{}, err
 		}
 		codes, err := rowsOf(q, "SELECT project_id, code FROM project_code WHERE current")
 		if err != nil {
-			return nil, err
+			return contract.ProjectListReply{}, err
 		}
 		currentCode := map[string]string{}
 		for _, row := range codes {
@@ -505,171 +515,153 @@ func init() {
 			}
 			p, err := projectContext(q, id)
 			if err != nil {
-				return nil, err
+				return contract.ProjectListReply{}, err
 			}
 			if code := currentCode[id]; code != "" {
 				p["code"] = code
 			}
 			out = append(out, p)
 		}
-		return doc{"projects": out}, nil
-	}))
-	projectOp("project_context", true, shaped[contract.ProjectContextRequest, contract.ProjectContextReply](func(q *Request) (any, error) {
-		id := astr(body(q)["projectId"])
-		p, err := projectContext(q, id)
+		return contract.ProjectListReply{Projects: recsOf(out)}, nil
+	})
+	op("project_context", func(q *Request, r *contract.ProjectContextRequest) (contract.ProjectContextReply, error) {
+		p, err := projectContext(q, r.ProjectId)
 		if err != nil {
-			return nil, err
+			return contract.ProjectContextReply{}, err
 		}
-		res, err := projectResources(q, id)
+		res, err := projectResources(q, r.ProjectId)
 		if err != nil {
-			return nil, err
+			return contract.ProjectContextReply{}, err
 		}
 		p["resources"] = res
-		return p, nil
-	}))
-	projectOp("catalogue", true, shaped[contract.CatalogueRequest, contract.CatalogueReply](func(q *Request) (any, error) { return catalogue(q, astr(body(q)["projectId"])) }))
-	projectOp("recommendation_set", false, shaped[contract.RecommendationSetRequest, contract.RecommendationSetReply](func(q *Request) (any, error) {
-		b := body(q)
-		c, err := catalogue(q, astr(b["projectId"]))
+		return replyAs[contract.ProjectContextReply](p, nil)
+	})
+	op("catalogue", func(q *Request, r *contract.CatalogueRequest) (contract.CatalogueReply, error) {
+		return replyAs[contract.CatalogueReply](catalogue(q, r.ProjectId))
+	})
+	op("recommendation_set", func(q *Request, r *contract.RecommendationSetRequest) (contract.RecommendationSetReply, error) {
+		c, err := catalogue(q, r.ProjectId)
 		if err != nil {
-			return nil, err
+			return contract.RecommendationSetReply{}, err
 		}
 		found := false
 		for _, x := range c["methods"].([]any) {
-			found = found || astr(x.(map[string]any)["id"]) == astr(b["methodId"])
+			found = found || astr(x.(map[string]any)["id"]) == r.MethodId
 		}
 		if !found {
-			return nil, fail(400, "Method unavailable")
+			return contract.RecommendationSetReply{}, fail(400, "Method unavailable")
 		}
-		r := doc{"id": "recommendation:" + astr(b["projectId"]), "projectId": b["projectId"], "methodId": b["methodId"], "selectedAt": nowMs(), "actor": actor(q, "operator")}
-		return r, put(q, "project-recommendation", r)
-	}))
-	projectOp("question_ask", false, shaped[contract.QuestionAskRequest, contract.QuestionAskReply](func(q *Request) (any, error) {
-		b := body(q)
-		if _, err := projectContext(q, astr(b["projectId"])); err != nil {
-			return nil, err
+		rec := doc{"id": "recommendation:" + r.ProjectId, "projectId": r.ProjectId, "methodId": r.MethodId, "selectedAt": nowMs(), "actor": actor(q, "operator")}
+		if err := put(q, "project-recommendation", rec); err != nil {
+			return contract.RecommendationSetReply{}, err
 		}
-		rid, text := astr(b["requestId"]), astr(b["text"])
-		if rid == "" || text == "" || len([]rune(text)) > 2000 {
-			return nil, fail(400, "Expected question text and requestId")
+		return replyAs[contract.RecommendationSetReply](rec, nil)
+	})
+	op("question_ask", func(q *Request, r *contract.QuestionAskRequest) (contract.QuestionAskReply, error) {
+		if _, err := projectContext(q, r.ProjectId); err != nil {
+			return contract.QuestionAskReply{}, err
 		}
-		d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE kind='operator_decision' AND project_id=$1 AND request_id=$2", b["projectId"], rid)
+		if r.RequestId == "" || r.Text == "" || len([]rune(r.Text)) > 2000 {
+			return contract.QuestionAskReply{}, fail(400, "Expected question text and requestId")
+		}
+		d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE kind='operator_decision' AND project_id=$1 AND request_id=$2", r.ProjectId, r.RequestId)
 		if err != nil {
-			return nil, err
+			return contract.QuestionAskReply{}, err
 		}
 		if d != nil {
 			d = mapOf(d["v"])
-			if astr(d["text"]) != text {
-				return nil, fail(409, "Question identity conflict")
+			if astr(d["text"]) != r.Text {
+				return contract.QuestionAskReply{}, fail(409, "Question identity conflict")
 			}
-			return d, nil
+			return replyAs[contract.QuestionAskReply](d, nil)
 		}
-		v := doc{"id": newID(), "projectId": b["projectId"], "requestId": rid, "text": text, "state": "waiting", "createdAt": nowMs(), "actor": actor(q, "operator")}
-		_, err = askQuestion(q, doc{"id": v["id"], "kind": "operator_decision", "text": text, "projectId": b["projectId"], "askedBy": v["actor"], "requestId": rid, "askedAt": v["createdAt"]})
-		return v, err
-	}))
-	projectOp("question_answer", false, shaped[contract.QuestionAnswerRequest, contract.QuestionAnswerReply](func(q *Request) (any, error) {
-		b := body(q)
-		id := astr(b["questionId"])
-		answer, err := strArg(b, "answer", "answer", 4000)
-		if err != nil {
-			return nil, err
+		v := doc{"id": newID(), "projectId": r.ProjectId, "requestId": r.RequestId, "text": r.Text, "state": "waiting", "createdAt": nowMs(), "actor": actor(q, "operator")}
+		_, err = askQuestion(q, doc{"id": v["id"], "kind": "operator_decision", "text": r.Text, "projectId": r.ProjectId, "askedBy": v["actor"], "requestId": r.RequestId, "askedAt": v["createdAt"]})
+		return replyAs[contract.QuestionAskReply](v, err)
+	})
+	op("question_answer", func(q *Request, r *contract.QuestionAnswerRequest) (contract.QuestionAnswerReply, error) {
+		if r.Answer == "" || len([]rune(r.Answer)) > 4000 {
+			return contract.QuestionAnswerReply{}, fail(400, "Expected answer")
 		}
-		pq, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE id=$1 AND "+projectQuestion, id)
+		pq, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE id=$1 AND "+projectQuestion, r.QuestionId)
 		if err != nil {
-			return nil, err
+			return contract.QuestionAnswerReply{}, err
 		}
 		if pq == nil {
-			ids, _ := b["artifactIds"].([]any)
-			a, err := answerQuestion(q, id, answer, actor(q, "operator"), ids)
+			var ids []any
+			if r.ArtifactIds != nil {
+				ids = []any{}
+				for _, x := range r.ArtifactIds {
+					ids = append(ids, x)
+				}
+			}
+			a, err := answerQuestion(q, r.QuestionId, r.Answer, actor(q, "operator"), ids)
 			if err != nil {
-				return nil, err
+				return contract.QuestionAnswerReply{}, err
 			}
-			if x, err := findQuestion(q, astr(a["task_id"]), id); x != nil || err != nil {
-				return x, err
+			if x, err := findQuestion(q, astr(a["task_id"]), r.QuestionId); x != nil || err != nil {
+				return replyAs[contract.QuestionAnswerReply](x, err)
 			}
-			return doc{"id": a["id"], "state": a["state"], "answer": a["answer"]}, nil
+			return replyAs[contract.QuestionAnswerReply](doc{"id": a["id"], "state": a["state"], "answer": a["answer"]}, nil)
 		}
 		v := mapOf(pq["v"])
 		if astr(v["state"]) == "answered" {
-			if astr(v["answer"]) != answer {
-				return nil, fail(409, "Answer already recorded")
+			if astr(v["answer"]) != r.Answer {
+				return contract.QuestionAnswerReply{}, fail(409, "Answer already recorded")
 			}
-			return v, nil
+			return replyAs[contract.QuestionAnswerReply](v, nil)
 		}
-		if _, err := answerQuestion(q, id, answer, actor(q, "operator"), nil); err != nil {
-			return nil, err
+		if _, err := answerQuestion(q, r.QuestionId, r.Answer, actor(q, "operator"), nil); err != nil {
+			return contract.QuestionAnswerReply{}, err
 		}
-		pq, err = first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE id=$1", id)
+		pq, err = first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE id=$1", r.QuestionId)
 		if err != nil {
-			return nil, err
+			return contract.QuestionAnswerReply{}, err
 		}
-		return mapOf(pq["v"]), nil
-	}))
-	projectOp("question_history", true, shaped[contract.QuestionHistoryRequest, contract.QuestionHistoryReply](func(q *Request) (any, error) {
-		b := body(q)
-		if _, err := projectContext(q, astr(b["projectId"])); err != nil {
-			return nil, err
+		return replyAs[contract.QuestionAnswerReply](mapOf(pq["v"]), nil)
+	})
+	op("question_history", func(q *Request, r *contract.QuestionHistoryRequest) (contract.QuestionHistoryReply, error) {
+		if _, err := projectContext(q, r.ProjectId); err != nil {
+			return contract.QuestionHistoryReply{}, err
 		}
-		qs, err := rows(q, "SELECT "+projectQuestionJSON+" FROM question WHERE "+projectQuestion+" AND project_id=$1 ORDER BY seq", b["projectId"])
-		return doc{"questions": qs}, err
-	}))
-	projectOp("pipeline_get", true, shaped[contract.PipelineGetRequest, contract.PipelineGetReply](func(q *Request) (any, error) {
-		b := body(q)
-		id := astr(b["runId"])
-		if id == "" || len(id) > 200 {
-			return nil, fail(400, "Expected runId")
+		qs, err := rows(q, "SELECT "+projectQuestionJSON+" FROM question WHERE "+projectQuestion+" AND project_id=$1 ORDER BY seq", r.ProjectId)
+		return replyAs[contract.QuestionHistoryReply](doc{"questions": qs}, err)
+	})
+	op("pipeline_get", func(q *Request, r *contract.PipelineGetRequest) (contract.PipelineGetReply, error) {
+		if r.RunId == "" || len(r.RunId) > 200 {
+			return contract.PipelineGetReply{}, fail(400, "Expected runId")
 		}
-		r, err := pipelineRun(q, id)
+		run, err := pipelineRun(q, r.RunId)
 		if err != nil {
-			return nil, err
+			return contract.PipelineGetReply{}, err
 		}
-		if p := astr(b["projectId"]); p != "" && astr(r["projectId"]) != p {
-			return nil, fail(403, "Pipeline belongs to another project")
+		if p := deref(r.ProjectId); p != "" && astr(run["projectId"]) != p {
+			return contract.PipelineGetReply{}, fail(403, "Pipeline belongs to another project")
 		}
-
-		return r, nil
-	}))
-	projectOp("pipeline_history", true, shaped[contract.PipelineHistoryRequest, contract.PipelineHistoryReply](func(q *Request) (any, error) {
-		b := body(q)
-		if _, err := projectContext(q, astr(b["projectId"])); err != nil {
-			return nil, err
+		return replyAs[contract.PipelineGetReply](run, nil)
+	})
+	op("pipeline_history", func(q *Request, r *contract.PipelineHistoryRequest) (contract.PipelineHistoryReply, error) {
+		if _, err := projectContext(q, r.ProjectId); err != nil {
+			return contract.PipelineHistoryReply{}, err
 		}
-		ids, err := rowsOf(q, "SELECT id FROM execution WHERE "+runRows+" AND data->>'projectId'=$1 ORDER BY seq", b["projectId"])
+		ids, err := rowsOf(q, "SELECT id FROM execution WHERE "+runRows+" AND data->>'projectId'=$1 ORDER BY seq", r.ProjectId)
 		if err != nil {
-			return nil, err
+			return contract.PipelineHistoryReply{}, err
 		}
 		runs := []doc{}
 		for _, x := range ids {
-			r, err := pipelineRun(q, astr(x["id"]))
+			run, err := pipelineRun(q, astr(x["id"]))
 			if err != nil {
-				return nil, err
+				return contract.PipelineHistoryReply{}, err
 			}
-			runs = append(runs, r)
+			runs = append(runs, run)
 		}
-		return doc{"runs": runs}, nil
-	}))
-	gatedRoute("GET /api/projects", func(q *Request) (any, error) { return projectOps["project_list"].h(q) })
-	projectRoute := func(path, op string) {
-		gatedRoute("GET "+path, func(q *Request) (any, error) {
-			q.body = json.RawMessage(js(doc{"projectId": q.r.PathValue("id")}))
-			return projectOps[op].h(q)
-		})
-	}
-	projectRoute("/api/projects/{id}", "project_context")
-	projectRoute("/api/projects/{id}/catalogue", "catalogue")
-	projectRoute("/api/projects/{id}/runs", "pipeline_history")
-	gatedRoute("GET /api/pipeline-runs/{id}", func(q *Request) (any, error) {
-		q.body = json.RawMessage(js(doc{"runId": q.r.PathValue("id")}))
-		return projectOps["pipeline_get"].h(q)
+		return replyAs[contract.PipelineHistoryReply](doc{"runs": runs}, nil)
 	})
-	gatedLongRoute("POST /api/project-operations/{name}", func(q *Request) (any, error) {
-		if _, ok := projectOps[q.r.PathValue("name")]; !ok {
-			return nil, fail(404, "Unknown operation")
-		}
-		return q.app.runOp(q, q.r.PathValue("name"), q.body, nil)
-	})
-	gatedLongRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps) })
+	addProjectOps("project_detail", "project_resources", "project_resource_items", "project_list", "project_context", "catalogue",
+		"recommendation_set", "question_ask", "question_answer", "question_history", "pipeline_get", "pipeline_history",
+		"pipeline_run", "direct_search", "connections_key_request")
+	longRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps) })
 }
 
 // pipelineRun: a pipeline-run record with its steps.
@@ -808,32 +800,26 @@ func resourceOperationAdvertised(name string) bool {
 	return !isResourceRead(name) || resourceReadsEnabled
 }
 
-// Authorization precedes typed item/category/cursor interpretation, including conditional reads.
-// Do not use projectContext here: an invalid configuration must not disable prepared reads.
-func resourceReadGate(h handler) handler {
-	return func(q *Request) (any, error) {
-		if !resourceReadsEnabled {
-			return nil, fail(503, "Prepared project reads disabled")
-		}
-		var b struct {
-			ProjectID string `json:"projectId"`
-		}
-		if json.Unmarshal(q.body, &b) != nil || strings.TrimSpace(b.ProjectID) == "" {
-			return nil, fail(400, "Expected projectId")
-		}
-		if q.person != nil && !mayAccessProjectID(q.person, b.ProjectID) {
-			return nil, fail(404, "Unknown project")
-		}
-		exists, err := has(q, `SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL`, b.ProjectID)
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
-			return nil, fail(404, "Unknown project")
-		}
-		return h(q)
+// resourceGate: the prepared project reads' gate, before the body is decoded (opGates): reads off 503, no projectId 400,
+// an unknown or retired project 404. The grant is the declared project:projectId rule.
+func resourceGate(q *Request) error {
+	if !resourceReadsEnabled {
+		return fail(503, "Prepared project reads disabled")
 	}
+	id := jsonPathString(q.body, "projectId")
+	if strings.TrimSpace(id) == "" {
+		return fail(400, "Expected projectId")
+	}
+	exists, err := has(q, `SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fail(404, "Unknown project")
+	}
+	return nil
 }
+
 func projectDetail(q *Request, r *contract.ProjectDetailRequest) (contract.ProjectDetailReply, error) {
 	p, err := projectContext(q, r.ProjectId)
 	if err != nil {
