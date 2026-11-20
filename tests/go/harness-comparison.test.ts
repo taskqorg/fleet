@@ -33,7 +33,8 @@ test('retained Lab descendants and native observations remain correctly attribut
   // Reapply the upgrade's repair pass, twice, to populated history rather than an empty schema. Its function body of
   // migration 54 read events from document; the current one (migration 77) reads the event table, so the pass runs it.
   const migration=readFileSync('go/coordinator/schema.sql','utf8').split('-- migration 54:')[1].split('-- migration 55:')[0];
-  const projection=migration.slice(migration.indexOf('-- Owner-only upgrade'));
+  // Its RLS switches of the document table are left out: migration 83 dropped the table.
+  const projection=migration.slice(migration.indexOf('-- Owner-only upgrade')).replace(/^ALTER TABLE document [^\n]*\n/gm,'');
   c.sql('BEGIN;'+projection+'COMMIT;');c.sql('BEGIN;'+projection+'COMMIT;');
   const rows=JSON.parse(c.sql(`SELECT json_agg(json_build_object('id',e.id,'reasoning',tokens_reasoning,'api',api_ms)) FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.id LIKE 'native-%'`));
   const byId=new Map<string,any>(rows.map((r:any)=>[r.id,r]));
