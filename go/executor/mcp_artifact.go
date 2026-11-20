@@ -7,6 +7,7 @@ package main
 import (
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fleet/contract"
 	"io"
@@ -23,7 +24,14 @@ import (
 var mcpMimeJSON []byte
 
 // Captured Python mimetypes table keeps the former adapter's defaults without host Python.
-var mimeTable, _ = dec(string(mcpMimeJSON))
+var mimeTable = func() (t struct {
+	Encodings map[string]string `json:"encodings"`
+	Suffixes  map[string]string `json:"suffixes"`
+	Types     map[string]string `json:"types"`
+}) {
+	json.Unmarshal(mcpMimeJSON, &t)
+	return t
+}()
 
 const notLink = "path must be a regular file inside your working area, not a link"
 
@@ -44,17 +52,17 @@ func mime(name string) string {
 	path := name
 	for {
 		ext := extension(path)
-		suffix, ok := str(jAt(mimeTable, "suffixes", strings.ToLower(ext)))
+		suffix, ok := mimeTable.Suffixes[strings.ToLower(ext)]
 		if !ok || ext == "" {
 			break
 		}
 		path = path[:len(path)-len(ext)] + suffix
 	}
 	ext := extension(path)
-	if has(jAt(mimeTable, "encodings"), ext) {
+	if _, ok := mimeTable.Encodings[ext]; ok {
 		ext = extension(path[:len(path)-len(ext)])
 	}
-	if t, ok := str(jAt(mimeTable, "types", strings.ToLower(ext))); ok {
+	if t, ok := mimeTable.Types[strings.ToLower(ext)]; ok {
 		return t
 	}
 	return "application/octet-stream"
@@ -125,13 +133,27 @@ func insideParts(workdir string, parts []string) []string {
 	return nil
 }
 
-func artifactSave(ctx, q any, db dbExec) (any, error) {
-	path, ok := str(jAt(q, "path"))
-	if !ok {
+// artifactArgs: the arguments of artifact_save, artifact_list and artifact_get (mcp-tools.json); artifactCall admits
+// only text and booleans, and a value passed on keeps its type.
+type artifactArgs struct {
+	Path        lax[string] `json:"path"`
+	Name        lax[string] `json:"name"`
+	MediaType   lax[string] `json:"media_type"`
+	Required    lax[bool]   `json:"required"`
+	ArtifactId  lax[string] `json:"artifact_id"`
+	ExecutionId lax[string] `json:"execution_id"`
+	TaskId      lax[string] `json:"task_id"`
+	Scope       lax[string] `json:"scope"`
+	Cursor      lax[string] `json:"cursor"`
+}
+
+func artifactSave(ctx *delegationContext, q artifactArgs, db dbExec) (any, error) {
+	path := q.Path.V
+	if !q.Path.Ok {
 		return nil, refusal("path must be a file inside your working area")
 	}
-	workdir, ok := str(jAt(ctx, "workdir"))
-	if !ok {
+	workdir := ctx.Workdir.V
+	if !ctx.Workdir.Ok {
 		return nil, refusal("workdir")
 	}
 	parts := pathParts(path)
@@ -162,8 +184,8 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 		return nil, refusal("path must be a regular file with one link")
 	}
 	key := newID()
-	spoolDir, ok := str(jAt(ctx, "spool"))
-	if !ok {
+	spoolDir := ctx.Spool.V
+	if !ctx.Spool.Ok {
 		return nil, refusal("spool")
 	}
 	spool := filepath.Join(spoolDir, key)
@@ -182,19 +204,20 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 		return nil, err
 	}
 	name := strings.Join(parts, "/")
-	body := M{"path": spool, "spool": true, "previews": true, "name": name, "mediaType": mime(name), "executionId": jAt(ctx, "executionId"), "required": jAt(q, "required") == true}
-	if truth(jAt(q, "name")) {
-		body["name"] = jAt(q, "name")
+	body := M{"path": spool, "spool": true, "previews": true, "name": name, "mediaType": mime(name), "executionId": ctx.ExecutionId.value(), "required": q.Required.V}
+	declared := name
+	if truth(q.Name.value()) {
+		body["name"], declared = q.Name.value(), q.Name.V
 	}
-	if truth(jAt(q, "media_type")) {
-		body["mediaType"] = jAt(q, "media_type")
+	if truth(q.MediaType.value()) {
+		body["mediaType"] = q.MediaType.value()
 	}
 	if err := db.tx(func(x execer) error {
 		if _, err := x.Exec("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,'upload',?,?)", key, enc(body), nowMs()); err != nil {
 			return err
 		}
-		if body["required"] == true {
-			decl := contract.ArtifactDeclareRequest{HostId: jStr(ctx, "hostId"), ExecutionId: jStr(ctx, "executionId"), Name: jStr(body, "name")}
+		if q.Required.V {
+			decl := contract.ArtifactDeclareRequest{HostId: ctx.HostId.V, ExecutionId: ctx.ExecutionId.V, Name: declared}
 			return queueTo(x, contract.RouteArtifactsDeclare, decl)
 		}
 		return nil
@@ -202,72 +225,81 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 		return nil, dbe(err)
 	}
 	r, err := wait(db.DB, "transfers", key, 30, true)
-	if r == nil && err == nil {
-		r = M{"artifactId": key, "state": "pending"}
+	if err != nil {
+		return nil, err
 	}
-	return r, err
+	if r == nil {
+		return M{"artifactId": key, "state": "pending"}, nil
+	}
+	return r.Value, nil
 }
 
-func artifactCall(ctx any, name string, q any, db dbExec) (any, error) {
-	var spec any
-	for _, t := range mcpTools(ctx)["tools"].([]any) {
-		if jAt(t, "name") == name {
-			spec = jAt(t, "inputSchema")
-		}
+func artifactCall(context any, name string, q any, db dbExec) (any, error) {
+	ctx := contextOf(context)
+	spec := toolSchemas[name]
+	var keys lax[map[string]json.RawMessage]
+	viewOf(q, &keys)
+	text := map[string]bool{} // each argument key: its value is text
+	bad := !keys.Ok
+	for k, v := range keys.V {
+		var s lax[string]
+		var b lax[bool]
+		json.Unmarshal(v, &s)
+		json.Unmarshal(v, &b)
+		_, known := spec.Properties[k]
+		text[k] = s.Ok
+		bad = bad || !known || !(s.Ok || b.Ok)
 	}
-	qo, ok := q.(M)
-	bad := !ok
-	for k, v := range qo {
-		_, isS := v.(string)
-		_, isB := v.(bool)
-		bad = bad || !has(jAt(spec, "properties"), k) || !(isS || isB)
-	}
-	req, _ := jAt(spec, "required").([]any)
-	for _, k := range req {
-		bad = bad || !has(qo, jStr(k))
+	for _, k := range spec.Required {
+		_, in := keys.V[k]
+		bad = bad || !in
 	}
 	if bad {
 		return nil, errors.New("Invalid artifact tool arguments")
 	}
+	var args artifactArgs
+	viewOf(q, &args)
 	var result any
 	var err error
 	if name == "artifact_save" {
-		result, err = artifactSave(ctx, q, db)
+		result, err = artifactSave(ctx, args, db)
 	} else {
 		key := newID()
 		kind, seconds := "get", 600
-		body := M{"executionId": jAt(ctx, "executionId"), "artifactId": jAt(q, "artifact_id"), "inputDir": jAt(ctx, "inputDir")}
+		body := M{"executionId": ctx.ExecutionId.value(), "artifactId": args.ArtifactId.value(), "inputDir": ctx.InputDir.value()}
 		if name == "artifact_list" {
 			kind, seconds = "list", 20
-			for k, v := range qo {
-				if _, ok := v.(string); !ok {
+			for k, isText := range text {
+				if !isText {
 					return mcpText(M{"error": "artifact tool refused: " + k + " must be text"}, &yes), nil
 				}
 			}
 			var scope any
-			if s := jStr(q, "scope"); s != "" { // empty is absent, as for the filters
+			if s := args.Scope.V; s != "" { // empty is absent, as for the filters
 				scope = s
 			}
 			if scope != nil && scope != "execution" && scope != "project" {
 				return mcpText(M{"error": `artifact tool refused: scope must be "execution" or "project"`}, &yes), nil
 			}
-			if scope != nil && (jStr(q, "execution_id") != "" || jStr(q, "task_id") != "") {
+			if scope != nil && (args.ExecutionId.V != "" || args.TaskId.V != "") {
 				return mcpText(M{"error": "artifact tool refused: scope goes without execution_id and task_id"}, &yes), nil
 			}
 			// Without a filter an agent lists its own execution's artifacts; the whole project only on request.
-			execution := jStr(q, "execution_id") // empty is absent, as the transfer drops it
-			if execution == "" && jStr(q, "task_id") == "" && scope != "project" {
-				execution = jStr(ctx, "executionId")
+			execution := args.ExecutionId.V // empty is absent, as the transfer drops it
+			if execution == "" && args.TaskId.V == "" && scope != "project" {
+				execution = ctx.ExecutionId.V
 			}
-			body = M{"executionId": jAt(ctx, "executionId"), "filter": M{"executionId": optStr(execution), "taskId": jAt(q, "task_id"), "mediaType": jAt(q, "media_type"), "cursor": jAt(q, "cursor")}}
+			body = M{"executionId": ctx.ExecutionId.value(), "filter": M{"executionId": optStr(execution), "taskId": args.TaskId.value(), "mediaType": args.MediaType.value(), "cursor": args.Cursor.value()}}
 		}
 		if _, err := db.Exec("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,?,?,?)", key, kind, enc(body), nowMs()); err != nil {
 			return nil, dbe(err)
 		}
-		result, err = wait(db.DB, "transfers", key, seconds, false)
+		var r *hostReply
+		r, err = wait(db.DB, "transfers", key, seconds, false)
 		if err == nil {
-			if r, ok := result.(M); ok {
-				r["transferId"] = key
+			if m, ok := r.valueObject(); ok {
+				m["transferId"] = key
+				result = m
 			} else {
 				result = M{"state": "pending", "transferId": key, "instruction": "Still in progress on this host; list artifacts later."}
 			}

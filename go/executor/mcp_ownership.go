@@ -41,6 +41,52 @@ type mcpOwner struct {
 	pending                sync.WaitGroup
 }
 
+// mcpLaunchSpec: the members of a trusted MCP launch spec (a binding) the executor reads; the spec itself passes on to
+// the guardian and the bound command as written.
+type mcpLaunchSpec struct {
+	ReceiptPath       lax[string] `json:"receiptPath"`
+	PathPolicy        lax[string] `json:"pathPolicy"`
+	Generation        lax[string] `json:"generation"`
+	Dependency        lax[string] `json:"dependency"`
+	Command           lax[string] `json:"command"`
+	TargetSha256      lax[string] `json:"targetSha256"`
+	Dependencies      lax[M]      `json:"dependencies"`      // name -> path, for mcpPrivatePath
+	OwnedDependencies lax[[]any]  `json:"ownedDependencies"` // names, for mcpPrivatePath
+	Tools             lax[[]any]  `json:"tools"`             // the selected tool names, for filterMCP
+}
+
+// ownerRequest: one request on an execution's MCP owner socket: a guardian's registration (identity, with generation,
+// dependency, command and targetSha256 for an owned dependency), or action prepare or lookup.
+type ownerRequest struct {
+	Action            lax[string]                 `json:"action"`
+	Identity          lax[string]                 `json:"identity"`
+	Generation        lax[string]                 `json:"generation"`
+	Dependency        lax[string]                 `json:"dependency"`
+	Command           lax[string]                 `json:"command"`
+	TargetSha256      lax[string]                 `json:"targetSha256"`
+	Dependencies      lax[map[string]lax[string]] `json:"dependencies"`
+	OwnedDependencies lax[[]lax[string]]          `json:"ownedDependencies"`
+}
+
+// ownerRequestOf: the owner request of v, an ownerRequest or its JSON.
+func ownerRequestOf(v any) ownerRequest {
+	if r, ok := v.(ownerRequest); ok {
+		return r
+	}
+	var r ownerRequest
+	viewOf(v, &r)
+	return r
+}
+
+// ownerAnswer: the owner's answer to a request; the guardian passes the identity and error members on as they came.
+type ownerAnswer struct {
+	Registered  lax[bool]       `json:"registered"`
+	Error       lax[string]     `json:"error"`
+	ExecutionId json.RawMessage `json:"executionId"`
+	ErrorKind   json.RawMessage `json:"errorKind"`
+	ErrorCode   json.RawMessage `json:"errorCode"`
+}
+
 func newMCPOwner(db *sql.DB, execution string) (*mcpOwner, error) {
 	dir, err := os.MkdirTemp("", "fleet-mcp-")
 	if err != nil {
@@ -80,7 +126,7 @@ func (o *mcpOwner) accept() {
 			defer c.Close()
 			defer func() { o.mu.Lock(); delete(o.connections, c); o.mu.Unlock() }()
 			c.SetDeadline(time.Now().Add(probeWait))
-			var request M
+			var request ownerRequest
 			if json.NewDecoder(c).Decode(&request) != nil {
 				return
 			}
@@ -103,10 +149,10 @@ func (o *mcpOwner) accept() {
 			keep := false
 			var end func()
 			if err == nil {
-				if jStr(request, "action") == "prepare" || jStr(request, "action") == "lookup" || jStr(request, "generation") != "" {
+				if request.Action.V == "prepare" || request.Action.V == "lookup" || request.Generation.V != "" {
 					answer, keep, end, err = o.generationRequest(c, pid, request)
 				} else {
-					err = o.register(pid, jStr(request, "identity"))
+					err = o.register(pid, request.Identity.V)
 					if err == nil {
 						keep = true
 						end = func() {}
@@ -294,25 +340,27 @@ func mcpGuardian(args []string) error {
 		return err
 	}
 	report["guardianIdentity"] = id
-	spec, err := dec(args[1])
+	spec, err := dec(args[1]) // passed on to the bound command as written
 	if err != nil {
 		return err
 	}
-	if err = json.NewEncoder(c).Encode(M{"identity": id, "generation": jStr(spec, "generation"), "dependency": jStr(spec, "dependency"), "command": jStr(spec, "command"), "targetSha256": jStr(spec, "targetSha256")}); err != nil {
+	var s mcpLaunchSpec
+	viewOf(spec, &s)
+	if err = json.NewEncoder(c).Encode(M{"identity": id, "generation": s.Generation.V, "dependency": s.Dependency.V, "command": s.Command.V, "targetSha256": s.TargetSha256.V}); err != nil {
 		return err
 	}
-	var answer M
+	var answer ownerAnswer
 	if err = json.NewDecoder(c).Decode(&answer); err != nil {
 		return errors.New("MCP ownership acknowledgement unknown; no server start")
 	}
-	if !jBoolOr(false, answer, "registered") {
+	if !answer.Registered.V {
 		report["registration"] = "refused"
-		report["refusalReason"] = jStr(answer, "error")
-		report["errorKind"], report["errorCode"] = answer["errorKind"], answer["errorCode"]
-		return errors.New("MCP ownership refused: " + jStr(answer, "error"))
+		report["refusalReason"] = answer.Error.V
+		report["errorKind"], report["errorCode"] = decRaw(answer.ErrorKind), decRaw(answer.ErrorCode)
+		return errors.New("MCP ownership refused: " + answer.Error.V)
 	}
 	report["registration"] = "acknowledged"
-	report["executionId"] = answer["executionId"]
+	report["executionId"] = decRaw(answer.ExecutionId)
 	report["stage"] = "binding"
 	c.SetDeadline(time.Time{})
 	errtrack.Go("mcp-guardian.owner", func() { io.Copy(io.Discard, c); kill() })
@@ -506,7 +554,9 @@ func (c *mcpChild) close() {
 }
 func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, policy string, parentLease ...io.ReadCloser) (resultErr error) {
 	phase, status := "socket", safeMCPStatus(nil)
-	if prefix := jStr(spec, "receiptPath"); prefix != "" {
+	var s mcpLaunchSpec
+	viewOf(spec, &s)
+	if prefix := s.ReceiptPath.V; prefix != "" {
 		f, err := openMCPReceipt(prefix)
 		if err == nil {
 			// An interrupted sidecar leaves explicit unknown, never a fabricated exit.
@@ -524,16 +574,19 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 	if err := privateSocket(socket); err != nil {
 		return err
 	}
-	spec = jObj(jClone(spec))
+	out, _ := jClone(spec).(M) // the spec passed on, with this owner's members added
+	if out == nil {
+		out = M{}
+	}
 	phase = "dependency"
-	if len(jArr(spec, "ownedDependencies")) > 0 {
-		answer, connection, err := mcpOwnerCall(socket, M{"action": "prepare", "dependencies": jAt(spec, "dependencies"), "ownedDependencies": jAt(spec, "ownedDependencies")})
+	if len(s.OwnedDependencies.V) > 0 {
+		answer, connection, err := mcpOwnerCall(socket, M{"action": "prepare", "dependencies": s.Dependencies.Raw, "ownedDependencies": s.OwnedDependencies.Raw})
 		if err != nil {
 			return err
 		}
 		connection.Close()
-		jObj(spec)["generation"] = answer["generation"]
-		jObj(spec)["ownerSocket"] = socket
+		out["generation"] = answer["generation"]
+		out["ownerSocket"] = socket
 	}
 	phase = "child-home"
 	direct := policy == "owned-command"
@@ -542,15 +595,15 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 		if err != nil {
 			return err
 		}
-		jObj(spec)["childHome"] = home
-		path, err := mcpPrivatePath(jObj(spec, "dependencies"), filepath.Dir(socket), jArr(spec, "ownedDependencies"))
+		out["childHome"] = home
+		path, err := mcpPrivatePath(s.Dependencies.V, filepath.Dir(socket), s.OwnedDependencies.V)
 		if err != nil {
 			return err
 		}
-		jObj(spec)["childPath"] = path
+		out["childPath"] = path
 	}
 	phase = "spawn"
-	child, err := startMCPChild(socket, spec, root, input, output, direct)
+	child, err := startMCPChild(socket, out, root, input, output, direct)
 	if err != nil {
 		return err
 	}
@@ -563,7 +616,7 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 		defer lease.Close()
 		errtrack.Go("mcp.lease", func() { io.Copy(io.Discard, lease); child.control.Close() })
 		status = readMCPStatus(child.status)
-		if jStr(status, "outcome") != "exited" || jAt(status, "exitCode") != float64(0) {
+		if status["outcome"] != "exited" || status["exitCode"] != float64(0) {
 			return errors.Join(errors.New("owned dependency result unknown or failed; no replay"), &mcpLifecycleError{status})
 		}
 		return nil
@@ -614,7 +667,7 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 		}
 	}()
 	phase = "forward"
-	err = filterMCP(queued, ownedOutput, child.in, child.out, root, jArr(spec, "tools"), policy)
+	err = filterMCP(queued, ownedOutput, child.in, child.out, root, s.Tools.V, policy)
 	if unexpectedExit.Load() {
 		return errors.Join(err, errors.New("MCP server exited or status was lost; outcome unknown; no replay"))
 	}
@@ -755,20 +808,46 @@ type mcpLifecycleError struct{ status M }
 func (e *mcpLifecycleError) Error() string {
 	return "MCP lifecycle interrupted; outcome unknown; no replay: " + enc(e.status)
 }
+
+// guardianStatus: the guardian's private status report as read; safeMCPStatus keeps only its known values.
+type guardianStatus struct {
+	Stage            lax[string]  `json:"stage"`
+	Registration     lax[string]  `json:"registration"`
+	Outcome          lax[string]  `json:"outcome"`
+	Provenance       lax[string]  `json:"provenance"`
+	ErrorKind        lax[string]  `json:"errorKind"`
+	RefusalReason    lax[string]  `json:"refusalReason"`
+	GuardianIdentity lax[string]  `json:"guardianIdentity"`
+	ExecutionId      lax[string]  `json:"executionId"`
+	GuardianPid      lax[float64] `json:"guardianPid"`
+	ExitCode         lax[float64] `json:"exitCode"`
+	Signal           lax[float64] `json:"signal"`
+	ErrorCode        lax[float64] `json:"errorCode"`
+}
+
 func safeMCPStatus(raw M) M {
+	var s guardianStatus
+	viewOf(raw, &s)
+	return safeStatus(s)
+}
+
+func safeStatus(raw guardianStatus) M {
 	out := M{"stage": "unknown", "registration": "unknown", "outcome": "unknown", "provenance": "status-unavailable"}
-	for key, values := range map[string][]string{"stage": {"ownership", "binding", "spawn", "server-exit"}, "registration": {"unknown", "refused", "acknowledged"}, "outcome": {"unknown", "exited", "signaled"}, "provenance": {"guardian-private-status"}, "errorKind": {"sqlite", "system"}, "refusalReason": {"MCP peer owner differs", "MCP execution launch is not open", "MCP guardian identity differs", "MCP guardian belongs to another execution", "MCP guardian is not its group leader", "MCP guardian executable differs", "MCP group registration conflicts with retained identity", "MCP execution is fenced", "MCP peer belongs to another execution", "MCP peer executable differs", "MCP generation is stale or unknown", "MCP dependency generation lost its parent", "dependency was not selected by the binding", "MCP dependency target changed", "MCP fixed dependency identity differs", "MCP generation preparer changed", "MCP generation already has a guardian"}} {
-		for _, allowed := range values {
-			if jStr(raw, key) == allowed {
+	for key, field := range map[string]struct {
+		v      string
+		values []string
+	}{"stage": {raw.Stage.V, []string{"ownership", "binding", "spawn", "server-exit"}}, "registration": {raw.Registration.V, []string{"unknown", "refused", "acknowledged"}}, "outcome": {raw.Outcome.V, []string{"unknown", "exited", "signaled"}}, "provenance": {raw.Provenance.V, []string{"guardian-private-status"}}, "errorKind": {raw.ErrorKind.V, []string{"sqlite", "system"}}, "refusalReason": {raw.RefusalReason.V, []string{"MCP peer owner differs", "MCP execution launch is not open", "MCP guardian identity differs", "MCP guardian belongs to another execution", "MCP guardian is not its group leader", "MCP guardian executable differs", "MCP group registration conflicts with retained identity", "MCP execution is fenced", "MCP peer belongs to another execution", "MCP peer executable differs", "MCP generation is stale or unknown", "MCP dependency generation lost its parent", "dependency was not selected by the binding", "MCP dependency target changed", "MCP fixed dependency identity differs", "MCP generation preparer changed", "MCP generation already has a guardian"}}} {
+		for _, allowed := range field.values {
+			if field.v == allowed {
 				out[key] = allowed
 			}
 		}
 	}
-	identity := jStr(raw, "guardianIdentity")
+	identity := raw.GuardianIdentity.V
 	if len(identity) > 0 && len(identity) <= 80 && onlyBytes(identity, func(b byte) bool { return b >= '0' && b <= '9' || b == '-' }) {
 		out["guardianIdentity"] = identity
 	}
-	execution := jStr(raw, "executionId")
+	execution := raw.ExecutionId.V
 	if len(execution) == 36 && execution[8] == '-' && execution[13] == '-' && execution[18] == '-' && execution[23] == '-' {
 		hex := strings.ReplaceAll(execution, "-", "")
 		if len(hex) == 32 && onlyBytes(hex, func(b byte) bool { return b >= '0' && b <= '9' || b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F' }) {
@@ -776,21 +855,26 @@ func safeMCPStatus(raw M) M {
 		}
 	}
 
-	for key, max := range map[string]float64{"guardianPid": 2147483647, "exitCode": 255, "signal": 127, "errorCode": 2147483647} {
-		if n, ok := jAt(raw, key).(float64); ok && n >= 0 && n <= max && n == float64(int64(n)) {
+	for key, field := range map[string]struct {
+		n   lax[float64]
+		max float64
+	}{"guardianPid": {raw.GuardianPid, 2147483647}, "exitCode": {raw.ExitCode, 255}, "signal": {raw.Signal, 127}, "errorCode": {raw.ErrorCode, 2147483647}} {
+		if n := field.n.V; field.n.Ok && n >= 0 && n <= field.max && n == float64(int64(n)) {
 			out[key] = n
 		}
 	}
-	if out["outcome"] == "exited" && !has(out, "exitCode") || out["outcome"] == "signaled" && !has(out, "signal") {
+	_, exitCode := out["exitCode"]
+	_, signal := out["signal"]
+	if out["outcome"] == "exited" && !exitCode || out["outcome"] == "signaled" && !signal {
 		out["outcome"] = "unknown"
 	}
 	return out
 }
 
 func readMCPStatus(input io.Reader) M {
-	var raw M
+	var raw guardianStatus
 	if json.NewDecoder(input).Decode(&raw) != nil {
-		return safeMCPStatus(nil)
+		return safeStatus(guardianStatus{})
 	}
-	return safeMCPStatus(raw)
+	return safeStatus(raw)
 }

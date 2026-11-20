@@ -73,46 +73,75 @@ func refusedLine(connection, tool, code, reason string) contract.CallLine {
 // connectionLimits are each connection spec's gateway waits (stallMs, answerMs), set by the server that loaded it.
 var connectionLimits = map[string]any{}
 
+// connectionTool: a tool of a connection spec ({name, file?, idempotent, inputSchema, ...}) as the client reads it; the
+// model sees its other keys as written (modelTool).
+type connectionTool struct {
+	Name        lax[string] `json:"name"`
+	File        lax[string] `json:"file"`
+	Idempotent  lax[bool]   `json:"idempotent"`
+	InputSchema lax[struct {
+		Properties lax[map[string]json.RawMessage] `json:"properties"`
+		Required   lax[[]lax[string]]              `json:"required"`
+	}] `json:"inputSchema"`
+}
+
+// connectionSpec: a connection spec as a server or the call command loads it.
+type connectionSpec struct {
+	Name         lax[string]            `json:"name"`
+	Tools        lax[[]json.RawMessage] `json:"tools"`
+	Limits       json.RawMessage        `json:"limits"`
+	Instructions lax[string]            `json:"instructions"`
+}
+
 // connectionCall is one call of a spec tool ({name, file?, idempotent}) with this process's token: a JSON call, an
 // upload or a download by the tool's file mode. Its output is what the agent reads.
-func connectionCall(connection string, tool any, arguments any) contract.CallLine {
-	name := jStr(tool, "name")
+func connectionCall(connection string, spec any, arguments any) contract.CallLine {
+	var tool connectionTool
+	viewOf(spec, &tool)
+	name := tool.Name.V
 	t := gatewayTarget()
-	t.Idempotent = jAt(tool, "idempotent") == true
+	t.Idempotent = tool.Idempotent.V
 	if t.Header == nil {
 		t.Header = map[string]string{}
 	}
 	t.Header["X-Fleet-File-Client"] = "1"
 	// The client outwaits the gateway: its stall wait at least the connection's, its answer wait a minute beyond.
-	ms := func(k string) time.Duration {
-		n, _ := num(jAt(connectionLimits[connection], k))
-		return time.Duration(n) * time.Millisecond
+	var limits lax[contract.GatewayLimits]
+	viewOf(connectionLimits[connection], &limits)
+	ms := func(n *int64) time.Duration {
+		if n == nil {
+			return 0
+		}
+		return time.Duration(*n) * time.Millisecond
 	}
-	if s := ms("stallMs"); s > 0 {
+	if s := ms(limits.V.StallMs); s > 0 {
 		t.Stall = s
 	}
-	if a := ms("answerMs"); a > 0 {
+	if a := ms(limits.V.AnswerMs); a > 0 {
 		t.Answer = a + time.Minute
 	}
-	switch jStr(tool, "file") {
+	switch tool.File.V {
 	case "upload":
-		return connectionUpload(t, connection, name, jObj(tool, "inputSchema", "properties"), arguments)
+		return connectionUpload(t, connection, name, tool.InputSchema.V.Properties, arguments)
 	case "download":
 		return connectionDownload(t, connection, tool, arguments)
 	}
 	return contract.GatewayCall(context.Background(), t, connection, name, []byte(enc(arguments)))
 }
 
-func connectionUpload(t contract.GatewayTarget, connection, tool string, properties M, arguments any) contract.CallLine {
+func connectionUpload(t contract.GatewayTarget, connection, tool string, properties lax[map[string]json.RawMessage], arguments any) contract.CallLine {
+	var given map[string]json.RawMessage // the agent's arguments, passed to the gateway as they came
+	viewOf(arguments, &given)
 	args := map[string]any{}
-	for k, v := range jObj(arguments) {
-		if _, known := properties[k]; properties != nil && !known {
+	for k, v := range given {
+		if _, known := properties.V[k]; properties.Ok && !known {
 			// The gateway takes the path fields only; name the extra argument before any file is read.
 			return refusedLine(connection, tool, "bad-request", "unknown argument "+k)
 		}
-		args[k] = v
+		args[k] = decRaw(v)
 	}
-	path, _ := str(args["path"])
+	var path lax[string]
+	json.Unmarshal(given["path"], &path)
 	delete(args, "path")
 	if t.URL == "" || t.Token == "" {
 		return refusedLine(connection, tool, "connection-unavailable", "no gateway URL or token")
@@ -121,7 +150,7 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, propert
 	if base == "" {
 		base, _ = os.Getwd()
 	}
-	f, info, err := openForUpload(path, base)
+	f, info, err := openForUpload(path.V, base)
 	if err != nil {
 		return refusedLine(connection, tool, "path-refused", err.Error())
 	}
@@ -172,8 +201,8 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, propert
 
 // connectionDownload: the file lands in <root>/<required arguments but the last...>/<last>-<name> (for
 // attachment_get {issue, attachment}: <root>/TGT-12/85-1234-screen.png).
-func connectionDownload(t contract.GatewayTarget, connection string, tool any, arguments any) contract.CallLine {
-	name := jStr(tool, "name")
+func connectionDownload(t contract.GatewayTarget, connection string, tool connectionTool, arguments any) contract.CallLine {
+	name := tool.Name.V
 	// The trusted root is the run's input folder (the executor made it) or the host's output folder; the attachments
 	// folder below the input folder is the agent's to change, so it is opened without following links like the rest.
 	root, folder := os.Getenv("FLEET_FILES_OUT"), []string{}
@@ -183,15 +212,20 @@ func connectionDownload(t contract.GatewayTarget, connection string, tool any, a
 		home, _ := os.UserHomeDir()
 		root = filepath.Join(home, ".local/share/fleet/files")
 	}
+	var given map[string]json.RawMessage
+	viewOf(arguments, &given)
 	var parts []string
-	for _, field := range jArr(tool, "inputSchema", "required") {
-		raw := jAt(arguments, jStr(field))
-		v, ok := str(raw)
-		if n, isNumber := raw.(json.Number); isNumber {
-			v, ok = n.String(), true
+	for _, field := range tool.InputSchema.V.Required.V {
+		var text lax[string]
+		var number lax[float64]
+		json.Unmarshal(given[field.V], &text)
+		json.Unmarshal(given[field.V], &number)
+		v := text.V
+		if number.Ok {
+			v = string(given[field.V]) // a number as written
 		}
-		if !ok {
-			return refusedLine(connection, name, "bad-request", fmt.Sprintf("%s must be a string", jStr(field)))
+		if !text.Ok && !number.Ok {
+			return refusedLine(connection, name, "bad-request", fmt.Sprintf("%s must be a string", field.V))
 		}
 		parts = append(parts, v)
 	}
@@ -204,10 +238,12 @@ func connectionDownload(t contract.GatewayTarget, connection string, tool any, a
 
 // modelTool is a spec tool as the model sees it: without the client's file and idempotent flags.
 func modelTool(tool any) any {
+	var keys map[string]json.RawMessage
+	viewOf(tool, &keys)
 	m := M{}
-	for k, v := range jObj(tool) {
+	for k, v := range keys {
 		if k != "file" && k != "idempotent" {
-			m[k] = v
+			m[k] = decRaw(v)
 		}
 	}
 	return m
@@ -238,16 +274,20 @@ func callText(line contract.CallLine) (string, bool) {
 	return text, ok
 }
 
-func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error {
-	tools := jArr(spec, "tools")
-	connectionLimits[connection] = jAt(spec, "limits")
+func connectionMCP(connection string, specValue any, in io.Reader, w io.Writer) error {
+	var spec connectionSpec
+	viewOf(specValue, &spec)
+	connectionLimits[connection] = decRaw(spec.Limits)
 	byName, listed := map[string]any{}, []any{}
-	for _, t := range tools {
-		byName[jStr(t, "name")] = t
+	for _, raw := range spec.Tools.V {
+		var tool connectionTool
+		json.Unmarshal(raw, &tool)
+		t := decRaw(raw)
+		byName[tool.Name.V] = t
 		listed = append(listed, modelTool(t))
 	}
 	// Calls run concurrently: a long file transfer never holds a ping or another call.
-	return mcpserve.Stdio{Name: connection, Version: "1", Instructions: jStr(spec, "instructions"), Concurrent: true,
+	return mcpserve.Stdio{Name: connection, Version: "1", Instructions: spec.Instructions.V, Concurrent: true,
 		Tools: func() any { return listed },
 		Call: func(name string, arguments json.RawMessage) (any, error) {
 			code := "tool-not-granted"
@@ -308,26 +348,34 @@ func connectionCommand(args []string, stdin io.Reader, stdout io.Writer) (bool, 
 		if err != nil {
 			return false, err
 		}
-		spec, err := dec(string(b))
-		if err != nil {
+		var list lax[[]json.RawMessage] // a list of specs, a reply with connections, or one spec
+		if err := json.Unmarshal(b, &list); err != nil {
 			return false, fmt.Errorf("spec file: %w", err)
 		}
-		specs := jArr(spec)
-		if specs == nil {
-			specs = jArr(spec, "connections")
-		}
-		if specs == nil {
-			specs = []any{spec}
+		specs := list.V
+		if !list.Ok {
+			var reply struct {
+				Connections lax[[]json.RawMessage] `json:"connections"`
+			}
+			json.Unmarshal(b, &reply)
+			specs = reply.Connections.V
+			if !reply.Connections.Ok {
+				specs = []json.RawMessage{b}
+			}
 		}
 		found := false
-		for _, s := range specs {
-			if n := jStr(s, "name"); n != connection && (n != "" || len(specs) > 1) {
+		for _, raw := range specs {
+			var s connectionSpec
+			json.Unmarshal(raw, &s)
+			if n := s.Name.V; n != connection && (n != "" || len(specs) > 1) {
 				continue
 			}
-			for _, t := range jArr(s, "tools") {
-				if jStr(t, "name") == name {
-					tool, found = t, true
-					connectionLimits[connection] = jAt(s, "limits")
+			for _, t := range s.Tools.V {
+				var view connectionTool
+				json.Unmarshal(t, &view)
+				if view.Name.V == name {
+					tool, found = decRaw(t), true
+					connectionLimits[connection] = decRaw(s.Limits)
 				}
 			}
 		}
