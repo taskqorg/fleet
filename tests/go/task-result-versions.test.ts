@@ -31,10 +31,10 @@ test('Task result content versions resist replay and preserve explicit lineage a
   const foreignTask=task(),foreign=artifact(execution(foreignTask),hash(20),true);
   const isolated=task();artifact(execution(isolated),hash(21),true);const own=artifact(execution(isolated),hash(20));assert.equal((await get(isolated)).latestResult.artifactId,own,'another task must not age these bytes');
 
-  for(const unknown of ['hash','scope','project','invalid-hash']){
+  {
    const tid=task(),e1=execution(tid),e2=execution(tid),e3=execution(tid);
-   const make=(e:string)=>unknown==='project'?artifact(e,hash(30),false,'prod',null):legacy(e,unknown==='hash'?undefined:unknown==='invalid-hash'?'unknown':hash(30),unknown==='scope'?undefined:'prod');
-   make(e1);artifact(e2,hash(31),true);const fresh=make(e3);assert.equal((await get(tid)).latestResult.id,fresh,unknown);
+   const make=(e:string)=>artifact(e,hash(30),false,'prod',null);
+   make(e1);artifact(e2,hash(31),true);const fresh=make(e3);assert.equal((await get(tid)).latestResult.id,fresh,'unknown project identity');
   }
 
   for(const reservation of ['pending','failed']){
@@ -65,7 +65,7 @@ test('Task result content versions resist replay and preserve explicit lineage a
   const childRun=execution(accepted),childArtifact=artifact(childRun,hash(72)),childSession=randomUUID();
   c.sql(`INSERT INTO session(id,project_id,task_id) VALUES('${childSession}','hello-world','${accepted}');UPDATE execution SET task_id=NULL,session_id='${childSession}' WHERE id='${childRun}'`);
   select([childArtifact]);assert.equal((await get(accepted)).latestResult.artifactId,childArtifact,'attached child session results retain lineage without direct execution task binding');
-  const historical=legacy(acceptedRun,hash(71),'prod');select([historical]);assert.equal((await get(accepted)).latestResult.id,historical,'accepted legacy document remains readable');
+  const historical=legacy(acceptedRun,hash(71),'prod');select([historical]);assert.equal((await get(accepted)).latestResult,null,'a result kept as a document (before the artifact table) is no longer read');
   const alias=randomUUID();c.sql(`UPDATE artifact SET legacy_id='${alias}' WHERE id='${chosen}'`);select([alias]);assert.equal((await get(accepted)).latestResult.artifactId,chosen,'canonical legacy alias resolves');
 
   select([chosen,later]);assert.equal((await get(accepted)).latestResult.artifactId,chosen,'selection order, not publication order');
@@ -78,7 +78,7 @@ test('Task result content versions resist replay and preserve explicit lineage a
   c.sql(`UPDATE artifact SET state='stored' WHERE id='${chosen}';UPDATE task SET project_id='desiign' WHERE id='${accepted}'`);
   assert.equal((await get(accepted,'member@trial.test')).latestResult,null,'RLS hides accepted artifact from another project');
   c.sql(`UPDATE task SET project_id='hello-world',state='in_progress' WHERE id='${accepted}'`);
-  assert.equal((await get(accepted)).latestResult.id,historical,'unaccepted work retains existing publication fallback');
+  assert.equal((await get(accepted)).latestResult.artifactId,chosen,'unaccepted work retains existing publication fallback');
   assert.equal(c.sql(`SELECT count(*) FROM artifact WHERE id IN ('${chosen}','${later}')`).trim(),'2','history preserved');
  } finally {await c.stop();}
 });
