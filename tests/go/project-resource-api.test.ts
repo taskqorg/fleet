@@ -55,7 +55,7 @@ test('prepared operations: auth, progress, configuration independence, C-order w
   c.sql("INSERT INTO execution(id,kind,state,project_id,data) VALUES('api-pending','tool_run','succeeded','desiign','{\"tool\":\"pending\"}')");
   let unchanged=await op('project_resources',{projectId:'desiign',knownVersion:ready.version},member);
   assert.equal(unchanged.kind,'unchanged');assert.equal(unchanged.progress.state,'updating');assert.ok(unchanged.progress.oldestPendingAt);assert.equal(unchanged.progress.pending,true);
-  c.sql("UPDATE resource_work SET last_error_class='ownership_mismatch' WHERE execution_id='api-pending'");
+  c.sql("UPDATE resource_work SET last_error='ownership_mismatch' WHERE execution_id='api-pending'");
   unchanged=await op('project_resources',{projectId:'desiign',knownVersion:ready.version},member);
   assert.equal(unchanged.progress.state,'error');assert.equal(unchanged.progress.errorClass,'ownership_mismatch');
   assert.equal((await op('project_detail',{projectId:'desiign'},member)).contentSha,detail.contentSha);

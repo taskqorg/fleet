@@ -723,12 +723,12 @@ type ResourceBuild struct {
 	Generation       pgtype.UUID
 	AfterExecutionID *string
 	ScanDone         bool
-	Ready            bool
 	Phase            string
 	LastError        *string
 	UpdatedAt        time.Time
 	Attempts         int32
 	NextAttemptAt    time.Time
+	Ready            *bool
 }
 
 type ResourceContribution struct {
@@ -839,7 +839,7 @@ type ResourceWork struct {
 	FirstPendingAt  time.Time
 	NextAttemptAt   time.Time
 	Attempts        int32
-	LastErrorClass  *string
+	LastError       *string
 }
 
 type ResourceWorkScope struct {

@@ -143,7 +143,7 @@ func (d *resourceDelta) add(c contract.ResourceContributionV1, sign int64) error
 	for _, v := range []struct {
 		metric string
 		value  *int64
-	}{{"start", c.StartedMs}, {"end", c.EndedMs}, {"peakMemory", resourceInt(json.Number(deref(c.Metrics["peakMemoryBytes"].Value)))}} {
+	}{{"start", c.StartedMs}, {"end", c.EndedMs}, {"peakMemory", resourceInteger((*json.Number)(c.Metrics["peakMemoryBytes"].Value))}} {
 		if v.value != nil {
 			d.extremes[resourceExtremeKey{v.metric, *v.value}] += sign
 		}

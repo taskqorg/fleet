@@ -1,0 +1,7 @@
+{
+ "ID": "M1",
+ "Defect": "experiment 1's planted defect: a failed cohort deletes its first execution's due work before its halves run",
+ "File": "work_kit.go",
+ "Find": "\t\treturn k.tx(ctx, func(r *Request) error { return q.Batch(r, now, cs) })",
+ "Replace": "\t\terr := k.tx(ctx, func(r *Request) error { return q.Batch(r, now, cs) })\n\t\tif err != nil {\n\t\t\t_ = k.tx(ctx, func(r *Request) error {\n\t\t\t\treturn exec(r, `DELETE FROM resource_work WHERE execution_id=$1 AND next_attempt_at<=$2`, cs[0].Key, now)\n\t\t\t})\n\t\t}\n\t\treturn err"
+}

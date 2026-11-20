@@ -319,7 +319,7 @@ export async function serve(o: { out: string; history: number; projects: number;
     let observing = false;
     monitor = setInterval(() => {
       if (observing || closing) return; observing = true;
-      void observer.run('', `(SELECT json_build_object('pending',count(*),'oldest',min(first_pending_at),'failed',count(*) FILTER(WHERE last_error_class IS NOT NULL)) FROM resource_work)`).then(result => emit('backlog', { run: run?.id, ...result })).catch(e => emit('observer-error', { error: String(e) })).finally(() => { observing = false; });
+      void observer.run('', `(SELECT json_build_object('pending',count(*),'oldest',min(first_pending_at),'failed',count(*) FILTER(WHERE last_error IS NOT NULL)) FROM resource_work)`).then(result => emit('backlog', { run: run?.id, ...result })).catch(e => emit('observer-error', { error: String(e) })).finally(() => { observing = false; });
     }, 1000);
     writeFileSync(resolve(o.out, 'pg-before.json'), JSON.stringify(pgSnapshot(c), null, 2));
     const acknowledge = (r: Run, reader: string, fact: Fact) => {
