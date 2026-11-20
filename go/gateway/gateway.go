@@ -1906,9 +1906,11 @@ func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 		listener.Close()
 		return err
 	}
-	done := make(chan struct{})
-	defer close(done)
+	// serve returns only after the refresh loop has stopped: a refresh still writing state_dir would outlive the call.
+	done, refreshed := make(chan struct{}), make(chan struct{})
+	defer func() { close(done); <-refreshed }()
 	errtrack.Go("gateway.refresh", func() {
+		defer close(refreshed)
 		tick := time.NewTicker(c.refreshEvery)
 		expire := time.NewTicker(time.Hour)
 		defer tick.Stop()
