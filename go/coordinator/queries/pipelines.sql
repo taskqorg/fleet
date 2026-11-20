@@ -34,3 +34,8 @@ DELETE FROM lab_work WHERE experiment_id=$1;
 
 -- name: LabExperimentState :one
 SELECT state FROM experiment WHERE id=$1;
+
+-- name: PipelineRevokeRunTokens :execrows
+-- Every live call token of a run's steps (rows <run>:step:<i>), for a run that left the queue unread.
+UPDATE run_token SET revoked_at=to_timestamp(sqlc.arg(at)::float8/1000), updated_at=now()
+WHERE starts_with(execution_id, sqlc.arg(run_id)::text || ':step:') AND revoked_at IS NULL;

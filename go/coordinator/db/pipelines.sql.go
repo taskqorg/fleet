@@ -80,6 +80,25 @@ func (q *Queries) LabWorkEnsure(ctx context.Context, experimentID string) (int64
 	return result.RowsAffected(), nil
 }
 
+const pipelineRevokeRunTokens = `-- name: PipelineRevokeRunTokens :execrows
+UPDATE run_token SET revoked_at=to_timestamp($1::float8/1000), updated_at=now()
+WHERE starts_with(execution_id, $2::text || ':step:') AND revoked_at IS NULL
+`
+
+type PipelineRevokeRunTokensParams struct {
+	At    float64
+	RunID string
+}
+
+// Every live call token of a run's steps (rows <run>:step:<i>), for a run that left the queue unread.
+func (q *Queries) PipelineRevokeRunTokens(ctx context.Context, arg PipelineRevokeRunTokensParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pipelineRevokeRunTokens, arg.At, arg.RunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pipelineRunLock = `-- name: PipelineRunLock :one
 SELECT id FROM execution WHERE id=$1 FOR UPDATE
 `

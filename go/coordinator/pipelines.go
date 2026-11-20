@@ -1186,14 +1186,12 @@ func pipelineRevokeSteps(q *Request, run doc) error {
 // that is gone or cannot be read has them looked up by its step rows' prefix.
 func pipelineWorkDone(q *Request, runID string, ended bool) error {
 	if !ended {
-		rs, err := queryRows(q, "SELECT DISTINCT data->>'executionId' AS id FROM document WHERE kind='run-token' AND starts_with(data->>'executionId',$1||':step:') AND NOT data ? 'revokedAt'", runID)
+		n, err := q.db().PipelineRevokeRunTokens(q.ctx(), db.PipelineRevokeRunTokensParams{At: float64(nowMs()), RunID: runID})
 		if err != nil {
 			return err
 		}
-		for _, r := range rs {
-			if err := revokeTokens(q, astr(r["id"])); err != nil {
-				return err
-			}
+		if n > 0 {
+			publish(q)
 		}
 	}
 	return q.db().PipelineWorkDelete(q.ctx(), runID)
