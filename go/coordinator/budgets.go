@@ -162,6 +162,9 @@ func jsNum(f float64) string {
 }
 
 func budgetDelete(q *Request, b *contract.BudgetDeleteRequest) (contract.BudgetDeleteReply, error) {
+	if b.Id == "" {
+		return contract.BudgetDeleteReply{}, fail(404, "Unknown budget")
+	}
 	var n int64
 	err := q.app.store.Write(q.ctx(), q, []string{budgetLock(b.Id)}, func(q *Request) (err error) {
 		n, err = q.db().BudgetDelete(q.ctx(), b.Id)
@@ -243,25 +246,22 @@ func blockedConnections(q *Request) (map[string]bool, error) {
 	return out, err
 }
 
-// budgetAskOf: the budget ask of question id with its answer and who gave it; ask nil for any other question.
-func budgetAskOf(q *Request, id string) (*budgetAskData, db.BudgetAskOfRow, error) {
-	r, err := q.db().BudgetAskOf(q.ctx(), id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, r, nil
-	}
-	if err != nil || len(r.BudgetAsk) == 0 || string(r.BudgetAsk) == "null" {
-		return nil, r, err
+// budgetAskOf: data.budgetAsk of a question, nil for every other question.
+func budgetAskOf(raw json.RawMessage) (*budgetAskData, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
 	}
 	var a budgetAskData
-	if err := json.Unmarshal(r.BudgetAsk, &a); err != nil {
-		return nil, r, err
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return nil, err
 	}
-	return &a, r, nil
+	return &a, nil
 }
 
-// budgetAnswerCheck and budgetAnswerAfter: the answer hooks of a budget ask (tasks area calls them, in its transaction).
-func budgetAnswerCheck(q *Request, id, answer string) error {
-	a, _, err := budgetAskOf(q, id)
+// budgetAnswerCheck and budgetAnswerAfter: the answer hooks of a budget ask (tasks area calls them, in its transaction,
+// with the question's data.budgetAsk; after, with its recorded answer and who gave it).
+func budgetAnswerCheck(q *Request, ask json.RawMessage, answer string) error {
+	a, err := budgetAskOf(ask)
 	if err != nil || a == nil {
 		return err
 	}
@@ -274,16 +274,20 @@ func budgetAnswerCheck(q *Request, id, answer string) error {
 	return nil
 }
 
-func budgetAnswerAfter(q *Request, id string) error {
-	a, row, err := budgetAskOf(q, id)
-	if err != nil || a == nil || row.Answer == nil || *row.Answer != "approve" {
+func budgetAnswerAfter(q *Request, ask json.RawMessage, answer string, answeredBy *string) error {
+	a, err := budgetAskOf(ask)
+	if err != nil || a == nil || answer != "approve" {
 		return err
 	}
 	by := "owner"
-	if row.AnsweredBy != nil {
-		by = *row.AnsweredBy
+	if answeredBy != nil {
+		by = *answeredBy
 	}
-	return q.app.store.Write(q.ctx(), q, []string{budgetLock(a.BudgetId)}, func(q *Request) error {
+	var locks []string
+	if a.BudgetId != "" {
+		locks = []string{budgetLock(a.BudgetId)}
+	}
+	return q.app.store.Write(q.ctx(), q, locks, func(q *Request) error {
 		if err := q.db().BudgetRaise(q.ctx(), db.BudgetRaiseParams{ID: a.BudgetId, Limit: a.Limit, SetBy: by}); err != nil {
 			return err
 		}
@@ -296,8 +300,8 @@ func budgetAnswerAfter(q *Request, id string) error {
 			Actor      *string `json:"actor"`
 			OnBehalfOf string  `json:"onBehalfOf,omitempty"`
 			At         int64   `json:"at"`
-		}{Id: newID(), Target: "budget:" + a.BudgetId, Field: "limit", Value: a.Limit, AskedBy: a.AskedBy, Actor: row.AnsweredBy, At: nowMs()}
-		if q.agent != "" { // an agent's change: the execution acts for its director (fleet-pm-agent.md §1)
+		}{Id: newID(), Target: "budget:" + a.BudgetId, Field: "limit", Value: a.Limit, AskedBy: a.AskedBy, Actor: answeredBy, At: nowMs()}
+		if q.agent != "" && q.person != nil { // an agent's change: the execution acts for its director (fleet-pm-agent.md §1)
 			change.Actor, change.OnBehalfOf = &q.agent, q.person.Email
 		}
 		data, _ := json.Marshal(change)

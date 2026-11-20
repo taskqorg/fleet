@@ -35,24 +35,6 @@ func (q *Queries) BudgetAskInsert(ctx context.Context, arg BudgetAskInsertParams
 	return err
 }
 
-const budgetAskOf = `-- name: BudgetAskOf :one
-SELECT (data->'budgetAsk')::jsonb AS budget_ask, answer, answered_by FROM question WHERE id=$1
-`
-
-type BudgetAskOfRow struct {
-	BudgetAsk  []byte
-	Answer     *string
-	AnsweredBy *string
-}
-
-// The budget ask of a question (NULL for every other question), with its answer.
-func (q *Queries) BudgetAskOf(ctx context.Context, id string) (BudgetAskOfRow, error) {
-	row := q.db.QueryRow(ctx, budgetAskOf, id)
-	var i BudgetAskOfRow
-	err := row.Scan(&i.BudgetAsk, &i.Answer, &i.AnsweredBy)
-	return i, err
-}
-
 const budgetDelete = `-- name: BudgetDelete :execrows
 DELETE FROM budget WHERE id=$1
 `

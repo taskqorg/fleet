@@ -96,7 +96,11 @@ var currencyCode = regexp.MustCompile(`^[A-Z]{3}$`)
 
 // connectionProvider: the provider of the API connection name, found false when there is none.
 func connectionProvider(q *Request, name string) (string, bool, error) {
-	p, err := q.db().PriceConnectionProvider(q.ctx(), "connection:"+name)
+	var p string
+	err := q.app.store.Read(q.ctx(), q, func(q *Request) (err error) {
+		p, err = q.db().PriceConnectionProvider(q.ctx(), "connection:"+name)
+		return err
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil
 	}

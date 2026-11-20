@@ -56,10 +56,6 @@ WHERE e.project_id=sqlc.arg(project_id)::text AND e.system_actor IS NULL
 -- An operator decision asking to raise a budget (questions table; budgetAsk in data names the budget).
 INSERT INTO question(id,kind,project_id,text,options,asked_by,data) VALUES($1,'operator_decision',$2,$3,$4,$5,$6);
 
--- name: BudgetAskOf :one
--- The budget ask of a question (NULL for every other question), with its answer.
-SELECT (data->'budgetAsk')::jsonb AS budget_ask, answer, answered_by FROM question WHERE id=$1;
-
 -- name: SettingChangeInsert :exec
 -- The audit record of a changed setting (kind setting-change, no project).
 INSERT INTO document(kind,id,data) VALUES('setting-change',$1,$2);

@@ -2725,8 +2725,13 @@ DECLARE
  copy constant text := $c$(current_setting('fleet.project_ids'::text, true) = '*'::text) OR (COALESCE(project_id, ''::text) = ANY (string_to_array(current_setting('fleet.project_ids'::text, true), ','::text)))$c$;
  p record;
 BEGIN
- FOR p IN SELECT tablename, policyname, qual FROM pg_policies WHERE schemaname = 'public' AND with_check IS NULL AND strpos(qual, copy) > 0 LOOP
-  EXECUTE format('ALTER POLICY %I ON %I USING (%s)', p.policyname, p.tablename, replace(p.qual, copy, 'fleet_visible(project_id)'));
+ FOR p IN SELECT tablename, policyname, qual, with_check FROM pg_policies WHERE schemaname = 'public' AND (strpos(qual, copy) > 0 OR strpos(with_check, copy) > 0) LOOP
+  IF p.qual IS NOT NULL THEN
+   EXECUTE format('ALTER POLICY %I ON %I USING (%s)', p.policyname, p.tablename, replace(p.qual, copy, 'fleet_visible(project_id)'));
+  END IF;
+  IF p.with_check IS NOT NULL THEN
+   EXECUTE format('ALTER POLICY %I ON %I WITH CHECK (%s)', p.policyname, p.tablename, replace(p.with_check, copy, 'fleet_visible(project_id)'));
+  END IF;
  END LOOP;
  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND (qual ILIKE '%coalesce(project_id%' OR with_check ILIKE '%coalesce(project_id%')) THEN
   RAISE EXCEPTION 'migration 75: a policy still copies the project scope expression';
