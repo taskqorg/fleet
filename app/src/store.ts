@@ -293,20 +293,28 @@ export const canonical = (v: unknown) => JSON.stringify(v, (_k, x) => x && typeo
 /** The cache key of a read: the operation and its canonical request, shared by every view that asks the same. */
 export const opKey = (name: OpName, request: unknown) => name + ':' + canonical(request);
 
-// Request fields that name one entity, and the change field (or the id of a change of that kind) naming the same.
+// Request fields that name one entity, and what a change says of it: the entity it names (a match, or another one), null
+// when the change could name one and names none (a run of no task), undefined when its kind never names one.
 const SCOPE: { field: string; of: (c: Change) => string | null | undefined }[] = [
   { field: 'taskId', of: c => c.taskId ?? (c.kind === 'task' ? c.id : null) },
-  { field: 'sessionId', of: c => c.sessionId },
+  { field: 'sessionId', of: c => c.sessionId ?? (c.kind === 'session' ? c.id : null) },
   { field: 'hostId', of: c => c.hostId ?? (c.kind === 'host' ? c.id : null) },
-  { field: 'artifactId', of: c => c.kind === 'artifact' ? c.id : null },
-  { field: 'executionId', of: c => c.kind === 'execution' ? c.id : null },
-  { field: 'experimentId', of: c => c.kind === 'experiment' ? c.id : null },
-  { field: 'questionId', of: c => c.kind === 'question' ? c.id : null },
+  { field: 'artifactId', of: c => c.kind === 'artifact' ? c.id : undefined },
+  { field: 'executionId', of: c => c.kind === 'execution' ? c.id : undefined },
+  { field: 'experimentId', of: c => c.kind === 'experiment' ? c.id : undefined },
+  { field: 'questionId', of: c => c.kind === 'question' ? c.id : undefined },
   // A project definition is project/<id>; other definition kinds (agents, pipelines) may feed any project.
-  { field: 'projectId', of: c => c.kind === 'resource_summary' ? c.id : c.kind === 'definition' && c.id.startsWith('project/') && c.id.length > 8 ? c.id.slice(8) : null },
+  { field: 'projectId', of: c => c.kind === 'resource_summary' ? c.id : c.kind === 'definition' && c.id.startsWith('project/') && c.id.length > 8 ? c.id.slice(8) : undefined },
 ];
-// entity_card {kind, id}: the request field its entity kind stands for.
-const CARD_FIELD: Record<string, string> = { task: 'taskId', conversation: 'sessionId', host: 'hostId', result: 'artifactId', execution: 'executionId', experiment: 'experimentId', question: 'questionId', project: 'projectId' };
+// entity_card {kind, id}: the request field its entity kind stands for; kinds with no field name their own changes.
+const CARD_FIELD: Record<string, string> = { task: 'taskId', conversation: 'sessionId', host: 'hostId', result: 'artifactId', execution: 'executionId', experiment: 'experimentId', question: 'questionId' };
+const CARD_OWN: Record<string, (c: Change, id: string) => boolean> = {
+  project: (c, id) => c.kind === 'definition' && c.id === 'project/' + id,
+  agent: (c, id) => c.kind === 'definition' && c.id === 'agent/' + id,
+  pipeline: (c, id) => c.kind === 'definition' && c.id === 'pipeline/' + id,
+  pull_request: c => c.kind === 'delivery',
+  release: c => c.kind === 'delivery' || c.kind === 'host',
+};
 let identityKey: () => string | undefined = () => undefined;
 /** main.tsx: whose personal settings a setting-change must name to touch this tab's reads. */
 export function setIdentity(read: () => string | undefined) { identityKey = read; }
@@ -319,8 +327,12 @@ export function setIdentity(read: () => string | undefined) { identityKey = read
 export function touchedBy(c: Change, name: OpName, request: unknown): boolean {
   if (!c.touches?.includes(name)) return false;
   const r = { ...(request && typeof request === 'object' ? request as Record<string, unknown> : {}) };
-  if (name === 'entity_card' && typeof r.kind === 'string' && typeof r.id === 'string' && CARD_FIELD[r.kind]) r[CARD_FIELD[r.kind]] = r.id;
-  for (const { field, of } of SCOPE) { const want = r[field], got = of(c); if (typeof want === 'string' && got && got !== want) return false; }
+  if (name === 'entity_card' && typeof r.kind === 'string') {
+    if (typeof r.id !== 'string') return false; // a card asked by code: its id is not known yet
+    if (CARD_OWN[r.kind]) return CARD_OWN[r.kind](c, r.id);
+    if (CARD_FIELD[r.kind]) r[CARD_FIELD[r.kind]] = r.id;
+  }
+  for (const { field, of } of SCOPE) { const want = r[field], got = of(c); if (typeof want === 'string' && got !== undefined && got !== want) return false; }
   // A read of rows by id (list_membership of pinned rows): only a change naming one of them.
   if (Array.isArray(r.ids) && ![c.taskId, c.sessionId, c.id].some(x => !!x && (r.ids as unknown[]).includes(x))) return false;
   const me = identityKey(), t = c.settingTarget;
@@ -330,13 +342,13 @@ export function touchedBy(c: Change, name: OpName, request: unknown): boolean {
   return true;
 }
 
-type Mounted = { name: OpName; request: unknown; read: () => void };
+type Mounted = { name: OpName; request: () => unknown; read: () => void };
 const mounted = new Set<Mounted>();
 let opFeed: (() => void) | null = null;
 /** One feed subscription for every mounted read: a batch rereads each read it touches once. */
 function watch(m: Mounted) {
   mounted.add(m);
-  opFeed ??= subscribe({ resync: () => { for (const x of mounted) x.read(); }, changes: cs => { for (const x of mounted) if (cs.some(c => touchedBy(c, x.name, x.request))) x.read(); } });
+  opFeed ??= subscribe({ resync: () => { for (const x of mounted) x.read(); }, changes: cs => { for (const x of mounted) { const r = x.request(); if (cs.some(c => touchedBy(c, x.name, r))) x.read(); } } });
   return () => { mounted.delete(m); };
 }
 /** A reread at most once per quiet ms: the first at once, later ones at the end of the window (none is lost). */
@@ -354,6 +366,8 @@ export type OpOptions = {
   every?: number;
   /** Reread on touches at most once per quiet ms (counters touched by every busy execution). */
   quiet?: number;
+  /** Fields added to the request for touchedBy only, not the key: the entity a read concerns once its reply named it. */
+  scope?: Record<string, unknown>;
 };
 export type OpRead<T> = { data: T | null; restored: boolean; error: string | null; status: number | null; state: Freshness; reload: () => void };
 
@@ -366,6 +380,7 @@ export type OpRead<T> = { data: T | null; restored: boolean; error: string | nul
 export function useOp<K extends OpName>(name: K, request: Ops[K]['request'] | null, opts: OpOptions = {}): OpRead<Ops[K]['reply']> {
   const key = request === null ? null : opKey(name, request);
   const reqRef = useRef(request); reqRef.current = request;
+  const scopeRef = useRef(opts.scope); scopeRef.current = opts.scope;
   const reloadRef = useRef<() => void>(() => {});
   const s = key ? docSignal(key) : null;
   const gen = generation.value;
@@ -374,7 +389,7 @@ export function useOp<K extends OpName>(name: K, request: Ops[K]['request'] | nu
     const release = holdDoc(key, () => op(name, reqRef.current!));
     reloadRef.current = () => readDoc(key);
     const t = throttle(() => readDoc(key), opts.quiet);
-    const off = watch({ name, request: reqRef.current, read: t.read });
+    const off = watch({ name, request: () => ({ ...reqRef.current, ...scopeRef.current }), read: t.read });
     const timer = opts.every ? setInterval(() => readDoc(key), opts.every) : 0;
     return () => { reloadRef.current = () => {}; release(); off(); t.stop(); clearInterval(timer); };
   }, [key, opts.every, opts.quiet, gen]);
@@ -466,7 +481,7 @@ export function usePreparedOp<K extends 'project_resources' | 'project_resource_
     if (!key) { setReader(null); return; }
     const fetcher: PreparedFetcher<Ops[K]['reply']> = c => readRef.current ? readRef.current(c) : op(name, { ...reqRef.current!, knownVersion: c.knownVersion }, { signal: c.signal });
     const r = acquirePrepared(key, fetcher, opts.visible !== false); setReader(r);
-    const off = watch({ name, request: reqRef.current, read: () => r.refresh('notification') });
+    const off = watch({ name, request: () => reqRef.current, read: () => r.refresh('notification') });
     const focus = () => r.refresh('foreground');
     addEventListener('visibilitychange', focus); addEventListener('online', focus);
     return () => { off(); r.release(); removeEventListener('visibilitychange', focus); removeEventListener('online', focus); };

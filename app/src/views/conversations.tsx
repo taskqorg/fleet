@@ -354,7 +354,8 @@ function SwitchPanel({ sessionId, handoff, current, onDone, run }: { sessionId: 
   const { data: profiles } = useOp('profiles_list', {});
   const { data: accounts } = useOp('account_list', handoff ? {} : null);
   const [profile, setProfile] = useState<string | null>(null), [account, setAccount] = useState<string | null>(null), [done, setDone] = useState<string | null>(null), [next, setNext] = useState<string | null>(null), [, nav] = useLocation();
-  const list = profiles?.profiles ?? [];
+  // Listed profiles are open records (contracts/profile.schema.json): their id, harness and model.
+  const list = (profiles?.profiles ?? []).flatMap(p => typeof p.id === 'string' ? [{ id: p.id, harness: str(p.harness), model: str(p.model) }] : []);
   const selectedProfile = list.find(p => p.id === profile);
   const named = (accounts?.accounts ?? []).filter(a => a.intake === 'all' && selectedProfile && a.harness === (selectedProfile.harness ?? 'codex'));
   const go = () => run(async () => { const r = await op('session_transition', { sessionId, profileId: profile ?? undefined, ...(account ? { account } : {}) }); setDone(r.transition); setNext(r.sessionId && r.sessionId !== sessionId ? r.sessionId : null); });

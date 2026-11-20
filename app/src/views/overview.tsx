@@ -79,7 +79,7 @@ export function Overview({ id }: { id?: string }) {
   const [closed, setClosed] = useState<string[]>([]);
   const { data, state, error } = useOverview(scope);
   // The Hosts page's read (one key, so one fetch serves both); liveness moves without a change row: every 5 s.
-  const hosts = useOp('hosts_list', {}, { every: 5000 }).data, offset = useClockOffset(hosts);
+  const hostsRead = useOp('hosts_list', {}, { every: 5000 }), hosts = hostsRead.data, offset = useClockOffset(hostsRead);
   const now = Date.now();
   const hostNow = now + offset;
   if (!data) return <>{error ? <ErrorBanner text={`Overview did not load: ${error}`} /> : <Skeleton rows={6} />}</>;

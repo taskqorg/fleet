@@ -37,8 +37,8 @@ function spendTotals(spend: RunnerSpend[]): TotalItem[] {
 
 export function Runners() {
   const [, go] = useLocation();
-  const { data, state, error } = useOp('executions_runners', {}, { every: 15000 }); // timer only: gateway calls change executions many times a second
-  const clockOffsetMs = useClockOffset(data);
+  const runners = useOp('executions_runners', {}, { every: 15000 }), { data, state, error } = runners; // timer only: gateway calls change executions many times a second
+  const clockOffsetMs = useClockOffset(runners);
   if (!data) return <>{error ? <ErrorBanner text={`Runners did not load: ${error}`} /> : <Skeleton rows={6} />}</>;
   const now = Date.now() + clockOffsetMs, from = now - DAY;
   const hosts = [...new Set<string | null>([...data.runs.map(r => r.hostId), ...data.spend.map(s => s.hostId)])]

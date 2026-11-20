@@ -2,11 +2,11 @@
 // counter for this person; agents read the same operation. It is read through useOp, so it rereads when a change touches
 // nav_counts (this person's focus, ignored projects and counter views included) at most once per 5 s, and every 30 s for
 // hosts, whose liveness moves without a change row.
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import type { Ops } from './api.ts';
 import { useOp } from './store.ts';
-import { prefs, prefsRead } from './prefs.ts';
+import { prefs, prefsRead, prefsSaved } from './prefs.ts';
 import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
 import type { NavCount, Tone } from '../../packages/ui/src/index.ts';
 
@@ -22,6 +22,11 @@ export function useNavCounts(ready: boolean): Record<string, NavCount> {
   // counter views) included: reread at most once per 5 s, so busy executions never storm it, and every 30 s for hosts,
   // whose liveness moves without a change row.
   const doc = useOp('nav_counts', ready && prefsRead.value ? {} : null, { quiet: 5000, every: 30_000 });
+  // A changed focus, ignored project or counter view is read as soon as its save lands, not at the end of the quiet window.
+  const { focus, ignored, navCounters, views } = prefs.value;
+  const settings = JSON.stringify([focus, ignored, Object.entries(navCounters ?? {}).sort().map(([list, name]) => [list, name, views.find(v => v.list === list && v.name === name)?.view ?? null])]);
+  const first = useRef(true), reload = useRef(doc.reload); reload.current = doc.reload;
+  useEffect(() => { if (first.current) { first.current = false; return; } void prefsSaved().then(() => reload.current()); }, [settings]);
   // The last counters stay while a changed setting is read (OR-23: nothing blinks out); none once access closes, so the
   // next person never sees them.
   const read = ready ? doc.data : null;

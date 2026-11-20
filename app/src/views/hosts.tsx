@@ -11,9 +11,13 @@ import type { HostRow, HostReading, ProcessReading, RunReading, OperationStats }
 import { Limits } from './limits.tsx';
 
 const ms = (s: string) => Date.parse(s);
-/** The server's clock minus this browser's, from serverNow of the reply and the moment it arrived (judge ages on the server's clock). */
-export function useClockOffset(data: { serverNow: number } | null): number {
+/**
+ * The server's clock minus this browser's, from serverNow of the reply and the moment it arrived (judge ages on the server's
+ * clock). A copy restored from the browser's store arrived at an unknown time: no offset, so its hosts age from then.
+ */
+export function useClockOffset(read: { data: { serverNow: number } | null; restored: boolean }): number {
   const arrived = useRef<{ data: unknown; at: number }>({ data: null, at: 0 });
+  const data = read.restored ? null : read.data;
   if (data && arrived.current.data !== data) arrived.current = { data, at: Date.now() };
   return data ? data.serverNow - arrived.current.at : 0;
 }
@@ -24,8 +28,8 @@ export function Hosts({ id }: { id?: string }) {
   useTick(5000);
   // Liveness comes from lastSeenAt, which polls move without a change row; re-read every 5 s (D11 CUJ 5) and judge age on the
   // server's clock (serverNow) so a skewed browser clock does not mark hosts offline.
-  const { data, state } = useOp('hosts_list', {}, { every: 5000 });
-  const clockOffsetMs = useClockOffset(data);
+  const hosts = useOp('hosts_list', {}, { every: 5000 }), { data, state } = hosts;
+  const clockOffsetMs = useClockOffset(hosts);
   const now = Date.now() + clockOffsetMs;
   // Limits (people-access §8): the latest reading per subscription and limit period, with its age; none is unknown, never zero.
   // Spans change without change rows: summary and findings are re-read every 30 s.

@@ -11,7 +11,9 @@ const TIMED = new Set<EntityRef['kind']>(['execution', 'conversation', 'host']);
 function useCard(ref: EntityRef): EntityCardRead {
   // The server names entity_card in the changes that can alter a card; touchedBy keeps those of this entity (by its id).
   // Execution changes are left out (totals flush many times a second): kinds whose state comes from runs read every 5 s.
-  const doc = useOp('entity_card', ref.id ? { kind: ref.kind, id: ref.id } : { code: ref.code! }, { every: TIMED.has(ref.kind) ? 5000 : undefined });
+  // A card asked by code learns its id from the reply (a legacy or alias id resolves to the one changes carry).
+  const scope = { kind: ref.kind, id: ref.id }, doc = useOp('entity_card', ref.id ? { kind: ref.kind, id: ref.id } : { code: ref.code! }, { every: TIMED.has(ref.kind) ? 5000 : undefined, scope });
+  if (doc.data?.id) scope.id = doc.data.id;
   // An entity now gone or hidden shows as such, never as its stored card.
   const gone = doc.status === 404;
   return { data: gone ? null : doc.data, error: gone ? NOT_FOUND : doc.error, retry: doc.reload };
