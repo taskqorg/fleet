@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -241,23 +242,32 @@ func uploadBegin(q *Request, b *contract.ArtifactUploadBeginRequest) (contract.A
 		return none, fail(400, "A file this large is more than the transfer protocol carries (10,000 parts of 95 MiB)")
 	}
 	name := attachmentName(b.Name)
-	u := doc{"id": newID(), "person": q.person.Email, "name": name, "mediaType": mediaTypeOf(name, deref(b.MediaType)), "size": b.Size, "partBytes": part, "received": 0, "parts": []any{}, "createdAt": nowMs()}
+	u := upload{ID: newID(), Person: q.person.Email, uploadPayload: uploadPayload{Name: name, MediaType: mediaTypeOf(name, deref(b.MediaType)),
+		Size: b.Size, PartBytes: part, Parts: []S3Part{}, CreatedAt: nowMs()}}
 	var projectID *string
 	if sid := deref(b.SessionId); sid != "" {
-		s, err := get(q, sid, "session") // RLS: a session outside the caller's grant is unknown
+		s, err := q.db().UploadSessionProject(q.ctx(), sid) // RLS: a session outside the caller's grant is unknown
+		if errors.Is(err, pgx.ErrNoRows) {
+			return none, errNotFound
+		}
 		if err != nil {
 			return none, err
 		}
-		u["sessionId"], projectID = sid, strPtr(s["projectId"])
+		projectID = s.ProjectID
+		if projectID == nil {
+			var p string
+			if json.Unmarshal(s.PayloadProject, &p) == nil {
+				projectID = &p
+			}
+		}
+		u.SessionID = &sid
 	} else if b.ProjectId != nil && *b.ProjectId != "" {
 		projectID = b.ProjectId
 	}
 	if !mayAccessProject(q.person, projectID) {
 		return none, fail(404, "Unknown project")
 	}
-	if projectID != nil {
-		u["projectId"] = *projectID
-	}
+	u.ProjectID = projectID
 	target, err := selectStore(withTx(q), q.app, artifactLocations(q.app, projectID), "")
 	if err != nil {
 		return none, err
@@ -267,111 +277,136 @@ func uploadBegin(q *Request, b *contract.ArtifactUploadBeginRequest) (contract.A
 	}
 	// The store's multipart upload starts with the first part (uploadPart), never in this transaction, so a begin that
 	// does not commit leaves nothing on the store.
-	u["storeId"], u["staging"] = target.ID, projectKey(projectID)+"/prod/.pending/upload-"+astr(u["id"])
-	if err := exec(q, uploadPutSQL, jsonBytes(u)); err != nil {
+	u.StoreID, u.Staging = target.ID, projectKey(projectID)+"/prod/.pending/upload-"+u.ID
+	if err := q.db().UploadInsert(q.ctx(), db.UploadInsertParams{ID: u.ID, Person: u.Person, SessionID: u.SessionID, ProjectID: u.ProjectID,
+		Payload: jsonBytes(u.uploadPayload)}); err != nil {
 		return none, err
 	}
 	sweepUploads(q.app)
-	return contract.ArtifactUploadBeginReply{UploadId: astr(u["id"]), Url: "/api/uploads/" + astr(u["id"]), PartBytes: part}, nil
+	return contract.ArtifactUploadBeginReply{UploadId: u.ID, Url: "/api/uploads/" + u.ID, PartBytes: part}, nil
 }
 
-// The upload row (migration 82): the fields a write guards or a reference names are columns, payload the rest; a record
-// is the row as the upload code reads it.
-const (
-	uploadRecordSQL = `(payload || jsonb_strip_nulls(jsonb_build_object('id', id, 'person', person, 'sessionId', session_id, 'projectId', project_id,
-	 'received', received, 'multipart', multipart, 'artifactId', artifact_id)))`
-	uploadColumnsSQL = `d->>'id', d->>'person', d->>'sessionId', d->>'projectId', coalesce((d->>'received')::bigint, 0), d->>'multipart', d->>'artifactId',
-	 d - '{id,person,sessionId,projectId,received,multipart,artifactId}'::text[]`
-	uploadPutSQL = `INSERT INTO upload(id, person, session_id, project_id, received, multipart, artifact_id, payload) SELECT ` + uploadColumnsSQL + ` FROM (SELECT $1::jsonb AS d) x`
-	// uploadSaveSQL writes a record that still has the received count it was read with and no artifact yet.
-	uploadSaveSQL = `UPDATE upload SET (person, session_id, project_id, received, multipart, artifact_id, payload, updated_at) =
-	 (SELECT d->>'person', d->>'sessionId', d->>'projectId', coalesce((d->>'received')::bigint, 0), d->>'multipart', d->>'artifactId',
-	  d - '{id,person,sessionId,projectId,received,multipart,artifactId}'::text[], now() FROM (SELECT $2::jsonb AS d) x)
-	 WHERE id=$1 AND received=$3 AND artifact_id IS NULL`
-)
+// upload: the upload row (migration 82, queries/uploads.sql): the fields a write guards or a reference names are
+// columns, uploadPayload the rest.
+type upload struct {
+	ID, Person           string
+	SessionID, ProjectID *string
+	Received             int64
+	Multipart            *string // the store's multipart upload, once the first part started it
+	ArtifactID           *string // the stored attachment, once finished
+	uploadPayload
+}
 
-var sweeping sync.Mutex
+type uploadPayload struct {
+	Name      string   `json:"name"`
+	MediaType string   `json:"mediaType"`
+	Size      int64    `json:"size"`
+	PartBytes int64    `json:"partBytes"`
+	Parts     []S3Part `json:"parts"`
+	CreatedAt int64    `json:"createdAt"`
+	StoreID   string   `json:"storeId"`
+	Staging   string   `json:"staging"`
+	Sha       string   `json:"sha,omitempty"`       // the running SHA-256 of the parts received (hashState)
+	Completed bool     `json:"completed,omitempty"` // the store's upload is complete: the staging object holds the file
+}
+
+func uploadOf(r db.UploadGetRow) (upload, error) {
+	u := upload{ID: r.ID, Person: r.Person, SessionID: r.SessionID, ProjectID: r.ProjectID, Received: r.Received, Multipart: r.Multipart, ArtifactID: r.ArtifactID}
+	return u, json.Unmarshal(r.Payload, &u.uploadPayload)
+}
+
+// uploadProgress: the answer of a part, a probe and a finish that runs in the background, and the extra fields of a
+// conflict: how much of the file the coordinator has.
+type uploadProgress struct {
+	Received  int64 `json:"received"`
+	Finishing bool  `json:"finishing,omitempty"`
+}
+
+func uploadConflict(code int, msg string, received int64) error {
+	return &HTTPError{Code: code, Msg: msg, Extra: docOf(uploadProgress{Received: received})}
+}
 
 // sweepUploads, in the background after a begin: aborts uploads left unfinished for uploadStaleAfter (the store's
 // multipart upload and the record) and drops finished records that old (they only answer a retried last part).
+var sweepUploadsSoon = coalesced("upload-sweep", func(ctx context.Context, a *App) error {
+	sweepUploadsNow(ctx, a)
+	return nil
+})
+
 func sweepUploads(a *App) {
-	if a == nil || !sweeping.TryLock() {
-		return
+	if a != nil {
+		sweepUploadsSoon(a)
 	}
-	go func() {
-		defer sweeping.Unlock()
-		sweepUploadsNow(context.Background(), a)
-	}()
 }
 
-// sweepUploadsNow: one sweep (the caller holds sweeping).
+var sweeping sync.Mutex
+
+// sweepUploadsNow: one sweep, at most one at a time in this coordinator.
 func sweepUploadsNow(ctx context.Context, a *App) {
-	{
-		age := strconv.Itoa(int(uploadStaleAfter.Seconds())) + " seconds"
-		var stale []doc
-		err := a.store.Tx(ctx, nil, false, "", func(tx pgx.Tx) error {
-			rows, err := tx.Query(ctx, "SELECT "+uploadRecordSQL+" FROM upload WHERE updated_at < now() - $1::interval", age)
+	if !sweeping.TryLock() {
+		return
+	}
+	defer sweeping.Unlock()
+	age := uploadStaleAfter.Seconds()
+	var stale []upload
+	err := a.store.Tx(ctx, nil, false, "", func(tx pgx.Tx) error {
+		rs, err := db.New(tx).UploadsStale(ctx, age)
+		stale = nil
+		for _, r := range rs {
+			if u, err := uploadOf(db.UploadGetRow(r)); err == nil {
+				stale = append(stale, u)
+			}
+		}
+		return err
+	})
+	if err != nil {
+		return
+	}
+	for _, u := range stale {
+		// The store lets go of an unfinished upload first; a record whose abort failed stays for the next sweep.
+		if u.ArtifactID == nil && deref(u.Multipart) != "" {
+			s, err := storeGet(ctx, a, u.StoreID)
 			if err != nil {
-				return err
+				continue
 			}
-			for rows.Next() {
-				var raw []byte
-				var u doc
-				if rows.Scan(&raw) == nil && json.Unmarshal(raw, &u) == nil {
-					stale = append(stale, u)
+			if s == nil { // the store is gone, and its uploads with it: only the record is left
+				goto drop
+			}
+			t, err := tunnel(s)
+			if err != nil {
+				continue
+			}
+			if err := t.AbortMultipartUpload(s.Bucket, u.Staging, *u.Multipart); err != nil {
+				var se *S3Error
+				if !errors.As(err, &se) || se.Status != 404 {
+					continue
 				}
 			}
-			return rows.Err()
+			t.Delete(s.Bucket, u.Staging)
+		}
+	drop:
+		a.store.Tx(ctx, nil, true, NOLOCK, func(tx pgx.Tx) error {
+			return db.New(tx).UploadDrop(ctx, db.UploadDropParams{ID: u.ID, AgeSeconds: age})
 		})
-		if err != nil {
-			return
-		}
-		for _, u := range stale {
-			// The store lets go of an unfinished upload first; a record whose abort failed stays for the next sweep.
-			if u["artifactId"] == nil && astr(u["multipart"]) != "" {
-				s, err := storeGet(ctx, a, astr(u["storeId"]))
-				if err != nil {
-					continue
-				}
-				if s == nil { // the store is gone, and its uploads with it: only the record is left
-					goto drop
-				}
-				t, err := tunnel(s)
-				if err != nil {
-					continue
-				}
-				if err := t.AbortMultipartUpload(s.Bucket, astr(u["staging"]), astr(u["multipart"])); err != nil {
-					var se *S3Error
-					if !errors.As(err, &se) || se.Status != 404 {
-						continue
-					}
-				}
-				t.Delete(s.Bucket, astr(u["staging"]))
-			}
-		drop:
-			a.store.Tx(ctx, nil, true, NOLOCK, func(tx pgx.Tx) error {
-				_, err := tx.Exec(ctx, "DELETE FROM upload WHERE id=$1 AND updated_at < now() - $2::interval", u["id"], age)
-				return err
-			})
-		}
 	}
 }
 
 // uploadRecord reads the upload in the person's scope; only the person who began it may write it.
-func (a *App) uploadRecord(ctx context.Context, p *Person, id string) (doc, error) {
-	var u doc
+func (a *App) uploadRecord(ctx context.Context, p *Person, id string) (upload, error) {
+	var u upload
 	err := a.store.Tx(ctx, scopeOf(p), false, "", func(tx pgx.Tx) error {
-		var raw []byte
-		if err := tx.QueryRow(ctx, "SELECT "+uploadRecordSQL+" FROM upload WHERE id=$1", id).Scan(&raw); err != nil {
+		r, err := db.New(tx).UploadGet(ctx, id)
+		if err != nil {
 			return err
 		}
-		return json.Unmarshal(raw, &u)
+		u, err = uploadOf(r)
+		return err
 	})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err // a database failure is the server's, and the client sends the part again
+		return u, err // a database failure is the server's, and the client sends the part again
 	}
-	if err != nil || astr(u["person"]) != p.Email {
-		return nil, fail(404, "Unknown upload")
+	if err != nil || u.Person != p.Email {
+		return u, fail(404, "Unknown upload")
 	}
 	return u, nil
 }
@@ -379,15 +414,15 @@ func (a *App) uploadRecord(ctx context.Context, p *Person, id string) (doc, erro
 // saveUpload writes the record in the person's scope if it still has the received count it was read with (another
 // coordinator may have taken the same part meanwhile: 409, the client resumes); extra runs in the same transaction.
 // The record of a finished upload (artifactId) takes no more writes, so two finishes record one artifact.
-func (a *App) saveUpload(ctx context.Context, p *Person, u doc, received int64, extra func(pgx.Tx) error) error {
+func (a *App) saveUpload(ctx context.Context, p *Person, u upload, received int64, extra func(pgx.Tx) error) error {
 	return a.store.Tx(ctx, scopeOf(p), true, NOLOCK, func(tx pgx.Tx) error {
-		raw, _ := json.Marshal(u)
-		tag, err := tx.Exec(ctx, uploadSaveSQL, u["id"], raw, received)
+		n, err := db.New(tx).UploadSave(ctx, db.UploadSaveParams{ID: u.ID, Received: u.Received, Multipart: u.Multipart, ArtifactID: u.ArtifactID,
+			Payload: jsonBytes(u.uploadPayload), WasReceived: received})
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() == 0 {
-			return &HTTPError{Code: 409, Msg: "Upload changed meanwhile", Extra: map[string]any{"received": received}}
+		if n == 0 {
+			return uploadConflict(409, "Upload changed meanwhile", received)
 		}
 		if extra != nil {
 			return extra(tx)
@@ -420,10 +455,10 @@ func (a *App) uploadPart(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		if aid := astr(u["artifactId"]); aid != "" {
+		if aid := deref(u.ArtifactID); aid != "" {
 			return a.uploadView(ctx, q.person, aid)
 		}
-		size, have, part := int64(num(u["size"])), int64(num(u["received"])), int64(num(u["partBytes"]))
+		size, have, part := u.Size, u.Received, u.PartBytes
 		if size == 0 {
 			return a.finishLocked(ctx, q.person, id)
 		}
@@ -435,7 +470,7 @@ func (a *App) uploadPart(w http.ResponseWriter, r *http.Request) {
 			if have == size {
 				return a.finishLocked(ctx, q.person, id)
 			}
-			return doc{"received": have}, nil
+			return uploadProgress{Received: have}, nil
 		}
 		g := contentRangePattern.FindStringSubmatch(r.Header.Get("Content-Range"))
 		if g == nil {
@@ -451,10 +486,10 @@ func (a *App) uploadPart(w http.ResponseWriter, r *http.Request) {
 			if have == size {
 				return a.finishLocked(ctx, q.person, id)
 			}
-			return doc{"received": have}, nil
+			return uploadProgress{Received: have}, nil
 		}
 		if first != have {
-			return nil, &HTTPError{Code: 409, Msg: "Part out of order", Extra: map[string]any{"received": have}}
+			return nil, uploadConflict(409, "Part out of order", have)
 		}
 		// Only now, for the person who began this upload and a part on its grid, may the request body take longer. The
 		// body is read before the upload's lock, so a stalled request never holds back a retry of the same part.
@@ -466,7 +501,7 @@ func (a *App) uploadPart(w http.ResponseWriter, r *http.Request) {
 		err = uploadMemory.acquire(wctx, need)
 		cancel()
 		if err != nil {
-			return nil, &HTTPError{Code: 503, Msg: "Upload memory busy; send the part again", Extra: map[string]any{"received": have}}
+			return nil, uploadConflict(503, "Upload memory busy; send the part again", have)
 		}
 		held := true
 		free := func() {
@@ -479,16 +514,16 @@ func (a *App) uploadPart(w http.ResponseWriter, r *http.Request) {
 		body := make([]byte, need)
 		if _, err := io.ReadFull(r.Body, body); err != nil {
 			// A cut-off body (slow link, deadline, proxy): nothing was taken; the client sends the part again.
-			return nil, &HTTPError{Code: 409, Msg: "Part cut off; send it again", Extra: map[string]any{"received": have}}
+			return nil, uploadConflict(409, "Part cut off; send it again", have)
 		}
 		defer uploadLock(id)()
 		if u, err = a.uploadRecord(ctx, q.person, id); err != nil {
 			return nil, err
 		}
-		if int64(num(u["received"])) != first || u["artifactId"] != nil {
-			return nil, &HTTPError{Code: 409, Msg: "Upload changed meanwhile", Extra: map[string]any{"received": int64(num(u["received"]))}}
+		if u.Received != first || u.ArtifactID != nil {
+			return nil, uploadConflict(409, "Upload changed meanwhile", u.Received)
 		}
-		h, err := hashFrom(astr(u["sha"]))
+		h, err := hashFrom(u.Sha)
 		if err != nil {
 			return nil, err
 		}
@@ -497,25 +532,27 @@ func (a *App) uploadPart(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		if astr(u["multipart"]) == "" {
-			if u["multipart"], err = a.startMultipart(ctx, q.person, id, s, t, u); err != nil {
+		if deref(u.Multipart) == "" {
+			mp, err := a.startMultipart(ctx, q.person, id, s, t, u)
+			if err != nil {
 				return nil, err
 			}
+			u.Multipart = &mp
 		}
 		n := int(first/part) + 1
-		etag, err := t.UploadPart(s.Bucket, astr(u["staging"]), astr(u["multipart"]), n, body)
+		etag, err := t.UploadPart(s.Bucket, u.Staging, *u.Multipart, n, body)
 		body = nil
 		free() // the store has the bytes: the reservation is not held through the record write and a finish
 		if err != nil {
 			return nil, err
 		}
-		u["parts"] = append(anys(u["parts"]), doc{"partNumber": n, "etag": etag})
-		u["received"], u["sha"] = last+1, hashState(h)
+		u.Parts = append(u.Parts, S3Part{PartNumber: n, ETag: etag})
+		u.Received, u.Sha = last+1, hashState(h)
 		if err := a.saveUpload(ctx, q.person, u, first, nil); err != nil {
 			return nil, err
 		}
 		if last+1 < size {
-			return doc{"received": last + 1}, nil
+			return uploadProgress{Received: last + 1}, nil
 		}
 		return a.finishUpload(ctx, q.person, id)
 	}()
@@ -529,33 +566,33 @@ func (a *App) uploadPart(w http.ResponseWriter, r *http.Request) {
 
 // startMultipart starts the store's multipart upload and records its id only if the record has none; a request that
 // loses that race (another coordinator) aborts its own and uses the recorded one, so one id is ever used.
-func (a *App) startMultipart(ctx context.Context, p *Person, id string, s *StoreRow, t *S3, u doc) (string, error) {
-	mp, err := t.CreateMultipartUpload(s.Bucket, astr(u["staging"]), astr(u["mediaType"]))
+func (a *App) startMultipart(ctx context.Context, p *Person, id string, s *StoreRow, t *S3, u upload) (string, error) {
+	mp, err := t.CreateMultipartUpload(s.Bucket, u.Staging, u.MediaType)
 	if err != nil {
 		return "", err
 	}
 	won := false
 	err = a.store.Tx(ctx, scopeOf(p), true, NOLOCK, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, "UPDATE upload SET multipart=$2,updated_at=now() WHERE id=$1 AND multipart IS NULL", id, mp)
-		won = err == nil && tag.RowsAffected() == 1
+		n, err := db.New(tx).UploadMultipartSet(ctx, db.UploadMultipartSetParams{ID: id, Multipart: &mp})
+		won = err == nil && n == 1
 		return err
 	})
 	if err != nil || !won {
-		t.AbortMultipartUpload(s.Bucket, astr(u["staging"]), mp)
+		t.AbortMultipartUpload(s.Bucket, u.Staging, mp)
 		if err != nil {
 			return "", err
 		}
 		fresh, err := a.uploadRecord(ctx, p, id)
-		if err != nil || astr(fresh["multipart"]) == "" {
-			return "", &HTTPError{Code: 409, Msg: "Upload changed meanwhile", Extra: map[string]any{"received": int64(num(u["received"]))}}
+		if err != nil || deref(fresh.Multipart) == "" {
+			return "", uploadConflict(409, "Upload changed meanwhile", u.Received)
 		}
-		return astr(fresh["multipart"]), nil
+		return *fresh.Multipart, nil
 	}
 	return mp, nil
 }
 
-func (a *App) uploadStore(ctx context.Context, u doc) (*StoreRow, *S3, error) {
-	s, err := storeGet(ctx, a, astr(u["storeId"]))
+func (a *App) uploadStore(ctx context.Context, u upload) (*StoreRow, *S3, error) {
+	s, err := storeGet(ctx, a, u.StoreID)
 	if err != nil || s == nil {
 		return nil, nil, failCode(409, "The upload's store is gone; begin again", "no_store")
 	}
@@ -568,7 +605,7 @@ func (a *App) uploadStore(ctx context.Context, u doc) (*StoreRow, *S3, error) {
 func (a *App) finishLocked(ctx context.Context, p *Person, id string) (any, error) {
 	if _, busy := finishing.Load(id); busy {
 		if u, err := a.uploadRecord(ctx, p, id); err == nil {
-			return doc{"finishing": true, "received": int64(num(u["size"]))}, nil
+			return uploadProgress{Received: u.Size, Finishing: true}, nil
 		}
 	}
 	defer uploadLock(id)()
@@ -583,14 +620,13 @@ func (a *App) finishUpload(ctx context.Context, p *Person, id string) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	if aid := astr(u["artifactId"]); aid != "" {
+	if aid := deref(u.ArtifactID); aid != "" {
 		return a.uploadView(ctx, p, aid)
 	}
-	size := int64(num(u["size"]))
 	if _, busy := finishing.Load(id); busy {
-		return doc{"received": size, "finishing": true}, nil
+		return uploadProgress{Received: u.Size, Finishing: true}, nil
 	}
-	if size <= finishInline {
+	if u.Size <= finishInline {
 		return a.finishNow(ctx, p, u)
 	}
 	finishing.Store(id, true)
@@ -602,60 +638,56 @@ func (a *App) finishUpload(ctx context.Context, p *Person, id string) (any, erro
 			log.Printf("upload %s: finish: %v", id, err) // the next retried part finishes again
 		}
 	}()
-	return doc{"received": size, "finishing": true}, nil
+	return uploadProgress{Received: u.Size, Finishing: true}, nil
 }
 
 // finishNow completes the store upload once, copies the staging object to its content key and records the stored
 // attachment with its verified copy; each step repeats safely.
-func (a *App) finishNow(ctx context.Context, p *Person, u doc) (any, error) {
+func (a *App) finishNow(ctx context.Context, p *Person, u upload) (any, error) {
 	s, t, err := a.uploadStore(ctx, u)
 	if err != nil {
 		return nil, err
 	}
-	size, staging := int64(num(u["size"])), astr(u["staging"])
-	if u["completed"] != true {
+	size, staging := u.Size, u.Staging
+	if !u.Completed {
 		// A finish that completed the store upload but failed to record it completes nothing twice: the staging object
 		// of the whole size is there.
 		if n, err := t.Head(s.Bucket, staging); err != nil {
 			return nil, err
 		} else if size > 0 && n == size {
-			u["completed"] = true
+			u.Completed = true
 		}
 	}
-	if u["completed"] != true {
+	if !u.Completed {
 		if size == 0 {
-			err = t.Put(s.Bucket, staging, []byte{}, astr(u["mediaType"]))
+			err = t.Put(s.Bucket, staging, []byte{}, u.MediaType)
 		} else {
-			parts := []S3Part{}
-			for _, x := range anys(u["parts"]) {
-				parts = append(parts, S3Part{PartNumber: int(num(mapOf(x)["partNumber"])), ETag: astr(mapOf(x)["etag"])})
-			}
-			err = t.CompleteMultipartUpload(s.Bucket, staging, astr(u["multipart"]), parts)
+			err = t.CompleteMultipartUpload(s.Bucket, staging, deref(u.Multipart), u.Parts)
 		}
 		if err != nil {
 			return nil, err
 		}
-		u["completed"] = true
+		u.Completed = true
 		if err := a.saveUpload(ctx, p, u, size, nil); err != nil {
 			return nil, err
 		}
 	}
-	h, err := hashFrom(astr(u["sha"]))
+	h, err := hashFrom(u.Sha)
 	if err != nil {
 		return nil, err
 	}
 	sum := hex.EncodeToString(h.Sum(nil))
-	projectID := strPtr(u["projectId"])
+	projectID := u.ProjectID
 	// As artifactReserve: purged content is never stored again.
-	if r, err := oneCtx(ctx, a, "SELECT 1 AS x FROM purged_hash WHERE project_id=$1 AND scope='prod' AND content_hash=$2", projectKey(projectID), sum); err != nil {
+	if purged, err := connDB(ctx, a).UploadContentPurged(ctx, db.UploadContentPurgedParams{ProjectKey: projectKey(projectID), ContentHash: sum}); err != nil {
 		return nil, err
-	} else if r != nil {
+	} else if purged {
 		t.Delete(s.Bucket, staging)
 		return nil, failCode(409, "Content was purged", "purged")
 	}
 	key := keyOf(&Artifact{ProjectID: projectID, Scope: "prod", ContentHash: sum})
 	id := newID()
-	u["artifactId"] = id
+	u.ArtifactID = &id
 	err = a.saveUpload(ctx, p, u, size, func(tx pgx.Tx) error {
 		// Under the object lock until the copy row commits, as writeObject: a purge of this content either finished
 		// before the Head in promote (the object is written again) or waits and then sees the copy (cleanup.go).
@@ -665,11 +697,12 @@ func (a *App) finishNow(ctx context.Context, p *Person, u doc) (any, error) {
 		if err := promote(t, s.Bucket, staging, key, size); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, "INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,session_id,role,state) VALUES($1,$2,'prod',$3,$4,$5,$6,$7,'attachment','stored')", id, projectID, sum, size, astr(u["mediaType"]), astr(u["name"]), strPtr(u["sessionId"])); err != nil {
+		d := db.New(tx)
+		if err := d.UploadArtifactInsert(ctx, db.UploadArtifactInsertParams{ID: id, ProjectID: projectID, ContentHash: sum, Size: size,
+			MediaType: u.MediaType, Name: u.Name, SessionID: u.SessionID}); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, "INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())", id, s.ID, projectID)
-		return err
+		return d.UploadCopyInsert(ctx, db.UploadCopyInsertParams{ArtifactID: id, StoreID: s.ID, ProjectID: projectID})
 	})
 	if err != nil {
 		return nil, err
@@ -691,10 +724,7 @@ func (a *App) uploadView(ctx context.Context, p *Person, id string) (doc, error)
 func init() {
 	onStart(func(ctx context.Context, a *App) { // stale uploads go also when nobody begins a new one
 		every(ctx, "upload-sweep", time.Hour, func(ctx context.Context) error {
-			if sweeping.TryLock() {
-				defer sweeping.Unlock()
-				sweepUploadsNow(ctx, a)
-			}
+			sweepUploadsNow(ctx, a)
 			return nil
 		})
 	})
