@@ -50,6 +50,46 @@ func (q *Queries) LabHostJobInProject(ctx context.Context, arg LabHostJobInProje
 	return owned, err
 }
 
+const labScoreInsert = `-- name: LabScoreInsert :exec
+INSERT INTO score(id,experiment_id,project_id,trial_ids,evaluator,evaluator_version,form,value,source_execution_id,question_id,rationale,replaces_score_id)
+VALUES($1,$2,$3,$4::text[],$5,$6,$7,$8::jsonb,
+  $9,$10,$11,$12)
+`
+
+type LabScoreInsertParams struct {
+	ID                string
+	ExperimentID      string
+	ProjectID         string
+	TrialIds          []string
+	Evaluator         string
+	EvaluatorVersion  string
+	Form              string
+	Value             []byte
+	SourceExecutionID *string
+	QuestionID        *string
+	Rationale         *string
+	ReplacesScoreID   *string
+}
+
+// One score of an experiment's trials (lab_score.go).
+func (q *Queries) LabScoreInsert(ctx context.Context, arg LabScoreInsertParams) error {
+	_, err := q.db.Exec(ctx, labScoreInsert,
+		arg.ID,
+		arg.ExperimentID,
+		arg.ProjectID,
+		arg.TrialIds,
+		arg.Evaluator,
+		arg.EvaluatorVersion,
+		arg.Form,
+		arg.Value,
+		arg.SourceExecutionID,
+		arg.QuestionID,
+		arg.Rationale,
+		arg.ReplacesScoreID,
+	)
+	return err
+}
+
 const labSuffixRuns = `-- name: LabSuffixRuns :many
 SELECT (data || jsonb_build_object('id',id,'experimentId',experiment_id,'kind',kind))::jsonb AS record FROM execution WHERE request_id=$1
 `

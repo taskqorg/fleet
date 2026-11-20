@@ -12,7 +12,7 @@ import (
 // labEvaluator: one experiment evaluator as stored in experiment.evaluators.
 type labEvaluator struct {
 	Kind      string `json:"kind"`
-	Ref       any    `json:"ref"`
+	Ref       string `json:"ref"`
 	Form      string `json:"form"`
 	Overrides any    `json:"overrides,omitempty"`
 }

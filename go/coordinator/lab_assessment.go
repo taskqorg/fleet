@@ -17,9 +17,74 @@ import (
 	"fleet/coordinator/db"
 )
 
+// labAssessmentCapture: one check's assessment file, captured before scratch cleanup (runChecks).
+type labAssessmentCapture struct {
+	CheckID  string `json:"checkId"`
+	SchemaID string `json:"schemaId"`
+	Bytes    []byte `json:"bytes"`
+	Sha256   string `json:"sha256"`
+}
+
+// labAssessmentRef: a stored assessment linked to its trial; fields in canonical (sorted) key order.
+type labAssessmentRef struct {
+	ArtifactID      string `json:"artifactId"`
+	CheckID         string `json:"checkId"`
+	EvaluatorSha256 string `json:"evaluatorSha256"`
+	InputSha256     string `json:"inputSha256"`
+	SchemaID        string `json:"schemaId"`
+	Sha256          string `json:"sha256"`
+}
+
+// labFileBinding: an evaluator input file by path and content; fields in canonical (sorted) key order.
+type labFileBinding struct {
+	Path   string `json:"path"`
+	Sha256 string `json:"sha256"`
+}
+
+// labAssessmentSnap: what a trial's assessment was computed from (labAssessmentSnapshot).
+type labAssessmentSnap struct {
+	ExampleSha256   string `json:"exampleSha256"`
+	PlanRevision    any    `json:"planRevision"`
+	CanonicalResult any    `json:"canonicalResult"`
+	Usage           any    `json:"usage"`
+	DurationMs      any    `json:"durationMs"`
+}
+
+// labAssessTrial: the fields of a trial (a pipeline run of the experiment) that assessments read.
+type labAssessTrial struct {
+	ID                 string             `json:"id"`
+	ExperimentID       string             `json:"experimentId"`
+	State              string             `json:"state"`
+	Observation        string             `json:"observation"`
+	Cell               labCell            `json:"cell"`
+	ProjectAssessments []labAssessmentRef `json:"projectAssessments"`
+	Plan               struct {
+		Revision any `json:"revision"`
+	} `json:"plan"`
+	CanonicalResult any `json:"canonicalResult"`
+	Usage           any `json:"usage"`
+	DurationMs      any `json:"durationMs"`
+}
+
+// labCanonicalInputs: the input artifacts of a trial's canonical result.
+type labCanonicalInputs struct {
+	CanonicalResult struct {
+		Inputs []struct {
+			ArtifactID string `json:"artifactId"`
+			Sha256     string `json:"sha256"`
+		} `json:"inputs"`
+	} `json:"canonicalResult"`
+}
+
+// labCheckResult: the assessment fields of a script check result (runChecks, then materializeLabAssessments).
+type labCheckResult struct {
+	Assessments        []labAssessmentCapture `json:"assessments"`
+	ProjectAssessments []labAssessmentRef     `json:"projectAssessments"`
+}
+
 // captureLabAssessment accepts one fixed, regular, contained JSON file. The
 // bytes are retained before scratch cleanup; exit status is a separate fact.
-func captureLabAssessment(dir string) (doc, error) {
+func captureLabAssessment(dir string) (*labAssessmentCapture, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
@@ -58,31 +123,38 @@ func captureLabAssessment(dir string) (doc, error) {
 	if err != nil || len(b) > 64<<20 {
 		return nil, fmt.Errorf("assessment bytes unavailable or too large")
 	}
-	var value doc
-	if json.Unmarshal(b, &value) != nil || strings.TrimSpace(astr(value["schema"])) == "" {
+	var value *struct {
+		Schema string `json:"schema"`
+	}
+	if json.Unmarshal(b, &value) != nil || value == nil || strings.TrimSpace(value.Schema) == "" {
 		return nil, fmt.Errorf("assessment requires a JSON object with schema")
 	}
-	return doc{"schemaId": value["schema"], "bytes": b, "sha256": sha256hex(b)}, nil
+	return &labAssessmentCapture{SchemaID: value.Schema, Bytes: b, Sha256: sha256hex(b)}, nil
 }
 
-func labFileBindings(files []labFile) []any {
-	bindings := []any{}
+func labFileBindings(files []labFile) []labFileBinding {
+	bindings := []labFileBinding{}
 	for _, f := range files {
-		bindings = append(bindings, doc{"path": f.path, "sha256": sha256hex(f.bytes)})
+		bindings = append(bindings, labFileBinding{Path: f.path, Sha256: sha256hex(f.bytes)})
 	}
-	sort.Slice(bindings, func(i, j int) bool { return astr(mapOf(bindings[i])["path"]) < astr(mapOf(bindings[j])["path"]) })
+	sort.Slice(bindings, func(i, j int) bool { return bindings[i].Path < bindings[j].Path })
 	return bindings
 }
 
 func labEvaluatorIdentity(checks []any, files []labFile) string {
-	members := []any{}
+	members := []labFileBinding{}
 	for _, f := range files {
 		if f.path == "tools/program.py" || f.path == "contracts.json" {
-			members = append(members, doc{"path": f.path, "sha256": sha256hex(f.bytes)})
+			members = append(members, labFileBinding{Path: f.path, Sha256: sha256hex(f.bytes)})
 		}
 	}
-	sort.Slice(members, func(i, j int) bool { return astr(mapOf(members[i])["path"]) < astr(mapOf(members[j])["path"]) })
-	evaluator := append([]any{doc{"checks": checks}}, members...)
+	sort.Slice(members, func(i, j int) bool { return members[i].Path < members[j].Path })
+	evaluator := []any{struct {
+		Checks []any `json:"checks"`
+	}{checks}}
+	for _, m := range members {
+		evaluator = append(evaluator, m)
+	}
 	return sha256hex([]byte(canonical(evaluator)))
 }
 
@@ -93,65 +165,73 @@ func labAssessmentInputs(trial doc, checks []any, files []labFile) (string, stri
 // Upload before opening the linking transaction. A storage failure cannot make
 // the script check score durable; an unlinked object is ordinary retained data.
 func materializeLabAssessments(ctx context.Context, a *App, trial doc, result doc, evaluator, input string) error {
-	refs := []any{}
-	for _, v := range anys(result["assessments"]) {
-		capture := mapOf(v)
-		name := filepath.ToSlash(filepath.Join("assessments", astr(trial["id"]), astr(capture["checkId"]), evaluator, input+".json"))
-		id, hash, err := saveObject(ctx, a, projectIDPtr(trial["projectId"]), "lab", astr(trial["id"]), name, capture["bytes"].([]byte), "application/json")
+	t, _ := asT[labAssessTrial](trial)
+	r, _ := asT[labCheckResult](result)
+	refs := []labAssessmentRef{}
+	for _, capture := range r.Assessments {
+		name := filepath.ToSlash(filepath.Join("assessments", t.ID, capture.CheckID, evaluator, input+".json"))
+		id, hash, err := saveObject(ctx, a, projectIDPtr(trial["projectId"]), "lab", t.ID, name, capture.Bytes, "application/json")
 		if err != nil {
 			return err
 		}
-		if hash != capture["sha256"] {
+		if hash != capture.Sha256 {
 			return fail(409, "Assessment stored bytes differ")
 		}
-		refs = append(refs, doc{"checkId": capture["checkId"], "schemaId": capture["schemaId"], "artifactId": id, "sha256": hash, "evaluatorSha256": evaluator, "inputSha256": input})
+		refs = append(refs, labAssessmentRef{CheckID: capture.CheckID, SchemaID: capture.SchemaID, ArtifactID: id, Sha256: hash, EvaluatorSha256: evaluator, InputSha256: input})
 	}
 	sort.Slice(refs, func(i, j int) bool { return canonical(refs[i]) < canonical(refs[j]) })
-	result["projectAssessments"] = refs
+	linked := []any{}
+	for _, ref := range refs {
+		linked = append(linked, ref)
+	}
+	result["projectAssessments"] = linked
 	delete(result, "assessments")
 	return nil
 }
 
 func linkLabAssessments(q *Request, trial doc, result doc) error {
-	refs := anys(result["projectAssessments"])
+	r, _ := asT[labCheckResult](result)
+	refs := r.ProjectAssessments
 	if len(refs) == 0 {
 		return nil
 	}
 	if !txHasLock(q.tx, GLOBAL) {
 		return fail(409, "Assessment linking requires its transaction fence")
 	}
-	if _, err := q.db().ExecutionLockState(q.ctx(), astr(trial["id"])); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	t, _ := asT[labAssessTrial](trial)
+	if _, err := q.db().ExecutionLockState(q.ctx(), t.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	current, err := getRun(q, astr(trial["id"]))
+	current, err := getRun(q, t.ID)
 	if err != nil {
 		return err
 	}
-	if current == nil || current["state"] != "succeeded" || current["observation"] == "unconfirmed" || !same(current["canonicalResult"], trial["canonicalResult"]) {
+	if current == nil {
 		return fail(409, "Assessment trial snapshot changed")
 	}
-	runs, err := expRuns(q, astr(trial["experimentId"]))
+	run, _ := asT[labAssessTrial](current)
+	if run.State != "succeeded" || run.Observation == "unconfirmed" || !same(current["canonicalResult"], trial["canonicalResult"]) {
+		return fail(409, "Assessment trial snapshot changed")
+	}
+	runs, err := expRuns(q, t.ExperimentID)
 	if err != nil {
 		return err
 	}
 	_, latest := expLatest(expTrials(runs))
-	cell := mapOf(trial["cell"])
-	if latest[cellKey(cell["example"], cell["variant"], cell["repeat"])]["id"] != trial["id"] {
+	if latest[cellKey(t.Cell.Example, t.Cell.Variant, t.Cell.Repeat)]["id"] != trial["id"] {
 		return fail(409, "Assessment attempt was superseded")
 	}
-	existing := append([]any{}, anys(current["projectAssessments"])...)
-	for _, value := range refs {
-		ref := mapOf(value)
-		artifact, err := artifactRow(withTx(q), q.app, astr(ref["artifactId"]))
-		if err != nil || artifact.State != "stored" || !same(artifact.ProjectID, trial["projectId"]) || artifact.ExecutionID == nil || *artifact.ExecutionID != astr(trial["id"]) || artifact.ContentHash != ref["sha256"] {
+	existing := append([]labAssessmentRef{}, run.ProjectAssessments...)
+	for _, ref := range refs {
+		artifact, err := artifactRow(withTx(q), q.app, ref.ArtifactID)
+		if err != nil || artifact.State != "stored" || !same(artifact.ProjectID, trial["projectId"]) || artifact.ExecutionID == nil || *artifact.ExecutionID != t.ID || artifact.ContentHash != ref.Sha256 {
 			return fail(409, "Assessment artifact identity unavailable or changed")
 		}
 		found := false
-		for _, v := range existing {
-			old := mapOf(v)
-			if old["checkId"] == ref["checkId"] && old["evaluatorSha256"] == ref["evaluatorSha256"] && old["inputSha256"] == ref["inputSha256"] {
-				if old["sha256"] != ref["sha256"] {
-					return &HTTPError{Code: 409, Msg: "Assessment identity conflict", Extra: doc{"reason": "assessment_identity_conflict"}}
+		for _, old := range existing {
+			if old.CheckID == ref.CheckID && old.EvaluatorSha256 == ref.EvaluatorSha256 && old.InputSha256 == ref.InputSha256 {
+				if old.Sha256 != ref.Sha256 {
+					return labConflict("Assessment identity conflict", "assessment_identity_conflict")
 				}
 				found = true
 			}
@@ -161,19 +241,21 @@ func linkLabAssessments(q *Request, trial doc, result doc) error {
 		}
 	}
 	sort.Slice(existing, func(i, j int) bool {
-		a, b := mapOf(existing[i]), mapOf(existing[j])
-		for _, key := range []string{"checkId", "evaluatorSha256", "inputSha256"} {
-			if a[key] != b[key] {
-				return astr(a[key]) < astr(b[key])
-			}
+		a, b := existing[i], existing[j]
+		if a.CheckID != b.CheckID {
+			return a.CheckID < b.CheckID
 		}
-		return false
+		if a.EvaluatorSha256 != b.EvaluatorSha256 {
+			return a.EvaluatorSha256 < b.EvaluatorSha256
+		}
+		return a.InputSha256 < b.InputSha256
 	})
-	return q.db().LabTrialAssessmentsSet(q.ctx(), db.LabTrialAssessmentsSetParams{ID: astr(trial["id"]), Assessments: jsonBytes(existing)})
+	return q.db().LabTrialAssessmentsSet(q.ctx(), db.LabTrialAssessmentsSetParams{ID: t.ID, Assessments: jsonBytes(existing)})
 }
 
-func labAssessmentSnapshot(trial, example doc) doc {
-	return doc{"exampleSha256": sha256hex([]byte(canonical(example))), "planRevision": mapOf(trial["plan"])["revision"], "canonicalResult": trial["canonicalResult"], "usage": trial["usage"], "durationMs": trial["durationMs"]}
+func labAssessmentSnapshot(trial, example doc) labAssessmentSnap {
+	t, _ := asT[labAssessTrial](trial)
+	return labAssessmentSnap{ExampleSha256: sha256hex([]byte(canonical(example))), PlanRevision: t.Plan.Revision, CanonicalResult: t.CanonicalResult, Usage: t.Usage, DurationMs: t.DurationMs}
 }
 
 func validateLabAssessmentSnapshot(q *Request, trial, example, result doc) error {
@@ -182,10 +264,10 @@ func validateLabAssessmentSnapshot(q *Request, trial, example, result doc) error
 	}
 	// The output and every input artifact are immutable identities. Availability
 	// and ownership are checked again at the linking boundary without object I/O.
-	for _, v := range anys(mapOf(trial["canonicalResult"])["inputs"]) {
-		binding := mapOf(v)
-		a, err := artifactRow(withTx(q), q.app, astr(binding["artifactId"]))
-		if err != nil || a.State != "stored" || a.ContentHash != binding["sha256"] || !same(a.ProjectID, trial["projectId"]) {
+	t, _ := asT[labCanonicalInputs](trial)
+	for _, binding := range t.CanonicalResult.Inputs {
+		a, err := artifactRow(withTx(q), q.app, binding.ArtifactID)
+		if err != nil || a.State != "stored" || a.ContentHash != binding.Sha256 || !same(a.ProjectID, trial["projectId"]) {
 			return fail(409, "Assessment input artifact changed")
 		}
 	}

@@ -80,7 +80,7 @@ func TestPairwiseOrderDependenceAndVersions(t *testing.T) {
 		return doc{"id": id, "state": "succeeded", "judge": doc{"evaluator": "judge:pair:pick_best", "groupId": "g", "trialIds": []any{"a", "b"}, "order": order}, "canonicalResult": doc{"stepId": "judge", "mode": "static"}, "plan": doc{"entries": []any{doc{"id": "judge"}}}, "steps": []any{doc{"id": "judge", "output": doc{"value": value}}}}
 	}
 	view := pairwiseView([]doc{run("one", "a", 0), run("two", "b", 1)})
-	if len(view) != 1 || mapOf(view[0])["reason"] != "order-dependent" {
+	if len(view) != 1 || *view[0].Reason != "order-dependent" {
 		t.Fatalf("%v", view)
 	}
 	scores := []doc{

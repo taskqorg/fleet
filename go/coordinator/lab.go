@@ -618,8 +618,8 @@ func runChecks(ctx context.Context, checks []any, files []labFile) (doc, error) 
 		killGroup(cmd)
 		assessment, captureErr := captureLabAssessment(dir)
 		if assessment != nil {
-			assessment["checkId"] = c["id"]
-			captured = append(captured, assessment)
+			assessment.CheckID = astr(c["id"])
+			captured = append(captured, *assessment)
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err() // capture precedes cleanup; cancelled work remains unscored
@@ -637,25 +637,15 @@ func scoreView(r doc) doc {
 		"replacesScoreId": r["replaces_score_id"], "createdAt": r["created_at"]}
 }
 
+// scoreAdd: scoreInsert of a score given as a map (the callers not yet on labNewScore).
 func scoreAdd(q *Request, s doc) (string, error) {
-	trials := anys(s["trialIds"])
-	if err := checkValue(astr(s["form"]), s["value"], trials); err != nil {
-		return "", err
+	n := labNewScore{ExperimentID: astr(s["experimentId"]), ProjectID: astr(s["projectId"]), TrialIDs: []string{}, Evaluator: astr(s["evaluator"]),
+		EvaluatorVersion: astr(s["evaluatorVersion"]), Form: astr(s["form"]), Value: s["value"], SourceExecutionID: strp(s, "sourceExecutionId"),
+		QuestionID: strp(s, "questionId"), Rationale: strp(s, "rationale"), Replaces: strp(s, "replaces")}
+	for _, t := range anys(s["trialIds"]) {
+		n.TrialIDs = append(n.TrialIDs, astr(t))
 	}
-	ids := []string{}
-	for _, t := range trials {
-		ids = append(ids, astr(t))
-	}
-	var rat any
-	if r, ok := s["rationale"].(string); ok {
-		if len(r) > 4000 {
-			r = r[:4000]
-		}
-		rat = r
-	}
-	id := newID()
-	return id, exec(q, `INSERT INTO score(id,experiment_id,project_id,trial_ids,evaluator,evaluator_version,form,value,source_execution_id,question_id,rationale,replaces_score_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-		id, s["experimentId"], s["projectId"], ids, s["evaluator"], s["evaluatorVersion"], s["form"], jsonBytes(s["value"]), s["sourceExecutionId"], s["questionId"], rat, s["replaces"])
+	return scoreInsert(q, n)
 }
 
 func scoresCurrent(q *Request, expID string) ([]doc, error) {
@@ -669,6 +659,15 @@ func scoresCurrent(q *Request, expID string) ([]doc, error) {
 
 func trialIDsOf(s doc) []any {
 	return anys(s["trialIds"])
+}
+
+// labIDStrings: trial IDs as strings (a non-string is "").
+func labIDStrings(ids []any) []string {
+	out := []string{}
+	for _, id := range ids {
+		out = append(out, astr(id))
+	}
+	return out
 }
 
 func firstTrial(s doc) any {
@@ -710,7 +709,7 @@ func agreementBase(scores []doc) doc {
 			ts := trialIDsOf(o)
 			paired := false
 			for _, j := range judges {
-				if j["form"] == "pick_best" && sameTrialSet(ts, trialIDsOf(j)) {
+				if j["form"] == "pick_best" && sameTrialSet(labIDStrings(ts), labIDStrings(trialIDsOf(j))) {
 					compared++
 					if j["value"] == o["value"] {
 						matched++
@@ -1294,6 +1293,75 @@ func expInsertRun(q *Request, exp doc, requestID, file string, example any, vari
 	return expInsertRunReuse(q, exp, requestID, file, example, variant, extra, nil)
 }
 
+// expInsertLabRun: expInsertRun of a typed variant and extra, as the maps pipelineStart reads.
+func expInsertLabRun(q *Request, exp doc, requestID, file string, example any, variant *labVariant, extra labRunExtra) (string, error) {
+	var v doc
+	if variant != nil {
+		v = doc{"overrides": variant.Overrides, "config_ref": variant.ConfigRef}
+		if variant.Label != "" {
+			v["label"] = variant.Label
+		}
+	}
+	return expInsertRun(q, exp, requestID, file, example, v, extra.doc())
+}
+
+// doc: the extra as the map pipelineStart copies into the run.
+func (e labRunExtra) doc() doc {
+	d := doc{}
+	if c := e.Cell; c != nil {
+		cell := doc{"example": c.Example, "variant": c.Variant, "repeat": c.Repeat, "attempt": c.Attempt}
+		if c.Iteration != nil {
+			cell["iteration"] = *c.Iteration
+		}
+		d["cell"] = cell
+	}
+	if j := e.Judge; j != nil {
+		judge := doc{"evaluator": j.Evaluator}
+		if j.GroupID != "" {
+			judge["groupId"] = j.GroupID
+		}
+		if j.TrialID != "" {
+			judge["trialId"] = j.TrialID
+		}
+		if j.TrialIDs != nil {
+			ids := []any{}
+			for _, id := range j.TrialIDs {
+				ids = append(ids, id)
+			}
+			judge["trialIds"] = ids
+		}
+		if j.Order != nil {
+			judge["order"] = *j.Order
+		}
+		d["judge"] = judge
+	}
+	if e.ExampleInputs != nil {
+		inputs := []any{}
+		for _, in := range e.ExampleInputs {
+			inputs = append(inputs, doc{"artifactId": in.ArtifactID, "path": in.Path})
+		}
+		d["exampleInputs"] = inputs
+	}
+	if e.LoopIteration != nil {
+		d["loopStrategy"] = doc{"iteration": *e.LoopIteration}
+	}
+	return d
+}
+
+// labJudgeExample: a pairwise judge run's example: the prompt and the candidate trials.
+func labJudgeExample(prompt any, candidates []string) doc {
+	cs := []any{}
+	for _, c := range candidates {
+		cs = append(cs, c)
+	}
+	return doc{"prompt": prompt, "candidates": cs}
+}
+
+// judgeOutput: a judge (or strategy) run's output object.
+func judgeOutput(run doc) doc {
+	return mapOf(pipelineResultValue(run))
+}
+
 // expInsertRunReuse reserves exactly once; an existing request never reinitializes a run.
 func expInsertRunReuse(q *Request, exp doc, requestID, file string, example any, variant doc, extra, reuseOptions doc) (string, error) {
 	requester, err := labRequester(q, astr(exp["id"]))
@@ -1653,7 +1721,7 @@ type labPending struct {
 	files            []labFile
 	trial            doc
 	evaluator, input string
-	snapshot         doc
+	snapshot         labAssessmentSnap
 }
 
 // labChecked: the script checks' results by trial, or why they could not run.
@@ -1953,6 +2021,11 @@ launch:
 		return err
 	}
 	return nil
+}
+
+// labConflict: a 409 whose body names its reason.
+func labConflict(msg, reason string) error {
+	return &HTTPError{Code: 409, Msg: msg, Extra: doc{"reason": reason}}
 }
 
 func expSetState(q *Request, id string, from []string, to string, reason any) error {
