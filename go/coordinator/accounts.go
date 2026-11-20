@@ -35,11 +35,10 @@ func init() {
 		return replyAs[contract.AccountConnectReply](accountInspect(q, r.AccountId, deref(r.HostId), &r.Binding))
 	})
 	op("account_login_handoff", func(q *Request, r *contract.AccountLoginHandoffRequest) (contract.AccountLoginHandoffReply, error) {
-		return replyAs[contract.AccountLoginHandoffReply](accountLoginHandoff(q, r))
+		return accountLoginHandoff(q, r)
 	})
-	// The body as sent: switchPct and lowPct distinguish null (clear) from absent (keep).
-	op("account_update", func(q *Request, _ *contract.AccountUpdateRequest) (contract.AccountUpdateReply, error) {
-		return replyAs[contract.AccountUpdateReply](accountUpdateBody(q, body(q)))
+	op("account_update", func(q *Request, r *contract.AccountUpdateRequest) (contract.AccountUpdateReply, error) {
+		return replyAs[contract.AccountUpdateReply](accountUpdate(q, r))
 	})
 	hostRoute(contract.RouteAccounts, func(q *Request, b *contract.AccountObservation) (any, error) {
 		if !q.app.hostMaySee(q.host, nil) {
@@ -78,6 +77,7 @@ type accountBinding struct {
 	Platform   *string         `json:"platform"`
 	Readiness  *string         `json:"readiness"`
 	Roots      json.RawMessage `json:"roots"`
+	raw        json.RawMessage // the binding as stored
 }
 
 // accountOf decodes a row's payload; a binding that is not an object is left out.
@@ -90,11 +90,7 @@ func accountOf(r db.ManagedAccount) account {
 	_ = json.Unmarshal(r.Payload, &p)
 	a.accountFields = p.accountFields
 	if bs, ok := jsonAs[[]json.RawMessage](p.Bindings); ok {
-		for _, raw := range bs {
-			if b, ok := jsonAs[accountBinding](raw); ok {
-				a.Bindings = append(a.Bindings, b)
-			}
-		}
+		a.Bindings = bindingsIn(bs)
 	}
 	return a
 }
@@ -176,42 +172,162 @@ func accountInspectionJob(q *Request, host string, p contract.AccountInspectPayl
 		Status: "pending", Payload: p}))
 }
 
-func bindingsOf(a doc) []map[string]any {
-	out := []map[string]any{}
-	for _, x := range anys(a["bindings"]) {
-		if m, ok := x.(map[string]any); ok {
-			out = append(out, m)
+// kindGet, kindMaybe, kindAll, kindPut: records of a kind (get, maybe, all and put, records.go) as T, decoded once here;
+// a filter is a struct whose JSON fields (omitempty) are the record fields matched.
+func kindGet[T any](q *Request, id, kind string) (T, error) {
+	d, err := get(q, id, kind)
+	if err != nil {
+		var none T
+		return none, err
+	}
+	return asT[T](d)
+}
+
+func kindMaybe[T any](q *Request, id, kind string) (*T, error) {
+	d, err := maybe(q, id, kind)
+	if err != nil || d == nil {
+		return nil, err
+	}
+	t, err := asT[T](d)
+	return &t, err
+}
+
+func kindAll[T any](q *Request, kind string, filter any) ([]T, error) {
+	var f doc
+	if filter != nil {
+		f = docOf(filter)
+	}
+	ds, err := all(q, kind, f)
+	if err != nil {
+		return nil, err
+	}
+	return asT[[]T](ds)
+}
+
+func kindPut(q *Request, kind string, v any) error { return put(q, kind, docOf(v)) }
+
+// accountRec: a subscription as all/get/put serve it: the managed_account columns and the payload fields its writers
+// (accountCreate, accountUpdate, accountReport) write. Bindings stay as stored; bindings() reads them.
+type accountRec struct {
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Harness    string            `json:"harness"`
+	Holder     string            `json:"holder"`
+	Intake     string            `json:"intake"`
+	Provider   *string           `json:"provider,omitempty"`
+	ProjectID  *string           `json:"projectId,omitempty"`
+	Kind       *string           `json:"kind"`
+	Plan       *string           `json:"plan"`
+	Comment    *string           `json:"comment"`
+	Login      *string           `json:"login"`
+	Take       json.RawMessage   `json:"take"`
+	SwitchPct  json.RawMessage   `json:"switchPct"`
+	PlanWeight json.RawMessage   `json:"planWeight,omitempty"`
+	LowPct     json.RawMessage   `json:"lowPct,omitempty"`
+	CreatedAt  json.RawMessage   `json:"createdAt,omitempty"`
+	UpdatedAt  *int64            `json:"updatedAt,omitempty"`
+	Bindings   []json.RawMessage `json:"bindings"`
+}
+
+// bindings: the host bindings that are objects, in order.
+func (a accountRec) bindings() []accountBinding { return bindingsIn(a.Bindings) }
+
+// binding: the first binding on host (named name when byName); nil when none.
+func (a accountRec) binding(host string, name *string, byName bool) *accountBinding {
+	for _, b := range a.bindings() {
+		if deref(b.HostID) == host && (!byName || sameText(b.Binding, name)) {
+			return &b
+		}
+	}
+	return nil
+}
+
+func bindingsIn(raw []json.RawMessage) []accountBinding {
+	out := []accountBinding{}
+	for _, r := range raw {
+		if b, ok := jsonAs[accountBinding](r); ok {
+			b.raw = r
+			out = append(out, b)
 		}
 	}
 	return out
 }
 
+// sameText: both absent, or the same text.
+func sameText(a, b *string) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
+
+// bindingsOf: a subscription record's bindings as the maps dispatch.go reads (binding, hostId).
+func bindingsOf(a doc) []doc {
+	rec, _ := asT[struct {
+		Bindings []json.RawMessage `json:"bindings"`
+	}](a)
+	out := []doc{}
+	for _, b := range bindingsIn(rec.Bindings) {
+		out = append(out, docOf(b.raw))
+	}
+	return out
+}
+
+// takeProjectsOf: the projects of a take rule; an entry that is not text is left out.
+func takeProjectsOf(take json.RawMessage) []string {
+	t, _ := jsonAs[struct {
+		Projects []json.RawMessage `json:"projects"`
+	}](take)
+	out := []string{}
+	for _, p := range t.Projects {
+		if s, ok := jsonAs[string](p); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// hostBeat: a host's observation as accounts read it.
+type hostBeat struct {
+	ID         string  `json:"id"`
+	Holder     *string `json:"holder"`
+	LastSeenAt float64 `json:"lastSeenAt"`
+	Platform   *string `json:"platform"`
+}
+
 // accountHostBeat only trusts an observation of the currently configured holder.
-func accountHostBeat(q *Request, id string) (doc, error) {
-	h, err := hostByID(q, id)
+func accountHostBeat(q *Request, id string) (*hostBeat, error) {
+	h, err := liveHost(q, id)
 	if err != nil || h == nil {
 		return nil, err
 	}
-	b, err := maybe(q, id, "host-observation")
+	b, err := kindMaybe[hostBeat](q, id, "host-observation")
 	if err != nil {
 		return nil, err
 	}
-	if b != nil && (astr(h["holder"]) == "" || b["holder"] != h["holder"]) {
+	if b != nil && (h.holder() == "" || deref(b.Holder) != h.holder()) {
 		return nil, nil
 	}
 	return b, nil
 }
 
-func accountBeatOnline(q *Request, b doc) bool {
+func accountBeatOnline(q *Request, b *hostBeat) bool {
 	if b == nil {
 		return false
 	}
-	seen := q.app.effectiveHostSeen(astr(b["id"]), num(b["lastSeenAt"]))
+	seen := q.app.effectiveHostSeen(b.ID, b.LastSeenAt)
 	return seen > 0 && float64(nowMs())-seen < hostStaleMs
 }
 
+// accountHost: a host a subscription may bind to (account_hosts).
+type accountHost struct {
+	ID                  string   `json:"id"`
+	Inspector           *string  `json:"inspector"`
+	Platform            string   `json:"platform"`
+	LastSeenAt          *float64 `json:"lastSeenAt"`
+	Connectivity        string   `json:"connectivity"`
+	Eligible            bool     `json:"eligible"`
+	OnboardingSupported bool     `json:"onboardingSupported"`
+	Reason              string   `json:"reason"`
+}
+
 // accountHosts: the hosts a subscription of this harness may bind to, with their inspector and readiness.
-func accountHosts(q *Request, harness string) ([]doc, error) {
+func accountHosts(q *Request, harness string) ([]accountHost, error) {
 	ids := []string{}
 	pub, err := hostWithRole(q, "publication")
 	if err != nil {
@@ -226,11 +342,11 @@ func accountHosts(q *Request, harness string) ([]doc, error) {
 			ids = append(ids, id)
 		}
 	}
-	accounts, err := all(q, "managed-account", nil)
+	accounts, err := kindAll[accountRec](q, "managed-account", nil)
 	if err != nil {
 		return nil, err
 	}
-	out := []doc{}
+	out := []accountHost{}
 	for _, id := range ids {
 		inspector, err := hostWithRole(q, "inspector-for:"+id)
 		if err != nil {
@@ -266,53 +382,60 @@ func accountHosts(q *Request, harness string) ([]doc, error) {
 		if inspector != "" {
 			look = inspector
 		}
-		var previous map[string]any
+		var previous *accountBinding
 		for _, a := range accounts {
-			for _, b := range bindingsOf(a) {
-				if previous == nil && b["hostId"] == id {
-					previous = b
-				}
+			if previous == nil {
+				previous = a.binding(id, nil, false)
 			}
 		}
 		platform := "unknown"
-		if beat != nil && beat["platform"] != nil {
-			platform = astr(beat["platform"])
-		} else if previous != nil && previous["platform"] != nil {
-			platform = astr(previous["platform"])
+		if beat != nil && beat.Platform != nil {
+			platform = *beat.Platform
+		} else if previous != nil && previous.Platform != nil {
+			platform = *previous.Platform
 		}
-		var seen any
-		connectivity := "unknown"
+		h := accountHost{ID: id, Platform: platform, Connectivity: "unknown", Eligible: allowed}
 		if beat != nil {
-			eff := q.app.effectiveHostSeen(look, num(beat["lastSeenAt"]))
+			eff := q.app.effectiveHostSeen(look, beat.LastSeenAt)
 			if eff > 0 {
-				seen = eff
-			} else {
-				seen = beat["lastSeenAt"]
+				h.LastSeenAt = &eff
+			} else if beat.LastSeenAt != 0 {
+				h.LastSeenAt = &beat.LastSeenAt
 			}
-			connectivity = "offline"
+			h.Connectivity = "offline"
 			if float64(nowMs())-eff < 30000 {
-				connectivity = "online"
+				h.Connectivity = "online"
 			}
 		}
-		reason := "Local Mac inspector; connectivity is not authentication"
+		h.Reason = "Local Mac inspector; connectivity is not authentication"
 		switch {
 		case !allowed:
-			reason = fmt.Sprintf("%s is not allowed on this host (host setting harnesses.%s.allowed)", harness, harness)
-		case inList(exec, id) && inspector == "":
-			reason = "Native executor host; accounts bound by host observation, login on the host"
+			h.Reason = fmt.Sprintf("%s is not allowed on this host (host setting harnesses.%s.allowed)", harness, harness)
+		case native && inspector == "":
+			h.Reason = "Native executor host; accounts bound by host observation, login on the host"
 		case inspector == "":
-			reason = "Remote native executable/account not provisioned for onboarding"
+			h.Reason = "Remote native executable/account not provisioned for onboarding"
 		case platform != "darwin":
-			reason = "Await host platform/readiness metadata"
+			h.Reason = "Await host platform/readiness metadata"
 		}
-		var insp any
 		if inspector != "" {
-			insp = inspector
+			h.Inspector = &inspector
 		}
-		out = append(out, doc{"id": id, "inspector": insp, "platform": platform, "lastSeenAt": seen, "connectivity": connectivity, "eligible": allowed,
-			"onboardingSupported": inList(exec, id) || (inspector != "" && platform == "darwin"), "reason": reason})
+		h.OnboardingSupported = native || (inspector != "" && platform == "darwin")
+		out = append(out, h)
 	}
 	return out, nil
+}
+
+// accountHostOf: the host id of hosts (the last listed); nil when it is not one of them.
+func accountHostOf(hs []accountHost, id string) *accountHost {
+	var out *accountHost
+	for i := range hs {
+		if hs[i].ID == id {
+			out = &hs[i]
+		}
+	}
+	return out
 }
 
 func accountHostsOp(q *Request, r *contract.AccountHostsRequest) (any, error) {
@@ -321,67 +444,125 @@ func accountHostsOp(q *Request, r *contract.AccountHostsRequest) (any, error) {
 		harness = *r.Harness
 	}
 	if r.AccountId != nil {
-		a, err := get(q, *r.AccountId, "managed-account")
+		a, err := kindGet[accountRec](q, *r.AccountId, "managed-account")
 		if err != nil {
 			return nil, err
 		}
-		harness = astr(a["harness"])
+		harness = a.Harness
 	}
 	hs, err := accountHosts(q, harness)
-	return doc{"hosts": hs}, err
+	return struct {
+		Hosts []accountHost `json:"hosts"`
+	}{hs}, err
+}
+
+// accountInspectionRec: an inspection as stored (account_inspection); accountInspectionView adds its execution's state.
+type accountInspectionRec struct {
+	ID          string          `json:"id"`
+	AccountID   string          `json:"accountId"`
+	HostID      string          `json:"hostId"`
+	Binding     *string         `json:"binding"`
+	ExecutionID string          `json:"executionId"`
+	ProjectID   *string         `json:"projectId,omitempty"`
+	CreatedAt   json.RawMessage `json:"createdAt,omitempty"`
+	LoginAction *string         `json:"loginAction,omitempty"`
+}
+
+type accountInspectionView struct {
+	accountInspectionRec
+	State *string         `json:"state"`
+	Error json.RawMessage `json:"error"`
+}
+
+// accountInspectionExec: the fields of an inspection's execution read here.
+type accountInspectionExec struct {
+	State       *string         `json:"state"`
+	Observation string          `json:"observation"`
+	Error       json.RawMessage `json:"error"`
 }
 
 // Retained inspections predate host_job and may still be tool_run; the general execution reader excludes those.
-func accountInspectionExecution(q *Request, inspection doc) (doc, error) {
-	raw, err := q.db().AccountInspectionExecution(q.ctx(), astr(inspection["id"]))
+func accountInspectionExecution(q *Request, inspectionID string) (accountInspectionExec, error) {
+	var e accountInspectionExec
+	raw, err := q.db().AccountInspectionExecution(q.ctx(), inspectionID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errNotFound
+		return e, errNotFound
 	}
 	if err != nil {
-		return nil, err
+		return e, err
 	}
-	var e doc
 	return e, json.Unmarshal(raw, &e)
 }
 
+// accountView: a subscription as account_list shows it.
+type accountView struct {
+	accountRec
+	Inspections []accountInspectionView `json:"inspections"`
+	Checks      []json.RawMessage       `json:"checks"`
+	History     []json.RawMessage       `json:"history"`
+}
+
 func accountList(q *Request) (any, error) {
-	cats, err := all(q, "account-catalogue", nil)
+	cats, err := kindAll[json.RawMessage](q, "account-catalogue", nil)
 	if err != nil {
 		return nil, err
 	}
-	as, err := all(q, "managed-account", nil)
+	as, err := kindAll[accountRec](q, "managed-account", nil)
 	if err != nil {
 		return nil, err
 	}
-	changes, err := auditOfKind(q, "account")
+	changes, err := q.db().AuditOfKind(q.ctx(), "account")
 	if err != nil {
 		return nil, err
 	}
+	out := []accountView{}
 	for _, a := range as {
-		ins, err := all(q, "account-inspection", doc{"accountId": a["id"]})
+		v := accountView{accountRec: a, Inspections: []accountInspectionView{}, History: []json.RawMessage{}}
+		ins, err := kindAll[accountInspectionRec](q, "account-inspection", accountOnly{AccountID: a.ID})
 		if err != nil {
 			return nil, err
 		}
 		for _, i := range ins {
-			e, err := accountInspectionExecution(q, i)
+			e, err := accountInspectionExecution(q, i.ID)
 			if err != nil {
 				return nil, err
 			}
-			i["state"], i["error"] = e["state"], nonNil(e["error"])
+			errValue := e.Error
+			if len(errValue) == 0 {
+				errValue = json.RawMessage("null")
+			}
+			v.Inspections = append(v.Inspections, accountInspectionView{accountInspectionRec: i, State: e.State, Error: errValue})
 		}
-		checks, err := all(q, "account-check", doc{"accountId": a["id"]})
-		if err != nil {
+		if v.Checks, err = kindAll[json.RawMessage](q, "account-check", accountOnly{AccountID: a.ID}); err != nil {
 			return nil, err
 		}
-		history := []doc{}
 		for _, h := range changes {
-			if h["target"] == "account:"+astr(a["id"]) {
-				history = append(history, h)
+			if h.Target == "account:"+a.ID {
+				v.History = append(v.History, json.RawMessage(h.Data))
 			}
 		}
-		a["inspections"], a["checks"], a["history"] = ins, checks, history
+		out = append(out, v)
 	}
-	return doc{"catalogues": cats, "accounts": as}, nil
+	return struct {
+		Catalogues []json.RawMessage `json:"catalogues"`
+		Accounts   []accountView     `json:"accounts"`
+	}{cats, out}, nil
+}
+
+// accountOnly, accountCheckFilter, catalogueFilter: record filters (kindAll).
+type accountOnly struct {
+	AccountID string `json:"accountId,omitempty"`
+}
+
+type accountCheckFilter struct {
+	AccountID string  `json:"accountId,omitempty"`
+	HostID    string  `json:"hostId,omitempty"`
+	Binding   *string `json:"binding,omitempty"`
+}
+
+type catalogueFilter struct {
+	HostID  string `json:"hostId,omitempty"`
+	Harness string `json:"harness,omitempty"`
 }
 
 // loginCommands: each harness's native login, as accounts tell the owner (contracts/vocabulary.json).
@@ -413,306 +594,384 @@ func accountCreate(q *Request, r *contract.AccountCreateRequest) (any, error) {
 	if holder != director && !fullAccess(q.person) {
 		return nil, fail(403, "Only the owner creates a subscription for another person")
 	}
-	a := doc{"id": newID(), "name": r.Name, "harness": harness, "holder": holder, "kind": "personal", "plan": deref(r.Plan), "intake": "all",
-		"take": doc{"projects": []any{}}, "switchPct": nil, "comment": deref(r.Comment), "createdAt": nowMs(), "bindings": []any{},
-		"login": "Native login on the holder's host, under its protected binding environment: " + loginCommands[harness] + ". Never paste codes or tokens into Fleet. Inspect an existing authorized login first; creation does not authenticate."}
-	return a, put(q, "managed-account", a)
+	kind, plan, comment := "personal", deref(r.Plan), deref(r.Comment)
+	login := "Native login on the holder's host, under its protected binding environment: " + loginCommands[harness] + ". Never paste codes or tokens into Fleet. Inspect an existing authorized login first; creation does not authenticate."
+	a := accountRec{ID: newID(), Name: r.Name, Harness: harness, Holder: holder, Kind: &kind, Plan: &plan, Intake: "all",
+		Take: json.RawMessage(`{"projects":[]}`), SwitchPct: json.RawMessage("null"), Comment: &comment, CreatedAt: jsonBytes(nowMs()),
+		Bindings: []json.RawMessage{}, Login: &login}
+	return a, kindPut(q, "managed-account", a)
 }
 
 func integrationHost(q *Request) (string, error) {
 	return hostWithRole(q, "inspector-for:"+defaultHostID(q))
 }
 
+// accountBound: the error when a subscription other than a already has binding name on host.
+func accountBound(q *Request, a accountRec, host string, name *string) error {
+	others, err := kindAll[accountRec](q, "managed-account", nil)
+	if err != nil {
+		return err
+	}
+	for _, o := range others {
+		if o.ID != a.ID && o.binding(host, name, true) != nil {
+			return fail(409, "Host binding already belongs to another managed account")
+		}
+	}
+	return nil
+}
+
 // accountInspect: a read-only inspection command to the selected host or its inspector; the native catalogue when
 // binding is nil (account_discover), else the status of that binding (account_connect). host "" is the default host.
 func accountInspect(q *Request, accountID, host string, wanted *string) (any, error) {
 	catalogue := wanted == nil
-	a, err := get(q, accountID, "managed-account")
+	a, err := kindGet[accountRec](q, accountID, "managed-account")
 	if err != nil {
 		return nil, err
 	}
 	if host == "" {
 		host = defaultHostID(q)
 	}
-	hs, err := accountHosts(q, astr(a["harness"]))
+	hs, err := accountHosts(q, a.Harness)
 	if err != nil {
 		return nil, err
 	}
-	var h doc
-	for _, x := range hs {
-		if x["id"] == host {
-			h = x
-		}
-	}
+	h := accountHostOf(hs, host)
 	switch {
 	case h == nil:
 		return nil, fail(404, "Unknown host")
-	case h["eligible"] != true:
-		return nil, fail(409, astr(h["reason"]))
-	case h["connectivity"] != "online":
-		return nil, fail(409, "Host "+astr(h["connectivity"])+"; native login/readiness unknown")
-	case h["onboardingSupported"] != true:
-		return nil, fail(409, astr(h["reason"]))
+	case !h.Eligible:
+		return nil, fail(409, h.Reason)
+	case h.Connectivity != "online":
+		return nil, fail(409, "Host "+h.Connectivity+"; native login/readiness unknown")
+	case !h.OnboardingSupported:
+		return nil, fail(409, h.Reason)
 	}
-	integ := firstString(h["inspector"], host)
-	var binding any
+	integ := host
+	if h.Inspector != nil && *h.Inspector != "" {
+		integ = *h.Inspector
+	}
+	var binding *string
 	if !catalogue {
 		if !accountName.MatchString(*wanted) {
 			return nil, fail(400, "Expected host-owned binding identifier")
 		}
-		binding = *wanted
-		others, err := all(q, "managed-account", nil)
-		if err != nil {
+		binding = wanted
+		if err := accountBound(q, a, host, binding); err != nil {
 			return nil, err
 		}
-		for _, o := range others {
-			for _, x := range bindingsOf(o) {
-				if o["id"] != a["id"] && x["hostId"] == host && x["binding"] == binding {
-					return nil, fail(409, "Host binding already belongs to another managed account")
-				}
-			}
-		}
 	}
-	olds, err := all(q, "account-inspection", nil)
+	olds, err := kindAll[accountInspectionRec](q, "account-inspection", nil)
 	if err != nil {
 		return nil, err
 	}
 	for _, x := range olds {
-		if x["accountId"] == a["id"] && x["hostId"] == host && x["binding"] == binding {
-			e, err := accountInspectionExecution(q, x)
+		if x.AccountID == a.ID && x.HostID == host && sameText(x.Binding, binding) {
+			e, err := accountInspectionExecution(q, x.ID)
 			if err != nil {
 				return nil, err
 			}
-			if !terminal(e) && !unconfirmed(e) {
+			if !executionEnds(deref(e.State)) && e.Observation != "unconfirmed" {
 				return x, nil
 			}
 		}
 	}
-	sid, id := newID(), newID()
 	mode := "status"
 	if catalogue {
 		mode = "catalogue"
 	}
-	if err := put(q, "session", doc{"id": sid, "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
+	id, err := accountInspectionJob(q, integ, contract.AccountInspectPayload{AccountId: a.ID, Harness: a.Harness, Binding: binding, NativeHostId: &host, Mode: &mode})
+	if err != nil {
 		return nil, err
 	}
-	if err := put(q, "execution", doc{"id": id, "executionId": id, "sessionId": sid, "hostId": integ, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker", "accountId": a["id"]}); err != nil {
-		return nil, err
-	}
-	if err := put(q, "command", doc{"id": newID(), "executionId": id, "sessionId": sid, "hostId": integ, "kind": string(contract.CommandKindAccountInspect), "status": "pending",
-		"payload": contract.AccountInspectPayload{AccountId: astr(a["id"]), Harness: astr(a["harness"]), Binding: strPtr(binding), NativeHostId: strPtr(host), Mode: &mode}}); err != nil {
-		return nil, err
-	}
-	r := doc{"id": newID(), "accountId": a["id"], "hostId": host, "binding": binding, "executionId": id, "createdAt": nowMs(),
-		"loginAction": "Read-only inspection; no authentication changes. Await host result, then explicit login handoff only if needed."}
-	return r, put(q, "account-inspection", r)
+	action := "Read-only inspection; no authentication changes. Await host result, then explicit login handoff only if needed."
+	r := accountInspectionRec{ID: newID(), AccountID: a.ID, HostID: host, Binding: binding, ExecutionID: id, CreatedAt: jsonBytes(nowMs()), LoginAction: &action}
+	return r, kindPut(q, "account-inspection", r)
 }
 
 // loginArgv: the login arguments of each harness's binary; nil where the bound agent logs in on its own.
-var loginArgv = func() map[string]any {
-	out := map[string]any{}
+var loginArgv = func() map[string][]string {
+	out := map[string][]string{}
 	for _, h := range contract.Vocabulary.Harnesses {
-		if h.LoginArgv == nil {
-			out[h.ID] = nil
-			continue
-		}
-		argv := []any{}
-		for _, a := range h.LoginArgv {
-			argv = append(argv, a)
-		}
-		out[h.ID] = argv
+		out[h.ID] = h.LoginArgv
 	}
 	return out
 }()
 
-func accountLoginHandoff(q *Request, r *contract.AccountLoginHandoffRequest) (any, error) {
-	b := docOf(r)
-	a, err := get(q, r.AccountId, "managed-account")
+// catalogueBinding: one binding of a host's catalogue (account-catalogue), as accountCatalogue writes it.
+type catalogueBinding struct {
+	Name             *string         `json:"name"`
+	Executable       json.RawMessage `json:"executable"`
+	Environment      json.RawMessage `json:"environment"`
+	BehaviorApproved json.RawMessage `json:"behaviorApproved,omitempty"`
+}
+
+// accountCheckRec: an observation of one binding (account-check), as accountReport writes it.
+type accountCheckRec struct {
+	ID                  string          `json:"id"`
+	AccountID           string          `json:"accountId"`
+	HostID              string          `json:"hostId"`
+	Binding             string          `json:"binding"`
+	Readiness           string          `json:"readiness"`
+	Roots               json.RawMessage `json:"roots"`
+	Reason              json.RawMessage `json:"reason"`
+	NativeLoginObserved *bool           `json:"nativeLoginObserved"`
+	Quota               string          `json:"quota"`
+	ObservedAt          json.RawMessage `json:"observedAt"`
+}
+
+// isNull: an absent or JSON null value.
+func isNull(v json.RawMessage) bool { return len(v) == 0 || string(v) == "null" }
+
+// orNull: an absent value as JSON null.
+func orNull(v json.RawMessage) json.RawMessage {
+	if len(v) == 0 {
+		return json.RawMessage("null")
+	}
+	return v
+}
+
+func accountLoginHandoff(q *Request, r *contract.AccountLoginHandoffRequest) (contract.AccountLoginHandoffReply, error) {
+	var no contract.AccountLoginHandoffReply
+	a, err := kindGet[accountRec](q, r.AccountId, "managed-account")
 	if err != nil {
-		return nil, err
+		return no, err
 	}
-	hs, err := accountHosts(q, astr(a["harness"]))
+	hs, err := accountHosts(q, a.Harness)
 	if err != nil {
-		return nil, err
+		return no, err
 	}
-	var host doc
-	for _, h := range hs {
-		if h["id"] == b["hostId"] {
-			host = h
-		}
+	host := accountHostOf(hs, r.HostId)
+	if host == nil || !host.Eligible || !host.OnboardingSupported || host.Connectivity != "online" {
+		return no, fail(409, "No eligible supported online native login host")
 	}
-	if host == nil || host["eligible"] != true || host["onboardingSupported"] != true || host["connectivity"] != "online" {
-		return nil, fail(409, "No eligible supported online native login host")
-	}
-	cats, err := all(q, "account-catalogue", doc{"hostId": host["id"], "harness": a["harness"]})
+	cats, err := kindAll[struct {
+		Bindings []json.RawMessage `json:"bindings"`
+	}](q, "account-catalogue", catalogueFilter{HostID: host.ID, Harness: a.Harness})
 	if err != nil {
-		return nil, err
+		return no, err
 	}
-	var binding map[string]any
+	var binding *catalogueBinding
 	if len(cats) > 0 {
-		for _, x := range anys(cats[0]["bindings"]) {
-			if m, _ := x.(map[string]any); m["name"] == b["binding"] {
-				binding = m
+		for _, x := range cats[0].Bindings {
+			if m, ok := jsonAs[catalogueBinding](x); ok && sameText(m.Name, r.Binding) {
+				binding = &m
 			}
 		}
 	}
 	if binding == nil {
-		return nil, fail(409, "Discover a protected host binding first; browser cannot supply roots")
+		return no, fail(409, "Discover a protected host binding first; browser cannot supply roots")
 	}
-	var existing map[string]any
-	for _, x := range bindingsOf(a) {
-		if x["hostId"] == host["id"] && x["binding"] == b["binding"] {
-			existing = x
+	var existing *accountBinding
+	for _, b := range a.bindings() { // the last matching one, as the record lists them
+		if deref(b.HostID) == host.ID && sameText(b.Binding, r.Binding) {
+			existing = &b
 		}
 	}
-	checks, err := all(q, "account-check", doc{"accountId": a["id"], "hostId": host["id"], "binding": b["binding"]})
+	checks, err := kindAll[accountCheckRec](q, "account-check", accountCheckFilter{AccountID: a.ID, HostID: host.ID, Binding: r.Binding})
 	if err != nil {
-		return nil, err
+		return no, err
 	}
-	var latest doc
+	var reason, basedOn json.RawMessage
 	if len(checks) > 0 {
-		latest = checks[len(checks)-1]
-	}
-	reason, basedOn := any(nil), any(nil)
-	if latest != nil {
-		reason, basedOn = latest["reason"], latest["observedAt"]
+		latest := checks[len(checks)-1]
+		reason, basedOn = latest.Reason, latest.ObservedAt
 	}
 	if existing != nil {
-		if reason == nil {
-			if lc, ok := existing["lastCheck"].(map[string]any); ok {
-				reason = lc["reason"]
+		if isNull(reason) {
+			if lc, ok := jsonAs[struct {
+				Reason json.RawMessage `json:"reason"`
+			}](existing.LastCheck); ok {
+				reason = lc.Reason
 			}
 		}
-		basedOn = nonNil(basedOn, existing["observedAt"])
+		if isNull(basedOn) {
+			basedOn = existing.ObservedAt
+		}
 	}
-	needed := reason == "login-absent"
-	var command, warning any
+	reasonText, _ := jsonAs[string](reason)
+	var command []string
+	var warning *string
 	interaction := "Login need is not established: inspect status first; missing executable/config requires host provisioning."
-	if needed {
-		command = loginArgv[astr(a["harness"])]
+	if reasonText == "login-absent" {
+		command = loginArgv[a.Harness]
 		interaction = "On the selected Mac, run this executable/argv with exactly the displayed host-owned environment, complete the native flow locally, then Recheck. Never paste credentials/codes into Fleet."
-	} else if existing != nil && existing["readiness"] == "ready" {
+	} else if existing != nil && deref(existing.Readiness) == "ready" {
 		interaction = "Existing ready binding: no login needed; recheck metadata only."
 	}
-	if a["harness"] == "antigravity" {
-		warning = "Native-current login may replace the shared principal; explicit operator review before any login."
+	if a.Harness == "antigravity" {
+		w := "Native-current login may replace the shared principal; explicit operator review before any login."
+		warning = &w
 	}
-	return doc{"observedAt": nowMs(), "basedOnCheckAt": basedOn, "hostId": host["id"], "binding": b["binding"], "environment": binding["environment"], "executable": binding["executable"],
-		"command": command, "requiredUserInteraction": interaction, "warning": warning, "quota": "unknown", "authChanged": false}, nil
+	return contract.AccountLoginHandoffReply{ObservedAt: nowMs(), BasedOnCheckAt: orNull(basedOn), HostId: host.ID, Binding: jsonBytes(r.Binding),
+		Environment: orNull(binding.Environment), Executable: orNull(binding.Executable), Command: jsonBytes(command), RequiredUserInteraction: jsonBytes(interaction),
+		Warning: jsonBytes(warning), Quota: "unknown", AuthChanged: false}, nil
 }
 
-func accountUpdateBody(q *Request, b doc) (any, error) {
-	a, err := get(q, b["accountId"], "managed-account")
+// accountUpdate: the request as typed; whether switchPct, planWeight and lowPct were sent (null clears them) is read
+// from the body as sent.
+func accountUpdate(q *Request, r *contract.AccountUpdateRequest) (any, error) {
+	var sent struct {
+		SwitchPct  json.RawMessage `json:"switchPct"`
+		PlanWeight json.RawMessage `json:"planWeight"`
+		LowPct     json.RawMessage `json:"lowPct"`
+	}
+	_ = json.Unmarshal(q.body, &sent)
+	a, err := kindGet[accountRec](q, r.AccountId, "managed-account")
 	if err != nil {
 		return nil, err
 	}
 	// Stricter than the declared holder:account rule, which an architect passes: only the holder or the owner changes it.
 	p := q.person
-	if p != nil && !fullAccess(p) && p.Email != a["holder"] {
+	if p != nil && !fullAccess(p) && p.Email != a.Holder {
 		return nil, fail(403, "Only the holder or the owner changes this subscription")
 	}
-	next := doc{}
-	order := []string{}
-	set := func(k string, v any) { next[k] = v; order = append(order, k) }
-	if v, ok := b["intake"]; ok && v != nil {
-		if v != "all" && v != "paused" {
+	// Each change: its field, the stored and the new value, and how the record takes it.
+	type change struct {
+		field      string
+		prev, next any
+		apply      func(*accountRec)
+	}
+	changes := []change{}
+	if r.Intake != nil {
+		in := string(*r.Intake)
+		if in != "all" && in != "paused" {
 			return nil, fail(400, "intake: all or paused")
 		}
-		set("intake", v)
+		changes = append(changes, change{"intake", a.Intake, in, func(x *accountRec) { x.Intake = in }})
 	}
-	for _, k := range []string{"plan", "comment"} {
-		if v, ok := b[k]; ok && v != nil {
-			s, isStr := v.(string)
-			if !isStr || len(s) > 2000 {
-				return nil, fail(400, k+": text")
-			}
-			set(k, s)
+	for _, f := range []struct {
+		name string
+		v    *string
+		at   func(*accountRec) **string
+	}{{"plan", r.Plan, func(x *accountRec) **string { return &x.Plan }}, {"comment", r.Comment, func(x *accountRec) **string { return &x.Comment }}} {
+		if f.v == nil {
+			continue
 		}
-	}
-	if v, ok := b["switchPct"]; ok {
-		if f, isNum := v.(float64); v != nil && !(isNum && f > 0 && f <= 100) {
-			return nil, fail(400, "switchPct: 1-100 or null")
+		if len(*f.v) > 2000 {
+			return nil, fail(400, f.name+": text")
 		}
-		set("switchPct", v)
+		v, at := *f.v, f.at
+		changes = append(changes, change{f.name, *at(&a), v, func(x *accountRec) { *at(x) = &v }})
 	}
 	// fleet-people-access.md section 8: planWeight (default 1) weights the pool; lowPct (default off) marks Low.
-	if v, ok := b["planWeight"]; ok {
-		// Bounded so the weighted pool sums stay finite numbers; no plan is a trillion base plans.
-		if f, isNum := v.(float64); v != nil && !(isNum && f > 0 && f <= 1e12) {
-			return nil, fail(400, "planWeight: a positive number up to 1e12, or null (1)")
+	// planWeight is bounded so the weighted pool sums stay finite numbers; no plan is a trillion base plans.
+	for _, f := range []struct {
+		name, msg string
+		sent      json.RawMessage
+		v         *float64
+		max       float64
+		at        func(*accountRec) *json.RawMessage
+	}{
+		{"switchPct", "switchPct: 1-100 or null", sent.SwitchPct, r.SwitchPct, 100, func(x *accountRec) *json.RawMessage { return &x.SwitchPct }},
+		{"planWeight", "planWeight: a positive number up to 1e12, or null (1)", sent.PlanWeight, r.PlanWeight, 1e12, func(x *accountRec) *json.RawMessage { return &x.PlanWeight }},
+		{"lowPct", "lowPct: 1-100 or null (off)", sent.LowPct, r.LowPct, 100, func(x *accountRec) *json.RawMessage { return &x.LowPct }},
+	} {
+		if len(f.sent) == 0 {
+			continue
 		}
-		set("planWeight", v)
-	}
-	if v, ok := b["lowPct"]; ok {
-		if f, isNum := v.(float64); v != nil && !(isNum && f > 0 && f <= 100) {
-			return nil, fail(400, "lowPct: 1-100 or null (off)")
+		if f.v != nil && !(*f.v > 0 && *f.v <= f.max) {
+			return nil, fail(400, f.msg)
 		}
-		set("lowPct", v)
+		v, at := json.RawMessage(jsonBytes(f.v)), f.at
+		changes = append(changes, change{f.name, *at(&a), v, func(x *accountRec) { *at(x) = v }})
 	}
-	if v, ok := b["take"]; ok && v != nil {
-		t, _ := v.(map[string]any)
-		ps, isList := t["projects"].([]any)
-		if !isList {
+	if !isNull(r.Take) {
+		t, ok := jsonAs[struct {
+			Projects *[]json.RawMessage `json:"projects"`
+		}](r.Take)
+		if !ok || t.Projects == nil {
 			return nil, fail(400, "take: {projects: [ids]}")
 		}
-		holder := q.peopleSnapshot().person(astr(a["holder"]))
-		uniq := []any{}
-		for _, x := range ps {
-			s, isStr := x.(string)
+		holder := q.peopleSnapshot().person(a.Holder)
+		uniq := []string{}
+		for _, x := range *t.Projects {
+			s, isStr := jsonAs[string](x)
 			if !isStr {
 				return nil, fail(400, "take: {projects: [ids]}")
 			}
 			if holder == nil || !holder.mayAccess(s) {
-				return nil, fail(400, fmt.Sprintf("%s has no grant on %s; a take needs one", a["holder"], s))
+				return nil, fail(400, fmt.Sprintf("%s has no grant on %s; a take needs one", a.Holder, s))
 			}
-			if !inList(strs(uniq), s) {
+			if !inList(uniq, s) {
 				uniq = append(uniq, s)
 			}
 		}
-		set("take", doc{"projects": uniq})
+		take := json.RawMessage(jsonBytes(struct {
+			Projects []string `json:"projects"`
+		}{uniq}))
+		changes = append(changes, change{"take", a.Take, take, func(x *accountRec) { x.Take = take }})
 	}
-	if v, ok := b["holder"]; ok && v != nil {
+	newHolder := ""
+	if r.Holder != nil {
 		if p != nil && !fullAccess(p) {
 			return nil, fail(403, "Only the owner changes the holder")
 		}
-		h := strings.ToLower(astr(v))
-		if q.peopleSnapshot().person(h) == nil {
+		newHolder = strings.ToLower(*r.Holder)
+		if q.peopleSnapshot().person(newHolder) == nil {
 			return nil, fail(400, "Holder is not a person")
 		}
-		set("holder", h)
+		h := newHolder
+		changes = append(changes, change{"holder", a.Holder, h, func(x *accountRec) { x.Holder = h }})
+	}
+	auditHolder := a.Holder
+	if newHolder != "" {
+		auditHolder = newHolder
 	}
 	changed := []string{}
-	for _, f := range order {
-		if js(a[f]) == js(next[f]) {
+	for _, c := range changes {
+		if js(c.prev) == js(c.next) {
 			continue
 		}
-		changed = append(changed, f)
-		if err := audit(q, "account:"+astr(a["id"]), f, a[f], next[f], auditExtra{Holder: astr(nonNil(next["holder"], a["holder"]))}); err != nil {
+		changed = append(changed, c.field)
+		if err := audit(q, "account:"+a.ID, c.field, c.prev, c.next, auditExtra{Holder: auditHolder}); err != nil {
 			return nil, err
 		}
 	}
 	if len(changed) > 0 {
-		if err := notifyHolder(q, astr(a["holder"]), fmt.Sprintf("The owner changed %s of your subscription %s.", strings.Join(changed, ", "), a["name"])); err != nil {
+		if err := notifyHolder(q, a.Holder, fmt.Sprintf("The owner changed %s of your subscription %s.", strings.Join(changed, ", "), a.Name)); err != nil {
 			return nil, err
 		}
 	}
-	if h, ok := next["holder"]; ok && h != a["holder"] {
-		if err := notifyHolder(q, astr(h), fmt.Sprintf("The owner made you the holder of subscription %s.", a["name"])); err != nil {
+	if newHolder != "" && newHolder != a.Holder {
+		if err := notifyHolder(q, newHolder, fmt.Sprintf("The owner made you the holder of subscription %s.", a.Name)); err != nil {
 			return nil, err
 		}
 	}
-	for k, v := range next {
-		a[k] = v
+	for _, c := range changes {
+		c.apply(&a)
 	}
-	a["updatedAt"] = nowMs()
-	return a, put(q, "managed-account", a)
+	now := nowMs()
+	a.UpdatedAt = &now
+	return a, kindPut(q, "managed-account", a)
 }
 
 var checkReasons = []string{"ready", "login-absent", "executable-missing", "binding-unprovisioned", "binding-absent", "status-unknown", "catalogue-only", "configuration-error"}
 
+// accountLastCheck: a binding's last check as accountReport writes it.
+type accountLastCheck struct {
+	Readiness           string `json:"readiness"`
+	Reason              string `json:"reason"`
+	NativeLoginObserved *bool  `json:"nativeLoginObserved"`
+	Quota               string `json:"quota"`
+	ObservedAt          int64  `json:"observedAt"`
+}
+
+// accountBindingOut: a binding as accountReport writes it.
+type accountBindingOut struct {
+	HostID         string            `json:"hostId"`
+	Binding        string            `json:"binding"`
+	Platform       contract.Platform `json:"platform"`
+	Readiness      string            `json:"readiness"`
+	ObservedAt     int64             `json:"observedAt"`
+	Roots          json.RawMessage   `json:"roots"`
+	LastCheck      accountLastCheck  `json:"lastCheck"`
+	ReadinessBasis string            `json:"readinessBasis"`
+	Authority      string            `json:"authority"`
+}
+
 // accountReport: a host's observation of one binding of a subscription.
 func accountReport(q *Request, b *contract.AccountObservation, host string) (any, error) {
-	a, err := get(q, b.AccountId, "managed-account")
+	a, err := kindGet[accountRec](q, b.AccountId, "managed-account")
 	if err != nil {
 		return nil, err
 	}
@@ -732,27 +991,19 @@ func accountReport(q *Request, b *contract.AccountObservation, host string) (any
 	if host == "" || !inList(known, host) || !accountName.MatchString(b.Binding) || !inList([]string{"ready", "unavailable", "unknown"}, b.Readiness) {
 		return nil, fail(400, "Invalid host account observation")
 	}
-	if ok, err := harnessAllowed(q, host, astr(a["harness"])); err != nil || !ok {
+	if ok, err := harnessAllowed(q, host, a.Harness); err != nil || !ok {
 		if err == nil {
-			err = fail(409, fmt.Sprintf("%s is not allowed on host %s", a["harness"], host))
+			err = fail(409, fmt.Sprintf("%s is not allowed on host %s", a.Harness, host))
 		}
 		return nil, err
 	}
-	others, err := all(q, "managed-account", nil)
-	if err != nil {
+	if err := accountBound(q, a, host, &b.Binding); err != nil {
 		return nil, err
 	}
-	for _, o := range others {
-		for _, x := range bindingsOf(o) {
-			if o["id"] != a["id"] && x["hostId"] == host && x["binding"] == b.Binding {
-				return nil, fail(409, "Host binding already belongs to another managed account")
-			}
-		}
-	}
-	var previous map[string]any
-	for _, x := range bindingsOf(a) {
-		if x["hostId"] == host && x["binding"] == b.Binding {
-			previous = x
+	var previous *accountBinding
+	for _, x := range a.bindings() {
+		if deref(x.HostID) == host && deref(x.Binding) == b.Binding {
+			previous = &x
 		}
 	}
 	observedAt := nowMs()
@@ -760,71 +1011,60 @@ func accountReport(q *Request, b *contract.AccountObservation, host string) (any
 	if inList(checkReasons, b.Reason) {
 		reason = b.Reason
 	}
-	var native any
-	if b.NativeLoginObserved != nil {
-		native = *b.NativeLoginObserved
-	}
-	details := doc{"reason": reason, "nativeLoginObserved": native, "quota": "unknown", "observedAt": observedAt}
-	var roots any
+	var roots json.RawMessage
 	if r := b.Roots; r != nil {
-		m := doc{}
-		for k, s := range map[string]*string{"home": r.Home, "nativeHome": r.NativeHome, "credentialHome": r.CredentialHome, "credentialAuthority": r.CredentialAuthority, "executable": r.Executable} {
-			if s != nil && len(*s) < 2000 {
-				m[k] = *s
+		kept := *r
+		for _, s := range []**string{&kept.Home, &kept.NativeHome, &kept.CredentialHome, &kept.CredentialAuthority, &kept.Executable} {
+			if *s != nil && len(**s) >= 2000 {
+				*s = nil
 			}
 		}
-		roots = m
+		roots = jsonBytes(kept)
 	} else if previous != nil {
-		roots = previous["roots"]
+		roots = previous.Roots
 	}
-	retained := reason == "catalogue-only" && previous != nil && previous["readiness"] == "ready"
+	roots = orNull(roots)
+	retained := reason == "catalogue-only" && previous != nil && deref(previous.Readiness) == "ready"
 	readiness, basis := b.Readiness, "Latest host status and behavior approval"
 	if retained {
 		readiness, basis = "ready", "Prior qualified ready binding retained; catalogue is not new authentication proof"
 	}
-	last := doc{"readiness": b.Readiness}
-	for k, v := range details {
-		last[k] = v
-	}
-	binding := doc{"hostId": host, "binding": b.Binding, "platform": b.Platform, "readiness": readiness, "observedAt": observedAt, "roots": roots,
-		"lastCheck": last, "readinessBasis": basis, "authority": "host-owned native registry; no credentials transferred"}
-	check := doc{"id": newID(), "accountId": a["id"], "hostId": host, "binding": b.Binding, "readiness": b.Readiness, "roots": roots}
-	for k, v := range details {
-		check[k] = v
-	}
-	if err := put(q, "account-check", check); err != nil {
+	last := accountLastCheck{Readiness: b.Readiness, Reason: reason, NativeLoginObserved: b.NativeLoginObserved, Quota: "unknown", ObservedAt: observedAt}
+	binding := accountBindingOut{HostID: host, Binding: b.Binding, Platform: b.Platform, Readiness: readiness, ObservedAt: observedAt, Roots: roots,
+		LastCheck: last, ReadinessBasis: basis, Authority: "host-owned native registry; no credentials transferred"}
+	check := accountCheckRec{ID: newID(), AccountID: a.ID, HostID: host, Binding: b.Binding, Readiness: b.Readiness, Roots: roots,
+		Reason: jsonBytes(reason), NativeLoginObserved: b.NativeLoginObserved, Quota: "unknown", ObservedAt: jsonBytes(observedAt)}
+	if err := kindPut(q, "account-check", check); err != nil {
 		return nil, err
 	}
-	var current map[string]any
-	for _, x := range bindingsOf(a) {
-		if current == nil && x["hostId"] == host {
-			current = x
-		}
-	}
-	if current == nil || current["binding"] == b.Binding || b.Readiness == "ready" {
-		kept := []any{}
-		for _, x := range bindingsOf(a) {
-			if x["hostId"] != host {
-				kept = append(kept, x)
+	current := a.binding(host, nil, false)
+	if current == nil || deref(current.Binding) == b.Binding || b.Readiness == "ready" {
+		kept := []json.RawMessage{}
+		for _, x := range a.bindings() {
+			if deref(x.HostID) != host {
+				kept = append(kept, x.raw)
 			}
 		}
-		a["bindings"] = append(kept, binding)
+		a.Bindings = append(kept, jsonBytes(binding))
 	}
-	return a, put(q, "managed-account", a)
+	if a.Bindings == nil {
+		a.Bindings = []json.RawMessage{}
+	}
+	return a, kindPut(q, "managed-account", a)
 }
 
 // accountCatalogue: the safe binding metadata the default host's inspector reports.
 func accountCatalogue(q *Request, b *contract.AccountCatalogue, host string) (any, error) {
-	a, err := get(q, b.AccountId, "managed-account")
+	a, err := kindGet[accountRec](q, b.AccountId, "managed-account")
 	if err != nil {
 		return nil, err
 	}
 	if host != defaultHostID(q) || len(b.Bindings) > 100 {
 		return nil, fail(400, "Invalid host catalogue")
 	}
-	out := []any{}
+	out := []catalogueBinding{}
 	for _, m := range b.Bindings {
-		env := doc{}
+		env := map[string]string{}
 		for k, v := range map[string]*string{"HOME": m.Environment.HOME, "CODEX_HOME": m.Environment.CODEXHOME, "CLAUDE_CONFIG_DIR": m.Environment.CLAUDECONFIGDIR, "GEMINI_HOME": m.Environment.GEMINIHOME} {
 			if v == nil {
 				continue
@@ -837,13 +1077,34 @@ func accountCatalogue(q *Request, b *contract.AccountCatalogue, host string) (an
 		if !accountName.MatchString(m.Name) {
 			return nil, fail(400, "Invalid safe host binding metadata")
 		}
-		out = append(out, doc{"name": m.Name, "executable": m.Executable, "environment": env, "behaviorApproved": m.BehaviorApproved})
+		name := m.Name
+		out = append(out, catalogueBinding{Name: &name, Executable: jsonBytes(m.Executable), Environment: jsonBytes(env), BehaviorApproved: jsonBytes(m.BehaviorApproved)})
 	}
-	err = put(q, "account-catalogue", doc{"id": "catalogue:" + host + ":" + astr(a["harness"]), "hostId": host, "harness": a["harness"], "observedAt": nowMs(), "bindings": out})
-	return doc{"ok": true}, err
+	err = kindPut(q, "account-catalogue", struct {
+		ID         string             `json:"id"`
+		HostID     string             `json:"hostId"`
+		Harness    string             `json:"harness"`
+		ObservedAt int64              `json:"observedAt"`
+		Bindings   []catalogueBinding `json:"bindings"`
+	}{"catalogue:" + host + ":" + a.Harness, host, a.Harness, nowMs(), out})
+	return struct {
+		OK bool `json:"ok"`
+	}{true}, err
 }
 
-// resolveAccount: the ready binding of a subscription on a host for this director; nil when none applies.
+// resolvedAccount: the binding resolveAccount chose (dispatch.go reads it as startBinding).
+type resolvedAccount struct {
+	AccountID   string          `json:"accountId"`
+	AccountName string          `json:"accountName"`
+	Binding     *string         `json:"binding"`
+	HostID      string          `json:"hostId"`
+	ObservedAt  json.RawMessage `json:"observedAt"`
+	Holder      string          `json:"holder"`
+	Taken       bool            `json:"taken"`
+}
+
+// resolveAccount: the ready binding of a subscription on a host for this director; nil when none applies. director and
+// projectID are text or absent. The reply is the map dispatch.go keeps on its candidate.
 func resolveAccount(q *Request, selection *string, harness, host string, director, projectID any) (doc, error) {
 	requested := ""
 	if selection != nil {
@@ -854,42 +1115,37 @@ func resolveAccount(q *Request, selection *string, harness, host string, directo
 	if requested == "" {
 		return nil, nil
 	}
-	as, err := all(q, "managed-account", nil)
+	as, err := kindAll[accountRec](q, "managed-account", nil)
 	if err != nil {
 		return nil, err
 	}
-	var a doc
-	for _, x := range as {
-		match := x["id"] == requested || x["name"] == requested
-		for _, b := range bindingsOf(x) {
-			if b["hostId"] == host && b["binding"] == requested {
-				match = true
-			}
-		}
-		if match {
-			a = x
+	var a *accountRec
+	for i, x := range as {
+		if x.ID == requested || x.Name == requested || x.binding(host, &requested, true) != nil {
+			a = &as[i]
 			break
 		}
 	}
 	if a == nil {
 		return nil, nil
 	}
-	if a["harness"] != harness {
+	if a.Harness != harness {
 		return nil, fail(409, "Selected account harness mismatch")
 	}
-	dir := astr(director)
+	dir, _ := director.(string)
+	project, _ := projectID.(string)
 	// A take rule covers its projects; a director with full access (the owner, or a grant on *, as site-agents has
 	// in development) may take any subscription. Either way the execution records takenFrom, the real director.
-	takes := inList(strs(mapOf(a["take"])["projects"]), astr(projectID)) && astr(projectID) != "" || q.peopleSnapshot().person(dir) != nil && fullAccess(q.peopleSnapshot().person(dir))
-	if selection == nil && dir != "" && a["holder"] != dir && !takes {
+	takes := inList(takeProjectsOf(a.Take), project) && project != "" || q.peopleSnapshot().person(dir) != nil && fullAccess(q.peopleSnapshot().person(dir))
+	if selection == nil && dir != "" && a.Holder != dir && !takes {
 		return nil, nil
 	}
-	if a["intake"] == "paused" {
-		return nil, fail(409, fmt.Sprintf("Subscription %s is Paused", a["name"]))
+	if a.Intake == "paused" {
+		return nil, fail(409, fmt.Sprintf("Subscription %s is Paused", a.Name))
 	}
-	taken := dir != "" && a["holder"] != dir
+	taken := dir != "" && a.Holder != dir
 	if taken && !takes {
-		return nil, fail(409, fmt.Sprintf("Subscription %s is held by %s; work directed by %s needs a take", a["name"], a["holder"], dir))
+		return nil, fail(409, fmt.Sprintf("Subscription %s is held by %s; work directed by %s needs a take", a.Name, a.Holder, dir))
 	}
 	if ok, err := harnessAllowed(q, host, harness); err != nil || !ok {
 		if err == nil {
@@ -897,16 +1153,11 @@ func resolveAccount(q *Request, selection *string, harness, host string, directo
 		}
 		return nil, err
 	}
-	var b map[string]any
-	for _, x := range bindingsOf(a) {
-		if b == nil && x["hostId"] == host {
-			b = x
-		}
-	}
-	if b == nil || b["readiness"] != "ready" {
+	b := a.binding(host, nil, false)
+	if b == nil || deref(b.Readiness) != "ready" {
 		return nil, fail(409, "Selected account has no observed ready binding on this host")
 	}
-	return doc{"accountId": a["id"], "accountName": a["name"], "binding": b["binding"], "hostId": host, "observedAt": b["observedAt"], "holder": a["holder"], "taken": taken}, nil
+	return docOf(resolvedAccount{AccountID: a.ID, AccountName: a.Name, Binding: b.Binding, HostID: host, ObservedAt: orNull(b.ObservedAt), Holder: a.Holder, Taken: taken}), nil
 }
 
 func (p *Person) mayAccess(projectID string) bool {

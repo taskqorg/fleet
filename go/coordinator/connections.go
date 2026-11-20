@@ -58,24 +58,144 @@ func connDir(name string) (string, error) {
 	return filepath.Join(secretDir(), "connections", name), nil
 }
 
-func connByName(q *Request, name any) (doc, error) {
-	n, ok := name.(string)
-	if !ok || !connName.MatchString(n) {
-		return nil, fail(400, "Expected connection name")
+// apiConnection: a connection as all/get/put serve it (api_connection: the columns and the payload fields).
+type apiConnection struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Provider  string          `json:"provider"`
+	Holder    string          `json:"holder,omitempty"`
+	ProjectID *string         `json:"projectId,omitempty"`
+	Access    connAccess      `json:"access"`
+	Intake    string          `json:"intake"`
+	Tools     []string        `json:"tools"`
+	Comment   string          `json:"comment"`
+	CreatedAt json.RawMessage `json:"createdAt,omitempty"`
+	UpdatedAt *int64          `json:"updatedAt,omitempty"`
+	Limits    json.RawMessage `json:"limits,omitempty"`
+}
+
+// limits: the stored file tool limits (§9); none is the zero value.
+func (c apiConnection) limits() (contract.GatewayLimits, error) {
+	var l contract.GatewayLimits
+	if isNull(c.Limits) {
+		return l, nil
 	}
-	c, err := maybe(q, "connection:"+n, "api-connection")
+	return l, json.Unmarshal(c.Limits, &l)
+}
+
+// connAccess: who a connection is granted to; all three empty means its holder only.
+type connAccess struct {
+	Experiments []string `json:"experiments"`
+	People      []string `json:"people"`
+	Projects    []string `json:"projects"`
+}
+
+// stored: the lists as written (an absent list is empty).
+func (a connAccess) stored() connAccess {
+	for _, l := range []*[]string{&a.Experiments, &a.People, &a.Projects} {
+		if *l == nil {
+			*l = []string{}
+		}
+	}
+	return a
+}
+
+// connKey: a connection key as all/get/put serve it (connection_key; its state moves through key_states.go).
+type connKey struct {
+	ID             string         `json:"id"`
+	ConnectionID   string         `json:"connectionId"`
+	Fingerprint    string         `json:"fingerprint"`
+	State          string         `json:"state"`
+	ProjectID      *string        `json:"projectId,omitempty"`
+	AddedAt        float64        `json:"addedAt"`
+	AddedBy        *string        `json:"addedBy,omitempty"`
+	UpdatedAt      *int64         `json:"updatedAt,omitempty"`
+	EnabledAt      *float64       `json:"enabledAt,omitempty"`
+	DisabledReason *string        `json:"disabledReason,omitempty"`
+	DisabledAt     *int64         `json:"disabledAt,omitempty"`
+	Problem        *keyProblem    `json:"problem,omitempty"`
+	Reconcile      *keyReconcile  `json:"reconcile,omitempty"`
+	UsageBaseline  *usageBaseline `json:"usageBaseline,omitempty"`
+}
+
+// keyProblem: the provider's last complaint about a key that did not disable it.
+type keyProblem struct {
+	Status  int64  `json:"status"`
+	Message string `json:"message"`
+	At      int64  `json:"at"`
+}
+
+// keyReconcile: the last usage reconcile of a key (§2).
+type keyReconcile struct {
+	At            json.RawMessage `json:"at,omitempty"`
+	Unknown       *string         `json:"unknown,omitempty"`
+	ProviderDelta *float64        `json:"providerDelta,omitempty"`
+	Recorded      *float64        `json:"recorded,omitempty"`
+	Difference    *float64        `json:"difference,omitempty"`
+}
+
+// usageBaseline: the provider's usage of a key when Fleet first observed it.
+type usageBaseline struct {
+	Usage float64         `json:"usage"`
+	At    json.RawMessage `json:"at"`
+}
+
+// runToken: a run token as all/get/put serve it (run_token).
+type runToken struct {
+	ID                      string          `json:"id"`
+	Sha256                  string          `json:"sha256"`
+	ExecutionID             *string         `json:"executionId"`
+	DirectedBy              *string         `json:"directedBy"`
+	ProjectID               *string         `json:"projectId"`
+	ExperimentID            *string         `json:"experimentId"`
+	PipelineRunID           *string         `json:"pipelineRunId"`
+	Connections             []string        `json:"connections"`
+	CreatedAt               json.RawMessage `json:"createdAt,omitempty"`
+	FileDownloads           []string        `json:"fileDownloads,omitempty"`
+	Step                    bool            `json:"step,omitempty"`
+	Personal                *string         `json:"personal,omitempty"`
+	SystemActor             *string         `json:"systemActor,omitempty"`
+	RevokedAt               json.RawMessage `json:"revokedAt,omitempty"`
+	DirectorAccessRevokedAt json.RawMessage `json:"directorAccessRevokedAt,omitempty"`
+}
+
+func (t runToken) revoked() bool { return !isNull(t.RevokedAt) }
+
+// connNamed: the connection called name; 400 for a name that is not one, 404 for an unknown one.
+func connNamed(q *Request, name string) (apiConnection, error) {
+	if !connName.MatchString(name) {
+		return apiConnection{}, fail(400, "Expected connection name")
+	}
+	c, err := kindMaybe[apiConnection](q, "connection:"+name, "api-connection")
 	if err == nil && c == nil {
-		err = fail(404, "Unknown API key "+n)
+		err = fail(404, "Unknown API key "+name)
 	}
-	return c, err
+	if err != nil {
+		return apiConnection{}, err
+	}
+	return *c, nil
 }
 
-func connChange(q *Request, c doc, field string, previous, value any) error {
-	return audit(q, "connection:"+astr(c["name"]), field, previous, value, auditExtra{Holder: astr(c["holder"])})
+// connByName: connNamed for the pipeline files, which read the connection as a map (provider, tools).
+func connByName(q *Request, name any) (doc, error) {
+	n, _ := name.(string)
+	c, err := connNamed(q, n)
+	if err != nil {
+		return nil, err
+	}
+	return docOf(c), nil
 }
 
-func connKeys(q *Request, name string) ([]doc, error) {
-	return all(q, "connection-key", doc{"connectionId": name})
+func connChange(q *Request, c apiConnection, field string, previous, value any) error {
+	return audit(q, "connection:"+c.Name, field, previous, value, auditExtra{Holder: c.Holder})
+}
+
+type connOnly struct {
+	ConnectionID string `json:"connectionId,omitempty"`
+}
+
+func connKeys(q *Request, name string) ([]connKey, error) {
+	return kindAll[connKey](q, "connection-key", connOnly{ConnectionID: name})
 }
 
 // Snapshot (§3). Built in its own read transaction, so it shows only committed rows.
@@ -86,40 +206,41 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 	if err != nil {
 		return snap, err
 	}
-	connections, err := all(q, "api-connection", nil)
+	connections, err := kindAll[apiConnection](q, "api-connection", nil)
 	if err != nil {
 		return snap, err
 	}
 	for _, c := range connections {
-		name := astr(c["name"])
-		ks, err := connKeys(q, name)
+		ks, err := connKeys(q, c.Name)
 		if err != nil {
 			return snap, err
 		}
 		keys := []contract.GatewayKey{}
 		for _, k := range ks {
-			if k["state"] == "retired" {
+			if k.State == "retired" {
 				continue
 			}
-			e := contract.GatewayKey{Id: strings.TrimPrefix(astr(k["id"]), "key:"), State: astr(k["state"])}
-			if at, ok := numOK(k["enabledAt"]); ok {
-				ms := int64(at)
+			e := contract.GatewayKey{Id: strings.TrimPrefix(k.ID, "key:"), State: k.State}
+			if k.EnabledAt != nil {
+				ms := int64(*k.EnabledAt)
 				e.EnabledAt = &ms
 			}
 			keys = append(keys, e)
 		}
 		bl := []string{}
-		if blocked[name] {
+		if blocked[c.Name] {
 			bl = append(bl, "connection")
 		}
-		gc := contract.GatewayConnection{Provider: astr(c["provider"]), Tools: strs(c["tools"]), Intake: astr(c["intake"]), Keys: keys, Blocked: bl}
-		if l, ok := c["limits"].(map[string]any); ok && len(l) > 0 {
-			// A value that does not decode leaves this connection at its defaults; it never blocks every other one.
-			if limits, err := asT[contract.GatewayLimits](l); err != nil {
-				log.Printf("connection %s: limits not published: %v", name, err)
-			} else {
-				gc.Limits = &limits
-			}
+		tools := c.Tools
+		if tools == nil {
+			tools = []string{}
+		}
+		gc := contract.GatewayConnection{Provider: c.Provider, Tools: tools, Intake: c.Intake, Keys: keys, Blocked: bl}
+		// A value that does not decode leaves this connection at its defaults; it never blocks every other one.
+		if limits, err := c.limits(); err != nil {
+			log.Printf("connection %s: limits not published: %v", c.Name, err)
+		} else if limits != (contract.GatewayLimits{}) {
+			gc.Limits = &limits
 		}
 		if gc.Provider == "youtrack" {
 			// Keep issue_get URLs for connections and existing tokens without the replacement download tool.
@@ -137,18 +258,25 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 				gc.Provider = legacyProvider
 			}
 		}
-		snap.Connections[name] = gc
+		snap.Connections[c.Name] = gc
 	}
-	toks, err := all(q, "run-token", nil)
+	toks, err := kindAll[runToken](q, "run-token", nil)
 	if err != nil {
 		return snap, err
 	}
 	for _, t := range toks {
-		if t["revokedAt"] != nil {
+		if t.revoked() {
 			continue
 		}
-		snap.Tokens = append(snap.Tokens, contract.GatewayRunToken{Sha256: astr(t["sha256"]), ExecutionId: astr(t["executionId"]), DirectedBy: astr(t["directedBy"]),
-			ProjectId: astr(t["projectId"]), ExperimentId: astr(t["experimentId"]), Connections: strs(t["connections"]), FileDownloads: strs(t["fileDownloads"])})
+		conns, downloads := t.Connections, t.FileDownloads
+		if conns == nil {
+			conns = []string{}
+		}
+		if downloads == nil {
+			downloads = []string{}
+		}
+		snap.Tokens = append(snap.Tokens, contract.GatewayRunToken{Sha256: t.Sha256, ExecutionId: deref(t.ExecutionID), DirectedBy: deref(t.DirectedBy),
+			ProjectId: deref(t.ProjectID), ExperimentId: deref(t.ExperimentID), Connections: conns, FileDownloads: downloads})
 	}
 	return snap, nil
 }
@@ -212,21 +340,21 @@ func connSync(q *Request) error {
 		if !connName.MatchString(name) || !ent.IsDir() {
 			continue
 		}
-		c, err := maybe(q, "connection:"+name, "api-connection")
+		c, err := kindMaybe[apiConnection](q, "connection:"+name, "api-connection")
 		if err != nil {
 			return err
 		}
-		if c != nil && c["holder"] != owner {
-			log.Printf("secret directory %s: connection is held by %v, files not registered", name, c["holder"])
+		if c != nil && c.Holder != owner {
+			log.Printf("secret directory %s: connection is held by %v, files not registered", name, c.Holder)
 			continue
 		}
 		if c == nil {
-			if providers[name] == nil {
+			if _, known := gatewayProviders[name]; !known {
 				continue
 			}
-			c = doc{"id": "connection:" + name, "name": name, "provider": name, "holder": owner, "access": doc{"people": []any{}, "projects": []any{"*"}, "experiments": []any{}},
-				"intake": "all", "tools": toolNames(name), "comment": "", "createdAt": nowMs()}
-			if err := put(q, "api-connection", c); err != nil {
+			nc := apiConnection{ID: "connection:" + name, Name: name, Provider: name, Holder: owner, Access: connAccess{Projects: []string{"*"}}.stored(),
+				Intake: "all", Tools: toolNames(name), Comment: "", CreatedAt: jsonBytes(nowMs())}
+			if err := kindPut(q, "api-connection", nc); err != nil {
 				return err
 			}
 		}
@@ -234,12 +362,12 @@ func connSync(q *Request) error {
 		for _, f := range files {
 			if m := stagedKey.FindStringSubmatch(f.Name()); m != nil {
 				// An add a crash interrupted: its bytes count only when the row committed.
-				k, err := maybe(q, "key:"+m[1], "connection-key")
+				k, err := kindMaybe[connKey](q, "key:"+m[1], "connection-key")
 				if err != nil {
 					return err
 				}
 				staged := filepath.Join(root, name, f.Name())
-				if k != nil && k["state"] != "retired" && k["connectionId"] == name {
+				if k != nil && k.State != "retired" && k.ConnectionID == name {
 					os.Rename(staged, filepath.Join(root, name, m[1]))
 				} else {
 					os.Remove(staged)
@@ -257,12 +385,13 @@ func connSync(q *Request) error {
 			if fingerprint(strings.TrimSpace(string(b))) != f.Name() {
 				continue // a renamed or edited file never registers under a wrong fingerprint
 			}
-			if k, err := maybe(q, "key:"+f.Name(), "connection-key"); err != nil {
+			if k, err := kindMaybe[connKey](q, "key:"+f.Name(), "connection-key"); err != nil {
 				return err
-			} else if k != nil && k["state"] == "retired" {
+			} else if k != nil && k.State == "retired" {
 				os.Remove(filepath.Join(root, name, f.Name())) // a retirement committed before a crash removed the value
 			} else if k == nil {
-				if err := put(q, "connection-key", doc{"id": "key:" + f.Name(), "connectionId": name, "fingerprint": f.Name(), "state": "active", "addedAt": nowMs(), "addedBy": "import"}); err != nil {
+				by := "import"
+				if err := kindPut(q, "connection-key", connKey{ID: "key:" + f.Name(), ConnectionID: name, Fingerprint: f.Name(), State: "active", AddedAt: float64(nowMs()), AddedBy: &by}); err != nil {
 					return err
 				}
 			}
@@ -271,26 +400,16 @@ func connSync(q *Request) error {
 	return nil
 }
 
-func toolNames(provider string) []any {
-	out := []any{}
-	for _, k := range sortedKeysOf(providerTools(provider)) {
-		out = append(out, k)
-	}
-	return out
+// toolNames: a provider's tools, sorted.
+func toolNames(provider string) []string {
+	return slices.Sorted(maps.Keys(gatewayProviders[provider].Tools))
 }
 
-func idList(v any, field string) ([]any, error) {
-	if v == nil {
-		return []any{}, nil
-	}
-	l, ok := v.([]any)
-	if !ok {
-		return nil, fail(400, field+": list of ids")
-	}
-	seen, out := map[string]bool{}, []any{}
-	for _, x := range l {
-		s, ok := x.(string)
-		if !ok || len(s) > 320 {
+// idList: the ids once each, in order; an id longer than 320 is refused.
+func idList(l []string, field string) ([]string, error) {
+	seen, out := map[string]bool{}, []string{}
+	for _, s := range l {
+		if len(s) > 320 {
 			return nil, fail(400, field+": list of ids")
 		}
 		if !seen[s] {
@@ -345,58 +464,67 @@ func init() {
 		return replyAs[contract.ConnectionsTokenCreateReply](out, err)
 	})
 	op("connections_token_list", func(q *Request, _ *contract.ConnectionsTokenListRequest) (contract.ConnectionsTokenListReply, error) {
-		out, err := connectionsTokenList(q)
-		return replyAs[contract.ConnectionsTokenListReply](out, err)
+		return connectionsTokenList(q)
 	})
 	op("connections_token_revoke", connectionsTokenRevoke)
 }
 
+// connectionView: a connection as connections_list shows it.
+type connectionView struct {
+	apiConnection
+	Keys    []connKey         `json:"keys"`
+	Spend   connSpend         `json:"spend"`
+	History []json.RawMessage `json:"history"`
+}
+
+type connSpend struct {
+	Basis string `json:"basis"`
+}
+
 func connectionsList(q *Request) (any, error) {
-	keys, err := all(q, "connection-key", nil)
+	keys, err := kindAll[connKey](q, "connection-key", nil)
 	if err != nil {
 		return nil, err
 	}
-	sort.SliceStable(keys, func(i, j int) bool {
-		a, _ := numOK(keys[i]["addedAt"])
-		b, _ := numOK(keys[j]["addedAt"])
-		return a < b
-	})
+	sort.SliceStable(keys, func(i, j int) bool { return keys[i].AddedAt < keys[j].AddedAt })
 	hist, err := q.db().AuditOfKind(q.ctx(), "connection")
 	if err != nil {
 		return nil, err
 	}
-	connections, err := all(q, "api-connection", nil)
+	connections, err := kindAll[apiConnection](q, "api-connection", nil)
 	if err != nil {
 		return nil, err
 	}
-	out := []any{}
+	out := []connectionView{}
 	for _, c := range connections {
-		ks, hs := []any{}, []any{}
+		v := connectionView{apiConnection: c, Keys: []connKey{}, Spend: connSpend{Basis: "unavailable"}, History: []json.RawMessage{}}
 		for _, k := range keys {
-			if k["connectionId"] == c["name"] {
-				ks = append(ks, k)
+			if k.ConnectionID == c.Name {
+				v.Keys = append(v.Keys, k)
 			}
 		}
 		for _, h := range hist {
-			if h.Target == "connection:"+astr(c["name"]) {
-				hs = append(hs, json.RawMessage(h.Data))
+			if h.Target == "connection:"+c.Name {
+				v.History = append(v.History, json.RawMessage(h.Data))
 			}
 		}
-		c["keys"], c["spend"], c["history"] = ks, doc{"basis": "unavailable"}, hs
-		out = append(out, c)
+		out = append(out, v)
 	}
-	return doc{"providers": providers, "connections": out}, nil
+	return struct {
+		Providers   map[string]json.RawMessage `json:"providers"`
+		Connections []connectionView           `json:"connections"`
+	}{providerCatalogue, out}, nil
 }
 
 func connectionsCreate(q *Request, r *contract.ConnectionsCreateRequest) (any, error) {
 	name, provider := r.Name, r.Provider
-	if !connName.MatchString(name) || providers[provider] == nil {
+	if _, known := gatewayProviders[provider]; !connName.MatchString(name) || !known {
 		return nil, fail(400, "Expected name and a known provider")
 	}
 	if slices.Contains(contract.ExecutorMCPServers, name) {
 		return nil, fail(400, "Connection name "+name+" is an executor MCP server name")
 	}
-	if old, err := maybe(q, "connection:"+name, "api-connection"); err != nil {
+	if old, err := kindMaybe[apiConnection](q, "connection:"+name, "api-connection"); err != nil {
 		return nil, err
 	} else if old != nil {
 		return nil, fail(409, "API key name exists")
@@ -412,9 +540,9 @@ func connectionsCreate(q *Request, r *contract.ConnectionsCreateRequest) (any, e
 	if len(comment) > 2000 {
 		comment = comment[:2000]
 	}
-	c := doc{"id": "connection:" + name, "name": name, "provider": provider, "holder": holder, "access": doc{"people": []any{}, "projects": []any{}, "experiments": []any{}},
-		"intake": "all", "tools": toolNames(provider), "comment": comment, "createdAt": nowMs()}
-	if err := put(q, "api-connection", c); err != nil {
+	c := apiConnection{ID: "connection:" + name, Name: name, Provider: provider, Holder: holder, Access: connAccess{}.stored(),
+		Intake: "all", Tools: toolNames(provider), Comment: comment, CreatedAt: jsonBytes(nowMs())}
+	if err := kindPut(q, "api-connection", c); err != nil {
 		return nil, err
 	}
 	publish(q)
@@ -423,7 +551,7 @@ func connectionsCreate(q *Request, r *contract.ConnectionsCreateRequest) (any, e
 
 // connectionsKeyAdd (owner): writes the value file and the row; answers with the fingerprint only.
 func connectionsKeyAdd(q *Request, r *contract.ConnectionsKeyAddRequest) (any, error) {
-	c, err := connByName(q, r.Connection)
+	c, err := connNamed(q, r.Connection)
 	if err != nil {
 		return nil, err
 	}
@@ -434,27 +562,28 @@ func connectionsKeyAdd(q *Request, r *contract.ConnectionsKeyAddRequest) (any, e
 	qid, fp := deref(r.QuestionId), fingerprint(value)
 	if qid != "" {
 		// A retry of an add that already answered this request (its reply was lost) passes here and replays below.
-		if err := keyRequestOf(q, qid, astr(c["name"]), keyAnswer(astr(c["name"]), fp, "active")); err != nil {
+		if err := keyRequestOf(q, qid, c.Name, keyAnswer(c.Name, fp, "active")); err != nil {
 			return nil, err
 		}
 	}
-	if old, err := maybe(q, "key:"+fp, "connection-key"); err != nil {
+	if old, err := kindMaybe[connKey](q, "key:"+fp, "connection-key"); err != nil {
 		return nil, err
 	} else if old != nil {
-		if qid != "" && old["connectionId"] == c["name"] && old["state"] == "active" { // Fleet already holds it: answer with it
-			if _, err := answerQuestion(q, qid, keyAnswer(astr(c["name"]), fp, "active"), actor(q, "operator"), nil); err != nil {
+		if qid != "" && old.ConnectionID == c.Name && old.State == "active" { // Fleet already holds it: answer with it
+			if _, err := answerQuestion(q, qid, keyAnswer(c.Name, fp, "active"), actor(q, "operator"), nil); err != nil {
 				return nil, err
 			}
-			return old, nil
+			return *old, nil
 		}
 		return nil, fail(409, "Key already added")
 	}
-	dir, err := connDir(astr(c["name"]))
+	dir, err := connDir(c.Name)
 	if err != nil {
 		return nil, err
 	}
-	k := doc{"id": "key:" + fp, "connectionId": c["name"], "fingerprint": fp, "state": "active", "addedAt": nowMs(), "addedBy": actor(q, "operator")}
-	if err := put(q, "connection-key", k); err != nil {
+	by := actor(q, "operator")
+	k := connKey{ID: "key:" + fp, ConnectionID: c.Name, Fingerprint: fp, State: "active", AddedAt: float64(nowMs()), AddedBy: &by}
+	if err := kindPut(q, "connection-key", k); err != nil {
 		return nil, err
 	}
 	// The value is staged before commit and takes its key name only after the row committed; a rolled-back add removes
@@ -475,12 +604,23 @@ func connectionsKeyAdd(q *Request, r *contract.ConnectionsKeyAddRequest) (any, e
 		}
 	})
 	if qid != "" { // the agent's question gets the fingerprint only, never the value
-		if _, err := answerQuestion(q, qid, keyAnswer(astr(c["name"]), fp, "active"), actor(q, "operator"), nil); err != nil {
+		if _, err := answerQuestion(q, qid, keyAnswer(c.Name, fp, "active"), actor(q, "operator"), nil); err != nil {
 			return nil, err
 		}
 	}
 	publish(q)
 	return k, nil
+}
+
+// keyRequestReply: a new key request as the project's questions show it.
+type keyRequestReply struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"projectId"`
+	RequestID string `json:"requestId"`
+	Text      string `json:"text"`
+	State     string `json:"state"`
+	CreatedAt int64  `json:"createdAt"`
+	Actor     string `json:"actor"`
 }
 
 // connectionsKeyRequest: an agent (or a person) asks the owner for a key value (docs/designs/fleet-connections.md §1,
@@ -490,7 +630,7 @@ func connectionsKeyRequest(q *Request, r *contract.ConnectionsKeyRequestRequest)
 	if _, err := projectContext(q, r.ProjectId); err != nil {
 		return nil, err
 	}
-	c, err := connByName(q, r.Connection)
+	c, err := connNamed(q, r.Connection)
 	if err != nil {
 		return nil, err
 	}
@@ -498,7 +638,7 @@ func connectionsKeyRequest(q *Request, r *contract.ConnectionsKeyRequestRequest)
 	if rid == "" || len(rid) > 200 || len([]rune(reason)) > 500 {
 		return nil, fail(400, "Expected requestId and a reason of at most 500 characters")
 	}
-	text := fmt.Sprintf("Add a %s key for connection %s", c["provider"], c["name"])
+	text := fmt.Sprintf("Add a %s key for connection %s", c.Provider, c.Name)
 	if reason != "" {
 		text += ": " + reason
 	}
@@ -512,24 +652,25 @@ func connectionsKeyRequest(q *Request, r *contract.ConnectionsKeyRequestRequest)
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	v := doc{"id": newID(), "projectId": r.ProjectId, "requestId": rid, "text": text, "state": "waiting", "createdAt": nowMs(), "actor": actor(q, "operator")}
-	ask := doc{"id": v["id"], "kind": "secret", "text": text, "projectId": r.ProjectId, "askedBy": v["actor"], "requestId": rid, "askedAt": v["createdAt"],
-		"options": doc{"connection": c["name"]}}
+	now := nowMs()
+	v := keyRequestReply{ID: newID(), ProjectID: r.ProjectId, RequestID: rid, Text: text, State: "waiting", CreatedAt: now, Actor: actor(q, "operator")}
+	asked := time.UnixMilli(now).UTC()
+	ask := questionAsk{ID: v.ID, Kind: "secret", Text: text, ProjectID: r.ProjectId, AskedBy: &v.Actor, RequestID: &rid, AskedAt: &asked,
+		Options: jsonBytes(struct {
+			Connection string `json:"connection"`
+		}{c.Name})}
 	if strings.HasPrefix(q.agent, "execution:") { // a host agent: the question shows in its conversation
 		eid := strings.TrimPrefix(q.agent, "execution:")
 		sid, err := q.db().ConnExecutionSession(q.ctx(), eid)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
-		ask["executionId"] = eid
-		if err == nil {
-			ask["sessionId"] = nil
-			if sid != nil {
-				ask["sessionId"] = *sid
-			}
+		ask.ExecutionID = &eid
+		if err == nil && sid != nil && *sid != "" {
+			ask.SessionID = sid
 		}
 	}
-	_, err = askQuestion(q, ask)
+	_, err = askQuestionAs(q, ask)
 	return v, err
 }
 
@@ -538,12 +679,12 @@ func connectionsKeyRequest(q *Request, r *contract.ConnectionsKeyRequestRequest)
 // an audit row that a new connection of the same name does not inherit.
 func connectionsDelete(q *Request, r *contract.ConnectionsDeleteRequest) (contract.ConnectionsDeleteReply, error) {
 	var no contract.ConnectionsDeleteReply
-	c, err := connByName(q, r.Connection)
+	c, err := connNamed(q, r.Connection)
 	if err != nil {
 		return no, err
 	}
-	name := astr(c["name"])
-	if _, err := getForUpdate(q, astr(c["id"]), "api-connection"); err != nil {
+	name := c.Name
+	if _, err := getForUpdate(q, c.ID, "api-connection"); err != nil {
 		return no, err
 	}
 	keys, err := connKeys(q, name)
@@ -551,26 +692,26 @@ func connectionsDelete(q *Request, r *contract.ConnectionsDeleteRequest) (contra
 		return no, err
 	}
 	for _, k := range keys {
-		if k["state"] != "retired" {
+		if k.State != "retired" {
 			return no, fail(409, "Retire every key of "+name+" first")
 		}
 	}
-	toks, err := all(q, "run-token", nil)
+	toks, err := kindAll[runToken](q, "run-token", nil)
 	if err != nil {
 		return no, err
 	}
 	for _, t := range toks {
-		if names := strs(t["connections"]); slices.Contains(names, name) {
-			t["connections"] = slices.DeleteFunc(names, func(n string) bool { return n == name })
-			if err := put(q, "run-token", t); err != nil {
+		if slices.Contains(t.Connections, name) {
+			t.Connections = slices.DeleteFunc(t.Connections, func(n string) bool { return n == name })
+			if err := kindPut(q, "run-token", t); err != nil {
 				return no, err
 			}
 		}
 	}
-	if err := q.db().DeleteAPIConnection(q.ctx(), astr(c["id"])); err != nil {
+	if err := q.db().DeleteAPIConnection(q.ctx(), c.ID); err != nil {
 		return no, err
 	}
-	if astr(c["id"]) != "" {
+	if c.ID != "" {
 		secrets, err := q.db().ConnOpenKeyRequests(q.ctx(), name)
 		if err != nil {
 			return no, err
@@ -602,52 +743,52 @@ func connectionsKeyState(q *Request, r *contract.ConnectionsKeyStateRequest) (an
 	if id != "" && !strings.HasPrefix(id, "key:") {
 		id = "key:" + id
 	}
-	k, err := maybe(q, id, "connection-key")
+	kp, err := kindMaybe[connKey](q, id, "connection-key")
 	if err != nil {
 		return nil, err
 	}
-	if k == nil {
+	if kp == nil {
 		return nil, fail(404, "Unknown key")
 	}
-	c, err := connByName(q, k["connectionId"])
+	k := *kp
+	c, err := connNamed(q, k.ConnectionID)
 	if err != nil {
 		return nil, err
 	}
 	// The request names the key, not the connection: the holder rule is checked on the key's connection here.
-	if q.person != nil && !fullAccess(q.person) && q.person.Email != c["holder"] {
+	if q.person != nil && !fullAccess(q.person) && q.person.Email != c.Holder {
 		return nil, fail(403, "Only the holder or the owner changes this API key")
 	}
 	to := string(r.State)
-	if k["state"] == "retired" {
+	if k.State == "retired" {
 		return nil, fail(409, "A retired key stays retired")
 	}
-	if k["state"] == "disabled" && to != "retired" && q.person != nil && !fullAccess(q.person) {
+	if k.State == "disabled" && to != "retired" && q.person != nil && !fullAccess(q.person) {
 		return nil, fail(403, "Only the owner handles key values")
 	}
-	if to == k["state"] {
+	if to == k.State {
 		return k, nil
 	}
-	if err := connChange(q, c, "key:"+astr(k["fingerprint"]), k["state"], to); err != nil {
+	if err := connChange(q, c, "key:"+k.Fingerprint, k.State, to); err != nil {
 		return nil, err
 	}
-	k["state"], k["updatedAt"] = to, nowMs()
+	now := nowMs()
+	k.State, k.UpdatedAt = to, &now
 	if to == "active" {
-		delete(k, "disabledReason")
-		delete(k, "disabledAt")
-		delete(k, "problem")
-		k["enabledAt"] = nowMs()
+		enabled := float64(now)
+		k.DisabledReason, k.DisabledAt, k.Problem, k.EnabledAt = nil, nil, nil, &enabled
 	}
-	if err := put(q, "connection-key", k); err != nil {
+	if err := kindPut(q, "connection-key", k); err != nil {
 		return nil, err
 	}
 	// The key left disabled (enabled again or retired): its refused-key question no longer needs the owner.
-	if err := problemClose(q, "key:"+astr(k["fingerprint"])+":disabled"); err != nil {
+	if err := problemClose(q, "key:"+k.Fingerprint+":disabled"); err != nil {
 		return nil, err
 	}
 	if to == "retired" {
-		if dir, err := connDir(astr(c["name"])); err == nil {
+		if dir, err := connDir(c.Name); err == nil {
 			// The value goes only once the retirement committed; connSync removes it if a crash came in between.
-			path := filepath.Join(dir, astr(k["fingerprint"]))
+			path := filepath.Join(dir, k.Fingerprint)
 			onEnd(q.tx, func(committed bool) {
 				if committed {
 					os.Remove(path)
@@ -659,86 +800,93 @@ func connectionsKeyState(q *Request, r *contract.ConnectionsKeyStateRequest) (an
 	return k, nil
 }
 
+// connUpdated: the connection written with its change time, then the snapshot republished.
+func connUpdated(q *Request, c apiConnection) error {
+	now := nowMs()
+	c.UpdatedAt = &now
+	if err := kindPut(q, "api-connection", c); err != nil {
+		return err
+	}
+	publish(q)
+	return nil
+}
+
 // connectionsSetTools (owner): the explicit provider tool grant.
 func connectionsSetTools(q *Request, r *contract.ConnectionsSetToolsRequest) (any, error) {
 	if _, err := getForUpdate(q, "connection:"+r.Connection, "api-connection"); err != nil && !errors.Is(err, errNotFound) {
 		return nil, err
 	}
-	c, err := connByName(q, r.Connection)
+	c, err := connNamed(q, r.Connection)
 	if err != nil {
 		return nil, err
 	}
-	seen, tools := map[string]bool{}, []any{}
+	seen, tools := map[string]bool{}, []string{}
 	for _, name := range r.Tools {
-		if name == "" || seen[name] || providerTools(astr(c["provider"]))[name] == nil {
+		if _, known := gatewayProviders[c.Provider].Tools[name]; name == "" || seen[name] || !known {
 			return nil, fail(400, "tools must be unique recognized provider tool names")
 		}
 		seen[name] = true
 		tools = append(tools, name)
 	}
-	if canonical(tools) != canonical(c["tools"]) {
-		if err := connChange(q, c, "tools", c["tools"], tools); err != nil {
+	if js(tools) != js(c.Tools) {
+		if err := connChange(q, c, "tools", c.Tools, tools); err != nil {
 			return nil, err
 		}
-		c["tools"], c["updatedAt"] = tools, nowMs()
-		if err := put(q, "api-connection", c); err != nil {
+		c.Tools = tools
+		if err := connUpdated(q, c); err != nil {
 			return nil, err
 		}
-		publish(q)
 	}
 	return c, nil
 }
 
 func connectionsSetAccess(q *Request, r *contract.ConnectionsSetAccessRequest) (any, error) {
-	c, err := connByName(q, r.Connection)
+	c, err := connNamed(q, r.Connection)
 	if err != nil {
 		return nil, err
 	}
-	a := docOf(r.Access)
-	people, err := idList(a["people"], "people")
+	people, err := idList(r.Access.People, "people")
 	if err != nil {
 		return nil, err
 	}
 	for i, p := range people {
-		people[i] = strings.ToLower(p.(string))
+		people[i] = strings.ToLower(p)
 	}
-	projects, err := idList(a["projects"], "projects")
+	projects, err := idList(r.Access.Projects, "projects")
 	if err != nil {
 		return nil, err
 	}
-	exps, err := idList(a["experiments"], "experiments")
+	exps, err := idList(r.Access.Experiments, "experiments")
 	if err != nil {
 		return nil, err
 	}
-	next := doc{"people": people, "projects": projects, "experiments": exps}
-	if canonical(next) != canonical(c["access"]) {
-		if err := connChange(q, c, "access", c["access"], next); err != nil {
+	next, prev := connAccess{People: people, Projects: projects, Experiments: exps}.stored(), c.Access.stored()
+	if js(next) != js(prev) {
+		if err := connChange(q, c, "access", c.Access, next); err != nil {
 			return nil, err
 		}
-		c["access"], c["updatedAt"] = next, nowMs()
-		if err := put(q, "api-connection", c); err != nil {
+		c.Access = next
+		if err := connUpdated(q, c); err != nil {
 			return nil, err
 		}
-		publish(q)
 	}
 	return c, nil
 }
 
 func connectionsSetIntake(q *Request, r *contract.ConnectionsSetIntakeRequest) (any, error) {
-	c, err := connByName(q, r.Connection)
+	c, err := connNamed(q, r.Connection)
 	if err != nil {
 		return nil, err
 	}
 	in := string(r.Intake)
-	if c["intake"] != in {
-		if err := connChange(q, c, "intake", c["intake"], in); err != nil {
+	if c.Intake != in {
+		if err := connChange(q, c, "intake", c.Intake, in); err != nil {
 			return nil, err
 		}
-		c["intake"], c["updatedAt"] = in, nowMs()
-		if err := put(q, "api-connection", c); err != nil {
+		c.Intake = in
+		if err := connUpdated(q, c); err != nil {
 			return nil, err
 		}
-		publish(q)
 	}
 	return c, nil
 }
@@ -746,36 +894,34 @@ func connectionsSetIntake(q *Request, r *contract.ConnectionsSetIntakeRequest) (
 // connectionsSetLimits: file tool limits (§9); the stored object is replaced as a whole; an omitted field takes the
 // gateway's default.
 func connectionsSetLimits(q *Request, r *contract.ConnectionsSetLimitsRequest) (any, error) {
-	c, err := connByName(q, r.Connection)
+	c, err := connNamed(q, r.Connection)
 	if err != nil {
 		return nil, err
 	}
-	next := doc{}
-	for k, v := range map[string]*int64{"fileBytes": r.Limits.FileBytes, "replyBytes": r.Limits.ReplyBytes, "stallMs": r.Limits.StallMs, "answerMs": r.Limits.AnswerMs} {
-		if v == nil {
-			continue
+	for _, f := range []struct {
+		name string
+		v    *int64
+	}{{"fileBytes", r.Limits.FileBytes}, {"replyBytes", r.Limits.ReplyBytes}, {"stallMs", r.Limits.StallMs}, {"answerMs", r.Limits.AnswerMs}} {
+		if f.v != nil && (*f.v < 1 || *f.v > 1<<53) {
+			return nil, fail(400, "limits."+f.name+" must be a positive integer")
 		}
-		if *v < 1 || *v > 1<<53 {
-			return nil, fail(400, "limits."+k+" must be a positive integer")
-		}
-		next[k] = float64(*v)
 	}
-	previous, _ := c["limits"].(map[string]any)
-	if previous == nil {
-		previous = doc{}
+	next := r.Limits
+	previous := json.RawMessage("{}")
+	if !isNull(c.Limits) {
+		previous = c.Limits
 	}
-	if canonical(next) != canonical(previous) {
+	if stored, err := c.limits(); err != nil || js(next) != js(stored) { // the fields are pointers: compared as written
 		if err := connChange(q, c, "limits", previous, next); err != nil {
 			return nil, err
 		}
-		c["limits"], c["updatedAt"] = next, nowMs()
-		if len(next) == 0 {
-			delete(c, "limits")
+		c.Limits = nil
+		if next != (contract.GatewayLimits{}) {
+			c.Limits = jsonBytes(next)
 		}
-		if err := put(q, "api-connection", c); err != nil {
+		if err := connUpdated(q, c); err != nil {
 			return nil, err
 		}
-		publish(q)
 	}
 	return c, nil
 }
@@ -787,56 +933,55 @@ func connectionsTokenCreate(q *Request, r *contract.ConnectionsTokenCreateReques
 	if !connName.MatchString(name) {
 		return nil, fail(400, "Expected token name")
 	}
-	toks, err := all(q, "run-token", nil)
+	toks, err := kindAll[runToken](q, "run-token", nil)
 	if err != nil {
 		return nil, err
 	}
 	for _, t := range toks {
-		if t["personal"] == name && t["revokedAt"] == nil {
+		if deref(t.Personal) == name && !t.revoked() {
 			return nil, fail(409, "Token name in use")
 		}
 	}
-	requested := append([]string{}, r.Connections...)
-	m, err := mint(q, doc{"executionId": "token:" + name, "directedBy": directorOf(q), "personal": name}, requested)
+	exec, director := "token:"+name, directorOf(q)
+	g, err := mintGrantFor(q, mintRun{ExecutionID: &exec, DirectedBy: &director, Personal: &name}, append([]string{}, r.Connections...))
 	if err != nil {
 		return nil, err
 	}
-	if m["token"] == nil {
-		r := []string{}
-		for _, x := range m["refused"].([]string) {
-			r = append(r, x)
-		}
-		return nil, fail(409, "No usable connection: "+strings.Join(r, ", "))
+	if g.Token == nil {
+		return nil, fail(409, "No usable connection: "+strings.Join(g.Refused, ", "))
 	}
-	m["name"] = name
-	return m, nil
+	return struct {
+		mintGrant
+		Name string `json:"name"`
+	}{g, name}, nil
 }
 
-func connectionsTokenList(q *Request) (any, error) {
-	toks, err := all(q, "run-token", nil)
+func connectionsTokenList(q *Request) (contract.ConnectionsTokenListReply, error) {
+	out := contract.ConnectionsTokenListReply{Tokens: []contract.TokenInfo{}}
+	toks, err := kindAll[runToken](q, "run-token", nil)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	out := []any{}
 	for _, t := range toks {
-		if t["personal"] != nil {
-			out = append(out, doc{"name": t["personal"], "connections": t["connections"], "createdAt": t["createdAt"], "revokedAt": t["revokedAt"], "directedBy": t["directedBy"]})
+		if t.Personal != nil {
+			out.Tokens = append(out.Tokens, contract.TokenInfo{Name: *t.Personal, Connections: jsonBytes(t.Connections), CreatedAt: orNull(t.CreatedAt),
+				RevokedAt: orNull(t.RevokedAt), DirectedBy: jsonBytes(t.DirectedBy)})
 		}
 	}
-	return doc{"tokens": out}, nil
+	return out, nil
 }
 
 func connectionsTokenRevoke(q *Request, r *contract.ConnectionsTokenRevokeRequest) (contract.ConnectionsTokenRevokeReply, error) {
 	var no contract.ConnectionsTokenRevokeReply
-	toks, err := all(q, "run-token", nil)
+	toks, err := kindAll[runToken](q, "run-token", nil)
 	if err != nil {
 		return no, err
 	}
 	n := 0
 	for _, t := range toks {
-		if t["personal"] == r.Name && t["revokedAt"] == nil {
-			t["revokedAt"] = nowMs()
-			if err := put(q, "run-token", t); err != nil {
+		if deref(t.Personal) == r.Name && !t.revoked() {
+			t.RevokedAt = jsonBytes(nowMs())
+			if err := kindPut(q, "run-token", t); err != nil {
 				return no, err
 			}
 			n++
@@ -890,52 +1035,100 @@ type mintRun struct {
 	Step                                                                                   bool
 }
 
-// mintRunOf: a run record's fields; a field that is not a string is absent.
+// mintRunOf: a run record's fields (the pipeline and dispatch files hold the run as a map); a field that is not text is
+// absent.
 func mintRunOf(run doc) mintRun {
-	str := func(k string) *string {
-		if s, ok := run[k].(string); ok {
+	r, _ := asT[struct {
+		ExecutionID   json.RawMessage `json:"executionId"`
+		DirectedBy    json.RawMessage `json:"directedBy"`
+		ProjectID     json.RawMessage `json:"projectId"`
+		ExperimentID  json.RawMessage `json:"experimentId"`
+		PipelineRunID json.RawMessage `json:"pipelineRunId"`
+		Personal      json.RawMessage `json:"personal"`
+		SystemActor   json.RawMessage `json:"systemActor"`
+		Step          json.RawMessage `json:"step"`
+	}](run)
+	text := func(v json.RawMessage) *string {
+		if s, ok := jsonAs[string](v); ok {
 			return &s
 		}
 		return nil
 	}
-	return mintRun{ExecutionID: str("executionId"), DirectedBy: str("directedBy"), ProjectID: str("projectId"), ExperimentID: str("experimentId"),
-		PipelineRunID: str("pipelineRunId"), Personal: str("personal"), SystemActor: str("systemActor"), Step: run["step"] == true}
-}
-
-// orNil: the string, or an untyped nil (a record field left out of its column).
-func orNil(s *string) any {
-	if s == nil {
-		return nil
-	}
-	return *s
+	step, _ := jsonAs[bool](r.Step)
+	return mintRun{ExecutionID: text(r.ExecutionID), DirectedBy: text(r.DirectedBy), ProjectID: text(r.ProjectID), ExperimentID: text(r.ExperimentID),
+		PipelineRunID: text(r.PipelineRunID), Personal: text(r.Personal), SystemActor: text(r.SystemActor), Step: step}
 }
 
 // Per-run tokens (§4): granted are the requested connections that exist, take intake and whose access names the run.
-func connAllowed(c doc, run doc) bool { return connAllowedFor(c, mintRunOf(run)) }
-
-func connAllowedFor(c doc, r mintRun) bool {
-	a := mapOf(c["access"])
-	has := func(list string, v *string) bool {
-		for _, x := range anys(a[list]) {
-			if v != nil && x == *v {
-				return true
-			}
-		}
+// connAllowed takes the connection and the run as the maps its callers hold (holder and access; the run's fields).
+func connAllowed(c doc, run doc) bool {
+	conn, err := asT[struct {
+		Holder string     `json:"holder"`
+		Access connAccess `json:"access"`
+	}](c)
+	if err != nil {
 		return false
 	}
-	if len(anys(a["people"])) == 0 && len(anys(a["projects"])) == 0 && len(anys(a["experiments"])) == 0 {
-		return r.DirectedBy != nil && *r.DirectedBy == c["holder"]
-	}
-	all := "*"
-	return has("people", r.DirectedBy) || has("projects", &all) || has("projects", r.ProjectID) || has("experiments", r.ExperimentID)
+	return connAllowedFor(apiConnection{Holder: conn.Holder, Access: conn.Access}, mintRunOf(run))
 }
 
-// mint: {token, refused, connections}; token is nil when nothing was granted.
+func connAllowedFor(c apiConnection, r mintRun) bool {
+	a := c.Access
+	has := func(list []string, v *string) bool { return v != nil && slices.Contains(list, *v) }
+	if len(a.People) == 0 && len(a.Projects) == 0 && len(a.Experiments) == 0 {
+		return r.DirectedBy != nil && c.Holder != "" && *r.DirectedBy == c.Holder
+	}
+	all := "*"
+	return has(a.People, r.DirectedBy) || has(a.Projects, &all) || has(a.Projects, r.ProjectID) || has(a.Experiments, r.ExperimentID)
+}
+
+// mintGrant: what a mint answers: the token (nil when nothing was granted), the refused names and each granted
+// connection as its client sees it.
+type mintGrant struct {
+	Token       *string    `json:"token"`
+	Refused     []string   `json:"refused"`
+	Connections []connSpec `json:"connections"`
+}
+
+// connSpec, toolSpec: a granted connection and its tools as the client's MCP server serves them; file and idempotent
+// tell the client the transfer mode and how an edge error reads (its MCP server keeps them from the model), the waits
+// let it outwait the gateway (§9).
+type connSpec struct {
+	Name         string          `json:"name"`
+	Instructions json.RawMessage `json:"instructions"`
+	Tools        []toolSpec      `json:"tools"`
+	Limits       *connWaits      `json:"limits,omitempty"`
+}
+
+type toolSpec struct {
+	Name        string                    `json:"name"`
+	Description json.RawMessage           `json:"description"`
+	InputSchema json.RawMessage           `json:"inputSchema"`
+	Idempotent  bool                      `json:"idempotent"`
+	File        *contract.GatewayFileMode `json:"file,omitempty"`
+}
+
+type connWaits struct {
+	StallMs  *int64 `json:"stallMs,omitempty"`
+	AnswerMs *int64 `json:"answerMs,omitempty"`
+}
+
+// mint and mintFor: mintGrantFor as the map their callers read (token text or nil, refused as []string, connections).
 func mint(q *Request, run doc, requested []string) (doc, error) {
 	return mintFor(q, mintRunOf(run), requested)
 }
 
 func mintFor(q *Request, run mintRun, requested []string) (doc, error) {
+	g, err := mintGrantFor(q, run, requested)
+	if err != nil {
+		return nil, err
+	}
+	m := docOf(g)
+	m["refused"] = g.Refused // pipeline_plan.go reads the list as []string
+	return m, nil
+}
+
+func mintGrantFor(q *Request, run mintRun, requested []string) (mintGrant, error) {
 	seen, uniq := map[string]bool{}, []string{}
 	for _, r := range requested {
 		if !seen[r] {
@@ -943,83 +1136,60 @@ func mintFor(q *Request, run mintRun, requested []string) (doc, error) {
 			uniq = append(uniq, r)
 		}
 	}
-	granted := []doc{}
+	granted := []apiConnection{}
 	for _, name := range uniq {
-		c, err := maybe(q, "connection:"+name, "api-connection")
+		c, err := kindMaybe[apiConnection](q, "connection:"+name, "api-connection")
 		if err != nil {
-			return nil, err
+			return mintGrant{}, err
 		}
-		if c != nil && c["intake"] == "all" && connAllowedFor(c, run) {
-			granted = append(granted, c)
+		if c != nil && c.Intake == "all" && connAllowedFor(*c, run) {
+			granted = append(granted, *c)
 		}
 	}
 	if len(granted) == 0 {
-		return doc{"token": nil, "connections": []any{}, "refused": uniq}, nil
+		return mintGrant{Refused: uniq, Connections: []connSpec{}}, nil
 	}
 	token := randomToken()
 	sha := sha256hex([]byte(token))
-	names, specs, refused := []any{}, []any{}, []string{}
+	names, specs, refused := []string{}, []connSpec{}, []string{}
 	var fileDownloads []string
 	for _, c := range granted {
-		names = append(names, c["name"])
-		p := mapOf(providers[astr(c["provider"])])
-		tools := []any{}
-		for _, t := range anys(c["tools"]) {
-			if spec := mapOf(mapOf(p["tools"])[astr(t)]); spec != nil {
-				// file and idempotent tell the client the transfer mode and how an edge error reads; its MCP server
-				// keeps them from the model.
-				entry := doc{"name": t, "description": spec["description"], "inputSchema": spec["inputSchema"], "idempotent": spec["idempotent"] == true}
-				if spec["file"] != nil {
-					entry["file"] = spec["file"]
-				}
-				if spec["file"] == "download" && !slices.Contains(fileDownloads, astr(c["name"])) {
-					fileDownloads = append(fileDownloads, astr(c["name"]))
-				}
-				tools = append(tools, entry)
+		names = append(names, c.Name)
+		p := gatewayProviders[c.Provider]
+		spec := connSpec{Name: c.Name, Instructions: orNull(p.Rest["instructions"]), Tools: []toolSpec{}}
+		for _, t := range c.Tools {
+			tool, ok := p.Tools[t]
+			if !ok {
+				continue
+			}
+			spec.Tools = append(spec.Tools, toolSpec{Name: t, Description: orNull(tool.Rest["description"]), InputSchema: orNull(tool.Rest["inputSchema"]),
+				Idempotent: tool.Idempotent, File: tool.File})
+			if tool.File != nil && *tool.File == contract.GatewayFileModeDownload && !slices.Contains(fileDownloads, c.Name) {
+				fileDownloads = append(fileDownloads, c.Name)
 			}
 		}
-		spec := doc{"name": c["name"], "instructions": p["instructions"], "tools": tools}
-		// The configured waits let the client outwait the gateway (§9).
-		waits := doc{}
-		for _, k := range []string{"stallMs", "answerMs"} {
-			if v := mapOf(c["limits"])[k]; v != nil {
-				waits[k] = v
-			}
-		}
-		if len(waits) > 0 {
-			spec["limits"] = waits
+		if l, err := c.limits(); err == nil && (l.StallMs != nil || l.AnswerMs != nil) {
+			spec.Limits = &connWaits{StallMs: l.StallMs, AnswerMs: l.AnswerMs}
 		}
 		specs = append(specs, spec)
 	}
 	for _, n := range uniq {
-		ok := false
-		for _, g := range names {
-			ok = ok || g == n
-		}
-		if !ok {
+		if !slices.Contains(names, n) {
 			refused = append(refused, n)
 		}
 	}
-	row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": orNil(run.ExecutionID), "directedBy": orNil(run.DirectedBy), "projectId": projectOrNil(orNil(run.ProjectID)),
-		"experimentId": orNil(run.ExperimentID), "pipelineRunId": orNil(run.PipelineRunID), "connections": names, "createdAt": nowMs()}
-	if len(fileDownloads) > 0 {
-		row["fileDownloads"] = fileDownloads
+	project := run.ProjectID
+	if project != nil && *project == "" {
+		project = nil
 	}
-	if run.Step {
-		row["step"] = true
-	}
-	if run.Personal != nil {
-		row["personal"] = *run.Personal
-	}
-	if run.SystemActor != nil {
-		row["systemActor"] = *run.SystemActor // its calls are Fleet's own activity (connRecord)
-	}
-	err := put(q, "run-token", row)
-	if err != nil {
-		return nil, err
+	row := runToken{ID: "run-token:" + sha, Sha256: sha, ExecutionID: run.ExecutionID, DirectedBy: run.DirectedBy, ProjectID: project,
+		ExperimentID: run.ExperimentID, PipelineRunID: run.PipelineRunID, Connections: names, CreatedAt: jsonBytes(nowMs()), FileDownloads: fileDownloads,
+		Step: run.Step, Personal: run.Personal, SystemActor: run.SystemActor} // systemActor: its calls are Fleet's own activity (connRecord)
+	if err := kindPut(q, "run-token", row); err != nil {
+		return mintGrant{}, err
 	}
 	publish(q)
-	return doc{"token": token, "refused": refused, "connections": specs}, nil
+	return mintGrant{Token: &token, Refused: refused, Connections: specs}, nil
 }
 
 func revokeTokens(q *Request, executionID string) error {
@@ -1157,11 +1327,53 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 	return added, nil
 }
 
+// callData: a call row's data (tool_run) from its gateway line and run token.
+type callData struct {
+	Tool                    string                 `json:"tool"`
+	Connection              string                 `json:"connection"`
+	Outcome                 contract.CallOutcome   `json:"outcome"`
+	ErrorCode               *string                `json:"errorCode"`
+	Status                  int64                  `json:"status"`
+	KeyFingerprint          *string                `json:"keyFingerprint"`
+	Usage                   *contract.CallUsage    `json:"usage"`
+	DirectedBy              *string                `json:"directedBy"`
+	StartedAt               int64                  `json:"startedAt"`
+	Ms                      int64                  `json:"ms"`
+	Transfer                *contract.CallTransfer `json:"transfer,omitempty"`
+	Phase                   *contract.CallPhase    `json:"phase,omitempty"`
+	UploadAccounted         bool                   `json:"uploadAccounted,omitempty"`
+	TokenName               *string                `json:"tokenName,omitempty"`
+	PipelineRunID           *string                `json:"pipelineRunId,omitempty"`
+	DirectorAccessRevokedAt json.RawMessage        `json:"directorAccessRevokedAt,omitempty"`
+}
+
+// callExecution: a call row as insertExecution (store.go) takes it.
+type callExecution struct {
+	ID                string   `json:"id"`
+	Kind              string   `json:"kind"`
+	State             string   `json:"state"`
+	ProjectID         *string  `json:"projectId"`
+	ParentExecutionID *string  `json:"parentExecutionId"`
+	ExperimentID      *string  `json:"experimentId"`
+	TaskID            *string  `json:"taskId"`
+	SessionID         *string  `json:"sessionId"`
+	DirectedBy        *string  `json:"directedBy"`
+	StartedAt         *int64   `json:"startedAt"`
+	EndedAt           *int64   `json:"endedAt"`
+	PipelineID        *string  `json:"pipelineId"`
+	PipelineRevision  *int64   `json:"pipelineRevision"`
+	StepID            *string  `json:"stepId"`
+	ProfileID         *string  `json:"profileId"`
+	ProfileRevision   *int64   `json:"profileRevision"`
+	SystemActor       *string  `json:"systemActor"`
+	Data              callData `json:"data"`
+}
+
 func connRecord(q *Request, l contract.CallLine) (bool, error) {
 	if l.CallId == "" || l.TokenSha256 == nil || l.ExecutionId == nil {
 		return false, nil
 	}
-	t, err := maybe(q, "run-token:"+*l.TokenSha256, "run-token")
+	t, err := kindMaybe[runToken](q, "run-token:"+*l.TokenSha256, "run-token")
 	if err != nil || t == nil {
 		return false, err
 	}
@@ -1170,63 +1382,50 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 	if l.Outcome == contract.CallOutcomeOk {
 		state = "succeeded"
 	}
-	data := doc{"tool": l.Tool, "connection": l.Connection, "outcome": l.Outcome, "errorCode": l.ErrorCode, "status": l.Status,
-		"keyFingerprint": l.KeyFingerprint, "usage": l.Usage, "directedBy": t["directedBy"], "startedAt": l.StartedAt, "ms": l.Ms}
-	if l.Transfer != nil {
-		data["transfer"] = l.Transfer
+	data := callData{Tool: l.Tool, Connection: l.Connection, Outcome: l.Outcome, ErrorCode: l.ErrorCode, Status: l.Status,
+		KeyFingerprint: l.KeyFingerprint, Usage: l.Usage, DirectedBy: t.DirectedBy, StartedAt: l.StartedAt, Ms: l.Ms, Transfer: l.Transfer,
+		Phase: l.Phase, TokenName: t.Personal, PipelineRunID: t.PipelineRunID}
+	if l.Phase != nil && *l.Phase == contract.CallPhaseCompleted && isUpload(l) {
+		data.UploadAccounted = true
 	}
-	if l.Phase != nil {
-		data["phase"] = *l.Phase
-		if *l.Phase == contract.CallPhaseCompleted && isUpload(l) {
-			data["uploadAccounted"] = true
-		}
-	}
-	if t["personal"] != nil {
-		data["tokenName"] = t["personal"]
-	}
-	if t["pipelineRunId"] != nil {
-		data["pipelineRunId"] = t["pipelineRunId"]
-	}
-	var parent any = t["executionId"]
-	if t["personal"] != nil {
+	parent := t.ExecutionID
+	if t.Personal != nil {
 		parent = nil
 	}
 	var pr db.ConnCallParentRow
-	if pid := astr(parent); pid != "" {
+	if pid := deref(parent); pid != "" {
 		var err error
 		if pr, err = q.db().ConnCallParent(q.ctx(), pid); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return false, err
 		}
 	}
-	pTask, pSession, pDir, pPipe, pStep, pProf, pPipeRev, pProfRev := pr.TaskID, pr.SessionID, pr.DirectedBy, pr.PipelineID, pr.StepID, pr.ProfileID, pr.PipelineRevision, pr.ProfileRevision
-	var startedAt, endedAt any
+	var startedAt, endedAt *int64
 	if l.StartedAt > 0 {
-		dur := l.Ms
-		if dur < 0 {
-			dur = 0
-		}
-		startedAt, endedAt = l.StartedAt, l.StartedAt+dur
+		start, end := l.StartedAt, l.StartedAt+max(l.Ms, 0)
+		startedAt, endedAt = &start, &end
 	}
-	if astr(t["projectId"]) == "" && pSession == nil {
-		if t["directorAccessRevokedAt"] != nil {
-			data["directorAccessRevokedAt"] = t["directorAccessRevokedAt"]
-		} else if dir := firstString(t["directedBy"], deref(pDir)); dir != "" {
-			active, err := q.db().ConnPersonExists(q.ctx(), dir)
+	director := firstString(deref(t.DirectedBy), deref(pr.DirectedBy))
+	if deref(t.ProjectID) == "" && pr.SessionID == nil {
+		if !isNull(t.DirectorAccessRevokedAt) {
+			data.DirectorAccessRevokedAt = t.DirectorAccessRevokedAt
+		} else if director != "" {
+			active, err := q.db().ConnPersonExists(q.ctx(), director)
 			if err != nil {
 				return false, err
 			}
 			if !active {
-				data["directorAccessRevokedAt"] = nowMs()
+				data.DirectorAccessRevokedAt = jsonBytes(nowMs())
 			}
 		}
 	}
-	inserted, err := insertExecution(q, doc{
-		"id": id, "kind": "tool_run", "state": state, "projectId": t["projectId"], "parentExecutionId": parent,
-		"experimentId": t["experimentId"], "taskId": pTask, "sessionId": pSession,
-		"directedBy": nilIf(firstString(t["directedBy"], deref(pDir))), "startedAt": startedAt, "endedAt": endedAt,
-		"pipelineId": pPipe, "pipelineRevision": pPipeRev, "stepId": pStep, "profileId": pProf, "profileRevision": pProfRev,
-		"systemActor": t["systemActor"], "data": data,
-	})
+	var directedBy *string
+	if director != "" {
+		directedBy = &director
+	}
+	inserted, err := insertExecution(q, docOf(callExecution{ID: id, Kind: "tool_run", State: state, ProjectID: t.ProjectID, ParentExecutionID: parent,
+		ExperimentID: t.ExperimentID, TaskID: pr.TaskID, SessionID: pr.SessionID, DirectedBy: directedBy, StartedAt: startedAt, EndedAt: endedAt,
+		PipelineID: pr.PipelineID, PipelineRevision: pr.PipelineRevision, StepID: pr.StepID, ProfileID: pr.ProfileID, ProfileRevision: pr.ProfileRevision,
+		SystemActor: t.SystemActor, Data: data}))
 	if err != nil || !inserted {
 		return false, err
 	}
@@ -1235,7 +1434,7 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 			return false, err
 		}
 	}
-	if err := connAccount(q, id, l, t["step"] == true); err != nil {
+	if err := connAccount(q, id, l, t.Step); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -1263,7 +1462,8 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 				return err
 			}
 		}
-		cost = doc{"unit": u.Unit, u.Unit: amount, "amount": amount, "connection": l.Connection}
+		// The cost names its amount under its unit as well (a JSON object keyed by the provider's unit).
+		cost = map[string]json.RawMessage{"unit": jsonBytes(u.Unit), u.Unit: jsonBytes(amount), "amount": jsonBytes(amount), "connection": jsonBytes(l.Connection)}
 	}
 	if err := writeConnectionCost(q, id, cost); err != nil {
 		return err
@@ -1278,7 +1478,7 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 		}
 	}
 	if p := l.KeyProblem; p != nil && p.Key != "" {
-		k, err := maybe(q, "key:"+p.Key, "connection-key")
+		k, err := kindMaybe[connKey](q, "key:"+p.Key, "connection-key")
 		if err != nil {
 			return err
 		}
@@ -1290,11 +1490,11 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 			if at == 0 {
 				at = nowMs()
 			}
-			if enabled, ok := numOK(k["enabledAt"]); ok && int64(enabled) >= at {
+			if k.EnabledAt != nil && int64(*k.EnabledAt) >= at {
 				return nil
 			}
-			k["problem"] = doc{"status": p.Status, "message": msg, "at": at}
-			if err := put(q, "connection-key", k); err != nil {
+			k.Problem = &keyProblem{Status: p.Status, Message: msg, At: at}
+			if err := kindPut(q, "connection-key", *k); err != nil {
 				return err
 			}
 		}
@@ -1304,6 +1504,20 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 
 func isUpload(l contract.CallLine) bool {
 	return l.Transfer != nil && l.Transfer.Direction == contract.CallTransferDirectionUpload
+}
+
+// transferPatch: what a transfer's completed line writes over its started row's data; an upload also writes its key,
+// usage (null when the line has none) and that it is accounted.
+type transferPatch struct {
+	Outcome         contract.CallOutcome   `json:"outcome"`
+	Status          int64                  `json:"status"`
+	ErrorCode       *string                `json:"errorCode"`
+	Ms              int64                  `json:"ms"`
+	Phase           contract.CallPhase     `json:"phase"`
+	Transfer        *contract.CallTransfer `json:"transfer,omitempty"`
+	KeyFingerprint  json.RawMessage        `json:"keyFingerprint,omitempty"`
+	Usage           json.RawMessage        `json:"usage,omitempty"`
+	UploadAccounted bool                   `json:"uploadAccounted,omitempty"`
 }
 
 // connComplete applies a file transfer's completed line (§9) to its started row. A repeated pass leaves the
@@ -1316,13 +1530,10 @@ func connComplete(q *Request, l contract.CallLine) error {
 		state, problem = "succeeded", nil
 	}
 	ms := max(l.Ms, 0)
-	patch := doc{"outcome": l.Outcome, "status": l.Status, "errorCode": l.ErrorCode, "ms": ms, "phase": contract.CallPhaseCompleted}
-	if l.Transfer != nil {
-		patch["transfer"] = l.Transfer
-	}
+	patch := transferPatch{Outcome: l.Outcome, Status: l.Status, ErrorCode: l.ErrorCode, Ms: ms, Phase: contract.CallPhaseCompleted, Transfer: l.Transfer}
 	upload := isUpload(l)
 	if upload {
-		patch["keyFingerprint"], patch["usage"], patch["uploadAccounted"] = l.KeyFingerprint, l.Usage, true
+		patch.KeyFingerprint, patch.Usage, patch.UploadAccounted = jsonBytes(l.KeyFingerprint), jsonBytes(l.Usage), true
 	}
 	n, err := q.db().ConnTransferComplete(q.ctx(), db.ConnTransferCompleteParams{ID: id, Ms: ms, Problem: problem, Patch: jsonBytes(patch), Upload: upload})
 	if err != nil {
@@ -1355,21 +1566,22 @@ func connComplete(q *Request, l contract.CallLine) error {
 }
 
 func connDisable(q *Request, fp string, status, attemptedAt int64) error {
-	k, err := maybe(q, "key:"+fp, "connection-key")
-	if err != nil || k == nil || k["state"] == "retired" || k["state"] == "disabled" {
+	k, err := kindMaybe[connKey](q, "key:"+fp, "connection-key")
+	if err != nil || k == nil || k.State == "retired" || k.State == "disabled" {
 		return err
 	}
-	if enabled, ok := numOK(k["enabledAt"]); ok && attemptedAt > 0 && int64(enabled) > attemptedAt {
+	if k.EnabledAt != nil && attemptedAt > 0 && int64(*k.EnabledAt) > attemptedAt {
 		return nil
 	}
 	st := fmt.Sprint(status)
-	k["state"], k["disabledReason"], k["disabledAt"] = "disabled", "provider answered HTTP "+st, nowMs()
-	if err := put(q, "connection-key", k); err != nil {
+	reason, now := "provider answered HTTP "+st, nowMs()
+	k.State, k.DisabledReason, k.DisabledAt = "disabled", &reason, &now
+	if err := kindPut(q, "connection-key", *k); err != nil {
 		return err
 	}
 	publish(q)
 	return problemRaise(q, "", Problem{Cause: "key:" + fp + ":disabled", Options: []any{"seen"},
-		Text: fmt.Sprintf("API key %s of %v was refused by the provider (HTTP %s) and is disabled. Re-enable it on the API keys screen once it works again, or retire it.", fp, k["connectionId"], st)})
+		Text: fmt.Sprintf("API key %s of %v was refused by the provider (HTTP %s) and is disabled. Re-enable it on the API keys screen once it works again, or retire it.", fp, k.ConnectionID, st)})
 }
 
 var (
@@ -1389,13 +1601,14 @@ func connTickPass(ctx context.Context, a *App) error {
 		if err != nil {
 			return err
 		}
-		m := map[string]any{}
+		names := []string{}
 		for k, v := range b {
 			if v {
-				m[k] = true
+				names = append(names, k)
 			}
 		}
-		blockedJSON = string(jsonBytes(sortedKeysOf(m)))
+		sort.Strings(names)
+		blockedJSON = string(jsonBytes(names))
 		open, err := q.db().OpenRunTokenExecutions(q.ctx())
 		if err != nil {
 			return err
@@ -1437,6 +1650,16 @@ func connTickPass(ctx context.Context, a *App) error {
 	return nil
 }
 
+// usageReport: the gateway's per-key provider usage (GET /v1/usage).
+type usageReport struct {
+	At   json.RawMessage `json:"at"`
+	Keys []struct {
+		Key     string          `json:"key"`
+		Usage   json.RawMessage `json:"usage"`
+		Unknown json.RawMessage `json:"unknown"`
+	} `json:"keys"`
+}
+
 // Reconcile (§2): the provider's per-key usage since the first observation against the credits recorded through the gateway.
 func connReconcile(ctx context.Context, a *App) {
 	if gatewayURL() == "" {
@@ -1449,49 +1672,47 @@ func connReconcile(ctx context.Context, a *App) {
 		return
 	}
 	defer res.Body.Close()
-	var report doc
+	var report usageReport
 	if res.StatusCode/100 != 2 || json.NewDecoder(res.Body).Decode(&report) != nil {
 		return
 	}
+	at := orNull(report.At)
 	err = runTx(ctx, a, nil, true, "", func(q *Request) error {
-		for _, r := range anys(report["keys"]) {
-			row := mapOf(r)
-			k, err := maybe(q, "key:"+astr(row["key"]), "connection-key")
+		for _, row := range report.Keys {
+			k, err := kindMaybe[connKey](q, "key:"+row.Key, "connection-key")
 			if err != nil {
 				return err
 			}
 			if k == nil {
 				continue
 			}
-			usage, ok := numOK(row["usage"])
-			if !ok {
-				rc := mapOf(k["reconcile"])
-				if rc == nil {
-					rc = doc{}
+			if usage, ok := jsonAs[float64](row.Usage); !ok {
+				rc := keyReconcile{}
+				if k.Reconcile != nil {
+					rc = *k.Reconcile
 				}
 				unknown := "no usage reported"
-				if row["unknown"] != nil {
-					unknown = fmt.Sprint(row["unknown"])
+				if s, ok := jsonAs[string](row.Unknown); ok {
+					unknown = s
+				} else if !isNull(row.Unknown) {
+					unknown = string(row.Unknown)
 				}
-				rc["at"], rc["unknown"] = report["at"], unknown
-				k["reconcile"] = rc
+				rc.At, rc.Unknown = at, &unknown
+				k.Reconcile = &rc
 			} else {
-				base := mapOf(k["usageBaseline"])
-				if base == nil {
-					base = doc{"usage": usage, "at": report["at"]}
-					k["usageBaseline"] = base
+				if k.UsageBaseline == nil {
+					k.UsageBaseline = &usageBaseline{Usage: usage, At: at}
 				}
-				at, _ := numOK(base["at"])
-				fp, _ := k["fingerprint"].(string)
-				recorded, err := q.db().ConnKeyRecordedSince(q.ctx(), db.ConnKeyRecordedSinceParams{Fingerprint: fp, Since: int64(at)})
+				since, _ := jsonAs[float64](k.UsageBaseline.At)
+				recorded, err := q.db().ConnKeyRecordedSince(q.ctx(), db.ConnKeyRecordedSinceParams{Fingerprint: k.Fingerprint, Since: int64(since)})
 				if err != nil {
 					return err
 				}
-				bu, _ := numOK(base["usage"])
-				delta := usage - bu
-				k["reconcile"] = doc{"at": report["at"], "providerDelta": delta, "recorded": recorded, "difference": delta - recorded}
+				delta := usage - k.UsageBaseline.Usage
+				difference := delta - recorded
+				k.Reconcile = &keyReconcile{At: at, ProviderDelta: &delta, Recorded: &recorded, Difference: &difference}
 			}
-			if err := put(q, "connection-key", k); err != nil {
+			if err := kindPut(q, "connection-key", *k); err != nil {
 				return err
 			}
 		}
@@ -1541,7 +1762,11 @@ func cfAccessHeaders() map[string]string {
 
 // keyAnswer: the only answer a key request records besides decline: the JSON text {connection, fingerprint, state}.
 func keyAnswer(connection, fp, state string) string {
-	return js(doc{"connection": connection, "fingerprint": fp, "state": state})
+	return js(struct {
+		Connection  string `json:"connection"`
+		Fingerprint string `json:"fingerprint"`
+		State       string `json:"state"`
+	}{connection, fp, state})
 }
 
 // keyRequestOf: the open key request qid for connection, or one already answered with replay (a retried add).
@@ -1562,10 +1787,17 @@ func keyRequestOf(q *Request, qid, connection, replay string) error {
 	return nil
 }
 
-// keyAnswerCheck: the answer hook of a key request (tasks area calls it). Only the owner settles it, with decline or
-// with the fingerprint answer of a key added to its connection, so no answer path carries a value.
-func keyAnswerCheck(q *Request, qn doc, answer string) error {
-	if qn["kind"] != "secret" {
+// keyAnswerCheck: the answer hook of a key request (tasks area calls it with the question as its map). Only the owner
+// settles it, with decline or with the fingerprint answer of a key added to its connection, so no answer path carries a
+// value.
+func keyAnswerCheck(q *Request, question doc, answer string) error {
+	qn, _ := asT[struct {
+		Kind    string `json:"kind"`
+		Options struct {
+			Connection json.RawMessage `json:"connection"`
+		} `json:"options"`
+	}](question)
+	if qn.Kind != "secret" {
 		return nil
 	}
 	if q.agent != "" || q.person == nil || !fullAccess(q.person) { // never the asking agent, even with the owner's rights
@@ -1575,19 +1807,16 @@ func keyAnswerCheck(q *Request, qn doc, answer string) error {
 		return nil
 	}
 	var a struct{ Connection, Fingerprint, State string }
-	conn := astr(mapOf(qn["options"])["connection"])
+	conn, _ := jsonAs[string](qn.Options.Connection)
 	if json.Unmarshal([]byte(answer), &a) != nil || a.Connection != conn || keyAnswer(a.Connection, a.Fingerprint, a.State) != answer {
 		return fail(400, "Answer decline, or add the key in its field")
 	}
-	k, err := maybe(q, "key:"+a.Fingerprint, "connection-key")
+	k, err := kindMaybe[connKey](q, "key:"+a.Fingerprint, "connection-key")
 	if err != nil {
 		return err
 	}
-	if k == nil || k["connectionId"] != conn || a.State != "active" || k["state"] != "active" {
+	if k == nil || k.ConnectionID != conn || a.State != "active" || k.State != "active" {
 		return fail(400, "Answer decline, or add the key in its field")
 	}
 	return nil
-}
-
-func init() {
 }
