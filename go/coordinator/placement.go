@@ -16,9 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"fleet/contract"
-
 	"github.com/jackc/pgx/v5"
+
+	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 const copySourceSeconds = 6 * 3600
@@ -43,46 +44,58 @@ func ruleHash(r artifactRule) string {
 	return hex.EncodeToString(h[:])
 }
 
-// validRule: hosts, when given, are the hosts with registered stores (a move rule must name only those).
-func validRule(v any, hosts map[string]bool) (artifactRule, error) {
-	m, _ := v.(map[string]any)
+// ruleInput: a rule as written in the project settings or a request, before validRule checks it.
+type ruleInput struct {
+	Scope         *string         `json:"scope"`
+	OlderThanDays *float64        `json:"older_than_days"`
+	Action        *string         `json:"action"`
+	To            json.RawMessage `json:"to"`
+}
+
+// validRule: one rule's JSON; hosts, when given, are the hosts with registered stores (a move rule must name only those).
+func validRule(raw json.RawMessage, hosts map[string]bool) (artifactRule, error) {
+	var m *ruleInput
 	var r artifactRule
-	days, ok := m["older_than_days"].(float64)
-	if m == nil || (m["scope"] != "lab" && m["scope"] != "prod") || !ok || days < 0 || days != float64(int64(days)) || (m["action"] != "move" && m["action"] != "delete") {
+	if json.Unmarshal(raw, &m) != nil || m == nil || m.Scope == nil || m.OlderThanDays == nil || m.Action == nil {
 		return r, fail(400, "Invalid artifact rule")
 	}
-	r = artifactRule{Scope: m["scope"].(string), OlderThanDays: int64(days), Action: m["action"].(string)}
-	to, hasTo := m["to"]
+	days := *m.OlderThanDays
+	if (*m.Scope != "lab" && *m.Scope != "prod") || days < 0 || days != float64(int64(days)) || (*m.Action != "move" && *m.Action != "delete") {
+		return r, fail(400, "Invalid artifact rule")
+	}
+	r = artifactRule{Scope: *m.Scope, OlderThanDays: int64(days), Action: *m.Action}
 	if r.Action == "move" {
-		l, _ := to.([]any)
-		if len(l) == 0 {
+		var l []*string
+		if json.Unmarshal(m.To, &l) != nil || len(l) == 0 {
 			return r, fail(400, "A move rule needs to: hosts with registered stores")
 		}
 		for _, h := range l {
-			s, ok := h.(string)
-			if !ok || hosts != nil && !hosts[s] {
+			if h == nil || hosts != nil && !hosts[*h] {
 				return r, fail(400, "A move rule needs to: hosts with registered stores")
 			}
-			r.To = append(r.To, s)
+			r.To = append(r.To, *h)
 		}
-	} else if hasTo {
+	} else if len(m.To) > 0 {
 		return r, fail(400, "A delete rule takes no to")
 	}
 	return r, nil
 }
 
-func projectRules(q *Request, projectID *string) []any {
+// projectRules: the artifact_rules of a project's settings, each rule's JSON; a single rule counts as a list of one.
+func projectRules(q *Request, projectID *string) []json.RawMessage {
 	if projectID == nil {
 		return nil
 	}
-	switch v := projectSettingsOf(q, *projectID)["artifact_rules"].(type) {
-	case []any:
-		return v
-	case nil:
+	v, ok := projectSettingsOf(q, *projectID)["artifact_rules"]
+	if !ok || v == nil {
 		return nil
-	default:
-		return []any{v}
 	}
+	b := jsonBytes(v)
+	var list []json.RawMessage
+	if json.Unmarshal(b, &list) != nil {
+		list = []json.RawMessage{b}
+	}
+	return list
 }
 
 // Problems of the last pass, shown by stores_list.
@@ -91,7 +104,9 @@ var placementProblems struct {
 	list []doc
 }
 
-func problem(p doc) {
+// problem: one problem of this pass, its fields as their JSON names.
+func problem(v any) {
+	p := docOf(v)
 	placementProblems.Lock()
 	placementProblems.list = append(placementProblems.list, p)
 	placementProblems.Unlock()
@@ -108,6 +123,19 @@ type plan struct {
 	delete    *artifactRule
 }
 
+// ruleProblem: a project rule that does not validate; projectId stays a *string, as stores_list filters it.
+func ruleProblem(projectID *string, rule int, err error) {
+	p := docOf(struct {
+		Kind  string `json:"kind"`
+		Rule  int    `json:"rule"`
+		Error string `json:"error"`
+	}{"artifact-rule-invalid", rule, err.Error()})
+	p["projectId"] = projectID
+	placementProblems.Lock()
+	placementProblems.list = append(placementProblems.list, p)
+	placementProblems.Unlock()
+}
+
 // effective: a confirmed matching move rule replaces the project list for the artifact; a delete rule ends it.
 func effective(ctx context.Context, a *App, x *Artifact, hosts map[string]bool) (plan, error) {
 	q := backgroundRequest(ctx, a, nil)
@@ -116,7 +144,7 @@ func effective(ctx context.Context, a *App, x *Artifact, hosts map[string]bool) 
 	for i, raw := range projectRules(q, x.ProjectID) {
 		r, err := validRule(raw, hosts)
 		if err != nil {
-			problem(doc{"kind": "artifact-rule-invalid", "projectId": x.ProjectID, "rule": i, "error": err.Error()})
+			ruleProblem(x.ProjectID, i, err)
 			continue
 		}
 		if r.Scope == x.Scope && age >= float64(r.OlderThanDays) {
@@ -125,11 +153,11 @@ func effective(ctx context.Context, a *App, x *Artifact, hosts map[string]bool) 
 	}
 	sort.SliceStable(rules, func(i, j int) bool { return rules[i].OlderThanDays > rules[j].OlderThanDays })
 	for _, r := range rules {
-		ok, err := oneCtx(ctx, a, "SELECT 1 AS x FROM artifact_rule_confirmation WHERE project_id=$1 AND rule_hash=$2", projectKey(x.ProjectID), ruleHash(r))
+		ok, err := connDB(ctx, a).DispRuleConfirmed(ctx, db.DispRuleConfirmedParams{ProjectID: projectKey(x.ProjectID), RuleHash: ruleHash(r)})
 		if err != nil {
 			return plan{}, err
 		}
-		if ok == nil {
+		if !ok {
 			continue
 		}
 		if r.Action == "delete" {
@@ -170,7 +198,11 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 		x := &all[i]
 		q, d, err := placeOne(ctx, a, x, stores, byID, byHost, hosts)
 		if err != nil {
-			problem(doc{"kind": "artifact-placement-error", "artifactId": x.ID, "error": err.Error()})
+			problem(struct {
+				Kind       string `json:"kind"`
+				ArtifactID string `json:"artifactId"`
+				Error      string `json:"error"`
+			}{"artifact-placement-error", x.ID, err.Error()})
 		}
 		queued, deleted = queued+q, deleted+d
 	}
@@ -181,14 +213,14 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 }
 
 func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID, byHost map[string]*StoreRow, hosts map[string]bool) (queued, deleted int, err error) {
-	copies, err := rowsCtx(ctx, conn(ctx, a), "SELECT store_id,state,last_error,attempts,next_attempt_at,(next_attempt_at IS NULL OR next_attempt_at<=now()) AS due FROM artifact_copy WHERE artifact_id=$1", x.ID)
+	copies, err := connDB(ctx, a).DispArtifactCopies(ctx, x.ID)
 	if err != nil {
 		return 0, 0, err
 	}
 	verified := []*StoreRow{}
 	for _, c := range copies {
-		if astr(c["state"]) == "verified" {
-			if s := byID[astr(c["store_id"])]; s != nil {
+		if c.State == "verified" {
+			if s := byID[c.StoreID]; s != nil {
 				verified = append(verified, s)
 			}
 		}
@@ -205,20 +237,28 @@ func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID,
 		if s == nil || s.State != "reachable" {
 			continue
 		}
-		var c map[string]any
-		for _, y := range copies {
-			if astr(y["store_id"]) == s.ID {
-				c = y
+		var c *db.DispArtifactCopiesRow
+		for i := range copies {
+			if copies[i].StoreID == s.ID {
+				c = &copies[i]
 			}
 		}
 		if c != nil {
-			switch astr(c["state"]) {
+			switch c.State {
 			case "verified", "pending", "copying", "purge_pending":
 				continue
 			case "failed":
 				// A failed copy waits for its backoff (or an operator retry); its failure stays visible meanwhile.
-				problem(doc{"kind": "artifact-copy-failed", "artifactId": x.ID, "storeId": s.ID, "error": c["last_error"], "attempts": c["attempts"], "nextAttemptAt": c["next_attempt_at"], "actions": []string{"artifact_copy_retry"}})
-				if c["due"] != true {
+				problem(struct {
+					Kind          string     `json:"kind"`
+					ArtifactID    string     `json:"artifactId"`
+					StoreID       string     `json:"storeId"`
+					Error         *string    `json:"error"`
+					Attempts      int32      `json:"attempts"`
+					NextAttemptAt *time.Time `json:"nextAttemptAt"`
+					Actions       []string   `json:"actions"`
+				}{"artifact-copy-failed", x.ID, s.ID, c.LastError, c.Attempts, c.NextAttemptAt, []string{"artifact_copy_retry"}})
+				if !c.Due {
 					continue
 				}
 			}
@@ -242,8 +282,9 @@ func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID,
 		if err != nil {
 			return queued, deleted, err
 		}
-		if err := execCtx(ctx, a, `INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,upload_id,staging_key,lease_expires_at) VALUES($1,$2,$3,'copying',$4,$5,now()+interval '6 hours')
-     ON CONFLICT(artifact_id,store_id) DO UPDATE SET state='copying',next_attempt_at=NULL,upload_id=excluded.upload_id,staging_key=excluded.staging_key,lease_expires_at=excluded.lease_expires_at,last_error=NULL`, x.ID, s.ID, x.ProjectID, upload, staging); err != nil {
+		if err := txCtx(ctx, a, func(tx pgx.Tx) error {
+			return db.New(tx).DispCopyStart(ctx, db.DispCopyStartParams{ArtifactID: x.ID, StoreID: s.ID, ProjectID: x.ProjectID, UploadID: &upload, StagingKey: &staging})
+		}); err != nil {
 			return queued, deleted, err
 		}
 		src, err := s3For(from, s.HostID == from.HostID && from.LocalEndpoint != nil)
@@ -251,7 +292,8 @@ func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID,
 			return queued, deleted, err
 		}
 		url := src.Presign("GET", from.Bucket, keyOf(x), copySourceSeconds, nil)
-		if err := queueCommand(ctx, a, s.HostID, "artifact-copy", doc{"artifactId": x.ID, "storeId": s.ID, "size": x.Size, "partSize": partSize, "source": doc{"storeId": from.ID, "url": url}}); err != nil {
+		payload := docOf(copyPayload{ArtifactID: x.ID, StoreID: s.ID, Size: x.Size, PartSize: partSize, Source: copySource{StoreID: from.ID, URL: url}})
+		if err := queueCommand(ctx, a, s.HostID, "artifact-copy", payload); err != nil {
 			return queued, deleted, err
 		}
 		queued++
@@ -294,13 +336,13 @@ func removeCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, survivors
 	if !alive {
 		return false, nil
 	}
-	others, err := rowsCtx(ctx, conn(ctx, a), "SELECT a.project_id FROM artifact a JOIN artifact_copy c ON c.artifact_id=a.id WHERE a.id<>$1 AND a.project_id IS NOT DISTINCT FROM $2 AND a.scope=$3 AND a.content_hash=$4 AND a.state='stored' AND c.store_id=$5 AND c.state='verified'", x.ID, x.ProjectID, x.Scope, x.ContentHash, s.ID)
+	others, err := connDB(ctx, a).DispCopySharers(ctx, db.DispCopySharersParams{ID: x.ID, ProjectID: x.ProjectID, Scope: x.Scope, ContentHash: x.ContentHash, StoreID: s.ID})
 	if err != nil {
 		return false, err
 	}
 	needed := false
 	for _, o := range others {
-		if contains(artifactLocations(a, strp(o, "project_id")), s.HostID) {
+		if contains(artifactLocations(a, o), s.HostID) {
 			needed = true
 		}
 	}
@@ -313,30 +355,37 @@ func removeCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, survivors
 			return false, err
 		}
 	}
-	return true, execCtx(ctx, a, "UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2", x.ID, s.ID)
+	return true, copyDeleted(ctx, a, x.ID, s.ID)
+}
+
+// copyDeleted: the copy of artifact on store is gone.
+func copyDeleted(ctx context.Context, a *App, artifact, store string) error {
+	return txCtx(ctx, a, func(tx pgx.Tx) error {
+		return db.New(tx).DispCopyDeleted(ctx, db.DispCopyDeletedParams{ArtifactID: artifact, StoreID: store})
+	})
 }
 
 // deleteArtifact: a delete rule ends the artifact; every copy goes (objects only where no other stored row needs them) and
 // the row stays as a tombstone. Nothing happens while a verified copy sits on an unreachable store.
 func deleteArtifact(ctx context.Context, a *App, x *Artifact, by string) error {
-	held, err := oneCtx(ctx, a, "SELECT 1 AS x FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE c.artifact_id=$1 AND c.state='verified' AND s.state='unreachable' LIMIT 1", x.ID)
-	if err != nil || held != nil {
+	held, err := connDB(ctx, a).DispArtifactHeld(ctx, x.ID)
+	if err != nil || held {
 		return err
 	}
-	cs, err := rowsCtx(ctx, conn(ctx, a), "SELECT store_id FROM artifact_copy WHERE artifact_id=$1 AND state='verified'", x.ID)
+	cs, err := connDB(ctx, a).DispVerifiedStores(ctx, x.ID)
 	if err != nil {
 		return err
 	}
 	for _, c := range cs {
-		s, err := storeGet(ctx, a, astr(c["store_id"]))
+		s, err := storeGet(ctx, a, c)
 		if err != nil {
 			return err
 		}
-		shared, err := oneCtx(ctx, a, "SELECT 1 AS x FROM artifact y JOIN artifact_copy z ON z.artifact_id=y.id WHERE y.id<>$1 AND y.project_id IS NOT DISTINCT FROM $2 AND y.scope=$3 AND y.content_hash=$4 AND y.state='stored' AND z.store_id=$5 AND z.state='verified' LIMIT 1", x.ID, x.ProjectID, x.Scope, x.ContentHash, s.ID)
+		shared, err := connDB(ctx, a).DispCopyShared(ctx, db.DispCopySharedParams{ID: x.ID, ProjectID: x.ProjectID, Scope: x.Scope, ContentHash: x.ContentHash, StoreID: s.ID})
 		if err != nil {
 			return err
 		}
-		if shared == nil {
+		if !shared {
 			t, err := tunnel(s)
 			if err != nil {
 				return err
@@ -345,28 +394,30 @@ func deleteArtifact(ctx context.Context, a *App, x *Artifact, by string) error {
 				return err
 			}
 		}
-		if err := execCtx(ctx, a, "UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2", x.ID, s.ID); err != nil {
+		if err := copyDeleted(ctx, a, x.ID, s.ID); err != nil {
 			return err
 		}
 	}
-	return execCtx(ctx, a, "UPDATE artifact SET state='deleted',deleted_at=now(),deleted_by=$2 WHERE id=$1", x.ID, by)
+	return txCtx(ctx, a, func(tx pgx.Tx) error {
+		return db.New(tx).DispArtifactDelete(ctx, db.DispArtifactDeleteParams{ID: x.ID, DeletedBy: &by})
+	})
 }
 
 // reconcilePurges: pending purges are deleted as soon as their store is reachable again, before it serves anything.
 func reconcilePurges(ctx context.Context, a *App) error {
-	rs, err := rowsCtx(ctx, conn(ctx, a), "SELECT c.artifact_id,c.store_id,a.project_id,a.scope,a.content_hash FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id WHERE c.state='purge_pending'")
+	rs, err := connDB(ctx, a).DispPurgesPending(ctx)
 	if err != nil {
 		return err
 	}
 	for _, c := range rs {
-		s, err := storeGet(ctx, a, astr(c["store_id"]))
+		s, err := storeGet(ctx, a, c.StoreID)
 		if err != nil || s.State == "unreachable" {
 			continue
 		}
 		if t, err := tunnel(s); err == nil {
-			t.Delete(s.Bucket, keyOf(&Artifact{ProjectID: strp(c, "project_id"), Scope: astr(c["scope"]), ContentHash: astr(c["content_hash"])}))
+			t.Delete(s.Bucket, keyOf(&Artifact{ProjectID: c.ProjectID, Scope: c.Scope, ContentHash: c.ContentHash}))
 		}
-		if err := execCtx(ctx, a, "UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2", astr(c["artifact_id"]), s.ID); err != nil {
+		if err := copyDeleted(ctx, a, c.ArtifactID, s.ID); err != nil {
 			return err
 		}
 	}
@@ -375,22 +426,19 @@ func reconcilePurges(ctx context.Context, a *App) error {
 
 // reconcileArtifactWaits recovers missed storage callbacks and enforces the retry window.
 func reconcileArtifactWaits(ctx context.Context, a *App) error {
-	rs, err := rowsCtx(ctx, conn(ctx, a), `SELECT id,data->'declaredArtifacts' AS declared,
-		       coalesce((data->>'waitingSince')::bigint,0) < $1 AS expired
-		FROM execution WHERE `+execKinds+` AND state='waiting' AND data->>'waitReason'='artifacts'
-		ORDER BY seq`, nowMs()-int64(retryWindowMS))
+	rs, err := connDB(ctx, a).DispArtifactWaits(ctx, nowMs()-int64(retryWindowMS))
 	if err != nil {
 		return err
 	}
 	var failures error
 	for _, r := range rs {
-		id := astr(r["id"])
+		id := r.ID
 		expired := ""
-		if r["expired"] == true {
+		if r.Expired {
 			expired = "artifact retry window passed"
 		} else {
 			// Keep ordinary pending checks off the global write lock. Settlement rechecks the gate under the lock.
-			requirement, err := artifactRequirement(ctx, a, id, declaredNames(strs(r["declared"])))
+			requirement, err := artifactRequirement(ctx, a, id, declaredNames(jsonStrings(r.Declared)))
 			if err != nil {
 				failures = errors.Join(failures, fmt.Errorf("%s: %w", id, err))
 				continue
@@ -407,10 +455,36 @@ func reconcileArtifactWaits(ctx context.Context, a *App) error {
 }
 
 func ruleArg(projectID *string, rule json.RawMessage) (*string, artifactRule, error) {
-	var v any
-	json.Unmarshal(rule, &v)
-	r, err := validRule(v, nil)
+	r, err := validRule(rule, nil)
 	return projectID, r, err
+}
+
+// copyPayload: the payload of an artifact-copy command (contract.ArtifactTransferPayload and its open fields).
+type copyPayload struct {
+	ArtifactID string     `json:"artifactId"`
+	StoreID    string     `json:"storeId"`
+	Size       int64      `json:"size"`
+	PartSize   int64      `json:"partSize"`
+	Source     copySource `json:"source"`
+}
+
+type copySource struct {
+	StoreID string `json:"storeId"`
+	URL     string `json:"url"`
+}
+
+// jsonStrings: the strings of a JSON array; other elements are skipped, anything else is no strings.
+func jsonStrings(b []byte) []string {
+	var xs []json.RawMessage
+	json.Unmarshal(b, &xs)
+	out := []string{}
+	for _, x := range xs {
+		var s string
+		if json.Unmarshal(x, &s) == nil {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func init() {
@@ -424,15 +498,23 @@ func init() {
 		if err != nil {
 			return none, err
 		}
-		rows, err := rowsCtx(withTx(q), conn(withTx(q), q.app), "SELECT id,name,size FROM artifact WHERE state='stored' AND project_id IS NOT DISTINCT FROM $1 AND scope=$2 AND created_at <= now() - ($3::text||' days')::interval ORDER BY seq", p, r.Scope, fmt.Sprint(r.OlderThanDays))
+		rows, err := q.db().DispRulePreview(q.ctx(), db.DispRulePreviewParams{ProjectID: p, Scope: r.Scope, Days: fmt.Sprint(r.OlderThanDays)})
 		if err != nil {
 			return none, err
 		}
 		var bytes int64
-		for _, x := range rows {
-			bytes += int64(num(x["size"]))
+		sample := []map[string]json.RawMessage{}
+		for i, x := range rows {
+			bytes += x.Size
+			if i < 10 {
+				sample = append(sample, recOf(struct {
+					ID   string `json:"id"`
+					Name string `json:"name"`
+					Size int64  `json:"size"`
+				}{x.ID, x.Name, x.Size}))
+			}
 		}
-		return contract.ArtifactRulePreviewReply{RuleHash: ruleHash(r), Count: int64(len(rows)), Bytes: bytes, Sample: recsOf(rows[:min(10, len(rows))])}, nil
+		return contract.ArtifactRulePreviewReply{RuleHash: ruleHash(r), Count: int64(len(rows)), Bytes: bytes, Sample: sample}, nil
 	})
 	op("artifact_rule_confirm", func(q *Request, b *contract.ArtifactRuleConfirmRequest) (contract.ArtifactRuleConfirmReply, error) {
 		var none contract.ArtifactRuleConfirmReply
@@ -454,10 +536,8 @@ func init() {
 		for _, s := range ss {
 			hosts[s.HostID] = true
 		}
-		var raw map[string]any
 		rb, _ := json.Marshal(r)
-		json.Unmarshal(rb, &raw)
-		if _, err := validRule(raw, hosts); err != nil {
+		if _, err := validRule(rb, hosts); err != nil {
 			return none, err
 		}
 		found := false
@@ -469,7 +549,7 @@ func init() {
 		if !found {
 			return none, fail(404, "Rule is not in the project settings")
 		}
-		_, err = q.tx.Exec(q.ctx(), "INSERT INTO artifact_rule_confirmation(project_id,rule_hash,confirmed_by) VALUES($1,$2,$3) ON CONFLICT(project_id,rule_hash) DO UPDATE SET confirmed_by=excluded.confirmed_by,confirmed_at=now()", projectKey(p), ruleHash(r), "operator:"+q.person.Email)
+		err = q.db().DispRuleConfirm(q.ctx(), db.DispRuleConfirmParams{ProjectID: projectKey(p), RuleHash: ruleHash(r), ConfirmedBy: "operator:" + q.person.Email})
 		return contract.ArtifactRuleConfirmReply{RuleHash: ruleHash(r), Confirmed: true}, err
 	})
 	// An operator retry of a failed copy: placement queues it on its next pass.
@@ -477,8 +557,7 @@ func init() {
 		if err := operatorOnly(q); err != nil {
 			return contract.ArtifactCopyRetryReply{}, err
 		}
-		var id string
-		err := q.tx.QueryRow(q.ctx(), "UPDATE artifact_copy SET next_attempt_at=now(),attempts=0 WHERE artifact_id=$1 AND store_id=$2 AND state='failed' RETURNING artifact_id", truncate(b.ArtifactId, 200), truncate(b.StoreId, 200)).Scan(&id)
+		_, err := q.db().DispCopyRetry(q.ctx(), db.DispCopyRetryParams{ArtifactID: truncate(b.ArtifactId, 200), StoreID: truncate(b.StoreId, 200)})
 		if err == pgx.ErrNoRows {
 			return contract.ArtifactCopyRetryReply{}, fail(409, "No failed copy for this artifact and store")
 		}
