@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // codePattern: the D17 grammar, matched case-insensitively (lookup is case-insensitive).
@@ -18,15 +19,10 @@ var projectCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,4}$`)
 // resolveCodes: the entities the codes name in the caller's scope (row-level security on entity_code and the entity's
 // table), by code; an unknown or forbidden code is absent, and callers report both alike.
 func resolveCodes(q *Request, codes []string) (map[string]contract.EntityCode, error) {
-	rs, err := rowsOf(q, `SELECT e.code,e.entity_id,e.type,coalesce(t.code,x.code,d.code) AS current FROM entity_code e
-	 LEFT JOIN task t ON e.type='T' AND t.id=e.entity_id LEFT JOIN question x ON e.type='Q' AND x.id=e.entity_id
-	 LEFT JOIN session d ON e.type='C' AND d.id=e.entity_id
-	 WHERE e.code=ANY($1) AND coalesce(t.code,x.code,d.code) IS NOT NULL
-	 AND (e.code=coalesce(t.code,x.code,d.code) OR e.superseded_by IS NOT NULL)`, codes)
+	rs, err := q.db().EntResolveCodes(q.ctx(), codes)
 	out := map[string]contract.EntityCode{}
 	for _, r := range rs {
-		c, cur := astr(r["code"]), astr(r["current"])
-		out[c] = contract.EntityCode{Code: c, Id: astr(r["entity_id"]), Type: astr(r["type"]), CurrentCode: cur, Superseded: cur != c}
+		out[r.Code] = contract.EntityCode{Code: r.Code, Id: r.EntityID, Type: r.Type, CurrentCode: r.Current, Superseded: r.Current != r.Code}
 	}
 	return out, err
 }
@@ -70,19 +66,19 @@ func init() {
 		if !projectCodePattern.MatchString(code) || strings.ContainsAny(code, "IO") || strings.Trim(code, "0123456789ABCDEF") == "" || code == "ALL" {
 			return contract.ProjectCodeSetReply{}, fail(400, "Expected a project code: 2 to 5 letters or digits, a letter first, not hex-only, no I or O")
 		}
-		if ok, err := has(q, "SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL", r.ProjectId); err != nil || !ok {
+		if ok, err := q.db().EntProjectLive(q.ctx(), r.ProjectId); err != nil || !ok {
 			if err == nil {
 				err = fail(404, "Unknown project")
 			}
 			return contract.ProjectCodeSetReply{}, err
 		}
-		if ok, err := has(q, "SELECT 1 FROM project_code WHERE code=$1 AND NOT (project_id=$2 AND current)", code, r.ProjectId); err != nil || ok {
+		if ok, err := q.db().EntProjectCodeTaken(q.ctx(), db.EntProjectCodeTakenParams{Code: code, ProjectID: r.ProjectId}); err != nil || ok {
 			if err == nil {
 				err = fail(409, "Project code "+code+" is or was used; codes are never reused")
 			}
 			return contract.ProjectCodeSetReply{}, err
 		}
-		if err := exec(q, "SELECT fleet_project_code_set($1,$2)", r.ProjectId, code); err != nil {
+		if err := q.db().EntProjectCodeSet(q.ctx(), db.EntProjectCodeSetParams{ProjectID: r.ProjectId, Code: code}); err != nil {
 			if pgCode(err) == "23505" { // taken by a concurrent change after the check above
 				err = fail(409, "Project code "+code+" is or was used; codes are never reused")
 			}
