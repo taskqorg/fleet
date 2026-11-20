@@ -151,6 +151,9 @@ func (v *CostFigure) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*CostFigure) Closed() bool { return false }
+
 type CostPriceRef struct {
 	Id         string `json:"id"`
 	ObservedAt int64  `json:"observedAt"`
@@ -160,6 +163,9 @@ type CostPriceRef struct {
 func (v *CostPriceRef) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*CostPriceRef) Closed() bool { return false }
 
 // DefinitionConflict: Body of a 409 from definition_save and definition_create.
 type DefinitionConflict struct {
@@ -252,6 +258,9 @@ func (v *DurationBreakdown) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*DurationBreakdown) Closed() bool { return false }
 
 // ExecutionRow: One execution row (executionCols in go/coordinator/tasks.go); times are RFC 3339.
 type ExecutionRow struct {
@@ -364,6 +373,9 @@ func (v *ListFilter) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ListFilter) Closed() bool { return false }
+
 type ListGroup struct {
 	Count int64   `json:"count"`
 	Key   string  `json:"key"`
@@ -422,6 +434,9 @@ func (v *MeasuredInt) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*MeasuredInt) Closed() bool { return false }
+
 type MeasuredNumber struct {
 	Basis   ResourceBasis `json:"basis"`
 	Note    *string       `json:"note,omitempty"`
@@ -437,6 +452,9 @@ func (v *MeasuredNumber) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*MeasuredNumber) Closed() bool { return false }
 
 type MethodAssessment struct {
 	At                  *string                    `json:"at,omitempty"`
@@ -547,6 +565,9 @@ func (v *ResourceSummary) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ResourceSummary) Closed() bool { return false }
+
 type ScopedResourceRollup struct {
 	Delegated    ResourceSummary  `json:"delegated"`
 	Hidden       int64            `json:"hidden"`
@@ -581,6 +602,9 @@ func (v *ScopedResourceRollup) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ScopedResourceRollup) Closed() bool { return false }
+
 type SpawnedTaskRef struct {
 	Code      *string         `json:"code,omitempty"`
 	ProjectId *string         `json:"projectId,omitempty"`
@@ -597,6 +621,9 @@ func (v *SpawnedTaskRef) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*SpawnedTaskRef) Closed() bool { return false }
 
 // StreamCursor: Body of the GET /api/stream events ready (the cursor the stream starts after) and resync (reload everything, then continue after cursor).
 type StreamCursor struct {
@@ -648,6 +675,9 @@ func (v *TokenBreakdown) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*TokenBreakdown) Closed() bool { return false }
+
 type ToolUsageCount struct {
 	Calls      int64   `json:"calls"`
 	Connection *string `json:"connection,omitempty"`
@@ -659,6 +689,9 @@ type ToolUsageCount struct {
 func (v *ToolUsageCount) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ToolUsageCount) Closed() bool { return false }
 
 type ToolUsageSummary struct {
 	Basis       ResourceBasis    `json:"basis"`
@@ -684,6 +717,9 @@ func (v *ToolUsageSummary) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ToolUsageSummary) Closed() bool { return false }
 
 // VariantVsBaseline: Added to lab_experiment_get: one per non-baseline variant, over examples where both have a final score.
 type VariantVsBaseline struct {

@@ -168,7 +168,7 @@ func (v *DirectSearchRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*DirectSearchRequest) Closed() bool { return true }
 
 // MessageSendReply: The execution the message started, or the queued message with queued: true and its position.
@@ -753,7 +753,7 @@ func (v *SessionProfileRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*SessionProfileRequest) Closed() bool { return true }
 
 type SessionRenameReply struct {
@@ -767,6 +767,9 @@ func (v *SessionRenameReply) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*SessionRenameReply) Closed() bool { return false }
+
 // SessionRenameRequest: The explicit title of a conversation; a person renames one they direct (403 otherwise; the owner any). A generated title (titleBy auto) never replaces it and is never written over it.
 type SessionRenameRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
@@ -777,6 +780,9 @@ type SessionRenameRequest struct {
 func (v *SessionRenameRequest) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*SessionRenameRequest) Closed() bool { return false }
 
 // SessionResumeReply: How the session continues: its harness, account and native session ids.
 type SessionResumeReply struct {
@@ -967,7 +973,7 @@ func (v *SessionTransitionRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*SessionTransitionRequest) Closed() bool { return true }
 
 // SessionUnarchiveReply: teardownsWithdrawn: pending teardown commands of the session that were stopped before a host ran them.
@@ -981,6 +987,9 @@ func (v *SessionUnarchiveReply) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*SessionUnarchiveReply) Closed() bool { return false }
+
 // SessionUnarchiveRequest: Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A worktree already torn down is not restored; the next start prepares a new one.
 type SessionUnarchiveRequest struct {
 	Reason    string `json:"reason"`
@@ -991,6 +1000,9 @@ type SessionUnarchiveRequest struct {
 func (v *SessionUnarchiveRequest) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*SessionUnarchiveRequest) Closed() bool { return false }
 
 // SessionsListReply: nextAfter: null on the last page, else the sort key to pass as after. Row sortKey: [group key, sort key, id]; rows carry activityAt (last change of the session, its messages and events, or the start or end of its executions) and executions (their count). groups: key, label and count of each group of the filtered list (none for group none).
 type SessionsListReply struct {

@@ -187,6 +187,9 @@ func (v *ArtifactRow) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ArtifactRow) Closed() bool { return false }
+
 type ArtifactRuleConfirmReply struct {
 	Confirmed bool   `json:"confirmed"`
 	RuleHash  string `json:"ruleHash"`

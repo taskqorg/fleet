@@ -955,6 +955,9 @@ func (v *ExecutionsAbandonRequest) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ExecutionsAbandonRequest) Closed() bool { return false }
+
 // ExecutionsCiReply: The Runners screen's CI half for taskqorg/fleet, the last background pass (every FLEET_RUNNERS_CI_TICK_MS, default 1 min, first at start) read through githubRead (cached; keyed through the github connection, else unauthenticated). jobs: in progress and queued. minutesToday: job wall minutes since 00:00 UTC per runner type; runsUncounted: today's runs whose jobs are not read yet (minutes are a lower bound while above 0). runners: self-hosted runners, null without a key (state unknown).
 type ExecutionsCiReply struct {
 	Jobs          []CiJob     `json:"jobs"`
@@ -1031,6 +1034,9 @@ func (v *ExecutionsDismissRequest) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ExecutionsDismissRequest) Closed() bool { return false }
 
 type ExecutionsListReply struct {
 	Executions []ExecutionRow `json:"executions"`
@@ -1605,6 +1611,9 @@ func (v *PipelineArtifactRef) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelineArtifactRef) Closed() bool { return false }
+
 type PipelineAuthority struct {
 	ActorEmail            string                  `json:"actorEmail"`
 	ProjectId             *string                 `json:"projectId"`
@@ -1623,6 +1632,9 @@ func (v *PipelineAuthority) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelineAuthority) Closed() bool { return false }
 
 type PipelineCanonicalResult struct {
 	Artifact            PipelineArtifactRef    `json:"artifact"`
@@ -1666,6 +1678,9 @@ func (v *PipelineCanonicalResult) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelineCanonicalResult) Closed() bool { return false }
+
 type PipelineCapabilityKind string
 
 const (
@@ -1699,6 +1714,9 @@ func (v *PipelineCapabilityRef) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelineCapabilityRef) Closed() bool { return false }
+
 type PipelineConditionDecision struct {
 	EvaluatedAtMs   int64                   `json:"evaluatedAtMs"`
 	Kind            PipelineDecisionKind    `json:"kind"`
@@ -1730,6 +1748,9 @@ func (v *PipelineConditionDecision) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelineConditionDecision) Closed() bool { return false }
 
 type PipelineDecisionKind string
 
@@ -1793,6 +1814,9 @@ func (v *PipelineDispatch) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelineDispatch) Closed() bool { return false }
+
 type PipelineDispatchPhase string
 
 const (
@@ -1832,6 +1856,9 @@ func (v *PipelineExecutionRef) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelineExecutionRef) Closed() bool { return false }
 
 type PipelineExecutionView struct {
 	Calls             []json.RawMessage   `json:"calls,omitempty"`
@@ -2043,6 +2070,9 @@ func (v *PipelineInputBinding) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelineInputBinding) Closed() bool { return false }
+
 type PipelineObservation string
 
 const (
@@ -2081,6 +2111,9 @@ func (v *PipelinePlan) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelinePlan) Closed() bool { return false }
 
 type PipelinePlanEntry struct {
 	Activation       PipelineActivation         `json:"activation"`
@@ -2139,6 +2172,9 @@ func (v *PipelinePlanEntry) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelinePlanEntry) Closed() bool { return false }
+
 type PipelinePlanProblem struct {
 	Code    PipelinePlanReason `json:"code"`
 	Message string             `json:"message"`
@@ -2151,6 +2187,9 @@ func (v *PipelinePlanProblem) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelinePlanProblem) Closed() bool { return false }
 
 type PipelinePlanReason string
 
@@ -2201,6 +2240,9 @@ type PipelinePlanSummary struct {
 func (v *PipelinePlanSummary) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelinePlanSummary) Closed() bool { return false }
 
 type PipelineRefMode string
 
@@ -2410,7 +2452,7 @@ func (v *PipelineRunRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*PipelineRunRequest) Closed() bool { return true }
 
 // PurgeCount: bytes: stored artifact bytes of the objects (project and experiment). reasons (kept entries): why each id stays.

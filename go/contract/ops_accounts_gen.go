@@ -20,7 +20,7 @@ func (v *AccountConnectRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*AccountConnectRequest) Closed() bool { return true }
 
 // AccountCreateReply: A managed-account record: id, name, harness, holder, kind, plan, intake, take, switchPct, comment, bindings and times.
@@ -40,7 +40,7 @@ func (v *AccountCreateRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*AccountCreateRequest) Closed() bool { return true }
 
 type AccountDiscoverReply = AccountInspection
@@ -56,7 +56,7 @@ func (v *AccountDiscoverRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*AccountDiscoverRequest) Closed() bool { return true }
 
 type AccountHostsReply struct {
@@ -432,7 +432,7 @@ func (v *ConnectionAccess) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*ConnectionAccess) Closed() bool { return true }
 
 // ConnectionView: An API connection; keys, spend and history only in connections_list.
@@ -481,7 +481,7 @@ func (v *ConnectionsCreateRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*ConnectionsCreateRequest) Closed() bool { return true }
 
 type ConnectionsDeleteReply struct {
@@ -503,6 +503,9 @@ type ConnectionsDeleteRequest struct {
 func (v *ConnectionsDeleteRequest) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ConnectionsDeleteRequest) Closed() bool { return false }
 
 // ConnectionsKeyAddReply: The new key row (fingerprint, state, addedAt, addedBy); never the value.
 type ConnectionsKeyAddReply = map[string]json.RawMessage
@@ -551,6 +554,9 @@ type ConnectionsKeyRequestRequest struct {
 func (v *ConnectionsKeyRequestRequest) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ConnectionsKeyRequestRequest) Closed() bool { return false }
 
 // ConnectionsKeyStateReply: The key row after the change.
 type ConnectionsKeyStateReply = map[string]json.RawMessage
@@ -691,6 +697,9 @@ func (v *ConnectionsSetLimitsRequest) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ConnectionsSetLimitsRequest) Closed() bool { return false }
+
 type ConnectionsSetToolsReply = ConnectionView
 
 // ConnectionsSetToolsRequest: Owner-only explicit recognized provider tool grant; does not change people/project/experiment access.
@@ -707,7 +716,7 @@ func (v *ConnectionsSetToolsRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*ConnectionsSetToolsRequest) Closed() bool { return true }
 
 // ConnectionsTokenCreateReply: token: the bearer value, shown once; refused: requested connections the owner cannot use.
@@ -864,6 +873,9 @@ func (v *LimitEmpty) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LimitEmpty) Closed() bool { return false }
+
 type LimitEmptyState string
 
 const (
@@ -951,6 +963,9 @@ func (v *LimitPeriod) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LimitPeriod) Closed() bool { return false }
+
 // LimitPoint: left in percent of the member (or weighted points for a pool) at a time
 type LimitPoint struct {
 	At   int64   `json:"at"`
@@ -961,6 +976,9 @@ type LimitPoint struct {
 func (v *LimitPoint) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LimitPoint) Closed() bool { return false }
 
 // LimitPool: per harness and period over members with a known percent, weighted by planWeight
 type LimitPool struct {
@@ -1006,6 +1024,9 @@ func (v *LimitPool) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LimitPool) Closed() bool { return false }
+
 type LimitRefreshSent struct {
 	Binding        string `json:"binding"`
 	ExecutionId    string `json:"executionId"`
@@ -1018,6 +1039,9 @@ func (v *LimitRefreshSent) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LimitRefreshSent) Closed() bool { return false }
+
 type LimitRefreshSkipped struct {
 	Reason         string `json:"reason"`
 	SubscriptionId string `json:"subscriptionId"`
@@ -1027,6 +1051,9 @@ type LimitRefreshSkipped struct {
 func (v *LimitRefreshSkipped) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LimitRefreshSkipped) Closed() bool { return false }
 
 // LimitReset: earliest member reset and the weighted points it adds back
 type LimitReset struct {
@@ -1038,6 +1065,9 @@ type LimitReset struct {
 func (v *LimitReset) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LimitReset) Closed() bool { return false }
 
 type LimitSubscription struct {
 	Harness    string                `json:"harness"`
@@ -1081,6 +1111,9 @@ func (v *LimitSubscription) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LimitSubscription) Closed() bool { return false }
 
 type PriceAddReply = PriceEntry
 
@@ -1171,6 +1204,9 @@ func (v *SubscriptionLimitsRefreshReply) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*SubscriptionLimitsRefreshReply) Closed() bool { return false }
+
 // SubscriptionLimitsRefreshRequest: fleet-people-access.md section 8 "Read without a run": one subscription, or every one the caller holds (the owner: all)
 type SubscriptionLimitsRefreshRequest struct {
 	SubscriptionId *string `json:"subscriptionId,omitempty"`
@@ -1180,6 +1216,9 @@ type SubscriptionLimitsRefreshRequest struct {
 func (v *SubscriptionLimitsRefreshRequest) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*SubscriptionLimitsRefreshRequest) Closed() bool { return false }
 
 type SubscriptionLimitsReply struct {
 	From          int64               `json:"from"`
@@ -1211,6 +1250,9 @@ func (v *SubscriptionLimitsReply) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*SubscriptionLimitsReply) Closed() bool { return false }
+
 type SubscriptionLimitsRequest struct {
 	From        *int64   `json:"from,omitempty"`
 	PaceMargin  *float64 `json:"paceMargin,omitempty"`
@@ -1222,6 +1264,9 @@ type SubscriptionLimitsRequest struct {
 func (v *SubscriptionLimitsRequest) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*SubscriptionLimitsRequest) Closed() bool { return false }
 
 type SubscriptionReading struct {
 	At       int64    `json:"at"`
@@ -1279,7 +1324,7 @@ func (v *TransportAuthorizeRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*TransportAuthorizeRequest) Closed() bool { return true }
 
 // TransportInspectReply: Retained transport of one execution; never reruns native work.

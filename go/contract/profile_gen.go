@@ -42,6 +42,9 @@ func (v *AntigravitySettings) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*AntigravitySettings) Closed() bool { return false }
+
 type ClaudeTool string
 
 const (
@@ -141,6 +144,9 @@ func (v *Profile) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*Profile) Closed() bool { return false }
+
 type ProfileHarness string
 
 const (
@@ -175,3 +181,6 @@ func (v *ProfileMcpGrant) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ProfileMcpGrant) Closed() bool { return false }

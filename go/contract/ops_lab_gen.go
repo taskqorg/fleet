@@ -325,7 +325,7 @@ func (v *LabExperimentCreateRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*LabExperimentCreateRequest) Closed() bool { return true }
 
 // LabExperimentDecideReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
@@ -342,7 +342,7 @@ func (v *LabExperimentDecideRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*LabExperimentDecideRequest) Closed() bool { return true }
 
 // LabExperimentGetReply: An experiment view (expView). Planned with the definition editors: baseline and vsBaseline. comparison: each non-baseline variant vs the first on the primary evaluator, {variant, baseline, evaluator, split, result: {n, mean, low, high, tooFew, examples}} (fleet-lab.md, Statistics). typed: per variant {variant, split, stats: [{tag, n, confident, correct, coverage, selectiveAccuracy, escalation}]}, the aggregate last with tag all.
@@ -594,7 +594,7 @@ func (v *LabExperimentNoteRequest) Validate() error {
 	return nil
 }
 
-// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
 func (*LabExperimentNoteRequest) Closed() bool { return true }
 
 type LabExperimentPromoteReply struct {
@@ -652,6 +652,9 @@ func (v *LabLoopAllocator) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LabLoopAllocator) Closed() bool { return false }
+
 type LabLoopAllocatorKind string
 
 const (
@@ -687,6 +690,9 @@ func (v *LabLoopGenerator) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LabLoopGenerator) Closed() bool { return false }
+
 type LabLoopGeneratorKind string
 
 const (
@@ -717,6 +723,9 @@ func (v *LabLoopNoGain) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LabLoopNoGain) Closed() bool { return false }
+
 // LabLoopStrategy: Explicit loop configuration; no default k or iteration ceiling. Internal owner override authority is resolved by the server, never supplied here.
 type LabLoopStrategy struct {
 	Allocator     LabLoopAllocator `json:"allocator"`
@@ -740,6 +749,9 @@ func (v *LabLoopStrategy) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LabLoopStrategy) Closed() bool { return false }
 
 type LabNoteKind string
 
@@ -916,6 +928,9 @@ func (v *LabRatingWithdrawRequest) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LabRatingWithdrawRequest) Closed() bool { return false }
+
 type LabRatingsListReply struct {
 	Ratings []map[string]json.RawMessage `json:"ratings"`
 }
@@ -1079,6 +1094,9 @@ func (v *LabTrialRecord) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*LabTrialRecord) Closed() bool { return false }
+
 type ProjectAssessmentRef struct {
 	ArtifactId      string `json:"artifactId"`
 	CheckId         string `json:"checkId"`
@@ -1092,6 +1110,9 @@ type ProjectAssessmentRef struct {
 func (v *ProjectAssessmentRef) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ProjectAssessmentRef) Closed() bool { return false }
 
 func init() {
 	for n, o := range map[string]Operation{

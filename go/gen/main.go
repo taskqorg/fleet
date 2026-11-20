@@ -6,8 +6,9 @@
 // Mapping: object -> struct (an open object names only the listed fields, as in TypeScript); an object without
 // properties whose additionalProperties is a schema -> map[string]<that type>; string enum -> named string
 // type with constants; {} -> json.RawMessage; integer -> int64; a property outside required, or with "null" in its type,
-// is a pointer with omitempty (required nullable: pointer, always written); an object with unevaluatedProperties false
-// gets Closed(), and the coordinator's strict decoder refuses keys it does not name; one with additionalProperties true
+// is a pointer with omitempty (required nullable: pointer, always written); an object with additionalProperties false
+// gets Closed(), and the coordinator's strict decoder refuses keys it does not name (nested too with
+// unevaluatedProperties false); one with additionalProperties true
 // keeps the other keys in Rest.
 package main
 
@@ -278,9 +279,10 @@ func main() {
 			if u, ok := s["unevaluatedProperties"]; ok && u != false {
 				fail("%s: unevaluatedProperties must be false", n)
 			}
-			if s["unevaluatedProperties"] == false {
-				// Closed: the strict decoder refuses a key the schema does not name (unevaluatedProperties: false).
-				fmt.Fprintf(&b, "// Closed: unevaluatedProperties is false; a body key outside the schema is refused.\nfunc (*%s) Closed() bool { return true }\n\n", name)
+			// Closed: the strict decoder refuses a key the schema does not name. additionalProperties false: in the request
+			// object itself; unevaluatedProperties false: wherever the object appears in a request (Closed reports true).
+			if deep := s["unevaluatedProperties"] == false; deep || s["additionalProperties"] == false {
+				fmt.Fprintf(&b, "// Closed: a request key outside the schema is refused; true: also where this object is nested.\nfunc (*%s) Closed() bool { return %v }\n\n", name, deep)
 			}
 		case s["oneOf"] != nil:
 			// A union of $refs: each member is its own struct; the union itself stays JSON (Go has no sum type).

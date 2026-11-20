@@ -93,6 +93,9 @@ func (v *UseCase) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*UseCase) Closed() bool { return false }
+
 type UseCaseCheck struct {
 	Kind   string  `json:"kind"`
 	Metric *string `json:"metric,omitempty"`
@@ -103,6 +106,9 @@ type UseCaseCheck struct {
 func (v *UseCaseCheck) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*UseCaseCheck) Closed() bool { return false }
 
 type UseCaseSource struct {
 	Anchor string `json:"anchor"`
@@ -116,6 +122,9 @@ type UseCaseSource struct {
 func (v *UseCaseSource) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*UseCaseSource) Closed() bool { return false }
 
 type UseCaseStatus string
 

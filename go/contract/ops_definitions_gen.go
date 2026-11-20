@@ -395,6 +395,9 @@ func (v *DefinitionDeleteRequest) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*DefinitionDeleteRequest) Closed() bool { return false }
+
 type DefinitionDiffReply struct {
 	Fields  []FieldChange `json:"fields"`
 	Unified string        `json:"unified"`
@@ -1094,6 +1097,9 @@ func (v *PipelineBooleanCondition) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelineBooleanCondition) Closed() bool { return false }
+
 type PipelineCondition = json.RawMessage
 
 type PipelineConditionSource struct {
@@ -1108,6 +1114,9 @@ func (v *PipelineConditionSource) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelineConditionSource) Closed() bool { return false }
 
 // PipelineDefinition: A pipeline file (config/pipelines/<id>.json); validatePipeline is its full check.
 type PipelineDefinition struct {
@@ -1130,6 +1139,9 @@ func (v *PipelineDefinition) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelineDefinition) Closed() bool { return false }
+
 type PipelineEnumCondition struct {
 	Domain []string                `json:"domain"`
 	Equals string                  `json:"equals"`
@@ -1147,6 +1159,9 @@ func (v *PipelineEnumCondition) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PipelineEnumCondition) Closed() bool { return false }
 
 // PipelineStep: kind api (connection, tool, arguments, mode, output), agent (profile, prompt) or script (command, timeout_ms, host); validatePipeline is the full check.
 type PipelineStep struct {

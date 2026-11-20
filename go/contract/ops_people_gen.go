@@ -52,6 +52,9 @@ func (v *FocusPreset) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*FocusPreset) Closed() bool { return false }
+
 type FocusSetReply struct {
 	Focus     Focus  `json:"focus"`
 	SessionId string `json:"sessionId"`
@@ -283,6 +286,9 @@ func (v *NavCount) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*NavCount) Closed() bool { return false }
+
 type NavCountsReply struct {
 	Focused  bool                `json:"focused"`
 	Sections map[string]NavCount `json:"sections"`
@@ -295,6 +301,9 @@ func (v *NavCountsReply) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*NavCountsReply) Closed() bool { return false }
 
 // NavCountsRequest: The navigation counters of the caller (an agent: its director) in one call: each section counts its counter view (person setting navCounters; defaults Tasks and Conversations Running, Delivery In flight, Results Last 24 h, Hosts Offline) with its list's own filters, split by the person's focus; ignored projects are never counted.
 type NavCountsRequest = map[string]json.RawMessage
@@ -418,6 +427,9 @@ func (v *PersonSettings) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PersonSettings) Closed() bool { return false }
+
 type PersonSettingsGetReply = PersonSettings
 
 type PersonSettingsGetRequest struct {
@@ -428,6 +440,9 @@ type PersonSettingsGetRequest struct {
 func (v *PersonSettingsGetRequest) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PersonSettingsGetRequest) Closed() bool { return false }
 
 type PersonSettingsSetReply = PersonSettings
 
@@ -498,6 +513,9 @@ func (v *PersonSettingsSetRequest) Validate() error {
 	return nil
 }
 
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*PersonSettingsSetRequest) Closed() bool { return false }
+
 type ProjectIgnore struct {
 	Ignored bool   `json:"ignored"`
 	Project string `json:"project"`
@@ -507,6 +525,9 @@ type ProjectIgnore struct {
 func (v *ProjectIgnore) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ProjectIgnore) Closed() bool { return false }
 
 type RowPin struct {
 	Id     string `json:"id"`
@@ -518,6 +539,9 @@ type RowPin struct {
 func (v *RowPin) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*RowPin) Closed() bool { return false }
 
 type SavedView struct {
 	List string                     `json:"list"`
@@ -532,6 +556,9 @@ func (v *SavedView) Validate() error {
 	}
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*SavedView) Closed() bool { return false }
 
 // SearchReply: Hits of every provider in registry order: a query of only T-, Q- and C- codes resolved (old codes too, with the current code), then tasks (an id or code starting with the text first), questions (open first, answered and withdrawn after), conversations, results, projects, hosts, agents, pipelines. Inside each kind hits in the focus come before all others, then that kind's order, then recently changed. Each word of the text narrows the hits.
 type SearchReply struct {
@@ -565,6 +592,9 @@ type SearchRequest struct {
 func (v *SearchRequest) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*SearchRequest) Closed() bool { return false }
 
 // ViewLinkReply: For view: url and path; for url: the parsed view.
 type ViewLinkReply struct {
@@ -615,6 +645,9 @@ type ViewRef struct {
 func (v *ViewRef) Validate() error {
 	return nil
 }
+
+// Closed: a request key outside the schema is refused; true: also where this object is nested.
+func (*ViewRef) Closed() bool { return false }
 
 func init() {
 	for n, o := range map[string]Operation{
