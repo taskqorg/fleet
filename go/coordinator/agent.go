@@ -2860,7 +2860,8 @@ func init() {
 					if f == nil {
 						f = map[string]json.RawMessage{}
 					}
-					f["projectId"], a["filter"] = jsonBytes(focus), jsonBytes(f) // focus filters reads without a project (§2)
+					f["projectId"] = jsonBytes(focus) // focus filters reads without a project (§2)
+					a["filter"] = jsonBytes(f)
 				}
 			}
 			if name == "analytics_query" {
@@ -2895,7 +2896,8 @@ func init() {
 						if f == nil {
 							f = map[string]json.RawMessage{}
 						}
-						f["projectId"], a["filters"] = jsonBytes(bound), jsonBytes(f)
+						f["projectId"] = jsonBytes(bound)
+						a["filters"] = jsonBytes(f)
 					}
 				}
 			}
