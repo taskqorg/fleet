@@ -10,7 +10,7 @@ import (
 
 // sqlc cannot parse schema.sql (its migrations hold DO blocks, functions and CTE views), so it reads db/schema.sql:
 // every enum, table and view of the migrated database as plain CREATE TYPE / CREATE TABLE (a view as the table of its
-// columns). Requirement S2 (docs/designs/fleet-standard.md). Risk: a migration changes a column and the generated
+// columns) and every plain function by its signature. Requirement S2 (docs/designs/fleet-standard.md). Risk: a migration changes a column and the generated
 // queries keep the old type, so a query compiles but fails or misreads at run time.
 // FLEET_UPDATE_SQLC_SCHEMA=1 rewrites the file; then run pnpm run go:sqlc.
 const sqlcSchemaPath = "db/schema.sql"
@@ -70,7 +70,26 @@ func sqlcSchema(t *testing.T, e *testCoordEnv) string {
 		if rel != "" {
 			b.WriteString("\n);\n")
 		}
-		return cols.Err()
+		if err := cols.Err(); err != nil {
+			return err
+		}
+		// Plain functions (no trigger, aggregate or procedure) by signature, so queries may call them; sqlc reads
+		// only the signature, the body is a stub.
+		fns, err := tx.Query(e.ctx, `SELECT p.proname, pg_get_function_arguments(p.oid), pg_get_function_result(p.oid)
+		 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+		 WHERE n.nspname='public' AND p.prokind='f' AND p.prorettype<>'trigger'::regtype AND NOT p.proretset
+		 ORDER BY p.proname, pg_get_function_arguments(p.oid)`)
+		if err != nil {
+			return err
+		}
+		for fns.Next() {
+			var name, args, result string
+			if err := fns.Scan(&name, &args, &result); err != nil {
+				return err
+			}
+			b.WriteString("CREATE FUNCTION " + name + "(" + args + ") RETURNS " + result + " LANGUAGE sql AS $$ SELECT NULL $$;\n")
+		}
+		return fns.Err()
 	})
 	if err != nil {
 		t.Fatal(err)

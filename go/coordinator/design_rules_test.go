@@ -14,9 +14,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"fleet/contract"
@@ -133,7 +135,7 @@ func TestDesignRules(t *testing.T) {
 	}
 	for file, rules := range found {
 		for rule, pos := range rules {
-			if !designRulesLegacy[file][rule] {
+			if !designRulesLegacy[file][rule] && designRulesOwned[file][rule] == "" {
 				t.Errorf("%s: breaks %s (DESIGN_RULES.md, %d places in the file); move it onto the standard", fset.Position(pos[0]), rule, len(pos))
 			}
 		}
@@ -166,6 +168,395 @@ func designRulesAllowlist(found map[string]map[string][]token.Pos) string {
 		fmt.Fprintf(&b, "\t%q: {%s},\n", f, strings.Join(rules, ", "))
 	}
 	return b.String()
+}
+
+// The S5/S6 checks of the work kit and its queues (DESIGN_RULES.md). designKitAreas: the file-name prefixes of the
+// areas whose item work runs on the kit; an area moving onto the kit adds its prefix.
+var designKitAreas = []string{"resource_"}
+
+func designKitArea(name string) bool {
+	for _, p := range designKitAreas {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+type designFile struct {
+	name string
+	ast  *ast.File
+}
+
+// designSources: the package's Go files, parsed; tests true gives the test files instead.
+func designSources(t *testing.T, tests bool) []designFile {
+	t.Helper()
+	names, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(names)
+	fset := token.NewFileSet()
+	var out []designFile
+	for _, n := range names {
+		if strings.HasSuffix(n, "_test.go") != tests {
+			continue
+		}
+		f, err := parser.ParseFile(fset, n, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, designFile{n, f})
+	}
+	return out
+}
+
+// designLiterals: every string expression of f, constant-folded: literal parts concatenated, any other operand "?".
+func designLiterals(f *ast.File) []string {
+	var fold func(e ast.Expr) (string, bool)
+	fold = func(e ast.Expr) (string, bool) {
+		switch x := e.(type) {
+		case *ast.BasicLit:
+			if x.Kind == token.STRING {
+				s, _ := strconv.Unquote(x.Value)
+				return s, true
+			}
+		case *ast.BinaryExpr:
+			if x.Op == token.ADD {
+				a, okA := fold(x.X)
+				b, okB := fold(x.Y)
+				return a + b, okA || okB
+			}
+		case *ast.ParenExpr:
+			return fold(x.X)
+		}
+		return "?", false
+	}
+	var out []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.BinaryExpr:
+			if s, ok := fold(x); ok && x.Op == token.ADD {
+				out = append(out, s)
+				return false
+			}
+		case *ast.BasicLit:
+			if x.Kind == token.STRING {
+				s, _ := strconv.Unquote(x.Value)
+				out = append(out, s)
+			}
+		}
+		return true
+	})
+	return out
+}
+
+var (
+	designAssign    = regexp.MustCompile(`(?:^|,)\s*([a-z_]+)\s*=`)
+	designClauseEnd = regexp.MustCompile(`(?i)\b(WHERE|FROM|RETURNING)\b`)
+	designDoUpdate  = regexp.MustCompile(`(?is)\bDO\s+UPDATE\s+SET\s+(.*)`)
+	designTableRes  sync.Map // table -> [3]*regexp.Regexp
+)
+
+// designWrites: the columns of table that sql writes (UPDATE ... SET, INSERT column lists, ON CONFLICT DO UPDATE SET),
+// and "DELETE" when it deletes rows of table.
+func designWrites(sql, table string) []string {
+	if !strings.Contains(sql, table) {
+		return nil
+	}
+	v, ok := designTableRes.Load(table)
+	if !ok {
+		t := regexp.QuoteMeta(table)
+		v, _ = designTableRes.LoadOrStore(table, [3]*regexp.Regexp{
+			regexp.MustCompile(`(?is)\bUPDATE\s+` + t + `\b(?:\s+[a-z]+)?\s+SET\s+(.*)`),
+			regexp.MustCompile(`(?is)\bINSERT\s+INTO\s+` + t + `\s*\(([^)]*)\)(.*)`),
+			regexp.MustCompile(`(?is)\bDELETE\s+FROM\s+` + t + `\b`)})
+	}
+	res := v.([3]*regexp.Regexp)
+	var cols []string
+	set := func(clause string) {
+		if i := designClauseEnd.FindStringIndex(clause); i != nil {
+			clause = clause[:i[0]]
+		}
+		for _, m := range designAssign.FindAllStringSubmatch(clause, -1) {
+			cols = append(cols, m[1])
+		}
+	}
+	for _, m := range res[0].FindAllStringSubmatch(sql, -1) {
+		set(m[1])
+	}
+	for _, m := range res[1].FindAllStringSubmatch(sql, -1) {
+		for _, c := range strings.Split(m[1], ",") {
+			cols = append(cols, strings.TrimSpace(c))
+		}
+		if u := designDoUpdate.FindStringSubmatch(m[2]); u != nil {
+			set(u[1])
+		}
+	}
+	if res[2].MatchString(sql) {
+		cols = append(cols, "DELETE")
+	}
+	return cols
+}
+
+type designOwner struct {
+	table, owner string
+	columns      []string
+}
+
+// designStateOwners: each state column of a machine and the one file that may write it (S5). The retry columns of
+// every registered kit queue's table belong to the kit (S6).
+func designStateOwners() []designOwner {
+	out := []designOwner{
+		{"resource_build", "resource_states.go", []string{"phase", "scan_done", "after_execution_id", "generation", "DELETE"}},
+		{"resource_project_summary", "resource_states.go", []string{"ready", "epoch"}},
+		{"resource_metadata_repair", "resource_states.go", []string{"done", "after_execution_id", "DELETE"}},
+	}
+	for _, q := range kitQueues {
+		out = append(out, designOwner{q.Retry.Table, "work_kit.go", []string{"attempts", "next_attempt_at", "last_error"}})
+	}
+	return out
+}
+
+// S5: a machine's state columns and a kit queue's retry columns are written only by their owner file.
+func TestDesignStateWrites(t *testing.T) {
+	if got := strings.Join(designWrites(`INSERT INTO resource_build(project_id,phase) VALUES($1,'x') ON CONFLICT(project_id) DO UPDATE SET attempts=1 WHERE resource_build.phase='y'`, "resource_build"), ","); got != "project_id,phase,attempts" {
+		t.Fatal("the write scanner is broken:", got)
+	}
+	if len(kitQueues) == 0 {
+		t.Fatal("no work kit queue is registered")
+	}
+	for _, f := range designSources(t, false) {
+		for _, sql := range designLiterals(f.ast) {
+			for _, o := range designStateOwners() {
+				if f.name == o.owner {
+					continue
+				}
+				for _, c := range designWrites(sql, o.table) {
+					if slices.Contains(o.columns, c) {
+						t.Errorf("%s writes %s.%s, which only %s may write (DESIGN_RULES.md S5): %.120s", f.name, o.table, c, o.owner, strings.Join(strings.Fields(sql), " "))
+					}
+				}
+			}
+		}
+	}
+}
+
+// S6: in the kit's areas only the kit schedules: tickers, timers, sleeps, its own connections, randomness, every() and
+// the statement clock (time reaches their SQL only as the kit's $now).
+func TestDesignScheduling(t *testing.T) {
+	banned := map[string]bool{"time.NewTicker": true, "time.After": true, "time.NewTimer": true, "time.Sleep": true, "time.Tick": true, "time.AfterFunc": true, "pgx.Connect": true, "every": true}
+	seen := 0
+	for _, f := range designSources(t, false) {
+		if !designKitArea(f.name) && f.name != "work_kit.go" {
+			continue
+		}
+		ast.Inspect(f.ast, func(n ast.Node) bool {
+			name := ""
+			switch x := n.(type) {
+			case *ast.SelectorExpr:
+				if id, ok := x.X.(*ast.Ident); ok {
+					name = id.Name + "." + x.Sel.Name
+					if id.Name == "rand" {
+						banned[name] = true
+					}
+				}
+			case *ast.GoStmt:
+				name = "go"
+				banned[name] = true
+			case *ast.CallExpr:
+				if id, ok := x.Fun.(*ast.Ident); ok {
+					name = id.Name
+				}
+			}
+			if banned[name] {
+				if f.name == "work_kit.go" {
+					seen++
+				} else {
+					t.Errorf("%s uses %s; only the work kit schedules (DESIGN_RULES.md S6)", f.name, name)
+				}
+			}
+			return true
+		})
+		for _, sql := range designLiterals(f.ast) {
+			if strings.Contains(sql, "statement_timestamp()") && f.name != "work_kit.go" {
+				t.Errorf("%s reads the statement clock; queue SQL gets the kit's $now (DESIGN_RULES.md S6): %.80s", f.name, sql)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("the scheduling scanner found nothing in work_kit.go")
+	}
+}
+
+// S5: the transition tables cover the schema's states: every state has a row or is declared terminal, every target is
+// a state, every state is reachable and reaches a terminal one, and buildTransition moves only to declared phases.
+func TestDesignTransitions(t *testing.T) {
+	schema, err := os.ReadFile("schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`phase text NOT NULL DEFAULT '(\w+)' CHECK\(phase IN \(([^)]*)\)\)`).FindSubmatch(schema)
+	if m == nil {
+		t.Fatal("resource_build.phase check not found in schema.sql")
+	}
+	var phases []string
+	for _, p := range strings.Split(string(m[2]), ",") {
+		phases = append(phases, strings.Trim(strings.TrimSpace(p), "'"))
+	}
+	if !strings.Contains(string(schema), `ADD COLUMN ready boolean GENERATED ALWAYS AS (phase = 'ready') STORED`) {
+		t.Error("resource_build.ready must be generated from phase (migration 76)")
+	}
+	check := func(name string, table map[string][]string, states []string, starts ...string) {
+		for _, s := range states {
+			if _, ok := table[s]; !ok {
+				t.Errorf("%s: state %s has no transition row (declare it terminal with nil)", name, s)
+			}
+		}
+		for s, targets := range table {
+			if !slices.Contains(states, s) {
+				t.Errorf("%s: row %s is no state", name, s)
+			}
+			for _, to := range targets {
+				if !slices.Contains(states, to) {
+					t.Errorf("%s: %s -> %s is no state", name, s, to)
+				}
+			}
+		}
+		reach := map[string]bool{}
+		var walk func(string)
+		walk = func(s string) {
+			if !reach[s] {
+				reach[s] = true
+				for _, to := range table[s] {
+					walk(to)
+				}
+			}
+		}
+		for _, s := range starts {
+			walk(s)
+		}
+		for _, s := range states {
+			if !reach[s] {
+				t.Errorf("%s: state %s is unreachable", name, s)
+			}
+			ends := map[string]bool{}
+			var down func(string) bool
+			down = func(x string) bool {
+				if len(table[x]) == 0 {
+					return true
+				}
+				if ends[x] {
+					return false
+				}
+				ends[x] = true
+				for _, to := range table[x] {
+					if to != x && down(to) {
+						return true
+					}
+				}
+				return false
+			}
+			if !down(s) {
+				t.Errorf("%s: state %s never reaches a terminal state", name, s)
+			}
+		}
+	}
+	check("build", buildTransitions, phases, string(m[1]), "clearing")
+	check("repair", repairTransitions, []string{"enumerating", "done", "deleted"}, "enumerating")
+	src, err := os.ReadFile("resource_states.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := regexp.MustCompile(`\bto\("(\w+)"`).FindAllSubmatch(src, -1)
+	if len(targets) == 0 {
+		t.Fatal("no buildTransition targets found")
+	}
+	for _, x := range targets {
+		if !slices.Contains(phases, string(x[1])) {
+			t.Errorf("buildTransition moves to %s, which is no phase", x[1])
+		}
+	}
+}
+
+// S6: code of the kit's areas never opens a transaction; the kit gives each step, selection, failure and restart one.
+func TestDesignTransactions(t *testing.T) {
+	opens := map[string]bool{"runTx": true, "runTxLocks": true, "runTxLocksOnce": true, "Tx": true, "TxLocks": true, "TxLocksOnce": true, "Read": true, "Write": true, "Begin": true, "BeginTx": true, "BeginFunc": true, "BeginTxFunc": true}
+	for _, f := range designSources(t, false) {
+		if !designKitArea(f.name) {
+			continue
+		}
+		ast.Inspect(f.ast, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			name := ""
+			switch x := call.Fun.(type) {
+			case *ast.Ident:
+				name = x.Name
+			case *ast.SelectorExpr:
+				name = x.Sel.Name
+				if r, ok := x.X.(*ast.SelectorExpr); (name == "Read" || name == "Write") && (!ok || r.Sel.Name != "store") {
+					name = "" // an io.Writer, not store.Read/Write
+				}
+			}
+			if opens[name] {
+				t.Errorf("%s: %s opens a transaction; work runs in the kit's (DESIGN_RULES.md S6)", f.name, name)
+			}
+			return true
+		})
+	}
+}
+
+// S10: DESIGN_RULES.md names every TestDesign* and TestLaw* check, and every check it names exists.
+func TestDesignRulesList(t *testing.T) {
+	raw, err := os.ReadFile("DESIGN_RULES.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	rows := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		cells := strings.Split(line, "|")
+		if len(cells) != 5 || !regexp.MustCompile(`^\s*S\d+\s*$`).MatchString(cells[1]) {
+			continue
+		}
+		rows++
+		for _, m := range regexp.MustCompile("`(Test\\w+)`").FindAllStringSubmatch(cells[3], -1) {
+			listed[m[1]] = true
+		}
+	}
+	if rows != 10 {
+		t.Fatalf("DESIGN_RULES.md has %d rule rows, want S1-S10", rows)
+	}
+	tests := map[string]bool{}
+	for _, f := range designSources(t, true) {
+		for _, d := range f.ast.Decls {
+			if fn, ok := d.(*ast.FuncDecl); ok && strings.HasPrefix(fn.Name.Name, "Test") {
+				tests[fn.Name.Name] = true
+			}
+		}
+	}
+	for name := range listed {
+		if !tests[name] {
+			t.Errorf("DESIGN_RULES.md lists %s, which does not exist", name)
+		}
+	}
+	for name := range tests {
+		if (strings.HasPrefix(name, "TestDesign") || strings.HasPrefix(name, "TestLaw")) && !listed[name] {
+			t.Errorf("%s is not listed in DESIGN_RULES.md", name)
+		}
+	}
+}
+
+// designRulesOwned: file -> rule -> why the file owns what the rule keeps out of every other file. Not legacy: these
+// entries stay.
+var designRulesOwned = map[string]map[string]string{
+	"work_kit.go": {
+		"R-GO":  "S6: the kit's loop and its fleet_work listener are the scheduling the rule keeps out of the queues",
+		"R-SQL": "S6: the kit alone writes attempts, next_attempt_at and last_error of any queue's table, named by the queue; sqlc cannot name a table per call",
+	},
 }
 
 // designRulesLegacy: file -> rules it may still break, generated from the tree
@@ -236,7 +627,7 @@ var designRulesLegacy = map[string]map[string]bool{
 	"registry.go":            {"R-MAP": true},
 	"release.go":             {"R-MAP": true, "R-SQL": true},
 	"resource_apply.go":      {"R-SQL": true},
-	"resource_projection.go": {"R-GO": true, "R-MAP": true, "R-SQL": true},
+	"resource_projection.go": {"R-SQL": true},
 	"rules.go":               {"R-MAP": true, "R-SQL": true},
 	"runners.go":             {"R-MAP": true, "R-SQL": true},
 	"runners_ci.go":          {"R-GO": true, "R-MAP": true},

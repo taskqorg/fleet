@@ -2738,7 +2738,56 @@ BEGIN
  END IF;
 END $$;
 
--- migration 76: one owner per state (go/coordinator/DESIGN_RULES.md, R1). A build's ready was stored beside its phase and
+-- migration 76: one owner per state (go/coordinator/DESIGN_RULES.md, S5). A build's ready was stored beside its phase and
 -- written by every transition; it is now derived from the phase, which buildTransition (resource_states.go) alone writes.
 ALTER TABLE resource_build DROP COLUMN ready;
 ALTER TABLE resource_build ADD COLUMN ready boolean GENERATED ALWAYS AS (phase = 'ready') STORED;
+-- The work kit's retry columns are attempts, next_attempt_at and last_error on every queue's
+-- table (docs/designs/fleet-standard.md S6); its one wake channel fleet_work carries the name of the queue with new
+-- work (work_kit.go). Pending intents of the old channel move over.
+ALTER TABLE resource_work RENAME COLUMN last_error_class TO last_error;
+ALTER TABLE wake_outbox DROP CONSTRAINT wake_outbox_channel_check;
+UPDATE wake_outbox SET channel = 'fleet_work', payload = 'resource-work' WHERE channel = 'fleet_resource_work';
+ALTER TABLE wake_outbox ADD CONSTRAINT wake_outbox_channel_check CHECK (channel IN ('fleet_change','fleet_work','fleet_resource_summary'));
+CREATE OR REPLACE FUNCTION fleet_enqueue_wake(ch text, body text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE old_scope text := current_setting('fleet.project_ids',true);
+BEGIN
+ IF ch IS NULL OR body IS NULL OR ch NOT IN ('fleet_change','fleet_work','fleet_resource_summary')
+  OR octet_length(body)>=8000 OR (ch='fleet_change' AND body<>'') OR (ch='fleet_work' AND body !~ '^[a-z][a-z0-9-]*$') THEN
+  RAISE EXCEPTION 'invalid wake channel or payload';
+ END IF;
+ PERFORM set_config('fleet.project_ids','*',true);
+ INSERT INTO wake_outbox(channel,payload) VALUES(ch,body);
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true);
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true); RAISE;
+END $$;
+CREATE OR REPLACE FUNCTION resource_enqueue_source(eid text, old_project text, new_project text) RETURNS void
+LANGUAGE plpgsql SET search_path=public AS $$
+DECLARE wid uuid; pending timestamptz;
+BEGIN
+ INSERT INTO resource_work(execution_id) VALUES(eid)
+ ON CONFLICT ON CONSTRAINT resource_work_source_key DO UPDATE SET execution_id=excluded.execution_id
+ RETURNING work_id,first_pending_at INTO wid,pending;
+ INSERT INTO resource_work_scope(work_id,project_id,first_pending_at)
+ SELECT wid,p,pending FROM (VALUES(old_project),(new_project)) v(p) WHERE p IS NOT NULL
+ ON CONFLICT DO NOTHING;
+ PERFORM fleet_enqueue_wake('fleet_work','resource-work');
+END $$;
+CREATE OR REPLACE FUNCTION resource_capture_metadata() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE old_scope text := current_setting('fleet.project_ids',true); old_class jsonb:='{}'; new_class jsonb:='{}'; mid text;
+BEGIN
+ IF TG_TABLE_NAME <> 'document' OR TG_WHEN <> 'AFTER' THEN RAISE EXCEPTION 'invalid metadata capture context'; END IF;
+ IF TG_OP <> 'INSERT' THEN old_class:=resource_metadata_class(OLD); mid:=OLD.id; END IF;
+ IF TG_OP <> 'DELETE' THEN new_class:=resource_metadata_class(NEW); mid:=NEW.id; END IF;
+ IF old_class IS NOT DISTINCT FROM new_class THEN RETURN NULL; END IF;
+ PERFORM set_config('fleet.project_ids','*',true);
+ INSERT INTO resource_metadata_repair(metadata_id,old_class,new_class) VALUES(mid,old_class,new_class)
+ ON CONFLICT(source_xid,metadata_id) DO UPDATE SET new_class=excluded.new_class;
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true);
+ PERFORM fleet_enqueue_wake('fleet_work','resource-repair');
+ RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true); RAISE;
+END $$;

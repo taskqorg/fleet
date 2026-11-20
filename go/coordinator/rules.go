@@ -279,7 +279,7 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]boo
 		}
 		// resource-failing: resource work whose retry pause reached its maximum (work_kit.go): an execution's work, a
 		// project build or a metadata repair. One system question names them; it closes once they succeed.
-		failing, err := queryRows(q, `SELECT 'execution '||execution_id AS item FROM (SELECT DISTINCT execution_id FROM resource_work WHERE last_error_class IS NOT NULL AND attempts>=$1) w
+		failing, err := queryRows(q, `SELECT 'execution '||execution_id AS item FROM (SELECT DISTINCT execution_id FROM resource_work WHERE last_error IS NOT NULL AND attempts>=$1) w
 			UNION ALL SELECT 'build of project '||project_id FROM resource_build WHERE NOT ready AND attempts>=$1
 			UNION ALL SELECT 'metadata repair '||repair_id::text FROM resource_metadata_repair WHERE attempts>=$1 ORDER BY 1`, kitFailingAttempts())
 		if err != nil {
@@ -298,9 +298,9 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]boo
 			text(&f, fmt.Sprintf("Resource processing keeps failing for %d %s (%s). Retry pauses are up to %s.", len(items), noun, strings.Join(items, ", "), kitRetryEvery()))
 			out = append(out, f)
 		}
-		// resource-stalled: a queue of this process's resource processor whose own bookkeeping (selection, failure
-		// writes) keeps failing, which no item's attempts can show.
-		if f, ok := resourceStalled(a); ok {
+		// work-stalled: a queue of this process's work kit whose own bookkeeping (selection, failure writes) keeps
+		// failing, which no item's attempts can show.
+		if f, ok := workStalled(a); ok {
 			out = append(out, f)
 		}
 		// Hosts the span rules may name: not removed, intake not paused.

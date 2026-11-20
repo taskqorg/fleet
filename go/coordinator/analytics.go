@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 const (
@@ -488,56 +489,56 @@ type sqlMeasureStats struct {
 	TokensREst      int64    `json:"tokensReasoningEst"`
 	TokensRExpected int64    `json:"tokensReasoningExpected"`
 
-	Count               int64    `json:"count"`
-	Failed              int64    `json:"failed"`
-	TokensIn            *float64 `json:"tokensIn"`
-	TokensInHave        int64    `json:"tokensInHave"`
-	TokensInSub         int64    `json:"tokensInSub"`
-	TokensInEst         int64    `json:"tokensInEst"`
-	TokensInExpected    int64    `json:"tokensInExpected"`
-	TokensOut           *float64 `json:"tokensOut"`
-	TokensOutHave       int64    `json:"tokensOutHave"`
-	TokensOutSub        int64    `json:"tokensOutSub"`
-	TokensOutEst        int64    `json:"tokensOutEst"`
-	TokensOutExpected   int64    `json:"tokensOutExpected"`
-	TokensCR            *float64 `json:"tokensCR"`
-	TokensCRHave        int64    `json:"tokensCRHave"`
-	TokensCRSub         int64    `json:"tokensCRSub"`
-	TokensCREst         int64    `json:"tokensCREst"`
-	TokensCRExpected    int64    `json:"tokensCRExpected"`
-	TokensCW            *float64 `json:"tokensCW"`
-	TokensCWHave        int64    `json:"tokensCWHave"`
-	TokensCWSub         int64    `json:"tokensCWSub"`
-	TokensCWEst         int64    `json:"tokensCWEst"`
-	TokensCWExpected    int64    `json:"tokensCWExpected"`
-	WallMs              *float64 `json:"wallMs"`
-	WallMsP50           *float64 `json:"wallMsP50"`
-	WallMsP95           *float64 `json:"wallMsP95"`
-	WallMsHave          int64    `json:"wallMsHave"`
-	WallMsSub           int64    `json:"wallMsSub"`
-	WallMsEst           int64    `json:"wallMsEst"`
-	WallMsExpected      int64    `json:"wallMsExpected"`
-	ActiveMs            *float64 `json:"activeMs"`
-	ActiveMsHave        int64    `json:"activeMsHave"`
-	ActiveMsSub         int64    `json:"activeMsSub"`
-	ActiveMsEst         int64    `json:"activeMsEst"`
-	ActiveMsExpected    int64    `json:"activeMsExpected"`
-	CpuMs               *float64 `json:"cpuMs"`
-	CpuMsHave           int64    `json:"cpuMsHave"`
-	CpuMsSub            int64    `json:"cpuMsSub"`
-	CpuMsEst            int64    `json:"cpuMsEst"`
-	CpuMsExpected       int64    `json:"cpuMsExpected"`
-	PeakMem             *float64 `json:"peakMem"`
-	PeakMemHave         int64    `json:"peakMemHave"`
-	PeakMemSub          int64    `json:"peakMemSub"`
-	PeakMemEst          int64    `json:"peakMemEst"`
-	PeakMemExpected     int64    `json:"peakMemExpected"`
-	Calls               *float64 `json:"calls"`
-	CallsHave           int64    `json:"callsHave"`
-	CallsExpected       int64    `json:"callsExpected"`
-	Credits             *float64 `json:"credits"`
-	CreditsHave         int64    `json:"creditsHave"`
-	CreditsExpected     int64    `json:"creditsExpected"`
+	Count             int64    `json:"count"`
+	Failed            int64    `json:"failed"`
+	TokensIn          *float64 `json:"tokensIn"`
+	TokensInHave      int64    `json:"tokensInHave"`
+	TokensInSub       int64    `json:"tokensInSub"`
+	TokensInEst       int64    `json:"tokensInEst"`
+	TokensInExpected  int64    `json:"tokensInExpected"`
+	TokensOut         *float64 `json:"tokensOut"`
+	TokensOutHave     int64    `json:"tokensOutHave"`
+	TokensOutSub      int64    `json:"tokensOutSub"`
+	TokensOutEst      int64    `json:"tokensOutEst"`
+	TokensOutExpected int64    `json:"tokensOutExpected"`
+	TokensCR          *float64 `json:"tokensCR"`
+	TokensCRHave      int64    `json:"tokensCRHave"`
+	TokensCRSub       int64    `json:"tokensCRSub"`
+	TokensCREst       int64    `json:"tokensCREst"`
+	TokensCRExpected  int64    `json:"tokensCRExpected"`
+	TokensCW          *float64 `json:"tokensCW"`
+	TokensCWHave      int64    `json:"tokensCWHave"`
+	TokensCWSub       int64    `json:"tokensCWSub"`
+	TokensCWEst       int64    `json:"tokensCWEst"`
+	TokensCWExpected  int64    `json:"tokensCWExpected"`
+	WallMs            *float64 `json:"wallMs"`
+	WallMsP50         *float64 `json:"wallMsP50"`
+	WallMsP95         *float64 `json:"wallMsP95"`
+	WallMsHave        int64    `json:"wallMsHave"`
+	WallMsSub         int64    `json:"wallMsSub"`
+	WallMsEst         int64    `json:"wallMsEst"`
+	WallMsExpected    int64    `json:"wallMsExpected"`
+	ActiveMs          *float64 `json:"activeMs"`
+	ActiveMsHave      int64    `json:"activeMsHave"`
+	ActiveMsSub       int64    `json:"activeMsSub"`
+	ActiveMsEst       int64    `json:"activeMsEst"`
+	ActiveMsExpected  int64    `json:"activeMsExpected"`
+	CpuMs             *float64 `json:"cpuMs"`
+	CpuMsHave         int64    `json:"cpuMsHave"`
+	CpuMsSub          int64    `json:"cpuMsSub"`
+	CpuMsEst          int64    `json:"cpuMsEst"`
+	CpuMsExpected     int64    `json:"cpuMsExpected"`
+	PeakMem           *float64 `json:"peakMem"`
+	PeakMemHave       int64    `json:"peakMemHave"`
+	PeakMemSub        int64    `json:"peakMemSub"`
+	PeakMemEst        int64    `json:"peakMemEst"`
+	PeakMemExpected   int64    `json:"peakMemExpected"`
+	Calls             *float64 `json:"calls"`
+	CallsHave         int64    `json:"callsHave"`
+	CallsExpected     int64    `json:"callsExpected"`
+	Credits           *float64 `json:"credits"`
+	CreditsHave       int64    `json:"creditsHave"`
+	CreditsExpected   int64    `json:"creditsExpected"`
 }
 
 const sqlMeasureSelect = `jsonb_build_object(
@@ -960,8 +961,8 @@ ORDER BY is_total ASC, %s`, dimJSONBuild, sqlMeasureSelect, dimListSQL,
 
 	// Hidden: unfiltered count of leaf executions in [from, to) excluded by caller's RLS scope (CA-05).
 	if q.person != nil && !fullAccess(q.person) {
-		var windowAll int64
-		if err := q.tx.QueryRow(q.ctx(), `SELECT fleet_window_leaf_count($1, $2)`, from, to).Scan(&windowAll); err != nil {
+		windowAll, err := q.db().AnalyticsWindowLeafCount(q.ctx(), db.AnalyticsWindowLeafCountParams{WinFrom: from, WinTo: to})
+		if err != nil {
 			return rep, err
 		}
 		if windowAll > windowVisible {
@@ -1583,14 +1584,21 @@ const spawnedExecsCTEs = `,
 // On error, the enclosing transaction rolls back its LOCAL setting; do not
 // send a restore query into a canceled or aborted transaction.
 func resourceLineageQuery[T any](q *Request, run func() (T, error)) (out T, err error) {
-	var previous string
-	if err = q.tx.QueryRow(q.ctx(), "SELECT current_setting('jit')").Scan(&previous); err != nil { return out, err }
-	if previous == "off" { return run() }
-	if _, err = q.tx.Exec(q.ctx(), "SELECT set_config('jit', 'off', true)"); err != nil { return out, err }
-	out, err = run()
-	if err != nil { return out, err }
-	_, err = q.tx.Exec(q.ctx(), "SELECT set_config('jit', $1, true)", previous)
-	return out, err
+	d := q.db()
+	previous, err := d.AnalyticsJIT(q.ctx())
+	if err != nil {
+		return out, err
+	}
+	if previous == "off" {
+		return run()
+	}
+	if err = d.AnalyticsSetJIT(q.ctx(), "off"); err != nil {
+		return out, err
+	}
+	if out, err = run(); err != nil {
+		return out, err
+	}
+	return out, d.AnalyticsSetJIT(q.ctx(), previous)
 }
 
 func taskResourceRollup(q *Request, taskID string) (contract.ScopedResourceRollup, error) {
@@ -1669,7 +1677,7 @@ func taskResourceRollupQuery(q *Request, taskID string) (contract.ScopedResource
 
 	// Hidden direct lineage count under RLS (CA-05): compare visible vs total downstream leaf delegations + spawned tasks via SECURITY DEFINER helper.
 	if q.person != nil && !fullAccess(q.person) {
-		if err := q.tx.QueryRow(q.ctx(), `SELECT fleet_task_hidden_lineage_count($1)`, taskID).Scan(&out.Hidden); err != nil {
+		if out.Hidden, err = q.db().AnalyticsTaskHiddenLineage(q.ctx(), taskID); err != nil {
 			return out, err
 		}
 	}
@@ -1723,7 +1731,6 @@ const sessionLineageCTEs = `WITH RECURSIVE
       OR t.created_by_session_id IN (SELECT session_id FROM del_tree WHERE session_id IS NOT NULL)
     )
  )` + spawnedExecsCTEs
-
 
 func sessionResourceRollup(q *Request, sessionID string) (contract.ScopedResourceRollup, error) {
 	return resourceLineageQuery(q, func() (contract.ScopedResourceRollup, error) { return sessionResourceRollupQuery(q, sessionID) })
@@ -1799,7 +1806,7 @@ func sessionResourceRollupQuery(q *Request, sessionID string) (contract.ScopedRe
 	taskRows.Close()
 
 	if q.person != nil && !fullAccess(q.person) {
-		if err := q.tx.QueryRow(q.ctx(), `SELECT fleet_session_hidden_lineage_count($1)`, sessionID).Scan(&out.Hidden); err != nil {
+		if out.Hidden, err = q.db().AnalyticsSessionHiddenLineage(q.ctx(), sessionID); err != nil {
 			return out, err
 		}
 	}

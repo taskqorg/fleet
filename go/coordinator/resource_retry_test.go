@@ -112,7 +112,7 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 	pass := func() error { t.Helper(); return k.pass(ctx) }
 	paused := func(id string) string {
 		t.Helper()
-		return scalar(`SELECT max(attempts)::text||' '||coalesce(max(last_error_class),'-')||' '||(max(next_attempt_at)>$2)::text FROM resource_work WHERE execution_id=$1`, id, k.now())
+		return scalar(`SELECT max(attempts)::text||' '||coalesce(max(last_error),'-')||' '||(max(next_attempt_at)>$2)::text FROM resource_work WHERE execution_id=$1`, id, k.now())
 	}
 	// Let the shipped projects' builds settle, so the passes below fail only on purpose.
 	for i := 0; i < 200 && scalar(`SELECT count(*)::text FROM resource_build WHERE NOT ready`) != "0"; i++ {
@@ -137,7 +137,7 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 	}
 	// A failure written after its claims were consumed (a COMMIT whose response was lost) pauses nothing later.
 	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('pause-later','tool_run','succeeded','PAUSE')`)
-	if err := k.fail(ctx, k.queue("work"), k.now(), &kitClaim{Key: "pause-later", Guard: []any{[]string{"00000000-0000-0000-0000-000000000001"}}}, context.DeadlineExceeded); err != nil {
+	if err := k.fail(ctx, k.queue("resource-work"), k.now(), &kitClaim{Key: "pause-later", Guard: []any{[]string{"00000000-0000-0000-0000-000000000001"}}}, context.DeadlineExceeded); err != nil {
 		t.Fatal(err)
 	}
 	equal(`SELECT attempts::text FROM resource_work WHERE execution_id='pause-later'`, "0")
@@ -247,7 +247,7 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 			t.Fatal("unwritable failure", err)
 		}
 	}
-	if h := k.kitHealth(); len(h) != 1 || h[0].Queue != "work" || h[0].Failures != kitFailingAttempts() {
+	if h := k.kitHealth(); len(h) != 1 || h[0].Queue != "resource-work" || h[0].Failures != kitFailingAttempts() {
 		t.Fatal("queue health", h)
 	}
 	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('pause-healthy-4','tool_run','succeeded','PAUSE')`)
@@ -255,7 +255,7 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 		t.Fatal("a backing-off queue ran", err)
 	}
 	equal(`SELECT count(*)::text FROM resource_contribution WHERE execution_id='pause-healthy-4'`, "0")
-	if f := finding("resource-stalled"); !strings.HasPrefix(f, "problem:resource:stalled ") || !strings.Contains(f, "work") {
+	if f := finding("work-stalled"); !strings.HasPrefix(f, "problem:work:stalled ") || !strings.Contains(f, "resource-work") {
 		t.Fatal("stalled queue not surfaced", f)
 	}
 	owner(`DROP TRIGGER pause_work_fault ON resource_work; SELECT set_config('fleet.project_ids','*',false); DELETE FROM resource_work WHERE execution_id='pause-stall'`)
@@ -264,7 +264,7 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	equal(`SELECT count(*)::text FROM resource_contribution WHERE execution_id='pause-healthy-4'`, "1")
-	if f := finding("resource-stalled"); f != "" || len(k.kitHealth()) != 0 {
+	if f := finding("work-stalled"); f != "" || len(k.kitHealth()) != 0 {
 		t.Fatal("stall stays after recovery", f, k.kitHealth())
 	}
 

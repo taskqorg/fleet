@@ -366,12 +366,12 @@ CREATE TABLE resource_build (
   "generation" uuid NOT NULL,
   "after_execution_id" text,
   "scan_done" boolean NOT NULL,
-  "ready" boolean NOT NULL,
   "phase" text NOT NULL,
   "last_error" text,
   "updated_at" timestamp with time zone NOT NULL,
   "attempts" integer NOT NULL,
-  "next_attempt_at" timestamp with time zone NOT NULL
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "ready" boolean
 );
 CREATE TABLE resource_contribution (
   "execution_id" text NOT NULL,
@@ -471,7 +471,7 @@ CREATE TABLE resource_work (
   "first_pending_at" timestamp with time zone NOT NULL,
   "next_attempt_at" timestamp with time zone NOT NULL,
   "attempts" integer NOT NULL,
-  "last_error_class" text
+  "last_error" text
 );
 CREATE TABLE resource_work_scope (
   "work_id" uuid NOT NULL,
@@ -591,3 +591,25 @@ CREATE TABLE wake_outbox (
   "payload" text NOT NULL,
   "created_at" timestamp with time zone NOT NULL
 );
+CREATE FUNCTION fleet_deleted_projects() RETURNS text[] LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_enqueue_wake(ch text, body text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_issue_code(p_type text, p_project text, p_entity text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_own_projectless_execution(eid text) RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_own_projectless_session(sid text) RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_project_code(p_project text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_project_code_set(p_project text, p_code text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_session_hidden_lineage_count(sid text) RETURNS bigint LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_show_deleted() RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_task_derived(p_task text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_task_hidden_lineage_count(tid text) RETURNS bigint LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_token_count(v jsonb) RETURNS bigint LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_visible(p_project text) RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_window_leaf_count(win_from timestamp with time zone, win_to timestamp with time zone) RETURNS bigint LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_write_model(eid text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_write_native_observations(eid text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_write_tokens(eid text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION resource_enqueue_source(eid text, old_project text, new_project text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION resource_execution_facts(r execution) RETURNS jsonb LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION resource_metadata_class(r document) RETURNS jsonb LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION resource_reasons_merge(old jsonb, delta jsonb) RETURNS jsonb LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION task_derived_recompute(p_task text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;

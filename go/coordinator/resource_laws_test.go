@@ -349,7 +349,7 @@ func (e *lawEnv) checkProgress() {
 	}
 }
 
-const lawFailingSQL = `SELECT (EXISTS(SELECT 1 FROM resource_work WHERE last_error_class IS NOT NULL AND attempts>=$1)
+const lawFailingSQL = `SELECT (EXISTS(SELECT 1 FROM resource_work WHERE last_error IS NOT NULL AND attempts>=$1)
  OR EXISTS(SELECT 1 FROM resource_build WHERE NOT ready AND attempts>=$1)
  OR EXISTS(SELECT 1 FROM resource_metadata_repair WHERE attempts>=$1))::text`
 

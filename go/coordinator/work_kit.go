@@ -1,7 +1,8 @@
-// The work kit: the one scheduler of resource work (DESIGN_RULES.md, R3). Every queue (execution work, project builds,
-// metadata repairs) is a spec; the kit selects due items, runs each step in one transaction, retries failures with
-// exponential backoff written by one guarded statement, groups cohorts and bisects failed ones. Nothing per item is
-// kept in memory: an item's retry state lives in its row.
+// The work kit (docs/designs/fleet-standard.md S6, DESIGN_RULES.md): the one scheduler of retried item work. A queue
+// registers itself (kitRegister) with its period; the kit selects its due items, runs each step in one transaction,
+// retries failures with exponential backoff written by one guarded statement into the item row's attempts,
+// next_attempt_at and last_error, groups cohorts and bisects failed ones. Nothing per item is kept in memory: an item's
+// retry state lives in its row. One wake channel, fleet_work, carries the name of the queue that has new work.
 package main
 
 import (
@@ -11,7 +12,6 @@ import (
 	"log"
 	"math"
 	"math/rand/v2"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +19,7 @@ import (
 
 	"fleet/contract"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // kitClaim: one due item as its queue's selection saw it.
@@ -29,32 +30,52 @@ type kitClaim struct {
 	Guard    []any  // what the selection (or the step) saw; the failure write applies only while it is still there
 }
 
-// kitRetry: how one failure of an item of a queue is written: attempts, next attempt and error in table's row(s) of
-// the key, only while Guard (SQL over $5..., qualified by the table name) still holds. Upsert creates a missing row.
+// kitRetry: how one failure of an item of a queue is written: attempts, next_attempt_at and last_error in Table's
+// row(s) of the key, only while Guard (SQL over $5..., qualified by the table name) still holds. Upsert creates a
+// missing row.
 type kitRetry struct {
-	Table, Key, Error, Guard, Set string
-	Upsert                        bool
-	Class                         func(error) string
+	Table, Key, Guard, Set string
+	Upsert                 bool
+	Class                  func(error) string
 	// OnFail runs in the failure write's transaction (the ownership repair of an execution).
 	OnFail func(q *Request, c *kitClaim, err error) error
 }
 
-// kitQueue: a queue of resource work. Due selects at most limit due items at now; Step makes one item's transition and
-// its effects; Batch (optional) does the same for a cohort of same-group claims. Neither opens a transaction.
+// kitQueue: a queue of item work. Due selects at most limit due items at now; Step makes one item's transition and
+// its effects; Batch (optional) does the same for a cohort of same-group claims. Neither opens a transaction. The
+// running kit passes the queue every Period and on a fleet_work wake naming it, while On (nil: always) holds.
 type kitQueue struct {
-	Name  string
-	Limit int
-	Due   func(q *Request, now time.Time, limit int) ([]*kitClaim, error)
-	Step  func(q *Request, now time.Time, c *kitClaim) error
-	Batch func(q *Request, now time.Time, cs []*kitClaim) error
-	Retry kitRetry
+	Name   string
+	Period time.Duration
+	On     func() bool
+	Limit  int
+	Due    func(q *Request, now time.Time, limit int) ([]*kitClaim, error)
+	Step   func(q *Request, now time.Time, c *kitClaim) error
+	Batch  func(q *Request, now time.Time, cs []*kitClaim) error
+	Retry  kitRetry
+}
+
+// kitQueues: the registered queues in registration (pass) order.
+var kitQueues []*kitQueue
+
+// kitRegister adds a queue to the kit; called from the owning file's init.
+func kitRegister(q *kitQueue) {
+	for _, o := range kitQueues {
+		if o.Name == q.Name {
+			panic("work kit: queue " + q.Name + " registered twice")
+		}
+	}
+	if q.Period <= 0 || q.Limit <= 0 || q.Due == nil || q.Step == nil || q.Retry.Table == "" || q.Retry.Key == "" || q.Retry.Class == nil {
+		panic("work kit: queue " + q.Name + " lacks its period, limit, selection, step or retry")
+	}
+	kitQueues = append(kitQueues, q)
 }
 
 // errKitSkip: the item cannot run now (a busy lock, a clearing build); it is tried again next pass, nothing is recorded.
 // errKitAgain: the step learned something (a new scope) and runs again at once in a new transaction.
 var (
-	errKitSkip  = errors.New("resource work skipped this pass")
-	errKitAgain = errors.New("resource work runs again")
+	errKitSkip  = errors.New("work skipped this pass")
+	errKitAgain = errors.New("work runs again")
 )
 
 type kitPassKey struct{}
@@ -72,8 +93,8 @@ func kitLock(q *Request, keys ...string) error {
 // Retry pause: base*2^attempts plus up to half a step of jitter, never above the maximum (there, up to a quarter below
 // it), as client-go's workqueue limiter with wait.Jitter. Success resets attempts.
 var (
-	kitRetryBase = max(envMs("FLEET_RESOURCE_RETRY_BASE_MS", 100), time.Millisecond)
-	kitRetryMax  = max(envMs("FLEET_RESOURCE_RETRY_MAX_MS", 5*60*1000), kitRetryBase)
+	kitRetryBase = max(envMs("FLEET_WORK_RETRY_BASE_MS", 100), time.Millisecond)
+	kitRetryMax  = max(envMs("FLEET_WORK_RETRY_MAX_MS", 5*60*1000), kitRetryBase)
 )
 
 // kitFailingAttempts: the attempts after which an item's pause has reached the maximum; from then on it is failing.
@@ -120,7 +141,7 @@ type kitQueueHealth struct {
 
 func newWorkKit(a *App, now func() time.Time, seed uint64) *workKit {
 	k := &workKit{a: a, now: now, cohort: resourceCohortSize, rng: rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)), health: map[string]*kitHealthState{}}
-	k.queues = resourceQueues()
+	k.queues = kitQueues
 	for _, q := range k.queues {
 		k.health[q.Name] = &kitHealthState{}
 	}
@@ -151,7 +172,7 @@ func (k *workKit) backoff(attempts int) time.Duration {
 	return time.Duration(limit * (1 - r/4))
 }
 
-// kitHealth: the queues whose bookkeeping is failing, for the resource-stalled rule.
+// kitHealth: the queues whose bookkeeping is failing, for the work-stalled rule.
 func (k *workKit) kitHealth() []kitQueueHealth {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -188,7 +209,7 @@ func (k *workKit) queue(name string) *kitQueue {
 			return q
 		}
 	}
-	panic("no resource queue " + name)
+	panic("work kit: no queue " + name)
 }
 
 // read runs fn in one read-only transaction.
@@ -201,41 +222,50 @@ func (k *workKit) tx(ctx context.Context, fn func(q *Request) error) error {
 	return runTxLocksOnce(ctx, k.a, nil, true, nil, fn)
 }
 
-// pass runs every queue once: select its due items, run them, write their failures.
+// pass runs every queue once in registration order.
 func (k *workKit) pass(ctx context.Context) error {
-	ctx = context.WithValue(ctx, kitPassKey{}, true)
-	now := k.now()
 	var errs error
 	for _, q := range k.queues {
-		k.mu.Lock()
-		waiting := now.Before(k.health[q.Name].until)
-		k.mu.Unlock()
-		if waiting {
-			continue
-		}
-		var claims []*kitClaim
-		err := k.read(ctx, func(r *Request) error {
-			var err error
-			claims, err = q.Due(r, now, q.Limit)
-			return err
-		})
-		if err != nil {
+		if err := k.passQueue(ctx, q); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			k.sick(q, now)
-			errs = errors.Join(errs, fmt.Errorf("resource %s selection: %w", q.Name, err))
-			continue
+			errs = errors.Join(errs, err)
 		}
-		stepErr, bookErr := k.run(ctx, q, now, claims)
-		if bookErr != nil {
-			k.sick(q, now)
-		} else {
-			k.well(q)
-		}
-		errs = errors.Join(errs, stepErr, bookErr)
 	}
 	return errs
+}
+
+// passQueue runs q once: select its due items, run them, write their failures.
+func (k *workKit) passQueue(ctx context.Context, q *kitQueue) error {
+	ctx = context.WithValue(ctx, kitPassKey{}, true)
+	now := k.now()
+	k.mu.Lock()
+	waiting := now.Before(k.health[q.Name].until)
+	k.mu.Unlock()
+	if waiting {
+		return nil
+	}
+	var claims []*kitClaim
+	err := k.read(ctx, func(r *Request) error {
+		var err error
+		claims, err = q.Due(r, now, q.Limit)
+		return err
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		k.sick(q, now)
+		return fmt.Errorf("work %s selection: %w", q.Name, err)
+	}
+	stepErr, bookErr := k.run(ctx, q, now, claims)
+	if bookErr != nil {
+		k.sick(q, now)
+	} else {
+		k.well(q)
+	}
+	return errors.Join(stepErr, bookErr)
 }
 
 // run runs claims of q: same-group claims as cohorts (a failed cohort is retried in halves down to single steps), the
@@ -331,12 +361,24 @@ func (k *workKit) step(ctx context.Context, q *kitQueue, now time.Time, c *kitCl
 // kitReset: a successful step's item starts its retries afresh. A row still paused (another failure after the
 // selection) keeps its pause.
 func kitReset(q *Request, rt kitRetry, key string, now time.Time) error {
-	return exec(q, `UPDATE `+rt.Table+` SET attempts=0,`+rt.Error+`=NULL WHERE `+rt.Key+`=$1 AND next_attempt_at<=$2 AND (attempts<>0 OR `+rt.Error+` IS NOT NULL)`, key, now)
+	return exec(q, `UPDATE `+rt.Table+` SET attempts=0,last_error=NULL WHERE `+rt.Key+`=$1 AND next_attempt_at<=$2 AND (attempts<>0 OR last_error IS NOT NULL)`, key, now)
 }
 
 // kitRestart: an item started afresh by its owner (a rebuilt project) is due at now with no attempts.
 func kitRestart(q *Request, rt kitRetry, key string, now time.Time) error {
-	return exec(q, `UPDATE `+rt.Table+` SET attempts=0,next_attempt_at=$2,`+rt.Error+`=NULL WHERE `+rt.Key+`=$1`, key, now)
+	return exec(q, `UPDATE `+rt.Table+` SET attempts=0,next_attempt_at=$2,last_error=NULL WHERE `+rt.Key+`=$1`, key, now)
+}
+
+// restart runs fn, an owner starting key of queue name afresh (a rebuilt project), and the item's restart in one write
+// transaction holding locks, retried on conflicts.
+func (k *workKit) restart(ctx context.Context, name, key string, locks []string, fn func(q *Request) error) error {
+	q := k.queue(name)
+	return runTxLocks(ctx, k.a, nil, true, locks, func(r *Request) error {
+		if err := fn(r); err != nil {
+			return err
+		}
+		return kitRestart(r, q.Retry, key, k.now())
+	})
 }
 
 // fail writes one failure of c: one guarded statement in its own transaction, so it records nothing once the guard
@@ -345,10 +387,10 @@ func (k *workKit) fail(ctx context.Context, q *kitQueue, now time.Time, c *kitCl
 	rt := q.Retry
 	next := now.Add(k.backoff(c.Attempts))
 	args := append([]any{c.Key, c.Attempts + 1, next, rt.Class(cause)}, c.Guard...)
-	set := `attempts=$2,next_attempt_at=$3,` + rt.Error + `=$4` + rt.Set
+	set := `attempts=$2,next_attempt_at=$3,last_error=$4` + rt.Set
 	sql := `UPDATE ` + rt.Table + ` SET ` + set + ` WHERE ` + rt.Key + `=$1 AND ` + rt.Guard
 	if rt.Upsert {
-		sql = `INSERT INTO ` + rt.Table + `(` + rt.Key + `,attempts,next_attempt_at,` + rt.Error + `) VALUES($1,$2,$3,$4) ON CONFLICT(` + rt.Key + `) DO UPDATE SET ` + set + ` WHERE ` + rt.Guard
+		sql = `INSERT INTO ` + rt.Table + `(` + rt.Key + `,attempts,next_attempt_at,last_error) VALUES($1,$2,$3,$4) ON CONFLICT(` + rt.Key + `) DO UPDATE SET ` + set + ` WHERE ` + rt.Guard
 	}
 	err := k.tx(ctx, func(r *Request) error {
 		if err := exec(r, sql, args...); err != nil {
@@ -360,7 +402,7 @@ func (k *workKit) fail(ctx context.Context, q *kitQueue, now time.Time, c *kitCl
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("resource %s failure of %s not recorded: %w", q.Name, c.Key, err)
+		return fmt.Errorf("work %s failure of %s not recorded: %w", q.Name, c.Key, err)
 	}
 	return nil
 }
@@ -372,44 +414,68 @@ func (k *workKit) runOne(ctx context.Context, name string, c *kitClaim) error {
 	return errors.Join(s, b)
 }
 
-// startResourceProcessor runs the kit when FLEET_RESOURCE_PROCESSOR=on (startup default off): a pass on every
-// fleet_resource_work notification and every 100 ms.
-func init() { onStart(startResourceProcessor) }
+// startWorkKit runs the kit: each queue whose On holds is passed every Period and at once on a fleet_work
+// notification naming it (an empty payload names every queue); one pass at a time.
+func init() { onStart(startWorkKit) }
 
-func startResourceProcessor(ctx context.Context, a *App) {
-	if os.Getenv("FLEET_RESOURCE_PROCESSOR") != "on" {
+func startWorkKit(ctx context.Context, a *App) {
+	k := kitOf(a)
+	var queues []*kitQueue
+	for _, q := range k.queues {
+		if q.On == nil || q.On() {
+			queues = append(queues, q)
+		}
+	}
+	if len(queues) == 0 {
 		return
 	}
-	k := kitOf(a)
-	wake := make(chan struct{}, 1)
+	wake := make(chan string, 64)
 	go kitListen(ctx, a.store.pool.Config().ConnConfig.ConnString(), wake)
 	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
+		next := make(map[string]time.Time, len(queues))
+		timer := time.NewTimer(0)
+		defer timer.Stop()
 		for ctx.Err() == nil {
-			if err := k.pass(ctx); err != nil && ctx.Err() == nil {
-				log.Printf("resource processor: %v", err)
+			now := time.Now()
+			soonest := now.Add(time.Hour)
+			for _, q := range queues {
+				if !now.Before(next[q.Name]) {
+					if err := k.passQueue(ctx, q); err != nil && ctx.Err() == nil {
+						log.Printf("work kit: %v", err)
+					}
+					next[q.Name] = time.Now().Add(q.Period)
+				}
+				if next[q.Name].Before(soonest) {
+					soonest = next[q.Name]
+				}
 			}
+			timer.Reset(time.Until(soonest))
 			select {
 			case <-ctx.Done():
 				return
-			case <-wake:
-			case <-ticker.C:
+			case name := <-wake:
+				for _, q := range queues {
+					if name == "" || name == q.Name {
+						next[q.Name] = time.Time{}
+					}
+				}
+			case <-timer.C:
 			}
 		}
 	}()
 }
 
-// kitListen: one listener per processor; a failed listener only delays work to the next tick.
-func kitListen(ctx context.Context, url string, wake chan<- struct{}) {
+// kitListen: one fleet_work listener per kit; a failed listener only delays work to each queue's period.
+func kitListen(ctx context.Context, url string, wake chan<- string) {
 	for ctx.Err() == nil {
 		conn, err := pgx.Connect(ctx, url)
 		if err == nil {
-			_, err = conn.Exec(ctx, "LISTEN fleet_resource_work")
+			_, err = conn.Exec(ctx, "LISTEN fleet_work")
 			for err == nil {
-				if _, err = conn.WaitForNotification(ctx); err == nil {
+				var n *pgconn.Notification
+				if n, err = conn.WaitForNotification(ctx); err == nil {
 					select {
-					case wake <- struct{}{}:
+					case wake <- n.Payload:
 					default:
 					}
 				}
@@ -424,8 +490,8 @@ func kitListen(ctx context.Context, url string, wake chan<- struct{}) {
 	}
 }
 
-// resourceStalled: the resource-stalled finding of a's processor, when one of its queues is failing.
-func resourceStalled(a *App) (contract.Finding, bool) {
+// workStalled: the work-stalled finding of a's kit, when the bookkeeping of one of its queues keeps failing.
+func workStalled(a *App) (contract.Finding, bool) {
 	v, ok := kitDefault.Load(a)
 	if !ok {
 		return contract.Finding{}, false
@@ -439,7 +505,7 @@ func resourceStalled(a *App) (contract.Finding, bool) {
 	if len(queues) == 0 {
 		return contract.Finding{}, false
 	}
-	f := contract.Finding{Rule: "resource-stalled", Subject: "resource processor", Value: float64(len(queues)), Cause: "problem:resource:stalled", Exemplars: []string{}}
-	text(&f, fmt.Sprintf("The resource processor keeps failing to select or record its %s work. Retry pauses are up to %s.", strings.Join(queues, ", "), kitRetryEvery()))
+	f := contract.Finding{Rule: "work-stalled", Subject: "work kit", Value: float64(len(queues)), Cause: "problem:work:stalled", Exemplars: []string{}}
+	text(&f, fmt.Sprintf("The work kit keeps failing to select or record the work of %s. Retry pauses are up to %s.", strings.Join(queues, ", "), kitRetryEvery()))
 	return f, true
 }

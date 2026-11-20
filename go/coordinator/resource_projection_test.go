@@ -63,7 +63,7 @@ func TestResourceBisectCohort(t *testing.T) {
 	if batches != 1 || singles != 0 {
 		t.Fatalf("a skipped cohort must wait whole: batches=%d singles=%d", batches, singles)
 	}
-	if q := kitOf(&App{}).queue("work"); q.Limit != resourceCohortSize {
+	if q := kitOf(&App{}).queue("resource-work"); q.Limit != resourceCohortSize {
 		t.Fatal("cohort size must equal the work queue's selection bound")
 	}
 }
@@ -697,7 +697,7 @@ func TestResourcePostgres(t *testing.T) {
 	if e = resourceMetadataPage(ctx, a, blocked); e != nil {
 		t.Fatal(e)
 	}
-	sql(`UPDATE resource_work SET next_attempt_at=clock_timestamp()+interval '1 hour',last_error_class='projection_failed' WHERE repair_id=$1::uuid`, blocked)
+	sql(`UPDATE resource_work SET next_attempt_at=clock_timestamp()+interval '1 hour',last_error='projection_failed' WHERE repair_id=$1::uuid`, blocked)
 	sql(`INSERT INTO execution(id,kind,state,project_id,data) VALUES('p-meta-later','tool_run','succeeded','META','{"connection":"later","tool":"x"}');
  INSERT INTO document(id,kind,data) VALUES('connection:later','api-connection','{"provider":"fixture"}')`)
 	later := scalar(`SELECT repair_id::text FROM resource_metadata_repair WHERE metadata_id='connection:later'`)

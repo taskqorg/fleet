@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"os"
 	"reflect"
 	"regexp"
 	"slices"
@@ -734,7 +735,7 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 		return err
 	}
 	k := kitOf(a)
-	stepErr, bookErr := k.one(ctx, k.queue("work"), k.now(), cs[0])
+	stepErr, bookErr := k.one(ctx, k.queue("resource-work"), k.now(), cs[0])
 	if errors.Is(stepErr, errResourceOwnership) && bookErr == nil {
 		return nil
 	}
@@ -901,7 +902,7 @@ func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error 
 		return err
 	}
 	k := kitOf(a)
-	stepErr, bookErr := k.run(ctx, k.queue("work"), k.now(), cs)
+	stepErr, bookErr := k.run(ctx, k.queue("resource-work"), k.now(), cs)
 	return errors.Join(stepErr, bookErr)
 }
 
@@ -1125,12 +1126,6 @@ func resourcePublish(q *Request, p string) (resultErr error) {
 	return err
 }
 
-// resourceProgressSQL is used by finalization; authorized readers use the same coverage predicates.
-// Unenumerated metadata jobs conservatively keep ALL scopes pending until enumeration completes.
-const resourceProgressSQL = `SELECT EXISTS(SELECT 1 FROM resource_work_scope WHERE project_id=$1)
- OR EXISTS(SELECT 1 FROM resource_repair_scope WHERE project_id=$1)
- OR EXISTS(SELECT 1 FROM resource_metadata_repair WHERE NOT done)`
-
 // resourceBuildStep (build queue): one transition of a project's build (buildTransition) under its project lock.
 func resourceBuildStep(q *Request, now time.Time, c *kitClaim) error {
 	if err := kitLock(q, "project:"+c.Key); err != nil {
@@ -1142,18 +1137,14 @@ func resourceBuildStep(q *Request, now time.Time, c *kitClaim) error {
 // resourceBuildPage runs one build step as a pass does, without writing a failure, waiting for its lock.
 func resourceBuildPage(ctx context.Context, a *App, p string) error {
 	k := kitOf(a)
-	return k.step(ctx, k.queue("build"), k.now(), &kitClaim{Key: p})
+	return k.step(ctx, k.queue("resource-build"), k.now(), &kitClaim{Key: p})
 }
 
 // resourceRebuild is internal maintenance, never called by a reader: a new generation and epoch start clearing; no
 // frozen valuation or source work is erased.
 func resourceRebuild(ctx context.Context, a *App, p string) error {
-	k := kitOf(a)
-	return runTxLocks(ctx, a, nil, true, []string{"project:" + p}, func(q *Request) error {
-		if err := buildTransition(q, p, buildRebuild); err != nil {
-			return err
-		}
-		return kitRestart(q, k.queue("build").Retry, p, k.now())
+	return kitOf(a).restart(ctx, "resource-build", p, []string{"project:" + p}, func(q *Request) error {
+		return buildTransition(q, p, buildRebuild)
 	})
 }
 
@@ -1176,25 +1167,29 @@ func resourceRepairStep(q *Request, now time.Time, c *kitClaim) error {
 // resourceMetadataPage runs one repair step as a pass does, without writing a failure.
 func resourceMetadataPage(ctx context.Context, a *App, repair string) error {
 	k := kitOf(a)
-	return k.step(ctx, k.queue("repair"), k.now(), &kitClaim{Key: repair})
+	return k.step(ctx, k.queue("resource-repair"), k.now(), &kitClaim{Key: repair})
 }
 
-// resourceQueues: the processor's queues in pass order: project builds (a missing build row is due too), metadata
-// repairs, execution work.
-func resourceQueues() []*kitQueue {
-	return []*kitQueue{
-		{Name: "build", Limit: 4, Due: resourceBuildsDue, Step: resourceBuildStep, Retry: kitRetry{Table: "resource_build", Key: "project_id", Error: "last_error",
-			Guard:  `NOT resource_build.ready AND resource_build.generation IS NOT DISTINCT FROM $5::uuid AND resource_build.updated_at IS NOT DISTINCT FROM $6::timestamptz`,
-			Set:    `,updated_at=clock_timestamp()`,
-			Upsert: true, Class: func(error) string { return "build_failed" }}},
-		{Name: "repair", Limit: 1, Due: resourceRepairsDue, Step: resourceRepairStep, Retry: kitRetry{Table: "resource_metadata_repair", Key: "repair_id", Error: "last_error",
-			Guard: `resource_metadata_repair.after_execution_id IS NOT DISTINCT FROM $5::text AND resource_metadata_repair.done=$6::boolean`,
-			Class: func(error) string { return "metadata_failed" }}},
-		{Name: "work", Limit: resourceCohortSize, Due: resourceWorkDue, Step: resourceReplaceStep, Batch: resourceReplaceBatchStep, Retry: kitRetry{Table: "resource_work", Key: "execution_id", Error: "last_error_class",
-			Guard: `(coalesce(cardinality($5::uuid[]),0)=0 OR EXISTS(SELECT 1 FROM resource_work g WHERE g.work_id=ANY($5::uuid[])))`,
-			Class: resourceErrorClass, OnFail: resourceRepairOwnership}},
-	}
+// The resource queues in pass order: project builds (a missing build row is due too), metadata repairs, execution
+// work. They run when FLEET_RESOURCE_PROCESSOR=on (read once at startup, default off); fleet_work wakes name them.
+func init() {
+	on := func() bool { return resourceProcessorOn }
+	kitRegister(&kitQueue{Name: "resource-build", Period: resourcePeriod, On: on, Limit: 4, Due: resourceBuildsDue, Step: resourceBuildStep, Retry: kitRetry{Table: "resource_build", Key: "project_id",
+		Guard:  `NOT resource_build.ready AND resource_build.generation IS NOT DISTINCT FROM $5::uuid AND resource_build.updated_at IS NOT DISTINCT FROM $6::timestamptz`,
+		Set:    `,updated_at=clock_timestamp()`,
+		Upsert: true, Class: func(error) string { return "build_failed" }}})
+	kitRegister(&kitQueue{Name: "resource-repair", Period: resourcePeriod, On: on, Limit: 1, Due: resourceRepairsDue, Step: resourceRepairStep, Retry: kitRetry{Table: "resource_metadata_repair", Key: "repair_id",
+		Guard: `resource_metadata_repair.after_execution_id IS NOT DISTINCT FROM $5::text AND resource_metadata_repair.done=$6::boolean`,
+		Class: func(error) string { return "metadata_failed" }}})
+	kitRegister(&kitQueue{Name: "resource-work", Period: resourcePeriod, On: on, Limit: resourceCohortSize, Due: resourceWorkDue, Step: resourceReplaceStep, Batch: resourceReplaceBatchStep, Retry: kitRetry{Table: "resource_work", Key: "execution_id",
+		Guard: `(coalesce(cardinality($5::uuid[]),0)=0 OR EXISTS(SELECT 1 FROM resource_work g WHERE g.work_id=ANY($5::uuid[])))`,
+		Class: resourceErrorClass, OnFail: resourceRepairOwnership}})
 }
+
+// resourcePeriod: how often each resource queue is passed besides its fleet_work wakes.
+const resourcePeriod = 100 * time.Millisecond
+
+var resourceProcessorOn = os.Getenv("FLEET_RESOURCE_PROCESSOR") == "on"
 
 // Projects are discovered from the configuration catalogue, never by rescanning execution history.
 func resourceBuildsDue(q *Request, now time.Time, limit int) ([]*kitClaim, error) {
@@ -1302,7 +1297,7 @@ func resourceReadPrepared(q *Request, p string) (resourcePreparedState, error) {
     (SELECT first_pending_at at FROM resource_work_scope WHERE project_id=$1 AND first_pending_at IS NOT NULL ORDER BY first_pending_at LIMIT 1)
     UNION ALL SELECT min(w.first_pending_at) FROM resource_work_scope ws JOIN resource_work w USING(work_id) WHERE ws.project_id=$1 AND ws.first_pending_at IS NULL
     UNION ALL SELECT min(r.created_at) FROM resource_metadata_repair r WHERE NOT done OR EXISTS(SELECT 1 FROM resource_repair_scope rs WHERE rs.repair_id=r.repair_id AND rs.project_id=$1)) ages),
-   coalesce((SELECT w.last_error_class FROM resource_work w WHERE w.last_error_class IS NOT NULL AND EXISTS(SELECT 1 FROM resource_work_scope ws WHERE ws.work_id=w.work_id AND ws.project_id=$1) ORDER BY w.first_pending_at,w.work_id LIMIT 1),
+   coalesce((SELECT w.last_error FROM resource_work w WHERE w.last_error IS NOT NULL AND EXISTS(SELECT 1 FROM resource_work_scope ws WHERE ws.work_id=w.work_id AND ws.project_id=$1) ORDER BY w.first_pending_at,w.work_id LIMIT 1),
     (SELECT r.last_error FROM resource_metadata_repair r WHERE r.last_error IS NOT NULL AND (NOT done OR EXISTS(SELECT 1 FROM resource_repair_scope rs WHERE rs.repair_id=r.repair_id AND rs.project_id=$1)) ORDER BY r.created_at,r.repair_id LIMIT 1))`, p).Scan(&out.Pending, &out.OldestPendingAt, &workError)
 		if out.ErrorClass == nil {
 			out.ErrorClass = workError

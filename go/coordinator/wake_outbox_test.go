@@ -88,7 +88,7 @@ func TestWakeOutboxPostgres(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer listener.Close(context.Background())
-	for _, channel := range []string{"fleet_change", "fleet_resource_work", "fleet_resource_summary"} {
+	for _, channel := range []string{"fleet_change", "fleet_work", "fleet_resource_summary"} {
 		if _, e = listener.Exec(ctx, "LISTEN "+channel); e != nil {
 			t.Fatal(e)
 		}
@@ -195,7 +195,7 @@ func TestWakeOutboxPostgres(t *testing.T) {
 		t.Fatal("duplicate intents", n, e)
 	}
 	saw := map[string]bool{}
-	for deadline := time.Now().Add(5 * time.Second); !saw["fleet_resource_summary/precise-☃"] || !saw["fleet_resource_summary/later-project"] || !saw["fleet_change/"] || !saw["fleet_resource_work/"]; {
+	for deadline := time.Now().Add(5 * time.Second); !saw["fleet_resource_summary/precise-☃"] || !saw["fleet_resource_summary/later-project"] || !saw["fleet_change/"] || !saw["fleet_work/resource-work"]; {
 		select {
 		case n := <-notifications:
 			saw[n.Channel+"/"+n.Payload] = true
