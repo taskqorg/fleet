@@ -3062,7 +3062,7 @@ type pipelineCatalogue struct {
 	RecommendedMethod    string          `json:"recommendedMethod"`
 	Methods              []struct {
 		ID       json.RawMessage `json:"id"`
-		Pipeline string          `json:"pipeline"`
+		Pipeline json.RawMessage `json:"pipeline"`
 	} `json:"methods"`
 }
 
@@ -3108,7 +3108,8 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 		var file string
 		for _, m := range c.Methods {
 			if id, ok := jsonString(m.ID); ok && id == want {
-				found, methodRaw, file = true, m.ID, m.Pipeline
+				found, methodRaw = true, m.ID
+				file, _ = jsonString(m.Pipeline)
 			}
 		}
 		if !found {
