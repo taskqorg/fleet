@@ -470,6 +470,15 @@ func answered(db *sql.DB, took, probe bool) {
 	stops[db] = &coordinatorStop{until: nowMs() + 2000}
 }
 
+// probeOpen: a probe whose answer says nothing about the coordinator; the stop stands and the next request probes.
+func probeOpen(db *sql.DB, probe bool) {
+	stopMu.Lock()
+	defer stopMu.Unlock()
+	if s := stops[db]; probe && s != nil {
+		s.probing = false
+	}
+}
+
 // outboxPass is one scan's state, shared by the lanes it started.
 type outboxPass struct {
 	db               *sql.DB
@@ -694,9 +703,15 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			return nil
 		}
 		a := sendWithClient(context.Background(), deliveryClient, p.url, p.token, r.route, r.route, value)
-		// A span batch the telemetry store refuses for now holds only its own lane, never the coordinator as a whole.
-		stop := a.kind == answerRetry && r.route != spansRoute && (a.unreachable || a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable)
-		answered(db, !stop, probe)
+		// A span batch the telemetry store refuses for now (429, 503) holds only its own lane, never the coordinator as a
+		// whole; it says nothing about the coordinator either, so a probe it was stays open for the next request.
+		busy := a.kind == answerRetry && (a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable)
+		stop := a.kind == answerRetry && a.unreachable || busy && r.route != spansRoute
+		if busy && r.route == spansRoute {
+			probeOpen(db, probe)
+		} else {
+			answered(db, !stop, probe)
+		}
 		var response any
 		switch a.kind {
 		case answerOK:
