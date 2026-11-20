@@ -1528,10 +1528,10 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 // labSelectedEvidence is evaluator-only; never stage this snapshot for producers/judges.
 func labSelectedEvidence(q *Request, trial doc) (doc, []labFile, error) {
 	entries, bindings, files := []any{}, []any{}, []labFile{}
-	for i, value := range pipelinePlanEntries(trial) {
-		entry := mapOf(value)
+	for i := range pipelineEntries(trial) {
+		entry := pipelineEntry(trial, i)
 		step := mapOf(anys(trial["steps"])[i])
-		item := doc{"id": entry["id"], "activation": entry["activation"], "executionRef": entry["executionRef"], "executionState": step["state"], "observation": firstString(step["observation"], "confirmed")}
+		item := doc{"id": entry.Id, "activation": entry.Activation, "executionRef": entry.ExecutionRef, "executionState": step["state"], "observation": firstString(step["observation"], "confirmed")}
 		definition := mapOf(anys(mapOf(trial["definition"])["steps"])[i])
 		if definition["kind"] == "api" {
 			item["api"] = doc{"connection": definition["connection"], "tool": definition["tool"], "arguments": step["arguments"], "mode": firstString(definition["mode"], "sync"), "output": definition["output"]}
@@ -1570,19 +1570,22 @@ func labSelectedEvidence(q *Request, trial doc) (doc, []labFile, error) {
 			return nil, nil, fail(409, "Evaluator evidence hash differs")
 		}
 		producer, _, _ := strings.Cut(output.Path, "/")
-		var entry doc
-		for _, value := range pipelinePlanEntries(trial) {
-			if mapOf(value)["id"] == producer {
-				entry = mapOf(value)
+		var entry *contract.PipelinePlanEntry
+		for i := range pipelineEntries(trial) {
+			if e := pipelineEntry(trial, i); e.Id == producer {
+				entry = e
 				break
 			}
 		}
 		if entry == nil {
 			return nil, nil, fail(409, "Evaluator producer unavailable")
 		}
-		ref := mapOf(entry["executionRef"])
+		var producerRun, producerExecution any
+		if ref := entry.ExecutionRef; ref != nil {
+			producerRun, producerExecution = ref.SourceRunId, ref.ExecutionId
+		}
 		path := "__fleet_evaluation/evidence/" + output.Path
-		bindings = append(bindings, doc{"path": output.Path, "evidencePath": path, "artifactId": output.ArtifactID, "sha256": artifact.ContentHash, "producerRunId": ref["sourceRunId"], "producerStepId": producer, "producerExecutionId": ref["executionId"]})
+		bindings = append(bindings, doc{"path": output.Path, "evidencePath": path, "artifactId": output.ArtifactID, "sha256": artifact.ContentHash, "producerRunId": producerRun, "producerStepId": producer, "producerExecutionId": producerExecution})
 		files = append(files, labFile{path, bytes})
 	}
 	return doc{"schema": "fleet.pipeline-control.v1", "consumerStepId": "final", "entries": entries, "inputs": bindings}, files, nil

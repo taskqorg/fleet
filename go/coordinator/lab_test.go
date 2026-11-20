@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"fleet/contract"
 )
 
 // Requirement: a Lab script check observes cancellation (docs/designs/fleet-lab.md, script evaluators). Risk: a hung check
@@ -193,9 +195,9 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 		if err := exec(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES('assessment-result','hello-world','lab',$1,$2,'application/json','output.json',$3,'stored')`, sha256hex(jsonBytes(output)), len(jsonBytes(output)), stepRow(trial, 0)); err != nil {
 			return err
 		}
-		entry := pipelinePlanEntry(trial, 0)
-		entry["inputs"] = []any{}
-		mapOf(entry["dispatch"])["phase"] = "handed_off"
+		entry := pipelineEntry(trial, 0)
+		entry.Inputs = []contract.PipelineInputBinding{}
+		entry.Dispatch.Phase = "handed_off"
 		mapOf(anys(trial["steps"])[0])["outputArtifactId"] = "assessment-result"
 		if err := completeStep(q, trial, 0, output, nil); err != nil {
 			return err

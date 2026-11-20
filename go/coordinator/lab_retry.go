@@ -209,7 +209,7 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 	snap := &suffixSnapshot{exp: exp, source: source, variant: variant, reuse: reuse, artifacts: map[string]*Artifact{}, expected: map[string]string{}, proofs: []any{}}
 	// Include every original prefix coordinator output, even when a child file overrides its staging path.
 	for i, x := range reuse {
-		if pipelinePlanEntry(source, i)["activation"] == "not_selected" {
+		if e := pipelineEntry(source, i); e != nil && e.Activation == contract.PipelineActivationNotSelected {
 			continue
 		}
 		s := mapOf(x)
@@ -265,17 +265,16 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 	// artifact. Verify those exact command bindings rather than guessing inputs
 	// from a flattened prefix projection.
 	for i := len(reuse); i < len(steps); i++ {
-		entry := pipelinePlanEntry(source, i)
-		if entry["activation"] != "selected" {
+		entry := pipelineEntry(source, i)
+		if entry == nil || entry.Activation != contract.PipelineActivationSelected {
 			continue
 		}
-		bindings := anys(entry["inputs"])
-		if bindings == nil || sha256hex([]byte(canonical(bindings))) != mapOf(entry["executionRef"])["sourceInputSha256"] {
+		bindings := entry.Inputs
+		if bindings == nil || entry.ExecutionRef == nil || sha256hex([]byte(canonical(bindings))) != entry.ExecutionRef.SourceInputSha256 {
 			return nil, suffixConflict("suffix input binding unavailable")
 		}
-		for _, value := range bindings {
-			binding := mapOf(value)
-			snap.expected[astr(binding["artifactId"])] = astr(binding["sha256"])
+		for _, binding := range bindings {
+			snap.expected[binding.ArtifactId] = binding.Sha256
 		}
 	}
 	artifactFacts := doc{}
@@ -315,10 +314,13 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 		if d["kind"] != "script" {
 			return nil, suffixConflict("suffix is not script-only")
 		}
-		entry := pipelinePlanEntry(source, i)
+		entry := pipelineEntry(source, i)
+		if entry == nil {
+			return nil, suffixConflict("missing suffix plan entry")
+		}
 		xid := astr(s["executionId"])
 		if xid == "" {
-			if entry["executionRef"] == nil && (entry["activation"] == "pending" || entry["activation"] == "blocked" || entry["activation"] == "not_selected") {
+			if entry.ExecutionRef == nil && (entry.Activation == contract.PipelineActivationPending || entry.Activation == contract.PipelineActivationBlocked || entry.Activation == contract.PipelineActivationNotSelected) {
 				continue
 			}
 			if s["state"] != "preparing" {
@@ -345,8 +347,8 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 		if err != nil {
 			return nil, err
 		}
-		dispatch := mapOf(entry["dispatch"])
-		if entry["activation"] != "selected" || mapOf(entry["executionRef"])["mode"] != "fresh" || dispatch["phase"] != "handed_off" || dispatch["commandId"] != command["id"] || dispatch["nativeExecutionId"] != xid {
+		x := entry.Dispatch
+		if entry.Activation != contract.PipelineActivationSelected || entryRefMode(entry) != contract.PipelineRefModeFresh || x == nil || x.Phase != contract.PipelineDispatchPhaseHandedOff || optString(x.CommandId) != command["id"] || optString(x.NativeExecutionId) != xid {
 			return nil, suffixConflict("selected launch plan binding changed")
 		}
 		session, err := get(q, e["sessionId"], "session")
@@ -391,9 +393,8 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 		}
 		// Only the first pending suffix command has inputs; later steps were never launched.
 		frozen := []any{}
-		for _, value := range anys(entry["inputs"]) {
-			binding := mapOf(value)
-			frozen = append(frozen, doc{"path": binding["path"], "artifactId": binding["artifactId"]})
+		for _, binding := range entry.Inputs {
+			frozen = append(frozen, doc{"path": binding.Path, "artifactId": binding.ArtifactId})
 		}
 		// Preparation sorts binding facts, while commands retain staging order.
 		ordered := func(values []any) string {

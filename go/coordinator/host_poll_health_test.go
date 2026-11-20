@@ -39,8 +39,8 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 			if err != nil || len(commands) != 1 {
 				return fmt.Errorf("script command: %v %d", err, len(commands))
 			}
-			dispatch := mapOf(pipelinePlanEntry(run, 0)["dispatch"])
-			dispatch["phase"], dispatch["nativeExecutionId"], dispatch["commandId"], dispatch["hostId"] = "prepared", nativeID, commands[0]["id"], "iso-host"
+			dispatch := pipelineEntry(run, 0).Dispatch
+			dispatch.Phase, dispatch.NativeExecutionId, dispatch.CommandId, dispatch.HostId = "prepared", ptr(nativeID), strp(commands[0], "id"), ptr("iso-host")
 			if err := putRun(q, run); err != nil {
 				return err
 			}
@@ -85,21 +85,21 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		native, err := get(q, mapOf(pipelinePlanEntry(run, 0)["dispatch"])["nativeExecutionId"], "execution")
+		native, err := get(q, optString(pipelineEntry(run, 0).Dispatch.NativeExecutionId), "execution")
 		if err != nil {
 			return err
 		}
 		if native["state"] != "cancelled" || native["stopDetail"] != "refused: Pipeline initiating actor no longer has project access" {
 			return fmt.Errorf("refused script's execution is %v (%v), want cancelled with the reason", native["state"], native["stopDetail"])
 		}
-		if phase := mapOf(pipelinePlanEntry(run, 0)["dispatch"])["phase"]; phase != "prepared" {
+		if phase := pipelineEntry(run, 0).Dispatch.Phase; phase != "prepared" {
 			return fmt.Errorf("refused run's dispatch is %v, want still prepared (never handed off)", phase)
 		}
 		run, err = getRun(q, "good")
 		if err != nil {
 			return err
 		}
-		if phase := mapOf(pipelinePlanEntry(run, 0)["dispatch"])["phase"]; phase != "handed_off" {
+		if phase := pipelineEntry(run, 0).Dispatch.Phase; phase != "handed_off" {
 			return fmt.Errorf("good run's dispatch is %v, want handed_off", phase)
 		}
 		return nil

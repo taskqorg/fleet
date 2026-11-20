@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"fleet/contract"
 )
 
 func planFixture(t *testing.T, id string) doc {
@@ -166,8 +168,8 @@ func TestPipelinePlanFalseHasNoExecution(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		entry := pipelinePlanEntry(got, 1)
-		if entry["activation"] != "not_selected" || entry["executionRef"] != nil || entry["dispatch"] != nil {
+		entry := pipelineEntry(got, 1)
+		if entry.Activation != "not_selected" || entry.ExecutionRef != nil || entry.Dispatch != nil {
 			t.Fatal("false guard acquired work", entry)
 		}
 		var count int
@@ -181,7 +183,7 @@ func TestPipelinePlanFalseHasNoExecution(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if view["steps"] != nil || len(pipelinePlanEntries(view)) != 3 || num(mapOf(view["planSummary"])["notSelected"]) != 1 {
+		if view["steps"] != nil || len(pipelineEntries(view)) != 3 || view["planSummary"].(contract.PipelinePlanSummary).NotSelected != 1 {
 			t.Fatal("public read lost the inactive plan", view)
 		}
 		return nil
@@ -200,7 +202,7 @@ func TestPipelinePlanWriteConflictAndRollback(t *testing.T) {
 	}
 	var stale doc
 	jsonRoundTrip(run, &stale)
-	revision := mapOf(run["plan"])["revision"]
+	revision := pipelineRevision(run)
 	abort := errors.New("fixture rollback")
 	err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
 		if err := putRun(q, run); err != nil {
@@ -211,7 +213,7 @@ func TestPipelinePlanWriteConflictAndRollback(t *testing.T) {
 		}
 		return abort
 	})
-	if !errors.Is(err, abort) || mapOf(run["plan"])["revision"] != revision {
+	if !errors.Is(err, abort) || pipelineRevision(run) != revision {
 		t.Fatal("rollback changed the plan revision", err, run)
 	}
 	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error { return putRun(q, run) }); err != nil {
@@ -257,8 +259,8 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 			command = commands[0]
 			step := mapOf(anys(run["steps"])[0])
 			step["state"], step["executionId"] = "running", nativeID
-			dispatch := mapOf(pipelinePlanEntry(run, 0)["dispatch"])
-			dispatch["phase"], dispatch["nativeExecutionId"], dispatch["commandId"], dispatch["hostId"] = "prepared", nativeID, command["id"], "plan-host"
+			dispatch := pipelineEntry(run, 0).Dispatch
+			dispatch.Phase, dispatch.NativeExecutionId, dispatch.CommandId, dispatch.HostId = "prepared", ptr(nativeID), strp(command, "id"), ptr("plan-host")
 			return putRun(q, run)
 		}); err != nil {
 			t.Fatal(err)
@@ -293,8 +295,8 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		dispatch := mapOf(pipelinePlanEntry(got, 0)["dispatch"])
-		if dispatch["phase"] != "handed_off" || dispatch["claimId"] == nil {
+		dispatch := pipelineEntry(got, 0).Dispatch
+		if dispatch.Phase != "handed_off" || dispatch.ClaimId == nil {
 			return errors.New("handoff claim was not persisted")
 		}
 		return nil
@@ -318,7 +320,7 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if fresh["state"] != "cancelled" || pipelinePlanEntry(fresh, 1)["activation"] != "blocked" || pipelinePlanEntry(fresh, 2)["activation"] != "blocked" {
+		if fresh["state"] != "cancelled" || pipelineEntry(fresh, 1).Activation != "blocked" || pipelineEntry(fresh, 2).Activation != "blocked" {
 			return errors.New("cancel did not block future plan entries")
 		}
 		stored, err := get(q, pending["id"], "command")
@@ -357,12 +359,12 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 			}
 			step := mapOf(anys(run["steps"])[0])
 			step["state"], step["executionId"] = "running", nativeID
-			dispatch := mapOf(pipelinePlanEntry(run, 0)["dispatch"])
+			dispatch := pipelineEntry(run, 0).Dispatch
 			commands, err := all(q, "command", doc{"executionId": nativeID, "kind": "script"})
 			if err != nil || len(commands) != 1 {
 				return fmt.Errorf("script command: %v %d", err, len(commands))
 			}
-			dispatch["phase"], dispatch["nativeExecutionId"], dispatch["commandId"], dispatch["hostId"] = "prepared", nativeID, commands[0]["id"], "plan-host"
+			dispatch.Phase, dispatch.NativeExecutionId, dispatch.CommandId, dispatch.HostId = "prepared", ptr(nativeID), strp(commands[0], "id"), ptr("plan-host")
 			if err := putRun(q, run); err != nil {
 				return err
 			}
@@ -458,7 +460,7 @@ func TestPipelineFinalizerBinding(t *testing.T) {
 				}
 				route := mapOf(anys(run["steps"])[0])
 				route["outputArtifactId"] = "route-result"
-				mapOf(pipelinePlanEntry(run, 0)["dispatch"])["phase"] = "handed_off"
+				pipelineEntry(run, 0).Dispatch.Phase = "handed_off"
 				if err := completeStep(q, run, 0, output, nil); err != nil {
 					return err
 				}
@@ -474,9 +476,13 @@ func TestPipelineFinalizerBinding(t *testing.T) {
 					return err
 				}
 				inputs := []any{binding, doc{"path": "__fleet_control/pipeline.json", "artifactId": "final-control", "sha256": sha256hex(jsonBytes(control))}}
-				entry := pipelinePlanEntry(run, 2)
-				entry["inputs"] = inputs
-				mapOf(entry["executionRef"])["sourceInputSha256"] = sha256hex([]byte(canonical(inputs)))
+				entry := pipelineEntry(run, 2)
+				typed, err := asT[[]contract.PipelineInputBinding](inputs)
+				if err != nil {
+					return err
+				}
+				entry.Inputs = typed
+				entry.ExecutionRef.SourceInputSha256 = sha256hex([]byte(canonical(inputs)))
 				source := doc{}
 				for k, v := range binding {
 					source[k] = v
@@ -489,7 +495,7 @@ func TestPipelineFinalizerBinding(t *testing.T) {
 					return err
 				}
 				mapOf(anys(run["steps"])[2])["outputArtifactId"] = "final-result"
-				mapOf(entry["dispatch"])["phase"] = "handed_off"
+				entry.Dispatch.Phase = "handed_off"
 				if err := completeStep(q, run, 2, final, nil); err != nil {
 					return err
 				}
@@ -502,7 +508,7 @@ func TestPipelineFinalizerBinding(t *testing.T) {
 				if run["state"] != "failed" || run["canonicalResult"] != nil {
 					t.Fatal(run)
 				}
-			} else if run["state"] != "succeeded" || mapOf(run["canonicalResult"])["mode"] != "finalizer" || pipelinePlanEntry(run, 1)["activation"] != "not_selected" {
+			} else if run["state"] != "succeeded" || mapOf(run["canonicalResult"])["mode"] != "finalizer" || pipelineEntry(run, 1).Activation != "not_selected" {
 				t.Fatal(run)
 			}
 		})
@@ -531,9 +537,9 @@ func TestPipelineVerifiedPrefixReuse(t *testing.T) {
 		if err := exec(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES('prefix-output','hello-world','lab',$1,$2,'application/json','output.json',$3,'stored')`, sha256hex(jsonBytes(output)), len(jsonBytes(output)), stepRow(old, 0)); err != nil {
 			return err
 		}
-		entry := pipelinePlanEntry(old, 0)
-		entry["inputs"] = []any{}
-		mapOf(entry["dispatch"])["phase"] = "handed_off"
+		entry := pipelineEntry(old, 0)
+		entry.Inputs = []contract.PipelineInputBinding{}
+		entry.Dispatch.Phase = "handed_off"
 		mapOf(anys(old["steps"])[0])["outputArtifactId"] = "prefix-output"
 		if err := completeStep(q, old, 0, output, nil); err != nil {
 			return err
@@ -565,7 +571,7 @@ func TestPipelineVerifiedPrefixReuse(t *testing.T) {
 		if err = q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM execution WHERE parent_execution_id=$1", derived["id"]).Scan(&n); err != nil {
 			return err
 		}
-		if n != 0 || mapOf(pipelinePlanEntry(derived, 0)["executionRef"])["executionId"] != stepRow(old, 0) || mapOf(pipelinePlanEntry(derived, 0)["executionRef"])["mode"] != "reused" {
+		if n != 0 || refExecutionID(pipelineEntry(derived, 0)) != stepRow(old, 0) || entryRefMode(pipelineEntry(derived, 0)) != "reused" {
 			return errors.New("reuse fabricated work or changed source identity")
 		}
 		return finishRun(q, derived, "succeeded", "")
@@ -599,8 +605,8 @@ func TestPipelineRecoveryRejectsUnconfirmedExternalAction(t *testing.T) {
 	run := planFixture(t, "unknown-action")
 	definition := mapOf(run["definition"])
 	mapOf(anys(definition["steps"])[0])["kind"] = "api"
-	entry := pipelinePlanEntry(run, 0)
-	entry["activation"], entry["executionRef"], entry["dispatch"] = "selected", doc{"mode": "fresh"}, doc{"phase": "handed_off"}
+	entry := pipelineEntry(run, 0)
+	entry.Activation, entry.ExecutionRef, entry.Dispatch = "selected", &contract.PipelineExecutionRef{Mode: "fresh"}, &contract.PipelineDispatch{Phase: "handed_off"}
 	mapOf(anys(run["steps"])[0])["observation"] = "unconfirmed"
 	var conflict *HTTPError
 	if err := pipelineRecoveryFence(nil, run); !errors.As(err, &conflict) || conflict.Code != 409 {
@@ -622,9 +628,9 @@ func TestPipelineCompletionRestoresFullStateOnDBRetry(t *testing.T) {
 		if err := selectPipelineStep(q, run, 0); err != nil {
 			return err
 		}
-		entry := pipelinePlanEntry(run, 0)
-		entry["inputs"] = []any{}
-		mapOf(entry["dispatch"])["phase"] = "handed_off"
+		entry := pipelineEntry(run, 0)
+		entry.Inputs = []contract.PipelineInputBinding{}
+		entry.Dispatch.Phase = "handed_off"
 		mapOf(anys(run["steps"])[0])["state"] = "running"
 		if err := putRun(q, run); err != nil {
 			return err
@@ -638,7 +644,7 @@ func TestPipelineCompletionRestoresFullStateOnDBRetry(t *testing.T) {
 	attempts := 0
 	if err := runPipelineTransition(env.ctx, env.app, run, func(q *Request) error {
 		attempts++
-		if mapOf(pipelinePlanEntry(run, 0)["dispatch"])["phase"] != "handed_off" || step["state"] != "running" || step["outputArtifactId"] != "completion-output" {
+		if pipelineEntry(run, 0).Dispatch.Phase != "handed_off" || step["state"] != "running" || step["outputArtifactId"] != "completion-output" {
 			return errors.New("retry leaked mutated state or lost retained answer")
 		}
 		if err := completeStep(q, run, 0, output, nil); err != nil {
@@ -651,7 +657,7 @@ func TestPipelineCompletionRestoresFullStateOnDBRetry(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if attempts != 2 || step["state"] != "succeeded" || mapOf(pipelinePlanEntry(run, 0)["dispatch"])["phase"] != "settled" {
+	if attempts != 2 || step["state"] != "succeeded" || pipelineEntry(run, 0).Dispatch.Phase != "settled" {
 		t.Fatal("completion retry failed", attempts, run)
 	}
 	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
@@ -687,10 +693,10 @@ func TestPipelineGlobalOwnerAuthority(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if email == testOwnerEmail && pipelinePlanEntry(run, 0)["activation"] != "selected" {
+		if email == testOwnerEmail && pipelineEntry(run, 0).Activation != "selected" {
 			t.Fatal("global owner run denied", run)
 		}
-		if email != testOwnerEmail && pipelinePlanEntry(run, 0)["activation"] != "blocked" {
+		if email != testOwnerEmail && pipelineEntry(run, 0).Activation != "blocked" {
 			t.Fatal("global run borrowed owner authority", run)
 		}
 	}

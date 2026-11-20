@@ -19,14 +19,81 @@ import (
 
 const pipelinePlanVersion = 1
 
-func pipelinePlanEntries(run doc) []any { return anys(mapOf(run["plan"])["entries"]) }
+// pipelinePlanOfRun: a run's plan (contract.PipelinePlan, the run document's plan from getRun, nil for a run without
+// one); a plan written as JSON (a fixture's map) is read into it once.
+func pipelinePlanOfRun(run doc) *contract.PipelinePlan {
+	switch p := run["plan"].(type) {
+	case *contract.PipelinePlan:
+		return p
+	case nil:
+		return nil
+	default:
+		plan, err := asT[contract.PipelinePlan](p)
+		if err != nil {
+			return nil
+		}
+		run["plan"] = &plan
+		return &plan
+	}
+}
 
-func pipelinePlanEntry(run doc, index int) doc {
-	entries := pipelinePlanEntries(run)
+// pipelineEntries: the entries of a run's plan, in index order (aliases: an edit is the plan's).
+func pipelineEntries(run doc) []contract.PipelinePlanEntry {
+	if p := pipelinePlanOfRun(run); p != nil {
+		return p.Entries
+	}
+	return nil
+}
+
+// pipelineEntry: entry index of a run's plan, nil out of range.
+func pipelineEntry(run doc, index int) *contract.PipelinePlanEntry {
+	entries := pipelineEntries(run)
 	if index < 0 || index >= len(entries) {
 		return nil
 	}
-	return mapOf(entries[index])
+	return &entries[index]
+}
+
+// pipelinePlanEntry: entry index as the record host_poll.go reads (a copy; nil out of range).
+func pipelinePlanEntry(run doc, index int) doc {
+	e := pipelineEntry(run, index)
+	if e == nil {
+		return nil
+	}
+	var out doc
+	if json.Unmarshal(jsonBytes(e), &out) != nil {
+		return nil
+	}
+	return out
+}
+
+func refExecutionID(e *contract.PipelinePlanEntry) string {
+	if e.ExecutionRef == nil {
+		return ""
+	}
+	return e.ExecutionRef.ExecutionId
+}
+
+func entryRefMode(e *contract.PipelinePlanEntry) contract.PipelineRefMode {
+	if e.ExecutionRef == nil {
+		return ""
+	}
+	return e.ExecutionRef.Mode
+}
+
+func dispatchPhase(e *contract.PipelinePlanEntry) contract.PipelineDispatchPhase {
+	if e.Dispatch == nil {
+		return ""
+	}
+	return e.Dispatch.Phase
+}
+
+// optString: *p, nil when absent (as a record's field compares).
+func optString(p *string) any {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
 
 // initPipelinePlan creates no execution. Static and guarded definitions share
@@ -37,11 +104,11 @@ func initPipelinePlan(run doc) error {
 		return fail(403, "Pipeline requires its original initiating actor")
 	}
 	definition := mapOf(run["definition"])
-	entries, capabilities := []any{}, []any{}
+	entries, capabilities := []contract.PipelinePlanEntry{}, []any{}
 	seen := map[string]bool{}
 	for i, v := range anys(definition["steps"]) {
 		step := mapOf(v)
-		entries = append(entries, doc{"id": step["id"], "index": i, "definitionSha256": sha256hex([]byte(canonical(step))), "activation": "pending"})
+		entries = append(entries, contract.PipelinePlanEntry{Id: astr(step["id"]), Index: int64(i), DefinitionSha256: sha256hex([]byte(canonical(step))), Activation: contract.PipelineActivationPending})
 		kind, id := "", ""
 		if step["kind"] == "api" {
 			kind, id = "connection", astr(step["connection"])
@@ -69,14 +136,14 @@ func initPipelinePlan(run doc) error {
 		}
 	}
 	run["planVersion"] = pipelinePlanVersion
-	run["plan"] = doc{"definitionSha256": run["definitionSha256"], "revision": 0, "entries": entries}
+	run["plan"] = &contract.PipelinePlan{DefinitionSha256: astr(run["definitionSha256"]), Revision: 0, Entries: entries}
 	run["authority"] = doc{"actorEmail": actor, "projectId": run["projectId"], "requestedCapabilities": capabilities}
 	return nil
 }
 
 func requirePipelinePlan(run doc) error {
 	version, ok := intOK(run["planVersion"])
-	if !ok || version != pipelinePlanVersion || len(pipelinePlanEntries(run)) != len(anys(mapOf(run["definition"])["steps"])) {
+	if !ok || version != pipelinePlanVersion || len(pipelineEntries(run)) != len(anys(mapOf(run["definition"])["steps"])) {
 		return pipelineFormatError()
 	}
 	return nil
@@ -114,7 +181,7 @@ type pipelineWriteKey struct {
 
 type pipelineWriteState struct {
 	revision int64
-	plans    []doc
+	plans    []*contract.PipelinePlan
 }
 
 var pipelineWrites sync.Map
@@ -270,8 +337,8 @@ func pipelineAuthorityStampWithin(q *Request, run doc, index int, connection, to
 }
 
 func pipelineStepIndex(run doc, executionID string) int {
-	for i := range pipelinePlanEntries(run) {
-		if mapOf(pipelinePlanEntry(run, i)["executionRef"])["executionId"] == executionID {
+	for i := range pipelineEntries(run) {
+		if refExecutionID(pipelineEntry(run, i)) == executionID {
 			return i
 		}
 	}
@@ -296,9 +363,9 @@ func claimPipelineAPI(q *Request, runID, executionID, connection, tool string) (
 	if run["state"] != "running" || index < 0 {
 		return run, "", false, false, nil
 	}
-	entry := pipelinePlanEntry(run, index)
+	entry := pipelineEntry(run, index)
 	def := mapOf(anys(mapOf(run["definition"])["steps"])[index])
-	dispatch := mapOf(entry["dispatch"])
+	phase := dispatchPhase(entry)
 	if def["kind"] != "api" || def["connection"] != connection {
 		return run, "", false, false, fail(409, "Pipeline call does not match its declared API step")
 	}
@@ -309,10 +376,10 @@ func claimPipelineAPI(q *Request, runID, executionID, connection, tool string) (
 			return run, "", false, false, err
 		}
 		meta := mapOf(providerTools(astr(c["provider"]))[tool])
-		if meta["method"] != "GET" || meta["idempotent"] != true || dispatch["phase"] != "handed_off" {
+		if meta["method"] != "GET" || meta["idempotent"] != true || phase != contract.PipelineDispatchPhaseHandedOff {
 			return run, "", false, false, fail(409, "Pipeline observation is not a granted idempotent job read")
 		}
-	} else if dispatch["phase"] != "reserved" {
+	} else if phase != contract.PipelineDispatchPhaseReserved {
 		return run, "", false, false, nil
 	}
 	stamp, _, err := pipelineAuthorityStamp(q, run, index, connection, tool, "")
@@ -339,8 +406,7 @@ func claimPipelineAPI(q *Request, runID, executionID, connection, tool string) (
 		return run, "", false, false, fail(403, "Pipeline token was not granted")
 	}
 	if !observe {
-		dispatch["phase"], dispatch["claimId"], dispatch["ownerBootId"] = "handed_off", newID(), pipelineBootID
-		dispatch["handedOffAtMs"], dispatch["authoritySha256"] = nowMs(), stamp
+		pipelineHandOff(entry.Dispatch, stamp)
 		if err := putRun(q, run); err != nil {
 			return run, "", false, false, err
 		}
@@ -367,15 +433,15 @@ func preparePipelineCommand(q *Request, execution, command doc) error {
 	if step["executionId"] != execution["id"] {
 		return fail(409, "Pipeline native execution identity changed")
 	}
-	dispatch := mapOf(pipelinePlanEntry(run, index)["dispatch"])
-	if dispatch["phase"] != "reserved" {
+	entry := pipelineEntry(run, index)
+	if dispatchPhase(entry) != contract.PipelineDispatchPhaseReserved {
 		return fail(409, "Pipeline command was already prepared")
 	}
 	if _, _, err := pipelineAuthorityStamp(q, run, index, "", "", astr(command["hostId"])); err != nil {
 		return err
 	}
-	dispatch["phase"], dispatch["nativeExecutionId"], dispatch["commandId"] = "prepared", execution["id"], command["id"]
-	dispatch["hostId"] = command["hostId"]
+	d := entry.Dispatch
+	d.Phase, d.NativeExecutionId, d.CommandId, d.HostId = contract.PipelineDispatchPhasePrepared, strp(execution, "id"), strp(command, "id"), strp(command, "hostId")
 	return putRun(q, run)
 }
 
@@ -414,18 +480,19 @@ func handoffPipelineCommand(q *Request, execution, command doc) (bool, error) {
 	if step["executionId"] != execution["id"] {
 		return false, stopPipelineCommand(q, command, "pipeline command execution differs")
 	}
-	dispatch := mapOf(pipelinePlanEntry(run, index)["dispatch"])
-	if dispatch["commandId"] != command["id"] || dispatch["nativeExecutionId"] != execution["id"] || dispatch["hostId"] != command["hostId"] {
+	entry := pipelineEntry(run, index)
+	d := entry.Dispatch
+	if d == nil || optString(d.CommandId) != command["id"] || optString(d.NativeExecutionId) != execution["id"] || optString(d.HostId) != command["hostId"] {
 		return false, stopPipelineCommand(q, command, "pipeline command binding differs")
 	}
 	stamp, connections, err := pipelineAuthorityStamp(q, run, index, "", "", astr(command["hostId"]))
 	if err != nil {
 		return false, err
 	}
-	if dispatch["phase"] == "handed_off" {
+	if d.Phase == contract.PipelineDispatchPhaseHandedOff {
 		return true, nil // same immutable command, no token mint or new invocation
 	}
-	if dispatch["phase"] != "prepared" {
+	if d.Phase != contract.PipelineDispatchPhasePrepared {
 		return false, nil
 	}
 	if len(connections) > 0 {
@@ -443,9 +510,14 @@ func handoffPipelineCommand(q *Request, execution, command doc) (bool, error) {
 			return false, err
 		}
 	}
-	dispatch["phase"], dispatch["claimId"], dispatch["ownerBootId"] = "handed_off", newID(), pipelineBootID
-	dispatch["handedOffAtMs"], dispatch["authoritySha256"] = nowMs(), stamp
+	pipelineHandOff(d, stamp)
 	return true, putRun(q, run)
+}
+
+// pipelineHandOff: a dispatch is handed off now by this coordinator, under authority stamp.
+func pipelineHandOff(d *contract.PipelineDispatch, stamp string) {
+	claim, boot, at := newID(), pipelineBootID, nowMs()
+	d.Phase, d.ClaimId, d.OwnerBootId, d.HandedOffAtMs, d.AuthoritySha256 = contract.PipelineDispatchPhaseHandedOff, &claim, &boot, &at, &stamp
 }
 
 // guardPipelineWrite rejects a stale caller before any row is overwritten.
@@ -455,8 +527,8 @@ func guardPipelineWrite(q *Request, run doc) error {
 	if err := requirePipelinePlan(run); err != nil {
 		return err
 	}
-	plan := mapOf(run["plan"])
-	want, _ := intOK(plan["revision"])
+	plan := pipelinePlanOfRun(run)
+	want := plan.Revision
 	stored, err := q.db().PipelineStoredPlan(q.ctx(), astr(run["id"]))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
@@ -466,7 +538,7 @@ func guardPipelineWrite(q *Request, run doc) error {
 		if stored.PlanVersion != strconv.Itoa(pipelinePlanVersion) || stored.Entries != stored.Steps {
 			return pipelineFormatError()
 		}
-		if stored.Revision != int64(want) || stored.DefinitionSha256 != astr(plan["definitionSha256"]) {
+		if stored.Revision != want || stored.DefinitionSha256 != plan.DefinitionSha256 {
 			return fail(409, "Pipeline plan changed before this transition")
 		}
 		next++
@@ -480,33 +552,35 @@ func guardPipelineWrite(q *Request, run doc) error {
 		onEnd(q.tx, func(committed bool) {
 			if !committed {
 				for _, p := range state.plans {
-					p["revision"] = state.revision
+					p.Revision = state.revision
 				}
 			}
 			pipelineWrites.Delete(key)
 		})
 	}
-	plan["revision"] = next
+	plan.Revision = next
 	return nil
 }
 
-func pipelinePlanSummary(run doc) doc {
-	out := doc{"planned": 0, "pending": 0, "selected": 0, "notSelected": 0, "blocked": 0, "freshExecutions": 0, "reusedExecutions": 0}
-	inc := func(key string) { n, _ := intOK(out[key]); out[key] = n + 1 }
-	for _, value := range pipelinePlanEntries(run) {
-		e := mapOf(value)
-		inc("planned")
-		key := astr(e["activation"])
-		if key == "not_selected" {
-			key = "notSelected"
-		}
-		inc(key)
-		if e["activation"] == "selected" {
-			if mapOf(e["executionRef"])["mode"] == "reused" {
-				inc("reusedExecutions")
+func pipelinePlanSummary(run doc) contract.PipelinePlanSummary {
+	var out contract.PipelinePlanSummary
+	for i := range pipelineEntries(run) {
+		e := pipelineEntry(run, i)
+		out.Planned++
+		switch e.Activation {
+		case contract.PipelineActivationPending:
+			out.Pending++
+		case contract.PipelineActivationSelected:
+			out.Selected++
+			if entryRefMode(e) == contract.PipelineRefModeReused {
+				out.ReusedExecutions++
 			} else {
-				inc("freshExecutions")
+				out.FreshExecutions++
 			}
+		case contract.PipelineActivationNotSelected:
+			out.NotSelected++
+		case contract.PipelineActivationBlocked:
+			out.Blocked++
 		}
 	}
 	return out
@@ -520,8 +594,8 @@ func pipelineReservedInput(path string) bool {
 // selectPipelineStep is called after the current run was read under its write
 // transaction. Its execution reservation and decision are persisted together.
 func selectPipelineStep(q *Request, run doc, index int) error {
-	entry := pipelinePlanEntry(run, index)
-	if entry == nil || entry["activation"] != "pending" {
+	entry := pipelineEntry(run, index)
+	if entry == nil || entry.Activation != contract.PipelineActivationPending {
 		return nil
 	}
 	definition := mapOf(anys(mapOf(run["definition"])["steps"])[index])
@@ -564,14 +638,12 @@ func selectPipelineStep(q *Request, run doc, index int) error {
 			decision = pipelineBlockedDecision(when, reason, nowMs())
 		}
 	}
-	entry["activation"] = string(decision.Outcome)
-	if entry["activation"] == "blocked" {
-		entry["decision"] = decision
-		entry["problem"] = doc{"code": string(decision.Reason), "message": "Condition evidence is unavailable or invalid"}
+	entry.Activation, entry.Decision = contract.PipelineActivation(decision.Outcome), &decision
+	if entry.Activation == contract.PipelineActivationBlocked {
+		entry.Problem = &contract.PipelinePlanProblem{Code: decision.Reason, Message: "Condition evidence is unavailable or invalid"}
 		return finishRun(q, run, "failed", string(decision.Reason))
 	}
-	if entry["activation"] == "not_selected" {
-		entry["decision"] = decision
+	if entry.Activation == contract.PipelineActivationNotSelected {
 		return putRun(q, run)
 	}
 	connection, tool := "", ""
@@ -579,13 +651,11 @@ func selectPipelineStep(q *Request, run doc, index int) error {
 		connection, tool = astr(definition["connection"]), astr(definition["tool"])
 	}
 	if _, _, err := pipelineAuthorityStamp(q, run, index, connection, tool, ""); err != nil {
-		entry["activation"] = "blocked"
+		entry.Activation = contract.PipelineActivationBlocked
 		decision.Outcome, decision.Reason = contract.PipelineDecisionOutcomeBlocked, contract.PipelinePlanReasonAuthorityDenied
-		entry["decision"] = decision
-		entry["problem"] = doc{"code": "authority_denied", "message": "Current pipeline authority was denied"}
+		entry.Problem = &contract.PipelinePlanProblem{Code: contract.PipelinePlanReasonAuthorityDenied, Message: "Current pipeline authority was denied"}
 		return finishRun(q, run, "failed", "authority_denied")
 	}
-	entry["decision"] = decision
 	row := stepRow(run, index)
 	existing, err := q.db().PipelineExecutionExists(q.ctx(), row)
 	if err != nil {
@@ -594,8 +664,9 @@ func selectPipelineStep(q *Request, run doc, index int) error {
 	if existing {
 		return fail(409, "Pipeline execution reservation identity conflict")
 	}
-	entry["executionRef"] = doc{"mode": "fresh", "executionId": row, "sourceRunId": run["id"], "sourceStepId": entry["id"], "sourceStepIndex": index, "sourceDefinitionSha256": run["definitionSha256"], "sourceInputSha256": sha256hex([]byte("[]"))}
-	entry["dispatch"] = doc{"phase": "reserved"}
+	entry.ExecutionRef = &contract.PipelineExecutionRef{Mode: contract.PipelineRefModeFresh, ExecutionId: row, SourceRunId: astr(run["id"]), SourceStepId: entry.Id,
+		SourceStepIndex: int64(index), SourceDefinitionSha256: astr(run["definitionSha256"]), SourceInputSha256: sha256hex([]byte("[]"))}
+	entry.Dispatch = &contract.PipelineDispatch{Phase: contract.PipelineDispatchPhaseReserved}
 	step := mapOf(anys(run["steps"])[index])
 	step["state"] = "preparing"
 	return putRun(q, run)
@@ -603,23 +674,22 @@ func selectPipelineStep(q *Request, run doc, index int) error {
 
 type pipelinePreparedInputs struct {
 	files    []any
-	bindings []any
+	bindings []contract.PipelineInputBinding
 	example  []any
 }
 
 // materializePipelineInputs performs object I/O outside plan write locks. The
 // caller later freezes these exact bindings using its expected plan revision.
 func materializePipelineInputs(ctx context.Context, a *App, run doc, index int) (*pipelinePreparedInputs, error) {
-	prepared := &pipelinePreparedInputs{files: []any{}, bindings: []any{}, example: append([]any{}, anys(run["exampleInputs"])...)}
-	if frozen := anys(pipelinePlanEntry(run, index)["inputs"]); frozen != nil {
+	prepared := &pipelinePreparedInputs{files: []any{}, bindings: []contract.PipelineInputBinding{}, example: append([]any{}, anys(run["exampleInputs"])...)}
+	if frozen := pipelineEntry(run, index).Inputs; frozen != nil {
 		if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-			for _, value := range frozen {
-				binding := mapOf(value)
-				artifact, err := artifactRow(withTx(q), a, astr(binding["artifactId"]))
-				if err != nil || artifact.State != "stored" || !same(artifact.ProjectID, run["projectId"]) || artifact.ContentHash != binding["sha256"] {
+			for _, binding := range frozen {
+				artifact, err := artifactRow(withTx(q), a, binding.ArtifactId)
+				if err != nil || artifact.State != "stored" || !same(artifact.ProjectID, run["projectId"]) || artifact.ContentHash != binding.Sha256 {
 					return fail(409, "Frozen pipeline input is unavailable or changed")
 				}
-				prepared.files = append(prepared.files, doc{"artifactId": binding["artifactId"], "path": binding["path"]})
+				prepared.files = append(prepared.files, doc{"artifactId": binding.ArtifactId, "path": binding.Path})
 			}
 			return nil
 		}); err != nil {
@@ -675,13 +745,14 @@ func materializePipelineInputs(ctx context.Context, a *App, run doc, index int) 
 			if artifact.State != "stored" || !same(artifact.ProjectID, run["projectId"]) {
 				return fail(409, "Unavailable or foreign pipeline input")
 			}
-			binding := doc{"path": name, "artifactId": file["artifactId"], "sha256": artifact.ContentHash}
+			binding := contract.PipelineInputBinding{Path: name, ArtifactId: astr(file["artifactId"]), Sha256: artifact.ContentHash}
 			producer, _, _ := strings.Cut(name, "/")
-			for i, v := range pipelinePlanEntries(run)[:index] {
-				entry := mapOf(v)
-				if entry["id"] == producer && entry["activation"] == "selected" {
-					ref := mapOf(entry["executionRef"])
-					binding["producerRunId"], binding["producerStepId"], binding["producerExecutionId"] = ref["sourceRunId"], entry["id"], ref["executionId"]
+			for i := range pipelineEntries(run)[:index] {
+				entry := pipelineEntry(run, i)
+				if entry.Id == producer && entry.Activation == contract.PipelineActivationSelected {
+					ref := entry.ExecutionRef
+					stepID := entry.Id
+					binding.ProducerRunId, binding.ProducerStepId, binding.ProducerExecutionId = &ref.SourceRunId, &stepID, &ref.ExecutionId
 					if mapOf(anys(run["steps"])[i])["state"] != "succeeded" {
 						return fail(409, "Pipeline input producer has not succeeded")
 					}
@@ -693,16 +764,14 @@ func materializePipelineInputs(ctx context.Context, a *App, run doc, index int) 
 	}); err != nil {
 		return nil, err
 	}
-	sort.Slice(prepared.bindings, func(i, j int) bool {
-		return astr(mapOf(prepared.bindings[i])["path"]) < astr(mapOf(prepared.bindings[j])["path"])
-	})
+	sort.Slice(prepared.bindings, func(i, j int) bool { return prepared.bindings[i].Path < prepared.bindings[j].Path })
 	if num(mapOf(run["definition"])["version"]) == 3 {
 		entries := []any{}
-		for i, v := range pipelinePlanEntries(run)[:index] {
-			entry := mapOf(v)
-			metadata := doc{"id": entry["id"], "index": i, "activation": entry["activation"]}
-			if entry["executionRef"] != nil {
-				metadata["executionRef"] = entry["executionRef"]
+		for i := range pipelineEntries(run)[:index] {
+			entry := pipelineEntry(run, i)
+			metadata := doc{"id": entry.Id, "index": i, "activation": entry.Activation}
+			if entry.ExecutionRef != nil {
+				metadata["executionRef"] = entry.ExecutionRef
 			}
 			step := mapOf(anys(run["steps"])[i])
 			if native := astr(step["executionId"]); native != "" {
@@ -730,24 +799,21 @@ func materializePipelineInputs(ctx context.Context, a *App, run doc, index int) 
 				metadata["observation"] = firstString(step["observation"], "confirmed")
 				metadata["executionState"] = step["state"]
 			}
-			for _, value := range prepared.bindings {
-				binding := mapOf(value)
-				if binding["path"] == astr(entry["id"])+"/output.json" {
-					metadata["output"] = doc{"artifactId": binding["artifactId"], "sha256": binding["sha256"]}
+			for _, binding := range prepared.bindings {
+				if binding.Path == entry.Id+"/output.json" {
+					metadata["output"] = contract.PipelineArtifactRef{ArtifactId: binding.ArtifactId, Sha256: binding.Sha256}
 				}
 			}
 			entries = append(entries, metadata)
 		}
-		manifest := doc{"schema": "fleet.pipeline-control.v1", "runId": run["id"], "consumerStepId": pipelinePlanEntry(run, index)["id"], "definitionSha256": run["definitionSha256"], "planRevision": mapOf(run["plan"])["revision"], "entries": entries, "inputs": prepared.bindings}
+		manifest := doc{"schema": "fleet.pipeline-control.v1", "runId": run["id"], "consumerStepId": pipelineEntry(run, index).Id, "definitionSha256": run["definitionSha256"], "planRevision": pipelineRevision(run), "entries": entries, "inputs": prepared.bindings}
 		id, hash, err := saveObject(ctx, a, projectIDPtr(run["projectId"]), runScope(run), stepRow(run, index), "__fleet_control/pipeline.json", jsonBytes(manifest), "application/json")
 		if err != nil {
 			return nil, err
 		}
 		prepared.files = append(prepared.files, doc{"path": "__fleet_control/pipeline.json", "artifactId": id})
-		prepared.bindings = append(prepared.bindings, doc{"path": "__fleet_control/pipeline.json", "artifactId": id, "sha256": hash})
-		sort.Slice(prepared.bindings, func(i, j int) bool {
-			return astr(mapOf(prepared.bindings[i])["path"]) < astr(mapOf(prepared.bindings[j])["path"])
-		})
+		prepared.bindings = append(prepared.bindings, contract.PipelineInputBinding{Path: "__fleet_control/pipeline.json", ArtifactId: id, Sha256: hash})
+		sort.Slice(prepared.bindings, func(i, j int) bool { return prepared.bindings[i].Path < prepared.bindings[j].Path })
 	}
 	return prepared, nil
 }
@@ -758,9 +824,9 @@ func pipelineInputPath(value string) bool {
 
 func freezePipelineInputs(run doc, index int, inputs *pipelinePreparedInputs) {
 	run["exampleInputs"] = inputs.example
-	entry := pipelinePlanEntry(run, index)
-	entry["inputs"] = inputs.bindings
-	mapOf(entry["executionRef"])["sourceInputSha256"] = sha256hex([]byte(canonical(inputs.bindings)))
+	entry := pipelineEntry(run, index)
+	entry.Inputs = inputs.bindings
+	entry.ExecutionRef.SourceInputSha256 = sha256hex([]byte(canonical(inputs.bindings)))
 }
 
 func materializePipelineOutput(ctx context.Context, a *App, run doc, index int, output any) error {
@@ -781,8 +847,8 @@ func bindPipelineResult(q *Request, run doc) error {
 		return fail(409, "Pipeline has no final output")
 	}
 	index := len(steps) - 1
-	step, entry := mapOf(steps[index]), pipelinePlanEntry(run, index)
-	if entry["activation"] != "selected" || step["state"] != "succeeded" || step["observation"] == "unconfirmed" {
+	step, entry := mapOf(steps[index]), pipelineEntry(run, index)
+	if entry.Activation != contract.PipelineActivationSelected || step["state"] != "succeeded" || step["observation"] == "unconfirmed" {
 		return fail(409, "Pipeline final output is not confirmed")
 	}
 	artifact, err := artifactRow(withTx(q), q.app, astr(step["outputArtifactId"]))
@@ -795,22 +861,21 @@ func bindPipelineResult(q *Request, run doc) error {
 	if artifact.ContentHash != sha256hex(jsonBytes(step["output"])) {
 		return fail(409, "Pipeline final output bytes changed")
 	}
-	inputs := append([]any{}, anys(entry["inputs"])...)
-	result := doc{"mode": "static", "stepId": entry["id"], "producerExecutionId": mapOf(entry["executionRef"])["executionId"], "artifact": doc{"artifactId": artifact.ID, "sha256": artifact.ContentHash}, "inputs": inputs, "selectedSources": []any{}}
+	inputs := append([]contract.PipelineInputBinding{}, entry.Inputs...)
+	result := doc{"mode": "static", "stepId": entry.Id, "producerExecutionId": refExecutionID(entry), "artifact": doc{"artifactId": artifact.ID, "sha256": artifact.ContentHash}, "inputs": inputs, "selectedSources": []any{}}
 	if num(mapOf(run["definition"])["version"]) == 3 {
 		output := mapOf(step["output"])
 		lineage := mapOf(output["fleetLineage"])
 		if !keysOnly(output, "fleetLineage", "projectResult") || output["projectResult"] == nil || lineage == nil || !keysOnly(lineage, "schema", "selectedSources") || lineage["schema"] != "fleet.result-lineage.v1" || anys(lineage["selectedSources"]) == nil {
 			return fail(409, "Finalizer result lineage is invalid")
 		}
-		for _, v := range inputs {
-			binding := mapOf(v)
-			if binding["path"] == "__fleet_control/pipeline.json" {
-				control, err := artifactRow(withTx(q), q.app, astr(binding["artifactId"]))
+		for _, binding := range inputs {
+			if binding.Path == "__fleet_control/pipeline.json" {
+				control, err := artifactRow(withTx(q), q.app, binding.ArtifactId)
 				if err != nil {
 					return err
 				}
-				if control.State != "stored" || !same(control.ProjectID, run["projectId"]) || control.ExecutionID == nil || *control.ExecutionID != astr(mapOf(entry["executionRef"])["executionId"]) || control.ContentHash != binding["sha256"] {
+				if control.State != "stored" || !same(control.ProjectID, run["projectId"]) || control.ExecutionID == nil || *control.ExecutionID != refExecutionID(entry) || control.ContentHash != binding.Sha256 {
 					return fail(409, "Finalizer control manifest binding changed")
 				}
 				result["controlArtifact"] = doc{"artifactId": control.ID, "sha256": control.ContentHash}
@@ -842,24 +907,24 @@ func pipelinePlanShape(run doc) error {
 	if err := requirePipelinePlan(run); err != nil {
 		return err
 	}
-	for i, value := range pipelinePlanEntries(run) {
-		entry := mapOf(value)
+	for i := range pipelineEntries(run) {
+		entry := pipelineEntry(run, i)
 		definition := mapOf(anys(mapOf(run["definition"])["steps"])[i])
-		if entry["id"] != definition["id"] || entry["definitionSha256"] != sha256hex([]byte(canonical(definition))) {
+		if entry.Id != definition["id"] || entry.DefinitionSha256 != sha256hex([]byte(canonical(definition))) {
 			return fmt.Errorf("pipeline plan entry %d does not match its definition", i)
 		}
-		ref := mapOf(entry["executionRef"])
-		if entry["activation"] == "selected" {
-			if ref == nil || ref["sourceStepId"] != entry["id"] || num(ref["sourceStepIndex"]) != float64(i) || !labSha.MatchString(astr(ref["sourceDefinitionSha256"])) || !labSha.MatchString(astr(ref["sourceInputSha256"])) {
+		ref := entry.ExecutionRef
+		if entry.Activation == contract.PipelineActivationSelected {
+			if ref == nil || ref.SourceStepId != entry.Id || ref.SourceStepIndex != int64(i) || !labSha.MatchString(ref.SourceDefinitionSha256) || !labSha.MatchString(ref.SourceInputSha256) {
 				return fail(409, "Invalid selected execution reference")
 			}
-			if ref["mode"] == "fresh" && (ref["executionId"] != stepRow(run, i) || ref["sourceRunId"] != run["id"] || entry["dispatch"] == nil) {
+			if ref.Mode == contract.PipelineRefModeFresh && (ref.ExecutionId != stepRow(run, i) || ref.SourceRunId != run["id"] || entry.Dispatch == nil) {
 				return fail(409, "Invalid fresh execution ownership")
 			}
-			if ref["mode"] == "reused" && entry["dispatch"] != nil {
+			if ref.Mode == contract.PipelineRefModeReused && entry.Dispatch != nil {
 				return fail(409, "Reused execution cannot carry a new dispatch")
 			}
-		} else if ref != nil || entry["dispatch"] != nil || entry["inputs"] != nil {
+		} else if ref != nil || entry.Dispatch != nil || entry.Inputs != nil {
 			return fail(409, "Inactive plan entry carries execution facts")
 		}
 	}
@@ -876,32 +941,36 @@ func pipelinePlanRead(q *Request, run doc) (doc, error) {
 			out[k] = v
 		}
 	}
-	plan := mapOf(run["plan"])
-	view := doc{"definitionSha256": plan["definitionSha256"], "revision": plan["revision"], "entries": []any{}}
-	for i, value := range pipelinePlanEntries(run) {
-		entry := doc{}
-		for k, v := range mapOf(value) {
-			entry[k] = v
-		}
-		if entry["activation"] == "selected" {
+	plan := pipelinePlanOfRun(run)
+	view := &contract.PipelinePlan{DefinitionSha256: plan.DefinitionSha256, Revision: plan.Revision, Entries: []contract.PipelinePlanEntry{}}
+	for i := range plan.Entries {
+		entry := plan.Entries[i]
+		if entry.Activation == contract.PipelineActivationSelected {
 			step := mapOf(anys(run["steps"])[i])
-			execution := doc{"executionId": mapOf(entry["executionRef"])["executionId"], "state": step["state"], "observation": "confirmed"}
-			if step["observation"] != nil {
-				execution["observation"] = step["observation"]
+			execution := &contract.PipelineExecutionView{ExecutionId: refExecutionID(&entry), State: contract.ExecutionState(astr(step["state"])), Observation: contract.PipelineObservationConfirmed}
+			if o, ok := step["observation"].(string); ok {
+				execution.Observation = contract.PipelineObservation(o)
 			}
 			if id := astr(step["executionId"]); id != "" {
-				execution["nativeExecutionId"] = id
+				execution.NativeExecutionId = &id
 			}
-			for _, k := range []string{"startedAt", "finishedAt", "durationMs", "usage", "calls", "error"} {
-				if step[k] != nil {
-					if k == "finishedAt" {
-						execution["endedAt"] = step[k]
-					} else {
-						execution[k] = step[k]
-					}
+			raw := func(v any) json.RawMessage {
+				if v == nil {
+					return nil
+				}
+				return jsonBytes(v)
+			}
+			execution.StartedAt, execution.EndedAt, execution.Usage, execution.Error = raw(step["startedAt"]), raw(step["finishedAt"]), raw(step["usage"]), raw(step["error"])
+			if d, ok := numOK(step["durationMs"]); ok {
+				execution.DurationMs = &d
+			}
+			if step["calls"] != nil {
+				execution.Calls = []json.RawMessage{}
+				for _, c := range anys(step["calls"]) {
+					execution.Calls = append(execution.Calls, jsonBytes(c))
 				}
 			}
-			entry["execution"] = execution
+			entry.Execution = execution
 			if id := astr(step["outputArtifactId"]); id != "" {
 				artifact, err := artifactRow(withTx(q), q.app, id)
 				if err != nil {
@@ -914,11 +983,11 @@ func pipelinePlanRead(q *Request, run doc) (doc, error) {
 					if artifact.ContentHash != sha256hex(jsonBytes(step["output"])) {
 						return nil, fail(409, "Pipeline output bytes changed")
 					}
-					entry["output"] = doc{"artifactId": id, "sha256": artifact.ContentHash}
+					entry.Output = &contract.PipelineArtifactRef{ArtifactId: id, Sha256: artifact.ContentHash}
 				}
 			}
 		}
-		view["entries"] = append(anys(view["entries"]), entry)
+		view.Entries = append(view.Entries, entry)
 	}
 	out["plan"], out["planSummary"] = view, pipelinePlanSummary(run)
 	return out, nil
@@ -944,8 +1013,8 @@ func pipelinePublicRead(ctx context.Context, a *App, id string) (doc, error) {
 
 func pipelineResultValue(run doc) any {
 	result := mapOf(run["canonicalResult"])
-	for i, value := range pipelinePlanEntries(run) {
-		if mapOf(value)["id"] == result["stepId"] {
+	for i := range pipelineEntries(run) {
+		if pipelineEntry(run, i).Id == result["stepId"] {
 			output := mapOf(anys(run["steps"])[i])["output"]
 			if result["mode"] == "finalizer" {
 				return mapOf(output)["projectResult"]
@@ -960,9 +1029,9 @@ func pipelineResultValue(run doc) any {
 // action. Only the existing command-bound local process proof can release an
 // interrupted script suffix; the original observation stays unconfirmed.
 func pipelineRecoveryFence(q *Request, run doc) error {
-	for i, value := range pipelinePlanEntries(run) {
-		entry := mapOf(value)
-		if entry["activation"] != "selected" {
+	for i := range pipelineEntries(run) {
+		entry := pipelineEntry(run, i)
+		if entry.Activation != contract.PipelineActivationSelected {
 			continue
 		}
 		step := mapOf(anys(run["steps"])[i])
@@ -970,8 +1039,7 @@ func pipelineRecoveryFence(q *Request, run doc) error {
 			continue
 		}
 		definition := mapOf(anys(mapOf(run["definition"])["steps"])[i])
-		ref := mapOf(entry["executionRef"])
-		if definition["kind"] != "script" || ref["mode"] != "fresh" {
+		if definition["kind"] != "script" || entryRefMode(entry) != contract.PipelineRefModeFresh {
 			return fail(409, "Unconfirmed external action cannot be replayed by rerun")
 		}
 		native := astr(step["executionId"])
@@ -998,8 +1066,8 @@ func pipelineRecoveryFence(q *Request, run doc) error {
 		if err != nil {
 			return err
 		}
-		dispatch := mapOf(entry["dispatch"])
-		if dispatch["commandId"] != command["id"] || dispatch["nativeExecutionId"] != native || dispatch["phase"] != "handed_off" {
+		d := entry.Dispatch
+		if d == nil || optString(d.CommandId) != command["id"] || optString(d.NativeExecutionId) != native || d.Phase != contract.PipelineDispatchPhaseHandedOff {
 			return fail(409, "Interrupted script handoff proof unavailable")
 		}
 		events, err := eventsWhere(q, doc{"executionId": native, "type": "process.reconciled"})
@@ -1023,6 +1091,19 @@ func pipelineRecoveryFence(q *Request, run doc) error {
 // transition snapshot. Numeric types are preserved; no JSON roundtrip is used.
 func restorePipelineValue(current, snapshot any) any {
 	switch source := snapshot.(type) {
+	case *contract.PipelinePlan:
+		target, _ := current.(*contract.PipelinePlan)
+		if target == nil || target == source {
+			target = &contract.PipelinePlan{}
+		}
+		target.DefinitionSha256, target.Revision = source.DefinitionSha256, source.Revision
+		if len(target.Entries) != len(source.Entries) {
+			target.Entries = make([]contract.PipelinePlanEntry, len(source.Entries))
+		}
+		for i := range source.Entries {
+			restorePipelineEntry(&target.Entries[i], source.Entries[i])
+		}
+		return target
 	case map[string]any:
 		target := mapOf(current)
 		if target == nil {
@@ -1049,6 +1130,39 @@ func restorePipelineValue(current, snapshot any) any {
 	default:
 		return snapshot
 	}
+}
+
+// restorePipelineEntry sets *dst to a copy of src, keeping dst's dispatch and execution reference aliases alive.
+func restorePipelineEntry(dst *contract.PipelinePlanEntry, src contract.PipelinePlanEntry) {
+	if src.Decision != nil {
+		d := *src.Decision
+		d.Path = append([]string(nil), d.Path...)
+		src.Decision = &d
+	}
+	if src.ExecutionRef != nil {
+		r := *src.ExecutionRef
+		if dst.ExecutionRef != nil {
+			*dst.ExecutionRef, src.ExecutionRef = r, dst.ExecutionRef
+		} else {
+			src.ExecutionRef = &r
+		}
+	}
+	if src.Dispatch != nil {
+		x := *src.Dispatch
+		if dst.Dispatch != nil {
+			*dst.Dispatch, src.Dispatch = x, dst.Dispatch
+		} else {
+			src.Dispatch = &x
+		}
+	}
+	if src.Inputs != nil {
+		src.Inputs = append(make([]contract.PipelineInputBinding, 0, len(src.Inputs)), src.Inputs...)
+	}
+	if src.Problem != nil {
+		p := *src.Problem
+		src.Problem = &p
+	}
+	*dst = src
 }
 
 // runPipelineTransition retries DB work with the complete pre-transition
