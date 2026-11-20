@@ -63,7 +63,7 @@ func jsonBool(raw json.RawMessage) (bool, bool) {
 	return false, false
 }
 
-func jsonObject(raw []byte) pipelineRule {
+func pipelineRuleOf(raw []byte) pipelineRule {
 	var r pipelineRule
 	if jsonKind(raw) != '{' || json.Unmarshal(raw, &r) != nil {
 		return nil
@@ -95,11 +95,11 @@ func ruleKeysOnly(r pipelineRule, allowed ...string) bool {
 // validatePipelineCondition accepts one literal predicate over an earlier output.
 // Project programs own thresholds and compound policies; this is not an expression interpreter.
 func validatePipelineCondition(v any, earlier map[string]bool) error {
-	w := jsonObject(jsonBytes(v))
+	w := pipelineRuleOf(jsonBytes(v))
 	if w == nil {
 		return fmt.Errorf("when must be a Boolean or enum condition")
 	}
-	s := jsonObject(w["source"])
+	s := pipelineRuleOf(w["source"])
 	step, _ := jsonString(s["step"])
 	if s == nil || !ruleKeysOnly(s, "step", "path") || !earlier[step] {
 		return fmt.Errorf("when.source must name a strictly earlier step")
@@ -175,7 +175,7 @@ func pipelineConditionDecision(when *pipelineWhen, output any, at int64) contrac
 		if jsonKind(value) == 'n' {
 			return block(contract.PipelinePlanReasonConditionNull)
 		}
-		object := jsonObject(value)
+		object := pipelineRuleOf(value)
 		if object == nil {
 			return block(contract.PipelinePlanReasonConditionType)
 		}
