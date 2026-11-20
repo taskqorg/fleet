@@ -28,6 +28,12 @@ type kitClaim struct {
 	Group    string // non-empty: may share a cohort transaction with claims of the same group
 	Attempts int    // the item's attempts when selected
 	Guard    []any  // what the selection (or the step) saw; the failure write applies only while it is still there
+	// Call: work the step leaves to do after its transaction commits and outside any transaction (a provider call, object
+	// I/O). The kit runs it and then the step again at once with its Result, which that next transaction records. A crash
+	// or a failed record between the two loses Result: the queue's step reads what it committed before the call as an
+	// outcome it cannot know, and never repeats an effect it cannot repeat safely.
+	Call   func(ctx context.Context) any
+	Result any
 }
 
 // kitRetry: how one failure of an item of a queue is written: attempts, next_attempt_at and last_error in Table's
@@ -222,6 +228,11 @@ func (k *workKit) tx(ctx context.Context, fn func(q *Request) error) error {
 	return runTxLocksOnce(ctx, k.a, nil, true, nil, fn)
 }
 
+// txRetried runs fn in one write transaction, retried on serialization failures and deadlocks.
+func (k *workKit) txRetried(ctx context.Context, fn func(q *Request) error) error {
+	return runTxLocks(ctx, k.a, nil, true, nil, fn)
+}
+
 // pass runs every queue once in registration order.
 func (k *workKit) pass(ctx context.Context) error {
 	var errs error
@@ -340,22 +351,72 @@ func (k *workKit) one(ctx context.Context, q *kitQueue, now time.Time, c *kitCla
 	return err, k.fail(ctx, q, now, c, err)
 }
 
+// kitCalls: the calls one item may make in one run of its step (a submit, a listing after an unknown submit, ...).
+const kitCalls = 4
+
 // step runs the step and the retry reset in one transaction; a step that learned something runs again at once, at most
-// three times.
+// three times. A Call the committed step left runs outside any transaction, then the step again with its Result; that
+// recording transaction is retried on conflicts, so a lost Result costs a crash or a real failure, not a busy row.
 func (k *workKit) step(ctx context.Context, q *kitQueue, now time.Time, c *kitClaim) error {
 	var err error
-	for try := 0; try < 3; try++ {
-		err = k.tx(ctx, func(r *Request) error {
+	for try, calls := 0, 0; ; {
+		c.Call = nil
+		run := k.tx
+		if c.Result != nil {
+			run = k.txRetried
+		}
+		err = run(ctx, func(r *Request) error {
 			if err := q.Step(r, now, c); err != nil {
 				return err
 			}
 			return kitReset(r, q.Retry, c.Key, now)
 		})
-		if !errors.Is(err, errKitAgain) {
+		c.Result = nil
+		if err == nil && c.Call != nil && calls < kitCalls && ctx.Err() == nil {
+			calls++
+			c.Result = c.Call(ctx)
+			continue
+		}
+		c.Call = nil
+		if !errors.Is(err, errKitAgain) || try >= 2 {
 			return err
 		}
+		try++
 	}
-	return err
+}
+
+// kitSchedule: the owner's item key of queue name is next due at at, its retries started afresh (a run waiting for
+// its job, an experiment's next look). Called in the owner's step transaction.
+func kitSchedule(q *Request, name, key string, at time.Time) error {
+	rt := kitQueueNamed(name).Retry
+	return exec(q, `UPDATE `+rt.Table+` SET attempts=0,last_error=NULL,next_attempt_at=$2 WHERE `+rt.Key+`=$1`, key, at)
+}
+
+// kitWake: a producer's new work for item key of queue name, in the producer's transaction: the item is due at now
+// unless it is already due or its failures pause it, and the queue is woken through fleet_work. A missing row is
+// nothing to do.
+func kitWake(q *Request, name, key string, now time.Time) error {
+	rt := kitQueueNamed(name).Retry
+	tag, err := q.tx.Exec(q.ctx(), `UPDATE `+rt.Table+` SET next_attempt_at=$2 WHERE `+rt.Key+`=$1 AND attempts=0 AND next_attempt_at>$2`, key, now)
+	if err != nil || tag.RowsAffected() == 0 {
+		return err
+	}
+	return kitNotify(q, name)
+}
+
+// kitNotify: queue name has new work (an owner inserted an item row): one fleet_work wake intent in q's transaction.
+func kitNotify(q *Request, name string) error {
+	kitQueueNamed(name)
+	return exec(q, `SELECT fleet_enqueue_wake('fleet_work',$1)`, name)
+}
+
+func kitQueueNamed(name string) *kitQueue {
+	for _, q := range kitQueues {
+		if q.Name == name {
+			return q
+		}
+	}
+	panic("work kit: no queue " + name)
 }
 
 // kitReset: a successful step's item starts its retries afresh. A row still paused (another failure after the

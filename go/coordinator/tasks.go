@@ -183,7 +183,7 @@ func cancelTaskWork(q *Request, id string) error {
 	for _, e := range linked {
 		eid := astr(e["id"])
 		if e["kind"] == "pipeline_run" {
-			owned, run, err := pipelineCancelIn(q, eid)
+			owned, _, err := pipelineCancelIn(q, eid)
 			if pipelineFormatUnsupported(err) {
 				// A historical plan cannot run. Its retained native executions
 				// are handled below without decoding or resuming the old plan.
@@ -194,13 +194,6 @@ func cancelTaskWork(q *Request, id string) error {
 			}
 			if err != nil {
 				return err
-			}
-			if run != nil {
-				onEnd(q.tx, func(committed bool) {
-					if committed {
-						notifyFinished(q.app, run)
-					}
-				})
 			}
 			if owned == "" {
 				continue

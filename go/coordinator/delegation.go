@@ -6,19 +6,17 @@ package main
 
 import (
 	"context"
-	"net/http"
+	"encoding/json"
+	"errors"
 	"regexp"
-	"sync"
+	"time"
 
 	"fleet/contract"
 
-	"github.com/jackc/pgx/v5"
+	"fleet/coordinator/db"
 )
 
-var (
-	fetchingSources sync.Map
-	websitePath     = regexp.MustCompile(`(?i)\.(html|css)$`)
-)
+var websitePath = regexp.MustCompile(`(?i)\.(html|css)$`)
 
 const sourcesTooLarge = "Website text inputs unavailable or exceed 128000 characters"
 
@@ -89,51 +87,76 @@ func (a *App) delegationRequest(q *Request, req *contract.ChildRequest, c doc) (
 	return d, put(q, "delegation", d)
 }
 
-// fetchSources reads website sources outside the poll transaction; a later poll binds them.
-func (a *App) fetchSources(id string, files []doc) {
-	if _, busy := fetchingSources.LoadOrStore(id, true); busy {
-		return
+// delegationSources: the website sources of a delegation read outside the step's transaction: their texts, the reason
+// they cannot be bound, or that no store is reachable now (tried again later).
+type delegationSources struct {
+	texts       doc
+	errText     string
+	unreachable error
+}
+
+// delegationSourcesStep reads the website sources of delegation c.Key outside the transaction (the delegation-sources
+// queue's step, delegation_work.go) and records them on the delegation; a later poll binds them. A crash before the
+// record reads them again.
+func delegationSourcesStep(q *Request, now time.Time, c *kitClaim) error {
+	d, err := get(q, c.Key, "delegation")
+	if err != nil || d["sourceTexts"] != nil || d["routingError"] != nil {
+		if err != nil && !errors.Is(err, errNotFound) {
+			var he *HTTPError
+			if !asHTTP(err, &he) || he.Code != 404 {
+				return err
+			}
+		}
+		return q.db().DelegationSourceWorkDelete(q.ctx(), c.Key)
 	}
-	go func() {
-		defer fetchingSources.Delete(id)
-		texts, errText := doc{}, ""
+	if r, ok := c.Result.(delegationSources); ok {
+		if r.unreachable != nil {
+			return r.unreachable
+		}
+		if r.errText != "" {
+			d["routingError"] = r.errText
+		} else {
+			d["sourceTexts"] = r.texts
+		}
+		if err := put(q, "delegation", d); err != nil {
+			return err
+		}
+		return q.db().DelegationSourceWorkDelete(q.ctx(), c.Key)
+	}
+	payload, err := q.db().DelegationSourceWorkFiles(q.ctx(), c.Key)
+	if err != nil {
+		return err
+	}
+	var files []doc
+	if err := json.Unmarshal(payload, &files); err != nil {
+		return err
+	}
+	a := q.app
+	c.Call = func(context.Context) any {
+		r := delegationSources{texts: doc{}}
 		n := 0
 		for _, f := range files {
-			b, err := readArtifact(a, astr(nonNil(f["artifactId"], f["id"])))
+			b, err := readArtifact(a, astr(f["artifactId"]))
 			if err != nil {
 				var he *HTTPError
-				if !asHTTP(err, &he) || he.Code != 503 {
-					errText = sourcesTooLarge
-				} else {
-					return // no reachable store now; the next poll asks again
+				if asHTTP(err, &he) && he.Code == 503 {
+					return delegationSources{unreachable: err} // no reachable store now
 				}
-				break
+				r.errText = sourcesTooLarge
+				return r
 			}
 			n += len([]rune(string(b)))
 			if n > 128000 {
-				errText = sourcesTooLarge
-				break
+				r.errText = sourcesTooLarge
+				return r
 			}
-			texts[astr(f["path"])] = string(b)
+			r.texts[astr(f["path"])] = string(b)
 		}
-		ctx := context.Background()
-		a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
-			q := &Request{app: a, tx: tx, r: (&http.Request{}).WithContext(ctx)}
-			d, err := get(q, id, "delegation")
-			if err != nil {
-				return err
-			}
-			if errText != "" {
-				d["routingError"] = errText
-			} else {
-				d["sourceTexts"] = texts
-			}
-			return put(q, "delegation", d)
-		})
-	}()
+		return r
+	}
+	return nil
 }
 
-// delegationReady: whether a start command of this execution may go out now (parent completed, inputs bound).
 func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	if e["continuationOf"] != nil {
 		c, err := get(q, e["continuationOf"], "execution")
@@ -151,10 +174,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	if err != nil || parent["state"] != "succeeded" {
 		return false, err
 	}
-	cancelled, err := has(q, `SELECT 1 FROM execution p
-		LEFT JOIN session s ON s.id=p.session_id
-		JOIN task t ON t.id=coalesce(p.task_id,s.task_id)
-		WHERE p.id=$1 AND t.state='cancelled'`, parent["id"])
+	cancelled, err := q.db().DelegationParentTaskCancelled(q.ctx(), astr(parent["id"]))
 	if err != nil || cancelled {
 		return false, err
 	}
@@ -184,12 +204,12 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 		history[i], history[j] = history[j], history[i]
 	}
 	with := map[string]bool{}
-	rs, err := queryRows(q, "SELECT DISTINCT execution_id AS id FROM artifact WHERE state='stored' AND execution_id=ANY($1) UNION SELECT DISTINCT data->>'executionId' FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1)", history)
+	rs, err := q.db().DelegationExecutionsWithArtifacts(q.ctx(), history)
 	if err != nil {
 		return false, err
 	}
-	for _, r := range rs {
-		with[astr(r["id"])] = true
+	for _, id := range rs {
+		with[id] = true
 	}
 	source := ""
 	for _, h := range history {
@@ -232,8 +252,16 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	}
 	texts := mapOf(d["sourceTexts"])
 	if len(files) > 0 && texts == nil {
-		a.fetchSources(astr(d["id"]), files)
-		return false, nil
+		// The sources are read on the kit (delegationSourcesStep), outside this poll's transaction.
+		want := []doc{}
+		for _, f := range files {
+			want = append(want, doc{"artifactId": nonNil(f["artifactId"], f["id"]), "path": f["path"]})
+		}
+		n, err := q.db().DelegationSourceWorkEnsure(q.ctx(), db.DelegationSourceWorkEnsureParams{DelegationID: astr(d["id"]), Payload: jsonBytes(want)})
+		if err != nil || n == 0 {
+			return false, err
+		}
+		return false, kitNotify(q, "delegation-sources")
 	}
 	sources, inputs := []doc{}, []any{}
 	for _, f := range files {

@@ -1,7 +1,7 @@
 // Pipeline format version 2 runner (docs/designs/fleet-lab.md "Pipeline format version 2").
 // A run is an ordered chain of api, agent and script steps: the pipeline_run execution
 // with one pipeline_step row `<run>:step:<i>` per step; each provider call is a tool_run child of its step. Every step
-// leaves an output.json artifact. pipelineAdvance(runId) moves a run forward and is safe to call any time; a sync api call
+// leaves an output.json artifact. a run moves on the work kit (pipeline_work.go), one step per transaction; a sync api call
 // interrupted by a restart is unknown and never replayed.
 package main
 
@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -313,6 +312,16 @@ func putRun(q *Request, run doc) error {
 		}
 		if _, err := executionTransition(q, astr(run["id"]), executionEvent{To: state, KeepEnd: true}); err != nil {
 			return err
+		}
+	}
+	if state == "running" {
+		// A running run has its row on the kit (pipeline_work.go); a new one wakes the queue.
+		if n, err := q.db().PipelineWorkEnsure(q.ctx(), astr(run["id"])); err != nil {
+			return err
+		} else if n > 0 {
+			if err := kitNotify(q, "pipeline"); err != nil {
+				return err
+			}
 		}
 	}
 	if run["definitions"] != nil {
@@ -634,32 +643,6 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 	return run, putRun(q, run)
 }
 
-// Runner state of this process: per-run serial chains and in-flight sync calls.
-var (
-	runLocks sync.Map // run id -> *sync.Mutex
-	inflight sync.Map // step row -> true
-	runWG    sync.WaitGroup
-)
-
-func runLock(id string) *sync.Mutex {
-	m, _ := runLocks.LoadOrStore(id, &sync.Mutex{})
-	return m.(*sync.Mutex)
-}
-
-// pipelineAdvance moves a run forward in the background, serial per run, outside any caller's transaction.
-func pipelineAdvance(a *App, runID string) {
-	runWG.Add(1)
-	go func() {
-		defer runWG.Done()
-		m := runLock(runID)
-		m.Lock()
-		defer m.Unlock()
-		if err := advanceOnce(context.Background(), a, runID); err != nil {
-			log.Printf("pipeline %s: %v", runID, err)
-		}
-	}()
-}
-
 // pipelineWait polls until the run leaves running (pipeline_run waits for a direct search).
 func pipelineWait(ctx context.Context, a *App, runID string) (doc, error) {
 	for {
@@ -681,55 +664,24 @@ func pipelineWait(ctx context.Context, a *App, runID string) (doc, error) {
 	}
 }
 
-// pipelineOnExecution: the run whose step is this execution moves on (receipt hook; the tick is the backstop).
-func pipelineOnExecution(a *App, executionID string) {
-	var ids []string
-	runTx(context.Background(), a, nil, false, "", func(q *Request) error {
-		rs, err := queryRows(q, "SELECT parent_execution_id AS id FROM execution WHERE kind='pipeline_step' AND data->>'executionId'=$1", executionID)
-		for _, r := range rs {
-			ids = append(ids, astr(r["id"]))
-		}
+// pipelineOnEnded: an agent or script step's own execution ended (its executionTransition): its run's step is due.
+func pipelineOnEnded(q *Request, executionID string) error {
+	runID, err := q.db().PipelineRunOfExecution(q.ctx(), executionID)
+	if err != nil || runID == "" {
 		return err
-	})
-	for _, id := range ids {
-		pipelineAdvance(a, id)
 	}
-}
-
-func pipelineTick(ctx context.Context, a *App) {
-	var ids []string
-	runTx(ctx, a, nil, false, "", func(q *Request) error {
-		rs, err := queryRows(q, "SELECT id FROM execution WHERE "+runRows+" AND state='running' AND data->>'planVersion'='1' ORDER BY seq")
-		for _, r := range rs {
-			ids = append(ids, astr(r["id"]))
-		}
-		return err
-	})
-	for _, id := range ids {
-		m := runLock(id)
-		if m.TryLock() { // a run already being advanced is skipped
-			m.Unlock()
-			pipelineAdvance(a, id)
-		}
-	}
+	return kitWake(q, "pipeline", runID, time.Now())
 }
 
 // pipelineCancel: the run ends cancelled, later steps never start; returns the running step's own execution, which the
-// caller stops. Serial with advance.
+// caller stops. Its GLOBAL fence orders it with the run's steps on the kit.
 func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
-	m := runLock(runID)
-	m.Lock()
-	defer m.Unlock()
 	own := ""
-	var done doc
 	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		var err error
-		own, done, err = pipelineCancelIn(q, runID)
+		own, _, err = pipelineCancelIn(q, runID)
 		return err
 	})
-	if err == nil && done != nil {
-		notifyFinished(a, done)
-	}
 	return own, err
 }
 
@@ -766,10 +718,6 @@ func pipelineCancelIn(q *Request, runID string) (string, doc, error) {
 		step["state"], step["finishedAt"] = "cancelled", nowMs()
 	}
 	return own, run, finishRun(q, run, "cancelled", "cancelled")
-}
-
-func notifyFinished(a *App, run doc) {
-	go pipelineFinished(context.Background(), a, run)
 }
 
 func finishRun(q *Request, run doc, state, problem string) error {
@@ -845,9 +793,11 @@ func finishRun(q *Request, run doc, state, problem string) error {
 		return err
 	}
 	if problem != "" {
-		return exec(q, "UPDATE execution SET problem=$2 WHERE id=$1", run["id"], problem)
+		if err := exec(q, "UPDATE execution SET problem=$2 WHERE id=$1", run["id"], problem); err != nil {
+			return err
+		}
 	}
-	return nil
+	return pipelineEnded(q, run)
 }
 
 func failStep(q *Request, run doc, i int, problem, message string) error {
@@ -1066,46 +1016,49 @@ func startScript(q *Request, run doc, stepExecutionID, command string, timeout a
 	return id, put(q, "command", doc{"id": newID(), "executionId": id, "sessionId": sid, "hostId": hostID, "kind": "script", "payload": payload, "status": "pending", "handedOut": false})
 }
 
-// connCallFor: one provider call with a token minted for the step row, revoked after the call; the gateway's spool line
-// becomes the step's tool_run (ingested here, so the row exists when the step moves on).
-func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, tool string, args any) contract.CallLine {
-	unavailable := contract.CallLine{Tool: tool, Connection: connection, Outcome: contract.CallOutcomeError, ErrorCode: ptr("connection-unavailable")}
+// pipelineClaimCall claims a provider call of a pipeline api step in q's transaction (claimPipelineAPI: a submit is handed
+// off with the step, an observation of the job mints its own token): the token, or the line that answers the call
+// without it. The token is revoked by the step that records the call.
+func pipelineClaimCall(q *Request, run doc, row, connection, tool string) (string, bool, *contract.CallLine) {
+	unavailable := &contract.CallLine{Tool: tool, Connection: connection, Outcome: contract.CallOutcomeError, ErrorCode: ptr("connection-unavailable")}
 	if gatewayURL() == "" || !connName.MatchString(connection) {
-		return unavailable
+		return "", false, unavailable
 	}
-	var token string
-	var claimed doc
-	var won, idempotent bool
-	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		var err error
-		claimed, token, won, idempotent, err = claimPipelineAPI(q, astr(run["id"]), executionID, connection, tool)
-		return err
-	})
-	if errors.Is(err, errFileTool) {
-		unavailable.ErrorCode = ptr("file-tool-unsupported")
-		return unavailable
-	}
-	if err != nil {
+	if err := exec(q, "SAVEPOINT pipeline_claim"); err != nil {
 		unavailable.ErrorCode = ptr("pipeline-authority-denied")
-		return unavailable
+		return "", false, unavailable
+	}
+	claimed, token, won, idempotent, err := claimPipelineAPI(q, astr(run["id"]), row, connection, tool)
+	if err != nil {
+		if e := exec(q, "ROLLBACK TO SAVEPOINT pipeline_claim"); e != nil {
+			unavailable.ErrorCode = ptr("pipeline-authority-denied")
+			return "", false, unavailable
+		}
+		unavailable.ErrorCode = ptr("pipeline-authority-denied")
+		if errors.Is(err, errFileTool) {
+			unavailable.ErrorCode = ptr("file-tool-unsupported")
+		}
+		return "", false, unavailable
+	}
+	if err := exec(q, "RELEASE SAVEPOINT pipeline_claim"); err != nil {
+		return "", false, unavailable
 	}
 	if !won || token == "" {
 		unavailable.ErrorCode = ptr(pipelineClaimObserved)
-		return unavailable
+		return "", false, unavailable
 	}
-	// Only the confirmed commit owner reaches the gateway; keep this caller's
-	// expected revision aligned without replacing its retained step observations.
+	// The claim wrote the run: the caller's record moves to its plan revision and dispatch.
 	run["plan"] = claimed["plan"]
+	return token, idempotent, nil
+}
+
+// pipelineGateway: one provider call through the gateway with a claimed token, outside any transaction; the gateway's
+// spool line becomes the step's tool_run (ingested here, so the row exists when the step records the call).
+func pipelineGateway(ctx context.Context, a *App, token, connection, tool string, args any, idempotent bool) contract.CallLine {
 	writeSnapshot(ctx, a) // the gateway must see the token before the call
 	line := gatewayCall(ctx, token, connection, tool, args, idempotent)
-	// Revoked even when the caller left: a live token would keep the key reachable until the next start.
-	if err := runTx(context.WithoutCancel(ctx), a, nil, true, "", func(q *Request) error {
-		return revokeTokens(q, executionID)
-	}); err != nil {
-		log.Printf("revoke %s: %v", executionID, err)
-	}
 	if _, err := connIngestPass(context.WithoutCancel(ctx), a); err != nil {
-		log.Printf("ingest %s: %v", executionID, err)
+		log.Printf("ingest %s: %v", connection, err)
 	}
 	return line
 }
@@ -1152,387 +1105,232 @@ func creditsOf(q *Request, executionID string) (any, error) {
 	return doc{"credits": credits}, nil
 }
 
-func advanceOnce(ctx context.Context, a *App, runID string) error {
-	for {
-		var run doc
-		index := -1
-		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-			if _, err := first(q, "SELECT id FROM execution WHERE id=$1 FOR UPDATE", runID); err != nil {
-				return err
-			}
-			var err error
-			run, err = getRun(q, runID)
-			if err != nil || run == nil || run["state"] != "running" {
-				return err
-			}
-			for i, value := range pipelinePlanEntries(run) {
-				entry := mapOf(value)
-				if entry["activation"] == "not_selected" {
-					continue
-				}
-				if entry["activation"] == "pending" {
-					if err := selectPipelineStep(q, run, i); err != nil {
-						return err
-					}
-					if run["state"] != "running" {
-						return nil
-					}
-					if entry["activation"] == "not_selected" {
-						continue
-					}
-				}
-				if entry["activation"] == "blocked" {
-					return finishRun(q, run, "failed", "prior_step_failed")
-				}
-				step := mapOf(anys(run["steps"])[i])
-				if step["state"] == "succeeded" {
-					continue
-				}
-				index = i
-				return nil
-			}
-			return finishRun(q, run, "succeeded", "")
-		}); err != nil {
+// The runner on the work kit (pipeline_work.go). One step of a run is one transaction under GLOBAL: it selects the next
+// plan entry and moves its step as far as the database alone can. Work outside the database (the inputs' objects, a
+// provider call, the output's object, a job poll, a finished agent's output) is a Call the step leaves; the kit runs it
+// after the commit, outside any transaction, and its pipelineRecord is applied by the next step to the run read again,
+// only while the plan revision is the one the call was made at (else the step looks again). What a crash between them
+// leaves: inputs or an output object saved but not bound (saved again, the old object unbound); a sync api call or a job
+// submit handed off (committed before the call) but not answered, which the next step fails as unknown:interrupted and
+// never sends again; a poll not recorded, which polls again.
+
+// pipelineRecord: what a call outside the step's transaction learned; revoke names the step row whose call token is
+// revoked whatever happens to the record.
+type pipelineRecord struct {
+	revision int64
+	revoke   string
+	apply    func(q *Request, run doc) error
+}
+
+// pipelineDrafts: the bytes of a finished draft-examples run's example files.
+type pipelineDrafts [][]byte
+
+// pipelineEvery: how often a waiting step looks again (a job poll, an agent's uploads) besides the wakes of its
+// execution's end; FLEET_PIPELINE_TICK_MS, 0 = only on wakes.
+var pipelineEvery = envMs("FLEET_PIPELINE_TICK_MS", 5000)
+
+func pipelineRevision(run doc) int64 {
+	r, _ := intOK(mapOf(run["plan"])["revision"])
+	return r
+}
+
+// pipelineSoon: the run's next step is due now and the queue is woken.
+func pipelineSoon(q *Request, runID string) error {
+	if err := kitSchedule(q, "pipeline", runID, time.Now()); err != nil {
+		return err
+	}
+	return kitNotify(q, "pipeline")
+}
+
+// pipelineLater: the run waits for a wake, or its next look after pipelineEvery.
+func pipelineLater(q *Request, runID string, now time.Time) error {
+	at := now.Add(100 * 365 * 24 * time.Hour)
+	if pipelineEvery > 0 {
+		at = now.Add(pipelineEvery)
+	}
+	return kitSchedule(q, "pipeline", runID, at)
+}
+
+// pipelineEnded: a run that ended in q's transaction: its experiment looks again and its own row runs once more for what
+// follows an end (draft examples), then goes.
+func pipelineEnded(q *Request, run doc) error {
+	if id := astr(run["experimentId"]); id != "" {
+		if err := labEnqueue(q, id); err != nil {
 			return err
 		}
-		if run == nil {
-			return nil
+	}
+	return pipelineSoon(q, astr(run["id"]))
+}
+
+// pipelineWorkStep: one step of run c.Key (the pipeline queue's step, in the kit's transaction).
+func pipelineWorkStep(q *Request, now time.Time, c *kitClaim) error {
+	if err := acquireTxLock(q, GLOBAL); err != nil {
+		return err
+	}
+	if _, err := q.db().PipelineRunLock(q.ctx(), c.Key); errors.Is(err, pgx.ErrNoRows) {
+		return q.db().PipelineWorkDelete(q.ctx(), c.Key)
+	} else if err != nil {
+		return err
+	}
+	run, err := getRun(q, c.Key)
+	if pipelineFormatUnsupported(err) || err == nil && run == nil {
+		return q.db().PipelineWorkDelete(q.ctx(), c.Key) // a historical plan never runs again
+	}
+	if err != nil {
+		return err
+	}
+	switch r := c.Result.(type) {
+	case pipelineDrafts:
+		return pipelineImportDrafts(q, run, r)
+	case pipelineRecord:
+		if r.revoke != "" {
+			if err := revokeTokens(q, r.revoke); err != nil {
+				return err
+			}
 		}
-		if run["state"] != "running" {
-			notifyFinished(a, run)
-			return nil
+		if run["state"] != "running" || pipelineRevision(run) != r.revision {
+			return pipelineSoon(q, c.Key)
 		}
-		if index < 0 {
-			return nil
-		}
-		again, err := runStep(ctx, a, run, index)
+		return r.apply(q, run)
+	}
+	if run["state"] == "running" {
+		index, err := pipelineNext(q, run)
 		if err != nil {
 			return err
 		}
-		if run["state"] != "running" {
-			notifyFinished(a, run)
-		}
-		if !again {
-			return nil
+		if run["state"] == "running" {
+			return pipelineStepAt(q, now, c, run, index)
 		}
 	}
+	// An ended run: a draft-examples run that succeeded leaves its examples to read, then the row goes.
+	if run["pipelineId"] == "draft-examples" && run["state"] == "succeeded" {
+		files, err := pipelineOutputs(q, run, -1)
+		if err != nil {
+			return err
+		}
+		a := q.app
+		c.Call = func(ctx context.Context) any {
+			out := pipelineDrafts{}
+			for _, f := range files {
+				if !draftExample.MatchString(f.Path) {
+					continue
+				}
+				if b, err := artifactBytes(ctx, a, f.ArtifactID, 64<<20); err == nil {
+					out = append(out, b)
+				}
+			}
+			return out
+		}
+		return nil
+	}
+	return q.db().PipelineWorkDelete(q.ctx(), c.Key)
 }
 
-// runStep: true when the next step may start now.
-func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
+// pipelineNext selects the plan entries up to the first step still to run and returns its index; a run with none left
+// ends.
+func pipelineNext(q *Request, run doc) (int, error) {
+	for i, value := range pipelinePlanEntries(run) {
+		entry := mapOf(value)
+		if entry["activation"] == "not_selected" {
+			continue
+		}
+		if entry["activation"] == "pending" {
+			if err := selectPipelineStep(q, run, i); err != nil {
+				return -1, err
+			}
+			if run["state"] != "running" {
+				return -1, nil
+			}
+			if entry["activation"] == "not_selected" {
+				continue
+			}
+		}
+		if entry["activation"] == "blocked" {
+			return -1, finishRun(q, run, "failed", "prior_step_failed")
+		}
+		if mapOf(anys(run["steps"])[i])["state"] == "succeeded" {
+			continue
+		}
+		return i, nil
+	}
+	return -1, finishRun(q, run, "succeeded", "")
+}
+
+// pipelineStepAt moves step i of a running run: a preparing step leaves its inputs to materialize; a running api step
+// fails as interrupted (sync) or leaves its job poll; a running agent or script step waits for its execution, then leaves
+// its output to read.
+func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run doc, i int) error {
+	a := q.app
 	s := mapOf(anys(run["steps"])[i])
 	def := mapOf(anys(mapOf(run["definition"])["steps"])[i])
-	outputs := doc{}
-	for _, x := range anys(run["steps"])[:i] {
-		outputs[astr(mapOf(x)["id"])] = mapOf(x)["output"]
-	}
 	row := stepRow(run, i)
 	kind := astr(def["kind"])
-	tx := func(fn func(q *Request) error) error { return runPipelineTransition(ctx, a, run, fn) }
-	failNow := func(problem, message string) (bool, error) {
-		return false, tx(func(q *Request) error { return failStep(q, run, i, problem, message) })
-	}
+	runID := astr(run["id"])
 	// A run keeps the definition it started with: a step of a kind no longer run (publication) fails, never runs as a
 	// script; a job it had started under the step (the coordinator's own publication job) ends with it.
 	if kind != "api" && kind != "agent" && kind != "script" {
-		return false, tx(func(q *Request) error {
-			jobs, err := queryRows(q, "SELECT id FROM execution WHERE parent_execution_id=$1 AND state IN ('preparing','running','waiting') ORDER BY id FOR UPDATE", row)
-			if err != nil {
+		jobs, err := queryRows(q, "SELECT id FROM execution WHERE parent_execution_id=$1 AND state IN ('preparing','running','waiting') ORDER BY id FOR UPDATE", row)
+		if err != nil {
+			return err
+		}
+		problem := "step:unknown-kind"
+		for _, j := range jobs {
+			if _, err := executionTransition(q, astr(j["id"]), executionEvent{To: "failed", Problem: &problem}); err != nil {
 				return err
 			}
-			problem := "step:unknown-kind"
-			for _, j := range jobs {
-				if _, err := executionTransition(q, astr(j["id"]), executionEvent{To: "failed", Problem: &problem}); err != nil {
-					return err
-				}
-			}
-			return failStep(q, run, i, "step:unknown-kind", "Step kind "+kind+" is no longer run")
-		})
+		}
+		return failStep(q, run, i, "step:unknown-kind", "Step kind "+kind+" is no longer run")
 	}
-	connection := astr(def["connection"])
-
 	if s["state"] == "preparing" {
-		prepared, err := materializePipelineInputs(ctx, a, run, i)
-		if err != nil {
-			return failNow("infra:inputs", err.Error())
+		snapshot, revision := run, pipelineRevision(run)
+		c.Call = func(ctx context.Context) any {
+			prepared, err := materializePipelineInputs(ctx, a, snapshot, i)
+			return pipelineRecord{revision: revision, apply: func(q *Request, run doc) error { return pipelinePrepared(q, c, run, i, prepared, err) }}
 		}
-		freezePipelineInputs(run, i, prepared)
-		var resolved any
-		switch kind {
-		case "api":
-			resolved, err = resolveRefs(withArguments(def, mapOf(run["overrides"])), run["example"], outputs, false)
-		case "agent":
-			p := def["prompt"]
-			if o := mapOf(run["overrides"]); o != nil && o["prompt"] != nil {
-				p = o["prompt"]
-			}
-			resolved, err = resolveRefs(p, run["example"], outputs, false)
-		default:
-			resolved, err = resolveRefs(def["command"], run["example"], outputs, true)
-		}
-		if re, ok := err.(*refError); ok {
-			s["startedAt"] = nowMs()
-			return failNow("ref:"+re.path, "Missing reference "+re.path)
-		} else if err != nil {
-			return false, err
-		}
-		s["state"], s["startedAt"] = "running", nowMs()
-		if kind == "api" {
-			var submitTool doc
-			if def["mode"] == "job" {
-				err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-					c, err := connByName(q, connection)
-					if err != nil {
-						return err
-					}
-					tools := providerTools(astr(c["provider"]))
-					submitTool = mapOf(tools[astr(def["tool"])])
-					for _, name := range []string{jobTool(def, "job_status"), jobTool(def, "recent_tasks")} {
-						tool := mapOf(tools[name])
-						granted := false
-						for _, t := range anys(c["tools"]) {
-							granted = granted || t == name
-						}
-						if tool["method"] != "GET" || tool["idempotent"] != true || !granted {
-							return fmt.Errorf("job read tool %s must be a granted idempotent GET", name)
-						}
-					}
-					return nil
-				})
-				if err != nil {
-					return failNow("step:job-tools", err.Error())
-				}
-			}
-			s["arguments"] = resolved
-			if err := tx(func(q *Request) error { return putRun(q, run) }); err != nil {
-				return false, err
-			}
-			inflight.Store(row, true)
-			defer inflight.Delete(row)
-			tool := astr(def["tool"])
-			line := connCallFor(ctx, a, run, connection, row, tool, resolved)
-			if deref(line.ErrorCode) == pipelineClaimObserved {
-				return false, nil
-			}
-			job := def["mode"] == "job"
-			// A job submit without a clear answer: a task created since the call started is adopted; otherwise unknown, never resent.
-			code := deref(line.ErrorCode)
-			if job && line.Outcome != contract.CallOutcomeOk && (line.Outcome == contract.CallOutcomeUnknown || http5xx.MatchString(code)) {
-				recent := connCallFor(ctx, a, run, connection, row, jobTool(def, "recent_tasks"), doc{})
-				listed := callOutput(recent)
-				tasks := anys(listed)
-				if tasks == nil {
-					tasks = anys(mapOf(listed)["result"])
-				}
-				owned := map[string]bool{}
-				runTx(ctx, a, nil, false, "", func(q *Request) error {
-					rs, err := queryRows(q, "SELECT data->>'jobId' AS id FROM execution WHERE data ? 'jobId'")
-					for _, r := range rs {
-						owned[astr(r["id"])] = true
-					}
-					return err
-				})
-				started, _ := numOK(s["startedAt"])
-				mine := []doc{}
-				if recent.Outcome == contract.CallOutcomeOk {
-					for _, x := range tasks {
-						t := mapOf(x)
-						id, ok := t["id"].(string)
-						c, _ := numOK(t["created_at"])
-						if ok && id != "" && jobCreatedDuring(c, started, float64(nowMs())) && !owned[id] && jobMatches(t, mapOf(resolved), submitTool) {
-							mine = append(mine, t)
-						}
-					}
-				}
-				if len(mine) == 1 {
-					line.Outcome, line.Output = contract.CallOutcomeOk, jsonBytes(doc{"jobId": mine[0]["id"]})
-					s["adoptedAfter"] = code
-				} else {
-					why := fmt.Sprintf("%d matching tasks", len(mine))
-					if recent.Outcome != contract.CallOutcomeOk {
-						why = "recent tasks unreadable"
-					}
-					return failNow("unknown:submit-unconfirmed", fmt.Sprintf("Job submit %s; %s; not sent again", code, why))
-				}
-			}
-			if line.Outcome != contract.CallOutcomeOk {
-				return failNow(problemOf(string(line.Outcome), code), fmt.Sprintf("Connection call %s: %s", line.Outcome, code))
-			}
-			if job {
-				out := mapOf(callOutput(line))
-				if _, ok := out["jobId"].(string); !ok {
-					if r, ok := out["result"].(string); ok {
-						out = doc{"jobId": r}
-					}
-				}
-				jobID, ok := out["jobId"].(string)
-				if !ok {
-					return failNow("step:no-job-id", "Job submit returned no jobId")
-				}
-				s["jobId"], s["polls"] = jobID, 0
-				return false, tx(func(q *Request) error {
-					if err := putRun(q, run); err != nil {
-						return err
-					}
-					return exec(q, "UPDATE execution SET data=data||jsonb_build_object('jobId',$2::text) WHERE id=$1", row, jobID)
-				})
-			}
-			out := callOutput(line)
-			if m := def["output"]; m != nil {
-				// The step's output is the mapping over the reply (${reply.<path>}); the reply's usage stays the step's usage.
-				usage := mapOf(out)["usage"]
-				mapped, err := resolveRefs(m, nil, doc{"": out}, false)
-				if err != nil {
-					s["reply"] = out // the paid answer stays inspectable on the failed step
-					return failNow(err.Error(), "Output mapping: a reference to the reply is missing")
-				}
-				if err := materializePipelineOutput(ctx, a, run, i, mapped); err != nil {
-					return false, err
-				}
-				return true, tx(func(q *Request) error { return completeStep(q, run, i, mapped, doc{"usage": usage}) })
-			}
-			if err := materializePipelineOutput(ctx, a, run, i, out); err != nil {
-				return false, err
-			}
-			return true, tx(func(q *Request) error {
-				return completeStep(q, run, i, out, doc{"usage": mapOf(out)["usage"]})
-			})
-		}
-		var execID string
-		err = tx(func(q *Request) error {
-			inputs := prepared.files
-			if err := putRun(q, run); err != nil {
-				return err
-			}
-			if kind == "agent" {
-				execID, err = startAgentStep(q, run, def, row, astr(resolved), inputs, mapOf(run["overrides"]))
-			} else {
-				host := astr(def["host"])
-				if h := mapOf(run["overrides"])["host"]; h != nil {
-					host = fmt.Sprint(h)
-				}
-				execID, err = startScript(q, run, row, astr(resolved), def["timeout_ms"], host, inputs)
-			}
-			if err != nil {
-				return err
-			}
-			s["executionId"] = execID
-			dispatch := mapOf(pipelinePlanEntry(run, i)["dispatch"])
-			dispatch["nativeExecutionId"] = execID
-			if kind == "script" {
-				command, err := first(q, "SELECT "+convTables["command"].record()+" AS data FROM command WHERE execution_id=$1 AND kind='script' ORDER BY seq", execID)
-				if err != nil {
-					return err
-				}
-				c := mapOf(command["data"])
-				if c == nil {
-					return fail(409, "Pipeline script command was not reserved")
-				}
-				dispatch["phase"], dispatch["commandId"], dispatch["hostId"] = "prepared", c["id"], c["hostId"]
-			}
-			return putRun(q, run)
-		})
-		if err != nil {
-			problem := "step:start"
-			if he, ok := err.(*HTTPError); ok && (he.Code == 409 || he.Code == 503) || strings.Contains(strings.ToLower(err.Error()), "reachable store") {
-				problem = "infra:start"
-			}
-			msg := err.Error()
-			if len(msg) > 500 {
-				msg = msg[:500]
-			}
-			// Re-read: the failed transaction left nothing; the step fails from its preparing state.
-			delete(s, "executionId")
-			return failNow(problem, msg)
-		}
-		return false, nil
+		return nil
 	}
 	if kind != "api" && s["executionId"] == nil {
-		return failNow("unknown:start", "Coordinator stopped while starting the step; not replayed")
+		return failStep(q, run, i, "unknown:start", "Coordinator stopped while starting the step; not replayed")
 	}
 	if kind == "api" && mapOf(pipelinePlanEntry(run, i)["dispatch"])["phase"] == "reserved" {
 		// No committed handoff exists. Resume preparation with the same frozen
 		// bindings and logical step; this is not replay of a provider call.
 		s["state"] = "preparing"
-		return true, tx(func(q *Request) error { return putRun(q, run) })
+		if err := putRun(q, run); err != nil {
+			return err
+		}
+		return pipelineSoon(q, runID)
 	}
 	if kind == "api" && def["mode"] != "job" {
-		if _, busy := inflight.Load(row); busy {
-			return false, nil
-		}
-		return failNow("unknown:interrupted", "Coordinator restarted during the call; outcome unknown, not replayed")
+		// Handed off and not answered: the call's record was lost (a restart, a failed record). Never sent again.
+		return failStep(q, run, i, "unknown:interrupted", "Coordinator restarted during the call; outcome unknown, not replayed")
 	}
 	if kind == "api" {
-		if _, busy := inflight.LoadOrStore(row, true); busy {
-			return false, nil
+		connection, tool := astr(def["connection"]), jobTool(def, "job_status")
+		token, idempotent, refused := pipelineClaimCall(q, run, row, connection, tool)
+		snapshot, revision, jobID := run, pipelineRevision(run), s["jobId"]
+		c.Call = func(ctx context.Context) any {
+			line := refused
+			if line == nil {
+				l := pipelineGateway(ctx, a, token, connection, tool, doc{"jobId": jobID}, idempotent)
+				line = &l
+			}
+			out, artifact, err := pipelinePolled(ctx, a, snapshot, i, *line)
+			return pipelineRecord{revision: revision, revoke: row, apply: func(q *Request, run doc) error {
+				return pipelinePollRecord(q, now, run, i, *line, out, artifact, err)
+			}}
 		}
-		defer inflight.Delete(row)
-		line := connCallFor(ctx, a, run, connection, row, jobTool(def, "job_status"), doc{"jobId": s["jobId"]})
-		p, _ := numOK(s["polls"])
-		s["polls"] = p + 1
-		if line.Outcome != contract.CallOutcomeOk {
-			if line.Outcome == contract.CallOutcomeUnknown {
-				return false, nil
-			}
-			code := deref(line.ErrorCode)
-			return failNow(problemOf(string(line.Outcome), code), "Job poll failed: "+code)
-		}
-		out := mapOf(callOutput(line))
-		// Meshy's task shape: status SUCCEEDED | FAILED | CANCELED | EXPIRED | PENDING | IN_PROGRESS.
-		if st, ok := out["status"].(string); ok && out["state"] == nil {
-			state := "running"
-			if st == "SUCCEEDED" {
-				state = "succeeded"
-			} else if st == "FAILED" || st == "CANCELED" || st == "EXPIRED" {
-				state = "failed"
-			}
-			urls := out["model_urls"]
-			if urls == nil {
-				urls = doc{}
-			}
-			var usage any
-			if c, ok := numOK(out["consumed_credits"]); ok {
-				usage = doc{"credits": c}
-			}
-			out = doc{"state": state, "output": doc{"jobId": s["jobId"], "request": s["arguments"], "result": out["result"], "model_urls": urls, "thumbnail_url": out["thumbnail_url"], "image_urls": out["image_urls"], "receipt": out}, "usage": usage, "error": mapOf(out["task_error"])["message"]}
-		}
-		switch out["state"] {
-		case "succeeded":
-			result := out["output"]
-			if result == nil {
-				result = doc{}
-			}
-			if err := materializePipelineOutput(ctx, a, run, i, result); err != nil {
-				return false, err
-			}
-			return true, tx(func(q *Request) error {
-				if err := completeStep(q, run, i, result, doc{"usage": out["usage"]}); err != nil {
-					return err
-				}
-				if u := mapOf(out["usage"]); u != nil {
-					return recordJob(q, run, row, astr(def["tool"]), astr(s["jobId"]), connection, u)
-				}
-				return nil
-			})
-		case "failed":
-			code := out["error"]
-			if code == nil {
-				code = "job-failed"
-			}
-			return failNow(problemOf("error", fmt.Sprint(code)), "Job failed")
-		}
-		return false, tx(func(q *Request) error { return putRun(q, run) })
+		return nil
 	}
 	// Agent or script step running: wait for its execution.
-	var e doc
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) { e, err = maybe(q, s["executionId"], "execution"); return }); err != nil || e == nil {
-		return false, err
+	e, err := maybe(q, s["executionId"], "execution")
+	if err != nil {
+		return err
 	}
-	st := astr(e["state"])
-	if !terminal(e) {
-		return false, nil // an unconfirmed running state is not final: the host may still report the real outcome
+	if e == nil || !terminal(e) {
+		return pipelineLater(q, runID, now) // an unconfirmed running state is not final: the host may still report the real outcome
 	}
-	if st != "succeeded" {
+	if st := astr(e["state"]); st != "succeeded" {
 		problem := "step:cancelled"
 		if st != "cancelled" {
 			code := mapOf(e["error"])["code"]
@@ -1548,25 +1346,49 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 		if msg == "" {
 			msg = "Step execution " + st
 		}
-		return failNow(problem, msg)
+		return failStep(q, run, i, problem, msg)
 	}
-	var arts []doc
 	var pending int
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM artifact WHERE execution_id=$1 AND state='pending'", s["executionId"]).Scan(&pending); err != nil {
-			return err
-		}
-		var err error
-		arts, err = artifactsOf(q, astr(s["executionId"]))
+	if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM artifact WHERE execution_id=$1 AND state='pending'", s["executionId"]).Scan(&pending); err != nil {
 		return err
-	}); err != nil {
-		return false, err
 	}
 	if pending > 0 {
-		return false, nil // uploads can finish after the completion receipt
+		return pipelineLater(q, runID, now) // uploads can finish after the completion receipt
 	}
+	arts, err := artifactsOf(q, astr(s["executionId"]))
+	if err != nil {
+		return err
+	}
+	snapshot, revision := run, pipelineRevision(run)
+	c.Call = func(ctx context.Context) any {
+		output, artifact, err := pipelineAgentOutput(ctx, a, snapshot, i, arts)
+		return pipelineRecord{revision: revision, apply: func(q *Request, run doc) error {
+			if err != nil {
+				return err
+			}
+			step := mapOf(anys(run["steps"])[i])
+			step["outputArtifactId"] = artifact
+			u, err := creditsOf(q, astr(step["executionId"]))
+			if err != nil {
+				return err
+			}
+			if err := completeStep(q, run, i, output, doc{"usage": u}); err != nil {
+				return err
+			}
+			return pipelineSoon(q, astr(run["id"]))
+		}}
+	}
+	return nil
+}
+
+// pipelineStepOf: step i of run as a record.
+func pipelineStepOf(run doc, i int) doc { return mapOf(anys(run["steps"])[i]) }
+
+// pipelineAgentOutput: a finished agent or script step's output (its output.json, else its file list), saved as the
+// step's output object. Outside any transaction.
+func pipelineAgentOutput(ctx context.Context, a *App, run doc, i int, arts []doc) (any, any, error) {
 	if _, err := connIngestPass(ctx, a); err != nil {
-		return false, err
+		return nil, nil, err
 	}
 	var output any
 	for _, art := range arts {
@@ -1594,15 +1416,392 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 		output = doc{"files": files}
 	}
 	if err := materializePipelineOutput(ctx, a, run, i, output); err != nil {
-		return false, err
+		return nil, nil, err
 	}
-	return true, tx(func(q *Request) error {
-		u, err := creditsOf(q, astr(s["executionId"]))
+	return output, pipelineStepOf(run, i)["outputArtifactId"], nil
+}
+
+// pipelinePrepared records a preparing step's materialized inputs and starts it: an api step is handed off and leaves
+// its call; an agent or script step starts its execution (a start that fails fails the step from its preparing state).
+func pipelinePrepared(q *Request, c *kitClaim, run doc, i int, prepared *pipelinePreparedInputs, inputsErr error) error {
+	s := pipelineStepOf(run, i)
+	def := mapOf(anys(mapOf(run["definition"])["steps"])[i])
+	kind, connection, row := astr(def["kind"]), astr(def["connection"]), stepRow(run, i)
+	if inputsErr != nil {
+		return failStep(q, run, i, "infra:inputs", inputsErr.Error())
+	}
+	outputs := doc{}
+	for _, x := range anys(run["steps"])[:i] {
+		outputs[astr(mapOf(x)["id"])] = mapOf(x)["output"]
+	}
+	freezePipelineInputs(run, i, prepared)
+	var resolved any
+	var err error
+	switch kind {
+	case "api":
+		resolved, err = resolveRefs(withArguments(def, mapOf(run["overrides"])), run["example"], outputs, false)
+	case "agent":
+		p := def["prompt"]
+		if o := mapOf(run["overrides"]); o != nil && o["prompt"] != nil {
+			p = o["prompt"]
+		}
+		resolved, err = resolveRefs(p, run["example"], outputs, false)
+	default:
+		resolved, err = resolveRefs(def["command"], run["example"], outputs, true)
+	}
+	if re, ok := err.(*refError); ok {
+		s["startedAt"] = nowMs()
+		return failStep(q, run, i, "ref:"+re.path, "Missing reference "+re.path)
+	} else if err != nil {
+		return err
+	}
+	s["state"], s["startedAt"] = "running", nowMs()
+	if kind == "api" {
+		var submitTool doc
+		if def["mode"] == "job" {
+			conn, err := connByName(q, connection)
+			if err != nil {
+				return failStep(q, run, i, "step:job-tools", err.Error())
+			}
+			tools := providerTools(astr(conn["provider"]))
+			submitTool = mapOf(tools[astr(def["tool"])])
+			for _, name := range []string{jobTool(def, "job_status"), jobTool(def, "recent_tasks")} {
+				tool := mapOf(tools[name])
+				granted := false
+				for _, t := range anys(conn["tools"]) {
+					granted = granted || t == name
+				}
+				if tool["method"] != "GET" || tool["idempotent"] != true || !granted {
+					return failStep(q, run, i, "step:job-tools", fmt.Sprintf("job read tool %s must be a granted idempotent GET", name))
+				}
+			}
+		}
+		s["arguments"] = resolved
+		if err := putRun(q, run); err != nil {
+			return err
+		}
+		return pipelineSubmit(q, c, run, i, resolved, submitTool)
+	}
+	// The start runs under a savepoint: one that fails leaves nothing of it, and the step fails from here.
+	revision := pipelineRevision(run)
+	if err := exec(q, "SAVEPOINT pipeline_start"); err != nil {
+		return err
+	}
+	err = func() error {
+		if err := putRun(q, run); err != nil {
+			return err
+		}
+		var execID string
+		var err error
+		if kind == "agent" {
+			execID, err = startAgentStep(q, run, def, row, astr(resolved), prepared.files, mapOf(run["overrides"]))
+		} else {
+			host := astr(def["host"])
+			if h := mapOf(run["overrides"])["host"]; h != nil {
+				host = fmt.Sprint(h)
+			}
+			execID, err = startScript(q, run, row, astr(resolved), def["timeout_ms"], host, prepared.files)
+		}
 		if err != nil {
 			return err
 		}
-		return completeStep(q, run, i, output, doc{"usage": u})
-	})
+		s["executionId"] = execID
+		dispatch := mapOf(pipelinePlanEntry(run, i)["dispatch"])
+		dispatch["nativeExecutionId"] = execID
+		if kind == "script" {
+			command, err := first(q, "SELECT "+convTables["command"].record()+" AS data FROM command WHERE execution_id=$1 AND kind='script' ORDER BY seq", execID)
+			if err != nil {
+				return err
+			}
+			cmd := mapOf(command["data"])
+			if cmd == nil {
+				return fail(409, "Pipeline script command was not reserved")
+			}
+			dispatch["phase"], dispatch["commandId"], dispatch["hostId"] = "prepared", cmd["id"], cmd["hostId"]
+		}
+		return putRun(q, run)
+	}()
+	if err == nil {
+		return exec(q, "RELEASE SAVEPOINT pipeline_start") // the step waits for its execution's end, which wakes the run
+	}
+	if e := exec(q, "ROLLBACK TO SAVEPOINT pipeline_start"); e != nil {
+		return e
+	}
+	problem := "step:start"
+	if he, ok := err.(*HTTPError); ok && (he.Code == 409 || he.Code == 503) || strings.Contains(strings.ToLower(err.Error()), "reachable store") {
+		problem = "infra:start"
+	}
+	msg := err.Error()
+	if len(msg) > 500 {
+		msg = msg[:500]
+	}
+	delete(s, "executionId")
+	mapOf(run["plan"])["revision"] = revision
+	return failStep(q, run, i, problem, msg)
+}
+
+// pipelineSubmit hands an api step's call off (claimPipelineAPI, committed with this step) and leaves the call.
+func pipelineSubmit(q *Request, c *kitClaim, run doc, i int, resolved any, submitTool doc) error {
+	a := q.app
+	def := mapOf(anys(mapOf(run["definition"])["steps"])[i])
+	connection, tool, row := astr(def["connection"]), astr(def["tool"]), stepRow(run, i)
+	token, idempotent, refused := pipelineClaimCall(q, run, row, connection, tool)
+	if refused != nil && deref(refused.ErrorCode) == pipelineClaimObserved {
+		return pipelineSoon(q, astr(run["id"])) // another owner holds the call
+	}
+	if refused != nil {
+		return pipelineSubmitted(q, c, run, i, *refused, resolved, submitTool, nil)
+	}
+	snapshot, revision := run, pipelineRevision(run)
+	c.Call = func(ctx context.Context) any {
+		line := pipelineGateway(ctx, a, token, connection, tool, resolved, idempotent)
+		out := pipelineSyncOutput(ctx, a, snapshot, i, line)
+		return pipelineRecord{revision: revision, revoke: row, apply: func(q *Request, run doc) error {
+			return pipelineSubmitted(q, c, run, i, line, resolved, submitTool, out)
+		}}
+	}
+	return nil
+}
+
+// pipelineSyncResult: a sync api step's answer read outside the transaction: its output (the mapping over the reply),
+// its saved output object, or why neither.
+type pipelineSyncResult struct {
+	output, usage, reply, artifact any
+	mapErr, saveErr                error
+}
+
+func pipelineSyncOutput(ctx context.Context, a *App, run doc, i int, line contract.CallLine) *pipelineSyncResult {
+	def := mapOf(anys(mapOf(run["definition"])["steps"])[i])
+	if line.Outcome != contract.CallOutcomeOk || def["mode"] == "job" {
+		return nil
+	}
+	out := callOutput(line)
+	r := &pipelineSyncResult{output: out, usage: mapOf(out)["usage"]}
+	if m := def["output"]; m != nil {
+		// The step's output is the mapping over the reply (${reply.<path>}); the reply's usage stays the step's usage.
+		mapped, err := resolveRefs(m, nil, doc{"": out}, false)
+		if err != nil {
+			r.reply, r.mapErr = out, err // the paid answer stays inspectable on the failed step
+			return r
+		}
+		r.output = mapped
+	}
+	r.saveErr = materializePipelineOutput(ctx, a, run, i, r.output)
+	r.artifact = pipelineStepOf(run, i)["outputArtifactId"]
+	return r
+}
+
+// pipelineSubmitted records an api step's call: a job submit without a clear answer leaves a listing of recent tasks
+// (one created since the call started is adopted; otherwise unknown, never resent).
+func pipelineSubmitted(q *Request, c *kitClaim, run doc, i int, line contract.CallLine, resolved any, submitTool doc, out *pipelineSyncResult) error {
+	a := q.app
+	s := pipelineStepOf(run, i)
+	def := mapOf(anys(mapOf(run["definition"])["steps"])[i])
+	connection, row := astr(def["connection"]), stepRow(run, i)
+	job := def["mode"] == "job"
+	code := deref(line.ErrorCode)
+	if job && line.Outcome != contract.CallOutcomeOk && (line.Outcome == contract.CallOutcomeUnknown || http5xx.MatchString(code)) {
+		tool := jobTool(def, "recent_tasks")
+		token, idempotent, refused := pipelineClaimCall(q, run, row, connection, tool)
+		revision := pipelineRevision(run)
+		c.Call = func(ctx context.Context) any {
+			recent := refused
+			if recent == nil {
+				l := pipelineGateway(ctx, a, token, connection, tool, doc{}, idempotent)
+				recent = &l
+			}
+			return pipelineRecord{revision: revision, revoke: row, apply: func(q *Request, run doc) error {
+				return pipelineAdopt(q, run, i, code, *recent, resolved, submitTool)
+			}}
+		}
+		return nil
+	}
+	if line.Outcome != contract.CallOutcomeOk {
+		return failStep(q, run, i, problemOf(string(line.Outcome), code), fmt.Sprintf("Connection call %s: %s", line.Outcome, code))
+	}
+	if job {
+		return pipelineJobStarted(q, run, i, line)
+	}
+	if out.mapErr != nil {
+		s["reply"] = out.reply
+		return failStep(q, run, i, out.mapErr.Error(), "Output mapping: a reference to the reply is missing")
+	}
+	if out.saveErr != nil {
+		return out.saveErr
+	}
+	s["outputArtifactId"] = out.artifact
+	if err := completeStep(q, run, i, out.output, doc{"usage": out.usage}); err != nil {
+		return err
+	}
+	return pipelineSoon(q, astr(run["id"]))
+}
+
+// pipelineAdopt: after a job submit without a clear answer, the one recent task created since the call started that no
+// step owns and that matches the request is the step's job; otherwise the submit is unknown and never sent again.
+func pipelineAdopt(q *Request, run doc, i int, code string, recent contract.CallLine, resolved any, submitTool doc) error {
+	s := pipelineStepOf(run, i)
+	listed := callOutput(recent)
+	tasks := anys(listed)
+	if tasks == nil {
+		tasks = anys(mapOf(listed)["result"])
+	}
+	owned := map[string]bool{}
+	rs, err := queryRows(q, "SELECT data->>'jobId' AS id FROM execution WHERE data ? 'jobId'")
+	if err != nil {
+		return err
+	}
+	for _, r := range rs {
+		owned[astr(r["id"])] = true
+	}
+	started, _ := numOK(s["startedAt"])
+	mine := []doc{}
+	if recent.Outcome == contract.CallOutcomeOk {
+		for _, x := range tasks {
+			t := mapOf(x)
+			id, ok := t["id"].(string)
+			c, _ := numOK(t["created_at"])
+			if ok && id != "" && jobCreatedDuring(c, started, float64(nowMs())) && !owned[id] && jobMatches(t, mapOf(resolved), submitTool) {
+				mine = append(mine, t)
+			}
+		}
+	}
+	if len(mine) != 1 {
+		why := fmt.Sprintf("%d matching tasks", len(mine))
+		if recent.Outcome != contract.CallOutcomeOk {
+			why = "recent tasks unreadable"
+		}
+		return failStep(q, run, i, "unknown:submit-unconfirmed", fmt.Sprintf("Job submit %s; %s; not sent again", code, why))
+	}
+	s["adoptedAfter"] = code
+	return pipelineJobStarted(q, run, i, contract.CallLine{Outcome: contract.CallOutcomeOk, Output: jsonBytes(doc{"jobId": mine[0]["id"]})})
+}
+
+// pipelineJobStarted: a job submit's answer names the job the step polls from now on.
+func pipelineJobStarted(q *Request, run doc, i int, line contract.CallLine) error {
+	s := pipelineStepOf(run, i)
+	out := mapOf(callOutput(line))
+	if _, ok := out["jobId"].(string); !ok {
+		if r, ok := out["result"].(string); ok {
+			out = doc{"jobId": r}
+		}
+	}
+	jobID, ok := out["jobId"].(string)
+	if !ok {
+		return failStep(q, run, i, "step:no-job-id", "Job submit returned no jobId")
+	}
+	s["jobId"], s["polls"] = jobID, 0
+	if err := putRun(q, run); err != nil {
+		return err
+	}
+	if err := exec(q, "UPDATE execution SET data=data||jsonb_build_object('jobId',$2::text) WHERE id=$1", stepRow(run, i), jobID); err != nil {
+		return err
+	}
+	return pipelineLater(q, astr(run["id"]), time.Now())
+}
+
+// pipelinePolled reads a job poll's answer outside the transaction: the job's state, its output (Meshy's task shape
+// mapped) and, once it succeeded, its saved output object.
+func pipelinePolled(ctx context.Context, a *App, run doc, i int, line contract.CallLine) (doc, any, error) {
+	if line.Outcome != contract.CallOutcomeOk {
+		return nil, nil, nil
+	}
+	s := pipelineStepOf(run, i)
+	out := mapOf(callOutput(line))
+	// Meshy's task shape: status SUCCEEDED | FAILED | CANCELED | EXPIRED | PENDING | IN_PROGRESS.
+	if st, ok := out["status"].(string); ok && out["state"] == nil {
+		state := "running"
+		if st == "SUCCEEDED" {
+			state = "succeeded"
+		} else if st == "FAILED" || st == "CANCELED" || st == "EXPIRED" {
+			state = "failed"
+		}
+		urls := out["model_urls"]
+		if urls == nil {
+			urls = doc{}
+		}
+		var usage any
+		if c, ok := numOK(out["consumed_credits"]); ok {
+			usage = doc{"credits": c}
+		}
+		out = doc{"state": state, "output": doc{"jobId": s["jobId"], "request": s["arguments"], "result": out["result"], "model_urls": urls, "thumbnail_url": out["thumbnail_url"], "image_urls": out["image_urls"], "receipt": out}, "usage": usage, "error": mapOf(out["task_error"])["message"]}
+	}
+	if out["state"] != "succeeded" {
+		return out, nil, nil
+	}
+	if out["output"] == nil {
+		out["output"] = doc{}
+	}
+	if err := materializePipelineOutput(ctx, a, run, i, out["output"]); err != nil {
+		return out, nil, err
+	}
+	return out, s["outputArtifactId"], nil
+}
+
+// pipelinePollRecord records one job poll: a succeeded job completes the step with its usage, a failed one fails it,
+// anything else (an unknown poll included) polls again later.
+func pipelinePollRecord(q *Request, now time.Time, run doc, i int, line contract.CallLine, out doc, artifact any, saveErr error) error {
+	s := pipelineStepOf(run, i)
+	def := mapOf(anys(mapOf(run["definition"])["steps"])[i])
+	runID, row := astr(run["id"]), stepRow(run, i)
+	if line.Outcome != contract.CallOutcomeOk {
+		if line.Outcome == contract.CallOutcomeUnknown {
+			return pipelineLater(q, runID, now)
+		}
+		code := deref(line.ErrorCode)
+		return failStep(q, run, i, problemOf(string(line.Outcome), code), "Job poll failed: "+code)
+	}
+	p, _ := numOK(s["polls"])
+	s["polls"] = p + 1
+	switch out["state"] {
+	case "succeeded":
+		if saveErr != nil {
+			return saveErr
+		}
+		s["outputArtifactId"] = artifact
+		if err := completeStep(q, run, i, out["output"], doc{"usage": out["usage"]}); err != nil {
+			return err
+		}
+		if u := mapOf(out["usage"]); u != nil {
+			if err := recordJob(q, run, row, astr(def["tool"]), astr(s["jobId"]), astr(def["connection"]), u); err != nil {
+				return err
+			}
+		}
+		return pipelineSoon(q, runID)
+	case "failed":
+		code := out["error"]
+		if code == nil {
+			code = "job-failed"
+		}
+		return failStep(q, run, i, problemOf("error", fmt.Sprint(code)), "Job failed")
+	}
+	if err := putRun(q, run); err != nil {
+		return err
+	}
+	return pipelineLater(q, runID, now)
+}
+
+// pipelineImportDrafts: a finished draft-examples run's examples become unapproved examples, each with its rating
+// question; one that is refused is left out (savepoint). The run's row goes.
+func pipelineImportDrafts(q *Request, run doc, drafts pipelineDrafts) error {
+	for _, b := range drafts {
+		var ex any
+		if json.Unmarshal(b, &ex) != nil {
+			continue
+		}
+		if err := exec(q, "SAVEPOINT pipeline_draft"); err != nil {
+			return err
+		}
+		if err := importDraft(q, run, ex); err != nil {
+			if e := exec(q, "ROLLBACK TO SAVEPOINT pipeline_draft"); e != nil {
+				return e
+			}
+			continue
+		}
+		if err := exec(q, "RELEASE SAVEPOINT pipeline_draft"); err != nil {
+			return err
+		}
+	}
+	return q.db().PipelineWorkDelete(q.ctx(), astr(run["id"]))
 }
 
 // callOutput: the provider's reply body of an in-process call, decoded; nil when there is none.
@@ -1636,9 +1835,6 @@ func init() {
 			out, err = pipelineRunCreate(q)
 			return err
 		})
-		if err == nil && out["state"] == "running" {
-			pipelineAdvance(q.app, astr(out["id"]))
-		}
 		if err != nil {
 			return nil, err
 		}
@@ -1658,9 +1854,6 @@ func init() {
 		})
 		if err != nil {
 			return out, err
-		}
-		if run["state"] == "running" {
-			pipelineAdvance(q.app, astr(run["id"]))
 		}
 		out.RunId = astr(run["id"])
 		for _, x := range anys(run["reused"]) {
@@ -1713,20 +1906,12 @@ func init() {
 		if err != nil {
 			return out, err
 		}
-		if run["state"] == "running" {
-			pipelineAdvance(q.app, astr(run["id"]))
-		}
 		out.RunId = astr(run["id"])
 		out.Definitions, err = asT[[]contract.DefinitionRef](run["definitions"])
 		if out.Definitions == nil {
 			out.Definitions = []contract.DefinitionRef{}
 		}
 		return out, err
-	})
-	onStart(func(ctx context.Context, a *App) {
-		// On start, running v2 runs move on (an interrupted sync call becomes unknown, never replayed).
-		pipelineTick(ctx, a)
-		every(ctx, "pipelines", envMs("FLEET_PIPELINE_TICK_MS", 5000), func(ctx context.Context) error { pipelineTick(ctx, a); labReconcileRunning(ctx, a); return nil })
 	})
 }
 
@@ -1894,7 +2079,6 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 	if old {
 		return pipelinePublicRead(q.ctx(), q.app, astr(run["id"]))
 	}
-	pipelineAdvance(q.app, astr(run["id"]))
 	return pipelineWait(q.ctx(), q.app, astr(run["id"]))
 }
 

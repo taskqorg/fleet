@@ -1,7 +1,8 @@
 // Lab (docs/designs/fleet-lab.md): examples, experiments, scores and ratings.
 // An example is a lab-scope artifact with role 'example'. An experiment is pinned approved examples x variants x repeats of
 // one v2 pipeline; a trial is a pipeline_run with experiment_id, variant and request_id; a judge run has variant null.
-// labReconcile(id) is the one function that moves an experiment, under the experiment's scope lock.
+// labWorkStep (the work kit's lab queue, pipeline_work.go) is the one function that moves an experiment, under the
+// experiment's scope lock.
 package main
 
 import (
@@ -12,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"net/http"
 	"os"
@@ -23,7 +23,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"fleet/contract"
@@ -1648,29 +1647,86 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 	return complete, nil
 }
 
-var expLocks sync.Map
-
-func expLock(id string) *sync.Mutex {
-	m, _ := expLocks.LoadOrStore(id, &sync.Mutex{})
-	return m.(*sync.Mutex)
+// labPending: a script check of one trial, read in the step's transaction and run outside it.
+type labPending struct {
+	checks           []any
+	files            []labFile
+	trial            doc
+	evaluator, input string
+	snapshot         doc
 }
 
-// labReconcile moves one experiment, serial per experiment.
-func labReconcile(ctx context.Context, a *App, id string) error {
-	m := expLock(id)
-	m.Lock()
-	defer m.Unlock()
-	launched := []string{}
-	// Script checks run after the read snapshot closed and before the write transaction, so a slow check holds neither.
-	type pending struct {
-		checks           []any
-		files            []labFile
-		trial            doc
-		evaluator, input string
-		snapshot         doc
+// labChecked: the script checks' results by trial, or why they could not run.
+type labChecked struct {
+	checked map[string]doc
+	err     error
+}
+
+// labLaterEvery: how often a running experiment looks again besides its trials' ends (budgets, the requester's access):
+// FLEET_PIPELINE_TICK_MS, 0 = only on wakes.
+var labLaterEvery = envMs("FLEET_PIPELINE_TICK_MS", 5000)
+
+// labWorkStep moves experiment c.Key (the lab queue's step, in the kit's transaction under GLOBAL and the experiment's
+// lock): trials whose script checks are due leave the checks to run outside the transaction (the next step records
+// their scores); otherwise the experiment's budgets, evaluations, launches and end are written. A running experiment
+// looks again later; any other leaves the queue until a producer enqueues it again.
+func labWorkStep(q *Request, now time.Time, c *kitClaim) error {
+	id := c.Key
+	if err := acquireTxLock(q, GLOBAL, "experiment:"+id); err != nil {
+		return err
 	}
-	todo := map[string]pending{}
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+	checked := map[string]doc{}
+	if r, ok := c.Result.(labChecked); ok {
+		if r.err != nil {
+			return r.err
+		}
+		checked = r.checked
+	} else {
+		todo, err := labPendingChecks(q, id)
+		if err != nil {
+			return err
+		}
+		if len(todo) > 0 {
+			a := q.app
+			c.Call = func(ctx context.Context) any {
+				checked := map[string]doc{}
+				for id, p := range todo {
+					r, err := runChecks(ctx, p.checks, p.files)
+					if err == nil {
+						err = materializeLabAssessments(ctx, a, p.trial, r, p.evaluator, p.input)
+					}
+					if err != nil {
+						return labChecked{err: err}
+					}
+					r["assessmentSnapshot"] = p.snapshot
+					checked[id] = r
+				}
+				return labChecked{checked: checked}
+			}
+			return nil
+		}
+	}
+	if err := labRecord(q, id, checked); err != nil {
+		return err
+	}
+	state, err := q.db().LabExperimentState(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (state != "running" || labLaterEvery <= 0) {
+		return q.db().LabWorkDelete(q.ctx(), id)
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := q.db().LabWorkEnsure(q.ctx(), id); err != nil {
+		return err
+	}
+	return kitSchedule(q, "lab", id, now.Add(labLaterEvery))
+}
+
+// labPendingChecks: the latest comparable trials of experiment id whose script checks have not scored them, with what
+// the checks read.
+func labPendingChecks(q *Request, id string) (map[string]labPending, error) {
+	todo := map[string]labPending{}
+	err := func() error {
 		exp, err := expRow(q, id)
 		if err != nil || exp["state"] == "draft" {
 			return err
@@ -1738,200 +1794,162 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			metadata := doc{"schema": "fleet.lab-trial.v1", "evaluatorSha256": labEvaluatorIdentity(anys(full["checks"]), files), "trialId": t["id"], "runId": t["id"], "experimentId": id, "variantId": mapOf(t["cell"])["variant"], "planSummary": pipelinePlanSummary(t), "canonicalResult": t["canonicalResult"], "evidence": evidence, "executionState": t["state"], "observation": firstString(t["observation"], "confirmed"), "resources": doc{"usage": t["usage"], "durationMs": t["durationMs"]}, "inputs": labFileBindings(files)}
 			files = append(files, labFile{"__fleet_evaluation/trial.json", jsonBytes(metadata)})
 			evaluator, input := labAssessmentInputs(t, anys(full["checks"]), files)
-			todo[astr(t["id"])] = pending{anys(full["checks"]), files, t, evaluator, input, labAssessmentSnapshot(t, full)}
+			todo[astr(t["id"])] = labPending{anys(full["checks"]), files, t, evaluator, input, labAssessmentSnapshot(t, full)}
 		}
 		return nil
-	}); err != nil {
+	}()
+	return todo, err
+}
+
+// labRecord writes one look at experiment id: its requester, budgets, the evaluations (checked: the script checks just
+// run), the trials to launch and its end. A launched trial's run is on the kit from its first write.
+func labRecord(q *Request, id string, checked map[string]doc) error {
+	var launched []string
+	exp, err := expRow(q, id)
+	if err != nil || exp["state"] == "draft" {
 		return err
 	}
-	checked := map[string]doc{}
-	for id, p := range todo {
-		r, err := runChecks(ctx, p.checks, p.files)
-		if err != nil {
-			return err
-		}
-		if err := materializeLabAssessments(ctx, a, p.trial, r, p.evaluator, p.input); err != nil {
-			return err
-		}
-		r["assessmentSnapshot"] = p.snapshot
-		checked[id] = r
+	runs, err := expRuns(q, id)
+	if err != nil {
+		return err
 	}
-	err := runTxLocks(ctx, a, nil, true, []string{GLOBAL, "experiment:" + id}, func(q *Request) error {
-		exp, err := expRow(q, id)
-		if err != nil || exp["state"] == "draft" {
-			return err
-		}
-		runs, err := expRuns(q, id)
-		if err != nil {
-			return err
-		}
-		trials := expTrials(runs)
-		cur, err := scoresCurrent(q, id)
-		if err != nil {
-			return err
-		}
-		if exp["state"] != "running" {
-			_, err := expEvaluate(q, exp, trials, runs, cur, &launched, checked)
-			return err
-		}
-		if _, err := labRequester(q, id); err != nil {
-			var reason *codedError
-			if errors.As(err, &reason) && strings.HasPrefix(reason.code, "requester:") {
-				state := "stopped"
-				if reason.code == "requester:access-revoked" {
-					state = "paused"
-				}
-				_, err := experimentTransition(q, id, experimentEvent{To: state, StopReason: &reason.code})
-				return err
+	trials := expTrials(runs)
+	cur, err := scoresCurrent(q, id)
+	if err != nil {
+		return err
+	}
+	if exp["state"] != "running" {
+		_, err := expEvaluate(q, exp, trials, runs, cur, &launched, checked)
+		return err
+	}
+	if _, err := labRequester(q, id); err != nil {
+		var reason *codedError
+		if errors.As(err, &reason) && strings.HasPrefix(reason.code, "requester:") {
+			state := "stopped"
+			if reason.code == "requester:access-revoked" {
+				state = "paused"
 			}
+			_, err := experimentTransition(q, id, experimentEvent{To: state, StopReason: &reason.code})
 			return err
 		}
-		if strings.HasPrefix(astr(exp["stop_reason"]), "requester:") {
-			if err := exec(q, "UPDATE experiment SET stop_reason=NULL WHERE id=$1", id); err != nil {
-				return err
-			}
-		}
-		order, last := expLatest(trials)
-		repeats, _ := intOK(exp["repeats"])
-		total := len(anys(exp["examples"])) * len(anys(exp["variants"])) * int(repeats)
-		missing := total - len(order)
-		s, err := expSpend(q, id)
-		if err != nil {
+		return err
+	}
+	if strings.HasPrefix(astr(exp["stop_reason"]), "requester:") {
+		if err := exec(q, "UPDATE experiment SET stop_reason=NULL WHERE id=$1", id); err != nil {
 			return err
 		}
-		budgets := []any{}
-		if missing > 0 || exp["kind"] == "loop" {
-			budgets = anys(exp["budgets"])
+	}
+	order, last := expLatest(trials)
+	repeats, _ := intOK(exp["repeats"])
+	total := len(anys(exp["examples"])) * len(anys(exp["variants"])) * int(repeats)
+	missing := total - len(order)
+	s, err := expSpend(q, id)
+	if err != nil {
+		return err
+	}
+	budgets := []any{}
+	if missing > 0 || exp["kind"] == "loop" {
+		budgets = anys(exp["budgets"])
+	}
+	state, changed := "running", false
+	var reason any
+	reached := func(b doc) bool {
+		v, _ := numOK(mapOf(s[astr(b["unit"])])["value"])
+		l, _ := numOK(b["limit"])
+		return b["firedAt"] == nil && v >= l
+	}
+	for _, x := range budgets {
+		b := mapOf(x)
+		if b["action"] == "stop" && reached(b) {
+			b["firedAt"], changed, state, reason = nowMs(), true, "stopped", "budget:"+astr(b["unit"])
+			break
 		}
-		state, changed := "running", false
-		var reason any
-		reached := func(b doc) bool {
-			v, _ := numOK(mapOf(s[astr(b["unit"])])["value"])
-			l, _ := numOK(b["limit"])
-			return b["firedAt"] == nil && v >= l
-		}
+	}
+	if state == "running" {
 		for _, x := range budgets {
 			b := mapOf(x)
-			if b["action"] == "stop" && reached(b) {
-				b["firedAt"], changed, state, reason = nowMs(), true, "stopped", "budget:"+astr(b["unit"])
+			if b["action"] == "stop" || !reached(b) {
+				continue
+			}
+			b["firedAt"], changed = nowMs(), true
+			if b["action"] == "pause" {
+				state = "paused"
+				v := mapOf(s[astr(b["unit"])])["value"]
+				if _, err := askRow(q, "operator_decision", fmt.Sprintf("Lab budget reached: %v %v of %v. Running trials finish; resume launches or stop the experiment?", b["unit"], v, b["limit"]),
+					exp["project_id"], []any{"resume", "stop"}, "lab", doc{"experimentId": id, "budget": b["unit"]}); err != nil {
+					return err
+				}
 				break
 			}
 		}
-		if state == "running" {
-			for _, x := range budgets {
-				b := mapOf(x)
-				if b["action"] == "stop" || !reached(b) {
-					continue
-				}
-				b["firedAt"], changed = nowMs(), true
-				if b["action"] == "pause" {
-					state = "paused"
-					v := mapOf(s[astr(b["unit"])])["value"]
-					if _, err := askRow(q, "operator_decision", fmt.Sprintf("Lab budget reached: %v %v of %v. Running trials finish; resume launches or stop the experiment?", b["unit"], v, b["limit"]),
-						exp["project_id"], []any{"resume", "stop"}, "lab", doc{"experimentId": id, "budget": b["unit"]}); err != nil {
-						return err
-					}
-					break
-				}
-			}
-		}
-		if changed || state != "running" {
-			if err := exec(q, "UPDATE experiment SET budgets=$2 WHERE id=$1", id, jsonBytes(budgets)); err != nil {
-				return err
-			}
-			if _, err := experimentTransition(q, id, experimentEvent{To: state, StopReason: strPtr(reason)}); err != nil {
-				return err
-			}
-		}
-		evalExp := mapOf(clone(exp))
-		evalExp["state"] = state
-		evaluated, err := expEvaluate(q, evalExp, trials, runs, cur, &launched, checked)
-		if err != nil {
+	}
+	if changed || state != "running" {
+		if err := exec(q, "UPDATE experiment SET budgets=$2 WHERE id=$1", id, jsonBytes(budgets)); err != nil {
 			return err
 		}
-		if state != "running" {
-			return nil
+		if _, err := experimentTransition(q, id, experimentEvent{To: state, StopReason: strPtr(reason)}); err != nil {
+			return err
 		}
-		// A trials budget that has not fired caps this pass's launches, so it is reached exactly.
-		room := math.Inf(1)
-		tv, _ := numOK(mapOf(s["trials"])["value"])
-		for _, x := range budgets {
-			b := mapOf(x)
-			if b["unit"] == "trials" && b["action"] != "warn" && b["firedAt"] == nil {
-				l, _ := numOK(b["limit"])
-				room = math.Min(room, l-tv)
-			}
+	}
+	evalExp := mapOf(clone(exp))
+	evalExp["state"] = state
+	evaluated, err := expEvaluate(q, evalExp, trials, runs, cur, &launched, checked)
+	if err != nil {
+		return err
+	}
+	if state != "running" {
+		return nil
+	}
+	// A trials budget that has not fired caps this pass's launches, so it is reached exactly.
+	room := math.Inf(1)
+	tv, _ := numOK(mapOf(s["trials"])["value"])
+	for _, x := range budgets {
+		b := mapOf(x)
+		if b["unit"] == "trials" && b["action"] != "warn" && b["firedAt"] == nil {
+			l, _ := numOK(b["limit"])
+			room = math.Min(room, l-tv)
 		}
-	launch:
-		for _, p := range anys(exp["examples"]) {
-			for _, v := range anys(exp["variants"]) {
-				for r := int64(0); r < repeats; r++ {
-					if _, ok := last[cellKey(mapOf(p)["id"], mapOf(v)["label"], r)]; ok {
-						continue
-					}
-					if room <= 0 {
-						break launch
-					}
-					rid, err := expLaunchTrial(q, exp, mapOf(p), mapOf(v), r, 0)
-					if err != nil {
-						return err
-					}
-					if rid != "" {
-						launched = append(launched, rid)
-						room--
-					}
+	}
+launch:
+	for _, p := range anys(exp["examples"]) {
+		for _, v := range anys(exp["variants"]) {
+			for r := int64(0); r < repeats; r++ {
+				if _, ok := last[cellKey(mapOf(p)["id"], mapOf(v)["label"], r)]; ok {
+					continue
 				}
-			}
-		}
-		allFinal := true
-		for _, k := range order {
-			allFinal = allFinal && terminal(last[k])
-		}
-		if len(launched) == 0 && len(order) == total && allFinal && evaluated {
-			if exp["kind"] == "loop" {
-				// Evaluators may have just inserted the final scores in this transaction.
-				fresh, err := scoresCurrent(q, id)
+				if room <= 0 {
+					break launch
+				}
+				rid, err := expLaunchTrial(q, exp, mapOf(p), mapOf(v), r, 0)
 				if err != nil {
 					return err
 				}
-				return loopAdvance(q, exp, trials, runs, fresh, s, &launched)
+				if rid != "" {
+					launched = append(launched, rid)
+					room--
+				}
 			}
-			complete := "complete"
-			_, err = experimentTransition(q, id, experimentEvent{To: "done", From: []string{"running"}, StopReason: &complete})
-			return err
 		}
-		return nil
-	})
-	for _, r := range launched {
-		pipelineAdvance(a, r)
 	}
-	return err
-}
-
-func labReconcileWhere(ctx context.Context, a *App, states string, skipBusy bool) {
-	var ids []string
-	runTx(ctx, a, nil, false, "", func(q *Request) error {
-		rs, err := queryRows(q, "SELECT id FROM experiment WHERE state = ANY(string_to_array($1, ','))", states)
-		for _, r := range rs {
-			ids = append(ids, astr(r["id"]))
+	allFinal := true
+	for _, k := range order {
+		allFinal = allFinal && terminal(last[k])
+	}
+	if len(launched) == 0 && len(order) == total && allFinal && evaluated {
+		if exp["kind"] == "loop" {
+			// Evaluators may have just inserted the final scores in this transaction.
+			fresh, err := scoresCurrent(q, id)
+			if err != nil {
+				return err
+			}
+			return loopAdvance(q, exp, trials, runs, fresh, s, &launched)
 		}
+		complete := "complete"
+		_, err = experimentTransition(q, id, experimentEvent{To: "done", From: []string{"running"}, StopReason: &complete})
 		return err
-	})
-	for _, id := range ids {
-		if skipBusy {
-			m := expLock(id)
-			if !m.TryLock() {
-				continue
-			}
-			m.Unlock()
-		}
-		if err := labReconcile(ctx, a, id); err != nil {
-			log.Printf("lab reconcile %s: %v", id, err)
-		}
 	}
+	return nil
 }
-
-func labReconcileRunning(ctx context.Context, a *App) { labReconcileWhere(ctx, a, "running", true) }
 
 func expSetState(q *Request, id string, from []string, to string, reason any) error {
 	_, err := experimentTransition(q, id, experimentEvent{To: to, From: from, Strict: true, StopReason: strPtr(reason)})
@@ -1966,7 +1984,7 @@ func expAction(q *Request, id, action string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := labReconcile(q.ctx(), q.app, id); err != nil {
+	if err := labRunNow(q.ctx(), q.app, id); err != nil {
 		return nil, err
 	}
 	out, err := expGetTx(q, id)
@@ -2039,7 +2057,6 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 			return nil, fail(409, fmt.Sprintf("Experiment is %v", exp["state"]))
 		}
 		c := mapOf(t["cell"])
-		var rid string
 		if err := runTxLocks(q.ctx(), q.app, q, true, []string{GLOBAL, "experiment:" + id}, func(q *Request) error {
 			runs, err := expRuns(q, id)
 			if err != nil {
@@ -2057,16 +2074,13 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 			}
 			rep, _ := intOK(c["repeat"])
 			att, _ := intOK(c["attempt"])
-			rid, err = expLaunchTrial(q, exp, findPin(exp, c["example"]), findVariant(exp, c["variant"]), rep, att+1)
+			_, err = expLaunchTrial(q, exp, findPin(exp, c["example"]), findVariant(exp, c["variant"]), rep, att+1)
 			return err
 		}); err != nil {
 			return nil, err
 		}
-		if rid != "" {
-			pipelineAdvance(q.app, rid)
-		}
 	}
-	if err := labReconcile(q.ctx(), q.app, id); err != nil {
+	if err := labRunNow(q.ctx(), q.app, id); err != nil {
 		return nil, err
 	}
 	return expGetTx(q, id)
@@ -2343,52 +2357,33 @@ func labAnswerAfter(q *Request, question doc) error {
 	default:
 		return nil
 	}
-	a := q.app
-	afterCommit(q, func() { go labReconcile(context.Background(), a, eid) })
-	return nil
+	return labEnqueue(q, eid)
 }
 
-// importDrafts: each examples/*.json file of a completed draft-examples run becomes a proposed example with one pass_fail
-// rating question; the owner's pass approves it. A file that is not a valid example is skipped.
-func importDrafts(ctx context.Context, a *App, run doc) {
-	var files []fileRef
-	runTx(ctx, a, nil, false, "", func(q *Request) (err error) { files, err = pipelineOutputs(q, run, -1); return })
-	for _, f := range files {
-		if !draftExample.MatchString(f.Path) {
-			continue
-		}
-		b, err := artifactBytes(ctx, a, f.ArtifactID, 64<<20)
-		if err != nil {
-			continue
-		}
-		var ex any
-		if json.Unmarshal(b, &ex) != nil {
-			continue
-		}
-		runTx(ctx, a, nil, true, "", func(q *Request) error {
-			res, err := labExamplesAdd(q, doc{"examples": []any{ex}, "projectId": run["projectId"], "approved": false})
-			if err != nil {
-				return nil
-			}
-			st := mapOf(anys(res["examples"])[0])
-			aid := astr(st["artifactId"])
-			var n int
-			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM question WHERE kind='rating' AND options->>'example_artifact_id'=$1", aid).Scan(&n); err != nil || n > 0 {
-				return err
-			}
-			got, err := labExampleGet(q, aid)
-			if err != nil {
-				return err
-			}
-			lines := []string{}
-			for _, c := range anys(mapOf(got["example"])["checks"]) {
-				lines = append(lines, fmt.Sprintf("%v: %v", mapOf(c)["id"], mapOf(c)["run"]))
-			}
-			_, err = askRow(q, "rating", fmt.Sprintf("Approve drafted example %s? Approving lets the coordinator run its checks:\n%s", exampleRef(st["id"], st["version"]), strings.Join(lines, "\n")),
-				run["projectId"], doc{"form": "pass_fail", "example_artifact_id": aid, "seed": aid}, "lab", doc{"exampleArtifactId": aid})
-			return err
-		})
+// importDraft: one examples/*.json file of a completed draft-examples run becomes a proposed example with one pass_fail
+// rating question; the owner's pass approves it (pipelineImportDrafts, after the run's end).
+func importDraft(q *Request, run doc, ex any) error {
+	res, err := labExamplesAdd(q, doc{"examples": []any{ex}, "projectId": run["projectId"], "approved": false})
+	if err != nil {
+		return err
 	}
+	st := mapOf(anys(res["examples"])[0])
+	aid := astr(st["artifactId"])
+	var n int
+	if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM question WHERE kind='rating' AND options->>'example_artifact_id'=$1", aid).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	got, err := labExampleGet(q, aid)
+	if err != nil {
+		return err
+	}
+	lines := []string{}
+	for _, c := range anys(mapOf(got["example"])["checks"]) {
+		lines = append(lines, fmt.Sprintf("%v: %v", mapOf(c)["id"], mapOf(c)["run"]))
+	}
+	_, err = askRow(q, "rating", fmt.Sprintf("Approve drafted example %s? Approving lets the coordinator run its checks:\n%s", exampleRef(st["id"], st["version"]), strings.Join(lines, "\n")),
+		run["projectId"], doc{"form": "pass_fail", "example_artifact_id": aid, "seed": aid}, "lab", doc{"exampleArtifactId": aid})
+	return err
 }
 
 func expGet(q *Request, id string) (doc, error) {
@@ -2759,31 +2754,6 @@ func init() {
 		return replyAs[contract.LabRegistryReply](doc{"useCases": u}, err)
 	})
 
-	onStart(func(ctx context.Context, a *App) {
-		go func() {
-			labReconcileWhere(ctx, a, "running,paused,stopped", false)
-			// A finish hook lost to a restart: completed draft runs are imported again (idempotent).
-			var runs []doc
-			runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
-				runs, err = runsWhere(q, "data->>'pipelineId'='draft-examples' AND state='succeeded'")
-				return
-			})
-			for _, r := range runs {
-				importDrafts(ctx, a, r)
-			}
-		}()
-	})
-}
-
-func pipelineFinished(ctx context.Context, a *App, run doc) {
-	if id := astr(run["experimentId"]); id != "" {
-		if err := labReconcile(ctx, a, id); err != nil {
-			log.Printf("lab reconcile %s: %v", id, err)
-		}
-	}
-	if run["pipelineId"] == "draft-examples" && run["state"] == "succeeded" {
-		importDrafts(ctx, a, run)
-	}
 }
 
 // expComparison: each non-baseline variant against the baseline (the first variant) on the primary evaluator, through

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,10 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
+
+	"fleet/coordinator/db"
 )
 
 // captureLabAssessment accepts one fixed, regular, contained JSON file. The
@@ -115,7 +120,7 @@ func linkLabAssessments(q *Request, trial doc, result doc) error {
 	if !txHasLock(q.tx, GLOBAL) {
 		return fail(409, "Assessment linking requires its transaction fence")
 	}
-	if _, err := first(q, "SELECT id FROM execution WHERE id=$1 FOR UPDATE", trial["id"]); err != nil {
+	if _, err := q.db().ExecutionLockState(q.ctx(), astr(trial["id"])); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
 	current, err := getRun(q, astr(trial["id"]))
@@ -164,7 +169,7 @@ func linkLabAssessments(q *Request, trial doc, result doc) error {
 		}
 		return false
 	})
-	return exec(q, "UPDATE execution SET data=jsonb_set(data,'{projectAssessments}',$2::jsonb) WHERE id=$1", trial["id"], jsonBytes(existing))
+	return q.db().LabTrialAssessmentsSet(q.ctx(), db.LabTrialAssessmentsSetParams{ID: astr(trial["id"]), Assessments: jsonBytes(existing)})
 }
 
 func labAssessmentSnapshot(trial, example doc) doc {

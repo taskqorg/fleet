@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"math"
+
+	"fleet/coordinator/db"
 )
 
 func loopStrategy(q *Request, raw any) (doc, error) {
@@ -340,7 +342,7 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 	if err != nil {
 		return halt("strategy:" + err.Error())
 	}
-	return exec(q, "UPDATE experiment SET variants=$2 WHERE id=$1 AND state='running'", exp["id"], jsonBytes(variants))
+	return q.db().LabVariantsSetRunning(q.ctx(), db.LabVariantsSetRunningParams{ID: astr(exp["id"]), Variants: jsonBytes(variants)})
 }
 
 func loopBestVariant(exp doc, trials, scores []doc) doc {
