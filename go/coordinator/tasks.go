@@ -13,8 +13,13 @@ import (
 	"strconv"
 	"strings"
 
-	"fleet/contract"
+	"time"
+
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 var taskStates = []string{"queued", "in_progress", "waiting", "paused", "completed", "failed", "cancelled"}
@@ -54,6 +59,7 @@ func priorityClass(v any) (string, error) {
 	return "", fail(400, "Invalid priority: use urgent, normal or background")
 }
 
+// taskRow: the task's row as a record (column names), for callers outside this file; errNotFound when absent.
 func taskRow(q *Request, id string) (doc, error) {
 	t, err := first(q, "SELECT * FROM task WHERE id=$1", id)
 	if err == nil && t == nil {
@@ -62,8 +68,17 @@ func taskRow(q *Request, id string) (doc, error) {
 	return t, err
 }
 
+// taskLoad: the task's row; errNotFound when absent.
+func taskLoad(q *Request, id string) (db.Task, error) {
+	t, err := q.db().TaskGet(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return t, errNotFound
+	}
+	return t, err
+}
+
 func waitReason(q *Request, id string) (string, error) {
-	if ok, err := has(q, "SELECT 1 FROM question WHERE task_id=$1 AND state='open' AND kind IN ('operator_decision','agent_question','secret')", id); err != nil || ok {
+	if ok, err := q.db().TaskHasOpenBlockingQuestion(q.ctx(), &id); err != nil || ok {
 		return "question", err
 	}
 	if ok, err := openDependency(q, id); err != nil || ok {
@@ -73,21 +88,21 @@ func waitReason(q *Request, id string) (string, error) {
 }
 
 func openDependency(q *Request, id string) (bool, error) {
-	return has(q, "SELECT 1 FROM task_dependency d JOIN task t ON t.id=d.depends_on_task_id WHERE d.task_id=$1 AND d.kind='blocks' AND t.state<>'completed'", id)
+	return q.db().TaskHasOpenDependency(q.ctx(), id)
 }
 
 func taskTransition(q *Request, id, trigger, reason string) (string, error) {
-	t, err := taskRow(q, id)
+	t, err := taskLoad(q, id)
 	if err != nil {
 		return "", err
 	}
 	rule := taskTransitions[trigger]
-	state := astr(t["state"])
+	state := string(t.State)
 	if !slices.Contains(rule.from, state) {
 		return "", fail(409, fmt.Sprintf("Task %s cannot %s", state, strings.Replace(trigger, "_", " ", 1)))
 	}
 	if trigger == "first_execution" {
-		started, err := has(q, "SELECT 1 FROM execution WHERE task_id=$1 AND state<>'preparing'", id)
+		started, err := q.db().TaskHasStartedExecution(q.ctx(), &id)
 		if err != nil {
 			return "", err
 		}
@@ -107,30 +122,29 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 			return "", err
 		}
 	}
-	if trigger == "release" && astr(t["pause_reason"]) != "held" {
+	if trigger == "release" && deref(t.PauseReason) != "held" {
 		return "", fail(409, "Paused by a person: resume it")
 	}
 	to := rule.to
-	if to == "previous" {
-		to = astr(t["state_before_pause"])
+	if to == "previous" && t.StateBeforePause != nil {
+		to = string(*t.StateBeforePause)
 	}
-	var wr, before any
+	set := db.TaskSetStateParams{ID: id, State: db.TaskState(to)}
 	if to == "waiting" {
 		if reason == "" {
 			if reason, err = waitReason(q, id); err != nil {
 				return "", err
 			}
 		}
-		wr = nilIf(reason)
+		set.WaitReason = strPtr(reason)
 	}
-	var pauseReason any
 	if trigger == "pause" || trigger == "hold" {
-		before = state
+		set.StateBeforePause = &t.State
 	}
 	if trigger == "hold" {
-		pauseReason = "held"
+		set.PauseReason = strPtr("held")
 	}
-	return to, exec(q, "UPDATE task SET state=$2,wait_reason=$3,state_before_pause=$4,pause_reason=$5,updated_at=now() WHERE id=$1", id, to, wr, before, pauseReason)
+	return to, q.db().TaskSetState(q.ctx(), set)
 }
 
 // taskAllowsWork fences a new task-bound turn against a concurrent cancellation.
@@ -138,11 +152,14 @@ func taskAllowsWork(q *Request, id string) error {
 	if id == "" {
 		return nil
 	}
-	task, err := first(q, "SELECT state::text FROM task WHERE id=$1 FOR SHARE", id)
+	state, err := q.db().TaskStateForShare(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	if task["state"] == "cancelled" {
+	if state == db.TaskStateCancelled {
 		return fail(409, "Task is cancelled")
 	}
 	return nil
@@ -164,25 +181,13 @@ func cancelTask(q *Request, id string) error {
 }
 
 func cancelTaskWork(q *Request, id string) error {
-	linked, err := queryRows(q, `WITH roots AS (
-		SELECT id,kind FROM execution r
-		WHERE r.task_id=$1 OR (r.task_id IS NULL AND EXISTS (
-			SELECT 1 FROM session s WHERE s.id=r.session_id AND s.task_id=$1
-		))
-	)
-	SELECT e.id,e.kind FROM execution e
-	WHERE e.state IN ('preparing','running','waiting')
-	AND (e.id IN (SELECT id FROM roots) OR (e.task_id IS NULL AND (
-		(e.delegation IS NOT NULL AND e.parent_execution_id IN (SELECT id FROM roots)) OR
-		e.data->>'pipelineRunId' IN (SELECT id FROM roots WHERE kind='pipeline_run')
-	))) AND e.kind IN ('pipeline_run','agent_run','host_job')
-	ORDER BY (e.kind='pipeline_run') DESC,e.seq FOR UPDATE`, id)
+	linked, err := q.db().TaskCancelLinkedExecutions(q.ctx(), &id)
 	if err != nil {
 		return err
 	}
 	for _, e := range linked {
-		eid := astr(e["id"])
-		if e["kind"] == "pipeline_run" {
+		eid := e.ID
+		if e.Kind == db.ExecutionKindPipelineRun {
 			owned, _, err := pipelineCancelIn(q, eid)
 			if pipelineFormatUnsupported(err) {
 				// A historical plan cannot run. Its retained native executions
@@ -209,25 +214,19 @@ func cancelTaskWork(q *Request, id string) error {
 			return err
 		}
 	}
-	if err := exec(q, `UPDATE queued_message m SET state='cancelled',updated_at=now()
-		WHERE m.state IN ('queued','steering')
-		AND m.tombstoned_at IS NULL
-		AND (m.task_id=$1 OR (m.task_id IS NULL AND EXISTS (
-			SELECT 1 FROM session s WHERE s.id=m.session_id AND s.task_id=$1
-		)))`, id); err != nil {
+	if err := q.db().TaskCancelQueuedMessages(q.ctx(), &id); err != nil {
 		return err
 	}
-	return exec(q, `DELETE FROM watch w USING session s
-		WHERE s.id=w.session_id AND s.task_id=$1`, id)
+	return q.db().TaskDeleteWatches(q.ctx(), &id)
 }
 
 // settleTask moves an open task toward target through the transitions whose guards hold now.
 func settleTask(q *Request, id, target string) (string, error) {
-	t, err := taskRow(q, id)
+	t, err := taskLoad(q, id)
 	if err != nil {
 		return "", err
 	}
-	state := astr(t["state"])
+	state := string(t.State)
 	if !openTask[state] || state == "paused" {
 		return state, nil
 	}
@@ -278,69 +277,99 @@ func settleTask(q *Request, id, target string) (string, error) {
 }
 
 func takeTask(q *Request, id, taker, from string) error {
-	t, err := taskRow(q, id)
+	t, err := taskLoad(q, id)
 	if err != nil {
 		return err
 	}
-	if astr(t["directed_by"]) == taker {
+	if deref(t.DirectedBy) == taker {
 		return nil
 	}
-	prev := firstString(t["directed_by"], from)
-	if err := exec(q, "UPDATE task SET directed_by=$2,taken_from=$3,updated_at=now() WHERE id=$1", id, taker, nilIf(prev)); err != nil {
+	if err := q.db().TaskSetDirector(q.ctx(), db.TaskSetDirectorParams{ID: id, DirectedBy: &taker, TakenFrom: strPtr(firstString(deref(t.DirectedBy), from))}); err != nil {
 		return err
 	}
-	return exec(q, "UPDATE execution SET directed_by=$2 WHERE task_id=$1 AND state IN ('preparing','running','waiting')", id, taker)
+	return q.db().TaskExecutionsSetDirector(q.ctx(), db.TaskExecutionsSetDirectorParams{TaskID: &id, DirectedBy: &taker})
 }
 
-// askQuestion: v has kind, text and optional id, projectId, taskId, executionId, sessionId, options, askedBy, requestId, data, askedAt.
+// questionAsk: a new question. ProjectID and TaskID "" are none (TaskID is then its execution's); Options is JSON or
+// nil; AskedAt nil is now; Data is a JSON object (nil: {}).
+type questionAsk struct {
+	ID, Kind, Text                             string
+	ProjectID, TaskID                          string
+	ExecutionID, SessionID, AskedBy, RequestID *string
+	Options, Data                              []byte
+	AskedAt                                    *time.Time
+}
+
+// askQuestion: v has kind, text and optional id, projectId, taskId, executionId, sessionId, options, askedBy, requestId,
+// data, askedAt (milliseconds); the record form of askQuestionAs for callers holding one.
 func askQuestion(q *Request, v doc) (string, error) {
-	taskID, projectID := astr(v["taskId"]), astr(v["projectId"])
-	if taskID == "" && astr(v["executionId"]) != "" {
-		e, err := first(q, "SELECT task_id,project_id FROM execution WHERE id=$1", v["executionId"])
-		if err != nil {
+	var r struct {
+		ID          string          `json:"id"`
+		Kind        string          `json:"kind"`
+		Text        string          `json:"text"`
+		ProjectID   string          `json:"projectId"`
+		TaskID      string          `json:"taskId"`
+		ExecutionID *string         `json:"executionId"`
+		SessionID   *string         `json:"sessionId"`
+		AskedBy     *string         `json:"askedBy"`
+		RequestID   *string         `json:"requestId"`
+		Options     json.RawMessage `json:"options"`
+		Data        json.RawMessage `json:"data"`
+		AskedAt     any             `json:"askedAt"`
+	}
+	if err := json.Unmarshal(jsonBytes(v), &r); err != nil {
+		return "", fmt.Errorf("question: %w", err)
+	}
+	a := questionAsk{ID: r.ID, Kind: r.Kind, Text: r.Text, ProjectID: r.ProjectID, TaskID: r.TaskID, ExecutionID: r.ExecutionID, SessionID: r.SessionID, AskedBy: r.AskedBy, RequestID: r.RequestID}
+	if len(r.Options) > 0 && string(r.Options) != "null" {
+		a.Options = r.Options
+	}
+	if len(r.Data) > 0 && string(r.Data) != "null" {
+		a.Data = r.Data
+	}
+	if t, ok := msTime(r.AskedAt).(time.Time); ok {
+		a.AskedAt = &t
+	}
+	return askQuestionAs(q, a)
+}
+
+// askQuestionAs asks a; a task's question (but an acceptance) settles its task.
+func askQuestionAs(q *Request, a questionAsk) (string, error) {
+	if a.TaskID == "" && deref(a.ExecutionID) != "" {
+		e, err := q.db().TaskExecutionLink(q.ctx(), *a.ExecutionID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return "", err
 		}
-		if e != nil {
-			taskID = astr(e["task_id"])
-			if projectID == "" {
-				projectID = astr(e["project_id"])
+		if err == nil {
+			a.TaskID = deref(e.TaskID)
+			if a.ProjectID == "" {
+				a.ProjectID = deref(e.ProjectID)
 			}
 		}
 	}
-	id := firstString(v["id"], newID())
-	var options any
-	if v["options"] != nil {
-		options = js(v["options"])
+	if a.ID == "" {
+		a.ID = newID()
 	}
-	data := v["data"]
-	if data == nil {
-		data = doc{}
+	if a.Data == nil {
+		a.Data = []byte("{}")
 	}
-	if err := exec(q, "INSERT INTO question(id,kind,project_id,task_id,execution_id,session_id,text,options,asked_by,asked_at,request_id,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,coalesce($10::timestamptz,now()),$11,$12)",
-		id, v["kind"], nilIf(projectID), nilIf(taskID), v["executionId"], v["sessionId"], v["text"], options, v["askedBy"], msTime(v["askedAt"]), v["requestId"], js(data)); err != nil {
+	var at pgtype.Timestamptz
+	if a.AskedAt != nil {
+		at = pgtype.Timestamptz{Time: *a.AskedAt, Valid: true}
+	}
+	if err := q.db().TaskQuestionInsert(q.ctx(), db.TaskQuestionInsertParams{ID: a.ID, Kind: db.QuestionKind(a.Kind), ProjectID: strPtr(a.ProjectID), TaskID: strPtr(a.TaskID),
+		ExecutionID: a.ExecutionID, SessionID: a.SessionID, Text: a.Text, Options: a.Options, AskedBy: a.AskedBy, AskedAt: at, RequestID: a.RequestID, Data: a.Data}); err != nil {
 		return "", err
 	}
-	if taskID != "" && v["kind"] != "acceptance" {
-		if _, err := settleTask(q, taskID, ""); err != nil {
+	if a.TaskID != "" && a.Kind != "acceptance" {
+		if _, err := settleTask(q, a.TaskID, ""); err != nil {
 			return "", err
 		}
 	}
-	return id, nil
+	return a.ID, nil
 }
 
-// idleTaskSQL: tasks in progress with nothing that can move them: no open execution (child agent rows do not count: no
-// writer ends them), no open question, and no rejected acceptance since the run that ended last (a rejection waits for a
-// new run, data foundation §3). l is the run that ended last; null when the task has no run at all.
-const idleTaskSQL = `FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.session_id, x.ended_at, x.data FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent'
-	  ORDER BY x.ended_at DESC NULLS LAST, x.seq DESC LIMIT 1) l ON true
-	WHERE t.state='in_progress'
-	AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent' AND x.state NOT IN ('succeeded','failed','cancelled'))
-	AND NOT EXISTS (SELECT 1 FROM queued_message qm JOIN session ss ON ss.id=qm.session_id
- WHERE qm.state IN ('queued','steering') AND ss.task_id=t.id::text)
-AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')
-	AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.kind='acceptance' AND qq.answer='rejected' AND qq.answered_at >= coalesce(l.ended_at, '-infinity'))`
-
-// settleIdleTask: no task stays in progress with nothing that can move it. When it is idle (idleTaskSQL): if the run that
+// settleIdleTask: no task stays in progress with nothing that can move it. When it is idle (TaskIdle): if the run that
 // ended last succeeded, its result goes to the operator for acceptance; otherwise the operator gets a decision that
 // blocks the task, so it shows in Needs you: fail the task, or (when an earlier run succeeded) accept that result. A
 // retry is a new run, which withdraws the decision (withdrawIdleDecision). Task 2273393d: its only run failed before it
@@ -349,57 +378,64 @@ AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='op
 // resume, and for every task at coordinator start (settleIdleTasks). Reports whether it asked.
 func settleIdleTask(q *Request, id string) (bool, error) {
 	// A newer failed run supersedes an unanswered success prompt; history remains queryable.
-	var superseded []string
-	if err := q.tx.QueryRow(q.ctx(), `SELECT coalesce(array_agg(qq.id),'{}') FROM question qq WHERE qq.task_id=$1 AND qq.kind='acceptance' AND qq.state='open' AND coalesce(qq.data->>'earlierResult','false')<>'true'
-	 AND EXISTS (SELECT 1 FROM execution x WHERE x.id=(SELECT e.id FROM execution e WHERE e.task_id=$1 AND e.kind<>'child_agent' ORDER BY e.seq DESC LIMIT 1)
-	 AND (x.state IN ('failed','cancelled') OR x.data->'report'->>'outcome'='failed'))`, id).Scan(&superseded); err != nil {
+	superseded, err := q.db().TaskSupersededAcceptances(q.ctx(), &id)
+	if err != nil {
 		return false, err
 	}
 	if err := questionsWithdraw(q, superseded); err != nil {
 		return false, err
 	}
-	t, err := first(q, `SELECT t.*, l.id AS latest_id, l.state::text AS latest, l.session_id AS latest_session, l.data->'report' AS report,
-		EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.state='succeeded' AND coalesce(x.data->'report'->>'outcome','succeeded')='succeeded') AS succeeded `+idleTaskSQL+` AND t.id=$1`, id)
-	if err != nil || t == nil {
+	t, err := q.db().TaskIdle(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
 		return false, err
 	}
-	if astr(t["latest"]) == "succeeded" && astr(mapOf(t["report"])["outcome"]) != "failed" {
-		_, err = requestAcceptance(q, t, nil, nil, "fleet")
+	var report struct {
+		Outcome string `json:"outcome"`
+		Summary string `json:"summary"`
+	}
+	if len(t.Report) > 0 {
+		_ = json.Unmarshal(t.Report, &report)
+	}
+	if t.Latest == "succeeded" && report.Outcome != "failed" {
+		_, err = requestAcceptance(q, acceptTask{ID: t.ID, Title: t.Title, ProjectID: t.ProjectID}, nil, nil, "fleet")
 		return err == nil, err
 	}
 	options := []string{idleFail}
-	if t["succeeded"] == true {
+	if t.Succeeded {
 		options = append(options, idleAccept)
 	}
-	what := "The last run of " + astr(t["title"]) + " " + astr(t["latest"])
-	if r := mapOf(t["report"]); astr(r["outcome"]) == "failed" {
-		what = "Work was reported incomplete: " + astr(r["summary"])
+	what := "The last run of " + t.Title + " " + t.Latest
+	if report.Outcome == "failed" {
+		what = "Work was reported incomplete: " + report.Summary
 	}
-	if t["latest"] == nil {
-		what = astr(t["title"]) + " is in progress with no run"
+	if t.Latest == "" {
+		what = t.Title + " is in progress with no run"
 	}
-	_, err = askQuestion(q, doc{"kind": "operator_decision", "taskId": id, "projectId": t["project_id"], "executionId": t["latest_id"], "sessionId": t["latest_session"],
-		"askedBy": "fleet", "options": options, "data": doc{"idle": true},
-		"text": what + ". Retry it with a new message in its session, or answer."})
+	_, err = askQuestionAs(q, questionAsk{Kind: "operator_decision", TaskID: id, ProjectID: deref(t.ProjectID), ExecutionID: strPtr(t.LatestID), SessionID: t.LatestSession,
+		AskedBy: strPtr("fleet"), Options: jsonBytes(options), Data: []byte(`{"idle":true}`),
+		Text: what + ". Retry it with a new message in its session, or answer."})
 	return err == nil, err
 }
 
 func init() {
 	// At start: every idle task, one transaction each, so one bad task neither rolls back nor blocks the others.
 	onStart(func(ctx context.Context, a *App) {
-		var ids []doc
+		var ids []string
 		if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
-			ids, err = rowsOf(q, "SELECT id FROM task WHERE state IN ('in_progress','waiting') ORDER BY created_at")
+			ids, err = q.db().TaskOpenIDs(q.ctx())
 			return
 		}); err != nil {
 			log.Printf("settle idle tasks: %v", err)
 			return
 		}
 		n := 0
-		for _, r := range ids {
+		for _, id := range ids {
 			asked := false
-			if err := runTx(ctx, a, nil, true, "", func(q *Request) (err error) { asked, err = settleIdleTask(q, astr(r["id"])); return }); err != nil {
-				log.Printf("settle idle task %s: %v", astr(r["id"]), err)
+			if err := runTx(ctx, a, nil, true, "", func(q *Request) (err error) { asked, err = settleIdleTask(q, id); return }); err != nil {
+				log.Printf("settle idle task %s: %v", id, err)
 			} else if asked {
 				n++
 			}
@@ -414,105 +450,136 @@ const idleFail, idleAccept = "fail task", "accept earlier result"
 
 // withdrawIdleDecision: a new run of the task answers settleIdleTask's decision by itself.
 func withdrawIdleDecision(q *Request, id string) error {
-	var idle []string
-	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(array_agg(id),'{}') FROM question WHERE task_id=$1 AND state='open' AND data->>'idle'='true'", id).Scan(&idle); err != nil {
+	idle, err := q.db().TaskIdleDecisions(q.ctx(), &id)
+	if err != nil {
 		return err
 	}
 	return questionsWithdraw(q, idle)
 }
 
-// acceptanceExecution validates the selected work, independently of who requests or answers acceptance.
-func acceptanceExecution(q *Request, taskID string, earlier bool) (doc, error) {
-	filter := ""
-	if earlier {
-		filter = " AND state='succeeded' AND coalesce(data->'report'->>'outcome','succeeded')='succeeded'"
-	}
-	e, err := first(q, "SELECT id,state,data->'report'->>'outcome' AS outcome FROM execution WHERE task_id=$1 AND kind<>'child_agent'"+filter+" ORDER BY seq DESC LIMIT 1", taskID)
-	if err != nil {
-		return nil, err
-	}
-	if e == nil {
+// acceptanceExecution validates the selected work, independently of who requests or answers acceptance: the task's
+// latest run, or with earlier its latest successful one; nil when the task has no run.
+func acceptanceExecution(q *Request, taskID string, earlier bool) (*db.TaskAcceptanceExecutionRow, error) {
+	e, err := q.db().TaskAcceptanceExecution(q.ctx(), db.TaskAcceptanceExecutionParams{TaskID: &taskID, Earlier: earlier})
+	if errors.Is(err, pgx.ErrNoRows) {
 		if earlier {
 			return nil, fail(409, "No successful earlier work result is available")
 		}
 		return nil, nil // Results may be supplied without a Fleet execution.
 	}
-	if e["outcome"] == "failed" || e["state"] == "failed" || e["state"] == "cancelled" {
+	if err != nil {
+		return nil, err
+	}
+	if e.Outcome == "failed" || e.State == db.ExecutionStateFailed || e.State == db.ExecutionStateCancelled {
 		return nil, fail(409, "Latest work did not succeed; retry it or explicitly select an available earlier result")
 	}
-	return e, nil
+	return &e, nil
+}
+
+// acceptTask: the task an acceptance is asked for; EarlierResult selects its latest successful run over its latest.
+type acceptTask struct {
+	ID, Title     string
+	ProjectID     *string
+	EarlierResult bool
 }
 
 // requestAcceptance asks the task's acceptance question with the given artifacts (default: its stored originals). An open
 // acceptance question is reused and updated, so an explicit request after the automatic one never leaves a second open.
-func requestAcceptance(q *Request, t doc, artifactIDs []string, text *string, askedBy string) (string, error) {
-	id := astr(t["id"])
-	selected, err := acceptanceExecution(q, id, t["earlierResult"] == true)
+func requestAcceptance(q *Request, t acceptTask, artifactIDs []string, text *string, askedBy string) (string, error) {
+	selected, err := acceptanceExecution(q, t.ID, t.EarlierResult)
 	if err != nil {
 		return "", err
 	}
-	ids := []any{}
+	var selectedID *string
+	if selected != nil {
+		selectedID = &selected.ID
+	}
+	ids := []string{}
 	if artifactIDs != nil {
-		for _, x := range artifactIDs {
-			ids = append(ids, x)
-		}
+		ids = append(ids, artifactIDs...)
 	} else {
-		rs, err := rowsOf(q, "SELECT coalesce(legacy_id,id) AS id FROM artifact WHERE task_id=$1 AND state='stored' AND role='original' AND ($2::text IS NULL OR execution_id=$2) AND name NOT LIKE 'mcp-lifecycle-%' ORDER BY seq", id, selected["id"])
+		rs, err := q.db().TaskAcceptanceArtifacts(q.ctx(), db.TaskAcceptanceArtifactsParams{TaskID: &t.ID, ExecutionID: selectedID})
 		if err != nil {
 			return "", err
 		}
-		for _, x := range rs {
-			ids = append(ids, x["id"])
-		}
+		ids = append(ids, rs...)
 	}
-	body := "Accept the result of: " + astr(t["title"])
+	body := "Accept the result of: " + t.Title
 	if text != nil {
 		body = string([]rune(*text)[:min(len([]rune(*text)), 2000)])
 	}
-	open, err := first(q, "SELECT id FROM question WHERE task_id=$1 AND kind='acceptance' AND state='open' ORDER BY asked_at DESC LIMIT 1", id)
-	if err != nil {
+	open, err := q.db().TaskOpenAcceptance(q.ctx(), &t.ID)
+	if err == nil {
+		return open, q.db().TaskAcceptanceAskAgain(q.ctx(), db.TaskAcceptanceAskAgainParams{ID: open, Text: body, ArtifactIds: jsonBytes(ids), AskedBy: &askedBy})
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", err
 	}
-	if open != nil {
-		qid := astr(open["id"])
-		return qid, exec(q, "UPDATE question SET text=$2,asked_by=$4,asked_at=now(),data=coalesce(data,'{}'::jsonb)||jsonb_build_object('artifactIds',$3::jsonb) WHERE id=$1", qid, body, js(ids), askedBy)
+	data := struct {
+		ArtifactIds   []string `json:"artifactIds"`
+		EarlierResult *bool    `json:"earlierResult"`
+	}{ArtifactIds: ids}
+	if t.EarlierResult {
+		data.EarlierResult = &t.EarlierResult
 	}
-	return askQuestion(q, doc{"kind": "acceptance", "taskId": id, "projectId": t["project_id"], "text": body, "options": []string{"accepted", "rejected"}, "askedBy": askedBy, "executionId": selected["id"], "data": doc{"artifactIds": ids, "earlierResult": t["earlierResult"]}})
+	return askQuestionAs(q, questionAsk{Kind: "acceptance", TaskID: t.ID, ProjectID: deref(t.ProjectID), Text: body, Options: jsonBytes([]string{"accepted", "rejected"}),
+		AskedBy: &askedBy, ExecutionID: selectedID, Data: jsonBytes(data)})
+}
+
+// questionRecord: the question's row as a record (column names), as the answer checks and callers outside this file
+// read it; nil when absent.
+func questionRecord(q *Request, id string) (doc, error) {
+	return first(q, "SELECT * FROM question WHERE id=$1", id)
+}
+
+// questionData: the fields of a question's data the answer path reads.
+type questionData struct {
+	EarlierResult bool  `json:"earlierResult"`
+	Idle          bool  `json:"idle"`
+	ArtifactIds   []any `json:"artifactIds"`
 }
 
 // answerQuestion: one answer wins; an acceptance completes (or keeps in progress) its task, other answers unblock it.
-// runAnswerChecks and runAnswerAfter apply the Lab and budget rules of the question.
+// runAnswerChecks and runAnswerAfter apply the Lab and budget rules of the question. The reply is the question's record.
 func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, error) {
-	qu, err := first(q, "SELECT * FROM question WHERE id=$1", id)
+	cur, err := q.db().TaskQuestion(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
-	if qu == nil {
-		return nil, errNotFound
-	}
-	if astr(qu["state"]) == "answered" {
-		if astr(qu["answer"]) != answer {
+	if cur.State == db.QuestionStateAnswered {
+		if deref(cur.Answer) != answer {
 			return nil, fail(409, "Question already answered differently")
 		}
 		// A replay (a client retry) keeps the owner-only rule of a key request; the answer itself was checked when given.
-		if qu["kind"] == "secret" && (q.agent != "" || q.person == nil || !fullAccess(q.person)) {
+		if cur.Kind == db.QuestionKindSecret && (q.agent != "" || q.person == nil || !fullAccess(q.person)) {
 			return nil, fail(403, "Only the owner answers a key request")
 		}
-		return qu, nil
+		return questionRecord(q, id)
 	}
-	if astr(qu["state"]) != "open" {
+	if cur.State != db.QuestionStateOpen {
 		return nil, fail(409, "Question withdrawn")
 	}
-	if astr(qu["kind"]) == "acceptance" {
-		if _, err := acceptanceExecution(q, astr(qu["task_id"]), mapOf(qu["data"])["earlierResult"] == true); err != nil {
+	var data questionData
+	if len(cur.Data) > 0 {
+		_ = json.Unmarshal(cur.Data, &data)
+	}
+	if cur.Kind == db.QuestionKindAcceptance {
+		if _, err := acceptanceExecution(q, deref(cur.TaskID), data.EarlierResult); err != nil {
 			return nil, err
 		}
+		if answer != "accepted" && answer != "rejected" {
+			return nil, fail(400, "Acceptance answer is accepted or rejected")
+		}
 	}
-	if astr(qu["kind"]) == "acceptance" && answer != "accepted" && answer != "rejected" {
-		return nil, fail(400, "Acceptance answer is accepted or rejected")
-	}
-	if mapOf(qu["data"])["idle"] == true && answer != idleFail && answer != idleAccept {
+	if data.Idle && answer != idleFail && answer != idleAccept {
 		return nil, fail(400, "Answer "+idleFail+", or "+idleAccept+" when offered; retry with a new message in the session")
+	}
+	qu, err := questionRecord(q, id)
+	if err != nil {
+		return nil, err
 	}
 	if err := runAnswerChecks(q, qu, answer); err != nil { // Lab and budget answers
 		return nil, err
@@ -522,11 +589,11 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 		return nil, err
 	}
 	if !moved {
-		now, _ := first(q, "SELECT * FROM question WHERE id=$1", id)
-		if astr(now["state"]) == "answered" && astr(now["answer"]) == answer {
-			return now, nil
+		now, _ := q.db().TaskQuestion(q.ctx(), id)
+		if now.State == db.QuestionStateAnswered && deref(now.Answer) == answer {
+			return questionRecord(q, id)
 		}
-		if astr(now["state"]) == "answered" {
+		if now.State == db.QuestionStateAnswered {
 			return nil, fail(409, "Question already answered differently")
 		}
 		return nil, fail(409, "Question withdrawn")
@@ -534,8 +601,8 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 	if err := runAnswerAfter(q, id); err != nil {
 		return nil, err
 	}
-	if t := astr(qu["task_id"]); t != "" {
-		if astr(qu["kind"]) == "acceptance" {
+	if t := deref(cur.TaskID); t != "" {
+		if cur.Kind == db.QuestionKindAcceptance {
 			if answer == "accepted" {
 				if _, err := taskTransition(q, t, "accepted", ""); err != nil {
 					return nil, err
@@ -543,14 +610,14 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 				ids := []string{}
 				src := artifactIDs
 				if src == nil {
-					src, _ = mapOf(qu["data"])["artifactIds"].([]any)
+					src = data.ArtifactIds
 				}
 				for _, x := range src {
 					if s, ok := x.(string); ok {
 						ids = append(ids, s)
 					}
 				}
-				if err := exec(q, "UPDATE task SET accepted_by=$2,accepted_at=now(),accepted_artifact_ids=$3 WHERE id=$1", t, by, ids); err != nil {
+				if err := q.db().TaskAccept(q.ctx(), db.TaskAcceptParams{ID: t, AcceptedBy: &by, ArtifactIds: ids}); err != nil {
 					return nil, err
 				}
 				if err := deliveredTeardown(q, t); err != nil {
@@ -560,21 +627,19 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 				return nil, err
 			}
 		} else {
-			idle := mapOf(qu["data"])["idle"] == true
 			target := ""
-			if idle && answer == idleFail {
+			if data.Idle && answer == idleFail {
 				target = "failed"
 			}
 			if _, err := settleTask(q, t, target); err != nil {
 				return nil, err
 			}
-			if idle && answer == idleAccept {
-				task, err := taskRow(q, t)
+			if data.Idle && answer == idleAccept {
+				task, err := taskLoad(q, t)
 				if err != nil {
 					return nil, err
 				}
-				task["earlierResult"] = true
-				if _, err := requestAcceptance(q, task, nil, nil, by); err != nil {
+				if _, err := requestAcceptance(q, acceptTask{ID: task.ID, Title: task.Title, ProjectID: task.ProjectID, EarlierResult: true}, nil, nil, by); err != nil {
 					return nil, err
 				}
 			}
@@ -583,11 +648,8 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 			}
 		}
 	}
-	return first(q, "SELECT * FROM question WHERE id=$1", id)
+	return questionRecord(q, id)
 }
-
-const questionCols = `id,code,kind,project_id AS "projectId",task_id AS "taskId",execution_id AS "executionId",session_id AS "sessionId",text,options,asked_by AS "askedBy",asked_at AS "askedAt",
- answer,answered_by AS "answeredBy",answered_at AS "answeredAt",state,data->'artifactIds' AS "artifactIds",data->'cause' AS cause`
 
 // excludeCheck: an excludeProjectIds list holds no empty id (a JSON null decodes to one), so an exclusion is never skipped
 // silently; '-' is no project.
@@ -598,25 +660,58 @@ func excludeCheck(ids []string) error {
 	return nil
 }
 
+// projectSplit: a project id list ('-' is no project) as its named projects and whether it names no project; named is
+// nil (no condition) when ids is empty.
+func projectSplit(ids []string) (named []string, null bool) {
+	if len(ids) == 0 {
+		return nil, false
+	}
+	named = slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == "-" })
+	return named, len(named) < len(ids)
+}
+
+// optTime: an optional timestamp as its JSON text (timeText); nil stays nil.
+func optTime(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := timeText(*t)
+	return &s
+}
+
+// rawJSON: a jsonb value as a JSON field; SQL NULL is JSON null.
+func rawJSON(b []byte) json.RawMessage {
+	if b == nil {
+		return json.RawMessage("null")
+	}
+	return json.RawMessage(b)
+}
+
 // questionsList: projects keeps those projects only, exclude leaves those out ('-' is no project in both; OR-34).
-func questionsList(q *Request, taskID, state, kind string, projects, exclude []string) ([]doc, error) {
-	c, p := projectIn(nil, nil, projects)
-	c = projectNotIn(c, &p, "project_id", exclude)
-	for _, f := range [][2]string{{taskID, "task_id"}, {state, "state::text"}, {kind, "kind::text"}} {
-		if f[0] != "" {
-			p = append(p, f[0])
-			c = append(c, fmt.Sprintf("%s=$%d", f[1], len(p)))
-		}
+func questionsList(q *Request, taskID, state, kind string, projects, exclude []string) ([]contract.QuestionRow, error) {
+	return questionRows(q, db.TaskQuestionsParams{TaskID: strPtr(taskID), State: strPtr(state), Kind: strPtr(kind)}, projects, exclude)
+}
+
+func questionRows(q *Request, p db.TaskQuestionsParams, projects, exclude []string) ([]contract.QuestionRow, error) {
+	p.Projects, p.ProjectsNull = projectSplit(projects)
+	p.Excluded, p.ExcludeNull = projectSplit(exclude)
+	rs, err := q.db().TaskQuestions(q.ctx(), p)
+	if err != nil {
+		return nil, err
 	}
-	rs, err := rowsOf(q, "SELECT "+questionCols+" FROM question"+where(c)+" ORDER BY seq", p...)
-	for _, r := range rs { // absent, not null, as in the TypeScript view
-		for _, k := range []string{"artifactIds", "cause"} {
-			if r[k] == nil {
-				delete(r, k)
-			}
+	out := make([]contract.QuestionRow, 0, len(rs))
+	for _, r := range rs {
+		if string(r.ArtifactIds) == "null" {
+			r.ArtifactIds = nil
 		}
+		if string(r.Cause) == "null" {
+			r.Cause = nil
+		}
+		out = append(out, contract.QuestionRow{Id: r.ID, Code: r.Code, Kind: contract.QuestionKind(r.Kind), ProjectId: r.ProjectID, TaskId: r.TaskID, ExecutionId: r.ExecutionID,
+			SessionId: r.SessionID, Text: r.Text, Options: rawJSON(r.Options), AskedBy: r.AskedBy, AskedAt: timeText(r.AskedAt), Answer: r.Answer, AnsweredBy: r.AnsweredBy,
+			AnsweredAt: optTime(r.AnsweredAt), State: r.State, ArtifactIds: r.ArtifactIds, Cause: r.Cause}) // artifactIds and cause: absent, not null, as in the TypeScript view
 	}
-	return rs, err
+	return out, nil
 }
 
 // projectIn: the condition "project in ids" ('-' is no project) appended to c and p; none when ids is empty. The bare
@@ -663,25 +758,33 @@ func where(c []string) string {
 	return " WHERE " + strings.Join(c, " AND ")
 }
 
-func createTask(q *Request, v doc) (string, error) {
-	title, _ := v["title"].(string)
-	if strings.TrimSpace(title) == "" || len([]rune(title)) > 500 {
+// newTask: task_create's fields; CreatedBy "execution:<id>" also records that execution and its session.
+type newTask struct {
+	ProjectID, ExpectedOutcome, Priority, ResultDestination *string
+	Title, CreatedBy, DirectedBy                            string
+	CompletionRequirements                                  json.RawMessage
+	DependsOn                                               []string
+	Held                                                    bool // a Held task: paused before its first queue (fleet-pm-agent.md §4)
+}
+
+func createTask(q *Request, v newTask) (string, error) {
+	if strings.TrimSpace(v.Title) == "" || len([]rune(v.Title)) > 500 {
 		return "", fail(400, "Expected task title")
 	}
-	id := firstString(v["id"], newID())
-	pr := v["priority"]
-	if pr == nil {
-		pr = "normal"
+	id := newID()
+	pr := "normal"
+	if v.Priority != nil {
+		pr = *v.Priority
 	}
 	priority, err := priorityClass(pr)
 	if err != nil {
 		return "", err
 	}
-	cr := v["completionRequirements"]
-	if cr == nil {
-		cr = doc{}
+	cr := []byte(v.CompletionRequirements)
+	if len(cr) == 0 || string(cr) == "null" {
+		cr = []byte("{}")
 	}
-	if pid := astr(v["projectId"]); pid != "" {
+	if pid := deref(v.ProjectID); pid != "" {
 		if retired, err := projectRetired(q, pid); err != nil || retired {
 			if err == nil {
 				err = fail(404, "Unknown project")
@@ -689,69 +792,33 @@ func createTask(q *Request, v doc) (string, error) {
 			return "", err
 		}
 	}
-	var createdByExec, createdBySess any
-	if cb := astr(v["createdBy"]); strings.HasPrefix(cb, "execution:") {
-		eid := strings.TrimPrefix(cb, "execution:")
-		if eid != "" {
-			createdByExec = eid
-			sid, err := unscoped(q, func() (string, error) {
-				var s *string
-				err := q.tx.QueryRow(q.ctx(), "SELECT session_id FROM execution WHERE id=$1", eid).Scan(&s)
-				if errors.Is(err, pgx.ErrNoRows) {
-					return "", nil
-				}
-				return deref(s), err
-			})
-			if err != nil {
-				return "", err
+	var createdByExec, createdBySess *string
+	if eid, ok := strings.CutPrefix(v.CreatedBy, "execution:"); ok && eid != "" {
+		createdByExec = &eid
+		sid, err := unscoped(q, func() (*string, error) {
+			s, err := q.db().TaskExecutionSession(q.ctx(), eid)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, nil
 			}
-			createdBySess = nilIf(firstString(sid, v["createdBySessionId"]))
+			return s, err
+		})
+		if err != nil {
+			return "", err
 		}
+		createdBySess = strPtr(sid)
 	}
-	held := v["held"] == true // a Held task: paused before its first queue (fleet-pm-agent.md §4)
-	if err := exec(q, "INSERT INTO task(id,project_id,title,expected_outcome,completion_requirements,result_destination,created_by,created_by_execution_id,created_by_session_id,data,state,state_before_pause,pause_reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'{}',CASE WHEN $10 THEN 'paused' ELSE 'queued' END::task_state,CASE WHEN $10 THEN 'queued' END::task_state,CASE WHEN $10 THEN 'held' END)",
-		id, v["projectId"], title, v["expectedOutcome"], js(cr), v["resultDestination"], v["createdBy"], createdByExec, createdBySess, held); err != nil {
+	if err := q.db().TaskInsert(q.ctx(), db.TaskInsertParams{ID: id, ProjectID: v.ProjectID, Title: v.Title, ExpectedOutcome: v.ExpectedOutcome, CompletionRequirements: cr,
+		ResultDestination: v.ResultDestination, CreatedBy: strPtr(v.CreatedBy), CreatedByExecutionID: createdByExec, CreatedBySessionID: createdBySess, Held: v.Held,
+		DirectedBy: strPtr(v.DirectedBy), Priority: priority}); err != nil {
 		return "", err
 	}
-	if d := astr(v["directedBy"]); d != "" {
-		if err := exec(q, "UPDATE task SET directed_by=$2,requested_by=$2 WHERE id=$1", id, d); err != nil {
-			return "", err
-		}
-	}
-	if priority != "normal" {
-		if err := exec(q, "UPDATE task SET priority=$2 WHERE id=$1", id, priority); err != nil {
-			return "", err
-		}
-	}
-	deps, _ := v["dependsOn"].([]string)
-	for _, d := range deps {
-		if err := exec(q, "INSERT INTO task_dependency(task_id,depends_on_task_id,kind,project_id) VALUES($1,$2,'blocks',$3) ON CONFLICT DO NOTHING", id, d, v["projectId"]); err != nil {
+	for _, d := range v.DependsOn {
+		if err := q.db().TaskDependencyAdd(q.ctx(), db.TaskDependencyAddParams{TaskID: id, DependsOn: d, ProjectID: v.ProjectID}); err != nil {
 			return "", err
 		}
 	}
 	return id, nil
 }
-
-const taskViewCols = `id,code,project_id AS "projectId",title,expected_outcome AS "expectedOutcome",state,wait_reason AS "waitReason",priority,completion_requirements AS "completionRequirements",
- result_destination AS "resultDestination",delivery_method AS "deliveryMethod",accepted_by AS "acceptedBy",accepted_at AS "acceptedAt",accepted_artifact_ids AS "acceptedArtifactIds",
- created_by AS "createdBy",directed_by AS "directedBy",requested_by AS "requestedBy",taken_from AS "takenFrom",created_at AS "createdAt",updated_at AS "updatedAt",pause_reason AS "pauseReason"`
-
-// Older pipeline steps retained millisecond ends in data but omitted the typed
-// column. Read that actual terminal observation only; never infer an end from
-// duration, updated_at or the current clock. Bounds keep RFC3339/Go timestamps
-// representable, and nested CASE protects casts of malformed legacy JSON.
-const executionEndSQL = `CASE WHEN kind<>'pipeline_step' THEN ended_at
- WHEN state NOT IN ('succeeded','failed','cancelled') THEN NULL
- WHEN ended_at IS NOT NULL THEN ended_at
- WHEN jsonb_typeof(data->'finishedAt')='number' THEN
-  CASE WHEN (data->>'finishedAt')::numeric BETWEEN 0 AND 253402300799999
-   AND trunc((data->>'finishedAt')::numeric)=(data->>'finishedAt')::numeric
-  THEN to_timestamp(((data->>'finishedAt')::bigint/1000)::double precision)
-   + ((data->>'finishedAt')::bigint%1000)*interval '1 millisecond' END END`
-
-const executionCols = `id,kind,state,observation,last_seen_at AS "lastSeenAt",project_id AS "projectId",task_id AS "taskId",experiment_id AS "experimentId",variant,parent_execution_id AS "parentExecutionId",
- session_id AS "sessionId",account_id AS "accountId",host_id AS "hostId",environment_id AS "environmentId",harness,harness_version AS "harnessVersion",model,config_ref AS "configRef",problem,
- started_at AS "startedAt",` + executionEndSQL + ` AS "endedAt",definitions,data->'report' AS report,system_actor AS "systemActor"`
 
 func executionsList(q *Request, f contract.ExecutionsListRequest) ([]contract.ExecutionRow, error) {
 	page, err := executionsPage(q, f)
@@ -769,64 +836,59 @@ func executionsPage(q *Request, f contract.ExecutionsListRequest) (contract.Exec
 	if err := excludeCheck(f.ExcludeProjectIds); err != nil {
 		return empty, err
 	}
-	c, p := []string{}, []any{}
-	for _, x := range []struct {
-		v   *string
-		col string
-	}{{f.TaskId, "task_id"}, {f.ProjectId, "project_id"}, {f.ParentExecutionId, "parent_execution_id"}, {f.SessionId, "session_id"}} {
-		if v := deref(x.v); v != "" {
-			p = append(p, v)
-			c = append(c, fmt.Sprintf("%s=$%d", x.col, len(p)))
-		}
+	p := db.TaskExecutionsPageParams{TaskID: strPtr(f.TaskId), ProjectID: strPtr(f.ProjectId), ParentExecutionID: strPtr(f.ParentExecutionId), SessionID: strPtr(f.SessionId),
+		Problem: f.Problem != nil && *f.Problem, NeedsYou: f.NeedsYou != nil && *f.NeedsYou}
+	if s := systemOf(f.System, deref(f.ParentExecutionId) != ""); s != nil {
+		p.System = string(*s)
 	}
-	c = append(c, systemFilter(systemOf(f.System, deref(f.ParentExecutionId) != ""), "system_actor"))
-	if f.Problem != nil && *f.Problem {
-		c = append(c, "problem IS NOT NULL")
-	}
-	if f.NeedsYou != nil && *f.NeedsYou {
-		// Tool calls are per-call gateway records (a dead key asks its own question). A step shows through its run
-		// when the run carries a problem. A binding problem holds only while the execution is open.
-		c = append(c, `problem IS NOT NULL AND problem NOT IN ('unknown:abandoned','cancelled') AND kind<>'tool_run'
-		AND NOT EXISTS (SELECT 1 FROM document x WHERE x.kind='problem-dismissal' AND x.id=execution.id)
-		AND NOT (state IN ('succeeded','failed','cancelled') AND (problem LIKE 'unregistered host %' OR problem LIKE 'unregistered account %' OR problem LIKE 'no registered environment of project %'))
-		AND NOT (kind='pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.problem IS NOT NULL AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1))))
-		AND (project_id IS NULL OR EXISTS (SELECT 1 FROM definition d WHERE d.kind='project' AND d.id=execution.project_id))`)
-	}
-	c, p = projectIn(c, p, f.ProjectIds)
-	c = projectNotIn(c, &p, "project_id", f.ExcludeProjectIds)
+	p.Projects, p.ProjectsNull = projectSplit(f.ProjectIds)
+	p.Excluded, p.ExcludeNull = projectSplit(f.ExcludeProjectIds)
 	if f.After != nil {
-		args := append(append([]any{}, p...), *f.After)
-		cursorWhere := append(append([]string{}, c...), fmt.Sprintf("id=$%d", len(args)))
-		var seq int64
-		err := q.tx.QueryRow(q.ctx(), "SELECT seq FROM execution"+where(cursorWhere), args...).Scan(&seq)
-		if err == pgx.ErrNoRows {
-			return empty, fail(400, "Invalid execution cursor")
-		}
+		// The cursor is a row of this same list.
+		at := p
+		at.ID = f.After
+		cursor, err := q.db().TaskExecutionsPage(q.ctx(), at)
 		if err != nil {
 			return empty, err
 		}
-		p = append(p, seq, *f.After)
-		c = append(c, fmt.Sprintf("(seq,id)>($%d,$%d)", len(p)-1, len(p)))
+		if len(cursor) == 0 {
+			return empty, fail(400, "Invalid execution cursor")
+		}
+		p.AfterSeq, p.AfterID = &cursor[0].Seq, f.After
 	}
-	suffix := " ORDER BY seq,id"
 	if f.Limit != nil {
-		p = append(p, *f.Limit+1)
-		suffix += fmt.Sprintf(" LIMIT $%d", len(p))
+		lim := int32(*f.Limit + 1)
+		p.Lim = &lim
 	}
-	rs, err := rowsOf(q, "SELECT "+executionCols+" FROM execution"+where(c)+suffix, p...)
+	rs, err := q.db().TaskExecutionsPage(q.ctx(), p)
 	if err != nil {
 		return empty, err
 	}
-	es, err := asT[[]contract.ExecutionRow](rs)
-	if err != nil {
-		return empty, err
+	es := make([]contract.ExecutionRow, 0, len(rs))
+	for _, r := range rs {
+		e := contract.ExecutionRow{Id: r.ID, Kind: string(r.Kind), State: contract.ExecutionState(r.State), Observation: string(r.Observation), LastSeenAt: optTime(r.LastSeenAt),
+			ProjectId: r.ProjectID, TaskId: r.TaskID, ExperimentId: r.ExperimentID, Variant: r.Variant, ParentExecutionId: r.ParentExecutionID, SessionId: r.SessionID,
+			AccountId: r.AccountID, HostId: r.HostID, EnvironmentId: r.EnvironmentID, Harness: r.Harness, HarnessVersion: r.HarnessVersion, Model: r.Model,
+			ConfigRef: rawJSON(r.ConfigRef), Problem: r.Problem, StartedAt: optTime(r.StartedAt), SystemActor: r.SystemActor}
+		if r.EndAt.Valid {
+			e.EndedAt = optTime(&r.EndAt.Time)
+		}
+		if err := json.Unmarshal(rawJSON(r.Definitions), &e.Definitions); err != nil {
+			return empty, err
+		}
+		if r.Report != nil {
+			if err := json.Unmarshal(r.Report, &e.Report); err != nil {
+				return empty, err
+			}
+		}
+		es = append(es, e)
 	}
 	reply := contract.ExecutionsListReply{Executions: es}
 	if f.Limit != nil {
 		// Metadata is present only when the caller opts in to paging.
 		more := len(es) > int(*f.Limit)
 		reply.HasMore = &more
-		if len(es) > int(*f.Limit) {
+		if more {
 			reply.Executions = es[:*f.Limit]
 			cursor := reply.Executions[len(reply.Executions)-1].Id
 			reply.NextAfter = &cursor
@@ -835,64 +897,74 @@ func executionsPage(q *Request, f contract.ExecutionsListRequest) (contract.Exec
 	return reply, nil
 }
 
-func taskGet(q *Request, id string) (doc, error) {
-	t, err := first(q, "SELECT "+taskViewCols+" FROM task WHERE id=$1", id)
+// taskItem: a task row as the list shows it, with its view's progress and open questions.
+func taskItem(t db.Task, count *int64, byState, open []byte) contract.TaskListItem {
+	return contract.TaskListItem{Id: t.ID, Code: t.Code, ProjectId: t.ProjectID, Title: t.Title, ExpectedOutcome: t.ExpectedOutcome, State: contract.TaskState(t.State),
+		WaitReason: t.WaitReason, Priority: t.Priority, CompletionRequirements: rawJSON(t.CompletionRequirements), ResultDestination: t.ResultDestination,
+		DeliveryMethod: rawJSON(t.DeliveryMethod), AcceptedBy: t.AcceptedBy, AcceptedAt: optTime(t.AcceptedAt), AcceptedArtifactIds: t.AcceptedArtifactIds,
+		CreatedBy: t.CreatedBy, DirectedBy: t.DirectedBy, RequestedBy: t.RequestedBy, TakenFrom: t.TakenFrom, CreatedAt: timeText(t.CreatedAt),
+		UpdatedAt: timeText(t.UpdatedAt), PauseReason: t.PauseReason,
+		Progress: contract.TaskProgress{Executions: rawJSON(jsonBytes(count)), ByState: rawJSON(byState)}, OpenQuestions: rawJSON(open)}
+}
+
+// taskDetail: task_get's task with its progress, latest (or accepted) result, resources, runs, dependencies and questions.
+func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
+	var none contract.TaskDetail
+	t, err := taskLoad(q, id)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
-	if t == nil {
-		return nil, errNotFound
+	v, err := q.db().TaskView(q.ctx(), &id)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return none, err
 	}
-	d, err := first(q, "SELECT * FROM task_view WHERE task_id=$1", id)
-	if err != nil {
-		return nil, err
-	}
-	t["progress"] = doc{"executions": d["execution_count"], "byState": d["executions_by_state"]}
-	t["latestResult"], t["openQuestions"] = d["latest_result"], d["open_questions"]
+	it := taskItem(t, v.ExecutionCount, v.ExecutionsByState, v.OpenQuestions)
+	d := contract.TaskDetail{Id: it.Id, Code: it.Code, ProjectId: it.ProjectId, Title: it.Title, ExpectedOutcome: it.ExpectedOutcome, State: it.State, WaitReason: it.WaitReason,
+		Priority: it.Priority, CompletionRequirements: it.CompletionRequirements, ResultDestination: it.ResultDestination, DeliveryMethod: it.DeliveryMethod,
+		AcceptedBy: it.AcceptedBy, AcceptedAt: it.AcceptedAt, AcceptedArtifactIds: it.AcceptedArtifactIds, CreatedBy: it.CreatedBy, DirectedBy: it.DirectedBy,
+		RequestedBy: it.RequestedBy, TakenFrom: it.TakenFrom, CreatedAt: it.CreatedAt, UpdatedAt: it.UpdatedAt, PauseReason: it.PauseReason,
+		Progress: it.Progress, OpenQuestions: it.OpenQuestions, LatestResult: rawJSON(v.LatestResult)}
 	// A completed task presents its explicitly accepted collection in selection
 	// order. Missing/hidden/unretained selections cannot turn a later diagnostic
 	// into the accepted result. Unaccepted work keeps task_view version ordering.
-	if t["state"] == "completed" && t["acceptedAt"] != nil && t["acceptedArtifactIds"] != nil {
-		selected, err := resourceLineageQuery(q, func() (doc, error) {
-			return first(q, taskLineageCTEs+`, accepted_results AS (
- SELECT selection.position,a.id AS row_id,jsonb_build_object('id',coalesce(a.legacy_id,a.id),'artifactId',a.id,'executionId',a.execution_id,'path',a.name,'mediaType',a.media_type,'sha256',a.content_hash,'size',a.size) AS result
- FROM jsonb_array_elements_text($2::jsonb) WITH ORDINALITY selection(id,position)
- JOIN artifact a ON a.id=selection.id OR a.legacy_id=selection.id
- WHERE a.state='stored' AND a.execution_id IN (SELECT id FROM own_execs UNION SELECT id FROM del_tree)
- UNION ALL
- SELECT selection.position,d.id,d.data-'contentBase64'
- FROM jsonb_array_elements_text($2::jsonb) WITH ORDINALITY selection(id,position)
- JOIN document d ON d.id=selection.id AND d.kind='artifact'
- WHERE d.data->>'executionId' IN (SELECT id FROM own_execs UNION SELECT id FROM del_tree)
- ) SELECT result FROM accepted_results ORDER BY position,row_id LIMIT 1`, id, js(t["acceptedArtifactIds"]))
+	if t.State == db.TaskStateCompleted && t.AcceptedAt != nil && t.AcceptedArtifactIds != nil {
+		selected, err := resourceLineageQuery(q, func() ([]byte, error) {
+			r, err := q.db().TaskAcceptedResult(q.ctx(), db.TaskAcceptedResultParams{TaskID: &id, Column2: jsonBytes(t.AcceptedArtifactIds)})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, nil
+			}
+			return r, err
 		})
 		if err != nil {
-			return nil, err
+			return none, err
 		}
-		t["latestResult"] = selected["result"]
+		d.LatestResult = rawJSON(selected)
 	}
-
 	rollup, err := taskResourceRollup(q, id)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
-	t["cost"], t["resources"] = rollup.Total.Cost, rollup
+	d.Cost, d.Resources = rollup.Total.Cost, &rollup
 	execs, err := executionsList(q, contract.ExecutionsListRequest{TaskId: &id})
 	if err != nil {
-		return nil, err
+		return none, err
 	}
-	filtered := make([]contract.ExecutionRow, 0, len(execs))
+	d.Executions = make([]contract.ExecutionRow, 0, len(execs))
 	for _, ex := range execs {
 		if ex.Kind != "tool_run" {
-			filtered = append(filtered, ex)
+			d.Executions = append(d.Executions, ex)
 		}
 	}
-	t["executions"] = filtered
-	if t["dependencies"], err = rowsOf(q, "SELECT d.depends_on_task_id AS id,d.kind,t.code FROM task_dependency d LEFT JOIN task t ON t.id=d.depends_on_task_id WHERE d.task_id=$1", id); err != nil {
-		return nil, err
+	deps, err := q.db().TaskDependencies(q.ctx(), id)
+	if err != nil {
+		return none, err
 	}
-	t["questions"], err = questionsList(q, id, "", "", nil, nil)
-	return t, err
+	d.Dependencies = make([]contract.TaskDependency, 0, len(deps))
+	for _, x := range deps {
+		d.Dependencies = append(d.Dependencies, contract.TaskDependency{Id: x.ID, Kind: x.Kind, Code: x.Code})
+	}
+	d.Questions, err = questionsList(q, id, "", "", nil, nil)
+	return d, err
 }
 
 type taskGroup struct {
@@ -1247,6 +1319,27 @@ func taskMembership(q *Request, f doc, group, sort any, ids []string) ([]doc, er
 	return out, err
 }
 
+// settingChangeRecord: a setting-change audit row (the operator's take of a task, a withdrawn question).
+type settingChangeRecord struct {
+	ID        string  `json:"id"`
+	Target    string  `json:"target"`
+	ProjectID *string `json:"projectId"`
+	Field     string  `json:"field"`
+	Previous  any     `json:"previous"`
+	Value     any     `json:"value"`
+	Reason    string  `json:"reason,omitempty"`
+	Actor     string  `json:"actor"`
+	At        int64   `json:"at"`
+}
+
+func putSettingChange(q *Request, c settingChangeRecord) error {
+	rec, err := asT[doc](c)
+	if err != nil {
+		return err
+	}
+	return put(q, "setting-change", rec)
+}
+
 func init() {
 	op("task_create", func(q *Request, r *contract.TaskCreateRequest) (contract.TaskDetail, error) {
 		if r.Title == "" || len([]rune(r.Title)) > 500 {
@@ -1259,9 +1352,9 @@ func init() {
 			}
 			deps = append(deps, d)
 		}
-		id, err := createTask(q, doc{"projectId": optAny(r.ProjectId), "title": r.Title, "expectedOutcome": optAny(r.ExpectedOutcome), "priority": optAny(r.Priority),
-			"completionRequirements": rawAny(r.CompletionRequirements), "resultDestination": optAny(r.ResultDestination), "createdBy": actor(q, "operator"), "directedBy": director(q),
-			"dependsOn": deps, "held": q.agent != "" || (r.Held != nil && *r.Held)})
+		id, err := createTask(q, newTask{ProjectID: strPtr(r.ProjectId), Title: r.Title, ExpectedOutcome: r.ExpectedOutcome, Priority: r.Priority,
+			CompletionRequirements: r.CompletionRequirements, ResultDestination: r.ResultDestination, CreatedBy: actor(q, "operator"), DirectedBy: director(q),
+			DependsOn: deps, Held: q.agent != "" || (r.Held != nil && *r.Held)})
 		if err != nil {
 			return contract.TaskDetail{}, err
 		}
@@ -1273,7 +1366,7 @@ func init() {
 		if !idOK(id) {
 			return none, fail(400, "Expected taskId")
 		}
-		if _, err := taskRow(q, id); err != nil {
+		if _, err := taskLoad(q, id); err != nil {
 			return none, err
 		}
 		if r.Action != nil && q.agent != "" {
@@ -1300,23 +1393,28 @@ func init() {
 				}
 			}
 		}
+		set := db.TaskUpdateFieldsParams{ID: id}
 		for _, f := range []struct {
-			name, col string
-			v         *string
-		}{{"title", "title", r.Title}, {"expectedOutcome", "expected_outcome", r.ExpectedOutcome}, {"priority", "priority", r.Priority}, {"resultDestination", "result_destination", r.ResultDestination}} {
+			name string
+			v    *string
+			to   **string
+		}{{"title", r.Title, &set.Title}, {"expectedOutcome", r.ExpectedOutcome, &set.ExpectedOutcome}, {"priority", r.Priority, &set.Priority}, {"resultDestination", r.ResultDestination, &set.ResultDestination}} {
 			if f.v == nil {
 				continue
 			}
-			var v any = *f.v
+			v := *f.v
 			if f.name == "priority" {
 				var err error
 				if v, err = priorityClass(v); err != nil {
 					return none, err
 				}
-			} else if len([]rune(*f.v)) > 4000 {
+			} else if len([]rune(v)) > 4000 {
 				return none, fail(400, "Invalid "+f.name)
 			}
-			if err := exec(q, "UPDATE task SET "+f.col+"=$2,updated_at=now() WHERE id=$1", id, v); err != nil {
+			*f.to = &v
+		}
+		if set.Title != nil || set.ExpectedOutcome != nil || set.Priority != nil || set.ResultDestination != nil {
+			if err := q.db().TaskUpdateFields(q.ctx(), set); err != nil {
 				return none, err
 			}
 		}
@@ -1349,42 +1447,29 @@ func init() {
 		if !idOK(id) {
 			return none, fail(400, "Expected taskId")
 		}
-		t, err := taskRow(q, id)
+		t, err := taskLoad(q, id)
 		if err != nil {
 			return none, err
 		}
-		if astr(t["state"]) != "in_progress" {
+		if t.State != db.TaskStateInProgress {
 			return none, fail(409, "Task is not in progress")
 		}
-		qid, err := requestAcceptance(q, t, r.ArtifactIds, r.Text, actor(q, "operator"))
+		qid, err := requestAcceptance(q, acceptTask{ID: t.ID, Title: t.Title, ProjectID: t.ProjectID}, r.ArtifactIds, r.Text, actor(q, "operator"))
 		if err != nil {
 			return none, err
 		}
 		return questionRow(q, id, qid)
 	})
 	op("task_list", func(q *Request, r *contract.TaskListRequest) (contract.TaskListReply, error) {
-		c, p := []string{}, []any{}
-		if v := deref(r.ProjectId); v != "" {
-			p = append(p, v)
-			c = append(c, fmt.Sprintf("t.project_id=$%d", len(p)))
-		}
-		if v := deref(r.State); v != "" {
-			p = append(p, v)
-			c = append(c, fmt.Sprintf(stateSQL+"=$%d", len(p)))
-		}
-		rs, err := rowsOf(q, "SELECT t.*,v.execution_count,v.executions_by_state,v.open_questions FROM task t JOIN task_view v ON v.task_id=t.id"+where(c)+" ORDER BY t.seq", p...)
+		rs, err := q.db().TaskList(q.ctx(), db.TaskListParams{ProjectID: strPtr(r.ProjectId), State: strPtr(r.State)})
 		if err != nil {
 			return contract.TaskListReply{}, err
 		}
-		out := []doc{}
+		tasks := make([]contract.TaskListItem, 0, len(rs))
 		for _, t := range rs {
-			v := taskRecord(t)
-			v["progress"] = doc{"executions": t["execution_count"], "byState": t["executions_by_state"]}
-			v["openQuestions"] = t["open_questions"]
-			out = append(out, v)
+			tasks = append(tasks, taskItem(t.Task, t.ExecutionCount, t.ExecutionsByState, t.OpenQuestions))
 		}
-		tasks, err := asT[[]contract.TaskListItem](out)
-		return contract.TaskListReply{Tasks: tasks}, err
+		return contract.TaskListReply{Tasks: tasks}, nil
 	})
 	op("task_take", func(q *Request, r *contract.TaskTakeRequest) (contract.TaskDetail, error) {
 		var none contract.TaskDetail
@@ -1392,19 +1477,19 @@ func init() {
 		if !idOK(id) {
 			return none, fail(400, "Expected taskId")
 		}
-		t, err := taskRow(q, id)
+		t, err := taskLoad(q, id)
 		if err != nil {
 			return none, err
 		}
 		p := q.person
-		if p == nil || !mayAccessProjectID(p, astr(t["project_id"])) {
+		if p == nil || !mayAccessProjectID(p, deref(t.ProjectID)) {
 			return none, fail(403, "Take needs a grant on the task project")
 		}
-		if astr(t["directed_by"]) != p.Email {
+		if deref(t.DirectedBy) != p.Email {
 			if err := takeTask(q, id, p.Email, ""); err != nil {
 				return none, err
 			}
-			if err := put(q, "setting-change", doc{"id": newID(), "target": "task:" + id, "projectId": t["project_id"], "field": "directedBy", "previous": t["directed_by"], "value": p.Email, "actor": p.Email, "at": nowMs()}); err != nil {
+			if err := putSettingChange(q, settingChangeRecord{ID: newID(), Target: "task:" + id, ProjectID: t.ProjectID, Field: "directedBy", Previous: t.DirectedBy, Value: p.Email, Actor: p.Email, At: nowMs()}); err != nil {
 				return none, err
 			}
 		}
@@ -1415,11 +1500,7 @@ func init() {
 			return contract.QuestionsListReply{}, err
 		}
 		qs, err := questionsList(q, deref(r.TaskId), deref(r.State), deref(r.Kind), r.ProjectIds, r.ExcludeProjectIds)
-		if err != nil {
-			return contract.QuestionsListReply{}, err
-		}
-		rows, err := asT[[]contract.QuestionRow](qs)
-		return contract.QuestionsListReply{Questions: rows}, err
+		return contract.QuestionsListReply{Questions: qs}, err
 	})
 	// questions_withdraw: the owner (or full access) withdraws open questions that no longer need anyone, with one
 	// setting-change audit row each. A cause is let go, so a problem still present is asked again by its source.
@@ -1435,23 +1516,28 @@ func init() {
 			if !idOK(id) {
 				return out, fail(400, "Expected question ids")
 			}
-			row, err := first(q, "SELECT project_id,state::text FROM question WHERE id=$1 FOR UPDATE", id)
-			if err != nil {
+			row, err := q.db().TaskQuestionLock(q.ctx(), id)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return out, err
 			}
-			if row == nil || row["state"] != "open" {
+			if err != nil || row.State != db.QuestionStateOpen {
 				state := "unknown"
-				if row != nil {
-					state = astr(row["state"])
+				if err == nil {
+					state = string(row.State)
 				}
 				out.Skipped = append(out.Skipped, contract.QuestionSkipped{Id: id, State: state})
 				continue
 			}
-			w := doc{"reason": r.Reason, "actor": actor(q, "operator"), "at": nowMs()} // as lab_rating_withdraw records it
+			by, at := actor(q, "operator"), nowMs()
+			w := struct { // as lab_rating_withdraw records it
+				Reason string `json:"reason"`
+				Actor  string `json:"actor"`
+				At     int64  `json:"at"`
+			}{r.Reason, by, at}
 			if _, err := questionTransition(q, id, questionEvent{To: "withdrawn", Withdrawal: jsonBytes(w)}); err != nil {
 				return out, err
 			}
-			if err := put(q, "setting-change", doc{"id": newID(), "target": "question:" + id, "projectId": row["project_id"], "field": "state", "previous": "open", "value": "withdrawn", "reason": r.Reason, "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
+			if err := putSettingChange(q, settingChangeRecord{ID: newID(), Target: "question:" + id, ProjectID: row.ProjectID, Field: "state", Previous: "open", Value: "withdrawn", Reason: r.Reason, Actor: by, At: nowMs()}); err != nil {
 				return out, err
 			}
 			out.Withdrawn = append(out.Withdrawn, id)
@@ -1470,14 +1556,18 @@ func init() {
 		}
 		// An agent's question is answered by delivering the reply to its session (agent tool reply); recording the
 		// answer alone left the asker without it.
-		if aq, err := first(q, "SELECT coalesce(q.project_id,s.project_id) AS project_id FROM question q LEFT JOIN session s ON s.id=q.session_id WHERE q.id=$1 AND q.kind='agent_question'", id); err != nil {
+		project, err := q.db().TaskAgentQuestionProject(q.ctx(), id)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return none, err
-		} else if aq != nil {
+		}
+		if err == nil {
 			// The reply reaches another session: the person must have that session's project, as for any project op.
-			if p := q.person; p != nil && !fullAccess(p) && !mayAccessProjectID(p, astr(aq["project_id"])) {
+			if p := q.person; p != nil && !fullAccess(p) && !mayAccessProjectID(p, project) {
 				return none, errNotFound
 			}
-			if _, err := agentReply(q, doc{"questionId": id, "answer": answer}); err != nil {
+			reply := make(doc) // agentReply's request record
+			reply["questionId"], reply["answer"] = id, answer
+			if _, err := agentReply(q, reply); err != nil {
 				return none, err
 			}
 			return questionRow(q, "", id)
@@ -1505,10 +1595,11 @@ func init() {
 		return taskPage(q, r, raw.Filter)
 	})
 	op("task_derived_check", func(q *Request, _ *contract.TaskDerivedCheckRequest) (contract.TaskDerivedCheckReply, error) {
-		var n int64
-		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*)::int FROM task").Scan(&n); err != nil {
+		n, err := q.db().TaskCount(q.ctx())
+		if err != nil {
 			return contract.TaskDerivedCheckReply{}, err
 		}
+		// task_derived_drift() returns a table, which the sqlc schema (db/schema.sql) does not declare.
 		d, err := rowsOf(q, `SELECT task_id AS "taskId",stored,expected FROM task_derived_drift()`)
 		if err != nil {
 			return contract.TaskDerivedCheckReply{}, err
@@ -1518,48 +1609,23 @@ func init() {
 	})
 }
 
-func taskRecord(t doc) doc {
-	v := doc{}
-	for col, key := range map[string]string{"id": "id", "code": "code", "project_id": "projectId", "title": "title", "expected_outcome": "expectedOutcome", "state": "state", "wait_reason": "waitReason", "priority": "priority",
-		"completion_requirements": "completionRequirements", "result_destination": "resultDestination", "delivery_method": "deliveryMethod", "accepted_by": "acceptedBy", "accepted_at": "acceptedAt",
-		"accepted_artifact_ids": "acceptedArtifactIds", "created_by": "createdBy", "directed_by": "directedBy", "requested_by": "requestedBy", "taken_from": "takenFrom", "created_at": "createdAt",
-		"updated_at": "updatedAt", "pause_reason": "pauseReason"} {
-		v[key] = t[col]
-	}
-	return v
-}
-
-// taskDetail: taskGet as its contract type.
-func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
-	t, err := taskGet(q, id)
-	if err != nil {
-		return contract.TaskDetail{}, err
-	}
-	return asT[contract.TaskDetail](t)
-}
-
 // questionRow: one question row as its contract type (404 when the row is not in the caller's scope); taskID, when set,
 // must be its task.
 func questionRow(q *Request, taskID, id string) (contract.QuestionRow, error) {
-	x, err := first(q, "SELECT "+questionCols+" FROM question WHERE id=$1 AND ($2='' OR task_id=$2)", id, taskID)
-	if err != nil || x == nil {
-		if err == nil {
-			err = errNotFound
-		}
+	rs, err := questionRows(q, db.TaskQuestionsParams{ID: &id, TaskID: strPtr(taskID)}, nil, nil)
+	if err != nil {
 		return contract.QuestionRow{}, err
 	}
-	for _, k := range []string{"artifactIds", "cause"} { // absent, not null, as in questionsList
-		if x[k] == nil {
-			delete(x, k)
-		}
+	if len(rs) == 0 {
+		return contract.QuestionRow{}, errNotFound
 	}
-	return asT[contract.QuestionRow](x)
+	return rs[0], nil
 }
 
 // idOK: a record id argument: non-empty, at most 200 characters (strArg's rule).
 func idOK(id string) bool { return id != "" && len([]rune(id)) <= 200 }
 
-// optAny and rawAny: optional request fields as the map values createTask reads (nil when absent).
+// optAny and rawAny: optional request fields as record values (nil when absent).
 func optAny(s *string) any {
 	if s == nil {
 		return nil
@@ -1576,15 +1642,18 @@ func rawAny(m json.RawMessage) any {
 	return v
 }
 
+// findQuestion: the question id of the task as its row, nil when it is not one.
 func findQuestion(q *Request, taskID, id string) (any, error) {
-	qs, err := questionsList(q, taskID, "", "", nil, nil)
-	if err != nil {
+	rs, err := questionRows(q, db.TaskQuestionsParams{ID: &id, TaskID: strPtr(taskID)}, nil, nil)
+	if err != nil || len(rs) == 0 {
 		return nil, err
 	}
-	for _, x := range qs {
-		if x["id"] == id {
-			return x, nil
-		}
-	}
-	return nil, nil
+	return rs[0], nil
 }
+
+// Task columns of the search syntax for task_page (tasks.go taskWhere); agent and host are subqueries, so every task
+// query can use them without a join. agent: the harness of the task's latest execution (task_derived.last_agent;
+// task_derived.agent is set only while one runs). The search queries (queries/entities.sql) mirror them.
+var taskSearchText = []string{"t.title", "t.id", "t.code"}
+var taskSearchFields = map[string]string{"agent": "(SELECT last_agent FROM task_derived WHERE task_id=t.id)", "host": "(SELECT host FROM task_derived WHERE task_id=t.id)",
+	"project": "t.project_id", "state": stateSQL}

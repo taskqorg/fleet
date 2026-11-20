@@ -800,7 +800,6 @@ CREATE TABLE task (
   "created_by" text,
   "created_at" timestamp with time zone NOT NULL,
   "updated_at" timestamp with time zone NOT NULL,
-  "data" jsonb NOT NULL,
   "seq" bigint NOT NULL,
   "directed_by" text,
   "requested_by" text,

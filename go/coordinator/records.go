@@ -8,6 +8,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+
+	"fleet/coordinator/db"
 )
 
 func nilIf(v string) any {
@@ -42,8 +44,6 @@ func has(q *Request, sql string, args ...any) (bool, error) {
 	return ok, err
 }
 
-var typedTable = map[string]string{"execution": "execution", "question": "question"}
-
 // all: the records of a kind whose data contains filter, in insertion order.
 func all(q *Request, kind string, filter doc) ([]doc, error) {
 	f := doc{}
@@ -57,13 +57,41 @@ func all(q *Request, kind string, filter doc) ([]doc, error) {
 	}
 	switch kind {
 	case "execution":
-		return rows(q, "SELECT "+execJSON+" FROM execution WHERE "+execKinds+" AND data @> $1 ORDER BY seq", js(f))
+		return records(q.db().EntExecutionRecords(q.ctx(), jsonBytes(f)))
 	case "question":
 		return agentQuestions(q, f)
 	case "delegation":
-		return rows(q, "SELECT delegation FROM execution WHERE delegation IS NOT NULL AND delegation @> $1 ORDER BY seq", js(f))
+		return records(q.db().EntDelegationRecords(q.ctx(), jsonBytes(f)))
 	}
-	return rows(q, "SELECT data FROM document WHERE kind=$1 AND data @> $2 ORDER BY seq", kind, js(f))
+	return records(q.db().EntDocumentRecords(q.ctx(), db.EntDocumentRecordsParams{Kind: kind, Filter: jsonBytes(f)}))
+}
+
+// records: JSON records as read, in order; none is an empty list.
+func records(bs [][]byte, err error) ([]doc, error) {
+	out := []doc{}
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range bs {
+		var d doc
+		if err := json.Unmarshal(b, &d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, nil
+}
+
+// record: one JSON record as read; none is not found (404).
+func record(b []byte, err error) (doc, error) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var d doc
+	return d, json.Unmarshal(b, &d)
 }
 
 // get: one record of a kind; a missing or non-string id is not found (404).
@@ -79,11 +107,11 @@ func get(q *Request, anyID any, kind string) (doc, error) {
 	case "execution":
 		return getExecution(q, id)
 	case "question":
-		return one(q, "SELECT "+agentQuestionJSON+" FROM question WHERE id=$1 AND kind='agent_question'", id)
+		return record(q.db().EntAgentQuestion(q.ctx(), id))
 	case "delegation":
-		return one(q, "SELECT delegation FROM execution WHERE delegation->>'id'=$1", id)
+		return record(q.db().EntDelegationRecord(q.ctx(), id))
 	}
-	return one(q, "SELECT data FROM document WHERE id=$1 AND kind=$2", id, kind)
+	return record(q.db().EntDocumentRecord(q.ctx(), db.EntDocumentRecordParams{ID: id, Kind: kind}))
 }
 
 func getForUpdate(q *Request, id, kind string) (doc, error) {
@@ -93,7 +121,7 @@ func getForUpdate(q *Request, id, kind string) (doc, error) {
 	if t := convTables[kind]; t != nil {
 		return convGet(q, t, id, true)
 	}
-	return one(q, "SELECT data FROM document WHERE id=$1 AND kind=$2 FOR UPDATE", id, kind)
+	return record(q.db().EntDocumentRecordForUpdate(q.ctx(), db.EntDocumentRecordForUpdateParams{ID: id, Kind: kind}))
 }
 
 // maybe: get, nil when absent.
@@ -125,8 +153,8 @@ func put(q *Request, kind string, v doc) error {
 	case "question":
 		return putQuestion(q, v)
 	case "delegation":
-		tag, err := q.tx.Exec(q.ctx(), "UPDATE execution SET delegation=$2,parent_execution_id=coalesce(parent_execution_id,$3) WHERE id=$1", v["childExecutionId"], js(v), v["parentExecutionId"])
-		if err == nil && tag.RowsAffected() == 0 {
+		n, err := q.db().EntDelegationPut(q.ctx(), db.EntDelegationPutParams{ID: astr(v["childExecutionId"]), Delegation: jsonBytes(v), ParentExecutionID: strp(v, "parentExecutionId")})
+		if err == nil && n == 0 {
 			return fail(409, fmt.Sprint("Delegation child execution not found: ", v["childExecutionId"]))
 		}
 		return err
@@ -188,8 +216,8 @@ func definitionScalars(defs any, cfg doc) (profileID, profileRev, pipelineID, pi
 // the record's task settles.
 func putExecution(q *Request, e doc) error {
 	id := astr(e["id"])
-	var prev string
-	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1),'')", id).Scan(&prev); err != nil {
+	prev, err := q.db().EntExecutionStateOf(q.ctx(), id)
+	if err != nil {
 		return err
 	}
 	state := firstString(e["state"], prev, "preparing")
@@ -225,7 +253,7 @@ func putExecution(q *Request, e doc) error {
 		parent = astr(sess["createdByExecutionId"])
 	}
 	if fo := mapOf(sess["forkOf"]); parent == "" && astr(fo["executionId"]) != "" {
-		other, err := has(q, "SELECT 1 FROM execution WHERE session_id=$1 AND id<>$2 AND "+execKinds, astr(sess["id"]), id)
+		other, err := q.db().EntSessionHasOtherRun(q.ctx(), db.EntSessionHasOtherRunParams{SessionID: ptr(astr(sess["id"])), ID: id})
 		if err != nil {
 			return err
 		}
@@ -256,11 +284,11 @@ func putExecution(q *Request, e doc) error {
 	profileID, profileRev, pipelineID, pipelineRev := definitionScalars(e["definitions"], doc{"profileId": nilIf(astr(ac["id"]))})
 	stepID := nilIf(astr(e["stepId"]))
 	if stepRowID := firstString(e["pipelineStepId"], e["pipelineRunId"]); stepRowID != "" && (pipelineID == nil || stepID == nil) {
-		var pPipe, pStep *string
-		var pRev *int64
-		if err := q.tx.QueryRow(q.ctx(), "SELECT pipeline_id,pipeline_revision,step_id FROM execution WHERE id=$1", stepRowID).Scan(&pPipe, &pRev, &pStep); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		p, err := q.db().EntExecutionPipelineRef(q.ctx(), stepRowID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
+		pPipe, pRev, pStep := p.PipelineID, p.PipelineRevision, p.StepID
 		if pipelineID == nil && pPipe != nil {
 			pipelineID = *pPipe
 			if pRev != nil {
@@ -289,25 +317,22 @@ func putExecution(q *Request, e doc) error {
 		}
 	}
 	if !inserted {
-		if err := exec(q, `UPDATE execution SET observation=$2,project_id=$3,task_id=coalesce(task_id,$4),experiment_id=$5,variant=$6,parent_execution_id=$7,session_id=$8,
-		  account_id=$9,host_id=$10,harness=$11,model=$12,config_ref=$13,started_at=$14,ended_at=$15,
-		  data=$16::jsonb || jsonb_strip_nulls(jsonb_build_object('traceparent',data->'traceparent','traceActor',data->'traceActor')),
-		  directed_by=coalesce($17,directed_by),profile_id=coalesce($18,profile_id),profile_revision=coalesce($19,profile_revision),
-		  pipeline_id=coalesce($20,pipeline_id),pipeline_revision=coalesce($21,pipeline_revision),step_id=coalesce($22,step_id) WHERE id=$1`,
-			id, observation, nilIf(project), nilIf(task), experiment, variant, nilIf(parent), e["sessionId"], nilIf(account), e["hostId"], harness, e["model"], cfg,
-			msTime(e["startedAt"]), msTime(e["finishedAt"]), js(data), directed, profileID, profileRev, pipelineID, pipelineRev, stepID); err != nil {
+		if err := q.db().EntExecutionUpdate(q.ctx(), db.EntExecutionUpdateParams{ID: id, Observation: db.Observation(observation), ProjectID: strPtr(project),
+			TaskID: strPtr(task), ExperimentID: strPtr(experiment), Variant: strPtr(variant), ParentExecutionID: strPtr(parent), SessionID: strp(e, "sessionId"),
+			AccountID: strPtr(account), HostID: strp(e, "hostId"), Harness: strPtr(harness), Model: strp(e, "model"), ConfigRef: []byte(cfg),
+			StartedAt: nullTime(e["startedAt"]), EndedAt: nullTime(e["finishedAt"]), Data: jsonBytes(data), DirectedBy: strPtr(directed), ProfileID: strPtr(profileID),
+			ProfileRevision: nullInt(profileRev), PipelineID: strPtr(pipelineID), PipelineRevision: nullInt(pipelineRev), StepID: strPtr(stepID)}); err != nil {
 			return err
 		}
 	}
 	if e["definitions"] != nil {
-		if err := exec(q, `UPDATE execution SET definitions=$2,profile_id=coalesce($3,profile_id),profile_revision=coalesce($4,profile_revision),
-		 pipeline_id=coalesce($5,pipeline_id),pipeline_revision=coalesce($6,pipeline_revision) WHERE id=$1`,
-			id, jsonBytes(e["definitions"]), profileID, profileRev, pipelineID, pipelineRev); err != nil {
+		if err := q.db().EntExecutionDefinitions(q.ctx(), db.EntExecutionDefinitionsParams{ID: id, Definitions: jsonBytes(e["definitions"]), ProfileID: strPtr(profileID),
+			ProfileRevision: nullInt(profileRev), PipelineID: strPtr(pipelineID), PipelineRevision: nullInt(pipelineRev)}); err != nil {
 			return err
 		}
 	}
 	if d := astr(e["directedBy"]); d != "" {
-		if err := exec(q, "UPDATE execution SET directed_by=$2 WHERE id=$1 AND directed_by IS DISTINCT FROM $2", id, d); err != nil {
+		if err := q.db().EntExecutionDirectedBy(q.ctx(), db.EntExecutionDirectedByParams{ID: id, DirectedBy: d}); err != nil {
 			return err
 		}
 	}
@@ -322,8 +347,13 @@ func putExecution(q *Request, e doc) error {
 			return err
 		}
 	}
-	var t *string
-	q.tx.QueryRow(q.ctx(), "SELECT e.task_id FROM execution e JOIN task k ON k.id=e.task_id WHERE e.id=$1", id).Scan(&t)
+	t, err := q.db().EntExecutionTaskOf(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		t, err = nil, nil
+	}
+	if err != nil {
+		return err
+	}
 	if t != nil {
 		if prev == "" && !executionEnds(state) { // a new run
 			if err := withdrawIdleDecision(q, *t); err != nil {
@@ -352,15 +382,11 @@ func putExecution(q *Request, e doc) error {
 	return err
 }
 
-// wallKnown: a run's wall time is measured when it has both ends, unless it was abandoned (it ended when given up).
-const wallKnown = `started_at IS NOT NULL AND ended_at IS NOT NULL AND problem IS DISTINCT FROM 'unknown:abandoned'`
-
 // lockExecutionForTotals establishes parent-before-totals row order for every totals writer.
 // Execution ownership is authoritative, including a projectless NULL owner.
 func lockExecutionForTotals(q *Request, id string) (string, error) {
-	var kind string
-	err := q.tx.QueryRow(q.ctx(), "SELECT kind::text FROM execution WHERE id=$1 FOR UPDATE", id).Scan(&kind)
-	if err == pgx.ErrNoRows {
+	kind, err := q.db().EntExecutionLockKind(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	return kind, err
@@ -372,21 +398,21 @@ func writeConfirmedUsage(q *Request, id string) error {
 	if err != nil || kind == "" || kind == "pipeline_run" || kind == "pipeline_step" {
 		return err
 	}
-	if err := exec(q, `INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,computed_at)
- SELECT id,project_id,directed_by,CASE
- WHEN account_id IS NOT NULL AND NOT coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('',account_id) m),false) THEN 'subscription'
- WHEN kind IN ('agent_run','child_agent','tool_run') THEN 'metered' ELSE 'unavailable' END,now()
- FROM execution WHERE id=$1
- ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,directed_by=excluded.directed_by,
- computed_at=now()`, id); err != nil {
+	if err := q.db().EntTotalsConfirmedUsage(q.ctx(), id); err != nil {
 		return err
 	}
-	for _, fn := range []string{"fleet_write_model", "fleet_write_tokens", "fleet_write_native_observations"} {
-		if err := exec(q, "SELECT "+fn+"($1)", id); err != nil {
-			return err
-		}
+	return writeUsage(q, id)
+}
+
+// writeUsage: the model, tokens and native observations the harness reported, into the execution's totals row.
+func writeUsage(q *Request, id string) error {
+	if err := q.db().EntTotalsModel(q.ctx(), id); err != nil {
+		return err
 	}
-	return nil
+	if err := q.db().EntTotalsTokens(q.ctx(), id); err != nil {
+		return err
+	}
+	return q.db().EntTotalsNativeObservations(q.ctx(), id)
 }
 
 // writeTotals persists and merges leaf-execution totals so receipt and process.closed converge regardless of arrival order.
@@ -395,117 +421,43 @@ func writeTotals(q *Request, id string) error {
 	if err != nil || kind == "" || kind == "pipeline_run" || kind == "pipeline_step" {
 		return err
 	}
-	if err := exec(q, `INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,wall_ms,wall_ms_basis,computed_at)
-	 SELECT id,project_id,directed_by,
-	  CASE
-	   WHEN account_id IS NOT NULL AND NOT coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('', account_id) m), false) THEN 'subscription'
-	   WHEN kind IN ('agent_run','child_agent','tool_run') THEN 'metered'
-	   ELSE 'unavailable'
-	  END,
-	  CASE WHEN `+wallKnown+` THEN greatest(0,(extract(epoch FROM ended_at-started_at)*1000)::bigint) END,
-	  CASE WHEN `+wallKnown+` THEN 'measured' ELSE 'unavailable' END,
-	  now()
-	 FROM execution WHERE id=$1
-	 ON CONFLICT(execution_id) DO UPDATE SET
-	  project_id=excluded.project_id,
-	  directed_by=coalesce(excluded.directed_by,execution_totals.directed_by),
-	  billing_basis=CASE WHEN execution_totals.billing_basis='metered' AND execution_totals.connection_cost IS NOT NULL THEN 'metered' ELSE excluded.billing_basis END,
-	  wall_ms=CASE WHEN (SELECT problem FROM execution WHERE id=$1)='unknown:abandoned' THEN NULL ELSE coalesce(excluded.wall_ms,execution_totals.wall_ms) END,
-	  wall_ms_basis=CASE WHEN (SELECT problem FROM execution WHERE id=$1)='unknown:abandoned' THEN 'unavailable' WHEN coalesce(excluded.wall_ms,execution_totals.wall_ms) IS NOT NULL THEN 'measured' ELSE 'unavailable' END,
-	  computed_at=now()`, id); err != nil {
+	if err := q.db().EntTotalsWrite(q.ctx(), id); err != nil {
 		return err
 	}
-	if err := exec(q, "SELECT fleet_write_model($1)", id); err != nil { // the model the harness reports (migration 45)
+	if err := writeUsage(q, id); err != nil {
 		return err
 	}
-	if err := exec(q, "SELECT fleet_write_tokens($1)", id); err != nil { // tokens from the harness's usage report (migration 40, 44, 50)
+	if err := q.db().EntTotalsRateLimit(q.ctx(), id); err != nil {
 		return err
 	}
-	if err := exec(q, "SELECT fleet_write_native_observations($1)", id); err != nil {
-		return err
-	}
-	if err := exec(q, `UPDATE execution_totals SET rate_limit_last=r.payload->'data',rate_limit_last_basis='measured' FROM (SELECT payload FROM event WHERE NOT delta AND execution_id=$1 AND type='limit_reading' ORDER BY seq DESC LIMIT 1) r WHERE execution_id=$1`, id); err != nil {
-		return err
-	}
-	return exec(q, `WITH pc AS (
-	 SELECT payload->'data'->'resources' AS r
-	 FROM event
-	 WHERE NOT delta AND execution_id=$1 AND type='process.closed'
-	 ORDER BY seq DESC LIMIT 1
-	), parsed AS (
-	 SELECT
-	  jsonb_typeof(r)='object' AS has_obj,
-	  fleet_token_count(r->'cpuMs') AS cpu_ms,
-	  fleet_token_count(r->'peakMemoryBytes') AS peak_mem,
-	  fleet_token_count(r->'activeMs') AS active_ms,
-	  fleet_token_count(r->'turnCount') AS turn_count,
-	  CASE WHEN jsonb_typeof(r->'cpuMissingReason')='string' THEN r->>'cpuMissingReason' END AS cpu_reason,
-	  CASE WHEN jsonb_typeof(r->'memoryMissingReason')='string' THEN r->>'memoryMissingReason' END AS mem_reason,
-	  CASE WHEN $2='agent_run' AND jsonb_typeof(r)='object' THEN
-	   jsonb_strip_nulls(jsonb_build_object(
-	    'byTool', CASE WHEN jsonb_typeof(r->'toolCalls')='object' THEN r->'toolCalls' ELSE '{}'::jsonb END,
-	    'other', CASE WHEN jsonb_typeof(r->'toolCallsOther')='object' THEN r->'toolCallsOther' END
-	   ))
-	  END AS tool_calls
-	 FROM pc
-	)
-	UPDATE execution_totals t SET
-	 cpu_ms=coalesce(p.cpu_ms,t.cpu_ms),
-	 cpu_ms_basis=CASE WHEN coalesce(p.cpu_ms,t.cpu_ms) IS NOT NULL THEN 'measured' ELSE t.cpu_ms_basis END,
-	 cpu_missing_reason=CASE
-	  WHEN coalesce(p.cpu_ms,t.cpu_ms) IS NOT NULL THEN NULL
-	  WHEN p.has_obj THEN coalesce(p.cpu_reason,t.cpu_missing_reason)
-	  ELSE coalesce(t.cpu_missing_reason,'executor_version')
-	 END,
-	 peak_memory_bytes=coalesce(p.peak_mem,t.peak_memory_bytes),
-	 peak_memory_bytes_basis=CASE WHEN coalesce(p.peak_mem,t.peak_memory_bytes) IS NOT NULL THEN 'measured' ELSE t.peak_memory_bytes_basis END,
-	 memory_missing_reason=CASE
-	  WHEN coalesce(p.peak_mem,t.peak_memory_bytes) IS NOT NULL THEN NULL
-	  WHEN p.has_obj THEN coalesce(p.mem_reason,t.memory_missing_reason)
-	  ELSE coalesce(t.memory_missing_reason,'executor_version')
-	 END,
-	 active_ms=coalesce(p.active_ms,t.active_ms),
-	 active_ms_basis=CASE WHEN coalesce(p.active_ms,t.active_ms) IS NOT NULL THEN 'measured' ELSE t.active_ms_basis END,
-	 turn_count=coalesce(p.turn_count,t.turn_count),
-	 turn_count_basis=CASE WHEN coalesce(p.turn_count,t.turn_count) IS NOT NULL THEN 'measured' ELSE t.turn_count_basis END,
-	 tool_calls=coalesce(p.tool_calls,t.tool_calls),
-	 tool_calls_basis=CASE WHEN coalesce(p.tool_calls,t.tool_calls) IS NOT NULL THEN 'measured' ELSE t.tool_calls_basis END,
-	 computed_at=now()
-	FROM parsed p
-	WHERE t.execution_id=$1`, id, kind)
+	return q.db().EntTotalsProcessClosed(q.ctx(), db.EntTotalsProcessClosedParams{ID: id, Kind: kind})
 }
 
 // writeEnded: the end of an agent run in its thread, one event with a fixed id.
 func writeEnded(q *Request, id string) error {
-	return exec(q, `INSERT INTO event(id,execution_id,session_id,project_id,type,at,payload) SELECT 'ended:'||id,id,session_id,project_id,'execution.ended',
-	 coalesce(ended_at,now()),jsonb_build_object('data',jsonb_build_object('fleetNormalized',jsonb_build_object('blocks','[]'::jsonb)))
-	 FROM execution WHERE id=$1 AND kind='agent_run' ON CONFLICT(id) DO NOTHING`, id)
+	return q.db().EntExecutionEnded(q.ctx(), id)
 }
 
-// agentQuestionJSON: an agent question record ('question') from its columns; data holds the open rest (delivery).
-const agentQuestionJSON = `data || jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'projectId',project_id,'taskId',task_id,'requestId',request_id,
- 'question',text,'state',state,'answer',answer,'answeredBy',answered_by,'answeredAt',(extract(epoch FROM answered_at)*1000)::bigint,'createdAt',(extract(epoch FROM asked_at)*1000)::bigint))`
-
-// agentQuestionColumns: the record fields all() filters on, by column.
-var agentQuestionColumns = map[string]string{"executionId": "execution_id", "sessionId": "session_id", "projectId": "project_id", "requestId": "request_id", "state": "state::text"}
-
+// agentQuestions: the agent question records whose fields equal filter's, by column (executionId, sessionId, projectId,
+// requestId, state).
 func agentQuestions(q *Request, f doc) ([]doc, error) {
-	where, args := "kind='agent_question'", []any{}
+	var p db.EntAgentQuestionsParams
+	cols := map[string]**string{"executionId": &p.ExecutionID, "sessionId": &p.SessionID, "projectId": &p.ProjectID, "requestId": &p.RequestID, "state": &p.State}
 	for _, k := range sortedKeysOf(f) {
-		col, ok := agentQuestionColumns[k]
-		if !ok {
+		col, ok := cols[k]
+		s, text := f[k].(string)
+		if !ok || !text {
 			return nil, fmt.Errorf("question filter on %s", k)
 		}
-		args = append(args, f[k])
-		where += fmt.Sprintf(" AND %s=$%d", col, len(args))
+		*col = &s
 	}
-	return rows(q, "SELECT "+agentQuestionJSON+" FROM question WHERE "+where+" ORDER BY seq", args...)
+	return records(q.db().EntAgentQuestions(q.ctx(), p))
 }
 
 // putQuestion: an agent question record ('question'); its fields live in the question columns, data keeps the rest.
 func putQuestion(q *Request, v doc) error {
 	id := astr(v["id"])
-	found, err := has(q, "SELECT 1 FROM question WHERE id=$1", id)
+	found, err := q.db().EntQuestionExists(q.ctx(), id)
 	if err != nil {
 		return err
 	}
@@ -531,10 +483,10 @@ func putQuestion(q *Request, v doc) error {
 			return err
 		}
 	}
-	return exec(q, "UPDATE question SET data=$2,project_id=coalesce(project_id,$3) WHERE id=$1", id, js(questionRest(v)), nilIf(astr(v["projectId"])))
+	return q.db().EntQuestionRest(q.ctx(), db.EntQuestionRestParams{ID: id, Data: jsonBytes(questionRest(v)), ProjectID: strPtr(v["projectId"])})
 }
 
-// agentQuestionFields: the record fields agentQuestionJSON builds from columns (migration 32 strips the same from data).
+// agentQuestionFields: the record fields EntAgentQuestion builds from columns (queries/entities.sql) (migration 32 strips the same from data).
 var agentQuestionFields = []string{"taskId", "id", "executionId", "sessionId", "projectId", "requestId", "question", "state", "answer", "answeredBy", "answeredAt", "createdAt"}
 
 // questionRest: the agent question fields without a column.
@@ -604,16 +556,11 @@ func putDocument(q *Request, kind string, v doc) error {
 		v["actor"], v["onBehalfOf"] = q.agent, q.person.Email
 	}
 	b, _ := json.Marshal(v)
-	var project any
-	if p, ok := v["projectId"].(string); ok {
-		project = p
-	}
-	_, err := q.tx.Exec(q.ctx(), "INSERT INTO document(kind,id,data,project_id) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data=excluded.data,project_id=excluded.project_id,updated_at=now() WHERE document.kind=excluded.kind", kind, v["id"], b, project)
-	return err
+	return q.db().EntDocumentPut(q.ctx(), db.EntDocumentPutParams{Kind: kind, ID: strp(v, "id"), Data: b, ProjectID: strp(v, "projectId")})
 }
 
 func getExecution(q *Request, id string) (doc, error) {
-	return one(q, "SELECT "+execJSON+" FROM execution WHERE id=$1 AND "+execKinds, id)
+	return record(q.db().EntExecutionRecord(q.ctx(), id))
 }
 
 func decode(raw json.RawMessage, v any) error {
@@ -630,11 +577,14 @@ func owned(q *Request, executionID *string) error {
 	if executionID == nil || *executionID == "" {
 		return nil
 	}
-	e, err := getExecution(q, *executionID)
+	h, err := q.db().EntExecutionHost(q.ctx(), *executionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errNotFound
+	}
 	if err != nil {
 		return err
 	}
-	if h, _ := e["hostId"].(string); h != hostOf(q) {
+	if h != hostOf(q) {
 		return fail(403, "Execution rejected")
 	}
 	return nil

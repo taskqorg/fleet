@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,13 +15,46 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 )
 
 // conflict: a 409 whose body carries DefinitionConflict next to the message.
 func conflict(reason contract.ConflictReason, head int64, repoSha *string, msg string) error {
-	return &HTTPError{Code: 409, Msg: msg, Extra: map[string]any{"reason": reason, "head": head, "repoSha": repoSha}}
+	return &HTTPError{Code: 409, Msg: msg, Extra: conflictExtra(reason, head, repoSha)}
+}
+
+// conflictExtra: DefinitionConflict as the error body's extra fields (repoSha null when unknown).
+func conflictExtra(reason contract.ConflictReason, head int64, repoSha *string) doc {
+	return docOf(struct {
+		Reason  contract.ConflictReason `json:"reason"`
+		Head    int64                   `json:"head"`
+		RepoSha *string                 `json:"repoSha"`
+	}{reason, head, repoSha})
+}
+
+// definitionChange: the setting-change audit record of a definition (a project's carries its project).
+type definitionChange struct {
+	ID         string `json:"id"`
+	ProjectID  string `json:"projectId,omitempty"`
+	Target     string `json:"target"`
+	Field      string `json:"field"`
+	Previous   any    `json:"previous"`
+	Value      any    `json:"value"`
+	Actor      string `json:"actor"`
+	OnBehalfOf string `json:"onBehalfOf,omitempty"`
+	At         int64  `json:"at"`
+	Note       string `json:"note,omitempty"`
+}
+
+// auditDefinition records c; an agent's change is the execution acting for its director (fleet-pm-agent.md §1).
+func auditDefinition(q *Request, c definitionChange) error {
+	c.ID, c.Actor, c.At = newID(), actor(q, "operator"), nowMs()
+	if q.agent != "" && q.person != nil {
+		c.Actor, c.OnBehalfOf = q.agent, q.person.Email
+	}
+	return q.db().DefSettingChange(q.ctx(), db.DefSettingChangeParams{ID: c.ID, Data: jsonBytes(c), ProjectID: optStr(c.ProjectID)})
 }
 
 // contentText: the request's content of the definition's kind as canonical text, from the bytes sent (the typed struct
@@ -46,7 +80,7 @@ func contentText(q *Request, kind contract.DefinitionKind, c contract.Definition
 
 // problems: the kind's validator on content; a draft is stored even when it has some, a save refuses it.
 func problems(kind, id, text string) []contract.Problem {
-	if _, err := validDefinition(kind, id, []byte(text)); err != nil {
+	if err := validDefinition(kind, id, []byte(text)); err != nil {
 		return []contract.Problem{{Path: "", Message: err.Error()}}
 	}
 	return []contract.Problem{}
@@ -63,9 +97,16 @@ func decodeNumbers(text string) any {
 // fieldChanges: changed leaves between two contents as JSON pointers; arrays of objects with an id match by id.
 func fieldChanges(a, b string) []contract.FieldChange {
 	out := []contract.FieldChange{}
-	text := func(v any) *string { t, _ := canonicalText(jsonBytes(v)); t = strings.TrimSuffix(t, "\n"); return &t }
-	var walk func(path string, x, y any, hasX, hasY bool)
-	walk = func(path string, x, y any, hasX, hasY bool) {
+	text := func(v json.RawMessage) *string {
+		t, _ := canonicalText([]byte(v))
+		t = strings.TrimSuffix(t, "\n")
+		return &t
+	}
+	pointer := func(path, k string) string {
+		return path + "/" + strings.ReplaceAll(strings.ReplaceAll(k, "~", "~0"), "/", "~1")
+	}
+	var walk func(path string, x, y json.RawMessage, hasX, hasY bool)
+	walk = func(path string, x, y json.RawMessage, hasX, hasY bool) {
 		switch {
 		case !hasX:
 			out = append(out, contract.FieldChange{Path: path, Op: contract.FieldOpAdd, ToText: text(y)})
@@ -74,8 +115,8 @@ func fieldChanges(a, b string) []contract.FieldChange {
 			out = append(out, contract.FieldChange{Path: path, Op: contract.FieldOpRemove, FromText: text(x)})
 			return
 		}
-		mx, okx := x.(map[string]any)
-		my, oky := y.(map[string]any)
+		mx, okx := jsonObject(x)
+		my, oky := jsonObject(y)
 		if okx && oky {
 			keys := map[string]bool{}
 			for k := range mx {
@@ -92,43 +133,32 @@ func fieldChanges(a, b string) []contract.FieldChange {
 			for _, k := range ks {
 				vx, hx := mx[k]
 				vy, hy := my[k]
-				walk(path+"/"+strings.ReplaceAll(strings.ReplaceAll(k, "~", "~0"), "/", "~1"), vx, vy, hx, hy)
+				walk(pointer(path, k), vx, vy, hx, hy)
 			}
 			return
 		}
-		ax, okx := x.([]any)
-		ay, oky := y.([]any)
+		ax, okx := jsonArray(x)
+		ay, oky := jsonArray(y)
 		if okx && oky {
-			byID := func(xs []any) map[string]any {
-				m := map[string]any{}
-				for _, e := range xs {
-					id := astr(mapOf(e)["id"])
-					if _, dup := m[id]; id == "" || dup {
-						return nil // no id or a repeated one: compare by index
-					}
-					m[id] = e
-				}
-				return m
-			}
-			if ix, iy := byID(ax), byID(ay); ix != nil && iy != nil {
+			if ix, iy := elementsByID(ax), elementsByID(ay); ix != nil && iy != nil {
 				ids := []string{}
 				for _, e := range ax {
-					ids = append(ids, astr(mapOf(e)["id"]))
+					ids = append(ids, elementID(e))
 				}
 				for _, e := range ay {
-					if _, ok := ix[astr(mapOf(e)["id"])]; !ok {
-						ids = append(ids, astr(mapOf(e)["id"]))
+					if _, ok := ix[elementID(e)]; !ok {
+						ids = append(ids, elementID(e))
 					}
 				}
 				for _, id := range ids {
 					vx, hx := ix[id]
 					vy, hy := iy[id]
-					walk(path+"/"+strings.ReplaceAll(strings.ReplaceAll(id, "~", "~0"), "/", "~1"), vx, vy, hx, hy)
+					walk(pointer(path, id), vx, vy, hx, hy)
 				}
 				return
 			}
 			for i := 0; i < max(len(ax), len(ay)); i++ {
-				var vx, vy any
+				var vx, vy json.RawMessage
 				if i < len(ax) {
 					vx = ax[i]
 				}
@@ -139,12 +169,56 @@ func fieldChanges(a, b string) []contract.FieldChange {
 			}
 			return
 		}
-		if !reflect.DeepEqual(x, y) {
+		if !reflect.DeepEqual(decodeNumbers(string(x)), decodeNumbers(string(y))) {
 			out = append(out, contract.FieldChange{Path: path, Op: contract.FieldOpReplace, FromText: text(x), ToText: text(y)})
 		}
 	}
-	walk("", decodeNumbers(a), decodeNumbers(b), a != "", b != "")
+	walk("", json.RawMessage(a), json.RawMessage(b), a != "", b != "")
 	return out
+}
+
+// jsonObject: the members of a JSON object, false when raw is no object.
+func jsonObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	if t := bytes.TrimSpace(raw); len(t) == 0 || t[0] != '{' {
+		return nil, false
+	}
+	var m map[string]json.RawMessage
+	return m, json.Unmarshal(raw, &m) == nil
+}
+
+// jsonArray: the elements of a JSON array, false when raw is no array.
+func jsonArray(raw json.RawMessage) ([]json.RawMessage, bool) {
+	if t := bytes.TrimSpace(raw); len(t) == 0 || t[0] != '[' {
+		return nil, false
+	}
+	var xs []json.RawMessage
+	return xs, json.Unmarshal(raw, &xs) == nil
+}
+
+// elementID: an array element's string id, "" when it is no object or has none.
+func elementID(raw json.RawMessage) string {
+	if _, ok := jsonObject(raw); !ok {
+		return ""
+	}
+	var e struct {
+		ID any `json:"id"`
+	}
+	json.Unmarshal(raw, &e)
+	id, _ := e.ID.(string)
+	return id
+}
+
+// elementsByID: array elements by id; nil when one has no id or an id repeats (compare by index).
+func elementsByID(xs []json.RawMessage) map[string]json.RawMessage {
+	m := map[string]json.RawMessage{}
+	for _, e := range xs {
+		id := elementID(e)
+		if _, dup := m[id]; id == "" || dup {
+			return nil
+		}
+		m[id] = e
+	}
+	return m
 }
 
 type draftRow struct {
@@ -162,23 +236,21 @@ func draftOwner(q *Request) string {
 }
 
 func draftOf(q *Request, kind, id string) (*draftRow, error) {
-	var d draftRow
-	err := q.tx.QueryRow(q.ctx(), "SELECT base,content,updated_at FROM definition_draft WHERE kind=$1 AND id=$2 AND person=$3", kind, id, draftOwner(q)).Scan(&d.Base, &d.Content, &d.At)
-	if err == pgx.ErrNoRows {
+	r, err := q.db().DefDraft(q.ctx(), db.DefDraftParams{Kind: kind, ID: id, Person: draftOwner(q)})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
-	return &d, err
+	return &draftRow{Base: r.Base, Content: r.Content, At: r.UpdatedAt}, err
 }
 
 // headOf: the definition's head row, nil when it does not exist or was deleted (definition_delete).
 func headOf(q *Request, kind, id string, lock bool) (*definitionRow, error) {
-	where := "d.kind=$1 AND d.id=$2 AND d.deleted_at IS NULL"
 	if lock {
-		if _, err := q.tx.Exec(q.ctx(), "SELECT 1 FROM definition WHERE kind=$1 AND id=$2 FOR UPDATE", kind, id); err != nil {
+		if err := q.db().DefLock(q.ctx(), db.DefLockParams{Kind: kind, ID: id}); err != nil {
 			return nil, err
 		}
 	}
-	xs, err := definitionRows(q, where, 0, kind, id)
+	xs, err := definitionsOf(q.ctx(), q.db(), definitionFilter{kind: kind, id: id, live: true})
 	if err != nil || len(xs) == 0 {
 		return nil, err
 	}
@@ -216,8 +288,7 @@ func definitionDraftPut(q *Request, r *contract.DefinitionDraftPutRequest) (cont
 	if head == nil && r.BaseRevision != 0 || head != nil && r.BaseRevision < 1 {
 		return out, fail(400, "baseRevision: 0 for a new definition, else a revision of it")
 	}
-	if err := exec(q, `INSERT INTO definition_draft(kind,id,person,base,content) VALUES($1,$2,$3,$4,$5)
-	  ON CONFLICT(kind,id,person) DO UPDATE SET base=excluded.base,content=excluded.content,updated_at=now()`, r.Kind, r.Id, draftOwner(q), r.BaseRevision, text); err != nil {
+	if err := q.db().DefDraftPut(q.ctx(), db.DefDraftPutParams{Kind: string(r.Kind), ID: r.Id, Person: draftOwner(q), Base: int32(r.BaseRevision), Content: text}); err != nil {
 		return out, err
 	}
 	d, err := draftOf(q, string(r.Kind), r.Id)
@@ -245,11 +316,11 @@ func definitionDraftGet(q *Request, r *contract.DefinitionDraftGetRequest) (cont
 }
 
 func definitionDraftDiscard(q *Request, r *contract.DefinitionDraftDiscardRequest) (contract.DefinitionDraftDiscardReply, error) {
-	tag, err := q.tx.Exec(q.ctx(), "DELETE FROM definition_draft WHERE kind=$1 AND id=$2 AND person=$3", r.Kind, r.Id, draftOwner(q))
+	n, err := q.db().DefDraftDelete(q.ctx(), db.DefDraftDeleteParams{Kind: string(r.Kind), ID: r.Id, Person: optStr(draftOwner(q))})
 	if err != nil {
 		return contract.DefinitionDraftDiscardReply{}, err
 	}
-	return contract.DefinitionDraftDiscardReply{Discarded: tag.RowsAffected() > 0}, nil
+	return contract.DefinitionDraftDiscardReply{Discarded: n > 0}, nil
 }
 
 // sideText: one side of a diff: a revision, the caller's draft or the shipped file ("" and false when absent).
@@ -268,7 +339,7 @@ func sideText(q *Request, kind, id string, s contract.DiffSide) (string, bool, e
 		if *s.Revision < 1 {
 			return "", false, fail(400, "revision: 1 or more")
 		}
-		xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2", *s.Revision, kind, id)
+		xs, err := definitionsOf(q.ctx(), q.db(), definitionFilter{kind: kind, id: id, revision: *s.Revision})
 		if err != nil || len(xs) == 0 {
 			if err == nil {
 				err = fail(404, "Unknown definition or revision")
@@ -286,8 +357,8 @@ func sideText(q *Request, kind, id string, s contract.DiffSide) (string, bool, e
 		}
 		return d.Content, true, nil
 	}
-	var t *string
-	if err := q.tx.QueryRow(q.ctx(), "SELECT repo_content FROM definition WHERE kind=$1 AND id=$2", kind, id).Scan(&t); err != nil && err != pgx.ErrNoRows {
+	t, err := q.db().DefRepoContent(q.ctx(), db.DefRepoContentParams{Kind: kind, ID: id})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return "", false, err
 	}
 	if t == nil {
@@ -336,20 +407,20 @@ func definitionPath(kind, id string) string {
 
 // appendRevision: the next revision of a definition whose row is locked; moves the head and drops the saver's draft.
 func appendRevision(q *Request, kind, id string, head int64, text, repoBase *string, source, message string) (contract.Revision, error) {
-	actorKind, byEmail, byExec := "person", any(director(q)), any(nil)
+	actorKind, byEmail, byExec := "person", ptr(director(q)), (*string)(nil)
 	if q.agent != "" {
-		actorKind, byEmail, byExec = "agent", nil, strings.TrimPrefix(q.agent, "execution:")
+		actorKind, byEmail, byExec = "agent", nil, ptr(strings.TrimPrefix(q.agent, "execution:"))
 		if source == "editor" {
 			source = "agent"
 		}
 	}
-	var parent any
+	var parent *int32
 	if head > 0 {
-		parent = head
+		parent = ptr(int32(head))
 	}
 	n := head + 1
-	err := exec(q, `INSERT INTO definition_revision(kind,id,revision,parent,content,content_sha,repo_base,source,actor_kind,by_email,by_execution,directed_by,message)
-	  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, kind, id, n, parent, *text, sha256Text(*text), repoBase, source, actorKind, byEmail, byExec, director(q), message)
+	err := q.db().DefRevisionInsert(q.ctx(), db.DefRevisionInsertParams{Kind: kind, ID: id, Revision: int32(n), Parent: parent, Content: *text, ContentSha: sha256Text(*text),
+		RepoBase: repoBase, Source: source, ActorKind: actorKind, ByEmail: byEmail, ByExecution: byExec, DirectedBy: ptr(director(q)), Message: message})
 	if pgCode(err) == "23505" {
 		return contract.Revision{}, conflict(contract.ConflictReasonBaseMoved, head, nil, "Another save moved the head")
 	}
@@ -358,22 +429,22 @@ func appendRevision(q *Request, kind, id string, head int64, text, repoBase *str
 	}
 	// A save decides a definition whose file is gone: it is the store's own from now (store-only, exportable), and a
 	// retired one is back.
-	if err := exec(q, "UPDATE definition SET head=$3,retired_at=CASE WHEN deleted_at IS NULL THEN NULL ELSE retired_at END,ever_shipped=ever_shipped AND repo_sha IS NOT NULL WHERE kind=$1 AND id=$2", kind, id, n); err != nil {
+	if err := q.db().DefMoveHead(q.ctx(), db.DefMoveHeadParams{Kind: kind, ID: id, Head: int32(n)}); err != nil {
 		return contract.Revision{}, err
 	}
 	if source == "lab" { // a Lab promote is not the saver's draft: leave their draft as it is
-	} else if err := exec(q, "DELETE FROM definition_draft WHERE kind=$1 AND id=$2 AND person=$3", kind, id, draftOwner(q)); err != nil {
+	} else if _, err := q.db().DefDraftDelete(q.ctx(), db.DefDraftDeleteParams{Kind: kind, ID: id, Person: optStr(draftOwner(q))}); err != nil {
 		return contract.Revision{}, err
 	}
-	change := doc{"id": newID(), "target": "definition:" + kind + "/" + id, "field": "revision", "previous": head, "value": n, "actor": actor(q, "operator"), "at": nowMs()}
+	change := definitionChange{Target: "definition:" + kind + "/" + id, Field: "revision", Previous: head, Value: n}
 	if kind == "project" {
-		change["projectId"] = id
+		change.ProjectID = id
 	}
-	if err := put(q, "setting-change", change); err != nil {
+	if err := auditDefinition(q, change); err != nil {
 		return contract.Revision{}, err
 	}
 	invalidateEnvCacheOnCommit(q)
-	xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2", n, kind, id)
+	xs, err := definitionsOf(q.ctx(), q.db(), definitionFilter{kind: kind, id: id, revision: n})
 	if err != nil || len(xs) == 0 {
 		return contract.Revision{}, err
 	}
@@ -406,7 +477,7 @@ func definitionSave(q *Request, r *contract.DefinitionSaveRequest) (contract.Def
 		return out, conflict(contract.ConflictReasonNoChange, head.Head, head.RepoSha, "No change from the head")
 	}
 	if ps := problems(string(r.Kind), r.Id, text); len(ps) > 0 {
-		return out, &HTTPError{Code: 409, Msg: "Invalid content: " + ps[0].Message, Extra: map[string]any{"reason": contract.ConflictReasonInvalidDraft, "head": head.Head, "repoSha": head.RepoSha}}
+		return out, &HTTPError{Code: 409, Msg: "Invalid content: " + ps[0].Message, Extra: conflictExtra(contract.ConflictReasonInvalidDraft, head.Head, head.RepoSha)}
 	}
 	if strings.TrimSpace(r.Message) == "" {
 		return out, fail(400, "Expected message")
@@ -435,16 +506,16 @@ func definitionCreate(q *Request, r *contract.DefinitionCreateRequest) (contract
 		return out, err
 	}
 	if ps := problems(string(r.Kind), r.Id, text); len(ps) > 0 {
-		return out, &HTTPError{Code: 409, Msg: "Invalid content: " + ps[0].Message, Extra: map[string]any{"reason": contract.ConflictReasonInvalidDraft, "head": 0, "repoSha": nil}}
+		return out, &HTTPError{Code: 409, Msg: "Invalid content: " + ps[0].Message, Extra: conflictExtra(contract.ConflictReasonInvalidDraft, 0, nil)}
 	}
 	if strings.TrimSpace(r.Message) == "" {
 		return out, fail(400, "Expected message")
 	}
-	tag, err := q.tx.Exec(q.ctx(), "INSERT INTO definition(kind,id,path,head) VALUES($1,$2,$3,0) ON CONFLICT DO NOTHING", r.Kind, r.Id, definitionPath(string(r.Kind), r.Id))
+	n, err := q.db().DefCreate(q.ctx(), db.DefCreateParams{Kind: string(r.Kind), ID: r.Id, Path: definitionPath(string(r.Kind), r.Id)})
 	if err != nil {
 		return out, err
 	}
-	if tag.RowsAffected() == 0 {
+	if n == 0 {
 		return out, conflict(contract.ConflictReasonWrongState, 0, nil, "The definition exists")
 	}
 	rev, err := appendRevision(q, string(r.Kind), r.Id, 0, &text, nil, "editor", r.Message)
@@ -475,22 +546,16 @@ func definitionDelete(q *Request, r *contract.DefinitionDeleteRequest) (contract
 	}
 	// Every pin, not only the first one of its kind (execution.pipeline_id and profile_id keep the first).
 	// Older runs name it only in data (pipelineId) or config_ref (profileId).
-	if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FROM execution WHERE state IN ('preparing','running','waiting')
-	  AND (definitions @> jsonb_build_array(jsonb_build_object('kind',$1::text,'id',$2::text))
-	   OR ($1='pipeline' AND (pipeline_id=$2 OR data->>'pipelineId'=$2)) OR ($1='agent' AND (profile_id=$2 OR config_ref->>'profileId'=$2)))`, r.Kind, r.Id).Scan(&out.Running); err != nil {
+	if out.Running, err = q.db().DefRunning(q.ctx(), db.DefRunningParams{Kind: string(r.Kind), ID: r.Id}); err != nil {
 		return out, err
 	}
 	// A live experiment names it as its pipeline, or anywhere in its variants (a method's pipelineId, a profile
 	// override) or evaluators: a JSON string equal to the id.
-	rs, err := queryRows(q, `SELECT id FROM experiment WHERE state IN ('draft','running','paused') AND tombstoned_at IS NULL AND (pipeline_id=$1
-	  OR jsonb_path_exists(variants, '$.** ? (@ == $id)', jsonb_build_object('id',$1::text))
-	  OR jsonb_path_exists(evaluators, '$.** ? (@ == $id)', jsonb_build_object('id',$1::text))) ORDER BY id`, r.Id)
+	exps, err := q.db().DefExperimentsUsing(q.ctx(), r.Id)
 	if err != nil {
 		return out, err
 	}
-	for _, x := range rs {
-		out.Experiments = append(out.Experiments, astr(x["id"]))
-	}
+	out.Experiments = append(out.Experiments, exps...)
 	// A project's roles and execution profiles name agents.
 	roles := []string{}
 	if r.Kind == contract.DefinitionKindAgent {
@@ -504,7 +569,7 @@ func definitionDelete(q *Request, r *contract.DefinitionDeleteRequest) (contract
 	// An open session whose profile it is would take no further turn.
 	var sessions int64
 	if r.Kind == contract.DefinitionKindAgent {
-		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM session WHERE payload->'agentConfig'->>'id'=$1 AND archived_at IS NULL AND tombstoned_at IS NULL", r.Id).Scan(&sessions); err != nil {
+		if sessions, err = q.db().DefSessionsUsing(q.ctx(), r.Id); err != nil {
 			return out, err
 		}
 	}
@@ -536,14 +601,17 @@ func definitionDelete(q *Request, r *contract.DefinitionDeleteRequest) (contract
 	if refused != "" {
 		return out, fail(409, "Not deleted: "+refused)
 	}
-	if err := exec(q, "UPDATE definition SET deleted_at=now(),retired_at=coalesce(retired_at,now()) WHERE kind=$1 AND id=$2", r.Kind, r.Id); err != nil {
+	if err := q.db().DefDelete(q.ctx(), db.DefDeleteParams{Kind: string(r.Kind), ID: r.Id}); err != nil {
 		return out, err
 	}
-	if err := exec(q, "DELETE FROM definition_draft WHERE kind=$1 AND id=$2", r.Kind, r.Id); err != nil {
+	if _, err := q.db().DefDraftDelete(q.ctx(), db.DefDraftDeleteParams{Kind: string(r.Kind), ID: r.Id}); err != nil {
 		return out, err
 	}
-	if err := put(q, "setting-change", doc{"id": newID(), "target": "definition:" + string(r.Kind) + "/" + r.Id, "field": "deletedAt", "previous": nil, "value": nowMs(),
-		"actor": actor(q, "operator"), "at": nowMs(), "note": js(doc{"state": out.State, "head": head.Head})}); err != nil {
+	note := js(struct {
+		State contract.DefinitionState `json:"state"`
+		Head  int64                    `json:"head"`
+	}{out.State, head.Head})
+	if err := auditDefinition(q, definitionChange{Target: "definition:" + string(r.Kind) + "/" + r.Id, Field: "deletedAt", Value: nowMs(), Note: note}); err != nil {
 		return out, err
 	}
 	out.Deleted = true
@@ -568,14 +636,9 @@ func definitionHistory(q *Request, r *contract.DefinitionHistoryRequest) (contra
 	if r.Before != nil {
 		before = min(*r.Before, head.Head+1)
 	}
-	rs, err := q.tx.Query(q.ctx(), "SELECT "+definitionCols+` FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id
-	  WHERE d.kind=$1 AND d.id=$2 AND r.revision<$3 ORDER BY r.revision DESC LIMIT $4`, string(r.Kind), r.Id, before, limit)
-	if err != nil {
-		return out, err
-	}
-	xs, err := pgx.CollectRows(rs, scanDefinition)
+	xs, err := q.db().DefHistory(q.ctx(), db.DefHistoryParams{Kind: string(r.Kind), ID: r.Id, Before: int32(before), Lim: int32(limit)})
 	for _, x := range xs {
-		out.Revisions = append(out.Revisions, x.revisionView(q))
+		out.Revisions = append(out.Revisions, definitionRowOf(db.DefRowsRow(x)).revisionView(q))
 	}
 	return out, err
 }
@@ -584,7 +647,7 @@ func definitionHistory(q *Request, r *contract.DefinitionHistoryRequest) (contra
 // named ones). A repository-changed or repository-deleted one is never exported, so an export cannot revert a release.
 func definitionExport(q *Request, r *contract.DefinitionExportRequest) (contract.DefinitionExportReply, error) {
 	out := contract.DefinitionExportReply{Files: []contract.ExportFile{}, Covers: []contract.DefinitionRef{}}
-	xs, err := definitionRows(q, "d.retired_at IS NULL", 0)
+	xs, err := definitionsOf(q.ctx(), q.db(), definitionFilter{current: true})
 	if err != nil {
 		return out, err
 	}

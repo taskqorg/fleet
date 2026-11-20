@@ -11,16 +11,19 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -61,34 +64,46 @@ func gitBlobSha(b []byte) string {
 }
 
 // validDefinition: the kind's own validator, on parsed content.
-func validDefinition(kind, id string, raw []byte) (any, error) {
-	var v map[string]any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return nil, fmt.Errorf("JSON: %v", err)
+func validDefinition(kind, id string, raw []byte) error {
+	var head struct {
+		ID         any             `json:"id"`
+		Capability any             `json:"capability"`
+		Methods    json.RawMessage `json:"methods"`
+	}
+	if err := json.Unmarshal(raw, &head); err != nil {
+		return fmt.Errorf("JSON: %v", err)
 	}
 	switch kind {
 	case "project":
-		return projectBundle(id, v)
+		var v doc // projectBundle and projectSettings (projects.go) validate the open bundle
+		json.Unmarshal(raw, &v)
+		_, err := projectBundle(id, v)
+		return err
 	case "agent":
 		if _, err := contract.ParseProfile(raw); err != nil {
-			return nil, err
+			return err
 		}
-		if v["id"] != id {
-			return nil, fmt.Errorf("id differs from the file name")
+		if head.ID != id {
+			return fmt.Errorf("id differs from the file name")
 		}
 	case "pipeline":
+		var v doc // validatePipeline (pipelines.go) reads the open definition
+		json.Unmarshal(raw, &v)
 		if _, err := validatePipeline(v); err != nil {
-			return nil, err
+			return err
 		}
-		if v["id"] != id {
-			return nil, fmt.Errorf("id differs from the file name")
+		if head.ID != id {
+			return fmt.Errorf("id differs from the file name")
 		}
 	case "catalogue":
-		if astr(v["capability"]) == "" || anys(v["methods"]) == nil {
-			return nil, fmt.Errorf("expected capability and methods")
+		if c, _ := head.Capability.(string); c == "" {
+			return fmt.Errorf("expected capability and methods")
+		}
+		if _, ok := jsonArray(head.Methods); !ok {
+			return fmt.Errorf("expected capability and methods")
 		}
 	}
-	return v, nil
+	return nil
 }
 
 // shippedDefinitions: the definition files of the running release. A profile file that is not a valid profile is not a
@@ -108,7 +123,7 @@ func shippedDefinitions() (files []definitionFile, broken map[string]error) {
 				continue
 			}
 			f := definitionFile{kind, id, repoDir + "/" + n, raw}
-			if _, err := validDefinition(kind, id, raw); err != nil {
+			if err := validDefinition(kind, id, raw); err != nil {
 				// Not imported. A broken pipeline or catalogue keeps its last valid revision; a file in the profile directory that
 				// is not a profile is not a definition (as listProfiles skips it), and an imported one stays while its file exists.
 				if kind == "agent" {
@@ -125,7 +140,7 @@ func shippedDefinitions() (files []definitionFile, broken map[string]error) {
 	read("agent", profilesDir(), "config/agents")
 	read("pipeline", filepath.Join(configDir(), "pipelines"), "config/pipelines")
 	if raw, err := os.ReadFile(filepath.Join(configDir(), "catalogue.json")); err == nil {
-		if _, err := validDefinition("catalogue", "catalogue", raw); err != nil {
+		if err := validDefinition("catalogue", "catalogue", raw); err != nil {
 			broken["catalogue/catalogue"] = err
 		} else {
 			files = append(files, definitionFile{"catalogue", "catalogue", "config/catalogue.json", raw})
@@ -151,60 +166,45 @@ func reconcileDefinitions(q *Request, files []definitionFile, broken map[string]
 			return err
 		}
 		blob, csha := gitBlobSha(f.raw), sha256Text(text)
-		var repoSha *string
-		var retired *time.Time
-		err = q.tx.QueryRow(q.ctx(), "SELECT repo_sha,retired_at FROM definition WHERE kind=$1 AND id=$2 FOR UPDATE", f.kind, f.id).Scan(&repoSha, &retired)
-		if err == pgx.ErrNoRows {
-			if err := exec(q, `INSERT INTO definition(kind,id,path,head,repo_sha,repo_content,repo_content_sha,ever_shipped) VALUES($1,$2,$3,1,$4,$5,$6,true)`,
-				f.kind, f.id, f.path, blob, text, csha); err != nil {
+		st, err := q.db().DefRepoState(q.ctx(), db.DefRepoStateParams{Kind: f.kind, ID: f.id})
+		if errors.Is(err, pgx.ErrNoRows) {
+			if err := q.db().DefInsertShipped(q.ctx(), db.DefInsertShippedParams{Kind: f.kind, ID: f.id, Path: f.path, RepoSha: &blob, RepoContent: &text, RepoContentSha: &csha}); err != nil {
 				return err
 			}
-			if err := exec(q, `INSERT INTO definition_revision(kind,id,revision,content,content_sha,repo_base,source,actor_kind,message) VALUES($1,$2,1,$3,$4,$5,'repo','system',$6)`,
-				f.kind, f.id, text, csha, blob, "Repository "+release); err != nil {
+			if err := q.db().DefRevisionInsert(q.ctx(), db.DefRevisionInsertParams{Kind: f.kind, ID: f.id, Revision: 1, Content: text, ContentSha: csha, RepoBase: &blob,
+				Source: "repo", ActorKind: "system", Message: "Repository " + release}); err != nil {
 				return err
-			}
-			if f.kind == "project" {
-				if err := exec(q, "UPDATE definition SET project_id=id WHERE kind='project' AND id=$1", f.id); err != nil {
-					return err
-				}
 			}
 			continue
 		}
 		if err != nil {
 			return err
 		}
-		if repoSha != nil && *repoSha == blob && retired == nil {
+		if st.RepoSha != nil && *st.RepoSha == blob && st.RetiredAt == nil {
 			continue
 		}
 		// The repository moved (or the file came back): record it; the head stays (state repository-changed or synced).
 		// A deleted agent or pipeline whose file came back is the repository's again (shipped wins); a deleted project
 		// stays deleted: its data is gone and its id only reserved.
-		if err := exec(q, `UPDATE definition SET repo_sha=$3,repo_content=$4,repo_content_sha=$5,ever_shipped=true,
-		  deleted_at=CASE WHEN kind='project' THEN deleted_at END,
-		  retired_at=CASE WHEN kind='project' AND deleted_at IS NOT NULL THEN retired_at END WHERE kind=$1 AND id=$2`,
-			f.kind, f.id, blob, text, csha); err != nil {
+		if err := q.db().DefRecordRepo(q.ctx(), db.DefRecordRepoParams{Kind: f.kind, ID: f.id, RepoSha: &blob, RepoContent: &text, RepoContentSha: &csha}); err != nil {
 			return err
 		}
 	}
-	rs, err := queryRows(q, `SELECT d.kind,d.id,d.repo_content_sha,r.content_sha AS head_sha FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
-	  WHERE d.ever_shipped AND d.retired_at IS NULL AND d.repo_sha IS NOT NULL`)
+	rs, err := q.db().DefShippedHeads(q.ctx())
 	if err != nil {
 		return err
 	}
 	for _, r := range rs {
-		key := astr(r["kind"]) + "/" + astr(r["id"])
-		if r["kind"] == "project" {
+		key := r.Kind + "/" + r.ID
+		if r.Kind == "project" {
 			continue
 		}
 		if _, present := broken[key]; seen[key] || present {
 			continue
 		}
 		// The shipped file is gone: retire an unedited definition, otherwise keep it (repository-deleted).
-		retire := "NULL"
-		if astr(r["head_sha"]) == astr(r["repo_content_sha"]) {
-			retire = "now()"
-		}
-		if err := exec(q, "UPDATE definition SET repo_sha=NULL,repo_content=NULL,repo_content_sha=NULL,retired_at="+retire+" WHERE kind=$1 AND id=$2", r["kind"], r["id"]); err != nil {
+		retire := r.RepoContentSha != nil && r.HeadSha == *r.RepoContentSha
+		if err := q.db().DefRepoGone(q.ctx(), db.DefRepoGoneParams{Kind: r.Kind, ID: r.ID, Retire: retire}); err != nil {
 			return err
 		}
 	}
@@ -250,26 +250,71 @@ type definitionRow struct {
 	At                           time.Time
 }
 
-const definitionCols = `d.kind,d.id,d.path,d.head,d.repo_sha,d.repo_content_sha,d.ever_shipped,d.retired_at,r.revision,r.parent,r.content,r.content_sha,r.repo_base,r.source,r.actor_kind,r.by_email,r.by_execution,r.directed_by,r.message,r.at`
-
-func scanDefinition(r pgx.CollectableRow) (definitionRow, error) {
-	var x definitionRow
-	err := r.Scan(&x.Kind, &x.ID, &x.Path, &x.Head, &x.RepoSha, &x.RepoContentSha, &x.EverShipped, &x.Retired, &x.Revision, &x.Parent, &x.Content, &x.ContentSha, &x.RepoBase,
-		&x.Source, &x.ActorKind, &x.ByEmail, &x.ByExecution, &x.Direct, &x.Message, &x.At)
-	return x, err
+// definitionFilter: which definitions definitionsOf reads; kind and id "" for any, live leaves out deleted ones, current
+// retired ones; revision > 0 reads that revision instead of the head.
+type definitionFilter struct {
+	kind, id      string
+	revision      int64
+	live, current bool
 }
 
-// definitionRows: definitions with one revision each (the head, or revision when > 0).
+// definitionsOf: definitions with one revision each (the head, or f.revision), ordered by kind and id.
+func definitionsOf(ctx context.Context, d *db.Queries, f definitionFilter) ([]definitionRow, error) {
+	rs, err := d.DefRows(ctx, db.DefRowsParams{Revision: int32(f.revision), Kind: optStr(f.kind), ID: optStr(f.id), Live: f.live, Current: f.current})
+	out := make([]definitionRow, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, definitionRowOf(r))
+	}
+	return out, err
+}
+
+func definitionRowOf(r db.DefRowsRow) definitionRow {
+	var parent *int64
+	if r.Parent != nil {
+		p := int64(*r.Parent)
+		parent = &p
+	}
+	return definitionRow{Kind: r.Kind, ID: r.ID, Path: r.Path, Head: r.Head, RepoSha: r.RepoSha, RepoContentSha: r.RepoContentSha, EverShipped: r.EverShipped,
+		Retired: r.RetiredAt, Revision: r.Revision, Parent: parent, Content: []byte(r.Content), ContentSha: r.ContentSha, RepoBase: r.RepoBase, Source: r.Source,
+		ActorKind: r.ActorKind, ByEmail: r.ByEmail, ByExecution: r.ByExecution, Direct: r.DirectedBy, Message: r.Message, At: r.At}
+}
+
+// definitionRows: the filter form callers outside this file still pass (entity_card.go, search.go): conjuncts of
+// d.kind=$n, d.kind='project', d.id=$n, d.deleted_at IS NULL and d.retired_at IS NULL, read through definitionsOf.
 func definitionRows(q *Request, where string, revision int64, args ...any) ([]definitionRow, error) {
-	join := "r.revision=d.head"
-	if revision > 0 {
-		join = fmt.Sprintf("r.revision=%d", revision)
+	f := definitionFilter{revision: revision}
+	arg := func(t string) (string, error) {
+		n, err := strconv.Atoi(strings.TrimPrefix(t, "$"))
+		if err != nil || n < 1 || n > len(args) {
+			return "", fmt.Errorf("definitionRows: bad argument %q", t)
+		}
+		v, ok := args[n-1].(string)
+		if !ok {
+			return "", fmt.Errorf("definitionRows: argument %s is not text", t)
+		}
+		return v, nil
 	}
-	rs, err := q.tx.Query(q.ctx(), "SELECT "+definitionCols+" FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND "+join+" WHERE "+where+" ORDER BY d.kind,d.id", args...)
-	if err != nil {
-		return nil, err
+	for _, c := range strings.Split(where, " AND ") {
+		var err error
+		switch c = strings.TrimSpace(c); {
+		case c == "d.deleted_at IS NULL":
+			f.live = true
+		case c == "d.retired_at IS NULL":
+			f.current = true
+		case c == "d.kind='project'":
+			f.kind = "project"
+		case strings.HasPrefix(c, "d.kind=$"):
+			f.kind, err = arg(strings.TrimPrefix(c, "d.kind="))
+		case strings.HasPrefix(c, "d.id=$"):
+			f.id, err = arg(strings.TrimPrefix(c, "d.id="))
+		default:
+			err = fmt.Errorf("definitionRows: unknown filter %q", c)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
-	return pgx.CollectRows(rs, scanDefinition)
+	return definitionsOf(q.ctx(), q.db(), f)
 }
 
 // personOf: a person by email as replies show them; the name comes from people.json at read time.
@@ -338,13 +383,17 @@ func profileHarness(content []byte) string {
 
 // definitionName: the title a list shows (a profile or method name when it has one, else the id).
 func definitionName(x definitionRow) string {
-	var v map[string]any
+	var v struct {
+		Name       any `json:"name"`
+		Capability any `json:"capability"`
+	}
 	json.Unmarshal(x.Content, &v)
-	if n := astr(v["name"]); n != "" {
+	if n, _ := v.Name.(string); n != "" {
 		return n
 	}
 	if x.Kind == "catalogue" {
-		return "Catalogue: " + astr(v["capability"])
+		c, _ := v.Capability.(string)
+		return "Catalogue: " + c
 	}
 	return x.ID
 }
@@ -366,22 +415,38 @@ func projectRoleProfiles(q *Request, execution bool) (map[string][]string, error
 		return nil, err
 	}
 	for _, id := range ids {
-		s := projectSettingsOf(q, id)
-		for role, v := range mapOf(s["roles"]) {
-			p := astr(v)
-			if p == "" {
-				p = astr(mapOf(v)["profile"])
-			}
+		var s struct {
+			Roles     map[string]json.RawMessage `json:"roles"`
+			Execution struct {
+				Profiles []json.RawMessage `json:"profiles"`
+			} `json:"execution"`
+		}
+		json.Unmarshal(jsonBytes(projectSettingsOf(q, id)), &s)
+		for role, v := range s.Roles {
+			p := profileNamed(v)
 			out[p] = append(out[p], id+":"+role)
 		}
 		if execution {
-			for _, v := range anys(mapOf(s["execution"])["profiles"]) {
-				p := firstString(astr(v), astr(mapOf(v)["id"]), astr(mapOf(v)["profile"]))
-				out[p] = append(out[p], id+":execution.profiles")
+			for _, v := range s.Execution.Profiles {
+				out[profileNamed(v)] = append(out[profileNamed(v)], id+":execution.profiles")
 			}
 		}
 	}
 	return out, nil
+}
+
+// profileNamed: the profile a project setting names: a string, or an object's id or profile.
+func profileNamed(raw json.RawMessage) string {
+	var p string
+	if json.Unmarshal(raw, &p) == nil {
+		return p
+	}
+	var o struct {
+		ID      any `json:"id"`
+		Profile any `json:"profile"`
+	}
+	json.Unmarshal(raw, &o)
+	return firstString(o.ID, o.Profile)
 }
 
 func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.DefinitionListReply, error) {
@@ -389,11 +454,11 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 	if err := definitionKind(r.Kind); err != nil {
 		return out, err
 	}
-	where := "d.kind=$1 AND d.retired_at IS NULL"
+	f := definitionFilter{kind: string(r.Kind), current: true}
 	if r.IncludeRetired != nil && *r.IncludeRetired {
-		where = "d.kind=$1 AND d.deleted_at IS NULL" // a deleted definition is gone, retired or not
+		f = definitionFilter{kind: string(r.Kind), live: true} // a deleted definition is gone, retired or not
 	}
-	xs, err := definitionRows(q, where, 0, string(r.Kind))
+	xs, err := definitionsOf(q.ctx(), q.db(), f)
 	if err != nil {
 		return out, err
 	}
@@ -449,11 +514,7 @@ func definitionGet(q *Request, r *contract.DefinitionGetRequest) (contract.Defin
 		}
 	}
 	// A deleted definition is gone; a revision an execution pinned stays readable by its number.
-	live := "d.kind=$1 AND d.id=$2 AND d.deleted_at IS NULL"
-	if rev > 0 {
-		live = "d.kind=$1 AND d.id=$2"
-	}
-	xs, err := definitionRows(q, live, rev, string(r.Kind), r.Id)
+	xs, err := definitionsOf(q.ctx(), q.db(), definitionFilter{kind: string(r.Kind), id: r.Id, revision: rev, live: rev == 0})
 	if err != nil {
 		return out, err
 	}
@@ -467,7 +528,7 @@ func definitionGet(q *Request, r *contract.DefinitionGetRequest) (contract.Defin
 	}
 	state := x.state()
 	if rev > 0 && rev != x.Head { // state is the definition's: compute it from its head
-		hs, err := definitionRows(q, "d.kind=$1 AND d.id=$2", 0, string(r.Kind), r.Id)
+		hs, err := definitionsOf(q.ctx(), q.db(), definitionFilter{kind: string(r.Kind), id: r.Id})
 		if err != nil {
 			return out, err
 		}
@@ -480,21 +541,14 @@ func definitionGet(q *Request, r *contract.DefinitionGetRequest) (contract.Defin
 // headText: the head content of a live definition; an execution reads definitions only from the store (the repository
 // file is a seed). Outside a transaction (long operations) it reads in its own snapshot.
 func headText(q *Request, kind, id string) ([]byte, bool, error) {
-	var text []byte
-	read := func(tx pgx.Tx) error {
-		return tx.QueryRow(q.ctx(), `SELECT r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
-		  WHERE d.kind=$1 AND d.id=$2 AND d.retired_at IS NULL`, kind, id).Scan(&text)
-	}
-	var err error
-	if q.tx != nil {
-		err = read(q.tx)
-	} else {
-		err = q.app.store.Tx(q.ctx(), nil, false, "", read)
-	}
-	if err == pgx.ErrNoRows {
+	if id == "" {
 		return nil, false, nil
 	}
-	return text, err == nil, err
+	hs, err := headTextsOf(q, kind, id)
+	if err != nil || len(hs) == 0 {
+		return nil, false, err
+	}
+	return hs[0].text, true, nil
 }
 
 // definitionRef: the revision an execution uses for content it resolved: the newest revision with that exact content, or
@@ -505,27 +559,24 @@ func definitionRef(q *Request, kind, id string, content any) (contract.Definitio
 		return contract.DefinitionRef{}, err
 	}
 	ref := contract.DefinitionRef{Kind: contract.DefinitionKind(kind), Id: id, ContentSha: sha256Text(text)}
-	err = q.tx.QueryRow(q.ctx(), "SELECT revision FROM definition_revision WHERE kind=$1 AND id=$2 AND content_sha=$3 ORDER BY revision DESC LIMIT 1", kind, id, ref.ContentSha).Scan(&ref.Revision)
-	if err == pgx.ErrNoRows {
+	ref.Revision, err = q.db().DefRevisionBySha(q.ctx(), db.DefRevisionByShaParams{Kind: kind, ID: id, ContentSha: ref.ContentSha})
+	if errors.Is(err, pgx.ErrNoRows) {
 		// The same value written another way (a float64 round trip turns 30000.0 into 30000): compare with the head.
-		var head int64
-		var headSha string
-		var raw []byte
-		if e := q.tx.QueryRow(q.ctx(), `SELECT d.head,r.content_sha,r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head WHERE d.kind=$1 AND d.id=$2`, kind, id).Scan(&head, &headSha, &raw); e == nil {
+		if hs, e := definitionsOf(q.ctx(), q.db(), definitionFilter{kind: kind, id: id}); e == nil && len(hs) > 0 {
 			var a, b any
-			json.Unmarshal(raw, &a)
+			json.Unmarshal(hs[0].Content, &a)
 			json.Unmarshal(jsonBytes(content), &b)
 			if reflect.DeepEqual(a, b) {
-				ref.Revision, ref.ContentSha = head, headSha
+				ref.Revision, ref.ContentSha = hs[0].Head, hs[0].ContentSha
 				return ref, nil
 			}
 		}
 	}
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		yes := true
 		ref.Draft = &yes
-		err = q.tx.QueryRow(q.ctx(), "SELECT head FROM definition WHERE kind=$1 AND id=$2", kind, id).Scan(&ref.Revision)
-		if err == pgx.ErrNoRows {
+		ref.Revision, err = q.db().DefHeadNumber(q.ctx(), db.DefHeadNumberParams{Kind: kind, ID: id})
+		if errors.Is(err, pgx.ErrNoRows) {
 			ref.Revision, err = 0, nil
 		}
 	}
@@ -539,20 +590,24 @@ type headRow struct {
 
 // headTexts: every live definition of a kind with its head content, in one read.
 func headTexts(q *Request, kind string) ([]headRow, error) {
+	return headTextsOf(q, kind, "")
+}
+
+// headTextsOf: the current definitions of a kind (id "" for all) with their head content. Outside a transaction (long
+// operations) it reads in its own snapshot.
+func headTextsOf(q *Request, kind, id string) ([]headRow, error) {
 	var out []headRow
-	read := func(tx pgx.Tx) error {
-		rs, err := tx.Query(q.ctx(), `SELECT d.id,r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
-		  WHERE d.kind=$1 AND d.retired_at IS NULL ORDER BY d.id`, kind)
-		if err != nil {
-			return err
+	read := func(d *db.Queries) error {
+		rs, err := d.DefHeadTexts(q.ctx(), db.DefHeadTextsParams{Kind: kind, ID: optStr(id)})
+		for _, r := range rs {
+			out = append(out, headRow{id: r.ID, text: []byte(r.Content)})
 		}
-		out, err = pgx.CollectRows(rs, func(r pgx.CollectableRow) (headRow, error) { var h headRow; return h, r.Scan(&h.id, &h.text) })
 		return err
 	}
 	if q.tx != nil {
-		return out, read(q.tx)
+		return out, read(q.db())
 	}
-	return out, q.app.store.Tx(q.ctx(), nil, false, "", read)
+	return out, q.app.store.Tx(q.ctx(), nil, false, "", func(tx pgx.Tx) error { return read(db.New(tx)) })
 }
 
 func init() {

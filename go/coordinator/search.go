@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // search: one find-anything operation for the Spotlight palette and for agents (OR-32). The query is free text plus
@@ -57,31 +57,40 @@ func (s searchQuery) only(allowed ...string) bool {
 	return true
 }
 
-// inFocus: an SQL condition that col (a project id) is in the focus ('-' matches no project).
-func (s searchQuery) inFocus(p *[]any, col string) string {
-	*p = append(*p, s.focus)
-	return fmt.Sprintf("coalesce(%s,'-')=ANY($%d)", col, len(*p))
+// searchTerms: the query as the search queries' parameters (queries/entities.sql): each free-text word and each
+// agent, host or project term a LIKE pattern (likePattern; the list search syntax, searchWhere), the state term exact.
+type searchTerms struct {
+	words                       []string
+	agent, host, project, state *string
 }
 
-// focusFirst: the ORDER BY term that puts rows in the focus first, with its comma; nothing without a focus.
-func (s searchQuery) focusFirst(p *[]any, col string) string {
-	if len(s.focus) == 0 {
-		return ""
+func (s searchQuery) terms() searchTerms {
+	t := searchTerms{words: []string{}}
+	for _, w := range strings.Fields(s.text) {
+		t.words = append(t.words, likePattern(w))
 	}
-	return s.inFocus(p, col) + " DESC,"
+	like := func(k string) *string {
+		if v, ok := s.fields[k]; ok {
+			return ptr(likePattern(v))
+		}
+		return nil
+	}
+	t.agent, t.host, t.project = like("agent"), like("host"), like("project")
+	if v, ok := s.fields["state"]; ok {
+		t.state = ptr(strings.ToLower(v))
+	}
+	return t
 }
 
-// listFilter: the search, the focus and the ignored projects as a list's own filter (task_page, sessions_list: a null
-// projectId or excludeProjectId is no project), as the app builds it for the list "All N" opens.
-func (s searchQuery) listFilter() doc {
-	f := doc{"search": s.raw}
-	if len(s.focus) > 0 {
-		f["projectId"] = nullProjects(s.focus)
-	}
-	if len(s.listIgnored) > 0 {
-		f["excludeProjectId"] = nullProjects(s.listIgnored)
-	}
-	return f
+// projectsOut: ignored project ids as the queries leave them out: the named ones, and whether '-' (no project) is among them.
+func projectsOut(ids []string) ([]string, bool) {
+	named := slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == "-" })
+	return named, len(named) < len(ids)
+}
+
+// focusOf: the focus as the queries order and count by it ('-' is work outside projects), never null.
+func (s searchQuery) focusOf() []string {
+	return append([]string{}, s.focus...)
 }
 
 // nullProjects: project ids with '-' (no project) as null, the list filter's form.
@@ -116,36 +125,30 @@ var searchProviders = []searchProvider{searchCodes, searchTasks, searchQuestions
 	searchDefinitions(contract.FoundKindAgent), searchDefinitions(contract.FoundKindPipeline)}
 
 // searchCounters: the kinds whose list section takes the query (Tasks, Conversations, Results). Each counts its matches
-// in the focus with its list's own conditions (taskWhere, sessionWhere, artifactSearch), so "All N" opens a list of N rows.
+// in the focus with its list's own conditions (taskWhere, sessionWhere, artifactSearch, mirrored in queries/entities.sql),
+// so "All N" opens a list of N rows.
 var searchCounters = map[contract.FoundKind]func(q *Request, s searchQuery) (int64, error){
 	contract.FoundKindTask: func(q *Request, s searchQuery) (int64, error) {
-		p := []any{}
-		c, err := taskWhere(s.listFilter(), &p, true)
-		if err != nil {
-			return 0, err
-		}
-		return countOf(q, "SELECT count(*) FROM task t"+where(c), p...)
+		t := s.terms()
+		named, none := projectsOut(s.listIgnored)
+		return q.db().EntCountTasks(q.ctx(), db.EntCountTasksParams{Words: t.words, Agent: t.agent, Host: t.host, Project: t.project, State: t.state,
+			Focused: len(s.focus) > 0, Focus: s.focusOf(), Ignored: named, IgnoreNone: none})
 	},
 	contract.FoundKindConversation: func(q *Request, s searchQuery) (int64, error) {
-		p := []any{}
-		c, err := sessionWhere(s.listFilter(), &p, true)
-		if err != nil {
-			return 0, err
-		}
-		return countOf(q, sessionBase+" SELECT count(*) FROM x"+where(c), p...)
+		t := s.terms()
+		named, none := projectsOut(s.listIgnored)
+		return q.db().EntCountSessions(q.ctx(), db.EntCountSessionsParams{Words: t.words, Agent: t.agent, Host: t.host, Project: t.project, State: t.state,
+			Focused: len(s.focus) > 0, Focus: s.focusOf(), Ignored: named, IgnoreNone: none})
 	},
 	contract.FoundKindResult: func(q *Request, s searchQuery) (int64, error) {
-		p := []any{}
-		c := projectNotIn(artifactSearch(s.raw, &p), &p, "project_id", s.listIgnored)
-		c, p = projectIn(c, p, s.focus) // the bare column, as artifact_list filters, so its index serves
-		return countOf(q, "SELECT count(*) FROM artifact"+where(c), p...)
+		t := s.terms()
+		if t.agent != nil || t.host != nil { // results have no agent or host column: a term on one matches nothing
+			return 0, nil
+		}
+		named, none := projectsOut(s.listIgnored)
+		return q.db().EntCountResults(q.ctx(), db.EntCountResultsParams{Words: t.words, Project: t.project, State: t.state,
+			Focused: len(s.focus) > 0, Focus: s.focusOf(), Ignored: named, IgnoreNone: none})
 	},
-}
-
-func countOf(q *Request, sql string, args ...any) (int64, error) {
-	var n int64
-	err := q.tx.QueryRow(q.ctx(), sql, args...).Scan(&n)
-	return n, err
 }
 
 // hasText: every word of needle is in hay (case-insensitive); an empty needle matches.
@@ -199,47 +202,37 @@ func searchWhere(raw string, p *[]any, text []string, fields map[string]string, 
 	return c
 }
 
-// Task columns of the search syntax; agent and host are subqueries, so every task query can use them without a join.
-// agent: the harness of the task's latest execution (task_derived.last_agent; task_derived.agent is set only while one runs).
-var taskSearchText = []string{"t.title", "t.id", "t.code"}
-var taskSearchFields = map[string]string{"agent": "(SELECT last_agent FROM task_derived WHERE task_id=t.id)", "host": "(SELECT host FROM task_derived WHERE task_id=t.id)",
-	"project": "t.project_id", "state": stateSQL}
+// noLimit: the limit of a code jump's reads, which name their hits (at most the search limit of codes).
+const noLimit = 1000
 
-const taskHitCols = "SELECT t.id,t.code,t.title," + stateSQL + " AS state,t.project_id,d.last_agent AS agent,d.host,t.updated_at AS at FROM task t LEFT JOIN task_derived d ON d.task_id=t.id"
-
-func taskHits(rs []doc) []contract.Found {
+func taskHits(rs []db.EntSearchTasksRow) []contract.Found {
 	out := []contract.Found{}
 	for _, r := range rs {
-		out = append(out, contract.Found{Kind: contract.FoundKindTask, Id: astr(r["id"]), Code: optStr(astr(r["code"])), Title: astr(r["title"]), State: optStr(astr(r["state"])),
-			ProjectId: optStr(astr(r["project_id"])), Agent: optStr(astr(r["agent"])), Host: optStr(astr(r["host"])), At: optStr(astr(r["at"]))})
+		out = append(out, contract.Found{Kind: contract.FoundKindTask, Id: r.ID, Code: optStr(deref(r.Code)), Title: r.Title, State: optStr(r.State),
+			ProjectId: optStr(deref(r.ProjectID)), Agent: optStr(deref(r.Agent)), Host: optStr(deref(r.Host)), At: optStr(cardTime(&r.At))})
 	}
 	return out
 }
 
 // searchTasks: tasks in the focus first, then an id or code that starts with the text, then recently changed.
 func searchTasks(q *Request, s searchQuery, limit int) ([]contract.Found, error) {
-	p, first := []any{}, "t.id IS NULL"
+	var prefix *string
 	if s.text != "" {
-		p, first = append(p, strings.TrimSuffix(likePattern(s.text)[1:], "%")+"%"), "(lower(t.id) LIKE $1 OR lower(coalesce(t.code,'')) LIKE $1)"
+		prefix = ptr(strings.TrimSuffix(likePattern(s.text)[1:], "%") + "%")
 	}
-	c, err := taskWhere(doc{"search": s.raw}, &p, true) // task_page's own conditions, as its count
-	if err != nil {
-		return nil, err
-	}
-	c = projectNotIn(c, &p, "t.project_id", s.ignored)
-	f := s.focusFirst(&p, "t.project_id")
-	rs, err := rowsOf(q, taskHitCols+where(c)+" ORDER BY "+f+first+" DESC,t.updated_at DESC,t.id LIMIT "+fmt.Sprint(limit), p...)
+	t := s.terms()
+	named, none := projectsOut(s.ignored)
+	rs, err := q.db().EntSearchTasks(q.ctx(), db.EntSearchTasksParams{Words: t.words, Agent: t.agent, Host: t.host, Project: t.project, State: t.state,
+		Ignored: named, IgnoreNone: none, Focus: s.focusOf(), Prefix: prefix, Lim: int32(limit)})
 	return taskHits(rs), err
 }
 
-const questionHitCols = "SELECT x.id,x.code,x.text,x.state::text AS state,x.project_id,x.task_id,x.session_id,x.asked_at AS at FROM question x"
-
-func questionHits(rs []doc) []contract.Found {
+func questionHits(rs []db.EntSearchQuestionsRow) []contract.Found {
 	out := []contract.Found{}
 	for _, r := range rs {
-		t := []rune(astr(r["text"]))
-		out = append(out, contract.Found{Kind: contract.FoundKindQuestion, Id: astr(r["id"]), Code: optStr(astr(r["code"])), Title: string(t[:min(200, len(t))]),
-			State: optStr(astr(r["state"])), ProjectId: optStr(astr(r["project_id"])), TaskId: optStr(astr(r["task_id"])), SessionId: optStr(astr(r["session_id"])), At: optStr(astr(r["at"]))})
+		t := []rune(r.Text)
+		out = append(out, contract.Found{Kind: contract.FoundKindQuestion, Id: r.ID, Code: optStr(deref(r.Code)), Title: string(t[:min(200, len(t))]),
+			State: optStr(r.State), ProjectId: optStr(deref(r.ProjectID)), TaskId: optStr(deref(r.TaskID)), SessionId: optStr(deref(r.SessionID)), At: optStr(cardTime(&r.At))})
 	}
 	return out
 }
@@ -250,23 +243,25 @@ func searchQuestions(q *Request, s searchQuery, limit int) ([]contract.Found, er
 	if !s.only("project", "state") {
 		return nil, nil
 	}
-	p := []any{}
-	c := projectNotIn(searchWhere(s.raw, &p, []string{"x.text", "x.code"}, map[string]string{"project": "x.project_id", "state": "x.state::text"}, true), &p, "x.project_id", s.ignored)
-	f := s.focusFirst(&p, "x.project_id")
-	rs, err := rowsOf(q, questionHitCols+where(c)+" ORDER BY "+f+"x.state='open' DESC,x.seq DESC LIMIT "+fmt.Sprint(limit), p...)
+	t := s.terms()
+	named, none := projectsOut(s.ignored)
+	rs, err := q.db().EntSearchQuestions(q.ctx(), db.EntSearchQuestionsParams{Words: t.words, Project: t.project, State: t.state,
+		Ignored: named, IgnoreNone: none, Focus: s.focusOf(), Lim: int32(limit)})
 	return questionHits(rs), err
 }
 
-var sessionHitCols = sessionBase + " SELECT x.id,x.code,x.title,x.first_message,x.state,x.project_id," + sessionAgent + " AS agent,x.activity_at AS at FROM x"
-
 // sessionHits: conversation hits; words (the query's free text) give each the snippet of its first message around them.
-func sessionHits(rs []doc, words string) []contract.Found {
+func sessionHits(rs []db.EntSearchSessionsRow, words string) []contract.Found {
 	out := []contract.Found{}
 	for _, r := range rs {
-		t := []rune(firstString(astr(r["title"]), astr(r["first_message"]), astr(r["code"]), astr(r["id"])))
-		out = append(out, contract.Found{Kind: contract.FoundKindConversation, Id: astr(r["id"]), Code: optStr(astr(r["code"])), Title: string(t[:min(200, len(t))]),
-			State: optStr(astr(r["state"])), ProjectId: optStr(astr(r["project_id"])), Agent: optStr(astr(r["agent"])), At: optStr(astr(r["at"])),
-			Snippet: optStr(matchSnippet(astr(r["first_message"]), words))})
+		var at *time.Time
+		if r.At.Valid {
+			at = &r.At.Time
+		}
+		t := []rune(firstString(r.Title, r.FirstMessage, deref(r.Code), r.ID))
+		out = append(out, contract.Found{Kind: contract.FoundKindConversation, Id: r.ID, Code: optStr(deref(r.Code)), Title: string(t[:min(200, len(t))]),
+			State: optStr(r.State), ProjectId: optStr(deref(r.ProjectID)), Agent: optStr(r.Agent), At: optStr(cardTime(at)),
+			Snippet: optStr(matchSnippet(r.FirstMessage, words))})
 	}
 	return out
 }
@@ -309,14 +304,10 @@ func matchSnippet(text, words string) string {
 // searchConversations: conversations (sessions) with the sessions_list search: every field term applies, and archived
 // ones are left out as the list leaves them out. The focus first, then latest activity.
 func searchConversations(q *Request, s searchQuery, limit int) ([]contract.Found, error) {
-	p := []any{}
-	c, err := sessionWhere(doc{"search": s.raw}, &p, true)
-	if err != nil {
-		return nil, err
-	}
-	c = projectNotIn(c, &p, "x.project_id", s.ignored)
-	f := s.focusFirst(&p, "x.project_id")
-	rs, err := rowsOf(q, sessionHitCols+where(c)+" ORDER BY "+f+"x.activity_at DESC,x.id LIMIT "+fmt.Sprint(limit), p...)
+	t := s.terms()
+	named, none := projectsOut(s.ignored)
+	rs, err := q.db().EntSearchSessions(q.ctx(), db.EntSearchSessionsParams{Words: t.words, Agent: t.agent, Host: t.host, Project: t.project, State: t.state,
+		Ignored: named, IgnoreNone: none, Focus: s.focusOf(), Lim: int32(limit)})
 	return sessionHits(rs, s.text), err
 }
 
@@ -331,14 +322,14 @@ func searchResults(q *Request, s searchQuery, limit int) ([]contract.Found, erro
 	if !s.only("project", "state") {
 		return nil, nil
 	}
-	p := []any{}
-	c := projectNotIn(artifactSearch(s.raw, &p), &p, "project_id", s.ignored)
-	f := s.focusFirst(&p, "project_id")
-	rs, err := rowsOf(q, "SELECT id,name,state::text AS state,project_id,task_id,created_at AS at FROM artifact"+where(c)+" ORDER BY "+f+"seq DESC LIMIT "+fmt.Sprint(limit), p...)
+	t := s.terms()
+	named, none := projectsOut(s.ignored)
+	rs, err := q.db().EntSearchResults(q.ctx(), db.EntSearchResultsParams{Words: t.words, Project: t.project, State: t.state,
+		Ignored: named, IgnoreNone: none, Focus: s.focusOf(), Lim: int32(limit)})
 	out := []contract.Found{}
 	for _, r := range rs {
-		out = append(out, contract.Found{Kind: contract.FoundKindResult, Id: astr(r["id"]), Title: firstString(astr(r["name"]), astr(r["id"])), State: optStr(astr(r["state"])),
-			ProjectId: optStr(astr(r["project_id"])), TaskId: optStr(astr(r["task_id"])), At: optStr(astr(r["at"]))})
+		out = append(out, contract.Found{Kind: contract.FoundKindResult, Id: r.ID, Title: firstString(r.Name, r.ID), State: optStr(r.State),
+			ProjectId: optStr(deref(r.ProjectID)), TaskId: optStr(deref(r.TaskID)), At: optStr(cardTime(&r.At))})
 	}
 	return out, err
 }
@@ -395,15 +386,16 @@ func searchCodes(q *Request, s searchQuery, limit int) ([]contract.Found, error)
 			sessions = append(sessions, e.Id)
 		}
 	}
-	ts, err := rowsOf(q, taskHitCols+" WHERE t.id=ANY($1)", tasks)
+	none := []string{}
+	ts, err := q.db().EntSearchTasks(q.ctx(), db.EntSearchTasksParams{Ids: tasks, Words: none, Ignored: none, Focus: none, Lim: noLimit})
 	if err != nil {
 		return nil, err
 	}
-	qs, err := rowsOf(q, questionHitCols+" WHERE x.id=ANY($1)", questions)
+	qs, err := q.db().EntSearchQuestions(q.ctx(), db.EntSearchQuestionsParams{Ids: questions, Words: none, Ignored: none, Focus: none, Lim: noLimit})
 	if err != nil {
 		return nil, err
 	}
-	cs, err := rowsOf(q, sessionHitCols+" WHERE x.id=ANY($1) AND coalesce(x.actor,'')<>'program-worker'", sessions) // host command sessions are no conversations
+	cs, err := q.db().EntSearchSessions(q.ctx(), db.EntSearchSessionsParams{Ids: sessions, Words: none, Ignored: none, Focus: none, Lim: noLimit}) // host command sessions are no conversations
 	if err != nil {
 		return nil, err
 	}
@@ -437,9 +429,7 @@ func searchProjects(q *Request, s searchQuery, limit int) ([]contract.Found, err
 		if q.person != nil && !mayAccessProjectID(q.person, r.id) || slices.Contains(s.ignored, r.id) {
 			continue
 		}
-		var b doc
-		_ = json.Unmarshal(r.text, &b)
-		id, name := r.id, firstString(astr(mapOf(b["settings"])["name"]), r.id)
+		id, name := r.id, firstString(projectName(r.text), r.id)
 		if hasText(id, s.fields["project"]) && hasText(id+" "+name, s.text) {
 			out = append(out, contract.Found{Kind: contract.FoundKindProject, Id: id, Title: name})
 		}
@@ -461,10 +451,10 @@ func searchHosts(q *Request, s searchQuery, limit int) ([]contract.Found, error)
 		return nil, nil
 	}
 	// ponytail: configured hosts only; a host known only from its observations is not found until it is registered.
-	hs, err := hostList(q)
+	hs, err := q.db().EntSearchHosts(q.ctx())
 	out := []contract.Found{}
 	for _, h := range hs {
-		id, name := astr(h["id"]), firstString(astr(h["name"]), astr(h["id"]))
+		id, name := h.HostID, firstString(h.Name, h.HostID)
 		if len(out) < limit && (hasText(id, s.fields["host"]) || hasText(name, s.fields["host"])) && hasText(id+" "+name, s.text) {
 			out = append(out, contract.Found{Kind: contract.FoundKindHost, Id: id, Title: name})
 		}

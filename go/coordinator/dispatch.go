@@ -8,7 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fleet/contract"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
@@ -16,6 +16,11 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 func init() {
@@ -127,27 +132,16 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 	var needsSweep bool
 	var pipelinePending bool
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-		rs, err := queryRows(q, `SELECT DISTINCT sid FROM (
-			SELECT session_id AS sid FROM queued_message WHERE state='queued'
-			UNION ALL
-			SELECT session_id AS sid FROM execution WHERE host_id IS NULL AND state='preparing' AND kind='agent_run' AND session_id IS NOT NULL
-		) x WHERE coalesce(sid,'')<>''`)
-		if err != nil {
+		var err error
+		if sessionIDs, err = q.db().DispPendingSessions(q.ctx()); err != nil {
 			return err
-		}
-		for _, r := range rs {
-			if sid := astr(r["sid"]); sid != "" {
-				sessionIDs = append(sessionIDs, sid)
-			}
 		}
 		if explicit || len(sessionIDs) > 0 {
 			needsSweep = true
 			return nil
 		}
-		return q.tx.QueryRow(q.ctx(), `SELECT
-			EXISTS(SELECT 1 FROM execution WHERE delegation IS NOT NULL AND coalesce(delegation->>'continuationExecutionId','')='' AND coalesce(delegation->>'state','')<>'suppressed')
-			OR EXISTS(SELECT 1 FROM question WHERE state IN ('open','answered') AND cause ~ $1)
-			OR EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','running','waiting'))`, dispatchStallCauses).Scan(&needsSweep)
+		needsSweep, err = q.db().DispNeedsSweep(q.ctx(), dispatchStallCauses)
+		return err
 	}); err != nil {
 		return err
 	}
@@ -155,7 +149,9 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 		return nil
 	}
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-		return q.tx.QueryRow(q.ctx(), "SELECT EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','waiting') AND kind='agent_run' AND host_id IS NULL AND data ? 'pipelineRunId')").Scan(&pipelinePending)
+		var err error
+		pipelinePending, err = q.db().DispPipelinePending(q.ctx())
+		return err
 	}); err != nil {
 		return err
 	}
@@ -204,15 +200,47 @@ type candidate struct {
 }
 
 type dispatchContext struct {
-	hosts    []doc
+	hostIDs  []string // the ids of byID in host order
 	byID     map[string]doc
+	views    map[string]dispatchHost // the fields dispatch reads of each host in byID
 	seen     map[string]float64
 	caps     map[string][]string
 	roots    map[string][]string
 	conns    map[string][]string // git connection names each host reported; absent: unknown
-	accounts []doc
+	accounts []dispatchAccount
 	readings map[string][]Reading
 	orders   map[string]contract.DispatchOrder // the directors' order setting, read once per pass
+}
+
+// dispatchHost: the fields dispatch reads of a host record (hostList).
+type dispatchHost struct {
+	ID        string            `json:"id"`
+	Holder    string            `json:"holder"`
+	Roles     []json.RawMessage `json:"roles"`
+	Harnesses map[string]struct {
+		Allowed *bool `json:"allowed"`
+	} `json:"harnesses"`
+}
+
+// hostSeen: the fields dispatch reads of a host observation.
+type hostSeen struct {
+	ID             string    `json:"id"`
+	LastSeenAt     float64   `json:"lastSeenAt"`
+	Capabilities   []string  `json:"capabilities"`
+	GitConnections *[]string `json:"gitConnections"`
+	ProjectRoots   *[]string `json:"projectRoots"`
+}
+
+// dispatchAccount: a subscription (managed-account record) with the fields dispatch reads; rec is the record itself.
+type dispatchAccount struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Holder  string `json:"holder"`
+	Harness string `json:"harness"`
+	Take    struct {
+		Projects []string `json:"projects"`
+	} `json:"take"`
+	rec doc
 }
 
 func loadDispatchContext(q *Request) (*dispatchContext, error) {
@@ -220,30 +248,37 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	k := &dispatchContext{byID: map[string]doc{}, caps: map[string][]string{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, orders: map[string]contract.DispatchOrder{}}
+	k := &dispatchContext{byID: map[string]doc{}, views: map[string]dispatchHost{}, caps: map[string][]string{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, orders: map[string]contract.DispatchOrder{}}
 	for _, h := range hs {
-		if len(anys(h["roles"])) == 0 {
-			k.hosts = append(k.hosts, h)
-			k.byID[astr(h["id"])] = h
+		v, _ := asT[dispatchHost](h) // a field of another type reads as absent
+		if len(v.Roles) == 0 {
+			k.hostIDs = append(k.hostIDs, v.ID)
+			k.byID[v.ID], k.views[v.ID] = h, v
 		}
 	}
 	obs, err := all(q, "host-observation", nil)
 	if err != nil {
 		return nil, err
 	}
-	for _, o := range obs {
-		hid := astr(o["id"])
-		k.caps[hid] = strs(o["capabilities"])
-		k.seen[hid] = q.app.effectiveHostSeen(hid, num(o["lastSeenAt"]))
-		if o["gitConnections"] != nil {
-			k.conns[astr(o["id"])] = strs(o["gitConnections"])
+	for _, x := range obs {
+		o, _ := asT[hostSeen](x)
+		k.caps[o.ID] = nonNilStrings(o.Capabilities)
+		k.seen[o.ID] = q.app.effectiveHostSeen(o.ID, o.LastSeenAt)
+		if o.GitConnections != nil {
+			k.conns[o.ID] = nonNilStrings(*o.GitConnections)
 		}
-		if o["projectRoots"] != nil {
-			k.roots[astr(o["id"])] = strs(o["projectRoots"])
+		if o.ProjectRoots != nil {
+			k.roots[o.ID] = nonNilStrings(*o.ProjectRoots)
 		}
 	}
-	if k.accounts, err = all(q, "managed-account", nil); err != nil {
+	accounts, err := all(q, "managed-account", nil)
+	if err != nil {
 		return nil, err
+	}
+	for _, x := range accounts {
+		s, _ := asT[dispatchAccount](x)
+		s.rec = x
+		k.accounts = append(k.accounts, s)
 	}
 	// The dispatch transaction's own connection: a second pool connection, taken while this transaction holds the
 	// global lock, waits forever once every other pool connection waits for that lock.
@@ -251,43 +286,59 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	return k, err
 }
 
-func subscriptionsOf(q *Request, projectID any) []string {
-	return strs(projectSetting(q, projectID, "subscriptions"))
+func nonNilStrings(xs []string) []string {
+	if xs == nil {
+		return []string{}
+	}
+	return xs
 }
 
-// checkouts: the project's environments, each {hostId, checkoutPath}.
-func checkouts(q *Request, projectID any) []map[string]any {
-	out := []map[string]any{}
-	for _, x := range anys(projectSetting(q, projectID, "environments")) {
-		if m, ok := x.(map[string]any); ok {
-			out = append(out, m)
-		}
-	}
-	return out
+// projectRepo and projectEnvironment: a project's repository and its environment on a host (project settings).
+type projectRepo struct {
+	ID         string `json:"id"`
+	Connection string `json:"connection"`
+	Remote     string `json:"remote"`
+}
+
+type projectEnvironment struct {
+	HostID       string  `json:"hostId"`
+	CheckoutPath string  `json:"checkoutPath"`
+	Repo         *string `json:"repo"`
+}
+
+// runSettings: the project settings dispatch reads.
+type runSettings struct {
+	Execution *struct {
+		Profiles []string `json:"profiles"`
+		Forge    bool     `json:"forge"`
+		Tools    []string `json:"tools"`
+	} `json:"execution"`
+	Environments  []projectEnvironment `json:"environments"`
+	Subscriptions []string             `json:"subscriptions"`
+	Repos         []projectRepo        `json:"repos"`
 }
 
 // repoConnection: the git connection of the repository a project runs on a host (its environment's repo, else the
 // first repo), as the executor's gitRepo chooses it; empty when that repo declares none.
-func repoConnection(repos []any, cos []map[string]any, host string) string {
-	var repo any
+func repoConnection(repos []projectRepo, cos []projectEnvironment, host string) string {
+	var repo *string
 	for _, co := range cos {
-		if co["hostId"] == host {
-			repo = co["repo"]
+		if co.HostID == host {
+			repo = co.Repo
 			break
 		}
 	}
 	for _, r := range repos {
-		m := mapOf(r)
-		if repo == nil || m["id"] == repo {
-			return astr(m["connection"])
+		if repo == nil || r.ID == *repo {
+			return r.Connection
 		}
 	}
 	return ""
 }
 
-func accountHarness(a doc) string {
-	if h := astr(a["harness"]); h != "" {
-		return h
+func accountHarness(a dispatchAccount) string {
+	if a.Harness != "" {
+		return a.Harness
 	}
 	return "codex"
 }
@@ -342,57 +393,100 @@ func rawList(v any) []json.RawMessage {
 }
 
 // causeOf: a skip reason's stall cause key. ponytail: keyed on resolve's messages; structured codes if they start to change.
-func causeOf(a doc, host, message string) string {
-	id := astr(a["id"])
+func causeOf(a dispatchAccount, host, message string) string {
 	switch {
 	case strings.Contains(message, "Paused"):
-		return "subscription:" + id + ":paused"
+		return "subscription:" + a.ID + ":paused"
 	case strings.Contains(message, "not allowed on host"):
-		return "placement:" + host + ":" + astr(a["harness"])
+		return "placement:" + host + ":" + a.Harness
 	case strings.Contains(message, "held by"):
-		return "subscription:" + id + ":not-taken"
+		return "subscription:" + a.ID + ":not-taken"
 	case strings.Contains(message, "ready binding"):
-		return "subscription:" + id + ":not-ready"
+		return "subscription:" + a.ID + ":not-ready"
 	}
-	return "subscription:" + id + ":refused"
+	return "subscription:" + a.ID + ":refused"
 }
 
-func subOf(a doc) doc {
+// subOf: the subscription a candidate names, as route decisions record it.
+func subOf(a *dispatchAccount) doc {
 	if a == nil {
 		return nil
 	}
-	return doc{"id": a["id"], "name": a["name"], "holder": a["holder"]}
+	return docOf(struct {
+		ID     any `json:"id"`
+		Name   any `json:"name"`
+		Holder any `json:"holder"`
+	}{a.rec["id"], a.rec["name"], a.rec["holder"]})
+}
+
+// dispatchSpec: an execution's dispatch record (enqueue): where and how it starts.
+type dispatchSpec struct {
+	ProjectID        *string                    `json:"projectId"`
+	Harness          string                     `json:"harness"`
+	Host             string                     `json:"host"`
+	Last             string                     `json:"last"`
+	Account          string                     `json:"account"`
+	Access           string                     `json:"access"`
+	Branch           *bool                      `json:"branch"`
+	WorkspaceKey     *string                    `json:"workspaceKey"`
+	WorkingDirectory *string                    `json:"workingDirectory"`
+	Input            *string                    `json:"input"`
+	Payload          map[string]json.RawMessage `json:"payload"`
+}
+
+// projectSnapshot: the project as an execution froze it at enqueue (projectContext).
+type projectSnapshot struct {
+	Settings doc `json:"settings"`
+	Context  []struct {
+		Path string `json:"path"`
+		Text string `json:"text"`
+	} `json:"context"`
+	Revision   json.RawMessage `json:"revision"`
+	ContentSha json.RawMessage `json:"contentSha"`
+}
+
+// queuedRun: the fields dispatch reads of a queued execution record.
+type queuedRun struct {
+	ID              string           `json:"id"`
+	SessionID       string           `json:"sessionId"`
+	DirectedBy      *string          `json:"directedBy"`
+	Dispatch        dispatchSpec     `json:"dispatch"`
+	ProjectSnapshot *projectSnapshot `json:"projectSnapshot"`
+	AgentConfig     struct {
+		ID string `json:"id"`
+	} `json:"agentConfig"`
+}
+
+// queuedOf: the typed view of an execution record; a field of another type reads as absent.
+func queuedOf(e doc) queuedRun {
+	v, _ := asT[queuedRun](e)
+	return v
 }
 
 // rankCandidates: the ordered candidate list of one queued execution.
 func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidate, error) {
-	x := mapOf(e["dispatch"])
-	director := e["directedBy"]
-	dir := astr(director)
-	projectID := x["projectId"]
-	harness := astr(x["harness"])
+	run := queuedOf(e)
+	x := run.Dispatch
+	director := optAny(run.DirectedBy)
+	dir := deref(run.DirectedBy)
+	projectID := optAny(x.ProjectID)
+	harness := x.Harness
 	order := []string{}
-	if h := astr(x["host"]); h != "" {
-		order = []string{h}
+	if x.Host != "" {
+		order = []string{x.Host}
 	} else {
-		for _, id := range append([]string{astr(x["last"]), a.hostID}, func() []string {
-			ids := []string{}
-			for _, h := range k.hosts {
-				ids = append(ids, astr(h["id"]))
-			}
-			return ids
-		}()...) {
+		for _, id := range append([]string{x.Last, a.hostID}, k.hostIDs...) {
 			if _, ok := k.byID[id]; ok && !inList(order, id) {
 				order = append(order, id)
 			}
 		}
 	}
-	named := func(v string) func(doc) bool {
-		return func(s doc) bool {
-			if s["id"] == v || s["name"] == v {
+	named := func(v string) func(*dispatchAccount) bool {
+		return func(s *dispatchAccount) bool {
+			if s.rec["id"] == v || s.rec["name"] == v {
 				return true
 			}
-			for _, b := range bindingsOf(s) {
+			for _, b := range bindingsOf(s.rec) {
 				if b["binding"] == v {
 					return true
 				}
@@ -400,54 +494,55 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			return false
 		}
 	}
-	find := func(list []doc, f func(doc) bool) doc {
-		for _, s := range list {
-			if f(s) {
-				return s
+	find := func(list []dispatchAccount, f func(*dispatchAccount) bool) *dispatchAccount {
+		for i := range list {
+			if f(&list[i]) {
+				return &list[i]
 			}
 		}
 		return nil
 	}
-	settings := mapOf(mapOf(e["projectSnapshot"])["settings"])
-	if settings == nil && projectID != nil {
-		settings = projectSettingsOf(q, astr(projectID))
+	var settingsDoc doc
+	if run.ProjectSnapshot != nil {
+		settingsDoc = run.ProjectSnapshot.Settings
 	}
-	requirements := mapOf(settings["execution"])
-	if ids := strs(requirements["profiles"]); len(ids) > 0 && !slices.Contains(ids, astr(mapOf(e["agentConfig"])["id"])) {
+	if settingsDoc == nil && projectID != nil {
+		settingsDoc = projectSettingsOf(q, *x.ProjectID)
+	}
+	settings, _ := asT[runSettings](settingsDoc) // a field of another type reads as absent
+	requirements := settings.Execution
+	if requirements != nil && len(requirements.Profiles) > 0 && !slices.Contains(requirements.Profiles, run.AgentConfig.ID) {
 		requirements = nil
 	}
-	cos := []map[string]any{}
-	for _, v := range anys(settings["environments"]) {
-		cos = append(cos, mapOf(v))
-	}
-	accounts := []doc{}
+	cos := settings.Environments
+	accounts := []dispatchAccount{}
 	for _, s := range k.accounts {
 		if accountHarness(s) == harness {
 			accounts = append(accounts, s)
 		}
 	}
 	out := []*candidate{}
-	var subs []doc
-	if acc := astr(x["account"]); acc != "" {
+	var subs []*dispatchAccount
+	if acc := x.Account; acc != "" {
 		s := find(k.accounts, named(acc))
-		if s != nil && accountHarness(s) != harness {
+		if s != nil && accountHarness(*s) != harness {
 			host := a.hostID
 			if len(order) > 0 {
 				host = order[0]
 			}
-			return []*candidate{{Subscription: subOf(s), Host: host, Warnings: []string{}, Skipped: fmt.Sprintf("%s is a %s subscription, not %s", s["name"], s["harness"], harness), Cause: "subscription:" + astr(s["id"]) + ":harness"}}, nil
+			return []*candidate{{Subscription: subOf(s), Host: host, Warnings: []string{}, Skipped: fmt.Sprintf("%s is a %s subscription, not %s", s.rec["name"], s.rec["harness"], harness), Cause: "subscription:" + s.ID + ":harness"}}, nil
 		}
-		subs = []doc{s}
+		subs = []*dispatchAccount{s}
 	} else {
-		list := strs(settings["subscriptions"])
-		pos := func(s doc) int {
+		list := nonNilStrings(settings.Subscriptions)
+		pos := func(s *dispatchAccount) int {
 			for i, n := range list {
-				if n == s["name"] {
+				if n == s.rec["name"] {
 					return i
 				}
 			}
 			for i, n := range list {
-				if n == s["id"] {
+				if n == s.rec["id"] {
 					return i
 				}
 			}
@@ -459,24 +554,24 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 		// Only owner-held subscriptions: another person's personal login still needs its holder's take rule.
 		p, owner := q.peopleSnapshot().person(dir), ownerEmail(q)
 		full := p != nil && fullAccess(p)
-		mine := func(s doc) bool {
-			return s["holder"] == director || full && s["holder"] == owner || inList(strs(mapOf(s["take"])["projects"]), astr(projectID)) && projectID != nil
+		mine := func(s *dispatchAccount) bool {
+			return s.rec["holder"] == director || full && s.rec["holder"] == owner || inList(nonNilStrings(s.Take.Projects), deref(x.ProjectID)) && projectID != nil
 		}
-		weight := func(s doc) int {
+		weight := func(s *dispatchAccount) int {
 			w := pos(s)
-			if s["holder"] != director {
+			if s.rec["holder"] != director {
 				w += 1000000
 			}
 			return w
 		}
-		ranked := []doc{}
-		for _, s := range accounts {
-			if mine(s) {
-				ranked = append(ranked, s)
+		ranked := []*dispatchAccount{}
+		for i := range accounts {
+			if mine(&accounts[i]) {
+				ranked = append(ranked, &accounts[i])
 			}
 		}
 		sort.SliceStable(ranked, func(i, j int) bool { return weight(ranked[i]) < weight(ranked[j]) })
-		var def doc
+		var def *dispatchAccount
 		if harness == "codex" && defaultAccountBinding() != "" {
 			def = find(accounts, named(defaultAccountBinding()))
 		}
@@ -485,7 +580,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			subs = append(subs, def)
 		}
 		for _, s := range ranked {
-			if def == nil || s["id"] != def["id"] {
+			if def == nil || s.rec["id"] != def.rec["id"] {
 				subs = append(subs, s)
 			}
 		}
@@ -495,10 +590,10 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 	}
 	for _, s := range subs {
 		for _, id := range order {
-			h := k.byID[id]
+			h, hv := k.byID[id], k.views[id]
 			if s != nil {
 				bound := false
-				for _, b := range bindingsOf(s) {
+				for _, b := range bindingsOf(s.rec) {
 					if b["hostId"] == id {
 						bound = true
 					}
@@ -514,15 +609,17 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 				skip(id+" is offline", "host:"+id+":offline")
 				continue
 			}
-			if requirements["forge"] == true && (len(anys(settings["repos"])) == 0 || !contract.HasCapability(k.caps[id], contract.ForgeCapability(strings.TrimSuffix(strings.TrimPrefix(astr(mapOf(anys(settings["repos"])[0])["remote"]), "https://github.com/"), ".git")))) {
+			if requirements != nil && requirements.Forge && (len(settings.Repos) == 0 || !contract.HasCapability(k.caps[id], contract.ForgeCapability(strings.TrimSuffix(strings.TrimPrefix(settings.Repos[0].Remote, "https://github.com/"), ".git")))) {
 				skip("project forge connection unavailable on "+id, "host:"+id+":forge")
 				continue
 			}
 			missingTool := ""
-			for _, tool := range strs(requirements["tools"]) {
-				if !contract.HasCapability(k.caps[id], contract.ToolCapability(tool)) {
-					missingTool = tool
-					break
+			if requirements != nil {
+				for _, tool := range requirements.Tools {
+					if !contract.HasCapability(k.caps[id], contract.ToolCapability(tool)) {
+						missingTool = tool
+						break
+					}
 				}
 			}
 			if missingTool != "" {
@@ -531,8 +628,10 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			}
 			// A read-only or branchless start (a preset), a workspace key or message attachments run only where the
 			// executor honours them (contract.MissingCapability, the same gate the poll applies).
-			if c, missing := contract.MissingCapability(k.caps[id], contract.StartNeeds{ReadOnly: x["access"] == "read", Branchless: x["branch"] == false && projectID != nil,
-				WorkspaceKey: astr(x["workspaceKey"]) != "", Attachments: len(anys(mapOf(x["payload"])["attachments"])) > 0}); missing {
+			var attachments []json.RawMessage
+			json.Unmarshal(x.Payload["attachments"], &attachments)
+			if c, missing := contract.MissingCapability(k.caps[id], contract.StartNeeds{ReadOnly: x.Access == "read", Branchless: x.Branch != nil && !*x.Branch && projectID != nil,
+				WorkspaceKey: deref(x.WorkspaceKey) != "", Attachments: len(attachments) > 0}); missing {
 				switch c {
 				case contract.CapabilityStartAccessV1:
 					skip(id+" executor lacks start-access-v1 for a read-only or branchless start; update required", "host:"+id+":start-access")
@@ -552,11 +651,11 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 				continue
 			}
 			roots, haveRoots := k.roots[id]
-			checkout := astr(x["workingDirectory"])
+			checkout := deref(x.WorkingDirectory)
 			if checkout == "" {
 				for _, co := range cos {
-					if co["hostId"] == id {
-						checkout = astr(co["checkoutPath"])
+					if co.HostID == id {
+						checkout = co.CheckoutPath
 						break
 					}
 				}
@@ -571,7 +670,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 				if !inside {
 					of := ""
 					if projectID != nil {
-						of = " of " + astr(projectID)
+						of = " of " + *x.ProjectID
 					}
 					skip(fmt.Sprintf("checkout %s%s is outside FLEET_PROJECT_ROOTS on %s", checkout, of, id), fmt.Sprintf("host:%s:roots:%v", id, jsText(projectID)))
 					continue
@@ -579,32 +678,32 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			}
 			// The repository's git connection must be on the host, else the run fails after setup (2026-11-11).
 			if have, known := k.conns[id]; known {
-				if need := repoConnection(anys(settings["repos"]), cos, id); need != "" && !slices.Contains(have, need) {
+				if need := repoConnection(settings.Repos, cos, id); need != "" && !slices.Contains(have, need) {
 					skip(fmt.Sprintf("%s has no git connection %s", id, need), fmt.Sprintf("host:%s:connection:%s", id, need))
 					continue
 				}
 			}
 			if s != nil {
-				name := astr(s["name"])
+				name := s.Name
 				b, err := resolveAccount(q, &name, harness, id, director, projectID)
 				if err != nil {
 					var he *HTTPError
 					if !asHTTP(err, &he) {
 						return nil, err
 					}
-					skip(he.Msg, causeOf(s, id, he.Msg))
+					skip(he.Msg, causeOf(*s, id, he.Msg))
 					continue
 				}
 				c.binding = b
-				if over := readingOverSwitch(s, k.readings[astr(s["id"])]); over != "" {
-					skip(over, "subscription:"+astr(s["id"])+":limit")
+				if over := readingOverSwitch(s.rec, k.readings[s.ID]); over != "" {
+					skip(over, "subscription:"+s.ID+":limit")
 					continue
 				}
-				if s["harness"] == "claude" && s["holder"] != h["holder"] {
+				if s.rec["harness"] == "claude" && s.rec["holder"] != h["holder"] {
 					c.Warnings = append(c.Warnings, fmt.Sprintf("%s can read this login (Claude on a host held by someone else)", h["holder"]))
 				}
 			} else {
-				if harness != "codex" && astr(x["account"]) == "" {
+				if harness != "codex" && x.Account == "" {
 					skip(fmt.Sprintf("no %s subscription of %v applies", harness, jsText(director)), fmt.Sprintf("director:%v:%s", jsText(director), harness))
 					continue
 				}
@@ -612,7 +711,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 					skip(fmt.Sprintf("%s login belongs to %s", id, h["holder"]), "host:"+id+":holder")
 					continue
 				}
-				if hs := mapOf(mapOf(h["harnesses"])[harness]); hs["allowed"] == false {
+				if hs := hv.Harnesses[harness]; hs.Allowed != nil && !*hs.Allowed {
 					skip(fmt.Sprintf("%s is not allowed on host %s", harness, id), "placement:"+id+":"+harness)
 					continue
 				}
@@ -668,7 +767,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			c.Warnings = append(c.Warnings, "two personal subscriptions of one holder in one order list (provider rate-limit terms)")
 		}
 	}
-	reached, err := budgetsReached(q, astr(mapOf(e["dispatch"])["projectId"]), astr(e["directedBy"]))
+	reached, err := budgetsReached(q, deref(x.ProjectID), dir)
 	if err != nil {
 		return nil, err
 	}
@@ -708,22 +807,26 @@ func asHTTP(err error, he **HTTPError) bool {
 }
 
 func recordDecision(q *Request, e doc, polling string, cs []*candidate, winner *candidate) error {
-	var w any
+	run := queuedOf(e)
+	var w []byte
 	if winner != nil {
-		w = js(doc{"subscription": winner.Subscription, "host": winner.Host})
+		w = jsonBytes(struct {
+			Subscription doc    `json:"subscription"`
+			Host         string `json:"host"`
+		}{winner.Subscription, winner.Host})
 	}
-	return exec(q, "INSERT INTO route_decision(execution_id,project_id,host_id,candidates,winner) VALUES($1,$2,$3,$4,$5)", e["id"], mapOf(e["dispatch"])["projectId"], nilIf(polling), js(cs), w)
+	return q.db().DispRouteDecision(q.ctx(), db.DispRouteDecisionParams{ExecutionID: run.ID, ProjectID: run.Dispatch.ProjectID, HostID: strPtr(polling), Candidates: jsonBytes(cs), Winner: w})
 }
 
 var causeHost = regexp.MustCompile(`^host:([^:]+)`)
 
 // dispatchRun: one dispatch pass; when polling == "", evaluates and assigns every host.
 func (a *App) dispatchRun(q *Request, polling string) error {
-	var ids []string
-	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(array_agg(id ORDER BY seq),'{}') FROM execution WHERE host_id IS NULL AND state='preparing' AND kind='agent_run'").Scan(&ids); err != nil {
+	ids, err := q.db().DispQueuedIDs(q.ctx())
+	if err != nil {
 		return err
 	}
-	type stall struct{ reason, director, ask, projectID any }
+	type stall struct{ reason, director, ask, projectID string }
 	causes := map[string]stall{}
 	causeOrder := []string{}
 	var k *dispatchContext
@@ -741,7 +844,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		if !claimable(e) {
 			continue
 		}
-		if sid := astr(e["sessionId"]); sid != "" && !txHasLock(q.tx, "session:"+sid) {
+		if sid := queuedOf(e).SessionID; sid != "" && !txHasLock(q.tx, "session:"+sid) {
 			if canAcquireTxLock(q.tx, "session:"+sid) {
 				if err := acquireTxLock(q, "session:"+sid); err != nil {
 					return err
@@ -800,7 +903,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			delete(e, "waitDetail")
 			// A refused start ends this execution only: returning would fail the whole pass, and every later pass,
 			// while the execution stays queued (PDS18 outage, 2026-11-12). Its partial writes roll back first.
-			queued := mapOf(clone(e))
+			queued := docOf(e)
 			if err := exec(q, "SAVEPOINT start_command"); err != nil {
 				return err
 			}
@@ -816,7 +919,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				if err := put(q, "execution", queued); err != nil {
 					return err
 				}
-				if err := exec(q, "UPDATE execution SET wait_reason=NULL WHERE id=$1", e["id"]); err != nil {
+				if err := q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id}); err != nil {
 					return err
 				}
 				continue
@@ -827,7 +930,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if err := recordDecision(q, e, firstString(polling, best.Host), cs, best); err != nil {
 				return err
 			}
-			if err := exec(q, "UPDATE execution SET wait_reason=NULL WHERE id=$1", e["id"]); err != nil {
+			if err := q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id}); err != nil {
 				return err
 			}
 			continue
@@ -870,27 +973,29 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		}
 		// Checked again on the locked row: an overlapping pass may have written the same wait meanwhile.
 		if e["waitDetail"] != reason {
-			e["waitReason"], e["waitDetail"] = waitKindOf(cause), reason
+			kind := waitKindOf(cause)
+			e["waitReason"], e["waitDetail"] = kind, reason
 			if err := put(q, "execution", e); err != nil {
 				return err
 			}
-			if err := exec(q, "UPDATE execution SET wait_reason=$2 WHERE id=$1", e["id"], e["waitReason"]); err != nil {
+			if err := q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id, WaitReason: &kind}); err != nil {
 				return err
 			}
 			if err := recordDecision(q, e, polling, cs, nil); err != nil {
 				return err
 			}
 		}
-		var holder any
+		var holder string
 		if m := causeHost.FindStringSubmatch(cause); m != nil {
-			if h := k.byID[m[1]]; h != nil {
-				holder = h["holder"]
+			if _, ok := k.byID[m[1]]; ok {
+				holder = k.views[m[1]].Holder
 			}
 		} else if first != nil && first.Subscription != nil {
-			holder = first.Subscription["holder"]
+			holder, _ = first.Subscription["holder"].(string)
 		}
 		if _, ok := causes[cause]; !ok {
-			causes[cause] = stall{reason, e["directedBy"], holder, mapOf(e["dispatch"])["projectId"]}
+			run := queuedOf(e)
+			causes[cause] = stall{reason, deref(run.DirectedBy), holder, deref(run.Dispatch.ProjectID)}
 			causeOrder = append(causeOrder, cause)
 		}
 	}
@@ -899,10 +1004,10 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 	for _, cause := range causeOrder {
 		c := causes[cause]
 		tail := " Change the setting to let it start."
-		if c.ask != nil && c.ask != c.director {
+		if c.ask != "" && c.ask != c.director {
 			tail = fmt.Sprintf(" Ask %v, or change the setting.", c.ask)
 		}
-		stalls = append(stalls, Problem{Cause: cause, Text: fmt.Sprintf("Work is waiting: %v.%s", c.reason, tail), ProjectID: astr(c.projectID), AddressedTo: astr(c.director), Options: []any{"ok"}})
+		stalls = append(stalls, Problem{Cause: cause, Text: fmt.Sprintf("Work is waiting: %v.%s", c.reason, tail), ProjectID: c.projectID, AddressedTo: c.director, Options: []any{"ok"}})
 	}
 	return problemsSet(q, "", dispatchStallCauses, stalls)
 }
@@ -913,7 +1018,7 @@ const dispatchStallCauses = `^(subscription|placement|host|director|execution):|
 // claimRow locks an execution's row for this transaction and returns it while it is still claimable, nil otherwise.
 // executionStop takes the same row lock; every dispatch write of a queued execution goes through here.
 func claimRow(q *Request, id string) (doc, error) {
-	if err := exec(q, "SELECT 1 FROM execution WHERE id=$1 FOR UPDATE", id); err != nil {
+	if err := q.db().DispExecLock(q.ctx(), id); err != nil {
 		return nil, err
 	}
 	e, err := get(q, id, "execution")
@@ -931,105 +1036,130 @@ func claimable(e doc) bool {
 	return e["dispatch"] != nil && e["hostId"] == nil && e["state"] == "preparing" && e["stopRequested"] != true
 }
 
+// startSession: the fields startCommand reads of the session record.
+type startSession struct {
+	ID                 string                     `json:"id"`
+	DeliveryID         string                     `json:"deliveryId"`
+	Starter            string                     `json:"starter"`
+	WorkspaceSnapshots map[string]json.RawMessage `json:"workspaceSnapshots"`
+}
+
+// startBinding: the fields startCommand reads of the chosen binding (resolveAccount).
+type startBinding struct {
+	Binding *string `json:"binding"`
+	Holder  string  `json:"holder"`
+	Taken   bool    `json:"taken"`
+}
+
 // startCommand: the start command of a claimed execution, from the session as it is now and the chosen binding.
 func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, error) {
-	s, err := get(q, e["sessionId"], "session")
+	liveSession, err := get(q, e["sessionId"], "session")
 	if err != nil {
 		return nil, err
 	}
-	if err := taskAllowsWork(q, firstString(e["deliveryId"], s["deliveryId"], s["taskId"])); err != nil {
+	if err := taskAllowsWork(q, firstString(e["deliveryId"], liveSession["deliveryId"], liveSession["taskId"])); err != nil {
 		return nil, err
 	}
-	d := mapOf(e["dispatch"])
-	liveSession := s
-	s = mapOf(clone(s))
-	s["projectId"], s["workingDirectory"], s["workspaceKey"] = d["projectId"], d["workingDirectory"], d["workspaceKey"]
+	run := queuedOf(e)
+	d := run.Dispatch
+	sv, _ := asT[startSession](liveSession)
+	bv, _ := asT[startBinding](binding)
+	s := docOf(liveSession) // a copy: the start reads the dispatch's project and checkout
+	s["projectId"], s["workingDirectory"], s["workspaceKey"] = optAny(d.ProjectID), optAny(d.WorkingDirectory), optAny(d.WorkspaceKey)
 	e["hostId"] = host
 	if s["account"] != nil || binding != nil {
 		e["requestedAccount"] = s["account"]
 		if binding != nil {
 			e["effectiveAccount"] = binding
 		} else {
-			e["effectiveAccount"] = doc{"binding": s["account"], "legacy": true}
+			e["effectiveAccount"] = docOf(struct {
+				Binding any  `json:"binding"`
+				Legacy  bool `json:"legacy"`
+			}{s["account"], true})
 		}
 	}
-	if binding != nil && binding["taken"] == true {
+	if binding != nil && bv.Taken {
 		e["takenFrom"], e["directedBy"] = e["directedBy"], binding["holder"]
 	}
-	cfg := mapOf(s["agentConfig"])
+	cfg := rawMap(s["agentConfig"])
 	// The start payload is contract.StartPayload, field by field: the enqueue extras (inputs, skills, webRoute) are named
 	// fields, never a blind merge over the fields above (C7).
-	p := &contract.StartPayload{Harness: ptr(harnessOf(s)), Text: strPtr(d["input"]), Setup: strPtr(nonNil(s["setup"], "run")),
-		WorkspaceKey: strPtr(s["workspaceKey"]), WorkingDirectory: strPtr(s["workingDirectory"]), Model: strPtr(e["model"]), Effort: strPtr(e["effort"]),
+	p := &contract.StartPayload{Harness: ptr(harnessOf(s)), Text: strPtr(d.Input), Setup: strPtr(nonNil(s["setup"], "run")),
+		WorkspaceKey: strPtr(d.WorkspaceKey), WorkingDirectory: strPtr(d.WorkingDirectory), Model: strPtr(e["model"]), Effort: strPtr(e["effort"]),
 		Instructions: ptr(defaultInstructions), NativeSessionId: strp(s, "nativeSessionId")} // "" still reaches the executor's check
 	if s["account"] != nil || binding != nil {
 		if binding != nil {
-			p.Account = strPtr(binding["binding"])
+			p.Account = strPtr(bv.Binding)
 		} else {
 			p.Account = strPtr(s["account"])
 		}
 	}
-	if pid := astr(s["projectId"]); pid != "" {
-		snapshot := mapOf(e["projectSnapshot"])
-		if snapshot == nil { // queued before project snapshots: freeze the project as it is now
-			var err error
-			if snapshot, err = projectContext(q, pid); err != nil {
+	if pid := deref(d.ProjectID); pid != "" {
+		if e["projectSnapshot"] == nil { // queued before project snapshots: freeze the project as it is now
+			snapshot, err := projectContext(q, pid)
+			if err != nil {
 				return nil, err
 			}
 			e["projectSnapshot"] = snapshot
 		}
-		st := mapOf(snapshot["settings"])
-		p.ProjectId, p.Project = &pid, rawMap(st)
+		snap, _ := asT[projectSnapshot](e["projectSnapshot"])
+		p.ProjectId, p.Project = &pid, rawMap(snap.Settings)
 	}
-	networkSession := mapOf(clone(s))
-	if snapshot := mapOf(e["projectSnapshot"]); snapshot != nil {
-		networkSession["projectSettings"] = snapshot["settings"]
+	snapshot, _ := asT[*projectSnapshot](e["projectSnapshot"])
+	networkSession := docOf(s)
+	if snapshot != nil {
+		networkSession["projectSettings"] = snapshot.Settings
 	}
 	if gitNetworkOf(q, networkSession) {
 		p.GitNetwork = ptr(true)
 	}
 	if cfg != nil {
-		p.AgentConfig, p.Instructions = rawMap(cfg), ptr("")
-		if cfg["fleetOperations"] == true { // the profile opts in to every operation its director may call (fleet-pm-agent.md §1)
+		p.AgentConfig, p.Instructions = cfg, ptr("")
+		if string(cfg["fleetOperations"]) == "true" { // the profile opts in to every operation its director may call (fleet-pm-agent.md §1)
 			if dir := q.peopleSnapshot().person(firstString(e["directedBy"], ownerEmail(q))); dir != nil {
 				p.FleetOperations = rawList(fleetOperations(dir))
 			}
 		}
 	}
-	extra := mapOf(d["payload"])
+	extra := d.Payload
 	if v, ok := extra["inputs"]; ok {
-		if err := json.Unmarshal(jsonBytes(v), &p.Inputs); err != nil {
+		if err := json.Unmarshal(v, &p.Inputs); err != nil {
 			return nil, failf(400, "execution %v: pipeline inputs are not [{artifactId, path}]: %v", e["id"], err)
 		}
 	}
-	if list := anys(extra["attachments"]); len(list) > 0 {
-		inputs, attachments := startAttachments(astr(e["id"]), list)
+	var list []any
+	json.Unmarshal(extra["attachments"], &list)
+	if len(list) > 0 {
+		inputs, attachments := startAttachments(run.ID, list)
 		p.Inputs, p.Attachments = append(p.Inputs, inputs...), attachments
 	}
-	p.Skills, p.WebRoute = rawList(extra["skills"]), strPtr(extra["webRoute"])
-	if snapshot := mapOf(e["projectSnapshot"]); snapshot != nil {
+	var webRoute *string
+	json.Unmarshal(extra["webRoute"], &webRoute)
+	p.Skills, p.WebRoute = rawList(extra["skills"]), strPtr(webRoute)
+	if snapshot != nil {
 		instruction := ""
 		if p.Instructions != nil {
 			instruction = *p.Instructions
 		}
-		for _, f := range anys(snapshot["context"]) {
-			m := mapOf(f)
-			instruction += "\n\nProject context " + astr(m["path"]) + ":\n" + astr(m["text"])
-		}
-		// Stored JSON arrays can also be typed docs before their first database round-trip.
-		if xs, ok := snapshot["context"].([]doc); ok {
-			for _, m := range xs {
-				instruction += "\n\nProject context " + astr(m["path"]) + ":\n" + astr(m["text"])
-			}
+		for _, f := range snapshot.Context {
+			instruction += "\n\nProject context " + f.Path + ":\n" + f.Text
 		}
 		p.Instructions = &instruction
-		workspaces := mapOf(s["workspaceSnapshots"])
+		workspaces := sv.WorkspaceSnapshots
 		if workspaces == nil {
-			workspaces = doc{}
+			workspaces = map[string]json.RawMessage{}
 		}
-		key := host + ":" + astr(d["projectId"]) + ":" + astr(d["workspaceKey"])
-		if workspaces[key] == nil {
-			workspaces[key] = doc{"executionId": e["id"], "projectId": d["projectId"], "workspaceKey": d["workspaceKey"], "project": snapshot["settings"], "revision": snapshot["revision"], "contentSha": snapshot["contentSha"], "workingDirectory": s["workingDirectory"]}
+		key := host + ":" + deref(d.ProjectID) + ":" + deref(d.WorkspaceKey)
+		if ws := workspaces[key]; len(ws) == 0 || string(ws) == "null" {
+			workspaces[key] = jsonBytes(struct {
+				ExecutionID      any             `json:"executionId"`
+				ProjectID        any             `json:"projectId"`
+				WorkspaceKey     any             `json:"workspaceKey"`
+				Project          doc             `json:"project"`
+				Revision         json.RawMessage `json:"revision"`
+				ContentSha       json.RawMessage `json:"contentSha"`
+				WorkingDirectory any             `json:"workingDirectory"`
+			}{e["id"], optAny(d.ProjectID), optAny(d.WorkspaceKey), snapshot.Settings, nullRaw(snapshot.Revision), nullRaw(snapshot.ContentSha), s["workingDirectory"]})
 			liveSession["workspaceSnapshots"] = workspaces
 			if err := put(q, "session", liveSession); err != nil {
 				return nil, err
@@ -1044,24 +1174,44 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	if s["branch"] == false {
 		p.Branch = ptr(false)
 	}
-	if st := astr(s["starter"]); st != "" {
+	if st := sv.Starter; st != "" {
 		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\nThis conversation's preset. " + st))
 	}
-	command := doc{"id": newID(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": string(contract.CommandKindStart), "payload": p, "status": "pending", "handedOut": false}
+	command := docOf(struct {
+		ID          string `json:"id"`
+		ExecutionID any    `json:"executionId"`
+		SessionID   any    `json:"sessionId"`
+		HostID      string `json:"hostId"`
+		Kind        string `json:"kind"`
+		Status      string `json:"status"`
+		HandedOut   bool   `json:"handedOut"`
+	}{newID(), e["id"], s["id"], host, string(contract.CommandKindStart), "pending", false})
+	command["payload"] = p // the payload itself: agentDecorate completes it below
 	if err := agentDecorate(q, s, e, p); err != nil {
 		return nil, err
 	}
-	if granted := strs(cfg["connections"]); len(granted) > 0 && e["pipelineRunId"] == nil {
-		run, err := mint(q, doc{"executionId": e["id"], "directedBy": e["directedBy"], "projectId": s["projectId"], "experimentId": e["experimentId"], "pipelineRunId": s["pipelineRunId"]}, granted)
+	if granted := jsonStrings(cfg["connections"]); len(granted) > 0 && e["pipelineRunId"] == nil {
+		minted, err := mint(q, docOf(struct {
+			ExecutionID   any `json:"executionId"`
+			DirectedBy    any `json:"directedBy"`
+			ProjectID     any `json:"projectId"`
+			ExperimentID  any `json:"experimentId"`
+			PipelineRunID any `json:"pipelineRunId"`
+		}{e["id"], e["directedBy"], s["projectId"], e["experimentId"], s["pipelineRunId"]}), granted)
 		if err != nil {
 			return nil, err
 		}
-		if run != nil {
-			if run["token"] != nil {
-				p.RunToken, p.Connections = strPtr(run["token"]), rawList(run["connections"])
+		if minted != nil {
+			grant, _ := asT[struct {
+				Token       *string           `json:"token"`
+				Connections json.RawMessage   `json:"connections"`
+				Refused     []json.RawMessage `json:"refused"`
+			}](minted)
+			if grant.Token != nil {
+				p.RunToken, p.Connections = strPtr(grant.Token), rawList(grant.Connections)
 			}
-			if len(anys(run["refused"])) > 0 {
-				e["connectionsRefused"] = run["refused"]
+			if len(grant.Refused) > 0 {
+				e["connectionsRefused"] = minted["refused"]
 			}
 		}
 	}
@@ -1074,22 +1224,28 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	if err := preparePipelineCommand(q, e, command); err != nil {
 		return nil, err
 	}
-	if binding != nil && binding["taken"] == true {
-		task := astr(s["deliveryId"])
+	if binding != nil && bv.Taken {
+		task := sv.DeliveryID
 		if task == "" {
-			ms, err := queryRows(q, "SELECT task_id FROM execution WHERE id=$1", e["id"])
-			if err != nil {
+			t, err := q.db().DispExecTask(q.ctx(), run.ID)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return nil, err
 			}
-			if len(ms) > 0 {
-				task = astr(ms[0]["task_id"])
-			}
+			task = deref(t)
 		}
 		if task != "" {
-			if err := takeTaskFrom(q, task, astr(binding["holder"]), e["takenFrom"]); err != nil {
+			if err := takeTaskFrom(q, task, bv.Holder, e["takenFrom"]); err != nil {
 				return nil, err
 			}
 		}
 	}
 	return command, nil
+}
+
+// nullRaw: an absent JSON value as null.
+func nullRaw(v json.RawMessage) json.RawMessage {
+	if len(v) == 0 {
+		return json.RawMessage("null")
+	}
+	return v
 }

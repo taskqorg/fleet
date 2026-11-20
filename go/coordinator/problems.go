@@ -6,8 +6,14 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
+
+	"github.com/jackc/pgx/v5"
+
+	"fleet/coordinator/db"
 )
 
 var problemOptions = []any{"investigate", "dismiss"}
@@ -23,43 +29,51 @@ type Problem struct {
 }
 
 func problemAsk(q *Request, source string, p Problem) error {
-	data := doc{"cause": p.Cause}
+	// The question's data: cause, source and rule, then the problem's own fields over them.
+	data := map[string]json.RawMessage{"cause": jsonBytes(p.Cause)}
 	if source != "" {
-		data["source"] = source
+		data["source"] = jsonBytes(source)
 	}
 	if p.Rule != "" {
-		data["rule"] = p.Rule
+		data["rule"] = jsonBytes(p.Rule)
 	}
 	for k, v := range p.Data {
-		data[k] = v
+		data[k] = jsonBytes(v)
 	}
 	to := p.AddressedTo
 	if to == "" {
 		to = ownerEmail(q)
 	}
-	var pid any
-	if p.ProjectID != "" {
-		pid = p.ProjectID
-	}
 	options := p.Options
 	if options == nil {
 		options = problemOptions
 	}
-	qid, err := askQuestion(q, doc{"kind": "operator_decision", "text": p.Text, "options": options, "askedBy": "fleet", "projectId": pid, "data": data})
+	fleet := "fleet"
+	qid, err := askQuestionAs(q, questionAsk{Kind: "operator_decision", Text: p.Text, Options: jsonBytes(options), AskedBy: &fleet, ProjectID: p.ProjectID, Data: jsonBytes(data)})
 	if err != nil {
 		return err
 	}
-	return exec(q, "UPDATE question SET cause=$2,addressed_to=$3 WHERE id=$1", qid, p.Cause, to)
+	return q.db().TaskProblemSetCause(q.ctx(), db.TaskProblemSetCauseParams{ID: qid, Cause: &p.Cause, AddressedTo: &to})
 }
 
-// problemHeld: the open or answered question holding cause, if any.
+// problemHeld: the open or answered question holding cause (id and state), nil when none.
 func problemHeld(q *Request, cause string) (doc, error) {
-	return first(q, "SELECT id,state,data FROM question WHERE cause=$1 AND state IN ('open','answered') ORDER BY seq DESC LIMIT 1", cause)
+	h, err := q.db().TaskProblemHeld(q.ctx(), &cause)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	held := make(doc)
+	held["id"], held["state"] = h.ID, string(h.State)
+	return held, nil
 }
 
 // problemOpen: a one-off sender's cause (span writer, backup); asks once while held.
 func problemOpen(q *Request, cause string, projectID any, text string) error {
-	return problemRaise(q, "direct", Problem{Cause: cause, Text: text, ProjectID: astr(projectID)})
+	pid, _ := projectID.(string)
+	return problemRaise(q, "direct", Problem{Cause: cause, Text: text, ProjectID: pid})
 }
 
 // problemRaise asks p unless its cause is held.
@@ -81,30 +95,44 @@ func problemsClose(q *Request, causes []string) error {
 	if len(causes) == 0 {
 		return nil
 	}
-	held, err := queryRows(q, "SELECT id,state::text AS state FROM question WHERE cause=ANY($1) AND state IN ('open','answered') ORDER BY id FOR UPDATE", causes)
+	held, err := q.db().TaskProblemsHeld(q.ctx(), db.TaskProblemsHeldParams{Causes: causes})
 	if err != nil {
 		return err
 	}
-	return problemsRelease(q, held)
+	return problemsRelease(q, heldOf(held))
 }
 
 // problemsClosePrefix: problemClose for every held cause starting with prefix.
 func problemsClosePrefix(q *Request, prefix string) error {
-	held, err := queryRows(q, "SELECT id,state::text AS state FROM question WHERE starts_with(cause,$1) AND state IN ('open','answered') ORDER BY id FOR UPDATE", prefix)
+	held, err := q.db().TaskProblemsHeld(q.ctx(), db.TaskProblemsHeldParams{Prefix: &prefix})
 	if err != nil {
 		return err
 	}
-	return problemsRelease(q, held)
+	return problemsRelease(q, heldOf(held))
 }
 
-// problemsRelease: held questions (id, state) let go of their cause; an open one is withdrawn.
-func problemsRelease(q *Request, held []doc) error {
+// heldQuestion: a question holding a cause.
+type heldQuestion struct {
+	ID    string
+	State db.QuestionState
+}
+
+func heldOf(rows []db.TaskProblemsHeldRow) []heldQuestion {
+	out := make([]heldQuestion, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, heldQuestion{r.ID, r.State})
+	}
+	return out
+}
+
+// problemsRelease: held questions let go of their cause; an open one is withdrawn.
+func problemsRelease(q *Request, held []heldQuestion) error {
 	open, answered := []string{}, []string{}
 	for _, h := range held {
-		if h["state"] == "open" {
-			open = append(open, astr(h["id"]))
+		if h.State == db.QuestionStateOpen {
+			open = append(open, h.ID)
 		} else {
-			answered = append(answered, astr(h["id"]))
+			answered = append(answered, h.ID)
 		}
 	}
 	if err := questionsWithdraw(q, open); err != nil {
@@ -118,25 +146,24 @@ func problemsLetGo(q *Request, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return exec(q, "UPDATE question SET cause=NULL WHERE id=ANY($1) AND cause IS NOT NULL", ids)
+	return q.db().TaskProblemsLetGo(q.ctx(), ids)
 }
 
 // problemsSet: the full current set of the causes matching pattern (a regular expression), one pass of a source that
 // sees all of them at once (dispatch): a held cause no longer present closes at once, a new one is asked.
 func problemsSet(q *Request, source, pattern string, current []Problem) error {
-	held, err := queryRows(q, "SELECT id,state::text AS state,cause FROM question WHERE state IN ('open','answered') AND cause ~ $1 ORDER BY id", pattern)
+	held, err := q.db().TaskProblemsMatching(q.ctx(), pattern)
 	if err != nil {
 		return err
 	}
-	now, have, gone := map[string]bool{}, map[string]bool{}, []doc{}
+	now, have, gone := map[string]bool{}, map[string]bool{}, []heldQuestion{}
 	for _, p := range current {
 		now[p.Cause] = true
 	}
 	for _, h := range held {
-		c := astr(h["cause"])
-		have[c] = true
-		if !now[c] {
-			gone = append(gone, h)
+		have[h.Cause] = true
+		if !now[h.Cause] {
+			gone = append(gone, heldQuestion{h.ID, h.State})
 		}
 	}
 	if err := problemsRelease(q, gone); err != nil {
@@ -160,33 +187,32 @@ func problemsSync(q *Request, source string, current []Problem) error {
 	for _, p := range current {
 		now[p.Cause] = p
 	}
-	held, err := queryRows(q, "SELECT id,cause,coalesce(data->>'misses','0') AS misses FROM question WHERE cause LIKE 'problem:%' AND state IN ('open','answered') AND data->>'source'=$1", source)
+	held, err := q.db().TaskProblemsOfSource(q.ctx(), source)
 	if err != nil {
 		return err
 	}
 	have := map[string]bool{}
 	for _, h := range held {
-		c := astr(h["cause"])
-		have[c] = true
-		if p, present := now[c]; present {
+		have[h.Cause] = true
+		if p, present := now[h.Cause]; present {
 			if p.RefreshText {
-				if err := exec(q, `UPDATE question SET text=CASE WHEN state='open' THEN $2 ELSE text END, data=data-'misses'
-					WHERE id=$1 AND (data ? 'misses' OR (state='open' AND text IS DISTINCT FROM $2))`, h["id"], p.Text); err != nil {
-					return err
-				}
-			} else if err := exec(q, "UPDATE question SET data=data-'misses' WHERE id=$1 AND data ? 'misses'", h["id"]); err != nil {
+				err = q.db().TaskProblemRefresh(q.ctx(), db.TaskProblemRefreshParams{ID: h.ID, Text: p.Text})
+			} else {
+				err = q.db().TaskProblemPresent(q.ctx(), h.ID)
+			}
+			if err != nil {
 				return err
 			}
 			continue
 		}
-		n, _ := strconv.Atoi(astr(h["misses"]))
+		n, _ := strconv.Atoi(h.Misses)
 		if n+1 >= problemCleanRuns {
-			if err := problemClose(q, c); err != nil {
+			if err := problemClose(q, h.Cause); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := exec(q, "UPDATE question SET data=jsonb_set(data,'{misses}',to_jsonb($2::int)) WHERE id=$1", h["id"], n+1); err != nil {
+		if err := q.db().TaskProblemMissed(q.ctx(), db.TaskProblemMissedParams{ID: h.ID, Misses: int32(n + 1)}); err != nil {
 			return err
 		}
 	}

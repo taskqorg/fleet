@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
-	"fleet/contract"
+	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5"
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
+
+	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // projectWriteArgs: a decoded project_create or project_update; request is recorded under its JSON for idempotent replay.
@@ -19,7 +24,35 @@ type projectWriteArgs struct {
 	request       any
 }
 
-func projectWrite(q *Request, create bool, w projectWriteArgs) (doc, error) {
+// projectWriteResult: a project write's reply, recorded for its replay.
+type projectWriteResult struct {
+	ProjectID  string `json:"projectId"`
+	Revision   int64  `json:"revision"`
+	ContentSha string `json:"contentSha"`
+	Configured bool   `json:"configured"`
+}
+
+// projectSettingRefs: the settings of a project bundle that name hosts and profiles.
+type projectSettingRefs struct {
+	Environments []json.RawMessage          `json:"environments"`
+	Roles        map[string]json.RawMessage `json:"roles"`
+	Presets      json.RawMessage            `json:"presets"`
+	Execution    struct {
+		Profiles []json.RawMessage `json:"profiles"`
+	} `json:"execution"`
+}
+
+// rawText: a JSON string's value, "" for any other value.
+func rawText(raw json.RawMessage) string {
+	var s string
+	if t := bytes.TrimSpace(raw); len(t) == 0 || t[0] != '"' || json.Unmarshal(raw, &s) != nil {
+		return ""
+	}
+	return s
+}
+
+// projectWrite: a project_create or project_update; its reply JSON (a retry replays the recorded one).
+func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 	id := w.id
 	op := "project_update"
 	if create {
@@ -32,9 +65,7 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) (doc, error) {
 		return nil, fail(400, "Expected project identity and requestId")
 	}
 	// GLOBAL also serializes people projection replacement; authenticate again in this transaction.
-	var roles []string
-	var owner bool
-	if err := q.tx.QueryRow(q.ctx(), "SELECT roles,owner FROM person WHERE email=$1", q.person.Email).Scan(&roles, &owner); err != nil {
+	if _, err := q.db().DefPersonRoles(q.ctx(), q.person.Email); err != nil {
 		return nil, fail(403, "Director is unavailable")
 	}
 	bundle, err := projectBundle(id, docOf(w.content))
@@ -46,21 +77,17 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) (doc, error) {
 		return nil, err
 	}
 	payload := sha256Text(js(body(q))) // the body as sent, keys sorted: a retry matches its stored request
-	var prior []byte
-	var digest string
-	err = q.tx.QueryRow(q.ctx(), "SELECT payload_sha,result FROM project_write_request WHERE directing_email=$1 AND operation=$2 AND request_id=$3", q.person.Email, op, w.requestID).Scan(&digest, &prior)
+	prior, err := q.db().DefWriteRequest(q.ctx(), db.DefWriteRequestParams{DirectingEmail: q.person.Email, Operation: op, RequestID: w.requestID})
 	if err == nil {
 		if !mayAccessProjectID(q.person, id) {
 			return nil, fail(404, "Unknown project")
 		}
-		if digest != payload {
+		if prior.PayloadSha != payload {
 			return nil, fail(409, "Request identity conflict")
 		}
-		var out doc
-		err = json.Unmarshal(prior, &out)
-		return out, err
+		return prior.Result, nil
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	if !create && !mayAccessProjectID(q.person, id) {
@@ -82,11 +109,11 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) (doc, error) {
 		}
 		// Creation may publish change rows only for its freshly reserved identity.
 		if sc := scopeOf(q.person); sc != nil {
-			if _, err := q.tx.Exec(q.ctx(), "SELECT set_config('fleet.project_ids',$1,true)", sc.ProjectIDs+","+id); err != nil {
+			if err := q.db().DefSetProjectScope(q.ctx(), sc.ProjectIDs+","+id); err != nil {
 				return nil, err
 			}
 		}
-		if err := exec(q, "INSERT INTO definition(kind,id,path,head,project_id,created_by,initial_member) VALUES('project',$1,$2,0,$1,$3,$3)", id, "config/projects/"+id+"/project.json", q.person.Email); err != nil {
+		if err := q.db().DefProjectCreate(q.ctx(), db.DefProjectCreateParams{ID: id, Path: "config/projects/" + id + "/project.json", CreatedBy: &q.person.Email}); err != nil {
 			return nil, err
 		}
 	} else {
@@ -100,27 +127,36 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) (doc, error) {
 			return nil, fail(409, "Project revision changed")
 		}
 	}
+	var settings projectSettingRefs
+	json.Unmarshal(jsonBytes(bundle["settings"]), &settings)
 	// A project edit cannot turn a foreign host into a newly granted resource.
-	previous := doc{}
+	var previous struct {
+		Settings struct {
+			Environments []json.RawMessage `json:"environments"`
+		} `json:"settings"`
+	}
 	if head != nil {
-		var old doc
-		if err := json.Unmarshal(head.Content, &old); err != nil {
+		if err := json.Unmarshal(head.Content, &previous); err != nil {
 			return nil, err
 		}
-		previous = mapOf(old["settings"])
 	}
-	for _, raw := range anys(mapOf(bundle["settings"])["environments"]) {
-		environment := mapOf(raw)
+	for _, raw := range settings.Environments {
+		now, _ := canonicalText([]byte(raw))
 		unchanged := false
-		for _, prior := range anys(previous["environments"]) {
-			if canonical(prior) == canonical(raw) {
+		for _, prior := range previous.Settings.Environments {
+			if was, _ := canonicalText([]byte(prior)); was == now {
 				unchanged = true
 			}
 		}
 		if unchanged || fullAccess(q.person) {
 			continue
 		}
-		h, err := maybe(q, "host:"+astr(environment["hostId"]), "host")
+		var environment struct {
+			HostID any `json:"hostId"`
+		}
+		json.Unmarshal(raw, &environment)
+		hostID, _ := environment.HostID.(string)
+		h, err := maybe(q, "host:"+hostID, "host")
 		if err != nil {
 			return nil, err
 		}
@@ -128,13 +164,18 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) (doc, error) {
 			return nil, fail(403, "Host binding is not granted")
 		}
 	}
-	for _, profile := range mapOf(mapOf(bundle["settings"])["roles"]) {
-		if _, err := readTrustedProfile(q, astr(profile)); err != nil {
+	for _, profile := range settings.Roles {
+		if _, err := readTrustedProfile(q, rawText(profile)); err != nil {
 			return nil, fail(400, "Unknown role configuration")
 		}
 	}
 	// A preset starts with its role's profile or its own: both must be trusted profiles, so a saved preset can start.
-	presets, err := parsePresets(nonNil(mapOf(bundle["settings"])["presets"], []any{}))
+	var presetsValue any
+	json.Unmarshal(settings.Presets, &presetsValue)
+	if presetsValue == nil {
+		presetsValue = []any{}
+	}
+	presets, err := parsePresets(presetsValue)
 	if err != nil {
 		return nil, err
 	}
@@ -143,12 +184,12 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) (doc, error) {
 			if _, err := readTrustedProfile(q, p.Profile); err != nil {
 				return nil, fail(400, "Unknown preset profile "+p.Profile)
 			}
-		} else if astr(mapOf(mapOf(bundle["settings"])["roles"])[p.Role]) == "" {
+		} else if rawText(settings.Roles[p.Role]) == "" {
 			return nil, fail(400, "Preset "+p.ID+" names role "+p.Role+", which the project does not map, and no profile")
 		}
 	}
-	for _, profile := range anys(mapOf(mapOf(bundle["settings"])["execution"])["profiles"]) {
-		if _, err := readTrustedProfile(q, astr(profile)); err != nil {
+	for _, profile := range settings.Execution.Profiles {
+		if _, err := readTrustedProfile(q, rawText(profile)); err != nil {
 			return nil, fail(400, "Unknown execution profile")
 		}
 	}
@@ -171,12 +212,18 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) (doc, error) {
 		if err != nil {
 			return nil, err
 		}
-		if mapOf(session["focus"])["projectIds"] != "*" {
+		var focus struct {
+			ProjectIDs any `json:"projectIds"`
+		}
+		json.Unmarshal(jsonBytes(session["focus"]), &focus)
+		if focus.ProjectIDs != "*" {
 			ids := focusIDs(session)
 			if !contains(ids, id) {
 				ids = append(ids, id)
 			}
-			session["focus"] = doc{"projectIds": ids}
+			session["focus"] = struct {
+				ProjectIDs []string `json:"projectIds"`
+			}{ids}
 			if err := put(q, "session", session); err != nil {
 				return nil, err
 			}
@@ -191,40 +238,59 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) (doc, error) {
 			return nil, err
 		}
 	}
-	out := doc{"projectId": id, "revision": rev.Revision, "contentSha": rev.ContentSha, "configured": true}
-	if err := exec(q, "INSERT INTO project_write_request VALUES($1,$2,$3,$4,$5,$6)", q.person.Email, op, w.requestID, payload, id, jsonBytes(out)); err != nil {
+	out := jsonBytes(projectWriteResult{ProjectID: id, Revision: rev.Revision, ContentSha: rev.ContentSha, Configured: true})
+	if err := q.db().DefWriteRequestInsert(q.ctx(), db.DefWriteRequestInsertParams{DirectingEmail: q.person.Email, Operation: op, RequestID: w.requestID,
+		PayloadSha: payload, ProjectID: id, Result: out}); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// projectReply: a project write's reply JSON as its open contract reply.
+func projectReply(out []byte, err error) (map[string]json.RawMessage, error) {
+	if err != nil {
+		return nil, err
+	}
+	var r map[string]json.RawMessage
+	return r, json.Unmarshal(out, &r)
 }
 
 func projectInitialRevoke(q *Request, r *contract.ProjectInitialAccessRevokeRequest) (contract.ProjectInitialAccessRevokeReply, error) {
 	if !q.person.Owner { // the owner only, stricter than the declared owner rule (full access)
 		return contract.ProjectInitialAccessRevokeReply{}, fail(403, "Only the owner administers access")
 	}
-	out, err := projectInitialRevokeDoc(q, r.ProjectId, r.BaseAccessVersion)
-	return replyAs[contract.ProjectInitialAccessRevokeReply](out, err)
+	out, err := projectInitialRevokeOf(q, r.ProjectId, r.BaseAccessVersion)
+	if err != nil {
+		return nil, err
+	}
+	return projectReply(jsonBytes(out), nil)
 }
 
-func projectInitialRevokeDoc(q *Request, id string, base int64) (doc, error) {
-	var version int64
-	var revoked bool
-	if err := q.tx.QueryRow(q.ctx(), "SELECT access_version,initial_member_revoked_at IS NOT NULL FROM definition WHERE kind='project' AND id=$1 FOR UPDATE", id).Scan(&version, &revoked); err != nil {
-		return nil, fail(404, "Unknown project")
+type projectRevokeResult struct {
+	ProjectID     string `json:"projectId"`
+	AccessVersion int64  `json:"accessVersion"`
+	Revoked       bool   `json:"revoked"`
+}
+
+func projectInitialRevokeOf(q *Request, id string, base int64) (projectRevokeResult, error) {
+	a, err := q.db().DefProjectAccessLock(q.ctx(), id)
+	if err != nil {
+		return projectRevokeResult{}, fail(404, "Unknown project")
 	}
-	if !revoked {
+	version := a.AccessVersion
+	if !a.Revoked {
 		if base != version {
-			return nil, fail(409, "Access version changed")
+			return projectRevokeResult{}, fail(409, "Access version changed")
 		}
-		if err := exec(q, "UPDATE definition SET initial_member_revoked_at=now(),access_version=access_version+1 WHERE kind='project' AND id=$1", id); err != nil {
-			return nil, err
+		if err := q.db().DefProjectRevoke(q.ctx(), id); err != nil {
+			return projectRevokeResult{}, err
 		}
-		if err := put(q, "setting-change", doc{"id": newID(), "projectId": id, "target": "project:" + id, "field": "initialAccess", "previous": "active", "value": "revoked", "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
-			return nil, err
+		if err := auditDefinition(q, definitionChange{ProjectID: id, Target: "project:" + id, Field: "initialAccess", Previous: "active", Value: "revoked"}); err != nil {
+			return projectRevokeResult{}, err
 		}
 		version++
 	}
-	return doc{"projectId": id, "accessVersion": version, "revoked": true}, nil
+	return projectRevokeResult{ProjectID: id, AccessVersion: version, Revoked: true}, nil
 }
 
 // projectArchive: retire a project definition (owner decision to drop a project). Its tasks, sessions and executions
@@ -233,109 +299,121 @@ func projectInitialRevokeDoc(q *Request, id string, base int64) (doc, error) {
 // The GLOBAL write lock of every operation serializes this check with task_create and session_start; afterwards
 // task_create, project_update and project_create refuse the id.
 func projectArchive(q *Request, r *contract.ProjectArchiveRequest) (contract.ProjectArchiveReply, error) {
-	out, err := projectArchiveDoc(q, r.ProjectId)
-	return replyAs[contract.ProjectArchiveReply](out, err)
+	return projectArchiveOf(q, r.ProjectId)
 }
 
-func projectArchiveDoc(q *Request, id string) (doc, error) {
-	rows, err := queryRows(q, `SELECT kind,count(*) AS n,min(id) AS example FROM (
-	  SELECT 'task' AS kind,id FROM task WHERE project_id=$1 AND state::text=ANY($2)
-	  UNION ALL SELECT 'session',id FROM session WHERE project_id=$1 AND archived_at IS NULL
-	  UNION ALL SELECT 'execution',id FROM execution WHERE project_id=$1 AND kind::text<>'pipeline_step' AND state IN ('preparing','running','waiting')) o GROUP BY kind ORDER BY kind`, id, slices.Collect(maps.Keys(openTask)))
+func projectArchiveOf(q *Request, id string) (contract.ProjectArchiveReply, error) {
+	var out contract.ProjectArchiveReply
+	rows, err := q.db().DefProjectOpenWork(q.ctx(), db.DefProjectOpenWorkParams{ProjectID: id, TaskStates: slices.Collect(maps.Keys(openTask))})
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	if len(rows) > 0 {
 		open := []string{}
 		for _, r := range rows {
-			open = append(open, fmt.Sprintf("%v %s (e.g. %s)", r["n"], astr(r["kind"]), astr(r["example"])))
+			open = append(open, fmt.Sprintf("%v %s (e.g. %s)", r.N, r.Kind, r.Example))
 		}
-		return nil, fail(409, "Close first: "+strings.Join(open, ", "))
+		return out, fail(409, "Close first: "+strings.Join(open, ", "))
 	}
 	// The head stays readable after retirement, so archiving again (idempotent) cleans keys a first run left behind.
-	var raw []byte
-	err = q.tx.QueryRow(q.ctx(), `SELECT r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
-	  WHERE d.kind='project' AND d.id=$1`, id).Scan(&raw)
-	if err == pgx.ErrNoRows {
-		return nil, fail(404, "Unknown project")
-	}
+	heads, err := definitionsOf(q.ctx(), q.db(), definitionFilter{kind: "project", id: id})
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	conns, err := headConnections(raw)
+	if len(heads) == 0 {
+		return out, fail(404, "Unknown project")
+	}
+	conns, err := headConnections(heads[0].Content)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	if err := exec(q, "UPDATE definition SET retired_at=coalesce(retired_at,now()) WHERE kind='project' AND id=$1", id); err != nil {
-		return nil, err
+	if err := q.db().DefProjectRetire(q.ctx(), id); err != nil {
+		return out, err
 	}
 	removed, err := removeUnusedConnections(q, conns)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	invalidateEnvCacheOnCommit(q)
-	return doc{"projectId": id, "archived": true, "connectionRemovals": removed}, nil
+	return contract.ProjectArchiveReply{ProjectId: id, Archived: true, ConnectionRemovals: removed}, nil
 }
 
 // projectRetired: the id belongs to an archived project (its definition row stays, so the id is never reused).
 func projectRetired(q *Request, id string) (bool, error) {
-	return has(q, "SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NOT NULL", id)
+	return q.db().DefProjectRetired(q.ctx(), id)
 }
 
 func init() {
 	op("project_archive", projectArchive)
 	op("project_create", func(q *Request, r *contract.ProjectCreateRequest) (contract.ProjectCreateReply, error) {
-		return replyAs[contract.ProjectCreateReply](projectWrite(q, true, projectWriteArgs{id: r.Id, requestID: r.RequestId, content: r.Content, request: r}))
+		return projectReply(projectWrite(q, true, projectWriteArgs{id: r.Id, requestID: r.RequestId, content: r.Content, request: r}))
 	})
 	op("project_update", func(q *Request, r *contract.ProjectUpdateRequest) (contract.ProjectUpdateReply, error) {
-		return replyAs[contract.ProjectUpdateReply](projectWrite(q, false, projectWriteArgs{id: r.ProjectId, requestID: r.RequestId, content: r.Content,
+		return projectReply(projectWrite(q, false, projectWriteArgs{id: r.ProjectId, requestID: r.RequestId, content: r.Content,
 			baseRevision: r.BaseRevision, repoSha: r.RepoSha, request: r}))
 	})
 	op("project_initial_access_revoke", projectInitialRevoke)
 }
 
+// projectContextFile: one owned context file of a project as its context shows it.
+type projectContextFile struct {
+	Path   any    `json:"path"`
+	Text   any    `json:"text"`
+	Sha256 string `json:"sha256"`
+}
+
+// projectContext: a live project's head as the record its callers read (dispatch, agents, projects.go): the bundle's
+// settings at the top, with content (the bundle), the parsed settings, unknownKeys, context, revision and contentSha;
+// in a transaction also its repoSha and sourceState, and for the owner its initialAccess.
 func projectContext(q *Request, id string) (doc, error) {
-	var raw []byte
-	var revision int64
-	var hash string
-	read := func(tx pgx.Tx) error {
-		return tx.QueryRow(q.ctx(), `SELECT r.content,d.head,r.content_sha FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head WHERE d.kind='project' AND d.id=$1 AND d.retired_at IS NULL`, id).Scan(&raw, &revision, &hash)
+	var heads []definitionRow
+	read := func(d *db.Queries) error {
+		var err error
+		heads, err = definitionsOf(q.ctx(), d, definitionFilter{kind: "project", id: id, current: true})
+		return err
 	}
 	var err error
 	if q.tx != nil {
-		err = read(q.tx)
+		err = read(q.db())
 	} else {
-		err = q.app.store.Tx(q.ctx(), nil, false, "", read)
-	}
-	if err == pgx.ErrNoRows {
-		return nil, fail(404, "Unknown project")
+		err = q.app.store.Tx(q.ctx(), nil, false, "", func(tx pgx.Tx) error { return read(db.New(tx)) })
 	}
 	if err != nil {
 		return nil, err
 	}
-	var b doc
-	if err = json.Unmarshal(raw, &b); err != nil {
+	if len(heads) == 0 {
+		return nil, fail(404, "Unknown project")
+	}
+	h := heads[0]
+	var b doc // the open bundle, as projectBundle and projectSettings (projects.go) read it
+	if err = json.Unmarshal(h.Content, &b); err != nil {
 		return nil, err
 	}
 	if _, err = projectBundle(id, b); err != nil {
 		return nil, err
 	}
-	settings := mapOf(b["settings"])
-	parsed, unknown, err := projectSettings(settings)
+	var parts struct {
+		Settings     doc `json:"settings"`
+		ContextFiles []struct {
+			Path any `json:"path"`
+			Text any `json:"text"`
+		} `json:"contextFiles"`
+	}
+	if err = json.Unmarshal(h.Content, &parts); err != nil {
+		return nil, err
+	}
+	parsed, unknown, err := projectSettings(parts.Settings)
 	if err != nil {
 		return nil, err
 	}
-	out := doc{}
-	for k, v := range settings {
-		out[k] = v
-	}
+	out := make(doc, len(parts.Settings)+10)
+	maps.Copy(out, parts.Settings)
 	out["content"] = b
 	out["settings"] = parsed
 	out["unknownKeys"] = unknown
 	ctx := []doc{}
-	for _, f := range anys(b["contextFiles"]) {
-		m := mapOf(f)
-		ctx = append(ctx, doc{"path": m["path"], "text": m["text"], "sha256": sha256Text(js(m["text"]))})
+	for _, f := range parts.ContextFiles {
+		ctx = append(ctx, docOf(projectContextFile{Path: f.Path, Text: f.Text, Sha256: sha256Text(js(f.Text))}))
 	}
 	out["context"] = ctx
 	if q.tx != nil {
@@ -347,18 +425,21 @@ func projectContext(q *Request, id string) (doc, error) {
 		out["sourceState"] = head.state()
 	}
 	if q.person != nil && q.person.Owner && q.tx != nil {
-		var member *string
-		var revoked bool
-		var accessVersion int64
-		if err := q.tx.QueryRow(q.ctx(), "SELECT initial_member,initial_member_revoked_at IS NOT NULL,access_version FROM definition WHERE kind='project' AND id=$1", id).Scan(&member, &revoked, &accessVersion); err != nil {
+		a, err := q.db().DefProjectAccess(q.ctx(), id)
+		if err != nil {
 			return nil, err
 		}
-		out["initialAccess"] = doc{"member": member, "revoked": revoked, "version": accessVersion}
+		out["initialAccess"] = docOf(struct {
+			Member  *string `json:"member"`
+			Revoked bool    `json:"revoked"`
+			Version int64   `json:"version"`
+		}{a.InitialMember, a.Revoked, a.AccessVersion})
 	}
-	out["revision"] = revision
-	out["contentSha"] = hash
+	out["revision"] = h.Head
+	out["contentSha"] = h.ContentSha
 	return out, nil
 }
+
 func projectIDs(q *Request) ([]string, error) {
 	rows, err := headTexts(q, "project")
 	if err != nil {
@@ -403,20 +484,15 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 	if len(conns) == 0 {
 		return out, nil
 	}
-	heads, err := queryRows(q, `SELECT d.id,r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
-	  WHERE d.kind='project' AND d.retired_at IS NULL`)
+	heads, err := headTexts(q, "project")
 	if err != nil {
 		return nil, err
 	}
 	used := map[string]bool{}
 	for _, h := range heads {
-		raw, isText := h["content"].(string)
-		if !isText {
-			raw = js(h["content"])
-		}
-		cs, err := headConnections([]byte(raw))
+		cs, err := headConnections(h.text)
 		if err != nil {
-			return nil, fail(409, "Project "+astr(h["id"])+" does not parse; no deploy key is removed")
+			return nil, fail(409, "Project "+h.id+" does not parse; no deploy key is removed")
 		}
 		for _, c := range cs {
 			used[c] = true
@@ -430,10 +506,14 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	live := []doc{} // a removed host never fetches a removal
+	type hostConnections struct {
+		id          string
+		connections []string
+	}
+	live := []hostConnections{} // a removed host never fetches a removal
 	for _, o := range obs {
-		if !slices.Contains(removed, astr(o["id"])) {
-			live = append(live, o)
+		if id, _ := o["id"].(string); !slices.Contains(removed, id) {
+			live = append(live, hostConnections{id, strs(o["gitConnections"])})
 		}
 	}
 	for _, c := range conns {
@@ -441,25 +521,44 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 			continue
 		}
 		for _, o := range live {
-			host := astr(o["id"])
-			if !slices.Contains(strs(o["gitConnections"]), c) {
+			host := o.id
+			if !slices.Contains(o.connections, c) {
 				continue
 			}
-			if dup, err := has(q, "SELECT 1 FROM command WHERE host_id=$1 AND kind='connection-remove' AND status='pending' AND payload->'payload'->>'connection'=$2", host, c); err != nil || dup {
+			if dup, err := q.db().DefRemovalPending(q.ctx(), db.DefRemovalPendingParams{HostID: host, Connection: c}); err != nil || dup {
 				if err != nil {
 					return nil, err
 				}
 				continue
 			}
 			sid, xid := newID(), newID()
-			if err := put(q, "session", doc{"id": sid, "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
+			if err := put(q, "session", docOf(struct {
+				ID        string `json:"id"`
+				CreatedAt int64  `json:"createdAt"`
+				Actor     string `json:"actor"`
+			}{sid, nowMs(), "program-worker"})); err != nil {
 				return nil, err
 			}
-			if err := put(q, "execution", doc{"id": xid, "executionId": xid, "sessionId": sid, "hostId": host, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
+			if err := put(q, "execution", docOf(struct {
+				ID          string `json:"id"`
+				ExecutionID string `json:"executionId"`
+				SessionID   string `json:"sessionId"`
+				HostID      string `json:"hostId"`
+				State       string `json:"state"`
+				CreatedAt   int64  `json:"createdAt"`
+				Actor       string `json:"actor"`
+			}{xid, xid, sid, host, "preparing", nowMs(), "program-worker"})); err != nil {
 				return nil, err
 			}
-			if err := put(q, "command", doc{"id": newID(), "executionId": xid, "sessionId": sid, "hostId": host, "kind": string(contract.CommandKindConnectionRemove), "status": "pending",
-				"payload": contract.ConnectionRemovePayload{Connection: c}}); err != nil {
+			if err := put(q, "command", docOf(struct {
+				ID          string                           `json:"id"`
+				ExecutionID string                           `json:"executionId"`
+				SessionID   string                           `json:"sessionId"`
+				HostID      string                           `json:"hostId"`
+				Kind        string                           `json:"kind"`
+				Status      string                           `json:"status"`
+				Payload     contract.ConnectionRemovePayload `json:"payload"`
+			}{newID(), xid, sid, host, string(contract.CommandKindConnectionRemove), "pending", contract.ConnectionRemovePayload{Connection: c}})); err != nil {
 				return nil, err
 			}
 			out = append(out, host+"/"+c)
@@ -475,12 +574,15 @@ func withdrawConnectionRemovals(q *Request, conns []string) error {
 	if len(conns) == 0 {
 		return nil
 	}
-	cmds, err := queryRows(q, `SELECT `+convTables["command"].record()+` AS data FROM command WHERE kind='connection-remove' AND status='pending' AND payload->'payload'->>'connection'=ANY($1) ORDER BY seq`, conns)
+	ids, err := q.db().DefRemovalsPending(q.ctx(), conns)
 	if err != nil {
 		return err
 	}
-	for _, r := range cmds {
-		c := mapOf(r["data"])
+	for _, id := range ids {
+		c, err := get(q, id, "command")
+		if err != nil {
+			return err
+		}
 		c["status"], c["stopDetail"] = "stopped", "connection in use again"
 		if err := put(q, "command", c); err != nil {
 			return err
