@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"fleet/coordinator/db"
 )
 
 type suffixSnapshot struct {
@@ -29,14 +31,15 @@ func suffixKey(identity doc) string {
 
 // Called only after expRow succeeds in the caller's ordinary project scope. No cached result bypasses authorization.
 func suffixReplay(q *Request, identity doc) (string, error) {
-	rs, err := rows(q, "SELECT data || jsonb_build_object('id',id,'experimentId',experiment_id,'kind',kind) FROM execution WHERE request_id=$1", suffixKey(identity))
-	if err != nil {
+	key := suffixKey(identity)
+	records, err := q.db().LabSuffixRuns(q.ctx(), &key)
+	if err != nil || len(records) == 0 {
 		return "", err
 	}
-	if len(rs) == 0 {
-		return "", nil
+	var r doc
+	if err := json.Unmarshal(records[0], &r); err != nil {
+		return "", err
 	}
-	r := rs[0]
 	got := mapOf(mapOf(r["recovery"])["identity"])
 	if r["kind"] != "pipeline_run" || len(got) != 4 || !same(got, identity) || r["experimentId"] != identity["experimentId"] || astr(r["id"]) == "" {
 		return "", suffixConflict("request identity conflict")
@@ -327,7 +330,7 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 		if err != nil {
 			return nil, err
 		}
-		owned, err := has(q, "SELECT 1 FROM execution WHERE id=$1 AND project_id=$2 AND kind='host_job'", xid, source["projectId"])
+		owned, err := q.db().LabHostJobInProject(q.ctx(), db.LabHostJobInProjectParams{ID: xid, ProjectID: strPtr(source["projectId"])})
 		if err != nil {
 			return nil, err
 		}
@@ -463,14 +466,10 @@ func expRetrySuffix(q *Request, id, cell, sourceRunID, requestID string) (doc, e
 		}
 	}
 
-	m := runLock(astr(identity["sourceRunId"]))
-	m.Lock()
 	var created bool
-	var done doc
 	err = runTx(q.ctx(), q.app, q, true, "", func(q *Request) error {
 		// A retried transaction must not retain side effects from a previous rolled-back attempt.
 		created = false
-		done = nil
 		result = ""
 		if err := acquireTxLock(q, "experiment:"+id); err != nil {
 			return err
@@ -524,7 +523,7 @@ func expRetrySuffix(q *Request, id, cell, sourceRunID, requestID string) (doc, e
 			}
 			return nil
 		}
-		_, done, err = pipelineCancelIn(q, astr(fresh.source["id"]))
+		_, _, err = pipelineCancelIn(q, astr(fresh.source["id"]))
 		if err != nil {
 			return err
 		}
@@ -534,16 +533,11 @@ func expRetrySuffix(q *Request, id, cell, sourceRunID, requestID string) (doc, e
 		created = true
 		return nil
 	})
-	m.Unlock()
 	if err != nil {
 		return nil, err
 	}
 	if created {
-		if done != nil {
-			notifyFinished(q.app, done)
-		}
-		pipelineAdvance(q.app, result)
-		if err := labReconcile(q.ctx(), q.app, id); err != nil {
+		if err := labRunNow(q.ctx(), q.app, id); err != nil {
 			return nil, err
 		}
 	}

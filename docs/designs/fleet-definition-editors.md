@@ -166,7 +166,7 @@ git: definition_export  ──▶  unified diff of every ahead definition agains
 
 ### Reconcile at start
 
-Reconcile runs once at start, in an `onStart` hook registered before the hooks that resume work (`pipelineTick`, `labReconcileRunning`), inside one `writeTxAs` under the `GLOBAL` lock. Terms: `repoSha` is the git blob SHA-1 of the file bytes (matches `git hash-object`); `repoContentSha` is the SHA-256 of the file's canonical content; the `definition` row keeps the last seen `repo_sha`, `repo_content` and `repo_content_sha`. A revision's `repo_base` is the `repo_sha` that was current when it was written.
+Reconcile runs once at start, in an `onStart` hook registered before the work kit starts (which resumes pipeline runs and experiments), inside one `writeTxAs` under the `GLOBAL` lock. Terms: `repoSha` is the git blob SHA-1 of the file bytes (matches `git hash-object`); `repoContentSha` is the SHA-256 of the file's canonical content; the `definition` row keeps the last seen `repo_sha`, `repo_content` and `repo_content_sha`. A revision's `repo_base` is the `repo_sha` that was current when it was written.
 
 For each definition file:
 

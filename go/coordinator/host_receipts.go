@@ -51,9 +51,7 @@ func receiptTx(q *Request, write bool, locks []string, fn func() (any, string, e
 	if err != nil {
 		return nil, err
 	}
-	if ended != "" {
-		go pipelineOnExecution(q.app, ended)
-	}
+	_ = ended // an ended step's run is woken by its executionTransition
 	return out, nil
 }
 

@@ -275,6 +275,11 @@ var referenceMap = []objectRef{
 	{table: "task_derived", column: "task_id", kind: "task", mode: refOwn},
 	{table: "task_derived", column: "project_id", kind: "project", mode: refOwn},
 	{table: "wake_outbox", column: "wake_id", mode: refNone},
+	// Work kit rows (pipeline_work.go, delegation_work.go): they go with their run or experiment by foreign key; a
+	// delegation's goes when its step finds the delegation gone.
+	{table: "pipeline_work", column: "run_id", mode: refNone},
+	{table: "lab_work", column: "experiment_id", mode: refNone},
+	{table: "delegation_source_work", column: "delegation_id", mode: refNone},
 }
 
 // objectTables: the tables whose rows are objects of a kind; the cascade of a root is closed over their refOwn columns.

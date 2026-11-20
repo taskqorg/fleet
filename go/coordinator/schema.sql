@@ -3771,3 +3771,36 @@ BEGIN
  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
  provider := v_provider; is_api_conn := coalesce(v_is_api, false); RETURN NEXT;
 END $function$;
+-- migration 79: pipelines, Lab and delegation sources on the work kit (docs/designs/fleet-standard.md S6, stage 6). A
+-- running pipeline run, an experiment to look at and a delegation whose website sources are read each have one row
+-- with the kit's retry columns; producers insert or wake it in their own transaction, and the kit's queue deletes it
+-- when there is nothing more to do. The runs and experiments a start used to sweep (running runs, succeeded draft-examples
+-- runs to import, running, paused and stopped experiments) get their rows here.
+CREATE TABLE pipeline_work (
+ run_id text PRIMARY KEY REFERENCES execution(id) ON DELETE CASCADE,
+ attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ last_error text NULL
+);
+CREATE INDEX pipeline_work_due ON pipeline_work(next_attempt_at);
+CREATE TABLE lab_work (
+ experiment_id text PRIMARY KEY REFERENCES experiment(id) ON DELETE CASCADE,
+ attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ last_error text NULL
+);
+CREATE INDEX lab_work_due ON lab_work(next_attempt_at);
+-- delegation_id names a delegation record of the document table (stage 8 makes it a table and this a foreign key);
+-- payload is the source files to read, [{artifactId, path}].
+CREATE TABLE delegation_source_work (
+ delegation_id text PRIMARY KEY,
+ payload jsonb NOT NULL,
+ attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ last_error text NULL
+);
+CREATE INDEX delegation_source_work_due ON delegation_source_work(next_attempt_at);
+SELECT set_config('fleet.project_ids', '*', true);
+INSERT INTO pipeline_work(run_id) SELECT id FROM execution WHERE kind='pipeline_run' AND data ? 'pipelineId'
+ AND (state='running' OR state='succeeded' AND data->>'pipelineId'='draft-examples'); -- a start imported finished drafts again
+INSERT INTO lab_work(experiment_id) SELECT id FROM experiment WHERE state IN ('running','paused','stopped');

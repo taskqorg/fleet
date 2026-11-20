@@ -609,6 +609,14 @@ type DefinitionRevision struct {
 	At          time.Time
 }
 
+type DelegationSourceWork struct {
+	DelegationID  string
+	Payload       []byte
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     *string
+}
+
 type Document struct {
 	Kind         string
 	ID           string
@@ -816,6 +824,13 @@ type HostSetting struct {
 	ApplyError *string
 }
 
+type LabWork struct {
+	ExperimentID  string
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     *string
+}
+
 type ManagedAccount struct {
 	ID           string
 	Name         *string
@@ -867,6 +882,13 @@ type PersonSetting struct {
 	Seq          int64
 	UpdatedAt    time.Time
 	TombstonedAt *time.Time
+}
+
+type PipelineWork struct {
+	RunID         string
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     *string
 }
 
 type PriceEntry struct {

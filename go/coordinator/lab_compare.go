@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // Compare uses one locked stored catalogue head; selection does not launch work.
@@ -117,18 +118,18 @@ func labCompareMethods(q *Request, b doc) (doc, error) {
 	if len(evaluators) == 0 {
 		return nil, fail(409, "Use case has no evaluators")
 	}
-	rows, err := queryRows(q, "SELECT id FROM artifact WHERE role='example' AND state='stored' AND approved_at IS NOT NULL AND project_id=$1 ORDER BY created_at,id", project)
+	ids, err := q.db().LabApprovedExamples(q.ctx(), strPtr(project))
 	if err != nil {
 		return nil, err
 	}
 	examples := []any{}
-	for _, row := range rows {
-		ex, err := labExampleGet(q, astr(row["id"]))
+	for _, id := range ids {
+		ex, err := labExampleGet(q, id)
 		if err != nil {
 			return nil, err
 		}
 		if mapOf(ex["example"])["use_case_id"] == uc {
-			examples = append(examples, row["id"])
+			examples = append(examples, id)
 		}
 	}
 	if len(examples) == 0 {
@@ -152,7 +153,7 @@ func labCompareMethods(q *Request, b doc) (doc, error) {
 		}
 		v["catalogueConfigRef"], v["methodId"], v["catalogueRef"] = identity, m["id"], ref
 	}
-	if err := exec(q, "UPDATE experiment SET variants=$2 WHERE id=$1", created["id"], jsonBytes(snapshots)); err != nil {
+	if err := q.db().LabVariantsSet(q.ctx(), db.LabVariantsSetParams{ID: astr(created["id"]), Variants: jsonBytes(snapshots)}); err != nil {
 		return nil, err
 	}
 	return doc{"experimentId": created["id"]}, nil

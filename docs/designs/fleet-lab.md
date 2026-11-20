@@ -178,17 +178,17 @@ Every provider call goes through fleet-gateway, from two entry points; the conne
     *   Agents never see examples: host artifact routes skip role `example`. A trial receives its example's inputs only.
 *   Owner seeds `config/lab/examples/*.json` are approved by PR review and imported with `scripts/lab-examples.ts import` (sends `$FLEET_ORIGIN`, else `$FLEET_BROWSER_ORIGIN`, as Origin). After import the artifact is the source of truth; an edit needs a new version. Seeds: `fleet:UC1`, `fleet:UC5` (two: web research, and `fleet-typed-decision-smoke` for `typed-decision`, whose check reads `references/expected.json`), `fleet:UC9`, `taskq:UC-07`, `taskq:UC-16`.
 *   Operations: `lab_examples_add` `{examples[], projectId?, approved?}` → `{examples: [{artifactId, id, version, hash, created}]}` (400 invalid or unknown use case, 409 conflict or no store); `lab_examples_list {state?: proposed|approved}`; `lab_example_get {artifactId}`.
-*   Drafting (R3.6): a completed `draft-examples` run's `examples/*.json` files become proposed example artifacts, each with a `rating` question `{form: pass_fail, example_artifact_id}` whose text lists every check command; a pass sets `approved_at`. Completed draft runs are imported again on start.
+*   Drafting (R3.6): a completed `draft-examples` run's `examples/*.json` files become proposed example artifacts, each with a `rating` question `{form: pass_fail, example_artifact_id}` whose text lists every check command; a pass sets `approved_at`. The run's own work row reads the files after its end and imports them in one transaction, then goes.
 *   `config/lab` ships in `dist/config/lab`; `FLEET_LAB_DIRECTORY` overrides. Loaders skip dotfiles.
 
 ## Experiment reconcile
 
-`labReconcile` (`go/coordinator/lab.go`) runs on coordinator start, after every Lab execution reaches a final state, after each owner action and answer, and on the pipeline tick for running experiments. It runs under the store scope lock `experiment:<id>` (`pg_advisory_xact_lock`). Script checks run before the transaction, never under the lock.
+An experiment moves on the work kit's `lab` queue (`labWorkStep`, `go/coordinator/lab.go`; [Fleet standard](fleet-standard.md) S6). Its `lab_work` row is enqueued in the producer's transaction when one of its trials ends, after an answer, and by each owner action, which also runs the look at once so its reply shows the launched trials; a running experiment looks again every `FLEET_PIPELINE_TICK_MS` (budgets, the requester's access). One look is one transaction under `GLOBAL` and the experiment's lock `experiment:<id>`. Due script checks are left to run after that transaction commits, outside any transaction and never under the lock; the next look records their scores, and a crash in between runs them again.
 
 1.  Load the experiment, its executions, scores and spend.
 2.  Stop rules, first match wins and is recorded: owner stop; budget with action `stop`.
 3.  Budget with action `pause` reached: state `paused`, one `operator_decision` question (`resume|stop`, no task). Running trials finish. `warn` shows a banner only.
-4.  For each needed cell, insert the trial with its `request_id` (`ON CONFLICT DO NOTHING`) in the reconcile transaction; only inserted rows launch, started by the pipeline runner after commit. Priority `background` (no effect until the scheduler exists; the screen says so).
+4.  For each needed cell, insert the trial with its `request_id` (`ON CONFLICT DO NOTHING`) in the reconcile transaction; only inserted rows launch; a launched run is on the pipeline queue from its first write. Priority `background` (no effect until the scheduler exists; the screen says so).
 5.  Iteration complete = every cell's trial is final and every automatic evaluator has a score or a failed run for each completed trial.
 
 Final trial states are execution states: `succeeded`, `failed`, `cancelled`; a trial whose outcome nobody can prove is `failed` with `observation = unconfirmed` (shown as Unknown). Only a confirmed `succeeded` trial is comparable. Cancel cell ends the run `cancelled` and stops its running step. Retry cell inserts attempt + 1.

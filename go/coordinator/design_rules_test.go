@@ -172,7 +172,7 @@ func designRulesAllowlist(found map[string]map[string][]token.Pos) string {
 
 // The S5/S6 checks of the work kit and its queues (DESIGN_RULES.md). designKitAreas: the file-name prefixes of the
 // areas whose item work runs on the kit; an area moving onto the kit adds its prefix.
-var designKitAreas = []string{"resource_"}
+var designKitAreas = []string{"resource_", "pipeline_work", "delegation_work"}
 
 func designKitArea(name string) bool {
 	for _, p := range designKitAreas {
@@ -650,7 +650,7 @@ var designRulesLegacy = map[string]map[string]bool{
 	"definitions.go":         {"R-MAP": true, "R-SQL": true},
 	"definitions_usage.go":   {"R-MAP": true, "R-SQL": true},
 	"definitions_write.go":   {"R-MAP": true, "R-SQL": true},
-	"delegation.go":          {"R-GO": true, "R-MAP": true, "R-SQL": true},
+	"delegation.go":          {"R-MAP": true},
 	"delivery.go":            {"R-GO": true, "R-MAP": true, "R-SQL": true},
 	"delivery_history.go":    {"R-GO": true, "R-MAP": true, "R-SQL": true},
 	"dispatch.go":            {"R-GO": true, "R-MAP": true, "R-SQL": true},
@@ -658,22 +658,22 @@ var designRulesLegacy = map[string]map[string]bool{
 	"entity_codes.go":        {"R-MAP": true, "R-SQL": true},
 	"event_batch.go":         {"R-MAP": true, "R-SQL": true},
 	"execution_trace.go":     {"R-MAP": true, "R-SQL": true},
-	"executions.go":          {"R-GO": true, "R-MAP": true, "R-SQL": true},
+	"executions.go":          {"R-MAP": true, "R-SQL": true},
 	"github.go":              {"R-GO": true, "R-MAP": true},
 	"health.go":              {"R-MAP": true},
 	"host_events.go":         {"R-MAP": true, "R-SQL": true},
 	"host_poll.go":           {"R-MAP": true, "R-SQL": true},
 	"host_poll_health.go":    {"R-MAP": true},
-	"host_receipts.go":       {"R-GO": true, "R-MAP": true, "R-SQL": true},
+	"host_receipts.go":       {"R-MAP": true, "R-SQL": true},
 	"host_remove.go":         {"R-MAP": true},
 	"hosts.go":               {"R-MAP": true},
 	"json.go":                {"R-MAP": true},
-	"lab.go":                 {"R-GO": true, "R-MAP": true, "R-SQL": true},
-	"lab_assessment.go":      {"R-MAP": true, "R-SQL": true},
+	"lab.go":                 {"R-MAP": true, "R-SQL": true},
+	"lab_assessment.go":      {"R-MAP": true},
 	"lab_compare.go":         {"R-MAP": true, "R-SQL": true},
-	"lab_loop.go":            {"R-MAP": true, "R-SQL": true},
+	"lab_loop.go":            {"R-MAP": true},
 	"lab_pairwise.go":        {"R-MAP": true},
-	"lab_retry.go":           {"R-MAP": true, "R-SQL": true},
+	"lab_retry.go":           {"R-MAP": true},
 	"lab_variant.go":         {"R-MAP": true},
 	"limits.go":              {"R-MAP": true},
 	"limits_refresh.go":      {"R-MAP": true},
@@ -683,7 +683,7 @@ var designRulesLegacy = map[string]map[string]bool{
 	"person_settings.go":     {"R-MAP": true},
 	"pipeline_condition.go":  {"R-MAP": true},
 	"pipeline_plan.go":       {"R-MAP": true, "R-SQL": true},
-	"pipelines.go":           {"R-GO": true, "R-MAP": true, "R-SQL": true},
+	"pipelines.go":           {"R-MAP": true, "R-SQL": true},
 	"placement.go":           {"R-MAP": true, "R-SQL": true},
 	"presets.go":             {"R-MAP": true},
 	"problems.go":            {"R-MAP": true, "R-SQL": true},

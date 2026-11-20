@@ -323,9 +323,7 @@ func settleWaiting(ctx context.Context, a *App, id string) error {
 
 // settleWaitingAs: after the retry window, a still-pending artifact fails the execution.
 func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
-	ended := ""
 	err := a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
-		ended = ""
 		q := &Request{app: a, tx: tx, r: (&http.Request{}).WithContext(ctx)}
 		e, err := maybe(q, id, "execution")
 		if err != nil || e == nil || e["state"] != "waiting" || e["waitReason"] != "artifacts" {
@@ -367,12 +365,8 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 				return err
 			}
 		}
-		ended = id
 		return nil
 	})
-	if err == nil && ended != "" {
-		go pipelineOnExecution(a, ended)
-	}
 	return err
 }
 

@@ -114,6 +114,11 @@ func executionTransition(q *Request, id string, ev executionEvent) (bool, error)
 		if err := writeEnded(q, id); err != nil {
 			return false, err
 		}
+		if cur.Kind != db.ExecutionKindToolRun && cur.Kind != db.ExecutionKindPipelineStep && cur.Kind != db.ExecutionKindPipelineRun {
+			if err := pipelineOnEnded(q, id); err != nil { // an agent or script step's run moves on
+				return false, err
+			}
+		}
 	}
 	return true, nil
 }

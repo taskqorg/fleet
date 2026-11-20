@@ -214,6 +214,13 @@ CREATE TABLE definition_revision (
   "message" text NOT NULL,
   "at" timestamp with time zone NOT NULL
 );
+CREATE TABLE delegation_source_work (
+  "delegation_id" text NOT NULL,
+  "payload" jsonb NOT NULL,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text
+);
 CREATE TABLE document (
   "kind" text NOT NULL,
   "id" text NOT NULL,
@@ -410,6 +417,12 @@ CREATE TABLE host_setting (
   "applied_at" timestamp with time zone,
   "apply_error" text
 );
+CREATE TABLE lab_work (
+  "experiment_id" text NOT NULL,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text
+);
 CREATE TABLE managed_account (
   "id" text NOT NULL,
   "name" text,
@@ -457,6 +470,12 @@ CREATE TABLE person_setting (
   "seq" bigint NOT NULL,
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE pipeline_work (
+  "run_id" text NOT NULL,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text
 );
 CREATE TABLE price_entry (
   "id" text NOT NULL,
