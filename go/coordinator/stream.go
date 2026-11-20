@@ -143,7 +143,9 @@ func since(ctx context.Context, tx pgx.Tx, cursor int64, limit int) (out []chang
 	}
 	out, err = pgx.CollectRows(rs, func(r pgx.CollectableRow) (change, error) {
 		var c change
-		return c, r.Scan(&c.Seq, &c.Kind, &c.Id, &c.TaskId, &c.SessionId, &c.HostId, &c.Op, &c.ProjectID, &c.Actor, &c.SettingTarget)
+		err := r.Scan(&c.Seq, &c.Kind, &c.Id, &c.TaskId, &c.SessionId, &c.HostId, &c.Op, &c.ProjectID, &c.Actor, &c.SettingTarget)
+		c.Touches = contract.Touches(string(c.Kind), c.Id) // the operations the contract says this change can alter
+		return c, err
 	})
 	if err != nil {
 		return
