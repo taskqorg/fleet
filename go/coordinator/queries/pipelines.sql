@@ -154,9 +154,19 @@ UPDATE execution SET observation=sqlc.arg(observation)::observation,project_id=s
 WHERE id=sqlc.arg(id);
 
 -- name: PipelineSteps :many
--- The step rows of selected plan entries: owner run, project and record (as execJSON shows it).
-SELECT id,parent_execution_id,project_id,(data || jsonb_build_object('state',state,'observation',observation,'lastSeenAt',last_seen_at))::jsonb AS record
-FROM execution WHERE kind='pipeline_step' AND id=ANY(sqlc.arg(ids)::text[]);
+-- The step rows of selected plan entries: owner run, project, the record's open remainder (as execJSON shows it) and
+-- the step facts of its plan entry (migration 80).
+SELECT e.id,e.parent_execution_id,e.project_id,(e.data || jsonb_build_object('state',e.state,'observation',e.observation,'lastSeenAt',e.last_seen_at))::jsonb AS record,
+ p.native_execution_id,p.arguments,p.output,p.output_artifact_id,p.job_id,p.polls,p.usage,p.error,p.step_problem,p.started_at_ms,p.finished_at_ms,p.duration_ms
+FROM execution e LEFT JOIN pipeline_step p ON p.run_id=e.parent_execution_id AND p.ref_mode='fresh' AND p.ref_execution_id=e.id
+WHERE e.kind='pipeline_step' AND e.id=ANY(sqlc.arg(ids)::text[]);
+
+-- name: PipelineStepRecordSet :exec
+-- The step facts of a fresh entry's step record.
+UPDATE pipeline_step SET native_execution_id=sqlc.narg(native_execution_id),arguments=sqlc.narg(arguments),output=sqlc.narg(output),
+ output_artifact_id=sqlc.narg(output_artifact_id),job_id=sqlc.narg(job_id),polls=sqlc.narg(polls),usage=sqlc.narg(usage),error=sqlc.narg(error),
+ step_problem=sqlc.narg(step_problem),started_at_ms=sqlc.narg(started_at_ms),finished_at_ms=sqlc.narg(finished_at_ms),duration_ms=sqlc.narg(duration_ms)
+WHERE run_id=sqlc.arg(run_id) AND step_index=sqlc.arg(step_index);
 
 -- name: PipelineStepCalls :many
 -- The tool calls of steps, with their connection cost.
@@ -205,11 +215,12 @@ SELECT id FROM execution WHERE parent_execution_id=$1 AND state IN ('preparing',
 SELECT id,coalesce(host_id,payload->>'hostId','')::text AS host_id FROM command WHERE execution_id=$1 AND kind='script' ORDER BY seq LIMIT 1;
 
 -- name: PipelineOwnedJobIDs :many
--- Every job id a step owns.
-SELECT coalesce(data->>'jobId','')::text AS id FROM execution WHERE data ? 'jobId';
+-- Every job id a step owns (a step of a run without its plan rows still holds it in its record).
+SELECT job_id::text AS id FROM pipeline_step WHERE job_id IS NOT NULL
+UNION ALL SELECT coalesce(data->>'jobId','')::text FROM execution WHERE data ? 'jobId';
 
 -- name: PipelineStepJobSet :exec
-UPDATE execution SET data=data||jsonb_build_object('jobId',sqlc.arg(job_id)::text) WHERE id=sqlc.arg(id);
+UPDATE pipeline_step SET job_id=sqlc.arg(job_id)::text WHERE run_id=sqlc.arg(run_id) AND step_index=sqlc.arg(step_index);
 
 -- name: PipelineQuestion :one
 -- What an answered question's after-effects read (labAnswerAfter, budgetAnswerAfter).

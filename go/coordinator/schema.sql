@@ -3851,6 +3851,10 @@ CREATE OR REPLACE VIEW task_view WITH (security_invoker = true) AS
 -- runRows in projects.go, queries/lab.sql; projectId, requestId, pipeline, rerunOf, definition, steps' outputs: lab.go,
 -- lab_assessment.go, host_poll.go, tasks.go) and planVersion, the format marker a run without its plan is refused by.
 -- decision is a contract.PipelineConditionDecision and inputs a list of contract.PipelineInputBinding, each one value.
+-- A fresh selected entry's step record (its execution row <run>:step:<i>) keeps there its state, observation, times,
+-- index and traceparent (telemetry.go reads it) and the open remainder of its record; what only the pipeline code reads
+-- is the entry's: the native execution, resolved arguments, output and its artifact, job id and polls, usage, error,
+-- problem and the step's millisecond times (a JSON value column holds JSON null when the record had the key as null).
 CREATE TABLE pipeline_run (
  run_id text PRIMARY KEY REFERENCES execution(id) ON DELETE CASCADE,
  definition_sha256 text NOT NULL,
@@ -3882,6 +3886,18 @@ CREATE TABLE pipeline_step (
  inputs jsonb NULL CHECK (inputs IS NULL OR jsonb_typeof(inputs) = 'array'),
  problem_code text NULL,
  problem_message text NULL,
+ native_execution_id text NULL,
+ arguments jsonb NULL,
+ output jsonb NULL,
+ output_artifact_id text NULL,
+ job_id text NULL,
+ polls bigint NULL,
+ usage jsonb NULL,
+ error jsonb NULL,
+ step_problem text NULL,
+ started_at_ms bigint NULL,
+ finished_at_ms bigint NULL,
+ duration_ms bigint NULL,
  PRIMARY KEY (run_id, step_index)
 );
 SELECT set_config('fleet.project_ids', '*', true);
@@ -3904,3 +3920,24 @@ INSERT INTO pipeline_step(run_id,step_index,step_id,definition_sha256,activation
  FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.data->'plan'->'entries') WITH ORDINALITY AS x(v,ord)
  WHERE e.kind='pipeline_run' AND jsonb_typeof(e.data->'plan'->'entries')='array';
 UPDATE execution SET data=data-'plan' WHERE id IN (SELECT run_id FROM pipeline_run);
+UPDATE pipeline_step p SET
+ native_execution_id=CASE WHEN jsonb_typeof(e.data->'executionId')='string' THEN e.data->>'executionId' END,
+ arguments=e.data->'arguments',output=e.data->'output',usage=e.data->'usage',error=e.data->'error',
+ output_artifact_id=CASE WHEN jsonb_typeof(e.data->'outputArtifactId')='string' THEN e.data->>'outputArtifactId' END,
+ job_id=CASE WHEN jsonb_typeof(e.data->'jobId')='string' THEN e.data->>'jobId' END,
+ polls=CASE WHEN jsonb_typeof(e.data->'polls')='number' AND (e.data->>'polls') ~ '^[0-9]+$' THEN (e.data->>'polls')::bigint END,
+ step_problem=CASE WHEN jsonb_typeof(e.data->'problem')='string' THEN e.data->>'problem' END,
+ started_at_ms=CASE WHEN jsonb_typeof(e.data->'startedAt')='number' AND (e.data->>'startedAt') ~ '^-?[0-9]+$' THEN (e.data->>'startedAt')::bigint END,
+ finished_at_ms=CASE WHEN jsonb_typeof(e.data->'finishedAt')='number' AND (e.data->>'finishedAt') ~ '^-?[0-9]+$' THEN (e.data->>'finishedAt')::bigint END,
+ duration_ms=CASE WHEN jsonb_typeof(e.data->'durationMs')='number' AND (e.data->>'durationMs') ~ '^-?[0-9]+$' THEN (e.data->>'durationMs')::bigint END
+FROM execution e WHERE e.kind='pipeline_step' AND p.run_id=e.parent_execution_id AND p.ref_mode='fresh' AND p.ref_execution_id=e.id;
+UPDATE execution e SET data=e.data-ARRAY['arguments','output','usage','error']
+ -(CASE WHEN p.native_execution_id IS NOT NULL THEN 'executionId' ELSE '' END)
+ -(CASE WHEN p.output_artifact_id IS NOT NULL THEN 'outputArtifactId' ELSE '' END)
+ -(CASE WHEN p.job_id IS NOT NULL THEN 'jobId' ELSE '' END)
+ -(CASE WHEN p.polls IS NOT NULL THEN 'polls' ELSE '' END)
+ -(CASE WHEN p.step_problem IS NOT NULL THEN 'problem' ELSE '' END)
+ -(CASE WHEN p.started_at_ms IS NOT NULL THEN 'startedAt' ELSE '' END)
+ -(CASE WHEN p.finished_at_ms IS NOT NULL THEN 'finishedAt' ELSE '' END)
+ -(CASE WHEN p.duration_ms IS NOT NULL THEN 'durationMs' ELSE '' END)
+FROM pipeline_step p WHERE e.kind='pipeline_step' AND p.run_id=e.parent_execution_id AND p.ref_mode='fresh' AND p.ref_execution_id=e.id;

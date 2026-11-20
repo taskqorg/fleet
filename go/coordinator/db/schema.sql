@@ -501,7 +501,19 @@ CREATE TABLE pipeline_step (
   "dispatch_settled_at_ms" bigint,
   "inputs" jsonb,
   "problem_code" text,
-  "problem_message" text
+  "problem_message" text,
+  "native_execution_id" text,
+  "arguments" jsonb,
+  "output" jsonb,
+  "output_artifact_id" text,
+  "job_id" text,
+  "polls" bigint,
+  "usage" jsonb,
+  "error" jsonb,
+  "step_problem" text,
+  "started_at_ms" bigint,
+  "finished_at_ms" bigint,
+  "duration_ms" bigint
 );
 CREATE TABLE pipeline_work (
   "run_id" text NOT NULL,

@@ -348,6 +348,8 @@ func putRun(q *Request, run doc) error {
 				data[k] = v
 			}
 		}
+		facts := pipelineStepFactsOf(data)
+		facts.RunID, facts.StepIndex = astr(run["id"]), int32(i)
 		var ended any
 		if executionEnds(st) {
 			ended = msTime(s["finishedAt"])
@@ -363,6 +365,9 @@ func putRun(q *Request, run doc) error {
 		if err != nil {
 			return err
 		}
+		if err := q.db().PipelineStepRecordSet(q.ctx(), facts); err != nil {
+			return err
+		}
 		if inserted {
 			continue
 		}
@@ -373,6 +378,56 @@ func putRun(q *Request, run doc) error {
 		}
 		if _, err := executionTransition(q, row, executionEvent{To: st, KeepEnd: true}); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// pipelineStepFactsOf moves out of a step record what only the pipeline code reads (pipeline_step's step columns): a
+// text or whole-number field when it holds one, a JSON field whenever present. The rest stays the record's remainder.
+func pipelineStepFactsOf(data doc) db.PipelineStepRecordSetParams {
+	var f db.PipelineStepRecordSetParams
+	texts := map[string]**string{"executionId": &f.NativeExecutionID, "outputArtifactId": &f.OutputArtifactID, "jobId": &f.JobID, "problem": &f.StepProblem}
+	numbers := map[string]**int64{"polls": &f.Polls, "startedAt": &f.StartedAtMs, "finishedAt": &f.FinishedAtMs, "durationMs": &f.DurationMs}
+	values := map[string]*[]byte{"arguments": &f.Arguments, "output": &f.Output, "usage": &f.Usage, "error": &f.Error}
+	for k, v := range data {
+		if p, ok := texts[k]; ok {
+			if text, ok := v.(string); ok {
+				*p = &text
+				delete(data, k)
+			}
+		} else if p, ok := numbers[k]; ok {
+			if n, ok := intOK(v); ok {
+				*p = &n
+				delete(data, k)
+			}
+		} else if p, ok := values[k]; ok {
+			*p = jsonBytes(v)
+			delete(data, k)
+		}
+	}
+	return f
+}
+
+// withPipelineStepFacts puts a step row's facts (PipelineSteps) back into its record.
+func withPipelineStepFacts(data doc, r db.PipelineStepsRow) error {
+	for k, p := range map[string]*string{"executionId": r.NativeExecutionID, "outputArtifactId": r.OutputArtifactID, "jobId": r.JobID, "problem": r.StepProblem} {
+		if p != nil {
+			data[k] = *p
+		}
+	}
+	for k, p := range map[string]*int64{"polls": r.Polls, "startedAt": r.StartedAtMs, "finishedAt": r.FinishedAtMs, "durationMs": r.DurationMs} {
+		if p != nil {
+			data[k] = float64(*p)
+		}
+	}
+	for k, b := range map[string][]byte{"arguments": r.Arguments, "output": r.Output, "usage": r.Usage, "error": r.Error} {
+		if b != nil {
+			var v any
+			if err := json.Unmarshal(b, &v); err != nil {
+				return err
+			}
+			data[k] = v
 		}
 	}
 	return nil
@@ -520,6 +575,9 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 	for _, r := range records {
 		var data doc
 		if err := json.Unmarshal(r.Record, &data); err != nil {
+			return nil, err
+		}
+		if err := withPipelineStepFacts(data, r); err != nil {
 			return nil, err
 		}
 		byID[r.ID] = stepRecord{r.ParentExecutionID, r.ProjectID, data}
@@ -1886,7 +1944,7 @@ func pipelineJobStarted(q *Request, run doc, i int, line contract.CallLine) erro
 	if err := putRun(q, run); err != nil {
 		return err
 	}
-	if err := q.db().PipelineStepJobSet(q.ctx(), db.PipelineStepJobSetParams{ID: stepRow(run, i), JobID: jobID}); err != nil {
+	if err := q.db().PipelineStepJobSet(q.ctx(), db.PipelineStepJobSetParams{RunID: astr(run["id"]), StepIndex: int32(i), JobID: jobID}); err != nil {
 		return err
 	}
 	return pipelineLater(q, astr(run["id"]))

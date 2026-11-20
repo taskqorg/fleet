@@ -916,6 +916,18 @@ type PipelineStep struct {
 	Inputs                    []byte
 	ProblemCode               *string
 	ProblemMessage            *string
+	NativeExecutionID         *string
+	Arguments                 []byte
+	Output                    []byte
+	OutputArtifactID          *string
+	JobID                     *string
+	Polls                     *int64
+	Usage                     []byte
+	Error                     []byte
+	StepProblem               *string
+	StartedAtMs               *int64
+	FinishedAtMs              *int64
+	DurationMs                *int64
 }
 
 type PipelineWork struct {

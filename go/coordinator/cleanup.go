@@ -281,7 +281,8 @@ var referenceMap = []objectRef{
 	{table: "lab_work", column: "experiment_id", mode: refNone},
 	{table: "delegation_source_work", column: "delegation_id", mode: refNone},
 	// A pipeline run's plan (migration 81, pipelines.go): it goes with its run by foreign key; the ids an entry names
-	// (its step, the executions, command, host and claim of its dispatch) are evidence of the run, not references.
+	// (its step, the executions, command, host and claim of its dispatch, its step's native execution, output artifact
+	// and provider job) are evidence of the run, not references.
 	{table: "pipeline_run", column: "run_id", mode: refNone},
 	{table: "pipeline_step", column: "run_id", mode: refNone},
 	{table: "pipeline_step", column: "step_id", mode: refNone},
@@ -293,6 +294,9 @@ var referenceMap = []objectRef{
 	{table: "pipeline_step", column: "dispatch_native_execution_id", mode: refNone},
 	{table: "pipeline_step", column: "dispatch_command_id", mode: refNone},
 	{table: "pipeline_step", column: "dispatch_host_id", mode: refNone},
+	{table: "pipeline_step", column: "native_execution_id", mode: refNone},
+	{table: "pipeline_step", column: "output_artifact_id", mode: refNone},
+	{table: "pipeline_step", column: "job_id", mode: refNone},
 }
 
 // objectTables: the tables whose rows are objects of a kind; the cascade of a root is closed over their refOwn columns.

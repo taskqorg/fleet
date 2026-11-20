@@ -265,10 +265,11 @@ func (q *Queries) PipelineOpenJobs(ctx context.Context, parentExecutionID *strin
 }
 
 const pipelineOwnedJobIDs = `-- name: PipelineOwnedJobIDs :many
-SELECT coalesce(data->>'jobId','')::text AS id FROM execution WHERE data ? 'jobId'
+SELECT job_id::text AS id FROM pipeline_step WHERE job_id IS NOT NULL
+UNION ALL SELECT coalesce(data->>'jobId','')::text FROM execution WHERE data ? 'jobId'
 `
 
-// Every job id a step owns.
+// Every job id a step owns (a step of a run without its plan rows still holds it in its record).
 func (q *Queries) PipelineOwnedJobIDs(ctx context.Context) ([]string, error) {
 	rows, err := q.db.Query(ctx, pipelineOwnedJobIDs)
 	if err != nil {
@@ -421,7 +422,7 @@ func (q *Queries) PipelinePlanStepSet(ctx context.Context, arg PipelinePlanStepS
 }
 
 const pipelinePlanSteps = `-- name: PipelinePlanSteps :many
-SELECT run_id, step_index, step_id, definition_sha256, activation, decision, ref_mode, ref_execution_id, ref_source_run_id, ref_source_step_id, ref_source_step_index, ref_source_definition_sha256, ref_source_input_sha256, dispatch_phase, dispatch_claim_id, dispatch_owner_boot_id, dispatch_handed_off_at_ms, dispatch_authority_sha256, dispatch_native_execution_id, dispatch_command_id, dispatch_host_id, dispatch_settled_at_ms, inputs, problem_code, problem_message FROM pipeline_step WHERE run_id=ANY($1::text[]) ORDER BY run_id,step_index
+SELECT run_id, step_index, step_id, definition_sha256, activation, decision, ref_mode, ref_execution_id, ref_source_run_id, ref_source_step_id, ref_source_step_index, ref_source_definition_sha256, ref_source_input_sha256, dispatch_phase, dispatch_claim_id, dispatch_owner_boot_id, dispatch_handed_off_at_ms, dispatch_authority_sha256, dispatch_native_execution_id, dispatch_command_id, dispatch_host_id, dispatch_settled_at_ms, inputs, problem_code, problem_message, native_execution_id, arguments, output, output_artifact_id, job_id, polls, usage, error, step_problem, started_at_ms, finished_at_ms, duration_ms FROM pipeline_step WHERE run_id=ANY($1::text[]) ORDER BY run_id,step_index
 `
 
 func (q *Queries) PipelinePlanSteps(ctx context.Context, runIds []string) ([]PipelineStep, error) {
@@ -459,6 +460,18 @@ func (q *Queries) PipelinePlanSteps(ctx context.Context, runIds []string) ([]Pip
 			&i.Inputs,
 			&i.ProblemCode,
 			&i.ProblemMessage,
+			&i.NativeExecutionID,
+			&i.Arguments,
+			&i.Output,
+			&i.OutputArtifactID,
+			&i.JobID,
+			&i.Polls,
+			&i.Usage,
+			&i.Error,
+			&i.StepProblem,
+			&i.StartedAtMs,
+			&i.FinishedAtMs,
+			&i.DurationMs,
 		); err != nil {
 			return nil, err
 		}
@@ -896,16 +909,17 @@ func (q *Queries) PipelineStepCredits(ctx context.Context, parentExecutionID *st
 }
 
 const pipelineStepJobSet = `-- name: PipelineStepJobSet :exec
-UPDATE execution SET data=data||jsonb_build_object('jobId',$1::text) WHERE id=$2
+UPDATE pipeline_step SET job_id=$1::text WHERE run_id=$2 AND step_index=$3
 `
 
 type PipelineStepJobSetParams struct {
-	JobID string
-	ID    string
+	JobID     string
+	RunID     string
+	StepIndex int32
 }
 
 func (q *Queries) PipelineStepJobSet(ctx context.Context, arg PipelineStepJobSetParams) error {
-	_, err := q.db.Exec(ctx, pipelineStepJobSet, arg.JobID, arg.ID)
+	_, err := q.db.Exec(ctx, pipelineStepJobSet, arg.JobID, arg.RunID, arg.StepIndex)
 	return err
 }
 
@@ -935,6 +949,51 @@ func (q *Queries) PipelineStepLineage(ctx context.Context, id string) (PipelineS
 		&i.StepID,
 	)
 	return i, err
+}
+
+const pipelineStepRecordSet = `-- name: PipelineStepRecordSet :exec
+UPDATE pipeline_step SET native_execution_id=$1,arguments=$2,output=$3,
+ output_artifact_id=$4,job_id=$5,polls=$6,usage=$7,error=$8,
+ step_problem=$9,started_at_ms=$10,finished_at_ms=$11,duration_ms=$12
+WHERE run_id=$13 AND step_index=$14
+`
+
+type PipelineStepRecordSetParams struct {
+	NativeExecutionID *string
+	Arguments         []byte
+	Output            []byte
+	OutputArtifactID  *string
+	JobID             *string
+	Polls             *int64
+	Usage             []byte
+	Error             []byte
+	StepProblem       *string
+	StartedAtMs       *int64
+	FinishedAtMs      *int64
+	DurationMs        *int64
+	RunID             string
+	StepIndex         int32
+}
+
+// The step facts of a fresh entry's step record.
+func (q *Queries) PipelineStepRecordSet(ctx context.Context, arg PipelineStepRecordSetParams) error {
+	_, err := q.db.Exec(ctx, pipelineStepRecordSet,
+		arg.NativeExecutionID,
+		arg.Arguments,
+		arg.Output,
+		arg.OutputArtifactID,
+		arg.JobID,
+		arg.Polls,
+		arg.Usage,
+		arg.Error,
+		arg.StepProblem,
+		arg.StartedAtMs,
+		arg.FinishedAtMs,
+		arg.DurationMs,
+		arg.RunID,
+		arg.StepIndex,
+	)
+	return err
 }
 
 const pipelineStepUpdate = `-- name: PipelineStepUpdate :exec
@@ -983,8 +1042,10 @@ func (q *Queries) PipelineStepUpdate(ctx context.Context, arg PipelineStepUpdate
 }
 
 const pipelineSteps = `-- name: PipelineSteps :many
-SELECT id,parent_execution_id,project_id,(data || jsonb_build_object('state',state,'observation',observation,'lastSeenAt',last_seen_at))::jsonb AS record
-FROM execution WHERE kind='pipeline_step' AND id=ANY($1::text[])
+SELECT e.id,e.parent_execution_id,e.project_id,(e.data || jsonb_build_object('state',e.state,'observation',e.observation,'lastSeenAt',e.last_seen_at))::jsonb AS record,
+ p.native_execution_id,p.arguments,p.output,p.output_artifact_id,p.job_id,p.polls,p.usage,p.error,p.step_problem,p.started_at_ms,p.finished_at_ms,p.duration_ms
+FROM execution e LEFT JOIN pipeline_step p ON p.run_id=e.parent_execution_id AND p.ref_mode='fresh' AND p.ref_execution_id=e.id
+WHERE e.kind='pipeline_step' AND e.id=ANY($1::text[])
 `
 
 type PipelineStepsRow struct {
@@ -992,9 +1053,22 @@ type PipelineStepsRow struct {
 	ParentExecutionID *string
 	ProjectID         *string
 	Record            []byte
+	NativeExecutionID *string
+	Arguments         []byte
+	Output            []byte
+	OutputArtifactID  *string
+	JobID             *string
+	Polls             *int64
+	Usage             []byte
+	Error             []byte
+	StepProblem       *string
+	StartedAtMs       *int64
+	FinishedAtMs      *int64
+	DurationMs        *int64
 }
 
-// The step rows of selected plan entries: owner run, project and record (as execJSON shows it).
+// The step rows of selected plan entries: owner run, project, the record's open remainder (as execJSON shows it) and
+// the step facts of its plan entry (migration 80).
 func (q *Queries) PipelineSteps(ctx context.Context, ids []string) ([]PipelineStepsRow, error) {
 	rows, err := q.db.Query(ctx, pipelineSteps, ids)
 	if err != nil {
@@ -1009,6 +1083,18 @@ func (q *Queries) PipelineSteps(ctx context.Context, ids []string) ([]PipelineSt
 			&i.ParentExecutionID,
 			&i.ProjectID,
 			&i.Record,
+			&i.NativeExecutionID,
+			&i.Arguments,
+			&i.Output,
+			&i.OutputArtifactID,
+			&i.JobID,
+			&i.Polls,
+			&i.Usage,
+			&i.Error,
+			&i.StepProblem,
+			&i.StartedAtMs,
+			&i.FinishedAtMs,
+			&i.DurationMs,
 		); err != nil {
 			return nil, err
 		}
