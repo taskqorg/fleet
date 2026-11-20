@@ -497,7 +497,9 @@ async function suffixFixture(projectId = 'cs', differentOuter = false, checks?: 
   const view = () => op('lab_experiment_get', {experimentId: exp.id}).then(ok);
   const trial = await until(async () => { const v = await view(); return v.trials[0]?.state === 'running' ? v.trials[0] : undefined; }, 'source trial');
   const run = await until(async () => { const r = ok(await op('pipeline_get', {runId: trial.id})); return r.observedSteps[1]?.executionId ? r : undefined; }, 'suffix command');
-  const poll = (q = '') => host('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []}).then(ok);
+  // The host reports the store it serves on every poll, as an executor does: a store unreported for two minutes is
+  // unreachable (storeUnseenMS), and this file runs longer than that on a busy runner.
+  const poll = (q = '') => host('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [{id: 'trial-store', reachable: true}], problems: []}).then(ok);
   const command = await hostCommand(poll, (c: any) => c.executionId === run.observedSteps[1].executionId);
   assert.ok(command);
   const receipt = (cmd: any, status: string, extra = {}) => host('/api/hosts/receipts', {commandId: cmd.id, executionId: cmd.executionId, status, ...extra}).then(ok);
