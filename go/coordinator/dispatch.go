@@ -145,9 +145,9 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 			return nil
 		}
 		return q.tx.QueryRow(q.ctx(), `SELECT
-			EXISTS(SELECT 1 FROM document WHERE kind='delegation' AND coalesce(data->>'continuationExecutionId','')='' AND coalesce(data->>'state','')<>'suppressed')
-			OR EXISTS(SELECT 1 FROM question WHERE state IN ('open','answered') AND cause ~ '^(subscription|placement|host|director|execution):|^budget:.*:reached$')
-			OR EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','running','waiting'))`).Scan(&needsSweep)
+			EXISTS(SELECT 1 FROM execution WHERE delegation IS NOT NULL AND coalesce(delegation->>'continuationExecutionId','')='' AND coalesce(delegation->>'state','')<>'suppressed')
+			OR EXISTS(SELECT 1 FROM question WHERE state IN ('open','answered') AND cause ~ $1)
+			OR EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','running','waiting'))`, dispatchStallCauses).Scan(&needsSweep)
 	}); err != nil {
 		return err
 	}
@@ -308,10 +308,17 @@ func waitKindOf(cause string) string {
 	return "placement" // offline, paused, roots, placement, limits: Fleet retries
 }
 
-// strPtr: a string value as an optional contract field; nil for anything else or "" (strp keeps "").
+// strPtr: a string value (or *string) as an optional field; nil for anything else or "" (strp keeps "").
 func strPtr(v any) *string {
-	if s, ok := v.(string); ok && s != "" {
-		return &s
+	switch s := v.(type) {
+	case string:
+		if s != "" {
+			return &s
+		}
+	case *string:
+		if s != nil && *s != "" {
+			return s
+		}
 	}
 	return nil
 }
@@ -713,9 +720,7 @@ var causeHost = regexp.MustCompile(`^host:([^:]+)`)
 // dispatchRun: one dispatch pass; when polling == "", evaluates and assigns every host.
 func (a *App) dispatchRun(q *Request, polling string) error {
 	var ids []string
-	// Only the stall causes this pass raises: a key, budget-ask or other area's question keeps its cause.
-	var held []map[string]any
-	if err := q.tx.QueryRow(q.ctx(), "SELECT (SELECT coalesce(array_agg(id ORDER BY seq),'{}') FROM execution WHERE host_id IS NULL AND state='preparing' AND kind='agent_run'),(SELECT coalesce(json_agg(json_build_object('id',id,'cause',cause,'state',state)),'[]') FROM question WHERE state IN ('open','answered') AND cause ~ '^(subscription|placement|host|director|execution):|^budget:.*:reached$')").Scan(&ids, &held); err != nil {
+	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(array_agg(id ORDER BY seq),'{}') FROM execution WHERE host_id IS NULL AND state='preparing' AND kind='agent_run'").Scan(&ids); err != nil {
 		return err
 	}
 	type stall struct{ reason, director, ask, projectID any }
@@ -889,36 +894,21 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			causeOrder = append(causeOrder, cause)
 		}
 	}
-	heldCause := map[string]bool{}
-	for _, h := range held {
-		c := astr(h["cause"])
-		heldCause[c] = true
-		if _, ok := causes[c]; ok {
-			continue
-		}
-		sql := "UPDATE question SET cause=NULL WHERE id=$1"
-		if h["state"] == "open" {
-			sql = "UPDATE question SET state='withdrawn',cause=NULL WHERE id=$1"
-		}
-		if err := exec(q, sql, h["id"]); err != nil {
-			return err
-		}
-	}
+	// Only the stall causes this pass raises: a key, budget-ask or other area's question keeps its cause.
+	stalls := make([]Problem, 0, len(causeOrder))
 	for _, cause := range causeOrder {
-		if heldCause[cause] {
-			continue
-		}
 		c := causes[cause]
 		tail := " Change the setting to let it start."
 		if c.ask != nil && c.ask != c.director {
 			tail = fmt.Sprintf(" Ask %v, or change the setting.", c.ask)
 		}
-		if err := openCauseQuestion(q, cause, c.director, c.projectID, fmt.Sprintf("Work is waiting: %v.%s", c.reason, tail)); err != nil {
-			return err
-		}
+		stalls = append(stalls, Problem{Cause: cause, Text: fmt.Sprintf("Work is waiting: %v.%s", c.reason, tail), ProjectID: astr(c.projectID), AddressedTo: astr(c.director), Options: []any{"ok"}})
 	}
-	return nil
+	return problemsSet(q, "", dispatchStallCauses, stalls)
 }
+
+// dispatchStallCauses: the causes a dispatch pass raises and closes (problemsSet).
+const dispatchStallCauses = `^(subscription|placement|host|director|execution):|^budget:.*:reached$`
 
 // claimRow locks an execution's row for this transaction and returns it while it is still claimable, nil otherwise.
 // executionStop takes the same row lock; every dispatch write of a queued execution goes through here.
@@ -939,15 +929,6 @@ func claimRow(q *Request, id string) (doc, error) {
 // claimable: queued agent work no host has and no stop asked for.
 func claimable(e doc) bool {
 	return e["dispatch"] != nil && e["hostId"] == nil && e["state"] == "preparing" && e["stopRequested"] != true
-}
-
-// openCauseQuestion opens a needs-you operator_decision question keyed by cause, addressed to one person.
-func openCauseQuestion(q *Request, cause string, addressedTo, projectID any, text string) error {
-	qid, err := askQuestion(q, doc{"kind": "operator_decision", "text": text, "options": []any{"ok"}, "askedBy": "fleet", "projectId": projectID, "data": doc{"cause": cause}})
-	if err != nil {
-		return err
-	}
-	return exec(q, "UPDATE question SET cause=$2,addressed_to=$3 WHERE id=$1", qid, cause, addressedTo)
 }
 
 // startCommand: the start command of a claimed execution, from the session as it is now and the chosen binding.

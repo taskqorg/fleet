@@ -209,10 +209,12 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 	s := mapOf(exp["strategy"])
 	iteration := loopIteration(exp)
 	stop := func(reason string) error {
-		return exec(q, "UPDATE experiment SET state='done',stop_reason=$2 WHERE id=$1 AND state='running'", exp["id"], reason)
+		_, err := experimentTransition(q, astr(exp["id"]), experimentEvent{To: "done", From: []string{"running"}, StopReason: &reason})
+		return err
 	}
 	halt := func(reason string) error {
-		return exec(q, "UPDATE experiment SET state='stopped',stop_reason=$2 WHERE id=$1 AND state='running'", exp["id"], reason)
+		_, err := experimentTransition(q, astr(exp["id"]), experimentEvent{To: "stopped", From: []string{"running"}, StopReason: &reason})
+		return err
 	}
 	if n, ok := intOK(s["max_iterations"]); ok && iteration+1 >= n {
 		return stop("max_iterations")

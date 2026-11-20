@@ -528,7 +528,7 @@ func objectDelete(q *Request, b *contract.ObjectDeleteRequest) (contract.ObjectD
 			return err
 		}
 		running = out.Running
-		if err := exec(q, "UPDATE experiment SET state='stopped',stop_reason='deleted' WHERE id=ANY($1) AND state IN ('running','paused')", c.sets["experiment"]); err != nil {
+		if err := experimentsStop(q, c.sets["experiment"], "deleted"); err != nil {
 			return err
 		}
 		rs, err := queryRows(q, "SELECT id FROM execution WHERE id=ANY($1) AND kind='pipeline_run' AND state='running' ORDER BY seq", c.sets["execution"])
@@ -586,10 +586,10 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 	} else if tag.RowsAffected() > 0 {
 		publish(q)
 	}
-	if err := exec(q, "UPDATE experiment SET state='stopped',stop_reason='deleted' WHERE id=ANY($1) AND state IN ('running','paused')", c.sets["experiment"]); err != nil {
+	if err := experimentsStop(q, c.sets["experiment"], "deleted"); err != nil {
 		return err
 	}
-	if err := exec(q, "UPDATE question SET state='withdrawn' WHERE id=ANY($1) AND state='open'", c.sets["question"]); err != nil {
+	if err := questionsWithdraw(q, c.sets["question"]); err != nil {
 		return err
 	}
 	// Messages still waiting for a turn never start one (host receipts see deleted rows and promote queued messages).

@@ -528,7 +528,7 @@ func expRetrySuffix(q *Request, id, cell, sourceRunID, requestID string) (doc, e
 		if err != nil {
 			return err
 		}
-		if err := exec(q, "UPDATE experiment SET state='running' WHERE id=$1 AND state='done'", id); err != nil {
+		if _, err := experimentTransition(q, id, experimentEvent{To: "running", From: []string{"done"}}); err != nil {
 			return err
 		}
 		created = true

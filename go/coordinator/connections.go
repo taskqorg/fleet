@@ -579,11 +579,15 @@ func connectionsDelete(q *Request, r *contract.ConnectionsDeleteRequest) (contra
 			}
 		}
 	}
-	for _, x := range []string{
-		"DELETE FROM document WHERE (kind='api-connection' AND id=$1) OR (kind='connection-key' AND data->>'connectionId'=$2) OR (kind='setting-change' AND data->>'target'=$1)",
-		"UPDATE question SET state='withdrawn' WHERE kind='secret' AND state='open' AND options->>'connection'=$2 AND $1<>''",
-	} {
-		if err := exec(q, x, c["id"], name); err != nil {
+	if err := exec(q, "DELETE FROM document WHERE (kind='api-connection' AND id=$1) OR (kind='connection-key' AND data->>'connectionId'=$2) OR (kind='setting-change' AND data->>'target'=$1)", c["id"], name); err != nil {
+		return no, err
+	}
+	if astr(c["id"]) != "" {
+		var secrets []string
+		if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(array_agg(id),'{}') FROM question WHERE kind='secret' AND state='open' AND options->>'connection'=$1", name).Scan(&secrets); err != nil {
+			return no, err
+		}
+		if err := questionsWithdraw(q, secrets); err != nil {
 			return no, err
 		}
 	}
@@ -1343,14 +1347,17 @@ func connComplete(q *Request, l contract.CallLine) error {
 	if upload {
 		patch["keyFingerprint"], patch["usage"], patch["uploadAccounted"] = l.KeyFingerprint, l.Usage, true
 	}
-	tag, err := q.tx.Exec(q.ctx(), `UPDATE execution SET state=$2, problem=$4, data=data||$5::jsonb,
-	 ended_at=started_at+make_interval(secs => $3::bigint/1000.0) WHERE id=$1 AND
-	 (data->>'phase'='started' OR ($6 AND data->>'phase'='completed' AND NOT data ? 'uploadAccounted'))`,
-		id, state, ms, problem, jsonBytes(patch), upload)
+	tag, err := q.tx.Exec(q.ctx(), `UPDATE execution SET problem=$3, data=data||$4::jsonb,
+	 ended_at=started_at+make_interval(secs => $2::bigint/1000.0) WHERE id=$1 AND
+	 (data->>'phase'='started' OR ($5 AND data->>'phase'='completed' AND NOT data ? 'uploadAccounted'))`,
+		id, ms, problem, jsonBytes(patch), upload)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 1 {
+		if _, err := executionTransition(q, id, executionEvent{To: state, KeepEnd: true, Correct: true}); err != nil {
+			return err
+		}
 		if upload {
 			// A file upload has no usageOnce. Its usage and key effects are known only after the POST.
 			if err := connAccount(q, id, l, false); err != nil {
@@ -1389,18 +1396,8 @@ func connDisable(q *Request, fp string, status, attemptedAt int64) error {
 		return err
 	}
 	publish(q)
-	cause := "key:" + fp + ":disabled"
-	var n int
-	// Fix: TS stored the cause only in data, so the dedupe never matched; the cause column (and its open-unique index) holds it now.
-	if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM question WHERE cause=$1 AND state<>'answered'", cause).Scan(&n); err != nil || n > 0 {
-		return err
-	}
-	id, err := askRow(q, "operator_decision", fmt.Sprintf("API key %s of %v was refused by the provider (HTTP %s) and is disabled. Re-enable it on the API keys screen once it works again, or retire it.", fp, k["connectionId"], st),
-		nil, []any{"seen"}, "fleet", doc{"cause": cause})
-	if err != nil {
-		return err
-	}
-	return exec(q, "UPDATE question SET cause=$2 WHERE id=$1", id, cause)
+	return problemRaise(q, "", Problem{Cause: "key:" + fp + ":disabled", Options: []any{"seen"},
+		Text: fmt.Sprintf("API key %s of %v was refused by the provider (HTTP %s) and is disabled. Re-enable it on the API keys screen once it works again, or retire it.", fp, k["connectionId"], st)})
 }
 
 var (
@@ -1442,7 +1439,7 @@ func connTickPass(ctx context.Context, a *App) error {
 			if err != nil {
 				return err
 			}
-			if state == nil || *state == "" || terminalTyped[*state] {
+			if state == nil || *state == "" || executionEnds(*state) {
 				seenExec[id] = true
 				toRevoke = append(toRevoke, id)
 			}

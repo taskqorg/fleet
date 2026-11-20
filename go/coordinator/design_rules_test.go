@@ -312,6 +312,10 @@ func designStateOwners() []designOwner {
 		{"resource_project_summary", "resource_states.go", []string{"ready", "epoch"}},
 		{"resource_metadata_repair", "resource_states.go", []string{"done", "after_execution_id", "DELETE"}},
 		{"command", "commands.go", []string{"status", "stop_detail"}},
+		{"execution", "execution_states.go", []string{"state"}},
+		{"question", "question_states.go", []string{"state"}},
+		{"question", "problems.go", []string{"cause"}},
+		{"experiment", "experiment_states.go", []string{"state"}},
 	}
 	for _, q := range kitQueues {
 		out = append(out, designOwner{q.Retry.Table, "work_kit.go", []string{"attempts", "next_attempt_at", "last_error"}})
@@ -424,8 +428,9 @@ func TestDesignScheduling(t *testing.T) {
 	}
 }
 
-// S5: the transition tables cover the schema's states: every state has a row or is declared terminal, every target is
-// a state, every state is reachable and reaches a terminal one, and buildTransition moves only to declared phases.
+// S5: the transition tables (resource build and repair, execution, question, experiment) cover the schema's states: every
+// state has a row or is declared terminal, every target is a state, every state is reachable and reaches a terminal one,
+// and buildTransition moves only to declared phases.
 func TestDesignTransitions(t *testing.T) {
 	schema, err := os.ReadFile("schema.sql")
 	if err != nil {
@@ -442,7 +447,10 @@ func TestDesignTransitions(t *testing.T) {
 	if !strings.Contains(string(schema), `ADD COLUMN ready boolean GENERATED ALWAYS AS (phase = 'ready') STORED`) {
 		t.Error("resource_build.ready must be generated from phase (migration 76)")
 	}
-	check := func(name string, table map[string][]string, states []string, starts ...string) {
+	check := func(name string, table map[string][]string, states []string, ends func(string) bool, starts ...string) {
+		if ends == nil {
+			ends = func(s string) bool { return len(table[s]) == 0 }
+		}
 		for _, s := range states {
 			if _, ok := table[s]; !ok {
 				t.Errorf("%s: state %s has no transition row (declare it terminal with nil)", name, s)
@@ -475,16 +483,16 @@ func TestDesignTransitions(t *testing.T) {
 			if !reach[s] {
 				t.Errorf("%s: state %s is unreachable", name, s)
 			}
-			ends := map[string]bool{}
+			seen := map[string]bool{}
 			var down func(string) bool
 			down = func(x string) bool {
-				if len(table[x]) == 0 {
+				if ends(x) {
 					return true
 				}
-				if ends[x] {
+				if seen[x] {
 					return false
 				}
-				ends[x] = true
+				seen[x] = true
 				for _, to := range table[x] {
 					if to != x && down(to) {
 						return true
@@ -497,8 +505,8 @@ func TestDesignTransitions(t *testing.T) {
 			}
 		}
 	}
-	check("build", buildTransitions, phases, string(m[1]), "clearing")
-	check("repair", repairTransitions, []string{"enumerating", "done", "deleted"}, "enumerating")
+	check("build", buildTransitions, phases, nil, string(m[1]), "clearing")
+	check("repair", repairTransitions, []string{"enumerating", "done", "deleted"}, nil, "enumerating")
 	cm := regexp.MustCompile(`CREATE TYPE command_status AS ENUM \(([^)]*)\)`).FindSubmatch(schema)
 	if cm == nil {
 		t.Fatal("command_status enum not found in schema.sql")
@@ -507,7 +515,23 @@ func TestDesignTransitions(t *testing.T) {
 	for _, p := range strings.Split(string(cm[1]), ",") {
 		statuses = append(statuses, strings.Trim(strings.TrimSpace(p), "'"))
 	}
-	check("command", commandTransitions, statuses, "pending")
+	check("command", commandTransitions, statuses, nil, "pending")
+	enum := func(re string) []string {
+		m := regexp.MustCompile(re).FindSubmatch(schema)
+		if m == nil {
+			t.Fatalf("%s not found in schema.sql", re)
+		}
+		var out []string
+		for _, v := range strings.Split(string(m[1]), ",") {
+			out = append(out, strings.Trim(strings.TrimSpace(v), "'"))
+		}
+		return out
+	}
+	executionStates := enum(`CREATE TYPE execution_state AS ENUM \(([^)]*)\)`)
+	check("execution", executionTransitions, executionStates, nil, "preparing")
+	check("pipeline step", pipelineStepTransitions, executionStates, executionEnds, "preparing")
+	check("question", questionTransitions, enum(`CREATE TYPE question_state AS ENUM \(([^)]*)\)`), nil, "open")
+	check("experiment", experimentTransitions, enum(`state text NOT NULL DEFAULT 'draft' CHECK \(state IN \(([^)]*)\)\)`), nil, "draft")
 	src, err := os.ReadFile("resource_states.go")
 	if err != nil {
 		t.Fatal(err)

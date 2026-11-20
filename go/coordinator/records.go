@@ -140,7 +140,6 @@ func put(q *Request, kind string, v doc) error {
 // execJSON: an execution record as the API shows it: the typed state, observation and last contact over the open remainder in data.
 const execJSON = "data || jsonb_build_object('state',state,'observation',observation,'lastSeenAt',last_seen_at)"
 
-var terminalTyped = map[string]bool{"succeeded": true, "failed": true, "cancelled": true}
 
 // execKinds: the execution kinds served as 'execution' records (host-dispatched agent runs and host jobs).
 const execKinds = "kind IN ('agent_run','host_job')"
@@ -186,7 +185,7 @@ func definitionScalars(defs any, cfg doc) (profileID, profileRev, pipelineID, pi
 }
 
 // putExecution: the one writer of an execution record (kind agent_run or host_job). state is the typed execution state
-// (stateOrder); observation stays 'unconfirmed' only while the state does not move. kind is fixed by the first write. Both live in their columns only, then
+// (executionTransitions, moved by executionTransition); observation stays 'unconfirmed' only while the state does not move. kind is fixed by the first write. Both live in their columns only, then
 // the record's task settles.
 func putExecution(q *Request, e doc) error {
 	id := astr(e["id"])
@@ -195,7 +194,7 @@ func putExecution(q *Request, e doc) error {
 		return err
 	}
 	state := firstString(e["state"], prev, "preparing")
-	if _, ok := stateOrder[state]; !ok {
+	if _, ok := executionTransitions[state]; !ok {
 		return fmt.Errorf("execution %s: unknown state %q", id, state)
 	}
 	observation := "confirmed" // a writer that moves the state knows it
@@ -279,17 +278,27 @@ func putExecution(q *Request, e doc) error {
 			data[k] = v
 		}
 	}
-	err = exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,task_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,harness,model,config_ref,started_at,ended_at,data,directed_by,profile_id,profile_revision,pipeline_id,pipeline_revision,step_id)
-	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
-	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,task_id=coalesce(execution.task_id,excluded.task_id),
-	  experiment_id=excluded.experiment_id,variant=excluded.variant,parent_execution_id=excluded.parent_execution_id,session_id=excluded.session_id,account_id=excluded.account_id,host_id=excluded.host_id,
-	  harness=excluded.harness,model=excluded.model,config_ref=excluded.config_ref,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data || jsonb_strip_nulls(jsonb_build_object('traceparent',execution.data->'traceparent','traceActor',execution.data->'traceActor')),
-	  directed_by=coalesce(excluded.directed_by,execution.directed_by),profile_id=coalesce(excluded.profile_id,execution.profile_id),profile_revision=coalesce(excluded.profile_revision,execution.profile_revision),
-	  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision),step_id=coalesce(excluded.step_id,execution.step_id),
-	  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-		id, kind, state, observation, nilIf(project), nilIf(task), experiment, variant, nilIf(parent), e["sessionId"], nilIf(account), e["hostId"], harness, e["model"], cfg, msTime(e["startedAt"]), msTime(e["finishedAt"]), js(data), nilIf(firstString(e["directedBy"], sess["directedBy"])), profileID, profileRev, pipelineID, pipelineRev, stepID)
-	if err != nil {
-		return err
+	directed := nilIf(firstString(e["directedBy"], sess["directedBy"]))
+	inserted := false
+	if prev == "" {
+		inserted, err = executionInsert(q, executionRow(doc{"id": id, "kind": kind, "state": state, "observation": observation, "projectId": nilIf(project), "taskId": nilIf(task),
+		"experimentId": experiment, "variant": variant, "parentExecutionId": nilIf(parent), "sessionId": e["sessionId"], "accountId": nilIf(account), "hostId": e["hostId"],
+		"harness": harness, "model": e["model"], "configRef": json.RawMessage(cfg), "startedAt": e["startedAt"], "endedAt": e["finishedAt"], "data": data,
+			"directedBy": directed, "profileId": profileID, "profileRevision": profileRev, "pipelineId": pipelineID, "pipelineRevision": pipelineRev, "stepId": stepID}))
+		if err != nil {
+			return err
+		}
+	}
+	if !inserted {
+		if err := exec(q, `UPDATE execution SET observation=$2,project_id=$3,task_id=coalesce(task_id,$4),experiment_id=$5,variant=$6,parent_execution_id=$7,session_id=$8,
+		  account_id=$9,host_id=$10,harness=$11,model=$12,config_ref=$13,started_at=$14,ended_at=$15,
+		  data=$16::jsonb || jsonb_strip_nulls(jsonb_build_object('traceparent',data->'traceparent','traceActor',data->'traceActor')),
+		  directed_by=coalesce($17,directed_by),profile_id=coalesce($18,profile_id),profile_revision=coalesce($19,profile_revision),
+		  pipeline_id=coalesce($20,pipeline_id),pipeline_revision=coalesce($21,pipeline_revision),step_id=coalesce($22,step_id) WHERE id=$1`,
+			id, observation, nilIf(project), nilIf(task), experiment, variant, nilIf(parent), e["sessionId"], nilIf(account), e["hostId"], harness, e["model"], cfg,
+			msTime(e["startedAt"]), msTime(e["finishedAt"]), js(data), directed, profileID, profileRev, pipelineID, pipelineRev, stepID); err != nil {
+			return err
+		}
 	}
 	if e["definitions"] != nil {
 		if err := exec(q, `UPDATE execution SET definitions=$2,profile_id=coalesce($3,profile_id),profile_revision=coalesce($4,profile_revision),
@@ -303,31 +312,32 @@ func putExecution(q *Request, e doc) error {
 			return err
 		}
 	}
-	if terminalTyped[state] && !terminalTyped[prev] {
-		if err := writeTotals(q, id); err != nil {
-			return err
-		}
-		if prev != "" {
-			if err := writeEnded(q, id); err != nil {
+	if !inserted {
+		if state != prev {
+			if _, err := executionTransition(q, id, executionEvent{To: state, KeepEnd: true}); err != nil {
 				return err
 			}
+		}
+	} else if executionEnds(state) {
+		if err := writeTotals(q, id); err != nil {
+			return err
 		}
 	}
 	var t *string
 	q.tx.QueryRow(q.ctx(), "SELECT e.task_id FROM execution e JOIN task k ON k.id=e.task_id WHERE e.id=$1", id).Scan(&t)
 	if t != nil {
-		if prev == "" && !terminalTyped[state] { // a new run
+		if prev == "" && !executionEnds(state) { // a new run
 			if err := withdrawIdleDecision(q, *t); err != nil {
 				return err
 			}
 		}
-		if _, err = settleTask(q, *t, ""); err == nil && terminalTyped[state] && !terminalTyped[prev] {
+		if _, err = settleTask(q, *t, ""); err == nil && executionEnds(state) && !executionEnds(prev) {
 			_, err = settleIdleTask(q, *t)
 		}
 	}
 	if err == nil && q.app != nil {
 		needDispatch := state == "preparing" && e["hostId"] == nil && kind == "agent_run"
-		newlySucceeded := state == "succeeded" && !terminalTyped[prev]
+		newlySucceeded := state == "succeeded" && !executionEnds(prev)
 		if needDispatch || newlySucceeded {
 			onEnd(q.tx, func(committed bool) {
 				if !committed {
@@ -512,7 +522,8 @@ func putQuestion(q *Request, v doc) error {
 		}
 		if answered {
 			by := firstString(v["answeredBy"], "operator")
-			return exec(q, "UPDATE question SET state='answered',answer=$2,answered_by=$3,answered_at=$4 WHERE id=$1", id, v["answer"], by, msTime(v["answeredAt"]))
+			_, err := questionTransition(q, id, questionEvent{To: "answered", Answer: strp(v, "answer"), AnsweredBy: &by, AnsweredAt: nullTime(v["answeredAt"])})
+			return err
 		}
 		return nil
 	}
@@ -556,7 +567,7 @@ func body(q *Request) doc {
 }
 
 // terminal: an execution record in a final state.
-func terminal(e doc) bool { return terminalTyped[astr(e["state"])] }
+func terminal(e doc) bool { return executionEnds(astr(e["state"])) }
 
 // unconfirmed: the host has not confirmed the execution's state (a receipt 'unknown', a silent host).
 func unconfirmed(e doc) bool { return e["observation"] == "unconfirmed" }
