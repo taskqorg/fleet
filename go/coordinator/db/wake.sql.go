@@ -53,9 +53,9 @@ func (q *Queries) WakeDelete(ctx context.Context, ids []string) error {
 }
 
 const wakeNotify = `-- name: WakeNotify :exec
-SELECT count(pg_notify(a.channel, b.payload))
-FROM unnest($1::text[]) WITH ORDINALITY AS a(channel, n)
-JOIN unnest($2::text[]) WITH ORDINALITY AS b(payload, n) USING (n)
+SELECT count(*) FROM (SELECT pg_notify(a.channel, b.payload)
+ FROM unnest($1::text[]) WITH ORDINALITY AS a(channel, n)
+ JOIN unnest($2::text[]) WITH ORDINALITY AS b(payload, m) ON b.m = a.n ORDER BY a.n) x
 `
 
 type WakeNotifyParams struct {
@@ -63,6 +63,7 @@ type WakeNotifyParams struct {
 	Payloads []string
 }
 
+// One NOTIFY per hint, in the order given (a volatile output is computed after the sort).
 func (q *Queries) WakeNotify(ctx context.Context, arg WakeNotifyParams) error {
 	_, err := q.db.Exec(ctx, wakeNotify, arg.Channels, arg.Payloads)
 	return err

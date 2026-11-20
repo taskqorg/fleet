@@ -637,7 +637,7 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 			return err
 		}
 	}
-	if n, err := q.db().CleanupRevokeRunTokens(q.ctx(), ids); err != nil {
+	if n, err := q.db().CleanupRevokeRunTokens(q.ctx(), db.CleanupRevokeRunTokensParams{Ids: ids, At: ptr(time.UnixMilli(nowMs()))}); err != nil {
 		return err
 	} else if n > 0 {
 		publish(q)

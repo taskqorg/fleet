@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 )
 
 const cleanupBudgets = `-- name: CleanupBudgets :exec
@@ -252,11 +253,16 @@ func (q *Queries) CleanupQueuedMessages(ctx context.Context, sessions []string) 
 }
 
 const cleanupRevokeRunTokens = `-- name: CleanupRevokeRunTokens :execrows
-UPDATE run_token SET revoked_at = now(), updated_at = now() WHERE execution_id = ANY ($1::text[]) AND revoked_at IS NULL
+UPDATE run_token SET revoked_at = $1, updated_at = now() WHERE execution_id = ANY ($2::text[]) AND revoked_at IS NULL
 `
 
-func (q *Queries) CleanupRevokeRunTokens(ctx context.Context, ids []string) (int64, error) {
-	result, err := q.db.Exec(ctx, cleanupRevokeRunTokens, ids)
+type CleanupRevokeRunTokensParams struct {
+	At  *time.Time
+	Ids []string
+}
+
+func (q *Queries) CleanupRevokeRunTokens(ctx context.Context, arg CleanupRevokeRunTokensParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cleanupRevokeRunTokens, arg.At, arg.Ids)
 	if err != nil {
 		return 0, err
 	}

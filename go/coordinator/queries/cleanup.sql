@@ -62,7 +62,7 @@ SELECT id FROM execution WHERE id = ANY (@ids::text[]) AND kind IN ('agent_run',
 UPDATE execution SET data = data || '{"stopDetail":"deleted"}' WHERE id = @id;
 
 -- name: CleanupRevokeRunTokens :execrows
-UPDATE run_token SET revoked_at = now(), updated_at = now() WHERE execution_id = ANY (@ids::text[]) AND revoked_at IS NULL;
+UPDATE run_token SET revoked_at = @at, updated_at = now() WHERE execution_id = ANY (@ids::text[]) AND revoked_at IS NULL;
 
 -- name: CleanupQueuedMessages :exec
 -- Messages still waiting for a turn never start one (host receipts see deleted rows and promote queued messages).

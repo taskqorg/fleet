@@ -256,7 +256,7 @@ func uploadBegin(q *Request, b *contract.ArtifactUploadBeginRequest) (contract.A
 		projectID = s.ProjectID
 		if projectID == nil {
 			var p string
-			if json.Unmarshal(s.PayloadProject, &p) == nil {
+			if json.Unmarshal(s.PayloadProject, &p) == nil && p != "" {
 				projectID = &p
 			}
 		}

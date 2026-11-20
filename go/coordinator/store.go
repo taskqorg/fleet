@@ -506,6 +506,11 @@ func applySchemaFiles(ctx context.Context, url string) error {
 			if have, err := q.SchemaFileHash(ctx, name); err == nil && have == sum || err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
+			// A policy is replaced under its table's exclusive lock: a start waits for no long reader past this; it fails
+			// and the next start applies the file.
+			if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '30s'"); err != nil {
+				return err
+			}
 			if _, err := tx.Exec(ctx, string(body), pgx.QueryExecModeSimpleProtocol); err != nil {
 				return err
 			}
