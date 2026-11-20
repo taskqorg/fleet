@@ -1393,6 +1393,15 @@ func labJudgeExample(prompt any, candidates []string) doc {
 	return doc{"prompt": prompt, "candidates": cs}
 }
 
+// labStrategyExample: a loop strategy run's example: its input files.
+func labStrategyExample(inputs []labStrategyInput) doc {
+	files := []any{}
+	for _, in := range inputs {
+		files = append(files, doc{"path": in.Path, "text": in.Text})
+	}
+	return doc{"inputs": files}
+}
+
 // judgeOutput: a judge (or strategy) run's output object.
 func judgeOutput(run doc) doc {
 	return mapOf(pipelineResultValue(run))

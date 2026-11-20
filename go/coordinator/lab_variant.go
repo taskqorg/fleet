@@ -73,7 +73,36 @@ type labExp struct {
 	PrimaryEvaluator string       `json:"primary_evaluator"`
 	Repeats          int64        `json:"repeats"`
 	Variants         []labVariant `json:"variants"`
+	Examples         []labPin     `json:"examples"`
 }
+
+// labPin: an example pinned by an experiment (expCreate).
+type labPin struct {
+	ID    string `json:"id"`
+	Split string `json:"split"`
+}
+
+// tune: how many of the experiment's examples are tune examples.
+func (e labExp) tune() int {
+	n := 0
+	for _, p := range e.Examples {
+		if p.Split == "tune" {
+			n++
+		}
+	}
+	return n
+}
+
+// labScoreForm: a score's form and, for a typed score, its answer.
+type labScoreForm struct {
+	Form  string `json:"form"`
+	Value struct {
+		Answer string `json:"answer"`
+	} `json:"value"`
+}
+
+// unscored: a typed score that could not score its trial (it counts in no statistic).
+func (s labScoreForm) unscored() bool { return s.Form == "typed" && s.Value.Answer == "unscored" }
 
 // labJudge: what a judge run judges (its run's judge field).
 type labJudge struct {
