@@ -3,6 +3,9 @@
 package main
 
 import (
+	"encoding/json"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -10,29 +13,99 @@ import (
 	"fleet/coordinator/db"
 )
 
-// runnerAt: when an execution ran (end, else start, else the start a gateway call carries in data, else last seen).
-const runnerAt = `coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at)`
+// runnerRow: one execution as the Runners screen reads it (queries/runners.sql), or a group of tool calls.
+type runnerRow struct {
+	id, kind, state                                              string
+	hostID, harness, taskID, title, sessionID, parentID, problem *string
+	callerRun, model, accountID, billingBasis                    *string
+	started, ended, seen, wallMs, cpuMs, peakMemoryBytes, tokens *float64
+	subject                                                      string
+	connectionCost                                               []byte
+	isAPIConn                                                    bool
+	tokensInput, tokensOutput, tokensCacheRead, tokensCacheWrite *int64
+	at                                                           time.Time
+	calls, failedCalls                                           *int64
+	usages                                                       []usage // a tool-call group, priced already per call
+	grouped                                                      bool
+}
 
-// runnerTokens: input + output + cache; null when none of them was measured (unknown, never 0).
-const runnerTokens = `CASE WHEN coalesce(x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write) IS NULL THEN NULL
- ELSE coalesce(x.tokens_input,0)+coalesce(x.tokens_output,0)+coalesce(x.tokens_cache_read,0)+coalesce(x.tokens_cache_write,0) END`
+// runnerMs: a time as Unix milliseconds, rounded as PostgreSQL rounds (extract(epoch)*1000)::bigint.
+func runnerMs(t *time.Time) *float64 {
+	if t == nil {
+		return nil
+	}
+	v := math.Round(float64(t.UnixMicro()) / 1000)
+	return &v
+}
 
-// runnerUsage: the priced usages of one execution: a gateway call's connection cost, an agent run's tokens per model,
-// priced at the run's start (fleet-analytics.md, price table). A run on a subscription login (account_id) adds no money.
-const runnerUsage = `coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool','') AS subject,x.connection_cost->>'unit' AS unit,
- coalesce(x.connection_cost->>'amount',x.connection_cost->>(x.connection_cost->>'unit'))::float8 AS amount,
- x.billing_basis,coalesce(x.model,e.model) AS model,e.account_id,
- CASE WHEN coalesce(x.billing_basis,'') IN ('','unavailable') AND e.account_id IS NOT NULL THEN coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('',e.account_id) m),false) ELSE false END AS is_api_conn,
- x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write,coalesce(e.started_at,` + runnerAt + `) AS at`
+func runnerF(v *int64) *float64 {
+	if v == nil {
+		return nil
+	}
+	f := float64(*v)
+	return &f
+}
 
-func isRunnerSubscription(r doc) bool {
-	switch astr(r["billing_basis"]) {
+// runnerTokens: input + output + cache; nil when none of them was measured (unknown, never 0).
+func runnerTokens(in, out, read, write *int64) *float64 {
+	if in == nil && out == nil && read == nil && write == nil {
+		return nil
+	}
+	var t float64
+	for _, v := range []*int64{in, out, read, write} {
+		if v != nil {
+			t += float64(*v)
+		}
+	}
+	return &t
+}
+
+// runnerCostField: a field of a gateway call's connection cost as text (->>), nil when absent or JSON null.
+func runnerCostField(cost []byte, key string) *string {
+	var o map[string]json.RawMessage
+	if json.Unmarshal(cost, &o) != nil {
+		return nil
+	}
+	raw, ok := o[key]
+	if !ok || string(raw) == "null" {
+		return nil
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return &s
+	}
+	t := string(raw)
+	return &t
+}
+
+func runnerUnit(r *runnerRow) *string { return runnerCostField(r.connectionCost, "unit") }
+
+// runnerAmount: the cost amount, else the figure named by its unit.
+func runnerAmount(r *runnerRow) *float64 {
+	a := runnerCostField(r.connectionCost, "amount")
+	if a == nil {
+		if u := runnerUnit(r); u != nil {
+			a = runnerCostField(r.connectionCost, *u)
+		}
+	}
+	if a == nil {
+		return nil
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(*a), 64)
+	if err != nil {
+		return nil
+	}
+	return &v
+}
+
+func isRunnerSubscription(r *runnerRow) bool {
+	switch deref(r.billingBasis) {
 	case string(contract.ResourceBasisSubscription):
 		return true
 	case "metered":
 		return false
 	}
-	return r["account_id"] != nil && r["is_api_conn"] != true
+	return r.accountID != nil && !r.isAPIConn
 }
 
 // runnerCost: the cost of one run's usages. A run on a subscription login (account_id / subscription billing_basis) costs no metered money: its
@@ -49,26 +122,25 @@ func runnerCost(prices []db.PriceEntry, subscription bool, us []usage) []contrac
 	return out
 }
 
-func runnerUsages(r doc) []usage {
-	if us, ok := r["usages"].([]usage); ok {
-		return us // a tool-call group, priced already per call
+func runnerUsages(r *runnerRow) []usage {
+	if r.grouped {
+		return r.usages
 	}
-	at, _ := r["at"].(time.Time)
-	if r["kind"] == "tool_run" {
-		if r["unit"] == nil {
-			return []usage{{astr(r["subject"]), "", nil, at}}
+	if r.kind == "tool_run" {
+		unit := runnerUnit(r)
+		if unit == nil {
+			return []usage{{r.subject, "", nil, r.at}}
 		}
-		var a *float64
-		if v, ok := numOK(r["amount"]); ok {
-			a = &v
-		}
-		return []usage{{astr(r["subject"]), astr(r["unit"]), a, at}}
+		return []usage{{r.subject, *unit, runnerAmount(r), r.at}}
 	}
 	out := []usage{}
-	for _, u := range []string{"input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"} {
-		col := map[string]string{"input_tokens": "tokens_input", "output_tokens": "tokens_output", "cache_read_tokens": "tokens_cache_read", "cache_write_tokens": "tokens_cache_write"}[u]
-		if v, ok := numOK(r[col]); ok && v > 0 {
-			out = append(out, usage{astr(r["model"]), u, &v, at})
+	for _, u := range []struct {
+		unit string
+		v    *int64
+	}{{"input_tokens", r.tokensInput}, {"output_tokens", r.tokensOutput}, {"cache_read_tokens", r.tokensCacheRead}, {"cache_write_tokens", r.tokensCacheWrite}} {
+		if u.v != nil && *u.v > 0 {
+			v := float64(*u.v)
+			out = append(out, usage{deref(r.model), u.unit, &v, r.at})
 		}
 	}
 	return out
@@ -77,49 +149,55 @@ func runnerUsages(r doc) []usage {
 // toolCallGroups: the tool calls of one caller (parent execution, else task, else connection) as one row: calls and
 // failed calls, first start, last end, summed wall time, all usages priced together; failed when any call failed,
 // running while any runs.
-func toolCallGroups(calls []doc) []doc {
-	groups, order := map[string]doc{}, []string{}
-	for _, c := range calls {
+func toolCallGroups(calls []runnerRow) []runnerRow {
+	groups, order := map[string]*runnerRow{}, []string{}
+	for i := range calls {
+		c := &calls[i]
 		// Per host (the screen lists runs by host), then the caller: its parent run when that run exists, else its task,
 		// else the connection (the coordinator's own reads, e.g. GitHub, carry a fresh session and parent id per call).
-		key := astr(c["host_id"]) + "/" + firstString(c["caller_run"], c["task_id"], "conn:"+strings.SplitN(astr(c["subject"]), "/", 2)[0])
+		key := deref(c.hostID) + "/" + firstString(deref(c.callerRun), deref(c.taskID), "conn:"+strings.SplitN(c.subject, "/", 2)[0])
 		g := groups[key]
 		if g == nil {
-			g = doc{"id": "calls:" + key, "kind": "tool_run", "state": "succeeded", "host_id": c["host_id"], "session_id": c["session_id"], "task_id": c["task_id"], "title": c["title"],
-				"parent_execution_id": c["parent_execution_id"], "calls": 0, "failed_calls": 0, "usages": []usage{}}
+			zero := int64(0)
+			failed := int64(0)
+			g = &runnerRow{id: "calls:" + key, kind: "tool_run", state: "succeeded", hostID: c.hostID, sessionID: c.sessionID, taskID: c.taskID, title: c.title,
+				parentID: c.parentID, calls: &zero, failedCalls: &failed, usages: []usage{}, grouped: true}
 			groups[key], order = g, append(order, key)
 		}
-		g["calls"] = g["calls"].(int) + 1
-		switch astr(c["state"]) {
+		*g.calls++
+		switch c.state {
 		case "failed", "cancelled":
-			g["failed_calls"] = g["failed_calls"].(int) + 1
-			if g["state"] != "running" {
-				g["state"] = "failed"
+			*g.failedCalls++
+			if g.state != "running" {
+				g.state = "failed"
 			}
 		case "preparing", "running", "waiting":
-			g["state"] = "running"
+			g.state = "running"
 		}
-		if v, ok := numOK(c["started"]); ok && (g["started"] == nil || v < g["started"].(float64)) {
-			g["started"] = v
+		if v := c.started; v != nil && (g.started == nil || *v < *g.started) {
+			g.started = ptr(*v)
 		}
-		if v, ok := numOK(c["ended"]); ok && (g["ended"] == nil || v > g["ended"].(float64)) {
-			g["ended"] = v
+		if v := c.ended; v != nil && (g.ended == nil || *v > *g.ended) {
+			g.ended = ptr(*v)
 		}
-		if v, ok := numOK(c["wall_ms"]); ok {
-			w, _ := numOK(g["wall_ms"])
-			g["wall_ms"] = w + v
+		if v := c.wallMs; v != nil {
+			w := *v
+			if g.wallMs != nil {
+				w += *g.wallMs
+			}
+			g.wallMs = &w
 		}
-		if c["problem"] != nil && g["problem"] == nil { // calls come newest first: the latest cause
-			g["problem"] = c["problem"]
+		if c.problem != nil && g.problem == nil { // calls come newest first: the latest cause
+			g.problem = c.problem
 		}
-		g["usages"] = append(g["usages"].([]usage), runnerUsages(c)...)
+		g.usages = append(g.usages, runnerUsages(c)...)
 	}
-	out := make([]doc, 0, len(order))
+	out := make([]runnerRow, 0, len(order))
 	for _, k := range order {
-		if g := groups[k]; g["state"] == "running" {
-			g["ended"] = nil
+		if g := groups[k]; g.state == "running" {
+			g.ended = nil
 		}
-		out = append(out, groups[k])
+		out = append(out, *groups[k])
 	}
 	return out
 }
@@ -129,75 +207,84 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 	if err != nil {
 		return contract.ExecutionsRunnersReply{}, err
 	}
-	ms := func(col string) string { return `(extract(epoch FROM ` + col + `)*1000)::bigint` }
 	// Active runs first, so a long run is never cut off by newer ended ones. ponytail: newest 500; page by host when busier.
 	// Tool calls (gateway calls, thousands a day) are not rows of their own: they are summed per caller below.
-	cols := `e.id,e.kind::text AS kind,e.state::text AS state,e.host_id,e.harness,e.task_id,t.title,e.session_id,e.parent_execution_id,e.problem,
-	 ` + ms("coalesce(e.started_at,"+runnerAt+")") + ` AS started,` + ms("e.ended_at") + ` AS ended,` + ms("e.last_seen_at") + ` AS seen,
-	 x.wall_ms,x.cpu_ms,x.peak_memory_bytes,` + runnerTokens + ` AS tokens,` + runnerUsage + `
-	 FROM execution e LEFT JOIN execution_totals x ON x.execution_id=e.id LEFT JOIN task t ON t.id=e.task_id
-	 WHERE (e.state IN ('preparing','running','waiting') OR ` + runnerAt + ` > now()-interval '24 hours') AND `
-	runs, err := queryRows(q, `SELECT `+cols+` e.kind NOT IN ('pipeline_run','pipeline_step','tool_run')
-	 ORDER BY (e.state IN ('preparing','running','waiting')) DESC,e.seq DESC LIMIT 500`)
+	rs, err := q.db().RunnerRuns(q.ctx())
 	if err != nil {
 		return contract.ExecutionsRunnersReply{}, err
+	}
+	runs := make([]runnerRow, 0, len(rs))
+	for _, r := range rs {
+		runs = append(runs, runnerRow{id: r.ID, kind: r.Kind, state: r.State, hostID: r.HostID, harness: r.Harness, taskID: r.TaskID, title: r.Title,
+			sessionID: r.SessionID, parentID: r.ParentExecutionID, problem: r.Problem, started: runnerMs(r.At), ended: runnerMs(r.EndedAt), seen: runnerMs(r.LastSeenAt),
+			wallMs: runnerF(r.WallMs), cpuMs: runnerF(r.CpuMs), peakMemoryBytes: runnerF(r.PeakMemoryBytes), tokens: runnerTokens(r.TokensInput, r.TokensOutput, r.TokensCacheRead, r.TokensCacheWrite),
+			subject: r.Subject, connectionCost: r.ConnectionCost, billingBasis: r.BillingBasis, model: r.Model, accountID: r.AccountID, isAPIConn: r.IsApiConn,
+			tokensInput: r.TokensInput, tokensOutput: r.TokensOutput, tokensCacheRead: r.TokensCacheRead, tokensCacheWrite: r.TokensCacheWrite, at: runnerTime(r.At)})
 	}
 	// ponytail: the newest 20000 calls of the day; a busier gateway needs the sums in SQL.
-	calls, err := queryRows(q, `SELECT (SELECT p.id FROM execution p WHERE p.id=e.parent_execution_id) AS caller_run,`+cols+` e.kind='tool_run' ORDER BY e.seq DESC LIMIT 20000`)
+	cs, err := q.db().RunnerCalls(q.ctx())
 	if err != nil {
 		return contract.ExecutionsRunnersReply{}, err
 	}
-	out := doc{"serverNow": time.Now().UnixMilli(), "runs": []any{}, "spend": []any{}}
+	calls := make([]runnerRow, 0, len(cs))
+	for _, r := range cs {
+		calls = append(calls, runnerRow{callerRun: r.CallerRun, id: r.ID, kind: r.Kind, state: r.State, hostID: r.HostID, harness: r.Harness, taskID: r.TaskID, title: r.Title,
+			sessionID: r.SessionID, parentID: r.ParentExecutionID, problem: r.Problem, started: runnerMs(r.At), ended: runnerMs(r.EndedAt), seen: runnerMs(r.LastSeenAt),
+			wallMs: runnerF(r.WallMs), cpuMs: runnerF(r.CpuMs), peakMemoryBytes: runnerF(r.PeakMemoryBytes), tokens: runnerTokens(r.TokensInput, r.TokensOutput, r.TokensCacheRead, r.TokensCacheWrite),
+			subject: r.Subject, connectionCost: r.ConnectionCost, billingBasis: r.BillingBasis, model: r.Model, accountID: r.AccountID, isAPIConn: r.IsApiConn,
+			tokensInput: r.TokensInput, tokensOutput: r.TokensOutput, tokensCacheRead: r.TokensCacheRead, tokensCacheWrite: r.TokensCacheWrite, at: runnerTime(r.At)})
+	}
+	out := contract.ExecutionsRunnersReply{ServerNow: time.Now().UnixMilli(), Runs: []contract.RunnerRun{}, Spend: []contract.RunnerSpend{}}
 	runs = append(runs, toolCallGroups(calls)...)
-	for _, r := range runs {
-		out["runs"] = append(out["runs"].([]any), doc{"id": r["id"], "kind": r["kind"], "state": r["state"], "hostId": r["host_id"], "harness": r["harness"], "model": r["model"],
-			"taskId": r["task_id"], "taskTitle": r["title"], "sessionId": r["session_id"], "problem": r["problem"], "startedAt": r["started"], "endedAt": r["ended"], "lastSeenAt": r["seen"],
-			"wallMs": r["wall_ms"], "cpuMs": r["cpu_ms"], "peakMemoryBytes": r["peak_memory_bytes"], "tokens": r["tokens"], "calls": r["calls"], "failedCalls": r["failed_calls"],
-			"parentExecutionId": r["parent_execution_id"], "cost": runnerCost(prices, isRunnerSubscription(r), runnerUsages(r))})
+	for i := range runs {
+		r := &runs[i]
+		out.Runs = append(out.Runs, contract.RunnerRun{Id: r.id, Kind: r.kind, State: contract.ExecutionState(r.state), HostId: r.hostID, Harness: r.harness, Model: r.model,
+			TaskId: r.taskID, TaskTitle: r.title, SessionId: r.sessionID, Problem: r.problem, StartedAt: r.started, EndedAt: r.ended, LastSeenAt: r.seen,
+			WallMs: r.wallMs, CpuMs: r.cpuMs, PeakMemoryBytes: r.peakMemoryBytes, Tokens: r.tokens, Calls: r.calls, FailedCalls: r.failedCalls,
+			ParentExecutionId: r.parentID, Cost: runnerCost(prices, isRunnerSubscription(r), runnerUsages(r))})
 	}
 	// Spend: every execution this UTC month, by when it ran (end, else start), summed per host, kind and period in Go so
 	// costs are priced per usage. ponytail: a full-month scan per call; aggregate closed days in SQL when months grow large.
-	rows, err := queryRows(q, `SELECT e.host_id,e.kind::text AS kind,(`+runnerAt+` >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS today,
-	 x.execution_id IS NOT NULL AS measured,x.wall_ms,x.cpu_ms,`+runnerTokens+` AS tokens,`+runnerUsage+`
-	 FROM execution e LEFT JOIN execution_totals x ON x.execution_id=e.id
-	 WHERE e.kind NOT IN ('pipeline_run','pipeline_step') AND `+runnerAt+` >= date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`)
+	rows, err := q.db().RunnerSpendRows(q.ctx())
 	if err != nil {
 		return contract.ExecutionsRunnersReply{}, err
 	}
 	type key struct{ host, kind, period string }
 	type acc struct {
-		runs, measured    int
+		runs, measured    int64
 		wall, cpu, tokens *float64
 		us, subUs         []usage // metered, and on a subscription login
 	}
 	sums, order := map[key]*acc{}, []key{}
-	add := func(p **float64, v any) {
-		if f, ok := numOK(v); ok {
+	add := func(p **float64, v *float64) {
+		if v != nil {
 			if *p == nil {
 				*p = new(float64)
 			}
-			**p += f
+			**p += *v
 		}
 	}
-	for _, r := range rows {
+	for _, s := range rows {
+		r := &runnerRow{kind: s.Kind, hostID: s.HostID, subject: s.Subject, connectionCost: s.ConnectionCost, billingBasis: s.BillingBasis, model: s.Model, accountID: s.AccountID,
+			isAPIConn: s.IsApiConn, tokensInput: s.TokensInput, tokensOutput: s.TokensOutput, tokensCacheRead: s.TokensCacheRead, tokensCacheWrite: s.TokensCacheWrite, at: runnerTime(s.At)}
 		periods := []string{"month"}
-		if r["today"] == true {
+		if s.Today {
 			periods = append(periods, "today")
 		}
 		for _, p := range periods {
-			k := key{astr(r["host_id"]), astr(r["kind"]), p}
+			k := key{deref(s.HostID), s.Kind, p}
 			a := sums[k]
 			if a == nil {
 				a = &acc{}
 				sums[k], order = a, append(order, k)
 			}
 			a.runs++
-			if r["measured"] == true {
+			if s.Measured {
 				a.measured++
 			}
-			add(&a.wall, r["wall_ms"])
-			add(&a.cpu, r["cpu_ms"])
-			add(&a.tokens, r["tokens"])
+			add(&a.wall, runnerF(s.WallMs))
+			add(&a.cpu, runnerF(s.CpuMs))
+			add(&a.tokens, runnerTokens(s.TokensInput, s.TokensOutput, s.TokensCacheRead, s.TokensCacheWrite))
 			if isRunnerSubscription(r) {
 				a.subUs = append(a.subUs, runnerUsages(r)...)
 			} else {
@@ -207,15 +294,19 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 	}
 	for _, k := range order {
 		a := sums[k]
-		var host any
-		if k.host != "" {
-			host = k.host
-		}
-		out["spend"] = append(out["spend"].([]any), doc{"hostId": host, "kind": k.kind, "period": k.period, "runs": a.runs, "measured": a.measured, "wallMs": a.wall, "cpuMs": a.cpu, "tokens": a.tokens, "cost": append(runnerCost(prices, false, a.us), runnerCost(prices, true, a.subUs)...)})
+		out.Spend = append(out.Spend, contract.RunnerSpend{HostId: optStr(k.host), Kind: k.kind, Period: k.period, Runs: a.runs, Measured: a.measured, WallMs: a.wall, CpuMs: a.cpu,
+			Tokens: a.tokens, Cost: append(runnerCost(prices, false, a.us), runnerCost(prices, true, a.subUs)...)})
 	}
-	return replyAs[contract.ExecutionsRunnersReply](out, nil)
+	return out, nil
 }
 
 func init() {
 	op("executions_runners", executionsRunners)
+}
+
+func runnerTime(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
 }
