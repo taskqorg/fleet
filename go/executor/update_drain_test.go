@@ -259,7 +259,7 @@ func TestUpdateDrainRetainsAuditButWaitsForRecoverableDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	lease(false)
-	if err := settleJob(e.db, "fake", "required", "upload", body, 0, M{"state": "stored"}, nil); err != nil {
+	if err := settleJob(e.db, "fake", "required", "upload", readJob(enc(body)), 0, M{"state": "stored"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	lease(true)

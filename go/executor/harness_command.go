@@ -116,7 +116,7 @@ func (h harness) Command(dir, native string, p map[string]any) (*exec.Cmd, []byt
 		if exe == "" {
 			exe = "codex"
 		}
-		exe, _, err := managedExecutable(n, exe, jStr(p["model"]))
+		exe, _, err := managedExecutable(n, exe, launchOf(p).Model)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -263,7 +263,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		return fail("unsupported credential authority")
 	}
 	legacy, _ := str(jAt(a, "executable"))
-	exe, managed, err := managedExecutable(h, legacy, jStr(p["model"]))
+	exe, managed, err := managedExecutable(h, legacy, launchOf(p).Model)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -344,7 +344,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 	if !hasText {
 		return fail("missing text")
 	}
-	instructions := jStr(p["instructions"])
+	instructions := launchOf(p).Instructions
 	if h == "claude" {
 		u, err := user.Current()
 		if err != nil || u.Username == "" {
@@ -369,8 +369,9 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 			if err := os.WriteFile(filepath.Join(plugin, ".claude-plugin/plugin.json"), []byte(manifest), 0o644); err != nil {
 				return nil, nil, err
 			}
-			for _, s := range skills {
-				id, _ := str(jAt(s, "id"))
+			items := skillItems(skills)
+			for i := range skills {
+				id, _ := valStr(items[i].Id)
 				if id == "" || strings.Trim(id, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
 					return fail("invalid skill id")
 				}
@@ -378,7 +379,8 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 				if err := os.MkdirAll(d, 0o755); err != nil {
 					return nil, nil, err
 				}
-				if err := os.WriteFile(filepath.Join(d, "SKILL.md"), []byte(jStr(jAt(s, "text"))), 0o644); err != nil {
+				text, _ := valStr(items[i].Text)
+				if err := os.WriteFile(filepath.Join(d, "SKILL.md"), []byte(text), 0o644); err != nil {
 					return nil, nil, err
 				}
 			}
@@ -391,7 +393,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		if err != nil {
 			return fail(err.Error())
 		}
-		tools = append(codeVisible(tools, jStr(p0, "agentConfig", "codeMode")), claudeExtraTools(p)...)
+		tools = append(codeVisible(tools, launchOf(p0["agentConfig"]).CodeMode), claudeExtraTools(p)...)
 		if jIsTrue(p, "readOnly") {
 			tools = readOnlyTools(tools)
 		}

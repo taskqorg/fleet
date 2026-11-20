@@ -122,13 +122,13 @@ func loginObserved(e registryEntry) *bool {
 	return &ok
 }
 
-func (e *executor) accountInspect(c M) error {
+func (e *executor) accountInspect(c contract.Command) error {
 	p, err := payloadOf[contract.AccountInspectPayload](c)
 	if err != nil {
 		return e.finish(c, "failed", "")
 	}
-	cid, _ := cmdID(c, "id")
-	execution, _ := cmdID(c, "executionId")
+	cid, _ := idOf(c, "id")
+	execution, _ := idOf(c, "executionId")
 	mode := str0(p.Mode)
 	reg, rerr := readRegistry()
 	if mode == "limits" {
@@ -193,7 +193,7 @@ func sortedKeysOf[V any](m map[string]V) []string {
 
 // readLimits (section 8 "Read without a run"): ask the vendor CLI for its current limits and report them as a
 // limit_reading event with source probe. A harness with no such request answers unsupported.
-func (e *executor) readLimits(c M, p contract.AccountInspectPayload, reg map[string]registryEntry, rerr error) error {
+func (e *executor) readLimits(c contract.Command, p contract.AccountInspectPayload, reg map[string]registryEntry, rerr error) error {
 	fail := func(reason string) error {
 		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: reason}); err != nil {
 			return err
@@ -346,56 +346,87 @@ func claudeReadLimits(x registryEntry) (M, error) {
 		{"type": "control_request", "request_id": "fleet-init", "request": M{"subtype": "initialize"}},
 		{"type": "control_request", "request_id": "fleet-usage", "request": M{"subtype": "get_usage"}},
 	}, func(v M) bool {
-		return jStr(v, "type") == "control_response" && jStr(v, "response", "request_id") == "fleet-usage"
+		a := claudeControlAnswer(v)
+		return a.Type == "control_response" && a.Response.RequestId == "fleet-usage"
 	})
 	if err != nil {
 		return nil, err
 	}
-	if jStr(r, "response", "subtype") != "success" {
+	a := claudeControlAnswer(r)
+	if a.Response.Subtype != "success" {
 		return nil, errors.New("get_usage refused")
 	}
-	return claudeUsageReading(jObj(r, "response", "response"), jAt(r, "response", "response", "rate_limits")), nil
+	native := typed[struct {
+		RateLimits jsonValue `json:"rate_limits"`
+	}](a.Response.Response).RateLimits.V
+	return claudeUsageReading(json.RawMessage(enc(a.Response.Response.V)), native), nil
 }
+
+// claudeControl: a Claude Code stream-json control response; a field of another type reads as absent.
+// A response that is not an object: only the type is read.
+type claudeControl struct {
+	Type     string `json:"type"`
+	Response struct {
+		RequestId string    `json:"request_id"`
+		Subtype   string    `json:"subtype"`
+		Response  jsonValue `json:"response"`
+	} `json:"response"`
+}
+
+func claudeControlAnswer(v M) claudeControl { return typed[claudeControl](v) }
 
 // claudeUsageReading: a get_usage answer (Claude Code 2.1.319, seen live 2026-11-11): response.rate_limits holds
 // five_hour, seven_day and seven_day_<name> as {utilization 0-100, resets_at RFC 3339} or null, and model_scoped as
 // [{display_name, utilization, resets_at}] for per-model weekly limits. Other keys (extra usage, spend, breakdowns) are
 // not limit windows.
-func claudeUsageReading(answer M, native any) M {
-	usage := jObj(answer, "rate_limits")
-	if usage == nil {
-		usage = answer
+func claudeUsageReading(answer json.RawMessage, native any) M {
+	// The windows: rate_limits when it is an object, else the answer itself; a value that is not an object has none.
+	ans := decRaw(answer)
+	outer := typed[struct {
+		RateLimits jsonValue `json:"rate_limits"`
+	}](ans)
+	usage, ok := outer.RateLimits.V.(M)
+	if !ok {
+		usage, _ = ans.(M)
+	}
+	type window struct {
+		Utilization jsonValue `json:"utilization"`
+		ResetsAt    jsonValue `json:"resets_at"`
+		DisplayName string    `json:"display_name"`
 	}
 	windows := []contract.LimitWindow{}
-	add := func(period string, w any, model *string) {
-		u, ok := num(jAt(w, "utilization"))
+	add := func(period string, w window, model *string) {
+		u, ok := num(w.Utilization.V)
 		if !ok {
 			return
 		}
 		lw := contract.LimitWindow{Period: period, Pct: &u, Model: model}
-		if t, ok := str(jAt(w, "resets_at")); ok {
+		if t, ok := valStr(w.ResetsAt); ok {
 			if at, err := time.Parse(time.RFC3339, t); err == nil {
 				v := at.UnixMilli()
 				lw.ResetsAt = &v
 			}
 		} else {
-			lw.ResetsAt = ms(jAt(w, "resets_at")) // epoch seconds, as rate_limit_event sends
+			lw.ResetsAt = ms(w.ResetsAt.V) // epoch seconds, as rate_limit_event sends
 		}
 		windows = append(windows, lw)
 	}
-	for _, k := range sortedKeys(usage) {
+	read := func(v any) window { return typed[window](v) }
+	for _, k := range sortedKeysOf(usage) {
 		if k == "five_hour" || k == "seven_day" || strings.HasPrefix(k, "seven_day_") {
 			var model *string
 			if m := strings.TrimPrefix(k, "seven_day_"); m != k {
 				model = &m
 			}
-			add(claudePeriod(k), usage[k], model)
+			add(claudePeriod(k), read(usage[k]), model)
 		}
 	}
-	for _, m := range jArr(usage, "model_scoped") {
+	scoped, _ := usage["model_scoped"].([]any)
+	for _, raw := range scoped {
 		// One model name for both sources: the lower-case key form (seven_day_opus and a display name "Opus" agree).
-		if name := strings.ToLower(strings.ReplaceAll(jStr(m, "display_name"), " ", "-")); name != "" {
-			add("weekly-"+name, m, &name)
+		w := read(raw)
+		if name := strings.ToLower(strings.ReplaceAll(w.DisplayName, " ", "-")); name != "" {
+			add("weekly-"+name, w, &name)
 		}
 	}
 	return limitReading("claude", windows, native)

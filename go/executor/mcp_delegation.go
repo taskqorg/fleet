@@ -38,12 +38,88 @@ var (
 
 func init() { runMCP = mcpRun }
 
+// delegationContext: the delegation server's context (executor.go writes it at the start of a Fleet tools run).
+type delegationContext struct {
+	HostId      *string          `json:"hostId"`
+	CommandId   *string          `json:"commandId"`
+	ExecutionId jsonValue        `json:"executionId"` // a string names the execution; requests carry the value as written
+	ProjectId   *string          `json:"projectId"`
+	Workdir     *string          `json:"workdir"`
+	InputDir    jsonValue        `json:"inputDir"`
+	Spool       *string          `json:"spool"`
+	Profiles    jsonValue        `json:"profiles"` // read through profiles()
+	Operations  []fleetOperation `json:"operations"`
+}
+
+// execution: the context's execution id, and whether it is a string.
+func (c *delegationContext) execution() (string, bool) { return valStr(c.ExecutionId) }
+
+// profiles: the delegation profiles when the context names a list of strings, else none (a list with any other item
+// counts as no list).
+func (c *delegationContext) profiles() []string {
+	items, ok := c.Profiles.V.([]any)
+	if !ok {
+		return nil
+	}
+	out := []string{}
+	for _, it := range items {
+		s, ok := it.(string)
+		if !ok {
+			return nil
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// fleetOperation: one of the director's operations (the start command's fleetOperations).
+type fleetOperation struct {
+	Name        string    `json:"name"`
+	Description jsonValue `json:"description"`
+	InputSchema jsonValue `json:"inputSchema"`
+}
+
+// contextOf: the delegation context of ctx, a *delegationContext or its JSON value (in memory: jClone gives it JSON form).
+func contextOf(ctx any) *delegationContext {
+	if c, ok := ctx.(*delegationContext); ok {
+		return c
+	}
+	c := typed[delegationContext](ctx)
+	return &c
+}
+
+// toolSchema: the part of a tool's inputSchema in mcp-tools.json that a call is checked against.
+type toolSchema struct {
+	Properties map[string]struct {
+		MinLength *float64 `json:"minLength"`
+		MaxLength *float64 `json:"maxLength"`
+	} `json:"properties"`
+	Required []string `json:"required"`
+}
+
+// mcpToolEntry: one entry of mcp-tools.json: its name, its schema and the entry as written (the listing publishes it).
+type mcpToolEntry struct {
+	Name        string     `json:"name"`
+	InputSchema toolSchema `json:"inputSchema"`
+	raw         string
+}
+
+var mcpToolEntries = func() []mcpToolEntry {
+	var raws []json.RawMessage
+	var out []mcpToolEntry
+	json.Unmarshal(mcpToolsJSON, &raws)
+	json.Unmarshal(mcpToolsJSON, &out)
+	for i := range out {
+		out[i].raw = string(raws[i])
+	}
+	return out
+}()
+
 // toolSchemas: the inputSchema of every tool in mcp-tools.json, by name.
-var toolSchemas = func() map[string]any {
-	all, _ := dec(string(mcpToolsJSON))
-	out := map[string]any{}
-	for _, t := range jArr(all) {
-		out[jStr(t, "name")] = jAt(t, "inputSchema")
+var toolSchemas = func() map[string]toolSchema {
+	out := map[string]toolSchema{}
+	for _, t := range mcpToolEntries {
+		out[t.Name] = t.InputSchema
 	}
 	return out
 }()
@@ -53,22 +129,22 @@ var toolSchemas = func() map[string]any {
 func argumentsFit(name string, args M) error {
 	schema := toolSchemas[name]
 	for k, v := range args {
-		p, ok := jAt(schema, "properties", k).(M)
+		p, ok := schema.Properties[k]
 		if !ok {
 			return fmt.Errorf("Invalid project request: %s takes no %s", name, k)
 		}
-		s, isStr := v.(string)
+		s, ok := v.(string)
 		n := float64(utf8.RuneCountInString(s))
-		if min, ok := p["minLength"].(float64); !isStr || ok && n < min {
+		if !ok || p.MinLength != nil && n < *p.MinLength {
 			return fmt.Errorf("Invalid project request: %s must be a non-empty string", k)
 		}
-		if max, ok := p["maxLength"].(float64); ok && n > max {
-			return fmt.Errorf("Invalid project request: %s is longer than %d characters", k, int(max))
+		if p.MaxLength != nil && n > *p.MaxLength {
+			return fmt.Errorf("Invalid project request: %s is longer than %d characters", k, int(*p.MaxLength))
 		}
 	}
-	for _, k := range jArr(schema, "required") {
-		if s, _ := str(args[jStr(k)]); strings.TrimSpace(s) == "" {
-			return fmt.Errorf("Invalid project request: %s needs %s", name, jStr(k))
+	for _, k := range schema.Required {
+		if s, _ := args[k].(string); strings.TrimSpace(s) == "" {
+			return fmt.Errorf("Invalid project request: %s needs %s", name, k)
 		}
 	}
 	return nil
@@ -93,24 +169,26 @@ func mcpText(v any, isError *bool) M {
 
 var yes, no = true, false
 
+// mcpTools: the delegation server's tools/list for its context, each entry a JSON object as published.
 func mcpTools(ctx any) M {
-	all, _ := dec(string(mcpToolsJSON))
+	c := contextOf(ctx)
 	out := []any{}
-	for _, t := range all.([]any) {
-		n := jStr(jAt(t, "name"))
-		if n == "request_child" {
-			if !truth(jAt(ctx, "profiles")) {
+	names := []string{}
+	for _, t := range mcpToolEntries {
+		entry, _ := dec(t.raw)
+		if t.Name == "request_child" {
+			if len(c.profiles()) == 0 {
 				continue
 			}
-			jAt(t, "inputSchema", "properties", "profileId").(M)["enum"] = jAt(ctx, "profiles")
-		} else if slices.Contains(projectTools, n) && !truth(jAt(ctx, "projectId")) || slices.Contains(artifactTools, n) && !truth(jAt(ctx, "workdir")) {
+			jAt(entry, "inputSchema", "properties", "profileId").(M)["enum"] = c.profiles() // the static entry's own shape
+		} else if slices.Contains(projectTools, t.Name) && str0(c.ProjectId) == "" || slices.Contains(artifactTools, t.Name) && str0(c.Workdir) == "" {
 			continue
 		}
-		out = append(out, t)
+		out, names = append(out, entry), append(names, t.Name)
 	}
-	for _, o := range operationsOf(ctx) { // the director's operations from the start command (profile fleetOperations)
-		if n := jStr(jAt(o, "name")); !slices.ContainsFunc(out, func(t any) bool { return jStr(jAt(t, "name")) == n }) {
-			schema := jAt(o, "inputSchema")
+	for _, o := range c.Operations { // the director's operations from the start command (profile fleetOperations)
+		if n := o.Name; !slices.Contains(names, n) {
+			schema := o.InputSchema.V
 			if schema == nil {
 				if generated := contract.Operations[n].InputSchema; len(generated) > 0 {
 					schema = generated
@@ -119,7 +197,7 @@ func mcpTools(ctx any) M {
 			if schema == nil {
 				schema = M{"type": "object"}
 			}
-			out = append(out, M{"name": n, "description": jAt(o, "description"), "inputSchema": schema})
+			out, names = append(out, M{"name": n, "description": o.Description.V, "inputSchema": schema}), append(names, n)
 		}
 	}
 	return M{"tools": out}
@@ -127,9 +205,14 @@ func mcpTools(ctx any) M {
 
 // Internal launch selection comes from the same schema/context as actual discovery, including recovery tools.
 func mcpToolNames(discovery any) []any {
+	d := typed[struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}](discovery)
 	out := []any{}
-	for _, tool := range jArr(discovery, "tools") {
-		out = append(out, jStr(tool, "name"))
+	for _, tool := range d.Tools {
+		out = append(out, tool.Name)
 	}
 	return out
 }
@@ -156,8 +239,44 @@ func dbe(err error) error {
 	return dbError{err}
 }
 
+// hostReply: a stored host reply. Value is the reply as decoded (the agent reads it as is); Keys are the members the
+// executor looks at, each Set when the reply is an object with that key.
+type hostReply struct {
+	Value any
+	Keys  struct {
+		Result           jsonValue `json:"result"`
+		Error            jsonValue `json:"error"`
+		ArtifactId       jsonValue `json:"artifactId"`
+		ChildExecutionId jsonValue `json:"childExecutionId"`
+	}
+}
+
+// valueObject: the reply when it is a JSON object (the caller adds its own keys to it).
+func (r *hostReply) valueObject() (M, bool) {
+	if r == nil {
+		return nil, false
+	}
+	m, ok := r.Value.(M)
+	return m, ok
+}
+
+func readReply(raw string) (*hostReply, error) {
+	v, err := dec(raw)
+	if err != nil {
+		return nil, err
+	}
+	r := &hostReply{Value: v}
+	r.Keys = typed[struct {
+		Result           jsonValue `json:"result"`
+		Error            jsonValue `json:"error"`
+		ArtifactId       jsonValue `json:"artifactId"`
+		ChildExecutionId jsonValue `json:"childExecutionId"`
+	}](v) // a reply that is no object has none of the keys
+	return r, nil
+}
+
 // wait returns the host's reply for key once the executor settles it (wake.go), nil after seconds.
-func wait(db *sql.DB, table, key string, seconds int, artifact bool) (any, error) {
+func wait(db *sql.DB, table, key string, seconds int, artifact bool) (*hostReply, error) {
 	end := time.Now().Add(time.Duration(seconds) * time.Second)
 	w := listen(db, key) // before the first read: a reply written after it signals this FIFO
 	defer w.close()
@@ -174,7 +293,7 @@ func wait(db *sql.DB, table, key string, seconds int, artifact bool) (any, error
 }
 
 // reply reads key's stored reply: ok once it is the one the caller waits for.
-func reply(db *sql.DB, table, key string, artifact bool) (any, bool, error) {
+func reply(db *sql.DB, table, key string, artifact bool) (*hostReply, bool, error) {
 	q := "SELECT response,'' FROM delegation_requests WHERE id=?"
 	if table == "transfers" {
 		q = "SELECT response,state FROM transfers WHERE id=?"
@@ -188,14 +307,29 @@ func reply(db *sql.DB, table, key string, artifact bool) (any, bool, error) {
 	if err != nil || raw.String == "" {
 		return nil, false, nil
 	}
-	v, err := dec(raw.String)
+	v, err := readReply(raw.String)
 	if err != nil {
 		return nil, false, unreadReply{err} // the stored reply does not decode: the request was made, its outcome unknown
 	}
-	if table != "transfers" || state == "failed" || (artifact && has(v, "artifactId")) || (!artifact && state == "done") {
+	if table != "transfers" || state == "failed" || (artifact && v.Keys.ArtifactId.Set) || (!artifact && state == "done") {
 		return v, true, nil
 	}
 	return nil, false, nil
+}
+
+// journaledRequest: the members of a journaled delegation_requests body (AgentToolsRequest, ChildReceipt or
+// ProjectReceipt) that agent_tool_result checks.
+type journaledRequest struct {
+	CommandId   string    `json:"commandId"`
+	ExecutionId string    `json:"executionId"`
+	Request     jsonValue `json:"request"`
+}
+
+// childArgs: request_child's arguments (mcp-tools.json).
+type childArgs struct {
+	RequestId *string `json:"requestId"`
+	ProfileId *string `json:"profileId"`
+	Input     *string `json:"input"`
 }
 
 // delegationCall answers one tools/call of the delegation server.
@@ -203,11 +337,14 @@ func delegationCall(name string, q, ctx any, db *sql.DB) (any, error) {
 	if !truth(q) {
 		q = M{}
 	}
+	c := contextOf(ctx)
 	if name == "agent_tool_result" {
-		key := jStr(q, "requestKey")
+		key := typed[struct {
+			RequestKey string `json:"requestKey"`
+		}](q).RequestKey
 		var body string
 		var raw sql.NullString
-		if !strings.HasPrefix(key, jStr(ctx, "commandId")+":") {
+		if !strings.HasPrefix(key, str0(c.CommandId)+":") {
 			return mcpText(M{"error": "Request belongs to another command"}, &yes), nil
 		}
 		err := db.QueryRow("SELECT body,response FROM delegation_requests WHERE id=?", key).Scan(&body, &raw)
@@ -217,129 +354,122 @@ func delegationCall(name string, q, ctx any, db *sql.DB) (any, error) {
 		if err != nil {
 			return nil, dbe(err)
 		}
-		stored, err := dec(body)
+		journaled, err := dec(body)
 		if err != nil {
 			return nil, dbe(err)
 		}
-		if jStr(stored, "commandId") != jStr(ctx, "commandId") {
+		stored := typed[journaledRequest](journaled)
+		if stored.CommandId != str0(c.CommandId) {
 			return mcpText(M{"error": "Request belongs to another command"}, &yes), nil
 		}
-		if jStr(stored, "executionId") != jStr(ctx, "executionId") {
+		if execution, _ := c.execution(); stored.ExecutionId != execution {
 			return mcpText(M{"error": "Request belongs to another execution"}, &yes), nil
 		}
 		if raw.String == "" {
 			return mcpText(M{"status": "pending", "requestKey": key, "instruction": "Outcome unknown; inspect this request again. Do not repeat the mutation."}, &yes), nil
 		}
-		result, err := dec(raw.String)
+		result, err := readReply(raw.String)
 		if err != nil {
 			return nil, dbe(err)
 		}
-		if has(stored, "request") {
-			if has(result, "result") {
-				return jAt(result, "result"), nil
+		if stored.Request.Set {
+			if result.Keys.Result.Set {
+				return result.Keys.Result.V, nil
 			}
-			return mcpText(result, &yes), nil
+			return mcpText(result.Value, &yes), nil
 		}
-		isErr := has(result, "error")
-		return mcpText(result, &isErr), nil
+		isErr := result.Keys.Error.Set
+		return mcpText(result.Value, &isErr), nil
 	}
-	if slices.Contains(artifactTools, name) && truth(jAt(ctx, "workdir")) {
-		return artifactCall(ctx, name, q, dbExec{db})
+	if slices.Contains(artifactTools, name) && str0(c.Workdir) != "" {
+		return artifactCall(c, name, q, dbExec{db})
 	}
-	need := func(k string) (string, error) {
-		s, ok := str(jAt(ctx, k))
-		if !ok {
+	need := func(k string, v *string) (string, error) {
+		if v == nil {
 			return "", fmt.Errorf("'%s'", k)
 		}
-		return s, nil
+		return *v, nil
 	}
-	agent := slices.Contains(agentTools, name) || slices.ContainsFunc(operationsOf(ctx), func(o any) bool { return jStr(jAt(o, "name")) == name })
+	agent := slices.Contains(agentTools, name) || slices.ContainsFunc(c.Operations, func(o fleetOperation) bool { return o.Name == name })
 	var key string
 	var body any
 	route := contract.RouteAgentTools.Path // one route per envelope (contracts/host-protocol.schema.json routes)
 	if agent {
-		cmd, err := need("commandId")
+		cmd, err := need("commandId", c.CommandId)
 		if err != nil {
 			return nil, err
 		}
 		key = cmd + ":agent:" + newID()
-		host := jStr(ctx, "hostId") // the coordinator derives the host from its token
 		var execution *string
-		if s, ok := str(jAt(ctx, "executionId")); ok {
-			execution = &s
+		if e, ok := c.execution(); ok {
+			execution = &e
 		}
-		body = contract.AgentToolsRequest{HostId: host, CommandId: cmd, ExecutionId: execution, AgentToolKey: &key,
+		// The coordinator derives the host from its token; the arguments are the agent's, passed on as they came.
+		body = contract.AgentToolsRequest{HostId: str0(c.HostId), CommandId: cmd, ExecutionId: execution, AgentToolKey: &key,
 			Request: json.RawMessage(enc(M{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": M{"name": name, "arguments": q}}))}
 	} else {
 		child := name == "request_child"
 		route = map[bool]string{true: contract.RouteDelegations.Path, false: contract.RouteProjectOperations.Path}[child]
-		if !child && !(truth(jAt(ctx, "projectId")) && slices.Contains(projectTools, name)) {
+		if !child && !(str0(c.ProjectId) != "" && slices.Contains(projectTools, name)) {
 			return nil, errors.New("Unsupported method")
 		}
-		var d M
-		qo, isObj := q.(M)
+		q = jClone(q)           // the arguments in JSON form: what is checked here is what is sent
+		args, isObject := q.(M) // the arguments by key
+		var rid string
+		var ca childArgs
 		if child {
-			profiles, _ := jAt(ctx, "profiles").([]any)
-			bad := !isObj || len(qo) != 3 || !has(qo, "requestId") || !has(qo, "profileId") || !has(qo, "input") ||
-				!slices.ContainsFunc(profiles, func(x any) bool { return enc(x) == enc(qo["profileId"]) })
-			for k, n := range map[string]int{"requestId": 200, "input": 32000} {
-				s, ok := str(jAt(q, k))
-				bad = bad || !ok || s == "" || utf8.RuneCountInString(s) > n
+			ca = typed[childArgs](q)
+			_, hasRequest := args["requestId"]
+			_, hasProfile := args["profileId"]
+			_, hasInput := args["input"]
+			bad := !isObject || len(args) != 3 || !hasRequest || !hasProfile || !hasInput || ca.ProfileId == nil || !slices.Contains(c.profiles(), *ca.ProfileId)
+			for _, f := range []struct {
+				v *string
+				n int
+			}{{ca.RequestId, 200}, {ca.Input, 32000}} {
+				bad = bad || f.v == nil || *f.v == "" || utf8.RuneCountInString(*f.v) > f.n
 			}
 			if bad {
 				return nil, errors.New("Invalid child request")
 			}
-			d = qo
+			rid = *ca.RequestId
 		} else {
-			if !isObj {
+			if !isObject {
 				return nil, errors.New("Invalid project request")
 			}
-			if err := argumentsFit(name, qo); err != nil {
+			if err := argumentsFit(name, args); err != nil {
 				return nil, err
 			}
 			// An effect (its schema requires requestId) keeps the caller's requestId, so a retry is the same request.
-			rid := any(name + "-" + newID())
-			if slices.Contains(jArr(toolSchemas[name], "required"), any("requestId")) {
-				rid = qo["requestId"]
+			rid = name + "-" + newID()
+			if slices.Contains(toolSchemas[name].Required, "requestId") {
+				rid, _ = args["requestId"].(string) // argumentsFit: a non-blank string
 			}
-			d = M{"operation": name, "arguments": q, "requestId": rid, "projectId": jAt(ctx, "projectId")}
 		}
-		cmd, err := need("commandId")
+		cmd, err := need("commandId", c.CommandId)
 		if err != nil {
 			return nil, err
 		}
-		rid, ok := str(d["requestId"])
-		if !ok {
-			return nil, errors.New(map[bool]string{true: "Invalid child request", false: "Invalid project request"}[child])
-		}
 		key = cmd + ":" + rid
 		// The typed receipt (contracts ChildReceipt / ProjectReceipt): every identity must be a string.
-		ids := map[string]string{}
-		for _, k := range []string{"hostId", "commandId", "executionId"} {
-			s, err := need(k)
-			if err != nil {
-				return nil, err
-			}
-			ids[k] = s
+		host, err := need("hostId", c.HostId)
+		if err != nil {
+			return nil, err
+		}
+		execution, ok := c.execution()
+		if !ok {
+			return nil, fmt.Errorf("'%s'", "executionId")
 		}
 		if child {
-			profile, ok := str(d["profileId"])
-			if !ok {
-				return nil, errors.New("Invalid child request")
-			}
-			body = contract.ChildReceipt{HostId: ids["hostId"], CommandId: ids["commandId"], ExecutionId: ids["executionId"],
-				Delegation: contract.ChildRequest{RequestId: rid, ProfileId: profile, Input: jStr(d, "input")}}
+			body = contract.ChildReceipt{HostId: host, CommandId: cmd, ExecutionId: execution,
+				Delegation: contract.ChildRequest{RequestId: rid, ProfileId: *ca.ProfileId, Input: *ca.Input}}
 		} else {
-			project, err := need("projectId")
+			project, err := need("projectId", c.ProjectId)
 			if err != nil {
 				return nil, err
 			}
-			args := contract.ProjectArguments{}
-			for k, v := range qo {
-				args[k] = json.RawMessage(enc(v))
-			}
-			body = contract.ProjectReceipt{HostId: ids["hostId"], CommandId: ids["commandId"], ExecutionId: ids["executionId"],
-				Delegation: contract.ProjectRequest{Operation: contract.ProjectOperation(name), Arguments: args, RequestId: rid, ProjectId: project}}
+			body = contract.ProjectReceipt{HostId: host, CommandId: cmd, ExecutionId: execution,
+				Delegation: contract.ProjectRequest{Operation: contract.ProjectOperation(name), Arguments: projectArguments(args), RequestId: rid, ProjectId: project}}
 		}
 	}
 	raw := enc(body)
@@ -359,20 +489,24 @@ func delegationCall(name string, q, ctx any, db *sql.DB) (any, error) {
 		return mcpText(M{"status": "pending", "requestKey": key, "instruction": "Outcome unknown; use agent_tool_result with this requestKey. Do not repeat the mutation."}, &yes), nil
 	}
 	if agent {
-		if has(r, "result") {
-			return jAt(r, "result"), nil
+		if r.Keys.Result.Set {
+			return r.Keys.Result.V, nil
 		}
-		return mcpText(r, &yes), nil
+		return mcpText(r.Value, &yes), nil
 	}
-	isErr := truth(r) && has(r, "error")
+	var value any
+	isErr := false
+	if r != nil {
+		value, isErr = r.Value, r.Keys.Error.Set
+	}
 	if name == "request_child" {
 		status := "pending-or-rejected"
-		if truth(r) && has(r, "childExecutionId") {
+		if r != nil && r.Keys.ChildExecutionId.Set {
 			status = "accepted"
 		}
-		r = M{"status": status, "response": r, "instruction": "Finish this turn. Child work runs after your completed receipt. Retry only with the same requestId; submission is not completion."}
+		value = M{"status": status, "response": value, "instruction": "Finish this turn. Child work runs after your completed receipt. Retry only with the same requestId; submission is not completion."}
 	}
-	return mcpText(r, &isErr), nil
+	return mcpText(value, &isErr), nil
 }
 
 // journalOnce records the request and its outbox row in one immediate transaction; a repeat with the same body is a no-op.
@@ -430,11 +564,11 @@ func mcpRun(args []string) error {
 		if len(args) != 4 {
 			return errors.New("stdio MCP needs owner, trusted spec and root")
 		}
-		spec, err := dec(args[2])
+		spec, err := dec(args[2]) // passed on as written
 		if err != nil {
 			return err
 		}
-		return mcpStdio(args[1], spec, os.Stdin, os.Stdout, args[3], jStr(spec, "pathPolicy"))
+		return mcpStdio(args[1], spec, os.Stdin, os.Stdout, args[3], typed[mcpLaunchSpec](spec).PathPolicy)
 	}
 
 	if server == "project-browser" {
@@ -464,7 +598,7 @@ func mcpRun(args []string) error {
 		if err != nil {
 			return err
 		}
-		if ctx, err = dec(s); err != nil {
+		if ctx, err = dec(s); err != nil { // the grant data or forge context, handed to its server as is
 			return err
 		}
 	case "delegation":
@@ -490,9 +624,12 @@ func mcpRun(args []string) error {
 			}
 			s = string(b)
 		}
-		if ctx, err = dec(s); err != nil {
+		v, err := dec(s) // decoded once; a context of another shape leaves every member unset
+		if err != nil {
 			return err
 		}
+		c := typed[delegationContext](v)
+		ctx = &c
 	case "code":
 		path, err := arg(1, "spec file")
 		if err != nil {
@@ -547,7 +684,13 @@ func mcpRun(args []string) error {
 }
 
 // operationsOf: the start command's fleetOperations list carried in the server context.
-func operationsOf(ctx any) []any {
-	xs, _ := jAt(ctx, "operations").([]any)
-	return xs
+func operationsOf(ctx any) []fleetOperation { return contextOf(ctx).Operations }
+
+// projectArguments: checked project arguments as the contract carries them, each value as checked.
+func projectArguments(args M) contract.ProjectArguments {
+	out := contract.ProjectArguments{}
+	for k, v := range args {
+		out[k] = json.RawMessage(enc(v))
+	}
+	return out
 }

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"fleet/contract"
 )
 
 func contextFixture(t *testing.T) (M, string, string) {
@@ -61,7 +63,7 @@ func TestAttemptContextFrozenGitAndHardening(t *testing.T) {
 	os.Remove(filepath.Join(root, "engineering/core.md"))
 	os.Symlink(marker, filepath.Join(root, "engineering/core.md"))
 	input := t.TempDir()
-	got, err := resolveAttemptContext(p, "h", []string{root}, nil, input)
+	got, err := resolveAttemptContext(proj(p), "h", []string{root}, nil, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +73,7 @@ func TestAttemptContextFrozenGitAndHardening(t *testing.T) {
 	if exists(marker) {
 		t.Fatal("source executed hook/filter/credential command")
 	}
-	if _, err = resolveAttemptContext(p, "h", []string{root}, nil, input); err != nil {
+	if _, err = resolveAttemptContext(proj(p), "h", []string{root}, nil, input); err != nil {
 		t.Fatal("same verified staged bytes should be reusable", err)
 	}
 	staged := filepath.Join(input, "context-sources/specq", revision, "engineering/core.md")
@@ -79,7 +81,7 @@ func TestAttemptContextFrozenGitAndHardening(t *testing.T) {
 	if string(bytes) != "required-core\n" {
 		t.Fatal(string(bytes))
 	}
-	if path, ok := repoPath(M{"project": p}, "h"); !ok || path != "/primary" {
+	if path, ok := repoPath(nil, proj(p), "h"); !ok || path != "/primary" {
 		t.Fatal("source binding became primary checkout", path)
 	}
 }
@@ -92,21 +94,21 @@ func TestAttemptContextRejectsInvalidSources(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			x := jObj(jClone(p))
 			mutate(x)
-			if _, err := resolveAttemptContext(x, "h", []string{root}, nil, t.TempDir()); err == nil {
+			if _, err := resolveAttemptContext(proj(x), "h", []string{root}, nil, t.TempDir()); err == nil {
 				t.Fatal("accepted invalid source")
 			}
 		})
 	}
-	if _, err := resolveAttemptContext(p, "h", []string{t.TempDir()}, nil, ""); err == nil {
+	if _, err := resolveAttemptContext(proj(p), "h", []string{t.TempDir()}, nil, ""); err == nil {
 		t.Fatal("outside roots")
 	}
-	if _, err := resolveAttemptContext(p, "h", []string{root}, []string{root}, ""); err == nil {
+	if _, err := resolveAttemptContext(proj(p), "h", []string{root}, []string{root}, ""); err == nil {
 		t.Fatal("forbidden root")
 	}
 	input := t.TempDir()
 	outside := t.TempDir()
 	os.Symlink(outside, filepath.Join(input, "context-sources"))
-	if _, err := resolveAttemptContext(p, "h", []string{root}, nil, input); err == nil {
+	if _, err := resolveAttemptContext(proj(p), "h", []string{root}, nil, input); err == nil {
 		t.Fatal("input symlink escape")
 	}
 	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
@@ -212,7 +214,7 @@ func assertAttemptSourceStartBlocked(t *testing.T, p M, source string) {
 	t.Setenv("FLEET_PROJECT_ROOTS", source)
 	payload := M{"agentConfig": M{"id": "baseline", "model": "gpt-6.1-sol", "effort": "low", "instructions": "profile", "mcpServers": []any{}, "fleetTools": false, "collaborationTools": false}, "model": "gpt-6.1-sol", "effort": "low", "account": "fixture", "text": "read only", "project": p}
 	c := M{"id": "source-negative", "executionId": "source-negative-execution", "sessionId": "source-negative-session", "kind": "start", "payload": payload}
-	if err := e.start(c, "source-negative", "source-negative-execution", "source-negative-session", payload); err != nil {
+	if err := e.start(typedCommand(c), "source-negative", "source-negative-execution", "source-negative-session", payload); err != nil {
 		t.Fatal(err)
 	}
 	if exists(marker) || len(e.live) != 0 || lastReceipt(e, "source-negative") != "failed" {
@@ -272,7 +274,7 @@ func TestAttemptContextPartialCloneNeverFetches(t *testing.T) {
 	git("config", "remote.origin.promisor", "true")
 	git("config", "remote.origin.partialclonefilter", "blob:none")
 	git("config", "core.sshCommand", hook)
-	if _, err := resolveAttemptContext(p, "h", []string{root}, nil, ""); err == nil {
+	if _, err := resolveAttemptContext(proj(p), "h", []string{root}, nil, ""); err == nil {
 		t.Fatal("missing blob accepted")
 	}
 	if exists(marker) {
@@ -309,7 +311,7 @@ func TestAttemptContextDeclaredTenCoreAndLinkedSelection(t *testing.T) {
 	source["revision"] = strings.TrimSpace(string(pin))
 	source["core"] = core
 	input := t.TempDir()
-	got, e := resolveAttemptContext(p, "h", []string{root}, nil, input)
+	got, e := resolveAttemptContext(proj(p), "h", []string{root}, nil, input)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -346,7 +348,7 @@ func TestAttemptContextGitStorageAuthority(t *testing.T) {
 				os.WriteFile(filepath.Join(objects, "info", "alternates"), []byte(outside+"\n"), 0600)
 			}
 			input := t.TempDir()
-			if _, err := resolveAttemptContext(p, "h", []string{root}, nil, input); err == nil {
+			if _, err := resolveAttemptContext(proj(p), "h", []string{root}, nil, input); err == nil {
 				t.Fatal("foreign object storage accepted")
 			}
 			entries, _ := os.ReadDir(input)
@@ -365,7 +367,7 @@ func TestAttemptContextGitStorageAuthority(t *testing.T) {
 		t.Setenv("GIT_CONFIG_COUNT", "1")
 		t.Setenv("GIT_CONFIG_KEY_0", "remote.origin.url")
 		t.Setenv("GIT_CONFIG_VALUE_0", "https://foreign.invalid/repo")
-		got, err := resolveAttemptContext(p, "h", []string{root}, nil, t.TempDir())
+		got, err := resolveAttemptContext(proj(p), "h", []string{root}, nil, t.TempDir())
 		if err != nil || !strings.Contains(got.Core, "required-core") {
 			t.Fatal(got, err)
 		}
@@ -378,8 +380,17 @@ func TestAttemptContextGitStorageAuthority(t *testing.T) {
 			t.Fatal(e, string(b))
 		}
 		jObj(jArr(p, "environments")[0])["checkoutPath"] = work
-		if _, e := resolveAttemptContext(p, "h", []string{root, parent}, nil, t.TempDir()); e != nil {
+		if _, e := resolveAttemptContext(proj(p), "h", []string{root, parent}, nil, t.TempDir()); e != nil {
 			t.Fatal(e)
 		}
 	})
+}
+
+// proj: a test project as the executor decodes payload.project.
+func proj(v any) contract.ProjectContext {
+	p, err := projectContext(v)
+	if err != nil {
+		panic(err)
+	}
+	return p
 }

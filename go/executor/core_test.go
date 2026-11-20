@@ -60,8 +60,8 @@ func TestNativeSessionReceiptOnlyOnObservationChange(t *testing.T) {
 	for _, native := range []string{"known", "known", "learned", "learned"} {
 		lines <- enc(M{"type": "system", "session_id": native})
 	}
-	l := &live{command: M{"id": "c", "sessionId": "s", "executionId": "x", "kind": "start",
-		"payload": M{"harness": "claude"}}, native: "known", lines: lines}
+	l := &live{command: typedCommand(M{"id": "c", "sessionId": "s", "executionId": "x", "kind": "start",
+		"payload": M{"harness": "claude"}}), native: "known", lines: lines}
 	if _, err := e.tickOne("x", l); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,10 @@ func TestStoreSenderTyped(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(d, "key"), []byte(`{"accessKeyId":"GK1","secretAccessKey":"s1"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := M{"id": "st1", "zone": "z", "bucket": "b", "keyFile": filepath.Join(d, "key"), "capacityBytes": json.Number("1000")}
+	var cfg *storeFile
+	if err := json.Unmarshal([]byte(enc(M{"id": "st1", "zone": "z", "bucket": "b", "keyFile": filepath.Join(d, "key"), "capacityBytes": json.Number("1000")})), &cfg); err != nil {
+		t.Fatal(err)
+	}
 	r := storeRegistration(cfg, "h1")
 	if r == nil || r.HostId != "h1" || r.Store.Id != "st1" || enc(r.Store.AccessKeyId) != `"GK1"` || enc(r.Store.CapacityBytes) != "1000" || enc(r.Store.Zone) != `"z"` {
 		t.Fatalf("%+v", r)

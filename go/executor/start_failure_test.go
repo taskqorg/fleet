@@ -44,7 +44,7 @@ func TestStartMissingExecutableSaysWhy(t *testing.T) {
 	t.Setenv("FLEET_NATIVE_ACCOUNTS", registry)
 	payload := M{"agentConfig": M{"id": "baseline", "model": "gpt-6.1-sol", "effort": "low", "instructions": "profile", "mcpServers": []any{}, "fleetTools": false, "collaborationTools": false}, "model": "gpt-6.1-sol", "effort": "low", "account": "fixture", "text": "hi"}
 	c := M{"id": "gone-cmd", "executionId": "gone-execution", "sessionId": "gone-session", "kind": "start", "payload": payload}
-	if err := e.start(c, "gone-cmd", "gone-execution", "gone-session", payload); err != nil {
+	if err := e.start(typedCommand(c), "gone-cmd", "gone-execution", "gone-session", payload); err != nil {
 		t.Fatal(err)
 	}
 	if len(e.live) != 0 || lastReceipt(e, "gone-cmd") != "failed" {

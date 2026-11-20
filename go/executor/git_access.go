@@ -9,7 +9,23 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"fleet/contract"
 )
+
+// projectContext: a payload's project (an open object on the wire) as contract.ProjectContext; absent or null is the
+// zero value. Decode it once per command and pass the value on.
+func projectContext(v any) (contract.ProjectContext, error) {
+	var out contract.ProjectContext
+	if v == nil {
+		return out, nil
+	}
+	out, err := contractOf[contract.ProjectContext](v)
+	if err != nil {
+		return out, errors.New("invalid project context: " + err.Error())
+	}
+	return out, nil
+}
 
 func connectionsDir() string {
 	d := os.Getenv("FLEET_CONNECTIONS_DIR")
@@ -20,20 +36,27 @@ func connectionsDir() string {
 }
 
 // gitRepo: repo by id; a nil id means the project's first repo. An unknown id resolves to nil.
-func gitRepo(project any, id any) any {
-	repos := jArr(project, "repos")
+func gitRepo(project contract.ProjectContext, id *string) *contract.ProjectRepo {
 	if id == nil {
-		if len(repos) > 0 {
-			return repos[0]
+		if len(project.Repos) > 0 {
+			return &project.Repos[0]
 		}
 		return nil
 	}
-	for _, r := range repos {
-		if jEq(jAt(r, "id"), id) {
-			return r
+	for i, r := range project.Repos {
+		if r.Id != nil && *r.Id == *id {
+			return &project.Repos[i]
 		}
 	}
 	return nil
+}
+
+// primaryRemote: the remote of the project's first repository ("" when none).
+func primaryRemote(project contract.ProjectContext) string {
+	if r := gitRepo(project, nil); r != nil {
+		return str0(r.Remote)
+	}
+	return ""
 }
 
 func isFile(p string) bool { s, err := os.Stat(p); return err == nil && s.Mode().IsRegular() }
@@ -66,18 +89,18 @@ func gitConnections(dir string) []string {
 	return out
 }
 
-func gitEnv(project, repo any, dir string) ([]string, error) {
+func gitEnv(project contract.ProjectContext, repo *contract.ProjectRepo, dir string) ([]string, error) {
 	var v []string
-	if n, e := jStr(project, "identity", "name"), jStr(project, "identity", "email"); jIsStr(project, "identity", "name") && jIsStr(project, "identity", "email") {
+	if id := project.Identity; id != nil && id.Name != nil && id.Email != nil {
 		for _, who := range []string{"AUTHOR", "COMMITTER"} {
-			v = append(v, "GIT_"+who+"_NAME="+n, "GIT_"+who+"_EMAIL="+e)
+			v = append(v, "GIT_"+who+"_NAME="+*id.Name, "GIT_"+who+"_EMAIL="+*id.Email)
 		}
 	}
 	// ponytail: repos without `connection` keep host ssh; fail closed once all projects declare one.
-	if !jIsStr(repo, "connection") {
+	if repo == nil || repo.Connection == nil {
 		return v, nil
 	}
-	name := jStr(repo, "connection")
+	name := *repo.Connection
 	if name == "" || !onlyBytes(name, func(b byte) bool { return alnum(b) || b == '-' || b == '_' }) {
 		return nil, errors.New("connection-invalid")
 	}

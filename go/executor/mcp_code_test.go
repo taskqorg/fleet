@@ -201,7 +201,7 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 	if enc(r["value"]) != `["undefined","undefined","undefined",["web"]]` || calls.Load() != before {
 		t.Fatalf("ungranted names: %v, gateway calls %d", r["value"], calls.Load()-before)
 	}
-	srv := &codeServer{conns: map[string]any{"web": web}, fleet: map[string]bool{}}
+	srv := &codeServer{conns: map[string]codeConn{"web": codeConnOf(web)}, fleet: map[string]bool{}}
 	for _, x := range [][3]string{{"conn:web", "delete", "tool-not-granted"}, {"conn:other", "search", "connection-not-granted"}, {"fleet", "ask", "no-fleet-tools"}} {
 		if _, fail := srv.bridge(nil, x[0], x[1], M{}); jStr(fail, "code") != x[2] {
 			t.Errorf("bridge %s.%s: %v", x[0], x[1], fail)
@@ -490,7 +490,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 	if _, spec, _ := launch("add", "acp", M{"readOnly": true}, "/journal"); has(spec, "shell") || spec["write"] != false {
 		t.Fatalf("acp read-only: %v", spec)
 	}
-	if d := codeDescription(M{"shell": M{"sandbox": true, "readOnly": true}}); !strings.Contains(d, "Commands write nothing and have no network.") {
+	if d := codeDescription(codeSpec{Shell: &codeShell{Sandbox: true, ReadOnly: true}}); !strings.Contains(d, "Commands write nothing and have no network.") {
 		t.Fatalf("read-only description: %s", d)
 	}
 	// only hides the Claude tools that host functions cover; add keeps them.
@@ -531,7 +531,7 @@ func TestCodeModeJournalErrorIsUnknown(t *testing.T) {
 func TestCodeModeReplyAndLastExpression(t *testing.T) {
 	// Requirement: a cold call returns the actual value to clients that prefer structuredContent.
 	// Risk: Claude sees only the runtime-start notice and repeats a completed operation.
-	reply := codeReply(M{"status": "done", "value": M{"phase": 1}, "newRuntime": true})
+	reply := codeReply(codeResult{Status: "done", Value: M{"phase": 1}, NewRuntime: true})
 	if has(reply, "structuredContent") || jAt(reply, "_meta", "fleet/code", "newRuntime") != true || jStr(jArr(reply, "content")[0], "text") != `{"phase":1}` {
 		t.Fatalf("cold reply hides the value: %v", reply)
 	}
@@ -670,7 +670,7 @@ func TestCodeModeFiles(t *testing.T) {
 	if r, _ := c.code(`[typeof read, typeof write, typeof edit, typeof sh]`); enc(r["value"]) != `["undefined","undefined","undefined","undefined"]` {
 		t.Fatalf("ungranted: %v", r["value"])
 	}
-	srv := &codeServer{spec: M{"dir": dir}}
+	srv := &codeServer{spec: codeSpec{Dir: dir}}
 	for _, tool := range []string{"write", "edit", "sh"} {
 		if _, fail := srv.bridge(nil, "host", tool, M{"path": "x", "command": "true"}); jStr(fail, "code") != "tool-not-granted" {
 			t.Errorf("%s: %v", tool, fail)

@@ -109,16 +109,36 @@ func runPreview(c *exec.Cmd) error {
 }
 
 // buildPreviews builds the previews of a stored upload and queues them for upload.
+// transferFile: the fields of a stored transfer's journal body that previews and spool cleanup read.
+type transferFile struct {
+	Path      *string `json:"path"`
+	Name      *string `json:"name"`
+	MediaType string  `json:"mediaType"`
+}
+
+// transferAnswer: the store's answer to a transfer (only its state and artifact id are read).
+type transferAnswer struct {
+	State      string    `json:"state"`
+	ArtifactId jsonValue `json:"artifactId"`
+}
+
+// transferAnswerOf: a transfer's answer (an M or a contract reply) as transferAnswer.
+func transferAnswerOf(response any) transferAnswer {
+	return typedRaw[transferAnswer]([]byte(enc(response)))
+}
+
 func buildPreviews(db *sql.DB, body M, response any) {
-	media := jStr(body, "mediaType")
+	file := typed[transferFile](body)
+	answer := transferAnswerOf(response)
+	media := file.MediaType
 	format := demuxer(media)
-	if format == "" || ffmpegVersion() == "" || !jIsStr(body, "path") {
+	if format == "" || ffmpegVersion() == "" || file.Path == nil {
 		return
 	}
-	src := jStr(body, "path")
+	src := *file.Path
 	name := "artifact"
-	if jIsStr(body, "name") {
-		name = jStr(body, "name")
+	if file.Name != nil {
+		name = *file.Name
 	}
 	roles := []struct {
 		role   string
@@ -138,6 +158,6 @@ func buildPreviews(db *sql.DB, body M, response any) {
 			continue
 		}
 		enqueue(db, id, "upload", M{"path": out, "spool": true, "previews": false, "name": name + "." + r.role + ".jpg", "mediaType": "image/jpeg",
-			"executionId": body["executionId"], "required": false, "derivedFrom": jAt(response, "artifactId"), "role": r.role})
+			"executionId": body["executionId"], "required": false, "derivedFrom": answer.ArtifactId.V, "role": r.role})
 	}
 }

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Files an executor host and fleet-update share on disk (docs/designs/fleet-self-update.md, section 4). Hosts run mixed versions during a self-update, so a file's shape changes only compatibly.",
+  "$defs": {
+    "UpdateSignal": {
+      "$comment": "<data dir>/update/update.json: written by the executor from its poll answers (temp file, then rename, only when a value other than at changes), read by fleet-update",
+      "type": "object",
+      "required": ["hostId", "target", "autoUpdate", "running", "pollOk", "at"],
+      "properties": {
+        "restartTarget": {
+          "$comment": "the target version the executor has drained for and may be restarted into; absent when none",
+          "type": "string"
+        },
+        "hostId": {"type": "string"},
+        "target": {
+          "$comment": "the version the coordinator asks for; null when none",
+          "type": ["string", "null"]
+        },
+        "autoUpdate": {
+          "$comment": "on, off or an RFC 3339 UTC time until which updates are held",
+          "type": "string"
+        },
+        "running": {"type": "string"},
+        "pollOk": {"type": "boolean"},
+        "pollError": {
+          "$comment": "network or http-<status> of the last failed poll; absent when the poll succeeded",
+          "type": "string"
+        },
+        "at": {"type": "string"}
+      }
+    },
+    "UpdateStateFile": {
+      "$comment": "<data dir>/update/update-state.json, written by fleet-update; the executor reads last and sends it in its poll. fleet-update keeps the same shape per part in pds18-state.json and in ui-state.json",
+      "type": "object",
+      "properties": {
+        "refused": {
+          "$comment": "refused version to its reason",
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "last": {"$ref": "host-protocol.schema.json#/$defs/UpdateResult"}
+      }
+    },
+    "Pds18StateFile": {
+      "$comment": "/var/lib/fleet-update/pds18-state.json, written by fleet-update on PDS18; the coordinator reads hostId and each part's last for that host's row",
+      "type": "object",
+      "required": ["coordinator", "executor"],
+      "properties": {
+        "hostId": {
+          "$comment": "the PDS18 executor's host id, from its update.json",
+          "type": "string"
+        },
+        "coordinator": {"$ref": "#/$defs/UpdateStateFile"},
+        "executor": {"$ref": "#/$defs/UpdateStateFile"}
+      }
+    }
+  }
+}

@@ -351,12 +351,14 @@ func uploadDenyLines(dataDir string) string {
 func executorStores() []string {
 	list := []string{connectionsDir(), os.Getenv("FLEET_CODEX_HOME"), os.Getenv("FLEET_NATIVE_ACCOUNTS"), os.Getenv("FLEET_FORGE_CONFIG_DIR"), os.Getenv("FLEET_STORE_CONFIG"), os.Getenv("FLEET_BROWSER_BINDINGS")}
 	if c := storeConfig(); c != nil {
-		list = append(list, jStr(c, "keyFile"))
+		list = append(list, c.KeyFile)
 	}
 	if b, err := os.ReadFile(os.Getenv("FLEET_BROWSER_BINDINGS")); err == nil {
-		if v, err := dec(string(b)); err == nil {
-			for _, binding := range jObj(v) {
-				list = append(list, jStr(binding, "production", "accessFile"))
+		if all, err := dec(string(b)); err == nil {
+			bindings, _ := all.(M)
+			for _, raw := range bindings {
+				// an entry or grant that is not an object names no file
+				list = append(list, typed[browserProduction](typed[browserBinding](raw).Production).AccessFile)
 			}
 		}
 	}

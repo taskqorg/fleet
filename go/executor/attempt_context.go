@@ -5,6 +5,7 @@ import (
 	"fleet/contract"
 	"io"
 	"io/fs"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -41,13 +42,12 @@ func sourceRemoteIdentity(remote string) string {
 
 // resolveAttemptContext never fetches, reads working-tree rule files, or executes source hooks/filters.
 // Empty inputDir checks the same sources for readiness without materializing files.
-func resolveAttemptContext(project any, host string, roots, forbidden []string, inputDir string) (attemptContext, error) {
+func resolveAttemptContext(project contract.ProjectContext, host string, roots, forbidden []string, inputDir string) (attemptContext, error) {
 	out := attemptContext{Sources: []any{}}
-	value := jAt(project, "contextSources")
-	if value == nil {
+	if project.ContextSources == nil {
 		return out, nil
 	}
-	sources, err := contract.ContextSources(value)
+	sources, err := contract.ContextSources(project.ContextSources)
 	if err != nil {
 		return out, errors.New("instruction-source-invalid: " + err.Error())
 	}
@@ -55,26 +55,26 @@ func resolveAttemptContext(project any, host string, roots, forbidden []string, 
 		fail := func(reason string) (attemptContext, error) {
 			return out, errors.New("instruction-source-unavailable: " + source.Repo + "@" + source.Revision + ": " + reason)
 		}
-		repo := gitRepo(project, source.Repo)
+		repo := gitRepo(project, &source.Repo)
 		matches := 0
-		for _, candidate := range jArr(project, "repos") {
-			if jStr(candidate, "id") == source.Repo {
+		for _, candidate := range project.Repos {
+			if str0(candidate.Id) == source.Repo {
 				matches++
 			}
 		}
 		if matches != 1 {
 			return fail("one declared repository identity required")
 		}
-		if repo == nil || sourceRemoteIdentity(jStr(repo, "remote")) == "" {
+		if repo == nil || sourceRemoteIdentity(str0(repo.Remote)) == "" {
 			return fail("declared repository identity required")
 		}
 		checkout := ""
-		for _, env := range jArr(project, "environments") {
-			if jStr(env, "hostId") == host && jStr(env, "repo") == source.Repo {
+		for _, env := range project.Environments {
+			if str0(env.HostId) == host && str0(env.Repo) == source.Repo {
 				if checkout != "" {
 					return fail("ambiguous host binding")
 				}
-				checkout = jStr(env, "checkoutPath")
+				checkout = str0(env.CheckoutPath)
 			}
 		}
 		root, err := canon(checkout)
@@ -169,7 +169,7 @@ func resolveAttemptContext(project any, host string, roots, forbidden []string, 
 			}
 		}
 		origin, err := git("config", "--no-includes", "--file", filepath.Join(configDir, "config"), "--get", "remote.origin.url")
-		if err != nil || sourceRemoteIdentity(strings.TrimSpace(string(origin))) != sourceRemoteIdentity(jStr(repo, "remote")) {
+		if err != nil || sourceRemoteIdentity(strings.TrimSpace(string(origin))) != sourceRemoteIdentity(str0(repo.Remote)) {
 			return fail("source origin identity mismatch")
 		}
 		kind, err := git("cat-file", "-t", source.Revision)
@@ -225,8 +225,8 @@ func resolveAttemptContext(project any, host string, roots, forbidden []string, 
 }
 
 // Runtime assembly follows definition validation; resolved sources do not loosen the profile input contract.
-func assembledInstructions(profile, skills any, projectInstructions string, context attemptContext) string {
-	text := jStr(withSkills(profile, skills), "instructions")
+func assembledInstructions(instructions string, skills any, projectInstructions string, context attemptContext) string {
+	text := skillText(instructions, skills)
 	if context.Core != "" {
 		text = context.Core + "\n\n# Selected profile and skills\n" + text + context.Index
 	}
@@ -278,11 +278,16 @@ func prepareInstructions(cmd *exec.Cmd, harness string, p M, projectInstructions
 	if !hasProfile {
 		base = p
 	}
-	text := assembledInstructions(base, p["skills"], projectInstructions, context)
-	// A private runtime copy can carry verified source bodies beyond the strict profile-definition text limit.
-	runtime := jObj(jClone(p))
+	text := assembledInstructions(profileInstructions(base), p["skills"], projectInstructions, context)
+	// A private runtime copy can carry verified source bodies beyond the strict profile-definition text limit; only
+	// top-level keys change, so a shallow copy keeps the received payload unchanged.
+	runtime := maps.Clone(p)
 	if hasProfile {
-		cfg := jObj(jClone(base))
+		cfg, _ := base.(M) // a validated profile is an object
+		cfg = maps.Clone(cfg)
+		if cfg == nil {
+			cfg = M{}
+		}
 		cfg["instructions"] = text
 		runtime["agentConfig"] = cfg
 	} else {
@@ -293,7 +298,7 @@ func prepareInstructions(cmd *exec.Cmd, harness string, p M, projectInstructions
 		evidence = M{"requested": base, "applied": M{"harness": harness}, "profileSha256": profileHash(base)}
 	}
 	evidence["selection"] = M{"harness": harness, "account": p["account"], "authority": "trusted host account reference; native observation follows"}
-	applied := jObj(evidence["applied"])
+	applied, _ := evidence["applied"].(M) // built by profilePrepare or above
 	if applied == nil {
 		applied = M{}
 		evidence["applied"] = applied

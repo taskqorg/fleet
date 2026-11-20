@@ -4,14 +4,25 @@ import (
 	"errors"
 )
 
-func mcpResultText(result M) (string, error) {
-	if jAt(result, "isError") == true {
+// mcpToolResult: an MCP tools/call result as qualification reads it.
+type mcpToolResult struct {
+	IsError bool `json:"isError"`
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+}
+
+// mcpResultText: the text content of a decoded tools/call result.
+func mcpResultText(result any) (string, error) {
+	r := typed[mcpToolResult](result)
+	if r.IsError {
 		return "", errors.New("MCP reported tool failure")
 	}
 	text := ""
-	for _, c := range jArr(result, "content") {
-		if jStr(c, "type") == "text" {
-			text += jStr(c, "text")
+	for _, c := range r.Content {
+		if c.Type == "text" {
+			text += c.Text
 		}
 	}
 	if text == "" {
@@ -21,13 +32,13 @@ func mcpResultText(result M) (string, error) {
 }
 
 func serenaSymbolWitness(text string) error {
-	value, err := dec(text)
+	v, err := dec(text)
 	if err != nil {
 		return errors.New("Serena symbol result is not structured navigation evidence (check language-server readiness)")
 	}
-	for _, names := range jObj(value) {
-		for _, name := range jArr(names) {
-			if jStr(name) == "CapabilityWitness" {
+	for _, names := range typed[map[string][]string](v) { // symbol kind -> names
+		for _, name := range names {
+			if name == "CapabilityWitness" {
 				return nil
 			}
 		}

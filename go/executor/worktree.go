@@ -3,6 +3,7 @@ package main
 // Worktree lifecycle: roots, base, branch, links, setup, teardown; trial worktrees for lab scripts.
 
 import (
+	"encoding/json"
 	"errors"
 	"fleet/contract"
 	"os"
@@ -81,14 +82,17 @@ func reportedRoots() []string {
 }
 
 // repoPath: payload workingDirectory, else this host's first project checkout.
-func repoPath(p any, host string) (string, bool) {
-	if jIsStr(p, "workingDirectory") {
-		return jStr(p, "workingDirectory"), true
+func repoPath(workingDirectory *string, project contract.ProjectContext, host string) (string, bool) {
+	if workingDirectory != nil {
+		return *workingDirectory, true
 	}
-	primary := jAt(gitRepo(jAt(p, "project"), nil), "id")
-	for _, e := range jArr(p, "project", "environments") {
-		if jStr(e, "hostId") == host && jIsStr(e, "checkoutPath") && (jAt(e, "repo") == nil || jEq(jAt(e, "repo"), primary)) {
-			return jStr(e, "checkoutPath"), true
+	var primary *string
+	if r := gitRepo(project, nil); r != nil {
+		primary = r.Id
+	}
+	for _, e := range project.Environments {
+		if str0(e.HostId) == host && e.CheckoutPath != nil && (e.Repo == nil || primary != nil && *e.Repo == *primary) {
+			return *e.CheckoutPath, true
 		}
 	}
 	return "", false
@@ -115,7 +119,7 @@ func overlaps(p string, forbidden []string) bool {
 	return false
 }
 
-func gitFetch(top string, project any) bool {
+func gitFetch(top string, project contract.ProjectContext) bool {
 	access, err := gitEnv(project, gitRepo(project, nil), connectionsDir())
 	if err != nil {
 		return false
@@ -131,7 +135,7 @@ func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 // <prefix>/<session>, or detached at the same base when the start says branch false: a session with no branch). The
 // payload path is untrusted: it must resolve under a configured project root and outside the executor and session dirs.
 // Returns (worktree, checkout toplevel, created); ok false means no worktree.
-func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string, project any, detached bool) (w, top string, created, ok bool, err error) {
+func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string, project contract.ProjectContext, detached bool) (w, top string, created, ok bool, err error) {
 	if !hasRepo {
 		return
 	}
@@ -182,7 +186,10 @@ func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string
 	if exists(filepath.Join(w, ".git")) {
 		return w, top, false, true, nil
 	}
-	wt := jObj(project, "worktree")
+	wt := contract.ProjectWorktree{}
+	if project.Worktree != nil {
+		wt = *project.Worktree
+	}
 	branch := sessionBranch(project, session)
 	ceil := "GIT_CEILING_DIRECTORIES=" + root
 	v := hardenedGit("-C", top, "rev-parse", "--verify", "--quiet", branch)
@@ -197,12 +204,12 @@ func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string
 			args = append(args, "--no-track", "-b", branch, w)
 		}
 		// Base: explicit baseRef, else fresh origin/<defaultBranch> when startFromOrigin, else HEAD.
-		if jIsStr(wt, "baseRef") {
-			args = append(args, jStr(wt, "baseRef"))
-		} else if jBoolOr(false, wt, "startFromOrigin") && gitFetch(top, project) {
+		if wt.BaseRef != nil {
+			args = append(args, *wt.BaseRef)
+		} else if wt.StartFromOrigin != nil && *wt.StartFromOrigin && gitFetch(top, project) {
 			def := "main"
-			if repos := jArr(project, "repos"); len(repos) > 0 && jIsStr(repos[0], "defaultBranch") {
-				def = jStr(repos[0], "defaultBranch")
+			if repos := project.Repos; len(repos) > 0 && repos[0].DefaultBranch != nil {
+				def = *repos[0].DefaultBranch
 			}
 			args = append(args, "origin/"+def)
 		}
@@ -214,10 +221,9 @@ func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string
 		return
 	}
 	// linkPaths and sharedDirectories: symlinks into the main checkout; only existing, relative, non-escaping paths.
-	for _, k := range []string{"linkPaths", "sharedDirectories"} {
-		for _, rv := range jArr(wt, k) {
-			rel, isS := rv.(string)
-			if !isS || strings.HasPrefix(rel, "/") || contains(strings.Split(rel, "/"), "..") {
+	for _, list := range [][]json.RawMessage{wt.LinkPaths, wt.SharedDirectories} {
+		for _, rel := range stringsOf(list) {
+			if strings.HasPrefix(rel, "/") || contains(strings.Split(rel, "/"), "..") {
 				continue
 			}
 			src, dst := filepath.Join(top, rel), filepath.Join(w, rel)
@@ -321,16 +327,14 @@ func projectScript(name, cmd, top, w, session string) contract.ProjectScriptResu
 }
 
 // keepReasons: the project's cleanup.keepWhen (default uncommitted, unpushed, teardown-failed).
-func keepReasons(project any) map[string]bool {
+func keepReasons(project contract.ProjectContext) map[string]bool {
 	keep := map[string]bool{}
-	list := jArr(project, "cleanup", "keepWhen")
-	if list == nil {
-		list = []any{"uncommitted", "unpushed", "teardown-failed"}
+	list := []string{"uncommitted", "unpushed", "teardown-failed"}
+	if project.Cleanup != nil && project.Cleanup.KeepWhen != nil {
+		list = stringsOf(project.Cleanup.KeepWhen)
 	}
-	for _, v := range list {
-		if s, ok := v.(string); ok {
-			keep[s] = true
-		}
+	for _, s := range list {
+		keep[s] = true
 	}
 	return keep
 }
@@ -338,15 +342,15 @@ func keepReasons(project any) map[string]bool {
 // teardown: teardown script, then remove the worktree unless a cleanup.keepWhen reason holds (uncommitted changes,
 // commits on no remote branch, a failed teardown script). The branch goes with -d (merged only), or -D
 // when the work was delivered (deleteBranch: the task was accepted).
-func teardown(dir, session, top string, project any, deleteBranch, detached bool) contract.Teardown {
+func teardown(dir, session, top string, project contract.ProjectContext, deleteBranch, detached bool) contract.Teardown {
 	keep := keepReasons(project)
 	w := filepath.Join(dir, "worktree")
 	if !exists(filepath.Join(w, ".git")) {
 		return refusedTeardown("no-worktree")
 	}
 	out := contract.Teardown{}
-	if jIsStr(project, "scripts", "teardown") {
-		t := projectScript("teardown", jStr(project, "scripts", "teardown"), top, w, session)
+	if project.Scripts != nil && project.Scripts.Teardown != nil {
+		t := projectScript("teardown", *project.Scripts.Teardown, top, w, session)
 		out.Teardown = &t
 		if !t.Ok && keep["teardown-failed"] {
 			out.Reason = new("teardown-failed")
@@ -355,9 +359,9 @@ func teardown(dir, session, top string, project any, deleteBranch, detached bool
 	}
 	// Fleet-made links are excluded from the dirty check and removed before `worktree remove`.
 	var links []string
-	for _, k := range []string{"linkPaths", "sharedDirectories"} {
-		for _, v := range jArr(project, "worktree", k) {
-			if r, ok := v.(string); ok {
+	if wt := project.Worktree; wt != nil {
+		for _, list := range [][]json.RawMessage{wt.LinkPaths, wt.SharedDirectories} {
+			for _, r := range stringsOf(list) {
 				if m, err := os.Lstat(filepath.Join(w, r)); err == nil && m.Mode()&os.ModeSymlink != 0 {
 					links = append(links, r)
 				}
@@ -412,10 +416,10 @@ func teardown(dir, session, top string, project any, deleteBranch, detached bool
 }
 
 // sessionBranch: <prefix>/<session>, the branch a session with a branch works on.
-func sessionBranch(project any, session string) string {
+func sessionBranch(project contract.ProjectContext, session string) string {
 	prefix := "fleet"
-	if jIsStr(project, "worktree", "branchPrefix") {
-		prefix = jStr(project, "worktree", "branchPrefix")
+	if project.Worktree != nil && project.Worktree.BranchPrefix != nil {
+		prefix = *project.Worktree.BranchPrefix
 	}
 	return prefix + "/" + session
 }

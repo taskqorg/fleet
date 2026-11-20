@@ -26,13 +26,28 @@ func forgeRepo(remote string) string {
 	return strings.Join(parts, "/")
 }
 
+// forgeContext is the project forge server's context, built by the executor at launch (argv of `mcp project-forge`).
+type forgeContext struct {
+	Repositories   string `json:"repositories"`
+	CredentialHome string `json:"credentialHome"`
+	Repo           string `json:"repo"`
+	Base           string `json:"base"`
+	Branch         string `json:"branch"`
+	Prefix         string `json:"prefix"`
+	AutoMerge      bool   `json:"autoMerge"`
+	MergeMethod    string `json:"mergeMethod"`
+	Workdir        string `json:"workdir"`
+	Home           string `json:"home"`
+	Store          string `json:"store"`
+}
+
 // forgeCommand reads only the explicitly connected host credential store; native HOME stays isolated.
-func forgeCommand(ctx any, name string, args ...string) *exec.Cmd {
+func forgeCommand(ctx forgeContext, name string, args ...string) *exec.Cmd {
 	c := exec.Command(name, args...)
-	c.Dir = jStr(ctx, "workdir")
-	c.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + jStr(ctx, "home"), "GH_CONFIG_DIR=" + jStr(ctx, "store"), "GH_PROMPT_DISABLED=1", "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
+	c.Dir = ctx.Workdir
+	c.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + ctx.Home, "GH_CONFIG_DIR=" + ctx.Store, "GH_PROMPT_DISABLED=1", "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
 	credential := exec.Command("gh", "auth", "token", "--hostname", "github.com")
-	credential.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + jStr(ctx, "credentialHome"), "GH_CONFIG_DIR=" + jStr(ctx, "store"), "GH_PROMPT_DISABLED=1"}
+	credential.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + ctx.CredentialHome, "GH_CONFIG_DIR=" + ctx.Store, "GH_PROMPT_DISABLED=1"}
 	if token, err := boundedOutput(credential, probeWait); err == nil {
 		c.Env = append(c.Env, "GH_TOKEN="+strings.TrimSpace(string(token)))
 	}
@@ -41,18 +56,38 @@ func forgeCommand(ctx any, name string, args ...string) *exec.Cmd {
 
 var forgeTools = []any{M{"name": "publish_draft", "description": "Push this execution branch to its granted project repository and open or reuse a draft pull request. Never merges.", "inputSchema": M{"type": "object", "additionalProperties": false, "required": []any{"title", "body"}, "properties": M{"title": M{"type": "string"}, "body": M{"type": "string"}}}}, M{"name": "delivery", "description": "Read this branch PR checks/head/status, mark it ready, or enable project-authorized auto-merge through required checks. Independent review remains required.", "inputSchema": M{"type": "object", "additionalProperties": false, "required": []any{"action"}, "properties": M{"action": M{"type": "string", "enum": []any{"status", "ready", "auto_merge"}}}}}}
 
+// forgeArgs are the arguments of publish_draft ({title, body}) and delivery ({action}).
+type forgeArgs struct {
+	Title  *string `json:"title"`
+	Body   *string `json:"body"`
+	Action string  `json:"action"`
+}
+
+// forgePR is what a publication answers of a GitHub pull request.
+type forgePR struct {
+	HTMLURL jsonValue `json:"html_url"`
+	Number  jsonValue `json:"number"`
+}
+
+func forgePRReply(raw any, existing bool) M {
+	pr := typed[forgePR](raw)
+	return mcpText(M{"url": pr.HTMLURL.V, "number": pr.Number.V, "existing": existing}, &no)
+}
+
 // forgeCall answers one tools/call of the project forge server.
-func forgeCall(name string, arguments, ctx any) (any, error) {
-	p := M{"name": name, "arguments": arguments}
-	a := jObj(jAt(p, "arguments"))
-	if (jStr(p, "name") == "publish_draft" && (len(a) != 2 || !jIsStr(a, "title") || !jIsStr(a, "body") || strings.TrimSpace(jStr(a, "title")) == "")) || (jStr(p, "name") == "delivery" && (len(a) != 1 || (jStr(a, "action") != "status" && jStr(a, "action") != "ready" && jStr(a, "action") != "auto_merge"))) || (jStr(p, "name") != "publish_draft" && jStr(p, "name") != "delivery") {
+func forgeCall(name string, arguments, context any) (any, error) {
+	// A member of another type reads as absent; the key counts then refuse the request, as a strict decode did.
+	keys, _ := jClone(arguments).(M)
+	a := typed[forgeArgs](keys)
+	if (name == "publish_draft" && (len(keys) != 2 || a.Title == nil || a.Body == nil || strings.TrimSpace(*a.Title) == "")) || (name == "delivery" && (len(keys) != 1 || (a.Action != "status" && a.Action != "ready" && a.Action != "auto_merge"))) || (name != "publish_draft" && name != "delivery") {
 		return nil, errors.New("invalid publication request")
 	}
-	repo, branch := jStr(ctx, "repo"), jStr(ctx, "branch")
-	if !strings.Contains(","+jStr(ctx, "repositories")+",", ","+repo+",") || repo == "" || forgeRepo("https://github.com/"+repo) != repo || jStr(ctx, "prefix") == "" || !strings.HasPrefix(branch, jStr(ctx, "prefix")+"/") || strings.ContainsAny(branch, " :~^?*[\\") {
+	ctx := typed[forgeContext](context)
+	repo, branch := ctx.Repo, ctx.Branch
+	if !strings.Contains(","+ctx.Repositories+",", ","+repo+",") || repo == "" || forgeRepo("https://github.com/"+repo) != repo || ctx.Prefix == "" || !strings.HasPrefix(branch, ctx.Prefix+"/") || strings.ContainsAny(branch, " :~^?*[\\") {
 		return nil, errors.New("publication authority unavailable")
 	}
-	if !filepath.IsAbs(jStr(ctx, "store")) || !isFile(filepath.Join(jStr(ctx, "store"), "hosts.yml")) {
+	if !filepath.IsAbs(ctx.Store) || !isFile(filepath.Join(ctx.Store, "hosts.yml")) {
 		return nil, errors.New("forge-credential-store-missing")
 	}
 	if _, err := boundedOutput(forgeCommand(ctx, "git", "check-ref-format", "--branch", branch), probeWait); err != nil {
@@ -62,16 +97,16 @@ func forgeCall(name string, arguments, ctx any) (any, error) {
 	if err != nil || strings.TrimSpace(string(current)) != branch {
 		return nil, errors.New("execution branch changed")
 	}
-	if jStr(p, "name") == "delivery" {
+	if name == "delivery" {
 		args := []string{"pr", "view", branch, "--repo", repo, "--json", "number,url,isDraft,state,headRefOid,statusCheckRollup,mergeStateStatus,autoMergeRequest"}
-		switch jStr(a, "action") {
+		switch a.Action {
 		case "ready":
 			args = []string{"pr", "ready", branch, "--repo", repo}
 		case "auto_merge":
-			if jAt(ctx, "autoMerge") != true {
+			if !ctx.AutoMerge {
 				return nil, errors.New("project auto-merge not granted")
 			}
-			method := jStr(ctx, "mergeMethod")
+			method := ctx.MergeMethod
 			if method != "squash" && method != "merge" && method != "rebase" {
 				return nil, errors.New("project merge method unavailable")
 			}
@@ -81,14 +116,14 @@ func forgeCall(name string, arguments, ctx any) (any, error) {
 		if err != nil {
 			return nil, errors.New("project-delivery-unconfirmed; inspect status before retry")
 		}
-		if jStr(a, "action") == "status" {
+		if a.Action == "status" {
 			v, err := dec(string(b))
 			if err != nil {
 				return nil, errors.New("invalid forge response")
 			}
 			return mcpText(v, &no), nil
 		}
-		return mcpText(M{"action": jStr(a, "action"), "requested": true, "note": "Read status to establish the resulting state; required checks and independent review still apply."}, &no), nil
+		return mcpText(M{"action": a.Action, "requested": true, "note": "Read status to establish the resulting state; required checks and independent review still apply."}, &no), nil
 	}
 	rewrites, err := boundedOutput(forgeCommand(ctx, "git", "config", "--get-regexp", `^(url\.|http\.|https\.|core\.gitproxy$)`), probeWait)
 	var absent *exec.ExitError
@@ -105,23 +140,23 @@ func forgeCall(name string, arguments, ctx any) (any, error) {
 	if err != nil {
 		return nil, errors.New("project-pr-read-failed; inspect before retry")
 	}
-	existing, err := dec(string(b))
+	listed, err := dec(string(b))
 	if err != nil {
 		return nil, errors.New("invalid forge response")
 	}
-	for _, pr := range jArr(existing) {
-		return mcpText(M{"url": jAt(pr, "html_url"), "number": jAt(pr, "number"), "existing": true}, &no), nil
+	for _, pr := range typed[[]jsonValue](listed) {
+		return forgePRReply(pr, true), nil
 	}
-	c = forgeCommand(ctx, "gh", "api", "--hostname", "github.com", "--method", "POST", "repos/"+repo+"/pulls", "-f", "title="+jStr(a, "title"), "-f", "body="+jStr(a, "body"), "-f", "head="+branch, "-f", "base="+jStr(ctx, "base"), "-F", "draft=true")
+	c = forgeCommand(ctx, "gh", "api", "--hostname", "github.com", "--method", "POST", "repos/"+repo+"/pulls", "-f", "title="+*a.Title, "-f", "body="+*a.Body, "-f", "head="+branch, "-f", "base="+ctx.Base, "-F", "draft=true")
 	b, err = boundedOutput(c, probeWait)
 	if err != nil {
 		return nil, errors.New("project-pr-create-unconfirmed; inspect existing pull request before retry")
 	}
-	pr, err := dec(string(b))
+	created, err := dec(string(b))
 	if err != nil {
 		return nil, errors.New("invalid forge response")
 	}
-	return mcpText(M{"url": jAt(pr, "html_url"), "number": jAt(pr, "number"), "existing": false}, &no), nil
+	return forgePRReply(created, false), nil
 }
 
 func forgeGranted(repo string) bool {
@@ -133,8 +168,9 @@ func forgeGranted(repo string) bool {
 	return false
 }
 
-func forgeReadiness(project any) string {
-	repo := forgeRepo(jStr(gitRepo(project, nil), "remote"))
+// forgeReadiness: remote is the project's first repository's (primaryRemote).
+func forgeReadiness(remote string) string {
+	repo := forgeRepo(remote)
 	if !forgeGranted(repo) {
 		return "forge-repository-not-granted"
 	}
@@ -142,13 +178,18 @@ func forgeReadiness(project any) string {
 	if !filepath.IsAbs(store) || !isFile(filepath.Join(store, "hosts.yml")) {
 		return "forge-credential-store-missing"
 	}
-	ctx := M{"store": store, "home": os.TempDir(), "credentialHome": os.Getenv("HOME"), "workdir": os.TempDir()}
+	ctx := forgeContext{Store: store, Home: os.TempDir(), CredentialHome: os.Getenv("HOME"), Workdir: os.TempDir()}
 	b, err := boundedOutput(forgeCommand(ctx, "gh", "api", "--hostname", "github.com", "repos/"+repo), probeWait)
 	if err != nil {
 		return "forge-repository-auth-unready"
 	}
-	v, err := dec(string(b))
-	if err != nil || jAt(v, "permissions", "push") != true || jStr(v, "full_name") != repo {
+	v := typedRaw[struct {
+		Permissions struct {
+			Push bool `json:"push"`
+		} `json:"permissions"`
+		FullName string `json:"full_name"`
+	}](b)
+	if !v.Permissions.Push || v.FullName != repo {
 		return "forge-repository-push-unready"
 	}
 	return ""

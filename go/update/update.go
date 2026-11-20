@@ -26,7 +26,7 @@ import (
 	"syscall"
 	"time"
 
-	"fleet/update/updatesignal"
+	"fleet/contract"
 )
 
 // verRe is the strict release version N.yymmdd.M (section 1); the tag is "v" + version.
@@ -51,22 +51,31 @@ func newer(a, b string) bool {
 	return false
 }
 
-// Result is `last` of the update state, sent by the executor in its poll and shown by hosts_list.
-type Result struct {
-	Version string `json:"version"`
-	State   string `json:"state"` // ok, pending, held, error, refused, failed
-	Error   string `json:"error,omitempty"`
-	At      string `json:"at"`
+// Result is `last` of the update state (contracts/host-protocol.schema.json), sent by the executor in its poll and shown by
+// hosts_list.
+type Result = contract.UpdateResult
+
+// State is update-state.json (contracts/host-files.schema.json); pds18-state.json holds one per part, ui-state.json one.
+type State = contract.UpdateStateFile
+
+// signalFile is <data dir>/update/update.json (contracts/host-files.schema.json), written by the executor.
+type signalFile = contract.UpdateSignal
+
+// str: an optional field's value, "" when absent.
+func str(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
-// State is update-state.json; pds18-state.json holds one per part under "coordinator" and "executor".
-type State struct {
-	Refused map[string]string `json:"refused,omitempty"`
-	Last    *Result           `json:"last,omitempty"`
+// optional: s as an optional field, absent when "".
+func optional(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
-
-// signalFile is <data dir>/update/update.json (package updatesignal, the executor writes the same type).
-type signalFile = updatesignal.Signal
 
 type probe int
 
@@ -117,9 +126,9 @@ func newUpdater(key ed25519.PublicKey) *updater {
 		dumpCmd: pgDump}
 }
 
-func (u *updater) result(ver, state, msg string) *Result {
+func (u *updater) result(ver string, state contract.UpdateState, msg string) *Result {
 	log.Printf("%s %s: %s", ver, state, msg)
-	return &Result{Version: ver, State: state, Error: msg, At: u.now().UTC().Format(time.RFC3339)}
+	return &Result{Version: ver, State: state, Error: optional(msg), At: u.now().UTC().Format(time.RFC3339)}
 }
 
 // held: autoUpdate "off" or an RFC 3339 UTC time still in the future.
@@ -218,7 +227,7 @@ func (u *updater) refuse(p *part, ver, reason, msg string) *Result {
 	}
 	p.st.Refused[ver] = reason
 	r := u.result(ver, "refused", msg)
-	r.Error = reason
+	r.Error = optional(reason)
 	return r
 }
 
@@ -513,7 +522,7 @@ func (u *updater) settle(p *part, ver string, restart bool) *Result {
 		prev, err := p.r.Readlink("previous")
 		if err != nil || filepath.Base(prev) == ver {
 			r := u.result(ver, "failed", "unhealthy, no previous release")
-			r.Error = "unhealthy"
+			r.Error = optional("unhealthy")
 			return r
 		}
 		if err := relink(p.r, "current", filepath.Base(prev)); err != nil {
@@ -601,7 +610,7 @@ func (u *updater) executorHealth(signal string) func(string) probe {
 		if s.PollOk {
 			return up
 		}
-		if s.PollError == "network" || strings.HasPrefix(s.PollError, "http-5") {
+		if str(s.PollError) == "network" || strings.HasPrefix(str(s.PollError), "http-5") {
 			return waiting
 		}
 		return down

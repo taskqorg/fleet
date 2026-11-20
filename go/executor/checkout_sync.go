@@ -83,19 +83,31 @@ func syncOne(dir, sha string, access []string) error {
 	return nil
 }
 
+// checkoutSync: base-updated (a ProjectPayload with sha and repo, the merged commit and its repository).
 func checkoutSync(p any, host string, roots, forbidden []string) (contract.CheckoutSync, bool) {
-	sha := jStr(p, "sha")
+	payload, perr := contractOf[contract.ProjectPayload](p)
+	project, err := projectContext(payload.Project)
+	if perr != nil || err != nil {
+		return contract.CheckoutSync{HostId: host, Checkouts: []contract.CheckoutResult{}}, false
+	}
+	rest := typed[struct {
+		Sha  string    `json:"sha"`
+		Repo jsonValue `json:"repo"`
+	}](p) // keys the payload schema does not name
+	sha := rest.Sha
+	repoID, repoIsStr := valStr(rest.Repo)
+	anyRepo := rest.Repo.V == nil
 	valid := len(sha) >= 7 && isHex(sha)
 	results := []contract.CheckoutResult{}
 	ok := true
-	for _, e := range jArr(p, "project", "environments") {
-		if jStr(e, "hostId") != host || !(jAt(e, "repo") == nil || jAt(p, "repo") == nil || jEq(jAt(e, "repo"), jAt(p, "repo"))) || !jIsStr(e, "checkoutPath") {
+	for _, e := range project.Environments {
+		if str0(e.HostId) != host || !(e.Repo == nil || anyRepo || repoIsStr && *e.Repo == repoID) || e.CheckoutPath == nil {
 			continue
 		}
-		dir := jStr(e, "checkoutPath")
+		dir := *e.CheckoutPath
 		err := errors.New("invalid-sha")
 		if valid {
-			access, aerr := gitEnv(jAt(p, "project"), gitRepo(jAt(p, "project"), jAt(e, "repo")), connectionsDir())
+			access, aerr := gitEnv(project, gitRepo(project, e.Repo), connectionsDir())
 			if d := syncAllowed(dir, roots, forbidden); d == "" {
 				err = errors.New("checkout-denied")
 			} else if aerr != nil {

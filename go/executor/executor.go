@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"os/exec"
@@ -36,26 +37,81 @@ func cmdID(v any, k string) (string, error) {
 	if !ok {
 		return "", errors.New("missing identity")
 	}
+	return checkedID(s)
+}
+
+// idOf returns a command's identity field (id, executionId or sessionId) as cmdID checks it; a command that does not fit
+// its kind's type is read from its JSON.
+func idOf(c contract.Command, k string) (string, error) {
+	if c.Value() != nil {
+		var s *string
+		switch k {
+		case "id":
+			s = new(c.Id())
+		case "executionId":
+			s = new(c.ExecutionId())
+		case "sessionId":
+			s = c.SessionId()
+		}
+		if s != nil && *s != "" {
+			return checkedID(*s)
+		}
+	}
+	raw := c.Raw
+	if raw == nil {
+		raw, _ = json.Marshal(c)
+	}
+	s, ok := valStr(typedRaw[map[string]jsonValue](raw)[k])
+	if !ok {
+		return "", errors.New("missing identity")
+	}
+	return checkedID(s)
+}
+
+func checkedID(s string) (string, error) {
 	if s == "" || !onlyBytes(s, func(b byte) bool { return alnum(b) || b == '_' || b == '-' }) {
 		return "", errors.New("invalid identity")
 	}
 	return s, nil
 }
 
-// harnessName: payload harness, else agentConfig.harness; a non-string is "invalid"; default codex.
-func harnessName(p any) string {
-	o := jObj(p)
-	v, ok := o["harness"]
-	if !ok {
-		v, ok = jObj(o["agentConfig"])["harness"]
+// harnessName: payload harness, else agentConfig.harness; a non-string agentConfig harness is "invalid"; default codex.
+func harnessName(p contract.StartPayload) string {
+	if p.Harness != nil {
+		return *p.Harness
 	}
+	raw, ok := p.AgentConfig["harness"]
 	if !ok {
 		return "codex"
 	}
-	if s, isS := v.(string); isS {
-		return s
+	if s := typedRaw[*string](raw); s != nil {
+		return *s
 	}
 	return "invalid"
+}
+
+// commandHarness: the harness of a start or input command; other kinds name none, so codex.
+func commandHarness(c contract.Command) string {
+	switch {
+	case c.Start != nil && c.Start.Payload != nil:
+		return harnessName(*c.Start.Payload)
+	case c.Input != nil && c.Input.Payload != nil:
+		return harnessName(*c.Input.Payload)
+	}
+	return harnessName(contract.StartPayload{})
+}
+
+// workspaceKey: the command payload's workspaceKey ("" when absent or not a string).
+func workspaceKey(c contract.Command) string {
+	raw := c.Raw
+	if raw == nil {
+		raw, _ = json.Marshal(c)
+	}
+	return typedRaw[struct {
+		Payload struct {
+			WorkspaceKey string `json:"workspaceKey"`
+		} `json:"payload"`
+	}](raw).Payload.WorkspaceKey
 }
 
 // safeNativeID: native ids reach argv; ASCII alphanumerics and '-', at most 64, never a leading '-'.
@@ -167,13 +223,17 @@ func writeFrame(w io.Writer, log *os.File, v M) (M, error) {
 	if _, err := w.Write(b); err != nil {
 		return nil, err
 	}
+	frame := typedRaw[struct {
+		Method *string `json:"method"`
+		Id     *uint64 `json:"id"`
+	}](b)
 	method := "response"
-	if jIsStr(v, "method") {
-		method = jStr(v, "method")
+	if frame.Method != nil {
+		method = *frame.Method
 	}
 	var rid any
-	if n, ok := jU64(v, "id"); ok {
-		rid = n
+	if frame.Id != nil {
+		rid = *frame.Id
 	}
 	return M{"type": "protocol.write", "method": method, "requestId": rid, "bytes": len(b), "sha256": sha(b),
 		"delivery": "written to local transport; native acceptance unknown"}, nil
@@ -184,7 +244,7 @@ type live struct {
 	cmd            *exec.Cmd
 	exited         <-chan struct{} // closed once the process was reaped (supervise.Proc.Done)
 	proc           *supervise.Proc
-	command        M
+	command        contract.Command // as journaled; idOf reads its identities
 	native         string
 	nativeObserved bool
 	seq            uint64
@@ -263,7 +323,7 @@ type executor struct {
 	live         map[string]*live
 	sessions     string
 	harnessCache map[string]M
-	storeCfg     M
+	storeCfg     *storeFile
 	declared     []string
 	storeAt      time.Time
 	storeLast    []contract.StoreReport
@@ -293,8 +353,8 @@ func (e *executor) sessionDir(session string) string {
 	return filepath.Join(e.sessions, session)
 }
 
-func workspaceSession(session string, payload any) string {
-	if key := jStr(payload, "workspaceKey"); key != "" {
+func workspaceSession(session, key string) string {
+	if key != "" {
 		sum := sha256.Sum256([]byte(key))
 		return session + "-" + fmt.Sprintf("%x", sum[:])
 	}
@@ -302,9 +362,9 @@ func workspaceSession(session string, payload any) string {
 }
 
 // commandDir keeps transitioned workspaces isolated; legacy commands retain their original directory.
-func (e *executor) commandDir(session string, payload any) string {
+func (e *executor) commandDir(session, key string) string {
 	dir := e.sessionDir(session)
-	if key := jStr(payload, "workspaceKey"); key != "" {
+	if key != "" {
 		// Hash the untrusted key so it cannot escape the owned session directory.
 		sum := sha256.Sum256([]byte(key))
 		dir = filepath.Join(dir, "workspaces", fmt.Sprintf("%x", sum[:]))
@@ -312,14 +372,14 @@ func (e *executor) commandDir(session string, payload any) string {
 	return dir
 }
 
-func (e *executor) receipt(c M, status string, native string) error {
+func (e *executor) receipt(c contract.Command, status string, native string) error {
 	declared := e.declared
 	e.declared = nil
-	cid, err := cmdID(c, "id")
+	cid, err := idOf(c, "id")
 	if err != nil {
 		return err
 	}
-	ex, err := cmdID(c, "executionId")
+	ex, err := idOf(c, "executionId")
 	if err != nil {
 		return err
 	}
@@ -334,16 +394,16 @@ func (e *executor) receipt(c M, status string, native string) error {
 }
 
 // event queues one Fleet-originated execution event; nativeEvent one harness record under its own open type.
-func (e *executor) event(c M, seq uint64, kind contract.FleetEventType, data any) error {
+func (e *executor) event(c contract.Command, seq uint64, kind contract.FleetEventType, data any) error {
 	return e.nativeEvent(c, seq, string(kind), data)
 }
 
-func (e *executor) nativeEvent(c M, seq uint64, kind string, data any) error {
-	cid, err := cmdID(c, "id")
+func (e *executor) nativeEvent(c contract.Command, seq uint64, kind string, data any) error {
+	cid, err := idOf(c, "id")
 	if err != nil {
 		return err
 	}
-	ex, err := cmdID(c, "executionId")
+	ex, err := idOf(c, "executionId")
 	if err != nil {
 		return err
 	}
@@ -351,9 +411,9 @@ func (e *executor) nativeEvent(c M, seq uint64, kind string, data any) error {
 	return queueTo(e.ex, contract.RouteEvents, ev)
 }
 
-func (e *executor) finish(c M, status, native string) error {
-	id, _ := cmdID(c, "id")
-	execution, _ := cmdID(c, "executionId")
+func (e *executor) finish(c contract.Command, status, native string) error {
+	id, _ := idOf(c, "id")
+	execution, _ := idOf(c, "executionId")
 	if l := e.live[execution]; l != nil && l.mcp != nil && l.commandID() == id {
 		if err := l.mcp.close(); err != nil {
 			return err
@@ -363,7 +423,7 @@ func (e *executor) finish(c M, status, native string) error {
 		if err := e.receipt(c, status, native); err != nil {
 			return err
 		}
-		cid, err := cmdID(c, "id")
+		cid, err := idOf(c, "id")
 		if err != nil {
 			return err
 		}
@@ -526,7 +586,7 @@ func (e *executor) reconcileProcesses() error {
 		resolved := len(x.l.owned) > 0 && x.err == nil && err == nil && !alive
 		// Reported once, while the command is open; the reconcile below then finishes it unknown.
 		if b, ok := e.commandBody(x.command, true); ok {
-			if err := e.event(decM(b), uint64(nowMs()), contract.FleetEventTypeProcessReconciled, contract.ProcessReconciled{OwnedProcesses: int64(len(x.l.owned)), Survived: x.survived,
+			if err := e.event(commandOf(b), uint64(nowMs()), contract.FleetEventTypeProcessReconciled, contract.ProcessReconciled{OwnedProcesses: int64(len(x.l.owned)), Survived: x.survived,
 				LaunchWindowUnresolved: len(x.l.owned) == 0, Resolved: resolved}); err != nil {
 				return err
 			}
@@ -575,7 +635,7 @@ func (e *executor) reconcile() error {
 	}
 	rs.Close()
 	for _, b := range bodies {
-		if err := e.finish(decM(b), "unknown", ""); err != nil {
+		if err := e.finish(commandOf(b), "unknown", ""); err != nil {
 			return err
 		}
 	}
@@ -617,7 +677,7 @@ func (e *executor) observeHarness(cmd *exec.Cmd, harness string) M {
 		key += strings.Join(flags, "\x00")
 	}
 	if v, ok := e.harnessCache[key]; ok {
-		return jObj(jClone(v))
+		return maps.Clone(v) // callers set top-level keys only
 	}
 	var version any
 	if o, err := exec.Command(exe, "--version").Output(); err == nil {
@@ -643,19 +703,25 @@ func (e *executor) observeHarness(cmd *exec.Cmd, harness string) M {
 		}
 		var tools any
 		if o, err := probe.Output(); err == nil {
-			if items, err := dec(string(o)); err == nil {
+			if all, err := dec(string(o)); err == nil {
+				// A tool group {tools: [...]} nests; a leaf names a tool. Anything else is skipped.
+				type node struct {
+					Tools []any   `json:"tools"`
+					Name  *string `json:"name"`
+				}
 				out := []any{}
 				var walk func(v any)
 				walk = func(v any) {
-					for _, t := range jArr(v, "tools") {
-						if jArr(t, "tools") != nil {
+					for _, t := range typed[node](v).Tools {
+						if x := typed[node](t); x.Tools != nil {
 							walk(t)
-						} else if jIsStr(t, "name") {
-							out = append(out, jStr(t, "name"))
+						} else if x.Name != nil {
+							out = append(out, *x.Name)
 						}
 					}
 				}
-				for _, it := range jArr(items) {
+				items, _ := all.([]any)
+				for _, it := range items {
 					walk(it)
 				}
 				tools = out
@@ -668,7 +734,7 @@ func (e *executor) observeHarness(cmd *exec.Cmd, harness string) M {
 		v["builtinTools"] = "not exposed by ACP"
 	}
 	e.harnessCache[key] = v
-	return jObj(jClone(v))
+	return maps.Clone(v)
 }
 
 func (e *executor) commandBody(id string, onlyOpen bool) (string, bool) {
@@ -704,6 +770,9 @@ func (e *executor) run(c M) error {
 	if typedErr != nil || cmd.Value() == nil {
 		kind = commandKind(body) // a payload that does not fit, or a kind this executor does not know (refused below)
 	}
+	if typedErr != nil {
+		cmd = contract.Command{Raw: json.RawMessage(body)} // receipts and events still read its identities
+	}
 	signalMu.Lock()
 	draining := updatePending(lastSignal)
 	signalMu.Unlock()
@@ -730,11 +799,11 @@ func (e *executor) run(c M) error {
 		if _, err := e.ex.Exec("INSERT INTO commands(id,body) VALUES(?,?)", cid, body); err != nil {
 			return err
 		}
-		return e.receipt(c, "accepted", "")
+		return e.receipt(cmd, "accepted", "")
 	}); err != nil {
 		return err
 	}
-	p := jObj(c, "payload")
+	payload := c["payload"]
 	switch kind {
 	case contract.CommandKindStop:
 		result := "unknown"
@@ -748,7 +817,7 @@ func (e *executor) run(c M) error {
 		} else if err := e.releaseLaunchWindow(execution, session); err != nil {
 			return err
 		}
-		if err := e.receipt(c, result, ""); err != nil {
+		if err := e.receipt(cmd, result, ""); err != nil {
 			return err
 		}
 		if result == "unknown" {
@@ -778,33 +847,33 @@ func (e *executor) run(c M) error {
 			return nil
 		}
 		if perr != nil {
-			if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: "invalid steer payload: " + perr.Error()}); err != nil {
+			if err := e.event(cmd, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: "invalid steer payload: " + perr.Error()}); err != nil {
 				return err
 			}
 		}
-		return e.finish(c, "failed", "")
+		return e.finish(cmd, "failed", "")
 	case contract.CommandKindReadiness:
-		data := readiness(p, e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"), e.forbidden())
+		data := readiness(payload, e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"), e.forbidden())
 		ok := data.Ok
-		if err := e.event(c, 0, contract.FleetEventTypeReadiness, data); err != nil {
+		if err := e.event(cmd, 0, contract.FleetEventTypeReadiness, data); err != nil {
 			return err
 		}
 		if !ok {
-			if err := e.event(c, 1, contract.FleetEventTypeReadinessFailed, contract.ReadinessFailed{Reason: "readiness-check-failed"}); err != nil {
+			if err := e.event(cmd, 1, contract.FleetEventTypeReadinessFailed, contract.ReadinessFailed{Reason: "readiness-check-failed"}); err != nil {
 				return err
 			}
 		}
-		return e.finish(c, okStatus(ok), "")
+		return e.finish(cmd, okStatus(ok), "")
 	case contract.CommandKindBaseUpdated:
-		data, ok := checkoutSync(p, e.host, projectRoots(), e.forbidden())
+		data, ok := checkoutSync(payload, e.host, projectRoots(), e.forbidden())
 		k := contract.FleetEventTypeSyncFailed
 		if ok {
 			k = contract.FleetEventTypeCheckoutSynced
 		}
-		if err := e.event(c, 0, k, data); err != nil {
+		if err := e.event(cmd, 0, k, data); err != nil {
 			return err
 		}
-		return e.finish(c, okStatus(ok), "")
+		return e.finish(cmd, okStatus(ok), "")
 	case contract.CommandKindTeardown:
 		// Session finish: teardown script, keep on dirty/teardown failure, safe branch delete. Lookup only: never create a
 		// worktree; the session dir must be a real dir under the executor or session roots. A payload that does not fit
@@ -812,33 +881,56 @@ func (e *executor) run(c M) error {
 		var tp contract.ProjectPayload
 		if typedErr == nil && cmd.Teardown.Payload != nil {
 			tp = *cmd.Teardown.Payload
+		} else if typedErr != nil {
+			// The payload does not fit: its project and working directory still locate the worktree; branch and
+			// deleteBranch are left unset, so no branch is deleted.
+			loose := typed[struct {
+				Project jsonValue `json:"project"`
+				Rest    struct {
+					WorkingDirectory jsonValue `json:"workingDirectory"`
+				}
+			}](c["payload"])
+			if m, ok := loose.Project.V.(M); ok {
+				tp.Project = map[string]json.RawMessage{}
+				for k, v := range m {
+					tp.Project[k] = json.RawMessage(enc(v))
+				}
+			}
+			if wd, ok := loose.Rest.WorkingDirectory.V.(string); ok {
+				tp.Rest = map[string]json.RawMessage{"workingDirectory": json.RawMessage(enc(wd))}
+			}
 		}
-		dir := e.commandDir(session, p)
-		repo, hasRepo := repoPath(p, e.host)
+		key := workspaceKey(cmd)
+		dir := e.commandDir(session, key)
 		data := refusedTeardown("no-worktree")
-		if e.insideDirs(dir) && exists(filepath.Join(dir, "worktree", ".git")) {
-			_, top, created, ok, err := worktree(dir, workspaceSession(session, p), repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"), false)
+		if project, err := projectContext(tp.Project); err != nil {
+			data = refusedTeardown(err.Error())
+		} else if e.insideDirs(dir) && exists(filepath.Join(dir, "worktree", ".git")) {
+			wd := typedRaw[*string](tp.Rest["workingDirectory"])
+			repo, hasRepo := repoPath(wd, project, e.host)
+			_, top, created, ok, err := worktree(dir, workspaceSession(session, key), repo, hasRepo, projectRoots(), e.forbidden(), project, false)
 			switch {
 			case err != nil:
 				data = refusedTeardown(err.Error())
 			case ok && !created:
-				data = teardown(dir, workspaceSession(session, p), top, jAt(p, "project"), tp.DeleteBranch != nil && *tp.DeleteBranch, tp.Branch != nil && !*tp.Branch)
+				data = teardown(dir, workspaceSession(session, key), top, project, tp.DeleteBranch != nil && *tp.DeleteBranch, tp.Branch != nil && !*tp.Branch)
 			}
 		}
 		reason := str0(data.Reason)
 		ok := data.Removed || reason == "uncommitted" || reason == "unpushed" || reason == "no-worktree"
 		// The teardown command reuses the last execution, whose seq 0.. are taken by its turn: use a fresh seq.
-		if err := e.event(c, uint64(nowMs()), contract.FleetEventTypeTeardown, data); err != nil {
+		if err := e.event(cmd, uint64(nowMs()), contract.FleetEventTypeTeardown, data); err != nil {
 			return err
 		}
-		return e.finish(c, okStatus(ok), "")
+		return e.finish(cmd, okStatus(ok), "")
 	case contract.CommandKindArtifactCopy, contract.CommandKindArtifactVerify:
 		// Long transfers run on the transfer worker, which sends the final receipt; the journal row resumes them.
-		b := jObj(jClone(p))
+		b, _ := payload.(M) // open JSON: the transfer job is the payload as received, plus the command and spool
+		b = maps.Clone(b)
 		if b == nil {
 			b = M{}
 		}
-		b["command"] = M{"id": c["id"], "executionId": c["executionId"]}
+		b["command"] = M{"id": cid, "executionId": execution}
 		b["spool"] = filepath.Join(e.root, "spool")
 		k := "verify"
 		if kind == contract.CommandKindArtifactCopy {
@@ -850,29 +942,34 @@ func (e *executor) run(c M) error {
 		_, err := e.db.Exec("UPDATE commands SET terminal=1 WHERE id=?", cid)
 		return err
 	case contract.CommandKindAccountInspect:
-		return e.accountInspect(c)
+		return e.accountInspect(cmd)
 	case contract.CommandKindConnectionRemove:
 		if typedErr != nil || cmd.ConnectionRemove.Payload == nil || !removeConnection(connectionsDir(), cmd.ConnectionRemove.Payload.Connection) {
-			return e.finish(c, "failed", "")
+			return e.finish(cmd, "failed", "")
 		}
-		return e.finish(c, "completed", "")
+		return e.finish(cmd, "completed", "")
 	case contract.CommandKindScript:
-		return e.script(c, execution, session)
+		return e.script(cmd, execution, session)
 	case contract.CommandKindStart, contract.CommandKindInput:
-		return e.start(c, cid, execution, session, p)
+		p, _ := payload.(M) // open JSON: the harness adapters still read the start payload as a map
+		return e.start(cmd, cid, execution, session, p)
 	}
-	return e.finish(c, "failed", "")
+	return e.finish(cmd, "failed", "")
 }
 
 // commandID and sessionID: the live command's identities, checked when it ran ("" for one that is not).
-func (l *live) commandID() string { s, _ := cmdID(l.command, "id"); return s }
-func (l *live) sessionID() string { s, _ := cmdID(l.command, "sessionId"); return s }
+func (l *live) commandID() string { s, _ := idOf(l.command, "id"); return s }
+func (l *live) sessionID() string { s, _ := idOf(l.command, "sessionId"); return s }
 
-// typedCommand: a journal command as its contract type; a command that does not fit is the zero value (no member set).
-func typedCommand(c M) contract.Command {
+// typedCommand: a decoded command as its contract type (commandOf of its journal body).
+func typedCommand(c M) contract.Command { return commandOf(enc(c)) }
+
+// commandOf: a journal body as its contract type; one that does not fit its kind's type keeps only Raw (no member set),
+// so its identities are still read from the JSON.
+func commandOf(body string) contract.Command {
 	var cmd contract.Command
-	if json.Unmarshal([]byte(enc(c)), &cmd) != nil {
-		return contract.Command{}
+	if json.Unmarshal([]byte(body), &cmd) != nil {
+		return contract.Command{Raw: json.RawMessage(body)}
 	}
 	return cmd
 }
@@ -886,11 +983,19 @@ func commandKind(body string) contract.CommandKind {
 	return k.Kind
 }
 
-// payloadOf decodes a command payload into its per-kind contract type (an absent payload is the zero value).
-func payloadOf[T any](c M) (T, error) {
+// payloadOf decodes a command payload into its per-kind contract type (an absent or null payload is the zero value).
+func payloadOf[T any](c contract.Command) (T, error) {
 	var v T
-	if raw, has := c["payload"]; has && raw != nil {
-		err := json.Unmarshal([]byte(enc(raw)), &v)
+	raw := c.Raw
+	if raw == nil {
+		raw, _ = json.Marshal(c)
+	}
+	var x struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	json.Unmarshal(raw, &x)
+	if len(x.Payload) > 0 && string(x.Payload) != "null" {
+		err := json.Unmarshal(x.Payload, &v)
 		return v, err
 	}
 	return v, nil
@@ -911,7 +1016,7 @@ func okStatus(ok bool) string {
 	return "failed"
 }
 
-func (e *executor) start(c M, cid, execution, session string, p M) error {
+func (e *executor) start(c contract.Command, cid, execution, session string, p M) error {
 	// A session with a recorded launch is running, or its process from before a restart is not confirmed gone.
 	var busy string
 	err := e.db.QueryRow("SELECT execution FROM launches WHERE session=? LIMIT 1", session).Scan(&busy)
@@ -923,7 +1028,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		if _, live := e.live[busy]; !live {
 			reason += "; a stop for execution " + busy + " accepts the uncertainty and releases the session"
 		}
-		if err := e.event(c, 1, "preparation.failed", M{"reason": reason}); err != nil {
+		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: reason}); err != nil {
 			return err
 		}
 		return e.finish(c, "failed", "")
@@ -935,12 +1040,16 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		}
 		return e.finish(c, "failed", "")
 	}
-	cfg, hasCfg := p["agentConfig"]
-	if hasCfg && profileValidate(cfg) != nil {
-		return e.finish(c, "failed", "")
+	cfg, hasCfg := p["agentConfig"] // the profile as received: evidence and hashes keep its bytes
+	var profile contract.Profile
+	if hasCfg {
+		if profile, err = contract.ParseProfile([]byte(enc(cfg))); err != nil {
+			return e.finish(c, "failed", "")
+		}
 	}
-	name := harnessName(p)
-	dir := e.commandDir(session, p)
+	name := harnessName(sp)
+	key := str0(sp.WorkspaceKey)
+	dir := e.commandDir(session, key)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -974,7 +1083,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	var evidence M
 	selectedMCP := M{}
 	if hasCfg {
-		ev, selected, err := profilePrepare(cfg, jStr(p, "account"), p["skills"])
+		ev, selected, err := profilePrepare(cfg, str0(sp.Account), p["skills"])
 		if err != nil {
 			return fail(1, err.Error())
 		}
@@ -990,21 +1099,25 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if err != nil {
 		return fail(1, err.Error())
 	}
-	fleetTools := jBoolOr(true, p, "agentConfig", "fleetTools")
-	collaboration := jBoolOr(true, p, "agentConfig", "collaborationTools")
+	fleetTools := profile.FleetTools == nil || *profile.FleetTools
+	collaboration := profile.CollaborationTools == nil || *profile.CollaborationTools
 	if name == "codex" && !collaboration {
 		cmd.Args = append(cmd.Args, "--disable", "multi_agent", "--disable", "multi_agent_v2")
 	}
-	repo, hasRepo := repoPath(p, e.host)
+	project, err := projectContext(sp.Project)
+	if err != nil {
+		return fail(1, err.Error())
+	}
+	repo, hasRepo := repoPath(sp.WorkingDirectory, project, e.host)
 	checkoutTop := ""
-	w, top, created, hasW, err := worktree(dir, workspaceSession(session, p), repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"), jAt(p, "branch") == false)
+	w, top, created, hasW, err := worktree(dir, workspaceSession(session, key), repo, hasRepo, projectRoots(), e.forbidden(), project, sp.Branch != nil && !*sp.Branch)
 	if err != nil {
 		return fail(1, err.Error())
 	}
 	if hasW {
 		checkoutTop = top
-		if script := jStr(p, "project", "scripts", "setup"); created && jIsStr(p, "project", "scripts", "setup") && str0(sp.Setup) != "skip" {
-			r := projectScript("setup", script, top, w, session)
+		if created && project.Scripts != nil && project.Scripts.Setup != nil && str0(sp.Setup) != "skip" {
+			r := projectScript("setup", *project.Scripts.Setup, top, w, session)
 			failSeq = 2
 			if err := e.event(c, 1, contract.FleetEventTypeSetup, r); err != nil {
 				return err
@@ -1024,10 +1137,10 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	os.MkdirAll(outputDir, 0o755)
 	os.MkdirAll(inputDir, 0o755)
 	setEnvKV(cmd, "FLEET_OUTPUT_DIR="+outputDir, "FLEET_INPUT_DIR="+inputDir)
-	if err := e.stageInputs(p, inputDir, c["executionId"]); err != nil {
+	if err := e.stageInputs(p, inputDir, execution); err != nil {
 		return fail(1, err.Error())
 	}
-	resolved, err := resolveAttemptContext(jAt(p, "project"), e.host, projectRoots(), e.forbidden(), inputDir)
+	resolved, err := resolveAttemptContext(project, e.host, projectRoots(), e.forbidden(), inputDir)
 	if err != nil {
 		return fail(1, err.Error())
 	}
@@ -1036,38 +1149,41 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		return err
 	}
 	var gitAccess []string
-	if jObj(p, "project") != nil {
+	if sp.Project != nil {
 		// Repo of this host's environment (env.repo), else the project's single/first repo.
-		var envRepo any
-		for _, en := range jArr(p, "project", "environments") {
-			if jStr(en, "hostId") == e.host {
-				envRepo = jAt(en, "repo")
+		var envRepo *string
+		for _, en := range project.Environments {
+			if str0(en.HostId) == e.host {
+				envRepo = en.Repo
 				break
 			}
 		}
-		access, err := gitEnv(jAt(p, "project"), gitRepo(jAt(p, "project"), envRepo), connectionsDir())
+		access, err := gitEnv(project, gitRepo(project, envRepo), connectionsDir())
 		if err != nil {
 			return fail(1, err.Error())
 		}
 		gitAccess = access
 		gitApply(cmd, access)
 	}
-	requirements := projectRequirements(jAt(p, "project"), jStr(p, "agentConfig", "id"))
-	for _, tool := range jArr(requirements, "tools") {
+	requirements := contract.ProjectExecution{}
+	if r := projectRequirements(project, profile.Id); r != nil {
+		requirements = *r
+	}
+	for _, tool := range requirements.Tools {
 		var err error
-		if jStr(tool) == "browser" {
+		if tool == "browser" {
 			err = browserReady(p, commandHome(cmd))
 		} else {
-			err = codingTool(jStr(tool), commandHome(cmd))
+			err = codingTool(tool, commandHome(cmd))
 		}
 		if err != nil {
-			return fail(1, "coding-tool-unready: "+jStr(tool))
+			return fail(1, "coding-tool-unready: "+tool)
 		}
 	}
 	observed := e.observeHarness(cmd, name)
 	servers := mcpAtRoot(selectedMCP, work)
-	for _, tool := range jArr(requirements, "tools") {
-		if jStr(tool) == "browser" {
+	for _, tool := range requirements.Tools {
+		if tool == "browser" {
 			cfg, err := browserConfig(p)
 			if err != nil {
 				return fail(1, "browser-binding-unready")
@@ -1075,28 +1191,43 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			servers["project-browser"] = M{"command": exe(), "args": []any{"mcp", "project-browser", enc(cfg)}, "tools": []any{"navigate", "read", "evaluate", "click", "fill", "close"}, "dependencies": M{"fleet-browser-chromium": os.Getenv("FLEET_BROWSER_EXECUTABLE")}, "ownedDependencies": []any{"fleet-browser-chromium"}}
 		}
 	}
-	if jAt(requirements, "forge") == true {
-		if reason := forgeReadiness(jAt(p, "project")); reason != "" {
+	if requirements.Forge != nil && *requirements.Forge {
+		if reason := forgeReadiness(primaryRemote(project)); reason != "" {
 			return fail(1, reason)
 		}
-		repo := gitRepo(jAt(p, "project"), nil)
-		remote := forgeRepo(jStr(repo, "remote"))
+		repo := gitRepo(project, nil)
+		if repo == nil {
+			repo = &contract.ProjectRepo{}
+		}
+		remote := forgeRepo(str0(repo.Remote))
 		store := os.Getenv("FLEET_FORGE_CONFIG_DIR")
 		branchBytes, err := exec.Command("git", "-C", work, "symbolic-ref", "--short", "HEAD").Output()
 		if err != nil || remote == "" || !forgeGranted(remote) || !filepath.IsAbs(store) {
 			return fail(1, "project-forge-unready")
 		}
-		context := M{"repositories": os.Getenv("FLEET_FORGE_REPOSITORIES"), "credentialHome": os.Getenv("HOME"), "repo": remote, "base": jStr(repo, "defaultBranch"), "branch": strings.TrimSpace(string(branchBytes)), "prefix": jStr(p, "project", "worktree", "branchPrefix"), "autoMerge": jAt(p, "project", "integration", "autoMerge"), "mergeMethod": jStr(p, "project", "integration", "mergeMethod"), "workdir": work, "home": commandHome(cmd), "store": store}
+		var prefix, mergeMethod string
+		var autoMerge bool
+		if project.Worktree != nil {
+			prefix = str0(project.Worktree.BranchPrefix)
+		}
+		if in := project.Integration; in != nil {
+			mergeMethod = str0(in.MergeMethod)
+			if in.AutoMerge != nil {
+				autoMerge = *in.AutoMerge
+			}
+		}
+		context := forgeContext{Repositories: os.Getenv("FLEET_FORGE_REPOSITORIES"), CredentialHome: os.Getenv("HOME"), Repo: remote, Base: str0(repo.DefaultBranch), Branch: strings.TrimSpace(string(branchBytes)), Prefix: prefix, AutoMerge: autoMerge, MergeMethod: mergeMethod, Workdir: work, Home: commandHome(cmd), Store: store}
 		servers["project-forge"] = M{"command": exe(), "args": []any{"mcp", "project-forge", enc(context)}, "tools": []any{"publish_draft", "delivery"}}
 	}
-	profiles := jArr(p, "agentConfig", "delegationProfiles")
-	if profiles == nil {
-		profiles = []any{}
-	}
+	profiles := anyStrings(profile.DelegationProfiles)
 	fleetMCP := []any{}
 	var codeFleetTools *codeFleet
 	if fleetTools {
-		context := M{"hostId": e.host, "commandId": c["id"], "executionId": c["executionId"], "profiles": profiles, "projectId": p["projectId"], "workdir": work, "inputDir": inputDir, "spool": filepath.Join(e.root, "spool"), "operations": p["fleetOperations"]}
+		var projectID any
+		if sp.ProjectId != nil {
+			projectID = *sp.ProjectId
+		}
+		context := M{"hostId": e.host, "commandId": cid, "executionId": execution, "profiles": profiles, "projectId": projectID, "workdir": work, "inputDir": inputDir, "spool": filepath.Join(e.root, "spool"), "operations": p["fleetOperations"]}
 		journal := filepath.Join(e.root, "journal.sqlite")
 		if err := os.MkdirAll(filepath.Join(e.root, "runs"), 0o700); err != nil {
 			return err
@@ -1124,7 +1255,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			os.Remove(fleetContextFile(e.root, execution)) // nor its Fleet server context
 		}
 	}()
-	granted := jArr(p, "connections")
+	granted := sp.Connections
 	if len(granted) > 0 {
 		gateway := os.Getenv("FLEET_GATEWAY_URL")
 		if gateway == "" || sp.RunToken == nil {
@@ -1151,26 +1282,37 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		}
 	}
 	gatewayConns := map[string]bool{}
-	codeMode := jStr(p, "agentConfig", "codeMode")
+	codeMode := ""
+	if profile.CodeMode != nil {
+		codeMode = string(*profile.CodeMode)
+	}
 	var bridged []any // the granted connections with the tools their direct servers expose, for code mode
-	for _, spec := range granted {
-		conn := jStr(spec, "name")
+	for _, raw := range granted {
+		// A grant names its connection and tools; the rest of the spec reaches the connection server as sent.
+		spec := decRaw(raw) // decoded once: the checked name and tools are those of the spec forwarded
+		grant := typed[struct {
+			Name  string `json:"name"`
+			Tools []any  `json:"tools"`
+		}](spec)
+		conn := grant.Name
 		if conn == "" || !onlyBytes(conn, func(b byte) bool { return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' }) {
 			continue
 		}
 		tools, specs := []any{}, []any{}
-		for _, t := range jArr(spec, "tools") {
-			if n := jStr(t, "name"); n != "" && onlyBytes(n, func(b byte) bool { return alnum(b) || b == '_' }) {
-				tools, specs = append(tools, n), append(specs, t)
+		for _, t := range grant.Tools {
+			if n := typed[struct {
+				Name string `json:"name"`
+			}](t).Name; n != "" && onlyBytes(n, func(b byte) bool { return alnum(b) || b == '_' }) {
+				tools, specs = append(tools, n), append(specs, jClone(t))
 				connectionTools = append(connectionTools, "mcp__"+conn+"__"+n)
 			}
 		}
 		if codeMode != "" {
-			b := jObj(jClone(spec))
+			b := decM(string(raw))
 			b["tools"] = specs
 			bridged = append(bridged, b)
 		}
-		if has(servers, conn) {
+		if _, taken := servers[conn]; taken {
 			return fail(1, "MCP server name collides with a granted connection")
 		}
 		servers[conn] = M{"command": exe(), "args": []any{"mcp", "connection", conn, enc(spec), runFile}, "tools": tools, "env": []any{"HOME"}}
@@ -1185,9 +1327,9 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		}
 	}
 	if codeMode != "" {
-		auth := codeAuthorityFor(name, jAt(p, "agentConfig"), work, []string{work, inputDir}, gitRoots, p["gitNetwork"] == true, jIsTrue(p, "readOnly"), e.root)
+		auth := codeAuthorityFor(name, cfg, work, []string{work, inputDir}, gitRoots, sp.GitNetwork != nil && *sp.GitNetwork, sp.ReadOnly != nil && *sp.ReadOnly, e.root)
 		auth.env = M{"FLEET_INPUT_DIR": inputDir, "FLEET_OUTPUT_DIR": outputDir}
-		if jObj(p, "project") != nil {
+		if sp.Project != nil {
 			auth.gitEnv = anyStrings(gitAccess)
 		}
 		// The worktree's Git directories stay readable to a sandboxed sh that hides the data directory. They come from the
@@ -1208,7 +1350,8 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			for _, key := range []string{"read", "write", "hide"} {
 				var paths []any
 				for _, path := range jArr(auth.shell, key) {
-					c, err := canon(jStr(path))
+					s, _ := str(path) // the roots above are strings
+					c, err := canon(s)
 					if err != nil {
 						return fail(1, "code-mode shell root: "+err.Error())
 					}
@@ -1258,7 +1401,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		if str0(sp.WebRoute) == "builtin" {
 			extra = append(extra, "WebSearch", "WebFetch")
 		}
-		if len(jArr(p, "skills")) > 0 {
+		if len(sp.Skills) > 0 {
 			extra = append(extra, "Skill")
 		}
 	}
@@ -1290,7 +1433,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	pp := p
 	if gitRoots != nil {
-		pp = jObj(jClone(p))
+		pp = maps.Clone(p) // a top-level key only
 		pp["writableRoots"] = gitRoots
 	}
 	cmd, sess := h.Protocol(cmd, root, native, pp, servers)
@@ -1507,8 +1650,7 @@ func readStdout(r *os.File, rawLog *os.File, w *wire, acpProtocol bool, out chan
 // script: a lab script step: `sh -c <command>` in its own process group, in the trial's own worktree at the pinned commit
 // (or the session dir when the payload names no repository). Stop and timeout kill the whole group. Full stdout and stderr
 // (output/script.stdout, output/script.stderr) and everything in FLEET_OUTPUT_DIR become artifacts.
-func (e *executor) script(c M, execution, session string) error {
-	p := jObj(c, "payload")
+func (e *executor) script(c contract.Command, execution, session string) error {
 	dir := e.sessionDir(session)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -1544,7 +1686,7 @@ func (e *executor) script(c M, execution, session string) error {
 	if err := os.MkdirAll(input, 0o755); err != nil {
 		return err
 	}
-	if err := e.stageInputs(p, input, c["executionId"]); err != nil {
+	if err := e.stageInputs(M{"inputs": sp.Inputs}, input, execution); err != nil {
 		return refuse(err.Error())
 	}
 	stdout, err := os.Create(filepath.Join(output, "script.stdout"))
@@ -1557,7 +1699,12 @@ func (e *executor) script(c M, execution, session string) error {
 		return err
 	}
 	defer stderr.Close()
-	repo, hasRepo := repoPath(p, e.host)
+	project, err := projectContext(sp.Project)
+	if err != nil {
+		return refuse(err.Error())
+	}
+	wd := typedRaw[*string](sp.Rest["workingDirectory"])
+	repo, hasRepo := repoPath(wd, project, e.host)
 	work := dir
 	var trial *[2]string
 	switch {
@@ -1597,7 +1744,7 @@ func (e *executor) script(c M, execution, session string) error {
 	if v := os.Getenv("FLEET_BLENDER"); v != "" {
 		cmd.Env = append(cmd.Env, "FLEET_BLENDER="+v)
 	}
-	cid, _ := cmdID(c, "id")
+	cid, _ := idOf(c, "id")
 	if err := e.launch(execution, cid, session); err != nil {
 		dropTrial()
 		return err
@@ -1812,7 +1959,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			l.cleanupUnknown = true
 		}
 	}
-	name := harnessName(jAt(l.command, "payload"))
+	name := commandHarness(l.command)
 	h := Harnesses[name]
 	if l.blocks == nil && NewBlocks != nil {
 		l.blocks = NewBlocks()
@@ -1842,8 +1989,9 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			}
 			// A harness may repeat its native identity on every event. Publish the first
 			// observation and changes so ordinary event traffic can batch in the outbox.
-			if n := jStr(projection, "session"); n != "" && (!l.nativeObserved || n != l.native) {
-				sid, err := cmdID(l.command, "sessionId")
+			n, _ := projection["session"].(string) // the in-memory projection Blocks built, not received JSON
+			if n != "" && (!l.nativeObserved || n != l.native) {
+				sid, err := idOf(l.command, "sessionId")
 				if err != nil {
 					return false, err
 				}
@@ -1855,26 +2003,28 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 				}
 				l.native, l.nativeObserved = n, true
 			}
-			if jStr(event, "type") == "steer.result" {
-				if b, ok := e.commandBody(jStr(event, "commandId"), true); ok {
-					if err := e.finish(decM(b), okStatus(jIsTrue(event, "ok")), ""); err != nil {
+			kind := "unknown"
+			ev := typed[harnessEvent](event)
+			if k, ok := valStr(ev.Type); ok {
+				kind = k
+			}
+			if kind == "steer.result" {
+				steer := typed[steerResult](event)
+				if b, ok := e.commandBody(str0(steer.CommandID), true); ok {
+					if err := e.finish(commandOf(b), okStatus(steer.Ok != nil && *steer.Ok), ""); err != nil {
 						return false, err
 					}
 				}
 			}
-			if jStr(event, "type") == string(contract.FleetEventTypeProtocolFailed) && !l.stopped {
+			if kind == string(contract.FleetEventTypeProtocolFailed) && !l.stopped {
 				l.cleanupUnknown, l.stopped = true, true
 			}
 			if projection["completed"] == true {
 				l.completed = true
 			}
 			l.seq++
-			retained := jObj(jClone(event))
+			retained := maps.Clone(event) // the record as normalized, plus its projection
 			retained["fleetNormalized"] = projection
-			kind := "unknown"
-			if jIsStr(event, "type") {
-				kind = jStr(event, "type")
-			}
 			if err := e.nativeEvent(l.command, l.seq, kind, retained); err != nil {
 				return false, err
 			}
@@ -1917,14 +2067,14 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	res := buildExecutionResourceSummary(l)
 	executionSpan(execution, l)
 	l.seq++
-	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, Resources: res, StderrTail: stderrTail(e.commandDir(l.sessionID(), jAt(l.command, "payload")), execution, code)}); err != nil {
+	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, Resources: res, StderrTail: stderrTail(e.commandDir(l.sessionID(), workspaceKey(l.command)), execution, code)}); err != nil {
 		return false, err
 	}
-	sid, err := cmdID(l.command, "sessionId")
+	sid, err := idOf(l.command, "sessionId")
 	if err != nil {
 		return false, err
 	}
-	dir := e.commandDir(sid, jAt(l.command, "payload"))
+	dir := e.commandDir(sid, workspaceKey(l.command))
 	// Project sessions run in their worktree, so the agent writes output/ there.
 	output := []string{"output"}
 	if st, err := os.Lstat(filepath.Join(dir, "worktree", "output")); err == nil && st.IsDir() {
@@ -1980,7 +2130,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			st = "unknown"
 		}
 		for _, b := range bodies {
-			if err := e.finish(decM(b), st, l.native); err != nil {
+			if err := e.finish(commandOf(b), st, l.native); err != nil {
 				return false, err
 			}
 		}
@@ -2072,7 +2222,7 @@ func (e *executor) stores() []contract.StoreReport {
 func buildExecutionResourceSummary(l *live) *contract.ExecutionResourceSummary {
 	out := &contract.ExecutionResourceSummary{}
 	if l.metrics != nil {
-		l.metrics.applyTo(harnessName(jAt(l.command, "payload")), out)
+		l.metrics.applyTo(commandHarness(l.command), out)
 	} else if !l.started.IsZero() {
 		active := max(int64(0), time.Since(l.started).Milliseconds())
 		out.ActiveMs = &active
@@ -2276,26 +2426,31 @@ func reproject() error {
 		if strings.TrimSpace(in.Text()) == "" {
 			continue
 		}
-		v, err := dec(in.Text())
-		if err != nil {
+		if _, err := dec(in.Text()); err != nil {
 			return err
 		}
-		ex := jStr(v, "executionId")
+		// A field of another type reads as absent; the record is the open native record, decoded as the journal does.
+		line := typedRaw[struct {
+			ExecutionId string    `json:"executionId"`
+			Harness     *string   `json:"harness"`
+			Timestamp   uint64    `json:"timestamp"`
+			Record      jsonValue `json:"record"`
+		}](in.Bytes())
+		ex := line.ExecutionId
 		b := state[ex]
 		if b == nil {
 			b = NewBlocks()
 			state[ex] = b
 		}
 		h := "codex"
-		if jIsStr(v, "harness") {
-			h = jStr(v, "harness")
+		if line.Harness != nil {
+			h = *line.Harness
 		}
-		ts, _ := jU64(v, "timestamp")
-		rec := jObj(v, "record")
+		rec, _ := line.Record.V.(M)
 		if rec == nil {
 			rec = M{}
 		}
-		fmt.Fprintln(out, enc(b.Project(h, rec, ts)))
+		fmt.Fprintln(out, enc(b.Project(h, rec, line.Timestamp)))
 	}
 	if err := in.Err(); err != nil {
 		return err
@@ -2350,11 +2505,13 @@ func runExecutor() error {
 	// Artifact transfers run on their own goroutines; the Access token for store tunnels from FLEET_CF_ACCESS_FILE.
 	if err := spawnTransfers(journal, newTransferClient(url, token, host, accessToken(accessFile())), func(_ *transferClient, db *sql.DB, body M, response any) {
 		// A remote store answers "verifying" until the store's host checks the copy; the bytes are uploaded either way.
-		if st := jStr(response, "state"); body["previews"] == true && (st == "stored" || st == "verifying") {
+		answer := transferAnswerOf(response)
+		file := typed[transferFile](body)
+		if st := answer.State; body["previews"] == true && (st == "stored" || st == "verifying") {
 			buildPreviews(db, body, response)
 		}
-		if body["spool"] == true && jIsStr(body, "path") {
-			os.Remove(jStr(body, "path"))
+		if body["spool"] == true && file.Path != nil {
+			os.Remove(*file.Path)
 		}
 	}); err != nil {
 		return err
@@ -2506,18 +2663,18 @@ func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply
 	}
 	signalMu.Lock()
 	defer signalMu.Unlock()
-	sig := updateSignal{HostID: e.host, Running: version, AutoUpdate: "on"}
+	sig := updateSignal{HostId: e.host, Running: version, AutoUpdate: "on"}
 	if lastSignal != nil {
 		sig.Target, sig.AutoUpdate = lastSignal.Target, lastSignal.AutoUpdate
 	}
-	sig.PollOk, sig.PollError = pollSignal(a)
+	sig.PollOk, sig.PollError = pollFields(a)
 	var reply *pollReply
 	if a.kind == answerOK {
 		var err error
 		reply, err = decodePoll(a.value)
 		if err != nil {
 			a.kind, a.text = answerRetry, "invalid poll reply: "+err.Error()
-			sig.PollOk, sig.PollError = pollSignal(a)
+			sig.PollOk, sig.PollError = pollFields(a)
 		} else {
 			sig.Target = reply.Target
 			if reply.AutoUpdate != nil {
@@ -2596,18 +2753,19 @@ func (e *executor) exchange() (err error) {
 
 // runOrFail runs one command. A command that errors before its run is live fails, and a start or input says why:
 // without the reason an execution failed with no problem and no preparation.failed event.
-func (e *executor) runOrFail(c M) error {
-	err := e.run(c)
+func (e *executor) runOrFail(m M) error {
+	err := e.run(m)
 	if err == nil {
 		return nil
 	}
-	id, _ := cmdID(c, "id")
-	execution, _ := cmdID(c, "executionId")
+	c := typedCommand(m)
+	id, _ := idOf(c, "id")
+	execution, _ := idOf(c, "executionId")
 	if _, isLive := e.live[execution]; isLive {
 		return nil
 	}
 	b, ok := e.commandBody(id, true)
-	if !ok || b != enc(c) {
+	if !ok || b != enc(m) {
 		return nil
 	}
 	if k := commandKind(b); k == contract.CommandKindStart || k == contract.CommandKindInput {

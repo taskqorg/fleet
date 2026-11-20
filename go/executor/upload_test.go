@@ -23,7 +23,7 @@ func TestTransferOutcomeAndReceiptCommitTogether(t *testing.T) {
 	if err := enqueue(db, "j1", "copy", body); err != nil {
 		t.Fatal(err)
 	}
-	if err := (dbExec{db}).tx(func(x execer) error { return settleJob(x, "h", "j1", "copy", body, 0, M{}, nil) }); err == nil {
+	if err := (dbExec{db}).tx(func(x execer) error { return settleJob(x, "h", "j1", "copy", readJob(enc(body)), 0, M{}, nil) }); err == nil {
 		t.Fatal("settled without an outbox")
 	}
 	var state string
@@ -34,7 +34,7 @@ func TestTransferOutcomeAndReceiptCommitTogether(t *testing.T) {
 	if _, err := db.Exec("CREATE TABLE outbox(route TEXT NOT NULL,body TEXT NOT NULL)"); err != nil {
 		t.Fatal(err)
 	}
-	if err := (dbExec{db}).tx(func(x execer) error { return settleJob(x, "h", "j1", "copy", body, 0, M{}, nil) }); err != nil {
+	if err := (dbExec{db}).tx(func(x execer) error { return settleJob(x, "h", "j1", "copy", readJob(enc(body)), 0, M{}, nil) }); err != nil {
 		t.Fatal(err)
 	}
 	db.QueryRow("SELECT state FROM transfers WHERE id='j1'").Scan(&state)
@@ -66,11 +66,11 @@ func TestTypedReserveMismatchRetainsTransfer(t *testing.T) {
 		fmt.Fprint(w, `{"artifactId":"upload","state":9}`)
 	}))
 	defer server.Close()
-	value, f := runJob(newTransferClient(server.URL, "fixture", "host", nil), db, "upload", "upload", body)
+	value, f := runJob(newTransferClient(server.URL, "fixture", "host", nil), db, "upload", "upload", readJob(enc(body)))
 	if f == nil || !f.retry {
 		t.Fatal("invalid typed reply did not retain retry")
 	}
-	if err := (dbExec{db}).tx(func(x execer) error { return settleJob(x, "host", "upload", "upload", body, 0, value, f) }); err != nil {
+	if err := (dbExec{db}).tx(func(x execer) error { return settleJob(x, "host", "upload", "upload", readJob(enc(body)), 0, value, f) }); err != nil {
 		t.Fatal(err)
 	}
 	var state string

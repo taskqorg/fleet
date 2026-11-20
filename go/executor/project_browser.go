@@ -12,8 +12,22 @@ import (
 //go:embed project_browser.cjs
 var projectBrowserScript string
 
+// browserBinding: one project's entry of FLEET_BROWSER_BINDINGS.
+type browserBinding struct {
+	PreviewOrigins jsonValue `json:"previewOrigins"`
+	Production     jsonValue `json:"production"`
+}
+
+// browserProduction: a binding's production grant; its other keys reach the browser script unchanged.
+type browserProduction struct {
+	Origin     string `json:"origin"`
+	AccessFile string `json:"accessFile"`
+}
+
 func browserConfig(payload any) (M, error) {
-	projectID := jStr(payload, "projectId")
+	projectID := typed[struct {
+		ProjectId string `json:"projectId"`
+	}](payload).ProjectId
 	if projectID == "" {
 		return nil, errors.New("browser-project-not-granted")
 	}
@@ -29,31 +43,36 @@ func browserConfig(payload any) (M, error) {
 	if err != nil {
 		return nil, err
 	}
-	bindings, err := dec(string(raw))
+	all, err := dec(string(raw))
 	if err != nil {
 		return nil, err
 	}
 	// The coordinator supplies identity separately from normalized project settings.
-	binding := jObj(bindings, projectID)
-	if binding == nil {
+	bindings, _ := all.(M)
+	entry, ok := bindings[projectID].(M)
+	if !ok {
 		return nil, errors.New("browser-project-not-granted")
 	}
-	previews := jArr(binding, "previewOrigins")
-	if has(binding, "previewOrigins") && previews == nil {
+	binding := typed[browserBinding](entry)
+	previews, isList := binding.PreviewOrigins.V.([]any)
+	if binding.PreviewOrigins.Set && !isList {
 		return nil, errors.New("browser-preview-grant-invalid")
 	}
 	for _, value := range previews {
-		u, err := url.Parse(jStr(value))
+		origin, _ := value.(string)
+		u, err := url.Parse(origin)
 		if err != nil || u.Scheme != "http" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost") || u.Port() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 			return nil, errors.New("browser-preview-grant-invalid")
 		}
 	}
-	production := jObj(binding, "production")
-	if production != nil {
-		if jStr(production, "origin") != "https://fleet.ufobe.com" {
+	var production any // the grant as written, for the browser script; nil unless an object
+	if p, ok := binding.Production.V.(M); ok {
+		production = p
+		grant := typed[browserProduction](p)
+		if grant.Origin != "https://fleet.ufobe.com" {
 			return nil, errors.New("browser-production-origin-denied")
 		}
-		credential := jStr(production, "accessFile")
+		credential := grant.AccessFile
 		credentialInfo, statErr := os.Stat(credential)
 		if !filepath.IsAbs(credential) || private(credential) != nil || statErr != nil || !credentialInfo.Mode().IsRegular() || owner(credentialInfo) != os.Geteuid() {
 			return nil, errors.New("browser-authority-unready")
@@ -65,7 +84,7 @@ func browserConfig(payload any) (M, error) {
 	if !isFile(os.Getenv("FLEET_PLAYWRIGHT_MODULE")) || !isFile(os.Getenv("FLEET_BROWSER_EXECUTABLE")) {
 		return nil, errors.New("browser-runtime-unready")
 	}
-	return M{"module": os.Getenv("FLEET_PLAYWRIGHT_MODULE"), "executable": os.Getenv("FLEET_BROWSER_EXECUTABLE"), "previewOrigins": previews, "production": production, "timeoutMs": probeWait.Milliseconds()}, nil
+	return M{"module": os.Getenv("FLEET_PLAYWRIGHT_MODULE"), "executable": os.Getenv("FLEET_BROWSER_EXECUTABLE"), "previewOrigins": binding.PreviewOrigins.V, "production": production, "timeoutMs": probeWait.Milliseconds()}, nil
 }
 func browserCommand(config any, home string, check bool) *exec.Cmd {
 	args := []string{"-e", projectBrowserScript, enc(config)}

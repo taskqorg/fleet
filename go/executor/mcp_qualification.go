@@ -10,14 +10,37 @@ import (
 	"strings"
 	"time"
 
+	"fleet/contract"
 	"fleet/errtrack"
 )
+
+// qualificationChecks: qualify-mcp's declared checks (argument 6): fixture sources and each server's calls.
+type qualificationChecks struct {
+	Sources []string                       `json:"sources"`
+	Servers map[string][]qualificationCall `json:"servers"`
+}
+
+// qualificationCall: one declared fixture call and its oracle.
+type qualificationCall struct {
+	Tool      string    `json:"tool"`
+	Arguments jsonValue `json:"arguments"`
+	Oracle    jsonValue `json:"oracle"` // a string names the oracle; the evidence keeps the value as declared
+	Expected  string    `json:"expected"`
+	Phase     jsonValue `json:"phase"`
+}
+
+// mcpBindingView: the members of a named MCP binding (namedMCPBinding) qualification reads.
+type mcpBindingView struct {
+	Command      string            `json:"command"`
+	Dependencies map[string]string `json:"dependencies"`
+	PathPolicy   string            `json:"pathPolicy"`
+}
 
 // qualifyMCP uses declared fixture calls, the shared stdio boundary and existing execution ownership; no model.
 func qualifyMCP(args []string) (resultErr error) {
 	totalStarted := time.Now()
 
-	evidence := []any{}
+	evidence := []M{}
 	diagnostic := M{"phase": "arguments", "requestOrdinal": 0, "method": "none"}
 	var setupMs, workMs int64
 	defer func() {
@@ -37,7 +60,7 @@ func qualifyMCP(args []string) (resultErr error) {
 		for _, value := range evidence {
 			row := M{}
 			for _, key := range []string{"server", "tool", "resultSha256", "advertisedToolsSha256", "executableHashes", "passed", "oracle", "phase", "durationMs"} {
-				if v := jAt(value, key); v != nil {
+				if v := value[key]; v != nil {
 					row[key] = v
 				}
 			}
@@ -73,15 +96,16 @@ func qualifyMCP(args []string) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	profile, err := dec(string(raw))
+	profile, err := dec(string(raw)) // hashed as written
 	if err != nil {
 		return err
 	}
-	if err = profileValidate(profile); err != nil {
+	parsed, err := contract.ParseProfile([]byte(enc(profile))) // profileValidate's check
+	if err != nil {
 		return err
 	}
 	diagnostic["profileSha256"] = profileHash(profile)
-	diagnostic["instructionsSha256"] = sha([]byte(jStr(profile, "instructions")))
+	diagnostic["instructionsSha256"] = sha([]byte(parsed.Instructions))
 	diagnostic["phase"] = "checks"
 	root, err := filepath.Abs(args[1])
 	if err != nil {
@@ -91,15 +115,15 @@ func qualifyMCP(args []string) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	checks, err := dec(string(raw))
+	declared, err := dec(string(raw))
 	if err != nil {
 		return err
 	}
+	checks := typed[qualificationChecks](declared)
 	diagnostic["checksSha256"] = sha(raw)
 	diagnostic["phase"] = "sources"
 	sources := M{}
-	for _, value := range jArr(checks, "sources") {
-		path := jStr(value)
+	for _, path := range checks.Sources {
 		if filepath.IsAbs(path) || path == "" {
 			return errors.New("MCP fixture source must be relative")
 		}
@@ -139,8 +163,8 @@ func qualifyMCP(args []string) (resultErr error) {
 		}
 	}()
 	os.Setenv("HOME", home)
-	for _, grant := range jArr(profile, "mcpServers") {
-		name := jStr(grant, "id")
+	for _, grant := range parsed.McpServers {
+		name := grant.Id
 		diagnostic["phase"] = "binding"
 		diagnostic["server"] = name
 		bindingStarted := time.Now()
@@ -148,14 +172,15 @@ func qualifyMCP(args []string) (resultErr error) {
 		if err != nil {
 			return err
 		}
+		view := typed[mcpBindingView](binding)
 		hashes := M{}
-		hash, err := mcpFileHash(jStr(binding, "command"))
+		hash, err := mcpFileHash(view.Command)
 		if err != nil {
 			return err
 		}
 		hashes["command"] = hash
-		for name, path := range jObj(binding, "dependencies") {
-			hash, err := mcpFileHash(jStr(path))
+		for name, path := range view.Dependencies {
+			hash, err := mcpFileHash(path)
 			if err != nil {
 				return err
 			}
@@ -164,8 +189,8 @@ func qualifyMCP(args []string) (resultErr error) {
 		binding["observedExecutableHashes"] = hashes
 		diagnostic["bindingSha256"] = profileHash(binding)
 		setupMs += time.Since(bindingStarted).Milliseconds()
-		binding["tools"] = jAt(grant, "data", "tools")
-		calls := jArr(checks, "servers", name)
+		binding["tools"] = decRaw(grant.Data["tools"])
+		calls := checks.Servers[name]
 		if len(calls) == 0 {
 			return fmt.Errorf("MCP %s has no declared qualification calls", name)
 		}
@@ -181,7 +206,7 @@ func qualifyMCP(args []string) (resultErr error) {
 		}
 		done := make(chan error, 1)
 		errtrack.Go("qualify.serve", func() {
-			err := mcpStdio(socket, binding, inReader, outWriter, root, jStr(binding, "pathPolicy"))
+			err := mcpStdio(socket, binding, inReader, outWriter, root, view.PathPolicy)
 			outWriter.Close()
 			done <- err
 		})
@@ -203,17 +228,19 @@ func qualifyMCP(args []string) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	receipt := M{"executorSha256": runnerHash, "sessionId": os.Getenv("FLEET_SESSION_ID"), "kind": "mcp-program-qualification", "profileSha256": profileHash(profile), "instructionsSha256": sha([]byte(jStr(profile, "instructions"))), "sourceSha256": profileHash(sources), "sources": sources, "checksSha256": sha(raw), "nativeAccount": args[3], "calls": evidence, "setupStartupMs": setupMs, "workMs": workMs, "totalMs": time.Since(totalStarted).Milliseconds(), "timingBasis": "setupStartupMs includes binding identity/init/discovery/startup calls; workMs includes declared work calls; totalMs includes preparation/teardown", "modelInvoked": false, "nativeInstructionFollowing": "not tested by program probe", "costUsd": nil, "usageBasis": "local program; no model/provider consumption", "transport": "stdio", "platform": platform()}
+	receipt := M{"executorSha256": runnerHash, "sessionId": os.Getenv("FLEET_SESSION_ID"), "kind": "mcp-program-qualification", "profileSha256": profileHash(profile), "instructionsSha256": sha([]byte(parsed.Instructions)), "sourceSha256": profileHash(sources), "sources": sources, "checksSha256": sha(raw), "nativeAccount": args[3], "calls": evidence, "setupStartupMs": setupMs, "workMs": workMs, "totalMs": time.Since(totalStarted).Milliseconds(), "timingBasis": "setupStartupMs includes binding identity/init/discovery/startup calls; workMs includes declared work calls; totalMs includes preparation/teardown", "modelInvoked": false, "nativeInstructionFollowing": "not tested by program probe", "costUsd": nil, "usageBasis": "local program; no model/provider consumption", "transport": "stdio", "platform": platform()}
 	if err = os.MkdirAll(filepath.Dir(args[2]), 0755); err != nil {
 		return err
 	}
 	return os.WriteFile(args[2], []byte(enc(receipt)+"\n"), 0600)
 }
-func qualifyMCPServer(name string, binding M, calls []any, input io.Writer, output io.Reader, evidence *[]any, setupMs, workMs *int64, diagnostic M) error {
+func qualifyMCPServer(name string, binding M, calls []qualificationCall, input io.Writer, output io.Reader, evidence *[]M, setupMs, workMs *int64, diagnostic M) error {
 	encoder, decoder := json.NewEncoder(input), json.NewDecoder(output)
 	id := 0
 	started := time.Now()
-	rpc := func(method string, params M) (M, error) {
+	decoder.UseNumber()
+	// rpc answers the result of one request, as written (numbers as json.Number).
+	rpc := func(method string, params M) (any, error) {
 		requestStarted := time.Now()
 		defer func() { diagnostic["requestDurationMs"] = time.Since(requestStarted).Milliseconds() }()
 		id++
@@ -221,14 +248,22 @@ func qualifyMCPServer(name string, binding M, calls []any, input io.Writer, outp
 		if err := encoder.Encode(M{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 			return nil, err
 		}
-		var answer M
-		if err := decoder.Decode(&answer); err != nil {
+		var frame any
+		if err := decoder.Decode(&frame); err != nil {
 			return nil, errors.New("MCP response unavailable; no replay")
 		}
-		if enc(answer["id"]) != fmt.Sprint(id) || has(answer, "error") {
+		if _, ok := frame.(M); !ok {
+			return nil, errors.New("MCP response unavailable; no replay")
+		}
+		answer := typed[struct {
+			ID     *float64  `json:"id"`
+			Error  jsonValue `json:"error"`
+			Result jsonValue `json:"result"`
+		}](frame)
+		if answer.ID == nil || *answer.ID != float64(id) || answer.Error.Set {
 			return nil, errors.New("MCP call refused or response identity differs")
 		}
-		return jObj(answer, "result"), nil
+		return answer.Result.V, nil
 	}
 	initialization, err := rpc("initialize", M{"protocolVersion": "2024-11-05", "capabilities": M{}, "clientInfo": M{"name": "fleet-program-qualification", "version": "1"}})
 	if err != nil {
@@ -237,15 +272,28 @@ func qualifyMCPServer(name string, binding M, calls []any, input io.Writer, outp
 	if err := encoder.Encode(M{"jsonrpc": "2.0", "method": "notifications/initialized"}); err != nil {
 		return err
 	}
-	listing, err := rpc("tools/list", M{})
+	listed, err := rpc("tools/list", M{})
 	if err != nil {
 		return err
 	}
+	var listing M // hashed as decoded with float numbers; a result that is no object hashes as null
+	json.Unmarshal([]byte(enc(listed)), &listing)
+	server := typed[struct {
+		ServerInfo struct {
+			Name    jsonValue `json:"name"`
+			Version jsonValue `json:"version"`
+		} `json:"serverInfo"`
+	}](initialization)
 	*setupMs += time.Since(started).Milliseconds()
 	for _, call := range calls {
-		tool := jStr(call, "tool")
+		tool := call.Tool
+		oracle, _ := valStr(call.Oracle)
 		start := time.Now()
-		result, err := rpc("tools/call", M{"name": tool, "arguments": jObj(call, "arguments")})
+		var arguments any // an object, else null
+		if a, ok := call.Arguments.V.(M); ok {
+			arguments = a
+		}
+		result, err := rpc("tools/call", M{"name": tool, "arguments": arguments})
 		if err != nil {
 			return err
 		}
@@ -254,7 +302,7 @@ func qualifyMCPServer(name string, binding M, calls []any, input io.Writer, outp
 		if err != nil {
 			return err
 		}
-		switch jStr(call, "oracle") {
+		switch oracle {
 		case "nonempty":
 		case "onboarding-status":
 		case "go-symbol":
@@ -262,24 +310,24 @@ func qualifyMCPServer(name string, binding M, calls []any, input io.Writer, outp
 				return err
 			}
 		case "text-contains":
-			if !strings.Contains(text, jStr(call, "expected")) || jStr(call, "expected") == "" {
+			if !strings.Contains(text, call.Expected) || call.Expected == "" {
 				return errors.New("MCP fixture semantic witness missing")
 			}
 		case "text-equals":
-			if text != jStr(call, "expected") {
+			if text != call.Expected {
 				return errors.New("MCP fixture result differs")
 			}
 		default:
 			return errors.New("MCP declared oracle unsupported")
 		}
 		elapsed := time.Since(start).Milliseconds()
-		if jStr(call, "phase") == "startup" {
+		if phase, _ := valStr(call.Phase); phase == "startup" {
 			*setupMs += elapsed
 		} else {
 			*workMs += elapsed
 		}
 		observation := ""
-		if jStr(call, "oracle") == "onboarding-status" {
+		if oracle == "onboarding-status" {
 			observation = "unknown"
 			if !strings.HasPrefix(strings.TrimSpace(text), "Error") {
 				observation = "observed"
@@ -288,7 +336,7 @@ func qualifyMCPServer(name string, binding M, calls []any, input io.Writer, outp
 				observation = "pending-cache"
 			}
 		}
-		*evidence = append(*evidence, M{"observation": observation, "server": name, "tool": tool, "resultSha256": sha([]byte(text)), "advertisedToolsSha256": profileHash(listing), "serverInfo": M{"name": jAt(initialization, "serverInfo", "name"), "version": jAt(initialization, "serverInfo", "version")}, "resolvedCommand": binding["command"], "dependencyPaths": binding["dependencies"], "executableHashes": binding["observedExecutableHashes"], "ownedDependencies": binding["ownedDependencies"], "passed": true, "oracle": jAt(call, "oracle"), "phase": jAt(call, "phase"), "durationMs": elapsed})
+		*evidence = append(*evidence, M{"observation": observation, "server": name, "tool": tool, "resultSha256": sha([]byte(text)), "advertisedToolsSha256": profileHash(listing), "serverInfo": M{"name": server.ServerInfo.Name.V, "version": server.ServerInfo.Version.V}, "resolvedCommand": binding["command"], "dependencyPaths": binding["dependencies"], "executableHashes": binding["observedExecutableHashes"], "ownedDependencies": binding["ownedDependencies"], "passed": true, "oracle": call.Oracle.V, "phase": call.Phase.V, "durationMs": elapsed})
 	}
 	return nil
 }

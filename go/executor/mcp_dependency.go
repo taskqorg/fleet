@@ -53,17 +53,20 @@ func (o *mcpOwner) allowedPeer(pid int) (string, error) {
 	}
 	return identity(pid)
 }
-func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, request M) (M, bool, func(), error) {
+
+// generationRequest answers an owner request (an ownerRequest or its JSON) that prepares, looks up or registers in a
+// dependency generation.
+func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, raw any) (M, bool, func(), error) {
+	request := ownerRequestOf(raw)
 	peerID, err := o.allowedPeer(pid)
 	if err != nil {
 		return nil, false, nil, err
 	}
-	action := jStr(request, "action")
+	action := request.Action
 	if action == "prepare" {
 		targets := map[string]mcpTarget{}
-		for _, value := range jArr(request, "ownedDependencies") {
-			name := jStr(value)
-			path := jStr(request, "dependencies", name)
+		for _, name := range request.OwnedDependencies {
+			path := request.Dependencies[name]
 			if name == "" || path == "" {
 				return nil, false, nil, errors.New("owned dependency missing")
 			}
@@ -87,11 +90,11 @@ func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, request M) (M, bo
 		o.generations[generation] = &mcpGeneration{preparer: pid, preparerID: peerID, targets: targets, leases: map[*net.UnixConn]bool{}}
 		return M{"generation": generation}, false, nil, nil
 	}
-	gen := o.generations[jStr(request, "generation")]
+	gen := o.generations[request.Generation]
 	if gen == nil {
 		return nil, false, nil, errors.New("MCP generation is stale or unknown")
 	}
-	dependency := jStr(request, "dependency")
+	dependency := request.Dependency
 	if action == "lookup" || dependency != "" {
 		id, e := identity(gen.guardian)
 		if e != nil || id != gen.guardianID || !descendant(pid, gen.guardian) {
@@ -106,10 +109,10 @@ func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, request M) (M, bo
 			return nil, false, nil, errors.New("MCP dependency target changed")
 		}
 		if action == "lookup" {
-			o.generations[jStr(request, "generation")].leases[c] = true
+			o.generations[request.Generation].leases[c] = true
 			return M{"command": target.path, "targetSha256": target.hash}, true, func() { delete(gen.leases, c) }, nil
 		}
-		if jStr(request, "command") != target.path || jStr(request, "targetSha256") != target.hash {
+		if request.Command != target.path || request.TargetSha256 != target.hash {
 			return nil, false, nil, errors.New("MCP fixed dependency identity differs")
 		}
 	} else {
@@ -121,14 +124,14 @@ func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, request M) (M, bo
 			return nil, false, nil, errors.New("MCP generation already has a guardian")
 		}
 	}
-	if err = o.register(pid, jStr(request, "identity")); err != nil {
+	if err = o.register(pid, request.Identity); err != nil {
 		return nil, false, nil, err
 	}
 	if dependency != "" {
 		return M{}, true, func() {}, nil
 	}
-	gen.guardian, gen.guardianID = pid, jStr(request, "identity")
-	generation := jStr(request, "generation")
+	gen.guardian, gen.guardianID = pid, request.Identity
+	generation := request.Generation
 	return M{}, true, func() {
 		delete(o.generations, generation)
 		for lease := range gen.leases {
@@ -136,6 +139,8 @@ func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, request M) (M, bo
 		}
 	}, nil
 }
+
+// mcpOwnerCall sends one request to the owner and answers its answer, as decoded: the caller passes its members on.
 func mcpOwnerCall(socket string, request M) (M, *net.UnixConn, error) {
 	if err := privateSocket(socket); err != nil {
 		return nil, nil, err
@@ -149,14 +154,15 @@ func mcpOwnerCall(socket string, request M) (M, *net.UnixConn, error) {
 		c.Close()
 		return nil, nil, err
 	}
+	var raw json.RawMessage
 	var answer M
-	if err = json.NewDecoder(c).Decode(&answer); err != nil {
+	if err = json.NewDecoder(c).Decode(&raw); err != nil || json.Unmarshal(raw, &answer) != nil {
 		c.Close()
 		return nil, nil, errors.New("MCP ownership acknowledgement unknown; no replay")
 	}
-	if !jBoolOr(false, answer, "registered") {
+	if a := typed[ownerAnswer](answer); !a.Registered {
 		c.Close()
-		return nil, nil, errors.New("MCP ownership refused: " + jStr(answer, "error"))
+		return nil, nil, errors.New("MCP ownership refused: " + a.Error)
 	}
 	c.SetDeadline(time.Time{})
 	return answer, c, nil

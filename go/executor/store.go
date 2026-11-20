@@ -15,7 +15,21 @@ import (
 	"fleet/contract"
 )
 
-func storeConfig() M {
+// storeFile: FLEET_STORE_CONFIG; a field of another type counts as absent.
+type storeFile struct {
+	Id            string  `json:"id"`
+	Zone          *string `json:"zone"`
+	Bucket        *string `json:"bucket"`
+	Endpoint      *string `json:"endpoint"`
+	LocalEndpoint *string `json:"localEndpoint"`
+	KeyFile       string  `json:"keyFile"`
+	CapacityBytes *uint64 `json:"capacityBytes"`
+	BackingPath   string  `json:"backingPath"`
+	RequiresLogon bool    `json:"requiresLogon"`
+}
+
+// storeConfig: nil without a config file that holds a JSON object.
+func storeConfig() *storeFile {
 	p := os.Getenv("FLEET_STORE_CONFIG")
 	if p == "" {
 		return nil
@@ -25,11 +39,19 @@ func storeConfig() M {
 		return nil
 	}
 	v, err := dec(string(b))
-	if err != nil {
+	if _, ok := v.(M); err != nil || !ok {
 		return nil
 	}
-	m, _ := v.(M)
-	return m
+	cfg := typed[storeFile](v)
+	return &cfg
+}
+
+// endpoint: the store's public endpoint; "" without a config.
+func (cfg *storeFile) endpoint() string {
+	if cfg == nil {
+		return ""
+	}
+	return str0(cfg.Endpoint)
 }
 
 func unquote(v string) string { return strings.Trim(strings.Trim(strings.TrimSpace(v), "'"), `"`) }
@@ -41,9 +63,12 @@ func readKey(path string) (string, string, bool) {
 		return "", "", false
 	}
 	text := string(b)
-	if v, err := dec(text); err == nil {
-		id, s := jStr(v, "accessKeyId"), jStr(v, "secretAccessKey")
-		return id, s, jIsStr(v, "accessKeyId") && jIsStr(v, "secretAccessKey")
+	if _, err := dec(text); err == nil {
+		k := typedRaw[struct { // JSON that is not an object holds no key
+			AccessKeyId     *string `json:"accessKeyId"`
+			SecretAccessKey *string `json:"secretAccessKey"`
+		}](b)
+		return str0(k.AccessKeyId), str0(k.SecretAccessKey), k.AccessKeyId != nil && k.SecretAccessKey != nil
 	}
 	var id, secret *string
 	for _, line := range strings.Split(text, "\n") {
@@ -93,7 +118,7 @@ func freeBytes(path string) (uint64, bool) {
 }
 
 // effectiveCapacity: the configured capacity bounded by the free space behind the store; nil when neither is known.
-func effectiveCapacity(cfg M) *int64 {
+func effectiveCapacity(cfg *storeFile) *int64 {
 	c, ok := capacity(cfg)
 	if !ok {
 		return nil
@@ -102,11 +127,11 @@ func effectiveCapacity(cfg M) *int64 {
 	return &v
 }
 
-func capacity(cfg M) (uint64, bool) {
-	c, hasC := jU64(cfg, "capacityBytes")
+func capacity(cfg *storeFile) (uint64, bool) {
+	c, hasC := orU64(cfg.CapacityBytes, 0), cfg.CapacityBytes != nil
 	var f uint64
 	hasF := false
-	if p := jStr(cfg, "backingPath"); p != "" {
+	if p := cfg.BackingPath; p != "" {
 		f, hasF = freeBytes(p)
 	}
 	switch {
@@ -121,8 +146,8 @@ func capacity(cfg M) (uint64, bool) {
 }
 
 // storeReachable: any HTTP answer from the loopback endpoint means the store process is up.
-func storeReachable(cfg M) bool {
-	u := jStr(cfg, "localEndpoint")
+func storeReachable(cfg *storeFile) bool {
+	u := str0(cfg.LocalEndpoint)
 	if u == "" {
 		return false
 	}
@@ -134,23 +159,17 @@ func storeReachable(cfg M) bool {
 	return true
 }
 
-func storeRegistration(cfg M, host string) *contract.StoresRequest {
-	key, secret, ok := readKey(jStr(cfg, "keyFile"))
+func storeRegistration(cfg *storeFile, host string) *contract.StoresRequest {
+	key, secret, ok := readKey(cfg.KeyFile)
 	if !ok {
 		return nil
 	}
-	opt := func(k string) *string {
-		if s, ok := jAt(cfg, k).(string); ok {
-			return &s
-		}
-		return nil
-	}
-	logon := jBoolOr(false, cfg, "requiresLogon")
-	return &contract.StoresRequest{HostId: host, Store: contract.StoreRegistration{Id: jStr(cfg, "id"), Zone: opt("zone"), Bucket: opt("bucket"),
-		Endpoint: opt("endpoint"), LocalEndpoint: opt("localEndpoint"), AccessKeyId: &key, SecretAccessKey: &secret,
+	logon := cfg.RequiresLogon
+	return &contract.StoresRequest{HostId: host, Store: contract.StoreRegistration{Id: cfg.Id, Zone: cfg.Zone, Bucket: cfg.Bucket,
+		Endpoint: cfg.Endpoint, LocalEndpoint: cfg.LocalEndpoint, AccessKeyId: &key, SecretAccessKey: &secret,
 		CapacityBytes: effectiveCapacity(cfg), RequiresLogon: &logon}}
 }
 
-func storeReport(cfg M) []contract.StoreReport {
-	return []contract.StoreReport{{Id: jStr(cfg, "id"), Reachable: storeReachable(cfg), CapacityBytes: effectiveCapacity(cfg)}}
+func storeReport(cfg *storeFile) []contract.StoreReport {
+	return []contract.StoreReport{{Id: cfg.Id, Reachable: storeReachable(cfg), CapacityBytes: effectiveCapacity(cfg)}}
 }

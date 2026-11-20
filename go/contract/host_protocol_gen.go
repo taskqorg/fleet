@@ -1772,6 +1772,223 @@ func (v *ProcessReconciled) Validate() error {
 // ProjectArguments: Native tool arguments are forwarded unchanged to the owning project operation validator.
 type ProjectArguments = map[string]json.RawMessage
 
+type ProjectCleanup struct {
+	KeepWhen []json.RawMessage `json:"keepWhen,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectCleanup) MarshalJSON() ([]byte, error) {
+	type plain ProjectCleanup
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectCleanup) UnmarshalJSON(b []byte) error {
+	type plain ProjectCleanup
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectCleanup) Validate() error {
+	return nil
+}
+
+// ProjectContext: The project a command carries as payload.project: the project's frozen settings (docs/configuration.md, coordinator projectSettings) plus profileIds. The payload types keep it an open object; the executor decodes it as this type once per command.
+type ProjectContext struct {
+	Cleanup        *ProjectCleanup      `json:"cleanup,omitempty"`
+	ContextSources []json.RawMessage    `json:"contextSources,omitempty"`
+	Environments   []ProjectEnvironment `json:"environments,omitempty"`
+	Execution      *ProjectExecution    `json:"execution,omitempty"`
+	Identity       *ProjectIdentity     `json:"identity,omitempty"`
+	Integration    *ProjectIntegration  `json:"integration,omitempty"`
+	ProfileIds     map[string]string    `json:"profileIds,omitempty"`
+	Repos          []ProjectRepo        `json:"repos,omitempty"`
+	Roles          map[string]string    `json:"roles,omitempty"`
+	Scripts        *ProjectScripts      `json:"scripts,omitempty"`
+	SetupStart     *string              `json:"setupStart,omitempty"`
+	Worktree       *ProjectWorktree     `json:"worktree,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectContext) MarshalJSON() ([]byte, error) {
+	type plain ProjectContext
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectContext) UnmarshalJSON(b []byte) error {
+	type plain ProjectContext
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectContext) Validate() error {
+	if v.Cleanup != nil {
+		if err := Check(v.Cleanup, "cleanup"); err != nil {
+			return err
+		}
+	}
+	for i := range v.Environments {
+		if err := Check(&v.Environments[i], "environments"); err != nil {
+			return err
+		}
+	}
+	if v.Execution != nil {
+		if err := Check(v.Execution, "execution"); err != nil {
+			return err
+		}
+	}
+	if v.Identity != nil {
+		if err := Check(v.Identity, "identity"); err != nil {
+			return err
+		}
+	}
+	if v.Integration != nil {
+		if err := Check(v.Integration, "integration"); err != nil {
+			return err
+		}
+	}
+	for i := range v.Repos {
+		if err := Check(&v.Repos[i], "repos"); err != nil {
+			return err
+		}
+	}
+	if v.Scripts != nil {
+		if err := Check(v.Scripts, "scripts"); err != nil {
+			return err
+		}
+	}
+	if v.Worktree != nil {
+		if err := Check(v.Worktree, "worktree"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProjectEnvironment struct {
+	CheckoutPath *string `json:"checkoutPath,omitempty"`
+	HostId       *string `json:"hostId,omitempty"`
+	Repo         *string `json:"repo,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectEnvironment) MarshalJSON() ([]byte, error) {
+	type plain ProjectEnvironment
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectEnvironment) UnmarshalJSON(b []byte) error {
+	type plain ProjectEnvironment
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectEnvironment) Validate() error {
+	return nil
+}
+
+type ProjectExecution struct {
+	Forge    *bool    `json:"forge,omitempty"`
+	Profiles []string `json:"profiles,omitempty"`
+	Tools    []string `json:"tools,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectExecution) MarshalJSON() ([]byte, error) {
+	type plain ProjectExecution
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectExecution) UnmarshalJSON(b []byte) error {
+	type plain ProjectExecution
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectExecution) Validate() error {
+	return nil
+}
+
+// ProjectIdentity: git author and committer; null: none
+type ProjectIdentity struct {
+	Email *string `json:"email,omitempty"`
+	Name  *string `json:"name,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectIdentity) MarshalJSON() ([]byte, error) {
+	type plain ProjectIdentity
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectIdentity) UnmarshalJSON(b []byte) error {
+	type plain ProjectIdentity
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectIdentity) Validate() error {
+	return nil
+}
+
+type ProjectIntegration struct {
+	AutoMerge              *bool   `json:"autoMerge,omitempty"`
+	MergeMethod            *string `json:"mergeMethod,omitempty"`
+	Mode                   *string `json:"mode,omitempty"`
+	SyncCheckoutAfterMerge *bool   `json:"syncCheckoutAfterMerge,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectIntegration) MarshalJSON() ([]byte, error) {
+	type plain ProjectIntegration
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectIntegration) UnmarshalJSON(b []byte) error {
+	type plain ProjectIntegration
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectIntegration) Validate() error {
+	return nil
+}
+
 type ProjectOperation string
 
 const (
@@ -1847,6 +2064,37 @@ func (v *ProjectReceipt) Validate() error {
 // Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*ProjectReceipt) Closed() bool { return true }
 
+type ProjectRepo struct {
+	Connection    *string `json:"connection,omitempty"`
+	DefaultBranch *string `json:"defaultBranch,omitempty"`
+	Forge         *string `json:"forge,omitempty"`
+	Id            *string `json:"id,omitempty"`
+	Path          *string `json:"path,omitempty"`
+	Remote        *string `json:"remote,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectRepo) MarshalJSON() ([]byte, error) {
+	type plain ProjectRepo
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectRepo) UnmarshalJSON(b []byte) error {
+	type plain ProjectRepo
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectRepo) Validate() error {
+	return nil
+}
+
 type ProjectRequest struct {
 	Arguments ProjectArguments `json:"arguments"`
 	Operation ProjectOperation `json:"operation"`
@@ -1876,6 +2124,64 @@ type ProjectScriptResult struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProjectScriptResult) Validate() error {
+	return nil
+}
+
+type ProjectScripts struct {
+	Setup    *string `json:"setup,omitempty"`
+	Teardown *string `json:"teardown,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectScripts) MarshalJSON() ([]byte, error) {
+	type plain ProjectScripts
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectScripts) UnmarshalJSON(b []byte) error {
+	type plain ProjectScripts
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectScripts) Validate() error {
+	return nil
+}
+
+type ProjectWorktree struct {
+	BaseRef           *string           `json:"baseRef,omitempty"`
+	BranchPrefix      *string           `json:"branchPrefix,omitempty"`
+	EnvMode           *string           `json:"envMode,omitempty"`
+	LinkPaths         []json.RawMessage `json:"linkPaths,omitempty"`
+	SharedDirectories []json.RawMessage `json:"sharedDirectories,omitempty"`
+	StartFromOrigin   *bool             `json:"startFromOrigin,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectWorktree) MarshalJSON() ([]byte, error) {
+	type plain ProjectWorktree
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectWorktree) UnmarshalJSON(b []byte) error {
+	type plain ProjectWorktree
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectWorktree) Validate() error {
 	return nil
 }
 

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -154,4 +156,276 @@ func decRaw(raw json.RawMessage) any {
 	}
 	v, _ := dec(string(raw))
 	return v
+}
+
+// exactKeys refuses a JSON text in which one object names two keys equal under Unicode case folding (strings.EqualFold,
+// which also folds 'ſ' to 's' and 'K' to 'k' as encoding/json does), or a key that folds to one of names without being
+// spelled exactly so: a typed read (encoding/json matches field names case-insensitively, last duplicate wins) and
+// another reader of the same bytes could then see different values.
+func exactKeys(raw []byte, names ...string) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	type frame struct {
+		object bool
+		key    bool // the next token in an object is a key
+		seen   []string
+	}
+	var stack []*frame
+	for {
+		t, err := d.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var top *frame
+		if len(stack) > 0 {
+			top = stack[len(stack)-1]
+		}
+		if top != nil && top.object && top.key {
+			if k, ok := t.(string); ok {
+				for _, x := range append(top.seen, names...) {
+					if strings.EqualFold(x, k) && (x != k || slices.Contains(top.seen, k)) {
+						return errors.New("duplicate or case-variant key: " + k)
+					}
+				}
+				top.seen = append(top.seen, k)
+				top.key = false
+				continue
+			}
+		}
+		if top != nil && top.object && !top.key {
+			top.key = true // this token is the key's value (or opens it)
+		}
+		switch t {
+		case json.Delim('{'):
+			stack = append(stack, &frame{object: true, key: true})
+		case json.Delim('['):
+			stack = append(stack, &frame{})
+		case json.Delim('}'), json.Delim(']'):
+			stack = stack[:len(stack)-1]
+		}
+	}
+}
+
+// The one way the executor reads received JSON into records: typed (a decoded value) or typedRaw (bytes). Record fields
+// are plain Go types (string, *string, bool, *bool, numbers, []T, map[string]T, nested structs) and jsonValue for an
+// open or varying value. Keys match a field's json name exactly (encoding/json alone also takes a key differing in case,
+// and the last of two duplicates), and a value of another JSON type than the field's reads as absent, so a decode never
+// fails on a record of an unexpected shape.
+
+// typed decodes a received JSON value (a decoded M, or a jsonValue field of another record) into T. encoding/json
+// decodes the typed fields from fit's reduction of v: only keys that name a field exactly, and only values of the
+// field's JSON type, so a field of another type reads as absent ("" for a string, nil for a pointer), as the map
+// accessors read it. Open values (any, jsonValue) are then set from v itself, so they keep their decoded form.
+func typed[T any](v any) T {
+	var t T
+	if j, ok := v.(jsonValue); ok {
+		v = j.V
+	}
+	if !decoded(v) {
+		v = jClone(v) // an in-memory value ([]string, a struct, int): read it as its JSON
+	}
+	rt := reflect.TypeOf(&t).Elem()
+	d := json.NewDecoder(strings.NewReader(enc(fit(v, rt))))
+	d.UseNumber()
+	_ = d.Decode(&t)
+	fill(reflect.ValueOf(&t).Elem(), v)
+	return t
+}
+
+// contractOf decodes a received JSON value as a fleet/contract type with the contract's own decoder: strict (a field of
+// another type is an error), unnamed keys kept in Rest. Records the executor reads tolerantly use typed.
+func contractOf[T any](v any) (T, error) {
+	var t T
+	err := json.Unmarshal([]byte(enc(v)), &t)
+	return t, err
+}
+
+// decoded: v holds only what a JSON decode into any yields (nil, bool, string, json.Number or float64, []any, M); such a
+// value is read as it is, so open values keep their form.
+func decoded(v any) bool {
+	switch x := v.(type) {
+	case nil, bool, string, json.Number, float64:
+		return true
+	case []any:
+		for _, e := range x {
+			if !decoded(e) {
+				return false
+			}
+		}
+		return true
+	case M:
+		for _, e := range x {
+			if !decoded(e) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// typedRaw decodes JSON text into T as typed does (numbers kept as json.Number); text that is not one JSON value is T's
+// zero value.
+func typedRaw[T any](raw []byte) T {
+	v, _ := dec(string(raw))
+	return typed[T](v)
+}
+
+// stringsOf: the string items of a JSON array a contract type keeps as raw items (items of another type are skipped).
+func stringsOf(items []json.RawMessage) []string {
+	out := []string{}
+	for _, it := range items {
+		if s := typedRaw[*string](it); s != nil {
+			out = append(out, *s)
+		}
+	}
+	return out
+}
+
+// jsonValue: an open field of a record, as decoded: Set when the key is present (even as null), V its value.
+type jsonValue struct {
+	Set bool
+	V   any
+}
+
+// MarshalJSON writes the value as decoded (a json.Number as written); an absent value is null.
+func (j jsonValue) MarshalJSON() ([]byte, error) {
+	if !j.Set {
+		return []byte("null"), nil
+	}
+	return []byte(enc(j.V)), nil
+}
+
+// valStr: an open field's string, and whether it is one (jIsStr).
+func valStr(j jsonValue) (string, bool) {
+	s, ok := j.V.(string)
+	return s, ok
+}
+
+var jsonValueType = reflect.TypeFor[jsonValue]()
+
+func fieldName(f reflect.StructField) string {
+	name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+	if name == "-" || !f.IsExported() {
+		return ""
+	}
+	return name
+}
+
+// fit is v reduced to the typed fields t can hold: struct keys by exact json name, values of the target kind; any
+// other value, and every open value (fill sets those), is dropped (a list element becomes null).
+func fit(v any, t reflect.Type) any {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Struct:
+		m, ok := v.(M)
+		if !ok || t == jsonValueType {
+			return nil
+		}
+		out := M{}
+		for i := range t.NumField() {
+			f := t.Field(i)
+			if x, ok := m[fieldName(f)]; ok && fieldName(f) != "" {
+				if x = fit(x, f.Type); x != nil {
+					out[fieldName(f)] = x
+				}
+			}
+		}
+		return out
+	case reflect.Slice:
+		a, ok := v.([]any)
+		if !ok {
+			return nil
+		}
+		out := make([]any, len(a))
+		for i, x := range a {
+			out[i] = fit(x, t.Elem())
+		}
+		return out
+	case reflect.Map:
+		m, ok := v.(M)
+		if !ok || t.Key().Kind() != reflect.String {
+			return nil
+		}
+		out := make(M, len(m))
+		for k, x := range m {
+			out[k] = fit(x, t.Elem())
+		}
+		return out
+	case reflect.String:
+		if _, ok := v.(string); ok {
+			return v
+		}
+	case reflect.Bool:
+		if _, ok := v.(bool); ok {
+			return v
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8,
+		reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+		switch v.(type) {
+		case json.Number, float64, float32, int, int64, int32, uint, uint64, uint32:
+			// a number the field holds exactly (an integer field refuses 1.5, -1 for an unsigned one, or an overflow)
+			if json.Unmarshal([]byte(enc(v)), reflect.New(t).Interface()) == nil {
+				return v
+			}
+		}
+	}
+	return nil
+}
+
+// fill sets the open values of rv (decoded from fit(src)) from src.
+func fill(rv reflect.Value, src any) {
+	switch {
+	case rv.Type() == jsonValueType:
+		rv.Set(reflect.ValueOf(jsonValue{true, src}))
+	case rv.Kind() == reflect.Interface:
+		if src != nil {
+			rv.Set(reflect.ValueOf(src))
+		}
+	case rv.Kind() == reflect.Pointer:
+		if !rv.IsNil() {
+			fill(rv.Elem(), src)
+		}
+	case rv.Kind() == reflect.Struct:
+		m, _ := src.(M)
+		for i := range rv.NumField() {
+			if x, ok := m[fieldName(rv.Type().Field(i))]; ok && fieldName(rv.Type().Field(i)) != "" {
+				fill(rv.Field(i), x)
+			}
+		}
+	case rv.Kind() == reflect.Slice:
+		if a, ok := src.([]any); ok && len(a) == rv.Len() {
+			for i, x := range a {
+				fill(rv.Index(i), x)
+			}
+		}
+	case rv.Kind() == reflect.Map:
+		m, ok := src.(M)
+		if !ok || rv.IsNil() {
+			return
+		}
+		switch rv.Type().Elem() {
+		case jsonValueType:
+			for k, x := range m {
+				rv.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(jsonValue{true, x}))
+			}
+		default:
+			for k, x := range m {
+				if rv.Type().Elem().Kind() == reflect.Interface {
+					if x != nil {
+						rv.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(x))
+					}
+				} else if e := rv.MapIndex(reflect.ValueOf(k)); e.IsValid() { // a map element is not addressable
+					c := reflect.New(e.Type()).Elem()
+					c.Set(e)
+					fill(c, x)
+					rv.SetMapIndex(reflect.ValueOf(k), c)
+				}
+			}
+		}
+	}
 }

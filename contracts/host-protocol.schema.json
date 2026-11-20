@@ -969,6 +969,218 @@
       },
       "$comment": "readiness, base-updated and teardown: the project context plus kind-specific fields"
     },
+    "ProjectContext": {
+      "$comment": "The project a command carries as payload.project: the project's frozen settings (docs/configuration.md, coordinator projectSettings) plus profileIds. The payload types keep it an open object; the executor decodes it as this type once per command.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "contextSources": {
+          "$comment": "immutable repository-rule references, validated by contract.ContextSources; absent or null: none",
+          "type": "array",
+          "items": {}
+        },
+        "repos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectRepo"
+          }
+        },
+        "environments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectEnvironment"
+          }
+        },
+        "identity": {
+          "$ref": "#/$defs/ProjectIdentity"
+        },
+        "scripts": {
+          "$ref": "#/$defs/ProjectScripts"
+        },
+        "worktree": {
+          "$ref": "#/$defs/ProjectWorktree"
+        },
+        "integration": {
+          "$ref": "#/$defs/ProjectIntegration"
+        },
+        "cleanup": {
+          "$ref": "#/$defs/ProjectCleanup"
+        },
+        "execution": {
+          "$ref": "#/$defs/ProjectExecution"
+        },
+        "roles": {
+          "$comment": "role -> harness",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "profileIds": {
+          "$comment": "role -> agent profile id",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "setupStart": {
+          "type": "string"
+        }
+      }
+    },
+    "ProjectRepo": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "remote": {
+          "type": "string"
+        },
+        "forge": {
+          "type": "string"
+        },
+        "defaultBranch": {
+          "type": "string"
+        },
+        "connection": {
+          "$comment": "the git connection (an SSH key under FLEET_CONNECTIONS_DIR); absent: host ssh",
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "ProjectEnvironment": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "checkoutPath": {
+          "type": "string"
+        },
+        "repo": {
+          "$comment": "a repos id; absent: the project's first repo",
+          "type": "string"
+        }
+      }
+    },
+    "ProjectIdentity": {
+      "$comment": "git author and committer; null: none",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        }
+      }
+    },
+    "ProjectScripts": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "setup": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "teardown": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ProjectWorktree": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "envMode": {
+          "type": "string"
+        },
+        "baseRef": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startFromOrigin": {
+          "type": "boolean"
+        },
+        "branchPrefix": {
+          "type": "string"
+        },
+        "linkPaths": {
+          "$comment": "relative paths linked into the worktree; an item that is not a string is skipped",
+          "type": "array",
+          "items": {}
+        },
+        "sharedDirectories": {
+          "$comment": "as linkPaths",
+          "type": "array",
+          "items": {}
+        }
+      }
+    },
+    "ProjectIntegration": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "mergeMethod": {
+          "type": "string"
+        },
+        "autoMerge": {
+          "type": "boolean"
+        },
+        "syncCheckoutAfterMerge": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ProjectCleanup": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "keepWhen": {
+          "$comment": "absent: uncommitted, unpushed, teardown-failed; an item that is not a string is skipped",
+          "type": "array",
+          "items": {}
+        }
+      }
+    },
+    "ProjectExecution": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "forge": {
+          "type": "boolean"
+        }
+      }
+    },
     "ArtifactTransferPayload": {
       "type": "object",
       "additionalProperties": true,
