@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"golang.org/x/sys/unix"
 	"io"
 	"net"
 	"os"
@@ -21,7 +20,12 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"modernc.org/sqlite"
+
+	"fleet/errtrack"
+	"fleet/executor/supervise"
 )
 
 type mcpOwner struct {
@@ -53,7 +57,7 @@ func newMCPOwner(db *sql.DB, execution string) (*mcpOwner, error) {
 		os.RemoveAll(dir)
 		return nil, err
 	}
-	go o.accept()
+	errtrack.Go("mcp.accept", func() { o.accept() })
 	return o, nil
 }
 func (o *mcpOwner) accept() {
@@ -71,7 +75,7 @@ func (o *mcpOwner) accept() {
 		o.connections[c] = true
 		o.pending.Add(1)
 		o.mu.Unlock()
-		go func() {
+		errtrack.Go("mcp.register", func() {
 			defer o.pending.Done()
 			defer c.Close()
 			defer func() { o.mu.Lock(); delete(o.connections, c); o.mu.Unlock() }()
@@ -136,7 +140,7 @@ func (o *mcpOwner) accept() {
 				o.mu.Unlock()
 			}
 
-		}()
+		})
 	}
 }
 func descendant(pid, root int) bool {
@@ -273,9 +277,9 @@ func mcpGuardian(args []string) error {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGUSR1)
 	defer signal.Stop(signals)
-	go func() { <-signals; kill() }()
+	errtrack.Go("mcp-guardian.signal", func() { <-signals; kill() })
 	ended := make(chan struct{})
-	go func() { io.Copy(io.Discard, control); close(ended); kill() }()
+	errtrack.Go("mcp-guardian.control", func() { io.Copy(io.Discard, control); close(ended); kill() })
 	if err := privateSocket(args[0]); err != nil {
 		return err
 	}
@@ -311,7 +315,7 @@ func mcpGuardian(args []string) error {
 	report["executionId"] = answer["executionId"]
 	report["stage"] = "binding"
 	c.SetDeadline(time.Time{})
-	go func() { io.Copy(io.Discard, c); kill() }()
+	errtrack.Go("mcp-guardian.owner", func() { io.Copy(io.Discard, c); kill() })
 	cmd, cleanup, err := mcpBoundCommand(spec)
 	if err != nil {
 		return err
@@ -334,8 +338,10 @@ func mcpGuardian(args []string) error {
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, discard
 	// ExtraFiles is empty: the private lifetime descriptor cannot keep itself alive in server descendants.
 	report["stage"] = "spawn"
-	if err = cmd.Start(); err == nil {
-		cmd.Wait()
+	// The server stays in this guardian's process group: the guardian's group kill ends it with its descendants.
+	var proc *supervise.Proc
+	if proc, err = supervise.Spawn(supervise.Spec{Cmd: cmd, SameGroup: true}); err == nil {
+		proc.Wait()
 		report["stage"] = "server-exit"
 		if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 			report["signal"], report["outcome"] = int(ws.Signal()), "signaled"
@@ -471,19 +477,20 @@ func startMCPChild(socket string, spec any, root string, input io.Reader, output
 	}
 	defer discard.Close()
 	cmd.Stderr = discard
-	if err = cmd.Start(); err != nil {
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd})
+	if err != nil {
 		return fail(err)
 	}
 	lease.Close()
 	statusWriter.Close()
-	go func() {
-		child.done <- cmd.Wait()
+	errtrack.Go("mcp.child", func() {
+		child.done <- proc.Wait()
 		if !direct {
 			if closer, ok := input.(io.Closer); ok {
 				closer.Close()
 			}
 		}
-	}()
+	})
 	return child, nil
 }
 func (c *mcpChild) close() {
@@ -554,7 +561,7 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 		}
 		lease := parentLease[0]
 		defer lease.Close()
-		go func() { io.Copy(io.Discard, lease); child.control.Close() }()
+		errtrack.Go("mcp.lease", func() { io.Copy(io.Discard, lease); child.control.Close() })
 		status = readMCPStatus(child.status)
 		if jStr(status, "outcome") != "exited" || jAt(status, "exitCode") != float64(0) {
 			return errors.Join(errors.New("owned dependency result unknown or failed; no replay"), &mcpLifecycleError{status})
@@ -583,7 +590,7 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 	}
 	defer queued.close()
 	statusDone := make(chan struct{})
-	go func() {
+	errtrack.Go("mcp.status", func() {
 		defer close(statusDone)
 		status := readMCPStatus(child.status)
 		observedStatus.Store(status)
@@ -595,7 +602,7 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 			queued.source.Close()
 			ownedOutput.Close()
 		}
-	}()
+	})
 	defer func() {
 		closing.Store(true)
 		child.control.Close() // The sole private status writer exits with its guardian; descendants never inherit it.
@@ -695,7 +702,7 @@ func newMCPInput(source io.ReadCloser, closed func()) (*mcpInput, error) {
 	q := &mcpInput{source: owned, original: source, done: make(chan struct{})}
 	q.cond = sync.NewCond(&q.mu)
 
-	go func() {
+	errtrack.Go("mcp.queue", func() {
 		defer close(q.done)
 		buffer := make([]byte, 32*1024)
 		for {
@@ -712,7 +719,7 @@ func newMCPInput(source io.ReadCloser, closed func()) (*mcpInput, error) {
 				return
 			}
 		}
-	}()
+	})
 	return q, nil
 }
 func (q *mcpInput) Read(p []byte) (int, error) {

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"fleet/errtrack"
 )
 
 // qualifyMCP uses declared fixture calls, the shared stdio boundary and existing execution ownership; no model.
@@ -178,11 +180,11 @@ func qualifyMCP(args []string) (resultErr error) {
 			return err
 		}
 		done := make(chan error, 1)
-		go func() {
+		errtrack.Go("qualify.serve", func() {
 			err := mcpStdio(socket, binding, inReader, outWriter, root, jStr(binding, "pathPolicy"))
 			outWriter.Close()
 			done <- err
-		}()
+		})
 		err = qualifyMCPServer(name, binding, calls, inWriter, outReader, &evidence, &setupMs, &workMs, diagnostic)
 		cleanupStarted := time.Now()
 		inWriter.Close()

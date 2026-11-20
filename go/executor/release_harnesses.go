@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"fleet/contract"
-	"fleet/harnessrelease"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +12,10 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"fleet/contract"
+	"fleet/errtrack"
+	"fleet/harnessrelease"
 )
 
 type harnessRelease struct {
@@ -98,7 +100,7 @@ func observeCLIVersion(path string) *string {
 	}
 	sample := &cliObservation{info: info, at: time.Now()}
 	cliObservations[path] = sample
-	go probeCLIVersion(path, sample)
+	errtrack.Go("harness.version", func() { probeCLIVersion(path, sample) })
 	return nil
 }
 

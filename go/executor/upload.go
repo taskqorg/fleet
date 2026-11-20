@@ -10,19 +10,19 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fleet/contract"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"fleet/contract"
+	"fleet/errtrack"
 )
 
 // enqueue queues a job; id is also the artifact id of an upload, so a repeated reserve is the same reservation.
@@ -113,12 +113,9 @@ type transferClient struct {
 
 func newTransferClient(url, token, host string, access *[2]string) *transferClient {
 	return &transferClient{url: url, token: token, host: host, access: access,
-		coordinator: &http.Client{Timeout: 60 * time.Second, CheckRedirect: noRedirect},
-		// Parts are 32 MiB; a slow tunnel needs more than the outbox's 5 s. Never follows a redirect: requests carry the
-		// Access service token headers, which a redirect would hand on.
-		store: &http.Client{CheckRedirect: noRedirect, Transport: &http.Transport{
-			DialContext:           (&net.Dialer{Timeout: 20 * time.Second}).DialContext,
-			ResponseHeaderTimeout: 300 * time.Second, Proxy: http.ProxyFromEnvironment}}}
+		coordinator: httpClient(60 * time.Second),
+		// Parts are 32 MiB; a slow tunnel needs more than the outbox's 5 s.
+		store: streamClient(20*time.Second, 300*time.Second)}
 }
 
 // failure: retry true is retried with backoff; false is permanent.
@@ -131,19 +128,10 @@ func (f *failure) Error() string             { return f.msg }
 func retryf(f string, a ...any) *failure     { return &failure{true, fmt.Sprintf(f, a...)} }
 func permanentf(f string, a ...any) *failure { return &failure{false, fmt.Sprintf(f, a...)} }
 
-// ioFailure: network-shaped I/O errors are retried; others (a missing or unreadable local file) are permanent.
+// ioFailure: a transfer step's error as a failure, by the one classifier (outcome).
 func ioFailure(err error) *failure {
-	var f *failure
-	if errors.As(err, &f) {
-		return f
-	}
-	var ne net.Error
-	if errors.As(err, &ne) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) ||
-		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOTCONN) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ETIMEDOUT) ||
-		errors.Is(err, syscall.EINTR) || errors.Is(err, syscall.EAGAIN) {
-		return &failure{true, err.Error()}
-	}
-	return &failure{false, err.Error()}
+	a := outcome(err)
+	return &failure{a.kind == answerRetry, a.text}
 }
 
 func (c *transferClient) post(route string, body any) (json.RawMessage, *failure) {
@@ -307,22 +295,16 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 			if _, err := f.ReadAt(chunk, int64((n-1)*partSize)); err != nil && !(errors.Is(err, io.EOF) && l == 0) {
 				return contract.ArtifactStateReply{}, ioFailure(err)
 			}
-			var etag string
-			for tries := 0; ; tries++ {
-				e, fl := c.putPart(p.Url, chunk)
-				if fl == nil {
-					etag = e
-					break
-				}
-				if !fl.retry || tries >= 5 {
-					return contract.ArtifactStateReply{}, fl
-				}
-				time.Sleep(time.Duration(min(1<<(tries+1), 60)) * time.Second)
+			// A failed part ends this run of the job: a retryable one is retried with the job's backoff, from the
+			// parts already journaled as done.
+			etag, fl := c.putPart(p.Url, chunk)
+			if fl != nil {
+				return contract.ArtifactStateReply{}, fl
 			}
 			done = append(done, M{"partNumber": n, "etag": etag})
 			b := jObj(jClone(body))
 			b["done"] = done
-			db.Exec("UPDATE transfers SET body=? WHERE id=?", enc(b), jobID)
+			db.Exec("UPDATE transfers SET body=?,attempts=0 WHERE id=?", enc(b), jobID) // progress: the backoff starts over
 		}
 	}
 	req := contract.ArtifactCommitRequest{HostId: c.host, ArtifactId: artifactID, StoreId: optStr(storeID)}
@@ -381,6 +363,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 			return nil, f
 		}
 		db.Exec("UPDATE transfers SET response=? WHERE id=?", enc(M{"artifactId": r.ArtifactId, "state": r.State}), id)
+		wake(db, id)
 		switch r.State {
 		case "stored":
 			return M{"artifactId": r.ArtifactId, "state": "stored"}, nil
@@ -532,13 +515,13 @@ func spawnTransfers(journal string, c *transferClient, after afterJob) error {
 		if err != nil {
 			return err
 		}
-		go transferWork(db, c, lane, after)
+		errtrack.Go("transfer.lane", func() { transferWork(db, c, lane, after) })
 	}
 	db, err := openJournal(journal)
 	if err != nil {
 		return err
 	}
-	go func() {
+	errtrack.Go("transfer.renew", func() {
 		for {
 			time.Sleep(10 * time.Minute)
 			type job struct{ id, kind, body string }
@@ -557,11 +540,11 @@ func spawnTransfers(journal string, c *transferClient, after afterJob) error {
 			}
 			for _, j := range jobs {
 				if a, s, ok := leased(j.kind, j.id, decM(j.body)); ok {
-					c.post("/api/hosts/artifacts/renew", contract.ArtifactLeaseRequest{HostId: c.host, ArtifactId: a, StoreId: optStr(s)})
+					c.post("/api/hosts/artifacts/renew", contract.ArtifactLeaseRequest{HostId: c.host, ArtifactId: a, StoreId: optStr(s)}) // best effort, not a delivery
 				}
 			}
 		}
-	}()
+	})
 	return nil
 }
 
@@ -579,6 +562,7 @@ func transferWork(db *sql.DB, c *transferClient, lane string, after afterJob) {
 		}
 		body := decM(bodyText)
 		v, f := runJob(c, db, id, kind, body)
+		db.QueryRow("SELECT attempts FROM transfers WHERE id=?", id).Scan(&attempts) // a run that journaled parts reset it
 		// The terminal state and its outbound notices commit together. In this process a failed commit is retried as a
 		// commit, not by running the job again (a crash before the commit leaves the row running, and the job runs again
 		// after restart: transfers resume by their journal row). The cleanup callback runs only after the commit; a crash
@@ -591,6 +575,7 @@ func transferWork(db *sql.DB, c *transferClient, lane string, after afterJob) {
 			fmt.Fprintln(os.Stderr, "executor: transfer journal write failed; retrying:", err)
 			time.Sleep(time.Second)
 		}
+		wake(db, id)
 		if f == nil {
 			after(c, db, body, v)
 		}

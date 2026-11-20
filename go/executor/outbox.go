@@ -9,17 +9,21 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fleet/contract"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
+
+	"fleet/contract"
+	"fleet/errtrack"
 )
 
 // requeueUnauthorized: a 401 is a credential condition of the host, not of the row: at start those rows go back to the
@@ -89,12 +93,34 @@ func location(r *http.Response) string {
 	return l
 }
 
-// transportAnswer: a request or body read that failed in transport.
-func transportAnswer(err error) answer {
+// transportError: an exchange that failed after the request was made (no answer, or a 2xx body cut while it is read).
+type transportError struct{ error }
+
+func (e transportError) Unwrap() error { return e.error }
+
+// outcome is the one classifier of a failed exchange or transfer step (outbox rows, polls, transfer parts and store
+// calls): a transport failure, a network-shaped I/O error or a retryable failure is retried; anything else (a missing
+// or unreadable local file, a permanent failure) is rejected.
+func outcome(err error) answer {
+	var f *failure
+	if errors.As(err, &f) {
+		return answer{kind: map[bool]answerKind{true: answerRetry, false: answerReject}[f.retry], text: f.msg}
+	}
 	var ne net.Error
 	var op *net.OpError
-	return answer{kind: answerRetry, text: err.Error(), timeout: errors.As(err, &ne) && ne.Timeout(), unreachable: errors.As(err, &op) && op.Op == "dial"}
+	var te transportError
+	a := answer{kind: answerReject, text: err.Error(), timeout: errors.As(err, &ne) && ne.Timeout(), unreachable: errors.As(err, &op) && op.Op == "dial"}
+	if errors.As(err, &te) || errors.As(err, &ne) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) || errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ENOTCONN) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ETIMEDOUT) ||
+		errors.Is(err, syscall.EINTR) || errors.Is(err, syscall.EAGAIN) {
+		a.kind = answerRetry
+	}
+	return a
 }
+
+// transportAnswer: a request or body read that failed in transport.
+func transportAnswer(err error) answer { return outcome(transportError{err}) }
 
 func classify(r *http.Response, err error) answer {
 	if err != nil {
@@ -148,9 +174,10 @@ func (r redirected) Error() string {
 	return fmt.Sprintf("coordinator edge answered %d (%s)", r.status, r.detail)
 }
 
-// Edge conditions in progress, by route (a coordinator route, or "store <host>"): one log line when a route starts and one
-// when it recovers, and a host problem edge-redirect with every poll until then.
-type edgeState struct {
+// Backoffs in progress, one map with one backoff(): an edge condition by route (a coordinator route, or "store <host>":
+// one log line when a route starts and one when it recovers, and a host problem edge-redirect with every poll until
+// then) and a retried outbox row by rowKey.
+type hold struct {
 	status   int
 	detail   string
 	attempts int
@@ -158,9 +185,12 @@ type edgeState struct {
 }
 
 var (
-	edgeMu sync.Mutex
-	edges  = map[string]*edgeState{}
+	holdMu sync.Mutex
+	holds  = map[string]*hold{}
 )
+
+// rowKey: an outbox row's backoff key; never a route ("/...") or a store ("store ...").
+func rowKey(n int64) string { return "row " + strconv.FormatInt(n, 10) }
 
 func nowMs() int64 { return time.Now().UnixMilli() }
 
@@ -178,10 +208,10 @@ func backoff(attempts int64) int64 {
 const pollRoute = "/api/hosts/poll"
 
 func edgeRedirect(route string, status int, detail string) {
-	edgeMu.Lock()
-	defer edgeMu.Unlock()
+	holdMu.Lock()
+	defer holdMu.Unlock()
 	attempts := 0
-	if e, ok := edges[route]; ok {
+	if e, ok := holds[route]; ok {
 		// An answer inside the route's backoff (lanes that asked together, a transfer retrying) is the same attempt.
 		if route != pollRoute && nowMs() < e.nextAt {
 			e.status, e.detail = status, detail
@@ -196,14 +226,14 @@ func edgeRedirect(route string, status int, detail string) {
 	if route != pollRoute {
 		wait = backoff(int64(attempts))
 	}
-	edges[route] = &edgeState{status, detail, attempts, nowMs() + wait}
+	holds[route] = &hold{status, detail, attempts, nowMs() + wait}
 }
 
 func edgeOK(route string) {
-	edgeMu.Lock()
-	defer edgeMu.Unlock()
-	if _, ok := edges[route]; ok {
-		delete(edges, route)
+	holdMu.Lock()
+	defer holdMu.Unlock()
+	if _, ok := holds[route]; ok {
+		delete(holds, route)
 		if h, ok := strings.CutPrefix(route, "store "); ok {
 			fmt.Fprintf(os.Stderr, "executor: store %s reachable again\n", h)
 		} else {
@@ -224,12 +254,12 @@ func observe(route string, a answer) {
 
 // edgeClearIdle clears the given routes (and store keys) once no transfer is left to ask them again.
 func edgeClearIdle(routes []string) {
-	edgeMu.Lock()
-	defer edgeMu.Unlock()
-	for r := range edges {
+	holdMu.Lock()
+	defer holdMu.Unlock()
+	for r := range holds {
 		if strings.HasPrefix(r, "store ") || contains(routes, r) {
 			fmt.Fprintf(os.Stderr, "executor: nothing left for %s; edge signal cleared\n", r)
-			delete(edges, r)
+			delete(holds, r)
 		}
 	}
 }
@@ -244,19 +274,21 @@ func contains[T comparable](s []T, v T) bool {
 }
 
 func edgeWait(route string) bool {
-	edgeMu.Lock()
-	defer edgeMu.Unlock()
-	e, ok := edges[route]
+	holdMu.Lock()
+	defer holdMu.Unlock()
+	e, ok := holds[route]
 	return ok && nowMs() < e.nextAt
 }
 
 // edgeProblems is the poll's problems list; the poll's own route is left out.
 func edgeProblems(except string) []contract.EdgeProblem {
-	edgeMu.Lock()
-	defer edgeMu.Unlock()
-	keys := make([]string, 0, len(edges))
-	for k := range edges {
-		keys = append(keys, k)
+	holdMu.Lock()
+	defer holdMu.Unlock()
+	keys := make([]string, 0, len(holds))
+	for k := range holds {
+		if !strings.HasPrefix(k, "row ") {
+			keys = append(keys, k)
+		}
 	}
 	sort.Strings(keys)
 	out := []contract.EdgeProblem{}
@@ -264,7 +296,7 @@ func edgeProblems(except string) []contract.EdgeProblem {
 		if route == except {
 			continue
 		}
-		e := edges[route]
+		e := holds[route]
 		p := contract.EdgeProblem{Kind: contract.ProblemKindEdgeRedirect, Route: route, Status: int64(e.status), Detail: e.detail}
 		if e.status >= 300 && e.status < 400 {
 			loc := e.detail
@@ -275,27 +307,16 @@ func edgeProblems(except string) []contract.EdgeProblem {
 	return out
 }
 
-func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-
-// One pooled client: keep-alive avoids a TLS handshake per row; redirects are not followed. Its 5s deadline keeps
-// heartbeat polls and one-off posts (span batches included) responsive.
-var outboxClient = &http.Client{Timeout: 5 * time.Second, CheckRedirect: noRedirect}
+// outboxClient: heartbeat polls and one-off posts (span batches included) stay responsive with a 5 s deadline.
+var outboxClient = httpClient(5 * time.Second)
 
 // pollClient allows 25s coordinator long-polls plus network margin.
-var pollClient = &http.Client{Timeout: 35 * time.Second, CheckRedirect: noRedirect}
+var pollClient = httpClient(35 * time.Second)
 
 // deliveryClient delivers journaled outbox rows with the held-poll deadline. A cancelled row is rolled back by the
 // coordinator and resent whole, so a deadline shorter than its ingest never lets it through and holds every row
 // behind it, the terminal receipt included.
-// Its own transport keeps an idle connection per concurrent lane (the default keeps 2 per host), so lanes over
-// HTTP/1.1 do not dial and handshake again on every pass.
-var deliveryClient = &http.Client{Timeout: pollClient.Timeout, CheckRedirect: noRedirect, Transport: deliveryTransport()}
-
-func deliveryTransport() http.RoundTripper {
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.MaxIdleConnsPerHost = 100
-	return t
-}
+var deliveryClient = httpClient(pollClient.Timeout)
 
 func postJSON(c *http.Client, url, token string, v any) (*http.Response, error) {
 	return postJSONCtx(context.Background(), c, url, token, v)
@@ -351,33 +372,28 @@ func queue(db execer, route string, v any) error {
 
 var heldOnly atomic.Bool
 
-// Rows that got a retry answer (5xx, 429, timeout), by outbox rowid: each waits out its own backoff while other rows flow.
-var (
-	retryMu   sync.Mutex
-	retryRows = map[int64]*edgeState{}
-)
-
+// Rows that got a retry answer (5xx, 429, timeout), by rowKey: each waits out its own backoff while other rows flow.
 func retryWait(n int64) bool {
-	retryMu.Lock()
-	defer retryMu.Unlock()
-	r, ok := retryRows[n]
+	holdMu.Lock()
+	defer holdMu.Unlock()
+	r, ok := holds[rowKey(n)]
 	return ok && nowMs() < r.nextAt
 }
 
 func retryFailed(n int64) {
-	retryMu.Lock()
-	defer retryMu.Unlock()
+	holdMu.Lock()
+	defer holdMu.Unlock()
 	attempts := 0
-	if r, ok := retryRows[n]; ok {
+	if r, ok := holds[rowKey(n)]; ok {
 		attempts = r.attempts + 1
 	}
-	retryRows[n] = &edgeState{attempts: attempts, nextAt: nowMs() + backoff(int64(attempts))}
+	holds[rowKey(n)] = &hold{attempts: attempts, nextAt: nowMs() + backoff(int64(attempts))}
 }
 
 func retryDone(n int64) {
-	retryMu.Lock()
-	defer retryMu.Unlock()
-	delete(retryRows, n)
+	holdMu.Lock()
+	defer holdMu.Unlock()
+	delete(holds, rowKey(n))
 }
 
 // Outbox lanes: the rows of one execution are one lane, delivered in rowid order; a row without an execution is in
@@ -494,7 +510,8 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 	// laneMu: a lane run that ends meanwhile releases its lane after the scan, so no claimed lane holds rows its earlier
 	// run already sent. Bodies are read for the claimed lanes only.
 	laneMu.Lock()
-	rs, err := db.Query(`SELECT rowid,route,CASE WHEN json_valid(body) THEN CASE WHEN json_type(body,'$.executionId')='text'
+	// A span batch (up to 1000 spans) has no execution: its body is not parsed on every scan.
+	rs, err := db.Query(`SELECT rowid,route,CASE WHEN route='/api/hosts/spans' THEN '' WHEN json_valid(body) THEN CASE WHEN json_type(body,'$.executionId')='text'
 		THEN json_extract(body,'$.executionId') ELSE '' END ELSE '' END FROM outbox ORDER BY rowid`)
 	if err != nil {
 		laneMu.Unlock()
@@ -540,7 +557,8 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 		k := laneID{db, key}
 		p.started++
 		wg.Add(1)
-		go func(k laneID, rows []outboxRow) {
+		rows := lanes[key]
+		errtrack.Go("outbox.lane", func() {
 			defer wg.Done()
 			defer func() { laneMu.Lock(); delete(laneBusy, k); laneMu.Unlock() }()
 			if err := p.lane(rows); err != nil {
@@ -550,7 +568,7 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 				}
 				p.mu.Unlock()
 			}
-		}(k, lanes[key])
+		})
 	}
 	return func() error {
 		wg.Wait()
@@ -676,7 +694,8 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			return nil
 		}
 		a := sendWithClient(context.Background(), deliveryClient, p.url, p.token, r.route, r.route, value)
-		stop := a.kind == answerRetry && (a.unreachable || a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable)
+		// A span batch the telemetry store refuses for now holds only its own lane, never the coordinator as a whole.
+		stop := a.kind == answerRetry && r.route != spansRoute && (a.unreachable || a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable)
 		answered(db, !stop, probe)
 		var response any
 		switch a.kind {
@@ -748,6 +767,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			if _, err := db.Exec("UPDATE delegation_requests SET response=? WHERE id=?", enc(response), k); err != nil {
 				return err
 			}
+			wake(db, k)
 		}
 		for _, b := range batch {
 			if _, err := db.Exec("DELETE FROM outbox WHERE rowid=?", b.n); err != nil {
@@ -803,11 +823,11 @@ func (p *outboxPass) poisoned(r outboxRow, value M, a answer, reason string) err
 // the coordinator cannot take rows) a scan starts the lanes that are not delivering yet, so a new row of an idle lane
 // leaves at once while other lanes are still sending.
 func spawnOutbox(db *sql.DB, url, token, host string) {
-	go func() {
+	errtrack.Go("outbox.scan", func() {
 		for {
 			wait, err := startFlush(db, url, token, host)
 			if err == nil {
-				go func() { logFlush(wait()) }()
+				errtrack.Go("outbox.flush", func() { logFlush(wait()) })
 			} else {
 				logFlush(err)
 			}
@@ -816,7 +836,7 @@ func spawnOutbox(db *sql.DB, url, token, host string) {
 				time.Sleep(1900 * time.Millisecond)
 			}
 		}
-	}()
+	})
 }
 
 func logFlush(err error) {

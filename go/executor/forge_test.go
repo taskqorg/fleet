@@ -21,7 +21,7 @@ func TestForgeRepositoryBoundary(t *testing.T) {
 	if forgeRepo("https://github.com/invented/project.git") != "invented/project" {
 		t.Fatal("valid project refused")
 	}
-	_, err := forge(M{"method": "tools/call", "params": M{"name": "publish_draft", "arguments": M{"title": "diagnostic", "body": "fixture"}}}, M{"repo": "invented/project", "branch": "fleet/fixture", "prefix": "fleet", "repositories": "other/project"})
+	_, err := forgeCall("publish_draft", M{"title": "diagnostic", "body": "fixture"}, M{"repo": "invented/project", "branch": "fleet/fixture", "prefix": "fleet", "repositories": "other/project"})
 	if err == nil {
 		t.Fatal("ungranted repository accepted")
 	}
@@ -54,25 +54,25 @@ func TestForgePublishDraft(t *testing.T) {
 	}
 	t.Setenv("PATH", dir)
 	ctx := M{"repo": "invented/project", "repositories": "invented/project", "branch": "fleet/fixture", "prefix": "fleet", "base": "main", "store": dir, "workdir": dir, "home": dir, "credentialHome": dir}
-	result, err := forge(M{"method": "tools/call", "params": M{"name": "publish_draft", "arguments": M{"title": "fixture", "body": "fixture"}}}, ctx)
+	result, err := forgeCall("publish_draft", M{"title": "fixture", "body": "fixture"}, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(enc(result), "/pull/1") || strings.Contains(enc(result), "invented-token") {
 		t.Fatal("invalid or leaking result")
 	}
-	if _, err := forge(M{"method": "tools/call", "params": M{"name": "delivery", "arguments": M{"action": "auto_merge"}}}, ctx); err == nil || !strings.Contains(err.Error(), "not granted") {
+	if _, err := forgeCall("delivery", M{"action": "auto_merge"}, ctx); err == nil || !strings.Contains(err.Error(), "not granted") {
 		t.Fatal("auto-merge widened project authority")
 	}
 	if err := os.WriteFile(filepath.Join(dir, "transport-error"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := forge(M{"method": "tools/call", "params": M{"name": "publish_draft", "arguments": M{"title": "fixture", "body": "fixture"}}}, ctx); err == nil {
+	if _, err := forgeCall("publish_draft", M{"title": "fixture", "body": "fixture"}, ctx); err == nil {
 		t.Fatal("unknown transport configuration accepted")
 	}
 	os.Remove(filepath.Join(dir, "transport-error"))
 	ctx["branch"] = "fleet/other"
-	if _, err = forge(M{"method": "tools/call", "params": M{"name": "publish_draft", "arguments": M{"title": "fixture", "body": "fixture"}}}, ctx); err == nil {
+	if _, err = forgeCall("publish_draft", M{"title": "fixture", "body": "fixture"}, ctx); err == nil {
 		t.Fatal("changed branch accepted")
 	}
 }

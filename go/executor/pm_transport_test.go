@@ -29,7 +29,7 @@ func TestPMTransportAgainstCoordinator(t *testing.T) {
 	defer db.Close()
 	call := func(name string, args M) M {
 		t.Helper()
-		r, err := delegation(M{"method": "tools/call", "params": M{"name": name, "arguments": args}}, ctx, db)
+		r, err := delegationCall(name, args, ctx, db)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -140,7 +140,7 @@ func TestPMTransportAgainstCoordinator(t *testing.T) {
 	// The local receipt must not be readable under another command/execution context.
 	foreign := decM(enc(ctx))
 	foreign["executionId"] = "foreign"
-	r, err := delegation(M{"method": "tools/call", "params": M{"name": "agent_tool_result", "arguments": M{"requestKey": key}}}, foreign, db)
+	r, err := delegationCall("agent_tool_result", M{"requestKey": key}, foreign, db)
 	if err != nil || jAt(r, "isError") != true {
 		t.Fatal("foreign receipt", r, err)
 	}

@@ -1,10 +1,12 @@
-// Package mcpserve is the one MCP tools server over Fleet operations (docs/designs/fleet-standard.md S8): the JSON-RPC
-// request, initialize, tools/list described from contract.Operations, and tools/call handed to the caller's dispatcher.
+// Package mcpserve is the one MCP tools server (docs/designs/fleet-standard.md S8): the JSON-RPC request, initialize,
+// tools/list and tools/call handed to the caller's dispatcher. Server answers one request over Fleet operations
+// (tools described from contract.Operations); Stdio serves a newline JSON-RPC stream with the caller's own tools.
 package mcpserve
 
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 
 	"fleet/contract"
@@ -29,8 +31,9 @@ type Request struct {
 	ID     any    `json:"id"`
 	Method string `json:"method"`
 	Params struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
+		Name            string          `json:"name"`
+		Arguments       json.RawMessage `json:"arguments"`
+		ProtocolVersion string          `json:"protocolVersion"`
 	} `json:"params"`
 }
 
@@ -65,7 +68,7 @@ func (s Server) Handle(body []byte) (any, error) {
 	r := Parse(body)
 	switch r.Method {
 	case "initialize":
-		return Reply{"2.0", r.ID, map[string]any{"protocolVersion": ProtocolVersion, "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": s.Name, "version": "1"}}}, nil
+		return Reply{"2.0", r.ID, Initialize(r.Params.ProtocolVersion, s.Name, "1", "")}, nil
 	case "tools/list":
 		return Reply{"2.0", r.ID, map[string]any{"tools": List(s.Tools)}}, nil
 	case "tools/call":
@@ -76,6 +79,22 @@ func (s Server) Handle(body []byte) (any, error) {
 		return Result(r.ID, out), nil
 	}
 	return nil, ErrUnknownMethod
+}
+
+// Versions: the MCP protocol versions these servers answer; they publish tools only, the same in each.
+var Versions = []string{"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
+
+// Initialize: the initialize result. The protocol version is the client's requested one when it is in Versions, else
+// ProtocolVersion. instructions is left out when empty.
+func Initialize(requested, name, version, instructions string) map[string]any {
+	if !slices.Contains(Versions, requested) {
+		requested = ProtocolVersion
+	}
+	out := map[string]any{"protocolVersion": requested, "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": name, "version": version}}
+	if instructions != "" {
+		out["instructions"] = instructions
+	}
+	return out
 }
 
 // Result: a tools/call result: the operation's reply as one JSON text content.

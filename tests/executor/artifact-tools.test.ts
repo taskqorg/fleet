@@ -1,4 +1,4 @@
-import {executorBinary} from './executor-binary.ts';
+import {executorBinary} from './executor-binary.ts';import {wakeAll} from './wake.ts';
 // fleet-stack L4: protect artifact path confinement while replacing the MCP adapter.
 // The agent's artifact tools in the executor's MCP adapter (go/executor/mcp_artifact.go): artifact_save copies only a
 // regular file inside the working area into the transfer journal, never following a link.
@@ -20,7 +20,7 @@ test('artifact_save takes an absolute path inside the working area, also through
  const ctx=JSON.stringify({hostId:'h',commandId:'c',executionId:'e',profiles:[],workdir:d+'/alias/work',inputDir:d+'/in',spool:d+'/spool'});
  const call=(id:number,args:any)=>JSON.stringify({jsonrpc:'2.0',id,method:'tools/call',params:{name:'artifact_save',arguments:args}});
  const paths=[d+'/alias/work/output/report.md',d+'/real/work/output/report.md',d+'/secret.txt',d+'/alias/work/up/secret.txt',d+'/alias/work/../../secret.txt'];
- const responder=setInterval(()=>db.prepare("UPDATE transfers SET state='done',response=? WHERE response IS NULL").run(JSON.stringify({artifactId:'a',state:'done'})),10); // plays the transfer lane
+ const responder=setInterval(()=>{db.prepare("UPDATE transfers SET state='done',response=? WHERE response IS NULL").run(JSON.stringify({artifactId:'a',state:'done'}));wakeAll(d)},10); // plays the transfer lane
  const child=execFile(executorBinary(),['mcp','delegation',d+'/j.sqlite',ctx],{timeout:60000});child.stdin!.end(paths.map((path,i)=>call(i+1,{path})).join('\n')+'\n');
  let stdout='';child.stdout!.on('data',s=>stdout+=s);
  try{assert.equal((await once(child,'close'))[0],0)}finally{clearInterval(responder)}

@@ -10,6 +10,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {executorBinary} from '../executor/executor-binary.ts';
+import {wakeAll} from '../executor/wake.ts';
 const BASE=process.env.FLEET_TRIAL_URL!,SECRET=process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const member='member@trial.test',owner='owner@trial.test';
 async function call(path:string,body:object,person=owner){const r=await fetch(BASE+path,{method:'POST',headers:{authorization:'Bearer '+SECRET,'x-fleet-person':person,'content-type':'application/json'},body:JSON.stringify(body)});assert.equal(r.status,200,await r.clone().text());return r.json() as Promise<any>;}
@@ -26,7 +27,7 @@ test('Native projectless PM discovers project tools, creates/focuses project, ed
  const context={hostId,commandId:command.id,executionId:execution.id,operations:command.payload.fleetOperations,profiles:[]};
  const child=spawn(executorBinary(),['mcp','delegation',journal,JSON.stringify(context)],{stdio:['pipe','pipe','pipe']});const closed=once(child,'close');
  const lines=createInterface({input:child.stdout})[Symbol.asyncIterator]();let n=0,bridgeError:unknown;const pending=new Set<string>();
- const bridge=setInterval(()=>{for(const row of db.prepare('SELECT id,body FROM delegation_requests WHERE response IS NULL').all() as any[]){if(pending.has(row.id))continue;pending.add(row.id);void fetch(BASE+'/api/hosts/agent-tools',{method:'POST',headers:{authorization:'Bearer '+host.secret,'content-type':'application/json'},body:row.body}).then(async r=>{const body=await r.json();db.prepare('UPDATE delegation_requests SET response=? WHERE id=?').run(JSON.stringify(body),row.id);}).catch(e=>bridgeError=e);}},20);
+ const bridge=setInterval(()=>{for(const row of db.prepare('SELECT id,body FROM delegation_requests WHERE response IS NULL').all() as any[]){if(pending.has(row.id))continue;pending.add(row.id);void fetch(BASE+'/api/hosts/agent-tools',{method:'POST',headers:{authorization:'Bearer '+host.secret,'content-type':'application/json'},body:row.body}).then(async r=>{const body=await r.json();db.prepare('UPDATE delegation_requests SET response=? WHERE id=?').run(JSON.stringify(body),row.id);wakeAll(root);}).catch(e=>bridgeError=e);}},20);
  const rpc=async(method:string,params?:object)=>{child.stdin.write(JSON.stringify({jsonrpc:'2.0',id:++n,method,params})+'\n');const next=await lines.next();assert.equal(next.done,false);const r=JSON.parse(next.value!);assert.equal(r.error,undefined);return r.result;};
  const tool=async(name:string,args:object)=>{const r=await rpc('tools/call',{name,arguments:args});assert.notEqual(r.isError,true,JSON.stringify(r));return JSON.parse(r.content[0].text);};
  try {

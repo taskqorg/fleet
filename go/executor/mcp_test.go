@@ -108,7 +108,7 @@ func TestProjectToolSchemas(t *testing.T) {
 		{"name": "pipeline_get", "arguments": M{}},                          // runId missing
 		{"name": "question_ask", "arguments": M{"requestId": "r"}},          // text missing
 	} {
-		if _, err := delegation(M{"method": "tools/call", "params": bad}, ctx, nil); err == nil || !strings.Contains(err.Error(), "Invalid project request") {
+		if _, err := delegationCall(jStr(bad, "name"), bad["arguments"], ctx, nil); err == nil || !strings.Contains(err.Error(), "Invalid project request") {
 			t.Errorf("%v: %v", bad, err)
 		}
 	}

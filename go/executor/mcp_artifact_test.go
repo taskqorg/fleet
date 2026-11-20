@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -21,9 +22,21 @@ func answerTransfers(t *testing.T, db *sql.DB, reply string) {
 				return
 			case <-time.After(5 * time.Millisecond):
 				db.Exec("UPDATE transfers SET state='done',response=? WHERE response IS NULL", reply)
+				wakeAll(db)
 			}
 		}
 	}()
+}
+
+// wakeAll signals every waiting FIFO of the journal, as the executor does for the reply it writes (wake.go).
+func wakeAll(db *sql.DB) {
+	paths, _ := filepath.Glob(filepath.Join(journalDir(db), "wake", "*"))
+	for _, p := range paths {
+		if f, err := os.OpenFile(p, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			f.Write([]byte{1})
+			f.Close()
+		}
+	}
 }
 
 func artifactJournal(t *testing.T) *sql.DB {

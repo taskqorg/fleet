@@ -12,7 +12,6 @@ package main
 // path. file and idempotent stay out of tools/list.
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -21,10 +20,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"fleet/contract"
+	"fleet/mcpserve"
 )
 
 func accessHeaders() map[string]string {
@@ -247,67 +246,22 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 		byName[jStr(t, "name")] = t
 		listed = append(listed, modelTool(t))
 	}
-	out := bufio.NewWriter(w)
-	var wmu sync.Mutex
-	write := func(reply M) {
-		wmu.Lock()
-		defer wmu.Unlock()
-		fmt.Fprintln(out, enc(reply))
-		out.Flush()
-	}
-	// Calls run concurrently: a long file transfer never holds a ping or another call. At end of input the server
-	// waits for the calls in flight.
-	var calls sync.WaitGroup
-	defer calls.Wait()
-	sc := bufio.NewScanner(in)
-	sc.Buffer(nil, 64<<20)
-	for sc.Scan() {
-		m, err := dec(sc.Text())
-		if err != nil || !has(m, "id") {
-			continue
-		}
-		params, _ := jAt(m, "params").(M)
-		reply := M{"jsonrpc": "2.0", "id": jAt(m, "id")}
-		switch jAt(m, "method") {
-		case "initialize":
-			pv := any("2025-06-18")
-			if has(params, "protocolVersion") {
-				pv = params["protocolVersion"]
-			}
-			instr := jAt(spec, "instructions")
-			if !has(spec, "instructions") {
-				instr = ""
-			}
-			reply["result"] = M{"protocolVersion": pv, "capabilities": M{"tools": M{}}, "serverInfo": M{"name": connection, "version": "1"}, "instructions": instr}
-		case "ping":
-			reply["result"] = M{}
-		case "tools/list":
-			reply["result"] = M{"tools": listed}
-		case "tools/call":
-			calls.Add(1)
-			go func() {
-				defer calls.Done()
-				name, _ := str(params["name"])
-				code := "tool-not-granted"
-				line := contract.CallLine{Outcome: contract.CallOutcomeError, ErrorCode: &code}
-				if tool, ok := byName[name]; ok && name != "" {
-					args := params["arguments"]
-					if !truth(args) {
-						args = M{}
-					}
-					line = connectionCall(connection, tool, args)
+	// Calls run concurrently: a long file transfer never holds a ping or another call.
+	return mcpserve.Stdio{Name: connection, Version: "1", Instructions: jStr(spec, "instructions"), Concurrent: true,
+		Tools: func() any { return listed },
+		Call: func(name string, arguments json.RawMessage) (any, error) {
+			code := "tool-not-granted"
+			line := contract.CallLine{Outcome: contract.CallOutcomeError, ErrorCode: &code}
+			if tool, ok := byName[name]; ok && name != "" {
+				args := decRaw(arguments)
+				if !truth(args) {
+					args = M{}
 				}
-				text, ok := callText(line)
-				reply["result"] = M{"content": []any{M{"type": "text", "text": text}}, "isError": !ok}
-				write(reply)
-			}()
-			continue
-		default:
-			reply["error"] = M{"code": -32601, "message": "method not found"}
-		}
-		write(reply)
-	}
-	return sc.Err()
+				line = connectionCall(connection, tool, args)
+			}
+			text, ok := callText(line)
+			return M{"content": []any{M{"type": "text", "text": text}}, "isError": !ok}, nil
+		}}.Serve(in, w)
 }
 
 // runFileKeys are the keys a run file may set: the token, gateway and Access file, the run's work and input folders

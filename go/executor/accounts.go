@@ -9,15 +9,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fleet/contract"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
+
+	"fleet/contract"
+	"fleet/errtrack"
+	"fleet/executor/supervise"
 )
 
 // registryEntry is one named host account of FLEET_NATIVE_ACCOUNTS.
@@ -245,21 +247,26 @@ func rpcExchange(cmd *exec.Cmd, frames []M, accept func(M) bool) (M, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := cmd.StdoutPipe()
+	// Our own pipe, not StdoutPipe: the reaper's Wait would close that one at exit, before its last lines are read.
+	out, w, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
-	if err := cmd.Start(); err != nil {
+	defer out.Close()
+	cmd.Stdout = w
+	p, err := supervise.Spawn(supervise.Spec{Cmd: cmd})
+	w.Close()
+	if err != nil {
 		return nil, err
 	}
-	defer func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); cmd.Wait() }() // the CLI runs in its own group (newCmd)
+	defer func() { p.Kill(); p.Wait() }() // the CLI runs in its own group
 	for _, f := range frames {
 		if _, err := in.Write([]byte(enc(f) + "\n")); err != nil {
 			return nil, err
 		}
 	}
 	found := make(chan M, 1)
-	go func() {
+	errtrack.Go("rpc.read", func() {
 		sc := bufio.NewScanner(out)
 		sc.Buffer(make([]byte, 1<<20), 64<<20)
 		for sc.Scan() {
@@ -269,7 +276,7 @@ func rpcExchange(cmd *exec.Cmd, frames []M, accept func(M) bool) (M, error) {
 			}
 		}
 		close(found)
-	}()
+	})
 	select {
 	case v, ok := <-found:
 		if !ok {

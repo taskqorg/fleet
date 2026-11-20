@@ -7,6 +7,8 @@
 ## Interface
 
 - `Start(dsn, service, host, release)` initialises the client and sets the `obs` fail hook, so a panic in `obs.Handler` or `obs.Pass` and a failed `obs.Pass` become events tagged with the span name. `Init` initialises without the hook.
+- `Go(name, fn)`: the one way a service starts a goroutine; a panic in it is sent (tag `span`) and raised again, so the process still ends and its service manager restarts it.
+- `DSN()`: `FLEET_BUGSINK_DSN` when set (empty turns tracking off), else `bugsinkDsn` of `config/executor-defaults.json` next to the running binary; the executor, gateway and fleet-update read their DSN through it.
 - `Capture(err, tags)` sends one error; `Panic(p, tags)` sends a recovered panic value and waits up to 2 s for delivery; `Flush(d)` waits for queued events; `Enabled` reports whether a client runs.
 
 ## Invariants

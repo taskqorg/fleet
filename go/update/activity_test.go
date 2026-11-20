@@ -21,10 +21,11 @@ func TestExecutorActivityRequiresExactDrainAndLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	s := signalFile{Target: "1.261113.20", RestartTarget: "1.261113.20", AutoUpdate: "on"}
+	v := "1.261113.20"
+	s := signalFile{Target: &v, RestartTarget: &v, AutoUpdate: "on"}
 	writeJSON(signal, s, 0600)
 	syscall.Flock(int(f.Fd()), syscall.LOCK_SH)
-	if release, err := guard(s.Target); err != nil || release != nil {
+	if release, err := guard(v); err != nil || release != nil {
 		t.Fatal("active native lease ignored", err)
 	}
 	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
@@ -33,12 +34,12 @@ func TestExecutorActivityRequiresExactDrainAndLease(t *testing.T) {
 	}
 	s.AutoUpdate = "off"
 	writeJSON(signal, s, 0600)
-	if release, err := guard(s.Target); err != nil || release != nil {
+	if release, err := guard(v); err != nil || release != nil {
 		t.Fatal("held update accepted", err)
 	}
 	s.AutoUpdate = "on"
 	writeJSON(signal, s, 0600)
-	release, err := guard(s.Target)
+	release, err := guard(v)
 	if err != nil || release == nil {
 		t.Fatal("idle update refused", err)
 	}

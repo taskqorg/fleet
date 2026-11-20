@@ -14,13 +14,30 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"fleet/errtrack"
+	"fleet/obs"
 )
 
 // version is set at build time with -ldflags "-X main.version=<commit>".
 var version = "dev"
 
 func main() {
+	// Unexpected errors and panics go to Bugsink (docs/designs/fleet-error-tracking.md), as in the coordinator.
+	host, _ := os.Hostname()
+	obs.Service, obs.HostID, obs.Version = "gateway", host, version
+	if err := errtrack.Start(errtrack.DSN(), "gateway", host, version); err != nil {
+		fmt.Fprintf(os.Stderr, "fleet-gateway: error tracking off: %v\n", err)
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			errtrack.Panic(p, map[string]string{"span": "main"})
+			panic(p)
+		}
+	}()
 	if err := run(os.Args[1:]); err != nil {
+		errtrack.Capture(err, map[string]string{"span": "main"})
+		errtrack.Flush(2 * time.Second)
 		fmt.Fprintf(os.Stderr, "fleet-gateway: %v\n", err)
 		os.Exit(2)
 	}
@@ -62,13 +79,13 @@ func run(args []string) error {
 		}
 		server := &http.Server{Handler: newGuard(secret, accessIssuer+"/cdn-cgi/access/certs"), ReadHeaderTimeout: 10 * time.Second}
 		drained := make(chan struct{})
-		go func() {
+		errtrack.Go("guard.drain", func() {
 			defer close(drained)
 			<-terminated()
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second) // in-flight checks finish
 			defer cancel()
 			server.Shutdown(ctx)
-		}()
+		})
 		if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
@@ -82,7 +99,7 @@ func terminated() <-chan struct{} {
 	done := make(chan struct{})
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
-	go func() { <-signals; close(done) }()
+	errtrack.Go("signals", func() { <-signals; close(done) })
 	return done
 }
 

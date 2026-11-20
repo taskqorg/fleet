@@ -25,6 +25,8 @@
 - The spool acknowledges a call record only after its JSON line is fsynced. Spool-loss accounting is persisted separately when possible ([gateway.go](gateway.go)).
 - The guard accepts only one RS256 Cloudflare Access assertion with the configured issuer, audience, required time claims, and identity. It returns 503 when signing keys cannot be obtained and 403 for invalid assertions ([guard.go](guard.go)).
 
+- Unexpected errors and panics, a handler's panic included (`obs.Handler`), go to Bugsink through [`errtrack`](../errtrack/README.md) with `FLEET_BUGSINK_DSN`, as in the coordinator; goroutines start through `errtrack.Go`.
+
 ## Side effects
 
 - Reads gateway snapshots and key files; retains valid snapshots, disabled-key state, and call spools under the configured state directory ([gateway.go](gateway.go)).

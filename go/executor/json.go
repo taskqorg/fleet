@@ -146,3 +146,12 @@ func optStr(s string) *string {
 	}
 	return &s
 }
+
+// decRaw: a JSON-RPC field as a journal value (numbers kept as written); nil when absent or not JSON.
+func decRaw(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	v, _ := dec(string(raw))
+	return v
+}

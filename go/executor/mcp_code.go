@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"fleet/errtrack"
+	"fleet/executor/supervise"
+	"fleet/mcpserve"
 )
 
 //go:embed code_runtime.js
@@ -189,9 +194,9 @@ type codeServer struct {
 	order  []string
 	rt     *codeRuntime
 	seq    int
-	closed bool             // the server is shutting down: no new runtime
-	procs  map[*shProc]bool // running sh commands, killed by reset and shutdown
-	tmp    string           // the private /tmp of Linux sh commands, removed at shutdown
+	closed bool                     // the server is shutting down: no new runtime
+	procs  map[*supervise.Proc]bool // running sh commands, killed by reset and shutdown
+	tmp    string                   // the private /tmp of Linux sh commands, removed at shutdown
 }
 
 type codeRuntime struct {
@@ -199,14 +204,14 @@ type codeRuntime struct {
 	gone     bool                // its stdout ended (under codeServer.mu)
 	stopped  bool                // a reset or shutdown stopped it: no new sh for its jobs (under codeServer.mu)
 	tail     tailBuf             // the end of its stderr, for the runtime-exited reason
-	cmd      *exec.Cmd
+	proc     *supervise.Proc
 	mu       sync.Mutex // serializes writes to stdin
 	in       io.WriteCloser
 	dead     chan struct{}
 }
 
 func codeMCP(spec any, in io.Reader, w io.Writer) error {
-	s := &codeServer{spec: spec, jobs: map[string]*codeJob{}, fleet: map[string]bool{}, conns: map[string]any{}, procs: map[*shProc]bool{}}
+	s := &codeServer{spec: spec, jobs: map[string]*codeJob{}, fleet: map[string]bool{}, conns: map[string]any{}, procs: map[*supervise.Proc]bool{}}
 	// A bridged upload reads only what the sandbox may read; without read roots it reads nothing.
 	roots := []string{}
 	for _, root := range jArr(spec, "read") {
@@ -238,8 +243,6 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 	// any lost reply.
 	// Requests are served concurrently, so a long `code` call never delays a ping, a poll or a second call; only the
 	// writes are serialized.
-	var wmu sync.Mutex
-	var wg sync.WaitGroup
 	defer func() { // last: the commands are killed by then
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -248,8 +251,7 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 		}
 	}()
 	// On stdin end the runtime stops first, so waiting requests return with runtime-exited instead of their full wait.
-	defer wg.Wait()
-	defer func() {
+	closed := func() {
 		s.mu.Lock()
 		s.closed = true
 		s.mu.Unlock()
@@ -264,80 +266,34 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 		for _, j := range open {
 			s.finish(j, false, nil, runtimeExited())
 		}
-	}()
-	out := bufio.NewWriter(w)
-	write := func(m M) {
-		wmu.Lock()
-		defer wmu.Unlock()
-		fmt.Fprintln(out, enc(m))
-		out.Flush()
 	}
-	r := bufio.NewReader(in) // no line cap: a request may carry a large source
-	for {
-		line, rerr := r.ReadBytes('\n')
-		if len(strings.TrimSpace(string(line))) > 0 {
-			m, err := dec(string(line))
-			if err != nil {
-				write(M{"jsonrpc": "2.0", "id": nil, "error": M{"code": -32700, "message": "Parse error"}})
-			} else if has(m, "id") {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					write(s.serve(m))
-				}()
-			}
-		}
-		if rerr == io.EOF {
-			return nil
-		}
-		if rerr != nil {
-			return rerr
+	// With `only`, the direct connection servers are gone: their instructions (query syntax, limits) come from here.
+	var instr []string
+	for _, c := range jArr(s.spec, "instructions") {
+		if i := jStr(c, "instructions"); i != "" {
+			instr = append(instr, "conn[\""+jStr(c, "name")+"\"]: "+i)
 		}
 	}
-}
-
-func (s *codeServer) serve(m any) M {
-	params := jAt(m, "params")
-	reply := M{"jsonrpc": "2.0", "id": jAt(m, "id")}
-	switch jStr(m, "method") {
-	case "initialize":
-		pv := any("2025-06-18")
-		if has(params, "protocolVersion") {
-			pv = jAt(params, "protocolVersion")
-		}
-		// With `only`, the direct connection servers are gone: their instructions (query syntax, limits) come from here.
-		var instr []string
-		for _, c := range jArr(s.spec, "instructions") {
-			if i := jStr(c, "instructions"); i != "" {
-				instr = append(instr, "conn[\""+jStr(c, "name")+"\"]: "+i)
+	return mcpserve.Stdio{Name: "fleet-code", Version: "1", Instructions: strings.Join(instr, "\n\n"), Concurrent: true, Closed: closed,
+		Tools: func() any {
+			tools := jClone(codeTools).([]any)
+			tools[0].(M)["description"] = codeDescription(s.spec)
+			return tools
+		},
+		Call: func(name string, arguments json.RawMessage) (any, error) {
+			args := decRaw(arguments)
+			switch name {
+			case "code":
+				return s.code(jStr(args, "source"), seconds(jAt(args, "detachAfterSeconds"))), nil
+			case "poll":
+				if jAt(args, "reset") == true {
+					s.stop()
+					return codeNote(M{"reset": true}, false), nil
+				}
+				return s.poll(jStr(args, "jobId"), seconds(jAt(args, "waitSeconds"))), nil
 			}
-		}
-		reply["result"] = M{"protocolVersion": pv, "capabilities": M{"tools": M{}}, "serverInfo": M{"name": "fleet-code", "version": "1"}, "instructions": strings.Join(instr, "\n\n")}
-	case "ping":
-		reply["result"] = M{}
-	case "tools/list":
-		tools := jClone(codeTools).([]any)
-		tools[0].(M)["description"] = codeDescription(s.spec)
-		reply["result"] = M{"tools": tools}
-	case "tools/call":
-		args := jAt(params, "arguments")
-		switch jStr(params, "name") {
-		case "code":
-			reply["result"] = s.code(jStr(args, "source"), seconds(jAt(args, "detachAfterSeconds")))
-		case "poll":
-			if jAt(args, "reset") == true {
-				s.stop()
-				reply["result"] = codeNote(M{"reset": true}, false)
-			} else {
-				reply["result"] = s.poll(jStr(args, "jobId"), seconds(jAt(args, "waitSeconds")))
-			}
-		default:
-			reply["error"] = M{"code": -32602, "message": "unknown tool"}
-		}
-	default:
-		reply["error"] = M{"code": -32601, "message": "method not found"}
-	}
-	return reply
+			return nil, errors.New("unknown tool")
+		}}.Serve(in, w)
 }
 
 // seconds is a reply wait: absent or negative means 25 s, 0 answers at once, and more than 50 s means 50 s. The executor's MCP filter
@@ -367,11 +323,11 @@ func (s *codeServer) code(source string, detach time.Duration) M {
 	s.mu.Unlock()
 	// The send may block while the runtime does not read (a job that never yields); the reply still comes at detach,
 	// and poll reset ends the send.
-	go func() {
+	errtrack.Go("code.run", func() {
 		if err := rt.send(M{"type": "run", "job": j.id, "source": source}); err != nil {
 			s.finish(j, false, nil, runtimeExited())
 		}
-	}()
+	})
 	r := s.wait(j, detach)
 	if started {
 		r["newRuntime"] = true
@@ -524,16 +480,17 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 		return nil, false, err
 	}
 	cmd.ExtraFiles = []*os.File{proto}
-	err = cmd.Start()
+	// The runtime stays in the code server's group: the MCP guardian's group kill ends it (macOS has no --die-with-parent).
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd, SameGroup: true})
 	proto.Close()
 	if err != nil {
 		stdout.Close()
 		in.Close()
 		return nil, false, err
 	}
-	rt.cmd, rt.in = cmd, in
+	rt.proc, rt.in = proc, in
 	s.rt = rt
-	go s.read(rt, stdout)
+	errtrack.Go("code.read", func() { s.read(rt, stdout) })
 	// The granted names become real properties of `fleet` and `conn`: a typo or a probe (`then`, `toJSON`) is undefined
 	// in the runtime, not a call.
 	names := M{}
@@ -544,10 +501,10 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	// replies) waits for it, and s.mu is not held while a slow runtime starts reading.
 	tools := enc(M{"type": "tools", "fleet": anyStrings(sortedKeysOf(s.fleet)), "conns": names, "host": anyStrings(codeHostNames(s.spec)), "dir": jStr(s.spec, "dir")}) + "\n"
 	rt.mu.Lock()
-	go func() {
+	errtrack.Go("code.tools", func() {
 		defer rt.mu.Unlock()
 		io.WriteString(rt.in, tools)
-	}()
+	})
 	return rt, true, nil
 }
 
@@ -615,12 +572,12 @@ func (s *codeServer) stop() {
 		rt.stopped = true
 	}
 	for p := range s.procs {
-		p.kill()
+		p.Kill()
 	}
 	s.mu.Unlock()
 	if rt != nil {
 		rt.in.Close()
-		rt.cmd.Process.Kill()
+		rt.proc.Kill()
 		<-rt.dead
 	}
 }
@@ -642,8 +599,8 @@ func (s *codeServer) read(rt *codeRuntime, stdout io.ReadCloser) {
 	s.mu.Lock()
 	rt.gone = true // from here no new job uses this runtime: runtime() starts a fresh one
 	s.mu.Unlock()
-	rt.cmd.Process.Kill()
-	rt.cmd.Wait()
+	rt.proc.Kill()
+	rt.proc.Wait()
 	exited := runtimeExited()
 	if t := strings.TrimSpace(rt.tail.String()); t != "" {
 		exited["stderrTail"] = t // the end of the runtime's stderr: why it stopped, such as a sandbox that cannot start
@@ -746,10 +703,10 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 			// A call made after its job ended (a timer) would have an effect nobody sees.
 			fail := callError("error", "job-ended", nil)
 			fail["tool"] = callLabel(jStr(m, "server"), jStr(m, "tool"))
-			go rt.send(M{"type": "reply", "id": jAt(m, "id"), "ok": false, "error": fail})
+			errtrack.Go("code.reply", func() { rt.send(M{"type": "reply", "id": jAt(m, "id"), "ok": false, "error": fail}) })
 			return
 		}
-		go s.call(rt, j, m)
+		errtrack.Go("code.call", func() { s.call(rt, j, m) })
 	}
 }
 
@@ -857,7 +814,7 @@ func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any
 	if !s.fleet[tool] {
 		return nil, callError("error", "tool-not-granted", nil)
 	}
-	r, err := delegation(M{"method": "tools/call", "params": M{"name": tool, "arguments": args}}, s.ctx, s.db)
+	r, err := delegationCall(tool, args, s.ctx, s.db)
 	var de dbError
 	var ur unreadReply
 	if errors.As(err, &de) || errors.As(err, &ur) {
@@ -927,12 +884,12 @@ var codeHost = func() func() (string, string, error) {
 			at = time.Now()
 		case err != nil && time.Since(at) >= time.Minute && !background:
 			background = true
-			go func() {
+			errtrack.Go("code.probe", func() {
 				n, sb, e := probeCodeHost()
 				mu.Lock()
 				node, sandbox, err, at, background = n, sb, e, time.Now(), false
 				mu.Unlock()
-			}()
+			})
 		}
 		return node, sandbox, err
 	}

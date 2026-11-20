@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fleet/contract"
 	"fmt"
 	"io"
 	"math"
@@ -23,6 +22,10 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"fleet/contract"
+	"fleet/errtrack"
+	"fleet/executor/supervise"
 )
 
 var shutdown atomic.Bool
@@ -176,8 +179,8 @@ func writeFrame(w io.Writer, log *os.File, v M) (M, error) {
 type live struct {
 	mcp            *mcpOwner
 	cmd            *exec.Cmd
-	exited         chan struct{} // closed when Wait returned
-	state          *os.ProcessState
+	exited         <-chan struct{} // closed once the process was reaped (supervise.Proc.Done)
+	proc           *supervise.Proc
 	command        M
 	native         string
 	nativeObserved bool
@@ -225,6 +228,14 @@ func (l *live) account(table []proc) {
 		}
 	}
 	l.peakRSS = max(l.peakRSS, rss)
+}
+
+// state: the reaped process's state; nil while it runs.
+func (l *live) state() *os.ProcessState {
+	if !l.exitedNow() {
+		return nil
+	}
+	return l.cmd.ProcessState
 }
 
 func (l *live) exitedNow() bool {
@@ -1295,17 +1306,16 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			return err
 		}
 	}
-	if err := cmd.Start(); err != nil {
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd})
+	if err != nil {
 		pw.Close()
 		closeAll()
 		e.release(execution)
 		return fail(1, "harness did not start: "+err.Error())
 	}
 	pw.Close()
-	exited := make(chan struct{})
-	l := &live{mcp: mcp, cmd: cmd, exited: exited, command: c, native: native, seq: 2, owned: map[int]string{}, metrics: newRunMetrics(gatewayConns), started: time.Now()}
-	go func() { cmd.Wait(); l.state = cmd.ProcessState; close(exited) }()
-	kill := func() { cmd.Process.Kill(); <-exited; closeAll(); e.release(execution) }
+	l := &live{mcp: mcp, cmd: cmd, proc: proc, exited: proc.Done(), command: c, native: native, seq: 2, owned: map[int]string{}, metrics: newRunMetrics(gatewayConns), started: time.Now()}
+	kill := func() { proc.Kill(); proc.Wait(); closeAll(); e.release(execution) }
 	if nativeInput != nil && !protocol {
 		_, err := stdin.Write(nativeInput)
 		stdin.Close()
@@ -1341,7 +1351,8 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		lines <- enc(meta)
 	}
 	acpProtocol := acp(name)
-	go readStdout(pr, rawLog, l.wire, acpProtocol, lines)
+	wire := l.wire
+	errtrack.Go("harness.stdout", func() { readStdout(pr, rawLog, wire, acpProtocol, lines) })
 	e.live[execution], launched = l, true
 	l.seq++
 	if err := e.event(c, l.seq, contract.FleetEventTypeHarness, observed); err != nil {
@@ -1538,7 +1549,6 @@ func (e *executor) script(c M, execution, session string) error {
 	}()
 	cmd := cleanCmd("sh", "-c", command)
 	cmd.Dir = work
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.Env = append(cmd.Env, "FLEET_INPUT_DIR="+input, "FLEET_OUTPUT_DIR="+output, "FLEET_SESSION_ID="+session, "FLEET_EXECUTION_ID="+execution,
 		// Lab scripts ship in the release next to the binary (fleet-asset-pipelines §4); Blender is a host setting.
@@ -1553,19 +1563,18 @@ func (e *executor) script(c M, execution, session string) error {
 	if _, err = e.db.Exec("UPDATE launches SET mcp_dir=? WHERE execution=?", mcp.dir, execution); err != nil {
 		return err
 	}
-	if err := cmd.Start(); err != nil {
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd})
+	if err != nil {
 		dropTrial()
 		e.release(execution)
 		return refuse("script spawn failed: " + err.Error())
 	}
-	pid := cmd.Process.Pid
-	exited := make(chan struct{})
-	l := &live{mcp: mcp, cmd: cmd, exited: exited, command: c, seq: 2, completed: true, owned: map[int]string{}, started: time.Now(), group: pid, trial: trial}
-	go func() { cmd.Wait(); l.state = cmd.ProcessState; close(exited) }()
+	pid := proc.Pid
+	l := &live{mcp: mcp, cmd: cmd, proc: proc, exited: proc.Done(), command: c, seq: 2, completed: true, owned: map[int]string{}, started: time.Now(), group: pid, trial: trial}
 	ident, err := identity(pid)
 	if err != nil {
-		syscall.Kill(-pid, syscall.SIGKILL)
-		<-exited
+		proc.Kill()
+		proc.Wait()
 		dropTrial()
 		e.release(execution)
 		return e.finish(c, "unknown", "")
@@ -1573,8 +1582,8 @@ func (e *executor) script(c M, execution, session string) error {
 	l.owned[pid] = ident
 	_ = l.observe()
 	if err := e.ownGroup(execution, pid, l); err != nil {
-		syscall.Kill(-pid, syscall.SIGKILL)
-		<-exited
+		proc.Kill()
+		proc.Wait()
 		dropTrial()
 		e.release(execution)
 		return e.finish(c, "unknown", "")
@@ -1669,10 +1678,10 @@ func (e *executor) heldPoll() (*pollReply, error) {
 		err   error
 	}
 	got := make(chan answered, 1)
-	go func() {
+	errtrack.Go("poll.held", func() {
 		reply, err := e.pollWait(ctx, longPollWait)
 		got <- answered{reply, err}
-	}()
+	})
 	beat := time.NewTicker(tickEvery)
 	defer beat.Stop()
 	for {
@@ -1852,8 +1861,8 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	}
 	removeRunFiles(e.root, execution) // the run token is not needed after the run
 	var code *int64
-	if l.state != nil && l.state.Exited() {
-		c := int64(l.state.ExitCode())
+	if l.state() != nil && l.state().Exited() {
+		c := int64(l.state().ExitCode())
 		code = &c
 	}
 	_ = l.observe()
@@ -1900,7 +1909,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	case l.timedOut:
 	case l.stopped:
 		status = "stopped"
-	case l.state != nil && l.state.Success() && l.completed:
+	case l.state() != nil && l.state().Success() && l.completed:
 		status = "completed"
 	}
 	if err := e.finish(l.command, status, l.native); err != nil {
@@ -2314,7 +2323,7 @@ func runExecutor() error {
 		return err
 	}
 	spawnOutbox(odb, url, token, host)
-	startTelemetry(root, url, token, host)
+	startTelemetry(root, odb, host)
 	if err := os.MkdirAll(sessions, 0o700); err != nil {
 		return err
 	}
@@ -2326,7 +2335,7 @@ func runExecutor() error {
 	e.stopCtx = stopCtx
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	go func() { <-sig; shutdown.Store(true); cancelStop() }()
+	errtrack.Go("signals", func() { <-sig; shutdown.Store(true); cancelStop() })
 	if err := e.reconcile(); err != nil {
 		return err
 	}
@@ -2493,7 +2502,7 @@ func (e *executor) exchange() (err error) {
 	beatCtx, cancelBeat := context.WithCancel(e.baseCtx())
 	stop, done := make(chan struct{}), make(chan struct{})
 	var removed atomic.Bool
-	go func() {
+	errtrack.Go("update.drain", func() {
 		defer close(done)
 		beat := time.NewTicker(time.Second)
 		defer beat.Stop()
@@ -2511,7 +2520,7 @@ func (e *executor) exchange() (err error) {
 				}
 			}
 		}
-	}()
+	})
 	defer func() {
 		cancelBeat()
 		close(stop)

@@ -30,6 +30,8 @@ import (
 	"unicode/utf8"
 
 	"fleet/contract"
+	"fleet/errtrack"
+	"fleet/obs"
 )
 
 const (
@@ -1888,6 +1890,15 @@ func deref(s *string) string {
 	return *s
 }
 
+// spanRoute names a request's span by its method and first two path segments (/v1/call), never by connection or tool.
+func spanRoute(r *http.Request) string {
+	seg := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 3)
+	if len(seg) > 2 {
+		seg = seg[:2]
+	}
+	return r.Method + " /" + strings.Join(seg, "/")
+}
+
 // serve answers on listener until stop closes, then drains for drain_timeout.
 func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 	g, err := newGateway(c)
@@ -1897,7 +1908,7 @@ func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 	}
 	done := make(chan struct{})
 	defer close(done)
-	go func() {
+	errtrack.Go("gateway.refresh", func() {
 		tick := time.NewTicker(c.refreshEvery)
 		expire := time.NewTicker(time.Hour)
 		defer tick.Stop()
@@ -1912,10 +1923,11 @@ func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 				return
 			}
 		}
-	}()
-	server := &http.Server{Handler: g, ReadHeaderTimeout: 10 * time.Second}
+	})
+	// obs.Handler, as in the coordinator: a handler's panic reaches Bugsink through the errtrack hook.
+	server := &http.Server{Handler: obs.Handler(g, spanRoute), ReadHeaderTimeout: 10 * time.Second}
 	served := make(chan error, 1)
-	go func() { served <- server.Serve(listener) }()
+	errtrack.Go("gateway.serve", func() { served <- server.Serve(listener) })
 	fmt.Printf("fleet-gateway: serving on %s\n", listener.Addr())
 	select {
 	case err := <-served:

@@ -25,6 +25,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"fleet/update/updatesignal"
 )
 
 // verRe is the strict release version N.yymmdd.M (section 1); the tag is "v" + version.
@@ -63,16 +65,8 @@ type State struct {
 	Last    *Result           `json:"last,omitempty"`
 }
 
-// signalFile is <data dir>/update/update.json, written by the executor from its poll answers.
-type signalFile struct {
-	RestartTarget string `json:"restartTarget"`
-	HostID        string `json:"hostId"`
-	Target        string `json:"target"`
-	AutoUpdate    string `json:"autoUpdate"`
-	Running       string `json:"running"`
-	PollOk        bool   `json:"pollOk"`
-	PollError     string `json:"pollError"`
-}
+// signalFile is <data dir>/update/update.json (package updatesignal, the executor writes the same type).
+type signalFile = updatesignal.Signal
 
 type probe int
 
