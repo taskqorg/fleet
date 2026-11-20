@@ -555,9 +555,14 @@ func checkValue(form string, v any, trials []any) error {
 		f, isNum := numOK(v)
 		ok = isNum && !math.IsInf(f, 0) && !math.IsNaN(f)
 	case "typed":
-		m := mapOf(v)
-		_, isP := numOK(m["p"])
-		ok = m != nil && (isP && (m["answer"] == "yes" || m["answer"] == "no" || m["answer"] == "abstain") && (m["label"] == "yes" || m["label"] == "no") || m["answer"] == "unscored" && m["reason"] != nil)
+		var m struct {
+			P, Answer, Label, Reason json.RawMessage
+		}
+		raw := rawOf(v)
+		isObject := len(raw) > 0 && raw[0] == '{' && json.Unmarshal(raw, &m) == nil
+		_, isP := numOK(rawValue(m.P))
+		answer, label := rawValue(m.Answer), rawValue(m.Label)
+		ok = isObject && (isP && (answer == "yes" || answer == "no" || answer == "abstain") && (label == "yes" || label == "no") || answer == "unscored" && rawValue(m.Reason) != nil)
 	}
 	if !ok {
 		return fail(400, "Invalid "+form+" value")
@@ -934,11 +939,14 @@ func expLocked(q *Request, id string) (doc, error) {
 
 // expLaunch: draft to running, refused without a goal and a hypothesis; the record is frozen from here on.
 func expLaunch(q *Request, id string) error {
-	e, err := expRow(q, id)
+	e, err := q.db().LabExperiment(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fail(404, "Unknown experiment")
+	}
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(astr(e["goal"])) == "" || strings.TrimSpace(astr(e["hypothesis"])) == "" {
+	if strings.TrimSpace(deref(e.Goal)) == "" || strings.TrimSpace(deref(e.Hypothesis)) == "" {
 		return fail(400, "Launch needs the experiment's goal and hypothesis")
 	}
 	return expSetState(q, id, []string{"draft"}, "running", nil) // the experiment_record trigger stamps launched_at
@@ -3005,7 +3013,10 @@ func bandsOf(v any) (float64, float64, error) {
 // variant's bands, against the example's label (references/expected.json {expected, tag?}). A trial it cannot score is
 // recorded as {answer: unscored, reason} so the reason is visible and it is not tried again; it counts in no statistic.
 func scoreTyped(q *Request, exp, t, pin doc, name string, examples map[string]doc) error {
-	key := astr(pin["artifact_id"])
+	pinRef, _ := asT[struct {
+		ArtifactID string `json:"artifact_id"`
+	}](pin)
+	key := pinRef.ArtifactID
 	full := examples[key]
 	if full == nil {
 		var err error
@@ -3014,18 +3025,30 @@ func scoreTyped(q *Request, exp, t, pin doc, name string, examples map[string]do
 		}
 		examples[key] = full
 	}
+	refs, _ := asT[struct {
+		References []struct {
+			Path any    `json:"path"`
+			Text string `json:"text"`
+		} `json:"references"`
+	}](full)
 	var label, tag, reason string
-	for _, x := range anys(full["references"]) {
-		if f := mapOf(x); f["path"] == "expected.json" && label == "" && reason == "" { // paths are unique; the first counts
-			var e map[string]any
-			if err := json.Unmarshal([]byte(astr(f["text"])), &e); err != nil {
+	for _, f := range refs.References {
+		if f.Path == "expected.json" && label == "" && reason == "" { // paths are unique; the first counts
+			var e struct {
+				Expected, Tag json.RawMessage
+			}
+			if err := json.Unmarshal([]byte(f.Text), &e); err != nil {
 				reason = "references/expected.json is not a JSON object"
 			}
-			label, tag = astr(e["expected"]), astr(e["tag"])
+			json.Unmarshal(e.Expected, &label)
+			json.Unmarshal(e.Tag, &tag)
 		}
 	}
-	out := mapOf(pipelineResultValue(t))
-	p, isP := numOK(out["p"])
+	out, _ := asT[struct {
+		P json.RawMessage `json:"p"`
+	}](pipelineResultValue(t))
+	pv := rawValue(out.P)
+	p, isP := numOK(pv)
 	switch {
 	case reason != "":
 	case label != "yes" && label != "no":
@@ -3033,24 +3056,46 @@ func scoreTyped(q *Request, exp, t, pin doc, name string, examples map[string]do
 	case !isP:
 		reason = "the trial output has no number p"
 	case p < 0 || p > 1:
-		reason = fmt.Sprintf("the trial output p %v is outside 0..1", out["p"])
+		reason = fmt.Sprintf("the trial output p %v is outside 0..1", pv)
 	}
-	var value doc
+	var value labTypedValue
 	rationale := ""
 	if reason != "" {
-		value, rationale = doc{"answer": "unscored", "reason": reason, "label": nilIf(label), "tag": nilIf(tag)}, "unscored: "+reason
+		value, rationale = labTypedValue{Answer: "unscored", Reason: reason, Label: strPtr(label), Tag: strPtr(tag)}, "unscored: "+reason
 	} else {
-		yes, no, err := bandsOf(mapOf(findVariant(exp, mapOf(t["cell"])["variant"])["overrides"])["bands"])
+		e, _ := asT[labExp](exp)
+		var bands any
+		for _, v := range e.Variants {
+			if v.Label == labCellOf(t).Variant {
+				o, _ := asT[struct {
+					Bands any `json:"bands"`
+				}](v.Overrides)
+				bands = o.Bands
+				break
+			}
+		}
+		yes, no, err := bandsOf(bands)
 		if err != nil {
 			return err
 		}
 		answer := bandAnswer(p, yes, no)
-		value = doc{"answer": answer, "label": label, "p": p, "tag": nilIf(tag)}
+		value = labTypedValue{Answer: answer, Label: &label, P: &p, Tag: strPtr(tag)}
 		rationale = fmt.Sprintf("%s at p %.3g (bands %.3g/%.3g), label %s", answer, p, yes, no, label)
 	}
-	_, err := scoreAdd(q, doc{"experimentId": exp["id"], "projectId": exp["project_id"], "trialIds": []any{t["id"]}, "evaluator": name,
-		"evaluatorVersion": "labels-v1", "form": "typed", "value": value, "rationale": rationale})
+	head := labRunHeadOf(t)
+	e, _ := asT[labExp](exp)
+	_, err := scoreInsert(q, labNewScore{ExperimentID: e.ID, ProjectID: e.ProjectID, TrialIDs: []string{head.ID}, Evaluator: name, EvaluatorVersion: "labels-v1", Form: "typed",
+		Value: value, Rationale: &rationale})
 	return err
+}
+
+// labTypedValue: a typed score's value: the banded answer against the example's label, or unscored with its reason.
+type labTypedValue struct {
+	Answer string   `json:"answer"`
+	Label  *string  `json:"label"`
+	P      *float64 `json:"p,omitempty"`
+	Reason string   `json:"reason,omitempty"`
+	Tag    *string  `json:"tag"`
 }
 
 // scoredTrial: the latest attempt of one cell with its latest score of one evaluator.
