@@ -1,67 +1,141 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 
 	"fleet/coordinator/db"
 )
 
-func loopStrategy(q *Request, raw any) (doc, error) {
-	s := mapOf(raw)
-	if s == nil || !keysOnly(s, "generator", "allocator", "max_iterations", "no_gain") {
+// A JSON object of a loop strategy or variant overrides, by key. Values are kept as rawOf writes them (keys sorted, no
+// HTML escaping), so a digest through canonical and a hash through jsonBytes see what they saw of the decoded object.
+//
+// rawOf: v as JSON, keys sorted and without HTML escaping (the form canonical gives a decoded value).
+func rawOf(v any) json.RawMessage {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.Encode(v)
+	return json.RawMessage(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
+}
+
+// rawObject: raw as an object with each value in rawOf form; ok false when raw is not an object.
+func rawObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	t := bytes.TrimSpace(raw)
+	if len(t) == 0 || t[0] != '{' {
+		return nil, false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(t, &m) != nil {
+		return nil, false
+	}
+	for k, x := range m {
+		m[k] = rawOf(rawValue(x))
+	}
+	return m, true
+}
+
+// rawObjectOr: raw as an object, or an empty one when it is absent, null or not an object.
+func rawObjectOr(raw json.RawMessage) map[string]json.RawMessage {
+	if m, ok := rawObject(raw); ok {
+		return m
+	}
+	return map[string]json.RawMessage{}
+}
+
+// rawValue: a JSON value decoded (nil for absent).
+func rawValue(raw json.RawMessage) any {
+	var v any
+	if len(raw) > 0 {
+		json.Unmarshal(raw, &v)
+	}
+	return v
+}
+
+// rawSet: m has key k with a value other than null.
+func rawSet(m map[string]json.RawMessage, k string) bool {
+	return rawValue(m[k]) != nil
+}
+
+// rawArray: raw is a JSON array.
+func rawArray(raw json.RawMessage) bool {
+	t := bytes.TrimSpace(raw)
+	return len(t) > 0 && t[0] == '['
+}
+
+func rawKeysOnly(m map[string]json.RawMessage, allowed ...string) bool {
+	for k := range m {
+		if !slices.Contains(allowed, k) {
+			return false
+		}
+	}
+	return true
+}
+
+// loopStrategy validates a loop's strategy and returns it as stored, with the caller's owner-override authority.
+func loopStrategy(q *Request, raw any) (map[string]json.RawMessage, error) {
+	s, ok := rawObject(rawOf(raw))
+	if !ok || !rawKeysOnly(s, "generator", "allocator", "max_iterations", "no_gain") {
 		return nil, fail(400, "Loop strategy requires generator, allocator and optional explicit stop rules")
 	}
-	g, a := mapOf(s["generator"]), mapOf(s["allocator"])
-	if g == nil || !keysOnly(g, "kind", "params") || mapOf(g["params"]) == nil || (g["kind"] != "list" && g["kind"] != "grid" && g["kind"] != "propose") {
+	g, okG := rawObject(s["generator"])
+	params, okP := rawObject(g["params"])
+	kind := rawValue(g["kind"])
+	if !okG || !rawKeysOnly(g, "kind", "params") || !okP || (kind != "list" && kind != "grid" && kind != "propose") {
 		return nil, fail(400, "Loop generator is list, grid or propose with params")
 	}
-	if a == nil || a["kind"] != "full" {
+	if a, ok := rawObject(s["allocator"]); !ok || rawValue(a["kind"]) != "full" {
 		return nil, fail(400, "Loop allocator is full")
 	}
 	if v, has := s["max_iterations"]; has {
-		if n, ok := intOK(v); !ok || n < 1 {
+		if n, ok := intOK(rawValue(v)); !ok || n < 1 {
 			return nil, fail(400, "max_iterations must be positive")
 		}
 	}
 	if v, has := s["no_gain"]; has {
-		m := mapOf(v)
-		if n, ok := intOK(m["k"]); m == nil || !keysOnly(m, "k") || !ok || n < 1 {
+		m, ok := rawObject(v)
+		if n, okK := intOK(rawValue(m["k"])); !ok || !rawKeysOnly(m, "k") || !okK || n < 1 {
 			return nil, fail(400, "no_gain requires explicit positive k")
 		}
 	}
 	// Persist the caller's existing owner-override authority; background reconciliation is not a new grant.
-	s["ownerOverrides"] = q.person == nil || fullAccess(q.person)
-	params := mapOf(g["params"])
-	if g["kind"] == "list" {
-		vs, ok := params["variants"].([]any)
-		if !ok {
+	owner := q.person == nil || fullAccess(q.person)
+	s["ownerOverrides"] = rawOf(owner)
+	base := labLoopBase{OwnerOverrides: owner}
+	if kind == "list" {
+		if !rawArray(params["variants"]) {
 			return nil, fail(400, "list params.variants must be an array")
 		}
-		if _, err := loopVariants(doc{"strategy": s}, vs, 1); err != nil {
+		var vs []labProposal
+		for _, x := range rawValue(params["variants"]).([]any) {
+			vs = append(vs, labProposalOf(x))
+		}
+		if _, err := loopVariantsOf(base, vs, 1); err != nil {
 			return nil, err
 		}
 	}
-	if g["kind"] == "grid" {
-		axes := mapOf(params["overrides"])
-		if axes == nil {
+	if kind == "grid" {
+		axes, ok := rawObject(params["overrides"])
+		if !ok {
 			return nil, fail(400, "grid params.overrides must be an object")
 		}
-		if !keysOnly(axes, labVariantKeys...) {
+		if !rawKeysOnly(axes, labVariantKeys...) {
 			return nil, fail(400, "Invalid grid override key")
 		}
 		for _, axis := range axes {
-			if _, ok := axis.([]any); !ok {
+			if !rawArray(axis) {
 				return nil, fail(400, "Grid axes must be arrays")
 			}
 		}
 	}
 	if ov, has := params["step_overrides"]; has {
-		if mapOf(ov) == nil || !keysOnly(mapOf(ov), labOverrides...) {
+		if m, ok := rawObject(ov); !ok || !rawKeysOnly(m, labOverrides...) {
 			return nil, fail(400, "Invalid strategy step_overrides")
 		}
-		if _, err := loopVariants(doc{"strategy": s}, []any{doc{"label": "strategy", "overrides": ov}}, 1); err != nil {
+		if _, err := loopVariantsOf(base, []labProposal{{Label: "strategy", Overrides: ov}}, 1); err != nil {
 			return nil, err
 		}
 	}
@@ -79,54 +153,99 @@ func loopIteration(exp doc) int64 {
 	return n
 }
 
-func loopVariants(exp doc, proposed []any, iteration int64) ([]any, error) {
-	out := append([]any{}, anys(exp["variants"])...)
+// labProposal: a proposed loop variant (a strategy's list, a strategy run's output).
+type labProposal struct {
+	Label     string          `json:"label"`
+	Overrides json.RawMessage `json:"overrides"`
+}
+
+func labProposalOf(x any) labProposal {
+	p, _ := asT[labProposal](x)
+	return p
+}
+
+// labLoopBase: what new loop variants are added to: the experiment's pipeline, its variants and the owner authority.
+type labLoopBase struct {
+	PipelineID     string
+	Variants       []json.RawMessage
+	OwnerOverrides bool
+}
+
+// labLoopVariant: a loop-generated variant as stored in experiment.variants; keys in canonical order.
+type labLoopVariant struct {
+	ConfigRef     string                     `json:"config_ref"`
+	Iteration     int64                      `json:"iteration"`
+	Label         string                     `json:"label"`
+	Overrides     map[string]json.RawMessage `json:"overrides"`
+	ProposalLabel string                     `json:"proposalLabel"`
+}
+
+// loopVariants: the experiment's variants and the proposed ones, validated and labelled for iteration.
+func loopVariants(exp doc, proposed []any, iteration int64) ([]json.RawMessage, error) {
+	e, _ := asT[struct {
+		PipelineID string            `json:"pipeline_id"`
+		Variants   []json.RawMessage `json:"variants"`
+		Strategy   struct {
+			OwnerOverrides bool `json:"ownerOverrides"`
+		} `json:"strategy"`
+	}](exp)
+	ps := []labProposal{}
+	for _, x := range proposed {
+		ps = append(ps, labProposalOf(x))
+	}
+	return loopVariantsOf(labLoopBase{PipelineID: e.PipelineID, Variants: e.Variants, OwnerOverrides: e.Strategy.OwnerOverrides}, ps, iteration)
+}
+
+func loopVariantsOf(base labLoopBase, proposed []labProposal, iteration int64) ([]json.RawMessage, error) {
+	out := append([]json.RawMessage{}, base.Variants...)
 	used := map[string]bool{}
 	for _, v := range out {
-		used[astr(mapOf(v)["label"])] = true
+		existing, _ := asT[labVariant](v)
+		used[existing.Label] = true
 	}
-	strategy := mapOf(exp["strategy"])
-	for i, x := range proposed {
-		v := mapOf(x)
-		label := astr(v["label"])
-		if !labLabel.MatchString(label) {
+	for i, v := range proposed {
+		if !labLabel.MatchString(v.Label) {
 			return nil, fail(400, "Invalid strategy variant label")
 		}
-		ov := mapOf(v["overrides"])
-		if v["overrides"] == nil {
-			ov = doc{}
+		ov := map[string]json.RawMessage{}
+		if rawValue(v.Overrides) != nil {
+			m, ok := rawObject(v.Overrides)
+			if !ok {
+				return nil, fail(400, "Invalid strategy overrides")
+			}
+			ov = m
 		}
-		if ov == nil || !keysOnly(ov, labVariantKeys...) {
+		if !rawKeysOnly(ov, labVariantKeys...) {
 			return nil, fail(400, "Invalid strategy overrides")
 		}
-		if strategy["ownerOverrides"] != true && (ov["host"] != nil || ov["account"] != nil || ov["profile"] != nil) {
+		if !base.OwnerOverrides && (rawSet(ov, "host") || rawSet(ov, "account") || rawSet(ov, "profile")) {
 			return nil, fail(403, "Only the owner overrides host, account or profile")
 		}
 		if args, has := ov["arguments"]; has {
-			m := mapOf(args)
-			if m == nil {
+			m, ok := rawObject(args)
+			if !ok {
 				return nil, fail(400, "arguments must map step IDs to objects")
 			}
 			for _, arg := range m {
-				if mapOf(arg) == nil {
+				if _, ok := rawObject(arg); !ok {
 					return nil, fail(400, "arguments must map step IDs to objects")
 				}
 			}
 		}
 		if bands, has := ov["bands"]; has {
-			if _, _, err := bandsOf(bands); err != nil {
+			if _, _, err := bandsOf(rawValue(bands)); err != nil {
 				return nil, err
 			}
 		}
-		if w := ov["web_route"]; w != nil && w != "connections" && w != "builtin" {
+		if w := rawValue(ov["web_route"]); w != nil && w != "connections" && w != "builtin" {
 			return nil, fail(400, "Invalid strategy web_route")
 		}
-		id := fmt.Sprintf("i%d %s", iteration, sha256hex(jsonBytes([]any{i, label, ov}))[:16])
+		id := fmt.Sprintf("i%d %s", iteration, sha256hex(jsonBytes([]any{i, v.Label, ov}))[:16])
 		for used[id] {
 			id += "x"
 		}
 		used[id] = true
-		out = append(out, doc{"label": id, "proposalLabel": label, "iteration": iteration, "overrides": ov, "config_ref": labConfigDigest(astr(exp["pipeline_id"]), ov)})
+		out = append(out, jsonBytes(labLoopVariant{Label: id, ProposalLabel: v.Label, Iteration: iteration, Overrides: ov, ConfigRef: labConfigDigestOf(base.PipelineID, ov)}))
 	}
 	return out, nil
 }
@@ -216,7 +335,8 @@ type labLoopState struct {
 type labLoopGenerator struct {
 	Kind   string `json:"kind"`
 	Params struct {
-		KeepBest bool `json:"keep_best"`
+		KeepBest      bool            `json:"keep_best"`
+		StepOverrides json.RawMessage `json:"step_overrides"`
 	} `json:"params"`
 }
 
@@ -359,20 +479,16 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 			}
 		}
 		inputs = append(inputs, labStrategyInput{Path: "snapshot.json", Text: string(jsonBytes(snapshot))})
-		params := mapOf(mapOf(exp["strategy"])["generator"])["params"]
-		ov := mapOf(mapOf(params)["step_overrides"])
-		if ov == nil {
-			ov = doc{}
-		}
-		if !keysOnly(ov, labOverrides...) {
+		ov := rawObjectOr(generator.Params.StepOverrides)
+		if !rawKeysOnly(ov, labOverrides...) {
 			return halt("strategy:invalid-overrides")
 		}
-		if !s.OwnerOverrides && (ov["host"] != nil || ov["account"] != nil || ov["profile"] != nil) {
+		if !s.OwnerOverrides && (rawSet(ov, "host") || rawSet(ov, "account") || rawSet(ov, "profile")) {
 			return halt("strategy:unauthorized-overrides")
 		}
 		next := iteration
 		id, err := expInsertLabRun(q, exp, "loop:"+sha256hex(jsonBytes([]any{exp["id"], iteration})), pipeline+".json", labStrategyExample(inputs),
-			&labVariant{Overrides: ov, ConfigRef: sha256hex(jsonBytes(exp["strategy"]))}, labRunExtra{LoopIteration: &next})
+			&labVariant{Overrides: rawValue(jsonBytes(ov)), ConfigRef: sha256hex(jsonBytes(exp["strategy"]))}, labRunExtra{LoopIteration: &next})
 		if err != nil {
 			return err
 		}
@@ -400,18 +516,23 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 	if out.Action != "next" || len(out.Variants) == 0 {
 		return halt("strategy:invalid-output")
 	}
-	proposed := out.Variants
+	proposed := []labProposal{}
+	for _, x := range out.Variants {
+		proposed = append(proposed, labProposalOf(x))
+	}
 	if generator.Params.KeepBest {
 		best := loopBestVariant(exp, trials, scores)
 		if best == nil {
 			return halt("strategy:best-unavailable")
 		}
-		for _, x := range proposed {
-			v := mapOf(x)
-			v["overrides"] = loopMergeOverrides(mapOf(best.Overrides), mapOf(v["overrides"]))
+		for i, v := range proposed {
+			proposed[i].Overrides = jsonBytes(loopMergeOverrides(rawObjectOr(rawOf(best.Overrides)), rawObjectOr(v.Overrides)))
 		}
 	}
-	variants, err := loopVariants(exp, proposed, iteration+1)
+	e2, _ := asT[struct {
+		Variants []json.RawMessage `json:"variants"`
+	}](exp)
+	variants, err := loopVariantsOf(labLoopBase{PipelineID: e.PipelineID, Variants: e2.Variants, OwnerOverrides: s.OwnerOverrides}, proposed, iteration+1)
 	if err != nil {
 		return halt("strategy:" + err.Error())
 	}
@@ -454,30 +575,25 @@ func loopBestVariant(exp doc, trials, scores []doc) *labVariant {
 	return best
 }
 
-func loopMergeOverrides(base, extra doc) doc {
-	out := doc{}
+// loopMergeOverrides: extra over base; arguments merge per step and argument.
+func loopMergeOverrides(base, extra map[string]json.RawMessage) map[string]json.RawMessage {
+	out := map[string]json.RawMessage{}
 	for k, v := range base {
 		out[k] = v
 	}
 	for k, v := range extra {
 		out[k] = v
 	}
-	if extra["arguments"] != nil {
-		steps := doc{}
-		for k, v := range mapOf(base["arguments"]) {
-			steps[k] = v
-		}
-		for k, v := range mapOf(extra["arguments"]) {
-			args := doc{}
-			for n, a := range mapOf(steps[k]) {
+	if rawSet(extra, "arguments") {
+		steps := rawObjectOr(base["arguments"])
+		for k, v := range rawObjectOr(extra["arguments"]) {
+			args := rawObjectOr(steps[k])
+			for n, a := range rawObjectOr(v) {
 				args[n] = a
 			}
-			for n, a := range mapOf(v) {
-				args[n] = a
-			}
-			steps[k] = args
+			steps[k] = rawOf(args)
 		}
-		out["arguments"] = steps
+		out["arguments"] = rawOf(steps)
 	}
 	return out
 }

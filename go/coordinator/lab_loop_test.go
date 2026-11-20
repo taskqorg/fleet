@@ -54,10 +54,11 @@ func TestLoopExplicitStopsAndKeepBest(t *testing.T) {
 	if _, err := loopStrategy(&Request{}, raw); err == nil {
 		t.Fatal("zero k accepted")
 	}
-	base := doc{"model": "original", "arguments": doc{"gen": doc{"ai_model": "mesh", "target_polycount": 3000}}}
-	got := loopMergeOverrides(base, doc{"arguments": doc{"gen": doc{"target_polycount": 2400}}})
+	base := rawObjectOr(rawOf(doc{"model": "original", "arguments": doc{"gen": doc{"ai_model": "mesh", "target_polycount": 3000}}}))
+	merged := loopMergeOverrides(base, rawObjectOr(rawOf(doc{"arguments": doc{"gen": doc{"target_polycount": 2400}}})))
+	got, before := mapOf(rawValue(jsonBytes(merged))), mapOf(rawValue(jsonBytes(base)))
 	args := mapOf(mapOf(got["arguments"])["gen"])
-	if got["model"] != "original" || args["ai_model"] != "mesh" || args["target_polycount"] != 2400 || mapOf(mapOf(base["arguments"])["gen"])["target_polycount"] != 3000 {
+	if got["model"] != "original" || args["ai_model"] != "mesh" || args["target_polycount"] != 2400.0 || mapOf(mapOf(before["arguments"])["gen"])["target_polycount"] != 3000.0 {
 		t.Fatal(got)
 	}
 }
