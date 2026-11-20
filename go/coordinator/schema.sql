@@ -3024,6 +3024,8 @@ FROM document d WHERE d.kind = 'session-transition' AND EXISTS (SELECT 1 FROM se
 INSERT INTO worker_done(id, execution_id, project_id, payload, seq, updated_at, tombstoned_at)
 SELECT d.id, (SELECT e.id FROM execution e WHERE e.id = d.execution_ref), d.project_id, d.data - '{id,executionId,projectId}'::text[], d.seq, d.updated_at, d.tombstoned_at
 FROM document d WHERE d.kind = 'worker-done';
+-- The copies' deferred foreign keys are checked now: a pending check would block the ALTER TABLEs below.
+SET CONSTRAINTS ALL IMMEDIATE;
 ALTER TABLE document DISABLE TRIGGER document_change;
 DELETE FROM document WHERE kind IN ('session', 'message', 'event', 'event-delta', 'queued-message', 'command', 'handoff', 'session-fork', 'session-transition', 'worker-done');
 ALTER TABLE document ENABLE TRIGGER document_change;
