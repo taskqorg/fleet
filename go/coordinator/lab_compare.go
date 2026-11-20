@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -34,6 +36,20 @@ type labExampleUseCase struct {
 	} `json:"example"`
 }
 
+// labCatalogue: the catalogue definition's fields method comparison reads; overrides stay as stored.
+type labCatalogue struct {
+	Capability string               `json:"capability"`
+	Methods    []labCatalogueMethod `json:"methods"`
+}
+
+type labCatalogueMethod struct {
+	ID        string          `json:"id"`
+	Scope     string          `json:"scope"`
+	Pipeline  string          `json:"pipeline"`
+	ConfigRef string          `json:"configRef"`
+	Overrides json.RawMessage `json:"overrides"`
+}
+
 // labCreated: the created experiment's id and stored variants, each kept whole.
 type labCreated struct {
 	ID       string                       `json:"id"`
@@ -57,20 +73,23 @@ func labCompareMethods(q *Request, r *contract.LabCompareMethodsRequest) (contra
 	if head == nil {
 		return out, fail(404, "No catalogue")
 	}
-	var c *contract.CatalogueDefinition
-	if json.Unmarshal(head.Content, &c) != nil || c == nil {
+	var c labCatalogue
+	var typeErr *json.UnmarshalTypeError
+	if t := bytes.TrimSpace(head.Content); len(t) == 0 || t[0] != '{' {
+		return out, fail(500, "Invalid catalogue definition")
+	} else if err := json.Unmarshal(t, &c); err != nil && !errors.As(err, &typeErr) {
 		return out, fail(500, "Invalid catalogue definition")
 	}
 	if r.Capability != c.Capability {
 		return out, fail(400, "Unknown capability")
 	}
-	available := map[string]contract.CatalogueMethod{}
+	available := map[string]labCatalogueMethod{}
 	for _, m := range c.Methods {
 		if m.Scope == "shared" || m.Scope == project {
-			available[m.Id] = m
+			available[m.ID] = m
 		}
 	}
-	methods := []contract.CatalogueMethod{}
+	methods := []labCatalogueMethod{}
 	selected := map[string]bool{}
 	for _, id := range r.Methods {
 		if selected[id] {
@@ -101,7 +120,7 @@ func labCompareMethods(q *Request, r *contract.LabCompareMethodsRequest) (contra
 		return out, fail(400, "Choose a baseline from the chosen methods")
 	}
 	for i, m := range methods {
-		if m.Id == baseline {
+		if m.ID == baseline {
 			methods[0], methods[i] = methods[i], methods[0]
 			break
 		}
@@ -170,11 +189,11 @@ func labCompareMethods(q *Request, r *contract.LabCompareMethodsRequest) (contra
 	}
 	variants := []labCompareVariant{}
 	for _, m := range methods {
-		variants = append(variants, labCompareVariant{Label: m.Id, PipelineID: strings.TrimSuffix(m.Pipeline, ".json"), Overrides: m.Overrides})
+		variants = append(variants, labCompareVariant{Label: m.ID, PipelineID: strings.TrimSuffix(m.Pipeline, ".json"), Overrides: m.Overrides})
 	}
 	kind, pipeline := "ab", strings.TrimSuffix(methods[0].Pipeline, ".json")
-	// The same create an lab_experiment_create request makes.
-	created, err := expCreate(q, docOf(contract.LabExperimentCreateRequest{Kind: &kind, ProjectId: &project, PipelineId: &pipeline, Variants: jsonBytes(variants),
+	// The create a lab_experiment_create request makes, with the catalogue's numbers as stored.
+	created, err := expCreate(q, labCreateDoc(contract.LabExperimentCreateRequest{Kind: &kind, ProjectId: &project, PipelineId: &pipeline, Variants: jsonBytes(variants),
 		Examples: jsonBytes(examples), Evaluators: jsonBytes(evaluators), PrimaryEvaluator: jsonBytes(evaluators[0].name())}))
 	if err != nil {
 		return out, err
@@ -183,12 +202,12 @@ func labCompareMethods(q *Request, r *contract.LabCompareMethodsRequest) (contra
 	ref := contract.DefinitionRef{Kind: contract.DefinitionKindCatalogue, Id: "catalogue", Revision: head.Head, ContentSha: head.ContentSha}
 	for i, snapshot := range exp.Variants {
 		m := methods[i]
-		identity := deref(m.ConfigRef)
+		identity := m.ConfigRef
 		if identity == "" {
 			v, _ := asT[labVariant](snapshot)
 			identity = labConfigDigestOf(v.PipelineID, v.Overrides)
 		}
-		snapshot["catalogueConfigRef"], snapshot["methodId"], snapshot["catalogueRef"] = jsonBytes(identity), jsonBytes(m.Id), jsonBytes(ref)
+		snapshot["catalogueConfigRef"], snapshot["methodId"], snapshot["catalogueRef"] = jsonBytes(identity), jsonBytes(m.ID), jsonBytes(ref)
 	}
 	if err := q.db().LabVariantsSet(q.ctx(), db.LabVariantsSetParams{ID: exp.ID, Variants: jsonBytes(exp.Variants)}); err != nil {
 		return out, err

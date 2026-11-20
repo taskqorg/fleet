@@ -628,8 +628,7 @@ func runChecks(ctx context.Context, checks []any, files []labFile) (doc, error) 
 		killGroup(cmd)
 		assessment, captureErr := captureLabAssessment(dir)
 		if assessment != nil {
-			assessment.CheckID = astr(c["id"])
-			captured = append(captured, *assessment)
+			captured = append(captured, doc{"checkId": c["id"], "schemaId": assessment.SchemaID, "bytes": assessment.Bytes, "sha256": assessment.Sha256})
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err() // capture precedes cleanup; cancelled work remains unscored
@@ -1382,6 +1381,11 @@ func (e labRunExtra) doc() doc {
 		d["loopStrategy"] = doc{"iteration": *e.LoopIteration}
 	}
 	return d
+}
+
+// labCreateDoc: a create request as the map expCreate reads, numbers kept exact (json.Number) as in a stored definition.
+func labCreateDoc(r contract.LabExperimentCreateRequest) doc {
+	return mapOf(decodeNumbers(string(jsonBytes(r))))
 }
 
 // labJudgeExample: a pairwise judge run's example: the prompt and the candidate trials.
