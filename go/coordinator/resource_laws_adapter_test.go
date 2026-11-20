@@ -3,6 +3,10 @@ package main
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"fleet/coordinator/db"
 )
 
 // The law harness reaches the engine only through these functions, so the laws stay the same while the engine
@@ -24,6 +28,11 @@ func lawAttach(e *lawEnv, a *App) {
 	k.cohort = 2 + int(e.seed%7)
 	kitDefault.Store(a, k)
 	e.t.Cleanup(func() { kitDefault.Delete(a) })
+}
+
+// lawSource reads one execution's source snapshot as a replacement reads it (ResourceSource), in tx.
+func lawSource(ctx context.Context, tx pgx.Tx, id string) ([]byte, error) {
+	return db.New(tx).ResourceSource(ctx, id)
 }
 
 // lawPass runs one processor pass of every queue.

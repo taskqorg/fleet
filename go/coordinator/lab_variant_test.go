@@ -24,8 +24,8 @@ func TestLoopVariantEvidenceWithHTMLPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exp["variants"] = variants
-	variant := mapOf(variants[0])
+	exp["variants"] = rawValue(jsonBytes(variants))
+	variant := mapOf(anys(exp["variants"])[0])
 	method := doc{"pipeline": "web.json", "overrides": overrides, "configRef": variant["config_ref"]}
 	if evidenceVariant(exp, method) == nil {
 		t.Fatal("loop-generated HTML configuration lost its Catalogue evidence after promotion")

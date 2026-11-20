@@ -1,66 +1,133 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 
 	"fleet/coordinator/db"
 )
 
-func loopStrategy(q *Request, raw any) (doc, error) {
-	s := mapOf(raw)
-	if s == nil || !keysOnly(s, "generator", "allocator", "max_iterations", "no_gain") {
+// A JSON object of a loop strategy or variant overrides, by key. Values are kept as rawOf writes them (keys sorted, no
+// HTML escaping), so a digest through canonical and a hash through jsonBytes see what they saw of the decoded object.
+//
+// rawOf: v as JSON, keys sorted and without HTML escaping (the form canonical gives a decoded value).
+func rawOf(v any) json.RawMessage {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.Encode(v)
+	return json.RawMessage(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
+}
+
+// labRawObject: raw as an object with each value in rawOf form; ok false when raw is not an object.
+func labRawObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	t := bytes.TrimSpace(raw)
+	if len(t) == 0 || t[0] != '{' {
+		return nil, false
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(t, &m) != nil {
+		return nil, false
+	}
+	for k, x := range m {
+		m[k] = rawOf(rawValue(x))
+	}
+	return m, true
+}
+
+// rawObjectOr: raw as an object, or an empty one when it is absent, null or not an object.
+func rawObjectOr(raw json.RawMessage) map[string]json.RawMessage {
+	if m, ok := labRawObject(raw); ok {
+		return m
+	}
+	return map[string]json.RawMessage{}
+}
+
+
+// rawSet: m has key k with a value other than null.
+func rawSet(m map[string]json.RawMessage, k string) bool {
+	return rawValue(m[k]) != nil
+}
+
+// rawArray: raw is a JSON array.
+func rawArray(raw json.RawMessage) bool {
+	t := bytes.TrimSpace(raw)
+	return len(t) > 0 && t[0] == '['
+}
+
+func rawKeysOnly(m map[string]json.RawMessage, allowed ...string) bool {
+	for k := range m {
+		if !slices.Contains(allowed, k) {
+			return false
+		}
+	}
+	return true
+}
+
+// loopStrategy validates a loop's strategy and returns it as stored, with the caller's owner-override authority.
+func loopStrategy(q *Request, raw any) (map[string]json.RawMessage, error) {
+	s, ok := labRawObject(rawOf(raw))
+	if !ok || !rawKeysOnly(s, "generator", "allocator", "max_iterations", "no_gain") {
 		return nil, fail(400, "Loop strategy requires generator, allocator and optional explicit stop rules")
 	}
-	g, a := mapOf(s["generator"]), mapOf(s["allocator"])
-	if g == nil || !keysOnly(g, "kind", "params") || mapOf(g["params"]) == nil || (g["kind"] != "list" && g["kind"] != "grid" && g["kind"] != "propose") {
+	g, okG := labRawObject(s["generator"])
+	params, okP := labRawObject(g["params"])
+	kind := rawValue(g["kind"])
+	if !okG || !rawKeysOnly(g, "kind", "params") || !okP || (kind != "list" && kind != "grid" && kind != "propose") {
 		return nil, fail(400, "Loop generator is list, grid or propose with params")
 	}
-	if a == nil || a["kind"] != "full" {
+	if a, ok := labRawObject(s["allocator"]); !ok || rawValue(a["kind"]) != "full" {
 		return nil, fail(400, "Loop allocator is full")
 	}
 	if v, has := s["max_iterations"]; has {
-		if n, ok := intOK(v); !ok || n < 1 {
+		if n, ok := intOK(rawValue(v)); !ok || n < 1 {
 			return nil, fail(400, "max_iterations must be positive")
 		}
 	}
 	if v, has := s["no_gain"]; has {
-		m := mapOf(v)
-		if n, ok := intOK(m["k"]); m == nil || !keysOnly(m, "k") || !ok || n < 1 {
+		m, ok := labRawObject(v)
+		if n, okK := intOK(rawValue(m["k"])); !ok || !rawKeysOnly(m, "k") || !okK || n < 1 {
 			return nil, fail(400, "no_gain requires explicit positive k")
 		}
 	}
 	// Persist the caller's existing owner-override authority; background reconciliation is not a new grant.
-	s["ownerOverrides"] = q.person == nil || fullAccess(q.person)
-	params := mapOf(g["params"])
-	if g["kind"] == "list" {
-		vs, ok := params["variants"].([]any)
-		if !ok {
+	owner := q.person == nil || fullAccess(q.person)
+	s["ownerOverrides"] = rawOf(owner)
+	base := labLoopBase{OwnerOverrides: owner}
+	if kind == "list" {
+		if !rawArray(params["variants"]) {
 			return nil, fail(400, "list params.variants must be an array")
 		}
-		if _, err := loopVariants(doc{"strategy": s}, vs, 1); err != nil {
+		var vs []labProposal
+		for _, x := range rawValue(params["variants"]).([]any) {
+			vs = append(vs, labProposalOf(x))
+		}
+		if _, err := loopVariantsOf(base, vs, 1); err != nil {
 			return nil, err
 		}
 	}
-	if g["kind"] == "grid" {
-		axes := mapOf(params["overrides"])
-		if axes == nil {
+	if kind == "grid" {
+		axes, ok := labRawObject(params["overrides"])
+		if !ok {
 			return nil, fail(400, "grid params.overrides must be an object")
 		}
-		if !keysOnly(axes, labVariantKeys...) {
+		if !rawKeysOnly(axes, labVariantKeys...) {
 			return nil, fail(400, "Invalid grid override key")
 		}
 		for _, axis := range axes {
-			if _, ok := axis.([]any); !ok {
+			if !rawArray(axis) {
 				return nil, fail(400, "Grid axes must be arrays")
 			}
 		}
 	}
 	if ov, has := params["step_overrides"]; has {
-		if mapOf(ov) == nil || !keysOnly(mapOf(ov), labOverrides...) {
+		if m, ok := labRawObject(ov); !ok || !rawKeysOnly(m, labOverrides...) {
 			return nil, fail(400, "Invalid strategy step_overrides")
 		}
-		if _, err := loopVariants(doc{"strategy": s}, []any{doc{"label": "strategy", "overrides": ov}}, 1); err != nil {
+		if _, err := loopVariantsOf(base, []labProposal{{Label: "strategy", Overrides: ov}}, 1); err != nil {
 			return nil, err
 		}
 	}
@@ -68,88 +135,133 @@ func loopStrategy(q *Request, raw any) (doc, error) {
 }
 
 func loopIteration(exp doc) int64 {
+	e, _ := asT[labExp](exp)
 	n := int64(0)
-	for _, v := range anys(exp["variants"]) {
-		i, _ := intOK(mapOf(v)["iteration"])
-		if i > n {
-			n = i
+	for _, v := range e.Variants {
+		if v.Iteration > n {
+			n = v.Iteration
 		}
 	}
 	return n
 }
 
-func loopVariants(exp doc, proposed []any, iteration int64) ([]any, error) {
-	out := append([]any{}, anys(exp["variants"])...)
+// labProposal: a proposed loop variant (a strategy's list, a strategy run's output).
+type labProposal struct {
+	Label     string          `json:"label"`
+	Overrides json.RawMessage `json:"overrides"`
+}
+
+func labProposalOf(x any) labProposal {
+	p, _ := asT[labProposal](x)
+	return p
+}
+
+// labLoopBase: what new loop variants are added to: the experiment's pipeline, its variants and the owner authority.
+type labLoopBase struct {
+	PipelineID     string
+	Variants       []json.RawMessage
+	OwnerOverrides bool
+}
+
+// labLoopVariant: a loop-generated variant as stored in experiment.variants; keys in canonical order.
+type labLoopVariant struct {
+	ConfigRef     string                     `json:"config_ref"`
+	Iteration     int64                      `json:"iteration"`
+	Label         string                     `json:"label"`
+	Overrides     map[string]json.RawMessage `json:"overrides"`
+	ProposalLabel string                     `json:"proposalLabel"`
+}
+
+// loopVariants: the experiment's variants and the proposed ones, validated and labelled for iteration.
+func loopVariants(exp doc, proposed []any, iteration int64) ([]json.RawMessage, error) {
+	e, _ := asT[struct {
+		PipelineID string            `json:"pipeline_id"`
+		Variants   []json.RawMessage `json:"variants"`
+		Strategy   struct {
+			OwnerOverrides bool `json:"ownerOverrides"`
+		} `json:"strategy"`
+	}](exp)
+	ps := []labProposal{}
+	for _, x := range proposed {
+		ps = append(ps, labProposalOf(x))
+	}
+	return loopVariantsOf(labLoopBase{PipelineID: e.PipelineID, Variants: e.Variants, OwnerOverrides: e.Strategy.OwnerOverrides}, ps, iteration)
+}
+
+func loopVariantsOf(base labLoopBase, proposed []labProposal, iteration int64) ([]json.RawMessage, error) {
+	out := append([]json.RawMessage{}, base.Variants...)
 	used := map[string]bool{}
 	for _, v := range out {
-		used[astr(mapOf(v)["label"])] = true
+		existing, _ := asT[labVariant](v)
+		used[existing.Label] = true
 	}
-	strategy := mapOf(exp["strategy"])
-	for i, x := range proposed {
-		v := mapOf(x)
-		label := astr(v["label"])
-		if !labLabel.MatchString(label) {
+	for i, v := range proposed {
+		if !labLabel.MatchString(v.Label) {
 			return nil, fail(400, "Invalid strategy variant label")
 		}
-		ov := mapOf(v["overrides"])
-		if v["overrides"] == nil {
-			ov = doc{}
+		ov := map[string]json.RawMessage{}
+		if rawValue(v.Overrides) != nil {
+			m, ok := labRawObject(v.Overrides)
+			if !ok {
+				return nil, fail(400, "Invalid strategy overrides")
+			}
+			ov = m
 		}
-		if ov == nil || !keysOnly(ov, labVariantKeys...) {
+		if !rawKeysOnly(ov, labVariantKeys...) {
 			return nil, fail(400, "Invalid strategy overrides")
 		}
-		if strategy["ownerOverrides"] != true && (ov["host"] != nil || ov["account"] != nil || ov["profile"] != nil) {
+		if !base.OwnerOverrides && (rawSet(ov, "host") || rawSet(ov, "account") || rawSet(ov, "profile")) {
 			return nil, fail(403, "Only the owner overrides host, account or profile")
 		}
 		if args, has := ov["arguments"]; has {
-			m := mapOf(args)
-			if m == nil {
+			m, ok := labRawObject(args)
+			if !ok {
 				return nil, fail(400, "arguments must map step IDs to objects")
 			}
 			for _, arg := range m {
-				if mapOf(arg) == nil {
+				if _, ok := labRawObject(arg); !ok {
 					return nil, fail(400, "arguments must map step IDs to objects")
 				}
 			}
 		}
 		if bands, has := ov["bands"]; has {
-			if _, _, err := bandsOf(bands); err != nil {
+			if _, _, err := bandsOf(rawValue(bands)); err != nil {
 				return nil, err
 			}
 		}
-		if w := ov["web_route"]; w != nil && w != "connections" && w != "builtin" {
+		if w := rawValue(ov["web_route"]); w != nil && w != "connections" && w != "builtin" {
 			return nil, fail(400, "Invalid strategy web_route")
 		}
-		id := fmt.Sprintf("i%d %s", iteration, sha256hex(jsonBytes([]any{i, label, ov}))[:16])
+		id := fmt.Sprintf("i%d %s", iteration, sha256hex(jsonBytes([]any{i, v.Label, ov}))[:16])
 		for used[id] {
 			id += "x"
 		}
 		used[id] = true
-		out = append(out, doc{"label": id, "proposalLabel": label, "iteration": iteration, "overrides": ov, "config_ref": labConfigDigest(astr(exp["pipeline_id"]), ov)})
+		out = append(out, jsonBytes(labLoopVariant{Label: id, ProposalLabel: v.Label, Iteration: iteration, Overrides: ov, ConfigRef: labConfigDigestOf(base.PipelineID, ov)}))
 	}
 	return out, nil
 }
 
 // no_gain compares tune means against the original baseline's repeat range; missing evidence is never zero.
 func loopNoGain(exp doc, trials, scores []doc, k int64) (bool, bool) {
-	variants := anys(exp["variants"])
-	if len(variants) == 0 {
+	e, _ := asT[labExp](exp)
+	if len(e.Variants) == 0 {
 		return false, false
 	}
-	baseline := astr(mapOf(variants[0])["label"])
+	baseline := e.Variants[0].Label
 	byVariant := map[string][]float64{}
 	byRepeat := map[string][]float64{}
 	for _, s := range scoredLatest(exp, trials, scores, func(s doc) bool { return s["evaluator"] == exp["primary_evaluator"] }) {
 		if s.split != "tune" {
 			continue
 		}
-		if s.score["form"] == "typed" && mapOf(s.score["value"])["answer"] == "unscored" {
+		if f, _ := asT[labScoreForm](s.score); f.unscored() {
 			continue
 		}
 		value := scoreNumber(s.score)
 		byVariant[s.variant] = append(byVariant[s.variant], value)
 		if s.variant == baseline {
-			r := fmt.Sprint(mapOf(s.trial["cell"])["repeat"])
+			r := fmt.Sprint(labRunHeadOf(s.trial).Cell.Repeat)
 			byRepeat[r] = append(byRepeat[r], value)
 		}
 	}
@@ -160,13 +272,7 @@ func loopNoGain(exp doc, trials, scores []doc, k int64) (bool, bool) {
 		}
 		return sum / float64(len(xs))
 	}
-	repeats, _ := intOK(exp["repeats"])
-	tune := 0
-	for _, p := range anys(exp["examples"]) {
-		if mapOf(p)["split"] == "tune" {
-			tune++
-		}
-	}
+	repeats, tune := e.Repeats, e.tune()
 	if tune == 0 || int64(len(byRepeat)) != repeats {
 		return false, false
 	}
@@ -183,13 +289,11 @@ func loopNoGain(exp doc, trials, scores []doc, k int64) (bool, bool) {
 	streak := int64(0)
 	for iteration := int64(0); iteration <= loopIteration(exp); iteration++ {
 		best := math.Inf(-1)
-		for _, x := range variants {
-			v := mapOf(x)
-			i, _ := intOK(v["iteration"])
-			if i != iteration {
+		for _, v := range e.Variants {
+			if v.Iteration != iteration {
 				continue
 			}
-			values := byVariant[astr(v["label"])]
+			values := byVariant[v.Label]
 			if int64(len(values)) != int64(tune)*repeats {
 				return false, false
 			}
@@ -207,26 +311,106 @@ func loopNoGain(exp doc, trials, scores []doc, k int64) (bool, bool) {
 	return streak >= k, true
 }
 
+// labLoopState: the fields of a loop experiment's stored strategy (loopStrategy) that its advance reads; generator and
+// allocator stay whole for the strategy run's snapshot.
+type labLoopState struct {
+	Generator     json.RawMessage `json:"generator"`
+	Allocator     json.RawMessage `json:"allocator"`
+	MaxIterations *int64          `json:"max_iterations"`
+	NoGain        *struct {
+		K int64 `json:"k"`
+	} `json:"no_gain"`
+	OwnerOverrides bool `json:"ownerOverrides"`
+}
+
+// labLoopGenerator: the fields of a strategy's generator the advance reads.
+type labLoopGenerator struct {
+	Kind   string `json:"kind"`
+	Params struct {
+		KeepBest      bool            `json:"keep_best"`
+		StepOverrides json.RawMessage `json:"step_overrides"`
+	} `json:"params"`
+}
+
+// labLoopRun: the fields of a Lab run the loop advance reads (strategy runs and the trials' steps).
+type labLoopRun struct {
+	ID           string `json:"id"`
+	LoopStrategy *struct {
+		Iteration *int64 `json:"iteration"`
+	} `json:"loopStrategy"`
+	Steps []struct {
+		ID          string `json:"id"`
+		ExecutionID string `json:"executionId"`
+		State       any    `json:"state"`
+	} `json:"steps"`
+}
+
+// labLoopOutput: the fields of a strategy run's output the advance reads.
+type labLoopOutput struct {
+	Action   string          `json:"action"`
+	Reason   json.RawMessage `json:"reason"`
+	Variants []any           `json:"variants"`
+}
+
+// labTranscript: one losing trial step's events, as the propose strategy reads it; keys in canonical order.
+type labTranscript struct {
+	Available   bool   `json:"available"`
+	Error       string `json:"error,omitempty"`
+	Events      any    `json:"events"`
+	ExecutionID string `json:"executionId"`
+	State       any    `json:"state"`
+	TrialID     string `json:"trialId"`
+}
+
+// labLosing: a losing transcript's place in the strategy run's inputs; keys in canonical order.
+type labLosing struct {
+	Available bool   `json:"available"`
+	Path      string `json:"path"`
+	Step      string `json:"step"`
+	TrialID   string `json:"trialId"`
+}
+
+// labStrategyInput: a file of the strategy run's example.
+type labStrategyInput struct {
+	Path string `json:"path"`
+	Text string `json:"text"`
+}
+
+// labLoopSnapshot: what a strategy run reads of its experiment (snapshot.json); keys in canonical order.
+type labLoopSnapshot struct {
+	Allocator         json.RawMessage `json:"allocator"`
+	Budgets           any             `json:"budgets"`
+	ExperimentID      any             `json:"experimentId"`
+	Generator         json.RawMessage `json:"generator"`
+	Iteration         int64           `json:"iteration"`
+	LosingTranscripts []labLosing     `json:"losingTranscripts"`
+	PrimaryEvaluator  any             `json:"primaryEvaluator"`
+	Scores            []any           `json:"scores"`
+	Spend             doc             `json:"spend"`
+	Variants          any             `json:"variants"`
+}
+
 func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, launched *[]string) error {
-	s := mapOf(exp["strategy"])
+	e, _ := asT[labExp](exp)
+	s, _ := asT[labLoopState](exp["strategy"])
+	generator, _ := asT[labLoopGenerator](s.Generator)
 	iteration := loopIteration(exp)
 	stop := func(reason string) error {
-		_, err := experimentTransition(q, astr(exp["id"]), experimentEvent{To: "done", From: []string{"running"}, StopReason: &reason})
+		_, err := experimentTransition(q, e.ID, experimentEvent{To: "done", From: []string{"running"}, StopReason: &reason})
 		return err
 	}
 	halt := func(reason string) error {
-		_, err := experimentTransition(q, astr(exp["id"]), experimentEvent{To: "stopped", From: []string{"running"}, StopReason: &reason})
+		_, err := experimentTransition(q, e.ID, experimentEvent{To: "stopped", From: []string{"running"}, StopReason: &reason})
 		return err
 	}
-	if n, ok := intOK(s["max_iterations"]); ok && iteration+1 >= n {
+	if s.MaxIterations != nil && iteration+1 >= *s.MaxIterations {
 		return stop("max_iterations")
 	}
 	if !loopPrimaryComplete(exp, trials, scores) {
 		return halt("primary-score-unavailable")
 	}
-	if ng := mapOf(s["no_gain"]); ng != nil {
-		k, _ := intOK(ng["k"])
-		done, available := loopNoGain(exp, trials, scores, k)
+	if s.NoGain != nil {
+		done, available := loopNoGain(exp, trials, scores, s.NoGain.K)
 		if !available {
 			return halt("primary-score-unavailable")
 		}
@@ -236,22 +420,19 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 	}
 	var strategyRun doc
 	for _, r := range runs {
-		m := mapOf(r["loopStrategy"])
-		i, ok := intOK(m["iteration"])
-		if ok && i == iteration {
+		if st := labLoopRunOf(r).LoopStrategy; st != nil && st.Iteration != nil && *st.Iteration == iteration {
 			strategyRun = r
 		}
 	}
 	if strategyRun == nil {
-		generator := mapOf(s["generator"])
 		pipeline := "lab-strategy"
-		if generator["kind"] == "propose" {
+		if generator.Kind == "propose" {
 			pipeline = "lab-strategy-propose"
 		}
 		// Held-out results remain in history but never steer proposal generation.
 		tuneTrials := map[any]bool{}
 		for _, t := range trials {
-			pin := findPin(exp, mapOf(t["cell"])["example"])
+			pin := findPin(exp, labRunHeadOf(t).Cell.Example)
 			if pin["split"] == "tune" {
 				tuneTrials[t["id"]] = true
 			}
@@ -262,47 +443,44 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 				tuneScores = append(tuneScores, score)
 			}
 		}
-		snapshot := doc{"experimentId": exp["id"], "iteration": iteration, "variants": exp["variants"], "scores": tuneScores, "primaryEvaluator": exp["primary_evaluator"], "generator": generator, "allocator": s["allocator"], "spend": spend, "budgets": exp["budgets"]}
-		inputs := []any{}
-		losing := []any{}
-		if generator["kind"] == "propose" {
+		snapshot := labLoopSnapshot{ExperimentID: exp["id"], Iteration: iteration, Variants: exp["variants"], Scores: tuneScores, PrimaryEvaluator: exp["primary_evaluator"],
+			Generator: s.Generator, Allocator: s.Allocator, Spend: spend, Budgets: exp["budgets"], LosingTranscripts: []labLosing{}}
+		inputs := []labStrategyInput{}
+		if generator.Kind == "propose" {
 			best := loopBestVariant(exp, trials, scores)
 			order, latest := expLatest(trials)
 			for _, key := range order {
 				t := latest[key]
-				if !tuneTrials[t["id"]] || mapOf(t["cell"])["variant"] == best["label"] {
+				if !tuneTrials[t["id"]] || best != nil && labRunHeadOf(t).Cell.Variant == best.Label {
 					continue
 				}
-				for _, step := range anys(t["steps"]) {
-					st := mapOf(step)
-					id := astr(st["executionId"])
-					if id == "" {
+				run := labLoopRunOf(t)
+				for _, st := range run.Steps {
+					if st.ExecutionID == "" {
 						continue
 					}
-					events, err := executionEventsOf(q, id)
-					path := "history/" + astr(t["id"]) + "/" + astr(st["id"]) + ".json"
-					record := doc{"trialId": t["id"], "executionId": id, "state": st["state"], "events": events, "available": err == nil}
+					events, err := executionEventsOf(q, st.ExecutionID)
+					path := "history/" + run.ID + "/" + st.ID + ".json"
+					record := labTranscript{TrialID: run.ID, ExecutionID: st.ExecutionID, State: st.State, Events: events, Available: err == nil}
 					if err != nil {
-						record["error"] = err.Error()
+						record.Error = err.Error()
 					}
-					inputs = append(inputs, doc{"path": path, "text": string(jsonBytes(record))})
-					losing = append(losing, doc{"trialId": t["id"], "step": st["id"], "path": path, "available": err == nil})
+					inputs = append(inputs, labStrategyInput{Path: path, Text: string(jsonBytes(record))})
+					snapshot.LosingTranscripts = append(snapshot.LosingTranscripts, labLosing{TrialID: run.ID, Step: st.ID, Path: path, Available: err == nil})
 				}
 			}
 		}
-		snapshot["losingTranscripts"] = losing
-		inputs = append(inputs, doc{"path": "snapshot.json", "text": string(jsonBytes(snapshot))})
-		ov := mapOf(mapOf(generator["params"])["step_overrides"])
-		if ov == nil {
-			ov = doc{}
-		}
-		if !keysOnly(ov, labOverrides...) {
+		inputs = append(inputs, labStrategyInput{Path: "snapshot.json", Text: string(jsonBytes(snapshot))})
+		ov := rawObjectOr(generator.Params.StepOverrides)
+		if !rawKeysOnly(ov, labOverrides...) {
 			return halt("strategy:invalid-overrides")
 		}
-		if s["ownerOverrides"] != true && (ov["host"] != nil || ov["account"] != nil || ov["profile"] != nil) {
+		if !s.OwnerOverrides && (rawSet(ov, "host") || rawSet(ov, "account") || rawSet(ov, "profile")) {
 			return halt("strategy:unauthorized-overrides")
 		}
-		id, err := expInsertRun(q, exp, "loop:"+sha256hex(jsonBytes([]any{exp["id"], iteration})), pipeline+".json", doc{"inputs": inputs}, doc{"overrides": ov, "config_ref": sha256hex(jsonBytes(s))}, doc{"loopStrategy": doc{"iteration": iteration}})
+		next := iteration
+		id, err := expInsertLabRun(q, exp, "loop:"+sha256hex(jsonBytes([]any{exp["id"], iteration})), pipeline+".json", labStrategyExample(inputs),
+			&labVariant{Overrides: rawValue(jsonBytes(ov)), ConfigRef: sha256hex(jsonBytes(exp["strategy"]))}, labRunExtra{LoopIteration: &next})
 		if err != nil {
 			return err
 		}
@@ -318,34 +496,47 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 		return halt("strategy:" + strOr(strategyRun["problem"]))
 	}
 	output := judgeOutput(strategyRun)
+	out, _ := asT[labLoopOutput](output)
 	if !keysOnly(output, "action", "variants", "reason") || output["reason"] == nil {
 		return halt("strategy:invalid-output")
 	}
-	if output["action"] == "stop" {
-		return stop("strategy:" + astr(output["reason"]))
+	if out.Action == "stop" {
+		var reason string
+		json.Unmarshal(out.Reason, &reason)
+		return stop("strategy:" + reason)
 	}
-	if output["action"] != "next" || len(anys(output["variants"])) == 0 {
+	if out.Action != "next" || len(out.Variants) == 0 {
 		return halt("strategy:invalid-output")
 	}
-	proposed := anys(output["variants"])
-	if mapOf(mapOf(s["generator"])["params"])["keep_best"] == true {
+	proposed := []labProposal{}
+	for _, x := range out.Variants {
+		proposed = append(proposed, labProposalOf(x))
+	}
+	if generator.Params.KeepBest {
 		best := loopBestVariant(exp, trials, scores)
 		if best == nil {
 			return halt("strategy:best-unavailable")
 		}
-		for _, x := range proposed {
-			v := mapOf(x)
-			v["overrides"] = loopMergeOverrides(mapOf(best["overrides"]), mapOf(v["overrides"]))
+		for i, v := range proposed {
+			proposed[i].Overrides = jsonBytes(loopMergeOverrides(rawObjectOr(rawOf(best.Overrides)), rawObjectOr(v.Overrides)))
 		}
 	}
-	variants, err := loopVariants(exp, proposed, iteration+1)
+	e2, _ := asT[struct {
+		Variants []json.RawMessage `json:"variants"`
+	}](exp)
+	variants, err := loopVariantsOf(labLoopBase{PipelineID: e.PipelineID, Variants: e2.Variants, OwnerOverrides: s.OwnerOverrides}, proposed, iteration+1)
 	if err != nil {
 		return halt("strategy:" + err.Error())
 	}
-	return q.db().LabVariantsSetRunning(q.ctx(), db.LabVariantsSetRunningParams{ID: astr(exp["id"]), Variants: jsonBytes(variants)})
+	return q.db().LabVariantsSetRunning(q.ctx(), db.LabVariantsSetRunningParams{ID: e.ID, Variants: jsonBytes(variants)})
 }
 
-func loopBestVariant(exp doc, trials, scores []doc) doc {
+func labLoopRunOf(run doc) labLoopRun {
+	r, _ := asT[labLoopRun](run)
+	return r
+}
+
+func loopBestVariant(exp doc, trials, scores []doc) *labVariant {
 	if !loopPrimaryComplete(exp, trials, scores) {
 		return nil
 	}
@@ -355,11 +546,11 @@ func loopBestVariant(exp doc, trials, scores []doc) doc {
 			values[s.variant] = append(values[s.variant], scoreNumber(s.score))
 		}
 	}
-	var best doc
+	e, _ := asT[labExp](exp)
+	var best *labVariant
 	max := math.Inf(-1)
-	for _, x := range anys(exp["variants"]) {
-		v := mapOf(x)
-		xs := values[astr(v["label"])]
+	for i, v := range e.Variants {
+		xs := values[v.Label]
 		if len(xs) == 0 {
 			continue
 		}
@@ -370,62 +561,52 @@ func loopBestVariant(exp doc, trials, scores []doc) doc {
 		mean := sum / float64(len(xs))
 		if mean > max {
 			max = mean
-			best = v
+			best = &e.Variants[i]
 		}
 	}
 	return best
 }
 
-func loopMergeOverrides(base, extra doc) doc {
-	out := doc{}
+// loopMergeOverrides: extra over base; arguments merge per step and argument.
+func loopMergeOverrides(base, extra map[string]json.RawMessage) map[string]json.RawMessage {
+	out := map[string]json.RawMessage{}
 	for k, v := range base {
 		out[k] = v
 	}
 	for k, v := range extra {
 		out[k] = v
 	}
-	if extra["arguments"] != nil {
-		steps := doc{}
-		for k, v := range mapOf(base["arguments"]) {
-			steps[k] = v
-		}
-		for k, v := range mapOf(extra["arguments"]) {
-			args := doc{}
-			for n, a := range mapOf(steps[k]) {
+	if rawSet(extra, "arguments") {
+		steps := rawObjectOr(base["arguments"])
+		for k, v := range rawObjectOr(extra["arguments"]) {
+			args := rawObjectOr(steps[k])
+			for n, a := range rawObjectOr(v) {
 				args[n] = a
 			}
-			for n, a := range mapOf(v) {
-				args[n] = a
-			}
-			steps[k] = args
+			steps[k] = rawOf(args)
 		}
-		out["arguments"] = steps
+		out["arguments"] = rawOf(steps)
 	}
 	return out
 }
 
 func loopPrimaryComplete(exp doc, trials, scores []doc) bool {
-	tune := 0
-	for _, p := range anys(exp["examples"]) {
-		if mapOf(p)["split"] == "tune" {
-			tune++
-		}
-	}
-	repeats, _ := intOK(exp["repeats"])
-	if tune == 0 || repeats < 1 {
+	e, _ := asT[labExp](exp)
+	tune := e.tune()
+	if tune == 0 || e.Repeats < 1 {
 		return false
 	}
 	counts := map[string]int{}
 	for _, s := range scoredLatest(exp, trials, scores, func(s doc) bool { return s["evaluator"] == exp["primary_evaluator"] }) {
-		if s.split != "tune" || s.score["form"] == "typed" && mapOf(s.score["value"])["answer"] == "unscored" {
+		if f, _ := asT[labScoreForm](s.score); s.split != "tune" || f.unscored() {
 			continue
 		}
 		counts[s.variant]++
 	}
-	for _, v := range anys(exp["variants"]) {
-		if int64(counts[astr(mapOf(v)["label"])]) != int64(tune)*repeats {
+	for _, v := range e.Variants {
+		if int64(counts[v.Label]) != int64(tune)*e.Repeats {
 			return false
 		}
 	}
-	return len(anys(exp["variants"])) > 0
+	return len(e.Variants) > 0
 }

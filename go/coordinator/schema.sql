@@ -3843,3 +3843,117 @@ CREATE OR REPLACE VIEW task_view WITH (security_invoker = true) AS
    ORDER BY deliverable DESC,version_execution_seq DESC,version_seq DESC,required DESC,seq DESC LIMIT 1) AS latest_result,
   (SELECT coalesce(jsonb_agg(jsonb_build_object('id', q.id, 'kind', q.kind, 'text', q.text, 'options', q.options) ORDER BY q.seq), '[]') FROM question q WHERE q.task_id = t.id AND q.state = 'open') AS open_questions
  FROM task t;
+-- migration 81: a pipeline run's plan out of its execution document (docs/designs/fleet-standard.md S1, stage 3c).
+-- pipeline_run holds the plan head of a run (the definition hash it plans and its write revision, guardPipelineWrite);
+-- pipeline_step one entry per definition step (activation, condition decision, execution reference, dispatch, frozen
+-- inputs, problem), keyed by the step's index. getRun assembles the run's plan from them. execution.data keeps the rest
+-- of the run document: the run fields other areas read there or through getRun until their own stages (pipelineId:
+-- runRows in projects.go, queries/lab.sql; projectId, requestId, pipeline, rerunOf, definition, steps' outputs: lab.go,
+-- lab_assessment.go, host_poll.go, tasks.go) and planVersion, the format marker a run without its plan is refused by.
+-- decision is a contract.PipelineConditionDecision and inputs a list of contract.PipelineInputBinding, each one value.
+-- A fresh selected entry's step record (its execution row <run>:step:<i>) keeps there its state, observation, times,
+-- index and traceparent (telemetry.go reads it) and the open remainder of its record; what only the pipeline code reads
+-- is the entry's: the native execution, resolved arguments, output and its artifact, job id and polls, usage, error,
+-- problem and the step's millisecond times (a JSON value column holds JSON null when the record had the key as null).
+CREATE TABLE pipeline_run (
+ run_id text PRIMARY KEY REFERENCES execution(id) ON DELETE CASCADE,
+ definition_sha256 text NOT NULL,
+ revision bigint NOT NULL CHECK (revision >= 0)
+);
+CREATE TABLE pipeline_step (
+ run_id text NOT NULL REFERENCES pipeline_run(run_id) ON DELETE CASCADE,
+ step_index integer NOT NULL CHECK (step_index >= 0),
+ step_id text NOT NULL,
+ definition_sha256 text NOT NULL,
+ activation text NOT NULL CHECK (activation IN ('pending','selected','not_selected','blocked')),
+ decision jsonb NULL,
+ ref_mode text NULL CHECK (ref_mode IN ('fresh','reused')),
+ ref_execution_id text NULL,
+ ref_source_run_id text NULL,
+ ref_source_step_id text NULL,
+ ref_source_step_index integer NULL,
+ ref_source_definition_sha256 text NULL,
+ ref_source_input_sha256 text NULL,
+ dispatch_phase text NULL CHECK (dispatch_phase IN ('reserved','prepared','handed_off','settled')),
+ dispatch_claim_id text NULL,
+ dispatch_owner_boot_id text NULL,
+ dispatch_handed_off_at_ms bigint NULL,
+ dispatch_authority_sha256 text NULL,
+ dispatch_native_execution_id text NULL,
+ dispatch_command_id text NULL,
+ dispatch_host_id text NULL,
+ dispatch_settled_at_ms bigint NULL,
+ inputs jsonb NULL CHECK (inputs IS NULL OR jsonb_typeof(inputs) = 'array'),
+ problem_code text NULL,
+ problem_message text NULL,
+ native_execution_id text NULL,
+ arguments jsonb NULL,
+ output jsonb NULL,
+ output_artifact_id text NULL,
+ job_id text NULL,
+ polls bigint NULL,
+ usage jsonb NULL,
+ error jsonb NULL,
+ step_problem text NULL,
+ started_at_ms bigint NULL,
+ finished_at_ms bigint NULL,
+ duration_ms bigint NULL,
+ PRIMARY KEY (run_id, step_index)
+);
+SELECT set_config('fleet.project_ids', '*', true);
+INSERT INTO pipeline_run(run_id,definition_sha256,revision)
+ SELECT id,coalesce(data->'plan'->>'definitionSha256',''),
+  CASE WHEN jsonb_typeof(data->'plan'->'revision')='number' THEN greatest((data->'plan'->>'revision')::numeric,0)::bigint ELSE 0 END
+ FROM execution WHERE kind='pipeline_run' AND jsonb_typeof(data->'plan'->'entries')='array';
+INSERT INTO pipeline_step(run_id,step_index,step_id,definition_sha256,activation,decision,ref_mode,ref_execution_id,ref_source_run_id,
+ ref_source_step_id,ref_source_step_index,ref_source_definition_sha256,ref_source_input_sha256,dispatch_phase,dispatch_claim_id,
+ dispatch_owner_boot_id,dispatch_handed_off_at_ms,dispatch_authority_sha256,dispatch_native_execution_id,dispatch_command_id,dispatch_host_id,
+ dispatch_settled_at_ms,inputs,problem_code,problem_message)
+ SELECT e.id,(x.ord-1)::integer,coalesce(x.v->>'id',''),coalesce(x.v->>'definitionSha256',''),coalesce(x.v->>'activation','pending'),
+  CASE WHEN jsonb_typeof(x.v->'decision')='object' THEN x.v->'decision' END,
+  x.v->'executionRef'->>'mode',x.v->'executionRef'->>'executionId',x.v->'executionRef'->>'sourceRunId',x.v->'executionRef'->>'sourceStepId',
+  (x.v->'executionRef'->>'sourceStepIndex')::numeric::integer,x.v->'executionRef'->>'sourceDefinitionSha256',x.v->'executionRef'->>'sourceInputSha256',
+  x.v->'dispatch'->>'phase',x.v->'dispatch'->>'claimId',x.v->'dispatch'->>'ownerBootId',(x.v->'dispatch'->>'handedOffAtMs')::numeric::bigint,
+  x.v->'dispatch'->>'authoritySha256',x.v->'dispatch'->>'nativeExecutionId',x.v->'dispatch'->>'commandId',x.v->'dispatch'->>'hostId',
+  (x.v->'dispatch'->>'settledAtMs')::numeric::bigint,
+  CASE WHEN jsonb_typeof(x.v->'inputs')='array' THEN x.v->'inputs' END,x.v->'problem'->>'code',x.v->'problem'->>'message'
+ FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.data->'plan'->'entries') WITH ORDINALITY AS x(v,ord)
+ WHERE e.kind='pipeline_run' AND jsonb_typeof(e.data->'plan'->'entries')='array';
+-- Moving keys out of execution.data is no change of an execution: its triggers (touch, change feed, resource capture)
+-- stay off for these writes.
+ALTER TABLE execution DISABLE TRIGGER USER;
+UPDATE execution SET data=data-'plan' WHERE id IN (SELECT run_id FROM pipeline_run);
+UPDATE pipeline_step p SET
+ native_execution_id=CASE WHEN jsonb_typeof(e.data->'executionId')='string' THEN e.data->>'executionId' END,
+ arguments=e.data->'arguments',output=e.data->'output',usage=e.data->'usage',error=e.data->'error',
+ output_artifact_id=CASE WHEN jsonb_typeof(e.data->'outputArtifactId')='string' THEN e.data->>'outputArtifactId' END,
+ job_id=CASE WHEN jsonb_typeof(e.data->'jobId')='string' THEN e.data->>'jobId' END,
+ polls=CASE WHEN jsonb_typeof(e.data->'polls')='number' AND (e.data->>'polls') ~ '^[0-9]+$' THEN (e.data->>'polls')::bigint END,
+ step_problem=CASE WHEN jsonb_typeof(e.data->'problem')='string' THEN e.data->>'problem' END,
+ started_at_ms=CASE WHEN jsonb_typeof(e.data->'startedAt')='number' AND (e.data->>'startedAt') ~ '^-?[0-9]+$' THEN (e.data->>'startedAt')::bigint END,
+ finished_at_ms=CASE WHEN jsonb_typeof(e.data->'finishedAt')='number' AND (e.data->>'finishedAt') ~ '^-?[0-9]+$' THEN (e.data->>'finishedAt')::bigint END,
+ duration_ms=CASE WHEN jsonb_typeof(e.data->'durationMs')='number' AND (e.data->>'durationMs') ~ '^-?[0-9]+$' THEN (e.data->>'durationMs')::bigint END
+FROM execution e WHERE e.kind='pipeline_step' AND p.run_id=e.parent_execution_id AND p.ref_mode='fresh' AND p.ref_execution_id=e.id;
+-- A finished step row without ended_at kept its end only in data.finishedAt (task executions read it there): it gets
+-- ended_at before the key moves.
+UPDATE execution e SET ended_at=to_timestamp(p.finished_at_ms/1000.0)
+FROM pipeline_step p WHERE e.kind='pipeline_step' AND p.run_id=e.parent_execution_id AND p.ref_mode='fresh' AND p.ref_execution_id=e.id
+ AND e.ended_at IS NULL AND p.finished_at_ms IS NOT NULL AND e.state IN ('succeeded','failed','cancelled');
+UPDATE execution e SET data=e.data-ARRAY['arguments','output','usage','error']
+ -(CASE WHEN p.native_execution_id IS NOT NULL THEN 'executionId' ELSE '' END)
+ -(CASE WHEN p.output_artifact_id IS NOT NULL THEN 'outputArtifactId' ELSE '' END)
+ -(CASE WHEN p.job_id IS NOT NULL THEN 'jobId' ELSE '' END)
+ -(CASE WHEN p.polls IS NOT NULL THEN 'polls' ELSE '' END)
+ -(CASE WHEN p.step_problem IS NOT NULL THEN 'problem' ELSE '' END)
+ -(CASE WHEN p.started_at_ms IS NOT NULL THEN 'startedAt' ELSE '' END)
+ -(CASE WHEN p.finished_at_ms IS NOT NULL THEN 'finishedAt' ELSE '' END)
+ -(CASE WHEN p.duration_ms IS NOT NULL THEN 'durationMs' ELSE '' END)
+FROM pipeline_step p WHERE e.kind='pipeline_step' AND p.run_id=e.parent_execution_id AND p.ref_mode='fresh' AND p.ref_execution_id=e.id;
+ALTER TABLE execution ENABLE TRIGGER USER;
+-- A run's plan is seen with its run: the rows follow execution's own policy.
+ALTER TABLE pipeline_run ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pipeline_run FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON pipeline_run USING (EXISTS (SELECT 1 FROM execution e WHERE e.id = run_id));
+ALTER TABLE pipeline_step ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pipeline_step FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON pipeline_step USING (EXISTS (SELECT 1 FROM execution e WHERE e.id = run_id));

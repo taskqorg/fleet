@@ -25,17 +25,22 @@ func TestPipelineConditionDecision(t *testing.T) {
 		{"unconditional", "selected", "unconditional", nil, nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			d := pipelineConditionDecision(c.rule, c.output, 123)
-			if d["outcome"] != c.outcome || d["reason"] != c.reason || d["evaluatedAtMs"] != int64(123) || !labSha.MatchString(astr(d["ruleSha256"])) {
+			when, err := parsePipelineWhen(c.rule)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := pipelineConditionDecision(when, c.output, 123)
+			if string(d.Outcome) != c.outcome || string(d.Reason) != c.reason || d.EvaluatedAtMs != 123 || !labSha.MatchString(d.RuleSha256) {
 				t.Fatalf("decision: %#v", d)
 			}
-			if c.name == "false" && d["observedBoolean"] != false {
+			if c.name == "false" && (d.ObservedBoolean == nil || *d.ObservedBoolean) {
 				t.Fatal("false observation was omitted or changed")
 			}
 		})
 	}
 	negative := doc{"kind": "boolean", "source": doc{"step": "route", "path": []any{"review"}}, "equals": false}
-	if d := pipelineConditionDecision(negative, doc{"review": false}, 1); d["outcome"] != "selected" {
+	when, _ := parsePipelineWhen(negative)
+	if d := pipelineConditionDecision(when, doc{"review": false}, 1); d.Outcome != "selected" {
 		t.Fatal("exact equality to false was treated as nonselection", d)
 	}
 }

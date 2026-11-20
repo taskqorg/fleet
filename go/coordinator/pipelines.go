@@ -280,7 +280,7 @@ func putRun(q *Request, run doc) error {
 	}
 	rest := doc{}
 	for k, v := range run {
-		if k != "steps" && k != "state" && k != "observation" {
+		if k != "steps" && k != "state" && k != "observation" && k != "plan" {
 			rest[k] = v
 		}
 	}
@@ -303,16 +303,18 @@ func putRun(q *Request, run doc) error {
 		return err
 	}
 	if !inserted {
-		if err := exec(q, `UPDATE execution SET observation=$2,project_id=$3,started_at=$4,ended_at=$5,data=$6::jsonb || CASE WHEN data ? 'projectAssessments' THEN jsonb_build_object('projectAssessments',data->'projectAssessments') ELSE '{}'::jsonb END,
-		  config_ref=CASE WHEN variant IS NULL THEN $7 ELSE config_ref END,experiment_id=coalesce(experiment_id,$8),variant=coalesce(variant,$9),
-		  task_id=coalesce(task_id,$10),session_id=coalesce(session_id,$11),directed_by=coalesce($12,directed_by),
-		  pipeline_id=coalesce($13,pipeline_id),pipeline_revision=coalesce($14,pipeline_revision),parent_execution_id=coalesce(parent_execution_id,$15) WHERE id=$1`,
-			run["id"], obs, projectOrNil(run["projectId"]), msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"], taskID, sessID, dir, pipeID, pipeRev, run["parentExecutionId"]); err != nil {
+		if err := q.db().PipelineRunUpdate(q.ctx(), db.PipelineRunUpdateParams{ID: astr(run["id"]), Observation: db.Observation(obs), ProjectID: strPtr(projectOrNil(run["projectId"])),
+			StartedAt: msTimePtr(run["startedAt"]), EndedAt: msTimePtr(run["finishedAt"]), Data: jsonBytes(rest), ConfigRef: jsonBytes(cfg), ExperimentID: textOf(run["experimentId"]),
+			Variant: textOf(run["variant"]), TaskID: strPtr(taskID), SessionID: strPtr(sessID), DirectedBy: strPtr(dir), PipelineID: strPtr(pipeID), PipelineRevision: nullInt(pipeRev),
+			ParentExecutionID: textOf(run["parentExecutionId"])}); err != nil {
 			return err
 		}
 		if _, err := executionTransition(q, astr(run["id"]), executionEvent{To: state, KeepEnd: true}); err != nil {
 			return err
 		}
+	}
+	if err := putPipelinePlan(q, astr(run["id"]), pipelinePlanOfRun(run)); err != nil {
+		return err
 	}
 	if state == "running" {
 		// A running run has its row on the kit (pipeline_work.go); a new one wakes the queue.
@@ -325,14 +327,14 @@ func putRun(q *Request, run doc) error {
 		}
 	}
 	if run["definitions"] != nil {
-		if err := exec(q, `UPDATE execution SET definitions=$2,pipeline_id=coalesce($3,pipeline_id),pipeline_revision=coalesce($4,pipeline_revision) WHERE id=$1`,
-			run["id"], jsonBytes(run["definitions"]), pipeID, pipeRev); err != nil {
+		if err := q.db().PipelineRunDefinitionsSet(q.ctx(), db.PipelineRunDefinitionsSetParams{ID: astr(run["id"]), Definitions: jsonBytes(run["definitions"]),
+			PipelineID: strPtr(pipeID), PipelineRevision: nullInt(pipeRev)}); err != nil {
 			return err
 		}
 	}
 	for i, x := range anys(run["steps"]) {
-		entry := pipelinePlanEntry(run, i)
-		if entry == nil || entry["activation"] != "selected" || mapOf(entry["executionRef"])["mode"] == "reused" {
+		entry := pipelineEntry(run, i)
+		if entry == nil || entry.Activation != contract.PipelineActivationSelected || entryRefMode(entry) == contract.PipelineRefModeReused {
 			continue
 		}
 		s := mapOf(x)
@@ -346,9 +348,15 @@ func putRun(q *Request, run doc) error {
 				data[k] = v
 			}
 		}
+		facts := pipelineStepFactsOf(data)
+		facts.RunID, facts.StepIndex = astr(run["id"]), int32(i)
 		var ended any
 		if executionEnds(st) {
 			ended = msTime(s["finishedAt"])
+		}
+		endedAt := msTimePtr(nil)
+		if executionEnds(st) {
+			endedAt = msTimePtr(s["finishedAt"])
 		}
 		row := stepRow(run, i)
 		inserted, err := executionInsert(q, executionRow(doc{"id": row, "kind": "pipeline_step", "state": st, "observation": sobs, "projectId": run["projectId"], "parentExecutionId": run["id"],
@@ -357,13 +365,15 @@ func putRun(q *Request, run doc) error {
 		if err != nil {
 			return err
 		}
+		if err := q.db().PipelineStepRecordSet(q.ctx(), facts); err != nil {
+			return err
+		}
 		if inserted {
 			continue
 		}
-		if err := exec(q, `UPDATE execution SET observation=$2,project_id=$3,started_at=$4,ended_at=$5,data=$6,
-		  task_id=coalesce(task_id,$7),session_id=coalesce(session_id,$8),directed_by=coalesce($9,directed_by),experiment_id=$10,variant=$11,
-		  pipeline_id=coalesce($12,pipeline_id),pipeline_revision=coalesce($13,pipeline_revision),step_id=coalesce($14,step_id) WHERE id=$1`,
-			row, sobs, projectOrNil(run["projectId"]), msTime(s["startedAt"]), ended, jsonBytes(data), taskID, sessID, dir, run["experimentId"], run["variant"], pipeID, pipeRev, nilIf(astr(s["id"]))); err != nil {
+		if err := q.db().PipelineStepUpdate(q.ctx(), db.PipelineStepUpdateParams{ID: row, Observation: db.Observation(sobs), ProjectID: strPtr(projectOrNil(run["projectId"])),
+			StartedAt: msTimePtr(s["startedAt"]), EndedAt: endedAt, Data: jsonBytes(data), TaskID: strPtr(taskID), SessionID: strPtr(sessID), DirectedBy: strPtr(dir),
+			ExperimentID: textOf(run["experimentId"]), Variant: textOf(run["variant"]), PipelineID: strPtr(pipeID), PipelineRevision: nullInt(pipeRev), StepID: strPtr(s["id"])}); err != nil {
 			return err
 		}
 		if _, err := executionTransition(q, row, executionEvent{To: st, KeepEnd: true}); err != nil {
@@ -373,65 +383,244 @@ func putRun(q *Request, run doc) error {
 	return nil
 }
 
+// pipelineStepFactsOf moves out of a step record what only the pipeline code reads (pipeline_step's step columns): a
+// text or whole-number field when it holds one, a JSON field whenever present. The rest stays the record's remainder.
+func pipelineStepFactsOf(data doc) db.PipelineStepRecordSetParams {
+	var f db.PipelineStepRecordSetParams
+	texts := map[string]**string{"executionId": &f.NativeExecutionID, "outputArtifactId": &f.OutputArtifactID, "jobId": &f.JobID, "problem": &f.StepProblem}
+	numbers := map[string]**int64{"polls": &f.Polls, "startedAt": &f.StartedAtMs, "finishedAt": &f.FinishedAtMs, "durationMs": &f.DurationMs}
+	values := map[string]*[]byte{"arguments": &f.Arguments, "output": &f.Output, "usage": &f.Usage, "error": &f.Error}
+	for k, v := range data {
+		if p, ok := texts[k]; ok {
+			if text, ok := v.(string); ok {
+				*p = &text
+				delete(data, k)
+			}
+		} else if p, ok := numbers[k]; ok {
+			if n, ok := intOK(v); ok {
+				*p = &n
+				delete(data, k)
+			}
+		} else if p, ok := values[k]; ok {
+			*p = jsonBytes(v)
+			delete(data, k)
+		}
+	}
+	return f
+}
+
+// withPipelineStepFacts puts a step row's facts (PipelineSteps) back into its record.
+func withPipelineStepFacts(data doc, r db.PipelineStepsRow) error {
+	for k, p := range map[string]*string{"executionId": r.NativeExecutionID, "outputArtifactId": r.OutputArtifactID, "jobId": r.JobID, "problem": r.StepProblem} {
+		if p != nil {
+			data[k] = *p
+		}
+	}
+	for k, p := range map[string]*int64{"polls": r.Polls, "startedAt": r.StartedAtMs, "finishedAt": r.FinishedAtMs, "durationMs": r.DurationMs} {
+		if p != nil {
+			data[k] = float64(*p)
+		}
+	}
+	for k, b := range map[string][]byte{"arguments": r.Arguments, "output": r.Output, "usage": r.Usage, "error": r.Error} {
+		if b != nil {
+			var v any
+			if err := json.Unmarshal(b, &v); err != nil {
+				return err
+			}
+			data[k] = v
+		}
+	}
+	return nil
+}
+
+// putPipelinePlan writes plan p of run id to pipeline_run and its entries to pipeline_step (an entry's inputs: none is
+// not yet frozen, an empty list is frozen empty).
+func putPipelinePlan(q *Request, id string, p *contract.PipelinePlan) error {
+	if p == nil {
+		return nil
+	}
+	d := q.db()
+	if err := d.PipelinePlanHeadSet(q.ctx(), db.PipelinePlanHeadSetParams{RunID: id, DefinitionSha256: p.DefinitionSha256, Revision: p.Revision}); err != nil {
+		return err
+	}
+	for i := range p.Entries {
+		e := &p.Entries[i]
+		row := db.PipelinePlanStepSetParams{RunID: id, StepIndex: int32(i), StepID: e.Id, DefinitionSha256: e.DefinitionSha256, Activation: string(e.Activation)}
+		if e.Decision != nil {
+			row.Decision = jsonBytes(e.Decision)
+		}
+		if r := e.ExecutionRef; r != nil {
+			mode, index := string(r.Mode), int32(r.SourceStepIndex)
+			row.RefMode, row.RefExecutionID, row.RefSourceRunID, row.RefSourceStepID = &mode, &r.ExecutionId, &r.SourceRunId, &r.SourceStepId
+			row.RefSourceStepIndex, row.RefSourceDefinitionSha256, row.RefSourceInputSha256 = &index, &r.SourceDefinitionSha256, &r.SourceInputSha256
+		}
+		if x := e.Dispatch; x != nil {
+			phase := string(x.Phase)
+			row.DispatchPhase, row.DispatchClaimID, row.DispatchOwnerBootID, row.DispatchHandedOffAtMs = &phase, x.ClaimId, x.OwnerBootId, x.HandedOffAtMs
+			row.DispatchAuthoritySha256, row.DispatchNativeExecutionID, row.DispatchCommandID = x.AuthoritySha256, x.NativeExecutionId, x.CommandId
+			row.DispatchHostID, row.DispatchSettledAtMs = x.HostId, x.SettledAtMs
+		}
+		if e.Inputs != nil {
+			row.Inputs = jsonBytes(e.Inputs)
+		}
+		if e.Problem != nil {
+			code := string(e.Problem.Code)
+			row.ProblemCode, row.ProblemMessage = &code, &e.Problem.Message
+		}
+		if err := d.PipelinePlanStepSet(q.ctx(), row); err != nil {
+			return err
+		}
+	}
+	return d.PipelinePlanStepsTrim(q.ctx(), db.PipelinePlanStepsTrimParams{RunID: id, Entries: int32(len(p.Entries))})
+}
+
+// pipelinePlanOf: the plan of one run from its stored head and entries (in index order).
+func pipelinePlanOf(head db.PipelineRun, steps []db.PipelineStep) (*contract.PipelinePlan, error) {
+	p := &contract.PipelinePlan{DefinitionSha256: head.DefinitionSha256, Revision: head.Revision, Entries: []contract.PipelinePlanEntry{}}
+	for _, s := range steps {
+		e := contract.PipelinePlanEntry{Id: s.StepID, Index: int64(s.StepIndex), DefinitionSha256: s.DefinitionSha256, Activation: contract.PipelineActivation(s.Activation)}
+		if s.Decision != nil {
+			var decision contract.PipelineConditionDecision
+			if err := json.Unmarshal(s.Decision, &decision); err != nil {
+				return nil, err
+			}
+			e.Decision = &decision
+		}
+		if s.RefMode != nil {
+			e.ExecutionRef = &contract.PipelineExecutionRef{Mode: contract.PipelineRefMode(*s.RefMode), ExecutionId: deref(s.RefExecutionID), SourceRunId: deref(s.RefSourceRunID),
+				SourceStepId: deref(s.RefSourceStepID), SourceDefinitionSha256: deref(s.RefSourceDefinitionSha256), SourceInputSha256: deref(s.RefSourceInputSha256)}
+			if s.RefSourceStepIndex != nil {
+				e.ExecutionRef.SourceStepIndex = int64(*s.RefSourceStepIndex)
+			}
+		}
+		if s.DispatchPhase != nil {
+			e.Dispatch = &contract.PipelineDispatch{Phase: contract.PipelineDispatchPhase(*s.DispatchPhase), ClaimId: s.DispatchClaimID, OwnerBootId: s.DispatchOwnerBootID,
+				HandedOffAtMs: s.DispatchHandedOffAtMs, AuthoritySha256: s.DispatchAuthoritySha256, NativeExecutionId: s.DispatchNativeExecutionID,
+				CommandId: s.DispatchCommandID, HostId: s.DispatchHostID, SettledAtMs: s.DispatchSettledAtMs}
+		}
+		if s.Inputs != nil {
+			e.Inputs = []contract.PipelineInputBinding{}
+			if err := json.Unmarshal(s.Inputs, &e.Inputs); err != nil {
+				return nil, err
+			}
+		}
+		if s.ProblemCode != nil {
+			e.Problem = &contract.PipelinePlanProblem{Code: contract.PipelinePlanReason(*s.ProblemCode), Message: deref(s.ProblemMessage)}
+		}
+		p.Entries = append(p.Entries, e)
+	}
+	return p, nil
+}
+
+// withPipelinePlans sets each run's plan from its stored rows; a run without them keeps none (a format
+// requirePipelinePlan refuses).
+func withPipelinePlans(q *Request, runs []doc) error {
+	ids := make([]string, 0, len(runs))
+	for _, run := range runs {
+		ids = append(ids, astr(run["id"]))
+	}
+	heads, err := q.db().PipelinePlanHeads(q.ctx(), ids)
+	if err != nil {
+		return err
+	}
+	steps, err := q.db().PipelinePlanSteps(q.ctx(), ids)
+	if err != nil {
+		return err
+	}
+	byRun := map[string][]db.PipelineStep{}
+	for _, s := range steps {
+		byRun[s.RunID] = append(byRun[s.RunID], s)
+	}
+	plans := map[string]*contract.PipelinePlan{}
+	for _, h := range heads {
+		if plans[h.RunID], err = pipelinePlanOf(h, byRun[h.RunID]); err != nil {
+			return err
+		}
+	}
+	for _, run := range runs {
+		if p, ok := plans[astr(run["id"])]; ok {
+			run["plan"] = p
+		}
+	}
+	return nil
+}
+
 func withSteps(q *Request, runs []doc) ([]doc, error) {
 	if len(runs) == 0 {
 		return runs, nil
+	}
+	if err := withPipelinePlans(q, runs); err != nil {
+		return nil, err
 	}
 	ids := []string{}
 	for _, run := range runs {
 		if err := requirePipelinePlan(run); err != nil {
 			return nil, err
 		}
-		for _, v := range pipelinePlanEntries(run) {
-			entry := mapOf(v)
-			if entry["activation"] == "selected" {
-				ids = append(ids, astr(mapOf(entry["executionRef"])["executionId"]))
+		for i := range pipelineEntries(run) {
+			if entry := pipelineEntry(run, i); entry.Activation == contract.PipelineActivationSelected {
+				ids = append(ids, refExecutionID(entry))
 			}
 		}
 	}
-	records, err := queryRows(q, "SELECT id AS step,parent_execution_id AS owner,project_id AS project,"+execJSON+" AS data FROM execution WHERE kind='pipeline_step' AND id=ANY($1)", ids)
+	records, err := q.db().PipelineSteps(q.ctx(), ids)
 	if err != nil {
 		return nil, err
 	}
-	byID := map[string]doc{}
-	for _, record := range records {
-		byID[astr(record["step"])] = record
+	type stepRecord struct {
+		owner, project *string
+		data           doc // the step's record, as the runner projection shows it
 	}
-	calls, err := queryRows(q, `SELECT e.parent_execution_id AS step,e.id,e.data->>'tool' AS tool,e.data->>'connection' AS connection,t.connection_cost AS cost,
-  coalesce(t.connection_cost_basis,'unavailable') AS basis FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id
-  WHERE e.kind='tool_run' AND e.parent_execution_id=ANY($1) ORDER BY e.seq`, ids)
+	byID := map[string]stepRecord{}
+	for _, r := range records {
+		var data doc
+		if err := json.Unmarshal(r.Record, &data); err != nil {
+			return nil, err
+		}
+		if err := withPipelineStepFacts(data, r); err != nil {
+			return nil, err
+		}
+		byID[r.ID] = stepRecord{r.ParentExecutionID, r.ProjectID, data}
+	}
+	calls, err := q.db().PipelineStepCalls(q.ctx(), ids)
 	if err != nil {
 		return nil, err
 	}
 	byStep := map[string][]any{}
 	for _, c := range calls {
-		key := astr(c["step"])
-		byStep[key] = append(byStep[key], doc{"id": c["id"], "tool": c["tool"], "connection": c["connection"], "cost": c["cost"], "basis": c["basis"]})
+		var cost any
+		if err := json.Unmarshal(c.Cost, &cost); c.Cost != nil && err != nil {
+			return nil, err
+		}
+		byStep[c.Step] = append(byStep[c.Step], doc{"id": c.ID, "tool": nilIf(c.Tool), "connection": nilIf(c.Connection), "cost": cost, "basis": c.Basis})
 	}
 	for _, run := range runs {
 		list := []any{}
 		definition := anys(mapOf(run["definition"])["steps"])
-		for i, v := range pipelinePlanEntries(run) {
-			entry, def := mapOf(v), mapOf(definition[i])
-			step := doc{"id": entry["id"], "kind": def["kind"]}
+		for i := range pipelineEntries(run) {
+			entry, def := pipelineEntry(run, i), mapOf(definition[i])
+			step := doc{"id": entry.Id, "kind": def["kind"]}
 			if def["kind"] == "api" {
 				step["tool"], step["connection"] = def["tool"], def["connection"]
 			}
-			if entry["activation"] == "selected" {
-				ref := mapOf(entry["executionRef"])
-				record := byID[astr(ref["executionId"])]
-				if record == nil || record["owner"] != ref["sourceRunId"] || !same(record["project"], run["projectId"]) || mapOf(record["data"])["id"] != ref["sourceStepId"] {
+			if entry.Activation == contract.PipelineActivationSelected && entry.ExecutionRef == nil {
+				return nil, fail(409, "Missing or foreign selected pipeline execution")
+			}
+			if entry.Activation == contract.PipelineActivationSelected {
+				ref := entry.ExecutionRef
+				record, found := byID[ref.ExecutionId]
+				if !found || record.owner == nil || *record.owner != ref.SourceRunId || !same(derefAny(record.project), run["projectId"]) || record.data["id"] != ref.SourceStepId {
 					return nil, fail(409, "Missing or foreign selected pipeline execution")
 				}
-				for k, value := range mapOf(record["data"]) {
+				for k, value := range record.data {
 					if k != "index" {
 						step[k] = value
 					}
 				}
-				step["id"], step["kind"] = entry["id"], def["kind"]
-				step["calls"] = append([]any{}, byStep[astr(ref["executionId"])]...)
-				if ref["mode"] == "reused" {
-					step["reusedFrom"] = ref["sourceRunId"]
+				step["id"], step["kind"] = entry.Id, def["kind"]
+				step["calls"] = append([]any{}, byStep[ref.ExecutionId]...)
+				if ref.Mode == contract.PipelineRefModeReused {
+					step["reusedFrom"] = ref.SourceRunId
 				}
 			}
 			list = append(list, step)
@@ -442,23 +631,40 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 }
 
 func getRun(q *Request, id string) (doc, error) {
-	rs, err := rows(q, "SELECT "+execJSON+" FROM execution WHERE id=$1 AND "+runRows, id)
+	raw, err := q.db().PipelineRun(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	rs, err = withSteps(q, rs)
+	var run doc
+	if err := json.Unmarshal(raw, &run); err != nil {
+		return nil, err
+	}
+	rs, err := withSteps(q, []doc{run})
 	if err != nil || len(rs) == 0 {
 		return nil, err
 	}
 	return rs[0], nil
 }
 
-func runsWhere(q *Request, clause string, args ...any) ([]doc, error) {
-	rs, err := rows(q, "SELECT "+execJSON+" FROM execution WHERE "+runRows+" AND "+clause+" ORDER BY seq", args...)
-	if err != nil {
-		return nil, err
+// runsOf: run records (PipelineRun... queries) with their steps.
+func runsOf(q *Request) func([][]byte, error) ([]doc, error) {
+	return func(raws [][]byte, err error) ([]doc, error) {
+		if err != nil {
+			return nil, err
+		}
+		runs := make([]doc, 0, len(raws))
+		for _, raw := range raws {
+			var run doc
+			if err := json.Unmarshal(raw, &run); err != nil {
+				return nil, err
+			}
+			runs = append(runs, run)
+		}
+		return withSteps(q, runs)
 	}
-	return withSteps(q, rs)
 }
 
 // runRows: the pipeline runs a run record was written for (a Lab trial row exists before its run starts).
@@ -524,36 +730,35 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 	// Caller lineage is server-derived, never a pipeline parameter.
 	if strings.HasPrefix(q.agent, "execution:") {
 		source := strings.TrimPrefix(q.agent, "execution:")
-		parent, e := first(q, `SELECT e.project_id,coalesce(e.task_id,s.task_id) AS task_id,e.session_id,e.directed_by
-			FROM execution e LEFT JOIN session s ON s.id=e.session_id WHERE e.id=$1`, source)
-		if e != nil {
+		parent, e := q.db().PipelineCaller(q.ctx(), source)
+		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 			return nil, e
 		}
-		if parent == nil || parent["project_id"] != run["projectId"] {
+		if e != nil || derefAny(parent.ProjectID) != run["projectId"] {
 			return nil, fail(403, "Pipeline caller project mismatch")
 		}
-		if parent["task_id"] != nil {
-			task, e := first(q, "SELECT project_id FROM task WHERE id=$1", parent["task_id"])
-			if e != nil {
+		if parent.TaskID != nil {
+			project, e := q.db().PipelineTaskProject(q.ctx(), *parent.TaskID)
+			if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 				return nil, e
 			}
-			if task == nil || task["project_id"] != run["projectId"] {
+			if e != nil || derefAny(project) != run["projectId"] {
 				return nil, fail(403, "Pipeline caller task project mismatch")
 			}
 		}
-		if parent["session_id"] != nil {
-			session, e := get(q, parent["session_id"], "session")
+		if parent.SessionID != nil {
+			session, e := get(q, *parent.SessionID, "session")
 			if e != nil {
 				return nil, e
 			}
-			if session["projectId"] != run["projectId"] || session["taskId"] != nil && session["taskId"] != parent["task_id"] {
+			if session["projectId"] != run["projectId"] || session["taskId"] != nil && session["taskId"] != derefAny(parent.TaskID) {
 				return nil, fail(403, "Pipeline caller session ownership mismatch")
 			}
 		}
-		if strings.TrimSpace(astr(parent["directed_by"])) == "" {
+		if strings.TrimSpace(deref(parent.DirectedBy)) == "" {
 			return nil, fail(403, "Pipeline caller has no initiating actor provenance")
 		}
-		run["parentExecutionId"], run["taskId"], run["sessionId"], run["directedBy"] = source, parent["task_id"], parent["session_id"], parent["directed_by"]
+		run["parentExecutionId"], run["taskId"], run["sessionId"], run["directedBy"] = source, derefAny(parent.TaskID), derefAny(parent.SessionID), derefAny(parent.DirectedBy)
 	}
 	if o["experimentId"] != nil {
 		run["experimentId"] = o["experimentId"]
@@ -603,40 +808,44 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 			return nil, fail(409, "Reused prefix proof changed")
 		}
 		for i := range anys(o["reuse"]) {
-			sourceEntry := pipelinePlanEntry(old, i)
-			entry := pipelinePlanEntry(run, i)
+			sourceEntry := pipelineEntry(old, i)
+			entry := pipelineEntry(run, i)
 			definition := mapOf(anys(def["steps"])[i])
-			when := mapOf(definition["when"])
+			when, err := parsePipelineWhen(definition["when"])
+			if err != nil {
+				return nil, err
+			}
 			var output any
 			if when != nil {
 				for _, value := range steps[:i] {
 					previous := mapOf(value)
-					if previous["id"] == mapOf(when["source"])["step"] {
+					if previous["id"] == when.Source.Step {
 						output = previous["output"]
 					}
 				}
 			}
 			decision := pipelineConditionDecision(when, output, nowMs())
-			if decision["outcome"] != sourceEntry["activation"] {
+			if contract.PipelineActivation(decision.Outcome) != sourceEntry.Activation {
 				return nil, fail(409, "Reused prefix guard proof differs")
 			}
-			if evidence := mapOf(sourceEntry["decision"])["sourceArtifact"]; evidence != nil {
-				decision["sourceArtifact"] = evidence
+			if sourceEntry.Decision != nil && sourceEntry.Decision.SourceArtifact != nil {
+				evidence := *sourceEntry.Decision.SourceArtifact
+				decision.SourceArtifact = &evidence
 			}
-			entry["activation"], entry["decision"] = decision["outcome"], decision
-			if entry["activation"] == "not_selected" {
+			entry.Activation, entry.Decision = contract.PipelineActivation(decision.Outcome), &decision
+			if entry.Activation == contract.PipelineActivationNotSelected {
 				continue
 			}
-			ref := doc{}
-			for k, v := range mapOf(sourceEntry["executionRef"]) {
-				ref[k] = v
+			ref := &contract.PipelineExecutionRef{}
+			if sourceEntry.ExecutionRef != nil {
+				*ref = *sourceEntry.ExecutionRef
 			}
-			ref["mode"] = "reused"
-			entry["executionRef"], entry["inputs"] = ref, sourceEntry["inputs"]
+			ref.Mode = contract.PipelineRefModeReused
+			entry.ExecutionRef, entry.Inputs = ref, sourceEntry.Inputs
 			step := mapOf(verified[i])
-			step["reusedFrom"] = ref["sourceRunId"]
+			step["reusedFrom"] = ref.SourceRunId
 			steps[i] = step
-			reused = append(reused, astr(entry["id"]))
+			reused = append(reused, entry.Id)
 		}
 		run["reused"] = reused
 	}
@@ -694,17 +903,16 @@ func pipelineCancelIn(q *Request, runID string) (string, doc, error) {
 		return "", nil, err
 	}
 	own := ""
-	for i, value := range pipelinePlanEntries(run) {
-		entry := mapOf(value)
-		if entry["activation"] != "selected" || mapOf(entry["executionRef"])["mode"] == "reused" {
+	for i := range pipelineEntries(run) {
+		entry := pipelineEntry(run, i)
+		if entry.Activation != contract.PipelineActivationSelected || entryRefMode(entry) == contract.PipelineRefModeReused {
 			continue
 		}
 		step := mapOf(anys(run["steps"])[i])
 		if step["state"] != "running" && step["state"] != "preparing" && step["state"] != "waiting" {
 			continue
 		}
-		dispatch := mapOf(entry["dispatch"])
-		if dispatch["phase"] == "handed_off" {
+		if dispatchPhase(entry) == contract.PipelineDispatchPhaseHandedOff {
 			own = astr(step["executionId"])
 			step["observation"], run["observation"] = "unconfirmed", "unconfirmed"
 		} else if native := astr(step["executionId"]); native != "" {
@@ -728,14 +936,13 @@ func finishRun(q *Request, run doc, state, problem string) error {
 	}
 	if state != "succeeded" {
 		delete(run, "canonicalResult")
-		code := "prior_step_failed"
+		code := contract.PipelinePlanReasonPriorStepFailed
 		if state == "cancelled" {
-			code = "run_cancelled"
+			code = contract.PipelinePlanReasonRunCancelled
 		}
-		for _, value := range pipelinePlanEntries(run) {
-			entry := mapOf(value)
-			if entry["activation"] == "pending" {
-				entry["activation"], entry["problem"] = "blocked", doc{"code": code, "message": "Run ended before this entry could activate"}
+		for i := range pipelineEntries(run) {
+			if entry := pipelineEntry(run, i); entry.Activation == contract.PipelineActivationPending {
+				entry.Activation, entry.Problem = contract.PipelineActivationBlocked, &contract.PipelinePlanProblem{Code: code, Message: "Run ended before this entry could activate"}
 			}
 		}
 	}
@@ -748,7 +955,7 @@ func finishRun(q *Request, run doc, state, problem string) error {
 	var stepErr any
 	for i, x := range anys(run["steps"]) {
 		s := mapOf(x)
-		if u := mapOf(s["usage"]); u != nil && mapOf(pipelinePlanEntry(run, i)["executionRef"])["mode"] != "reused" {
+		if u := mapOf(s["usage"]); u != nil && entryRefMode(pipelineEntry(run, i)) != contract.PipelineRefModeReused {
 			used = true
 			c, _ := numOK(u["credits"])
 			credits += c
@@ -793,7 +1000,7 @@ func finishRun(q *Request, run doc, state, problem string) error {
 		return err
 	}
 	if problem != "" {
-		if err := exec(q, "UPDATE execution SET problem=$2 WHERE id=$1", run["id"], problem); err != nil {
+		if err := q.db().PipelineProblemSet(q.ctx(), db.PipelineProblemSetParams{ID: astr(run["id"]), Problem: problem}); err != nil {
 			return err
 		}
 	}
@@ -811,7 +1018,7 @@ func failStep(q *Request, run doc, i int, problem, message string) error {
 	if err := putRun(q, run); err != nil {
 		return err
 	}
-	if err := exec(q, "UPDATE execution SET problem=$2 WHERE id=$1", stepRow(run, i), problem); err != nil {
+	if err := q.db().PipelineProblemSet(q.ctx(), db.PipelineProblemSetParams{ID: stepRow(run, i), Problem: problem}); err != nil {
 		return err
 	}
 	return finishRun(q, run, "failed", problem)
@@ -840,11 +1047,12 @@ func completeStep(q *Request, run doc, i int, output any, extra doc) error {
 	if !pipelineOutputIdentity(artifact, run["projectId"], stepRow(run, i)) || artifact.ContentHash != sha256hex(jsonBytes(output)) {
 		return fail(409, "Pipeline output identity or bytes changed")
 	}
-	dispatch := mapOf(pipelinePlanEntry(run, i)["dispatch"])
-	if dispatch["phase"] != "handed_off" {
+	d := pipelineEntry(run, i).Dispatch
+	if d == nil || d.Phase != contract.PipelineDispatchPhaseHandedOff {
 		return fail(409, "Pipeline output has no committed handoff")
 	}
-	dispatch["phase"], dispatch["settledAtMs"] = "settled", nowMs()
+	settled := nowMs()
+	d.Phase, d.SettledAtMs = contract.PipelineDispatchPhaseSettled, &settled
 	for k, v := range extra {
 		s[k] = v
 	}
@@ -863,8 +1071,8 @@ type fileRef struct{ ArtifactID, Path string }
 func (f fileRef) doc() doc { return doc{"artifactId": f.ArtifactID, "path": f.Path} }
 
 // artifactsOf: stored artifacts of an execution {id, path, sha256}.
-func artifactsOf(q *Request, executionID string) ([]doc, error) {
-	return queryRows(q, "SELECT id,name AS path,content_hash AS sha256 FROM artifact WHERE execution_id=$1 AND state='stored' ORDER BY seq", executionID)
+func artifactsOf(q *Request, executionID string) ([]db.PipelineStoredArtifactsRow, error) {
+	return q.db().PipelineStoredArtifacts(q.ctx(), &executionID)
 }
 
 // pipelineOutputIdentity rejects even a readable artifact owned by another step/project.
@@ -918,11 +1126,11 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 	out := []fileRef{}
 	for j := 0; j < n && j < len(steps); j++ {
 		s := mapOf(steps[j])
-		entry := pipelinePlanEntry(run, j)
-		if entry == nil || entry["activation"] != "selected" || s["state"] != "succeeded" || s["observation"] == "unconfirmed" {
+		entry := pipelineEntry(run, j)
+		if entry == nil || entry.Activation != contract.PipelineActivationSelected || s["state"] != "succeeded" || s["observation"] == "unconfirmed" {
 			continue
 		}
-		ids := []string{astr(mapOf(entry["executionRef"])["executionId"])}
+		ids := []string{refExecutionID(entry)}
 		if e := astr(s["executionId"]); e != "" {
 			ids = append(ids, e)
 		}
@@ -940,7 +1148,7 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 				return nil, err
 			}
 			for _, a := range as {
-				rel := strings.TrimPrefix(astr(a["path"]), "output/")
+				rel := strings.TrimPrefix(a.Path, "output/")
 				if pipelineReservedInput(rel) {
 					continue // server control is a consumer input, never a producer output
 				}
@@ -955,7 +1163,7 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 				if _, ok := files[k]; !ok {
 					order = append(order, k)
 				}
-				files[k] = astr(a["id"])
+				files[k] = a.ID
 			}
 		}
 		for _, k := range order {
@@ -1073,10 +1281,11 @@ func recordJob(q *Request, run doc, stepID, tool, jobID, connection string, usag
 	id := stepID + ":job:0"
 	var pTask, pSession, pDir, pPipe, pStep *string
 	var pPipeRev *int64
-	if err := q.tx.QueryRow(q.ctx(), "SELECT task_id,session_id,directed_by,pipeline_id,pipeline_revision,step_id FROM execution WHERE id=$1", stepID).
-		Scan(&pTask, &pSession, &pDir, &pPipe, &pPipeRev, &pStep); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	lineage, err := q.db().PipelineStepLineage(q.ctx(), stepID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
+	pTask, pSession, pDir, pPipe, pPipeRev, pStep = lineage.TaskID, lineage.SessionID, lineage.DirectedBy, lineage.PipelineID, lineage.PipelineRevision, lineage.StepID
 	dir := nilIf(firstString(deref(pDir), run["directedBy"], mapOf(run["requestedBy"])["email"]))
 	taskID := any(pTask)
 	if pTask == nil {
@@ -1101,13 +1310,11 @@ func recordJob(q *Request, run doc, stepID, tool, jobID, connection string, usag
 }
 
 func creditsOf(q *Request, executionID string) (any, error) {
-	var calls int
-	var credits float64
-	err := q.tx.QueryRow(q.ctx(), `SELECT count(*)::int,coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8 FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.parent_execution_id=$1 AND e.kind='tool_run'`, executionID).Scan(&calls, &credits)
-	if err != nil || calls == 0 {
+	r, err := q.db().PipelineStepCredits(q.ctx(), &executionID)
+	if err != nil || r.Calls == 0 {
 		return nil, err
 	}
-	return doc{"credits": credits}, nil
+	return doc{"credits": r.Credits}, nil
 }
 
 // The runner on the work kit (pipeline_work.go). One step of a run is one transaction under GLOBAL: it selects the next
@@ -1135,8 +1342,10 @@ type pipelineDrafts [][]byte
 var pipelineEvery = envMs("FLEET_PIPELINE_TICK_MS", 5000)
 
 func pipelineRevision(run doc) int64 {
-	r, _ := intOK(mapOf(run["plan"])["revision"])
-	return r
+	if p := pipelinePlanOfRun(run); p != nil {
+		return p.Revision
+	}
+	return 0
 }
 
 // pipelineSoon: the run's next step is due now and the queue is woken.
@@ -1264,23 +1473,23 @@ func pipelineWorkStep(q *Request, now time.Time, c *kitClaim) error {
 // pipelineNext selects the plan entries up to the first step still to run and returns its index; a run with none left
 // ends.
 func pipelineNext(q *Request, run doc) (int, error) {
-	for i, value := range pipelinePlanEntries(run) {
-		entry := mapOf(value)
-		if entry["activation"] == "not_selected" {
+	for i := range pipelineEntries(run) {
+		entry := pipelineEntry(run, i)
+		if entry.Activation == contract.PipelineActivationNotSelected {
 			continue
 		}
-		if entry["activation"] == "pending" {
+		if entry.Activation == contract.PipelineActivationPending {
 			if err := selectPipelineStep(q, run, i); err != nil {
 				return -1, err
 			}
 			if run["state"] != "running" {
 				return -1, nil
 			}
-			if entry["activation"] == "not_selected" {
+			if entry.Activation == contract.PipelineActivationNotSelected {
 				continue
 			}
 		}
-		if entry["activation"] == "blocked" {
+		if entry.Activation == contract.PipelineActivationBlocked {
 			return -1, finishRun(q, run, "failed", "prior_step_failed")
 		}
 		if mapOf(anys(run["steps"])[i])["state"] == "succeeded" {
@@ -1304,13 +1513,13 @@ func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run doc, i int) erro
 	// A run keeps the definition it started with: a step of a kind no longer run (publication) fails, never runs as a
 	// script; a job it had started under the step (the coordinator's own publication job) ends with it.
 	if kind != "api" && kind != "agent" && kind != "script" {
-		jobs, err := queryRows(q, "SELECT id FROM execution WHERE parent_execution_id=$1 AND state IN ('preparing','running','waiting') ORDER BY id FOR UPDATE", row)
+		jobs, err := q.db().PipelineOpenJobs(q.ctx(), &row)
 		if err != nil {
 			return err
 		}
 		problem := "step:unknown-kind"
 		for _, j := range jobs {
-			if _, err := executionTransition(q, astr(j["id"]), executionEvent{To: "failed", Problem: &problem}); err != nil {
+			if _, err := executionTransition(q, j, executionEvent{To: "failed", Problem: &problem}); err != nil {
 				return err
 			}
 		}
@@ -1327,7 +1536,7 @@ func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run doc, i int) erro
 	if kind != "api" && s["executionId"] == nil {
 		return failStep(q, run, i, "unknown:start", "Coordinator stopped while starting the step; not replayed")
 	}
-	if kind == "api" && mapOf(pipelinePlanEntry(run, i)["dispatch"])["phase"] == "reserved" {
+	if kind == "api" && dispatchPhase(pipelineEntry(run, i)) == contract.PipelineDispatchPhaseReserved {
 		// No committed handoff exists. Resume preparation with the same frozen
 		// bindings and logical step; this is not replay of a provider call.
 		s["state"] = "preparing"
@@ -1383,8 +1592,8 @@ func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run doc, i int) erro
 		}
 		return failStep(q, run, i, problem, msg)
 	}
-	var pending int
-	if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM artifact WHERE execution_id=$1 AND state='pending'", s["executionId"]).Scan(&pending); err != nil {
+	pending, err := q.db().PipelinePendingArtifacts(q.ctx(), strPtr(s["executionId"]))
+	if err != nil {
 		return err
 	}
 	if pending > 0 {
@@ -1421,14 +1630,14 @@ func pipelineStepOf(run doc, i int) doc { return mapOf(anys(run["steps"])[i]) }
 
 // pipelineAgentOutput: a finished agent or script step's output (its output.json, else its file list), saved as the
 // step's output object. Outside any transaction.
-func pipelineAgentOutput(ctx context.Context, a *App, run doc, i int, arts []doc) (any, any, error) {
+func pipelineAgentOutput(ctx context.Context, a *App, run doc, i int, arts []db.PipelineStoredArtifactsRow) (any, any, error) {
 	if _, err := connIngestPass(ctx, a); err != nil {
 		return nil, nil, err
 	}
 	var output any
 	for _, art := range arts {
-		if ownOutput.MatchString(astr(art["path"])) {
-			if b, err := artifactBytes(ctx, a, astr(art["id"]), 64<<20); err == nil {
+		if ownOutput.MatchString(art.Path) {
+			if b, err := artifactBytes(ctx, a, art.ID, 64<<20); err == nil {
 				if json.Unmarshal(b, &output) != nil {
 					output = nil
 				}
@@ -1439,7 +1648,7 @@ func pipelineAgentOutput(ctx context.Context, a *App, run doc, i int, arts []doc
 	if output == nil {
 		files := []any{}
 		for _, art := range arts {
-			p := strings.TrimPrefix(astr(art["path"]), "output/")
+			p := strings.TrimPrefix(art.Path, "output/")
 			dot := false
 			for _, x := range strings.Split(p, "/") {
 				dot = dot || strings.HasPrefix(x, ".")
@@ -1518,7 +1727,11 @@ func pipelinePrepared(q *Request, c *kitClaim, run doc, i int, prepared *pipelin
 		return pipelineSubmit(q, c, run, i, resolved, submitTool)
 	}
 	// The start runs under a savepoint: one that fails leaves nothing of it, and the step fails from here.
-	revision, dispatchBefore := pipelineRevision(run), clone(pipelinePlanEntry(run, i)["dispatch"])
+	revision, dispatchBefore := pipelineRevision(run), pipelineEntry(run, i).Dispatch
+	if dispatchBefore != nil {
+		before := *dispatchBefore
+		dispatchBefore = &before
+	}
 	if err := exec(q, "SAVEPOINT pipeline_start"); err != nil {
 		return err
 	}
@@ -1541,18 +1754,20 @@ func pipelinePrepared(q *Request, c *kitClaim, run doc, i int, prepared *pipelin
 			return err
 		}
 		s["executionId"] = execID
-		dispatch := mapOf(pipelinePlanEntry(run, i)["dispatch"])
-		dispatch["nativeExecutionId"] = execID
+		d := pipelineEntry(run, i).Dispatch
+		d.NativeExecutionId = &execID
 		if kind == "script" {
-			command, err := first(q, "SELECT "+convTables["command"].record()+" AS data FROM command WHERE execution_id=$1 AND kind='script' ORDER BY seq", execID)
+			cmd, err := q.db().PipelineScriptCommand(q.ctx(), &execID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return fail(409, "Pipeline script command was not reserved")
+			}
 			if err != nil {
 				return err
 			}
-			cmd := mapOf(command["data"])
-			if cmd == nil {
-				return fail(409, "Pipeline script command was not reserved")
+			d.Phase, d.CommandId, d.HostId = contract.PipelineDispatchPhasePrepared, &cmd.ID, nil
+			if cmd.HostID != "" {
+				d.HostId = &cmd.HostID
 			}
-			dispatch["phase"], dispatch["commandId"], dispatch["hostId"] = "prepared", cmd["id"], cmd["hostId"]
 		}
 		return putRun(q, run)
 	}()
@@ -1571,12 +1786,8 @@ func pipelinePrepared(q *Request, c *kitClaim, run doc, i int, prepared *pipelin
 		msg = msg[:500]
 	}
 	delete(s, "executionId")
-	mapOf(run["plan"])["revision"] = revision
-	if dispatchBefore == nil {
-		delete(pipelinePlanEntry(run, i), "dispatch")
-	} else {
-		pipelinePlanEntry(run, i)["dispatch"] = dispatchBefore
-	}
+	pipelinePlanOfRun(run).Revision = revision
+	pipelineEntry(run, i).Dispatch = dispatchBefore
 	return failStep(q, run, i, problem, msg)
 }
 
@@ -1686,12 +1897,12 @@ func pipelineAdopt(q *Request, run doc, i int, code string, recent contract.Call
 		tasks = anys(mapOf(listed)["result"])
 	}
 	owned := map[string]bool{}
-	rs, err := queryRows(q, "SELECT data->>'jobId' AS id FROM execution WHERE data ? 'jobId'")
+	rs, err := q.db().PipelineOwnedJobIDs(q.ctx())
 	if err != nil {
 		return err
 	}
 	for _, r := range rs {
-		owned[astr(r["id"])] = true
+		owned[r] = true
 	}
 	started, _ := numOK(s["startedAt"])
 	mine := []doc{}
@@ -1733,7 +1944,7 @@ func pipelineJobStarted(q *Request, run doc, i int, line contract.CallLine) erro
 	if err := putRun(q, run); err != nil {
 		return err
 	}
-	if err := exec(q, "UPDATE execution SET data=data||jsonb_build_object('jobId',$2::text) WHERE id=$1", stepRow(run, i), jobID); err != nil {
+	if err := q.db().PipelineStepJobSet(q.ctx(), db.PipelineStepJobSetParams{RunID: astr(run["id"]), StepIndex: int32(i), JobID: jobID}); err != nil {
 		return err
 	}
 	return pipelineLater(q, astr(run["id"]))
@@ -1851,6 +2062,30 @@ func callOutput(l contract.CallLine) any {
 	return v
 }
 
+// derefAny: an optional column as the value a record holds (nil when NULL).
+func derefAny[T any](p *T) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// textOf: a record's string field as a column value ("" kept, nil for anything else).
+func textOf(v any) *string {
+	if s, ok := v.(string); ok {
+		return &s
+	}
+	return nil
+}
+
+// msTimePtr: a millisecond time as a column value (msTime).
+func msTimePtr(v any) *time.Time {
+	if t, ok := msTime(v).(time.Time); ok {
+		return &t
+	}
+	return nil
+}
+
 func deref(s *string) string {
 	if s == nil {
 		return ""
@@ -1927,7 +2162,7 @@ func init() {
 			var draft doc
 			var base int64
 			// A repeated requestId answers its run, even after the draft was saved or changed.
-			if old, err := runsWhere(q, "data->>'requestId'=$1 AND data->>'pipeline'=$2", r.RequestId, r.PipelineId+".json"); err != nil {
+			if old, err := runsOf(q)(q.db().PipelineRunsByRequest(q.ctx(), db.PipelineRunsByRequestParams{RequestID: r.RequestId, Pipeline: r.PipelineId + ".json"})); err != nil {
 				return err
 			} else if len(old) > 0 && r.Draft != nil && *r.Draft {
 				run = old[0]
@@ -1987,7 +2222,7 @@ func pipelineRunFrom(q *Request, pipelineID string, b doc, draft doc, draftBase 
 			sig["contentSha"], sig["draft"] = sha256Text(t), true
 		}
 		signature := sha256hex([]byte(canonical(sig)))
-		old, err := runsWhere(q, "data->>'requestId'=$1 AND data->>'pipeline'=$2", rid, file)
+		old, err := runsOf(q)(q.db().PipelineRunsByRequest(q.ctx(), db.PipelineRunsByRequestParams{RequestID: rid, Pipeline: file}))
 		if err != nil {
 			return nil, err
 		}
@@ -2054,14 +2289,27 @@ func runAnswerChecks(q *Request, question doc, answer string) error {
 }
 
 func runAnswerAfter(q *Request, id string) error {
-	row, err := first(q, "SELECT * FROM question WHERE id=$1", id)
-	if err != nil || row == nil {
+	r, err := q.db().PipelineQuestion(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
-	if err := labAnswerAfter(q, row); err != nil {
+	var options, data any
+	if err := json.Unmarshal(r.Data, &data); err != nil {
 		return err
 	}
-	return budgetAnswerAfter(q, jsonBytes(mapOf(row["data"])["budgetAsk"]), astr(row["answer"]), strPtr(row["answered_by"]))
+	if r.Options != nil {
+		if err := json.Unmarshal(r.Options, &options); err != nil {
+			return err
+		}
+	}
+	// labAnswerAfter (lab.go) reads the answered question as its row.
+	if err := labAnswerAfter(q, doc{"id": r.ID, "kind": r.Kind, "answer": derefAny(r.Answer), "answered_by": derefAny(r.AnsweredBy), "options": options, "data": data}); err != nil {
+		return err
+	}
+	return budgetAnswerAfter(q, jsonBytes(mapOf(data)["budgetAsk"]), deref(r.Answer), strPtr(derefAny(r.AnsweredBy)))
 }
 
 // runPipeline: the selected method's v2 pipeline with the query as the example ({query, prompt}); waits for the run.
@@ -2074,7 +2322,7 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 	old := false
 	err := runTx(q.ctx(), q.app, q, true, "", func(q *Request) error {
 		signature := sha256hex([]byte(canonical(doc{"projectId": projectID, "query": query, "methodId": optText(methodID), "invocation": inv})))
-		prev, err := runsWhere(q, "data->>'projectId'=$1 AND data->>'requestId'=$2", projectID, rid)
+		prev, err := runsOf(q)(q.db().PipelineRunsByProjectRequest(q.ctx(), db.PipelineRunsByProjectRequestParams{ProjectID: projectID, RequestID: rid}))
 		if err != nil {
 			return err
 		}
@@ -2318,7 +2566,7 @@ func pipelineRerun(q *Request, r *contract.PipelineRerunRequest) (doc, error) {
 		rid = "rerun:" + newID()
 	}
 	// A repeated requestId answers its rerun (even after the draft changed); a different mode or draft is a conflict.
-	if prev, err := runsWhere(q, "data->>'requestId'=$1 AND data->>'rerunOf'=$2", rid, r.RunId); err != nil {
+	if prev, err := runsOf(q)(q.db().PipelineRunsByRerun(q.ctx(), db.PipelineRunsByRerunParams{RequestID: rid, RerunOf: r.RunId})); err != nil {
 		return nil, err
 	} else if len(prev) > 0 {
 		if astr(prev[0]["rerunIdentity"]) != identity {
@@ -2368,15 +2616,15 @@ func succeededPrefix(q *Request, old, def doc) ([]any, error) {
 	oldSteps, newSteps := anys(old["steps"]), anys(def["steps"])
 	oldDef := anys(mapOf(old["definition"])["steps"])
 	for i := 0; i < len(oldSteps) && i < len(newSteps) && i < len(oldDef); i++ {
-		e, entry := mapOf(oldSteps[i]), pipelinePlanEntry(old, i)
-		if canonical(oldDef[i]) != canonical(newSteps[i]) {
+		e, entry := mapOf(oldSteps[i]), pipelineEntry(old, i)
+		if entry == nil || canonical(oldDef[i]) != canonical(newSteps[i]) {
 			break
 		}
-		if entry["activation"] == "not_selected" {
+		if entry.Activation == contract.PipelineActivationNotSelected {
 			reuse = append(reuse, doc{"id": e["id"], "kind": e["kind"]})
 			continue
 		}
-		if entry["activation"] != "selected" || e["state"] != "succeeded" || e["observation"] == "unconfirmed" || mapOf(entry["dispatch"])["phase"] != "settled" && mapOf(entry["executionRef"])["mode"] != "reused" {
+		if entry.Activation != contract.PipelineActivationSelected || e["state"] != "succeeded" || e["observation"] == "unconfirmed" || dispatchPhase(entry) != contract.PipelineDispatchPhaseSettled && entryRefMode(entry) != contract.PipelineRefModeReused {
 			break
 		}
 		if err := pipelineOutputOwner(q, old, i, astr(e["outputArtifactId"])); err != nil {
@@ -2386,14 +2634,13 @@ func succeededPrefix(q *Request, old, def doc) ([]any, error) {
 		if err != nil || artifact.ContentHash != sha256hex(jsonBytes(e["output"])) {
 			return nil, fail(409, "Reused output bytes cannot be verified")
 		}
-		bindings := anys(entry["inputs"])
-		if bindings == nil || sha256hex([]byte(canonical(bindings))) != mapOf(entry["executionRef"])["sourceInputSha256"] {
+		bindings := entry.Inputs
+		if bindings == nil || entry.ExecutionRef == nil || sha256hex([]byte(canonical(bindings))) != entry.ExecutionRef.SourceInputSha256 {
 			return nil, fail(409, "Reused input identity cannot be verified")
 		}
-		for _, value := range bindings {
-			binding := mapOf(value)
-			a, err := artifactRow(withTx(q), q.app, astr(binding["artifactId"]))
-			if err != nil || a.State != "stored" || !same(a.ProjectID, old["projectId"]) || a.ContentHash != binding["sha256"] {
+		for _, binding := range bindings {
+			a, err := artifactRow(withTx(q), q.app, binding.ArtifactId)
+			if err != nil || a.State != "stored" || !same(a.ProjectID, old["projectId"]) || a.ContentHash != binding.Sha256 {
 				return nil, fail(409, "Reused input artifact is unavailable or changed")
 			}
 		}
@@ -2429,7 +2676,8 @@ func succeededPrefix(q *Request, old, def doc) ([]any, error) {
 func sameAgentStep(q *Request, executionID string, step, overrides doc) (bool, error) {
 	var pinned []contract.DefinitionRef
 	var raw []byte
-	if err := q.tx.QueryRow(q.ctx(), "SELECT definitions FROM execution WHERE id=$1", executionID).Scan(&raw); err != nil {
+	raw, err := q.db().PipelineExecutionPins(q.ctx(), executionID)
+	if err != nil {
 		if err == pgx.ErrNoRows {
 			return false, nil
 		}

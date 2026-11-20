@@ -10,6 +10,8 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
@@ -21,6 +23,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -406,8 +409,8 @@ func TestResourcePostgres(t *testing.T) {
 	if _, e = gate.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('fixture:resource-read',0))`); e != nil {
 		t.Fatal(e)
 	}
-	originalSQL := resourceSourceSQL
-	resourceSourceSQL = strings.Replace(originalSQL, "WITH leaf AS", `WITH gate AS MATERIALIZED(SELECT pg_advisory_xact_lock(hashtextextended('fixture:resource-read',0))), leaf AS`, 1) + ` FROM gate`
+	// The gate: the source part of the claim statement (ResourceClaimSnapshot) reads resource_execution_facts, which the
+	// fixture (tests/go/project-resources.test.ts) makes wait for this lock.
 	result := make(chan error, 1)
 	go func() { result <- resourceReplace(ctx, a, "p-e") }()
 	wait := func(check func() bool) {
@@ -421,7 +424,7 @@ func TestResourcePostgres(t *testing.T) {
 		}
 	}
 	wait(func() bool {
-		return scalar(`SELECT count(*)::text FROM pg_stat_activity WHERE query LIKE '%WITH gate AS MATERIALIZED%' AND wait_event='advisory' AND pid<>pg_backend_pid()`) != "0"
+		return scalar(`SELECT count(*)::text FROM pg_stat_activity WHERE query LIKE '%ResourceClaimSnapshot%' AND wait_event='advisory' AND pid<>pg_backend_pid()`) != "0"
 	})
 	sql(`UPDATE execution_totals SET tokens_input=30 WHERE execution_id='p-e'`)
 	if e = gate.Commit(ctx); e != nil {
@@ -430,7 +433,6 @@ func TestResourcePostgres(t *testing.T) {
 	if e = <-result; e != nil {
 		t.Fatal(e)
 	}
-	resourceSourceSQL = originalSQL
 	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id='p-e'`, "1")
 	replace("p-e")
 	if got := num("A", "input"); got != "30" {
@@ -1554,11 +1556,8 @@ func TestResourceCohortPostgres(t *testing.T) {
  INSERT INTO execution(id,kind,state,project_id) VALUES('cohort-healthy-other','tool_run','succeeded','COHORT_OTHER')`)
 	var candidates []string
 	if e = runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
-		rows, e := q.tx.Query(ctx, resourceCandidatesSQL, time.Now(), resourceCohortSize)
-		if e != nil {
-			return e
-		}
-		candidates, e = pgx.CollectRows(rows, pgx.RowTo[string])
+		var e error
+		candidates, e = q.db().ResourceCandidates(ctx, db.ResourceCandidatesParams{Now: time.Now(), Max: resourceCohortSize})
 		return e
 	}); e != nil {
 		t.Fatal(e)
@@ -1604,11 +1603,8 @@ func TestResourceCohortPostgres(t *testing.T) {
 			t.Helper()
 			var ids []string
 			if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
-				rows, e := q.tx.Query(q.ctx(), resourceCandidatesSQL, time.Now(), resourceCohortSize)
-				if e != nil {
-					return e
-				}
-				ids, e = pgx.CollectRows(rows, pgx.RowTo[string])
+				var e error
+				ids, e = q.db().ResourceCandidates(q.ctx(), db.ResourceCandidatesParams{Now: time.Now(), Max: resourceCohortSize})
 				return e
 			}); e != nil {
 				t.Fatal(e)
@@ -1795,7 +1791,7 @@ func TestResourceBatchHintsPostgres(t *testing.T) {
 	// The work queue has existing pages but empty ANALYZE statistics, as after a
 	// drain. Count actual scope-row visits, not a wall-time threshold or a chosen node type.
 	var raw json.RawMessage
-	if e := st.readPool.QueryRow(ctx, "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+resourceBatchHintsSQL, ids).Scan(&raw); e != nil {
+	if e := st.readPool.QueryRow(ctx, "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+typedQueryText(t, "ResourceBatchHints"), ids).Scan(&raw); e != nil {
 		t.Fatal(e)
 	}
 	var plans []map[string]any
@@ -1867,15 +1863,14 @@ func TestResourceBatchHintsPostgres(t *testing.T) {
 		t.Fatal("rejected authoritative scope lost work")
 	}
 	if e = st.Tx(ctx, &Scope{ProjectIDs: "HINT_B", Person: "hint-reader"}, false, NOLOCK, func(tx pgx.Tx) error {
-		rows, e := tx.Query(ctx, resourceBatchHintsSQL, ids)
+		rows, e := db.New(tx).ResourceBatchHints(ctx, ids)
 		if e != nil {
 			return e
 		}
-		defer rows.Close()
-		if rows.Next() {
+		if len(rows) > 0 {
 			return errors.New("selected-ID hint SQL leaked another project's source")
 		}
-		return rows.Err()
+		return nil
 	}); e != nil {
 		t.Fatal(e)
 	}
@@ -1995,4 +1990,27 @@ func TestResourceProjectlessToolRunPostgres(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "execution_project_id_not_empty") {
 		t.Fatal("empty project accepted", err)
 	}
+}
+
+// typedQueryText: the SQL of the typed query name in queries/*.sql, for EXPLAIN.
+func typedQueryText(t *testing.T, name string) string {
+	t.Helper()
+	files, err := filepath.Glob("queries/*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, part := range strings.Split(string(raw), "-- name: ")[1:] {
+			if head, body, _ := strings.Cut(part, "\n"); strings.Fields(head)[0] == name {
+				sql, _, _ := strings.Cut(body, ";\n")
+				return sql
+			}
+		}
+	}
+	t.Fatal("no typed query", name)
+	return ""
 }

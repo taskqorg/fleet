@@ -1,51 +1,126 @@
 package main
 
-import "fmt"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+
+	"fleet/contract"
+)
+
+// pipelineRule: one JSON object of a step's when, field by field (validatePipelineCondition checks it before any run
+// exists).
+type pipelineRule = map[string]json.RawMessage
+
+// pipelineWhen: a validated when (contract.PipelineBooleanCondition or PipelineEnumCondition) and the rule hash its
+// decisions carry.
+type pipelineWhen struct {
+	Kind   string                           `json:"kind"`
+	Source contract.PipelineConditionSource `json:"source"`
+	Equals json.RawMessage                  `json:"equals"`
+	Domain []string                         `json:"domain"`
+	sha    string
+}
+
+// parsePipelineWhen: the when of a definition step (nil when it has none); v was validated with its definition.
+func parsePipelineWhen(v any) (*pipelineWhen, error) {
+	b := jsonBytes(v)
+	if jsonKind(b) == 'n' || len(b) == 0 {
+		return nil, nil
+	}
+	w := &pipelineWhen{}
+	if err := json.Unmarshal(b, w); err != nil {
+		return nil, fmt.Errorf("when is not a valid condition: %w", err)
+	}
+	w.sha = sha256hex([]byte(canonical(v)))
+	return w, nil
+}
+
+func jsonBool(raw json.RawMessage) (bool, bool) {
+	switch string(bytes.TrimSpace(raw)) {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	}
+	return false, false
+}
+
+func pipelineRuleOf(raw []byte) pipelineRule {
+	var r pipelineRule
+	if jsonKind(raw) != '{' || json.Unmarshal(raw, &r) != nil {
+		return nil
+	}
+	return r
+}
+
+func jsonList(raw json.RawMessage) []json.RawMessage {
+	var l []json.RawMessage
+	if jsonKind(raw) != '[' || json.Unmarshal(raw, &l) != nil {
+		return nil
+	}
+	return l
+}
+
+func ruleKeysOnly(r pipelineRule, allowed ...string) bool {
+	for k := range r {
+		found := false
+		for _, a := range allowed {
+			found = found || k == a
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
 
 // validatePipelineCondition accepts one literal predicate over an earlier output.
 // Project programs own thresholds and compound policies; this is not an expression interpreter.
 func validatePipelineCondition(v any, earlier map[string]bool) error {
-	w := mapOf(v)
+	w := pipelineRuleOf(jsonBytes(v))
 	if w == nil {
 		return fmt.Errorf("when must be a Boolean or enum condition")
 	}
-	s := mapOf(w["source"])
-	if s == nil || !keysOnly(s, "step", "path") || !earlier[astr(s["step"])] {
+	s := pipelineRuleOf(w["source"])
+	step, _ := jsonString(s["step"])
+	if s == nil || !ruleKeysOnly(s, "step", "path") || !earlier[step] {
 		return fmt.Errorf("when.source must name a strictly earlier step")
 	}
-	path := anys(s["path"])
+	path := jsonList(s["path"])
 	if len(path) == 0 {
 		return fmt.Errorf("when.source.path must contain literal object keys")
 	}
 	for _, key := range path {
-		if text, ok := key.(string); !ok || text == "" {
+		if text, ok := jsonString(key); !ok || text == "" {
 			return fmt.Errorf("when.source.path must contain nonempty string keys")
 		}
 	}
-	switch w["kind"] {
+	kind, _ := jsonString(w["kind"])
+	switch kind {
 	case "boolean":
-		if !keysOnly(w, "kind", "source", "equals") {
+		if !ruleKeysOnly(w, "kind", "source", "equals") {
 			return fmt.Errorf("Boolean when has an unknown field")
 		}
-		if _, ok := w["equals"].(bool); !ok {
+		if _, ok := jsonBool(w["equals"]); !ok {
 			return fmt.Errorf("Boolean when.equals must be an explicit Boolean")
 		}
 	case "enum":
-		if !keysOnly(w, "kind", "source", "domain", "equals") {
+		if !ruleKeysOnly(w, "kind", "source", "domain", "equals") {
 			return fmt.Errorf("enum when has an unknown field")
 		}
-		domain, seen := anys(w["domain"]), map[string]bool{}
+		domain, seen := jsonList(w["domain"]), map[string]bool{}
 		if len(domain) == 0 {
 			return fmt.Errorf("enum when.domain must be nonempty")
 		}
 		for _, value := range domain {
-			text, ok := value.(string)
+			text, ok := jsonString(value)
 			if !ok || text == "" || seen[text] {
 				return fmt.Errorf("enum when.domain must contain unique nonempty strings")
 			}
 			seen[text] = true
 		}
-		if value, ok := w["equals"].(string); !ok || !seen[value] {
+		if value, ok := jsonString(w["equals"]); !ok || !seen[value] {
 			return fmt.Errorf("enum when.equals must belong to its domain")
 		}
 	default:
@@ -54,72 +129,79 @@ func validatePipelineCondition(v any, earlier map[string]bool) error {
 	return nil
 }
 
+// unconditionalRuleSha: the rule hash of a step without when (the canonical {"kind":"unconditional"}).
+var unconditionalRuleSha = sha256hex([]byte(`{"kind":"unconditional"}`))
+
+// pipelineBlockedDecision: the decision of a when whose source evidence is unavailable or invalid (selectPipelineStep).
+func pipelineBlockedDecision(when *pipelineWhen, reason contract.PipelinePlanReason, at int64) contract.PipelineConditionDecision {
+	step := when.Source.Step
+	return contract.PipelineConditionDecision{Kind: contract.PipelineDecisionKind(when.Kind), Outcome: contract.PipelineDecisionOutcomeBlocked, Reason: reason,
+		EvaluatedAtMs: at, RuleSha256: when.sha, SourceStepId: &step, Path: when.Source.Path}
+}
+
 // pipelineConditionDecision runs only after the caller verified the source's
 // successful observation, artifact ownership and exact bytes. Invalid evidence
 // blocks; it is never a false decision or authority to dispatch a fallback.
-func pipelineConditionDecision(when doc, output any, at int64) doc {
-	rule := when
-	if rule == nil {
-		rule = doc{"kind": "unconditional"}
-	}
-	d := doc{"kind": rule["kind"], "outcome": "selected", "reason": "unconditional", "evaluatedAtMs": at, "ruleSha256": sha256hex([]byte(canonical(rule)))}
+func pipelineConditionDecision(when *pipelineWhen, output any, at int64) contract.PipelineConditionDecision {
+	d := contract.PipelineConditionDecision{Kind: contract.PipelineDecisionKindUnconditional, Outcome: contract.PipelineDecisionOutcomeSelected,
+		Reason: contract.PipelinePlanReasonUnconditional, EvaluatedAtMs: at, RuleSha256: unconditionalRuleSha}
 	if when == nil {
 		return d
 	}
-	source := mapOf(when["source"])
-	d["sourceStepId"], d["path"] = source["step"], source["path"]
-	block := func(reason string) doc {
-		d["outcome"], d["reason"] = "blocked", reason
+	d = pipelineBlockedDecision(when, "", at)
+	block := func(reason contract.PipelinePlanReason) contract.PipelineConditionDecision {
+		d.Outcome, d.Reason = contract.PipelineDecisionOutcomeBlocked, reason
 		return d
 	}
-	value := output
-	for _, key := range anys(source["path"]) {
-		if value == nil {
-			return block("condition_null")
+	value := json.RawMessage(jsonBytes(output))
+	for _, key := range when.Source.Path {
+		if jsonKind(value) == 'n' {
+			return block(contract.PipelinePlanReasonConditionNull)
 		}
-		object := mapOf(value)
+		object := pipelineRuleOf(value)
 		if object == nil {
-			return block("condition_type")
+			return block(contract.PipelinePlanReasonConditionType)
 		}
 		var present bool
-		value, present = object[astr(key)]
+		value, present = object[key]
 		if !present {
-			return block("condition_missing")
+			return block(contract.PipelinePlanReasonConditionMissing)
 		}
 	}
-	if value == nil {
-		return block("condition_null")
+	if jsonKind(value) == 'n' {
+		return block(contract.PipelinePlanReasonConditionNull)
 	}
 	match := false
-	switch when["kind"] {
+	switch when.Kind {
 	case "boolean":
-		b, ok := value.(bool)
+		b, ok := jsonBool(value)
 		if !ok {
-			return block("condition_type")
+			return block(contract.PipelinePlanReasonConditionType)
 		}
-		d["observedBoolean"] = b
-		match = b == when["equals"]
+		equals, _ := jsonBool(when.Equals)
+		d.ObservedBoolean = &b
+		match = b == equals
 	case "enum":
-		text, ok := value.(string)
+		text, ok := jsonString(value)
 		if !ok {
-			return block("condition_type")
+			return block(contract.PipelinePlanReasonConditionType)
 		}
-		d["observedString"] = text
+		d.ObservedString = &text
 		found := false
-		for _, allowed := range anys(when["domain"]) {
+		for _, allowed := range when.Domain {
 			found = found || text == allowed
 		}
 		if !found {
-			return block("condition_domain")
+			return block(contract.PipelinePlanReasonConditionDomain)
 		}
-		match = text == when["equals"]
+		equals, _ := jsonString(when.Equals)
+		match = text == equals
 	default:
-		return block("condition_type")
+		return block(contract.PipelinePlanReasonConditionType)
 	}
-	if match {
-		d["reason"] = "condition_true"
-	} else {
-		d["outcome"], d["reason"] = "not_selected", "condition_false"
+	d.Outcome, d.Reason = contract.PipelineDecisionOutcomeSelected, contract.PipelinePlanReasonConditionTrue
+	if !match {
+		d.Outcome, d.Reason = contract.PipelineDecisionOutcomeNotSelected, contract.PipelinePlanReasonConditionFalse
 	}
 	return d
 }

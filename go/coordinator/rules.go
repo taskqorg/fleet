@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -14,6 +15,8 @@ import (
 
 	"fleet/contract"
 	"fleet/obs"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Rule factors (settings rules.<rule>.*; these are the defaults, tuned from the first week of data).
@@ -114,13 +117,11 @@ func rulesPass(ctx context.Context, a *App) error {
 		for i := range ps {
 			if id, ok := ps[i].Data["executionId"].(string); ok && ps[i].ProjectID != "" {
 				// A project cause goes to the project's director: the execution's directedBy.
-				r, err := first(q, "SELECT directed_by FROM execution WHERE id=$1", id)
-				if err != nil {
+				by, err := q.db().RulesExecutionDirector(q.ctx(), id)
+				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 					return err
 				}
-				if r != nil {
-					ps[i].AddressedTo = astr(r["directed_by"])
-				}
+				ps[i].AddressedTo = deref(by)
 			}
 		}
 		return problemsSync(q, "rules", ps)
@@ -238,17 +239,23 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]boo
 	var out []contract.Finding
 	active := map[string]bool{}
 	err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-		stores, err := queryRows(q, "SELECT id,host_id,state,capacity_bytes::float8,free_space_warning_bytes::float8 FROM store WHERE observed_at IS NOT NULL AND state IN ('full','unreachable')")
+		stores, err := q.db().RulesStoresDown(q.ctx())
 		if err != nil {
 			return err
 		}
+		bytes := func(v *int64) float64 {
+			if v == nil {
+				return 0
+			}
+			return float64(*v)
+		}
 		for _, s := range stores {
-			id, host := astr(s["id"]), astr(s["host_id"])
+			id, host := s.ID, s.HostID
 			f := contract.Finding{Subject: id, StoreId: ptr(id), HostId: ptr(host), Exemplars: []string{}}
-			if s["state"] == "full" {
+			if s.State == "full" {
 				f.Rule, f.Cause = "store-fill", "problem:store:"+id+":fill"
-				f.Value = num(s["capacity_bytes"]) // capacity left (store observe), compared with the warning level
-				f.Baseline = ptr(num(s["free_space_warning_bytes"]))
+				f.Value = bytes(s.CapacityBytes) // capacity left (store observe), compared with the warning level
+				f.Baseline = ptr(bytes(s.FreeSpaceWarningBytes))
 				text(&f, fmt.Sprintf("Store %s on %s has less free space than its warning level.", id, host))
 			} else {
 				f.Rule, f.Cause = "absence-store", "problem:store:"+id+":offline"
@@ -256,39 +263,32 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]boo
 			}
 			out = append(out, f)
 		}
-		stuck, err := queryRows(q, `SELECT e.id,e.project_id,e.host_id,extract(epoch FROM now()-coalesce((SELECT max(d.updated_at) FROM event d WHERE NOT d.delta
-			AND d.execution_id=e.id AND d.type <> 'resource.observation'), e.started_at))::float8 AS idle
-			FROM execution e WHERE e.state='running' AND e.observation='confirmed' AND NOT coalesce((e.data->>'stopRequested')::boolean,false) AND e.started_at < now() - make_interval(secs => $1)`, ruleStuck.Seconds())
+		stuck, err := q.db().RulesStuckExecutions(q.ctx(), ruleStuck.Seconds())
 		if err != nil {
 			return err
 		}
 		for _, s := range stuck {
-			if num(s["idle"]) < ruleStuck.Seconds() {
+			if s.Idle < ruleStuck.Seconds() {
 				continue
 			}
-			id := astr(s["id"])
-			f := contract.Finding{Rule: "stuck", Subject: id, Value: num(s["idle"]), Cause: "problem:execution:" + id + ":stuck", ExecutionId: ptr(id), Exemplars: []string{}}
-			if h := astr(s["host_id"]); h != "" {
+			id := s.ID
+			f := contract.Finding{Rule: "stuck", Subject: id, Value: s.Idle, Cause: "problem:execution:" + id + ":stuck", ExecutionId: ptr(id), Exemplars: []string{}}
+			if h := deref(s.HostID); h != "" {
 				f.HostId = ptr(h)
 			}
-			if p := astr(s["project_id"]); p != "" {
+			if p := deref(s.ProjectID); p != "" {
 				f.ProjectId = ptr(p)
 			}
-			text(&f, fmt.Sprintf("Execution %s has shown no activity for %d minutes.", id, int(num(s["idle"])/60)))
+			text(&f, fmt.Sprintf("Execution %s has shown no activity for %d minutes.", id, int(s.Idle/60)))
 			out = append(out, f)
 		}
 		// resource-failing: resource work whose retry pause reached its maximum (work_kit.go): an execution's work, a
 		// project build or a metadata repair. One system question names them; it closes once they succeed.
-		failing, err := queryRows(q, `SELECT 'execution '||execution_id AS item FROM (SELECT DISTINCT execution_id FROM resource_work WHERE last_error IS NOT NULL AND attempts>=$1) w
-			UNION ALL SELECT 'build of project '||project_id FROM resource_build WHERE NOT ready AND attempts>=$1
-			UNION ALL SELECT 'metadata repair '||repair_id::text FROM resource_metadata_repair WHERE attempts>=$1 ORDER BY 1`, kitFailingAttempts())
+		failing, err := q.db().RulesResourceFailing(q.ctx(), int32(kitFailingAttempts()))
 		if err != nil {
 			return err
 		}
-		items := []string{}
-		for _, r := range failing {
-			items = append(items, astr(r["item"]))
-		}
+		items := append([]string{}, failing...)
 		if len(items) > 0 {
 			f := contract.Finding{Rule: "resource-failing", Subject: "resource processor", Value: float64(len(items)), Cause: "problem:resource:failing", Exemplars: []string{}}
 			noun := "items"

@@ -75,12 +75,20 @@ func ciRunner(j ciJob) (string, bool) {
 	return "unknown", true
 }
 
-func ciMs(s string) any {
+func ciMs(s string) *float64 {
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil || t.IsZero() || t.Year() < 2000 {
 		return nil
 	}
-	return t.UnixMilli()
+	ms := float64(t.UnixMilli())
+	return &ms
+}
+
+// ciRun: the fields of a GitHub workflow run the pass reads.
+type ciRun struct {
+	ID         *float64 `json:"id"`
+	RunAttempt float64  `json:"run_attempt"`
+	Status     string   `json:"status"`
 }
 
 // ciLast: the last pass (ciPass), which executions_ci serves; nil before the first one ends.
@@ -143,11 +151,11 @@ func ciRead(ctx context.Context, a *App) (contract.ExecutionsCiReply, error) {
 	}
 	problems := []string{}
 	var keyed bool
-	runsOf := func(tool string, kv ...string) []map[string]any {
+	runsOf := func(tool string, kv ...string) []ciRun {
 		b, k, err := githubRead(ctx, a, ciProject, tool, args(kv...))
 		keyed = keyed || k
 		var r struct {
-			Runs []map[string]any `json:"workflow_runs"`
+			Runs []ciRun `json:"workflow_runs"`
 		}
 		if err == nil {
 			err = json.Unmarshal(b, &r)
@@ -194,19 +202,24 @@ func ciRead(ctx context.Context, a *App) (contract.ExecutionsCiReply, error) {
 	}
 	now := time.Now().UTC()
 	today := now.Format("2006-01-02")
-	runIDs := func(rs []map[string]any) []int64 {
+	runIDs := func(rs []ciRun) []int64 {
 		out := []int64{}
 		for _, r := range rs {
-			if f, ok := r["id"].(float64); ok {
-				out = append(out, int64(f))
+			if r.ID != nil {
+				out = append(out, int64(*r.ID))
 			}
 		}
 		return out
 	}
-	num := func(v any) int64 { f, _ := v.(float64); return int64(f) }
+	runID := func(r ciRun) int64 {
+		if r.ID == nil {
+			return 0
+		}
+		return int64(*r.ID)
+	}
 	active := append(runIDs(runsOf("runs_in_progress")), runIDs(runsOf("runs_queued"))...)
 	recent := runsOf("runs_recent", "date", today)
-	jobs := []any{}
+	jobs := []contract.CiJob{}
 	type acc struct {
 		minutes float64
 		jobs    int
@@ -255,8 +268,8 @@ func ciRead(ctx context.Context, a *App) (contract.ExecutionsCiReply, error) {
 				continue
 			}
 			name, hosted := ciRunner(j)
-			jobs = append(jobs, doc{"id": j.ID, "runId": j.RunID, "workflow": j.WorkflowRun, "name": j.Name, "status": j.Status, "url": j.URL,
-				"runner": name, "hosted": hosted, "runnerName": j.RunnerName, "createdAt": ciMs(j.CreatedAt), "startedAt": ciMs(j.StartedAt)})
+			jobs = append(jobs, contract.CiJob{Id: j.ID, RunId: j.RunID, Workflow: j.WorkflowRun, Name: j.Name, Status: j.Status, Url: j.URL,
+				Runner: name, Hosted: hosted, RunnerName: j.RunnerName, CreatedAt: ciMs(j.CreatedAt), StartedAt: ciMs(j.StartedAt)})
 		}
 	}
 	// Completed runs of today: their jobs count toward minutes, read once each. Without a key at most 20 new runs per
@@ -270,21 +283,21 @@ func ciRead(ctx context.Context, a *App) (contract.ExecutionsCiReply, error) {
 	ciMu.Unlock()
 	need := []int64{}
 	for _, run := range recent {
-		id := num(run["id"])
+		id := runID(run)
 		ciMu.Lock()
-		_, ok := ciDone[ciRunKey{id, num(run["run_attempt"])}]
+		_, ok := ciDone[ciRunKey{id, int64(run.RunAttempt)}]
 		ciMu.Unlock()
-		if !ok && !seen[id] && run["status"] == "completed" && len(need) < budget {
+		if !ok && !seen[id] && run.Status == "completed" && len(need) < budget {
 			need = append(need, id)
 		}
 	}
 	read := prefetch(need)
 	fresh, missing, listed := 0, 0, map[ciRunKey]bool{}
 	for _, run := range recent {
-		id := num(run["id"])
-		k := ciRunKey{id, num(run["run_attempt"])}
+		id := runID(run)
+		k := ciRunKey{id, int64(run.RunAttempt)}
 		listed[k] = true
-		if seen[id] || run["status"] != "completed" {
+		if seen[id] || run.Status != "completed" {
 			continue // active runs were counted above; a requested or pending run has no jobs yet
 		}
 		seen[id] = true
@@ -321,24 +334,24 @@ func ciRead(ctx context.Context, a *App) (contract.ExecutionsCiReply, error) {
 		}
 	}
 	ciMu.Unlock()
-	mins := []any{}
+	mins := []contract.CiMinutes{}
 	names := make([]string, 0, len(minutes))
 	for n := range minutes {
 		names = append(names, n)
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		mins = append(mins, doc{"runner": n, "hosted": minutes[n].hosted, "minutes": minutes[n].minutes, "jobs": minutes[n].jobs})
+		mins = append(mins, contract.CiMinutes{Runner: n, Hosted: minutes[n].hosted, Minutes: minutes[n].minutes, Jobs: int64(minutes[n].jobs)})
 	}
-	out := doc{"serverNow": now.UnixMilli(), "keyed": keyed, "jobs": jobs, "minutesToday": mins, "runsUncounted": missing, "runners": nil, "problems": problems}
+	out := contract.ExecutionsCiReply{ServerNow: now.UnixMilli(), Keyed: keyed, Jobs: jobs, MinutesToday: mins, RunsUncounted: int64(missing), Problems: problems}
 	if len(recent) >= 100 {
-		out["runsUncounted"] = missing + 1 // more runs today than one page holds
+		out.RunsUncounted = int64(missing) + 1 // more runs today than one page holds
 	}
 	// Self-hosted runners' online state needs a key with organization runner read; without one it is unknown (null).
 	if keyed {
 		if b, _, err := githubRead(ctx, a, ciProject, "org_runners", map[string]string{"owner": ciOwner}); err != nil {
 			problems = append(problems, fmt.Sprintf("runners: %v", err))
-			out["problems"] = problems
+			out.Problems = problems
 		} else {
 			var r struct {
 				Runners []struct {
@@ -351,21 +364,21 @@ func ciRead(ctx context.Context, a *App) (contract.ExecutionsCiReply, error) {
 				} `json:"runners"`
 			}
 			if err := json.Unmarshal(b, &r); err != nil {
-				out["problems"] = append(problems, fmt.Sprintf("runners: %v", err))
+				out.Problems = append(problems, fmt.Sprintf("runners: %v", err))
 			} else {
-				rs := []any{}
+				rs := []contract.CiRunner{}
 				for _, x := range r.Runners {
 					ls := []string{}
 					for _, l := range x.Labels {
 						ls = append(ls, l.Name)
 					}
-					rs = append(rs, doc{"name": x.Name, "status": x.Status, "busy": x.Busy, "labels": ls})
+					rs = append(rs, contract.CiRunner{Name: x.Name, Status: x.Status, Busy: x.Busy, Labels: ls})
 				}
-				out["runners"] = rs
+				out.Runners = rs
 			}
 		}
 	}
-	return replyAs[contract.ExecutionsCiReply](out, nil)
+	return out, nil
 }
 
 func init() {

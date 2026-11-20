@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -8,9 +9,11 @@ import (
 	"strings"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fleet/obs"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // resourceDelta accumulates the support changes of every contribution applied to one project in one replacement
@@ -198,72 +201,107 @@ func pairKeys[V any](m map[[2]string]V) [][2]string {
 	return keys
 }
 
-// resourceWrites queues statements into one batch; each result is read in queue order.
-type resourceWrites struct {
+// resourceBatch sends the typed batch queries (queries/resources.sql, :batch*) of one flush or header read in one
+// round trip: each generated call queues its statements here, send sends them together, and the reads queued with
+// read take their results in queue order. A generated result's Close is a no-op; send closes the batch once.
+type resourceBatch struct {
+	tx      pgx.Tx
 	batch   pgx.Batch
-	results []func(pgx.BatchResults) error
+	results pgx.BatchResults
+	reads   []func() error
 }
 
-func (w *resourceWrites) exec(sql string, args ...any) {
-	w.batch.Queue(sql, args...)
-	w.results = append(w.results, func(r pgx.BatchResults) error { _, err := r.Exec(); return err })
+func newResourceBatch(q *Request) (*resourceBatch, *db.Queries) {
+	b := &resourceBatch{tx: q.tx}
+	return b, db.New(b)
 }
 
-// count queues a statement whose affected rows (sign +1 or -1) change an item count.
-func (w *resourceWrites) count(total *int64, sign int64, sql string, args ...any) {
-	w.batch.Queue(sql, args...)
-	w.results = append(w.results, func(r pgx.BatchResults) error {
-		ct, err := r.Exec()
-		*total += sign * ct.RowsAffected()
-		return err
-	})
+func (b *resourceBatch) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	return b.tx.Exec(ctx, sql, args...)
+}
+func (b *resourceBatch) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	return b.tx.Query(ctx, sql, args...)
+}
+func (b *resourceBatch) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	return b.tx.QueryRow(ctx, sql, args...)
+}
+func (b *resourceBatch) SendBatch(_ context.Context, x *pgx.Batch) pgx.BatchResults {
+	b.batch.QueuedQueries = append(b.batch.QueuedQueries, x.QueuedQueries...)
+	return resourceBatchResults{b}
 }
 
-// selected queues a statement returning one count that changes an item count by sign per row.
-func (w *resourceWrites) selected(total *int64, sign int64, sql string, args ...any) {
-	w.batch.Queue(sql, args...)
-	w.results = append(w.results, func(r pgx.BatchResults) error {
-		var n int64
-		err := r.QueryRow().Scan(&n)
-		*total += sign * n
-		return err
-	})
-}
+type resourceBatchResults struct{ b *resourceBatch }
 
-// inserted queues an upsert RETURNING (xmax=0) and adds the rows it created to total.
-func (w *resourceWrites) inserted(total *int64, sql string, args ...any) {
-	w.batch.Queue(sql, args...)
-	w.results = append(w.results, func(r pgx.BatchResults) error {
-		rs, err := r.Query()
-		if err != nil {
+func (r resourceBatchResults) Exec() (pgconn.CommandTag, error) { return r.b.results.Exec() }
+func (r resourceBatchResults) Query() (pgx.Rows, error)         { return r.b.results.Query() }
+func (r resourceBatchResults) QueryRow() pgx.Row                { return r.b.results.QueryRow() }
+func (r resourceBatchResults) Close() error                     { return nil }
+
+// read queues the reading of the statements queued last.
+func (b *resourceBatch) read(f func() error) { b.reads = append(b.reads, f) }
+
+// send sends every queued statement and runs the reads in order. Closing consumes even unread results, so a late SQL
+// error is returned too.
+func (b *resourceBatch) send(ctx context.Context) error {
+	if len(b.batch.QueuedQueries) == 0 {
+		return nil
+	}
+	b.results = b.tx.SendBatch(ctx, &b.batch)
+	for _, read := range b.reads {
+		if err := read(); err != nil {
+			b.results.Close()
 			return err
 		}
-		defer rs.Close()
-		for rs.Next() {
-			var created bool
-			if err = rs.Scan(&created); err != nil {
-				return err
-			}
-			if created {
+	}
+	return b.results.Close()
+}
+
+// firstErr keeps the first error a batch read reports.
+func firstErr(err *error) func(int, error) {
+	return func(_ int, e error) {
+		if *err == nil {
+			*err = e
+		}
+	}
+}
+
+// created adds the rows an upsert created (it returns xmax=0 per row) to total.
+func created(total *int64, err *error) func(int, []bool, error) {
+	return func(_ int, rows []bool, e error) {
+		for _, c := range rows {
+			if c {
 				*total++
 			}
 		}
-		return rs.Err()
-	})
+		if *err == nil {
+			*err = e
+		}
+	}
+}
+
+// removed subtracts the rows a delete removed from total.
+func removed(total *int64, err *error) func(int, int64, error) {
+	return func(_ int, n int64, e error) {
+		*total -= n
+		if *err == nil {
+			*err = e
+		}
+	}
 }
 
 // Per table, keys whose every component only grows take one upsert; keys whose references reach zero are deleted;
-// the rest are updated in place. CHECK constraints apply to an INSERT's proposed row before ON CONFLICT, so a key
-// that loses anything never takes the insert path. The project advisory lock is held, so row order needs no care.
+// the rest are updated in place (queries/resources.sql). The project advisory lock is held, so row order needs no care.
 func (d *resourceDelta) flush(q *Request) (resultErr error) {
 	_, span := obs.Start(q.ctx(), "resource.apply", "internal")
 	defer func() { span.End(resultErr) }()
-	p := d.project
-	w := &resourceWrites{}
+	ctx, p := q.ctx(), d.project
+	w, bq := newResourceBatch(q)
 	var toolCount, costCount, priceCount int64
+	exec := func(r interface{ Exec(func(int, error)) }) {
+		w.read(func() (err error) { r.Exec(firstErr(&err)); return })
+	}
 	if d.executions != 0 || d.history != 0 || d.otherCalls != 0 || d.otherErrs != 0 {
-		w.exec(`UPDATE resource_project_summary SET executions=executions+$2,history_incomplete=history_incomplete+$3,
-  other_calls=other_calls+$4,other_errors=other_errors+$5 WHERE project_id=$1`, p, d.executions, d.history, d.otherCalls, d.otherErrs)
+		exec(bq.ResourceSummaryAdd(ctx, []db.ResourceSummaryAddParams{{ProjectID: p, Executions: d.executions, History: d.history, OtherCalls: d.otherCalls, OtherErrors: d.otherErrs}}))
 	}
 
 	type metricRows struct {
@@ -290,22 +328,13 @@ func (d *resourceDelta) flush(q *Request) (resultErr error) {
 		t.m, t.b, t.p, t.e, t.s, t.r = append(t.m, k[0]), append(t.b, k[1]), append(t.p, x.present), append(t.e, x.expected), append(t.s, x.sum), append(t.r, string(jsonBytes(reasons)))
 	}
 	if len(up.m) > 0 {
-		w.exec(`INSERT INTO resource_metric AS r(project_id,metric,basis,present_count,expected_count,sum_value,reasons)
- SELECT $1,d.m::resource_metric_name,d.b,d.p,d.e,d.s::numeric,d.r::jsonb FROM unnest($2::text[],$3::text[],$4::bigint[],$5::bigint[],$6::text[],$7::text[]) d(m,b,p,e,s,r)
- ON CONFLICT(project_id,metric,basis) DO UPDATE SET present_count=r.present_count+excluded.present_count,
-  expected_count=r.expected_count+excluded.expected_count,sum_value=r.sum_value+excluded.sum_value,reasons=CASE WHEN excluded.reasons='{}' THEN r.reasons ELSE resource_reasons_merge(r.reasons,excluded.reasons) END`,
-			p, up.m, up.b, up.p, up.e, up.s, up.r)
+		exec(bq.ResourceMetricsGain(ctx, []db.ResourceMetricsGainParams{{ProjectID: p, Metrics: up.m, Bases: up.b, Present: up.p, Expected: up.e, Sums: up.s, Reasons: up.r}}))
 	}
 	if len(down.m) > 0 {
-		w.exec(`UPDATE resource_metric r SET present_count=r.present_count+d.p,expected_count=r.expected_count+d.e,sum_value=r.sum_value+d.s::numeric,
-  reasons=CASE WHEN d.r='{}' THEN r.reasons ELSE resource_reasons_merge(r.reasons,d.r::jsonb) END
- FROM unnest($2::text[],$3::text[],$4::bigint[],$5::bigint[],$6::text[],$7::text[]) d(m,b,p,e,s,r)
- WHERE r.project_id=$1 AND r.metric=d.m::resource_metric_name AND r.basis=d.b`, p, down.m, down.b, down.p, down.e, down.s, down.r)
+		exec(bq.ResourceMetricsLose(ctx, []db.ResourceMetricsLoseParams{{ProjectID: p, Metrics: down.m, Bases: down.b, Present: down.p, Expected: down.e, Sums: down.s, Reasons: down.r}}))
 	}
 	if touched := append(append([]string{}, up.m...), down.m...); len(touched) > 0 {
-		w.exec(`DELETE FROM resource_metric r USING unnest($2::text[],$3::text[]) d(m,b)
- WHERE r.project_id=$1 AND r.metric=d.m::resource_metric_name AND r.basis=d.b AND r.present_count=0 AND r.expected_count=0 AND r.reasons='{}'`,
-			p, touched, append(append([]string{}, up.b...), down.b...))
+		exec(bq.ResourceMetricsPrune(ctx, []db.ResourceMetricsPruneParams{{ProjectID: p, Metrics: touched, Bases: append(append([]string{}, up.b...), down.b...)}}))
 	}
 
 	ekeys := make([]resourceExtremeKey, 0, len(d.extremes))
@@ -325,14 +354,11 @@ func (d *resourceDelta) flush(q *Request) (resultErr error) {
 		}
 	}
 	if len(eUpM) > 0 {
-		w.exec(`INSERT INTO resource_extreme AS r(project_id,metric,value,multiplicity) SELECT $1,d.m,d.v,d.n FROM unnest($2::text[],$3::bigint[],$4::bigint[]) d(m,v,n)
- ON CONFLICT(project_id,metric,value) DO UPDATE SET multiplicity=r.multiplicity+excluded.multiplicity`, p, eUpM, eUpV, eUpN)
+		exec(bq.ResourceExtremesGain(ctx, []db.ResourceExtremesGainParams{{ProjectID: p, Metrics: eUpM, Vals: eUpV, Deltas: eUpN}}))
 	}
 	if len(eDownM) > 0 {
-		w.exec(`DELETE FROM resource_extreme r USING unnest($2::text[],$3::bigint[],$4::bigint[]) d(m,v,n)
- WHERE r.project_id=$1 AND r.metric=d.m AND r.value=d.v AND r.multiplicity+d.n=0`, p, eDownM, eDownV, eDownN)
-		w.exec(`UPDATE resource_extreme r SET multiplicity=r.multiplicity+d.n FROM unnest($2::text[],$3::bigint[],$4::bigint[]) d(m,v,n)
- WHERE r.project_id=$1 AND r.metric=d.m AND r.value=d.v`, p, eDownM, eDownV, eDownN)
+		exec(bq.ResourceExtremesDrop(ctx, []db.ResourceExtremesDropParams{{ProjectID: p, Metrics: eDownM, Vals: eDownV, Deltas: eDownN}}))
+		exec(bq.ResourceExtremesLose(ctx, []db.ResourceExtremesLoseParams{{ProjectID: p, Metrics: eDownM, Vals: eDownV, Deltas: eDownN}}))
 	}
 
 	type countRows struct {
@@ -351,17 +377,13 @@ func (d *resourceDelta) flush(q *Request) (resultErr error) {
 		t.a, t.b, t.calls, t.errs, t.refs = append(t.a, k[0]), append(t.b, k[1]), append(t.calls, x.calls), append(t.errs, x.errors), append(t.refs, x.refs)
 	}
 	if len(tUp.a) > 0 {
-		w.inserted(&toolCount, `INSERT INTO resource_tool AS r(project_id,connection,name,calls,errors,references_count)
- SELECT $1,d.c,d.n,d.calls,d.errs,d.refs FROM unnest($2::text[],$3::text[],$4::bigint[],$5::bigint[],$6::bigint[]) d(c,n,calls,errs,refs)
- ON CONFLICT(project_id,connection,name) DO UPDATE SET calls=r.calls+excluded.calls,errors=r.errors+excluded.errors,references_count=r.references_count+excluded.references_count
- RETURNING (xmax=0)`, p, tUp.a, tUp.b, tUp.calls, tUp.errs, tUp.refs)
+		r := bq.ResourceToolsGain(ctx, []db.ResourceToolsGainParams{{ProjectID: p, Connections: tUp.a, Names: tUp.b, Calls: tUp.calls, Errs: tUp.errs, Refs: tUp.refs}})
+		w.read(func() (err error) { r.Query(created(&toolCount, &err)); return })
 	}
 	if len(tRest.a) > 0 {
-		w.count(&toolCount, -1, `DELETE FROM resource_tool r USING unnest($2::text[],$3::text[],$4::bigint[]) d(c,n,refs)
- WHERE r.project_id=$1 AND r.connection=d.c AND r.name=d.n AND r.references_count+d.refs=0`, p, tRest.a, tRest.b, tRest.refs)
-		w.exec(`UPDATE resource_tool r SET calls=r.calls+d.calls,errors=r.errors+d.errs,references_count=r.references_count+d.refs
- FROM unnest($2::text[],$3::text[],$4::bigint[],$5::bigint[],$6::bigint[]) d(c,n,calls,errs,refs)
- WHERE r.project_id=$1 AND r.connection=d.c AND r.name=d.n`, p, tRest.a, tRest.b, tRest.calls, tRest.errs, tRest.refs)
+		r := bq.ResourceToolsDrop(ctx, []db.ResourceToolsDropParams{{ProjectID: p, Connections: tRest.a, Names: tRest.b, Refs: tRest.refs}})
+		w.read(func() (err error) { r.QueryRow(removed(&toolCount, &err)); return })
+		exec(bq.ResourceToolsLose(ctx, []db.ResourceToolsLoseParams{{ProjectID: p, Connections: tRest.a, Names: tRest.b, Calls: tRest.calls, Errs: tRest.errs, Refs: tRest.refs}}))
 	}
 
 	type costRows struct {
@@ -370,30 +392,25 @@ func (d *resourceDelta) flush(q *Request) (resultErr error) {
 	}
 	var cUp costRows
 	for _, k := range pairKeys(d.costs) {
-		x := d.costs[k]
-		if x.sequential {
-			for _, op := range x.ops {
+		c := d.costs[k]
+		if c.sequential {
+			for _, op := range c.ops {
 				if op.sign > 0 {
-					w.inserted(&costCount, `INSERT INTO resource_cost(project_id,currency,basis,value,usages,references_count) VALUES($1,$2,$3,$4::numeric,$5,1)
-    ON CONFLICT(project_id,currency,basis) DO UPDATE SET value=resource_cost.value+excluded.value,usages=resource_cost.usages+excluded.usages,references_count=resource_cost.references_count+1 RETURNING (xmax=0)`,
-						p, k[0], k[1], op.amount, op.usages)
+					r := bq.ResourceCostAdd(ctx, []db.ResourceCostAddParams{{ProjectID: p, Currency: k[0], Basis: k[1], Amount: op.amount, Usages: op.usages}})
+					w.read(func() (err error) { r.Query(created(&costCount, &err)); return })
 				} else {
-					// One statement: the last reference deletes the row (a later add recreates its value), others subtract.
-					w.selected(&costCount, -1, `WITH gone AS (DELETE FROM resource_cost WHERE project_id=$1 AND currency=$2 AND basis=$3 AND references_count=1 RETURNING 1),
- kept AS (UPDATE resource_cost SET value=value-$4::numeric,usages=usages-$5,references_count=references_count-1 WHERE project_id=$1 AND currency=$2 AND basis=$3 AND references_count>1 RETURNING 1)
- SELECT count(*) FROM gone`, p, k[0], k[1], op.amount, op.usages)
+					r := bq.ResourceCostSubtract(ctx, []db.ResourceCostSubtractParams{{ProjectID: p, Currency: k[0], Basis: k[1], Amount: op.amount, Usages: op.usages}})
+					w.read(func() (err error) { r.QueryRow(removed(&costCount, &err)); return })
 				}
 			}
 			continue
 		}
 		t := &cUp // only known additions remain netted (see resourceDelta)
-		t.c, t.b, t.v, t.usages, t.refs = append(t.c, k[0]), append(t.b, k[1]), append(t.v, resourceAtScale(x.value, x.scale)), append(t.usages, x.usages), append(t.refs, x.refs)
+		t.c, t.b, t.v, t.usages, t.refs = append(t.c, k[0]), append(t.b, k[1]), append(t.v, resourceAtScale(c.value, c.scale)), append(t.usages, c.usages), append(t.refs, c.refs)
 	}
 	if len(cUp.c) > 0 {
-		w.inserted(&costCount, `INSERT INTO resource_cost AS r(project_id,currency,basis,value,usages,references_count)
- SELECT $1,d.c,d.b,d.v::numeric,d.u,d.refs FROM unnest($2::text[],$3::text[],$4::text[],$5::bigint[],$6::bigint[]) d(c,b,v,u,refs)
- ON CONFLICT(project_id,currency,basis) DO UPDATE SET value=r.value+excluded.value,usages=r.usages+excluded.usages,references_count=r.references_count+excluded.references_count
- RETURNING (xmax=0)`, p, cUp.c, cUp.b, cUp.v, cUp.usages, cUp.refs)
+		r := bq.ResourceCostsGain(ctx, []db.ResourceCostsGainParams{{ProjectID: p, Currencies: cUp.c, Bases: cUp.b, Vals: cUp.v, Usages: cUp.usages, Refs: cUp.refs}})
+		w.read(func() (err error) { r.Query(created(&costCount, &err)); return })
 	}
 	pkeys := make([]resourcePriceKey, 0, len(d.prices))
 	for k := range d.prices {
@@ -427,46 +444,34 @@ func (d *resourceDelta) flush(q *Request) (resultErr error) {
 		t.c, t.b, t.id, t.at, t.delta = append(t.c, k.currency), append(t.b, k.basis), append(t.id, k.price), append(t.at, k.observed), append(t.delta, n)
 	}
 	if len(pUp.c) > 0 {
-		w.inserted(&priceCount, `INSERT INTO resource_price_ref AS r(project_id,currency,basis,price_id,observed_at,references_count)
- SELECT $1,d.c,d.b,d.id,d.at,d.n FROM unnest($2::text[],$3::text[],$4::text[],$5::bigint[],$6::bigint[]) d(c,b,id,at,n)
- ON CONFLICT(project_id,currency,basis,price_id,observed_at) DO UPDATE SET references_count=r.references_count+excluded.references_count
- RETURNING (xmax=0)`, p, pUp.c, pUp.b, pUp.id, pUp.at, pUp.delta)
+		r := bq.ResourcePricesGain(ctx, []db.ResourcePricesGainParams{{ProjectID: p, Currencies: pUp.c, Bases: pUp.b, PriceIds: pUp.id, Observed: pUp.at, Deltas: pUp.delta}})
+		w.read(func() (err error) { r.Query(created(&priceCount, &err)); return })
 	}
 	if len(pDown.c) > 0 {
-		w.count(&priceCount, -1, `DELETE FROM resource_price_ref r USING unnest($2::text[],$3::text[],$4::text[],$5::bigint[],$6::bigint[]) d(c,b,id,at,n)
- WHERE r.project_id=$1 AND r.currency=d.c AND r.basis=d.b AND r.price_id=d.id AND r.observed_at=d.at AND r.references_count+d.n=0`, p, pDown.c, pDown.b, pDown.id, pDown.at, pDown.delta)
-		w.exec(`UPDATE resource_price_ref r SET references_count=r.references_count+d.n
- FROM unnest($2::text[],$3::text[],$4::text[],$5::bigint[],$6::bigint[]) d(c,b,id,at,n)
- WHERE r.project_id=$1 AND r.currency=d.c AND r.basis=d.b AND r.price_id=d.id AND r.observed_at=d.at`, p, pDown.c, pDown.b, pDown.id, pDown.at, pDown.delta)
+		r := bq.ResourcePricesDrop(ctx, []db.ResourcePricesDropParams{{ProjectID: p, Currencies: pDown.c, Bases: pDown.b, PriceIds: pDown.id, Observed: pDown.at, Deltas: pDown.delta}})
+		w.read(func() (err error) { r.QueryRow(removed(&priceCount, &err)); return })
+		exec(bq.ResourcePricesLose(ctx, []db.ResourcePricesLoseParams{{ProjectID: p, Currencies: pDown.c, Bases: pDown.b, PriceIds: pDown.id, Observed: pDown.at, Deltas: pDown.delta}}))
 	}
 
-	if len(w.results) > 0 {
-		results := q.tx.SendBatch(q.ctx(), &w.batch)
-		for _, read := range w.results {
-			if err := read(results); err != nil {
-				results.Close()
-				return err
-			}
-		}
-		if err := results.Close(); err != nil {
+	statements := len(w.batch.QueuedQueries)
+	if err := w.send(ctx); err != nil {
+		return err
+	}
+	span.Set("fleet.resource.apply_statements", strconv.Itoa(statements))
+	// Only changed item counts are written: their columns may carry update triggers.
+	typed := q.db()
+	if toolCount != 0 {
+		if err := typed.ResourceSummaryTools(ctx, db.ResourceSummaryToolsParams{ProjectID: p, Delta: toolCount}); err != nil {
 			return err
 		}
 	}
-	span.Set("fleet.resource.apply_statements", strconv.Itoa(len(w.results)))
-	// Only changed item counts are written: their columns carry update triggers.
-	var set []string
-	args := []any{p}
-	for _, c := range []struct {
-		column string
-		delta  int64
-	}{{"tool_count", toolCount}, {"cost_count", costCount}, {"price_count", priceCount}} {
-		if c.delta != 0 {
-			args = append(args, c.delta)
-			set = append(set, c.column+"="+c.column+"+$"+strconv.Itoa(len(args)))
+	if costCount != 0 {
+		if err := typed.ResourceSummaryCosts(ctx, db.ResourceSummaryCostsParams{ProjectID: p, Delta: costCount}); err != nil {
+			return err
 		}
 	}
-	if len(set) > 0 {
-		return exec(q, `UPDATE resource_project_summary SET `+strings.Join(set, ",")+` WHERE project_id=$1`, args...)
+	if priceCount != 0 {
+		return typed.ResourceSummaryPrices(ctx, db.ResourceSummaryPricesParams{ProjectID: p, Delta: priceCount})
 	}
 	return nil
 }
