@@ -55,6 +55,8 @@ async function until<T>(fn: () => Promise<T | undefined> | T | undefined, what: 
 }
 
 // The fake gateway: every call answers 502 provider-timeout (the charge is unknown), and records the bearer it saw.
+// seen holds provider calls (/v1/call/...) only: the coordinator's own usage read (GET /v1/usage, the reconcile pass a
+// minute after start) is no provider call, and counting it failed whichever test spanned that minute.
 const seen: string[] = [];
 let gateway: Server;
 let trialHostSecret = '';
@@ -62,7 +64,7 @@ let typedReplyBarrier: {reached: () => void; release: Promise<void>} | undefined
 let assetJob: {connection: string; mode: 'exact'|'missing'|'ambiguous'|'wrong-tool'|'ungranted'; jobId: string; kind?: 'rigging'; args: any; calls: string[]} | undefined;
 before(async () => {
   gateway = createServer(async (req, res) => {
-    seen.push(String(req.headers.authorization));
+    if (req.url?.startsWith('/v1/call/')) seen.push(String(req.headers.authorization));
     if (assetJob && req.url?.startsWith('/v1/call/' + assetJob.connection + '/')) {
       const fixture = assetJob, tool = req.url.split('/').at(-1)!;
       fixture.calls.push(tool);
