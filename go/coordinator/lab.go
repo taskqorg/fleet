@@ -126,12 +126,6 @@ func (e labExample) runnable() labRunExample {
 	return labRunExample{ID: e.ID, UseCaseID: e.UseCaseID, Version: e.Version, Origin: e.Origin, Fixture: e.Fixture, Prompt: e.Prompt, Inputs: e.Inputs, Checks: e.Checks, Split: e.Split}
 }
 
-// exampleFileBytes: labFileBytes of a run's example input as the map pipeline_plan.go reads (inputsFor).
-func exampleFileBytes(q *Request, projectID any, input doc) ([]byte, error) {
-	f, _ := asT[labExampleFile](input)
-	return labFileBytes(q, projectIDPtr(projectID), f)
-}
-
 // labFileBytes: a text file's text, or a binary file's stored bytes, found by its content hash among the example
 // files of the run's project or of no project.
 func labFileBytes(q *Request, projectID *string, f labExampleFile) ([]byte, error) {
@@ -608,15 +602,6 @@ func labExampleRead(q *Request, id string) (labStoredExample, error) {
 	}
 	st := labExampleState(r.ApprovedAt)
 	return labStoredExample{reply: contract.LabExampleGetReply{ArtifactId: id, State: jsonBytes(st), Example: b, Hash: r.ContentHash, ProjectId: r.ProjectID}, state: st, example: ex}, nil
-}
-
-// labExampleGet: labExampleRead's reply as the map pipelines.go reads (pipelineRun's exampleArtifactId).
-func labExampleGet(q *Request, id string) (doc, error) {
-	ex, err := labExampleRead(q, id)
-	if err != nil {
-		return nil, err
-	}
-	return docOf(ex.reply), nil
 }
 
 // labOpt: an optional column as a map value: nil when absent.
@@ -1298,7 +1283,7 @@ func expCreate(q *Request, r *contract.LabExperimentCreateRequest, exact bool) (
 	if err != nil {
 		return none, err
 	}
-	if _, err := loadPipeline(q, pipelineID+".json"); err != nil {
+	if _, err := loadPipelineDef(q, pipelineID+".json"); err != nil {
 		return none, err
 	}
 	if !projectKnown(q, projectID) {
@@ -1386,7 +1371,7 @@ func expCreate(q *Request, r *contract.LabExperimentCreateRequest, exact bool) (
 			if err != nil {
 				return none, err
 			}
-			if _, err := loadPipeline(q, variantPipeline+".json"); err != nil {
+			if _, err := loadPipelineDef(q, variantPipeline+".json"); err != nil {
 				return none, err
 			}
 		}
@@ -1423,7 +1408,7 @@ func expCreate(q *Request, r *contract.LabExperimentCreateRequest, exact bool) (
 			if err != nil {
 				return none, err
 			}
-			if _, err := loadPipeline(q, r+".json"); err != nil {
+			if _, err := loadPipelineDef(q, r+".json"); err != nil {
 				return none, err
 			}
 			if f != "pass_fail" && f != "scale" && f != "pick_best" {
@@ -1543,9 +1528,9 @@ func spendOf(s contract.LabSpend, unit string) float64 {
 }
 
 // labRun: a Lab run (a trial, a judge run or a loop strategy run) as the Lab reads it, decoded once from its record
-// (labRunFacts). rec is the record itself, handed only to the pipelines.go functions that take a run.
+// (labRunFacts). run is the typed run record the pipelines.go functions take.
 type labRun struct {
-	rec                doc
+	run                *runRecord
 	ID                 string          `json:"id"`
 	Kind               string          `json:"kind"`
 	ExperimentID       string          `json:"experimentId"`
@@ -1587,12 +1572,12 @@ type labRunStep struct {
 }
 
 // labRunFacts: a run record (getRun) as the Lab reads it; nil stays nil.
-func labRunFacts(run doc) *labRun {
+func labRunFacts(run *runRecord) *labRun {
 	if run == nil {
 		return nil
 	}
-	r, _ := asT[labRun](run)
-	r.rec = run
+	r, _ := asT[labRun](docOf(run)) // values as decoded JSON writes them (object keys sorted), as the trial evidence hashes them
+	r.run = run
 	return &r
 }
 
@@ -1610,7 +1595,7 @@ func (t *labRun) inputs() []labExampleInput {
 }
 
 // output: the run's result value (pipelineResultValue), its JSON.
-func (t *labRun) output() json.RawMessage { return jsonBytes(pipelineResultValue(t.rec)) }
+func (t *labRun) output() json.RawMessage { return labNull(t.run.resultValue()) }
 
 // outputObject: the run's result when it is an object, else nil.
 func (t *labRun) outputObject() json.RawMessage {
@@ -1635,8 +1620,9 @@ func expRuns(q *Request, id string) ([]*labRun, error) {
 			return nil, err
 		}
 		if run != nil {
-			run["variant"], run["problem"] = labOpt(r.Variant), labOpt(r.Problem)
-			out = append(out, labRunFacts(run))
+			t := labRunFacts(run)
+			t.Variant, t.Problem = r.Variant, jsonBytes(r.Problem)
+			out = append(out, t)
 		}
 	}
 	return out, nil
@@ -1687,15 +1673,8 @@ type labRunStart struct {
 	Example   any
 	Variant   *labVariant
 	Extra     labRunExtra
-	Reuse     []any
+	Reuse     []runStep
 	RerunOf   string
-}
-
-// labRequestedBy: who asked for a Lab run: the experiment's requester.
-type labRequestedBy struct {
-	Kind         string `json:"kind"`
-	ExperimentID string `json:"experimentId"`
-	Email        string `json:"email"`
 }
 
 // labExecutionRow: the execution row of a Lab run, reserved before the run starts (insertExecution).
@@ -1715,22 +1694,6 @@ type labExecutionRow struct {
 	} `json:"data"`
 }
 
-// labStartOptions: pipelineStart's options for a Lab run (pipelines.go reads them by name).
-type labStartOptions struct {
-	ID           string         `json:"id"`
-	File         string         `json:"file"`
-	ProjectID    string         `json:"projectId"`
-	RequestID    string         `json:"requestId"`
-	Example      any            `json:"example"`
-	Overrides    any            `json:"overrides"`
-	ExperimentID string         `json:"experimentId"`
-	Variant      *string        `json:"variant"`
-	RequestedBy  labRequestedBy `json:"requestedBy"`
-	Extra        labRunExtra    `json:"extra"`
-	Reuse        []any          `json:"reuse,omitempty"`
-	RerunOf      string         `json:"rerunOf,omitempty"`
-}
-
 // labStartRun reserves exactly once; an existing request never reinitializes a run. It is the Lab's one start of a
 // pipeline run: the execution row (insertExecution) and the run (pipelineStart) from its options.
 func labStartRun(q *Request, exp *labExperiment, s labRunStart) (string, error) {
@@ -1741,7 +1704,7 @@ func labStartRun(q *Request, exp *labExperiment, s labRunStart) (string, error) 
 	id := newID()
 	row := labExecutionRow{ID: id, Kind: "pipeline_run", State: "preparing", ProjectID: exp.ProjectID, ExperimentID: exp.ID, RequestID: s.RequestID}
 	row.Data.Recovery = s.Extra.Recovery
-	var overrides any
+	var overrides json.RawMessage
 	if v := s.Variant; v != nil {
 		if v.Label != "" {
 			row.Variant = &v.Label
@@ -1749,16 +1712,27 @@ func labStartRun(q *Request, exp *labExperiment, s labRunStart) (string, error) 
 		row.ConfigRef = &struct {
 			ConfigRef string `json:"config_ref"`
 		}{v.ConfigRef}
-		overrides = v.Overrides
+		if v.Overrides != nil {
+			overrides = jsonBytes(v.Overrides)
+		}
 	}
 	ok, err := insertExecution(q, docOf(row))
 	if err != nil || !ok {
 		return "", err
 	}
 	s.Extra.Priority = "background"
-	opts := labStartOptions{ID: id, File: s.File, ProjectID: exp.ProjectID, RequestID: s.RequestID, Example: s.Example, Overrides: overrides, ExperimentID: exp.ID,
-		Variant: row.Variant, RequestedBy: labRequestedBy{Kind: "lab", ExperimentID: exp.ID, Email: requester.Email}, Extra: s.Extra, Reuse: s.Reuse, RerunOf: s.RerunOf}
-	_, err = pipelineStart(q, docOf(opts))
+	extra, err := recordOf(s.Extra)
+	if err != nil {
+		return "", err
+	}
+	reuse := []json.RawMessage{}
+	for _, step := range s.Reuse {
+		reuse = append(reuse, jsonBytes(step))
+	}
+	project := exp.ProjectID
+	opts := pipelineStartOptions{ID: id, File: s.File, ProjectID: &project, RequestID: s.RequestID, Example: jsonBytes(s.Example), Overrides: overrides, ExperimentID: exp.ID,
+		Variant: deref(row.Variant), RequestedBy: &pipelineRequester{Kind: "lab", ExperimentID: exp.ID, Email: requester.Email}, Extra: extra, Reuse: reuse, RerunOf: s.RerunOf}
+	_, err = startRun(q, opts)
 	return id, err
 }
 
@@ -1831,7 +1805,7 @@ func trialFiles(q *Request, trial *labRun, example labExample) ([]labFile, error
 		}
 		set(f.Path, b)
 	}
-	outs, err := pipelineOutputs(q, trial.rec, -1)
+	outs, err := trial.run.outputFiles(q, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -1926,9 +1900,9 @@ func labSelectedEvidence(q *Request, trial *labRun) (labEvidence, []labFile, err
 	files := []labFile{}
 	var def labDefinitionSteps
 	json.Unmarshal(trial.Definition, &def)
-	entries := pipelineEntries(trial.rec)
+	entries := trial.run.entries()
 	for i := range entries {
-		entry := pipelineEntry(trial.rec, i)
+		entry := trial.run.entry(i)
 		var step labRunStep
 		if i < len(trial.Steps) {
 			step = trial.Steps[i]
@@ -1949,7 +1923,7 @@ func labSelectedEvidence(q *Request, trial *labRun) (labEvidence, []labFile, err
 		}
 		out.Entries = append(out.Entries, item)
 	}
-	outputs, err := pipelineOutputs(q, trial.rec, -1)
+	outputs, err := trial.run.outputFiles(q, -1)
 	if err != nil {
 		return out, nil, err
 	}
@@ -1974,7 +1948,7 @@ func labSelectedEvidence(q *Request, trial *labRun) (labEvidence, []labFile, err
 		producer, _, _ := strings.Cut(output.Path, "/")
 		var entry *contract.PipelinePlanEntry
 		for i := range entries {
-			if e := pipelineEntry(trial.rec, i); e.Id == producer {
+			if e := trial.run.entry(i); e.Id == producer {
 				entry = e
 				break
 			}
@@ -2046,10 +2020,10 @@ func expEvaluate(q *Request, exp *labExperiment, trials, runs []*labRun, current
 					if e.Form != "pass_fail" {
 						return false, fail(409, "Project assessment contract checks require pass_fail")
 					}
-					if err := validateLabAssessmentSnapshot(q, t.rec, full, r); err != nil {
+					if err := validateLabAssessmentSnapshot(q, t.run, full, r); err != nil {
 						return false, err
 					}
-					if err := linkLabAssessments(q, t.rec, r); err != nil {
+					if err := linkLabAssessments(q, t.run, r); err != nil {
 						return false, err
 					}
 				}
@@ -2098,7 +2072,7 @@ func expEvaluate(q *Request, exp *labExperiment, trials, runs []*labRun, current
 					if strings.HasSuffix(strings.ToLower(f.path), ".glb") {
 						continue
 					}
-					id, err := saveArtifact(q, t.rec, t.ID, "judge/"+f.path, f.bytes, http.DetectContentType(f.bytes))
+					id, err := t.run.saveArtifact(q, t.ID, "judge/"+f.path, f.bytes, http.DetectContentType(f.bytes))
 					if err != nil {
 						return false, err
 					}
@@ -2190,7 +2164,7 @@ func labWorkStep(q *Request, now time.Time, c *kitClaim) error {
 				for id, p := range todo {
 					r, err := runChecks(ctx, p.checks, p.files)
 					if err == nil {
-						err = materializeLabAssessments(ctx, a, p.trial.rec, r, p.evaluator, p.input)
+						err = materializeLabAssessments(ctx, a, p.trial.run, r, p.evaluator, p.input)
 					}
 					if err != nil {
 						return labChecked{err: err}
@@ -2320,11 +2294,11 @@ func labPendingChecks(q *Request, id string) (map[string]labPending, error) {
 				result = json.RawMessage("null")
 			}
 			metadata := labTrialMeta{Schema: "fleet.lab-trial.v1", EvaluatorSha256: labEvaluatorIdentity(full.Checks, files), TrialID: t.ID, RunID: t.ID, ExperimentID: id,
-				VariantID: t.cell().Variant, PlanSummary: pipelinePlanSummary(t.rec), CanonicalResult: result, Evidence: evidence, ExecutionState: t.State,
+				VariantID: t.cell().Variant, PlanSummary: planSummary(t.run.entries()), CanonicalResult: result, Evidence: evidence, ExecutionState: t.State,
 				Observation: firstString(t.Observation, "confirmed"), Resources: labTrialResources{Usage: t.Usage, DurationMs: t.DurationMs}, Inputs: labFileBindings(files)}
 			files = append(files, labFile{"__fleet_evaluation/trial.json", jsonBytes(metadata)})
-			evaluator, input := labAssessmentInputs(t.rec, full.Checks, files)
-			todo[t.ID] = labPending{full.Checks, files, t, evaluator, input, labAssessmentSnapshot(t.rec, full)}
+			evaluator, input := labAssessmentInputs(t.run, full.Checks, files)
+			todo[t.ID] = labPending{full.Checks, files, t, evaluator, input, labAssessmentSnapshot(t.run, full)}
 		}
 		return nil
 	}()
@@ -2611,7 +2585,7 @@ func expCellAction(q *Request, id, cell, action string) (labExperimentView, erro
 			if latest[cell] == nil || latest[cell].ID != t.ID {
 				return fail(409, "Cell source changed; read it again")
 			}
-			if err := pipelineRecoveryFence(q, latest[cell].rec); err != nil {
+			if err := recoveryFence(q, latest[cell].run); err != nil {
 				return err
 			}
 			if _, err := experimentTransition(q, id, experimentEvent{To: "running", From: []string{"done"}}); err != nil {
@@ -2862,7 +2836,7 @@ func labRating(q *Request, qid string) (labRatingView, error) {
 		files := []labExampleInput{}
 		for _, t := range runs {
 			if t.ID == tid {
-				fs, err := pipelineOutputs(q, t.rec, -1)
+				fs, err := t.run.outputFiles(q, -1)
 				if err != nil {
 					return labRatingView{}, err
 				}
@@ -3028,7 +3002,7 @@ type labExampleAsk struct {
 
 // importDraft: one examples/*.json file of a completed draft-examples run becomes a proposed example with one pass_fail
 // rating question; the owner's pass approves it (pipelineImportDrafts, after the run's end).
-func importDraft(q *Request, run doc, ex any) error {
+func importDraft(q *Request, run *runRecord, ex any) error {
 	r := labRunFacts(run)
 	approved := false
 	res, err := labExamplesAdd(q, &contract.LabExamplesAddRequest{Examples: jsonBytes([]any{ex}), ProjectId: r.ProjectID, Approved: &approved})
@@ -3197,7 +3171,7 @@ func expGet(q *Request, id string) (labExperimentView, error) {
 		v := contract.LabTrialRecord{Id: t.ID, Cell: cell, State: contract.ExecutionState(t.State), Observation: contract.PipelineObservation(t.Observation), Problem: labNull(t.Problem),
 			Comparable: comparable(t), StartedAt: labNull(t.StartedAt), FinishedAt: labNull(t.FinishedAt), DurationMs: t.DurationMs,
 			Spend: contract.LabTrialSpend{Calls: &calls, Credits: &credit, Basis: &basis}, Cost: append([]contract.CostFigure{}, trialCost[t.ID]...),
-			Confounders: contract.LabConfounders{Hosts: uniq(hosts), Harnesses: uniq(harnesses), Models: uniq(models), WebRoute: web}, Scores: mine, PlanSummary: pipelinePlanSummary(t.rec)}
+			Confounders: contract.LabConfounders{Hosts: uniq(hosts), Harnesses: uniq(harnesses), Models: uniq(models), WebRoute: web}, Scores: mine, PlanSummary: planSummary(t.run.entries())}
 		if rawValue(t.CanonicalResult) != nil {
 			r, err := asT[contract.PipelineCanonicalResult](t.CanonicalResult)
 			if err != nil {

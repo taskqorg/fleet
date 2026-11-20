@@ -714,7 +714,7 @@ func init() {
 
 // pipelineRun: a pipeline run as its readers get it (planRead).
 func pipelineRun(q *Request, id string) (recordRest, error) {
-	run, err := loadRun(q, id)
+	run, err := getRun(q, id)
 	if err != nil {
 		return nil, err
 	}

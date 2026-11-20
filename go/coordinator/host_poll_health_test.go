@@ -85,21 +85,21 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		native, err := get(q, optString(pipelineEntry(run, 0).Dispatch.NativeExecutionId), "execution")
+		native, err := get(q, optString(run.entry(0).Dispatch.NativeExecutionId), "execution")
 		if err != nil {
 			return err
 		}
 		if native["state"] != "cancelled" || native["stopDetail"] != "refused: Pipeline initiating actor no longer has project access" {
 			return fmt.Errorf("refused script's execution is %v (%v), want cancelled with the reason", native["state"], native["stopDetail"])
 		}
-		if phase := pipelineEntry(run, 0).Dispatch.Phase; phase != "prepared" {
+		if phase := run.entry(0).Dispatch.Phase; phase != "prepared" {
 			return fmt.Errorf("refused run's dispatch is %v, want still prepared (never handed off)", phase)
 		}
 		run, err = getRun(q, "good")
 		if err != nil {
 			return err
 		}
-		if phase := pipelineEntry(run, 0).Dispatch.Phase; phase != "handed_off" {
+		if phase := run.entry(0).Dispatch.Phase; phase != "handed_off" {
 			return fmt.Errorf("good run's dispatch is %v, want handed_off", phase)
 		}
 		return nil

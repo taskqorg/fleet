@@ -240,3 +240,158 @@ func restorePipelineEntry(dst *contract.PipelinePlanEntry, src contract.Pipeline
 	}
 	*dst = src
 }
+
+// runOfDoc: a run record held as a map as the typed run; its plan stays the map's (an edit through either is the other's).
+func runOfDoc(d doc) (*runRecord, error) {
+	plan := pipelinePlanOfRun(d)
+	r, err := asT[runRecord](d)
+	if err != nil {
+		return nil, err
+	}
+	r.Plan = plan
+	return &r, nil
+}
+
+// docOfRun: run as the map its callers read, sharing run's plan; nil for none.
+func docOfRun(r *runRecord) doc {
+	if r == nil {
+		return nil
+	}
+	d := docOf(r)
+	if r.Plan != nil {
+		d["plan"] = r.Plan
+	}
+	return d
+}
+
+// getRunDoc: getRun as a map record.
+func getRunDoc(q *Request, id string) (doc, error) {
+	r, err := getRun(q, id)
+	return docOfRun(r), err
+}
+
+// pipelineStart: startRun from the options as a map (lab.go; a draftDefinition and draftBase too); the run as a map
+// record.
+func pipelineStart(q *Request, o doc) (doc, error) {
+	opts, err := asT[pipelineStartOptions](o)
+	if err != nil {
+		return nil, err
+	}
+	draft, err := asT[struct {
+		Definition *pipelineDef `json:"draftDefinition"`
+		Base       *int64       `json:"draftBase"`
+	}](o)
+	if err != nil {
+		return nil, err
+	}
+	opts.draft = draft.Definition
+	if draft.Base != nil {
+		opts.draftBase, opts.hasDraftBase = *draft.Base, true
+	}
+	r, err := startRun(q, opts)
+	return docOfRun(r), err
+}
+
+// succeededPrefix: runPrefix of a map record and definition; each reused step as its map record.
+func succeededPrefix(q *Request, old, def doc) ([]any, error) {
+	r, err := runOfDoc(old)
+	if err != nil {
+		return nil, err
+	}
+	d, err := asT[pipelineDef](def)
+	if err != nil {
+		return nil, err
+	}
+	steps, err := runPrefix(q, r, &d)
+	out := []any{}
+	for _, s := range steps {
+		out = append(out, docOf(s))
+	}
+	return out, err
+}
+
+// stepRow: the step row id of a map record's step i.
+func stepRow(run doc, i int) string {
+	r, _ := runOfDoc(run)
+	return r.row(i)
+}
+
+// pipelineRecoveryFence: recoveryFence of a map record.
+func pipelineRecoveryFence(q *Request, run doc) error {
+	r, err := runOfDoc(run)
+	if err != nil {
+		return err
+	}
+	return recoveryFence(q, r)
+}
+
+// validatePipeline: validatePipelineDef of a map (definitions.go); d itself when valid.
+func validatePipeline(d doc) (doc, error) {
+	if _, err := validatePipelineDef(jsonBytes(d)); err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+// pipelinePlanOfRun: the plan of a run held as a map record (contract.PipelinePlan; nil for a run without one); a plan
+// written as JSON (a fixture's map) is read into it once.
+func pipelinePlanOfRun(run doc) *contract.PipelinePlan {
+	switch p := run["plan"].(type) {
+	case *contract.PipelinePlan:
+		return p
+	case nil:
+		return nil
+	default:
+		plan, err := asT[contract.PipelinePlan](p)
+		if err != nil {
+			return nil
+		}
+		run["plan"] = &plan
+		return &plan
+	}
+}
+
+// pipelineEntries: the entries of a map record's plan, in index order (aliases: an edit is the plan's).
+func pipelineEntries(run doc) []contract.PipelinePlanEntry {
+	if p := pipelinePlanOfRun(run); p != nil {
+		return p.Entries
+	}
+	return nil
+}
+
+// pipelineEntry: entry index of a map record's plan, nil out of range.
+func pipelineEntry(run doc, index int) *contract.PipelinePlanEntry {
+	entries := pipelineEntries(run)
+	if index < 0 || index >= len(entries) {
+		return nil
+	}
+	return &entries[index]
+}
+
+// mustRunOf: runOfDoc of a fixture; nil when it does not decode.
+func mustRunOf(d doc) *runRecord {
+	r, _ := runOfDoc(d)
+	return r
+}
+
+// suffixProof: suffixProven of records as the tests build them.
+func suffixProof(execution, command, event doc, stepID string) bool {
+	return suffixProven(labRecordOf[labProofExecution](execution), labRecordOf[labSuffixCommand](command), labRecordOf[labProofEvent](event), stepID)
+}
+
+// suffixCommand: suffixScript of command records as the tests build them; the script command's record.
+func suffixCommand(records []doc) (doc, error) {
+	commands := []labSuffixCommand{}
+	for _, r := range records {
+		c, _ := asT[labSuffixCommand](r)
+		commands = append(commands, c)
+	}
+	i, err := suffixScript(commands)
+	if err != nil {
+		return nil, err
+	}
+	return records[i], nil
+}
+
+// doc: the file reference as the tests read it.
+func (f fileRef) doc() doc { return docOf(f) }

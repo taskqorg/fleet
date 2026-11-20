@@ -115,7 +115,7 @@ type suffixSnapshot struct {
 	source    *labRun
 	variant   *labVariant
 	pin       *labPin
-	reuse     []any
+	reuse     []runStep
 	reused    []labRunStep
 	inputs    []labExampleInput
 	facts     labSuffixFacts
@@ -157,11 +157,6 @@ func suffixReplay(q *Request, identity labSuffixIdentity) (string, error) {
 	return r.ID, nil
 }
 
-// suffixProof: suffixProven of records as pipeline_plan.go reads them (pipelineRecoveryFence).
-func suffixProof(execution, command, event doc, stepID string) bool {
-	return suffixProven(labRecordOf[labProofExecution](execution), labRecordOf[labSuffixCommand](command), labRecordOf[labProofEvent](event), stepID)
-}
-
 // Exact command/event identity is required in addition to the trusted host's resolved recorded ownership.
 func suffixProven(execution *labProofExecution, command *labSuffixCommand, event *labProofEvent, stepID string) bool {
 	if execution == nil || command == nil || event == nil {
@@ -180,20 +175,6 @@ func suffixProven(execution *labProofExecution, command *labSuffixCommand, event
 	d := event.Data
 	return d.OwnedProcesses != nil && *d.OwnedProcesses > 0 && d.Resolved != nil && *d.Resolved && d.LaunchWindowUnresolved != nil && !*d.LaunchWindowUnresolved &&
 		d.Survived != nil && !*d.Survived && rawValue(d.FleetNormalized) == nil
-}
-
-// suffixCommand: suffixScript of command records as pipeline_plan.go reads them; the script command's record.
-func suffixCommand(records []doc) (doc, error) {
-	commands := []labSuffixCommand{}
-	for _, r := range records {
-		c, _ := asT[labSuffixCommand](r)
-		commands = append(commands, c)
-	}
-	i, err := suffixScript(commands)
-	if err != nil {
-		return nil, err
-	}
-	return records[i], nil
 }
 
 // A stop command neither launches work nor supplies absence proof. Any other second command is ambiguous.
@@ -344,16 +325,16 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 	if !same(source.Overrides, overrides) {
 		return nil, suffixConflict("variant or example changed")
 	}
-	def, err := loadPipeline(q, variantPipelineID(exp, variant)+".json")
+	def, err := loadPipelineDef(q, variantPipelineID(exp, variant)+".json")
 	if err != nil {
 		return nil, err
 	}
-	if !same(def, source.Definition) || sha256hex([]byte(canonical(def))) != source.DefinitionSha256 {
+	if !same(def.value(), source.Definition) || sha256hex([]byte(canonical(def.value()))) != source.DefinitionSha256 {
 		return nil, suffixConflict("frozen definition changed")
 	}
 	var steps labDefinitionSteps
 	json.Unmarshal(jsonBytes(def), &steps)
-	ref, err := definitionRef(q, "pipeline", steps.ID, def)
+	ref, err := definitionRef(q, "pipeline", def.ID, def.value())
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +355,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 	if !same(source.Definitions, refs) {
 		return nil, suffixConflict("frozen pipeline revision changed")
 	}
-	reuse, err := succeededPrefix(q, source.rec, def)
+	reuse, err := runPrefix(q, source.run, def)
 	if err != nil {
 		return nil, err
 	}
@@ -393,19 +374,19 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 		proofs: []labSuffixProof{}}
 	// Include every original prefix coordinator output, even when a child file overrides its staging path.
 	for i, s := range reused {
-		if e := pipelineEntry(source.rec, i); e != nil && e.Activation == contract.PipelineActivationNotSelected {
+		if e := source.run.entry(i); e != nil && e.Activation == contract.PipelineActivationNotSelected {
 			continue
 		}
 		aid := s.OutputArtifactID
 		if aid == "" {
 			return nil, suffixConflict("prefix output artifact missing")
 		}
-		if err := pipelineOutputOwner(q, source.rec, i, aid); err != nil {
+		if err := outputOwner(q, source.run, i, aid); err != nil {
 			return nil, err
 		}
-		snap.expected[aid] = sha256hex(jsonBytes(labNull(s.Output)))
+		snap.expected[aid] = sha256hex(jsonNorm(s.Output))
 	}
-	fs, err := pipelineOutputs(q, source.rec, len(reused))
+	fs, err := source.run.outputFiles(q, len(reused))
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +433,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 	// artifact. Verify those exact command bindings rather than guessing inputs
 	// from a flattened prefix projection.
 	for i := len(reused); i < len(run); i++ {
-		entry := pipelineEntry(source.rec, i)
+		entry := source.run.entry(i)
 		if entry == nil || entry.Activation != contract.PipelineActivationSelected {
 			continue
 		}
@@ -501,7 +482,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 		if d.Kind != "script" {
 			return nil, suffixConflict("suffix is not script-only")
 		}
-		entry := pipelineEntry(source.rec, i)
+		entry := source.run.entry(i)
 		if entry == nil {
 			return nil, suffixConflict("missing suffix plan entry")
 		}
@@ -561,13 +542,13 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 		for _, prev := range run[:i] {
 			outputs[prev.ID] = labNull(prev.Output)
 		}
-		resolved, err := resolveRefs(rawValue(d.Command), rawValue(source.Example), docOf(outputs), true)
+		resolved, err := resolveRefsRaw(d.Command, source.Example, outputs, true)
 		if err != nil {
 			return nil, suffixConflict("frozen script cannot be resolved")
 		}
 		var payload labCommandPayload
 		json.Unmarshal(command.Payload, &payload)
-		if !same(rawValue(payload.Command), resolved) || !same(rawValue(payload.TimeoutMs), rawValue(d.TimeoutMs)) {
+		if !same(rawValue(payload.Command), rawValue(resolved)) || !same(rawValue(payload.TimeoutMs), rawValue(d.TimeoutMs)) {
 			return nil, suffixConflict("original script command changed")
 		}
 
@@ -578,7 +559,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 		var proof *labProofEvent
 		for _, event := range events {
 			v := labRecordOf[labProofEvent](event)
-			if suffixProven(e, command, v, stepRow(source.rec, i)) {
+			if suffixProven(e, command, v, source.run.row(i)) {
 				if proof != nil {
 					return nil, suffixConflict("ambiguous absence proof")
 				}

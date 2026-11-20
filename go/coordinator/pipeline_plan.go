@@ -19,41 +19,6 @@ import (
 
 const pipelinePlanVersion = 1
 
-// pipelinePlanOfRun: the plan of a run held as a map record (contract.PipelinePlan; nil for a run without one); a plan
-// written as JSON (a fixture's map) is read into it once.
-func pipelinePlanOfRun(run doc) *contract.PipelinePlan {
-	switch p := run["plan"].(type) {
-	case *contract.PipelinePlan:
-		return p
-	case nil:
-		return nil
-	default:
-		plan, err := asT[contract.PipelinePlan](p)
-		if err != nil {
-			return nil
-		}
-		run["plan"] = &plan
-		return &plan
-	}
-}
-
-// pipelineEntries: the entries of a map record's plan, in index order (aliases: an edit is the plan's).
-func pipelineEntries(run doc) []contract.PipelinePlanEntry {
-	if p := pipelinePlanOfRun(run); p != nil {
-		return p.Entries
-	}
-	return nil
-}
-
-// pipelineEntry: entry index of a map record's plan, nil out of range.
-func pipelineEntry(run doc, index int) *contract.PipelinePlanEntry {
-	entries := pipelineEntries(run)
-	if index < 0 || index >= len(entries) {
-		return nil
-	}
-	return &entries[index]
-}
-
 func refExecutionID(e *contract.PipelinePlanEntry) string {
 	if e.ExecutionRef == nil {
 		return ""
@@ -379,7 +344,7 @@ func claimPipelineAPI(q *Request, runID, executionID, connection, tool string) (
 	if _, err := q.db().PipelineRunLock(q.ctx(), runID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", false, false, err
 	}
-	run, err := loadRun(q, runID)
+	run, err := getRun(q, runID)
 	if err != nil || run == nil {
 		return run, "", false, false, err
 	}
@@ -452,7 +417,7 @@ func preparePipelineCommand(q *Request, execution, command doc) error {
 	if !txHasLock(q.tx, GLOBAL) {
 		return fail(409, "Pipeline command preparation requires its transaction fence")
 	}
-	run, err := loadRun(q, e.PipelineRunID)
+	run, err := getRun(q, e.PipelineRunID)
 	if err != nil || run == nil {
 		return err
 	}
@@ -490,7 +455,7 @@ func handoffPipelineCommand(q *Request, execution, command doc) (bool, error) {
 	// A command that can never be handed off is stopped with its reason, never answered as an error: an error
 	// fails the whole poll, so the host would get no other command and no update target. Its execution is left
 	// to its engine and the lost-host sweep, as before.
-	run, err := loadRun(q, e.PipelineRunID)
+	run, err := getRun(q, e.PipelineRunID)
 	if pipelineFormatUnsupported(err) {
 		return false, stopPipelineCommand(q, command, "pipeline run format unsupported")
 	}
@@ -618,11 +583,6 @@ func planSummary(entries []contract.PipelinePlanEntry) contract.PipelinePlanSumm
 		}
 	}
 	return out
-}
-
-// pipelinePlanSummary: planSummary of a map record (lab.go).
-func pipelinePlanSummary(run doc) contract.PipelinePlanSummary {
-	return planSummary(pipelineEntries(run))
 }
 
 func pipelineReservedInput(path string) bool {
@@ -772,7 +732,9 @@ func materializePipelineInputs(ctx context.Context, a *App, run *runRecord, inde
 			var data []byte
 			if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
 				var err error
-				data, err = exampleFileBytes(q, project, docOf(input))
+				var f labExampleFile
+				json.Unmarshal(jsonBytes(input), &f)
+				data, err = labFileBytes(q, run.ProjectID, f)
 				return err
 			}); err != nil {
 				return nil, err
@@ -1079,7 +1041,7 @@ func (run *runRecord) planRead(q *Request) (recordRest, error) {
 func pipelinePublicRead(ctx context.Context, a *App, id string) (recordRest, error) {
 	var out recordRest
 	err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-		run, err := loadRun(q, id)
+		run, err := getRun(q, id)
 		if err != nil {
 			return err
 		}
@@ -1147,12 +1109,14 @@ func recoveryFence(q *Request, run *runRecord) error {
 		if err != nil {
 			return err
 		}
-		// suffixProof (lab_retry.go) reads the host job's record.
-		var execution doc
-		if err := json.Unmarshal(raw, &execution); err != nil {
+		var job pipelineHostJobRecord
+		if err := json.Unmarshal(raw, &job); err != nil {
 			return err
 		}
-		job := agentView[pipelineHostJobRecord](execution)
+		var execution *labProofExecution
+		if json.Unmarshal(raw, &execution) != nil {
+			execution = nil // a record that is no host job proves nothing
+		}
 		if execution == nil || job.PipelineRunID != run.ID || !same(derefAny(job.ProjectID), derefAny(run.ProjectID)) {
 			return fail(409, "Interrupted script ownership proof unavailable")
 		}
@@ -1160,12 +1124,17 @@ func recoveryFence(q *Request, run *runRecord) error {
 		if err != nil {
 			return err
 		}
-		command, err := suffixCommand(commands)
+		scripts := []labSuffixCommand{}
+		for _, c := range commands {
+			scripts = append(scripts, agentView[labSuffixCommand](c))
+		}
+		ci, err := suffixScript(scripts)
 		if err != nil {
 			return err
 		}
+		command := &scripts[ci]
 		d := entry.Dispatch
-		if d == nil || deref(d.CommandId) != agentView[agentCommand](command).ID || d.CommandId == nil || deref(d.NativeExecutionId) != native || d.Phase != contract.PipelineDispatchPhaseHandedOff {
+		if d == nil || deref(d.CommandId) != command.ID || d.CommandId == nil || deref(d.NativeExecutionId) != native || d.Phase != contract.PipelineDispatchPhaseHandedOff {
 			return fail(409, "Interrupted script handoff proof unavailable")
 		}
 		events, err := eventsWhere(q, docOf(pipelineEventFilter{ExecutionID: native, Type: "process.reconciled"}))
@@ -1174,7 +1143,7 @@ func recoveryFence(q *Request, run *runRecord) error {
 		}
 		matches := 0
 		for _, event := range events {
-			if suffixProof(execution, command, event, run.row(i)) {
+			if suffixProven(execution, command, labRecordOf[labProofEvent](event), run.row(i)) {
 				matches++
 			}
 		}

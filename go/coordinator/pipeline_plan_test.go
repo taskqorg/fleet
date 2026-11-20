@@ -164,7 +164,7 @@ func TestPipelinePlanFalseHasNoExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
-		got, err := getRun(q, "plan-false")
+		got, err := getRunDoc(q, "plan-false")
 		if err != nil {
 			return err
 		}
@@ -291,7 +291,7 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 		}
 	}
 	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
-		got, err := getRun(q, astr(run["id"]))
+		got, err := getRunDoc(q, astr(run["id"]))
 		if err != nil {
 			return err
 		}
@@ -316,7 +316,7 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 		if ok {
 			return errors.New("cancelled preparation was handed off")
 		}
-		fresh, err := getRun(q, astr(cancelled["id"]))
+		fresh, err := getRunDoc(q, astr(cancelled["id"]))
 		if err != nil {
 			return err
 		}
@@ -552,7 +552,7 @@ func TestPipelineVerifiedPrefixReuse(t *testing.T) {
 	var derived doc
 	err = runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
 		q.person = &Person{Email: testOwnerEmail, Owner: true}
-		source, err := getRun(q, astr(old["id"]))
+		source, err := getRunDoc(q, astr(old["id"]))
 		if err != nil {
 			return err
 		}
@@ -586,7 +586,7 @@ func TestPipelineVerifiedPrefixReuse(t *testing.T) {
 		if err := exec(q, "UPDATE artifact SET content_hash=$2 WHERE id=$1", "prefix-output", sha256hex([]byte("corrupt"))); err != nil {
 			return err
 		}
-		source, err := getRun(q, astr(derived["id"]))
+		source, err := getRunDoc(q, astr(derived["id"]))
 		if err != nil {
 			return err
 		}
@@ -661,7 +661,7 @@ func TestPipelineCompletionRestoresFullStateOnDBRetry(t *testing.T) {
 		t.Fatal("completion retry failed", attempts, run)
 	}
 	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
-		actual, err := getRun(q, astr(run["id"]))
+		actual, err := getRunDoc(q, astr(run["id"]))
 		if err != nil {
 			return err
 		}

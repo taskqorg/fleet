@@ -89,7 +89,7 @@ func pairwiseEvaluate(q *Request, e *labExperiment, ev labEvaluator, trials, run
 					if strings.HasSuffix(strings.ToLower(f.path), ".glb") {
 						continue
 					}
-					aid, err := saveArtifact(q, t.rec, t.ID, "judge/"+f.path, f.bytes, http.DetectContentType(f.bytes))
+					aid, err := t.run.saveArtifact(q, t.ID, "judge/"+f.path, f.bytes, http.DetectContentType(f.bytes))
 					if err != nil {
 						return false, err
 					}

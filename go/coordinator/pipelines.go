@@ -36,7 +36,7 @@ var (
 	ownOutput      = regexp.MustCompile(`^(output/)?output\.json$`)
 )
 
-// runRecord: a pipeline run as the runner holds it (loadRun reads it, put writes it): its pipeline_run execution's record
+// runRecord: a pipeline run as the runner holds it (getRun reads it, put writes it): its pipeline_run execution's record
 // (execution.data, its state and observation), its plan (pipeline_run and pipeline_step rows) and its steps (each a
 // pipeline_step execution's record with its step facts). Keys no field names (a Lab trial's cell, recovery, priority)
 // stay in rest, never read here. A kit claim, its call and the step after it share one *runRecord.
@@ -393,164 +393,6 @@ func (r *runRecord) merge(extra recordRest) error {
 	out.Plan = plan
 	*r = out
 	return nil
-}
-
-// Map adapters for the callers that still hold a run as its record (lab.go, lab_retry.go, lab_assessment.go,
-// lab_pairwise.go, lab_variant.go, definitions.go): each converts once at the call. They go when those callers hold a
-// *runRecord.
-
-// runOfDoc: a run record held as a map as the typed run; its plan stays the map's (an edit through either is the other's).
-func runOfDoc(d doc) (*runRecord, error) {
-	plan := pipelinePlanOfRun(d)
-	r, err := asT[runRecord](d)
-	if err != nil {
-		return nil, err
-	}
-	r.Plan = plan
-	return &r, nil
-}
-
-// docOfRun: run as the map its callers read, sharing run's plan; nil for none.
-func docOfRun(r *runRecord) doc {
-	if r == nil {
-		return nil
-	}
-	d := docOf(r)
-	if r.Plan != nil {
-		d["plan"] = r.Plan
-	}
-	return d
-}
-
-// getRun: loadRun as a map record.
-func getRun(q *Request, id string) (doc, error) {
-	r, err := loadRun(q, id)
-	return docOfRun(r), err
-}
-
-// pipelineStart: startRun from the options as a map (lab.go; a draftDefinition and draftBase too); the run as a map
-// record.
-func pipelineStart(q *Request, o doc) (doc, error) {
-	opts, err := asT[pipelineStartOptions](o)
-	if err != nil {
-		return nil, err
-	}
-	draft, err := asT[struct {
-		Definition *pipelineDef `json:"draftDefinition"`
-		Base       *int64       `json:"draftBase"`
-	}](o)
-	if err != nil {
-		return nil, err
-	}
-	opts.draft = draft.Definition
-	if draft.Base != nil {
-		opts.draftBase, opts.hasDraftBase = *draft.Base, true
-	}
-	r, err := startRun(q, opts)
-	return docOfRun(r), err
-}
-
-// pipelineOutputs: outputFiles of a map record.
-func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
-	r, err := runOfDoc(run)
-	if err != nil {
-		return nil, err
-	}
-	return r.outputFiles(q, n)
-}
-
-// saveArtifact: an object of a run held as a map record (Lab judges).
-func saveArtifact(q *Request, run doc, executionID, name string, b []byte, media string) (string, error) {
-	r, err := runOfDoc(run)
-	if err != nil {
-		return "", err
-	}
-	return r.saveArtifact(q, executionID, name, b, media)
-}
-
-// succeededPrefix: runPrefix of a map record and definition; each reused step as its map record.
-func succeededPrefix(q *Request, old, def doc) ([]any, error) {
-	r, err := runOfDoc(old)
-	if err != nil {
-		return nil, err
-	}
-	d, err := asT[pipelineDef](def)
-	if err != nil {
-		return nil, err
-	}
-	steps, err := runPrefix(q, r, &d)
-	out := []any{}
-	for _, s := range steps {
-		out = append(out, docOf(s))
-	}
-	return out, err
-}
-
-// stepRow: the step row id of a map record's step i.
-func stepRow(run doc, i int) string {
-	r, _ := runOfDoc(run)
-	return r.row(i)
-}
-
-// pipelineOutputOwner: outputOwner of a map record.
-func pipelineOutputOwner(q *Request, run doc, index int, aid string) error {
-	r, err := runOfDoc(run)
-	if err != nil {
-		return err
-	}
-	return outputOwner(q, r, index, aid)
-}
-
-// pipelineRecoveryFence: recoveryFence of a map record.
-func pipelineRecoveryFence(q *Request, run doc) error {
-	r, err := runOfDoc(run)
-	if err != nil {
-		return err
-	}
-	return recoveryFence(q, r)
-}
-
-// pipelineResultValue: resultValue of a map record.
-func pipelineResultValue(run doc) any {
-	r, err := runOfDoc(run)
-	if err != nil {
-		return nil
-	}
-	return rawAny(r.resultValue())
-}
-
-// resolveRefs: resolveRefsRaw over decoded values (lab_retry.go).
-func resolveRefs(v any, example any, outputs doc, quote bool) (any, error) {
-	outs := map[string]json.RawMessage{}
-	for k, o := range outputs {
-		outs[k] = jsonBytes(o)
-	}
-	var ex json.RawMessage
-	if example != nil {
-		ex = jsonBytes(example)
-	}
-	out, err := resolveRefsRaw(jsonBytes(v), ex, outs, quote)
-	if err != nil {
-		return nil, err
-	}
-	return rawAny(out), nil
-}
-
-// validatePipeline: validatePipelineDef of a map (definitions.go); d itself when valid.
-func validatePipeline(d doc) (doc, error) {
-	if _, err := validatePipelineDef(jsonBytes(d)); err != nil {
-		return nil, err
-	}
-	return d, nil
-}
-
-// loadPipeline: loadPipelineDef as a map.
-func loadPipeline(q *Request, file string) (doc, error) {
-	d, err := loadPipelineDef(q, file)
-	if err != nil {
-		return nil, err
-	}
-	return docOf(d.value()), nil
 }
 
 // problemOf: the execution problem for a failed call; code is the call's error code, "" when none.
@@ -1199,8 +1041,8 @@ func withSteps(q *Request, runs []*runRecord) ([]*runRecord, error) {
 	return runs, nil
 }
 
-// loadRun: run id with its plan and steps; nil when there is none.
-func loadRun(q *Request, id string) (*runRecord, error) {
+// getRun: run id with its plan and steps; nil when there is none.
+func getRun(q *Request, id string) (*runRecord, error) {
 	raw, err := q.db().PipelineRun(q.ctx(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -1398,7 +1240,7 @@ func startRun(q *Request, o pipelineStartOptions) (*runRecord, error) {
 		return nil, err
 	}
 	if len(o.Reuse) > 0 {
-		old, err := loadRun(q, o.RerunOf)
+		old, err := getRun(q, o.RerunOf)
 		if err != nil || old == nil {
 			return nil, fail(409, "Reused source run is unavailable")
 		}
@@ -1456,7 +1298,7 @@ func startRun(q *Request, o pipelineStartOptions) (*runRecord, error) {
 func pipelineWait(ctx context.Context, a *App, runID string) (recordRest, error) {
 	for {
 		var r *runRecord
-		if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) { r, err = loadRun(q, runID); return }); err != nil {
+		if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) { r, err = getRun(q, runID); return }); err != nil {
 			return nil, err
 		}
 		if r == nil {
@@ -1498,7 +1340,7 @@ func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
 // already holds a snapshot rechecks the stored run before writing it back.
 // The caller handles post-commit notification and a handed-off native stop.
 func pipelineCancelIn(q *Request, runID string) (string, *runRecord, error) {
-	run, err := loadRun(q, runID)
+	run, err := getRun(q, runID)
 	if err != nil || run == nil || run.State != "running" {
 		return "", nil, err
 	}
@@ -1676,8 +1518,6 @@ type fileRef struct {
 	Path       string `json:"path"`
 }
 
-func (f fileRef) doc() doc { return docOf(f) }
-
 // artifactsOf: stored artifacts of an execution {id, path, sha256}.
 func artifactsOf(q *Request, executionID string) ([]db.PipelineStoredArtifactsRow, error) {
 	return q.db().PipelineStoredArtifacts(q.ctx(), &executionID)
@@ -1714,7 +1554,7 @@ func outputOwner(q *Request, run *runRecord, index int, aid string) error {
 			return nil
 		}
 		var err error
-		current, err = loadRun(q, previous)
+		current, err = getRun(q, previous)
 		if err != nil {
 			return err
 		}
@@ -2073,7 +1913,7 @@ func pipelineWorkStep(q *Request, now time.Time, c *kitClaim) error {
 	} else if err != nil {
 		return err
 	}
-	run, err := loadRun(q, c.Key)
+	run, err := getRun(q, c.Key)
 	if pipelineFormatUnsupported(err) || err == nil && run == nil {
 		return pipelineWorkDone(q, c.Key, false) // a historical plan never runs again
 	}
@@ -2751,7 +2591,6 @@ func pipelinePollRecord(q *Request, now time.Time, run *runRecord, i int, line c
 // pipelineImportDrafts: a finished draft-examples run's examples become unapproved examples, each with its rating
 // question; one that is refused is left out (savepoint). The run's row goes.
 func pipelineImportDrafts(q *Request, run *runRecord, drafts pipelineDrafts) error {
-	record := docOfRun(run) // importDraft (lab.go) reads the run as its record
 	for _, b := range drafts {
 		var ex any
 		if json.Unmarshal(b, &ex) != nil {
@@ -2760,7 +2599,7 @@ func pipelineImportDrafts(q *Request, run *runRecord, drafts pipelineDrafts) err
 		if err := exec(q, "SAVEPOINT pipeline_draft"); err != nil {
 			return err
 		}
-		if err := importDraft(q, record, ex); err != nil {
+		if err := importDraft(q, run, ex); err != nil {
 			if e := exec(q, "ROLLBACK TO SAVEPOINT pipeline_draft"); e != nil {
 				return e
 			}
@@ -2950,18 +2789,14 @@ func pipelineRunFrom(q *Request, pipelineID string, b pipelineRule, draft *pipel
 		example = pipelineRule{}
 	}
 	if id, ok := jsonString(b["exampleArtifactId"]); ok && id != "" {
-		ex, err := labExampleGet(q, id)
+		ex, err := labExampleRead(q, id)
 		if err != nil {
 			return nil, err
 		}
-		approved := agentView[struct {
-			State   string          `json:"state"`
-			Example json.RawMessage `json:"example"`
-		}](ex)
-		if approved.State != "approved" {
+		if ex.state != "approved" {
 			return nil, fail(409, "Example not approved")
 		}
-		example = pipelineRuleOf(approved.Example)
+		example = pipelineRuleOf(ex.reply.Example)
 		if example == nil {
 			example = pipelineRule{}
 		}
@@ -3316,7 +3151,7 @@ func draftPipeline(q *Request, pid string) (*pipelineDef, int64, error) {
 // Mode all runs every step; mode failed reuses the longest prefix of R's steps where each succeeded, is the same step in
 // the new definition, and (agent steps) would run the same profile content.
 func pipelineRerun(q *Request, r *contract.PipelineRerunRequest) (*runRecord, error) {
-	old, err := loadRun(q, r.RunId)
+	old, err := getRun(q, r.RunId)
 	if err != nil {
 		return nil, err
 	}

@@ -609,7 +609,7 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 	if native.PipelineRunID == "" || executionEnds(native.State) || native.State == "running" {
 		return nil
 	}
-	run, err := loadRun(wq, native.PipelineRunID)
+	run, err := getRun(wq, native.PipelineRunID)
 	if pipelineFormatUnsupported(err) || err == nil && run == nil {
 		return nil // no run to read: nothing proves the command never went out
 	}

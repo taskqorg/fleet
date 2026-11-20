@@ -212,7 +212,7 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 	}
 	rollback := errors.New("injected score/link rollback")
 	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
-		if err := linkLabAssessments(q, trial, result); err != nil {
+		if err := linkLabAssessments(q, mustRunOf(trial), result); err != nil {
 			return err
 		}
 		if _, err := scoreInsert(q, labNewScore{ExperimentID: "assessment-exp", ProjectID: "hello-world", TrialIDs: []string{astr(trial["id"])}, Evaluator: "script:example.checks:pass_fail", EvaluatorVersion: "synthetic", Form: "pass_fail", Value: true}); err != nil {
@@ -223,7 +223,7 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
-		current, err := getRun(q, astr(trial["id"]))
+		current, err := getRunDoc(q, astr(trial["id"]))
 		if err != nil {
 			return err
 		}
@@ -237,13 +237,13 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 		if n != 0 {
 			t.Fatal("rollback retained a contract score")
 		}
-		if err := linkLabAssessments(q, trial, result); err != nil {
+		if err := linkLabAssessments(q, mustRunOf(trial), result); err != nil {
 			return err
 		}
-		if err := linkLabAssessments(q, trial, result); err != nil {
+		if err := linkLabAssessments(q, mustRunOf(trial), result); err != nil {
 			return err
 		}
-		current, err = getRun(q, astr(trial["id"]))
+		current, err = getRunDoc(q, astr(trial["id"]))
 		if err != nil {
 			return err
 		}
@@ -265,18 +265,18 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 			return err
 		}
 		changedT, _ := asT[labAssessmentRef](changed)
-		return linkLabAssessments(q, trial, &labCheckRun{ProjectAssessments: []labAssessmentRef{changedT}})
+		return linkLabAssessments(q, mustRunOf(trial), &labCheckRun{ProjectAssessments: []labAssessmentRef{changedT}})
 	})
 	var conflict *HTTPError
 	if !errors.As(err, &conflict) || conflict.Code != 409 || conflict.Extra["reason"] != "assessment_identity_conflict" {
 		t.Fatal("changed assessment bytes accepted", err)
 	}
 	failedStorage := &labCheckRun{Assessments: []labAssessmentCapture{{CheckID: "contract", SchemaID: "synthetic.assessment.v1", Bytes: []byte("{}"), Sha256: sha256hex([]byte("{}"))}}}
-	if err := materializeLabAssessments(env.ctx, env.app, trial, failedStorage, astr(ref["evaluatorSha256"]), astr(ref["inputSha256"])); err == nil || failedStorage.ProjectAssessments != nil {
+	if err := materializeLabAssessments(env.ctx, env.app, mustRunOf(trial), failedStorage, astr(ref["evaluatorSha256"]), astr(ref["inputSha256"])); err == nil || failedStorage.ProjectAssessments != nil {
 		t.Fatal("missing storage fabricated durable evidence", err, failedStorage)
 	}
 	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
-		current, err := getRun(q, astr(trial["id"]))
+		current, err := getRunDoc(q, astr(trial["id"]))
 		if err != nil {
 			return err
 		}
@@ -284,9 +284,9 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 			t.Fatal("plan write lost retained assessment")
 		}
 		full := labExample{Checks: []labCheck{}}
-		snapshot := labAssessmentSnapshot(current, full)
+		snapshot := labAssessmentSnapshot(mustRunOf(current), full)
 		checked := &labCheckRun{AssessmentSnapshot: &snapshot}
-		if err := validateLabAssessmentSnapshot(q, current, labExample{Checks: []labCheck{{ID: "changed", Run: "exit 0"}}}, checked); err == nil {
+		if err := validateLabAssessmentSnapshot(q, mustRunOf(current), labExample{Checks: []labCheck{{ID: "changed", Run: "exit 0"}}}, checked); err == nil {
 			t.Fatal("changed check snapshot accepted")
 		}
 		return nil
@@ -299,7 +299,7 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 		if err := putRun(q, newer); err != nil {
 			return err
 		}
-		return linkLabAssessments(q, trial, result)
+		return linkLabAssessments(q, mustRunOf(trial), result)
 	})
 	if !errors.As(err, &conflict) || conflict.Code != 409 {
 		t.Fatal("superseded attempt accepted assessment", err)

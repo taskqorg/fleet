@@ -152,18 +152,18 @@ func labEvaluatorIdentity(checks []labCheck, files []labFile) string {
 	return sha256hex([]byte(canonical(evaluator)))
 }
 
-func labAssessmentInputs(trial doc, checks []labCheck, files []labFile) (string, string) {
+func labAssessmentInputs(trial *runRecord, checks []labCheck, files []labFile) (string, string) {
 	return labEvaluatorIdentity(checks, files), sha256hex([]byte(canonical(labFileBindings(files))))
 }
 
 // Upload before opening the linking transaction. A storage failure cannot make
 // the script check score durable; an unlinked object is ordinary retained data.
-func materializeLabAssessments(ctx context.Context, a *App, trial doc, r *labCheckRun, evaluator, input string) error {
+func materializeLabAssessments(ctx context.Context, a *App, trial *runRecord, r *labCheckRun, evaluator, input string) error {
 	t, _ := asT[labAssessTrial](trial)
 	refs := []labAssessmentRef{}
 	for _, capture := range r.Assessments {
 		name := filepath.ToSlash(filepath.Join("assessments", t.ID, capture.CheckID, evaluator, input+".json"))
-		id, hash, err := saveObject(ctx, a, projectIDPtr(trial["projectId"]), "lab", t.ID, name, capture.Bytes, "application/json")
+		id, hash, err := saveObject(ctx, a, trial.ProjectID, "lab", t.ID, name, capture.Bytes, "application/json")
 		if err != nil {
 			return err
 		}
@@ -177,7 +177,7 @@ func materializeLabAssessments(ctx context.Context, a *App, trial doc, r *labChe
 	return nil
 }
 
-func linkLabAssessments(q *Request, trial doc, r *labCheckRun) error {
+func linkLabAssessments(q *Request, trial *runRecord, r *labCheckRun) error {
 	refs := r.ProjectAssessments
 	if len(refs) == 0 {
 		return nil
@@ -197,7 +197,7 @@ func linkLabAssessments(q *Request, trial doc, r *labCheckRun) error {
 		return fail(409, "Assessment trial snapshot changed")
 	}
 	run, _ := asT[labAssessTrial](current)
-	if run.State != "succeeded" || run.Observation == "unconfirmed" || !same(current["canonicalResult"], trial["canonicalResult"]) {
+	if run.State != "succeeded" || run.Observation == "unconfirmed" || !same(current.CanonicalResult, trial.CanonicalResult) {
 		return fail(409, "Assessment trial snapshot changed")
 	}
 	runs, err := expRuns(q, t.ExperimentID)
@@ -211,7 +211,7 @@ func linkLabAssessments(q *Request, trial doc, r *labCheckRun) error {
 	existing := append([]labAssessmentRef{}, run.ProjectAssessments...)
 	for _, ref := range refs {
 		artifact, err := artifactRow(withTx(q), q.app, ref.ArtifactID)
-		if err != nil || artifact.State != "stored" || !same(artifact.ProjectID, trial["projectId"]) || artifact.ExecutionID == nil || *artifact.ExecutionID != t.ID || artifact.ContentHash != ref.Sha256 {
+		if err != nil || artifact.State != "stored" || !same(artifact.ProjectID, trial.ProjectID) || artifact.ExecutionID == nil || *artifact.ExecutionID != t.ID || artifact.ContentHash != ref.Sha256 {
 			return fail(409, "Assessment artifact identity unavailable or changed")
 		}
 		found := false
@@ -240,12 +240,12 @@ func linkLabAssessments(q *Request, trial doc, r *labCheckRun) error {
 	return q.db().LabTrialAssessmentsSet(q.ctx(), db.LabTrialAssessmentsSetParams{ID: t.ID, Assessments: jsonBytes(existing)})
 }
 
-func labAssessmentSnapshot(trial doc, example labExample) labAssessmentSnap {
+func labAssessmentSnapshot(trial *runRecord, example labExample) labAssessmentSnap {
 	t, _ := asT[labAssessTrial](trial)
 	return labAssessmentSnap{ExampleSha256: sha256hex([]byte(canonical(rawValue(jsonBytes(example))))), PlanRevision: t.Plan.Revision, CanonicalResult: t.CanonicalResult, Usage: t.Usage, DurationMs: t.DurationMs}
 }
 
-func validateLabAssessmentSnapshot(q *Request, trial doc, example labExample, result *labCheckRun) error {
+func validateLabAssessmentSnapshot(q *Request, trial *runRecord, example labExample, result *labCheckRun) error {
 	if result.AssessmentSnapshot == nil || !same(*result.AssessmentSnapshot, labAssessmentSnapshot(trial, example)) {
 		return fail(409, "Assessment evaluator or input snapshot changed")
 	}
@@ -254,7 +254,7 @@ func validateLabAssessmentSnapshot(q *Request, trial doc, example labExample, re
 	t, _ := asT[labCanonicalInputs](trial)
 	for _, binding := range t.CanonicalResult.Inputs {
 		a, err := artifactRow(withTx(q), q.app, binding.ArtifactID)
-		if err != nil || a.State != "stored" || a.ContentHash != binding.Sha256 || !same(a.ProjectID, trial["projectId"]) {
+		if err != nil || a.State != "stored" || a.ContentHash != binding.Sha256 || !same(a.ProjectID, trial.ProjectID) {
 			return fail(409, "Assessment input artifact changed")
 		}
 	}

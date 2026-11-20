@@ -18,7 +18,7 @@ func labExpOf(d doc) *labExperiment {
 func labRunsOf(ds []doc) []*labRun {
 	out := []*labRun{}
 	for _, d := range ds {
-		out = append(out, labRunFacts(d))
+		out = append(out, labRunFacts(mustRunOf(d)))
 	}
 	return out
 }

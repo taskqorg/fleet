@@ -87,9 +87,7 @@ func validDefinition(kind, id string, raw []byte) error {
 			return fmt.Errorf("id differs from the file name")
 		}
 	case "pipeline":
-		var v doc // validatePipeline (pipelines.go) reads the open definition
-		json.Unmarshal(raw, &v)
-		if _, err := validatePipeline(v); err != nil {
+		if _, err := validatePipelineDef(raw); err != nil {
 			return err
 		}
 		if head.ID != id {
