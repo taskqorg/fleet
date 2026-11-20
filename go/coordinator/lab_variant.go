@@ -1,5 +1,7 @@
 package main
 
+import "encoding/json"
+
 // labVariant: one experiment variant as stored in experiment.variants (expCreate, loopVariants, lab_compare_methods).
 type labVariant struct {
 	Label         string `json:"label"`
@@ -146,4 +148,41 @@ type labRunExtra struct {
 	Judge         *labJudge
 	ExampleInputs []labExampleInput
 	LoopIteration *int64
+}
+
+// labCellOf: a trial run's cell.
+func labCellOf(run doc) labCell {
+	c, _ := asT[labCell](run["cell"])
+	return c
+}
+
+// labScore: the fields of a score view (scoreView) the statistics read; the value stays as stored.
+type labScore struct {
+	Evaluator        string          `json:"evaluator"`
+	EvaluatorVersion string          `json:"evaluatorVersion"`
+	Form             string          `json:"form"`
+	TrialIDs         []string        `json:"trialIds"`
+	Value            json.RawMessage `json:"value"`
+}
+
+func labScoreOf(s doc) labScore {
+	sc, _ := asT[labScore](s)
+	return sc
+}
+
+// typed: a typed score's value (an object; anything else, or a field that is not text, reads empty).
+func (s labScore) typed() (v struct {
+	Tag    string `json:"tag"`
+	Answer string `json:"answer"`
+	Label  string `json:"label"`
+}) {
+	json.Unmarshal(s.Value, &v)
+	return v
+}
+
+// text: the value when it is text, else "".
+func (s labScore) text() string {
+	var t string
+	json.Unmarshal(s.Value, &t)
+	return t
 }
