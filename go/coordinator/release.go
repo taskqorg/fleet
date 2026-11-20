@@ -122,7 +122,7 @@ func (a *App) ownAutoUpdate(ctx context.Context) string {
 		return "on"
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, "SELECT set_config('fleet.project_ids','*',true)"); err != nil {
+	if err := db.New(tx).TxSetScope(ctx, db.TxSetScopeParams{ProjectIds: "*"}); err != nil {
 		return "on"
 	}
 	s, err := db.New(tx).HostAutoUpdate(ctx, "host:"+host) // no host, or no autoUpdate (NULL): on
@@ -137,6 +137,12 @@ var pds18StateFile = "/var/lib/fleet-update/pds18-state.json"
 
 var updateRank = map[contract.UpdateState]int{contract.UpdateStateOk: 0, contract.UpdateStateHeld: 1, contract.UpdateStatePending: 2, contract.UpdateStateError: 3, contract.UpdateStateRefused: 4, contract.UpdateStateFailed: 5}
 
+// mergedUpdate: the update a host shows for PDS18, with the parts it was merged from.
+type mergedUpdate struct {
+	contract.UpdateResult
+	Parts map[string]*contract.UpdateResult `json:"parts"`
+}
+
 // mergeUpdate: the worse of the polled result and the PDS18 parts; parts lists coordinator and executor results.
 func mergeUpdate(polled any) any {
 	b, err := os.ReadFile(pds18StateFile)
@@ -148,7 +154,7 @@ func mergeUpdate(polled any) any {
 		return polled
 	}
 	var worst *contract.UpdateResult
-	parts := doc{}
+	parts := map[string]*contract.UpdateResult{}
 	for _, k := range []string{"coordinator", "executor"} {
 		var part struct {
 			Last *contract.UpdateResult `json:"last"`
@@ -167,11 +173,7 @@ func mergeUpdate(polled any) any {
 	if worst == nil {
 		return polled
 	}
-	out := doc{"version": worst.Version, "state": worst.State, "at": worst.At, "parts": parts}
-	if worst.Error != nil {
-		out["error"] = *worst.Error
-	}
-	return out
+	return mergedUpdate{*worst, parts}
 }
 
 // decodeUpdate reads a poll body's update through the generated contract type.
@@ -209,7 +211,7 @@ func updateQuestion(q *Request, host string, holder any, r contract.UpdateResult
 	} else if reason == "unhealthy" {
 		what = "rolled back"
 	}
-	return problemRaise(q, "", Problem{Cause: "update:" + host + ":" + r.Version, Text: host + ": update to " + r.Version + " " + what + " (" + reason + ").", AddressedTo: astr(holder), Options: []any{"ok"}})
+	return problemRaise(q, "", Problem{Cause: "update:" + host + ":" + r.Version, Text: host + ": update to " + r.Version + " " + what + " (" + reason + ").", AddressedTo: holderName(holder), Options: []any{"ok"}})
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -230,4 +232,10 @@ func selftest() error {
 		}
 	}
 	return nil
+}
+
+// holderName: a host record's holder, "" when it has none.
+func holderName(holder any) string {
+	h, _ := holder.(string)
+	return h
 }

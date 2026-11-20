@@ -55,3 +55,11 @@ func strList(v any) []string {
 
 // jsonRoundTrip decodes the JSON encoding of v into out (a typed view of an open value).
 func jsonRoundTrip(v any, out any) { b, _ := json.Marshal(v); json.Unmarshal(b, out) }
+
+type HTTPError struct {
+	Code  int
+	Msg   string
+	Extra map[string]any // more fields of the error body (a 409's DefinitionConflict)
+	// Refused marks a refusal by design (a removed host): its span outcome is refused, not error.
+	Refused bool
+}

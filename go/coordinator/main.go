@@ -256,36 +256,27 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 		for _, p := range list {
 			emails = append(emails, p.Email)
 		}
-		if _, err := tx.Exec(ctx, `UPDATE definition SET initial_member_revoked_at=now(),access_version=access_version+1 WHERE kind='project' AND initial_member IS NOT NULL AND initial_member_revoked_at IS NULL AND NOT(initial_member=ANY($1))`, emails); err != nil {
-			return err
+		q := db.New(tx)
+		for _, revoke := range []func(context.Context, []string) error{q.PeopleRevokeInitialMembers, q.PeopleRevokeSessionDirectors,
+			q.PeopleRevokeExecutionDirectors, q.PeopleRevokeRunTokens, q.PeopleMarkRemovedRequesters} {
+			if err := revoke(ctx, emails); err != nil {
+				return err
+			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE session SET director_access_revoked_at=now() WHERE project_id IS NULL AND directed_by IS NOT NULL AND director_access_revoked_at IS NULL AND NOT(directed_by=ANY($1))`, emails); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE execution SET data=data||jsonb_build_object('directorAccessRevokedAt',extract(epoch from now())*1000) WHERE project_id IS NULL AND session_id IS NULL AND directed_by IS NOT NULL AND NOT(data ? 'directorAccessRevokedAt') AND NOT(directed_by=ANY($1))`, emails); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE run_token SET revoked_at=coalesce(revoked_at,now()),director_access_revoked_at=now(),updated_at=now() WHERE directed_by IS NOT NULL AND director_access_revoked_at IS NULL AND NOT(directed_by=ANY($1))`, emails); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE experiment SET requester_removed_at=now() WHERE requester_removed_at IS NULL AND requested_by IN (SELECT email FROM person WHERE NOT(email=ANY($1)))`, emails); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, "DELETE FROM person"); err != nil {
+		if err := q.PeopleClear(ctx); err != nil {
 			return err
 		}
 		for _, p := range list {
-			if _, err := tx.Exec(ctx, "INSERT INTO person(email,name,roles,owner) VALUES($1,$2,$3,$4)", p.Email, p.Name, p.Roles, p.Owner); err != nil {
+			if err := q.PersonInsert(ctx, db.PersonInsertParams{Email: p.Email, Name: p.Name, Roles: p.Roles, Owner: p.Owner}); err != nil {
 				return err
 			}
 			for _, g := range p.Grants {
-				if _, err := tx.Exec(ctx, "INSERT INTO person_grant(email,object_kind,object_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", p.Email, g.Kind, g.ID); err != nil {
+				if err := q.PersonGrantInsert(ctx, db.PersonGrantInsertParams{Email: p.Email, ObjectKind: g.Kind, ObjectID: g.ID}); err != nil {
 					return err
 				}
 			}
 		}
-		_, err := tx.Exec(ctx, "SELECT fleet_enqueue_wake('fleet_change','')")
-		return err
+		return q.PeopleChanged(ctx)
 	})
 	if err == nil {
 		a.invalidateEnvCache()
@@ -488,7 +479,8 @@ func (a *App) hostFromSecret(ctx context.Context, secret string) (map[string]any
 	}
 	s.authMu.Unlock()
 	if data == nil {
-		err := s.readPool.QueryRow(ctx, "SELECT "+convTables["host"].record()+" FROM host JOIN person p ON p.email=host.holder WHERE host.secret_hash=$1", key).Scan(&data)
+		var err error
+		data, err = db.New(s.readPool).HostRecordBySecret(ctx, &key)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}

@@ -1,8 +1,5 @@
 -- The migration steps of store.go (migrateSQL, applySchemaFiles), each in one transaction under the migration lock.
 
--- name: MigrationLock :exec
-SELECT pg_advisory_xact_lock(hashtextextended(@lock::text, 0));
-
 -- name: MigrationApplied :one
 SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version = @version::int);
 

@@ -580,3 +580,16 @@ func owned(q *Request, executionID *string) error {
 	}
 	return nil
 }
+
+// queryRows: rows as maps (column name -> value); jsonb decodes to JSON values, timestamps to time.Time.
+func queryRows(q *Request, sql string, args ...any) ([]doc, error) {
+	rs, err := q.tx.Query(q.ctx(), sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	out, err := pgx.CollectRows(rs, pgx.RowToMap)
+	if out == nil {
+		out = []map[string]any{}
+	}
+	return out, err
+}

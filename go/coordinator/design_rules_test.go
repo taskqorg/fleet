@@ -629,6 +629,12 @@ var designRulesOwned = map[string]map[string]string{
 	"background.go": {
 		"R-GO": "S6: every() is the one periodic-pass loop, coalesced() the one runner of a coalesced after-commit effect (the gateway snapshot) and untilDone() the one retried start-up step (the span schema)",
 	},
+	"main.go": {
+		"R-GO": "S6: HTTP plumbing: the signal handler that stops the long polls and the stream and drains the server",
+	},
+	"wake_outbox.go": {
+		"R-GO": "S6: the wake dispatcher, the one sender of wake_outbox's NOTIFYs: it claims the next batch at once while a full one was claimed, so it cannot be an every() pass",
+	},
 	"stream.go": {
 		"R-GO": "S6: HTTP/stream plumbing: the LISTEN fleet_change connection (reconnected after a second), the feed loop that reads behind it, and the ping ticker of each open /api/stream",
 	},
@@ -661,7 +667,7 @@ var designRulesLegacy = map[string]map[string]bool{
 	"json.go":               {"R-MAP": true},
 	"lab.go":                {"R-MAP": true},
 	"lab_retry.go":          {"R-MAP": true},
-	"main.go":               {"R-GO": true, "R-MAP": true, "R-SQL": true},
+	"main.go":               {"R-MAP": true},
 	"nav_counts.go":         {"R-MAP": true, "R-SQL": true},
 	"pipeline_plan.go":      {"R-MAP": true},
 	"pipelines.go":          {"R-MAP": true},
@@ -669,13 +675,10 @@ var designRulesLegacy = map[string]map[string]bool{
 	"providers.go":          {"R-MAP": true},
 	"records.go":            {"R-MAP": true, "R-SQL": true},
 	"registry.go":           {"R-MAP": true},
-	"release.go":            {"R-MAP": true, "R-SQL": true},
 	"rules.go":              {"R-MAP": true, "R-SQL": true},
 	"runners_ci.go":         {"R-GO": true},
 	"s3.go":                 {"R-GO": true},
 	"sessions.go":           {"R-MAP": true, "R-SQL": true},
-	"store.go":              {"R-MAP": true, "R-SQL": true},
 	"tasks.go":              {"R-MAP": true, "R-SQL": true},
 	"uploads.go":            {"R-GO": true, "R-MAP": true, "R-SQL": true},
-	"wake_outbox.go":        {"R-GO": true, "R-SQL": true},
 }

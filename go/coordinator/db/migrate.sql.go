@@ -10,25 +10,16 @@ import (
 )
 
 const migrationApplied = `-- name: MigrationApplied :one
+
 SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version = $1::int)
 `
 
+// The migration steps of store.go (migrateSQL, applySchemaFiles), each in one transaction under the migration lock.
 func (q *Queries) MigrationApplied(ctx context.Context, version int32) (bool, error) {
 	row := q.db.QueryRow(ctx, migrationApplied, version)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
-}
-
-const migrationLock = `-- name: MigrationLock :exec
-
-SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
-`
-
-// The migration steps of store.go (migrateSQL, applySchemaFiles), each in one transaction under the migration lock.
-func (q *Queries) MigrationLock(ctx context.Context, lock string) error {
-	_, err := q.db.Exec(ctx, migrationLock, lock)
-	return err
 }
 
 const migrationRecord = `-- name: MigrationRecord :exec
