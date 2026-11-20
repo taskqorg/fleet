@@ -15,86 +15,82 @@ import (
 	"strings"
 )
 
-// first returns the value of the first key present in v (Rust's jAt(a).or(jAt(b))).
-func first(v any, keys ...string) any {
-	for _, k := range keys {
-		if has(v, k) {
-			return jAt(v, k)
-		}
-	}
-	return nil
-}
-
 func nonEmptyObj(x any) bool { o, ok := x.(M); return x != nil && !(ok && len(o) == 0) }
 
-func toolsOf(h string, v any) []any {
-	switch {
+func toolsOf(h string, e harnessEvent) []any {
+	switch u, step := typed[acpUpdate](e.Update), typed[acpStepUpdate](e.StepUpdate); {
 	case h == "claude":
 		out := []any{}
-		content, _ := jAt(v, "message", "content").([]any)
-		for _, b := range content {
-			if t := jAt(b, "type"); t == "tool_use" || t == "tool_result" {
-				out = append(out, M{"id": first(b, "id", "tool_use_id"), "name": jAt(b, "name"), "arguments": jAt(b, "input"), "result": jAt(b, "content"), "error": jAt(b, "is_error")})
+		for _, b := range claudeContentOf(e) {
+			if b.Type == "tool_use" || b.Type == "tool_result" {
+				out = append(out, M{"id": firstRaw(b.ID, b.ToolUseID), "name": b.Name, "arguments": b.Input, "result": b.Content, "error": b.IsError})
 			}
 		}
 		return out
-	case isACP(h) && (jAt(v, "update", "sessionUpdate") == "tool_call" || jAt(v, "update", "sessionUpdate") == "tool_call_update"):
-		b := jAt(v, "update")
-		result := first(b, "content", "rawOutput")
-		if nonEmptyObj(jAt(b, "rawOutput")) {
-			result = jAt(b, "rawOutput")
+	case isACP(h) && (u.SessionUpdate == "tool_call" || u.SessionUpdate == "tool_call_update"):
+		result := any(nil)
+		if u.Content.Set {
+			result = u.Content.V
+		} else {
+			result = u.RawOutput
 		}
-		return []any{M{"id": jAt(b, "toolCallId"), "name": first(b, "name", "title"), "arguments": jAt(b, "rawInput"), "result": result, "status": jAt(b, "status"), "kind": jAt(b, "kind")}}
-	case isACP(h) && jAt(v, "step_update", "step_type") == "tool":
-		b := jAt(v, "step_update")
-		return []any{M{"id": jAt(b, "step_index"), "name": jAt(b, "tool_name"), "arguments": jAt(b, "tool_info", "parameters"), "result": jAt(b, "tool_info", "result"), "status": jAt(b, "state")}}
-	case isACP(h) && jAt(v, "type") == "PLANNER_RESPONSE":
+		if nonEmptyObj(u.RawOutput) {
+			result = u.RawOutput
+		}
+		return []any{M{"id": u.ToolCallID, "name": firstRaw(u.Name, u.Title), "arguments": u.RawInput, "result": result, "status": u.Status, "kind": u.Kind}}
+	case isACP(h) && step.StepType == "tool":
+		return []any{M{"id": step.StepIndex, "name": step.ToolName, "arguments": step.ToolInfo.Parameters, "result": step.ToolInfo.Result, "status": step.State}}
+	case isACP(h) && e.kind() == "PLANNER_RESPONSE":
 		out := []any{}
-		calls, _ := jAt(v, "tool_calls").([]any)
-		for _, b := range calls {
-			out = append(out, M{"id": jAt(b, "id"), "name": jAt(b, "name"), "arguments": first(b, "arguments", "args"), "result": nil, "status": "requested"})
+		for _, b := range e.ToolCalls {
+			args := b.Args
+			if b.Arguments.Set {
+				args = b.Arguments.V
+			}
+			out = append(out, M{"id": b.ID, "name": b.Name, "arguments": args, "result": nil, "status": "requested"})
 		}
 		return out
-	case isACP(h) && jAt(v, "type") == "TOOL_RESPONSE":
-		return []any{M{"id": jAt(v, "tool_call_id"), "name": nil, "arguments": nil, "result": first(v, "content", "result"), "status": jAt(v, "status")}}
+	case isACP(h) && e.kind() == "TOOL_RESPONSE":
+		return []any{M{"id": e.ToolCallID, "name": nil, "arguments": nil, "result": firstRaw(e.Content, e.Result), "status": e.Status.V}}
 	case h == "codex":
-		switch jAt(v, "item", "type") {
+		b := typed[codexItem](e.Item)
+		switch b.Type {
 		case "command_execution", "mcp_tool_call", "function_call", "function_call_output", "commandExecution", "mcpToolCall", "collabAgentToolCall":
-			b := jAt(v, "item")
-			return []any{M{"id": jAt(b, "id"), "name": first(b, "tool", "name", "type"), "arguments": first(b, "arguments", "command"),
-				"result": first(b, "result", "aggregatedOutput", "aggregated_output", "output"), "status": jAt(b, "status"), "exitCode": first(b, "exitCode", "exit_code")}}
+			name := firstRaw(b.Tool, b.Name)
+			if !b.Tool.Set && !b.Name.Set {
+				name = b.Type
+			}
+			return []any{M{"id": b.ID, "name": name, "arguments": firstRaw(b.Arguments, b.Command),
+				"result": firstRaw(b.Result, b.AggregatedOutput, b.AggregatedOutputSnake, b.Output), "status": b.Status, "exitCode": firstRaw(b.ExitCode, b.ExitCodeSnake)}}
 		}
 	}
 	return []any{}
 }
 
-func nativeUsage(v any) (any, bool) {
-	if has(v, "usage") {
-		return jAt(v, "usage"), true
+func nativeUsage(e harnessEvent) (any, bool) {
+	if e.Usage.Set {
+		return e.Usage.V, true
 	}
-	if has(jAt(v, "result"), "usage") {
-		return jAt(v, "result", "usage"), true
+	if r := e.result(); r.Usage.Set {
+		return r.Usage.V, true
 	}
 	return nil, false
 }
 
-func usage(v any) any {
-	raw, ok := nativeUsage(v)
+func usage(e harnessEvent) any {
+	raw, ok := nativeUsage(e)
 	if !ok {
 		return nil
 	}
-	source := raw
-	if has(raw, "total") {
-		source = jAt(raw, "total")
+	counts := typed[usageCounts](raw)
+	if counts.Total.Set {
+		counts = typed[usageCounts](counts.Total)
 	}
 	fields := M{}
-	for _, m := range [][2]string{{"inputTokens", "input_tokens"}, {"outputTokens", "output_tokens"}, {"cachedInputTokens", "cached_input_tokens"},
-		{"cacheWriteInputTokens", "cache_write_input_tokens"}, {"reasoningOutputTokens", "reasoning_output_tokens"}, {"totalTokens", "total_tokens"},
-		{"cachedReadTokens", "cache_read_tokens"}, {"cachedWriteTokens", "cache_write_tokens"}, {"thoughtTokens", "thought_tokens"},
-		{"input_tokens", "input_tokens"}, {"output_tokens", "output_tokens"}, {"cached_input_tokens", "cached_input_tokens"}} {
-		if n := jAt(source, m[0]); n != nil {
-			if _, isNum := num(n); isNum {
-				fields[m[1]] = n
+	for _, c := range counts.fields() {
+		if c.n != nil {
+			if _, isNum := num(c.n); isNum {
+				fields[c.name] = c.n
 			}
 		}
 	}
@@ -104,56 +100,60 @@ func usage(v any) any {
 	return fields
 }
 
-func project(h string, v M) M {
+func project(h string, v M) M { return projectEvent(h, v, typed[harnessEvent](v)) }
+
+// projectEvent: the projection of v, whose typed view is e.
+func projectEvent(h string, v M, e harnessEvent) M {
+	t, res := e.kind(), e.result()
 	var session any
 	switch h {
 	case "codex":
-		session = v["thread_id"]
+		session = e.ThreadID
 	case "claude":
-		session = v["session_id"]
+		session = e.SessionID
 	default:
 		switch {
-		case has(v, "conversation_id"):
-			session = v["conversation_id"]
-		case has(v, "conversationId"):
-			session = v["conversationId"]
-		case has(jAt(v, "result"), "conversation_id"):
-			session = jAt(v, "result", "conversation_id")
-		case v["type"] == "conversation.started" || v["type"] == "system" || v["type"] == "result":
-			session = v["session_id"]
+		case e.ConversationID.Set:
+			session = e.ConversationID.V
+		case e.ConversationIDCamel.Set:
+			session = e.ConversationIDCamel.V
+		case res.ConversationID.Set:
+			session = res.ConversationID.V
+		case t == "conversation.started" || t == "system" || t == "result":
+			session = e.SessionID
 		}
 	}
 	var success bool
 	switch h {
 	case "codex":
-		success = v["type"] == "turn.completed"
+		success = t == "turn.completed"
 	case "claude":
-		success = v["type"] == "result" && v["is_error"] == false
+		success = t == "result" && e.IsError != nil && !*e.IsError
 	default:
-		success = (v["event"] == "result" && jAt(v, "result", "status") == "SUCCESS") || v["type"] == "turn.completed"
+		success = (e.event() == "result" && res.Status == "SUCCESS") || t == "turn.completed"
 	}
-	message := v["item"]
+	message := e.Item.V
 	switch h {
 	case "claude":
-		message = v["message"]
+		message = e.Message.V
 	case "antigravity", "acp":
-		message = first(v, "step_update", "result")
+		message = firstRaw(e.StepUpdate, e.Result)
 	}
-	errv := v["error"]
-	if !has(v, "error") {
-		errv = jAt(v, "result", "error")
+	errv := e.Error.V
+	if !e.Error.Set {
+		errv = res.Error.V
 	}
-	nu, _ := nativeUsage(v)
+	nu, _ := nativeUsage(e)
 	var context any
-	if jAt(v, "update", "sessionUpdate") == "usage_update" {
-		context = M{"used": jAt(v, "update", "used"), "capacity": jAt(v, "update", "size"), "scope": "native context window; not additive billing usage"}
+	if u := typed[acpUpdate](e.Update); u.SessionUpdate == "usage_update" {
+		context = M{"used": u.Used, "capacity": u.Size, "scope": "native context window; not additive billing usage"}
 	}
 	scope := "native report; scope unknown, may be cumulative; not additive"
-	if h == "codex" && has(jAt(v, "usage"), "total") {
+	if h == "codex" && typed[usageCounts](e.Usage.V).Total.Set {
 		scope = "native thread cumulative total; not additive"
 	}
-	return M{"harness": h, "session": session, "completed": success, "lifecycle": first(v, "type", "event"), "error": errv, "message": message,
-		"tools": toolsOf(h, v), "usage": usage(v), "nativeUsage": nu, "contextUsage": context, "usageScope": scope, "native": v}
+	return M{"harness": h, "session": session, "completed": success, "lifecycle": firstRaw(e.Type, e.Event), "error": errv, "message": message,
+		"tools": toolsOf(h, e), "usage": usage(e), "nativeUsage": nu, "contextUsage": context, "usageScope": scope, "native": v}
 }
 
 type openTool struct {
@@ -242,8 +242,9 @@ func toolBlock(name, input, output, state, started, ended any) contract.Transcri
 
 // Project is project() plus `blocks` (and `deltaOf` / `closes` for streams); at is the record's time in ms.
 func (b *blocks) Project(h string, v map[string]any, at uint64) map[string]any {
-	p := project(h, v)
-	if kind, text, ok := b.chunk(h, v); ok {
+	e := typed[harnessEvent](v)
+	p := projectEvent(h, v, e)
+	if kind, text, ok := b.chunk(h, e); ok {
 		var s *stream
 		for _, x := range b.streams {
 			if x.kind == kind {
@@ -274,8 +275,8 @@ func (b *blocks) Project(h string, v map[string]any, at uint64) map[string]any {
 		p["closes"] = ids
 		b.streams = nil
 	}
-	_, response := jAt(v, "result", "response").(string)
-	for _, x := range b.own(h, v, at) {
+	response := e.result().Response != nil
+	for _, x := range b.own(h, v, e, at) {
 		// The step format repeats the streamed reply in result.response: the closed stream already holds it.
 		if _, text := x.(contract.TranscriptText); !(streamed && response && text) {
 			out = append(out, x)
@@ -287,18 +288,20 @@ func (b *blocks) Project(h string, v map[string]any, at uint64) map[string]any {
 
 func itoa(n int) string { return strings.TrimSpace(enc(n)) }
 
-func (b *blocks) chunk(h string, v M) (string, string, bool) {
+func (b *blocks) chunk(h string, e harnessEvent) (string, string, bool) {
 	if !isACP(h) {
 		return "", "", false
 	}
-	switch jAt(v, "update", "sessionUpdate") {
+	switch u := typed[acpUpdate](e.Update); u.SessionUpdate {
 	case "agent_message_chunk":
-		return "text", textOf(jAt(v, "update", "content")), true
+		return "text", textOf(u.Content.V), true
 	case "agent_thought_chunk":
-		return "reasoning", textOf(jAt(v, "update", "content")), true
+		return "reasoning", textOf(u.Content.V), true
 	}
-	t, ok := str(jAt(v, "step_update", "text_delta"))
-	return "text", t, ok
+	if t := typed[acpStepUpdate](e.StepUpdate).TextDelta; t != nil {
+		return "text", *t, true
+	}
+	return "text", "", false
 }
 
 func (b *blocks) start(id string, name, input any, at uint64) *openTool {
@@ -308,14 +311,16 @@ func (b *blocks) start(id string, name, input any, at uint64) *openTool {
 	return t
 }
 
-func (b *blocks) own(h string, v M, at uint64) []any {
-	t := jStr(v["type"])
-	if t == "unparsed" || strings.HasSuffix(t, ".failed") || (h == "claude" && t == "result" && v["is_error"] == true) {
+// own: the blocks of v itself, whose typed view is e.
+func (b *blocks) own(h string, v M, e harnessEvent, at uint64) []any {
+	t := e.kind()
+	isError := e.IsError != nil && *e.IsError
+	if t == "unparsed" || strings.HasSuffix(t, ".failed") || (h == "claude" && t == "result" && isError) {
 		return []any{toolBlock(t, nil, v, "failed", at, at)}
 	}
 	out := []any{}
 	// A turn end settles tools that never reported an end, so a cut-off tool still shows.
-	if t == "turn.completed" || t == "turn.failed" || t == "result" || v["event"] == "result" {
+	if t == "turn.completed" || t == "turn.failed" || t == "result" || e.event() == "result" {
 		open := make([]*openTool, 0, len(b.tools))
 		for _, x := range b.tools {
 			open = append(open, x)
@@ -333,87 +338,86 @@ func (b *blocks) own(h string, v M, at uint64) []any {
 	}
 	switch {
 	case h == "codex" && t == "item.completed":
-		i := jAt(v, "item")
+		i := typed[codexItem](e.Item)
 		started, ended := any(at), any(at)
-		if _, ok := num(jAt(i, "startedAtMs")); ok {
-			started = jAt(i, "startedAtMs")
+		if _, ok := num(i.StartedAtMs); ok {
+			started = i.StartedAtMs
 		}
-		if _, ok := num(jAt(i, "completedAtMs")); ok {
-			ended = jAt(i, "completedAtMs")
+		if _, ok := num(i.CompletedAtMs); ok {
+			ended = i.CompletedAtMs
 		}
-		switch kind := jStr(jAt(i, "type")); kind {
+		switch kind := i.Type; kind {
 		case "agent_message", "agentMessage":
-			out = append(out, textBlock("text", textOf(jAt(i, "text")))...)
+			out = append(out, textBlock("text", textOf(i.Text))...)
 		case "reasoning", "plan":
 			var parts []string
-			for _, k := range []string{"text", "summary", "content"} {
-				if s := textOf(jAt(i, k)); s != "" {
+			for _, x := range []any{i.Text, i.Summary, i.Content} {
+				if s := textOf(x); s != "" {
 					parts = append(parts, s)
 				}
 			}
 			out = append(out, textBlock("reasoning", strings.Join(parts, "\n"))...)
 		case "userMessage", "user_message":
 		default:
-			name := first(i, "tool", "name")
+			name := firstRaw(i.Tool, i.Name)
 			if name == nil {
 				name = kind
 			}
-			state := jAt(i, "status")
+			state := i.Status
 			if kind == "error" {
 				state = "failed"
 			}
-			out = append(out, toolBlock(name, first(i, "arguments", "command", "changes"), first(i, "result", "aggregatedOutput", "aggregated_output", "output", "error", "message"), state, started, ended))
+			out = append(out, toolBlock(name, firstRaw(i.Arguments, i.Command, i.Changes), firstRaw(i.Result, i.AggregatedOutput, i.AggregatedOutputSnake, i.Output, i.Error, i.Message), state, started, ended))
 		}
 	case h == "claude":
-		content, _ := jAt(v, "message", "content").([]any)
-		for _, c := range content {
-			switch jAt(c, "type") {
+		for _, c := range claudeContentOf(e) {
+			switch c.Type {
 			case "text":
 				if t == "assistant" {
-					out = append(out, textBlock("text", textOf(jAt(c, "text")))...)
+					out = append(out, textBlock("text", textOf(c.Text))...)
 				}
 			case "thinking":
 				if t == "assistant" {
-					out = append(out, textBlock("reasoning", textOf(jAt(c, "thinking")))...)
+					out = append(out, textBlock("reasoning", textOf(c.Thinking))...)
 				}
 			case "tool_use":
-				b.start(blockKey(jAt(c, "id")), jAt(c, "name"), jAt(c, "input"), at)
+				b.start(blockKey(c.ID.V), c.Name, c.Input, at)
 			case "tool_result":
-				k := blockKey(jAt(c, "tool_use_id"))
+				k := blockKey(c.ToolUseID.V)
 				x, ok := b.tools[k]
 				if !ok {
 					x = &openTool{at: at}
 				}
 				delete(b.tools, k)
 				state := "completed"
-				if jAt(c, "is_error") == true {
+				if c.IsError == true {
 					state = "failed"
 				}
-				out = append(out, toolBlock(x.name, x.input, jAt(c, "content"), state, x.at, at))
+				out = append(out, toolBlock(x.name, x.input, c.Content, state, x.at, at))
 			}
 		}
 	case isACP(h):
-		if r, ok := str(jAt(v, "result", "response")); ok {
-			out = append(out, textBlock("text", r)...)
+		if r := e.result().Response; r != nil {
+			out = append(out, textBlock("text", *r)...)
 		}
-		u := jAt(v, "update")
-		if su := jAt(u, "sessionUpdate"); su == "tool_call" || su == "tool_call_update" {
-			id := blockKey(jAt(u, "toolCallId"))
+		u := typed[acpUpdate](e.Update)
+		if su := u.SessionUpdate; su == "tool_call" || su == "tool_call_update" {
+			id := blockKey(u.ToolCallID)
 			x, ok := b.tools[id]
 			if !ok {
-				x = b.start(id, first(u, "title", "name"), jAt(u, "rawInput"), at)
+				x = b.start(id, firstRaw(u.Title, u.Name), u.RawInput, at)
 			}
 			if x.name == nil {
-				x.name = jAt(u, "title")
+				x.name = u.Title.V
 			}
 			if x.input == nil {
-				x.input = jAt(u, "rawInput")
+				x.input = u.RawInput
 			}
-			if st := jAt(u, "status"); st == "completed" || st == "failed" {
+			if st := u.Status; st == "completed" || st == "failed" {
 				delete(b.tools, id)
-				output := jAt(u, "content")
-				if nonEmptyObj(jAt(u, "rawOutput")) {
-					output = jAt(u, "rawOutput")
+				output := u.Content.V
+				if nonEmptyObj(u.RawOutput) {
+					output = u.RawOutput
 				}
 				out = append(out, toolBlock(x.name, x.input, output, st, x.at, at))
 			}
@@ -426,16 +430,16 @@ const maxToolEntries = 32
 
 // runMetrics accumulates non-gateway tool calls, turn counts, and active duration from normalized harness events.
 type runMetrics struct {
-	gatewayConns     map[string]bool
-	tools            map[string]*contract.ToolCallCounter
-	toolNameByID     map[string]string
-	seenToolIDs      map[string]bool
-	erroredToolIDs   map[string]bool
-	ignoredToolIDs   map[string]bool
-	usageSteps       int64
-	assistantSteps   int64
-	completedTurns   int64
-	reportedTurns    int64
+	gatewayConns      map[string]bool
+	tools             map[string]*contract.ToolCallCounter
+	toolNameByID      map[string]string
+	seenToolIDs       map[string]bool
+	erroredToolIDs    map[string]bool
+	ignoredToolIDs    map[string]bool
+	usageSteps        int64
+	assistantSteps    int64
+	completedTurns    int64
+	reportedTurns     int64
 	hasAssistantItem  bool
 	inAssistantStep   bool
 	hasReportedActive bool
@@ -556,7 +560,8 @@ func (m *runMetrics) recordErrorByID(id string) {
 }
 
 func (m *runMetrics) observeEvent(h string, v M, atMs int64) {
-	t := jStr(v, "type")
+	e := typed[harnessEvent](v)
+	t := e.kind()
 	if t == "unparsed" ||
 		t == string(contract.FleetEventTypeProtocolWrite) ||
 		t == string(contract.FleetEventTypeProtocolFailed) ||
@@ -567,15 +572,15 @@ func (m *runMetrics) observeEvent(h string, v M, atMs int64) {
 	}
 	switch {
 	case h == "codex":
-		m.observeCodex(t, v, atMs)
+		m.observeCodex(t, e, atMs)
 	case h == "claude":
-		m.observeClaude(t, v, atMs)
+		m.observeClaude(t, e, atMs)
 	case isACP(h):
-		m.observeACP(t, v, atMs)
+		m.observeACP(t, e, atMs)
 	}
 }
 
-func (m *runMetrics) observeCodex(t string, v M, atMs int64) {
+func (m *runMetrics) observeCodex(t string, e harnessEvent, atMs int64) {
 	switch t {
 	case "thread.started", "item.completed", "usage.observation", "turn.completed", "turn.failed":
 		m.touch(atMs)
@@ -585,30 +590,30 @@ func (m *runMetrics) observeCodex(t string, v M, atMs int64) {
 		m.usageSteps++
 	case "turn.completed", "turn.failed":
 		m.completedTurns++
-		if d, ok := num(first(v, "durationMs")); ok && d >= 0 {
+		if d, ok := num(e.DurationMs); ok && d >= 0 {
 			m.hasReportedActive = true
 			m.reportedActiveMs += int64(math.Round(d))
-		} else if d, ok := num(jAt(v, "native", "params", "turn", "durationMs")); ok && d >= 0 {
+		} else if d, ok := num(typed[codexParams](typed[rpcFrame](e.Native).Params).Turn.DurationMs); ok && d >= 0 {
 			m.hasReportedActive = true
 			m.reportedActiveMs += int64(math.Round(d))
 		}
 	case "item.completed":
-		i := jAt(v, "item")
-		kind := jStr(jAt(i, "type"))
+		i := typed[codexItem](e.Item)
+		kind := i.Type
 		switch kind {
 		case "agent_message", "agentMessage", "reasoning", "plan":
 			m.hasAssistantItem = true
 		case "command_execution", "commandExecution", "mcp_tool_call", "mcpToolCall", "function_call", "collabAgentToolCall":
-			srv := jStr(jAt(i, "server"))
-			rawName := label(first(i, "tool", "name"), kind)
-			id := toolID("codex", jAt(i, "id"))
-			tname, counted := m.recordCall(id, srv, rawName)
+			rawName := label(firstRaw(i.Tool, i.Name), kind)
+			id := toolID("codex", i.ID)
+			tname, counted := m.recordCall(id, i.Server, rawName)
 			if !counted || tname == "" {
 				return
 			}
-			failed := jStr(jAt(i, "status")) == "failed" || jAt(i, "error") != nil
+			status, _ := i.Status.(string)
+			failed := status == "failed" || i.Error.V != nil
 			if !failed && (kind == "command_execution" || kind == "commandExecution") {
-				if ec, ok := num(first(i, "exitCode", "exit_code")); ok && ec != 0 {
+				if ec, ok := num(firstRaw(i.ExitCode, i.ExitCodeSnake)); ok && ec != 0 {
 					failed = true
 				}
 			}
@@ -622,7 +627,7 @@ func (m *runMetrics) observeCodex(t string, v M, atMs int64) {
 	}
 }
 
-func (m *runMetrics) observeClaude(t string, v M, atMs int64) {
+func (m *runMetrics) observeClaude(t string, e harnessEvent, atMs int64) {
 	if t == "assistant" || t == "user" || t == "result" {
 		m.touch(atMs)
 	}
@@ -630,10 +635,10 @@ func (m *runMetrics) observeClaude(t string, v M, atMs int64) {
 	case "assistant":
 		m.assistantSteps++
 	case "result":
-		if n, ok := num(v["num_turns"]); ok && n > 0 {
+		if n, ok := num(e.NumTurns); ok && n > 0 {
 			m.reportedTurns = max(m.reportedTurns, int64(math.Round(n)))
 		}
-		if d, ok := num(v["duration_ms"]); ok && d >= 0 {
+		if d, ok := num(e.DurationMsSnake); ok && d >= 0 {
 			m.hasReportedActive = true
 			m.reportedActiveMs += int64(math.Round(d))
 		}
@@ -642,57 +647,57 @@ func (m *runMetrics) observeClaude(t string, v M, atMs int64) {
 	if t != "assistant" && t != "user" {
 		return
 	}
-	content, _ := jAt(v, "message", "content").([]any)
-	for _, c := range content {
-		switch jAt(c, "type") {
+	for _, c := range claudeContentOf(e) {
+		switch c.Type {
 		case "tool_use":
-			id := toolID("claude", jAt(c, "id"))
-			rawName := label(jAt(c, "name"), "tool")
+			id := toolID("claude", c.ID.V)
+			rawName := label(c.Name, "tool")
 			m.recordCall(id, "", rawName)
 		case "tool_result":
-			if jAt(c, "is_error") == true {
-				id := toolID("claude", jAt(c, "tool_use_id"))
+			if c.IsError == true {
+				id := toolID("claude", c.ToolUseID.V)
 				m.recordErrorByID(id)
 			}
 		}
 	}
 }
 
-func (m *runMetrics) observeACP(t string, v M, atMs int64) {
+func (m *runMetrics) observeACP(t string, e harnessEvent, atMs int64) {
+	hasStep := e.StepUpdate.Set
 	if t == "session.started" || t == "configuration.applied" || t == "acp.update" ||
 		t == "turn.completed" || t == "turn.failed" || t == "PLANNER_RESPONSE" ||
-		t == "TOOL_RESPONSE" || has(v, "step_update") || v["event"] == "result" {
+		t == "TOOL_RESPONSE" || hasStep || e.event() == "result" {
 		m.touch(atMs)
 	}
 	switch {
 	case t == "PLANNER_RESPONSE":
 		m.assistantSteps++
 		m.inAssistantStep = false
-		for _, tc := range jArr(v, "tool_calls") {
-			id := toolID("call", jAt(tc, "id"))
-			rawName := label(jAt(tc, "name"), "tool")
+		for _, tc := range e.ToolCalls {
+			id := toolID("call", tc.ID)
+			rawName := label(tc.Name, "tool")
 			m.recordCall(id, "", rawName)
 		}
 	case t == "TOOL_RESPONSE":
-		st := jStr(v, "status")
+		st, _ := rawStr(e.Status)
 		if st == "ERROR" || st == "failed" {
-			id := toolID("call", jAt(v, "tool_call_id"))
+			id := toolID("call", e.ToolCallID)
 			m.recordErrorByID(id)
 		}
 	case t == "acp.update":
-		u := jAt(v, "update")
-		su := jStr(jAt(u, "sessionUpdate"))
+		u := typed[acpUpdate](e.Update)
+		su := u.SessionUpdate
 		if (su == "agent_message_chunk" || su == "agent_thought_chunk" || su == "tool_call") && !m.inAssistantStep {
 			m.inAssistantStep = true
 			m.assistantSteps++
 		}
 		if su == "tool_call" || su == "tool_call_update" {
-			id := toolID("acp", jAt(u, "toolCallId"))
-			rawName := jStr(first(u, "name", "title"))
+			id := toolID("acp", u.ToolCallID)
+			rawName, _ := firstRaw(u.Name, u.Title).(string)
 			if su == "tool_call" || rawName != "" || id != "" {
 				m.recordCall(id, "", rawName)
 			}
-			st := jStr(jAt(u, "status"))
+			st, _ := u.Status.(string)
 			if st == "completed" || st == "failed" {
 				m.inAssistantStep = false
 			}
@@ -700,26 +705,26 @@ func (m *runMetrics) observeACP(t string, v M, atMs int64) {
 				m.recordErrorByID(id)
 			}
 		}
-	case has(v, "step_update"):
-		su := jAt(v, "step_update")
-		if _, ok := str(jAt(su, "text_delta")); ok && !m.inAssistantStep {
+	case hasStep:
+		su := typed[acpStepUpdate](e.StepUpdate)
+		if su.TextDelta != nil && !m.inAssistantStep {
 			m.inAssistantStep = true
 			m.assistantSteps++
 		}
-		if jAt(su, "step_type") == "tool" {
+		if su.StepType == "tool" {
 			m.inAssistantStep = false
-			id := toolID("step", jAt(su, "step_index"))
-			rawName := label(jAt(su, "tool_name"), "tool")
+			id := toolID("step", su.StepIndex)
+			rawName := label(su.ToolName, "tool")
 			m.recordCall(id, "", rawName)
-			st := jStr(jAt(su, "state"))
+			st, _ := su.State.(string)
 			if st == "failed" || st == "ERROR" {
 				m.recordErrorByID(id)
 			}
 		}
-	case t == "turn.completed" || t == "turn.failed" || v["event"] == "result":
+	case t == "turn.completed" || t == "turn.failed" || e.event() == "result":
 		m.completedTurns++
 		m.inAssistantStep = false
-		if d, ok := num(v["durationMs"]); ok && d >= 0 {
+		if d, ok := num(e.DurationMs); ok && d >= 0 {
 			m.hasReportedActive = true
 			m.reportedActiveMs += int64(math.Round(d))
 		}

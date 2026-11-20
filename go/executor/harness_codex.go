@@ -29,8 +29,6 @@ func num(v any) (float64, bool) {
 	return 0, false
 }
 
-func isID(v any, n float64) bool { f, ok := num(jAt(v, "id")); return ok && f == n }
-
 // ms: a provider reset time in seconds as ms since epoch; nil when absent or not a whole non-negative number.
 func ms(v any) *int64 {
 	if f, ok := num(v); ok && f >= 0 && f < math.MaxInt64/1000 && f == math.Trunc(f) {
@@ -47,7 +45,7 @@ func limitReading(harness string, windows []contract.LimitWindow, native any) M 
 }
 
 func (h harness) Normalize(event map[string]any) map[string]any {
-	if h.name == "claude" && event["type"] == "rate_limit_event" {
+	if h.name == "claude" && typed[claudeRateLimitEvent](event).Type == "rate_limit_event" {
 		return claudeLimitReading(event)
 	}
 	return event
@@ -55,24 +53,23 @@ func (h harness) Normalize(event map[string]any) map[string]any {
 
 // claudeLimitReading: Claude stream-json rate_limit_event to a limit_reading: status, reset time and, when utilization is given, the percent.
 func claudeLimitReading(v M) M {
-	i := v["rate_limit_info"]
-	if !has(v, "rate_limit_info") {
-		i = v
+	var i claudeRateLimit
+	if e := typed[claudeRateLimitEvent](v); e.RateLimitInfo.Set {
+		i = typed[claudeRateLimit](e.RateLimitInfo)
+	} else {
+		i = typed[claudeRateLimit](v)
 	}
-	period, t := "unknown", jStr(i, "rateLimitType")
+	period, t := "unknown", i.RateLimitType
 	if t != "" {
 		period = claudePeriod(t)
 	}
-	r := contract.LimitWindow{Period: period, ResetsAt: ms(jAt(i, "resetsAt"))}
+	r := contract.LimitWindow{Period: period, ResetsAt: ms(i.ResetsAt), Status: i.Status}
 	if m := strings.TrimPrefix(t, "seven_day_"); m != t {
 		r.Model = &m // a per-model weekly limit
 	}
-	if st, ok := str(jAt(i, "status")); ok {
-		r.Status = &st
-	}
 	// fleet-people-access.md section 8: utilization (0-1) gives the percent, to 0.01; without it the reading stays
 	// status only.
-	if u, ok := num(jAt(i, "utilization")); ok {
+	if u, ok := num(i.Utilization); ok {
 		pct := math.Round(u*10000) / 100
 		r.Pct = &pct
 	}
@@ -82,26 +79,26 @@ func claudeLimitReading(v M) M {
 // codexLimitReading: one reading per rate-limit window, its period named from its duration.
 func codexLimitReading(r, native any) M {
 	readings := []contract.LimitWindow{}
-	for _, k := range []string{"primary", "secondary"} {
-		w, ok := jAt(r, k).(M)
-		if !ok {
+	limits := typed[codexRateLimits](r)
+	for _, w := range []*codexWindow{limits.Primary, limits.Secondary} {
+		if w == nil {
 			continue
 		}
-		pick := func(a, b string) any {
-			if w[a] != nil {
-				return w[a]
+		pick := func(a, b any) any {
+			if a != nil {
+				return a
 			}
-			return w[b]
+			return b
 		}
 		period := "unknown"
-		if m, ok := num(pick("windowDurationMins", "window_minutes")); ok && m >= 0 && m == float64(uint64(m)) {
+		if m, ok := num(pick(w.WindowDurationMins, w.WindowMinutes)); ok && m >= 0 && m == float64(uint64(m)) {
 			period = map[uint64]string{300: "5h", 10080: "weekly"}[uint64(m)]
 			if period == "" {
 				period = fmt.Sprintf("%dm", uint64(m))
 			}
 		}
-		lw := contract.LimitWindow{Period: period, ResetsAt: ms(pick("resetsAt", "resets_at"))}
-		if pct, ok := num(pick("usedPercent", "used_percent")); ok {
+		lw := contract.LimitWindow{Period: period, ResetsAt: ms(pick(w.ResetsAt, w.ResetsAtSnake))}
+		if pct, ok := num(pick(w.UsedPercent, w.UsedPercentSnake)); ok {
 			lw.Pct = &pct
 		}
 		readings = append(readings, lw)
@@ -272,24 +269,26 @@ func (s *codexSession) turnRequest() M {
 }
 
 func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]any, bool, error) {
-	if has(v, "id") && has(v, "method") {
-		return []M{{"id": v["id"], "error": M{"code": -32601, "message": "Fleet denies ungranted native request"}}}, nil, false, nil
+	f := typed[rpcFrame](v)
+	if f.request() {
+		return []M{{"id": f.ID.V, "error": M{"code": -32601, "message": "Fleet denies ungranted native request"}}}, nil, false, nil
 	}
-	if id, ok := num(v["id"]); ok {
+	if id, ok := num(f.ID.V); ok {
 		if cmd, ok := s.steers[id]; ok {
 			delete(s.steers, id)
-			return nil, M{"type": "steer.result", "commandId": cmd, "ok": !has(v, "error"), "native": v}, false, nil
+			return nil, M{"type": "steer.result", "commandId": cmd, "ok": !f.Error.Set, "native": v}, false, nil
 		}
 	}
-	if has(v, "error") {
-		return nil, nil, false, fmt.Errorf("native protocol request failed: %s", enc(jAt(v, "error", "code")))
+	if f.Error.Set {
+		return nil, nil, false, fmt.Errorf("native protocol request failed: %s", f.errorCode())
 	}
 	instructions := jStr(jAt(s.config(), "instructions"))
+	r := typed[codexResult](f.Result)
 	switch {
-	case isID(v, 1) && s.stage == 0:
+	case f.isID(1) && s.stage == 0:
 		s.stage = 1
-		if ua, ok := str(jAt(v, "result", "userAgent")); ok {
-			s.version = ua
+		if r.UserAgent != nil {
+			s.version = *r.UserAgent
 		}
 		p := s.profile
 		params := M{"cwd": s.root, "model": p["model"], "approvalPolicy": "never", "sandbox": "workspace-write", "developerInstructions": instructions,
@@ -306,11 +305,11 @@ func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]a
 			method, params["threadId"] = "thread/fork", s.fork
 		}
 		return []M{{"method": "initialized"}, {"id": 2, "method": method, "params": params}}, nil, false, nil
-	case isID(v, 2) && s.stage == 1:
-		thread, ok := str(jAt(v, "result", "thread", "id"))
-		if !ok {
+	case f.isID(2) && s.stage == 1:
+		if r.Thread.ID == nil {
 			return nil, nil, false, errors.New("missing native thread")
 		}
+		thread := *r.Thread.ID
 		if s.resume != "" && s.resume != thread {
 			return nil, nil, false, errors.New("resumed thread identity mismatch")
 		}
@@ -322,74 +321,79 @@ func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]a
 				"items": []any{M{"type": "message", "role": "developer", "content": []any{M{"type": "input_text", "text": instructions}}}}}}}
 		}
 		return next, M{"type": "thread.started", "thread_id": thread, "harnessVersion": s.version, "native": v}, false, nil
-	case isID(v, 4) && s.stage == 4:
+	case f.isID(4) && s.stage == 4:
 		s.stage = 2
 		return []M{s.turnRequest()}, nil, false, nil
-	case isID(v, 3) && s.stage == 2:
-		s.turn, _ = str(jAt(v, "result", "turn", "id"))
+	case f.isID(3) && s.stage == 2:
+		s.turn = r.Turn.ID
 		if s.turn != "" && s.turnStartedAtMs == 0 {
 			s.turnStartedAtMs = nowMs()
 		}
 		s.stage = 3
 		return nil, nil, false, nil
 	}
-	p := jAt(v, "params")
+	p := typed[codexParams](f.Params)
+	method := f.method()
 	// Limit readings (people-access §8): the account-wide notification carries no thread.
-	if v["method"] == "account/rateLimits/updated" {
-		return nil, codexLimitReading(jAt(p, "rateLimits"), v), false, nil
+	if method == "account/rateLimits/updated" {
+		return nil, codexLimitReading(p.RateLimits, v), false, nil
 	}
-	if t, ok := str(jAt(p, "threadId")); !ok || s.thread == "" || t != s.thread {
+	if p.ThreadID == nil || s.thread == "" || *p.ThreadID != s.thread {
 		return nil, nil, false, nil
 	}
-	if v["method"] == "turn/started" && s.turn == "" {
-		s.turn, _ = str(jAt(p, "turn", "id"))
+	if method == "turn/started" && s.turn == "" {
+		s.turn = p.Turn.ID
 		if s.turn != "" && s.turnStartedAtMs == 0 {
 			s.turnStartedAtMs = nowMs()
 		}
 	}
-	if t, ok := str(jAt(p, "turnId")); ok && t != s.turn {
+	if p.TurnID != nil && *p.TurnID != s.turn {
 		return nil, nil, false, nil
 	}
-	turnID, _ := str(jAt(p, "turnId"))
 	switch {
-	case v["method"] == "item/completed" && s.turn != "" && turnID == s.turn:
-		item, _ := jClone(jAt(p, "item")).(M)
+	case method == "item/completed" && s.turn != "" && isStr(p.TurnID, s.turn):
+		item, _ := jClone(p.Item.V).(M) // a copy: the frame is forwarded as received
 		if item == nil {
 			return nil, nil, false, errors.New("codex item: not an object")
 		}
 		// contracts Item: these fields are strings when present.
-		for _, k := range []string{"type", "text", "command", "name", "status"} {
-			if x, ok := item[k]; ok && x != nil {
-				if _, ok := x.(string); !ok {
-					return nil, nil, false, fmt.Errorf("codex item: %s must be a string", k)
+		strs := typed[codexItemStrings](p.Item)
+		for _, x := range []struct {
+			k string
+			r jsonValue
+		}{{"type", strs.Type}, {"text", strs.Text}, {"command", strs.Command}, {"name", strs.Name}, {"status", strs.Status}} {
+			if x.r.V != nil {
+				if _, ok := rawStr(x.r); !ok {
+					return nil, nil, false, fmt.Errorf("codex item: %s must be a string", x.k)
 				}
 			}
 		}
-		if item["type"] == "agentMessage" {
+		it := typed[codexItem](p.Item)
+		if it.Type == "agentMessage" {
 			item["type"] = "agent_message"
 		}
 		// Codex collab (spawn_agent etc.): child threads are accounted under this parent execution.
 		children := []any{}
-		if item["type"] == "collabAgentToolCall" {
-			ids, _ := item["receiverThreadIds"].([]any)
-			for _, c := range ids {
-				model := item["model"]
+		if it.Type == "collabAgentToolCall" {
+			for _, c := range it.ReceiverThreadIDs {
+				model := it.Model
 				if model == nil {
 					model = s.profile["model"]
 				}
-				children = append(children, M{"threadId": c, "parentThreadId": s.thread, "tool": item["tool"], "binding": M{"model": model, "account": "parent"}, "state": jAt(item, "agentsStates", jStr(c))})
+				thread, _ := c.(string)
+				children = append(children, M{"threadId": c, "parentThreadId": s.thread, "tool": it.Tool.V, "binding": M{"model": model, "account": "parent"}, "state": it.AgentsStates[thread]})
 			}
 		}
 		return nil, M{"item": item, "type": "item.completed", "children": children, "native": v}, false, nil
-	case v["method"] == "thread/tokenUsage/updated":
-		return nil, M{"type": "usage.observation", "usage": jAt(p, "tokenUsage"), "native": v}, false, nil
-	case v["method"] == "turn/completed" && s.turn != "" && jAt(p, "turn", "id") == s.turn:
+	case method == "thread/tokenUsage/updated":
+		return nil, M{"type": "usage.observation", "usage": p.TokenUsage, "native": v}, false, nil
+	case method == "turn/completed" && s.turn != "" && p.Turn.ID == s.turn:
 		t := "turn.failed"
-		if jAt(p, "turn", "status") == "completed" {
+		if p.Turn.Status == "completed" {
 			t = "turn.completed"
 		}
-		ev := M{"type": t, "error": jAt(p, "turn", "error"), "native": v}
-		dur := jAt(p, "turn", "durationMs")
+		ev := M{"type": t, "error": p.Turn.Error, "native": v}
+		dur := p.Turn.DurationMs
 		if dur == nil && s.turnStartedAtMs > 0 {
 			dur = max(nowMs()-s.turnStartedAtMs, int64(0))
 		}
