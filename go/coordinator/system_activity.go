@@ -17,9 +17,7 @@ func init() {
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "system-reads-cleanup", envMs("FLEET_SYSTEM_READS_CLEANUP_MS", 3_600_000), func(ctx context.Context) error {
 			n, err := systemReadsCleanup(ctx, a)
-			if err != nil {
-				log.Printf("system reads cleanup: %v", err)
-			} else if n > 0 {
+			if err == nil && n > 0 {
 				log.Printf("system reads cleanup: %d legacy rows deleted", n)
 			}
 			return err
