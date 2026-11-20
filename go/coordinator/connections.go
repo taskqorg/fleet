@@ -5,7 +5,6 @@ package main
 
 import (
 	"fleet/coordinator/db"
-	"fleet/obs"
 
 	"bytes"
 	"context"
@@ -180,37 +179,21 @@ func writeSnapshot(ctx context.Context, a *App) error {
 
 // publish: the snapshot is rewritten after the caller's transaction commits (coalesced). A rewrite scheduled before the
 // commit would read the old rows, and the tick does not republish on every change.
-var publishPending sync.Mutex
-var publishQueued bool
-
 func publish(q *Request) {
 	if q.tx == nil {
 		schedulePublish()
 		return
 	}
-	onEnd(q.tx, func(committed bool) {
-		if committed {
-			schedulePublish()
-		}
-	})
+	afterCommit(q, schedulePublish)
 }
 
-func schedulePublish() {
-	publishPending.Lock()
-	defer publishPending.Unlock()
-	if publishQueued || runningApp == nil {
-		return
+// schedulePublish rewrites the snapshot once per burst of calls (background.go).
+var schedulePublish = coalesced("snapshot", func(ctx context.Context) error {
+	if runningApp == nil {
+		return nil
 	}
-	publishQueued = true
-	go func() {
-		publishPending.Lock()
-		publishQueued = false
-		publishPending.Unlock()
-		if err := writeSnapshot(context.Background(), runningApp); err != nil {
-			log.Printf("snapshot: %v", err)
-		}
-	}()
-}
+	return writeSnapshot(ctx, runningApp)
+})
 
 // connSync: key files without a row are registered; a directory without a connection becomes one (owner-held, every project).
 func connSync(q *Request) error {
@@ -377,7 +360,7 @@ func connectionsList(q *Request) (any, error) {
 		b, _ := numOK(keys[j]["addedAt"])
 		return a < b
 	})
-	hist, err := rows(q, "SELECT data FROM document WHERE kind='setting-change' AND data->>'target' LIKE 'connection:%' ORDER BY seq")
+	hist, err := q.db().ConnHistory(q.ctx())
 	if err != nil {
 		return nil, err
 	}
@@ -394,8 +377,8 @@ func connectionsList(q *Request) (any, error) {
 			}
 		}
 		for _, h := range hist {
-			if h["target"] == "connection:"+astr(c["name"]) {
-				hs = append(hs, h)
+			if h.Target == "connection:"+astr(c["name"]) {
+				hs = append(hs, json.RawMessage(h.Data))
 			}
 		}
 		c["keys"], c["spend"], c["history"] = ks, doc{"basis": "unavailable"}, hs
@@ -450,7 +433,7 @@ func connectionsKeyAdd(q *Request, r *contract.ConnectionsKeyAddRequest) (any, e
 	qid, fp := deref(r.QuestionId), fingerprint(value)
 	if qid != "" {
 		// A retry of an add that already answered this request (its reply was lost) passes here and replays below.
-		if _, err := keyRequestOf(q, qid, astr(c["name"]), keyAnswer(astr(c["name"]), fp, "active")); err != nil {
+		if err := keyRequestOf(q, qid, astr(c["name"]), keyAnswer(astr(c["name"]), fp, "active")); err != nil {
 			return nil, err
 		}
 	}
@@ -518,28 +501,31 @@ func connectionsKeyRequest(q *Request, r *contract.ConnectionsKeyRequestRequest)
 	if reason != "" {
 		text += ": " + reason
 	}
-	d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE kind='secret' AND project_id=$1 AND request_id=$2", r.ProjectId, rid)
-	if err != nil {
-		return nil, err
-	}
-	if d != nil {
-		if d = mapOf(d["v"]); astr(d["text"]) != text {
+	d, err := q.db().ConnKeyRequestByRequest(q.ctx(), db.ConnKeyRequestByRequestParams{ProjectID: r.ProjectId, RequestID: rid})
+	if err == nil {
+		if d.Text != text {
 			return nil, fail(409, "Question identity conflict")
 		}
-		return d, nil
+		return json.RawMessage(d.Question), nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
 	}
 	v := doc{"id": newID(), "projectId": r.ProjectId, "requestId": rid, "text": text, "state": "waiting", "createdAt": nowMs(), "actor": actor(q, "operator")}
 	ask := doc{"id": v["id"], "kind": "secret", "text": text, "projectId": r.ProjectId, "askedBy": v["actor"], "requestId": rid, "askedAt": v["createdAt"],
 		"options": doc{"connection": c["name"]}}
 	if strings.HasPrefix(q.agent, "execution:") { // a host agent: the question shows in its conversation
 		eid := strings.TrimPrefix(q.agent, "execution:")
-		e, err := first(q, "SELECT session_id FROM execution WHERE id=$1", eid)
-		if err != nil {
+		sid, err := q.db().ConnExecutionSession(q.ctx(), eid)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
 		ask["executionId"] = eid
-		if e != nil {
-			ask["sessionId"] = e["session_id"]
+		if err == nil {
+			ask["sessionId"] = nil
+			if sid != nil {
+				ask["sessionId"] = *sid
+			}
 		}
 	}
 	_, err = askQuestion(q, ask)
@@ -584,8 +570,8 @@ func connectionsDelete(q *Request, r *contract.ConnectionsDeleteRequest) (contra
 		return no, err
 	}
 	if astr(c["id"]) != "" {
-		var secrets []string
-		if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(array_agg(id),'{}') FROM question WHERE kind='secret' AND state='open' AND options->>'connection'=$1", name).Scan(&secrets); err != nil {
+		secrets, err := q.db().ConnOpenKeyRequests(q.ctx(), name)
+		if err != nil {
 			return no, err
 		}
 		if err := questionsWithdraw(q, secrets); err != nil {
@@ -896,51 +882,59 @@ func envMs(k string, d int) time.Duration {
 	return time.Duration(n) * time.Millisecond
 }
 
-// every runs fn on a ticker until ctx ends, each run as the pass span pass.<name> in fn's ctx; single flight (a slow
-// pass never overlaps the next); d <= 0 turns it off.
-func every(ctx context.Context, name string, d time.Duration, fn func(context.Context) error) {
-	if d <= 0 {
-		return
-	}
-	passIntervals.Store(name, d)
-	go func() {
-		// The first run is at most a minute after start: a deploy more often than d restarts the timer, so a pass that
-		// waited a full interval first would never run (absence-pass, 2026-11-12: reconcile and delivery starved by
-		// deploys); the minute lets hosts poll before the rules judge them silent.
-		t := time.NewTimer(min(d, time.Minute))
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-			}
-			obs.Pass(ctx, name, func(ctx context.Context) (int, error) { return 0, fn(ctx) })
-			t.Reset(d)
+// mintRun: what a run token is minted for: its execution, director, project, experiment and pipeline run, and its
+// marks (a pipeline step's, a person's named token, Fleet's own reads).
+type mintRun struct {
+	ExecutionID, DirectedBy, ProjectID, ExperimentID, PipelineRunID, Personal, SystemActor *string
+	Step                                                                                   bool
+}
+
+// mintRunOf: a run record's fields; a field that is not a string is absent.
+func mintRunOf(run doc) mintRun {
+	str := func(k string) *string {
+		if s, ok := run[k].(string); ok {
+			return &s
 		}
-	}()
+		return nil
+	}
+	return mintRun{ExecutionID: str("executionId"), DirectedBy: str("directedBy"), ProjectID: str("projectId"), ExperimentID: str("experimentId"),
+		PipelineRunID: str("pipelineRunId"), Personal: str("personal"), SystemActor: str("systemActor"), Step: run["step"] == true}
+}
+
+// orNil: the string, or an untyped nil (a record field left out of its column).
+func orNil(s *string) any {
+	if s == nil {
+		return nil
+	}
+	return *s
 }
 
 // Per-run tokens (§4): granted are the requested connections that exist, take intake and whose access names the run.
-func connAllowed(c doc, run doc) bool {
+func connAllowed(c doc, run doc) bool { return connAllowedFor(c, mintRunOf(run)) }
+
+func connAllowedFor(c doc, r mintRun) bool {
 	a := mapOf(c["access"])
-	has := func(list string, v any) bool {
+	has := func(list string, v *string) bool {
 		for _, x := range anys(a[list]) {
-			if x == v {
+			if v != nil && x == *v {
 				return true
 			}
 		}
 		return false
 	}
 	if len(anys(a["people"])) == 0 && len(anys(a["projects"])) == 0 && len(anys(a["experiments"])) == 0 {
-		return run["directedBy"] != nil && run["directedBy"] == c["holder"]
+		return r.DirectedBy != nil && *r.DirectedBy == c["holder"]
 	}
-	return (run["directedBy"] != nil && has("people", run["directedBy"])) || has("projects", "*") ||
-		(run["projectId"] != nil && has("projects", run["projectId"])) || (run["experimentId"] != nil && has("experiments", run["experimentId"]))
+	all := "*"
+	return has("people", r.DirectedBy) || has("projects", &all) || has("projects", r.ProjectID) || has("experiments", r.ExperimentID)
 }
 
 // mint: {token, refused, connections}; token is nil when nothing was granted.
 func mint(q *Request, run doc, requested []string) (doc, error) {
+	return mintFor(q, mintRunOf(run), requested)
+}
+
+func mintFor(q *Request, run mintRun, requested []string) (doc, error) {
 	seen, uniq := map[string]bool{}, []string{}
 	for _, r := range requested {
 		if !seen[r] {
@@ -954,7 +948,7 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 		if err != nil {
 			return nil, err
 		}
-		if c != nil && c["intake"] == "all" && connAllowed(c, run) {
+		if c != nil && c["intake"] == "all" && connAllowedFor(c, run) {
 			granted = append(granted, c)
 		}
 	}
@@ -1005,19 +999,19 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 			refused = append(refused, n)
 		}
 	}
-	row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": run["executionId"], "directedBy": run["directedBy"], "projectId": projectOrNil(run["projectId"]),
-		"experimentId": run["experimentId"], "pipelineRunId": run["pipelineRunId"], "connections": names, "createdAt": nowMs()}
+	row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": orNil(run.ExecutionID), "directedBy": orNil(run.DirectedBy), "projectId": projectOrNil(orNil(run.ProjectID)),
+		"experimentId": orNil(run.ExperimentID), "pipelineRunId": orNil(run.PipelineRunID), "connections": names, "createdAt": nowMs()}
 	if len(fileDownloads) > 0 {
 		row["fileDownloads"] = fileDownloads
 	}
-	if run["step"] == true {
+	if run.Step {
 		row["step"] = true
 	}
-	if run["personal"] != nil {
-		row["personal"] = run["personal"]
+	if run.Personal != nil {
+		row["personal"] = *run.Personal
 	}
-	if run["systemActor"] != nil {
-		row["systemActor"] = run["systemActor"] // its calls are Fleet's own activity (connRecord)
+	if run.SystemActor != nil {
+		row["systemActor"] = *run.SystemActor // its calls are Fleet's own activity (connRecord)
 	}
 	err := put(q, "run-token", row)
 	if err != nil {
@@ -1101,14 +1095,12 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 		existing := map[string]string{}
 		if len(callIDs) > 0 {
 			if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-				rs, err := queryRows(q, `SELECT id, CASE WHEN data->>'phase'='completed' AND data->'transfer'->>'direction'='upload'
-					AND NOT data ? 'uploadAccounted' THEN 'upload-unaccounted' ELSE coalesce(data->>'phase','') END AS phase
-					FROM execution WHERE id = ANY($1)`, callIDs)
+				rs, err := q.db().ConnCallPhases(q.ctx(), callIDs)
 				if err != nil {
 					return err
 				}
 				for _, r := range rs {
-					existing[astr(r["id"])] = astr(r["phase"])
+					existing[r.ID] = r.Phase
 				}
 				return nil
 			}); err != nil {
@@ -1198,14 +1190,14 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 	if t["personal"] != nil {
 		parent = nil
 	}
-	var pTask, pSession, pDir, pPipe, pStep, pProf *string
-	var pPipeRev, pProfRev *int64
+	var pr db.ConnCallParentRow
 	if pid := astr(parent); pid != "" {
-		if err := q.tx.QueryRow(q.ctx(), "SELECT task_id,session_id,directed_by,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision FROM execution WHERE id=$1", pid).
-			Scan(&pTask, &pSession, &pDir, &pPipe, &pPipeRev, &pStep, &pProf, &pProfRev); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		var err error
+		if pr, err = q.db().ConnCallParent(q.ctx(), pid); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return false, err
 		}
 	}
+	pTask, pSession, pDir, pPipe, pStep, pProf, pPipeRev, pProfRev := pr.TaskID, pr.SessionID, pr.DirectedBy, pr.PipelineID, pr.StepID, pr.ProfileID, pr.PipelineRevision, pr.ProfileRevision
 	var startedAt, endedAt any
 	if l.StartedAt > 0 {
 		dur := l.Ms
@@ -1218,8 +1210,8 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 		if t["directorAccessRevokedAt"] != nil {
 			data["directorAccessRevokedAt"] = t["directorAccessRevokedAt"]
 		} else if dir := firstString(t["directedBy"], deref(pDir)); dir != "" {
-			var active bool
-			if err := q.tx.QueryRow(q.ctx(), "SELECT EXISTS(SELECT 1 FROM person WHERE email=$1)", dir).Scan(&active); err != nil {
+			active, err := q.db().ConnPersonExists(q.ctx(), dir)
+			if err != nil {
 				return false, err
 			}
 			if !active {
@@ -1238,7 +1230,7 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 		return false, err
 	}
 	if l.Outcome != contract.CallOutcomeOk {
-		if err := exec(q, "UPDATE execution SET problem=$2 WHERE id=$1 AND problem IS NULL", id, problemOf(string(l.Outcome), deref(l.ErrorCode))); err != nil {
+		if err := q.db().ConnCallProblem(q.ctx(), db.ConnCallProblemParams{ID: id, Problem: problemOf(string(l.Outcome), deref(l.ErrorCode))}); err != nil {
 			return false, err
 		}
 	}
@@ -1260,13 +1252,13 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 			if err := acquireTxLock(q, "usageKey:"+*l.UsageKey); err != nil {
 				return err
 			}
-			var n int
-			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM execution WHERE kind='tool_run' AND data->>'usageKey'=$1 AND id<>$2", *l.UsageKey, id).Scan(&n); err != nil {
+			n, err := q.db().ConnUsageKeyCount(q.ctx(), db.ConnUsageKeyCountParams{UsageKey: *l.UsageKey, ID: id})
+			if err != nil {
 				return err
 			}
 			if n > 0 || step {
 				amount = 0
-			} else if err := exec(q, "UPDATE execution SET data=jsonb_set(data,'{usageKey}',to_jsonb($2::text)) WHERE id=$1", id, *l.UsageKey); err != nil {
+			} else if err := q.db().ConnSetUsageKey(q.ctx(), db.ConnSetUsageKeyParams{UsageKey: *l.UsageKey, ID: id}); err != nil {
 				return err
 			}
 		}
@@ -1317,7 +1309,8 @@ func isUpload(l contract.CallLine) bool {
 // completed row unchanged. If the started line was lost, the completed line is recorded alone.
 func connComplete(q *Request, l contract.CallLine) error {
 	id := "call:" + l.CallId
-	state, problem := "failed", any(problemOf(string(l.Outcome), deref(l.ErrorCode)))
+	p := problemOf(string(l.Outcome), deref(l.ErrorCode))
+	state, problem := "failed", &p
 	if l.Outcome == contract.CallOutcomeOk {
 		state, problem = "succeeded", nil
 	}
@@ -1330,14 +1323,11 @@ func connComplete(q *Request, l contract.CallLine) error {
 	if upload {
 		patch["keyFingerprint"], patch["usage"], patch["uploadAccounted"] = l.KeyFingerprint, l.Usage, true
 	}
-	tag, err := q.tx.Exec(q.ctx(), `UPDATE execution SET problem=$3, data=data||$4::jsonb,
-	 ended_at=started_at+make_interval(secs => $2::bigint/1000.0) WHERE id=$1 AND
-	 (data->>'phase'='started' OR ($5 AND data->>'phase'='completed' AND NOT data ? 'uploadAccounted'))`,
-		id, ms, problem, jsonBytes(patch), upload)
+	n, err := q.db().ConnTransferComplete(q.ctx(), db.ConnTransferCompleteParams{ID: id, Ms: ms, Problem: problem, Patch: jsonBytes(patch), Upload: upload})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 1 {
+	if n == 1 {
 		if _, err := executionTransition(q, id, executionEvent{To: state, KeepEnd: true, Correct: true}); err != nil {
 			return err
 		}
@@ -1347,15 +1337,13 @@ func connComplete(q *Request, l contract.CallLine) error {
 				return err
 			}
 		}
-		if err := exec(q, `UPDATE execution_totals SET wall_ms=$2,wall_ms_basis='measured',active_ms=$2,active_ms_basis='measured',computed_at=now()
-		 WHERE execution_id=$1 AND EXISTS (SELECT 1 FROM execution e WHERE e.id=$1 AND e.started_at IS NOT NULL)`, id, ms); err != nil {
+		if err := q.db().ConnTransferTotals(q.ctx(), db.ConnTransferTotalsParams{ID: id, Ms: ms}); err != nil {
 			return err
 		}
 		publish(q)
 		return nil
 	}
-	var exists bool
-	if err := q.tx.QueryRow(q.ctx(), "SELECT EXISTS(SELECT 1 FROM execution WHERE id=$1)", id).Scan(&exists); err != nil || exists {
+	if exists, err := q.db().ConnExecutionExists(q.ctx(), id); err != nil || exists {
 		return err
 	}
 	ok, err := connRecord(q, l)
@@ -1412,12 +1400,11 @@ func connTickPass(ctx context.Context, a *App) error {
 			return err
 		}
 		for _, id := range open {
-			var state *string
-			err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1 AND "+execKinds+"),'')", id).Scan(&state)
+			state, err := q.db().ConnRunState(q.ctx(), id)
 			if err != nil {
 				return err
 			}
-			if state == nil || *state == "" || executionEnds(*state) {
+			if state == "" || executionEnds(state) {
 				toRevoke = append(toRevoke, id)
 			}
 		}
@@ -1494,9 +1481,9 @@ func connReconcile(ctx context.Context, a *App) {
 					k["usageBaseline"] = base
 				}
 				at, _ := numOK(base["at"])
-				var recorded float64
-				if err := q.tx.QueryRow(q.ctx(), `SELECT coalesce(sum((t.connection_cost->>'amount')::numeric),0)::float8 FROM execution e JOIN execution_totals t ON t.execution_id=e.id
-				 WHERE e.kind='tool_run' AND e.data->>'keyFingerprint'=$1 AND (e.data->>'startedAt')::bigint>=$2`, k["fingerprint"], int64(at)).Scan(&recorded); err != nil {
+				fp, _ := k["fingerprint"].(string)
+				recorded, err := q.db().ConnKeyRecordedSince(q.ctx(), db.ConnKeyRecordedSinceParams{Fingerprint: fp, Since: int64(at)})
+				if err != nil {
 					return err
 				}
 				bu, _ := numOK(base["usage"])
@@ -1557,21 +1544,21 @@ func keyAnswer(connection, fp, state string) string {
 }
 
 // keyRequestOf: the open key request qid for connection, or one already answered with replay (a retried add).
-func keyRequestOf(q *Request, qid, connection, replay string) (doc, error) {
-	qn, err := first(q, "SELECT * FROM question WHERE id=$1 AND kind='secret'", qid)
+func keyRequestOf(q *Request, qid, connection, replay string) error {
+	qn, err := q.db().ConnKeyRequest(q.ctx(), qid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fail(404, "Unknown key request")
+	}
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if qn == nil {
-		return nil, fail(404, "Unknown key request")
+	if qn.State != "open" && (replay == "" || qn.State != "answered" || qn.Answer != replay) {
+		return fail(409, "Key request already settled")
 	}
-	if astr(qn["state"]) != "open" && (replay == "" || astr(qn["state"]) != "answered" || astr(qn["answer"]) != replay) {
-		return nil, fail(409, "Key request already settled")
+	if qn.Connection != connection {
+		return fail(400, "The key request names another connection")
 	}
-	if astr(mapOf(qn["options"])["connection"]) != connection {
-		return nil, fail(400, "The key request names another connection")
-	}
-	return qn, nil
+	return nil
 }
 
 // keyAnswerCheck: the answer hook of a key request (tasks area calls it). Only the owner settles it, with decline or

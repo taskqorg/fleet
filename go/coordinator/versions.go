@@ -18,43 +18,33 @@ import (
 // overview (docs/design-system/controls/nav-rail.md, Version) and for agents.
 func init() {
 	op("system_versions", func(q *Request, _ *contract.SystemVersionsRequest) (contract.SystemVersionsReply, error) {
-		out, err := systemVersions(q)
-		return replyAs[contract.SystemVersionsReply](out, err)
+		return systemVersions(q)
 	})
 }
 
-func systemVersions(q *Request) (any, error) {
-	hl, err := hostsList(q, false)
+func systemVersions(q *Request) (contract.SystemVersionsReply, error) {
+	list, err := hostsListReply(q, false)
 	if err != nil {
-		return nil, err
+		return contract.SystemVersionsReply{}, err
 	}
-	list := hl.(doc)
 	target := healthyTarget()
-	hosts := []doc{}
-	for _, h := range list["hosts"].([]doc) {
-		v, _ := h["version"].(string)
-		row := doc{"id": h["id"], "version": h["version"], "autoUpdate": h["autoUpdate"], "update": h["update"], "lastSeenAt": h["lastSeenAt"],
-			"behind": versionBehindTarget(v, target)}
-		if h["pollError"] != nil {
-			row["pollError"] = h["pollError"]
+	hosts := []contract.HostVersion{}
+	for _, h := range list.Hosts {
+		row := contract.HostVersion{Id: h.Id, Version: h.Version, AutoUpdate: h.AutoUpdate, Update: h.Update, LastSeenAt: h.LastSeenAt, PollError: h.PollError}
+		if b, ok := versionBehindTarget(valueOr(h.Version), target).(bool); ok {
+			row.Behind = &b
 		}
 		hosts = append(hosts, row)
 	}
-	coord := doc{"version": version, "started": coordinatorStarted.Format(time.RFC3339)}
+	coord := contract.CoordinatorVersion{Version: version, Started: coordinatorStarted.Format(time.RFC3339), Offered: target}
 	if p := ownRelease().Previous; p != "" {
-		coord["previous"] = p
-	}
-	if target != nil {
-		coord["offered"] = *target
+		coord.Previous = &p
 	}
 	if c := buildCommit(); c != "" {
-		coord["commit"] = c
+		coord.Commit = &c
 	}
-	out := doc{"coordinator": coord, "ui": uiRelease(), "hosts": hosts, "serverNow": list["serverNow"], "staleAfterMs": list["staleAfterMs"]}
-	if gw := gatewayVersion(q.ctx()); gw != nil {
-		out["gateway"] = gw
-	}
-	return out, nil
+	return contract.SystemVersionsReply{Coordinator: coord, Ui: uiRelease(), Hosts: hosts, ServerNow: list.ServerNow, StaleAfterMs: list.StaleAfterMs,
+		Gateway: gatewayVersion()}, nil
 }
 
 // Missing or non-release values do not establish an update comparison.
@@ -98,58 +88,63 @@ func selectedUIRelease() (dir string, m uiManifest, ok bool) {
 }
 
 // uiRelease: the UI the site serves, as GET /ui-release.json reports it.
-func uiRelease() doc {
+func uiRelease() contract.UiVersion {
 	if _, m, ok := selectedUIRelease(); ok {
-		out := doc{"kind": "ui", "version": m.Version, "backendVersion": m.BackendVersion}
+		out := contract.UiVersion{Kind: contract.UiKindUi, Version: m.Version, BackendVersion: m.BackendVersion}
 		if m.Version == "" {
-			out["version"] = version
+			out.Version = version
 		}
 		if m.Commit != "" {
-			out["commit"] = m.Commit
+			out.Commit = &m.Commit
 		}
 		return out
 	}
-	return doc{"kind": "bundled", "version": version, "backendVersion": version}
+	return contract.UiVersion{Kind: contract.UiKindBundled, Version: version, BackendVersion: version}
 }
 
 // The gateway's state is probed outside any request: a read returns the last probe at once (never holding its
-// transaction on the network) and starts a new probe when that one is older than a minute.
+// transaction on the network) and starts a new probe (coalesced, background.go) when that one is older than a minute;
+// pending until the first probe.
 var gatewayProbe struct {
 	sync.Mutex
-	at      time.Time
-	last    doc
-	running bool
+	at   time.Time
+	last *contract.GatewayVersion
 }
 
-func gatewayVersion(_ context.Context) doc {
+var gatewayProbeNow = coalesced("gateway probe", func(ctx context.Context) error {
+	d := probeGateway(ctx)
+	d.ObservedAt = ptr(float64(time.Now().UnixMilli()))
+	gatewayProbe.Lock()
+	gatewayProbe.last, gatewayProbe.at = &d, time.Now()
+	gatewayProbe.Unlock()
+	return nil
+})
+
+func gatewayVersion() *contract.GatewayVersion {
 	if gatewayURL() == "" {
 		return nil
 	}
 	gatewayProbe.Lock()
 	defer gatewayProbe.Unlock()
-	if !gatewayProbe.running && time.Since(gatewayProbe.at) > time.Minute {
-		gatewayProbe.running = true
-		go func() {
-			d := probeGateway()
-			gatewayProbe.Lock()
-			d["observedAt"] = time.Now().UnixMilli()
-			gatewayProbe.last, gatewayProbe.at, gatewayProbe.running = d, time.Now(), false
-			gatewayProbe.Unlock()
-		}()
+	if time.Since(gatewayProbe.at) > time.Minute {
+		gatewayProbe.at = time.Now()
+		gatewayProbeNow()
 	}
 	if gatewayProbe.last == nil {
-		return doc{"state": "pending", "observedAt": nil}
+		return &contract.GatewayVersion{State: contract.GatewayStatePending}
 	}
-	return gatewayProbe.last
+	last := *gatewayProbe.last
+	return &last
 }
 
 // probeGateway: GET /healthz of fleet-gateway (go/gateway), with the Access headers gatewayCall uses for https.
-func probeGateway() doc {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+func probeGateway(ctx context.Context) contract.GatewayVersion {
+	unreachable := contract.GatewayVersion{State: contract.GatewayStateUnreachable}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", gatewayURL()+"/healthz", nil)
 	if err != nil {
-		return doc{"state": "unreachable"}
+		return unreachable
 	}
 	if strings.HasPrefix(gatewayURL(), "https://") {
 		for k, v := range cfAccessHeaders() {
@@ -158,16 +153,16 @@ func probeGateway() doc {
 	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return doc{"state": "unreachable"}
+		return unreachable
 	}
 	defer res.Body.Close()
 	var h struct{ Status, Version string }
 	if res.StatusCode != 200 || json.NewDecoder(res.Body).Decode(&h) != nil || (h.Status != "ok" && h.Status != "draining") {
-		return doc{"state": "unreachable"}
+		return unreachable
 	}
-	out := doc{"state": h.Status}
+	out := contract.GatewayVersion{State: contract.GatewayState(h.Status)}
 	if h.Version != "" {
-		out["version"] = h.Version
+		out.Version = &h.Version
 	}
 	return out
 }

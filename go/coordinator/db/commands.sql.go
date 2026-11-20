@@ -87,6 +87,37 @@ func (q *Queries) CommandUpsert(ctx context.Context, arg CommandUpsertParams) er
 	return err
 }
 
+const commandsOfExecution = `-- name: CommandsOfExecution :many
+SELECT id, kind, status FROM command WHERE execution_id=$1 ORDER BY seq
+`
+
+type CommandsOfExecutionRow struct {
+	ID     string
+	Kind   string
+	Status CommandStatus
+}
+
+// An execution's commands in creation order (transport_inspect).
+func (q *Queries) CommandsOfExecution(ctx context.Context, executionID *string) ([]CommandsOfExecutionRow, error) {
+	rows, err := q.db.Query(ctx, commandsOfExecution, executionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CommandsOfExecutionRow
+	for rows.Next() {
+		var i CommandsOfExecutionRow
+		if err := rows.Scan(&i.ID, &i.Kind, &i.Status); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const commandsPending = `-- name: CommandsPending :many
 SELECT id FROM command WHERE host_id=$1 AND status='pending' ORDER BY seq
 `

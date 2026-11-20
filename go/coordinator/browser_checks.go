@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	"fleet/coordinator/db"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -87,11 +89,11 @@ func (a *App) refreshPeople(ctx context.Context) error {
 			}
 		}
 		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-			var n int
-			if err := q.tx.QueryRow(ctx, "SELECT count(*) FROM question WHERE state='open' AND data->>'peopleFile'='true'").Scan(&n); err != nil || n > 0 {
+			if open, err := q.db().BrowserPeopleQuestionOpen(ctx); err != nil || open {
 				return err
 			}
-			_, err := askRow(q, "operator_decision", peopleQuestion(problem, partial), nil, []any{"fixed"}, "fleet", doc{"peopleFile": true})
+			// askRow (store.go) still takes the question data as a map.
+			_, err := askRow(q, "operator_decision", peopleQuestion(problem, partial), nil, []any{"fixed"}, "fleet", docOf(peopleFileQuestion{PeopleFile: true}))
 			return err
 		}); err != nil {
 			return err
@@ -99,6 +101,11 @@ func (a *App) refreshPeople(ctx context.Context) error {
 	}
 	peopleSeen = key
 	return nil
+}
+
+// peopleFileQuestion: the data of the open question about a broken people file.
+type peopleFileQuestion struct {
+	PeopleFile bool `json:"peopleFile"`
 }
 
 func peopleQuestion(problem string, partial bool) string {
@@ -112,32 +119,24 @@ func peopleQuestion(problem string, partial bool) string {
 func (a *App) peopleFromRows(ctx context.Context) error {
 	people := map[string]*Person{}
 	return a.store.Tx(ctx, nil, false, "", func(tx pgx.Tx) error {
-		rows, _ := tx.Query(ctx, "SELECT email,name,roles,owner FROM person")
-		for rows.Next() {
-			p := &Person{}
-			if err := rows.Scan(&p.Email, &p.Name, &p.Roles, &p.Owner); err != nil {
-				return err
-			}
-			people[p.Email] = p
-		}
-		if err := rows.Err(); err != nil {
+		rows, err := db.New(tx).BrowserPersonRows(ctx)
+		if err != nil {
 			return err
 		}
-		grants, _ := tx.Query(ctx, "SELECT email,object_kind,object_id FROM person_grant")
-		for grants.Next() {
-			var email, kind, id string
-			if err := grants.Scan(&email, &kind, &id); err != nil {
-				return err
-			}
-			if p := people[email]; p != nil {
+		for _, r := range rows {
+			people[r.Email] = &Person{Email: r.Email, Name: r.Name, Roles: r.Roles, Owner: r.Owner}
+		}
+		grants, err := db.New(tx).BrowserPersonGrants(ctx)
+		if err != nil {
+			return err
+		}
+		for _, g := range grants {
+			if p := people[g.Email]; p != nil {
 				p.Grants = append(p.Grants, struct {
 					Kind string `json:"kind"`
 					ID   string `json:"id"`
-				}{kind, id})
+				}{g.ObjectKind, g.ObjectID})
 			}
-		}
-		if err := grants.Err(); err != nil {
-			return err
 		}
 		a.publishPeople(people)
 		return nil

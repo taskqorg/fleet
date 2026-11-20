@@ -16,8 +16,6 @@ func init() {
 	op("hosts_remove", hostsRemove)
 }
 
-func hostRemoved(h doc) bool { return astr(h["state"]) == "removed" }
-
 // hostRemoveCounts: what removing host id touches; the preview and the confirm run the same queries.
 func hostRemoveCounts(q *Request, id string) (contract.HostsRemoveReply, error) {
 	r := contract.HostsRemoveReply{Id: id}
@@ -31,17 +29,17 @@ func hostRemoveCounts(q *Request, id string) (contract.HostsRemoveReply, error) 
 
 func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemoveReply, error) {
 	var none contract.HostsRemoveReply
-	h, err := maybe(q, "host:"+b.Id, "host")
+	h, err := hostRecordByID(q, b.Id)
 	if err != nil {
 		return none, err
 	}
 	if h == nil {
 		return none, fail(404, "Unknown host")
 	}
-	if q.person == nil || (!fullAccess(q.person) && q.person.Email != h["holder"]) {
+	if q.person == nil || (!fullAccess(q.person) && (h.Holder == nil || q.person.Email != *h.Holder)) {
 		return none, fail(403, "Only the holder or the owner removes this host")
 	}
-	if hostRemoved(h) {
+	if h.removed() {
 		return none, fail(409, "Host already removed")
 	}
 	r, err := hostRemoveCounts(q, b.Id)
@@ -49,10 +47,10 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 		return r, err
 	}
 	// Tombstone first: lists, dispatch and the rules stop seeing the host, and stops settle here (knownHost is false).
-	h["state"], h["removedAt"], h["removedSecretHash"] = "removed", nowMs(), h["secretHash"]
-	delete(h, "secretHash")
-	delete(h, "harnesses")
-	if err := put(q, "host", h); err != nil {
+	if err := q.db().HostTombstone(q.ctx(), db.HostTombstoneParams{ID: "host:" + b.Id, RemovedAt: nowMs()}); err != nil {
+		return none, err
+	}
+	if err := hostTransition(q, "host:"+b.Id, "removed"); err != nil {
 		return none, err
 	}
 	if err := q.db().DeleteHostSettings(q.ctx(), b.Id); err != nil {
@@ -96,8 +94,8 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 	if err := q.db().StoresOfHostUnreachable(q.ctx(), b.Id); err != nil {
 		return none, err
 	}
-	if err := put(q, "setting-change", doc{"id": newID(), "target": "host:" + b.Id, "holder": h["holder"], "field": "state", "previous": "active", "value": "removed",
-		"actor": q.person.Email, "at": nowMs(), "note": js(r)}); err != nil {
+	if err := recordHostChange(q, hostChange{Target: "host:" + b.Id, Holder: jsonBytes(h.Holder), Field: "state", Previous: jsonBytes("active"), Value: jsonBytes("removed"),
+		Actor: q.person.Email, Note: ptr(js(r))}); err != nil {
 		return none, err
 	}
 	onEnd(q.tx, func(committed bool) {
@@ -156,7 +154,10 @@ func purgeHosts(q *Request, preview bool) (removed, kept contract.PurgeCount, er
 			}
 		})
 	}
-	err = put(q, "setting-change", doc{"id": newID(), "target": "system", "field": "purge", "value": doc{"host": gone}, "actor": actor(q, "operator"), "at": nowMs()})
+	purged := struct {
+		Host []string `json:"host"`
+	}{gone}
+	err = recordHostChange(q, hostChange{Target: "system", Field: "purge", Value: jsonBytes(purged), Actor: actor(q, "operator")})
 	return removed, kept, err
 }
 

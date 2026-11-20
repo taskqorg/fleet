@@ -3,9 +3,9 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -13,9 +13,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"fleet/contract"
-
 	"github.com/jackc/pgx/v5"
+
+	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 type bkey struct{ seq, index int64 }
@@ -44,18 +45,16 @@ func cmpKey(a, b bkey) int64 {
 	return a.index - b.index
 }
 
-const maxSeq = "9223372036854775807"
-
 var terminalState = map[string]bool{"succeeded": true, "failed": true, "cancelled": true}
 
 // threadKey: {task} or {session}.
 type threadKey struct{ task, session string }
 
-func (k threadKey) view() doc {
+func (k threadKey) view() contract.ThreadKey {
 	if k.task != "" {
-		return doc{"task": k.task}
+		return contract.ThreadKey{Task: &k.task}
 	}
-	return doc{"session": k.session}
+	return contract.ThreadKey{Session: &k.session}
 }
 
 func threadKeyOf(k contract.ThreadKey) (threadKey, error) {
@@ -68,32 +67,53 @@ func threadKeyOf(k contract.ThreadKey) (threadKey, error) {
 	return threadKey{}, fail(400, "Expected key {task} or {session}")
 }
 
+// member: an execution of the thread, as its boundary and its agent blocks show it. known: the execution is a member
+// (a row of another execution has none).
 type member struct {
-	doc
-	seq int64
+	id                                string
+	sessionID, harness, model, effort *string
+	state                             string
+	startedAt, endedAt                *time.Time
+	seq                               int64
+	known                             bool
+}
+
+// memberRow: the execution columns every member query selects.
+type memberRow = db.ThreadMemberOfRow
+
+func memberOf(r memberRow) member {
+	m := member{id: r.ID, sessionID: r.SessionID, harness: r.Harness, model: r.Model, state: r.State, startedAt: r.StartedAt, endedAt: r.EndedAt, seq: r.Seq, known: true}
+	json.Unmarshal(r.Effort, &m.effort)
+	return m
 }
 
 // members: a task's executions, plus the taskless executions of sessions whose first (or attached) task it is.
 func members(q *Request, key threadKey) (map[string]member, []string, error) {
-	cols := "id,session_id,harness,model,config_ref->>'effort' AS effort,state::text AS state,started_at,ended_at,seq"
-	var rs []doc
-	var err error
+	var rs []memberRow
 	if key.task != "" {
-		rs, err = rowsOf(q, `WITH attached AS (SELECT id AS session_id FROM session WHERE task_id=$1),
-		 first_task AS (SELECT DISTINCT ON (session_id) session_id,task_id FROM execution WHERE task_id IS NOT NULL AND session_id IN (SELECT session_id FROM execution WHERE task_id=$1) ORDER BY session_id,seq)
-		 SELECT `+cols+` FROM execution WHERE kind='agent_run' AND (task_id=$1 OR (task_id IS NULL AND (session_id IN (SELECT session_id FROM first_task WHERE task_id=$1) OR session_id IN (SELECT session_id FROM attached)))) ORDER BY seq`, key.task)
+		xs, err := q.db().ThreadMembersOfTask(q.ctx(), key.task)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, x := range xs {
+			rs = append(rs, memberRow(x))
+		}
 	} else {
-		rs, err = rowsOf(q, "SELECT "+cols+" FROM execution WHERE kind='agent_run' AND session_id=$1 ORDER BY seq", key.session)
-	}
-	if err != nil {
-		return nil, nil, err
+		xs, err := q.db().ThreadMembersOfSession(q.ctx(), &key.session)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, x := range xs {
+			rs = append(rs, memberRow(x))
+		}
 	}
 	if len(rs) == 0 {
 		var ok bool
+		var err error
 		if key.session != "" {
-			ok, err = has(q, "SELECT 1 FROM session WHERE id=$1", key.session)
+			ok, err = q.db().ThreadSessionExists(q.ctx(), key.session)
 		} else {
-			ok, err = has(q, "SELECT 1 FROM task WHERE id=$1", key.task)
+			ok, err = q.db().ThreadTaskExists(q.ctx(), key.task)
 		}
 		if err == nil && !ok {
 			err = errNotFound
@@ -104,8 +124,8 @@ func members(q *Request, key threadKey) (map[string]member, []string, error) {
 	}
 	m, ids := map[string]member{}, []string{}
 	for _, r := range rs {
-		m[astr(r["id"])] = member{r, int64(num(r["seq"]))}
-		ids = append(ids, astr(r["id"]))
+		m[r.ID] = memberOf(r)
+		ids = append(ids, r.ID)
 	}
 	return m, ids, nil
 }
@@ -123,11 +143,26 @@ func tsMs(v any) any {
 	return nil
 }
 
-func mark(e doc) doc { return doc{"harness": e["harness"], "model": e["model"], "effort": e["effort"]} }
+// msOfTime: a member time as an optional contract time.
+func msOfTime(t *time.Time) *int64 {
+	if t == nil {
+		return nil
+	}
+	n := t.UnixMilli()
+	return &n
+}
 
-// markOf: mark as the contract's optional fields.
-func markOf(e doc) (harness, model, effort *string) {
-	return strPtr(e["harness"]), strPtr(e["model"]), strPtr(e["effort"])
+// nonEmpty: s, nil when absent or "".
+func nonEmpty(s *string) *string {
+	if s == nil || *s == "" {
+		return nil
+	}
+	return s
+}
+
+// markOf: the agent of a member as the contract's optional fields.
+func markOf(e member) (harness, model, effort *string) {
+	return nonEmpty(e.harness), nonEmpty(e.model), nonEmpty(e.effort)
 }
 
 // msPtr: tsMs as an optional contract time.
@@ -138,35 +173,39 @@ func msPtr(v any) *int64 {
 	return nil
 }
 
-// blockDoc: a block built from its contract struct (contracts/ops-sessions.schema.json Block), as the doc the thread code sorts and
-// merges. Top-level integers stay int64, as in the executor blocks (tsMs), so every block carries one number type.
-func blockDoc(v any) doc {
-	dec := json.NewDecoder(bytes.NewReader(jsonBytes(v)))
-	dec.UseNumber()
-	var d doc
-	dec.Decode(&d)
-	for k, x := range d {
-		if n, ok := x.(json.Number); ok {
-			if i, err := n.Int64(); err == nil {
-				d[k] = i
-			}
-		}
-	}
-	return d
+// threadBlock: a block of the thread (contracts/ops-sessions.schema.json Block). Fleet's own blocks are built from their
+// contract struct; an executor block is the host's open object with the thread's fields set.
+type threadBlock = rawObject
+
+// blockOf: a block from its contract struct.
+func blockOf(v any) threadBlock {
+	var b threadBlock
+	json.Unmarshal(jsonBytes(v), &b)
+	return b
 }
 
-func boundary(e member) doc {
-	b := contract.BoundaryBlock{Kind: "boundary", Key: bkey{e.seq, 0}.String(), SessionId: strPtr(e.doc["session_id"]), ExecutionId: astr(e.doc["id"]),
-		State: contract.ExecutionState(astr(e.doc["state"])), StartedAt: msPtr(e.doc["started_at"]), EndedAt: msPtr(e.doc["ended_at"])}
-	b.Harness, b.Model, b.Effort = markOf(e.doc)
-	return blockDoc(b)
+// val: field k as its decoded JSON value (nil when absent), for open fields shown as they are (tool input and output).
+func (r rawObject) val(k string) any {
+	var v any
+	json.Unmarshal(r[k], &v)
+	return v
 }
 
-func attachBoundaryResources(q *Request, bs []doc) error {
+// key: the block's key.
+func (r rawObject) key() bkey { return mustKey(r.text("key")) }
+
+func boundary(e member) threadBlock {
+	b := contract.BoundaryBlock{Kind: "boundary", Key: bkey{e.seq, 0}.String(), SessionId: nonEmpty(e.sessionID), ExecutionId: e.id,
+		State: contract.ExecutionState(e.state), StartedAt: msOfTime(e.startedAt), EndedAt: msOfTime(e.endedAt)}
+	b.Harness, b.Model, b.Effort = markOf(e)
+	return blockOf(b)
+}
+
+func attachBoundaryResources(q *Request, bs []threadBlock) error {
 	ids, seen := []string{}, map[string]bool{}
 	for _, b := range bs {
-		if b["kind"] == "boundary" {
-			if eid := astr(b["executionId"]); eid != "" && !seen[eid] {
+		if b.text("kind") == "boundary" {
+			if eid := b.text("executionId"); eid != "" && !seen[eid] {
 				seen[eid] = true
 				ids = append(ids, eid)
 			}
@@ -180,83 +219,121 @@ func attachBoundaryResources(q *Request, bs []doc) error {
 		return err
 	}
 	for _, b := range bs {
-		if b["kind"] == "boundary" {
-			if res, ok := resMap[astr(b["executionId"])]; ok {
-				b["resources"] = res
+		if b.text("kind") == "boundary" {
+			if res, ok := resMap[b.text("executionId")]; ok {
+				b["resources"] = jsonBytes(res)
 			}
 		}
 	}
 	return nil
 }
 
-func questionBlock(qu doc, seq int64) doc {
-	b := contract.QuestionBlock{Kind: "question", Key: bkey{seq, 0}.String(), ExecutionId: strPtr(qu["execution_id"]), QuestionId: astr(qu["id"]), Text: astr(qu["text"]),
-		Options: json.RawMessage("[]"), State: astr(qu["state"]), AskedAt: msPtr(qu["asked_at"]), AnsweredAt: msPtr(qu["answered_at"]), AnsweredBy: strPtr(qu["answered_by"])}
-	if qu["options"] != nil {
-		b.Options = jsonBytes(qu["options"])
-	}
-	if qu["answer"] != nil {
-		b.Answer = jsonBytes(qu["answer"])
-	}
-	return blockDoc(b)
+// threadQuestion: a question row (the question table's columns as JSON, without data).
+type threadQuestion struct {
+	ID          string          `json:"id"`
+	ExecutionID *string         `json:"execution_id"`
+	Text        string          `json:"text"`
+	Options     json.RawMessage `json:"options"`
+	State       string          `json:"state"`
+	AskedAt     *string         `json:"asked_at"`
+	AnsweredAt  *string         `json:"answered_at"`
+	AnsweredBy  *string         `json:"answered_by"`
+	Answer      *string         `json:"answer"`
 }
 
-// messageRow, eventRow: a thread row of a message or an event (migration 77 tables).
-const messageRowExpr = `jsonb_build_object('id',id,'executionId',execution_id,'type',NULL,'text',to_jsonb(text),'blocks',NULL,'deltaOf',NULL,'closes',NULL,'at',updated_at,'sentBy',sent_by,'attachments',payload->'attachments')`
-const eventRowExpr = `jsonb_build_object('id',id,'executionId',execution_id,'type',type,'text',payload->'text','blocks',payload->'data'->'fleetNormalized'->'blocks','deltaOf',payload->'data'->'fleetNormalized'->'deltaOf','closes',payload->'data'->'fleetNormalized'->'closes','at',updated_at,'sentBy',payload->>'sentBy','attachments',payload->'attachments')`
+func questionBlock(raw []byte, seq int64) threadBlock {
+	var qu threadQuestion
+	json.Unmarshal(raw, &qu)
+	at := func(s *string) *int64 {
+		if s == nil {
+			return nil
+		}
+		return msPtr(*s)
+	}
+	b := contract.QuestionBlock{Kind: "question", Key: bkey{seq, 0}.String(), ExecutionId: nonEmpty(qu.ExecutionID), QuestionId: qu.ID, Text: qu.Text,
+		Options: json.RawMessage("[]"), State: qu.State, AskedAt: at(qu.AskedAt), AnsweredAt: at(qu.AnsweredAt), AnsweredBy: nonEmpty(qu.AnsweredBy)}
+	if len(qu.Options) > 0 && string(qu.Options) != "null" {
+		b.Options = qu.Options
+	}
+	if qu.Answer != nil {
+		b.Answer = jsonBytes(*qu.Answer)
+	}
+	return blockOf(b)
+}
 
-// threadSearchText: the text of an event a thread search matches (its blocks' text, names and tool input and output).
-const threadSearchText = `(SELECT string_agg(concat_ws(' ',b->>'markdown',b->>'name',(b->'input')::text,(b->'output')::text),' ') FROM jsonb_array_elements(coalesce(payload->'data'->'fleetNormalized'->'blocks','[]'::jsonb)) b)`
+// threadRow: a message or event row (queries/threads.sql); type, text, deltaOf and at keep their JSON, which differs by row.
+type threadRow struct {
+	ID          string            `json:"id"`
+	ExecutionID *string           `json:"executionId"`
+	Type        json.RawMessage   `json:"type"`
+	Text        json.RawMessage   `json:"text"`
+	Blocks      []json.RawMessage `json:"blocks"`
+	DeltaOf     json.RawMessage   `json:"deltaOf"`
+	Closes      []json.RawMessage `json:"closes"`
+	At          json.RawMessage   `json:"at"`
+	SentBy      *string           `json:"sentBy"`
+	Attachments []json.RawMessage `json:"attachments"`
+}
 
+// rawValue: raw decoded, nil when absent.
+func rawValue(raw json.RawMessage) any {
+	var v any
+	json.Unmarshal(raw, &v)
+	return v
+}
+
+// trow: one row of the thread: its seq, its source (message, event, event-delta, question, execution) and its JSON.
 type trow struct {
 	seq int64
 	src string
-	v   doc
+	v   []byte
 }
 
-// threadRows: the rows of executions ids from seq from in direction dir; like (a search, ILIKE pattern) keeps only the
-// messages and events whose text matches.
-func threadRows(q *Request, ids []string, dir, from string, limit int, like ...any) ([]trow, error) {
-	order := "ASC"
-	if dir == "<" {
-		order = "DESC"
-	}
-	off, msg, ev := "", "", ""
-	if len(like) > 0 {
-		off, msg, ev = " AND false", " AND text ILIKE $4", " AND "+threadSearchText+" ILIKE $4"
-	}
-	window := func(src, table, cond string) string {
-		return `SELECT d.seq,d.src,d.v FROM unnest($1::text[]) m(id),
-	  LATERAL (SELECT seq,'` + src + `' AS src,` + map[string]string{"message": messageRowExpr, "event": eventRowExpr}[table] + ` AS v FROM ` + table + ` WHERE execution_id=m.id AND seq ` + dir + `= $2::bigint` + cond + `
-	   ORDER BY seq ` + order + ` LIMIT $3) d`
-	}
-	sql := `SELECT seq,src,v FROM (
-	 ` + window("message", "message", msg) + `
-	 UNION ALL ` + window("event", "event", ` AND NOT delta AND (type='execution.ended' OR jsonb_array_length(coalesce(payload->'data'->'fleetNormalized'->'blocks','[]'::jsonb))>0)`+ev) + `
-	 UNION ALL ` + window("event-delta", "event", ` AND delta AND payload->'data'->'fleetNormalized'->>'opens'='true'`+off) + `
-	 UNION ALL SELECT seq,'question',to_jsonb(q)-'data' FROM question q WHERE execution_id=ANY($1) AND seq ` + dir + `= $2::bigint` + off + `
-	 UNION ALL SELECT seq,'execution',jsonb_build_object('id',id) FROM execution WHERE id=ANY($1) AND seq ` + dir + `= $2::bigint` + off + `
-	) x ORDER BY seq ` + order + ` LIMIT $3`
-	rs, err := rowsOf(q, sql, append([]any{ids, from, limit}, like...)...)
+func (r trow) row() threadRow {
+	var x threadRow
+	json.Unmarshal(r.v, &x)
+	return x
+}
+
+// threadRows: the rows of executions ids from seq from in direction dir; pattern (a search, ILIKE pattern) keeps only
+// the messages and events whose text matches.
+func threadRows(q *Request, ids []string, dir string, from int64, limit int, pattern *string) ([]trow, error) {
 	out := []trow{}
+	add := func(seq int64, src string, v []byte) { out = append(out, trow{seq, src, v}) }
+	switch {
+	case pattern != nil:
+		rs, err := q.db().ThreadRowsSearch(q.ctx(), db.ThreadRowsSearchParams{Ids: ids, FromSeq: from, Lim: int32(limit), Pattern: *pattern})
+		for _, r := range rs {
+			add(r.Seq, r.Src, r.V)
+		}
+		return out, err
+	case dir == "<":
+		rs, err := q.db().ThreadRowsBefore(q.ctx(), db.ThreadRowsBeforeParams{Ids: ids, FromSeq: from, Lim: int32(limit)})
+		for _, r := range rs {
+			add(r.Seq, r.Src, r.V)
+		}
+		return out, err
+	}
+	rs, err := q.db().ThreadRowsAfter(q.ctx(), db.ThreadRowsAfterParams{Ids: ids, FromSeq: from, Lim: int32(limit)})
 	for _, r := range rs {
-		out = append(out, trow{int64(num(r["seq"])), astr(r["src"]), mapOf(r["v"])})
+		add(r.Seq, r.Src, r.V)
 	}
 	return out, err
 }
 
 // stream: the text of an open stream (event-delta rows of one deltaOf); "", false once an event closes it.
 func streamText(q *Request, executionID, id string) (string, bool, error) {
-	closed, err := has(q, "SELECT 1 FROM event WHERE NOT delta AND execution_id=$1 AND payload->'data'->'fleetNormalized'->'closes' ? $2", executionID, id)
+	closed, err := q.db().ThreadStreamClosed(q.ctx(), db.ThreadStreamClosedParams{ExecutionID: executionID, DeltaOf: id})
 	if err != nil || closed {
 		return "", false, err
 	}
-	parts, err := rowsOf(q, "SELECT payload->'data'->'fleetNormalized'->'blocks' AS b FROM event WHERE delta AND execution_id=$1 AND payload->'data'->'fleetNormalized'->>'deltaOf'=$2 ORDER BY seq", executionID, id)
+	parts, err := q.db().ThreadStreamBlocks(q.ctx(), db.ThreadStreamBlocksParams{ExecutionID: executionID, DeltaOf: id})
 	var sb strings.Builder
 	for _, p := range parts {
-		bs, _ := p["b"].([]any)
+		var bs []rawObject
+		json.Unmarshal(p, &bs)
 		for _, x := range bs {
-			sb.WriteString(astr(x.(map[string]any)["markdown"]))
+			sb.WriteString(x.text("markdown"))
 		}
 	}
 	return sb.String(), true, err
@@ -264,83 +341,83 @@ func streamText(q *Request, executionID, id string) (string, bool, error) {
 
 // expand: the blocks of one row, in index order.
 // ponytail: the delivery stage on the result block is dropped with delivery (dead code, owner 2026-11-11).
-func expand(q *Request, r trow, m map[string]member) ([]doc, error) {
-	v := r.v
-	e := m[firstString(v["executionId"], v["execution_id"])]
+func expand(q *Request, r trow, m map[string]member) ([]threadBlock, error) {
+	if r.src == "question" {
+		return []threadBlock{questionBlock(r.v, r.seq)}, nil
+	}
+	v := r.row()
+	eid := deref(v.ExecutionID)
+	e := m[eid]
 	at := func(i int) string { return bkey{r.seq, int64(i)}.String() }
 	switch r.src {
-	case "question":
-		return []doc{questionBlock(v, r.seq)}, nil
 	case "message":
-		t, ok := v["text"].(string)
-		if !ok {
+		var t *string
+		if json.Unmarshal(v.Text, &t) != nil || t == nil {
 			return nil, nil
 		}
-		b := contract.TextBlock{Kind: "text", Key: at(0), ExecutionId: strPtr(v["executionId"]), Role: "operator", Markdown: t, Plain: &t, At: msPtr(v["at"]), By: strPtr(v["sentBy"])}
-		for _, x := range anys(v["attachments"]) {
-			m := mapOf(x)
-			b.Attachments = append(b.Attachments, contract.ResultArtifact{Id: astr(m["artifactId"]), Name: astr(m["name"]), MediaType: astr(m["mediaType"]), Size: int64(num(m["size"]))})
+		b := contract.TextBlock{Kind: "text", Key: at(0), ExecutionId: nonEmpty(v.ExecutionID), Role: "operator", Markdown: *t, Plain: t, At: msPtr(rawValue(v.At)), By: nonEmpty(v.SentBy)}
+		for _, x := range v.Attachments {
+			var a rawObject
+			json.Unmarshal(x, &a)
+			size, _ := jsonNumber(a["size"])
+			b.Attachments = append(b.Attachments, contract.ResultArtifact{Id: a.text("artifactId"), Name: a.text("name"), MediaType: a.text("mediaType"), Size: int64(size)})
 		}
-		return []doc{blockDoc(b)}, nil
+		return []threadBlock{blockOf(b)}, nil
 	case "event-delta":
-		text, open, err := streamText(q, astr(v["executionId"]), astr(v["deltaOf"]))
+		deltaOf := rawText(v.DeltaOf)
+		text, open, err := streamText(q, eid, deltaOf)
 		if err != nil || !open {
 			return nil, err
 		}
 		stream := "open"
-		if e.doc != nil && terminalState[astr(e.doc["state"])] {
+		if e.known && terminalState[e.state] {
 			stream = "cut-off"
 		}
-		if strings.HasPrefix(astr(v["deltaOf"]), "reasoning:") {
-			return []doc{blockDoc(contract.ReasoningBlock{Kind: "reasoning", Key: at(0), ExecutionId: strPtr(v["executionId"]), Markdown: text, Plain: &text, Stream: &stream, At: msPtr(v["at"])})}, nil
+		if strings.HasPrefix(deltaOf, "reasoning:") {
+			return []threadBlock{blockOf(contract.ReasoningBlock{Kind: "reasoning", Key: at(0), ExecutionId: nonEmpty(v.ExecutionID), Markdown: text, Plain: &text, Stream: &stream, At: msPtr(rawValue(v.At))})}, nil
 		}
-		b := contract.TextBlock{Kind: "text", Key: at(0), ExecutionId: strPtr(v["executionId"]), Role: "agent", Markdown: text, Plain: &text, Stream: &stream, At: msPtr(v["at"])}
-		b.Harness, b.Model, b.Effort = markOf(e.doc)
-		return []doc{blockDoc(b)}, nil
+		b := contract.TextBlock{Kind: "text", Key: at(0), ExecutionId: nonEmpty(v.ExecutionID), Role: "agent", Markdown: text, Plain: &text, Stream: &stream, At: msPtr(rawValue(v.At))}
+		b.Harness, b.Model, b.Effort = markOf(e)
+		return []threadBlock{blockOf(b)}, nil
 	}
-	own := []doc{}
-	bs, _ := v["blocks"].([]any)
-	for i, x := range bs {
-		src, _ := x.(map[string]any)
-		b := doc{}
+	own := []threadBlock{}
+	for i, x := range v.Blocks {
+		var src rawObject
+		json.Unmarshal(x, &src)
+		b := threadBlock{}
 		for k, y := range src {
 			b[k] = y
 		}
-		b["key"], b["executionId"], b["at"] = at(i), v["executionId"], tsMs(v["at"])
-		if astr(b["kind"]) == "text" {
-			b["role"] = firstString(src["role"], "agent")
-			for k, y := range mark(e.doc) {
-				b[k] = y
-			}
+		b["key"], b["executionId"], b["at"] = jsonBytes(at(i)), jsonBytes(v.ExecutionID), jsonBytes(tsMs(rawValue(v.At)))
+		if b.text("kind") == "text" {
+			b["role"] = jsonBytes(firstString(src.text("role"), "agent"))
+			// The member's agent as it is (null for a row of another execution).
+			b["harness"], b["model"], b["effort"] = jsonBytes(e.harness), jsonBytes(e.model), jsonBytes(e.effort)
 		}
-		if k := astr(b["kind"]); k == "text" || k == "reasoning" {
-			b["plain"] = astr(src["markdown"])
+		if k := b.text("kind"); k == "text" || k == "reasoning" {
+			b["plain"] = jsonBytes(src.text("markdown"))
 		}
 		own = append(own, b)
 	}
-	if astr(v["type"]) == "execution.ended" {
-		arts, err := storedArtifacts(q, astr(v["executionId"]))
+	if rawText(v.Type) == "execution.ended" {
+		arts, err := q.db().ThreadStoredArtifacts(q.ctx(), v.ExecutionID)
 		if err != nil {
 			return nil, err
 		}
 		if len(arts) > 0 {
-			r := contract.ResultBlock{Kind: "result", Key: at(len(own)), ExecutionId: strPtr(v["executionId"]), ArtifactIds: []string{}}
+			r := contract.ResultBlock{Kind: "result", Key: at(len(own)), ExecutionId: nonEmpty(v.ExecutionID), ArtifactIds: []string{}}
 			for _, a := range arts {
-				r.ArtifactIds = append(r.ArtifactIds, astr(a["id"]))
-				r.Artifacts = append(r.Artifacts, contract.ResultArtifact{Id: astr(a["id"]), Name: astr(a["name"]), MediaType: astr(a["mediaType"]), Size: int64(num(a["size"]))})
+				r.ArtifactIds = append(r.ArtifactIds, a.ID)
+				r.Artifacts = append(r.Artifacts, contract.ResultArtifact{Id: a.ID, Name: a.Name, MediaType: a.MediaType, Size: a.Size})
 			}
-			own = append(own, blockDoc(r))
+			own = append(own, blockOf(r))
 		}
 	}
 	return own, nil
 }
 
-func storedArtifacts(q *Request, executionID string) ([]doc, error) {
-	return rowsOf(q, `SELECT coalesce(legacy_id,id) AS id,name,media_type AS "mediaType",coalesce(size,0) AS size FROM artifact WHERE execution_id=$1 AND state='stored' ORDER BY seq`, executionID)
-}
-
-func reverse(xs []doc) []doc {
-	out := make([]doc, len(xs))
+func reverse(xs []threadBlock) []threadBlock {
+	out := make([]threadBlock, len(xs))
 	for i, x := range xs {
 		out[len(xs)-1-i] = x
 	}
@@ -348,20 +425,20 @@ func reverse(xs []doc) []doc {
 }
 
 // side: up to limit blocks strictly before ('<') or after ('>') from, nearest first; more says whether more remain.
-func side(q *Request, m map[string]member, ids []string, dir string, from *bkey, limit int, inclusive bool) ([]doc, bool, error) {
-	out, seen := []doc{}, map[int64]bool{}
-	cursor := "0"
+func side(q *Request, m map[string]member, ids []string, dir string, from *bkey, limit int, inclusive bool) ([]threadBlock, bool, error) {
+	out, seen := []threadBlock{}, map[int64]bool{}
+	cursor := int64(0)
 	if dir == "<" {
-		cursor = maxSeq
+		cursor = math.MaxInt64
 	}
 	if from != nil {
-		cursor = strconv.FormatInt(from.seq, 10)
+		cursor = from.seq
 	}
-	keep := func(b doc) bool {
+	keep := func(b threadBlock) bool {
 		if from == nil {
 			return true
 		}
-		c := cmpKey(mustKey(b["key"]), *from)
+		c := cmpKey(b.key(), *from)
 		if dir == "<" {
 			return c < 0
 		}
@@ -371,7 +448,7 @@ func side(q *Request, m map[string]member, ids []string, dir string, from *bkey,
 		return c > 0
 	}
 	for {
-		batch, err := threadRows(q, ids, dir, cursor, limit+1)
+		batch, err := threadRows(q, ids, dir, cursor, limit+1, nil)
 		if err != nil {
 			return nil, false, err
 		}
@@ -380,9 +457,9 @@ func side(q *Request, m map[string]member, ids []string, dir string, from *bkey,
 				continue
 			}
 			seen[r.seq] = true
-			var bs []doc
+			var bs []threadBlock
 			if r.src == "execution" {
-				bs = []doc{boundary(m[astr(r.v["id"])])}
+				bs = []threadBlock{boundary(m[r.row().ID])}
 			} else if bs, err = expand(q, r, m); err != nil {
 				return nil, false, err
 			}
@@ -401,7 +478,7 @@ func side(q *Request, m map[string]member, ids []string, dir string, from *bkey,
 		if len(out) > limit || len(batch) <= limit {
 			break
 		}
-		cursor = strconv.FormatInt(batch[len(batch)-1].seq, 10)
+		cursor = batch[len(batch)-1].seq
 	}
 	more := len(out) > limit
 	if more {
@@ -414,17 +491,14 @@ func side(q *Request, m map[string]member, ids []string, dir string, from *bkey,
 }
 
 func threadTotal(q *Request, m map[string]member, ids []string) (int64, error) {
-	var n int64
-	if err := q.tx.QueryRow(q.ctx(), `SELECT (SELECT count(*) FROM message WHERE execution_id=ANY($1))
-	 +(SELECT coalesce(sum(jsonb_array_length(coalesce(payload->'data'->'fleetNormalized'->'blocks','[]'::jsonb))),0) FROM event WHERE NOT delta AND execution_id=ANY($1))
-	 +(SELECT count(*) FROM question WHERE execution_id=ANY($1))
-	 +(SELECT count(*) FROM event v WHERE NOT v.delta AND v.type='execution.ended' AND v.execution_id=ANY($1) AND EXISTS(SELECT 1 FROM artifact a WHERE a.execution_id=v.execution_id AND a.state='stored'))`, ids).Scan(&n); err != nil {
+	n, err := q.db().ThreadTotal(q.ctx(), ids)
+	if err != nil {
 		return 0, err
 	}
 	n += int64(len(m))
-	ss, err := rowsOf(q, "SELECT execution_id AS e,payload->'data'->'fleetNormalized'->>'deltaOf' AS id FROM event WHERE delta AND execution_id=ANY($1) AND payload->'data'->'fleetNormalized'->>'opens'='true'", ids)
+	ss, err := q.db().ThreadOpenStreams(q.ctx(), ids)
 	for _, x := range ss {
-		if _, open, err := streamText(q, astr(x["e"]), astr(x["id"])); err != nil {
+		if _, open, err := streamText(q, x.ExecutionID, rawText(x.DeltaOf)); err != nil {
 			return 0, err
 		} else if open {
 			n++
@@ -442,35 +516,50 @@ func positiveLimit(v *int64) (int, error) {
 
 // keyOfSession: the thread a session shows: its attached or first task's, else its own.
 func keyOfSession(q *Request, sid string) (threadKey, error) {
-	t, err := first(q, "SELECT coalesce((SELECT task_id FROM session WHERE id=$1),(SELECT task_id FROM execution WHERE session_id=$1 AND task_id IS NOT NULL ORDER BY seq LIMIT 1)) AS t", sid)
+	ts, err := q.db().ThreadSessionTask(q.ctx(), sid)
 	if err != nil {
 		return threadKey{}, err
 	}
-	if tid := astr(t["t"]); tid != "" {
-		return threadKey{task: tid}, nil
+	if len(ts) == 0 {
+		if ts, err = q.db().ThreadSessionFirstTask(q.ctx(), &sid); err != nil {
+			return threadKey{}, err
+		}
+	}
+	if len(ts) > 0 && deref(ts[0]) != "" {
+		return threadKey{task: *ts[0]}, nil
 	}
 	return threadKey{session: sid}, nil
 }
 
 func feedCursor(q *Request) (int64, error) { return head(q.ctx(), q.tx) }
 
-func threadEntries(q *Request, b *contract.ThreadEntriesRequest) (doc, error) {
+// blocksJSON: blocks as the contract's Block values.
+func blocksJSON(bs []threadBlock) []contract.Block {
+	out := make([]contract.Block, 0, len(bs))
+	for _, b := range bs {
+		out = append(out, jsonBytes(b))
+	}
+	return out
+}
+
+func threadEntries(q *Request, b *contract.ThreadEntriesRequest) (contract.ThreadEntriesReply, error) {
+	var none contract.ThreadEntriesReply
 	key, err := threadKeyOf(b.Key)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	if b.Resolve != nil && *b.Resolve && key.session != "" {
 		if key, err = keyOfSession(q, key.session); err != nil {
-			return nil, err
+			return none, err
 		}
 	}
 	limit, err := positiveLimit(b.Limit)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	m, ids, err := members(q, key)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	given := 0
 	for _, k := range []*string{b.Before, b.After, b.Around} {
@@ -479,105 +568,99 @@ func threadEntries(q *Request, b *contract.ThreadEntriesRequest) (doc, error) {
 		}
 	}
 	if given > 1 {
-		return nil, fail(400, "Expected one of before, after, around")
+		return none, fail(400, "Expected one of before, after, around")
 	}
-	var entries []doc
+	var entries []threadBlock
 	hasBefore, hasAfter, withTotal := false, false, false
 	switch {
 	case b.Before != nil:
 		k, err := parseKey(*b.Before)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		if entries, hasBefore, err = side(q, m, ids, "<", &k, limit, false); err != nil {
-			return nil, err
+			return none, err
 		}
 		hasAfter = true
 	case b.After != nil:
 		k, err := parseKey(*b.After)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		if entries, hasAfter, err = side(q, m, ids, ">", &k, limit, false); err != nil {
-			return nil, err
+			return none, err
 		}
 		hasBefore = true
 	case b.Around != nil:
 		k, err := parseKey(*b.Around)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		half := limit / 2
-		l, lmore, err := side(q, m, ids, "<", &k, half, false)
-		if err != nil {
-			return nil, err
+		// A page of one is all after the key; its hasBefore is the probe below (a side of zero blocks would never end).
+		var l []threadBlock
+		lmore := false
+		if half > 0 {
+			if l, lmore, err = side(q, m, ids, "<", &k, half, false); err != nil {
+				return none, err
+			}
 		}
 		r, rmore, err := side(q, m, ids, ">", &k, limit-half, true)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		entries, hasBefore, hasAfter, withTotal = append(l, r...), lmore, rmore, true
 		if half == 0 && !hasBefore {
 			one, _, err := side(q, m, ids, "<", &k, 1, false)
 			if err != nil {
-				return nil, err
+				return none, err
 			}
 			hasBefore = len(one) > 0
 		}
 	default:
 		if entries, hasBefore, err = side(q, m, ids, "<", nil, limit, false); err != nil {
-			return nil, err
+			return none, err
 		}
 		withTotal = true
 	}
 	if err := attachBoundaryResources(q, entries); err != nil {
-		return nil, err
+		return none, err
 	}
-	sessions, seen := []any{}, map[string]bool{}
+	sessions, seen := []string{}, map[string]bool{}
 	for _, id := range ids {
-		if s := astr(m[id].doc["session_id"]); s != "" && !seen[s] {
+		if s := deref(m[id].sessionID); s != "" && !seen[s] {
 			seen[s] = true
 			sessions = append(sessions, s)
 		}
 	}
-	out := doc{"key": key.view(), "entries": entries, "first": nil, "last": nil, "hasBefore": hasBefore, "hasAfter": hasAfter, "sessionIds": sessions}
+	out := contract.ThreadEntriesReply{Key: key.view(), Entries: blocksJSON(entries), HasBefore: hasBefore, HasAfter: hasAfter, SessionIds: sessions}
 	if len(entries) > 0 {
-		out["first"], out["last"] = entries[0]["key"], entries[len(entries)-1]["key"]
+		f, l := entries[0].text("key"), entries[len(entries)-1].text("key")
+		out.First, out.Last = &f, &l
 	}
 	if withTotal {
-		if out["total"], err = threadTotal(q, m, ids); err != nil {
-			return nil, err
+		n, err := threadTotal(q, m, ids)
+		if err != nil {
+			return none, err
 		}
+		out.Total = &n
 	}
-	out["feedCursor"], err = feedCursor(q)
+	out.FeedCursor, err = feedCursor(q)
 	return out, err
 }
 
-// eventRow: the thread rows of the events (and, with messages, the messages) where sql holds.
-func eventRow(q *Request, messages bool, sql string, args ...any) ([]trow, error) {
-	src := "SELECT seq,CASE WHEN delta THEN 'event-delta' ELSE 'event' END AS src," + eventRowExpr + " AS v FROM event WHERE " + sql
-	if messages {
-		src += " UNION ALL SELECT seq,'message' AS src," + messageRowExpr + " AS v FROM message WHERE " + sql
-	}
-	rs, err := rowsOf(q, src, args...)
-	out := []trow{}
-	for _, r := range rs {
-		out = append(out, trow{int64(num(r["seq"])), astr(r["src"]), mapOf(r["v"])})
-	}
-	return out, err
-}
-
-func threadBlocks(q *Request, b *contract.ThreadBlocksRequest) (doc, error) {
+func threadBlocks(q *Request, b *contract.ThreadBlocksRequest) (contract.ThreadBlocksReply, error) {
+	var none contract.ThreadBlocksReply
 	key, err := threadKeyOf(b.Key)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	m, ids, err := members(q, key)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 
-	out, removed := []doc{}, []string{}
+	out, removed := []threadBlock{}, []string{}
 	add := func(rs []trow) error {
 		for _, r := range rs {
 			bs, err := expand(q, r, m)
@@ -587,6 +670,18 @@ func threadBlocks(q *Request, b *contract.ThreadBlocksRequest) (doc, error) {
 			out = append(out, bs...)
 		}
 		return nil
+	}
+	// openRows: the delta that opened stream deltaOf of an execution.
+	openRows := func(executionID *string, deltaOf string) ([]trow, error) {
+		if executionID == nil {
+			return nil, nil
+		}
+		rs, err := q.db().ThreadStreamOpenRows(q.ctx(), db.ThreadStreamOpenRowsParams{ExecutionID: *executionID, DeltaOf: deltaOf})
+		out := []trow{}
+		for _, r := range rs {
+			out = append(out, trow{r.Seq, r.Src, r.V})
+		}
+		return out, err
 	}
 	for _, c := range b.Rows {
 		id, kind := c.Id, string(c.Kind)
@@ -599,84 +694,88 @@ func threadBlocks(q *Request, b *contract.ThreadBlocksRequest) (doc, error) {
 				out = append(out, boundary(e))
 			}
 		case "question":
-			qs, err := rowsOf(q, "SELECT * FROM question WHERE id=$1 AND execution_id=ANY($2)", id, ids)
+			qs, err := q.db().ThreadQuestion(q.ctx(), db.ThreadQuestionParams{ID: id, Ids: ids})
 			if err != nil {
-				return nil, err
+				return none, err
 			}
 			for _, qu := range qs {
-				out = append(out, questionBlock(qu, int64(num(qu["seq"]))))
+				out = append(out, questionBlock(qu.V, qu.Seq))
 			}
 		case "artifact":
-			r, err := first(q, "SELECT execution_id AS e FROM artifact WHERE id=$1 OR legacy_id=$1", id)
+			es, err := q.db().ThreadArtifactExecution(q.ctx(), id)
 			if err != nil {
-				return nil, err
+				return none, err
 			}
-			if e := astr(r["e"]); e != "" {
+			if len(es) > 0 && deref(es[0]) != "" {
+				e := *es[0]
 				if _, ok := m[e]; ok {
-					rs, err := eventRow(q, false, "id=$1 AND NOT delta", "ended:"+e)
+					rs, err := q.db().ThreadEventRows(q.ctx(), "ended:"+e)
 					if err != nil {
-						return nil, err
+						return none, err
 					}
-					if err := add(rs); err != nil {
-						return nil, err
+					for _, r := range rs {
+						if err := add([]trow{{r.Seq, r.Src, r.V}}); err != nil {
+							return none, err
+						}
 					}
 				}
 			}
 		case "event":
-			rs, err := eventRow(q, true, "id=$1 AND execution_id=ANY($2)", id, ids)
+			rs, err := q.db().ThreadRowsByID(q.ctx(), db.ThreadRowsByIDParams{ID: id, Ids: ids})
 			if err != nil {
-				return nil, err
+				return none, err
 			}
-			for _, d := range rs {
+			for _, x := range rs {
+				d := trow{x.Seq, x.Src, x.V}
+				v := d.row()
 				if d.src == "event-delta" {
-					f, err := eventRow(q, false, "delta AND execution_id=$1 AND payload->'data'->'fleetNormalized'->>'deltaOf'=$2 AND payload->'data'->'fleetNormalized'->>'opens'='true'", d.v["executionId"], d.v["deltaOf"])
+					f, err := openRows(v.ExecutionID, rawText(v.DeltaOf))
 					if err != nil {
-						return nil, err
+						return none, err
 					}
 					if err := add(f[:min(1, len(f))]); err != nil {
-						return nil, err
+						return none, err
 					}
 					continue
 				}
-				closes, _ := d.v["closes"].([]any)
-				for _, cid := range closes {
-					os, err := rowsOf(q, "SELECT seq FROM event WHERE delta AND execution_id=$1 AND payload->'data'->'fleetNormalized'->>'deltaOf'=$2 AND payload->'data'->'fleetNormalized'->>'opens'='true'", d.v["executionId"], cid)
+				for _, cid := range v.Closes {
+					os, err := openRows(v.ExecutionID, rawText(cid))
 					if err != nil {
-						return nil, err
+						return none, err
 					}
 					for _, o := range os {
-						removed = append(removed, bkey{int64(num(o["seq"])), 0}.String())
+						removed = append(removed, bkey{o.seq, 0}.String())
 					}
 				}
 				if err := add([]trow{d}); err != nil {
-					return nil, err
+					return none, err
 				}
 			}
 		}
 	}
-	byKey := map[string]doc{}
+	byKey := map[string]threadBlock{}
 	for _, x := range out {
-		byKey[astr(x["key"])] = x
+		byKey[x.text("key")] = x
 	}
-	entries := []doc{}
+	entries := []threadBlock{}
 	for _, x := range byKey {
 		entries = append(entries, x)
 	}
-	sort.Slice(entries, func(i, j int) bool { return cmpKey(mustKey(entries[i]["key"]), mustKey(entries[j]["key"])) < 0 })
+	sort.Slice(entries, func(i, j int) bool { return cmpKey(entries[i].key(), entries[j].key()) < 0 })
 	if err := attachBoundaryResources(q, entries); err != nil {
-		return nil, err
+		return none, err
 	}
-	return doc{"removed": removed, "entries": entries}, nil
+	return contract.ThreadBlocksReply{Removed: removed, Entries: blocksJSON(entries)}, nil
 }
 
-func searchable(b doc) string {
-	switch astr(b["kind"]) {
+func searchable(b threadBlock) string {
+	switch b.text("kind") {
 	case "text", "reasoning":
-		return firstString(b["plain"], b["markdown"])
+		return firstString(b.val("plain"), b.val("markdown"))
 	case "tool":
-		return strings.Join([]string{fmt.Sprint(b["name"]), jsOr(b["input"]), jsOr(b["output"])}, " ")
+		return strings.Join([]string{fmt.Sprint(b.val("name")), jsOr(b.val("input")), jsOr(b.val("output"))}, " ")
 	case "question":
-		return astr(b["text"]) + " " + astr(b["answer"])
+		return b.text("text") + " " + b.text("answer")
 	}
 	return ""
 }
@@ -688,46 +787,47 @@ func jsOr(v any) string {
 	return js(v)
 }
 
-func threadSearch(q *Request, b *contract.ThreadSearchRequest) (doc, error) {
+func threadSearch(q *Request, b *contract.ThreadSearchRequest) (contract.ThreadSearchReply, error) {
+	var none contract.ThreadSearchReply
 	key, err := threadKeyOf(b.Key)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	limit, err := positiveLimit(b.Limit)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	qs := strings.TrimSpace(b.Q)
 	if qs == "" {
-		return nil, fail(400, "Expected q")
+		return none, fail(400, "Expected q")
 	}
 	var before *bkey
 	if b.Before != nil {
 		k, err := parseKey(*b.Before)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		before = &k
 	}
 	m, ids, err := members(q, key)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
 	needle := strings.ToLower(qs)
 	like := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(qs) + "%"
-	cursor := maxSeq
+	cursor := int64(math.MaxInt64)
 	if before != nil {
-		cursor = strconv.FormatInt(before.seq, 10)
+		cursor = before.seq
 	}
-	hits, seen := []doc{}, map[string]bool{}
+	hits, seen := []contract.SearchHit{}, map[string]bool{}
 	for {
-		batch, err := threadRows(q, ids, "<", cursor, limit+1, like)
+		batch, err := threadRows(q, ids, "<", cursor, limit+1, &like)
 		if err != nil {
-			return nil, err
+			return none, err
 		}
-		qrows, err := rowsOf(q, "SELECT * FROM question WHERE execution_id=ANY($1) AND seq<=$2::bigint AND (text ILIKE $3 OR coalesce(answer,'') ILIKE $3) ORDER BY seq DESC LIMIT $4", ids, cursor, like, limit+1)
+		qrows, err := q.db().ThreadQuestionsSearch(q.ctx(), db.ThreadQuestionsSearchParams{Ids: ids, FromSeq: cursor, Pattern: like, Lim: int32(limit + 1)})
 		if err != nil {
-			return nil, err
+			return none, err
 		}
 		lo := int64(-1)
 		if len(batch) > limit {
@@ -740,26 +840,27 @@ func threadSearch(q *Request, b *contract.ThreadSearchRequest) (doc, error) {
 			}
 		}
 		for _, x := range qrows {
-			if s := int64(num(x["seq"])); s >= lo {
-				all = append(all, trow{s, "question", x})
+			if x.Seq >= lo {
+				all = append(all, trow{x.Seq, "question", x.V})
 			}
 		}
 		sort.SliceStable(all, func(i, j int) bool { return all[i].seq > all[j].seq })
 		for _, r := range all {
 			bs, err := expand(q, r, m)
 			if err != nil {
-				return nil, err
+				return none, err
 			}
 			for _, x := range reverse(bs) {
-				if before != nil && cmpKey(mustKey(x["key"]), *before) >= 0 {
+				k := x.text("key")
+				if before != nil && cmpKey(x.key(), *before) >= 0 {
 					continue
 				}
 				t := searchable(x)
 				i := strings.Index(strings.ToLower(t), needle)
-				if i < 0 || seen[astr(x["key"])] {
+				if i < 0 || seen[k] {
 					continue
 				}
-				seen[astr(x["key"])] = true
+				seen[k] = true
 				rs := []rune(t)
 				ri := len([]rune(t[:i]))
 				snip := ""
@@ -767,15 +868,15 @@ func threadSearch(q *Request, b *contract.ThreadSearchRequest) (doc, error) {
 					snip = "…"
 				}
 				snip += string(rs[max(0, ri-40):min(len(rs), ri+len([]rune(qs))+80)])
-				hits = append(hits, doc{"key": x["key"], "snippet": snip})
+				hits = append(hits, contract.SearchHit{Key: k, Snippet: snip})
 			}
 		}
 		if len(hits) > limit || len(batch) <= limit {
 			break
 		}
-		cursor = strconv.FormatInt(lo, 10)
+		cursor = lo
 	}
-	return doc{"hits": hits[:min(len(hits), limit)], "hasMore": len(hits) > limit}, nil
+	return contract.ThreadSearchReply{Hits: hits[:min(len(hits), limit)], HasMore: len(hits) > limit}, nil
 }
 
 func fence(v any) string {
@@ -828,16 +929,16 @@ func mdCode(s string) string {
 }
 
 // whoOf: the author line of a text block: the person (email local part) or the agent as harness, model and effort.
-func whoOf(b doc) string {
-	if astr(b["role"]) == "operator" {
-		if e := astr(b["by"]); e != "" {
+func whoOf(b threadBlock) string {
+	if b.text("role") == "operator" {
+		if e := b.text("by"); e != "" {
 			return strings.SplitN(e, "@", 2)[0]
 		}
 		return "You"
 	}
 	parts := []string{}
 	for _, k := range []string{"harness", "model", "effort"} {
-		if v := astr(b[k]); v != "" {
+		if v := b.text(k); v != "" {
 			parts = append(parts, v)
 		}
 	}
@@ -847,14 +948,14 @@ func whoOf(b doc) string {
 	return strings.Join(parts, " ")
 }
 
-func markdownOf(b doc, from, to *point, loc *time.Location) string {
+func markdownOf(b threadBlock, from, to *point, loc *time.Location) string {
 	cut := func(s string) string {
 		rs := []rune(s)
 		a, z := 0, len(rs)
-		if from != nil && from.key == astr(b["key"]) {
+		if from != nil && from.key == b.text("key") {
 			a = min(from.offset, len(rs))
 		}
-		if to != nil && to.key == astr(b["key"]) {
+		if to != nil && to.key == b.text("key") {
 			z = min(to.offset, len(rs))
 		}
 		if a > z {
@@ -862,45 +963,47 @@ func markdownOf(b doc, from, to *point, loc *time.Location) string {
 		}
 		return string(rs[a:z])
 	}
-	switch astr(b["kind"]) {
+	switch b.text("kind") {
 	case "text":
 		head := whoOf(b)
-		if t := clipTime(b["at"], loc); t != "" {
+		if t := clipTime(b.val("at"), loc); t != "" {
 			head += " · " + t
 		}
-		s := fmt.Sprintf("**%s**\n%s\n", head, cut(firstString(b["plain"], b["markdown"])))
-		for _, x := range anys(b["attachments"]) {
-			s += "*Attachment:* " + mdCode(astr(mapOf(x)["name"])) + "\n"
+		s := fmt.Sprintf("**%s**\n%s\n", head, cut(firstString(b.val("plain"), b.val("markdown"))))
+		var atts []rawObject
+		json.Unmarshal(b["attachments"], &atts)
+		for _, x := range atts {
+			s += "*Attachment:* " + mdCode(x.text("name")) + "\n"
 		}
 		return s
 	case "reasoning":
-		return fmt.Sprintf("*Reasoning:*\n\n%s\n", cut(firstString(b["plain"], b["markdown"])))
+		return fmt.Sprintf("*Reasoning:*\n\n%s\n", cut(firstString(b.val("plain"), b.val("markdown"))))
 	case "tool":
-		s := fmt.Sprintf("**Tool** `%s` (%v)\n\n", strings.ReplaceAll(fmt.Sprint(b["name"]), "`", ""), b["state"])
-		if b["input"] != nil {
-			s += fence(b["input"]) + "\n"
+		s := fmt.Sprintf("**Tool** `%s` (%v)\n\n", strings.ReplaceAll(fmt.Sprint(b.val("name")), "`", ""), b.val("state"))
+		if b.has("input") {
+			s += fence(b.val("input")) + "\n"
 		}
-		if b["output"] != nil {
-			s += fence(b["output"]) + "\n"
+		if b.has("output") {
+			s += fence(b.val("output")) + "\n"
 		}
 		return s
 	case "question":
-		s := "**Question:** " + astr(b["text"])
-		if a := astr(b["answer"]); a != "" {
+		s := "**Question:** " + b.text("text")
+		if a := b.text("answer"); a != "" {
 			s += "\n\n**Answer:** " + a
 		}
 		return s + "\n"
 	case "result":
-		return "**Result:** " + strings.Join(strList(b["artifactIds"]), ", ") + "\n"
+		return "**Result:** " + strings.Join(strList(b.val("artifactIds")), ", ") + "\n"
 	case "boundary":
 		parts := []string{}
 		for _, k := range []string{"harness", "model", "effort"} {
-			if v := astr(b[k]); v != "" {
+			if v := b.text(k); v != "" {
 				parts = append(parts, v)
 			}
 		}
-		id := astr(b["executionId"])
-		return fmt.Sprintf("---\n*Execution %s · %s · %v*\n", id[:min(8, len(id))], strings.Join(parts, " "), b["state"])
+		id := b.text("executionId")
+		return fmt.Sprintf("---\n*Execution %s · %s · %v*\n", id[:min(8, len(id))], strings.Join(parts, " "), b.val("state"))
 	}
 	return ""
 }
@@ -912,11 +1015,11 @@ func replyText(q *Request, executionID string) ([]string, error) {
 
 // replyTextUpTo: replyText that stops paging once the texts hold at least maxRunes runes (0: no bound).
 func replyTextUpTo(q *Request, executionID string, maxRunes int) ([]string, error) {
-	e, err := first(q, "SELECT id,session_id,harness,model,config_ref->>'effort' AS effort,state::text AS state,started_at,ended_at,seq FROM execution WHERE id=$1", executionID)
-	if err != nil || e == nil {
+	es, err := q.db().ThreadMemberOf(q.ctx(), executionID)
+	if err != nil || len(es) == 0 {
 		return []string{}, err
 	}
-	m, ids := map[string]member{executionID: {e, int64(num(e["seq"]))}}, []string{executionID}
+	m, ids := map[string]member{executionID: memberOf(es[0])}, []string{executionID}
 	out, runes, page := []string{}, 0, 500
 	if maxRunes > 0 {
 		page = 200 // a bounded excerpt stops after the page that completes it
@@ -928,29 +1031,23 @@ func replyTextUpTo(q *Request, executionID string, maxRunes int) ([]string, erro
 			return nil, err
 		}
 		for _, b := range bs {
-			if astr(b["kind"]) == "text" && astr(b["role"]) == "agent" && astr(b["markdown"]) != "" {
-				out = append(out, astr(b["markdown"]))
-				runes += utf8.RuneCountInString(astr(b["markdown"]))
+			if md := b.text("markdown"); b.text("kind") == "text" && b.text("role") == "agent" && md != "" {
+				out = append(out, md)
+				runes += utf8.RuneCountInString(md)
 			}
 		}
 		if !more || (maxRunes > 0 && runes >= maxRunes) {
 			return out, nil
 		}
-		k := mustKey(bs[len(bs)-1]["key"])
+		k := bs[len(bs)-1].key()
 		after = &k
 	}
 }
 
 func init() {
-	op("thread_entries", func(q *Request, r *contract.ThreadEntriesRequest) (contract.ThreadEntriesReply, error) {
-		return replyAs[contract.ThreadEntriesReply](threadEntries(q, r))
-	})
-	op("thread_blocks", func(q *Request, r *contract.ThreadBlocksRequest) (contract.ThreadBlocksReply, error) {
-		return replyAs[contract.ThreadBlocksReply](threadBlocks(q, r))
-	})
-	op("thread_search", func(q *Request, r *contract.ThreadSearchRequest) (contract.ThreadSearchReply, error) {
-		return replyAs[contract.ThreadSearchReply](threadSearch(q, r))
-	})
+	op("thread_entries", threadEntries)
+	op("thread_blocks", threadBlocks)
+	op("thread_search", threadSearch)
 	op("thread_export", func(q *Request, r *contract.ThreadExportRequest) (contract.ThreadExportReply, error) {
 		key, err := threadKeyOf(r.Key)
 		if err != nil {
@@ -990,7 +1087,7 @@ func exportPages(q *Request, key threadKey, from, to *point, loc *time.Location,
 	}
 	firstPage := true
 	for {
-		var bs []doc
+		var bs []threadBlock
 		var more bool
 		read := func() error {
 			m, ids, err := members(q, key)
@@ -1016,7 +1113,7 @@ func exportPages(q *Request, key threadKey, from, to *point, loc *time.Location,
 		firstPage = false
 		parts, done := []string{}, !more
 		for _, x := range bs {
-			if to != nil && cmpKey(mustKey(x["key"]), mustKey(to.key)) > 0 {
+			if to != nil && cmpKey(x.key(), mustKey(to.key)) > 0 {
 				done = true
 				break
 			}
@@ -1030,7 +1127,7 @@ func exportPages(q *Request, key threadKey, from, to *point, loc *time.Location,
 		if done || len(bs) == 0 {
 			return nil
 		}
-		k := mustKey(bs[len(bs)-1]["key"])
+		k := bs[len(bs)-1].key()
 		after = &k
 	}
 }

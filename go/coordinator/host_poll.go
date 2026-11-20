@@ -383,7 +383,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, 
 	if inList(stopWithheldKinds, astr(c["kind"])) {
 		// This row lock is shared with stop. A committed poll may have
 		// reached the executor even when its HTTP response is lost.
-		locked, err := has(wq, "SELECT 1 FROM execution WHERE id=$1 FOR UPDATE SKIP LOCKED", c["executionId"])
+		locked, err := wq.db().HostPollLockExecution(wq.ctx(), astr(c["executionId"]))
 		if err != nil {
 			return nil, err
 		}
@@ -578,7 +578,7 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 			a.wakeDispatch()
 		}
 	})
-	return exec(wq, "UPDATE execution SET wait_reason=NULL WHERE id=$1", e["id"])
+	return wq.db().HostPollClearWaitReason(wq.ctx(), astr(e["id"]))
 }
 
 // pollObserved runs one host poll, its body's decoding included, and records its health: a failure the host cannot
@@ -831,4 +831,63 @@ func safeInt(v any) any {
 		return int64(f)
 	}
 	return nil
+}
+
+// Map shims for the callers that still read hosts as records (accounts.go, dispatch.go, entity_card.go, nav_counts.go,
+// people.go, pipeline_plan.go, project_definitions.go, search.go, host_events.go) and for q.host, the authenticated
+// host's record: views of the typed hosts (hosts.go). They go when those callers read the typed ones.
+
+// hostList: every host that is not removed, as its record with the bare id.
+func hostList(q *Request) ([]doc, error) {
+	hs, err := hostsLive(q)
+	out := make([]doc, 0, len(hs))
+	for _, h := range hs {
+		out = append(out, docOf(h))
+	}
+	return out, err
+}
+
+func hostByID(q *Request, id any) (doc, error) {
+	s, _ := id.(string)
+	h, err := liveHost(q, s)
+	if err != nil || h == nil {
+		return nil, err
+	}
+	return docOf(*h), nil
+}
+
+// hostsList: hosts_list as a map, its hosts as maps.
+func hostsList(q *Request, includeRemoved bool) (any, error) {
+	r, err := hostsListReply(q, includeRemoved)
+	if err != nil {
+		return nil, err
+	}
+	out := docOf(r)
+	hosts := make([]doc, 0, len(r.Hosts))
+	for _, h := range r.Hosts {
+		hosts = append(hosts, docOf(h))
+	}
+	out["hosts"] = hosts
+	return out, nil
+}
+
+func hostRemoved(h doc) bool { return astr(h["state"]) == "removed" }
+
+func (a *App) hostMaySee(h doc, projectID any) bool {
+	return a.holderMaySee(astr(h["holder"]), astr(projectID))
+}
+
+func (a *App) hostMayRun(h doc, projectID any, director any) bool {
+	return a.holderMayRun(astr(h["holder"]), astr(projectID), astr(director))
+}
+
+func (q *Request) obj() doc {
+	if q.body == nil {
+		return doc{}
+	}
+	var b doc
+	if decode(q.body, &b) != nil || b == nil {
+		return doc{}
+	}
+	return b
 }

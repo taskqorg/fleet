@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"github.com/jackc/pgx/v5"
 	"os"
+
+	"fleet/coordinator/db"
 	"regexp"
 	"strings"
 )
@@ -51,14 +53,127 @@ func defaultHostID(q *Request) string { return q.app.hostID }
 
 func defaultAccountBinding() string { return os.Getenv("FLEET_DEFAULT_ACCOUNT_BINDING") }
 
-func harnessAllowed(q *Request, host, harness string) (bool, error) {
-	h, err := hostByID(q, host)
-	if err != nil || h == nil {
-		return true, err
+// account: a managed_account row (record kind managed-account) with the payload fields read here. Writers keep the
+// bridge's shape (typed_records.go): the columns, then every other record field in payload under its record name.
+type account struct {
+	db.ManagedAccount
+	accountFields
+}
+
+// accountFields: the payload fields of a subscription read in Go; a value of another JSON type reads as absent.
+type accountFields struct {
+	Bindings   []accountBinding `json:"-"`
+	LowPct     json.RawMessage  `json:"lowPct"`
+	PlanWeight json.RawMessage  `json:"planWeight"`
+	SwitchPct  json.RawMessage  `json:"switchPct"`
+	Take       json.RawMessage  `json:"take"`
+}
+
+// accountBinding: one host binding of a subscription (accountReport writes it).
+type accountBinding struct {
+	Binding    *string         `json:"binding"`
+	HostID     *string         `json:"hostId"`
+	LastCheck  json.RawMessage `json:"lastCheck"`
+	ObservedAt json.RawMessage `json:"observedAt"`
+	Platform   *string         `json:"platform"`
+	Readiness  *string         `json:"readiness"`
+	Roots      json.RawMessage `json:"roots"`
+}
+
+// accountOf decodes a row's payload; a binding that is not an object is left out.
+func accountOf(r db.ManagedAccount) account {
+	a := account{ManagedAccount: r}
+	var p struct {
+		accountFields
+		Bindings json.RawMessage `json:"bindings"`
 	}
-	hs, _ := h["harnesses"].(map[string]any)
-	x, _ := hs[harness].(map[string]any)
-	return x["allowed"] != false, nil
+	_ = json.Unmarshal(r.Payload, &p)
+	a.accountFields = p.accountFields
+	if bs, ok := jsonAs[[]json.RawMessage](p.Bindings); ok {
+		for _, raw := range bs {
+			if b, ok := jsonAs[accountBinding](raw); ok {
+				a.Bindings = append(a.Bindings, b)
+			}
+		}
+	}
+	return a
+}
+
+// takeProjects: the projects of the subscription's take rule.
+func (a account) takeProjects() []string {
+	t, _ := jsonAs[struct {
+		Projects []json.RawMessage `json:"projects"`
+	}](a.Take)
+	out := []string{}
+	for _, p := range t.Projects {
+		if s, ok := jsonAs[string](p); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// accountsAll: every subscription, in insertion order.
+func accountsAll(q *Request) ([]account, error) {
+	rs, err := q.db().AccountRows(q.ctx())
+	out := make([]account, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, accountOf(r))
+	}
+	return out, err
+}
+
+// harnessAllowed: whether host allows harness (a host that is not registered allows every one).
+func harnessAllowed(q *Request, host, harness string) (bool, error) {
+	ok, err := q.db().AccountHostHarnessAllowed(q.ctx(), db.AccountHostHarnessAllowedParams{HostID: host, Harness: harness})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+	return ok, err
+}
+
+// accountJobSession, accountJobExecution, accountJobCommand: the records of an inspection's host job, as their owners'
+// writers (put: sessions.go, records.go, commands) take them.
+type accountJobSession struct {
+	ID        string `json:"id"`
+	CreatedAt int64  `json:"createdAt"`
+	Actor     string `json:"actor"`
+}
+
+type accountJobExecution struct {
+	ID          string `json:"id"`
+	ExecutionID string `json:"executionId"`
+	SessionID   string `json:"sessionId"`
+	HostID      string `json:"hostId"`
+	State       string `json:"state"`
+	CreatedAt   int64  `json:"createdAt"`
+	Actor       string `json:"actor"`
+	AccountID   string `json:"accountId"`
+}
+
+type accountJobCommand struct {
+	ID          string                         `json:"id"`
+	ExecutionID string                         `json:"executionId"`
+	SessionID   string                         `json:"sessionId"`
+	HostID      string                         `json:"hostId"`
+	Kind        string                         `json:"kind"`
+	Status      string                         `json:"status"`
+	Payload     contract.AccountInspectPayload `json:"payload"`
+}
+
+// accountInspectionJob: a program-worker session and host job on host with a pending account-inspect command
+// (account_discover, account_connect, subscription_limits_refresh); the execution's id.
+func accountInspectionJob(q *Request, host string, p contract.AccountInspectPayload) (string, error) {
+	sid, eid := newID(), newID()
+	if err := put(q, "session", docOf(accountJobSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"})); err != nil {
+		return "", err
+	}
+	if err := put(q, "execution", docOf(accountJobExecution{ID: eid, ExecutionID: eid, SessionID: sid, HostID: host, State: "preparing", CreatedAt: nowMs(),
+		Actor: "program-worker", AccountID: p.AccountId})); err != nil {
+		return "", err
+	}
+	return eid, put(q, "command", docOf(accountJobCommand{ID: newID(), ExecutionID: eid, SessionID: sid, HostID: host, Kind: string(contract.CommandKindAccountInspect),
+		Status: "pending", Payload: p}))
 }
 
 func bindingsOf(a doc) []map[string]any {

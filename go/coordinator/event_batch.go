@@ -1,37 +1,171 @@
 package main
 
+import (
+	"bytes"
+	"encoding/json"
+	"math"
+
+	"fleet/coordinator/db"
+)
+
+// rawObject: an open JSON object (a host's event, its data, a profile) read field by field with its exact keys.
+type rawObject map[string]json.RawMessage
+
+// eventRecord: an event as its record, the host's open object: payload with the typed columns under their record
+// names (id, executionId, sessionId, projectId, seq, type, timestamp), as the generic record API shows it (sessions.go
+// convEventCols).
+type eventRecord = rawObject
+
+// eventRecordOf: a stored event as its record. A NULL column is absent, a column overrides a payload key.
+func eventRecordOf(e db.Event) eventRecord {
+	r := eventRecord{}
+	json.Unmarshal(e.Payload, &r)
+	set := func(k string, v any) { r[k] = jsonBytes(v) }
+	set("id", e.ID)
+	for k, v := range map[string]*string{"executionId": e.ExecutionID, "sessionId": e.SessionID, "projectId": e.ProjectID, "type": e.Type} {
+		if v != nil {
+			set(k, *v)
+		}
+	}
+	if e.EventSeq != nil {
+		set("seq", *e.EventSeq)
+	}
+	if e.At != nil {
+		set("timestamp", int64(math.Round(float64(e.At.UnixMicro())/1000)))
+	}
+	return r
+}
+
+func eventRecordsOf(es []db.Event) []eventRecord {
+	out := make([]eventRecord, 0, len(es))
+	for _, e := range es {
+		out = append(out, eventRecordOf(e))
+	}
+	return out
+}
+
+// str: field k as a string, false when absent, null or not a string.
+func (r rawObject) str(k string) (string, bool) {
+	var s *string
+	if json.Unmarshal(r[k], &s) != nil || s == nil {
+		return "", false
+	}
+	return *s, true
+}
+
+// text: field k as a string, "" when absent or not a string.
+func (r rawObject) text(k string) string { s, _ := r.str(k); return s }
+
+// has: field k is present and not null (a decoded map's value is not nil).
+func (r rawObject) has(k string) bool { return len(r[k]) > 0 && !bytes.Equal(r[k], []byte("null")) }
+
+// object: field k as an object, nil when it is not one.
+func (r rawObject) object(k string) rawObject {
+	var o rawObject
+	json.Unmarshal(r[k], &o)
+	return o
+}
+
+// seq: the record's sequence when it is a safe integer.
+func (r rawObject) seq() (int64, bool) {
+	var f any
+	if json.Unmarshal(r["seq"], &f) != nil {
+		return 0, false
+	}
+	return safeSeq(f)
+}
+
+// value: the record as a decoded JSON value, the form frameHash and same compare.
+func (r rawObject) value() any { return norm(r) }
+
+// eventColumns: a record split into the event table's columns, as convPut splits it: a field whose value has its column's
+// type is the column, any other field (or a field of the wrong type) stays in payload.
+type eventColumns struct {
+	ID          string          `json:"id"`
+	Delta       bool            `json:"delta"`
+	ExecutionID *string         `json:"executionId"`
+	SessionID   *string         `json:"sessionId"`
+	ProjectID   *string         `json:"projectId"`
+	Seq         *int64          `json:"seq"`
+	Type        *string         `json:"type"`
+	At          *float64        `json:"at"`
+	Payload     json.RawMessage `json:"payload"`
+}
+
+func eventColumnsOf(r eventRecord) eventColumns {
+	rest := eventRecord{}
+	for k, v := range r {
+		if k != "id" && r.has(k) {
+			rest[k] = v
+		}
+	}
+	row := eventColumns{ID: r.text("id"), Delta: eventKind(r) == "event-delta"}
+	text := func(k string) *string {
+		s, ok := r.str(k)
+		if !ok {
+			return nil
+		}
+		delete(rest, k)
+		return &s
+	}
+	row.ExecutionID, row.SessionID, row.ProjectID, row.Type = text("executionId"), text("sessionId"), text("projectId"), text("type")
+	if n, ok := jsonNumber(r["seq"]); ok && n == math.Trunc(n) {
+		s := int64(n)
+		row.Seq = &s
+		delete(rest, "seq")
+	}
+	if at, ok := jsonNumber(r["timestamp"]); ok {
+		row.At = &at
+		delete(rest, "timestamp")
+	}
+	row.Payload = jsonBytes(rest)
+	return row
+}
+
+// jsonNumber: raw as a number, false for anything else (null included).
+func jsonNumber(raw json.RawMessage) (float64, bool) {
+	var n *float64
+	if json.Unmarshal(raw, &n) != nil || n == nil {
+		return 0, false
+	}
+	return *n, true
+}
+
 // Event chunks are durable until a full closing block commits. Afterwards only
 // immutable transport identities remain, so retries cannot resurrect chunks.
-func eventBatchSnapshot(q *Request, executionID string, evs []any) (map[string]doc, map[int64]doc, map[string]string, error) {
+func eventBatchSnapshot(q *Request, executionID string, evs []eventRecord) (map[string]eventRecord, map[int64]eventRecord, map[string]string, error) {
 	ids := make([]string, 0, len(evs))
 	seqs := make([]int64, 0, len(evs))
-	for _, raw := range evs {
-		ev := mapOf(raw)
-		seq, ok := safeSeq(ev["seq"])
+	for _, ev := range evs {
+		seq, ok := ev.seq()
 		if !ok {
 			continue
 		}
-		ids = append(ids, "event:"+executionID+":"+astr(ev["id"]))
+		ids = append(ids, "event:"+executionID+":"+ev.text("id"))
 		seqs = append(seqs, seq)
 	}
-	existing, err := rows(q, "SELECT "+convTables["event"].record()+" FROM event WHERE execution_id=$1 AND (event_seq=ANY($2) OR id=ANY($3))", executionID, seqs, ids)
+	existing, err := q.db().EventsByIdentity(q.ctx(), db.EventsByIdentityParams{ExecutionID: &executionID, Seqs: seqs, Ids: ids})
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	byID, bySeq := map[string]doc{}, map[int64]doc{}
-	for _, v := range existing {
-		byID[astr(v["id"])] = v
-		bySeq[int64(num(v["seq"]))] = v
+	byID, bySeq := map[string]eventRecord{}, map[int64]eventRecord{}
+	for _, e := range existing {
+		r := eventRecordOf(e)
+		byID[e.ID] = r
+		var seq int64
+		if e.EventSeq != nil {
+			seq = *e.EventSeq
+		}
+		bySeq[seq] = r
 	}
-	compact, err := rowsOf(q, "SELECT id,event_seq,digest,event_type FROM closed_delta_identity WHERE execution_id=$1 AND (event_seq=ANY($2) OR id=ANY($3))", executionID, seqs, ids)
+	compact, err := q.db().EventsClosedByIdentity(q.ctx(), db.EventsClosedByIdentityParams{ExecutionID: executionID, Seqs: seqs, Ids: ids})
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	hashes := map[string]string{}
 	for _, v := range compact {
-		id := astr(v["id"])
-		hashes[id] = astr(v["digest"])
-		bySeq[int64(num(v["event_seq"]))] = doc{"id": id, "type": v["event_type"]}
+		hashes[v.ID] = v.Digest
+		bySeq[v.EventSeq] = eventRecord{"id": jsonBytes(v.ID), "type": jsonBytes(v.EventType)}
 	}
 	return byID, bySeq, hashes, nil
 }
@@ -39,7 +173,7 @@ func eventBatchSnapshot(q *Request, executionID string, evs []any) (map[string]d
 func cleanupClosedDeltas(q *Request, executionID string) error {
 	// The complete closing event is authoritative. Hash the full normalized chunk
 	// before removing its text; hashes preserve exact retry/conflict semantics.
-	chunks, err := rows(q, "SELECT "+convTables["event-delta"].record()+` FROM event d WHERE d.delta AND d.execution_id=$1 AND EXISTS(SELECT 1 FROM event c WHERE NOT c.delta AND c.execution_id=$1 AND c.payload->'data'->'fleetNormalized'->'closes' ? (d.payload->'data'->'fleetNormalized'->>'deltaOf'))`, executionID)
+	chunks, err := q.db().EventsClosedDeltas(q.ctx(), &executionID)
 	if err != nil {
 		return err
 	}
@@ -47,76 +181,36 @@ func cleanupClosedDeltas(q *Request, executionID string) error {
 		return nil
 	}
 	ids, seqs, hashes, types := []string{}, []int64{}, []string{}, []string{}
-	for _, v := range chunks {
-		ids = append(ids, astr(v["id"]))
-		seqs = append(seqs, int64(num(v["seq"])))
-		hashes = append(hashes, frameHash(v))
-		types = append(types, astr(v["type"]))
+	for _, e := range chunks {
+		ids = append(ids, e.ID)
+		var seq int64
+		if e.EventSeq != nil {
+			seq = *e.EventSeq
+		}
+		seqs = append(seqs, seq)
+		hashes = append(hashes, frameHash(eventRecordOf(e).value()))
+		types = append(types, deref(e.Type))
 	}
-	if err := exec(q, `INSERT INTO closed_delta_identity(id,execution_id,event_seq,digest,event_type) SELECT i,$1,s,h,t FROM unnest($2::text[],$3::bigint[],$4::text[],$5::text[]) AS x(i,s,h,t) ON CONFLICT(id) DO NOTHING`, executionID, ids, seqs, hashes, types); err != nil {
+	if err := q.db().EventsClosedIdentityInsert(q.ctx(), db.EventsClosedIdentityInsertParams{Ids: ids, ExecutionID: executionID, Seqs: seqs, Digests: hashes, Types: types}); err != nil {
 		return err
 	}
-	return exec(q, "DELETE FROM event WHERE delta AND id=ANY($1)", ids)
+	return q.db().EventsDeltasDelete(q.ctx(), ids)
 }
 
 // putEventBatch inserts a host's new events in one statement (an event already stored stays as it is).
 func putEventBatch(q *Request, prepared []preparedEvent) error {
-	var ids, executions, sessions, projects, types []*string
-	var deltas []bool
-	var seqs []*int64
-	var ats []*float64
-	var payloads []string
+	rows := []eventColumns{}
 	seen := map[string]bool{}
-	t := convTables["event"]
 	for _, p := range prepared {
-		v := p.value
-		id := astr(v["id"])
-		if seen[id] {
+		row := eventColumnsOf(p.value)
+		if seen[row.ID] {
 			continue
 		}
-		seen[id] = true
-		rest := doc{}
-		for k, x := range v {
-			if _, found := t.col(k); !found && k != "id" {
-				rest[k] = x
-			}
-		}
-		text := func(field string) *string {
-			c, _ := t.col(field)
-			if x, ok := c.value(v[field]); ok {
-				s := x.(string)
-				return &s
-			} else if v[field] != nil {
-				rest[field] = v[field]
-			}
-			return nil
-		}
-		c, _ := t.col("seq")
-		var seq *int64
-		if x, ok := c.value(v["seq"]); ok {
-			n := x.(int64)
-			seq = &n
-		} else if v["seq"] != nil {
-			rest["seq"] = v["seq"]
-		}
-		c, _ = t.col("timestamp")
-		var at *float64
-		if x, ok := c.value(v["timestamp"]); ok {
-			f := x.(float64)
-			at = &f
-		} else if v["timestamp"] != nil {
-			rest["timestamp"] = v["timestamp"]
-		}
-		ids = append(ids, &id)
-		deltas = append(deltas, eventKind(v) == "event-delta")
-		executions, sessions, projects, types = append(executions, text("executionId")), append(sessions, text("sessionId")), append(projects, text("projectId")), append(types, text("type"))
-		seqs, ats = append(seqs, seq), append(ats, at)
-		payloads = append(payloads, js(rest))
+		seen[row.ID] = true
+		rows = append(rows, row)
 	}
-	if len(ids) == 0 {
+	if len(rows) == 0 {
 		return nil
 	}
-	return exec(q, `INSERT INTO event(id,delta,execution_id,session_id,project_id,event_seq,type,at,payload)
-	 SELECT i,d,e,s,p,n,t,to_timestamp(a/1000),pl::jsonb FROM unnest($1::text[],$2::boolean[],$3::text[],$4::text[],$5::text[],$6::bigint[],$7::text[],$8::float8[],$9::text[]) AS x(i,d,e,s,p,n,t,a,pl)
-	 ON CONFLICT(id) DO NOTHING`, ids, deltas, executions, sessions, projects, seqs, types, ats, payloads)
+	return q.db().EventsInsert(q.ctx(), jsonBytes(rows))
 }

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 func init() {
@@ -108,9 +109,18 @@ func (s navScope) split(p *[]any, col string) string {
 	return fmt.Sprintf("coalesce(%s,'-')=ANY($%d)", col, len(*p))
 }
 
+// navSaved: the fields of a saved view a counter reads (person settings views, checked by viewProblem when saved); a null
+// project is work outside projects.
+type navSaved struct {
+	Q        string    `json:"q"`
+	Project  []*string `json:"project"`
+	State    []string  `json:"state"`
+	Archived bool      `json:"archived"`
+}
+
 // navList: a saved view's filter as the list operation takes it (task_page, sessions_list): its states, its search and
-// the projects it names; ignored projects are left out whatever it names.
-func navList(v map[string]any, states []string, s navScope) doc {
+// the projects it names; ignored projects are left out whatever it names. v is nil for a system view.
+func navList(v *navSaved, states []string, s navScope) doc {
 	f := doc{}
 	if len(states) > 0 {
 		st := []any{}
@@ -119,16 +129,24 @@ func navList(v map[string]any, states []string, s navScope) doc {
 		}
 		f["state"] = st
 	}
-	if q, _ := v["q"].(string); strings.TrimSpace(q) != "" {
-		f["search"] = q
+	if v != nil && strings.TrimSpace(v.Q) != "" {
+		f["search"] = v.Q
 	}
-	if ps, _ := v["project"].([]any); len(ps) > 0 {
+	if v != nil && len(v.Project) > 0 {
+		ps := []any{}
+		for _, p := range v.Project {
+			if p == nil {
+				ps = append(ps, nil)
+			} else {
+				ps = append(ps, *p)
+			}
+		}
 		f["projectId"] = ps
 	}
 	if len(s.ignored) > 0 {
 		f["excludeProjectId"] = nullProjects(s.ignored)
 	}
-	if v["archived"] == true {
+	if v != nil && v.Archived {
 		f["archived"] = true
 	}
 	return f
@@ -171,11 +189,12 @@ func navCounts(q *Request, _ *contract.NavCountsRequest) (contract.NavCountsRepl
 		// no longer reads, counts it too).
 		def, _ := navSystemView(section, navDefaults[section])
 		view, _ := navSystemView(section, name)
-		var saved map[string]any
+		var saved *navSaved
 		if view.name == "" && name != "" {
+			var sv navSaved
 			if i := slices.IndexFunc(ps.Views, func(x contract.SavedView) bool { return x.List == section && x.Name == name }); i >= 0 &&
-				json.Unmarshal(jsonBytes(ps.Views[i].View), &saved) == nil {
-				view = navView{name: name, label: name, states: strs(saved["state"])}
+				json.Unmarshal(jsonBytes(ps.Views[i].View), &sv) == nil {
+				saved, view = &sv, navView{name: name, label: name, states: sv.State}
 			}
 		}
 		if view.name == "" {
@@ -183,14 +202,14 @@ func navCounts(q *Request, _ *contract.NavCountsRequest) (contract.NavCountsRepl
 		}
 		// A saved view that names its projects is that list whatever the focus (withFocus in the app): one number, no split.
 		sc := s
-		if named, _ := saved["project"].([]any); len(named) > 0 && section != "delivery" {
+		if saved != nil && len(saved.Project) > 0 && section != "delivery" {
 			sc = navScope{ignored: s.ignored}
 		}
 		in, outside, err := navCount(q, section, view, saved, sc)
 		// A saved view the list filters no longer take (a state since renamed) is refused (400) before any statement runs:
 		// the section counts its default rather than failing every counter. Any other failure fails the read.
 		var refused *HTTPError
-		if err != nil && len(saved) > 0 && errors.As(err, &refused) && refused.Code == 400 {
+		if err != nil && saved != nil && errors.As(err, &refused) && refused.Code == 400 {
 			view, sc = def, s
 			in, outside, err = navCount(q, section, view, nil, sc)
 		}
@@ -203,7 +222,7 @@ func navCounts(q *Request, _ *contract.NavCountsRequest) (contract.NavCountsRepl
 }
 
 // navCount: the items of one section's counter view in the focus and outside it.
-func navCount(q *Request, section string, v navView, saved map[string]any, s navScope) (int64, int64, error) {
+func navCount(q *Request, section string, v navView, saved *navSaved, s navScope) (int64, int64, error) {
 	switch section {
 	case "tasks":
 		p := []any{}
@@ -229,19 +248,17 @@ func navCount(q *Request, section string, v navView, saved map[string]any, s nav
 		return navDelivery(q, v, saved, s)
 	case "results":
 		// The Results list with since:1d: every result of the last 24 hours it shows, in any state (artifact_list).
-		p := []any{time.Now().Add(-24 * time.Hour)}
-		c := projectNotIn([]string{"tombstoned_at IS NULL", "created_at>=$1"}, &p, "project_id", s.ignored)
-		return splitCount(q, "SELECT count(*) FILTER (WHERE "+s.split(&p, "project_id")+"),count(*) FROM artifact"+where(c), p)
+		n, err := q.db().NavResultsCount(q.ctx(), db.NavResultsCountParams{Focus: nonNilStrs(s.focus), Since: time.Now().Add(-24 * time.Hour), Ignored: nonNilStrs(s.ignored)})
+		return n.InFocus, n.Total - n.InFocus, err
 	case "hosts":
 		// Hosts have no project: one number. Offline is the Hosts list's own judgement: not seen within staleAfterMs.
-		r, err := hostsList(q, false)
+		r, err := hostsListReply(q, false)
 		if err != nil {
 			return 0, 0, err
 		}
 		n, now := int64(0), float64(nowMs())
-		hs, _ := r.(doc)["hosts"].([]doc)
-		for _, h := range hs {
-			if seen := num(h["lastSeenAt"]); seen <= 0 || now-seen >= hostStaleMs {
+		for _, h := range r.Hosts {
+			if h.LastSeenAt == nil || *h.LastSeenAt <= 0 || now-*h.LastSeenAt >= hostStaleMs {
 				n++
 			}
 		}
@@ -253,13 +270,16 @@ func navCount(q *Request, section string, v navView, saved map[string]any, s nav
 // navDelivery: the pull requests of delivery_status in the view's stages and search, as the Delivery list shows them for
 // the person's scope: in the focus is what the list shows with the focus, outside what only every project adds. A view's
 // picked pace day (extra at) is not counted: the counter is the pull requests now.
-func navDelivery(q *Request, v navView, saved map[string]any, s navScope) (int64, int64, error) {
+func navDelivery(q *Request, v navView, saved *navSaved, s navScope) (int64, int64, error) {
 	deliveryMu.Lock()
 	last := deliveryLast
 	deliveryMu.Unlock()
 	full := fullAccess(q.person)
 	may := func(p string) bool { return (full || mayAccessProjectID(q.person, p)) && !s.ignores(p) }
-	text, _ := saved["q"].(string)
+	text := ""
+	if saved != nil {
+		text = saved.Q
+	}
 	match := func(it contract.DeliveryItem) bool {
 		return (len(v.states) == 0 || slices.Contains(v.states, string(it.Stage))) &&
 			matchSearch(text, fmt.Sprintf("%s #%d %s", it.Title, it.Number, it.Repo), map[string]string{"state": string(it.Stage), "project": it.ProjectId})

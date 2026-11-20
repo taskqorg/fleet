@@ -38,3 +38,7 @@ FROM command c LEFT JOIN execution e ON e.id=c.execution_id WHERE c.host_id = @h
 
 -- name: CommandsPendingByHost :many
 SELECT host_id::text AS host_id, count(*)::int AS n FROM command WHERE status='pending' AND host_id IS NOT NULL GROUP BY host_id;
+
+-- name: CommandsOfExecution :many
+-- An execution's commands in creation order (transport_inspect).
+SELECT id, kind, status FROM command WHERE execution_id=$1 ORDER BY seq;

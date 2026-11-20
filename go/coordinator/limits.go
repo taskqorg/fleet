@@ -56,17 +56,17 @@ func limitHistory(ctx context.Context, a *App, since int64) (map[string]map[stri
 			continue
 		}
 		o := limitObs{at: r.UpdatedAt.UnixMilli(), source: "execution"}
-		period, _ := v["period"].(string)
+		period, _ := jsonAs[string](v.Period)
 		if period == "" {
 			period = "unknown"
 		}
-		if p, ok := v["pct"].(float64); ok && p >= 0 && p <= 100 {
+		if p, ok := jsonAs[float64](v.Pct); ok && p >= 0 && p <= 100 {
 			o.pct = &p
 		}
-		if s, ok := v["status"].(string); ok {
+		if s, ok := jsonAs[string](v.Status); ok {
 			o.status = &s
 		}
-		if t, ok := v["resetsAt"].(float64); ok {
+		if t, ok := jsonAs[float64](v.ResetsAt); ok {
 			n := int64(t)
 			o.resetsAt = &n
 		}
@@ -78,8 +78,22 @@ func limitHistory(ctx context.Context, a *App, since int64) (map[string]map[stri
 	return out, nil
 }
 
-// limitReading: one reading of a limit_reading event, each field kept only with its JSON type.
-type limitReading map[string]any
+// limitReading: one reading of a limit_reading event, each field kept only with its JSON type (jsonAs).
+type limitReading struct {
+	Period   json.RawMessage `json:"period"`
+	Pct      json.RawMessage `json:"pct"`
+	Status   json.RawMessage `json:"status"`
+	ResetsAt json.RawMessage `json:"resetsAt"`
+}
+
+// jsonAs: the JSON value m as a T; false when m is absent, null or of another JSON type.
+func jsonAs[T any](m json.RawMessage) (T, bool) {
+	var v T
+	if len(m) == 0 || string(m) == "null" || json.Unmarshal(m, &v) != nil {
+		return v, false
+	}
+	return v, true
+}
 
 type limitOptions struct {
 	now, from, to int64
@@ -433,7 +447,7 @@ func limitsReply(q *Request, o limitOptions) (contract.SubscriptionLimitsReply, 
 	if err != nil {
 		return none, err
 	}
-	rows, err := all(q, "managed-account", nil)
+	rows, err := accountsAll(q)
 	if err != nil {
 		return none, err
 	}
@@ -441,11 +455,11 @@ func limitsReply(q *Request, o limitOptions) (contract.SubscriptionLimitsReply, 
 	periods := map[string][]contract.LimitPeriod{}
 	reply := contract.SubscriptionLimitsReply{ServerNow: now, WindowHours: o.windowHours, From: o.from, To: o.to, Subscriptions: []contract.LimitSubscription{}}
 	for _, x := range rows {
-		a := limitAccount{id: astr(x["id"]), harness: astr(x["harness"]), weight: 1}
-		if w, ok := x["planWeight"].(float64); ok && w > 0 {
+		a := limitAccount{id: x.ID, harness: deref(x.Harness), weight: 1}
+		if w, ok := jsonAs[float64](x.PlanWeight); ok && w > 0 {
 			a.weight = w
 		}
-		if l, ok := x["lowPct"].(float64); ok {
+		if l, ok := jsonAs[float64](x.LowPct); ok {
 			a.lowPct = &l
 		}
 		accounts = append(accounts, a)
@@ -457,13 +471,12 @@ func limitsReply(q *Request, o limitOptions) (contract.SubscriptionLimitsReply, 
 		if readings == nil {
 			readings = []contract.SubscriptionReading{}
 		}
-		raw := func(k string) json.RawMessage { b, _ := json.Marshal(x[k]); return b }
 		var sw *float64
-		if v, ok := x["switchPct"].(float64); ok {
+		if v, ok := jsonAs[float64](x.SwitchPct); ok {
 			sw = &v
 		}
-		reply.Subscriptions = append(reply.Subscriptions, contract.LimitSubscription{Id: a.id, Name: raw("name"), Harness: a.harness, Holder: raw("holder"),
-			Intake: raw("intake"), SwitchPct: sw, PlanWeight: a.weight, LowPct: a.lowPct, Readings: readings, Periods: periods[a.id]})
+		reply.Subscriptions = append(reply.Subscriptions, contract.LimitSubscription{Id: a.id, Name: jsonBytes(x.Name), Harness: a.harness, Holder: jsonBytes(x.Holder),
+			Intake: jsonBytes(x.Intake), SwitchPct: sw, PlanWeight: a.weight, LowPct: a.lowPct, Readings: readings, Periods: periods[a.id]})
 	}
 	reply.Pools = limitPools(accounts, periods, o)
 	return reply, nil

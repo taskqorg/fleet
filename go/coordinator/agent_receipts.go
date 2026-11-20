@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"slices"
+
+	"github.com/jackc/pgx/v5"
+
+	"fleet/coordinator/db"
 )
 
 // The executor already journals this identity before sending. Commit its acknowledgment with the mutation.
@@ -13,21 +16,19 @@ func agentReceipt(q *Request, key *string, execution, operation string, payload 
 		return run()
 	} // Older hosts did not send identities.
 	digest := frameHash(payload)
-	var priorExecution, priorDirector, priorOperation, priorDigest string
-	var result, authority json.RawMessage
-	err := q.tx.QueryRow(q.ctx(), "SELECT execution_id,directing_email,operation,payload_sha,result,authority FROM agent_tool_receipt WHERE id=$1", *key).Scan(&priorExecution, &priorDirector, &priorOperation, &priorDigest, &result, &authority)
+	prior, err := q.db().ReceiptOf(q.ctx(), *key)
 	if err == nil {
-		if priorExecution != execution || priorDirector != q.person.Email || priorOperation != operation || priorDigest != digest {
+		if prior.ExecutionID != execution || prior.DirectingEmail != q.person.Email || prior.Operation != operation || prior.PayloadSha != digest {
 			return nil, fail(409, "Agent tool request identity conflict")
 		}
 		var previous Person
-		if err := json.Unmarshal(authority, &previous); err != nil {
+		if err := json.Unmarshal(prior.Authority, &previous); err != nil {
 			return nil, err
 		}
 		if !receiptAuthority(q.person, &previous) {
 			return nil, fail(403, "Request already committed; current authority no longer permits its acknowledgment. Do not repeat the mutation")
 		}
-		return result, nil
+		return json.RawMessage(prior.Result), nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
@@ -36,8 +37,8 @@ func agentReceipt(q *Request, key *string, execution, operation string, payload 
 	if err != nil {
 		return nil, err
 	}
-	err = exec(q, "INSERT INTO agent_tool_receipt VALUES($1,$2,$3,$4,$5,$6,$7)", *key, execution, q.person.Email, operation, digest, jsonBytes(out), jsonBytes(q.person))
-	return out, err
+	return out, q.db().ReceiptInsert(q.ctx(), db.ReceiptInsertParams{ID: *key, ExecutionID: execution, DirectingEmail: q.person.Email, Operation: operation,
+		PayloadSha: digest, Result: jsonBytes(out), Authority: jsonBytes(q.person)})
 }
 
 // Withhold old data after a revocation, even for an operation whose target is implicit in its body.
