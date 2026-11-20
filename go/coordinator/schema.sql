@@ -3843,3 +3843,64 @@ CREATE OR REPLACE VIEW task_view WITH (security_invoker = true) AS
    ORDER BY deliverable DESC,version_execution_seq DESC,version_seq DESC,required DESC,seq DESC LIMIT 1) AS latest_result,
   (SELECT coalesce(jsonb_agg(jsonb_build_object('id', q.id, 'kind', q.kind, 'text', q.text, 'options', q.options) ORDER BY q.seq), '[]') FROM question q WHERE q.task_id = t.id AND q.state = 'open') AS open_questions
  FROM task t;
+-- migration 81: a pipeline run's plan out of its execution document (docs/designs/fleet-standard.md S1, stage 3c).
+-- pipeline_run holds the plan head of a run (the definition hash it plans and its write revision, guardPipelineWrite);
+-- pipeline_step one entry per definition step (activation, condition decision, execution reference, dispatch, frozen
+-- inputs, problem), keyed by the step's index. getRun assembles the run's plan from them. execution.data keeps the rest
+-- of the run document: the run fields other areas read there or through getRun until their own stages (pipelineId:
+-- runRows in projects.go, queries/lab.sql; projectId, requestId, pipeline, rerunOf, definition, steps' outputs: lab.go,
+-- lab_assessment.go, host_poll.go, tasks.go) and planVersion, the format marker a run without its plan is refused by.
+-- decision is a contract.PipelineConditionDecision and inputs a list of contract.PipelineInputBinding, each one value.
+CREATE TABLE pipeline_run (
+ run_id text PRIMARY KEY REFERENCES execution(id) ON DELETE CASCADE,
+ definition_sha256 text NOT NULL,
+ revision bigint NOT NULL CHECK (revision >= 0)
+);
+CREATE TABLE pipeline_step (
+ run_id text NOT NULL REFERENCES pipeline_run(run_id) ON DELETE CASCADE,
+ step_index integer NOT NULL CHECK (step_index >= 0),
+ step_id text NOT NULL,
+ definition_sha256 text NOT NULL,
+ activation text NOT NULL CHECK (activation IN ('pending','selected','not_selected','blocked')),
+ decision jsonb NULL,
+ ref_mode text NULL CHECK (ref_mode IN ('fresh','reused')),
+ ref_execution_id text NULL,
+ ref_source_run_id text NULL,
+ ref_source_step_id text NULL,
+ ref_source_step_index integer NULL,
+ ref_source_definition_sha256 text NULL,
+ ref_source_input_sha256 text NULL,
+ dispatch_phase text NULL CHECK (dispatch_phase IN ('reserved','prepared','handed_off','settled')),
+ dispatch_claim_id text NULL,
+ dispatch_owner_boot_id text NULL,
+ dispatch_handed_off_at_ms bigint NULL,
+ dispatch_authority_sha256 text NULL,
+ dispatch_native_execution_id text NULL,
+ dispatch_command_id text NULL,
+ dispatch_host_id text NULL,
+ dispatch_settled_at_ms bigint NULL,
+ inputs jsonb NULL CHECK (inputs IS NULL OR jsonb_typeof(inputs) = 'array'),
+ problem_code text NULL,
+ problem_message text NULL,
+ PRIMARY KEY (run_id, step_index)
+);
+SELECT set_config('fleet.project_ids', '*', true);
+INSERT INTO pipeline_run(run_id,definition_sha256,revision)
+ SELECT id,coalesce(data->'plan'->>'definitionSha256',''),
+  CASE WHEN jsonb_typeof(data->'plan'->'revision')='number' THEN greatest((data->'plan'->>'revision')::numeric,0)::bigint ELSE 0 END
+ FROM execution WHERE kind='pipeline_run' AND jsonb_typeof(data->'plan'->'entries')='array';
+INSERT INTO pipeline_step(run_id,step_index,step_id,definition_sha256,activation,decision,ref_mode,ref_execution_id,ref_source_run_id,
+ ref_source_step_id,ref_source_step_index,ref_source_definition_sha256,ref_source_input_sha256,dispatch_phase,dispatch_claim_id,
+ dispatch_owner_boot_id,dispatch_handed_off_at_ms,dispatch_authority_sha256,dispatch_native_execution_id,dispatch_command_id,dispatch_host_id,
+ dispatch_settled_at_ms,inputs,problem_code,problem_message)
+ SELECT e.id,(x.ord-1)::integer,coalesce(x.v->>'id',''),coalesce(x.v->>'definitionSha256',''),coalesce(x.v->>'activation','pending'),
+  CASE WHEN jsonb_typeof(x.v->'decision')='object' THEN x.v->'decision' END,
+  x.v->'executionRef'->>'mode',x.v->'executionRef'->>'executionId',x.v->'executionRef'->>'sourceRunId',x.v->'executionRef'->>'sourceStepId',
+  (x.v->'executionRef'->>'sourceStepIndex')::numeric::integer,x.v->'executionRef'->>'sourceDefinitionSha256',x.v->'executionRef'->>'sourceInputSha256',
+  x.v->'dispatch'->>'phase',x.v->'dispatch'->>'claimId',x.v->'dispatch'->>'ownerBootId',(x.v->'dispatch'->>'handedOffAtMs')::numeric::bigint,
+  x.v->'dispatch'->>'authoritySha256',x.v->'dispatch'->>'nativeExecutionId',x.v->'dispatch'->>'commandId',x.v->'dispatch'->>'hostId',
+  (x.v->'dispatch'->>'settledAtMs')::numeric::bigint,
+  CASE WHEN jsonb_typeof(x.v->'inputs')='array' THEN x.v->'inputs' END,x.v->'problem'->>'code',x.v->'problem'->>'message'
+ FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.data->'plan'->'entries') WITH ORDINALITY AS x(v,ord)
+ WHERE e.kind='pipeline_run' AND jsonb_typeof(e.data->'plan'->'entries')='array';
+UPDATE execution SET data=data-'plan' WHERE id IN (SELECT run_id FROM pipeline_run);

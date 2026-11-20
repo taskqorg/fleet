@@ -471,6 +471,38 @@ CREATE TABLE person_setting (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE pipeline_run (
+  "run_id" text NOT NULL,
+  "definition_sha256" text NOT NULL,
+  "revision" bigint NOT NULL
+);
+CREATE TABLE pipeline_step (
+  "run_id" text NOT NULL,
+  "step_index" integer NOT NULL,
+  "step_id" text NOT NULL,
+  "definition_sha256" text NOT NULL,
+  "activation" text NOT NULL,
+  "decision" jsonb,
+  "ref_mode" text,
+  "ref_execution_id" text,
+  "ref_source_run_id" text,
+  "ref_source_step_id" text,
+  "ref_source_step_index" integer,
+  "ref_source_definition_sha256" text,
+  "ref_source_input_sha256" text,
+  "dispatch_phase" text,
+  "dispatch_claim_id" text,
+  "dispatch_owner_boot_id" text,
+  "dispatch_handed_off_at_ms" bigint,
+  "dispatch_authority_sha256" text,
+  "dispatch_native_execution_id" text,
+  "dispatch_command_id" text,
+  "dispatch_host_id" text,
+  "dispatch_settled_at_ms" bigint,
+  "inputs" jsonb,
+  "problem_code" text,
+  "problem_message" text
+);
 CREATE TABLE pipeline_work (
   "run_id" text NOT NULL,
   "attempts" integer NOT NULL,

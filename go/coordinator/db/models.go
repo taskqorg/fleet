@@ -884,6 +884,40 @@ type PersonSetting struct {
 	TombstonedAt *time.Time
 }
 
+type PipelineRun struct {
+	RunID            string
+	DefinitionSha256 string
+	Revision         int64
+}
+
+type PipelineStep struct {
+	RunID                     string
+	StepIndex                 int32
+	StepID                    string
+	DefinitionSha256          string
+	Activation                string
+	Decision                  []byte
+	RefMode                   *string
+	RefExecutionID            *string
+	RefSourceRunID            *string
+	RefSourceStepID           *string
+	RefSourceStepIndex        *int32
+	RefSourceDefinitionSha256 *string
+	RefSourceInputSha256      *string
+	DispatchPhase             *string
+	DispatchClaimID           *string
+	DispatchOwnerBootID       *string
+	DispatchHandedOffAtMs     *int64
+	DispatchAuthoritySha256   *string
+	DispatchNativeExecutionID *string
+	DispatchCommandID         *string
+	DispatchHostID            *string
+	DispatchSettledAtMs       *int64
+	Inputs                    []byte
+	ProblemCode               *string
+	ProblemMessage            *string
+}
+
 type PipelineWork struct {
 	RunID         string
 	Attempts      int32

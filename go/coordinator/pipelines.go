@@ -280,7 +280,7 @@ func putRun(q *Request, run doc) error {
 	}
 	rest := doc{}
 	for k, v := range run {
-		if k != "steps" && k != "state" && k != "observation" {
+		if k != "steps" && k != "state" && k != "observation" && k != "plan" {
 			rest[k] = v
 		}
 	}
@@ -312,6 +312,9 @@ func putRun(q *Request, run doc) error {
 		if _, err := executionTransition(q, astr(run["id"]), executionEvent{To: state, KeepEnd: true}); err != nil {
 			return err
 		}
+	}
+	if err := putPipelinePlan(q, astr(run["id"]), run["plan"]); err != nil {
+		return err
 	}
 	if state == "running" {
 		// A running run has its row on the kit (pipeline_work.go); a new one wakes the queue.
@@ -375,9 +378,145 @@ func putRun(q *Request, run doc) error {
 	return nil
 }
 
+// pipelinePlanRecord: a run's plan as stored (pipeline_run, its entries pipeline_step) and as the run document holds it
+// (contract.PipelinePlan without the read view's execution and output of an entry).
+type pipelinePlanRecord struct {
+	DefinitionSha256 string                    `json:"definitionSha256"`
+	Revision         int64                     `json:"revision"`
+	Entries          []pipelinePlanEntryRecord `json:"entries"`
+}
+
+type pipelinePlanEntryRecord struct {
+	ID               string                              `json:"id"`
+	Index            int64                               `json:"index"`
+	DefinitionSha256 string                              `json:"definitionSha256"`
+	Activation       string                              `json:"activation"`
+	Decision         *contract.PipelineConditionDecision `json:"decision,omitempty"`
+	ExecutionRef     *contract.PipelineExecutionRef      `json:"executionRef,omitempty"`
+	Dispatch         *contract.PipelineDispatch          `json:"dispatch,omitempty"`
+	// Inputs: the frozen []contract.PipelineInputBinding as written (an empty list is frozen, none is not yet).
+	Inputs  json.RawMessage               `json:"inputs,omitempty"`
+	Problem *contract.PipelinePlanProblem `json:"problem,omitempty"`
+}
+
+// putPipelinePlan writes the plan of run id (its document's plan) to pipeline_run and pipeline_step.
+func putPipelinePlan(q *Request, id string, plan any) error {
+	if plan == nil {
+		return nil
+	}
+	p, err := asT[pipelinePlanRecord](plan)
+	if err != nil {
+		return fmt.Errorf("pipeline run %s plan: %w", id, err)
+	}
+	d := q.db()
+	if err := d.PipelinePlanHeadSet(q.ctx(), db.PipelinePlanHeadSetParams{RunID: id, DefinitionSha256: p.DefinitionSha256, Revision: p.Revision}); err != nil {
+		return err
+	}
+	for i, e := range p.Entries {
+		row := db.PipelinePlanStepSetParams{RunID: id, StepIndex: int32(i), StepID: e.ID, DefinitionSha256: e.DefinitionSha256, Activation: e.Activation}
+		if e.Decision != nil {
+			row.Decision = jsonBytes(e.Decision)
+		}
+		if r := e.ExecutionRef; r != nil {
+			mode, index := string(r.Mode), int32(r.SourceStepIndex)
+			row.RefMode, row.RefExecutionID, row.RefSourceRunID, row.RefSourceStepID = &mode, &r.ExecutionId, &r.SourceRunId, &r.SourceStepId
+			row.RefSourceStepIndex, row.RefSourceDefinitionSha256, row.RefSourceInputSha256 = &index, &r.SourceDefinitionSha256, &r.SourceInputSha256
+		}
+		if x := e.Dispatch; x != nil {
+			phase := string(x.Phase)
+			row.DispatchPhase, row.DispatchClaimID, row.DispatchOwnerBootID, row.DispatchHandedOffAtMs = &phase, x.ClaimId, x.OwnerBootId, x.HandedOffAtMs
+			row.DispatchAuthoritySha256, row.DispatchNativeExecutionID, row.DispatchCommandID = x.AuthoritySha256, x.NativeExecutionId, x.CommandId
+			row.DispatchHostID, row.DispatchSettledAtMs = x.HostId, x.SettledAtMs
+		}
+		if jsonKind(e.Inputs) == '[' {
+			row.Inputs = e.Inputs
+		}
+		if e.Problem != nil {
+			code := string(e.Problem.Code)
+			row.ProblemCode, row.ProblemMessage = &code, &e.Problem.Message
+		}
+		if err := d.PipelinePlanStepSet(q.ctx(), row); err != nil {
+			return err
+		}
+	}
+	return d.PipelinePlanStepsTrim(q.ctx(), db.PipelinePlanStepsTrimParams{RunID: id, Entries: int32(len(p.Entries))})
+}
+
+// pipelinePlanOf: the plan of one run from its stored head and entries (in index order).
+func pipelinePlanOf(head db.PipelineRun, steps []db.PipelineStep) (pipelinePlanRecord, error) {
+	p := pipelinePlanRecord{DefinitionSha256: head.DefinitionSha256, Revision: head.Revision, Entries: []pipelinePlanEntryRecord{}}
+	for _, s := range steps {
+		e := pipelinePlanEntryRecord{ID: s.StepID, Index: int64(s.StepIndex), DefinitionSha256: s.DefinitionSha256, Activation: s.Activation, Inputs: s.Inputs}
+		if s.Decision != nil {
+			var decision contract.PipelineConditionDecision
+			if err := json.Unmarshal(s.Decision, &decision); err != nil {
+				return p, err
+			}
+			e.Decision = &decision
+		}
+		if s.RefMode != nil {
+			e.ExecutionRef = &contract.PipelineExecutionRef{Mode: contract.PipelineRefMode(*s.RefMode), ExecutionId: deref(s.RefExecutionID), SourceRunId: deref(s.RefSourceRunID),
+				SourceStepId: deref(s.RefSourceStepID), SourceDefinitionSha256: deref(s.RefSourceDefinitionSha256), SourceInputSha256: deref(s.RefSourceInputSha256)}
+			if s.RefSourceStepIndex != nil {
+				e.ExecutionRef.SourceStepIndex = int64(*s.RefSourceStepIndex)
+			}
+		}
+		if s.DispatchPhase != nil {
+			e.Dispatch = &contract.PipelineDispatch{Phase: contract.PipelineDispatchPhase(*s.DispatchPhase), ClaimId: s.DispatchClaimID, OwnerBootId: s.DispatchOwnerBootID,
+				HandedOffAtMs: s.DispatchHandedOffAtMs, AuthoritySha256: s.DispatchAuthoritySha256, NativeExecutionId: s.DispatchNativeExecutionID,
+				CommandId: s.DispatchCommandID, HostId: s.DispatchHostID, SettledAtMs: s.DispatchSettledAtMs}
+		}
+		if s.ProblemCode != nil {
+			e.Problem = &contract.PipelinePlanProblem{Code: contract.PipelinePlanReason(*s.ProblemCode), Message: deref(s.ProblemMessage)}
+		}
+		p.Entries = append(p.Entries, e)
+	}
+	return p, nil
+}
+
+// withPipelinePlans sets each run document's plan from its stored rows; a run without them keeps none (a format
+// requirePipelinePlan refuses). The plan code edits the plan in the document's shape until it is typed too.
+func withPipelinePlans(q *Request, runs []doc) error {
+	ids := make([]string, 0, len(runs))
+	for _, run := range runs {
+		ids = append(ids, astr(run["id"]))
+	}
+	heads, err := q.db().PipelinePlanHeads(q.ctx(), ids)
+	if err != nil {
+		return err
+	}
+	steps, err := q.db().PipelinePlanSteps(q.ctx(), ids)
+	if err != nil {
+		return err
+	}
+	byRun := map[string][]db.PipelineStep{}
+	for _, s := range steps {
+		byRun[s.RunID] = append(byRun[s.RunID], s)
+	}
+	plans := map[string]pipelinePlanRecord{}
+	for _, h := range heads {
+		if plans[h.RunID], err = pipelinePlanOf(h, byRun[h.RunID]); err != nil {
+			return err
+		}
+	}
+	for _, run := range runs {
+		if p, ok := plans[astr(run["id"])]; ok {
+			var plan doc
+			if err := json.Unmarshal(jsonBytes(p), &plan); err != nil {
+				return err
+			}
+			run["plan"] = plan
+		}
+	}
+	return nil
+}
+
 func withSteps(q *Request, runs []doc) ([]doc, error) {
 	if len(runs) == 0 {
 		return runs, nil
+	}
+	if err := withPipelinePlans(q, runs); err != nil {
+		return nil, err
 	}
 	ids := []string{}
 	for _, run := range runs {

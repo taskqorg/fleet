@@ -280,6 +280,19 @@ var referenceMap = []objectRef{
 	{table: "pipeline_work", column: "run_id", mode: refNone},
 	{table: "lab_work", column: "experiment_id", mode: refNone},
 	{table: "delegation_source_work", column: "delegation_id", mode: refNone},
+	// A pipeline run's plan (migration 81, pipelines.go): it goes with its run by foreign key; the ids an entry names
+	// (its step, the executions, command, host and claim of its dispatch) are evidence of the run, not references.
+	{table: "pipeline_run", column: "run_id", mode: refNone},
+	{table: "pipeline_step", column: "run_id", mode: refNone},
+	{table: "pipeline_step", column: "step_id", mode: refNone},
+	{table: "pipeline_step", column: "ref_execution_id", mode: refNone},
+	{table: "pipeline_step", column: "ref_source_run_id", mode: refNone},
+	{table: "pipeline_step", column: "ref_source_step_id", mode: refNone},
+	{table: "pipeline_step", column: "dispatch_claim_id", mode: refNone},
+	{table: "pipeline_step", column: "dispatch_owner_boot_id", mode: refNone},
+	{table: "pipeline_step", column: "dispatch_native_execution_id", mode: refNone},
+	{table: "pipeline_step", column: "dispatch_command_id", mode: refNone},
+	{table: "pipeline_step", column: "dispatch_host_id", mode: refNone},
 }
 
 // objectTables: the tables whose rows are objects of a kind; the cascade of a root is closed over their refOwn columns.

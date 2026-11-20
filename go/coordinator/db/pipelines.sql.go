@@ -300,6 +300,191 @@ func (q *Queries) PipelinePendingArtifacts(ctx context.Context, executionID *str
 	return column_1, err
 }
 
+const pipelinePlanHeadSet = `-- name: PipelinePlanHeadSet :exec
+INSERT INTO pipeline_run(run_id,definition_sha256,revision) VALUES($1,$2,$3)
+ON CONFLICT (run_id) DO UPDATE SET definition_sha256=EXCLUDED.definition_sha256,revision=EXCLUDED.revision
+`
+
+type PipelinePlanHeadSetParams struct {
+	RunID            string
+	DefinitionSha256 string
+	Revision         int64
+}
+
+func (q *Queries) PipelinePlanHeadSet(ctx context.Context, arg PipelinePlanHeadSetParams) error {
+	_, err := q.db.Exec(ctx, pipelinePlanHeadSet, arg.RunID, arg.DefinitionSha256, arg.Revision)
+	return err
+}
+
+const pipelinePlanHeads = `-- name: PipelinePlanHeads :many
+SELECT run_id,definition_sha256,revision FROM pipeline_run WHERE run_id=ANY($1::text[])
+`
+
+func (q *Queries) PipelinePlanHeads(ctx context.Context, runIds []string) ([]PipelineRun, error) {
+	rows, err := q.db.Query(ctx, pipelinePlanHeads, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PipelineRun
+	for rows.Next() {
+		var i PipelineRun
+		if err := rows.Scan(&i.RunID, &i.DefinitionSha256, &i.Revision); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pipelinePlanStepSet = `-- name: PipelinePlanStepSet :exec
+INSERT INTO pipeline_step(run_id,step_index,step_id,definition_sha256,activation,decision,ref_mode,ref_execution_id,ref_source_run_id,
+ ref_source_step_id,ref_source_step_index,ref_source_definition_sha256,ref_source_input_sha256,dispatch_phase,dispatch_claim_id,
+ dispatch_owner_boot_id,dispatch_handed_off_at_ms,dispatch_authority_sha256,dispatch_native_execution_id,dispatch_command_id,dispatch_host_id,
+ dispatch_settled_at_ms,inputs,problem_code,problem_message)
+VALUES($1,$2,$3,$4,$5,$6,$7,
+ $8,$9,$10,$11,$12,
+ $13,$14,$15,$16,$17,
+ $18,$19,$20,$21,
+ $22,$23,$24,$25)
+ON CONFLICT (run_id,step_index) DO UPDATE SET step_id=EXCLUDED.step_id,definition_sha256=EXCLUDED.definition_sha256,activation=EXCLUDED.activation,
+ decision=EXCLUDED.decision,ref_mode=EXCLUDED.ref_mode,ref_execution_id=EXCLUDED.ref_execution_id,ref_source_run_id=EXCLUDED.ref_source_run_id,
+ ref_source_step_id=EXCLUDED.ref_source_step_id,ref_source_step_index=EXCLUDED.ref_source_step_index,
+ ref_source_definition_sha256=EXCLUDED.ref_source_definition_sha256,ref_source_input_sha256=EXCLUDED.ref_source_input_sha256,
+ dispatch_phase=EXCLUDED.dispatch_phase,dispatch_claim_id=EXCLUDED.dispatch_claim_id,dispatch_owner_boot_id=EXCLUDED.dispatch_owner_boot_id,
+ dispatch_handed_off_at_ms=EXCLUDED.dispatch_handed_off_at_ms,dispatch_authority_sha256=EXCLUDED.dispatch_authority_sha256,
+ dispatch_native_execution_id=EXCLUDED.dispatch_native_execution_id,dispatch_command_id=EXCLUDED.dispatch_command_id,
+ dispatch_host_id=EXCLUDED.dispatch_host_id,dispatch_settled_at_ms=EXCLUDED.dispatch_settled_at_ms,inputs=EXCLUDED.inputs,
+ problem_code=EXCLUDED.problem_code,problem_message=EXCLUDED.problem_message
+`
+
+type PipelinePlanStepSetParams struct {
+	RunID                     string
+	StepIndex                 int32
+	StepID                    string
+	DefinitionSha256          string
+	Activation                string
+	Decision                  []byte
+	RefMode                   *string
+	RefExecutionID            *string
+	RefSourceRunID            *string
+	RefSourceStepID           *string
+	RefSourceStepIndex        *int32
+	RefSourceDefinitionSha256 *string
+	RefSourceInputSha256      *string
+	DispatchPhase             *string
+	DispatchClaimID           *string
+	DispatchOwnerBootID       *string
+	DispatchHandedOffAtMs     *int64
+	DispatchAuthoritySha256   *string
+	DispatchNativeExecutionID *string
+	DispatchCommandID         *string
+	DispatchHostID            *string
+	DispatchSettledAtMs       *int64
+	Inputs                    []byte
+	ProblemCode               *string
+	ProblemMessage            *string
+}
+
+func (q *Queries) PipelinePlanStepSet(ctx context.Context, arg PipelinePlanStepSetParams) error {
+	_, err := q.db.Exec(ctx, pipelinePlanStepSet,
+		arg.RunID,
+		arg.StepIndex,
+		arg.StepID,
+		arg.DefinitionSha256,
+		arg.Activation,
+		arg.Decision,
+		arg.RefMode,
+		arg.RefExecutionID,
+		arg.RefSourceRunID,
+		arg.RefSourceStepID,
+		arg.RefSourceStepIndex,
+		arg.RefSourceDefinitionSha256,
+		arg.RefSourceInputSha256,
+		arg.DispatchPhase,
+		arg.DispatchClaimID,
+		arg.DispatchOwnerBootID,
+		arg.DispatchHandedOffAtMs,
+		arg.DispatchAuthoritySha256,
+		arg.DispatchNativeExecutionID,
+		arg.DispatchCommandID,
+		arg.DispatchHostID,
+		arg.DispatchSettledAtMs,
+		arg.Inputs,
+		arg.ProblemCode,
+		arg.ProblemMessage,
+	)
+	return err
+}
+
+const pipelinePlanSteps = `-- name: PipelinePlanSteps :many
+SELECT run_id, step_index, step_id, definition_sha256, activation, decision, ref_mode, ref_execution_id, ref_source_run_id, ref_source_step_id, ref_source_step_index, ref_source_definition_sha256, ref_source_input_sha256, dispatch_phase, dispatch_claim_id, dispatch_owner_boot_id, dispatch_handed_off_at_ms, dispatch_authority_sha256, dispatch_native_execution_id, dispatch_command_id, dispatch_host_id, dispatch_settled_at_ms, inputs, problem_code, problem_message FROM pipeline_step WHERE run_id=ANY($1::text[]) ORDER BY run_id,step_index
+`
+
+func (q *Queries) PipelinePlanSteps(ctx context.Context, runIds []string) ([]PipelineStep, error) {
+	rows, err := q.db.Query(ctx, pipelinePlanSteps, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PipelineStep
+	for rows.Next() {
+		var i PipelineStep
+		if err := rows.Scan(
+			&i.RunID,
+			&i.StepIndex,
+			&i.StepID,
+			&i.DefinitionSha256,
+			&i.Activation,
+			&i.Decision,
+			&i.RefMode,
+			&i.RefExecutionID,
+			&i.RefSourceRunID,
+			&i.RefSourceStepID,
+			&i.RefSourceStepIndex,
+			&i.RefSourceDefinitionSha256,
+			&i.RefSourceInputSha256,
+			&i.DispatchPhase,
+			&i.DispatchClaimID,
+			&i.DispatchOwnerBootID,
+			&i.DispatchHandedOffAtMs,
+			&i.DispatchAuthoritySha256,
+			&i.DispatchNativeExecutionID,
+			&i.DispatchCommandID,
+			&i.DispatchHostID,
+			&i.DispatchSettledAtMs,
+			&i.Inputs,
+			&i.ProblemCode,
+			&i.ProblemMessage,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pipelinePlanStepsTrim = `-- name: PipelinePlanStepsTrim :exec
+DELETE FROM pipeline_step WHERE run_id=$1 AND step_index>=$2::int
+`
+
+type PipelinePlanStepsTrimParams struct {
+	RunID   string
+	Entries int32
+}
+
+// A plan has one entry per definition step: none past its last.
+func (q *Queries) PipelinePlanStepsTrim(ctx context.Context, arg PipelinePlanStepsTrimParams) error {
+	_, err := q.db.Exec(ctx, pipelinePlanStepsTrim, arg.RunID, arg.Entries)
+	return err
+}
+
 const pipelineProblemSet = `-- name: PipelineProblemSet :exec
 UPDATE execution SET problem=$1::text WHERE id=$2
 `
@@ -867,12 +1052,11 @@ func (q *Queries) PipelineStoredArtifacts(ctx context.Context, executionID *stri
 }
 
 const pipelineStoredPlan = `-- name: PipelineStoredPlan :one
-SELECT (data ? 'pipelineId')::bool AS is_run,(CASE WHEN jsonb_typeof(data->'planVersion')='number' THEN data->>'planVersion' ELSE '' END)::text AS plan_version,
- (CASE WHEN jsonb_typeof(data->'plan'->'entries')='array' THEN jsonb_array_length(data->'plan'->'entries') ELSE 0 END)::int AS entries,
- (CASE WHEN jsonb_typeof(data->'definition'->'steps')='array' THEN jsonb_array_length(data->'definition'->'steps') ELSE 0 END)::int AS steps,
- (CASE WHEN jsonb_typeof(data->'plan'->'revision')='number' THEN (data->'plan'->>'revision')::numeric ELSE 0 END)::bigint AS revision,
- coalesce(data->'plan'->>'definitionSha256','')::text AS definition_sha256
-FROM execution WHERE id=$1 FOR UPDATE
+SELECT (e.data ? 'pipelineId')::bool AS is_run,(CASE WHEN jsonb_typeof(e.data->'planVersion')='number' THEN e.data->>'planVersion' ELSE '' END)::text AS plan_version,
+ (SELECT count(*) FROM pipeline_step s WHERE s.run_id=e.id)::int AS entries,
+ (CASE WHEN jsonb_typeof(e.data->'definition'->'steps')='array' THEN jsonb_array_length(e.data->'definition'->'steps') ELSE 0 END)::int AS steps,
+ coalesce(p.revision,0)::bigint AS revision,coalesce(p.definition_sha256,'')::text AS definition_sha256
+FROM execution e LEFT JOIN pipeline_run p ON p.run_id=e.id WHERE e.id=$1 FOR UPDATE OF e
 `
 
 type PipelineStoredPlanRow struct {
@@ -884,8 +1068,8 @@ type PipelineStoredPlanRow struct {
 	DefinitionSha256 string
 }
 
-// The stored plan of a run row, locked (guardPipelineWrite): whether it is a run record, its plan version, entry and
-// definition step counts, revision and definition hash.
+// The stored plan of a run row, locked (guardPipelineWrite): whether it is a run record, its plan version, plan entry
+// and definition step counts, revision and definition hash.
 func (q *Queries) PipelineStoredPlan(ctx context.Context, id string) (PipelineStoredPlanRow, error) {
 	row := q.db.QueryRow(ctx, pipelineStoredPlan, id)
 	var i PipelineStoredPlanRow

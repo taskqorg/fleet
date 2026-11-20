@@ -72,14 +72,47 @@ SELECT coalesce(CASE WHEN state<>'active' THEN state ELSE payload->>'state' END,
 SELECT coalesce(CASE WHEN state<>'active' THEN state ELSE payload->>'state' END,'')::text AS state,coalesce(holder,payload->>'holder','')::text AS holder FROM host WHERE id=$1 FOR SHARE;
 
 -- name: PipelineStoredPlan :one
--- The stored plan of a run row, locked (guardPipelineWrite): whether it is a run record, its plan version, entry and
--- definition step counts, revision and definition hash.
-SELECT (data ? 'pipelineId')::bool AS is_run,(CASE WHEN jsonb_typeof(data->'planVersion')='number' THEN data->>'planVersion' ELSE '' END)::text AS plan_version,
- (CASE WHEN jsonb_typeof(data->'plan'->'entries')='array' THEN jsonb_array_length(data->'plan'->'entries') ELSE 0 END)::int AS entries,
- (CASE WHEN jsonb_typeof(data->'definition'->'steps')='array' THEN jsonb_array_length(data->'definition'->'steps') ELSE 0 END)::int AS steps,
- (CASE WHEN jsonb_typeof(data->'plan'->'revision')='number' THEN (data->'plan'->>'revision')::numeric ELSE 0 END)::bigint AS revision,
- coalesce(data->'plan'->>'definitionSha256','')::text AS definition_sha256
-FROM execution WHERE id=$1 FOR UPDATE;
+-- The stored plan of a run row, locked (guardPipelineWrite): whether it is a run record, its plan version, plan entry
+-- and definition step counts, revision and definition hash.
+SELECT (e.data ? 'pipelineId')::bool AS is_run,(CASE WHEN jsonb_typeof(e.data->'planVersion')='number' THEN e.data->>'planVersion' ELSE '' END)::text AS plan_version,
+ (SELECT count(*) FROM pipeline_step s WHERE s.run_id=e.id)::int AS entries,
+ (CASE WHEN jsonb_typeof(e.data->'definition'->'steps')='array' THEN jsonb_array_length(e.data->'definition'->'steps') ELSE 0 END)::int AS steps,
+ coalesce(p.revision,0)::bigint AS revision,coalesce(p.definition_sha256,'')::text AS definition_sha256
+FROM execution e LEFT JOIN pipeline_run p ON p.run_id=e.id WHERE e.id=$1 FOR UPDATE OF e;
+
+-- name: PipelinePlanHeadSet :exec
+INSERT INTO pipeline_run(run_id,definition_sha256,revision) VALUES(sqlc.arg(run_id),sqlc.arg(definition_sha256),sqlc.arg(revision))
+ON CONFLICT (run_id) DO UPDATE SET definition_sha256=EXCLUDED.definition_sha256,revision=EXCLUDED.revision;
+
+-- name: PipelinePlanStepSet :exec
+INSERT INTO pipeline_step(run_id,step_index,step_id,definition_sha256,activation,decision,ref_mode,ref_execution_id,ref_source_run_id,
+ ref_source_step_id,ref_source_step_index,ref_source_definition_sha256,ref_source_input_sha256,dispatch_phase,dispatch_claim_id,
+ dispatch_owner_boot_id,dispatch_handed_off_at_ms,dispatch_authority_sha256,dispatch_native_execution_id,dispatch_command_id,dispatch_host_id,
+ dispatch_settled_at_ms,inputs,problem_code,problem_message)
+VALUES(sqlc.arg(run_id),sqlc.arg(step_index),sqlc.arg(step_id),sqlc.arg(definition_sha256),sqlc.arg(activation),sqlc.narg(decision),sqlc.narg(ref_mode),
+ sqlc.narg(ref_execution_id),sqlc.narg(ref_source_run_id),sqlc.narg(ref_source_step_id),sqlc.narg(ref_source_step_index),sqlc.narg(ref_source_definition_sha256),
+ sqlc.narg(ref_source_input_sha256),sqlc.narg(dispatch_phase),sqlc.narg(dispatch_claim_id),sqlc.narg(dispatch_owner_boot_id),sqlc.narg(dispatch_handed_off_at_ms),
+ sqlc.narg(dispatch_authority_sha256),sqlc.narg(dispatch_native_execution_id),sqlc.narg(dispatch_command_id),sqlc.narg(dispatch_host_id),
+ sqlc.narg(dispatch_settled_at_ms),sqlc.narg(inputs),sqlc.narg(problem_code),sqlc.narg(problem_message))
+ON CONFLICT (run_id,step_index) DO UPDATE SET step_id=EXCLUDED.step_id,definition_sha256=EXCLUDED.definition_sha256,activation=EXCLUDED.activation,
+ decision=EXCLUDED.decision,ref_mode=EXCLUDED.ref_mode,ref_execution_id=EXCLUDED.ref_execution_id,ref_source_run_id=EXCLUDED.ref_source_run_id,
+ ref_source_step_id=EXCLUDED.ref_source_step_id,ref_source_step_index=EXCLUDED.ref_source_step_index,
+ ref_source_definition_sha256=EXCLUDED.ref_source_definition_sha256,ref_source_input_sha256=EXCLUDED.ref_source_input_sha256,
+ dispatch_phase=EXCLUDED.dispatch_phase,dispatch_claim_id=EXCLUDED.dispatch_claim_id,dispatch_owner_boot_id=EXCLUDED.dispatch_owner_boot_id,
+ dispatch_handed_off_at_ms=EXCLUDED.dispatch_handed_off_at_ms,dispatch_authority_sha256=EXCLUDED.dispatch_authority_sha256,
+ dispatch_native_execution_id=EXCLUDED.dispatch_native_execution_id,dispatch_command_id=EXCLUDED.dispatch_command_id,
+ dispatch_host_id=EXCLUDED.dispatch_host_id,dispatch_settled_at_ms=EXCLUDED.dispatch_settled_at_ms,inputs=EXCLUDED.inputs,
+ problem_code=EXCLUDED.problem_code,problem_message=EXCLUDED.problem_message;
+
+-- name: PipelinePlanStepsTrim :exec
+-- A plan has one entry per definition step: none past its last.
+DELETE FROM pipeline_step WHERE run_id=sqlc.arg(run_id) AND step_index>=sqlc.arg(entries)::int;
+
+-- name: PipelinePlanHeads :many
+SELECT run_id,definition_sha256,revision FROM pipeline_run WHERE run_id=ANY(sqlc.arg(run_ids)::text[]);
+
+-- name: PipelinePlanSteps :many
+SELECT * FROM pipeline_step WHERE run_id=ANY(sqlc.arg(run_ids)::text[]) ORDER BY run_id,step_index;
 
 -- name: PipelineExecutionExists :one
 SELECT EXISTS(SELECT 1 FROM execution WHERE id=$1)::bool;
