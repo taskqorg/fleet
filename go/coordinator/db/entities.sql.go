@@ -606,18 +606,6 @@ func (q *Queries) EntExecutionEnded(ctx context.Context, id string) error {
 	return err
 }
 
-const entExecutionHost = `-- name: EntExecutionHost :one
-SELECT (CASE WHEN jsonb_typeof(data->'hostId')='string' THEN data->>'hostId' ELSE '' END)::text FROM execution WHERE id=$1 AND kind IN ('agent_run','host_job')
-`
-
-// The host an agent run or host job record names (its hostId), ” when none.
-func (q *Queries) EntExecutionHost(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRow(ctx, entExecutionHost, id)
-	var column_1 string
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const entExecutionLockKind = `-- name: EntExecutionLockKind :one
 SELECT kind::text FROM execution WHERE id=$1 FOR UPDATE
 `

@@ -73,11 +73,11 @@ func sqlcSchema(t *testing.T, e *testCoordEnv) string {
 		if err := cols.Err(); err != nil {
 			return err
 		}
-		// Plain functions (no trigger, aggregate or procedure) by signature, so queries may call them; sqlc reads
-		// only the signature, the body is a stub.
+		// Plain functions (no trigger, aggregate or procedure; a set-returning one as RETURNS TABLE) by signature, so
+		// queries may call them; sqlc reads only the signature, the body is a stub.
 		fns, err := tx.Query(e.ctx, `SELECT p.proname, pg_get_function_arguments(p.oid), pg_get_function_result(p.oid)
 		 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-		 WHERE n.nspname='public' AND p.prokind='f' AND p.prorettype<>'trigger'::regtype AND NOT p.proretset
+		 WHERE n.nspname='public' AND p.prokind='f' AND p.prorettype<>'trigger'::regtype
 		 ORDER BY p.proname, pg_get_function_arguments(p.oid)`)
 		if err != nil {
 			return err

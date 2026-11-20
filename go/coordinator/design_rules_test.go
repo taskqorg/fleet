@@ -668,7 +668,6 @@ var designRulesLegacy = map[string]map[string]bool{
 	"lab.go":                {"R-MAP": true},
 	"lab_retry.go":          {"R-MAP": true},
 	"main.go":               {"R-MAP": true},
-	"nav_counts.go":         {"R-MAP": true, "R-SQL": true},
 	"pipeline_plan.go":      {"R-MAP": true},
 	"pipelines.go":          {"R-MAP": true},
 	"projects.go":           {"R-MAP": true},
@@ -679,6 +678,5 @@ var designRulesLegacy = map[string]map[string]bool{
 	"runners_ci.go":         {"R-GO": true},
 	"s3.go":                 {"R-GO": true},
 	"sessions.go":           {"R-MAP": true, "R-SQL": true},
-	"tasks.go":              {"R-MAP": true, "R-SQL": true},
 	"uploads.go":            {"R-GO": true, "R-MAP": true, "R-SQL": true},
 }

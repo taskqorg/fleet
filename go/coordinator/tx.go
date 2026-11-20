@@ -63,6 +63,15 @@ func txWrites(tx pgx.Tx) bool {
 	return st.write
 }
 
+// typedRows: the rows of a statement sql_builder.go assembled, each as T by column name (its db tags).
+func typedRows[T any](q *Request, sql string, args []any) ([]T, error) {
+	rs, err := q.tx.Query(q.ctx(), sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rs, pgx.RowToStructByName[T])
+}
+
 // db: the typed queries in the request's transaction.
 func (q *Request) db() *db.Queries { return db.New(q.tx) }
 

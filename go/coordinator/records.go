@@ -563,24 +563,6 @@ func decode(raw json.RawMessage, v any) error {
 
 func hostOf(q *Request) string { return q.host["hostId"].(string) }
 
-// owned: the execution named in a host request runs on the requesting host.
-func owned(q *Request, executionID *string) error {
-	if executionID == nil || *executionID == "" {
-		return nil
-	}
-	h, err := q.db().EntExecutionHost(q.ctx(), *executionID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return errNotFound
-	}
-	if err != nil {
-		return err
-	}
-	if h != hostOf(q) {
-		return fail(403, "Execution rejected")
-	}
-	return nil
-}
-
 // queryRows: rows as maps (column name -> value); jsonb decodes to JSON values, timestamps to time.Time.
 func queryRows(q *Request, sql string, args ...any) ([]doc, error) {
 	rs, err := q.tx.Query(q.ctx(), sql, args...)
@@ -592,4 +574,19 @@ func queryRows(q *Request, sql string, args ...any) ([]doc, error) {
 		out = []map[string]any{}
 	}
 	return out, err
+}
+
+// taskRow: the task's row as a record (column names), for callers outside this file; errNotFound when absent.
+func taskRow(q *Request, id string) (doc, error) {
+	t, err := first(q, "SELECT * FROM task WHERE id=$1", id)
+	if err == nil && t == nil {
+		return nil, errNotFound
+	}
+	return t, err
+}
+
+// questionRecord: the question's row as a record (column names), as the answer checks and callers outside this file
+// read it; nil when absent.
+func questionRecord(q *Request, id string) (doc, error) {
+	return first(q, "SELECT * FROM question WHERE id=$1", id)
 }

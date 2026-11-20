@@ -10,7 +10,6 @@ import (
 	"log"
 	"math"
 	"slices"
-	"strconv"
 	"strings"
 
 	"time"
@@ -26,8 +25,6 @@ var taskStates = []string{"queued", "in_progress", "waiting", "paused", "complet
 
 // listStates: the states of lists and counts; "held" is a paused task with pause_reason 'held' (fleet-pm-agent.md §4).
 var listStates = append([]string{"held"}, taskStates...)
-
-const stateSQL = "(CASE WHEN t.state='paused' AND t.pause_reason='held' THEN 'held' ELSE t.state::text END)"
 
 var openTask = map[string]bool{"queued": true, "in_progress": true, "waiting": true, "paused": true}
 
@@ -57,15 +54,6 @@ func priorityClass(v any) (string, error) {
 		return priorities[s], nil
 	}
 	return "", fail(400, "Invalid priority: use urgent, normal or background")
-}
-
-// taskRow: the task's row as a record (column names), for callers outside this file; errNotFound when absent.
-func taskRow(q *Request, id string) (doc, error) {
-	t, err := first(q, "SELECT * FROM task WHERE id=$1", id)
-	if err == nil && t == nil {
-		return nil, errNotFound
-	}
-	return t, err
 }
 
 // taskLoad: the task's row; errNotFound when absent.
@@ -526,12 +514,6 @@ func requestAcceptance(q *Request, t acceptTask, artifactIDs []string, text *str
 		AskedBy: &askedBy, ExecutionID: selectedID, Data: jsonBytes(data)})
 }
 
-// questionRecord: the question's row as a record (column names), as the answer checks and callers outside this file
-// read it; nil when absent.
-func questionRecord(q *Request, id string) (doc, error) {
-	return first(q, "SELECT * FROM question WHERE id=$1", id)
-}
-
 // questionData: the fields of a question's data the answer path reads.
 type questionData struct {
 	EarlierResult bool  `json:"earlierResult"`
@@ -730,32 +712,6 @@ func projectIn(c []string, p []any, ids []string) ([]string, []any) {
 		cond = "(" + cond + " OR project_id IS NULL)"
 	}
 	return append(c, cond), p
-}
-
-// projectNotIn: the condition "col is not one of ids" ('-' is no project) appended to c; none when ids is empty. A row
-// without a project stays unless '-' is among ids.
-func projectNotIn(c []string, p *[]any, col string, ids []string) []string {
-	named := slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == "-" })
-	return notInProjects(c, p, col, named, len(named) < len(ids))
-}
-
-// notInProjects: the conditions "col is none of named" and, with null, "col is set" appended to c.
-func notInProjects(c []string, p *[]any, col string, named []string, null bool) []string {
-	if len(named) > 0 {
-		*p = append(*p, named)
-		c = append(c, fmt.Sprintf("NOT coalesce(%s=ANY($%d),false)", col, len(*p)))
-	}
-	if null {
-		c = append(c, col+" IS NOT NULL")
-	}
-	return c
-}
-
-func where(c []string) string {
-	if len(c) == 0 {
-		return ""
-	}
-	return " WHERE " + strings.Join(c, " AND ")
 }
 
 // newTask: task_create's fields; CreatedBy "execution:<id>" also records that execution and its session.
@@ -967,177 +923,57 @@ func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
 	return d, err
 }
 
-type taskGroup struct {
-	sql     string
-	derived bool
-}
-
-var taskGroups = map[string]taskGroup{
-	"none":     {"left(t.id,0)", false},
-	"priority": {"(CASE t.priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END)", false},
-	"project":  {"coalesce(t.project_id,'~')", false},
-	"agent":    {"coalesce(d.agent,'~')", true},
-	"host":     {"coalesce(d.host,'~')", true},
-	"state":    {"(CASE " + stateSQL + " WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'in_progress' THEN '3' WHEN 'queued' THEN '4' WHEN 'held' THEN '5' WHEN 'paused' THEN '6' WHEN 'completed' THEN '7' ELSE '8' END)", false},
-}
-
-// taskSorts: the second sort key inside a group (owner review P7), ascending numbers; "-" before a name is descending.
-// The default is recently changed first. Migrations 47 and 61 index each sort for the priority and project groupings and for no grouping;
-// ponytail: the other groupings sort the filtered tasks, add their indexes when those lists outgrow a scan.
-var taskSorts = map[string]string{"changed": "(extract(epoch FROM t.updated_at AT TIME ZONE 'UTC')*1000)::float8", "created": "(t.seq::float8)"}
-
-const defaultTaskSort = "-changed"
-
-// defaultTaskGroup is the grouping a view without one uses (view-url.ts DEFAULT_TASK_GROUP).
-const defaultTaskGroup = "project"
-
-func taskSortOf(v any) (string, error) {
-	s, ok := v.(string)
-	if v != nil && !ok {
-		return "", fail(400, "sort must be a string")
-	}
-	if s == "" {
-		s = defaultTaskSort
-	}
-	expr, ok := taskSorts[strings.TrimPrefix(s, "-")]
-	if !ok {
-		return "", fail(400, "sort must be changed, created, -changed or -created")
-	}
-	if strings.HasPrefix(s, "-") {
-		return "(-" + expr + ")", nil
-	}
-	return expr, nil
-}
-
-var taskLabels = map[string]string{"priority": "t.priority", "state": stateSQL, "project": "t.project_id", "agent": "d.agent", "host": "d.host"}
-
-func groupOf(g any) (string, taskGroup, error) {
-	if g == nil {
-		return "none", taskGroups["none"], nil
-	}
-	name, ok := g.(string)
-	G, found := taskGroups[name]
-	if !ok || !found {
-		return "", G, fail(400, "Invalid group")
-	}
-	return name, G, nil
-}
-
 func likePattern(s string) string {
 	r := strings.NewReplacer(`%`, `\%`, `_`, `\_`, `\`, `\\`)
 	return "%" + r.Replace(strings.ToLower(strings.TrimSpace(s))) + "%"
 }
 
-// filterFields: a list filter field the list does not implement is an error, never a silent "all rows".
-// Each known field has one type; a wrong type is a 400 too, so no condition silently drops out.
-func filterFields(f doc, known ...string) error {
-	for k, v := range f {
-		if !slices.Contains(known, k) {
-			return fail(400, "Unknown filter field "+k)
-		}
-		ok := false
-		switch k {
-		case "state":
-			_, ok = v.([]any)
-		case "projectId":
-			l, isList := v.([]any)
-			ok = isList && len(l) > 0
-		case "excludeProjectId": // empty: nothing is left out
-			_, ok = v.([]any)
-		case "search":
-			_, ok = v.(string)
-		case "archived":
-			_, ok = v.(bool)
-		}
-		if !ok {
-			return fail(400, "Invalid filter field "+k)
-		}
-	}
-	return nil
+// taskListDBRow: a task_page and list_membership row (sqlTaskListCols) with its group and sort keys.
+type taskListDBRow struct {
+	ID            string  `db:"id"`
+	Code          *string `db:"code"`
+	ProjectID     *string `db:"project_id"`
+	Title         string  `db:"title"`
+	State         string  `db:"state"`
+	PauseReason   *string `db:"pause_reason"`
+	WaitReason    *string `db:"wait_reason"`
+	Priority      string  `db:"priority"`
+	CreatedAt     string  `db:"created_at"`
+	UpdatedAt     string  `db:"updated_at"`
+	Agent         *string `db:"agent"`
+	Host          *string `db:"host"`
+	StartedAt     *string `db:"started_at"`
+	OpenQuestions int64   `db:"open_questions"`
+	StateAt       *string `db:"state_at"`
+	Executions    int64   `db:"executions"`
+	LastAgent     *string `db:"last_agent"`
+	G             string  `db:"g"`
+	Sk            float64 `db:"sk"`
 }
 
-func taskWhere(f doc, p *[]any, withState bool) ([]string, error) {
-	if err := filterFields(f, "projectId", "excludeProjectId", "state", "search"); err != nil {
-		return nil, err
-	}
-	c, err := projectWhere(f, p, "t.project_id", []string{})
+func (x taskListDBRow) row() contract.TaskRow {
+	return contract.TaskRow{Id: x.ID, Code: x.Code, ProjectId: x.ProjectID, Title: x.Title, State: x.State, PauseReason: x.PauseReason,
+		WaitReason: x.WaitReason, Priority: x.Priority, Agent: x.Agent, Host: x.Host, StartedAt: x.StartedAt, CreatedAt: x.CreatedAt,
+		UpdatedAt: x.UpdatedAt, OpenQuestions: x.OpenQuestions, StateAt: x.StateAt, Executions: x.Executions, LastAgent: x.LastAgent,
+		SortKey: sortKey(x.G, x.Sk, x.ID)}
+}
+
+// taskFilter: a task list's filter as sent (rowFilterOf).
+func taskFilter(raw json.RawMessage) (rowFilter, error) {
+	return rowFilterOf(raw, "projectId", "excludeProjectId", "state", "search")
+}
+
+// taskListRows: the task rows of an assembled list statement.
+func taskListRows(q *Request, sql string, p []any, err error) ([]contract.TaskRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	if st, ok := f["state"].([]any); withState && ok && len(st) > 0 {
-		ss := []string{}
-		for _, x := range st {
-			v, ok := x.(string)
-			if !ok || !slices.Contains(listStates, v) {
-				return nil, fail(400, "Invalid state")
-			}
-			ss = append(ss, v)
-		}
-		*p = append(*p, ss)
-		c = append(c, fmt.Sprintf(stateSQL+"=ANY($%d)", len(*p)))
+	rs, err := typedRows[taskListDBRow](q, sql, p)
+	out := make([]contract.TaskRow, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, r.row())
 	}
-	if s, ok := f["search"].(string); ok {
-		c = append(c, searchWhere(s, p, taskSearchText, taskSearchFields, withState)...)
-	}
-	return c, nil
-}
-
-// projectWhere: the projectId filter (a list; null is work outside projects) and the excludeProjectId exclusion (the
-// person's ignored projects, OR-34; a project in both is left out) as conditions on col.
-func projectWhere(f doc, p *[]any, col string, c []string) ([]string, error) {
-	if pv, ok := f["projectId"]; ok {
-		ids, null, err := projectList(pv, "projectId")
-		if err != nil {
-			return nil, err
-		}
-		o := []string{}
-		if len(ids) > 0 {
-			*p = append(*p, ids)
-			o = append(o, fmt.Sprintf("%s=ANY($%d)", col, len(*p)))
-		}
-		if null {
-			o = append(o, col+" IS NULL")
-		}
-		if len(o) > 0 {
-			c = append(c, "("+strings.Join(o, " OR ")+")")
-		}
-	}
-	if xv, ok := f["excludeProjectId"]; ok {
-		ids, null, err := projectList(xv, "excludeProjectId")
-		if err != nil {
-			return nil, err
-		}
-		if null {
-			ids = append(ids, "-")
-		}
-		c = projectNotIn(c, p, col, ids) // '-' is no project too, as in the excludeProjectIds of the other operations
-	}
-	return c, nil
-}
-
-// projectList: a list filter's project ids and whether it holds null (work outside projects).
-func projectList(v any, field string) ([]string, bool, error) {
-	ps, _ := v.([]any)
-	ids, null := []string{}, false
-	for _, x := range ps {
-		switch v := x.(type) {
-		case string:
-			ids = append(ids, v)
-		case nil:
-			null = true
-		default:
-			return nil, false, fail(400, "Invalid "+field)
-		}
-	}
-	return ids, null, nil
-}
-
-const taskListCols = "t.id,t.code,t.project_id,t.title,t.state,t.pause_reason,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,d.agent,d.host,d.started_at,coalesce(d.open_questions,0) AS open_questions,t.state_at,coalesce(d.executions,0) AS executions,d.last_agent"
-
-func taskListRow(x doc) doc {
-	return doc{"id": x["id"], "code": x["code"], "projectId": x["project_id"], "title": x["title"], "state": x["state"], "pauseReason": x["pause_reason"], "waitReason": x["wait_reason"], "priority": x["priority"], "agent": x["agent"], "host": x["host"],
-		"startedAt": x["started_at"], "createdAt": x["created_at"], "updatedAt": x["updated_at"], "openQuestions": x["open_questions"],
-		"stateAt": x["state_at"], "executions": x["executions"], "lastAgent": x["last_agent"], "sortKey": []any{x["g"], num(x["sk"]), x["id"]}}
+	return out, err
 }
 
 func pageLimit(v any, def int) int {
@@ -1147,155 +983,124 @@ func pageLimit(v any, def int) int {
 	return int(math.Max(1, math.Min(500, math.Floor(num(v)))))
 }
 
-func zeroCounts(states []string) doc {
-	c := doc{}
+func zeroCounts(states []string) map[string]int64 {
+	c := map[string]int64{}
 	for _, s := range states {
 		c[s] = 0
 	}
 	return c
 }
 
-func taskSummary(q *Request, f doc, group any, groupCounts bool) (doc, []doc, error) {
-	name, G, err := groupOf(group)
-	if err != nil {
-		return nil, nil, err
-	}
-	cp := []any{}
-	cc, err := taskWhere(f, &cp, false)
-	if err != nil {
-		return nil, nil, err
-	}
-	byState := zeroCounts(listStates)
-	rs, err := rowsOf(q, "SELECT "+stateSQL+" AS state,count(*) AS n FROM task t"+where(cc)+" GROUP BY 1", cp...)
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, r := range rs {
-		byState[astr(r["state"])] = r["n"]
-	}
-	groups := []doc{}
-	if name == "none" {
-		return byState, groups, nil
-	}
-	from := "FROM task t"
-	if G.derived {
-		from = "FROM task t LEFT JOIN task_derived d ON d.task_id=t.id"
-	}
-	gp := []any{}
-	gc, _ := taskWhere(f, &gp, true)
-	gr, err := rowsOf(q, "SELECT "+G.sql+" AS g,min("+taskLabels[name]+") AS label,count(*) AS n "+from+where(gc)+" GROUP BY 1 ORDER BY 1", gp...)
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, r := range gr {
-		groups = append(groups, doc{"key": r["g"], "label": r["label"], "count": r["n"]})
-	}
-	if !groupCounts || len(groups) == 0 {
-		return byState, groups, nil
-	}
-	by := map[string]doc{}
-	for _, g := range groups {
-		by[astr(g["key"])] = zeroCounts(listStates)
-	}
-	rs, err = rowsOf(q, "SELECT "+G.sql+" AS g,"+stateSQL+" AS state,count(*) AS n "+from+where(cc)+" GROUP BY 1,2", cp...)
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, r := range rs {
-		if c := by[astr(r["g"])]; c != nil {
-			c[astr(r["state"])] = r["n"]
-		}
-	}
-	for _, g := range groups {
-		g["counts"] = by[astr(g["key"])]
-	}
-	return byState, groups, nil
-}
-
-func total(c doc) float64 {
-	t := 0.0
+func total(c map[string]int64) int64 {
+	t := int64(0)
 	for _, v := range c {
-		t += num(v)
+		t += v
 	}
 	return t
 }
 
-// taskPage: task_page. The filter is read as sent (f): a null projectId means work outside projects, which the typed
-// list of strings cannot hold.
-func taskPage(q *Request, r *contract.TaskPageRequest, f doc) (contract.TaskPageReply, error) {
-	out, err := taskPageDoc(q, r, f)
-	return replyAs[contract.TaskPageReply](out, err)
+// listCount: a count of a list's rows by group key and state (sqlTaskStateCounts, sqlTaskGroups), with the group's label.
+type listCount struct {
+	G     string  `db:"g"`
+	State string  `db:"state"`
+	N     int64   `db:"n"`
+	Label *string `db:"label"`
 }
 
-func taskPageDoc(q *Request, r *contract.TaskPageRequest, f doc) (doc, error) {
-	if f == nil {
-		f = doc{}
-	}
-	_, G, err := groupOf(optAny(r.Group))
+func taskSummary(q *Request, f rowFilter, group *string, groupCounts bool) (map[string]int64, []contract.ListGroup, error) {
+	name, G, err := groupOf(group)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	S, err := taskSortOf(optAny(r.Sort))
+	sql, p, err := sqlTaskStateCounts(f, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	rs, err := typedRows[listCount](q, sql, p)
+	if err != nil {
+		return nil, nil, err
+	}
+	byState := zeroCounts(listStates)
+	for _, r := range rs {
+		byState[r.State] = r.N
+	}
+	groups := []contract.ListGroup{}
+	if name == "none" {
+		return byState, groups, nil
+	}
+	sql, p = sqlTaskGroups(f, name, G)
+	gr, err := typedRows[listCount](q, sql, p)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, r := range gr {
+		groups = append(groups, contract.ListGroup{Key: r.G, Label: r.Label, Count: r.N})
+	}
+	if !groupCounts || len(groups) == 0 {
+		return byState, groups, nil
+	}
+	by := map[string]map[string]int64{}
+	for _, g := range groups {
+		by[g.Key] = zeroCounts(listStates)
+	}
+	if sql, p, err = sqlTaskStateCounts(f, &G); err != nil {
+		return nil, nil, err
+	}
+	if rs, err = typedRows[listCount](q, sql, p); err != nil {
+		return nil, nil, err
+	}
+	for _, r := range rs {
+		if c := by[r.G]; c != nil {
+			c[r.State] = r.N
+		}
+	}
+	for i := range groups {
+		groups[i].Counts = by[groups[i].Key]
+	}
+	return byState, groups, nil
+}
+
+// taskPage: task_page. The filter is read as sent (raw): a null projectId means work outside projects, which the typed
+// list of strings cannot hold.
+func taskPage(q *Request, r *contract.TaskPageRequest, raw json.RawMessage) (contract.TaskPageReply, error) {
+	var out contract.TaskPageReply
+	f, err := taskFilter(raw)
+	if err != nil {
+		return out, err
+	}
+	_, G, err := groupOf(r.Group)
+	if err != nil {
+		return out, err
+	}
+	S, err := taskSortOf(r.Sort)
+	if err != nil {
+		return out, err
 	}
 	limit := 100
 	if r.Limit != nil {
 		limit = pageLimit(float64(*r.Limit), 100)
 	}
-	p := []any{}
-	c, err := taskWhere(f, &p, true)
+	after, err := listAfter(r.After)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	// No grouping orders by the sort key alone, so the sort's own index serves it (a constant group key would not).
-	none := G.sql == taskGroups["none"].sql
-	if r.After != nil {
-		var a []any
-		if json.Unmarshal(jsonBytes(r.After), &a) != nil || len(a) != 3 {
-			return nil, fail(400, "Invalid after")
-		}
-		if none {
-			p = append(p, num(a[1]), fmt.Sprint(a[2]))
-			c = append(c, fmt.Sprintf("(%s,t.id) > ($%d::float8,$%d)", S, len(p)-1, len(p)))
-		} else {
-			p = append(p, fmt.Sprint(a[0]), num(a[1]), fmt.Sprint(a[2]))
-			c = append(c, fmt.Sprintf("(%s,%s,t.id) > ($%d,$%d::float8,$%d)", G.sql, S, len(p)-2, len(p)-1, len(p)))
-		}
-	}
-	g, lim := G.sql, strconv.Itoa(limit+1)
-	order, outer := g+",", "t.g,"
-	if none {
-		order, outer = "", ""
-	}
-	var sql string
-	if G.derived {
-		sql = "SELECT " + taskListCols + "," + g + " AS g," + S + " AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id" + where(c) + " ORDER BY " + order + S + ",t.id LIMIT " + lim
-	} else {
-		sql = "SELECT " + taskListCols + ",t.g," + S + " AS sk FROM (SELECT t.*," + g + " AS g FROM task t" + where(c) + " ORDER BY " + order + S + ",t.id LIMIT " + lim + ") t LEFT JOIN task_derived d ON d.task_id=t.id ORDER BY " + outer + S + ",t.id"
-	}
-	rs, err := rowsOf(q, sql, p...)
+	sql, p, err := sqlTaskPage(f, G, S, after, limit+1)
+	rs, err := taskListRows(q, sql, p, err)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	counts, groups, err := taskSummary(q, f, optAny(r.Group), r.GroupCounts != nil && *r.GroupCounts)
-	if err != nil {
-		return nil, err
+	if out.Counts, out.Groups, err = taskSummary(q, f, r.Group, r.GroupCounts != nil && *r.GroupCounts); err != nil {
+		return out, err
 	}
-	page := []doc{}
-	for i, r := range rs {
-		if i < limit {
-			page = append(page, taskListRow(r))
-		}
-	}
-	var next any
+	out.Tasks = rs[:min(limit, len(rs))]
 	if len(rs) > limit {
-		next = page[len(page)-1]["sortKey"]
+		out.NextAfter = jsonBytes(out.Tasks[len(out.Tasks)-1].SortKey)
 	}
-	return doc{"tasks": page, "nextAfter": next, "counts": counts, "total": total(counts), "groups": groups}, nil
+	out.Total = total(out.Counts)
+	return out, nil
 }
 
-func taskMembership(q *Request, f doc, group, sort any, ids []string) ([]doc, error) {
+func taskMembership(q *Request, f rowFilter, group, sort *string, ids []string) ([]contract.TaskRow, error) {
 	_, G, err := groupOf(group)
 	if err != nil {
 		return nil, err
@@ -1304,19 +1109,8 @@ func taskMembership(q *Request, f doc, group, sort any, ids []string) ([]doc, er
 	if err != nil {
 		return nil, err
 	}
-	p := []any{}
-	c, err := taskWhere(f, &p, true)
-	if err != nil {
-		return nil, err
-	}
-	p = append(p, ids)
-	c = append(c, fmt.Sprintf("t.id=ANY($%d)", len(p)))
-	rs, err := rowsOf(q, "SELECT "+taskListCols+","+G.sql+" AS g,"+S+" AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id"+where(c), p...)
-	out := []doc{}
-	for _, r := range rs {
-		out = append(out, taskListRow(r))
-	}
-	return out, err
+	sql, p, err := sqlTaskRows(f, G, S, ids)
+	return taskListRows(q, sql, p, err)
 }
 
 func init() {
@@ -1568,7 +1362,7 @@ func init() {
 	})
 	op("task_page", func(q *Request, r *contract.TaskPageRequest) (contract.TaskPageReply, error) {
 		var raw struct {
-			Filter doc `json:"filter"`
+			Filter json.RawMessage `json:"filter"`
 		}
 		json.Unmarshal(q.body, &raw)
 		return taskPage(q, r, raw.Filter)
@@ -1578,13 +1372,12 @@ func init() {
 		if err != nil {
 			return contract.TaskDerivedCheckReply{}, err
 		}
-		// task_derived_drift() returns a table, which the sqlc schema (db/schema.sql) does not declare.
-		d, err := rowsOf(q, `SELECT task_id AS "taskId",stored,expected FROM task_derived_drift()`)
+		d, err := q.db().TaskDerivedDrift(q.ctx())
 		if err != nil {
 			return contract.TaskDerivedCheckReply{}, err
 		}
-		drifted, err := asT[[]contract.TaskDerivedDrift](d)
-		return contract.TaskDerivedCheckReply{Checked: n, Drifted: drifted}, err
+		out := contract.TaskDerivedCheckReply{Checked: n}
+		return out, json.Unmarshal(d, &out.Drifted)
 	})
 }
 
@@ -1629,10 +1422,3 @@ func findQuestion(q *Request, taskID, id string) (any, error) {
 	}
 	return rs[0], nil
 }
-
-// Task columns of the search syntax for task_page (tasks.go taskWhere); agent and host are subqueries, so every task
-// query can use them without a join. agent: the harness of the task's latest execution (task_derived.last_agent;
-// task_derived.agent is set only while one runs). The search queries (queries/entities.sql) mirror them.
-var taskSearchText = []string{"t.title", "t.id", "t.code"}
-var taskSearchFields = map[string]string{"agent": "(SELECT last_agent FROM task_derived WHERE task_id=t.id)", "host": "(SELECT host FROM task_derived WHERE task_id=t.id)",
-	"project": "t.project_id", "state": stateSQL}
