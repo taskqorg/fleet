@@ -384,8 +384,8 @@ test('R5 empty-string dimensions normalize to unknown, api-connection metadata r
     await seedProject(c, 'secret-proj', 'Secret');
 
     c.sql(`
-      INSERT INTO document(id, kind, data) VALUES
-        ('connection:priv', 'api-connection', '{"id":"connection:priv","provider":"openai","holder":"owner@trial.test","secret":"top-secret-key"}'::jsonb);
+      INSERT INTO api_connection(id, name, provider, holder, payload) VALUES
+        ('connection:priv', 'priv', 'openai', 'owner@trial.test', '{"secret":"top-secret-key"}'::jsonb);
       INSERT INTO session(id, project_id, task_id) VALUES
         ('sess-own', 'desiign', 't-main'),
         ('sess-hid', 'secret-proj', 't-spawn');

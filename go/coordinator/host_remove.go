@@ -21,28 +21,23 @@ func hostRemoved(h doc) bool { return astr(h["state"]) == "removed" }
 // hostRemoveCounts: what removing host id touches; the preview and the confirm run the same queries.
 func hostRemoveCounts(q *Request, id string) (contract.HostsRemoveReply, error) {
 	r := contract.HostsRemoveReply{Id: id}
-	row, err := first(q, `SELECT
-	(SELECT count(*) FROM execution WHERE host_id=$1 AND state IN ('preparing','running','waiting'))::int AS running,
-	(SELECT count(*) FROM session WHERE host_id=$1 AND archived_at IS NULL)::int AS sessions,
-	(SELECT count(DISTINCT c.artifact_id) FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE s.host_id=$1 AND c.state='verified'
-	  AND NOT EXISTS (SELECT 1 FROM artifact_copy o JOIN store t ON t.id=o.store_id WHERE o.artifact_id=c.artifact_id AND o.state='verified' AND t.host_id<>$1))::int AS lonely`, id)
+	c, err := q.db().HostRemoveCounts(q.ctx(), id)
 	if err != nil {
 		return r, err
 	}
-	r.RunningExecutions, r.OpenSessions, r.UnreplicatedArtifacts = int64(num(row["running"])), int64(num(row["sessions"])), int64(num(row["lonely"]))
+	r.RunningExecutions, r.OpenSessions, r.UnreplicatedArtifacts = c.Running, c.Sessions, c.Lonely
 	return r, nil
 }
 
 func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemoveReply, error) {
 	var none contract.HostsRemoveReply
-	h, err := first(q, "SELECT data FROM document WHERE kind='host' AND id='host:'||$1", b.Id)
+	h, err := maybe(q, "host:"+b.Id, "host")
 	if err != nil {
 		return none, err
 	}
 	if h == nil {
 		return none, fail(404, "Unknown host")
 	}
-	h = mapOf(h["data"])
 	if q.person == nil || (!fullAccess(q.person) && q.person.Email != h["holder"]) {
 		return none, fail(403, "Only the holder or the owner removes this host")
 	}
@@ -60,18 +55,18 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 	if err := put(q, "host", h); err != nil {
 		return none, err
 	}
-	if err := exec(q, "DELETE FROM host_setting WHERE host_id=$1", b.Id); err != nil {
+	if err := q.db().DeleteHostSettings(q.ctx(), b.Id); err != nil {
 		return none, err
 	}
-	runs, err := queryRows(q, "SELECT id FROM execution WHERE host_id=$1 AND state IN ('preparing','running','waiting') ORDER BY seq", b.Id)
+	runs, err := q.db().OpenExecutionsOnHost(q.ctx(), &b.Id)
 	if err != nil {
 		return none, err
 	}
 	for _, x := range runs {
-		if _, err := executionStop(q, astr(x["id"])); err != nil {
-			return none, fmt.Errorf("stop %v: %w", x["id"], err)
+		if _, err := executionStop(q, x); err != nil {
+			return none, fmt.Errorf("stop %v: %w", x, err)
 		}
-		e, err := get(q, x["id"], "execution")
+		e, err := get(q, x, "execution")
 		if err != nil {
 			return none, err
 		}
@@ -92,15 +87,13 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 	}
 	// Artifacts whose only verified copy was on this host's stores are lost (data foundation tombstone rules): the
 	// artifact fails with host-removed, then the copies there are deleted.
-	if err := exec(q, `UPDATE artifact a SET state='failed', last_error='host-removed' WHERE a.state='stored'
-	AND EXISTS (SELECT 1 FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE c.artifact_id=a.id AND c.state='verified' AND s.host_id=$1)
-	AND NOT EXISTS (SELECT 1 FROM artifact_copy o JOIN store t ON t.id=o.store_id WHERE o.artifact_id=a.id AND o.state='verified' AND t.host_id<>$1)`, b.Id); err != nil {
+	if err := q.db().FailArtifactsOnlyOnHost(q.ctx(), b.Id); err != nil {
 		return none, err
 	}
-	if err := exec(q, `UPDATE artifact_copy c SET state='deleted', last_error='host-removed' FROM store s WHERE s.id=c.store_id AND s.host_id=$1 AND c.state<>'deleted'`, b.Id); err != nil {
+	if err := q.db().DeleteCopiesOnHost(q.ctx(), b.Id); err != nil {
 		return none, err
 	}
-	if err := exec(q, "UPDATE store SET state='unreachable' WHERE host_id=$1", b.Id); err != nil {
+	if err := q.db().StoresOfHostUnreachable(q.ctx(), b.Id); err != nil {
 		return none, err
 	}
 	if err := put(q, "setting-change", doc{"id": newID(), "target": "host:" + b.Id, "holder": h["holder"], "field": "state", "previous": "active", "value": "removed",
@@ -120,21 +113,15 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 // purgeableHosts: removed hosts and whether anything still references them. The reference list is every table and
 // document field that names a host id; its stores go with it when only deleted copies name them.
 func purgeableHosts(q *Request) (gone []string, kept []contract.PurgeReason, err error) {
-	rows, err := queryRows(q, `SELECT d.data->>'hostId' AS id, CASE
-	WHEN EXISTS (SELECT 1 FROM execution e WHERE e.host_id=d.data->>'hostId') THEN 'execution.host_id'
-	WHEN EXISTS (SELECT 1 FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE s.host_id=d.data->>'hostId' AND c.state<>'deleted') THEN 'artifact_copy on its store'
-	WHEN EXISTS (SELECT 1 FROM route_decision r WHERE r.host_id=d.data->>'hostId') THEN 'route_decision.host_id'
-	WHEN EXISTS (SELECT 1 FROM session x WHERE x.host_id=d.data->>'hostId') THEN 'session.host_id'
-	WHEN EXISTS (SELECT 1 FROM command x WHERE x.host_id=d.data->>'hostId') THEN 'command.host_id' END AS referenced
-	FROM document d WHERE d.kind='host' AND d.data->>'state'='removed' ORDER BY d.seq`)
+	rows, err := q.db().PurgeableHosts(q.ctx())
 	if err != nil {
 		return nil, nil, err
 	}
 	for _, r := range rows {
-		if by := astr(r["referenced"]); by != "" {
-			kept = append(kept, contract.PurgeReason{Id: astr(r["id"]), Reason: by + " (a removed host stays while any row names it)"})
+		if r.Referenced != "" {
+			kept = append(kept, contract.PurgeReason{Id: r.HostID, Reason: r.Referenced + " (a removed host stays while any row names it)"})
 		} else {
-			gone = append(gone, astr(r["id"]))
+			gone = append(gone, r.HostID)
 		}
 	}
 	return gone, kept, nil
@@ -153,13 +140,13 @@ func purgeHosts(q *Request, preview bool) (removed, kept contract.PurgeCount, er
 	}
 	for _, id := range gone {
 		// Only deleted copies (the ones hosts_remove dropped) still name these stores; they go with them.
-		if err := exec(q, "DELETE FROM artifact_copy WHERE state='deleted' AND store_id IN (SELECT id FROM store WHERE host_id=$1)", id); err != nil {
+		if err := q.db().DeleteDeletedCopiesOfHost(q.ctx(), id); err != nil {
 			return removed, kept, err
 		}
-		if err := exec(q, "DELETE FROM store WHERE host_id=$1", id); err != nil {
+		if err := q.db().DeleteStoresOfHost(q.ctx(), id); err != nil {
 			return removed, kept, err
 		}
-		if err := exec(q, "DELETE FROM document WHERE (kind='host' AND id='host:'||$1) OR (kind='host-observation' AND id=$1)", id); err != nil {
+		if err := q.db().DeleteHost(q.ctx(), id); err != nil {
 			return removed, kept, err
 		}
 		hid := id

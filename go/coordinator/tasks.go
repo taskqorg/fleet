@@ -224,8 +224,8 @@ func cancelTaskWork(q *Request, id string) error {
 		)))`, id); err != nil {
 		return err
 	}
-	return exec(q, `DELETE FROM document w USING session s
-		WHERE w.kind='watch' AND s.id=w.session_ref AND s.task_id=$1`, id)
+	return exec(q, `DELETE FROM watch w USING session s
+		WHERE s.id=w.session_id AND s.task_id=$1`, id)
 }
 
 // settleTask moves an open task toward target through the transitions whose guards hold now.

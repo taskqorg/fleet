@@ -253,7 +253,7 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 	}
 	// Two minutes later the next failure opens one problem.
 	if err := runTx(env.ctx, env.app, nil, true, "host:sick-host", func(q *Request) error {
-		return exec(q, "UPDATE document SET data=jsonb_set(data,'{pollError,since}',to_jsonb($2::float8)) WHERE kind='host-observation' AND id=$1", "sick-host", since-3*60*1000)
+		return exec(q, "UPDATE host_observation SET payload=jsonb_set(payload,'{pollError,since}',to_jsonb($2::float8)) WHERE id=$1", "sick-host", since-3*60*1000)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 	env.app.notePollFailure(env.ctx, "sick-host", testOwnerEmail, failure)
 	old := float64(nowMs() - 60*60*1000)
 	if err := runTx(env.ctx, env.app, nil, true, "host:sick-host", func(q *Request) error {
-		return exec(q, "UPDATE document SET data=jsonb_set(jsonb_set(data,'{pollError,since}',to_jsonb($2::float8)),'{pollError,at}',to_jsonb($2::float8)) WHERE kind='host-observation' AND id=$1", "sick-host", old)
+		return exec(q, "UPDATE host_observation SET payload=jsonb_set(jsonb_set(payload,'{pollError,since}',to_jsonb($2::float8)),'{pollError,at}',to_jsonb($2::float8)) WHERE id=$1", "sick-host", old)
 	}); err != nil {
 		t.Fatal(err)
 	}

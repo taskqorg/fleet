@@ -75,14 +75,14 @@ func TestAuthCacheHostRotationDeletionAndPersonRegrant(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("UPDATE document SET data=jsonb_set(data,'{secretHash}',to_jsonb($1::text)) WHERE kind='host' AND (id='cache-host' OR id='host:cache-host')", secretHash(rotated))
+	write("UPDATE host SET secret_hash=$1 WHERE id='host:cache-host'", secretHash(rotated))
 	if h, err := e.app.hostFromSecret(e.ctx, secret); err != nil || h != nil {
 		t.Fatalf("old credential accepted: %v", err)
 	}
 	if h, err := e.app.hostFromSecret(e.ctx, rotated); err != nil || h == nil {
 		t.Fatalf("rotated host: %v", err)
 	}
-	write("DELETE FROM document WHERE kind='host' AND (id='cache-host' OR id='host:cache-host')")
+	write("DELETE FROM host WHERE id='host:cache-host'")
 	if h, err := e.app.hostFromSecret(e.ctx, rotated); err != nil || h != nil {
 		t.Fatalf("deleted host accepted: %v", err)
 	}

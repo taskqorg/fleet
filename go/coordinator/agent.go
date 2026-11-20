@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fleet/mcpserve"
 	"fmt"
 	"os"
@@ -42,20 +43,20 @@ func defaultHost() string { return firstString(os.Getenv("FLEET_HOST_ID"), "owne
 
 // capable: the default host reported the capability in its last poll.
 func capable(q *Request, name string) (bool, error) {
-	return has(q, "SELECT 1 FROM document WHERE kind='host-observation' AND id=$1 AND data->'capabilities' ? $2", defaultHost(), name)
+	return q.db().ObservationHasCapability(q.ctx(), db.ObservationHasCapabilityParams{HostID: defaultHost(), Capability: name})
 }
 
 // knownHost: configured (the default or a registered host) or has polled once.
 func knownHost(q *Request, id string) (bool, error) {
 	return unscoped(q, func() (bool, error) {
-		removed, err := has(q, "SELECT 1 FROM document WHERE kind='host' AND id='host:'||$1 AND data->>'state'='removed'", id)
+		removed, err := q.db().HostRemovedByHostID(q.ctx(), id)
 		if err != nil || removed {
 			return false, err
 		}
 		if id == defaultHost() {
 			return true, nil
 		}
-		return has(q, "SELECT 1 FROM document WHERE (kind='host' AND id='host:'||$1) OR (kind='host-observation' AND id=$1)", id)
+		return q.db().HostKnown(q.ctx(), id)
 	})
 }
 
@@ -2193,7 +2194,7 @@ func boundArguments(q *Request, name string, a doc, executionID string) (doc, er
 			}
 		}
 		if acct, ok := a["account"]; ok {
-			if ok, err := has(q, "SELECT 1 FROM document WHERE kind='managed-account' AND data->>'intake'='all' AND (id=$1 OR data->>'name'=$1)", fmt.Sprint(acct)); err != nil || !ok {
+			if ok, err := q.db().AccountTakesWork(q.ctx(), fmt.Sprint(acct)); err != nil || !ok {
 				if err == nil {
 					err = fail(403, "Account not available")
 				}
@@ -2230,7 +2231,7 @@ func boundArguments(q *Request, name string, a doc, executionID string) (doc, er
 		}
 		// ponytail: the account must be a registered managed account; its binding readiness on this host is the accounts area's resolve.
 		if acct, ok := a["account"]; ok && acct != nil {
-			if ok, err := has(q, "SELECT 1 FROM document WHERE kind='managed-account' AND data->>'intake'='all' AND (id=$1 OR data->>'name'=$1)", fmt.Sprint(acct)); err != nil || !ok {
+			if ok, err := q.db().AccountTakesWork(q.ctx(), fmt.Sprint(acct)); err != nil || !ok {
 				if err == nil {
 					err = fail(403, "Account not available")
 				}

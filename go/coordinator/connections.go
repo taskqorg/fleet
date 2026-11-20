@@ -4,6 +4,7 @@
 package main
 
 import (
+	"fleet/coordinator/db"
 	"fleet/obs"
 
 	"bytes"
@@ -76,7 +77,7 @@ func connChange(q *Request, c doc, field string, previous, value any) error {
 }
 
 func connKeys(q *Request, name string) ([]doc, error) {
-	return rows(q, "SELECT data FROM document WHERE kind='connection-key' AND data->>'connectionId'=$1 ORDER BY (data->>'addedAt')::bigint, seq", name)
+	return all(q, "connection-key", doc{"connectionId": name})
 }
 
 // Snapshot (§3). Built in its own read transaction, so it shows only committed rows.
@@ -555,7 +556,7 @@ func connectionsDelete(q *Request, r *contract.ConnectionsDeleteRequest) (contra
 		return no, err
 	}
 	name := astr(c["name"])
-	if err := exec(q, "SELECT 1 FROM document WHERE id=$1 AND kind='api-connection' FOR UPDATE", c["id"]); err != nil {
+	if _, err := getForUpdate(q, astr(c["id"]), "api-connection"); err != nil {
 		return no, err
 	}
 	keys, err := connKeys(q, name)
@@ -579,7 +580,7 @@ func connectionsDelete(q *Request, r *contract.ConnectionsDeleteRequest) (contra
 			}
 		}
 	}
-	if err := exec(q, "DELETE FROM document WHERE (kind='api-connection' AND id=$1) OR (kind='connection-key' AND data->>'connectionId'=$2) OR (kind='setting-change' AND data->>'target'=$1)", c["id"], name); err != nil {
+	if err := q.db().DeleteAPIConnection(q.ctx(), astr(c["id"])); err != nil {
 		return no, err
 	}
 	if astr(c["id"]) != "" {
@@ -673,7 +674,7 @@ func connectionsKeyState(q *Request, r *contract.ConnectionsKeyStateRequest) (an
 
 // connectionsSetTools (owner): the explicit provider tool grant.
 func connectionsSetTools(q *Request, r *contract.ConnectionsSetToolsRequest) (any, error) {
-	if err := exec(q, "SELECT 1 FROM document WHERE id=$1 AND kind='api-connection' FOR UPDATE", "connection:"+r.Connection); err != nil {
+	if _, err := getForUpdate(q, "connection:"+r.Connection, "api-connection"); err != nil && !errors.Is(err, errNotFound) {
 		return nil, err
 	}
 	c, err := connByName(q, r.Connection)
@@ -1027,17 +1028,11 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 }
 
 func revokeTokens(q *Request, executionID string) error {
-	ts, err := rows(q, "SELECT data FROM document WHERE kind='run-token' AND data->>'executionId'=$1 AND NOT data ? 'revokedAt'", executionID)
+	n, err := q.db().RevokeExecutionTokens(q.ctx(), db.RevokeExecutionTokensParams{At: float64(nowMs()), ExecutionID: executionID})
 	if err != nil {
 		return err
 	}
-	for _, t := range ts {
-		t["revokedAt"] = nowMs()
-		if err := exec(q, "UPDATE document SET data=$2 WHERE id=$1", t["id"], jsonBytes(t)); err != nil {
-			return err
-		}
-	}
-	if len(ts) > 0 {
+	if n > 0 {
 		publish(q)
 	}
 	return nil
@@ -1045,19 +1040,7 @@ func revokeTokens(q *Request, executionID string) error {
 
 // At start no api step call of an earlier process is in flight: their tokens are revoked.
 func revokeSteps(q *Request) error {
-	ts, err := rows(q, "SELECT data FROM document WHERE kind='run-token' AND data->>'step'='true' AND NOT data ? 'revokedAt'")
-	if err != nil {
-		return err
-	}
-	for _, t := range ts {
-		if c, _ := numOK(t["createdAt"]); int64(c) < processStarted {
-			t["revokedAt"] = nowMs()
-			if err := exec(q, "UPDATE document SET data=$2 WHERE id=$1", t["id"], jsonBytes(t)); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return q.db().RevokeStepTokensBefore(q.ctx(), db.RevokeStepTokensBeforeParams{At: float64(nowMs()), Started: float64(processStarted)})
 }
 
 // Spool ingest (§3): every gateway line becomes one tool_run with connection_cost, idempotent by callId. Each
@@ -1424,23 +1407,17 @@ func connTickPass(ctx context.Context, a *App) error {
 			}
 		}
 		blockedJSON = string(jsonBytes(sortedKeysOf(m)))
-		open, err := rows(q, "SELECT data FROM document WHERE kind='run-token' AND NOT data ? 'revokedAt' AND NOT data ? 'step' AND NOT data ? 'personal'")
+		open, err := q.db().OpenRunTokenExecutions(q.ctx())
 		if err != nil {
 			return err
 		}
-		seenExec := map[string]bool{}
-		for _, t := range open {
-			id := astr(t["executionId"])
-			if seenExec[id] {
-				continue
-			}
+		for _, id := range open {
 			var state *string
 			err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1 AND "+execKinds+"),'')", id).Scan(&state)
 			if err != nil {
 				return err
 			}
 			if state == nil || *state == "" || executionEnds(*state) {
-				seenExec[id] = true
 				toRevoke = append(toRevoke, id)
 			}
 		}

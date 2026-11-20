@@ -1,11 +1,14 @@
 package main
 
-// subscriptions and their host bindings (docs/designs/fleet-people-access.md). A subscription is a 'managed-account' document; logins stay
+// subscriptions and their host bindings (docs/designs/fleet-people-access.md). A subscription is a row of table managed_account (record kind 'managed-account'); logins stay
 // on the holder's host, Fleet keeps only what hosts observe.
 
 import (
+	"encoding/json"
+	"errors"
 	"fleet/contract"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"os"
 	"regexp"
 	"strings"
@@ -215,10 +218,15 @@ func accountHostsOp(q *Request, r *contract.AccountHostsRequest) (any, error) {
 
 // Retained inspections predate host_job and may still be tool_run; the general execution reader excludes those.
 func accountInspectionExecution(q *Request, inspection doc) (doc, error) {
-	return one(q, `SELECT e.data || jsonb_build_object('state',e.state,'observation',e.observation)
- FROM execution e JOIN document i ON i.id=$1 AND i.kind='account-inspection' AND e.id=i.data->>'executionId'
- WHERE e.kind IN ('host_job','tool_run') AND e.data->>'actor'='program-worker'
- AND e.data->>'accountId'=i.data->>'accountId' AND e.project_id IS NOT DISTINCT FROM i.project_id`, inspection["id"])
+	raw, err := q.db().AccountInspectionExecution(q.ctx(), astr(inspection["id"]))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var e doc
+	return e, json.Unmarshal(raw, &e)
 }
 
 func accountList(q *Request) (any, error) {
@@ -275,11 +283,11 @@ func accountCreate(q *Request, r *contract.AccountCreateRequest) (any, error) {
 	if !accountName.MatchString(r.Name) || !inList(contract.HarnessIDs(), harness) {
 		return nil, fail(400, "Expected account name and harness")
 	}
-	same, err := rows(q, "SELECT data FROM document WHERE kind='managed-account' AND data->>'name'=$1", r.Name)
+	same, err := q.db().AccountNameTaken(q.ctx(), &r.Name)
 	if err != nil {
 		return nil, err
 	}
-	if len(same) > 0 {
+	if same {
 		return nil, fail(409, "Account name exists")
 	}
 	director := q.person.Email

@@ -44,6 +44,13 @@ func TestChangeKindsMatchTriggers(t *testing.T) {
 			}
 			before += strings.Count(m[1], ",") // the IN list is one assignment
 		}
+		// k := replace(TG_TABLE_NAME, '_', '-') names the change by the table: the tables listed in the IN (...) right before it.
+		for _, m := range regexp.MustCompile(`TG_TABLE_NAME IN \(([^)]*)\) THEN k := replace\(TG_TABLE_NAME, '_', '-'\)`).FindAllStringSubmatch(def, -1) {
+			for _, k := range strings.Split(m[1], ",") {
+				kinds = append(kinds, strings.ReplaceAll(strings.Trim(strings.TrimSpace(k), "'"), "_", "-"))
+			}
+			before += strings.Count(m[1], ",")
+		}
 		if got := len(kinds) - before; got != assigned {
 			t.Fatalf("%s assigns k %d times, the test reads %d: teach it the new form", fn, assigned, got)
 		}

@@ -29,7 +29,7 @@ async function op(name: string, body: unknown = {}) {
 const ok = (r: {status: number, body: any}) => { assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body; };
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-// A deferred constraint trigger fails the commit of any transaction that writes a document of this kind (or an execution
+// A deferred constraint trigger fails the commit of any transaction that writes such a row (a connection key, an execution
 // with this id prefix): the handler's own statements all succeed, only COMMIT fails.
 function failCommitOn(name: string, where: string) {
   c.sql(`CREATE OR REPLACE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION '${name}'; END $$;
@@ -92,17 +92,17 @@ test('K1 a key value file changes only with its committed row, for add and retir
   const conn = await tavily(), keys = join(SECRET_DIR, 'connections', conn);
   // Add whose commit fails: no value file under the key name, no staged bytes left.
   const lost = 'tvly-' + randomUUID(), lostFp = sha(lost).slice(0, 12);
-  failCommitOn('fail_key_add', `document NEW.id = 'key:${lostFp}'`);
+  failCommitOn('fail_key_add', `connection_key NEW.id = 'key:${lostFp}'`);
   assert.notEqual((await op('connections_key_add', {connection: conn, value: lost})).status, 200);
-  clear('fail_key_add', 'document');
+  clear('fail_key_add', 'connection_key');
   assert.equal(existsSync(join(keys, lostFp)), false, 'a rolled-back add left the value file');
   assert.deepEqual(readdirSync(keys), []);
   // Retire whose commit fails: the row stays active and keeps its value file.
   const k = ok(await op('connections_key_add', {connection: conn, value: 'tvly-' + randomUUID()}));
   assert.ok(existsSync(join(keys, k.fingerprint)));
-  failCommitOn('fail_key_retire', `document NEW.id = 'key:${k.fingerprint}' AND NEW.data->>'state' = 'retired'`);
+  failCommitOn('fail_key_retire', `connection_key NEW.id = 'key:${k.fingerprint}' AND NEW.state = 'retired'`);
   assert.notEqual((await op('connections_key_state', {keyId: k.fingerprint, state: 'retired'})).status, 200);
-  clear('fail_key_retire', 'document');
+  clear('fail_key_retire', 'connection_key');
   assert.ok(existsSync(join(keys, k.fingerprint)), 'a rolled-back retire deleted the value of an active key');
   ok(await op('connections_key_state', {keyId: k.fingerprint, state: 'retired'}));
   assert.equal(existsSync(join(keys, k.fingerprint)), false);

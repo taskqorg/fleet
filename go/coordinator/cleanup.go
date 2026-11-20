@@ -85,9 +85,43 @@ var referenceMap = []objectRef{
 	// security (not leakproof), so every check of it read and detoasted every document.
 	{table: "document", column: "execution_ref", kind: "execution", mode: refOwn},
 	{table: "document", column: "session_ref", kind: "session", mode: refOwn},
-	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "data->>'pipelineRunId'", guard: "kind='run-token'"}, // the tokens of a run's steps
 	{table: "document", column: "data", kind: "task", mode: refNone, expr: "data->>'taskId'"},
 	{table: "document", column: "data", kind: "host", mode: refKeep, expr: "data->>'hostId'"},
+	// Hosts, subscriptions, connections and tokens (migration 78). A run token goes with its execution and with the run
+	// whose step it was minted for; an inspection with its execution; a watch with its session.
+	{table: "host", column: "id", mode: refNone},
+	{table: "host", column: "host_id", mode: refNone}, // the host's own id; system_purge deletes a removed host (host_remove.go)
+	{table: "host", column: "project_id", kind: "project", mode: refOwn},
+	{table: "host_observation", column: "id", mode: refNone},
+	{table: "host_observation", column: "project_id", kind: "project", mode: refOwn},
+	{table: "watch", column: "id", mode: refNone},
+	{table: "watch", column: "session_id", kind: "session", mode: refOwn},
+	{table: "watch", column: "project_id", kind: "project", mode: refOwn},
+	{table: "managed_account", column: "id", mode: refNone},
+	{table: "managed_account", column: "project_id", kind: "project", mode: refOwn},
+	{table: "account_inspection", column: "id", mode: refNone},
+	{table: "account_inspection", column: "account_id", mode: refNone}, // a subscription (foreign key, ON DELETE CASCADE)
+	{table: "account_inspection", column: "execution_id", kind: "execution", mode: refOwn},
+	{table: "account_inspection", column: "host_id", kind: "host", mode: refKeep},
+	{table: "account_inspection", column: "project_id", kind: "project", mode: refOwn},
+	{table: "account_check", column: "id", mode: refNone},
+	{table: "account_check", column: "account_id", mode: refNone},
+	{table: "account_check", column: "host_id", kind: "host", mode: refKeep},
+	{table: "account_check", column: "project_id", kind: "project", mode: refOwn},
+	{table: "account_catalogue", column: "id", mode: refNone},
+	{table: "account_catalogue", column: "host_id", kind: "host", mode: refKeep},
+	{table: "account_catalogue", column: "project_id", kind: "project", mode: refOwn},
+	{table: "api_connection", column: "id", mode: refNone},
+	{table: "api_connection", column: "project_id", kind: "project", mode: refOwn},
+	{table: "connection_key", column: "id", mode: refNone},
+	{table: "connection_key", column: "connection_id", mode: refNone}, // its connection (foreign key, ON DELETE CASCADE)
+	{table: "connection_key", column: "project_id", kind: "project", mode: refOwn},
+	{table: "run_token", column: "id", mode: refNone},
+	{table: "run_token", column: "execution_id", kind: "execution", mode: refOwn},
+	{table: "run_token", column: "pipeline_run_id", kind: "execution", mode: refOwn}, // the tokens of a run's steps
+	{table: "run_token", column: "project_id", kind: "project", mode: refOwn},
+	{table: "person_setting", column: "id", mode: refNone},
+	{table: "person_setting", column: "project_id", kind: "project", mode: refOwn},
 	// Conversations (migration 77). A session working for a task outlives it (session and task lifecycles are separate):
 	// the reference goes stale. A session's transcript (messages, queued messages, transitions, handoffs) belongs to the
 	// session: a task's runs in a live session leave its turns in place; events and commands go with their execution too.
@@ -251,14 +285,17 @@ var objectTables = []struct{ kind, table, filter string }{
 
 // tombstoned: the tables with a tombstoned_at column (migration 67).
 var tombstoned = []string{"execution", "task", "experiment", "question", "artifact", "document", "score", "experiment_note",
-	"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done"}
+	"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done",
+	"host", "host_observation", "watch", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
+	"connection_key", "run_token", "person_setting"}
 
 // keptRows: rows that neither go with an object nor keep one: audit records outlive what they describe (the journal of M0).
 var keptRows = map[string]string{"document": "kind NOT IN ('setting-change','transport-audit','purge-task')"}
 
 // purgeOrder: the tables system_purge deletes from, referencing rows before the rows they reference (foreign keys).
 var purgeOrder = []string{"score", "experiment_note", "artifact_copy", "artifact", "question", "execution_totals", "route_decision",
-	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "document", "message", "event",
+	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "document", "watch", "run_token", "account_inspection", "account_check", "account_catalogue",
+	"connection_key", "api_connection", "managed_account", "host_observation", "host", "person_setting", "message", "event",
 	"queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done", "session", "execution",
 	"resource_work", "resource_work_scope", "task_dependency", "task_derived", "task", "entity_code", "experiment", "budget",
 	"project_write_request", "purged_hash", "artifact_rule_confirmation", "resource_project_summary", "resource_metric",
@@ -581,7 +618,7 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 			return err
 		}
 	}
-	if tag, err := q.tx.Exec(q.ctx(), "UPDATE document SET data=data||jsonb_build_object('revokedAt',$2::bigint) WHERE kind='run-token' AND execution_ref=ANY($1) AND NOT data ? 'revokedAt'", ids, nowMs()); err != nil {
+	if tag, err := q.tx.Exec(q.ctx(), "UPDATE run_token SET revoked_at=to_timestamp($2::float8/1000),updated_at=now() WHERE execution_id=ANY($1) AND revoked_at IS NULL", ids, nowMs()); err != nil {
 		return err
 	} else if tag.RowsAffected() > 0 {
 		publish(q)
@@ -770,10 +807,10 @@ func purgeCascade(q *Request, c *cascade) error {
 // pendingCommands: the unfinished commands of executions ($1) and whether their host is gone: removed, or unknown
 // (neither the default host $2 nor a host record nor an observation), as knownHost decides.
 const pendingCommands = `SELECT c.id, c.kind, c.host_id AS host,
- (h.data->>'state' IS NOT DISTINCT FROM 'removed' AND h.id IS NOT NULL
+ (h.state='removed' AND h.id IS NOT NULL
   OR (h.id IS NULL AND c.host_id IS DISTINCT FROM $2
-   AND NOT EXISTS (SELECT 1 FROM document o WHERE o.kind='host-observation' AND o.id=c.host_id))) AS dead
- FROM command c LEFT JOIN document h ON h.kind='host' AND h.id='host:'||c.host_id
+   AND NOT EXISTS (SELECT 1 FROM host_observation o WHERE o.id=c.host_id))) AS dead
+ FROM command c LEFT JOIN host h ON h.host_id=c.host_id
  WHERE c.execution_id=ANY($1) AND c.status='pending' ORDER BY c.seq`
 
 // purgeRootTx: one tombstoned root in its own transaction: blocked (a live row keeps it) or purged.

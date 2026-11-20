@@ -7,6 +7,38 @@ CREATE TYPE question_kind AS ENUM ('operator_decision', 'agent_question', 'accep
 CREATE TYPE question_state AS ENUM ('open', 'answered', 'withdrawn');
 CREATE TYPE resource_metric_name AS ENUM ('input', 'output', 'cacheRead', 'cacheWrite', 'reasoning', 'wallMs', 'activeMs', 'apiMs', 'cpuMs', 'peakMemoryBytes', 'credits', 'turns', 'toolCalls', 'toolErrors', 'tokenActors', 'processActors', 'toolActors');
 CREATE TYPE task_state AS ENUM ('queued', 'in_progress', 'waiting', 'paused', 'completed', 'failed', 'cancelled');
+CREATE TABLE account_catalogue (
+  "id" text NOT NULL,
+  "host_id" text,
+  "harness" text,
+  "project_id" text,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE account_check (
+  "id" text NOT NULL,
+  "account_id" text,
+  "host_id" text,
+  "binding" text,
+  "project_id" text,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE account_inspection (
+  "id" text NOT NULL,
+  "account_id" text,
+  "execution_id" text,
+  "host_id" text,
+  "project_id" text,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
 CREATE TABLE agent_tool_receipt (
   "id" text NOT NULL,
   "execution_id" text NOT NULL,
@@ -15,6 +47,17 @@ CREATE TABLE agent_tool_receipt (
   "payload_sha" text NOT NULL,
   "result" jsonb NOT NULL,
   "authority" jsonb NOT NULL
+);
+CREATE TABLE api_connection (
+  "id" text NOT NULL,
+  "name" text NOT NULL,
+  "provider" text,
+  "holder" text,
+  "project_id" text,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
 );
 CREATE TABLE artifact (
   "id" text NOT NULL,
@@ -112,6 +155,18 @@ CREATE TABLE command (
   "stop_detail" text,
   "handed_out" boolean,
   "traceparent" text,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE connection_key (
+  "id" text NOT NULL,
+  "connection_id" text NOT NULL,
+  "fingerprint" text,
+  "state" text NOT NULL,
+  "added_at" timestamp with time zone,
+  "project_id" text,
   "payload" jsonb NOT NULL,
   "seq" bigint NOT NULL,
   "updated_at" timestamp with time zone NOT NULL,
@@ -322,6 +377,30 @@ CREATE TABLE handoff (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE host (
+  "id" text NOT NULL,
+  "host_id" text NOT NULL,
+  "holder" text,
+  "state" text NOT NULL,
+  "intake" text,
+  "secret_hash" text,
+  "removed_secret_hash" text,
+  "project_id" text,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE host_observation (
+  "id" text NOT NULL,
+  "holder" text,
+  "last_seen_at" timestamp with time zone,
+  "project_id" text,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
 CREATE TABLE host_setting (
   "host_id" text NOT NULL,
   "key" text NOT NULL,
@@ -330,6 +409,19 @@ CREATE TABLE host_setting (
   "updated_at" timestamp with time zone NOT NULL,
   "applied_at" timestamp with time zone,
   "apply_error" text
+);
+CREATE TABLE managed_account (
+  "id" text NOT NULL,
+  "name" text,
+  "holder" text,
+  "intake" text,
+  "harness" text,
+  "provider" text,
+  "project_id" text,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
 );
 CREATE TABLE message (
   "id" text NOT NULL,
@@ -356,6 +448,15 @@ CREATE TABLE person_grant (
   "email" text NOT NULL,
   "object_kind" text NOT NULL,
   "object_id" text NOT NULL
+);
+CREATE TABLE person_setting (
+  "id" text NOT NULL,
+  "email" text,
+  "project_id" text,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
 );
 CREATE TABLE price_entry (
   "id" text NOT NULL,
@@ -559,6 +660,23 @@ CREATE TABLE route_decision (
   "candidates" jsonb NOT NULL,
   "winner" jsonb
 );
+CREATE TABLE run_token (
+  "id" text NOT NULL,
+  "sha256" text,
+  "execution_id" text,
+  "pipeline_run_id" text,
+  "personal" text,
+  "step" boolean,
+  "directed_by" text,
+  "created_at" timestamp with time zone,
+  "revoked_at" timestamp with time zone,
+  "director_access_revoked_at" timestamp with time zone,
+  "project_id" text,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
 CREATE TABLE schema_migration (
   "version" integer NOT NULL,
   "applied_at" timestamp with time zone NOT NULL
@@ -710,6 +828,15 @@ CREATE TABLE wake_outbox (
   "payload" text NOT NULL,
   "created_at" timestamp with time zone NOT NULL
 );
+CREATE TABLE watch (
+  "id" text NOT NULL,
+  "session_id" text NOT NULL,
+  "project_id" text,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
 CREATE TABLE worker_done (
   "id" text NOT NULL,
   "execution_id" text,
@@ -738,6 +865,6 @@ CREATE FUNCTION fleet_write_native_observations(eid text) RETURNS void LANGUAGE 
 CREATE FUNCTION fleet_write_tokens(eid text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION resource_enqueue_source(eid text, old_project text, new_project text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION resource_execution_facts(r execution) RETURNS jsonb LANGUAGE sql AS $$ SELECT NULL $$;
-CREATE FUNCTION resource_metadata_class(r document) RETURNS jsonb LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION resource_metadata_class(p_kind text, p_id text, p_provider jsonb) RETURNS jsonb LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION resource_reasons_merge(old jsonb, delta jsonb) RETURNS jsonb LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION task_derived_recompute(p_task text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;

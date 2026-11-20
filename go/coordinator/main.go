@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fleet/coordinator/db"
 	"fmt"
 	"log"
 	"net"
@@ -264,7 +265,7 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 		if _, err := tx.Exec(ctx, `UPDATE execution SET data=data||jsonb_build_object('directorAccessRevokedAt',extract(epoch from now())*1000) WHERE project_id IS NULL AND session_id IS NULL AND directed_by IS NOT NULL AND NOT(data ? 'directorAccessRevokedAt') AND NOT(directed_by=ANY($1))`, emails); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE document SET data=data||jsonb_build_object('revokedAt',coalesce(data->'revokedAt',to_jsonb(extract(epoch from now())*1000)),'directorAccessRevokedAt',extract(epoch from now())*1000) WHERE kind='run-token' AND data ? 'directedBy' AND NOT(data ? 'directorAccessRevokedAt') AND NOT(data->>'directedBy'=ANY($1))`, emails); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE run_token SET revoked_at=coalesce(revoked_at,now()),director_access_revoked_at=now(),updated_at=now() WHERE directed_by IS NOT NULL AND director_access_revoked_at IS NULL AND NOT(directed_by=ANY($1))`, emails); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE experiment SET requester_removed_at=now() WHERE requester_removed_at IS NULL AND requested_by IN (SELECT email FROM person WHERE NOT(email=ANY($1)))`, emails); err != nil {
@@ -467,8 +468,8 @@ func (a *App) removedHostSecret(ctx context.Context, secret string) (bool, error
 	if secret == "" {
 		return false, nil
 	}
-	var n int
-	err := a.store.readPool.QueryRow(ctx, "SELECT count(*) FROM document WHERE kind='host' AND data @> jsonb_build_object('removedSecretHash', $1::text)", secretHash(secret)).Scan(&n)
+	h := secretHash(secret)
+	n, err := db.New(a.store.readPool).HostRemovedSecretCount(ctx, &h)
 	return n > 0, err
 }
 
@@ -487,7 +488,7 @@ func (a *App) hostFromSecret(ctx context.Context, secret string) (map[string]any
 	}
 	s.authMu.Unlock()
 	if data == nil {
-		err := s.readPool.QueryRow(ctx, "SELECT d.data FROM document d JOIN person p ON p.email=d.data->>'holder' WHERE d.kind='host' AND d.data->>'secretHash'=$1", key).Scan(&data)
+		err := s.readPool.QueryRow(ctx, "SELECT "+convTables["host"].record()+" FROM host JOIN person p ON p.email=host.holder WHERE host.secret_hash=$1", key).Scan(&data)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}

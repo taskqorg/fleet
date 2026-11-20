@@ -20,8 +20,8 @@ before(async () => {
   mkdirSync(join(dir, 'secret'), {recursive: true});
   c = await startCoordinator({name: 'transfer', env: {FLEET_GATEWAY_DIR: gatewayDir, FLEET_SECRET_DIR: join(dir, 'secret'), FLEET_CONNECTION_TICK_MS: '120'}});
   // An owner token's row, as connections_token_create writes it.
-  c.sql(`INSERT INTO document(kind,id,data) VALUES ('run-token','run-token:${tokenSha}',jsonb_build_object('id','run-token:${tokenSha}','sha256','${tokenSha}',
-    'executionId','token:files','directedBy','${OWNER}','personal','files','connections',jsonb_build_array('youtrack'),'createdAt',1));`);
+  c.sql(`INSERT INTO run_token(id,sha256,execution_id,directed_by,personal,created_at,payload) VALUES ('run-token:${tokenSha}','${tokenSha}',
+    'token:files','${OWNER}','files',to_timestamp(0.001),jsonb_build_object('connections',jsonb_build_array('youtrack')));`);
 });
 after(async () => { await c?.stop(); });
 

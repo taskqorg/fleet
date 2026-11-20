@@ -78,7 +78,7 @@ test('nav_counts: counter views by person setting, the focus split, ignored proj
   s = await counts();
   assert.deepEqual([s.tasks.inFocus, s.tasks.outside, s.tasks.split], [await total('task_page', {state: ['queued', 'failed'], projectId: ['beta']}), 0, false]); assert.equal(s.tasks.inFocus, 2);
   // A saved view the list filters no longer take counts the default instead of failing every counter.
-  c.sql(`UPDATE document SET data=jsonb_set(data,'{views}',(SELECT jsonb_agg(CASE WHEN v->>'name'='Beta' THEN jsonb_set(v,'{view,state}','["no_such_state"]') ELSE v END) FROM jsonb_array_elements(data->'views') v)) WHERE kind='person-setting'`);
+  c.sql(`UPDATE person_setting SET payload=jsonb_set(payload,'{views}',(SELECT jsonb_agg(CASE WHEN v->>'name'='Beta' THEN jsonb_set(v,'{view,state}','["no_such_state"]') ELSE v END) FROM jsonb_array_elements(payload->'views') v))`);
   s = await counts();
   assert.equal(s.tasks.view, 'Running', 'a view the list refuses counts the default'); assert.equal(s.results.view, 'Last 24 h');
   await op('person_settings_set', {viewDelete: {list: 'tasks', name: 'Beta'}, navCounters: {tasks: 'Mine'}});

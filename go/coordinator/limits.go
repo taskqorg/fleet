@@ -44,23 +44,18 @@ type limitObs struct {
 
 // limitHistory: every limit_reading since `since`, per subscription and period, oldest first.
 func limitHistory(ctx context.Context, a *App, since int64) (map[string]map[string][]limitObs, error) {
-	rs, err := conn(ctx, a).Query(ctx, `SELECT x.account_id, r, d.updated_at
-   FROM event d JOIN execution x ON x.id = d.execution_id CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.payload->'data'->'readings','[]'::jsonb)) r
-   WHERE NOT d.delta AND d.type='limit_reading' AND x.account_id IS NOT NULL AND d.updated_at >= $1
-   ORDER BY d.updated_at, d.seq`, time.UnixMilli(since))
+	rs, err := connDB(ctx, a).LimitReadingsSince(ctx, time.UnixMilli(since))
 	if err != nil {
 		return nil, err
 	}
-	defer rs.Close()
 	out := map[string]map[string][]limitObs{}
-	for rs.Next() {
-		var account string
-		var v map[string]any
-		var at time.Time
-		if err := rs.Scan(&account, &v, &at); err != nil {
-			return nil, err
+	for _, r := range rs {
+		account := r.AccountID
+		var v limitReading
+		if json.Unmarshal(r.Reading, &v) != nil {
+			continue
 		}
-		o := limitObs{at: at.UnixMilli(), source: "execution"}
+		o := limitObs{at: r.UpdatedAt.UnixMilli(), source: "execution"}
 		period, _ := v["period"].(string)
 		if period == "" {
 			period = "unknown"
@@ -80,8 +75,11 @@ func limitHistory(ctx context.Context, a *App, since int64) (map[string]map[stri
 		}
 		out[account][period] = append(out[account][period], o)
 	}
-	return out, rs.Err()
+	return out, nil
 }
+
+// limitReading: one reading of a limit_reading event, each field kept only with its JSON type.
+type limitReading map[string]any
 
 type limitOptions struct {
 	now, from, to int64
@@ -435,15 +433,14 @@ func limitsReply(q *Request, o limitOptions) (contract.SubscriptionLimitsReply, 
 	if err != nil {
 		return none, err
 	}
-	rows, err := rowsCtx(ctx, conn(ctx, q.app), "SELECT data FROM document WHERE kind='managed-account' ORDER BY seq")
+	rows, err := all(q, "managed-account", nil)
 	if err != nil {
 		return none, err
 	}
 	var accounts []limitAccount
 	periods := map[string][]contract.LimitPeriod{}
 	reply := contract.SubscriptionLimitsReply{ServerNow: now, WindowHours: o.windowHours, From: o.from, To: o.to, Subscriptions: []contract.LimitSubscription{}}
-	for _, r := range rows {
-		x, _ := r["data"].(map[string]any)
+	for _, x := range rows {
 		a := limitAccount{id: astr(x["id"]), harness: astr(x["harness"]), weight: 1}
 		if w, ok := x["planWeight"].(float64); ok && w > 0 {
 			a.weight = w

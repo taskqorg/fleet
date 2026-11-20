@@ -1,18 +1,22 @@
 package main
 
-// hosts and the host operations (docs/designs/fleet-people-access.md). A host row is the 'host' document
-// 'host:<id>' {hostId, name, holder, platform, roles, secretHash, intake, harnesses, createdAt}; only the secret's hash is kept.
+// hosts and the host operations (docs/designs/fleet-people-access.md). A host is a row of table host (record kind
+// 'host', id 'host:<id>', typed_records.go) {hostId, name, holder, platform, roles, secretHash, intake, harnesses,
+// createdAt}; only the secret's hash is kept. Its state moves through hostTransition (host_states.go).
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"sync"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fleet/harnessrelease"
 )
 
@@ -152,7 +156,7 @@ func notifyHolder(q *Request, holder, text string) error {
 	if err != nil {
 		return err
 	}
-	return exec(q, "UPDATE question SET addressed_to=$2 WHERE id=$1", id, holder)
+	return q.db().AddressQuestion(q.ctx(), db.AddressQuestionParams{Holder: holder, ID: id})
 }
 
 func validHarnesses(v any) bool {
@@ -257,7 +261,9 @@ func hostsRegister(q *Request, b doc) (any, error) {
 		platform = s
 	}
 	h := doc{"id": id, "name": name, "holder": holder, "platform": platform, "roles": roles, "secretHash": hash, "intake": "all", "harnesses": harnesses, "createdAt": nowMs()}
-	if err := saveHost(q, h); err != nil {
+	row := maps.Clone(h)
+	row["state"] = hostStateActive // the id of a removed host is registered again (host_states.go)
+	if err := saveHost(q, row); err != nil {
 		return nil, err
 	}
 	out := doc{"host": hostView(h)}
@@ -418,11 +424,11 @@ func hostsList(q *Request, includeRemoved bool) (any, error) {
 			}
 		}
 	}
-	running, err := queryRows(q, "SELECT host_id,harness,count(*)::int AS n FROM execution WHERE state IN ('preparing','running') AND host_id IS NOT NULL GROUP BY 1,2")
+	running, err := q.db().RunningByHostHarness(q.ctx())
 	if err != nil {
 		return nil, err
 	}
-	queued, err := queryRows(q, "SELECT host_id,count(*)::int AS n FROM command WHERE status='pending' AND host_id IS NOT NULL GROUP BY 1")
+	queued, err := q.db().PendingCommandsByHost(q.ctx())
 	if err != nil {
 		return nil, err
 	}
@@ -446,19 +452,19 @@ func hostsList(q *Request, includeRemoved bool) (any, error) {
 		by := doc{}
 		total := 0
 		for _, r := range running {
-			if r["host_id"] == id {
-				h := astr(r["harness"])
+			if r.HostID == id {
+				h := r.Harness
 				if h == "" {
 					h = "unknown"
 				}
-				n := int(r["n"].(int32))
+				n := int(r.N)
 				by[h], total = n, total+n
 			}
 		}
 		n := 0
 		for _, r := range queued {
-			if r["host_id"] == id {
-				n = int(r["n"].(int32))
+			if r.HostID == id {
+				n = int(r.N)
 			}
 		}
 		h := doc{"id": id, "configured": inList(configured, id), "platform": nil, "lastSeenAt": nil, "capabilities": []any{}, "problems": []any{},
@@ -516,10 +522,14 @@ func routeDecisions(q *Request, r *contract.RouteDecisionsRequest) (contract.Rou
 	if id == "" || len(id) > 200 {
 		return out, fail(400, "Expected executionId")
 	}
-	rs, err := queryRows(q, "SELECT execution_id,at,host_id,candidates,winner FROM route_decision WHERE execution_id=$1 ORDER BY at", id)
+	rs, err := q.db().RouteDecisionsOf(q.ctx(), id)
 	for _, x := range rs {
-		out.Decisions = append(out.Decisions, contract.RouteDecision{ExecutionId: astr(x["execution_id"]), At: timeText(x["at"]), HostId: strPtr(x["host_id"]),
-			Candidates: jsonBytes(x["candidates"]), Winner: jsonBytes(x["winner"])})
+		winner := json.RawMessage(x.Winner)
+		if winner == nil {
+			winner = json.RawMessage("null")
+		}
+		out.Decisions = append(out.Decisions, contract.RouteDecision{ExecutionId: x.ExecutionID, At: timeText(x.At), HostId: x.HostID,
+			Candidates: x.Candidates, Winner: winner})
 	}
 	return out, err
 }

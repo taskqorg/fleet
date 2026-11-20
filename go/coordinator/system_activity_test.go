@@ -35,9 +35,9 @@ func TestSystemActivityLeftOutOfProjectWork(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	ctx := e.ctx
 	if _, err := e.ownerStore.pool.Exec(ctx, `SET fleet.project_ids='*';
-	 INSERT INTO document(kind,id,data) VALUES
-	  ('run-token','run-token:sys','{"id":"run-token:sys","sha256":"sys","executionId":"github-read:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0","projectId":"p1","step":true,"systemActor":"coordinator"}'),
-	  ('run-token','run-token:agent','{"id":"run-token:agent","sha256":"agent","executionId":"a-run","projectId":"p1"}');
+	 INSERT INTO run_token(id,sha256,execution_id,project_id,step,payload) VALUES
+	  ('run-token:sys','sys','github-read:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0','p1',true,'{"systemActor":"coordinator"}'),
+	  ('run-token:agent','agent','a-run','p1',NULL,'{}');
 	 INSERT INTO execution(id,kind,state,project_id,started_at,ended_at) VALUES ('a-run','agent_run','succeeded','p1',now()-interval '1 minute',now())`); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,9 @@ func TestSystemActivityLeftOutOfProjectWork(t *testing.T) {
 func TestMigration69RemovesLegacySystemReads(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	ownerURL := fmt.Sprintf("postgresql://fleet@/%s?host=%s&port=%d", e.dbName, e.sockDir, e.pgPort)
+	// Migration 69 ran when run tokens were documents (migration 78 moved them): the documents it read are seeded as then.
 	if _, err := e.ownerStore.pool.Exec(e.ctx, `SET fleet.project_ids='*';
+	 ALTER TABLE document DROP CONSTRAINT document_moved_kind;
 	 INSERT INTO document(kind,id,data) VALUES
 	  ('run-token','run-token:open','{"id":"run-token:open","sha256":"open","executionId":"bugsink-read:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0","projectId":"p1","step":true}'),
 	  ('run-token','run-token:revoked','{"id":"run-token:revoked","sha256":"revoked","executionId":"github-read:11111111-2222-3333-4444-555555555555","projectId":"p1","step":true,"revokedAt":1}'),

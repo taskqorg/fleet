@@ -522,7 +522,7 @@ func (e *lawEnv) opRebuild() {
 
 func (e *lawEnv) opProvider() {
 	provider := e.pick([]string{"openai", "anthropic"})
-	e.owner(`INSERT INTO document(kind,id,data) VALUES('api-connection','connection:cA',$1) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, fmt.Sprintf(`{"provider":%q}`, provider))
+	e.owner(`INSERT INTO api_connection(id,name,provider) VALUES('connection:cA','cA',$1) ON CONFLICT(id) DO UPDATE SET provider=excluded.provider`, provider)
 	e.log("connection cA provider=%s", provider)
 }
 

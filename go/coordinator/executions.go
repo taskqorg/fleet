@@ -156,8 +156,8 @@ func executionEnded(q *Request, id any) (bool, error) {
 // detectProblems refreshes registration problems on open executions without replacing retained runtime causes.
 func detectProblems(q *Request, hosts []string, environments map[string][]string) error {
 	return exec(q, `WITH found AS (SELECT e.id,CASE
-    WHEN e.host_id IS NOT NULL AND NOT (e.host_id=ANY($1) OR EXISTS (SELECT 1 FROM document h WHERE h.kind='host-observation' AND h.id=e.host_id)) THEN 'unregistered host '||e.host_id
-    WHEN e.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM document a WHERE a.kind='managed-account' AND a.id=e.account_id) THEN 'unregistered account '||e.account_id
+    WHEN e.host_id IS NOT NULL AND NOT (e.host_id=ANY($1) OR EXISTS (SELECT 1 FROM host_observation h WHERE h.id=e.host_id)) THEN 'unregistered host '||e.host_id
+    WHEN e.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM managed_account a WHERE a.id=e.account_id) THEN 'unregistered account '||e.account_id
     WHEN e.project_id IS NOT NULL AND e.host_id IS NOT NULL AND jsonb_array_length(coalesce($2::jsonb->e.project_id,'[]'))>0 AND NOT ($2::jsonb->e.project_id) ? e.host_id THEN 'no registered environment of project '||e.project_id||' on host '||e.host_id
    END AS problem FROM execution e WHERE e.state NOT IN ('succeeded','failed','cancelled') AND e.kind<>'child_agent')
    UPDATE execution x SET problem=found.problem FROM found WHERE x.id=found.id
@@ -608,8 +608,8 @@ func init() {
 				  WHERE c.execution_id=execution.id AND c.kind='stop' AND c.status IN ('pending','unknown'))))
 				  AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1))
 				 OR (kind='host_job' AND state='running' AND observation='confirmed' AND coalesce(last_seen_at, started_at, updated_at) < now() - make_interval(secs => $1)
-				  AND EXISTS (SELECT 1 FROM document h WHERE h.kind='host-observation' AND h.id=execution.host_id
-				   AND (h.data->>'lastSeenAt')::float8 > (extract(epoch FROM now()) - 300) * 1000))
+				  AND EXISTS (SELECT 1 FROM host_observation h WHERE h.id=execution.host_id
+				   AND h.last_seen_at > now() - interval '300 seconds'))
 				 OR (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $1)
 				  AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))))`
 				rs, err := queryRows(q, "SELECT id FROM execution WHERE "+lostCond, lostAfter.Seconds())

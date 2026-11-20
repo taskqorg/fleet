@@ -15,4 +15,4 @@ SELECT * FROM price_entry ORDER BY effective_from DESC,seq DESC;
 
 -- name: PriceConnectionProvider :one
 -- The provider of an API connection, absent when the connection is not visible.
-SELECT coalesce(data->>'provider','')::text AS provider FROM document WHERE id=$1 AND kind='api-connection';
+SELECT coalesce(provider, payload->>'provider', '')::text AS provider FROM api_connection WHERE id=$1;
