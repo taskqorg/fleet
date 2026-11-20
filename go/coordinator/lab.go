@@ -2664,7 +2664,7 @@ func init() {
 	// Lab operations (contracts/ops-lab.schema.json): lab_experiment_action and lab_cell_action are long and open their own
 	// transactions; the rest run in runOp's.
 	op("lab_compare_methods", func(q *Request, r *contract.LabCompareMethodsRequest) (contract.LabCompareMethodsReply, error) {
-		return replyAs[contract.LabCompareMethodsReply](labCompareMethods(q, docOf(r)))
+		return labCompareMethods(q, r)
 	})
 	op("lab_examples_add", func(q *Request, r *contract.LabExamplesAddRequest) (contract.LabExamplesAddReply, error) {
 		return replyAs[contract.LabExamplesAddReply](labExamplesAdd(q, docOf(r)))
