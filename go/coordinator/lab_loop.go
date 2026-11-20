@@ -22,8 +22,8 @@ func rawOf(v any) json.RawMessage {
 	return json.RawMessage(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
 }
 
-// rawObject: raw as an object with each value in rawOf form; ok false when raw is not an object.
-func rawObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+// labRawObject: raw as an object with each value in rawOf form; ok false when raw is not an object.
+func labRawObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
 	t := bytes.TrimSpace(raw)
 	if len(t) == 0 || t[0] != '{' {
 		return nil, false
@@ -40,20 +40,12 @@ func rawObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
 
 // rawObjectOr: raw as an object, or an empty one when it is absent, null or not an object.
 func rawObjectOr(raw json.RawMessage) map[string]json.RawMessage {
-	if m, ok := rawObject(raw); ok {
+	if m, ok := labRawObject(raw); ok {
 		return m
 	}
 	return map[string]json.RawMessage{}
 }
 
-// rawValue: a JSON value decoded (nil for absent).
-func rawValue(raw json.RawMessage) any {
-	var v any
-	if len(raw) > 0 {
-		json.Unmarshal(raw, &v)
-	}
-	return v
-}
 
 // rawSet: m has key k with a value other than null.
 func rawSet(m map[string]json.RawMessage, k string) bool {
@@ -77,17 +69,17 @@ func rawKeysOnly(m map[string]json.RawMessage, allowed ...string) bool {
 
 // loopStrategy validates a loop's strategy and returns it as stored, with the caller's owner-override authority.
 func loopStrategy(q *Request, raw any) (map[string]json.RawMessage, error) {
-	s, ok := rawObject(rawOf(raw))
+	s, ok := labRawObject(rawOf(raw))
 	if !ok || !rawKeysOnly(s, "generator", "allocator", "max_iterations", "no_gain") {
 		return nil, fail(400, "Loop strategy requires generator, allocator and optional explicit stop rules")
 	}
-	g, okG := rawObject(s["generator"])
-	params, okP := rawObject(g["params"])
+	g, okG := labRawObject(s["generator"])
+	params, okP := labRawObject(g["params"])
 	kind := rawValue(g["kind"])
 	if !okG || !rawKeysOnly(g, "kind", "params") || !okP || (kind != "list" && kind != "grid" && kind != "propose") {
 		return nil, fail(400, "Loop generator is list, grid or propose with params")
 	}
-	if a, ok := rawObject(s["allocator"]); !ok || rawValue(a["kind"]) != "full" {
+	if a, ok := labRawObject(s["allocator"]); !ok || rawValue(a["kind"]) != "full" {
 		return nil, fail(400, "Loop allocator is full")
 	}
 	if v, has := s["max_iterations"]; has {
@@ -96,7 +88,7 @@ func loopStrategy(q *Request, raw any) (map[string]json.RawMessage, error) {
 		}
 	}
 	if v, has := s["no_gain"]; has {
-		m, ok := rawObject(v)
+		m, ok := labRawObject(v)
 		if n, okK := intOK(rawValue(m["k"])); !ok || !rawKeysOnly(m, "k") || !okK || n < 1 {
 			return nil, fail(400, "no_gain requires explicit positive k")
 		}
@@ -118,7 +110,7 @@ func loopStrategy(q *Request, raw any) (map[string]json.RawMessage, error) {
 		}
 	}
 	if kind == "grid" {
-		axes, ok := rawObject(params["overrides"])
+		axes, ok := labRawObject(params["overrides"])
 		if !ok {
 			return nil, fail(400, "grid params.overrides must be an object")
 		}
@@ -132,7 +124,7 @@ func loopStrategy(q *Request, raw any) (map[string]json.RawMessage, error) {
 		}
 	}
 	if ov, has := params["step_overrides"]; has {
-		if m, ok := rawObject(ov); !ok || !rawKeysOnly(m, labOverrides...) {
+		if m, ok := labRawObject(ov); !ok || !rawKeysOnly(m, labOverrides...) {
 			return nil, fail(400, "Invalid strategy step_overrides")
 		}
 		if _, err := loopVariantsOf(base, []labProposal{{Label: "strategy", Overrides: ov}}, 1); err != nil {
@@ -209,7 +201,7 @@ func loopVariantsOf(base labLoopBase, proposed []labProposal, iteration int64) (
 		}
 		ov := map[string]json.RawMessage{}
 		if rawValue(v.Overrides) != nil {
-			m, ok := rawObject(v.Overrides)
+			m, ok := labRawObject(v.Overrides)
 			if !ok {
 				return nil, fail(400, "Invalid strategy overrides")
 			}
@@ -222,12 +214,12 @@ func loopVariantsOf(base labLoopBase, proposed []labProposal, iteration int64) (
 			return nil, fail(403, "Only the owner overrides host, account or profile")
 		}
 		if args, has := ov["arguments"]; has {
-			m, ok := rawObject(args)
+			m, ok := labRawObject(args)
 			if !ok {
 				return nil, fail(400, "arguments must map step IDs to objects")
 			}
 			for _, arg := range m {
-				if _, ok := rawObject(arg); !ok {
+				if _, ok := labRawObject(arg); !ok {
 					return nil, fail(400, "arguments must map step IDs to objects")
 				}
 			}

@@ -36,23 +36,6 @@ func parsePipelineWhen(v any) (*pipelineWhen, error) {
 	return w, nil
 }
 
-// jsonKind: the first byte of a JSON value ('n' null, 't'/'f' Boolean, '"' string, '{' object, '[' array).
-func jsonKind(raw []byte) byte {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 {
-		return 0
-	}
-	return raw[0]
-}
-
-func jsonString(raw json.RawMessage) (string, bool) {
-	var s string
-	if jsonKind(raw) != '"' || json.Unmarshal(raw, &s) != nil {
-		return "", false
-	}
-	return s, true
-}
-
 func jsonBool(raw json.RawMessage) (bool, bool) {
 	switch string(bytes.TrimSpace(raw)) {
 	case "true":
