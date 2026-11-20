@@ -9,15 +9,8 @@ import (
 	"sort"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
-
-const usageSQL = `SELECT d->>'id' AS id, CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::int END AS rev, GROUPING(CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::int END) AS total, count(*), count(*) FILTER (WHERE e.state='succeeded'),
-   (percentile_disc(0.5) WITHIN GROUP (ORDER BY coalesce(t.wall_ms, CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN greatest(0, (extract(epoch FROM e.ended_at - e.started_at)*1000)::bigint) END)))::bigint,
-   coalesce(sum(coalesce(t.tokens_input,0)+coalesce(t.tokens_output,0)),0)::bigint
- FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d LEFT JOIN execution_totals t ON t.execution_id=e.id
- WHERE e.definitions @> $1 AND d->>'kind'=$2 AND ($3='' OR d->>'id'=$3) AND coalesce((d->>'draft')::boolean,false)=false AND coalesce(d->>'revision','') ~ '^[0-9]+$'
-   AND coalesce(e.started_at, e.updated_at) >= now() - make_interval(days => $4::int)
- GROUP BY d->>'id', ROLLUP (CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::int END)`
 
 // usageWindows: runs, successes, median wall time and tokens of the executions that pinned a saved revision of kind/id
 // (id "" for every definition of the kind) in the last days, per definition and per revision; draft runs are not a
@@ -32,11 +25,10 @@ func usageWindows(q *Request, kind, id string, days int64) (map[string]contract.
 		return nil, nil, err
 	}
 	totals, byRev := map[string]contract.Window{}, map[string][]contract.RevisionWindow{}
-	rows, err := q.tx.Query(q.ctx(), usageSQL, jsonBytes([]map[string]string{pin}), kind, id, days)
+	rows, err := q.db().DefUsage(q.ctx(), db.DefUsageParams{Pin: jsonBytes([]map[string]string{pin}), Kind: kind, ID: id, Days: int32(days)})
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
 	attach := func(w *contract.Window, res contract.ResourceSummary, ok bool) {
 		if !ok {
 			res = emptyResourceSummary()
@@ -52,29 +44,27 @@ func usageWindows(q *Request, kind, id string, days int64) (map[string]contract.
 			w.Cost = []contract.CostFigure{}
 		}
 	}
-	for rows.Next() {
-		var did string
-		var rev, median *int64
-		var grouping int
-		w := contract.Window{CostBasis: ptr("tokens")}
-		if err := rows.Scan(&did, &rev, &grouping, &w.Runs, &w.Succeeded, &median, &w.Tokens); err != nil {
-			return nil, nil, err
+	for _, r := range rows {
+		did := r.ID
+		w := contract.Window{CostBasis: ptr("tokens"), Runs: r.Runs, Succeeded: r.Succeeded, Tokens: r.Tokens}
+		if r.Median >= 0 {
+			median := r.Median
+			w.WallMsMedian = &median
 		}
-		w.WallMsMedian = median
-		if grouping == 1 {
+		if r.Total == 1 {
 			res, ok := totRes[did]
 			attach(&w, res, ok)
 			totals[did] = w
-		} else if rev != nil {
-			res, ok := revRes[did][*rev]
+		} else if r.Rev >= 0 {
+			res, ok := revRes[did][r.Rev]
 			attach(&w, res, ok)
-			byRev[did] = append(byRev[did], contract.RevisionWindow{Revision: *rev, Window: w})
+			byRev[did] = append(byRev[did], contract.RevisionWindow{Revision: r.Rev, Window: w})
 		}
 	}
 	for k := range byRev {
 		sort.Slice(byRev[k], func(i, j int) bool { return byRev[k][i].Revision > byRev[k][j].Revision })
 	}
-	return totals, byRev, rows.Err()
+	return totals, byRev, nil
 }
 
 // usedByDefinitions: the definitions that name kind/id: pipelines whose agent steps run the profile, the catalogue when one
@@ -90,10 +80,14 @@ func usedByDefinitions(q *Request, kind, id string) ([]contract.DefinitionKey, e
 			return nil, err
 		}
 		for _, h := range pipes {
-			var d doc
+			var d struct {
+				Steps []struct {
+					Profile any `json:"profile"`
+				} `json:"steps"`
+			}
 			json.Unmarshal(h.text, &d)
-			for _, s := range anys(d["steps"]) {
-				if astr(mapOf(s)["profile"]) == id {
+			for _, s := range d.Steps {
+				if s.Profile == id {
 					out = append(out, contract.DefinitionKey{Kind: contract.DefinitionKindPipeline, Id: h.id})
 					break
 				}
@@ -107,13 +101,15 @@ func usedByDefinitions(q *Request, kind, id string) ([]contract.DefinitionKey, e
 	} else if err != nil {
 		return nil, err
 	}
-	{
-		for _, m := range anys(cat["methods"]) {
-			mm := mapOf(m)
-			if kind == "pipeline" && astr(mm["pipeline"]) == id+".json" || kind == "agent" && astr(mm["agentProfile"]) == id {
-				out = append(out, contract.DefinitionKey{Kind: contract.DefinitionKindCatalogue, Id: "catalogue"})
-				break
-			}
+	var methods []struct {
+		Pipeline     any `json:"pipeline"`
+		AgentProfile any `json:"agentProfile"`
+	}
+	json.Unmarshal(jsonBytes(cat["methods"]), &methods)
+	for _, m := range methods {
+		if kind == "pipeline" && m.Pipeline == id+".json" || kind == "agent" && m.AgentProfile == id {
+			out = append(out, contract.DefinitionKey{Kind: contract.DefinitionKindCatalogue, Id: "catalogue"})
+			break
 		}
 	}
 	return out, nil

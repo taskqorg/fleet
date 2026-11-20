@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
+	"maps"
+
 	"github.com/jackc/pgx/v5"
+
+	"fleet/coordinator/db"
 )
 
 // resolveAccess never mutates the file projection or borrows the owner's identity.
@@ -44,72 +48,71 @@ func resolveAccessShareTx(ctx context.Context, tx pgx.Tx, email string) (*Person
 	return resolveAccessQuery(ctx, tx, email, true)
 }
 
+// personGrant: one grant of a Person (main.go).
+type personGrant = struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+
 func resolveAccessQuery(ctx context.Context, tx pgx.Tx, email string, share bool) (*Person, error) {
-	var out Person
+	d := db.New(tx)
+	out := Person{Grants: []personGrant{}}
 	err := func() error {
-		forShare := ""
+		var grants []db.DefGrantsRow
 		if share {
-			forShare = " FOR SHARE"
+			p, err := d.DefPersonShare(ctx, email)
+			if err != nil {
+				return err
+			}
+			out.Email, out.Name, out.Roles, out.Owner, out.AccessVersion = p.Email, p.Name, p.Roles, p.Owner, p.LoadedAt
+			gs, err := d.DefGrantsShare(ctx, email)
+			if err != nil {
+				return err
+			}
+			for _, g := range gs {
+				grants = append(grants, db.DefGrantsRow(g))
+			}
+		} else {
+			p, err := d.DefPerson(ctx, email)
+			if err != nil {
+				return err
+			}
+			out.Email, out.Name, out.Roles, out.Owner, out.AccessVersion = p.Email, p.Name, p.Roles, p.Owner, p.LoadedAt
+			if grants, err = d.DefGrants(ctx, email); err != nil {
+				return err
+			}
 		}
-		if err := tx.QueryRow(ctx, "SELECT email,name,roles,owner,loaded_at::text FROM person WHERE email=$1"+forShare, email).Scan(&out.Email, &out.Name, &out.Roles, &out.Owner, &out.AccessVersion); err != nil {
-			return err
-		}
-		var membershipVersion string
-		if err := tx.QueryRow(ctx, `SELECT coalesce(string_agg(id||':'||access_version::text,',' ORDER BY id),'') FROM definition WHERE kind='project' AND initial_member=$1`, email).Scan(&membershipVersion); err != nil {
+		membershipVersion, err := d.DefMembershipVersion(ctx, &email)
+		if err != nil {
 			return err
 		}
 		out.AccessVersion += "/" + membershipVersion
-		grants := []doc{}
-		seen := map[string]struct{}{}
+		seen := map[personGrant]bool{}
 		addGrant := func(kind, id string) {
-			k := kind + "\x00" + id
-			if _, ok := seen[k]; ok {
-				return
+			if g := (personGrant{Kind: kind, ID: id}); !seen[g] {
+				seen[g] = true
+				out.Grants = append(out.Grants, g)
 			}
-			seen[k] = struct{}{}
-			grants = append(grants, doc{"kind": kind, "id": id})
 		}
-		rows, err := tx.Query(ctx, `SELECT object_kind,object_id FROM person_grant WHERE email=$1`+forShare, email)
+		for _, g := range grants {
+			addGrant(g.ObjectKind, g.ObjectID)
+		}
+		projects, err := d.DefInitialMemberships(ctx, &email)
 		if err != nil {
 			return err
 		}
-		for rows.Next() {
-			var kind, id string
-			if err := rows.Scan(&kind, &id); err != nil {
-				rows.Close()
-				return err
-			}
-			addGrant(kind, id)
+		for _, id := range projects {
+			addGrant("project", id)
 		}
-		if err = rows.Err(); err != nil {
-			rows.Close()
-			return err
-		}
-		rows.Close()
-		defRows, err := tx.Query(ctx, `SELECT 'project',id FROM definition WHERE kind='project' AND initial_member=$1 AND initial_member_revoked_at IS NULL`, email)
-		if err != nil {
-			return err
-		}
-		for defRows.Next() {
-			var kind, id string
-			if err := defRows.Scan(&kind, &id); err != nil {
-				defRows.Close()
-				return err
-			}
-			addGrant(kind, id)
-		}
-		if err = defRows.Err(); err != nil {
-			defRows.Close()
-			return err
-		}
-		defRows.Close()
-		raw, _ := json.Marshal(grants)
-		return json.Unmarshal(raw, &out.Grants)
+		return nil
 	}()
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fail(403, "Unknown person")
 	}
-	return &out, err
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func seedProjectDefinitions() ([]definitionFile, map[string]error) {
@@ -121,19 +124,23 @@ func seedProjectDefinitions() ([]definitionFile, map[string]error) {
 			broken["project/"+id] = err
 			continue
 		}
-		settings := doc{}
-		for k, v := range p {
-			if k != "settings" && k != "unknownKeys" && k != "context" {
-				settings[k] = v
-			}
+		settings := maps.Clone(p) // the open project settings as shippedProjectContext (projects.go) reads them
+		delete(settings, "settings")
+		delete(settings, "unknownKeys")
+		delete(settings, "context")
+		type contextFile struct {
+			Path any `json:"path"`
+			Text any `json:"text"`
 		}
-		texts := []any{}
+		texts := []contextFile{}
 		contexts, _ := p["context"].([]doc)
 		for _, f := range contexts {
-			m := mapOf(f)
-			texts = append(texts, doc{"path": m["path"], "text": m["text"]})
+			texts = append(texts, contextFile{Path: f["path"], Text: f["text"]})
 		}
-		text, err := canonicalText(doc{"settings": settings, "contextFiles": texts})
+		text, err := canonicalText(jsonBytes(struct {
+			Settings     doc           `json:"settings"`
+			ContextFiles []contextFile `json:"contextFiles"`
+		}{settings, texts}))
 		if err != nil {
 			broken["project/"+id] = err
 			continue
@@ -164,7 +171,7 @@ func refreshRequestAccess(q *Request) error {
 		if sc != nil {
 			ids, person = sc.ProjectIDs, sc.Person
 		}
-		_, err = q.tx.Exec(q.ctx(), "SELECT set_config('fleet.project_ids',$1,true),set_config('fleet.person',$2,true)", ids, person)
+		err = q.db().DefSetScope(q.ctx(), db.DefSetScopeParams{Ids: ids, Person: person})
 	}
 	return err
 }
@@ -190,7 +197,7 @@ func projectAgentArguments(q *Request, args doc, executionID string, preparedRea
 		args["projectId"] = project
 		return args, nil
 	}
-	project := astr(session["projectId"])
+	project, _ := session["projectId"].(string)
 	if preparedRead && project == "" {
 		return nil, fail(400, "Expected projectId")
 	}

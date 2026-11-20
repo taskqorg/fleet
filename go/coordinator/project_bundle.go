@@ -1,18 +1,39 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fleet/contract"
 	"path"
 	"strings"
 )
 
-// projectBundle validates only owned context, never reads a caller-selected host path.
+// projectBundle validates only owned context, never reads a caller-selected host path. v is the open bundle
+// ({settings, contextFiles}); projectSettings (projects.go) checks the settings.
 func projectBundle(id string, v doc) (doc, error) {
 	if !keysOnly(v, "settings", "contextFiles") {
 		return nil, fail(400, "Expected settings and contextFiles")
 	}
-	s := mapOf(v["settings"])
-	if !idPattern.MatchString(id) || s["id"] != id || strings.TrimSpace(astr(s["name"])) == "" {
+	var b struct {
+		Settings     json.RawMessage `json:"settings"`
+		ContextFiles json.RawMessage `json:"contextFiles"`
+	}
+	json.Unmarshal(jsonBytes(v), &b)
+	var s doc
+	var st struct {
+		ID    any `json:"id"`
+		Name  any `json:"name"`
+		Repos []struct {
+			ID any `json:"id"`
+		} `json:"repos"`
+		ContextFiles json.RawMessage `json:"contextFiles"`
+	}
+	if _, ok := jsonObject(b.Settings); ok {
+		json.Unmarshal(b.Settings, &s)
+		json.Unmarshal(b.Settings, &st)
+	}
+	name, _ := st.Name.(string)
+	if !idPattern.MatchString(id) || st.ID != id || strings.TrimSpace(name) == "" {
 		return nil, fail(400, "Invalid project identity")
 	}
 	if _, _, err := projectSettings(s); err != nil {
@@ -25,8 +46,8 @@ func projectBundle(id string, v doc) (doc, error) {
 		}
 		for _, source := range sources {
 			found := 0
-			for _, r := range anys(s["repos"]) {
-				if mapOf(r)["id"] == source.Repo {
+			for _, r := range st.Repos {
+				if r.ID == source.Repo {
 					found++
 				}
 			}
@@ -35,20 +56,29 @@ func projectBundle(id string, v doc) (doc, error) {
 			}
 		}
 	}
-	names, ok := s["contextFiles"].([]any)
+	names, ok := jsonArray(st.ContextFiles)
 	if !ok {
 		return nil, fail(400, "Expected contextFiles paths")
 	}
-	files, ok := v["contextFiles"].([]any)
+	files, ok := jsonArray(b.ContextFiles)
 	if !ok {
 		return nil, fail(400, "Expected owned context files")
 	}
 	owned := map[string]string{}
 	for _, f := range files {
-		m := mapOf(f)
-		n := astr(m["path"])
-		text, ok := m["text"].(string)
-		if !keysOnly(m, "path", "text") || !ok || n == "" || path.IsAbs(n) || path.Clean(n) != n || n == "." || n == ".." || strings.HasPrefix(n, "../") || strings.Contains(n, "\\") {
+		m, isObject := jsonObject(f)
+		var e struct {
+			Path any `json:"path"`
+			Text any `json:"text"`
+		}
+		json.Unmarshal(f, &e)
+		n, _ := e.Path.(string)
+		text, ok := e.Text.(string)
+		onlyKeys := true
+		for k := range m {
+			onlyKeys = onlyKeys && (k == "path" || k == "text")
+		}
+		if !isObject || !onlyKeys || !ok || n == "" || path.IsAbs(n) || path.Clean(n) != n || n == "." || n == ".." || strings.HasPrefix(n, "../") || strings.Contains(n, "\\") {
 			return nil, fail(400, "Invalid owned context path")
 		}
 		if _, exists := owned[n]; exists {
@@ -57,9 +87,9 @@ func projectBundle(id string, v doc) (doc, error) {
 		owned[n] = text
 	}
 	seen := map[string]bool{}
-	for _, name := range names {
-		n, ok := name.(string)
-		if !ok || seen[n] {
+	for _, raw := range names {
+		var n string
+		if t := bytes.TrimSpace(raw); len(t) == 0 || t[0] != '"' || json.Unmarshal(raw, &n) != nil || seen[n] {
 			return nil, fail(400, "Invalid context reference")
 		}
 		if _, ok := owned[n]; !ok {
