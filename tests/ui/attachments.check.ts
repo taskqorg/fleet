@@ -85,7 +85,7 @@ export async function checkAttachments(browser: Browser, origin: string, seed: R
     assert.equal(seed.rows(`SELECT 1 FROM message WHERE session_id='${S}'`).length, 0, 'Send waits for the uploads');
     release();
     assert.ok(await until(async () => seed.rows(`SELECT 1 FROM message WHERE session_id='${S}'`).length === 1), 'the message is sent once the files are stored');
-    const [message] = seed.rows(`SELECT payload AS data FROM message WHERE session_id='${S}'`);
+    const [message] = seed.rows(`SELECT payload AS data, execution_id FROM message WHERE session_id='${S}'`);
     assert.deepEqual(message.data.attachments.map((a: any) => [a.name, a.mediaType]), [['screenshot.png', 'image/png'], ['note.txt', 'text/plain']]);
     assert.ok(await until(async () => await chips.count() === 0), 'the chips leave the composer after the send');
     assert.equal(await composer.locator('textarea').inputValue(), '', 'the text leaves with the send');
@@ -95,7 +95,7 @@ export async function checkAttachments(browser: Browser, origin: string, seed: R
     assert.ok(await until(async () => await row.locator('.msg-files .att').count() === 2), 'the sent message shows its two files: ' + await p.locator('.transcript, [data-ui=detail]').first().innerText().catch(e => String(e)));
     assert.equal(await row.locator('.msg-files img.att-thumb').count(), 1, 'the image as a thumbnail');
     assert.ok(await until(async () => await row.locator('img.att-thumb').evaluate(i => (i as HTMLImageElement).naturalWidth > 0)), 'the thumbnail loads from the store');
-    const execution = message.data.executionId;
+    const execution = message.execution_id;
     seed.sql(`UPDATE execution SET state='running', started_at=now() WHERE id='${execution}'`);
     seed.put('event', { id: 'att-reply', sessionId: S, executionId: execution, type: 'item.completed', seq: 1, data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: 'Reading the files.' }] } } });
     await p.reload(); await row.waitFor();
