@@ -242,19 +242,6 @@ func executionCommands(q *Request, id string, kind, status *string) ([]doc, erro
 	return out, nil
 }
 
-// settingChange: one audit row of a setting-change record.
-type settingChange struct {
-	ID        string  `json:"id"`
-	Target    string  `json:"target"`
-	ProjectID *string `json:"projectId"`
-	Field     string  `json:"field"`
-	Previous  any     `json:"previous"`
-	Value     any     `json:"value"`
-	Reason    string  `json:"reason"`
-	Actor     string  `json:"actor"`
-	At        int64   `json:"at"`
-}
-
 // executionArtifactError: the error of an execution its artifact gate fails.
 type executionArtifactError struct {
 	Code    string    `json:"code"`
@@ -629,7 +616,7 @@ func init() {
 			return out, err
 		}
 		for _, id := range r.Ids {
-			state, err := executionAbandon(q, id, r.Reason, actor(q, "operator"))
+			state, err := executionAbandon(q, id, r.Reason)
 			if err != nil {
 				return out, err
 			}
@@ -655,7 +642,7 @@ func init() {
 				return out, fail(400, "Expected execution ids")
 			}
 		}
-		by := actor(q, "operator")
+		by := actor(q, "fleet") // as its audit row
 		for _, id := range r.Ids {
 			row, err := q.db().DispExecDismissRow(q.ctx(), id)
 			found := err == nil
@@ -673,19 +660,11 @@ func init() {
 				out.Skipped = append(out.Skipped, contract.ExecutionSkipped{Id: id, State: state})
 				continue
 			}
-			// Its own record: engines put execution data wholesale, which would drop a field there.
-			at := nowMs()
-			d := docOf(struct {
-				ID      string `json:"id"`
-				Problem string `json:"problem"`
-				Reason  string `json:"reason"`
-				Actor   string `json:"actor"`
-				At      int64  `json:"at"`
-			}{id, *row.Problem, r.Reason, by, at})
-			if err := put(q, "problem-dismissal", d); err != nil {
+			// Its own row: engines put execution data wholesale, which would drop a field there.
+			if err := q.db().DispProblemDismiss(q.ctx(), db.DispProblemDismissParams{ExecutionID: id, ProjectID: row.ProjectID, Problem: *row.Problem, Reason: r.Reason, Actor: by}); err != nil {
 				return out, err
 			}
-			if err := put(q, "setting-change", docOf(settingChange{ID: newID(), Target: "execution:" + id, ProjectID: row.ProjectID, Field: "problem", Previous: *row.Problem, Value: "dismissed", Reason: r.Reason, Actor: by, At: at})); err != nil {
+			if err := audit(q, "execution:"+id, "problem", *row.Problem, "dismissed", auditExtra{ProjectID: row.ProjectID, Reason: r.Reason}); err != nil {
 				return out, err
 			}
 			out.Dismissed = append(out.Dismissed, id)
@@ -713,7 +692,7 @@ func init() {
 					if !still {
 						continue
 					}
-					if _, err := executionAbandon(q, id, "no host receipt for "+lostAfter.String()+" after the host lost track, the stop went unanswered, or the host kept polling without it", "fleet"); err != nil {
+					if _, err := executionAbandon(q, id, "no host receipt for "+lostAfter.String()+" after the host lost track, the stop went unanswered, or the host kept polling without it"); err != nil {
 						return err
 					}
 					n++
@@ -737,7 +716,7 @@ func init() {
 // (the outcome is unknown), pending commands settled, the parent woken, its open questions withdrawn, one audit row;
 // the caller promotes queued work once after its batch. It returns the state of an
 // execution it leaves alone ("unknown": not an agent run or host job), "" when it ended it.
-func executionAbandon(q *Request, id, reason, by string) (string, error) {
+func executionAbandon(q *Request, id, reason string) (string, error) {
 	row, err := q.db().DispAbandonRow(q.ctx(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "unknown", nil
@@ -765,7 +744,7 @@ func executionAbandon(q *Request, id, reason, by string) (string, error) {
 		if err := q.db().DispAbandonData(q.ctx(), db.DispAbandonDataParams{ID: id, Reason: reason}); err != nil {
 			return "", err
 		}
-		return "", put(q, "setting-change", docOf(settingChange{ID: newID(), Target: "execution:" + id, ProjectID: row.ProjectID, Field: "state", Previous: row.State, Value: "failed", Reason: reason, Actor: by, At: nowMs()}))
+		return "", audit(q, "execution:"+id, "state", row.State, "failed", auditExtra{ProjectID: row.ProjectID, Reason: reason})
 	}
 	e, err := get(q, id, "execution")
 	if err != nil {
@@ -791,7 +770,7 @@ func executionAbandon(q *Request, id, reason, by string) (string, error) {
 	if err := q.db().DispTotalsWallUnknown(q.ctx(), id); err != nil {
 		return "", err
 	}
-	if err := put(q, "setting-change", docOf(settingChange{ID: newID(), Target: "execution:" + id, ProjectID: strPtr(e["projectId"]), Field: "state", Previous: prev, Value: "failed", Reason: reason, Actor: by, At: now})); err != nil {
+	if err := audit(q, "execution:"+id, "state", prev, "failed", auditExtra{ProjectID: strPtr(e["projectId"]), Reason: reason}); err != nil {
 		return "", err
 	}
 	start := "start"

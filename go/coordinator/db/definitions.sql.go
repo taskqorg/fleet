@@ -946,22 +946,6 @@ func (q *Queries) DefSetScope(ctx context.Context, arg DefSetScopeParams) error 
 	return err
 }
 
-const defSettingChange = `-- name: DefSettingChange :exec
-INSERT INTO document(kind,id,data,project_id) VALUES('setting-change', $1, $2, $3)
-`
-
-type DefSettingChangeParams struct {
-	ID        string
-	Data      []byte
-	ProjectID *string
-}
-
-// The audit record of a definition change (kind setting-change; a project's carries its project).
-func (q *Queries) DefSettingChange(ctx context.Context, arg DefSettingChangeParams) error {
-	_, err := q.db.Exec(ctx, defSettingChange, arg.ID, arg.Data, arg.ProjectID)
-	return err
-}
-
 const defShippedHeads = `-- name: DefShippedHeads :many
 SELECT d.kind, d.id, d.repo_content_sha, r.content_sha AS head_sha FROM definition d
  JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head

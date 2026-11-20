@@ -66,7 +66,7 @@ test('entity_card: every kind by code or kind and id, within the caller\'s grant
   const rel = await card({kind: 'release', id: 'v1.2.3'});
   assert.equal(rel.state, 'installed'); assert.ok(rel.facts.some((f: any) => f.label === 'Hosts' && f.value === '1 of 1'), JSON.stringify(rel.facts));
   assert.equal(await status({kind: 'release', id: 'v9.0.0'}), 404, 'a tag nothing knows is no release');
-  c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES('delivery-release','delivery-release:v9.0.0','fleet','{"tag":"v9.0.0"}')`);
+  c.sql(`INSERT INTO delivery_release(id,tag,project_id,payload) VALUES('delivery-release:v9.0.0','v9.0.0','fleet','{"tag":"v9.0.0"}')`);
   const next = await card({kind: 'release', id: 'v9.0.0'});
   assert.equal(next.state, 'installing'); assert.ok(next.facts.some((f: any) => f.label === 'Hosts' && f.value === '0 of 1'));
   // An old code after a project rename still resolves, to the current code.
@@ -80,7 +80,7 @@ test('entity_card: every kind by code or kind and id, within the caller\'s grant
   assert.equal(await status({kind: 'pull_request', id: 'taskqorg/fleet#1'}), 404, 'a pull request the delivery pass has not read');
   for (const b of [{code: ''}, {code: '  '}]) assert.equal(await status(b), 400, 'an empty code is a 400, not a crash');
   // A merged pull request only the delivery history holds (a picked day on Delivery), by a zero-padded number too.
-  c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES('delivery-pr','delivery-pr:612','fleet','{"number":612,"title":"Older change","url":"https://github.com/taskqorg/fleet/pull/612","author":"alex","opened":"2026-11-10T10:00:00Z","merged":"2026-11-10T12:00:00Z","release":"v1.2.0","installed":{"coordinator":"2026-11-10T13:00:00Z"}}')`);
+  c.sql(`INSERT INTO delivery_pr(id,number,project_id,payload) VALUES('delivery-pr:612',612,'fleet','{"number":612,"title":"Older change","url":"https://github.com/taskqorg/fleet/pull/612","author":"alex","opened":"2026-11-10T10:00:00Z","merged":"2026-11-10T12:00:00Z","release":"v1.2.0","installed":{"coordinator":"2026-11-10T13:00:00Z"}}')`);
   const old = await card({kind: 'pull_request', id: 'taskqorg/fleet#0612'});
   assert.equal(old.id, 'taskqorg/fleet#612'); assert.equal(old.code, '#612'); assert.equal(old.state, 'installed'); assert.equal(old.path, '/delivery/taskqorg~fleet~612');
   assert.ok(old.facts.some((f: any) => f.label === 'Author' && f.value === 'alex'));

@@ -364,7 +364,7 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 	if err := put(q, "session", s); err != nil {
 		return nil, err
 	}
-	if err := put(q, "setting-change", doc{"id": newID(), "target": "session:" + sid, "field": "archivedAt", "previous": nil, "value": s["archivedAt"], "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
+	if err := audit(q, "session:"+sid, "archivedAt", nil, s["archivedAt"], auditExtra{}); err != nil {
 		return nil, err
 	}
 	if last == nil {
@@ -636,7 +636,7 @@ func sessionUnarchive(q *Request, r *contract.SessionUnarchiveRequest) (contract
 			return none, err
 		}
 	}
-	if err := put(q, "setting-change", doc{"id": newID(), "target": "session:" + sid, "field": "archivedAt", "previous": at, "value": nil, "reason": reason, "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
+	if err := audit(q, "session:"+sid, "archivedAt", at, nil, auditExtra{Reason: reason}); err != nil {
 		return none, err
 	}
 	return contract.SessionUnarchiveReply{SessionId: sid, TeardownsWithdrawn: int64(len(pending))}, nil

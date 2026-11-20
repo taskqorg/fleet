@@ -242,31 +242,6 @@ func notifyHolder(q *Request, holder, text string) error {
 	return q.db().AddressQuestion(q.ctx(), db.AddressQuestionParams{Holder: holder, ID: id})
 }
 
-// hostChange: the setting-change record of a host setting (document kind setting-change, no project). Holder is left
-// out for a change of no host's row.
-type hostChange struct {
-	ID         string          `json:"id"`
-	Target     string          `json:"target"`
-	Holder     json.RawMessage `json:"holder,omitempty"`
-	Field      string          `json:"field"`
-	Previous   json.RawMessage `json:"previous,omitempty"`
-	Value      json.RawMessage `json:"value"`
-	Actor      string          `json:"actor"`
-	OnBehalfOf string          `json:"onBehalfOf,omitempty"`
-	At         int64           `json:"at"`
-	Note       *string         `json:"note,omitempty"`
-}
-
-// recordHostChange writes c with a new id and now; an agent's change acts for its director (fleet-pm-agent.md §1), as
-// put does for every setting change.
-func recordHostChange(q *Request, c hostChange) error {
-	c.ID, c.At = newID(), nowMs()
-	if q.agent != "" {
-		c.Actor, c.OnBehalfOf = q.agent, q.person.Email
-	}
-	return q.db().SettingChangeInsert(q.ctx(), db.SettingChangeInsertParams{ID: c.ID, Data: jsonBytes(c)})
-}
-
 // harnessPermissions: a host's harnesses setting, {<name>: {allowed}}; ok false when raw is not one.
 func harnessPermissions(raw json.RawMessage) (map[string]json.RawMessage, bool) {
 	var m map[string]json.RawMessage
@@ -449,11 +424,7 @@ func hostsUpdate(q *Request, b *contract.HostsUpdateRequest) (contract.HostsUpda
 			continue
 		}
 		changed = append(changed, f.field)
-		prev := f.previous
-		if prev == nil {
-			prev = json.RawMessage("null")
-		}
-		if err := recordHostChange(q, hostChange{Target: "host:" + h.ID, Holder: jsonBytes(h.Holder), Field: f.field, Previous: prev, Value: f.next, Actor: q.person.Email}); err != nil {
+		if err := audit(q, "host:"+h.ID, f.field, f.previous, f.next, auditExtra{Holder: deref(h.Holder)}); err != nil {
 			return out, err
 		}
 	}

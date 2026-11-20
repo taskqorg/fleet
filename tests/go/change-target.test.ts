@@ -13,12 +13,12 @@ test('committed setting target survives audit deletion, rollback and legacy rows
   let cursor=(await call('member@trial.test','changes_since')).cursor;
   await call('owner@trial.test','person_settings_set',{email:'member@trial.test',navCollapsed:true});
   const rows=await read(cursor,r=>r.kind==='setting-change'&&r.settingTarget==='person:member@trial.test'),personal=rows.find((r:any)=>r.kind==='setting-change'&&r.settingTarget==='person:member@trial.test');assert.ok(personal);
-  const audit=JSON.parse(c.sql(`SELECT data FROM document WHERE kind='setting-change' AND id=${lit(personal.id)}`));assert.equal(audit.actor,'owner@trial.test');assert.equal(audit.holder,'member@trial.test');
+  const audit=JSON.parse(c.sql(`SELECT json_build_object('actor',actor,'holder',holder) FROM audit_log WHERE id=${lit(personal.id)}`));assert.equal(audit.actor,'owner@trial.test');assert.equal(audit.holder,'member@trial.test');
   assert.equal((await call('outsider@trial.test','changes_since',{cursor})).changes.some((r:any)=>r.id===personal.id),false);
   cursor=(await call('member@trial.test','changes_since')).cursor;
-  c.sql(`DELETE FROM document WHERE kind='setting-change' AND id=${lit(personal.id)}`);
+  c.sql(`DELETE FROM audit_log WHERE id=${lit(personal.id)}`);
   const deleted=(await read(cursor,r=>r.id===personal.id&&r.op==='D')).find((r:any)=>r.id===personal.id&&r.op==='D');assert.equal(deleted?.settingTarget,'person:member@trial.test','OLD audit data remains authoritative after body removal');
-  c.sql(`BEGIN; INSERT INTO document(kind,id,data) VALUES('setting-change','rolled-target','{"target":"person:member@trial.test","holder":"member@trial.test"}'); ROLLBACK`);assert.equal(c.sql("SELECT count(*) FROM change WHERE id='rolled-target'").trim(),'0');
+  c.sql(`BEGIN; INSERT INTO audit_log(id,target,field,actor,holder) VALUES('rolled-target','person:member@trial.test','x','owner@trial.test','member@trial.test'); ROLLBACK`);assert.equal(c.sql("SELECT count(*) FROM change WHERE id='rolled-target'").trim(),'0');
   cursor=(await call('member@trial.test','changes_since')).cursor;
   c.sql("BEGIN; INSERT INTO change(kind,id,op,holder) VALUES('setting-change','legacy-target','I','member@trial.test'); SELECT fleet_enqueue_wake('fleet_change',''); COMMIT");
   const legacy=(await read(cursor,r=>r.id==='legacy-target')).find((r:any)=>r.id==='legacy-target');assert.ok(legacy);assert.ok(!('settingTarget'in legacy),'legacy metadata is unknown, not fabricated');

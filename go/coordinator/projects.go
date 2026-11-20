@@ -447,7 +447,7 @@ func catalogueBase(q *Request, id string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	recs, err := all(q, "project-recommendation", doc{"projectId": id})
+	recs, err := records(q.db().ProjectRecommendation(q.ctx(), id))
 	if err != nil {
 		return nil, err
 	}
@@ -555,7 +555,7 @@ func init() {
 			return contract.RecommendationSetReply{}, fail(400, "Method unavailable")
 		}
 		rec := doc{"id": "recommendation:" + r.ProjectId, "projectId": r.ProjectId, "methodId": r.MethodId, "selectedAt": nowMs(), "actor": actor(q, "operator")}
-		if err := put(q, "project-recommendation", rec); err != nil {
+		if err := q.db().ProjectRecommendationSet(q.ctx(), db.ProjectRecommendationSetParams{ID: astr(rec["id"]), ProjectID: r.ProjectId, MethodID: r.MethodId, Actor: astr(rec["actor"])}); err != nil {
 			return contract.RecommendationSetReply{}, err
 		}
 		return replyAs[contract.RecommendationSetReply](rec, nil)

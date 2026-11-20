@@ -228,7 +228,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 	if byKey[strings.ToLower(githubPublicRepo)] != nil {
 		if rerr := runTx(ctx, a, nil, false, "", func(q *Request) error {
 			recordedUI = nil // a retried transaction starts over
-			rs, err := rows(q, "SELECT data FROM document WHERE kind='delivery-release' AND id LIKE 'delivery-release:ui-%'")
+			rs, err := rows(q, "SELECT payload FROM delivery_release WHERE tag LIKE 'ui-%'")
 			for _, r := range rs {
 				var x contract.DeliveryRelease
 				if json.Unmarshal(jsonBytes(r), &x) == nil && uiOnlyRelease(x.Tag) {
@@ -337,8 +337,8 @@ func deliveryPass(ctx context.Context, a *App) error {
 	deliveryMu.Lock()
 	deliveryLast = next
 	deliveryMu.Unlock()
-	// Watchers learn of a change through the change stream: one small document per project whose rows changed, so a
-	// pass that changes nothing writes nothing (fleet_change maps kind delivery-state to the change kind delivery).
+	// Watchers learn of a change through the change stream: one small delivery_state row per project whose rows changed,
+	// so a pass that changes nothing writes nothing (fleet_change maps the row to the change kind delivery).
 	changed := map[string]bool{}
 	same := func(p, r *deliveryRepo) bool {
 		return p.problem == r.problem && p.landing == r.landing && string(jsonBytes(p.items)) == string(jsonBytes(r.items))
@@ -360,8 +360,8 @@ func deliveryPass(ctx context.Context, a *App) error {
 	if len(changed) > 0 {
 		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 			for id := range changed {
-				if err := exec(q, `INSERT INTO document(kind,id,project_id,data) VALUES('delivery-state',$1,$2,$3::jsonb)
-					ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data,updated_at=now()`, "delivery-state:"+id, id, jsonBytes(doc{"refreshedAt": next.refreshedAt})); err != nil {
+				if err := exec(q, `INSERT INTO delivery_state(id,project_id,refreshed_at) VALUES($1,$2,$3)
+					ON CONFLICT (id) DO UPDATE SET refreshed_at=EXCLUDED.refreshed_at,updated_at=now()`, "delivery-state:"+id, id, next.refreshedAt); err != nil {
 					return err
 				}
 			}
@@ -601,34 +601,32 @@ func versionLess(a, b string) bool {
 	return len(x) < len(y)
 }
 
-// deliverySamples appends this read's counts to the day's sample document of each repository and returns the last 24
+// deliverySamples records this read's counts of each repository (one delivery_sample row each) and returns the last 24
 // hours. Written without a change row: nobody watches samples live, the page reads them with the status.
 func deliverySamples(ctx context.Context, a *App, counts map[string]map[string]int64, now time.Time) ([]contract.DeliverySample, error) {
 	out := []contract.DeliverySample{}
-	at, from := now.Format(time.RFC3339), now.Add(-24*time.Hour).Format(time.RFC3339)
 	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		for k, c := range counts { // per "<first project> <owner/repo>": one sample per repository
 			p, repo, _ := strings.Cut(k, " ")
-			id := "delivery-samples:" + p + ":" + repo + ":" + now.Format("2006-01-02")
-			if err := exec(q, `INSERT INTO document(kind,id,project_id,data) VALUES('delivery-samples',$1,$2,jsonb_build_object('samples',jsonb_build_array($3::jsonb)))
-				ON CONFLICT (id) DO UPDATE SET data=jsonb_set(document.data,'{samples}',document.data->'samples' || $3::jsonb),updated_at=now()`,
-				id, p, jsonBytes(contract.DeliverySample{At: at, ProjectId: p, Repo: &repo, Counts: c})); err != nil {
+			if err := exec(q, "INSERT INTO delivery_sample(project_id,repo,at,payload) VALUES($1,$2,$3,$4::jsonb)", p, repo, now, jsonBytes(c)); err != nil {
 				return err
 			}
 		}
-		if err := exec(q, "DELETE FROM document WHERE kind='delivery-samples' AND updated_at < now() - interval '7 days'"); err != nil {
+		if err := exec(q, "DELETE FROM delivery_sample WHERE at < now() - interval '7 days'"); err != nil {
 			return err
 		}
-		rs, err := rows(q, "SELECT data FROM document WHERE kind='delivery-samples' AND updated_at >= now() - interval '25 hours'")
+		rs, err := rowsOf(q, "SELECT project_id, repo, at, payload FROM delivery_sample WHERE at >= $1 ORDER BY at, seq", now.Add(-24*time.Hour))
 		for _, r := range rs {
-			var d struct{ Samples []contract.DeliverySample }
-			if json.Unmarshal(jsonBytes(r), &d) == nil {
-				for _, s := range d.Samples {
-					if s.At >= from {
-						out = append(out, s)
-					}
-				}
+			var counts map[string]int64
+			if json.Unmarshal(jsonBytes(r["payload"]), &counts) != nil {
+				continue
 			}
+			at, _ := time.Parse(time.RFC3339Nano, astr(r["at"]))
+			s := contract.DeliverySample{At: at.UTC().Format(time.RFC3339), ProjectId: astr(r["project_id"]), Counts: counts}
+			if repo := astr(r["repo"]); repo != "" {
+				s.Repo = &repo
+			}
+			out = append(out, s)
 		}
 		return err
 	})

@@ -57,23 +57,48 @@ SELECT data, state::text AS state FROM execution WHERE id=$1 AND kind IN ('agent
 -- The first cause wins: a later event does not replace the problem an execution already records.
 UPDATE execution SET problem= @problem WHERE id= @id AND problem IS NULL;
 
+-- Transport conflicts and their audit (migration 82): a record is the row as transport_inspect shows it.
+
 -- name: EventsTransportConflict :one
-SELECT data FROM document WHERE kind='transport-conflict' AND id=$1;
+SELECT (jsonb_build_object('id', id, 'executionId', coalesce(execution_id, ''), 'hostId', coalesce(host_id, ''), 'originalEventId', coalesce(original_event_id, ''),
+ 'originalSequence', coalesce(original_sequence, 0), 'frameSha256', coalesce(frame_sha256, ''), 'original', payload, 'collisionEventId', coalesce(collision_event_id, ''),
+ 'supported', supported, 'state', state, 'observedAt', coalesce(observed_at, 0))
+ || jsonb_strip_nulls(jsonb_build_object('reservedSequence', reserved_sequence, 'authorizedAt', authorized_at, 'deliveredAt', delivered_at)))::jsonb FROM transport_conflict WHERE id=$1;
 
 -- name: EventsTransportConflicts :many
-SELECT data FROM document WHERE kind='transport-conflict' AND data->>'executionId'= @execution_id::text ORDER BY seq;
+SELECT (jsonb_build_object('id', id, 'executionId', coalesce(execution_id, ''), 'hostId', coalesce(host_id, ''), 'originalEventId', coalesce(original_event_id, ''),
+ 'originalSequence', coalesce(original_sequence, 0), 'frameSha256', coalesce(frame_sha256, ''), 'original', payload, 'collisionEventId', coalesce(collision_event_id, ''),
+ 'supported', supported, 'state', state, 'observedAt', coalesce(observed_at, 0))
+ || jsonb_strip_nulls(jsonb_build_object('reservedSequence', reserved_sequence, 'authorizedAt', authorized_at, 'deliveredAt', delivered_at)))::jsonb FROM transport_conflict WHERE execution_id= @execution_id::text ORDER BY seq;
 
 -- name: EventsTransportAudits :many
 -- The transport audit of an execution, or with one request id (each filter optional).
-SELECT data FROM document WHERE kind='transport-audit'
- AND (sqlc.narg(execution_id)::text IS NULL OR data->>'executionId'=sqlc.narg(execution_id))
- AND (sqlc.narg(request_id)::text IS NULL OR data->>'requestId'=sqlc.narg(request_id))
+SELECT (jsonb_build_object('id', id, 'executionId', coalesce(execution_id, ''), 'conflictId', coalesce(conflict_id, ''), 'actor', actor, 'operation', operation,
+ 'at', coalesce(at, 0), 'nativeEffectReplayed', native_effect_replayed) || jsonb_strip_nulls(jsonb_build_object('requestId', request_id, 'signature', signature)))::jsonb FROM transport_audit
+WHERE (sqlc.narg(execution_id)::text IS NULL OR execution_id=sqlc.narg(execution_id))
+ AND (sqlc.narg(request_id)::text IS NULL OR request_id=sqlc.narg(request_id))
 ORDER BY seq;
 
--- name: EventsTransportPut :exec
--- A transport conflict or audit record (no project: they belong to an execution's transport).
-INSERT INTO document(kind, id, data, project_id) VALUES (@kind, @id, @data, NULL)
-ON CONFLICT (id) DO UPDATE SET data=excluded.data, project_id=excluded.project_id, updated_at=now() WHERE document.kind=excluded.kind;
+-- name: EventsTransportConflictPut :exec
+-- A transport conflict record (no project: it belongs to an execution's transport).
+INSERT INTO transport_conflict(id, execution_id, host_id, original_event_id, original_sequence, frame_sha256, payload, collision_event_id, supported, state,
+ observed_at, reserved_sequence, authorized_at, delivered_at)
+SELECT d->>'id', nullif(d->>'executionId', ''), nullif(d->>'hostId', ''), nullif(d->>'originalEventId', ''), (d->>'originalSequence')::bigint, nullif(d->>'frameSha256', ''),
+ d->'original', nullif(d->>'collisionEventId', ''), coalesce((d->>'supported')::boolean, false), coalesce(d->>'state', ''), (d->>'observedAt')::bigint,
+ (d->>'reservedSequence')::float8, (d->>'authorizedAt')::bigint, (d->>'deliveredAt')::bigint
+FROM (SELECT @data::jsonb AS d) x
+ON CONFLICT (id) DO UPDATE SET execution_id=excluded.execution_id, host_id=excluded.host_id, original_event_id=excluded.original_event_id,
+ original_sequence=excluded.original_sequence, frame_sha256=excluded.frame_sha256, payload=excluded.payload, collision_event_id=excluded.collision_event_id,
+ supported=excluded.supported, state=excluded.state, observed_at=excluded.observed_at, reserved_sequence=excluded.reserved_sequence,
+ authorized_at=excluded.authorized_at, delivered_at=excluded.delivered_at, updated_at=now();
+
+-- name: EventsTransportAuditPut :exec
+-- A transport audit record (kept: it outlives the execution).
+INSERT INTO transport_audit(id, execution_id, conflict_id, request_id, signature, actor, operation, at, native_effect_replayed)
+SELECT d->>'id', nullif(d->>'executionId', ''), nullif(d->>'conflictId', ''), nullif(d->>'requestId', ''), nullif(d->>'signature', ''), coalesce(d->>'actor', ''),
+ coalesce(d->>'operation', ''), (d->>'at')::bigint, coalesce((d->>'nativeEffectReplayed')::boolean, false)
+FROM (SELECT @data::jsonb AS d) x
+ON CONFLICT (id) DO NOTHING;
 
 -- name: EventsCountOfExecution :one
 -- How many events and deltas an execution has stored.

@@ -17,7 +17,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"fleet/contract"
-	"fleet/coordinator/db"
 )
 
 type cardReader func(q *Request, id string) (*contract.EntityCardReply, error)
@@ -361,7 +360,7 @@ func cardPullRequestHistory(q *Request, repo string, number int64) (*contract.En
 	if !strings.EqualFold(repo, ciOwner+"/"+ciRepo) || deliveryMay(q) != nil {
 		return nil, nil
 	}
-	d, err := cardRow(q.db().EntDeliveryRecord(q.ctx(), db.EntDeliveryRecordParams{ID: "delivery-pr:" + strconv.FormatInt(number, 10), Kind: "delivery-pr"}))
+	d, err := cardRow(q.db().EntDeliveryPr(q.ctx(), number))
 	if d == nil || err != nil {
 		return nil, err
 	}
@@ -409,7 +408,7 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 			installing = installing || it.Stage != contract.DeliveryStageInstalled
 		}
 	}
-	rec, err := cardRow(q.db().EntDeliveryRecord(q.ctx(), db.EntDeliveryRecordParams{ID: "delivery-release:" + tag, Kind: "delivery-release"}))
+	rec, err := cardRow(q.db().EntDeliveryRelease(q.ctx(), tag))
 	if err != nil {
 		return nil, err
 	}

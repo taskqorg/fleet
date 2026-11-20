@@ -3957,3 +3957,332 @@ CREATE POLICY project_scope ON pipeline_run USING (EXISTS (SELECT 1 FROM executi
 ALTER TABLE pipeline_step ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pipeline_step FORCE ROW LEVEL SECURITY;
 CREATE POLICY project_scope ON pipeline_step USING (EXISTS (SELECT 1 FROM execution e WHERE e.id = run_id));
+-- migration 82: the last document kinds outside pipelines and Lab (docs/designs/fleet-standard.md S1, stage 8a). The
+-- setting-change audit becomes audit_log, written only through audit() (audit.go): its target, field, previous and new
+-- value, actor (and the director an agent acts for), holder and project are columns; payload holds what else a change
+-- says (a reason, a note). Delivery's state ping, samples, history records (pull requests, merge-queue runs, releases,
+-- baselines, the check, the settings and the pass's own state), uploads, purge tasks, problem dismissals,
+-- reconciliations, project recommendations and the transport conflicts and audit get tables. The pass's retry maps
+-- (runs whose jobs read failed, pull requests whose PR CI lookup failed or found nothing yet) become rows with the
+-- work kit's attempts, next_attempt_at and last_error. Artifact documents (no longer written since the artifact table)
+-- and stale delegation documents (a delegation is execution.delegation) are deleted.
+SELECT set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+CREATE TABLE audit_log(
+ id text PRIMARY KEY,
+ target text NOT NULL,
+ field text NOT NULL,
+ previous jsonb NULL,
+ value jsonb NULL,
+ actor text NOT NULL,
+ on_behalf_of text NULL,
+ holder text NULL,
+ project_id text NULL,
+ at timestamptz NOT NULL DEFAULT now(),
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq')
+);
+CREATE INDEX audit_log_seq ON audit_log(seq);
+CREATE INDEX audit_log_target ON audit_log(target, seq);
+CREATE INDEX audit_log_target_kind ON audit_log(split_part(target, ':', 1), seq);
+CREATE TABLE delivery_state(
+ id text PRIMARY KEY,
+ project_id text NOT NULL,
+ refreshed_at text NULL,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE delivery_sample(
+ seq bigserial PRIMARY KEY,
+ project_id text NOT NULL,
+ repo text NULL,
+ at timestamptz NOT NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX delivery_sample_at ON delivery_sample(at);
+CREATE TABLE delivery_pr(
+ id text PRIMARY KEY,
+ number bigint NOT NULL UNIQUE,
+ payload jsonb NOT NULL,
+ attempts int NOT NULL DEFAULT 0,
+ next_attempt_at timestamptz NULL,
+ last_error text NULL,
+ project_id text NOT NULL,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE delivery_run(
+ id text PRIMARY KEY,
+ run_id bigint NOT NULL UNIQUE,
+ payload jsonb NOT NULL,
+ project_id text NOT NULL,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE delivery_run_read(
+ run_id bigint PRIMARY KEY,
+ payload jsonb NOT NULL,
+ attempts int NOT NULL DEFAULT 0,
+ next_attempt_at timestamptz NOT NULL DEFAULT now(),
+ last_error text NULL,
+ project_id text NOT NULL,
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE delivery_release(
+ id text PRIMARY KEY,
+ tag text NOT NULL UNIQUE,
+ payload jsonb NOT NULL,
+ project_id text NOT NULL,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE delivery_baseline(
+ id text PRIMARY KEY,
+ name text NOT NULL UNIQUE,
+ payload jsonb NOT NULL,
+ project_id text NOT NULL,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE delivery_check(
+ id text PRIMARY KEY CHECK (id = 'delivery-check'),
+ payload jsonb NOT NULL,
+ project_id text NOT NULL,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE delivery_settings(
+ id text PRIMARY KEY CHECK (id = 'delivery-settings'),
+ ratio float8 NOT NULL,
+ min_samples bigint NOT NULL,
+ min_delta_ms bigint NOT NULL,
+ baseline text NOT NULL DEFAULT '',
+ project_id text NOT NULL,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE delivery_history_state(
+ id text PRIMARY KEY CHECK (id = 'delivery-history'),
+ backfilled_from text NULL,
+ backfilled boolean NOT NULL DEFAULT false,
+ through text NULL,
+ pulls_updated text NULL,
+ installs_from text NULL,
+ refreshed_at text NULL,
+ problem text NULL,
+ checked_release text NULL,
+ checked_at text NULL,
+ project_id text NOT NULL,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE delivery_ui_seen(
+ version text PRIMARY KEY,
+ seen_at text NOT NULL,
+ project_id text NOT NULL,
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE upload(
+ id text PRIMARY KEY,
+ person text NOT NULL,
+ session_id text NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ project_id text NULL,
+ received bigint NOT NULL DEFAULT 0,
+ multipart text NULL,
+ artifact_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX upload_updated ON upload(updated_at);
+CREATE INDEX upload_session ON upload(session_id) WHERE session_id IS NOT NULL;
+CREATE TABLE purge_task(
+ id text PRIMARY KEY,
+ store_id text NULL,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq')
+);
+CREATE TABLE problem_dismissal(
+ execution_id text PRIMARY KEY REFERENCES execution(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ project_id text NULL,
+ problem text NOT NULL,
+ reason text NOT NULL DEFAULT '',
+ actor text NOT NULL,
+ at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE reconciliation(
+ id text PRIMARY KEY,
+ at timestamptz NOT NULL DEFAULT now(),
+ payload jsonb NOT NULL DEFAULT '[]',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq')
+);
+CREATE INDEX reconciliation_seq ON reconciliation(seq);
+CREATE TABLE project_recommendation(
+ id text PRIMARY KEY,
+ project_id text NOT NULL UNIQUE,
+ method_id text NOT NULL,
+ selected_at timestamptz NOT NULL DEFAULT now(),
+ actor text NOT NULL,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+-- original is the retained frame as the host sent it (an open payload).
+CREATE TABLE transport_conflict(
+ id text PRIMARY KEY,
+ execution_id text NULL,
+ host_id text NULL,
+ original_event_id text NULL,
+ original_sequence bigint NULL,
+ frame_sha256 text NULL,
+ payload jsonb NULL,
+ collision_event_id text NULL,
+ supported boolean NOT NULL DEFAULT false,
+ state text NOT NULL DEFAULT '',
+ observed_at bigint NULL,
+ reserved_sequence float8 NULL,
+ authorized_at bigint NULL,
+ delivered_at bigint NULL,
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX transport_conflict_execution ON transport_conflict(execution_id, seq);
+CREATE TABLE transport_audit(
+ id text PRIMARY KEY,
+ execution_id text NULL,
+ conflict_id text NULL,
+ request_id text NULL,
+ signature text NULL,
+ actor text NOT NULL DEFAULT '',
+ operation text NOT NULL DEFAULT '',
+ at bigint NULL,
+ native_effect_replayed boolean NOT NULL DEFAULT false,
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq')
+);
+CREATE INDEX transport_audit_execution ON transport_audit(execution_id, seq);
+CREATE INDEX transport_audit_request ON transport_audit(request_id) WHERE request_id IS NOT NULL;
+CREATE OR REPLACE FUNCTION pg_temp.str(v jsonb) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN jsonb_typeof(v) = 'string' THEN v #>> '{}' END $$;
+CREATE OR REPLACE FUNCTION pg_temp.num82(v jsonb) RETURNS float8 LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN jsonb_typeof(v) = 'number' THEN (v #>> '{}')::float8 END $$;
+CREATE OR REPLACE FUNCTION pg_temp.ms(v jsonb) RETURNS timestamptz LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN jsonb_typeof(v) = 'number' THEN to_timestamp((v #>> '{}')::float8 / 1000) END $$;
+CREATE OR REPLACE FUNCTION pg_temp.ts82(v text) RETURNS timestamptz LANGUAGE plpgsql IMMUTABLE AS $$ BEGIN RETURN v::timestamptz; EXCEPTION WHEN OTHERS THEN RETURN NULL; END $$;
+INSERT INTO audit_log(id, target, field, previous, value, actor, on_behalf_of, holder, project_id, at, payload, seq)
+SELECT d.id, coalesce(pg_temp.str(d.data->'target'), ''), coalesce(pg_temp.str(d.data->'field'), ''), d.data->'previous', d.data->'value',
+ coalesce(pg_temp.str(d.data->'actor'), ''), pg_temp.str(d.data->'onBehalfOf'), pg_temp.str(d.data->'holder'), d.project_id,
+ coalesce(pg_temp.ms(d.data->'at'), d.updated_at), d.data - '{id,target,field,previous,value,actor,onBehalfOf,holder,projectId,at}'::text[], d.seq
+FROM document d WHERE d.kind = 'setting-change';
+INSERT INTO delivery_state(id, project_id, refreshed_at, updated_at, tombstoned_at)
+SELECT d.id, d.project_id, pg_temp.str(d.data->'refreshedAt'), d.updated_at, d.tombstoned_at FROM document d WHERE d.kind = 'delivery-state' AND d.project_id IS NOT NULL;
+INSERT INTO delivery_sample(project_id, repo, at, payload, tombstoned_at)
+SELECT coalesce(pg_temp.str(s->'projectId'), d.project_id), pg_temp.str(s->'repo'), pg_temp.ts82(s->>'at'), coalesce(s->'counts', '{}'), d.tombstoned_at
+FROM document d, jsonb_array_elements(CASE WHEN jsonb_typeof(d.data->'samples') = 'array' THEN d.data->'samples' ELSE '[]' END) s
+WHERE d.kind = 'delivery-samples' AND pg_temp.ts82(s->>'at') IS NOT NULL AND coalesce(pg_temp.str(s->'projectId'), d.project_id) IS NOT NULL
+ORDER BY d.seq;
+INSERT INTO delivery_pr(id, number, payload, project_id, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.num82(d.data->'number')::bigint, d.data, coalesce(d.project_id, 'fleet'), d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'delivery-pr' AND pg_temp.num82(d.data->'number') IS NOT NULL;
+INSERT INTO delivery_run(id, run_id, payload, project_id, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.num82(d.data->'id')::bigint, d.data, coalesce(d.project_id, 'fleet'), d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'delivery-run' AND pg_temp.num82(d.data->'id') IS NOT NULL;
+INSERT INTO delivery_release(id, tag, payload, project_id, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'tag'), d.data, coalesce(d.project_id, 'fleet'), d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'delivery-release' AND pg_temp.str(d.data->'tag') IS NOT NULL;
+INSERT INTO delivery_baseline(id, name, payload, project_id, updated_at, tombstoned_at)
+SELECT d.id, substr(d.id, length('delivery-baseline:') + 1), d.data, coalesce(d.project_id, 'fleet'), d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'delivery-baseline' AND d.id LIKE 'delivery-baseline:%';
+INSERT INTO delivery_check(id, payload, project_id, updated_at, tombstoned_at)
+SELECT d.id, d.data, coalesce(d.project_id, 'fleet'), d.updated_at, d.tombstoned_at FROM document d WHERE d.kind = 'delivery-check' AND d.id = 'delivery-check';
+INSERT INTO delivery_settings(id, ratio, min_samples, min_delta_ms, baseline, project_id, updated_at, tombstoned_at)
+SELECT d.id, coalesce(pg_temp.num82(d.data->'ratio'), 1.5), coalesce(pg_temp.num82(d.data->'minSamples'), 5)::bigint, coalesce(pg_temp.num82(d.data->'minDeltaMs'), 60000)::bigint,
+ coalesce(pg_temp.str(d.data->'baseline'), ''), coalesce(d.project_id, 'fleet'), d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'delivery-settings' AND d.id = 'delivery-settings';
+INSERT INTO delivery_history_state(id, backfilled_from, backfilled, through, pulls_updated, installs_from, refreshed_at, problem, checked_release, checked_at, project_id, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'backfilledFrom'), coalesce((d.data->>'backfilled')::boolean, false), pg_temp.str(d.data->'through'), pg_temp.str(d.data->'pullsUpdated'),
+ pg_temp.str(d.data->'installsFrom'), pg_temp.str(d.data->'refreshedAt'), pg_temp.str(d.data->'problem'), pg_temp.str(d.data->'checkedRelease'), pg_temp.str(d.data->'checkedAt'),
+ coalesce(d.project_id, 'fleet'), d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'delivery-history' AND d.id = 'delivery-history';
+INSERT INTO delivery_ui_seen(version, seen_at, project_id)
+SELECT u.key, u.value #>> '{}', coalesce(d.project_id, 'fleet')
+FROM document d, jsonb_each(CASE WHEN jsonb_typeof(d.data->'uiSeen') = 'object' THEN d.data->'uiSeen' ELSE '{}' END) u
+WHERE d.kind = 'delivery-history' AND d.id = 'delivery-history' AND jsonb_typeof(u.value) = 'string';
+INSERT INTO delivery_run_read(run_id, payload, attempts, project_id)
+SELECT DISTINCT ON (pg_temp.num82(x->'run'->'id')) pg_temp.num82(x->'run'->'id')::bigint, x->'run', coalesce(pg_temp.num82(x->'tries'), 0)::int, coalesce(d.project_id, 'fleet')
+FROM document d, jsonb_array_elements(CASE WHEN jsonb_typeof(d.data->'retryRuns') = 'array' THEN d.data->'retryRuns' ELSE '[]' END) x
+WHERE d.kind = 'delivery-history' AND d.id = 'delivery-history' AND pg_temp.num82(x->'run'->'id') IS NOT NULL;
+-- ciRetry: failed PR CI lookups; ciTried: the last lookup while none was found, so the next is due an hour later.
+UPDATE delivery_pr p SET attempts = coalesce(pg_temp.num82(d.data->'ciRetry'->(p.number::text)), 0)::int,
+ next_attempt_at = pg_temp.ts82(d.data->'ciTried'->>(p.number::text)) + interval '1 hour'
+FROM document d WHERE d.kind = 'delivery-history' AND d.id = 'delivery-history'
+ AND (d.data->'ciRetry' ? p.number::text OR d.data->'ciTried' ? p.number::text);
+INSERT INTO upload(id, person, session_id, project_id, received, multipart, artifact_id, payload, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'person'), pg_temp.str(d.data->'sessionId'), d.project_id, coalesce(pg_temp.num82(d.data->'received'), 0)::bigint,
+ pg_temp.str(d.data->'multipart'), pg_temp.str(d.data->'artifactId'), d.data - '{id,person,sessionId,projectId,received,multipart,artifactId}'::text[], d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'upload' AND pg_temp.str(d.data->'person') IS NOT NULL
+ AND (d.data->>'sessionId' IS NULL OR EXISTS (SELECT 1 FROM session s WHERE s.id = d.data->>'sessionId'));
+INSERT INTO purge_task(id, store_id, created_at, payload, seq)
+SELECT d.id, pg_temp.str(d.data->'storeId'), coalesce(pg_temp.ms(d.data->'createdAt'), d.updated_at), d.data - '{id,storeId,createdAt}'::text[], d.seq
+FROM document d WHERE d.kind = 'purge-task';
+INSERT INTO problem_dismissal(execution_id, project_id, problem, reason, actor, at, tombstoned_at)
+SELECT d.id, e.project_id, coalesce(pg_temp.str(d.data->'problem'), ''), coalesce(pg_temp.str(d.data->'reason'), ''), coalesce(pg_temp.str(d.data->'actor'), ''),
+ coalesce(pg_temp.ms(d.data->'at'), d.updated_at), e.tombstoned_at
+FROM document d JOIN execution e ON e.id = d.id WHERE d.kind = 'problem-dismissal';
+INSERT INTO reconciliation(id, at, payload, seq)
+SELECT d.id, coalesce(pg_temp.ms(d.data->'at'), d.updated_at), coalesce(d.data->'items', '[]'), d.seq FROM document d WHERE d.kind = 'reconciliation';
+INSERT INTO project_recommendation(id, project_id, method_id, selected_at, actor, updated_at, tombstoned_at)
+SELECT DISTINCT ON (d.data->>'projectId') d.id, pg_temp.str(d.data->'projectId'), pg_temp.str(d.data->'methodId'), coalesce(pg_temp.ms(d.data->'selectedAt'), d.updated_at),
+ coalesce(pg_temp.str(d.data->'actor'), ''), d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'project-recommendation' AND pg_temp.str(d.data->'projectId') IS NOT NULL AND pg_temp.str(d.data->'methodId') IS NOT NULL
+ORDER BY d.data->>'projectId', d.seq DESC;
+INSERT INTO transport_conflict(id, execution_id, host_id, original_event_id, original_sequence, frame_sha256, payload, collision_event_id, supported, state,
+ observed_at, reserved_sequence, authorized_at, delivered_at, seq, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'executionId'), pg_temp.str(d.data->'hostId'), pg_temp.str(d.data->'originalEventId'), pg_temp.num82(d.data->'originalSequence')::bigint,
+ pg_temp.str(d.data->'frameSha256'), d.data->'original', pg_temp.str(d.data->'collisionEventId'), coalesce((d.data->>'supported')::boolean, false), coalesce(pg_temp.str(d.data->'state'), ''),
+ pg_temp.num82(d.data->'observedAt')::bigint, pg_temp.num82(d.data->'reservedSequence'), pg_temp.num82(d.data->'authorizedAt')::bigint, pg_temp.num82(d.data->'deliveredAt')::bigint,
+ d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'transport-conflict';
+INSERT INTO transport_audit(id, execution_id, conflict_id, request_id, signature, actor, operation, at, native_effect_replayed, seq)
+SELECT d.id, pg_temp.str(d.data->'executionId'), pg_temp.str(d.data->'conflictId'), pg_temp.str(d.data->'requestId'), pg_temp.str(d.data->'signature'),
+ coalesce(pg_temp.str(d.data->'actor'), ''), coalesce(pg_temp.str(d.data->'operation'), ''), pg_temp.num82(d.data->'at')::bigint, coalesce((d.data->>'nativeEffectReplayed')::boolean, false), d.seq
+FROM document d WHERE d.kind = 'transport-audit';
+SET CONSTRAINTS ALL IMMEDIATE;
+ALTER TABLE document DISABLE TRIGGER document_change;
+DELETE FROM document WHERE kind IN ('setting-change', 'delivery-state', 'delivery-samples', 'delivery-pr', 'delivery-run', 'delivery-release', 'delivery-baseline',
+ 'delivery-check', 'delivery-settings', 'delivery-history', 'upload', 'purge-task', 'problem-dismissal', 'reconciliation', 'project-recommendation',
+ 'transport-conflict', 'transport-audit', 'artifact', 'delegation');
+ALTER TABLE document ENABLE TRIGGER document_change;
+ALTER TABLE document DROP CONSTRAINT document_moved_kind;
+ALTER TABLE document ADD CONSTRAINT document_moved_kind CHECK (kind NOT IN ('session', 'message', 'event', 'event-delta', 'queued-message', 'command', 'handoff', 'session-fork', 'session-transition', 'worker-done', 'host', 'host-observation', 'watch', 'managed-account', 'account-inspection', 'account-check', 'account-catalogue', 'account-action', 'api-connection', 'connection-key', 'run-token', 'secret', 'person-setting',
+ 'setting-change', 'delivery-state', 'delivery-samples', 'delivery-pr', 'delivery-run', 'delivery-release', 'delivery-baseline', 'delivery-check', 'delivery-settings', 'delivery-history',
+ 'upload', 'purge-task', 'problem-dismissal', 'reconciliation', 'project-recommendation', 'transport-conflict', 'transport-audit', 'artifact', 'delegation'));
+ALTER POLICY project_scope ON document USING (fleet_visible(project_id));
+DO $$ DECLARE t text; BEGIN
+ FOREACH t IN ARRAY string_to_array('audit_log,delivery_state,delivery_sample,delivery_pr,delivery_run,delivery_run_read,delivery_release,delivery_baseline,delivery_check,delivery_settings,delivery_history_state,delivery_ui_seen,upload,purge_task,problem_dismissal,reconciliation,project_recommendation,transport_conflict,transport_audit', ',') LOOP
+  EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+  EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+  IF t = 'audit_log' THEN -- a person sees the changes of what they hold; audit outlives a deleted project
+   EXECUTE format('CREATE POLICY project_scope ON %I USING (fleet_visible(project_id) OR holder = current_setting(''fleet.person'', true))', t);
+  ELSIF t IN ('purge_task', 'reconciliation', 'transport_conflict', 'transport_audit') THEN -- no project
+   EXECUTE format('CREATE POLICY project_scope ON %I USING (fleet_visible(NULL))', t);
+  ELSE
+   EXECUTE format('CREATE POLICY project_scope ON %I USING (fleet_visible(project_id))', t);
+  END IF;
+  IF t = 'transport_conflict' THEN
+   EXECUTE format('CREATE POLICY live ON %I AS RESTRICTIVE FOR SELECT USING (fleet_show_deleted() OR tombstoned_at IS NULL)', t);
+  ELSIF t NOT IN ('audit_log', 'purge_task', 'reconciliation', 'transport_audit') THEN
+   EXECUTE format('CREATE POLICY live ON %I AS RESTRICTIVE FOR SELECT USING (fleet_show_deleted() OR (tombstoned_at IS NULL'
+    ' AND (project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[]))))', t);
+  END IF;
+ END LOOP;
+END $$;
+CREATE TRIGGER transport_conflict_tombstone BEFORE INSERT ON transport_conflict FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
+CREATE TRIGGER problem_dismissal_tombstone BEFORE INSERT ON problem_dismissal FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
+CREATE TRIGGER upload_tombstone BEFORE INSERT ON upload FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+-- The change feed: the audit as setting-change (with its holder and target), a project recommendation, and Delivery's
+-- rows as delivery (an update that changed only retry columns or updated_at is no change); no document kind is left.
+CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; w text; ek text; st text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'audit_log' THEN k := 'setting-change'; i := r.id; w := r.holder; st := nullif(r.target, ''); ELSIF TG_TABLE_NAME = 'project_recommendation' THEN k := 'project-recommendation'; i := r.id; ELSIF TG_TABLE_NAME IN ('delivery_state', 'delivery_pr', 'delivery_run', 'delivery_release', 'delivery_check') THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - '{updated_at,attempts,next_attempt_at,last_error}'::text[]) = (to_jsonb(NEW) - '{updated_at,attempts,next_attempt_at,last_error}'::text[]) THEN RETURN NULL; END IF; k := 'delivery'; i := r.id; ELSIF TG_TABLE_NAME = 'host_observation' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - '{last_seen_at,updated_at}'::text[]) = (to_jsonb(NEW) - '{last_seen_at,updated_at}'::text[]) THEN RETURN NULL; END IF; k := 'host'; i := r.id; h := r.id; ELSIF TG_TABLE_NAME IN ('managed_account', 'api_connection') THEN k := replace(TG_TABLE_NAME, '_', '-'); i := r.id; w := r.holder; ELSIF TG_TABLE_NAME = 'connection_key' THEN k := 'connection-key'; i := r.id; ELSIF TG_TABLE_NAME = 'session' THEN k := 'session'; i := r.id; s := r.id; ELSIF TG_TABLE_NAME IN ('message', 'event') THEN k := 'event'; i := r.id; s := r.session_id; ELSIF TG_TABLE_NAME = 'command' THEN k := 'command'; i := r.id; h := r.host_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN IF r.kind = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN SELECT e.kind::text, e.task_id, e.session_id, e.host_id INTO ek, t, s, h FROM execution e WHERE e.id = r.execution_id; IF ek = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; ELSIF TG_TABLE_NAME = 'definition' THEN k := 'definition'; i := r.kind || '/' || r.id; ELSE RETURN NULL; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op, actor, holder, setting_target) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1), nullif(current_setting('fleet.actor', true), ''), w, st); PERFORM fleet_enqueue_wake('fleet_change', ''); RETURN NULL; END $$;
+DO $$ DECLARE t text; BEGIN
+ FOREACH t IN ARRAY string_to_array('audit_log,project_recommendation,delivery_state,delivery_pr,delivery_run,delivery_release,delivery_check', ',') LOOP
+  EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION fleet_change()', t || '_change', t);
+ END LOOP;
+END $$;

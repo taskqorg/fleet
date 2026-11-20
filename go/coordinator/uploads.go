@@ -27,7 +27,7 @@ import (
 )
 
 // Operator uploads: message attachments (docs/designs/fleet-conversations.md, Attachments). artifact_upload_begin
-// records the upload as an 'upload' document in the person's scope (owner, project, session, size, the store's multipart
+// records the upload as an upload row in the person's scope (owner, project, session, size, the store's multipart
 // upload on a staging key, the parts received and the running SHA-256); nothing is spooled on the coordinator's disk.
 // PUT /api/uploads/{id} takes the parts in order on the part grid of the upload (uploadGrid); each part goes straight to the store
 // as one multipart part and advances the record. The part that completes the file completes the multipart upload,
@@ -268,12 +268,27 @@ func uploadBegin(q *Request, b *contract.ArtifactUploadBeginRequest) (contract.A
 	// The store's multipart upload starts with the first part (uploadPart), never in this transaction, so a begin that
 	// does not commit leaves nothing on the store.
 	u["storeId"], u["staging"] = target.ID, projectKey(projectID)+"/prod/.pending/upload-"+astr(u["id"])
-	if err := put(q, "upload", u); err != nil {
+	if err := exec(q, uploadPutSQL, jsonBytes(u)); err != nil {
 		return none, err
 	}
 	sweepUploads(q.app)
 	return contract.ArtifactUploadBeginReply{UploadId: astr(u["id"]), Url: "/api/uploads/" + astr(u["id"]), PartBytes: part}, nil
 }
+
+// The upload row (migration 82): the fields a write guards or a reference names are columns, payload the rest; a record
+// is the row as the upload code reads it.
+const (
+	uploadRecordSQL = `(payload || jsonb_strip_nulls(jsonb_build_object('id', id, 'person', person, 'sessionId', session_id, 'projectId', project_id,
+	 'received', received, 'multipart', multipart, 'artifactId', artifact_id)))`
+	uploadColumnsSQL = `d->>'id', d->>'person', d->>'sessionId', d->>'projectId', coalesce((d->>'received')::bigint, 0), d->>'multipart', d->>'artifactId',
+	 d - '{id,person,sessionId,projectId,received,multipart,artifactId}'::text[]`
+	uploadPutSQL = `INSERT INTO upload(id, person, session_id, project_id, received, multipart, artifact_id, payload) SELECT ` + uploadColumnsSQL + ` FROM (SELECT $1::jsonb AS d) x`
+	// uploadSaveSQL writes a record that still has the received count it was read with and no artifact yet.
+	uploadSaveSQL = `UPDATE upload SET (person, session_id, project_id, received, multipart, artifact_id, payload, updated_at) =
+	 (SELECT d->>'person', d->>'sessionId', d->>'projectId', coalesce((d->>'received')::bigint, 0), d->>'multipart', d->>'artifactId',
+	  d - '{id,person,sessionId,projectId,received,multipart,artifactId}'::text[], now() FROM (SELECT $2::jsonb AS d) x)
+	 WHERE id=$1 AND received=$3 AND artifact_id IS NULL`
+)
 
 var sweeping sync.Mutex
 
@@ -295,7 +310,7 @@ func sweepUploadsNow(ctx context.Context, a *App) {
 		age := strconv.Itoa(int(uploadStaleAfter.Seconds())) + " seconds"
 		var stale []doc
 		err := a.store.Tx(ctx, nil, false, "", func(tx pgx.Tx) error {
-			rows, err := tx.Query(ctx, "SELECT data FROM document WHERE kind='upload' AND updated_at < now() - $1::interval", age)
+			rows, err := tx.Query(ctx, "SELECT "+uploadRecordSQL+" FROM upload WHERE updated_at < now() - $1::interval", age)
 			if err != nil {
 				return err
 			}
@@ -335,7 +350,7 @@ func sweepUploadsNow(ctx context.Context, a *App) {
 			}
 		drop:
 			a.store.Tx(ctx, nil, true, NOLOCK, func(tx pgx.Tx) error {
-				_, err := tx.Exec(ctx, "DELETE FROM document WHERE kind='upload' AND id=$1 AND updated_at < now() - $2::interval", u["id"], age)
+				_, err := tx.Exec(ctx, "DELETE FROM upload WHERE id=$1 AND updated_at < now() - $2::interval", u["id"], age)
 				return err
 			})
 		}
@@ -347,7 +362,7 @@ func (a *App) uploadRecord(ctx context.Context, p *Person, id string) (doc, erro
 	var u doc
 	err := a.store.Tx(ctx, scopeOf(p), false, "", func(tx pgx.Tx) error {
 		var raw []byte
-		if err := tx.QueryRow(ctx, "SELECT data FROM document WHERE kind='upload' AND id=$1", id).Scan(&raw); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT "+uploadRecordSQL+" FROM upload WHERE id=$1", id).Scan(&raw); err != nil {
 			return err
 		}
 		return json.Unmarshal(raw, &u)
@@ -367,7 +382,7 @@ func (a *App) uploadRecord(ctx context.Context, p *Person, id string) (doc, erro
 func (a *App) saveUpload(ctx context.Context, p *Person, u doc, received int64, extra func(pgx.Tx) error) error {
 	return a.store.Tx(ctx, scopeOf(p), true, NOLOCK, func(tx pgx.Tx) error {
 		raw, _ := json.Marshal(u)
-		tag, err := tx.Exec(ctx, "UPDATE document SET data=$2,updated_at=now() WHERE kind='upload' AND id=$1 AND (data->>'received')::bigint=$3 AND NOT (data ? 'artifactId')", u["id"], raw, received)
+		tag, err := tx.Exec(ctx, uploadSaveSQL, u["id"], raw, received)
 		if err != nil {
 			return err
 		}
@@ -521,7 +536,7 @@ func (a *App) startMultipart(ctx context.Context, p *Person, id string, s *Store
 	}
 	won := false
 	err = a.store.Tx(ctx, scopeOf(p), true, NOLOCK, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, "UPDATE document SET data=jsonb_set(data,'{multipart}',to_jsonb($2::text)),updated_at=now() WHERE kind='upload' AND id=$1 AND NOT (data ? 'multipart')", id, mp)
+		tag, err := tx.Exec(ctx, "UPDATE upload SET multipart=$2,updated_at=now() WHERE id=$1 AND multipart IS NULL", id, mp)
 		won = err == nil && tag.RowsAffected() == 1
 		return err
 	})

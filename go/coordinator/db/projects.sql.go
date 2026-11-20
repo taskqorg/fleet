@@ -9,6 +9,54 @@ import (
 	"context"
 )
 
+const projectRecommendation = `-- name: ProjectRecommendation :many
+SELECT jsonb_build_object('id', id, 'projectId', project_id, 'methodId', method_id, 'selectedAt', (extract(epoch FROM selected_at) * 1000)::bigint, 'actor', actor)::jsonb
+FROM project_recommendation WHERE project_id = $1::text
+`
+
+// The method a project selected (recommendation_set), as the catalogue reads it.
+func (q *Queries) ProjectRecommendation(ctx context.Context, projectID string) ([][]byte, error) {
+	rows, err := q.db.Query(ctx, projectRecommendation, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items [][]byte
+	for rows.Next() {
+		var column_1 []byte
+		if err := rows.Scan(&column_1); err != nil {
+			return nil, err
+		}
+		items = append(items, column_1)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectRecommendationSet = `-- name: ProjectRecommendationSet :exec
+INSERT INTO project_recommendation(id, project_id, method_id, actor) VALUES ($1::text, $2::text, $3::text, $4::text)
+ON CONFLICT (id) DO UPDATE SET method_id=excluded.method_id, selected_at=now(), actor=excluded.actor, updated_at=now()
+`
+
+type ProjectRecommendationSetParams struct {
+	ID        string
+	ProjectID string
+	MethodID  string
+	Actor     string
+}
+
+func (q *Queries) ProjectRecommendationSet(ctx context.Context, arg ProjectRecommendationSetParams) error {
+	_, err := q.db.Exec(ctx, projectRecommendationSet,
+		arg.ID,
+		arg.ProjectID,
+		arg.MethodID,
+		arg.Actor,
+	)
+	return err
+}
+
 const projectsCurrentCodes = `-- name: ProjectsCurrentCodes :many
 
 SELECT project_id, code FROM project_code WHERE current

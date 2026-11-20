@@ -37,7 +37,7 @@ const ownCounts=new Map<string,Record<string,number>>();
 const snapshot=()=>Object.fromEntries(readers.map(r=>[r.id,{...ownCounts.get(r.id)}]));
 const delta=(before:any)=>Object.fromEntries(readers.map(r=>[r.id,Object.fromEntries(Object.entries(ownCounts.get(r.id)!).map(([k,n])=>[k,n-(before[r.id][k]??0)]))]));
 const settle=async()=>{let last=-1,stable=0;const end=Date.now()+10000;while(stable<4){assert.ok(Date.now()<end,'protocol reads did not settle');const n=rows.filter(x=>x.operation.startsWith('/api/ops/')).length;const pending=rows.some(x=>x.operation.startsWith('/api/ops/')&&!x.finished);if(n===last&&!pending)stable++;else stable=0;last=n;await new Promise(r=>setTimeout(r,100));}};
-const audit=(target:string)=>JSON.parse(c.sql(`SELECT json_build_object('id',id,'target',data->>'target','actor',data->>'actor','holder',data->>'holder') FROM document WHERE kind='setting-change' AND data->>'target'=${lit(target)} ORDER BY seq DESC LIMIT1`.replace('LIMIT1','LIMIT 1')));
+const audit=(target:string)=>JSON.parse(c.sql(`SELECT json_build_object('id',id,'target',target,'actor',actor,'holder',holder) FROM audit_log WHERE target=${lit(target)} ORDER BY seq DESC LIMIT1`.replace('LIMIT1','LIMIT 1')));
 const arrived=async(ids:string[],readersToCheck=readers)=>{for(const r of readersToCheck)await r.page.waitForFunction(ids=>ids.every(id=>(window as any).__changes.some((c:any)=>c.id===id)),ids);for(const r of readersToCheck)await r.page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))));await settle();};
 const results:any={classification:'small native PG/mounted shipped Chromium protocol, not capacity',protocol:'scoped-invalidation-v1',stages:[]};
 try{

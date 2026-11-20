@@ -357,7 +357,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			return struct{}{}, err
 		}
 		change := func(field string, previous, value any) error {
-			return recordPeopleChange(q, peopleChange{Target: "person:" + email, Holder: email, Field: field, Previous: previous, Value: value})
+			return audit(q, "person:"+email, field, previous, value, auditExtra{Holder: email})
 		}
 		if next.Order != prev.Order {
 			if err := change("order", string(prev.Order), string(next.Order)); err != nil {

@@ -105,6 +105,20 @@ CREATE TABLE artifact_rule_confirmation (
   "confirmed_by" text NOT NULL,
   "confirmed_at" timestamp with time zone NOT NULL
 );
+CREATE TABLE audit_log (
+  "id" text NOT NULL,
+  "target" text NOT NULL,
+  "field" text NOT NULL,
+  "previous" jsonb,
+  "value" jsonb,
+  "actor" text NOT NULL,
+  "on_behalf_of" text,
+  "holder" text,
+  "project_id" text,
+  "at" timestamp with time zone NOT NULL,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL
+);
 CREATE TABLE budget (
   "id" text NOT NULL,
   "scope" text NOT NULL,
@@ -220,6 +234,103 @@ CREATE TABLE delegation_source_work (
   "attempts" integer NOT NULL,
   "next_attempt_at" timestamp with time zone NOT NULL,
   "last_error" text
+);
+CREATE TABLE delivery_baseline (
+  "id" text NOT NULL,
+  "name" text NOT NULL,
+  "payload" jsonb NOT NULL,
+  "project_id" text NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE delivery_check (
+  "id" text NOT NULL,
+  "payload" jsonb NOT NULL,
+  "project_id" text NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE delivery_history_state (
+  "id" text NOT NULL,
+  "backfilled_from" text,
+  "backfilled" boolean NOT NULL,
+  "through" text,
+  "pulls_updated" text,
+  "installs_from" text,
+  "refreshed_at" text,
+  "problem" text,
+  "checked_release" text,
+  "checked_at" text,
+  "project_id" text NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE delivery_pr (
+  "id" text NOT NULL,
+  "number" bigint NOT NULL,
+  "payload" jsonb NOT NULL,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone,
+  "last_error" text,
+  "project_id" text NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE delivery_release (
+  "id" text NOT NULL,
+  "tag" text NOT NULL,
+  "payload" jsonb NOT NULL,
+  "project_id" text NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE delivery_run (
+  "id" text NOT NULL,
+  "run_id" bigint NOT NULL,
+  "payload" jsonb NOT NULL,
+  "project_id" text NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE delivery_run_read (
+  "run_id" bigint NOT NULL,
+  "payload" jsonb NOT NULL,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text,
+  "project_id" text NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE delivery_sample (
+  "seq" bigint NOT NULL,
+  "project_id" text NOT NULL,
+  "repo" text,
+  "at" timestamp with time zone NOT NULL,
+  "payload" jsonb NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE delivery_settings (
+  "id" text NOT NULL,
+  "ratio" double precision NOT NULL,
+  "min_samples" bigint NOT NULL,
+  "min_delta_ms" bigint NOT NULL,
+  "baseline" text NOT NULL,
+  "project_id" text NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE delivery_state (
+  "id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "refreshed_at" text,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE delivery_ui_seen (
+  "version" text NOT NULL,
+  "seen_at" text NOT NULL,
+  "project_id" text NOT NULL,
+  "tombstoned_at" timestamp with time zone
 );
 CREATE TABLE document (
   "kind" text NOT NULL,
@@ -534,11 +645,29 @@ CREATE TABLE price_entry (
   "created_by" text,
   "seq" bigint NOT NULL
 );
+CREATE TABLE problem_dismissal (
+  "execution_id" text NOT NULL,
+  "project_id" text,
+  "problem" text NOT NULL,
+  "reason" text NOT NULL,
+  "actor" text NOT NULL,
+  "at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
 CREATE TABLE project_code (
   "code" text NOT NULL,
   "project_id" text NOT NULL,
   "current" boolean NOT NULL,
   "set_at" timestamp with time zone NOT NULL
+);
+CREATE TABLE project_recommendation (
+  "id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "method_id" text NOT NULL,
+  "selected_at" timestamp with time zone NOT NULL,
+  "actor" text NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
 );
 CREATE TABLE project_write_request (
   "directing_email" text NOT NULL,
@@ -547,6 +676,13 @@ CREATE TABLE project_write_request (
   "payload_sha" text NOT NULL,
   "project_id" text NOT NULL,
   "result" jsonb NOT NULL
+);
+CREATE TABLE purge_task (
+  "id" text NOT NULL,
+  "store_id" text,
+  "created_at" timestamp with time zone NOT NULL,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL
 );
 CREATE TABLE purged_hash (
   "project_id" text NOT NULL,
@@ -596,6 +732,12 @@ CREATE TABLE queued_message (
   "seq" bigint NOT NULL,
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE reconciliation (
+  "id" text NOT NULL,
+  "at" timestamp with time zone NOT NULL,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL
 );
 CREATE TABLE resource_build (
   "project_id" text NOT NULL,
@@ -882,6 +1024,49 @@ CREATE TABLE task_view (
   "totals" jsonb,
   "latest_result" jsonb,
   "open_questions" jsonb
+);
+CREATE TABLE transport_audit (
+  "id" text NOT NULL,
+  "execution_id" text,
+  "conflict_id" text,
+  "request_id" text,
+  "signature" text,
+  "actor" text NOT NULL,
+  "operation" text NOT NULL,
+  "at" bigint,
+  "native_effect_replayed" boolean NOT NULL,
+  "seq" bigint NOT NULL
+);
+CREATE TABLE transport_conflict (
+  "id" text NOT NULL,
+  "execution_id" text,
+  "host_id" text,
+  "original_event_id" text,
+  "original_sequence" bigint,
+  "frame_sha256" text,
+  "payload" jsonb,
+  "collision_event_id" text,
+  "supported" boolean NOT NULL,
+  "state" text NOT NULL,
+  "observed_at" bigint,
+  "reserved_sequence" double precision,
+  "authorized_at" bigint,
+  "delivered_at" bigint,
+  "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE upload (
+  "id" text NOT NULL,
+  "person" text NOT NULL,
+  "session_id" text,
+  "project_id" text,
+  "received" bigint NOT NULL,
+  "multipart" text,
+  "artifact_id" text,
+  "payload" jsonb NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
 );
 CREATE TABLE wake_outbox (
   "wake_id" uuid NOT NULL,

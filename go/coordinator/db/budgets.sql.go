@@ -326,18 +326,3 @@ func (q *Queries) BudgetsList(ctx context.Context) ([]Budget, error) {
 	}
 	return items, nil
 }
-
-const settingChangeInsert = `-- name: SettingChangeInsert :exec
-INSERT INTO document(kind,id,data) VALUES('setting-change',$1,$2)
-`
-
-type SettingChangeInsertParams struct {
-	ID   string
-	Data []byte
-}
-
-// The audit record of a changed setting (kind setting-change, no project).
-func (q *Queries) SettingChangeInsert(ctx context.Context, arg SettingChangeInsertParams) error {
-	_, err := q.db.Exec(ctx, settingChangeInsert, arg.ID, arg.Data)
-	return err
-}

@@ -377,10 +377,25 @@ func (q *Queries) EventsOfExecution(ctx context.Context, executionID *string) ([
 	return items, nil
 }
 
+const eventsTransportAuditPut = `-- name: EventsTransportAuditPut :exec
+INSERT INTO transport_audit(id, execution_id, conflict_id, request_id, signature, actor, operation, at, native_effect_replayed)
+SELECT d->>'id', nullif(d->>'executionId', ''), nullif(d->>'conflictId', ''), nullif(d->>'requestId', ''), nullif(d->>'signature', ''), coalesce(d->>'actor', ''),
+ coalesce(d->>'operation', ''), (d->>'at')::bigint, coalesce((d->>'nativeEffectReplayed')::boolean, false)
+FROM (SELECT $1::jsonb AS d) x
+ON CONFLICT (id) DO NOTHING
+`
+
+// A transport audit record (kept: it outlives the execution).
+func (q *Queries) EventsTransportAuditPut(ctx context.Context, data []byte) error {
+	_, err := q.db.Exec(ctx, eventsTransportAuditPut, data)
+	return err
+}
+
 const eventsTransportAudits = `-- name: EventsTransportAudits :many
-SELECT data FROM document WHERE kind='transport-audit'
- AND ($1::text IS NULL OR data->>'executionId'=$1)
- AND ($2::text IS NULL OR data->>'requestId'=$2)
+SELECT (jsonb_build_object('id', id, 'executionId', coalesce(execution_id, ''), 'conflictId', coalesce(conflict_id, ''), 'actor', actor, 'operation', operation,
+ 'at', coalesce(at, 0), 'nativeEffectReplayed', native_effect_replayed) || jsonb_strip_nulls(jsonb_build_object('requestId', request_id, 'signature', signature)))::jsonb FROM transport_audit
+WHERE ($1::text IS NULL OR execution_id=$1)
+ AND ($2::text IS NULL OR request_id=$2)
 ORDER BY seq
 `
 
@@ -398,11 +413,11 @@ func (q *Queries) EventsTransportAudits(ctx context.Context, arg EventsTransport
 	defer rows.Close()
 	var items [][]byte
 	for rows.Next() {
-		var data []byte
-		if err := rows.Scan(&data); err != nil {
+		var column_1 []byte
+		if err := rows.Scan(&column_1); err != nil {
 			return nil, err
 		}
-		items = append(items, data)
+		items = append(items, column_1)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -411,18 +426,45 @@ func (q *Queries) EventsTransportAudits(ctx context.Context, arg EventsTransport
 }
 
 const eventsTransportConflict = `-- name: EventsTransportConflict :one
-SELECT data FROM document WHERE kind='transport-conflict' AND id=$1
+
+SELECT (jsonb_build_object('id', id, 'executionId', coalesce(execution_id, ''), 'hostId', coalesce(host_id, ''), 'originalEventId', coalesce(original_event_id, ''),
+ 'originalSequence', coalesce(original_sequence, 0), 'frameSha256', coalesce(frame_sha256, ''), 'original', payload, 'collisionEventId', coalesce(collision_event_id, ''),
+ 'supported', supported, 'state', state, 'observedAt', coalesce(observed_at, 0))
+ || jsonb_strip_nulls(jsonb_build_object('reservedSequence', reserved_sequence, 'authorizedAt', authorized_at, 'deliveredAt', delivered_at)))::jsonb FROM transport_conflict WHERE id=$1
 `
 
+// Transport conflicts and their audit (migration 82): a record is the row as transport_inspect shows it.
 func (q *Queries) EventsTransportConflict(ctx context.Context, id string) ([]byte, error) {
 	row := q.db.QueryRow(ctx, eventsTransportConflict, id)
-	var data []byte
-	err := row.Scan(&data)
-	return data, err
+	var column_1 []byte
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const eventsTransportConflictPut = `-- name: EventsTransportConflictPut :exec
+INSERT INTO transport_conflict(id, execution_id, host_id, original_event_id, original_sequence, frame_sha256, payload, collision_event_id, supported, state,
+ observed_at, reserved_sequence, authorized_at, delivered_at)
+SELECT d->>'id', nullif(d->>'executionId', ''), nullif(d->>'hostId', ''), nullif(d->>'originalEventId', ''), (d->>'originalSequence')::bigint, nullif(d->>'frameSha256', ''),
+ d->'original', nullif(d->>'collisionEventId', ''), coalesce((d->>'supported')::boolean, false), coalesce(d->>'state', ''), (d->>'observedAt')::bigint,
+ (d->>'reservedSequence')::float8, (d->>'authorizedAt')::bigint, (d->>'deliveredAt')::bigint
+FROM (SELECT $1::jsonb AS d) x
+ON CONFLICT (id) DO UPDATE SET execution_id=excluded.execution_id, host_id=excluded.host_id, original_event_id=excluded.original_event_id,
+ original_sequence=excluded.original_sequence, frame_sha256=excluded.frame_sha256, payload=excluded.payload, collision_event_id=excluded.collision_event_id,
+ supported=excluded.supported, state=excluded.state, observed_at=excluded.observed_at, reserved_sequence=excluded.reserved_sequence,
+ authorized_at=excluded.authorized_at, delivered_at=excluded.delivered_at, updated_at=now()
+`
+
+// A transport conflict record (no project: it belongs to an execution's transport).
+func (q *Queries) EventsTransportConflictPut(ctx context.Context, data []byte) error {
+	_, err := q.db.Exec(ctx, eventsTransportConflictPut, data)
+	return err
 }
 
 const eventsTransportConflicts = `-- name: EventsTransportConflicts :many
-SELECT data FROM document WHERE kind='transport-conflict' AND data->>'executionId'= $1::text ORDER BY seq
+SELECT (jsonb_build_object('id', id, 'executionId', coalesce(execution_id, ''), 'hostId', coalesce(host_id, ''), 'originalEventId', coalesce(original_event_id, ''),
+ 'originalSequence', coalesce(original_sequence, 0), 'frameSha256', coalesce(frame_sha256, ''), 'original', payload, 'collisionEventId', coalesce(collision_event_id, ''),
+ 'supported', supported, 'state', state, 'observedAt', coalesce(observed_at, 0))
+ || jsonb_strip_nulls(jsonb_build_object('reservedSequence', reserved_sequence, 'authorizedAt', authorized_at, 'deliveredAt', delivered_at)))::jsonb FROM transport_conflict WHERE execution_id= $1::text ORDER BY seq
 `
 
 func (q *Queries) EventsTransportConflicts(ctx context.Context, executionID string) ([][]byte, error) {
@@ -433,31 +475,14 @@ func (q *Queries) EventsTransportConflicts(ctx context.Context, executionID stri
 	defer rows.Close()
 	var items [][]byte
 	for rows.Next() {
-		var data []byte
-		if err := rows.Scan(&data); err != nil {
+		var column_1 []byte
+		if err := rows.Scan(&column_1); err != nil {
 			return nil, err
 		}
-		items = append(items, data)
+		items = append(items, column_1)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return items, nil
-}
-
-const eventsTransportPut = `-- name: EventsTransportPut :exec
-INSERT INTO document(kind, id, data, project_id) VALUES ($1, $2, $3, NULL)
-ON CONFLICT (id) DO UPDATE SET data=excluded.data, project_id=excluded.project_id, updated_at=now() WHERE document.kind=excluded.kind
-`
-
-type EventsTransportPutParams struct {
-	Kind string
-	ID   string
-	Data []byte
-}
-
-// A transport conflict or audit record (no project: they belong to an execution's transport).
-func (q *Queries) EventsTransportPut(ctx context.Context, arg EventsTransportPutParams) error {
-	_, err := q.db.Exec(ctx, eventsTransportPut, arg.Kind, arg.ID, arg.Data)
-	return err
 }

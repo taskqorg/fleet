@@ -291,20 +291,6 @@ func budgetAnswerAfter(q *Request, ask json.RawMessage, answer string, answeredB
 		if err := q.db().BudgetRaise(q.ctx(), db.BudgetRaiseParams{ID: a.BudgetId, Limit: a.Limit, SetBy: by}); err != nil {
 			return err
 		}
-		change := struct {
-			Id         string  `json:"id"`
-			Target     string  `json:"target"`
-			Field      string  `json:"field"`
-			Value      float64 `json:"value"`
-			AskedBy    *string `json:"askedBy"`
-			Actor      *string `json:"actor"`
-			OnBehalfOf string  `json:"onBehalfOf,omitempty"`
-			At         int64   `json:"at"`
-		}{Id: newID(), Target: "budget:" + a.BudgetId, Field: "limit", Value: a.Limit, AskedBy: a.AskedBy, Actor: answeredBy, At: nowMs()}
-		if q.agent != "" && q.person != nil { // an agent's change: the execution acts for its director (fleet-pm-agent.md §1)
-			change.Actor, change.OnBehalfOf = &q.agent, q.person.Email
-		}
-		data, _ := json.Marshal(change)
-		return q.db().SettingChangeInsert(q.ctx(), db.SettingChangeInsertParams{ID: change.Id, Data: data})
+		return audit(q, "budget:"+a.BudgetId, "limit", nil, a.Limit, auditExtra{AskedBy: a.AskedBy, AnsweredBy: answeredBy})
 	})
 }

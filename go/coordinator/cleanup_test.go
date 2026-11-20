@@ -307,7 +307,7 @@ INSERT INTO command(id,kind,execution_id,host_id,status) VALUES ('c-ghost','tear
 	if n := psqlLines(t, e, "SELECT count(*) FROM experiment WHERE id='x2'"); n[0] != "1" {
 		t.Fatalf("a live experiment was purged")
 	}
-	if n := psqlLines(t, e, "SELECT count(*) FROM document WHERE kind='setting-change' AND data->>'field' IN ('deletedAt','purge')"); n[0] != "4" {
+	if n := psqlLines(t, e, "SELECT count(*) FROM audit_log WHERE field IN ('deletedAt','purge')"); n[0] != "4" {
 		t.Fatalf("audit rows: %v", n)
 	}
 }
@@ -351,7 +351,7 @@ func TestPurgeTaskSkipsObjectsInUseAgain(t *testing.T) {
 INSERT INTO store(id,host_id,bucket,endpoint,state) VALUES ('st1','h-x','b','`+s3.URL+`','reachable');
 INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,state) VALUES ('a3','keep','prod','h3',1,'text/plain','n','stored');
 INSERT INTO artifact_copy(artifact_id,store_id,project_id,state) VALUES ('a3','st1','keep','verified');
-INSERT INTO document(kind,id,data) VALUES ('purge-task','pt1','{"id":"pt1","storeId":"st1","objects":[
+INSERT INTO purge_task(id,store_id,payload) VALUES ('pt1','st1','{"objects":[
  {"key":"keep/prod/h3","projectId":"keep","scope":"prod","hash":"h3"},{"key":"gone/prod/h4","projectId":"gone","scope":"prod","hash":"h4"},{"key":"gone/prod/.pending/a4.st1"}]}');`)
 	left, err := runPurgeTasks(e.ctx, e.app, time.Now().Add(time.Minute))
 	if err != nil || left != 0 {
@@ -362,7 +362,7 @@ INSERT INTO document(kind,id,data) VALUES ('purge-task','pt1','{"id":"pt1","stor
 	if !slices.Contains(deleted, "/b/gone/prod/h4") || !slices.Contains(deleted, "/b/gone/prod/.pending/a4.st1") || slices.ContainsFunc(deleted, func(p string) bool { return strings.Contains(p, "h3") }) {
 		t.Fatalf("deleted %v: want the unused object and the staging key, never keep/prod/h3", deleted)
 	}
-	if n := psqlLines(t, e, "SELECT count(*) FROM document WHERE kind='purge-task'"); n[0] != "0" {
+	if n := psqlLines(t, e, "SELECT count(*) FROM purge_task"); n[0] != "0" {
 		t.Fatalf("a finished purge task stays: %v", n)
 	}
 }

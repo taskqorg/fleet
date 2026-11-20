@@ -124,7 +124,11 @@ ORDER BY seq;
 SELECT EXISTS(SELECT 1 FROM command WHERE execution_id=$1 AND kind IN ('start','script') AND status='pending' AND handed_out=false)::boolean;
 
 -- name: DispLatestReconciliation :one
-SELECT data FROM document WHERE kind='reconciliation' ORDER BY seq DESC LIMIT 1;
+SELECT jsonb_build_object('id', id, 'at', (extract(epoch FROM at) * 1000)::bigint, 'items', payload)::jsonb FROM reconciliation ORDER BY seq DESC LIMIT 1;
+
+-- name: DispReconciliationPut :exec
+-- One reconciliation pass: its items (agent.go reconcile).
+INSERT INTO reconciliation(id, payload) VALUES (@id::text, @items::jsonb);
 
 -- name: DispExecSessions :many
 -- The sessions of the executions and the sessions that created them.
@@ -132,9 +136,13 @@ SELECT DISTINCT s::text FROM (SELECT e.session_id AS s FROM execution e WHERE e.
  UNION SELECT s.created_by_session_id AS s FROM execution e JOIN session s ON s.id=e.session_id WHERE e.id = ANY(@ids::text[])) x
 WHERE coalesce(s,'')<>'';
 
+-- name: DispProblemDismiss :exec
+-- An execution's problem taken off Needs you (executions_dismiss); the problem stays on the execution.
+INSERT INTO problem_dismissal(execution_id, project_id, problem, reason, actor) VALUES (@execution_id::text, sqlc.narg(project_id)::text, @problem::text, @reason::text, @actor::text);
+
 -- name: DispExecDismissRow :one
 SELECT state::text AS state,project_id,problem,
- EXISTS (SELECT 1 FROM document d WHERE d.kind='problem-dismissal' AND d.id=execution.id)::boolean AS dismissed
+ EXISTS (SELECT 1 FROM problem_dismissal d WHERE d.execution_id=execution.id)::boolean AS dismissed
 FROM execution WHERE execution.id=$1 FOR UPDATE;
 
 -- name: DispLostIDs :many

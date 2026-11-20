@@ -19,6 +19,5 @@ SELECT EXISTS(SELECT 1 FROM execution p LEFT JOIN session s ON s.id=p.session_id
  WHERE p.id=$1 AND t.state='cancelled')::boolean AS cancelled;
 
 -- name: DelegationExecutionsWithArtifacts :many
--- Of ids, the executions with a stored artifact (a typed row or a legacy artifact record).
-SELECT DISTINCT execution_id::text AS id FROM artifact WHERE state='stored' AND execution_id=ANY(sqlc.arg(ids)::text[])
-UNION SELECT DISTINCT (data->>'executionId')::text FROM document WHERE kind='artifact' AND data->>'executionId'=ANY(sqlc.arg(ids)::text[]);
+-- Of ids, the executions with a stored artifact.
+SELECT DISTINCT execution_id::text AS id FROM artifact WHERE state='stored' AND execution_id=ANY(sqlc.arg(ids)::text[]);

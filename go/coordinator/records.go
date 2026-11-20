@@ -63,7 +63,7 @@ func all(q *Request, kind string, filter doc) ([]doc, error) {
 	case "delegation":
 		return records(q.db().EntDelegationRecords(q.ctx(), jsonBytes(f)))
 	}
-	return records(q.db().EntDocumentRecords(q.ctx(), db.EntDocumentRecordsParams{Kind: kind, Filter: jsonBytes(f)}))
+	return nil, fmt.Errorf("unknown record kind %s", kind)
 }
 
 // records: JSON records as read, in order; none is an empty list.
@@ -111,7 +111,7 @@ func get(q *Request, anyID any, kind string) (doc, error) {
 	case "delegation":
 		return record(q.db().EntDelegationRecord(q.ctx(), id))
 	}
-	return record(q.db().EntDocumentRecord(q.ctx(), db.EntDocumentRecordParams{ID: id, Kind: kind}))
+	return nil, fmt.Errorf("unknown record kind %s", kind)
 }
 
 func getForUpdate(q *Request, id, kind string) (doc, error) {
@@ -121,7 +121,7 @@ func getForUpdate(q *Request, id, kind string) (doc, error) {
 	if t := convTables[kind]; t != nil {
 		return convGet(q, t, id, true)
 	}
-	return record(q.db().EntDocumentRecordForUpdate(q.ctx(), db.EntDocumentRecordForUpdateParams{ID: id, Kind: kind}))
+	return nil, fmt.Errorf("unknown record kind %s", kind)
 }
 
 // maybe: get, nil when absent.
@@ -162,7 +162,7 @@ func put(q *Request, kind string, v doc) error {
 	if t := convTables[kind]; t != nil {
 		return convPut(q, kind, t, v)
 	}
-	return putDocument(q, kind, v)
+	return fmt.Errorf("unknown record kind %s", kind)
 }
 
 // execJSON: an execution record as the API shows it: the typed state, observation and last contact over the open remainder in data.
@@ -548,15 +548,6 @@ func one(q *Request, sql string, args ...any) (doc, error) {
 		return nil, errNotFound
 	}
 	return ds[0], nil
-}
-
-// putDocument writes a document row (put routes every non-typed kind here).
-func putDocument(q *Request, kind string, v doc) error {
-	if kind == "setting-change" && q.agent != "" { // an agent's change: the execution acts for its director (fleet-pm-agent.md §1)
-		v["actor"], v["onBehalfOf"] = q.agent, q.person.Email
-	}
-	b, _ := json.Marshal(v)
-	return q.db().EntDocumentPut(q.ctx(), db.EntDocumentPutParams{Kind: kind, ID: strp(v, "id"), Data: b, ProjectID: strp(v, "projectId")})
 }
 
 func getExecution(q *Request, id string) (doc, error) {

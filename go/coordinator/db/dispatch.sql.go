@@ -356,7 +356,7 @@ func (q *Queries) DispDetectProblems(ctx context.Context, arg DispDetectProblems
 
 const dispExecDismissRow = `-- name: DispExecDismissRow :one
 SELECT state::text AS state,project_id,problem,
- EXISTS (SELECT 1 FROM document d WHERE d.kind='problem-dismissal' AND d.id=execution.id)::boolean AS dismissed
+ EXISTS (SELECT 1 FROM problem_dismissal d WHERE d.execution_id=execution.id)::boolean AS dismissed
 FROM execution WHERE execution.id=$1 FOR UPDATE
 `
 
@@ -514,14 +514,14 @@ func (q *Queries) DispHarnessVersion(ctx context.Context, arg DispHarnessVersion
 }
 
 const dispLatestReconciliation = `-- name: DispLatestReconciliation :one
-SELECT data FROM document WHERE kind='reconciliation' ORDER BY seq DESC LIMIT 1
+SELECT jsonb_build_object('id', id, 'at', (extract(epoch FROM at) * 1000)::bigint, 'items', payload)::jsonb FROM reconciliation ORDER BY seq DESC LIMIT 1
 `
 
 func (q *Queries) DispLatestReconciliation(ctx context.Context) ([]byte, error) {
 	row := q.db.QueryRow(ctx, dispLatestReconciliation)
-	var data []byte
-	err := row.Scan(&data)
-	return data, err
+	var column_1 []byte
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const dispLockExecutionTask = `-- name: DispLockExecutionTask :exec
@@ -725,6 +725,30 @@ func (q *Queries) DispPipelinePending(ctx context.Context) (bool, error) {
 	return column_1, err
 }
 
+const dispProblemDismiss = `-- name: DispProblemDismiss :exec
+INSERT INTO problem_dismissal(execution_id, project_id, problem, reason, actor) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text)
+`
+
+type DispProblemDismissParams struct {
+	ExecutionID string
+	ProjectID   *string
+	Problem     string
+	Reason      string
+	Actor       string
+}
+
+// An execution's problem taken off Needs you (executions_dismiss); the problem stays on the execution.
+func (q *Queries) DispProblemDismiss(ctx context.Context, arg DispProblemDismissParams) error {
+	_, err := q.db.Exec(ctx, dispProblemDismiss,
+		arg.ExecutionID,
+		arg.ProjectID,
+		arg.Problem,
+		arg.Reason,
+		arg.Actor,
+	)
+	return err
+}
+
 const dispPurgesPending = `-- name: DispPurgesPending :many
 SELECT c.artifact_id,c.store_id,a.project_id,a.scope,a.content_hash FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id
 WHERE c.state='purge_pending'
@@ -786,6 +810,21 @@ func (q *Queries) DispQueuedIDs(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const dispReconciliationPut = `-- name: DispReconciliationPut :exec
+INSERT INTO reconciliation(id, payload) VALUES ($1::text, $2::jsonb)
+`
+
+type DispReconciliationPutParams struct {
+	ID    string
+	Items []byte
+}
+
+// One reconciliation pass: its items (agent.go reconcile).
+func (q *Queries) DispReconciliationPut(ctx context.Context, arg DispReconciliationPutParams) error {
+	_, err := q.db.Exec(ctx, dispReconciliationPut, arg.ID, arg.Items)
+	return err
 }
 
 const dispRouteDecision = `-- name: DispRouteDecision :exec
