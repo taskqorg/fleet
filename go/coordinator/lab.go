@@ -945,89 +945,128 @@ func expLaunch(q *Request, id string) error {
 }
 
 // expNote: an append-only note, or an amendment that changes one record field and keeps its old and new value.
-func expNote(q *Request, b doc) (doc, error) {
-	e, err := expLocked(q, astr(b["experimentId"]))
+func expNote(q *Request, r *contract.LabExperimentNoteRequest) (labNote, error) {
+	e, err := expLockedRow(q, r.ExperimentId)
 	if err != nil {
-		return nil, err
+		return labNote{}, err
 	}
-	text, _ := b["text"].(string)
+	text := r.Text
 	if strings.TrimSpace(text) == "" {
-		return nil, fail(400, "A note needs text")
+		return labNote{}, fail(400, "A note needs text")
 	}
-	kind, field := astr(b["kind"]), astr(b["field"])
+	kind, field := string(r.Kind), deref(r.Field)
 	var old, value any
 	switch kind {
 	case "note":
-		if b["field"] != nil || b["value"] != nil {
-			return nil, fail(400, "A note has no field or value")
+		if r.Field != nil || r.Value != nil {
+			return labNote{}, fail(400, "A note has no field or value")
 		}
 	case "amendment":
 		col, ok := recordColumns[field]
 		if !ok {
-			return nil, fail(400, "An amendment changes one of "+strings.Join(recordFields, ", "))
+			return labNote{}, fail(400, "An amendment changes one of "+strings.Join(recordFields, ", "))
 		}
-		v, isText := b["value"].(string)
-		if b["value"] != nil && !isText {
-			return nil, fail(400, "value must be text or null")
-		}
+		v := deref(r.Value)
 		if (field == "goal" || field == "hypothesis") && strings.TrimSpace(v) == "" {
-			return nil, fail(400, field+" cannot be cleared")
+			return labNote{}, fail(400, field+" cannot be cleared")
 		}
-		if field == "primaryEvaluator" && v != "" && !slices.ContainsFunc(anys(e["evaluators"]), func(x any) bool { return evaluatorName(mapOf(x)) == v }) {
-			return nil, fail(400, "primaryEvaluator names none of the evaluators")
+		var evaluators []labEvaluator
+		json.Unmarshal(e.Evaluators, &evaluators)
+		if field == "primaryEvaluator" && v != "" && !slices.ContainsFunc(evaluators, func(x labEvaluator) bool { return x.name() == v }) {
+			return labNote{}, fail(400, "primaryEvaluator names none of the evaluators")
 		}
-		old, value = e[col], b["value"]
-		if err := q.db().LabExperimentRecordSet(q.ctx(), db.LabExperimentRecordSetParams{ID: astr(e["id"]), Field: col, Value: strPtr(v)}); err != nil {
-			return nil, err
+		old, value = labOpt(expRecordField(e, col)), labOpt(r.Value)
+		if err := q.db().LabExperimentRecordSet(q.ctx(), db.LabExperimentRecordSetParams{ID: e.ID, Field: col, Value: strPtr(v)}); err != nil {
+			return labNote{}, err
 		}
 	default:
-		return nil, fail(400, "kind is amendment or note")
+		return labNote{}, fail(400, "kind is amendment or note")
 	}
-	n := doc{"id": newID(), "experimentId": e["id"], "kind": kind, "field": nilIf(field), "old": old, "new": value, "text": text, "author": actor(q, "operator")}
-	if err := q.db().LabNoteInsert(q.ctx(), db.LabNoteInsertParams{ID: astr(n["id"]), ExperimentID: astr(e["id"]), ProjectID: astr(e["project_id"]), Kind: kind, Field: strPtr(field),
-		Old: jsonBytes(old), New: jsonBytes(value), Text: text, Author: astr(n["author"])}); err != nil {
-		return nil, err
+	n := labNote{ID: newID(), ExperimentID: e.ID, Kind: kind, Field: strPtr(field), Old: old, New: value, Text: text, Author: actor(q, "operator")}
+	if err := q.db().LabNoteInsert(q.ctx(), db.LabNoteInsertParams{ID: n.ID, ExperimentID: e.ID, ProjectID: e.ProjectID, Kind: kind, Field: n.Field,
+		Old: jsonBytes(old), New: jsonBytes(value), Text: text, Author: n.Author}); err != nil {
+		return labNote{}, err
 	}
 	// A note changes the experiment as its readers see it: touch the row so its change reaches the feed.
-	return n, q.db().LabExperimentTouch(q.ctx(), astr(e["id"]))
+	return n, q.db().LabExperimentTouch(q.ctx(), e.ID)
+}
+
+// labNote: an experiment note or amendment as recorded.
+type labNote struct {
+	ID           string  `json:"id"`
+	ExperimentID string  `json:"experimentId"`
+	Kind         string  `json:"kind"`
+	Field        *string `json:"field"`
+	Old          any     `json:"old"`
+	New          any     `json:"new"`
+	Text         string  `json:"text"`
+	Author       string  `json:"author"`
+}
+
+// expRecordField: one record column of an experiment row.
+func expRecordField(e db.Experiment, col string) *string {
+	switch col {
+	case "goal":
+		return e.Goal
+	case "hypothesis":
+		return e.Hypothesis
+	case "decision_rule":
+		return e.DecisionRule
+	case "lab_group":
+		return e.LabGroup
+	case "primary_evaluator":
+		return e.PrimaryEvaluator
+	}
+	return nil
+}
+
+// expLockedRow: the experiment row, locked for this transaction.
+func expLockedRow(q *Request, id string) (db.Experiment, error) {
+	e, err := q.db().LabExperimentForUpdate(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return e, fail(404, "Unknown experiment")
+	}
+	return e, err
 }
 
 // expDecide: a person confirms or overrides the decision of a stopped or done experiment; an override needs a reason and
 // is an amendment.
-func expDecide(q *Request, b doc) (doc, error) {
-	e, err := expLocked(q, astr(b["experimentId"]))
+func expDecide(q *Request, r *contract.LabExperimentDecideRequest) (doc, error) {
+	e, err := expLockedRow(q, r.ExperimentId)
 	if err != nil {
 		return nil, err
 	}
-	if e["state"] != "stopped" && e["state"] != "done" {
+	if e.State != "stopped" && e.State != "done" {
 		return nil, fail(409, "An experiment is decided once it is stopped or done")
 	}
-	d, reason := astr(b["decision"]), strings.TrimSpace(astr(b["reason"]))
+	d, reason := r.Decision, strings.TrimSpace(deref(r.Reason))
 	label, adopt := strings.CutPrefix(d, "adopt ")
-	if adopt && !slices.ContainsFunc(anys(e["variants"]), func(v any) bool { return mapOf(v)["label"] == label }) {
+	var variants []labVariant
+	json.Unmarshal(e.Variants, &variants)
+	if adopt && !slices.ContainsFunc(variants, func(v labVariant) bool { return v.Label == label }) {
 		return nil, fail(400, "Unknown variant "+label)
 	}
 	if !adopt && d != "keep baseline" && d != "inconclusive" {
 		return nil, fail(400, "decision is adopt <variant>, keep baseline or inconclusive")
 	}
-	prev := astr(e["decision"])
+	prev := deref(e.Decision)
 	if prev == d {
-		return expGet(q, astr(e["id"])) // already decided so: nothing changes, no second record
+		return expGet(q, e.ID) // already decided so: nothing changes, no second record
 	}
 	if prev != "" && prev != "pending" && prev != d {
 		if reason == "" {
 			return nil, fail(400, "Overriding a decision needs a reason")
 		}
 		field := "decision"
-		if err := q.db().LabNoteInsert(q.ctx(), db.LabNoteInsertParams{ID: newID(), ExperimentID: astr(e["id"]), ProjectID: astr(e["project_id"]), Kind: "amendment", Field: &field,
+		if err := q.db().LabNoteInsert(q.ctx(), db.LabNoteInsertParams{ID: newID(), ExperimentID: e.ID, ProjectID: e.ProjectID, Kind: "amendment", Field: &field,
 			Old: jsonBytes(prev), New: jsonBytes(d), Text: reason, Author: actor(q, "operator")}); err != nil {
 			return nil, err
 		}
 	}
-	if err := q.db().LabExperimentDecide(q.ctx(), db.LabExperimentDecideParams{ID: astr(e["id"]), Decision: &d, DecisionReason: strPtr(reason), DecidedBy: ptr(actor(q, "operator"))}); err != nil {
+	if err := q.db().LabExperimentDecide(q.ctx(), db.LabExperimentDecideParams{ID: e.ID, Decision: &d, DecisionReason: strPtr(reason), DecidedBy: ptr(actor(q, "operator"))}); err != nil {
 		return nil, err
 	}
-	return expGet(q, astr(e["id"]))
+	return expGet(q, e.ID)
 }
 
 func expCreate(q *Request, b doc) (doc, error) {
@@ -2808,10 +2847,10 @@ func init() {
 		return replyAs[contract.LabExperimentCreateReply](expCreate(q, docOf(r)))
 	})
 	op("lab_experiment_note", func(q *Request, r *contract.LabExperimentNoteRequest) (contract.LabExperimentNoteReply, error) {
-		return replyAs[contract.LabExperimentNoteReply](expNote(q, docOf(r)))
+		return replyAs[contract.LabExperimentNoteReply](expNote(q, r))
 	})
 	op("lab_experiment_decide", func(q *Request, r *contract.LabExperimentDecideRequest) (contract.LabExperimentDecideReply, error) {
-		return replyAs[contract.LabExperimentDecideReply](expDecide(q, docOf(r)))
+		return replyAs[contract.LabExperimentDecideReply](expDecide(q, r))
 	})
 	op("lab_experiments_list", func(q *Request, _ *contract.LabExperimentsListRequest) (contract.LabExperimentsListReply, error) {
 		rs, err := q.db().LabExperiments(q.ctx())
