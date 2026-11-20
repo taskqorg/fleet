@@ -555,14 +555,10 @@ func checkValue(form string, v any, trials []any) error {
 		f, isNum := numOK(v)
 		ok = isNum && !math.IsInf(f, 0) && !math.IsNaN(f)
 	case "typed":
-		var m struct {
-			P, Answer, Label, Reason json.RawMessage
-		}
-		raw := rawOf(v)
-		isObject := len(raw) > 0 && raw[0] == '{' && json.Unmarshal(raw, &m) == nil
-		_, isP := numOK(rawValue(m.P))
-		answer, label := rawValue(m.Answer), rawValue(m.Label)
-		ok = isObject && (isP && (answer == "yes" || answer == "no" || answer == "abstain") && (label == "yes" || label == "no") || answer == "unscored" && rawValue(m.Reason) != nil)
+		m, isObject := labRawObject(rawOf(v)) // exact keys, as the value's own object
+		_, isP := numOK(rawValue(m["p"]))
+		answer, label := rawValue(m["answer"]), rawValue(m["label"])
+		ok = isObject && (isP && (answer == "yes" || answer == "no" || answer == "abstain") && (label == "yes" || label == "no") || answer == "unscored" && rawValue(m["reason"]) != nil)
 	}
 	if !ok {
 		return fail(400, "Invalid "+form+" value")
@@ -3096,14 +3092,12 @@ func scoreTyped(q *Request, exp, t, pin doc, name string, examples map[string]do
 	var label, tag, reason string
 	for _, f := range refs.References {
 		if f.Path == "expected.json" && label == "" && reason == "" { // paths are unique; the first counts
-			var e struct {
-				Expected, Tag json.RawMessage
-			}
+			var e map[string]json.RawMessage // exact keys
 			if err := json.Unmarshal([]byte(f.Text), &e); err != nil {
 				reason = "references/expected.json is not a JSON object"
 			}
-			json.Unmarshal(e.Expected, &label)
-			json.Unmarshal(e.Tag, &tag)
+			json.Unmarshal(e["expected"], &label)
+			json.Unmarshal(e["tag"], &tag)
 		}
 	}
 	out, _ := asT[struct {

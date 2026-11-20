@@ -176,7 +176,10 @@ func (s labScore) typed() (v struct {
 	Answer string `json:"answer"`
 	Label  string `json:"label"`
 }) {
-	json.Unmarshal(s.Value, &v)
+	m, _ := labRawObject(s.Value) // exact keys
+	json.Unmarshal(m["tag"], &v.Tag)
+	json.Unmarshal(m["answer"], &v.Answer)
+	json.Unmarshal(m["label"], &v.Label)
 	return v
 }
 
