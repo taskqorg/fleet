@@ -57,9 +57,6 @@ func (v *EntityCardRequest) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*EntityCardRequest) Closed() bool { return false }
-
 // EntityCode: A human code (D17) and the entity it names; superseded: an alias of currentCode (a moved entity or a renamed project).
 type EntityCode struct {
 	Code        string `json:"code"`
@@ -247,9 +244,6 @@ func (v *PreparedHeaderV1) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*PreparedHeaderV1) Closed() bool { return false }
-
 type PreparedItemCountsV1 struct {
 	Costs  int64 `json:"costs"`
 	Prices int64 `json:"prices"`
@@ -260,9 +254,6 @@ type PreparedItemCountsV1 struct {
 func (v *PreparedItemCountsV1) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*PreparedItemCountsV1) Closed() bool { return false }
 
 type PreparedToolsV1 struct {
 	Basis       ResourceBasis `json:"basis"`
@@ -279,9 +270,6 @@ func (v *PreparedToolsV1) Validate() error {
 	}
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*PreparedToolsV1) Closed() bool { return false }
 
 type ProjectCodeSetReply struct {
 	Code      string `json:"code"`
@@ -331,9 +319,6 @@ type ProjectContextEntry struct {
 func (v *ProjectContextEntry) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ProjectContextEntry) Closed() bool { return false }
 
 // ProjectContextReply: The project's context (projectContext): settings, roles, connections, rules, and optional resource summary.
 type ProjectContextReply struct {
@@ -467,9 +452,6 @@ func (v *ProjectDetailReply) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ProjectDetailReply) Closed() bool { return false }
-
 type ProjectDetailRequest struct {
 	ProjectId string `json:"projectId"`
 }
@@ -478,9 +460,6 @@ type ProjectDetailRequest struct {
 func (v *ProjectDetailRequest) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ProjectDetailRequest) Closed() bool { return false }
 
 type ProjectInitialAccess struct {
 	Member  *string `json:"member"`
@@ -492,9 +471,6 @@ type ProjectInitialAccess struct {
 func (v *ProjectInitialAccess) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ProjectInitialAccess) Closed() bool { return false }
 
 type ProjectListReply struct {
 	Projects []map[string]json.RawMessage `json:"projects"`
@@ -606,9 +582,6 @@ func (v *ProjectResourceItemsRequest) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ProjectResourceItemsRequest) Closed() bool { return false }
-
 type ProjectResourcesReply = json.RawMessage
 
 type ProjectResourcesRequest struct {
@@ -620,9 +593,6 @@ type ProjectResourcesRequest struct {
 func (v *ProjectResourcesRequest) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ProjectResourcesRequest) Closed() bool { return false }
 
 // QuestionAnswerReply: A project question (ProjectQuestion), or the answered question row for any other question.
 type QuestionAnswerReply = map[string]json.RawMessage
@@ -945,9 +915,6 @@ func (v *QuestionsWithdrawRequest) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*QuestionsWithdrawRequest) Closed() bool { return false }
-
 type ResourceAnchor string
 
 const (
@@ -983,9 +950,6 @@ func (v *ResourceAround) Validate() error {
 	}
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceAround) Closed() bool { return false }
 
 type ResourceCategory string
 
@@ -1054,9 +1018,6 @@ func (v *ResourceContributionV1) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceContributionV1) Closed() bool { return false }
-
 type ResourceCostItem struct {
 	Basis      ResourceBasis `json:"basis"`
 	Currency   *string       `json:"currency"`
@@ -1076,9 +1037,6 @@ func (v *ResourceCostItem) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceCostItem) Closed() bool { return false }
-
 type ResourceCostKey struct {
 	Basis    ResourceBasis `json:"basis"`
 	Currency *string       `json:"currency"`
@@ -1092,9 +1050,6 @@ func (v *ResourceCostKey) Validate() error {
 	}
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceCostKey) Closed() bool { return false }
 
 type ResourceCostV1 struct {
 	Amount        *string              `json:"amount"`
@@ -1119,9 +1074,6 @@ func (v *ResourceCostV1) Validate() error {
 	}
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceCostV1) Closed() bool { return false }
 
 type ResourceDirection string
 
@@ -1178,9 +1130,6 @@ func (v *ResourceGroup) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceGroup) Closed() bool { return false }
-
 type ResourceItem = json.RawMessage
 
 type ResourceItemsPage struct {
@@ -1221,9 +1170,6 @@ func (v *ResourceItemsPage) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceItemsPage) Closed() bool { return false }
-
 type ResourceMethodComponentV1 struct {
 	Currency   *string `json:"currency"`
 	ObservedAt *int64  `json:"observedAt"`
@@ -1237,9 +1183,6 @@ type ResourceMethodComponentV1 struct {
 func (v *ResourceMethodComponentV1) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceMethodComponentV1) Closed() bool { return false }
 
 type ResourceMethodV1 struct {
 	Components    []ResourceMethodComponentV1 `json:"components"`
@@ -1261,9 +1204,6 @@ func (v *ResourceMethodV1) Validate() error {
 	}
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceMethodV1) Closed() bool { return false }
 
 type ResourceMetricNameV1 string
 
@@ -1315,9 +1255,6 @@ func (v *ResourceMetricV1) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceMetricV1) Closed() bool { return false }
-
 type ResourceNullKey = json.RawMessage
 
 type ResourceNullableErrorClass = json.RawMessage
@@ -1332,9 +1269,6 @@ type ResourcePackedToolKey struct {
 func (v *ResourcePackedToolKey) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourcePackedToolKey) Closed() bool { return false }
 
 type ResourcePreparingReply struct {
 	Kind      string           `json:"kind"`
@@ -1354,9 +1288,6 @@ func (v *ResourcePreparingReply) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourcePreparingReply) Closed() bool { return false }
-
 type ResourcePriceItem struct {
 	Group      ResourceGroup `json:"group"`
 	Kind       string        `json:"kind"`
@@ -1372,9 +1303,6 @@ func (v *ResourcePriceItem) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourcePriceItem) Closed() bool { return false }
-
 type ResourcePriceKey struct {
 	Kind       string `json:"kind"`
 	ObservedAt int64  `json:"observedAt"`
@@ -1386,9 +1314,6 @@ func (v *ResourcePriceKey) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourcePriceKey) Closed() bool { return false }
-
 type ResourcePriceRefV1 struct {
 	ObservedAt int64  `json:"observedAt"`
 	PriceId    string `json:"priceId"`
@@ -1398,9 +1323,6 @@ type ResourcePriceRefV1 struct {
 func (v *ResourcePriceRefV1) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourcePriceRefV1) Closed() bool { return false }
 
 type ResourceProgress struct {
 	ErrorClass      ResourceNullableErrorClass `json:"errorClass"`
@@ -1421,9 +1343,6 @@ func (v *ResourceProgress) Validate() error {
 	}
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceProgress) Closed() bool { return false }
 
 type ResourceProgressState string
 
@@ -1466,9 +1385,6 @@ func (v *ResourceReadyReply) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceReadyReply) Closed() bool { return false }
-
 type ResourceResolvedKey = json.RawMessage
 
 type ResourceSortKey = json.RawMessage
@@ -1492,9 +1408,6 @@ func (v *ResourceToolItem) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceToolItem) Closed() bool { return false }
-
 // ResourceToolKey: Preserve full admitted native tool names/connections, including values longer than 200 characters; positions remain subject to the HTTP body bound.
 type ResourceToolKey struct {
 	Connection *string `json:"connection"`
@@ -1507,9 +1420,6 @@ func (v *ResourceToolKey) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceToolKey) Closed() bool { return false }
-
 type ResourceToolV1 struct {
 	Calls      int64  `json:"calls"`
 	Connection string `json:"connection"`
@@ -1521,9 +1431,6 @@ type ResourceToolV1 struct {
 func (v *ResourceToolV1) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceToolV1) Closed() bool { return false }
 
 type ResourceUnchangedReply struct {
 	Kind      string           `json:"kind"`
@@ -1539,9 +1446,6 @@ func (v *ResourceUnchangedReply) Validate() error {
 	}
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ResourceUnchangedReply) Closed() bool { return false }
 
 type TaskCancelReply = TaskDetail
 

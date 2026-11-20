@@ -134,8 +134,7 @@ func hostKeys(body json.RawMessage, t reflect.Type) error {
 	return keysAt(body, t, "", true, false)
 }
 
-// closedType: a generated closed object (go/gen Closed): its unknown keys are refused at the top of a request, and
-// nested too when Closed reports true (unevaluatedProperties false).
+// closedType: a generated closed object (go/gen Closed, unevaluatedProperties false): its unknown keys are refused.
 var closedType = reflect.TypeOf((*interface{ Closed() bool })(nil)).Elem()
 
 // keysAt: deep checks required keys at every depth; closed refuses a key a closed object (Closed) does not name.
@@ -165,7 +164,7 @@ func keysAt(body json.RawMessage, t reflect.Type, path string, deep, closed bool
 	if json.Unmarshal(body, &m) != nil {
 		return nil // not an object: decode reports it
 	}
-	if closed && reflect.PointerTo(t).Implements(closedType) && (path == "" || reflect.New(t).Interface().(interface{ Closed() bool }).Closed()) {
+	if closed && reflect.PointerTo(t).Implements(closedType) {
 		named := map[string]bool{}
 		for i := 0; i < t.NumField(); i++ {
 			tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")

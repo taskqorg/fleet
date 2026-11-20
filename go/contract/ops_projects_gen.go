@@ -20,9 +20,6 @@ func (v *ProjectArchiveReply) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ProjectArchiveReply) Closed() bool { return false }
-
 // ProjectArchiveRequest: Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.
 type ProjectArchiveRequest struct {
 	ProjectId string `json:"projectId"`
@@ -32,9 +29,6 @@ type ProjectArchiveRequest struct {
 func (v *ProjectArchiveRequest) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ProjectArchiveRequest) Closed() bool { return false }
 
 type ProjectBundle struct {
 	ContextFiles []ProjectContextFile       `json:"contextFiles"`
@@ -57,7 +51,7 @@ func (v *ProjectBundle) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*ProjectBundle) Closed() bool { return true }
 
 type ProjectContextFile struct {
@@ -70,7 +64,7 @@ func (v *ProjectContextFile) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*ProjectContextFile) Closed() bool { return true }
 
 type ProjectCreateReply = map[string]json.RawMessage

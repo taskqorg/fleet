@@ -64,12 +64,21 @@ func (a *App) runOp(q *Request, name string, b json.RawMessage, rc *toolReceipt)
 	return out, err
 }
 
-// authorizeOp: the access refresh, then the declared auth rule.
+// opGates: a check of an operation that runs after its auth and before its body is decoded (prepared reads off: 503).
+var opGates = map[string]func(q *Request) error{}
+
+// authorizeOp: the access refresh, the declared auth rule, then the operation's gate.
 func authorizeOp(q *Request, name string) error {
 	if err := refreshRequestAccess(q); err != nil {
 		return err
 	}
-	return declaredAuth(q, name)
+	if err := declaredAuth(q, name); err != nil {
+		return err
+	}
+	if g := opGates[name]; g != nil {
+		return g(q)
+	}
+	return nil
 }
 
 // declaredAuth is the one authorization rule of an operation: its contract auth (contracts/ops-*.schema.json) and the

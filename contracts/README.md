@@ -71,9 +71,9 @@ An object without properties whose `additionalProperties` is a schema is a map (
   passes on without reading.
 * `"additionalProperties": true` marks an open object: TypeScript names only the listed fields, so code reads a
   field only after the schema names it; Go keeps the other keys in `Rest` through decode and encode.
-* `"additionalProperties": false` on an operation request makes the coordinator's strict decoder refuse a key the
-  schema does not name (Go `Closed()`); `"unevaluatedProperties": false` does the same where the object is nested in a
-  request. A nested object with only `additionalProperties: false` (definition content, project settings) is typed, not refused.
+* `"unevaluatedProperties": false` on an operation request object, or one nested in it, makes the coordinator's
+  strict decoder refuse a key the schema does not name (Go `Closed()`). `"additionalProperties": false` alone types
+  only: callers have long sent requests with keys it does not list.
 * A property not in `required` is optional (`?` in TypeScript, a pointer with `omitempty` in Go). A required
   property with `"null"` in its type is always written, as `null` when absent.
 

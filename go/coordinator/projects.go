@@ -485,9 +485,12 @@ func addProjectOps(names ...string) {
 }
 
 func init() {
-	op("project_detail", resourceGated(projectDetail))
-	op("project_resources", resourceGated(projectPreparedResources))
-	op("project_resource_items", resourceGated(projectPreparedItems))
+	op("project_detail", projectDetail)
+	opGates["project_detail"] = resourceGate
+	op("project_resources", projectPreparedResources)
+	opGates["project_resources"] = resourceGate
+	op("project_resource_items", projectPreparedItems)
+	opGates["project_resource_items"] = resourceGate
 	op("profiles_list", func(q *Request, _ *contract.ProfilesListRequest) (contract.ProfilesListReply, error) {
 		ps, err := listProfiles(q)
 		return contract.ProfilesListReply{Profiles: recsOf(ps)}, err
@@ -797,29 +800,26 @@ func resourceOperationAdvertised(name string) bool {
 	return !isResourceRead(name) || resourceReadsEnabled
 }
 
-// resourceGated: a prepared project read. The declared project:projectId rule has checked the grant before the body was
-// decoded; the reads are off unless FLEET_RESOURCE_READS=on, and a retired or unknown project is 404.
-// Do not use projectContext here: an invalid configuration must not disable prepared reads.
-func resourceGated[Req, Rep any](h func(*Request, *Req) (Rep, error)) func(*Request, *Req) (Rep, error) {
-	return func(q *Request, r *Req) (Rep, error) {
-		var zero Rep
-		if !resourceReadsEnabled {
-			return zero, fail(503, "Prepared project reads disabled")
-		}
-		id := jsonPathString(q.body, "projectId")
-		if strings.TrimSpace(id) == "" {
-			return zero, fail(400, "Expected projectId")
-		}
-		exists, err := has(q, `SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL`, id)
-		if err != nil {
-			return zero, err
-		}
-		if !exists {
-			return zero, fail(404, "Unknown project")
-		}
-		return h(q, r)
+// resourceGate: the prepared project reads' gate, before the body is decoded (opGates): reads off 503, no projectId 400,
+// an unknown or retired project 404. The grant is the declared project:projectId rule.
+func resourceGate(q *Request) error {
+	if !resourceReadsEnabled {
+		return fail(503, "Prepared project reads disabled")
 	}
+	id := jsonPathString(q.body, "projectId")
+	if strings.TrimSpace(id) == "" {
+		return fail(400, "Expected projectId")
+	}
+	exists, err := has(q, `SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL`, id)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fail(404, "Unknown project")
+	}
+	return nil
 }
+
 func projectDetail(q *Request, r *contract.ProjectDetailRequest) (contract.ProjectDetailReply, error) {
 	p, err := projectContext(q, r.ProjectId)
 	if err != nil {

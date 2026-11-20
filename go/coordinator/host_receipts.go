@@ -103,6 +103,11 @@ func projectReceipt(q *Request, operation string, args doc, agent doc) (any, err
 	if operation == "connections_key_request" { // its question shows in the asking agent's conversation
 		sub.agent = "execution:" + astr(agent["executionId"])
 	}
+	if g := opGates[operation]; g != nil {
+		if err := g(sub); err != nil {
+			return nil, err
+		}
+	}
 	return op.h(sub)
 }
 

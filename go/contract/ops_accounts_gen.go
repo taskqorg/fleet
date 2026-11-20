@@ -20,7 +20,7 @@ func (v *AccountConnectRequest) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*AccountConnectRequest) Closed() bool { return true }
 
 // AccountCreateReply: A managed-account record: id, name, harness, holder, kind, plan, intake, take, switchPct, comment, bindings and times.
@@ -40,7 +40,7 @@ func (v *AccountCreateRequest) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*AccountCreateRequest) Closed() bool { return true }
 
 type AccountDiscoverReply = AccountInspection
@@ -56,7 +56,7 @@ func (v *AccountDiscoverRequest) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*AccountDiscoverRequest) Closed() bool { return true }
 
 type AccountHostsReply struct {
@@ -432,7 +432,7 @@ func (v *ConnectionAccess) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*ConnectionAccess) Closed() bool { return true }
 
 // ConnectionView: An API connection; keys, spend and history only in connections_list.
@@ -481,7 +481,7 @@ func (v *ConnectionsCreateRequest) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*ConnectionsCreateRequest) Closed() bool { return true }
 
 type ConnectionsDeleteReply struct {
@@ -503,9 +503,6 @@ type ConnectionsDeleteRequest struct {
 func (v *ConnectionsDeleteRequest) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ConnectionsDeleteRequest) Closed() bool { return false }
 
 // ConnectionsKeyAddReply: The new key row (fingerprint, state, addedAt, addedBy); never the value.
 type ConnectionsKeyAddReply = map[string]json.RawMessage
@@ -555,8 +552,8 @@ func (v *ConnectionsKeyRequestRequest) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ConnectionsKeyRequestRequest) Closed() bool { return false }
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ConnectionsKeyRequestRequest) Closed() bool { return true }
 
 // ConnectionsKeyStateReply: The key row after the change.
 type ConnectionsKeyStateReply = map[string]json.RawMessage
@@ -697,8 +694,8 @@ func (v *ConnectionsSetLimitsRequest) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*ConnectionsSetLimitsRequest) Closed() bool { return false }
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ConnectionsSetLimitsRequest) Closed() bool { return true }
 
 type ConnectionsSetToolsReply = ConnectionView
 
@@ -716,7 +713,7 @@ func (v *ConnectionsSetToolsRequest) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*ConnectionsSetToolsRequest) Closed() bool { return true }
 
 // ConnectionsTokenCreateReply: token: the bearer value, shown once; refused: requested connections the owner cannot use.
@@ -873,9 +870,6 @@ func (v *LimitEmpty) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*LimitEmpty) Closed() bool { return false }
-
 type LimitEmptyState string
 
 const (
@@ -963,9 +957,6 @@ func (v *LimitPeriod) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*LimitPeriod) Closed() bool { return false }
-
 // LimitPoint: left in percent of the member (or weighted points for a pool) at a time
 type LimitPoint struct {
 	At   int64   `json:"at"`
@@ -976,9 +967,6 @@ type LimitPoint struct {
 func (v *LimitPoint) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*LimitPoint) Closed() bool { return false }
 
 // LimitPool: per harness and period over members with a known percent, weighted by planWeight
 type LimitPool struct {
@@ -1024,9 +1012,6 @@ func (v *LimitPool) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*LimitPool) Closed() bool { return false }
-
 type LimitRefreshSent struct {
 	Binding        string `json:"binding"`
 	ExecutionId    string `json:"executionId"`
@@ -1039,9 +1024,6 @@ func (v *LimitRefreshSent) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*LimitRefreshSent) Closed() bool { return false }
-
 type LimitRefreshSkipped struct {
 	Reason         string `json:"reason"`
 	SubscriptionId string `json:"subscriptionId"`
@@ -1051,9 +1033,6 @@ type LimitRefreshSkipped struct {
 func (v *LimitRefreshSkipped) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*LimitRefreshSkipped) Closed() bool { return false }
 
 // LimitReset: earliest member reset and the weighted points it adds back
 type LimitReset struct {
@@ -1065,9 +1044,6 @@ type LimitReset struct {
 func (v *LimitReset) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*LimitReset) Closed() bool { return false }
 
 type LimitSubscription struct {
 	Harness    string                `json:"harness"`
@@ -1111,9 +1087,6 @@ func (v *LimitSubscription) Validate() error {
 	}
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*LimitSubscription) Closed() bool { return false }
 
 type PriceAddReply = PriceEntry
 
@@ -1204,9 +1177,6 @@ func (v *SubscriptionLimitsRefreshReply) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*SubscriptionLimitsRefreshReply) Closed() bool { return false }
-
 // SubscriptionLimitsRefreshRequest: fleet-people-access.md section 8 "Read without a run": one subscription, or every one the caller holds (the owner: all)
 type SubscriptionLimitsRefreshRequest struct {
 	SubscriptionId *string `json:"subscriptionId,omitempty"`
@@ -1216,9 +1186,6 @@ type SubscriptionLimitsRefreshRequest struct {
 func (v *SubscriptionLimitsRefreshRequest) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*SubscriptionLimitsRefreshRequest) Closed() bool { return false }
 
 type SubscriptionLimitsReply struct {
 	From          int64               `json:"from"`
@@ -1250,9 +1217,6 @@ func (v *SubscriptionLimitsReply) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*SubscriptionLimitsReply) Closed() bool { return false }
-
 type SubscriptionLimitsRequest struct {
 	From        *int64   `json:"from,omitempty"`
 	PaceMargin  *float64 `json:"paceMargin,omitempty"`
@@ -1264,9 +1228,6 @@ type SubscriptionLimitsRequest struct {
 func (v *SubscriptionLimitsRequest) Validate() error {
 	return nil
 }
-
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
-func (*SubscriptionLimitsRequest) Closed() bool { return false }
 
 type SubscriptionReading struct {
 	At       int64    `json:"at"`
@@ -1324,7 +1285,7 @@ func (v *TransportAuthorizeRequest) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*TransportAuthorizeRequest) Closed() bool { return true }
 
 // TransportInspectReply: Retained transport of one execution; never reruns native work.
@@ -1410,12 +1371,12 @@ func init() {
 		"connections_create":          {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "architect", Agent: "tool", Description: "holder: the owner may create a key for another person.", InputSchema: json.RawMessage("{\"$comment\":\"holder: the owner may create a key for another person.\",\"additionalProperties\":false,\"properties\":{\"comment\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"provider\":{\"type\":\"string\"}},\"required\":[\"name\",\"provider\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"connections_delete":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "no", Description: "Owner or full-access person (not agents). Deletes a connection whose keys are all retired: the connection, its key rows, history and value directory; run tokens drop its name; open key requests for it are withdrawn.", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person (not agents). Deletes a connection whose keys are all retired: the connection, its key rows, history and value directory; run tokens drop its name; open key requests for it are withdrawn.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"}},\"required\":[\"connection\"],\"type\":\"object\"}")},
 		"connections_key_add":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "no", Description: "Owner only. The value goes to the secret file; the reply has its fingerprint only. questionId: the open key request (connections_key_request) this value answers with {connection, fingerprint, state}.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only. The value goes to the secret file; the reply has its fingerprint only. questionId: the open key request (connections_key_request) this value answers with {connection, fingerprint, state}.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"questionId\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"connection\",\"value\"],\"type\":\"object\"}")},
-		"connections_key_request":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask the owner to add an API key: projectId, requestId, connection, reason. Never pass a key value; the owner pastes it into Fleet and the answer (question_history) is only {connection, fingerprint, state} or decline", InputSchema: json.RawMessage("{\"$comment\":\"An agent asks the owner for a key value of connection. No argument carries a value; the owner answers through connections_key_add with questionId.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"connection\"],\"type\":\"object\"}")},
+		"connections_key_request":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask the owner to add an API key: projectId, requestId, connection, reason. Never pass a key value; the owner pastes it into Fleet and the answer (question_history) is only {connection, fingerprint, state} or decline", InputSchema: json.RawMessage("{\"$comment\":\"An agent asks the owner for a key value of connection. No argument carries a value; the owner answers through connections_key_add with questionId.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"connection\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"connections_key_state":       {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "state active, draining or retired.", InputSchema: json.RawMessage("{\"$comment\":\"state active, draining or retired.\",\"additionalProperties\":true,\"properties\":{\"keyId\":{\"type\":\"string\"},\"state\":{\"$comment\":\"A key state a holder sets (disabled is Fleet's own).\",\"enum\":[\"active\",\"draining\",\"retired\"],\"type\":\"string\"}},\"required\":[\"keyId\",\"state\"],\"type\":\"object\"}")},
 		"connections_list":            {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Connections visible to the caller: provider, tools, access, intake, limits and key state, never key values", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_set_access":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "access: {people, projects, experiments}, each a list of ids.", InputSchema: json.RawMessage("{\"$comment\":\"access: {people, projects, experiments}, each a list of ids.\",\"additionalProperties\":true,\"properties\":{\"access\":{\"$comment\":\"Who besides the holder may use the API key: people (emails), projects and experiments.\",\"additionalProperties\":false,\"properties\":{\"experiments\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"people\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\",\"unevaluatedProperties\":false},\"connection\":{\"type\":\"string\"}},\"required\":[\"connection\",\"access\"],\"type\":\"object\"}")},
 		"connections_set_intake":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "intake all or paused.", InputSchema: json.RawMessage("{\"$comment\":\"intake all or paused.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"intake\":{\"$comment\":\"Whether new work may use a subscription or API key.\",\"enum\":[\"all\",\"paused\"],\"type\":\"string\"}},\"required\":[\"connection\",\"intake\"],\"type\":\"object\"}")},
-		"connections_set_limits":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.", InputSchema: json.RawMessage("{\"$comment\":\"Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"limits\":{\"$comment\":\"File tool limits of a connection (connections_set_limits); an absent field takes its default: fileBytes and replyBytes no cap, stallMs 60000, answerMs 120000.\",\"additionalProperties\":false,\"properties\":{\"answerMs\":{\"$comment\":\"Wait from the last byte sent to the provider's response headers (file tools).\",\"minimum\":1,\"type\":\"integer\"},\"fileBytes\":{\"$comment\":\"Largest upload in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"replyBytes\":{\"$comment\":\"Largest download in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"stallMs\":{\"$comment\":\"Longest time without progress in either direction.\",\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\",\"unevaluatedProperties\":false}},\"required\":[\"connection\",\"limits\"],\"type\":\"object\"}")},
+		"connections_set_limits":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.", InputSchema: json.RawMessage("{\"$comment\":\"Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"limits\":{\"$comment\":\"File tool limits of a connection (connections_set_limits); an absent field takes its default: fileBytes and replyBytes no cap, stallMs 60000, answerMs 120000.\",\"additionalProperties\":false,\"properties\":{\"answerMs\":{\"$comment\":\"Wait from the last byte sent to the provider's response headers (file tools).\",\"minimum\":1,\"type\":\"integer\"},\"fileBytes\":{\"$comment\":\"Largest upload in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"replyBytes\":{\"$comment\":\"Largest download in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"stallMs\":{\"$comment\":\"Longest time without progress in either direction.\",\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\",\"unevaluatedProperties\":false}},\"required\":[\"connection\",\"limits\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"connections_set_tools":       {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "owner", Agent: "tool", Description: "Owner-only explicit recognized provider tool grant; does not change people/project/experiment access.", InputSchema: json.RawMessage("{\"$comment\":\"Owner-only explicit recognized provider tool grant; does not change people/project/experiment access.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"tools\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"connection\",\"tools\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"connections_token_create":    {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "owner", Agent: "no", Description: "The owner only (not an agent). The token value is answered once.", InputSchema: json.RawMessage("{\"$comment\":\"The owner only (not an agent). The token value is answered once.\",\"additionalProperties\":true,\"properties\":{\"connections\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"name\":{\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"}")},
 		"connections_token_list":      {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Gateway tokens of connections: id, connection, created and revoked, never the token value", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},

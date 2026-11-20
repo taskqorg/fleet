@@ -262,7 +262,7 @@ func (v *GatewayLimits) Validate() error {
 	return nil
 }
 
-// Closed: a request key outside the schema is refused; true: also where this object is nested.
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*GatewayLimits) Closed() bool { return true }
 
 // GatewayProvider: A provider catalogue entry (go/coordinator/providers.go); the gateway reads only these fields.
