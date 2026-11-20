@@ -11,6 +11,8 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // sessionListDBRow: a sessions_list and list_membership row (sqlSessionListCols) with its group and sort keys.
@@ -179,13 +181,17 @@ func related(q *Request, d doc) (doc, error) {
 	return out, nil
 }
 
-func delegationsWhere(q *Request, sql string, id string) ([]doc, error) {
-	ds, err := rows(q, "SELECT delegation FROM execution WHERE delegation IS NOT NULL AND ("+sql+") ORDER BY seq", id)
+// delegationsOf: the delegations read (SessionDelegations, ExecutionDelegations), each with the states of its runs.
+func delegationsOf(q *Request, ds [][]byte, err error) ([]doc, error) {
 	if err != nil {
 		return nil, err
 	}
 	out := []doc{}
-	for _, d := range ds {
+	for _, raw := range ds {
+		var d doc
+		if json.Unmarshal(raw, &d) != nil {
+			continue
+		}
 		r, err := related(q, d)
 		if err != nil {
 			return nil, err
@@ -208,12 +214,16 @@ func sessionGet(q *Request, sid string) (doc, error) {
 		s[k] = x
 	}
 	s["sessionId"] = sid
-	c, err := first(q, "SELECT code FROM session WHERE id=$1", sid)
-	if err != nil {
+	code, err := q.db().SessionCode(q.ctx(), sid)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	s["code"] = c["code"]
-	if s["delegations"], err = delegationsWhere(q, "delegation->>'parentSessionId'=$1 OR delegation->>'childSessionId'=$1", sid); err != nil {
+	s["code"] = nil
+	if code != nil {
+		s["code"] = *code
+	}
+	ds, err := q.db().SessionDelegations(q.ctx(), sid)
+	if s["delegations"], err = delegationsOf(q, ds, err); err != nil {
 		return nil, err
 	}
 	if s["messages"], err = all(q, "message", doc{"sessionId": sid}); err != nil {
@@ -400,12 +410,11 @@ func teardownCommand(q *Request, s, last doc, deleteBranch bool) (doc, error) {
 // deliveredTeardown: an accepted task's sessions get their worktree teardown (fleet-system-management.md, Worktree on
 // delivery). A session with a live execution, or a teardown still pending, is left alone; archiving it later sends one.
 func deliveredTeardown(q *Request, taskID string) error {
-	sids, err := queryRows(q, "SELECT DISTINCT session_id FROM execution WHERE task_id=$1 AND session_id IS NOT NULL", taskID)
+	sids, err := q.db().TaskSessionIDs(q.ctx(), &taskID)
 	if err != nil {
 		return err
 	}
-	for _, r := range sids {
-		sid := astr(r["session_id"])
+	for _, sid := range sids {
 		s, err := get(q, sid, "session")
 		if errors.Is(err, errNotFound) {
 			continue
@@ -472,7 +481,8 @@ func init() {
 		if _, err := get(q, id, "execution"); err != nil {
 			return nil, err
 		}
-		ds, err := delegationsWhere(q, "delegation->>'parentExecutionId'=$1 OR delegation->>'childExecutionId'=$1 OR delegation->>'continuationExecutionId'=$1", id)
+		raw, err := q.db().ExecutionDelegations(q.ctx(), id)
+		ds, err := delegationsOf(q, raw, err)
 		return doc{"delegations": ds}, err
 	})
 	op("session_create", func(q *Request, r *contract.SessionCreateRequest) (contract.SessionCreateReply, error) {

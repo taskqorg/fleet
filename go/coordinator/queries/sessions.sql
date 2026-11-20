@@ -17,3 +17,21 @@ SELECT DISTINCT ON (coalesce(e.harness,'codex'),coalesce(e.harness_version,''),c
 FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d
 WHERE e.definitions @> @defs::jsonb AND d->>'kind'='agent' AND d->>'id'= @id::text AND coalesce(e.started_at,e.updated_at) >= now() - interval '30 days'
 ORDER BY coalesce(e.harness,'codex'),coalesce(e.harness_version,''),coalesce(e.model,''),coalesce(e.data->>'effort',''),e.seq DESC;
+
+-- name: SessionCode :one
+SELECT code FROM session WHERE id = @id;
+
+-- name: TaskSessionIDs :many
+-- The sessions a task's executions ran in (deliveredTeardown).
+SELECT DISTINCT session_id::text FROM execution WHERE task_id = @task_id AND session_id IS NOT NULL;
+
+-- name: SessionDelegations :many
+-- The delegations a session takes part in, as parent or child (sessionGet).
+SELECT delegation FROM execution WHERE delegation IS NOT NULL
+  AND (delegation->>'parentSessionId' = @session_id::text OR delegation->>'childSessionId' = @session_id::text) ORDER BY seq;
+
+-- name: ExecutionDelegations :many
+-- The delegations an execution takes part in, as parent, child or continuation.
+SELECT delegation FROM execution WHERE delegation IS NOT NULL
+  AND (delegation->>'parentExecutionId' = @execution_id::text OR delegation->>'childExecutionId' = @execution_id::text
+   OR delegation->>'continuationExecutionId' = @execution_id::text) ORDER BY seq;

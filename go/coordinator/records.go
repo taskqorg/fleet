@@ -563,19 +563,6 @@ func decode(raw json.RawMessage, v any) error {
 
 func hostOf(q *Request) string { return q.host["hostId"].(string) }
 
-// queryRows: rows as maps (column name -> value); jsonb decodes to JSON values, timestamps to time.Time.
-func queryRows(q *Request, sql string, args ...any) ([]doc, error) {
-	rs, err := q.tx.Query(q.ctx(), sql, args...)
-	if err != nil {
-		return nil, err
-	}
-	out, err := pgx.CollectRows(rs, pgx.RowToMap)
-	if out == nil {
-		out = []map[string]any{}
-	}
-	return out, err
-}
-
 // taskRow: the task's row as a record (column names), for callers outside this file; errNotFound when absent.
 func taskRow(q *Request, id string) (doc, error) {
 	t, err := first(q, "SELECT * FROM task WHERE id=$1", id)

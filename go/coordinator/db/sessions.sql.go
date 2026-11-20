@@ -67,6 +67,33 @@ func (q *Queries) AgentsCompatibilityRuns(ctx context.Context, arg AgentsCompati
 	return items, nil
 }
 
+const executionDelegations = `-- name: ExecutionDelegations :many
+SELECT delegation FROM execution WHERE delegation IS NOT NULL
+  AND (delegation->>'parentExecutionId' = $1::text OR delegation->>'childExecutionId' = $1::text
+   OR delegation->>'continuationExecutionId' = $1::text) ORDER BY seq
+`
+
+// The delegations an execution takes part in, as parent, child or continuation.
+func (q *Queries) ExecutionDelegations(ctx context.Context, executionID string) ([][]byte, error) {
+	rows, err := q.db.Query(ctx, executionDelegations, executionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items [][]byte
+	for rows.Next() {
+		var delegation []byte
+		if err := rows.Scan(&delegation); err != nil {
+			return nil, err
+		}
+		items = append(items, delegation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const receiptInsert = `-- name: ReceiptInsert :exec
 INSERT INTO agent_tool_receipt(id, execution_id, directing_email, operation, payload_sha, result, authority)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -123,4 +150,66 @@ func (q *Queries) ReceiptOf(ctx context.Context, id string) (ReceiptOfRow, error
 		&i.Authority,
 	)
 	return i, err
+}
+
+const sessionCode = `-- name: SessionCode :one
+SELECT code FROM session WHERE id = $1
+`
+
+func (q *Queries) SessionCode(ctx context.Context, id string) (*string, error) {
+	row := q.db.QueryRow(ctx, sessionCode, id)
+	var code *string
+	err := row.Scan(&code)
+	return code, err
+}
+
+const sessionDelegations = `-- name: SessionDelegations :many
+SELECT delegation FROM execution WHERE delegation IS NOT NULL
+  AND (delegation->>'parentSessionId' = $1::text OR delegation->>'childSessionId' = $1::text) ORDER BY seq
+`
+
+// The delegations a session takes part in, as parent or child (sessionGet).
+func (q *Queries) SessionDelegations(ctx context.Context, sessionID string) ([][]byte, error) {
+	rows, err := q.db.Query(ctx, sessionDelegations, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items [][]byte
+	for rows.Next() {
+		var delegation []byte
+		if err := rows.Scan(&delegation); err != nil {
+			return nil, err
+		}
+		items = append(items, delegation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const taskSessionIDs = `-- name: TaskSessionIDs :many
+SELECT DISTINCT session_id::text FROM execution WHERE task_id = $1 AND session_id IS NOT NULL
+`
+
+// The sessions a task's executions ran in (deliveredTeardown).
+func (q *Queries) TaskSessionIDs(ctx context.Context, taskID *string) ([]string, error) {
+	rows, err := q.db.Query(ctx, taskSessionIDs, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var session_id string
+		if err := rows.Scan(&session_id); err != nil {
+			return nil, err
+		}
+		items = append(items, session_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
