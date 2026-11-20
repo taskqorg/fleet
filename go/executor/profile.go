@@ -38,7 +38,7 @@ func exe() string { p, _ := os.Executable(); return p }
 
 // profileGrants: the profile's MCP grants (a profile that does not fit names none; profileValidate refuses it first).
 func profileGrants(v any) []contract.ProfileMcpGrant {
-	p, _ := decodeAs[struct {
+	p, _ := contractOf[struct {
 		McpServers []contract.ProfileMcpGrant `json:"mcpServers"`
 	}](v)
 	return p.McpServers
@@ -75,25 +75,18 @@ func profileServers(v any, root, harness, account string) (M, error) {
 
 // skillItem: one resolved skill snapshot of a start payload; an item that is not an object reads as empty.
 type skillItem struct {
-	Id   json.RawMessage `json:"id"`
-	Text json.RawMessage `json:"text"`
+	Id   jsonValue `json:"id"`
+	Text jsonValue `json:"text"`
 }
 
-func skillItems(skills any) []skillItem {
-	raw, _ := decodeAs[[]json.RawMessage](skills)
-	out := make([]skillItem, len(raw))
-	for i, r := range raw {
-		json.Unmarshal(r, &out[i])
-	}
-	return out
-}
+func skillItems(skills any) []skillItem { return typed[[]skillItem](skills) }
 
 // skillText appends skill text to Codex developer instructions (skill discovery is disabled in Fleet's Codex runs); a
 // skill without a string id and text is skipped.
 func skillText(instructions string, skills any) string {
 	for _, s := range skillItems(skills) {
-		id, idOK := rawStr(s.Id)
-		text, textOK := rawStr(s.Text)
+		id, idOK := valStr(s.Id)
+		text, textOK := valStr(s.Text)
 		if idOK && textOK {
 			instructions += "\n\n# Skill: " + id + "\n\n" + text
 		}
@@ -108,30 +101,20 @@ type launchFields struct {
 }
 
 func launchOf(v any) launchFields {
-	var raw struct {
-		Model        json.RawMessage `json:"model"`
-		Instructions json.RawMessage `json:"instructions"`
-		CodeMode     json.RawMessage `json:"codeMode"`
-		Text         json.RawMessage `json:"text"`
-	}
-	if b := jsonBytes(v); isObject(b) {
-		json.Unmarshal(b, &raw)
-	}
-	var out launchFields
-	out.Model, _ = rawStr(raw.Model)
-	out.Instructions, _ = rawStr(raw.Instructions)
-	out.CodeMode, _ = rawStr(raw.CodeMode)
-	out.Text, _ = rawStr(raw.Text)
-	return out
+	raw := typed[struct {
+		Model        string `json:"model"`
+		Instructions string `json:"instructions"`
+		CodeMode     string `json:"codeMode"`
+		Text         string `json:"text"`
+	}](v)
+	return launchFields{Model: raw.Model, Instructions: raw.Instructions, CodeMode: raw.CodeMode, Text: raw.Text}
 }
-
-func jsonBytes(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
 
 // profileInstructions: the profile's instructions ("" when not a string).
 func profileInstructions(v any) string {
-	p, _ := decodeAs[map[string]json.RawMessage](v)
-	s, _ := rawStr(p["instructions"])
-	return s
+	return typed[struct {
+		Instructions string `json:"instructions"`
+	}](v).Instructions
 }
 
 // profileApply: JSON string quoting is also valid TOML basic-string quoting for these values.
@@ -159,8 +142,8 @@ func profilePrepare(v any, account string, skills any) (M, M, error) {
 	}
 
 	// The evidence echoes the requested fields as sent, so their hashes stay those of the received profile.
-	fields, _ := decodeAs[map[string]json.RawMessage](v)
-	o := func(k string) any { return decRaw(fields[k]) }
+	fields := typed[map[string]jsonValue](v)
+	o := func(k string) any { return fields[k].V }
 	if profile.Harness != nil && *profile.Harness != contract.ProfileHarnessCodex {
 		return M{"capabilityReadiness": capabilityEvidence, "requested": v, "profileSha256": profileHash(v), "applied": M{"harness": o("harness"), "model": o("model"), "instructionRole": o("instructionRole"),
 			"instructions": o("instructions"), "tools": o("tools"), "mcpServers": o("mcpServers"), "delegationProfiles": o("delegationProfiles"), "settings": o("settings"),
@@ -169,8 +152,8 @@ func profilePrepare(v any, account string, skills any) (M, M, error) {
 	applied := skillText(profile.Instructions, skills)
 	resolvedSkills := []any{}
 	for _, skill := range skillItems(skills) {
-		text, _ := rawStr(skill.Text)
-		resolvedSkills = append(resolvedSkills, M{"id": decRaw(skill.Id), "sha256": sha([]byte(text))})
+		text, _ := valStr(skill.Text)
+		resolvedSkills = append(resolvedSkills, M{"id": skill.Id.V, "sha256": sha([]byte(text))})
 	}
 	bin, err := os.ReadFile(exe())
 	if err != nil {

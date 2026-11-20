@@ -5,7 +5,6 @@ package main
 // and ~/.ssh config are never used. Errors are reason codes; key contents never leave the host.
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -14,17 +13,6 @@ import (
 	"fleet/contract"
 )
 
-// decodeAs decodes a JSON value already read (a payload map, an M) as T.
-func decodeAs[T any](v any) (T, error) {
-	var out T
-	b, err := json.Marshal(v)
-	if err != nil {
-		return out, err
-	}
-	err = json.Unmarshal(b, &out)
-	return out, err
-}
-
 // projectContext: a payload's project (an open object on the wire) as contract.ProjectContext; absent or null is the
 // zero value. Decode it once per command and pass the value on.
 func projectContext(v any) (contract.ProjectContext, error) {
@@ -32,31 +20,11 @@ func projectContext(v any) (contract.ProjectContext, error) {
 	if v == nil {
 		return out, nil
 	}
-	out, err := decodeAs[contract.ProjectContext](v)
+	out, err := contractOf[contract.ProjectContext](v)
 	if err != nil {
 		return out, errors.New("invalid project context: " + err.Error())
 	}
 	return out, nil
-}
-
-// rawStr: a JSON value that is a string (jIsStr): its text and true; any other value, or none, is "", false.
-func rawStr(raw json.RawMessage) (string, bool) {
-	var s string
-	if len(raw) == 0 || raw[0] != '"' || json.Unmarshal(raw, &s) != nil {
-		return "", false
-	}
-	return s, true
-}
-
-// rawStrs: the string items of a JSON array (items of another type are skipped).
-func rawStrs(items []json.RawMessage) []string {
-	out := []string{}
-	for _, it := range items {
-		if s, ok := rawStr(it); ok {
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 func connectionsDir() string {

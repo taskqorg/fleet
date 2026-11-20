@@ -4,7 +4,6 @@ package main
 // or secrets leave the host.
 
 import (
-	"encoding/json"
 	"errors"
 	"fleet/contract"
 	"os"
@@ -84,14 +83,14 @@ func claudePlacementHere() (string, error) {
 // accountView: the readiness fields of one FLEET_NATIVE_ACCOUNTS entry; a field of another type reads as absent and an
 // entry that is not an object has none.
 type accountView struct {
-	Harness    json.RawMessage `json:"harness"`
-	Readiness  json.RawMessage `json:"readiness"`
-	Home       json.RawMessage `json:"home"`
-	NativeHome json.RawMessage `json:"nativeHome"`
+	Harness    jsonValue `json:"harness"`
+	Readiness  jsonValue `json:"readiness"`
+	Home       string    `json:"home"`
+	NativeHome jsonValue `json:"nativeHome"`
 }
 
 func readiness(payload any, host, registry string, forbidden ...[]string) contract.Readiness {
-	pp, err := decodeAs[contract.ProjectPayload](payload)
+	pp, err := contractOf[contract.ProjectPayload](payload)
 	project, perr := projectContext(pp.Project)
 	if err != nil || perr != nil {
 		reason := "invalid project payload"
@@ -173,13 +172,12 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 	var accounts map[string]accountView
 	if registry != "" {
 		if b, err := os.ReadFile(registry); err == nil {
-			var entries map[string]json.RawMessage
-			if _, err := dec(string(b)); err == nil && json.Unmarshal(b, &entries) == nil && entries != nil {
-				accounts = map[string]accountView{}
-				for name, raw := range entries {
-					var a accountView
-					json.Unmarshal(raw, &a)
-					accounts[name] = a
+			if all, err := dec(string(b)); err == nil {
+				if entries, ok := all.(M); ok {
+					accounts = map[string]accountView{}
+					for name, raw := range entries {
+						accounts[name] = typed[accountView](raw)
+					}
 				}
 			}
 		}
@@ -191,11 +189,11 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 		} else {
 			for _, name := range sortedKeysOf(accounts) {
 				a := accounts[name]
-				if !has(rawStr(a.Harness)) {
+				if !has(valStr(a.Harness)) {
 					continue
 				}
 				f := ""
-				if r, isStr := rawStr(a.Readiness); len(a.Readiness) > 0 && !(isStr && r == "ready") {
+				if r, isStr := valStr(a.Readiness); a.Readiness.Set && !(isStr && r == "ready") {
 					f = "login-absent"
 				}
 				checks = append(checks, check("account", name, f))
@@ -206,8 +204,8 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 		var homes []string
 		for _, name := range sortedKeysOf(accounts) {
 			a := accounts[name]
-			if h, _ := rawStr(a.Harness); h == "claude" {
-				if home, ok := rawStr(a.NativeHome); ok {
+			if h, _ := valStr(a.Harness); h == "claude" {
+				if home, ok := valStr(a.NativeHome); ok {
 					homes = append(homes, home)
 				}
 			}
@@ -238,11 +236,11 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 	}
 	for _, name := range sortedKeysOf(accounts) {
 		a := accounts[name]
-		harness, _ := rawStr(a.Harness)
-		if r, isStr := rawStr(a.Readiness); !codingHarnesses[harness] || (isStr && r != "ready") {
+		harness, _ := valStr(a.Harness)
+		if r, isStr := valStr(a.Readiness); !codingHarnesses[harness] || (isStr && r != "ready") {
 			continue
 		}
-		home, _ := rawStr(a.Home)
+		home := a.Home
 		for _, tool := range execution.Tools {
 			failed := ""
 			var err error

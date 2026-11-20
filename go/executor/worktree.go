@@ -222,7 +222,7 @@ func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string
 	}
 	// linkPaths and sharedDirectories: symlinks into the main checkout; only existing, relative, non-escaping paths.
 	for _, list := range [][]json.RawMessage{wt.LinkPaths, wt.SharedDirectories} {
-		for _, rel := range rawStrs(list) {
+		for _, rel := range stringsOf(list) {
 			if strings.HasPrefix(rel, "/") || contains(strings.Split(rel, "/"), "..") {
 				continue
 			}
@@ -331,7 +331,7 @@ func keepReasons(project contract.ProjectContext) map[string]bool {
 	keep := map[string]bool{}
 	list := []string{"uncommitted", "unpushed", "teardown-failed"}
 	if project.Cleanup != nil && project.Cleanup.KeepWhen != nil {
-		list = rawStrs(project.Cleanup.KeepWhen)
+		list = stringsOf(project.Cleanup.KeepWhen)
 	}
 	for _, s := range list {
 		keep[s] = true
@@ -361,7 +361,7 @@ func teardown(dir, session, top string, project contract.ProjectContext, deleteB
 	var links []string
 	if wt := project.Worktree; wt != nil {
 		for _, list := range [][]json.RawMessage{wt.LinkPaths, wt.SharedDirectories} {
-			for _, r := range rawStrs(list) {
+			for _, r := range stringsOf(list) {
 				if m, err := os.Lstat(filepath.Join(w, r)); err == nil && m.Mode()&os.ModeSymlink != 0 {
 					links = append(links, r)
 				}

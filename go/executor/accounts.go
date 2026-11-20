@@ -347,48 +347,33 @@ func claudeReadLimits(x registryEntry) (M, error) {
 		{"type": "control_request", "request_id": "fleet-usage", "request": M{"subtype": "get_usage"}},
 	}, func(v M) bool {
 		a := claudeControlAnswer(v)
-		t, _ := rawStr(a.Type)
-		id, _ := rawStr(a.Response.RequestId)
-		return t == "control_response" && id == "fleet-usage"
+		return a.Type == "control_response" && a.Response.RequestId == "fleet-usage"
 	})
 	if err != nil {
 		return nil, err
 	}
 	a := claudeControlAnswer(r)
-	if st, _ := rawStr(a.Response.Subtype); st != "success" {
+	if a.Response.Subtype != "success" {
 		return nil, errors.New("get_usage refused")
 	}
-	var answer struct {
-		RateLimits json.RawMessage `json:"rate_limits"`
-	}
-	json.Unmarshal(a.Response.Response, &answer)
-	return claudeUsageReading(a.Response.Response, decRaw(answer.RateLimits)), nil
+	native := typed[struct {
+		RateLimits jsonValue `json:"rate_limits"`
+	}](a.Response.Response).RateLimits.V
+	return claudeUsageReading(json.RawMessage(enc(a.Response.Response.V)), native), nil
 }
 
 // claudeControl: a Claude Code stream-json control response; a field of another type reads as absent.
+// A response that is not an object: only the type is read.
 type claudeControl struct {
-	Type     json.RawMessage `json:"type"`
+	Type     string `json:"type"`
 	Response struct {
-		RequestId json.RawMessage `json:"request_id"`
-		Subtype   json.RawMessage `json:"subtype"`
-		Response  json.RawMessage `json:"response"`
+		RequestId string    `json:"request_id"`
+		Subtype   string    `json:"subtype"`
+		Response  jsonValue `json:"response"`
 	} `json:"response"`
 }
 
-func claudeControlAnswer(v M) claudeControl {
-	var a claudeControl
-	if b, err := json.Marshal(v); err == nil {
-		if json.Unmarshal(b, &a) != nil {
-			// A response that is not an object: only the type is read.
-			var t struct {
-				Type json.RawMessage `json:"type"`
-			}
-			json.Unmarshal(b, &t)
-			a = claudeControl{Type: t.Type}
-		}
-	}
-	return a
-}
+func claudeControlAnswer(v M) claudeControl { return typed[claudeControl](v) }
 
 // claudeUsageReading: a get_usage answer (Claude Code 2.1.319, seen live 2026-11-11): response.rate_limits holds
 // five_hour, seven_day and seven_day_<name> as {utilization 0-100, resets_at RFC 3339} or null, and model_scoped as
@@ -396,43 +381,37 @@ func claudeControlAnswer(v M) claudeControl {
 // not limit windows.
 func claudeUsageReading(answer json.RawMessage, native any) M {
 	// The windows: rate_limits when it is an object, else the answer itself; a value that is not an object has none.
-	var outer struct {
-		RateLimits json.RawMessage `json:"rate_limits"`
-	}
-	json.Unmarshal(answer, &outer)
-	var usage map[string]json.RawMessage
-	if isObject(outer.RateLimits) {
-		json.Unmarshal(outer.RateLimits, &usage)
-	} else if isObject(answer) {
-		json.Unmarshal(answer, &usage)
+	ans := decRaw(answer)
+	outer := typed[struct {
+		RateLimits jsonValue `json:"rate_limits"`
+	}](ans)
+	usage, ok := outer.RateLimits.V.(M)
+	if !ok {
+		usage, _ = ans.(M)
 	}
 	type window struct {
-		Utilization json.RawMessage `json:"utilization"`
-		ResetsAt    json.RawMessage `json:"resets_at"`
-		DisplayName json.RawMessage `json:"display_name"`
+		Utilization jsonValue `json:"utilization"`
+		ResetsAt    jsonValue `json:"resets_at"`
+		DisplayName string    `json:"display_name"`
 	}
 	windows := []contract.LimitWindow{}
 	add := func(period string, w window, model *string) {
-		u, ok := num(decRaw(w.Utilization))
+		u, ok := num(w.Utilization.V)
 		if !ok {
 			return
 		}
 		lw := contract.LimitWindow{Period: period, Pct: &u, Model: model}
-		if t, ok := rawStr(w.ResetsAt); ok {
+		if t, ok := valStr(w.ResetsAt); ok {
 			if at, err := time.Parse(time.RFC3339, t); err == nil {
 				v := at.UnixMilli()
 				lw.ResetsAt = &v
 			}
 		} else {
-			lw.ResetsAt = ms(decRaw(w.ResetsAt)) // epoch seconds, as rate_limit_event sends
+			lw.ResetsAt = ms(w.ResetsAt.V) // epoch seconds, as rate_limit_event sends
 		}
 		windows = append(windows, lw)
 	}
-	read := func(raw json.RawMessage) window {
-		var w window
-		json.Unmarshal(raw, &w)
-		return w
-	}
+	read := func(v any) window { return typed[window](v) }
 	for _, k := range sortedKeysOf(usage) {
 		if k == "five_hour" || k == "seven_day" || strings.HasPrefix(k, "seven_day_") {
 			var model *string
@@ -442,15 +421,11 @@ func claudeUsageReading(answer json.RawMessage, native any) M {
 			add(claudePeriod(k), read(usage[k]), model)
 		}
 	}
-	var scoped []json.RawMessage
-	if raw := usage["model_scoped"]; len(raw) > 0 && raw[0] == '[' {
-		json.Unmarshal(raw, &scoped)
-	}
+	scoped, _ := usage["model_scoped"].([]any)
 	for _, raw := range scoped {
 		// One model name for both sources: the lower-case key form (seven_day_opus and a display name "Opus" agree).
 		w := read(raw)
-		display, _ := rawStr(w.DisplayName)
-		if name := strings.ToLower(strings.ReplaceAll(display, " ", "-")); name != "" {
+		if name := strings.ToLower(strings.ReplaceAll(w.DisplayName, " ", "-")); name != "" {
 			add("weekly-"+name, w, &name)
 		}
 	}

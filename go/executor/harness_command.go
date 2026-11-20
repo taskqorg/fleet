@@ -371,7 +371,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 			}
 			items := skillItems(skills)
 			for i := range skills {
-				id, _ := rawStr(items[i].Id)
+				id, _ := valStr(items[i].Id)
 				if id == "" || strings.Trim(id, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
 					return fail("invalid skill id")
 				}
@@ -379,7 +379,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 				if err := os.MkdirAll(d, 0o755); err != nil {
 					return nil, nil, err
 				}
-				text, _ := rawStr(items[i].Text)
+				text, _ := valStr(items[i].Text)
 				if err := os.WriteFile(filepath.Join(d, "SKILL.md"), []byte(text), 0o644); err != nil {
 					return nil, nil, err
 				}

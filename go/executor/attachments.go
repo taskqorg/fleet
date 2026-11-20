@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -39,39 +38,35 @@ func unsafeRune(r rune) bool { return r < 0x20 || r >= 0x7f && r < 0xa0 || r == 
 
 // attachTurn: the turn text with the attachment list appended, and the local paths of attached images.
 func attachTurn(p M, inputDir, harness string) {
-	in, _ := decodeAs[struct {
-		Attachments []json.RawMessage `json:"attachments"`
-		Text        json.RawMessage   `json:"text"`
-		AgentConfig json.RawMessage   `json:"agentConfig"`
+	// An item that is not an object, or a field of another type, reads as absent (the item is then skipped).
+	in := typed[struct {
+		Attachments []struct {
+			Path      string  `json:"path"`
+			MediaType string  `json:"mediaType"`
+			Size      float64 `json:"size"`
+		} `json:"attachments"`
+		Text        string               `json:"text"`
+		AgentConfig map[string]jsonValue `json:"agentConfig"` // not an object reads as none
 	}](p)
-	var profile map[string]json.RawMessage // agentConfig; not an object reads as none
-	json.Unmarshal(in.AgentConfig, &profile)
+	profile := in.AgentConfig
 	list := in.Attachments
 	if len(list) == 0 {
 		return
 	}
 	var lines []string
 	images := []any{}
-	for _, raw := range list {
-		// An item that is not an object, or a field of another type, reads as absent (the item is then skipped).
-		var a struct {
-			Path      json.RawMessage `json:"path"`
-			MediaType json.RawMessage `json:"mediaType"`
-			Size      json.RawMessage `json:"size"`
-		}
-		json.Unmarshal(raw, &a)
-		rel, _ := rawStr(a.Path)
+	for _, a := range list {
+		rel := a.Path
 		// stageInputs refuses the same paths; a control character would let a name start a line of its own in the turn.
 		if strings.HasPrefix(rel, "/") || anyPart(rel, func(x string) bool { return x == "" || x == "." || x == ".." }) || strings.IndexFunc(rel, unsafeRune) >= 0 {
 			continue
 		}
 		abs := filepath.Join(inputDir, filepath.FromSlash(rel))
-		media, _ := rawStr(a.MediaType)
+		media := a.MediaType
 		if strings.IndexFunc(media, unsafeRune) >= 0 {
 			media = "application/octet-stream"
 		}
-		var size float64
-		json.Unmarshal(a.Size, &size)
+		size := a.Size
 		note := ""
 		if nativeImage(media) {
 			switch harness {
@@ -94,7 +89,7 @@ func attachTurn(p M, inputDir, harness string) {
 	if len(lines) == 0 {
 		return
 	}
-	text, _ := rawStr(in.Text)
+	text := in.Text
 	if text != "" {
 		text += "\n\n"
 	}

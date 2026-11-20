@@ -228,11 +228,30 @@ func typed[T any](v any) T {
 	return t
 }
 
+// contractOf decodes a received JSON value as a fleet/contract type with the contract's own decoder: strict (a field of
+// another type is an error), unnamed keys kept in Rest. Records the executor reads tolerantly use typed.
+func contractOf[T any](v any) (T, error) {
+	var t T
+	err := json.Unmarshal([]byte(enc(v)), &t)
+	return t, err
+}
+
 // typedRaw decodes JSON text into T as typed does (numbers kept as json.Number); text that is not one JSON value is T's
 // zero value.
 func typedRaw[T any](raw []byte) T {
 	v, _ := dec(string(raw))
 	return typed[T](v)
+}
+
+// stringsOf: the string items of a JSON array a contract type keeps as raw items (items of another type are skipped).
+func stringsOf(items []json.RawMessage) []string {
+	out := []string{}
+	for _, it := range items {
+		if s := typedRaw[*string](it); s != nil {
+			out = append(out, *s)
+		}
+	}
+	return out
 }
 
 // jsonValue: an open field of a record, as decoded: Set when the key is present (even as null), V its value.

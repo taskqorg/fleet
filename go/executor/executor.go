@@ -61,9 +61,7 @@ func idOf(c contract.Command, k string) (string, error) {
 	if raw == nil {
 		raw, _ = json.Marshal(c)
 	}
-	var envelope map[string]json.RawMessage
-	json.Unmarshal(raw, &envelope)
-	s, ok := rawStr(envelope[k])
+	s, ok := valStr(typedRaw[map[string]jsonValue](raw)[k])
 	if !ok {
 		return "", errors.New("missing identity")
 	}
@@ -86,8 +84,8 @@ func harnessName(p contract.StartPayload) string {
 	if !ok {
 		return "codex"
 	}
-	if s, isS := rawStr(raw); isS {
-		return s
+	if s := typedRaw[*string](raw); s != nil {
+		return *s
 	}
 	return "invalid"
 }
@@ -105,18 +103,15 @@ func commandHarness(c contract.Command) string {
 
 // workspaceKey: the command payload's workspaceKey ("" when absent or not a string).
 func workspaceKey(c contract.Command) string {
-	var x struct {
-		Payload struct {
-			WorkspaceKey json.RawMessage `json:"workspaceKey"`
-		} `json:"payload"`
-	}
 	raw := c.Raw
 	if raw == nil {
 		raw, _ = json.Marshal(c)
 	}
-	json.Unmarshal(raw, &x)
-	key, _ := rawStr(x.Payload.WorkspaceKey)
-	return key
+	return typedRaw[struct {
+		Payload struct {
+			WorkspaceKey string `json:"workspaceKey"`
+		} `json:"payload"`
+	}](raw).Payload.WorkspaceKey
 }
 
 // safeNativeID: native ids reach argv; ASCII alphanumerics and '-', at most 64, never a leading '-'.
@@ -228,19 +223,17 @@ func writeFrame(w io.Writer, log *os.File, v M) (M, error) {
 	if _, err := w.Write(b); err != nil {
 		return nil, err
 	}
-	var frame struct {
-		Method json.RawMessage `json:"method"`
-		Id     json.RawMessage `json:"id"`
-	}
-	json.Unmarshal(b, &frame)
+	frame := typedRaw[struct {
+		Method *string `json:"method"`
+		Id     *uint64 `json:"id"`
+	}](b)
 	method := "response"
-	if m, ok := rawStr(frame.Method); ok {
-		method = m
+	if frame.Method != nil {
+		method = *frame.Method
 	}
 	var rid any
-	var n uint64
-	if len(frame.Id) > 0 && json.Unmarshal(frame.Id, &n) == nil && string(frame.Id) != "null" {
-		rid = n
+	if frame.Id != nil {
+		rid = *frame.Id
 	}
 	return M{"type": "protocol.write", "method": method, "requestId": rid, "bytes": len(b), "sha256": sha(b),
 		"delivery": "written to local transport; native acceptance unknown"}, nil
@@ -710,35 +703,25 @@ func (e *executor) observeHarness(cmd *exec.Cmd, harness string) M {
 		}
 		var tools any
 		if o, err := probe.Output(); err == nil {
-			if _, err := dec(string(o)); err == nil {
+			if all, err := dec(string(o)); err == nil {
 				// A tool group {tools: [...]} nests; a leaf names a tool. Anything else is skipped.
 				type node struct {
-					Tools json.RawMessage `json:"tools"`
-					Name  json.RawMessage `json:"name"`
-				}
-				array := func(raw json.RawMessage) []json.RawMessage {
-					var items []json.RawMessage
-					if len(raw) > 0 && raw[0] == '[' {
-						json.Unmarshal(raw, &items)
-					}
-					return items
+					Tools []any   `json:"tools"`
+					Name  *string `json:"name"`
 				}
 				out := []any{}
-				var walk func(raw json.RawMessage)
-				walk = func(raw json.RawMessage) {
-					var g node
-					json.Unmarshal(raw, &g)
-					for _, t := range array(g.Tools) {
-						var x node
-						json.Unmarshal(t, &x)
-						if len(x.Tools) > 0 && x.Tools[0] == '[' {
+				var walk func(v any)
+				walk = func(v any) {
+					for _, t := range typed[node](v).Tools {
+						if x := typed[node](t); x.Tools != nil {
 							walk(t)
-						} else if n, ok := rawStr(x.Name); ok {
-							out = append(out, n)
+						} else if x.Name != nil {
+							out = append(out, *x.Name)
 						}
 					}
 				}
-				for _, it := range array(o) {
+				items, _ := all.([]any)
+				for _, it := range items {
 					walk(it)
 				}
 				tools = out
@@ -905,10 +888,7 @@ func (e *executor) run(c M) error {
 		if project, err := projectContext(tp.Project); err != nil {
 			data = refusedTeardown(err.Error())
 		} else if e.insideDirs(dir) && exists(filepath.Join(dir, "worktree", ".git")) {
-			var wd *string
-			if s, ok := rawStr(tp.Rest["workingDirectory"]); ok {
-				wd = &s
-			}
+			wd := typedRaw[*string](tp.Rest["workingDirectory"])
 			repo, hasRepo := repoPath(wd, project, e.host)
 			_, top, created, ok, err := worktree(dir, workspaceSession(session, key), repo, hasRepo, projectRoots(), e.forbidden(), project, false)
 			switch {
@@ -1291,27 +1271,21 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	var bridged []any // the granted connections with the tools their direct servers expose, for code mode
 	for _, raw := range granted {
 		// A grant names its connection and tools; the rest of the spec reaches the connection server as sent.
-		var grant struct {
-			Name  json.RawMessage `json:"name"`
-			Tools json.RawMessage `json:"tools"`
-		}
-		json.Unmarshal(raw, &grant)
-		conn, _ := rawStr(grant.Name)
+		spec := decRaw(raw) // decoded once: the checked name and tools are those of the spec forwarded
+		grant := typed[struct {
+			Name  string `json:"name"`
+			Tools []any  `json:"tools"`
+		}](spec)
+		conn := grant.Name
 		if conn == "" || !onlyBytes(conn, func(b byte) bool { return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' }) {
 			continue
 		}
-		var grantTools []json.RawMessage
-		if len(grant.Tools) > 0 && grant.Tools[0] == '[' {
-			json.Unmarshal(grant.Tools, &grantTools)
-		}
 		tools, specs := []any{}, []any{}
-		for _, t := range grantTools {
-			var tool struct {
-				Name json.RawMessage `json:"name"`
-			}
-			json.Unmarshal(t, &tool)
-			if n, _ := rawStr(tool.Name); n != "" && onlyBytes(n, func(b byte) bool { return alnum(b) || b == '_' }) {
-				tools, specs = append(tools, n), append(specs, decRaw(t))
+		for _, t := range grant.Tools {
+			if n := typed[struct {
+				Name string `json:"name"`
+			}](t).Name; n != "" && onlyBytes(n, func(b byte) bool { return alnum(b) || b == '_' }) {
+				tools, specs = append(tools, n), append(specs, jClone(t))
 				connectionTools = append(connectionTools, "mcp__"+conn+"__"+n)
 			}
 		}
@@ -1323,7 +1297,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		if _, taken := servers[conn]; taken {
 			return fail(1, "MCP server name collides with a granted connection")
 		}
-		servers[conn] = M{"command": exe(), "args": []any{"mcp", "connection", conn, enc(decRaw(raw)), runFile}, "tools": tools, "env": []any{"HOME"}}
+		servers[conn] = M{"command": exe(), "args": []any{"mcp", "connection", conn, enc(spec), runFile}, "tools": tools, "env": []any{"HOME"}}
 		gatewayConns[conn] = true
 	}
 	// Code mode (docs/designs/fleet-code-mode.md): one `code` server bridges the fleet server and the connection servers.
@@ -1711,10 +1685,7 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	if err != nil {
 		return refuse(err.Error())
 	}
-	var wd *string
-	if s, ok := rawStr(sp.Rest["workingDirectory"]); ok {
-		wd = &s
-	}
+	wd := typedRaw[*string](sp.Rest["workingDirectory"])
 	repo, hasRepo := repoPath(wd, project, e.host)
 	work := dir
 	var trial *[2]string
@@ -2442,30 +2413,27 @@ func reproject() error {
 			return err
 		}
 		// A field of another type reads as absent; the record is the open native record, decoded as the journal does.
-		var line struct {
-			ExecutionId json.RawMessage `json:"executionId"`
-			Harness     json.RawMessage `json:"harness"`
-			Timestamp   json.RawMessage `json:"timestamp"`
-			Record      json.RawMessage `json:"record"`
-		}
-		json.Unmarshal([]byte(in.Text()), &line)
-		ex, _ := rawStr(line.ExecutionId)
+		line := typedRaw[struct {
+			ExecutionId string    `json:"executionId"`
+			Harness     *string   `json:"harness"`
+			Timestamp   uint64    `json:"timestamp"`
+			Record      jsonValue `json:"record"`
+		}](in.Bytes())
+		ex := line.ExecutionId
 		b := state[ex]
 		if b == nil {
 			b = NewBlocks()
 			state[ex] = b
 		}
 		h := "codex"
-		if s, ok := rawStr(line.Harness); ok {
-			h = s
+		if line.Harness != nil {
+			h = *line.Harness
 		}
-		var ts uint64
-		json.Unmarshal(line.Timestamp, &ts)
-		rec := M{}
-		if isObject(line.Record) {
-			rec = decM(string(line.Record))
+		rec, _ := line.Record.V.(M)
+		if rec == nil {
+			rec = M{}
 		}
-		fmt.Fprintln(out, enc(b.Project(h, rec, ts)))
+		fmt.Fprintln(out, enc(b.Project(h, rec, line.Timestamp)))
 	}
 	if err := in.Err(); err != nil {
 		return err
@@ -2520,13 +2488,13 @@ func runExecutor() error {
 	// Artifact transfers run on their own goroutines; the Access token for store tunnels from FLEET_CF_ACCESS_FILE.
 	if err := spawnTransfers(journal, newTransferClient(url, token, host, accessToken(accessFile())), func(_ *transferClient, db *sql.DB, body M, response any) {
 		// A remote store answers "verifying" until the store's host checks the copy; the bytes are uploaded either way.
-		answer, _ := decodeAs[transferAnswer](response)
-		file, _ := decodeAs[transferFile](body)
-		if st, _ := rawStr(answer.State); body["previews"] == true && (st == "stored" || st == "verifying") {
+		answer := transferAnswerOf(response)
+		file := typed[transferFile](body)
+		if st := answer.State; body["previews"] == true && (st == "stored" || st == "verifying") {
 			buildPreviews(db, body, response)
 		}
-		if path, ok := rawStr(file.Path); body["spool"] == true && ok {
-			os.Remove(path)
+		if body["spool"] == true && file.Path != nil {
+			os.Remove(*file.Path)
 		}
 	}); err != nil {
 		return err

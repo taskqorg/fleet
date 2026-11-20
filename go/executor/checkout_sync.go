@@ -85,15 +85,18 @@ func syncOne(dir, sha string, access []string) error {
 
 // checkoutSync: base-updated (a ProjectPayload with sha and repo, the merged commit and its repository).
 func checkoutSync(p any, host string, roots, forbidden []string) (contract.CheckoutSync, bool) {
-	payload, perr := decodeAs[contract.ProjectPayload](p)
+	payload, perr := contractOf[contract.ProjectPayload](p)
 	project, err := projectContext(payload.Project)
 	if perr != nil || err != nil {
 		return contract.CheckoutSync{HostId: host, Checkouts: []contract.CheckoutResult{}}, false
 	}
-	sha, _ := rawStr(payload.Rest["sha"])
-	repo := payload.Rest["repo"]
-	repoID, repoIsStr := rawStr(repo)
-	anyRepo := len(repo) == 0 || string(repo) == "null"
+	rest := typed[struct {
+		Sha  string    `json:"sha"`
+		Repo jsonValue `json:"repo"`
+	}](p) // keys the payload schema does not name
+	sha := rest.Sha
+	repoID, repoIsStr := valStr(rest.Repo)
+	anyRepo := rest.Repo.V == nil
 	valid := len(sha) >= 7 && isHex(sha)
 	results := []contract.CheckoutResult{}
 	ok := true
