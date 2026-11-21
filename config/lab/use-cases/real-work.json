@@ -1,0 +1,172 @@
+[
+ {
+  "id": "real:ui-unify-and-mockups",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/benchmarks/real-work-use-cases.md",
+   "anchor": "ui-unify-and-mockups",
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "6c2406311459a49fef6386827aee3fc850250f3a2903ffc641b324b009c3ca7d"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Unify UI views and styling against design-system rules and mockups",
+  "expected_outcome": "Consistent shared UI primitives and layout without visual regressions or redundant controls.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "real-work",
+   "hermes",
+   "ui"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "real:feature-with-qa",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/benchmarks/real-work-use-cases.md",
+   "anchor": "feature-with-qa",
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "757d38caea07a366ec9f3554d4638b4846a2e23863fd633f1d7b4a4389d4c19d"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Implement a scoped user-facing feature with deterministic QA verification",
+  "expected_outcome": "Role-isolated feature behavior verified by deterministic checks with non-target layouts preserved.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "real-work",
+   "hermes",
+   "qa"
+  ],
+  "maturity": "synthetic ready"
+ },
+ {
+  "id": "real:prod-alert-triage",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/benchmarks/real-work-use-cases.md",
+   "anchor": "prod-alert-triage",
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "7d2eaf990d9a8a1561398d44e4b000ba43bb9d4c46a6b8a36cc5c3b8c3c5f828"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Triage a live 502 or scraper production alert from logs and sitemap snapshots",
+  "expected_outcome": "Structured triage JSON with root cause, affected endpoints, offending sources and remediation actions.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "real-work",
+   "hermes",
+   "triage",
+   "ops"
+  ],
+  "maturity": "synthetic ready"
+ },
+ {
+  "id": "real:live-vs-dev-audit",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/benchmarks/real-work-use-cases.md",
+   "anchor": "live-vs-dev-audit",
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "019910f06de7ff747ad629a830293411f57d5a9474740ddff23e151ce64d3760"
+  },
+  "source_status": "current",
+  "actor": "architect",
+  "goal": "Audit live production state against development builds and repository specs",
+  "expected_outcome": "Verified discrepancy report distinguishing confirmed live drift from unverified assumptions.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "real-work",
+   "hermes",
+   "audit"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "real:ops-automation-and-pr",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/benchmarks/real-work-use-cases.md",
+   "anchor": "ops-automation-and-pr",
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "27c2ddcaa9e0c2003c82bf363a7dec8055c8131dd4a6f66b9cf2c3805312ef11"
+  },
+  "source_status": "current",
+  "actor": "architect",
+  "goal": "Automate recurring operational maintenance and deliver a clean reviewed PR",
+  "expected_outcome": "Idempotent scripts or configs with verified checks and merge-ready pull request.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "real-work",
+   "hermes",
+   "ops",
+   "automation"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "real:autonomous-error-fixing",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/benchmarks/real-work-use-cases.md",
+   "anchor": "autonomous-error-fixing",
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "5f06ac0a0707a406a40584ce1a0a390fe053cb357bad714b3a87f30323bd5837"
+  },
+  "source_status": "current",
+  "actor": "operator",
+  "goal": "Diagnose recurring runtime or CI errors and deliver a minimal verified fix",
+  "expected_outcome": "Confirmed root cause, minimal patch and passing reproduction check.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "real-work",
+   "hermes",
+   "debugging"
+  ],
+  "maturity": "indexed"
+ }
+]

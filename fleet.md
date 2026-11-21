@@ -12,6 +12,15 @@ A system for performing work through agents across projects. This specification 
 - **R6 Minimal mechanisms.** Agents act through supplied instructions, context and tools, invoking pipelines when useful. Fleet provides execution control, data access and observable history for improvement. Structure only what it must coordinate and recover; domain workflows and methodologies remain configurable, not mandatory system stages.
 - **R7 Agentic first.** Every new capability reaches agents first, as tools, data and queries over the shared core (R2). Its human interface follows, designed for convenience. When an agent path and a UI path compete, build the agent path first.
 
+## Product purpose
+
+Fleet turns agent experiments into controlled project capabilities across four connected stages:
+
+- **Fast Lab evaluation:** benchmark models, harnesses, prompts and pipelines on curated use cases, real work cases and code benchmarks to establish repeatable quality, latency and cost evidence.
+- **Proven method catalogue:** register workflows and methods with explicit lifecycle statuses (`experimental`, `recommended`, `deprecated`), usage conditions and project or system defaults.
+- **Project and task accounting:** execute and track real tasks across connected projects, retaining full execution history, costs and metrics to diagnose problems and convert recurring failures into new Lab cases.
+- **Controlled agent tools:** expose configured pipelines and recommended methods as agent-callable tools over the shared core so agents and operators run proven methods under Fleet authority and accounting.
+
 ## Operator interface
 
 Deliver the operator and architect interfaces on the web first, across all projects. Later desktop applications for Windows, macOS and Linux reuse the web UI and shared operations. Follow the [delivery order](docs/designs/fleet-stack.md#delivery-order-and-change-cycles).

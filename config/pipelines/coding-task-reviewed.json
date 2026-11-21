@@ -1,0 +1,24 @@
+{
+  "id": "coding-task-reviewed",
+  "steps": [
+    {
+      "id": "implement",
+      "kind": "agent",
+      "profile": "coding-worker",
+      "prompt": "Inspect all input files staged in $FLEET_INPUT_DIR/example/ and read the task carefully:\n\n${example.prompt}\n\nImplement the required solution cleanly, verify your changes with the appropriate local tools/runtime, and write all modified or newly created deliverable files directly into $FLEET_OUTPUT_DIR (preserving their expected relative paths). Also write a concise summary in $FLEET_OUTPUT_DIR/output.json."
+    },
+    {
+      "id": "review",
+      "kind": "agent",
+      "profile": "claude-reviewer",
+      "prompt": "Review the implementation in $FLEET_INPUT_DIR/implement/ against the original inputs in $FLEET_INPUT_DIR/example/ and the task requirements:\n\n${example.prompt}\n\nCheck correctness, edge cases, contract adherence, code quality and missing deliverables. Do not edit source files. Write a structured review report to $FLEET_OUTPUT_DIR/review.md and $FLEET_OUTPUT_DIR/output.json (including verdict and concrete findings)."
+    },
+    {
+      "id": "fix",
+      "kind": "agent",
+      "profile": "coding-worker",
+      "prompt": "Read the original inputs in $FLEET_INPUT_DIR/example/, the initial implementation in $FLEET_INPUT_DIR/implement/, and the review findings in $FLEET_INPUT_DIR/review/ for the task:\n\n${example.prompt}\n\nAddress every valid review finding, verify the final deliverables cleanly, and write all final deliverable files (copying any unchanged deliverables from $FLEET_INPUT_DIR/implement/ and updating changed ones) into $FLEET_OUTPUT_DIR (preserving their expected relative paths), plus a concise summary in $FLEET_OUTPUT_DIR/output.json."
+    }
+  ],
+  "version": 2
+}

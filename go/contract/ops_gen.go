@@ -29,24 +29,55 @@ func (v AssessmentBasis) Valid() bool {
 
 type CatalogueMethod struct {
 	AgentProfile     *string                    `json:"agentProfile,omitempty"`
+	Capability       *string                    `json:"capability,omitempty"`
 	ConfigRef        *string                    `json:"configRef,omitempty"`
+	Description      *string                    `json:"description,omitempty"`
 	Id               string                     `json:"id"`
 	Name             string                     `json:"name"`
 	Overrides        map[string]json.RawMessage `json:"overrides,omitempty"`
 	Pipeline         string                     `json:"pipeline"`
 	Scope            string                     `json:"scope"`
 	SourceExperiment *string                    `json:"sourceExperiment,omitempty"`
+	Status           *CatalogueMethodStatus     `json:"status,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *CatalogueMethod) Validate() error {
+	if v.Status != nil {
+		if err := Check(v.Status, "status"); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+type CatalogueMethodStatus string
+
+const (
+	CatalogueMethodStatusExperimental CatalogueMethodStatus = "experimental"
+	CatalogueMethodStatusRecommended  CatalogueMethodStatus = "recommended"
+	CatalogueMethodStatusDeprecated   CatalogueMethodStatus = "deprecated"
+)
+
+// CatalogueMethodStatusValues lists every CatalogueMethodStatus in schema order.
+var CatalogueMethodStatusValues = []CatalogueMethodStatus{CatalogueMethodStatusExperimental, CatalogueMethodStatusRecommended, CatalogueMethodStatusDeprecated}
+
+// Valid: v is one of the schema's values.
+func (v CatalogueMethodStatus) Valid() bool {
+	for _, x := range CatalogueMethodStatusValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 type CatalogueMethodView struct {
 	AgentProfile     *string                    `json:"agentProfile,omitempty"`
 	Assessment       MethodAssessment           `json:"assessment"`
+	Capability       *string                    `json:"capability,omitempty"`
 	ConfigRef        *string                    `json:"configRef,omitempty"`
+	Description      *string                    `json:"description,omitempty"`
 	Id               string                     `json:"id"`
 	Name             string                     `json:"name"`
 	Overrides        map[string]json.RawMessage `json:"overrides,omitempty"`
@@ -54,6 +85,7 @@ type CatalogueMethodView struct {
 	RecommendedFor   []string                   `json:"recommendedFor"`
 	Scope            string                     `json:"scope"`
 	SourceExperiment *string                    `json:"sourceExperiment,omitempty"`
+	Status           *CatalogueMethodStatus     `json:"status,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -63,6 +95,11 @@ func (v *CatalogueMethodView) Validate() error {
 	}
 	if v.RecommendedFor == nil {
 		return Missing("recommendedFor")
+	}
+	if v.Status != nil {
+		if err := Check(v.Status, "status"); err != nil {
+			return err
+		}
 	}
 	return nil
 }

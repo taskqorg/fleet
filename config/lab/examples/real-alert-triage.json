@@ -1,0 +1,31 @@
+{
+ "id": "real-alert-triage",
+ "use_case_id": "real:prod-alert-triage",
+ "version": 1,
+ "origin": "synthetic",
+ "fixture": null,
+ "prompt": "Analyze alerts.log and sitemap.json and write triage.json with keys: severity ('critical'|'high'|'medium'|'low'), primary_status_code (number), root_cause (string explaining the upstream worker exhaustion and scraper cause), affected_paths (sorted array of unique paths with 502 responses in alerts.log), offending_ips (sorted array of unique client IPs generating the 502 scraper burst), offending_user_agents (sorted array of unique offending user agents), sitemap_hotspots (array of URL patterns from sitemap.json contributing to dynamic load), and recommended_actions (array of concrete mitigations).",
+ "inputs": [
+  {
+   "path": "alerts.log",
+   "text": "2026-11-20T03:11:02Z status=200 ip=10.0.0.5 path=/healthz ua=\"kube-probe/1.30\" msg=\"ok\"\n2026-11-20T03:12:10Z status=502 ip=198.51.100.42 path=/events/nicosia-jazz-2026 ua=\"Scrapy/2.11.0\" msg=\"upstream prematurely closed connection while reading response header from upstream\"\n2026-11-20T03:12:11Z status=502 ip=198.51.100.42 path=/events/limassol-wine-fest ua=\"Scrapy/2.11.0\" msg=\"upstream worker pool exhausted\"\n2026-11-20T03:12:12Z status=502 ip=203.0.113.77 path=/sitemap-venues.xml ua=\"Bytespider\" msg=\"upstream worker pool exhausted\"\n2026-11-20T03:12:13Z status=502 ip=203.0.113.77 path=/events/paphos-theatre ua=\"Bytespider\" msg=\"upstream prematurely closed connection while reading response header from upstream\"\n2026-11-20T03:12:14Z status=502 ip=198.51.100.42 path=/api/search ua=\"Scrapy/2.11.0\" msg=\"upstream worker pool exhausted\"\n2026-11-20T03:12:15Z status=200 ip=192.0.2.15 path=/static/app.css ua=\"Mozilla/5.0\" msg=\"cache hit\"\n"
+  },
+  {
+   "path": "sitemap.json",
+   "text": "{\n  \"generated_at\": \"2026-11-20T03:00:00Z\",\n  \"crawl_delay_seconds\": null,\n  \"groups\": [\n    {\"pattern\": \"/events/*\", \"urls\": 48000, \"cached\": false},\n    {\"pattern\": \"/venues/*\", \"urls\": 12000, \"cached\": false},\n    {\"pattern\": \"/sitemap-venues.xml\", \"urls\": 1, \"cached\": false},\n    {\"pattern\": \"/static/*\", \"urls\": 120, \"cached\": true}\n  ]\n}\n"
+  }
+ ],
+ "references": [
+  {
+   "path": "triage.json",
+   "text": "{\n  \"severity\": \"high\",\n  \"primary_status_code\": 502,\n  \"root_cause\": \"Unthrottled scraper traffic from Scrapy/2.11.0 and Bytespider against uncached dynamic /events/* and /sitemap-venues.xml routes exhausted the upstream worker pool, causing 502 Bad Gateway responses.\",\n  \"affected_paths\": [\n    \"/api/search\",\n    \"/events/limassol-wine-fest\",\n    \"/events/nicosia-jazz-2026\",\n    \"/events/paphos-theatre\",\n    \"/sitemap-venues.xml\"\n  ],\n  \"offending_ips\": [\n    \"198.51.100.42\",\n    \"203.0.113.77\"\n  ],\n  \"offending_user_agents\": [\n    \"Bytespider\",\n    \"Scrapy/2.11.0\"\n  ],\n  \"sitemap_hotspots\": [\n    \"/events/*\",\n    \"/sitemap-venues.xml\",\n    \"/venues/*\"\n  ],\n  \"recommended_actions\": [\n    \"Rate-limit or block offending scraper IPs (198.51.100.42, 203.0.113.77) and user-agents (Bytespider, Scrapy/2.11.0) at the edge\",\n    \"Cache /sitemap-venues.xml and dynamic /events/* responses at the CDN/reverse proxy\",\n    \"Configure crawl-delay and bot rules in robots.txt and protect /api/search with per-IP rate limits\"\n  ]\n}\n"
+  }
+ ],
+ "checks": [
+  {
+   "id": "triage-json-schema-and-attribution",
+   "run": "node -e \"const fs=require('node:fs'),assert=require('node:assert/strict');const t=JSON.parse(fs.readFileSync('triage.json','utf8'));assert.ok(['critical','high','medium','low'].includes(t.severity));assert.equal(t.primary_status_code,502);assert.match(t.root_cause,/worker|upstream/i);assert.match(t.root_cause,/scrap|bot/i);assert.deepEqual(t.affected_paths,['/api/search','/events/limassol-wine-fest','/events/nicosia-jazz-2026','/events/paphos-theatre','/sitemap-venues.xml']);assert.deepEqual(t.offending_ips,['198.51.100.42','203.0.113.77']);assert.deepEqual(t.offending_user_agents,['Bytespider','Scrapy/2.11.0']);assert.ok(Array.isArray(t.sitemap_hotspots)&&t.sitemap_hotspots.includes('/events/*'));assert.ok(Array.isArray(t.recommended_actions)&&t.recommended_actions.length>=2);\""
+  }
+ ],
+ "split": "held_out"
+}

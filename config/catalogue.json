@@ -2,10 +2,69 @@
   "capability": "web-research",
   "methods": [
     {
+      "capability": "web-research",
+      "description": "Basic Tavily web search for quick source discovery.",
       "id": "search-basic",
       "name": "Basic source discovery",
       "pipeline": "search-basic.json",
-      "scope": "shared"
+      "scope": "shared",
+      "status": "recommended"
+    },
+    {
+      "agentProfile": "coding-worker",
+      "capability": "coding",
+      "description": "Single-agent coding implementation and verification using coding-worker.",
+      "id": "coding-task",
+      "name": "Single-agent coding task",
+      "pipeline": "coding-task.json",
+      "scope": "shared",
+      "status": "recommended"
+    },
+    {
+      "agentProfile": "coding-worker",
+      "capability": "coding",
+      "description": "Implement with coding-worker, review with claude-reviewer, and apply review fixes.",
+      "id": "coding-task-reviewed",
+      "name": "Reviewed coding task",
+      "pipeline": "coding-task-reviewed.json",
+      "scope": "shared",
+      "status": "experimental"
+    },
+    {
+      "capability": "3d-asset",
+      "description": "Generate, measure, and render a 3D prop mesh from a reference image via Meshy and Blender.",
+      "id": "meshy-prop",
+      "name": "Meshy 3D prop",
+      "pipeline": "meshy-prop.json",
+      "scope": "shared",
+      "status": "experimental"
+    },
+    {
+      "capability": "3d-character",
+      "description": "Multi-view character sheet generation, orientation inspection, and 3D assembly.",
+      "id": "character-multiview",
+      "name": "Character multiview 3D",
+      "pipeline": "character-multiview.json",
+      "scope": "shared",
+      "status": "experimental"
+    },
+    {
+      "capability": "image-generation",
+      "description": "Generate an image to a visual brief and validate dimensions, alpha, and color profile.",
+      "id": "image-brief",
+      "name": "Image brief generation",
+      "pipeline": "image-brief.json",
+      "scope": "shared",
+      "status": "experimental"
+    },
+    {
+      "capability": "language-verification",
+      "description": "Verify that localized event text is genuinely written in the expected language via System One Jev.",
+      "id": "lang-check-jev",
+      "name": "Language verification (Jev)",
+      "pipeline": "lang-check-jev.json",
+      "scope": "shared",
+      "status": "experimental"
     }
   ],
   "sharedDefault": "search-basic"

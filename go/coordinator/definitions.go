@@ -101,6 +101,13 @@ func validDefinition(kind, id string, raw []byte) error {
 		if _, ok := jsonArray(head.Methods); !ok {
 			return fmt.Errorf("expected capability and methods")
 		}
+		var cd contract.CatalogueDefinition
+		if err := json.Unmarshal(raw, &cd); err != nil {
+			return fmt.Errorf("catalogue: %v", err)
+		}
+		if err := cd.Validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

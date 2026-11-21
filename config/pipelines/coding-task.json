@@ -1,0 +1,12 @@
+{
+  "id": "coding-task",
+  "steps": [
+    {
+      "id": "implement",
+      "kind": "agent",
+      "profile": "coding-worker",
+      "prompt": "Inspect all input files staged in $FLEET_INPUT_DIR/example/ and read the task carefully:\n\n${example.prompt}\n\nImplement the required solution cleanly, verify your changes with the appropriate local tools/runtime, and write all modified or newly created deliverable files directly into $FLEET_OUTPUT_DIR (preserving their expected relative paths). Also write a concise summary in $FLEET_OUTPUT_DIR/output.json."
+    }
+  ],
+  "version": 2
+}
