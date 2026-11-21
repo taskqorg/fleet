@@ -45,15 +45,15 @@ for (const f of files) {
   }
 }
 // OR-14: interactive elements inside floating layers (markup heuristic on tsx). Sticky or fixed panels are caught on the rendered page (tests/ui/layout.check.ts).
-// OR-32: the Spotlight palette (data-ui="spotlight", packages/ui/src/controls.tsx) is the one allowed floating working tool; a second one warns.
-// OR-44: the entity card (data-ui="entity-card", controls.tsx) is an informational dialog: facts, Open and copy actions only.
+// OR-32: the Spotlight palette (data-ui="spotlight", packages/ui/src/controls/navigation.tsx) is the one allowed floating working tool; a second one warns.
+// OR-44: the entity card (data-ui="entity-card", packages/ui/src/controls/overlays.tsx) is an informational dialog: facts, Open and copy actions only.
 let palettes = 0, cards = 0;
 for (const f of files.filter(f => /\.tsx$/.test(f))) {
   const t = readFileSync(f, 'utf8');
   for (const m of t.matchAll(/role="dialog"|popover=/g)) {
     const line = t.split('\n')[t.slice(0, m.index).split('\n').length - 1];
-    if (/data-ui="spotlight"/.test(line) && /packages\/ui\/src\/controls\.tsx$/.test(f) && ++palettes === 1) continue;
-    if (/data-ui="entity-card"/.test(line) && /packages\/ui\/src\/controls\.tsx$/.test(f) && ++cards === 1) continue;
+    if (/data-ui="spotlight"/.test(line) && /packages\/ui\/src\/controls(\/.*)?\.tsx$/.test(f) && ++palettes === 1) continue;
+    if (/data-ui="entity-card"/.test(line) && /packages\/ui\/src\/controls(\/.*)?\.tsx$/.test(f) && ++cards === 1) continue;
     warn.push(`${relative(root, f)}  OR-14  floating layer found; it may hold only information (OR-32: Spotlight is the only exception)`);
   }
 }

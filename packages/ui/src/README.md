@@ -6,9 +6,16 @@
 
 ## Interface
 
-- `controls.tsx` exports controls for navigation, lists, details, threads, forms, artifacts, metrics, and charts. `EntityCode` is every reference to another object; its card (`EntityCardLayer`, mounted once by `AppShell`) reads through the `EntityCards` context the app or the book provides; `Markdown` turns D17 codes in text into references (`linkCodes`); `CopyButton` copies a value with icon feedback.
+- `controls.tsx` re-exports all control modules from `controls/` (`index.ts`, `patterns.tsx`, and book files import through `controls.tsx` or `index.ts`):
+  - `controls/primitives.tsx`: `Icon`, `Button`, `StateBadge`, numbers and live ages (`Num`, `Totals`, `CostFigures`, `useTick`, `Ago`, `AgeChip`), harness/stage marks (`HarnessMark`, `HarnessCounts`, `StageChip`), status feedback (`Skeleton`, `Empty`, `ErrorBanner`, `Stale`, `OfflineMarker`, `StatusLine`), clipboard/menu helpers (`copyText`, `CopyButton`, `focusOnMount`, `useDismiss`, `SplitButton`, `ActionMenu`, `SearchBox`), and layout rows (`DetailSection`, `KvRow`, `ProblemRow`).
+  - `controls/overlays.tsx`: `TooltipLayer`, `EntityCode`, `EntityCardLayer` (mounted once by `AppShell`, reading through `EntityCards`), `linkCodes`, `ContextMenu`, and `MenuItem`.
+  - `controls/navigation.tsx`: `NavRail`, `FocusPresets`, `FocusControl` (header focus chip with presets, ignore, and outside-focus count), `Spotlight`, and `sectionProvider`.
+  - `controls/lists.tsx`: `FilterBar`, `StateCounters`, `GroupHeader`, `Presets`, `GroupControl`, `SortControl`, `RowFacts`, `Fact`, `SelectBar`, `SelectToggle`, `RowCheck`, and `RowPin`.
+  - `controls/forms.tsx`: `TextField`, `SettingField`, `Composer`, `DropZone`, `CodeEditor`, `DiffText`, `DraftBar`, `Choice`, `ProjectPick`, `PresetPicker`, and `StartFacts`.
+  - `controls/thread.tsx`: `Thread` and row renderers (`TextRow`, `ToolRow`, `ReasoningRow`, `QuestionRow`, `ResultRow`, `BoundaryRow`, `AgentMark`, `MessageFiles`), `DecisionBlock`, `Markdown` (turns D17 codes in text into references via `linkCodes`), `ResultViewer`, `ArtifactView`, and `SearchField`.
+  - `controls/metrics.tsx`: `FillBar`, `StatStrip`, `ExecTree`, `OutcomeBlock`, `StepList`, `FlowStrip`, `AreaChart`, and `TimeStrip`.
 - `charts.tsx` exports the day charts for pace pages: `DayChart`, `ShareBar`, `NormBar` and the scale helper `capOf`.
-- `patterns.tsx` exports assembled layouts including `AppShell` (navigation rail plus the shell header: collapse toggle, section title, focus chip slot, search icon), `ListDetail`, `ListFrame`, `TaskListView`, and `DefinitionEditor`. `controls.tsx:FocusControl` is the header's focus chip with presets, ignore and the outside-focus count.
+- `patterns.tsx` exports assembled layouts including `AppShell` (navigation rail plus the shell header: collapse toggle, section title, focus chip slot, search icon), `ListDetail`, `ListFrame`, `TaskListView`, and `DefinitionEditor`. `controls/navigation.tsx:FocusControl` is the header's focus chip with presets, ignore and the outside-focus count.
 - `virtual-list.tsx:VirtualList` exports keyed virtual rendering and `VirtualListHandle`.
 - `registry.ts` exports icons, state families, workspaces, actions, harnesses, and stages; `format.ts` exports compact value formatting (including calendar days in the viewer's zone: `day`, `dayStart`, `hourLabel`) and actor/file helpers.
 - `markdown.ts`/`markdown.tsx` export parsing and Preact markdown rendering; `clip.ts` exports clipboard message/HTML helpers; `search.ts:matchSearch` applies supported search fields.
