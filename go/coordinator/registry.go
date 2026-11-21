@@ -12,14 +12,12 @@ import (
 	"time"
 
 	"fleet/contract"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // Route registry: the one router. Domain files call these from init(); patterns are net/http ServeMux patterns
 // ("GET /api/executions/{id}/delegations", read with q.r.PathValue).
 //   route        one transaction around the handler: GET a read snapshot, otherwise one GLOBAL write.
-//   longRoute    no surrounding transaction (q.tx nil); the handler opens its own through q.app.store.Tx.
+//   longRoute    no surrounding transaction (q.tx nil); the handler opens its own through q.app.store.Read / Write.
 //   publicRoute  matched before the credential check; a plain http.HandlerFunc.
 //   rawRoute     a plain handler of the App: it runs its own credential check and reads its own body (not JSON).
 //   op           POST /api/ops/{name} and the MCP servers (runOp): one line on the contract types.
@@ -348,13 +346,16 @@ func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler
 	if err == nil && kind == txNone {
 		out, err = h(q)
 	} else if err == nil {
-		err = a.store.Tx(q.ctx(), scopeOf(q.person), kind == txWrite, "", func(tx pgx.Tx) error {
-			q.tx = tx
-			defer func() { q.tx = nil }()
+		run := func(q *Request) error {
 			var err error
 			out, err = h(q)
 			return err
-		})
+		}
+		if kind == txWrite {
+			err = a.store.Write(q.ctx(), q, []string{GLOBAL}, run)
+		} else {
+			err = a.store.Read(q.ctx(), q, run)
+		}
 		if err == nil && kind == txWrite {
 			a.wakeDispatch()
 		}

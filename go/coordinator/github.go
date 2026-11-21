@@ -99,7 +99,7 @@ func githubConnectionOf(q *Request, owner string) (name string, c *apiConnection
 // reply younger than 30 s (keyed) or 5 min (public) is served from the cache. keyed says which way it went.
 func githubRead(ctx context.Context, a *App, project, tool string, args map[string]string) (body []byte, keyed bool, err error) {
 	var connection string
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
+	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
 		connection, _, keyed, err = githubConnectionOf(q, args["owner"])
 		return
 	}); err != nil {
@@ -161,7 +161,7 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 func githubReadKeyed(ctx context.Context, a *App, project, tool string, args map[string]string) ([]byte, error) {
 	var connection string
 	var keyed bool
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
+	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
 		connection, _, keyed, err = githubConnectionOf(q, args["owner"])
 		return
 	}); err != nil {
@@ -265,7 +265,7 @@ func readTokensEnd(ctx context.Context, a *App) error {
 		return nil
 	}
 	for _, exec := range due {
-		if err := runTx(ctx, a, nil, true, "", func(q *Request) error { return revokeTokens(q, exec) }); err != nil {
+		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error { return revokeTokens(q, exec) }); err != nil {
 			log.Printf("revoke %s: %v", exec, err)
 		}
 	}
@@ -300,7 +300,7 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 	readTokMu.Unlock()
 	exec := connection + "-read:" + newID()
 	var token string
-	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+	if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		system := "coordinator"
 		m, err := mintGrantFor(q, mintRun{ExecutionID: &exec, ProjectID: &project, Step: true, SystemActor: &system}, []string{connection})
 		token = deref(m.Token)

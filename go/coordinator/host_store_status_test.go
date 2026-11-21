@@ -48,7 +48,7 @@ func TestHostStorePollProjection(t *testing.T) {
 	}
 	check := func(want string) {
 		t.Helper()
-		if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+		if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 			o, err := recGet[doc](q, recHostObservation, "h-store-check")
 			if err != nil {
 				return err

@@ -274,7 +274,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 	var pipelinePending bool
 	var hasPending bool
 	var removed bool
-	if err := runTx(ctx, a, nil, false, "", func(rq *Request) error {
+	if err := a.store.Read(ctx, nil, func(rq *Request) error {
 		if h, err := recMaybe[hostShim](rq, recHost, "host:"+host); err != nil {
 			return err
 		} else if h != nil && h.removed() {
@@ -302,7 +302,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 	if pipelinePending {
 		locks = append([]string{GLOBAL}, locks...)
 	}
-	err := runTxLocks(ctx, a, nil, true, locks, func(wq *Request) error {
+	err := a.store.Write(ctx, nil, locks, func(wq *Request) error {
 		h, err := recMaybe[hostShim](wq, recHost, "host:"+host)
 		if err != nil {
 			return err
@@ -785,7 +785,7 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	ctx := q.ctx()
 	if flushObs || flushStores {
 		obs.LastSeenAt = now
-		if err := runTx(ctx, a, nil, true, "host:"+host, func(wq *Request) error {
+		if err := a.store.Write(ctx, nil, []string{"host:" + host}, func(wq *Request) error {
 			if flushStores {
 				if err := storesObserve(wq.ctx(), wq.tx, host, stores); err != nil {
 					return err

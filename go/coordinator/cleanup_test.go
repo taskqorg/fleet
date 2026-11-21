@@ -13,8 +13,6 @@ import (
 	"time"
 
 	"fleet/contract"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // schemaRefColumns: every *_id, *_ids and id column and every foreign-key column of the public tables.
@@ -54,8 +52,8 @@ func TestReferenceMapCoversSchema(t *testing.T) {
 		t.Fatalf("schema columns not read: %v", cols)
 	}
 	var refs []objectRef
-	if err := e.ownerStore.Tx(e.ctx, nil, false, "", func(tx pgx.Tx) (err error) {
-		refs, err = references(backgroundRequest(e.ctx, nil, tx))
+	if err := e.ownerStore.Read(e.ctx, nil, func(q *Request) (err error) {
+		refs, err = references(q)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -96,13 +94,13 @@ func TestReferenceMapCoversSchema(t *testing.T) {
 func appCount(t *testing.T, e *testCoordEnv, show bool, sql string, args ...any) int {
 	t.Helper()
 	var n int
-	if err := e.appStore.Tx(e.ctx, nil, false, "", func(tx pgx.Tx) error {
+	if err := e.appStore.Read(e.ctx, nil, func(q *Request) error {
 		if show {
-			if _, err := tx.Exec(e.ctx, "SELECT set_config('fleet.deleted','on',true)"); err != nil {
+			if _, err := q.tx.Exec(e.ctx, "SELECT set_config('fleet.deleted','on',true)"); err != nil {
 				return err
 			}
 		}
-		return tx.QueryRow(e.ctx, sql, args...).Scan(&n)
+		return q.tx.QueryRow(e.ctx, sql, args...).Scan(&n)
 	}); err != nil {
 		t.Fatalf("%s: %v", sql, err)
 	}

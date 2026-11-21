@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"fleet/contract"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // toolReceipt: a host agent's tool call identity (agent_receipts.go); its write commits with its acknowledgment.
@@ -30,38 +28,45 @@ func (a *App) runOp(q *Request, name string, b json.RawMessage, rc *toolReceipt)
 	}
 	sub := *q
 	sub.body = b
+	sub.tx = nil
 	if h, ok := longOperations[name]; ok {
-		sub.tx = nil
 		if err := authorizeOp(&sub, name); err != nil {
 			return nil, err
 		}
 		return h(&sub)
 	}
 	var out any
-	lock := ""
-	if l := opLocks[name]; l != nil {
-		lock = l(b)
-	}
-	err := a.store.Tx(q.ctx(), scopeOf(q.person), !reg.read, lock, func(tx pgx.Tx) error {
-		sub.tx = tx
-		err := authorizeOp(&sub, name)
+	run := func(sub *Request) error {
+		err := authorizeOp(sub, name)
 		if err != nil {
 			return err
 		}
 		if rc != nil && !reg.read {
-			if _, err = getExecution(&sub, rc.execution); err != nil {
+			if _, err = getExecution(sub, rc.execution); err != nil {
 				return err
 			}
 			payload := rc.payload
 			if payload == nil {
 				payload = b
 			}
-			out, err = agentReceipt(&sub, rc.key, rc.execution, name, payload, func() (any, error) { return reg.h(&sub) })
+			out, err = agentReceipt(sub, rc.key, rc.execution, name, payload, func() (any, error) { return reg.h(sub) })
 		} else {
-			out, err = reg.h(&sub)
+			out, err = reg.h(sub)
 		}
 		return err
-	})
+	}
+	var err error
+	if reg.read {
+		err = a.store.Read(q.ctx(), &sub, run)
+	} else {
+		lock := GLOBAL
+		if l := opLocks[name]; l != nil {
+			if v := l(b); v != "" {
+				lock = v
+			}
+		}
+		err = a.store.Write(q.ctx(), &sub, []string{lock}, run)
+	}
 	if err == nil && !reg.read {
 		a.wakeDispatch()
 	}

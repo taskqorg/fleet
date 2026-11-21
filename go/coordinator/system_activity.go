@@ -66,7 +66,7 @@ func spoolCallIDs() (ids []string, ok bool, err error) {
 // systemReadsCleanup deletes the legacy rows no spool line names, 1000 per transaction, totals first (foreign key).
 func systemReadsCleanup(ctx context.Context, a *App) (int, error) {
 	var left bool
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
 		if err := showDeleted(q); err != nil {
 			return err
 		}
@@ -83,7 +83,7 @@ func systemReadsCleanup(ctx context.Context, a *App) (int, error) {
 	deleted := 0
 	for {
 		var n int
-		if err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
+		if err := a.store.Write(ctx, nil, nil, func(q *Request) error {
 			if err := showDeleted(q); err != nil {
 				return err
 			}

@@ -710,7 +710,8 @@ func materializePipelineInputs(ctx context.Context, a *App, run *runRecord, inde
 	}
 	project := derefAny(run.ProjectID)
 	if frozen := run.entry(index).Inputs; frozen != nil {
-		if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+		if err := a.store.Read(ctx, nil, func(q *Request) error {
+			prepared.files = prepared.files[:0]
 			for _, binding := range frozen {
 				artifact, err := artifactRow(withTx(q), a, binding.ArtifactId)
 				if err != nil || artifact.State != "stored" || !same(artifact.ProjectID, project) || artifact.ContentHash != binding.Sha256 {
@@ -732,7 +733,7 @@ func materializePipelineInputs(ctx context.Context, a *App, run *runRecord, inde
 				return nil, fail(400, "Invalid or reserved pipeline input path")
 			}
 			var data []byte
-			if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+			if err := a.store.Read(ctx, nil, func(q *Request) error {
 				var err error
 				var f labExampleFile
 				json.Unmarshal(jsonBytes(input), &f)
@@ -749,8 +750,9 @@ func materializePipelineInputs(ctx context.Context, a *App, run *runRecord, inde
 			prepared.example = append(prepared.example, fileRef{ArtifactID: id, Path: "example/" + name})
 		}
 	}
-	prepared.files = append(prepared.files, prepared.example...)
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
+		prepared.files = append([]fileRef(nil), prepared.example...)
+		prepared.bindings = nil
 		files, err := run.outputFiles(q, index)
 		if err != nil {
 			return err
@@ -797,7 +799,7 @@ func materializePipelineInputs(ctx context.Context, a *App, run *runRecord, inde
 			metadata := pipelineControlEntry{ID: entry.Id, Index: i, Activation: entry.Activation, ExecutionRef: entry.ExecutionRef}
 			step := &run.Steps[i]
 			if native := step.ExecutionID; native != "" {
-				if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+				if err := a.store.Read(ctx, nil, func(q *Request) error {
 					raw, err := q.db().PipelineExecutionDefinitions(q.ctx(), db.PipelineExecutionDefinitionsParams{ID: native, ProjectID: run.ProjectID})
 					if errors.Is(err, pgx.ErrNoRows) {
 						return nil
@@ -1042,7 +1044,7 @@ func (run *runRecord) planRead(q *Request) (recordRest, error) {
 // projections never leak an eager or fabricated steps array to callers.
 func pipelinePublicRead(ctx context.Context, a *App, id string) (recordRest, error) {
 	var out recordRest
-	err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+	err := a.store.Read(ctx, nil, func(q *Request) error {
 		run, err := getRun(q, id)
 		if err != nil {
 			return err

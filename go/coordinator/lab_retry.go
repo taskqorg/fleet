@@ -639,13 +639,10 @@ func expRetrySuffix(q *Request, id, cell, sourceRunID, requestID string) (labExp
 	}
 
 	var created bool
-	err = runTx(q.ctx(), q.app, q, true, "", func(q *Request) error {
+	err = q.app.store.Write(q.ctx(), q, []string{GLOBAL, "experiment:" + id}, func(q *Request) error {
 		// A retried transaction must not retain side effects from a previous rolled-back attempt.
 		created = false
 		result = ""
-		if err := acquireTxLock(q, "experiment:"+id); err != nil {
-			return err
-		}
 		if _, err := expLocked(q, id); err != nil {
 			return err
 		}

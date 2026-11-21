@@ -114,7 +114,7 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 	var sessionIDs []string
 	var needsSweep bool
 	var pipelinePending bool
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
 		var err error
 		if sessionIDs, err = q.db().DispPendingSessions(q.ctx()); err != nil {
 			return err
@@ -131,7 +131,7 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 	if !needsSweep {
 		return nil
 	}
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
 		var err error
 		pipelinePending, err = q.db().DispPipelinePending(q.ctx())
 		return err
@@ -146,7 +146,7 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 	for _, sid := range sessionIDs {
 		locks = append(locks, "session:"+sid)
 	}
-	return runTxLocks(ctx, a, nil, true, locks, func(q *Request) error {
+	return a.store.Write(ctx, nil, locks, func(q *Request) error {
 		if err := a.delegationReconcile(q); err != nil {
 			return err
 		}

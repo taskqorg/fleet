@@ -44,7 +44,7 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 		if err := initPipelinePlan(run); err != nil {
 			t.Fatal(err)
 		}
-		if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			if err := putRun(q, run); err != nil {
 				return err
 			}
@@ -55,7 +55,7 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 		return run
 	}
 	connection := doc{"id": "connection:fixture", "name": "fixture", "provider": "typesafe", "intake": "all", "tools": []any{"system_one"}, "access": doc{"projects": []any{"hello-world"}}}
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error { return recPut(q, recAPIConnection, &connection) }); err != nil {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error { return recPut(q, recAPIConnection, &connection) }); err != nil {
 		t.Fatal(err)
 	}
 	run := seed("api-claim")
@@ -72,7 +72,7 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 			defer wg.Done()
 			<-start
 			won := false
-			err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+			err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 				_, token, claim, _, err := claimPipelineAPI(q, "api-claim", stepRow(run, 0), "fixture", "system_one")
 				won = claim
 				if claim && token == "" {
@@ -98,7 +98,7 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 	if winners != 1 {
 		t.Fatal("competing DB sessions did not retain one claim owner", winners)
 	}
-	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+	if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 		var count int
 		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM run_token WHERE execution_id=$1", stepRow(run, 0)).Scan(&count); err != nil {
 			return err
@@ -112,10 +112,10 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 	}
 	reserved := seed("api-revoked")
 	connection["intake"] = "none"
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error { return recPut(q, recAPIConnection, &connection) }); err != nil {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error { return recPut(q, recAPIConnection, &connection) }); err != nil {
 		t.Fatal(err)
 	}
-	err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		_, token, won, _, err := claimPipelineAPI(q, "api-revoked", stepRow(reserved, 0), "fixture", "system_one")
 		if token != "" || won {
 			t.Fatal("revoked connection authorized dispatch")
@@ -133,7 +133,7 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 func TestPipelinePlanFalseHasNoExecution(t *testing.T) {
 	env := openTestCoordinator(t, false)
 	run := planFixture(t, "plan-false")
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if err := putRun(q, run); err != nil {
 			return err
 		}
@@ -163,7 +163,7 @@ func TestPipelinePlanFalseHasNoExecution(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+	if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 		got, err := getRunDoc(q, "plan-false")
 		if err != nil {
 			return err
@@ -197,14 +197,14 @@ func TestPipelinePlanFalseHasNoExecution(t *testing.T) {
 func TestPipelinePlanWriteConflictAndRollback(t *testing.T) {
 	env := openTestCoordinator(t, false)
 	run := planFixture(t, "plan-conflict")
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error { return putRun(q, run) }); err != nil {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error { return putRun(q, run) }); err != nil {
 		t.Fatal(err)
 	}
 	var stale doc
 	jsonRoundTrip(run, &stale)
 	revision := pipelineRevision(run)
 	abort := errors.New("fixture rollback")
-	err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if err := putRun(q, run); err != nil {
 			return err
 		}
@@ -216,10 +216,10 @@ func TestPipelinePlanWriteConflictAndRollback(t *testing.T) {
 	if !errors.Is(err, abort) || pipelineRevision(run) != revision {
 		t.Fatal("rollback changed the plan revision", err, run)
 	}
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error { return putRun(q, run) }); err != nil {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error { return putRun(q, run) }); err != nil {
 		t.Fatal("safe write after rollback", err)
 	}
-	err = runTx(env.ctx, env.app, nil, true, "", func(q *Request) error { return putRun(q, stale) })
+	err = env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error { return putRun(q, stale) })
 	var conflict *HTTPError
 	if !errors.As(err, &conflict) || conflict.Code != 409 {
 		t.Fatal("stale plan write was accepted", err)
@@ -234,7 +234,7 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 	prepare := func(id string) (doc, doc, doc) {
 		run := planFixture(t, id)
 		var native, command doc
-		if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			if err := putRun(q, run); err != nil {
 				return err
 			}
@@ -270,7 +270,7 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 	run, native, command := prepare("native-once")
 	body := canonical(command)
 	for repeat := 0; repeat < 2; repeat++ {
-		if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			ok, err := handoffPipelineCommand(q, native, command)
 			if err != nil {
 				return err
@@ -290,7 +290,7 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+	if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 		got, err := getRunDoc(q, astr(run["id"]))
 		if err != nil {
 			return err
@@ -304,7 +304,7 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancelled, unstarted, pending := prepare("native-cancelled")
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		_, _, err := pipelineCancelIn(q, astr(cancelled["id"]))
 		if err != nil {
 			return err
@@ -344,7 +344,7 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 	env := openTestCoordinator(t, false)
 	env.registerHost(t, "plan-host")
 	ids := map[string]string{}
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		for _, id := range []string{"legacy", "removed", "ended", "current"} {
 			run := planFixture(t, id)
 			if err := putRun(q, run); err != nil {
@@ -413,7 +413,7 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 	if !got[ids["current:script"]] || !got[ids["current:steer"]] {
 		t.Fatal("current run's script or steer was not delivered", out)
 	}
-	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+	if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 		for _, id := range []string{"legacy", "removed", "ended"} {
 			if got[ids[id+":script"]] {
 				return fmt.Errorf("%s run's script was delivered", id)
@@ -443,7 +443,7 @@ func TestPipelineFinalizerBinding(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			env := openTestCoordinator(t, false)
 			run := planFixture(t, "finalizer-binding")
-			err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+			err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 				if err := putRun(q, run); err != nil {
 					return err
 				}
@@ -526,7 +526,7 @@ func TestPipelineVerifiedPrefixReuse(t *testing.T) {
 	if err := initPipelinePlan(old); err != nil {
 		t.Fatal(err)
 	}
-	err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if err := putRun(q, old); err != nil {
 			return err
 		}
@@ -550,7 +550,7 @@ func TestPipelineVerifiedPrefixReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	var derived doc
-	err = runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	err = env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		q.person = &Person{Email: testOwnerEmail, Owner: true}
 		source, err := getRunDoc(q, astr(old["id"]))
 		if err != nil {
@@ -582,7 +582,7 @@ func TestPipelineVerifiedPrefixReuse(t *testing.T) {
 	if derived["state"] != "succeeded" {
 		t.Fatal(derived)
 	}
-	err = runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	err = env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if err := exec(q, "UPDATE artifact SET content_hash=$2 WHERE id=$1", "prefix-output", sha256hex([]byte("corrupt"))); err != nil {
 			return err
 		}
@@ -621,7 +621,7 @@ func TestPipelineCompletionRestoresFullStateOnDBRetry(t *testing.T) {
 	env := openTestCoordinator(t, false)
 	run := planFixture(t, "completion-retry")
 	output := doc{"answer": "synthetic retained result"}
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if err := putRun(q, run); err != nil {
 			return err
 		}
@@ -660,7 +660,7 @@ func TestPipelineCompletionRestoresFullStateOnDBRetry(t *testing.T) {
 	if attempts != 2 || step["state"] != "succeeded" || pipelineEntry(run, 0).Dispatch.Phase != "settled" {
 		t.Fatal("completion retry failed", attempts, run)
 	}
-	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+	if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 		actual, err := getRunDoc(q, astr(run["id"]))
 		if err != nil {
 			return err
@@ -685,7 +685,7 @@ func TestPipelineGlobalOwnerAuthority(t *testing.T) {
 		if err := initPipelinePlan(run); err != nil {
 			t.Fatal(err)
 		}
-		if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			if err := putRun(q, run); err != nil {
 				return err
 			}

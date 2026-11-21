@@ -246,7 +246,7 @@ func TestDeliveryStatusExclude(t *testing.T) {
 func TestDeliveryStateChange(t *testing.T) {
 	env := openTestCoordinator(t, false)
 	var kind string
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if err := exec(q, `INSERT INTO delivery_state(id,project_id,refreshed_at) VALUES('delivery-state:fleet','fleet','x')`); err != nil {
 			return err
 		}

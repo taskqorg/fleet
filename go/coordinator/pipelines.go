@@ -1307,7 +1307,7 @@ func startRun(q *Request, o pipelineStartOptions) (*runRecord, error) {
 func pipelineWait(ctx context.Context, a *App, runID string) (recordRest, error) {
 	for {
 		var r *runRecord
-		if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) { r, err = getRun(q, runID); return }); err != nil {
+		if err := a.store.Read(ctx, nil, func(q *Request) (err error) { r, err = getRun(q, runID); return }); err != nil {
 			return nil, err
 		}
 		if r == nil {
@@ -1337,7 +1337,7 @@ func pipelineOnEnded(q *Request, executionID string) error {
 // caller stops. Its GLOBAL fence orders it with the run's steps on the kit.
 func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
 	own := ""
-	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+	err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		var err error
 		own, _, err = pipelineCancelIn(q, runID)
 		return err
@@ -1752,7 +1752,7 @@ func pipelineGateway(ctx context.Context, a *App, row, token, connection, tool s
 	line := gatewayCall(ctx, token, connection, tool, args, idempotent)
 	// Revoked at once in its own write, even when the caller left or the record fails: a live token would keep the key
 	// reachable. The recording step revokes again (idempotent), and a run's end revokes every token of its steps.
-	if err := runTx(context.WithoutCancel(ctx), a, nil, true, "", func(q *Request) error { return revokeTokens(q, row) }); err != nil {
+	if err := a.store.Write(context.WithoutCancel(ctx), nil, []string{GLOBAL}, func(q *Request) error { return revokeTokens(q, row) }); err != nil {
 		log.Printf("revoke %s: %v", row, err)
 	}
 	if _, err := connIngestPass(context.WithoutCancel(ctx), a); err != nil {
@@ -2670,8 +2670,7 @@ func init() {
 	// Generic v2 run: an example (an approved example artifact, references withheld, or an inline example) and overrides.
 	longRoute("POST /api/pipelines/{id}/runs", func(q *Request) (any, error) {
 		var out *runRecord
-		err := q.app.store.Tx(q.ctx(), scopeOf(q.person), true, "", func(tx pgx.Tx) error {
-			q.tx = tx
+		err := q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
 			var err error
 			out, err = pipelineRunFrom(q, q.r.PathValue("id"), recOf(body(q)), nil, 0)
 			return err
@@ -2686,9 +2685,7 @@ func init() {
 	op("pipeline_rerun", func(q *Request, r *contract.PipelineRerunRequest) (contract.PipelineRerunReply, error) {
 		out := contract.PipelineRerunReply{Reused: []string{}, Definitions: []contract.DefinitionRef{}}
 		var run *runRecord
-		err := q.app.store.Tx(q.ctx(), scopeOf(q.person), true, "", func(tx pgx.Tx) error {
-			q.tx = tx
-			defer func() { q.tx = nil }()
+		err := q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
 			var err error
 			run, err = pipelineRerun(q, r)
 			return err
@@ -2709,9 +2706,7 @@ func init() {
 	op("pipeline_run_create", func(q *Request, r *contract.PipelineRunCreateRequest) (contract.PipelineRunCreateReply, error) {
 		var out contract.PipelineRunCreateReply
 		var run *runRecord
-		err := q.app.store.Tx(q.ctx(), scopeOf(q.person), true, "", func(tx pgx.Tx) error {
-			q.tx = tx
-			defer func() { q.tx = nil }()
+		err := q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
 			b := pipelineRule{"requestId": jsonBytes(r.RequestId)}
 			if r.ProjectId != nil {
 				b["projectId"] = jsonBytes(*r.ProjectId)
@@ -2918,7 +2913,7 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 	}
 	var run *runRecord
 	old := false
-	err := runTx(q.ctx(), q.app, q, true, "", func(q *Request) error {
+	err := q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
 		signature := sha256hex([]byte(canonical(pipelineSignature{ProjectID: projectID, Query: query, MethodID: methodID, Invocation: inv})))
 		prev, err := runsOf(q)(q.db().PipelineRunsByProjectRequest(q.ctx(), db.PipelineRunsByProjectRequestParams{ProjectID: projectID, RequestID: rid}))
 		if err != nil {

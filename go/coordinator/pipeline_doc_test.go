@@ -146,7 +146,7 @@ func jobTool(def doc, name string) string {
 // Effects and object I/O must remain outside this callback.
 func runPipelineTransition(ctx context.Context, a *App, run doc, fn func(*Request) error) error {
 	snapshot := restorePipelineValue(nil, run)
-	return runTx(ctx, a, nil, true, "", func(q *Request) error {
+	return a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		cancelled, err := q.db().PipelineRunCancelled(q.ctx(), astr(run["id"]))
 		if err != nil {
 			return err

@@ -23,7 +23,7 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 	env := openTestCoordinator(t, false)
 	env.registerHost(t, "iso-host")
 	ids := map[string]string{}
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		for _, id := range []string{"good", "refused"} {
 			run := planFixture(t, id)
 			if err := putRun(q, run); err != nil {
@@ -79,7 +79,7 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 	if !got[ids["good"]] || got[ids["refused"]] || got[ids["orphan"]] || got[ids["deleted"]] || len(out) != 1 {
 		t.Fatalf("delivered %v, want only the good script %s", out, ids["good"])
 	}
-	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+	if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 		for id, want := range map[string]string{"refused": "refused: Pipeline initiating actor no longer has project access", "orphan": "handoff failed: Not found"} {
 			c, err := recGet[doc](q, recCommand, ids[id])
 			if err != nil {
@@ -224,7 +224,7 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 	question := func() doc {
 		t.Helper()
 		var q doc
-		if err := runTx(env.ctx, env.app, nil, false, "", func(rq *Request) error {
+		if err := env.app.store.Read(env.ctx, nil, func(rq *Request) error {
 			err := rq.tx.QueryRow(rq.ctx(), "SELECT to_jsonb(r) FROM (SELECT id,state,text,cause FROM question WHERE data->>'cause'=$1 ORDER BY seq DESC LIMIT 1) r", hostPollCause("sick-host")).Scan(&q)
 			if errors.Is(err, pgx.ErrNoRows) {
 				q, err = nil, nil
@@ -269,7 +269,7 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 		t.Fatalf("a flush dropped the record: %v", pe)
 	}
 	// Two minutes later the next failure opens one problem.
-	if err := runTx(env.ctx, env.app, nil, true, "host:sick-host", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{"host:sick-host"}, func(q *Request) error {
 		return exec(q, "UPDATE host_observation SET payload=jsonb_set(payload,'{pollError,since}',to_jsonb($2::float8)) WHERE id=$1", "sick-host", since-3*60*1000)
 	}); err != nil {
 		t.Fatal(err)
@@ -281,7 +281,7 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 	}
 	env.app.notePollFailure(env.ctx, "sick-host", testOwnerEmail, &HTTPError{Code: 409, Msg: "again", Extra: doc{"reason": "pipeline_format_unsupported"}})
 	var open int
-	if err := runTx(env.ctx, env.app, nil, false, "", func(rq *Request) error {
+	if err := env.app.store.Read(env.ctx, nil, func(rq *Request) error {
 		return rq.tx.QueryRow(rq.ctx(), "SELECT count(*) FROM question WHERE data->>'cause'=$1 AND state='open'", hostPollCause("sick-host")).Scan(&open)
 	}); err != nil || open != 1 {
 		t.Fatalf("open problems %d %v, want one", open, err)
@@ -305,7 +305,7 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 	failure := &HTTPError{Code: 409, Msg: "x", Extra: doc{"reason": "pipeline_format_unsupported"}}
 	env.app.notePollFailure(env.ctx, "sick-host", testOwnerEmail, failure)
 	old := float64(nowMs() - 60*60*1000)
-	if err := runTx(env.ctx, env.app, nil, true, "host:sick-host", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{"host:sick-host"}, func(q *Request) error {
 		return exec(q, "UPDATE host_observation SET payload=jsonb_set(jsonb_set(payload,'{pollError,since}',to_jsonb($2::float8)),'{pollError,at}',to_jsonb($2::float8)) WHERE id=$1", "sick-host", old)
 	}); err != nil {
 		t.Fatal(err)

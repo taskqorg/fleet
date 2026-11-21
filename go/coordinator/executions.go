@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -428,8 +427,7 @@ func settleWaiting(ctx context.Context, a *App, id string) error {
 
 // settleWaitingAs: after the retry window, a still-pending artifact fails the execution.
 func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
-	err := a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
-		q := &Request{app: a, tx: tx, r: (&http.Request{}).WithContext(ctx)}
+	err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		e, err := recFind[rawObject](q, recExecution, id) // open: the wait's fields are removed and an error object set
 		if err != nil || e == nil {
 			return err
@@ -487,8 +485,8 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 
 // stopExecution: execution_stop in its own transaction (Lab cell stop).
 func stopExecution(ctx context.Context, a *App, id string) error {
-	return a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
-		_, err := executionStop(&Request{app: a, tx: tx, r: (&http.Request{}).WithContext(ctx)}, id)
+	return a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		_, err := executionStop(q, id)
 		return err
 	})
 }
@@ -720,7 +718,7 @@ func init() {
 	})
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "lost", lostAfter/12, func(ctx context.Context) error {
-			return runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
+			return a.store.Write(ctx, nil, nil, func(q *Request) error {
 				// Still lost (DispLostIDs), re-checked under the row lock so a receipt that just arrived wins. A host job is also
 				// lost when its host keeps polling but sent no receipt for it in lostAfter: host jobs last minutes (p99 5 min),
 				// so a confirmed one that went silent was dropped by an executor restart. ponytail: a host job meant to run

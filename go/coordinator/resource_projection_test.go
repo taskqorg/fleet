@@ -214,9 +214,10 @@ func TestResourcePostgres(t *testing.T) {
 	}
 	defer st.Close()
 	a := &App{store: st}
+	st.app = a
 	tx := func(fn func(*Request) error) {
 		t.Helper()
-		if err := runTx(ctx, a, nil, true, NOLOCK, fn); err != nil {
+		if err := a.store.Write(ctx, nil, nil, fn); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -224,7 +225,7 @@ func TestResourcePostgres(t *testing.T) {
 	scalar := func(s string, args ...any) string {
 		t.Helper()
 		var v string
-		if err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error { return q.tx.QueryRow(ctx, s, args...).Scan(&v) }); err != nil {
+		if err := a.store.Read(ctx, nil, func(q *Request) error { return q.tx.QueryRow(ctx, s, args...).Scan(&v) }); err != nil {
 			t.Fatal(err)
 		}
 		return v
@@ -297,15 +298,11 @@ func TestResourcePostgres(t *testing.T) {
 	read := func(member bool) resourcePreparedState {
 		t.Helper()
 		var state resourcePreparedState
-		sc := (*Scope)(nil)
+		var rq *Request
 		if member {
-			sc = &Scope{ProjectIDs: "A", Person: "member@trial.test"}
+			rq = scopedRequest(ctx, a, &Person{Email: "member@trial.test", Grants: []personGrant{{Kind: "project", ID: "A"}}})
 		}
-		e := st.Tx(ctx, sc, false, NOLOCK, func(tx pgx.Tx) error {
-			q := backgroundRequest(ctx, a, tx)
-			if member {
-				q.person = &Person{Email: "member@trial.test"}
-			}
+		e := st.Read(ctx, rq, func(q *Request) error {
 			var e error
 			state, e = resourceReadPrepared(q, "A")
 			return e
@@ -328,7 +325,13 @@ func TestResourcePostgres(t *testing.T) {
 	// Requirement: coordinator statements never pay JIT compilation; risk: a 1 ms lookup compiles for 100+ ms per call.
 	for _, write := range []bool{true, false} {
 		var jit string
-		if e := st.Tx(ctx, nil, write, NOLOCK, func(tx pgx.Tx) error { return tx.QueryRow(ctx, `SHOW jit`).Scan(&jit) }); e != nil || jit != "off" {
+		var e error
+		if write {
+			e = st.Write(ctx, nil, nil, func(q *Request) error { return q.tx.QueryRow(ctx, `SHOW jit`).Scan(&jit) })
+		} else {
+			e = st.Read(ctx, nil, func(q *Request) error { return q.tx.QueryRow(ctx, `SHOW jit`).Scan(&jit) })
+		}
+		if e != nil || jit != "off" {
 			t.Fatalf("coordinator connection (write=%v) jit=%s %v", write, jit, e)
 		}
 	}
@@ -738,7 +741,8 @@ func TestResourceAPIBoundPaths(t *testing.T) {
 	}
 	defer st.Close()
 	a := &App{store: st}
-	err = runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+	st.app = a
+	err = a.store.Read(ctx, nil, func(q *Request) error {
 		p, err := resolveAccessTx(ctx, q.tx, "member@trial.test")
 		if err != nil {
 			return err
@@ -780,16 +784,17 @@ func TestResourceMetricBatchPostgres(t *testing.T) {
 	}
 	defer st.Close()
 	a := &App{store: st}
+	st.app = a
 	sql := func(s string) {
 		t.Helper()
-		if e := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error { return exec(q, s) }); e != nil {
+		if e := a.store.Write(ctx, nil, nil, func(q *Request) error { return exec(q, s) }); e != nil {
 			t.Fatal(e)
 		}
 	}
 	scalar := func(s string) string {
 		t.Helper()
 		var v string
-		if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error { return q.tx.QueryRow(q.ctx(), s).Scan(&v) }); e != nil {
+		if e := a.store.Read(ctx, nil, func(q *Request) error { return q.tx.QueryRow(q.ctx(), s).Scan(&v) }); e != nil {
 			t.Fatal(e)
 		}
 		return v
@@ -898,10 +903,11 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 	}
 	defer st.Close()
 	a := &App{store: st}
+	st.app = a
 	scalar := func(sql string) string {
 		t.Helper()
 		var v string
-		if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error { return q.tx.QueryRow(q.ctx(), sql).Scan(&v) }); e != nil {
+		if e := a.store.Read(ctx, nil, func(q *Request) error { return q.tx.QueryRow(q.ctx(), sql).Scan(&v) }); e != nil {
 			t.Fatal(e)
 		}
 		return v
@@ -920,7 +926,7 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 		"peakMemoryBytes": {Value: ptr("0"), Basis: contract.ResourceBasisMeasured, Expected: true},
 	}, Tools: []contract.ResourceToolV1{{Name: "zero-tool", Calls: 0, Errors: 0}}, Costs: []contract.ResourceCostV1{{Currency: ptr("USD"), Basis: contract.ResourceBasisMeasured, Amount: ptr("0"), PriceRefs: []contract.ResourcePriceRefV1{{PriceId: "zero-price", ObservedAt: 1704067200000}}}}}
 	apply := func(sign int64) error {
-		return runTxLocks(ctx, a, nil, true, []string{"project:SUPPORT_NOOP"}, func(q *Request) error {
+		return a.store.Write(ctx, nil, []string{"project:SUPPORT_NOOP"}, func(q *Request) error {
 			if e := resourceEnsureProject(q, "SUPPORT_NOOP"); e != nil {
 				return e
 			}
@@ -949,7 +955,7 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 	before := scalar(`SELECT jsonb_build_object('summary',(SELECT to_jsonb(s) FROM resource_project_summary s WHERE project_id='SUPPORT_NOOP'),'metric',(SELECT jsonb_agg(m ORDER BY metric,basis) FROM resource_metric m WHERE project_id='SUPPORT_NOOP'))::text`)
 	failure := errors.New("fixture rollback after atomic publication")
 	var failedXID string
-	err = runTxLocks(ctx, a, nil, true, []string{"project:SUPPORT_NOOP"}, func(q *Request) error {
+	err = a.store.Write(ctx, nil, []string{"project:SUPPORT_NOOP"}, func(q *Request) error {
 		if e := q.tx.QueryRow(q.ctx(), `SELECT pg_current_xact_id()::text`).Scan(&failedXID); e != nil {
 			return e
 		}
@@ -978,7 +984,7 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 	equal(`SELECT count(*)::text FROM wake_outbox WHERE source_xid::text='`+failedXID+`'`, "0")
 	// The third fixed-header SELECT fails after earlier batch results are valid.
 	// It must abort before a new public version can be acknowledged.
-	err = runTxLocks(ctx, a, nil, true, []string{"project:SUPPORT_NOOP"}, func(q *Request) error {
+	err = a.store.Write(ctx, nil, []string{"project:SUPPORT_NOOP"}, func(q *Request) error {
 		if e := resourceApply(q, c, 1); e != nil {
 			return e
 		}
@@ -1094,7 +1100,7 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 	steps = append(steps, step{krw("eq-krw-k", ptr("5")), -1}, step{krw("eq-krw-k", ptr("3")), 1})
 	for _, mode := range []string{"EQ_LEAF", "EQ_COHORT"} {
 		for _, part := range [][]step{steps[:phase1], steps[phase1:]} {
-			if err = runTxLocks(ctx, a, nil, true, []string{"project:" + mode}, func(q *Request) error {
+			if err = a.store.Write(ctx, nil, []string{"project:" + mode}, func(q *Request) error {
 				if e := resourceEnsureProject(q, mode); e != nil {
 					return e
 				}
@@ -1315,16 +1321,17 @@ func TestResourceCohortPostgres(t *testing.T) {
 	}
 	defer st.Close()
 	a := &App{store: st}
+	st.app = a
 	sql := func(s string, args ...any) {
 		t.Helper()
-		if e := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error { return exec(q, s, args...) }); e != nil {
+		if e := a.store.Write(ctx, nil, nil, func(q *Request) error { return exec(q, s, args...) }); e != nil {
 			t.Fatal(e)
 		}
 	}
 	scalar := func(s string, args ...any) string {
 		t.Helper()
 		var v string
-		if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error { return q.tx.QueryRow(q.ctx(), s, args...).Scan(&v) }); e != nil {
+		if e := a.store.Read(ctx, nil, func(q *Request) error { return q.tx.QueryRow(q.ctx(), s, args...).Scan(&v) }); e != nil {
 			t.Fatal(e)
 		}
 		return v
@@ -1341,7 +1348,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 		sql(`INSERT INTO execution(id,kind,state,project_id,harness,model,started_at) VALUES($1,'agent_run','succeeded','COHORT','codex','cohort-model','2024-01-01');`, ids[i])
 		sql(`INSERT INTO execution_totals(execution_id,project_id,tokens_input,tokens_input_basis) VALUES($1,'COHORT',$2,'measured')`, ids[i], i%3)
 	}
-	if err = runTxLocks(ctx, a, nil, true, []string{"project:COHORT"}, func(q *Request) error { return resourceEnsureProject(q, "COHORT") }); err != nil {
+	if err = a.store.Write(ctx, nil, []string{"project:COHORT"}, func(q *Request) error { return resourceEnsureProject(q, "COHORT") }); err != nil {
 		t.Fatal(err)
 	}
 	work := scalar(`SELECT string_agg(work_id::text,',' ORDER BY work_id) FROM resource_work WHERE execution_id=ANY($1::text[])`, ids)
@@ -1478,6 +1485,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 	}
 	defer pool.Close()
 	ambiguous := &App{store: &Store{pool: pool, readPool: st.readPool}}
+	ambiguous.store.app = ambiguous
 	beforePub := scalar(`SELECT count(*)::text FROM interface_publication WHERE project='COHORT'`)
 	drop.Store(true)
 	if e = resourceReplaceBatch(ctx, ambiguous, ids); e == nil {
@@ -1536,9 +1544,9 @@ func TestResourceCohortPostgres(t *testing.T) {
 	}
 	equal(`SELECT count(*)::text FROM resource_metric WHERE project_id='COHORT_ALT'`, "0")
 	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "0", ids)
-	if e = st.Tx(ctx, &Scope{ProjectIDs: "COHORT", Person: "cohort-reader"}, false, NOLOCK, func(tx pgx.Tx) error {
+	if e = st.Read(ctx, scopedRequest(ctx, a, &Person{Email: "cohort-reader", Grants: []personGrant{{Kind: "project", ID: "COHORT"}}}), func(q *Request) error {
 		var count int
-		if e := tx.QueryRow(ctx, `SELECT count(*) FROM resource_contribution WHERE execution_id='cohort-00'`).Scan(&count); e != nil {
+		if e := q.tx.QueryRow(ctx, `SELECT count(*) FROM resource_contribution WHERE execution_id='cohort-00'`).Scan(&count); e != nil {
 			return e
 		}
 		if count != 0 {
@@ -1555,7 +1563,7 @@ func TestResourceCohortPostgres(t *testing.T) {
  UPDATE resource_work SET next_attempt_at=clock_timestamp()-interval '1 day',first_pending_at=clock_timestamp()-interval '1 day' WHERE execution_id LIKE 'cohort-clear-%';
  INSERT INTO execution(id,kind,state,project_id) VALUES('cohort-healthy-other','tool_run','succeeded','COHORT_OTHER')`)
 	var candidates []string
-	if e = runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+	if e = a.store.Read(ctx, nil, func(q *Request) error {
 		var e error
 		candidates, e = q.db().ResourceCandidates(ctx, db.ResourceCandidatesParams{Now: time.Now(), Max: resourceCohortSize})
 		return e
@@ -1602,7 +1610,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 		selectWork := func() []string {
 			t.Helper()
 			var ids []string
-			if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+			if e := a.store.Read(ctx, nil, func(q *Request) error {
 				var e error
 				ids, e = q.db().ResourceCandidates(q.ctx(), db.ResourceCandidatesParams{Now: time.Now(), Max: resourceCohortSize})
 				return e
@@ -1682,9 +1690,9 @@ func TestResourceCohortPostgres(t *testing.T) {
 		equal(`SELECT calls::text||':'||errors::text FROM resource_tool WHERE project_id='COHORT_INTERLEAVED_ALT' AND name='!cohort-tool'`, "1:1")
 		equal(`SELECT (project_id IS NULL AND NOT included)::text FROM resource_contribution WHERE execution_id=$1`, "true", interleaved[5])
 		equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "0", interleaved)
-		if e := st.Tx(ctx, &Scope{ProjectIDs: projects[0], Person: "interleaved-reader"}, false, NOLOCK, func(tx pgx.Tx) error {
+		if e := st.Read(ctx, scopedRequest(ctx, a, &Person{Email: "interleaved-reader", Grants: []personGrant{{Kind: "project", ID: projects[0]}}}), func(q *Request) error {
 			var count int
-			if e := tx.QueryRow(ctx, `SELECT count(*) FROM resource_contribution WHERE execution_id=ANY($1::text[])`, interleaved).Scan(&count); e != nil {
+			if e := q.tx.QueryRow(ctx, `SELECT count(*) FROM resource_contribution WHERE execution_id=ANY($1::text[])`, interleaved).Scan(&count); e != nil {
 				return e
 			}
 			if count != 18 {
@@ -1747,16 +1755,17 @@ func TestResourceBatchHintsPostgres(t *testing.T) {
 	}
 	defer st.Close()
 	a := &App{store: st}
+	st.app = a
 	sql := func(s string, args ...any) {
 		t.Helper()
-		if e := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error { return exec(q, s, args...) }); e != nil {
+		if e := a.store.Write(ctx, nil, nil, func(q *Request) error { return exec(q, s, args...) }); e != nil {
 			t.Fatal(e)
 		}
 	}
 	scalar := func(s string, args ...any) string {
 		t.Helper()
 		var v string
-		if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error { return q.tx.QueryRow(ctx, s, args...).Scan(&v) }); e != nil {
+		if e := a.store.Read(ctx, nil, func(q *Request) error { return q.tx.QueryRow(ctx, s, args...).Scan(&v) }); e != nil {
 			t.Fatal(e)
 		}
 		return v
@@ -1862,8 +1871,8 @@ func TestResourceBatchHintsPostgres(t *testing.T) {
 	if after := scalar(`SELECT string_agg(work_id::text,',' ORDER BY work_id) FROM resource_work WHERE execution_id IN ('hint-from-null','hint-0000')`); after != before {
 		t.Fatal("rejected authoritative scope lost work")
 	}
-	if e = st.Tx(ctx, &Scope{ProjectIDs: "HINT_B", Person: "hint-reader"}, false, NOLOCK, func(tx pgx.Tx) error {
-		rows, e := db.New(tx).ResourceBatchHints(ctx, ids)
+	if e = st.Read(ctx, scopedRequest(ctx, a, &Person{Email: "hint-reader", Grants: []personGrant{{Kind: "project", ID: "HINT_B"}}}), func(q *Request) error {
+		rows, e := q.db().ResourceBatchHints(ctx, ids)
 		if e != nil {
 			return e
 		}
@@ -1897,13 +1906,13 @@ func resourceBatchHints(ctx context.Context, a *App, ids []string) (out map[stri
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	err = runTxLocksOnce(ctx, a, nil, false, nil, func(q *Request) error { out, err = resourceBatchHintsQ(q, ids); return err })
+	err = a.store.Read(ctx, nil, func(q *Request) error { out, err = resourceBatchHintsQ(q, ids); return err })
 	return out, err
 }
 
 // resourceScopeHint: every known scope of one execution, in its own read transaction.
 func resourceScopeHint(ctx context.Context, a *App, id string) (out []string, err error) {
-	err = runTxLocksOnce(ctx, a, nil, false, nil, func(q *Request) error { out, err = resourceScopes(q, id); return err })
+	err = a.store.Read(ctx, nil, func(q *Request) error { out, err = resourceScopes(q, id); return err })
 	return out, err
 }
 
@@ -1925,7 +1934,7 @@ func TestResourceProjectlessToolRunPostgres(t *testing.T) {
 	env := openTestCoordinator(t, false)
 	a, ctx := env.app, env.ctx
 	sha, parent, callID := "projectless-sha", "bugsink-read:projectless", "projectless-call"
-	if err := runTx(ctx, a, nil, true, GLOBAL, func(q *Request) error {
+	if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		// A token minted before the fix stored projectId "".
 		row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": parent, "projectId": "", "step": true, "connections": []any{"bugsink"}, "createdAt": nowMs()}
 		if err := recPut(q, recRunToken, &row); err != nil {
@@ -1939,7 +1948,7 @@ func TestResourceProjectlessToolRunPostgres(t *testing.T) {
 	}
 	id := "call:" + callID
 	var project *string
-	if err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
 		return q.tx.QueryRow(ctx, "SELECT project_id FROM execution WHERE id=$1", id).Scan(&project)
 	}); err != nil || project != nil {
 		t.Fatal("projectless call project", err, project)
@@ -1948,7 +1957,7 @@ func TestResourceProjectlessToolRunPostgres(t *testing.T) {
 		t.Fatal("resource replace", err)
 	}
 	var pending int
-	if err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
 		return q.tx.QueryRow(ctx, "SELECT count(*) FROM resource_work WHERE execution_id=$1", id).Scan(&pending)
 	}); err != nil || pending != 0 {
 		t.Fatal("pending work", err, pending)
@@ -1979,12 +1988,12 @@ func TestResourceProjectlessToolRunPostgres(t *testing.T) {
 	if err := resourceReplace(ctx, a, id); err != nil {
 		t.Fatal("resource replace after migration 68", err)
 	}
-	if err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
 		return q.tx.QueryRow(ctx, "SELECT count(*) FROM resource_work WHERE execution_id=$1", id).Scan(&pending)
 	}); err != nil || pending != 0 {
 		t.Fatal("pending work after migration 68", err, pending)
 	}
-	err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
+	err := a.store.Write(ctx, nil, nil, func(q *Request) error {
 		return exec(q, `INSERT INTO execution(id,kind,state,project_id) VALUES('empty-project','tool_run','succeeded','')`)
 	})
 	if err == nil || !strings.Contains(err.Error(), "execution_project_id_not_empty") {

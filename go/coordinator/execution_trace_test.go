@@ -25,13 +25,13 @@ func TestDurableCommandTraceAndDiscovery(t *testing.T) {
 		}
 	})
 	defer obs.SetSink(nil)
-	if err := runTx(ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		return recWrite(q, recExecution, doc{"id": "x-trace", "executionId": "x-trace", "actor": "program-worker", "hostId": host, "state": "preparing"})
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// Detached transaction models dispatch after request completion or coordinator restart.
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		return recWrite(q, recCommand, doc{"id": "c-trace", "executionId": "x-trace", "hostId": host, "kind": "script", "status": "pending", "payload": doc{"command": "true"}})
 	}); err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestDurableCommandTraceAndDiscovery(t *testing.T) {
 	if len(dispatched) != 1 || dispatched[0].ParentSpanID != parent.SpanID || dispatched[0].SpanID != span {
 		t.Fatalf("dispatch %+v", dispatched)
 	}
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		saved, err := recGet[doc](q, recCommand, "c-trace")
 		if err != nil {
 			return err
@@ -80,13 +80,13 @@ func TestDurableCommandTraceAndDiscovery(t *testing.T) {
 	if len(dispatched) != 1 {
 		t.Fatal("retry emitted dispatch twice")
 	}
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		_, err := insertExecution(q, doc{"id": "typed-trace", "kind": "pipeline_run", "parentExecutionId": "x-trace", "data": doc{"retained": "value"}})
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+	if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 		var data doc
 		if err := q.tx.QueryRow(q.ctx(), "SELECT data FROM execution WHERE id=$1", "typed-trace").Scan(&data); err != nil {
 			return err

@@ -102,7 +102,7 @@ func init() {
 
 // telemetryProblem opens or closes problem:telemetry:clickhouse (3 failed flushes in a row; closed on the next good flush).
 func telemetryProblem(ctx context.Context, a *App, open bool) {
-	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+	err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if open {
 			return problemOpen(q, "problem:telemetry:clickhouse", nil, "Telemetry: ClickHouse refuses span inserts; spans are dropped and counted until it answers.")
 		}
@@ -379,7 +379,7 @@ func telemetryTrace(q *Request, r *contract.TelemetryTraceRequest) (contract.Tel
 		if traceID != "" {
 			return out, fail(400, "Specify traceId or executionId, not both")
 		}
-		err := runTx(q.ctx(), q.app, q, false, "", func(tq *Request) error {
+		err := q.app.store.Read(q.ctx(), q, func(tq *Request) error {
 			tp, err := tq.db().TelemetryExecutionTraceparent(tq.ctx(), deref(r.ExecutionId))
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errNotFound

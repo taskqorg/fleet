@@ -76,6 +76,9 @@ type App struct {
 
 func (a *App) ensureRuntime() {
 	a.runtimeOnce.Do(func() {
+		if a.store != nil && a.store.app == nil {
+			a.store.app = a
+		}
 		a.dispatchCh = make(chan struct{}, 1)
 		a.dispatchDoneCh = make(chan struct{})
 		a.hostWake = map[string]*hostWakeEntry{}
@@ -252,12 +255,12 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 	if owners != 1 {
 		return nil, errors.New("exactly one person must have owner: true" + strings.Join(append([]string{""}, skipped...), "; left out: "))
 	}
-	err = a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
+	err = a.store.Write(ctx, nil, []string{GLOBAL}, func(req *Request) error {
 		emails := []string{}
 		for _, p := range list {
 			emails = append(emails, p.Email)
 		}
-		q := db.New(tx)
+		q := req.db()
 		for _, revoke := range []func(context.Context, []string) error{q.PeopleRevokeInitialMembers, q.PeopleRevokeSessionDirectors,
 			q.PeopleRevokeExecutionDirectors, q.PeopleRevokeRunTokens, q.PeopleMarkRemovedRequesters} {
 			if err := revoke(ctx, emails); err != nil {

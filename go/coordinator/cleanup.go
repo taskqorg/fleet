@@ -569,7 +569,7 @@ func objectDelete(q *Request, b *contract.ObjectDeleteRequest) (contract.ObjectD
 	var out contract.ObjectDeleteReply
 	var c *cascade
 	if b.Preview {
-		err := runTx(q.ctx(), q.app, q, false, "", func(q *Request) error {
+		err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
 			var err error
 			c, out, err = deletePreview(q, b)
 			return err
@@ -583,7 +583,7 @@ func objectDelete(q *Request, b *contract.ObjectDeleteRequest) (contract.ObjectD
 	// ponytail: a pipeline run a task starts between these transactions is tombstoned uncancelled; receipts of its
 	// steps (host calls see deleted rows) could still advance it. Cancel it in the last transaction if that is seen.
 	runs, running := []string{}, int64(0)
-	if err := runTx(q.ctx(), q.app, q, true, "", func(q *Request) error {
+	if err := q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
 		var err error
 		if c, out, err = deletePreview(q, b); err != nil {
 			return err
@@ -609,7 +609,7 @@ func objectDelete(q *Request, b *contract.ObjectDeleteRequest) (contract.ObjectD
 		}
 	}
 	// DISPATCH too: a dispatch pass or a promotion cannot add an execution to the cascade while it is read and marked.
-	err := runTxLocks(q.ctx(), q.app, q, true, []string{GLOBAL, DISPATCH}, func(q *Request) error {
+	err := q.app.store.Write(q.ctx(), q, []string{GLOBAL, DISPATCH}, func(q *Request) error {
 		var err error
 		if c, out, err = deletePreview(q, b); err != nil {
 			return err
@@ -809,7 +809,7 @@ func purgeCascade(q *Request, c *cascade) error {
 
 // purgeRootTx: one tombstoned root in its own transaction: blocked (a live row keeps it) or purged.
 func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (rows []contract.KindCount, bytes int64, blocked string, err error) {
-	err = runTx(q.ctx(), q.app, q, !preview, "", func(q *Request) error {
+	run := func(q *Request) error {
 		if err := showDeleted(q); err != nil {
 			return err
 		}
@@ -842,7 +842,12 @@ func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (
 			return err
 		}
 		return audit(q, string(kind)+":"+id, "purge", nil, rows, auditExtra{})
-	})
+	}
+	if preview {
+		err = q.app.store.Read(q.ctx(), q, run)
+	} else {
+		err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, run)
+	}
 	return
 }
 
@@ -870,14 +875,21 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 	// at the next purge.
 	if slices.Contains(kinds, contract.PurgeKindHost) {
 		var removed, kept contract.PurgeCount
-		if err := runTx(q.ctx(), q.app, q, !b.Preview, "", func(q *Request) error {
+		run := func(q *Request) error {
 			if err := showDeleted(q); err != nil {
 				return err
 			}
 			var err error
 			removed, kept, err = purgeHosts(q, b.Preview)
 			return err
-		}); err != nil {
+		}
+		var err error
+		if b.Preview {
+			err = q.app.store.Read(q.ctx(), q, run)
+		} else {
+			err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, run)
+		}
+		if err != nil {
 			return out, err
 		}
 		out.Removed, out.Kept = append(out.Removed, removed), append(out.Kept, kept)
@@ -903,7 +915,7 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		if !slices.Contains(kinds, kind) {
 			continue
 		}
-		if err := runTx(q.ctx(), q.app, q, false, "", func(q *Request) error {
+		if err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
 			if err := showDeleted(q); err != nil {
 				return err
 			}
@@ -990,7 +1002,7 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 	if !b.Preview {
 		left, err = runPurgeTasks(q.ctx(), q.app, start.Add(purgeBudget))
 	} else {
-		err = runTx(q.ctx(), q.app, q, false, "", func(q *Request) error {
+		err = q.app.store.Read(q.ctx(), q, func(q *Request) error {
 			var err error
 			left, err = q.db().PurgeTaskCount(q.ctx())
 			return err
@@ -1016,7 +1028,7 @@ func keptCount(kind contract.PurgeKind, kept []contract.PurgeReason) contract.Pu
 // deletes run outside any transaction.
 func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, error) {
 	var tasks []purgeTask
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
 		rs, err := q.db().PurgeTasks(q.ctx())
 		tasks = nil // a retried transaction starts over
 		for _, r := range rs {
@@ -1057,7 +1069,7 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 		}
 	}
 	if len(spanTasks) > 0 {
-		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			for _, t := range spanTasks {
 				rest := []string{}
 				for _, id := range t.ExecutionIDs {
@@ -1114,7 +1126,7 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 					rest = append(rest, o)
 					continue
 				}
-				if e := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
+				if e := a.store.Write(ctx, nil, nil, func(q *Request) error {
 					if err := showDeleted(q); err != nil {
 						return err
 					}
@@ -1138,7 +1150,7 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 			}
 			t.Objects = rest
 		}
-		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			if len(rest) == 0 {
 				return q.db().PurgeTaskDelete(q.ctx(), t.ID)
 			}

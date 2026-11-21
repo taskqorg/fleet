@@ -9,8 +9,6 @@ import (
 	"encoding/json"
 	"fleet/contract"
 	"fleet/coordinator/db"
-
-	"github.com/jackc/pgx/v5"
 )
 
 func init() {
@@ -42,13 +40,17 @@ func receiptLocks(b *contract.Receipt) []string {
 func receiptTx(q *Request, write bool, locks []string, fn func() (any, string, error)) (any, error) {
 	var out any
 	var ended string
-	err := q.app.store.TxLocks(q.ctx(), nil, write, locks, func(tx pgx.Tx) error {
-		q.tx = tx
-		defer func() { q.tx = nil }()
+	run := func(_ *Request) error {
 		var err error
 		out, ended, err = fn()
 		return err
-	})
+	}
+	var err error
+	if write {
+		err = q.app.store.Write(q.ctx(), q, locks, run)
+	} else {
+		err = q.app.store.Read(q.ctx(), q, run)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -17,17 +17,17 @@ import (
 func schemaDefinitions(t *testing.T, e *testCoordEnv) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	err := e.ownerStore.Tx(e.ctx, nil, false, "", func(tx pgx.Tx) error {
+	err := e.ownerStore.Read(e.ctx, nil, func(q *Request) error {
 		var err error
-		out["functions.sql"], err = schemaFunctions(e, tx)
+		out["functions.sql"], err = schemaFunctions(e, q.tx)
 		if err != nil {
 			return err
 		}
-		out["triggers.sql"], err = schemaTriggers(e, tx)
+		out["triggers.sql"], err = schemaTriggers(e, q.tx)
 		if err != nil {
 			return err
 		}
-		out["policies.sql"], err = schemaPolicies(e, tx)
+		out["policies.sql"], err = schemaPolicies(e, q.tx)
 		return err
 	})
 	if err != nil {

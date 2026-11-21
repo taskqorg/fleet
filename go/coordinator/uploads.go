@@ -344,8 +344,8 @@ func sweepUploadsNow(ctx context.Context, a *App) {
 	defer sweeping.Unlock()
 	age := uploadStaleAfter.Seconds()
 	var stale []upload
-	err := a.store.Tx(ctx, nil, false, "", func(tx pgx.Tx) error {
-		rs, err := db.New(tx).UploadsStale(ctx, age)
+	err := a.store.Read(ctx, nil, func(q *Request) error {
+		rs, err := q.db().UploadsStale(ctx, age)
 		stale = nil
 		for _, r := range rs {
 			if u, err := uploadOf(db.UploadGetRow(r)); err == nil {
@@ -380,8 +380,8 @@ func sweepUploadsNow(ctx context.Context, a *App) {
 			t.Delete(s.Bucket, u.Staging)
 		}
 	drop:
-		a.store.Tx(ctx, nil, true, NOLOCK, func(tx pgx.Tx) error {
-			return db.New(tx).UploadDrop(ctx, db.UploadDropParams{ID: u.ID, AgeSeconds: age})
+		a.store.Write(ctx, nil, nil, func(q *Request) error {
+			return q.db().UploadDrop(ctx, db.UploadDropParams{ID: u.ID, AgeSeconds: age})
 		})
 	}
 }
@@ -389,8 +389,8 @@ func sweepUploadsNow(ctx context.Context, a *App) {
 // uploadRecord reads the upload in the person's scope; only the person who began it may write it.
 func (a *App) uploadRecord(ctx context.Context, p *Person, id string) (upload, error) {
 	var u upload
-	err := a.store.Tx(ctx, scopeOf(p), false, "", func(tx pgx.Tx) error {
-		r, err := db.New(tx).UploadGet(ctx, id)
+	err := a.store.Read(ctx, scopedRequest(ctx, a, p), func(q *Request) error {
+		r, err := q.db().UploadGet(ctx, id)
 		if err != nil {
 			return err
 		}
@@ -410,8 +410,8 @@ func (a *App) uploadRecord(ctx context.Context, p *Person, id string) (upload, e
 // coordinator may have taken the same part meanwhile: 409, the client resumes); extra runs in the same transaction.
 // The record of a finished upload (artifactId) takes no more writes, so two finishes record one artifact.
 func (a *App) saveUpload(ctx context.Context, p *Person, u upload, received int64, extra func(pgx.Tx) error) error {
-	return a.store.Tx(ctx, scopeOf(p), true, NOLOCK, func(tx pgx.Tx) error {
-		n, err := db.New(tx).UploadSave(ctx, db.UploadSaveParams{ID: u.ID, Received: u.Received, Multipart: u.Multipart, ArtifactID: u.ArtifactID,
+	return a.store.Write(ctx, scopedRequest(ctx, a, p), nil, func(q *Request) error {
+		n, err := q.db().UploadSave(ctx, db.UploadSaveParams{ID: u.ID, Received: u.Received, Multipart: u.Multipart, ArtifactID: u.ArtifactID,
 			Payload: jsonBytes(u.uploadPayload), WasReceived: received})
 		if err != nil {
 			return err
@@ -420,7 +420,7 @@ func (a *App) saveUpload(ctx context.Context, p *Person, u upload, received int6
 			return uploadConflict(409, "Upload changed meanwhile", received)
 		}
 		if extra != nil {
-			return extra(tx)
+			return extra(q.tx)
 		}
 		return nil
 	})
@@ -567,8 +567,8 @@ func (a *App) startMultipart(ctx context.Context, p *Person, id string, s *Store
 		return "", err
 	}
 	won := false
-	err = a.store.Tx(ctx, scopeOf(p), true, NOLOCK, func(tx pgx.Tx) error {
-		n, err := db.New(tx).UploadMultipartSet(ctx, db.UploadMultipartSetParams{ID: id, Multipart: &mp})
+	err = a.store.Write(ctx, scopedRequest(ctx, a, p), nil, func(q *Request) error {
+		n, err := q.db().UploadMultipartSet(ctx, db.UploadMultipartSetParams{ID: id, Multipart: &mp})
 		won = err == nil && n == 1
 		return err
 	})
@@ -614,9 +614,9 @@ func (a *App) finishLocked(ctx context.Context, p *Person, id string) (any, erro
 // uploadFinishing: the upload's finish runs in the background (its upload_finish_work row, upload_work.go).
 func (a *App) uploadFinishing(ctx context.Context, p *Person, id string) (bool, error) {
 	var busy bool
-	err := a.store.Tx(ctx, scopeOf(p), false, "", func(tx pgx.Tx) error {
+	err := a.store.Read(ctx, scopedRequest(ctx, a, p), func(q *Request) error {
 		var err error
-		busy, err = db.New(tx).UploadFinishing(ctx, id)
+		busy, err = q.db().UploadFinishing(ctx, id)
 		return err
 	})
 	return busy, err
@@ -641,7 +641,7 @@ func (a *App) finishUpload(ctx context.Context, p *Person, id string) (any, erro
 	}
 	// The work row is this finish's exclusion: every finish path answers {finishing} while it is there, without the
 	// upload's lock, which the kit's call holds while it finishes.
-	if err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
+	if err := a.store.Write(ctx, nil, nil, func(q *Request) error {
 		if err := q.db().UploadFinishWorkAdd(q.ctx(), id); err != nil {
 			return err
 		}
@@ -724,9 +724,9 @@ func (a *App) finishNow(ctx context.Context, p *Person, u upload) (any, error) {
 
 func (a *App) uploadView(ctx context.Context, p *Person, id string) (contract.ArtifactView, error) {
 	var view contract.ArtifactView
-	err := a.store.Tx(ctx, scopeOf(p), false, "", func(tx pgx.Tx) error {
+	err := a.store.Read(ctx, scopedRequest(ctx, a, p), func(q *Request) error {
 		var err error
-		view, err = artifactView(context.WithValue(ctx, txKey{}, tx), a, id, "")
+		view, err = artifactView(context.WithValue(ctx, txKey{}, q.tx), a, id, "")
 		return err
 	})
 	return view, err

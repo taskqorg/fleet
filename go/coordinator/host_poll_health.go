@@ -120,7 +120,7 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 	}
 	var since, at float64
 	var changed, observed bool
-	werr := runTx(ctx, a, nil, true, "host:"+host, func(wq *Request) error {
+	werr := a.store.Write(ctx, nil, []string{"host:" + host}, func(wq *Request) error {
 		observed, changed = false, false
 		raw, err := wq.db().HostPollErrorOf(wq.ctx(), host)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -188,7 +188,7 @@ func (a *App) openPollProblem(ctx context.Context, host, reason string) {
 	// Under GLOBAL and the host's lock: a success clears under the host's lock, so the problem opens only while the
 	// record it describes is still there, and a success after it closes it. The flag is set only for a problem held.
 	held := false
-	if err := runTxLocks(ctx, a, nil, true, []string{GLOBAL, "host:" + host}, func(q *Request) error {
+	if err := a.store.Write(ctx, nil, []string{GLOBAL, "host:" + host}, func(q *Request) error {
 		held = false
 		raw, err := q.db().HostPollErrorOf(q.ctx(), host)
 		if errors.Is(err, pgx.ErrNoRows) || err == nil && string(raw) == "null" {
@@ -239,7 +239,7 @@ func (a *App) notePollSuccess(ctx context.Context, host string) {
 	// poll after it; problemClose of no question is a no-op. A failure noted since this poll read its generation is not
 	// cleared: that failure counts first, then writes under the same host lock.
 	stale := false
-	if err := runTx(ctx, a, nil, true, "host:"+host, func(wq *Request) error {
+	if err := a.store.Write(ctx, nil, []string{"host:" + host}, func(wq *Request) error {
 		a.pollMu.Lock()
 		stale = a.heartbeatOf(host).pollFailures != gen
 		a.pollMu.Unlock()

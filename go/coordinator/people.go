@@ -304,8 +304,7 @@ func peopleSet(q *Request, people json.RawMessage) (int, error) {
 	var prev, next any
 	json.Unmarshal(previous, &prev)
 	json.Unmarshal(b.People, &next)
-	err = q.app.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
-		q.tx = tx
+	err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
 		return audit(q, "people", "people", prev, next, auditExtra{})
 	})
 	return q.app.peopleSnapshot().count(), err
