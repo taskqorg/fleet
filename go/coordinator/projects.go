@@ -48,6 +48,12 @@ func configDir() string   { return envDir("FLEET_PROJECT_CONFIG_DIRECTORY", "con
 // canonical: JSON with object keys sorted by byte order (encoding/json sorts map keys; a struct keeps its field order),
 // without HTML escaping; an absent open object or list is {} or [].
 func canonical(v any) string {
+	if o, ok := v.(rawObject); ok { // an open object as its decoded value, as the map it replaced encoded
+		if o == nil {
+			return "{}"
+		}
+		v = norm(o)
+	}
 	if rv := reflect.ValueOf(v); rv.IsValid() && (rv.Kind() == reflect.Map || rv.Kind() == reflect.Slice) && rv.IsNil() && rv.Type().Elem().Kind() == reflect.Interface {
 		if rv.Kind() == reflect.Map {
 			return "{}"
@@ -64,7 +70,7 @@ func canonical(v any) string {
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,79}$`)
 
 // readTrustedProfile: an agent profile, the head of its definition in the store (fleet-definition-editors.md, Resolve).
-func readTrustedProfile(q *Request, id string) (doc, error) {
+func readTrustedProfile(q *Request, id string) (rawObject, error) {
 	if !idPattern.MatchString(id) {
 		return nil, fail(400, "Unknown trusted profile")
 	}
@@ -75,27 +81,26 @@ func readTrustedProfile(q *Request, id string) (doc, error) {
 	if !ok {
 		return nil, fail(400, "Unknown trusted profile")
 	}
-	var p doc
-	if err := json.Unmarshal(raw, &p); err != nil {
+	p, err := openObject(raw)
+	if err != nil {
 		return nil, fail(400, "Invalid profile")
 	}
 	// One validator with the executor (contracts/profile.schema.json), so a profile listed here is never refused on a host.
 	if _, err := contract.ParseProfile(raw); err != nil {
 		return nil, fail(400, "Invalid profile: "+err.Error())
 	}
-	if p["id"] != id {
+	if own, ok := p.str("id"); !ok || own != id {
 		return nil, fail(400, "Invalid profile: id differs from its definition")
 	}
 	return p, nil
 }
 
 // listProfiles: every live agent definition that is a valid profile, in one read.
-func listProfiles(q *Request) ([]doc, error) {
-	out := []doc{}
+func listProfiles(q *Request) ([]rawObject, error) {
+	out := []rawObject{}
 	heads, err := headTexts(q, "agent")
 	for _, h := range heads {
-		var p doc
-		if json.Unmarshal(h.text, &p) == nil && p["id"] == h.id {
+		if p, perr := openObject(h.text); perr == nil && p.text("id") == h.id && p.has("id") {
 			if _, err := contract.ParseProfile(h.text); err == nil {
 				out = append(out, p)
 			}
@@ -143,7 +148,8 @@ func jsType(v json.RawMessage) string {
 
 // projectSettings: a project definition's settings checked value by value (open JSON, walked by kind) over their
 // defaults, and the unknown keys.
-func projectSettings(p doc) (doc, []string, error) {
+// p is the settings object (decoded or raw JSON).
+func projectSettings(p any) (rawObject, []string, error) {
 	unknown := []string{}
 	bad := func(k string) error {
 		if k == "execution.profiles" || k == "errors.bugsink" {
@@ -348,7 +354,8 @@ func projectSettings(p doc) (doc, []string, error) {
 		rules = json.RawMessage("[]")
 	}
 	out["artifact_rules"] = rules
-	return docOf(out), unknown, nil
+	settings, err := openObject(jsonBytes(out))
+	return settings, unknown, err
 }
 
 func itoa(i int) string { b, _ := json.Marshal(i); return string(b) }
@@ -366,17 +373,16 @@ func shippedProjectIDs() []string {
 	return ids
 }
 
-func readJSON(path string) (doc, error) {
+func readJSON(path string) (rawObject, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var d doc
-	return d, json.Unmarshal(raw, &d)
+	return openObject(raw)
 }
 
 // projectContext: the definition with its settings, unknown keys and context files.
-func shippedProjectContext(id string) (doc, error) {
+func shippedProjectContext(id string) (rawObject, error) {
 	if !slices.Contains(shippedProjectIDs(), id) {
 		return nil, fail(404, "Unknown project")
 	}
@@ -398,7 +404,7 @@ func shippedProjectContext(id string) (doc, error) {
 		return nil, err
 	}
 	realRoot, _ := filepath.EvalSymlinks(root)
-	ctx := []doc{} // seedProjectDefinitions (project_access.go) reads the context as []doc
+	ctx := []projectContextFile{} // seedProjectDefinitions (project_access.go) reads the context
 	for _, f := range files {
 		name, ok := jsonString(f)
 		if !ok || strings.Contains(name, "..") || strings.HasPrefix(name, "/") {
@@ -416,19 +422,18 @@ func shippedProjectContext(id string) (doc, error) {
 			return nil, err
 		}
 		h := sha256.Sum256([]byte(js(string(text))))
-		ctx = append(ctx, docOf(projectContextFile{Path: name, Text: string(text), Sha256: hex.EncodeToString(h[:])})) // projectContextFile: project_definitions.go
+		ctx = append(ctx, projectContextFile{Path: name, Text: string(text), Sha256: hex.EncodeToString(h[:])}) // projectContextFile: project_definitions.go
 	}
-	out := docOf(p)
-	out["settings"], out["unknownKeys"], out["context"] = settings, unknown, ctx
-	return out, nil
+	p["settings"], p["unknownKeys"], p["context"] = jsonBytes(settings), jsonBytes(unknown), openJSON(ctx)
+	return p, nil
 }
 
-// projectSettingsView: the settings of a project context (the map its readers hold).
+// projectSettingsView: the settings of a project context.
 type projectSettingsView struct {
-	Settings doc `json:"settings"`
+	Settings rawObject `json:"settings"`
 }
 
-func projectSettingsOf(q *Request, id string) doc {
+func projectSettingsOf(q *Request, id string) rawObject {
 	p, err := projectContext(q, id)
 	if err != nil {
 		return nil
@@ -436,7 +441,7 @@ func projectSettingsOf(q *Request, id string) doc {
 	return agentView[projectSettingsView](p).Settings
 }
 
-func catalogue(q *Request, id string) (doc, error) {
+func catalogue(q *Request, id string) (rawObject, error) {
 	c, err := catalogueBase(q, id)
 	if err != nil {
 		return nil, err
@@ -447,7 +452,7 @@ func catalogue(q *Request, id string) (doc, error) {
 	return c, nil
 }
 
-func catalogueBase(q *Request, id string) (doc, error) {
+func catalogueBase(q *Request, id string) (rawObject, error) {
 	p, err := projectContext(q, id)
 	if err != nil {
 		return nil, err
@@ -488,8 +493,8 @@ func catalogueBase(q *Request, id string) (doc, error) {
 			delete(c, k)
 		}
 	}
-	c["capability"], c["sharedDefault"] = c["capability"], c["sharedDefault"]
-	c["projectId"], c["recommendedMethod"], c["recommendationSource"], c["methods"] = id, method, source, methods
+	c["capability"], c["sharedDefault"] = orNull(c["capability"]), orNull(c["sharedDefault"])
+	c["projectId"], c["recommendedMethod"], c["recommendationSource"], c["methods"] = jsonBytes(id), jsonBytes(method), jsonBytes(source), jsonBytes(methods)
 	return c, nil
 }
 
@@ -524,7 +529,7 @@ func init() {
 		return contract.ProfilesListReply{Profiles: recsOf(ps)}, err
 	})
 	op("project_list", func(q *Request, _ *contract.ProjectListRequest) (contract.ProjectListReply, error) {
-		out := []doc{}
+		out := []rawObject{}
 		ids, err := projectIDs(q)
 		if err != nil {
 			return contract.ProjectListReply{}, err
@@ -546,7 +551,7 @@ func init() {
 				return contract.ProjectListReply{}, err
 			}
 			if code := currentCode[id]; code != "" {
-				p["code"] = code
+				p["code"] = jsonBytes(code)
 			}
 			out = append(out, p)
 		}
@@ -561,7 +566,7 @@ func init() {
 		if err != nil {
 			return contract.ProjectContextReply{}, err
 		}
-		p["resources"] = res
+		p["resources"] = jsonBytes(res)
 		return replyAs[contract.ProjectContextReply](p, nil)
 	})
 	op("catalogue", func(q *Request, r *contract.CatalogueRequest) (contract.CatalogueReply, error) {
@@ -752,7 +757,7 @@ func (a *App) mcp(q *Request, server string, ops map[string]registeredOp) (any, 
 func artifactLocations(a *App, projectID *string) []string {
 	q := backgroundRequest(context.Background(), a, nil)
 	if projectID != nil {
-		if l := strList(projectSettingsOf(q, *projectID)["artifact_locations"]); len(l) > 0 {
+		if l := jsonStrings(projectSettingsOf(q, *projectID)["artifact_locations"]); len(l) > 0 {
 			return l
 		}
 	}
@@ -770,17 +775,16 @@ func projectSetting(q *Request, projectID any, key string) any {
 	if err != nil {
 		return nil
 	}
-	return st[key]
+	return rawAny(st[key])
 }
 
 // agentReady: agent.ready(command) in the poll's ready filter (a steer of a finished execution waits forever).
-func agentReady(q *Request, c doc) (bool, error) {
-	if c["kind"] != "steer" {
+func agentReady(q *Request, kind, executionID string) (bool, error) {
+	if kind != "steer" {
 		return true, nil
 	}
-	executionID, _ := c["executionId"].(string)
-	e, err := recGet[doc](q, recExecution, executionID)
-	return err == nil && !terminal(e), err
+	e, err := getExecution(q, executionID)
+	return err == nil && !e.terminal(), err
 }
 
 // takeTaskFrom: from is a record's value (text, else none).
@@ -790,7 +794,7 @@ func takeTaskFrom(q *Request, taskID, taker string, from any) error {
 }
 
 // projectSettingsByID: project_context(projectId).settings; error when unknown.
-func projectSettingsByID(q *Request, id string) (doc, error) {
+func projectSettingsByID(q *Request, id string) (rawObject, error) {
 	p, err := projectContext(q, id)
 	if err != nil {
 		return nil, err
@@ -799,7 +803,7 @@ func projectSettingsByID(q *Request, id string) (doc, error) {
 }
 
 // gitNetworkOf: whether the session's agent may use the network for git (its profile, else a project role with repos).
-func gitNetworkOf(q *Request, s doc) bool {
+func gitNetworkOf(q *Request, s any) bool {
 	sv := agentView[struct {
 		AgentConfig     json.RawMessage `json:"agentConfig"`
 		ProjectID       json.RawMessage `json:"projectId"`
@@ -818,11 +822,11 @@ func gitNetworkOf(q *Request, s doc) bool {
 		return len(jsonList(st["repos"])) > 0
 	}
 	st, err := projectSettingsByID(q, p)
-	return err == nil && len(jsonList(recOf(st)["repos"])) > 0
+	return err == nil && len(jsonList(st["repos"])) > 0
 }
 
 // catalogueHead: the catalogue definition's head (one definition, config/catalogue.json as its seed).
-func catalogueHead(q *Request) (doc, error) {
+func catalogueHead(q *Request) (rawObject, error) {
 	raw, ok, err := headText(q, "catalogue", "catalogue")
 	if err != nil || !ok {
 		if err == nil {
@@ -830,10 +834,12 @@ func catalogueHead(q *Request) (doc, error) {
 		}
 		return nil, err
 	}
-	var c doc // numbers keep their text (json.Number)
+	// Numbers keep their text (json.Number); keys sorted at every level, as openObject.
+	var v any
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
-	if dec.Decode(&c) != nil || c == nil {
+	var c rawObject
+	if dec.Decode(&v) != nil || json.Unmarshal(jsonBytes(v), &c) != nil || c == nil {
 		return nil, fail(500, "Invalid catalogue definition")
 	}
 	return c, nil

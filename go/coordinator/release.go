@@ -173,7 +173,7 @@ func mergeUpdate(polled any) any {
 	if worst == nil {
 		return polled
 	}
-	return docOf(mergedUpdate{*worst, parts}) // a record field, compared by its JSON with the stored one (host_poll.go)
+	return norm(mergedUpdate{*worst, parts}) // its decoded value: a record field, compared by its JSON with the stored one (host_poll.go)
 }
 
 // decodeUpdate reads a poll body's update through the generated contract type.

@@ -222,16 +222,12 @@ func bindingsIn(raw []json.RawMessage) []accountBinding {
 // sameText: both absent, or the same text.
 func sameText(a, b *string) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
 
-// bindingsOf: a subscription record's bindings as the maps dispatch.go reads (binding, hostId).
-func bindingsOf(a doc) []doc {
+// bindingsOf: a subscription record's bindings (dispatch.go reads binding and hostId).
+func bindingsOf(a any) []accountBinding {
 	rec, _ := asT[struct {
 		Bindings []json.RawMessage `json:"bindings"`
 	}](a)
-	out := []doc{}
-	for _, b := range bindingsIn(rec.Bindings) {
-		out = append(out, docOf(b.raw))
-	}
-	return out
+	return bindingsIn(rec.Bindings)
 }
 
 // takeProjectsOf: the projects of a take rule; an entry that is not text is left out.
@@ -1070,8 +1066,8 @@ type resolvedAccount struct {
 }
 
 // resolveAccount: the ready binding of a subscription on a host for this director; nil when none applies. director and
-// projectID are text or absent. The reply is the map dispatch.go keeps on its candidate.
-func resolveAccount(q *Request, selection *string, harness, host string, director, projectID any) (doc, error) {
+// projectID are text or absent. dispatch.go keeps the reply on its candidate.
+func resolveAccount(q *Request, selection *string, harness, host string, director, projectID any) (*resolvedAccount, error) {
 	requested := ""
 	if selection != nil {
 		requested = *selection
@@ -1123,7 +1119,7 @@ func resolveAccount(q *Request, selection *string, harness, host string, directo
 	if b == nil || deref(b.Readiness) != "ready" {
 		return nil, fail(409, "Selected account has no observed ready binding on this host")
 	}
-	return docOf(resolvedAccount{AccountID: a.ID, AccountName: a.Name, Binding: b.Binding, HostID: host, ObservedAt: orNull(b.ObservedAt), Holder: a.Holder, Taken: taken}), nil
+	return &resolvedAccount{AccountID: a.ID, AccountName: a.Name, Binding: b.Binding, HostID: host, ObservedAt: orNull(b.ObservedAt), Holder: a.Holder, Taken: taken}, nil
 }
 
 func (p *Person) mayAccess(projectID string) bool {

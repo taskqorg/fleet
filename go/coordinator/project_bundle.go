@@ -9,8 +9,16 @@ import (
 )
 
 // projectBundle validates only owned context, never reads a caller-selected host path. v is the open bundle
-// ({settings, contextFiles}); projectSettings (projects.go) checks the settings.
-func projectBundle(id string, v doc) (doc, error) {
+// ({settings, contextFiles}, any JSON value of it, a rawObject as openObject read it); projectSettings (projects.go)
+// checks the settings. The bundle comes back as openObject reads it.
+func projectBundle(id string, bundle any) (rawObject, error) {
+	v, read := bundle.(rawObject)
+	if !read {
+		var err error
+		if v, err = openObject(jsonBytes(bundle)); err != nil {
+			return nil, fail(400, "Expected settings and contextFiles")
+		}
+	}
 	if !keysOnly(v, "settings", "contextFiles") {
 		return nil, fail(400, "Expected settings and contextFiles")
 	}
@@ -19,7 +27,7 @@ func projectBundle(id string, v doc) (doc, error) {
 		ContextFiles json.RawMessage `json:"contextFiles"`
 	}
 	json.Unmarshal(jsonBytes(v), &b)
-	var s doc
+	var s rawObject
 	var st struct {
 		ID    any `json:"id"`
 		Name  any `json:"name"`
@@ -40,7 +48,7 @@ func projectBundle(id string, v doc) (doc, error) {
 		return nil, err
 	}
 	if value, present := s["contextSources"]; present {
-		sources, err := contract.ContextSources(value)
+		sources, err := contract.ContextSources(rawAny(value))
 		if err != nil {
 			return nil, fail(400, "Invalid contextSources")
 		}

@@ -367,7 +367,7 @@ func bugsinkProblem(q *Request, issue, project, reason string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	data := docOf(bugsinkProblemData{AlertReason: reason, BugsinkProject: project, IssueID: issue})
+	data := bugsinkProblemData{AlertReason: reason, BugsinkProject: project, IssueID: issue}
 	return true, problemAsk(q, "direct", Problem{Cause: cause, Text: bugsinkText(issue, project, reason), ProjectID: fleetProject, Data: data})
 }
 

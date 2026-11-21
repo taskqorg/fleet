@@ -337,8 +337,7 @@ func watchOne(q *Request, wid string) error {
 	}
 	w.Cursor = cursor
 	send := func(rid, text string) error {
-		// submitMessage (agent.go) still takes the message as a map.
-		if _, err := submitMessage(q, docOf(watchMessage{SessionID: id, RequestID: rid, Text: text}), "watch"); err != nil {
+		if _, err := agentSubmit(q, &contract.MessageSendRequest{SessionId: &id, RequestId: &rid, Text: &text}, "watch"); err != nil {
 			return err
 		}
 		w.Wakes, w.LastWakeAt = w.Wakes+1, jsonBytes(nowMs)
@@ -369,13 +368,6 @@ func watchOne(q *Request, wid string) error {
 	}
 	w.LastError = nil
 	return watchPut(q, w)
-}
-
-// watchMessage: the queued message of a watch wake.
-type watchMessage struct {
-	SessionID string `json:"sessionId"`
-	RequestID string `json:"requestId"`
-	Text      string `json:"text"`
 }
 
 // classify: one change by its current row; "" drops it (§5 table).

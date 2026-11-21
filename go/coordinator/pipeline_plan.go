@@ -132,7 +132,7 @@ var pipelineDispatchKinds = []string{string(contract.CommandKindStart), string(c
 func pipelineDispatchKind(kind string) bool { return slices.Contains(pipelineDispatchKinds, kind) }
 
 // stopPipelineCommand settles a still pending command that will never be handed off, with the reason.
-func stopPipelineCommand(q *Request, command doc, reason string) error {
+func stopPipelineCommand(q *Request, command any, reason string) error {
 	id := agentView[agentCommand](command).ID
 	_, err := commandStop(q, commandStopFilter{id: &id, statuses: []db.CommandStatus{db.CommandStatusPending}, detail: &reason})
 	return err
@@ -407,7 +407,7 @@ type pipelineNativeRecord struct {
 	PipelineStepID string `json:"pipelineStepId"`
 }
 
-func preparePipelineCommand(q *Request, execution, command doc) error {
+func preparePipelineCommand(q *Request, execution, command any) error {
 	e, cmd := agentView[pipelineNativeRecord](execution), agentView[agentCommand](command)
 	if e.PipelineRunID == "" {
 		return nil
@@ -442,7 +442,7 @@ func preparePipelineCommand(q *Request, execution, command doc) error {
 // command. Redelivery keeps its exact stored body and the executor's journal ID.
 // Only the command the plan dispatched (an agent start or a script) is gated; the
 // execution's later commands (stop, steer, input, teardown) go like any other.
-func handoffPipelineCommand(q *Request, execution, command doc) (bool, error) {
+func handoffPipelineCommand(q *Request, execution, command any) (bool, error) {
 	e, cmd := agentView[pipelineNativeRecord](execution), agentView[agentCommand](command)
 	if e.PipelineRunID == "" || !pipelineDispatchKind(cmd.Kind) {
 		return true, nil
@@ -1122,7 +1122,7 @@ func recoveryFence(q *Request, run *runRecord) error {
 		if execution == nil || job.PipelineRunID != run.ID || !same(derefAny(job.ProjectID), derefAny(run.ProjectID)) {
 			return fail(409, "Interrupted script ownership proof unavailable")
 		}
-		commands, err := recAll[doc](q, recCommand, agentFilter{ExecutionID: &native})
+		commands, err := recAll[rawObject](q, recCommand, agentFilter{ExecutionID: &native})
 		if err != nil {
 			return err
 		}

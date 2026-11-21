@@ -24,7 +24,7 @@ type Problem struct {
 	ProjectID         string // "" for a system cause
 	AddressedTo       string // "": the owner (a project cause names its director here)
 	RefreshText       bool   // Refresh the text while this question is open.
-	Data              doc    // hostId, storeId, executionId, exemplars, value
+	Data              any    // a struct whose JSON fields join the question's data: hostId, storeId, executionId, exemplars, value
 	Options           []any  // the answers offered; nil: investigate or dismiss
 }
 
@@ -37,8 +37,12 @@ func problemAsk(q *Request, source string, p Problem) error {
 	if p.Rule != "" {
 		data["rule"] = jsonBytes(p.Rule)
 	}
-	for k, v := range p.Data {
-		data[k] = jsonBytes(v)
+	own, err := openObject(jsonBytes(p.Data))
+	if err != nil {
+		return fmt.Errorf("problem %s data: %w", p.Cause, err)
+	}
+	for k, v := range own {
+		data[k] = v
 	}
 	to := p.AddressedTo
 	if to == "" {
@@ -57,7 +61,7 @@ func problemAsk(q *Request, source string, p Problem) error {
 }
 
 // problemHeld: the open or answered question holding cause (id and state), nil when none.
-func problemHeld(q *Request, cause string) (doc, error) {
+func problemHeld(q *Request, cause string) (*db.TaskProblemHeldRow, error) {
 	h, err := q.db().TaskProblemHeld(q.ctx(), &cause)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -65,9 +69,7 @@ func problemHeld(q *Request, cause string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	held := make(doc)
-	held["id"], held["state"] = h.ID, string(h.State)
-	return held, nil
+	return &h, nil
 }
 
 // problemOpen: a one-off sender's cause (span writer, backup); asks once while held.

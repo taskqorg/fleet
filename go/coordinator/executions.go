@@ -50,30 +50,69 @@ func executionLabContext(q *Request, parent, project string, experiment, variant
 // experimentId, variant, parentExecutionId, sessionId, accountId, hostId, harness, model, configRef, startedAt, endedAt
 // as a time or milliseconds, data, directedBy, profileId, profileRevision, pipelineId, pipelineRevision, stepId,
 // requestId, systemActor, definitions); JSON fields are encoded, nil is NULL.
-func executionRow(v doc) db.ExecutionInsertParams {
-	id, _ := v["id"].(string)
-	kind, _ := v["kind"].(string)
-	state, _ := v["state"].(string)
-	r := db.ExecutionInsertParams{ID: id, Kind: db.ExecutionKind(kind), State: db.ExecutionState(state),
-		ProjectID: strPtr(projectOrNil(v["projectId"])), TaskID: strPtr(v["taskId"]), ExperimentID: strPtr(v["experimentId"]), Variant: strPtr(v["variant"]),
-		ParentExecutionID: strPtr(v["parentExecutionId"]), SessionID: strPtr(v["sessionId"]), AccountID: strPtr(v["accountId"]), HostID: strPtr(v["hostId"]),
-		Harness: strPtr(v["harness"]), Model: strPtr(v["model"]), StartedAt: nullTime(v["startedAt"]), EndedAt: nullTime(v["endedAt"]),
-		DirectedBy: strPtr(v["directedBy"]), ProfileID: strPtr(v["profileId"]), ProfileRevision: nullInt(v["profileRevision"]), PipelineID: strPtr(v["pipelineId"]),
-		PipelineRevision: nullInt(v["pipelineRevision"]), StepID: strPtr(v["stepId"]), RequestID: strPtr(v["requestId"]), SystemActor: strPtr(v["systemActor"])}
-	if o, _ := v["observation"].(string); o != "" {
-		obs := db.Observation(o)
+func executionRow(v executionNew) db.ExecutionInsertParams {
+	r := db.ExecutionInsertParams{ID: v.ID, Kind: db.ExecutionKind(v.Kind), State: db.ExecutionState(v.State),
+		ProjectID: strPtr(v.ProjectID), TaskID: strPtr(v.TaskID), ExperimentID: strPtr(v.ExperimentID), Variant: strPtr(v.Variant),
+		ParentExecutionID: strPtr(v.ParentExecutionID), SessionID: strPtr(v.SessionID), AccountID: strPtr(v.AccountID), HostID: strPtr(v.HostID),
+		Harness: strPtr(v.Harness), Model: strPtr(v.Model), StartedAt: msTimeOf(v.StartedAt), EndedAt: msTimeOf(v.EndedAt),
+		DirectedBy: strPtr(v.DirectedBy), ProfileID: strPtr(v.ProfileID), ProfileRevision: v.ProfileRevision, PipelineID: strPtr(v.PipelineID),
+		PipelineRevision: v.PipelineRevision, StepID: strPtr(v.StepID), RequestID: strPtr(v.RequestID), SystemActor: strPtr(v.SystemActor)}
+	if v.Observation != "" {
+		obs := db.Observation(v.Observation)
 		r.Observation = &obs
 	}
-	if v["configRef"] != nil {
-		r.ConfigRef = jsonBytes(v["configRef"])
+	if jsonGiven(v.ConfigRef) {
+		r.ConfigRef = v.ConfigRef
 	}
-	if v["data"] != nil {
-		r.Data = jsonBytes(v["data"])
+	if jsonGiven(v.Data) {
+		r.Data = v.Data
 	}
-	if v["definitions"] != nil {
-		r.Definitions = jsonBytes(v["definitions"])
+	if jsonGiven(v.Definitions) {
+		r.Definitions = v.Definitions
 	}
 	return r
+}
+
+// executionNew: a new execution's fields as insertExecution (store.go) reads them from its caller's record.
+type executionNew struct {
+	ID                string          `json:"id"`
+	Kind              string          `json:"kind"`
+	State             string          `json:"state"`
+	Observation       string          `json:"observation"`
+	ProjectID         string          `json:"projectId"`
+	TaskID            string          `json:"taskId"`
+	ExperimentID      string          `json:"experimentId"`
+	Variant           string          `json:"variant"`
+	ParentExecutionID string          `json:"parentExecutionId"`
+	PipelineStepID    string          `json:"pipelineStepId"`
+	PipelineRunID     string          `json:"pipelineRunId"`
+	SessionID         string          `json:"sessionId"`
+	AccountID         string          `json:"accountId"`
+	HostID            string          `json:"hostId"`
+	Harness           string          `json:"harness"`
+	Model             string          `json:"model"`
+	StartedAt         *int64          `json:"startedAt"`
+	EndedAt           *int64          `json:"endedAt"`
+	DirectedBy        string          `json:"directedBy"`
+	ProfileID         string          `json:"profileId"`
+	ProfileRevision   *int64          `json:"profileRevision"`
+	PipelineID        string          `json:"pipelineId"`
+	PipelineRevision  *int64          `json:"pipelineRevision"`
+	StepID            string          `json:"stepId"`
+	RequestID         string          `json:"requestId"`
+	SystemActor       string          `json:"systemActor"`
+	ConfigRef         json.RawMessage `json:"configRef"`
+	Data              json.RawMessage `json:"data"`
+	Definitions       json.RawMessage `json:"definitions"`
+}
+
+// msTimeOf: milliseconds since the epoch as a nullable timestamp.
+func msTimeOf(ms *int64) *time.Time {
+	if ms == nil {
+		return nil
+	}
+	t := time.UnixMilli(*ms).UTC()
+	return &t
 }
 
 func nullInt(v any) *int64 {
@@ -144,9 +183,7 @@ func recordChildren(q *Request, parentID string, children []any) error {
 		}
 		json.Unmarshal(c.Binding, &binding)
 		model, _ := binding.Model.(string)
-		data, err := executionTraceData(q, docOf(struct {
-			ParentExecutionID string `json:"parentExecutionId"`
-		}{parentID}), docOf(childData{ThreadID: thread, ParentThreadID: c.ParentThreadID, Tool: c.Tool}))
+		data, err := executionTraceData(q, parentID, jsonBytes(childData{ThreadID: thread, ParentThreadID: c.ParentThreadID, Tool: c.Tool}))
 		if err != nil {
 			return err
 		}
@@ -175,14 +212,14 @@ func detectProblems(q *Request, hosts []string, environments map[string][]string
 	return q.db().DispDetectProblems(q.ctx(), db.DispDetectProblemsParams{Hosts: hosts, Environments: jsonBytes(environments)})
 }
 
-func openDelegations(q *Request) ([]doc, error) {
+func openDelegations(q *Request) ([]delegationRec, error) {
 	bs, err := q.db().DispOpenDelegations(q.ctx())
 	if err != nil {
 		return nil, err
 	}
-	out := []doc{}
+	out := []delegationRec{}
 	for _, b := range bs {
-		var d doc
+		var d delegationRec
 		if err := json.Unmarshal(b, &d); err != nil {
 			return nil, err
 		}
@@ -226,14 +263,14 @@ func lockExecutionTask(q *Request, id string) error {
 }
 
 // executionCommands: the command records of an execution, optionally of one kind and one status, in order.
-func executionCommands(q *Request, id string, kind, status *string) ([]doc, error) {
+func executionCommands(q *Request, id string, kind, status *string) ([]agentCommand, error) {
 	ids, err := q.db().DispCommandIDs(q.ctx(), db.DispCommandIDsParams{ExecutionID: &id, Kind: kind, Status: status})
 	if err != nil {
 		return nil, err
 	}
-	out := []doc{}
+	out := []agentCommand{}
 	for _, c := range ids {
-		d, err := recGet[doc](q, recCommand, c)
+		d, err := recGet[agentCommand](q, recCommand, c)
 		if err != nil {
 			return nil, err
 		}
@@ -267,7 +304,7 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 	if err := q.db().DispExecLock(q.ctx(), id); err != nil {
 		return rep, err
 	}
-	e, err := recGet[doc](q, recExecution, id)
+	e, err := recGet[agentExecution](q, recExecution, id)
 	if err != nil {
 		return rep, err
 	}
@@ -276,71 +313,62 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 	if err != nil {
 		return rep, err
 	}
-	var c doc
+	var c agentCommand
 	if len(stops) > 0 {
 		c = stops[0]
 	} else {
-		c = docOf(struct {
-			ID          string   `json:"id"`
-			ExecutionID any      `json:"executionId"`
-			SessionID   any      `json:"sessionId"`
-			HostID      any      `json:"hostId"`
-			Kind        string   `json:"kind"`
-			Payload     struct{} `json:"payload"`
-			Status      string   `json:"status"`
-		}{ID: newID(), ExecutionID: e["id"], SessionID: e["sessionId"], HostID: e["hostId"], Kind: stopKind, Status: pendingStatus})
+		c = agentCommand{ID: newID(), ExecutionID: e.ID, SessionID: e.SessionID, HostID: deref(e.HostID), Kind: stopKind, Payload: json.RawMessage("{}"), Status: pendingStatus}
 		if err := recPut(q, recCommand, &c); err != nil {
 			return rep, err
 		}
 	}
-	e["stopRequested"] = true
+	e.StopRequested = ptr(true)
 	if taskCancellation {
-		e["taskStopRequested"] = true
+		e.TaskStopRequested = ptr(true)
 	}
 	known := false
-	if h, _ := e["hostId"].(string); h != "" {
+	if h := deref(e.HostID); h != "" {
 		if known, err = knownHost(q, h); err != nil {
 			return rep, err
 		}
 	}
 	neverHandedOut := false
-	if taskCancellation && known && e["state"] == "preparing" {
+	if taskCancellation && known && e.State == "preparing" {
 		neverHandedOut, err = q.db().DispStartNeverHandedOut(q.ctx(), &id)
 		if err != nil {
 			return rep, err
 		}
 	}
-	if (!known || neverHandedOut) && !terminal(e) {
+	if (!known || neverHandedOut) && !e.terminal() {
 		pending, err := executionCommands(q, id, nil, &pendingStatus)
 		if err != nil {
 			return rep, err
 		}
 		for _, x := range pending {
-			x["status"] = "stopped"
+			x.Status = "stopped"
 			if err := recPut(q, recCommand, &x); err != nil {
 				return rep, err
 			}
 		}
-		e["state"], e["stopDetail"] = "cancelled", "stopped before dispatch"
-		if !known && e["hostId"] != nil {
-			e["stopDetail"] = "host never registered"
+		e.State, e.StopDetail = "cancelled", "stopped before dispatch"
+		if !known && e.HostID != nil {
+			e.StopDetail = "host never registered"
 		}
-		cid, _ := c["id"].(string)
-		if c, err = recGet[doc](q, recCommand, cid); err != nil {
+		if c, err = recGet[agentCommand](q, recCommand, c.ID); err != nil {
 			return rep, err
 		}
 	}
 	if err := recPut(q, recExecution, &e); err != nil {
 		return rep, err
 	}
-	out, err := stopOutcome(q, e)
+	out, err := agentStopOutcome(q, &e)
 	if err != nil {
 		return rep, err
 	}
 	if rep, err = asT[contract.ExecutionStopReply](c); err != nil {
 		return rep, err
 	}
-	rep.SessionId, rep.HostId, rep.Payload, rep.Stop = strPtr(rep.SessionId), strPtr(rep.HostId), recOf(c["payload"]), out
+	rep.SessionId, rep.HostId, rep.Payload, rep.Stop = strPtr(rep.SessionId), strPtr(rep.HostId), recOf(c.Payload), out
 	return rep, nil
 }
 
@@ -357,29 +385,40 @@ func declaredNames(declared []string) []string {
 }
 
 // artifactGate: a completed start waits for its required artifacts; a missing or failed one fails it.
-func artifactGate(q *Request, e doc, declared []string) (doc, error) {
+// The fields it sets on the execution record: its state and error, or the wait. Nothing set: no field.
+func artifactGate(q *Request, id string, declared []string) (rawObject, error) {
 	names := declaredNames(declared)
-	id, _ := e["id"].(string)
 	r, err := artifactRequirement(withTx(q), q.app, id, names) // the receipt transaction's connection, not a second one
 	if err != nil {
 		return nil, err
 	}
+	var gate any = struct{}{}
 	if len(r.Missing) > 0 || len(r.Failed) > 0 {
-		return docOf(struct {
+		gate = struct {
 			State string                 `json:"state"`
 			Error executionArtifactError `json:"error"`
-		}{"failed", executionArtifactError{Code: "artifact-required", Message: "Required artifacts missing or failed", Missing: r.Missing, Failed: r.Failed}}), nil
+		}{"failed", executionArtifactError{Code: "artifact-required", Message: "Required artifacts missing or failed", Missing: r.Missing, Failed: r.Failed}}
+	} else if len(r.Pending) > 0 {
+		gate = executionWait{State: "waiting", WaitReason: "artifacts", WaitingSince: nowMs(), PendingArtifacts: r.Pending, DeclaredArtifacts: names}
 	}
-	if len(r.Pending) > 0 {
-		return docOf(struct {
-			State             string   `json:"state"`
-			WaitReason        string   `json:"waitReason"`
-			WaitingSince      int64    `json:"waitingSince"`
-			PendingArtifacts  []string `json:"pendingArtifacts"`
-			DeclaredArtifacts []string `json:"declaredArtifacts"`
-		}{"waiting", "artifacts", nowMs(), r.Pending, names}), nil
-	}
-	return make(doc), nil
+	var out rawObject
+	return out, json.Unmarshal(jsonBytes(gate), &out)
+}
+
+// executionWait: the fields of an execution record that waits for its artifacts (artifactGate, settleWaitingAs).
+type executionWait struct {
+	State             string   `json:"state"`
+	WaitReason        string   `json:"waitReason"`
+	WaitingSince      int64    `json:"waitingSince"`
+	PendingArtifacts  []string `json:"pendingArtifacts"`
+	DeclaredArtifacts []string `json:"declaredArtifacts"`
+}
+
+// executionWaitOf: the wait fields of a stored execution record; a list item that is not text is left out.
+type executionWaitOf struct {
+	State             string          `json:"state"`
+	WaitReason        string          `json:"waitReason"`
+	DeclaredArtifacts json.RawMessage `json:"declaredArtifacts"`
 }
 
 // settleWaiting: a waiting execution finishes once its artifacts are settled.
@@ -391,11 +430,16 @@ func settleWaiting(ctx context.Context, a *App, id string) error {
 func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 	err := a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
 		q := &Request{app: a, tx: tx, r: (&http.Request{}).WithContext(ctx)}
-		e, err := recFind[doc](q, recExecution, id)
-		if err != nil || e == nil || e["state"] != "waiting" || e["waitReason"] != "artifacts" {
+		e, err := recFind[rawObject](q, recExecution, id) // open: the wait's fields are removed and an error object set
+		if err != nil || e == nil {
 			return err
 		}
-		r, err := artifactRequirement(withTx(q), a, id, declaredNames(strs(e["declaredArtifacts"])))
+		var w executionWaitOf
+		lenientDecode(jsonBytes(e), &w)
+		if w.State != "waiting" || w.WaitReason != "artifacts" {
+			return nil
+		}
+		r, err := artifactRequirement(withTx(q), a, id, declaredNames(jsonStrings(w.DeclaredArtifacts)))
 		if err != nil {
 			return err
 		}
@@ -406,15 +450,15 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 		for _, k := range []string{"waitReason", "waitingSince", "pendingArtifacts", "declaredArtifacts"} {
 			delete(e, k)
 		}
-		e["state"], e["updatedAt"] = "succeeded", nowMs()
+		e["state"], e["updatedAt"] = jsonBytes("succeeded"), jsonBytes(nowMs())
 		status := "completed" // the receipt the start command settles with
 		if failed {
-			e["state"], status = "failed", "failed"
+			e["state"], status = jsonBytes("failed"), "failed"
 			msg := "Required artifacts missing or failed"
 			if expired != "" && len(r.Pending) > 0 {
 				msg = expired
 			}
-			e["error"] = docOf(executionArtifactError{Code: "artifact-required", Message: msg, Missing: r.Missing, Failed: r.Failed, Pending: &r.Pending})
+			e["error"] = jsonBytes(executionArtifactError{Code: "artifact-required", Message: msg, Missing: r.Missing, Failed: r.Failed, Pending: &r.Pending})
 		}
 		if err := recPut(q, recExecution, &e); err != nil {
 			return err
@@ -425,7 +469,11 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 			return err
 		}
 		if len(cs) > 0 {
-			if err := agentOnReceipt(q, cs[0], e, status); err != nil {
+			ex, err := asT[agentExecution](e)
+			if err != nil {
+				return err
+			}
+			if err := agentCommandReceipt(q, &cs[0], &ex, status); err != nil {
 				return err
 			}
 			if err := agentPromote(q); err != nil {
@@ -456,21 +504,18 @@ func executionDifferences(q *Request, id, previousID string) (contract.Execution
 	if len(previousID) > 300 {
 		previousID = previousID[:300]
 	}
-	current, err := recGet[doc](q, recExecution, id)
+	current, err := recGet[agentExecution](q, recExecution, id)
 	if err != nil {
 		return rep, err
 	}
-	previous, err := recGet[doc](q, recExecution, previousID)
+	previous, err := recGet[agentExecution](q, recExecution, previousID)
 	if err != nil {
 		return rep, err
 	}
-	currentSession, _ := current["sessionId"].(string)
-	previousSession, _ := previous["sessionId"].(string)
-	if currentSession != previousSession {
+	if current.SessionID != previous.SessionID {
 		return rep, fail(403, "Different session")
 	}
-	currentID, _ := current["id"].(string)
-	previousID, _ = previous["id"].(string)
+	currentID, previousID := current.ID, previous.ID
 	files := func(id string) (map[string]*storedFile, error) {
 		xs, err := executionArtifacts(q, id)
 		if err != nil {
@@ -552,7 +597,7 @@ func executionDifferences(q *Request, id, previousID string) (contract.Execution
 		}
 		diffs = append(diffs, contract.DiffFile{Path: p, TextChange: change, State: state, Previous: ref(l), Current: ref(r)})
 	}
-	return contract.ExecutionDifferencesReply{SessionId: strPtr(currentSession), PreviousExecutionId: strPtr(previousID), ExecutionId: currentID, Files: diffs}, nil
+	return contract.ExecutionDifferencesReply{SessionId: strPtr(current.SessionID), PreviousExecutionId: strPtr(previousID), ExecutionId: currentID, Files: diffs}, nil
 }
 
 // storedFile: one stored file of an execution (executionArtifacts).
@@ -747,12 +792,12 @@ func executionAbandon(q *Request, id, reason string) (string, error) {
 		}
 		return "", audit(q, "execution:"+id, "state", row.State, "failed", auditExtra{ProjectID: row.ProjectID, Reason: reason})
 	}
-	e, err := recGet[doc](q, recExecution, id)
+	e, err := recGet[agentExecution](q, recExecution, id)
 	if err != nil {
 		return "", err
 	}
-	prev, _ := e["state"].(string)
-	if terminal(e) {
+	prev := e.State
+	if e.terminal() {
 		return prev, nil
 	}
 	abandoned := "abandoned"
@@ -760,7 +805,7 @@ func executionAbandon(q *Request, id, reason string) (string, error) {
 		return "", err
 	}
 	now := nowMs()
-	e["state"], e["stopRequested"], e["stopDetail"], e["error"], e["updatedAt"], e["finishedAt"] = "failed", true, "abandoned", "abandoned: "+reason, now, now
+	e.State, e.StopRequested, e.StopDetail, e.Error, e.UpdatedAt, e.FinishedAt = "failed", ptr(true), "abandoned", "abandoned: "+reason, now, jsonBytes(now)
 	if err := recPut(q, recExecution, &e); err != nil {
 		return "", err
 	}
@@ -771,7 +816,7 @@ func executionAbandon(q *Request, id, reason string) (string, error) {
 	if err := q.db().DispTotalsWallUnknown(q.ctx(), id); err != nil {
 		return "", err
 	}
-	if err := audit(q, "execution:"+id, "state", prev, "failed", auditExtra{ProjectID: strPtr(e["projectId"]), Reason: reason}); err != nil {
+	if err := audit(q, "execution:"+id, "state", prev, "failed", auditExtra{ProjectID: strPtr(e.ProjectID), Reason: reason}); err != nil {
 		return "", err
 	}
 	start := "start"
@@ -780,7 +825,7 @@ func executionAbandon(q *Request, id, reason string) (string, error) {
 		return "", err
 	}
 	if len(starts) > 0 {
-		if err := agentOnReceipt(q, starts[0], e, "failed"); err != nil {
+		if err := agentCommandReceipt(q, &starts[0], &e, "failed"); err != nil {
 			return "", err
 		}
 	}

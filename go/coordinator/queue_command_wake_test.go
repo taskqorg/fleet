@@ -61,7 +61,7 @@ func TestQueuedToolCommandWakesHeldPoll(t *testing.T) {
 		}
 	}
 	time.Sleep(200 * time.Millisecond)
-	if err := queueCommand(env.ctx, env.app, "h-store", "artifact-verify", doc{"artifactId": "a1", "storeId": "s1", "url": "http://store.invalid/a1"}); err != nil {
+	if err := queueCommand(env.ctx, env.app, "h-store", "artifact-verify", "a1", doc{"artifactId": "a1", "storeId": "s1", "url": "http://store.invalid/a1"}); err != nil {
 		t.Fatal(err)
 	}
 	select {

@@ -84,9 +84,9 @@ type labProofEvent struct {
 	} `json:"data"`
 }
 
-// labRecordOf: a record (get, all, eventsWhere) as T; nil when it does not decode as one.
-func labRecordOf[T any](v doc) *T {
-	if v == nil {
+// labRecordOf: a record (get, all, eventsWhere) as T; nil when it is none or does not decode as one.
+func labRecordOf[T any](v any) *T {
+	if string(jsonBytes(v)) == "null" {
 		return nil
 	}
 	t, err := asT[T](v)
@@ -496,7 +496,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 			}
 			continue
 		}
-		record, err := recGet[doc](q, recExecution, xid)
+		record, err := recGet[rawObject](q, recExecution, xid)
 		if err != nil {
 			return nil, err
 		}
@@ -511,7 +511,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 		if !owned {
 			return nil, suffixConflict("wrong execution project")
 		}
-		records, err := recAll[doc](q, recCommand, labExecutionFilter{ExecutionID: xid})
+		records, err := recAll[rawObject](q, recCommand, labExecutionFilter{ExecutionID: xid})
 		if err != nil {
 			return nil, err
 		}
@@ -530,7 +530,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 			x.CommandId == nil || *x.CommandId != command.ID || x.NativeExecutionId == nil || *x.NativeExecutionId != xid {
 			return nil, suffixConflict("selected launch plan binding changed")
 		}
-		sessionRecord, err := recGet[doc](q, recSession, e.SessionID)
+		sessionRecord, err := recGet[rawObject](q, recSession, e.SessionID)
 		if err != nil {
 			return nil, err
 		}

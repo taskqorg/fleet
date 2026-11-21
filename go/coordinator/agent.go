@@ -16,6 +16,7 @@ import (
 	"fleet/coordinator/db"
 	"fleet/mcpserve"
 	"fmt"
+	"maps"
 	"os"
 	"reflect"
 	"regexp"
@@ -131,21 +132,24 @@ type agentFilter struct {
 	Status           *string `json:"status,omitempty"`
 }
 
-// agentView: the fields T names of a value another area hands over as a map (a project, a profile, a run); a field of
+// agentView: the fields T names of an open value another area hands over (a project, a profile, a run); a field of
 // another JSON type reads as zero.
 func agentView[T any](v any) T {
 	t, _ := asT[T](v)
 	return t
 }
 
-// docReplace: dst holds v's record afterwards (a caller's map the typed code changed).
-func docReplace(dst doc, v any) {
+// recordReplace: dst holds v's record afterwards (a caller's open record the typed code changed).
+func recordReplace(dst rawObject, v any) error {
+	var src rawObject
+	if err := json.Unmarshal(jsonBytes(v), &src); err != nil {
+		return err
+	}
 	for k := range dst {
 		delete(dst, k)
 	}
-	for k, x := range docOf(v) {
-		dst[k] = x
-	}
+	maps.Copy(dst, src)
+	return nil
 }
 
 // agentOpt: s, nil when empty.
@@ -362,6 +366,7 @@ type agentExecution struct {
 	Report                *contract.WorkerReport `json:"report,omitempty"`
 	StopRequested         *bool                  `json:"stopRequested,omitempty"`
 	TaskStopRequested     *bool                  `json:"taskStopRequested,omitempty"`
+	StopDetail            string                 `json:"stopDetail,omitempty"`
 	Error                 string                 `json:"error,omitempty"`
 	Problem               string                 `json:"problem,omitempty"`
 	rest                  recordRest
@@ -389,6 +394,7 @@ type agentCommand struct {
 	ProjectID   string          `json:"projectId,omitempty"`
 	Kind        string          `json:"kind,omitempty"`
 	Status      string          `json:"status,omitempty"`
+	StopDetail  string          `json:"stopDetail,omitempty"`
 	Payload     json.RawMessage `json:"payload,omitempty"`
 	rest        recordRest
 }
@@ -564,8 +570,8 @@ func harnessOfProfile(raw json.RawMessage) string {
 	return firstString(p.Harness, "codex")
 }
 
-// harnessOf: the harness of a session or execution record another area hands over as a map.
-func harnessOf(s doc) string {
+// harnessOf: the harness of a session or execution record another area holds open.
+func harnessOf(s any) string {
 	return harnessOfProfile(agentView[struct {
 		AgentConfig json.RawMessage `json:"agentConfig"`
 	}](s).AgentConfig)
@@ -582,11 +588,6 @@ func agentExecutions(q *Request, sid string) ([]agentExecution, error) {
 	return recAll[agentExecution](q, recExecution, agentFilter{SessionID: &sid})
 }
 
-// sessionExecutions: agentExecutions as records, for other areas.
-func sessionExecutions(q *Request, sid string) ([]doc, error) {
-	return recAll[doc](q, recExecution, agentFilter{SessionID: &sid})
-}
-
 func agentActive(q *Request, sid string) (*agentExecution, error) {
 	es, err := agentExecutions(q, sid)
 	for i := range es {
@@ -595,15 +596,6 @@ func agentActive(q *Request, sid string) (*agentExecution, error) {
 		}
 	}
 	return nil, err
-}
-
-// activeOf: the session's active execution as a record (nil when none), for other areas.
-func activeOf(q *Request, sid string) (doc, error) {
-	a, err := agentActive(q, sid)
-	if err != nil || a == nil {
-		return nil, err
-	}
-	return docOf(*a), nil
 }
 
 func defaultHost() string { return firstString(os.Getenv("FLEET_HOST_ID"), "owner-mac") }
@@ -635,36 +627,9 @@ type agentProvenance struct {
 	TraceActor  string `json:"traceActor,omitempty"`
 }
 
-// enqueue: agentEnqueue for other areas (delegation, pipelines), which hand over the session, payload and execution
-// extras as maps and read the execution as one.
-func enqueue(q *Request, s doc, input, requestID string, payload, execution doc, host string, provenance ...doc) (doc, error) {
-	sess, err := asT[agentSession](s)
-	if err != nil {
-		return nil, err
-	}
-	undirected := sess.DirectedBy == ""
-	var prov *agentProvenance
-	if len(provenance) > 0 {
-		p := agentView[agentProvenance](provenance[0])
-		prov = &p
-	}
-	var pl map[string]json.RawMessage
-	if payload != nil {
-		pl = recOf(payload)
-	}
-	e, err := agentEnqueue(q, &sess, input, requestID, pl, execution, host, prov)
-	if undirected && sess.DirectedBy != "" {
-		s["directedBy"] = sess.DirectedBy // the director enqueue settled, as the caller's session record shows it
-	}
-	if err != nil {
-		return nil, err
-	}
-	return docOf(e), nil
-}
-
 // agentEnqueue: a queued execution and its message. Late choice: host and subscription are picked at dispatch.
-// execution: fields another area adds to the execution record (a pipeline step's, a delegation's).
-func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload map[string]json.RawMessage, execution doc, host string, prov *agentProvenance) (agentExecution, error) {
+// execution: a struct of the fields another area adds to the execution record (a pipeline step's); nil: none.
+func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload map[string]json.RawMessage, execution any, host string, prov *agentProvenance) (agentExecution, error) {
 	var none agentExecution
 	extra := agentView[struct {
 		DeliveryID string `json:"deliveryId"`
@@ -736,7 +701,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 	}
 	ac, hasProfile := s.profile()
 	if _, given := payload["skills"]; !given && len(ac.Skills) > 0 { // a session profile's skills, as pipeline steps get them
-		skills, err := profileSkills(docOf(s.AgentConfig))
+		skills, err := profileSkills(s.AgentConfig)
 		if err != nil {
 			return none, err
 		}
@@ -761,11 +726,15 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 		}
 		e.Definitions = jsonBytes([]contract.DefinitionRef{ref})
 	}
-	if len(execution) > 0 {
-		d := docOf(e)
-		for k, v := range execution {
-			d[k] = v
+	if execution != nil {
+		var d, add rawObject
+		if err := json.Unmarshal(jsonBytes(e), &d); err != nil {
+			return none, err
 		}
+		if err := json.Unmarshal(jsonBytes(execution), &add); err != nil {
+			return none, err
+		}
+		maps.Copy(d, add)
 		if e, err = asT[agentExecution](d); err != nil {
 			return none, err
 		}
@@ -887,19 +856,6 @@ func attachmentIDs(xs []string) ([]string, error) {
 	return ids, nil
 }
 
-// submitMessage: agentSubmit for other areas (a watch wake), the message and the reply as maps.
-func submitMessage(q *Request, b doc, source string) (doc, error) {
-	r, err := asT[contract.MessageSendRequest](b)
-	if err != nil {
-		return nil, fail(400, "Invalid body")
-	}
-	out, err := agentSubmit(q, &r, source)
-	if err != nil {
-		return nil, err
-	}
-	return docOf(out.reply()), nil
-}
-
 // agentSubmit: a message starts a turn, or is queued (or steered) behind an active execution; nothing is refused for
 // being busy. source is internal provenance, never taken from the caller's arguments.
 func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (agentSubmitted, error) {
@@ -956,7 +912,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 		return none, err
 	}
 	// A repeated request answered above without checking its files again; a new one checks them now.
-	attachments, err := messageAttachments(q, ids, docOf(s))
+	attachments, err := messageAttachments(q, ids, &s)
 	if err != nil {
 		return none, err
 	}
@@ -976,10 +932,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 		if err := refreshProfile(q, &s); err != nil {
 			return none, err
 		}
-		var payload map[string]json.RawMessage
-		if p := attachmentPayload(attachments, ids); p != nil {
-			payload = recOf(p)
-		}
+		payload := attachmentPayload(attachments, ids)
 		e, err := agentEnqueue(q, &s, text, requestID, payload, nil, "", &agentProvenance{SentBy: sender, Source: source})
 		if err != nil {
 			return none, err
@@ -1089,10 +1042,7 @@ func agentPromote(q *Request) error {
 			}
 			var attachments []any
 			json.Unmarshal(m.Attachments, &attachments)
-			var payload map[string]json.RawMessage
-			if p := attachmentPayload(attachments, m.AttachmentRequest); p != nil {
-				payload = recOf(p)
-			}
+			payload := attachmentPayload(attachments, m.AttachmentRequest)
 			return agentEnqueue(q, &s, m.Text, m.RequestID, payload, nil, "", &agentProvenance{SentBy: m.SentBy, Source: m.Source, Traceparent: m.Traceparent, TraceActor: m.TraceActor})
 		}()
 		if err != nil {
@@ -1108,19 +1058,6 @@ func agentPromote(q *Request) error {
 		}
 	}
 	return nil
-}
-
-// agentOnReceipt: agentCommandReceipt for other areas (executions.go), the command and execution as records.
-func agentOnReceipt(q *Request, c, e doc, status string) error {
-	cmd, err := asT[agentCommand](c)
-	if err != nil {
-		return err
-	}
-	ex, err := asT[agentExecution](e)
-	if err != nil {
-		return err
-	}
-	return agentCommandReceipt(q, &cmd, &ex, status)
 }
 
 // agentCommandReceipt: steer queue state, the completion wake and handoff delivery state for a receipt (status legacy).
@@ -1214,9 +1151,9 @@ func wake(q *Request, e *agentExecution, status string) error {
 	return nil
 }
 
-// agentDecorate: agentDecorateStart for dispatch.go, which holds the session and execution as records: the fields it
-// changes are written back into them.
-func agentDecorate(q *Request, s, e doc, payload *contract.StartPayload) error {
+// agentDecorate: agentDecorateStart for dispatch.go, which holds the session and execution as open records: the fields
+// it changes are written back into them.
+func agentDecorate(q *Request, s, e rawObject, payload *contract.StartPayload) error {
 	sess, err := asT[agentSession](s)
 	if err != nil {
 		return err
@@ -1226,12 +1163,12 @@ func agentDecorate(q *Request, s, e doc, payload *contract.StartPayload) error {
 		return err
 	}
 	err = agentDecorateStart(q, &sess, &ex, payload)
-	e["continuationKey"] = ex.ContinuationKey
+	e["continuationKey"] = jsonBytes(ex.ContinuationKey)
 	if ex.ForkOfNativeSessionID != "" {
-		e["forkOfNativeSessionId"] = ex.ForkOfNativeSessionID
+		e["forkOfNativeSessionId"] = jsonBytes(ex.ForkOfNativeSessionID)
 	}
 	if ex.HandoffID != "" {
-		e["handoffId"] = ex.HandoffID
+		e["handoffId"] = jsonBytes(ex.HandoffID)
 	}
 	if sess.PendingHandoffID == "" {
 		delete(s, "pendingHandoffId")
@@ -1499,19 +1436,6 @@ func sideOf(key string, cfg json.RawMessage) [4]string {
 		effort = js(jsonValue(p.Effort))
 	}
 	return [4]string{key, firstString(p.Model, "gpt-6.1-sol"), effort, canonical(jsonValue(jsonBytes(rest)))}
-}
-
-// sessionTransition: agentTransition for other areas (session_resume), the request and reply as maps.
-func sessionTransition(q *Request, b doc) (doc, error) {
-	args, err := asT[agentTransitionArgs](b)
-	if err != nil {
-		return nil, fail(400, "Expected sessionId, profileId, account")
-	}
-	r, err := agentTransition(q, args)
-	if err != nil {
-		return nil, err
-	}
-	return docOf(r), nil
 }
 
 func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransitionReply, error) {
@@ -1874,19 +1798,7 @@ func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
 	return out, nil
 }
 
-// agentReply: agentReplyTo for other areas (a task decision's answer), the request and reply as maps.
-func agentReply(q *Request, b doc) (doc, error) {
-	r, err := asT[contract.ReplyRequest](b)
-	if err != nil {
-		return nil, fail(400, "Expected questionId")
-	}
-	out, err := agentReplyTo(q, &r)
-	if err != nil {
-		return nil, err
-	}
-	return docOf(out), nil
-}
-
+// agentReplyTo: an answer to an agent's question delivered to its session (the reply tool, a task decision's answer).
 func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, error) {
 	qid := deref(r.QuestionId)
 	if qid == "" {
@@ -2001,15 +1913,6 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 	}
 	id, at := newID(), nowMs()
 	return record(contract.WorkerDoneReply{Id: &id, ExecutionId: eid, Action: "accepted", Report: &report, At: &at})
-}
-
-// stopOutcome: agentStopOutcome for other areas (execution_stop), the execution as a record.
-func stopOutcome(q *Request, e doc) (contract.StopOutcome, error) {
-	ex, err := asT[agentExecution](e)
-	if err != nil {
-		return contract.StopOutcome{}, err
-	}
-	return agentStopOutcome(q, &ex)
 }
 
 // agentStopOutcome: proven only when a host receipt ended the execution; otherwise unknown.
@@ -2212,43 +2115,46 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 	return r, q.db().DispReconciliationPut(q.ctx(), db.DispReconciliationPutParams{ID: id, Items: jsonBytes(items)})
 }
 
-// sessionView: a session's queue, questions, handoffs, transitions and forks (session_get), as a map for sessions.go.
-func sessionView(q *Request, sid string) (doc, error) {
+// sessionQueues: what session_get adds to a session record (sessionView).
+type sessionQueues struct {
+	Queued      []map[string]json.RawMessage `json:"queued"`
+	Questions   []map[string]json.RawMessage `json:"questions"`
+	Handoffs    []map[string]json.RawMessage `json:"handoffs"`
+	Transitions []map[string]json.RawMessage `json:"transitions"`
+	Forks       []map[string]json.RawMessage `json:"forks"`
+}
+
+// sessionView: a session's queue, questions, handoffs, transitions and forks (session_get, sessions.go).
+func sessionView(q *Request, sid string) (sessionQueues, error) {
+	var out sessionQueues
 	ms, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SessionID: &sid})
 	if err != nil {
-		return nil, err
-	}
-	var out struct {
-		Queued      []map[string]json.RawMessage `json:"queued"`
-		Questions   []map[string]json.RawMessage `json:"questions"`
-		Handoffs    []map[string]json.RawMessage `json:"handoffs"`
-		Transitions []map[string]json.RawMessage `json:"transitions"`
-		Forks       []map[string]json.RawMessage `json:"forks"`
+		return out, err
 	}
 	out.Queued = []map[string]json.RawMessage{}
 	for _, m := range ms {
 		v, err := queueView(q, m)
 		if err != nil {
-			return nil, err
+			return out, err
 		}
 		out.Queued = append(out.Queued, v)
 	}
-	questions, err := recAll[doc](q, recQuestion, agentFilter{SessionID: &sid})
+	questions, err := recAll[rawObject](q, recQuestion, agentFilter{SessionID: &sid})
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	out.Questions = recsOf(questions)
 	if out.Handoffs, err = sessionHandoffs(q, sid, false); err != nil {
-		return nil, err
+		return out, err
 	}
-	transitions, err := recAll[doc](q, recSessionTransition, agentFilter{SessionID: &sid})
+	transitions, err := recAll[rawObject](q, recSessionTransition, agentFilter{SessionID: &sid})
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	out.Transitions = recsOf(transitions)
-	forks, err := recAll[doc](q, recSessionFork, agentFilter{SourceSessionID: &sid})
+	forks, err := recAll[rawObject](q, recSessionFork, agentFilter{SourceSessionID: &sid})
 	out.Forks = recsOf(forks)
-	return docOf(out), err
+	return out, err
 }
 
 // sessionHandoffs: a session's handoff records (recHandoff), with or without their text.
@@ -2298,7 +2204,7 @@ func sortedJSON(b []byte) (json.RawMessage, error) {
 	return json.Marshal(v)
 }
 
-func roleProfile(q *Request, v string) doc { p, _ := readTrustedProfile(q, v); return p }
+func roleProfile(q *Request, v string) rawObject { p, _ := readTrustedProfile(q, v); return p }
 
 func projectReadiness(q *Request, r *contract.ProjectReadinessRequest) (contract.ProjectReadinessReply, error) {
 	var none contract.ProjectReadinessReply
@@ -2444,7 +2350,7 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 	if rid == "" {
 		return none, fail(400, "Expected requestId")
 	}
-	var project doc
+	var project rawObject
 	key := pid + ":" + rid
 	if pid != "" {
 		if project = projectSettingsOf(q, pid); project == nil {
@@ -2680,7 +2586,7 @@ func init() {
 	op("ask", agentAsk)
 	op("reply", agentReplyTo)
 	op("questions", func(q *Request, b *contract.QuestionsRequest) (contract.QuestionsReply, error) {
-		qs, err := recAll[doc](q, recQuestion, agentFilter{SessionID: agentOpt(deref(b.SessionId)), State: agentOpt(deref(b.State))})
+		qs, err := recAll[rawObject](q, recQuestion, agentFilter{SessionID: agentOpt(deref(b.SessionId)), State: agentOpt(deref(b.State))})
 		return contract.QuestionsReply{Questions: recsOf(qs)}, err
 	})
 	op("worker_done", workerDone)
@@ -2878,8 +2784,10 @@ func init() {
 				err := q.app.store.Tx(q.ctx(), scopeOf(q.person), false, "", func(tx pgx.Tx) error {
 					q.tx = tx
 					defer func() { q.tx = nil }()
-					out, err := projectAgentArguments(q, docOf(a), executionID, isResourceRead(name))
-					a = recOf(out)
+					out, err := projectAgentArguments(q, maps.Clone(a), executionID, isResourceRead(name)) // a retried attempt starts again from a
+					if err == nil {
+						a = out
+					}
 					return err
 				})
 				if err != nil {
@@ -2908,9 +2816,6 @@ func focusIDsOf(f *agentFocus) []string {
 	}
 	return jsonStrings(f.ProjectIDs)
 }
-
-// focusIDs: focusIDsOf a session record another area holds.
-func focusIDs(s doc) []string { return focusIDsOf(agentView[agentSession](s).Focus) }
 
 // focusProjectOf: the project of a call in a focused session: the given one (inside focus and the director's grants),
 // or the single focus project. settings: the project's settings must load too (the legacy focus resolution, which
@@ -2943,17 +2848,6 @@ func focusProjectOf(q *Request, f *agentFocus, p string, settings bool) (string,
 	return p, nil
 }
 
-// focusProjectID and focusProject: focusProjectOf for a session record another area holds (project_access.go).
-func focusProjectID(q *Request, s doc, given any) (string, error) {
-	p, _ := given.(string)
-	return focusProjectOf(q, agentView[agentSession](s).Focus, p, false)
-}
-
-func focusProject(q *Request, s doc, given any) (string, error) {
-	p, _ := given.(string)
-	return focusProjectOf(q, agentView[agentSession](s).Focus, p, true)
-}
-
 // sessionDirects: a person changes only sessions they direct (the owner any); an agent call is already bound to its own
 // session tree by boundArguments().
 func sessionDirects(q *Request, s *agentSession) error {
@@ -2961,12 +2855,6 @@ func sessionDirects(q *Request, s *agentSession) error {
 		return nil
 	}
 	return fail(403, "Session is directed by someone else")
-}
-
-// directs: sessionDirects for a session record another area holds.
-func directs(q *Request, s doc) error {
-	sess := agentView[agentSession](s)
-	return sessionDirects(q, &sess)
 }
 
 // focusSet: a session's focus, a list of projects in the caller's grants or "*" (docs/designs/fleet-pm-agent.md §2).
@@ -3050,15 +2938,6 @@ func agentAccountArg(raw json.RawMessage) string {
 		return s
 	}
 	return fmt.Sprint(jsonValue(raw))
-}
-
-// boundArguments: agentBoundArguments for a caller that holds the arguments as a map.
-func boundArguments(q *Request, name string, a doc, executionID string) (doc, error) {
-	out, err := agentBoundArguments(q, name, recOf(a), executionID)
-	if err != nil {
-		return nil, err
-	}
-	return docOf(out), nil
 }
 
 // agentBoundArguments: host-run agents act only on their own session (or one they created); lists never default to all

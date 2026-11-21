@@ -1763,7 +1763,7 @@ func labStartRun(q *Request, exp *labExperiment, s labRunStart) (string, error) 
 			overrides = jsonBytes(v.Overrides)
 		}
 	}
-	ok, err := insertExecution(q, docOf(row))
+	ok, err := insertExecution(q, row)
 	if err != nil || !ok {
 		return "", err
 	}
@@ -2427,7 +2427,7 @@ func labRecord(q *Request, id string, checked map[string]*labCheckRun) error {
 			if b.Action == "pause" {
 				state = "paused"
 				if _, err := askRow(q, "operator_decision", fmt.Sprintf("Lab budget reached: %v %v of %v. Running trials finish; resume launches or stop the experiment?", b.Unit, spendOf(s, b.Unit), b.Limit),
-					exp.ProjectID, []any{"resume", "stop"}, "lab", docOf(labBudgetAsk{ExperimentID: id, Budget: b.Unit})); err != nil {
+					exp.ProjectID, []any{"resume", "stop"}, "lab", labBudgetAsk{ExperimentID: id, Budget: b.Unit}); err != nil {
 					return err
 				}
 				break
@@ -2841,7 +2841,7 @@ func expRate(q *Request, r *contract.LabRatingCreateRequest) (labRatingView, err
 	} else if form == "pass_fail" {
 		text = "Pass or fail this output"
 	}
-	qid, err := askRow(q, "rating", text, exp.ProjectID, labRatingAsk{Form: form, ExperimentID: eid, TrialIDs: ids, Seed: newID()}, "operator", docOf(labBudgetAsk{ExperimentID: eid}))
+	qid, err := askRow(q, "rating", text, exp.ProjectID, labRatingAsk{Form: form, ExperimentID: eid, TrialIDs: ids, Seed: newID()}, "operator", labBudgetAsk{ExperimentID: eid})
 	if err != nil {
 		return labRatingView{}, err
 	}
@@ -2967,7 +2967,7 @@ func labRatings(q *Request, experimentID, state *string) (contract.LabRatingsLis
 
 // labAnswerCheck and labAnswerAfter: the answer hook for questions_answer (questions_answer calls both inside its transaction:
 // check before recording the answer, after once it is recorded). question: the question row (snake_case columns).
-func labAnswerCheck(q *Request, question doc, answer string) error {
+func labAnswerCheck(q *Request, question json.RawMessage, answer string) error {
 	x, _ := asT[labQuestion](question)
 	// Lab ratings are the owner's (scored as human:owner; a pass on a drafted example lets the coordinator run its checks)
 	// and budget asks move the owner's spend: owner only.
@@ -2993,7 +2993,7 @@ func labNoteText(note any) *string {
 	return nil
 }
 
-func labAnswerAfter(q *Request, question doc) error {
+func labAnswerAfter(q *Request, question json.RawMessage) error {
 	x, _ := asT[labQuestion](question)
 	o := x.Options
 	eid := ""
@@ -3069,7 +3069,7 @@ func importDraft(q *Request, run *runRecord, ex any) error {
 		lines = append(lines, fmt.Sprintf("%v: %v", c.ID, c.Run))
 	}
 	_, err = askRow(q, "rating", fmt.Sprintf("Approve drafted example %s? Approving lets the coordinator run its checks:\n%s", exampleRef(st.ID, st.Version), strings.Join(lines, "\n")),
-		optText(r.ProjectID), labRatingAsk{Form: "pass_fail", ExampleArtifactID: aid, Seed: aid}, "lab", docOf(labExampleAsk{ExampleArtifactID: aid}))
+		optText(r.ProjectID), labRatingAsk{Form: "pass_fail", ExampleArtifactID: aid, Seed: aid}, "lab", labExampleAsk{ExampleArtifactID: aid})
 	return err
 }
 

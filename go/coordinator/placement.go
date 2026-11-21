@@ -86,11 +86,10 @@ func projectRules(q *Request, projectID *string) []json.RawMessage {
 	if projectID == nil {
 		return nil
 	}
-	v, ok := projectSettingsOf(q, *projectID)["artifact_rules"]
-	if !ok || v == nil {
+	b, ok := projectSettingsOf(q, *projectID)["artifact_rules"]
+	if !ok || isNull(b) {
 		return nil
 	}
-	b := jsonBytes(v)
 	var list []json.RawMessage
 	if json.Unmarshal(b, &list) != nil {
 		list = []json.RawMessage{b}
@@ -101,21 +100,27 @@ func projectRules(q *Request, projectID *string) []json.RawMessage {
 // Problems of the last pass, shown by stores_list.
 var placementProblems struct {
 	sync.Mutex
-	list []doc
+	list []placementProblem
+}
+
+// placementProblem: one problem of a pass: its fields (a struct's JSON) and the project it belongs to (nil: none), which
+// stores_list filters by.
+type placementProblem struct {
+	projectID *string
+	fields    json.RawMessage
 }
 
 // problem: one problem of this pass, its fields as their JSON names.
 func problem(v any) {
-	p := docOf(v)
 	placementProblems.Lock()
-	placementProblems.list = append(placementProblems.list, p)
+	placementProblems.list = append(placementProblems.list, placementProblem{fields: jsonBytes(v)})
 	placementProblems.Unlock()
 }
 
-func lastPlacementProblems() []doc {
+func lastPlacementProblems() []placementProblem {
 	placementProblems.Lock()
 	defer placementProblems.Unlock()
-	return append([]doc{}, placementProblems.list...)
+	return append([]placementProblem{}, placementProblems.list...)
 }
 
 type plan struct {
@@ -125,12 +130,12 @@ type plan struct {
 
 // ruleProblem: a project rule that does not validate; projectId stays a *string, as stores_list filters it.
 func ruleProblem(projectID *string, rule int, err error) {
-	p := docOf(struct {
-		Kind  string `json:"kind"`
-		Rule  int    `json:"rule"`
-		Error string `json:"error"`
-	}{"artifact-rule-invalid", rule, err.Error()})
-	p["projectId"] = projectID
+	p := placementProblem{projectID: projectID, fields: jsonBytes(struct {
+		Kind      string  `json:"kind"`
+		Rule      int     `json:"rule"`
+		Error     string  `json:"error"`
+		ProjectID *string `json:"projectId"`
+	}{"artifact-rule-invalid", rule, err.Error(), projectID})}
 	placementProblems.Lock()
 	placementProblems.list = append(placementProblems.list, p)
 	placementProblems.Unlock()
@@ -292,8 +297,8 @@ func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID,
 			return queued, deleted, err
 		}
 		url := src.Presign("GET", from.Bucket, keyOf(x), copySourceSeconds, nil)
-		payload := docOf(copyPayload{ArtifactID: x.ID, StoreID: s.ID, Size: x.Size, PartSize: partSize, Source: copySource{StoreID: from.ID, URL: url}})
-		if err := queueCommand(ctx, a, s.HostID, "artifact-copy", payload); err != nil {
+		payload := copyPayload{ArtifactID: x.ID, StoreID: s.ID, Size: x.Size, PartSize: partSize, Source: copySource{StoreID: from.ID, URL: url}}
+		if err := queueCommand(ctx, a, s.HostID, "artifact-copy", x.ID, payload); err != nil {
 			return queued, deleted, err
 		}
 		queued++

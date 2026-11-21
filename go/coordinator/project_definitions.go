@@ -68,7 +68,7 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 	if _, err := q.db().DefPersonRoles(q.ctx(), q.person.Email); err != nil {
 		return nil, fail(403, "Director is unavailable")
 	}
-	bundle, err := projectBundle(id, docOf(w.content))
+	bundle, err := projectBundle(id, w.content)
 	if err != nil {
 		return nil, err
 	}
@@ -156,11 +156,11 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 		}
 		json.Unmarshal(raw, &environment)
 		hostID, _ := environment.HostID.(string)
-		h, err := recFind[doc](q, recHost, "host:"+hostID)
+		h, err := recFind[hostShim](q, recHost, "host:"+hostID) // absent: no holder
 		if err != nil {
 			return nil, err
 		}
-		if h == nil || h["holder"] != q.person.Email {
+		if h.Holder != q.person.Email {
 			return nil, fail(403, "Host binding is not granted")
 		}
 	}
@@ -204,27 +204,20 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 		return nil, err
 	}
 	if create && q.agent != "" {
-		e, err := recGet[doc](q, recExecution, strings.TrimPrefix(q.agent, "execution:"))
+		e, err := getExecution(q, strings.TrimPrefix(q.agent, "execution:"))
 		if err != nil {
 			return nil, err
 		}
-		sessionID, _ := e["sessionId"].(string)
-		session, err := recGet[doc](q, recSession, sessionID)
+		session, err := recGet[agentSession](q, recSession, e.SessionID)
 		if err != nil {
 			return nil, err
 		}
-		var focus struct {
-			ProjectIDs any `json:"projectIds"`
-		}
-		json.Unmarshal(jsonBytes(session["focus"]), &focus)
-		if focus.ProjectIDs != "*" {
-			ids := focusIDs(session)
+		if session.Focus == nil || string(session.Focus.ProjectIDs) != `"*"` {
+			ids := focusIDsOf(session.Focus)
 			if !contains(ids, id) {
 				ids = append(ids, id)
 			}
-			session["focus"] = struct {
-				ProjectIDs []string `json:"projectIds"`
-			}{ids}
+			session.Focus = &agentFocus{ProjectIDs: jsonBytes(ids)}
 			if err := recPut(q, recSession, &session); err != nil {
 				return nil, err
 			}
@@ -366,7 +359,7 @@ type projectContextFile struct {
 // projectContext: a live project's head as the record its callers read (dispatch, agents, projects.go): the bundle's
 // settings at the top, with content (the bundle), the parsed settings, unknownKeys, context, revision and contentSha;
 // in a transaction also its repoSha and sourceState, and for the owner its initialAccess.
-func projectContext(q *Request, id string) (doc, error) {
+func projectContext(q *Request, id string) (rawObject, error) {
 	var heads []definitionRow
 	read := func(d *db.Queries) error {
 		var err error
@@ -386,58 +379,62 @@ func projectContext(q *Request, id string) (doc, error) {
 		return nil, fail(404, "Unknown project")
 	}
 	h := heads[0]
-	var b doc // the open bundle, as projectBundle and projectSettings (projects.go) read it
-	if err = json.Unmarshal(h.Content, &b); err != nil {
+	b, err := openObject(h.Content) // the open bundle, as projectBundle and projectSettings (projects.go) read it
+	if err != nil {
 		return nil, err
 	}
 	if _, err = projectBundle(id, b); err != nil {
 		return nil, err
 	}
 	var parts struct {
-		Settings     doc `json:"settings"`
+		Settings     json.RawMessage `json:"settings"`
 		ContextFiles []struct {
 			Path any `json:"path"`
 			Text any `json:"text"`
 		} `json:"contextFiles"`
 	}
-	if err = json.Unmarshal(h.Content, &parts); err != nil {
+	if err = json.Unmarshal(jsonBytes(b), &parts); err != nil {
 		return nil, err
 	}
-	parsed, unknown, err := projectSettings(parts.Settings)
+	var settings rawObject // a value of b: already in openObject's form
+	if err := json.Unmarshal(orNull(parts.Settings), &settings); err != nil {
+		return nil, err
+	}
+	parsed, unknown, err := projectSettings(settings)
 	if err != nil {
 		return nil, err
 	}
-	out := make(doc, len(parts.Settings)+10)
-	maps.Copy(out, parts.Settings)
-	out["content"] = b
-	out["settings"] = parsed
-	out["unknownKeys"] = unknown
-	ctx := []doc{}
+	out := make(rawObject, len(settings)+10)
+	maps.Copy(out, settings)
+	out["content"] = jsonBytes(b)
+	out["settings"] = jsonBytes(parsed)
+	out["unknownKeys"] = jsonBytes(unknown)
+	ctx := []projectContextFile{}
 	for _, f := range parts.ContextFiles {
-		ctx = append(ctx, docOf(projectContextFile{Path: f.Path, Text: f.Text, Sha256: sha256Text(js(f.Text))}))
+		ctx = append(ctx, projectContextFile{Path: f.Path, Text: f.Text, Sha256: sha256Text(js(f.Text))})
 	}
-	out["context"] = ctx
+	out["context"] = openJSON(ctx)
 	if q.tx != nil {
 		head, err := headOf(q, "project", id, false)
 		if err != nil {
 			return nil, err
 		}
-		out["repoSha"] = head.RepoSha
-		out["sourceState"] = head.state()
+		out["repoSha"] = jsonBytes(head.RepoSha)
+		out["sourceState"] = jsonBytes(head.state())
 	}
 	if q.person != nil && q.person.Owner && q.tx != nil {
 		a, err := q.db().DefProjectAccess(q.ctx(), id)
 		if err != nil {
 			return nil, err
 		}
-		out["initialAccess"] = docOf(struct {
+		out["initialAccess"] = openJSON(struct {
 			Member  *string `json:"member"`
 			Revoked bool    `json:"revoked"`
 			Version int64   `json:"version"`
 		}{a.InitialMember, a.Revoked, a.AccessVersion})
 	}
-	out["revision"] = h.Head
-	out["contentSha"] = h.ContentSha
+	out["revision"] = jsonBytes(h.Head)
+	out["contentSha"] = jsonBytes(h.ContentSha)
 	return out, nil
 }
 
@@ -499,7 +496,10 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 			used[c] = true
 		}
 	}
-	obs, err := recAll[doc](q, recHostObservation, nil)
+	obs, err := recAll[struct {
+		ID             string          `json:"id"`
+		GitConnections json.RawMessage `json:"gitConnections"`
+	}](q, recHostObservation, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -513,8 +513,8 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 	}
 	live := []hostConnections{} // a removed host never fetches a removal
 	for _, o := range obs {
-		if id, _ := o["id"].(string); !slices.Contains(removed, id) {
-			live = append(live, hostConnections{id, strs(o["gitConnections"])})
+		if !slices.Contains(removed, o.ID) {
+			live = append(live, hostConnections{o.ID, jsonStrings(o.GitConnections)})
 		}
 	}
 	for _, c := range conns {
@@ -580,21 +580,20 @@ func withdrawConnectionRemovals(q *Request, conns []string) error {
 		return err
 	}
 	for _, id := range ids {
-		c, err := recGet[doc](q, recCommand, id)
+		c, err := recGet[agentCommand](q, recCommand, id)
 		if err != nil {
 			return err
 		}
-		c["status"], c["stopDetail"] = "stopped", "connection in use again"
+		c.Status, c.StopDetail = "stopped", "connection in use again"
 		if err := recPut(q, recCommand, &c); err != nil {
 			return err
 		}
-		executionID, _ := c["executionId"].(string)
-		e, err := recGet[doc](q, recExecution, executionID)
+		e, err := getExecution(q, c.ExecutionID)
 		if err != nil {
 			return err
 		}
-		if !terminal(e) {
-			e["state"], e["stopDetail"], e["finishedAt"] = "cancelled", "connection in use again", nowMs()
+		if !e.terminal() {
+			e.State, e.StopDetail, e.FinishedAt = "cancelled", "connection in use again", jsonBytes(nowMs())
 			if err := recPut(q, recExecution, &e); err != nil {
 				return err
 			}

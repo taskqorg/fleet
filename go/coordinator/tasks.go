@@ -192,7 +192,7 @@ func cancelTaskWork(q *Request, id string) error {
 				continue
 			}
 			eid = owned
-		} else if active, err := getExecution(q, eid); err != nil || terminal(active) {
+		} else if active, err := getExecution(q, eid); err != nil || active.terminal() {
 			if err != nil {
 				return err
 			}
@@ -286,39 +286,6 @@ type questionAsk struct {
 	ExecutionID, SessionID, AskedBy, RequestID *string
 	Options, Data                              []byte
 	AskedAt                                    *time.Time
-}
-
-// askQuestion: v has kind, text and optional id, projectId, taskId, executionId, sessionId, options, askedBy, requestId,
-// data, askedAt (milliseconds); the record form of askQuestionAs for callers holding one.
-func askQuestion(q *Request, v doc) (string, error) {
-	var r struct {
-		ID          string          `json:"id"`
-		Kind        string          `json:"kind"`
-		Text        string          `json:"text"`
-		ProjectID   string          `json:"projectId"`
-		TaskID      string          `json:"taskId"`
-		ExecutionID *string         `json:"executionId"`
-		SessionID   *string         `json:"sessionId"`
-		AskedBy     *string         `json:"askedBy"`
-		RequestID   *string         `json:"requestId"`
-		Options     json.RawMessage `json:"options"`
-		Data        json.RawMessage `json:"data"`
-		AskedAt     any             `json:"askedAt"`
-	}
-	if err := json.Unmarshal(jsonBytes(v), &r); err != nil {
-		return "", fmt.Errorf("question: %w", err)
-	}
-	a := questionAsk{ID: r.ID, Kind: r.Kind, Text: r.Text, ProjectID: r.ProjectID, TaskID: r.TaskID, ExecutionID: r.ExecutionID, SessionID: r.SessionID, AskedBy: r.AskedBy, RequestID: r.RequestID}
-	if len(r.Options) > 0 && string(r.Options) != "null" {
-		a.Options = r.Options
-	}
-	if len(r.Data) > 0 && string(r.Data) != "null" {
-		a.Data = r.Data
-	}
-	if t, ok := msTime(r.AskedAt).(time.Time); ok {
-		a.AskedAt = &t
-	}
-	return askQuestionAs(q, a)
 }
 
 // askQuestionAs asks a; a task's question (but an acceptance) settles its task.
@@ -523,7 +490,7 @@ type questionData struct {
 
 // answerQuestion: one answer wins; an acceptance completes (or keeps in progress) its task, other answers unblock it.
 // runAnswerChecks and runAnswerAfter apply the Lab and budget rules of the question. The reply is the question's record.
-func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, error) {
+func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.RawMessage, error) {
 	cur, err := q.db().TaskQuestion(q.ctx(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errNotFound
@@ -1338,9 +1305,7 @@ func init() {
 			if p := q.person; p != nil && !fullAccess(p) && !mayAccessProjectID(p, project) {
 				return none, errNotFound
 			}
-			reply := make(doc) // agentReply's request record
-			reply["questionId"], reply["answer"] = id, answer
-			if _, err := agentReply(q, reply); err != nil {
+			if _, err := agentReplyTo(q, &contract.ReplyRequest{QuestionId: &id, Answer: jsonBytes(answer)}); err != nil {
 				return none, err
 			}
 			return questionRow(q, "", id)

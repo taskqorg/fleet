@@ -240,8 +240,8 @@ type labCatalogueView struct {
 }
 
 // enrichCatalogue adds each method's assessment and the projects recommending it to c, a project's catalogue as
-// catalogueBase gives it (projects.go reads it as that map); numbers keep their text.
-func enrichCatalogue(q *Request, c doc) error {
+// catalogueBase gives it; numbers keep their text.
+func enrichCatalogue(q *Request, c rawObject) error {
 	view, _ := asT[labCatalogueView](c)
 	projects, err := projectIDs(q)
 	if err != nil {
@@ -273,6 +273,6 @@ func enrichCatalogue(q *Request, c doc) error {
 		m["assessment"], m["recommendedFor"] = jsonBytes(a), jsonBytes(recommended)
 		methods = append(methods, m)
 	}
-	c["methods"] = decodeNumbers(string(jsonBytes(methods)))
+	c["methods"] = jsonBytes(decodeNumbers(string(jsonBytes(methods))))
 	return nil
 }

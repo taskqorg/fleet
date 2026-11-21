@@ -205,7 +205,7 @@ func (a *App) childReceiptIn(q *Request, b *contract.ChildReceipt) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	return a.delegationRequest(q, &b.Delegation, docOf(c)) // delegation.go reads the command as a record
+	return a.delegationChild(q, &b.Delegation, c)
 }
 
 // statusReceiptIn: POST /api/hosts/receipts (contract.Receipt), a command's status.
@@ -294,9 +294,12 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	}
 	if (kind == "start" || kind == "script") && status == "completed" && !wasFinal {
 		// Every declaration reaches the gate: a dropped one would let a required output go unwaited.
-		record := docOf(e) // artifactGate (executions.go) reads and amends the execution as a record
-		gate, err := artifactGate(q, record, b.Artifacts)
+		gate, err := artifactGate(q, e.ID, b.Artifacts)
 		if err != nil {
+			return nil, "", err
+		}
+		var record rawObject // the gate sets fields agentExecution does not name (an error object, the wait)
+		if err := json.Unmarshal(jsonBytes(e), &record); err != nil {
 			return nil, "", err
 		}
 		for k, v := range gate {
@@ -372,7 +375,7 @@ func agentAccountList(q *Request, project, executionID string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	accounts, err := recAll[doc](q, recManagedAccount, nil)
+	accounts, err := recAll[rawObject](q, recManagedAccount, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -179,15 +179,6 @@ type delegationObservations struct {
 	Messages  []delegationMessage  `json:"messages"`
 }
 
-// delegationRequest: a child receipt from a running parent; c is the receipt's command record (host_receipts.go).
-func (a *App) delegationRequest(q *Request, req *contract.ChildRequest, c doc) (any, error) {
-	cmd, err := asT[agentCommand](c)
-	if err != nil {
-		return nil, err
-	}
-	return a.delegationChild(q, req, cmd)
-}
-
 func (a *App) delegationChild(q *Request, req *contract.ChildRequest, c agentCommand) (any, error) {
 	rid, input := req.RequestId, req.Input
 	if rid == "" || input == "" || len([]rune(rid)) > 200 || len([]rune(input)) > 32000 {
@@ -330,14 +321,16 @@ func delegationSourcesStep(q *Request, now time.Time, c *kitClaim) error {
 
 // delegationReady: whether execution e (host_poll.go's record) may start now; a delegated child binds its inputs first,
 // and e then holds the record as written.
-func (a *App) delegationReady(q *Request, e doc) (bool, error) {
+func (a *App) delegationReady(q *Request, e rawObject) (bool, error) {
 	ex, err := asT[delegationExecution](e)
 	if err != nil {
 		return false, err
 	}
 	ok, bound, err := a.delegationBind(q, &ex)
 	if bound {
-		docReplace(e, ex)
+		if rerr := recordReplace(e, ex); rerr != nil {
+			return false, rerr
+		}
 	}
 	return ok, err
 }
@@ -511,11 +504,7 @@ func (a *App) delegationBind(q *Request, e *delegationExecution) (ok, bound bool
 
 // delegationReconcile: on every poll, retain finished child results and deliver them as the parent's continuation.
 func (a *App) delegationReconcile(q *Request) error {
-	open, err := openDelegations(q)
-	if err != nil {
-		return err
-	}
-	ds, err := asT[[]delegationRec](open)
+	ds, err := openDelegations(q)
 	if err != nil {
 		return err
 	}
@@ -532,7 +521,7 @@ func (a *App) delegationReconcile(q *Request) error {
 			continue
 		}
 		if !jsonIsObject(d.Result) {
-			evs, err := recAll[doc](q, recEvent, agentFilter{ExecutionID: &child.ID})
+			evs, err := recAll[rawObject](q, recEvent, agentFilter{ExecutionID: &child.ID})
 			if err != nil {
 				return err
 			}

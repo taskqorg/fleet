@@ -209,9 +209,11 @@ func sessionGet(q *Request, sid string) (rawObject, error) {
 	if err != nil {
 		return nil, err
 	}
-	for k, x := range v {
-		s[k] = jsonBytes(x)
+	add, err := asT[rawObject](v)
+	if err != nil {
+		return nil, err
 	}
+	maps.Copy(s, add)
 	s["sessionId"] = jsonBytes(sid)
 	code, err := q.db().SessionCode(q.ctx(), sid)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -291,7 +293,7 @@ func sessionProfile(q *Request, r *contract.SessionProfileRequest) (contract.Ses
 	if err := recPut(q, recSession, &s); err != nil {
 		return none, err
 	}
-	profileID, _ := p["id"].(string)
+	profileID := p.text("id")
 	return contract.SessionProfileReply{SessionId: sid, ProfileId: profileID, Account: r.Account}, nil
 }
 

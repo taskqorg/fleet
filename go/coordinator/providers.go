@@ -45,13 +45,14 @@ func snapshotProviders() map[string]contract.GatewayProvider {
 	return out
 }
 
-// providerTools: a provider's tools as the maps the pipeline files read (method, idempotent); none for an unknown one.
-func providerTools(name string) doc {
+// providerTools: a provider's tools by name, each an open object (method, idempotent); none for an unknown one.
+func providerTools(name string) rawObject {
 	p, ok := gatewayProviders[name]
 	if !ok {
 		return nil
 	}
-	return docOf(p.Tools)
+	t, _ := openObject(jsonBytes(p.Tools))
+	return t
 }
 
 const providersJSON = `

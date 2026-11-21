@@ -77,10 +77,10 @@ type githubCached struct {
 // it (configured, intake open, an active key). A fine-grained token has one resource owner, so another owner's
 // repositories use connection github-<owner> (lower case) when it exists, else github.
 // An owner connection that cannot serve (no active key yet, intake closed) falls back to github.
-func githubConnectionOf(q *Request, owner string) (name string, c doc, keyed bool, err error) {
-	serves := func(n string) (doc, bool, error) {
-		c, err := recFind[doc](q, recAPIConnection, "connection:"+n)
-		if err != nil || c == nil || gatewayURL() == "" || c["intake"] != "all" {
+func githubConnectionOf(q *Request, owner string) (name string, c *apiConnection, keyed bool, err error) {
+	serves := func(n string) (*apiConnection, bool, error) {
+		c, err := recMaybe[apiConnection](q, recAPIConnection, "connection:"+n)
+		if err != nil || c == nil || gatewayURL() == "" || c.Intake != "all" {
 			return c, false, err
 		}
 		active, err := q.db().ConnHasActiveKey(q.ctx(), n)
@@ -302,10 +302,8 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 	var token string
 	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		system := "coordinator"
-		m, err := mintFor(q, mintRun{ExecutionID: &exec, ProjectID: &project, Step: true, SystemActor: &system}, []string{connection})
-		if err == nil {
-			token, _ = m["token"].(string)
-		}
+		m, err := mintGrantFor(q, mintRun{ExecutionID: &exec, ProjectID: &project, Step: true, SystemActor: &system}, []string{connection})
+		token = deref(m.Token)
 		return err
 	}); err != nil {
 		return "", nil, fmt.Errorf("token for %s: %w", connection, err)

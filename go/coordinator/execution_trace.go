@@ -115,15 +115,17 @@ func executionOrigin(q *Request, parent string) (string, error) {
 }
 
 // executionTraceData: an execution's data (a JSON object, or none) with its trace origin and actor.
-func executionTraceData(q *Request, v doc, data any) (doc, error) {
-	out := make(doc)
-	if d, ok := data.(doc); ok {
+// parent is the execution it follows (a parent, a pipeline step or run).
+func executionTraceData(q *Request, parent string, data json.RawMessage) (rawObject, error) {
+	out := rawObject{}
+	var d rawObject
+	if json.Unmarshal(data, &d) == nil { // a non-object is no data
 		maps.Copy(out, d)
 	}
-	tp, err := executionOrigin(q, firstString(v["parentExecutionId"], v["pipelineStepId"], v["pipelineRunId"]))
+	tp, err := executionOrigin(q, parent)
 	if err != nil {
 		return nil, err
 	}
-	out["traceparent"], out["traceActor"] = tp, actor(q, "fleet")
+	out["traceparent"], out["traceActor"] = jsonBytes(tp), jsonBytes(actor(q, "fleet"))
 	return out, nil
 }

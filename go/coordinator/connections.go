@@ -176,16 +176,6 @@ func connNamed(q *Request, name string) (apiConnection, error) {
 	return *c, nil
 }
 
-// connByName: connNamed for the pipeline files, which read the connection as a map (provider, tools).
-func connByName(q *Request, name any) (doc, error) {
-	n, _ := name.(string)
-	c, err := connNamed(q, n)
-	if err != nil {
-		return nil, err
-	}
-	return docOf(c), nil
-}
-
 func connChange(q *Request, c apiConnection, field string, previous, value any) error {
 	return audit(q, "connection:"+c.Name, field, previous, value, auditExtra{Holder: c.Holder})
 }
@@ -684,7 +674,7 @@ func connectionsDelete(q *Request, r *contract.ConnectionsDeleteRequest) (contra
 		return no, err
 	}
 	name := c.Name
-	if _, err := recLocked[doc](q, recAPIConnection, c.ID); err != nil {
+	if _, err := recLocked[json.RawMessage](q, recAPIConnection, c.ID); err != nil {
 		return no, err
 	}
 	keys, err := connKeys(q, name)
@@ -813,7 +803,7 @@ func connUpdated(q *Request, c apiConnection) error {
 
 // connectionsSetTools (owner): the explicit provider tool grant.
 func connectionsSetTools(q *Request, r *contract.ConnectionsSetToolsRequest) (any, error) {
-	if _, err := recLocked[doc](q, recAPIConnection, "connection:"+r.Connection); err != nil && !errors.Is(err, errNotFound) {
+	if _, err := recLocked[json.RawMessage](q, recAPIConnection, "connection:"+r.Connection); err != nil && !errors.Is(err, errNotFound) {
 		return nil, err
 	}
 	c, err := connNamed(q, r.Connection)
@@ -1035,9 +1025,9 @@ type mintRun struct {
 	Step                                                                                   bool
 }
 
-// mintRunOf: a run record's fields (the pipeline and dispatch files hold the run as a map); a field that is not text is
+// mintRunOf: a run record's fields (dispatch.go passes the execution's); a field that is not text is
 // absent.
-func mintRunOf(run doc) mintRun {
+func mintRunOf(run any) mintRun {
 	r, _ := asT[struct {
 		ExecutionID   json.RawMessage `json:"executionId"`
 		DirectedBy    json.RawMessage `json:"directedBy"`
@@ -1060,20 +1050,12 @@ func mintRunOf(run doc) mintRun {
 }
 
 // Per-run tokens (§4): granted are the requested connections that exist, take intake and whose access names the run.
-// connAllowed takes the connection and the run as the maps its callers hold (holder and access; the run's fields).
-func connAllowed(c doc, run doc) bool {
-	conn, ok := connGrantOf(c)
-	return ok && connAllowedFor(conn, mintRunOf(run))
-}
-
-// connGrantOf: the holder and access of a connection record held as a map (connAllowed, delivery.go); false when it
-// does not decode.
-func connGrantOf(c doc) (apiConnection, bool) {
-	conn, err := asT[struct {
-		Holder string     `json:"holder"`
-		Access connAccess `json:"access"`
-	}](c)
-	return apiConnection{Holder: conn.Holder, Access: conn.Access}, err == nil
+// connGrantOf: the holder and access of a connection (delivery.go); false when there is none.
+func connGrantOf(c *apiConnection) (apiConnection, bool) {
+	if c == nil {
+		return apiConnection{}, false
+	}
+	return apiConnection{Holder: c.Holder, Access: c.Access}, true
 }
 
 func connAllowedFor(c apiConnection, r mintRun) bool {
@@ -1118,18 +1100,9 @@ type connWaits struct {
 }
 
 // mint and mintFor: mintGrantFor as the map their callers read (token text or nil, refused as []string, connections).
-func mint(q *Request, run doc, requested []string) (doc, error) {
-	return mintFor(q, mintRunOf(run), requested)
-}
-
-func mintFor(q *Request, run mintRun, requested []string) (doc, error) {
-	g, err := mintGrantFor(q, run, requested)
-	if err != nil {
-		return nil, err
-	}
-	m := docOf(g)
-	m["refused"] = g.Refused // pipeline_plan.go reads the list as []string
-	return m, nil
+// mint: mintGrantFor a run given as its record's fields (mintRunOf).
+func mint(q *Request, run any, requested []string) (mintGrant, error) {
+	return mintGrantFor(q, mintRunOf(run), requested)
 }
 
 func mintGrantFor(q *Request, run mintRun, requested []string) (mintGrant, error) {
@@ -1426,10 +1399,10 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 	if director != "" {
 		directedBy = &director
 	}
-	inserted, err := insertExecution(q, docOf(callExecution{ID: id, Kind: "tool_run", State: state, ProjectID: t.ProjectID, ParentExecutionID: parent,
+	inserted, err := insertExecution(q, callExecution{ID: id, Kind: "tool_run", State: state, ProjectID: t.ProjectID, ParentExecutionID: parent,
 		ExperimentID: t.ExperimentID, TaskID: pr.TaskID, SessionID: pr.SessionID, DirectedBy: directedBy, StartedAt: startedAt, EndedAt: endedAt,
 		PipelineID: pr.PipelineID, PipelineRevision: pr.PipelineRevision, StepID: pr.StepID, ProfileID: pr.ProfileID, ProfileRevision: pr.ProfileRevision,
-		SystemActor: t.SystemActor, Data: data}))
+		SystemActor: t.SystemActor, Data: data})
 	if err != nil || !inserted {
 		return false, err
 	}
@@ -1791,10 +1764,10 @@ func keyRequestOf(q *Request, qid, connection, replay string) error {
 	return nil
 }
 
-// keyAnswerCheck: the answer hook of a key request (tasks area calls it with the question as its map). Only the owner
+// keyAnswerCheck: the answer hook of a key request (tasks area calls it with the question's row). Only the owner
 // settles it, with decline or with the fingerprint answer of a key added to its connection, so no answer path carries a
 // value.
-func keyAnswerCheck(q *Request, question doc, answer string) error {
+func keyAnswerCheck(q *Request, question json.RawMessage, answer string) error {
 	qn, _ := asT[struct {
 		Kind    string `json:"kind"`
 		Options struct {

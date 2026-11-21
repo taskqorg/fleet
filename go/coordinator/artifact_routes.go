@@ -87,8 +87,8 @@ func init() {
 			}
 		}
 		for _, p := range lastPlacementProblems() {
-			if pid, _ := p["projectId"].(*string); q.person == nil || fullAccess(q.person) || pid != nil && mayAccessProject(q.person, pid) {
-				problems = append(problems, recOf(p))
+			if pid := p.projectID; q.person == nil || fullAccess(q.person) || pid != nil && mayAccessProject(q.person, pid) {
+				problems = append(problems, recOf(p.fields))
 			}
 		}
 		return contract.StoresListReply{Stores: stores, Problems: problems}, nil
@@ -604,12 +604,17 @@ func latestReadings(ctx context.Context, a *App) (map[string][]Reading, error) {
 // readingOverSwitch: the dispatch skip (§6) for an account: provider rejected, or a percent at or over switchPct (100
 // without one: a full subscription cannot run anyway). Only
 // readings that know when their period ends count. Empty when none applies. For the dispatch area.
-func readingOverSwitch(account doc, list []Reading) string {
+// account is the account's record (its switchPct is read).
+func readingOverSwitch(account any, list []Reading) string {
 	old := func(r Reading) string { return strconv.FormatInt(max(0, (nowMs()-r.At+30000)/60000), 10) + " min old" }
 	var best *Reading
-	sw, ok := account["switchPct"].(float64)
-	if !ok {
-		sw = 100
+	sw := 100.0
+	a, _ := asT[struct {
+		SwitchPct *float64 `json:"switchPct"`
+	}](account)
+	ok := a.SwitchPct != nil
+	if ok {
+		sw = *a.SwitchPct
 	}
 	for i := range list {
 		r := list[i]

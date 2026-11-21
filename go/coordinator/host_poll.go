@@ -275,9 +275,9 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 	var hasPending bool
 	var removed bool
 	if err := runTx(ctx, a, nil, false, "", func(rq *Request) error {
-		if h, err := recFind[doc](rq, recHost, "host:"+host); err != nil {
+		if h, err := recMaybe[hostShim](rq, recHost, "host:"+host); err != nil {
 			return err
-		} else if h != nil && hostRemoved(h) {
+		} else if h != nil && h.removed() {
 			removed = true
 			return nil
 		}
@@ -297,22 +297,21 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 		return []contract.Command{}, nil
 	}
 	out := []contract.Command{}
-	var hostDoc doc
+	var hostDoc hostShim // none yet: no holder
 	locks := []string{"host:" + host}
 	if pipelinePending {
 		locks = append([]string{GLOBAL}, locks...)
 	}
 	err := runTxLocks(ctx, a, nil, true, locks, func(wq *Request) error {
-		h, err := recFind[doc](wq, recHost, "host:"+host)
+		h, err := recMaybe[hostShim](wq, recHost, "host:"+host)
 		if err != nil {
 			return err
 		}
-		if h != nil && hostRemoved(h) {
+		if h != nil && h.removed() {
 			return fail(410, "host-removed")
 		}
-		hostDoc = h
-		if hostDoc == nil {
-			hostDoc = docOf(pollHost{HostID: host})
+		if h != nil {
+			hostDoc = *h
 		}
 		pending, err := wq.db().HostPollPending(wq.ctx(), db.HostPollPendingParams{HostID: host})
 		if err != nil {
@@ -391,11 +390,6 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 
 var stopWithheldKinds = []string{"start", "input", "script", "steer", "delivery-step"}
 
-// pollHost: the host record of a host that has none yet.
-type pollHost struct {
-	HostID string `json:"hostId"`
-}
-
 // pollCommandView: the fields of a pending command the poll's gates read (HostPollPending).
 type pollCommandView struct {
 	ID          string
@@ -414,8 +408,8 @@ func pollCommandOf(row db.HostPollPendingRow, host string) pollCommandView {
 
 // gate: the command record the gates read (agentReady, handoffPipelineCommand, refusePollCommand), without its
 // payload: a pipeline handoff that writes the payload reads it itself.
-func (cv pollCommandView) gate() doc {
-	return docOf(pollGateCommand{ID: cv.ID, Kind: cv.Kind, ExecutionID: cv.ExecutionID, HostID: cv.HostID, Status: cv.Status})
+func (cv pollCommandView) gate() pollGateCommand {
+	return pollGateCommand{ID: cv.ID, Kind: cv.Kind, ExecutionID: cv.ExecutionID, HostID: cv.HostID, Status: cv.Status}
 }
 
 type pollGateCommand struct {
@@ -483,8 +477,8 @@ type pollExecutionView struct {
 
 // pollReadyCommand: command c as the host gets it now, or nil while it is not ready. The ready filter may rewrite the
 // command (delegation inputs), so the reply is the command as stored after it.
-func (a *App) pollReadyCommand(wq *Request, hostDoc doc, cv pollCommandView, prepared map[string]pollPreparedEntry) (*contract.Command, error) {
-	ok, err := agentReady(wq, cv.gate())
+func (a *App) pollReadyCommand(wq *Request, hostDoc hostShim, cv pollCommandView, prepared map[string]pollPreparedEntry) (*contract.Command, error) {
+	ok, err := agentReady(wq, cv.Kind, cv.ExecutionID)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -498,7 +492,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc doc, cv pollCommandView, pre
 		if !locked {
 			// A busy row is retried. A missing row still goes through
 			// the poll's permanent 404 refusal and retires its command.
-			_, err := recGet[doc](wq, recExecution, cv.ExecutionID)
+			_, err := recGet[json.RawMessage](wq, recExecution, cv.ExecutionID)
 			return nil, err
 		}
 		// The command as it is under the lock (a stop may have settled it, a writer changed it).
@@ -515,7 +509,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc doc, cv pollCommandView, pre
 		}
 		cv = pollCommandOf(rows[0], cv.HostID)
 	}
-	e, err := recGet[doc](wq, recExecution, cv.ExecutionID)
+	e, err := recGet[rawObject](wq, recExecution, cv.ExecutionID) // open: the delegation and handoff gates may rewrite it
 	if err != nil {
 		return nil, err
 	}
@@ -554,7 +548,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc doc, cv pollCommandView, pre
 	}
 	cmd, ok := pollPrepared.get(cv.HostID, cv.ID, revision)
 	if !ok {
-		out, err := recGet[doc](wq, recCommand, cv.ID)
+		out, err := recGet[rawObject](wq, recCommand, cv.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -668,7 +662,7 @@ const (
 // also ends its execution, cancelled with the reason, so the step does not wait on a command that cannot come. A
 // command that may have reached a host already (a redelivery, any other kind) leaves its execution to its receipts and
 // the lost-host sweep.
-func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
+func (a *App) refusePollCommand(wq *Request, c pollGateCommand, reason string) error {
 	if err := stopPipelineCommand(wq, c, reason); err != nil {
 		return err
 	}
@@ -676,11 +670,11 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 	if !pipelineDispatchKind(cmd.Kind) {
 		return nil
 	}
-	e, err := recFind[doc](wq, recExecution, cmd.ExecutionID)
+	e, err := recMaybe[rawObject](wq, recExecution, cmd.ExecutionID)
 	if err != nil || e == nil {
 		return err
 	}
-	native := agentView[pipelineRefused](e)
+	native := agentView[pipelineRefused](*e)
 	if native.PipelineRunID == "" || executionEnds(native.State) || native.State == "running" {
 		return nil
 	}
@@ -699,10 +693,11 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 		return nil
 	}
 	now := nowMs()
-	e["state"], e["stopDetail"], e["finishedAt"], e["updatedAt"] = "cancelled", reason, now, now
-	delete(e, "waitReason")
-	delete(e, "waitDetail")
-	if err := recPut(wq, recExecution, &e); err != nil {
+	ex := *e
+	ex["state"], ex["stopDetail"], ex["finishedAt"], ex["updatedAt"] = jsonBytes("cancelled"), jsonBytes(reason), jsonBytes(now), jsonBytes(now)
+	delete(ex, "waitReason")
+	delete(ex, "waitDetail")
+	if err := recPut(wq, recExecution, &ex); err != nil {
 		return err
 	}
 	// The dispatch pass runs the pipeline engine's sweeps: the step sees its native execution end.
@@ -980,59 +975,36 @@ func safeInt(v any) any {
 	return nil
 }
 
-// Map shims for the callers that still read hosts as records (accounts.go, dispatch.go, entity_card.go, nav_counts.go,
-// people.go, pipeline_plan.go, project_definitions.go, search.go, host_events.go) and for q.host, the authenticated
-// host's record: views of the typed hosts (hosts.go). They go when those callers read the typed ones.
-
-// hostList: every host that is not removed, as its record with the bare id.
-func hostList(q *Request) ([]doc, error) {
+// hostList: every host that is not removed, as its open record with the bare id (dispatch.go reads it).
+func hostList(q *Request) ([]rawObject, error) {
 	hs, err := hostsLive(q)
-	out := make([]doc, 0, len(hs))
+	out := make([]rawObject, 0, len(hs))
 	for _, h := range hs {
-		out = append(out, docOf(h))
+		var r rawObject
+		if err := json.Unmarshal(jsonBytes(h), &r); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
 	}
 	return out, err
 }
 
-func hostByID(q *Request, id any) (doc, error) {
-	s, _ := id.(string)
-	h, err := liveHost(q, s)
-	if err != nil || h == nil {
-		return nil, err
-	}
-	return docOf(*h), nil
-}
-
-// hostsList: hosts_list as a map, its hosts as maps.
-func hostsList(q *Request, includeRemoved bool) (any, error) {
-	r, err := hostsListReply(q, includeRemoved)
-	if err != nil {
-		return nil, err
-	}
-	out := docOf(r)
-	hosts := make([]doc, 0, len(r.Hosts))
-	for _, h := range r.Hosts {
-		hosts = append(hosts, docOf(h))
-	}
-	out["hosts"] = hosts
-	return out, nil
-}
-
-// hostShim: the fields of a host record the shims read.
+// hostShim: the fields of a host record the poll and dispatch read.
 type hostShim struct {
 	State  string `json:"state"`
 	Holder string `json:"holder"`
 }
 
-func hostRemoved(h doc) bool { return agentView[hostShim](h).State == "removed" }
-
-// hostMaySee, hostMayRun: projectID and director are a record's values (text, else none).
-func (a *App) hostMaySee(h doc, projectID any) bool {
-	p, _ := projectID.(string)
-	return a.holderMaySee(agentView[hostShim](h).Holder, p)
+// UnmarshalJSON: a field of another JSON type reads as absent.
+func (h *hostShim) UnmarshalJSON(b []byte) error {
+	type plain hostShim
+	return lenientDecode(b, (*plain)(h))
 }
 
-func (a *App) hostMayRun(h doc, projectID any, director any) bool {
+func (h *hostShim) removed() bool { return h.State == "removed" }
+
+// hostMayRun: h is a host record; projectID and director are a record's values (text, else none).
+func (a *App) hostMayRun(h any, projectID any, director any) bool {
 	p, _ := projectID.(string)
 	d, _ := director.(string)
 	return a.holderMayRun(agentView[hostShim](h).Holder, p, d)

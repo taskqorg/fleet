@@ -338,11 +338,11 @@ func sessionRename(q *Request, b *contract.SessionRenameRequest) (contract.Sessi
 	if uuidRe.MatchString(title) {
 		return contract.SessionRenameReply{}, fail(400, "A title names the work, never a UUID")
 	}
-	s, err := recGet[doc](q, recSession, sid)
+	s, err := recGet[agentSession](q, recSession, sid)
 	if err != nil {
 		return contract.SessionRenameReply{}, err
 	}
-	if err := directs(q, s); err != nil {
+	if err := sessionDirects(q, &s); err != nil {
 		return contract.SessionRenameReply{}, err
 	}
 	by := actor(q, "operator")
