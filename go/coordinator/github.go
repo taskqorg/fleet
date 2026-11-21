@@ -20,10 +20,45 @@ import (
 // githubPublicRepo: the one repository read without a key.
 const githubPublicRepo = "taskqorg/fleet"
 
+// keyedEntry holds the per-key mutex and active holder/waiter reference count for keyedLock.
+type keyedEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// keyedLock serializes callers per key and removes idle entries once the last holder or waiter unlocks.
+type keyedLock struct {
+	mu      sync.Mutex
+	entries map[string]*keyedEntry
+}
+
+func (k *keyedLock) lock(key string) func() {
+	k.mu.Lock()
+	if k.entries == nil {
+		k.entries = map[string]*keyedEntry{}
+	}
+	e := k.entries[key]
+	if e == nil {
+		e = &keyedEntry{}
+		k.entries[key] = e
+	}
+	e.refs++
+	k.mu.Unlock()
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		k.mu.Lock()
+		if e.refs--; e.refs == 0 {
+			delete(k.entries, key)
+		}
+		k.mu.Unlock()
+	}
+}
+
 var (
-	githubMu    sync.Mutex // guards githubCache and githubLocks, never held across a read
+	githubMu    sync.Mutex // guards githubCache and githubRefused, never held across a read
 	githubCache = map[string]githubCached{}
-	githubLocks = map[string]*sync.Mutex{}
+	githubLocks keyedLock
 	// githubRefused: when the key last failed per tool (guarded by githubMu); for 5 min that tool of the public
 	// repository is read publicly, so a key without a permission does not add a failed gateway call to every read.
 	githubRefused = map[string]time.Time{}
@@ -33,26 +68,17 @@ var (
 // run one at a time (a concurrent miss waits and gets the first one's reply); different keys never wait on each other,
 // so a slow screen (Runners reads jobs run by run) does not hold up Delivery's pass.
 func githubOnce(key string, ttl time.Duration, fetch func() ([]byte, error), keep func(error) bool) ([]byte, error) {
+	unlock := githubLocks.lock(key)
+	defer unlock()
 	githubMu.Lock()
 	if len(githubCache) > 2000 {
-		// ponytail: run_jobs adds a key per run; drop entries past every ttl (5 min) with their locks. A lock dropped
-		// while held lets one concurrent read through twice, nothing worse.
+		// ponytail: run_jobs adds a key per run; drop entries past every ttl (5 min).
 		for k, c := range githubCache {
 			if time.Since(c.at) > 10*time.Minute {
 				delete(githubCache, k)
-				delete(githubLocks, k)
 			}
 		}
 	}
-	l := githubLocks[key]
-	if l == nil {
-		l = &sync.Mutex{}
-		githubLocks[key] = l
-	}
-	githubMu.Unlock()
-	l.Lock()
-	defer l.Unlock()
-	githubMu.Lock()
 	c, ok := githubCache[key]
 	githubMu.Unlock()
 	if ok && time.Since(c.at) < ttl {
@@ -225,9 +251,9 @@ const readTokenTTL = 5 * time.Minute
 const readTokenGrace = 5 * time.Second
 
 var (
-	readTokMu    sync.Mutex                 // guards the maps and every readToken's fields, never held across a mint
-	readToks     = map[string]*readToken{}  // the current token of a connection and project
-	readTokLocks = map[string]*sync.Mutex{} // per connection and project, held across its mint
+	readTokMu    sync.Mutex                // guards readToks, readTokEnds and every readToken's fields, never held across a mint
+	readToks     = map[string]*readToken{} // the current token of a connection and project
+	readTokLocks keyedLock                 // per connection and project, held across its mint
 	// readTokEnds: every minted read token not yet revoked, by its execution (the current ones and those a newer token
 	// replaced while a read still held them).
 	readTokEnds = map[string]*readToken{}
@@ -280,15 +306,8 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 		return "", nil, fmt.Errorf("%s: connection-unavailable", connection)
 	}
 	key := connection + " " + project
-	readTokMu.Lock()
-	l := readTokLocks[key]
-	if l == nil {
-		l = &sync.Mutex{}
-		readTokLocks[key] = l
-	}
-	readTokMu.Unlock()
-	l.Lock() // concurrent reads of one key share its mint; other keys never wait
-	defer l.Unlock()
+	unlock := readTokLocks.lock(key) // concurrent reads of one key share its mint; other keys never wait
+	defer unlock()
 	readTokMu.Lock()
 	if t := readToks[key]; t != nil && time.Now().Before(t.until) {
 		t.users++
