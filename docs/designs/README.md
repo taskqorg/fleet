@@ -4,6 +4,7 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 
 * `fleet-data-foundation.md`: Postgres, typed tasks and executions, the artifact store, ingest, isolation, people and hosts, in phases. `fleet-data-foundation-brief.md` is its brief; `fleet-data-foundation-review/phase3/live-findings.md` holds live findings it cites.
 * `fleet-operator-app.md`: operator and architect workflows, the operator web app, live change feed and surviving retirement requirements.
+* `fleet-ia-and-journeys.md`: target 8-section information architecture (consolidating 15 routes), Lab-first evaluation model, core user journeys `J1`–`J5`, and agentic product-development method.
 * `fleet-view-urls-and-list-path.md`: view URLs and the list path.
 * `fleet-analytics.md`: `analytics_query` over work records and the price table.
 * `fleet-lab.md`: the Fleet Lab (experiments, examples, evaluators, Promote) and work analysis.
