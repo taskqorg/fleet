@@ -141,26 +141,27 @@ export type Family = keyof typeof states;
 export type StateOf<F extends Family> = keyof (typeof states)[F];
 
 /** Workspaces and their navigation anchors (OR-3), in nav order: the one list of screens. `app: true` marks a screen the
- * operator app has built; the app nav and routes, the build (manifests, service worker) and the coordinator's app routes
- * all follow it, so setting it (with the view in app/src/main.tsx) is all a new screen needs. */
+ * operator app has built; `nav: true` marks the 8 top-level sidebar sections (docs/designs/fleet-ia-and-journeys.md);
+ * the app routes, the build (manifests, service worker) and the coordinator's app routes follow `app`, while the rail
+ * renders `nav`. */
 export const workspaces = [
-  { id: 'overview', label: 'Overview', icon: 'house', group: 'Operator', app: true },
-  { id: 'tasks', label: 'Tasks', icon: 'list', group: 'Operator', app: true },
-  { id: 'conversations', label: 'Conversations', icon: 'messages-square', group: 'Operator', app: true },
-  { id: 'results', label: 'Results', icon: 'file-text', group: 'Operator', app: true },
-  { id: 'projects', label: 'Projects', icon: 'folder-open', group: 'Operator', app: true },
-  { id: 'spend', label: 'Spend', icon: 'gauge', group: 'Operator', app: true },
-  { id: 'delivery', label: 'Delivery', icon: 'git-merge', group: 'Operator', app: true },
-  { id: 'agents', label: 'Agents', icon: 'bot', group: 'Architect', app: true },
-  { id: 'pipelines', label: 'Pipelines', icon: 'network', group: 'Architect', app: true },
-  { id: 'catalogue', label: 'Catalogue', icon: 'rows-3', group: 'Architect', app: true },
-  { id: 'changes', label: 'Changes', icon: 'git-pull-request', group: 'Architect', app: true },
-  { id: 'hosts', label: 'Hosts', icon: 'panels-top-left', group: 'Architect', app: true },
-  { id: 'runners', label: 'Runners', icon: 'play', group: 'Architect', app: true },
-  { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', group: 'Architect', app: true },
-  { id: 'keys', label: 'API keys', icon: 'shield', group: 'Architect', app: true },
-  { id: 'access', label: 'Access', icon: 'shield', group: 'Architect', app: false },
-] as const satisfies readonly { id: string; label: string; icon: IconName; group: string; app: boolean }[];
+  { id: 'overview', label: 'Overview', icon: 'house', group: 'Work', app: true, nav: true },
+  { id: 'conversations', label: 'Conversations', icon: 'messages-square', group: 'Work', app: true, nav: true },
+  { id: 'projects', label: 'Projects', icon: 'folder-open', group: 'Work', app: true, nav: true },
+  { id: 'tasks', label: 'Tasks', icon: 'list', group: 'Work', app: true, nav: true },
+  { id: 'spend', label: 'Spend', icon: 'gauge', group: 'Work', app: true, nav: true },
+  { id: 'results', label: 'Results', icon: 'file-text', group: 'Work', app: true, nav: false },
+  { id: 'delivery', label: 'Delivery', icon: 'git-merge', group: 'Work', app: true, nav: false },
+  { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', group: 'System', app: true, nav: true },
+  { id: 'agents', label: 'Library', icon: 'rows-3', group: 'System', app: true, nav: true },
+  { id: 'hosts', label: 'Infrastructure', icon: 'panels-top-left', group: 'System', app: true, nav: true },
+  { id: 'pipelines', label: 'Pipelines', icon: 'network', group: 'System', app: true, nav: false },
+  { id: 'catalogue', label: 'Catalogue', icon: 'rows-3', group: 'System', app: true, nav: false },
+  { id: 'changes', label: 'Changes', icon: 'git-pull-request', group: 'System', app: true, nav: false },
+  { id: 'runners', label: 'Runners', icon: 'play', group: 'System', app: true, nav: false },
+  { id: 'keys', label: 'API keys', icon: 'shield', group: 'System', app: true, nav: false },
+  { id: 'access', label: 'Access', icon: 'shield', group: 'System', app: false, nav: false },
+] as const satisfies readonly { id: string; label: string; icon: IconName; group: string; app: boolean; nav: boolean }[];
 export type AppScreen = Extract<(typeof workspaces)[number], { app: true }>['id'];
 
 /** What an entity reference names (EntityCode, EntityCard; the coordinator's EntityKind): its word, icon and the state

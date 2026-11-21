@@ -4,7 +4,7 @@ import { captureRender, configureErrors } from './errors.ts';
 import { render, Component, type ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation, useSearch } from 'wouter-preact';
-import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, FocusControl, FocusPresets, type NavItem, type AppScreen, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
+import { AppShell, EntityCards, Empty, Button, ListDetail, TabBar, workspaces, matchSearch, FocusControl, FocusPresets, type NavItem, type AppScreen, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
 import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
@@ -87,7 +87,31 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   spend: { focus: false, view: () => <Spend /> },
 };
 const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
-const NAV: NavItem[] = BUILT;
+const NAV: NavItem[] = BUILT.filter(w => w.nav);
+type SubTab = { id: string; label: string };
+const SUB_NAVS = {
+  agents: {
+    label: 'Library sections',
+    tabs: [
+      { id: 'agents', label: 'Agents' },
+      { id: 'pipelines', label: 'Pipelines' },
+      { id: 'catalogue', label: 'Catalogue' },
+      { id: 'changes', label: 'Changes' },
+    ] as readonly SubTab[],
+  },
+  hosts: {
+    label: 'Infrastructure sections',
+    tabs: [
+      { id: 'hosts', label: 'Hosts' },
+      { id: 'runners', label: 'Runners' },
+      { id: 'keys', label: 'API keys' },
+    ] as readonly SubTab[],
+  },
+} as const;
+const PARENT_NAV: Record<string, keyof typeof SUB_NAVS> = {
+  agents: 'agents', pipelines: 'agents', catalogue: 'agents', changes: 'agents',
+  hosts: 'hosts', runners: 'hosts', keys: 'hosts',
+};
 // Each kind the server finds: its group label, icon, the registry state family of its hits, where a hit opens (a question
 // opens its task) and the list section that takes the same query (the "All N" row).
 type Hit = Ops['search']['reply']['hits'][number];
@@ -99,10 +123,23 @@ const KINDS: Record<Hit['kind'], { label: string; icon: IconName; family?: Famil
   conversation: { label: ws('conversations').label, icon: ws('conversations').icon, family: 'session', list: 'conversations', path: h => itemPath('conversations', h.id) },
   result: { label: ws('results').label, icon: ws('results').icon, family: 'artifact', list: 'results', path: h => itemPath('results', h.id) },
   project: { label: ws('projects').label, icon: ws('projects').icon, path: h => itemPath('projects', h.id) },
-  host: { label: ws('hosts').label, icon: ws('hosts').icon, path: h => itemPath('hosts', h.id) },
-  agent: { label: ws('agents').label, icon: ws('agents').icon, path: h => itemPath('agents', h.id) },
+  host: { label: 'Hosts', icon: ws('hosts').icon, path: h => itemPath('hosts', h.id) },
+  agent: { label: 'Agents', icon: 'bot', path: h => itemPath('agents', h.id) },
   pipeline: { label: ws('pipelines').label, icon: ws('pipelines').icon, path: h => itemPath('pipelines', h.id) },
 };
+
+/** Spotlight provider for deep-linked workspaces and consolidated sub-pages not shown directly in the 8-section rail. */
+const subPages = (go: (to: string) => void): SpotlightProvider => ({
+  id: 'pages',
+  label: 'Pages',
+  find: q => [
+    ...BUILT.filter(w => !w.nav).map(w => ({ id: w.id, label: w.label, icon: w.icon })),
+    { id: 'agents', label: 'Agents', icon: 'bot' as const },
+    { id: 'hosts', label: 'Hosts', icon: 'panels-top-left' as const },
+  ]
+    .filter(s => matchSearch(q, s.label))
+    .map(s => ({ key: 'sub:' + s.id, icon: s.icon, label: s.label, run: () => go('/' + s.id) })),
+});
 
 // The project focus (OR-34): '-' is work outside projects; an empty focus holds everything. The server marks hits outside it.
 const toggleFocus = (id: string) => { const f = prefs.value.focus; setFocus(f.includes(id) ? f.filter(x => x !== id) : [...f, id]); };
@@ -144,7 +181,11 @@ function App() {
   const [loc, go] = useLocation();
   const query = useSearch();
   const current = loc.split('/')[1] || 'overview';
-  const search = useRef((Object.keys(KINDS) as Hit['kind'][]).map(k => found(k, go))).current;
+  const parentNav = PARENT_NAV[current];
+  const activeNav = parentNav ?? current;
+  const subNav = parentNav ? SUB_NAVS[parentNav] : null;
+  const shellTitle = BUILT.find(w => w.id === activeNav)?.label ?? BUILT.find(w => w.id === current)?.label;
+  const search = useRef([subPages(go), ...(Object.keys(KINDS) as Hit['kind'][]).map(k => found(k, go))]).current;
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
   // Preferences load only after authorized baseline activation.
   // Focus and online check the person quietly (below); preferences changed elsewhere arrive as setting-change events.
@@ -206,7 +247,7 @@ function App() {
   // Unsent list group toggles are sent on the same section leave.
   const left = useRef<string | null>(null);
   useEffect(() => {
-    if (access.value.state !== 'open' || !prefsRead.value || !NAV.some(n => n.id === current)) return;
+    if (access.value.state !== 'open' || !prefsRead.value || !BUILT.some(n => n.id === current)) return;
     const parsed = (VIEWS as string[]).includes(current) ? parseView(loc + (query ? '?' + query : '')) : null;
     // The Overview keeps no view of its own: /overview?all (every project, from the outside-focus count) is never kept.
     noteView(current, parsed && current !== 'overview' ? formatView({ ...parsed, focus: undefined, sel: undefined }) : '/' + current);
@@ -229,14 +270,19 @@ function App() {
   const nav = NAV.map(n => counts[n.id] ? { ...n, count: counts[n.id] } : n);
   // Entity cards (EntityCode) read entity_card through the store; their Open goes to the in-app path.
   const cards = useMemo(() => entityCards(go), [go]);
-  return <EntityCards.Provider value={cards}><AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={nav} current={current} waiting={0} onGo={id => go(sectionPath(id))} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown}
+  return <EntityCards.Provider value={cards}><AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={nav} current={activeNav} title={shellTitle} waiting={0} onGo={id => go(sectionPath(id))} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown}
     searchIdle={<FocusPresets icon value={focus.filter(p => !ignored.includes(p))} presets={focusPresets} ignored={ignored} onChange={setFocus} />}
     focus={access.value.state === 'open' ? <Focus go={go} /> : undefined}
     widths={geometry.current.widths} onWidth={setWidth} collapsed={geometry.current.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={access.value.state === 'open' && user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
-    {access.value.state === 'open' ? <RenderBoundary at={access.value.generation + ':' + loc + '?' + query}><PrivateRoutes key={access.value.generation} go={go} /></RenderBoundary> : current === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}
+    {access.value.state === 'open' ? <>
+      {subNav && <nav aria-label={subNav.label} style={current === 'changes' || current === 'runners' ? { flex: 'none' } : { flex: 'none', background: 'var(--bg)', paddingInline: 'var(--space-4)' }}>
+        <TabBar cls="detail-tabs" label={subNav.label} tabs={subNav.tabs} value={current} onChange={id => go('/' + id)} />
+      </nav>}
+      <RenderBoundary at={access.value.generation + ':' + loc + '?' + query}><PrivateRoutes key={access.value.generation} go={go} /></RenderBoundary>
+    </> : current === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}
   </AppShell></EntityCards.Provider>;
 }
 
