@@ -1,7 +1,9 @@
-// Shared Lab use-case registry grouping, filtering, and slug helpers.
+// Shared Lab use-case registry grouping, filtering, tree mapping, and slug helpers.
+import type { ComponentChildren } from 'preact';
+import type { CatalogueTreeNode, IconName } from '../../../packages/ui/src/index.ts';
 import type { LabUseCaseEntry } from '../../../contracts/generated/ops.ts';
 
-export type RegistryUseCase = LabUseCaseEntry & { tags?: readonly string[] };
+export type RegistryUseCase = LabUseCaseEntry & { tags?: readonly string[]; expected_outcome?: string };
 
 export interface UseCaseCollection {
   key: 'benchmarks' | 'real-work' | 'fleet-projects';
@@ -77,4 +79,98 @@ export function useCaseOptionLabel(u: Pick<LabUseCaseEntry, 'id' | 'goal'>, maxG
   if (!goal) return u.id;
   const shortGoal = goal.length > maxGoal ? `${goal.slice(0, maxGoal - 1).trimEnd()}…` : goal;
   return `${u.id} · ${shortGoal}`;
+}
+
+export const USE_CASE_COLLECTION_PREFIX = 'col:';
+export const ARCHIVED_COLLECTION_ID = 'col:archived';
+
+const COLLECTION_TITLES: Record<UseCaseCollection['key'], string> = {
+  benchmarks: 'LLM Code Benchmarks',
+  'real-work': 'Real Work',
+  'fleet-projects': 'Fleet & Projects',
+};
+
+const COLLECTION_ICONS: Record<UseCaseCollection['key'], IconName> = {
+  benchmarks: 'chart-no-axes-column',
+  'real-work': 'list',
+  'fleet-projects': 'folder-open',
+};
+
+/** Resolve a CatalogueTree folder node id (`col:<key>`) back to its collection title, or null if unknown. */
+export function collectionTitleOf(folderId: string | null | undefined): string | null {
+  if (!folderId || !folderId.startsWith(USE_CASE_COLLECTION_PREFIX)) return null;
+  const key = folderId.slice(USE_CASE_COLLECTION_PREFIX.length);
+  if (key === 'archived') return 'Archived / Obsolete';
+  return (COLLECTION_TITLES as Record<string, string>)[key] ?? null;
+}
+
+export type UseCaseTreeOptions = {
+  /** Pinned use-case IDs hoisted into the top Pinned group (OR-12). */
+  pinnedIds?: readonly string[];
+  /** Optional right-aligned marker for each leaf node (e.g. score or run count). */
+  rightOf?: (u: RegistryUseCase) => ComponentChildren;
+  /** Optional right-aligned marker for each collection folder (e.g. best score). */
+  collectionRightOf?: (c: UseCaseCollection) => ComponentChildren;
+  /** Optional href for each leaf node. */
+  hrefOf?: (u: RegistryUseCase) => string;
+  /** Return archived entries in `archivedNodes` (for EntityPicker) instead of folding them at the bottom of `nodes`. */
+  separateArchived?: boolean;
+  /** Mark `lab_fit === 'none'` entries as disabled (e.g. when picking runnable Lab suites). */
+  eligibleOnly?: boolean;
+};
+
+/** Map grouped use cases into 2-level `CatalogueTreeNode[]` (<= 3 levels, `OR-12`, `OR-22`). */
+export function buildUseCaseTree(
+  useCases: readonly RegistryUseCase[],
+  opts: UseCaseTreeOptions = {},
+): { nodes: CatalogueTreeNode[]; archivedNodes: CatalogueTreeNode[] } {
+  const { collections, archived } = groupUseCases(useCases);
+  const pinnedSet = new Set(opts.pinnedIds ?? []);
+
+  const leafOf = (u: RegistryUseCase): CatalogueTreeNode => {
+    const disabled = !!opts.eligibleOnly && !isLabEligibleUseCase(u);
+    return {
+      id: u.id,
+      label: u.goal,
+      sub: u.id,
+      state: {
+        family: 'source',
+        state: u.source_status || 'current',
+        reason: u.source ? `${u.source.repo}/${u.source.path}#${u.source.anchor}` : undefined,
+      },
+      pinned: pinnedSet.has(u.id),
+      right: opts.rightOf?.(u),
+      href: opts.hrefOf?.(u),
+      disabled: disabled || undefined,
+      disabledReason: disabled ? 'Not runnable in Lab (lab_fit: none)' : undefined,
+      searchText: [u.id, u.goal, u.status, u.lab_fit, u.maturity, ...(u.tags ?? []), ...(u.maps_to ?? [])]
+        .filter(Boolean)
+        .join(' '),
+    };
+  };
+
+  const nodes: CatalogueTreeNode[] = collections.map(c => ({
+    id: `${USE_CASE_COLLECTION_PREFIX}${c.key}`,
+    label: c.title,
+    icon: COLLECTION_ICONS[c.key],
+    defaultCollapsed: false,
+    right: opts.collectionRightOf?.(c),
+    children: c.items.map(leafOf),
+  }));
+
+  const archivedFolder: CatalogueTreeNode | null = archived.length
+    ? {
+        id: ARCHIVED_COLLECTION_ID,
+        label: 'Archived / Obsolete',
+        icon: 'archive',
+        defaultCollapsed: !opts.separateArchived,
+        children: archived.map(leafOf),
+      }
+    : null;
+
+  const archivedNodes = archivedFolder ? [archivedFolder] : [];
+  if (archivedFolder && !opts.separateArchived) {
+    nodes.push(archivedFolder);
+  }
+  return { nodes, archivedNodes };
 }
