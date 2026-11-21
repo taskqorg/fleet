@@ -23,47 +23,37 @@ try {
   const p = await context.newPage();
   const errors: string[] = []; p.on('pageerror', e => errors.push(e.message));
   let posts = 0; p.on('request', r => { if (r.url().endsWith('/api/ops/lab_experiment_create')) posts++; });
-  let checkPostCommitFocus = true;
-  const pick = async (button: string | RegExp, group: string, id: string, multiple = false) => {
-    await p.getByRole('button', { name: button, exact: typeof button === 'string' }).click();
-    await p.getByRole('searchbox', { name: `Search ${group}` }).fill(id);
-    const row = p.getByRole('grid', { name: group, exact: true }).getByRole('row').filter({ has: p.locator('.id', { hasText: new RegExp('^' + id + '$') }) });
-    if (group === 'Projects') {
-      const holdFrames = checkPostCommitFocus; checkPostCommitFocus = false;
-      await row.getByRole('button').focus();
-      if (holdFrames) await p.evaluate(() => {
-        const request = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
-        let next = 0; const frames = new Map<number, FrameRequestCallback>();
-        window.requestAnimationFrame = cb => { const id = --next; frames.set(id, cb); return id; };
-        window.cancelAnimationFrame = id => { if (id < 0) frames.delete(id); else cancel.call(window, id); };
-        (window as any).releaseLabFocusFrames = () => {
-          window.requestAnimationFrame = request; window.cancelAnimationFrame = cancel;
-          for (const cb of frames.values()) request.call(window, cb);
-          delete (window as any).releaseLabFocusFrames;
-        };
-      });
-      try {
-        await p.keyboard.press('Enter');
-        if (holdFrames) {
-          // R3; risk: returning focus waits for an animation frame or runs before the disabled form commits.
-          await p.getByRole('searchbox', { name: 'Search Projects' }).waitFor({ state: 'detached' });
-          assert.ok(await p.getByRole('button', { name: /^Project:/ }).evaluate(e => document.activeElement === e && !e.matches(':disabled')));
-        }
-      } finally { if (holdFrames) await p.evaluate(() => (window as any).releaseLabFocusFrames?.()); }
-    } else await row.getByRole('button').click();
-    if (group === 'Projects') await p.waitForFunction(() => document.activeElement?.textContent?.startsWith('Project:'));
-    if (multiple) await p.getByRole('button', { name: 'Done choosing', exact: true }).click();
+  const pickerOf = (label: string) =>
+    p.locator('[data-ui="entity-picker"]').filter({ has: p.locator('.ep-label', { hasText: new RegExp(`^${label}$`) }) });
+  const pick = async (label: string, searchName: string, id: string, multiple = false) => {
+    const picker = pickerOf(label);
+    const trigger = picker.locator('button.ep-btn');
+    await trigger.click();
+    await picker.getByRole('searchbox', { name: searchName }).fill(id);
+    const item = picker.getByRole('tree', { name: label, exact: true }).locator(`[role="treeitem"][data-node-id="${id}"]`);
+    if (label === 'Project') {
+      await item.focus();
+      await p.keyboard.press('Enter');
+      await picker.getByRole('searchbox', { name: searchName }).waitFor({ state: 'detached' });
+      await p.waitForFunction(el => !!el && document.activeElement === el && !el.hasAttribute('aria-disabled'), await trigger.elementHandle());
+    } else {
+      await item.click();
+      if (multiple) {
+        await picker.getByRole('button', { name: 'Done', exact: true }).click();
+        await picker.getByRole('searchbox', { name: searchName }).waitFor({ state: 'detached' });
+      }
+    }
   };
   const fill = async (kind: 'single' | 'ab' | 'loop') => {
     await p.goto(origin + '/lab/new');
-    await pick(/^Project:/, 'Projects', 'hello-world');
-    await pick(/^Pipeline:/, 'Pipelines', 'typed-decision');
+    await pick('Project', 'Search projects', 'hello-world');
+    await pick('Pipeline', 'Search pipelines', 'typed-decision');
     await p.getByRole('group', { name: 'Experiment kind', exact: true }).getByRole('button', { name: kind, exact: true }).click();
-    await pick(/^Approved examples:/, 'Approved examples', exampleId, true);
+    await pick('Approved examples', 'Search approved examples', exampleId, true);
     await p.getByRole('textbox', { name: 'Goal', exact: true }).fill('Create only; retain the real experiment record');
     await p.getByRole('textbox', { name: 'Hypothesis', exact: true }).fill('Draft creation performs no execution or provider work');
     if (kind === 'ab') { await p.getByRole('button', { name: 'Add variant', exact: true }).click(); await p.getByRole('textbox', { name: 'Variant 2 label', exact: true }).fill('B'); }
-    if (kind === 'loop') { await p.getByRole('button', { name: 'Add evaluator', exact: true }).click(); await pick(/^Primary evaluator:/, 'Primary evaluators', 'script:example.checks:pass_fail'); }
+    if (kind === 'loop') { await p.getByRole('button', { name: 'Add evaluator', exact: true }).click(); await pick('Primary evaluator', 'Search evaluators', 'script:example.checks:pass_fail'); }
   };
   mkdirSync('design-report', { recursive: true });
   const created = async () => { await p.getByRole('button', { name: 'Create draft', exact: true }).click(); await p.waitForURL(/\/lab\/[a-f0-9-]+$/); await p.getByRole('button', { name: 'Launch', exact: true }).waitFor(); };
@@ -71,21 +61,21 @@ try {
     ? route.fulfill({ json: { examples: [] } }) : route.continue());
   const emptyRead = p.waitForResponse(r => r.url().endsWith('/api/ops/lab_examples_list') && r.request().postDataJSON()?.state === 'approved');
   await p.goto(origin + '/lab/new'); await emptyRead;
-  await p.getByRole('button', { name: /^Approved examples:/ }).click();
-  await p.getByText('No available choices. Check access and the required definitions or approved examples.', { exact: true }).waitFor();
+  await pickerOf('Approved examples').locator('button.ep-btn').click();
+  await pickerOf('Approved examples').getByText('No items.', { exact: true }).waitFor();
   assert.equal(await p.getByRole('button', { name: 'Create draft', exact: true }).getAttribute('aria-disabled'), 'true');
   await p.unroute('**/api/ops/lab_examples_list');
   await p.goto(origin + '/lab');
   await p.getByRole('button', { name: 'New experiment', exact: true }).click();
   await p.getByRole('button', { name: 'Create draft', exact: true }).waitFor();
-  // The sidebar invoker is recreated after choosing; focus must return to its current button, not a detached node.
-  const startProject = p.getByRole('button', { name: 'Choose project', exact: true });
-  await startProject.click();
-  await p.getByRole('searchbox', { name: 'Search Projects' }).fill('hello-world');
-  await p.getByRole('grid', { name: 'Projects', exact: true }).getByRole('row').filter({ has: p.locator('.id', { hasText: /^hello-world$/ }) }).getByRole('button').focus();
+  // Focus returns to the invoking EntityPicker trigger after choosing via keyboard.
+  const projectTrigger = pickerOf('Project').locator('button.ep-btn');
+  await projectTrigger.click();
+  await pickerOf('Project').getByRole('searchbox', { name: 'Search projects' }).fill('hello-world');
+  await pickerOf('Project').getByRole('tree', { name: 'Project', exact: true }).locator('[role="treeitem"][data-node-id="hello-world"]').focus();
   await p.keyboard.press('Enter');
-  await p.getByRole('searchbox', { name: 'Search Projects' }).waitFor({ state: 'detached' });
-  assert.ok(await startProject.evaluate(e => document.activeElement === e));
+  await pickerOf('Project').getByRole('searchbox', { name: 'Search projects' }).waitFor({ state: 'detached' });
+  await p.waitForFunction(el => document.activeElement === el, await projectTrigger.elementHandle());
   // All server-supported kinds remain available, and creating any of them never launches.
   for (const kind of ['single', 'ab', 'loop'] as const) {
     if (kind === 'single') await p.setViewportSize({ width: 600, height: 900 });
@@ -141,27 +131,27 @@ try {
   await p.getByRole('button', { name: 'Discard local draft', exact: true }).click();
   await p.getByRole('textbox', { name: 'Goal', exact: true }).fill('Actor-scoped draft');
   await p.reload();
-  await p.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent?.startsWith('Project:') && !b.hasAttribute('aria-disabled')));
+  await pickerOf('Project').locator('button.ep-btn:not([aria-disabled])').waitFor();
   assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), 'Actor-scoped draft');
   // Grant change invalidates the key even if another tab already updated the common grant marker.
-  await p.getByRole('button', { name: /^Project:/ }).click();
-  await p.getByRole('searchbox', { name: 'Search Projects' }).waitFor();
+  await pickerOf('Project').locator('button.ep-btn').click();
+  await pickerOf('Project').getByRole('searchbox', { name: 'Search projects' }).waitFor();
   await p.route('**/api/ops/me', async route => { const response = await route.fetch(); const m = await response.json(); await route.fulfill({ json: { ...m, grantsVersion: 'changed-for-fixture' } }); });
   // Focus checks the person quietly; the changed grants in its reply fence (the picker closes), then the draft returns.
   const meChanged = p.waitForResponse(r => r.url().endsWith('/api/ops/me'));
   await p.evaluate(() => window.dispatchEvent(new Event('focus'))); await meChanged;
-  await p.getByRole('grid', { name: 'Projects', exact: true }).waitFor({ state: 'detached' });
+  await pickerOf('Project').getByRole('tree', { name: 'Project', exact: true }).waitFor({ state: 'detached' });
   await p.waitForFunction(() => [...document.querySelectorAll('textarea')].some(input => input.value === 'Actor-scoped draft'));
   assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), 'Actor-scoped draft', 'same actor input survives fresh target authorization after changed grants');
-  assert.equal(await p.getByRole('grid', { name: 'Projects', exact: true }).count(), 0);
-  assert.equal(await p.getByRole('searchbox', { name: 'Search Projects' }).count(), 0);
+  assert.equal(await pickerOf('Project').getByRole('tree', { name: 'Project', exact: true }).count(), 0);
+  assert.equal(await pickerOf('Project').getByRole('searchbox', { name: 'Search projects' }).count(), 0);
   assert.deepEqual(counts(), before);
   await p.unroute('**/api/ops/me');
   await p.goto(origin + '/lab/new');
   await p.getByRole('textbox', { name: 'Goal', exact: true }).fill('Only the original actor may restore this');
   await p.route('**/api/ops/me', async route => { const response = await route.fetch(); const m = await response.json(); await route.fulfill({ json: { ...m, email: 'agents@trial.test' } }); });
   await p.reload();
-  await p.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent?.startsWith('Project:') && !b.hasAttribute('aria-disabled')));
+  await pickerOf('Project').locator('button.ep-btn:not([aria-disabled])').waitFor();
   assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), '');
   assert.equal(await p.evaluate(() => Object.keys(sessionStorage).some(k => k === 'fleet-lab-create:' + JSON.stringify([1, 'owner@trial.test']))), true, 'original actor input remains quarantined');
   await context.close();
