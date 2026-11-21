@@ -2,7 +2,17 @@
 
 **App routes:** `/projects` and `/projects/:id` in the operator app (`app/src/views/projects.tsx`). The app checks (`tests/ui/projects.check.ts`, `tests/ui/app.check.ts`) verify them. There is no static mockup.
 
-Projects are the operator's configured work context. The control column lists authorized projects; create, analytics overview, and detail open in the work area. Use only packages/ui controls. Creation, current saved revision and resource readiness are distinct facts.
+Projects are the operator's configured work context. The control column lists authorized projects; create, analytics overview, and tabbed detail (`ProjectDetail`) open in the work area. Use only packages/ui controls. Creation, current saved revision and resource readiness are distinct facts.
+
+**Project detail tabs (`TabBar` in `ProjectDetail`).**
+When an existing project is opened at `/projects/:id`, `ProjectDetail` organizes the work area with a shared [`TabBar`](../patterns/navigation-and-columns.md) across four tabs (preserving a single vertical scroller per `OR-25`):
+* **Work & Rules** (default): Preserves the `ProjectEditor` sections (header save/reload, Context, Repository, Environment, Agent roles, Readiness with `Open PM conversation`, Initial access, Project resources, and Resource analytics), followed by active project tasks/executions (`task_page`, `executions_list`, and quick link to `/tasks?project=...`) and the `OR-45 Diff from default` settings overview.
+* **Methods**: Reads scoped `catalogue` evidence for the project (`recommendedMethod`, `recommendationSource`, `sharedDefault`, and `methods` list with lifecycle status, Lab assessment quality/time/cost, and `recommendation_set`), highlighting when the project overrides `sharedDefault`, plus links to `/catalogue` and `/lab`.
+* **Delivery**: Reads project-filtered pull requests via `delivery_status` (`projectIds: [projectId]`) with stage `StateCounters`, search, and `DataTable` rows linking to `/delivery/:id` and `/delivery?q=project%3A...`.
+* **Results**: Reads project-filtered stored results and artifacts via `artifact_list` (`projectIds: [projectId]`) with artifact `StateCounters`, search, `Latest` row list linking to `/results/:id`, and a quick link to `/results?project=...`.
+
+**Settings from defaults (`OR-45 Diff from default`).**
+Within `Work & Rules`, `ProjectSettingsDiff` compares the project's resolved and authored settings against shared project defaults (`worktree`, `scripts`, `setupStart`, `integration`, `cleanup`, `identity`, `subscriptions`, `execution`, `errors`, `presets`, `contextSources`, `artifact_locations`, `artifact_rules`, `roles`, `repos`, `environments`, `capability`, `recommendedMethod`). Customized settings appear prominently with `default → override` values and an `override` badge; unchanged inherited defaults stay collapsed inside a single `<Disclosure summary="Inherited defaults (N)">`.
 
 **Resource analytics (`analytics_query` and `ProjectContextReply.resources`).**
 * **Workspace overview (`/projects`) and project detail (`/projects/:id`):** Renders unified resource accounting for the selected project (or across authorized projects in the overview) via `analytics_query` (`window`, `dimensions`, `measures`, `filters`, optional `projectId`).
