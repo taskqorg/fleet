@@ -191,6 +191,7 @@ func (e *lawEnv) open() {
 		e.t.Fatal(err)
 	}
 	e.st, e.a = st, &App{store: st}
+	st.app = e.a
 	cfg := st.pool.Config()
 	dial := cfg.ConnConfig.DialFunc
 	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -204,6 +205,7 @@ func (e *lawEnv) open() {
 		e.t.Fatal(err)
 	}
 	e.lost = &App{store: &Store{pool: e.lostPool, readPool: st.readPool}}
+	e.lost.store.app = e.lost
 	lawAttach(e, e.a)
 	lawAttach(e, e.lost)
 }
@@ -314,9 +316,9 @@ func (e *lawEnv) checkProgress() {
 	e.t.Helper()
 	for _, p := range e.strings(`SELECT project_id FROM resource_project_summary ORDER BY 1`) {
 		var s resourcePreparedState
-		err := e.st.Tx(e.ctx, nil, false, NOLOCK, func(tx pgx.Tx) error {
+		err := e.st.Read(e.ctx, nil, func(q *Request) error {
 			var err error
-			s, err = resourceReadPrepared(backgroundRequest(e.ctx, e.a, tx), p)
+			s, err = resourceReadPrepared(q, p)
 			return err
 		})
 		if err != nil {
@@ -710,12 +712,12 @@ func (e *lawEnv) checkExactlyOnce() {
 	for _, id := range e.executions() {
 		var raw []byte
 		var stored, method, frozen *string
-		err := e.st.Tx(e.ctx, nil, false, NOLOCK, func(tx pgx.Tx) error {
+		err := e.st.Read(e.ctx, nil, func(q *Request) error {
 			var err error
-			if raw, err = lawSource(e.ctx, tx, id); err != nil {
+			if raw, err = lawSource(e.ctx, q.tx, id); err != nil {
 				return err
 			}
-			err = tx.QueryRow(e.ctx, `SELECT c.source_sha,c.method_sha,v.method_sha FROM resource_contribution c LEFT JOIN resource_valuation v USING(execution_id) WHERE c.execution_id=$1`, id).Scan(&stored, &method, &frozen)
+			err = q.tx.QueryRow(e.ctx, `SELECT c.source_sha,c.method_sha,v.method_sha FROM resource_contribution c LEFT JOIN resource_valuation v USING(execution_id) WHERE c.execution_id=$1`, id).Scan(&stored, &method, &frozen)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
@@ -742,13 +744,12 @@ func (e *lawEnv) checkExactlyOnce() {
 		var h contract.PreparedHeaderV1
 		var stored []byte
 		var roll contract.ResourceSummary
-		err := e.st.Tx(e.ctx, nil, false, NOLOCK, func(tx pgx.Tx) error {
-			q := backgroundRequest(e.ctx, e.a, tx)
+		err := e.st.Read(e.ctx, nil, func(q *Request) error {
 			var err error
 			if h, err = resourcePreparedHeader(q, p); err != nil {
 				return err
 			}
-			if err = tx.QueryRow(e.ctx, `SELECT header FROM resource_project_summary WHERE project_id=$1`, p).Scan(&stored); err != nil {
+			if err = q.tx.QueryRow(e.ctx, `SELECT header FROM resource_project_summary WHERE project_id=$1`, p).Scan(&stored); err != nil {
 				return err
 			}
 			roll, err = projectResources(q, p)
@@ -792,7 +793,7 @@ func (e *lawEnv) checkSupport() {
 	}
 	for _, p := range lawProjects {
 		var actual, replayed string
-		err := runTxLocksOnce(e.ctx, e.a, nil, true, []string{"project:" + p}, func(q *Request) error {
+		err := e.a.store.Write(e.ctx, nil, []string{"project:" + p}, func(q *Request) error {
 			var err error
 			if actual, err = support(q, p); err != nil {
 				return err

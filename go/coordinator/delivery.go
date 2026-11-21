@@ -184,7 +184,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 	keyed := false // any repository read with a key
 	var versions []string
 	var recordedUI []ghRelease
-	err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+	err := a.store.Read(ctx, nil, func(q *Request) error {
 		ids, err := projectIDs(q)
 		if err != nil {
 			return err
@@ -227,7 +227,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 	// date, and a ui-* tag sorts among older native ones, past the 30 the releases read returns (#626). Extra evidence
 	// only, in its own transaction: a failed read leaves the pass as it was.
 	if byKey[strings.ToLower(githubPublicRepo)] != nil {
-		if rerr := runTx(ctx, a, nil, false, "", func(q *Request) error {
+		if rerr := a.store.Read(ctx, nil, func(q *Request) error {
 			recordedUI = nil // a retried transaction starts over
 			rs, err := q.db().DeliveryUIReleasePayloads(q.ctx())
 			for _, r := range rs {
@@ -359,7 +359,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 		}
 	}
 	if len(changed) > 0 {
-		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			for id := range changed {
 				if err := q.db().DeliveryStatePut(q.ctx(), db.DeliveryStatePutParams{ID: "delivery-state:" + id, ProjectID: id, RefreshedAt: next.refreshedAt}); err != nil {
 					return err
@@ -622,7 +622,7 @@ func versionLess(a, b string) bool {
 // hours. Written without a change row: nobody watches samples live, the page reads them with the status.
 func deliverySamples(ctx context.Context, a *App, counts map[string]map[string]int64, now time.Time) ([]contract.DeliverySample, error) {
 	out := []contract.DeliverySample{}
-	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+	err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		for k, c := range counts { // per "<first project> <owner/repo>": one sample per repository
 			p, repo, _ := strings.Cut(k, " ")
 			if err := q.db().DeliverySampleAdd(q.ctx(), db.DeliverySampleAddParams{ProjectID: p, Repo: &repo, At: now, Payload: jsonBytes(c)}); err != nil {

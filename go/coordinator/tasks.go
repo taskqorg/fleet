@@ -379,7 +379,7 @@ func init() {
 	// At start: every idle task, one transaction each, so one bad task neither rolls back nor blocks the others.
 	onStart(func(ctx context.Context, a *App) {
 		var ids []string
-		if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
+		if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
 			ids, err = q.db().TaskOpenIDs(q.ctx())
 			return
 		}); err != nil {
@@ -389,7 +389,7 @@ func init() {
 		n := 0
 		for _, id := range ids {
 			asked := false
-			if err := runTx(ctx, a, nil, true, "", func(q *Request) (err error) { asked, err = settleIdleTask(q, id); return }); err != nil {
+			if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) (err error) { asked, err = settleIdleTask(q, id); return }); err != nil {
 				log.Printf("settle idle task %s: %v", id, err)
 			} else if asked {
 				n++

@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"testing"
 )
 
@@ -22,8 +21,8 @@ func TestAccessCacheCommitRollbackAndConcurrentRead(t *testing.T) {
 	entered, finish := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- e.appStore.Tx(e.ctx, nil, true, "", func(tx pgx.Tx) error {
-			if _, err := tx.Exec(e.ctx, "UPDATE person SET name='changed' WHERE email=$1", testOwnerEmail); err != nil {
+		done <- e.appStore.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+			if _, err := q.tx.Exec(e.ctx, "UPDATE person SET name='changed' WHERE email=$1", testOwnerEmail); err != nil {
 				return err
 			}
 			close(entered)
@@ -45,8 +44,8 @@ func TestAccessCacheCommitRollbackAndConcurrentRead(t *testing.T) {
 		t.Fatalf("stale access after commit: %+v %v", after, err)
 	}
 	aborted := errors.New("rollback")
-	err = e.appStore.Tx(e.ctx, nil, true, "", func(tx pgx.Tx) error {
-		if _, err := tx.Exec(e.ctx, "DELETE FROM person WHERE email=$1", testOwnerEmail); err != nil {
+	err = e.appStore.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		if _, err := q.tx.Exec(e.ctx, "DELETE FROM person WHERE email=$1", testOwnerEmail); err != nil {
 			return err
 		}
 		return aborted
@@ -71,7 +70,7 @@ func TestAuthCacheHostRotationDeletionAndPersonRegrant(t *testing.T) {
 	rotated := "rotated-test-secret"
 	write := func(sql string, args ...any) {
 		t.Helper()
-		if err := e.appStore.Tx(e.ctx, nil, true, NOLOCK, func(tx pgx.Tx) error { _, err := tx.Exec(e.ctx, sql, args...); return err }); err != nil {
+		if err := e.appStore.Write(e.ctx, nil, nil, func(q *Request) error { _, err := q.tx.Exec(e.ctx, sql, args...); return err }); err != nil {
 			t.Fatal(err)
 		}
 	}

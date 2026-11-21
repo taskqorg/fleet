@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -245,7 +244,7 @@ func openTestCoordinator(t *testing.T, withDispatchLoop bool) *testCoordEnv {
 		t.Fatalf("loadPeople: %v", err)
 	}
 	files, broken := shippedDefinitions()
-	if err := runTx(ctx, a, nil, true, GLOBAL, func(q *Request) error {
+	if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		return reconcileDefinitions(q, files, broken, "test")
 	}); err != nil {
 		t.Fatalf("reconcileDefinitions: %v", err)
@@ -377,7 +376,8 @@ func TestLockOrderAnd64BitHashing(t *testing.T) {
 	}
 
 	env := openTestCoordinator(t, false)
-	if err := env.appStore.TxLocks(env.ctx, nil, true, []string{"execution:ex-check", "session:sess-check"}, func(tx pgx.Tx) error {
+	if err := env.appStore.Write(env.ctx, nil, []string{"execution:ex-check", "session:sess-check"}, func(q *Request) error {
+		tx := q.tx
 		if !txHasLock(tx, "session:sess-check") || !txHasLock(tx, "execution:ex-check") {
 			t.Fatal("expected txHasLock true for pre-acquired locks")
 		}
@@ -405,7 +405,7 @@ func TestLockOrderAnd64BitHashing(t *testing.T) {
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("TxLocks: %v", err)
+		t.Fatalf("Write: %v", err)
 	}
 }
 
@@ -427,11 +427,11 @@ func TestLabRequesterNoGlobalDeadlock(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for time.Now().Before(deadline) {
-				err := env.appStore.Tx(env.ctx, nil, true, GLOBAL, func(tx pgx.Tx) error {
-					if _, err := tx.Exec(env.ctx, "UPDATE person SET name=name WHERE email=$1", testOwnerEmail); err != nil {
+				err := env.appStore.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+					if _, err := q.tx.Exec(env.ctx, "UPDATE person SET name=name WHERE email=$1", testOwnerEmail); err != nil {
 						return err
 					}
-					_, err := tx.Exec(env.ctx, "SELECT id FROM experiment WHERE id='exp-1' FOR SHARE")
+					_, err := q.tx.Exec(env.ctx, "SELECT id FROM experiment WHERE id='exp-1' FOR SHARE")
 					return err
 				})
 				if err != nil {
@@ -444,7 +444,7 @@ func TestLabRequesterNoGlobalDeadlock(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for time.Now().Before(deadline) {
-				err := runTx(env.ctx, env.app, nil, true, "experiment:exp-1", func(q *Request) error {
+				err := env.app.store.Write(env.ctx, nil, []string{"experiment:exp-1"}, func(q *Request) error {
 					var id string
 					if err := q.tx.QueryRow(q.ctx(), "SELECT id FROM experiment WHERE id='exp-1' FOR UPDATE").Scan(&id); err != nil {
 						return err
@@ -549,7 +549,7 @@ func TestConcurrentHostPollsReceiptsMessagesNoGlobalContention(t *testing.T) {
 	releaseGlobal := make(chan struct{})
 	globalDone := make(chan error, 1)
 	go func() {
-		globalDone <- env.appStore.Tx(env.ctx, nil, true, GLOBAL, func(tx pgx.Tx) error {
+		globalDone <- env.appStore.Write(env.ctx, nil, []string{GLOBAL}, func(_ *Request) error {
 			close(globalHeld)
 			select {
 			case <-releaseGlobal:
@@ -746,7 +746,7 @@ func TestHeartbeatDebounceAndOnlineOverlay(t *testing.T) {
 		t.Fatal(err)
 	}
 	var online bool
-	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+	if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 		dctx, err := loadDispatchContext(q)
 		if err != nil {
 			return err
@@ -796,7 +796,7 @@ func TestHeartbeatDebounceAndOnlineOverlay(t *testing.T) {
 func TestDispatchLoopAndEnvCacheInvalidation(t *testing.T) {
 	env := openTestCoordinator(t, true)
 	var g0 uint64
-	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+	if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 		envs1, err := env.app.projectEnvironmentsCached(q)
 		if err != nil {
 			return err
@@ -825,7 +825,7 @@ func TestDispatchLoopAndEnvCacheInvalidation(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 10 {
-				if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+				if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 					_, err := env.app.projectEnvironmentsCached(q)
 					return err
 				}); err != nil {
@@ -839,7 +839,7 @@ func TestDispatchLoopAndEnvCacheInvalidation(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range 5 {
-			if err := runTx(env.ctx, env.app, nil, true, GLOBAL, func(q *Request) error {
+			if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 				invalidateEnvCacheOnCommit(q)
 				return nil
 			}); err != nil {
@@ -946,8 +946,8 @@ func TestNoOpStoreTriggerSuppression(t *testing.T) {
 	storesPayload := []any{
 		doc{"id": "store-trig-1", "capacityBytes": float64(1000), "usedBytes": float64(250), "reachable": true},
 	}
-	if err := s.Tx(ctx, nil, true, "host:h-trig", func(tx pgx.Tx) error {
-		return storesObserve(ctx, tx, "h-trig", storesPayload)
+	if err := s.Write(ctx, nil, []string{"host:h-trig"}, func(q *Request) error {
+		return storesObserve(ctx, q.tx, "h-trig", storesPayload)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -956,8 +956,8 @@ func TestNoOpStoreTriggerSuppression(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(15 * time.Millisecond)
-	if err := s.Tx(ctx, nil, true, "host:h-trig", func(tx pgx.Tx) error {
-		return storesObserve(ctx, tx, "h-trig", storesPayload)
+	if err := s.Write(ctx, nil, []string{"host:h-trig"}, func(q *Request) error {
+		return storesObserve(ctx, q.tx, "h-trig", storesPayload)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1009,7 +1009,7 @@ func TestDispatchContextUsesItsTransactionConnection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(env.ctx, 10*time.Second)
 	defer cancel()
 	// As dispatchPass: a writing transaction under the global lock, on the write pool's last free connection.
-	err := runTx(ctx, env.app, nil, true, GLOBAL, func(q *Request) error {
+	err := env.app.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		_, err := loadDispatchContext(q)
 		return err
 	})

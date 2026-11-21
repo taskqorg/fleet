@@ -139,7 +139,7 @@ func TestSessionTitles(t *testing.T) {
 		t.Fatalf("failed call: %v", got)
 	}
 	// A writer that read the session before the title and puts it back keeps the title (convPut).
-	if err := runTx(e.ctx, e.app, nil, true, NOLOCK, func(q *Request) error {
+	if err := e.app.store.Write(e.ctx, nil, nil, func(q *Request) error {
 		return recWrite(q, recSession, doc{"id": "s-done", "createdAt": 1, "workingDirectory": "/w"})
 	}); err != nil {
 		t.Fatal(err)

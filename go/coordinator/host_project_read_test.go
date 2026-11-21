@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // Requirement: a native agent's read project operation (project_context) answers without the GLOBAL lock, like the ops
@@ -67,7 +65,7 @@ func TestHostReadProjectOperationSkipsGlobal(t *testing.T) {
 	if cmdID == "" {
 		t.Fatalf("no command for %s: %v", execID, cmds)
 	}
-	if err := runTx(env.ctx, env.app, nil, true, GLOBAL, func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		s, err := recGet[doc](q, recSession, sid)
 		if err != nil {
 			return err
@@ -80,7 +78,7 @@ func TestHostReadProjectOperationSkipsGlobal(t *testing.T) {
 
 	held, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	go func() {
-		done <- env.appStore.Tx(env.ctx, nil, true, GLOBAL, func(tx pgx.Tx) error {
+		done <- env.appStore.Write(env.ctx, nil, []string{GLOBAL}, func(_ *Request) error {
 			close(held)
 			select {
 			case <-release:

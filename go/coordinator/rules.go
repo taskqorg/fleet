@@ -107,7 +107,7 @@ func rulesPass(ctx context.Context, a *App) error {
 		ps = append(ps, p)
 		execs = append(execs, f.ExecutionId)
 	}
-	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+	if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		for i := range ps {
 			if execs[i] != nil && ps[i].ProjectID != "" {
 				// A project cause goes to the project's director: the execution's directedBy.
@@ -241,7 +241,7 @@ func spanRules(ctx context.Context) ([]contract.Finding, error) {
 func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]bool, error) {
 	var out []contract.Finding
 	active := map[string]bool{}
-	err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+	err := a.store.Read(ctx, nil, func(q *Request) error {
 		stores, err := q.db().RulesStoresDown(q.ctx())
 		if err != nil {
 			return err

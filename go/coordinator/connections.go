@@ -280,7 +280,7 @@ func writeSnapshot(ctx context.Context, a *App) error {
 	snapshotMu.Lock()
 	defer snapshotMu.Unlock()
 	var s contract.GatewaySnapshot
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) { s, err = connSnapshot(q); return }); err != nil {
+	if err := a.store.Read(ctx, nil, func(q *Request) (err error) { s, err = connSnapshot(q); return }); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(gatewayDir(), 0o750); err != nil {
@@ -987,7 +987,7 @@ func connectionsTokenRevoke(q *Request, r *contract.ConnectionsTokenRevokeReques
 func init() {
 
 	onStart(func(ctx context.Context, a *App) {
-		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			if err := revokeSteps(q); err != nil {
 				return err
 			}
@@ -1247,7 +1247,7 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 		// Rows already recorded, with their transfer phase ("" for a one-line call).
 		existing := map[string]string{}
 		if len(callIDs) > 0 {
-			if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+			if err := a.store.Read(ctx, nil, func(q *Request) error {
 				rs, err := q.db().ConnCallPhases(q.ctx(), callIDs)
 				if err != nil {
 					return err
@@ -1270,7 +1270,7 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 				if phase == string(contract.CallPhaseCompleted) {
 					continue
 				}
-				if err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error { return connComplete(q, l) }); err != nil {
+				if err := a.store.Write(ctx, nil, nil, func(q *Request) error { return connComplete(q, l) }); err != nil {
 					return added, err
 				}
 				continue
@@ -1278,12 +1278,12 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 			if recorded {
 				continue
 			}
-			lock := NOLOCK
+			var locks []string
 			if l.UsageKey != nil && *l.UsageKey != "" {
-				lock = "usageKey:" + *l.UsageKey
+				locks = []string{"usageKey:" + *l.UsageKey}
 			}
 			var ok bool
-			if err := runTx(ctx, a, nil, true, lock, func(q *Request) error {
+			if err := a.store.Write(ctx, nil, locks, func(q *Request) error {
 				var err error
 				ok, err = connRecord(q, l)
 				if err != nil {
@@ -1581,7 +1581,7 @@ func connTickPass(ctx context.Context, a *App) error {
 	}
 	var blockedJSON string
 	var toRevoke []string
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
 		b, err := blockedConnections(q)
 		if err != nil {
 			return err
@@ -1612,7 +1612,7 @@ func connTickPass(ctx context.Context, a *App) error {
 		return err
 	}
 	if len(toRevoke) > 0 {
-		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			for _, id := range toRevoke {
 				if err := revokeTokens(q, id); err != nil {
 					return err
@@ -1662,7 +1662,7 @@ func connReconcile(ctx context.Context, a *App) {
 		return
 	}
 	at := orNull(report.At)
-	err = runTx(ctx, a, nil, true, "", func(q *Request) error {
+	err = a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		for _, row := range report.Keys {
 			k, err := recMaybe[connKey](q, recConnectionKey, "key:"+row.Key)
 			if err != nil {

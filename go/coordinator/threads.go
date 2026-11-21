@@ -13,8 +13,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
-
 	"fleet/contract"
 	"fleet/coordinator/db"
 )
@@ -1097,16 +1095,7 @@ func exportPages(q *Request, key threadKey, from, to *point, loc *time.Location,
 			bs, more, err = side(q, m, ids, ">", after, 500, firstPage && from != nil)
 			return err
 		}
-		var err error
-		if q.tx != nil {
-			err = read()
-		} else {
-			err = q.app.store.Tx(q.ctx(), scopeOf(q.person), false, "", func(tx pgx.Tx) error {
-				q.tx = tx
-				defer func() { q.tx = nil }()
-				return read()
-			})
-		}
+		err := q.app.store.Read(q.ctx(), q, func(_ *Request) error { return read() })
 		if err != nil {
 			return err
 		}

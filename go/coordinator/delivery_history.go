@@ -309,7 +309,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	var keyed bool
 	var st dhState
 	var obs []db.DeliveryHostsSeenRow
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
+	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
 		if _, _, keyed, err = githubConnectionOf(q, ciOwner); err != nil {
 			return err
 		}
@@ -323,7 +323,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}
 	now := time.Now().UTC()
 	save := func(fn func(q *Request) error) error {
-		return runTx(ctx, a, nil, true, "", func(q *Request) error {
+		return a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			if fn != nil {
 				if err := fn(q); err != nil {
 					return err
@@ -419,7 +419,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	var prs []contract.DeliveryPr
 	var stored []contract.DeliveryRun
 	var releases []contract.DeliveryRelease
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
+	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
 		if prs, err = dhLoad[contract.DeliveryPr](q, "delivery-pr"); err != nil {
 			return err
 		}
@@ -444,7 +444,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	// flush stores what was read so far: a deploy restarts the coordinator every few minutes, and the backfill's
 	// hundreds of reads must survive it (stored runs and PR CI times are not read again).
 	flush := func() error {
-		err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+		err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			for _, r := range changedRuns {
 				if err := dhPut(q, "delivery-run", "delivery-run:"+strconv.FormatInt(r.Id, 10), r); err != nil {
 					return err
@@ -696,7 +696,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		return err
 	}
 	// Its own transaction: a failed check must not undo the records just read; it counts as done only when it ran.
-	return runTx(ctx, a, nil, true, "", func(q *Request) error {
+	return a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if _, err := deliveryCheck(q, prs, runList, now, st.InstallsFrom); err != nil {
 			return err
 		}
@@ -1513,7 +1513,7 @@ func deliveryRegressionsOp(q *Request, r *contract.DeliveryRegressionsRequest) (
 		}
 		var c contract.DeliveryRegressionsReply
 		// The check writes questions: a read operation's transaction cannot, so it runs in its own.
-		err := runTx(q.ctx(), q.app, nil, true, "", func(w *Request) error {
+		err := q.app.store.Write(q.ctx(), nil, []string{GLOBAL}, func(w *Request) error {
 			prs, err := dhLoad[contract.DeliveryPr](w, "delivery-pr")
 			if err != nil {
 				return err

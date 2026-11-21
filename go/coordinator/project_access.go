@@ -25,7 +25,7 @@ func (a *App) resolveAccess(ctx context.Context, email string) (*Person, error) 
 	}
 	s.authMu.Unlock()
 	var out *Person
-	err := s.Tx(ctx, nil, false, "", func(tx pgx.Tx) error { var err error; out, err = resolveAccessTx(ctx, tx, email); return err })
+	err := s.Read(ctx, nil, func(q *Request) error { var err error; out, err = resolveAccessTx(ctx, q.tx, email); return err })
 	if err == nil {
 		s.authMu.Lock()
 		if s.authWrites == 0 && s.authGeneration == generation {

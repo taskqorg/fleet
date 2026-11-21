@@ -9,10 +9,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-
-	"fleet/coordinator/db"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // FLEET_BROWSER_ORIGIN: the public origin of the operator app (https://fleet.example). FLEET_BROWSER_PROXY_AUTH=true: the
@@ -88,7 +84,7 @@ func (a *App) refreshPeople(ctx context.Context) error {
 				return err
 			}
 		}
-		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			if open, err := q.db().BrowserPeopleQuestionOpen(ctx); err != nil || open {
 				return err
 			}
@@ -117,15 +113,16 @@ func peopleQuestion(problem string, partial bool) string {
 // peopleFromRows: after a restart with a broken file, the rows of the last valid load are that load.
 func (a *App) peopleFromRows(ctx context.Context) error {
 	people := map[string]*Person{}
-	return a.store.Tx(ctx, nil, false, "", func(tx pgx.Tx) error {
-		rows, err := db.New(tx).BrowserPersonRows(ctx)
+	return a.store.Read(ctx, nil, func(q *Request) error {
+		d := q.db()
+		rows, err := d.BrowserPersonRows(ctx)
 		if err != nil {
 			return err
 		}
 		for _, r := range rows {
 			people[r.Email] = &Person{Email: r.Email, Name: r.Name, Roles: r.Roles, Owner: r.Owner}
 		}
-		grants, err := db.New(tx).BrowserPersonGrants(ctx)
+		grants, err := d.BrowserPersonGrants(ctx)
 		if err != nil {
 			return err
 		}

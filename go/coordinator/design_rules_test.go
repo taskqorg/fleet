@@ -30,6 +30,8 @@ var designTimeCalls = map[string]bool{"NewTicker": true, "Tick": true, "Sleep": 
 
 var designOpCalls = map[string]bool{"gatedOp": true, "gatedObjOp": true, "shaped": true, "operation": true, "agentTool": true, "longOp": true, "projectOp": true, "threadOp": true, "checkFirst": true, "ownerFirst": true}
 
+var designTxCalls = map[string]bool{"runTx": true, "runTxLocks": true, "runTxLocksOnce": true, "Tx": true, "TxLocks": true, "TxLocksOnce": true, "txLocks": true, "readOnce": true, "writeOnce": true, "Begin": true, "BeginTx": true, "BeginFunc": true, "BeginTxFunc": true}
+
 // designCallExprName returns the called identifier or pkg.Name of fun, unwrapping generic type arguments.
 func designCallExprName(fun ast.Expr) string {
 	switch g := fun.(type) {
@@ -45,6 +47,23 @@ func designCallExprName(fun ast.Expr) string {
 		if id, ok := x.X.(*ast.Ident); ok {
 			return id.Name + "." + x.Sel.Name
 		}
+	}
+	return ""
+}
+
+// designCalleeName returns the final function or method name of fun, unwrapping generic type arguments.
+func designCalleeName(fun ast.Expr) string {
+	switch g := fun.(type) {
+	case *ast.IndexExpr:
+		fun = g.X
+	case *ast.IndexListExpr:
+		fun = g.X
+	}
+	switch x := fun.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.SelectorExpr:
+		return x.Sel.Name
 	}
 	return ""
 }
@@ -82,6 +101,9 @@ func designRuleHits(f *ast.File) map[string][]token.Pos {
 			}
 			if sel, ok := strings.CutPrefix(name, "time."); ok && designTimeCalls[sel] {
 				add("R-GO", x)
+			}
+			if designTxCalls[designCalleeName(x.Fun)] {
+				add("R-TX", x)
 			}
 		case *ast.CompositeLit:
 			if id, ok := x.Type.(*ast.Ident); ok && id.Name == "doc" {
@@ -771,7 +793,7 @@ func TestDesignTransitions(t *testing.T) {
 
 // S6: code of the kit's areas never opens a transaction; the kit gives each step, selection, failure and restart one.
 func TestDesignTransactions(t *testing.T) {
-	opens := map[string]bool{"runTx": true, "runTxLocks": true, "runTxLocksOnce": true, "Tx": true, "TxLocks": true, "TxLocksOnce": true, "Read": true, "Write": true, "Begin": true, "BeginTx": true, "BeginFunc": true, "BeginTxFunc": true}
+	opens := map[string]bool{"runTx": true, "runTxLocks": true, "runTxLocksOnce": true, "Tx": true, "TxLocks": true, "TxLocksOnce": true, "txLocks": true, "readOnce": true, "writeOnce": true, "Read": true, "Write": true, "Begin": true, "BeginTx": true, "BeginFunc": true, "BeginTxFunc": true}
 	for _, f := range designSources(t, false) {
 		if !designKitArea(f.name) {
 			continue
@@ -849,8 +871,15 @@ var designRulesOwned = map[string]map[string]string{
 	"main.go": {
 		"R-GO": "S6: HTTP plumbing: the signal handler that stops the long polls and the stream and drains the server",
 	},
+	"store.go": {
+		"R-TX": "S3: the database boundary itself, opening pgx transactions with advisory locks, scope, retry and afterCommit inside txLocks and migrateLocked",
+	},
+	"tx.go": {
+		"R-TX": "S3: implements Store.Read, Store.Write and the package-private single-attempt readOnce/writeOnce entry points over Store.txLocks",
+	},
 	"wake_outbox.go": {
 		"R-GO": "S6: the wake dispatcher, the one sender of wake_outbox's NOTIFYs: it claims the next batch at once while a full one was claimed, so it cannot be an every() pass",
+		"R-TX": "S3: the wake dispatcher runs pgx.BeginTxFunc every 100 ms directly so empty recovery checks never touch Store's auth-cache invalidation",
 	},
 	"stream.go": {
 		"R-GO": "S6: HTTP/stream plumbing: the LISTEN fleet_change connection (reconnected after a second), the feed loop that reads behind it, and the ping ticker of each open /api/stream",
@@ -861,6 +890,7 @@ var designRulesOwned = map[string]map[string]string{
 	"work_kit.go": {
 		"R-GO":  "S6: the kit's loop and its fleet_work listener are the scheduling the rule keeps out of the queues",
 		"R-SQL": "S6: the kit alone writes attempts, next_attempt_at and last_error of any queue's table, named by the queue; sqlc cannot name a table per call",
+		"R-TX":  "S6: uses single-attempt store.readOnce/store.writeOnce so durable queue steps report serialization/deadlock errors directly to the kit's retry accounting and cohort bisection",
 	},
 	"rules.go": {
 		"R-SQL": "S2 covers PostgreSQL: these are the ClickHouse span-store queries of the span rules (absence-host, absence-pass, error-spike, host-saturation), which sqlc cannot generate",

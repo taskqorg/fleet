@@ -200,8 +200,7 @@ func (a *App) ingest(q *Request, batch *contract.HostEvents) (contract.OkReply, 
 	// written only after the whole batch is valid).
 	var out contract.OkReply
 	var refused error
-	err := a.store.Tx(q.ctx(), nil, true, "execution:"+id, func(tx pgx.Tx) error {
-		q.tx = tx
+	err := a.store.Write(q.ctx(), q, []string{"execution:" + id}, func(q *Request) error {
 		var err error
 		out, err = ingestIn(q, b, batch)
 		var he *HTTPError

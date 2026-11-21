@@ -95,7 +95,7 @@ func txCtx(ctx context.Context, a *App, fn func(pgx.Tx) error) error {
 	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
 		return fn(tx)
 	}
-	return a.store.Tx(ctx, nil, true, "", fn)
+	return a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error { return fn(q.tx) })
 }
 
 // execCtx: an untyped write of the files not yet on the typed queries; this file reads and writes through
@@ -632,7 +632,7 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 			if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
 				return fn(tx)
 			}
-			return a.store.Tx(ctx, nil, true, NOLOCK, fn)
+			return a.store.Write(ctx, nil, nil, func(q *Request) error { return fn(q.tx) })
 		}
 		err := tx(func(tx pgx.Tx) error {
 			// An empty file has nothing to upload (stores refuse an empty multipart part): the coordinator writes it
@@ -1598,7 +1598,7 @@ func saveObject(ctx context.Context, a *App, projectID *string, scope, execution
 	} else {
 		// No GLOBAL lock: two new rows; the object lock (writeObject) is what serializes this write with a purge, so
 		// the Head under it does not hold every other write.
-		err = a.store.Tx(ctx, nil, true, NOLOCK, write)
+		err = a.store.Write(ctx, nil, nil, func(q *Request) error { return write(q.tx) })
 	}
 	return id, hash, err
 }

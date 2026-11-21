@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fleet/contract"
-	"fleet/coordinator/db"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -132,16 +131,15 @@ func (a *App) ownAutoUpdate(ctx context.Context) string {
 	if host == "" {
 		return "on"
 	}
-	tx, err := a.store.pool.Begin(ctx)
-	if err != nil {
-		return "on"
-	}
-	defer tx.Rollback(ctx)
-	if err := db.New(tx).TxSetScope(ctx, db.TxSetScopeParams{ProjectIds: "*"}); err != nil {
-		return "on"
-	}
-	s, err := db.New(tx).HostAutoUpdate(ctx, "host:"+host) // no host, or no autoUpdate (NULL): on
-	if err != nil {
+	s := "on"
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
+		v, err := q.db().HostAutoUpdate(q.ctx(), "host:"+host) // no host, or no autoUpdate (NULL): on
+		if err != nil {
+			return err
+		}
+		s = v
+		return nil
+	}); err != nil {
 		return "on"
 	}
 	return s

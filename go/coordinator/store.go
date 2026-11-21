@@ -28,6 +28,7 @@ import (
 type Store struct {
 	pool           *pgxpool.Pool
 	readPool       *pgxpool.Pool
+	app            *App
 	authMu         sync.Mutex
 	authWrites     int
 	authGeneration uint64
@@ -292,31 +293,6 @@ func (s *Store) Close() {
 func retryable(err error) bool {
 	var pe *pgconn.PgError
 	return errors.As(err, &pe) && (pe.Code == "40001" || pe.Code == "40P01")
-}
-
-// Tx runs fn in one transaction. write: READ COMMITTED holding the scope lock (GLOBAL when lock == "",
-// no advisory lock when lock == NOLOCK); read: a READ ONLY REPEATABLE READ snapshot.
-// Serialization failures and deadlocks are retried with a short randomized backoff (5 ms .. 200 ms).
-func (s *Store) Tx(ctx context.Context, sc *Scope, write bool, lock string, fn func(pgx.Tx) error) error {
-	var locks []string
-	if write && lock != NOLOCK {
-		if lock == "" {
-			lock = GLOBAL
-		}
-		locks = []string{lock}
-	}
-	return s.TxLocks(ctx, sc, write, locks, fn)
-}
-
-// TxLocks runs fn in one transaction acquiring the canonical sorted union of locks (64-bit hashtextextended).
-// When write is true and locks is empty, no initial advisory lock is acquired (equivalent to NOLOCK).
-func (s *Store) TxLocks(ctx context.Context, sc *Scope, write bool, locks []string, fn func(pgx.Tx) error) error {
-	return s.txLocks(ctx, sc, write, locks, true, fn)
-}
-
-// TxLocksOnce preserves lock ordering and access-cache fences but leaves retry/isolation to its caller.
-func (s *Store) TxLocksOnce(ctx context.Context, sc *Scope, write bool, locks []string, fn func(pgx.Tx) error) error {
-	return s.txLocks(ctx, sc, write, locks, false, fn)
 }
 
 func (s *Store) txLocks(ctx context.Context, sc *Scope, write bool, locks []string, retry bool, fn func(pgx.Tx) error) error {
@@ -638,46 +614,17 @@ func directorOf(q *Request) string {
 	return ownerEmailOf(q.app)
 }
 
-// runTx: fn in one store transaction as a request: as person q (its scope; q.tx set for fn), or as the coordinator's
-// background work when q is nil. A write takes lock (GLOBAL when empty).
-func runTx(ctx context.Context, a *App, q *Request, write bool, lock string, fn func(q *Request) error) error {
-	if q == nil {
-		return a.store.Tx(ctx, nil, write, lock, func(tx pgx.Tx) error { return fn(backgroundRequest(ctx, a, tx)) })
-	}
-	return a.store.Tx(ctx, scopeOf(q.person), write, lock, func(tx pgx.Tx) error {
-		q.tx = tx
-		defer func() { q.tx = nil }()
-		return fn(q)
-	})
-}
-
-func runTxLocks(ctx context.Context, a *App, q *Request, write bool, locks []string, fn func(q *Request) error) error {
-	if q == nil {
-		return a.store.TxLocks(ctx, nil, write, locks, func(tx pgx.Tx) error { return fn(backgroundRequest(ctx, a, tx)) })
-	}
-	return a.store.TxLocks(ctx, scopeOf(q.person), write, locks, func(tx pgx.Tx) error {
-		q.tx = tx
-		defer func() { q.tx = nil }()
-		return fn(q)
-	})
-}
-
-// One maintenance transaction attempt; bounded resource cohorts isolate failures outside it.
-func runTxLocksOnce(ctx context.Context, a *App, q *Request, write bool, locks []string, fn func(q *Request) error) error {
-	if q == nil {
-		return a.store.TxLocksOnce(ctx, nil, write, locks, func(tx pgx.Tx) error { return fn(backgroundRequest(ctx, a, tx)) })
-	}
-	return a.store.TxLocksOnce(ctx, scopeOf(q.person), write, locks, func(tx pgx.Tx) error {
-		q.tx = tx
-		defer func() { q.tx = nil }()
-		return fn(q)
-	})
-}
-
 // backgroundRequest: a request value for background work (no person: the coordinator's own scope).
 func backgroundRequest(ctx context.Context, a *App, tx pgx.Tx) *Request {
 	hr, _ := http.NewRequestWithContext(ctx, "POST", "/", nil)
 	return &Request{r: hr, tx: tx, app: a}
+}
+
+// scopedRequest: a request value for non-HTTP callers acting under p's scope (stream, uploads).
+func scopedRequest(ctx context.Context, a *App, p *Person) *Request {
+	q := backgroundRequest(ctx, a, nil)
+	q.person = p
+	return q
 }
 
 // askRow inserts one question; returns its id. data is a struct of the question's data fields (nil: none).

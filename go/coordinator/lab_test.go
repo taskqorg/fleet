@@ -182,7 +182,7 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 	ref := doc{"checkId": "contract", "schemaId": "synthetic.assessment.v1", "artifactId": "assessment-evidence", "sha256": hash, "evaluatorSha256": sha256hex([]byte("evaluator")), "inputSha256": sha256hex([]byte("inputs"))}
 	refT, _ := asT[labAssessmentRef](ref)
 	result := &labCheckRun{ProjectAssessments: []labAssessmentRef{refT}}
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if err := exec(q, "INSERT INTO experiment(id,project_id,kind,pipeline_id) VALUES('assessment-exp','hello-world','single','assessment')"); err != nil {
 			return err
 		}
@@ -211,7 +211,7 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	rollback := errors.New("injected score/link rollback")
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if err := linkLabAssessments(q, mustRunOf(trial), result); err != nil {
 			return err
 		}
@@ -222,7 +222,7 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 	}); !errors.Is(err, rollback) {
 		t.Fatal(err)
 	}
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		current, err := getRunDoc(q, astr(trial["id"]))
 		if err != nil {
 			return err
@@ -260,7 +260,7 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 		changed[k] = v
 	}
 	changed["sha256"], changed["artifactId"] = sha256hex([]byte("different bytes")), "assessment-different"
-	err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if err := exec(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES('assessment-different','hello-world','lab',$1,15,'application/json','assessments/synthetic.json',$2,'stored')`, changed["sha256"], trial["id"]); err != nil {
 			return err
 		}
@@ -275,7 +275,7 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 	if err := materializeLabAssessments(env.ctx, env.app, mustRunOf(trial), failedStorage, astr(ref["evaluatorSha256"]), astr(ref["inputSha256"])); err == nil || failedStorage.ProjectAssessments != nil {
 		t.Fatal("missing storage fabricated durable evidence", err, failedStorage)
 	}
-	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+	if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 		current, err := getRunDoc(q, astr(trial["id"]))
 		if err != nil {
 			return err
@@ -293,7 +293,7 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	err = runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	err = env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		newer := planFixture(t, "assessment-new-attempt")
 		newer["experimentId"], newer["variant"], newer["cell"] = "assessment-exp", "v", doc{"example": "synthetic", "variant": "v", "repeat": 1, "attempt": 2}
 		if err := putRun(q, newer); err != nil {

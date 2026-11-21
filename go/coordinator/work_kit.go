@@ -216,17 +216,17 @@ func (k *workKit) queue(name string) *kitQueue { return kitQueueNamed(name) }
 
 // read runs fn in one read-only transaction.
 func (k *workKit) read(ctx context.Context, fn func(q *Request) error) error {
-	return runTxLocksOnce(ctx, k.a, nil, false, nil, fn)
+	return k.a.store.readOnce(ctx, backgroundRequest(ctx, k.a, nil), fn)
 }
 
 // tx runs fn in one write transaction attempt.
 func (k *workKit) tx(ctx context.Context, fn func(q *Request) error) error {
-	return runTxLocksOnce(ctx, k.a, nil, true, nil, fn)
+	return k.a.store.writeOnce(ctx, backgroundRequest(ctx, k.a, nil), nil, fn)
 }
 
 // txRetried runs fn in one write transaction, retried on serialization failures and deadlocks.
 func (k *workKit) txRetried(ctx context.Context, fn func(q *Request) error) error {
-	return runTxLocks(ctx, k.a, nil, true, nil, fn)
+	return k.a.store.Write(ctx, backgroundRequest(ctx, k.a, nil), nil, fn)
 }
 
 // pass runs every queue once in registration order.
@@ -457,7 +457,7 @@ func kitRestart(q *Request, rt kitRetry, key string, now time.Time) error {
 // transaction holding locks, retried on conflicts.
 func (k *workKit) restart(ctx context.Context, name, key string, locks []string, fn func(q *Request) error) error {
 	q := k.queue(name)
-	return runTxLocks(ctx, k.a, nil, true, locks, func(r *Request) error {
+	return k.a.store.Write(ctx, backgroundRequest(ctx, k.a, nil), locks, func(r *Request) error {
 		if err := fn(r); err != nil {
 			return err
 		}

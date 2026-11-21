@@ -4,10 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	"github.com/jackc/pgx/v5"
-
-	"fleet/coordinator/db"
 )
 
 const streamRingLimit = 4096
@@ -45,10 +41,10 @@ func (b *Broadcast) runFeed(ctx context.Context, s *Store) {
 		timer = nil
 		for {
 			var batch streamBatch
-			err := s.Tx(ctx, nil, false, "", func(tx pgx.Tx) error {
+			err := s.Read(ctx, nil, func(q *Request) error {
 				if !initialized {
 					var err error
-					cursor, err = head(ctx, tx)
+					cursor, err = head(ctx, q.tx)
 					if err != nil {
 						return err
 					}
@@ -56,7 +52,7 @@ func (b *Broadcast) runFeed(ctx context.Context, s *Store) {
 				}
 				var err error
 				b.sinceQueries.Add(1)
-				batch.rows, batch.next, batch.resync, batch.held, err = since(ctx, tx, cursor, 1000)
+				batch.rows, batch.next, batch.resync, batch.held, err = since(ctx, q.tx, cursor, 1000)
 				return err
 			})
 			if err != nil {
@@ -161,9 +157,9 @@ func (b *Broadcast) readBatch(ctx context.Context, a *App, p *Person, cursor int
 	b.mu.Unlock()
 	batch := streamBatch{next: next, more: len(rows) == 1000}
 	b.rlsQueries.Add(1)
-	batch.err = s.Tx(ctx, sc, false, "", func(tx pgx.Tx) error {
+	batch.err = s.Read(ctx, scopedRequest(ctx, a, p), func(q *Request) error {
 		if p != nil {
-			current, err := resolveAccessTx(ctx, tx, p.Email)
+			current, err := resolveAccessTx(ctx, q.tx, p.Email)
 			if err != nil {
 				return err
 			}
@@ -174,7 +170,7 @@ func (b *Broadcast) readBatch(ctx context.Context, a *App, p *Person, cursor int
 		}
 		if !available || start < 0 {
 			var err error
-			batch.rows, batch.next, batch.resync, batch.held, err = since(ctx, tx, cursor, 1000)
+			batch.rows, batch.next, batch.resync, batch.held, err = since(ctx, q.tx, cursor, 1000)
 			batch.more = len(batch.rows) == 1000
 			return err
 		}
@@ -185,7 +181,7 @@ func (b *Broadcast) readBatch(ctx context.Context, a *App, p *Person, cursor int
 		for i, c := range rows {
 			seqs[i] = c.Seq
 		}
-		visible, err := db.New(tx).StreamVisibleSeqs(ctx, seqs)
+		visible, err := q.db().StreamVisibleSeqs(ctx, seqs)
 		if err != nil {
 			return err
 		}
@@ -224,7 +220,7 @@ func (b *Broadcast) readBatch(ctx context.Context, a *App, p *Person, cursor int
 // pruneChanges only expires the reconnect log, never durable work or transcripts; every minute (listen), then the feed
 // reads again.
 func (b *Broadcast) pruneChanges(ctx context.Context, s *Store) error {
-	err := s.Tx(ctx, nil, true, NOLOCK, func(tx pgx.Tx) error { return db.New(tx).StreamPruneChanges(ctx) })
+	err := s.Write(ctx, nil, nil, func(q *Request) error { return q.db().StreamPruneChanges(ctx) })
 	if err != nil {
 		return err
 	}

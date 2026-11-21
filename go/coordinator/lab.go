@@ -2517,11 +2517,7 @@ func expSetState(q *Request, id string, from []string, to string, reason any) er
 }
 
 func labReadTx(q *Request, fn func(q *Request) error) error {
-	return q.app.store.Tx(q.ctx(), scopeOf(q.person), false, "", func(tx pgx.Tx) error {
-		q.tx = tx
-		defer func() { q.tx = nil }()
-		return fn(q)
-	})
+	return q.app.store.Read(q.ctx(), q, fn)
 }
 
 func expGetTx(q *Request, id string) (out labExperimentView, err error) {
@@ -2533,11 +2529,11 @@ func expAction(q *Request, id, action string) (labExperimentView, error) {
 	var err error
 	switch action {
 	case "launch":
-		err = runTx(q.ctx(), q.app, q, true, "", func(q *Request) error { return expLaunch(q, id) })
+		err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error { return expLaunch(q, id) })
 	case "stop":
-		err = runTx(q.ctx(), q.app, q, true, "", func(q *Request) error { return expSetState(q, id, []string{"running", "paused"}, "stopped", "owner") })
+		err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error { return expSetState(q, id, []string{"running", "paused"}, "stopped", "owner") })
 	case "resume":
-		err = runTx(q.ctx(), q.app, q, true, "", func(q *Request) error { return expSetState(q, id, []string{"paused"}, "running", nil) })
+		err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error { return expSetState(q, id, []string{"paused"}, "running", nil) })
 	default:
 		return labExperimentView{}, fail(400, "action is launch, stop or resume")
 	}
@@ -2621,7 +2617,7 @@ func expCellAction(q *Request, id, cell, action string) (labExperimentView, erro
 			return labExperimentView{}, fail(409, fmt.Sprintf("Experiment is %v", exp.State))
 		}
 		c := t.cell()
-		if err := runTxLocks(q.ctx(), q.app, q, true, []string{GLOBAL, "experiment:" + id}, func(q *Request) error {
+		if err := q.app.store.Write(q.ctx(), q, []string{GLOBAL, "experiment:" + id}, func(q *Request) error {
 			runs, err := expRuns(q, id)
 			if err != nil {
 				return err

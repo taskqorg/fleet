@@ -361,17 +361,11 @@ type projectContextFile struct {
 // in a transaction also its repoSha and sourceState, and for the owner its initialAccess.
 func projectContext(q *Request, id string) (rawObject, error) {
 	var heads []definitionRow
-	read := func(d *db.Queries) error {
+	err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
 		var err error
-		heads, err = definitionsOf(q.ctx(), d, definitionFilter{kind: "project", id: id, current: true})
+		heads, err = definitionsOf(q.ctx(), q.db(), definitionFilter{kind: "project", id: id, current: true})
 		return err
-	}
-	var err error
-	if q.tx != nil {
-		err = read(q.db())
-	} else {
-		err = q.app.store.Tx(q.ctx(), nil, false, "", func(tx pgx.Tx) error { return read(db.New(tx)) })
-	}
+	})
 	if err != nil {
 		return nil, err
 	}

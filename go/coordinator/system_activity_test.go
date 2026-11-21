@@ -47,12 +47,12 @@ func TestSystemActivityLeftOutOfProjectWork(t *testing.T) {
 		{CallId: "sys-2", TokenSha256: strPtr("sys"), ExecutionId: strPtr("github-read:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"), Tool: "releases", Connection: "github", Outcome: contract.CallOutcomeError, ErrorCode: strPtr("http-404"), Status: 404, StartedAt: now - 1000, Ms: 10},
 		{CallId: "agent-1", TokenSha256: strPtr("agent"), ExecutionId: strPtr("a-run"), Tool: "pulls_open", Connection: "github", Outcome: contract.CallOutcomeOk, Status: 200, StartedAt: now - 1500, Ms: 10},
 	} {
-		if err := runTx(ctx, e.app, nil, true, "", func(q *Request) error { _, err := connRecord(q, l); return err }); err != nil {
+		if err := e.app.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error { _, err := connRecord(q, l); return err }); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var marked []string
-	if err := runTx(ctx, e.app, nil, false, "", func(q *Request) error {
+	if err := e.app.store.Read(ctx, nil, func(q *Request) error {
 		rs, err := q.tx.Query(q.ctx(), "SELECT id FROM execution WHERE system_actor='coordinator' AND project_id='p1' ORDER BY id")
 		if err != nil {
 			return err
@@ -76,7 +76,7 @@ func TestSystemActivityLeftOutOfProjectWork(t *testing.T) {
 	p1 := "p1"
 	list := func(s *contract.SystemActivity) []string {
 		var ids []string
-		if err := runTx(ctx, e.app, nil, false, "", func(q *Request) error {
+		if err := e.app.store.Read(ctx, nil, func(q *Request) error {
 			rows, err := executionsList(q, contract.ExecutionsListRequest{ProjectId: &p1, System: s})
 			for _, r := range rows {
 				ids = append(ids, r.Id)
@@ -99,7 +99,7 @@ func TestSystemActivityLeftOutOfProjectWork(t *testing.T) {
 		t.Fatalf("system include: %v", got)
 	}
 	readToken := "github-read:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
-	if err := runTx(ctx, e.app, nil, false, "", func(q *Request) error {
+	if err := e.app.store.Read(ctx, nil, func(q *Request) error {
 		rows, err := executionsList(q, contract.ExecutionsListRequest{ParentExecutionId: &readToken})
 		if err == nil && len(rows) != 2 {
 			err = fmt.Errorf("a read token's calls by parent: %d rows, want 2", len(rows))
@@ -120,7 +120,7 @@ func TestSystemActivityLeftOutOfProjectWork(t *testing.T) {
 
 	count := func(s *contract.SystemActivity, dims ...contract.AnalyticsDimension) (int64, int64) {
 		var rep contract.AnalyticsQueryReply
-		if err := runTx(ctx, e.app, nil, false, "", func(q *Request) error {
+		if err := e.app.store.Read(ctx, nil, func(q *Request) error {
 			var err error
 			rep, err = analyticsQuery(q, &contract.AnalyticsQueryRequest{ProjectId: &p1, System: s, Dimensions: dims,
 				Window:   contract.AnalyticsWindow{From: json.RawMessage(fmt.Sprint(now - 3600e3)), To: json.RawMessage(fmt.Sprint(now + 3600e3))},
@@ -153,7 +153,7 @@ func TestSystemActivityLeftOutOfProjectWork(t *testing.T) {
 	if n, f := count(sys(contract.SystemActivityInclude), contract.AnalyticsDimensionConnection); n != 4 || f != 1 {
 		t.Fatalf("connection dimension with system include: %d executions, %d failed", n, f)
 	}
-	if err := runTx(ctx, e.app, nil, false, "", func(q *Request) error {
+	if err := e.app.store.Read(ctx, nil, func(q *Request) error {
 		v, _, err := spend(q, db.Budget{Scope: "project", ScopeID: p1, Unit: "wall_ms"})
 		if err == nil && (v == nil || *v != 10.0) {
 			err = fmt.Errorf("project wall_ms spend %v, want 10 (the agent's call, not the coordinator's reads)", v)
@@ -169,7 +169,7 @@ func TestSystemActivityLeftOutOfProjectWork(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := runTx(ctx, e.app, nil, false, "", func(q *Request) error {
+	if err := e.app.store.Read(ctx, nil, func(q *Request) error {
 		s, err := projectResources(q, p1)
 		if err == nil && s.Executions != 2 {
 			err = fmt.Errorf("project resources count %d executions, want 2", s.Executions)
@@ -213,7 +213,7 @@ func TestMigration69RemovesLegacySystemReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := func() (left, system []string, totals int, marked, unmarked bool, work int) {
-		if err := runTx(e.ctx, e.app, nil, false, "", func(q *Request) error {
+		if err := e.app.store.Read(e.ctx, nil, func(q *Request) error {
 			return q.tx.QueryRow(q.ctx(), `SELECT (SELECT array_agg(id ORDER BY id) FROM execution),
 			  (SELECT array_agg(id ORDER BY id) FROM execution WHERE system_actor='coordinator'),
 			  (SELECT count(*) FROM execution_totals),

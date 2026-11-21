@@ -53,7 +53,7 @@ func TestAccountInspectionRouting(t *testing.T) {
 			}
 			targetSecret := reg(target, roles, tc.nativeDenied)
 			inspectorSecret := reg(inspector, []string{"inspector-for:" + target}, tc.inspectorDenied)
-			if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+			if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 				for id, fresh := range map[string]bool{target: tc.nativeFresh, inspector: tc.inspectorFresh} {
 					at := nowMs() - hostStaleMs - 1000
 					if fresh {

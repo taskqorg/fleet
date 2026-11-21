@@ -307,7 +307,7 @@ func TestClientErrorStoreDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []string{"a", "b"} {
-		if err := runTx(e.ctx, e.app, nil, true, "", func(q *Request) error {
+		if err := e.app.store.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			return problemAsk(q, "direct", Problem{Cause: "problem:client-error:" + c, Text: "A browser error group appeared"})
 		}); err != nil {
 			t.Fatal(err)

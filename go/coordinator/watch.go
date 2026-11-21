@@ -11,7 +11,6 @@ import (
 	"fleet/coordinator/db"
 	"fmt"
 	"log"
-	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -215,21 +214,21 @@ func init() {
 // ponytail: each watch takes the GLOBAL write lock briefly every tick; a read-only pre-check first if many watches show.
 func watchPass(ctx context.Context, a *App) {
 	var ids []string
-	if err := a.store.Tx(ctx, nil, false, "", func(tx pgx.Tx) error {
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
 		var err error
-		ids, err = db.New(tx).WatchIDs(ctx)
+		ids, err = q.db().WatchIDs(ctx)
 		return err
 	}); err != nil {
 		log.Printf("watch: %v", err)
 		return
 	}
 	for _, id := range ids {
-		err := a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
-			return watchOne(&Request{app: a, tx: tx, r: (&http.Request{}).WithContext(ctx)}, id)
+		err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
+			return watchOne(q, id)
 		})
 		if err != nil {
-			a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
-				return db.New(tx).WatchSetError(ctx, db.WatchSetErrorParams{Error: err.Error(), ID: id})
+			a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
+				return q.db().WatchSetError(ctx, db.WatchSetErrorParams{Error: err.Error(), ID: id})
 			})
 		}
 	}

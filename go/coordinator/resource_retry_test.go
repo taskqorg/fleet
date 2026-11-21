@@ -72,7 +72,7 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 	t.Cleanup(func() { kitDefault.Delete(a) })
 	sql := func(s string, args ...any) {
 		t.Helper()
-		if err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error { return exec(q, s, args...) }); err != nil {
+		if err := a.store.Write(ctx, nil, nil, func(q *Request) error { return exec(q, s, args...) }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -85,7 +85,7 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 	scalar := func(s string, args ...any) string {
 		t.Helper()
 		var v string
-		if err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error { return q.tx.QueryRow(q.ctx(), s, args...).Scan(&v) }); err != nil {
+		if err := a.store.Read(ctx, nil, func(q *Request) error { return q.tx.QueryRow(q.ctx(), s, args...).Scan(&v) }); err != nil {
 			t.Fatal(err)
 		}
 		return v
@@ -176,7 +176,7 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 		}
 		var rows, attempts int
 		var left float64
-		if err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+		if err := a.store.Read(ctx, nil, func(q *Request) error {
 			return q.tx.QueryRow(q.ctx(), `SELECT count(DISTINCT (attempts,next_attempt_at)),max(attempts),extract(epoch FROM max(next_attempt_at)-$1)::float8 FROM resource_work WHERE execution_id='pause-poison'`, k.now()).Scan(&rows, &attempts, &left)
 		}); err != nil {
 			t.Fatal(err)
@@ -191,7 +191,7 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 	// One open question tracks the current failure without asking again or rewriting an answered question.
 	syncFinding := func(text string) {
 		t.Helper()
-		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			return problemsSync(q, "rules", []Problem{{Cause: "problem:resource:failing", Text: text, Rule: "resource-failing", RefreshText: true}})
 		}); err != nil {
 			t.Fatal(err)

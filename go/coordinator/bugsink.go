@@ -327,7 +327,7 @@ func (a *App) bugsinkAlert(w http.ResponseWriter, r *http.Request) {
 		name = ""
 	}
 	var asked bool
-	if err := runTx(r.Context(), a, nil, true, "", func(q *Request) (err error) {
+	if err := a.store.Write(r.Context(), nil, []string{GLOBAL}, func(q *Request) (err error) {
 		asked, err = bugsinkProblem(q, p.ID, name, p.AlertReason)
 		return err
 	}); err != nil {
@@ -406,7 +406,7 @@ func bugsinkFleetProject(q *Request, name string) (string, error) {
 // bugsink connection (a gateway, intake, an active key) it does nothing: problems then close through their answers.
 func bugsinkResolvedPass(ctx context.Context, a *App) error {
 	var held []db.BugsinkHeldProblemsRow
-	if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
+	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
 		held, err = q.db().BugsinkHeldProblems(q.ctx(), bugsinkCause)
 		return err
 	}); err != nil || len(held) == 0 {
@@ -427,7 +427,7 @@ func bugsinkResolvedPass(ctx context.Context, a *App) error {
 			continue
 		}
 		if closed {
-			if err := runTx(ctx, a, nil, true, "", func(q *Request) error { return problemClose(q, cause) }); err != nil {
+			if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error { return problemClose(q, cause) }); err != nil {
 				failed = errors.Join(failed, err)
 			}
 		}
@@ -474,7 +474,7 @@ var bugsinkKeyed = func(ctx context.Context, a *App) (bool, error) {
 		return false, nil
 	}
 	ok := false
-	err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
+	err := a.store.Read(ctx, nil, func(q *Request) (err error) {
 		ok, err = q.db().ConnTakesCalls(q.ctx(), bugsinkConn)
 		return err
 	})

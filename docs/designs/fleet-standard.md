@@ -85,7 +85,7 @@ Contract list rows are closed types. One JSON source for presets, view grammar a
 
 **S10 Enforcement.** `go/coordinator/DESIGN_RULES.md` lists S1–S10; `design_rules_test.go` scans the
 coordinator source (go/parser) and fails on SQL literals (`R-SQL`), map accessors and `map[string]any`
-(`R-MAP`), goroutines, sleeps and tickers (`R-GO`) and raw op registration (`R-OP`) in every file (the legacy
+(`R-MAP`), goroutines, sleeps and tickers (`R-GO`), non-S3 transaction calls (`R-TX`) and raw op registration (`R-OP`) in every file (the legacy
 allowlist emptied with the `doc` map type and `docOf`, stage 8f). A short owner list names what one file owns (the work kit: its
 loop and the retry-column writes; `background.go`: periodic passes and background helpers in its named functions, verified
 alongside startup-only pass registration and kit-area bans by `TestDesignScheduling`). State-column writes outside the owner are checked for the machines on the kit

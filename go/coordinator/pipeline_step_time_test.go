@@ -30,7 +30,7 @@ func TestPipelineStepTerminalTimingProjection(t *testing.T) {
 		{"reopened-stale", "running", finish, true, false},
 		{"typed-column", "succeeded", nil, true, true},
 	}
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if _, e := insertExecution(q, doc{"id": "legacy-pipeline", "kind": "pipeline_run", "projectId": "hello-world", "data": doc{"pipelineId": "timing"}}); e != nil {
 			return e
 		}
@@ -74,7 +74,7 @@ func TestPipelineStepTerminalTimingProjection(t *testing.T) {
 	}
 	run := planFixture(t, "persisted-pipeline")
 	run["startedAt"] = start
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		if e := putRun(q, run); e != nil {
 			return e
 		}

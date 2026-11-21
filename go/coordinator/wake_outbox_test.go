@@ -26,16 +26,17 @@ func TestWakeOutboxPostgres(t *testing.T) {
 	}
 	defer st.Close()
 	a := &App{store: st}
+	st.app = a
 	sql := func(s string) {
 		t.Helper()
-		if e := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error { return exec(q, s) }); e != nil {
+		if e := a.store.Write(ctx, nil, nil, func(q *Request) error { return exec(q, s) }); e != nil {
 			t.Fatal(e)
 		}
 	}
 	scalar := func(s string) string {
 		t.Helper()
 		var v string
-		if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error { return q.tx.QueryRow(q.ctx(), s).Scan(&v) }); e != nil {
+		if e := a.store.Read(ctx, nil, func(q *Request) error { return q.tx.QueryRow(q.ctx(), s).Scan(&v) }); e != nil {
 			t.Fatal(e)
 		}
 		return v
@@ -52,21 +53,23 @@ func TestWakeOutboxPostgres(t *testing.T) {
 		t.Fatal("source capture absent", got)
 	}
 	var scoped string
-	err = st.Tx(ctx, &Scope{ProjectIDs: "WAKE", Person: "owner@trial.test"}, false, NOLOCK, func(tx pgx.Tx) error { return tx.QueryRow(ctx, `SELECT count(*)::text FROM wake_outbox`).Scan(&scoped) })
+	err = st.Read(ctx, scopedRequest(ctx, a, &Person{Email: "owner@trial.test", Grants: []personGrant{{Kind: "project", ID: "WAKE"}}}), func(q *Request) error {
+		return q.tx.QueryRow(ctx, `SELECT count(*)::text FROM wake_outbox`).Scan(&scoped)
+	})
 	if err != nil || scoped != "0" {
 		t.Fatal("wake rows leak under scoped RLS", scoped, err)
 	}
-	err = st.Tx(ctx, &Scope{ProjectIDs: "WAKE"}, true, NOLOCK, func(tx pgx.Tx) error {
-		if _, e := tx.Exec(ctx, `SELECT fleet_enqueue_wake('fleet_change','')`); e != nil {
+	err = st.Write(ctx, scopedRequest(ctx, a, &Person{Grants: []personGrant{{Kind: "project", ID: "WAKE"}}}), nil, func(q *Request) error {
+		if _, e := q.tx.Exec(ctx, `SELECT fleet_enqueue_wake('fleet_change','')`); e != nil {
 			return e
 		}
-		return tx.QueryRow(ctx, `SELECT current_setting('fleet.project_ids')`).Scan(&scoped)
+		return q.tx.QueryRow(ctx, `SELECT current_setting('fleet.project_ids')`).Scan(&scoped)
 	})
 	if err != nil || scoped != "WAKE" {
 		t.Fatal("enqueue leaked maintenance scope", scoped, err)
 	}
-	err = st.Tx(ctx, &Scope{ProjectIDs: "WAKE"}, true, NOLOCK, func(tx pgx.Tx) error {
-		_, e := tx.Exec(ctx, `SELECT fleet_enqueue_wake('untrusted','payload')`)
+	err = st.Write(ctx, scopedRequest(ctx, a, &Person{Grants: []personGrant{{Kind: "project", ID: "WAKE"}}}), nil, func(q *Request) error {
+		_, e := q.tx.Exec(ctx, `SELECT fleet_enqueue_wake('untrusted','payload')`)
 		return e
 	})
 	if err == nil {
@@ -74,7 +77,7 @@ func TestWakeOutboxPostgres(t *testing.T) {
 	}
 	before := scalar(`SELECT jsonb_agg(to_jsonb(w) ORDER BY wake_id)::text FROM wake_outbox w`)
 	rollback := errors.New("fixture source rollback")
-	err = runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
+	err = a.store.Write(ctx, nil, nil, func(q *Request) error {
 		if e := exec(q, `SELECT fleet_enqueue_wake('fleet_change','')`); e != nil {
 			return e
 		}

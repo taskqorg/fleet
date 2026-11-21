@@ -2670,9 +2670,7 @@ func init() {
 			}
 		}
 		// The proof and the director's access, in one read; each call then runs in its own transaction (runOp).
-		if err := q.app.store.Tx(q.ctx(), nil, false, "", func(tx pgx.Tx) error {
-			q.tx = tx
-			defer func() { q.tx = nil }()
+		if err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
 			if err := prove(); err != nil {
 				return err
 			}
@@ -2687,9 +2685,7 @@ func init() {
 		tableCall := func(name string, raw json.RawMessage) (any, error) {
 			var args map[string]json.RawMessage
 			json.Unmarshal(raw, &args)
-			err := q.app.store.Tx(q.ctx(), nil, false, "", func(tx pgx.Tx) error {
-				q.tx = tx
-				defer func() { q.tx = nil }()
+			err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
 				if err := refreshRequestAccess(q); err != nil {
 					return err
 				}
@@ -2781,9 +2777,7 @@ func init() {
 				return nil, fail(404, "Unknown project")
 			}
 			if name == "project_update" || name == "project_context" || name == "project_readiness" || isResourceRead(name) {
-				err := q.app.store.Tx(q.ctx(), scopeOf(q.person), false, "", func(tx pgx.Tx) error {
-					q.tx = tx
-					defer func() { q.tx = nil }()
+				err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
 					out, err := projectAgentArguments(q, maps.Clone(a), executionID, isResourceRead(name)) // a retried attempt starts again from a
 					if err == nil {
 						a = out

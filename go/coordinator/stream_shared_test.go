@@ -79,8 +79,8 @@ func TestSharedFeedTabsAndRevocation(t *testing.T) {
 	}
 	t.Logf("200 tabs, 2 identities: total RLS batches=%d, shared since queries=%d", b.rlsQueries.Load(), b.sinceQueries.Load())
 
-	if err := e.appStore.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, "UPDATE person SET roles=ARRAY['viewer']::text[],owner=false WHERE email=$1", p.Email)
+	if err := e.appStore.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		_, err := q.tx.Exec(ctx, "UPDATE person SET roles=ARRAY['viewer']::text[],owner=false WHERE email=$1", p.Email)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -120,8 +120,8 @@ func TestSharedFeedHeldWaitAndPruning(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seq int64
-	if err := e.appStore.Tx(ctx, nil, true, NOLOCK, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, "INSERT INTO change(kind,id,op) VALUES('task','held-shared','I') RETURNING seq").Scan(&seq)
+	if err := e.appStore.Write(ctx, nil, nil, func(q *Request) error {
+		return q.tx.QueryRow(ctx, "INSERT INTO change(kind,id,op) VALUES('task','held-shared','I') RETURNING seq").Scan(&seq)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -148,8 +148,8 @@ func TestSharedFeedHeldWaitAndPruning(t *testing.T) {
 		}
 		return false
 	})
-	if err := e.appStore.Tx(ctx, nil, true, NOLOCK, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, "UPDATE change SET at=now()-interval '25 hours' WHERE seq=$1", seq)
+	if err := e.appStore.Write(ctx, nil, nil, func(q *Request) error {
+		_, err := q.tx.Exec(ctx, "UPDATE change SET at=now()-interval '25 hours' WHERE seq=$1", seq)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -189,8 +189,8 @@ func TestStreamHorizonIgnoresOtherDatabases(t *testing.T) {
 	}
 	read := func(cursor int64) (out []change, held bool) {
 		t.Helper()
-		if err := e.appStore.Tx(ctx, nil, false, "", func(tx pgx.Tx) (err error) {
-			out, _, _, held, err = since(ctx, tx, cursor, 1000)
+		if err := e.appStore.Read(ctx, nil, func(q *Request) (err error) {
+			out, _, _, held, err = since(ctx, q.tx, cursor, 1000)
 			return
 		}); err != nil {
 			t.Fatal(err)
@@ -199,22 +199,22 @@ func TestStreamHorizonIgnoresOtherDatabases(t *testing.T) {
 	}
 	commit := func(id string) (seq int64) {
 		t.Helper()
-		if err := e.appStore.Tx(ctx, nil, true, NOLOCK, func(tx pgx.Tx) error {
-			return tx.QueryRow(ctx, "INSERT INTO change(kind,id,op) VALUES('task',$1,'I') RETURNING seq", id).Scan(&seq)
+		if err := e.appStore.Write(ctx, nil, nil, func(q *Request) error {
+			return q.tx.QueryRow(ctx, "INSERT INTO change(kind,id,op) VALUES('task',$1,'I') RETURNING seq", id).Scan(&seq)
 		}); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
 	var cursor int64
-	if err := e.appStore.Tx(ctx, nil, false, "", func(tx pgx.Tx) (err error) {
+	if err := e.appStore.Read(ctx, nil, func(q *Request) (err error) {
 		// The setup is the failure it guards: the server-wide horizon is held by the other database's transaction.
 		var serverWide bool
-		if err = tx.QueryRow(ctx, "SELECT pg_snapshot_xmin(pg_current_snapshot()) <= $1::xid8", otherXID).Scan(&serverWide); err == nil && !serverWide {
+		if err = q.tx.QueryRow(ctx, "SELECT pg_snapshot_xmin(pg_current_snapshot()) <= $1::xid8", otherXID).Scan(&serverWide); err == nil && !serverWide {
 			err = fmt.Errorf("the other database's xid %s does not hold the server-wide horizon", otherXID)
 		}
 		if err == nil {
-			cursor, err = head(ctx, tx)
+			cursor, err = head(ctx, q.tx)
 		}
 		return
 	}); err != nil {

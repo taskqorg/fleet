@@ -596,17 +596,15 @@ func headTexts(q *Request, kind string) ([]headRow, error) {
 // operations) it reads in its own snapshot.
 func headTextsOf(q *Request, kind, id string) ([]headRow, error) {
 	var out []headRow
-	read := func(d *db.Queries) error {
-		rs, err := d.DefHeadTexts(q.ctx(), db.DefHeadTextsParams{Kind: kind, ID: optStr(id)})
+	err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
+		out = nil
+		rs, err := q.db().DefHeadTexts(q.ctx(), db.DefHeadTextsParams{Kind: kind, ID: optStr(id)})
 		for _, r := range rs {
 			out = append(out, headRow{id: r.ID, text: []byte(r.Content)})
 		}
 		return err
-	}
-	if q.tx != nil {
-		return out, read(q.db())
-	}
-	return out, q.app.store.Tx(q.ctx(), nil, false, "", func(tx pgx.Tx) error { return read(db.New(tx)) })
+	})
+	return out, err
 }
 
 func init() {
@@ -619,7 +617,7 @@ func init() {
 		if release == "" {
 			release = "unknown release"
 		}
-		if err := runTx(ctx, a, nil, true, GLOBAL, func(q *Request) error { return reconcileDefinitions(q, files, broken, release) }); err != nil {
+		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error { return reconcileDefinitions(q, files, broken, release) }); err != nil {
 			log.Fatalf("definitions: reconcile: %v", err)
 		}
 	})

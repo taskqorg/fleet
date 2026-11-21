@@ -168,7 +168,7 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 		}
 		cursor = n
 	}
-	ctx, sc := q.ctx(), scopeOf(q.person)
+	ctx := q.ctx()
 	initialVersion := ""
 	if q.person != nil {
 		initialVersion = grantsVersion(q.person)
@@ -176,7 +176,7 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 	wake := a.stream.join() // before the first read: a NOTIFY during it is not lost
 	defer a.stream.leave(wake)
 	if cursor < 0 {
-		if err := a.store.Tx(ctx, sc, false, "", func(tx pgx.Tx) (err error) { cursor, err = head(ctx, tx); return }); err != nil {
+		if err := a.store.Read(ctx, q, func(q *Request) (err error) { cursor, err = head(ctx, q.tx); return }); err != nil {
 			return err
 		}
 	}
@@ -210,7 +210,6 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 					return nil
 				}
 				q.person = p
-				sc = scopeOf(p)
 			}
 			var cs []change
 			var resync bool
@@ -225,14 +224,14 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 				break
 			}
 			if resync {
-				if err := a.store.Tx(ctx, sc, false, "", func(tx pgx.Tx) error {
-					current := *q
-					current.tx = tx
-					if err := refreshRequestAccess(&current); err != nil {
+				current := *q
+				current.tx = nil
+				if err := a.store.Read(ctx, &current, func(rq *Request) error {
+					if err := refreshRequestAccess(rq); err != nil {
 						return err
 					}
 					var err error
-					publicCursor, err = head(ctx, tx)
+					publicCursor, err = head(ctx, rq.tx)
 					return err
 				}); err != nil {
 					return nil
