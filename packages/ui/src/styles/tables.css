@@ -38,6 +38,27 @@
     border-top: 0;
   }
 
+  .limit-table thead th:has(> .sort-btn) { padding: 0; }
+
+  .sort-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    width: 100%;
+    min-height: var(--size-control);
+    padding: var(--space-2) var(--space-3);
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+  }
+
+  .limit-table th.num .sort-btn { justify-content: flex-end; }
+  .sort-btn:hover { color: var(--fg); }
+  .sort-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
   .limit-cell {
     display: inline-flex;
     flex-wrap: wrap;

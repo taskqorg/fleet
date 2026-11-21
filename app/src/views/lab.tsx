@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { useLocation } from 'wouter-preact';
-import { StateBadge, Button, Disclosure, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, catalogueRow, ROW2, percent, SettingField, StepList, msMeasured, type StepItem, type StateOf, type Basis, ShellStatus } from '../../../packages/ui/src/index.ts';
+import { StateBadge, Button, Disclosure, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, DataTable, TabBar, Choice, TextField, catalogueRow, ROW2, percent, SettingField, StepList, msMeasured, type StepItem, type StateOf, type Basis, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type OpName, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import { LabCreate } from './lab-create.tsx';
@@ -22,12 +22,14 @@ const typedIcon = (value: unknown) => { const v = typedValue(value); return v.an
 
 export function Lab({ id }: { id?: string }) {
   const [, go] = useLocation();
+  const [idleTab, setIdleTab] = useState<'questions' | 'registry'>('questions');
   const experiments = useOp('lab_experiments_list', {}), registry = useOp('lab_registry', {}), ratings = useOp('lab_ratings_list', { state: 'open' });
   const now = Date.now();
   if (id === 'new') return <LabCreate />;
   if (!experiments.data) return <Empty text="Loading…" />;
   const data = { experiments: experiments.data.experiments, useCases: registry.data?.useCases ?? [], ratings: ratings.data?.ratings ?? [] }, state = experiments.state;
   const approvals = data.ratings.filter(r => r.exampleArtifactId), open = data.ratings.filter(r => r.experimentId);
+  const groupCount = new Set(data.experiments.map(e => e.labGroup || 'Ungrouped')).size;
   // Control column: what waits for the owner, then the experiments catalogue (its one scroller, OR-25).
   const list = <>
     <ShellStatus><OfflineMarker state={state} now={now} /></ShellStatus>
@@ -49,8 +51,48 @@ export function Lab({ id }: { id?: string }) {
         : <Empty text="No experiments yet. Choose New experiment to create a draft." />}
     </section>
   </>;
-  return <ListDetail list={list} detail={id ? <Experiment key={id} id={id} onClose={() => go('/lab')} /> : undefined} detailKey={id}
-    idle={<Registry useCases={data.useCases} head={<Undecided experiments={data.experiments} onOpen={x => go(`/lab/${x}`)} />} />} />;
+  const idle = <article class="detail" aria-label={idleTab === 'questions' ? 'Lab questions' : 'Use-case registry'}>
+    <TabBar label="Lab views" value={idleTab} onChange={setIdleTab} tabs={[
+      { id: 'questions', label: 'Questions', count: groupCount },
+      { id: 'registry', label: 'Use-case registry', count: data.useCases.length },
+    ]} />
+    {idleTab === 'questions'
+      ? <Questions experiments={data.experiments} onOpen={x => go(`/lab/${x}`)} />
+      : <Registry useCases={data.useCases} head={<Undecided experiments={data.experiments} onOpen={x => go(`/lab/${x}`)} />} />}
+  </article>;
+  return <ListDetail list={list} detail={id ? <Experiment key={id} id={id} onClose={() => go('/lab')} /> : undefined} detailKey={id} idle={idle} />;
+}
+
+function Questions({ experiments, onOpen }: { experiments: LabExperimentRecord[]; onOpen: (id: string) => void }) {
+  const groups = new Map<string, LabExperimentRecord[]>();
+  for (const e of experiments) {
+    const key = e.labGroup || 'Ungrouped';
+    const items = groups.get(key);
+    if (items) items.push(e);
+    else groups.set(key, [e]);
+  }
+  const ordered = [...groups.entries()].sort((a, b) => Math.max(...b[1].map(e => ms(e.launchedAt ?? e.createdAt))) - Math.max(...a[1].map(e => ms(e.launchedAt ?? e.createdAt))));
+  return <>
+    <Undecided experiments={experiments} onOpen={onOpen} />
+    {ordered.length === 0 && <Empty text="No experiment questions yet" />}
+    {ordered.map(([group, items]) => {
+      const sorted = items.toSorted((a, b) => ms(b.launchedAt ?? b.createdAt) - ms(a.launchedAt ?? a.createdAt));
+      const latestGoal = sorted.find(e => e.goal)?.goal;
+      const latestHyp = sorted.find(e => e.hypothesis)?.hypothesis;
+      return <DetailSection key={group} title={group}>
+        {latestGoal && <KvRow icon="circle-question-mark" label={latestGoal} meta={latestHyp ?? undefined} />}
+        <DataTable label={`${group} experiments`} head={<tr><th>Experiment</th><th>State</th><th>Goal</th><th>Decision</th><th /></tr>}>
+          {sorted.map(e => <tr key={e.id}>
+            <td><EntityCode id={e.id} kind="experiment" /><div class="muted">{subtitle(e)}</div></td>
+            <td><StateBadge family="experiment" state={e.state as StateOf<'experiment'>} reason={e.stopReason ?? undefined} compact /></td>
+            <td>{e.goal ?? title(e)}</td>
+            <td>{e.decision && e.decision !== 'pending' ? <><b>{e.decision}</b>{e.decisionReason && <div class="muted">{e.decisionReason}</div>}</> : <span class="muted">Undecided</span>}</td>
+            <td><Button label="Open" kind="quiet" onClick={() => onOpen(e.id)} /></td>
+          </tr>)}
+        </DataTable>
+      </DetailSection>;
+    })}
+  </>;
 }
 
 const title = (e: LabExperimentRecord) => `${e.pipelineId} · ${e.kind === 'ab' ? 'A/B' : e.kind} · ${e.variants.map(v => v.label).join(' vs ')}`;
@@ -84,7 +126,7 @@ function Registry({ useCases, head }: { useCases: LabUseCaseEntry[]; head?: Comp
     <span class="tt"><span class="title">{u.goal}</span><span class="id">{u.id}{u.maps_to?.length ? ` → ${u.maps_to.join(', ')}` : ''}</span></span>
     <span class="muted">{u.status ?? 'current'}</span><span class="muted">{u.lab_fit}</span><span class="muted">{u.maturity}</span>
   </div>;
-  return <article class="detail" aria-label="Use-case registry">
+  return <>
     {head}
     <h2 class="detail-title">Use-case registry</h2>
     <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 6rem 5rem 9rem' }}>
@@ -93,7 +135,7 @@ function Registry({ useCases, head }: { useCases: LabUseCaseEntry[]; head?: Comp
       {repos.map(repo => { const of = gone.filter(u => (u.source?.repo ?? '?') === repo);
         return <Disclosure key={repo} summaryClass="muted" summary={`${repo}: ${of.length} replaced`}>{of.map(row)}</Disclosure>; })}
     </div>
-  </article>;
+  </>;
 }
 
 // One rating or approval question with its blind outputs and keyboard answers.
@@ -123,6 +165,9 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const [recordDraft, setRecordDraft] = useState<Record<string, string>>({});
   const [recordErrors, setRecordErrors] = useState<Record<string, string>>({});
   const [savedRecord, setSavedRecord] = useState<Record<string, string>>({});
+  const [decisionDraft, setDecisionDraft] = useState<string>();
+  const [reasonDraft, setReasonDraft] = useState<string>();
+  const [savingDecision, setSavingDecision] = useState(false);
   const [sel, setSel] = useState<string[]>([]);
   const [planTrial, setPlanTrial] = useState<string>();
   const [msg, setMsg] = useState<{ text: string; tone: 'warning' | 'failure' } | null>(null);
@@ -138,6 +183,19 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const note = (unit: string) => { const b = budgetOf(unit); return b ? `of ${b.limit} · ${b.action}${b.firedAt ? ' · reached' : ''}` : undefined; };
   const record = (field: string) => field === 'goal' ? e.goal : field === 'hypothesis' ? e.hypothesis : undefined;
   const cols = `minmax(8rem,14rem) ${e.variants.map(() => 'minmax(12rem,1fr)').join(' ')}`;
+  const decisionOptions = [
+    ...e.variants.map(v => ({ id: `adopt ${v.label ?? ''}`.trim(), label: `Adopt ${v.label ?? ''}` })),
+    { id: 'keep baseline', label: 'Keep baseline' },
+    { id: 'inconclusive', label: 'Inconclusive' },
+  ];
+  const currentDecision = decisionDraft ?? (e.decision && e.decision !== 'pending' ? e.decision : '');
+  const currentReason = reasonDraft ?? e.decisionReason ?? '';
+  const saveDecision = async () => {
+    if (!currentDecision) return;
+    setSavingDecision(true);
+    try { await act('lab_experiment_decide', { experimentId: id, decision: currentDecision, reason: currentReason.trim() || undefined }); }
+    finally { setSavingDecision(false); }
+  };
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={title(e)}>
     <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><StateBadge family="experiment" state={e.state as StateOf<'experiment'>} reason={e.stopReason ?? undefined} /><EntityCode id={e.id} kind="experiment" /><span class="grow" />
       {e.state === 'draft' && <Button label="Launch" icon="play" kind="primary" disabledReason={savingRecord ? 'Saving experiment record' : Object.values(recordErrors).some(Boolean) || Object.entries(recordDraft).some(([field, value]) => value !== String(savedRecord[field] ?? record(field) ?? '')) ? 'Save the experiment record successfully before launch' : !String(savedRecord.goal ?? e.goal ?? '').trim() || !String(savedRecord.hypothesis ?? e.hypothesis ?? '').trim() ? 'Save a goal and hypothesis before launch' : undefined} onClick={() => act('lab_experiment_action', { experimentId: id, action: 'launch' })} />}
@@ -151,6 +209,19 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
       catch (x) { setRecordErrors(r => ({...r, [field]: message(x)})); setMsg({text: message(x), tone: 'failure'}); }
       finally { setSavingRecord(n => n - 1); }
     }} />)}</DetailSection>}
+    {(e.state !== 'draft' || (e.decision && e.decision !== 'pending')) && <DetailSection title="Question & decision">
+      {e.goal && <KvRow icon="circle-question-mark" label="Goal" value={e.goal} />}
+      {e.hypothesis && <KvRow icon="file-text" label="Hypothesis" value={e.hypothesis} />}
+      {e.decisionRule && <KvRow icon="sliders-horizontal" label="Decision rule" value={e.decisionRule} />}
+      {e.decision && e.decision !== 'pending' && <KvRow icon="check-check" label={e.decision}
+        meta={[e.decidedBy && `by ${e.decidedBy}`, e.decidedAt].filter(Boolean).join(' · ') || undefined}
+        value={e.decisionReason ?? undefined} />}
+      {(e.state === 'done' || e.state === 'stopped') && <div class="stack">
+        <Choice label="Experiment decision" options={decisionOptions} value={currentDecision} onChange={setDecisionDraft} />
+        <TextField label="Rationale" value={currentReason} onChange={setReasonDraft} help="Why this outcome was chosen" />
+        <div><Button label={savingDecision ? 'Saving decision…' : e.decision && e.decision !== 'pending' ? 'Update decision' : 'Record decision'} kind="primary" icon="check" disabledReason={!currentDecision ? 'Select a decision first' : savingDecision ? 'Saving decision' : undefined} onClick={saveDecision} /></div>
+      </div>}
+    </DetailSection>}
     {msg && <ProblemRow title={msg.tone === 'warning' ? 'Launched with warnings' : 'Action refused'} facts={msg.text} severity={msg.tone} actions={[]} />}
     <Totals items={[
       { label: 'Trials', m: { value: e.spend.trials.value, basis: 'measured' }, kind: 'count', note: note('trials') },
