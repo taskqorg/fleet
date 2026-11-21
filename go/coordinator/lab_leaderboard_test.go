@@ -271,12 +271,47 @@ func TestLabLeaderboard(t *testing.T) {
 			return err
 		}
 
-		// Exp3: Real Work use case (real:prod-alert-triage)
+		// Exp3: Real Work use case (real:prod-alert-triage) with multi-step descendants (session child_agent + measured tool_run + reused step exclusion)
 		t5 := now.Add(-30 * time.Minute)
 		if err := insertTrial("tr-3a", exp3ID, "coding-task", "triage-v1", "succeeded", "confirmed", e3.Examples[0].ID, triageRef, t5, t5.Add(5*time.Second), 5000, 0, 0); err != nil {
 			return err
 		}
 		if err := insertAgentStep("tr-3a", "step-3a", exp3ID, "triage-v1", "coding-task", "coding-worker", "gpt-5.3-codex", "acc-sub-1", "subscription", t5, t5.Add(5*time.Second), 500, 100, 0); err != nil {
+			return err
+		}
+		if err := exec(q, `INSERT INTO session(id,project_id,parent_execution_id,payload,updated_at) VALUES ('sess-child-3a','hello-world','step-3a','{}',$1)`, t5); err != nil {
+			return err
+		}
+		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,experiment_id,variant,session_id,profile_id,model,account_id,started_at,ended_at,data)
+			VALUES ('child-3a','child_agent','succeeded','confirmed','hello-world',$1,'triage-v1','sess-child-3a','coding-worker','gpt-5.3-codex','acc-sub-1',$2,$3,'{"id":"child-3a"}')`,
+			exp3ID, t5, t5.Add(2*time.Second)); err != nil {
+			return err
+		}
+		if err := exec(q, `INSERT INTO execution_totals(execution_id,project_id,model,billing_basis,tokens_input,tokens_input_basis,tokens_output,tokens_output_basis,tokens_cache_read,tokens_cache_read_basis)
+			VALUES ('child-3a','hello-world','gpt-5.3-codex','subscription',300,'subscription',100,'subscription',50,'subscription')`); err != nil {
+			return err
+		}
+		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,experiment_id,variant,parent_execution_id,started_at,ended_at,data)
+			VALUES ('tool-3a','tool_run','succeeded','confirmed','hello-world',$1,'triage-v1','step-3a',$2,$3,'{"connection":"github","tool":"search"}')`,
+			exp3ID, t5, t5.Add(time.Second)); err != nil {
+			return err
+		}
+		if err := exec(q, `INSERT INTO execution_totals(execution_id,project_id,billing_basis,connection_cost,connection_cost_basis)
+			VALUES ('tool-3a','hello-world','api','{"unit":"USD","amount":0.005,"currency":"USD"}'::jsonb,'measured')`); err != nil {
+			return err
+		}
+		// Reused step in pipeline_step must not contribute its child leaves to tr-3a.
+		if err := exec(q, `INSERT INTO pipeline_step(run_id,step_index,step_id,definition_sha256,activation,ref_mode)
+			VALUES ('tr-3a',1,'reused-step','sha-reused','selected','reused')`); err != nil {
+			return err
+		}
+		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,model,started_at,ended_at,data)
+			VALUES ('step-3a-reused','agent_run','succeeded','confirmed','hello-world','tr-3a:step:1','gpt-5.3-codex',$1,$2,'{}')`,
+			t5, t5.Add(time.Second)); err != nil {
+			return err
+		}
+		if err := exec(q, `INSERT INTO execution_totals(execution_id,project_id,model,billing_basis,tokens_input,tokens_input_basis)
+			VALUES ('step-3a-reused','hello-world','gpt-5.3-codex','subscription',9999,'subscription')`); err != nil {
 			return err
 		}
 		if _, err := scoreInsert(q, labNewScore{ExperimentID: exp3ID, ProjectID: "hello-world", TrialIDs: []string{"tr-3a"}, Evaluator: "script:example.checks:pass_fail", EvaluatorVersion: "v1", Form: "pass_fail", Value: true}); err != nil {
@@ -386,10 +421,15 @@ func TestLabLeaderboard(t *testing.T) {
 		t.Fatalf("claude costUsd = %v, want %v", claudeEntry.CostUsd, wantClaudeUsd)
 	}
 
-	// 3. Collection, useCaseId, and days window filters.
+	// 3. Collection, useCaseId, and days window filters + multi-step subscription/measured rollup.
 	realOnly := callLB(doc{"collection": "Real Work"})
 	if len(realOnly.Entries) != 1 || realOnly.Entries[0].UseCaseId != "real:prod-alert-triage" || realOnly.Entries[0].ScoreForm != "pass_fail" {
 		t.Fatalf("Real Work filter = %+v", realOnly.Entries)
+	}
+	re := realOnly.Entries[0]
+	wantRealUsd := (500+300)*0.000002 + (100+100)*0.000010 + 50*0.0000005 + 0.005 // 0.008625
+	if re.TokensTotal != 1050 || re.CostBasis != "subscription" || re.CostUsd == nil || math.Abs(*re.CostUsd-wantRealUsd) > 1e-9 {
+		t.Fatalf("Real Work multi-step spend = tokens:%d basis:%s usd:%v (want 1050, subscription, %v)", re.TokensTotal, re.CostBasis, re.CostUsd, wantRealUsd)
 	}
 	benchKeyOnly := callLB(doc{"collection": "benchmarks", "useCaseId": "bench:bug-finding"})
 	if len(benchKeyOnly.Entries) != 2 {
