@@ -19,7 +19,7 @@ This folder is the single knowledge base for Fleet's interface design. It plays 
 | `principles.md` | Usability rules that every screen follows: density, scrolling, filtering, keyboard, states, errors, empty states, motion, accessibility. | The owner approves a new rule. |
 | `tokens.md` + `packages/ui/tokens.json` | Colour, type, spacing, radius, elevation, motion, in light and dark. | The owner approves a visual change. |
 | `controls/<control>.md` | One file per control: purpose, anatomy, states, behaviour, keyboard, accessibility, do and don't, and where it is used. | A control is added or changed. |
-| `patterns/<pattern>.md` | Compositions of controls for recurring jobs, for example the decision block, the result viewer or the problem row. | A pattern is added or changed. |
+| `patterns/<pattern>.md` | Compositions of controls for recurring jobs, including [navigation and columns](patterns/navigation-and-columns.md), the decision block, the result viewer or the problem row. | A pattern is added or changed. |
 | `pages/<page>.md` | Each page: purpose, the inventory items it covers, the layout, and which controls and patterns it uses. | A page is added or changed. |
 | `decisions.md` | Dated design decisions with the options considered and the reason. Append only. | Every owner decision. |
 

@@ -1,6 +1,6 @@
 # Catalogue (architect)
 
-**Mockup routes:** `#/catalogue` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). The app uses the existing definition editor with a Methods tab ([D20](../decisions.md)).
+**App routes:** `/catalogue` and `/catalogue/<id>` (`app/src/views/definitions.tsx`). **Mockup routes:** `#/catalogue` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). The app uses `Definitions` / `DefinitionDetail` with a Methods tab ([D20](../decisions.md)).
 
 **Purpose.** See each capability, the methods that provide it and which method work will use ([capabilities, methods and tools](../../configuration.md#capabilities-methods-and-tools)).
 
@@ -10,7 +10,7 @@
 
 **Work area.**
 1. **What the caller gets:** the input and result contract.
-2. **Methods:** a table with state, name and ID, scope, what it runs (pipeline and agent), then quality, time and cost from Lab assessments, each with its basis, and "Recommended for".
+2. **Methods:** each method row shows its name, ID, scope, pipeline, optional `capability` chip, lifecycle `status` badge (`recommended`, `experimental`, `deprecated`), optional `description`, quality/time/cost from Lab assessments with basis, and "Recommended for".
 3. **Which method a call uses:** the selection order as three lines: the task's explicit choice, the project's recommendation, the shared default.
 4. Actions: "Recommend for a project" and "Compare methods in Lab". Changing a recommendation is its own action; an assessment never changes it.
 
