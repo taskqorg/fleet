@@ -37,6 +37,7 @@
 
   /* State badge */
   .state { display: inline-flex; align-items: center; gap: var(--space-3); min-width: 0; }
+  .state:has(> .badge.compact:only-child) { flex: none; }
   .badge {
     display: inline-flex;
     align-items: center;
@@ -478,14 +479,15 @@
   .cat-row.depth-2 { padding-left: calc(var(--space-4) + 2 * var(--space-5)); }
   .cat-row.disabled { opacity: .55; cursor: not-allowed; }
   .cat-row:focus-visible { outline: var(--size-focus-ring) solid var(--accent); outline-offset: calc(-1 * var(--size-focus-ring)); }
-  .cat-row.folder > .icon { color: var(--fg-muted); width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  .cat-row.folder > .icon { color: var(--fg-muted); width: var(--size-icon-sm); height: var(--size-icon-sm); flex: none; }
   .cat-tw { display: inline-flex; align-items: center; justify-content: center; width: var(--size-badge); height: var(--size-badge); flex: none; border: 0; border-radius: var(--radius-sm); background: none; color: var(--fg-muted); cursor: pointer; padding: 0; }
   .cat-tw:hover { background: var(--hover); color: var(--fg); }
   .cat-ic { display: inline-flex; color: var(--fg-muted); flex: none; }
   .cat-ic .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
-  .cat-label, .cat-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--font-weight-medium); color: var(--fg); text-decoration: none; }
+  .cat-row .state, .cat-row .badge, .cat-row .badge.compact, .cat-row .row-pin, .cat-row .row-check { flex: none; }
+  .cat-label, .cat-link { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--font-weight-medium); color: var(--fg); text-decoration: none; }
   .cat-row.folder .cat-label { font-size: var(--font-size-sm); }
-  .cat-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--fg-muted); }
+  .cat-sub { flex: 0 2 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--fg-muted); }
   .cat-right { margin-left: auto; display: inline-flex; align-items: center; gap: var(--space-2); flex: none; font-size: var(--font-size-sm); color: var(--fg-muted); }
   .cat-count { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--font-size-xs); color: var(--fg-muted); }
 

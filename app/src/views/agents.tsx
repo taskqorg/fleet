@@ -300,13 +300,18 @@ export function Agents({ id }: { id?: string }) {
       <ShellStatus><OfflineMarker state={agentsOp.state} now={Date.now()} /></ShellStatus>
       <header class="page-h">
         <SearchField label={listTab === 'agents' ? 'Find agents' : 'Find skills'} value={q} onInput={setQ} onSearch={() => {}} />
-        <span class="muted mono">{listTab === 'agents' ? `${filteredAgents.length} of ${agentItems.length}` : `${filteredSkills.length} of ${skillItems.length}`}</span>
         {listTab === 'agents' && harness && (
           <Button label={harnesses[harness]?.label ?? harness} icon="x" kind="quiet" onClick={() => setHarness('')} />
         )}
         {listTab === 'agents' && category && (
           <Button label={category} icon="x" kind="quiet" onClick={() => setCategory('')} />
         )}
+        <span class="grow" />
+        <span class="muted mono" aria-label={listTab === 'agents' ? `${filteredAgents.length} of ${agentItems.length} agents` : `${filteredSkills.length} of ${skillItems.length} skills`}>
+          {listTab === 'agents'
+            ? (filteredAgents.length < agentItems.length ? `${filteredAgents.length} of ${agentItems.length}` : agentItems.length)
+            : (filteredSkills.length < skillItems.length ? `${filteredSkills.length} of ${skillItems.length}` : skillItems.length)}
+        </span>
       </header>
       {listTab === 'agents' && agentsOp.error && <ErrorBanner text={agentsOp.error} onRetry={agentsOp.reload} />}
       {listTab === 'skills' && skillsOp.error && <ErrorBanner text={skillsOp.error} onRetry={skillsOp.reload} />}

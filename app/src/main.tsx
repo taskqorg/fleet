@@ -278,8 +278,8 @@ function App() {
     user={access.value.state === 'open' && user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
     {access.value.state === 'open' ? <>
-      {subNav && <nav aria-label={subNav.label} style={current === 'changes' || current === 'runners' ? { flex: 'none' } : { flex: 'none', background: 'var(--bg)', paddingInline: 'var(--space-4)' }}>
-        <TabBar cls="detail-tabs" label={subNav.label} tabs={subNav.tabs} value={current} onChange={id => go('/' + id)} />
+      {subNav && <nav class="sub-nav" aria-label={subNav.label}>
+        <TabBar label={subNav.label} tabs={subNav.tabs} value={current} onChange={id => go('/' + id)} />
       </nav>}
       <RenderBoundary at={access.value.generation + ':' + loc + '?' + query}><PrivateRoutes key={access.value.generation} go={go} /></RenderBoundary>
     </> : current === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}

@@ -1,8 +1,8 @@
 /* App shell, navigation rail, split list-detail layout, panels, and responsive regions. */
 @layer layout {
-.shell{--shell-header-height:calc(var(--size-control) + 2 * var(--space-2));display:grid;grid-template-columns:auto minmax(0,1fr);height:100dvh;overflow:hidden}
+.shell{--shell-header-height:calc(var(--size-control) + 2 * var(--space-2));--size-bar:var(--size-row);display:grid;grid-template-columns:auto minmax(0,1fr);height:100dvh;overflow:hidden}
   @media (pointer: coarse) {
-    .shell { --shell-header-height: calc(var(--size-hit-phone) + 2 * var(--space-2)); }
+    .shell { --shell-header-height: calc(var(--size-hit-phone) + 2 * var(--space-2)); --size-bar: var(--size-hit-phone); }
   }
   /* Until the person's settings are first read (at most 1.5 s) the shell is laid out but not shown, so a stored width or collapsed rail never jumps in (OR-23). */
   .shell.pending { visibility: hidden; }
@@ -168,10 +168,14 @@
   .nav-toggle .btn { border-color: transparent; background: none; }
   .shell-search:hover { background: var(--hover); color: var(--fg); }
 
+  .sub-nav { flex: none; display: flex; align-items: stretch; height: var(--size-bar); padding: 0 var(--space-4); border-bottom: 1px solid var(--line); background: var(--surface); }
+  .sub-nav .tabs { min-width: 0; }
+  .sub-nav .tabs button { height: 100%; }
+
   .shell-main { min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-4) var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); background: var(--surface); }
   .shell-main > * { flex: none; }
-  .shell-main:has(> .split-view) { padding: 0; gap: 0; overflow: hidden; }
-  .shell-main > .split-view { flex: 1; min-height: 0; }
+  .shell-main:has(> .split-view), .shell-main:has(> .sub-nav) { padding: 0; gap: 0; overflow: hidden; }
+  .shell-main > .split-view, .shell-main:has(> .sub-nav) > :is(.detail, .runners) { flex: 1; min-height: 0; }
   .shell-main, .rail, .split-list, .detail, .vl { scrollbar-width: thin; }
 
   /* Resizable dividers */
@@ -279,7 +283,7 @@
     .rail .nav-i a { padding: 0 var(--space-2); position: relative; }
     .rail .nav-count { position: absolute; top: calc(-1 * var(--space-1)); right: calc(-1 * var(--space-1)); padding: 0 var(--space-1); }
     .rail .nav-out, .rail .nav-count.out-only { display: none; }
-    .shell-main, .shell-main:not(:has(> .split-view)) { padding: var(--space-3); }
+    .shell-main:not(:has(> .split-view)):not(:has(> .sub-nav)) { padding: var(--space-3); }
   }
   @media (max-width: 760px) and (pointer: coarse) {
     .rail, .rail.mini { width: calc(var(--size-hit-phone) + 1px); padding-inline: 0; }

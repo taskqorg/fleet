@@ -30,16 +30,31 @@ const projectIds = (r: Ops['project_list']['reply'] | null) => (r?.projects ?? [
 
 export function Definitions({ kind, id }: { kind: Kind; id?: string }) {
   const [, go] = useLocation();
+  const [q, setQ] = useState('');
+  useEffect(() => setQ(''), [kind]);
   const { title, route } = SECTION[kind];
   const { data } = useOp('definition_list', { kind });
   const items = data?.items ?? [];
+  const shown = useMemo(
+    () => items
+      .filter(x => matchSearch(q, `${x.id} ${x.name} ${x.state}`))
+      .toSorted((a, b) => Number(!!b.draft) - Number(!!a.draft)),
+    [items, q],
+  );
   const list = <>
-    <header class="page-h"><span class="muted mono" aria-label={`${items.length} ${title.toLowerCase()}`}>{items.length}</span></header>
+    <header class="page-h">
+      <SearchField label={`Find ${title.toLowerCase()}`} value={q} onInput={setQ} onSearch={() => {}} />
+      <span class="grow" />
+      <span class="muted mono" aria-label={`${shown.length} of ${items.length} ${title.toLowerCase()}`}>
+        {shown.length < items.length ? `${shown.length} of ${items.length}` : items.length}
+      </span>
+    </header>
     <section class="panel">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
         {data && items.length === 0 && <Empty text={`No ${title.toLowerCase()} yet`} />}
+        {data && items.length > 0 && shown.length === 0 && <Empty text={`No matching ${title.toLowerCase()}`} />}
         {!data && <Empty text="Loading…" />}
-        {items.toSorted((a, b) => Number(!!b.draft) - Number(!!a.draft)).map(x =>
+        {shown.map(x =>
           <div key={x.id} role="row" class={`vl-row static${x.id === id ? ' sel' : ''}`} onClick={() => go(`${route}/${x.id}`)}>
             <span class="lead"><StateBadge family="definition" state={x.draft ? 'draft' : 'ready'} compact /></span>
             <span class="tt"><a class="title row-link" href={`${route}/${x.id}`} onClick={e => { e.preventDefault(); go(`${route}/${x.id}`); }}>{x.name}</a>
@@ -126,6 +141,7 @@ export function DefinitionDetail({ kind, id, onClose }: { kind: Kind; id: string
       ]} />}
     {tab === 'Configuration' && <>
       {draft && <SettingField label="Message" value={message} help="Says what the revision changes; shown in History." now={Date.now()} status={{ kind: 'pending' }} onSave={setMessage} />}
+      {kind === 'pipeline' && <PipelineFacts text={text} def={def} />}
       {kind === 'pipeline' && <Steps text={text} />}
       {kind === 'agent' && <AgentFacts text={text} def={def} />}
       <DetailSection title="Definition">
@@ -142,19 +158,204 @@ export function DefinitionDetail({ kind, id, onClose }: { kind: Kind; id: string
 }
 
 // reads: what a step's arguments or prompt reference (${example.x}, ${steps.<id>.output…}).
-type StepJson = { id?: string; kind?: string; profile?: string; tool?: string; command?: string; when?: { source?: { step?: string; path?: string[] }; equals?: unknown } };
+type StepJson = {
+  id?: string;
+  kind?: string;
+  profile?: string;
+  connection?: string;
+  tool?: string;
+  status_tool?: string;
+  recent_tool?: string;
+  mode?: string;
+  output?: Record<string, unknown>;
+  command?: string;
+  timeout_ms?: number;
+  host?: string;
+  when?: { source?: { step?: string; path?: string[] }; equals?: unknown };
+};
+type PipelineJson = { id?: string; version?: number; resultStep?: string; description?: string; steps?: unknown };
+type DiffFieldRow = { key: string; icon: IconName; label: string; baseText: string; currentText: string; diff: boolean; badgeLabel?: string };
+
+const parseJsonObj = <T extends object>(raw: string): T | null => {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as T) : null;
+  } catch {
+    return null;
+  }
+};
+
+const stepArrayOf = (steps: unknown): StepJson[] =>
+  Array.isArray(steps) ? (steps as unknown[]).filter((s): s is StepJson => !!s && typeof s === 'object') : [];
+
+function DiffFromDefault({ fields, emptyLabel, emptyMeta, loadingText }: {
+  fields: readonly DiffFieldRow[];
+  emptyLabel: string;
+  emptyMeta: string;
+  loadingText?: string;
+}) {
+  const diffs = fields.filter(f => f.diff);
+  const inherited = fields.filter(f => !f.diff);
+  return (
+    <DetailSection title="Differences from default">
+      {loadingText ? (
+        <Empty text={loadingText} />
+      ) : diffs.length > 0 ? (
+        diffs.map(f => (
+          <KvRow
+            key={f.key}
+            icon={f.icon}
+            label={f.label}
+            meta={<span class="mono">{f.baseText} → {f.currentText}</span>}
+            value={<span class="badge t-attention">{f.badgeLabel ?? 'override'}</span>}
+          />
+        ))
+      ) : (
+        <KvRow icon="circle-check" label={emptyLabel} meta={emptyMeta} />
+      )}
+      {inherited.length > 0 && (
+        <Disclosure summary={`Inherited defaults (${inherited.length})`} summaryClass="muted">
+          {inherited.map(f => (
+            <KvRow key={f.key} icon={f.icon} label={f.label} meta={<span class="mono">{f.currentText}</span>} />
+          ))}
+        </Disclosure>
+      )}
+    </DetailSection>
+  );
+}
+
 const readsOf = (s: unknown) => {
   const refs = [...(JSON.stringify(s) ?? '').matchAll(/\$\{(example|steps\.[\w-]+)/g)].map(m => m[1].replace('steps.', ''));
   return [...new Set(refs)].join(', ') || 'nothing';
 };
 
 function Steps({ text }: { text: string }) {
-  let parsed: unknown, resultStep: string | undefined;
-  try { const definition: { steps?: unknown; resultStep?: string } | null = JSON.parse(text); parsed = definition?.steps; resultStep = definition?.resultStep; } catch { return null; }
-  if (!Array.isArray(parsed)) return null;
-  const steps = (parsed as unknown[]).filter((s): s is StepJson => !!s && typeof s === 'object');
+  const definition = parseJsonObj<PipelineJson>(text);
+  if (!definition || !Array.isArray(definition.steps)) return null;
+  const steps = stepArrayOf(definition.steps);
+  const resultStep = definition.resultStep;
   const items: StepItem[] = steps.map(s => ({ id: s.id ?? '', kind: s.kind === 'api' ? 'tool' : s.kind === 'agent' ? 'agent' : 'program', executor: s.kind === 'api' || s.kind === 'agent' || s.kind === 'script' ? s.profile ?? s.tool ?? s.command ?? '' : `${s.kind}: no longer run`, reads: readsOf(s), writes: 'output', result: s.id === resultStep, condition: s.when ? `${s.when.source?.step}.${(s.when.source?.path ?? []).join('.')} = ${JSON.stringify(s.when.equals)}` : undefined }));
   return <DetailSection title="Steps"><StepList items={items} label="Steps" /></DetailSection>;
+}
+
+function PipelineFacts({ text, def }: { text: string; def: Get }) {
+  const p = parseJsonObj<PipelineJson>(text);
+  if (!p) return null;
+
+  const steps = stepArrayOf(p.steps);
+  const kinds = [...new Set(steps.map(s => s.kind).filter((k): k is string => !!k))];
+  const profiles = [...new Set(steps.filter(s => s.kind === 'agent' && s.profile).map(s => s.profile!))];
+  const connections = [...new Set(steps.filter(s => s.kind === 'api' && s.connection).map(s => s.connection!))];
+
+  const version = typeof p.version === 'number' ? p.version : 2;
+  const condSteps = steps.filter(s => !!s.when);
+  const jobSteps = steps.filter(s => s.kind === 'api' && s.mode && s.mode !== 'sync');
+  const outputSteps = steps.filter(s => s.kind === 'api' && s.output && typeof s.output === 'object' && Object.keys(s.output).length > 0);
+  const hostSteps = steps.filter(s => s.kind === 'script' && !!s.host);
+  const timeoutSteps = steps.filter(s => s.kind === 'script' && typeof s.timeout_ms === 'number');
+
+  const fields: DiffFieldRow[] = [
+    {
+      key: 'version',
+      icon: 'git-merge',
+      label: 'Plan version',
+      baseText: 'v2',
+      currentText: version === 3 ? 'v3 (conditional)' : `v${version}`,
+      diff: version !== 2,
+    },
+    {
+      key: 'resultStep',
+      icon: 'circle-check',
+      label: 'Result step',
+      baseText: 'last step',
+      currentText: p.resultStep || 'last step',
+      diff: !!p.resultStep,
+    },
+    {
+      key: 'when',
+      icon: 'sliders-horizontal',
+      label: 'Step activation',
+      baseText: 'unconditional',
+      currentText: condSteps.length ? condSteps.map(s => s.id || '?').join(', ') : 'unconditional',
+      diff: condSteps.length > 0,
+    },
+    {
+      key: 'mode',
+      icon: 'activity',
+      label: 'API execution mode',
+      baseText: 'sync',
+      currentText: jobSteps.length ? jobSteps.map(s => `${s.id || '?'}: ${s.mode}`).join(', ') : 'sync',
+      diff: jobSteps.length > 0,
+    },
+    {
+      key: 'output',
+      icon: 'file-text',
+      label: 'API output mapping',
+      baseText: 'raw reply',
+      currentText: outputSteps.length ? outputSteps.map(s => `${s.id || '?'} (${Object.keys(s.output!).length})`).join(', ') : 'raw reply',
+      diff: outputSteps.length > 0,
+    },
+    {
+      key: 'host',
+      icon: 'panels-top-left',
+      label: 'Script host placement',
+      baseText: 'auto',
+      currentText: hostSteps.length ? hostSteps.map(s => `${s.id || '?'} → ${s.host}`).join(', ') : 'auto',
+      diff: hostSteps.length > 0,
+    },
+    {
+      key: 'timeout_ms',
+      icon: 'clock',
+      label: 'Script timeout',
+      baseText: 'default',
+      currentText: timeoutSteps.length ? timeoutSteps.map(s => `${s.id || '?'}: ${s.timeout_ms}ms`).join(', ') : 'default',
+      diff: timeoutSteps.length > 0,
+    },
+  ];
+
+  if (text !== def.text) {
+    const saved = parseJsonObj<PipelineJson>(def.text);
+    const savedSteps = stepArrayOf(saved?.steps);
+    const savedById = new Map(savedSteps.map(s => [s.id ?? '', JSON.stringify(s)]));
+    const curById = new Map(steps.map(s => [s.id ?? '', JSON.stringify(s)]));
+    const changed = steps.filter(s => savedById.get(s.id ?? '') !== JSON.stringify(s)).length
+      + savedSteps.filter(s => !curById.has(s.id ?? '')).length;
+    if (changed > 0) {
+      fields.unshift({
+        key: 'draftSteps',
+        icon: 'file-plus-2',
+        label: 'Draft step edits',
+        baseText: `r${def.head} (${savedSteps.length})`,
+        currentText: `${steps.length} (${changed} changed)`,
+        diff: true,
+        badgeLabel: 'draft',
+      });
+    }
+  }
+
+  return <>
+    <DetailSection title="Identity">
+      <KvRow
+        icon="network"
+        label={p.id || def.id}
+        meta={<span class="mono">{def.scope} · {def.state} · r{def.head}{def.draft ? ' · draft' : ''}</span>}
+        value={<StateBadge family="definition" state={def.draft ? 'draft' : 'ready'} />}
+      />
+      <KvRow
+        icon="list-ordered"
+        label="Steps"
+        meta={<span class="mono">{steps.length}{kinds.length ? ` · ${kinds.join(', ')}` : ''}</span>}
+      />
+      {profiles.length > 0 && <KvRow icon="bot" label="Agent profiles" meta={<span class="mono">{profiles.join(', ')}</span>} />}
+      {connections.length > 0 && <KvRow icon="link" label="Connections" meta={<span class="mono">{connections.join(', ')}</span>} />}
+      {p.description && <KvRow icon="info" label="Description" meta={p.description} />}
+    </DetailSection>
+    <DiffFromDefault
+      fields={fields}
+      emptyLabel="Matches pipeline defaults"
+      emptyMeta="No non-default plan or step overrides"
+    />
+  </>;
 }
 
 function AgentFacts({ text, def }: { text: string; def: Get }) {
@@ -206,8 +407,7 @@ function AgentFacts({ text, def }: { text: string; def: Get }) {
     };
   };
 
-  type FieldRow = { key: string; icon: IconName; label: string; baseText: string; currentText: string; diff: boolean };
-  const fields: FieldRow[] = [];
+  const fields: DiffFieldRow[] = [];
 
   fields.push({
     key: 'harness',
@@ -361,8 +561,6 @@ function AgentFacts({ text, def }: { text: string; def: Get }) {
     });
   }
 
-  const diffs = fields.filter(f => f.diff);
-  const inherited = fields.filter(f => !f.diff);
   const baseSourceLabel = baseProfile ? baseProfile.id : 'system';
   const compatState = def.draft ? 'draft' : listItem?.compatibility === 'checked' ? 'ready' : listItem?.compatibility === 'failed' ? 'incompatible' : 'unchecked';
 
@@ -392,30 +590,12 @@ function AgentFacts({ text, def }: { text: string; def: Get }) {
         <KvRow icon="layers-2" label="Tags" meta={<span class="tag-row">{a.tags.map(t => <span key={t} class="chip">{t}</span>)}</span>} />
       )}
     </DetailSection>
-    <DetailSection title="Differences from default">
-      {variantOf && !baseOp.data && !baseOp.error ? (
-        <Empty text={`Loading base profile ${variantOf}…`} />
-      ) : diffs.length > 0 ? (
-        diffs.map(f => (
-          <KvRow
-            key={f.key}
-            icon={f.icon}
-            label={f.label}
-            meta={<span class="mono">{f.baseText} → {f.currentText}</span>}
-            value={<span class="badge t-attention">override</span>}
-          />
-        ))
-      ) : (
-        <KvRow icon="circle-check" label="Matches base defaults" meta={`No overrides from ${baseSourceLabel}`} />
-      )}
-      {inherited.length > 0 && (
-        <Disclosure summary={`Inherited defaults (${inherited.length})`} summaryClass="muted">
-          {inherited.map(f => (
-            <KvRow key={f.key} icon={f.icon} label={f.label} meta={<span class="mono">{f.currentText}</span>} />
-          ))}
-        </Disclosure>
-      )}
-    </DetailSection>
+    <DiffFromDefault
+      fields={fields}
+      loadingText={variantOf && !baseOp.data && !baseOp.error ? `Loading base profile ${variantOf}…` : undefined}
+      emptyLabel="Matches base defaults"
+      emptyMeta={`No overrides from ${baseSourceLabel}`}
+    />
   </>;
 }
 
