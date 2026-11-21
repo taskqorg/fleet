@@ -87,9 +87,9 @@ Contract list rows are closed types. One JSON source for presets, view grammar a
 coordinator source (go/parser) and fails on SQL literals (`R-SQL`), map accessors and `map[string]any`
 (`R-MAP`), goroutines, sleeps and tickers (`R-GO`) and raw op registration (`R-OP`) in every file (the legacy
 allowlist emptied with the `doc` map type and `docOf`, stage 8f). A short owner list names what one file owns (the work kit: its
-loop and the retry-column writes). State-column writes outside the owner are checked for the machines on the kit
-(stage 7), as are `execution`, `question` and `experiment` state and `question.cause` (owned by `problems.go`); not built: the
-`background.go` exemption.
+loop and the retry-column writes; `background.go`: periodic passes and background helpers in its named functions, verified
+alongside startup-only pass registration and kit-area bans by `TestDesignScheduling`). State-column writes outside the owner are checked for the machines on the kit
+(stage 7), as are `execution`, `question` and `experiment` state and `question.cause` (owned by `problems.go`).
 
 ## How the work runs
 
@@ -122,7 +122,6 @@ loop and the retry-column writes). State-column writes outside the owner are che
 
 - **Executor:** 3 `jStr` uses on in-memory maps (`harness_codex.go`, `mcp_code.go`); `jObj` and `jBoolOr` are read by
   tests only.
-- **S10 checks not built:** the `background.go` exemption of the scheduling scan.
 - **Schema:** `person_setting.email` has no foreign key (the people reload deletes and reinserts `person`).
 
 Stage 11 also fixed what the stages had deferred: `command.execution_id` has its foreign key again (migration 85), a
