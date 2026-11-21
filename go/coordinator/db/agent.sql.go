@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 )
 
 const agentExecutionLink = `-- name: AgentExecutionLink :one
@@ -141,7 +142,7 @@ const agentSessionPayload = `-- name: AgentSessionPayload :one
 SELECT payload FROM session WHERE id = $1
 `
 
-// A session's payload: the record fields without a column (queries/records.sql "session").
+// A session's payload: the record fields without a column (session_resume).
 func (q *Queries) AgentSessionPayload(ctx context.Context, id string) ([]byte, error) {
 	row := q.db.QueryRow(ctx, agentSessionPayload, id)
 	var payload []byte
@@ -210,4 +211,335 @@ func (q *Queries) AgentTranscriptArtifacts(ctx context.Context, sessionID string
 		return nil, err
 	}
 	return items, nil
+}
+
+const handoffByID = `-- name: HandoffByID :one
+SELECT id, session_id, project_id, state, payload, seq, updated_at, tombstoned_at FROM handoff WHERE id=$1
+`
+
+func (q *Queries) HandoffByID(ctx context.Context, id string) (Handoff, error) {
+	row := q.db.QueryRow(ctx, handoffByID, id)
+	var i Handoff
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.ProjectID,
+		&i.State,
+		&i.Payload,
+		&i.Seq,
+		&i.UpdatedAt,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
+const handoffPut = `-- name: HandoffPut :exec
+INSERT INTO handoff(id, session_id, project_id, state, payload)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ session_id=excluded.session_id, project_id=excluded.project_id, state=excluded.state
+`
+
+type HandoffPutParams struct {
+	ID        string
+	SessionID string
+	ProjectID *string
+	State     *string
+	Payload   []byte
+}
+
+func (q *Queries) HandoffPut(ctx context.Context, arg HandoffPutParams) error {
+	_, err := q.db.Exec(ctx, handoffPut,
+		arg.ID,
+		arg.SessionID,
+		arg.ProjectID,
+		arg.State,
+		arg.Payload,
+	)
+	return err
+}
+
+const handoffsByState = `-- name: HandoffsByState :many
+SELECT id, session_id, project_id, state, payload, seq, updated_at, tombstoned_at FROM handoff WHERE state = $1::text ORDER BY seq
+`
+
+func (q *Queries) HandoffsByState(ctx context.Context, state string) ([]Handoff, error) {
+	rows, err := q.db.Query(ctx, handoffsByState, state)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Handoff
+	for rows.Next() {
+		var i Handoff
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.ProjectID,
+			&i.State,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const queuedMessagePut = `-- name: QueuedMessagePut :exec
+INSERT INTO queued_message(id, session_id, project_id, task_id, request_id, text, state, execution_id, steer_command_id, sent_by, source, created_at, payload)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ session_id=excluded.session_id, project_id=excluded.project_id, task_id=excluded.task_id, request_id=excluded.request_id,
+ text=excluded.text, state=excluded.state, execution_id=excluded.execution_id, steer_command_id=excluded.steer_command_id,
+ sent_by=excluded.sent_by, source=excluded.source, created_at=excluded.created_at
+`
+
+type QueuedMessagePutParams struct {
+	ID             string
+	SessionID      string
+	ProjectID      *string
+	TaskID         *string
+	RequestID      *string
+	Text           *string
+	State          *string
+	ExecutionID    *string
+	SteerCommandID *string
+	SentBy         *string
+	Source         *string
+	CreatedAt      *time.Time
+	Payload        []byte
+}
+
+func (q *Queries) QueuedMessagePut(ctx context.Context, arg QueuedMessagePutParams) error {
+	_, err := q.db.Exec(ctx, queuedMessagePut,
+		arg.ID,
+		arg.SessionID,
+		arg.ProjectID,
+		arg.TaskID,
+		arg.RequestID,
+		arg.Text,
+		arg.State,
+		arg.ExecutionID,
+		arg.SteerCommandID,
+		arg.SentBy,
+		arg.Source,
+		arg.CreatedAt,
+		arg.Payload,
+	)
+	return err
+}
+
+const queuedMessages = `-- name: QueuedMessages :many
+SELECT id, session_id, project_id, task_id, request_id, text, state, execution_id, steer_command_id, sent_by, source, created_at, payload, seq, updated_at, tombstoned_at FROM queued_message
+WHERE ($1::text IS NULL OR session_id = $1)
+ AND ($2::text IS NULL OR request_id = $2)
+ AND ($3::text IS NULL OR state = $3)
+ AND ($4::text IS NULL OR steer_command_id = $4)
+ORDER BY seq
+`
+
+type QueuedMessagesParams struct {
+	SessionID      *string
+	RequestID      *string
+	State          *string
+	SteerCommandID *string
+}
+
+func (q *Queries) QueuedMessages(ctx context.Context, arg QueuedMessagesParams) ([]QueuedMessage, error) {
+	rows, err := q.db.Query(ctx, queuedMessages,
+		arg.SessionID,
+		arg.RequestID,
+		arg.State,
+		arg.SteerCommandID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QueuedMessage
+	for rows.Next() {
+		var i QueuedMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.RequestID,
+			&i.Text,
+			&i.State,
+			&i.ExecutionID,
+			&i.SteerCommandID,
+			&i.SentBy,
+			&i.Source,
+			&i.CreatedAt,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sessionForkPut = `-- name: SessionForkPut :exec
+INSERT INTO session_fork(id, session_id, source_session_id, project_id, request_id, payload)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ session_id=excluded.session_id, source_session_id=excluded.source_session_id, project_id=excluded.project_id, request_id=excluded.request_id
+`
+
+type SessionForkPutParams struct {
+	ID              string
+	SessionID       string
+	SourceSessionID string
+	ProjectID       *string
+	RequestID       *string
+	Payload         []byte
+}
+
+func (q *Queries) SessionForkPut(ctx context.Context, arg SessionForkPutParams) error {
+	_, err := q.db.Exec(ctx, sessionForkPut,
+		arg.ID,
+		arg.SessionID,
+		arg.SourceSessionID,
+		arg.ProjectID,
+		arg.RequestID,
+		arg.Payload,
+	)
+	return err
+}
+
+const sessionForks = `-- name: SessionForks :many
+SELECT id, session_id, source_session_id, project_id, request_id, payload, seq, updated_at, tombstoned_at FROM session_fork
+WHERE source_session_id = $1
+ AND ($2::text IS NULL OR request_id = $2)
+ORDER BY seq
+`
+
+type SessionForksParams struct {
+	SourceSessionID string
+	RequestID       *string
+}
+
+func (q *Queries) SessionForks(ctx context.Context, arg SessionForksParams) ([]SessionFork, error) {
+	rows, err := q.db.Query(ctx, sessionForks, arg.SourceSessionID, arg.RequestID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SessionFork
+	for rows.Next() {
+		var i SessionFork
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.SourceSessionID,
+			&i.ProjectID,
+			&i.RequestID,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sessionTransitionPut = `-- name: SessionTransitionPut :exec
+INSERT INTO session_transition(id, session_id, project_id, payload)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ session_id=excluded.session_id, project_id=excluded.project_id
+`
+
+type SessionTransitionPutParams struct {
+	ID        string
+	SessionID string
+	ProjectID *string
+	Payload   []byte
+}
+
+func (q *Queries) SessionTransitionPut(ctx context.Context, arg SessionTransitionPutParams) error {
+	_, err := q.db.Exec(ctx, sessionTransitionPut,
+		arg.ID,
+		arg.SessionID,
+		arg.ProjectID,
+		arg.Payload,
+	)
+	return err
+}
+
+const sessionTransitions = `-- name: SessionTransitions :many
+SELECT id, session_id, project_id, payload, seq, updated_at, tombstoned_at FROM session_transition WHERE session_id = $1 ORDER BY seq
+`
+
+func (q *Queries) SessionTransitions(ctx context.Context, sessionID string) ([]SessionTransition, error) {
+	rows, err := q.db.Query(ctx, sessionTransitions, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SessionTransition
+	for rows.Next() {
+		var i SessionTransition
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.ProjectID,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workerDonePut = `-- name: WorkerDonePut :exec
+INSERT INTO worker_done(id, execution_id, project_id, payload)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ execution_id=excluded.execution_id, project_id=excluded.project_id
+`
+
+type WorkerDonePutParams struct {
+	ID          string
+	ExecutionID *string
+	ProjectID   *string
+	Payload     []byte
+}
+
+func (q *Queries) WorkerDonePut(ctx context.Context, arg WorkerDonePutParams) error {
+	_, err := q.db.Exec(ctx, workerDonePut,
+		arg.ID,
+		arg.ExecutionID,
+		arg.ProjectID,
+		arg.Payload,
+	)
+	return err
 }

@@ -1,9 +1,10 @@
 // Host commands (docs/designs/fleet-standard.md S5): a command's status is a state machine; commandTransition is the only
 // writer of command.status after the command is created, and commandStop stops open commands in bulk through the same
-// table. The record shape callers read and write (all/get/put of "command") is in records.go (recCommand, commandRecPut).
+// table. commandGet, commandRawByID, commandsList and commandPut read and write command rows over typed queries.
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -28,10 +29,166 @@ var commandTransitions = map[string][]string{
 // commandOpen: the statuses a stop moves to stopped.
 var commandOpen = []db.CommandStatus{db.CommandStatusPending, db.CommandStatusAccepted, db.CommandStatusStarted, db.CommandStatusUnknown}
 
-// commandCreate writes a command; a new one starts with its status, an existing one keeps it (commandRecPut, records.go,
+// commandCreate writes a command; a new one starts with its status, an existing one keeps it (commandPut
 // moves it through commandTransition).
 func commandCreate(q *Request, p db.CommandUpsertParams) error {
 	return q.db().CommandUpsert(q.ctx(), p)
+}
+
+type commandBody struct {
+	Payload json.RawMessage `json:"payload,omitempty"`
+	Run     json.RawMessage `json:"run,omitempty"`
+}
+
+func commandOfRow(r db.Command) (agentCommand, error) {
+	var c agentCommand
+	if len(r.Payload) > 0 {
+		if err := restDecode(r.Payload, &c, &c.rest); err != nil {
+			return c, err
+		}
+	}
+	c.ID = r.ID
+	c.ExecutionID = deref(r.ExecutionID)
+	c.SessionID = deref(r.SessionID)
+	c.HostID = deref(r.HostID)
+	c.ProjectID = deref(r.ProjectID)
+	c.Kind = r.Kind
+	c.Status = string(r.Status)
+	c.StopDetail = deref(r.StopDetail)
+	c.HandedOut = r.HandedOut
+	c.Traceparent = r.Traceparent
+	return c, nil
+}
+
+func commandRawOf(r db.Command) (rawObject, error) {
+	out, err := recordRaw(r.Payload)
+	if err != nil {
+		return nil, err
+	}
+	out["id"] = jsonBytes(r.ID)
+	for k, v := range map[string]*string{
+		"executionId": r.ExecutionID,
+		"sessionId":   r.SessionID,
+		"hostId":      r.HostID,
+		"projectId":   r.ProjectID,
+		"stopDetail":  r.StopDetail,
+		"traceparent": r.Traceparent,
+	} {
+		if v != nil {
+			out[k] = jsonBytes(*v)
+		}
+	}
+	out["kind"] = jsonBytes(r.Kind)
+	out["status"] = jsonBytes(string(r.Status))
+	if r.HandedOut != nil {
+		out["handedOut"] = jsonBytes(*r.HandedOut)
+	}
+	return out, nil
+}
+
+func commandGet(q *Request, id string) (agentCommand, error) {
+	if id == "" {
+		return agentCommand{}, errNotFound
+	}
+	r, err := q.db().CommandByID(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return agentCommand{}, errNotFound
+	}
+	if err != nil {
+		return agentCommand{}, err
+	}
+	return commandOfRow(r)
+}
+
+func commandRawByID(q *Request, id string) (rawObject, error) {
+	if id == "" {
+		return nil, errNotFound
+	}
+	r, err := q.db().CommandByID(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return commandRawOf(r)
+}
+
+func commandsList(q *Request, p db.CommandsParams) ([]agentCommand, error) {
+	rs, err := q.db().Commands(q.ctx(), p)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentCommand, 0, len(rs))
+	for _, r := range rs {
+		c, err := commandOfRow(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// commandPut writes a command through its state owner: a new command is created with its status, an existing one keeps
+// its status unless c.Status names another, which commandTransition moves it to.
+func commandPut(q *Request, c *agentCommand) error {
+	if c.ID == "" {
+		return fmt.Errorf("command record without an id")
+	}
+	if c.Kind == "" {
+		return fmt.Errorf("command %s without a kind", c.ID)
+	}
+	tp, run, err := commandTrace(q, c.ID, c.ExecutionID, c.Kind, c.Traceparent, c.Run)
+	if err != nil {
+		return err
+	}
+	c.Traceparent, c.Run = tp, run
+	prev, err := commandStatus(q, c.ID)
+	if err != nil {
+		return err
+	}
+	status := c.Status
+	if status == "" {
+		status = firstString(prev, "pending")
+		c.Status = status
+	}
+	if _, ok := commandTransitions[status]; !ok {
+		return fmt.Errorf("command %s: unknown status %q", c.ID, status)
+	}
+	body, err := restEncode(commandBody{Payload: c.Payload, Run: c.Run}, c.rest)
+	if err != nil {
+		return err
+	}
+	if err := commandCreate(q, db.CommandUpsertParams{
+		ID:          c.ID,
+		ExecutionID: strPtr(c.ExecutionID),
+		SessionID:   strPtr(c.SessionID),
+		HostID:      strPtr(c.HostID),
+		ProjectID:   strPtr(c.ProjectID),
+		Kind:        c.Kind,
+		Status:      db.CommandStatus(status),
+		StopDetail:  strPtr(c.StopDetail),
+		HandedOut:   c.HandedOut,
+		Traceparent: c.Traceparent,
+		Payload:     body,
+	}); err != nil {
+		return err
+	}
+	if prev != "" && prev != status {
+		if err := commandTransition(q, c.ID, status, strPtr(c.StopDetail)); err != nil {
+			return err
+		}
+	} else if prev != "" {
+		if err := commandDetail(q, c.ID, strPtr(c.StopDetail)); err != nil {
+			return err
+		}
+	}
+	if status == "pending" && c.HostID != "" && q.app != nil {
+		hid := c.HostID
+		afterCommit(q, func() { q.app.wakeHost(hid) })
+	}
+	return nil
 }
 
 // commandStatus: the command's status, locked for this transaction; "" when there is none.

@@ -32,7 +32,7 @@ func TestDurableCommandTraceAndDiscovery(t *testing.T) {
 	}
 	// Detached transaction models dispatch after request completion or coordinator restart.
 	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
-		return recWrite(q, recCommand, doc{"id": "c-trace", "executionId": "x-trace", "hostId": host, "kind": "script", "status": "pending", "payload": doc{"command": "true"}})
+		return commandPut(q, &agentCommand{ID: "c-trace", ExecutionID: "x-trace", HostID: host, Kind: "script", Status: "pending", Payload: jsonBytes(doc{"command": "true"})})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -58,19 +58,19 @@ func TestDurableCommandTraceAndDiscovery(t *testing.T) {
 		t.Fatalf("dispatch %+v", dispatched)
 	}
 	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
-		saved, err := recGet[doc](q, recCommand, "c-trace")
+		saved, err := commandGet(q, "c-trace")
 		if err != nil {
 			return err
 		}
-		saved["status"] = "accepted"
-		if err := recPut(q, recCommand, &saved); err != nil {
+		saved.Status = "accepted"
+		if err := commandPut(q, &saved); err != nil {
 			return err
 		}
-		again, err := recGet[doc](q, recCommand, "c-trace")
+		again, err := commandGet(q, "c-trace")
 		if err != nil {
 			return err
 		}
-		if again["traceparent"] != tp {
+		if deref(again.Traceparent) != tp {
 			t.Fatal("retry changed parent")
 		}
 		return nil

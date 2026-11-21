@@ -46,5 +46,60 @@ SELECT EXISTS (
 SELECT EXISTS(SELECT 1 FROM definition WHERE kind='project' AND id = @id AND retired_at IS NULL);
 
 -- name: AgentSessionPayload :one
--- A session's payload: the record fields without a column (queries/records.sql "session").
+-- A session's payload: the record fields without a column (session_resume).
 SELECT payload FROM session WHERE id = @id;
+
+-- name: QueuedMessages :many
+SELECT * FROM queued_message
+WHERE (sqlc.narg(session_id)::text IS NULL OR session_id = sqlc.narg(session_id))
+ AND (sqlc.narg(request_id)::text IS NULL OR request_id = sqlc.narg(request_id))
+ AND (sqlc.narg(state)::text IS NULL OR state = sqlc.narg(state))
+ AND (sqlc.narg(steer_command_id)::text IS NULL OR steer_command_id = sqlc.narg(steer_command_id))
+ORDER BY seq;
+
+-- name: QueuedMessagePut :exec
+INSERT INTO queued_message(id, session_id, project_id, task_id, request_id, text, state, execution_id, steer_command_id, sent_by, source, created_at, payload)
+VALUES (@id, @session_id, sqlc.narg(project_id), sqlc.narg(task_id), sqlc.narg(request_id), sqlc.narg(text), sqlc.narg(state), sqlc.narg(execution_id), sqlc.narg(steer_command_id), sqlc.narg(sent_by), sqlc.narg(source), sqlc.narg(created_at), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ session_id=excluded.session_id, project_id=excluded.project_id, task_id=excluded.task_id, request_id=excluded.request_id,
+ text=excluded.text, state=excluded.state, execution_id=excluded.execution_id, steer_command_id=excluded.steer_command_id,
+ sent_by=excluded.sent_by, source=excluded.source, created_at=excluded.created_at;
+
+-- name: HandoffByID :one
+SELECT * FROM handoff WHERE id=$1;
+
+-- name: HandoffsByState :many
+SELECT * FROM handoff WHERE state = @state::text ORDER BY seq;
+
+-- name: HandoffPut :exec
+INSERT INTO handoff(id, session_id, project_id, state, payload)
+VALUES (@id, @session_id, sqlc.narg(project_id), sqlc.narg(state), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ session_id=excluded.session_id, project_id=excluded.project_id, state=excluded.state;
+
+-- name: SessionForks :many
+SELECT * FROM session_fork
+WHERE source_session_id = @source_session_id
+ AND (sqlc.narg(request_id)::text IS NULL OR request_id = sqlc.narg(request_id))
+ORDER BY seq;
+
+-- name: SessionForkPut :exec
+INSERT INTO session_fork(id, session_id, source_session_id, project_id, request_id, payload)
+VALUES (@id, @session_id, @source_session_id, sqlc.narg(project_id), sqlc.narg(request_id), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ session_id=excluded.session_id, source_session_id=excluded.source_session_id, project_id=excluded.project_id, request_id=excluded.request_id;
+
+-- name: SessionTransitions :many
+SELECT * FROM session_transition WHERE session_id = @session_id ORDER BY seq;
+
+-- name: SessionTransitionPut :exec
+INSERT INTO session_transition(id, session_id, project_id, payload)
+VALUES (@id, @session_id, sqlc.narg(project_id), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ session_id=excluded.session_id, project_id=excluded.project_id;
+
+-- name: WorkerDonePut :exec
+INSERT INTO worker_done(id, execution_id, project_id, payload)
+VALUES (@id, sqlc.narg(execution_id), sqlc.narg(project_id), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ execution_id=excluded.execution_id, project_id=excluded.project_id;

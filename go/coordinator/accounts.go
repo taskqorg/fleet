@@ -129,14 +129,7 @@ func harnessAllowed(q *Request, host, harness string) (bool, error) {
 	return ok, err
 }
 
-// accountJobSession, accountJobExecution, accountJobCommand: the records of an inspection's host job, as their owners'
-// writers (put: sessions.go, records.go, commands) take them.
-type accountJobSession struct {
-	ID        string `json:"id"`
-	CreatedAt int64  `json:"createdAt"`
-	Actor     string `json:"actor"`
-}
-
+// accountJobExecution: the execution record of an inspection's host job, as recExecution writes it.
 type accountJobExecution struct {
 	ID          string `json:"id"`
 	ExecutionID string `json:"executionId"`
@@ -148,29 +141,19 @@ type accountJobExecution struct {
 	AccountID   string `json:"accountId"`
 }
 
-type accountJobCommand struct {
-	ID          string                         `json:"id"`
-	ExecutionID string                         `json:"executionId"`
-	SessionID   string                         `json:"sessionId"`
-	HostID      string                         `json:"hostId"`
-	Kind        string                         `json:"kind"`
-	Status      string                         `json:"status"`
-	Payload     contract.AccountInspectPayload `json:"payload"`
-}
-
 // accountInspectionJob: a program-worker session and host job on host with a pending account-inspect command
 // (account_discover, account_connect, subscription_limits_refresh); the execution's id.
 func accountInspectionJob(q *Request, host string, p contract.AccountInspectPayload) (string, error) {
 	sid, eid := newID(), newID()
-	if err := recWrite(q, recSession, accountJobSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
+	if err := sessionPut(q, &agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
 		return "", err
 	}
 	if err := recWrite(q, recExecution, accountJobExecution{ID: eid, ExecutionID: eid, SessionID: sid, HostID: host, State: "preparing", CreatedAt: nowMs(),
 		Actor: "program-worker", AccountID: p.AccountId}); err != nil {
 		return "", err
 	}
-	return eid, recWrite(q, recCommand, accountJobCommand{ID: newID(), ExecutionID: eid, SessionID: sid, HostID: host, Kind: string(contract.CommandKindAccountInspect),
-		Status: "pending", Payload: p})
+	return eid, commandPut(q, &agentCommand{ID: newID(), ExecutionID: eid, SessionID: sid, HostID: host, Kind: string(contract.CommandKindAccountInspect),
+		Status: "pending", Payload: jsonBytes(p)})
 }
 
 // accountPayload: the payload fields of managed_account stored in payload.

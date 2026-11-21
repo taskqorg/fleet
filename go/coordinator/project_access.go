@@ -181,22 +181,20 @@ func projectAgentArguments(q *Request, args rawObject, executionID string, prepa
 	if err != nil {
 		return nil, err
 	}
-	session, err := recGet[rawObject](q, recSession, e.SessionID)
+	session, err := sessionByID(q, e.SessionID)
 	if err != nil {
 		return nil, err
 	}
-	if raw, focused := session["focus"]; focused {
-		var f *agentFocus
-		lenientDecode(raw, &f)
+	if session.Focus != nil {
 		given, _ := args.val("projectId").(string)
-		project, err := focusProjectOf(q, f, given, !preparedRead)
+		project, err := focusProjectOf(q, session.Focus, given, !preparedRead)
 		if err != nil {
 			return nil, err
 		}
 		args["projectId"] = jsonBytes(project)
 		return args, nil
 	}
-	project := session.text("projectId")
+	project := session.ProjectID
 	if preparedRead && project == "" {
 		return nil, fail(400, "Expected projectId")
 	}

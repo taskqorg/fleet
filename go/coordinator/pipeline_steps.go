@@ -59,18 +59,6 @@ type pipelineHostJob struct {
 	ExperimentID    string          `json:"experimentId,omitempty"`
 }
 
-// pipelineScriptCommand: the script command of a host job, as the host gets it.
-type pipelineScriptCommand struct {
-	ID          string                `json:"id"`
-	ExecutionID string                `json:"executionId"`
-	SessionID   string                `json:"sessionId"`
-	HostID      string                `json:"hostId"`
-	Kind        string                `json:"kind"`
-	Payload     pipelineScriptPayload `json:"payload"`
-	Status      string                `json:"status"`
-	HandedOut   bool                  `json:"handedOut"`
-}
-
 type pipelineScriptPayload struct {
 	Command   string          `json:"command"`
 	Inputs    []fileRef       `json:"inputs"`
@@ -83,7 +71,7 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 	dir := run.director()
 	// A host command session like the others (actor program-worker): it holds the step's host job, not a conversation.
 	s := agentSession{ID: sid, CreatedAt: nowMs(), PipelineRunID: run.ID, Actor: "program-worker", DirectedBy: dir, ProjectID: run.project()}
-	if err := recPut(q, recSession, &s); err != nil {
+	if err := sessionPut(q, &s); err != nil {
 		return "", err
 	}
 	if hostID == "" {
@@ -102,7 +90,7 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 	if !isNull(timeout) {
 		payload.TimeoutMs = timeout
 	}
-	return id, recWrite(q, recCommand, pipelineScriptCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: "script", Payload: payload, Status: "pending"})
+	return id, commandPut(q, &agentCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: "script", Payload: jsonBytes(payload), Status: "pending", HandedOut: ptr(false)})
 }
 
 // pipelineClaimCall claims a provider call of a pipeline api step in q's transaction (claimPipelineAPI: a submit is handed
@@ -772,7 +760,7 @@ func startAgentStep(q *Request, run *runRecord, step *pipelineDefStep, stepExecu
 	}
 	s := agentSession{ID: newID(), CreatedAt: nowMs(), AgentConfig: jsonBytes(profile), PipelineRunID: run.ID, DirectedBy: run.director(), Account: overrides.Account,
 		ProjectID: run.project()}
-	if err := recPut(q, recSession, &s); err != nil {
+	if err := sessionPut(q, &s); err != nil {
 		return "", err
 	}
 	if inputs == nil {

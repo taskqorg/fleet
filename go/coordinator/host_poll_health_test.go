@@ -38,16 +38,16 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 			}
 			step := mapOf(anys(run["steps"])[0])
 			step["state"], step["executionId"] = "running", nativeID
-			commands, err := recAll[doc](q, recCommand, doc{"executionId": nativeID, "kind": "script"})
+			commands, err := commandsList(q, db.CommandsParams{ExecutionID: &nativeID, Kind: ptr("script")})
 			if err != nil || len(commands) != 1 {
 				return fmt.Errorf("script command: %v %d", err, len(commands))
 			}
 			dispatch := pipelineEntry(run, 0).Dispatch
-			dispatch.Phase, dispatch.NativeExecutionId, dispatch.CommandId, dispatch.HostId = "prepared", ptr(nativeID), strp(commands[0], "id"), ptr("iso-host")
+			dispatch.Phase, dispatch.NativeExecutionId, dispatch.CommandId, dispatch.HostId = "prepared", ptr(nativeID), ptr(commands[0].ID), ptr("iso-host")
 			if err := putRun(q, run); err != nil {
 				return err
 			}
-			ids[id] = astr(commands[0]["id"])
+			ids[id] = commands[0].ID
 		}
 		// The refused run's initiating actor is no longer a person: its authority stamp is a 403.
 		if err := exec(q, `UPDATE execution SET data=jsonb_set(data,'{authority,actorEmail}','"gone@example.com"') WHERE id='refused'`); err != nil {
@@ -81,14 +81,16 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 	}
 	if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
 		for id, want := range map[string]string{"refused": "refused: Pipeline initiating actor no longer has project access", "orphan": "handoff failed: Not found"} {
-			c, err := recGet[doc](q, recCommand, ids[id])
+			c, err := commandGet(q, ids[id])
 			if err != nil {
 				return err
 			}
-			if c["status"] != "stopped" || c["stopDetail"] != want {
-				return fmt.Errorf("%s command is %v (%v), want stopped with %q", id, c["status"], c["stopDetail"], want)
+			if c.Status != "stopped" || c.StopDetail != want {
+				return fmt.Errorf("%s command is %v (%v), want stopped with %q", id, c.Status, c.StopDetail, want)
 			}
-			if mapOf(c["payload"])["runToken"] != nil {
+			var p doc
+			json.Unmarshal(c.Payload, &p)
+			if p["runToken"] != nil {
 				return fmt.Errorf("%s command carries a run token", id)
 			}
 		}

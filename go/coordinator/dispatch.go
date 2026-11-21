@@ -1126,7 +1126,23 @@ type dispatchSession struct {
 	Branch              *bool                      `json:"branch,omitempty"`
 	Starter             string                     `json:"starter,omitempty"`
 	WorkspaceSnapshots  map[string]json.RawMessage `json:"workspaceSnapshots,omitempty"`
+	row                 db.Session                 `json:"-"`
 	rest                recordRest
+}
+
+type dispatchSessionPayload struct {
+	DeliveryID          string                     `json:"deliveryId,omitempty"`
+	Account             *string                    `json:"account,omitempty"`
+	AgentConfig         json.RawMessage            `json:"agentConfig,omitempty"`
+	Setup               *string                    `json:"setup,omitempty"`
+	NativeSessionID     *string                    `json:"nativeSessionId,omitempty"`
+	ForkNativeSessionID string                     `json:"forkNativeSessionId,omitempty"`
+	PendingHandoffID    string                     `json:"pendingHandoffId,omitempty"`
+	Role                *string                    `json:"role,omitempty"`
+	Access              *string                    `json:"access,omitempty"`
+	Branch              *bool                      `json:"branch,omitempty"`
+	Starter             string                     `json:"starter,omitempty"`
+	WorkspaceSnapshots  map[string]json.RawMessage `json:"workspaceSnapshots,omitempty"`
 }
 
 func (s *dispatchSession) UnmarshalJSON(b []byte) error {
@@ -1137,6 +1153,56 @@ func (s *dispatchSession) UnmarshalJSON(b []byte) error {
 func (s dispatchSession) MarshalJSON() ([]byte, error) {
 	type plain dispatchSession
 	return restEncode(plain(s), s.rest)
+}
+
+func dispatchSessionByID(q *Request, id string) (dispatchSession, error) {
+	var s dispatchSession
+	if id == "" {
+		return s, errNotFound
+	}
+	row, err := q.db().SessionByID(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return s, errNotFound
+	}
+	if err != nil {
+		return s, err
+	}
+	if len(row.Payload) > 0 {
+		if err := json.Unmarshal(row.Payload, &s); err != nil {
+			return s, err
+		}
+	}
+	s.ID = row.ID
+	s.TaskID = deref(row.TaskID)
+	s.PipelineRunID = row.PipelineRunID
+	s.row = row
+	return s, nil
+}
+
+func dispatchSessionPut(q *Request, s *dispatchSession) error {
+	p := dispatchSessionPayload{
+		DeliveryID:          s.DeliveryID,
+		Account:             s.Account,
+		AgentConfig:         s.AgentConfig,
+		Setup:               s.Setup,
+		NativeSessionID:     s.NativeSessionID,
+		ForkNativeSessionID: s.ForkNativeSessionID,
+		PendingHandoffID:    s.PendingHandoffID,
+		Role:                s.Role,
+		Access:              s.Access,
+		Branch:              s.Branch,
+		Starter:             s.Starter,
+		WorkspaceSnapshots:  s.WorkspaceSnapshots,
+	}
+	payload, err := restEncode(p, s.rest)
+	if err != nil {
+		return err
+	}
+	row := s.row
+	row.ID = s.ID
+	row.TaskID = strPtr(s.TaskID)
+	row.PipelineRunID = s.PipelineRunID
+	return sessionPutRow(q, row, payload)
 }
 
 // dispatchStartCommand: the typed start command record written by startCommand.
@@ -1154,7 +1220,7 @@ type dispatchStartCommand struct {
 // startCommand: the start command of a claimed execution, from the session as it is now and the chosen binding.
 func (a *App) startCommand(q *Request, e *dispatchExecution, host string, binding *resolvedAccount) (dispatchStartCommand, error) {
 	var none dispatchStartCommand
-	liveSession, err := recGet[dispatchSession](q, recSession, e.SessionID)
+	liveSession, err := dispatchSessionByID(q, e.SessionID)
 	if err != nil {
 		return none, err
 	}
@@ -1291,7 +1357,7 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 				WorkingDirectory *string         `json:"workingDirectory"`
 			}{e.ID, d.ProjectID, d.WorkspaceKey, nullRaw(snapshot.Settings), nullRaw(snapshot.Revision), nullRaw(snapshot.ContentSha), d.WorkingDirectory})
 			liveSession.WorkspaceSnapshots = workspaces
-			if err := recPut(q, recSession, &liveSession); err != nil {
+			if err := dispatchSessionPut(q, &liveSession); err != nil {
 				return none, err
 			}
 		}
@@ -1352,7 +1418,7 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	if err := recPut(q, recExecution, e); err != nil {
 		return none, err
 	}
-	if err := recPut(q, recCommand, &command); err != nil {
+	if err := commandPut(q, &agentCommand{ID: command.ID, ExecutionID: command.ExecutionID, SessionID: command.SessionID, HostID: command.HostID, Kind: command.Kind, Status: command.Status, HandedOut: ptr(command.HandedOut), Payload: command.Payload}); err != nil {
 		return none, err
 	}
 	if err := preparePipelineCommand(q, e, command); err != nil {

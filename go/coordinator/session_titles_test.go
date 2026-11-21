@@ -138,9 +138,9 @@ func TestSessionTitles(t *testing.T) {
 	if got := psqlLines(t, e, `SELECT coalesce(title,'-')||'|'||(title_attempt_at IS NOT NULL) FROM session WHERE id='s-fail'`); len(got) != 1 || got[0] != "-|true" {
 		t.Fatalf("failed call: %v", got)
 	}
-	// A writer that read the session before the title and puts it back keeps the title (convPut).
+	// A writer that read the session before the title and puts it back keeps the title.
 	if err := e.app.store.Write(e.ctx, nil, nil, func(q *Request) error {
-		return recWrite(q, recSession, doc{"id": "s-done", "createdAt": 1, "workingDirectory": "/w"})
+		return sessionPut(q, &agentSession{ID: "s-done", CreatedAt: 1, WorkingDirectory: "/w"})
 	}); err != nil {
 		t.Fatal(err)
 	}

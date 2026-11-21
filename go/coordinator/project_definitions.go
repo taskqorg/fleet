@@ -212,7 +212,7 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		session, err := recGet[agentSession](q, recSession, e.SessionID)
+		session, err := sessionByID(q, e.SessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -222,7 +222,7 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 				ids = append(ids, id)
 			}
 			session.Focus = &agentFocus{ProjectIDs: jsonBytes(ids)}
-			if err := recPut(q, recSession, &session); err != nil {
+			if err := sessionPut(q, &session); err != nil {
 				return nil, err
 			}
 		}
@@ -532,11 +532,7 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 				continue
 			}
 			sid, xid := newID(), newID()
-			if err := recWrite(q, recSession, struct {
-				ID        string `json:"id"`
-				CreatedAt int64  `json:"createdAt"`
-				Actor     string `json:"actor"`
-			}{sid, nowMs(), "program-worker"}); err != nil {
+			if err := sessionPut(q, &agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
 				return nil, err
 			}
 			if err := recWrite(q, recExecution, struct {
@@ -550,15 +546,8 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 			}{xid, xid, sid, host, "preparing", nowMs(), "program-worker"}); err != nil {
 				return nil, err
 			}
-			if err := recWrite(q, recCommand, struct {
-				ID          string                           `json:"id"`
-				ExecutionID string                           `json:"executionId"`
-				SessionID   string                           `json:"sessionId"`
-				HostID      string                           `json:"hostId"`
-				Kind        string                           `json:"kind"`
-				Status      string                           `json:"status"`
-				Payload     contract.ConnectionRemovePayload `json:"payload"`
-			}{newID(), xid, sid, host, string(contract.CommandKindConnectionRemove), "pending", contract.ConnectionRemovePayload{Connection: c}}); err != nil {
+			if err := commandPut(q, &agentCommand{ID: newID(), ExecutionID: xid, SessionID: sid, HostID: host, Kind: string(contract.CommandKindConnectionRemove), Status: "pending",
+				Payload: jsonBytes(contract.ConnectionRemovePayload{Connection: c})}); err != nil {
 				return nil, err
 			}
 			out = append(out, host+"/"+c)
@@ -579,12 +568,12 @@ func withdrawConnectionRemovals(q *Request, conns []string) error {
 		return err
 	}
 	for _, id := range ids {
-		c, err := recGet[agentCommand](q, recCommand, id)
+		c, err := commandGet(q, id)
 		if err != nil {
 			return err
 		}
 		c.Status, c.StopDetail = "stopped", "connection in use again"
-		if err := recPut(q, recCommand, &c); err != nil {
+		if err := commandPut(q, &c); err != nil {
 			return err
 		}
 		e, err := getExecution(q, c.ExecutionID)

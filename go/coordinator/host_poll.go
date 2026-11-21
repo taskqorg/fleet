@@ -548,7 +548,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandVi
 	}
 	cmd, ok := pollPrepared.get(cv.HostID, cv.ID, revision)
 	if !ok {
-		out, err := recGet[rawObject](wq, recCommand, cv.ID)
+		out, err := commandRawByID(wq, cv.ID)
 		if err != nil {
 			return nil, err
 		}

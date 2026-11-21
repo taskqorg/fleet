@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 func planFixture(t *testing.T, id string) doc {
@@ -249,14 +250,16 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			commands, err := recAll[doc](q, recCommand, doc{"executionId": nativeID, "kind": "script"})
+			commands, err := commandsList(q, db.CommandsParams{ExecutionID: &nativeID, Kind: ptr("script")})
 			if err != nil {
 				return err
 			}
 			if len(commands) != 1 {
 				return errors.New("script preparation did not create one command")
 			}
-			command = commands[0]
+			if command, err = asT[doc](commands[0]); err != nil {
+				return err
+			}
 			step := mapOf(anys(run["steps"])[0])
 			step["state"], step["executionId"] = "running", nativeID
 			dispatch := pipelineEntry(run, 0).Dispatch
@@ -278,7 +281,11 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 			if !ok {
 				return errors.New("current authorized host handoff was refused")
 			}
-			fresh, err := recGet[doc](q, recCommand, astr(command["id"]))
+			c, err := commandGet(q, astr(command["id"]))
+			if err != nil {
+				return err
+			}
+			fresh, err := asT[doc](c)
 			if err != nil {
 				return err
 			}
@@ -323,11 +330,11 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 		if fresh["state"] != "cancelled" || pipelineEntry(fresh, 1).Activation != "blocked" || pipelineEntry(fresh, 2).Activation != "blocked" {
 			return errors.New("cancel did not block future plan entries")
 		}
-		stored, err := recGet[doc](q, recCommand, astr(pending["id"]))
+		stored, err := commandGet(q, astr(pending["id"]))
 		if err != nil {
 			return err
 		}
-		if stored["status"] != "stopped" {
+		if stored.Status != "stopped" {
 			return errors.New("prepared command remains deliverable after cancel")
 		}
 		return nil
@@ -360,25 +367,25 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 			step := mapOf(anys(run["steps"])[0])
 			step["state"], step["executionId"] = "running", nativeID
 			dispatch := pipelineEntry(run, 0).Dispatch
-			commands, err := recAll[doc](q, recCommand, doc{"executionId": nativeID, "kind": "script"})
+			commands, err := commandsList(q, db.CommandsParams{ExecutionID: &nativeID, Kind: ptr("script")})
 			if err != nil || len(commands) != 1 {
 				return fmt.Errorf("script command: %v %d", err, len(commands))
 			}
-			dispatch.Phase, dispatch.NativeExecutionId, dispatch.CommandId, dispatch.HostId = "prepared", ptr(nativeID), strp(commands[0], "id"), ptr("plan-host")
+			dispatch.Phase, dispatch.NativeExecutionId, dispatch.CommandId, dispatch.HostId = "prepared", ptr(nativeID), ptr(commands[0].ID), ptr("plan-host")
 			if err := putRun(q, run); err != nil {
 				return err
 			}
-			teardown := doc{"id": newID(), "executionId": nativeID, "hostId": "plan-host", "kind": "teardown", "payload": doc{}, "status": "pending"}
-			if err := recPut(q, recCommand, &teardown); err != nil {
+			teardown := agentCommand{ID: newID(), ExecutionID: nativeID, HostID: "plan-host", Kind: "teardown", Payload: jsonBytes(doc{}), Status: "pending"}
+			if err := commandPut(q, &teardown); err != nil {
 				return err
 			}
-			ids[id+":script"], ids[id+":teardown"], ids[id+":native"] = astr(commands[0]["id"]), astr(teardown["id"]), nativeID
+			ids[id+":script"], ids[id+":teardown"], ids[id+":native"] = commands[0].ID, teardown.ID, nativeID
 			for _, kind := range []string{"steer", "input"} {
-				c := doc{"id": newID(), "executionId": nativeID, "hostId": "plan-host", "kind": kind, "payload": doc{}, "status": "pending"}
-				if err := recPut(q, recCommand, &c); err != nil {
+				c := agentCommand{ID: newID(), ExecutionID: nativeID, HostID: "plan-host", Kind: kind, Payload: jsonBytes(doc{}), Status: "pending"}
+				if err := commandPut(q, &c); err != nil {
 					return err
 				}
-				ids[id+":"+kind] = astr(c["id"])
+				ids[id+":"+kind] = c.ID
 			}
 		}
 		if err := exec(q, "UPDATE execution SET state='succeeded',ended_at=now() WHERE id='ended'"); err != nil {
@@ -418,12 +425,12 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 			if got[ids[id+":script"]] {
 				return fmt.Errorf("%s run's script was delivered", id)
 			}
-			c, err := recGet[doc](q, recCommand, ids[id+":script"])
+			c, err := commandGet(q, ids[id+":script"])
 			if err != nil {
 				return err
 			}
-			if c["status"] != "stopped" || c["stopDetail"] == nil {
-				return fmt.Errorf("%s script command is %v (%v), want stopped with a reason", id, c["status"], c["stopDetail"])
+			if c.Status != "stopped" || c.StopDetail == "" {
+				return fmt.Errorf("%s script command is %v (%v), want stopped with a reason", id, c.Status, c.StopDetail)
 			}
 		}
 		return nil

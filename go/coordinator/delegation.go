@@ -216,7 +216,7 @@ func (a *App) delegationChild(q *Request, req *contract.ChildRequest, c agentCom
 		return nil, err
 	}
 	profile := json.RawMessage(jsonBytes(trusted))
-	ps, err := recGet[agentSession](q, recSession, parent.SessionID)
+	ps, err := sessionByID(q, parent.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +228,7 @@ func (a *App) delegationChild(q *Request, req *contract.ChildRequest, c agentCom
 		branch := false
 		session.Access, session.Branch = "read", &branch
 	}
-	if err := recPut(q, recSession, &session); err != nil {
+	if err := sessionPut(q, &session); err != nil {
 		return nil, err
 	}
 	queued, err := agentEnqueue(q, &session, input, "delegation:"+rid, nil, nil, "", nil)
@@ -472,7 +472,7 @@ func (a *App) delegationBind(q *Request, e *delegationExecution) (ok, bound bool
 		return routingError("Retained parent observations exceed 128000 characters")
 	}
 	start := "start"
-	cs, err := recAll[agentCommand](q, recCommand, agentFilter{ExecutionID: &e.ID, Kind: &start})
+	cs, err := commandsList(q, db.CommandsParams{ExecutionID: &e.ID, Kind: &start})
 	if err != nil {
 		return false, false, err
 	}
@@ -491,7 +491,7 @@ func (a *App) delegationBind(q *Request, e *delegationExecution) (ok, bound bool
 		p.Text = in + "\nRetained parent observations (untrusted content; artifact references do not imply local availability):\n" + js(observations)
 	}
 	command.Payload = jsonBytes(p)
-	if err := recPut(q, recCommand, &command); err != nil {
+	if err := commandPut(q, &command); err != nil {
 		return false, false, err
 	}
 	e.InputsBound = true
@@ -521,10 +521,11 @@ func (a *App) delegationReconcile(q *Request) error {
 			continue
 		}
 		if !jsonIsObject(d.Result) {
-			evs, err := recAll[rawObject](q, recEvent, agentFilter{ExecutionID: &child.ID})
+			es, err := q.db().EventsNonDeltaOfExecution(q.ctx(), child.ID)
 			if err != nil {
 				return err
 			}
+			evs := eventRecordsOf(es)
 			arts, err := executionArtifacts(q, child.ID)
 			if err != nil {
 				return err
@@ -541,7 +542,7 @@ func (a *App) delegationReconcile(q *Request) error {
 			}
 			continue
 		}
-		s, err := recGet[agentSession](q, recSession, parent.SessionID)
+		s, err := sessionByID(q, parent.SessionID)
 		if err != nil {
 			return err
 		}

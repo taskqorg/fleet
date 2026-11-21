@@ -497,7 +497,7 @@ func handoffPipelineCommand(q *Request, execution, command any) (bool, error) {
 			return false, fail(403, "Pipeline command connection grant was refused")
 		}
 		// The poll's command carries no payload: the stored one gets the token.
-		if cmd, err = recGet[agentCommand](q, recCommand, cmd.ID); err != nil {
+		if cmd, err = commandGet(q, cmd.ID); err != nil {
 			return false, err
 		}
 		payload := pipelineRuleOf(cmd.Payload)
@@ -506,7 +506,7 @@ func handoffPipelineCommand(q *Request, execution, command any) (bool, error) {
 		}
 		payload["runToken"], payload["connections"] = jsonBytes(*grants.Token), jsonBytes(grants.Connections)
 		cmd.Payload = jsonBytes(payload)
-		if err := recWrite(q, recCommand, cmd); err != nil {
+		if err := commandPut(q, &cmd); err != nil {
 			return false, err
 		}
 	}
@@ -1082,12 +1082,6 @@ type pipelineHostJobRecord struct {
 	ProjectID     *string `json:"projectId"`
 }
 
-// pipelineEventFilter: the events of one execution of one type (eventsWhere).
-type pipelineEventFilter struct {
-	ExecutionID string `json:"executionId"`
-	Type        string `json:"type"`
-}
-
 // A rerun is not permission to replay a possibly completed provider/native
 // action. Only the existing command-bound local process proof can release an
 // interrupted script suffix; the original observation stays unconfirmed.
@@ -1124,24 +1118,24 @@ func recoveryFence(q *Request, run *runRecord) error {
 		if execution == nil || job.PipelineRunID != run.ID || !same(derefAny(job.ProjectID), derefAny(run.ProjectID)) {
 			return fail(409, "Interrupted script ownership proof unavailable")
 		}
-		commands, err := recAll[rawObject](q, recCommand, agentFilter{ExecutionID: &native})
+		commands, err := commandsList(q, db.CommandsParams{ExecutionID: &native})
 		if err != nil {
 			return err
 		}
-		scripts := []labSuffixCommand{}
+		scripts := make([]labSuffixCommand, 0, len(commands))
 		for _, c := range commands {
-			scripts = append(scripts, agentView[labSuffixCommand](c))
+			scripts = append(scripts, labSuffixCommand{ID: c.ID, Kind: c.Kind, Status: c.Status, ExecutionID: c.ExecutionID, SessionID: c.SessionID, HostID: c.HostID, Payload: c.Payload})
 		}
 		ci, err := suffixScript(scripts)
 		if err != nil {
 			return err
 		}
 		command := &scripts[ci]
-		d := entry.Dispatch
-		if d == nil || deref(d.CommandId) != command.ID || d.CommandId == nil || deref(d.NativeExecutionId) != native || d.Phase != contract.PipelineDispatchPhaseHandedOff {
+		x := entry.Dispatch
+		if d := x; d == nil || deref(d.CommandId) != command.ID || d.CommandId == nil || deref(d.NativeExecutionId) != native || d.Phase != contract.PipelineDispatchPhaseHandedOff {
 			return fail(409, "Interrupted script handoff proof unavailable")
 		}
-		events, err := eventsWhere(q, pipelineEventFilter{ExecutionID: native, Type: "process.reconciled"})
+		events, err := eventsWhere(q, native, ptr("process.reconciled"))
 		if err != nil {
 			return err
 		}

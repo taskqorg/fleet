@@ -49,7 +49,7 @@ func refreshProfile(q *Request, s *agentSession) error {
 }
 
 func agentKnownNative(q *Request, e *agentExecution) (string, error) {
-	s, err := recGet[agentSession](q, recSession, e.SessionID)
+	s, err := sessionByID(q, e.SessionID)
 	if err != nil {
 		return "", err
 	}
@@ -62,7 +62,7 @@ func agentKnownNative(q *Request, e *agentExecution) (string, error) {
 
 // agentCaptureNative: keep the native id per continuation identity as the executor reports it.
 func agentCaptureNative(q *Request, e *agentExecution, id string) error {
-	s, err := recLocked[agentSession](q, recSession, e.SessionID)
+	s, err := sessionLocked(q, e.SessionID)
 	if err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ func agentCaptureNative(q *Request, e *agentExecution, id string) error {
 	if key == s.continuationKey() {
 		s.NativeSessionID, s.ForkNativeSessionID = id, ""
 	}
-	return recPut(q, recSession, &s)
+	return sessionPut(q, &s)
 }
 func resumeArgv(h, id, effort string) any {
 	switch h {
@@ -194,7 +194,7 @@ func transcript(q *Request, sid string) ([]agentTurn, error) {
 	if err != nil {
 		return nil, err
 	}
-	msgs, err := recAll[agentMessage](q, recMessage, agentFilter{SessionID: &sid})
+	msgs, err := messagesBySession(q, sid, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +255,7 @@ func makeHandoff(q *Request, s *agentSession, turns []agentTurn, strategy, sourc
 	}
 	h := agentHandoff{ID: newID(), SessionID: s.ID, Strategy: strategy, Source: source, ToKey: s.continuationKey(), Turns: ids, Text: renderHandoff(turns, strategy, source), State: "pending", CreatedAt: nowMs()}
 	s.PendingHandoffID = h.ID
-	return &h, recPut(q, recHandoff, &h)
+	return &h, handoffPut(q, &h)
 }
 
 var accountPattern = regexp.MustCompile(`^(?:[a-z][a-z0-9-]{0,79}|[a-f0-9-]{36})$`)
@@ -284,7 +284,7 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 	if sid == "" {
 		return none, fail(400, "Expected sessionId")
 	}
-	s, err := recLocked[agentSession](q, recSession, sid)
+	s, err := sessionLocked(q, sid)
 	if err != nil {
 		return none, err
 	}
@@ -353,7 +353,7 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 			}
 		}
 		s.PendingTransition = &pending
-		if err := recPut(q, recSession, &s); err != nil {
+		if err := sessionPut(q, &s); err != nil {
 			return none, err
 		}
 		return contract.SessionTransitionReply{SessionId: sid, ProfileId: pid, ProjectId: &project, Transition: "queued"}, nil
@@ -437,7 +437,7 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 			return none, err
 		}
 	}
-	if err := recPut(q, recSession, &next); err != nil {
+	if err := sessionPut(q, &next); err != nil {
 		return none, err
 	}
 	var hid *string
@@ -445,7 +445,7 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 		hid = &h.ID
 	}
 	t := agentTransitionRecord{ID: newID(), SessionID: sid, Type: typ, FromKey: fromKey, ToKey: toKey, ProfileID: target.ID, HandoffID: hid, At: nowMs()}
-	if err := recPut(q, recSessionTransition, &t); err != nil {
+	if err := sessionTransitionPut(q, &t); err != nil {
 		return none, err
 	}
 	return contract.SessionTransitionReply{SessionId: sid, ProfileId: target.ID, Account: agentOpt(next.Account), ProjectId: agentOpt(next.ProjectID), Transition: typ, HandoffId: hid,
@@ -458,7 +458,7 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 	if sid == "" {
 		return none, fail(400, "Expected sessionId")
 	}
-	source, err := recGet[agentSession](q, recSession, sid)
+	source, err := sessionByID(q, sid)
 	if err != nil {
 		return none, err
 	}
@@ -466,7 +466,7 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 	if rid == "" {
 		return none, fail(400, "Expected requestId")
 	}
-	if old, err := recAll[agentForkRecord](q, recSessionFork, agentFilter{SourceSessionID: &sid, RequestID: &rid}); err != nil || len(old) > 0 {
+	if old, err := sessionForks(q, sid, &rid); err != nil || len(old) > 0 {
 		if err != nil {
 			return none, err
 		}
@@ -504,7 +504,7 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 	if r.CallerSessionId != nil {
 		s.CreatedBySessionID = *r.CallerSessionId
 	}
-	if err := recPut(q, recSession, &s); err != nil {
+	if err := sessionPut(q, &s); err != nil {
 		return none, err
 	}
 	if strategy == "native" {
@@ -518,11 +518,11 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 			return none, err
 		}
 	}
-	if err := recPut(q, recSession, &s); err != nil {
+	if err := sessionPut(q, &s); err != nil {
 		return none, err
 	}
 	f := agentForkRecord{ID: newID(), RequestID: rid, SourceSessionID: sid, SessionID: s.ID, Strategy: strategy, HandoffID: agentOpt(s.PendingHandoffID), At: nowMs()}
-	if err := recPut(q, recSessionFork, &f); err != nil {
+	if err := sessionForkPut(q, &f); err != nil {
 		return none, err
 	}
 	if t := deref(r.Text); t != "" {
@@ -533,7 +533,7 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 	return f, nil
 }
 
-// sessionHandoffs: a session's handoff records (recHandoff), with or without their text.
+// sessionHandoffs: a session's handoff records, with or without their text.
 func sessionHandoffs(q *Request, sid string, text bool) ([]map[string]json.RawMessage, error) {
 	hs, err := q.db().AgentSessionHandoffs(q.ctx(), sid)
 	if err != nil {
@@ -601,7 +601,7 @@ func projectReadiness(q *Request, r *contract.ProjectReadinessRequest) (contract
 		}
 		sid, id := newID(), newID()
 		s := agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker", ProjectID: pid, ReadinessOfSessionID: deref(r.CallerSessionId)}
-		if err := recPut(q, recSession, &s); err != nil {
+		if err := sessionPut(q, &s); err != nil {
 			return none, err
 		}
 		e := agentExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: &hid, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", ProjectID: pid}
@@ -627,7 +627,7 @@ func projectReadiness(q *Request, r *contract.ProjectReadinessRequest) (contract
 			ProjectID string                     `json:"projectId"`
 			Project   map[string]json.RawMessage `json:"project"`
 		}{pid, pr})}
-		if err := recPut(q, recCommand, &c); err != nil {
+		if err := commandPut(q, &c); err != nil {
 			return none, err
 		}
 		hosts = append(hosts, contract.ProjectReadinessHost{HostId: hid, ExecutionId: &id})
@@ -660,7 +660,7 @@ func sessionAttach(q *Request, r *contract.SessionTaskAttachRequest) (contract.S
 	if sid == "" {
 		return none, fail(400, "Expected sessionId")
 	}
-	s, err := recLocked[agentSession](q, recSession, sid)
+	s, err := sessionLocked(q, sid)
 	if err != nil {
 		return none, err
 	}
@@ -697,7 +697,7 @@ func sessionAttach(q *Request, r *contract.SessionTaskAttachRequest) (contract.S
 		}
 	}
 	s.TaskID = tid
-	return contract.SessionTaskAttachReply{SessionId: sid, TaskId: tid}, recPut(q, recSession, &s)
+	return contract.SessionTaskAttachReply{SessionId: sid, TaskId: tid}, sessionPut(q, &s)
 }
 
 func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.SessionStartReply, error) {
@@ -728,7 +728,7 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 		}
 		key = "-:" + q.person.Email + ":" + rid
 	}
-	if old, err := recAll[agentSession](q, recSession, agentFilter{StartRequest: &key}); err != nil {
+	if old, err := sessionsByStartRequest(q, key); err != nil {
 		return none, err
 	} else if len(old) > 0 {
 		o := old[0]
@@ -863,7 +863,7 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 			s.Starter = pre.Name + ": " + pre.Starter
 		}
 	}
-	if err := recPut(q, recSession, &s); err != nil {
+	if err := sessionPut(q, &s); err != nil {
 		return none, err
 	}
 	out := contract.SessionStartReply{SessionId: s.ID, ProjectId: agentNullText(pid), TaskId: agentNullText(taskID), Role: agentNullText(role), ProfileId: agentNullText(agentView[agentProfile](profile).ID),

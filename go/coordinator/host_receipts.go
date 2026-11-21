@@ -94,7 +94,7 @@ func commandOf(q *Request, hostID, executionID, commandID, msg string) (agentCom
 	if err := ownedBody(q, hostID, executionID); err != nil {
 		return none, err
 	}
-	c, err := recGet[agentCommand](q, recCommand, commandID)
+	c, err := commandGet(q, commandID)
 	if err != nil {
 		return none, err
 	}
@@ -189,7 +189,7 @@ func projectReceiptIn(q *Request, b *contract.ProjectReceipt) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	s, err := recGet[agentSession](q, recSession, c.SessionID)
+	s, err := sessionByID(q, c.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +261,7 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 		}
 	}
 	c.Status = status
-	if err := recPut(q, recCommand, &c); err != nil {
+	if err := commandPut(q, &c); err != nil {
 		return nil, "", err
 	}
 	e, err := recGet[agentExecution](q, recExecution, b.ExecutionId)

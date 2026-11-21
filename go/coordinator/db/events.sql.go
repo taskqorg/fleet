@@ -127,7 +127,7 @@ type EventsByIdentityParams struct {
 
 // Execution events (host_events.go, event_batch.go, docs/designs/fleet-standard.md S2): an event and a stream delta share
 // one table, told apart by delta. The record a reader sees is payload with the columns under their record names
-// (eventRecordOf); a write splits a record the same way (eventColumnsOf), so its record (records.go recEvent) reads alike.
+// (eventRecordOf); a write splits a record the same way (eventColumnsOf).
 // The stored events and deltas of an execution at one of @seqs or with one of @ids (a host batch's snapshot).
 func (q *Queries) EventsByIdentity(ctx context.Context, arg EventsByIdentityParams) ([]Event, error) {
 	rows, err := q.db.Query(ctx, eventsByIdentity, arg.ExecutionID, arg.Seqs, arg.Ids)
@@ -339,6 +339,43 @@ func (q *Queries) EventsInsert(ctx context.Context, rows []byte) error {
 	return err
 }
 
+const eventsNonDeltaOfExecution = `-- name: EventsNonDeltaOfExecution :many
+SELECT id, delta, execution_id, session_id, project_id, event_seq, type, at, payload, seq, updated_at, tombstoned_at FROM event WHERE NOT delta AND execution_id = $1::text ORDER BY seq
+`
+
+func (q *Queries) EventsNonDeltaOfExecution(ctx context.Context, executionID string) ([]Event, error) {
+	rows, err := q.db.Query(ctx, eventsNonDeltaOfExecution, executionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Delta,
+			&i.ExecutionID,
+			&i.SessionID,
+			&i.ProjectID,
+			&i.EventSeq,
+			&i.Type,
+			&i.At,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eventsOfExecution = `-- name: EventsOfExecution :many
 SELECT id, delta, execution_id, session_id, project_id, event_seq, type, at, payload, seq, updated_at, tombstoned_at FROM event WHERE NOT delta AND execution_id=$1 AND type IS DISTINCT FROM 'execution.ended' ORDER BY event_seq, seq
 `
@@ -346,6 +383,51 @@ SELECT id, delta, execution_id, session_id, project_id, event_seq, type, at, pay
 // An execution's events (not deltas) in sequence order, without its ended marker (GET /api/executions/{id}/events).
 func (q *Queries) EventsOfExecution(ctx context.Context, executionID *string) ([]Event, error) {
 	rows, err := q.db.Query(ctx, eventsOfExecution, executionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Delta,
+			&i.ExecutionID,
+			&i.SessionID,
+			&i.ProjectID,
+			&i.EventSeq,
+			&i.Type,
+			&i.At,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventsOfExecutionByType = `-- name: EventsOfExecutionByType :many
+SELECT id, delta, execution_id, session_id, project_id, event_seq, type, at, payload, seq, updated_at, tombstoned_at FROM event
+WHERE execution_id = $1::text
+ AND ($2::text IS NULL OR type = $2)
+ORDER BY seq
+`
+
+type EventsOfExecutionByTypeParams struct {
+	ExecutionID string
+	Type        *string
+}
+
+func (q *Queries) EventsOfExecutionByType(ctx context.Context, arg EventsOfExecutionByTypeParams) ([]Event, error) {
+	rows, err := q.db.Query(ctx, eventsOfExecutionByType, arg.ExecutionID, arg.Type)
 	if err != nil {
 		return nil, err
 	}

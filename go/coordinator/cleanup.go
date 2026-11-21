@@ -1174,7 +1174,7 @@ func objectLock(ctx context.Context, tx pgx.Tx, storeID, key string) error {
 	return db.New(tx).AdvisoryXactLock(ctx, "object:"+storeID+":"+key)
 }
 
-// recordTables: the tables whose rows are records (queries/records.sql): a reason names a column by its record field.
+// recordTables: tables whose rows follow Fleet's column/payload record convention: a reason names a column by its record field.
 var recordTables = []string{"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition",
 	"worker_done", "host", "host_observation", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
 	"connection_key", "run_token", "watch", "person_setting"}

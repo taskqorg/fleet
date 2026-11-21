@@ -1,7 +1,6 @@
-// Records (docs/designs/fleet-data-foundation.md §7, fleet-standard.md S2): the record shape of the conversation
-// kinds (queries/records.sql) and of executions, questions and delegations (queries/entities.sql), read and written
-// through each kind's typed queries. A caller names the kind's recTable and its own type, and converts once at the
-// call: recGet, recLocked, recMaybe, recAll, recPut.
+// Records (docs/designs/fleet-data-foundation.md §7, fleet-standard.md S2): the record shape of executions, questions
+// and delegations (queries/entities.sql), read and written through each kind's typed queries. A caller names the
+// kind's recTable and its own type, and converts once at the call: recGet, recMaybe, recAll, recPut.
 package main
 
 import (
@@ -16,14 +15,13 @@ import (
 	"fleet/coordinator/db"
 )
 
-// recTable: one record kind's queries. get and locked read a record by id (locked: FOR UPDATE), all the records whose
-// record contains the filter (a JSON object), in insertion order; put writes a record and may complete it (a trace).
+// recTable: one record kind's queries. get reads a record by id, all the records whose record contains the filter
+// (a JSON object), in insertion order; put writes a record and may complete it (a trace).
 type recTable struct {
-	kind   string
-	get    func(q *Request, id string) ([]byte, error)
-	locked func(q *Request, id string) ([]byte, error)
-	all    func(q *Request, filter []byte) ([][]byte, error)
-	put    func(q *Request, rec rawObject) error
+	kind string
+	get  func(q *Request, id string) ([]byte, error)
+	all  func(q *Request, filter []byte) ([][]byte, error)
+	put  func(q *Request, rec rawObject) error
 }
 
 // recQ: a typed query as a call on the request's transaction.
@@ -31,41 +29,7 @@ func recQ[A, R any](f func(*db.Queries, context.Context, A) (R, error)) func(*Re
 	return func(q *Request, a A) (R, error) { return f(q.db(), q.ctx(), a) }
 }
 
-// recW: a record write (queries/records.sql): the record needs an id; wake: a new or changed record of the kind may let a
-// queued run start (queued messages, hosts, subscriptions).
-func recW(kind string, f func(*db.Queries, context.Context, []byte) error, wake bool) func(*Request, rawObject) error {
-	return func(q *Request, r rawObject) error {
-		if r.text("id") == "" {
-			return fmt.Errorf("%s record without an id", kind)
-		}
-		if err := f(q.db(), q.ctx(), jsonBytes(r)); err != nil {
-			return err
-		}
-		if wake && q.app != nil {
-			afterCommit(q, func() { q.app.wakeDispatch() })
-		}
-		return nil
-	}
-}
-
 var (
-	recSession = &recTable{kind: "session", get: recQ((*db.Queries).RecSessionGet), locked: recQ((*db.Queries).RecSessionGetLocked),
-		all: recQ((*db.Queries).RecSessionAll), put: recW("session", (*db.Queries).RecSessionPut, false)}
-	recMessage = &recTable{kind: "message", get: recQ((*db.Queries).RecMessageGet), all: recQ((*db.Queries).RecMessageAll),
-		put: recW("message", (*db.Queries).RecMessagePut, false)}
-	recEvent         = &recTable{kind: "event", all: recQ((*db.Queries).RecEventAll)}
-	recEventAny      = &recTable{kind: "event", all: recQ((*db.Queries).RecEventAnyAll)} // both kinds, the deltas too
-	recQueuedMessage = &recTable{kind: "queued-message", get: recQ((*db.Queries).RecQueuedMessageGet), all: recQ((*db.Queries).RecQueuedMessageAll),
-		put: queuedPut}
-	recCommand = &recTable{kind: "command", get: recQ((*db.Queries).RecCommandGet), all: recQ((*db.Queries).RecCommandAll), put: commandRecPut}
-	recHandoff = &recTable{kind: "handoff", get: recQ((*db.Queries).RecHandoffGet), all: recQ((*db.Queries).RecHandoffAll),
-		put: recW("handoff", (*db.Queries).RecHandoffPut, false)}
-	recSessionFork = &recTable{kind: "session-fork", get: recQ((*db.Queries).RecSessionForkGet), all: recQ((*db.Queries).RecSessionForkAll),
-		put: recW("session-fork", (*db.Queries).RecSessionForkPut, false)}
-	recSessionTransition = &recTable{kind: "session-transition", get: recQ((*db.Queries).RecSessionTransitionGet),
-		all: recQ((*db.Queries).RecSessionTransitionAll), put: recW("session-transition", (*db.Queries).RecSessionTransitionPut, false)}
-	recWorkerDone = &recTable{kind: "worker-done", get: recQ((*db.Queries).RecWorkerDoneGet), all: recQ((*db.Queries).RecWorkerDoneAll),
-		put: recW("worker-done", (*db.Queries).RecWorkerDonePut, false)}
 	recExecution = &recTable{kind: "execution", get: recQ((*db.Queries).EntExecutionRecord), all: recQ((*db.Queries).EntExecutionRecords),
 		put: func(q *Request, r rawObject) error { return putExecution(q, r) }}
 	recQuestion = &recTable{kind: "question", get: recQ((*db.Queries).EntAgentQuestion), all: agentQuestions,
@@ -97,11 +61,6 @@ func recRead[T any](q *Request, read func(*Request, string) ([]byte, error), id 
 
 // recGet: one record of a kind as T; a missing or empty id is not found (404).
 func recGet[T any](q *Request, t *recTable, id string) (T, error) { return recRead[T](q, t.get, id) }
-
-// recLocked: recGet, the row locked for update.
-func recLocked[T any](q *Request, t *recTable, id string) (T, error) {
-	return recRead[T](q, t.locked, id)
-}
 
 // recMaybe: recGet, nil when absent.
 func recMaybe[T any](q *Request, t *recTable, id string) (*T, error) {
@@ -156,73 +115,6 @@ func recPut[T any](q *Request, t *recTable, v *T) error {
 		return err
 	}
 	return json.Unmarshal(jsonBytes(r), v)
-}
-
-// queuedPut: a queued message keeps the trace of the request that queued it.
-func queuedPut(q *Request, r rawObject) error {
-	if !validTraceparent(r.text("traceparent")) {
-		r["traceparent"], r["traceActor"] = jsonBytes(originTrace(q)), jsonBytes(actor(q, "fleet"))
-	}
-	return recW("queued-message", (*db.Queries).RecQueuedMessagePut, true)(q, r)
-}
-
-// commandCols: the command record fields with a column (queries/records.sql); payload holds the others.
-var commandCols = map[string]bool{"id": true, "executionId": true, "sessionId": true, "hostId": true, "projectId": true, "kind": true,
-	"status": true, "stopDetail": true, "handedOut": true, "traceparent": true}
-
-// commandRecPut: a command record through its state owner (commands.go): a new command is created with its status, an
-// existing one keeps its status unless the record names another, which commandTransition moves it to.
-func commandRecPut(q *Request, r rawObject) error {
-	id := r.text("id")
-	if id == "" {
-		return fmt.Errorf("command record without an id")
-	}
-	if err := commandTrace(q, r); err != nil {
-		return err
-	}
-	rest := rawObject{}
-	for k, x := range r {
-		if !commandCols[k] {
-			rest[k] = x
-		}
-	}
-	kind, status := r.ptr("kind"), r.ptr("status")
-	if kind == nil {
-		return fmt.Errorf("command %s without a kind", id)
-	}
-	prev, err := commandStatus(q, id)
-	if err != nil {
-		return err
-	}
-	if status == nil {
-		p := firstString(prev, "pending")
-		status = &p
-	}
-	if _, ok := commandTransitions[*status]; !ok {
-		return fmt.Errorf("command %s: unknown status %q", id, *status)
-	}
-	var handed *bool
-	if b, ok := r.val("handedOut").(bool); ok {
-		handed = &b
-	}
-	if err := commandCreate(q, db.CommandUpsertParams{ID: id, ExecutionID: r.ptr("executionId"), SessionID: r.ptr("sessionId"), HostID: r.ptr("hostId"),
-		ProjectID: r.ptr("projectId"), Kind: *kind, Status: db.CommandStatus(*status), StopDetail: r.ptr("stopDetail"), HandedOut: handed,
-		Traceparent: r.ptr("traceparent"), Payload: jsonBytes(rest)}); err != nil {
-		return err
-	}
-	if prev != "" && prev != *status {
-		if err := commandTransition(q, id, *status, r.ptr("stopDetail")); err != nil {
-			return err
-		}
-	} else if prev != "" {
-		if err := commandDetail(q, id, r.ptr("stopDetail")); err != nil {
-			return err
-		}
-	}
-	if hid := r.ptr("hostId"); *status == "pending" && hid != nil && q.app != nil {
-		afterCommit(q, func() { q.app.wakeHost(*hid) })
-	}
-	return nil
 }
 
 // putDelegation: a delegation record, keyed by its child execution.
@@ -314,15 +206,15 @@ func putExecution(q *Request, e rawObject) error {
 	if e.text("actor") == "program-worker" {
 		kind = "host_job"
 	}
-	sp, err := recMaybe[rawObject](q, recSession, e.text("sessionId"))
+	sp, err := sessionMaybe(q, e.text("sessionId"))
 	if err != nil {
 		return err
 	}
-	sess := rawObject{}
+	var sess agentSession
 	if sp != nil {
 		sess = *sp
 	}
-	handoff, err := recMaybe[agentHandoff](q, recHandoff, e.text("handoffId"))
+	handoff, err := handoffMaybe(q, e.text("handoffId"))
 	if err != nil {
 		return err
 	}
@@ -331,15 +223,15 @@ func putExecution(q *Request, e rawObject) error {
 		parent = handoff.Turns[len(handoff.Turns)-1]
 	}
 	if parent == "" {
-		parent = sess.text("createdByExecutionId")
+		parent = sess.CreatedByExecutionID
 	}
-	if fo := sess.object("forkOf"); parent == "" && fo.text("executionId") != "" {
-		other, err := q.db().EntSessionHasOtherRun(q.ctx(), db.EntSessionHasOtherRunParams{SessionID: ptr(sess.text("id")), ID: id})
+	if parent == "" && sess.ForkOf != nil && deref(sess.ForkOf.ExecutionID) != "" {
+		other, err := q.db().EntSessionHasOtherRun(q.ctx(), db.EntSessionHasOtherRunParams{SessionID: ptr(sess.ID), ID: id})
 		if err != nil {
 			return err
 		}
 		if !other {
-			parent = fo.text("executionId")
+			parent = deref(sess.ForkOf.ExecutionID)
 		}
 	}
 	if prev == "" && !validTraceparent(e.text("traceparent")) {
@@ -349,8 +241,8 @@ func putExecution(q *Request, e rawObject) error {
 		}
 		e["traceparent"], e["traceActor"] = jsonBytes(tp), jsonBytes(actor(q, "fleet"))
 	}
-	project := firstString(e.text("projectId"), sess.text("projectId"))
-	task := firstString(e.text("deliveryId"), sess.text("deliveryId"), sess.text("taskId"))
+	project := firstString(e.text("projectId"), sess.ProjectID)
+	task := firstString(e.text("deliveryId"), sess.DeliveryID, sess.TaskID)
 	profile := e.object("agentConfig").text("id")
 	harness := ""
 	if kind == "agent_run" {
@@ -386,7 +278,7 @@ func putExecution(q *Request, e rawObject) error {
 			data[k] = v
 		}
 	}
-	directed := firstString(e.text("directedBy"), sess.text("directedBy"))
+	directed := firstString(e.text("directedBy"), sess.DirectedBy)
 	inserted := false
 	if prev == "" {
 		obs := db.Observation(observation)

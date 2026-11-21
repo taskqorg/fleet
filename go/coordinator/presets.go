@@ -146,7 +146,7 @@ func callerReadOnly(q *Request) bool {
 	if e == nil {
 		return false
 	}
-	s, _ := recMaybe[agentSession](q, recSession, e.SessionID)
+	s, _ := sessionMaybe(q, e.SessionID)
 	return s != nil && s.Access == "read"
 }
 
