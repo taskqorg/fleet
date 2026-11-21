@@ -299,7 +299,7 @@ func startTestGuardian(t *testing.T, o *mcpOwner, spec M) (*exec.Cmd, *os.File, 
 }
 func awaitFile(t *testing.T, path string) int {
 	t.Helper()
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 500; i++ { // 10 s: -race guardian + fixture process starts under CI load
 		if b, err := os.ReadFile(path); err == nil {
 			pid, e := strconv.Atoi(string(b))
 			if e != nil {
@@ -1102,7 +1102,7 @@ func TestMCPServerExitInterruptsBlockedOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second): // 2 MiB JSON decode+encode in filterMCP under -race load
 		t.Fatal("response write did not start")
 	}
 	os.WriteFile(marker+"-exit", []byte("exit"), 0600)
