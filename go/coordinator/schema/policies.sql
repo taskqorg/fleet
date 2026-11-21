@@ -193,6 +193,17 @@ CREATE POLICY live ON execution AS RESTRICTIVE FOR SELECT TO public USING ((flee
 DROP POLICY IF EXISTS project_scope ON execution;
 CREATE POLICY project_scope ON execution FOR ALL TO public USING (fleet_visible(project_id));
 
+-- execution_spend
+ALTER TABLE execution_spend ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS directed_spend ON execution_spend;
+CREATE POLICY directed_spend ON execution_spend FOR ALL TO public USING (((project_id IS NULL) AND (fleet_own_projectless_execution(execution_id) OR (EXISTS ( SELECT 1
+   FROM execution e
+  WHERE ((e.id = execution_spend.execution_id) AND (e.project_id IS NULL) AND (e.session_id IS NULL) AND (e.directed_by = current_setting('fleet.person'::text, true)) AND (NOT (e.data ? 'directorAccessRevokedAt'::text))))))));
+DROP POLICY IF EXISTS live ON execution_spend;
+CREATE POLICY live ON execution_spend AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
+DROP POLICY IF EXISTS project_scope ON execution_spend;
+CREATE POLICY project_scope ON execution_spend FOR ALL TO public USING (fleet_visible(project_id));
+
 -- execution_totals
 ALTER TABLE execution_totals ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS directed_totals ON execution_totals;

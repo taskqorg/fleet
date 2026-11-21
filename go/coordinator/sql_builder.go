@@ -136,15 +136,19 @@ type sqlAnalyticsFilter struct {
 // sqlAnalytics: the analytics_query statement and its arguments. It reads the caller's visible leaves started in
 // [from, to) (inside the caller's RLS transaction, never escalating fleet.project_ids) under the system activity, the
 // project and the filters, grouped by dims (each one of analyticsDimExpr) with a total row, with costs when cost.
-// The unfiltered window leaf CTE is evaluated once so the reply-level hidden count (CA-05) needs no rescan.
-func sqlAnalytics(from, to time.Time, system *contract.SystemActivity, project *string, filters []sqlAnalyticsFilter, dims []contract.AnalyticsDimension, cost bool) (string, []any) {
+func sqlAnalytics(from, to time.Time, system *contract.SystemActivity, project *string, filters []sqlAnalyticsFilter, dims []contract.AnalyticsDimension, cost, wantCalls, wantP50, wantP95, needWindowVisible bool) (string, []any) {
 	params := []any{from, to}
-	conds := []string{systemFilter(system, "l.system_actor")}
+	baseConds := []string{analyticsLeafFilter, "e.started_at >= $1", "e.started_at < $2", systemFilter(system, "e.system_actor")}
 	if project != nil {
 		params = append(params, *project)
-		conds = append(conds, fmt.Sprintf("l.project_id = $%d", len(params)))
+		baseConds = append(baseConds, fmt.Sprintf("e.project_id = $%d", len(params)))
 	}
+	conds := []string{}
+	needCategory := false
 	for _, f := range filters {
+		if len(f.values) > 0 && f.dim == contract.AnalyticsDimensionCategory {
+			needCategory = true
+		}
 		appendStringFilter(&conds, &params, analyticsDimExpr[f.dim], f.values)
 	}
 	filterSQL := ""
@@ -152,13 +156,13 @@ func sqlAnalytics(from, to time.Time, system *contract.SystemActivity, project *
 		filterSQL = " WHERE " + strings.Join(conds, " AND ")
 	}
 
-	// Build raw leaves CTE inside caller's RLS transaction (never escalating fleet.project_ids).
-	// Unfiltered window leaf CTE is evaluated once so we can also compute the unfiltered visible count
-	// for reply-level `hidden` (CA-05) without re-scanning.
 	dimCols := make([]string, len(dims))
 	dimNullChecks := make([]string, len(dims))
 	dimGroupCols := make([]string, len(dims))
 	for i, d := range dims {
+		if d == contract.AnalyticsDimensionCategory {
+			needCategory = true
+		}
 		expr := analyticsDimExpr[d]
 		col := fmt.Sprintf("dim_%d", i)
 		dimCols[i] = fmt.Sprintf("coalesce(nullif(%s, ''), 'unknown') AS %s", expr, col)
@@ -170,25 +174,47 @@ func sqlAnalytics(from, to time.Time, system *contract.SystemActivity, project *
 		unknownExpr = strings.Join(dimNullChecks, " OR ")
 	}
 
-	leavesBaseSQL := fmt.Sprintf(`WITH window_leaves AS MATERIALIZED (%s WHERE %s AND e.started_at >= $1 AND e.started_at < $2),
-leaves AS MATERIALIZED (
+	ctes := []string{
+		`conn_meta AS MATERIALIZED (SELECT m.id::text AS id, m.provider::text AS provider FROM fleet_conn_meta_all() m)`,
+	}
+	if needCategory {
+		ctes = append(ctes, `agent_cats AS MATERIALIZED (
+ SELECT da.id, nullif((dar.content::jsonb)->>'category', '') AS category
+ FROM definition da
+ JOIN definition_revision dar ON dar.kind = da.kind AND dar.id = da.id AND dar.revision = da.head
+ WHERE da.kind = 'agent' AND dar.content IS NOT NULL AND left(dar.content, 1) = '{'
+)`)
+	}
+	ctes = append(ctes,
+		fmt.Sprintf(`base_leaves AS (%s WHERE %s)`, analyticsBaseLeavesSelect(needCategory, wantCalls), strings.Join(baseConds, " AND ")),
+		fmt.Sprintf(`leaves AS MATERIALIZED (
  SELECT l.*, %s%s
- FROM window_leaves l%s
-)`, analyticsBaseLeavesSelect, analyticsLeafFilter,
-		func() string {
-			if len(dimCols) > 0 {
-				return strings.Join(dimCols, ", ") + ", "
-			}
-			return ""
-		}(),
-		fmt.Sprintf("(%s) AS has_unknown_dim", unknownExpr),
-		filterSQL)
+ FROM base_leaves l%s
+)`,
+			func() string {
+				if len(dimCols) > 0 {
+					return strings.Join(dimCols, ", ") + ", "
+				}
+				return ""
+			}(),
+			fmt.Sprintf("(%s) AS has_unknown_dim", unknownExpr),
+			filterSQL),
+	)
+	leavesBaseSQL := "WITH " + strings.Join(ctes, ",\n")
+	windowVisibleExpr := "0::bigint"
+	if needWindowVisible {
+		windowVisibleExpr = "(SELECT count(*)::bigint FROM execution_spend WHERE started_at >= $1 AND started_at < $2)"
+	}
+	measureSQL := sqlMeasureSelect(wantP50, wantP95)
 
 	var querySQL string
 	if cost {
 		querySQL = leavesBaseSQL + ",\n" + analyticsLeafCostCTEs + ",\n"
 	} else {
-		querySQL = leavesBaseSQL + "\n"
+		querySQL = leavesBaseSQL + ",\n"
+	}
+	if !cost {
+		querySQL = strings.TrimSuffix(querySQL, ",\n") + "\n"
 	}
 
 	dimListSQL := strings.Join(dimGroupCols, ", ")
@@ -205,14 +231,14 @@ cost_json AS (
  FROM cost_agg
 )
 SELECT true AS is_total, '[]'::jsonb AS dims, %s AS stats, (SELECT costs FROM cost_json) AS costs,
- (SELECT count(*)::bigint FROM window_leaves) AS window_visible,
+ %s AS window_visible,
  (count(*) FILTER (WHERE has_unknown_dim))::bigint AS unknown_cnt
-FROM leaves`, sqlMeasureSelect)
+FROM leaves`, measureSQL, windowVisibleExpr)
 		} else {
 			querySQL += fmt.Sprintf(`SELECT true AS is_total, '[]'::jsonb AS dims, %s AS stats, '[]'::jsonb AS costs,
- (SELECT count(*)::bigint FROM window_leaves) AS window_visible,
+ %s AS window_visible,
  (count(*) FILTER (WHERE has_unknown_dim))::bigint AS unknown_cnt
-FROM leaves`, sqlMeasureSelect)
+FROM leaves`, measureSQL, windowVisibleExpr)
 		}
 	} else {
 		dimJSONBuild := "jsonb_build_array(" + dimListSQL + ")"
@@ -241,12 +267,12 @@ cost_json AS (
  GROUP BY is_total, dims
 )
 SELECT m.is_total, m.dims, m.stats, coalesce(c.costs, '[]'::jsonb) AS costs,
- (SELECT count(*)::bigint FROM window_leaves) AS window_visible,
+ %s AS window_visible,
  m.unknown_cnt
 FROM metrics_agg m
 LEFT JOIN cost_json c ON c.is_total = m.is_total AND c.dims = m.dims
-ORDER BY m.is_total ASC, %s`, dimJSONBuild, dimListSQL, sqlMeasureSelect, dimListSQL,
-				dimJSONBuild, dimListSQL,
+ORDER BY m.is_total ASC, %s`, dimJSONBuild, dimListSQL, measureSQL, dimListSQL,
+				dimJSONBuild, dimListSQL, windowVisibleExpr,
 				func() string {
 					parts := make([]string, len(dims))
 					for i := range dims {
@@ -259,11 +285,11 @@ ORDER BY m.is_total ASC, %s`, dimJSONBuild, dimListSQL, sqlMeasureSelect, dimLis
  CASE WHEN GROUPING(dim_0) = 1 THEN '[]'::jsonb ELSE %s END AS dims,
  %s AS stats,
  '[]'::jsonb AS costs,
- (SELECT count(*)::bigint FROM window_leaves) AS window_visible,
+ %s AS window_visible,
  (count(*) FILTER (WHERE has_unknown_dim))::bigint AS unknown_cnt
 FROM leaves
 GROUP BY GROUPING SETS ((%s), ())
-ORDER BY is_total ASC, %s`, dimJSONBuild, sqlMeasureSelect, dimListSQL,
+ORDER BY is_total ASC, %s`, dimJSONBuild, measureSQL, windowVisibleExpr, dimListSQL,
 				func() string {
 					parts := make([]string, len(dims))
 					for i := range dims {
@@ -311,10 +337,28 @@ var analyticsDimExpr = map[contract.AnalyticsDimension]string{
 	contract.AnalyticsDimensionCategory:         `l.category`,
 }
 
-// analyticsBaseLeavesSelect is the shared column projection over `execution e` + `execution_totals t` + `fleet_exec_conn_meta conn`.
-// The rollups read the same projection (AnalyticsLeafRows, queries/analytics.sql) and a replacement an exact-numeric
-// variant of it (ResourceClaimSnapshot, queries/resources.sql); a change here is made there too.
-const analyticsBaseLeavesSelect = `
+// analyticsBaseLeavesSelect builds the column projection over `execution e` + `execution_totals t` + `conn_meta`,
+// skipping agent definition JSONB parsing and tool_calls jsonb_each unless requested.
+func analyticsBaseLeavesSelect(needCategory, needCalls bool) string {
+	catExpr := "NULL::text AS category,"
+	catJoin := ""
+	if needCategory {
+		catExpr = "ac.category AS category,"
+		catJoin = "\n LEFT JOIN agent_cats ac ON ac.id = e.profile_id"
+	}
+	callsExpr := `0::bigint AS leaf_calls,
+  0::bigint AS leaf_call_errors`
+	if needCalls {
+		callsExpr = `(CASE WHEN e.kind = 'tool_run' THEN 1::bigint
+        ELSE coalesce((SELECT sum((v->>'calls')::bigint) FROM jsonb_each(coalesce(t.tool_calls->'byTool', '{}'::jsonb)) kv(k, v) WHERE (v->>'calls') ~ '^[0-9]+$'), 0)
+           + coalesce((CASE WHEN (t.tool_calls->'other'->>'calls') ~ '^[0-9]+$' THEN (t.tool_calls->'other'->>'calls')::bigint END), 0)
+   END) AS leaf_calls,
+  (CASE WHEN e.kind = 'tool_run' THEN (CASE WHEN e.state IN ('failed', 'cancelled') THEN 1::bigint ELSE 0::bigint END)
+        ELSE coalesce((SELECT sum((v->>'errors')::bigint) FROM jsonb_each(coalesce(t.tool_calls->'byTool', '{}'::jsonb)) kv(k, v) WHERE (v->>'errors') ~ '^[0-9]+$'), 0)
+           + coalesce((CASE WHEN (t.tool_calls->'other'->>'errors') ~ '^[0-9]+$' THEN (t.tool_calls->'other'->>'errors')::bigint END), 0)
+   END) AS leaf_call_errors`
+	}
+	return `
  SELECT
   e.id,
   e.kind::text AS kind,
@@ -335,12 +379,10 @@ const analyticsBaseLeavesSelect = `
    WHEN e.session_id IS NOT NULL THEN 'conversation'
    ELSE 'other'
   END AS purpose,
-  CASE
-   WHEN dar.content IS NOT NULL AND left(dar.content, 1) = '{' THEN nullif((dar.content::jsonb)->>'category', '')
-  END AS category,
+  ` + catExpr + `
   e.harness,
   coalesce(t.model, e.model) AS model,
-  coalesce(conn.provider, nullif(e.data->>'provider', ''), CASE e.harness WHEN 'codex' THEN 'openai' WHEN 'claude' THEN 'anthropic' WHEN 'antigravity' THEN 'google' END) AS provider,
+  coalesce(cm_conn.provider, cm_acc.provider, nullif(e.data->>'provider', ''), CASE e.harness WHEN 'codex' THEN 'openai' WHEN 'claude' THEN 'anthropic' WHEN 'antigravity' THEN 'google' END) AS provider,
   e.account_id,
   e.host_id,
   nullif(e.data->>'connection', '') AS connection,
@@ -354,7 +396,7 @@ const analyticsBaseLeavesSelect = `
   e.ended_at,
   coalesce(e.started_at, CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint / 1000.0) END, e.ended_at, e.last_seen_at) AS leaf_at,
   (t.execution_id IS NOT NULL) AS has_totals,
-  (coalesce(t.billing_basis, '') = 'subscription' OR (coalesce(t.billing_basis, '') IN ('', 'unavailable') AND e.account_id IS NOT NULL AND NOT coalesce(conn.is_api_conn, false))) AS is_sub,
+  (coalesce(t.billing_basis, '') = 'subscription' OR (coalesce(t.billing_basis, '') IN ('', 'unavailable') AND e.account_id IS NOT NULL AND cm_acc.id IS NULL)) AS is_sub,
   t.tokens_input,
   coalesce(t.tokens_input_basis, 'unavailable') AS tokens_input_basis,
   t.tokens_reasoning,
@@ -410,23 +452,12 @@ const analyticsBaseLeavesSelect = `
    WHEN t.connection_cost IS NOT NULL AND coalesce(t.connection_cost->>'amount', CASE WHEN nullif(t.connection_cost->>'unit', '') IS NOT NULL THEN t.connection_cost->>(t.connection_cost->>'unit') END) ~ '` + analyticsNumericRegex + `'
    THEN coalesce(t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'unit'))::numeric
   END AS conn_amount,
-  (CASE WHEN e.kind = 'tool_run' THEN 1::bigint
-        ELSE coalesce((SELECT sum((v->>'calls')::bigint) FROM jsonb_each(coalesce(t.tool_calls->'byTool', '{}'::jsonb)) kv(k, v) WHERE (v->>'calls') ~ '^[0-9]+$'), 0)
-           + coalesce((CASE WHEN (t.tool_calls->'other'->>'calls') ~ '^[0-9]+$' THEN (t.tool_calls->'other'->>'calls')::bigint END), 0)
-   END) AS leaf_calls,
-  (CASE WHEN e.kind = 'tool_run' THEN (CASE WHEN e.state IN ('failed', 'cancelled') THEN 1::bigint ELSE 0::bigint END)
-        ELSE coalesce((SELECT sum((v->>'errors')::bigint) FROM jsonb_each(coalesce(t.tool_calls->'byTool', '{}'::jsonb)) kv(k, v) WHERE (v->>'errors') ~ '^[0-9]+$'), 0)
-           + coalesce((CASE WHEN (t.tool_calls->'other'->>'errors') ~ '^[0-9]+$' THEN (t.tool_calls->'other'->>'errors')::bigint END), 0)
-   END) AS leaf_call_errors
+  ` + callsExpr + `
  FROM execution e
- LEFT JOIN execution_totals t ON t.execution_id = e.id
- LEFT JOIN definition da ON da.kind = 'agent' AND da.id = e.profile_id
- LEFT JOIN definition_revision dar ON dar.kind = da.kind AND dar.id = da.id AND dar.revision = da.head
- LEFT JOIN LATERAL (
-  SELECT m.provider, m.is_api_conn
-  FROM fleet_exec_conn_meta(e.data->>'connection', e.account_id) m
-  WHERE e.data ? 'connection' OR e.account_id IS NOT NULL
- ) conn ON true`
+ LEFT JOIN execution_totals t ON t.execution_id = e.id` + catJoin + `
+ LEFT JOIN conn_meta cm_conn ON e.data ? 'connection' AND nullif(e.data->>'connection', '') IS NOT NULL AND cm_conn.id = 'connection:' || (e.data->>'connection')
+ LEFT JOIN conn_meta cm_acc ON e.account_id IS NOT NULL AND cm_acc.id = e.account_id`
+}
 
 // analyticsLeafCostCTEs assumes a `leaves` CTE is in scope and resolves every leaf's prices via LATERAL
 // lookups on `price_entry_subject` BEFORE any outer GROUP BY (`CA-04`).
@@ -542,7 +573,16 @@ func appendStringFilter(conds *[]string, params *[]any, expr string, vals []stri
 	*conds = append(*conds, fmt.Sprintf("coalesce(nullif(%s, ''), 'unknown') = ANY($%d)", expr, len(*params)))
 }
 
-const sqlMeasureSelect = `jsonb_build_object(
+func sqlMeasureSelect(wantP50, wantP95 bool) string {
+	p50Expr := "NULL::float8"
+	if wantP50 {
+		p50Expr = "(percentile_cont(0.5) WITHIN GROUP (ORDER BY wall_ms))::float8"
+	}
+	p95Expr := "NULL::float8"
+	if wantP95 {
+		p95Expr = "(percentile_cont(0.95) WITHIN GROUP (ORDER BY wall_ms))::float8"
+	}
+	return `jsonb_build_object(
  'count', count(*)::bigint,
  'failed', (count(*) FILTER (WHERE state = 'failed'))::bigint,
  'tokensIn', sum(tokens_input)::float8,
@@ -566,8 +606,8 @@ const sqlMeasureSelect = `jsonb_build_object(
  'tokensCWEst', (count(*) FILTER (WHERE tokens_cache_write IS NOT NULL AND tokens_cache_write_basis = 'estimated'))::bigint,
  'tokensCWExpected', (count(*) FILTER (WHERE kind IN ('agent_run', 'child_agent') OR tokens_cache_write IS NOT NULL))::bigint,
  'wallMs', sum(wall_ms)::float8,
- 'wallMsP50', (percentile_cont(0.5) WITHIN GROUP (ORDER BY wall_ms))::float8,
- 'wallMsP95', (percentile_cont(0.95) WITHIN GROUP (ORDER BY wall_ms))::float8,
+ 'wallMsP50', ` + p50Expr + `,
+ 'wallMsP95', ` + p95Expr + `,
  'wallMsHave', (count(*) FILTER (WHERE wall_ms IS NOT NULL))::bigint,
  'wallMsSub', (count(*) FILTER (WHERE wall_ms IS NOT NULL AND wall_ms_basis = 'subscription'))::bigint,
  'wallMsEst', (count(*) FILTER (WHERE wall_ms IS NOT NULL AND wall_ms_basis = 'estimated'))::bigint,
@@ -605,6 +645,7 @@ const sqlMeasureSelect = `jsonb_build_object(
  'apiMsEst', (count(*) FILTER (WHERE api_ms IS NOT NULL AND api_ms_basis = 'estimated'))::bigint,
  'apiMsExpected', (count(*) FILTER (WHERE kind IN ('agent_run', 'child_agent') OR api_ms IS NOT NULL))::bigint
 )`
+}
 
 // taskLineageCTEs: a task's own executions, its delegated tree and its spawned tasks with their executions
 // (AnalyticsTaskLineage, queries/analytics.sql, holds the same lineage). tasks.go composes the accepted-result read of

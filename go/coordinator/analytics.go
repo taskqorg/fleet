@@ -445,7 +445,15 @@ func analyticsQuery(q *Request, r *contract.AnalyticsQueryRequest) (contract.Ana
 			{contract.AnalyticsDimensionPurpose, f.Purpose}, {contract.AnalyticsDimensionCategory, f.Category},
 		}
 	}
-	querySQL, params := sqlAnalytics(from, to, systemOf(r.System, parentNamed), r.ProjectId, filters, dims, wantCost)
+	needHidden := q.person != nil && !fullAccess(q.person)
+	querySQL, params := sqlAnalytics(
+		from, to, systemOf(r.System, parentNamed), r.ProjectId, filters, dims,
+		wantCost,
+		seenMeasures[contract.AnalyticsMeasureCalls],
+		seenMeasures[contract.AnalyticsMeasureWallMsP50],
+		seenMeasures[contract.AnalyticsMeasureWallMsP95],
+		needHidden,
+	)
 
 	sqlRows, err := q.tx.Query(q.ctx(), querySQL, params...)
 	if err != nil {
@@ -1208,11 +1216,119 @@ func spendDimension(by contract.SpendGroupBy) (contract.AnalyticsDimension, erro
 	return "", fail(400, "Unknown spend group by: "+string(by))
 }
 
-func measureInt(m map[string]contract.MeasuredNumber, key string) int64 {
-	if v, ok := m[key]; ok && v.Value != nil {
-		return int64(math.Round(*v.Value))
+type spendCostKey struct {
+	currency string
+	basis    contract.ResourceBasis
+}
+
+type spendCostVal struct {
+	value  float64
+	prices map[contract.CostPriceRef]struct{}
+}
+
+type spendBucketAcc struct {
+	runs     int64
+	failed   int64
+	tin      float64
+	tinHave  int64
+	tinSub   int64
+	tinEst   int64
+	tinExp   int64
+	tout     float64
+	toutHave int64
+	toutSub  int64
+	toutEst  int64
+	toutExp  int64
+	costs    map[spendCostKey]*spendCostVal
+	unpriced int64
+}
+
+func newSpendBucketAcc() *spendBucketAcc {
+	return &spendBucketAcc{costs: map[spendCostKey]*spendCostVal{}}
+}
+
+func (a *spendBucketAcc) add(row db.AnalyticsSpendSummaryRow) error {
+	a.runs += row.Runs
+	a.failed += row.Failed
+	a.tin += row.Tin
+	a.tinHave += row.TinHave
+	a.tinSub += row.TinSub
+	a.tinEst += row.TinEst
+	a.tinExp += row.TinExp
+	a.tout += row.Tout
+	a.toutHave += row.ToutHave
+	a.toutSub += row.ToutSub
+	a.toutEst += row.ToutEst
+	a.toutExp += row.ToutExp
+	a.unpriced += row.Unpriced
+	if row.CostCurrency != nil && row.CostBasis != nil {
+		k := spendCostKey{currency: *row.CostCurrency, basis: contract.ResourceBasis(*row.CostBasis)}
+		cv := a.costs[k]
+		if cv == nil {
+			cv = &spendCostVal{prices: map[contract.CostPriceRef]struct{}{}}
+			a.costs[k] = cv
+		}
+		cv.value += row.CostVal
+		if row.CostPriceRefs != nil && *row.CostPriceRefs != "" {
+			var refs []contract.CostPriceRef
+			if err := json.Unmarshal([]byte(*row.CostPriceRefs), &refs); err != nil {
+				return err
+			}
+			for _, ref := range refs {
+				cv.prices[ref] = struct{}{}
+			}
+		}
 	}
-	return 0
+	return nil
+}
+
+func (a *spendBucketAcc) costFigures() []contract.CostFigure {
+	out := make([]contract.CostFigure, 0, len(a.costs)+1)
+	for k, cv := range a.costs {
+		v := cv.value
+		curr := k.currency
+		prices := make([]contract.CostPriceRef, 0, len(cv.prices))
+		for ref := range cv.prices {
+			prices = append(prices, ref)
+		}
+		sort.Slice(prices, func(i, j int) bool {
+			if prices[i].Id != prices[j].Id {
+				return prices[i].Id < prices[j].Id
+			}
+			return prices[i].ObservedAt < prices[j].ObservedAt
+		})
+		cf := contract.CostFigure{
+			Value:    &v,
+			Currency: &curr,
+			Basis:    k.basis,
+			Prices:   prices,
+		}
+		if k.basis == contract.ResourceBasisSubscription {
+			cf.Note = ptr(subscriptionCostNote)
+		}
+		out = append(out, cf)
+	}
+	if a.unpriced > 0 {
+		out = append(out, contract.CostFigure{
+			Value:  nil,
+			Basis:  contract.ResourceBasisUnavailable,
+			Reason: ptr(unavailableCostReason),
+			Usages: ptr(a.unpriced),
+		})
+	}
+	sortCostFigures(out)
+	return out
+}
+
+func (a *spendBucketAcc) tokensInt() int64 {
+	var total int64
+	if a.tinHave > 0 {
+		total += int64(math.Round(a.tin))
+	}
+	if a.toutHave > 0 {
+		total += int64(math.Round(a.tout))
+	}
+	return total
 }
 
 func costUsdAndUnpriced(cost []contract.CostFigure) (float64, int64) {
@@ -1234,22 +1350,18 @@ func costUsdAndUnpriced(cost []contract.CostFigure) (float64, int64) {
 	return usd, unpriced
 }
 
-func spendRowsFromBucket(rows []contract.AnalyticsBucketRow, dim contract.AnalyticsDimension, totalsUsd float64) []contract.SpendRow {
-	out := make([]contract.SpendRow, 0, len(rows))
-	for _, row := range rows {
-		key := row.Dimensions[string(dim)]
-		if key == "" {
-			key = "unknown"
-		}
-		tokens := measureInt(row.Measures, "tokens_input") + measureInt(row.Measures, "tokens_output")
-		usd, unpriced := costUsdAndUnpriced(row.Cost)
+func spendRowsFromAcc(buckets map[string]*spendBucketAcc, totalsUsd float64) []contract.SpendRow {
+	out := make([]contract.SpendRow, 0, len(buckets))
+	for key, a := range buckets {
+		cost := a.costFigures()
+		usd, unpriced := costUsdAndUnpriced(cost)
 		sr := contract.SpendRow{
 			Key:      key,
 			Label:    key,
-			Runs:     measureInt(row.Measures, "executions"),
-			Failed:   measureInt(row.Measures, "failed"),
-			Tokens:   tokens,
-			Cost:     row.Cost,
+			Runs:     a.runs,
+			Failed:   a.failed,
+			Tokens:   a.tokensInt(),
+			Cost:     cost,
 			Unpriced: unpriced,
 		}
 		if totalsUsd > 0 && usd > 0 {
@@ -1273,11 +1385,10 @@ func spendRowsFromBucket(rows []contract.AnalyticsBucketRow, dim contract.Analyt
 }
 
 // spendSummary returns spend breakdown for the requested dimension, always accompanied by purpose totals and
-// completed-task efficiency ("what it bought").
+// completed-task efficiency ("what it bought") in a single rollup-backed pass.
 func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSummaryReply, error) {
 	var out contract.SpendSummaryReply
-	dim, err := spendDimension(r.By)
-	if err != nil {
+	if _, err := spendDimension(r.By); err != nil {
 		return out, err
 	}
 	from, err := parseAnalyticsBound(r.Window.From)
@@ -1288,47 +1399,48 @@ func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSu
 	if err != nil {
 		return out, err
 	}
-	measures := []contract.AnalyticsMeasure{
-		contract.AnalyticsMeasureExecutions,
-		contract.AnalyticsMeasureFailed,
-		contract.AnalyticsMeasureTokensInput,
-		contract.AnalyticsMeasureTokensOutput,
-		contract.AnalyticsMeasureCost,
+	if !from.Before(to) {
+		return out, fail(400, "window.from must be before window.to")
 	}
-	mainRep, err := analyticsQuery(q, &contract.AnalyticsQueryRequest{
-		Window:     r.Window,
-		Dimensions: []contract.AnalyticsDimension{dim},
-		Measures:   measures,
-		ProjectId:  r.ProjectId,
-		System:     r.System,
+	if r.ProjectId != nil && *r.ProjectId == "" {
+		return out, fail(400, "Invalid projectId")
+	}
+
+	sysMode := "exclude"
+	if r.System != nil {
+		switch *r.System {
+		case contract.SystemActivityInclude:
+			sysMode = "include"
+		case contract.SystemActivityOnly:
+			sysMode = "only"
+		}
+	}
+
+	summaryRows, err := q.db().AnalyticsSpendSummary(q.ctx(), db.AnalyticsSpendSummaryParams{
+		WinFrom:    from,
+		WinTo:      to,
+		ProjectID:  r.ProjectId,
+		SystemMode: sysMode,
+		GroupBy:    string(r.By),
 	})
 	if err != nil {
-		return out, err
+		return out, fmt.Errorf("spend_summary: %w", err)
 	}
-	purposeRep := mainRep
-	if dim != contract.AnalyticsDimensionPurpose {
-		purposeRep, err = analyticsQuery(q, &contract.AnalyticsQueryRequest{
-			Window:     r.Window,
-			Dimensions: []contract.AnalyticsDimension{contract.AnalyticsDimensionPurpose},
-			Measures:   measures,
-			ProjectId:  r.ProjectId,
-			System:     r.System,
-		})
+
+	var catByProfile map[string]string
+	if r.By == contract.SpendGroupByCategory {
+		catRows, err := q.db().AnalyticsAgentCategories(q.ctx())
 		if err != nil {
 			return out, err
 		}
+		catByProfile = make(map[string]string, len(catRows))
+		for _, cr := range catRows {
+			if cr.Category != "" {
+				catByProfile[cr.ID] = cr.Category
+			}
+		}
 	}
-	taskByProjRep, err := analyticsQuery(q, &contract.AnalyticsQueryRequest{
-		Window:     r.Window,
-		Dimensions: []contract.AnalyticsDimension{contract.AnalyticsDimensionProject},
-		Measures:   []contract.AnalyticsMeasure{contract.AnalyticsMeasureExecutions, contract.AnalyticsMeasureCost},
-		Filters:    &contract.AnalyticsFilter{Purpose: []string{"task"}},
-		ProjectId:  r.ProjectId,
-		System:     r.System,
-	})
-	if err != nil {
-		return out, err
-	}
+
 	completedRows, err := q.db().AnalyticsCompletedTasksByProject(q.ctx(), db.AnalyticsCompletedTasksByProjectParams{
 		WinFrom:   from,
 		WinTo:     to,
@@ -1338,32 +1450,82 @@ func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSu
 		return out, err
 	}
 
-	totalUsd, _ := costUsdAndUnpriced(mainRep.Totals.Cost)
-	byPurpose := spendRowsFromBucket(purposeRep.Rows, contract.AnalyticsDimensionPurpose, totalUsd)
+	totalAcc := newSpendBucketAcc()
+	byDim := map[string]*spendBucketAcc{}
+	byPurposeAcc := map[string]*spendBucketAcc{}
+	taskByProjAcc := map[string]*spendBucketAcc{}
+
+	getAcc := func(m map[string]*spendBucketAcc, k string) *spendBucketAcc {
+		a := m[k]
+		if a == nil {
+			a = newSpendBucketAcc()
+			m[k] = a
+		}
+		return a
+	}
+
+	for _, row := range summaryRows {
+		if err := totalAcc.add(row); err != nil {
+			return out, err
+		}
+		dimKey := row.DimKey
+		if r.By == contract.SpendGroupByCategory {
+			if c := catByProfile[dimKey]; c != "" {
+				dimKey = c
+			} else {
+				dimKey = "unknown"
+			}
+		} else if dimKey == "" {
+			dimKey = "unknown"
+		}
+		if err := getAcc(byDim, dimKey).add(row); err != nil {
+			return out, err
+		}
+		if err := getAcc(byPurposeAcc, row.Purpose).add(row); err != nil {
+			return out, err
+		}
+		if row.Purpose == "task" {
+			if err := getAcc(taskByProjAcc, row.ProjKey).add(row); err != nil {
+				return out, err
+			}
+		}
+	}
+
+	totalCost := totalAcc.costFigures()
+	totalUsd, _ := costUsdAndUnpriced(totalCost)
+
+	execVal := float64(totalAcc.runs)
+	failVal := float64(totalAcc.failed)
+	var tinPtr, toutPtr *float64
+	if totalAcc.tinHave > 0 {
+		tinPtr = &totalAcc.tin
+	}
+	if totalAcc.toutHave > 0 {
+		toutPtr = &totalAcc.tout
+	}
+	totals := contract.AnalyticsTotals{
+		Measures: map[string]contract.MeasuredNumber{
+			string(contract.AnalyticsMeasureExecutions):   {Value: &execVal, Basis: contract.ResourceBasisMeasured},
+			string(contract.AnalyticsMeasureFailed):       {Value: &failVal, Basis: contract.ResourceBasisMeasured},
+			string(contract.AnalyticsMeasureTokensInput):  pickMeasuredNumber(tinPtr, totalAcc.tinExp, totalAcc.tinHave, totalAcc.tinSub, totalAcc.tinEst),
+			string(contract.AnalyticsMeasureTokensOutput): pickMeasuredNumber(toutPtr, totalAcc.toutExp, totalAcc.toutHave, totalAcc.toutSub, totalAcc.toutEst),
+		},
+		Cost: totalCost,
+	}
 
 	bought := contract.SpendBought{
 		TaskCost:         []contract.CostFigure{},
 		ConversationCost: []contract.CostFigure{},
 		ByProject:        []contract.SpendBoughtProject{},
 	}
-	for _, row := range purposeRep.Rows {
-		switch row.Dimensions["purpose"] {
-		case "task":
-			bought.TaskCost = row.Cost
-		case "conversation":
-			bought.ConversationRuns = measureInt(row.Measures, "executions")
-			bought.ConversationCost = row.Cost
-		}
+	if taskAcc := byPurposeAcc["task"]; taskAcc != nil {
+		bought.TaskCost = taskAcc.costFigures()
+	}
+	if convAcc := byPurposeAcc["conversation"]; convAcc != nil {
+		bought.ConversationRuns = convAcc.runs
+		bought.ConversationCost = convAcc.costFigures()
 	}
 
-	taskSpend := map[string]contract.AnalyticsBucketRow{}
-	for _, row := range taskByProjRep.Rows {
-		pid := row.Dimensions["project"]
-		if pid == "unknown" {
-			pid = ""
-		}
-		taskSpend[pid] = row
-	}
 	completedMap := map[string]int64{}
 	seenProj := map[string]bool{}
 	projKeys := []string{}
@@ -1375,7 +1537,7 @@ func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSu
 			projKeys = append(projKeys, c.ProjectID)
 		}
 	}
-	for pid := range taskSpend {
+	for pid := range taskByProjAcc {
 		if !seenProj[pid] {
 			seenProj[pid] = true
 			projKeys = append(projKeys, pid)
@@ -1383,10 +1545,9 @@ func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSu
 	}
 	for _, pid := range projKeys {
 		done := completedMap[pid]
-		bucket, ok := taskSpend[pid]
 		cost := []contract.CostFigure{}
-		if ok {
-			cost = bucket.Cost
+		if acc := taskByProjAcc[pid]; acc != nil {
+			cost = acc.costFigures()
 		}
 		usd, unpriced := costUsdAndUnpriced(cost)
 		label := pid
@@ -1412,14 +1573,37 @@ func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSu
 		return bought.ByProject[i].ProjectId < bought.ByProject[j].ProjectId
 	})
 
+	var unknownCnt int64
+	if unk := byDim["unknown"]; unk != nil {
+		unknownCnt = unk.runs
+	}
+
+	var hiddenCnt int64
+	if q.person != nil && !fullAccess(q.person) {
+		windowVisible := totalAcc.runs
+		if r.ProjectId != nil || sysMode != "include" {
+			windowVisible, err = q.db().AnalyticsWindowVisibleLeafCount(q.ctx(), db.AnalyticsWindowVisibleLeafCountParams{WinFrom: from, WinTo: to})
+			if err != nil {
+				return out, err
+			}
+		}
+		windowAll, err := q.db().AnalyticsWindowLeafCount(q.ctx(), db.AnalyticsWindowLeafCountParams{WinFrom: from, WinTo: to})
+		if err != nil {
+			return out, err
+		}
+		if windowAll > windowVisible {
+			hiddenCnt = windowAll - windowVisible
+		}
+	}
+
 	out = contract.SpendSummaryReply{
 		By:        r.By,
-		Totals:    mainRep.Totals,
-		Rows:      spendRowsFromBucket(mainRep.Rows, dim, totalUsd),
-		ByPurpose: byPurpose,
+		Totals:    totals,
+		Rows:      spendRowsFromAcc(byDim, totalUsd),
+		ByPurpose: spendRowsFromAcc(byPurposeAcc, totalUsd),
 		Bought:    bought,
-		Hidden:    mainRep.Hidden,
-		Unknown:   mainRep.Unknown,
+		Hidden:    hiddenCnt,
+		Unknown:   unknownCnt,
 	}
 	return out, nil
 }

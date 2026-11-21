@@ -8,6 +8,7 @@ CREATE OR REPLACE TRIGGER account_inspection_tombstone BEFORE INSERT ON account_
 -- api_connection
 CREATE OR REPLACE TRIGGER api_connection_capture_metadata AFTER INSERT OR DELETE OR UPDATE ON api_connection FOR EACH ROW EXECUTE FUNCTION resource_capture_metadata();
 CREATE OR REPLACE TRIGGER api_connection_change AFTER INSERT OR DELETE OR UPDATE ON api_connection FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE OR REPLACE TRIGGER api_connection_spend AFTER INSERT OR DELETE OR UPDATE ON api_connection FOR EACH ROW EXECUTE FUNCTION execution_spend_on_conn();
 
 -- artifact
 CREATE OR REPLACE TRIGGER artifact_change AFTER INSERT OR DELETE OR UPDATE ON artifact FOR EACH ROW EXECUTE FUNCTION fleet_artifact_change();
@@ -53,12 +54,14 @@ CREATE OR REPLACE TRIGGER event_tombstone BEFORE INSERT ON event FOR EACH ROW EX
 -- execution
 CREATE OR REPLACE TRIGGER execution_change AFTER INSERT OR DELETE OR UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER execution_derived AFTER INSERT OR DELETE OR UPDATE OF task_id, state, host_id, harness, started_at, seq ON execution FOR EACH ROW EXECUTE FUNCTION fleet_task_derived_touch();
+CREATE OR REPLACE TRIGGER execution_spend_exec AFTER INSERT OR DELETE OR UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION execution_spend_on_execution();
 CREATE OR REPLACE TRIGGER execution_tombstone BEFORE INSERT ON execution FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('parent_execution_id');
 CREATE OR REPLACE TRIGGER execution_touch BEFORE UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 CREATE OR REPLACE TRIGGER resource_align_totals_owner AFTER UPDATE OF project_id ON execution FOR EACH ROW EXECUTE FUNCTION resource_align_totals_owner();
 CREATE OR REPLACE TRIGGER resource_capture_execution AFTER INSERT OR DELETE OR UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION resource_capture_execution();
 
 -- execution_totals
+CREATE OR REPLACE TRIGGER execution_spend_totals AFTER INSERT OR DELETE OR UPDATE ON execution_totals FOR EACH ROW EXECUTE FUNCTION execution_spend_on_totals();
 CREATE OR REPLACE TRIGGER execution_totals_change AFTER INSERT OR DELETE OR UPDATE ON execution_totals FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER resource_capture_totals AFTER INSERT OR DELETE OR UPDATE ON execution_totals FOR EACH ROW EXECUTE FUNCTION resource_capture_totals();
 
@@ -85,6 +88,7 @@ CREATE OR REPLACE TRIGGER message_tombstone BEFORE INSERT ON message FOR EACH RO
 
 -- price_entry
 CREATE OR REPLACE TRIGGER price_entry_append_only BEFORE DELETE OR UPDATE ON price_entry FOR EACH ROW EXECUTE FUNCTION fleet_append_only();
+CREATE OR REPLACE TRIGGER price_entry_spend AFTER INSERT ON price_entry FOR EACH ROW EXECUTE FUNCTION execution_spend_on_price();
 
 -- problem_dismissal
 CREATE OR REPLACE TRIGGER problem_dismissal_tombstone BEFORE INSERT ON problem_dismissal FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');

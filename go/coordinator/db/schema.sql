@@ -392,6 +392,43 @@ CREATE TABLE execution (
   "tombstoned_at" timestamp with time zone,
   "system_actor" text
 );
+CREATE TABLE execution_spend (
+  "execution_id" text NOT NULL,
+  "project_id" text,
+  "started_at" timestamp with time zone NOT NULL,
+  "kind" execution_kind NOT NULL,
+  "state" execution_state NOT NULL,
+  "system_actor" text,
+  "purpose" text NOT NULL,
+  "profile_id" text,
+  "model" text,
+  "host_id" text,
+  "account_id" text,
+  "connection" text,
+  "conn_subject" text NOT NULL,
+  "conn_unit" text,
+  "conn_amount" numeric,
+  "has_conn_cost" boolean NOT NULL,
+  "has_direct_cost" boolean NOT NULL,
+  "is_sub" boolean NOT NULL,
+  "failed_i" smallint NOT NULL,
+  "tokens_input" bigint,
+  "tin_sub_i" smallint NOT NULL,
+  "tin_est_i" smallint NOT NULL,
+  "tin_exp_i" smallint NOT NULL,
+  "tokens_output" bigint,
+  "tout_sub_i" smallint NOT NULL,
+  "tout_est_i" smallint NOT NULL,
+  "tout_exp_i" smallint NOT NULL,
+  "stale" boolean NOT NULL,
+  "cost_currency" text,
+  "cost_basis" text,
+  "cost_value" double precision,
+  "cost_unpriced" bigint NOT NULL,
+  "cost_price_refs" text,
+  "payload" jsonb,
+  "tombstoned_at" timestamp with time zone
+);
 CREATE TABLE execution_totals (
   "execution_id" text NOT NULL,
   "project_id" text,
@@ -1093,6 +1130,7 @@ CREATE TABLE worker_done (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE FUNCTION fleet_conn_meta_all() RETURNS TABLE(id text, provider text) LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_deleted_projects() RETURNS text[] LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_enqueue_wake(ch text, body text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_exec_conn_meta(conn_name text, aid text) RETURNS TABLE(provider text, is_api_conn boolean) LANGUAGE sql AS $$ SELECT NULL $$;
@@ -1101,6 +1139,7 @@ CREATE FUNCTION fleet_own_projectless_execution(eid text) RETURNS boolean LANGUA
 CREATE FUNCTION fleet_own_projectless_session(sid text) RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_project_code(p_project text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_project_code_set(p_project text, p_code text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_refresh_execution_spend(eid text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_session_hidden_lineage_count(sid text) RETURNS bigint LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_show_deleted() RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_task_derived(p_task text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;

@@ -44,4 +44,7 @@ CREATE TABLE IF NOT EXISTS span (
 ) ENGINE = MergeTree
 PARTITION BY toYYYYMM(start)
 ORDER BY (service, name, start)
-SETTINGS non_replicated_deduplication_window = 1000
+TTL toDateTime(start) + INTERVAL 90 DAY
+SETTINGS non_replicated_deduplication_window = 1000;
+
+ALTER TABLE span MODIFY TTL toDateTime(start) + INTERVAL 90 DAY;
