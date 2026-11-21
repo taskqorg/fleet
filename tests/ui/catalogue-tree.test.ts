@@ -1,6 +1,7 @@
 // CatalogueTree flatten invariants (docs/design-system/controls/catalogue-tree.md, OR-12, OR-33).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { build } from 'esbuild';
 import type { CatalogueTreeNode, FlattenCatalogueTreeOptions, FlattenedCatalogueRow } from '../../packages/ui/src/controls/catalogue-tree.tsx';
 
@@ -114,4 +115,16 @@ test('flattenCatalogueTree hoists pinned leaves, clamps depth to 0..2, respects 
   );
   assert.deepEqual(callerDefaultCollapsed, beforeSearch);
   assert.deepEqual(callerCollapsed, snapshot);
+});
+
+test('CatalogueTree fill modifier uses cat-tree-fill and 100% width instead of .fill capacity bar class (requirement: catalogue-tree.md; risk: .cat-tree.fill matches .fill { width: var(--size-fill) } and locks tree width to 160px)', () => {
+  const tsx = readFileSync('packages/ui/src/controls/catalogue-tree.tsx', 'utf8');
+  const css = readFileSync('packages/ui/src/styles/controls.css', 'utf8');
+
+  assert.match(tsx, /class=\{`cat-tree\$\{props\.fill \? ' cat-tree-fill' : ''\}/);
+  assert.doesNotMatch(tsx, /class=\{`cat-tree\$\{props\.fill \? ' fill' : ''\}/);
+
+  assert.match(css, /\.cat-tree\s*\{[^}]*\bwidth:\s*100%/);
+  assert.match(css, /\.cat-tree\.cat-tree-fill,\s*\.cat-tree\.cat-tree-fill\s+\.vl-wrap\s*\{[^}]*\bwidth:\s*100%/);
+  assert.doesNotMatch(css, /\.cat-tree\.fill\b/);
 });

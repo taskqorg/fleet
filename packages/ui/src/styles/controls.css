@@ -455,8 +455,8 @@
   .delivery-flow .area-chart { padding: 0 var(--space-4); }
 
   /* Catalogue tree & inline entity picker (controls/catalogue-tree.md, controls/entity-picker.md) */
-  .cat-tree { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  .cat-tree.fill, .cat-tree.fill .vl-wrap { flex: 1; min-height: 0; }
+  .cat-tree { display: flex; flex-direction: column; width: 100%; min-width: 0; min-height: 0; }
+  .cat-tree.cat-tree-fill, .cat-tree.cat-tree-fill .vl-wrap { flex: 1; min-height: 0; width: 100%; }
   .cat-tree .vl-row { padding: 0; }
   .cat-tree .vl-row.cat-folder-row { background: var(--bg); border-bottom-color: var(--line); }
   .cat-tree .vl-row.cat-folder-row:hover { background: var(--hover); }
