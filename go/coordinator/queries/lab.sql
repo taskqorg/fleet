@@ -183,3 +183,115 @@ SELECT id FROM question WHERE kind='rating' AND (sqlc.narg(experiment_id)::text 
 
 -- name: LabExampleRatingCount :one
 SELECT count(*)::int FROM question WHERE kind='rating' AND options->>'example_artifact_id'=sqlc.arg(artifact_id)::text;
+
+-- name: LabTrialsLineage :one
+-- Non-reused leaf executions per trial ID, including child_agent and tool_run descendants (lab.go expGet, lab_leaderboard.go).
+WITH RECURSIVE
+ trials AS (
+  SELECT DISTINCT t.trial_id FROM unnest(sqlc.arg(trial_ids)::text[]) AS t(trial_id)
+ ),
+ reused_steps AS (
+  SELECT p.run_id AS trial_id, (p.run_id || ':step:' || p.step_index::text) AS step_exec_id
+  FROM pipeline_step p
+  JOIN trials t ON t.trial_id = p.run_id
+  WHERE p.ref_mode = 'reused'
+ ),
+ seed AS (
+  SELECT t.trial_id, c.id AS exec_id
+  FROM trials t
+  JOIN execution c ON c.data @> jsonb_build_object('pipelineRunId', t.trial_id)
+  UNION
+  SELECT t.trial_id, c.id AS exec_id
+  FROM trials t
+  JOIN execution c ON c.parent_execution_id = t.trial_id
+  UNION
+  SELECT t.trial_id, c.id AS exec_id
+  FROM trials t
+  JOIN execution c ON c.parent_execution_id >= (t.trial_id || ':step:') AND c.parent_execution_id < (t.trial_id || ':step;')
+  WHERE NOT EXISTS (SELECT 1 FROM reused_steps rs WHERE rs.trial_id = t.trial_id AND rs.step_exec_id = c.parent_execution_id)
+  UNION
+  SELECT t.trial_id, c.id AS exec_id
+  FROM trials t
+  JOIN pipeline_step p ON p.run_id = t.trial_id AND p.ref_mode IS DISTINCT FROM 'reused' AND p.native_execution_id IS NOT NULL
+  JOIN execution c ON c.id = p.native_execution_id
+ ),
+ session_parents AS (
+  SELECT coalesce(jsonb_object_agg(id, parent_execution_id), '{}'::jsonb) AS m
+  FROM session WHERE parent_execution_id IS NOT NULL
+ ),
+ edges AS MATERIALIZED (
+  SELECT DISTINCT c.id AS child_id, p.parent_id::text AS parent_id
+  FROM execution c
+  CROSS JOIN LATERAL (VALUES
+   (c.parent_execution_id),
+   (CASE WHEN c.delegation IS NOT NULL THEN c.delegation->>'parentExecutionId' END),
+   ((SELECT m FROM session_parents) ->> c.session_id)
+  ) p(parent_id)
+  WHERE p.parent_id IS NOT NULL
+ ),
+ tree AS (
+  SELECT trial_id, exec_id FROM seed
+  UNION
+  SELECT tr.trial_id, e.child_id AS exec_id
+  FROM edges e JOIN tree tr ON e.parent_id = tr.exec_id
+ ),
+ scoped_leaves AS (
+  SELECT DISTINCT 'trial'::text AS scope, tr.trial_id AS scope_key, e.id AS leaf_id
+  FROM tree tr
+  JOIN execution e ON e.id = tr.exec_id
+  LEFT JOIN execution_totals tot ON tot.execution_id = e.id
+  WHERE e.kind NOT IN ('pipeline_run', 'pipeline_step')
+    AND NOT (e.kind = 'child_agent' AND tot.execution_id IS NULL)
+ )
+SELECT
+ coalesce((SELECT array_agg(scope ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scopes,
+ coalesce((SELECT array_agg(scope_key ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scope_keys,
+ coalesce((SELECT array_agg(leaf_id ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS leaf_ids;
+
+-- name: LabLeafMeta :many
+-- Resolved model and profile metadata for leaf executions (lab_leaderboard.go).
+SELECT
+ e.id,
+ e.kind::text AS kind,
+ coalesce(nullif(coalesce(tot.model, e.model), ''), '')::text AS model,
+ coalesce(nullif(coalesce(e.profile_id, e.data->'agentConfig'->>'id'), ''), '')::text AS profile_id
+FROM execution e
+LEFT JOIN execution_totals tot ON tot.execution_id = e.id
+WHERE e.id = ANY(sqlc.arg(leaf_ids)::text[])
+ORDER BY e.seq;
+
+-- name: LabLeaderboardTrials :many
+-- Confirmed succeeded and failed trials within the last days, visible under caller RLS (lab_leaderboard.go).
+SELECT
+ e.id,
+ e.experiment_id,
+ e.project_id,
+ e.variant,
+ e.state::text AS state,
+ e.pipeline_id,
+ e.config_ref,
+ e.started_at,
+ e.ended_at,
+ coalesce(e.ended_at, e.started_at, e.updated_at)::timestamptz AS trial_at,
+ coalesce(e.data->'cell'->>'example', '')::text AS cell_example,
+ coalesce(e.data->'example'->>'use_case_id', '')::text AS example_use_case_id,
+ coalesce(CASE WHEN (e.data->>'durationMs') ~ '^([0-9]+(\.[0-9]*)?|\.[0-9]+)$' THEN (e.data->>'durationMs')::float8 END, -1)::float8 AS data_duration_ms
+FROM execution e
+JOIN experiment x ON x.id = e.experiment_id
+WHERE e.kind = 'pipeline_run'
+  AND e.variant IS NOT NULL
+  AND e.experiment_id IS NOT NULL
+  AND e.state IN ('succeeded', 'failed')
+  AND e.observation = 'confirmed'
+  AND (sqlc.narg(project_id)::text IS NULL OR e.project_id = sqlc.narg(project_id)::text)
+  AND coalesce(e.ended_at, e.started_at, e.updated_at) >= now() - make_interval(days => sqlc.arg(days)::int)
+ORDER BY coalesce(e.ended_at, e.started_at, e.updated_at) DESC, e.seq DESC;
+
+-- name: LabExperimentsByIDs :many
+SELECT * FROM experiment WHERE id = ANY(sqlc.arg(ids)::text[]);
+
+-- name: LabScoresByExperiments :many
+SELECT * FROM score s
+WHERE s.experiment_id = ANY(sqlc.arg(experiment_ids)::text[])
+  AND NOT EXISTS (SELECT 1 FROM score r WHERE r.replaces_score_id = s.id)
+ORDER BY s.seq;
