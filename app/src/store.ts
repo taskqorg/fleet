@@ -1,19 +1,14 @@
-// Entity store (operator-app D4; docs/designs/fleet-view-urls-and-list-path.md §2). Records by id are shared by every list;
-// lists hold ordered ids and their own sort keys per canonical list key; docs hold detail reads. Nothing is ever reset:
-// a view keeps showing what it has while the next answer loads, and swaps it in place. IndexedDB (D3) fills the first
-// frame; every mounted list and doc then loads fresh data. One feed subscription asks list_membership about changed ids.
-//
-// Order: every record and every list remembers the change cursor its data reflects. A page answer is applied at the cursor
-// its request started from, a membership answer at the cursor of its change batch; an older answer never overwrites a
-// newer record or list. Changes that arrive while a list's page is loading are asked about once the page has landed.
+// Entity store (operator-app D4; docs/designs/fleet-view-urls-and-list-path.md §2): shared in-memory lists and docs,
+// kept current from the change feed via `touches` and list reloads. Nothing is ever blanked while reloading: a view
+// keeps showing its last rows while the next answer loads, and swaps in place.
 import { AccessChanged, accessGeneration, ensureAccessGeneration, isAccessCurrent, assertAccessGeneration } from './access.ts';
 import { signal, effect, type Signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { op, online, signedOut, OpError, type Ops, type OpName } from './api.ts';
-import { subscribe, currentCursor, feedState, type Change } from './feed.ts';
-import { applyMembership, chunks, touched, type Row, type SortKey } from './lists.ts';
+import { subscribe, feedState, type Change } from './feed.ts';
+import { type Row } from './lists.ts';
 import type { ListGroup, TaskRow, SessionRow } from '../../contracts/generated/ops.ts';
-import { save, load, onClear, pruneKeys } from './offline.ts';
+import { onClear } from './offline.ts';
 import { listKey, toPageParams, type View } from '../../packages/view-url/view-url.ts';
 import { withFocus, prefsRead } from './prefs.ts';
 
@@ -24,238 +19,150 @@ export const freshness = (restored: boolean): Freshness => signedOut.value ? 'si
 export type Kind = 'tasks' | 'sessions';
 type Params = ReturnType<typeof toPageParams>;
 type Group = ListGroup;
-export type ListState = { ids: string[]; keys: Record<string, SortKey>; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; restored: boolean; error: string | null };
-type Saved = Omit<ListState, 'restored' | 'error'> & { rows: Row[] };
-type Entry = { kind: Kind; view: View; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>; seq: number; mounted: number; loading: number; touchedWhileLoading: Set<string>; touchedSeq: number; paging: boolean; cursorReset: boolean; pageError: boolean };
-type Doc = { data: unknown; restored: boolean; error: string | null; status?: number | null };
+export type ListState = { rows: Row[]; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; error: string | null };
+type Entry = { kind: Kind; view: View; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>; started: number; shown: number; mounted: number; loading: number; dirty: boolean; paging: boolean; cursorReset: boolean; pageError: boolean };
+type Doc = { data: unknown; error: string | null; status?: number | null };
 
-const records = new Map<string, { row: Row; seq: number }>();
 const lists = new Map<string, Entry>();
-/** id -> keys of the lists that hold it, so a changed record re-renders only those lists. */
-const holders = new Map<string, Set<string>>();
 const docs = new Map<string, Signal<Doc | null>>();
 /** Bumped when stored data is cleared: mounted docs re-read. */
 const generation = signal(0);
-const MEMBERSHIP_IDS = 1000, MEMBERSHIP_LISTS = 2; // the server's per-call bounds
-const cursorNow = () => currentCursor() ?? 0;
 
 /**
- * Forget everything held in memory (sign-out, grants change; offline.ts clears IndexedDB at the same time). Entries and doc
- * signals stay, because mounted hooks hold them; their values are reset and mounted lists and docs load again.
+ * Forget everything held in memory (sign-out, grants change). Entries and doc signals stay because mounted hooks hold
+ * them; their values reset and mounted lists and docs load again.
  */
 export function clearMemory() {
-  records.clear(); holders.clear();
-  for (const [key, e] of lists) { e.state.value = null; e.seq = 0; e.touchedWhileLoading.clear(); if (!e.mounted) lists.delete(key); else if (isAccessCurrent(accessGeneration())) void loadList(e.kind, key, e.view); }
-  discardDocReads(); for (const s of docs.values()) s.value = null;
+  for (const [key, e] of lists) {
+    e.state.value = null; e.shown = e.started; e.dirty = false;
+    if (!e.mounted) lists.delete(key);
+    else if (isAccessCurrent(accessGeneration())) void loadList(e.kind, key, e.view);
+  }
+  discardDocReads();
+  for (const s of docs.values()) s.value = null;
   generation.value++;
 }
 onClear.add(clearMemory);
 
 function entry(kind: Kind, key: string, view: View): Entry {
   let e = lists.get(key);
-  if (!e) lists.set(key, e = { kind, view, params: toPageParams(view), state: signal(null), busy: signal(false), seq: 0, mounted: 0, loading: 0, touchedWhileLoading: new Set(), touchedSeq: 0, paging: false, cursorReset: false, pageError: false });
+  if (!e) lists.set(key, e = { kind, view, params: toPageParams(view), state: signal(null), busy: signal(false), started: 0, shown: 0, mounted: 0, loading: 0, dirty: false, paging: false, cursorReset: false, pageError: false });
   return e;
 }
-/** Set a list's state and keep the id -> lists index right. */
-function setList(key: string, e: Entry, next: ListState) {
-  for (const id of e.state.value?.ids ?? []) holders.get(id)?.delete(key);
-  for (const id of next.ids) { let h = holders.get(id); if (!h) holders.set(id, h = new Set()); h.add(key); }
-  e.state.value = next;
-}
-/** Store rows at a cursor; rows already newer are kept. Re-renders the lists holding a changed id. */
-function putRows(rows: Row[], seq: number) {
-  const touchedLists = new Set<string>();
-  for (const r of rows) {
-    const cur = records.get(r.id); if (cur && cur.seq > seq) continue;
-    records.set(r.id, { row: r, seq });
-    for (const k of holders.get(r.id) ?? []) touchedLists.add(k);
-  }
-  for (const k of touchedLists) { const e = lists.get(k), s = e?.state.value; if (e && s) e.state.value = { ...s }; }
-}
-/** Drop records no list holds any more. */
-function pruneRecords() { for (const id of records.keys()) if (!holders.get(id)?.size) { records.delete(id); holders.delete(id); } }
 const rowsOf = (r: Ops['task_page']['reply'] | Ops['sessions_list']['reply']): Row[] => 'tasks' in r ? r.tasks : r.sessions;
 const opName = (k: Kind) => k === 'tasks' ? 'task_page' : 'sessions_list';
-// The snapshot is built when the write happens (offline.save calls it at most once a second).
-// Snapshot keys carry a version: 'v2' since a view without a group means project, not priority (stored groups differ);
-// 'v3' since conversation rows are keyed [group, sort, id] (a stored two-part cursor would be refused).
-const SNAP = 'list:v3:';
-const persist = (key: string, e: Entry) => save<Saved>(SNAP + key, () => { const s = e.state.value!; return { ids: s.ids, keys: s.keys, counts: s.counts, total: s.total, groups: s.groups, nextAfter: s.nextAfter, at: s.at, rows: s.ids.map(id => records.get(id)?.row).filter((r): r is Row => !!r) }; }, currentCursor());
-const idsAndKeys = (rows: Row[]) => ({ ids: rows.map(x => x.id), keys: Object.fromEntries(rows.map(x => [x.id, x.sortKey])) });
-
-/** Fill the first frame from IndexedDB unless the server has already answered (a failed load still restores). */
-async function restore(key: string, e: Entry) {
-  if (e.state.value?.at) return;
-  const generation = accessGeneration();
-  const saved = await load<Saved>(SNAP + key);
-  if (!isAccessCurrent(generation)) return;
-  if (!saved || e.state.value?.at) return;
-  const error = e.state.value?.error ?? null;
-  putRows(saved.data.rows, -1); // stored rows never win over anything the server sends
-  const { rows: _, ...rest } = saved.data;
-  setList(key, e, { ...rest, at: 0, restored: true, error });
-}
 
 /**
- * Load the first page of a list. A superseded request is aborted through abort and leaves the list as it was.
- * `cursorReset` marks the reload nextPage starts after the server refused a stale cursor; any other load allows one again
- * (an accepted page does not: a server refusing its own deeper cursor would snap the list back to page 1 on every scroll).
+ * Load the first page of a list. An older slow response never overwrites a newer one (`read < e.shown`); a change
+ * arriving while a load is running marks the entry dirty so one follow-up reload runs once it lands.
  */
 export async function loadList(kind: Kind, key: string, view: View, abort?: AbortSignal, cursorReset = false) {
-  const e = entry(kind, key, view), from = cursorNow(), generation = accessGeneration();
+  const e = entry(kind, key, view), read = ++e.started, generation = accessGeneration();
   e.cursorReset = cursorReset; e.loading++; e.busy.value = true;
   try {
     await ensureAccessGeneration(); assertAccessGeneration(generation);
     const r = await op(opName(kind), { ...e.params, limit: 100 }, { signal: abort });
     assertAccessGeneration(generation);
-    if (from < e.seq) { // a newer membership answer already updated this list, but not its refused cursor
-      if (cursorReset && e.state.value) { setList(key, e, { ...e.state.value, nextAfter: r.nextAfter }); persist(key, e); }
-      return;
-    }
-    const rows = rowsOf(r);
-    setList(key, e, { ...idsAndKeys(rows), counts: r.counts, total: r.total, groups: 'groups' in r ? r.groups : [], nextAfter: r.nextAfter, at: Date.now(), restored: false, error: null });
-    e.pageError = false; putRows(rows, from); e.seq = from; persist(key, e); pruneRecords();
+    if (read < e.shown) return;
+    e.shown = read;
+    e.state.value = { rows: rowsOf(r), counts: r.counts, total: r.total, groups: 'groups' in r ? r.groups : [], nextAfter: r.nextAfter, at: Date.now(), error: null };
+    e.pageError = false;
   } catch (err) {
     if (err instanceof AccessChanged || !isAccessCurrent(generation) || err instanceof OpError && err.message === 'aborted') return;
-    const s = e.state.value, msg = errMsg(err); e.pageError = false; // the load's error now; a page must not clear it
-    setList(key, e, s ? { ...s, error: msg } : { ids: [], keys: {}, counts: {}, total: 0, groups: [], nextAfter: null, at: 0, restored: false, error: msg });
-    if (!s?.ids.length) restore(key, e); // offline: show what was stored, marked as not loaded
+    if (read < e.shown) return;
+    const s = e.state.value, msg = errMsg(err); e.pageError = false;
+    e.state.value = s ? { ...s, error: msg } : { rows: [], counts: {}, total: 0, groups: [], nextAfter: null, at: 0, error: msg };
   } finally {
     e.loading--; e.busy.value = e.loading > 0;
-    if (isAccessCurrent(generation) && !e.loading && e.touchedWhileLoading.size) { const ids = [...e.touchedWhileLoading]; e.touchedWhileLoading.clear(); await ask(e.kind, ids, [[key, e]], Math.max(e.touchedSeq, cursorNow())); }
+    if (isAccessCurrent(generation) && !e.loading && e.dirty && e.mounted) { e.dirty = false; await loadList(e.kind, key, e.view); }
   }
 }
 
 /**
  * The next page of the list stored under key, with that list's own params; not while its first page is loading.
- * A cursor the server refuses (400: a tab or stored snapshot holding an older cursor shape, or one from another group or
- * sort) is dropped and the list reloads from its first page, rows staying on screen; once per list load, so a server that
- * refuses its own fresh cursor shows the error instead of looping.
+ * A refused cursor (400) reloads from the first page once per list load, keeping rows on screen.
  */
 export async function nextPage(key: string) {
   const e = lists.get(key), st = e?.state.value;
   if (!e || !st?.nextAfter || e.paging || e.loading) return;
-  e.paging = true; const from = cursorNow(), generation = accessGeneration();
+  e.paging = true; const generation = accessGeneration();
   try {
     const r = await op(opName(e.kind), { ...e.params, limit: 100, after: st.nextAfter as unknown[] });
     assertAccessGeneration(generation);
     const now = e.state.value;
-    if (!now || now.nextAfter !== st.nextAfter) return; // a reload or another page got there first
-    const rows = rowsOf(r), have = new Set(now.ids), add = idsAndKeys(rows.filter(x => !have.has(x.id)));
-    // A page error clears with the next page; a failed first-page load's error stays until a load lands.
-    setList(key, e, { ...now, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter, error: e.pageError ? null : now.error });
+    if (!now || now.nextAfter !== st.nextAfter) return;
+    const have = new Set(now.rows.map(x => x.id)), add = rowsOf(r).filter(x => !have.has(x.id));
+    e.state.value = { ...now, rows: [...now.rows, ...add], nextAfter: r.nextAfter, error: e.pageError ? null : now.error };
     e.pageError = false;
-    putRows(rows, from); persist(key, e);
   } catch (err) {
-    // A reload got there first, or is running and will replace the cursor.
     if (!isAccessCurrent(generation) || !e.state.value || e.state.value.nextAfter !== st.nextAfter || e.loading) return;
     if (err instanceof OpError && err.status === 400 && !e.cursorReset) {
       await loadList(e.kind, key, e.view, undefined, true);
-      // The person is at the end: page on with the fresh cursor (the list may not grow, so nothing else would ask).
       const fresh = e.state.value;
       if (fresh && !fresh.error && fresh.nextAfter && fresh.nextAfter !== st.nextAfter) { e.paging = false; await nextPage(key); }
       return;
     }
-    setList(key, e, { ...e.state.value, error: errMsg(err) }); e.pageError = true;
+    e.state.value = { ...e.state.value, error: errMsg(err) }; e.pageError = true;
   } finally { e.paging = false; }
 }
 
-/** Ask list_membership about ids for the given lists (two lists per call), at the cursor of the changes. */
-async function ask(kind: Kind, ids: string[], targets: [string, Entry][], seq: number) {
-  const generation = accessGeneration();
-  for (const pair of chunks(targets, MEMBERSHIP_LISTS)) {
-    try {
-      const answers: { rows: Row[]; counts: Record<string, number> | null; groups: Group[] | null }[] = pair.map(() => ({ rows: [], counts: null, groups: null }));
-      for (const part of chunks(ids, MEMBERSHIP_IDS)) {
-        const r = await op('list_membership', { ids: part, lists: pair.map(([, e]) => ({ name: kind, ...e.params })) });
-        assertAccessGeneration(generation);
-        r.lists.forEach((l, i) => { answers[i].rows.push(...l.rows as Row[]); answers[i].counts = l.counts; answers[i].groups = l.groups ?? null; });
-      }
-      pair.forEach(([key, e], i) => {
-        const a = answers[i], cur = e.state.value;
-        if (!cur || seq < e.seq) return; // this list already reflects a newer change or page
-        const placed = applyMembership(cur.ids, cur.keys, ids, a.rows, cur.nextAfter === null);
-        setList(key, e, { ...cur, ...placed, counts: a.counts ?? cur.counts, total: a.counts ? Object.values(a.counts).reduce((x, n) => x + n, 0) : cur.total, groups: a.groups ?? cur.groups, at: Date.now() });
-        putRows(a.rows, seq); e.seq = seq; persist(key, e);
-      });
-    } catch { if (!isAccessCurrent(generation)) return; for (const [key, e] of pair) loadList(kind, key, e.view); } // never stop updating silently: full reload
-  }
-}
+const listAffected = (c: Change, kind: Kind) =>
+  kind === 'tasks' ? !!(c.taskId || c.kind === 'task') : !!(c.sessionId || c.kind === 'session');
 
-/** One batch of feed changes: every mounted list with touched ids is asked once (lists still loading ask after landing). */
+/** One batch of feed changes: every mounted list with affected rows reloads (coalescing if a load is in flight). */
 export async function applyChanges(cs: Change[]) {
   if (!isAccessCurrent(accessGeneration())) return;
-  const seq = Math.max(0, ...cs.map(c => c.seq));
-  for (const kind of ['tasks', 'sessions'] as Kind[]) {
-    const ids = touched(cs, kind); if (!ids.length) continue;
-    const targets: [string, Entry][] = [];
-    for (const [key, e] of lists) {
-      if (e.kind !== kind || !e.mounted) continue;
-      if (e.loading || !e.state.value) { ids.forEach(id => e.touchedWhileLoading.add(id)); e.touchedSeq = Math.max(e.touchedSeq, seq); continue; }
-      targets.push([key, e]);
-    }
-    if (targets.length) await ask(kind, ids, targets, seq);
+  const reloads: Promise<void>[] = [];
+  for (const [key, e] of lists) {
+    if (!e.mounted || !cs.some(c => listAffected(c, e.kind))) continue;
+    if (e.loading) { e.dirty = true; continue; }
+    reloads.push(loadList(e.kind, key, e.view));
   }
+  await Promise.all(reloads);
 }
 
 let started = false;
-/** One feed subscription for all lists (started once from main.tsx); drops IndexedDB keys of the old per-view layout. */
+/** One feed subscription for all lists (started once from main.tsx). */
 export function startStore() {
   if (started) return; started = true;
-  pruneKeys(k => k.startsWith('list:') || k.startsWith('doc:'));
-  const reloadMounted = (only?: (s: ListState | null) => boolean) => { for (const [key, e] of lists) if (e.mounted && (!only || only(e.state.value))) loadList(e.kind, key, e.view); };
+  const reloadMounted = (only?: (s: ListState | null) => boolean) => { for (const [key, e] of lists) if (e.mounted && (!only || only(e.state.value))) void loadList(e.kind, key, e.view); };
   subscribe({ resync: () => reloadMounted(), changes: applyChanges });
-  // Back from offline: lists still showing stored rows or a failed load fetch fresh pages.
-  effect(() => { if (feedState.value === 'live') reloadMounted(s => !s || s.restored || !!s.error); });
+  effect(() => { if (feedState.value === 'live') reloadMounted(s => !s || !!s.error); });
 }
 
-/**
- * A server-ordered list for a view. `rows` are the rows of the shown list; while the wanted list (from the URL) has no data
- * yet the previous list stays on screen and `pending` is true. `shownView` is the view those rows belong to (headers use it).
- * The skeleton is only for a view that never showed anything.
- */
 /** The row type of each list kind. */
 export type RowOf<K extends Kind> = K extends 'tasks' ? TaskRow : SessionRow;
 export function useList<K extends Kind>(kind: K, urlView: View) {
   const view = withFocus(urlView), key = listKey(view), e = entry(kind, key, view);
   const [last, setLast] = useState<string | null>(() => e.state.value ? key : null);
   const ctrl = useRef<AbortController | null>(null);
-  const shown = e.state.value ? key : last; // derived during render: no stale frame when the wanted list is in memory
+  const shown = e.state.value ? key : last;
   useEffect(() => { if (shown !== last) setLast(shown); }, [shown]);
-  // The key carries the focus, so nothing restores or loads before the person's preferences are known.
   const ready = prefsRead.value;
   useEffect(() => {
     if (!ready) return;
     e.mounted++;
     ctrl.current?.abort(); const c = ctrl.current = new AbortController();
-    restore(key, e); loadList(kind, key, view, c.signal);
+    void loadList(kind, key, view, c.signal);
     return () => { e.mounted--; c.abort(); };
   }, [key, ready]);
   const se = shown ? lists.get(shown) : undefined, cur = se?.state.value ?? null;
-  const rows = cur ? cur.ids.map(id => records.get(id)?.row).filter((r): r is RowOf<K> => !!r) : [];
   return {
-    rows, counts: cur?.counts ?? {}, total: cur?.total ?? 0, groups: cur?.groups ?? [], at: cur?.at ?? 0, error: cur?.error ?? null,
+    rows: (cur?.rows ?? []) as RowOf<K>[], counts: cur?.counts ?? {}, total: cur?.total ?? 0, groups: cur?.groups ?? [], at: cur?.at ?? 0, error: cur?.error ?? null,
     pending: !ready || shown !== key || e.busy.value, shownKey: shown, shownView: se?.view ?? view,
     more: () => ready && shown ? nextPage(shown) : Promise.resolve(), reload: () => ready ? loadList(kind, key, view) : Promise.resolve(),
-    state: freshness(!!cur?.restored),
+    state: freshness(false),
   };
 }
 
 /**
- * Readers of one doc name share its reads; a doc name identifies its read, so they pass equivalent fetches (the Focus
- * control and Projects both read `projects`). Every request for a read in one task (one feed batch reaching all readers,
- * mounts in one render) becomes one request. Reads are never held back by a running one, and an answer is shown when it
- * started after the one on screen, so a stalled or slow request neither blocks nor overwrites newer data; a later read's
- * failure stays visible over an older answer. Clearing memory discards running reads and pending restores.
+ * Readers of one doc name share its reads. Every request in one task becomes one request; reads are never held back by
+ * a running one, and an answer is shown only when it started after the one on screen.
  */
 type DocReader = { fetch: () => Promise<unknown> };
 type DocFlight = { readers: Set<DocReader>; started: number; shown: number; failed: number; scheduled: boolean; cleared: number };
 const flights = new Map<string, DocFlight>();
 function docSignal(name: string) { let s = docs.get(name); if (!s) docs.set(name, s = signal(null)); return s; }
-function restoreDoc(name: string, f: DocFlight) {
-  const s = docSignal(name), cleared = f.cleared;
-  void load<unknown>('doc:' + name).then(v => { if (v && flights.get(name) === f && f.cleared === cleared && s.value?.data == null) s.value = { data: v.data, restored: true, error: s.value?.error ?? null }; });
-}
 async function startDoc(name: string, f: DocFlight) {
   const reader = [...f.readers].pop(); if (!reader) return;
   const read = ++f.started, generation = accessGeneration(), s = docSignal(name);
@@ -263,13 +170,11 @@ async function startDoc(name: string, f: DocFlight) {
   try {
     await ensureAccessGeneration(); assertAccessGeneration(generation);
     const d = await reader.fetch();
-    // A later read's failure stays visible over this older answer.
-    if (newest()) { f.shown = read; s.value = { data: d, restored: false, error: f.failed > read ? s.value?.error ?? null : null }; save('doc:' + name, d, currentCursor()); }
+    if (newest()) { f.shown = read; s.value = { data: d, error: f.failed > read ? s.value?.error ?? null : null }; }
   } catch (e) {
-    if (!newest() || read < f.failed) return; // newer data or a newer failure is already shown
+    if (!newest() || read < f.failed) return;
     f.failed = read;
-    s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: errMsg(e), status: e instanceof OpError ? e.status : null };
-    if (s.value.data === null) restoreDoc(name, f); // offline: show what was stored
+    s.value = { data: s.value?.data ?? null, error: errMsg(e), status: e instanceof OpError ? e.status : null };
   }
 }
 /** Ask for a fresh read of a mounted doc; every ask in the same task sends one request. */
@@ -278,13 +183,11 @@ export function readDoc(name: string) {
   f.scheduled = true;
   queueMicrotask(() => { f.scheduled = false; void startDoc(name, f); });
 }
-/** Mount a reader: shows stored data first, then reads. Returns the release. */
+/** Mount a reader and immediately fetch. Returns the release. */
 export function holdDoc(name: string, fetch: () => Promise<unknown>) {
   let f = flights.get(name); if (!f) flights.set(name, f = { readers: new Set(), started: 0, shown: 0, failed: 0, scheduled: false, cleared: 0 });
   const flight = f, reader: DocReader = { fetch }; flight.readers.add(reader);
-  if (!docSignal(name).value?.data) restoreDoc(name, flight);
   readDoc(name);
-  // An effect re-run releases and mounts in one task; the flight and its running read survive that.
   return () => { flight.readers.delete(reader); queueMicrotask(() => { if (!flight.readers.size && flights.get(name) === flight) flights.delete(name); }); };
 }
 function discardDocReads() { for (const f of flights.values()) { f.shown = f.failed = f.started; f.cleared++; } }
@@ -294,8 +197,6 @@ export const canonical = (v: unknown) => JSON.stringify(v, (_k, x) => x && typeo
 /** The cache key of a read: the operation and its canonical request, shared by every view that asks the same. */
 export const opKey = (name: OpName, request: unknown) => name + ':' + canonical(request);
 
-// Request fields that name one entity, and what a change says of it: the entity it names (a match, or another one), null
-// when the change could name one and names none (a run of no task), undefined when its kind never names one.
 const SCOPE: { field: string; of: (c: Change) => string | null | undefined }[] = [
   { field: 'taskId', of: c => c.taskId ?? (c.kind === 'task' ? c.id : null) },
   { field: 'sessionId', of: c => c.sessionId ?? (c.kind === 'session' ? c.id : null) },
@@ -304,10 +205,8 @@ const SCOPE: { field: string; of: (c: Change) => string | null | undefined }[] =
   { field: 'executionId', of: c => c.kind === 'execution' ? c.id : undefined },
   { field: 'experimentId', of: c => c.kind === 'experiment' ? c.id : undefined },
   { field: 'questionId', of: c => c.kind === 'question' ? c.id : undefined },
-  // A project definition is project/<id>; other definition kinds (agents, pipelines) may feed any project.
   { field: 'projectId', of: c => c.kind === 'resource_summary' ? c.id : c.kind === 'definition' && c.id.startsWith('project/') && c.id.length > 8 ? c.id.slice(8) : undefined },
 ];
-// entity_card {kind, id}: the request field its entity kind stands for; kinds with no field name their own changes.
 const CARD_FIELD: Record<string, string> = { task: 'taskId', conversation: 'sessionId', host: 'hostId', result: 'artifactId', execution: 'executionId', experiment: 'experimentId', question: 'questionId' };
 const CARD_OWN: Record<string, (c: Change, id: string) => boolean> = {
   project: (c, id) => c.kind === 'definition' && c.id === 'project/' + id,
@@ -329,16 +228,14 @@ export function touchedBy(c: Change, name: OpName, request: unknown): boolean {
   if (!c.touches?.includes(name)) return false;
   const r = { ...(request && typeof request === 'object' ? request as Record<string, unknown> : {}) };
   if (name === 'entity_card' && typeof r.kind === 'string') {
-    if (typeof r.id !== 'string') return false; // a card asked by code: its id is not known yet
+    if (typeof r.id !== 'string') return false;
     if (CARD_OWN[r.kind]) return CARD_OWN[r.kind](c, r.id);
     if (CARD_FIELD[r.kind]) r[CARD_FIELD[r.kind]] = r.id;
   }
   for (const { field, of } of SCOPE) { const want = r[field], got = of(c); if (typeof want === 'string' && got !== undefined && got !== want) return false; }
-  // A read of rows by id (list_membership of pinned rows): only a change naming one of them.
   if (Array.isArray(r.ids) && ![c.taskId, c.sessionId, c.id].some(x => !!x && (r.ids as unknown[]).includes(x))) return false;
   const me = identityKey(), t = c.settingTarget;
   if (c.kind === 'setting-change' && me && t && t.startsWith('person:') && t !== 'person:' && t !== 'person:' + me) return false;
-  // A personal read (person_*) is touched only by this person's settings or an unknown target, never a known other one.
   if (c.kind === 'setting-change' && name.startsWith('person_') && t && t !== 'person:' && !t.startsWith('person:')) return false;
   return true;
 }
@@ -346,13 +243,11 @@ export function touchedBy(c: Change, name: OpName, request: unknown): boolean {
 type Mounted = { name: OpName; request: () => unknown; read: () => void };
 const mounted = new Set<Mounted>();
 let opFeed: (() => void) | null = null;
-/** One feed subscription for every mounted read: a batch rereads each read it touches once. */
 function watch(m: Mounted) {
   mounted.add(m);
   opFeed ??= subscribe({ resync: () => { for (const x of mounted) x.read(); }, changes: cs => { for (const x of mounted) { const r = x.request(); if (cs.some(c => touchedBy(c, x.name, r))) x.read(); } } });
   return () => { mounted.delete(m); };
 }
-/** A reread at most once per quiet ms: the first at once, later ones at the end of the window (none is lost). */
 function throttle(read: () => void, quiet = 0) {
   if (!quiet) return { read, stop: () => {} };
   let last = 0, timer: ReturnType<typeof setTimeout> | undefined;
@@ -374,9 +269,8 @@ export type OpRead<T> = { data: T | null; restored: boolean; error: string | nul
 
 /**
  * The one way a view reads an operation: useOp(name, request). The cache key is the operation and its canonical request,
- * so two views asking the same share one read (and its IndexedDB copy); null request: nothing to read yet. It rereads when
- * the server says a change touches the operation (touchedBy), on resync, and every `every` ms; the last value stays
- * visible while it rereads. Lists use useListPage; prepared reads use usePreparedOp.
+ * so two views asking the same share one read; null request: nothing to read yet. It rereads when the server says a
+ * change touches the operation (touchedBy), on resync, and every `every` ms; the last value stays visible while it rereads.
  */
 export function useOp<K extends OpName>(name: K, request: Ops[K]['request'] | null, opts: OpOptions = {}): OpRead<Ops[K]['reply']> {
   const key = request === null ? null : opKey(name, request);
@@ -395,11 +289,11 @@ export function useOp<K extends OpName>(name: K, request: Ops[K]['request'] | nu
     return () => { reloadRef.current = () => {}; release(); off(); t.stop(); clearInterval(timer); };
   }, [key, opts.every, opts.quiet, gen]);
   const v = s?.value ?? null;
-  return { data: (v?.data ?? null) as Ops[K]['reply'] | null, restored: !!v?.restored, error: v?.error ?? null, status: v?.status ?? null, state: freshness(!!v?.restored), reload: () => reloadRef.current() };
+  return { data: (v?.data ?? null) as Ops[K]['reply'] | null, restored: false, error: v?.error ?? null, status: v?.status ?? null, state: freshness(false), reload: () => reloadRef.current() };
 }
 
-/** For tests: the stored list under key and a record. */
-export const peek = { generation: () => generation.value, doc: (name: string) => docs.get(name)?.value ?? null, list: (key: string) => lists.get(key)?.state.value ?? null, record: (id: string) => records.get(id) ?? null, mount: (kind: Kind, key: string, view: View) => { entry(kind, key, view).mounted++; } };
+/** For tests: the stored list under key and a doc. */
+export const peek = { generation: () => generation.value, doc: (name: string) => docs.get(name)?.value ?? null, list: (key: string) => lists.get(key)?.state.value ?? null, mount: (kind: Kind, key: string, view: View) => { entry(kind, key, view).mounted++; } };
 
 // Prepared readers share scheduling by normalized request AND access generation.
 import type { ProjectResourcesReply, ProjectResourceItemsReply, ResourceProgress, ProjectResourceItemsRequest } from '../../contracts/generated/ops.ts';
@@ -410,7 +304,6 @@ type PreparedEntry<T> = { value: Signal<PreparedState<T>>; fetcher: PreparedFetc
 const prepared = new Map<string, PreparedEntry<PreparedReply>>();
 export function preparedKey(operation: 'project_resources' | 'project_resource_items', projectId: string, request: Omit<ProjectResourceItemsRequest, 'projectId' | 'knownVersion'> | null = null) {
   const r = request;
-  // Fixed fields; packed positions/cursors remain exact opaque server strings.
   const key = r?.around?.key;
   const position = !key ? null : key.kind === 'tool-position' ? [key.kind, key.encoded] : key.kind === 'tool' ? [key.kind, key.name, key.connection] : key.kind === 'cost' ? [key.kind, key.currency, key.basis] : [key.kind, key.priceId, key.observedAt];
   return JSON.stringify([operation, projectId, r ? [r.category, r.group ? [r.group.currency, r.group.basis] : null, r.query ?? '', r.limit ?? 50, r.cursor ?? null, r.anchor ?? null, r.around ? [position, r.around.direction] : null] : null, accessGeneration()]);
@@ -467,11 +360,6 @@ export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: P
   } };
 }
 onClear.add(() => { for (const e of prepared.values()) { e.disposed = true; e.request++; e.controller?.abort(); clearInterval(e.timer); e.value.value = { data: null, progress: null, error: null, restored: false, state: 'disposed' }; } prepared.clear(); });
-/**
- * A prepared read (project_resources, project_resource_items): the same key (operation + canonical request) and the same
- * server touches as useOp, plus the prepared protocol: knownVersion, unchanged and preparing replies, progress checked at
- * most every two seconds while visible. `read` sends the request itself when it depends on the live window (anchors).
- */
 export function usePreparedOp<K extends 'project_resources' | 'project_resource_items'>(name: K, request: Ops[K]['request'] | null,
   opts: { visible?: boolean; read?: PreparedFetcher<Ops[K]['reply']> } = {}) {
   const key = request === null ? null : preparedKey(name, request.projectId, name === 'project_resource_items' ? request as ProjectResourceItemsRequest : null);

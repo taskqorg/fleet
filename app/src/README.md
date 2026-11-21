@@ -2,7 +2,7 @@
 
 ## Overview
 
-`src/` is the browser client: it routes registry-backed screens, calls coordinator operations, keeps list and detail reads current from the change feed, and restores read-only cached state when offline.
+`src/` is the browser client: it routes registry-backed screens, calls coordinator operations, and keeps in-memory list and detail reads current from the change feed.
 
 ## Interface
 
@@ -15,7 +15,7 @@
 - [`lists.ts`](lists.ts), [`threads.ts`](threads.ts), [`selection.ts`](selection.ts), and [`url.ts`](url.ts) hold pure list/thread/selection logic and URL hooks.
 - [`list-page.tsx`](list-page.tsx) exports `useListPage` and `ListPagePanel`, the list-view pattern Tasks, Conversations and Delivery share: saved views and system presets, pins read by id, grouping with collapse remembered per person (`listGroups`), selection mode with bulk actions, and the row menu. A page that reads its whole list itself (Delivery) passes `local` in place of a server list kind.
 - [`uploads.ts`](uploads.ts) exports `uploadFile` (`artifact_upload_begin`, then `PUT` parts with `Content-Range`, resuming at the server's `received`) and `useAttachments`, the composer's files for one target: upload on add with progress, remove, `ready()` before a send, clear after it ([Attachments](../../docs/designs/fleet-conversations.md#attachments)).
-- [`offline.ts`](offline.ts) owns the IndexedDB read cache; [`prefs.ts`](prefs.ts) reads and patches per-person settings and turns the focus and ignored projects into the scope of lists that name no project (`scopeIds`, `withFocus`): the focus as the project filter, otherwise the ignored projects as the server-side exclusion; focus-dependent loads wait for `prefsRead`.
+- [`offline.ts`](offline.ts) owns the synchronous in-memory store reset bus (`onClear`, `clearAll`); [`prefs.ts`](prefs.ts) reads and patches per-person settings and turns the focus and ignored projects into the scope of lists that name no project (`scopeIds`, `withFocus`): the focus as the project filter, otherwise the ignored projects as the server-side exclusion; focus-dependent loads wait for `prefsRead`.
 - [`system-views.ts`](system-views.ts) turns the system presets and navigation counter defaults of [`contracts/vocabulary.json`](../../contracts/vocabulary.json) into views; the coordinator's `nav_counts` reads the same file. [`nav-counts.ts`](nav-counts.ts) `useNavCounts` reads `nav_counts` for the rail counters ([nav rail](../../docs/design-system/controls/nav-rail.md)) through `useOp`: again when a change touches it (this person's settings included) at most once per 5 s, and every 30 s; `navCounted` names the counted view as the server resolved it, and `prefs.ts` `setNavCounter` chooses it.
 - [`views`](views/README.md) exports the routed screen components.
 
@@ -23,18 +23,18 @@
 
 - `op` treats an aborted request separately from offline state, and a successful response whose JSON body cannot be read is an `OpError` rather than an empty success (`api.ts:op`).
 - `writeOnce` retries only unknown write outcomes with the same request body and stops on a definite error or aborted signal (`api.ts:writeOnce`).
-- The server decides list membership and ordering; `applyMembership` only merges returned rows, and `store.ts` bounds `list_membership` calls to 1,000 IDs and two lists.
+- The server decides list membership and ordering (`store.ts:loadList` reloads touched mounted lists and coalesces bursts with `dirty`; `list-page.tsx` reads pinned rows separately via `useOp('list_membership', ...)`).
 - Feed delivery de-duplicates sequence numbers and batches subscribers per animation frame (`feed.ts:deliver`).
-- A doc name identifies its read: every request for one name within one task (a feed batch reaching all its readers, mounts in one render) sends one request. Reads never wait for a running one, and an answer is shown only when it started after the answer on screen, so a stalled request neither blocks nor overwrites newer data; clearing memory discards running reads and pending restores (`store.ts:readDoc`).
+- A doc name identifies its read: every request for one name within one task (a feed batch reaching all its readers, mounts in one render) sends one request. Reads never wait for a running one, and an answer is shown only when it started after the answer on screen, so a stalled request neither blocks nor overwrites newer data; clearing memory discards running reads (`store.ts:readDoc`).
 - Invalidation has one rule, `store.ts:touchedBy`: the change's `touches` names the operation, and the change names no other task, session, host, artifact, execution, experiment, question or project than the request (a definition other than `project/<id>` touches every project); a setting-change of another known person touches nothing. Views write no predicates.
-- Stored app data is cleared when the grants version changes or the browser is signed out (`offline.ts:checkGrants`, `main.tsx:App`).
+- Stored in-memory app state is cleared on identity/grant invalidation or sign-out (`offline.ts:clearAll`, `main.tsx:App`).
 
 ## Side Effects
 
 - `errors.ts` sends Sentry envelopes to the same-origin tunnel `POST /api/errors` (the SDK's own fetch, outside `op()`).
 - `uploads.ts` sends same-origin `PUT /api/uploads/:id` parts with `XMLHttpRequest` (for upload progress).
 - `api.ts` sends same-origin `POST /api/ops/:name` requests; `feed.ts` opens `EventSource('/api/stream…')` and polls `changes_since` after repeated failures.
-- `offline.ts` reads, writes, and deletes IndexedDB cache entries; `prefs.ts` writes person settings through coordinator operations.
+- `offline.ts` clears in-memory stores on access invalidation; `prefs.ts` writes person settings through coordinator operations.
 - `main.tsx` registers `/sw.js`, changes browser history, and can redirect to Cloudflare Access logout.
 
 ## Verification
@@ -46,7 +46,7 @@
 
 ## Authorized prepared reads
 
-`access.ts` owns the single generation gate and injected identity/baseline controllers. `api.ts` fences every ordinary read/write and provides only the fixed identity/no-cursor control allowlist. `main.tsx` unmounts private route generations before validation and preserves shell geometry. `feed.ts` establishes a new authorized baseline without replaying old cursors; `offline.ts` fences memory and async persistence independently of blocked deletion.
+`access.ts` owns the single generation gate and injected identity/baseline controllers. `api.ts` fences every ordinary read/write and provides only the fixed identity/no-cursor control allowlist. `main.tsx` unmounts private route generations before validation and preserves shell geometry. `feed.ts` establishes a new authorized baseline without replaying old cursors; `offline.ts` fences and clears in-memory state on access invalidation.
 
 `store.ts:usePreparedOp` shares one active read plus one pending bit per canonical prepared key, checks bigint versions, retains figures on unchanged progress, cancels on last subscriber and checks foreground progress at most every two seconds. Scoped authored drafts remain in `api.ts` under their original actor/target; they are not server cache. Activation and rollback: [prepared resources](../../docs/designs/fleet-analytics.md#browser-access-and-activation).
 
