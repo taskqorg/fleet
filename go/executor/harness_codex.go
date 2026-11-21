@@ -106,28 +106,32 @@ func codexLimitReading(r, native any) M {
 	return limitReading("codex", readings, native)
 }
 
+// mcpServerEntry: one server entry in the executor's WireMCP server map.
+type mcpServerEntry struct {
+	Command jsonValue `json:"command"`
+	Args    jsonValue `json:"args"`
+	Tools   []string  `json:"tools"`
+	Env     jsonValue `json:"env"`
+}
+
 func (h harness) WireMCP(cmd *exec.Cmd, p map[string]any, servers map[string]any, extra []string) {
 	switch {
 	case h.name == "codex":
 		for name, s := range servers {
+			srv := typed[mcpServerEntry](s)
 			pre := "-c\x00mcp_servers." + name + "."
 			add := func(k, v string) { cmd.Args = append(cmd.Args, strings.Split(pre+k+"="+v, "\x00")...) }
-			add("command", enc(jAt(s, "command")))
-			add("args", enc(jAt(s, "args")))
+			add("command", enc(srv.Command.V))
+			add("args", enc(srv.Args.V))
 			add("required", "true")
-			if tools, ok := jAt(s, "tools").([]any); ok {
-				add("enabled_tools", enc(tools))
-				for _, t := range tools {
-					add("tools."+jStr(t)+".approval_mode", `"approve"`) // not JSON: the executor's own server map ([]any of tool names)
-				}
-			} else if tools, ok := jAt(s, "tools").([]string); ok {
-				add("enabled_tools", enc(tools))
-				for _, t := range tools {
+			if srv.Tools != nil {
+				add("enabled_tools", enc(srv.Tools))
+				for _, t := range srv.Tools {
 					add("tools."+t+".approval_mode", `"approve"`)
 				}
 			}
-			if env := jAt(s, "env"); env != nil {
-				add("env_vars", enc(env))
+			if srv.Env.V != nil {
+				add("env_vars", enc(srv.Env.V))
 			}
 		}
 	case h.name == "claude":
@@ -155,19 +159,13 @@ func claudeMCP(c *exec.Cmd, profile any, servers M, extra []string) {
 	if has(servers, "design-rules") {
 		allowed = append(allowed, "mcp__design-rules__get_design_rules")
 	}
-	for name, server := range servers {
-		for _, tool := range jArr(server, "tools") {
-			allowed = append(allowed, "mcp__"+name+"__"+jStr(tool)) // not JSON: the executor's own server map
-		}
-		if tools, ok := jAt(server, "tools").([]string); ok {
-			for _, tool := range tools {
-				allowed = append(allowed, "mcp__"+name+"__"+tool)
-			}
-		}
-	}
 	config := M{}
-	for name, s := range servers {
-		config[name] = M{"command": jAt(s, "command"), "args": jAt(s, "args")}
+	for name, server := range servers {
+		srv := typed[mcpServerEntry](server)
+		for _, tool := range srv.Tools {
+			allowed = append(allowed, "mcp__"+name+"__"+tool)
+		}
+		config[name] = M{"command": srv.Command.V, "args": srv.Args.V}
 	}
 	if has(servers, "fleet") {
 		for _, t := range []string{"session_presets", "session_transition", "session_fork", "session_resume", "session_handoffs", "session_rename", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status", "artifact_save", "artifact_list", "artifact_get"} {

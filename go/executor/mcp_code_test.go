@@ -203,8 +203,8 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 	}
 	srv := &codeServer{conns: map[string]codeConn{"web": codeConnOf(web)}, fleet: map[string]bool{}}
 	for _, x := range [][3]string{{"conn:web", "delete", "tool-not-granted"}, {"conn:other", "search", "connection-not-granted"}, {"fleet", "ask", "no-fleet-tools"}} {
-		if _, fail := srv.bridge(nil, x[0], x[1], M{}); jStr(fail, "code") != x[2] {
-			t.Errorf("bridge %s.%s: %v", x[0], x[1], fail)
+		if _, fail := srv.bridge(nil, x[0], x[1], M{}); fail == nil || fail.Code != x[2] {
+			t.Errorf("bridge %s.%s: %+v", x[0], x[1], fail)
 		}
 	}
 	if r, _ := c.code(`return (await conn.web.$tools()).map(t => t.name)`); enc(r["value"]) != `["search","broken"]` {
@@ -402,22 +402,22 @@ func TestCodeModeRuntimeRestart(t *testing.T) {
 // outcomes).
 func TestCodeModeFleetResults(t *testing.T) {
 	pending := mcpText(M{"status": "pending", "requestKey": "k"}, &yes)
-	if _, fail := mcpValue(pending); jStr(fail, "outcome") != "unknown" || jStr(fail, "code") != "pending" || jStr(fail, "output", "requestKey") != "k" {
-		t.Fatalf("pending: %v", fail)
+	if _, fail := mcpValue(pending); fail == nil || fail.Outcome != "unknown" || fail.Code != "pending" || jStr(fail.Output, "requestKey") != "k" {
+		t.Fatalf("pending: %+v", fail)
 	}
-	if _, fail := mcpValue(mcpText(M{"error": "nope"}, &yes)); jStr(fail, "code") != "tool-error" || jStr(fail, "output", "error") != "nope" {
-		t.Fatalf("error: %v", fail)
+	if _, fail := mcpValue(mcpText(M{"error": "nope"}, &yes)); fail == nil || fail.Code != "tool-error" || jStr(fail.Output, "error") != "nope" {
+		t.Fatalf("error: %+v", fail)
 	}
 	if v, fail := mcpValue(M{"content": []any{M{"type": "text", "text": "plain"}}}); fail != nil || v != "plain" {
 		t.Fatalf("text: %v", v)
 	}
 	child := mcpText(M{"status": "pending-or-rejected", "response": nil}, &no)
-	if _, fail := mcpValue(child); jStr(fail, "outcome") != "unknown" {
-		t.Fatalf("request_child without an answer: %v", fail)
+	if _, fail := mcpValue(child); fail == nil || fail.Outcome != "unknown" {
+		t.Fatalf("request_child without an answer: %+v", fail)
 	}
 	refused := mcpText(M{"status": "pending-or-rejected", "response": M{"error": "no such profile"}}, &yes)
-	if _, fail := mcpValue(refused); jStr(fail, "outcome") != "error" {
-		t.Fatalf("request_child refused: %v", fail)
+	if _, fail := mcpValue(refused); fail == nil || fail.Outcome != "error" {
+		t.Fatalf("request_child refused: %+v", fail)
 	}
 
 	c := newCodeClient(t, M{"dir": t.TempDir(), "journal": filepath.Join(t.TempDir(), "journal.sqlite"),
@@ -521,8 +521,8 @@ func TestCodeModeJournalErrorIsUnknown(t *testing.T) {
 	ctx := M{"commandId": "cmd", "executionId": "ex", "hostId": "h"}
 	s := &codeServer{db: db, ctx: ctx, fleet: map[string]bool{"message_send": true}}
 	db.Close()
-	if _, fail := s.bridge(nil, "fleet", "message_send", M{"text": "hi"}); jStr(fail, "outcome") != "unknown" || jStr(fail, "code") != "journal-error" {
-		t.Fatalf("closed journal: %v", fail)
+	if _, fail := s.bridge(nil, "fleet", "message_send", M{"text": "hi"}); fail == nil || fail.Outcome != "unknown" || fail.Code != "journal-error" {
+		t.Fatalf("closed journal: %+v", fail)
 	}
 }
 
@@ -661,8 +661,8 @@ func TestCodeModeFiles(t *testing.T) {
 	}
 	if runtime.GOOS == "darwin" { // a case-insensitive file system: .GIT through a symlink is the same directory
 		os.Symlink(filepath.Join(dir, ".GIT"), filepath.Join(dir, "g2"))
-		if _, fail := codeFile(dir, "write", M{"path": "g2/config", "text": ""}); jStr(fail, "code") != "outside-worktree" {
-			t.Fatalf(".GIT through a symlink: %v", fail)
+		if _, fail := codeFile(dir, "write", M{"path": "g2/config", "text": ""}); fail == nil || fail.Code != "outside-worktree" {
+			t.Fatalf(".GIT through a symlink: %+v", fail)
 		}
 	}
 	// Without the grant the functions do not exist, and the server refuses the call too.
@@ -672,8 +672,8 @@ func TestCodeModeFiles(t *testing.T) {
 	}
 	srv := &codeServer{spec: codeSpec{Dir: dir}}
 	for _, tool := range []string{"write", "edit", "sh"} {
-		if _, fail := srv.bridge(nil, "host", tool, M{"path": "x", "command": "true"}); jStr(fail, "code") != "tool-not-granted" {
-			t.Errorf("%s: %v", tool, fail)
+		if _, fail := srv.bridge(nil, "host", tool, M{"path": "x", "command": "true"}); fail == nil || fail.Code != "tool-not-granted" {
+			t.Errorf("%s: %+v", tool, fail)
 		}
 	}
 }

@@ -30,7 +30,7 @@ import (
 // server's environment without FLEET_* (no run token, gateway URL or Access file). It returns the whole stdout and
 // stderr; a non-zero exit is a result, not a failure. rt is the runtime that sent the call: once a reset stopped it, no
 // new command starts for it.
-func (s *codeServer) sh(rt *codeRuntime, arguments any) (any, M) {
+func (s *codeServer) sh(rt *codeRuntime, arguments any) (any, *codeCallError) {
 	// sh(cmd, {cwd, timeoutMs, args}); a field of another type reads as its zero value.
 	args := typed[struct {
 		Command   string      `json:"command"`
@@ -435,7 +435,7 @@ func resolveIn(real, rel string) (string, error) {
 // walks it by directory handle (os.Root), checking that no component became a symlink meanwhile and comparing each
 // directory, and the file, with the worktree's .git by file identity: no symlink, other spelling (macOS ignores case)
 // or concurrent rename reaches .git. The file itself is opened without following a symlink.
-func codeFile(dir, tool string, arguments any) (any, M) {
+func codeFile(dir, tool string, arguments any) (any, *codeCallError) {
 	// write(path, text) and edit(path, old, new, {all}); a field of another type reads as its zero value.
 	args := typed[struct {
 		Path string `json:"path"`
@@ -461,7 +461,7 @@ func codeFile(dir, tool string, arguments any) (any, M) {
 	if tool == "edit" && old == "" {
 		return nil, callError("error", "bad-arguments", "old required")
 	}
-	fail := func(err error) (any, M) {
+	fail := func(err error) (any, *codeCallError) {
 		if strings.Contains(err.Error(), "path escapes") {
 			return nil, callError("error", "outside-worktree", err.Error())
 		}
