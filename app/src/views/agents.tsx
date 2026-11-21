@@ -4,22 +4,96 @@
 import { useMemo, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  Button, Choice, DetailSection, Disclosure, Empty, ErrorBanner, HarnessMark, Icon, KvRow, ListDetail, Num,
-  OfflineMarker, ProblemRow, SearchField, ShellStatus, StateBadge, TabBar, Totals, VirtualList, catalogueRow,
-  harnesses, matchSearch, type Harness, type IconName, type StateOf, type TotalItem,
+  Button, CatalogueTree, Choice, ContextMenu, DetailSection, Disclosure, Empty, ErrorBanner, HarnessMark, Icon, KvRow,
+  ListDetail, Num, OfflineMarker, ProblemRow, SearchField, ShellStatus, StateBadge, TabBar, Totals, VirtualList,
+  actions, catalogueRow, copyText, harnesses, matchSearch,
+  type CatalogueTreeNode, type Harness, type IconName, type StateOf, type TotalItem,
 } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
+import { flipGroup } from '../lists.ts';
+import { listGroups, setListGroups, usePins } from '../prefs.ts';
 import { useOp } from '../store.ts';
 import { DefinitionDetail } from './definitions.tsx';
 import type { DefinitionKey, DefinitionListItem, SkillSummary } from '../../../contracts/generated/ops.ts';
 
 type LibTab = 'agents' | 'skills';
+type AgentRoleGroup = 'core' | 'research-design' | 'assets-3d' | 'other' | 'lab-variants';
+
+const AGENT_TREE_LIST = 'agents';
+const AGENT_TREE_GROUPS = 'agents:role';
+
+const ROLE_GROUPS: readonly { key: AgentRoleGroup; id: string; label: string; icon: IconName; defaultCollapsed: boolean }[] = [
+  { key: 'core', id: 'group:core', label: 'Core', icon: 'bot', defaultCollapsed: false },
+  { key: 'research-design', id: 'group:research-design', label: 'Research & Design', icon: 'search', defaultCollapsed: false },
+  { key: 'assets-3d', id: 'group:assets-3d', label: 'Assets & 3D', icon: 'archive', defaultCollapsed: false },
+  { key: 'other', id: 'group:other', label: 'Other', icon: 'layers-2', defaultCollapsed: false },
+  { key: 'lab-variants', id: 'group:lab-variants', label: 'Lab variants', icon: 'chart-no-axes-column', defaultCollapsed: true },
+];
 
 const compatibilityState = (c?: string): StateOf<'definition'> =>
   c === 'checked' ? 'ready' : c === 'failed' ? 'incompatible' : 'unchecked';
 
+const agentRoleGroup = (a: DefinitionListItem): AgentRoleGroup => {
+  const cat = a.agent?.category?.toLowerCase() ?? '';
+  const id = a.id.toLowerCase();
+  const tags = (a.agent?.tags ?? []).map(t => t.toLowerCase());
+  if (a.agent?.variantOf || a.agent?.experiment || id.startsWith('lab-') || cat === 'lab' || tags.includes('lab')) {
+    return 'lab-variants';
+  }
+  if (cat === 'assets' || cat === '3d' || cat === 'media' || id.startsWith('asset-') || id.startsWith('assets-')) {
+    return 'assets-3d';
+  }
+  if (cat === 'research' || cat === 'design' || /(researcher|designer|design-rules|website-review)/.test(id)) {
+    return 'research-design';
+  }
+  if (
+    cat === 'coding' || cat === 'review' || cat === 'operations' || cat === 'core'
+    || id === 'pm' || id === 'baseline' || /-(worker|reviewer|judge)$/.test(id)
+  ) {
+    return 'core';
+  }
+  return 'other';
+};
+
 const agentSearchText = (a: DefinitionListItem): string =>
-  `${a.id} ${a.name} ${a.agent?.purpose ?? ''} ${a.agent?.category ?? ''} ${(a.agent?.tags ?? []).join(' ')} ${(a.agent?.skills ?? []).join(' ')} ${a.agent?.model ?? ''}`;
+  [
+    a.id,
+    a.name,
+    a.agent?.purpose,
+    a.agent?.category,
+    a.agent?.harness ? `harness:${a.agent.harness}` : '',
+    a.agent?.category ? `category:${a.agent.category}` : '',
+    a.agent?.model,
+    a.agent?.effort,
+    a.agent?.variantOf,
+    ...(a.agent?.tags ?? []),
+    ...(a.agent?.skills ?? []).map(s => `skill:${s} ${s}`),
+    ...(a.agent?.roles ?? []),
+  ].filter(Boolean).join(' ');
+
+function agentDeltaSub(d: DefinitionListItem, byId: ReadonlyMap<string, DefinitionListItem>): string | undefined {
+  const a = d.agent;
+  if (!a) return undefined;
+  const parent = a.variantOf ? byId.get(a.variantOf) : undefined;
+  const baseHarness = parent?.agent?.harness ?? 'codex';
+  const baseModel = parent?.agent?.model ?? 'gpt-6.2-sol';
+  const baseEffort = parent
+    ? (parent.agent?.effort ?? null)
+    : (a.harness && a.harness !== 'codex' ? null : 'medium');
+
+  const parts: string[] = [];
+  if (a.model && a.model !== baseModel) parts.push(a.model);
+  if (a.effort && a.effort !== baseEffort) parts.push(a.effort);
+  if (a.variantOf && parts.length === 0) {
+    const parentSkills = parent?.agent?.skills ?? [];
+    const curSkills = a.skills ?? [];
+    const skillsDiffer = parent && (curSkills.length !== parentSkills.length || curSkills.some(s => !parentSkills.includes(s)));
+    parts.push(skillsDiffer ? `${curSkills.length} skills` : `var of ${a.variantOf}`);
+  } else if (!a.variantOf && a.harness !== baseHarness && parts.length === 0) {
+    parts.push(a.harness);
+  }
+  return parts.length ? parts.join(' · ') : undefined;
+}
 
 export function Agents({ id }: { id?: string }) {
   const [, go] = useLocation();
@@ -32,6 +106,10 @@ export function Agents({ id }: { id?: string }) {
   const [previewRepoKeys, setPreviewRepoKeys] = useState<DefinitionKey[] | null>(null);
   const [previewSkill, setPreviewSkill] = useState<{ skill: string; category?: string; agents?: string[] } | null>(null);
   const [skillTargetCat, setSkillTargetCat] = useState<Record<string, string>>({});
+  const [menu, setMenu] = useState<{ node: CatalogueTreeNode; at: { x: number; y: number } } | null>(null);
+
+  const pins = usePins(AGENT_TREE_LIST);
+  const flippedGroups = listGroups(AGENT_TREE_GROUPS);
 
   const agentsOp = useOp('definition_list', { kind: 'agent' });
   const skillsOp = useOp('skills_list', {});
@@ -44,13 +122,83 @@ export function Agents({ id }: { id?: string }) {
     [agentItems],
   );
 
+  const agentById = useMemo(() => new Map(agentItems.map(a => [a.id, a])), [agentItems]);
+
+  const facetAgents = useMemo(() => {
+    const agentTerm = q.toLowerCase().split(/\s+/).find(w => w.startsWith('agent:') && w.length > 6)?.slice(6) ?? '';
+    return agentItems.filter(a => (!harness || a.agent?.harness === harness)
+      && (!category || a.agent?.category === category)
+      && (!agentTerm || (a.agent?.harness ?? '').toLowerCase().includes(agentTerm)));
+  }, [agentItems, harness, category, q]);
+
   const filteredAgents = useMemo(() => {
     return agentItems
       .filter(a => (!harness || a.agent?.harness === harness)
         && (!category || a.agent?.category === category)
-        && matchSearch(q, agentSearchText(a), { agent: a.agent?.harness ?? null }))
+        && matchSearch(q, agentSearchText(a), {
+          agent: a.agent?.harness ?? null,
+          state: a.draft ? 'draft' : compatibilityState(a.compatibility),
+        }))
       .toSorted((a, b) => Number(!!b.draft) - Number(!!a.draft) || b.last30.runs - a.last30.runs || a.name.localeCompare(b.name));
   }, [agentItems, harness, category, q]);
+
+  const treeQuery = useMemo(() => q.replace(/\b(?:agent|host|project):(\S+)/gi, '$1'), [q]);
+
+  const collapsedMap = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    if (flippedGroups.includes('__pinned__')) map['__pinned__'] = true;
+    for (const g of ROLE_GROUPS) {
+      if (flippedGroups.includes(g.id)) map[g.id] = !g.defaultCollapsed;
+    }
+    return map;
+  }, [flippedGroups]);
+
+  const agentTreeNodes = useMemo<CatalogueTreeNode[]>(() => {
+    const buckets = new Map<AgentRoleGroup, DefinitionListItem[]>(ROLE_GROUPS.map(g => [g.key, []]));
+    for (const a of facetAgents) {
+      buckets.get(agentRoleGroup(a))!.push(a);
+    }
+    const sortItems = (items: DefinitionListItem[]) =>
+      items.toSorted((a, b) => Number(!!b.draft) - Number(!!a.draft) || b.last30.runs - a.last30.runs || a.name.localeCompare(b.name));
+
+    const out: CatalogueTreeNode[] = [];
+    for (const group of ROLE_GROUPS) {
+      const items = sortItems(buckets.get(group.key) ?? []);
+      if (!items.length) continue;
+      out.push({
+        id: group.id,
+        label: group.label,
+        icon: group.icon,
+        defaultCollapsed: group.defaultCollapsed,
+        children: items.map(d => {
+          const parentHarness = d.agent?.variantOf ? agentById.get(d.agent.variantOf)?.agent?.harness : undefined;
+          const baseHarness = parentHarness ?? 'codex';
+          const showHarness = !!(d.agent && d.agent.harness !== baseHarness && harnesses[d.agent.harness]);
+          const right = (d.state === 'repository-changed' || showHarness) ? (
+            <>
+              {d.state === 'repository-changed' && <Icon name="download" label="Repository update waiting" />}
+              {showHarness && <HarnessMark h={d.agent!.harness as Harness} />}
+            </>
+          ) : undefined;
+          return {
+            id: d.id,
+            label: d.name,
+            sub: agentDeltaSub(d, agentById),
+            state: {
+              family: 'definition',
+              state: d.draft ? 'draft' : compatibilityState(d.compatibility),
+            },
+            right,
+            pinned: pins.has(d.id),
+            href: `/agents/${encodeURIComponent(d.id)}`,
+            searchText: agentSearchText(d),
+            problem: d.compatibility === 'failed',
+          };
+        }),
+      });
+    }
+    return out;
+  }, [facetAgents, agentById, pins.ids]);
 
   const filteredSkills = useMemo(
     () => skillItems.filter(s => matchSearch(q, `${s.id} ${s.name} ${s.description}`)),
@@ -165,30 +313,41 @@ export function Agents({ id }: { id?: string }) {
       <section class="panel">
         {listTab === 'agents' && (
           !agentsOp.data && !agentsOp.error ? <Empty text="Loading…" /> :
-          filteredAgents.length ? (
-            <VirtualList
-              items={filteredAgents}
-              getKey={d => d.id}
-              rowHeight={catalogueRow()}
-              follow="top"
+          agentTreeNodes.length ? (
+            <CatalogueTree
+              fill
+              nodes={agentTreeNodes}
               label="Agents"
-              columns="1.5rem minmax(0,1fr) auto"
-              rowClass={d => d.id === id ? 'sel' : ''}
-              render={d => (
-                <>
-                  <span class="lead"><StateBadge family="definition" state={d.draft ? 'draft' : compatibilityState(d.compatibility)} compact /></span>
-                  <span class="tt">
-                    <a class="title row-link" href={`/agents/${d.id}`} onClick={ev => { ev.preventDefault(); go(`/agents/${d.id}`); }}>{d.name}</a>
-                    {d.agent?.purpose && <span class="sub muted">{d.agent.purpose}</span>}
-                  </span>
-                  <span class="acts">
-                    {d.state === 'repository-changed' && <Icon name="download" label="Repository update waiting" />}
-                    {d.agent && harnesses[d.agent.harness] && <HarnessMark h={d.agent.harness as Harness} />}
-                  </span>
-                </>
-              )}
+              selectedId={id ?? null}
+              query={treeQuery}
+              collapsed={collapsedMap}
+              emptyText="No matching agents."
+              onToggle={folderId => setListGroups(AGENT_TREE_GROUPS, flipGroup(listGroups(AGENT_TREE_GROUPS), folderId))}
+              onSelect={node => {
+                if (Array.isArray(node.children)) {
+                  setListGroups(AGENT_TREE_GROUPS, flipGroup(listGroups(AGENT_TREE_GROUPS), node.id));
+                } else {
+                  go(`/agents/${encodeURIComponent(node.id)}`);
+                }
+              }}
+              onPin={node => pins.toggle(node.id)}
+              onRowMenu={(node, at) => {
+                if (!Array.isArray(node.children)) setMenu({ node, at });
+              }}
             />
           ) : <Empty text="No matching agents." />
+        )}
+        {menu && (
+          <ContextMenu
+            at={menu.at}
+            label={menu.node.label}
+            onClose={() => setMenu(null)}
+            items={[
+              { label: 'Open', icon: actions.open, onClick: () => go(`/agents/${encodeURIComponent(menu.node.id)}`) },
+              { label: pins.has(menu.node.id) ? 'Unpin' : 'Pin', icon: pins.has(menu.node.id) ? actions.unpin : actions.pin, onClick: () => pins.toggle(menu.node.id) },
+              { label: 'Copy id', icon: actions.copy, onClick: () => copyText(menu.node.id) },
+            ]}
+          />
         )}
         {listTab === 'skills' && (
           !skillsOp.data && !skillsOp.error ? <Empty text="Loading…" /> :
