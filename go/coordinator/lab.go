@@ -644,27 +644,22 @@ func expGet(q *Request, id string) (labExperimentView, error) {
 	if err != nil {
 		return out, err
 	}
-	// Each trial's provider usage, priced per call (fleet-analytics.md: usage x the latest entry in force at the call).
-	usageRows, err := q.db().LabRunUsage(q.ctx(), &id)
-	if err != nil {
-		return out, err
+	trialIDs := make([]string, 0, len(trials))
+	for _, t := range trials {
+		trialIDs = append(trialIDs, t.ID)
 	}
-	costs := map[string][]usage{}
-	for _, u := range usageRows {
-		var amount *float64
-		if u.HasAmount {
-			a := u.Amount
-			amount = &a
+	trialResources := map[string]contract.ResourceSummary{}
+	if len(trialIDs) > 0 {
+		lineage, err := q.db().LabTrialsLineage(q.ctx(), trialIDs)
+		if err != nil {
+			return out, err
 		}
-		costs[u.Run] = append(costs[u.Run], usage{u.Subject, u.Unit, amount, u.At.Time})
-	}
-	prices, err := priceEntries(q)
-	if err != nil {
-		return out, err
-	}
-	trialCost := map[string][]contract.CostFigure{}
-	for run, us := range costs {
-		trialCost[run] = estimateCost(prices, us)
+		if len(lineage.LeafIds) > 0 {
+			trialResources, err = summarizeResourceQuery(q, lineage.Scopes, lineage.ScopeKeys, lineage.LeafIds)
+			if err != nil {
+				return out, err
+			}
+		}
 	}
 	uniq := func(l []string) []string {
 		seen, out := map[string]bool{}, []string{}
@@ -694,6 +689,12 @@ func expGet(q *Request, id string) (labExperimentView, error) {
 				}
 			}
 		}
+		res := trialResources["trial\x00"+t.ID]
+		var tokens int64
+		if res.Tokens.Total != nil {
+			tokens = *res.Tokens.Total
+		}
+		trialCosts := append([]contract.CostFigure{}, res.Cost...)
 		var o struct {
 			WebRoute json.RawMessage `json:"web_route"`
 		}
@@ -718,7 +719,7 @@ func expGet(q *Request, id string) (labExperimentView, error) {
 		}
 		v := contract.LabTrialRecord{Id: t.ID, Cell: cell, State: contract.ExecutionState(t.State), Observation: contract.PipelineObservation(t.Observation), Problem: trialProblem(t),
 			Comparable: comparable(t), StartedAt: labNull(t.StartedAt), FinishedAt: labNull(t.FinishedAt), DurationMs: t.DurationMs,
-			Spend: contract.LabTrialSpend{Calls: &calls, Credits: &credit, Basis: &basis}, Cost: append([]contract.CostFigure{}, trialCost[t.ID]...),
+			Spend: contract.LabTrialSpend{Calls: &calls, Credits: &credit, Tokens: &tokens, Basis: &basis}, Cost: trialCosts,
 			Confounders: contract.LabConfounders{Hosts: uniq(hosts), Harnesses: uniq(harnesses), Models: uniq(models), WebRoute: web}, Scores: mine, PlanSummary: planSummary(t.run.entries())}
 		if rawValue(t.CanonicalResult) != nil {
 			r, err := asT[contract.PipelineCanonicalResult](t.CanonicalResult)
@@ -923,6 +924,9 @@ func init() {
 			out.Experiments = append(out.Experiments, v)
 		}
 		return out, nil
+	})
+	op("lab_leaderboard", func(q *Request, r *contract.LabLeaderboardRequest) (contract.LabLeaderboardReply, error) {
+		return labLeaderboard(q, r)
 	})
 	op("lab_experiment_get", func(q *Request, r *contract.LabExperimentGetRequest) (contract.LabExperimentGetReply, error) {
 		if err := labIDArg(r.ExperimentId, "experimentId"); err != nil {

@@ -581,6 +581,58 @@ func (q *Queries) LabExperiments(ctx context.Context) ([]Experiment, error) {
 	return items, nil
 }
 
+const labExperimentsByIDs = `-- name: LabExperimentsByIDs :many
+SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at FROM experiment WHERE id = ANY($1::text[])
+`
+
+func (q *Queries) LabExperimentsByIDs(ctx context.Context, ids []string) ([]Experiment, error) {
+	rows, err := q.db.Query(ctx, labExperimentsByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Experiment
+	for rows.Next() {
+		var i Experiment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Kind,
+			&i.PipelineID,
+			&i.Examples,
+			&i.Variants,
+			&i.Repeats,
+			&i.Evaluators,
+			&i.PrimaryEvaluator,
+			&i.Strategy,
+			&i.Budgets,
+			&i.State,
+			&i.StopReason,
+			&i.CreatedAt,
+			&i.Seq,
+			&i.Goal,
+			&i.Hypothesis,
+			&i.DecisionRule,
+			&i.LabGroup,
+			&i.Decision,
+			&i.DecisionReason,
+			&i.DecidedBy,
+			&i.DecidedAt,
+			&i.LaunchedAt,
+			&i.RequestedBy,
+			&i.RequesterRemovedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const labHostJobInProject = `-- name: LabHostJobInProject :one
 SELECT EXISTS(SELECT 1 FROM execution WHERE id=$1 AND project_id=$2 AND kind='host_job')::boolean AS owned
 `
@@ -595,6 +647,134 @@ func (q *Queries) LabHostJobInProject(ctx context.Context, arg LabHostJobInProje
 	var owned bool
 	err := row.Scan(&owned)
 	return owned, err
+}
+
+const labLeaderboardTrials = `-- name: LabLeaderboardTrials :many
+SELECT
+ e.id,
+ e.experiment_id,
+ e.project_id,
+ e.variant,
+ e.state::text AS state,
+ e.pipeline_id,
+ e.config_ref,
+ e.started_at,
+ e.ended_at,
+ coalesce(e.ended_at, e.started_at, e.updated_at)::timestamptz AS trial_at,
+ coalesce(e.data->'cell'->>'example', '')::text AS cell_example,
+ coalesce(e.data->'example'->>'use_case_id', '')::text AS example_use_case_id,
+ coalesce(CASE WHEN (e.data->>'durationMs') ~ '^([0-9]+(\.[0-9]*)?|\.[0-9]+)$' THEN (e.data->>'durationMs')::float8 END, -1)::float8 AS data_duration_ms
+FROM execution e
+JOIN experiment x ON x.id = e.experiment_id
+WHERE e.kind = 'pipeline_run'
+  AND e.variant IS NOT NULL
+  AND e.experiment_id IS NOT NULL
+  AND e.state IN ('succeeded', 'failed')
+  AND e.observation = 'confirmed'
+  AND ($1::text IS NULL OR e.project_id = $1::text)
+  AND coalesce(e.ended_at, e.started_at, e.updated_at) >= now() - make_interval(days => $2::int)
+ORDER BY coalesce(e.ended_at, e.started_at, e.updated_at) DESC, e.seq DESC
+`
+
+type LabLeaderboardTrialsParams struct {
+	ProjectID *string
+	Days      int32
+}
+
+type LabLeaderboardTrialsRow struct {
+	ID               string
+	ExperimentID     *string
+	ProjectID        *string
+	Variant          *string
+	State            string
+	PipelineID       *string
+	ConfigRef        []byte
+	StartedAt        *time.Time
+	EndedAt          *time.Time
+	TrialAt          pgtype.Timestamptz
+	CellExample      string
+	ExampleUseCaseID string
+	DataDurationMs   float64
+}
+
+// Confirmed succeeded and failed trials within the last days, visible under caller RLS (lab_leaderboard.go).
+func (q *Queries) LabLeaderboardTrials(ctx context.Context, arg LabLeaderboardTrialsParams) ([]LabLeaderboardTrialsRow, error) {
+	rows, err := q.db.Query(ctx, labLeaderboardTrials, arg.ProjectID, arg.Days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LabLeaderboardTrialsRow
+	for rows.Next() {
+		var i LabLeaderboardTrialsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExperimentID,
+			&i.ProjectID,
+			&i.Variant,
+			&i.State,
+			&i.PipelineID,
+			&i.ConfigRef,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.TrialAt,
+			&i.CellExample,
+			&i.ExampleUseCaseID,
+			&i.DataDurationMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const labLeafMeta = `-- name: LabLeafMeta :many
+SELECT
+ e.id,
+ e.kind::text AS kind,
+ coalesce(nullif(coalesce(tot.model, e.model), ''), '')::text AS model,
+ coalesce(nullif(coalesce(e.profile_id, e.data->'agentConfig'->>'id'), ''), '')::text AS profile_id
+FROM execution e
+LEFT JOIN execution_totals tot ON tot.execution_id = e.id
+WHERE e.id = ANY($1::text[])
+ORDER BY e.seq
+`
+
+type LabLeafMetaRow struct {
+	ID        string
+	Kind      string
+	Model     string
+	ProfileID string
+}
+
+// Resolved model and profile metadata for leaf executions (lab_leaderboard.go).
+func (q *Queries) LabLeafMeta(ctx context.Context, leafIds []string) ([]LabLeafMetaRow, error) {
+	rows, err := q.db.Query(ctx, labLeafMeta, leafIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LabLeafMetaRow
+	for rows.Next() {
+		var i LabLeafMetaRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Model,
+			&i.ProfileID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const labNoteInsert = `-- name: LabNoteInsert :exec
@@ -954,6 +1134,49 @@ func (q *Queries) LabScoreReplacedCount(ctx context.Context, id *string) (int32,
 	return column_1, err
 }
 
+const labScoresByExperiments = `-- name: LabScoresByExperiments :many
+SELECT id, experiment_id, project_id, trial_ids, evaluator, evaluator_version, form, value, source_execution_id, question_id, rationale, replaces_score_id, created_at, seq, tombstoned_at FROM score s
+WHERE s.experiment_id = ANY($1::text[])
+  AND NOT EXISTS (SELECT 1 FROM score r WHERE r.replaces_score_id = s.id)
+ORDER BY s.seq
+`
+
+func (q *Queries) LabScoresByExperiments(ctx context.Context, experimentIds []string) ([]Score, error) {
+	rows, err := q.db.Query(ctx, labScoresByExperiments, experimentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Score
+	for rows.Next() {
+		var i Score
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExperimentID,
+			&i.ProjectID,
+			&i.TrialIds,
+			&i.Evaluator,
+			&i.EvaluatorVersion,
+			&i.Form,
+			&i.Value,
+			&i.SourceExecutionID,
+			&i.QuestionID,
+			&i.Rationale,
+			&i.ReplacesScoreID,
+			&i.CreatedAt,
+			&i.Seq,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const labScoresCurrent = `-- name: LabScoresCurrent :many
 SELECT id, experiment_id, project_id, trial_ids, evaluator, evaluator_version, form, value, source_execution_id, question_id, rationale, replaces_score_id, created_at, seq, tombstoned_at FROM score s WHERE s.experiment_id=$1 AND NOT EXISTS (SELECT 1 FROM score r WHERE r.replaces_score_id=s.id) ORDER BY seq
 `
@@ -1112,6 +1335,84 @@ func (q *Queries) LabTrialSpend(ctx context.Context, experimentID *string) (LabT
 	row := q.db.QueryRow(ctx, labTrialSpend, experimentID)
 	var i LabTrialSpendRow
 	err := row.Scan(&i.Trials, &i.WallMs)
+	return i, err
+}
+
+const labTrialsLineage = `-- name: LabTrialsLineage :one
+WITH RECURSIVE
+ trials AS (
+  SELECT DISTINCT t.trial_id FROM unnest($1::text[]) AS t(trial_id)
+ ),
+ reused_steps AS (
+  SELECT p.run_id AS trial_id, (p.run_id || ':step:' || p.step_index::text) AS step_exec_id
+  FROM pipeline_step p
+  JOIN trials t ON t.trial_id = p.run_id
+  WHERE p.ref_mode = 'reused'
+ ),
+ seed AS (
+  SELECT t.trial_id, c.id AS exec_id
+  FROM trials t
+  JOIN execution c ON c.data @> jsonb_build_object('pipelineRunId', t.trial_id)
+  UNION
+  SELECT t.trial_id, c.id AS exec_id
+  FROM trials t
+  JOIN execution c ON c.parent_execution_id = t.trial_id
+  UNION
+  SELECT t.trial_id, c.id AS exec_id
+  FROM trials t
+  JOIN execution c ON c.parent_execution_id >= (t.trial_id || ':step:') AND c.parent_execution_id < (t.trial_id || ':step;')
+  WHERE NOT EXISTS (SELECT 1 FROM reused_steps rs WHERE rs.trial_id = t.trial_id AND rs.step_exec_id = c.parent_execution_id)
+  UNION
+  SELECT t.trial_id, c.id AS exec_id
+  FROM trials t
+  JOIN pipeline_step p ON p.run_id = t.trial_id AND p.ref_mode IS DISTINCT FROM 'reused' AND p.native_execution_id IS NOT NULL
+  JOIN execution c ON c.id = p.native_execution_id
+ ),
+ session_parents AS (
+  SELECT coalesce(jsonb_object_agg(id, parent_execution_id), '{}'::jsonb) AS m
+  FROM session WHERE parent_execution_id IS NOT NULL
+ ),
+ edges AS MATERIALIZED (
+  SELECT DISTINCT c.id AS child_id, p.parent_id::text AS parent_id
+  FROM execution c
+  CROSS JOIN LATERAL (VALUES
+   (c.parent_execution_id),
+   (CASE WHEN c.delegation IS NOT NULL THEN c.delegation->>'parentExecutionId' END),
+   ((SELECT m FROM session_parents) ->> c.session_id)
+  ) p(parent_id)
+  WHERE p.parent_id IS NOT NULL
+ ),
+ tree AS (
+  SELECT trial_id, exec_id FROM seed
+  UNION
+  SELECT tr.trial_id, e.child_id AS exec_id
+  FROM edges e JOIN tree tr ON e.parent_id = tr.exec_id
+ ),
+ scoped_leaves AS (
+  SELECT DISTINCT 'trial'::text AS scope, tr.trial_id AS scope_key, e.id AS leaf_id
+  FROM tree tr
+  JOIN execution e ON e.id = tr.exec_id
+  LEFT JOIN execution_totals tot ON tot.execution_id = e.id
+  WHERE e.kind NOT IN ('pipeline_run', 'pipeline_step')
+    AND NOT (e.kind = 'child_agent' AND tot.execution_id IS NULL)
+ )
+SELECT
+ coalesce((SELECT array_agg(scope ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scopes,
+ coalesce((SELECT array_agg(scope_key ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scope_keys,
+ coalesce((SELECT array_agg(leaf_id ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS leaf_ids
+`
+
+type LabTrialsLineageRow struct {
+	Scopes    []string
+	ScopeKeys []string
+	LeafIds   []string
+}
+
+// Non-reused leaf executions per trial ID, including child_agent and tool_run descendants (lab.go expGet, lab_leaderboard.go).
+func (q *Queries) LabTrialsLineage(ctx context.Context, trialIds []string) (LabTrialsLineageRow, error) {
+	row := q.db.QueryRow(ctx, labTrialsLineage, trialIds)
+	var i LabTrialsLineageRow
+	err := row.Scan(&i.Scopes, &i.ScopeKeys, &i.LeafIds)
 	return i, err
 }
 

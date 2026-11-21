@@ -1077,6 +1077,68 @@ func (v *LabJudgeOutput) Validate() error {
 	return nil
 }
 
+type LabLeaderboardEntry struct {
+	Collection         string   `json:"collection"`
+	ConfigRef          *string  `json:"configRef"`
+	CostBasis          string   `json:"costBasis"`
+	CostUsd            *float64 `json:"costUsd"`
+	Evaluator          string   `json:"evaluator"`
+	FailedTrials       int64    `json:"failedTrials"`
+	LatestAt           string   `json:"latestAt"`
+	LatestExperimentId string   `json:"latestExperimentId"`
+	Model              *string  `json:"model"`
+	PipelineId         string   `json:"pipelineId"`
+	Profile            *string  `json:"profile"`
+	ScoreForm          string   `json:"scoreForm"`
+	ScoreMax           *float64 `json:"scoreMax"`
+	ScoreMean          *float64 `json:"scoreMean"`
+	ScoreMin           *float64 `json:"scoreMin"`
+	SucceededTrials    int64    `json:"succeededTrials"`
+	TokensTotal        int64    `json:"tokensTotal"`
+	Trials             int64    `json:"trials"`
+	UseCaseId          string   `json:"useCaseId"`
+	VariantLabel       string   `json:"variantLabel"`
+	WallMsMedian       *int64   `json:"wallMsMedian"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabLeaderboardEntry) Validate() error {
+	return nil
+}
+
+type LabLeaderboardReply struct {
+	Collections []string              `json:"collections"`
+	Entries     []LabLeaderboardEntry `json:"entries"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabLeaderboardReply) Validate() error {
+	if v.Collections == nil {
+		return Missing("collections")
+	}
+	if v.Entries == nil {
+		return Missing("entries")
+	}
+	for i := range v.Entries {
+		if err := Check(&v.Entries[i], "entries"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type LabLeaderboardRequest struct {
+	Collection *string `json:"collection,omitempty"`
+	Days       *int64  `json:"days,omitempty"`
+	ProjectId  *string `json:"projectId,omitempty"`
+	UseCaseId  *string `json:"useCaseId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabLeaderboardRequest) Validate() error {
+	return nil
+}
+
 type LabLoopAllocator struct {
 	Kind   LabLoopAllocatorKind       `json:"kind"`
 	Params map[string]json.RawMessage `json:"params,omitempty"`
@@ -1959,6 +2021,7 @@ type LabTrialSpend struct {
 	Basis   *string  `json:"basis,omitempty"`
 	Calls   *float64 `json:"calls,omitempty"`
 	Credits *float64 `json:"credits,omitempty"`
+	Tokens  *int64   `json:"tokens,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }
@@ -2187,6 +2250,7 @@ func init() {
 		"lab_experiment_get":    {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "A Lab experiment (experimentId) with its variants, trials and scores", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\"],\"type\":\"object\"}")},
 		"lab_experiment_note":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Add a note to a Lab experiment (experimentId, kind, text, optional field and value)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"field\":{\"$comment\":\"Amendment only: goal, hypothesis, decisionRule, labGroup or primaryEvaluator.\",\"type\":\"string\"},\"kind\":{\"enum\":[\"amendment\",\"note\"],\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"value\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"experimentId\",\"kind\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"lab_experiments_list":  {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Lab experiments", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"lab_leaderboard":       {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Aggregate Lab benchmark and real-work results across experiments by use case, pipeline, variant, model, profile and evaluator", Changes: []string{"experiment", "score", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"collection\":{\"type\":\"string\"},\"days\":{\"minimum\":1,\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"useCaseId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"lab_promote":           {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Promote a variant of a Lab experiment (experimentId, variant) to the catalogue recommendation", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"variant\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"variant\"],\"type\":\"object\"}")},
 		"lab_rating_create":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask for a human rating of Lab trials (experimentId, form, trialIds)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"form\":{\"enum\":[\"pass_fail\",\"pick_best\",\"scale\"],\"type\":\"string\"},\"trialIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"experimentId\",\"form\",\"trialIds\"],\"type\":\"object\"}")},
 		"lab_rating_get":        {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "A Lab rating question with its answers (questionId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\"],\"type\":\"object\"}")},
