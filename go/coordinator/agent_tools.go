@@ -1,0 +1,750 @@
+// Agent tools: /api/hosts/agent-tools MCP server, tool binding, director/focus scoping, and agent-callable operations.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"maps"
+	"slices"
+	"sort"
+
+	"fleet/contract"
+	"fleet/mcpserve"
+
+	"github.com/jackc/pgx/v5"
+)
+
+func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
+	eid := deref(r.ExecutionId)
+	if eid == "" {
+		return nil, fail(400, "Expected executionId")
+	}
+	e, err := recGet[agentExecution](q, recExecution, eid)
+	if err != nil {
+		return nil, err
+	}
+	if rid := deref(r.Resume); rid != "" {
+		if r.Question != nil || r.RequestId != nil || r.TaskId != nil {
+			return nil, fail(400, "Use question + requestId for a fresh ask, or resume=<questionId> alone to read an existing answer; resume is not continuation prose")
+		}
+		qu, err := recGet[agentQuestion](q, recQuestion, rid)
+		if err != nil {
+			return nil, err
+		}
+		if qu.ExecutionID != e.ID && qu.SessionID != e.SessionID {
+			return nil, fail(403, "Question belongs to another session")
+		}
+		return recOf(qu), nil
+	}
+	rid := deref(r.RequestId)
+	if rid == "" {
+		return nil, fail(400, "Expected requestId")
+	}
+	question := deref(r.Question)
+	if question == "" {
+		return nil, fail(400, "Expected question")
+	}
+	link, err := q.db().AgentExecutionLink(q.ctx(), eid)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	taskID, projectID := deref(link.TaskID), deref(link.ProjectID)
+	explicit := r.TaskId != nil || bodyKeys(q)["taskId"]
+	if explicit {
+		tid := deref(r.TaskId)
+		if tid == "" {
+			return nil, fail(400, "Expected taskId")
+		}
+		t, err := taskRow(q, tid)
+		if err != nil {
+			return nil, err
+		}
+		tp := agentView[struct {
+			ProjectID string `json:"project_id"`
+		}](t).ProjectID
+		if !mayAccessProjectID(q.person, tp) {
+			return nil, fail(403, "Task project is outside caller grants")
+		}
+		if (taskID != "" && taskID != tid) || (projectID != "" && projectID != tp) {
+			return nil, fail(409, "Question task conflicts with the execution task or project")
+		}
+		taskID, projectID = tid, tp
+	}
+	if old, err := recAll[agentQuestion](q, recQuestion, agentFilter{ExecutionID: &eid, RequestID: &rid}); err != nil {
+		return nil, err
+	} else if len(old) > 0 {
+		if old[0].Question != question || deref(old[0].TaskID) != taskID {
+			return nil, fail(409, "Question identity conflict")
+		}
+		return recOf(old[0]), nil
+	}
+	s, err := recGet[agentSession](q, recSession, e.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	if projectID == "" {
+		projectID = s.ProjectID
+	}
+	if explicit {
+		if err := withdrawIdleDecision(q, taskID); err != nil {
+			return nil, err
+		}
+	}
+	qu := agentQuestion{ID: newID(), ExecutionID: eid, SessionID: e.SessionID, ProjectID: agentOpt(projectID), TaskID: agentOpt(taskID), RequestID: rid, Question: question, State: "open", CreatedAt: nowMs()}
+	if err := recPut(q, recQuestion, &qu); err != nil {
+		return nil, err
+	}
+	out := recOf(qu) // a fresh question shows its missing project and task as null
+	out["projectId"], out["taskId"] = agentNullText(projectID), agentNullText(taskID)
+	return out, nil
+}
+
+// agentReplyTo: an answer to an agent's question delivered to its session (the reply tool, a task decision's answer).
+func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, error) {
+	qid := deref(r.QuestionId)
+	if qid == "" {
+		return nil, fail(400, "Expected questionId")
+	}
+	qu, err := recGet[agentQuestion](q, recQuestion, qid)
+	if err != nil {
+		return nil, err
+	}
+	answer, _ := jsonText(r.Answer)
+	if answer == "" {
+		return nil, fail(400, "Expected answer")
+	}
+	if qu.State == "answered" {
+		if qu.Answer != answer {
+			return nil, fail(409, "Question already answered differently")
+		}
+		return recOf(qu), nil
+	}
+	if qu.ProjectID == nil { // a question asked before it carried its session's project
+		s, err := recGet[agentSession](q, recSession, qu.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		qu.ProjectID = agentOpt(s.ProjectID)
+	}
+	qu.State, qu.Answer, qu.AnsweredAt = "answered", answer, nowMs()
+	d, err := agentSubmit(q, &contract.MessageSendRequest{SessionId: &qu.SessionID, RequestId: ptr("reply:" + qid),
+		Text: ptr(fmt.Sprintf("Fleet reply to your question %s (\"%s\"):\n%s", qid, qu.Question, answer))}, "")
+	if err != nil {
+		return nil, err
+	}
+	if d.queued != nil {
+		qu.Delivery = &agentQuestionDelivery{QueueID: d.queued.ID, State: d.queued.State}
+	} else {
+		qu.Delivery = &agentQuestionDelivery{ExecutionID: d.execution.ID}
+	}
+	err = recPut(q, recQuestion, &qu)
+	return recOf(qu), err
+}
+
+func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneReply, error) {
+	var none contract.WorkerDoneReply
+	eid := b.ExecutionId
+	if eid == "" {
+		return none, fail(400, "Expected executionId")
+	}
+	e, err := recGet[agentExecution](q, recExecution, eid)
+	if err != nil {
+		return none, err
+	}
+	record := func(r contract.WorkerDoneReply) (contract.WorkerDoneReply, error) {
+		return r, recWrite(q, recWorkerDone, r)
+	}
+	reject := func(code, reason string) (contract.WorkerDoneReply, error) {
+		id, at := newID(), nowMs()
+		return record(contract.WorkerDoneReply{Id: &id, ExecutionId: eid, Action: "rejected", Code: &code, Reason: &reason, At: &at})
+	}
+	var outcome string
+	json.Unmarshal(b.Outcome, &outcome) // a non-string outcome is rejected below, as before
+	var summary *string
+	json.Unmarshal(b.Summary, &summary) // a non-string summary is stored as null
+	if outcome != "succeeded" && outcome != "failed" {
+		return reject("invalid_outcome", "worker_done requires outcome=succeeded or outcome=failed.")
+	}
+	es, err := agentExecutions(q, e.SessionID)
+	if err != nil {
+		return none, err
+	}
+	if latest := es[len(es)-1]; latest.ID != eid {
+		return reject("stale_dispatch", fmt.Sprintf("Execution %s is superseded by %s.", eid, latest.ID))
+	}
+	if r := e.Report; r != nil {
+		if r.Outcome == outcome && (r.Summary == nil) == (summary == nil) && deref(r.Summary) == deref(summary) {
+			report, yes := *r, true
+			return contract.WorkerDoneReply{Action: "accepted", ExecutionId: eid, Report: &report, Duplicate: &yes}, nil
+		}
+		return reject("already_reported", "A different worker_done was already accepted for this execution.")
+	}
+	if n := deref(b.NativeSessionId); n != "" {
+		known, err := agentKnownNative(q, &e)
+		if err != nil {
+			return none, err
+		}
+		if known != "" && known != n {
+			return reject("native_identity_conflict", "Reported native session differs from the captured one.")
+		}
+	}
+	report := contract.WorkerReport{Outcome: outcome, Summary: summary, At: nowMs()}
+	e.Report = &report
+	if err := recPut(q, recExecution, &e); err != nil {
+		return none, err
+	}
+	if ds, err := recAll[agentDelegation](q, recDelegation, agentFilter{ChildExecutionID: &eid}); err != nil {
+		return none, err
+	} else if len(ds) > 0 {
+		ds[0].Report = &report
+		if err := recPut(q, recDelegation, &ds[0]); err != nil {
+			return none, err
+		}
+	}
+	if e.terminal() {
+		link, err := q.db().AgentExecutionLink(q.ctx(), eid)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return none, err
+		}
+		if taskID := deref(link.TaskID); taskID != "" {
+			if _, err := settleIdleTask(q, taskID); err != nil {
+				return none, err
+			}
+		}
+	}
+	id, at := newID(), nowMs()
+	return record(contract.WorkerDoneReply{Id: &id, ExecutionId: eid, Action: "accepted", Report: &report, At: &at})
+}
+
+// agentTable: an operation the coordinator binds to the calling session for a host agent (agent: bound:session in
+// contracts/ops-*.schema.json; boundArguments). The same operations serve /api/ops and /api/tools unbound.
+func agentTable(name string) bool {
+	_, ok := operations[name]
+	return ok && contract.Operations[name].Agent == "bound:session"
+}
+
+func init() {
+	// /api/hosts/agent-tools: an executor's agent calls a tool (mcpserve); every call is bound to the calling execution's
+	// session and runs through runOp, under the director's person gate.
+	hostRoute(contract.RouteAgentTools, func(q *Request, b *contract.AgentToolsRequest) (any, error) {
+		executionID := ""
+		if b.ExecutionId != nil {
+			executionID = *b.ExecutionId
+		}
+		rpc := mcpserve.Parse(b.Request)
+		// The director's rights, the execution as actor (docs/designs/fleet-pm-agent.md §1).
+		q.agent = "execution:" + executionID
+		q.r = q.r.WithContext(context.WithValue(q.ctx(), actorKey{}, q.agent))
+		var focus []string                   // nil: no focus or "*"
+		sessionProject, focused := "", false // the calling session's own project; whether it has any focus
+		prove := func() error {
+			var e agentExecution
+			if executionID != "" {
+				d, err := getExecution(q, executionID)
+				if err != nil {
+					return err
+				}
+				if e, err = asT[agentExecution](d); err != nil {
+					return err
+				}
+				if deref(e.HostID) != b.HostId {
+					return fail(403, "Execution rejected")
+				}
+			}
+			c, err := recGet[agentCommand](q, recCommand, b.CommandId)
+			if err != nil {
+				return err
+			}
+			if c.ExecutionID != executionID || c.HostID != b.HostId {
+				return fail(403, "Command rejected")
+			}
+			if sid := e.SessionID; sid != "" {
+				if s, err := recMaybe[agentSession](q, recSession, sid); err != nil {
+					return err
+				} else if s != nil {
+					focus, sessionProject, focused = focusIDsOf(s.Focus), s.ProjectID, s.Focus != nil
+				}
+			}
+			// A call without an execution (initialize, tools/list) acts for the host's holder; never an implicit owner.
+			holder := ""
+			if q.host != nil {
+				holder = q.host.Holder
+			}
+			d := firstString(e.DirectedBy, holder)
+			if q.person = q.peopleSnapshot().person(d); q.person == nil {
+				return fail(403, "Director "+d+" is not a person of this Fleet")
+			}
+			// A host acts with its director's rights only when its holder is that director or the owner (whose hosts
+			// run taken work, people-access §5); another holder's host never borrows a director's grants.
+			if hp := q.peopleSnapshot().person(holder); d != holder && (hp == nil || !hp.Owner) {
+				return fail(403, "Host "+b.HostId+" is held by "+holder+", not the director "+d)
+			}
+			// Taken work runs on the holder's subscription (dispatch sets directedBy to the holder), but its agent acts
+			// with the rights of the person it was taken from: otherwise a member's run would borrow the owner's rights,
+			// and its child sessions (director(q)) would inherit them.
+			if tf := e.TakenFrom; tf != "" {
+				if q.person = q.peopleSnapshot().person(tf); q.person == nil {
+					return fail(403, "Requester "+tf+" is not a person of this Fleet")
+				}
+			}
+			return nil
+		}
+		if name := rpc.Params.Name; rpc.Method == "tools/call" && !agentTable(name) {
+			if agentDenied(name) {
+				return nil, fail(403, "Only a person may do this")
+			}
+			if executionID == "" {
+				return nil, fail(403, "Execution rejected")
+			}
+		}
+		// The proof and the director's access, in one read; each call then runs in its own transaction (runOp).
+		if err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
+			if err := prove(); err != nil {
+				return err
+			}
+			return refreshRequestAccess(q)
+		}); err != nil {
+			return nil, err
+		}
+		receipt := func(payload any) *toolReceipt {
+			return &toolReceipt{key: b.AgentToolKey, execution: executionID, payload: payload}
+		}
+		// tableCall: an agent-table tool, its arguments bound to the caller's own session (boundArguments).
+		tableCall := func(name string, raw json.RawMessage) (any, error) {
+			var args map[string]json.RawMessage
+			json.Unmarshal(raw, &args)
+			err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
+				if err := refreshRequestAccess(q); err != nil {
+					return err
+				}
+				var err error
+				args, err = agentBoundArguments(q, name, args, executionID)
+				return err
+			})
+			if err != nil {
+				return nil, err
+			}
+			bound := jsonValue(jsonBytes(args))
+			return q.app.runOp(q, name, json.RawMessage(js(bound)), receipt(bound))
+		}
+		// operationCall: any other operation the director may call, with the focus defaults of an agent (§2).
+		operationCall := func(name string, raw json.RawMessage) (any, error) {
+			if isResourceRead(name) && !resourceReadsEnabled {
+				return nil, fail(503, "Prepared project reads disabled")
+			}
+			if !agentMay(q.person, name) {
+				return nil, fail(400, "Unknown agent tool")
+			}
+			var a map[string]json.RawMessage
+			json.Unmarshal(raw, &a)
+			if a == nil {
+				a = map[string]json.RawMessage{}
+			}
+			if name == "task_page" && focus != nil {
+				var f map[string]json.RawMessage
+				json.Unmarshal(a["filter"], &f) // a filter that is not an object reads as none
+				if f == nil || !jsonGiven(f["projectId"]) {
+					if f == nil {
+						f = map[string]json.RawMessage{}
+					}
+					f["projectId"] = jsonBytes(focus) // focus filters reads without a project (§2)
+					a["filter"] = jsonBytes(f)
+				}
+			}
+			if name == "analytics_query" {
+				var bound []string
+				if focused && focus != nil {
+					bound = focus
+				} else if !focused && sessionProject != "" {
+					bound = []string{sessionProject}
+				}
+				if bound != nil {
+					if len(bound) == 0 {
+						return nil, fail(403, "Project outside the session focus")
+					}
+					if jsonGiven(a["projectId"]) {
+						pid, ok := jsonText(a["projectId"])
+						if !ok || !slices.Contains(bound, pid) {
+							return nil, fail(403, "Project outside the session focus")
+						}
+					}
+					var f map[string]json.RawMessage
+					json.Unmarshal(a["filters"], &f)
+					for _, fk := range []string{"project", "projectId"} {
+						if raw, ok := f[fk]; ok && jsonGiven(raw) {
+							for _, pid := range jsonStrings(raw) {
+								if !slices.Contains(bound, pid) {
+									return nil, fail(403, "Project outside the session focus")
+								}
+							}
+						}
+					}
+					if !jsonGiven(a["projectId"]) && len(jsonStrings(f["project"])) == 0 && len(jsonStrings(f["projectId"])) == 0 {
+						if f == nil {
+							f = map[string]json.RawMessage{}
+						}
+						f["projectId"] = jsonBytes(bound)
+						a["filters"] = jsonBytes(f)
+					}
+				}
+			}
+			// An operation that requires projectId, called without the key, gets the one focus project, or the session's
+			// own project when it has no focus (§2). Optional projectIds stay absent (scope-wide reads), an explicit null
+			// stays null, and the operation's own gates still refuse a project the director cannot reach.
+			if _, given := a["projectId"]; !given && projectRequired[name] {
+				if len(focus) == 1 {
+					a["projectId"] = jsonBytes(focus[0])
+				} else if !focused && sessionProject != "" {
+					a["projectId"] = jsonBytes(sessionProject)
+				}
+			}
+			if name == "task_create" && !jsonGiven(a["projectId"]) && len(focus) == 1 {
+				a["projectId"] = jsonBytes(focus[0]) // one focus project is the default (§2)
+			}
+			if pid, _ := jsonText(a["projectId"]); isResourceRead(name) && pid != "" && !mayAccessProjectID(q.person, pid) {
+				return nil, fail(404, "Unknown project")
+			}
+			if name == "project_update" || name == "project_context" || name == "project_readiness" || isResourceRead(name) {
+				err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
+					out, err := projectAgentArguments(q, maps.Clone(a), executionID, isResourceRead(name)) // a retried attempt starts again from a
+					if err == nil {
+						a = out
+					}
+					return err
+				})
+				if err != nil {
+					return nil, err
+				}
+			}
+			return q.app.runOp(q, name, json.RawMessage(js(jsonValue(jsonBytes(a)))), receipt(nil))
+		}
+		out, err := mcpserve.Server{Name: "fleet-agent", Tools: agentTools(q.person), Call: func(name string, raw json.RawMessage) (any, error) {
+			if agentTable(name) {
+				return tableCall(name, raw)
+			}
+			return operationCall(name, raw)
+		}}.Handle(b.Request)
+		if errors.Is(err, mcpserve.ErrUnknownMethod) {
+			return nil, fail(400, "Unknown tool")
+		}
+		return out, err
+	})
+}
+
+// focusIDsOf: the focus projects; nil for no focus or "*" (every project in scope).
+func focusIDsOf(f *agentFocus) []string {
+	if f == nil || string(f.ProjectIDs) == `"*"` {
+		return nil
+	}
+	return jsonStrings(f.ProjectIDs)
+}
+
+// focusProjectOf: the project of a call in a focused session: the given one (inside focus and the director's grants),
+// or the single focus project. settings: the project's settings must load too (the legacy focus resolution, which
+// keeps its configuration validation; prepared reads skip it so a configuration failure cannot take down the resource
+// projection).
+func focusProjectOf(q *Request, f *agentFocus, p string, settings bool) (string, error) {
+	ids, all := focusIDsOf(f), f != nil && string(f.ProjectIDs) == `"*"`
+	if p == "" {
+		if all || len(ids) != 1 {
+			return "", fail(400, "Expected projectId: the session focus holds several projects")
+		}
+		p = ids[0]
+	}
+	if !all && !slices.Contains(ids, p) {
+		return "", fail(403, "Project outside the session focus")
+	}
+	if !mayAccessProjectID(q.person, p) {
+		return "", fail(404, "Unknown project")
+	}
+	exists, err := q.db().AgentProjectLive(q.ctx(), p)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", fail(404, "Unknown project")
+	}
+	if settings && projectSettingsOf(q, p) == nil {
+		return "", fail(404, "Unknown project")
+	}
+	return p, nil
+}
+
+// sessionDirects: a person changes only sessions they direct (the owner any); an agent call is already bound to its own
+// session tree by boundArguments().
+func sessionDirects(q *Request, s *agentSession) error {
+	if q.agent != "" || q.person == nil || fullAccess(q.person) || s.DirectedBy == q.person.Email {
+		return nil
+	}
+	return fail(403, "Session is directed by someone else")
+}
+
+// focusSet: a session's focus, a list of projects in the caller's grants or "*" (docs/designs/fleet-pm-agent.md §2).
+func focusSet(q *Request, r *contract.FocusSetRequest) (contract.FocusSetReply, error) {
+	var none contract.FocusSetReply
+	sid := r.SessionId
+	if sid == "" {
+		return none, fail(400, "Expected sessionId")
+	}
+	s, err := recGet[agentSession](q, recSession, sid)
+	if err != nil {
+		return none, err
+	}
+	if err := sessionDirects(q, &s); err != nil {
+		return none, err
+	}
+	v := json.RawMessage(`"*"`)
+	if t, _ := jsonText(r.ProjectIds); t != "*" {
+		var xs []json.RawMessage
+		list := len(r.ProjectIds) > 0 && r.ProjectIds[0] == '[' && json.Unmarshal(r.ProjectIds, &xs) == nil
+		ids := jsonStrings(r.ProjectIds)
+		if !list || len(ids) != len(xs) {
+			return none, fail(400, `Expected projectIds: a list of project ids or "*"`)
+		}
+		for _, id := range ids {
+			if projectSettingsOf(q, id) == nil || (q.person != nil && !mayAccessProjectID(q.person, id)) {
+				return none, fail(404, "Unknown project")
+			}
+		}
+		v = jsonBytes(ids)
+	}
+	s.Focus = &agentFocus{ProjectIDs: v}
+	if err := recPut(q, recSession, &s); err != nil {
+		return none, err
+	}
+	return contract.FocusSetReply{SessionId: sid, Focus: contract.Focus{ProjectIds: v}}, nil
+}
+
+// agentDenied: operations only a person may call (agent: no; take, host secrets, key values); docs/designs/fleet-pm-agent.md
+// §1. Secrets never enter a model's context: the host secret and gateway token operations return one.
+func agentDenied(name string) bool { return contract.Operations[name].Agent == "no" }
+
+// agentMay: an operation outside the agent table offered to the director: one whose declared auth is architect needs
+// the architect role; every other one is offered and runOp's declaredAuth decides.
+func agentMay(p *Person, name string) bool {
+	if !resourceOperationAdvertised(name) {
+		return false
+	}
+	if agentDenied(name) {
+		return false
+	}
+	_, op := operations[name]
+	_, long := longOperations[name]
+	switch auth := contract.Operations[name].Auth; {
+	case !op && !long:
+		return false
+	case fullAccess(p):
+		return true
+	case auth == "architect":
+		return hasRole(p, "architect")
+	}
+	// Owner, holder and project rules stay offered: runOp answers 403 or 404 for the object named.
+	return true
+}
+
+// agentTools: the agent table plus every operation the director may call, as published by tools/list.
+func agentTools(p *Person) []string {
+	out := []string{}
+	for n := range operations {
+		if agentTable(n) || agentMay(p, n) {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// agentAccountArg: an account argument as AccountTakesWork reads it (a string, else its printed value).
+func agentAccountArg(raw json.RawMessage) string {
+	if s, ok := jsonText(raw); ok {
+		return s
+	}
+	return fmt.Sprint(jsonValue(raw))
+}
+
+// agentBoundArguments: host-run agents act only on their own session (or one they created); lists never default to all
+// sessions. a: the tool's arguments as sent, an open object that goes on to the named operation.
+func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, executionID string) (map[string]json.RawMessage, error) {
+	if a == nil {
+		a = map[string]json.RawMessage{}
+	}
+	e, err := recGet[agentExecution](q, recExecution, executionID)
+	if err != nil {
+		return nil, err
+	}
+	own := e.SessionID
+	ownProject := func() (string, error) {
+		s, err := recGet[agentSession](q, recSession, own)
+		if err != nil {
+			return "", err
+		}
+		given, isText := jsonText(a["projectId"])
+		if s.Focus != nil {
+			return focusProjectOf(q, s.Focus, given, !isResourceRead(name))
+		}
+		p := s.ProjectID
+		if isResourceRead(name) && p == "" {
+			return "", fail(400, "Expected projectId")
+		}
+		if _, ok := a["projectId"]; p == "" || (ok && (!isText || given != p)) {
+			return "", fail(403, "Project belongs to another agent")
+		}
+		return p, nil
+	}
+	mine := func(sid string) error {
+		if sid == own && sid != "" {
+			return nil
+		}
+		if sid != "" {
+			s, err := recGet[agentSession](q, recSession, sid)
+			if err != nil {
+				return err
+			}
+			if s.CreatedBySessionID == own {
+				return nil
+			}
+		}
+		return fail(403, "Session belongs to another agent")
+	}
+	sessionArg, _ := jsonText(a["sessionId"])
+	switch {
+	case name == "execution_status" && jsonGiven(a["sessionId"]):
+		s, err := recMaybe[agentSession](q, recSession, sessionArg)
+		if err != nil {
+			return nil, err
+		}
+		if s == nil || s.ReadinessOfSessionID != own {
+			if err := mine(sessionArg); err != nil {
+				return nil, err
+			}
+		}
+		es, err := agentExecutions(q, sessionArg)
+		if err != nil {
+			return nil, err
+		}
+		if len(es) == 0 {
+			return nil, fail(404, "No execution")
+		}
+		a["executionId"] = jsonBytes(es[len(es)-1].ID)
+		delete(a, "sessionId")
+	case name == "ask" || name == "worker_done" || name == "execution_status":
+		a["executionId"] = jsonBytes(executionID)
+	case name == "reply":
+		qid, _ := jsonText(a["questionId"])
+		if qid == "" {
+			return nil, fail(400, "Expected questionId")
+		}
+		qu, err := recGet[agentQuestion](q, recQuestion, qid)
+		if err != nil {
+			return nil, err
+		}
+		if err := mine(qu.SessionID); err != nil {
+			return nil, err
+		}
+	case name == "reconcile":
+		return nil, fail(403, "Not available to host agents")
+	case name == "project_readiness" || name == "project_context" || name == "project_update" || name == "session_presets" || isResourceRead(name):
+		// Bound to the caller's own project: another project's readiness is not the agent's to read.
+		p, err := ownProject()
+		if err != nil {
+			return nil, err
+		}
+		a["projectId"] = jsonBytes(p)
+		if name == "project_readiness" {
+			a["callerSessionId"] = jsonBytes(own)
+		}
+	case name == "session_start":
+		p, err := ownProject()
+		if err != nil {
+			return nil, err
+		}
+		a["projectId"], a["callerSessionId"], a["callerExecutionId"] = jsonBytes(p), jsonBytes(own), jsonBytes(executionID)
+		if pid, ok := a["profileId"]; ok {
+			if id, _ := jsonText(pid); !profileInRoles(projectSettingsOf(q, p), id) {
+				return nil, fail(403, "Profile not in project roles")
+			}
+		}
+		if acct, ok := a["account"]; ok {
+			if ok, err := q.db().AccountTakesWork(q.ctx(), agentAccountArg(acct)); err != nil || !ok {
+				if err == nil {
+					err = fail(403, "Account not available")
+				}
+				return nil, err
+			}
+		}
+	default:
+		if !jsonGiven(a["sessionId"]) {
+			a["sessionId"], sessionArg = jsonBytes(own), own
+		}
+		if err := mine(sessionArg); err != nil {
+			return nil, err
+		}
+		if name == "session_fork" {
+			a["callerSessionId"] = jsonBytes(own)
+		}
+		if name == "session_task_attach" {
+			delete(a, "projectId")
+			p, err := ownProject()
+			if err != nil {
+				return nil, err
+			}
+			a["boundProject"] = jsonBytes(p)
+		}
+	}
+	if name == "session_transition" {
+		target, err := recGet[agentSession](q, recSession, sessionArg)
+		if err != nil {
+			return nil, err
+		}
+		current, _ := target.profile()
+		requested, _ := jsonText(a["profileId"])
+		pid := firstString(requested, current.ID)
+		if _, err := readTrustedProfile(q, pid); err != nil || pid == "" {
+			return nil, fail(403, "Unknown profile")
+		}
+		// ponytail: the account must be a registered managed account; its binding readiness on this host is the accounts area's resolve.
+		if acct, ok := a["account"]; ok && jsonGiven(acct) {
+			if ok, err := q.db().AccountTakesWork(q.ctx(), agentAccountArg(acct)); err != nil || !ok {
+				if err == nil {
+					err = fail(403, "Account not available")
+				}
+				return nil, err
+			}
+		}
+	}
+	return a, nil
+}
+
+// agentOperation: a tool of the executor's tool list (fleetOperations), keys in the order the list wrote them.
+type agentOperation struct {
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema"`
+	Name        string          `json:"name"`
+}
+
+// fleetOperations: name and description of every tool the director may call, for the
+// executor's tool list of a profile with fleetOperations (its MCP server forwards them to /api/hosts/agent-tools).
+func fleetOperations(p *Person) []agentOperation {
+	out := []agentOperation{}
+	for _, t := range mcpserve.List(agentTools(p)) { // the agent table too: the executor's own list predates focus_set and watch_*
+		out = append(out, agentOperation{Name: t.Name, InputSchema: t.InputSchema, Description: t.Description})
+	}
+	return out
+}
+
+// projectRequired: the operations whose input schema requires projectId (read once from the contract).
+var projectRequired = func() map[string]bool {
+	out := map[string]bool{}
+	for n, o := range contract.Operations {
+		var sc struct {
+			Required []string `json:"required"`
+		}
+		// a revoke or an archive must name its project: an agent never does either by omission.
+		if json.Unmarshal(o.InputSchema, &sc) == nil && slices.Contains(sc.Required, "projectId") && n != "project_initial_access_revoke" && n != "project_archive" {
+			out[n] = true
+		}
+	}
+	return out
+}()
