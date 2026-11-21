@@ -16,6 +16,8 @@ import (
 	"fleet/contract"
 	"fleet/coordinator/db"
 	"fleet/errtrack"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // POST /api/hosts/poll (SL5). Decoupled from GLOBAL: heartbeat writes and readiness checks run under "host:"+hostID
@@ -312,19 +314,21 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 		if hostDoc == nil {
 			hostDoc = docOf(pollHost{HostID: host})
 		}
-		pending, err := recAll[doc](wq, recCommand, pollPending{HostID: host, Status: "pending"})
+		pending, err := wq.db().HostPollPending(wq.ctx(), db.HostPollPendingParams{HostID: host})
 		if err != nil {
 			return err
 		}
 		out = []contract.Command{}
-		for _, c := range pending {
-			cv := agentView[pollCommandView](c)
+		prepared := map[string]pollPreparedEntry{}
+		afterCommit(wq, func() { pollPrepared.keep(host, prepared, time.Now()) })
+		for _, row := range pending {
+			cv := pollCommandOf(row, host)
+			c := cv.gate()
 			// A command waits for an executor that honours it (contract.MissingCapability), also if this host went back a release.
-			pl := cv.Payload
-			readOnly, _ := jsonBool(pl.ReadOnly)
-			branch, isBool := jsonBool(pl.Branch)
+			readOnly, _ := jsonBool(row.ReadOnly)
+			branch, isBool := jsonBool(row.Branch)
 			if _, missing := contract.MissingCapability(caps, contract.StartNeeds{ReadOnly: cv.Kind == "start" && readOnly,
-				Branchless: isBool && !branch && !isNull(pl.ProjectID), WorkspaceKey: pl.WorkspaceKey != "", Attachments: len(jsonList(pl.Attachments)) > 0}); missing {
+				Branchless: isBool && !branch && !isNull(row.PayloadProjectID), WorkspaceKey: row.WorkspaceKey != "", Attachments: row.HasAttachments}); missing {
 				continue
 			}
 			// Each command is prepared under its own savepoint: one command that cannot be handed off is stopped with
@@ -332,7 +336,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			if err := exec(wq, "SAVEPOINT poll_command"); err != nil {
 				return err
 			}
-			fresh, err := a.pollReadyCommand(wq, hostDoc, c)
+			fresh, err := a.pollReadyCommand(wq, hostDoc, cv, prepared)
 			if err != nil {
 				reason, outcome := pollCommandRefusal(err)
 				if outcome == pollFails {
@@ -392,26 +396,82 @@ type pollHost struct {
 	HostID string `json:"hostId"`
 }
 
-// pollPending: the pending commands of a host (all's filter).
-type pollPending struct {
-	HostID string `json:"hostId"`
-	Status string `json:"status"`
+// pollCommandView: the fields of a pending command the poll's gates read (HostPollPending).
+type pollCommandView struct {
+	ID          string
+	Kind        string
+	ExecutionID string
+	HostID      string
+	Status      string
+	HandedOut   *bool
+	ProjectID   json.RawMessage // its payload's projectId
 }
 
-// pollCommandView: the fields of a command record the poll reads (its payload's start needs among them).
-type pollCommandView struct {
+func pollCommandOf(row db.HostPollPendingRow, host string) pollCommandView {
+	return pollCommandView{ID: row.ID, Kind: row.Kind, ExecutionID: deref(row.ExecutionID), HostID: host, Status: row.Status,
+		HandedOut: row.HandedOut, ProjectID: row.PayloadProjectID}
+}
+
+// gate: the command record the gates read (agentReady, handoffPipelineCommand, refusePollCommand), without its
+// payload: a pipeline handoff that writes the payload reads it itself.
+func (cv pollCommandView) gate() doc {
+	return docOf(pollGateCommand{ID: cv.ID, Kind: cv.Kind, ExecutionID: cv.ExecutionID, HostID: cv.HostID, Status: cv.Status})
+}
+
+type pollGateCommand struct {
 	ID          string `json:"id"`
 	Kind        string `json:"kind"`
-	ExecutionID string `json:"executionId"`
+	ExecutionID string `json:"executionId,omitempty"`
+	HostID      string `json:"hostId"`
 	Status      string `json:"status"`
-	HandedOut   *bool  `json:"handedOut"`
-	Payload     struct {
-		ReadOnly     json.RawMessage `json:"readOnly"`
-		Branch       json.RawMessage `json:"branch"`
-		ProjectID    json.RawMessage `json:"projectId"`
-		WorkspaceKey string          `json:"workspaceKey"`
-		Attachments  json.RawMessage `json:"attachments"`
-	} `json:"payload"`
+}
+
+// pollPreparedEntry: a command as a poll handed it out, at the stored revision it was read at.
+type pollPreparedEntry struct {
+	revision string
+	cmd      contract.Command
+}
+
+// pollPrepared: per host, the reply of each pending command the last committed poll handed out. A host gets a pending
+// command again on every poll until its receipt (its reply may have been lost); a command whose stored row did not
+// change since (HostPollCommandRevision) is answered from here, not read and decoded again (a start is ~100 KB: about
+// 85 ms a command a poll under -race, 2026-11-21). Each poll replaces its host's entries, so only pending ones stay; a
+// host that has not polled for pollPreparedIdle (gone, removed, replaced) loses its entries at another host's poll.
+var pollPrepared = &preparedCommands{m: map[string]preparedHost{}}
+
+const pollPreparedIdle = 10 * time.Minute
+
+type preparedCommands struct {
+	mu sync.Mutex
+	m  map[string]preparedHost
+}
+
+type preparedHost struct {
+	at      time.Time
+	entries map[string]pollPreparedEntry
+}
+
+func (p *preparedCommands) get(host, id, revision string) (contract.Command, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.m[host].entries[id]
+	return e.cmd, ok && e.revision == revision
+}
+
+// keep makes entries host's prepared commands (after the poll that read them committed, at now).
+func (p *preparedCommands) keep(host string, entries map[string]pollPreparedEntry, now time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for h, x := range p.m {
+		if now.Sub(x.at) > pollPreparedIdle {
+			delete(p.m, h)
+		}
+	}
+	if len(entries) == 0 {
+		delete(p.m, host)
+		return
+	}
+	p.m[host] = preparedHost{now, entries}
 }
 
 // pollExecutionView: the fields of a command's execution the poll reads.
@@ -423,12 +483,11 @@ type pollExecutionView struct {
 
 // pollReadyCommand: command c as the host gets it now, or nil while it is not ready. The ready filter may rewrite the
 // command (delegation inputs), so the reply is the command as stored after it.
-func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, error) {
-	ok, err := agentReady(wq, c)
+func (a *App) pollReadyCommand(wq *Request, hostDoc doc, cv pollCommandView, prepared map[string]pollPreparedEntry) (*contract.Command, error) {
+	ok, err := agentReady(wq, cv.gate())
 	if err != nil || !ok {
 		return nil, err
 	}
-	cv := agentView[pollCommandView](c)
 	if inList(stopWithheldKinds, cv.Kind) {
 		// This row lock is shared with stop. A committed poll may have
 		// reached the executor even when its HTTP response is lost.
@@ -442,13 +501,19 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, 
 			_, err := recGet[doc](wq, recExecution, cv.ExecutionID)
 			return nil, err
 		}
-		c, err = recGet[doc](wq, recCommand, cv.ID)
+		// The command as it is under the lock (a stop may have settled it, a writer changed it).
+		status, err := commandStatus(wq, cv.ID)
 		if err != nil {
 			return nil, err
 		}
-		if cv = agentView[pollCommandView](c); cv.Status != "pending" {
-			return nil, nil
+		if status == "" {
+			return nil, errNotFound
 		}
+		rows, err := wq.db().HostPollPending(wq.ctx(), db.HostPollPendingParams{HostID: cv.HostID, ID: &cv.ID})
+		if err != nil || len(rows) == 0 {
+			return nil, err // no longer pending here
+		}
+		cv = pollCommandOf(rows[0], cv.HostID)
 	}
 	e, err := recGet[doc](wq, recExecution, cv.ExecutionID)
 	if err != nil {
@@ -462,7 +527,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, 
 	}
 	// Held-host trust: work that carries project content goes only to a host whose holder may see the project.
 	if k := cv.Kind; k == "start" || k == "script" || k == "delivery-step" {
-		if !a.hostMayRun(hostDoc, nonNil(rawAny(ev.ProjectID), rawAny(cv.Payload.ProjectID)), rawAny(ev.DirectedBy)) {
+		if !a.hostMayRun(hostDoc, nonNil(rawAny(ev.ProjectID), rawAny(cv.ProjectID)), rawAny(ev.DirectedBy)) {
 			return nil, nil
 		}
 	}
@@ -472,7 +537,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, 
 			return nil, err
 		}
 	}
-	if ok, err := handoffPipelineCommand(wq, e, c); err != nil || !ok {
+	if ok, err := handoffPipelineCommand(wq, e, cv.gate()); err != nil || !ok {
 		return nil, err
 	}
 	if cv.HandedOut != nil && !*cv.HandedOut {
@@ -480,15 +545,25 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, 
 			return nil, err
 		}
 	}
-	out, err := recGet[doc](wq, recCommand, cv.ID)
+	revision, err := wq.db().HostPollCommandRevision(wq.ctx(), cv.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
-	delete(out, "handedOut") // coordinator-only delivery fence, keep executor replays byte-identical
-	cmd, err := asT[contract.Command](out)
-	if err != nil {
-		return nil, fail(410, "command does not match the host protocol: "+err.Error()) // stopped with the reason
+	cmd, ok := pollPrepared.get(cv.HostID, cv.ID, revision)
+	if !ok {
+		out, err := recGet[doc](wq, recCommand, cv.ID)
+		if err != nil {
+			return nil, err
+		}
+		delete(out, "handedOut") // coordinator-only delivery fence, keep executor replays byte-identical
+		if cmd, err = asT[contract.Command](out); err != nil {
+			return nil, fail(410, "command does not match the host protocol: "+err.Error()) // stopped with the reason
+		}
 	}
+	prepared[cv.ID] = pollPreparedEntry{revision, cmd}
 	return &cmd, nil
 }
 

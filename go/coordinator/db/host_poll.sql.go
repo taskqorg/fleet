@@ -18,6 +18,18 @@ func (q *Queries) HostPollClearWaitReason(ctx context.Context, id string) error 
 	return err
 }
 
+const hostPollCommandRevision = `-- name: HostPollCommandRevision :one
+SELECT (xmin::text || ' ' || updated_at::text)::text AS revision FROM command WHERE id=$1
+`
+
+// The revision of a stored command: its row version and write time (a write in this transaction changes both).
+func (q *Queries) HostPollCommandRevision(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, hostPollCommandRevision, id)
+	var revision string
+	err := row.Scan(&revision)
+	return revision, err
+}
+
 const hostPollErrorOf = `-- name: HostPollErrorOf :one
 
 SELECT coalesce(payload->'pollError', 'null'::jsonb)::jsonb AS poll_error FROM host_observation WHERE id=$1
@@ -57,6 +69,66 @@ func (q *Queries) HostPollLockExecution(ctx context.Context, id string) (bool, e
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const hostPollPending = `-- name: HostPollPending :many
+SELECT id, kind, execution_id, status::text AS status, handed_out,
+ coalesce(x.p->'readOnly', 'null'::jsonb)::jsonb AS read_only, coalesce(x.p->'branch', 'null'::jsonb)::jsonb AS branch,
+ coalesce(x.p->'projectId', 'null'::jsonb)::jsonb AS payload_project_id, coalesce(x.p->>'workspaceKey', '')::text AS workspace_key,
+ coalesce(jsonb_typeof(x.p->'attachments') = 'array' AND jsonb_array_length(x.p->'attachments') > 0, false)::boolean AS has_attachments
+FROM command CROSS JOIN LATERAL (SELECT payload->'payload' AS p) x
+WHERE host_id= $1::text AND status='pending' AND ($2::text IS NULL OR id=$2) ORDER BY seq
+`
+
+type HostPollPendingParams struct {
+	HostID string
+	ID     *string
+}
+
+type HostPollPendingRow struct {
+	ID               string
+	Kind             string
+	ExecutionID      *string
+	Status           string
+	HandedOut        *bool
+	ReadOnly         []byte
+	Branch           []byte
+	PayloadProjectID []byte
+	WorkspaceKey     string
+	HasAttachments   bool
+}
+
+// A host's pending commands in order (one of them with id), without their payloads: only what the poll's gates read of
+// the command's payload (the record's payload field, held in the payload column with the record's other fields).
+func (q *Queries) HostPollPending(ctx context.Context, arg HostPollPendingParams) ([]HostPollPendingRow, error) {
+	rows, err := q.db.Query(ctx, hostPollPending, arg.HostID, arg.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HostPollPendingRow
+	for rows.Next() {
+		var i HostPollPendingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.ExecutionID,
+			&i.Status,
+			&i.HandedOut,
+			&i.ReadOnly,
+			&i.Branch,
+			&i.PayloadProjectID,
+			&i.WorkspaceKey,
+			&i.HasAttachments,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const hostReceiptLockExecution = `-- name: HostReceiptLockExecution :exec

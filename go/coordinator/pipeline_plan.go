@@ -496,6 +496,10 @@ func handoffPipelineCommand(q *Request, execution, command doc) (bool, error) {
 		if grants.Token == nil || len(grants.Refused) > 0 {
 			return false, fail(403, "Pipeline command connection grant was refused")
 		}
+		// The poll's command carries no payload: the stored one gets the token.
+		if cmd, err = recGet[agentCommand](q, recCommand, cmd.ID); err != nil {
+			return false, err
+		}
 		payload := pipelineRuleOf(cmd.Payload)
 		if payload == nil {
 			payload = pipelineRule{}
