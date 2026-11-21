@@ -34,6 +34,7 @@ var defaultAnalyticsMeasures = []contract.AnalyticsMeasure{
 
 func init() {
 	op("analytics_query", analyticsQuery)
+	op("spend_summary", spendSummary)
 }
 
 // systemFilter: the condition that keeps project work (exclude, the default), adds Fleet's own background calls
@@ -441,6 +442,7 @@ func analyticsQuery(q *Request, r *contract.AnalyticsQueryRequest) (contract.Ana
 			{contract.AnalyticsDimensionConnection, f.Connection}, {contract.AnalyticsDimensionExperiment, f.Experiment},
 			{contract.AnalyticsDimensionVariant, f.Variant}, {contract.AnalyticsDimensionState, f.State},
 			{contract.AnalyticsDimensionOutcome, f.Outcome}, {contract.AnalyticsDimensionPerson, f.Person},
+			{contract.AnalyticsDimensionPurpose, f.Purpose}, {contract.AnalyticsDimensionCategory, f.Category},
 		}
 	}
 	querySQL, params := sqlAnalytics(from, to, systemOf(r.System, parentNamed), r.ProjectId, filters, dims, wantCost)
@@ -1185,4 +1187,239 @@ func spawnedTasks(out *contract.ScopedResourceRollup, raw []byte, summaries map[
 		out.SpawnedTasks = append(out.SpawnedTasks, st)
 	}
 	return nil
+}
+
+// spendDimension maps a spend_summary breakdown key to the analytics_query dimension it aggregates over.
+func spendDimension(by contract.SpendGroupBy) (contract.AnalyticsDimension, error) {
+	switch by {
+	case contract.SpendGroupByPurpose:
+		return contract.AnalyticsDimensionPurpose, nil
+	case contract.SpendGroupByProject:
+		return contract.AnalyticsDimensionProject, nil
+	case contract.SpendGroupByCategory:
+		return contract.AnalyticsDimensionCategory, nil
+	case contract.SpendGroupByProfile:
+		return contract.AnalyticsDimensionProfileId, nil
+	case contract.SpendGroupByModel:
+		return contract.AnalyticsDimensionModel, nil
+	case contract.SpendGroupByHost:
+		return contract.AnalyticsDimensionHost, nil
+	}
+	return "", fail(400, "Unknown spend group by: "+string(by))
+}
+
+func measureInt(m map[string]contract.MeasuredNumber, key string) int64 {
+	if v, ok := m[key]; ok && v.Value != nil {
+		return int64(math.Round(*v.Value))
+	}
+	return 0
+}
+
+func costUsdAndUnpriced(cost []contract.CostFigure) (float64, int64) {
+	var usd float64
+	var unpriced int64
+	for _, c := range cost {
+		if c.Basis == contract.ResourceBasisUnavailable {
+			if c.Usages != nil {
+				unpriced += *c.Usages
+			} else {
+				unpriced++
+			}
+			continue
+		}
+		if c.Currency != nil && *c.Currency == "USD" && c.Value != nil {
+			usd += *c.Value
+		}
+	}
+	return usd, unpriced
+}
+
+func spendRowsFromBucket(rows []contract.AnalyticsBucketRow, dim contract.AnalyticsDimension, totalsUsd float64) []contract.SpendRow {
+	out := make([]contract.SpendRow, 0, len(rows))
+	for _, row := range rows {
+		key := row.Dimensions[string(dim)]
+		if key == "" {
+			key = "unknown"
+		}
+		tokens := measureInt(row.Measures, "tokens_input") + measureInt(row.Measures, "tokens_output")
+		usd, unpriced := costUsdAndUnpriced(row.Cost)
+		sr := contract.SpendRow{
+			Key:      key,
+			Label:    key,
+			Runs:     measureInt(row.Measures, "executions"),
+			Failed:   measureInt(row.Measures, "failed"),
+			Tokens:   tokens,
+			Cost:     row.Cost,
+			Unpriced: unpriced,
+		}
+		if totalsUsd > 0 && usd > 0 {
+			s := usd / totalsUsd
+			sr.Share = &s
+		}
+		out = append(out, sr)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ui, _ := costUsdAndUnpriced(out[i].Cost)
+		uj, _ := costUsdAndUnpriced(out[j].Cost)
+		if ui != uj {
+			return ui > uj
+		}
+		if out[i].Runs != out[j].Runs {
+			return out[i].Runs > out[j].Runs
+		}
+		return out[i].Key < out[j].Key
+	})
+	return out
+}
+
+// spendSummary returns spend breakdown for the requested dimension, always accompanied by purpose totals and
+// completed-task efficiency ("what it bought").
+func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSummaryReply, error) {
+	var out contract.SpendSummaryReply
+	dim, err := spendDimension(r.By)
+	if err != nil {
+		return out, err
+	}
+	from, err := parseAnalyticsBound(r.Window.From)
+	if err != nil {
+		return out, err
+	}
+	to, err := parseAnalyticsBound(r.Window.To)
+	if err != nil {
+		return out, err
+	}
+	measures := []contract.AnalyticsMeasure{
+		contract.AnalyticsMeasureExecutions,
+		contract.AnalyticsMeasureFailed,
+		contract.AnalyticsMeasureTokensInput,
+		contract.AnalyticsMeasureTokensOutput,
+		contract.AnalyticsMeasureCost,
+	}
+	mainRep, err := analyticsQuery(q, &contract.AnalyticsQueryRequest{
+		Window:     r.Window,
+		Dimensions: []contract.AnalyticsDimension{dim},
+		Measures:   measures,
+		ProjectId:  r.ProjectId,
+		System:     r.System,
+	})
+	if err != nil {
+		return out, err
+	}
+	purposeRep := mainRep
+	if dim != contract.AnalyticsDimensionPurpose {
+		purposeRep, err = analyticsQuery(q, &contract.AnalyticsQueryRequest{
+			Window:     r.Window,
+			Dimensions: []contract.AnalyticsDimension{contract.AnalyticsDimensionPurpose},
+			Measures:   measures,
+			ProjectId:  r.ProjectId,
+			System:     r.System,
+		})
+		if err != nil {
+			return out, err
+		}
+	}
+	taskByProjRep, err := analyticsQuery(q, &contract.AnalyticsQueryRequest{
+		Window:     r.Window,
+		Dimensions: []contract.AnalyticsDimension{contract.AnalyticsDimensionProject},
+		Measures:   []contract.AnalyticsMeasure{contract.AnalyticsMeasureExecutions, contract.AnalyticsMeasureCost},
+		Filters:    &contract.AnalyticsFilter{Purpose: []string{"task"}},
+		ProjectId:  r.ProjectId,
+		System:     r.System,
+	})
+	if err != nil {
+		return out, err
+	}
+	completedRows, err := q.db().AnalyticsCompletedTasksByProject(q.ctx(), db.AnalyticsCompletedTasksByProjectParams{
+		WinFrom:   from,
+		WinTo:     to,
+		ProjectID: r.ProjectId,
+	})
+	if err != nil {
+		return out, err
+	}
+
+	totalUsd, _ := costUsdAndUnpriced(mainRep.Totals.Cost)
+	byPurpose := spendRowsFromBucket(purposeRep.Rows, contract.AnalyticsDimensionPurpose, totalUsd)
+
+	bought := contract.SpendBought{
+		TaskCost:         []contract.CostFigure{},
+		ConversationCost: []contract.CostFigure{},
+		ByProject:        []contract.SpendBoughtProject{},
+	}
+	for _, row := range purposeRep.Rows {
+		switch row.Dimensions["purpose"] {
+		case "task":
+			bought.TaskCost = row.Cost
+		case "conversation":
+			bought.ConversationRuns = measureInt(row.Measures, "executions")
+			bought.ConversationCost = row.Cost
+		}
+	}
+
+	taskSpend := map[string]contract.AnalyticsBucketRow{}
+	for _, row := range taskByProjRep.Rows {
+		pid := row.Dimensions["project"]
+		if pid == "unknown" {
+			pid = ""
+		}
+		taskSpend[pid] = row
+	}
+	completedMap := map[string]int64{}
+	seenProj := map[string]bool{}
+	projKeys := []string{}
+	for _, c := range completedRows {
+		completedMap[c.ProjectID] = c.N
+		bought.CompletedTasks += c.N
+		if !seenProj[c.ProjectID] {
+			seenProj[c.ProjectID] = true
+			projKeys = append(projKeys, c.ProjectID)
+		}
+	}
+	for pid := range taskSpend {
+		if !seenProj[pid] {
+			seenProj[pid] = true
+			projKeys = append(projKeys, pid)
+		}
+	}
+	for _, pid := range projKeys {
+		done := completedMap[pid]
+		bucket, ok := taskSpend[pid]
+		cost := []contract.CostFigure{}
+		if ok {
+			cost = bucket.Cost
+		}
+		usd, unpriced := costUsdAndUnpriced(cost)
+		label := pid
+		if label == "" {
+			label = "unknown"
+		}
+		item := contract.SpendBoughtProject{
+			ProjectId:      label,
+			CompletedTasks: done,
+			TaskCost:       cost,
+			Unpriced:       unpriced,
+		}
+		if done > 0 && usd > 0 {
+			cpt := usd / float64(done)
+			item.CostPerTaskUsd = &cpt
+		}
+		bought.ByProject = append(bought.ByProject, item)
+	}
+	sort.Slice(bought.ByProject, func(i, j int) bool {
+		if bought.ByProject[i].CompletedTasks != bought.ByProject[j].CompletedTasks {
+			return bought.ByProject[i].CompletedTasks > bought.ByProject[j].CompletedTasks
+		}
+		return bought.ByProject[i].ProjectId < bought.ByProject[j].ProjectId
+	})
+
+	out = contract.SpendSummaryReply{
+		By:        r.By,
+		Totals:    mainRep.Totals,
+		Rows:      spendRowsFromBucket(mainRep.Rows, dim, totalUsd),
+		ByPurpose: byPurpose,
+		Bought:    bought,
+		Hidden:    mainRep.Hidden,
+		Unknown:   mainRep.Unknown,
+	}
+	return out, nil
 }

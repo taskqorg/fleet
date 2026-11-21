@@ -56,10 +56,12 @@ const (
 	AnalyticsDimensionState            AnalyticsDimension = "state"
 	AnalyticsDimensionOutcome          AnalyticsDimension = "outcome"
 	AnalyticsDimensionPerson           AnalyticsDimension = "person"
+	AnalyticsDimensionPurpose          AnalyticsDimension = "purpose"
+	AnalyticsDimensionCategory         AnalyticsDimension = "category"
 )
 
 // AnalyticsDimensionValues lists every AnalyticsDimension in schema order.
-var AnalyticsDimensionValues = []AnalyticsDimension{AnalyticsDimensionDay, AnalyticsDimensionHour, AnalyticsDimensionWeek, AnalyticsDimensionProject, AnalyticsDimensionKind, AnalyticsDimensionParent, AnalyticsDimensionPipeline, AnalyticsDimensionPipelineRevision, AnalyticsDimensionStep, AnalyticsDimensionProfileId, AnalyticsDimensionProfileRevision, AnalyticsDimensionHarness, AnalyticsDimensionModel, AnalyticsDimensionProvider, AnalyticsDimensionAccount, AnalyticsDimensionHost, AnalyticsDimensionConnection, AnalyticsDimensionExperiment, AnalyticsDimensionVariant, AnalyticsDimensionState, AnalyticsDimensionOutcome, AnalyticsDimensionPerson}
+var AnalyticsDimensionValues = []AnalyticsDimension{AnalyticsDimensionDay, AnalyticsDimensionHour, AnalyticsDimensionWeek, AnalyticsDimensionProject, AnalyticsDimensionKind, AnalyticsDimensionParent, AnalyticsDimensionPipeline, AnalyticsDimensionPipelineRevision, AnalyticsDimensionStep, AnalyticsDimensionProfileId, AnalyticsDimensionProfileRevision, AnalyticsDimensionHarness, AnalyticsDimensionModel, AnalyticsDimensionProvider, AnalyticsDimensionAccount, AnalyticsDimensionHost, AnalyticsDimensionConnection, AnalyticsDimensionExperiment, AnalyticsDimensionVariant, AnalyticsDimensionState, AnalyticsDimensionOutcome, AnalyticsDimensionPerson, AnalyticsDimensionPurpose, AnalyticsDimensionCategory}
 
 // Valid: v is one of the schema's values.
 func (v AnalyticsDimension) Valid() bool {
@@ -73,6 +75,7 @@ func (v AnalyticsDimension) Valid() bool {
 
 type AnalyticsFilter struct {
 	Account          []string          `json:"account,omitempty"`
+	Category         []string          `json:"category,omitempty"`
 	Connection       []string          `json:"connection,omitempty"`
 	Experiment       []string          `json:"experiment,omitempty"`
 	Harness          []string          `json:"harness,omitempty"`
@@ -89,6 +92,7 @@ type AnalyticsFilter struct {
 	Project          []string          `json:"project,omitempty"`
 	ProjectId        []string          `json:"projectId,omitempty"`
 	Provider         []string          `json:"provider,omitempty"`
+	Purpose          []string          `json:"purpose,omitempty"`
 	State            []string          `json:"state,omitempty"`
 	Step             []string          `json:"step,omitempty"`
 	Variant          []string          `json:"variant,omitempty"`
@@ -233,9 +237,179 @@ func (v *AnalyticsWindow) Validate() error {
 	return nil
 }
 
+type SpendBought struct {
+	ByProject        []SpendBoughtProject `json:"byProject"`
+	CompletedTasks   int64                `json:"completedTasks"`
+	ConversationCost []CostFigure         `json:"conversationCost"`
+	ConversationRuns int64                `json:"conversationRuns"`
+	TaskCost         []CostFigure         `json:"taskCost"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SpendBought) Validate() error {
+	if v.ByProject == nil {
+		return Missing("byProject")
+	}
+	for i := range v.ByProject {
+		if err := Check(&v.ByProject[i], "byProject"); err != nil {
+			return err
+		}
+	}
+	if v.ConversationCost == nil {
+		return Missing("conversationCost")
+	}
+	for i := range v.ConversationCost {
+		if err := Check(&v.ConversationCost[i], "conversationCost"); err != nil {
+			return err
+		}
+	}
+	if v.TaskCost == nil {
+		return Missing("taskCost")
+	}
+	for i := range v.TaskCost {
+		if err := Check(&v.TaskCost[i], "taskCost"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type SpendBoughtProject struct {
+	CompletedTasks int64        `json:"completedTasks"`
+	CostPerTaskUsd *float64     `json:"costPerTaskUsd,omitempty"`
+	ProjectId      string       `json:"projectId"`
+	TaskCost       []CostFigure `json:"taskCost"`
+	Unpriced       int64        `json:"unpriced"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SpendBoughtProject) Validate() error {
+	if v.TaskCost == nil {
+		return Missing("taskCost")
+	}
+	for i := range v.TaskCost {
+		if err := Check(&v.TaskCost[i], "taskCost"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type SpendGroupBy string
+
+const (
+	SpendGroupByPurpose  SpendGroupBy = "purpose"
+	SpendGroupByProject  SpendGroupBy = "project"
+	SpendGroupByCategory SpendGroupBy = "category"
+	SpendGroupByProfile  SpendGroupBy = "profile"
+	SpendGroupByModel    SpendGroupBy = "model"
+	SpendGroupByHost     SpendGroupBy = "host"
+)
+
+// SpendGroupByValues lists every SpendGroupBy in schema order.
+var SpendGroupByValues = []SpendGroupBy{SpendGroupByPurpose, SpendGroupByProject, SpendGroupByCategory, SpendGroupByProfile, SpendGroupByModel, SpendGroupByHost}
+
+// Valid: v is one of the schema's values.
+func (v SpendGroupBy) Valid() bool {
+	for _, x := range SpendGroupByValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type SpendRow struct {
+	Cost     []CostFigure `json:"cost"`
+	Failed   int64        `json:"failed"`
+	Key      string       `json:"key"`
+	Label    string       `json:"label"`
+	Runs     int64        `json:"runs"`
+	Share    *float64     `json:"share,omitempty"`
+	Tokens   int64        `json:"tokens"`
+	Unpriced int64        `json:"unpriced"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SpendRow) Validate() error {
+	if v.Cost == nil {
+		return Missing("cost")
+	}
+	for i := range v.Cost {
+		if err := Check(&v.Cost[i], "cost"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type SpendSummaryReply struct {
+	Bought    SpendBought     `json:"bought"`
+	By        SpendGroupBy    `json:"by"`
+	ByPurpose []SpendRow      `json:"byPurpose"`
+	Hidden    int64           `json:"hidden"`
+	Rows      []SpendRow      `json:"rows"`
+	Totals    AnalyticsTotals `json:"totals"`
+	Unknown   int64           `json:"unknown"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SpendSummaryReply) Validate() error {
+	if err := Check(&v.Bought, "bought"); err != nil {
+		return err
+	}
+	if err := Check(&v.By, "by"); err != nil {
+		return err
+	}
+	if v.ByPurpose == nil {
+		return Missing("byPurpose")
+	}
+	for i := range v.ByPurpose {
+		if err := Check(&v.ByPurpose[i], "byPurpose"); err != nil {
+			return err
+		}
+	}
+	if v.Rows == nil {
+		return Missing("rows")
+	}
+	for i := range v.Rows {
+		if err := Check(&v.Rows[i], "rows"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Totals, "totals"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type SpendSummaryRequest struct {
+	By        SpendGroupBy    `json:"by"`
+	ProjectId *string         `json:"projectId,omitempty"`
+	System    *SystemActivity `json:"system,omitempty"`
+	Window    AnalyticsWindow `json:"window"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SpendSummaryRequest) Validate() error {
+	if err := Check(&v.By, "by"); err != nil {
+		return err
+	}
+	if v.System != nil {
+		if err := Check(v.System, "system"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Window, "window"); err != nil {
+		return err
+	}
+	return nil
+}
+
 func init() {
 	for n, o := range map[string]Operation{
-		"analytics_query": {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:focus", Description: "Aggregate usage and outcome analytics: window, dimensions, measures, filters, optional projectId and system rows", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"dimensions\":{\"items\":{\"enum\":[\"day\",\"hour\",\"week\",\"project\",\"kind\",\"parent\",\"pipeline\",\"pipeline_revision\",\"step\",\"profile_id\",\"profile_revision\",\"harness\",\"model\",\"provider\",\"account\",\"host\",\"connection\",\"experiment\",\"variant\",\"state\",\"outcome\",\"person\"],\"type\":\"string\"},\"type\":\"array\"},\"filters\":{\"additionalProperties\":false,\"properties\":{\"account\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"connection\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"experiment\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"harness\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"host\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"kind\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"model\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"outcome\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"parent\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"person\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"pipeline\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"pipeline_revision\":{\"items\":{},\"type\":\"array\"},\"profile_id\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"profile_revision\":{\"items\":{},\"type\":\"array\"},\"project\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"provider\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"step\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"variant\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"measures\":{\"items\":{\"enum\":[\"executions\",\"count\",\"failed\",\"tokens_input\",\"tokens_output\",\"tokens_cache_read\",\"tokens_cache_write\",\"tokens_reasoning\",\"wall_ms\",\"wall_ms_p50\",\"wall_ms_p95\",\"active_ms\",\"api_ms\",\"cpu_ms\",\"peak_memory_bytes\",\"calls\",\"credits\",\"cost\"],\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"system\":{\"$comment\":\"Fleet's own background calls (execution systemActor set, such as the coordinator's GitHub and Bugsink reads): exclude leaves them out, include adds them, only keeps them alone. Unset is exclude, or include when the request names a parent (executions_list parentExecutionId, analytics_query filters.parent); a connection's full usage is system include (docs/designs/fleet-analytics.md, System activity).\",\"enum\":[\"exclude\",\"include\",\"only\"],\"type\":\"string\"},\"window\":{\"$comment\":\"Required [from, to) bounds: epoch milliseconds (integer) or RFC 3339 / YYYY-MM-DD strings.\",\"additionalProperties\":false,\"properties\":{\"from\":{},\"to\":{}},\"required\":[\"from\",\"to\"],\"type\":\"object\"}},\"required\":[\"window\"],\"type\":\"object\"}")},
+		"analytics_query": {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:focus", Description: "Aggregate usage and outcome analytics: window, dimensions, measures, filters, optional projectId and system rows", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"dimensions\":{\"items\":{\"enum\":[\"day\",\"hour\",\"week\",\"project\",\"kind\",\"parent\",\"pipeline\",\"pipeline_revision\",\"step\",\"profile_id\",\"profile_revision\",\"harness\",\"model\",\"provider\",\"account\",\"host\",\"connection\",\"experiment\",\"variant\",\"state\",\"outcome\",\"person\",\"purpose\",\"category\"],\"type\":\"string\"},\"type\":\"array\"},\"filters\":{\"additionalProperties\":false,\"properties\":{\"account\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"category\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"connection\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"experiment\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"harness\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"host\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"kind\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"model\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"outcome\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"parent\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"person\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"pipeline\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"pipeline_revision\":{\"items\":{},\"type\":\"array\"},\"profile_id\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"profile_revision\":{\"items\":{},\"type\":\"array\"},\"project\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"provider\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"purpose\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"step\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"variant\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"measures\":{\"items\":{\"enum\":[\"executions\",\"count\",\"failed\",\"tokens_input\",\"tokens_output\",\"tokens_cache_read\",\"tokens_cache_write\",\"tokens_reasoning\",\"wall_ms\",\"wall_ms_p50\",\"wall_ms_p95\",\"active_ms\",\"api_ms\",\"cpu_ms\",\"peak_memory_bytes\",\"calls\",\"credits\",\"cost\"],\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"system\":{\"$comment\":\"Fleet's own background calls (execution systemActor set, such as the coordinator's GitHub and Bugsink reads): exclude leaves them out, include adds them, only keeps them alone. Unset is exclude, or include when the request names a parent (executions_list parentExecutionId, analytics_query filters.parent); a connection's full usage is system include (docs/designs/fleet-analytics.md, System activity).\",\"enum\":[\"exclude\",\"include\",\"only\"],\"type\":\"string\"},\"window\":{\"$comment\":\"Required [from, to) bounds: epoch milliseconds (integer) or RFC 3339 / YYYY-MM-DD strings.\",\"additionalProperties\":false,\"properties\":{\"from\":{},\"to\":{}},\"required\":[\"from\",\"to\"],\"type\":\"object\"}},\"required\":[\"window\"],\"type\":\"object\"}")},
+		"spend_summary":   {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:focus", Description: "Spend breakdown for a window (by purpose, project, category, profile, model, or host) and what it bought (completed tasks, conversation runs, per-project cost per task)", Changes: []string{"execution", "task"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"by\":{\"enum\":[\"purpose\",\"project\",\"category\",\"profile\",\"model\",\"host\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"system\":{\"$comment\":\"Fleet's own background calls (execution systemActor set, such as the coordinator's GitHub and Bugsink reads): exclude leaves them out, include adds them, only keeps them alone. Unset is exclude, or include when the request names a parent (executions_list parentExecutionId, analytics_query filters.parent); a connection's full usage is system include (docs/designs/fleet-analytics.md, System activity).\",\"enum\":[\"exclude\",\"include\",\"only\"],\"type\":\"string\"},\"window\":{\"$comment\":\"Required [from, to) bounds: epoch milliseconds (integer) or RFC 3339 / YYYY-MM-DD strings.\",\"additionalProperties\":false,\"properties\":{\"from\":{},\"to\":{}},\"required\":[\"from\",\"to\"],\"type\":\"object\"}},\"required\":[\"window\",\"by\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

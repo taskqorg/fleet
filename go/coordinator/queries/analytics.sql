@@ -566,3 +566,15 @@ FROM leaves l
 CROSS JOIN LATERAL jsonb_array_elements((SELECT m FROM leaf_scope_map) -> l.id) sc
 CROSS JOIN LATERAL (SELECT sc->>0 AS scope, sc->>1 AS scope_key) s
 LEFT JOIN LATERAL (SELECT (SELECT m FROM leaf_cost_map) -> l.id AS costs) lc ON true;
+
+-- name: AnalyticsCompletedTasksByProject :many
+-- Completed non-tombstoned tasks per project within [win_from, win_to), visible under the caller's RLS scope.
+SELECT coalesce(project_id, '')::text AS project_id, count(*)::bigint AS n
+FROM task
+WHERE state = 'completed'
+  AND tombstoned_at IS NULL
+  AND coalesce(accepted_at, state_at) >= sqlc.arg(win_from)::pg_catalog.timestamptz
+  AND coalesce(accepted_at, state_at) < sqlc.arg(win_to)::pg_catalog.timestamptz
+  AND (sqlc.narg(project_id)::text IS NULL OR project_id = sqlc.narg(project_id)::text)
+GROUP BY coalesce(project_id, '')
+ORDER BY n DESC, project_id ASC;
