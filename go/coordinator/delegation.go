@@ -27,10 +27,92 @@ type delegationReq struct {
 	RequestId string `json:"requestId"`
 }
 
-func delegationRequestOf(d doc) delegationReq {
-	var r delegationReq
-	jsonRoundTrip(d["request"], &r)
-	return r
+// delegationRoute: where a delegation's result goes.
+type delegationRoute struct {
+	SessionID string `json:"sessionId"`
+}
+
+// delegationRec: the delegation record (put "delegation", keyed by its child execution); report and any other field
+// another area writes stay in rest.
+type delegationRec struct {
+	ID                      string              `json:"id"`
+	ParentExecutionID       string              `json:"parentExecutionId"`
+	ParentSessionID         string              `json:"parentSessionId"`
+	ChildExecutionID        string              `json:"childExecutionId"`
+	ChildSessionID          string              `json:"childSessionId"`
+	Request                 delegationReq       `json:"request"`
+	ResultRoute             delegationRoute     `json:"resultRoute"`
+	State                   string              `json:"state"`
+	RoutingError            string              `json:"routingError,omitempty"`
+	SourceTexts             map[string]string   `json:"sourceTexts,omitempty"`
+	SourceInputs            *[]delegationSource `json:"sourceInputs,omitempty"`
+	Result                  json.RawMessage     `json:"result,omitempty"` // delegationResult as stored
+	ContinuationExecutionID string              `json:"continuationExecutionId,omitempty"`
+	rest                    recordRest
+}
+
+func (d *delegationRec) UnmarshalJSON(b []byte) error {
+	type plain delegationRec
+	return restDecode(b, (*plain)(d), &d.rest)
+}
+
+func (d delegationRec) MarshalJSON() ([]byte, error) {
+	type plain delegationRec
+	return restEncode(plain(d), d.rest)
+}
+
+// delegationResult: a finished child's retained result; fields in byte order, as the continuation text has them.
+type delegationResult struct {
+	Artifacts   json.RawMessage `json:"artifacts"` // the child's artifact records, passed through
+	Events      json.RawMessage `json:"events"`    // the child's event records, passed through
+	ExecutionID string          `json:"executionId"`
+	State       string          `json:"state"`
+}
+
+// delegationFilter: a filter of all() on delegation records; an absent field filters nothing.
+type delegationFilter struct {
+	ParentExecutionID *string `json:"parentExecutionId,omitempty"`
+	ChildExecutionID  *string `json:"childExecutionId,omitempty"`
+}
+
+// delegationExecution: the fields of an execution record a delegation reads and writes; the rest stays as stored.
+type delegationExecution struct {
+	ID                string          `json:"id"`
+	SessionID         string          `json:"sessionId,omitempty"`
+	State             string          `json:"state,omitempty"`
+	AgentConfig       json.RawMessage `json:"agentConfig,omitempty"`
+	StopRequested     bool            `json:"stopRequested,omitempty"`
+	ParentExecutionID *string         `json:"parentExecutionId,omitempty"`
+	ContinuationOf    *string         `json:"continuationOf,omitempty"`
+	ChildExecutionID  string          `json:"childExecutionId,omitempty"`
+	InputsBound       bool            `json:"inputsBound,omitempty"`
+	rest              recordRest
+}
+
+func (e *delegationExecution) UnmarshalJSON(b []byte) error {
+	type plain delegationExecution
+	return restDecode(b, (*plain)(e), &e.rest)
+}
+
+func (e delegationExecution) MarshalJSON() ([]byte, error) {
+	type plain delegationExecution
+	return restEncode(plain(e), e.rest)
+}
+
+// delegationStartPayload: the text of a child's start command payload; the rest of the payload stays as stored.
+type delegationStartPayload struct {
+	Text string `json:"text"`
+	rest recordRest
+}
+
+func (p *delegationStartPayload) UnmarshalJSON(b []byte) error {
+	type plain delegationStartPayload
+	return restDecode(b, (*plain)(p), &p.rest)
+}
+
+func (p delegationStartPayload) MarshalJSON() ([]byte, error) {
+	type plain delegationStartPayload
+	return restEncode(plain(p), p.rest)
 }
 
 // delegationAgent: the fields of an agent configuration or profile a delegation checks; harness nil means codex.
@@ -40,9 +122,9 @@ type delegationAgent struct {
 	ID                 string   `json:"id"`
 }
 
-func delegationAgentOf(v any) delegationAgent {
+func delegationAgentOf(raw json.RawMessage) delegationAgent {
 	var a delegationAgent
-	jsonRoundTrip(v, &a)
+	json.Unmarshal(raw, &a)
 	return a
 }
 
@@ -61,20 +143,30 @@ type delegationSourceFile struct {
 
 // delegationSource: a bound website source; the fields in byte order, as the start command text has them.
 type delegationSource struct {
-	ExecutionID any `json:"executionId"`
-	Path        any `json:"path"`
-	Sha256      any `json:"sha256"`
-	Text        any `json:"text,omitempty"`
+	ExecutionID *string `json:"executionId"`
+	Path        string  `json:"path"`
+	Sha256      string  `json:"sha256"`
+	Text        *string `json:"text,omitempty"`
 }
 
-// delegationArtifact: the fields of an execution artifact (executionArtifacts) a delegation binds.
+// delegationArtifact: an execution artifact (executionArtifacts); the fields in byte order, as the start command text has them.
 type delegationArtifact struct {
+	ArtifactID  string  `json:"artifactId"`
+	ExecutionID *string `json:"executionId"`
 	ID          string  `json:"id"`
-	ArtifactID  *string `json:"artifactId"`
-	ExecutionID any     `json:"executionId"`
+	MediaType   string  `json:"mediaType"`
 	Path        string  `json:"path"`
-	Size        float64 `json:"size"`
-	Sha256      any     `json:"sha256"`
+	Sha256      string  `json:"sha256"`
+	Size        int64   `json:"size"`
+}
+
+// delegationArtifacts: executionArtifacts of one execution, decoded once.
+func delegationArtifacts(q *Request, executionID string) ([]delegationArtifact, error) {
+	as, err := executionArtifacts(q, executionID)
+	if err != nil {
+		return nil, err
+	}
+	return asT[[]delegationArtifact](as)
 }
 
 type delegationMessage struct {
@@ -83,75 +175,87 @@ type delegationMessage struct {
 }
 
 type delegationObservations struct {
-	Artifacts []doc               `json:"artifacts"`
-	Messages  []delegationMessage `json:"messages"`
+	Artifacts []delegationArtifact `json:"artifacts"`
+	Messages  []delegationMessage  `json:"messages"`
 }
 
-// delegationRequest: a child receipt from a running parent.
+// delegationRequest: a child receipt from a running parent; c is the receipt's command record (host_receipts.go).
 func (a *App) delegationRequest(q *Request, req *contract.ChildRequest, c doc) (any, error) {
+	cmd, err := asT[agentCommand](c)
+	if err != nil {
+		return nil, err
+	}
+	return a.delegationChild(q, req, cmd)
+}
+
+func (a *App) delegationChild(q *Request, req *contract.ChildRequest, c agentCommand) (any, error) {
 	rid, input := req.RequestId, req.Input
 	if rid == "" || input == "" || len([]rune(rid)) > 200 || len([]rune(input)) > 32000 {
 		return nil, fail(400, "Invalid delegation request")
 	}
-	r := doc{"input": input, "profileId": req.ProfileId, "requestId": rid}
-	parent, err := get(q, c["executionId"], "execution")
+	r := delegationReq{Input: input, ProfileId: req.ProfileId, RequestId: rid}
+	parent, err := agentGet[delegationExecution](q, c.ExecutionID, "execution")
 	if err != nil {
 		return nil, err
 	}
-	existing, err := all(q, "delegation", doc{"parentExecutionId": parent["id"]})
+	existing, err := kindAll[delegationRec](q, "delegation", delegationFilter{ParentExecutionID: &parent.ID})
 	if err != nil {
 		return nil, err
 	}
 	for _, d := range existing {
-		if delegationRequestOf(d).RequestId == rid {
-			if canonical(d["request"]) != canonical(r) {
+		if d.Request.RequestId == rid {
+			if d.Request != r {
 				return nil, fail(409, "Delegation identity conflict")
 			}
 			return d, nil
 		}
 	}
-	if c["kind"] != "start" || c["status"] != "started" || parent["stopRequested"] == true || parent["parentExecutionId"] != nil || parent["continuationOf"] != nil {
+	if c.Kind != "start" || c.Status != "started" || parent.StopRequested || parent.ParentExecutionID != nil || parent.ContinuationOf != nil {
 		return nil, fail(403, "Delegation unavailable")
 	}
-	pcfg := delegationAgentOf(parent["agentConfig"])
+	pcfg := delegationAgentOf(parent.AgentConfig)
 	if !inList(pcfg.DelegationProfiles, req.ProfileId) {
 		return nil, fail(403, "Child profile not granted")
 	}
 	if len(existing) > 0 {
 		return nil, fail(409, "One child per invocation")
 	}
-	profile, err := readTrustedProfile(q, req.ProfileId)
+	trusted, err := readTrustedProfile(q, req.ProfileId)
 	if err != nil {
 		return nil, err
 	}
-	ps, err := get(q, parent["sessionId"], "session")
+	profile := json.RawMessage(jsonBytes(trusted))
+	ps, err := agentGet[agentSession](q, parent.SessionID, "session")
 	if err != nil {
 		return nil, err
 	}
 	if delegationAgentOf(profile).harness() != pcfg.harness() {
 		return nil, fail(403, "Cross-harness child needs an explicit account binding")
 	}
-	session := doc{"id": newID(), "createdAt": nowMs(), "agentConfig": profile, "parentExecutionId": parent["id"]}
-	if ps["account"] != nil {
-		session["account"] = ps["account"]
+	session := agentSession{ID: newID(), CreatedAt: nowMs(), AgentConfig: profile, ParentExecutionID: parent.ID, Account: ps.Account}
+	if ps.Access == "read" { // a read-only conversation's child is read-only too, with no branch (presets.go)
+		branch := false
+		session.Access, session.Branch = "read", &branch
 	}
-	if ps["access"] == "read" { // a read-only conversation's child is read-only too, with no branch (presets.go)
-		session["access"], session["branch"] = "read", false
-	}
-	if err := put(q, "session", session); err != nil {
+	if err := agentPut(q, "session", &session); err != nil {
 		return nil, err
 	}
-	child, err := enqueue(q, session, input, "delegation:"+rid, nil, nil, "")
+	queued, err := agentEnqueue(q, &session, input, "delegation:"+rid, nil, nil, "", nil)
 	if err != nil {
 		return nil, err
 	}
-	child["parentExecutionId"] = parent["id"]
-	if err := put(q, "execution", child); err != nil {
+	child, err := asT[delegationExecution](queued)
+	if err != nil {
 		return nil, err
 	}
-	d := doc{"id": newID(), "parentExecutionId": parent["id"], "parentSessionId": parent["sessionId"], "childExecutionId": child["id"], "childSessionId": session["id"],
-		"request": r, "resultRoute": doc{"sessionId": parent["sessionId"]}, "state": "pending"}
-	return d, put(q, "delegation", d)
+	child.ParentExecutionID = &parent.ID
+	if err := agentPut(q, "execution", &child); err != nil {
+		return nil, err
+	}
+	d := delegationRec{ID: newID(), ParentExecutionID: parent.ID, ParentSessionID: parent.SessionID, ChildExecutionID: child.ID, ChildSessionID: session.ID,
+		Request: r, ResultRoute: delegationRoute{SessionID: parent.SessionID}, State: "pending"}
+	err = agentPut(q, "delegation", &d)
+	return d, err
 }
 
 // delegationSources: the website sources of a delegation read outside the step's transaction: their texts, the reason
@@ -166,8 +270,8 @@ type delegationSources struct {
 // queue's step, delegation_work.go) and records them on the delegation; a later poll binds them. A crash before the
 // record reads them again.
 func delegationSourcesStep(q *Request, now time.Time, c *kitClaim) error {
-	d, err := get(q, c.Key, "delegation")
-	if err != nil || d["sourceTexts"] != nil || d["routingError"] != nil {
+	d, err := kindGet[delegationRec](q, c.Key, "delegation")
+	if err != nil || d.SourceTexts != nil || d.RoutingError != "" {
 		if err != nil && !errors.Is(err, errNotFound) {
 			var he *HTTPError
 			if !asHTTP(err, &he) || he.Code != 404 {
@@ -181,11 +285,11 @@ func delegationSourcesStep(q *Request, now time.Time, c *kitClaim) error {
 			return r.unreachable
 		}
 		if r.errText != "" {
-			d["routingError"] = r.errText
+			d.RoutingError = r.errText
 		} else {
-			d["sourceTexts"] = r.texts
+			d.SourceTexts = r.texts
 		}
-		if err := put(q, "delegation", d); err != nil {
+		if err := agentPut(q, "delegation", &d); err != nil {
 			return err
 		}
 		return q.db().DelegationSourceWorkDelete(q.ctx(), c.Key)
@@ -224,46 +328,61 @@ func delegationSourcesStep(q *Request, now time.Time, c *kitClaim) error {
 	return nil
 }
 
+// delegationReady: whether execution e (host_poll.go's record) may start now; a delegated child binds its inputs first,
+// and e then holds the record as written.
 func (a *App) delegationReady(q *Request, e doc) (bool, error) {
-	if e["continuationOf"] != nil {
-		c, err := get(q, e["continuationOf"], "execution")
-		if err != nil {
-			return false, err
-		}
-		if c["stopRequested"] == true {
-			return false, nil
-		}
-	}
-	if e["parentExecutionId"] == nil {
-		return true, nil
-	}
-	parent, err := get(q, e["parentExecutionId"], "execution")
-	if err != nil || parent["state"] != "succeeded" {
-		return false, err
-	}
-	cancelled, err := q.db().DelegationParentTaskCancelled(q.ctx(), astr(parent["id"]))
-	if err != nil || cancelled {
-		return false, err
-	}
-	if e["inputsBound"] == true {
-		return true, nil
-	}
-	ds, err := all(q, "delegation", doc{"childExecutionId": e["id"]})
+	ex, err := asT[delegationExecution](e)
 	if err != nil {
 		return false, err
+	}
+	ok, bound, err := a.delegationBind(q, &ex)
+	if bound {
+		docReplace(e, ex)
+	}
+	return ok, err
+}
+
+// delegationBind: delegationReady on the typed record; bound when e was written with its inputs bound.
+func (a *App) delegationBind(q *Request, e *delegationExecution) (ok, bound bool, err error) {
+	if e.ContinuationOf != nil {
+		c, err := agentGet[delegationExecution](q, *e.ContinuationOf, "execution")
+		if err != nil {
+			return false, false, err
+		}
+		if c.StopRequested {
+			return false, false, nil
+		}
+	}
+	if e.ParentExecutionID == nil {
+		return true, false, nil
+	}
+	parent, err := agentGet[delegationExecution](q, *e.ParentExecutionID, "execution")
+	if err != nil || parent.State != "succeeded" {
+		return false, false, err
+	}
+	cancelled, err := q.db().DelegationParentTaskCancelled(q.ctx(), parent.ID)
+	if err != nil || cancelled {
+		return false, false, err
+	}
+	if e.InputsBound {
+		return true, false, nil
+	}
+	ds, err := kindAll[delegationRec](q, "delegation", delegationFilter{ChildExecutionID: &e.ID})
+	if err != nil {
+		return false, false, err
 	}
 	if len(ds) == 0 {
-		return false, fail(500, "Delegation of a child execution not found")
+		return false, false, fail(500, "Delegation of a child execution not found")
 	}
 	d := ds[0]
-	runs, err := all(q, "execution", doc{"sessionId": parent["sessionId"]})
+	runs, err := agentAll[delegationExecution](q, "execution", agentFilter{SessionID: &parent.SessionID})
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	history := []string{}
 	for _, r := range runs {
-		history = append(history, astr(r["id"]))
-		if r["id"] == parent["id"] {
+		history = append(history, r.ID)
+		if r.ID == parent.ID {
 			break
 		}
 	}
@@ -273,7 +392,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	with := map[string]bool{}
 	rs, err := q.db().DelegationExecutionsWithArtifacts(q.ctx(), history)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	for _, id := range rs {
 		with[id] = true
@@ -287,12 +406,10 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	}
 	latest, order := map[string]delegationArtifact{}, []string{}
 	if source != "" {
-		as, err := executionArtifacts(q, source)
+		xs, err := delegationArtifacts(q, source)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
-		var xs []delegationArtifact
-		jsonRoundTrip(as, &xs)
 		for _, x := range xs {
 			p := x.Path
 			if _, ok := latest[p]; !ok {
@@ -301,176 +418,189 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 			latest[p] = x
 		}
 	}
-	if d["routingError"] != nil {
-		return false, nil
+	if d.RoutingError != "" {
+		return false, false, nil
 	}
 	files := []delegationArtifact{}
-	size := 0.0
+	size := int64(0)
 	for _, p := range order {
 		if websitePath.MatchString(p) {
 			files = append(files, latest[p])
 			size += latest[p].Size
 		}
 	}
-	routingError := func(msg string) (bool, error) {
-		d["routingError"] = msg
-		return false, put(q, "delegation", d)
+	routingError := func(msg string) (bool, bool, error) {
+		d.RoutingError = msg
+		return false, false, agentPut(q, "delegation", &d)
 	}
 	if size > 128000 {
 		return routingError(sourcesTooLarge)
 	}
-	var texts map[string]string
-	jsonRoundTrip(d["sourceTexts"], &texts)
+	texts := d.SourceTexts
 	if len(files) > 0 && texts == nil {
 		// The sources are read on the kit (delegationSourcesStep), outside this poll's transaction.
 		want := []delegationSourceFile{}
 		for _, f := range files {
 			id := f.ID
-			if f.ArtifactID != nil {
-				id = *f.ArtifactID
+			if f.ArtifactID != "" {
+				id = f.ArtifactID
 			}
 			want = append(want, delegationSourceFile{ArtifactID: id, Path: f.Path})
 		}
-		n, err := q.db().DelegationSourceWorkEnsure(q.ctx(), db.DelegationSourceWorkEnsureParams{DelegationID: astr(d["id"]), Payload: jsonBytes(want)})
+		n, err := q.db().DelegationSourceWorkEnsure(q.ctx(), db.DelegationSourceWorkEnsureParams{DelegationID: d.ID, Payload: jsonBytes(want)})
 		if err != nil || n == 0 {
-			return false, err
+			return false, false, err
 		}
-		return false, kitNotify(q, "delegation-sources")
+		return false, false, kitNotify(q, "delegation-sources")
 	}
 	sources, inputs := []delegationSource{}, []delegationSource{}
 	for _, f := range files {
-		sources = append(sources, delegationSource{Path: f.Path, ExecutionID: f.ExecutionID, Sha256: f.Sha256, Text: texts[f.Path]})
+		text := texts[f.Path]
+		sources = append(sources, delegationSource{Path: f.Path, ExecutionID: f.ExecutionID, Sha256: f.Sha256, Text: &text})
 		inputs = append(inputs, delegationSource{Path: f.Path, ExecutionID: f.ExecutionID, Sha256: f.Sha256})
 	}
-	if (len(sources) == 0 && delegationRequestOf(d).ProfileId == "website-reviewer") || len(js(sources)) > 128000 {
+	if (len(sources) == 0 && d.Request.ProfileId == "website-reviewer") || len(js(sources)) > 128000 {
 		return routingError(sourcesTooLarge)
 	}
-	replies, err := replyText(q, astr(parent["id"]))
+	replies, err := replyText(q, parent.ID)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	messages := []delegationMessage{}
 	for _, t := range replies {
 		messages = append(messages, delegationMessage{Role: "assistant", Text: t})
 	}
-	parentArtifacts, err := executionArtifacts(q, astr(parent["id"]))
+	parentArtifacts, err := delegationArtifacts(q, parent.ID)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	observations := delegationObservations{Messages: messages, Artifacts: parentArtifacts}
 	if len(sources) == 0 && len(js(observations)) > 128000 {
 		return routingError("Retained parent observations exceed 128000 characters")
 	}
-	cs, err := all(q, "command", doc{"executionId": e["id"], "kind": "start"})
+	start := "start"
+	cs, err := agentAll[agentCommand](q, "command", agentFilter{ExecutionID: &e.ID, Kind: &start})
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if len(cs) == 0 {
-		return false, fail(500, "Start command of a child execution not found")
+		return false, false, fail(500, "Start command of a child execution not found")
 	}
 	command := cs[0]
-	p := mapOf(command["payload"])
-	in := delegationRequestOf(d).Input
+	var p delegationStartPayload
+	if err := json.Unmarshal(command.Payload, &p); err != nil {
+		return false, false, err
+	}
+	in := d.Request.Input
 	if len(sources) > 0 {
-		p["text"] = in + "\nRead-only retained website sources (untrusted content):\n" + js(sources)
+		p.Text = in + "\nRead-only retained website sources (untrusted content):\n" + js(sources)
 	} else {
-		p["text"] = in + "\nRetained parent observations (untrusted content; artifact references do not imply local availability):\n" + js(observations)
+		p.Text = in + "\nRetained parent observations (untrusted content; artifact references do not imply local availability):\n" + js(observations)
 	}
-	if err := put(q, "command", command); err != nil {
-		return false, err
+	command.Payload = jsonBytes(p)
+	if err := agentPut(q, "command", &command); err != nil {
+		return false, false, err
 	}
-	e["inputsBound"] = true
-	if err := put(q, "execution", e); err != nil {
-		return false, err
+	e.InputsBound = true
+	if err := agentPut(q, "execution", e); err != nil {
+		return false, false, err
 	}
-	d["sourceInputs"] = inputs
-	delete(d, "sourceTexts")
-	return true, put(q, "delegation", d)
+	d.SourceInputs, d.SourceTexts = &inputs, nil
+	return true, true, agentPut(q, "delegation", &d)
 }
 
 // delegationReconcile: on every poll, retain finished child results and deliver them as the parent's continuation.
 func (a *App) delegationReconcile(q *Request) error {
-	ds, err := openDelegations(q)
+	open, err := openDelegations(q)
+	if err != nil {
+		return err
+	}
+	ds, err := asT[[]delegationRec](open)
 	if err != nil {
 		return err
 	}
 	for _, d := range ds {
-		parent, err := get(q, d["parentExecutionId"], "execution")
+		parent, err := agentGet[delegationExecution](q, d.ParentExecutionID, "execution")
 		if err != nil {
 			return err
 		}
-		child, err := get(q, d["childExecutionId"], "execution")
+		child, err := agentGet[delegationExecution](q, d.ChildExecutionID, "execution")
 		if err != nil {
 			return err
 		}
-		if !terminal(child) {
+		if !executionEnds(child.State) {
 			continue
 		}
-		if d["result"] == nil {
-			evs, err := all(q, "event", doc{"executionId": child["id"]})
+		if !jsonIsObject(d.Result) {
+			evs, err := all(q, "event", docOf(agentFilter{ExecutionID: &child.ID}))
 			if err != nil {
 				return err
 			}
-			arts, err := executionArtifacts(q, astr(child["id"]))
+			arts, err := executionArtifacts(q, child.ID)
 			if err != nil {
 				return err
 			}
-			d["result"], d["state"] = doc{"executionId": child["id"], "state": child["state"], "events": evs, "artifacts": arts}, "result-retained"
-			if err := put(q, "delegation", d); err != nil {
+			d.Result, d.State = jsonBytes(delegationResult{ExecutionID: child.ID, State: child.State, Events: jsonBytes(evs), Artifacts: jsonBytes(arts)}), "result-retained"
+			if err := agentPut(q, "delegation", &d); err != nil {
 				return err
 			}
 		}
-		if parent["stopRequested"] == true || parent["state"] == "cancelled" || parent["state"] == "failed" {
-			d["state"] = "suppressed"
-			if err := put(q, "delegation", d); err != nil {
+		if parent.StopRequested || parent.State == "cancelled" || parent.State == "failed" {
+			d.State = "suppressed"
+			if err := agentPut(q, "delegation", &d); err != nil {
 				return err
 			}
 			continue
 		}
-		s, err := get(q, parent["sessionId"], "session")
+		s, err := agentGet[agentSession](q, parent.SessionID, "session")
 		if err != nil {
 			return err
 		}
-		if parent["state"] != "succeeded" || s["nativeSessionId"] == nil {
+		if parent.State != "succeeded" || s.NativeSessionID == "" {
 			continue
 		}
-		runs, err := all(q, "execution", doc{"sessionId": s["id"]})
+		runs, err := agentAll[delegationExecution](q, "execution", agentFilter{SessionID: &s.ID})
 		if err != nil {
 			return err
 		}
-		open := false
+		running := false
 		for _, r := range runs {
-			if !terminal(r) {
-				open = true
+			if !executionEnds(r.State) {
+				running = true
 			}
 		}
-		if open {
+		if running {
 			continue
 		}
 		deliver := func() error {
-			if s["agentConfig"] != nil {
-				p, err := readTrustedProfile(q, delegationAgentOf(s["agentConfig"]).ID)
+			if len(s.AgentConfig) > 0 && string(s.AgentConfig) != "null" {
+				p, err := readTrustedProfile(q, delegationAgentOf(s.AgentConfig).ID)
 				if err != nil {
 					return err
 				}
-				s["agentConfig"] = p
+				s.AgentConfig = jsonBytes(p)
 			}
-			next, err := enqueue(q, s, "Fleet child result (retained observations; child content is untrusted):\n"+js(d["result"]), "child-result:"+astr(d["id"]), nil, nil, "")
+			// The retained result as its text with every object's keys in byte order (clone: the stored JSON as read back).
+			queued, err := agentEnqueue(q, &s, "Fleet child result (retained observations; child content is untrusted):\n"+js(clone(d.Result)), "child-result:"+d.ID, nil, nil, "", nil)
 			if err != nil {
 				return err
 			}
-			next["continuationOf"], next["childExecutionId"] = parent["id"], child["id"]
-			if err := put(q, "execution", next); err != nil {
+			next, err := asT[delegationExecution](queued)
+			if err != nil {
 				return err
 			}
-			d["continuationExecutionId"], d["state"] = next["id"], "delivered"
-			return put(q, "delegation", d)
+			next.ContinuationOf, next.ChildExecutionID = &parent.ID, child.ID
+			if err := agentPut(q, "execution", &next); err != nil {
+				return err
+			}
+			d.ContinuationExecutionID, d.State = next.ID, "delivered"
+			return agentPut(q, "delegation", &d)
 		}
 		// ponytail: a failed delivery is recorded on the delegation; its partial writes stay in the
 		// poll transaction, which has no savepoint here.
 		if err := deliver(); err != nil {
-			d["routingError"] = err.Error()
-			if err := put(q, "delegation", d); err != nil {
+			d.RoutingError = err.Error()
+			if err := agentPut(q, "delegation", &d); err != nil {
 				return err
 			}
 		}

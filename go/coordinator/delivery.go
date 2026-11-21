@@ -201,7 +201,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 				}
 				// A keyed read is shown only to projects its connection is granted to: a project that merely lists a
 				// private repository must not see what another project's grant read. Keyless, only the public repository.
-				if k && !connAllowedFor(conn, mintRun{ProjectID: &id}) || !k && !strings.EqualFold(m[1]+"/"+m[2], githubPublicRepo) {
+				if grant, ok := connGrantOf(conn); k && !(ok && connAllowedFor(grant, mintRun{ProjectID: &id})) || !k && !strings.EqualFold(m[1]+"/"+m[2], githubPublicRepo) {
 					continue
 				}
 				keyed = keyed || k

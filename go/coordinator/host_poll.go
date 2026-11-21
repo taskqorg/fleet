@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -232,9 +233,18 @@ func parsePollWait(r *http.Request) time.Duration {
 	return d
 }
 
+// hostProblem: one problem of a host observation.
+type hostProblem struct {
+	Kind     string  `json:"kind"`
+	Route    string  `json:"route"`
+	Status   int64   `json:"status"`
+	Location *string `json:"location"`
+	Detail   string  `json:"detail"`
+}
+
 // hostProblems: the edge problems a host reports (at most 20, texts cut), redirects only.
-func hostProblems(list []contract.EdgeProblem) []any {
-	var out []any
+func hostProblems(list []contract.EdgeProblem) []hostProblem {
+	var out []hostProblem
 	cut := func(t string, n int) string {
 		if r := []rune(t); len(r) > n {
 			return string(r[:n])
@@ -245,11 +255,12 @@ func hostProblems(list []contract.EdgeProblem) []any {
 		if p.Kind != contract.ProblemKindEdgeRedirect || p.Status == 0 {
 			continue
 		}
-		var loc any
+		var loc *string
 		if p.Location != nil {
-			loc = cut(*p.Location, 500)
+			l := cut(*p.Location, 500)
+			loc = &l
 		}
-		out = append(out, doc{"kind": string(p.Kind), "route": cut(p.Route, 200), "status": p.Status, "location": loc, "detail": cut(p.Detail, 500)})
+		out = append(out, hostProblem{Kind: string(p.Kind), Route: cut(p.Route, 200), Status: int64(p.Status), Location: loc, Detail: cut(p.Detail, 500)})
 		if len(out) == 20 {
 			break
 		}
@@ -299,18 +310,21 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 		}
 		hostDoc = h
 		if hostDoc == nil {
-			hostDoc = doc{"hostId": host}
+			hostDoc = docOf(pollHost{HostID: host})
 		}
-		pending, err := all(wq, "command", doc{"hostId": host, "status": "pending"})
+		pending, err := all(wq, "command", docOf(pollPending{HostID: host, Status: "pending"}))
 		if err != nil {
 			return err
 		}
 		out = []contract.Command{}
 		for _, c := range pending {
+			cv := agentView[pollCommandView](c)
 			// A command waits for an executor that honours it (contract.MissingCapability), also if this host went back a release.
-			pl := mapOf(c["payload"])
-			if _, missing := contract.MissingCapability(caps, contract.StartNeeds{ReadOnly: c["kind"] == "start" && pl["readOnly"] == true,
-				Branchless: pl["branch"] == false && pl["projectId"] != nil, WorkspaceKey: astr(pl["workspaceKey"]) != "", Attachments: len(anys(pl["attachments"])) > 0}); missing {
+			pl := cv.Payload
+			readOnly, _ := jsonBool(pl.ReadOnly)
+			branch, isBool := jsonBool(pl.Branch)
+			if _, missing := contract.MissingCapability(caps, contract.StartNeeds{ReadOnly: cv.Kind == "start" && readOnly,
+				Branchless: isBool && !branch && !isNull(pl.ProjectID), WorkspaceKey: pl.WorkspaceKey != "", Attachments: len(jsonList(pl.Attachments)) > 0}); missing {
 				continue
 			}
 			// Each command is prepared under its own savepoint: one command that cannot be handed off is stopped with
@@ -334,22 +348,22 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 				if outcome == pollRetriesCommand {
 					// It stays pending for the next poll. A failure that keeps coming is a bug: one log line and one
 					// Bugsink event (its issue reaches Needs you) per command and error class, not one per poll.
-					if pollCommandWaits.note(astr(c["id"]), errorClass(err)) {
-						log.Printf("host %s command %s waits: %v", host, astr(c["id"]), err)
-						cerr, kind := err, astr(c["kind"])
+					if pollCommandWaits.note(cv.ID, errorClass(err)) {
+						log.Printf("host %s command %s waits: %v", host, cv.ID, err)
+						cerr, kind := err, cv.Kind
 						onEnd(wq.tx, func(bool) {
 							errtrack.Capture(cerr, map[string]string{"route": "POST /api/hosts/poll", "host": host, "command": kind})
 						})
 					}
 					continue
 				}
-				pollCommandWaits.forget(astr(c["id"]))
+				pollCommandWaits.forget(cv.ID)
 				if err := a.refusePollCommand(wq, c, reason); err != nil {
 					return err
 				}
-				log.Printf("host %s command %s stopped: %s", host, astr(c["id"]), reason)
+				log.Printf("host %s command %s stopped: %s", host, cv.ID, reason)
 				if !strings.HasPrefix(reason, "refused:") {
-					cerr, kind := err, astr(c["kind"])
+					cerr, kind := err, cv.Kind
 					onEnd(wq.tx, func(committed bool) { // once, for the attempt that committed the stop
 						if committed {
 							errtrack.Capture(cerr, map[string]string{"route": "POST /api/hosts/poll", "host": host, "command": kind})
@@ -361,7 +375,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			if err := exec(wq, "RELEASE SAVEPOINT poll_command"); err != nil {
 				return err
 			}
-			pollCommandWaits.forget(astr(c["id"])) // prepared: no longer waiting on an error
+			pollCommandWaits.forget(cv.ID) // prepared: no longer waiting on an error
 			if fresh != nil {
 				out = append(out, *fresh)
 			}
@@ -373,6 +387,40 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 
 var stopWithheldKinds = []string{"start", "input", "script", "steer", "delivery-step"}
 
+// pollHost: the host record of a host that has none yet.
+type pollHost struct {
+	HostID string `json:"hostId"`
+}
+
+// pollPending: the pending commands of a host (all's filter).
+type pollPending struct {
+	HostID string `json:"hostId"`
+	Status string `json:"status"`
+}
+
+// pollCommandView: the fields of a command record the poll reads (its payload's start needs among them).
+type pollCommandView struct {
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	ExecutionID string `json:"executionId"`
+	Status      string `json:"status"`
+	HandedOut   *bool  `json:"handedOut"`
+	Payload     struct {
+		ReadOnly     json.RawMessage `json:"readOnly"`
+		Branch       json.RawMessage `json:"branch"`
+		ProjectID    json.RawMessage `json:"projectId"`
+		WorkspaceKey string          `json:"workspaceKey"`
+		Attachments  json.RawMessage `json:"attachments"`
+	} `json:"payload"`
+}
+
+// pollExecutionView: the fields of a command's execution the poll reads.
+type pollExecutionView struct {
+	TaskStopRequested *bool           `json:"taskStopRequested"`
+	ProjectID         json.RawMessage `json:"projectId"`
+	DirectedBy        json.RawMessage `json:"directedBy"`
+}
+
 // pollReadyCommand: command c as the host gets it now, or nil while it is not ready. The ready filter may rewrite the
 // command (delegation inputs), so the reply is the command as stored after it.
 func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, error) {
@@ -380,40 +428,45 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, 
 	if err != nil || !ok {
 		return nil, err
 	}
-	if inList(stopWithheldKinds, astr(c["kind"])) {
+	cv := agentView[pollCommandView](c)
+	if inList(stopWithheldKinds, cv.Kind) {
 		// This row lock is shared with stop. A committed poll may have
 		// reached the executor even when its HTTP response is lost.
-		locked, err := wq.db().HostPollLockExecution(wq.ctx(), astr(c["executionId"]))
+		locked, err := wq.db().HostPollLockExecution(wq.ctx(), cv.ExecutionID)
 		if err != nil {
 			return nil, err
 		}
 		if !locked {
 			// A busy row is retried. A missing row still goes through
 			// the poll's permanent 404 refusal and retires its command.
-			_, err := get(wq, c["executionId"], "execution")
+			_, err := get(wq, cv.ExecutionID, "execution")
 			return nil, err
 		}
-		c, err = get(wq, c["id"], "command")
-		if err != nil || c["status"] != "pending" {
+		c, err = get(wq, cv.ID, "command")
+		if err != nil {
 			return nil, err
 		}
-	}
-	e, err := get(wq, c["executionId"], "execution")
-	if err != nil {
-		return nil, err
-	}
-	// A previously handed-out start may already be in flight. Stop it on its
-	// owning host, while withholding further delivery of work after the stop.
-	if e["taskStopRequested"] == true && inList(stopWithheldKinds, astr(c["kind"])) {
-		return nil, nil
-	}
-	// Held-host trust: work that carries project content goes only to a host whose holder may see the project.
-	if k := astr(c["kind"]); k == "start" || k == "script" || k == "delivery-step" {
-		if !a.hostMayRun(hostDoc, nonNil(e["projectId"], mapOf(c["payload"])["projectId"]), e["directedBy"]) {
+		if cv = agentView[pollCommandView](c); cv.Status != "pending" {
 			return nil, nil
 		}
 	}
-	if c["kind"] != "stop" {
+	e, err := get(wq, cv.ExecutionID, "execution")
+	if err != nil {
+		return nil, err
+	}
+	ev := agentView[pollExecutionView](e)
+	// A previously handed-out start may already be in flight. Stop it on its
+	// owning host, while withholding further delivery of work after the stop.
+	if ev.TaskStopRequested != nil && *ev.TaskStopRequested && inList(stopWithheldKinds, cv.Kind) {
+		return nil, nil
+	}
+	// Held-host trust: work that carries project content goes only to a host whose holder may see the project.
+	if k := cv.Kind; k == "start" || k == "script" || k == "delivery-step" {
+		if !a.hostMayRun(hostDoc, nonNil(rawAny(ev.ProjectID), rawAny(cv.Payload.ProjectID)), rawAny(ev.DirectedBy)) {
+			return nil, nil
+		}
+	}
+	if cv.Kind != "stop" {
 		ok, err := a.delegationReady(wq, e)
 		if err != nil || !ok {
 			return nil, err
@@ -422,12 +475,12 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, 
 	if ok, err := handoffPipelineCommand(wq, e, c); err != nil || !ok {
 		return nil, err
 	}
-	if c["handedOut"] == false {
-		if err := wq.db().CommandHandOut(wq.ctx(), astr(c["id"])); err != nil {
+	if cv.HandedOut != nil && !*cv.HandedOut {
+		if err := wq.db().CommandHandOut(wq.ctx(), cv.ID); err != nil {
 			return nil, err
 		}
 	}
-	out, err := get(wq, c["id"], "command")
+	out, err := get(wq, cv.ID, "command")
 	if err != nil {
 		return nil, err
 	}
@@ -544,25 +597,30 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 	if err := stopPipelineCommand(wq, c, reason); err != nil {
 		return err
 	}
-	if !pipelineDispatchKind(c["kind"]) {
+	cmd := agentView[agentCommand](c)
+	if !pipelineDispatchKind(cmd.Kind) {
 		return nil
 	}
-	e, err := maybe(wq, c["executionId"], "execution")
-	if err != nil || e == nil || e["pipelineRunId"] == nil || terminal(e) || e["state"] == "running" {
+	e, err := maybe(wq, cmd.ExecutionID, "execution")
+	if err != nil || e == nil {
 		return err
 	}
-	run, err := getRun(wq, astr(e["pipelineRunId"]))
+	native := agentView[pipelineRefused](e)
+	if native.PipelineRunID == "" || executionEnds(native.State) || native.State == "running" {
+		return nil
+	}
+	run, err := getRun(wq, native.PipelineRunID)
 	if pipelineFormatUnsupported(err) || err == nil && run == nil {
 		return nil // no run to read: nothing proves the command never went out
 	}
 	if err != nil {
 		return err
 	}
-	index := pipelineStepIndex(run, astr(e["pipelineStepId"]))
+	index := pipelineStepIndex(run, native.PipelineStepID)
 	if index < 0 {
 		return nil
 	}
-	if d := mapOf(pipelinePlanEntry(run, index)["dispatch"]); d["phase"] != "prepared" || d["commandId"] != c["id"] {
+	if d := run.entry(index).Dispatch; d == nil || d.Phase != contract.PipelineDispatchPhasePrepared || deref(d.CommandId) != cmd.ID {
 		return nil
 	}
 	now := nowMs()
@@ -578,7 +636,15 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 			a.wakeDispatch()
 		}
 	})
-	return wq.db().HostPollClearWaitReason(wq.ctx(), astr(e["id"]))
+	return wq.db().HostPollClearWaitReason(wq.ctx(), native.ID)
+}
+
+// pipelineRefused: the fields of a refused command's execution refusePollCommand reads.
+type pipelineRefused struct {
+	ID             string `json:"id"`
+	State          string `json:"state"`
+	PipelineRunID  string `json:"pipelineRunId"`
+	PipelineStepID string `json:"pipelineStepId"`
 }
 
 // pollObserved runs one host poll, its body's decoding included, and records its health: a failure the host cannot
@@ -602,82 +668,83 @@ func pollObserved(q *Request, run func() (any, error)) (any, error) {
 func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply, error) {
 	host := hostOf(q)
 	open := q.obj() // the open parts (stores, update) as the host's plain JSON
+	stores := rawAny(open.Stores)
 	now := nowMs()
-	obs := doc{"id": host, "holder": q.host["holder"]}
+	obs := hostPollObservation{ID: host, Holder: q.host["holder"], Version: b.Version}
 	if b.Platform.Valid() {
-		obs["platform"] = string(b.Platform)
+		obs.Platform = string(b.Platform)
 	}
 	if b.Capabilities != nil {
-		obs["capabilities"] = b.Capabilities
+		obs.Capabilities = &b.Capabilities
 	}
 	if b.HarnessVersions != nil {
-		obs["harnessVersions"] = b.HarnessVersions
+		obs.HarnessVersions = &b.HarnessVersions
 	}
 	if b.GitConnections != nil {
-		obs["gitConnections"] = b.GitConnections
+		obs.GitConnections = &b.GitConnections
 	}
 	if b.ProjectRoots != nil {
-		obs["projectRoots"] = b.ProjectRoots
+		obs.ProjectRoots = &b.ProjectRoots
 	}
 	ps := hostProblems(b.Problems)
 	if b.Version != nil {
 		v := *b.Version
-		obs["version"] = v
 		// N-1 is served without a flag; N-2 and older show version-behind (work still runs).
 		if prev := ownRelease().Previous; olderVersion(v, prev) {
-			ps = append(ps, doc{"kind": string(contract.ProblemKindVersionBehind), "route": "", "status": 0, "location": nil,
-				"detail": "executor " + v + ", coordinator serves " + prev + " and newer"})
+			ps = append(ps, hostProblem{Kind: string(contract.ProblemKindVersionBehind), Detail: "executor " + v + ", coordinator serves " + prev + " and newer"})
 		}
 	}
-	if ps != nil {
-		obs["problems"] = ps
-	}
-	upd := open["update"]
+	obs.Problems = ps
+	upd := rawAny(open.Update)
 	if host != "" && host == pds18Host() {
 		upd = mergeUpdate(upd) // PDS18: the coordinator side's result from fleet-update joins the executor's
 	}
 	updResult, hasUpd := decodeUpdate(upd)
 	if hasUpd {
-		obs["update"] = upd
+		obs.Update = upd
 	}
 
 	stateSig := canonical(obs)
-	storesSig := canonical(open["stores"])
+	storesSig := canonical(stores)
 	flushObs, flushStores, stateChanged := a.heartbeatNeedsFlush(host, stateSig, storesSig, now)
 	// Store changes persist with host observations without triggering global state-change work.
-	obs["stores"] = open["stores"]
+	obs.Stores = stores
 	flushObs = flushObs || flushStores
 
 	var flushGen uint64
 	ctx := q.ctx()
 	if flushObs || flushStores {
-		obs["lastSeenAt"] = now
+		obs.LastSeenAt = now
 		if err := runTx(ctx, a, nil, true, "host:"+host, func(wq *Request) error {
 			if flushStores {
-				if err := storesObserve(wq.ctx(), wq.tx, host, open["stores"]); err != nil {
+				if err := storesObserve(wq.ctx(), wq.tx, host, stores); err != nil {
 					return err
 				}
 			}
 			if flushObs {
-				prev, err := maybe(wq, host, "host-observation")
+				prev, err := kindMaybe[struct {
+					Update    json.RawMessage `json:"update"`
+					PollError json.RawMessage `json:"pollError"`
+				}](wq, host, "host-observation")
 				if err != nil {
 					return err
 				}
+				var prevUpdate any
+				row := obs
+				if prev != nil {
+					prevUpdate = rawAny(prev.Update)
+					// A recorded poll failure stays until a successful poll clears it (host_poll_health.go).
+					if !isNull(prev.PollError) {
+						row.PollError = prev.PollError
+					}
+				}
 				// Look at update question only when the update result changes.
-				if hasUpd && js(mapOf(prev)["update"]) != js(upd) {
+				if hasUpd && js(prevUpdate) != js(upd) {
 					if err := updateQuestion(wq, host, q.host["holder"], updResult); err != nil {
 						return err
 					}
 				}
-				// A recorded poll failure stays until a successful poll clears it (host_poll_health.go).
-				row := obs
-				if pe := mapOf(prev)["pollError"]; pe != nil {
-					row = doc{"pollError": pe}
-					for k, v := range obs {
-						row[k] = v
-					}
-				}
-				if err := put(wq, "host-observation", row); err != nil {
+				if err := kindPut(wq, "host-observation", row); err != nil {
 					return err
 				}
 			}
@@ -817,8 +884,13 @@ func projectEnvironments(q *Request) (map[string][]string, error) {
 			return nil, err
 		}
 		hs := []string{}
-		for _, x := range anys(st["environments"]) {
-			hs = append(hs, astr(mapOf(x)["hostId"]))
+		for _, x := range agentView[struct {
+			Environments []struct {
+				HostID json.RawMessage `json:"hostId"`
+			} `json:"environments"`
+		}](st).Environments {
+			id, _ := jsonString(x.HostID)
+			hs = append(hs, id)
 		}
 		envs[p] = hs
 	}
@@ -871,23 +943,54 @@ func hostsList(q *Request, includeRemoved bool) (any, error) {
 	return out, nil
 }
 
-func hostRemoved(h doc) bool { return astr(h["state"]) == "removed" }
+// hostShim: the fields of a host record the shims read.
+type hostShim struct {
+	State  string `json:"state"`
+	Holder string `json:"holder"`
+}
 
+func hostRemoved(h doc) bool { return agentView[hostShim](h).State == "removed" }
+
+// hostMaySee, hostMayRun: projectID and director are a record's values (text, else none).
 func (a *App) hostMaySee(h doc, projectID any) bool {
-	return a.holderMaySee(astr(h["holder"]), astr(projectID))
+	p, _ := projectID.(string)
+	return a.holderMaySee(agentView[hostShim](h).Holder, p)
 }
 
 func (a *App) hostMayRun(h doc, projectID any, director any) bool {
-	return a.holderMayRun(astr(h["holder"]), astr(projectID), astr(director))
+	p, _ := projectID.(string)
+	d, _ := director.(string)
+	return a.holderMayRun(agentView[hostShim](h).Holder, p, d)
 }
 
-func (q *Request) obj() doc {
-	if q.body == nil {
-		return doc{}
-	}
-	var b doc
-	if decode(q.body, &b) != nil || b == nil {
-		return doc{}
+// hostPollObservation: what a poll observes of its host (the host-observation record): its platform, capabilities,
+// versions, problems, update and stores; a recorded poll failure stays on it.
+type hostPollObservation struct {
+	ID              string                     `json:"id"`
+	Holder          any                        `json:"holder"`
+	Platform        string                     `json:"platform,omitempty"`
+	Capabilities    *[]string                  `json:"capabilities,omitempty"`
+	HarnessVersions *[]contract.HarnessVersion `json:"harnessVersions,omitempty"`
+	GitConnections  *[]string                  `json:"gitConnections,omitempty"`
+	ProjectRoots    *[]string                  `json:"projectRoots,omitempty"`
+	Version         *string                    `json:"version,omitempty"`
+	Problems        []hostProblem              `json:"problems,omitempty"`
+	Update          any                        `json:"update,omitempty"`
+	Stores          any                        `json:"stores"`
+	LastSeenAt      int64                      `json:"lastSeenAt,omitempty"`
+	PollError       json.RawMessage            `json:"pollError,omitempty"`
+}
+
+// pollOpen: the open parts of a poll body (stores, update) as the host's plain JSON.
+type pollOpen struct {
+	Stores json.RawMessage `json:"stores"`
+	Update json.RawMessage `json:"update"`
+}
+
+func (q *Request) obj() pollOpen {
+	var b pollOpen
+	if q.body != nil {
+		decode(q.body, &b)
 	}
 	return b
 }

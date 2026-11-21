@@ -18,7 +18,7 @@ func TestRunChecksStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	r, err := runChecks(ctx, []any{doc{"id": "hang", "run": "sleep 30"}}, nil)
+	r, err := runChecks(ctx, []labCheck{{ID: "hang", Run: "sleep 30"}}, nil)
 	if !errors.Is(err, context.DeadlineExceeded) || r != nil {
 		t.Fatalf("runChecks = %v, %v; want no result and the context error", r, err)
 	}
@@ -81,7 +81,7 @@ func TestPairwiseOrderDependenceAndVersions(t *testing.T) {
 	run := func(id, value string, order int) doc {
 		return doc{"id": id, "state": "succeeded", "judge": doc{"evaluator": "judge:pair:pick_best", "groupId": "g", "trialIds": []any{"a", "b"}, "order": order}, "canonicalResult": doc{"stepId": "judge", "mode": "static"}, "plan": doc{"entries": []any{doc{"id": "judge"}}}, "steps": []any{doc{"id": "judge", "output": doc{"value": value}}}}
 	}
-	view := pairwiseView([]doc{run("one", "a", 0), run("two", "b", 1)})
+	view := pairwiseView(labRunsOf([]doc{run("one", "a", 0), run("two", "b", 1)}))
 	if len(view) != 1 || *view[0].Reason != "order-dependent" {
 		t.Fatalf("%v", view)
 	}
@@ -90,9 +90,9 @@ func TestPairwiseOrderDependenceAndVersions(t *testing.T) {
 		{"evaluator": "judge:pair:pick_best", "evaluatorVersion": "v1", "form": "pick_best", "trialIds": []any{"a", "b"}, "value": "a"},
 		{"evaluator": "judge:pair:pick_best", "evaluatorVersion": "v2", "form": "pick_best", "trialIds": []any{"a", "b"}, "value": "b"},
 	}
-	a := agreement(scores)
-	vs := anys(a["byVersion"])
-	if len(vs) != 2 || mapOf(vs[0])["matched"] != 1 || mapOf(vs[1])["matched"] != 0 {
+	a := agreement(labScoresOf(scores))
+	vs := a.ByVersion
+	if len(vs) != 2 || vs[0].Matched != 1 || vs[1].Matched != 0 {
 		t.Fatalf("%v", a)
 	}
 }
@@ -104,16 +104,16 @@ func TestPairwiseWaitsForAllLatestCandidates(t *testing.T) {
 		return doc{"id": id, "state": state, "cell": doc{"iteration": 0, "example": "e", "repeat": 0, "variant": variant, "attempt": attempt}}
 	}
 	trials := []doc{trial("a", "a", "succeeded", 0), trial("b", "b", "succeeded", 0), trial("c", "c", "running", 0)}
-	if groups, complete := pairwiseGroups(exp, trials); complete || len(groups) != 0 {
+	if groups, complete := pairwiseGroups(labExpOf(exp), labRunsOf(trials)); complete || len(groups) != 0 {
 		t.Fatalf("premature group: %v", groups)
 	}
 	trials[2]["state"] = "succeeded"
 	trials = append(trials, trial("a-retry", "a", "running", 1))
-	if groups, complete := pairwiseGroups(exp, trials); complete || len(groups) != 0 {
+	if groups, complete := pairwiseGroups(labExpOf(exp), labRunsOf(trials)); complete || len(groups) != 0 {
 		t.Fatalf("stale retry group: %v", groups)
 	}
 	trials[3]["state"] = "succeeded"
-	groups, complete := pairwiseGroups(exp, trials)
+	groups, complete := pairwiseGroups(labExpOf(exp), labRunsOf(trials))
 	if !complete || len(groups) != 1 {
 		t.Fatalf("missing complete group: %v", groups)
 	}
@@ -122,7 +122,7 @@ func TestPairwiseWaitsForAllLatestCandidates(t *testing.T) {
 			t.Fatal(g)
 		}
 		for _, tr := range g {
-			if tr["id"] == "a" {
+			if tr.ID == "a" {
 				t.Fatal("old attempt included")
 			}
 		}
@@ -133,21 +133,21 @@ func TestPairwiseWaitsForAllLatestCandidates(t *testing.T) {
 // of exit status. Risk: a later check inherits stale evidence or follows symlinks.
 func TestRunChecksRetainsAssessmentEvidence(t *testing.T) {
 	bytes := "{\"schema\":\"test.assessment.v1\",\"falseAccepts\":2}\n"
-	checks := []any{
-		doc{"id": "contract", "run": "mkdir evaluation; printf '%s\\n' '{\"schema\":\"test.assessment.v1\",\"falseAccepts\":2}' > evaluation/assessment.json; exit 3"},
-		doc{"id": "later", "run": "test ! -e evaluation/assessment.json"},
+	checks := []labCheck{
+		{ID: "contract", Run: "mkdir evaluation; printf '%s\\n' '{\"schema\":\"test.assessment.v1\",\"falseAccepts\":2}' > evaluation/assessment.json; exit 3"},
+		{ID: "later", Run: "test ! -e evaluation/assessment.json"},
 	}
 	result, err := runChecks(context.Background(), checks, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	captured := anys(result["assessments"])
-	if len(captured) != 1 || len(anys(result["failed"])) != 1 || mapOf(captured[0])["checkId"] != "contract" || mapOf(captured[0])["sha256"] != sha256hex([]byte(bytes)) || string(mapOf(captured[0])["bytes"].([]byte)) != bytes {
+	captured := result.Assessments
+	if len(captured) != 1 || len(result.Failed) != 1 || captured[0].CheckID != "contract" || captured[0].Sha256 != sha256hex([]byte(bytes)) || string(captured[0].Bytes) != bytes {
 		t.Fatal(result)
 	}
 	// A structurally valid assessment with model errors is still a passing contract.
-	result, err = runChecks(context.Background(), []any{doc{"id": "valid", "run": "mkdir evaluation; printf '%s' '{\"schema\":\"test.assessment.v1\",\"falseAccepts\":9}' > evaluation/assessment.json"}}, nil)
-	if err != nil || len(anys(result["failed"])) != 0 || len(anys(result["assessments"])) != 1 {
+	result, err = runChecks(context.Background(), []labCheck{{ID: "valid", Run: "mkdir evaluation; printf '%s' '{\"schema\":\"test.assessment.v1\",\"falseAccepts\":9}' > evaluation/assessment.json"}}, nil)
+	if err != nil || len(result.Failed) != 0 || len(result.Assessments) != 1 {
 		t.Fatal(result, err)
 	}
 	for _, command := range []string{
@@ -155,8 +155,8 @@ func TestRunChecksRetainsAssessmentEvidence(t *testing.T) {
 		"mkdir evaluation; printf '%s' '{}' > evaluation/assessment.json",
 		"ln -s references evaluation",
 	} {
-		result, err = runChecks(context.Background(), []any{doc{"id": "invalid", "run": command}}, []labFile{{"truth.json", []byte(bytes)}, {"references/truth.json", []byte(bytes)}})
-		if err != nil || len(anys(result["failed"])) != 1 || len(anys(result["assessments"])) != 0 {
+		result, err = runChecks(context.Background(), []labCheck{{ID: "invalid", Run: command}}, []labFile{{"truth.json", []byte(bytes)}, {"references/truth.json", []byte(bytes)}})
+		if err != nil || len(result.Failed) != 1 || len(result.Assessments) != 0 {
 			t.Fatal(command, result, err)
 		}
 	}
@@ -180,7 +180,8 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 	}
 	hash := sha256hex([]byte("synthetic assessment bytes"))
 	ref := doc{"checkId": "contract", "schemaId": "synthetic.assessment.v1", "artifactId": "assessment-evidence", "sha256": hash, "evaluatorSha256": sha256hex([]byte("evaluator")), "inputSha256": sha256hex([]byte("inputs"))}
-	result := doc{"projectAssessments": []any{ref}}
+	refT, _ := asT[labAssessmentRef](ref)
+	result := &labCheckRun{ProjectAssessments: []labAssessmentRef{refT}}
 	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
 		if err := exec(q, "INSERT INTO experiment(id,project_id,kind,pipeline_id) VALUES('assessment-exp','hello-world','single','assessment')"); err != nil {
 			return err
@@ -211,10 +212,10 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 	}
 	rollback := errors.New("injected score/link rollback")
 	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
-		if err := linkLabAssessments(q, trial, result); err != nil {
+		if err := linkLabAssessments(q, mustRunOf(trial), result); err != nil {
 			return err
 		}
-		if _, err := scoreAdd(q, doc{"experimentId": "assessment-exp", "projectId": "hello-world", "trialIds": []any{trial["id"]}, "evaluator": "script:example.checks:pass_fail", "evaluatorVersion": "synthetic", "form": "pass_fail", "value": true}); err != nil {
+		if _, err := scoreInsert(q, labNewScore{ExperimentID: "assessment-exp", ProjectID: "hello-world", TrialIDs: []string{astr(trial["id"])}, Evaluator: "script:example.checks:pass_fail", EvaluatorVersion: "synthetic", Form: "pass_fail", Value: true}); err != nil {
 			return err
 		}
 		return rollback
@@ -222,7 +223,7 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
-		current, err := getRun(q, astr(trial["id"]))
+		current, err := getRunDoc(q, astr(trial["id"]))
 		if err != nil {
 			return err
 		}
@@ -236,13 +237,13 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 		if n != 0 {
 			t.Fatal("rollback retained a contract score")
 		}
-		if err := linkLabAssessments(q, trial, result); err != nil {
+		if err := linkLabAssessments(q, mustRunOf(trial), result); err != nil {
 			return err
 		}
-		if err := linkLabAssessments(q, trial, result); err != nil {
+		if err := linkLabAssessments(q, mustRunOf(trial), result); err != nil {
 			return err
 		}
-		current, err = getRun(q, astr(trial["id"]))
+		current, err = getRunDoc(q, astr(trial["id"]))
 		if err != nil {
 			return err
 		}
@@ -263,27 +264,29 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 		if err := exec(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES('assessment-different','hello-world','lab',$1,15,'application/json','assessments/synthetic.json',$2,'stored')`, changed["sha256"], trial["id"]); err != nil {
 			return err
 		}
-		return linkLabAssessments(q, trial, doc{"projectAssessments": []any{changed}})
+		changedT, _ := asT[labAssessmentRef](changed)
+		return linkLabAssessments(q, mustRunOf(trial), &labCheckRun{ProjectAssessments: []labAssessmentRef{changedT}})
 	})
 	var conflict *HTTPError
 	if !errors.As(err, &conflict) || conflict.Code != 409 || conflict.Extra["reason"] != "assessment_identity_conflict" {
 		t.Fatal("changed assessment bytes accepted", err)
 	}
-	failedStorage := doc{"assessments": []any{doc{"checkId": "contract", "schemaId": "synthetic.assessment.v1", "bytes": []byte("{}"), "sha256": sha256hex([]byte("{}"))}}}
-	if err := materializeLabAssessments(env.ctx, env.app, trial, failedStorage, astr(ref["evaluatorSha256"]), astr(ref["inputSha256"])); err == nil || failedStorage["projectAssessments"] != nil {
+	failedStorage := &labCheckRun{Assessments: []labAssessmentCapture{{CheckID: "contract", SchemaID: "synthetic.assessment.v1", Bytes: []byte("{}"), Sha256: sha256hex([]byte("{}"))}}}
+	if err := materializeLabAssessments(env.ctx, env.app, mustRunOf(trial), failedStorage, astr(ref["evaluatorSha256"]), astr(ref["inputSha256"])); err == nil || failedStorage.ProjectAssessments != nil {
 		t.Fatal("missing storage fabricated durable evidence", err, failedStorage)
 	}
 	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
-		current, err := getRun(q, astr(trial["id"]))
+		current, err := getRunDoc(q, astr(trial["id"]))
 		if err != nil {
 			return err
 		}
 		if len(anys(current["projectAssessments"])) != 1 {
 			t.Fatal("plan write lost retained assessment")
 		}
-		full := doc{"checks": []any{}}
-		checked := doc{"assessmentSnapshot": labAssessmentSnapshot(current, full)}
-		if err := validateLabAssessmentSnapshot(q, current, doc{"checks": []any{doc{"id": "changed", "run": "exit 0"}}}, checked); err == nil {
+		full := labExample{Checks: []labCheck{}}
+		snapshot := labAssessmentSnapshot(mustRunOf(current), full)
+		checked := &labCheckRun{AssessmentSnapshot: &snapshot}
+		if err := validateLabAssessmentSnapshot(q, mustRunOf(current), labExample{Checks: []labCheck{{ID: "changed", Run: "exit 0"}}}, checked); err == nil {
 			t.Fatal("changed check snapshot accepted")
 		}
 		return nil
@@ -296,7 +299,7 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 		if err := putRun(q, newer); err != nil {
 			return err
 		}
-		return linkLabAssessments(q, trial, result)
+		return linkLabAssessments(q, mustRunOf(trial), result)
 	})
 	if !errors.As(err, &conflict) || conflict.Code != 409 {
 		t.Fatal("superseded attempt accepted assessment", err)
@@ -314,7 +317,7 @@ func TestLabAssessmentSkipsSupersededScriptEvaluation(t *testing.T) {
 	latest := doc{"id": "latest", "state": "preparing", "observation": "confirmed", "cell": cell(2)}
 	exp := doc{"state": "running", "evaluators": []any{doc{"kind": "script", "ref": "example.checks", "form": "pass_fail"}}}
 	launched := []string{}
-	complete, err := expEvaluate(nil, exp, []doc{old, latest}, nil, nil, &launched, nil)
+	complete, err := expEvaluate(nil, labExpOf(exp), labRunsOf([]doc{old, latest}), nil, nil, &launched, nil)
 	if err != nil || !complete || len(launched) != 0 {
 		t.Fatal("superseded unscored trial obstructed grading", complete, err, launched)
 	}

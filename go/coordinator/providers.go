@@ -10,8 +10,9 @@ import (
 	"fleet/contract"
 )
 
-var providers = func() map[string]any {
-	var p map[string]any
+// providerCatalogue: each provider's catalogue entry as written below (connections_list shows it whole).
+var providerCatalogue = func() map[string]json.RawMessage {
+	var p map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(providersJSON), &p); err != nil {
 		panic(err)
 	}
@@ -44,7 +45,14 @@ func snapshotProviders() map[string]contract.GatewayProvider {
 	return out
 }
 
-func providerTools(name string) doc { return mapOf(mapOf(providers[name])["tools"]) }
+// providerTools: a provider's tools as the maps the pipeline files read (method, idempotent); none for an unknown one.
+func providerTools(name string) doc {
+	p, ok := gatewayProviders[name]
+	if !ok {
+		return nil
+	}
+	return docOf(p.Tools)
+}
 
 const providersJSON = `
 {

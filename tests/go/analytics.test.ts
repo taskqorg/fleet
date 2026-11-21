@@ -225,7 +225,7 @@ test('R3 agent MCP calls to analytics_query strictly enforce session focus and r
     // Unfiltered call auto-scopes strictly to session focus ('desiign').
     const scoped = await mcpCall({window: win, dimensions: ['project'], measures: ['executions', 'tokens_input']});
     assert.equal(scoped.status, 200);
-    const scopedPayload = JSON.parse(scoped.body.result.content[0].text);
+    const scopedPayload = JSON.parse(scoped.body.result.content[0].text); { const sg: any = await op(c, 'session_get', {sessionId: sess.sessionId}, owner); console.log('DBG', JSON.stringify(sg.focus ?? sg.session?.focus ?? Object.keys(sg)), cmd.executionId); }
     assert.equal(scopedPayload.totals.measures.executions.value, 1);
     assert.equal(scopedPayload.totals.measures.tokens_input.value, 111);
     assert.equal(scopedPayload.rows[0].dimensions.project, 'desiign');

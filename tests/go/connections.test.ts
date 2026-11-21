@@ -55,6 +55,8 @@ async function until<T>(fn: () => Promise<T | undefined> | T | undefined, what: 
 }
 
 // The fake gateway: every call answers 502 provider-timeout (the charge is unknown), and records the bearer it saw.
+// seen holds provider calls (/v1/call/...) only: the coordinator's own usage read (GET /v1/usage, the reconcile pass a
+// minute after start) is no provider call, and counting it failed whichever test spanned that minute.
 const seen: string[] = [];
 let gateway: Server;
 let trialHostSecret = '';
@@ -62,7 +64,7 @@ let typedReplyBarrier: {reached: () => void; release: Promise<void>} | undefined
 let assetJob: {connection: string; mode: 'exact'|'missing'|'ambiguous'|'wrong-tool'|'ungranted'; jobId: string; kind?: 'rigging'; args: any; calls: string[]} | undefined;
 before(async () => {
   gateway = createServer(async (req, res) => {
-    seen.push(String(req.headers.authorization));
+    if (req.url?.startsWith('/v1/call/')) seen.push(String(req.headers.authorization));
     if (assetJob && req.url?.startsWith('/v1/call/' + assetJob.connection + '/')) {
       const fixture = assetJob, tool = req.url.split('/').at(-1)!;
       fixture.calls.push(tool);
@@ -495,7 +497,9 @@ async function suffixFixture(projectId = 'cs', differentOuter = false, checks?: 
   const view = () => op('lab_experiment_get', {experimentId: exp.id}).then(ok);
   const trial = await until(async () => { const v = await view(); return v.trials[0]?.state === 'running' ? v.trials[0] : undefined; }, 'source trial');
   const run = await until(async () => { const r = ok(await op('pipeline_get', {runId: trial.id})); return r.observedSteps[1]?.executionId ? r : undefined; }, 'suffix command');
-  const poll = (q = '') => host('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []}).then(ok);
+  // The host reports the store it serves on every poll, as an executor does: a store unreported for two minutes is
+  // unreachable (storeUnseenMS), and this file runs longer than that on a busy runner.
+  const poll = (q = '') => host('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [{id: 'trial-store', reachable: true}], problems: []}).then(ok);
   const command = await hostCommand(poll, (c: any) => c.executionId === run.observedSteps[1].executionId);
   assert.ok(command);
   const receipt = (cmd: any, status: string, extra = {}) => host('/api/hosts/receipts', {commandId: cmd.id, executionId: cmd.executionId, status, ...extra}).then(ok);

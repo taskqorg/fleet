@@ -1,5 +1,5 @@
 // Background scheduling (docs/designs/fleet-standard.md S6): the coordinator's periodic passes run only through every()
-// and its coalesced after-commit effects only through coalesced(); retried item work is the work kit's (work_kit.go).
+// (everyWake when a wake also runs them) and its coalesced after-commit effects only through coalesced(); retried item work is the work kit's (work_kit.go).
 // This file owns the goroutines and timers those need (designRulesOwned).
 package main
 
@@ -15,24 +15,54 @@ import (
 // every runs fn on a ticker until ctx ends, each run as the pass span pass.<name> in fn's ctx; single flight (a slow
 // pass never overlaps the next); d <= 0 turns it off.
 func every(ctx context.Context, name string, d time.Duration, fn func(context.Context) error) {
-	if d <= 0 {
+	everyWake(ctx, name, d, nil, false, func(ctx context.Context, _ bool) error { return fn(ctx) })
+}
+
+// everyWake is every that a wake also runs: a receive on wake runs fn at once, and wakes during a run coalesce into
+// one next run (wake is a channel with a buffer of one that producers send to without blocking). runNow runs fn at
+// start instead of after the first wait. fn's woken is true for a run that a wake or runNow started, false for one
+// the ticker started; a tick that finds a wake pending counts as woken. d <= 0 leaves only wakes and runNow; with no
+// wake as well the pass is off.
+func everyWake(ctx context.Context, name string, d time.Duration, wake <-chan struct{}, runNow bool, fn func(ctx context.Context, woken bool) error) {
+	if d <= 0 && wake == nil {
 		return
 	}
-	passIntervals.Store(name, d)
-	go func() {
+	var tick <-chan time.Time
+	var t *time.Timer
+	if d > 0 {
+		passIntervals.Store(name, d)
 		// The first run is at most a minute after start: a deploy more often than d restarts the timer, so a pass that
 		// waited a full interval first would never run (absence-pass, 2026-11-12: reconcile and delivery starved by
 		// deploys); the minute lets hosts poll before the rules judge them silent.
-		t := time.NewTimer(min(d, time.Minute))
-		defer t.Stop()
+		t = time.NewTimer(min(d, time.Minute))
+		tick = t.C
+	}
+	go func() {
+		if t != nil {
+			defer t.Stop()
+		}
+		woken := runNow
 		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
+			if !runNow {
+				select {
+				case <-ctx.Done():
+					return
+				case <-wake:
+					woken = true
+				case <-tick:
+					select {
+					case <-wake:
+						woken = true
+					default:
+						woken = false
+					}
+				}
 			}
-			obs.Pass(ctx, name, func(ctx context.Context) (int, error) { return 0, fn(ctx) })
-			t.Reset(d)
+			runNow = false
+			obs.Pass(ctx, name, func(ctx context.Context) (int, error) { return 0, fn(ctx, woken) })
+			if t != nil {
+				t.Reset(d)
+			}
 		}
 	}()
 }

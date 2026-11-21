@@ -45,29 +45,14 @@ func envDir(k, rel string) string {
 func profilesDir() string { return envDir("FLEET_PROFILES_DIRECTORY", "config/agents") }
 func configDir() string   { return envDir("FLEET_PROJECT_CONFIG_DIRECTORY", "config") }
 
-// canonical: JSON with object keys sorted by byte order.
+// canonical: JSON with object keys sorted by byte order (encoding/json sorts map keys; a struct keeps its field order),
+// without HTML escaping; an absent open object or list is {} or [].
 func canonical(v any) string {
-	switch x := v.(type) {
-	case map[string]any:
-		keys := sortedKeysOf(x)
-		var b bytes.Buffer
-		b.WriteByte('{')
-		for i, k := range keys {
-			if i > 0 {
-				b.WriteByte(',')
-			}
-			b.WriteString(canonical(k))
-			b.WriteByte(':')
-			b.WriteString(canonical(x[k]))
+	if rv := reflect.ValueOf(v); rv.IsValid() && (rv.Kind() == reflect.Map || rv.Kind() == reflect.Slice) && rv.IsNil() && rv.Type().Elem().Kind() == reflect.Interface {
+		if rv.Kind() == reflect.Map {
+			return "{}"
 		}
-		b.WriteByte('}')
-		return b.String()
-	case []any:
-		parts := make([]string, len(x))
-		for i, e := range x {
-			parts[i] = canonical(e)
-		}
-		return "[" + strings.Join(parts, ",") + "]"
+		return "[]"
 	}
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
@@ -120,35 +105,44 @@ func listProfiles(q *Request) ([]doc, error) {
 }
 
 // Project settings (docs/configuration.md): defaults for absent keys, unknown keys reported.
-var settingsDefaults = map[string]any{"contextSources": []any{}, "repos": []any{}, "environments": []any{}, "roles": doc{},
-	"worktree": doc{"envMode": "worktree", "baseRef": nil, "startFromOrigin": true, "branchPrefix": "fleet", "linkPaths": []any{}, "sharedDirectories": []any{}},
-	"scripts":  doc{"setup": nil, "teardown": nil}, "setupStart": "wait",
-	"execution":   doc{"tools": []any{}, "forge": false, "profiles": []any{}},
-	"integration": doc{"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "syncCheckoutAfterMerge": true},
-	"cleanup":     doc{"keepWhen": []any{"uncommitted", "unpushed", "teardown-failed"}}, "identity": nil, "subscriptions": []any{},
+var settingsDefaults = func() map[string]json.RawMessage {
+	var d map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(`{"contextSources": [], "repos": [], "environments": [], "roles": {},
+	"worktree": {"envMode": "worktree", "baseRef": null, "startFromOrigin": true, "branchPrefix": "fleet", "linkPaths": [], "sharedDirectories": []},
+	"scripts": {"setup": null, "teardown": null}, "setupStart": "wait",
+	"execution": {"tools": [], "forge": false, "profiles": []},
+	"integration": {"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "syncCheckoutAfterMerge": true},
+	"cleanup": {"keepWhen": ["uncommitted", "unpushed", "teardown-failed"]}, "identity": null, "subscriptions": [],
+	"errors": {"bugsink": []},
+	"presets": []}`), &d); err != nil {
+		panic(err)
+	}
 	// errors.bugsink: the Bugsink projects (names) holding this project's errors (docs/designs/fleet-error-tracking.md).
-	"errors": doc{"bugsink": []any{}},
 	// presets: what a new conversation does (presets.go); empty: the system presets.
-	"presets": []any{}}
+	return d
+}()
 
 var settingsOrder = []string{"contextSources", "repos", "environments", "roles", "worktree", "scripts", "setupStart", "integration", "cleanup", "identity", "subscriptions", "execution", "errors", "presets"}
 var itemKeys = map[string][]string{"repos": {"id", "remote", "forge", "defaultBranch", "connection", "path"}, "environments": {"hostId", "checkoutPath", "repo"}, "identity": {"name", "email"}}
-var settingEnums = map[string][]any{"worktree.envMode": {"worktree", "local"}, "setupStart": {"wait", "background"}, "integration.mode": {"pr", "direct"}, "integration.mergeMethod": {"squash", "merge", "rebase"}, "repos.forge": {"github", "gitlab"}}
+var settingEnums = map[string][]string{"worktree.envMode": {"worktree", "local"}, "setupStart": {"wait", "background"}, "integration.mode": {"pr", "direct"}, "integration.mergeMethod": {"squash", "merge", "rebase"}, "repos.forge": {"github", "gitlab"}}
 
-func jsType(v any) string {
-	switch v.(type) {
-	case string:
+// jsType: a JSON value's type as a setting's default and value compare (lists are objects).
+func jsType(v json.RawMessage) string {
+	switch jsonKind(v) {
+	case '"':
 		return "string"
-	case bool:
+	case 't', 'f':
 		return "boolean"
-	case float64:
-		return "number"
-	case nil:
+	case 'n', 0:
 		return "null"
+	case '{', '[':
+		return "object"
 	}
-	return "object"
+	return "number"
 }
 
+// projectSettings: a project definition's settings checked value by value (open JSON, walked by kind) over their
+// defaults, and the unknown keys.
 func projectSettings(p doc) (doc, []string, error) {
 	unknown := []string{}
 	bad := func(k string) error {
@@ -157,47 +151,50 @@ func projectSettings(p doc) (doc, []string, error) {
 		}
 		return fail(500, "Invalid project setting "+k)
 	}
-	isObj := func(v any) bool { _, ok := v.(map[string]any); return ok }
-	isArr := func(v any) bool { _, ok := v.([]any); return ok }
-	check := func(k string, v, d any) error {
-		if e, ok := settingEnums[k]; ok && !slices.Contains(e, v) {
-			return bad(k)
+	isObj := func(v json.RawMessage) bool { return jsonKind(v) == '{' }
+	isArr := func(v json.RawMessage) bool { return jsonKind(v) == '[' }
+	check := func(k string, v, d json.RawMessage) error {
+		if e, ok := settingEnums[k]; ok {
+			if s, isText := jsonString(v); !isText || !slices.Contains(e, s) {
+				return bad(k)
+			}
 		}
-		if (d != nil && v != nil && jsType(d) != jsType(v)) || isArr(d) != isArr(v) {
+		if (!isNull(d) && !isNull(v) && jsType(d) != jsType(v)) || isArr(d) != isArr(v) {
 			return bad(k)
 		}
 		return nil
 	}
+	in := recOf(p)
 	top := append([]string{"id", "name", "capability", "recommendedMethod", "contextFiles", "artifact_locations", "artifact_rules"}, settingsOrder...)
-	for k := range p {
+	for k := range in {
 		if !slices.Contains(top, k) {
 			unknown = append(unknown, k)
 		}
 	}
 	sort.Strings(unknown)
-	out := doc{}
+	out := pipelineRule{}
 	for _, k := range settingsOrder {
 		d := settingsDefaults[k]
-		v, present := p[k]
+		v, present := in[k]
 		if !present {
-			out[k] = clone(d)
+			out[k] = d
 			continue
 		}
 		switch {
 		case k == "contextSources":
-			if _, err := contract.ContextSources(v); err != nil {
+			if _, err := contract.ContextSources(rawAny(v)); err != nil {
 				return nil, nil, fail(400, "Invalid contextSources: "+err.Error())
 			}
 			out[k] = v
 		case k == "presets":
-			if _, err := parsePresets(v); err != nil {
+			if _, err := parsePresets(rawAny(v)); err != nil {
 				return nil, nil, err
 			}
 			out[k] = v
 		case k == "subscriptions":
-			xs, ok := v.([]any)
-			for _, x := range xs {
-				if _, s := x.(string); !s {
+			ok := isArr(v)
+			for _, x := range jsonList(v) {
+				if _, s := jsonString(x); !s {
 					ok = false
 				}
 			}
@@ -206,9 +203,10 @@ func projectSettings(p doc) (doc, []string, error) {
 			}
 			out[k] = v
 		case k == "roles":
-			o, ok := v.(map[string]any)
+			o := pipelineRuleOf(v)
+			ok := o != nil
 			for _, x := range o {
-				if _, s := x.(string); !s {
+				if _, s := jsonString(x); !s {
 					ok = false
 				}
 			}
@@ -217,46 +215,46 @@ func projectSettings(p doc) (doc, []string, error) {
 			}
 			out[k] = v
 		case isArr(d):
-			xs, ok := v.([]any)
-			if !ok {
+			if !isArr(v) {
 				return nil, nil, bad(k)
 			}
-			items := []any{}
-			for i, it := range xs {
-				o, ok := it.(map[string]any)
-				if !ok {
+			items := []json.RawMessage{}
+			for i, it := range jsonList(v) {
+				o := pipelineRuleOf(it)
+				if o == nil {
 					return nil, nil, bad(k)
 				}
 				for x, y := range o {
 					if !slices.Contains(itemKeys[k], x) {
 						unknown = append(unknown, k+"["+itoa(i)+"]."+x)
-					} else if _, s := y.(string); !s {
+					} else if _, s := jsonString(y); !s {
 						return nil, nil, bad(k + "[" + itoa(i) + "]." + x)
 					}
 				}
+				text := func(key string) string { t, _ := jsonString(o[key]); return t }
 				if k == "repos" {
-					if astr(o["remote"]) == "" {
+					if text("remote") == "" {
 						return nil, nil, bad(k + ".remote")
 					}
-					if err := check("repos.forge", firstString(o["forge"], "github"), nil); err != nil {
+					if err := check("repos.forge", jsonBytes(firstString(text("forge"), "github")), nil); err != nil {
 						return nil, nil, err
 					}
-					r := doc{"forge": "github", "defaultBranch": "main"}
+					r := pipelineRule{"forge": jsonBytes("github"), "defaultBranch": jsonBytes("main")}
 					for x, y := range o {
 						r[x] = y
 					}
-					items = append(items, r)
+					items = append(items, jsonBytes(r))
 					continue
 				}
-				if astr(o["hostId"]) == "" || astr(o["checkoutPath"]) == "" {
+				if text("hostId") == "" || text("checkoutPath") == "" {
 					return nil, nil, bad(k)
 				}
-				items = append(items, o)
+				items = append(items, it)
 			}
-			out[k] = items
+			out[k] = jsonBytes(items)
 		case k == "identity":
-			o, ok := v.(map[string]any)
-			if !ok {
+			o := pipelineRuleOf(v)
+			if o == nil {
 				return nil, nil, bad(k)
 			}
 			for x := range o {
@@ -266,13 +264,17 @@ func projectSettings(p doc) (doc, []string, error) {
 			}
 			out[k] = v
 		case isObj(d):
-			o, ok := v.(map[string]any)
-			if !ok {
+			o := pipelineRuleOf(v)
+			if o == nil {
 				return nil, nil, bad(k)
 			}
-			r := clone(d).(map[string]any)
+			defaults := pipelineRuleOf(d)
+			r := pipelineRule{}
+			for x, y := range defaults {
+				r[x] = y
+			}
 			for x, y := range o {
-				dv, known := d.(doc)[x]
+				dv, known := defaults[x]
 				if !known {
 					unknown = append(unknown, k+"."+x)
 					continue
@@ -282,8 +284,8 @@ func projectSettings(p doc) (doc, []string, error) {
 				}
 				if k == "execution" && x == "profiles" {
 					seen := map[string]bool{}
-					for _, value := range anys(y) {
-						id, ok := value.(string)
+					for _, value := range jsonList(y) {
+						id, ok := jsonString(value)
 						if !ok || strings.TrimSpace(id) == "" || seen[id] {
 							return nil, nil, bad("execution.profiles")
 						}
@@ -291,22 +293,22 @@ func projectSettings(p doc) (doc, []string, error) {
 					}
 				}
 				if k == "errors" && x == "bugsink" {
-					for _, name := range anys(y) {
-						if !bugsinkProjectName.MatchString(astr(name)) {
+					for _, name := range jsonList(y) {
+						if n, _ := jsonString(name); !bugsinkProjectName.MatchString(n) {
 							return nil, nil, bad("errors.bugsink")
 						}
 					}
 				}
 				if k == "execution" && x == "tools" {
-					for _, tool := range anys(y) {
-						if !slices.Contains([]string{"node", "pnpm", "browser"}, astr(tool)) {
+					for _, tool := range jsonList(y) {
+						if t, _ := jsonString(tool); !slices.Contains([]string{"node", "pnpm", "browser"}, t) {
 							return nil, nil, bad("execution.tools")
 						}
 					}
 				}
 				r[x] = y
 			}
-			out[k] = r
+			out[k] = jsonBytes(r)
 		default:
 			if err := check(k, v, d); err != nil {
 				return nil, nil, err
@@ -314,12 +316,13 @@ func projectSettings(p doc) (doc, []string, error) {
 			out[k] = v
 		}
 	}
-	loc, has := p["artifact_locations"]
+	loc, has := in["artifact_locations"]
 	if has {
-		xs, ok := loc.([]any)
+		ok := isArr(loc)
+		xs := jsonList(loc)
 		seen := map[string]bool{}
 		for _, x := range xs {
-			s, _ := x.(string)
+			s, _ := jsonString(x)
 			if s == "" || seen[s] {
 				ok = false
 			}
@@ -329,11 +332,11 @@ func projectSettings(p doc) (doc, []string, error) {
 			return nil, nil, bad("artifact_locations")
 		}
 	}
-	out["artifact_locations"] = loc
-	rules, has := p["artifact_rules"]
+	out["artifact_locations"] = orNull(loc)
+	rules, has := in["artifact_rules"]
 	if has {
-		xs, ok := rules.([]any)
-		for _, x := range xs {
+		ok := isArr(rules)
+		for _, x := range jsonList(rules) {
 			if !isObj(x) {
 				ok = false
 			}
@@ -342,10 +345,10 @@ func projectSettings(p doc) (doc, []string, error) {
 			return nil, nil, bad("artifact_rules")
 		}
 	} else {
-		rules = []any{}
+		rules = json.RawMessage("[]")
 	}
 	out["artifact_rules"] = rules
-	return out, unknown, nil
+	return docOf(out), unknown, nil
 }
 
 func itoa(i int) string { b, _ := json.Marshal(i); return string(b) }
@@ -382,8 +385,12 @@ func shippedProjectContext(id string) (doc, error) {
 	if err != nil {
 		return nil, fail(500, "Invalid project definition")
 	}
-	files, ok := p["contextFiles"].([]any)
-	if p["id"] != id || !ok {
+	head := agentView[struct {
+		ID           json.RawMessage `json:"id"`
+		ContextFiles json.RawMessage `json:"contextFiles"`
+	}](p)
+	files := jsonList(head.ContextFiles)
+	if own, _ := jsonString(head.ID); own != id || jsonKind(head.ContextFiles) != '[' {
 		return nil, fail(500, "Invalid project definition")
 	}
 	settings, unknown, err := projectSettings(p)
@@ -391,9 +398,9 @@ func shippedProjectContext(id string) (doc, error) {
 		return nil, err
 	}
 	realRoot, _ := filepath.EvalSymlinks(root)
-	ctx := []doc{}
+	ctx := []doc{} // seedProjectDefinitions (project_access.go) reads the context as []doc
 	for _, f := range files {
-		name, ok := f.(string)
+		name, ok := jsonString(f)
 		if !ok || strings.Contains(name, "..") || strings.HasPrefix(name, "/") {
 			return nil, fail(500, "Invalid project context path")
 		}
@@ -409,14 +416,16 @@ func shippedProjectContext(id string) (doc, error) {
 			return nil, err
 		}
 		h := sha256.Sum256([]byte(js(string(text))))
-		ctx = append(ctx, doc{"path": name, "text": string(text), "sha256": hex.EncodeToString(h[:])})
+		ctx = append(ctx, docOf(projectContextFile{Path: name, Text: string(text), Sha256: hex.EncodeToString(h[:])})) // projectContextFile: project_definitions.go
 	}
-	out := doc{}
-	for k, v := range p {
-		out[k] = v
-	}
+	out := docOf(p)
 	out["settings"], out["unknownKeys"], out["context"] = settings, unknown, ctx
 	return out, nil
+}
+
+// projectSettingsView: the settings of a project context (the map its readers hold).
+type projectSettingsView struct {
+	Settings doc `json:"settings"`
 }
 
 func projectSettingsOf(q *Request, id string) doc {
@@ -424,7 +433,7 @@ func projectSettingsOf(q *Request, id string) doc {
 	if err != nil {
 		return nil
 	}
-	return mapOf(p["settings"])
+	return agentView[projectSettingsView](p).Settings
 }
 
 func catalogue(q *Request, id string) (doc, error) {
@@ -451,21 +460,37 @@ func catalogueBase(q *Request, id string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	method, source := firstString(p["recommendedMethod"], c["sharedDefault"]), "shared"
-	if p["recommendedMethod"] != nil {
+	own := agentView[struct {
+		RecommendedMethod json.RawMessage `json:"recommendedMethod"`
+	}](p).RecommendedMethod
+	head := agentView[struct {
+		SharedDefault json.RawMessage   `json:"sharedDefault"`
+		Methods       []json.RawMessage `json:"methods"`
+	}](c)
+	method, source := firstString(rawAny(own), rawAny(head.SharedDefault)), "shared"
+	if !isNull(own) {
 		source = "project"
 	}
 	if len(recs) > 0 {
-		method, source = astr(recs[0]["methodId"]), "project-selected"
+		method, source = agentView[struct {
+			MethodID string `json:"methodId"`
+		}](recs[0]).MethodID, "project-selected"
 	}
 	methods := []any{}
-	ms, _ := c["methods"].([]any)
-	for _, x := range ms {
-		if sc := astr(x.(map[string]any)["scope"]); sc == "shared" || sc == id {
-			methods = append(methods, x)
+	for _, x := range head.Methods {
+		if sc, _ := jsonString(pipelineRuleOf(x)["scope"]); sc == "shared" || sc == id {
+			methods = append(methods, decodeNumbers(string(x))) // a catalogue number keeps its text
 		}
 	}
-	return doc{"projectId": id, "capability": c["capability"], "sharedDefault": c["sharedDefault"], "recommendedMethod": method, "recommendationSource": source, "methods": methods}, nil
+	// The head's record (read for this call) becomes the project's catalogue: its capability and shared default stay.
+	for k := range c {
+		if k != "capability" && k != "sharedDefault" {
+			delete(c, k)
+		}
+	}
+	c["capability"], c["sharedDefault"] = c["capability"], c["sharedDefault"]
+	c["projectId"], c["recommendedMethod"], c["recommendationSource"], c["methods"] = id, method, source, methods
+	return c, nil
 }
 
 // projectOps: the operations of the projects MCP server (/api/project-tools) and of a native agent's project operations
@@ -548,17 +573,18 @@ func init() {
 			return contract.RecommendationSetReply{}, err
 		}
 		found := false
-		for _, x := range c["methods"].([]any) {
-			found = found || astr(x.(map[string]any)["id"]) == r.MethodId
+		for _, x := range agentView[pipelineCatalogue](c).Methods {
+			id, _ := jsonString(x.ID)
+			found = found || id == r.MethodId
 		}
 		if !found {
 			return contract.RecommendationSetReply{}, fail(400, "Method unavailable")
 		}
-		rec := doc{"id": "recommendation:" + r.ProjectId, "projectId": r.ProjectId, "methodId": r.MethodId, "selectedAt": nowMs(), "actor": actor(q, "operator")}
-		if err := q.db().ProjectRecommendationSet(q.ctx(), db.ProjectRecommendationSetParams{ID: astr(rec["id"]), ProjectID: r.ProjectId, MethodID: r.MethodId, Actor: astr(rec["actor"])}); err != nil {
+		rec := contract.RecommendationSetReply{Id: "recommendation:" + r.ProjectId, ProjectId: r.ProjectId, MethodId: r.MethodId, SelectedAt: nowMs(), Actor: actor(q, "operator")}
+		if err := q.db().ProjectRecommendationSet(q.ctx(), db.ProjectRecommendationSetParams{ID: rec.Id, ProjectID: r.ProjectId, MethodID: r.MethodId, Actor: rec.Actor}); err != nil {
 			return contract.RecommendationSetReply{}, err
 		}
-		return replyAs[contract.RecommendationSetReply](rec, nil)
+		return rec, nil
 	})
 	op("question_ask", func(q *Request, r *contract.QuestionAskRequest) (contract.QuestionAskReply, error) {
 		if _, err := projectContext(q, r.ProjectId); err != nil {
@@ -578,9 +604,10 @@ func init() {
 			}
 			return d, nil
 		}
-		v := doc{"id": newID(), "projectId": r.ProjectId, "requestId": r.RequestId, "text": r.Text, "state": "waiting", "createdAt": nowMs(), "actor": actor(q, "operator")}
-		_, err = askQuestion(q, doc{"id": v["id"], "kind": "operator_decision", "text": r.Text, "projectId": r.ProjectId, "askedBy": v["actor"], "requestId": r.RequestId, "askedAt": v["createdAt"]})
-		return replyAs[contract.QuestionAskReply](v, err)
+		v := contract.ProjectQuestion{Id: newID(), ProjectId: r.ProjectId, RequestId: r.RequestId, Text: r.Text, State: "waiting", CreatedAt: nowMs(), Actor: actor(q, "operator")}
+		at := time.UnixMilli(v.CreatedAt).UTC()
+		_, err = askQuestionAs(q, questionAsk{ID: v.Id, Kind: "operator_decision", Text: r.Text, ProjectID: r.ProjectId, AskedBy: &v.Actor, RequestID: &v.RequestId, AskedAt: &at})
+		return v, err
 	})
 	op("question_answer", func(q *Request, r *contract.QuestionAnswerRequest) (contract.QuestionAnswerReply, error) {
 		if r.Answer == "" || len([]rune(r.Answer)) > 4000 {
@@ -602,10 +629,16 @@ func init() {
 			if err != nil {
 				return contract.QuestionAnswerReply{}, err
 			}
-			if x, err := findQuestion(q, astr(a["task_id"]), r.QuestionId); x != nil || err != nil {
+			answered := agentView[struct {
+				ID     json.RawMessage `json:"id"`
+				State  json.RawMessage `json:"state"`
+				Answer json.RawMessage `json:"answer"`
+				TaskID string          `json:"task_id"`
+			}](a)
+			if x, err := findQuestion(q, answered.TaskID, r.QuestionId); x != nil || err != nil {
 				return replyAs[contract.QuestionAnswerReply](x, err)
 			}
-			return replyAs[contract.QuestionAnswerReply](doc{"id": a["id"], "state": a["state"], "answer": a["answer"]}, nil)
+			return contract.QuestionAnswerReply{"id": orNull(answered.ID), "state": orNull(answered.State), "answer": orNull(answered.Answer)}, nil
 		}
 		if v := projectQuestionOf(pq[0]); v.State == "answered" {
 			if deref(v.Answer) != r.Answer {
@@ -644,10 +677,12 @@ func init() {
 		if err != nil {
 			return contract.PipelineGetReply{}, err
 		}
-		if p := deref(r.ProjectId); p != "" && astr(run["projectId"]) != p {
-			return contract.PipelineGetReply{}, fail(403, "Pipeline belongs to another project")
+		if p := deref(r.ProjectId); p != "" {
+			if own, _ := jsonString(run["projectId"]); own != p {
+				return contract.PipelineGetReply{}, fail(403, "Pipeline belongs to another project")
+			}
 		}
-		return replyAs[contract.PipelineGetReply](run, nil)
+		return asT[contract.PipelineGetReply](run)
 	})
 	op("pipeline_history", func(q *Request, r *contract.PipelineHistoryRequest) (contract.PipelineHistoryReply, error) {
 		if _, err := projectContext(q, r.ProjectId); err != nil {
@@ -657,15 +692,19 @@ func init() {
 		if err != nil {
 			return contract.PipelineHistoryReply{}, err
 		}
-		runs := []doc{}
+		out := contract.PipelineHistoryReply{Runs: []contract.PipelineGetReply{}}
 		for _, id := range ids {
 			run, err := pipelineRun(q, id)
 			if err != nil {
 				return contract.PipelineHistoryReply{}, err
 			}
-			runs = append(runs, run)
+			v, err := asT[contract.PipelineGetReply](run)
+			if err != nil {
+				return contract.PipelineHistoryReply{}, err
+			}
+			out.Runs = append(out.Runs, v)
 		}
-		return replyAs[contract.PipelineHistoryReply](doc{"runs": runs}, nil)
+		return out, nil
 	})
 	addProjectOps("project_detail", "project_resources", "project_resource_items", "project_list", "project_context", "catalogue",
 		"recommendation_set", "question_ask", "question_answer", "question_history", "pipeline_get", "pipeline_history",
@@ -673,8 +712,8 @@ func init() {
 	longRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps) })
 }
 
-// pipelineRun: a pipeline-run record with its steps.
-func pipelineRun(q *Request, id string) (doc, error) {
+// pipelineRun: a pipeline run as its readers get it (planRead).
+func pipelineRun(q *Request, id string) (recordRest, error) {
 	run, err := getRun(q, id)
 	if err != nil {
 		return nil, err
@@ -682,7 +721,7 @@ func pipelineRun(q *Request, id string) (doc, error) {
 	if run == nil {
 		return nil, fail(404, "Unknown pipeline run")
 	}
-	return pipelinePlanRead(q, run)
+	return run.planRead(q)
 }
 
 // mcp: an MCP tools server (mcpserve) over an operation table: tools/list publishes its advertised operations, tools/call
@@ -743,8 +782,10 @@ func agentReady(q *Request, c doc) (bool, error) {
 	return err == nil && !terminal(e), err
 }
 
+// takeTaskFrom: from is a record's value (text, else none).
 func takeTaskFrom(q *Request, taskID, taker string, from any) error {
-	return takeTask(q, taskID, taker, astr(from))
+	f, _ := from.(string)
+	return takeTask(q, taskID, taker, f)
 }
 
 // projectSettingsByID: project_context(projectId).settings; error when unknown.
@@ -753,26 +794,30 @@ func projectSettingsByID(q *Request, id string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mapOf(p["settings"]), nil
+	return agentView[projectSettingsView](p).Settings, nil
 }
 
 // gitNetworkOf: whether the session's agent may use the network for git (its profile, else a project role with repos).
 func gitNetworkOf(q *Request, s doc) bool {
-	if cfg, ok := s["agentConfig"].(map[string]any); ok {
-		if v, ok := cfg["gitNetwork"].(bool); ok {
-			return v
-		}
+	sv := agentView[struct {
+		AgentConfig     json.RawMessage `json:"agentConfig"`
+		ProjectID       json.RawMessage `json:"projectId"`
+		Role            json.RawMessage `json:"role"`
+		ProjectSettings json.RawMessage `json:"projectSettings"`
+	}](s)
+	if v, ok := jsonBool(pipelineRuleOf(sv.AgentConfig)["gitNetwork"]); ok {
+		return v
 	}
-	p := astr(s["projectId"])
-	role := astr(s["role"])
+	p, _ := jsonString(sv.ProjectID)
+	role, _ := jsonString(sv.Role)
 	if p == "" || (role != "pm" && role != "reviewer" && role != "worker") {
 		return false
 	}
-	if st := mapOf(s["projectSettings"]); st != nil {
-		return len(anys(st["repos"])) > 0
+	if st := pipelineRuleOf(sv.ProjectSettings); st != nil {
+		return len(jsonList(st["repos"])) > 0
 	}
 	st, err := projectSettingsByID(q, p)
-	return err == nil && len(anys(st["repos"])) > 0
+	return err == nil && len(jsonList(recOf(st)["repos"])) > 0
 }
 
 // catalogueHead: the catalogue definition's head (one definition, config/catalogue.json as its seed).
@@ -784,8 +829,10 @@ func catalogueHead(q *Request) (doc, error) {
 		}
 		return nil, err
 	}
-	c := mapOf(decodeNumbers(string(raw)))
-	if c == nil {
+	var c doc // numbers keep their text (json.Number)
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if dec.Decode(&c) != nil || c == nil {
 		return nil, fail(500, "Invalid catalogue definition")
 	}
 	return c, nil
@@ -845,13 +892,13 @@ func projectDetail(q *Request, r *contract.ProjectDetailRequest) (contract.Proje
 		return contract.ProjectDetailReply{}, err
 	}
 	// Only this explicit shape reaches the new reader; legacy flattened settings stay legacy.
-	out := doc{}
+	rec, out := recOf(p), pipelineRule{}
 	for _, k := range []string{"id", "name", "content", "settings", "unknownKeys", "context", "revision", "contentSha", "repoSha", "sourceState", "initialAccess"} {
-		if v, ok := p[k]; ok {
+		if v, ok := rec[k]; ok {
 			out[k] = v
 		}
 	}
-	return replyAs[contract.ProjectDetailReply](out, nil)
+	return asT[contract.ProjectDetailReply](out)
 }
 func projectPreparedResources(q *Request, r *contract.ProjectResourcesRequest) (contract.ProjectResourcesReply, error) {
 	s, err := resourceReadPrepared(q, r.ProjectId)

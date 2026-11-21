@@ -29,13 +29,6 @@ type labCompareVariant struct {
 	Overrides  any    `json:"overrides"`
 }
 
-// labExampleUseCase: the use case of an example (labExampleGet).
-type labExampleUseCase struct {
-	Example struct {
-		UseCaseID string `json:"use_case_id"`
-	} `json:"example"`
-}
-
 // labCatalogue: the catalogue definition's fields method comparison reads; overrides stay as stored.
 type labCatalogue struct {
 	Capability string               `json:"capability"`
@@ -48,12 +41,6 @@ type labCatalogueMethod struct {
 	Pipeline  string          `json:"pipeline"`
 	ConfigRef string          `json:"configRef"`
 	Overrides json.RawMessage `json:"overrides"`
-}
-
-// labCreated: the created experiment's id and stored variants, each kept whole.
-type labCreated struct {
-	ID       string                       `json:"id"`
-	Variants []map[string]json.RawMessage `json:"variants"`
 }
 
 // Compare uses one locked stored catalogue head; selection does not launch work.
@@ -134,9 +121,9 @@ func labCompareMethods(q *Request, r *contract.LabCompareMethodsRequest) (contra
 		return out, err
 	}
 	var entry *contract.UseCase
-	for _, x := range registry {
-		if u, _ := asT[contract.UseCase](x); u.Id == uc {
-			entry = &u
+	for i, u := range registry {
+		if u.Id == uc {
+			entry = &registry[i]
 			break
 		}
 	}
@@ -176,11 +163,11 @@ func labCompareMethods(q *Request, r *contract.LabCompareMethodsRequest) (contra
 	}
 	examples := []string{}
 	for _, id := range ids {
-		ex, err := labExampleGet(q, id)
+		ex, err := labExampleRead(q, id)
 		if err != nil {
 			return out, err
 		}
-		if e, _ := asT[labExampleUseCase](ex); e.Example.UseCaseID == uc {
+		if ex.example.UseCaseID == uc {
 			examples = append(examples, id)
 		}
 	}
@@ -193,21 +180,23 @@ func labCompareMethods(q *Request, r *contract.LabCompareMethodsRequest) (contra
 	}
 	kind, pipeline := "ab", strings.TrimSuffix(methods[0].Pipeline, ".json")
 	// The create a lab_experiment_create request makes, with the catalogue's numbers as stored.
-	created, err := expCreate(q, labCreateDoc(contract.LabExperimentCreateRequest{Kind: &kind, ProjectId: &project, PipelineId: &pipeline, Variants: jsonBytes(variants),
-		Examples: jsonBytes(examples), Evaluators: jsonBytes(evaluators), PrimaryEvaluator: jsonBytes(evaluators[0].name())}))
+	created, err := expCreate(q, &contract.LabExperimentCreateRequest{Kind: &kind, ProjectId: &project, PipelineId: &pipeline, Variants: jsonBytes(variants),
+		Examples: jsonBytes(examples), Evaluators: jsonBytes(evaluators), PrimaryEvaluator: jsonBytes(evaluators[0].name())}, true)
 	if err != nil {
 		return out, err
 	}
-	exp, _ := asT[labCreated](created)
-	ref := contract.DefinitionRef{Kind: contract.DefinitionKindCatalogue, Id: "catalogue", Revision: head.Head, ContentSha: head.ContentSha}
-	for i, snapshot := range exp.Variants {
-		m := methods[i]
+	exp, err := expRow(q, created.Id)
+	if err != nil {
+		return out, err
+	}
+	ref := jsonBytes(contract.DefinitionRef{Kind: contract.DefinitionKindCatalogue, Id: "catalogue", Revision: head.Head, ContentSha: head.ContentSha})
+	for i := range exp.Variants {
+		v, m := &exp.Variants[i], methods[i]
 		identity := m.ConfigRef
 		if identity == "" {
-			v, _ := asT[labVariant](snapshot)
 			identity = labConfigDigestOf(v.PipelineID, v.Overrides)
 		}
-		snapshot["catalogueConfigRef"], snapshot["methodId"], snapshot["catalogueRef"] = jsonBytes(identity), jsonBytes(m.ID), jsonBytes(ref)
+		v.CatalogueConfigRef, v.MethodID, v.CatalogueRef = identity, m.ID, ref
 	}
 	if err := q.db().LabVariantsSet(q.ctx(), db.LabVariantsSetParams{ID: exp.ID, Variants: jsonBytes(exp.Variants)}); err != nil {
 		return out, err
