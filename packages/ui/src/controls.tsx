@@ -7,3 +7,5 @@ export * from './controls/tables.tsx';
 export * from './controls/forms.tsx';
 export * from './controls/thread.tsx';
 export * from './controls/metrics.tsx';
+export * from './controls/catalogue-tree.tsx';
+export * from './controls/entity-picker.tsx';

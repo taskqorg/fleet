@@ -454,9 +454,101 @@
   .delivery-flow { padding-bottom: var(--space-3); margin-bottom: var(--space-4); }
   .delivery-flow .area-chart { padding: 0 var(--space-4); }
 
+  /* Catalogue tree & inline entity picker (controls/catalogue-tree.md, controls/entity-picker.md) */
+  .cat-tree { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .cat-tree.fill, .cat-tree.fill .vl-wrap { flex: 1; min-height: 0; }
+  .cat-tree .vl-row { padding: 0; }
+  .cat-tree .vl-row.cat-folder-row { background: var(--bg); border-bottom-color: var(--line); }
+  .cat-tree .vl-row.cat-folder-row:hover { background: var(--hover); }
+  .cat-tree .vl-row.cat-folder-row.sel { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
+  .cat-tree .vl-row.cat-problem { background: var(--attention-soft); }
+  .cat-tree .vl-row.cat-problem.sel { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
+  .cat-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    padding-right: var(--space-4);
+    padding-left: var(--space-4);
+    cursor: pointer;
+  }
+  .cat-row.depth-1 { padding-left: calc(var(--space-4) + var(--space-5)); }
+  .cat-row.depth-2 { padding-left: calc(var(--space-4) + 2 * var(--space-5)); }
+  .cat-row.disabled { opacity: .55; cursor: not-allowed; }
+  .cat-row:focus-visible { outline: var(--size-focus-ring) solid var(--accent); outline-offset: calc(-1 * var(--size-focus-ring)); }
+  .cat-row.folder > .icon { color: var(--fg-muted); width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  .cat-tw { display: inline-flex; align-items: center; justify-content: center; width: var(--size-badge); height: var(--size-badge); flex: none; border: 0; border-radius: var(--radius-sm); background: none; color: var(--fg-muted); cursor: pointer; padding: 0; }
+  .cat-tw:hover { background: var(--hover); color: var(--fg); }
+  .cat-ic { display: inline-flex; color: var(--fg-muted); flex: none; }
+  .cat-ic .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  .cat-label, .cat-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--font-weight-medium); color: var(--fg); text-decoration: none; }
+  .cat-row.folder .cat-label { font-size: var(--font-size-sm); }
+  .cat-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--fg-muted); }
+  .cat-right { margin-left: auto; display: inline-flex; align-items: center; gap: var(--space-2); flex: none; font-size: var(--font-size-sm); color: var(--fg-muted); }
+  .cat-count { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--font-size-xs); color: var(--fg-muted); }
+
+  .ep { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+  .ep-label { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); color: var(--fg); }
+  .ep-trigger {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    min-height: var(--size-control);
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    cursor: pointer;
+  }
+  .ep-trigger:hover:not(.disabled) { border-color: var(--fg-muted); }
+  .ep-trigger.open, .ep-trigger:focus-within { border-color: var(--accent); }
+  .ep-trigger.disabled { background: var(--bg); color: var(--fg-faint); cursor: not-allowed; opacity: .7; }
+  .ep-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); flex: 1 1 var(--size-input); min-width: 0; }
+  .ep-placeholder { font-size: var(--font-size-sm); padding: 0 var(--space-1); }
+  .ep-chip { gap: var(--space-1); padding-left: var(--space-2); max-width: 100%; background: var(--bg); }
+  .ep-chip .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); color: var(--fg-muted); }
+  .ep-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ep-chip-sub { font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--fg-muted); }
+  .ep-more { font-size: var(--font-size-xs); padding: 0 var(--space-1); white-space: nowrap; }
+  .ep-btn {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    height: var(--size-chip);
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--fg-muted);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    flex: none;
+  }
+  .ep-btn:hover:not([aria-disabled=true]) { background: var(--hover); color: var(--fg); }
+  .ep-btn[aria-disabled=true] { cursor: not-allowed; }
+  .ep-btn .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  .ep-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+  .ep-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .ep-arch { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-sm); color: var(--fg-muted); cursor: pointer; white-space: nowrap; }
+  .ep-presets { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+  .ep-tree { --list-height: calc(var(--size-row) * 8); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--bg); }
+
   /* Touch hit targets (44 px owner-rules exception) */
   @media (pointer: coarse) {
-    .btn, .chip button, .seg, .pick-b, .pick-x, .tw, .pill { min-height: var(--size-hit-phone); min-width: var(--size-hit-phone); }
+    .btn, .chip button, .seg, .pick-b, .pick-x, .tw, .cat-tw, .pill { min-height: var(--size-hit-phone); min-width: var(--size-hit-phone); }
+    .ep-trigger, .ep-btn, .ep-arch { min-height: var(--size-hit-phone); }
     .vl-row .btn.icon-only, .row-pin, .nav-i a, .rail-user-b, .nav-pin, .counter, .seg, .preset button, .saved-chip, .tabs button, .menu button, .spot-list [role=option] .btn.icon-only, .spot-terms button { min-height: var(--size-hit-phone); min-width: var(--size-hit-phone); }
     .spot-list [role=option] { height: auto; min-height: var(--size-hit-phone); }
     .row-link { display: inline-flex; align-items: center; min-height: var(--size-hit-phone); }

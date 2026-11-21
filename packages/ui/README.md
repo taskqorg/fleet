@@ -6,7 +6,7 @@
 
 ## Interface
 
-- [`src`](src/README.md) is the public source package; `src/index.ts` is its export barrel.
+- [`src`](src/README.md) is the public source package; `src/index.ts` is its export barrel (including `src/controls.tsx` exports such as `CatalogueTree`, `flattenCatalogueTree`, and `EntityPicker` from `src/controls/catalogue-tree.tsx` and `src/controls/entity-picker.tsx`).
 - [`book`](book/README.md) is the interactive design-book source.
 - [`scripts`](scripts/README.md) builds the book, derives token CSS, and emits design warnings.
 - `tokens.json` is the token input for `scripts/tokens.mjs`; `icons.json` supplies the icon registry used by `src/registry.ts`.
