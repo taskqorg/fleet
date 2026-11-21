@@ -1,0 +1,142 @@
+[
+ {
+  "id": "bench:laravel-code-quality",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/benchmarks/llm-code-benchmarks.md",
+   "anchor": "laravel-code-quality",
+   "commit": "0000000000000000000000000000000000000000",
+   "sha256": ""
+  },
+  "source_status": "current",
+  "actor": "architect",
+  "goal": "Refactor or extend an existing Laravel PHP service or query path cleanly",
+  "expected_outcome": "Idiomatic Laravel architecture, clean service boundaries, query discipline and passing verification checks.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "llm-code-benchmarks",
+   "laravel",
+   "php"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "bench:react-ts-code-quality",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/benchmarks/llm-code-benchmarks.md",
+   "anchor": "react-ts-code-quality",
+   "commit": "0000000000000000000000000000000000000000",
+   "sha256": ""
+  },
+  "source_status": "current",
+  "actor": "architect",
+  "goal": "Implement or refactor a React and TypeScript component or hook cleanly",
+  "expected_outcome": "Strict TypeScript soundness, predictable state and hook structure, and passing component checks.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "llm-code-benchmarks",
+   "react",
+   "typescript"
+  ],
+  "maturity": "indexed"
+ },
+ {
+  "id": "bench:bug-finding",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/benchmarks/llm-code-benchmarks.md",
+   "anchor": "bug-finding",
+   "commit": "0000000000000000000000000000000000000000",
+   "sha256": ""
+  },
+  "source_status": "current",
+  "actor": "architect",
+  "goal": "Isolate and fix a subtle logic or edge-case bug in an existing module",
+  "expected_outcome": "Minimal verified patch that eliminates the defect without breaking existing callers.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "llm-code-benchmarks",
+   "bug-finding",
+   "debugging"
+  ],
+  "maturity": "synthetic ready"
+ },
+ {
+  "id": "bench:python-pricing-engine",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/benchmarks/llm-code-benchmarks.md",
+   "anchor": "python-pricing-engine",
+   "commit": "0000000000000000000000000000000000000000",
+   "sha256": ""
+  },
+  "source_status": "current",
+  "actor": "architect",
+  "goal": "Refactor and extend a Python pricing engine prototype into composable rule families",
+  "expected_outcome": "Clean rule-family architecture with exact numeric arithmetic, conflict handling and passing Python checks.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "llm-code-benchmarks",
+   "python",
+   "refactoring"
+  ],
+  "maturity": "synthetic ready"
+ },
+ {
+  "id": "bench:edge-case-testing",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/benchmarks/llm-code-benchmarks.md",
+   "anchor": "edge-case-testing",
+   "commit": "0000000000000000000000000000000000000000",
+   "sha256": ""
+  },
+  "source_status": "current",
+  "actor": "architect",
+  "goal": "Write targeted edge-case and boundary tests that expose latent defects",
+  "expected_outcome": "Deterministic test suite that fails on buggy implementations and passes on reference code.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "llm-code-benchmarks",
+   "testing",
+   "edge-cases"
+  ],
+  "maturity": "indexed"
+ }
+]

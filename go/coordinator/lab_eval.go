@@ -525,6 +525,9 @@ type labMethod struct {
 	Name             string          `json:"name"`
 	Scope            string          `json:"scope"`
 	Pipeline         string          `json:"pipeline"`
+	Status           string          `json:"status,omitempty"`
+	Capability       string          `json:"capability,omitempty"`
+	Description      string          `json:"description,omitempty"`
 	Overrides        json.RawMessage `json:"overrides"`
 	ConfigRef        string          `json:"configRef,omitempty"`
 	SourceExperiment string          `json:"sourceExperiment,omitempty"`

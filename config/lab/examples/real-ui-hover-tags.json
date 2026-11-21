@@ -1,0 +1,39 @@
+{
+ "id": "real-ui-hover-tags",
+ "use_case_id": "real:feature-with-qa",
+ "version": 1,
+ "origin": "synthetic",
+ "fixture": null,
+ "prompt": "Add moderator-only hover tag moderation controls to index.html and moderation.js without altering the layout or DOM structure seen by regular members: (1) when role is 'member', render no mod controls and keep .feed-list / .post-card / .tag-chip identical; (2) when role is 'moderator', include a hover-revealed mod control ([data-mod-control='block-tag']) inside each .tag-chip (hidden via CSS until :hover or :focus-within); (3) clicking the control prompts 'Reason for Block?' and, when given a non-empty trimmed reason, marks the tag blocked (data-blocked='true') and records { postId, tag, reason } in blockedTags. Export renderFeed(container, posts, options) from moderation.js so it works in browser DOM and Node test mocks.",
+ "inputs": [
+  {
+   "path": "index.html",
+   "text": "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Community Feed</title>\n<style>\n.feed-list { display: flex; flex-direction: column; gap: 12px; }\n.post-card { border: 1px solid #d0d7de; padding: 12px; border-radius: 6px; }\n.tag-list { display: flex; gap: 6px; margin-top: 8px; }\n.tag-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: #eef1f4; }\n</style>\n</head>\n<body>\n<main id=\"feed\" class=\"feed-list\" data-role=\"member\"></main>\n<script src=\"moderation.js\"></script>\n</body>\n</html>\n"
+  },
+  {
+   "path": "moderation.js",
+   "text": "function renderFeed(container, posts, options = {}) {\n  const doc = options.document || (typeof document !== 'undefined' ? document : null);\n  if (!doc) throw new Error('document is required');\n  container.innerHTML = '';\n  for (const post of posts) {\n    const card = doc.createElement('article');\n    card.className = 'post-card';\n    card.setAttribute('data-post-id', post.id);\n    const body = doc.createElement('p');\n    body.textContent = post.title;\n    card.appendChild(body);\n    const tags = doc.createElement('div');\n    tags.className = 'tag-list';\n    for (const tag of post.tags) {\n      const chip = doc.createElement('span');\n      chip.className = 'tag-chip';\n      chip.textContent = tag;\n      tags.appendChild(chip);\n    }\n    card.appendChild(tags);\n    container.appendChild(card);\n  }\n  return { blockedTags: [] };\n}\n\nif (typeof module !== 'undefined') module.exports = { renderFeed };\n"
+  }
+ ],
+ "references": [
+  {
+   "path": "index.html",
+   "text": "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Community Feed</title>\n<style>\n.feed-list { display: flex; flex-direction: column; gap: 12px; }\n.post-card { border: 1px solid #d0d7de; padding: 12px; border-radius: 6px; }\n.tag-list { display: flex; gap: 6px; margin-top: 8px; }\n.tag-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: #eef1f4; }\n.mod-tag-block { display: none; border: 0; background: transparent; cursor: pointer; font-size: 12px; }\n[data-role=\"moderator\"] .tag-chip:hover .mod-tag-block,\n[data-role=\"moderator\"] .tag-chip:focus-within .mod-tag-block { display: inline-flex; }\n.tag-chip[data-blocked=\"true\"] { opacity: 0.5; text-decoration: line-through; }\n</style>\n</head>\n<body>\n<main id=\"feed\" class=\"feed-list\" data-role=\"member\"></main>\n<script src=\"moderation.js\"></script>\n</body>\n</html>\n"
+  },
+  {
+   "path": "moderation.js",
+   "text": "function renderFeed(container, posts, options = {}) {\n  const doc = options.document || (typeof document !== 'undefined' ? document : null);\n  if (!doc) throw new Error('document is required');\n  const role = options.role || container.getAttribute('data-role') || 'member';\n  const promptFn = options.prompt || (typeof window !== 'undefined' && window.prompt ? window.prompt.bind(window) : () => null);\n  const blockedTags = [];\n  container.setAttribute('data-role', role);\n  container.innerHTML = '';\n  for (const post of posts) {\n    const card = doc.createElement('article');\n    card.className = 'post-card';\n    card.setAttribute('data-post-id', post.id);\n    const body = doc.createElement('p');\n    body.textContent = post.title;\n    card.appendChild(body);\n    const tags = doc.createElement('div');\n    tags.className = 'tag-list';\n    for (const tag of post.tags) {\n      const chip = doc.createElement('span');\n      chip.className = 'tag-chip';\n      chip.setAttribute('data-tag', tag);\n      const label = doc.createElement('span');\n      label.textContent = tag;\n      chip.appendChild(label);\n      if (role === 'moderator') {\n        const btn = doc.createElement('button');\n        btn.type = 'button';\n        btn.className = 'mod-tag-block';\n        btn.setAttribute('data-mod-control', 'block-tag');\n        btn.setAttribute('aria-label', `Block tag ${tag}`);\n        btn.textContent = 'x';\n        btn.addEventListener('click', () => {\n          const raw = promptFn('Reason for Block?');\n          const reason = typeof raw === 'string' ? raw.trim() : '';\n          if (!reason) return;\n          chip.setAttribute('data-blocked', 'true');\n          chip.setAttribute('data-block-reason', reason);\n          blockedTags.push({ postId: post.id, tag, reason });\n        });\n        chip.appendChild(btn);\n      }\n      tags.appendChild(chip);\n    }\n    card.appendChild(tags);\n    container.appendChild(card);\n  }\n  return { blockedTags };\n}\n\nif (typeof module !== 'undefined') module.exports = { renderFeed };\n"
+  }
+ ],
+ "checks": [
+  {
+   "id": "css-hover-mod-isolation",
+   "run": "node -e \"const fs=require('node:fs'),assert=require('node:assert/strict');const html=fs.readFileSync('index.html','utf8');assert.match(html,/class=\\\"feed-list\\\"/);assert.match(html,/data-role=\\\"member\\\"/);assert.match(html,/\\[data-role=\\\"moderator\\\"\\].*:hover/);assert.match(html,/display:\\s*none/);\""
+  },
+  {
+   "id": "role-gating-and-block-prompt",
+   "run": "node -e \"const assert=require('node:assert/strict');const {renderFeed}=require('./moderation.js');function makeDoc(){class El{constructor(t){this.tagName=t;this.children=[];this.attrs={};this.listeners={};this.className='';this.textContent='';}setAttribute(k,v){this.attrs[k]=String(v);}getAttribute(k){return this.attrs[k]??null;}appendChild(c){this.children.push(c);}addEventListener(e,fn){(this.listeners[e]??=[]).push(fn);}click(){for(const fn of this.listeners.click||[])fn();}set innerHTML(_){this.children=[];}findAll(pred,out=[]){if(pred(this))out.push(this);for(const c of this.children)c.findAll(pred,out);return out;}}return {El,createElement:(t)=>new El(t)};}const doc=makeDoc();const posts=[{id:'p1',title:'Hello',tags:['news','events']}];const mRoot=doc.createElement('main');mRoot.setAttribute('data-role','member');renderFeed(mRoot,posts,{document:doc,role:'member'});assert.equal(mRoot.findAll(e=>e.getAttribute('data-mod-control')==='block-tag').length,0,'member sees no mod controls');assert.equal(mRoot.findAll(e=>e.className==='tag-chip').length,2);const modRoot=doc.createElement('main');const prompts=[];let next='   ';const state=renderFeed(modRoot,posts,{document:doc,role:'moderator',prompt:(msg)=>{prompts.push(msg);return next;}});const ctrls=modRoot.findAll(e=>e.getAttribute('data-mod-control')==='block-tag');assert.equal(ctrls.length,2);ctrls[0].click();assert.equal(prompts[0],'Reason for Block?');assert.equal(state.blockedTags.length,0,'blank reason must not block');next='off-topic spam';ctrls[1].click();assert.deepEqual(state.blockedTags,[{postId:'p1',tag:'events',reason:'off-topic spam'}]);const chips=modRoot.findAll(e=>e.className==='tag-chip');assert.equal(chips[1].getAttribute('data-blocked'),'true');\""
+  }
+ ],
+ "split": "tune"
+}

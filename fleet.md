@@ -2,6 +2,15 @@
 
 A system for performing work through agents across projects. This specification defines the target architecture, not implementation status.
 
+## Product purpose
+
+Fleet turns agent experiments into controlled project capabilities across four connected stages:
+
+- **Fast Lab evaluation:** benchmark models, harnesses, prompts and pipelines on curated use cases, real work cases and code benchmarks to establish repeatable quality, latency and cost evidence.
+- **Proven method catalogue:** register workflows and methods with explicit lifecycle statuses (`experimental`, `recommended`, `deprecated`), usage conditions and project or system defaults.
+- **Project and task accounting:** execute and track real tasks across connected projects, retaining full execution history, costs and metrics to diagnose problems and convert recurring failures into new Lab cases.
+- **Controlled agent tools:** expose configured pipelines and recommended methods as agent-callable tools over the shared core so agents and operators run proven methods under Fleet authority and accounting.
+
 ## Principles
 
 - **R1 Shared rules.** [specq](https://github.com/taskqorg/specq) governs engineering, design and documentation. [Fleet document governance](docs/designs/fleet-docs-governance.md) defines the project paths and document kinds.

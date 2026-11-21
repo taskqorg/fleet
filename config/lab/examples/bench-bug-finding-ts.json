@@ -1,0 +1,31 @@
+{
+ "id": "bench-bug-finding-ts",
+ "use_case_id": "bench:bug-finding",
+ "version": 1,
+ "origin": "synthetic",
+ "fixture": null,
+ "prompt": "window-limiter.js implements SlidingWindowLimiter({ windowMs, maxRequests }) as a CommonJS module. Fix the bugs in allow(key, nowMs) and remaining(key, nowMs): (1) requests at or older than nowMs - windowMs (ts <= nowMs - windowMs) must expire from the active window; (2) denied requests must NOT be recorded in the window; (3) remaining(key, nowMs) must prune expired entries before computing remaining capacity; (4) out-of-order timestamps must never produce negative retryAfterMs (clamp to >= 0). Keep the exported class and method signatures intact.",
+ "inputs": [
+  {
+   "path": "window-limiter.js",
+   "text": "class SlidingWindowLimiter {\n  constructor({ windowMs, maxRequests }) {\n    if (!(windowMs > 0) || !(maxRequests > 0)) {\n      throw new Error('windowMs and maxRequests must be positive');\n    }\n    this.windowMs = windowMs;\n    this.maxRequests = maxRequests;\n    this.hits = new Map();\n  }\n\n  allow(key, nowMs) {\n    const list = this.hits.get(key) || [];\n    const cutoff = nowMs - this.windowMs;\n    // BUG 1: uses < instead of <= so an event at exact cutoff never expires\n    const active = list.filter((ts) => ts > cutoff || ts === cutoff);\n    // BUG 2: records nowMs before checking capacity, poisoning denied calls\n    active.push(nowMs);\n    this.hits.set(key, active);\n    if (active.length > this.maxRequests) {\n      const retryAfterMs = active[0] + this.windowMs - nowMs;\n      return { allowed: false, remaining: 0, retryAfterMs };\n    }\n    return { allowed: true, remaining: this.maxRequests - active.length, retryAfterMs: 0 };\n  }\n\n  remaining(key, nowMs) {\n    // BUG 3: does not prune expired timestamps before reading length\n    const list = this.hits.get(key) || [];\n    return Math.max(0, this.maxRequests - list.length);\n  }\n}\n\nmodule.exports = { SlidingWindowLimiter };\n"
+  }
+ ],
+ "references": [
+  {
+   "path": "window-limiter.js",
+   "text": "class SlidingWindowLimiter {\n  constructor({ windowMs, maxRequests }) {\n    if (!(windowMs > 0) || !(maxRequests > 0)) {\n      throw new Error('windowMs and maxRequests must be positive');\n    }\n    this.windowMs = windowMs;\n    this.maxRequests = maxRequests;\n    this.hits = new Map();\n  }\n\n  _active(key, nowMs) {\n    const list = this.hits.get(key) || [];\n    const cutoff = nowMs - this.windowMs;\n    const active = list.filter((ts) => ts > cutoff);\n    if (active.length) this.hits.set(key, active);\n    else this.hits.delete(key);\n    return active;\n  }\n\n  allow(key, nowMs) {\n    const active = this._active(key, nowMs);\n    if (active.length >= this.maxRequests) {\n      const oldest = Math.min(...active);\n      const retryAfterMs = Math.max(0, oldest + this.windowMs - nowMs);\n      return { allowed: false, remaining: 0, retryAfterMs };\n    }\n    active.push(nowMs);\n    this.hits.set(key, active);\n    return { allowed: true, remaining: this.maxRequests - active.length, retryAfterMs: 0 };\n  }\n\n  remaining(key, nowMs) {\n    const active = this._active(key, nowMs);\n    return Math.max(0, this.maxRequests - active.length);\n  }\n}\n\nmodule.exports = { SlidingWindowLimiter };\n"
+  }
+ ],
+ "checks": [
+  {
+   "id": "boundary-and-denied-not-recorded",
+   "run": "node -e \"const assert=require('node:assert/strict');const {SlidingWindowLimiter}=require('./window-limiter.js');const l=new SlidingWindowLimiter({windowMs:1000,maxRequests:2});assert.deepEqual(l.allow('u1',100),{allowed:true,remaining:1,retryAfterMs:0});assert.deepEqual(l.allow('u1',200),{allowed:true,remaining:0,retryAfterMs:0});const denied=l.allow('u1',500);assert.equal(denied.allowed,false);assert.equal(denied.remaining,0);assert.equal(denied.retryAfterMs,600);assert.equal(l.remaining('u1',500),0);assert.equal(l.remaining('u1',1100),1);assert.deepEqual(l.allow('u1',1100),{allowed:true,remaining:0,retryAfterMs:0});\""
+  },
+  {
+   "id": "out-of-order-and-remaining-prunes",
+   "run": "node -e \"const assert=require('node:assert/strict');const {SlidingWindowLimiter}=require('./window-limiter.js');const l=new SlidingWindowLimiter({windowMs:500,maxRequests:1});assert.equal(l.allow('k',1000).allowed,true);const r=l.allow('k',400);assert.equal(r.allowed,false);assert.ok(r.retryAfterMs>=0,'retryAfterMs must not be negative');assert.equal(l.remaining('k',1500),1);assert.equal(l.allow('k',1500).allowed,true);\""
+  }
+ ],
+ "split": "tune"
+}
