@@ -4,7 +4,7 @@ import { captureRender, configureErrors } from './errors.ts';
 import { render, Component, type ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation, useSearch } from 'wouter-preact';
-import { AppShell, EntityCards, Empty, Button, ListDetail, TabBar, workspaces, matchSearch, FocusControl, FocusPresets, type NavItem, type AppScreen, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
+import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, type NavItem, type AppScreen, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
 import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
@@ -44,10 +44,8 @@ const Tasks = lazy(async () => (await import('./views/tasks.tsx')).Tasks);
 const Conversations = lazy(async () => (await import('./views/conversations.tsx')).Conversations);
 const Results = lazy(async () => (await import('./views/results.tsx')).Results);
 const Delivery = lazy(async () => (await import('./views/delivery.tsx')).Delivery);
-const Hosts = lazy(async () => (await import('./views/hosts.tsx')).Hosts);
-const Runners = lazy(async () => (await import('./views/runners.tsx')).Runners);
+const Infrastructure = lazy(async () => (await import('./views/hosts.tsx')).Hosts);
 const Lab = lazy(async () => (await import('./views/lab.tsx')).Lab);
-const Keys = lazy(async () => (await import('./views/keys.tsx')).Keys);
 const Library = lazy(async () => (await import('./views/agents.tsx')).Agents);
 const Spend = lazy(async () => (await import('./views/spend.tsx')).Spend);
 
@@ -74,10 +72,10 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   conversations: { focus: true, view: p => <Conversations id={p.id} /> },
   results: { focus: true, view: p => <Results id={p.id} /> },
   delivery: { focus: true, view: p => <Delivery id={p.id} /> },
-  hosts: { focus: true, view: p => <Hosts id={p.id} /> },
-  runners: { focus: false, view: () => <Runners /> },
+  hosts: { focus: true, view: p => <Infrastructure section="hosts" id={p.id} /> },
+  runners: { focus: false, view: () => <Infrastructure section="runners" /> },
   lab: { focus: true, view: p => <Lab id={p.id} /> },
-  keys: { focus: true, view: p => <Keys id={p.id} /> },
+  keys: { focus: true, view: p => <Infrastructure section="keys" id={p.id} /> },
   agents: { focus: true, view: p => <Library section="agents" id={p.id} /> },
   pipelines: { focus: true, view: p => <Library section="pipelines" id={p.id} /> },
   catalogue: { focus: true, view: p => <Library section="catalogue" id={p.id} /> },
@@ -86,21 +84,8 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
 };
 const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
 const NAV: NavItem[] = BUILT.filter(w => w.nav);
-type SubTab = { id: string; label: string };
-const SUB_NAVS = {
-  hosts: {
-    label: 'Infrastructure sections',
-    tabs: [
-      { id: 'hosts', label: 'Hosts' },
-      { id: 'runners', label: 'Runners' },
-      { id: 'keys', label: 'API keys' },
-    ] as readonly SubTab[],
-  },
-} as const;
-const PARENT_NAV: Record<string, keyof typeof SUB_NAVS> = {
-  hosts: 'hosts', runners: 'hosts', keys: 'hosts',
-};
 const LIBRARY_SECTIONS = new Set(['agents', 'pipelines', 'catalogue', 'changes']);
+const INFRA_SECTIONS = new Set(['hosts', 'runners', 'keys']);
 // Each kind the server finds: its group label, icon, the registry state family of its hits, where a hit opens (a question
 // opens its task) and the list section that takes the same query (the "All N" row).
 type Hit = Ops['search']['reply']['hits'][number];
@@ -170,9 +155,7 @@ function App() {
   const [loc, go] = useLocation();
   const query = useSearch();
   const current = loc.split('/')[1] || 'overview';
-  const parentNav = PARENT_NAV[current];
-  const activeNav = parentNav ?? (LIBRARY_SECTIONS.has(current) ? 'agents' : current);
-  const subNav = parentNav ? SUB_NAVS[parentNav] : null;
+  const activeNav = LIBRARY_SECTIONS.has(current) ? 'agents' : INFRA_SECTIONS.has(current) ? 'hosts' : current;
   const shellTitle = BUILT.find(w => w.id === activeNav)?.label ?? BUILT.find(w => w.id === current)?.label;
   const search = useRef([subPages(go), ...(Object.keys(KINDS) as Hit['kind'][]).map(k => found(k, go))]).current;
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
@@ -266,12 +249,9 @@ function App() {
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={access.value.state === 'open' && user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
-    {access.value.state === 'open' ? <>
-      {subNav && <nav class="sub-nav" aria-label={subNav.label}>
-        <TabBar label={subNav.label} tabs={subNav.tabs} value={current} onChange={id => go('/' + id)} />
-      </nav>}
+    {access.value.state === 'open' ? (
       <RenderBoundary at={access.value.generation + ':' + loc + '?' + query}><PrivateRoutes key={access.value.generation} go={go} /></RenderBoundary>
-    </> : current === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}
+    ) : current === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}
   </AppShell></EntityCards.Provider>;
 }
 
@@ -284,6 +264,12 @@ function PrivateRoutes({ go }: { go: (to: string) => void }) {
     const section = (libMatch[1] ?? libMatch[3]) as 'agents' | 'pipelines' | 'catalogue' | 'changes';
     const id = libMatch[2] ? decodeSegment(libMatch[2]) : undefined;
     return <Library section={section} id={id} />;
+  }
+  const infraMatch = /^\/(hosts|keys)(?:\/([^/]+))?\/?$|^\/(runners)\/?$/.exec(loc);
+  if (infraMatch) {
+    const section = (infraMatch[1] ?? infraMatch[3]) as 'hosts' | 'keys' | 'runners';
+    const id = infraMatch[2] ? decodeSegment(infraMatch[2]) : undefined;
+    return <Infrastructure section={section} id={id} />;
   }
   return <Switch>
       <Route path="/"><Redirect to="/overview" /></Route>

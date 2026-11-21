@@ -2,100 +2,275 @@
 // only), access and intake. Key values go in, never come out: the add field is write-only and the answer is a fingerprint.
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { ListDetail, StateBadge, DetailSection, KvRow, Empty, Button, SettingField, AgeChip, ProblemRow, bytes, duration, type StateOf } from '../../../packages/ui/src/index.ts';
+import { AgeChip, Button, DetailSection, Disclosure, Empty, ErrorBanner, KvRow, ProblemRow, SettingField, Skeleton, StateBadge, bytes, duration, type StateOf } from '../../../packages/ui/src/index.ts';
 import { op, type OpName, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import type { ConnectionView, ConnectionKey } from '../../../contracts/generated/ops.ts';
 
 /** A connection as the screen shows it: the lists the reply omits when empty filled in. */
-type Conn = Omit<ConnectionView, 'keys' | 'tools' | 'access'> & { keys: ConnectionKey[]; tools: string[]; access: { people: string[]; projects: string[]; experiments: string[] } };
+export type Conn = Omit<ConnectionView, 'keys' | 'tools' | 'access'> & {
+  keys: ConnectionKey[];
+  tools: string[];
+  access: { people: string[]; projects: string[]; experiments: string[] };
+};
 
 /** A person by name: the email's local part (formats.md, Person). */
-const person = (h: string) => h.split('@')[0];
+export const person = (h: string) => h.split('@')[0];
 const ids = (v: string) => v.split(',').map(x => x.trim()).filter(Boolean);
 
-// A connection's file limits with the gateway defaults filled in (fleet-connections.md §9): no size caps, 60 s stall, 120 s answer.
-const fileLimits = (l: { fileBytes?: number; replyBytes?: number; stallMs?: number; answerMs?: number } | undefined) => [
-  `upload ${l?.fileBytes ? bytes(l.fileBytes).text : 'no cap'}`, `download ${l?.replyBytes ? bytes(l.replyBytes).text : 'no cap'}`,
-  `stall ${duration((l?.stallMs ?? 60_000) / 1000).text}`, `answer ${duration((l?.answerMs ?? 120_000) / 1000).text}`,
-].join(' · ');
+export const normalizeConnections = (list: readonly ConnectionView[]): Conn[] =>
+  list.map(c => ({
+    ...c,
+    keys: c.keys ?? [],
+    tools: c.tools ?? [],
+    access: {
+      people: c.access.people ?? [],
+      projects: c.access.projects ?? [],
+      experiments: c.access.experiments ?? [],
+    },
+  }));
 
-const fileTimeouts = (l?: { stallMs?: number; answerMs?: number }) =>
-  `Stall ${l?.stallMs ?? 60_000} ms · Answer ${l?.answerMs ?? 120_000} ms`;
+export const connectionScope = (c: Conn): string =>
+  `${c.access.projects.includes('*') ? 'all' : c.access.projects.join(', ') || 'none'}${c.access.experiments.length ? ' + Lab' : ''}`;
 
-export function Keys({ id }: { id?: string }) {
-  const [, go] = useLocation();
-  const [error, setError] = useState<string | null>(null);
-  const { data } = useOp('connections_list', {});
+type LimitKey = 'fileBytes' | 'replyBytes' | 'stallMs' | 'answerMs';
+const DEFAULT_STALL_MS = 60_000;
+const DEFAULT_ANSWER_MS = 120_000;
+
+type LimitFieldDef = {
+  key: LimitKey;
+  label: string;
+  value: string;
+  help: string;
+  diff: boolean;
+};
+
+function connectionLimitFields(limits: ConnectionView['limits'] | undefined): LimitFieldDef[] {
+  const fileBytes = limits?.fileBytes;
+  const replyBytes = limits?.replyBytes;
+  const stallMs = limits?.stallMs;
+  const answerMs = limits?.answerMs;
+  return [
+    {
+      key: 'fileBytes',
+      label: 'Upload cap',
+      value: fileBytes != null ? String(fileBytes) : '',
+      help: fileBytes != null ? `${bytes(fileBytes).text} · bytes; clear to restore no cap` : 'Bytes; default: no cap',
+      diff: fileBytes != null,
+    },
+    {
+      key: 'replyBytes',
+      label: 'Download cap',
+      value: replyBytes != null ? String(replyBytes) : '',
+      help: replyBytes != null ? `${bytes(replyBytes).text} · bytes; clear to restore no cap` : 'Bytes; default: no cap',
+      diff: replyBytes != null,
+    },
+    {
+      key: 'stallMs',
+      label: 'Stall timeout',
+      value: String(stallMs ?? DEFAULT_STALL_MS),
+      help: stallMs != null && stallMs !== DEFAULT_STALL_MS
+        ? `${duration(stallMs / 1000).text} · ms; default ${duration(DEFAULT_STALL_MS / 1000).text} (${DEFAULT_STALL_MS} ms)`
+        : `${duration(DEFAULT_STALL_MS / 1000).text} (${DEFAULT_STALL_MS} ms)`,
+      diff: stallMs != null && stallMs !== DEFAULT_STALL_MS,
+    },
+    {
+      key: 'answerMs',
+      label: 'Answer timeout',
+      value: String(answerMs ?? DEFAULT_ANSWER_MS),
+      help: answerMs != null && answerMs !== DEFAULT_ANSWER_MS
+        ? `${duration(answerMs / 1000).text} · ms; default ${duration(DEFAULT_ANSWER_MS / 1000).text} (${DEFAULT_ANSWER_MS} ms)`
+        : `${duration(DEFAULT_ANSWER_MS / 1000).text} (${DEFAULT_ANSWER_MS} ms)`,
+      diff: answerMs != null && answerMs !== DEFAULT_ANSWER_MS,
+    },
+  ];
+}
+
+export function KeyDetail({
+  id,
+  conn: sel,
+  loading,
+  error: readError,
+  onRetry,
+  onClose,
+}: {
+  id: string;
+  conn: Conn | undefined;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  onClose: () => void;
+}) {
+  const [actionError, setActionError] = useState<string | null>(null);
   const now = Date.now();
-  if (!data) return <Empty text="Loading…" />;
-  const run = <K extends OpName>(name: K, body: Ops[K]['request']) => op(name, body).then(() => { setError(null); }, e => setError(String(e.message ?? e)));
-  // The reply omits empty lists (keys, tools, access lists): a connection without keys yet must still render.
-  const conns: Conn[] = data.connections.map(c => ({ ...c, keys: c.keys ?? [], tools: c.tools ?? [], access: { people: c.access.people ?? [], projects: c.access.projects ?? [], experiments: c.access.experiments ?? [] } }));
-  const sel = conns.find(c => c.name === id);
-  // A word once per region (OR-17): the holder most connections share is named once above the list, a row names only another
-  // holder; the provider shows only where it differs from the connection's name.
-  const holders = new Map<string, number>(); for (const c of conns) holders.set(c.holder, (holders.get(c.holder) ?? 0) + 1);
-  const mainHolder = [...holders].sort((a, b) => b[1] - a[1])[0]?.[0];
-  const scope = (c: Conn) => `${c.access.projects.includes('*') ? 'all' : c.access.projects.join(', ') || 'none'}${c.access.experiments.length ? ' + Lab' : ''}`;
-  const list = <>
-    {mainHolder && <header class="page-h"><span class="muted">Held by {person(mainHolder)}{holders.size > 1 ? ', unless a row says otherwise' : ''}</span></header>}
-    <section class="panel">
-      <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto auto' }}>
-        {conns.length === 0 && <Empty text="No API keys yet" />}
-        {conns.map(c => <div key={c.name} role="row" class={`vl-row static${c.name === id ? ' sel' : ''}`}>
-          <span class="lead"><StateBadge family="intake" state={c.intake as StateOf<"intake">} compact /></span>
-          <span class="tt"><a class="title row-link" href={`/keys/${c.name}`} onClick={e => { e.preventDefault(); go(`/keys/${c.name}`); }}>{c.name}</a>{c.provider !== c.name && <span class="id">{c.provider}</span>}{c.holder !== mainHolder && <span class="muted">{person(c.holder)}</span>}</span>
-          <span class="mono muted" data-tip="Projects this connection serves">{scope(c)}</span>
-          <span class="r mono" data-tip="Active keys of all keys in use">{c.keys.filter(k => k.state === 'active').length}/{c.keys.filter(k => k.state !== 'retired').length}</span>
-        </div>)}
-      </div>
-    </section>
-  </>;
-  const detail = sel && <article class="detail" data-ui="detail" tabIndex={-1} aria-label={sel.name}>
-    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => go('/keys')} /><h2 class="detail-title">{sel.name}</h2></header>
-    {error && <div class="error" role="alert">{error}</div>}
-    <DetailSection title="Connection">
-      <KvRow icon="bot" label="Provider" meta={sel.provider} />
-      <KvRow icon="shield" label="Holder" meta={sel.holder} />
-      <KvRow icon="list" label="Tools" meta={sel.tools.join(', ')} />
-      <KvRow icon="activity" label="Spend" meta={sel.spend?.basis ?? 'unavailable'} />
-    </DetailSection>
-    <DetailSection title="Keys">
-      {sel.keys.map(k => <KvRow key={k.id} icon="shield" label={k.fingerprint} meta={k.disabledReason ?? (k.problem ? `HTTP ${k.problem.status}: ${k.problem.message}` : undefined)}
-        value={<><StateBadge family="key" state={k.state as StateOf<"key">} compact /><AgeChip t={k.addedAt} />
-          {k.reconcile && <span class={(k.reconcile.difference ?? 0) > 0 ? 'attention' : 'muted'} data-tip="Provider usage since the first check, minus credits recorded through Fleet">{k.reconcile.unknown ? 'usage unknown' : (k.reconcile.difference ?? 0) > 0 ? `+${k.reconcile.difference} elsewhere` : 'matches'}</span>}
-          {k.state === 'active' && <Button label="Drain" icon="pause" iconOnly onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'draining' })} />}
-          {(k.state === 'draining' || k.state === 'disabled') && <Button label="Activate" icon="play" iconOnly onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'active' })} />}
-          {k.state !== 'retired' && <Button label="Retire" icon="trash-2" iconOnly kind="danger" onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'retired' })} />}</>} />)}
-      <SettingField label="Add key" value="" secret help="Owner only. Stored on the coordinator host; Fleet shows only its fingerprint." now={now} status={{ kind: 'applied', at: sel.createdAt }}
-        onSave={v => { if (v.trim()) run('connections_key_add', { connection: sel.name, value: v.trim() }); }} />
-    </DetailSection>
-    <DetailSection title="Access">
-      <SettingField label="Projects" value={sel.access.projects.join(', ')} help="Project ids, or * for every project" now={now} status={{ kind: 'applied', at: sel.updatedAt ?? sel.createdAt }}
-        onSave={v => run('connections_set_access', { connection: sel.name, access: { ...sel.access, projects: ids(v) } })} />
-      <SettingField label="People" value={sel.access.people.join(', ')} help="E-mails of people whose work may use it" now={now} status={{ kind: 'applied', at: sel.updatedAt ?? sel.createdAt }}
-        onSave={v => run('connections_set_access', { connection: sel.name, access: { ...sel.access, people: ids(v) } })} />
-      <SettingField label="Experiments" value={sel.access.experiments.join(', ')} help="Lab experiment ids" now={now} status={{ kind: 'applied', at: sel.updatedAt ?? sel.createdAt }}
-        onSave={v => run('connections_set_access', { connection: sel.name, access: { ...sel.access, experiments: ids(v) } })} />
-      <KvRow icon="activity" label="Intake" value={<Button label={sel.intake === 'all' ? 'Pause' : 'Resume'} icon={sel.intake === 'all' ? 'pause' : 'play'} onClick={() => run('connections_set_intake', { connection: sel.name, intake: sel.intake === 'all' ? 'paused' : 'all' })} />} />
-      {/* File limits (fleet-connections.md §9) are set by the connections_set_limits operation; the screen shows them. */}
-      <KvRow icon="gauge" label="Limits" value={<span data-tip={fileTimeouts(sel.limits)} aria-description={fileTimeouts(sel.limits)}>
-        {fileLimits(sel.limits)}
-      </span>} />
-    </DetailSection>
-  </article>;
-  // Idle work area: what needs a look across connections (2026-11-20 decision): provider usage Fleet did not record, and retired keys.
+  const run = <K extends OpName>(name: K, body: Ops[K]['request']) =>
+    op(name, body).then(() => { setActionError(null); }, e => setActionError(e instanceof Error ? e.message : String(e)));
+
+  if (!sel) {
+    return (
+      <article class="detail stack" data-ui="detail" tabIndex={-1} aria-label={id}>
+        <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><h2 class="detail-title">{id}</h2></header>
+        {readError && <ErrorBanner text={`Connections did not load: ${readError}`} onRetry={onRetry} />}
+        {loading ? <Skeleton rows={5} /> : !readError && <Empty text={`Connection "${id}" not found.`} />}
+      </article>
+    );
+  }
+
+  const limitFields = connectionLimitFields(sel.limits);
+  const diffLimits = limitFields.filter(f => f.diff);
+  const inheritedLimits = limitFields.filter(f => !f.diff);
+  const updatedAt = sel.updatedAt ?? sel.createdAt;
+
+  const saveLimit = (key: LimitKey, raw: string) => {
+    const trimmed = raw.trim();
+    const next: NonNullable<ConnectionView['limits']> = { ...(sel.limits ?? {}) };
+    if (!trimmed) {
+      delete next[key];
+    } else {
+      const n = Number(trimmed);
+      if (!Number.isInteger(n) || n < 1) {
+        setActionError(`${key} must be a positive integer.`);
+        return;
+      }
+      if ((key === 'stallMs' && n === DEFAULT_STALL_MS) || (key === 'answerMs' && n === DEFAULT_ANSWER_MS)) {
+        delete next[key];
+      } else {
+        next[key] = n;
+      }
+    }
+    void run('connections_set_limits', { connection: sel.name, limits: next });
+  };
+
+  return (
+    <article class="detail stack" data-ui="detail" tabIndex={-1} aria-label={sel.name}>
+      <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><h2 class="detail-title">{sel.name}</h2></header>
+      {readError && <ErrorBanner text={`Connections did not load: ${readError}`} onRetry={onRetry} />}
+      {actionError && <ErrorBanner text={actionError} />}
+      <DetailSection title="Connection">
+        {sel.provider !== sel.name && <KvRow icon="bot" label="Provider" meta={sel.provider} />}
+        <KvRow icon="shield" label="Holder" meta={sel.holder} />
+        <KvRow icon="list" label="Tools" meta={sel.tools.length ? sel.tools.join(', ') : '—'} />
+        <KvRow icon="activity" label="Spend" meta={sel.spend?.basis && sel.spend.basis !== 'unavailable' ? sel.spend.basis : <span data-tip="Spend unavailable">—</span>} />
+      </DetailSection>
+      <DetailSection title="Keys">
+        {sel.keys.map(k => (
+          <KvRow
+            key={k.id}
+            icon="shield"
+            label={k.fingerprint}
+            meta={k.disabledReason ?? (k.problem ? `HTTP ${k.problem.status}: ${k.problem.message}` : undefined)}
+            value={<>
+              <StateBadge family="key" state={k.state as StateOf<'key'>} compact />
+              <AgeChip t={k.addedAt} />
+              {k.reconcile && (
+                <span class={(k.reconcile.difference ?? 0) > 0 ? 'attention' : 'muted'} data-tip={k.reconcile.unknown ? `Usage unknown: ${k.reconcile.unknown}` : 'Provider usage since the first check, minus credits recorded through Fleet'}>
+                  {k.reconcile.unknown ? '—' : (k.reconcile.difference ?? 0) > 0 ? `+${k.reconcile.difference} elsewhere` : 'matches'}
+                </span>
+              )}
+              {k.state === 'active' && <Button label="Drain" icon="pause" iconOnly onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'draining' })} />}
+              {(k.state === 'draining' || k.state === 'disabled') && <Button label="Activate" icon="play" iconOnly onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'active' })} />}
+              {k.state !== 'retired' && <Button label="Retire" icon="trash-2" iconOnly kind="danger" onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'retired' })} />}
+            </>}
+          />
+        ))}
+        <SettingField label="Add key" value="" secret help="Owner only. Stored on the coordinator host; Fleet shows only its fingerprint." now={now} status={{ kind: 'applied', at: sel.createdAt }}
+          onSave={v => { if (v.trim()) void run('connections_key_add', { connection: sel.name, value: v.trim() }); }} />
+      </DetailSection>
+      <DetailSection title="Access">
+        <SettingField label="Projects" value={sel.access.projects.join(', ')} help="Project ids, or * for every project" now={now} status={{ kind: 'applied', at: updatedAt }}
+          onSave={v => run('connections_set_access', { connection: sel.name, access: { ...sel.access, projects: ids(v) } })} />
+        <SettingField label="People" value={sel.access.people.join(', ')} help="E-mails of people whose work may use it" now={now} status={{ kind: 'applied', at: updatedAt }}
+          onSave={v => run('connections_set_access', { connection: sel.name, access: { ...sel.access, people: ids(v) } })} />
+        <SettingField label="Experiments" value={sel.access.experiments.join(', ')} help="Lab experiment ids" now={now} status={{ kind: 'applied', at: updatedAt }}
+          onSave={v => run('connections_set_access', { connection: sel.name, access: { ...sel.access, experiments: ids(v) } })} />
+        <KvRow icon="activity" label="Intake" value={<Button label={sel.intake === 'all' ? 'Pause' : 'Resume'} icon={sel.intake === 'all' ? 'pause' : 'play'} onClick={() => run('connections_set_intake', { connection: sel.name, intake: sel.intake === 'all' ? 'paused' : 'all' })} />} />
+      </DetailSection>
+      <DetailSection title="Limits">
+        {diffLimits.length > 0 ? diffLimits.map(f => (
+          <SettingField key={f.key} label={f.label} value={f.value} help={f.help} now={now} status={{ kind: 'applied', at: updatedAt }}
+            onSave={v => saveLimit(f.key, v)} />
+        )) : (
+          <KvRow icon="circle-check" label="Matches gateway defaults" meta="No size caps · 1m stall · 2m answer" />
+        )}
+        {inheritedLimits.length > 0 && (
+          <Disclosure summary={`Inherited defaults (${inheritedLimits.length})`} summaryClass="muted">
+            {inheritedLimits.map(f => (
+              <SettingField key={f.key} label={f.label} value={f.value} help={f.help} now={now} status={{ kind: 'applied', at: updatedAt }}
+                onSave={v => saveLimit(f.key, v)} />
+            ))}
+          </Disclosure>
+        )}
+      </DetailSection>
+    </article>
+  );
+}
+
+export function KeysIdle({
+  conns,
+  loading,
+  error,
+  onRetry,
+  onOpen,
+}: {
+  conns: readonly Conn[];
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  onOpen: (path: string) => void;
+}) {
+  if (loading && !conns.length) {
+    return (
+      <article class="detail stack" aria-label="Connections & API keys">
+        <header class="detail-h"><h2 class="detail-title">Connections & API keys</h2></header>
+        <Skeleton rows={4} />
+      </article>
+    );
+  }
   const unrecorded = conns.map(c => ({ c, keys: c.keys.filter(k => k.reconcile && !k.reconcile.unknown && (k.reconcile.difference ?? 0) > 0) })).filter(x => x.keys.length);
   const retired = conns.map(c => ({ c, n: c.keys.filter(k => k.state === 'retired').length })).filter(x => x.n);
   const limited = conns.filter(c => !c.access.projects.includes('*'));
-  const idle = <article class="detail" aria-label="API keys">
-    {unrecorded.map(({ c, keys }) => <ProblemRow key={c.name} severity="warning" title={`${c.name} counts ${keys.reduce((n, k) => n + (k.reconcile?.difference ?? 0), 0)} calls Fleet did not record`}
-      facts={`${keys.length} of its ${c.keys.length} keys: ${keys.map(k => `${k.reconcile?.providerDelta} at the provider against ${k.reconcile?.recorded} recorded`).join(', ')}`}
-      actions={[{ label: `Open ${c.name}`, primary: true, onClick: () => go(`/keys/${c.name}`) }]} />)}
-    {limited.length > 0 && <DetailSection title="Limited to some projects">{limited.map(c => <KvRow key={c.name} icon="shield" label={c.name} meta={`${c.provider} · ${c.keys.filter(k => k.state === 'active').length} active`} value={scope(c)} />)}</DetailSection>}
-    {retired.length > 0 && <DetailSection title="Retired keys">{retired.map(({ c, n }) => <KvRow key={c.name} icon="circle-slash" label={c.name} value={`${n} retired`} />)}</DetailSection>}
-    {!unrecorded.length && !limited.length && !retired.length && <Empty text="Every connection serves every project; no key needs a look." />}
-  </article>;
-  return <ListDetail list={list} detail={detail || undefined} detailKey={id} idle={idle} />;
+  return (
+    <article class="detail stack" aria-label="Connections & API keys">
+      <header class="detail-h"><h2 class="detail-title">Connections & API keys</h2></header>
+      {error && <ErrorBanner text={`Connections did not load: ${error}`} onRetry={onRetry} />}
+      {unrecorded.map(({ c, keys }) => (
+        <ProblemRow
+          key={c.name}
+          severity="warning"
+          title={`${c.name} counts ${keys.reduce((n, k) => n + (k.reconcile?.difference ?? 0), 0)} calls Fleet did not record`}
+          facts={`${keys.length} of its ${c.keys.length} keys: ${keys.map(k => `${k.reconcile?.providerDelta} at the provider against ${k.reconcile?.recorded} recorded`).join(', ')}`}
+          actions={[{ label: `Open ${c.name}`, primary: true, onClick: () => onOpen(`/keys/${encodeURIComponent(c.name)}`) }]}
+        />
+      ))}
+      {limited.length > 0 && (
+        <DetailSection title="Limited to some projects">
+          {limited.map(c => (
+            <KvRow
+              key={c.name}
+              icon="shield"
+              label={c.name}
+              meta={[c.provider !== c.name ? c.provider : '', `${c.keys.filter(k => k.state === 'active').length} active`].filter(Boolean).join(' · ')}
+              value={connectionScope(c)}
+            />
+          ))}
+        </DetailSection>
+      )}
+      {retired.length > 0 && (
+        <DetailSection title="Retired keys">
+          {retired.map(({ c, n }) => <KvRow key={c.name} icon="circle-slash" label={c.name} value={`${n} retired`} />)}
+        </DetailSection>
+      )}
+      {!error && !unrecorded.length && !limited.length && !retired.length && <Empty text="Every connection serves every project; no key needs a look." />}
+    </article>
+  );
+}
+
+export function Keys({ id }: { id?: string }) {
+  const [, go] = useLocation();
+  const { data, error, reload } = useOp('connections_list', {});
+  const conns = data ? normalizeConnections(data.connections) : [];
+  const sel = id ? conns.find(c => c.name === id) : undefined;
+  return id
+    ? <KeyDetail id={id} conn={sel} loading={!data && !error} error={error} onRetry={reload} onClose={() => go('/keys')} />
+    : <KeysIdle conns={conns} loading={!data && !error} error={error} onRetry={reload} onOpen={go} />;
 }
