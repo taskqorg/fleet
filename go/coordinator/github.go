@@ -214,34 +214,50 @@ func githubPublic(ctx context.Context, path string) ([]byte, error) {
 // systemActor coordinator: Fleet's own activity, kept under the project whose grant allowed the read but left out of
 // its analytics and execution lists by default (docs/designs/fleet-analytics.md, System activity).
 type readToken struct {
-	token string
-	until time.Time
+	token, exec string
+	until       time.Time // its end: no new read takes it after
+	users       int       // reads holding it (readTokenFor to its release)
 }
 
 const readTokenTTL = 5 * time.Minute
 
+// readTokenGrace: how long past its end a read still holding a token keeps it; then it is revoked all the same.
+const readTokenGrace = 5 * time.Second
+
 var (
-	readTokMu    sync.Mutex // guards the three maps, never held across a mint
-	readToks     = map[string]readToken{}
+	readTokMu    sync.Mutex                 // guards the maps and every readToken's fields, never held across a mint
+	readToks     = map[string]*readToken{}  // the current token of a connection and project
 	readTokLocks = map[string]*sync.Mutex{} // per connection and project, held across its mint
-	// readTokEnds: the executions of minted read tokens and when each is revoked (readTokensEnd).
-	readTokEnds = map[string]time.Time{}
+	// readTokEnds: every minted read token not yet revoked, by its execution (the current ones and those a newer token
+	// replaced while a read still held them).
+	readTokEnds = map[string]*readToken{}
+	// readTokWake runs the read-tokens pass at once: a token's last read released it after its end.
+	readTokWake = make(chan struct{}, 1)
 )
 
 func init() {
 	onStart(func(ctx context.Context, a *App) {
-		every(ctx, "read-tokens", 10*time.Second, func(ctx context.Context) error { return readTokensEnd(ctx, a) })
+		// The pass is the backstop for a token whose end comes with no read holding it, or whose read outlasts its
+		// grace; the release of the last read of an ended token wakes it, so that one is revoked when its read ends.
+		everyWake(ctx, "read-tokens", 10*time.Second, readTokWake, false, func(ctx context.Context, _ bool) error { return readTokensEnd(ctx, a) })
 	})
 }
 
-// readTokensEnd revokes the read tokens past their end and ingests their calls.
+// readTokensEnd revokes the read tokens past their end that no read holds, and those past their grace, and ingests
+// their calls.
 func readTokensEnd(ctx context.Context, a *App) error {
 	readTokMu.Lock()
 	due := []string{}
-	for exec, at := range readTokEnds {
-		if time.Now().After(at) {
+	now := time.Now()
+	for exec, t := range readTokEnds {
+		if !now.Before(t.until) && (t.users == 0 || !now.Before(t.until.Add(readTokenGrace))) {
 			due = append(due, exec)
 			delete(readTokEnds, exec)
+		}
+	}
+	for key, t := range readToks {
+		if readTokEnds[t.exec] == nil {
+			delete(readToks, key)
 		}
 	}
 	readTokMu.Unlock()
@@ -257,9 +273,11 @@ func readTokensEnd(ctx context.Context, a *App) error {
 	return err
 }
 
-func readTokenFor(ctx context.Context, a *App, connection, project string) (string, error) {
+// readTokenFor: the read token of connection for project and its release, which the caller calls once its gateway
+// calls are done. A token ended (readTokenTTL) and released by its last read is revoked then (readTokWake).
+func readTokenFor(ctx context.Context, a *App, connection, project string) (string, func(), error) {
 	if !connName.MatchString(connection) {
-		return "", fmt.Errorf("%s: connection-unavailable", connection)
+		return "", nil, fmt.Errorf("%s: connection-unavailable", connection)
 	}
 	key := connection + " " + project
 	readTokMu.Lock()
@@ -272,11 +290,14 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 	l.Lock() // concurrent reads of one key share its mint; other keys never wait
 	defer l.Unlock()
 	readTokMu.Lock()
-	t, ok := readToks[key]
-	readTokMu.Unlock()
-	if ok && time.Now().Before(t.until) {
-		return t.token, nil
+	if t := readToks[key]; t != nil && time.Now().Before(t.until) {
+		t.users++
+		readTokMu.Unlock()
+		return t.token, readTokRelease(t), nil
+	} else if t != nil && t.users == 0 {
+		wakeReadTokens() // ended and held by no read: revoked now, not at the next pass
 	}
+	readTokMu.Unlock()
 	exec := connection + "-read:" + newID()
 	var token string
 	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
@@ -287,30 +308,56 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 		}
 		return err
 	}); err != nil {
-		return "", fmt.Errorf("token for %s: %w", connection, err)
+		return "", nil, fmt.Errorf("token for %s: %w", connection, err)
 	}
 	if token == "" {
-		return "", fmt.Errorf("%s: %w (not granted to %s, or intake closed)", connection, errConnUnavailable, project)
+		return "", nil, fmt.Errorf("%s: %w (not granted to %s, or intake closed)", connection, errConnUnavailable, project)
 	}
-	// Revoked at its end whatever happens next (the read-tokens pass; a restart revokes it too: revokeSteps); its calls
-	// are ingested then. The gateway must see the token before the call; a failed snapshot revokes it at once.
-	// ponytail: an access or intake change reaches a cached token within readTokenTTL, not at the next read.
+	// Revoked at its end whatever happens next (its last read's release, else the read-tokens pass; a restart revokes it
+	// too: revokeSteps); its calls are ingested then. The gateway must see the token before the call; a failed snapshot
+	// revokes it at once.
+	// ponytail: an access or intake change reaches a cached token within readTokenTTL plus readTokenGrace, not at the
+	// next read.
+	t := &readToken{token: token, exec: exec, until: time.Now().Add(readTokenTTL), users: 1}
 	readTokMu.Lock()
-	readTokEnds[exec] = time.Now().Add(readTokenTTL + 5*time.Second)
+	readTokEnds[exec] = t
 	readTokMu.Unlock()
 	if err := writeSnapshot(context.WithoutCancel(ctx), a); err != nil {
 		readTokMu.Lock()
-		readTokEnds[exec] = time.Time{}
+		t.until, t.users = time.Time{}, 0
 		readTokMu.Unlock()
 		if err := readTokensEnd(context.WithoutCancel(ctx), a); err != nil {
 			log.Printf("ingest %s: %v", exec, err)
 		}
-		return "", err
+		return "", nil, err
 	}
 	readTokMu.Lock()
-	readToks[key] = readToken{token, time.Now().Add(readTokenTTL)}
+	readToks[key] = t
 	readTokMu.Unlock()
-	return token, nil
+	return token, readTokRelease(t), nil
+}
+
+// readTokRelease: the release of one read of t (once); the last read of an ended token wakes the pass that revokes it.
+func readTokRelease(t *readToken) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			readTokMu.Lock()
+			t.users--
+			ended := t.users == 0 && !time.Now().Before(t.until)
+			readTokMu.Unlock()
+			if ended {
+				wakeReadTokens()
+			}
+		})
+	}
+}
+
+func wakeReadTokens() {
+	select {
+	case readTokWake <- struct{}{}:
+	default:
+	}
 }
 
 // githubGateway: one call through the gateway with the connection's shared read token, recorded as a tool_run.
@@ -318,10 +365,11 @@ func githubGateway(ctx context.Context, a *App, connection, project, tool string
 	if gatewayURL() == "" {
 		return nil, fmt.Errorf("github %s: connection-unavailable", tool)
 	}
-	token, err := readTokenFor(ctx, a, connection, project)
+	token, release, err := readTokenFor(ctx, a, connection, project)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	line := gatewayCall(ctx, token, connection, tool, args, gatewayProviders["github"].Tools[tool].Idempotent)
 	if line.Outcome != contract.CallOutcomeOk {
 		return nil, fmt.Errorf("github %s: %s %d", tool, deref(line.ErrorCode), line.Status)

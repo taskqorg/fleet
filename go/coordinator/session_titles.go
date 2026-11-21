@@ -62,13 +62,14 @@ var sessionTitleCall = func(ctx context.Context, a *App, project, prompt string)
 	if gatewayURL() == "" {
 		return "", "", errNoGateway
 	}
-	token, err := readTokenFor(ctx, a, titleConnection, project)
+	token, release, err := readTokenFor(ctx, a, titleConnection, project)
 	if err != nil {
 		if !errors.Is(err, errConnUnavailable) {
 			err = fmt.Errorf("%w: %w", errTitleShared, err)
 		}
 		return "", "", err
 	}
+	defer release()
 	type part struct {
 		Text string `json:"text"`
 	}
