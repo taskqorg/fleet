@@ -5,8 +5,8 @@
    "repo": "fleet",
    "path": "docs/benchmarks/llm-code-benchmarks.md",
    "anchor": "laravel-code-quality",
-   "commit": "0000000000000000000000000000000000000000",
-   "sha256": ""
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "937161b4a1824256a76142a59709d75ac2a180b017ddf76097288fbc2daaafce"
   },
   "source_status": "current",
   "actor": "architect",
@@ -33,8 +33,8 @@
    "repo": "fleet",
    "path": "docs/benchmarks/llm-code-benchmarks.md",
    "anchor": "react-ts-code-quality",
-   "commit": "0000000000000000000000000000000000000000",
-   "sha256": ""
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "f8d707aeed19a43a9c26ffda949df81fa6988c97703fc2a151dae6afeb0043ba"
   },
   "source_status": "current",
   "actor": "architect",
@@ -61,8 +61,8 @@
    "repo": "fleet",
    "path": "docs/benchmarks/llm-code-benchmarks.md",
    "anchor": "bug-finding",
-   "commit": "0000000000000000000000000000000000000000",
-   "sha256": ""
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "30da87fb11eefc5fe1df812247d3b8160ecafba6fede85df60ef267c5079ae58"
   },
   "source_status": "current",
   "actor": "architect",
@@ -89,8 +89,8 @@
    "repo": "fleet",
    "path": "docs/benchmarks/llm-code-benchmarks.md",
    "anchor": "python-pricing-engine",
-   "commit": "0000000000000000000000000000000000000000",
-   "sha256": ""
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "e26140141d3c5770da712424b17692d422ae4eeacab5cdbf7824086ce6f5d3ed"
   },
   "source_status": "current",
   "actor": "architect",
@@ -117,8 +117,8 @@
    "repo": "fleet",
    "path": "docs/benchmarks/llm-code-benchmarks.md",
    "anchor": "edge-case-testing",
-   "commit": "0000000000000000000000000000000000000000",
-   "sha256": ""
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "680f98630d918970e68e189b498e250092356e5dc1d51fcf958bff31cb840443"
   },
   "source_status": "current",
   "actor": "architect",

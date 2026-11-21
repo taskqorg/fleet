@@ -27,13 +27,13 @@ func TestCatalogueSeedStatusesAndProjection(t *testing.T) {
 		t.Fatalf("unexpected catalogue defaults: capability=%q sharedDefault=%v", def.Capability, def.SharedDefault)
 	}
 	wantStatus := map[string]contract.CatalogueMethodStatus{
-		"search-basic":        contract.CatalogueMethodStatusRecommended,
-		"coding-task":         contract.CatalogueMethodStatusRecommended,
+		"search-basic":         contract.CatalogueMethodStatusRecommended,
+		"coding-task":          contract.CatalogueMethodStatusRecommended,
 		"coding-task-reviewed": contract.CatalogueMethodStatusExperimental,
-		"meshy-prop":          contract.CatalogueMethodStatusExperimental,
-		"character-multiview": contract.CatalogueMethodStatusExperimental,
-		"image-brief":         contract.CatalogueMethodStatusExperimental,
-		"lang-check-jev":      contract.CatalogueMethodStatusExperimental,
+		"meshy-prop":           contract.CatalogueMethodStatusExperimental,
+		"character-multiview":  contract.CatalogueMethodStatusExperimental,
+		"image-brief":          contract.CatalogueMethodStatusExperimental,
+		"lang-check-jev":       contract.CatalogueMethodStatusExperimental,
 	}
 	seen := map[string]bool{}
 	var methodViews []any

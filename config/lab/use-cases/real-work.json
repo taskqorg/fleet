@@ -5,8 +5,8 @@
    "repo": "fleet",
    "path": "docs/benchmarks/real-work-use-cases.md",
    "anchor": "ui-unify-and-mockups",
-   "commit": "0000000000000000000000000000000000000000",
-   "sha256": ""
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "6c2406311459a49fef6386827aee3fc850250f3a2903ffc641b324b009c3ca7d"
   },
   "source_status": "current",
   "actor": "operator",
@@ -33,8 +33,8 @@
    "repo": "fleet",
    "path": "docs/benchmarks/real-work-use-cases.md",
    "anchor": "feature-with-qa",
-   "commit": "0000000000000000000000000000000000000000",
-   "sha256": ""
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "757d38caea07a366ec9f3554d4638b4846a2e23863fd633f1d7b4a4389d4c19d"
   },
   "source_status": "current",
   "actor": "operator",
@@ -61,8 +61,8 @@
    "repo": "fleet",
    "path": "docs/benchmarks/real-work-use-cases.md",
    "anchor": "prod-alert-triage",
-   "commit": "0000000000000000000000000000000000000000",
-   "sha256": ""
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "7d2eaf990d9a8a1561398d44e4b000ba43bb9d4c46a6b8a36cc5c3b8c3c5f828"
   },
   "source_status": "current",
   "actor": "operator",
@@ -90,8 +90,8 @@
    "repo": "fleet",
    "path": "docs/benchmarks/real-work-use-cases.md",
    "anchor": "live-vs-dev-audit",
-   "commit": "0000000000000000000000000000000000000000",
-   "sha256": ""
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "019910f06de7ff747ad629a830293411f57d5a9474740ddff23e151ce64d3760"
   },
   "source_status": "current",
   "actor": "architect",
@@ -118,8 +118,8 @@
    "repo": "fleet",
    "path": "docs/benchmarks/real-work-use-cases.md",
    "anchor": "ops-automation-and-pr",
-   "commit": "0000000000000000000000000000000000000000",
-   "sha256": ""
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "27c2ddcaa9e0c2003c82bf363a7dec8055c8131dd4a6f66b9cf2c3805312ef11"
   },
   "source_status": "current",
   "actor": "architect",
@@ -147,8 +147,8 @@
    "repo": "fleet",
    "path": "docs/benchmarks/real-work-use-cases.md",
    "anchor": "autonomous-error-fixing",
-   "commit": "0000000000000000000000000000000000000000",
-   "sha256": ""
+   "commit": "55fefc0220029e9aab88f487b74b2476a435efaf",
+   "sha256": "5f06ac0a0707a406a40584ce1a0a390fe053cb357bad714b3a87f30323bd5837"
   },
   "source_status": "current",
   "actor": "operator",
