@@ -231,6 +231,7 @@ try {
   ] } }));
   let handoffBody: any;
   await p.route('**/api/ops/session_transition', route => { handoffBody = route.request().postDataJSON(); return route.fulfill({ json: { transition: 'reuse' } }); });
+  await p.reload(); await p.getByRole('button', { name: 'Actions' }).waitFor();
   await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Hand off to another agent' }).click();
   await p.getByRole('button', { name: 'handoff-codex · codex', exact: true }).click();
   const accountGroup = p.getByRole('group', { name: 'Account', exact: true });
