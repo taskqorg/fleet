@@ -3,14 +3,26 @@
 // budgets, judge-to-owner agreement, rating queue and Promote on /lab/<experiment id>. Ratings and budget questions are
 // answered through questions_answer like every question; rating outputs show blind (A, B, …) in the seeded order.
 import { Fragment, type ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { StateBadge, Button, Disclosure, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, DataTable, TabBar, Choice, TextField, catalogueRow, ROW2, percent, SettingField, StepList, msMeasured, type StepItem, type StateOf, type Basis, ShellStatus } from '../../../packages/ui/src/index.ts';
+import {
+  StateBadge, Button, Disclosure, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck,
+  AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, DataTable, SortColHead, Choice, TextField,
+  SearchField, CatalogueTree, ContextMenu, ErrorBanner, ROW2, percent, SettingField, StepList, msMeasured,
+  agentLabel, type StepItem, type StateOf, type Basis, type CatalogueTreeNode, type MenuItem, ShellStatus, actions,
+} from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type OpName, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
+import { closedGroups, flipGroup } from '../lists.ts';
+import { listGroups, setListGroups, usePins } from '../prefs.ts';
 import { LabCreate } from './lab-create.tsx';
-import { groupUseCases, isLabEligibleUseCase } from './use-cases.ts';
-import type { LabExperimentRecord, LabRating, LabScoreSummary, LabUseCaseEntry, ProjectAssessmentRef } from '../../../contracts/generated/ops.ts';
+import {
+  ARCHIVED_COLLECTION_ID, buildUseCaseTree, collectionTitleOf, groupUseCases, isLabEligibleUseCase,
+  matchesUseCaseSlug, useCaseSlug, type RegistryUseCase,
+} from './use-cases.ts';
+import type {
+  LabExperimentRecord, LabLeaderboardEntry, LabRating, LabScoreSummary, ProjectAssessmentRef,
+} from '../../../contracts/generated/ops.ts';
 
 const ms = (t: string | number | null | undefined) => typeof t === 'number' ? t : Date.parse(t ?? '');
 const message = (x: unknown) => x instanceof Error ? x.message : String(x);
@@ -33,46 +45,280 @@ const typedValue = (v: unknown): { answer?: unknown; label?: unknown } => v && t
 // typedIcon: a typed score at a glance: right, wrong, escalated (middle band) or not scorable.
 const typedIcon = (value: unknown) => { const v = typedValue(value); return v.answer === 'unscored' ? 'circle-alert' : v.answer === 'abstain' ? 'circle-pause' : v.answer === v.label ? 'circle-check' : 'circle-x'; };
 
+const costBasisOf = (b: string | null | undefined): Basis =>
+  b === 'measured' || b === 'estimated' || b === 'subscription' || b === 'unavailable' ? b : 'unavailable';
+
 export function Lab({ id }: { id?: string }) {
-  const [, go] = useLocation();
-  const [idleTab, setIdleTab] = useState<'questions' | 'registry'>('questions');
-  const experiments = useOp('lab_experiments_list', {}), registry = useOp('lab_registry', {}), ratings = useOp('lab_ratings_list', { state: 'open' });
-  const now = Date.now();
   if (id === 'new') return <LabCreate />;
+  return <LabView id={id} />;
+}
+
+const RUN_FOLDERS = [
+  { id: 'run:active', label: 'Active', icon: 'activity' as const, match: (e: LabExperimentRecord) => e.state === 'running' || e.state === 'paused', defaultCollapsed: false },
+  { id: 'run:drafts', label: 'Drafts', icon: 'circle-dashed' as const, match: (e: LabExperimentRecord) => e.state === 'draft', defaultCollapsed: false },
+  { id: 'run:completed', label: 'Completed', icon: 'circle-check' as const, match: (e: LabExperimentRecord) => e.state === 'done', defaultCollapsed: false },
+  { id: 'run:stopped', label: 'Stopped', icon: 'circle-slash' as const, match: (e: LabExperimentRecord) => e.state === 'stopped', defaultCollapsed: true },
+] as const;
+
+function LabView({ id }: { id?: string }) {
+  const [, go] = useLocation();
+  const [navMode, setNavMode] = useState<'use-cases' | 'runs'>(() => (id ? 'runs' : 'use-cases'));
+  const [ctlQuery, setCtlQuery] = useState('');
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [selectedUseCaseId, setSelectedUseCaseId] = useState<string | null>(null);
+  const [selectedRunFolderId, setSelectedRunFolderId] = useState<string | null>(null);
+  const [treeMenu, setTreeMenu] = useState<{ kind: 'use-case' | 'run'; node: CatalogueTreeNode; at: { x: number; y: number } } | null>(null);
+  const [bestScoresByUseCase, setBestScoresByUseCase] = useState<Record<string, number>>({});
+
+  const ucPins = usePins('lab:use-cases');
+  const runPins = usePins('lab:runs');
+
+  useEffect(() => {
+    if (id) setNavMode('runs');
+  }, [id]);
+
+  const experiments = useOp('lab_experiments_list', {});
+  const registry = useOp('lab_registry', {});
+  const ratings = useOp('lab_ratings_list', { state: 'open' });
+
+  const selectedCollectionTitle = collectionTitleOf(selectedFolderId);
+  const leaderboardReq = useMemo<Ops['lab_leaderboard']['request'] | null>(() => {
+    if (id || navMode !== 'use-cases') return null;
+    if (selectedUseCaseId) return { useCaseId: selectedUseCaseId };
+    if (selectedCollectionTitle && selectedCollectionTitle !== 'Archived / Obsolete') return { collection: selectedCollectionTitle };
+    return {};
+  }, [id, navMode, selectedUseCaseId, selectedCollectionTitle]);
+
+  const leaderboard = useOp('lab_leaderboard', leaderboardReq);
+  const approvedExamples = useOp('lab_examples_list', !id && navMode === 'use-cases' ? { state: 'approved' } : null);
+
+  useEffect(() => {
+    if (!leaderboard.data || selectedUseCaseId || selectedCollectionTitle) return;
+    const next: Record<string, number> = {};
+    for (const entry of leaderboard.data.entries) {
+      if (entry.scoreMean == null) continue;
+      const cur = next[entry.useCaseId];
+      if (cur === undefined || entry.scoreMean > cur) next[entry.useCaseId] = entry.scoreMean;
+    }
+    setBestScoresByUseCase(next);
+  }, [leaderboard.data, selectedUseCaseId, selectedCollectionTitle]);
+
+  const now = Date.now();
+  const rawExperiments = experiments.data?.experiments ?? [];
+  const rawUseCases: RegistryUseCase[] = registry.data?.useCases ?? [];
+  const rawRatings = ratings.data?.ratings ?? [];
+  const rawExamples = approvedExamples.data?.examples ?? [];
+
+  const { nodes: useCaseTreeNodes } = useMemo(
+    () => buildUseCaseTree(rawUseCases, {
+      pinnedIds: ucPins.ids,
+      rightOf: u => {
+        const best = bestScoresByUseCase[u.id];
+        return best !== undefined ? <span class="mono" data-tip="Best observed score">{best.toFixed(2)}</span> : undefined;
+      },
+    }),
+    [rawUseCases, ucPins.ids, bestScoresByUseCase],
+  );
+
+  const sortedExperiments = useMemo(
+    () => rawExperiments.toSorted((a, b) => ms(b.launchedAt ?? b.createdAt) - ms(a.launchedAt ?? a.createdAt)),
+    [rawExperiments],
+  );
+
+  const runTreeNodes = useMemo<CatalogueTreeNode[]>(() => {
+    const folders: CatalogueTreeNode[] = [];
+    for (const f of RUN_FOLDERS) {
+      const items = sortedExperiments.filter(f.match);
+      if (!items.length) continue;
+      const containsSelected = !!id && items.some(e => e.id === id);
+      folders.push({
+        id: f.id,
+        label: f.label,
+        icon: f.icon,
+        defaultCollapsed: f.defaultCollapsed && !containsSelected,
+        children: items.map(e => ({
+          id: e.id,
+          label: e.labGroup || e.goal || e.pipelineId,
+          sub: subtitle(e),
+          state: { family: 'experiment', state: e.state, reason: e.stopReason ?? undefined },
+          href: `/lab/${e.id}`,
+          pinned: runPins.has(e.id),
+          problem: undecided(e),
+          right: <>{undecided(e) && <Icon name="bell" label="Undecided" />}<AgeChip t={ms(e.createdAt)} /></>,
+          searchText: [e.id, e.labGroup, e.goal, e.pipelineId, e.kind, e.state, ...e.variants.map(v => v.label)].filter(Boolean).join(' '),
+        })),
+      });
+    }
+    return folders;
+  }, [sortedExperiments, id, runPins.ids]);
+
   if (!experiments.data) return <Empty text="Loading…" />;
-  const data = { experiments: experiments.data.experiments, useCases: registry.data?.useCases ?? [], ratings: ratings.data?.ratings ?? [] }, state = experiments.state;
+
+  const data = { experiments: rawExperiments, useCases: rawUseCases, ratings: rawRatings }, state = experiments.state;
   const approvals = data.ratings.filter(r => r.exampleArtifactId), open = data.ratings.filter(r => r.experimentId);
-  const groupCount = new Set(data.experiments.map(e => e.labGroup || 'Ungrouped')).size;
-  // Control column: what waits for the owner, then the experiments catalogue (its one scroller, OR-25).
+
+  const ucFlipped = listGroups('lab:use-cases');
+  const ucClosed = closedGroups([ARCHIVED_COLLECTION_ID], ucFlipped);
+  const ucCollapsed: Record<string, boolean> = {
+    __pinned__: ucClosed.has('__pinned__'),
+    ...Object.fromEntries(useCaseTreeNodes.map(n => [n.id, ucClosed.has(n.id)])),
+  };
+
+  const defaultRunClosed = RUN_FOLDERS
+    .filter(f => f.defaultCollapsed && !(id && sortedExperiments.some(e => e.id === id && f.match(e))))
+    .map(f => f.id);
+  const runFlipped = listGroups('lab:runs');
+  const runClosed = closedGroups(defaultRunClosed, runFlipped);
+  const runCollapsed: Record<string, boolean> = {
+    __pinned__: runClosed.has('__pinned__'),
+    ...Object.fromEntries(runTreeNodes.map(n => [n.id, runClosed.has(n.id)])),
+  };
+
+  const handleUseCaseSelect = (node: CatalogueTreeNode) => {
+    if (node.id === '__pinned__') {
+      setListGroups('lab:use-cases', flipGroup(ucFlipped, '__pinned__'));
+      return;
+    }
+    if (node.children) {
+      setSelectedFolderId(node.id);
+      setSelectedUseCaseId(null);
+      if (id) go('/lab');
+      return;
+    }
+    setSelectedUseCaseId(node.id);
+    setSelectedFolderId(null);
+    if (id) go('/lab');
+  };
+
+  const handleRunSelect = (node: CatalogueTreeNode) => {
+    if (node.id === '__pinned__') {
+      setListGroups('lab:runs', flipGroup(runFlipped, '__pinned__'));
+      return;
+    }
+    if (node.children) {
+      setSelectedRunFolderId(prev => (prev === node.id ? null : node.id));
+      if (id) go('/lab');
+      return;
+    }
+    go(`/lab/${node.id}`);
+  };
+
+  const menuItems: MenuItem[] = !treeMenu ? [] : treeMenu.kind === 'use-case'
+    ? (() => {
+        const u = rawUseCases.find(x => x.id === treeMenu.node.id);
+        const pinned = ucPins.has(treeMenu.node.id);
+        const items: MenuItem[] = [
+          { label: 'Open', icon: actions.open, onClick: () => handleUseCaseSelect(treeMenu.node) },
+          { label: pinned ? 'Unpin' : 'Pin', icon: pinned ? actions.unpin : actions.pin, onClick: () => ucPins.toggle(treeMenu.node.id) },
+        ];
+        if (u && isLabEligibleUseCase(u)) {
+          items.push({ label: 'Run in Lab', icon: 'play', onClick: () => go(`/lab/new?useCase=${encodeURIComponent(u.id)}`) });
+        }
+        return items;
+      })()
+    : (() => {
+        const pinned = runPins.has(treeMenu.node.id);
+        return [
+          { label: 'Open', icon: actions.open, onClick: () => go(`/lab/${treeMenu.node.id}`) },
+          { label: pinned ? 'Unpin' : 'Pin', icon: pinned ? actions.unpin : actions.pin, onClick: () => runPins.toggle(treeMenu.node.id) },
+        ];
+      })();
+
+  // Control column: mode switch, search, Waiting for you, and CatalogueTree (one scroller, OR-25).
   const list = <>
     <ShellStatus><OfflineMarker state={state} now={now} /></ShellStatus>
-    <header class="page-h"><span class="grow" /><Button label="New experiment" icon="plus" iconOnly onClick={() => go('/lab/new')} /></header>
+    <header class="page-h">
+      <Choice
+        label="Lab navigation"
+        value={navMode}
+        onChange={v => {
+          const next = v as 'use-cases' | 'runs';
+          setNavMode(next);
+          setCtlQuery('');
+        }}
+        options={[{ id: 'use-cases', label: 'Use cases' }, { id: 'runs', label: 'Runs' }]}
+      />
+      <SearchField label={navMode === 'use-cases' ? 'Search use cases' : 'Search runs'} value={ctlQuery} onInput={setCtlQuery} onSearch={() => {}} />
+      <span class="grow" />
+      <Button label="New experiment" icon="plus" iconOnly onClick={() => go('/lab/new')} />
+    </header>
     {(approvals.length > 0 || open.length > 0) && <section class="panel"><header class="panel-h"><Icon name="bell" /><h2>Waiting for you</h2></header>
       {open.length > 0 && <div class="vl-row static"><span>{open.length} open ratings</span></div>}
       {approvals.map(r => <Rating key={r.id} r={r} now={now} />)}
     </section>}
     <section class="panel">
-      {data.experiments.length ? <VirtualList items={data.experiments} getKey={e => e.id} rowHeight={catalogueRow()} follow="top" label="Experiments" columns="1.25rem minmax(0,1fr) auto auto"
-        rowClass={e => e.id === id ? 'sel' : ''}
-        render={e => <>
-          <span class="lead"><StateBadge family="experiment" state={e.state as StateOf<'experiment'>} reason={e.stopReason ?? undefined} compact /></span>
-          {/* One line: the series names the row, the pipeline, kind and variants follow as its secondary text (the full name was cut). */}
-          <span class="tt"><a class="title row-link" href={`/lab/${e.id}`} onClick={ev => { ev.preventDefault(); go(`/lab/${e.id}`); }} data-tip={title(e)}>{e.labGroup || e.pipelineId}</a><span class="id sub">{subtitle(e)}</span></span>
-          <span class="undecided" data-tip={undecided(e) ? 'Finished, waiting for a decision' : undefined}>{undecided(e) && <Icon name="bell" label="Undecided" />}</span>
-          <AgeChip t={ms(e.createdAt)} />
-        </>} />
-        : <Empty text="No experiments yet. Choose New experiment to create a draft." />}
+      {navMode === 'use-cases' ? (
+        <CatalogueTree
+          fill
+          label="Use cases"
+          nodes={useCaseTreeNodes}
+          selectedId={!id ? (selectedUseCaseId ?? selectedFolderId) : null}
+          query={ctlQuery}
+          collapsed={ucCollapsed}
+          onToggle={folderId => setListGroups('lab:use-cases', flipGroup(ucFlipped, folderId))}
+          onPin={node => ucPins.toggle(node.id)}
+          onSelect={handleUseCaseSelect}
+          onRowMenu={(node, at) => { if (!node.children) setTreeMenu({ kind: 'use-case', node, at }); }}
+          emptyText={rawUseCases.length === 0 ? 'No use cases in registry.' : 'No matching use cases.'}
+        />
+      ) : (
+        <CatalogueTree
+          fill
+          label="Experiments"
+          nodes={runTreeNodes}
+          selectedId={id ?? selectedRunFolderId}
+          query={ctlQuery}
+          collapsed={runCollapsed}
+          onToggle={folderId => setListGroups('lab:runs', flipGroup(runFlipped, folderId))}
+          onPin={node => runPins.toggle(node.id)}
+          onSelect={handleRunSelect}
+          onRowMenu={(node, at) => { if (!node.children) setTreeMenu({ kind: 'run', node, at }); }}
+          emptyText={data.experiments.length === 0 ? 'No experiments yet. Choose New experiment to create a draft.' : 'No matching runs.'}
+        />
+      )}
     </section>
+    {treeMenu && <ContextMenu at={treeMenu.at} label={treeMenu.node.label} items={menuItems} onClose={() => setTreeMenu(null)} />}
   </>;
-  const idle = <article class="detail" aria-label={idleTab === 'questions' ? 'Lab questions' : 'Use-case registry'}>
-    <TabBar label="Lab views" value={idleTab} onChange={setIdleTab} tabs={[
-      { id: 'questions', label: 'Questions', count: groupCount },
-      { id: 'registry', label: 'Use-case registry', count: data.useCases.length },
-    ]} />
-    {idleTab === 'questions'
-      ? <Questions experiments={data.experiments} onOpen={x => go(`/lab/${x}`)} />
-      : <Registry useCases={data.useCases} onRun={u => go(`/lab/new?useCase=${encodeURIComponent(u)}`)} head={<Undecided experiments={data.experiments} onOpen={x => go(`/lab/${x}`)} />} />}
-  </article>;
+
+  const selectedUseCase = selectedUseCaseId ? rawUseCases.find(u => u.id === selectedUseCaseId) ?? null : null;
+  const activeRunFolder = selectedRunFolderId ? RUN_FOLDERS.find(f => f.id === selectedRunFolderId) : null;
+  const shownExperiments = activeRunFolder ? data.experiments.filter(activeRunFolder.match) : data.experiments;
+
+  const idle = navMode === 'use-cases'
+    ? <article class="detail" aria-label={selectedUseCase ? selectedUseCase.goal : (selectedCollectionTitle ?? 'Lab suite leaderboard')}>
+        <Undecided experiments={data.experiments} onOpen={x => go(`/lab/${x}`)} />
+        {selectedUseCase && (
+          <UseCaseCard
+            useCase={selectedUseCase}
+            examples={rawExamples}
+            onClose={() => setSelectedUseCaseId(null)}
+            onRun={u => go(`/lab/new?useCase=${encodeURIComponent(u)}`)}
+          />
+        )}
+        <SuiteLeaderboard
+          scopeLabel={selectedUseCase ? selectedUseCase.id : (selectedCollectionTitle ?? 'All suites')}
+          entries={leaderboard.data?.entries ?? []}
+          loading={!leaderboard.data && !leaderboard.error}
+          error={leaderboard.error}
+          onRetry={leaderboard.reload}
+          showUseCase={!selectedUseCase}
+          onOpenExperiment={x => go(`/lab/${x}`)}
+          onOpenPipeline={p => go(`/pipelines/${p}`)}
+          onSelectUseCase={u => { setSelectedUseCaseId(u); setSelectedFolderId(null); }}
+        />
+        {!selectedUseCase && (
+          <Registry
+            useCases={rawUseCases}
+            collectionTitle={selectedCollectionTitle}
+            onSelect={u => { setSelectedUseCaseId(u); setSelectedFolderId(null); }}
+            onRun={u => go(`/lab/new?useCase=${encodeURIComponent(u)}`)}
+          />
+        )}
+      </article>
+    : <article class="detail" aria-label="Lab questions">
+        <Questions experiments={shownExperiments} onOpen={x => go(`/lab/${x}`)} />
+      </article>;
+
   return <ListDetail list={list} detail={id ? <Experiment key={id} id={id} onClose={() => go('/lab')} /> : undefined} detailKey={id} idle={idle} />;
 }
 
@@ -127,29 +373,268 @@ function Undecided({ experiments, onOpen }: { experiments: LabExperimentRecord[]
   </>;
 }
 
-// The use-case registry fills the work area while no experiment is open. It scrolls with the work area, so its rows are plain.
-// ponytail: static rows, fine for tens of use cases; make it its own catalogue with a virtual list if the registry grows past a few hundred.
-function Registry({ useCases, onRun, head }: { useCases: LabUseCaseEntry[]; onRun: (useCaseId: string) => void; head?: ComponentChildren }) {
+function UseCaseCard({
+  useCase,
+  examples,
+  onClose,
+  onRun,
+}: {
+  useCase: RegistryUseCase;
+  examples: readonly { artifactId: string; name: string }[];
+  onClose: () => void;
+  onRun: (useCaseId: string) => void;
+}) {
+  const slug = useCaseSlug(useCase.id);
+  const matched = examples.filter(ex => matchesUseCaseSlug(ex.name, slug));
+  const eligible = isLabEligibleUseCase(useCase);
+  const readiness = matched.length > 0
+    ? `${matched.length} approved (${matched.slice(0, 4).map(e => e.name).join(', ')}${matched.length > 4 ? `, +${matched.length - 4}` : ''})`
+    : `0 approved matching ${slug} (maturity: ${useCase.maturity})`;
+  return (
+    <section class="panel" aria-label={`Use case ${useCase.id}`}>
+      <header class="panel-h">
+        <Button label="All suites" icon="x" iconOnly onClick={onClose} />
+        <StateBadge
+          family="source"
+          state={(useCase.source_status || 'current') as StateOf<'source'>}
+          reason={useCase.source ? `${useCase.source.repo}/${useCase.source.path}#${useCase.source.anchor}` : undefined}
+        />
+        <span class="id mono">{useCase.id}</span>
+        <span class="grow" />
+        {eligible && <Button label="Run in Lab" icon="play" kind="primary" onClick={() => onRun(useCase.id)} />}
+      </header>
+      <div class="stack">
+        <h2 class="detail-title">{useCase.goal}</h2>
+        <DetailSection title="Specification & readiness">
+          <KvRow icon="check-check" label="Status" value={useCase.status ?? 'current'} />
+          <KvRow icon="sliders-horizontal" label="Lab fit" value={useCase.lab_fit} />
+          <KvRow icon="chart-no-axes-column" label="Maturity" value={useCase.maturity} />
+          <KvRow icon="rows-3" label="Approved examples" value={readiness} />
+          {useCase.tags && useCase.tags.length > 0 && (
+            <KvRow
+              icon="layers-2"
+              label="Tags"
+              value={<span class="ep-presets">{useCase.tags.map(t => <span key={t} class="chip">{t}</span>)}</span>}
+            />
+          )}
+          {useCase.expected_outcome && <KvRow icon="file-text" label="Expected outcome" value={useCase.expected_outcome} />}
+          {useCase.source && (
+            <KvRow
+              icon="file-text"
+              label="Source"
+              value={<span class="mono">{useCase.source.repo}/{useCase.source.path}#{useCase.source.anchor}</span>}
+            />
+          )}
+        </DetailSection>
+      </div>
+    </section>
+  );
+}
+
+type LeaderboardSortCol = 'variant' | 'pipeline' | 'score' | 'runs' | 'wall' | 'tokens' | 'cost';
+const lbCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+function SuiteLeaderboard({
+  scopeLabel,
+  entries,
+  loading,
+  error,
+  onRetry,
+  showUseCase,
+  onOpenExperiment,
+  onOpenPipeline,
+  onSelectUseCase,
+}: {
+  scopeLabel: string;
+  entries: readonly LabLeaderboardEntry[];
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  showUseCase: boolean;
+  onOpenExperiment: (id: string) => void;
+  onOpenPipeline: (id: string) => void;
+  onSelectUseCase: (id: string) => void;
+}) {
+  const [sortCol, setSortCol] = useState<LeaderboardSortCol | null>(null);
+  const [sortDir, setSortDir] = useState<'ascending' | 'descending'>('descending');
+
+  const toggleSort = (col: LeaderboardSortCol) => {
+    if (sortCol === col) {
+      setSortDir(d => (d === 'ascending' ? 'descending' : 'ascending'));
+    } else {
+      setSortCol(col);
+      setSortDir(col === 'variant' || col === 'pipeline' || col === 'wall' || col === 'cost' ? 'ascending' : 'descending');
+    }
+  };
+
+  const sorted = useMemo(() => {
+    if (!sortCol) return [...entries];
+    const dir = sortDir === 'ascending' ? 1 : -1;
+    const cmpNum = (a: number | null | undefined, b: number | null | undefined): number => {
+      if (a == null && b == null) return 0;
+      if (a == null) return 1;
+      if (b == null) return -1;
+      return dir * (a - b);
+    };
+    return entries.toSorted((a, b) => {
+      switch (sortCol) {
+        case 'variant': return dir * lbCollator.compare(a.variantLabel, b.variantLabel);
+        case 'pipeline': return dir * lbCollator.compare(a.pipelineId, b.pipelineId);
+        case 'score': return cmpNum(a.scoreMean, b.scoreMean);
+        case 'runs': return cmpNum(a.succeededTrials / Math.max(1, a.trials), b.succeededTrials / Math.max(1, b.trials)) || cmpNum(a.trials, b.trials);
+        case 'wall': return cmpNum(a.wallMsMedian, b.wallMsMedian);
+        case 'tokens': return cmpNum(a.tokensTotal, b.tokensTotal);
+        case 'cost': return cmpNum(a.costUsd, b.costUsd);
+      }
+    });
+  }, [entries, sortCol, sortDir]);
+
+  const sortStatus = sortCol ? `Sorted by ${sortCol}, ${sortDir}, ${sorted.length} rows` : '';
+
+  return (
+    <section class="panel" aria-label={`Suite leaderboard: ${scopeLabel}`}>
+      <header class="panel-h">
+        <Icon name="chart-no-axes-column" />
+        <h2>Suite leaderboard</h2>
+        <span class="muted">{scopeLabel}</span>
+        <span class="grow" />
+        <span class="muted mono">{entries.length}</span>
+      </header>
+      <span class="sr-only" role="status">{sortStatus}</span>
+      {error && <ErrorBanner text={error} onRetry={onRetry} />}
+      {loading && !error ? (
+        <Empty text="Loading leaderboard…" />
+      ) : sorted.length === 0 ? (
+        <Empty text={`No completed leaderboard trials for ${scopeLabel} yet.`} />
+      ) : (
+        <DataTable
+          label={`Suite leaderboard (${scopeLabel})`}
+          head={
+            <tr>
+              <SortColHead label="Variant" active={sortCol === 'variant'} dir={sortDir} onSort={() => toggleSort('variant')} />
+              <SortColHead label="Pipeline" active={sortCol === 'pipeline'} dir={sortDir} onSort={() => toggleSort('pipeline')} />
+              <th scope="col">Model / Profile</th>
+              <th scope="col">Evaluator</th>
+              <SortColHead label="Score" active={sortCol === 'score'} dir={sortDir} numeric onSort={() => toggleSort('score')} />
+              <SortColHead label="Runs" active={sortCol === 'runs'} dir={sortDir} numeric onSort={() => toggleSort('runs')} />
+              <SortColHead label="Median time" active={sortCol === 'wall'} dir={sortDir} numeric onSort={() => toggleSort('wall')} />
+              <SortColHead label="Tokens" active={sortCol === 'tokens'} dir={sortDir} numeric onSort={() => toggleSort('tokens')} />
+              <SortColHead label="Cost" active={sortCol === 'cost'} dir={sortDir} numeric onSort={() => toggleSort('cost')} />
+              <th scope="col">Latest</th>
+            </tr>
+          }
+        >
+          {sorted.map((entry, idx) => {
+            const key = `${entry.useCaseId}|${entry.pipelineId}|${entry.variantLabel}|${entry.model ?? ''}|${entry.profile ?? ''}|${entry.configRef ?? ''}|${entry.evaluator}|${idx}`;
+            const modelText = entry.model ? agentLabel(entry.model) : '—';
+            const rangeText = entry.scoreMin != null && entry.scoreMax != null && entry.scoreMin !== entry.scoreMax
+              ? ` (${entry.scoreMin.toFixed(2)}–${entry.scoreMax.toFixed(2)})`
+              : '';
+            const runsTip = `${entry.succeededTrials} succeeded, ${entry.failedTrials} failed of ${entry.trials} trials`;
+            const modelTip = [entry.model, entry.profile, entry.configRef].filter(Boolean).join(' · ') || undefined;
+            return (
+              <tr key={key}>
+                <th scope="row">
+                  <div>{entry.variantLabel || 'baseline'}</div>
+                  {showUseCase && (
+                    <div class="muted">
+                      <Button label={entry.useCaseId} kind="quiet" rowLink onClick={() => onSelectUseCase(entry.useCaseId)} />
+                    </div>
+                  )}
+                </th>
+                <td>
+                  <a href={`/pipelines/${entry.pipelineId}`} onClick={ev => { ev.preventDefault(); onOpenPipeline(entry.pipelineId); }}>
+                    {entry.pipelineId}
+                  </a>
+                </td>
+                <td data-tip={modelTip}>
+                  <div>{modelText}</div>
+                  {entry.profile && <div class="muted">{entry.profile}</div>}
+                </td>
+                <td>{evaluatorLabel(entry.evaluator)}</td>
+                <td class="num">
+                  <Num m={{ value: entry.scoreMean, basis: entry.scoreMean == null ? 'unavailable' : 'measured' }} kind="score" />
+                  {rangeText && <span class="muted">{rangeText}</span>}
+                </td>
+                <td class="num" data-tip={runsTip}>
+                  {entry.succeededTrials}/{entry.trials}
+                </td>
+                <td class="num">
+                  <Num m={msMeasured(entry.wallMsMedian)} kind="duration" />
+                </td>
+                <td class="num">
+                  <Num m={{ value: entry.tokensTotal, basis: entry.tokensTotal > 0 || entry.trials === 0 ? 'measured' : 'unavailable', reason: 'no token usage' }} kind="count" />
+                </td>
+                <td class="num">
+                  <Num m={{ value: entry.costUsd, basis: costBasisOf(entry.costBasis), currency: 'USD', reason: entry.costBasis }} kind="money" />
+                  <span class="muted"> {entry.costBasis}</span>
+                </td>
+                <td>
+                  <span class="deps">
+                    <EntityCode id={entry.latestExperimentId} kind="experiment" />
+                    <Button label="Open" kind="quiet" onClick={() => onOpenExperiment(entry.latestExperimentId)} />
+                    <AgeChip t={ms(entry.latestAt)} />
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </DataTable>
+      )}
+    </section>
+  );
+}
+
+// The use-case registry fills the work area below the leaderboard while no specific use case or experiment is open.
+function Registry({
+  useCases,
+  collectionTitle,
+  onSelect,
+  onRun,
+}: {
+  useCases: RegistryUseCase[];
+  collectionTitle: string | null;
+  onSelect: (useCaseId: string) => void;
+  onRun: (useCaseId: string) => void;
+}) {
   const { collections, archived } = groupUseCases(useCases);
+  const shownCollections = collectionTitle && collectionTitle !== 'Archived / Obsolete'
+    ? collections.filter(c => c.title === collectionTitle)
+    : collectionTitle === 'Archived / Obsolete'
+      ? []
+      : collections;
 
-  const row = (u: LabUseCaseEntry) => <div key={u.id} role="row" class="vl-row static">
-    <StateBadge family="source" state={u.source_status as StateOf<'source'>} reason={u.source ? `${u.source.repo}/${u.source.path}#${u.source.anchor}` : undefined} compact />
-    <span class="tt"><span class="title">{u.goal}</span><span class="id">{u.id}{u.maps_to?.length ? ` → ${u.maps_to.join(', ')}` : ''}</span></span>
-    <span class="muted">{u.status ?? 'current'}</span><span class="muted">{u.lab_fit}</span><span class="muted">{u.maturity}</span>
-    {isLabEligibleUseCase(u) ? <Button label="Run in Lab" icon="play" kind="quiet" tip={`Run ${u.id} in Lab`} onClick={() => onRun(u.id)} /> : <span />}
-  </div>;
+  const row = (u: RegistryUseCase) => (
+    <div key={u.id} role="row" class="vl-row static">
+      <StateBadge family="source" state={u.source_status as StateOf<'source'>} reason={u.source ? `${u.source.repo}/${u.source.path}#${u.source.anchor}` : undefined} compact />
+      <span class="tt">
+        <Button label={u.goal} rowLink kind="quiet" onClick={() => onSelect(u.id)} />
+        <span class="id">{u.id}{u.maps_to?.length ? ` → ${u.maps_to.join(', ')}` : ''}</span>
+      </span>
+      <span class="muted">{u.status ?? 'current'}</span>
+      <span class="muted">{u.lab_fit}</span>
+      <span class="muted">{u.maturity}</span>
+      {isLabEligibleUseCase(u) ? <Button label="Run in Lab" icon="play" kind="quiet" tip={`Run ${u.id} in Lab`} onClick={() => onRun(u.id)} /> : <span />}
+    </div>
+  );
 
-  const table = (items: LabUseCaseEntry[]) => <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 6rem 5rem 9rem auto' }}>
-    <div class="vl-head" role="row"><span /><span>Use case</span><span>Status</span><span>Fit</span><span>Maturity</span><span /></div>
-    {items.map(row)}
-  </div>;
+  const table = (items: RegistryUseCase[]) => (
+    <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 6rem 5rem 9rem auto' }}>
+      <div class="vl-head" role="row"><span /><span>Use case</span><span>Status</span><span>Fit</span><span>Maturity</span><span /></div>
+      {items.map(row)}
+    </div>
+  );
 
   return <>
-    {head}
-    <h2 class="detail-title">Use-case registry</h2>
+    <h2 class="detail-title">{collectionTitle ?? 'Use-case registry'}</h2>
     {useCases.length === 0 && <Empty text="No use cases in registry." />}
-    {collections.map(c => <DetailSection key={c.key} title={`${c.title} (${c.items.length})`}>{table(c.items)}</DetailSection>)}
-    {archived.length > 0 && <Disclosure summaryClass="muted" summary={`Archived / Obsolete (${archived.length})`}>{table(archived)}</Disclosure>}
+    {shownCollections.map(c => <DetailSection key={c.key} title={`${c.title} (${c.items.length})`}>{table(c.items)}</DetailSection>)}
+    {collectionTitle === 'Archived / Obsolete' && archived.length > 0 && (
+      <DetailSection title={`Archived / Obsolete (${archived.length})`}>{table(archived)}</DetailSection>
+    )}
+    {!collectionTitle && archived.length > 0 && (
+      <Disclosure summaryClass="muted" summary={`Archived / Obsolete (${archived.length})`}>{table(archived)}</Disclosure>
+    )}
   </>;
 }
 
@@ -258,16 +743,24 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
                 const conf = [(t.confounders.hosts ?? []).join(', '), (t.confounders.harnesses ?? []).join(', '), (t.confounders.models ?? []).join(', '), 'web ' + String(t.confounders.webRoute)].filter(Boolean).join(' · ');
                 const problem = problemText(t.problem);
                 const repeatTag = `r${(t.cell.repeat ?? 0) + 1}${t.cell.attempt ? `.${t.cell.attempt}` : ''}`;
+                const plannedSteps = t.planSummary?.planned ?? 0;
+                const activeStep = Math.min(plannedSteps, Math.max(0, t.planSummary?.selected ?? 0));
+                const showSteps = (t.state === 'running' || t.state === 'preparing') && plannedSteps > 0;
+                const stepTip = `${activeStep} of ${plannedSteps} steps selected${t.planSummary.pending ? ` · ${t.planSummary.pending} pending` : ''}${t.planSummary.blocked ? ` · ${t.planSummary.blocked} blocked` : ''}`;
                 return <Fragment key={key}>
                   <span class="lab-trial">
                     <Button label="View trial plan" icon="network" iconOnly kind="quiet" onClick={() => setPlanTrial(t.id)} />
                     <StateBadge family="trial" state={(t.observation === 'unconfirmed' ? 'unknown' : t.state) as StateOf<'trial'>} reason={problem ?? (t.comparable ? undefined : 'left out of comparison')} compact />
                     {t.comparable && <RowCheck checked={sel.includes(t.id)} label={`Select repeat ${(t.cell.repeat ?? 0) + 1} for rating`} onToggle={() => toggle(t.id)} />}
                     <span class="muted" data-tip={conf}>{repeatTag}</span>
+                    {showSteps && <span class="chip-age num" data-tip={stepTip}>step {activeStep}/{plannedSteps}</span>}
                     <Num m={{ value: t.durationMs == null ? null : t.durationMs / 1000, basis: t.durationMs == null ? 'unavailable' : 'measured', reason: 'running' }} kind="duration" />
                     <Num m={{ value: t.spend.credits ?? null, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" />
+                    {t.spend.tokens != null && (t.spend.tokens > 0 || t.state !== 'preparing') && (
+                      <span class="muted" data-tip={`Tokens: ${t.spend.tokens.toLocaleString('en')}`}><Num m={{ value: t.spend.tokens, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" /> tok</span>
+                    )}
                     {t.recovery && <span data-tip={`Reuses ${(t.recovery.reusedStepIds ?? []).join(', ')}; original spend remains in source history`}><Button label="Source run" icon="network" kind="quiet" onClick={() => setPlanTrial(t.recovery?.sourceRunId)} /></span>}
-                    {(t.cost ?? []).map((c, i) => <Num key={i} m={{ value: c.value, basis: c.basis as Basis, currency: c.currency ?? undefined, reason: c.value === null ? c.reason : `${c.prices?.length ?? 0} price${c.prices?.length === 1 ? '' : 's'}` }} kind="money" />)}
+                    {(t.cost ?? []).map((c, i) => <Num key={i} m={{ value: c.value, basis: costBasisOf(c.basis), currency: c.currency ?? undefined, reason: c.value === null ? c.reason : `${c.basis} · ${c.prices?.length ?? 0} price${c.prices?.length === 1 ? '' : 's'}` }} kind="money" />)}
                     {t.scores.filter(s => s.trialIds?.length === 1).map(s => s.form === 'typed'
                       ? <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator ?? '')}${s.rationale ? ": " + s.rationale : ""}`}><Icon name={typedIcon(s.value)} label={`${evaluatorLabel(s.evaluator ?? '')} ${String(typedValue(s.value).answer)}, label ${String(typedValue(s.value).label ?? 'none')}`} />{String(typedValue(s.value).answer)}</span>
                       : <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator ?? '')}${s.rationale ? ': ' + s.rationale : ''}`}><Icon name={s.form === 'pass_fail' ? (s.value ? 'circle-check' : 'circle-x') : 'sliders-horizontal'} label={`${evaluatorLabel(s.evaluator ?? '')} ${String(s.value)}`} />{s.form === 'pass_fail' ? '' : String(s.form === 'metric' ? Number(s.value).toFixed(2) : s.value)}</span>)}
