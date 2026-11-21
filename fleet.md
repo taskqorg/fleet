@@ -2,15 +2,6 @@
 
 A system for performing work through agents across projects. This specification defines the target architecture, not implementation status.
 
-## Product purpose
-
-Fleet turns agent experiments into controlled project capabilities across four connected stages:
-
-- **Fast Lab evaluation:** benchmark models, harnesses, prompts and pipelines on curated use cases, real work cases and code benchmarks to establish repeatable quality, latency and cost evidence.
-- **Proven method catalogue:** register workflows and methods with explicit lifecycle statuses (`experimental`, `recommended`, `deprecated`), usage conditions and project or system defaults.
-- **Project and task accounting:** execute and track real tasks across connected projects, retaining full execution history, costs and metrics to diagnose problems and convert recurring failures into new Lab cases.
-- **Controlled agent tools:** expose configured pipelines and recommended methods as agent-callable tools over the shared core so agents and operators run proven methods under Fleet authority and accounting.
-
 ## Principles
 
 - **R1 Shared rules.** [specq](https://github.com/taskqorg/specq) governs engineering, design and documentation. [Fleet document governance](docs/designs/fleet-docs-governance.md) defines the project paths and document kinds.
@@ -20,6 +11,15 @@ Fleet turns agent experiments into controlled project capabilities across four c
 - **R5 Observability.** Instrument every system component and operation, including agents, tools and infrastructure. Retain queryable history for diagnosis, resource attribution and improvement under [observation and evaluation](#observation-and-evaluation).
 - **R6 Minimal mechanisms.** Agents act through supplied instructions, context and tools, invoking pipelines when useful. Fleet provides execution control, data access and observable history for improvement. Structure only what it must coordinate and recover; domain workflows and methodologies remain configurable, not mandatory system stages.
 - **R7 Agentic first.** Every new capability reaches agents first, as tools, data and queries over the shared core (R2). Its human interface follows, designed for convenience. When an agent path and a UI path compete, build the agent path first.
+
+## Product purpose
+
+Fleet turns agent experiments into controlled project capabilities across four connected stages:
+
+- **Fast Lab evaluation:** benchmark models, harnesses, prompts and pipelines on curated use cases, real work cases and code benchmarks to establish repeatable quality, latency and cost evidence.
+- **Proven method catalogue:** register workflows and methods with explicit lifecycle statuses (`experimental`, `recommended`, `deprecated`), usage conditions and project or system defaults.
+- **Project and task accounting:** execute and track real tasks across connected projects, retaining full execution history, costs and metrics to diagnose problems and convert recurring failures into new Lab cases.
+- **Controlled agent tools:** expose configured pipelines and recommended methods as agent-callable tools over the shared core so agents and operators run proven methods under Fleet authority and accounting.
 
 ## Operator interface
 
