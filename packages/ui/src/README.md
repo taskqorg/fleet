@@ -6,12 +6,13 @@
 
 ## Interface
 
-- `controls.tsx` re-exports all control modules from `controls/` (`index.ts`, `patterns.tsx`, and book files import through `controls.tsx` or `index.ts`):
-  - `controls/primitives.tsx`: `Icon`, `Button`, `StateBadge`, numbers and live ages (`Num`, `Totals`, `CostFigures`, `useTick`, `Ago`, `AgeChip`), harness/stage marks (`HarnessMark`, `HarnessCounts`, `StageChip`), status feedback (`Skeleton`, `Empty`, `ErrorBanner`, `Stale`, `OfflineMarker`, `StatusLine`), clipboard/menu helpers (`copyText`, `CopyButton`, `focusOnMount`, `useDismiss`, `SplitButton`, `ActionMenu`, `SearchBox`), and layout rows (`DetailSection`, `KvRow`, `ProblemRow`).
-  - `controls/overlays.tsx`: `TooltipLayer`, `EntityCode`, `EntityCardLayer` (mounted once by `AppShell`, reading through `EntityCards`), `linkCodes`, `ContextMenu`, and `MenuItem`.
-  - `controls/navigation.tsx`: `NavRail`, `FocusPresets`, `FocusControl` (header focus chip with presets, ignore, and outside-focus count), `Spotlight`, and `sectionProvider`.
+- `controls.tsx` re-exports all control modules from `controls/` (`index.ts`, `patterns.tsx`, and book files import through `controls.tsx` or `index.ts`), and `styles/` provides layered CSS (`tokens`, `base`, `layout`, `controls`, `overlays`, `utilities`) assembled by `scripts/tokens.mjs:uiCss`:
+  - `controls/primitives.tsx`: `Icon`, `Button`, `StateBadge`, numbers and live ages (`Num`, `Totals`, `CostFigures`, `useTick`, `Ago`, `AgeChip`), harness/stage marks (`HarnessMark`, `HarnessCounts`, `StageChip`), status feedback (`Skeleton`, `Empty`, `ErrorBanner`, `Stale`, `OfflineMarker`, `StatusLine`), clipboard/popover/menu helpers (`copyText`, `CopyButton`, `focusOnMount`, `popoverAttr`, `useAnchoredPopover`, `SplitButton`, `ActionMenu`, `SearchBox`), and layout rows (`DetailSection`, `KvRow`, `ProblemRow`).
+  - `controls/overlays.tsx`: `TooltipLayer` (`popover="hint"`), `EntityCode`, `EntityCardLayer` (`popover="auto"`, mounted once by `AppShell`, reading through `EntityCards`), `linkCodes`, `ContextMenu`, and `MenuItem`.
+  - `controls/navigation.tsx`: `NavRail`, `FocusPresets`, `FocusControl` (`popover="auto"` header focus chip with presets, ignore, and outside-focus count), `Spotlight` (`<dialog closedby="any">`), and `sectionProvider`.
   - `controls/lists.tsx`: `FilterBar`, `StateCounters`, `GroupHeader`, `Presets`, `GroupControl`, `SortControl`, `RowFacts`, `Fact`, `SelectBar`, `SelectToggle`, `RowCheck`, and `RowPin`.
-  - `controls/forms.tsx`: `TextField`, `SettingField`, `Composer`, `DropZone`, `CodeEditor`, `DiffText`, `DraftBar`, `Choice`, `ProjectPick`, `PresetPicker`, and `StartFacts`.
+  - `controls/tables.tsx`: `DataTable` and `Disclosure`.
+  - `controls/forms.tsx`: `TextField`, `SettingField`, `Composer`, `DropZone`, `CodeEditor`, `DiffText`, `DraftBar`, `InlineForm`, `Choice`, `ProjectPick`, `PresetPicker`, and `StartFacts`.
   - `controls/thread.tsx`: `Thread` and row renderers (`TextRow`, `ToolRow`, `ReasoningRow`, `QuestionRow`, `ResultRow`, `BoundaryRow`, `AgentMark`, `MessageFiles`), `DecisionBlock`, `Markdown` (turns D17 codes in text into references via `linkCodes`), `ResultViewer`, `ArtifactView`, and `SearchField`.
   - `controls/metrics.tsx`: `FillBar`, `StatStrip`, `ExecTree`, `OutcomeBlock`, `StepList`, `FlowStrip`, `AreaChart`, and `TimeStrip`.
 - `charts.tsx` exports the day charts for pace pages: `DayChart`, `ShareBar`, `NormBar` and the scale helper `capOf`.

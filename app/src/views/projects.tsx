@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  AreaChart, Button, Choice, CostFigures, Empty, ErrorBanner, Icon, ListDetail, Num, SearchField,
+  AreaChart, Button, Choice, CostFigures, DataTable, Empty, ErrorBanner, Icon, ListDetail, Num, SearchField,
   Totals, VirtualList, matchSearch, catalogueRow, numMeasured,
   type ChartBucket, type ChartSeries, type Measured, type TotalItem,
 } from '../../../packages/ui/src/index.ts';
@@ -305,7 +305,7 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
           {filterChips.map(f => (
             <span key={`${f.k}:${f.v}`} class="chip">
               {f.k}: {f.v}
-              <button type="button" aria-label={`Remove ${f.k} filter ${f.v}`} onClick={() => setFilters({ ...filters, [f.k]: ((filters[f.k] as unknown[]) ?? []).filter(x => String(x) !== f.v) })}><Icon name="x" /></button>
+              <Button label={`Remove ${f.k} filter ${f.v}`} icon="x" iconOnly kind="quiet" onClick={() => setFilters({ ...filters, [f.k]: ((filters[f.k] as unknown[]) ?? []).filter(x => String(x) !== f.v) })} />
             </span>
           ))}
         </div>
@@ -347,9 +347,7 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
       {breakErr && <ErrorBanner text={`Breakdown failed: ${breakErr}`} onRetry={() => setRev(r => r + 1)} />}
       {breakdown && (
         breakdown.rows.length === 0 ? <Empty text="No recorded analytics in this window." /> : (
-          <div class="table-frame">
-            <table class="limit-table">
-              <thead>
+          <DataTable label="Analytics breakdown" head={
                 <tr>
                   <th scope="col">{dimsAvail.find(d => d.id === activeDim)?.label ?? activeDim}</th>
                   <th scope="col" class="num">Runs</th>
@@ -360,8 +358,7 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
                   <th scope="col" class="num">Tools</th>
                   <th scope="col" class="num">Cost</th>
                 </tr>
-              </thead>
-              <tbody>
+          }>
                 {breakdown.rows.map(r => {
                   const rawVal = r.dimensions[activeDim];
                   const keyVal = rawVal || '(none)';
@@ -372,9 +369,7 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
                     <tr key={keyVal} class={active ? 'on' : undefined}>
                       <th scope="row">
                         {rawVal ? (
-                          <button type="button" class="seg" onClick={() => toggleFilter(activeDim, rawVal)} data-tip={activeDim === 'project' ? `Open project ${rawVal}` : `Filter by ${rawVal}`}>
-                            <span class="mono">{rawVal}</span>
-                          </button>
+                          <Button label={rawVal} kind="quiet" pressed={active} tip={activeDim === 'project' ? `Open project ${rawVal}` : `Filter by ${rawVal}`} onClick={() => toggleFilter(activeDim, rawVal)} />
                         ) : <span class="muted">(none)</span>}
                       </th>
                       <td class="num"><Num m={numMeasured(r.measures.executions)} kind="count" />{r.measures.failed?.value ? <span class="chip t-danger">{r.measures.failed.value} fail</span> : null}</td>
@@ -387,9 +382,7 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
                     </tr>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
+          </DataTable>
         )
       )}
     </div>

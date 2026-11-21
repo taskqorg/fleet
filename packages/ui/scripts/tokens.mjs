@@ -1,15 +1,24 @@
-// Turns tokens.json into CSS custom properties and checks text contrast pairs (WCAG 4.5:1).
+// Turns tokens.json into CSS custom properties (with light-dark()) and checks text contrast pairs (WCAG 4.5:1).
 import { readFileSync } from 'node:fs';
 export const tokens = JSON.parse(readFileSync(new URL('../tokens.json', import.meta.url)));
 
 const vars = (o, p) => Object.entries(o).map(([k, v]) => `--${p ? p + '-' : ''}${k}:${v}`).join(';');
+const colorVars = (light, dark) => Object.entries(light).map(([k, v]) => `--${k}:light-dark(${v},${dark[k] ?? v})`).join(';');
+const STYLE_FILES = ['base.css', 'layout.css', 'controls.css', 'thread.css', 'tables.css', 'overlays.css'];
+
 export function tokensCss(t = tokens) {
   const base = ['font', 'space', 'size', 'radius', 'elevation', 'motion'].map(g => vars(t[g], g)).join(';');
-  return `:root{color-scheme:light;${base};${vars(t.color.light)}}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;${vars(t.color.dark)}}}
-:root[data-theme=dark]{color-scheme:dark;${vars(t.color.dark)}}
-.th-light{color-scheme:light;${vars(t.color.light)}}
-.th-dark{color-scheme:dark;${vars(t.color.dark)}}`;
+  return `@layer tokens{
+:root{color-scheme:light dark;${base};${colorVars(t.color.light, t.color.dark)}}
+:root[data-theme=light],.th-light{color-scheme:light}
+:root[data-theme=dark],.th-dark{color-scheme:dark}
+}`;
+}
+
+export function uiCss(extraCss = '') {
+  const layers = '@layer tokens,base,layout,controls,overlays,utilities;\n';
+  const parts = STYLE_FILES.map(f => readFileSync(new URL(`../src/styles/${f}`, import.meta.url), 'utf8')).join('\n');
+  return layers + tokensCss() + '\n' + parts + (extraCss ? '\n' + extraCss : '');
 }
 
 const lum = h => { const c = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]; };

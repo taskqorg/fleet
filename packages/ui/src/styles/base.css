@@ -1,0 +1,78 @@
+/* Base typography, box model, focus, and utility primitives. */
+@layer base {
+  :where(html, body, main, nav, section, article, aside, header, footer, div, ul, ol, li, dl, dt, dd, table, thead, tbody, tr, th, td, form, fieldset, dialog, button, input, select, textarea, label, a, span, p, h1, h2, h3, h4, pre, code) {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: var(--font-size-md)/var(--font-line) var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button, input, select, textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  a {
+    color: var(--accent);
+  }
+
+  :focus-visible {
+    outline: var(--size-focus-ring) solid var(--accent);
+    outline-offset: var(--size-focus-ring);
+  }
+
+  kbd {
+    font-size: var(--font-size-xs);
+    opacity: .75;
+    border: 1px solid currentColor;
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-1);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :where(.chev, .num, .btn .icon, .changed) {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+}
+
+@layer utilities {
+  .muted { color: var(--fg-muted); }
+  .grow { flex: 1; }
+  .mono, .num, .count, kbd, time {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .small-note {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    max-width: 80ch;
+  }
+  .skip {
+    position: absolute;
+    inset-inline-start: var(--space-2);
+    inset-block-start: -100px;
+    z-index: 20;
+    padding: var(--space-2) var(--space-3);
+    background: var(--accent);
+    color: var(--on-accent);
+    border-radius: var(--radius-md);
+  }
+  .skip:focus {
+    inset-block-start: var(--space-2);
+  }
+}

@@ -1,6 +1,6 @@
 // Primitive controls, badges, numbers, age clocks, harness marks, status states, copy, and search input.
 import type { ComponentChildren, TargetedMouseEvent } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages } from '../registry.ts';
 import { type Measured, type Kind, type CostFigureLike, costMeasured, splitCostFigures, measured, age, exact } from '../format.ts';
 import { isSubmitEnter } from '../keys.ts';
@@ -15,13 +15,13 @@ export function Icon({ name, label }: { name: IconName; label?: string }) {
 
 type ButtonProps = {
   label: string; icon?: IconName; iconOnly?: boolean; kind?: 'primary' | 'default' | 'quiet' | 'danger';
-  kbd?: string; rowLink?: boolean; busy?: boolean; disabledReason?: string; pressed?: boolean; onClick?: (event: TargetedMouseEvent<HTMLButtonElement>) => void;
+  kbd?: string; rowLink?: boolean; busy?: boolean; disabledReason?: string; tip?: string; pressed?: boolean; onClick?: (event: TargetedMouseEvent<HTMLButtonElement>) => void;
 };
 export function Button(p: ButtonProps) {
   const disabled = p.busy || !!p.disabledReason;
   return (
     <button type="button" data-ui="button" class={`btn ${p.kind ?? 'default'}${p.iconOnly ? ' icon-only' : ''}${p.rowLink ? ' row-link' : ''}${p.busy ? ' busy' : ''}`}
-      aria-label={p.iconOnly ? p.label : undefined} data-tip={p.disabledReason ?? (p.iconOnly ? p.label : undefined)}
+      aria-label={p.iconOnly ? p.label : undefined} data-tip={p.disabledReason ?? p.tip ?? (p.iconOnly ? p.label : undefined)}
       aria-disabled={disabled || undefined} aria-pressed={p.pressed} onClick={disabled ? undefined : p.onClick}>
       {p.icon && <Icon name={p.icon} />}
       {!p.iconOnly && <span>{p.label}</span>}
@@ -237,21 +237,70 @@ export function CopyButton({ label, value, iconOnly }: { label: string; value: s
  *  only while the page loads, so a dialog or menu opened later kept focus on its opener. One stable function, so it runs once. */
 export const focusOnMount = (el: HTMLElement | null) => el?.focus();
 
-/* ---------- Menu dismissal shared by the short menus under a button ---------- */
+/* ---------- Anchored native popovers (modern-web-guidance: viewport-aware-dropdowns) ---------- */
+
+export type PopoverElement = HTMLElement & {
+  showPopover(options?: { source?: HTMLElement }): void;
+  hidePopover(): void;
+};
+
+/** Declarative popover attribute without TypeScript `any` (UI-ANY). */
+export const popoverAttr = (kind: 'auto' | 'hint' | 'manual'): Record<string, string> => ({ popover: kind });
 
 /**
- * Closes an open menu on a pointer press outside `ref`, on Escape (focus back to `back` inside ref), and when focus
- * leaves `ref` (Tab away). One rule for SplitButton, ActionMenu and the group and sort chips.
+ * Opens a native auto-dismiss popover tethered to `triggerRef` via `showPopover({ source })` and syncs browser
+ * light-dismiss / Escape back to `onClose`. Guards re-clicking `triggerRef` so pointerdown light-dismiss does not
+ * immediately re-open the popover on `click`.
  */
-export function useDismiss(open: boolean, ref: { current: HTMLElement | null }, close: () => void, back?: string) {
+export function useAnchoredPopover(
+  open: boolean,
+  onClose: () => void,
+  triggerRef: { current: HTMLElement | null },
+  popoverRef: { current: HTMLElement | null },
+) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const suppressClickRef = useRef(false);
   useEffect(() => {
-    if (!open) return;
-    const press = (e: Event) => { if (!ref.current?.contains(e.target as Node)) close(); };
-    const key = (e: KeyboardEvent) => { if (e.key !== 'Escape') return; e.stopPropagation(); close(); if (back) ref.current?.querySelector<HTMLElement>(back)?.focus(); };
-    const blur = (e: FocusEvent) => { const to = e.relatedTarget as Node | null; if (to && !ref.current?.contains(to)) close(); };
-    const el = ref.current;
-    document.addEventListener('pointerdown', press); document.addEventListener('keydown', key, true); el?.addEventListener('focusout', blur);
-    return () => { document.removeEventListener('pointerdown', press); document.removeEventListener('keydown', key, true); el?.removeEventListener('focusout', blur); };
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    let clearTimer = 0;
+    const onTriggerPointerDown = () => {
+      const el = popoverRef.current as PopoverElement | null;
+      if (el?.matches(':popover-open')) {
+        suppressClickRef.current = true;
+        clearTimeout(clearTimer);
+        clearTimer = window.setTimeout(() => { suppressClickRef.current = false; }, 400);
+      }
+    };
+    const onTriggerClick = (e: MouseEvent) => {
+      if (!suppressClickRef.current) return;
+      suppressClickRef.current = false;
+      clearTimeout(clearTimer);
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    trigger.addEventListener('pointerdown', onTriggerPointerDown, true);
+    trigger.addEventListener('click', onTriggerClick, true);
+    return () => {
+      clearTimeout(clearTimer);
+      trigger.removeEventListener('pointerdown', onTriggerPointerDown, true);
+      trigger.removeEventListener('click', onTriggerClick, true);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const el = popoverRef.current as PopoverElement | null;
+    const trigger = triggerRef.current;
+    if (!open || !el) return;
+    const onToggle = (e: Event) => {
+      if ((e as Event & { newState?: string }).newState === 'closed') onCloseRef.current();
+    };
+    el.addEventListener('toggle', onToggle);
+    if (!el.matches(':popover-open')) el.showPopover(trigger ? { source: trigger } : undefined);
+    return () => {
+      el.removeEventListener('toggle', onToggle);
+      if (el.matches(':popover-open')) el.hidePopover();
+    };
   }, [open]);
 }
 
@@ -263,14 +312,14 @@ export function SplitButton({ main, alternatives, kind = 'default' }: {
   alternatives: { label: string; icon?: IconName; onClick?: () => void }[]; kind?: 'primary' | 'default';
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLSpanElement>(null);
-  useDismiss(open, ref, () => setOpen(false), '.split-more');
+  const triggerRef = useRef<HTMLButtonElement>(null), menuRef = useRef<HTMLDivElement>(null);
+  useAnchoredPopover(open, () => setOpen(false), triggerRef, menuRef);
   return (
-    <span class={`split ${kind}`} data-ui="split-button" ref={ref}>
+    <span class={`split ${kind}`} data-ui="split-button">
       <Button label={main.label} icon={main.icon} kind={kind} onClick={main.onClick} />
-      <button type="button" class={`btn ${kind} split-more`} aria-haspopup="menu" aria-expanded={open} aria-label={`More actions for ${main.label}`} onClick={() => setOpen(!open)}><Icon name="chevron-down" /></button>
-      {open && <span class="menu" role="menu">{alternatives.map(a =>
-        <button type="button" role="menuitem" key={a.label} onClick={() => { setOpen(false); a.onClick?.(); }}>{a.icon && <Icon name={a.icon} />}{a.label}</button>)}</span>}
+      <button ref={triggerRef} type="button" class={`btn ${kind} split-more`} aria-haspopup="menu" aria-expanded={open} aria-label={`More actions for ${main.label}`} onClick={() => setOpen(!open)}><Icon name="chevron-down" /></button>
+      {open && <div ref={menuRef} {...popoverAttr('auto')} class="menu anchored-menu" role="menu">{alternatives.map(a =>
+        <button type="button" role="menuitem" key={a.label} onClick={() => { setOpen(false); a.onClick?.(); }}>{a.icon && <Icon name={a.icon} />}{a.label}</button>)}</div>}
     </span>
   );
 }
@@ -279,13 +328,13 @@ export function SplitButton({ main, alternatives, kind = 'default' }: {
 
 export function ActionMenu({ label, items, disabledReason }: { label: string; items: { label: string; icon: IconName; onClick: () => void; disabledReason?: string }[]; disabledReason?: string }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLSpanElement>(null);
-  useDismiss(open, ref, () => setOpen(false), '.btn');
-  return <span class="split action-menu" data-ui="split-button" ref={ref}>
-    <button type="button" class="btn default icon-only" aria-haspopup="menu" aria-expanded={open} aria-label={label} data-tip={disabledReason ?? label} aria-disabled={!!disabledReason || undefined}
+  const triggerRef = useRef<HTMLButtonElement>(null), menuRef = useRef<HTMLDivElement>(null);
+  useAnchoredPopover(open, () => setOpen(false), triggerRef, menuRef);
+  return <span class="split action-menu" data-ui="split-button">
+    <button ref={triggerRef} type="button" class="btn default icon-only" aria-haspopup="menu" aria-expanded={open} aria-label={label} data-tip={disabledReason ?? label} aria-disabled={!!disabledReason || undefined}
       onClick={() => !disabledReason && setOpen(!open)}><Icon name={actions.more} /></button>
-    {open && <span class="menu" role="menu">{items.map(a =>
-      <button type="button" role="menuitem" key={a.label} aria-disabled={!!a.disabledReason || undefined} data-tip={a.disabledReason} onClick={() => { if (a.disabledReason) return; setOpen(false); a.onClick(); }}><Icon name={a.icon} />{a.label}</button>)}</span>}
+    {open && <div ref={menuRef} {...popoverAttr('auto')} class="menu anchored-menu" role="menu">{items.map(a =>
+      <button type="button" role="menuitem" key={a.label} aria-disabled={!!a.disabledReason || undefined} data-tip={a.disabledReason} onClick={() => { if (a.disabledReason) return; setOpen(false); a.onClick(); }}><Icon name={a.icon} />{a.label}</button>)}</div>}
   </span>;
 }
 

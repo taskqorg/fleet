@@ -1,0 +1,71 @@
+/* Semantic data tables (OR-25, modern-web-guidance responsive-table) and disclosures. */
+@layer controls {
+  .table-frame {
+    overflow: auto;
+    max-inline-size: 100%;
+    container-type: inline-size;
+  }
+
+  .limit-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
+    font-size: var(--font-size-sm);
+  }
+
+  .limit-table th,
+  .limit-table td {
+    padding: var(--space-2) var(--space-3);
+    border-top: 1px solid var(--line);
+    text-align: left;
+    vertical-align: top;
+    white-space: nowrap;
+  }
+
+  .limit-table thead th {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 1;
+    border-top: 0;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--fg-muted);
+    font-weight: var(--font-weight-medium);
+  }
+
+  .limit-table tbody tr:first-child th,
+  .limit-table tbody tr:first-child td {
+    border-top: 0;
+  }
+
+  .limit-cell {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .limit-cell .legend { white-space: nowrap; }
+
+  .limit-table .num {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .limit-table tr.on {
+    background: var(--selected);
+  }
+
+  .disclosure {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .disclosure > summary {
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+  }
+}

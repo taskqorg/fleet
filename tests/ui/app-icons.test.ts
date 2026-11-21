@@ -47,7 +47,7 @@ test('built manifests and HTML reference the shared Fleet icons', () => {
         assert.equal(bytes.subarray(1, 4).toString(), 'PNG');
         assert.equal(`${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`, icon.sizes);
       } else {
-        const css = readFileSync(new URL('../../packages/ui/src/styles.css', import.meta.url), 'utf8');
+        const css = readFileSync(new URL('../../packages/ui/src/styles/layout.css', import.meta.url), 'utf8');
         const mark = decodeURIComponent(css.match(/--brand-mark:url\("data:image\/svg\+xml,([^\"]+)/)![1]);
         assert.ok(bytes.toString().includes(mark.match(/<path[^>]+\/>/)![0]));
         assert.ok(html.includes(`rel="icon" type="image/svg+xml" href="${icon.src}"`));

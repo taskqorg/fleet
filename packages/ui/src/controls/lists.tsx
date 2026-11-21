@@ -3,7 +3,7 @@ import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, states, actions } from '../registry.ts';
 import { isSubmitEnter } from '../keys.ts';
-import { Icon, Button, SearchBox, useDismiss } from './primitives.tsx';
+import { Icon, Button, SearchBox, popoverAttr, useAnchoredPopover } from './primitives.tsx';
 import { ContextMenu, type MenuItem } from './overlays.tsx';
 
 /* ---------- Filter bar: search with query syntax, applied-filter chips and the list's controls (§4, OR-31, OR-36) ---------- */
@@ -134,23 +134,23 @@ export function Presets({ system = [], presets, active, onPick, onSave, onUnpin,
 type PickItem = { key: string; label: string; on: boolean; onPick: () => void; icon?: IconName } | 'sep' | { head: string };
 function usePickMenu() {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLSpanElement>(null);
-  useDismiss(open, ref, () => setOpen(false), '.pick-b');
+  const triggerRef = useRef<HTMLButtonElement>(null), menuRef = useRef<HTMLDivElement>(null);
+  useAnchoredPopover(open, () => setOpen(false), triggerRef, menuRef);
   // Focus starts on the checked choice, so Enter keeps the current value.
-  useEffect(() => { if (open) (ref.current?.querySelector<HTMLElement>('.menu [aria-checked=true]') ?? ref.current?.querySelector<HTMLElement>('.menu [role=menuitemradio]'))?.focus(); }, [open]);
+  useEffect(() => { if (open) (menuRef.current?.querySelector<HTMLElement>('[aria-checked=true]') ?? menuRef.current?.querySelector<HTMLElement>('[role=menuitemradio]'))?.focus(); }, [open]);
   const move = (e: KeyboardEvent) => {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
-    const all = [...ref.current!.querySelectorAll<HTMLElement>('.menu [role=menuitemradio]')], i = all.indexOf(document.activeElement as HTMLElement);
+    const all = [...menuRef.current!.querySelectorAll<HTMLElement>('[role=menuitemradio]')], i = all.indexOf(document.activeElement as HTMLElement);
     all[(i + (e.key === 'ArrowDown' ? 1 : all.length - 1)) % all.length]?.focus();
   };
-  const menu = (label: string, items: PickItem[]) => open && <span class="menu pick-menu" role="menu" aria-label={label} onKeyDown={move}>
+  const menu = (label: string, items: PickItem[]) => open && <div ref={menuRef} {...popoverAttr('auto')} class="menu anchored-menu pick-menu" role="menu" aria-label={label} onKeyDown={move}>
     {items.map((it, i) => it === 'sep' ? <span key={i} class="menu-sep" role="separator" />
       : 'head' in it ? <span key={i} class="menu-h">{it.head}</span>
       : <button type="button" key={it.key} role="menuitemradio" aria-checked={it.on} onClick={() => { setOpen(false); it.onPick(); }}>
           {it.icon && <Icon name={it.icon} />}<span class="grow">{it.label}</span>{it.on && <Icon name="check" />}</button>)}
-  </span>;
-  return { open, setOpen, ref, menu };
+  </div>;
+  return { open, setOpen, triggerRef, menu };
 }
 
 /**
@@ -160,8 +160,8 @@ function usePickMenu() {
 export function GroupControl<G extends string>({ value, options, onChange, none = 'none' as G }: { value: G; options: readonly (readonly [G, string])[]; onChange: (g: G) => void;
   /** The option key that means no grouping; without it in the options there is no cross and no "No grouping". */ none?: G }) {
   const m = usePickMenu(), canNone = options.some(([g]) => g === none), on = !canNone || value !== none, cur = options.find(([g]) => g === value)?.[1] ?? value;
-  return <span class="pick" ref={m.ref} data-ui="group-control">
-    <button type="button" class={`pick-b${on ? ' on' : ''}`} aria-haspopup="menu" aria-expanded={m.open} aria-label={on ? `Group by ${cur}` : 'Group by: none'} data-tip="Group by"
+  return <span class="pick" data-ui="group-control">
+    <button ref={m.triggerRef} type="button" class={`pick-b${on ? ' on' : ''}`} aria-haspopup="menu" aria-expanded={m.open} aria-label={on ? `Group by ${cur}` : 'Group by: none'} data-tip="Group by"
       onClick={() => m.setOpen(!m.open)}><Icon name={actions.group} />{on && <span>{cur}</span>}<Icon name="chevron-down" /></button>
     {on && canNone && <button type="button" class="pick-x" aria-label="Remove grouping" data-tip="No grouping" onClick={() => { m.setOpen(false); onChange(none); }}><Icon name="x" /></button>}
     {m.menu('Group by', [{ head: 'Group by' }, ...options.filter(([g]) => g !== none).map(([g, l]) => ({ key: g, label: l, on: g === value, onPick: () => onChange(g) })),
@@ -184,10 +184,10 @@ export function SortControl({ value, fields, onChange }: { value: string; fields
   // The icon's bars draw the values the rows show, top to bottom. A moment shows as an age (4m, 2h, 3d), so newest
   // first (descending) is small ages first: the narrow-to-wide icon, the reverse of a value sorted high first.
   const ages = (f[3] ?? 'age') === 'age', bigFirst = (d: boolean) => d !== ages, iconOf = (d: boolean) => bigFirst(d) ? actions.sortDesc : actions.sortAsc;
-  return <span class="pick" ref={m.ref} data-ui="sort-control">
+  return <span class="pick" data-ui="sort-control">
     <button type="button" class="pick-x pick-dir" aria-label={desc ? dDesc : dAsc} data-tip={`${desc ? dDesc : dAsc}; click for ${(desc ? dAsc : dDesc).toLowerCase()}`}
       onClick={() => { m.setOpen(false); onChange(desc ? f[0] : '-' + f[0]); }}><Icon name={iconOf(desc)} /></button>
-    <button type="button" class="pick-b on" aria-haspopup="menu" aria-expanded={m.open} aria-label={`Sort by ${f[1]}`} data-tip="Sort by" onClick={() => m.setOpen(!m.open)}>
+    <button ref={m.triggerRef} type="button" class="pick-b on" aria-haspopup="menu" aria-expanded={m.open} aria-label={`Sort by ${f[1]}`} data-tip="Sort by" onClick={() => m.setOpen(!m.open)}>
       <span>{f[1]}</span><Icon name="chevron-down" /></button>
     {m.menu('Sort', [{ head: 'Sort by' }, ...fields.map(x => ({ key: x[0], label: x[1], on: x[0] === f[0], onPick: () => onChange((desc ? '-' : '') + x[0]) })), 'sep',
       { key: 'desc', label: dDesc, icon: iconOf(true), on: desc, onPick: () => onChange('-' + f[0]) },

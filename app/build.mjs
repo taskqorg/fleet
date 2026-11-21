@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { tokensCss, tokens } from '../packages/ui/scripts/tokens.mjs';
+import { uiCss, tokens } from '../packages/ui/scripts/tokens.mjs';
 
 const root = new URL('..', import.meta.url), out = new URL('../dist/app/', import.meta.url);
 // Source maps go to dist/app/sourcemaps, which the coordinator never serves (it serves assets/ and named entry files);
@@ -38,7 +38,7 @@ for (const p of Object.keys(res.metafile.outputs)) if (p.endsWith('.map')) delet
 const files = Object.keys(res.metafile.outputs).map(p => p.split('/dist/app/')[1] ?? p.replace(/^.*dist\/app\//, ''));
 const main = files.find(f => /assets\/main-.*\.js$/.test(f));
 
-const css = tokensCss() + readFileSync(new URL('packages/ui/src/styles.css', root), 'utf8') + 'html,body,#app{height:100%}';
+const css = uiCss('html,body,#app{height:100%}');
 const cssName = `assets/app-${createHash('sha256').update(css).digest('hex').slice(0, 10)}.css`;
 writeFileSync(new URL(cssName, out), css);
 
@@ -67,7 +67,7 @@ for (const [view, [name]] of Object.entries(VIEWS)) {
 }
 
 const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">
 <title>Fleet</title><meta name="theme-color" content="${accent}">
 <link rel="stylesheet" href="/${cssName}">
 <link rel="icon" type="image/svg+xml" href="${brand['fleet.svg']}">

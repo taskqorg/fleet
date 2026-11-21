@@ -60,8 +60,7 @@ for (const f of files.filter(f => /\.tsx$/.test(f))) {
 // Raw controls in app views (build screens only from packages/ui): each file may hold at most its legacy count, which only
 // shrinks; one more fails the report.
 const RAW = /<(button|input|select|textarea|table|dialog|details|form|progress|meter)\b/g;
-const RAW_LEGACY = { 'conversations.tsx': { form: 1 }, 'definitions.tsx': { table: 1 }, 'lab-create.tsx': { details: 1 }, 'lab.tsx': { details: 1 },
-  'limits.tsx': { table: 1 }, 'projects.tsx': { button: 2, table: 1 }, 'resources.tsx': { details: 1, table: 1 }, 'runners.tsx': { table: 1 } };
+const RAW_LEGACY = {};
 const failures = [];
 const viewsDir = join(root, 'app/src/views');
 for (const f of existsSync(viewsDir) ? readdirSync(viewsDir).filter(f => f.endsWith('.tsx')) : []) {

@@ -1,7 +1,7 @@
 // Lab draft creation uses the existing operation, never launch (laboratory.md, Create experiment).
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { matchSearch, StatusLine, Button, Choice, CodeEditor, DetailSection, Empty, ListDetail, ProblemRow, RowCheck, SearchField, StateBadge, TextField, VirtualList, ROW2 } from '../../../packages/ui/src/index.ts';
+import { matchSearch, StatusLine, Button, Choice, CodeEditor, DetailSection, Disclosure, Empty, ListDetail, ProblemRow, RowCheck, SearchField, StateBadge, TextField, VirtualList, ROW2 } from '../../../packages/ui/src/index.ts';
 import { op, online, signedOut, OpError, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import { access, accessGeneration, isAccessCurrent } from '../access.ts';
@@ -137,8 +137,8 @@ export function LabCreate() {
   const options = (xs: string[]) => xs.map(id => ({ id, label: id }));
   const advanced = (label: string, value: string, change: (value: string) => void, help: string) => {
     let error = ''; try { object(value, label); } catch (e) { error = (e as Error).message; }
-    return <details open={error ? true : undefined}><summary>{label}</summary><p class="muted">{help}</p>
-      <CodeEditor label={label} value={value} onChange={change} problems={error ? [{ path: '', message: error }] : []} disabledReason={disabled} /></details>;
+    return <Disclosure open={error ? true : undefined} summary={label}><p class="muted">{help}</p>
+      <CodeEditor label={label} value={value} onChange={change} problems={error ? [{ path: '', message: error }] : []} disabledReason={disabled} /></Disclosure>;
   };
   const available = !picker ? [] : picker.label === 'Projects' ? projects : picker.label === 'Approved examples' ? examples : picker.label === 'Primary evaluators' ? [{ id: '', name: 'None' }, ...d.evaluators.map(e => ({ id: nameOf(e), name: nameOf(e) }))] : picker.label === 'Variant pipelines' ? [{ id: '', name: 'Base pipeline' }, ...pipelines] : pipelines;
   const matching = available.filter(x => matchSearch(query, `${x.name} ${x.id}`));

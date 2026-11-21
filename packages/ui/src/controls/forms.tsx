@@ -237,3 +237,13 @@ export function DraftBar({ changes, base, note, actions: acts }: {
     <span class="acts">{acts.map(a => <Button key={a.label} label={a.label} icon={a.icon} kind={a.primary ? 'primary' : 'default'} onClick={a.onClick} />)}</span>
   </div>;
 }
+
+/** Semantic inline form wrapper for edit/rename sections in views. */
+export function InlineForm({ cls, onSubmit, onKeyDown, children }: {
+  cls?: string;
+  onSubmit: (e: Event) => void;
+  onKeyDown?: (e: KeyboardEvent) => void;
+  children: ComponentChildren;
+}) {
+  return <form class={cls} data-ui="inline-form" onSubmit={onSubmit} onKeyDown={onKeyDown}>{children}</form>;
+}

@@ -2,7 +2,7 @@
 // Risk: an inactive branch appears completed or receives fabricated zero resources.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync, mkdirSync} from 'node:fs';
+import {mkdirSync} from 'node:fs';
 import {build} from 'esbuild';
 import {chromium} from 'playwright';
 
@@ -28,11 +28,11 @@ test('mounted plan distinguishes inactive, actual, reused and unconfirmed rows',
       {...base,id:'unknown',activation:'selected',run:{state:'failed',note:'unconfirmed',time:u,cost:u}},
     ]}/>,document.body);
   `,resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,format:'iife',jsx:'automatic',jsxImportSource:'preact'});
-  const {tokensCss}=await import(new URL('../../packages/ui/scripts/tokens.mjs',import.meta.url).href) as {tokensCss:()=>string};
+  const {uiCss}=await import(new URL('../../packages/ui/scripts/tokens.mjs',import.meta.url).href) as {uiCss:()=>string};
   const browser=await chromium.launch({headless:true}),page=await browser.newPage();
   try {
     await page.setViewportSize({width:1280,height:900});await page.setContent('<body></body>');
-    await page.addStyleTag({content:tokensCss()+readFileSync('packages/ui/src/styles.css','utf8')});
+    await page.addStyleTag({content:uiCss()});
     await page.addScriptTag({content:result.outputFiles[0].text});
     const rows=page.getByRole('list',{name:'Conditional plan'}).getByRole('listitem');
     assert.equal(await rows.count(),7);

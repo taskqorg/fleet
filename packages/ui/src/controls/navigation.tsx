@@ -4,7 +4,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hook
 import { type IconName, type Family, type StateDef, type Tone, states, actions } from '../registry.ts';
 import { matchSearch, searchFields } from '../search.ts';
 import { isSubmitEnter } from '../keys.ts';
-import { Icon, Button, StateBadge, Ago, SearchBox, useDismiss, focusOnMount } from './primitives.tsx';
+import { Icon, Button, StateBadge, Ago, SearchBox, popoverAttr, useAnchoredPopover, focusOnMount } from './primitives.tsx';
 
 /* ---------- Focus: one project multi-select for the whole app, with presets and ignore (OR-34, controls/focus-control.md) ---------- */
 
@@ -42,8 +42,8 @@ export function FocusControl({ projects, value, presets, ignored = [], outside, 
   onChange: (ids: string[]) => void; onSavePreset: (name: string) => void; onRemovePreset: (name: string) => void; onIgnore?: (id: string, ignored: boolean) => void;
 }) {
   const [open, setOpen] = useState(false), [q, setQ] = useState(''), [naming, setNaming] = useState<string | null>(null), [showIgnored, setShowIgnored] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useDismiss(open, ref, () => { setOpen(false); setNaming(null); }, '.focus-btn');
+  const btnRef = useRef<HTMLButtonElement>(null), panelRef = useRef<HTMLDivElement>(null);
+  useAnchoredPopover(open, () => { setOpen(false); setNaming(null); }, btnRef, panelRef);
   // '-' is work outside projects; it is listed when the focus or a preset holds it.
   const name = (id: string) => id === '-' ? 'No project' : projects.find(p => p.id === id)?.name ?? id;
   if (value.includes('-') || presets.some(p => p.projects.includes('-'))) projects = [{ id: '-', name: 'No project' }, ...projects.filter(p => p.id !== '-')];
@@ -54,13 +54,13 @@ export function FocusControl({ projects, value, presets, ignored = [], outside, 
   const shown = offered.filter(p => `${p.name} ${p.id}`.toLowerCase().includes(q.toLowerCase()));
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter(x => x !== id) : [...value, id]);
   const save = () => { if (naming?.trim()) onSavePreset(naming.trim()); setNaming(null); };
-  return <div class={`focus-ctl${open ? ' open' : ''}${value.length ? ' set' : ''}`} data-ui="focus-control" ref={ref}>
+  return <div class={`focus-ctl${open ? ' open' : ''}${value.length ? ' set' : ''}`} data-ui="focus-control">
     {outside && outside.n > 0 && <button type="button" class="focus-outside t-attention" aria-label={`${outside.n} need you outside focus: show every project`} data-tip="Show every project" onClick={() => { setOpen(false); outside.onOpen(); }}>
       <Icon name="bell" /><span class="num">{outside.n}</span><span class="nm">need you outside focus</span></button>}
-    <button type="button" class="focus-btn" aria-expanded={open} aria-label={`Focus: ${summary}`} onClick={() => setOpen(!open)}>
+    <button ref={btnRef} type="button" class="focus-btn" aria-expanded={open} aria-label={`Focus: ${summary}`} onClick={() => setOpen(!open)}>
       <span class="focus-ic" data-tip={`Focus: ${summary}`} data-tip-narrow><Icon name="focus" /></span>
       <span class="nm">{label}</span>{more > 0 && <span class="more">+{more}</span>}<Icon name="chevron-down" /></button>
-    {open && <div class="focus-panel" role="group" aria-label="Focus projects">
+    {open && <div ref={panelRef} {...popoverAttr('auto')} class="focus-panel" role="group" aria-label="Focus projects">
       <div class="presets">
         <span class={`preset${value.length === 0 ? ' on' : ''}`}><button type="button" aria-pressed={value.length === 0} onClick={() => onChange([])}>All projects</button></span>
         {presets.map(p => { const live = p.projects.filter(x => !ignored.includes(x)); return <span key={p.name} class={`preset${value.length && same(p.projects, value) ? ' on' : ''}`}>
@@ -225,18 +225,24 @@ export function Spotlight({ providers, onClose, memory, idle, terms = searchFiel
   const [waiting, setWaiting] = useState(mem.q.trim() ? 1 : 0), [failed, setFailed] = useState(false);
   // asked: the query the providers were last asked; until it is the field's query, results belong to an older one.
   const [asked, setAsked] = useState(mem.q);
+  const closedByAny: Record<string, string> = { closedby: 'any' };
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   // Focus returns to where it was only when the palette closes without opening an item.
   const back = useRef<Element | null>(document.activeElement), opened = useRef(false);
-  // The field has focus with its text selected when the palette opens: typing replaces the query, arrows browse the old
-  // results. It keeps focus while open (aria-modal): a page that focuses its own element as it loads behind the palette
-  // gives it back. Declared before the focus return, so the trap is gone when focus goes back.
-  const field = useRef<HTMLInputElement | null>(null), box = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => { // a layout effect: attached in the same commit as the field's focus, so no focus slips in between
-    const trap = (e: FocusEvent) => { if (!box.current?.contains(e.target as Node)) field.current?.focus(); };
-    document.addEventListener('focusin', trap); return () => document.removeEventListener('focusin', trap);
+  // Native top-layer modal dialog (<dialog closedby="any">) handles backdrop light-dismiss and focus trapping.
+  const field = useRef<HTMLInputElement | null>(null), dialogRef = useRef<HTMLDialogElement>(null);
+  useLayoutEffect(() => {
+    const d = dialogRef.current;
+    if (!d) return;
+    if (!d.open) d.showModal();
+    field.current?.focus();
+    field.current?.select();
+    const close = () => onCloseRef.current();
+    d.addEventListener('close', close);
+    return () => { d.removeEventListener('close', close); if (d.open) d.close(); };
   }, []);
   useEffect(() => () => { if (!opened.current) (back.current as HTMLElement | null)?.focus?.(); }, []);
-  const bind = useRef((el: HTMLInputElement | null) => { field.current = el; focusOnMount(el); el?.select(); }).current;
   useEffect(() => {
     // Each provider's results show as they arrive, in provider order; local ones are not held back by the server.
     const c = new AbortController(), text = q.trim(), got: (SpotlightItem[] | undefined)[] = providers.map(() => undefined);
@@ -311,9 +317,8 @@ export function Spotlight({ providers, onClose, memory, idle, terms = searchFiel
       {i.more && <Icon name="arrow-right" />}
     </li>;
   };
-  return <div class="spot-back" onPointerDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-    <div class="spotlight" data-ui="spotlight" ref={box} role="dialog" aria-modal="true" aria-label="Search" onKeyDown={key}>
-      <label class="search"><Icon name={actions.search} /><input type="search" ref={bind} placeholder="Code, task, conversation, result, project, agent · agent:claude host:mac" aria-label="Search"
+  return <dialog ref={dialogRef} {...closedByAny} class="spotlight" data-ui="spotlight" aria-label="Search" onKeyDown={key}>
+      <label class="search"><Icon name={actions.search} /><input type="search" ref={field} placeholder="Code, task, conversation, result, project, agent · agent:claude host:mac" aria-label="Search"
         role="combobox" list={undefined} aria-expanded={flat.length > 0} aria-controls={list} aria-activedescendant={flat[cur] ? `${list}-${cur}` : undefined}
         value={q} onInput={e => type((e.target as HTMLInputElement).value)} /></label>
       {!text && idle && <div class="spot-idle" onClick={() => field.current?.focus()}>{idle}</div>}
@@ -324,8 +329,7 @@ export function Spotlight({ providers, onClose, memory, idle, terms = searchFiel
       </Fragment>)}</ul>}
       {!text && terms.length > 0 && <p class="spot-terms muted">{terms.map(t => <button key={t} type="button" tabIndex={-1} class="id" onPointerDown={e => e.preventDefault()} onClick={() => addTerm(t)}>{t}:</button>)}<span>narrow the search</span></p>}
       {text && !waiting && asked === q && (failed || !flat.length) && <p class="muted spot-none" role="status">{failed ? flat.length ? 'Some kinds failed; try again' : 'Search failed; try again' : 'Nothing found'}</p>}
-    </div>
-  </div>;
+  </dialog>;
 }
 
 /** Sections as a palette provider: the navigation items whose label holds the text. A field term (agent:x) finds none. */

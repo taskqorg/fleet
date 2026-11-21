@@ -2,7 +2,7 @@
 import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  StatusLine, AgeChip, Button, SearchBox, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals, CopyButton,
+  StatusLine, AgeChip, Button, DataTable, Disclosure, SearchBox, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals, CopyButton,
   msMeasured, numMeasured, splitCostFigures,
   type CostFigureLike, type Measured, type StateOf, type TotalItem, type TreeNode,
 } from '../../../packages/ui/src/index.ts';
@@ -154,9 +154,7 @@ export function ScopedRollupDetails({ rollup, foldTools }: { rollup: ScopedResou
   return (
     <DetailSection title="Resource breakdown">
       {rows.length > 1 && (
-        <div class="table-frame">
-          <table class="limit-table">
-            <thead>
+        <DataTable label="Resource breakdown" head={
               <tr>
                 <th scope="col">Scope</th>
                 <th scope="col" class="num">Runs</th>
@@ -168,20 +166,17 @@ export function ScopedRollupDetails({ rollup, foldTools }: { rollup: ScopedResou
                 <th scope="col" class="num">Tools</th>
                 <th scope="col" class="num">Cost</th>
               </tr>
-            </thead>
-            <tbody>
+        }>
               {rows.map(r => (
                 <tr key={r.label}>
                   <th scope="row">{r.label}</th>
                   <ResourceCells s={r.s} />
                 </tr>
               ))}
-            </tbody>
-          </table>
-        </div>
+        </DataTable>
       )}
       {toolBreakdown && (foldTools
-        ? <details><summary>Top tools</summary>{toolBreakdown}</details>
+        ? <Disclosure summary="Top tools">{toolBreakdown}</Disclosure>
         : <><h4 class="sub-h">Top tools</h4>{toolBreakdown}</>)}
       {rollup.spawnedTasks.length > 0 && (
         <div class="stack spawned-tasks">
