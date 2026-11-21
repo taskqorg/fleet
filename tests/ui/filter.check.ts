@@ -73,7 +73,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
         if (!document.querySelector('[data-ui=data-list]')) seen.listGone = true;
         const now = [...document.querySelectorAll('.vl-row .row-link')].slice(0, 5).map(e => e.textContent).join('|') + (document.querySelector('[data-ui=list-view].pending') ? '…' : '');
         // Settled: no request pending and the first rows unchanged for 10 frames. Unsettled after 600 frames reports -1.
-        if (now && now === last && !now.endsWith('…')) { if (++stable === 10) { settled = performance.now() - t0 - 10 * 16.7; break; } } else { stable = 0; last = now; }
+        if (now && now === last && !now.endsWith('…')) { if (++stable === 10) { settled = Math.max(0, performance.now() - t0 - 10 * 16.7); break; } } else { stable = 0; last = now; }
       }
       return { ...seen, remounted: grid0 !== document.querySelector('[data-ui=data-list]'), settledMs: settled < 0 ? -1 : Math.max(0, Math.round(settled)) };
     }, act);

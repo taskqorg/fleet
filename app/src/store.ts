@@ -20,13 +20,43 @@ export type Kind = 'tasks' | 'sessions';
 type Params = ReturnType<typeof toPageParams>;
 type Group = ListGroup;
 export type ListState = { rows: Row[]; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; error: string | null };
-type Entry = { kind: Kind; view: View; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>; started: number; shown: number; mounted: number; loading: number; dirty: boolean; paging: boolean; cursorReset: boolean; pageError: boolean };
+type Entry = { kind: Kind; view: View; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>; started: number; shown: number; mounted: number; loading: number; dirty: boolean; paging: boolean; cursorReset: boolean; pageError: boolean; fetchedAt: number; lastReloadAt: number; throttleTimer?: ReturnType<typeof setTimeout> };
 type Doc = { data: unknown; error: string | null; status?: number | null };
+type DocEntry = { signal: Signal<Doc | null>; fetchedAt: number; dirty: boolean; dirtySeq: number; name?: OpName; request?: unknown };
+
+const FRESH_MS = 30_000;
+const MAX_UNMOUNTED_DOCS = 100;
+const MAX_UNMOUNTED_LISTS = 30;
+const APPLY_THROTTLE_MS = 1000;
+const PREPARED_PREPARING_MS = 5_000;
+const PREPARED_POLL_MS = 10_000;
 
 const lists = new Map<string, Entry>();
-const docs = new Map<string, Signal<Doc | null>>();
+const docs = new Map<string, DocEntry>();
 /** Bumped when stored data is cleared: mounted docs re-read. */
 const generation = signal(0);
+
+function touchList(key: string, e: Entry) { lists.delete(key); lists.set(key, e); }
+function evictLists() {
+  let unmounted = 0;
+  for (const e of lists.values()) if (!e.mounted) unmounted++;
+  if (unmounted <= MAX_UNMOUNTED_LISTS) return;
+  for (const [k, e] of lists) {
+    if (unmounted <= MAX_UNMOUNTED_LISTS) break;
+    if (!e.mounted) { clearTimeout(e.throttleTimer); e.throttleTimer = undefined; lists.delete(k); unmounted--; }
+  }
+}
+
+function touchDoc(name: string, e: DocEntry) { docs.delete(name); docs.set(name, e); }
+function evictDocs() {
+  let unmounted = 0;
+  for (const k of docs.keys()) if (!flights.get(k)?.readers.size) unmounted++;
+  if (unmounted <= MAX_UNMOUNTED_DOCS) return;
+  for (const k of docs.keys()) {
+    if (unmounted <= MAX_UNMOUNTED_DOCS) break;
+    if (!flights.get(k)?.readers.size) { docs.delete(k); unmounted--; }
+  }
+}
 
 /**
  * Forget everything held in memory (sign-out, grants change). Entries and doc signals stay because mounted hooks hold
@@ -34,19 +64,26 @@ const generation = signal(0);
  */
 export function clearMemory() {
   for (const [key, e] of lists) {
-    e.state.value = null; e.shown = e.started; e.dirty = false;
+    clearTimeout(e.throttleTimer); e.throttleTimer = undefined;
+    e.state.value = null; e.shown = e.started; e.dirty = false; e.fetchedAt = 0; e.lastReloadAt = 0;
     if (!e.mounted) lists.delete(key);
     else if (isAccessCurrent(accessGeneration())) void loadList(e.kind, key, e.view);
   }
   discardDocReads();
-  for (const s of docs.values()) s.value = null;
+  for (const [key, d] of docs) {
+    d.signal.value = null; d.fetchedAt = 0; d.dirty = false; d.dirtySeq++;
+    if (!flights.get(key)?.readers.size) docs.delete(key);
+  }
   generation.value++;
 }
 onClear.add(clearMemory);
 
 function entry(kind: Kind, key: string, view: View): Entry {
   let e = lists.get(key);
-  if (!e) lists.set(key, e = { kind, view, params: toPageParams(view), state: signal(null), busy: signal(false), started: 0, shown: 0, mounted: 0, loading: 0, dirty: false, paging: false, cursorReset: false, pageError: false });
+  if (!e) {
+    lists.set(key, e = { kind, view, params: toPageParams(view), state: signal(null), busy: signal(false), started: 0, shown: 0, mounted: 0, loading: 0, dirty: false, paging: false, cursorReset: false, pageError: false, fetchedAt: 0, lastReloadAt: 0 });
+    evictLists();
+  }
   return e;
 }
 const rowsOf = (r: Ops['task_page']['reply'] | Ops['sessions_list']['reply']): Row[] => 'tasks' in r ? r.tasks : r.sessions;
@@ -58,19 +95,27 @@ const opName = (k: Kind) => k === 'tasks' ? 'task_page' : 'sessions_list';
  */
 export async function loadList(kind: Kind, key: string, view: View, abort?: AbortSignal, cursorReset = false) {
   const e = entry(kind, key, view), read = ++e.started, generation = accessGeneration();
-  e.cursorReset = cursorReset; e.loading++; e.busy.value = true;
+  const wasDirty = e.dirty;
+  clearTimeout(e.throttleTimer); e.throttleTimer = undefined;
+  e.dirty = false; e.cursorReset = cursorReset; e.loading++; e.busy.value = true;
   try {
     await ensureAccessGeneration(); assertAccessGeneration(generation);
     const r = await op(opName(kind), { ...e.params, limit: 100 }, { signal: abort });
     assertAccessGeneration(generation);
     if (read < e.shown) return;
     e.shown = read;
-    e.state.value = { rows: rowsOf(r), counts: r.counts, total: r.total, groups: 'groups' in r ? r.groups : [], nextAfter: r.nextAfter, at: Date.now(), error: null };
+    const now = Date.now();
+    e.state.value = { rows: rowsOf(r), counts: r.counts, total: r.total, groups: 'groups' in r ? r.groups : [], nextAfter: r.nextAfter, at: now, error: null };
+    e.fetchedAt = now;
     e.pageError = false;
+    touchList(key, e);
   } catch (err) {
-    if (err instanceof AccessChanged || !isAccessCurrent(generation) || err instanceof OpError && err.message === 'aborted') return;
+    if (err instanceof AccessChanged || !isAccessCurrent(generation) || err instanceof OpError && err.message === 'aborted') {
+      if (wasDirty && read >= e.shown) e.dirty = true;
+      return;
+    }
     if (read < e.shown) return;
-    const s = e.state.value, msg = errMsg(err); e.pageError = false;
+    const s = e.state.value, msg = errMsg(err); e.pageError = false; e.fetchedAt = 0;
     e.state.value = s ? { ...s, error: msg } : { rows: [], counts: {}, total: 0, groups: [], nextAfter: null, at: 0, error: msg };
   } finally {
     e.loading--; e.busy.value = e.loading > 0;
@@ -106,17 +151,51 @@ export async function nextPage(key: string) {
   } finally { e.paging = false; }
 }
 
-const listAffected = (c: Change, kind: Kind) =>
-  kind === 'tasks' ? !!(c.taskId || c.kind === 'task') : !!(c.sessionId || c.kind === 'session');
+type ScopedChange = Change & { projectId?: string | null };
+const changeProjectId = (c: ScopedChange): string | null | undefined => {
+  if ('projectId' in c && c.projectId !== undefined) return c.projectId;
+  if (c.kind === 'resource_summary') return c.id;
+  if (c.kind === 'definition' && c.id.startsWith('project/') && c.id.length > 8) return c.id.slice(8);
+  return undefined;
+};
+const listProjectMatches = (c: Change, params: Params): boolean => {
+  const pid = changeProjectId(c as ScopedChange);
+  if (pid === undefined) return true;
+  const inc = params.filter.projectId;
+  if (inc?.length && !inc.includes(pid)) return false;
+  const exc = params.filter.excludeProjectId;
+  if (exc?.length && exc.includes(pid)) return false;
+  return true;
+};
+const listAffected = (c: Change, kind: Kind, params: Params) =>
+  (kind === 'tasks' ? !!(c.taskId || c.kind === 'task') : !!(c.sessionId || c.kind === 'session')) && listProjectMatches(c, params);
 
-/** One batch of feed changes: every mounted list with affected rows reloads (coalescing if a load is in flight). */
+/** One batch of feed changes: every mounted list with affected rows reloads (coalesced/throttled to 1000 ms). */
 export async function applyChanges(cs: Change[]) {
   if (!isAccessCurrent(accessGeneration())) return;
   const reloads: Promise<void>[] = [];
+  const now = Date.now();
   for (const [key, e] of lists) {
-    if (!e.mounted || !cs.some(c => listAffected(c, e.kind))) continue;
+    if (!cs.some(c => listAffected(c, e.kind, e.params))) continue;
+    if (!e.mounted) { e.dirty = true; continue; }
     if (e.loading) { e.dirty = true; continue; }
-    reloads.push(loadList(e.kind, key, e.view));
+    const wait = e.lastReloadAt + APPLY_THROTTLE_MS - now;
+    if (wait <= 0) {
+      clearTimeout(e.throttleTimer); e.throttleTimer = undefined;
+      e.lastReloadAt = now;
+      reloads.push(loadList(e.kind, key, e.view));
+    } else {
+      e.dirty = true;
+      if (!e.throttleTimer) {
+        e.throttleTimer = setTimeout(() => {
+          e.throttleTimer = undefined;
+          if (!e.mounted || !isAccessCurrent(accessGeneration())) return;
+          if (e.loading) { e.dirty = true; return; }
+          e.lastReloadAt = Date.now();
+          void loadList(e.kind, key, e.view);
+        }, wait);
+      }
+    }
   }
   await Promise.all(reloads);
 }
@@ -125,7 +204,13 @@ let started = false;
 /** One feed subscription for all lists (started once from main.tsx). */
 export function startStore() {
   if (started) return; started = true;
-  const reloadMounted = (only?: (s: ListState | null) => boolean) => { for (const [key, e] of lists) if (e.mounted && (!only || only(e.state.value))) void loadList(e.kind, key, e.view); };
+  const reloadMounted = (only?: (s: ListState | null) => boolean) => {
+    for (const [key, e] of lists) {
+      if (e.mounted) { if (!only || only(e.state.value)) void loadList(e.kind, key, e.view); }
+      else if (!only) e.dirty = true;
+    }
+    if (!only) for (const [k, d] of docs) if (!flights.get(k)?.readers.size) { d.dirty = true; d.dirtySeq++; }
+  };
   subscribe({ resync: () => reloadMounted(), changes: applyChanges });
   effect(() => { if (feedState.value === 'live') reloadMounted(s => !s || !!s.error); });
 }
@@ -142,9 +227,19 @@ export function useList<K extends Kind>(kind: K, urlView: View) {
   useEffect(() => {
     if (!ready) return;
     e.mounted++;
+    touchList(key, e);
     ctrl.current?.abort(); const c = ctrl.current = new AbortController();
-    void loadList(kind, key, view, c.signal);
-    return () => { e.mounted--; c.abort(); };
+    const cur = e.state.value;
+    const fresh = feedState.value === 'live' && !!cur && !cur.error && !e.dirty && e.fetchedAt > 0 && (Date.now() - e.fetchedAt < FRESH_MS);
+    if (!fresh) void loadList(kind, key, view, c.signal);
+    return () => {
+      e.mounted--;
+      c.abort();
+      if (!e.mounted) {
+        if (e.throttleTimer) { clearTimeout(e.throttleTimer); e.throttleTimer = undefined; e.dirty = true; }
+        evictLists();
+      }
+    };
   }, [key, ready]);
   const se = shown ? lists.get(shown) : undefined, cur = se?.state.value ?? null;
   return {
@@ -162,18 +257,29 @@ export function useList<K extends Kind>(kind: K, urlView: View) {
 type DocReader = { fetch: () => Promise<unknown> };
 type DocFlight = { readers: Set<DocReader>; started: number; shown: number; failed: number; scheduled: boolean; cleared: number };
 const flights = new Map<string, DocFlight>();
-function docSignal(name: string) { let s = docs.get(name); if (!s) docs.set(name, s = signal(null)); return s; }
+function docEntry(name: string): DocEntry {
+  let e = docs.get(name);
+  if (!e) { docs.set(name, e = { signal: signal(null), fetchedAt: 0, dirty: false, dirtySeq: 0 }); evictDocs(); }
+  return e;
+}
+function docSignal(name: string) { return docEntry(name).signal; }
 async function startDoc(name: string, f: DocFlight) {
   const reader = [...f.readers].pop(); if (!reader) return;
-  const read = ++f.started, generation = accessGeneration(), s = docSignal(name);
+  const read = ++f.started, generation = accessGeneration(), entry = docEntry(name), s = entry.signal, dirtyAtStart = entry.dirtySeq;
   const newest = () => flights.get(name) === f && read > f.shown && isAccessCurrent(generation);
   try {
     await ensureAccessGeneration(); assertAccessGeneration(generation);
     const d = await reader.fetch();
-    if (newest()) { f.shown = read; s.value = { data: d, error: f.failed > read ? s.value?.error ?? null : null }; }
+    if (newest()) {
+      f.shown = read;
+      s.value = { data: d, error: f.failed > read ? s.value?.error ?? null : null };
+      if (f.failed <= read) { entry.fetchedAt = Date.now(); if (entry.dirtySeq === dirtyAtStart) entry.dirty = false; }
+      touchDoc(name, entry);
+    }
   } catch (e) {
     if (!newest() || read < f.failed) return;
     f.failed = read;
+    entry.fetchedAt = 0;
     s.value = { data: s.value?.data ?? null, error: errMsg(e), status: e instanceof OpError ? e.status : null };
   }
 }
@@ -183,12 +289,17 @@ export function readDoc(name: string) {
   f.scheduled = true;
   queueMicrotask(() => { f.scheduled = false; void startDoc(name, f); });
 }
-/** Mount a reader and immediately fetch. Returns the release. */
-export function holdDoc(name: string, fetch: () => Promise<unknown>) {
+/** Mount a reader and fetch unless fresh cached data is already held while live. Returns the release. */
+export function holdDoc(name: string, fetch: () => Promise<unknown>, opts?: { name?: OpName; request?: unknown; maxAge?: number }) {
   let f = flights.get(name); if (!f) flights.set(name, f = { readers: new Set(), started: 0, shown: 0, failed: 0, scheduled: false, cleared: 0 });
   const flight = f, reader: DocReader = { fetch }; flight.readers.add(reader);
-  readDoc(name);
-  return () => { flight.readers.delete(reader); queueMicrotask(() => { if (!flight.readers.size && flights.get(name) === flight) flights.delete(name); }); };
+  const entry = docEntry(name);
+  if (opts?.name) { entry.name = opts.name; entry.request = opts.request; }
+  touchDoc(name, entry);
+  const v = entry.signal.value, maxAge = opts?.maxAge ?? FRESH_MS;
+  const fresh = feedState.value === 'live' && !!v && v.data !== null && !v.error && !entry.dirty && entry.fetchedAt > 0 && (Date.now() - entry.fetchedAt < maxAge);
+  if (!fresh) readDoc(name);
+  return () => { flight.readers.delete(reader); queueMicrotask(() => { if (!flight.readers.size && flights.get(name) === flight) { flights.delete(name); evictDocs(); } }); };
 }
 function discardDocReads() { for (const f of flights.values()) { f.shown = f.failed = f.started; f.cleared++; } }
 
@@ -245,7 +356,16 @@ const mounted = new Set<Mounted>();
 let opFeed: (() => void) | null = null;
 function watch(m: Mounted) {
   mounted.add(m);
-  opFeed ??= subscribe({ resync: () => { for (const x of mounted) x.read(); }, changes: cs => { for (const x of mounted) { const r = x.request(); if (cs.some(c => touchedBy(c, x.name, r))) x.read(); } } });
+  opFeed ??= subscribe({
+    resync: () => {
+      for (const x of mounted) x.read();
+      for (const [k, d] of docs) if (!flights.get(k)?.readers.size) { d.dirty = true; d.dirtySeq++; }
+    },
+    changes: cs => {
+      for (const x of mounted) { const r = x.request(); if (cs.some(c => touchedBy(c, x.name, r))) x.read(); }
+      for (const [k, d] of docs) if (!flights.get(k)?.readers.size && d.name && d.request !== undefined && cs.some(c => touchedBy(c, d.name!, d.request))) { d.dirty = true; d.dirtySeq++; }
+    },
+  });
   return () => { mounted.delete(m); };
 }
 function throttle(read: () => void, quiet = 0) {
@@ -281,7 +401,8 @@ export function useOp<K extends OpName>(name: K, request: Ops[K]['request'] | nu
   const gen = generation.value;
   useEffect(() => {
     if (!key) return;
-    const release = holdDoc(key, () => op(name, reqRef.current!));
+    const maxAge = opts.every ? Math.min(FRESH_MS, opts.every) : FRESH_MS;
+    const release = holdDoc(key, () => op(name, reqRef.current!), { name, request: reqRef.current, maxAge });
     reloadRef.current = () => readDoc(key);
     const t = throttle(() => readDoc(key), opts.quiet);
     const off = watch({ name, request: () => ({ ...reqRef.current, ...scopeRef.current }), read: t.read });
@@ -293,14 +414,14 @@ export function useOp<K extends OpName>(name: K, request: Ops[K]['request'] | nu
 }
 
 /** For tests: the stored list under key and a doc. */
-export const peek = { generation: () => generation.value, doc: (name: string) => docs.get(name)?.value ?? null, list: (key: string) => lists.get(key)?.state.value ?? null, mount: (kind: Kind, key: string, view: View) => { entry(kind, key, view).mounted++; } };
+export const peek = { generation: () => generation.value, doc: (name: string) => docs.get(name)?.signal.value ?? null, list: (key: string) => lists.get(key)?.state.value ?? null, mount: (kind: Kind, key: string, view: View) => { entry(kind, key, view).mounted++; } };
 
 // Prepared readers share scheduling by normalized request AND access generation.
 import type { ProjectResourcesReply, ProjectResourceItemsReply, ResourceProgress, ProjectResourceItemsRequest } from '../../contracts/generated/ops.ts';
 type PreparedReply = ProjectResourcesReply | ProjectResourceItemsReply;
 export type PreparedState<T> = { data: T | null; progress: ResourceProgress | null; error: string | null; restored: boolean; state: 'idle' | 'loading' | 'ready' | 'preparing' | 'error' | 'disposed' };
 type PreparedFetcher<T> = (context: { signal: AbortSignal; knownVersion?: string }) => Promise<T>;
-type PreparedEntry<T> = { value: Signal<PreparedState<T>>; fetcher: PreparedFetcher<T>; subscribers: number; visible: number; controller: AbortController | null; request: number; pending: boolean; version?: string; timer?: ReturnType<typeof setInterval>; disposed: boolean; refresh(reason?: string): void };
+type PreparedEntry<T> = { value: Signal<PreparedState<T>>; fetcher: PreparedFetcher<T>; subscribers: number; visible: number; controller: AbortController | null; request: number; pending: boolean; version?: string; timer?: ReturnType<typeof setInterval>; pollMs?: number; disposed: boolean; refresh(reason?: string): void };
 const prepared = new Map<string, PreparedEntry<PreparedReply>>();
 export function preparedKey(operation: 'project_resources' | 'project_resource_items', projectId: string, request: Omit<ProjectResourceItemsRequest, 'projectId' | 'knownVersion'> | null = null) {
   const r = request;
@@ -313,8 +434,18 @@ export function olderPreparedVersion(candidate: string, current?: string) {
   if (!current) return false;
   const a = versionParts(candidate), b = versionParts(current); return a.epoch === b.epoch && a.revision < b.revision;
 }
-export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: PreparedFetcher<T>, visible = true, interval = 2000) {
+export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: PreparedFetcher<T>, visible = true, interval = PREPARED_POLL_MS) {
   let entry = prepared.get(key) as unknown as PreparedEntry<T> | undefined;
+  const syncTimer = (e: PreparedEntry<T>) => {
+    const want = !e.disposed && e.visible > 0 ? (e.value.value.state === 'preparing' ? Math.min(interval, PREPARED_PREPARING_MS) : interval) : 0;
+    if (want === (e.pollMs ?? 0) && (!want || e.timer)) return;
+    clearInterval(e.timer); e.timer = undefined; e.pollMs = want;
+    if (want > 0) {
+      e.timer = setInterval(() => {
+        if (e.visible && !e.disposed && (typeof document === 'undefined' || document.visibilityState === 'visible')) e.refresh('interval');
+      }, want);
+    }
+  };
   if (!entry) {
     const generation = accessGeneration();
     const e: PreparedEntry<T> = { value: signal({ data: null, progress: null, error: null, restored: false, state: 'idle' }), fetcher, subscribers: 0, visible: 0, controller: null, request: 0, pending: false, disposed: false,
@@ -340,8 +471,12 @@ export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: P
               e.version = result.version ?? undefined;
               e.value.value = { data: result, progress: result.progress, error: null, restored: false, state: 'ready' };
             }
+            syncTimer(e);
           } catch (error) {
-            if (!e.disposed && !c.signal.aborted && isAccessCurrent(generation)) e.value.value = { ...e.value.value, error: errMsg(error), state: 'error' };
+            if (!e.disposed && !c.signal.aborted && isAccessCurrent(generation)) {
+              e.value.value = { ...e.value.value, error: errMsg(error), state: 'error' };
+              syncTimer(e);
+            }
           } finally {
             if (e.controller === c) e.controller = null;
             if (e.pending && !e.disposed) { e.pending = false; e.refresh('pending'); }
@@ -351,12 +486,12 @@ export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: P
     prepared.set(key, (entry = e) as unknown as PreparedEntry<PreparedReply>);
   }
   const e = entry; e.fetcher = fetcher; e.subscribers++; if (visible) e.visible++;
-  if (!e.timer && e.visible) e.timer = setInterval(() => { if (e.visible && (typeof document === 'undefined' || document.visibilityState === 'visible')) e.refresh('interval'); }, Math.min(interval, 2000));
+  syncTimer(e);
   if (e.subscribers === 1) e.refresh('mount');
   return { key, value: e.value, refresh: e.refresh, release: () => {
     e.subscribers--; if (visible) e.visible--;
-    if (!e.visible) { clearInterval(e.timer); e.timer = undefined; }
-    if (!e.subscribers) { e.disposed = true; e.pending = false; e.request++; e.controller?.abort(); clearInterval(e.timer); prepared.delete(key); e.value.value = { data: null, progress: null, error: null, restored: false, state: 'disposed' }; }
+    syncTimer(e);
+    if (!e.subscribers) { e.disposed = true; e.pending = false; e.request++; e.controller?.abort(); clearInterval(e.timer); e.timer = undefined; e.pollMs = 0; prepared.delete(key); e.value.value = { data: null, progress: null, error: null, restored: false, state: 'disposed' }; }
   } };
 }
 onClear.add(() => { for (const e of prepared.values()) { e.disposed = true; e.request++; e.controller?.abort(); clearInterval(e.timer); e.value.value = { data: null, progress: null, error: null, restored: false, state: 'disposed' }; } prepared.clear(); });
