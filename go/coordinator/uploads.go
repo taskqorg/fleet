@@ -713,7 +713,7 @@ func (a *App) finishNow(ctx context.Context, p *Person, u upload) (any, error) {
 			MediaType: u.MediaType, Name: u.Name, SessionID: u.SessionID}); err != nil {
 			return err
 		}
-		return d.UploadCopyInsert(ctx, db.UploadCopyInsertParams{ArtifactID: id, StoreID: s.ID, ProjectID: projectID})
+		return artifactCopyInsertVerified(ctx, d, id, s.ID, projectID)
 	})
 	if err != nil {
 		return nil, err

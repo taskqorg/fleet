@@ -28,9 +28,6 @@ SELECT EXISTS(SELECT 1 FROM artifact y JOIN artifact_copy z ON z.artifact_id=y.i
  WHERE y.id<> @id AND y.project_id IS NOT DISTINCT FROM sqlc.narg(project_id)::text AND y.scope= @scope AND y.content_hash= @content_hash
  AND y.state='stored' AND z.store_id= @store_id AND z.state='verified')::boolean;
 
--- name: DispCopyDeleted :exec
-UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2;
-
 -- name: DispArtifactHeld :one
 -- A verified copy of the artifact on an unreachable store.
 SELECT EXISTS(SELECT 1 FROM artifact_copy c JOIN store s ON s.id=c.store_id

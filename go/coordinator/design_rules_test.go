@@ -30,7 +30,7 @@ var designTimeCalls = map[string]bool{"NewTicker": true, "Tick": true, "Sleep": 
 
 var designOpCalls = map[string]bool{"gatedOp": true, "gatedObjOp": true, "shaped": true, "operation": true, "agentTool": true, "longOp": true, "projectOp": true, "threadOp": true, "checkFirst": true, "ownerFirst": true}
 
-var designTxCalls = map[string]bool{"runTx": true, "runTxLocks": true, "runTxLocksOnce": true, "Tx": true, "TxLocks": true, "TxLocksOnce": true, "txLocks": true, "readOnce": true, "writeOnce": true, "Begin": true, "BeginTx": true, "BeginFunc": true, "BeginTxFunc": true}
+var designTxCalls = map[string]bool{"runTx": true, "runTxLocks": true, "runTxLocksOnce": true, "Tx": true, "TxLocks": true, "TxLocksOnce": true, "txLocks": true, "readOnce": true, "writeOnce": true, "onEnd": true, "Begin": true, "BeginTx": true, "BeginFunc": true, "BeginTxFunc": true}
 
 // designCallExprName returns the called identifier or pkg.Name of fun, unwrapping generic type arguments.
 func designCallExprName(fun ast.Expr) string {
@@ -324,11 +324,14 @@ func designStateOwners() []designOwner {
 		{"resource_metadata_repair", "resource_states.go", []string{"done", "after_execution_id", "DELETE"}},
 		{"command", "commands.go", []string{"status", "stop_detail"}},
 		{"execution", "execution_states.go", []string{"state"}},
+		{"task", "tasks.go", []string{"state"}},
 		{"question", "question_states.go", []string{"state"}},
 		{"question", "problems.go", []string{"cause"}},
 		{"experiment", "experiment_states.go", []string{"state"}},
 		{"host", "host_states.go", []string{"state"}},
 		{"connection_key", "key_states.go", []string{"state"}},
+		{"artifact_copy", "artifact_states.go", []string{"state"}},
+		{"store", "artifact_states.go", []string{"state"}},
 		{"audit_log", "audit.go", []string{"target"}}, // S4: the audit is written only through audit()
 	}
 	for _, q := range kitQueues {
@@ -772,10 +775,13 @@ func TestDesignTransitions(t *testing.T) {
 	executionStates := enum(`CREATE TYPE execution_state AS ENUM \(([^)]*)\)`)
 	check("execution", executionTransitions, executionStates, nil, "preparing")
 	check("pipeline step", pipelineStepTransitions, executionStates, executionEnds, "preparing")
+	check("task", taskTransitions, enum(`CREATE TYPE task_state AS ENUM \(([^)]*)\)`), nil, "queued", "paused")
 	check("question", questionTransitions, enum(`CREATE TYPE question_state AS ENUM \(([^)]*)\)`), nil, "open")
 	check("experiment", experimentTransitions, enum(`state text NOT NULL DEFAULT 'draft' CHECK \(state IN \(([^)]*)\)\)`), nil, "draft")
 	check("host", hostTransitions, enum(`state text NOT NULL DEFAULT 'active' CHECK \(state IN \(('active', 'removed')\)\)`), func(s string) bool { return s == "removed" }, "active")
 	check("connection key", connectionKeyTransitions, enum(`state text NOT NULL DEFAULT 'active' CHECK \(state IN \(('active', 'disabled', 'retired')\)\)`), nil, "active")
+	check("artifact copy", artifactCopyTransitions, enum(`CREATE TABLE artifact_copy\([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), func(s string) bool { return s == "deleted" }, "pending", "copying", "verified")
+	check("store", storeTransitions, enum(`CREATE TABLE store\([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), func(s string) bool { return s == "unreachable" }, "reachable", "unreachable")
 	src, err := os.ReadFile("resource_states.go")
 	if err != nil {
 		t.Fatal(err)
@@ -875,7 +881,7 @@ var designRulesOwned = map[string]map[string]string{
 		"R-TX": "S3: the database boundary itself, opening pgx transactions with advisory locks, scope, retry and afterCommit inside txLocks and migrateLocked",
 	},
 	"tx.go": {
-		"R-TX": "S3: implements Store.Read, Store.Write and the package-private single-attempt readOnce/writeOnce entry points over Store.txLocks",
+		"R-TX": "S3: implements Store.Read, Store.Write, afterCommit, afterRollback and the package-private single-attempt readOnce/writeOnce entry points over Store.txLocks",
 	},
 	"wake_outbox.go": {
 		"R-GO": "S6: the wake dispatcher, the one sender of wake_outbox's NOTIFYs: it claims the next batch at once while a full one was claimed, so it cannot be an every() pass",

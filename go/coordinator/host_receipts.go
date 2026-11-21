@@ -348,19 +348,15 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 					return nil, "", err
 				}
 			} else {
-				onEnd(q.tx, func(committed bool) {
-					if committed {
-						a.wakeDispatch()
-					}
+				afterCommit(q, func() {
+					a.wakeDispatch()
 				})
 			}
 		}
 	}
 	if lost {
-		onEnd(q.tx, func(committed bool) {
-			if committed {
-				a.wakeDispatch()
-			}
+		afterCommit(q, func() {
+			a.wakeDispatch()
 		})
 	}
 	ended := ""

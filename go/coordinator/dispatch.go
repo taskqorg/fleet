@@ -920,10 +920,8 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 					continue
 				}
 			} else {
-				onEnd(q.tx, func(committed bool) {
-					if committed {
-						a.wakeDispatch()
-					}
+				afterCommit(q, func() {
+					a.wakeDispatch()
 				})
 				continue
 			}
@@ -941,10 +939,8 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		}
 		if best != nil {
 			if e.PipelineRunID != nil && !txHasLock(q.tx, GLOBAL) {
-				onEnd(q.tx, func(committed bool) {
-					if committed {
-						a.wakeDispatch()
-					}
+				afterCommit(q, func() {
+					a.wakeDispatch()
 				})
 				continue
 			}

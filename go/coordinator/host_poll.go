@@ -341,7 +341,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 				if outcome == pollFails {
 					return err // a deadlock, a lost connection, the request leaving: the whole poll fails and is retried
 				}
-				// Its writes roll back; its onEnd hooks (a publish, a pipeline write guard) stay, and are idempotent.
+				// Its writes roll back; its afterCommit/afterRollback hooks (a publish, a pipeline write guard) stay, and are idempotent.
 				if err := exec(wq, "ROLLBACK TO SAVEPOINT poll_command"); err != nil {
 					return err
 				}
@@ -354,9 +354,11 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 					if pollCommandWaits.note(cv.ID, errorClass(err)) {
 						log.Printf("host %s command %s waits: %v", host, cv.ID, err)
 						cerr, kind := err, cv.Kind
-						onEnd(wq.tx, func(bool) {
+						capture := func() {
 							errtrack.Capture(cerr, map[string]string{"route": "POST /api/hosts/poll", "host": host, "command": kind})
-						})
+						}
+						afterCommit(wq, capture)
+						afterRollback(wq, capture)
 					}
 					continue
 				}
@@ -367,10 +369,8 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 				log.Printf("host %s command %s stopped: %s", host, cv.ID, reason)
 				if !strings.HasPrefix(reason, "refused:") {
 					cerr, kind := err, cv.Kind
-					onEnd(wq.tx, func(committed bool) { // once, for the attempt that committed the stop
-						if committed {
-							errtrack.Capture(cerr, map[string]string{"route": "POST /api/hosts/poll", "host": host, "command": kind})
-						}
+					afterCommit(wq, func() { // once, for the attempt that committed the stop
+						errtrack.Capture(cerr, map[string]string{"route": "POST /api/hosts/poll", "host": host, "command": kind})
 					})
 				}
 				continue
@@ -701,10 +701,8 @@ func (a *App) refusePollCommand(wq *Request, c pollGateCommand, reason string) e
 		return err
 	}
 	// The dispatch pass runs the pipeline engine's sweeps: the step sees its native execution end.
-	onEnd(wq.tx, func(committed bool) {
-		if committed {
-			a.wakeDispatch()
-		}
+	afterCommit(wq, func() {
+		a.wakeDispatch()
 	})
 	return wq.db().HostPollClearWaitReason(wq.ctx(), native.ID)
 }
@@ -833,10 +831,7 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 					return err
 				}
 			}
-			onEnd(wq.tx, func(committed bool) {
-				if !committed {
-					return
-				}
+			afterCommit(wq, func() {
 				a.commitHostHeartbeat(host, stateSig, storesSig, now)
 				if stateChanged {
 					flushGen = a.triggerDispatch()
@@ -913,11 +908,9 @@ func invalidateEnvCacheOnCommit(q *Request) {
 	if q == nil || q.app == nil || q.tx == nil {
 		return
 	}
-	onEnd(q.tx, func(committed bool) {
-		if committed {
-			q.app.invalidateEnvCache()
-			q.app.wakeDispatch()
-		}
+	afterCommit(q, func() {
+		q.app.invalidateEnvCache()
+		q.app.wakeDispatch()
 	})
 }
 

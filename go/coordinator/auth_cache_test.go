@@ -68,9 +68,10 @@ func TestAuthCacheHostRotationDeletionAndPersonRegrant(t *testing.T) {
 		t.Fatalf("initial host: %v", err)
 	}
 	rotated := "rotated-test-secret"
+	// Production person/grant/host writes hold GLOBAL, which fences and invalidates the auth cache.
 	write := func(sql string, args ...any) {
 		t.Helper()
-		if err := e.appStore.Write(e.ctx, nil, nil, func(q *Request) error { _, err := q.tx.Exec(e.ctx, sql, args...); return err }); err != nil {
+		if err := e.appStore.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error { _, err := q.tx.Exec(e.ctx, sql, args...); return err }); err != nil {
 			t.Fatal(err)
 		}
 	}

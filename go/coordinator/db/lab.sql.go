@@ -37,22 +37,6 @@ func (q *Queries) LabApprovedExamples(ctx context.Context, projectID *string) ([
 	return items, nil
 }
 
-const labArtifactCopyVerified = `-- name: LabArtifactCopyVerified :exec
-INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())
-`
-
-type LabArtifactCopyVerifiedParams struct {
-	ArtifactID string
-	StoreID    string
-	ProjectID  *string
-}
-
-// The verified copy of an object a Lab artifact was just written to.
-func (q *Queries) LabArtifactCopyVerified(ctx context.Context, arg LabArtifactCopyVerifiedParams) error {
-	_, err := q.db.Exec(ctx, labArtifactCopyVerified, arg.ArtifactID, arg.StoreID, arg.ProjectID)
-	return err
-}
-
 const labArtifactHash = `-- name: LabArtifactHash :one
 SELECT content_hash FROM artifact WHERE id=$1
 `

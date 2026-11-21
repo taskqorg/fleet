@@ -6,10 +6,10 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"math"
 	"math/rand/v2"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -295,29 +295,33 @@ func retryable(err error) bool {
 	return errors.As(err, &pe) && (pe.Code == "40001" || pe.Code == "40P01")
 }
 
+// txLocks runs fn in a transaction holding sorted locks. Every production write to person, person_grant,
+// project initial_member or host holds GLOBAL, so authWrites/authGeneration fencing and authPeople/authHosts
+// invalidation apply only to writes holding GLOBAL; scoped writes (host polls, messages, receipts, tasks) leave
+// the auth cache and shared stream generations untouched.
 func (s *Store) txLocks(ctx context.Context, sc *Scope, write bool, locks []string, retry bool, fn func(pgx.Tx) error) error {
-	if write {
-		s.authMu.Lock()
-		s.authWrites++
-		s.authGeneration++
-		s.authPeople = nil
-		s.authHosts = nil
-		s.authMu.Unlock()
-		defer func() {
-			s.authMu.Lock()
-			s.authGeneration++
-			s.authPeople = nil
-			s.authHosts = nil
-			s.authWrites--
-			s.authMu.Unlock()
-		}()
-	}
 	var sorted []string
 	if write {
 		var err error
 		sorted, err = sortLocks(locks)
 		if err != nil {
 			return err
+		}
+		if slices.Contains(sorted, GLOBAL) {
+			s.authMu.Lock()
+			s.authWrites++
+			s.authGeneration++
+			s.authPeople = nil
+			s.authHosts = nil
+			s.authMu.Unlock()
+			defer func() {
+				s.authMu.Lock()
+				s.authGeneration++
+				s.authPeople = nil
+				s.authHosts = nil
+				s.authWrites--
+				s.authMu.Unlock()
+			}()
 		}
 	}
 	for attempt := 0; ; attempt++ {
@@ -527,75 +531,6 @@ func unscoped[T any](q *Request, fn func() (T, error)) (T, error) {
 var runningApp *App
 
 func labDir() string { return envDir("FLEET_LAB_DIRECTORY", "config/lab") }
-
-// numOK: a JSON number or a SQL integer column (pgx scans integer as int32, smallint as int16).
-func numOK(v any) (float64, bool) {
-	switch x := v.(type) {
-	case float64:
-		return x, true
-	case float32:
-		return float64(x), true
-	case int64:
-		return float64(x), true
-	case int32:
-		return float64(x), true
-	case int16:
-		return float64(x), true
-	case int:
-		return float64(x), true
-	}
-	return 0, false
-}
-
-// num: a finite number of any JSON or SQL integer or float type, or a numeric text (a ->> read); 0 otherwise. numOK
-// refuses text. A SQL numeric column needs ::float8 (pgx scans it as pgtype.Numeric).
-func num(v any) float64 {
-	f, ok := numOK(v)
-	if s, isText := v.(string); isText {
-		f, ok = parseNum(s)
-	}
-	if !ok || math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0
-	}
-	return f
-}
-
-func parseNum(s string) (float64, bool) {
-	f, err := strconv.ParseFloat(s, 64)
-	return f, err == nil
-}
-
-// msTime: a millisecond time (JSON or SQL number) as a timestamp, or nil.
-func msTime(v any) any {
-	f, ok := numOK(v)
-	if !ok || math.IsInf(f, 0) || math.IsNaN(f) {
-		return nil
-	}
-	return time.UnixMilli(int64(f)).UTC()
-}
-
-func intOK(v any) (int64, bool) {
-	f, ok := numOK(v)
-	if !ok || f != float64(int64(f)) || f > 1<<53 || f < -(1<<53) {
-		return 0, false
-	}
-	return int64(f), true
-}
-
-func keysOnly(b rawObject, allowed ...string) bool {
-	for k := range b {
-		ok := false
-		for _, a := range allowed {
-			if k == a {
-				ok = true
-			}
-		}
-		if !ok {
-			return false
-		}
-	}
-	return true
-}
 
 func ownerEmailOf(a *App) string {
 	for _, p := range a.peopleSnapshot().list() {

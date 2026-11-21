@@ -23,13 +23,8 @@ func originTrace(q *Request) string {
 		return tp
 	}
 	_, s := obs.Start(q.ctx(), "execution.schedule", obs.KindInternal)
-	onEnd(q.tx, func(committed bool) {
-		if committed {
-			s.End(nil)
-		} else {
-			s.End(errors.New("transaction rolled back"))
-		}
-	})
+	afterCommit(q, func() { s.End(nil) })
+	afterRollback(q, func() { s.End(errors.New("transaction rolled back")) })
 	return "00-" + s.TraceID + "-" + s.SpanID + "-01"
 }
 
@@ -87,13 +82,8 @@ func commandTrace(q *Request, id, executionID, kind string, traceparent *string,
 	ctx, s := obs.Start(ctx, "dispatch.command", obs.KindInternal)
 	s.Set("fleet.command.kind", kind)
 	newTP := obs.Traceparent(ctx)
-	onEnd(q.tx, func(committed bool) {
-		if committed {
-			s.End(nil)
-		} else {
-			s.End(errors.New("transaction rolled back"))
-		}
-	})
+	afterCommit(q, func() { s.End(nil) })
+	afterRollback(q, func() { s.End(errors.New("transaction rolled back")) })
 	return &newTP, jsonBytes(cr), nil
 }
 

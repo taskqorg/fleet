@@ -154,10 +154,8 @@ func runPipelineTransition(ctx context.Context, a *App, run doc, fn func(*Reques
 		if cancelled {
 			return fail(409, "Pipeline is cancelled")
 		}
-		onEnd(q.tx, func(committed bool) {
-			if !committed {
-				restorePipelineValue(run, snapshot)
-			}
+		afterRollback(q, func() {
+			restorePipelineValue(run, snapshot)
 		})
 		return fn(q)
 	})
