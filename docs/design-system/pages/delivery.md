@@ -1,6 +1,6 @@
 # Delivery (operator)
 
-App only. Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). The book's mockup (`#/delivery` in [mockups.html](mockups.html)) shows the same composition with fixture data.
+**App routes:** `/delivery` in the operator app (`app/src/views/delivery.tsx`). **Mockup routes:** `#/delivery` in [mockups.html](mockups.html) (same composition with fixture data). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 
 **Purpose.** Answers, in this order: what in delivery needs a look, what is moving now, and what the pace is. Covers the pull requests of all connected projects, from open to installed on hosts.
 

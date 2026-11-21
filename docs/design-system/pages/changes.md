@@ -1,19 +1,20 @@
 # Changes (architect)
 
-**Route:** `/changes` in the operator app (not built). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). Requirements: [changes screen](../../designs/fleet-system-management.md#changes-screen).
+**App routes:** `/changes` in the operator app (`app/src/views/changes.tsx`). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). Requirements: [changes screen](../../designs/fleet-system-management.md#changes-screen). There is no static mockup.
 
 **Purpose.** Answer "is every host on the same setup, and what has not reached it": configuration changes, the release and the harness pins, from the repository to the active store and to each host.
 
 **Layout.** [App shell](../patterns/app-shell.md) and one scrolling page, no control column (OR-24: no catalogue).
-* **Head:** a [stat strip](../controls/stat-strip.md): changes waiting, hosts behind, definitions only in Fleet.
-* **Where each change has reached:** a table. A row is one change: kind icon, title and a muted line with its cause (the pull request, or the files). Columns: repository, active, then one per host. A cell is a [state icon](../controls/state-badge.md) with a short value: done, waiting, not reached (with the value it has) or not needed. The last column holds the row's one action: take the repository version (primary), see the change, open the host.
-* Below the table, one muted line says that agents and skills travel with each task, and names an offline host with its last heartbeat.
-* **Made in Fleet, not in the repository:** one [key-value row](../controls/detail-section.md) for agents and one for pipelines, with the ones that ran this month named and "Save to the repository".
+* **Head:** drift summary (repository changed, store-only, ahead, hosts behind, harness pins drifting) and Refresh.
+* **Shipped definitions changed in repository:** a table (`DataTable`) of definitions whose repository version differs from the active store, with store revision, 30-day runs, Open, and Preview/Apply take repository version (`definition_take_repository`) via [problem row](../controls/problem-row.md).
+* **Release versions:** [key-value rows](../controls/detail-section.md) for Coordinator, Web UI, Gateway, and each host with its [state icon](../controls/state-badge.md).
+* **Harness CLI pins vs hosts:** a table of pinned vs observed harness versions per host.
+* **Made in Fleet, not in repository:** a table of store-only and ahead definitions with 30-day runs and repository path, plus Export patch (`definition_export`) shown as a diff.
 
 | Inventory item | Shown by |
 |---|---|
-| Where each change has reached | The table |
-| Agents waiting for a repository version; take it for many at once | Definition rows and their action |
-| Definitions made in Fleet and not in the repository | Made in Fleet section |
+| Where each change has reached | Shipped definitions table, Release versions, Harness CLI pins table |
+| Agents waiting for a repository version; take it for many at once | Preview take all / Take repo actions |
+| Definitions made in Fleet and not in the repository | Made in Fleet section with Export patch |
 
 **Open.** Naming the pull request needs the release to record the commit per shipped definition file.

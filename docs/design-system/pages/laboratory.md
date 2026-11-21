@@ -1,6 +1,6 @@
 # Laboratory (architect)
 
-**Routes:** app `/lab` and `/lab/<experiment id>` (workspace `lab`); mockup `#/lab` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). Built in Lab Stage 3 ([D18](../decisions.md), [fleet-lab.md](../../designs/fleet-lab.md#lab-screen)).
+**App routes:** `/lab`, `/lab/<experiment id>` and `/lab/new` in the operator app (`app/src/views/lab.tsx`, `app/src/views/lab-create.tsx`, checked by `tests/ui/app.check.ts` and `tests/ui/lab-create.check.ts`); mockup `#/lab` in [mockups.html](mockups.html) shows the earlier one-page layout. Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). Built in Lab Stage 3 ([D18](../decisions.md), [fleet-lab.md](../../designs/fleet-lab.md#lab-screen)).
 
 **Purpose.** Compare variants of a pipeline over examples, inspect trials, rate outputs, decide and promote.
 
