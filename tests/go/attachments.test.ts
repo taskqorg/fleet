@@ -8,7 +8,7 @@ import {after, test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash, randomUUID} from 'node:crypto';
 import {fakeS3} from '../s3-fake.ts';
-import {hostCommand} from '../harness.ts';
+import {hostCommand, noHostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 type Reply = {status: number, body: any};
@@ -128,7 +128,7 @@ test('message_send with attachments: the message and the start command carry the
   assert.equal((await op('message_send', {sessionId, requestId, text: 'Quote the word.', attachments: [png.id]})).status, 409, 'other attachments under one request id conflict');
   const view = ok(await op('artifact_get', {artifactId: png.id}));
   assert.equal(view.state, 'stored');
-  assert.ok(!ok(await h('/api/hosts/poll', old)).commands.some((x: any) => x.executionId === e.id), 'an executor without attachments support gets no turn with files');
+  assert.ok(await noHostCommand(async q => ok(await h('/api/hosts/poll' + q, old)), (x: any) => x.executionId === e.id), 'an executor without attachments support gets no turn with files');
   const c = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, poll)), (x: any) => x.executionId === e.id && x.kind === 'start');
   assert.ok(c, 'start command issued');
   assert.deepEqual(c.payload.attachments.map((a: any) => [a.artifactId, a.path, a.mediaType, a.size]),

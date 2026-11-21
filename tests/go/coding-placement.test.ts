@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {hostCommand, startCoordinator} from '../harness.ts';
+import {hostCommand, noHostCommand, startCoordinator} from '../harness.ts';
 
 test('Coding requirements select an eligible host and retain the ordinary coding profile (requirement: fleet.md environment compatibility and project grants; risk: a coding worker starts without its tools or uses an ungranted forge)', {timeout:30000},async()=>{
  const c=await startCoordinator({name:'coding-placement'});
@@ -12,6 +12,7 @@ test('Coding requirements select an eligible host and retain the ordinary coding
   const host='coding-fixture',secret=ok(await op('hosts_register',{id:host})).secret;
   const poll=(capabilities:string[],q='')=>call('/api/hosts/poll'+q,{platform:'darwin',capabilities,stores:[],problems:[]},secret);
   const claim=(capabilities:string[],pick:(x:any)=>unknown)=>hostCommand(async q=>ok(await poll(capabilities,q)),pick);
+  const absent=(capabilities:string[],pick:(x:any)=>unknown)=>noHostCommand(async q=>ok(await poll(capabilities,q)),pick);
   ok(await poll([]));
   const id='coding-'+randomUUID(),settings={id,name:'Coding fixture',contextFiles:[],repos:[{id:'main',remote:'https://github.com/invented/project.git',forge:'github',defaultBranch:'main'}],environments:[{hostId:host,checkoutPath:'/invented/project'}],roles:{worker:'coding-worker'},execution:{tools:['node','pnpm','browser'],forge:true}};
   ok(await op('project_create',{id,requestId:randomUUID(),content:{settings,contextFiles:[]}}));
@@ -20,12 +21,12 @@ test('Coding requirements select an eligible host and retain the ordinary coding
    const response=await op('project_create',{id:invalid.id,requestId:randomUUID(),content:{settings:invalid,contextFiles:[]}});assert.equal(response.status,400,JSON.stringify({profiles,...response}));
   }
   const start=ok(await op('session_start',{projectId:id,role:'worker',requestId:randomUUID(),text:'Fixture only.'}));
-  assert.ok(!ok(await poll(['tool:node','tool:pnpm','tool:browser'])).commands.some((x:any)=>x.executionId===start.executionId),'tools alone do not grant forge');
+  assert.ok(await absent(['tool:node','tool:pnpm','tool:browser'],(x:any)=>x.executionId===start.executionId),'tools alone do not grant forge');
   const command=await claim(['tool:node','tool:pnpm','tool:browser','forge:invented/project'],(x:any)=>x.executionId===start.executionId);
   assert.ok(command);assert.equal(command.payload.agentConfig.id,'coding-worker');assert.equal(command.payload.gitNetwork,true);
   assert.deepEqual(command.payload.project.execution,{tools:['node','pnpm','browser'],forge:true,profiles:[]});
   const windows='preferred-windows',windowsSecret=ok(await op('hosts_register',{id:windows})).secret;
-  const winPoll=()=>call('/api/hosts/poll',{platform:'win32',capabilities:['codex','tool:node','tool:pnpm','tool:browser'],stores:[],problems:[]},windowsSecret);
+  const winPoll=(q='')=>call('/api/hosts/poll'+q,{platform:'win32',capabilities:['codex','tool:node','tool:pnpm','tool:browser'],stores:[],problems:[]},windowsSecret);
   ok(await winPoll());
   const connect=async(name:string,h:string,token:string,platform:string,caps:string[])=>{
    const account=ok(await op('account_create',{name,harness:'codex'}));
@@ -39,12 +40,12 @@ test('Coding requirements select an eligible host and retain the ordinary coding
   const autoSettings={...settings,id:'auto-'+randomUUID(),subscriptions:[win.name,mac.name],environments:[...settings.environments,{hostId:windows,checkoutPath:'/invented/project'}],execution:{...settings.execution,profiles:['coding-worker']}};
   ok(await op('project_create',{id:autoSettings.id,requestId:randomUUID(),content:{settings:autoSettings,contextFiles:[]}}));
   const auto=ok(await op('session_start',{projectId:autoSettings.id,role:'worker',requestId:randomUUID(),text:'Auto coding fixture.'}));
-  assert.ok(!ok(await winPoll()).commands.some((x:any)=>x.executionId===auto.executionId));
+  assert.ok(await noHostCommand(async q=>ok(await winPoll(q)),(x:any)=>x.executionId===auto.executionId));
   const autoCommand=await claim(['codex','tool:node','tool:pnpm','tool:browser','forge:invented/project'],(x:any)=>x.executionId===auto.executionId);
   assert.ok(autoCommand);assert.equal(autoCommand.payload.account,mac.name);
   const explicit=ok(await op('session_start',{projectId:autoSettings.id,role:'worker',account:win.id,hostId:windows,requestId:randomUUID(),text:'Explicit Windows fixture.'}));
-  assert.ok(!ok(await winPoll()).commands.some((x:any)=>x.executionId===explicit.executionId));
-  assert.ok(!ok(await poll(['codex','tool:node','tool:pnpm','tool:browser','forge:invented/project'])).commands.some((x:any)=>x.executionId===explicit.executionId));
+  assert.ok(await noHostCommand(async q=>ok(await winPoll(q)),(x:any)=>x.executionId===explicit.executionId));
+  assert.ok(await absent(['codex','tool:node','tool:pnpm','tool:browser','forge:invented/project'],(x:any)=>x.executionId===explicit.executionId));
   const excluded={...settings,id:'scoped-'+randomUUID(),roles:{pm:'pm',worker:'coding-worker'},execution:{...settings.execution,profiles:['coding-worker']}};
   ok(await op('project_create',{id:excluded.id,requestId:randomUUID(),content:{settings:excluded,contextFiles:[]}}));
   const pm=ok(await op('session_start',{projectId:excluded.id,role:'pm',hostId:host,requestId:randomUUID(),text:'Read and edit fixture.'}));
@@ -56,7 +57,7 @@ test('Coding requirements select an eligible host and retain the ordinary coding
   const resumedCommand=await claim([],(x:any)=>x.executionId===resumed.id);
   assert.ok(resumedCommand);assert.equal(resumedCommand.payload.nativeSessionId,'invented-pds-pm');assert.equal(resumedCommand.payload.account,pmCommand.payload.account);
   const scoped=ok(await op('session_start',{projectId:excluded.id,role:'worker',hostId:host,requestId:randomUUID(),text:'Coding fixture.'}));
-  assert.ok(!ok(await poll([])).commands.some((x:any)=>x.executionId===scoped.executionId));
+  assert.ok(await absent([],(x:any)=>x.executionId===scoped.executionId));
   assert.ok(await claim(['tool:node','tool:pnpm','tool:browser','forge:invented/project'],(x:any)=>x.executionId===scoped.executionId));
  }finally{await c.stop();}
 });

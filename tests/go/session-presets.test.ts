@@ -5,7 +5,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {hostCommand} from '../harness.ts';
+import {hostCommand, noHostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 type Reply = {status: number, body: any};
@@ -103,7 +103,7 @@ test('P4 an agent starts only profiles its project maps, also through a preset, 
   };
   // An old host (no start-access-v1) takes no read-only start; it waits with the reason.
   const waiting = ok(await op('session_start', {projectId: 'preset-agent', preset: 'discuss', hostId: 'trial-host', requestId: randomUUID(), text: 'turn'}));
-  assert.ok(!ok(await host('/api/hosts/poll', {...poll, capabilities: []})).commands.some((c: any) => c.executionId === waiting.executionId), 'no read-only start on a host that would ignore it');
+  assert.ok(await noHostCommand(async q => ok(await host('/api/hosts/poll' + q, {...poll, capabilities: []})), (c: any) => c.executionId === waiting.executionId), 'no read-only start on a host that would ignore it');
   const writer = await agent({role: 'pm'});
   const listed = ok(await writer.tool('session_presets', {}));
   const review = listed.presets.find((p: any) => p.id === 'review');

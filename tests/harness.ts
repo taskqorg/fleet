@@ -89,12 +89,18 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
 // for up to 10 s in all. One poll does not prove a command is ready or not: it may come a round later (host_poll.go
 // pollReadyCommand withholds a command whose execution row is busy at that moment). A pending command is handed out
 // again on every poll until its receipt, so polling again is safe. poll sends the host poll with query ('' or
-// '?wait=1s') appended to its path and answers the reply; undefined when no such command came, for the caller's own
-// assertion.
-export async function hostCommand(poll: (query: string) => Promise<{commands: any[]}>, pick: (c: any) => unknown): Promise<any> {
-  for (let query = '', end = Date.now() + 10_000; ; query = '?wait=1s') {
+// '?wait=1s') appended to its path and answers the reply; undefined when no such command came within ms, for the
+// caller's own assertion.
+export async function hostCommand(poll: (query: string) => Promise<{commands: any[]}>, pick: (c: any) => unknown, ms = 10_000): Promise<any> {
+  for (let query = '', end = Date.now() + ms; ; query = '?wait=1s') {
     const c = (await poll(query)).commands.find(pick);
     if (c || Date.now() >= end) return c;
     await new Promise(r => setTimeout(r, 200)); // a held poll answers at once while another command is pending
   }
+}
+
+// noHostCommand: true when no command pick accepts came in 2 s of polling as hostCommand does. One poll does not prove a
+// command absent either: one withheld for a round would pass it.
+export async function noHostCommand(poll: (query: string) => Promise<{commands: any[]}>, pick: (c: any) => unknown): Promise<boolean> {
+  return await hostCommand(poll, pick, 2_000) === undefined;
 }

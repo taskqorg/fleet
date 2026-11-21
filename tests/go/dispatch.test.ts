@@ -6,7 +6,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
-import {hostCommand} from '../harness.ts';
+import {hostCommand, noHostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const OWNER = 'owner@trial.test';
@@ -27,6 +27,8 @@ async function host(id: string) {
 const poll = {platform: 'darwin', capabilities: [], stores: [], problems: []};
 // polled: the command pick accepts, polled by host h with body until it comes (harness.ts hostCommand).
 const polled = (h: (path: string, body: object) => Promise<Reply>, body: object, pick: (c: any) => unknown) => hostCommand(async q => ok(await h('/api/hosts/poll' + q, body)), pick);
+// unpolled: no command pick accepts comes to host h polling with body (harness.ts noHostCommand).
+const unpolled = (h: (path: string, body: object) => Promise<Reply>, body: object, pick: (c: any) => unknown) => noHostCommand(async q => ok(await h('/api/hosts/poll' + q, body)), pick);
 async function queued() {
   const {sessionId} = ok(await call('POST', '/api/ops/session_create', {}, owner));
   const e = ok(await call('POST', '/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'}, owner));
@@ -39,7 +41,7 @@ test('A1 a paused host takes no work: the execution waits with the skip reason a
   ok(await h('/api/hosts/poll', poll));
   ok(await op('hosts_update', {id: 'trial-host', intake: 'paused'}));
   const {sessionId, executionId} = await queued();
-  assert.ok(!ok(await h('/api/hosts/poll', poll)).commands.some((c: any) => c.executionId === executionId), 'no start command while paused');
+  assert.ok(await unpolled(h, poll, (c: any) => c.executionId === executionId), 'no start command while paused');
   assert.deepEqual([(await execution(sessionId, executionId)).waitReason, (await execution(sessionId, executionId)).waitDetail], ['placement', 'trial-host is Paused']);
   const waiting = () => op('questions_list', {state: 'open'}).then(r => ok(r).questions.filter((q: any) => /Work is waiting: trial-host is Paused/.test(q.text)));
   assert.equal((await waiting()).length, 1, 'one open stall question');
@@ -57,7 +59,7 @@ test('A2 a reached stop budget stops queued work of its director at the next pol
   const b = ok(await op('budget_set', {scope: 'person', scopeId: OWNER, unit: 'wall_ms', limit: 0, action: 'stop'}));
   try {
     const {sessionId, executionId} = await queued();
-    assert.ok(!ok(await h('/api/hosts/poll', poll)).commands.some((c: any) => c.executionId === executionId));
+    assert.ok(await unpolled(h, poll, (c: any) => c.executionId === executionId));
     const e = await execution(sessionId, executionId);
     assert.equal(e.state, 'cancelled'); assert.match(e.stopDetail, /budget reached/);
   } finally { ok(await op('budget_delete', {id: b.id})); }
@@ -103,7 +105,7 @@ test('A5 stopping work no host has taken settles it as stopped with its stop com
   assert.equal(e.state, 'cancelled'); assert.equal(e.stopDetail, 'stopped before dispatch');
   // The stop is final: once the host is open again, its poll (which waits for the dispatch pass) leaves it unclaimed.
   ok(await op('hosts_update', {id: 'trial-host', intake: 'all'}));
-  assert.ok(!ok(await h('/api/hosts/poll', poll)).commands.some((x: any) => x.executionId === executionId), 'no start command for stopped work');
+  assert.ok(await unpolled(h, poll, (x: any) => x.executionId === executionId), 'no start command for stopped work');
   const after = await execution(sessionId, executionId);
   assert.deepEqual([after.state, after.hostId ?? null], ['cancelled', null]);
 });
@@ -140,13 +142,12 @@ test('A5b a stop racing the dispatch claim is never overwritten: a stop that set
   t.diagnostic(`settled ${settled}, handed to the host ${handed}`);
 });
 
-test('task cancellation stops active work and fences later start commands (requirement: Fleet task cancellation and UC3; risk: cancelled tasks keep running or start again)', {timeout: 30_000}, async () => {
+test('task cancellation stops active work and fences later start commands (requirement: Fleet task cancellation and UC3; risk: cancelled tasks keep running or start again)', {timeout: 60_000}, async () => {
   const h = await host('trial-host');
   const projectId = 'hello-world';
   const createTask = async () => ok(await op('task_create', {projectId, title: 'cancel ' + randomUUID(), held: false})).id;
   const start = (taskId?: string, requestId = randomUUID()) =>
     op('session_start', {projectId, profileId: 'pm', taskId, requestId, text: 'work', hostId: 'trial-host'});
-  const commands = async () => ok(await h('/api/hosts/poll', poll)).commands;
   const taskId = await createTask();
   const requestId = randomUUID();
   const active = ok(await start(taskId, requestId));
@@ -165,7 +166,7 @@ test('task cancellation stops active work and fences later start commands (requi
   const pendingStop = await polled(h, poll, (c: any) => c.kind === 'stop' && c.executionId === pending.executionId);
   assert.ok(activeStop, 'cancelling the task requests stop for its running execution');
   assert.ok(pendingStop, 'a previously handed out command could still be running');
-  assert.ok(!(await commands()).some((c: any) => c.kind === 'start' && c.executionId === pending.executionId));
+  assert.ok(await unpolled(h, poll, (c: any) => c.kind === 'start' && c.executionId === pending.executionId));
   assert.equal((await execution(active.sessionId, active.executionId)).state, 'running', 'a stop request is not process proof');
   assert.equal((await start(taskId)).status, 409, 'fresh task-bound start is refused');
   assert.equal(ok(await start(taskId, requestId)).sessionId, active.sessionId, 'idempotent start returns its original session');
@@ -202,7 +203,7 @@ test('task cancellation stops active work and fences later start commands (requi
   assert.equal((await execution(neverDelivered.sessionId, neverDelivered.executionId)).hostId, 'trial-host');
   ok(await op('task_cancel', {taskId: neverDeliveredTask}));
   assert.equal((await execution(neverDelivered.sessionId, neverDelivered.executionId)).state, 'cancelled');
-  assert.ok(!(await commands()).some((c: any) => c.executionId === neverDelivered.executionId));
+  assert.ok(await unpolled(h, poll, (c: any) => c.executionId === neverDelivered.executionId));
 
   const receiptRaceTask = await createTask();
   const receiptRace = ok(await start(receiptRaceTask));
@@ -221,7 +222,7 @@ test('task cancellation stops active work and fences later start commands (requi
     assert.equal(ok(cancel).state, 'cancelled');
     assert.ok([200, 409].includes(launch.status), JSON.stringify(launch.body));
     if (launch.status === 200) {
-      assert.ok(!(await commands()).some((c: any) => c.kind === 'start' && c.executionId === launch.body.executionId));
+      assert.ok(await unpolled(h, poll, (c: any) => c.kind === 'start' && c.executionId === launch.body.executionId));
     }
   }
 });
@@ -271,7 +272,6 @@ test('task cancellation fences delegated work after the parent ended (requiremen
   ok(await op('definition_create', {kind: 'agent', id: profileId, message: 'fixture',
     content: {agent: {...pm, id: profileId, delegationProfiles: ['baseline']}}}));
   const {id: taskId} = ok(await op('task_create', {projectId, title: 'cancel delegated work', held: false}));
-  const commands = async () => ok(await h('/api/hosts/poll', poll)).commands;
   const delegate = async (taskId?: string) => {
     const parent = ok(await op('session_start', {projectId, profileId, taskId, requestId: randomUUID(), text: 'work', hostId: 'trial-host'}));
     const cmd = await polled(h, poll, (c: any) => c.kind === 'start' && c.executionId === parent.executionId);
@@ -287,7 +287,7 @@ test('task cancellation fences delegated work after the parent ended (requiremen
   const {child} = await delegate(taskId);
   assert.equal(ok(await op('task_cancel', {taskId})).state, 'cancelled');
   assert.equal(ok(await op('execution_status', {executionId: child.childExecutionId})).state, 'cancelled');
-  assert.ok(!(await commands()).some((c: any) => c.executionId === child.childExecutionId));
+  assert.ok(await unpolled(h, poll, (c: any) => c.executionId === child.childExecutionId));
   const detached = await delegate();
   const attach = await call('POST', '/api/ops/session_task_attach',
     {sessionId: detached.parent.sessionId, taskId}, {...owner, 'x-fleet-person': 'member@trial.test'});
@@ -336,7 +336,7 @@ test('task cancellation fences an agent-owned pipeline (requirement: Fleet task 
   ok(await receipt(stop, 'stopped'));
   ok(await receipt(script, 'completed'));
   assert.equal(ok(await op('pipeline_get', {runId})).state, 'cancelled');
-  assert.ok(!(await commands()).some((c: any) => c.kind === 'script'), 'no later step was handed out');
+  assert.ok(await unpolled(h, {...poll, capabilities: ['script']}, (c: any) => c.kind === 'script'), 'no later step was handed out');
   const parentStop = await polled(h, {...poll, capabilities: ['script']}, (c: any) => c.kind === 'stop' && c.executionId === active.executionId);
   assert.ok(parentStop);
   ok(await receipt(parentStop, 'stopped'));
@@ -451,7 +451,7 @@ test('A9 a host without the project repository\'s git connection takes no run of
   const h = await host('owner-mac');
   ok(await h('/api/hosts/poll', {...poll, gitConnections: []}));
   const s = ok(await op('session_start', {requestId: randomUUID(), text: 'hi', projectId: 'cs', profileId: 'pm', hostId: 'owner-mac'}));
-  assert.ok(!ok(await h('/api/hosts/poll', {...poll, gitConnections: []})).commands.some((c: any) => c.executionId === s.executionId), 'no start without the connection');
+  assert.ok(await unpolled(h, {...poll, gitConnections: []}, (c: any) => c.executionId === s.executionId), 'no start without the connection');
   assert.equal((await execution(s.sessionId, s.executionId)).waitDetail, 'owner-mac has no git connection cs-gitlab');
   assert.ok(await polled(h, {...poll, gitConnections: ['cs-gitlab']}, (c: any) => c.executionId === s.executionId && c.kind === 'start'), 'starts once the host holds the connection');
 });
