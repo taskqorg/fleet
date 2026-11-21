@@ -76,6 +76,7 @@ func checkedID(s string) (string, error) {
 }
 
 // harnessName: payload harness, else agentConfig.harness; a non-string agentConfig harness is "invalid"; default codex.
+// The decoded payload cannot tell a null harness from none: callers with the command check harnessNull.
 func harnessName(p contract.StartPayload) string {
 	if p.Harness != nil {
 		return *p.Harness
@@ -90,8 +91,26 @@ func harnessName(p contract.StartPayload) string {
 	return "invalid"
 }
 
+// harnessNull: the command's payload names "harness": null, which names no harness ("invalid": the start fails as an
+// unknown harness, never falls back to codex).
+func harnessNull(c contract.Command) bool {
+	raw := c.Raw
+	if raw == nil {
+		return false // built here, not received: a nil harness was omitted
+	}
+	var x struct {
+		Payload struct {
+			Harness json.RawMessage `json:"harness"`
+		} `json:"payload"`
+	}
+	return json.Unmarshal(raw, &x) == nil && string(x.Payload.Harness) == "null"
+}
+
 // commandHarness: the harness of a start or input command; other kinds name none, so codex.
 func commandHarness(c contract.Command) string {
+	if harnessNull(c) {
+		return "invalid"
+	}
 	switch {
 	case c.Start != nil && c.Start.Payload != nil:
 		return harnessName(*c.Start.Payload)
@@ -1048,6 +1067,9 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		}
 	}
 	name := harnessName(sp)
+	if harnessNull(c) {
+		name = "invalid"
+	}
 	key := str0(sp.WorkspaceKey)
 	dir := e.commandDir(session, key)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

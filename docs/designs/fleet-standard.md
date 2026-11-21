@@ -1,7 +1,8 @@
 # Fleet standard: one way per layer
 
-Status: plan, 2026-11-20. Owner decision: refactor every layer onto these standards first, with no new tests;
-tests come after, only where a check earns its place.
+Status: stages 0–11 merged, 2026-11-21; what remains is listed under [What remains](#what-remains). Owner decision:
+refactor every layer onto these standards first, with no new tests; tests come after, only where a check earns its
+place.
 
 ## Why
 
@@ -102,17 +103,32 @@ loop and the retry-column writes). State-column writes outside the owner are che
 
 ## Stages
 
-| # | Stage | Done when |
-|---|---|---|
-| 0 | Ground: merge the silent-skip test fix (55 PG tests no longer skip), this document, DESIGN_RULES.md with S10 scan + legacy allowlist | merged; scan passes with allowlist |
-| 1 | Foundations: sqlc toolchain + `db` package, `store.Read/Write`, `afterCommit`, `fleet_visible()`, schema functions split, `op[Req,Rep]` + `auth`/`agent` in the contract generator, single `runOp`, `mcpserve`, generalized work kit | new primitives used by at least one area each; old ones untouched |
-| 2 | Operations: every op on `op[Req,Rep]` with schema `auth`/`agent`; delete `gatedOp`, `gatedObjOp`, `shaped`, `agentOps`, `architectOps`, REST aliases | no raw/shaped ops; agent tools guarded |
-| 3 | Executions, tasks, questions, artifacts, definitions, experiments on sqlc; transition owners; drop `data` mirrors | these files off the allowlist |
-| 4 | Conversations: session, message, event, command, handoff into tables | `document` no longer holds them |
-| 5 | Hosts, accounts, connections, tokens into tables (reuse exp2/C); typed host protocol on the coordinator side | allowlist shrinks by these files |
-| 6 | Pipelines and Lab onto the kit and transitions; delete advance goroutines and lock maps | no `go func` in these files |
-| 7 | Resource projection onto the kit (reuse exp2/B), analytics on sqlc | resource files off the allowlist |
-| 8 | Delivery, audit, uploads and small kinds; delete `document`; cleanup reference map from foreign keys | `document` table dropped |
-| 9 | Executor: typed commands, single outbox, `supervise.Spawn`, `mcpserve`; gateway/update error tracking | executor `jStr` count 0 |
-| 10 | App: `useOp`, closed row types, single preset/harness source | no raw `op()` reads or `any` in views |
-| 11 | Tests: delete tests of removed internals, keep invariant checks; full suite green | CI green on main |
+| # | Stage | Done when | Merged |
+|---|---|---|---|
+| 0 | Ground: merge the silent-skip test fix (55 PG tests no longer skip), this document, DESIGN_RULES.md with S10 scan + legacy allowlist | merged; scan passes with allowlist | #675 |
+| 1 | Foundations: sqlc toolchain + `db` package, `store.Read/Write`, `afterCommit`, `fleet_visible()`, schema functions split, `op[Req,Rep]` + `auth`/`agent` in the contract generator, single `runOp`, `mcpserve`, generalized work kit | new primitives used by at least one area each; old ones untouched | #676, #677 |
+| 2 | Operations: every op on `op[Req,Rep]` with schema `auth`/`agent`; delete `gatedOp`, `gatedObjOp`, `shaped`, `agentOps`, `architectOps`, REST aliases | no raw/shaped ops; agent tools guarded | #679 |
+| 3 | Executions, tasks, questions, artifacts, definitions, experiments on sqlc; transition owners; drop `data` mirrors | these files off the allowlist | #681, #691, #693 |
+| 4 | Conversations: session, message, event, command, handoff into tables | `document` no longer holds them | #682, #692 |
+| 5 | Hosts, accounts, connections, tokens into tables (reuse exp2/C); typed host protocol on the coordinator side | allowlist shrinks by these files | #687 |
+| 6 | Pipelines and Lab onto the kit and transitions; delete advance goroutines and lock maps | no `go func` in these files | #689 |
+| 7 | Resource projection onto the kit (reuse exp2/B), analytics on sqlc | resource files off the allowlist | #678 |
+| 8 | Delivery, audit, uploads and small kinds; delete `document`; cleanup reference map from foreign keys | `document` table dropped | #694, #697, #698, #699 |
+| 9 | Executor: typed commands, single outbox, `supervise.Spawn`, `mcpserve`; gateway/update error tracking | executor `jStr` count 0 | #680, #688, #696 |
+| 10 | App: `useOp`, closed row types, single preset/harness source | no raw `op()` reads or `any` in views | #686 |
+| 11 | Tests: delete tests of removed internals, keep invariant checks; full suite green | CI green on main | this stage's pull request |
+
+## What remains
+
+- **Legacy allowlist:** `json.go` and `registry.go` (R-MAP): the `doc` map type and `docOf`, which typed callers
+  still use to hand records to the map-taking helpers (`agentReady`, `handoffPipelineCommand`, `hostMayRun`).
+- **Executor:** 3 `jStr` uses on in-memory maps (`harness_codex.go`, `mcp_code.go`); `jObj` and `jBoolOr` are read by
+  tests only.
+- **S10 checks not built:** the `background.go` exemption of the scheduling scan.
+- **Schema:** `person_setting.email` has no foreign key (the people reload deletes and reinserts `person`).
+
+Stage 11 also fixed what the stages had deferred: `command.execution_id` has its foreign key again (migration 85), a
+coordinator read token is revoked when the last read of an ended token releases it (the 10 s pass stays as the
+backstop), a start with `"harness": null` fails as an unknown harness instead of starting codex, and a host poll
+answers a pending command whose stored row is unchanged from the reply it prepared before (`pollPrepared`,
+host_poll.go) instead of decoding it again.

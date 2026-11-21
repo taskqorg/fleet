@@ -3,7 +3,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {hostCommand, startCoordinator, lit} from '../harness.ts';
+import {hostCommand, noHostCommand, startCoordinator, lit} from '../harness.ts';
 
 test('Q1 a project execution queued before project snapshots starts with the project as it is now, and the poll stays 200 (requirement: host poll serves every host, 2026-11-12 PDS18 outage; risk: one legacy queued execution fails every poll of the host it ranks first)', {timeout: 30_000}, async () => {
   const c = await startCoordinator({name: 'queue-legacy'});
@@ -35,7 +35,7 @@ test('Q1 a project execution queued before project snapshots starts with the pro
     // no longer retarget queued executions (execution-continuity.md session project selection).
     c.sql('UPDATE legacy_fixture SET bad=true');
     const bad = ok(await post('/api/ops/session_start', {requestId: randomUUID(), text: 'hi', projectId: 'hello-world', profileId: 'pm', hostId: 'trial-host'}, owner));
-    assert.ok(!ok(await poll()).commands.some((x: any) => x.executionId === bad.executionId), 'no start for the refused execution');
+    assert.ok(await noHostCommand(async q => ok(await poll(q)), (x: any) => x.executionId === bad.executionId), 'no start for the refused execution');
     const row = c.sql(`SELECT state || ' ' || (data->>'stopDetail') FROM execution WHERE id=${lit(bad.executionId)};`).trim();
     assert.equal(row, 'cancelled start refused: Unknown project');
     ok(await poll());

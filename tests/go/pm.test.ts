@@ -6,7 +6,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {hostCommand} from '../harness.ts';
+import {hostCommand, noHostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const OWNER = 'owner@trial.test', MEMBER = 'member@trial.test';
@@ -372,8 +372,8 @@ test('PM project transition applies after the active turn with checkout rules an
  assert.equal(before.executions[0].dispatch.projectId,null);
  ok(await hostCall(OWNER,'/api/hosts/receipts',{executionId:pm.executionId,commandId:pm.commandId,status:'completed',nativeSessionId:'old-projectless-native'}));
 
- const legacyPoll=ok(await hostCall(OWNER,'/api/hosts/poll',{...poll,capabilities:[]}));
- assert.ok(!legacyPoll.commands.some((c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId),'older executor must not claim keyed checkout');
+ const legacyPoll=async(q:string)=>ok(await hostCall(OWNER,'/api/hosts/poll'+q,{...poll,capabilities:[]}));
+ assert.ok(await noHostCommand(legacyPoll,(c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId),'older executor must not claim keyed checkout');
  const ownerPoll=async(q:string)=>ok(await hostCall(OWNER,'/api/hosts/poll'+q,poll));
  const next=await hostCommand(ownerPoll,(c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId&&c.executionId!==pm.executionId);
  assert.ok(next,'the next start of the session');
@@ -389,8 +389,7 @@ test('PM project transition applies after the active turn with checkout rules an
   const transition=ok(await op('session_transition',{sessionId:pm.sessionId,projectId}));
   assert.equal(transition.transition,'create_with_handoff');
   ok(await call('POST','/api/ops/message_send', {sessionId: pm.sessionId, requestId:randomUUID(),text:'continue'},as(OWNER)));
-  const oldHost=ok(await hostCall(OWNER,'/api/hosts/poll',{...poll,capabilities:[]}));
-  assert.ok(!oldHost.commands.some((c:any)=>c.payload?.workspaceKey),'old hosts cannot claim keyed cleanup or start');
+  assert.ok(await noHostCommand(legacyPoll,(c:any)=>c.payload?.workspaceKey),'old hosts cannot claim keyed cleanup or start');
   const cleanup=await hostCommand(ownerPoll,(c:any)=>c.kind==='teardown'&&c.executionId===current.executionId);
   assert.ok(cleanup,'the teardown of the previous checkout');
   assert.equal(cleanup.payload.projectId,current.payload.projectId);

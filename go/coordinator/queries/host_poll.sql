@@ -25,3 +25,17 @@ SELECT DISTINCT sid::text FROM (
 -- name: HostReceiptLockExecution :exec
 -- executionStop's row lock: an overlapping started or accepted receipt cannot overwrite a durable stop request.
 SELECT 1 FROM execution WHERE id=$1 FOR UPDATE;
+
+-- name: HostPollPending :many
+-- A host's pending commands in order (one of them with id), without their payloads: only what the poll's gates read of
+-- the command's payload (the record's payload field, held in the payload column with the record's other fields).
+SELECT id, kind, execution_id, status::text AS status, handed_out,
+ coalesce(x.p->'readOnly', 'null'::jsonb)::jsonb AS read_only, coalesce(x.p->'branch', 'null'::jsonb)::jsonb AS branch,
+ coalesce(x.p->'projectId', 'null'::jsonb)::jsonb AS payload_project_id, coalesce(x.p->>'workspaceKey', '')::text AS workspace_key,
+ coalesce(jsonb_typeof(x.p->'attachments') = 'array' AND jsonb_array_length(x.p->'attachments') > 0, false)::boolean AS has_attachments
+FROM command CROSS JOIN LATERAL (SELECT payload->'payload' AS p) x
+WHERE host_id= @host_id::text AND status='pending' AND (sqlc.narg(id)::text IS NULL OR id=sqlc.narg(id)) ORDER BY seq;
+
+-- name: HostPollCommandRevision :one
+-- The revision of a stored command: its row version and write time (a write in this transaction changes both).
+SELECT (xmin::text || ' ' || updated_at::text)::text AS revision FROM command WHERE id=$1;

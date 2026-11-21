@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -52,10 +53,18 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 		if err := exec(q, `UPDATE execution SET data=jsonb_set(data,'{authority,actorEmail}','"gone@example.com"') WHERE id='refused'`); err != nil {
 			return err
 		}
-		// A command of an execution that no longer exists.
-		orphan := doc{"id": newID(), "executionId": "no-such-execution", "hostId": "iso-host", "kind": "input", "payload": doc{}, "status": "pending"}
-		ids["orphan"] = astr(orphan["id"])
-		return recPut(q, recCommand, &orphan)
+		// Commands without their execution: one of no execution, and one whose execution is deleted (its foreign key
+		// deletes the command with it).
+		ids["orphan"], ids["deleted"] = newID(), newID()
+		if err := exec(q, `INSERT INTO execution(id,kind,state,data) VALUES('iso-gone','agent_run','running','{}')`); err != nil {
+			return err
+		}
+		for id, exe := range map[string]*string{ids["orphan"]: nil, ids["deleted"]: ptr("iso-gone")} {
+			if err := commandCreate(q, db.CommandUpsertParams{ID: id, ExecutionID: exe, HostID: ptr("iso-host"), Kind: "input", Status: db.CommandStatusPending, Payload: []byte("{}")}); err != nil {
+				return err
+			}
+		}
+		return exec(q, `DELETE FROM execution WHERE id='iso-gone'`)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +76,7 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 	for _, c := range out {
 		got[c.Id()] = true
 	}
-	if !got[ids["good"]] || got[ids["refused"]] || got[ids["orphan"]] || len(out) != 1 {
+	if !got[ids["good"]] || got[ids["refused"]] || got[ids["orphan"]] || got[ids["deleted"]] || len(out) != 1 {
 		t.Fatalf("delivered %v, want only the good script %s", out, ids["good"])
 	}
 	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
@@ -82,6 +91,10 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 			if mapOf(c["payload"])["runToken"] != nil {
 				return fmt.Errorf("%s command carries a run token", id)
 			}
+		}
+		var kept int
+		if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FROM command WHERE id=$1`, ids["deleted"]).Scan(&kept); err != nil || kept != 0 {
+			return fmt.Errorf("the deleted execution's command is still stored (%d, %v)", kept, err)
 		}
 		run, err := getRun(q, "refused")
 		if err != nil {

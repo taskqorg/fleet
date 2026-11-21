@@ -143,8 +143,8 @@ test('prepared operations: auth, progress, configuration independence, C-order w
    INSERT INTO command(id,kind,project_id,execution_id,host_id) VALUES('api-command','','desiign','api-agent','api-host');`);
   const agent=async(name:string,args:object,expected=200)=>{const r=await request('/api/hosts/agent-tools',{hostId:'api-host',executionId:'api-agent',commandId:'api-command',request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}}},member,host.secret);assert.equal(r.status,expected,JSON.stringify(r.body));return r.status===200?JSON.parse(r.body.result.content[0].text):r.body;};
   c.sql(`INSERT INTO session(id,directed_by) VALUES('api-unbound-session','${member}');
-   INSERT INTO command(id,kind,execution_id,host_id) VALUES('api-unbound-command','','api-unbound-agent','api-host');
-   INSERT INTO execution(id,kind,state,session_id,host_id,directed_by,data) VALUES('api-unbound-agent','agent_run','running','api-unbound-session','api-host','${member}',jsonb_build_object('id','api-unbound-agent','hostId','api-host','sessionId','api-unbound-session','directedBy','${member}'));`);
+   INSERT INTO execution(id,kind,state,session_id,host_id,directed_by,data) VALUES('api-unbound-agent','agent_run','running','api-unbound-session','api-host','${member}',jsonb_build_object('id','api-unbound-agent','hostId','api-host','sessionId','api-unbound-session','directedBy','${member}'));
+   INSERT INTO command(id,kind,execution_id,host_id) VALUES('api-unbound-command','','api-unbound-agent','api-host');`);
   for(const name of operations){const r=await request('/api/hosts/agent-tools',{hostId:'api-host',executionId:'api-unbound-agent',commandId:'api-unbound-command',request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:{category:'tools'}}}},member,host.secret);assert.equal(r.status,400,JSON.stringify(r.body));}
   for(const name of operations){
    const b=await agent(name,{category:'tools'});assert.equal(b.projectId??b.id,'desiign');

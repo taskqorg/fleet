@@ -438,10 +438,11 @@ func bugsinkResolvedPass(ctx context.Context, a *App) error {
 // bugsinkIssueClosed: whether Bugsink reports the issue resolved or no longer has it, read with the bugsink
 // connection's issue_get as project. A variable so tests answer without a gateway.
 var bugsinkIssueClosed = func(ctx context.Context, a *App, project, issue string) (bool, error) {
-	token, err := readTokenFor(ctx, a, bugsinkConn, project)
+	token, release, err := readTokenFor(ctx, a, bugsinkConn, project)
 	if err != nil {
 		return false, err
 	}
+	defer release()
 	return issueClosed(gatewayCall(ctx, token, bugsinkConn, "issue_get", map[string]string{"issue": issue}, gatewayProviders[bugsinkConn].Tools["issue_get"].Idempotent), issue)
 }
 

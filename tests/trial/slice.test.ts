@@ -5,7 +5,7 @@
 import {after, test as nodeTest} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {hostCommand} from '../harness.ts';
+import {hostCommand, noHostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 if (!BASE || !SECRET) throw Error('FLEET_TRIAL_URL and FLEET_TRIAL_BROWSER_SECRET are required (node tests/trial/run.ts sets them)');
@@ -105,8 +105,7 @@ test('SL4 a message queues one execution with no host yet; a repeated requestId 
 test('SL5 a poll of the default host claims a queued execution and delivers its start command; a poll delivers commands of the polling host only (risk: work sent to the wrong machine)', async () => {
   const {executionId, commandId} = await started();
   const other = await host('other-host');
-  const {commands} = ok(await other('/api/hosts/poll', {platform: 'linux', capabilities: [], stores: [], problems: []}));
-  assert.ok(!commands.some((c: any) => c.id === commandId || c.executionId === executionId), 'another host never gets this command');
+  assert.ok(await noHostCommand(async q => ok(await other('/api/hosts/poll' + q, {platform: 'linux', capabilities: [], stores: [], problems: []})), (c: any) => c.id === commandId || c.executionId === executionId), 'another host never gets this command');
   const h = await host('trial-host');
   const again = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []})), (c: any) => c.id === commandId);
   assert.equal(again?.kind, 'start'); assert.equal(again?.payload?.text, 'hello'); assert.equal(again?.status, 'pending'); assert.equal(again?.hostId, 'trial-host');
