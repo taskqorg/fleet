@@ -1139,7 +1139,7 @@ CREATE FUNCTION fleet_own_projectless_execution(eid text) RETURNS boolean LANGUA
 CREATE FUNCTION fleet_own_projectless_session(sid text) RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_project_code(p_project text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_project_code_set(p_project text, p_code text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
-CREATE FUNCTION fleet_refresh_execution_spend(eid text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_refresh_execution_spend_ids(eids text[]) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_session_hidden_lineage_count(sid text) RETURNS bigint LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_show_deleted() RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_task_derived(p_task text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
