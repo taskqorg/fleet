@@ -243,7 +243,27 @@ type leaderboardAcc struct {
 	latestAt           time.Time
 }
 
-var labExampleUseCaseCache sync.Map // artifactID -> use_case_id (approved example artifacts are immutable by ID/hash)
+var labExampleUseCaseCache sync.Map // artifactID -> use_case_id (example artifacts are immutable by ID/hash)
+
+// cachedExampleUseCaseID returns the immutable use_case_id of a stored example artifact,
+// caching only valid reads so transient read errors are never poisoned.
+func cachedExampleUseCaseID(q *Request, artifactID string) string {
+	if artifactID == "" {
+		return ""
+	}
+	if v, ok := labExampleUseCaseCache.Load(artifactID); ok {
+		uc, _ := v.(string)
+		return uc
+	}
+	stored, err := labExampleRead(q, artifactID)
+	if err != nil {
+		return ""
+	}
+	if stored.example.UseCaseID != "" {
+		labExampleUseCaseCache.Store(artifactID, stored.example.UseCaseID)
+	}
+	return stored.example.UseCaseID
+}
 
 func labTrialUseCaseID(q *Request, tr db.LabLeaderboardTrialsRow, exp *labExperiment, exCache map[string]string) string {
 	if tr.ExampleUseCaseID != "" {
@@ -259,19 +279,9 @@ func labTrialUseCaseID(q *Request, tr db.LabLeaderboardTrialsRow, exp *labExperi
 	if uc, ok := exCache[pin.ArtifactID]; ok {
 		return uc
 	}
-	if v, ok := labExampleUseCaseCache.Load(pin.ArtifactID); ok {
-		uc, _ := v.(string)
-		exCache[pin.ArtifactID] = uc
-		return uc
-	}
-	stored, err := labExampleRead(q, pin.ArtifactID)
-	if err != nil {
-		exCache[pin.ArtifactID] = ""
-		return ""
-	}
-	labExampleUseCaseCache.Store(pin.ArtifactID, stored.example.UseCaseID)
-	exCache[pin.ArtifactID] = stored.example.UseCaseID
-	return stored.example.UseCaseID
+	uc := cachedExampleUseCaseID(q, pin.ArtifactID)
+	exCache[pin.ArtifactID] = uc
+	return uc
 }
 
 func labTrialConfigRef(raw []byte, variant *labVariant) string {

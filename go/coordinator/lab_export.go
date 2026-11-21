@@ -523,8 +523,12 @@ func labExamplesList(q *Request, state *contract.LabExampleState) (contract.LabE
 	}
 	for _, r := range rs {
 		hash := r.ContentHash
+		var useCaseID *string
+		if uc := cachedExampleUseCaseID(q, r.ID); uc != "" {
+			useCaseID = &uc
+		}
 		out.Examples = append(out.Examples, contract.LabExampleEntry{ArtifactId: r.ID, ProjectId: r.ProjectID, Name: r.Name, Hash: &hash, State: labExampleState(r.ApprovedAt),
-			ApprovedAt: jsonBytes(r.ApprovedAt), CreatedAt: jsonBytes(r.CreatedAt)})
+			UseCaseId: useCaseID, ApprovedAt: jsonBytes(r.ApprovedAt), CreatedAt: jsonBytes(r.CreatedAt)})
 	}
 	return out, nil
 }
