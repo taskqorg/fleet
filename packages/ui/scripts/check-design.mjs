@@ -34,6 +34,9 @@ const RULES = [
   { id: 'OR-36', re: /label="Filter"/g, where: f => /\.tsx$/.test(f), say: 'Filter button; filters are typed in search (query syntax)' },
   { id: 'OR-35', re: /seg-label">Group</g, where: f => /\.tsx$/.test(f), say: '"Group" as a word; use GroupControl (registry icon with tooltip)' },
   { id: 'OR-15', re: /Back to /g, where: f => /\.(tsx|html)$/.test(f), say: 'text back link; use an icon, or rely on browser Back' },
+  { id: 'OR-45', re: /badge t-attention.*override/g, where: f => /\.tsx$/.test(f), say: 'override attention badge; show only differing values without override badge or t-attention tone' },
+  { id: 'OR-46', re: /<nav[^>]*class="[^"]*\bsub-nav\b/g, where: f => /\.(tsx|html)$/.test(f), say: 'horizontal <nav class="sub-nav"> above columns; use Control Column tree/list and one ShellHeader' },
+  { id: 'OR-49', re: /role="tablist"/g, where: f => /\.tsx$/.test(f) && !/controls\/tables\.tsx$/.test(f), say: 'raw role="tablist"; use TabBar from packages/ui' },
 ];
 const warn = [];
 for (const f of files) {
