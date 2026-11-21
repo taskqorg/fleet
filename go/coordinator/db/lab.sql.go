@@ -777,6 +777,80 @@ func (q *Queries) LabLeafMeta(ctx context.Context, leafIds []string) ([]LabLeafM
 	return items, nil
 }
 
+const labLeafSpend = `-- name: LabLeafSpend :many
+SELECT
+ e.id AS execution_id,
+ e.kind::text AS kind,
+ (s.execution_id IS NOT NULL)::boolean AS has_spend,
+ coalesce(s.stale, true)::boolean AS stale,
+ s.cost_currency,
+ s.cost_basis,
+ s.cost_value,
+ coalesce(s.cost_unpriced, 0)::bigint AS cost_unpriced,
+ s.payload,
+ t.tokens_input,
+ t.tokens_output,
+ t.tokens_cache_read,
+ t.tokens_cache_write
+FROM execution e
+LEFT JOIN execution_spend s ON s.execution_id = e.id
+LEFT JOIN execution_totals t ON t.execution_id = e.id
+WHERE e.id = ANY($1::text[])
+  AND e.kind NOT IN ('pipeline_run', 'pipeline_step')
+  AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL)
+`
+
+type LabLeafSpendRow struct {
+	ExecutionID      string
+	Kind             string
+	HasSpend         bool
+	Stale            bool
+	CostCurrency     *string
+	CostBasis        *string
+	CostValue        *float64
+	CostUnpriced     int64
+	Payload          []byte
+	TokensInput      *int64
+	TokensOutput     *int64
+	TokensCacheRead  *int64
+	TokensCacheWrite *int64
+}
+
+// Precomputed spend and token totals for leaf executions (lab_leaderboard.go).
+func (q *Queries) LabLeafSpend(ctx context.Context, leafIds []string) ([]LabLeafSpendRow, error) {
+	rows, err := q.db.Query(ctx, labLeafSpend, leafIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LabLeafSpendRow
+	for rows.Next() {
+		var i LabLeafSpendRow
+		if err := rows.Scan(
+			&i.ExecutionID,
+			&i.Kind,
+			&i.HasSpend,
+			&i.Stale,
+			&i.CostCurrency,
+			&i.CostBasis,
+			&i.CostValue,
+			&i.CostUnpriced,
+			&i.Payload,
+			&i.TokensInput,
+			&i.TokensOutput,
+			&i.TokensCacheRead,
+			&i.TokensCacheWrite,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const labNoteInsert = `-- name: LabNoteInsert :exec
 INSERT INTO experiment_note(id,experiment_id,project_id,kind,field,old,new,text,author)
 VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)
@@ -1353,40 +1427,62 @@ WITH RECURSIVE
   SELECT t.trial_id, c.id AS exec_id
   FROM trials t
   JOIN execution c ON c.data @> jsonb_build_object('pipelineRunId', t.trial_id)
+  WHERE NOT EXISTS (
+   SELECT 1 FROM reused_steps rs
+   WHERE rs.trial_id = t.trial_id AND (rs.step_exec_id = c.id OR rs.step_exec_id = c.parent_execution_id)
+  )
   UNION
   SELECT t.trial_id, c.id AS exec_id
   FROM trials t
   JOIN execution c ON c.parent_execution_id = t.trial_id
+  WHERE NOT EXISTS (
+   SELECT 1 FROM reused_steps rs
+   WHERE rs.trial_id = t.trial_id AND rs.step_exec_id = c.id
+  )
   UNION
   SELECT t.trial_id, c.id AS exec_id
   FROM trials t
-  JOIN execution c ON c.parent_execution_id >= (t.trial_id || ':step:') AND c.parent_execution_id < (t.trial_id || ':step;')
-  WHERE NOT EXISTS (SELECT 1 FROM reused_steps rs WHERE rs.trial_id = t.trial_id AND rs.step_exec_id = c.parent_execution_id)
+  JOIN pipeline_step p ON p.run_id = t.trial_id AND p.ref_mode IS DISTINCT FROM 'reused'
+  JOIN execution c ON c.parent_execution_id = (p.run_id || ':step:' || p.step_index::text)
+  UNION
+  SELECT t.trial_id, c.id AS exec_id
+  FROM trials t
+  JOIN pipeline_step p ON p.run_id = t.trial_id AND p.ref_mode IS DISTINCT FROM 'reused' AND p.ref_execution_id IS NOT NULL
+  JOIN execution c ON c.parent_execution_id = p.ref_execution_id
   UNION
   SELECT t.trial_id, c.id AS exec_id
   FROM trials t
   JOIN pipeline_step p ON p.run_id = t.trial_id AND p.ref_mode IS DISTINCT FROM 'reused' AND p.native_execution_id IS NOT NULL
   JOIN execution c ON c.id = p.native_execution_id
- ),
- session_parents AS (
-  SELECT coalesce(jsonb_object_agg(id, parent_execution_id), '{}'::jsonb) AS m
-  FROM session WHERE parent_execution_id IS NOT NULL
- ),
- edges AS MATERIALIZED (
-  SELECT DISTINCT c.id AS child_id, p.parent_id::text AS parent_id
-  FROM execution c
-  CROSS JOIN LATERAL (VALUES
-   (c.parent_execution_id),
-   (CASE WHEN c.delegation IS NOT NULL THEN c.delegation->>'parentExecutionId' END),
-   ((SELECT m FROM session_parents) ->> c.session_id)
-  ) p(parent_id)
-  WHERE p.parent_id IS NOT NULL
+  UNION
+  SELECT t.trial_id, c.id AS exec_id
+  FROM trials t
+  JOIN session s ON s.pipeline_run_id = t.trial_id
+  JOIN execution c ON c.session_id = s.id
+  WHERE NOT EXISTS (
+   SELECT 1 FROM reused_steps rs
+   WHERE rs.trial_id = t.trial_id AND (rs.step_exec_id = c.id OR rs.step_exec_id = c.parent_execution_id)
+  )
  ),
  tree AS (
   SELECT trial_id, exec_id FROM seed
   UNION
-  SELECT tr.trial_id, e.child_id AS exec_id
-  FROM edges e JOIN tree tr ON e.parent_id = tr.exec_id
+  SELECT tr.trial_id, ch.exec_id
+  FROM tree tr
+  CROSS JOIN LATERAL (
+   SELECT c.id AS exec_id
+   FROM execution c
+   WHERE c.parent_execution_id = tr.exec_id
+   UNION
+   SELECT c.id AS exec_id
+   FROM session s
+   JOIN execution c ON c.session_id = s.id
+   WHERE s.parent_execution_id = tr.exec_id
+  ) ch
+  WHERE NOT EXISTS (
+   SELECT 1 FROM reused_steps rs
+   WHERE rs.trial_id = tr.trial_id AND rs.step_exec_id = ch.exec_id
+  )
  ),
  scoped_leaves AS (
   SELECT DISTINCT 'trial'::text AS scope, tr.trial_id AS scope_key, e.id AS leaf_id
@@ -1408,7 +1504,7 @@ type LabTrialsLineageRow struct {
 	LeafIds   []string
 }
 
-// Non-reused leaf executions per trial ID, including child_agent and tool_run descendants (lab.go expGet, lab_leaderboard.go).
+// Non-reused leaf executions per trial ID, traversing strictly downward via indexed lookups (lab.go expGet, lab_leaderboard.go).
 func (q *Queries) LabTrialsLineage(ctx context.Context, trialIds []string) (LabTrialsLineageRow, error) {
 	row := q.db.QueryRow(ctx, labTrialsLineage, trialIds)
 	var i LabTrialsLineageRow

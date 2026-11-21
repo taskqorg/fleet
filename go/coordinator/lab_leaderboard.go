@@ -235,6 +235,38 @@ func medianInt64(vals []float64) *int64 {
 	return &v
 }
 
+func int64OrZero(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+type trialSpendAcc struct {
+	tokensTotal  int64
+	costUsd      float64
+	costPriced   int
+	costUnpriced int
+	costBases    []contract.ResourceBasis
+}
+
+func addTrialCostFigures(ts *trialSpendAcc, figs []contract.CostFigure) bool {
+	sawUnpriced := false
+	for _, cf := range figs {
+		if cf.Basis == contract.ResourceBasisUnavailable {
+			ts.costUnpriced++
+			sawUnpriced = true
+			continue
+		}
+		if cf.Value != nil && deref(cf.Currency) == "USD" {
+			ts.costUsd += *cf.Value
+			ts.costPriced++
+			ts.costBases = append(ts.costBases, cf.Basis)
+		}
+	}
+	return sawUnpriced
+}
+
 func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.LabLeaderboardReply, error) {
 	out := contract.LabLeaderboardReply{
 		Entries:     []contract.LabLeaderboardEntry{},
@@ -369,18 +401,22 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		}
 	}
 
-	// Fetch lineage, resource summaries (tokens + cost), and resolved model/profile per trial.
+	// Fetch lineage, precomputed leaf spend/tokens, and resolved model/profile per trial.
 	lineage, err := q.db().LabTrialsLineage(q.ctx(), filteredTrialIDs)
 	if err != nil {
 		return out, err
 	}
-	trialResources := map[string]contract.ResourceSummary{}
+	spendByTrial := map[string]*trialSpendAcc{}
+	ensureTrialSpend := func(tid string) *trialSpendAcc {
+		ts := spendByTrial[tid]
+		if ts == nil {
+			ts = &trialSpendAcc{}
+			spendByTrial[tid] = ts
+		}
+		return ts
+	}
 	leavesByTrial := map[string][]db.LabLeafMetaRow{}
 	if len(lineage.LeafIds) > 0 {
-		trialResources, err = summarizeResourceQuery(q, lineage.Scopes, lineage.ScopeKeys, lineage.LeafIds)
-		if err != nil {
-			return out, err
-		}
 		uniqLeafSet := map[string]bool{}
 		uniqLeafIDs := make([]string, 0, len(lineage.LeafIds))
 		for _, lid := range lineage.LeafIds {
@@ -388,6 +424,14 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 				uniqLeafSet[lid] = true
 				uniqLeafIDs = append(uniqLeafIDs, lid)
 			}
+		}
+		spendRows, err := q.db().LabLeafSpend(q.ctx(), uniqLeafIDs)
+		if err != nil {
+			return out, err
+		}
+		spendByID := make(map[string]db.LabLeafSpendRow, len(spendRows))
+		for _, s := range spendRows {
+			spendByID[s.ExecutionID] = s
 		}
 		metaRows, err := q.db().LabLeafMeta(q.ctx(), uniqLeafIDs)
 		if err != nil {
@@ -397,11 +441,57 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		for _, m := range metaRows {
 			metaByID[m.ID] = m
 		}
+		var staleScopes, staleKeys, staleLeaves []string
 		for i, lid := range lineage.LeafIds {
-			if i < len(lineage.ScopeKeys) {
-				if m, ok := metaByID[lid]; ok {
-					leavesByTrial[lineage.ScopeKeys[i]] = append(leavesByTrial[lineage.ScopeKeys[i]], m)
+			if i >= len(lineage.ScopeKeys) || i >= len(lineage.Scopes) {
+				continue
+			}
+			trialID := lineage.ScopeKeys[i]
+			if m, ok := metaByID[lid]; ok {
+				leavesByTrial[trialID] = append(leavesByTrial[trialID], m)
+			}
+			sp, ok := spendByID[lid]
+			if !ok {
+				continue
+			}
+			ts := ensureTrialSpend(trialID)
+			if sp.Kind == "agent_run" || sp.Kind == "child_agent" || sp.TokensInput != nil || sp.TokensOutput != nil {
+				ts.tokensTotal += int64OrZero(sp.TokensInput) + int64OrZero(sp.TokensOutput) + int64OrZero(sp.TokensCacheRead) + int64OrZero(sp.TokensCacheWrite)
+			}
+			if sp.HasSpend && !sp.Stale {
+				if len(sp.Payload) > 0 {
+					figs, err := decodeCostFigures(sp.Payload)
+					if err != nil {
+						return out, err
+					}
+					sawUnpriced := addTrialCostFigures(ts, figs)
+					if sp.CostUnpriced > 0 && !sawUnpriced {
+						ts.costUnpriced += int(sp.CostUnpriced)
+					}
+				} else {
+					if sp.CostUnpriced > 0 {
+						ts.costUnpriced += int(sp.CostUnpriced)
+					}
+					if sp.CostCurrency != nil && *sp.CostCurrency == "USD" && sp.CostBasis != nil && sp.CostValue != nil {
+						ts.costUsd += *sp.CostValue
+						ts.costPriced++
+						ts.costBases = append(ts.costBases, contract.ResourceBasis(*sp.CostBasis))
+					}
 				}
+			} else {
+				staleScopes = append(staleScopes, lineage.Scopes[i])
+				staleKeys = append(staleKeys, trialID)
+				staleLeaves = append(staleLeaves, lid)
+			}
+		}
+		if len(staleLeaves) > 0 {
+			fallbackRes, err := summarizeResourceQuery(q, staleScopes, staleKeys, staleLeaves)
+			if err != nil {
+				return out, err
+			}
+			for scopeKey, res := range fallbackRes {
+				tid := strings.TrimPrefix(scopeKey, "trial\x00")
+				addTrialCostFigures(ensureTrialSpend(tid), res.Cost)
 			}
 		}
 	}
@@ -416,10 +506,10 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		configRef := labTrialConfigRef(tr.ConfigRef, variant)
 		model, profile := labTrialModelAndProfile(leavesByTrial[tr.ID], variant)
 
-		res := trialResources["trial\x00"+tr.ID]
+		ts := spendByTrial[tr.ID]
 		var trialTokens int64
-		if res.Tokens.Total != nil {
-			trialTokens = *res.Tokens.Total
+		if ts != nil {
+			trialTokens = ts.tokensTotal
 		}
 		trialDur, hasDur := labTrialDurationMs(tr)
 
@@ -492,16 +582,11 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 				acc.durationsMs = append(acc.durationsMs, trialDur)
 			}
 			acc.tokensTotal += trialTokens
-			for _, cf := range res.Cost {
-				if cf.Basis == contract.ResourceBasisUnavailable {
-					acc.costUnpriced++
-					continue
-				}
-				if cf.Value != nil && deref(cf.Currency) == "USD" {
-					acc.costUsd += *cf.Value
-					acc.costPriced++
-					acc.costBases = append(acc.costBases, cf.Basis)
-				}
+			if ts != nil {
+				acc.costUsd += ts.costUsd
+				acc.costPriced += ts.costPriced
+				acc.costUnpriced += ts.costUnpriced
+				acc.costBases = append(acc.costBases, ts.costBases...)
 			}
 			if acc.latestExperimentID == "" || tr.TrialAt.Time.After(acc.latestAt) {
 				acc.latestExperimentID = exp.ID

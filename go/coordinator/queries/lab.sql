@@ -185,7 +185,7 @@ SELECT id FROM question WHERE kind='rating' AND (sqlc.narg(experiment_id)::text 
 SELECT count(*)::int FROM question WHERE kind='rating' AND options->>'example_artifact_id'=sqlc.arg(artifact_id)::text;
 
 -- name: LabTrialsLineage :one
--- Non-reused leaf executions per trial ID, including child_agent and tool_run descendants (lab.go expGet, lab_leaderboard.go).
+-- Non-reused leaf executions per trial ID, traversing strictly downward via indexed lookups (lab.go expGet, lab_leaderboard.go).
 WITH RECURSIVE
  trials AS (
   SELECT DISTINCT t.trial_id FROM unnest(sqlc.arg(trial_ids)::text[]) AS t(trial_id)
@@ -200,40 +200,62 @@ WITH RECURSIVE
   SELECT t.trial_id, c.id AS exec_id
   FROM trials t
   JOIN execution c ON c.data @> jsonb_build_object('pipelineRunId', t.trial_id)
+  WHERE NOT EXISTS (
+   SELECT 1 FROM reused_steps rs
+   WHERE rs.trial_id = t.trial_id AND (rs.step_exec_id = c.id OR rs.step_exec_id = c.parent_execution_id)
+  )
   UNION
   SELECT t.trial_id, c.id AS exec_id
   FROM trials t
   JOIN execution c ON c.parent_execution_id = t.trial_id
+  WHERE NOT EXISTS (
+   SELECT 1 FROM reused_steps rs
+   WHERE rs.trial_id = t.trial_id AND rs.step_exec_id = c.id
+  )
   UNION
   SELECT t.trial_id, c.id AS exec_id
   FROM trials t
-  JOIN execution c ON c.parent_execution_id >= (t.trial_id || ':step:') AND c.parent_execution_id < (t.trial_id || ':step;')
-  WHERE NOT EXISTS (SELECT 1 FROM reused_steps rs WHERE rs.trial_id = t.trial_id AND rs.step_exec_id = c.parent_execution_id)
+  JOIN pipeline_step p ON p.run_id = t.trial_id AND p.ref_mode IS DISTINCT FROM 'reused'
+  JOIN execution c ON c.parent_execution_id = (p.run_id || ':step:' || p.step_index::text)
+  UNION
+  SELECT t.trial_id, c.id AS exec_id
+  FROM trials t
+  JOIN pipeline_step p ON p.run_id = t.trial_id AND p.ref_mode IS DISTINCT FROM 'reused' AND p.ref_execution_id IS NOT NULL
+  JOIN execution c ON c.parent_execution_id = p.ref_execution_id
   UNION
   SELECT t.trial_id, c.id AS exec_id
   FROM trials t
   JOIN pipeline_step p ON p.run_id = t.trial_id AND p.ref_mode IS DISTINCT FROM 'reused' AND p.native_execution_id IS NOT NULL
   JOIN execution c ON c.id = p.native_execution_id
- ),
- session_parents AS (
-  SELECT coalesce(jsonb_object_agg(id, parent_execution_id), '{}'::jsonb) AS m
-  FROM session WHERE parent_execution_id IS NOT NULL
- ),
- edges AS MATERIALIZED (
-  SELECT DISTINCT c.id AS child_id, p.parent_id::text AS parent_id
-  FROM execution c
-  CROSS JOIN LATERAL (VALUES
-   (c.parent_execution_id),
-   (CASE WHEN c.delegation IS NOT NULL THEN c.delegation->>'parentExecutionId' END),
-   ((SELECT m FROM session_parents) ->> c.session_id)
-  ) p(parent_id)
-  WHERE p.parent_id IS NOT NULL
+  UNION
+  SELECT t.trial_id, c.id AS exec_id
+  FROM trials t
+  JOIN session s ON s.pipeline_run_id = t.trial_id
+  JOIN execution c ON c.session_id = s.id
+  WHERE NOT EXISTS (
+   SELECT 1 FROM reused_steps rs
+   WHERE rs.trial_id = t.trial_id AND (rs.step_exec_id = c.id OR rs.step_exec_id = c.parent_execution_id)
+  )
  ),
  tree AS (
   SELECT trial_id, exec_id FROM seed
   UNION
-  SELECT tr.trial_id, e.child_id AS exec_id
-  FROM edges e JOIN tree tr ON e.parent_id = tr.exec_id
+  SELECT tr.trial_id, ch.exec_id
+  FROM tree tr
+  CROSS JOIN LATERAL (
+   SELECT c.id AS exec_id
+   FROM execution c
+   WHERE c.parent_execution_id = tr.exec_id
+   UNION
+   SELECT c.id AS exec_id
+   FROM session s
+   JOIN execution c ON c.session_id = s.id
+   WHERE s.parent_execution_id = tr.exec_id
+  ) ch
+  WHERE NOT EXISTS (
+   SELECT 1 FROM reused_steps rs
+   WHERE rs.trial_id = tr.trial_id AND rs.step_exec_id = ch.exec_id
+  )
  ),
  scoped_leaves AS (
   SELECT DISTINCT 'trial'::text AS scope, tr.trial_id AS scope_key, e.id AS leaf_id
@@ -247,6 +269,29 @@ SELECT
  coalesce((SELECT array_agg(scope ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scopes,
  coalesce((SELECT array_agg(scope_key ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scope_keys,
  coalesce((SELECT array_agg(leaf_id ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS leaf_ids;
+
+-- name: LabLeafSpend :many
+-- Precomputed spend and token totals for leaf executions (lab_leaderboard.go).
+SELECT
+ e.id AS execution_id,
+ e.kind::text AS kind,
+ (s.execution_id IS NOT NULL)::boolean AS has_spend,
+ coalesce(s.stale, true)::boolean AS stale,
+ s.cost_currency,
+ s.cost_basis,
+ s.cost_value,
+ coalesce(s.cost_unpriced, 0)::bigint AS cost_unpriced,
+ s.payload,
+ t.tokens_input,
+ t.tokens_output,
+ t.tokens_cache_read,
+ t.tokens_cache_write
+FROM execution e
+LEFT JOIN execution_spend s ON s.execution_id = e.id
+LEFT JOIN execution_totals t ON t.execution_id = e.id
+WHERE e.id = ANY(sqlc.arg(leaf_ids)::text[])
+  AND e.kind NOT IN ('pipeline_run', 'pipeline_step')
+  AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL);
 
 -- name: LabLeafMeta :many
 -- Resolved model and profile metadata for leaf executions (lab_leaderboard.go).
