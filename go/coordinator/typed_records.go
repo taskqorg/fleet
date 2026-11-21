@@ -1,16 +1,22 @@
 // Typed tables (docs/designs/fleet-standard.md S1): read and written through their typed queries
 // (queries/hosts.sql, queries/accounts.sql, queries/connections.sql, queries/sessions.sql, queries/commands.sql,
-// queries/agent.sql, queries/events.sql). A record field a query filters, joins or orders, a policy reads (holder)
-// or a state machine owns is a column; payload holds the other fields. host.state, connection_key.state and
-// command.status are state machines: a put leaves the state alone and moves it only through hostTransition
-// (host_states.go), connectionKeyTransition (key_states.go) or commandTransition (commands.go).
+// queries/agent.sql, queries/events.sql, queries/executions.sql, queries/questions.sql, queries/delegation.sql).
+// A record field a query filters, joins or orders, a policy reads (holder) or a state machine owns is a column;
+// payload (or data) holds the other fields. host.state, connection_key.state, command.status, execution.state and
+// question.state are state machines: a put leaves the state alone and moves it only through hostTransition
+// (host_states.go), connectionKeyTransition (key_states.go), commandTransition (commands.go), executionTransition
+// (execution_states.go) or questionTransition (question_states.go).
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"fleet/coordinator/db"
 )
@@ -130,4 +136,33 @@ func recordMap(payload []byte) (map[string]json.RawMessage, error) {
 		}
 	}
 	return r, nil
+}
+
+// records: JSON records as read, in order; none is an empty list.
+func records(bs [][]byte, err error) ([]json.RawMessage, error) {
+	if err != nil {
+		return nil, err
+	}
+	out := make([]json.RawMessage, 0, len(bs))
+	for _, b := range bs {
+		if !json.Valid(b) {
+			return nil, fmt.Errorf("invalid stored record")
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
+
+// record: one JSON record as read; none is not found (404).
+func record(b []byte, err error) (json.RawMessage, error) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !json.Valid(b) {
+		return nil, fmt.Errorf("invalid stored record")
+	}
+	return b, nil
 }

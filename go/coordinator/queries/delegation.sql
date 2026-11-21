@@ -21,3 +21,17 @@ SELECT EXISTS(SELECT 1 FROM execution p LEFT JOIN session s ON s.id=p.session_id
 -- name: DelegationExecutionsWithArtifacts :many
 -- Of ids, the executions with a stored artifact.
 SELECT DISTINCT execution_id::text AS id FROM artifact WHERE state='stored' AND execution_id=ANY(sqlc.arg(ids)::text[]);
+
+-- name: DelegationByID :one
+SELECT delegation FROM execution WHERE delegation IS NOT NULL AND delegation->>'id'= @id::text LIMIT 1;
+
+-- name: Delegations :many
+SELECT delegation FROM execution
+WHERE delegation IS NOT NULL
+ AND (sqlc.narg(parent_execution_id)::text IS NULL OR delegation->>'parentExecutionId'=sqlc.narg(parent_execution_id)::text)
+ AND (sqlc.narg(child_execution_id)::text IS NULL OR delegation->>'childExecutionId'=sqlc.narg(child_execution_id)::text)
+ORDER BY seq;
+
+-- name: DelegationPut :execrows
+-- A delegation record on its child execution; the child's parent once known.
+UPDATE execution SET delegation= @delegation, parent_execution_id=coalesce(parent_execution_id, sqlc.narg(parent_execution_id)) WHERE id= @id;

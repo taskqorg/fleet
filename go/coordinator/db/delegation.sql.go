@@ -10,6 +10,17 @@ import (
 	"time"
 )
 
+const delegationByID = `-- name: DelegationByID :one
+SELECT delegation FROM execution WHERE delegation IS NOT NULL AND delegation->>'id'= $1::text LIMIT 1
+`
+
+func (q *Queries) DelegationByID(ctx context.Context, id string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, delegationByID, id)
+	var delegation []byte
+	err := row.Scan(&delegation)
+	return delegation, err
+}
+
 const delegationExecutionsWithArtifacts = `-- name: DelegationExecutionsWithArtifacts :many
 SELECT DISTINCT execution_id::text AS id FROM artifact WHERE state='stored' AND execution_id=ANY($1::text[])
 `
@@ -46,6 +57,25 @@ func (q *Queries) DelegationParentTaskCancelled(ctx context.Context, id string) 
 	var cancelled bool
 	err := row.Scan(&cancelled)
 	return cancelled, err
+}
+
+const delegationPut = `-- name: DelegationPut :execrows
+UPDATE execution SET delegation= $1, parent_execution_id=coalesce(parent_execution_id, $2) WHERE id= $3
+`
+
+type DelegationPutParams struct {
+	Delegation        []byte
+	ParentExecutionID *string
+	ID                string
+}
+
+// A delegation record on its child execution; the child's parent once known.
+func (q *Queries) DelegationPut(ctx context.Context, arg DelegationPutParams) (int64, error) {
+	result, err := q.db.Exec(ctx, delegationPut, arg.Delegation, arg.ParentExecutionID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const delegationSourceWorkDelete = `-- name: DelegationSourceWorkDelete :exec
@@ -120,4 +150,37 @@ func (q *Queries) DelegationSourceWorkFiles(ctx context.Context, delegationID st
 	var payload []byte
 	err := row.Scan(&payload)
 	return payload, err
+}
+
+const delegations = `-- name: Delegations :many
+SELECT delegation FROM execution
+WHERE delegation IS NOT NULL
+ AND ($1::text IS NULL OR delegation->>'parentExecutionId'=$1::text)
+ AND ($2::text IS NULL OR delegation->>'childExecutionId'=$2::text)
+ORDER BY seq
+`
+
+type DelegationsParams struct {
+	ParentExecutionID *string
+	ChildExecutionID  *string
+}
+
+func (q *Queries) Delegations(ctx context.Context, arg DelegationsParams) ([][]byte, error) {
+	rows, err := q.db.Query(ctx, delegations, arg.ParentExecutionID, arg.ChildExecutionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items [][]byte
+	for rows.Next() {
+		var delegation []byte
+		if err := rows.Scan(&delegation); err != nil {
+			return nil, err
+		}
+		items = append(items, delegation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

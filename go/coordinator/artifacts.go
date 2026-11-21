@@ -863,7 +863,7 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 	return contract.ArtifactStateReply{State: "verifying"}, nil
 }
 
-// jobExecution: the queued tool execution record, written through recWrite (records.go).
+// jobExecution: the queued tool execution record, written through executionWrite (executions.go).
 type jobExecution struct {
 	ID          string `json:"id"`
 	ExecutionID string `json:"executionId"`
@@ -884,7 +884,7 @@ func queueCommand(ctx context.Context, a *App, hostID, kind, artifactID string, 
 		if err := sessionPut(q, &agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
 			return err
 		}
-		if err := recWrite(q, recExecution, jobExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker",
+		if err := executionWrite(q, jobExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker",
 			ArtifactID: artifactID}); err != nil {
 			return err
 		}

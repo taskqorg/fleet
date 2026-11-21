@@ -69,7 +69,7 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 			return none, err
 		}
 		e.StopDetail = "host-removed"
-		if err := recPut(q, recExecution, &e); err != nil {
+		if err := executionPut(q, &e); err != nil {
 			return none, err
 		}
 	}

@@ -605,7 +605,7 @@ func projectReadiness(q *Request, r *contract.ProjectReadinessRequest) (contract
 			return none, err
 		}
 		e := agentExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: &hid, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", ProjectID: pid}
-		if err := recPut(q, recExecution, &e); err != nil {
+		if err := executionPut(q, &e); err != nil {
 			return none, err
 		}
 		roles := map[string]string{}
@@ -835,7 +835,7 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 	if q.person != nil {
 		directedBy = q.person.Email
 	} else if c := deref(r.CallerExecutionId); c != "" {
-		if e, _ := recMaybe[agentExecution](q, recExecution, c); e != nil {
+		if e, _ := executionMaybe(q, c); e != nil {
 			directedBy = e.DirectedBy
 		}
 	}

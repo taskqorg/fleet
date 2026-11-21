@@ -167,14 +167,14 @@ func related(q *Request, d rawObject) (rawObject, error) {
 	out := rawObject{}
 	maps.Copy(out, d)
 	for _, r := range []struct{ key, field string }{{"parentState", "parentExecutionId"}, {"childState", "childExecutionId"}, {"continuationState", "continuationExecutionId"}} {
-		e, err := recMaybe[rawObject](q, recExecution, d.text(r.field))
+		e, err := executionMaybe(q, d.text(r.field))
 		if err != nil {
 			return nil, err
 		}
 		out[r.key] = json.RawMessage("null")
 		if e != nil {
-			if st, ok := (*e)["state"]; ok {
-				out[r.key] = st
+			if e.State != "" {
+				out[r.key] = jsonBytes(e.State)
 			}
 		} else if r.key != "continuationState" && d.has(r.field) {
 			return nil, errNotFound
@@ -557,7 +557,7 @@ func sessionGet(q *Request, sid string) (rawObject, error) {
 		return nil, err
 	}
 	s["messages"] = jsonBytes(messages)
-	executions, err := recAll[rawObject](q, recExecution, agentFilter{SessionID: &sid})
+	executions, err := executionsRawBySession(q, sid)
 	if err != nil {
 		return nil, err
 	}
@@ -847,7 +847,7 @@ func sessionArg(sid string) (string, error) {
 func init() {
 	route("GET /api/executions/{id}/delegations", func(q *Request) (any, error) {
 		id := q.r.PathValue("id")
-		if _, err := recGet[rawObject](q, recExecution, id); err != nil {
+		if _, err := getExecution(q, id); err != nil {
 			return nil, err
 		}
 		raw, err := q.db().ExecutionDelegations(q.ctx(), id)

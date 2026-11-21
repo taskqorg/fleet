@@ -22,7 +22,7 @@ func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
 	if eid == "" {
 		return nil, fail(400, "Expected executionId")
 	}
-	e, err := recGet[agentExecution](q, recExecution, eid)
+	e, err := getExecution(q, eid)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
 		if r.Question != nil || r.RequestId != nil || r.TaskId != nil {
 			return nil, fail(400, "Use question + requestId for a fresh ask, or resume=<questionId> alone to read an existing answer; resume is not continuation prose")
 		}
-		qu, err := recGet[agentQuestion](q, recQuestion, rid)
+		qu, err := agentQuestionGet(q, rid)
 		if err != nil {
 			return nil, err
 		}
@@ -73,7 +73,7 @@ func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
 		}
 		taskID, projectID = tid, tp
 	}
-	if old, err := recAll[agentQuestion](q, recQuestion, agentFilter{ExecutionID: &eid, RequestID: &rid}); err != nil {
+	if old, err := agentQuestionsList(q, db.AgentQuestionsParams{ExecutionID: &eid, RequestID: &rid}); err != nil {
 		return nil, err
 	} else if len(old) > 0 {
 		if old[0].Question != question || deref(old[0].TaskID) != taskID {
@@ -94,7 +94,7 @@ func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
 		}
 	}
 	qu := agentQuestion{ID: newID(), ExecutionID: eid, SessionID: e.SessionID, ProjectID: agentOpt(projectID), TaskID: agentOpt(taskID), RequestID: rid, Question: question, State: "open", CreatedAt: nowMs()}
-	if err := recPut(q, recQuestion, &qu); err != nil {
+	if err := agentQuestionPut(q, &qu); err != nil {
 		return nil, err
 	}
 	out := recOf(qu) // a fresh question shows its missing project and task as null
@@ -108,7 +108,7 @@ func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, er
 	if qid == "" {
 		return nil, fail(400, "Expected questionId")
 	}
-	qu, err := recGet[agentQuestion](q, recQuestion, qid)
+	qu, err := agentQuestionGet(q, qid)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, er
 	} else {
 		qu.Delivery = &agentQuestionDelivery{ExecutionID: d.execution.ID}
 	}
-	err = recPut(q, recQuestion, &qu)
+	err = agentQuestionPut(q, &qu)
 	return recOf(qu), err
 }
 
@@ -159,7 +159,7 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 	if eid == "" {
 		return none, fail(400, "Expected executionId")
 	}
-	e, err := recGet[agentExecution](q, recExecution, eid)
+	e, err := getExecution(q, eid)
 	if err != nil {
 		return none, err
 	}
@@ -206,14 +206,14 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 	}
 	report := contract.WorkerReport{Outcome: outcome, Summary: summary, At: nowMs()}
 	e.Report = &report
-	if err := recPut(q, recExecution, &e); err != nil {
+	if err := executionPut(q, &e); err != nil {
 		return none, err
 	}
-	if ds, err := recAll[agentDelegation](q, recDelegation, agentFilter{ChildExecutionID: &eid}); err != nil {
+	if ds, err := delegationsList(q, nil, &eid); err != nil {
 		return none, err
 	} else if len(ds) > 0 {
 		ds[0].Report = &report
-		if err := recPut(q, recDelegation, &ds[0]); err != nil {
+		if err := delegationPut(q, &ds[0]); err != nil {
 			return none, err
 		}
 	}
@@ -256,11 +256,8 @@ func init() {
 		prove := func() error {
 			var e agentExecution
 			if executionID != "" {
-				d, err := getExecution(q, executionID)
-				if err != nil {
-					return err
-				}
-				if e, err = asT[agentExecution](d); err != nil {
+				var err error
+				if e, err = getExecution(q, executionID); err != nil {
 					return err
 				}
 				if deref(e.HostID) != b.HostId {
@@ -584,7 +581,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 	if a == nil {
 		a = map[string]json.RawMessage{}
 	}
-	e, err := recGet[agentExecution](q, recExecution, executionID)
+	e, err := getExecution(q, executionID)
 	if err != nil {
 		return nil, err
 	}
@@ -650,7 +647,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 		if qid == "" {
 			return nil, fail(400, "Expected questionId")
 		}
-		qu, err := recGet[agentQuestion](q, recQuestion, qid)
+		qu, err := agentQuestionGet(q, qid)
 		if err != nil {
 			return nil, err
 		}

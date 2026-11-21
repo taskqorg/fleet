@@ -70,6 +70,13 @@ func openJSON(v any) json.RawMessage { return jsonBytes(norm(v)) }
 // jsonRoundTrip decodes the JSON encoding of v into out (a typed view of an open value).
 func jsonRoundTrip(v any, out any) { b, _ := json.Marshal(v); json.Unmarshal(b, out) }
 
+func decode(raw json.RawMessage, v any) error {
+	if json.Unmarshal(raw, v) != nil {
+		return fail(400, "Invalid body")
+	}
+	return nil
+}
+
 type HTTPError struct {
 	Code  int
 	Msg   string

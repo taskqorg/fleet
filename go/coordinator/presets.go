@@ -142,7 +142,7 @@ func callerReadOnly(q *Request) bool {
 	if !ok {
 		return false
 	}
-	e, _ := recMaybe[agentExecution](q, recExecution, id)
+	e, _ := executionMaybe(q, id)
 	if e == nil {
 		return false
 	}

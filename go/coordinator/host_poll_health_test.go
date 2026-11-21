@@ -102,7 +102,7 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		native, err := recGet[doc](q, recExecution, deref(run.entry(0).Dispatch.NativeExecutionId))
+		native, err := executionGetAs[doc](q, deref(run.entry(0).Dispatch.NativeExecutionId))
 		if err != nil {
 			return err
 		}

@@ -65,6 +65,21 @@ func taskLoad(q *Request, id string) (db.Task, error) {
 	return t, err
 }
 
+// taskRow: the task's row as a record (column names); errNotFound when absent.
+func taskRow(q *Request, id string) (json.RawMessage, error) {
+	return record(q.db().TaskRowRecord(q.ctx(), id))
+}
+
+// questionRecord: the question's row as a record (column names), as the answer checks and callers outside this file
+// read it; nil when absent.
+func questionRecord(q *Request, id string) (json.RawMessage, error) {
+	d, err := record(q.db().QuestionRowRecord(q.ctx(), id))
+	if errors.Is(err, errNotFound) {
+		return nil, nil
+	}
+	return d, err
+}
+
 func waitReason(q *Request, id string) (string, error) {
 	if ok, err := q.db().TaskHasOpenBlockingQuestion(q.ctx(), &id); err != nil || ok {
 		return "question", err

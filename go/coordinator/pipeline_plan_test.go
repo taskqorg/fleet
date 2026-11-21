@@ -246,7 +246,7 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			native, err = recGet[doc](q, recExecution, nativeID)
+			native, err = executionGetAs[doc](q, nativeID)
 			if err != nil {
 				return err
 			}

@@ -3,9 +3,8 @@
 // host-agent binding (/api/hosts/agent-tools) of every call to the caller's own session.
 //
 // The records this area reads and writes (session, execution, command, message, queued message, handoff, question,
-// transition, fork) are Go structs: each is decoded once from its kind's typed queries (records.go: recGet, recAll) and
-// encoded once on the way back (recPut). A record keeps the fields its struct
-// does not name as stored (recordRest), since other areas write them.
+// transition, fork) are Go structs: each is decoded once from its kind's typed queries and encoded once on the way back.
+// A record keeps the fields its struct does not name as stored (recordRest), since other areas write them.
 package main
 
 import (
@@ -112,15 +111,6 @@ func restEncode(v any, rest recordRest) ([]byte, error) {
 		}
 	}
 	return json.Marshal(out)
-}
-
-// agentFilter: an entity record filter (recAll, records.go) as its fields; an absent field filters nothing.
-type agentFilter struct {
-	SessionID        *string `json:"sessionId,omitempty"`
-	ExecutionID      *string `json:"executionId,omitempty"`
-	ChildExecutionID *string `json:"childExecutionId,omitempty"`
-	RequestID        *string `json:"requestId,omitempty"`
-	State            *string `json:"state,omitempty"`
 }
 
 // agentView: the fields T names of an open value another area hands over (a project, a profile, a run); a field of
@@ -326,7 +316,7 @@ func (d agentDispatch) MarshalJSON() ([]byte, error) {
 	return restEncode(plain(d), d.rest)
 }
 
-// agentExecution: the execution record (agent_run, host_job; putExecution writes it).
+// agentExecution: the execution record (agent_run, host_job; executionPutRaw writes it).
 type agentExecution struct {
 	ID                    string                 `json:"id"`
 	ExecutionID           string                 `json:"executionId,omitempty"`
@@ -495,7 +485,7 @@ type agentQuestionDelivery struct {
 	ExecutionID string `json:"executionId,omitempty"`
 }
 
-// agentQuestion: an agent question record ('question', putQuestion).
+// agentQuestion: an agent question record ('question', agentQuestionPut).
 type agentQuestion struct {
 	ID          string                 `json:"id"`
 	ExecutionID string                 `json:"executionId,omitempty"`
@@ -507,6 +497,7 @@ type agentQuestion struct {
 	State       string                 `json:"state,omitempty"`
 	CreatedAt   int64                  `json:"createdAt,omitempty"`
 	Answer      string                 `json:"answer,omitempty"`
+	AnsweredBy  string                 `json:"answeredBy,omitempty"`
 	AnsweredAt  int64                  `json:"answeredAt,omitempty"`
 	Delivery    *agentQuestionDelivery `json:"delivery,omitempty"`
 	rest        recordRest
@@ -520,23 +511,6 @@ func (x *agentQuestion) UnmarshalJSON(b []byte) error {
 func (x agentQuestion) MarshalJSON() ([]byte, error) {
 	type plain agentQuestion
 	return restEncode(plain(x), x.rest)
-}
-
-// agentDelegation: the report of a delegation record (keyed by its child execution).
-type agentDelegation struct {
-	ChildExecutionID string                 `json:"childExecutionId"`
-	Report           *contract.WorkerReport `json:"report,omitempty"`
-	rest             recordRest
-}
-
-func (d *agentDelegation) UnmarshalJSON(b []byte) error {
-	type plain agentDelegation
-	return restDecode(b, (*plain)(d), &d.rest)
-}
-
-func (d agentDelegation) MarshalJSON() ([]byte, error) {
-	type plain agentDelegation
-	return restEncode(plain(d), d.rest)
 }
 
 // agentTransitionRecord: a session transition record ("session-transition").
@@ -893,6 +867,167 @@ func sessionTransitionPut(q *Request, t *agentTransitionRecord) error {
 	})
 }
 
+type agentQuestionData struct {
+	Delivery *agentQuestionDelivery `json:"delivery,omitempty"`
+}
+
+// agentQuestionFields: the record fields built from question columns (stripped from question.data).
+var agentQuestionFields = []string{"taskId", "id", "executionId", "sessionId", "projectId", "requestId", "question", "state", "answer", "answeredBy", "answeredAt", "createdAt"}
+
+func agentQuestionOf(r db.Question) (agentQuestion, error) {
+	var x agentQuestion
+	if len(r.Data) > 0 {
+		if err := restDecode(r.Data, &x, &x.rest); err != nil {
+			return x, err
+		}
+	}
+	x.ID = r.ID
+	x.ExecutionID = deref(r.ExecutionID)
+	x.SessionID = deref(r.SessionID)
+	x.ProjectID = r.ProjectID
+	x.TaskID = r.TaskID
+	x.RequestID = deref(r.RequestID)
+	x.Question = r.Text
+	x.State = string(r.State)
+	x.Answer = deref(r.Answer)
+	x.AnsweredBy = deref(r.AnsweredBy)
+	x.AnsweredAt = int64Ms(r.AnsweredAt)
+	x.CreatedAt = int64Ms(&r.AskedAt)
+	return x, nil
+}
+
+func agentQuestionRawOf(r db.Question) (map[string]json.RawMessage, error) {
+	out, err := recordMap(r.Data)
+	if err != nil {
+		return nil, err
+	}
+	out["id"] = jsonBytes(r.ID)
+	for k, v := range map[string]*string{
+		"executionId": r.ExecutionID,
+		"sessionId":   r.SessionID,
+		"projectId":   r.ProjectID,
+		"taskId":      r.TaskID,
+		"requestId":   r.RequestID,
+		"answer":      r.Answer,
+		"answeredBy":  r.AnsweredBy,
+	} {
+		if v != nil {
+			out[k] = jsonBytes(*v)
+		}
+	}
+	out["question"] = jsonBytes(r.Text)
+	out["state"] = jsonBytes(string(r.State))
+	if r.AnsweredAt != nil {
+		out["answeredAt"] = jsonBytes(int64Ms(r.AnsweredAt))
+	}
+	out["createdAt"] = jsonBytes(int64Ms(&r.AskedAt))
+	return out, nil
+}
+
+func agentQuestionGet(q *Request, id string) (agentQuestion, error) {
+	if id == "" {
+		return agentQuestion{}, errNotFound
+	}
+	r, err := q.db().AgentQuestionByID(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return agentQuestion{}, errNotFound
+	}
+	if err != nil {
+		return agentQuestion{}, err
+	}
+	return agentQuestionOf(r)
+}
+
+func agentQuestionsList(q *Request, p db.AgentQuestionsParams) ([]agentQuestion, error) {
+	rs, err := q.db().AgentQuestions(q.ctx(), p)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentQuestion, 0, len(rs))
+	for _, r := range rs {
+		x, err := agentQuestionOf(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, nil
+}
+
+func agentQuestionMaps(q *Request, p db.AgentQuestionsParams) ([]map[string]json.RawMessage, error) {
+	rs, err := q.db().AgentQuestions(q.ctx(), p)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]json.RawMessage, 0, len(rs))
+	for _, r := range rs {
+		m, err := agentQuestionRawOf(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// agentQuestionPut writes *qu through question state owners (askQuestionAs / questionTransition / answerQuestion);
+// fields without a column live in question.data.
+func agentQuestionPut(q *Request, qu *agentQuestion) error {
+	if qu.ID == "" {
+		return fmt.Errorf("agent question record without an id")
+	}
+	found, err := q.db().QuestionExists(q.ctx(), qu.ID)
+	if err != nil {
+		return err
+	}
+	dataBytes, err := restEncode(agentQuestionData{Delivery: qu.Delivery}, qu.rest)
+	if err != nil {
+		return err
+	}
+	var restObj rawObject
+	if err := json.Unmarshal(dataBytes, &restObj); err == nil && restObj != nil {
+		for _, k := range agentQuestionFields {
+			delete(restObj, k)
+		}
+		dataBytes = jsonBytes(restObj)
+	}
+	answered := qu.State == "answered"
+	if !found {
+		askedBy := "agent"
+		if qu.ExecutionID != "" {
+			askedBy = "execution:" + qu.ExecutionID
+		}
+		a := questionAsk{
+			ID:          qu.ID,
+			Kind:        "agent_question",
+			Text:        qu.Question,
+			TaskID:      deref(qu.TaskID),
+			ProjectID:   deref(qu.ProjectID),
+			ExecutionID: strPtr(qu.ExecutionID),
+			SessionID:   strPtr(qu.SessionID),
+			AskedBy:     &askedBy,
+			RequestID:   strPtr(qu.RequestID),
+			Data:        dataBytes,
+			AskedAt:     intMsPtr(qu.CreatedAt),
+		}
+		if _, err := askQuestionAs(q, a); err != nil {
+			return err
+		}
+		if answered {
+			by := firstString(qu.AnsweredBy, "operator")
+			_, err := questionTransition(q, qu.ID, questionEvent{To: "answered", Answer: strPtr(qu.Answer), AnsweredBy: &by, AnsweredAt: intMsPtr(qu.AnsweredAt)})
+			return err
+		}
+		return nil
+	}
+	if answered {
+		if _, err := answerQuestion(q, qu.ID, qu.Answer, firstString(qu.AnsweredBy, "operator"), nil); err != nil {
+			return err
+		}
+	}
+	return q.db().QuestionRestPut(q.ctx(), db.QuestionRestPutParams{ID: qu.ID, Data: dataBytes, ProjectID: strPtr(deref(qu.ProjectID))})
+}
+
 // sessionView: a session's queue, questions, handoffs, transitions and forks (session_get, sessions.go).
 func sessionView(q *Request, sid string) (sessionQueues, error) {
 	var out sessionQueues
@@ -908,11 +1043,9 @@ func sessionView(q *Request, sid string) (sessionQueues, error) {
 		}
 		out.Queued = append(out.Queued, v)
 	}
-	questions, err := recAll[rawObject](q, recQuestion, agentFilter{SessionID: &sid})
-	if err != nil {
+	if out.Questions, err = agentQuestionMaps(q, db.AgentQuestionsParams{SessionID: &sid}); err != nil {
 		return out, err
 	}
-	out.Questions = recsOf(questions)
 	if out.Handoffs, err = sessionHandoffs(q, sid, false); err != nil {
 		return out, err
 	}
@@ -994,8 +1127,8 @@ func init() {
 	op("ask", agentAsk)
 	op("reply", agentReplyTo)
 	op("questions", func(q *Request, b *contract.QuestionsRequest) (contract.QuestionsReply, error) {
-		qs, err := recAll[rawObject](q, recQuestion, agentFilter{SessionID: agentOpt(deref(b.SessionId)), State: agentOpt(deref(b.State))})
-		return contract.QuestionsReply{Questions: recsOf(qs)}, err
+		qs, err := agentQuestionMaps(q, db.AgentQuestionsParams{SessionID: agentOpt(deref(b.SessionId)), State: agentOpt(deref(b.State))})
+		return contract.QuestionsReply{Questions: qs}, err
 	})
 	op("worker_done", workerDone)
 	op("execution_status", executionStatus)

@@ -26,7 +26,7 @@ func TestDurableCommandTraceAndDiscovery(t *testing.T) {
 	})
 	defer obs.SetSink(nil)
 	if err := env.app.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
-		return recWrite(q, recExecution, doc{"id": "x-trace", "executionId": "x-trace", "actor": "program-worker", "hostId": host, "state": "preparing"})
+		return executionWrite(q, doc{"id": "x-trace", "executionId": "x-trace", "actor": "program-worker", "hostId": host, "state": "preparing"})
 	}); err != nil {
 		t.Fatal(err)
 	}

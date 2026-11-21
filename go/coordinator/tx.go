@@ -100,6 +100,11 @@ func typedRows[T any](q *Request, sql string, args []any) ([]T, error) {
 // db: the typed queries in the request's transaction.
 func (q *Request) db() *db.Queries { return db.New(q.tx) }
 
+func exec(q *Request, sql string, args ...any) error {
+	_, err := q.tx.Exec(q.ctx(), sql, args...)
+	return err
+}
+
 // afterCommit runs fn once q's transaction has committed, in the caller's goroutine; never when it rolls back (a retried
 // attempt's effects are dropped with it). The only way to an effect outside the database (a wake, a file, a cache).
 func afterCommit(q *Request, fn func()) {
