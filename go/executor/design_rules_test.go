@@ -18,7 +18,7 @@ var designExecutorOwned = map[string]map[string]string{
 	"coding_tools.go": {
 		"E-PROC": "probing installed coding tool binaries (--version)",
 	},
-	"executor.go": {
+	"executor_launch.go": {
 		"E-PROC": "harness --version/tools capability probes and git symbolic-ref for forge branch context",
 	},
 	"forge.go": {
