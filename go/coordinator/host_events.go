@@ -70,15 +70,13 @@ func executionEventRecords(q *Request, id string) ([]eventRecord, error) {
 	return eventRecordsOf(es), err
 }
 
-// executionEventsOf: executionEventRecords as records (lab_loop.go).
-func executionEventsOf(q *Request, id string) ([]doc, error) {
+// executionEventsOf: executionEventRecords as one JSON list in openJSON's form (lab_loop.go's transcripts).
+func executionEventsOf(q *Request, id string) (json.RawMessage, error) {
 	es, err := executionEventRecords(q, id)
 	if err != nil {
 		return nil, err
 	}
-	var out []doc
-	jsonRoundTrip(es, &out)
-	return out, nil
+	return openJSON(es), nil
 }
 
 // eventsExecution: the execution's record remainder (data) and state; not found when it is no agent run or host job.
@@ -107,7 +105,7 @@ func frameHash(v any) string {
 
 // eventsWhere: the events of either kind matching a record filter, for callers reading records
 // (lab_retry.go, pipeline_plan.go).
-func eventsWhere(q *Request, f any) ([]doc, error) { return recAll[doc](q, recEventAny, f) }
+func eventsWhere(q *Request, f any) ([]rawObject, error) { return recAll[rawObject](q, recEventAny, f) }
 
 func eventKind(v eventRecord) string {
 	if v.object("data").object("fleetNormalized").has("deltaOf") {

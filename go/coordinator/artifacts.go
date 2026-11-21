@@ -98,28 +98,8 @@ func txCtx(ctx context.Context, a *App, fn func(pgx.Tx) error) error {
 	return a.store.Tx(ctx, nil, true, "", fn)
 }
 
-// rowsCtx, oneCtx and execCtx: the untyped reads and writes of the files not yet on the typed queries (placement.go,
-// uploads.go); this file reads and writes through queries/artifacts.sql (artDB, txCtx).
-func rowsCtx(ctx context.Context, q querier, sql string, args ...any) ([]doc, error) {
-	rs, err := q.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, err
-	}
-	out, err := pgx.CollectRows(rs, pgx.RowToMap)
-	if out == nil {
-		out = []doc{}
-	}
-	return out, err
-}
-
-func oneCtx(ctx context.Context, a *App, sql string, args ...any) (doc, error) {
-	r, err := rowsCtx(ctx, conn(ctx, a), sql, args...)
-	if err != nil || len(r) == 0 {
-		return nil, err
-	}
-	return r[0], nil
-}
-
+// execCtx: an untyped write of the files not yet on the typed queries; this file reads and writes through
+// queries/artifacts.sql (artDB, txCtx).
 func execCtx(ctx context.Context, a *App, sql string, args ...any) error {
 	return txCtx(ctx, a, func(tx pgx.Tx) error { _, err := tx.Exec(ctx, sql, args...); return err })
 }
@@ -127,13 +107,6 @@ func execCtx(ctx context.Context, a *App, sql string, args ...any) error {
 // artWrite: typed writes in the context's transaction, else in a short one of their own.
 func artWrite(ctx context.Context, a *App, fn func(*db.Queries) error) error {
 	return txCtx(ctx, a, func(tx pgx.Tx) error { return fn(db.New(tx)) })
-}
-
-func strp(m doc, k string) *string {
-	if s, ok := m[k].(string); ok {
-		return &s
-	}
-	return nil
 }
 
 // ---- stores ----
@@ -468,12 +441,13 @@ func (x *Artifact) row() contract.ArtifactRow {
 		Seq: x.Seq, CreatedAt: float64(x.Created.UnixMilli())}
 }
 
-// view: the artifact's facts as a record (lab_retry.go's snapshot): the list row without its order and time.
-func (x *Artifact) view() doc {
-	v := docOf(x.row())
+// view: the artifact's facts (lab_retry.go's snapshot): the list row without its order and time.
+func (x *Artifact) view() json.RawMessage {
+	r := x.row()
+	v, _ := openObject(jsonBytes(r))
 	delete(v, "seq")
 	delete(v, "createdAt")
-	return v
+	return jsonBytes(v)
 }
 
 var shaPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -882,7 +856,7 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 		return nil, err
 	}
 	if !open {
-		if err := queueCommand(ctx, a, s.HostID, "artifact-verify", docOf(verify)); err != nil {
+		if err := queueCommand(ctx, a, s.HostID, "artifact-verify", verify.ArtifactId, verify); err != nil {
 			return nil, err
 		}
 	}
@@ -913,12 +887,13 @@ type (
 		HostID      string `json:"hostId"`
 		Kind        string `json:"kind"`
 		Status      string `json:"status"`
-		Payload     doc    `json:"payload"`
+		Payload     any    `json:"payload"`
 	}
 )
 
-// queueCommand: a tool command for a host's executor (copy, verify), in a program-worker execution of its own.
-func queueCommand(ctx context.Context, a *App, hostID, kind string, payload doc) error {
+// queueCommand: a tool command for a host's executor (copy, verify) on an artifact, in a program-worker execution of its
+// own; payload is the command's (a contract struct).
+func queueCommand(ctx context.Context, a *App, hostID, kind, artifactID string, payload any) error {
 	return txCtx(ctx, a, func(tx pgx.Tx) error {
 		q := backgroundRequest(ctx, a, tx) // carries app: put wakes the host's held poll once the command commits
 		sid, id := newID(), newID()
@@ -926,7 +901,7 @@ func queueCommand(ctx context.Context, a *App, hostID, kind string, payload doc)
 			return err
 		}
 		if err := recWrite(q, recExecution, jobExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker",
-			ArtifactID: payload["artifactId"]}); err != nil {
+			ArtifactID: artifactID}); err != nil {
 			return err
 		}
 		return recWrite(q, recCommand, jobCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: kind, Status: "pending", Payload: payload})
@@ -1242,15 +1217,6 @@ func artifactView(ctx context.Context, a *App, id, hostID string) (contract.Arti
 		}
 	}
 	return v, nil
-}
-
-// artifactGetView: artifactView as a record, for uploads.go.
-func artifactGetView(ctx context.Context, a *App, id, hostID string) (doc, error) {
-	v, err := artifactView(ctx, a, id, hostID)
-	if err != nil {
-		return nil, err
-	}
-	return docOf(v), nil
 }
 
 type listFilter struct {
@@ -1655,19 +1621,19 @@ type executionArtifact struct {
 	Sha256      string  `json:"sha256"`
 }
 
-func executionArtifacts(q *Request, executionID string) ([]doc, error) {
+func executionArtifacts(q *Request, executionID string) ([]executionArtifact, error) {
 	ctx := withTx(q)
 	rows, err := connDB(ctx, q.app).ArtOfExecution(ctx, db.ArtOfExecutionParams{ExecutionID: &executionID, StoredOnly: true})
 	if err != nil {
 		return nil, err
 	}
-	out := []doc{}
+	out := []executionArtifact{}
 	for _, x := range rows {
 		id := x.ID
 		if x.LegacyID != nil {
 			id = *x.LegacyID
 		}
-		out = append(out, docOf(executionArtifact{ID: id, ArtifactID: x.ID, ExecutionID: x.ExecutionID, Path: x.Name, MediaType: x.MediaType, Size: x.Size, Sha256: x.ContentHash}))
+		out = append(out, executionArtifact{ID: id, ArtifactID: x.ID, ExecutionID: x.ExecutionID, Path: x.Name, MediaType: x.MediaType, Size: x.Size, Sha256: x.ContentHash})
 	}
 	return out, nil
 }

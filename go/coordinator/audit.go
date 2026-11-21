@@ -45,13 +45,3 @@ func auditValue(v any) []byte {
 	}
 	return b
 }
-
-// auditOfKind: the audit records of every target of a kind (the target's part before ':'), oldest first.
-func auditOfKind(q *Request, kind string) ([]doc, error) {
-	rs, err := q.db().AuditOfKind(q.ctx(), kind)
-	out := make([][]byte, len(rs))
-	for i, r := range rs {
-		out[i] = r.Data
-	}
-	return records(out, err)
-}

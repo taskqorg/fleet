@@ -722,11 +722,11 @@ func (a *App) finishNow(ctx context.Context, p *Person, u upload) (any, error) {
 	return a.uploadView(ctx, p, id)
 }
 
-func (a *App) uploadView(ctx context.Context, p *Person, id string) (doc, error) {
-	var view doc
+func (a *App) uploadView(ctx context.Context, p *Person, id string) (contract.ArtifactView, error) {
+	var view contract.ArtifactView
 	err := a.store.Tx(ctx, scopeOf(p), false, "", func(tx pgx.Tx) error {
 		var err error
-		view, err = artifactGetView(context.WithValue(ctx, txKey{}, tx), a, id, "")
+		view, err = artifactView(context.WithValue(ctx, txKey{}, tx), a, id, "")
 		return err
 	})
 	return view, err

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -21,34 +22,10 @@ type messageAttachment struct {
 // ids; the message and its execution's dispatch keep {artifactId, name, mediaType, size}; the start command stages each
 // file under FLEET_INPUT_DIR/attachments/<execution>/<name> (startAttachments) and the executor lists them in the turn.
 
-// attachmentArg: the artifact ids of a message, in order, without repeats; checked before any read.
-func attachmentArg(b doc) ([]string, error) {
-	raw, given := b["attachments"]
-	if !given || raw == nil {
-		return nil, nil
-	}
-	list, ok := raw.([]any)
-	if !ok {
-		return nil, fail(400, "Expected attachments: a list of artifact ids")
-	}
-	ids, seen := []string{}, map[string]bool{}
-	for _, x := range list {
-		id, ok := x.(string)
-		if !ok || id == "" || len(id) > 200 {
-			return nil, fail(400, "Expected attachments: a list of artifact ids")
-		}
-		if !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
-		}
-	}
-	return ids, nil
-}
-
 // messageAttachments: the stored artifacts a message carries. Each must be readable in the caller's scope (the project
 // grant, RLS) and belong to the session's project; an operator upload must be unattached or this session's, and an
 // unattached one joins this session. Names are cleaned (attachmentName) before they reach a path or a turn.
-func messageAttachments(q *Request, ids []string, s doc) ([]any, error) {
+func messageAttachments(q *Request, ids []string, s *agentSession) ([]any, error) {
 	out, seen := []any{}, map[string]bool{}
 	for _, id := range ids {
 		a, err := artifactRow(withTx(q), q.app, id)
@@ -65,8 +42,7 @@ func messageAttachments(q *Request, ids []string, s doc) ([]any, error) {
 		if a.Role != "attachment" && a.Role != "original" {
 			return nil, fail(400, "Attachment "+id+" is a "+a.Role)
 		}
-		sessionProject, _ := s["projectId"].(string)
-		sessionID, _ := s["id"].(string)
+		sessionProject, sessionID := s.ProjectID, s.ID
 		if deref(a.ProjectID) != sessionProject {
 			return nil, fail(400, "Attachment "+id+" belongs to another project")
 		}
@@ -91,14 +67,11 @@ func messageAttachments(q *Request, ids []string, s doc) ([]any, error) {
 
 // attachmentPayload: the enqueue payload that carries a message's attachments to its execution's start command, with
 // the ids as requested (the request identity).
-func attachmentPayload(attachments []any, requested []string) doc {
+func attachmentPayload(attachments []any, requested []string) map[string]json.RawMessage {
 	if len(attachments) == 0 {
 		return nil
 	}
-	return docOf(struct {
-		Attachments       []any    `json:"attachments"`
-		AttachmentRequest []string `json:"attachmentRequest"`
-	}{attachments, requested})
+	return map[string]json.RawMessage{"attachments": jsonBytes(attachments), "attachmentRequest": jsonBytes(requested)}
 }
 
 // startAttachments: the inputs and attachment list of a start command. Each file goes to

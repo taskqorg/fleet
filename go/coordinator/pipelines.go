@@ -1809,14 +1809,14 @@ func (run *runRecord) recordJob(q *Request, stepID, tool, jobID, connection stri
 		taskID = agentOpt(firstString(run.DeliveryID, run.TaskID))
 	}
 	jobNow := nowMs()
-	if _, err := insertExecution(q, docOf(pipelineToolRun{
+	if _, err := insertExecution(q, pipelineToolRun{
 		ID: id, Kind: "tool_run", State: "succeeded", ProjectID: run.ProjectID, ParentExecutionID: stepID,
 		ExperimentID: agentOpt(run.ExperimentID), Variant: agentOpt(run.Variant),
 		TaskID: taskID, SessionID: lineage.SessionID, DirectedBy: dir,
 		PipelineID: lineage.PipelineID, PipelineRevision: lineage.PipelineRevision, StepID: lineage.StepID,
 		StartedAt: jobNow, EndedAt: jobNow,
 		Data: pipelineJobCall{Tool: tool, RequestID: jobID, Outcome: "ok", Usage: usage, Connection: connection},
-	})); err != nil {
+	}); err != nil {
 		return err
 	}
 	var cost any
@@ -2850,7 +2850,7 @@ type pipelineQuestionData struct {
 
 // Answer checks run before a question's answer is recorded and the after steps run after, in the same transaction:
 // Lab, then budgets. question is the row (snake_case columns); in after, its answer column holds the answer.
-func runAnswerChecks(q *Request, question doc, answer string) error {
+func runAnswerChecks(q *Request, question json.RawMessage, answer string) error {
 	if err := labAnswerCheck(q, question, answer); err != nil {
 		return err
 	}
@@ -2882,7 +2882,7 @@ func runAnswerAfter(q *Request, id string) error {
 		return fmt.Errorf("question %s: invalid record", id)
 	}
 	data := json.RawMessage(r.Data)
-	if err := labAnswerAfter(q, docOf(pipelineAnswered{ID: r.ID, Kind: r.Kind, Answer: r.Answer, AnsweredBy: r.AnsweredBy, Options: orNull(r.Options), Data: data})); err != nil {
+	if err := labAnswerAfter(q, jsonBytes(pipelineAnswered{ID: r.ID, Kind: r.Kind, Answer: r.Answer, AnsweredBy: r.AnsweredBy, Options: orNull(r.Options), Data: data})); err != nil {
 		return err
 	}
 	var ask struct {
@@ -3003,7 +3003,7 @@ type pipelineSkill struct {
 }
 
 // profileSkills: the SKILL.md texts of a profile's skills (config/skills/<id>/SKILL.md), as an execution payload carries them.
-func profileSkills(profile doc) ([]pipelineSkill, error) {
+func profileSkills(profile any) ([]pipelineSkill, error) {
 	skills := []pipelineSkill{}
 	for _, x := range agentView[struct {
 		Skills []json.RawMessage `json:"skills"`
@@ -3049,7 +3049,7 @@ func projectKnown(q *Request, id string) bool { _, err := catalogue(q, id); retu
 // run, and an ordinary queued execution.
 // stepProfile: the profile an agent step runs: its profile (or the override), with the variant's model and skills. The
 // profile is its definition's open content.
-func stepProfile(q *Request, step *pipelineDefStep, overrides *pipelineOverrides) (string, doc, error) {
+func stepProfile(q *Request, step *pipelineDefStep, overrides *pipelineOverrides) (string, rawObject, error) {
 	pid := step.Profile
 	if overrides.Profile != "" {
 		pid = overrides.Profile
@@ -3059,10 +3059,10 @@ func stepProfile(q *Request, step *pipelineDefStep, overrides *pipelineOverrides
 		return pid, nil, err
 	}
 	if len(overrides.Model) > 0 {
-		profile["model"] = rawAny(overrides.Model)
+		profile["model"] = openJSON(overrides.Model)
 	}
 	if len(overrides.Skills) > 0 {
-		profile["skills"] = rawAny(overrides.Skills)
+		profile["skills"] = openJSON(overrides.Skills)
 	}
 	return pid, profile, nil
 }
@@ -3111,7 +3111,7 @@ func startAgentStep(q *Request, run *runRecord, step *pipelineDefStep, stepExecu
 		inputs = []fileRef{}
 	}
 	payload := map[string]json.RawMessage{"inputs": jsonBytes(inputs), "skills": jsonBytes(skills), "webRoute": jsonBytes(web)}
-	extra := docOf(pipelineAgentExtra{PipelineStepID: stepExecutionID, PipelineRunID: run.ID, DirectedBy: run.director(), ExperimentID: run.ExperimentID})
+	extra := pipelineAgentExtra{PipelineStepID: stepExecutionID, PipelineRunID: run.ID, DirectedBy: run.director(), ExperimentID: run.ExperimentID}
 	e, err := agentEnqueue(q, &s, prompt, "pipeline:"+stepExecutionID, payload, extra, overrides.host(), nil)
 	if err != nil {
 		return "", err

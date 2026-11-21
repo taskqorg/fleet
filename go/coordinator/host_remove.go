@@ -64,11 +64,11 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 		if _, err := executionStop(q, x); err != nil {
 			return none, fmt.Errorf("stop %v: %w", x, err)
 		}
-		e, err := recGet[doc](q, recExecution, x)
+		e, err := getExecution(q, x)
 		if err != nil {
 			return none, err
 		}
-		e["stopDetail"] = "host-removed"
+		e.StopDetail = "host-removed"
 		if err := recPut(q, recExecution, &e); err != nil {
 			return none, err
 		}

@@ -56,8 +56,9 @@ type labConfigIdentity struct {
 }
 
 // Catalogue linkage never substitutes for this actual pipeline/override identity.
-func labConfigDigest(pipeline string, overrides doc) string {
-	if overrides == nil {
+// overrides is the decoded overrides object; none digests as {}.
+func labConfigDigest(pipeline string, overrides any) string {
+	if string(jsonBytes(overrides)) == "null" {
 		return labConfigDigestOf(pipeline, nil)
 	}
 	return labConfigDigestOf(pipeline, overrides)

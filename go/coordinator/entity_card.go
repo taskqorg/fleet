@@ -267,7 +267,7 @@ func cardProject(q *Request, id string) (*contract.EntityCardReply, error) {
 
 // cardHost: one host as hosts_list shows it: online while it polled within hostStaleMs, failing while its polls fail.
 func cardHost(q *Request, id string) (*contract.EntityCardReply, error) {
-	list, err := replyAs[contract.HostsListReply](hostsList(q, false))
+	list, err := hostsListReply(q, false)
 	if err != nil {
 		return nil, err
 	}

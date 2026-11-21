@@ -634,46 +634,43 @@ func body(q *Request) any {
 	return b
 }
 
-// terminal: an execution record in a final state.
-func terminal(e doc) bool { s, _ := e["state"].(string); return executionEnds(s) }
-
-// unconfirmed: the host has not confirmed the execution's state (a receipt 'unknown', a silent host).
-func unconfirmed(e doc) bool { return e["observation"] == "unconfirmed" }
-
 func exec(q *Request, sql string, args ...any) error {
 	_, err := q.tx.Exec(q.ctx(), sql, args...)
 	return err
 }
 
 // records: JSON records as read, in order; none is an empty list.
-func records(bs [][]byte, err error) ([]doc, error) {
-	out := []doc{}
+func records(bs [][]byte, err error) ([]json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
+	out := make([]json.RawMessage, 0, len(bs))
 	for _, b := range bs {
-		var d doc
-		if err := json.Unmarshal(b, &d); err != nil {
-			return nil, err
+		if !json.Valid(b) {
+			return nil, fmt.Errorf("invalid stored record")
 		}
-		out = append(out, d)
+		out = append(out, b)
 	}
 	return out, nil
 }
 
 // record: one JSON record as read; none is not found (404).
-func record(b []byte, err error) (doc, error) {
+func record(b []byte, err error) (json.RawMessage, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	var d doc
-	return d, json.Unmarshal(b, &d)
+	if !json.Valid(b) {
+		return nil, fmt.Errorf("invalid stored record")
+	}
+	return b, nil
 }
 
-func getExecution(q *Request, id string) (doc, error) { return recGet[doc](q, recExecution, id) }
+func getExecution(q *Request, id string) (agentExecution, error) {
+	return recGet[agentExecution](q, recExecution, id)
+}
 
 func decode(raw json.RawMessage, v any) error {
 	if json.Unmarshal(raw, v) != nil {
@@ -683,11 +680,13 @@ func decode(raw json.RawMessage, v any) error {
 }
 
 // taskRow: the task's row as a record (column names); errNotFound when absent.
-func taskRow(q *Request, id string) (doc, error) { return record(q.db().TaskRowRecord(q.ctx(), id)) }
+func taskRow(q *Request, id string) (json.RawMessage, error) {
+	return record(q.db().TaskRowRecord(q.ctx(), id))
+}
 
 // questionRecord: the question's row as a record (column names), as the answer checks and callers outside this file
 // read it; nil when absent.
-func questionRecord(q *Request, id string) (doc, error) {
+func questionRecord(q *Request, id string) (json.RawMessage, error) {
 	d, err := record(q.db().QuestionRowRecord(q.ctx(), id))
 	if errors.Is(err, errNotFound) {
 		return nil, nil

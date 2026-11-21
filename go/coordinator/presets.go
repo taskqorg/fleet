@@ -44,7 +44,7 @@ type presetSettings struct {
 	} `json:"repos"`
 }
 
-func presetSettingsOf(settings doc) presetSettings {
+func presetSettingsOf(settings rawObject) presetSettings {
 	var s presetSettings
 	jsonRoundTrip(settings, &s)
 	return s
@@ -107,8 +107,11 @@ func parsePresets(v any) ([]preset, error) {
 	return out, nil
 }
 
-// presetsOf: the project's presets, or the system presets when it defines none (settings nil: outside projects).
-func presetsOf(settings doc) ([]preset, contract.SessionPresetSource, error) {
+// presetsOf: the project's presets, or the system presets when it defines none (settings nil: outside projects; any
+// JSON object value).
+func presetsOf(settingsValue any) ([]preset, contract.SessionPresetSource, error) {
+	var settings rawObject
+	json.Unmarshal(jsonBytes(settingsValue), &settings)
 	if v, ok := settings["presets"]; ok && len(presetSettingsOf(settings).Presets) > 0 {
 		ps, err := parsePresets(v)
 		return ps, contract.SessionPresetSourceProject, err
@@ -118,7 +121,7 @@ func presetsOf(settings doc) ([]preset, contract.SessionPresetSource, error) {
 
 // resolvePreset: the profile a preset starts with in this project. Its role when the project maps it, else its own
 // profile; role is "" when it fell back. unavailable says why it cannot start.
-func resolvePreset(q *Request, p preset, settings doc) (role, profileID string, profile doc, unavailable string) {
+func resolvePreset(q *Request, p preset, settings rawObject) (role, profileID string, profile rawObject, unavailable string) {
 	if id := presetSettingsOf(settings).Roles[p.Role]; p.Role != "" && id != "" {
 		role, profileID = p.Role, id
 	} else {
@@ -139,20 +142,16 @@ func callerReadOnly(q *Request) bool {
 	if !ok {
 		return false
 	}
-	e, _ := recFind[doc](q, recExecution, id)
+	e, _ := recMaybe[agentExecution](q, recExecution, id)
 	if e == nil {
 		return false
 	}
-	var ex struct {
-		SessionId string `json:"sessionId"`
-	}
-	jsonRoundTrip(e, &ex)
-	s, _ := recFind[doc](q, recSession, ex.SessionId)
-	return s != nil && s["access"] == "read"
+	s, _ := recMaybe[agentSession](q, recSession, e.SessionID)
+	return s != nil && s.Access == "read"
 }
 
 // profileInRoles: the project maps some role to this profile; an agent starts only such profiles.
-func profileInRoles(settings doc, profileID string) bool {
+func profileInRoles(settings rawObject, profileID string) bool {
 	for _, v := range presetSettingsOf(settings).Roles {
 		if v == profileID && profileID != "" {
 			return true
@@ -163,7 +162,7 @@ func profileInRoles(settings doc, profileID string) bool {
 
 func sessionPresets(q *Request, r *contract.SessionPresetsRequest) (contract.SessionPresetsReply, error) {
 	out := contract.SessionPresetsReply{Presets: []contract.SessionPreset{}}
-	var settings doc
+	var settings rawObject
 	if pid := deref(r.ProjectId); pid != "" {
 		if settings = projectSettingsOf(q, pid); settings == nil || (q.person != nil && !mayAccessProjectID(q.person, pid)) {
 			return out, fail(404, "Unknown project")

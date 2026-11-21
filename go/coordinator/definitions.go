@@ -36,6 +36,9 @@ type definitionFile struct {
 
 // canonicalText: content as stored and exported: keys sorted, two-space indent, no HTML escaping, a trailing newline.
 func canonicalText(v any) (string, error) {
+	if o, ok := v.(rawObject); ok { // an open object: its values' text, as file bytes
+		v = []byte(jsonBytes(o))
+	}
 	if raw, ok := v.([]byte); ok { // file bytes: numbers keep their exact text
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		dec.UseNumber()
@@ -75,9 +78,7 @@ func validDefinition(kind, id string, raw []byte) error {
 	}
 	switch kind {
 	case "project":
-		var v doc // projectBundle and projectSettings (projects.go) validate the open bundle
-		json.Unmarshal(raw, &v)
-		_, err := projectBundle(id, v)
+		_, err := projectBundle(id, json.RawMessage(raw)) // projectBundle and projectSettings (projects.go) validate the open bundle
 		return err
 	case "agent":
 		if _, err := contract.ParseProfile(raw); err != nil {

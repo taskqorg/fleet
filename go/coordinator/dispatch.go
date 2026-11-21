@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -172,18 +173,18 @@ const onlineMs = 30000
 const defaultInstructions = "Follow the user request and its scope. Discuss, answer questions, or review existing results when requested; do not create or modify a website unless requested. When creating a static website, deliver output/index.html and retain all source assets. Do not spawn subagents."
 
 type candidate struct {
-	Subscription doc      `json:"subscription"`
-	Host         string   `json:"host"`
-	Skipped      string   `json:"skipped,omitempty"`
-	Cause        string   `json:"cause,omitempty"`
-	Warnings     []string `json:"warnings"`
-	Stop         bool     `json:"stop,omitempty"`
-	binding      doc
+	Subscription rawObject `json:"subscription"`
+	Host         string    `json:"host"`
+	Skipped      string    `json:"skipped,omitempty"`
+	Cause        string    `json:"cause,omitempty"`
+	Warnings     []string  `json:"warnings"`
+	Stop         bool      `json:"stop,omitempty"`
+	binding      *resolvedAccount
 }
 
 type dispatchContext struct {
 	hostIDs  []string // the ids of byID in host order
-	byID     map[string]doc
+	byID     map[string]rawObject
 	views    map[string]dispatchHost // the fields dispatch reads of each host in byID
 	seen     map[string]float64
 	caps     map[string][]string
@@ -222,7 +223,7 @@ type dispatchAccount struct {
 	Take    struct {
 		Projects []string `json:"projects"`
 	} `json:"take"`
-	rec doc
+	rec rawObject
 }
 
 func loadDispatchContext(q *Request) (*dispatchContext, error) {
@@ -230,7 +231,7 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	k := &dispatchContext{byID: map[string]doc{}, views: map[string]dispatchHost{}, caps: map[string][]string{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, orders: map[string]contract.DispatchOrder{}}
+	k := &dispatchContext{byID: map[string]rawObject{}, views: map[string]dispatchHost{}, caps: map[string][]string{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, orders: map[string]contract.DispatchOrder{}}
 	for _, h := range hs {
 		v, _ := asT[dispatchHost](h) // a field of another type reads as absent
 		if len(v.Roles) == 0 {
@@ -238,12 +239,12 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 			k.byID[v.ID], k.views[v.ID] = h, v
 		}
 	}
-	obs, err := recAll[doc](q, recHostObservation, nil)
+	obs, err := recAll[rawObject](q, recHostObservation, nil)
 	if err != nil {
 		return nil, err
 	}
 	for _, x := range obs {
-		o, _ := asT[hostSeen](x)
+		o, _ := asT[hostSeen](x) // a field of another type reads as absent
 		k.caps[o.ID] = nonNilStrings(o.Capabilities)
 		k.seen[o.ID] = q.app.effectiveHostSeen(o.ID, o.LastSeenAt)
 		if o.GitConnections != nil {
@@ -253,7 +254,7 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 			k.roots[o.ID] = nonNilStrings(*o.ProjectRoots)
 		}
 	}
-	accounts, err := recAll[doc](q, recManagedAccount, nil)
+	accounts, err := recAll[rawObject](q, recManagedAccount, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -390,15 +391,11 @@ func causeOf(a dispatchAccount, host, message string) string {
 }
 
 // subOf: the subscription a candidate names, as route decisions record it.
-func subOf(a *dispatchAccount) doc {
+func subOf(a *dispatchAccount) rawObject {
 	if a == nil {
 		return nil
 	}
-	return docOf(struct {
-		ID     any `json:"id"`
-		Name   any `json:"name"`
-		Holder any `json:"holder"`
-	}{a.rec["id"], a.rec["name"], a.rec["holder"]})
+	return rawObject{"id": orNull(a.rec["id"]), "name": orNull(a.rec["name"]), "holder": orNull(a.rec["holder"])}
 }
 
 // dispatchSpec: an execution's dispatch record (enqueue): where and how it starts.
@@ -418,7 +415,7 @@ type dispatchSpec struct {
 
 // projectSnapshot: the project as an execution froze it at enqueue (projectContext).
 type projectSnapshot struct {
-	Settings doc `json:"settings"`
+	Settings rawObject `json:"settings"`
 	Context  []struct {
 		Path string `json:"path"`
 		Text string `json:"text"`
@@ -440,13 +437,13 @@ type queuedRun struct {
 }
 
 // queuedOf: the typed view of an execution record; a field of another type reads as absent.
-func queuedOf(e doc) queuedRun {
+func queuedOf(e rawObject) queuedRun {
 	v, _ := asT[queuedRun](e)
 	return v
 }
 
 // rankCandidates: the ordered candidate list of one queued execution.
-func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidate, error) {
+func (a *App) rankCandidates(q *Request, e rawObject, k *dispatchContext) ([]*candidate, error) {
 	run := queuedOf(e)
 	x := run.Dispatch
 	director := optAny(run.DirectedBy)
@@ -465,11 +462,11 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 	}
 	named := func(v string) func(*dispatchAccount) bool {
 		return func(s *dispatchAccount) bool {
-			if s.rec["id"] == v || s.rec["name"] == v {
+			if s.rec.val("id") == v || s.rec.val("name") == v {
 				return true
 			}
 			for _, b := range bindingsOf(s.rec) {
-				if b["binding"] == v {
+				if b.Binding != nil && *b.Binding == v {
 					return true
 				}
 			}
@@ -484,7 +481,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 		}
 		return nil
 	}
-	var settingsDoc doc
+	var settingsDoc rawObject
 	if run.ProjectSnapshot != nil {
 		settingsDoc = run.ProjectSnapshot.Settings
 	}
@@ -512,19 +509,19 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			if len(order) > 0 {
 				host = order[0]
 			}
-			return []*candidate{{Subscription: subOf(s), Host: host, Warnings: []string{}, Skipped: fmt.Sprintf("%s is a %s subscription, not %s", s.rec["name"], s.rec["harness"], harness), Cause: "subscription:" + s.ID + ":harness"}}, nil
+			return []*candidate{{Subscription: subOf(s), Host: host, Warnings: []string{}, Skipped: fmt.Sprintf("%s is a %s subscription, not %s", s.rec.val("name"), s.rec.val("harness"), harness), Cause: "subscription:" + s.ID + ":harness"}}, nil
 		}
 		subs = []*dispatchAccount{s}
 	} else {
 		list := nonNilStrings(settings.Subscriptions)
 		pos := func(s *dispatchAccount) int {
 			for i, n := range list {
-				if n == s.rec["name"] {
+				if n == s.rec.val("name") {
 					return i
 				}
 			}
 			for i, n := range list {
-				if n == s.rec["id"] {
+				if n == s.rec.val("id") {
 					return i
 				}
 			}
@@ -537,11 +534,11 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 		p, owner := q.peopleSnapshot().person(dir), ownerEmail(q)
 		full := p != nil && fullAccess(p)
 		mine := func(s *dispatchAccount) bool {
-			return s.rec["holder"] == director || full && s.rec["holder"] == owner || inList(nonNilStrings(s.Take.Projects), deref(x.ProjectID)) && projectID != nil
+			return s.rec.val("holder") == director || full && s.rec.val("holder") == owner || inList(nonNilStrings(s.Take.Projects), deref(x.ProjectID)) && projectID != nil
 		}
 		weight := func(s *dispatchAccount) int {
 			w := pos(s)
-			if s.rec["holder"] != director {
+			if s.rec.val("holder") != director {
 				w += 1000000
 			}
 			return w
@@ -562,7 +559,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			subs = append(subs, def)
 		}
 		for _, s := range ranked {
-			if def == nil || s.rec["id"] != def.rec["id"] {
+			if def == nil || s.rec.val("id") != def.rec.val("id") {
 				subs = append(subs, s)
 			}
 		}
@@ -576,7 +573,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			if s != nil {
 				bound := false
 				for _, b := range bindingsOf(s.rec) {
-					if b["hostId"] == id {
+					if b.HostID != nil && *b.HostID == id {
 						bound = true
 					}
 				}
@@ -625,10 +622,10 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 				continue
 			}
 			if !a.hostMayRun(h, projectID, director) {
-				skip(fmt.Sprintf("%s is held by %s, who has no grant on %v", id, h["holder"], jsText(projectID)), "host:"+id+":trust")
+				skip(fmt.Sprintf("%s is held by %s, who has no grant on %v", id, h.val("holder"), jsText(projectID)), "host:"+id+":trust")
 				continue
 			}
-			if h["intake"] == "paused" {
+			if h.val("intake") == "paused" {
 				skip(id+" is Paused", "host:"+id+":paused")
 				continue
 			}
@@ -681,16 +678,16 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 					skip(over, "subscription:"+s.ID+":limit")
 					continue
 				}
-				if s.rec["harness"] == "claude" && s.rec["holder"] != h["holder"] {
-					c.Warnings = append(c.Warnings, fmt.Sprintf("%s can read this login (Claude on a host held by someone else)", h["holder"]))
+				if s.rec.val("harness") == "claude" && s.rec.val("holder") != h.val("holder") {
+					c.Warnings = append(c.Warnings, fmt.Sprintf("%s can read this login (Claude on a host held by someone else)", h.val("holder")))
 				}
 			} else {
 				if harness != "codex" && x.Account == "" {
 					skip(fmt.Sprintf("no %s subscription of %v applies", harness, jsText(director)), fmt.Sprintf("director:%v:%s", jsText(director), harness))
 					continue
 				}
-				if dir != "" && h["holder"] != dir {
-					skip(fmt.Sprintf("%s login belongs to %s", id, h["holder"]), "host:"+id+":holder")
+				if dir != "" && h.val("holder") != dir {
+					skip(fmt.Sprintf("%s login belongs to %s", id, h.val("holder")), "host:"+id+":holder")
 					continue
 				}
 				if hs := hv.Harnesses[harness]; hs.Allowed != nil && !*hs.Allowed {
@@ -722,7 +719,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			subs := map[any]bool{}
 			for _, c := range out {
 				if c.Skipped == "" && c.Subscription != nil {
-					subs[c.Subscription["id"]] = true
+					subs[c.Subscription.val("id")] = true
 				}
 			}
 			for _, c := range out {
@@ -741,8 +738,8 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 	for _, c := range live {
 		ids := map[any]bool{}
 		for _, o := range live {
-			if o.Subscription["holder"] == c.Subscription["holder"] {
-				ids[o.Subscription["id"]] = true
+			if o.Subscription.val("holder") == c.Subscription.val("holder") {
+				ids[o.Subscription.val("id")] = true
 			}
 		}
 		if len(ids) > 1 {
@@ -788,13 +785,13 @@ func asHTTP(err error, he **HTTPError) bool {
 	return ok
 }
 
-func recordDecision(q *Request, e doc, polling string, cs []*candidate, winner *candidate) error {
+func recordDecision(q *Request, e rawObject, polling string, cs []*candidate, winner *candidate) error {
 	run := queuedOf(e)
 	var w []byte
 	if winner != nil {
 		w = jsonBytes(struct {
-			Subscription doc    `json:"subscription"`
-			Host         string `json:"host"`
+			Subscription rawObject `json:"subscription"`
+			Host         string    `json:"host"`
 		}{winner.Subscription, winner.Host})
 	}
 	return q.db().DispRouteDecision(q.ctx(), db.DispRouteDecisionParams{ExecutionID: run.ID, ProjectID: run.Dispatch.ProjectID, HostID: strPtr(polling), Candidates: jsonBytes(cs), Winner: w})
@@ -819,7 +816,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		}
 	}
 	for _, id := range ids {
-		e, err := recGet[doc](q, recExecution, id)
+		e, err := recGet[rawObject](q, recExecution, id)
 		if err != nil {
 			return err
 		}
@@ -833,7 +830,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				}
 				// Re-read after acquiring the session lock so any concurrent session write is visible (a stop does not take it:
 				// the row lock of claimRow serializes with that).
-				e, err = recGet[doc](q, recExecution, id)
+				e, err = recGet[rawObject](q, recExecution, id)
 				if err != nil {
 					return err
 				}
@@ -861,7 +858,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 		}
 		if best != nil {
-			if e["pipelineRunId"] != nil && !txHasLock(q.tx, GLOBAL) {
+			if e.val("pipelineRunId") != nil && !txHasLock(q.tx, GLOBAL) {
 				onEnd(q.tx, func(committed bool) {
 					if committed {
 						a.wakeDispatch()
@@ -885,7 +882,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			delete(e, "waitDetail")
 			// A refused start ends this execution only: returning would fail the whole pass, and every later pass,
 			// while the execution stays queued (PDS18 outage, 2026-11-12). Its partial writes roll back first.
-			queued := docOf(e)
+			queued := maps.Clone(e)
 			if err := exec(q, "SAVEPOINT start_command"); err != nil {
 				return err
 			}
@@ -897,7 +894,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				if err := exec(q, "ROLLBACK TO SAVEPOINT start_command"); err != nil {
 					return err
 				}
-				queued["state"], queued["stopDetail"] = "cancelled", "start refused: "+he.Msg
+				queued["state"], queued["stopDetail"] = jsonBytes("cancelled"), jsonBytes("start refused: "+he.Msg)
 				if err := recPut(q, recExecution, &queued); err != nil {
 					return err
 				}
@@ -936,7 +933,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if e == nil {
 				continue
 			}
-			e["state"], e["stopDetail"], e["waitReason"], e["waitDetail"] = "cancelled", reason, waitKindOf(cause), reason
+			e["state"], e["stopDetail"], e["waitReason"], e["waitDetail"] = jsonBytes("cancelled"), jsonBytes(reason), jsonBytes(waitKindOf(cause)), jsonBytes(reason)
 			if err := recPut(q, recExecution, &e); err != nil {
 				return err
 			}
@@ -945,7 +942,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 			continue
 		}
-		if e["waitDetail"] != reason {
+		if e.val("waitDetail") != reason {
 			if e, err = claimRow(q, id); err != nil {
 				return err
 			}
@@ -954,9 +951,9 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 		}
 		// Checked again on the locked row: an overlapping pass may have written the same wait meanwhile.
-		if e["waitDetail"] != reason {
+		if e.val("waitDetail") != reason {
 			kind := waitKindOf(cause)
-			e["waitReason"], e["waitDetail"] = kind, reason
+			e["waitReason"], e["waitDetail"] = jsonBytes(kind), jsonBytes(reason)
 			if err := recPut(q, recExecution, &e); err != nil {
 				return err
 			}
@@ -973,7 +970,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				holder = k.views[m[1]].Holder
 			}
 		} else if first != nil && first.Subscription != nil {
-			holder, _ = first.Subscription["holder"].(string)
+			holder, _ = first.Subscription.val("holder").(string)
 		}
 		if _, ok := causes[cause]; !ok {
 			run := queuedOf(e)
@@ -999,11 +996,11 @@ const dispatchStallCauses = `^(subscription|placement|host|director|execution):|
 
 // claimRow locks an execution's row for this transaction and returns it while it is still claimable, nil otherwise.
 // executionStop takes the same row lock; every dispatch write of a queued execution goes through here.
-func claimRow(q *Request, id string) (doc, error) {
+func claimRow(q *Request, id string) (rawObject, error) {
 	if err := q.db().DispExecLock(q.ctx(), id); err != nil {
 		return nil, err
 	}
-	e, err := recGet[doc](q, recExecution, id)
+	e, err := recGet[rawObject](q, recExecution, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1014,8 +1011,8 @@ func claimRow(q *Request, id string) (doc, error) {
 }
 
 // claimable: queued agent work no host has and no stop asked for.
-func claimable(e doc) bool {
-	return e["dispatch"] != nil && e["hostId"] == nil && e["state"] == "preparing" && e["stopRequested"] != true
+func claimable(e rawObject) bool {
+	return e.val("dispatch") != nil && e.val("hostId") == nil && e.val("state") == "preparing" && e.val("stopRequested") != true
 }
 
 // startSession: the fields startCommand reads of the session record.
@@ -1034,64 +1031,64 @@ type startBinding struct {
 }
 
 // startCommand: the start command of a claimed execution, from the session as it is now and the chosen binding.
-func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, error) {
-	sessionID, _ := e["sessionId"].(string)
-	liveSession, err := recGet[doc](q, recSession, sessionID)
+func (a *App) startCommand(q *Request, e rawObject, host string, binding *resolvedAccount) (rawObject, error) {
+	sessionID, _ := e.val("sessionId").(string)
+	liveSession, err := recGet[rawObject](q, recSession, sessionID)
 	if err != nil {
 		return nil, err
 	}
-	if err := taskAllowsWork(q, firstString(e["deliveryId"], liveSession["deliveryId"], liveSession["taskId"])); err != nil {
+	if err := taskAllowsWork(q, firstString(e.val("deliveryId"), liveSession.val("deliveryId"), liveSession.val("taskId"))); err != nil {
 		return nil, err
 	}
 	run := queuedOf(e)
 	d := run.Dispatch
 	sv, _ := asT[startSession](liveSession)
 	bv, _ := asT[startBinding](binding)
-	s := docOf(liveSession) // a copy: the start reads the dispatch's project and checkout
-	s["projectId"], s["workingDirectory"], s["workspaceKey"] = optAny(d.ProjectID), optAny(d.WorkingDirectory), optAny(d.WorkspaceKey)
-	e["hostId"] = host
-	if s["account"] != nil || binding != nil {
-		e["requestedAccount"] = s["account"]
+	s := maps.Clone(liveSession) // a copy: the start reads the dispatch's project and checkout
+	s["projectId"], s["workingDirectory"], s["workspaceKey"] = jsonBytes(optAny(d.ProjectID)), jsonBytes(optAny(d.WorkingDirectory)), jsonBytes(optAny(d.WorkspaceKey))
+	e["hostId"] = jsonBytes(host)
+	if s.val("account") != nil || binding != nil {
+		e["requestedAccount"] = jsonBytes(s.val("account"))
 		if binding != nil {
-			e["effectiveAccount"] = binding
+			e["effectiveAccount"] = jsonBytes(binding)
 		} else {
-			e["effectiveAccount"] = docOf(struct {
+			e["effectiveAccount"] = jsonBytes(struct {
 				Binding any  `json:"binding"`
 				Legacy  bool `json:"legacy"`
-			}{s["account"], true})
+			}{s.val("account"), true})
 		}
 	}
 	if binding != nil && bv.Taken {
-		e["takenFrom"], e["directedBy"] = e["directedBy"], binding["holder"]
+		e["takenFrom"], e["directedBy"] = jsonBytes(e.val("directedBy")), jsonBytes(binding.Holder)
 	}
-	cfg := rawMap(s["agentConfig"])
+	cfg := rawMap(s.val("agentConfig"))
 	// The start payload is contract.StartPayload, field by field: the enqueue extras (inputs, skills, webRoute) are named
 	// fields, never a blind merge over the fields above (C7).
-	p := &contract.StartPayload{Harness: ptr(harnessOf(s)), Text: strPtr(d.Input), Setup: strPtr(nonNil(s["setup"], "run")),
-		WorkspaceKey: strPtr(d.WorkspaceKey), WorkingDirectory: strPtr(d.WorkingDirectory), Model: strPtr(e["model"]), Effort: strPtr(e["effort"]),
-		Instructions: ptr(defaultInstructions), NativeSessionId: strp(s, "nativeSessionId")} // "" still reaches the executor's check
-	if s["account"] != nil || binding != nil {
+	p := &contract.StartPayload{Harness: ptr(harnessOf(s)), Text: strPtr(d.Input), Setup: strPtr(nonNil(s.val("setup"), "run")),
+		WorkspaceKey: strPtr(d.WorkspaceKey), WorkingDirectory: strPtr(d.WorkingDirectory), Model: strPtr(e.val("model")), Effort: strPtr(e.val("effort")),
+		Instructions: ptr(defaultInstructions), NativeSessionId: s.ptr("nativeSessionId")} // "" still reaches the executor's check
+	if s.val("account") != nil || binding != nil {
 		if binding != nil {
 			p.Account = strPtr(bv.Binding)
 		} else {
-			p.Account = strPtr(s["account"])
+			p.Account = strPtr(s.val("account"))
 		}
 	}
 	if pid := deref(d.ProjectID); pid != "" {
-		if e["projectSnapshot"] == nil { // queued before project snapshots: freeze the project as it is now
+		if !e.has("projectSnapshot") { // queued before project snapshots: freeze the project as it is now
 			snapshot, err := projectContext(q, pid)
 			if err != nil {
 				return nil, err
 			}
-			e["projectSnapshot"] = snapshot
+			e["projectSnapshot"] = jsonBytes(snapshot)
 		}
 		snap, _ := asT[projectSnapshot](e["projectSnapshot"])
 		p.ProjectId, p.Project = &pid, rawMap(snap.Settings)
 	}
 	snapshot, _ := asT[*projectSnapshot](e["projectSnapshot"])
-	networkSession := docOf(s)
+	networkSession := maps.Clone(s)
 	if snapshot != nil {
-		networkSession["projectSettings"] = snapshot.Settings
+		networkSession["projectSettings"] = jsonBytes(snapshot.Settings)
 	}
 	if gitNetworkOf(q, networkSession) {
 		p.GitNetwork = ptr(true)
@@ -1099,7 +1096,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	if cfg != nil {
 		p.AgentConfig, p.Instructions = cfg, ptr("")
 		if string(cfg["fleetOperations"]) == "true" { // the profile opts in to every operation its director may call (fleet-pm-agent.md §1)
-			if dir := q.peopleSnapshot().person(firstString(e["directedBy"], ownerEmail(q))); dir != nil {
+			if dir := q.peopleSnapshot().person(firstString(e.val("directedBy"), ownerEmail(q))); dir != nil {
 				p.FleetOperations = rawList(fleetOperations(dir))
 			}
 		}
@@ -1107,7 +1104,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	extra := d.Payload
 	if v, ok := extra["inputs"]; ok {
 		if err := json.Unmarshal(v, &p.Inputs); err != nil {
-			return nil, failf(400, "execution %v: pipeline inputs are not [{artifactId, path}]: %v", e["id"], err)
+			return nil, failf(400, "execution %v: pipeline inputs are not [{artifactId, path}]: %v", e.val("id"), err)
 		}
 	}
 	var list []any
@@ -1138,66 +1135,52 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 				ExecutionID      any             `json:"executionId"`
 				ProjectID        any             `json:"projectId"`
 				WorkspaceKey     any             `json:"workspaceKey"`
-				Project          doc             `json:"project"`
+				Project          rawObject       `json:"project"`
 				Revision         json.RawMessage `json:"revision"`
 				ContentSha       json.RawMessage `json:"contentSha"`
 				WorkingDirectory any             `json:"workingDirectory"`
-			}{e["id"], optAny(d.ProjectID), optAny(d.WorkspaceKey), snapshot.Settings, nullRaw(snapshot.Revision), nullRaw(snapshot.ContentSha), s["workingDirectory"]})
-			liveSession["workspaceSnapshots"] = workspaces
+			}{e.val("id"), optAny(d.ProjectID), optAny(d.WorkspaceKey), snapshot.Settings, nullRaw(snapshot.Revision), nullRaw(snapshot.ContentSha), s.val("workingDirectory")})
+			liveSession["workspaceSnapshots"] = jsonBytes(workspaces)
 			if err := recPut(q, recSession, &liveSession); err != nil {
 				return nil, err
 			}
 		}
-		e["workspaceSnapshot"] = workspaces[key]
+		e["workspaceSnapshot"] = jsonBytes(workspaces[key])
 	}
 	// The session's preset (presets.go): read access, no branch and its starter instruction, on every turn.
-	if s["access"] == "read" {
+	if s.val("access") == "read" {
 		p.ReadOnly = ptr(true)
 	}
-	if s["branch"] == false {
+	if s.val("branch") == false {
 		p.Branch = ptr(false)
 	}
 	if st := sv.Starter; st != "" {
 		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\nThis conversation's preset. " + st))
 	}
-	command := docOf(struct {
-		ID          string `json:"id"`
-		ExecutionID any    `json:"executionId"`
-		SessionID   any    `json:"sessionId"`
-		HostID      string `json:"hostId"`
-		Kind        string `json:"kind"`
-		Status      string `json:"status"`
-		HandedOut   bool   `json:"handedOut"`
-	}{newID(), e["id"], s["id"], host, string(contract.CommandKindStart), "pending", false})
-	command["payload"] = p // the payload itself: agentDecorate completes it below
-	if err := agentDecorate(q, s, e, p); err != nil {
+	command := rawObject{"id": jsonBytes(newID()), "executionId": orNull(e["id"]), "sessionId": orNull(s["id"]), "hostId": jsonBytes(host),
+		"kind": jsonBytes(string(contract.CommandKindStart)), "status": jsonBytes("pending"), "handedOut": jsonBytes(false)}
+	if err := agentDecorate(q, s, e, p); err != nil { // agentDecorate completes the payload
 		return nil, err
 	}
-	if granted := jsonStrings(cfg["connections"]); len(granted) > 0 && e["pipelineRunId"] == nil {
-		minted, err := mint(q, docOf(struct {
-			ExecutionID   any `json:"executionId"`
-			DirectedBy    any `json:"directedBy"`
-			ProjectID     any `json:"projectId"`
-			ExperimentID  any `json:"experimentId"`
-			PipelineRunID any `json:"pipelineRunId"`
-		}{e["id"], e["directedBy"], s["projectId"], e["experimentId"], s["pipelineRunId"]}), granted)
+	if granted := jsonStrings(cfg["connections"]); len(granted) > 0 && !e.has("pipelineRunId") {
+		minted, err := mint(q, struct {
+			ExecutionID   json.RawMessage `json:"executionId"`
+			DirectedBy    json.RawMessage `json:"directedBy"`
+			ProjectID     json.RawMessage `json:"projectId"`
+			ExperimentID  json.RawMessage `json:"experimentId"`
+			PipelineRunID json.RawMessage `json:"pipelineRunId"`
+		}{orNull(e["id"]), orNull(e["directedBy"]), orNull(s["projectId"]), orNull(e["experimentId"]), orNull(s["pipelineRunId"])}, granted)
 		if err != nil {
 			return nil, err
 		}
-		if minted != nil {
-			grant, _ := asT[struct {
-				Token       *string           `json:"token"`
-				Connections json.RawMessage   `json:"connections"`
-				Refused     []json.RawMessage `json:"refused"`
-			}](minted)
-			if grant.Token != nil {
-				p.RunToken, p.Connections = strPtr(grant.Token), rawList(grant.Connections)
-			}
-			if len(grant.Refused) > 0 {
-				e["connectionsRefused"] = minted["refused"]
-			}
+		if minted.Token != nil {
+			p.RunToken, p.Connections = strPtr(minted.Token), rawList(minted.Connections)
+		}
+		if len(minted.Refused) > 0 {
+			e["connectionsRefused"] = jsonBytes(minted.Refused)
 		}
 	}
+	command["payload"] = jsonBytes(p) // the payload as completed above
 	if err := recPut(q, recExecution, &e); err != nil {
 		return nil, err
 	}
@@ -1217,7 +1200,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 			task = deref(t)
 		}
 		if task != "" {
-			if err := takeTaskFrom(q, task, bv.Holder, e["takenFrom"]); err != nil {
+			if err := takeTaskFrom(q, task, bv.Holder, e.val("takenFrom")); err != nil {
 				return nil, err
 			}
 		}

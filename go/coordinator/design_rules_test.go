@@ -2,12 +2,10 @@ package main
 
 // Design rules scan (docs/designs/fleet-standard.md S10, DESIGN_RULES.md).
 // Every non-test, non-generated Go file of this package is parsed and checked
-// for the patterns below. designRulesLegacy names the files not yet moved onto
-// the standard; it only shrinks: an entry whose file no longer breaks its rule
-// fails the test until it is removed.
+// for the patterns below; only designRulesOwned names a file that may break a
+// rule, with the reason.
 
 import (
-	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -135,39 +133,11 @@ func TestDesignRules(t *testing.T) {
 	}
 	for file, rules := range found {
 		for rule, pos := range rules {
-			if !designRulesLegacy[file][rule] && designRulesOwned[file][rule] == "" {
+			if designRulesOwned[file][rule] == "" {
 				t.Errorf("%s: breaks %s (DESIGN_RULES.md, %d places in the file); move it onto the standard", fset.Position(pos[0]), rule, len(pos))
 			}
 		}
 	}
-	for file, rules := range designRulesLegacy {
-		for rule := range rules {
-			if len(found[file][rule]) == 0 {
-				t.Errorf("%s no longer breaks %s: remove it from designRulesLegacy", file, rule)
-			}
-		}
-	}
-	if t.Failed() {
-		t.Logf("the current tree as designRulesLegacy (only remove entries):\n%s", designRulesAllowlist(found))
-	}
-}
-
-func designRulesAllowlist(found map[string]map[string][]token.Pos) string {
-	files := make([]string, 0, len(found))
-	for f := range found {
-		files = append(files, f)
-	}
-	sort.Strings(files)
-	var b strings.Builder
-	for _, f := range files {
-		rules := make([]string, 0, len(found[f]))
-		for r := range found[f] {
-			rules = append(rules, fmt.Sprintf("%q: true", r))
-		}
-		sort.Strings(rules)
-		fmt.Fprintf(&b, "\t%q: {%s},\n", f, strings.Join(rules, ", "))
-	}
-	return b.String()
 }
 
 // The S5/S6 checks of the work kit and its queues (DESIGN_RULES.md). designKitAreas: the file-name prefixes of the
@@ -651,11 +621,4 @@ var designRulesOwned = map[string]map[string]string{
 	"sql_builder.go": {
 		"R-SQL": "S2: the one place SQL is assembled at run time (resource item pages, analytics_query grouping and filters, list pages and their counts, delete and purge cascades), from allowlisted identifiers with bind parameters; sqlc cannot vary a statement's table, comparison, grouping or conditions",
 	},
-}
-
-// designRulesLegacy: file -> rules it may still break, generated from the tree
-// at stage 0. Entries are only removed.
-var designRulesLegacy = map[string]map[string]bool{
-	"json.go":     {"R-MAP": true},
-	"registry.go": {"R-MAP": true},
 }

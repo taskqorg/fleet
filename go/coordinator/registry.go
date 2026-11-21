@@ -210,13 +210,6 @@ func namedFold(named map[string]bool, k string) bool {
 	return false
 }
 
-// docOf: a decoded request as the map a handler not yet on struct fields reads; only the request type's fields reach it.
-func docOf(v any) doc {
-	d := doc{}
-	json.Unmarshal(jsonBytes(v), &d)
-	return d
-}
-
 // asT: rows and records read as maps, as their contract type. For values whose map keys are fixed by the query or the
 // builder (a SELECT column list); a reply built field by field names its struct directly.
 func asT[T any](v any) (T, error) {
@@ -232,7 +225,7 @@ func replyAs[T any](v any, err error) (T, error) {
 		return t, err
 	}
 	// A key the contract requires that the handler did not write is a contract break, not a zero value.
-	if m, ok := v.(doc); ok {
+	if m, ok := v.(rawObject); ok {
 		if rt := reflect.TypeOf(t); rt.Kind() == reflect.Struct {
 			for i := 0; i < rt.NumField(); i++ {
 				tag, opts, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
@@ -264,7 +257,7 @@ func timeText(v any) string {
 	return fmt.Sprint(v)
 }
 
-func recsOf(vs []doc) []map[string]json.RawMessage {
+func recsOf[T any](vs []T) []map[string]json.RawMessage {
 	out := make([]map[string]json.RawMessage, 0, len(vs))
 	for _, v := range vs {
 		out = append(out, recOf(v))

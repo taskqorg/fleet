@@ -606,7 +606,7 @@ func intOK(v any) (int64, bool) {
 	return int64(f), true
 }
 
-func keysOnly(b doc, allowed ...string) bool {
+func keysOnly(b rawObject, allowed ...string) bool {
 	for k := range b {
 		ok := false
 		for _, a := range allowed {
@@ -680,8 +680,8 @@ func backgroundRequest(ctx context.Context, a *App, tx pgx.Tx) *Request {
 	return &Request{r: hr, tx: tx, app: a}
 }
 
-// askRow inserts one question; returns its id.
-func askRow(q *Request, kind, text string, projectID any, options any, askedBy string, data doc) (string, error) {
+// askRow inserts one question; returns its id. data is a struct of the question's data fields (nil: none).
+func askRow(q *Request, kind, text string, projectID any, options any, askedBy string, data any) (string, error) {
 	id := newID()
 	var opts []byte
 	if options != nil {
@@ -707,21 +707,18 @@ func executionTime(v any) any {
 	return msTime(v)
 }
 
-// projectOrNil: a project id as stored; "" (no project) is NULL (migration 68: execution_project_id_not_empty).
-func projectOrNil(v any) any {
-	if s, ok := v.(string); ok && s == "" {
-		return nil
+// insertExecution inserts a typed execution row unless its id or request_id exists. v is the caller's record of it
+// (executionNew names the fields read).
+func insertExecution(q *Request, v any) (bool, error) {
+	x, err := asT[executionNew](v)
+	if err != nil {
+		return false, err
 	}
-	return v
-}
-
-// insertExecution inserts a typed execution row unless its id or request_id exists.
-func insertExecution(q *Request, v doc) (bool, error) {
-	data, traceErr := executionTraceData(q, v, v["data"])
+	data, traceErr := executionTraceData(q, firstString(x.ParentExecutionID, x.PipelineStepID, x.PipelineRunID), x.Data)
 	if traceErr != nil {
 		return false, traceErr
 	}
-	row := executionRow(v)
+	row := executionRow(x)
 	row.Data = jsonBytes(data)
 	return executionInsert(q, row)
 }

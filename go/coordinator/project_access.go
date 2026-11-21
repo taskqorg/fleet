@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"maps"
 
@@ -132,13 +133,10 @@ func seedProjectDefinitions() ([]definitionFile, map[string]error) {
 			Path any `json:"path"`
 			Text any `json:"text"`
 		}
-		texts := []contextFile{}
-		contexts, _ := p["context"].([]doc)
-		for _, f := range contexts {
-			texts = append(texts, contextFile{Path: f["path"], Text: f["text"]})
-		}
+		texts := []contextFile{} // the context as shippedProjectContext wrote it (projectContextFile)
+		json.Unmarshal(p["context"], &texts)
 		text, err := canonicalText(jsonBytes(struct {
-			Settings     doc           `json:"settings"`
+			Settings     rawObject     `json:"settings"`
 			ContextFiles []contextFile `json:"contextFiles"`
 		}{settings, texts}))
 		if err != nil {
@@ -176,36 +174,36 @@ func refreshRequestAccess(q *Request) error {
 	return err
 }
 
-func projectAgentArguments(q *Request, args doc, executionID string, preparedRead bool) (doc, error) {
-	e, err := recGet[doc](q, recExecution, executionID)
+// projectAgentArguments: an agent's project operation arguments (an open object that goes on to the operation) bound
+// to its session's project or focus (focusProjectOf, agent.go; a prepared read skips the settings check).
+func projectAgentArguments(q *Request, args rawObject, executionID string, preparedRead bool) (rawObject, error) {
+	e, err := getExecution(q, executionID)
 	if err != nil {
 		return nil, err
 	}
-	sessionID, _ := e["sessionId"].(string)
-	session, err := recGet[doc](q, recSession, sessionID)
+	session, err := recGet[rawObject](q, recSession, e.SessionID)
 	if err != nil {
 		return nil, err
 	}
-	if _, focused := session["focus"]; focused {
-		resolver := focusProject
-		if preparedRead {
-			resolver = focusProjectID
-		}
-		project, err := resolver(q, session, args["projectId"])
+	if raw, focused := session["focus"]; focused {
+		var f *agentFocus
+		lenientDecode(raw, &f)
+		given, _ := args.val("projectId").(string)
+		project, err := focusProjectOf(q, f, given, !preparedRead)
 		if err != nil {
 			return nil, err
 		}
-		args["projectId"] = project
+		args["projectId"] = jsonBytes(project)
 		return args, nil
 	}
-	project, _ := session["projectId"].(string)
+	project := session.text("projectId")
 	if preparedRead && project == "" {
 		return nil, fail(400, "Expected projectId")
 	}
-	if args["projectId"] == nil {
-		args["projectId"] = project
+	if !args.has("projectId") {
+		args["projectId"] = jsonBytes(project)
 	}
-	if project == "" || args["projectId"] != project || !mayAccessProjectID(q.person, project) {
+	if project == "" || args.val("projectId") != project || !mayAccessProjectID(q.person, project) {
 		return nil, fail(403, "Project outside the session focus")
 	}
 	return args, nil

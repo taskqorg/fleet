@@ -209,9 +209,8 @@ func sessionGet(q *Request, sid string) (rawObject, error) {
 	if err != nil {
 		return nil, err
 	}
-	for k, x := range v {
-		s[k] = jsonBytes(x)
-	}
+	s["queued"], s["questions"], s["handoffs"] = jsonBytes(v.Queued), jsonBytes(v.Questions), jsonBytes(v.Handoffs)
+	s["transitions"], s["forks"] = jsonBytes(v.Transitions), jsonBytes(v.Forks)
 	s["sessionId"] = jsonBytes(sid)
 	code, err := q.db().SessionCode(q.ctx(), sid)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -291,7 +290,7 @@ func sessionProfile(q *Request, r *contract.SessionProfileRequest) (contract.Ses
 	if err := recPut(q, recSession, &s); err != nil {
 		return none, err
 	}
-	profileID, _ := p["id"].(string)
+	profileID := p.text("id")
 	return contract.SessionProfileReply{SessionId: sid, ProfileId: profileID, Account: r.Account}, nil
 }
 

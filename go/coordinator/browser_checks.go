@@ -93,7 +93,7 @@ func (a *App) refreshPeople(ctx context.Context) error {
 				return err
 			}
 			// askRow (store.go) still takes the question data as a map.
-			_, err := askRow(q, "operator_decision", peopleQuestion(problem, partial), nil, []any{"fixed"}, "fleet", docOf(peopleFileQuestion{PeopleFile: true}))
+			_, err := askRow(q, "operator_decision", peopleQuestion(problem, partial), nil, []any{"fixed"}, "fleet", peopleFileQuestion{PeopleFile: true})
 			return err
 		}); err != nil {
 			return err

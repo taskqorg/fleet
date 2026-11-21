@@ -1308,7 +1308,7 @@ func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.Delive
 			text += " " + strings.Join(r.Links, " ")
 		}
 		ps = append(ps, Problem{Cause: "problem:delivery:" + r.Key + ":" + string(r.Metric), Text: text, Rule: "delivery-regression", ProjectID: ciProject,
-			Data: docOf(deliveryProblemData{r.Key, string(r.Metric), r.BaselineMs, r.CurrentMs, r.Links})})
+			Data: deliveryProblemData{r.Key, string(r.Metric), r.BaselineMs, r.CurrentMs, r.Links}})
 	}
 	if err := problemsSync(q, "delivery", ps); err != nil {
 		return contract.DeliveryRegressionsReply{}, err

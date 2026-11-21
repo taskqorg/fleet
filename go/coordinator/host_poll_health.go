@@ -201,7 +201,7 @@ func (a *App) openPollProblem(ctx context.Context, host, reason string) {
 			return err
 		}
 		held = true
-		return problemAsk(q, "direct", Problem{Cause: hostPollCause(host), Text: text, Data: docOf(hostPollProblemData{host, reason})})
+		return problemAsk(q, "direct", Problem{Cause: hostPollCause(host), Text: text, Data: hostPollProblemData{host, reason}})
 	}); err != nil {
 		log.Printf("host %s poll problem: %v", host, err)
 		return

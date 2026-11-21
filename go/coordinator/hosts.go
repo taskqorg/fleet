@@ -217,15 +217,9 @@ func mintSecret() string {
 	return hex.EncodeToString(b)
 }
 
-// holderNotice: the question that tells a holder the owner changed a setting of their row.
-type holderNotice struct {
-	Kind    string   `json:"kind"`
-	Text    string   `json:"text"`
-	Options []string `json:"options"`
-	AskedBy string   `json:"askedBy"`
-	Data    struct {
-		Notice string `json:"notice"`
-	} `json:"data"`
+// holderNoticeData: the data of the question that tells a holder the owner changed a setting of their row.
+type holderNoticeData struct {
+	Notice string `json:"notice"`
 }
 
 // notifyHolder: the owner changed a setting of a row someone else holds; tell the holder with a question addressed to them.
@@ -233,9 +227,9 @@ func notifyHolder(q *Request, holder, text string) error {
 	if q.person == nil || !fullAccess(q.person) || q.person.Email == holder {
 		return nil
 	}
-	n := holderNotice{Kind: "operator_decision", Text: text, Options: []string{"ok"}, AskedBy: q.person.Email}
-	n.Data.Notice = "owner-override"
-	id, err := askQuestion(q, docOf(n)) // askQuestion (tasks.go) still takes the record as a map
+	by := q.person.Email
+	id, err := askQuestionAs(q, questionAsk{Kind: "operator_decision", Text: text, Options: jsonBytes([]string{"ok"}), AskedBy: &by,
+		Data: jsonBytes(holderNoticeData{Notice: "owner-override"})})
 	if err != nil {
 		return err
 	}
