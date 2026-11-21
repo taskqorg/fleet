@@ -5,10 +5,13 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -200,8 +203,331 @@ func delegationsOf(q *Request, ds [][]byte, err error) ([]rawObject, error) {
 	return out, nil
 }
 
+type sessionPayload struct {
+	DeliveryID           string                 `json:"deliveryId,omitempty"`
+	AgentConfig          json.RawMessage        `json:"agentConfig,omitempty"`
+	StartRequest         string                 `json:"startRequest,omitempty"`
+	Role                 string                 `json:"role,omitempty"`
+	Preset               string                 `json:"preset,omitempty"`
+	Starter              string                 `json:"starter,omitempty"`
+	Account              string                 `json:"account,omitempty"`
+	Access               string                 `json:"access,omitempty"`
+	Branch               *bool                  `json:"branch,omitempty"`
+	Setup                string                 `json:"setup,omitempty"`
+	WorkingDirectory     string                 `json:"workingDirectory,omitempty"`
+	WorkspaceKey         string                 `json:"workspaceKey,omitempty"`
+	NativeSessionID      string                 `json:"nativeSessionId,omitempty"`
+	NativeSessions       map[string]agentNative `json:"nativeSessions,omitempty"`
+	ForkNativeSessionID  string                 `json:"forkNativeSessionId,omitempty"`
+	ForkOf               *agentForkOf           `json:"forkOf,omitempty"`
+	PendingHandoffID     string                 `json:"pendingHandoffId,omitempty"`
+	PendingTransition    *agentTransitionArgs   `json:"pendingTransition,omitempty"`
+	TransitionCleanup    json.RawMessage        `json:"transitionCleanup,omitempty"`
+	Focus                *agentFocus            `json:"focus,omitempty"`
+	ReadinessOfSessionID string                 `json:"readinessOfSessionId,omitempty"`
+}
+
+func sessionOf(r db.Session) (agentSession, error) {
+	var s agentSession
+	if len(r.Payload) > 0 {
+		if err := restDecode(r.Payload, &s, &s.rest); err != nil {
+			return s, err
+		}
+	}
+	s.ID = r.ID
+	s.ProjectID = deref(r.ProjectID)
+	s.TaskID = deref(r.TaskID)
+	s.HostID = deref(r.HostID)
+	s.Actor = deref(r.Actor)
+	s.DirectedBy = deref(r.DirectedBy)
+	s.DirectorAccessRevokedAt = r.DirectorAccessRevokedAt
+	s.ParentExecutionID = deref(r.ParentExecutionID)
+	s.CreatedByExecutionID = deref(r.CreatedByExecutionID)
+	s.CreatedBySessionID = deref(r.CreatedBySessionID)
+	s.SourceSessionID = deref(r.SourceSessionID)
+	s.PipelineRunID = deref(r.PipelineRunID)
+	s.CreatedAt = int64Ms(r.CreatedAt)
+	s.ArchivedAt = int64MsPtr(r.ArchivedAt)
+	return s, nil
+}
+
+func sessionByID(q *Request, id string) (agentSession, error) {
+	if id == "" {
+		return agentSession{}, errNotFound
+	}
+	r, err := q.db().SessionByID(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return agentSession{}, errNotFound
+	}
+	if err != nil {
+		return agentSession{}, err
+	}
+	return sessionOf(r)
+}
+
+func sessionLocked(q *Request, id string) (agentSession, error) {
+	if id == "" {
+		return agentSession{}, errNotFound
+	}
+	r, err := q.db().SessionByIDLocked(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return agentSession{}, errNotFound
+	}
+	if err != nil {
+		return agentSession{}, err
+	}
+	return sessionOf(r)
+}
+
+func sessionMaybe(q *Request, id string) (*agentSession, error) {
+	s, err := sessionByID(q, id)
+	if errors.Is(err, errNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+func sessionsByStartRequest(q *Request, key string) ([]agentSession, error) {
+	rs, err := q.db().SessionsByStartRequest(q.ctx(), key)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentSession, 0, len(rs))
+	for _, r := range rs {
+		s, err := sessionOf(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func sessionRecordOf(r db.Session) (rawObject, error) {
+	out, err := recordRaw(r.Payload)
+	if err != nil {
+		return nil, err
+	}
+	out["id"] = jsonBytes(r.ID)
+	for k, v := range map[string]*string{
+		"projectId":            r.ProjectID,
+		"taskId":               r.TaskID,
+		"hostId":               r.HostID,
+		"actor":                r.Actor,
+		"directedBy":           r.DirectedBy,
+		"parentExecutionId":    r.ParentExecutionID,
+		"createdByExecutionId": r.CreatedByExecutionID,
+		"createdBySessionId":   r.CreatedBySessionID,
+		"sourceSessionId":      r.SourceSessionID,
+		"pipelineRunId":        r.PipelineRunID,
+		"title":                r.Title,
+		"titleBy":              r.TitleBy,
+		"titleCall":            r.TitleCall,
+		"titleUnknownCall":     r.TitleUnknownCall,
+	} {
+		if v != nil {
+			out[k] = jsonBytes(*v)
+		}
+	}
+	for k, v := range map[string]*time.Time{
+		"directorAccessRevokedAt": r.DirectorAccessRevokedAt,
+		"createdAt":               r.CreatedAt,
+		"archivedAt":              r.ArchivedAt,
+		"titleAttemptAt":          r.TitleAttemptAt,
+	} {
+		if v != nil {
+			out[k] = jsonBytes(int64Ms(v))
+		}
+	}
+	if r.TitleAttempts != 0 {
+		out["titleAttempts"] = jsonBytes(r.TitleAttempts)
+	}
+	return out, nil
+}
+
+func sessionRecordByID(q *Request, id string) (rawObject, error) {
+	if id == "" {
+		return nil, errNotFound
+	}
+	r, err := q.db().SessionByID(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return sessionRecordOf(r)
+}
+
+func sessionPutRow(q *Request, row db.Session, payload []byte) error {
+	if row.ID == "" {
+		return fmt.Errorf("session record without an id")
+	}
+	return q.db().SessionPut(q.ctx(), db.SessionPutParams{
+		ID:                      row.ID,
+		ProjectID:               row.ProjectID,
+		TaskID:                  row.TaskID,
+		HostID:                  row.HostID,
+		Actor:                   row.Actor,
+		DirectedBy:              row.DirectedBy,
+		DirectorAccessRevokedAt: row.DirectorAccessRevokedAt,
+		ParentExecutionID:       row.ParentExecutionID,
+		CreatedByExecutionID:    row.CreatedByExecutionID,
+		CreatedBySessionID:      row.CreatedBySessionID,
+		SourceSessionID:         row.SourceSessionID,
+		PipelineRunID:           row.PipelineRunID,
+		CreatedAt:               row.CreatedAt,
+		ArchivedAt:              row.ArchivedAt,
+		Title:                   row.Title,
+		TitleBy:                 row.TitleBy,
+		TitleCall:               row.TitleCall,
+		TitleAttemptAt:          row.TitleAttemptAt,
+		TitleAttempts:           row.TitleAttempts,
+		TitleUnknownCall:        row.TitleUnknownCall,
+		Payload:                 payload,
+	})
+}
+
+func sessionPut(q *Request, s *agentSession) error {
+	p := sessionPayload{
+		DeliveryID:           s.DeliveryID,
+		AgentConfig:          s.AgentConfig,
+		StartRequest:         s.StartRequest,
+		Role:                 s.Role,
+		Preset:               s.Preset,
+		Starter:              s.Starter,
+		Account:              s.Account,
+		Access:               s.Access,
+		Branch:               s.Branch,
+		Setup:                s.Setup,
+		WorkingDirectory:     s.WorkingDirectory,
+		WorkspaceKey:         s.WorkspaceKey,
+		NativeSessionID:      s.NativeSessionID,
+		NativeSessions:       s.NativeSessions,
+		ForkNativeSessionID:  s.ForkNativeSessionID,
+		ForkOf:               s.ForkOf,
+		PendingHandoffID:     s.PendingHandoffID,
+		PendingTransition:    s.PendingTransition,
+		TransitionCleanup:    s.TransitionCleanup,
+		Focus:                s.Focus,
+		ReadinessOfSessionID: s.ReadinessOfSessionID,
+	}
+	payload, err := restEncode(p, s.rest)
+	if err != nil {
+		return err
+	}
+	return sessionPutRow(q, db.Session{
+		ID:                      s.ID,
+		ProjectID:               strPtr(s.ProjectID),
+		TaskID:                  strPtr(s.TaskID),
+		HostID:                  strPtr(s.HostID),
+		Actor:                   strPtr(s.Actor),
+		DirectedBy:              strPtr(s.DirectedBy),
+		DirectorAccessRevokedAt: s.DirectorAccessRevokedAt,
+		ParentExecutionID:       strPtr(s.ParentExecutionID),
+		CreatedByExecutionID:    strPtr(s.CreatedByExecutionID),
+		CreatedBySessionID:      strPtr(s.CreatedBySessionID),
+		SourceSessionID:         strPtr(s.SourceSessionID),
+		PipelineRunID:           strPtr(s.PipelineRunID),
+		CreatedAt:               intMsPtr(s.CreatedAt),
+		ArchivedAt:              optMsPtr(s.ArchivedAt),
+	}, payload)
+}
+
+type messagePayload struct {
+	Attachments       json.RawMessage `json:"attachments,omitempty"`
+	AttachmentRequest []string        `json:"attachmentRequest,omitempty"`
+}
+
+func messageOf(r db.Message) (agentMessage, error) {
+	var m agentMessage
+	if len(r.Payload) > 0 {
+		if err := restDecode(r.Payload, &m, &m.rest); err != nil {
+			return m, err
+		}
+	}
+	m.ID = r.ID
+	m.SessionID = r.SessionID
+	m.ExecutionID = deref(r.ExecutionID)
+	m.ProjectID = deref(r.ProjectID)
+	m.RequestID = deref(r.RequestID)
+	m.Text = deref(r.Text)
+	m.SentBy = deref(r.SentBy)
+	m.Source = deref(r.Source)
+	return m, nil
+}
+
+func messagesBySession(q *Request, sid string, reqID *string) ([]agentMessage, error) {
+	rs, err := q.db().Messages(q.ctx(), db.MessagesParams{SessionID: sid, RequestID: reqID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentMessage, 0, len(rs))
+	for _, r := range rs {
+		m, err := messageOf(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func messageRecordsOf(q *Request, sid string) ([]rawObject, error) {
+	rs, err := q.db().Messages(q.ctx(), db.MessagesParams{SessionID: sid})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]rawObject, 0, len(rs))
+	for _, r := range rs {
+		m, err := recordRaw(r.Payload)
+		if err != nil {
+			return nil, err
+		}
+		m["id"], m["sessionId"] = jsonBytes(r.ID), jsonBytes(r.SessionID)
+		for k, v := range map[string]*string{
+			"executionId": r.ExecutionID,
+			"projectId":   r.ProjectID,
+			"requestId":   r.RequestID,
+			"text":        r.Text,
+			"sentBy":      r.SentBy,
+			"source":      r.Source,
+		} {
+			if v != nil {
+				m[k] = jsonBytes(*v)
+			}
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func messagePut(q *Request, m *agentMessage) error {
+	if m.ID == "" {
+		return fmt.Errorf("message record without an id")
+	}
+	payload, err := restEncode(messagePayload{Attachments: m.Attachments, AttachmentRequest: m.AttachmentRequest}, m.rest)
+	if err != nil {
+		return err
+	}
+	return q.db().MessagePut(q.ctx(), db.MessagePutParams{
+		ID:          m.ID,
+		SessionID:   m.SessionID,
+		ExecutionID: strPtr(m.ExecutionID),
+		ProjectID:   strPtr(m.ProjectID),
+		RequestID:   strPtr(m.RequestID),
+		Text:        &m.Text,
+		SentBy:      strPtr(m.SentBy),
+		Source:      strPtr(m.Source),
+		Payload:     payload,
+	})
+}
+
 func sessionGet(q *Request, sid string) (rawObject, error) {
-	s, err := recGet[rawObject](q, recSession, sid)
+	s, err := sessionRecordByID(q, sid)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +552,7 @@ func sessionGet(q *Request, sid string) (rawObject, error) {
 		return nil, err
 	}
 	s["delegations"] = jsonBytes(delegations)
-	messages, err := recAll[rawObject](q, recMessage, agentFilter{SessionID: &sid})
+	messages, err := messageRecordsOf(q, sid)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +573,7 @@ func sessionGet(q *Request, sid string) (rawObject, error) {
 func sessionProfile(q *Request, r *contract.SessionProfileRequest) (contract.SessionProfileReply, error) {
 	var none contract.SessionProfileReply
 	sid := r.SessionId
-	s, err := recGet[agentSession](q, recSession, sid)
+	s, err := sessionByID(q, sid)
 	if err != nil {
 		return none, err
 	}
@@ -266,7 +592,7 @@ func sessionProfile(q *Request, r *contract.SessionProfileRequest) (contract.Ses
 			return none, fail(400, "Invalid working directory")
 		}
 		s.WorkingDirectory = *w
-		if err := recPut(q, recSession, &s); err != nil {
+		if err := sessionPut(q, &s); err != nil {
 			return none, err
 		}
 	}
@@ -290,16 +616,16 @@ func sessionProfile(q *Request, r *contract.SessionProfileRequest) (contract.Ses
 		delete(s.rest, "account")
 	}
 	s.AgentConfig = jsonBytes(p)
-	if err := recPut(q, recSession, &s); err != nil {
+	if err := sessionPut(q, &s); err != nil {
 		return none, err
 	}
 	profileID := p.text("id")
 	return contract.SessionProfileReply{SessionId: sid, ProfileId: profileID, Account: r.Account}, nil
 }
 
-// teardownFilter: a session's teardown commands no host has fetched yet.
-func teardownFilter(sid string) agentFilter {
-	return agentFilter{SessionID: &sid, Kind: ptr("teardown"), Status: ptr("pending")}
+// teardownPending: a session's teardown commands no host has fetched yet.
+func teardownPending(q *Request, sid string) ([]agentCommand, error) {
+	return commandsList(q, db.CommandsParams{SessionID: &sid, Kind: ptr("teardown"), Status: ptr("pending")})
 }
 
 // lastOnHost: the last of a session's executions that ran on a host, nil when none did.
@@ -322,7 +648,7 @@ type sessionArchived struct {
 
 // sessionArchive: one teardown command on the last execution's host.
 func sessionArchive(q *Request, sid string) (any, error) {
-	s, err := recGet[agentSession](q, recSession, sid)
+	s, err := sessionByID(q, sid)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +663,7 @@ func sessionArchive(q *Request, sid string) (any, error) {
 	}
 	last := lastOnHost(es)
 	// A teardown still on its way is the answer; a finished one (kept, or sent on delivery) does not stop a new one.
-	if old, err := recAll[agentCommand](q, recCommand, teardownFilter(sid)); err != nil || len(old) > 0 {
+	if old, err := teardownPending(q, sid); err != nil || len(old) > 0 {
 		if err != nil {
 			return nil, err
 		}
@@ -345,7 +671,7 @@ func sessionArchive(q *Request, sid string) (any, error) {
 	}
 	at := nowMs()
 	s.ArchivedAt = &at
-	if err := recPut(q, recSession, &s); err != nil {
+	if err := sessionPut(q, &s); err != nil {
 		return nil, err
 	}
 	if err := audit(q, "session:"+sid, "archivedAt", nil, at, auditExtra{}); err != nil {
@@ -360,14 +686,14 @@ func sessionArchive(q *Request, sid string) (any, error) {
 // sessionDeleteArchive: a deleted session is archived (object_delete, cleanup.go tombstone) and its worktree torn down
 // on the host of its last execution, unless it is archived already or a teardown is on its way; torn: one was queued.
 func sessionDeleteArchive(q *Request, sid string) (bool, error) {
-	s, err := recGet[agentSession](q, recSession, sid)
+	s, err := sessionByID(q, sid)
 	if err != nil {
 		return false, err
 	}
 	if s.ArchivedAt != nil {
 		return false, nil
 	}
-	if pending, err := recAll[agentCommand](q, recCommand, teardownFilter(sid)); err != nil || len(pending) > 0 {
+	if pending, err := teardownPending(q, sid); err != nil || len(pending) > 0 {
 		return false, err
 	}
 	es, err := agentExecutions(q, sid)
@@ -377,7 +703,7 @@ func sessionDeleteArchive(q *Request, sid string) (bool, error) {
 	last := lastOnHost(es)
 	at := nowMs()
 	s.ArchivedAt = &at
-	if err := recPut(q, recSession, &s); err != nil {
+	if err := sessionPut(q, &s); err != nil {
 		return false, err
 	}
 	if last == nil {
@@ -451,7 +777,7 @@ func teardownCommand(q *Request, s agentSession, last agentExecution, deleteBran
 		payload.Branch = s.Branch
 	}
 	c := agentCommand{ID: newID(), ExecutionID: last.ID, SessionID: sid, HostID: host, Kind: "teardown", Payload: jsonBytes(payload), Status: "pending"}
-	err := recPut(q, recCommand, &c)
+	err := commandPut(q, &c)
 	return c, err
 }
 
@@ -463,13 +789,13 @@ func deliveredTeardown(q *Request, taskID string) error {
 		return err
 	}
 	for _, sid := range sids {
-		s, err := recGet[agentSession](q, recSession, sid)
+		s, err := sessionByID(q, sid)
 		if errors.Is(err, errNotFound) {
 			continue
 		} else if err != nil {
 			return err
 		}
-		if old, err := recAll[agentCommand](q, recCommand, teardownFilter(sid)); err != nil || len(old) > 0 {
+		if old, err := teardownPending(q, sid); err != nil || len(old) > 0 {
 			if err != nil {
 				return err
 			}
@@ -502,7 +828,7 @@ func sessionCreate(q *Request) (contract.SessionCreateReply, error) {
 	if callerReadOnly(q) { // an agent of a read-only conversation creates read-only sessions (presets.go)
 		s.Access, s.Branch = "read", ptr(false)
 	}
-	if err := recWrite(q, recSession, s); err != nil {
+	if err := sessionPut(q, &s); err != nil {
 		return contract.SessionCreateReply{}, err
 	}
 	out, err := asT[contract.SessionCreateReply](s)
@@ -643,7 +969,7 @@ func sessionUnarchive(q *Request, r *contract.SessionUnarchiveRequest) (contract
 	if reason == "" {
 		return none, fail(400, "Expected reason")
 	}
-	s, err := recGet[agentSession](q, recSession, sid)
+	s, err := sessionByID(q, sid)
 	if err != nil {
 		return none, err
 	}
@@ -652,17 +978,17 @@ func sessionUnarchive(q *Request, r *contract.SessionUnarchiveRequest) (contract
 	}
 	at := *s.ArchivedAt
 	s.ArchivedAt, s.ID = nil, sid
-	if err := recPut(q, recSession, &s); err != nil {
+	if err := sessionPut(q, &s); err != nil {
 		return none, err
 	}
 	// A teardown no host has fetched yet would remove the worktree of a live session again.
-	pending, err := recAll[agentCommand](q, recCommand, teardownFilter(sid))
+	pending, err := teardownPending(q, sid)
 	if err != nil {
 		return none, err
 	}
 	for _, x := range pending {
 		x.Status = "stopped"
-		if err := recPut(q, recCommand, &x); err != nil {
+		if err := commandPut(q, &x); err != nil {
 			return none, err
 		}
 	}

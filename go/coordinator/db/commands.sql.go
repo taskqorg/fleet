@@ -9,6 +9,34 @@ import (
 	"context"
 )
 
+const commandByID = `-- name: CommandByID :one
+
+SELECT id, execution_id, session_id, host_id, project_id, kind, status, stop_detail, handed_out, traceparent, payload, seq, updated_at, tombstoned_at FROM command WHERE id=$1
+`
+
+// Host commands (commands.go, docs/designs/fleet-standard.md S5): commandTransition alone moves a command's status.
+func (q *Queries) CommandByID(ctx context.Context, id string) (Command, error) {
+	row := q.db.QueryRow(ctx, commandByID, id)
+	var i Command
+	err := row.Scan(
+		&i.ID,
+		&i.ExecutionID,
+		&i.SessionID,
+		&i.HostID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.Status,
+		&i.StopDetail,
+		&i.HandedOut,
+		&i.Traceparent,
+		&i.Payload,
+		&i.Seq,
+		&i.UpdatedAt,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
 const commandHandOut = `-- name: CommandHandOut :exec
 UPDATE command SET handed_out=true, updated_at=now() WHERE id=$1 AND handed_out=false
 `
@@ -46,7 +74,6 @@ func (q *Queries) CommandStatusOf(ctx context.Context, id string) (CommandStatus
 }
 
 const commandUpsert = `-- name: CommandUpsert :exec
-
 INSERT INTO command(id, execution_id, session_id, host_id, project_id, kind, status, stop_detail, handed_out, traceparent, payload)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (id) DO UPDATE SET execution_id=excluded.execution_id, session_id=excluded.session_id, host_id=excluded.host_id,
@@ -68,7 +95,6 @@ type CommandUpsertParams struct {
 	Payload     []byte
 }
 
-// Host commands (commands.go, docs/designs/fleet-standard.md S5): commandTransition alone moves a command's status.
 // A new command starts with its status; a put of an existing one changes everything but its status and stop detail.
 func (q *Queries) CommandUpsert(ctx context.Context, arg CommandUpsertParams) error {
 	_, err := q.db.Exec(ctx, commandUpsert,
@@ -85,6 +111,62 @@ func (q *Queries) CommandUpsert(ctx context.Context, arg CommandUpsertParams) er
 		arg.Payload,
 	)
 	return err
+}
+
+const commands = `-- name: Commands :many
+SELECT id, execution_id, session_id, host_id, project_id, kind, status, stop_detail, handed_out, traceparent, payload, seq, updated_at, tombstoned_at FROM command
+WHERE ($1::text IS NULL OR execution_id = $1)
+ AND ($2::text IS NULL OR session_id = $2)
+ AND ($3::text IS NULL OR kind = $3)
+ AND ($4::text IS NULL OR status::text = $4)
+ORDER BY seq
+`
+
+type CommandsParams struct {
+	ExecutionID *string
+	SessionID   *string
+	Kind        *string
+	Status      *string
+}
+
+func (q *Queries) Commands(ctx context.Context, arg CommandsParams) ([]Command, error) {
+	rows, err := q.db.Query(ctx, commands,
+		arg.ExecutionID,
+		arg.SessionID,
+		arg.Kind,
+		arg.Status,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Command
+	for rows.Next() {
+		var i Command
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExecutionID,
+			&i.SessionID,
+			&i.HostID,
+			&i.ProjectID,
+			&i.Kind,
+			&i.Status,
+			&i.StopDetail,
+			&i.HandedOut,
+			&i.Traceparent,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const commandsOfExecution = `-- name: CommandsOfExecution :many

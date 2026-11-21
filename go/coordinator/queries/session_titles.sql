@@ -1,5 +1,5 @@
 -- Conversation titles (session_titles.go, docs/designs/fleet-conversations.md, Titles): the title columns of a session
--- are written only here (session_rename and the title pass); a session put keeps them (queries/records.sql RecSessionPut).
+-- are written only here (session_rename and the title pass); a session put keeps them (queries/sessions.sql SessionPut).
 
 -- name: TitleCandidates :many
 -- Unarchived untitled sessions with a first message and a reply (a run that ended or started before @wait_before),

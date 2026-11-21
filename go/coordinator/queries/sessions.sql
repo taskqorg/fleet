@@ -35,3 +35,55 @@ SELECT delegation FROM execution WHERE delegation IS NOT NULL
 SELECT delegation FROM execution WHERE delegation IS NOT NULL
   AND (delegation->>'parentExecutionId' = @execution_id::text OR delegation->>'childExecutionId' = @execution_id::text
    OR delegation->>'continuationExecutionId' = @execution_id::text) ORDER BY seq;
+
+-- name: SessionByID :one
+SELECT * FROM session WHERE id=$1;
+
+-- name: SessionByIDLocked :one
+SELECT * FROM session WHERE id=$1 FOR UPDATE;
+
+-- name: SessionsByStartRequest :many
+SELECT * FROM session WHERE payload->>'startRequest' = @start_request::text ORDER BY seq;
+
+-- name: SessionPut :exec
+INSERT INTO session(id, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at,
+ parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id,
+ created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload)
+VALUES (@id, sqlc.narg(project_id), sqlc.narg(task_id), sqlc.narg(host_id), sqlc.narg(actor), sqlc.narg(directed_by),
+ sqlc.narg(director_access_revoked_at), sqlc.narg(parent_execution_id), sqlc.narg(created_by_execution_id),
+ sqlc.narg(created_by_session_id), sqlc.narg(source_session_id), sqlc.narg(pipeline_run_id),
+ sqlc.narg(created_at), sqlc.narg(archived_at), sqlc.narg(title), sqlc.narg(title_by), sqlc.narg(title_call),
+ sqlc.narg(title_attempt_at), @title_attempts, sqlc.narg(title_unknown_call), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ project_id=excluded.project_id,
+ task_id=excluded.task_id,
+ host_id=excluded.host_id,
+ actor=excluded.actor,
+ directed_by=excluded.directed_by,
+ director_access_revoked_at=excluded.director_access_revoked_at,
+ parent_execution_id=excluded.parent_execution_id,
+ created_by_execution_id=excluded.created_by_execution_id,
+ created_by_session_id=excluded.created_by_session_id,
+ source_session_id=excluded.source_session_id,
+ pipeline_run_id=excluded.pipeline_run_id,
+ created_at=excluded.created_at,
+ archived_at=excluded.archived_at,
+ title=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title ELSE NULL END,
+ title_by=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title_by ELSE NULL END,
+ title_call=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title_call ELSE NULL END,
+ title_attempt_at=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title_attempt_at ELSE NULL END,
+ title_attempts=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title_attempts ELSE 0 END,
+ title_unknown_call=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title_unknown_call ELSE NULL END;
+
+-- name: Messages :many
+SELECT * FROM message
+WHERE session_id = @session_id
+ AND (sqlc.narg(request_id)::text IS NULL OR request_id = sqlc.narg(request_id))
+ORDER BY seq;
+
+-- name: MessagePut :exec
+INSERT INTO message(id, session_id, execution_id, project_id, request_id, text, sent_by, source, payload)
+VALUES (@id, @session_id, sqlc.narg(execution_id), sqlc.narg(project_id), sqlc.narg(request_id), sqlc.narg(text), sqlc.narg(sent_by), sqlc.narg(source), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ session_id=excluded.session_id, execution_id=excluded.execution_id, project_id=excluded.project_id,
+ request_id=excluded.request_id, text=excluded.text, sent_by=excluded.sent_by, source=excluded.source;

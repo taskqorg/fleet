@@ -1,5 +1,16 @@
 -- Host commands (commands.go, docs/designs/fleet-standard.md S5): commandTransition alone moves a command's status.
 
+-- name: CommandByID :one
+SELECT * FROM command WHERE id=$1;
+
+-- name: Commands :many
+SELECT * FROM command
+WHERE (sqlc.narg(execution_id)::text IS NULL OR execution_id = sqlc.narg(execution_id))
+ AND (sqlc.narg(session_id)::text IS NULL OR session_id = sqlc.narg(session_id))
+ AND (sqlc.narg(kind)::text IS NULL OR kind = sqlc.narg(kind))
+ AND (sqlc.narg(status)::text IS NULL OR status::text = sqlc.narg(status))
+ORDER BY seq;
+
 -- name: CommandUpsert :exec
 -- A new command starts with its status; a put of an existing one changes everything but its status and stop detail.
 INSERT INTO command(id, execution_id, session_id, host_id, project_id, kind, status, stop_detail, handed_out, traceparent, payload)

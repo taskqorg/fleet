@@ -11,12 +11,17 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // recordRest: the fields of a stored record its struct does not name, kept as stored so a write through put keeps what
@@ -109,18 +114,13 @@ func restEncode(v any, rest recordRest) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// agentFilter: a record filter (recAll, records.go) as its fields; an absent field filters nothing.
+// agentFilter: an entity record filter (recAll, records.go) as its fields; an absent field filters nothing.
 type agentFilter struct {
 	SessionID        *string `json:"sessionId,omitempty"`
-	SourceSessionID  *string `json:"sourceSessionId,omitempty"`
 	ExecutionID      *string `json:"executionId,omitempty"`
 	ChildExecutionID *string `json:"childExecutionId,omitempty"`
 	RequestID        *string `json:"requestId,omitempty"`
-	SteerCommandID   *string `json:"steerCommandId,omitempty"`
-	StartRequest     *string `json:"startRequest,omitempty"`
 	State            *string `json:"state,omitempty"`
-	Kind             *string `json:"kind,omitempty"`
-	Status           *string `json:"status,omitempty"`
 }
 
 // agentView: the fields T names of an open value another area hands over (a project, a profile, a run); a field of
@@ -245,42 +245,44 @@ type agentTransitionArgs struct {
 	CallerSessionID string          `json:"callerSessionId,omitempty"`
 }
 
-// agentSession: the session record (queries/records.sql "session").
+// agentSession: the session row (session columns + payload).
 type agentSession struct {
-	ID                   string                 `json:"id"`
-	CreatedAt            int64                  `json:"createdAt,omitempty"`
-	ArchivedAt           *int64                 `json:"archivedAt,omitempty"`
-	ProjectID            string                 `json:"projectId,omitempty"`
-	TaskID               string                 `json:"taskId,omitempty"`
-	DeliveryID           string                 `json:"deliveryId,omitempty"`
-	HostID               string                 `json:"hostId,omitempty"`
-	Actor                string                 `json:"actor,omitempty"`
-	DirectedBy           string                 `json:"directedBy,omitempty"`
-	CreatedByExecutionID string                 `json:"createdByExecutionId,omitempty"`
-	ParentExecutionID    string                 `json:"parentExecutionId,omitempty"`
-	CreatedBySessionID   string                 `json:"createdBySessionId,omitempty"`
-	PipelineRunID        string                 `json:"pipelineRunId,omitempty"`
-	AgentConfig          json.RawMessage        `json:"agentConfig,omitempty"`
-	StartRequest         string                 `json:"startRequest,omitempty"`
-	Role                 string                 `json:"role,omitempty"`
-	Preset               string                 `json:"preset,omitempty"`
-	Starter              string                 `json:"starter,omitempty"`
-	Account              string                 `json:"account,omitempty"`
-	Access               string                 `json:"access,omitempty"`
-	Branch               *bool                  `json:"branch,omitempty"`
-	Setup                string                 `json:"setup,omitempty"`
-	WorkingDirectory     string                 `json:"workingDirectory,omitempty"`
-	WorkspaceKey         string                 `json:"workspaceKey,omitempty"`
-	NativeSessionID      string                 `json:"nativeSessionId,omitempty"`
-	NativeSessions       map[string]agentNative `json:"nativeSessions,omitempty"`
-	ForkNativeSessionID  string                 `json:"forkNativeSessionId,omitempty"`
-	ForkOf               *agentForkOf           `json:"forkOf,omitempty"`
-	PendingHandoffID     string                 `json:"pendingHandoffId,omitempty"`
-	PendingTransition    *agentTransitionArgs   `json:"pendingTransition,omitempty"`
-	TransitionCleanup    json.RawMessage        `json:"transitionCleanup,omitempty"`
-	Focus                *agentFocus            `json:"focus,omitempty"`
-	ReadinessOfSessionID string                 `json:"readinessOfSessionId,omitempty"`
-	rest                 recordRest
+	ID                      string                 `json:"id"`
+	CreatedAt               int64                  `json:"createdAt,omitempty"`
+	ArchivedAt              *int64                 `json:"archivedAt,omitempty"`
+	ProjectID               string                 `json:"projectId,omitempty"`
+	TaskID                  string                 `json:"taskId,omitempty"`
+	DeliveryID              string                 `json:"deliveryId,omitempty"`
+	HostID                  string                 `json:"hostId,omitempty"`
+	Actor                   string                 `json:"actor,omitempty"`
+	DirectedBy              string                 `json:"directedBy,omitempty"`
+	DirectorAccessRevokedAt *time.Time             `json:"-"`
+	CreatedByExecutionID    string                 `json:"createdByExecutionId,omitempty"`
+	ParentExecutionID       string                 `json:"parentExecutionId,omitempty"`
+	CreatedBySessionID      string                 `json:"createdBySessionId,omitempty"`
+	SourceSessionID         string                 `json:"-"`
+	PipelineRunID           string                 `json:"pipelineRunId,omitempty"`
+	AgentConfig             json.RawMessage        `json:"agentConfig,omitempty"`
+	StartRequest            string                 `json:"startRequest,omitempty"`
+	Role                    string                 `json:"role,omitempty"`
+	Preset                  string                 `json:"preset,omitempty"`
+	Starter                 string                 `json:"starter,omitempty"`
+	Account                 string                 `json:"account,omitempty"`
+	Access                  string                 `json:"access,omitempty"`
+	Branch                  *bool                  `json:"branch,omitempty"`
+	Setup                   string                 `json:"setup,omitempty"`
+	WorkingDirectory        string                 `json:"workingDirectory,omitempty"`
+	WorkspaceKey            string                 `json:"workspaceKey,omitempty"`
+	NativeSessionID         string                 `json:"nativeSessionId,omitempty"`
+	NativeSessions          map[string]agentNative `json:"nativeSessions,omitempty"`
+	ForkNativeSessionID     string                 `json:"forkNativeSessionId,omitempty"`
+	ForkOf                  *agentForkOf           `json:"forkOf,omitempty"`
+	PendingHandoffID        string                 `json:"pendingHandoffId,omitempty"`
+	PendingTransition       *agentTransitionArgs   `json:"pendingTransition,omitempty"`
+	TransitionCleanup       json.RawMessage        `json:"transitionCleanup,omitempty"`
+	Focus                   *agentFocus            `json:"focus,omitempty"`
+	ReadinessOfSessionID    string                 `json:"readinessOfSessionId,omitempty"`
+	rest                    recordRest
 }
 
 func (s *agentSession) UnmarshalJSON(b []byte) error {
@@ -376,7 +378,7 @@ func (e agentExecution) MarshalJSON() ([]byte, error) {
 func (e *agentExecution) terminal() bool    { return executionEnds(e.State) }
 func (e *agentExecution) unconfirmed() bool { return e.Observation == "unconfirmed" }
 
-// agentCommand: a host command record (recCommand; commandRecPut writes it).
+// agentCommand: a host command row (command columns + payload; commandPut writes it via commands.go).
 type agentCommand struct {
 	ID          string          `json:"id"`
 	ExecutionID string          `json:"executionId,omitempty"`
@@ -386,6 +388,9 @@ type agentCommand struct {
 	Kind        string          `json:"kind,omitempty"`
 	Status      string          `json:"status,omitempty"`
 	StopDetail  string          `json:"stopDetail,omitempty"`
+	HandedOut   *bool           `json:"handedOut,omitempty"`
+	Traceparent *string         `json:"traceparent,omitempty"`
+	Run         json.RawMessage `json:"run,omitempty"`
 	Payload     json.RawMessage `json:"payload,omitempty"`
 	rest        recordRest
 }
@@ -400,7 +405,7 @@ func (c agentCommand) MarshalJSON() ([]byte, error) {
 	return restEncode(plain(c), c.rest)
 }
 
-// agentMessage: a sent message record (queries/records.sql "message").
+// agentMessage: a sent message row (message columns + payload).
 type agentMessage struct {
 	ID                string          `json:"id"`
 	SessionID         string          `json:"sessionId,omitempty"`
@@ -425,7 +430,7 @@ func (m agentMessage) MarshalJSON() ([]byte, error) {
 	return restEncode(plain(m), m.rest)
 }
 
-// agentQueued: a queued message record (queries/records.sql "queued-message"): waiting, steering or started.
+// agentQueued: a queued message row (queued_message columns + payload): waiting, steering or started.
 type agentQueued struct {
 	ID                string          `json:"id"`
 	SessionID         string          `json:"sessionId,omitempty"`
@@ -457,10 +462,11 @@ func (m agentQueued) MarshalJSON() ([]byte, error) {
 	return restEncode(plain(m), m.rest)
 }
 
-// agentHandoff: a context handoff record (queries/records.sql "handoff").
+// agentHandoff: a context handoff row (handoff columns + payload).
 type agentHandoff struct {
 	ID          string   `json:"id"`
 	SessionID   string   `json:"sessionId,omitempty"`
+	ProjectID   *string  `json:"projectId,omitempty"`
 	Strategy    string   `json:"strategy,omitempty"`
 	Source      string   `json:"source,omitempty"`
 	ToKey       string   `json:"toKey,omitempty"`
@@ -603,10 +609,294 @@ type sessionQueues struct {
 	Forks       []map[string]json.RawMessage `json:"forks"`
 }
 
+type queuedMessagePayload struct {
+	Traceparent       string          `json:"traceparent,omitempty"`
+	TraceActor        string          `json:"traceActor,omitempty"`
+	Attachments       json.RawMessage `json:"attachments,omitempty"`
+	AttachmentRequest []string        `json:"attachmentRequest,omitempty"`
+	Error             string          `json:"error,omitempty"`
+}
+
+func queuedOf(r db.QueuedMessage) (agentQueued, error) {
+	var m agentQueued
+	if len(r.Payload) > 0 {
+		if err := restDecode(r.Payload, &m, &m.rest); err != nil {
+			return m, err
+		}
+	}
+	m.ID = r.ID
+	m.SessionID = r.SessionID
+	m.ProjectID = deref(r.ProjectID)
+	m.TaskID = deref(r.TaskID)
+	m.RequestID = deref(r.RequestID)
+	m.Text = deref(r.Text)
+	m.State = deref(r.State)
+	m.ExecutionID = deref(r.ExecutionID)
+	m.SteerCommandID = deref(r.SteerCommandID)
+	m.SentBy = deref(r.SentBy)
+	m.Source = deref(r.Source)
+	m.CreatedAt = int64Ms(r.CreatedAt)
+	return m, nil
+}
+
+func queuedMessages(q *Request, p db.QueuedMessagesParams) ([]agentQueued, error) {
+	rs, err := q.db().QueuedMessages(q.ctx(), p)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentQueued, 0, len(rs))
+	for _, r := range rs {
+		m, err := queuedOf(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func queuedMessagePut(q *Request, m *agentQueued) error {
+	if m.ID == "" {
+		return fmt.Errorf("queued-message record without an id")
+	}
+	if !validTraceparent(m.Traceparent) {
+		m.Traceparent, m.TraceActor = originTrace(q), actor(q, "fleet")
+	}
+	p := queuedMessagePayload{
+		Traceparent:       m.Traceparent,
+		TraceActor:        m.TraceActor,
+		Attachments:       m.Attachments,
+		AttachmentRequest: m.AttachmentRequest,
+		Error:             m.Error,
+	}
+	payload, err := restEncode(p, m.rest)
+	if err != nil {
+		return err
+	}
+	if err := q.db().QueuedMessagePut(q.ctx(), db.QueuedMessagePutParams{
+		ID:             m.ID,
+		SessionID:      m.SessionID,
+		ProjectID:      strPtr(m.ProjectID),
+		TaskID:         strPtr(m.TaskID),
+		RequestID:      strPtr(m.RequestID),
+		Text:           &m.Text,
+		State:          strPtr(m.State),
+		ExecutionID:    strPtr(m.ExecutionID),
+		SteerCommandID: strPtr(m.SteerCommandID),
+		SentBy:         strPtr(m.SentBy),
+		Source:         strPtr(m.Source),
+		CreatedAt:      intMsPtr(m.CreatedAt),
+		Payload:        payload,
+	}); err != nil {
+		return err
+	}
+	if q.app != nil {
+		afterCommit(q, func() { q.app.wakeDispatch() })
+	}
+	return nil
+}
+
+type handoffPayload struct {
+	Strategy    string   `json:"strategy,omitempty"`
+	Source      string   `json:"source,omitempty"`
+	ToKey       string   `json:"toKey,omitempty"`
+	Turns       []string `json:"turns,omitempty"`
+	Text        string   `json:"text,omitempty"`
+	CreatedAt   int64    `json:"createdAt,omitempty"`
+	ExecutionID string   `json:"executionId,omitempty"`
+}
+
+func handoffOf(r db.Handoff) (agentHandoff, error) {
+	var h agentHandoff
+	if len(r.Payload) > 0 {
+		if err := restDecode(r.Payload, &h, &h.rest); err != nil {
+			return h, err
+		}
+	}
+	h.ID = r.ID
+	h.SessionID = r.SessionID
+	h.ProjectID = r.ProjectID
+	h.State = deref(r.State)
+	return h, nil
+}
+
+func handoffGet(q *Request, id string) (agentHandoff, error) {
+	if id == "" {
+		return agentHandoff{}, errNotFound
+	}
+	r, err := q.db().HandoffByID(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return agentHandoff{}, errNotFound
+	}
+	if err != nil {
+		return agentHandoff{}, err
+	}
+	return handoffOf(r)
+}
+
+func handoffMaybe(q *Request, id string) (*agentHandoff, error) {
+	h, err := handoffGet(q, id)
+	if errors.Is(err, errNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &h, nil
+}
+
+func handoffsByState(q *Request, state string) ([]agentHandoff, error) {
+	rs, err := q.db().HandoffsByState(q.ctx(), state)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentHandoff, 0, len(rs))
+	for _, r := range rs {
+		h, err := handoffOf(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, nil
+}
+
+func handoffPut(q *Request, h *agentHandoff) error {
+	if h.ID == "" {
+		return fmt.Errorf("handoff record without an id")
+	}
+	p := handoffPayload{
+		Strategy:    h.Strategy,
+		Source:      h.Source,
+		ToKey:       h.ToKey,
+		Turns:       h.Turns,
+		Text:        h.Text,
+		CreatedAt:   h.CreatedAt,
+		ExecutionID: h.ExecutionID,
+	}
+	payload, err := restEncode(p, h.rest)
+	if err != nil {
+		return err
+	}
+	return q.db().HandoffPut(q.ctx(), db.HandoffPutParams{
+		ID:        h.ID,
+		SessionID: h.SessionID,
+		ProjectID: h.ProjectID,
+		State:     strPtr(h.State),
+		Payload:   payload,
+	})
+}
+
+type sessionForkPayload struct {
+	Strategy  string  `json:"strategy"`
+	HandoffID *string `json:"handoffId"`
+	At        int64   `json:"at"`
+}
+
+func sessionForks(q *Request, sourceSessionID string, requestID *string) ([]agentForkRecord, error) {
+	rs, err := q.db().SessionForks(q.ctx(), db.SessionForksParams{SourceSessionID: sourceSessionID, RequestID: requestID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentForkRecord, 0, len(rs))
+	for _, r := range rs {
+		var p sessionForkPayload
+		if err := lenientDecode(r.Payload, &p); err != nil {
+			return nil, err
+		}
+		out = append(out, agentForkRecord{
+			ID:              r.ID,
+			RequestID:       deref(r.RequestID),
+			SourceSessionID: r.SourceSessionID,
+			SessionID:       r.SessionID,
+			Strategy:        p.Strategy,
+			HandoffID:       p.HandoffID,
+			At:              p.At,
+		})
+	}
+	return out, nil
+}
+
+func sessionForkMaps(q *Request, sourceSessionID string) ([]map[string]json.RawMessage, error) {
+	rs, err := q.db().SessionForks(q.ctx(), db.SessionForksParams{SourceSessionID: sourceSessionID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]json.RawMessage, 0, len(rs))
+	for _, r := range rs {
+		m, err := recordMap(r.Payload)
+		if err != nil {
+			return nil, err
+		}
+		m["id"], m["sessionId"], m["sourceSessionId"] = jsonBytes(r.ID), jsonBytes(r.SessionID), jsonBytes(r.SourceSessionID)
+		if r.ProjectID != nil {
+			m["projectId"] = jsonBytes(*r.ProjectID)
+		}
+		if r.RequestID != nil {
+			m["requestId"] = jsonBytes(*r.RequestID)
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func sessionForkPut(q *Request, f *agentForkRecord) error {
+	if f.ID == "" {
+		return fmt.Errorf("session-fork record without an id")
+	}
+	return q.db().SessionForkPut(q.ctx(), db.SessionForkPutParams{
+		ID:              f.ID,
+		SessionID:       f.SessionID,
+		SourceSessionID: f.SourceSessionID,
+		RequestID:       strPtr(f.RequestID),
+		Payload:         jsonBytes(sessionForkPayload{Strategy: f.Strategy, HandoffID: f.HandoffID, At: f.At}),
+	})
+}
+
+type sessionTransitionPayload struct {
+	Type      string  `json:"type"`
+	FromKey   string  `json:"fromKey"`
+	ToKey     string  `json:"toKey"`
+	ProfileID string  `json:"profileId"`
+	HandoffID *string `json:"handoffId"`
+	At        int64   `json:"at"`
+}
+
+func sessionTransitionMaps(q *Request, sessionID string) ([]map[string]json.RawMessage, error) {
+	rs, err := q.db().SessionTransitions(q.ctx(), sessionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]json.RawMessage, 0, len(rs))
+	for _, r := range rs {
+		m, err := recordMap(r.Payload)
+		if err != nil {
+			return nil, err
+		}
+		m["id"], m["sessionId"] = jsonBytes(r.ID), jsonBytes(r.SessionID)
+		if r.ProjectID != nil {
+			m["projectId"] = jsonBytes(*r.ProjectID)
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func sessionTransitionPut(q *Request, t *agentTransitionRecord) error {
+	if t.ID == "" {
+		return fmt.Errorf("session-transition record without an id")
+	}
+	return q.db().SessionTransitionPut(q.ctx(), db.SessionTransitionPutParams{
+		ID:        t.ID,
+		SessionID: t.SessionID,
+		Payload:   jsonBytes(sessionTransitionPayload{Type: t.Type, FromKey: t.FromKey, ToKey: t.ToKey, ProfileID: t.ProfileID, HandoffID: t.HandoffID, At: t.At}),
+	})
+}
+
 // sessionView: a session's queue, questions, handoffs, transitions and forks (session_get, sessions.go).
 func sessionView(q *Request, sid string) (sessionQueues, error) {
 	var out sessionQueues
-	ms, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SessionID: &sid})
+	ms, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: &sid})
 	if err != nil {
 		return out, err
 	}
@@ -626,13 +916,10 @@ func sessionView(q *Request, sid string) (sessionQueues, error) {
 	if out.Handoffs, err = sessionHandoffs(q, sid, false); err != nil {
 		return out, err
 	}
-	transitions, err := recAll[rawObject](q, recSessionTransition, agentFilter{SessionID: &sid})
-	if err != nil {
+	if out.Transitions, err = sessionTransitionMaps(q, sid); err != nil {
 		return out, err
 	}
-	out.Transitions = recsOf(transitions)
-	forks, err := recAll[rawObject](q, recSessionFork, agentFilter{SourceSessionID: &sid})
-	out.Forks = recsOf(forks)
+	out.Forks, err = sessionForkMaps(q, sid)
 	return out, err
 }
 
@@ -693,7 +980,7 @@ func init() {
 		return out.reply(), nil
 	})
 	op("queue_list", func(q *Request, b *contract.QueueListRequest) (contract.QueueListReply, error) {
-		ms, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SessionID: agentOpt(deref(b.SessionId))})
+		ms, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: agentOpt(deref(b.SessionId))})
 		out := []map[string]json.RawMessage{}
 		for _, m := range ms {
 			v, err := queueView(q, m)

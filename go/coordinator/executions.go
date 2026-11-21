@@ -263,19 +263,7 @@ func lockExecutionTask(q *Request, id string) error {
 
 // executionCommands: the command records of an execution, optionally of one kind and one status, in order.
 func executionCommands(q *Request, id string, kind, status *string) ([]agentCommand, error) {
-	ids, err := q.db().DispCommandIDs(q.ctx(), db.DispCommandIDsParams{ExecutionID: &id, Kind: kind, Status: status})
-	if err != nil {
-		return nil, err
-	}
-	out := []agentCommand{}
-	for _, c := range ids {
-		d, err := recGet[agentCommand](q, recCommand, c)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, d)
-	}
-	return out, nil
+	return commandsList(q, db.CommandsParams{ExecutionID: &id, Kind: kind, Status: status})
 }
 
 // executionArtifactError: the error of an execution its artifact gate fails.
@@ -317,7 +305,7 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 		c = stops[0]
 	} else {
 		c = agentCommand{ID: newID(), ExecutionID: e.ID, SessionID: e.SessionID, HostID: deref(e.HostID), Kind: stopKind, Payload: json.RawMessage("{}"), Status: pendingStatus}
-		if err := recPut(q, recCommand, &c); err != nil {
+		if err := commandPut(q, &c); err != nil {
 			return rep, err
 		}
 	}
@@ -345,7 +333,7 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 		}
 		for _, x := range pending {
 			x.Status = "stopped"
-			if err := recPut(q, recCommand, &x); err != nil {
+			if err := commandPut(q, &x); err != nil {
 				return rep, err
 			}
 		}
@@ -353,7 +341,7 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 		if !known && e.HostID != nil {
 			e.StopDetail = "host never registered"
 		}
-		if c, err = recGet[agentCommand](q, recCommand, c.ID); err != nil {
+		if c, err = commandGet(q, c.ID); err != nil {
 			return rep, err
 		}
 	}

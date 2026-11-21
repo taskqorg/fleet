@@ -66,12 +66,12 @@ func TestHostReadProjectOperationSkipsGlobal(t *testing.T) {
 		t.Fatalf("no command for %s: %v", execID, cmds)
 	}
 	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
-		s, err := recGet[doc](q, recSession, sid)
+		s, err := sessionByID(q, sid)
 		if err != nil {
 			return err
 		}
-		s["projectId"] = "cs"
-		return recPut(q, recSession, &s)
+		s.ProjectID = "cs"
+		return sessionPut(q, &s)
 	}); err != nil {
 		t.Fatal(err)
 	}

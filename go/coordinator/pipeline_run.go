@@ -37,12 +37,6 @@ type pipelineStartOptions struct {
 	hasDraftBase bool
 }
 
-// pipelineCallerRow: the execution a pipeline is started from (lineage is server-derived, never a parameter).
-type pipelineSessionOwner struct {
-	ProjectID *string `json:"projectId"`
-	TaskID    *string `json:"taskId"`
-}
-
 // pipelineProjectSnapshot: the fields of a project context a run's definition reference reads.
 type pipelineProjectSnapshot struct {
 	Revision   float64 `json:"revision"`
@@ -110,11 +104,11 @@ func startRun(q *Request, o pipelineStartOptions) (*runRecord, error) {
 			}
 		}
 		if parent.SessionID != nil {
-			session, e := recGet[pipelineSessionOwner](q, recSession, *parent.SessionID)
+			session, e := sessionByID(q, *parent.SessionID)
 			if e != nil {
 				return nil, e
 			}
-			if deref(session.ProjectID) != run.project() || session.TaskID != nil && deref(session.TaskID) != deref(parent.TaskID) {
+			if session.ProjectID != run.project() || (session.TaskID != "" && session.TaskID != deref(parent.TaskID)) {
 				return nil, fail(403, "Pipeline caller session ownership mismatch")
 			}
 		}

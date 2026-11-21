@@ -863,33 +863,17 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 	return contract.ArtifactStateReply{State: "verifying"}, nil
 }
 
-// The records of a queued tool command, written through recWrite (records.go).
-type (
-	jobSession struct {
-		ID        string `json:"id"`
-		CreatedAt int64  `json:"createdAt"`
-		Actor     string `json:"actor"`
-	}
-	jobExecution struct {
-		ID          string `json:"id"`
-		ExecutionID string `json:"executionId"`
-		SessionID   string `json:"sessionId"`
-		HostID      string `json:"hostId"`
-		State       string `json:"state"`
-		CreatedAt   int64  `json:"createdAt"`
-		Actor       string `json:"actor"`
-		ArtifactID  any    `json:"artifactId"`
-	}
-	jobCommand struct {
-		ID          string `json:"id"`
-		ExecutionID string `json:"executionId"`
-		SessionID   string `json:"sessionId"`
-		HostID      string `json:"hostId"`
-		Kind        string `json:"kind"`
-		Status      string `json:"status"`
-		Payload     any    `json:"payload"`
-	}
-)
+// jobExecution: the queued tool execution record, written through recWrite (records.go).
+type jobExecution struct {
+	ID          string `json:"id"`
+	ExecutionID string `json:"executionId"`
+	SessionID   string `json:"sessionId"`
+	HostID      string `json:"hostId"`
+	State       string `json:"state"`
+	CreatedAt   int64  `json:"createdAt"`
+	Actor       string `json:"actor"`
+	ArtifactID  any    `json:"artifactId"`
+}
 
 // queueCommand: a tool command for a host's executor (copy, verify) on an artifact, in a program-worker execution of its
 // own; payload is the command's (a contract struct).
@@ -897,14 +881,14 @@ func queueCommand(ctx context.Context, a *App, hostID, kind, artifactID string, 
 	return txCtx(ctx, a, func(tx pgx.Tx) error {
 		q := backgroundRequest(ctx, a, tx) // carries app: put wakes the host's held poll once the command commits
 		sid, id := newID(), newID()
-		if err := recWrite(q, recSession, jobSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
+		if err := sessionPut(q, &agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
 			return err
 		}
 		if err := recWrite(q, recExecution, jobExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker",
 			ArtifactID: artifactID}); err != nil {
 			return err
 		}
-		return recWrite(q, recCommand, jobCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: kind, Status: "pending", Payload: payload})
+		return commandPut(q, &agentCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: kind, Status: "pending", Payload: jsonBytes(payload)})
 	})
 }
 

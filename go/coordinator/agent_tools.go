@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fleet/mcpserve"
 
 	"github.com/jackc/pgx/v5"
@@ -80,7 +81,7 @@ func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
 		}
 		return recOf(old[0]), nil
 	}
-	s, err := recGet[agentSession](q, recSession, e.SessionID)
+	s, err := sessionByID(q, e.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +123,7 @@ func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, er
 		return recOf(qu), nil
 	}
 	if qu.ProjectID == nil { // a question asked before it carried its session's project
-		s, err := recGet[agentSession](q, recSession, qu.SessionID)
+		s, err := sessionByID(q, qu.SessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -143,6 +144,15 @@ func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, er
 	return recOf(qu), err
 }
 
+type workerDonePayload struct {
+	Action    string                 `json:"action"`
+	At        *int64                 `json:"at,omitempty"`
+	Code      *string                `json:"code,omitempty"`
+	Duplicate *bool                  `json:"duplicate,omitempty"`
+	Reason    *string                `json:"reason,omitempty"`
+	Report    *contract.WorkerReport `json:"report,omitempty"`
+}
+
 func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneReply, error) {
 	var none contract.WorkerDoneReply
 	eid := b.ExecutionId
@@ -154,7 +164,11 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 		return none, err
 	}
 	record := func(r contract.WorkerDoneReply) (contract.WorkerDoneReply, error) {
-		return r, recWrite(q, recWorkerDone, r)
+		if deref(r.Id) == "" {
+			return r, fmt.Errorf("worker-done record without an id")
+		}
+		p := workerDonePayload{Action: r.Action, At: r.At, Code: r.Code, Duplicate: r.Duplicate, Reason: r.Reason, Report: r.Report}
+		return r, q.db().WorkerDonePut(q.ctx(), db.WorkerDonePutParams{ID: *r.Id, ExecutionID: strPtr(r.ExecutionId), Payload: jsonBytes(p)})
 	}
 	reject := func(code, reason string) (contract.WorkerDoneReply, error) {
 		id, at := newID(), nowMs()
@@ -253,7 +267,7 @@ func init() {
 					return fail(403, "Execution rejected")
 				}
 			}
-			c, err := recGet[agentCommand](q, recCommand, b.CommandId)
+			c, err := commandGet(q, b.CommandId)
 			if err != nil {
 				return err
 			}
@@ -261,7 +275,7 @@ func init() {
 				return fail(403, "Command rejected")
 			}
 			if sid := e.SessionID; sid != "" {
-				if s, err := recMaybe[agentSession](q, recSession, sid); err != nil {
+				if s, err := sessionMaybe(q, sid); err != nil {
 					return err
 				} else if s != nil {
 					focus, sessionProject, focused = focusIDsOf(s.Focus), s.ProjectID, s.Focus != nil
@@ -488,7 +502,7 @@ func focusSet(q *Request, r *contract.FocusSetRequest) (contract.FocusSetReply, 
 	if sid == "" {
 		return none, fail(400, "Expected sessionId")
 	}
-	s, err := recGet[agentSession](q, recSession, sid)
+	s, err := sessionByID(q, sid)
 	if err != nil {
 		return none, err
 	}
@@ -511,7 +525,7 @@ func focusSet(q *Request, r *contract.FocusSetRequest) (contract.FocusSetReply, 
 		v = jsonBytes(ids)
 	}
 	s.Focus = &agentFocus{ProjectIDs: v}
-	if err := recPut(q, recSession, &s); err != nil {
+	if err := sessionPut(q, &s); err != nil {
 		return none, err
 	}
 	return contract.FocusSetReply{SessionId: sid, Focus: contract.Focus{ProjectIds: v}}, nil
@@ -576,7 +590,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 	}
 	own := e.SessionID
 	ownProject := func() (string, error) {
-		s, err := recGet[agentSession](q, recSession, own)
+		s, err := sessionByID(q, own)
 		if err != nil {
 			return "", err
 		}
@@ -598,7 +612,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 			return nil
 		}
 		if sid != "" {
-			s, err := recGet[agentSession](q, recSession, sid)
+			s, err := sessionByID(q, sid)
 			if err != nil {
 				return err
 			}
@@ -611,7 +625,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 	sessionArg, _ := jsonText(a["sessionId"])
 	switch {
 	case name == "execution_status" && jsonGiven(a["sessionId"]):
-		s, err := recMaybe[agentSession](q, recSession, sessionArg)
+		s, err := sessionMaybe(q, sessionArg)
 		if err != nil {
 			return nil, err
 		}
@@ -694,7 +708,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 		}
 	}
 	if name == "session_transition" {
-		target, err := recGet[agentSession](q, recSession, sessionArg)
+		target, err := sessionByID(q, sessionArg)
 		if err != nil {
 			return nil, err
 		}

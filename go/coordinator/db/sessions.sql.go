@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 )
 
 const agentsCompatibilityRuns = `-- name: AgentsCompatibilityRuns :many
@@ -94,6 +95,86 @@ func (q *Queries) ExecutionDelegations(ctx context.Context, executionID string) 
 	return items, nil
 }
 
+const messagePut = `-- name: MessagePut :exec
+INSERT INTO message(id, session_id, execution_id, project_id, request_id, text, sent_by, source, payload)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ session_id=excluded.session_id, execution_id=excluded.execution_id, project_id=excluded.project_id,
+ request_id=excluded.request_id, text=excluded.text, sent_by=excluded.sent_by, source=excluded.source
+`
+
+type MessagePutParams struct {
+	ID          string
+	SessionID   string
+	ExecutionID *string
+	ProjectID   *string
+	RequestID   *string
+	Text        *string
+	SentBy      *string
+	Source      *string
+	Payload     []byte
+}
+
+func (q *Queries) MessagePut(ctx context.Context, arg MessagePutParams) error {
+	_, err := q.db.Exec(ctx, messagePut,
+		arg.ID,
+		arg.SessionID,
+		arg.ExecutionID,
+		arg.ProjectID,
+		arg.RequestID,
+		arg.Text,
+		arg.SentBy,
+		arg.Source,
+		arg.Payload,
+	)
+	return err
+}
+
+const messages = `-- name: Messages :many
+SELECT id, session_id, execution_id, project_id, request_id, text, sent_by, source, payload, seq, updated_at, tombstoned_at FROM message
+WHERE session_id = $1
+ AND ($2::text IS NULL OR request_id = $2)
+ORDER BY seq
+`
+
+type MessagesParams struct {
+	SessionID string
+	RequestID *string
+}
+
+func (q *Queries) Messages(ctx context.Context, arg MessagesParams) ([]Message, error) {
+	rows, err := q.db.Query(ctx, messages, arg.SessionID, arg.RequestID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.ExecutionID,
+			&i.ProjectID,
+			&i.RequestID,
+			&i.Text,
+			&i.SentBy,
+			&i.Source,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const receiptInsert = `-- name: ReceiptInsert :exec
 INSERT INTO agent_tool_receipt(id, execution_id, directing_email, operation, payload_sha, result, authority)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -152,6 +233,80 @@ func (q *Queries) ReceiptOf(ctx context.Context, id string) (ReceiptOfRow, error
 	return i, err
 }
 
+const sessionByID = `-- name: SessionByID :one
+SELECT id, code, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id, created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload, seq, updated_at, tombstoned_at FROM session WHERE id=$1
+`
+
+func (q *Queries) SessionByID(ctx context.Context, id string) (Session, error) {
+	row := q.db.QueryRow(ctx, sessionByID, id)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.Code,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.HostID,
+		&i.Actor,
+		&i.DirectedBy,
+		&i.DirectorAccessRevokedAt,
+		&i.ParentExecutionID,
+		&i.CreatedByExecutionID,
+		&i.CreatedBySessionID,
+		&i.SourceSessionID,
+		&i.PipelineRunID,
+		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.Title,
+		&i.TitleBy,
+		&i.TitleCall,
+		&i.TitleAttemptAt,
+		&i.TitleAttempts,
+		&i.TitleUnknownCall,
+		&i.Payload,
+		&i.Seq,
+		&i.UpdatedAt,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
+const sessionByIDLocked = `-- name: SessionByIDLocked :one
+SELECT id, code, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id, created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload, seq, updated_at, tombstoned_at FROM session WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) SessionByIDLocked(ctx context.Context, id string) (Session, error) {
+	row := q.db.QueryRow(ctx, sessionByIDLocked, id)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.Code,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.HostID,
+		&i.Actor,
+		&i.DirectedBy,
+		&i.DirectorAccessRevokedAt,
+		&i.ParentExecutionID,
+		&i.CreatedByExecutionID,
+		&i.CreatedBySessionID,
+		&i.SourceSessionID,
+		&i.PipelineRunID,
+		&i.CreatedAt,
+		&i.ArchivedAt,
+		&i.Title,
+		&i.TitleBy,
+		&i.TitleCall,
+		&i.TitleAttemptAt,
+		&i.TitleAttempts,
+		&i.TitleUnknownCall,
+		&i.Payload,
+		&i.Seq,
+		&i.UpdatedAt,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
 const sessionCode = `-- name: SessionCode :one
 SELECT code FROM session WHERE id = $1
 `
@@ -182,6 +337,138 @@ func (q *Queries) SessionDelegations(ctx context.Context, sessionID string) ([][
 			return nil, err
 		}
 		items = append(items, delegation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sessionPut = `-- name: SessionPut :exec
+INSERT INTO session(id, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at,
+ parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id,
+ created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload)
+VALUES ($1, $2, $3, $4, $5, $6,
+ $7, $8, $9,
+ $10, $11, $12,
+ $13, $14, $15, $16, $17,
+ $18, $19, $20, $21)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ project_id=excluded.project_id,
+ task_id=excluded.task_id,
+ host_id=excluded.host_id,
+ actor=excluded.actor,
+ directed_by=excluded.directed_by,
+ director_access_revoked_at=excluded.director_access_revoked_at,
+ parent_execution_id=excluded.parent_execution_id,
+ created_by_execution_id=excluded.created_by_execution_id,
+ created_by_session_id=excluded.created_by_session_id,
+ source_session_id=excluded.source_session_id,
+ pipeline_run_id=excluded.pipeline_run_id,
+ created_at=excluded.created_at,
+ archived_at=excluded.archived_at,
+ title=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title ELSE NULL END,
+ title_by=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title_by ELSE NULL END,
+ title_call=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title_call ELSE NULL END,
+ title_attempt_at=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title_attempt_at ELSE NULL END,
+ title_attempts=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title_attempts ELSE 0 END,
+ title_unknown_call=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title_unknown_call ELSE NULL END
+`
+
+type SessionPutParams struct {
+	ID                      string
+	ProjectID               *string
+	TaskID                  *string
+	HostID                  *string
+	Actor                   *string
+	DirectedBy              *string
+	DirectorAccessRevokedAt *time.Time
+	ParentExecutionID       *string
+	CreatedByExecutionID    *string
+	CreatedBySessionID      *string
+	SourceSessionID         *string
+	PipelineRunID           *string
+	CreatedAt               *time.Time
+	ArchivedAt              *time.Time
+	Title                   *string
+	TitleBy                 *string
+	TitleCall               *string
+	TitleAttemptAt          *time.Time
+	TitleAttempts           int32
+	TitleUnknownCall        *string
+	Payload                 []byte
+}
+
+func (q *Queries) SessionPut(ctx context.Context, arg SessionPutParams) error {
+	_, err := q.db.Exec(ctx, sessionPut,
+		arg.ID,
+		arg.ProjectID,
+		arg.TaskID,
+		arg.HostID,
+		arg.Actor,
+		arg.DirectedBy,
+		arg.DirectorAccessRevokedAt,
+		arg.ParentExecutionID,
+		arg.CreatedByExecutionID,
+		arg.CreatedBySessionID,
+		arg.SourceSessionID,
+		arg.PipelineRunID,
+		arg.CreatedAt,
+		arg.ArchivedAt,
+		arg.Title,
+		arg.TitleBy,
+		arg.TitleCall,
+		arg.TitleAttemptAt,
+		arg.TitleAttempts,
+		arg.TitleUnknownCall,
+		arg.Payload,
+	)
+	return err
+}
+
+const sessionsByStartRequest = `-- name: SessionsByStartRequest :many
+SELECT id, code, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id, created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload, seq, updated_at, tombstoned_at FROM session WHERE payload->>'startRequest' = $1::text ORDER BY seq
+`
+
+func (q *Queries) SessionsByStartRequest(ctx context.Context, startRequest string) ([]Session, error) {
+	rows, err := q.db.Query(ctx, sessionsByStartRequest, startRequest)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Session
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.HostID,
+			&i.Actor,
+			&i.DirectedBy,
+			&i.DirectorAccessRevokedAt,
+			&i.ParentExecutionID,
+			&i.CreatedByExecutionID,
+			&i.CreatedBySessionID,
+			&i.SourceSessionID,
+			&i.PipelineRunID,
+			&i.CreatedAt,
+			&i.ArchivedAt,
+			&i.Title,
+			&i.TitleBy,
+			&i.TitleCall,
+			&i.TitleAttemptAt,
+			&i.TitleAttempts,
+			&i.TitleUnknownCall,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

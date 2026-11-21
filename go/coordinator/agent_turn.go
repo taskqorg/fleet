@@ -56,7 +56,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 		if transitionErr != nil {
 			return none, transitionErr
 		}
-		fresh, err := recGet[agentSession](q, recSession, s.ID)
+		fresh, err := sessionByID(q, s.ID)
 		if err != nil {
 			return none, err
 		}
@@ -81,7 +81,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 			}
 		}
 		s.DirectedBy = firstString(d, director(q))
-		if err := recPut(q, recSession, s); err != nil {
+		if err := sessionPut(q, s); err != nil {
 			return none, err
 		}
 	}
@@ -199,12 +199,12 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 			m.Source = prov.Source
 		}
 	}
-	return e, recPut(q, recMessage, &m)
+	return e, messagePut(q, &m)
 }
 
 // queueView: a queued message as message_send and queue_list show it: its record, queued and its place in the queue.
 func queueView(q *Request, m agentQueued) (map[string]json.RawMessage, error) {
-	qs, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SessionID: &m.SessionID, State: ptr("queued")})
+	qs, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: &m.SessionID, State: ptr("queued")})
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 	if sid == "" {
 		return none, fail(400, "Expected sessionId")
 	}
-	s, err := recLocked[agentSession](q, recSession, sid)
+	s, err := sessionLocked(q, sid)
 	if err != nil {
 		return none, err
 	}
@@ -282,11 +282,11 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 			return none, fail(400, "Expected setup run|skip")
 		}
 		s.Setup = setup
-		if err := recPut(q, recSession, &s); err != nil {
+		if err := sessionPut(q, &s); err != nil {
 			return none, err
 		}
 	}
-	if sent, err := recAll[agentMessage](q, recMessage, agentFilter{SessionID: &sid, RequestID: &requestID}); err != nil {
+	if sent, err := messagesBySession(q, sid, &requestID); err != nil {
 		return none, err
 	} else if len(sent) > 0 {
 		if sent[0].Text != text || strings.Join(sent[0].AttachmentRequest, ",") != strings.Join(ids, ",") {
@@ -295,7 +295,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 		e, err := recGet[agentExecution](q, recExecution, sent[0].ExecutionID)
 		return agentSubmitted{execution: &e}, err
 	}
-	if queued, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SessionID: &sid, RequestID: &requestID}); err != nil {
+	if queued, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: &sid, RequestID: &requestID}); err != nil {
 		return none, err
 	} else if len(queued) > 0 {
 		if queued[0].Text != text || strings.Join(queued[0].AttachmentRequest, ",") != strings.Join(ids, ",") {
@@ -316,7 +316,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 	if err != nil {
 		return none, err
 	}
-	waiting, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SessionID: &sid, State: ptr("queued")})
+	waiting, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: &sid, State: ptr("queued")})
 	if err != nil {
 		return none, err
 	}
@@ -351,13 +351,13 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 				NativeSessionID string `json:"nativeSessionId,omitempty"`
 			}{text, s.NativeSessionID}
 			c := agentCommand{ID: newID(), ExecutionID: active.ID, SessionID: sid, HostID: deref(active.HostID), ProjectID: s.ProjectID, Kind: "steer", Payload: jsonBytes(payload), Status: "pending"}
-			if err := recPut(q, recCommand, &c); err != nil {
+			if err := commandPut(q, &c); err != nil {
 				return none, err
 			}
 			m.State, m.SteerCommandID, m.ExecutionID = "steering", c.ID, active.ID
 		}
 	}
-	if err := recPut(q, recQueuedMessage, &m); err != nil {
+	if err := queuedMessagePut(q, &m); err != nil {
 		return none, err
 	}
 	v, err := queueView(q, m)
@@ -367,7 +367,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 // agentPromote starts the oldest queued message of every idle session (call after an execution ends).
 // It acquires canonical session:<id> locks in order to serialize with concurrent message_send calls.
 func agentPromote(q *Request) error {
-	queued, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{State: ptr("queued")})
+	queued, err := queuedMessages(q, db.QueuedMessagesParams{State: ptr("queued")})
 	if err != nil || len(queued) == 0 {
 		return err
 	}
@@ -396,7 +396,7 @@ func agentPromote(q *Request) error {
 		if err := acquireTxLock(q, orderable...); err != nil {
 			return err
 		}
-		queued, err = recAll[agentQueued](q, recQueuedMessage, agentFilter{State: ptr("queued")})
+		queued, err = queuedMessages(q, db.QueuedMessagesParams{State: ptr("queued")})
 		if err != nil {
 			return err
 		}
@@ -429,7 +429,7 @@ func agentPromote(q *Request) error {
 			continue
 		}
 		e, err := func() (agentExecution, error) {
-			s, err := recLocked[agentSession](q, recSession, sid)
+			s, err := sessionLocked(q, sid)
 			if err != nil {
 				return agentExecution{}, err
 			}
@@ -449,7 +449,7 @@ func agentPromote(q *Request) error {
 		} else {
 			m.State, m.ExecutionID, m.Error = "started", e.ID, ""
 		}
-		if err := recPut(q, recQueuedMessage, &m); err != nil {
+		if err := queuedMessagePut(q, &m); err != nil {
 			return err
 		}
 	}
@@ -459,7 +459,7 @@ func agentPromote(q *Request) error {
 // agentCommandReceipt: steer queue state, the completion wake and handoff delivery state for a receipt (status legacy).
 func agentCommandReceipt(q *Request, c *agentCommand, e *agentExecution, status string) error {
 	if c.Kind == "steer" {
-		ms, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SteerCommandID: &c.ID})
+		ms, err := queuedMessages(q, db.QueuedMessagesParams{SteerCommandID: &c.ID})
 		if err != nil || len(ms) == 0 {
 			return err
 		}
@@ -475,7 +475,7 @@ func agentCommandReceipt(q *Request, c *agentCommand, e *agentExecution, status 
 		case "unknown":
 			m.State = "steer_unknown"
 		}
-		return recPut(q, recQueuedMessage, &m)
+		return queuedMessagePut(q, &m)
 	}
 	if c.Kind != "start" {
 		return nil
@@ -488,7 +488,7 @@ func agentCommandReceipt(q *Request, c *agentCommand, e *agentExecution, status 
 	if e.HandoffID == "" {
 		return nil
 	}
-	h, err := recGet[agentHandoff](q, recHandoff, e.HandoffID)
+	h, err := handoffGet(q, e.HandoffID)
 	if err != nil || h.State != "sent" {
 		return err
 	}
@@ -499,23 +499,23 @@ func agentCommandReceipt(q *Request, c *agentCommand, e *agentExecution, status 
 		h.State = "unconfirmed"
 	case "failed", "stopped":
 		h.State = "pending"
-		s, err := recGet[agentSession](q, recSession, e.SessionID)
+		s, err := sessionByID(q, e.SessionID)
 		if err != nil {
 			return err
 		}
 		if s.PendingHandoffID == "" && !jsonGiven(e.StartedAt) {
 			s.PendingHandoffID = h.ID
-			if err := recPut(q, recSession, &s); err != nil {
+			if err := sessionPut(q, &s); err != nil {
 				return err
 			}
 		}
 	}
-	return recPut(q, recHandoff, &h)
+	return handoffPut(q, &h)
 }
 
 // wake: a child session's finished turn becomes the next message of the session that created it.
 func wake(q *Request, e *agentExecution, status string) error {
-	s, err := recGet[agentSession](q, recSession, e.SessionID)
+	s, err := sessionByID(q, e.SessionID)
 	if err != nil {
 		return err
 	}
@@ -583,30 +583,30 @@ func agentDecorateStart(q *Request, s *agentSession, e *agentExecution, payload 
 		e.ForkOfNativeSessionID = f
 	}
 	if hid := s.PendingHandoffID; hid != "" {
-		h, err := recGet[agentHandoff](q, recHandoff, hid)
+		h, err := handoffGet(q, hid)
 		if err != nil {
 			return err
 		}
 		text := h.Text + "\n\nCurrent request:\n" + deref(payload.Text)
 		payload.Text = &text
 		h.State, h.ExecutionID = "sent", e.ID
-		if err := recPut(q, recHandoff, &h); err != nil {
+		if err := handoffPut(q, &h); err != nil {
 			return err
 		}
 		e.HandoffID = h.ID
-		fresh, err := recGet[agentSession](q, recSession, s.ID)
+		fresh, err := sessionByID(q, s.ID)
 		if err != nil {
 			return err
 		}
 		fresh.PendingHandoffID, s.PendingHandoffID = "", ""
-		return recPut(q, recSession, &fresh)
+		return sessionPut(q, &fresh)
 	}
 	return nil
 }
 
 // agentStopOutcome: proven only when a host receipt ended the execution; otherwise unknown.
 func agentStopOutcome(q *Request, e *agentExecution) (contract.StopOutcome, error) {
-	cs, err := recAll[agentCommand](q, recCommand, agentFilter{ExecutionID: &e.ID, Kind: ptr("stop")})
+	cs, err := commandsList(q, db.CommandsParams{ExecutionID: &e.ID, Kind: ptr("stop")})
 	if err != nil {
 		return contract.StopOutcome{}, err
 	}
@@ -712,12 +712,12 @@ type (
 // agentReconcile settles coordinator-owned queue and handoff state and reports unproven executions; nothing is replayed.
 func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 	items := []any{}
-	steering, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{State: ptr("steering")})
+	steering, err := queuedMessages(q, db.QueuedMessagesParams{State: ptr("steering")})
 	if err != nil {
 		return nil, err
 	}
 	for _, m := range steering {
-		c, err := recGet[agentCommand](q, recCommand, m.SteerCommandID)
+		c, err := commandGet(q, m.SteerCommandID)
 		if err != nil {
 			return nil, err
 		}
@@ -727,13 +727,13 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 		}
 		if e.terminal() && c.Status == "pending" {
 			m.State, m.SteerCommandID = "queued", ""
-			if err := recPut(q, recQueuedMessage, &m); err != nil {
+			if err := queuedMessagePut(q, &m); err != nil {
 				return nil, err
 			}
 			items = append(items, agentSteerRequeued{"steer_requeued", m.ID})
 		}
 	}
-	sent, err := recAll[agentHandoff](q, recHandoff, agentFilter{State: ptr("sent")})
+	sent, err := handoffsByState(q, "sent")
 	if err != nil {
 		return nil, err
 	}
@@ -744,16 +744,16 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 		}
 		if e.terminal() && !jsonGiven(e.StartedAt) {
 			h.State = "pending"
-			if err := recPut(q, recHandoff, &h); err != nil {
+			if err := handoffPut(q, &h); err != nil {
 				return nil, err
 			}
-			s, err := recGet[agentSession](q, recSession, h.SessionID)
+			s, err := sessionByID(q, h.SessionID)
 			if err != nil {
 				return nil, err
 			}
 			if s.PendingHandoffID == "" {
 				s.PendingHandoffID = h.ID
-				if err := recPut(q, recSession, &s); err != nil {
+				if err := sessionPut(q, &s); err != nil {
 					return nil, err
 				}
 			}
@@ -771,7 +771,7 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 		if e.terminal() {
 			continue
 		}
-		starts, err := recAll[agentCommand](q, recCommand, agentFilter{ExecutionID: &e.ID, Kind: ptr("start")})
+		starts, err := commandsList(q, db.CommandsParams{ExecutionID: &e.ID, Kind: ptr("start")})
 		if err != nil {
 			return nil, err
 		}

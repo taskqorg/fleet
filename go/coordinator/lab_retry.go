@@ -239,18 +239,6 @@ type labProjectRevision struct {
 	Revision   float64 `json:"revision"`
 }
 
-// labExecutionFilter: the records of one execution (all, eventsWhere).
-type labExecutionFilter struct {
-	ExecutionID string `json:"executionId"`
-	Type        string `json:"type,omitempty"`
-}
-
-// labSessionRun: the fields of a suffix step's session a retry reads.
-type labSessionRun struct {
-	PipelineRunID string  `json:"pipelineRunId"`
-	ProjectID     *string `json:"projectId"`
-}
-
 // labCommandPayload: the fields of a script command's payload a retry reads.
 type labCommandPayload struct {
 	Command   json.RawMessage   `json:"command"`
@@ -511,14 +499,13 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 		if !owned {
 			return nil, suffixConflict("wrong execution project")
 		}
-		records, err := recAll[rawObject](q, recCommand, labExecutionFilter{ExecutionID: xid})
+		cs, err := commandsList(q, db.CommandsParams{ExecutionID: &xid})
 		if err != nil {
 			return nil, err
 		}
-		commands := []labSuffixCommand{}
-		for _, r := range records {
-			c, _ := asT[labSuffixCommand](r)
-			commands = append(commands, c)
+		commands := make([]labSuffixCommand, 0, len(cs))
+		for _, c := range cs {
+			commands = append(commands, labSuffixCommand{ID: c.ID, Kind: c.Kind, Status: c.Status, ExecutionID: c.ExecutionID, SessionID: c.SessionID, HostID: c.HostID, Payload: c.Payload})
 		}
 		ci, err := suffixScript(commands)
 		if err != nil {
@@ -530,12 +517,11 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 			x.CommandId == nil || *x.CommandId != command.ID || x.NativeExecutionId == nil || *x.NativeExecutionId != xid {
 			return nil, suffixConflict("selected launch plan binding changed")
 		}
-		sessionRecord, err := recGet[rawObject](q, recSession, e.SessionID)
+		session, err := sessionByID(q, e.SessionID)
 		if err != nil {
 			return nil, err
 		}
-		session, _ := asT[labSessionRun](sessionRecord)
-		if e.PipelineRunID != sourceID || session.PipelineRunID != sourceID || !same(session.ProjectID, source.ProjectID) {
+		if e.PipelineRunID != sourceID || session.PipelineRunID != sourceID || !same(strPtr(session.ProjectID), source.ProjectID) {
 			return nil, suffixConflict("execution/session source binding changed")
 		}
 		outputs := map[string]json.RawMessage{}
@@ -552,7 +538,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 			return nil, suffixConflict("original script command changed")
 		}
 
-		events, err := eventsWhere(q, labExecutionFilter{ExecutionID: xid, Type: "process.reconciled"})
+		events, err := eventsWhere(q, xid, ptr("process.reconciled"))
 		if err != nil {
 			return nil, err
 		}

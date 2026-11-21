@@ -1,6 +1,6 @@
 -- Execution events (host_events.go, event_batch.go, docs/designs/fleet-standard.md S2): an event and a stream delta share
 -- one table, told apart by delta. The record a reader sees is payload with the columns under their record names
--- (eventRecordOf); a write splits a record the same way (eventColumnsOf), so its record (records.go recEvent) reads alike.
+-- (eventRecordOf); a write splits a record the same way (eventColumnsOf).
 
 -- name: EventsByIdentity :many
 -- The stored events and deltas of an execution at one of @seqs or with one of @ids (a host batch's snapshot).
@@ -103,3 +103,12 @@ ON CONFLICT (id) DO NOTHING;
 -- name: EventsCountOfExecution :one
 -- How many events and deltas an execution has stored.
 SELECT count(*)::bigint AS n FROM event WHERE execution_id=$1;
+
+-- name: EventsNonDeltaOfExecution :many
+SELECT * FROM event WHERE NOT delta AND execution_id = @execution_id::text ORDER BY seq;
+
+-- name: EventsOfExecutionByType :many
+SELECT * FROM event
+WHERE execution_id = @execution_id::text
+ AND (sqlc.narg(type)::text IS NULL OR type = sqlc.narg(type))
+ORDER BY seq;

@@ -103,9 +103,15 @@ func frameHash(v any) string {
 	return hex.EncodeToString(h[:])
 }
 
-// eventsWhere: the events of either kind matching a record filter, for callers reading records
+// eventsWhere: the events of either kind of an execution (optionally of one type), for callers reading records
 // (lab_retry.go, pipeline_plan.go).
-func eventsWhere(q *Request, f any) ([]rawObject, error) { return recAll[rawObject](q, recEventAny, f) }
+func eventsWhere(q *Request, executionID string, typ *string) ([]eventRecord, error) {
+	es, err := q.db().EventsOfExecutionByType(q.ctx(), db.EventsOfExecutionByTypeParams{ExecutionID: executionID, Type: typ})
+	if err != nil {
+		return nil, err
+	}
+	return eventRecordsOf(es), nil
+}
 
 func eventKind(v eventRecord) string {
 	if v.object("data").object("fleetNormalized").has("deltaOf") {

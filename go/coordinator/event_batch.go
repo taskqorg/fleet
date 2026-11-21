@@ -12,8 +12,7 @@ import (
 type rawObject map[string]json.RawMessage
 
 // eventRecord: an event as its record, the host's open object: payload with the typed columns under their record
-// names (id, executionId, sessionId, projectId, seq, type, timestamp), as its record shows it (queries/records.sql
-// RecEventAll).
+// names (id, executionId, sessionId, projectId, seq, type, timestamp).
 type eventRecord = rawObject
 
 // eventRecordOf: a stored event as its record. A NULL column is absent, a column overrides a payload key.
