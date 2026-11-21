@@ -817,7 +817,7 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 		if ended {
 			// A call made after its job ended (a timer) would have an effect nobody sees.
 			fail := callError("error", "job-ended", nil)
-			fail["tool"] = callLabel(m.Server, m.Tool)
+			fail.Tool = callLabel(m.Server, m.Tool)
 			errtrack.Go("code.reply", func() { rt.send(M{"type": "reply", "id": m.ID.V, "ok": false, "error": fail}) })
 			return
 		}
@@ -833,11 +833,11 @@ func (s *codeServer) call(rt *codeRuntime, j *codeJob, m codeLine) {
 	label := callLabel(server, tool)
 	outcome := "ok"
 	if fail != nil {
-		outcome = jStr(fail, "outcome") // not JSON: the in-memory map callError built
+		outcome = fail.Outcome
+		fail.Tool = label
 	}
 	reply := M{"type": "reply", "id": m.ID.V, "ok": fail == nil, "value": value}
 	if fail != nil {
-		fail["tool"] = label
 		reply["error"] = fail
 	}
 	// The call counts as busy until the runtime settles it: its `settled` line comes after the reply's promise callbacks
@@ -870,11 +870,19 @@ func (s *codeServer) settle(j *codeJob) {
 	}
 }
 
-func callError(outcome, code string, output any) M {
-	return M{"outcome": outcome, "code": code, "output": output}
+// codeCallError is a failed bridged call error sent back to the code-mode runtime as FleetCallError.
+type codeCallError struct {
+	Tool    string `json:"tool,omitempty"`
+	Outcome string `json:"outcome"`
+	Code    string `json:"code"`
+	Output  any    `json:"output"`
 }
 
-func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any, M) {
+func callError(outcome, code string, output any) *codeCallError {
+	return &codeCallError{Outcome: outcome, Code: code, Output: output}
+}
+
+func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any, *codeCallError) {
 	if !truth(args) {
 		args = M{}
 	}
@@ -944,7 +952,7 @@ func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any
 
 // mcpValue unwraps an MCP tool result: a text result parsed as JSON when it is JSON; a result with non-text parts as its
 // parts; isError becomes a call error.
-func mcpValue(r any) (any, M) {
+func mcpValue(r any) (any, *codeCallError) {
 	result := typed[struct {
 		Content []jsonValue `json:"content"` // nil when absent or not an array
 		IsError bool        `json:"isError"`

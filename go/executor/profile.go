@@ -55,8 +55,12 @@ func jsonOf(v any) any {
 
 // profileServers maps named grants to Fleet-owned launchers; definitions never provide commands or environment.
 func profileServers(v any, root, harness, account string) (M, error) {
+	return profileServersFor(profileGrants(v), root, harness, account)
+}
+
+func profileServersFor(grants []contract.ProfileMcpGrant, root, harness, account string) (M, error) {
 	servers := M{}
-	for _, grant := range profileGrants(v) {
+	for _, grant := range grants {
 		name := grant.Id
 		if name == "design-rules" {
 			discovery := M{"tools": designRulesTools}
@@ -124,12 +128,18 @@ func profileApply(c *exec.Cmd, instructions string) {
 }
 
 func profilePrepare(v any, account string, skills any) (M, M, error) {
-	capabilityEvidence := M{}
 	profile, err := contract.ParseProfile([]byte(enc(v)))
 	if err != nil {
 		return nil, nil, err
 	}
-	selected, err := profileServers(v, "", "", account)
+	return profilePrepareParsed(profile, v, account, skills)
+}
+
+// profilePrepareParsed validates grants and builds capability/instruction evidence from an already-parsed Profile,
+// keeping the raw received value v for exact echo/hashing in the receipt.
+func profilePrepareParsed(profile contract.Profile, v any, account string, skills any) (M, M, error) {
+	capabilityEvidence := M{}
+	selected, err := profileServersFor(profile.McpServers, "", "", account)
 	if err != nil {
 		return nil, nil, err
 	}

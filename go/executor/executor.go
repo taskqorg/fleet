@@ -1035,6 +1035,24 @@ func okStatus(ok bool) string {
 	return "failed"
 }
 
+// startPayload reads the already-decoded start/input payload from c when available, falling back to payloadOf for
+// raw commands without typed sub-payloads.
+func startPayload(c contract.Command) (contract.StartPayload, error) {
+	switch {
+	case c.Start != nil:
+		if c.Start.Payload != nil {
+			return *c.Start.Payload, nil
+		}
+		return contract.StartPayload{}, nil
+	case c.Input != nil:
+		if c.Input.Payload != nil {
+			return *c.Input.Payload, nil
+		}
+		return contract.StartPayload{}, nil
+	}
+	return payloadOf[contract.StartPayload](c)
+}
+
 func (e *executor) start(c contract.Command, cid, execution, session string, p M) error {
 	// A session with a recorded launch is running, or its process from before a restart is not confirmed gone.
 	var busy string
@@ -1052,7 +1070,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		}
 		return e.finish(c, "failed", "")
 	}
-	sp, err := payloadOf[contract.StartPayload](c)
+	sp, err := startPayload(c)
 	if err != nil {
 		if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: "invalid start payload: " + err.Error()}); err != nil {
 			return err
@@ -1067,7 +1085,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		}
 	}
 	name := harnessName(sp)
-	if harnessNull(c) {
+	if hv, has := p["harness"]; has && hv == nil || p == nil && harnessNull(c) {
 		name = "invalid"
 	}
 	key := str0(sp.WorkspaceKey)
@@ -1105,7 +1123,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	var evidence M
 	selectedMCP := M{}
 	if hasCfg {
-		ev, selected, err := profilePrepare(cfg, str0(sp.Account), p["skills"])
+		ev, selected, err := profilePrepareParsed(profile, cfg, str0(sp.Account), p["skills"])
 		if err != nil {
 			return fail(1, err.Error())
 		}
@@ -1159,7 +1177,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	os.MkdirAll(outputDir, 0o755)
 	os.MkdirAll(inputDir, 0o755)
 	setEnvKV(cmd, "FLEET_OUTPUT_DIR="+outputDir, "FLEET_INPUT_DIR="+inputDir)
-	if err := e.stageInputs(p, inputDir, execution); err != nil {
+	if err := e.stageArtifactInputs(sp.Inputs, inputDir, execution); err != nil {
 		return fail(1, err.Error())
 	}
 	resolved, err := resolveAttemptContext(project, e.host, projectRoots(), e.forbidden(), inputDir)
@@ -1330,7 +1348,11 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 			}
 		}
 		if codeMode != "" {
-			b := decM(string(raw))
+			specMap, _ := spec.(M)
+			b := maps.Clone(specMap)
+			if b == nil {
+				b = M{}
+			}
 			b["tools"] = specs
 			bridged = append(bridged, b)
 		}
@@ -1708,7 +1730,7 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	if err := os.MkdirAll(input, 0o755); err != nil {
 		return err
 	}
-	if err := e.stageInputs(M{"inputs": sp.Inputs}, input, execution); err != nil {
+	if err := e.stageArtifactInputs(sp.Inputs, input, execution); err != nil {
 		return refuse(err.Error())
 	}
 	stdout, err := os.Create(filepath.Join(output, "script.stdout"))
@@ -1826,7 +1848,11 @@ func (e *executor) stageInputs(p M, input string, execution any) error {
 	if json.Unmarshal([]byte(enc(p)), &in) != nil {
 		return errors.New("invalid input")
 	}
-	list := in.Inputs
+	executionID, _ := execution.(string)
+	return e.stageArtifactInputs(in.Inputs, input, executionID)
+}
+
+func (e *executor) stageArtifactInputs(list []contract.InputArtifact, input, executionID string) error {
 	if len(list) == 0 {
 		return nil
 	}
@@ -1836,7 +1862,6 @@ func (e *executor) stageInputs(p M, input string, execution any) error {
 	}
 	defer root.Close()
 	c := newTransferClient(e.url, e.token, e.host, accessToken(accessFile()))
-	executionID, _ := execution.(string)
 	for _, i := range list {
 		id, rel := i.ArtifactId, i.Path
 		if strings.HasPrefix(rel, "/") || anyPart(rel, func(x string) bool { return x == "" || x == "." || x == ".." }) {
