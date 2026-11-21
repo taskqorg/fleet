@@ -1,11 +1,12 @@
 // Lab draft creation uses the existing operation, never launch (laboratory.md, Create experiment).
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { useLocation } from 'wouter-preact';
+import { useLocation, useSearch } from 'wouter-preact';
 import { matchSearch, StatusLine, Button, Choice, CodeEditor, DetailSection, Disclosure, Empty, ListDetail, ProblemRow, RowCheck, SearchField, StateBadge, TextField, VirtualList, ROW2 } from '../../../packages/ui/src/index.ts';
 import { op, online, signedOut, OpError, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import { access, accessGeneration, isAccessCurrent } from '../access.ts';
 import { onClear } from '../offline.ts';
+import { matchesUseCaseSlug, useCaseSlug } from './use-cases.ts';
 
 type Variant = { label: string; pipelineId: string; overrides: string };
 type Evaluator = { kind: string; ref: string; form: string; overrides: string };
@@ -19,6 +20,13 @@ type Picker = { label: string; options: Option[]; selected: string[]; multiple?:
 const PREFIX = 'fleet-lab-create:';
 const blank = (): Draft => ({ projectId: '', pipelineId: '', kind: '', examples: [], repeats: '1', goal: '', hypothesis: '', decisionRule: '', labGroup: '',
   variants: [{ label: 'A', pipelineId: '', overrides: '{}' }], evaluators: [], primary: '', budgets: [], generator: 'list', params: '{"variants":[]}', max: '', k: '' });
+const prefillForUseCase = (slug: string): Draft => ({
+  ...blank(),
+  kind: 'ab',
+  labGroup: slug,
+  evaluators: [{ kind: 'script', ref: 'example.checks', form: 'metric', overrides: '{}' }],
+  primary: 'script:example.checks:metric',
+});
 const object = (text: string, label: string): Record<string, unknown> => {
   let x: unknown; try { x = JSON.parse(text); } catch (e) { throw Error(`${label}: ${(e as Error).message}`); }
   if (!x || typeof x !== 'object' || Array.isArray(x)) throw Error(label + ' must be an object');
@@ -50,6 +58,10 @@ function request(d: Draft): Ops['lab_experiment_create']['request'] {
 
 export function LabCreate() {
   const [, go] = useLocation();
+  const search = useSearch();
+  const requestedUseCase = new URLSearchParams(search).get('useCase')?.trim() ?? '';
+  const prefillSlug = useRef(requestedUseCase ? useCaseSlug(requestedUseCase) : '');
+  const prefillExamples = useRef(false);
   const [receipt, setReceipt] = useState<Receipt>({ draft: blank(), state: 'editing' });
   const [key, setKey] = useState(''), [error, setError] = useState(''), [storageWarning, setStorageWarning] = useState('');
   const [picker, setPicker] = useState<Picker | null>(null), [query, setQuery] = useState('');
@@ -57,11 +69,12 @@ export function LabCreate() {
   const generation = useRef(accessGeneration()).current;
   const live = useRef(true), identity = useRef(''), current = useRef(receipt), busy = useRef(false);
   current.current = receipt;
+  const seedDraft = (draft: Draft) => { if (!live.current || !isAccessCurrent(generation)) return; const next: Receipt = { draft, state: 'editing' }; current.current = next; setReceipt(next); };
   const persist = (next: Receipt) => { if (!live.current || !isAccessCurrent(generation)) return; current.current = next; if (live.current) setReceipt(next); if (identity.current) try { sessionStorage.setItem(identity.current, JSON.stringify(next)); } catch { if (live.current) setStorageWarning('Browser storage is unavailable. Keep this page open until creation is resolved.'); } };
   const clearAccess = () => {
     // Preserve authored input under its original actor; server receipts require fresh readback.
     if (identity.current) try { sessionStorage.setItem(identity.current, JSON.stringify({ draft: current.current.draft, state: current.current.state === 'editing' ? 'editing' : 'uncertain', message: current.current.state === 'editing' ? undefined : 'Previous creation outcome requires review; do not resend.' })); } catch { /* input still existed in this view */ }
-    identity.current = ''; invoker.current = null; busy.current = true; setKey('');
+    identity.current = ''; invoker.current = null; busy.current = true; prefillExamples.current = false; setKey('');
     current.current = { draft: blank(), state: 'editing' }; setReceipt(current.current);
     setPicker(null); setQuery('');
     setError('Access changed. Reload before creating a draft.');
@@ -85,6 +98,9 @@ export function LabCreate() {
           }
           if (!isAccessCurrent(generation) || !live.current) return;
           persist({ draft: saved.draft, state: saved.state === 'editing' ? 'editing' : 'uncertain', ...(saved.state !== 'editing' ? { message: 'Previous creation outcome requires review; do not resend.' } : {}) });
+        } else if (prefillSlug.current) {
+          prefillExamples.current = true;
+          seedDraft(prefillForUseCase(prefillSlug.current));
         }
         busy.current = false; setKey(k); setError('');
       } catch (e) { if (live.current) setError(message(e)); }
@@ -94,6 +110,18 @@ export function LabCreate() {
   const d = receipt.draft;
   // The choices: read once this person's draft is restored (key), the pipelines of the chosen project.
   const projectList = useOp('project_list', key ? {} : null), exampleList = useOp('lab_examples_list', key ? { state: 'approved' } : null);
+  useEffect(() => {
+    if (!prefillExamples.current || !key || !exampleList.data || busy.current) return;
+    if (!live.current || !isAccessCurrent(generation)) return;
+    prefillExamples.current = false;
+    if (current.current.state !== 'editing' || current.current.draft.examples.length > 0) return;
+    const matched = exampleList.data.examples.filter(e => matchesUseCaseSlug(e.name, prefillSlug.current)).map(e => e.artifactId);
+    if (!matched.length) return;
+    let hasSaved = false;
+    try { hasSaved = !!identity.current && sessionStorage.getItem(identity.current) !== null; } catch { /* ignore */ }
+    if (hasSaved) persist({ draft: { ...current.current.draft, examples: matched }, state: 'editing' });
+    else seedDraft({ ...current.current.draft, examples: matched });
+  }, [key, exampleList.data]);
   const pipelineList = useOp('definition_list', key && d.projectId ? { kind: 'pipeline', projectId: d.projectId } : null);
   const projects: Option[] = key ? (projectList.data?.projects ?? []).map(p => ({ id: String(p.id), name: String(p.name ?? p.id) })) : [];
   const examples: Option[] = key ? (exampleList.data?.examples ?? []).map(e => ({ id: e.artifactId, name: e.name })) : [];
@@ -184,7 +212,7 @@ export function LabCreate() {
       <Button label={`Remove budget ${i + 1}`} icon="x" disabledReason={disabled} onClick={() => edit({ budgets: d.budgets.filter((_, j) => i !== j) })} /></section>)}
       <Button label="Add budget" icon="plus" disabledReason={disabled} onClick={() => edit({ budgets: [...d.budgets, { unit: 'trials', limit: '', action: 'pause' }] })} /></DetailSection>
     </fieldset>
-    <Button label="Close" icon="x" onClick={() => go('/lab')} /><Button label="Discard local draft" disabledReason={receipt.state === 'pending' ? 'Creation is pending' : undefined} onClick={() => { busy.current = false; persist({ draft: blank(), state: 'editing' }); setError(''); }} />
+    <Button label="Close" icon="x" onClick={() => go('/lab')} /><Button label="Discard local draft" disabledReason={receipt.state === 'pending' ? 'Creation is pending' : undefined} onClick={() => { busy.current = false; prefillExamples.current = false; persist({ draft: blank(), state: 'editing' }); setError(''); }} />
     <p class="muted">Closing or discarding a local draft does not cancel a request already sent. Launch remains a separate action.</p>
   </article>;
   return <ListDetail list={list} detail={detail} detailKey="new" />;

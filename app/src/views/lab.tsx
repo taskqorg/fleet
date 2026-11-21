@@ -2,18 +2,31 @@
 // registry and examples awaiting approval on /lab; one experiment's matrix (rows examples, columns variants), spend against
 // budgets, judge-to-owner agreement, rating queue and Promote on /lab/<experiment id>. Ratings and budget questions are
 // answered through questions_answer like every question; rating outputs show blind (A, B, …) in the seeded order.
+import { Fragment, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import type { ComponentChildren } from 'preact';
 import { useLocation } from 'wouter-preact';
 import { StateBadge, Button, Disclosure, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, DataTable, TabBar, Choice, TextField, catalogueRow, ROW2, percent, SettingField, StepList, msMeasured, type StepItem, type StateOf, type Basis, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type OpName, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import { LabCreate } from './lab-create.tsx';
+import { groupUseCases, isLabEligibleUseCase } from './use-cases.ts';
 import type { LabExperimentRecord, LabRating, LabScoreSummary, LabUseCaseEntry, ProjectAssessmentRef } from '../../../contracts/generated/ops.ts';
 
 const ms = (t: string | number | null | undefined) => typeof t === 'number' ? t : Date.parse(t ?? '');
 const message = (x: unknown) => x instanceof Error ? x.message : String(x);
 const fixed = (x: number | null) => x === null ? '—' : x.toFixed(2);
+/** Extract a concise human-readable problem string from a trial or strategy problem field. */
+const problemText = (p: unknown): string | undefined => {
+  if (p == null) return undefined;
+  if (typeof p === 'string') return p.trim() || undefined;
+  if (typeof p === 'object') {
+    const r = p as { code?: unknown; message?: unknown; reason?: unknown; error?: unknown };
+    const parts = [r.code, r.message ?? r.reason ?? r.error].filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+    if (parts.length > 0) return parts.join(': ');
+    try { return JSON.stringify(p); } catch { return String(p); }
+  }
+  return String(p);
+};
 /** A typed score's value: the answer given and the example's label. */
 const typedValue = (v: unknown): { answer?: unknown; label?: unknown } => v && typeof v === 'object' ? v as { answer?: unknown; label?: unknown } : {};
 
@@ -58,7 +71,7 @@ export function Lab({ id }: { id?: string }) {
     ]} />
     {idleTab === 'questions'
       ? <Questions experiments={data.experiments} onOpen={x => go(`/lab/${x}`)} />
-      : <Registry useCases={data.useCases} head={<Undecided experiments={data.experiments} onOpen={x => go(`/lab/${x}`)} />} />}
+      : <Registry useCases={data.useCases} onRun={u => go(`/lab/new?useCase=${encodeURIComponent(u)}`)} head={<Undecided experiments={data.experiments} onOpen={x => go(`/lab/${x}`)} />} />}
   </article>;
   return <ListDetail list={list} detail={id ? <Experiment key={id} id={id} onClose={() => go('/lab')} /> : undefined} detailKey={id} idle={idle} />;
 }
@@ -114,37 +127,22 @@ function Undecided({ experiments, onOpen }: { experiments: LabExperimentRecord[]
   </>;
 }
 
-type RegistryUseCase = LabUseCaseEntry & { tags?: readonly string[] };
-
 // The use-case registry fills the work area while no experiment is open. It scrolls with the work area, so its rows are plain.
 // ponytail: static rows, fine for tens of use cases; make it its own catalogue with a virtual list if the registry grows past a few hundred.
-function Registry({ useCases, head }: { useCases: LabUseCaseEntry[]; head?: ComponentChildren }) {
-  // Organize active use cases by collection and fold obsolete/duplicate prototype rows away.
-  const isArchived = (u: RegistryUseCase) => u.status === 'obsolete' || u.status === 'duplicate';
-  const isBenchmark = (u: RegistryUseCase) => u.id.startsWith('bench:') || (u.tags ?? []).includes('llm-code-benchmarks');
-  const isRealWork = (u: RegistryUseCase) => u.id.startsWith('real:') || (u.tags ?? []).includes('real-work');
-  const active = useCases.filter(u => !isArchived(u));
-  const archived = useCases.filter(isArchived);
-  const benchmarks = active.filter(isBenchmark);
-  const realWork = active.filter(u => !isBenchmark(u) && isRealWork(u));
-  const fleetAndProjects = active.filter(u => !isBenchmark(u) && !isRealWork(u));
+function Registry({ useCases, onRun, head }: { useCases: LabUseCaseEntry[]; onRun: (useCaseId: string) => void; head?: ComponentChildren }) {
+  const { collections, archived } = groupUseCases(useCases);
 
   const row = (u: LabUseCaseEntry) => <div key={u.id} role="row" class="vl-row static">
     <StateBadge family="source" state={u.source_status as StateOf<'source'>} reason={u.source ? `${u.source.repo}/${u.source.path}#${u.source.anchor}` : undefined} compact />
     <span class="tt"><span class="title">{u.goal}</span><span class="id">{u.id}{u.maps_to?.length ? ` → ${u.maps_to.join(', ')}` : ''}</span></span>
     <span class="muted">{u.status ?? 'current'}</span><span class="muted">{u.lab_fit}</span><span class="muted">{u.maturity}</span>
+    {isLabEligibleUseCase(u) ? <Button label="Run in Lab" icon="play" kind="quiet" tip={`Run ${u.id} in Lab`} onClick={() => onRun(u.id)} /> : <span />}
   </div>;
 
-  const table = (items: LabUseCaseEntry[]) => <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 6rem 5rem 9rem' }}>
-    <div class="vl-head" role="row"><span /><span>Use case</span><span>Status</span><span>Fit</span><span>Maturity</span></div>
+  const table = (items: LabUseCaseEntry[]) => <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 6rem 5rem 9rem auto' }}>
+    <div class="vl-head" role="row"><span /><span>Use case</span><span>Status</span><span>Fit</span><span>Maturity</span><span /></div>
     {items.map(row)}
   </div>;
-
-  const collections = [
-    { key: 'benchmarks', title: 'LLM Code Benchmarks', items: benchmarks },
-    { key: 'real-work', title: 'Real Work', items: realWork },
-    { key: 'fleet-projects', title: 'Fleet & Projects', items: fleetAndProjects },
-  ].filter(c => c.items.length > 0);
 
   return <>
     {head}
@@ -258,26 +256,31 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
               {Object.entries(c?.summary ?? {}).map(([k, s]) => <span key={k} class="muted" data-tip={k}>{evaluatorLabel(k)} <b>{scoreText(s)}</b></span>)}
               {(c?.trials ?? []).map(key => { const t = trial(key); if (!t) return null;
                 const conf = [(t.confounders.hosts ?? []).join(', '), (t.confounders.harnesses ?? []).join(', '), (t.confounders.models ?? []).join(', '), 'web ' + String(t.confounders.webRoute)].filter(Boolean).join(' · ');
-                return <span key={key} class="lab-trial">
-                  <Button label="View trial plan" icon="network" iconOnly kind="quiet" onClick={() => setPlanTrial(t.id)} />
-                  <StateBadge family="trial" state={(t.observation === 'unconfirmed' ? 'unknown' : t.state) as StateOf<'trial'>} reason={t.problem != null ? String(t.problem) : t.comparable ? undefined : 'left out of comparison'} compact />
-                  {t.comparable && <RowCheck checked={sel.includes(t.id)} label={`Select repeat ${(t.cell.repeat ?? 0) + 1} for rating`} onToggle={() => toggle(t.id)} />}
-                  <span class="muted" data-tip={conf}>r{(t.cell.repeat ?? 0) + 1}{t.cell.attempt ? `.${t.cell.attempt}` : ''}</span>
-                  <Num m={{ value: t.durationMs == null ? null : t.durationMs / 1000, basis: t.durationMs == null ? 'unavailable' : 'measured', reason: 'running' }} kind="duration" />
-                  <Num m={{ value: t.spend.credits ?? null, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" />
-                  {t.recovery && <span data-tip={`Reuses ${(t.recovery.reusedStepIds ?? []).join(', ')}; original spend remains in source history`}><Button label="Source run" icon="network" kind="quiet" onClick={() => setPlanTrial(t.recovery?.sourceRunId)} /></span>}
-                  {(t.cost ?? []).map((c, i) => <Num key={i} m={{ value: c.value, basis: c.basis as Basis, currency: c.currency ?? undefined, reason: c.value === null ? c.reason : `${c.prices?.length ?? 0} price${c.prices?.length === 1 ? '' : 's'}` }} kind="money" />)}
-                  {t.scores.filter(s => s.trialIds?.length === 1).map(s => s.form === 'typed'
-                    ? <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator ?? '')}${s.rationale ? ": " + s.rationale : ""}`}><Icon name={typedIcon(s.value)} label={`${evaluatorLabel(s.evaluator ?? '')} ${String(typedValue(s.value).answer)}, label ${String(typedValue(s.value).label ?? 'none')}`} />{String(typedValue(s.value).answer)}</span>
-                    : <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator ?? '')}${s.rationale ? ': ' + s.rationale : ''}`}><Icon name={s.form === 'pass_fail' ? (s.value ? 'circle-check' : 'circle-x') : 'sliders-horizontal'} label={`${evaluatorLabel(s.evaluator ?? '')} ${String(s.value)}`} />{s.form === 'pass_fail' ? '' : String(s.form === 'metric' ? Number(s.value).toFixed(2) : s.value)}</span>)}
-                  {t.state === 'running' ? <Button label="Cancel cell" icon="x" iconOnly kind="quiet" onClick={() => act('lab_cell_action', { experimentId: id, cell: key, action: 'cancel' })} />
-                    : <Button label="Retry cell" icon="rotate-ccw" iconOnly kind="quiet" onClick={() => act('lab_cell_action', { experimentId: id, cell: key, action: 'retry' })} />}
-                </span>; })}
+                const problem = problemText(t.problem);
+                const repeatTag = `r${(t.cell.repeat ?? 0) + 1}${t.cell.attempt ? `.${t.cell.attempt}` : ''}`;
+                return <Fragment key={key}>
+                  <span class="lab-trial">
+                    <Button label="View trial plan" icon="network" iconOnly kind="quiet" onClick={() => setPlanTrial(t.id)} />
+                    <StateBadge family="trial" state={(t.observation === 'unconfirmed' ? 'unknown' : t.state) as StateOf<'trial'>} reason={problem ?? (t.comparable ? undefined : 'left out of comparison')} compact />
+                    {t.comparable && <RowCheck checked={sel.includes(t.id)} label={`Select repeat ${(t.cell.repeat ?? 0) + 1} for rating`} onToggle={() => toggle(t.id)} />}
+                    <span class="muted" data-tip={conf}>{repeatTag}</span>
+                    <Num m={{ value: t.durationMs == null ? null : t.durationMs / 1000, basis: t.durationMs == null ? 'unavailable' : 'measured', reason: 'running' }} kind="duration" />
+                    <Num m={{ value: t.spend.credits ?? null, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" />
+                    {t.recovery && <span data-tip={`Reuses ${(t.recovery.reusedStepIds ?? []).join(', ')}; original spend remains in source history`}><Button label="Source run" icon="network" kind="quiet" onClick={() => setPlanTrial(t.recovery?.sourceRunId)} /></span>}
+                    {(t.cost ?? []).map((c, i) => <Num key={i} m={{ value: c.value, basis: c.basis as Basis, currency: c.currency ?? undefined, reason: c.value === null ? c.reason : `${c.prices?.length ?? 0} price${c.prices?.length === 1 ? '' : 's'}` }} kind="money" />)}
+                    {t.scores.filter(s => s.trialIds?.length === 1).map(s => s.form === 'typed'
+                      ? <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator ?? '')}${s.rationale ? ": " + s.rationale : ""}`}><Icon name={typedIcon(s.value)} label={`${evaluatorLabel(s.evaluator ?? '')} ${String(typedValue(s.value).answer)}, label ${String(typedValue(s.value).label ?? 'none')}`} />{String(typedValue(s.value).answer)}</span>
+                      : <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator ?? '')}${s.rationale ? ': ' + s.rationale : ''}`}><Icon name={s.form === 'pass_fail' ? (s.value ? 'circle-check' : 'circle-x') : 'sliders-horizontal'} label={`${evaluatorLabel(s.evaluator ?? '')} ${String(s.value)}`} />{s.form === 'pass_fail' ? '' : String(s.form === 'metric' ? Number(s.value).toFixed(2) : s.value)}</span>)}
+                    {t.state === 'running' ? <Button label="Cancel cell" icon="x" iconOnly kind="quiet" onClick={() => act('lab_cell_action', { experimentId: id, cell: key, action: 'cancel' })} />
+                      : <Button label="Retry cell" icon="rotate-ccw" iconOnly kind="quiet" onClick={() => act('lab_cell_action', { experimentId: id, cell: key, action: 'retry' })} />}
+                  </span>
+                  {problem && <span class="reason" data-tip={problem}>{e.repeats > 1 ? `${repeatTag}: ` : ''}{problem}</span>}
+                </Fragment>; })}
             </div>; })}
         </div>)}
       </div>
     </section>
-    {planTrial && <TrialPlan key={planTrial} id={planTrial} projectId={e.projectId} assessments={e.trials.find(t => t.id === planTrial)?.projectAssessments ?? []} onOpen={setPlanTrial} onClose={() => setPlanTrial(undefined)} />}
+    {planTrial && <TrialPlan key={planTrial} id={planTrial} projectId={e.projectId} trialProblem={problemText(e.trials.find(t => t.id === planTrial)?.problem)} assessments={e.trials.find(t => t.id === planTrial)?.projectAssessments ?? []} onOpen={setPlanTrial} onClose={() => setPlanTrial(undefined)} />}
     <section class="panel"><header class="panel-h"><Icon name="sliders-horizontal" /><h2>Variants</h2></header>
       <DetailSection title="Spread across repeats">{e.variants.map(v => <KvRow key={v.label} icon="git-merge" label={v.proposalLabel ? `${v.proposalLabel} · ${v.label}` : v.label ?? ''}
         meta={<><span>{Object.entries(v.summary ?? {}).map(([k, s]) => `${evaluatorLabel(k)} ${scoreText(s)}`).join(' · ') || 'no scores yet'}</span><span> · Pipeline: <a href={`/pipelines/${v.pipelineId ?? e.pipelineId}`}>{v.pipelineId ?? e.pipelineId}</a></span><span class="id"> · Executable digest: {v.config_ref}</span>{v.catalogueConfigRef && <span class="id"> · Catalogue identity: {v.catalogueConfigRef}</span>}{v.catalogueRef && <span> · <a href={`/catalogue/${v.catalogueRef.id}`}>Catalogue r{v.catalogueRef.revision}</a></span>}</>}
@@ -297,7 +300,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
           value={c.reason ? <span class="muted">{c.reason}</span> : undefined} />
       </DetailSection>)}
       {(e.strategies ?? []).length > 0 && <DetailSection title="Loop strategies"><VirtualList items={e.strategies} getKey={v => v.id ?? ''} rowHeight={ROW2} follow="top" label="Strategy runs" columns="1.25rem minmax(0,1fr) auto"
-        render={v => <><span class="lead"><StateBadge family="execution" state={v.state as StateOf<'execution'>} compact /></span><span class="tt">Iteration {String(v.iteration)} · {v.output?.reason ?? (v.problem != null ? String(v.problem) : 'pending')}</span></>} /></DetailSection>}
+        render={v => <><span class="lead"><StateBadge family="execution" state={v.state as StateOf<'execution'>} compact /></span><span class="tt">Iteration {String(v.iteration)} · {v.output?.reason ?? problemText(v.problem) ?? 'pending'}</span></>} /></DetailSection>}
       <DetailSection title="Decision gate">
         <KvRow icon="check-check" label="Judge agrees with you" meta={e.agreement.compared ? `${e.agreement.matched} of ${e.agreement.compared} (${e.agreement.percent}%)` : 'no trial rated by both yet'} />
         {(e.agreement.byVersion ?? []).length > 0 && <VirtualList items={e.agreement.byVersion ?? []} getKey={v => v.version ?? ''} rowHeight={ROW2} follow="top" label="Agreement by rubric version" columns="1.25rem minmax(0,1fr) auto"
@@ -314,7 +317,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
 }
 
 // A scoped server read owns the plan; the matrix never reconstructs omitted work.
-function TrialPlan({ id, projectId, assessments, onOpen, onClose }: { id: string; projectId: string; assessments: ProjectAssessmentRef[]; onOpen: (runId: string) => void; onClose: () => void }) {
+function TrialPlan({ id, projectId, trialProblem, assessments, onOpen, onClose }: { id: string; projectId: string; trialProblem?: string; assessments: ProjectAssessmentRef[]; onOpen: (runId: string) => void; onClose: () => void }) {
   const { data: run, state, error } = useOp('pipeline_get', { runId: id, projectId }, { every: 5000 });
   const items: StepItem[] = (run?.plan.entries ?? []).map(entry => {
     const execution = entry.execution;
@@ -328,6 +331,7 @@ function TrialPlan({ id, projectId, assessments, onOpen, onClose }: { id: string
   return <DetailSection title="Trial plan">
     <KvRow icon="network" label="Trial" value={<><EntityCode id={id} kind="execution" /><Button label="Close trial plan" icon="x" iconOnly onClick={onClose} /></>} />
     <OfflineMarker state={state} now={Date.now()} />
+    {trialProblem && <ProblemRow title="Trial problem" facts={trialProblem} severity="failure" actions={[]} />}
     {error && <ProblemRow title="Trial plan unavailable" facts={error} severity="failure" actions={[]} />}
     {run && <KvRow icon="rows-3" label="Plan entries" meta={`${run.planSummary.planned} planned · ${run.planSummary.freshExecutions} fresh · ${run.planSummary.reusedExecutions} reused · ${run.planSummary.notSelected} not selected · ${run.planSummary.pending} pending · ${run.planSummary.blocked} blocked`} />}
     {run ? <StepList label="Trial activation and execution" items={items} /> : <Empty text="Plan unavailable" />}

@@ -12,12 +12,12 @@
 * Withdrawn ratings stay visible as history with their reason and no answer controls; they never count as pending or as owner scores.
 * "Waiting for you": open ratings count; drafted examples awaiting approval as [decision blocks](../controls/decision-block.md) (pass or fail).
 * Experiments: [data list](../controls/data-list.md), state first, title = pipeline · kind · variants, short ID, age.
-* Use-case registry: organized by source/collection — `LLM Code Benchmarks` (`bench:*` or `llm-code-benchmarks` tag), `Real Work` (`real:*` or `real-work` tag), `Fleet & Projects` (active `fleet:*`, `cs:*`, and other non-archived entries), plus a folded `Archived / Obsolete` disclosure (`status === 'obsolete' || status === 'duplicate'`). Each row shows drift state first ([state badge](../controls/state-badge.md) family `source`), goal with ID, fit, maturity.
+* Use-case registry: organized by source/collection — `LLM Code Benchmarks` (`bench:*` or `llm-code-benchmarks` tag), `Real Work` (`real:*` or `real-work` tag), `Fleet & Projects` (active `fleet:*`, `cs:*`, and other non-archived entries), plus a folded `Archived / Obsolete` disclosure (`status === 'obsolete' || status === 'duplicate'`). Each row shows drift state first ([state badge](../controls/state-badge.md) family `source`), goal with ID, status, fit, maturity, and a quiet "Run in Lab" action on active `lab_fit !== 'none'` rows opening `/lab/new?useCase=<id>`.
 
 **Layout of `/lab/<id>`.**
 * Head: experiment state, title, ID, Launch / Resume / Stop.
 * Spend: [totals](../controls/number.md) for trials, wall time, Pipe calls and credits, each with its basis and the budget limit and action.
-* Matrix: rows are examples, columns variants. A cell shows a summary per evaluator (never combined across forms) and one line per repeat: trial state (reason when left out of comparison), select for rating, repeat, time, credits, scores, run link, cancel or retry. Confounders (host, harness and version, model, web route) on the repeat's tooltip.
+* Matrix: rows are examples, columns variants. A cell shows a summary per evaluator (never combined across forms) and one line per repeat: trial state (reason when failed or left out of comparison, both in the state tooltip and concisely inline below the trial line), select for rating, repeat, time, credits, scores, run link, cancel or retry. Confounders (host, harness and version, model, web route) on the repeat's tooltip.
 * Loop strategies: retained iteration, state, output reason and execution ID; explicit stop reason in the experiment state. Proposal labels remain beside generated variant IDs.
 * Variants: spread across repeats per evaluator; Promote shows the catalogue patch inline or the recommendation it set.
 * Decision gate: judge-to-owner agreement, separately by evaluator/rubric version, and pairwise order checks (agree, order-dependent, invalid output or pending; both runs retained); Lab priority is background (no effect until the scheduler).
@@ -32,7 +32,7 @@
 
 ## Create experiment
 
-New experiment in the catalogue's head opens `/lab/new` in the work area. Searchable project, published pipeline and approved-example choices use the control column; selection returns focus to the invoking field. The form and each column retain one scroller. Back/Close preserve the actor-scoped local draft; discarding it does not cancel a request already sent.
+New experiment in the catalogue's head opens `/lab/new` in the work area; `/lab/new?useCase=<id>` prefills a fresh editing draft's group slug, `ab` kind, `script:example.checks:metric` evaluator and primary evaluator, and matching approved examples once loaded without overriding an existing saved draft. Searchable project, published pipeline and approved-example choices use the control column; selection returns focus to the invoking field. The form and each column retain one scroller. Back/Close preserve the actor-scoped local draft; discarding it does not cancel a request already sent.
 
 Use [text fields](../controls/text-field.md), Choice, CodeEditor for advanced configuration objects, and the existing list/selection controls. All existing single/A-B/loop kinds, variant/evaluator/strategy options and optional budgets follow the [Lab contract](../../designs/fleet-lab.md); no new algorithm, authority, numeric cap or automatic launch is added. Goal/hypothesis remain launch prerequisites rather than new create-time restrictions. Show unset budgets and unavailable costs honestly.
 
@@ -50,4 +50,4 @@ Quarantine locally authored draft input under its original validated identity. R
 
 ## Trial plan inspection
 
-“View trial plan” opens a read-only detail within the experiment and fetches only that trial through authorized `pipeline_get`. It uses the shared StepList to distinguish pending, selected execution, not selected and blocked. Unavailable resources stay unavailable; reused and unconfirmed observations retain their labels. The canonical result and project assessment artifacts have separate links. Current identity/grant fences apply to late reads; unavailable plans show an explicit empty/error state, without a write or automatic retry of work.
+“View trial plan” opens a read-only detail within the experiment, shows any trial `problem` reason at the top, and fetches only that trial through authorized `pipeline_get`. It uses the shared StepList to distinguish pending, selected execution, not selected and blocked. Unavailable resources stay unavailable; reused and unconfirmed observations retain their labels. The canonical result and project assessment artifacts have separate links. Current identity/grant fences apply to late reads; unavailable plans show an explicit empty/error state, without a write or automatic retry of work.
