@@ -49,7 +49,7 @@ export function DecisionBlock(p: DecisionProps) {
         {p.options.map(o => <Button key={o.label} label={o.label} kbd={o.kbd} kind={o.primary ? 'primary' : 'default'} onClick={() => send(o.label)} />)}
         {p.onSecret ? <>
           <input type="password" autocomplete="off" spellcheck={false} value={text} placeholder="Paste key" aria-label="Key value"
-            onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={e => { if (e.key === 'Enter') secret(); }} />
+            onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={e => { if (isSubmitEnter(e)) { e.preventDefault(); secret(); } }} />
           <Button label="Add key" icon="shield" kind="primary" disabledReason={text.trim() ? undefined : 'paste the key first'} onClick={secret} />
         </> : <input value={text} placeholder="Answer" aria-label="Typed answer" onInput={e => setText((e.target as HTMLInputElement).value)}
           onKeyDown={e => { if (isSubmitEnter(e)) send(text); }} />}

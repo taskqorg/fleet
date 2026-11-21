@@ -6,7 +6,7 @@ import {
   EntityCode, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
   StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, TextField,
-  writeClip, zone, DropZone, agentLabel, type ComposerChip,
+  writeClip, zone, DropZone, agentLabel, InlineForm, type ComposerChip,
   keyConnection, ShellStatus, ShellActions } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, sendingId, prepareSending, submissionKey, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
 import { NewConversation } from './conversation-new.tsx';
@@ -324,10 +324,10 @@ function RenamePanel({ sessionId, current, onDone, onSaved, run, onUnknown }: { 
     });
   };
   return <DetailSection title="Rename">
-    <form class="answers" onSubmit={e => { e.preventDefault(); if (!reason) save(); }} onKeyDown={e => { if (e.key === 'Escape') onDone(); }}>
+    <InlineForm cls="answers" onSubmit={e => { e.preventDefault(); if (!reason) save(); }} onKeyDown={e => { if (e.key === 'Escape') onDone(); }}>
       <TextField label="Title" value={v} onChange={setV} />
       <Button label="Save" kind="primary" busy={busy} disabledReason={reason} onClick={save} />
-      <Button label="Cancel" kind="quiet" onClick={onDone} /></form>
+      <Button label="Cancel" kind="quiet" onClick={onDone} /></InlineForm>
   </DetailSection>;
 }
 

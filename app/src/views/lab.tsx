@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { useLocation } from 'wouter-preact';
-import { StateBadge, Button, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, catalogueRow, ROW2, percent, SettingField, StepList, msMeasured, type StepItem, type StateOf, type Basis, ShellStatus } from '../../../packages/ui/src/index.ts';
+import { StateBadge, Button, Disclosure, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, catalogueRow, ROW2, percent, SettingField, StepList, msMeasured, type StepItem, type StateOf, type Basis, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type OpName, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import { LabCreate } from './lab-create.tsx';
@@ -91,7 +91,7 @@ function Registry({ useCases, head }: { useCases: LabUseCaseEntry[]; head?: Comp
       <div class="vl-head" role="row"><span /><span>Use case</span><span>Status</span><span>Fit</span><span>Maturity</span></div>
       {live.map(row)}
       {repos.map(repo => { const of = gone.filter(u => (u.source?.repo ?? '?') === repo);
-        return <details key={repo}><summary class="muted">{repo}: {of.length} replaced</summary>{of.map(row)}</details>; })}
+        return <Disclosure key={repo} summaryClass="muted" summary={`${repo}: ${of.length} replaced`}>{of.map(row)}</Disclosure>; })}
     </div>
   </article>;
 }

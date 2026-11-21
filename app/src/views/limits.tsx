@@ -1,7 +1,7 @@
 // Limits (docs/design-system/pages/hosts.md "Limits", fleet-people-access.md section 8 and section 12): one card per
 // harness and period with a chart, and a table per subscription. The Hosts page shows it while no host is open.
 import { useState } from 'preact/hooks';
-import { AreaChart, type ChartPoint, Button, Choice, FillBar, AgeChip, Empty, ErrorBanner, Icon, StateBadge, countdown, exact, type ChartSeries } from '../../../packages/ui/src/index.ts';
+import { AreaChart, type ChartPoint, Button, Choice, DataTable, FillBar, AgeChip, Empty, ErrorBanner, Icon, StateBadge, countdown, exact, type ChartSeries } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useOp } from '../store.ts';
 import type { LimitPool, LimitSubscription, LimitEmpty } from '../../../contracts/generated/ops.ts';
@@ -92,9 +92,8 @@ export function Limits() {
       })}
     </div>
     <section class="panel"><header class="panel-h"><h2>Subscriptions</h2></header>
-      <div class="table-frame"><table class="limit-table">
-        <thead><tr><th scope="col">Subscription</th>{periods.map(p => <th key={p} scope="col">{p}</th>)}<th scope="col"><span class="sr-only">Refresh</span></th></tr></thead>
-        <tbody>{data.subscriptions.map(s => <tr key={s.id}>
+      <DataTable label="Subscriptions" head={<tr><th scope="col">Subscription</th>{periods.map(p => <th key={p} scope="col">{p}</th>)}<th scope="col"><span class="sr-only">Refresh</span></th></tr>}>
+        {data.subscriptions.map(s => <tr key={s.id}>
           <th scope="row"><StateBadge family="subscription" state={s.intake === 'paused' ? 'paused' : 'all'} compact /> <span class="title">{nameOf(s)}</span> <span class="id">{s.harness}</span>{s.planWeight !== 1 && <span class="num muted"> ×{s.planWeight}</span>}</th>
           {periods.map(name => {
             const p = s.periods.find(x => x.period === name);
@@ -109,8 +108,8 @@ export function Limits() {
             </span></td>;
           })}
           <td><Button label={`Refresh ${nameOf(s)}`} icon="rotate-cw" iconOnly busy={busy === s.id} onClick={() => refresh(s.id)} /></td>
-        </tr>)}</tbody>
-      </table></div>
+        </tr>)}
+      </DataTable>
     </section>
     </>}
   </section>;

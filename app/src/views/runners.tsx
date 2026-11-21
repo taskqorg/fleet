@@ -1,7 +1,7 @@
 // Runners (docs/design-system/pages/runners.md): everything that executes work, grouped by host, each run on a 24-hour
 // time strip with its time and resources; spend today and this month per host and kind. Data: executions_runners.
 import { useLocation } from 'wouter-preact';
-import { StateBadge, HarnessMark, Num, CostFigures, Totals, EntityCode, AgeChip, TimeStrip, age, duration, ProblemRow, Empty, ErrorBanner, Skeleton, OfflineMarker, Icon, harnesses, type Harness, type Measured, type Kind, type TotalItem, ShellStatus } from '../../../packages/ui/src/index.ts';
+import { StateBadge, HarnessMark, Num, CostFigures, DataTable, Totals, EntityCode, AgeChip, TimeStrip, age, duration, ProblemRow, Empty, ErrorBanner, Skeleton, OfflineMarker, Icon, harnesses, type Harness, type Measured, type Kind, type TotalItem, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { useOp } from '../store.ts';
 import { useClockOffset } from './hosts.tsx';
 import type { RunnerRun, RunnerSpend } from '../../../contracts/generated/ops.ts';
@@ -52,17 +52,16 @@ export function Runners() {
     <section class="panel" aria-label="Spend">
       <header class="panel-h"><h2>Spend</h2><span class="muted">UTC</span></header>
       {summary.length > 0 && <div class="stack-pad"><Totals items={summary} /></div>}
-      <div class="table-frame"><table class="limit-table">
-        <thead><tr><th scope="col">Host</th><th scope="col">Kind</th>
+      <DataTable label="Spend" head={<tr><th scope="col">Host</th><th scope="col">Kind</th>
           <th scope="col">Runs today</th><th scope="col">Time today</th><th scope="col">Tokens today</th><th scope="col">Cost today</th>
-          <th scope="col">Runs month</th><th scope="col">Time month</th><th scope="col">Tokens month</th><th scope="col">Cost month</th></tr></thead>
-        <tbody>{hosts.flatMap(h => [...new Set<string>(data.spend.filter(s => s.hostId === h).map(s => s.kind))].sort().map((k, i) => {
+          <th scope="col">Runs month</th><th scope="col">Time month</th><th scope="col">Tokens month</th><th scope="col">Cost month</th></tr>}>
+        {hosts.flatMap(h => [...new Set<string>(data.spend.filter(s => s.hostId === h).map(s => s.kind))].sort().map((k, i) => {
           const t = data.spend.find(s => s.hostId === h && s.kind === k && s.period === 'today'), mo = data.spend.find(s => s.hostId === h && s.kind === k && s.period === 'month');
           return <tr key={`${h}:${k}`}><th scope="row">{i === 0 ? <span class="title">{hostName(h)}</span> : ''}</th><td>{KINDS[k] ?? k}</td>
             {cell(t, 'count', runsOf)}{cell(t, 'duration', s => s.wallMs == null ? null : s.wallMs / 1000)}{cell(t, 'count', s => s.tokens)}{money(t)}
             {cell(mo, 'count', runsOf)}{cell(mo, 'duration', s => s.wallMs == null ? null : s.wallMs / 1000)}{cell(mo, 'count', s => s.tokens)}{money(mo)}</tr>;
-        }))}</tbody>
-      </table></div>
+        }))}
+      </DataTable>
     </section>
     {hosts.map(h => {
       const runs = data.runs.filter(r => r.hostId === h);

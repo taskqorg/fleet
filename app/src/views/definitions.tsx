@@ -2,7 +2,7 @@
 // the coordinator's store. The control column lists one kind; the work area edits one as a draft and saves revisions.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { ListDetail, DefinitionEditor, DraftBar, DetailSection, KvRow, StateBadge, Empty, SettingField, CodeEditor, DiffText, StepList, AgeChip, Choice, Button, Totals, CostFigures, Num, Icon, msMeasured, matchSearch, SearchField, type CostFigureLike, type StepItem, type TotalItem } from '../../../packages/ui/src/index.ts';
+import { ListDetail, DefinitionEditor, DraftBar, DetailSection, KvRow, StateBadge, Empty, SettingField, CodeEditor, DiffText, StepList, AgeChip, Choice, Button, DataTable, Totals, CostFigures, Num, Icon, msMeasured, matchSearch, SearchField, type CostFigureLike, type StepItem, type TotalItem } from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import { resourceTotals } from './resources.tsx';
@@ -304,9 +304,8 @@ function UsageTab({ kind, id }: { kind: 'agent' | 'pipeline'; id: string }) {
         : <span class="muted">not referenced by other definitions</span>}
     </DetailSection>
     {u.byRevision.length > 0 && <DetailSection title="By revision">
-      <div class="table-frame"><table class="limit-table">
-        <thead><tr><th scope="col">Revision</th><th scope="col">Runs</th><th scope="col">Succeeded</th><th scope="col">Median wall</th><th scope="col">Tokens</th><th scope="col">Cost</th></tr></thead>
-        <tbody>{u.byRevision.map(rv => {
+      <DataTable label="By revision" head={<tr><th scope="col">Revision</th><th scope="col">Runs</th><th scope="col">Succeeded</th><th scope="col">Median wall</th><th scope="col">Tokens</th><th scope="col">Cost</th></tr>}>
+        {u.byRevision.map(rv => {
           const w = rv.window;
           const cost = windowCost(w);
           const tokRes = w.resources?.tokens;
@@ -322,8 +321,8 @@ function UsageTab({ kind, id }: { kind: 'agent' | 'pipeline'; id: string }) {
             <td class="num"><Num m={tokM} kind="count" /></td>
             <td class="num"><CostFigures cost={cost} showUnavailable={false} empty="—" /></td>
           </tr>;
-        })}</tbody>
-      </table></div>
+        })}
+      </DataTable>
     </DetailSection>}
   </>;
 }

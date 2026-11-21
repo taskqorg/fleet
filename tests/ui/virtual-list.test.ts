@@ -2,9 +2,10 @@
 // Risk: continuous prepared updates jump the reading position or retain an invalid old scroll.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
+// @ts-expect-error ESM helper module
+import { uiCss } from '../../packages/ui/scripts/tokens.mjs';
 test('mounted VirtualList anchor capture/restore, nearest deleted-key survivor and empty reset', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
   const result = await build({ stdin: { contents: `
     import {render} from 'preact';import {VirtualList} from './packages/ui/src/index.ts';
@@ -13,7 +14,7 @@ test('mounted VirtualList anchor capture/restore, nearest deleted-key survivor a
   `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
   const browser = await chromium.launch({ headless: true }), page = await browser.newPage();
   try {
-    await page.setContent('<body></body>'); await page.addStyleTag({ content: readFileSync('packages/ui/src/styles.css','utf8') + '.vl{height:300px}.vl-wrap{width:500px}' });
+    await page.setContent('<body></body>'); await page.addStyleTag({ content: uiCss('.vl{height:300px}.vl-wrap{width:500px}') });
     await page.addScriptTag({ content: result.outputFiles[0].text }); await page.getByRole('grid').waitFor();
     await page.getByRole('grid').evaluate(el => { el.scrollTop=650;el.dispatchEvent(new Event('scroll')); });
     const before = await page.evaluate(() => (window as any).handle.current.getAnchor()); assert.ok(before.key);
@@ -39,7 +40,7 @@ test('mounted bottom VirtualList keeps a scroll up that a render overtakes, and 
   `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
   const browser = await chromium.launch({ headless: true }), page = await browser.newPage();
   try {
-    await page.setContent('<body></body>'); await page.addStyleTag({ content: readFileSync('packages/ui/src/styles.css','utf8') + '.vl{height:300px}.vl-wrap{width:500px}.vl-row.dyn{height:32px}' });
+    await page.setContent('<body></body>'); await page.addStyleTag({ content: uiCss('.vl{height:300px}.vl-wrap{width:500px}.vl-row.dyn{height:32px}') });
     await page.addScriptTag({ content: result.outputFiles[0].text }); await page.getByRole('grid').waitFor();
     const grid = page.getByRole('grid'), gap = () => grid.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight);
     for (let i = 0; i < 50 && await gap() >= 2; i++) await page.waitForTimeout(20);
@@ -86,7 +87,7 @@ test('mounted top VirtualList keeps the row being read when an insert overtakes 
   `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
   const browser = await chromium.launch({ headless: true }), page = await browser.newPage();
   try {
-    await page.setContent('<body></body>'); await page.addStyleTag({ content: readFileSync('packages/ui/src/styles.css','utf8') + '.vl{height:300px}.vl-wrap{width:500px}' });
+    await page.setContent('<body></body>'); await page.addStyleTag({ content: uiCss('.vl{height:300px}.vl-wrap{width:500px}') });
     await page.addScriptTag({ content: result.outputFiles[0].text }); await page.getByRole('grid').waitFor();
     const grid = page.getByRole('grid');
     const rowTop = (k: string) => grid.evaluate((el, k) => { const r = el.querySelector<HTMLElement>(`[data-key="${k}"]`); return r ? Math.round(r.getBoundingClientRect().top - el.getBoundingClientRect().top) : null; }, k);
