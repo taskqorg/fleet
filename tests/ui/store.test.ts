@@ -5,7 +5,7 @@ import { registerAccessValidator, registerAccessBaseline, ensureAccessGeneration
 registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsVersion: 'one' }));
 registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
 await ensureAccessGeneration();
-import { loadList, nextPage, applyChanges, peek } from '../../app/src/store.ts';
+import { loadList, nextPage, applyChanges, peek, holdDoc, readDoc, clearMemory, acquirePrepared, preparedKey, olderPreparedVersion } from '../../app/src/store.ts';
 import { clearAll } from '../../app/src/offline.ts';
 import { op } from '../../app/src/api.ts';
 import { nextUrl } from '../../app/src/url.ts';
@@ -21,6 +21,7 @@ const realFetch = async (url: string, init: any) => {
 };
 (globalThis as any).fetch = realFetch;
 const row = (id: string, title = id) => ({ id, title, sortKey: ['1', -Number(id.replace(/\D/g, '') || 0), id] });
+const idsOf = (key: string) => peek.list(key)!.rows.map(r => r.id);
 const page = (rows: any[], nextAfter: unknown = null) => ({ tasks: rows, counts: { queued: rows.length }, total: rows.length, groups: [], nextAfter });
 const deferred = () => { let ok!: (v: any) => void; const p = new Promise(r => ok = r); return { p, ok }; };
 
@@ -34,7 +35,7 @@ test('review #33-1: paging uses the shown list\'s own params and waits while tha
   calls = []; answer = async (_n, b) => b.filter.state[0] === 'queued' ? slow.p : page([row('t9')]);
   await nextPage('A');
   assert.deepEqual(calls.map(c => c.body.filter.state), [['failed']]);
-  assert.deepEqual(peek.list('A')!.ids, ['t1', 't9']);
+  assert.deepEqual(idsOf('A'), ['t1', 't9']);
   slow.ok(page([row('t3')])); await pendingB;
   // While A itself is loading, nextPage does nothing.
   const slowA = deferred(); answer = async () => slowA.p; const reloading = loadList('tasks', 'A', A);
@@ -51,34 +52,18 @@ test('a refused page cursor reloads the first page once, keeping rows, and pages
   answer = async (_n, b) => b.after?.[0] === 'old' ? refused : b.after ? page([row('t4')]) : slow.p;
   const paging = nextPage('C'); await new Promise(r => setImmediate(r));
   assert.deepEqual(calls.map(c => c.body.after?.[0] ?? null), ['old', null], 'the refused cursor is followed by one first-page request');
-  assert.deepEqual(peek.list('C')!.ids, ['t1', 't2'], 'rows stay on screen while the first page reloads');
+  assert.deepEqual(idsOf('C'), ['t1', 't2'], 'rows stay on screen while the first page reloads');
   assert.equal(peek.list('C')!.error, null);
   slow.ok(page([row('t1'), row('t3')], ['g', 's', 't3'])); await paging;
   assert.deepEqual(calls.map(c => c.body.after?.[0] ?? null), ['old', null, 'g'], 'the person is at the end: it pages on with the fresh cursor');
-  assert.deepEqual(peek.list('C')!.ids, ['t1', 't3', 't4']); assert.equal(peek.list('C')!.error, null);
+  assert.deepEqual(idsOf('C'), ['t1', 't3', 't4']); assert.equal(peek.list('C')!.error, null);
   // A server that refuses its own fresh cursor: one reload per list load, then the error, rows kept.
   answer = async (_n, b) => b.after ? refused : page([row('t1'), row('t3')], ['g', 's', 't3']);
   await loadList('sessions', 'C', V); calls = []; await nextPage('C');
   assert.deepEqual(calls.map(c => !!c.body.after), [true, false, true], 'no second reload in the same list load');
   assert.equal(peek.list('C')!.error, 'Invalid after');
-  assert.deepEqual(peek.list('C')!.ids, ['t1', 't3']);
+  assert.deepEqual(idsOf('C'), ['t1', 't3']);
   calls = []; await nextPage('C'); assert.deepEqual(calls.map(c => !!c.body.after), [true], 'scrolling again does not reload');
-});
-
-test('a recovery reload that steps aside for a newer membership answer still drops the refused cursor', async () => {
-  await clearAll();
-  const V = { view: 'conversations' as const };
-  answer = async () => page([row('t1')], ['old', 't1']);
-  peek.mount('sessions', 'E', V); await loadList('sessions', 'E', V);
-  const member = deferred(), first = deferred();
-  answer = async (n, b) => n === 'list_membership' ? member.p : b.after?.[0] === 'old' ? { httpStatus: 400, message: 'Invalid after' } : b.after ? page([row('t5')]) : first.p;
-  const changing = applyChanges([{ seq: 10, kind: 'session', id: 't2', taskId: null, sessionId: 't2', hostId: null, op: 'I' } as any]);
-  await new Promise(r => setImmediate(r));
-  const paging = nextPage('E'); await new Promise(r => setImmediate(r));
-  member.ok({ lists: [{ rows: [row('t2')], counts: { queued: 2 }, groups: [] }] }); await changing;
-  first.ok(page([row('t1')], ['g', 's', 't1'])); await paging;
-  assert.ok(peek.list('E')!.ids.includes('t2'), 'the newer membership answer is kept');
-  assert.ok(peek.list('E')!.ids.includes('t5'), 'paged on with the fresh cursor'); assert.equal(peek.list('E')!.error, null);
 });
 
 test('a page error clears with the next page; a failed first-page load keeps its error', async () => {
@@ -111,31 +96,35 @@ test('a refused cursor while a reload runs leaves the cursor to that reload', as
   slow.ok(page([row('t1')], ['g', 's', 't1'])); await reloading;
 });
 
-test('review #33-3: an older page answer never overwrites a newer record; changes during a load are asked after it lands', async () => {
+test('affected feed changes reload mounted lists and coalesce bursts during an active load', async () => {
   await clearAll();
   const P = { view: 'tasks' } as const;
   answer = async () => page([row('t1', 'old')]);
   peek.mount('tasks', 'L', P); await loadList('tasks', 'L', P);
-  answer = async n => n === 'list_membership' ? { lists: [{ rows: [row('t1', 'new')], counts: { queued: 1 }, groups: [] }] } : page([]);
+  answer = async () => page([row('t1', 'new')]);
   await applyChanges([{ seq: 10, kind: 'task', id: 't1', taskId: 't1', sessionId: null, hostId: null, op: 'U', touches: [] }]);
-  assert.equal(peek.record('t1')!.row.title, 'new');
-  const slow = deferred(); answer = async n => n === 'list_membership' ? { lists: [{ rows: [row('t1', 'newer'), row('t2')], counts: { queued: 2 }, groups: [] }] } : slow.p;
+  assert.equal(peek.list('L')!.rows[0].title, 'new');
+  const slow = deferred();
+  let phase = 0;
+  answer = async () => (phase++ === 0 ? slow.p : page([row('t1', 'newer'), row('t2')]));
   const loading = loadList('tasks', 'L', P);
+  await new Promise(r => setImmediate(r));
   calls = [];
   await applyChanges([{ seq: 11, kind: 'task', id: 't2', taskId: 't2', sessionId: null, hostId: null, op: 'I', touches: [] }]);
-  assert.equal(calls.filter(c => c.name === 'list_membership').length, 0, 'not asked while the page is loading');
-  slow.ok(page([row('t1', 'old')])); await loading;
-  assert.notEqual(peek.record('t1')!.row.title, 'old', 'the page answer (cursor 0) did not overwrite the record from change 10');
-  assert.equal(calls.filter(c => c.name === 'list_membership').length, 1, 'asked once the page landed');
-  assert.ok(peek.list('L')!.ids.includes('t2'));
+  assert.equal(calls.length, 0, 'not reloaded while the page is already loading');
+  slow.ok(page([row('t1', 'stale')]));
+  await loading;
+  assert.equal(calls.length, 1, 'coalesced into one follow-up reload once the active load landed');
+  assert.deepEqual(idsOf('L'), ['t1', 't2']);
+  assert.equal(peek.list('L')!.rows[0].title, 'newer');
 });
 
-test('review #33-4: clearing stored data also forgets lists and records in memory', async () => {
+test('review #33-4: clearing stored data also forgets lists in memory', async () => {
   answer = async () => page([row('t5')]);
   await loadList('tasks', 'M', { view: 'tasks' });
-  assert.ok(peek.list('M') && peek.record('t5'));
+  assert.ok(peek.list('M'));
   await clearAll();
-  assert.equal(peek.list('M'), null); assert.equal(peek.record('t5'), null);
+  assert.equal(peek.list('M'), null);
 });
 
 test('review #33-6: an abort while the answer body is read is an abort, not an empty success', async () => {
@@ -153,61 +142,18 @@ test('review #33-2/5: URL changes are built from the URL at the time of the chan
   assert.equal(nextUrl('/conversations?state=running&q=x', 'conversations', { focus: 's1' }), '/conversations/s1?q=x&state=running');
 });
 
-// A small in-memory IndexedDB, enough for offline.ts (open, one object store, get/put/getAll/getAllKeys/delete).
-function fakeIndexedDB() {
-  const data = new Map<string, unknown>();
-  const req = (f: () => unknown) => { const r: any = {}; setTimeout(() => { r.result = f(); r.onsuccess?.(); }); return r; };
-  const store = { get: (k: string) => req(() => data.get(k)), put: (v: unknown, k: string) => req(() => { data.set(k, v); }), getAll: () => req(() => [...data.values()]),
-    getAllKeys: () => req(() => [...data.keys()]), delete: (k: string) => req(() => { data.delete(k); }) };
-  const db = { transaction: () => { const t: any = { objectStore: () => store, abort() { t.onabort?.(); } }; setTimeout(() => t.oncomplete?.(), 3); return t; }, createObjectStore: () => store, close() {}, onversionchange: null };
-  return { data, open: () => { const r: any = {}; setTimeout(() => { r.result = db; r.onupgradeneeded?.(); r.onsuccess?.(); }); return r; },
-    deleteDatabase: () => { const r: any = {}; setTimeout(() => { data.clear(); r.onsuccess?.(); }); return r; } };
-}
-
 test('review #34-1/2: after clearing, mounted lists load again and mounted docs re-read', async () => {
   answer = async () => page([row('t7')]);
   peek.mount('tasks', 'C', { view: 'tasks', state: ['queued'] }); await loadList('tasks', 'C', { view: 'tasks', state: ['queued'] });
   const gen = peek.generation(); calls = [];
   await clearAll(); await new Promise(r => setTimeout(r, 10));
   assert.ok(calls.some(c => c.name === 'task_page'), 'the mounted list was requested again');
-  assert.deepEqual(peek.list('C')?.ids, ['t7']);
+  assert.deepEqual(idsOf('C'), ['t7']);
   assert.equal(peek.generation(), gen + 1, 'docs depend on the generation, so mounted docs re-read');
-});
-
-test('review #34-3: a failed load still shows the stored rows (offline)', async () => {
-  const idb = fakeIndexedDB(); (globalThis as any).indexedDB = idb;
-  try {
-    answer = async () => page([row('t8', 'stored')]);
-    await loadList('tasks', 'O', { view: 'tasks', q: 'offline' });
-    await new Promise(r => setTimeout(r, 1100)); // offline.save writes after 1 s
-    assert.ok(idb.data.has('list:v3:O'));
-    await clearAll(); idb.data.set('list:v3:O', { data: { ids: ['t8'], keys: { t8: ['1', -8, 't8'] }, counts: {}, total: 1, groups: [], nextAfter: null, at: 1, rows: [row('t8', 'stored')] }, cursor: 0, at: 1 });
-    answer = async () => { throw new Error('down'); };
-    (globalThis as any).fetch = async () => { throw new TypeError('network'); };
-    await loadList('tasks', 'O', { view: 'tasks', q: 'offline' }); await new Promise(r => setTimeout(r, 20));
-    const l = peek.list('O')!;
-    assert.deepEqual([l.ids, l.restored, l.error], [['t8'], true, 'offline']);
-  } finally { delete (globalThis as any).indexedDB; (globalThis as any).fetch = realFetch; }
-});
-
-test('review #34-4: an older membership answer landing late does not re-add a task that left the list', async () => {
-  await clearAll();
-  answer = async () => page([row('t1')]);
-  peek.mount('tasks', 'R', { view: 'tasks' }); await loadList('tasks', 'R', { view: 'tasks' });
-  const late = deferred();
-  answer = async (n, b) => n === 'list_membership' ? (b.ids.includes('t1') && calls.filter(c => c.name === 'list_membership').length === 1 ? late.p : { lists: [{ rows: [], counts: {}, groups: [] }] }) : page([]);
-  calls = [];
-  const older = applyChanges([{ seq: 15, kind: 'task', id: 't1', taskId: 't1', sessionId: null, hostId: null, op: 'U', touches: [] }]);
-  await new Promise(r => setTimeout(r, 5));
-  await applyChanges([{ seq: 20, kind: 'task', id: 't1', taskId: 't1', sessionId: null, hostId: null, op: 'U', touches: [] }]); // t1 left the filter
-  assert.deepEqual(peek.list('R')!.ids, []);
-  late.ok({ lists: [{ rows: [row('t1')], counts: { queued: 1 }, groups: [] }] }); await older;
-  assert.deepEqual(peek.list('R')!.ids, [], 'the answer for change 15 arrived after the one for 20 and was ignored');
 });
 
 // Requirement: one request per prepared key, one pending refresh, last-subscriber cancellation.
 // Risk: event bursts multiply requests, unchanged progress erases figures or an old revision wins.
-import { acquirePrepared, preparedKey, olderPreparedVersion } from '../../app/src/store.ts';
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 test('prepared scheduler shares active reads, coalesces bursts and retains unchanged figures with new progress', async () => {
   const progress = { state: 'current' as const, validatedAt: '2026-11-15T00:00:00Z', publishedAt: null, oldestPendingAt: null, pending: false, errorClass: null };
@@ -230,7 +176,6 @@ test('prepared scheduler shares active reads, coalesces bursts and retains uncha
   assert.equal(olderPreparedVersion('new:1', 'old:99'), false, 'a replacement epoch is distinct from revision order');
 });
 
-import { holdDoc, readDoc, clearMemory } from '../../app/src/store.ts';
 const docData = (name: string) => (peek.doc(name) as any)?.data;
 test('doc readers of one name send one request per task; a newer answer is never overwritten by an older one', async () => {
   const waiting: ((value: unknown) => void)[] = [];

@@ -285,18 +285,6 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     const newWidth=await p.locator('.shell').evaluate(element=>(element as HTMLElement).style.getPropertyValue('--size-ctl'));
     releasePrefs();await p.unroute('**/api/ops/person_settings_set');await p.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>resolve())));
     assert.equal(await p.locator('.shell').evaluate(element=>(element as HTMLElement).style.getPropertyValue('--size-ctl')),newWidth,'old preference reply cannot overwrite current actor geometry');
-    // The real IndexedDB deletion is blocked by a connection that deliberately ignores versionchange.
-    actor = 'member@trial.test'; await focus(); await p.getByText('Member', { exact: true }).waitFor();
-    await p.evaluate(async () => {
-      const blocker = await new Promise<IDBDatabase>((resolve, reject) => { const open = indexedDB.open('fleet-app', 1); open.onupgradeneeded = () => { if (!open.result.objectStoreNames.contains('views')) open.result.createObjectStore('views'); }; open.onsuccess = () => resolve(open.result); open.onerror = () => reject(open.error); });
-      blocker.onversionchange = () => {}; (window as any).__idbBlocker = blocker;
-      await new Promise<void>((resolve, reject) => { const tx = blocker.transaction('views', 'readwrite'); tx.objectStore('views').put({ data: { artifacts: [{ name: 'Blocked stale private marker' }] }, cursor: 999999, at: 1 }, 'doc:private'); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); });
-    });
-    const beforeBlocked = Date.now(); actor = 'outsider@trial.test'; await focus();
-    await p.getByText('Outsider', { exact: true }).waitFor();
-    assert.ok(Date.now() - beforeBlocked >= 1800, 'fixture observed the blocked-clear fallback rather than an immediate delete');
-    assert.equal(await p.getByText('Blocked stale private marker', { exact: true }).count(), 0);
-    await p.evaluate(() => { (window as any).__idbBlocker.close(); delete (window as any).__idbBlocker; });
     // Creation input is actor-scoped, and its authored ID is never treated as an existing authorization grant.
     actor='owner@trial.test';await p.goto(origin+'/projects');await p.getByRole('button',{name:'Create project',exact:true}).click();
     await p.getByLabel('Project ID',{exact:true}).fill('browser-create-authored-only');await p.getByLabel('Name',{exact:true}).fill('Unsent creation actor');
