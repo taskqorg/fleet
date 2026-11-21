@@ -139,12 +139,9 @@ func (u *updater) cycleUI(backend, autoUpdate, root, stage, stateFile string) er
 	}
 	running := rootVersion(r, "current")
 	if _, err := r.Stat("current/healthy"); running != "" && err != nil {
-		st.Last = u.settle(p, running, false)
-		if st.Last.State == "failed" {
-			if err := r.Remove("current"); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			st.Last = u.refuse(p, st.Last.Version, "unhealthy", "restored bundled UI")
+		st.Last, err = u.settleUI(r, p, running, false)
+		if err != nil {
+			return err
 		}
 		if err := writeJSON(stateFile, st, 0600); err != nil {
 			return err
@@ -172,16 +169,7 @@ func (u *updater) cycleUI(backend, autoUpdate, root, stage, stateFile string) er
 	if err != nil {
 		return err
 	}
-	if err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		mode := os.FileMode(0444)
-		if entry.IsDir() {
-			mode = 0755
-		}
-		return os.Chmod(path, mode)
-	}); err != nil {
+	if err := chmodTree(func(fn fs.WalkDirFunc) error { return filepath.WalkDir(dir, fn) }, os.Chmod); err != nil {
 		return err
 	}
 	assets := filepath.Join(dir, "assets")
@@ -228,12 +216,20 @@ func (u *updater) cycleUI(backend, autoUpdate, root, stage, stateFile string) er
 		return err
 	}
 	u.uploadSourcemaps(filepath.Join(root, candidate, p.app), candidate)
-	st.Last = u.settle(p, candidate, true)
-	if st.Last.State == "failed" {
-		if err := r.Remove("current"); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		st.Last = u.refuse(p, st.Last.Version, "unhealthy", "restored bundled UI")
+	st.Last, err = u.settleUI(r, p, candidate, true)
+	if err != nil {
+		return err
 	}
 	return writeJSON(stateFile, st, 0600)
+}
+
+func (u *updater) settleUI(r *os.Root, p *part, ver string, restart bool) (*Result, error) {
+	res := u.settle(p, ver, restart)
+	if res.State == "failed" {
+		if err := r.Remove("current"); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		res = u.refuse(p, res.Version, "unhealthy", "restored bundled UI")
+	}
+	return res, nil
 }

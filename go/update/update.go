@@ -120,7 +120,7 @@ type updater struct {
 
 func newUpdater(key ed25519.PublicKey) *updater {
 	return &updater{base: releasesURL, repoURL: repoURL, key: key, target: runtime.GOOS + "-" + runtime.GOARCH,
-		client: &http.Client{Timeout: 10 * time.Minute}, now: time.Now, window: 30 * time.Second, tick: time.Second,
+		client: httpClient(10 * time.Minute), now: time.Now, window: 30 * time.Second, tick: time.Second,
 		coordURL: "http://127.0.0.1:9470/api/health", gatewayURL: "http://127.0.0.1:8742/healthz",
 		guardURL: "http://127.0.0.1:9471/verify", bugsinkDir: "/etc/fleet/bugsink",
 		dumpCmd: pgDump}
@@ -435,31 +435,12 @@ func (u *updater) install(p *part, ver, staged string) error {
 			return err
 		}
 	}
-	if err := fs.WalkDir(p.r.FS(), tmp, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		return p.r.Chmod(path, info.Mode().Perm()&^0o222)
-	}); err != nil {
-		return err
-	}
 	if p.uiBackend != "" {
-		if err := fs.WalkDir(p.r.FS(), tmp, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			mode := os.FileMode(0444)
-			if d.IsDir() {
-				mode = 0755
-			}
-			return p.r.Chmod(path, mode)
-		}); err != nil {
+		if err := chmodTree(func(fn fs.WalkDirFunc) error { return fs.WalkDir(p.r.FS(), tmp, fn) }, p.r.Chmod); err != nil {
 			return err
 		}
+	} else if err := chmodReadOnly(p.r, tmp); err != nil {
+		return err
 	}
 	p.r.RemoveAll(ver)
 	if err := p.r.Rename(tmp, ver); err != nil {
@@ -547,7 +528,7 @@ func (u *updater) probe(p *part, ver string) probe {
 
 func (u *updater) coordinatorSelf() (ver, autoUpdate string) {
 	var h struct{ Version, AutoUpdate, Database string }
-	resp, err := (&http.Client{Timeout: 3 * time.Second}).Get(u.coordURL)
+	resp, err := httpClient(3 * time.Second).Get(u.coordURL)
 	if err != nil {
 		return "", "on" // not answering: an update may repair it
 	}
@@ -560,7 +541,7 @@ func (u *updater) coordinatorSelf() (ver, autoUpdate string) {
 }
 
 func (u *updater) coordinatorHealth(ver string) probe {
-	c := &http.Client{Timeout: 3 * time.Second}
+	c := httpClient(3 * time.Second)
 	var h struct{ Version, Database string }
 	resp, err := c.Get(u.coordURL)
 	if err != nil {
@@ -913,4 +894,32 @@ func copyFile(src, dst string, mode fs.FileMode) error {
 	}
 	defer in.Close()
 	return writeFrom(dst, bufio.NewReader(in), mode)
+}
+
+// chmodReadOnly clears write bits on every regular file under dir within r.
+func chmodReadOnly(r *os.Root, dir string) error {
+	return fs.WalkDir(r.FS(), dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		return r.Chmod(path, info.Mode().Perm()&^0o222)
+	})
+}
+
+// chmodTree sets fixed read-only permissions (0755 for directories, 0444 for files) across a walked tree.
+func chmodTree(walk func(fs.WalkDirFunc) error, chmod func(string, fs.FileMode) error) error {
+	return walk(func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		mode := fs.FileMode(0o444)
+		if d.IsDir() {
+			mode = 0o755
+		}
+		return chmod(path, mode)
+	})
 }

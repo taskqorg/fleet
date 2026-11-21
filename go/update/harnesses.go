@@ -16,13 +16,15 @@ import (
 	"strings"
 )
 
+var managedHarnesses = []string{"codex", "claude", "antigravity"}
+
 // prepareHarnesses installs verified payloads without disturbing the running release.
 func (u *updater) prepareHarnesses(p *part, release string) error {
 	assets, err := harnessrelease.Read(release, u.target)
 	if err != nil {
 		return fmt.Errorf("%w: managed CLI manifest: %v", refusal("harness-manifest"), err)
 	}
-	for _, name := range []string{"codex", "claude", "antigravity"} {
+	for _, name := range managedHarnesses {
 		a, ok := assets[name]
 		if !ok {
 			continue
@@ -109,16 +111,7 @@ func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset) e
 	if err := copyTree(files, p.r, tmp); err != nil {
 		return err
 	}
-	if err := fs.WalkDir(p.r.FS(), tmp, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		return p.r.Chmod(path, info.Mode().Perm()&^0o222)
-	}); err != nil {
+	if err := chmodReadOnly(p.r, tmp); err != nil {
 		return err
 	}
 	checksums, err := harnessChecksums(p.r.FS(), tmp)
@@ -170,7 +163,7 @@ func (u *updater) pruneHarnesses(p *part) {
 		log.Print("prune managed CLIs: ", err)
 		return
 	}
-	for _, name := range []string{"codex", "claude", "antigravity"} {
+	for _, name := range managedHarnesses {
 		parent := filepath.Join("harnesses", name)
 		entries, _ := fs.ReadDir(p.r.FS(), parent)
 		for _, entry := range entries {

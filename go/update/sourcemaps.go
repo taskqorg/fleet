@@ -57,13 +57,32 @@ func (u *updater) uploadSourcemaps(app, ver string) {
 	}
 }
 
+type sourcemapAssembleRequest struct {
+	Checksum string   `json:"checksum"`
+	Chunks   []string `json:"chunks"`
+	Projects []string `json:"projects"`
+}
+
+type sourcemapBundleFile struct {
+	URL     string            `json:"url"`
+	Type    string            `json:"type"`
+	Headers map[string]string `json:"headers"`
+}
+
+type sourcemapBundleManifest struct {
+	Files   map[string]sourcemapBundleFile `json:"files"`
+	Org     string                         `json:"org"`
+	Project string                         `json:"project"`
+	Release string                         `json:"release"`
+}
+
 func (u *updater) sendSourcemaps(app, ver, base, org, token string) (int, error) {
 	bundle, n, err := sourcemapBundle(app, ver, org)
 	if err != nil || n == 0 {
 		return 0, err
 	}
 	// Short: the upload runs before the restart, and a hung Bugsink must not hold it.
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := httpClient(15 * time.Second)
 	call := func(method, url, contentType string, body io.Reader) ([]byte, error) {
 		req, err := http.NewRequest(method, url, body)
 		if err != nil {
@@ -102,14 +121,28 @@ func (u *updater) sendSourcemaps(app, ver, base, org, token string) (int, error)
 		chunks = append(chunks, sum)
 		var form bytes.Buffer
 		w := multipart.NewWriter(&form)
-		part, _ := w.CreateFormFile("file", sum)
-		part.Write(chunk)
-		w.Close()
+		part, err := w.CreateFormFile("file", sum)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := part.Write(chunk); err != nil {
+			return 0, err
+		}
+		if err := w.Close(); err != nil {
+			return 0, err
+		}
 		if _, err := call("POST", upload, w.FormDataContentType(), &form); err != nil {
 			return 0, err
 		}
 	}
-	assemble, _ := json.Marshal(map[string]any{"checksum": sha1hex(bundle), "chunks": chunks, "projects": []string{bugsinkProject}})
+	assemble, err := json.Marshal(sourcemapAssembleRequest{
+		Checksum: sha1hex(bundle),
+		Chunks:   chunks,
+		Projects: []string{bugsinkProject},
+	})
+	if err != nil {
+		return 0, err
+	}
 	b, err = call("POST", base+"/api/0/organizations/"+org+"/artifactbundle/assemble/", "application/json", bytes.NewReader(assemble))
 	if err != nil {
 		return 0, err
@@ -132,7 +165,7 @@ func sourcemapBundle(app, ver, org string) (bundle []byte, n int, err error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	files := map[string]any{}
+	files := map[string]sourcemapBundleFile{}
 	var out bytes.Buffer
 	z := zip.NewWriter(&out)
 	add := func(name string, b []byte) error {
@@ -154,8 +187,16 @@ func sourcemapBundle(app, ver, org string) (bundle []byte, n int, err error) {
 			continue
 		}
 		id := string(m[1])
-		files["files/_/_/"+name] = map[string]any{"url": "~/assets/" + name, "type": "minified_source", "headers": map[string]string{"debug-id": id, "sourcemap": name + ".map"}}
-		files["files/_/_/"+name+".map"] = map[string]any{"url": "~/assets/" + name + ".map", "type": "source_map", "headers": map[string]string{"debug-id": id}}
+		files["files/_/_/"+name] = sourcemapBundleFile{
+			URL:     "~/assets/" + name,
+			Type:    "minified_source",
+			Headers: map[string]string{"debug-id": id, "sourcemap": name + ".map"},
+		}
+		files["files/_/_/"+name+".map"] = sourcemapBundleFile{
+			URL:     "~/assets/" + name + ".map",
+			Type:    "source_map",
+			Headers: map[string]string{"debug-id": id},
+		}
 		if err := add("files/_/_/"+name, js); err != nil {
 			return nil, 0, err
 		}
@@ -167,7 +208,15 @@ func sourcemapBundle(app, ver, org string) (bundle []byte, n int, err error) {
 	if n == 0 {
 		return nil, 0, nil
 	}
-	manifest, _ := json.Marshal(map[string]any{"files": files, "org": org, "project": bugsinkProject, "release": ver})
+	manifest, err := json.Marshal(sourcemapBundleManifest{
+		Files:   files,
+		Org:     org,
+		Project: bugsinkProject,
+		Release: ver,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
 	if err := add("manifest.json", manifest); err != nil {
 		return nil, 0, err
 	}
