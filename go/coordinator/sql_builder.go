@@ -307,6 +307,8 @@ var analyticsDimExpr = map[contract.AnalyticsDimension]string{
 	contract.AnalyticsDimensionState:            `l.state`,
 	contract.AnalyticsDimensionOutcome:          `l.outcome`,
 	contract.AnalyticsDimensionPerson:           `l.person`,
+	contract.AnalyticsDimensionPurpose:          `l.purpose`,
+	contract.AnalyticsDimensionCategory:         `l.category`,
 }
 
 // analyticsBaseLeavesSelect is the shared column projection over `execution e` + `execution_totals t` + `fleet_exec_conn_meta conn`.
@@ -326,6 +328,16 @@ const analyticsBaseLeavesSelect = `
   e.step_id,
   e.profile_id,
   e.profile_revision,
+  CASE
+   WHEN e.system_actor IS NOT NULL THEN 'system'
+   WHEN e.experiment_id IS NOT NULL THEN 'lab'
+   WHEN e.task_id IS NOT NULL THEN 'task'
+   WHEN e.session_id IS NOT NULL THEN 'conversation'
+   ELSE 'other'
+  END AS purpose,
+  CASE
+   WHEN dar.content IS NOT NULL AND left(dar.content, 1) = '{' THEN nullif((dar.content::jsonb)->>'category', '')
+  END AS category,
   e.harness,
   coalesce(t.model, e.model) AS model,
   coalesce(conn.provider, nullif(e.data->>'provider', ''), CASE e.harness WHEN 'codex' THEN 'openai' WHEN 'claude' THEN 'anthropic' WHEN 'antigravity' THEN 'google' END) AS provider,
@@ -408,6 +420,8 @@ const analyticsBaseLeavesSelect = `
    END) AS leaf_call_errors
  FROM execution e
  LEFT JOIN execution_totals t ON t.execution_id = e.id
+ LEFT JOIN definition da ON da.kind = 'agent' AND da.id = e.profile_id
+ LEFT JOIN definition_revision dar ON dar.kind = da.kind AND dar.id = da.id AND dar.revision = da.head
  LEFT JOIN LATERAL (
   SELECT m.provider, m.is_api_conn
   FROM fleet_exec_conn_meta(e.data->>'connection', e.account_id) m

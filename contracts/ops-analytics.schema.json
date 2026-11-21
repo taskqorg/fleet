@@ -2,7 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Coordinator operations of the analytics domain (docs/designs/fleet-analytics.md); the rules are in ops.schema.json $comment and contracts/README.md.",
   "operations": {
-    "analytics_query": {"read": true, "errors": [400], "auth": "person", "agent": "bound:focus", "description": "Aggregate usage and outcome analytics: window, dimensions, measures, filters, optional projectId and system rows"}
+    "analytics_query": {"read": true, "errors": [400], "auth": "person", "agent": "bound:focus", "description": "Aggregate usage and outcome analytics: window, dimensions, measures, filters, optional projectId and system rows"},
+    "spend_summary": {"read": true, "errors": [400], "auth": "person", "agent": "bound:focus", "changes": ["execution", "task"], "description": "Spend breakdown for a window (by purpose, project, category, profile, model, or host) and what it bought (completed tasks, conversation runs, per-project cost per task)"}
   },
   "$defs": {
     "AnalyticsBucketRow": {
@@ -49,7 +50,9 @@
         "variant",
         "state",
         "outcome",
-        "person"
+        "person",
+        "purpose",
+        "category"
       ]
     },
     "AnalyticsFilter": {
@@ -74,7 +77,9 @@
         "variant": {"type": "array", "items": {"type": "string"}},
         "state": {"type": "array", "items": {"type": "string"}},
         "outcome": {"type": "array", "items": {"type": "string"}},
-        "person": {"type": "array", "items": {"type": "string"}}
+        "person": {"type": "array", "items": {"type": "string"}},
+        "purpose": {"type": "array", "items": {"type": "string"}},
+        "category": {"type": "array", "items": {"type": "string"}}
       },
       "additionalProperties": false
     },
@@ -149,6 +154,74 @@
       },
       "additionalProperties": false,
       "$comment": "Required [from, to) bounds: epoch milliseconds (integer) or RFC 3339 / YYYY-MM-DD strings."
+    },
+    "SpendGroupBy": {
+      "type": "string",
+      "enum": ["purpose", "project", "category", "profile", "model", "host"]
+    },
+    "SpendSummaryRequest": {
+      "type": "object",
+      "required": ["window", "by"],
+      "properties": {
+        "window": {"$ref": "#/$defs/AnalyticsWindow"},
+        "by": {"$ref": "#/$defs/SpendGroupBy"},
+        "projectId": {"type": "string"},
+        "system": {"$ref": "ops.schema.json#/$defs/SystemActivity"}
+      },
+      "additionalProperties": false
+    },
+    "SpendRow": {
+      "type": "object",
+      "required": ["key", "label", "runs", "failed", "tokens", "cost", "unpriced"],
+      "properties": {
+        "key": {"type": "string"},
+        "label": {"type": "string"},
+        "runs": {"type": "integer"},
+        "failed": {"type": "integer"},
+        "tokens": {"type": "integer"},
+        "cost": {"type": "array", "items": {"$ref": "ops.schema.json#/$defs/CostFigure"}},
+        "unpriced": {"type": "integer"},
+        "share": {"type": ["number", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "SpendBoughtProject": {
+      "type": "object",
+      "required": ["projectId", "completedTasks", "taskCost", "unpriced"],
+      "properties": {
+        "projectId": {"type": "string"},
+        "completedTasks": {"type": "integer"},
+        "taskCost": {"type": "array", "items": {"$ref": "ops.schema.json#/$defs/CostFigure"}},
+        "unpriced": {"type": "integer"},
+        "costPerTaskUsd": {"type": ["number", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "SpendBought": {
+      "type": "object",
+      "required": ["completedTasks", "conversationRuns", "taskCost", "conversationCost", "byProject"],
+      "properties": {
+        "completedTasks": {"type": "integer"},
+        "conversationRuns": {"type": "integer"},
+        "taskCost": {"type": "array", "items": {"$ref": "ops.schema.json#/$defs/CostFigure"}},
+        "conversationCost": {"type": "array", "items": {"$ref": "ops.schema.json#/$defs/CostFigure"}},
+        "byProject": {"type": "array", "items": {"$ref": "#/$defs/SpendBoughtProject"}}
+      },
+      "additionalProperties": false
+    },
+    "SpendSummaryReply": {
+      "type": "object",
+      "required": ["by", "totals", "rows", "byPurpose", "bought", "hidden", "unknown"],
+      "properties": {
+        "by": {"$ref": "#/$defs/SpendGroupBy"},
+        "totals": {"$ref": "#/$defs/AnalyticsTotals"},
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/SpendRow"}},
+        "byPurpose": {"type": "array", "items": {"$ref": "#/$defs/SpendRow"}},
+        "bought": {"$ref": "#/$defs/SpendBought"},
+        "hidden": {"type": "integer"},
+        "unknown": {"type": "integer"}
+      },
+      "additionalProperties": false
     }
   }
 }

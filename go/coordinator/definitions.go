@@ -462,9 +462,14 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 		return out, err
 	}
 	roles := map[string][]string{} // profile -> project:role, read once per list
+	usedByMap := map[string][]contract.DefinitionKey{}
 	if r.Kind == contract.DefinitionKindAgent {
 		var err error
 		if roles, err = projectRoleProfiles(q, false); err != nil {
+			return out, err
+		}
+		usedByMap, err = agentUsedByMap(q)
+		if err != nil {
 			return out, err
 		}
 	}
@@ -492,7 +497,21 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 		if x.Kind == "agent" {
 			var p contract.Profile
 			json.Unmarshal(x.Content, &p)
-			f := contract.AgentListFacts{Harness: profileHarness(x.Content), Model: p.Model, Effort: p.Effort, Roles: append([]string{}, roles[x.ID]...)}
+			f := contract.AgentListFacts{
+				Harness:    profileHarness(x.Content),
+				Model:      p.Model,
+				Effort:     p.Effort,
+				Roles:      append([]string{}, roles[x.ID]...),
+				Purpose:    p.Purpose,
+				Category:   p.Category,
+				Tags:       append([]string{}, p.Tags...),
+				Icon:       p.Icon,
+				Monogram:   p.Monogram,
+				VariantOf:  p.VariantOf,
+				Experiment: p.Experiment,
+				Skills:     append([]string{}, p.Skills...),
+				UsedBy:     append([]contract.DefinitionKey{}, usedByMap[x.ID]...),
+			}
 			sort.Strings(f.Roles)
 			item.Agent = &f
 		}

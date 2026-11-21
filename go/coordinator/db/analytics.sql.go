@@ -40,6 +40,50 @@ func (q *Queries) AnalyticsBoundaryLineage(ctx context.Context, ids []string) (A
 	return i, err
 }
 
+const analyticsCompletedTasksByProject = `-- name: AnalyticsCompletedTasksByProject :many
+SELECT coalesce(project_id, '')::text AS project_id, count(*)::bigint AS n
+FROM task
+WHERE state = 'completed'
+  AND tombstoned_at IS NULL
+  AND coalesce(accepted_at, state_at) >= $1::pg_catalog.timestamptz
+  AND coalesce(accepted_at, state_at) < $2::pg_catalog.timestamptz
+  AND ($3::text IS NULL OR project_id = $3::text)
+GROUP BY coalesce(project_id, '')
+ORDER BY n DESC, project_id ASC
+`
+
+type AnalyticsCompletedTasksByProjectParams struct {
+	WinFrom   time.Time
+	WinTo     time.Time
+	ProjectID *string
+}
+
+type AnalyticsCompletedTasksByProjectRow struct {
+	ProjectID string
+	N         int64
+}
+
+// Completed non-tombstoned tasks per project within [win_from, win_to), visible under the caller's RLS scope.
+func (q *Queries) AnalyticsCompletedTasksByProject(ctx context.Context, arg AnalyticsCompletedTasksByProjectParams) ([]AnalyticsCompletedTasksByProjectRow, error) {
+	rows, err := q.db.Query(ctx, analyticsCompletedTasksByProject, arg.WinFrom, arg.WinTo, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AnalyticsCompletedTasksByProjectRow
+	for rows.Next() {
+		var i AnalyticsCompletedTasksByProjectRow
+		if err := rows.Scan(&i.ProjectID, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const analyticsDefinitionLineage = `-- name: AnalyticsDefinitionLineage :one
 WITH RECURSIVE
  pinned AS (

@@ -89,23 +89,30 @@ func (v CodeMode) Valid() bool {
 }
 
 type Profile struct {
+	Category           *string              `json:"category,omitempty"`
 	CodeMode           *CodeMode            `json:"codeMode,omitempty"`
 	CollaborationTools *bool                `json:"collaborationTools,omitempty"`
 	Connections        []string             `json:"connections,omitempty"`
 	DelegationProfiles []string             `json:"delegationProfiles,omitempty"`
 	Effort             *string              `json:"effort,omitempty"`
+	Experiment         *string              `json:"experiment,omitempty"`
 	FleetOperations    *bool                `json:"fleetOperations,omitempty"`
 	FleetTools         *bool                `json:"fleetTools,omitempty"`
 	GitNetwork         *bool                `json:"gitNetwork,omitempty"`
 	Harness            *ProfileHarness      `json:"harness,omitempty"`
+	Icon               *string              `json:"icon,omitempty"`
 	Id                 string               `json:"id"`
 	InstructionRole    *string              `json:"instructionRole,omitempty"`
 	Instructions       string               `json:"instructions"`
 	McpServers         []ProfileMcpGrant    `json:"mcpServers"`
 	Model              string               `json:"model"`
+	Monogram           *string              `json:"monogram,omitempty"`
+	Purpose            *string              `json:"purpose,omitempty"`
 	Settings           *AntigravitySettings `json:"settings,omitempty"`
 	Skills             []string             `json:"skills,omitempty"`
+	Tags               []string             `json:"tags,omitempty"`
 	Tools              []ClaudeTool         `json:"tools,omitempty"`
+	VariantOf          *string              `json:"variantOf,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

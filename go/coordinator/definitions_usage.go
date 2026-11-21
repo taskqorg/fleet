@@ -115,6 +115,55 @@ func usedByDefinitions(q *Request, kind, id string) ([]contract.DefinitionKey, e
 	return out, nil
 }
 
+// agentUsedByMap computes usedBy (pipeline steps and catalogue methods) for every agent in one pass.
+func agentUsedByMap(q *Request) (map[string][]contract.DefinitionKey, error) {
+	out := map[string][]contract.DefinitionKey{}
+	seen := map[string]map[string]bool{}
+	add := func(agentID string, k contract.DefinitionKey) {
+		if agentID == "" {
+			return
+		}
+		key := string(k.Kind) + "/" + k.Id
+		if seen[agentID] == nil {
+			seen[agentID] = map[string]bool{}
+		}
+		if !seen[agentID][key] {
+			seen[agentID][key] = true
+			out[agentID] = append(out[agentID], k)
+		}
+	}
+	pipes, err := headTexts(q, "pipeline")
+	if err != nil {
+		return nil, err
+	}
+	for _, h := range pipes {
+		var d struct {
+			Steps []struct {
+				Profile string `json:"profile"`
+			} `json:"steps"`
+		}
+		json.Unmarshal(h.text, &d)
+		for _, s := range d.Steps {
+			add(s.Profile, contract.DefinitionKey{Kind: contract.DefinitionKindPipeline, Id: h.id})
+		}
+	}
+	cat, err := catalogueHead(q)
+	var he *HTTPError
+	if errors.As(err, &he) && he.Code == 404 {
+		return out, nil
+	} else if err != nil {
+		return nil, err
+	}
+	var methods []struct {
+		AgentProfile string `json:"agentProfile"`
+	}
+	json.Unmarshal(jsonBytes(cat["methods"]), &methods)
+	for _, m := range methods {
+		add(m.AgentProfile, contract.DefinitionKey{Kind: contract.DefinitionKindCatalogue, Id: "catalogue"})
+	}
+	return out, nil
+}
+
 func definitionUsage(q *Request, r *contract.DefinitionUsageRequest) (contract.DefinitionUsageReply, error) {
 	var out contract.DefinitionUsageReply
 	if err := definitionKind(r.Kind); err != nil {

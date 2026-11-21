@@ -163,7 +163,7 @@ func (p Profile) check() error {
 		ids  []string
 		max  int
 		what string
-	}{{p.DelegationProfiles, 8, "delegation grant"}, {p.Skills, 32, "profile skills"}, {p.Connections, 32, "profile connections"}} {
+	}{{p.DelegationProfiles, 8, "delegation grant"}, {p.Skills, 32, "profile skills"}, {p.Connections, 32, "profile connections"}, {p.Tags, 16, "profile tags"}} {
 		if len(l.ids) > l.max {
 			return errors.New("invalid " + l.what)
 		}
@@ -172,6 +172,24 @@ func (p Profile) check() error {
 				return errors.New("invalid " + l.what)
 			}
 		}
+	}
+	if p.Purpose != nil && len(*p.Purpose) > 240 {
+		return errors.New("invalid profile purpose")
+	}
+	if p.Category != nil && (*p.Category == "" || len(*p.Category) > 60) {
+		return errors.New("invalid profile category")
+	}
+	if p.Icon != nil && (*p.Icon == "" || len(*p.Icon) > 40) {
+		return errors.New("invalid profile icon")
+	}
+	if p.Monogram != nil && (*p.Monogram == "" || len([]rune(*p.Monogram)) > 4) {
+		return errors.New("invalid profile monogram")
+	}
+	if p.VariantOf != nil && *p.VariantOf == "" {
+		return errors.New("invalid profile variantOf")
+	}
+	if p.Experiment != nil && *p.Experiment == "" {
+		return errors.New("invalid profile experiment")
 	}
 	role := ""
 	if p.InstructionRole != nil {

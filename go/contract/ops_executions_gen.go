@@ -2724,6 +2724,92 @@ func (v *StopOutcome) Validate() error {
 	return nil
 }
 
+type SystemChangeDefinition struct {
+	Head    int64           `json:"head"`
+	Id      string          `json:"id"`
+	Kind    DefinitionKind  `json:"kind"`
+	Name    string          `json:"name"`
+	Path    string          `json:"path"`
+	RepoSha *string         `json:"repoSha,omitempty"`
+	Runs30d int64           `json:"runs30d"`
+	State   DefinitionState `json:"state"`
+	Summary *string         `json:"summary,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemChangeDefinition) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type SystemChangeHostHarness struct {
+	Behind   bool    `json:"behind"`
+	Expected string  `json:"expected"`
+	Harness  string  `json:"harness"`
+	HostId   string  `json:"hostId"`
+	Observed *string `json:"observed,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemChangeHostHarness) Validate() error {
+	return nil
+}
+
+type SystemChangesReply struct {
+	Ahead             []SystemChangeDefinition  `json:"ahead"`
+	HarnessDrift      []SystemChangeHostHarness `json:"harnessDrift"`
+	RepositoryChanged []SystemChangeDefinition  `json:"repositoryChanged"`
+	StoreOnly         []SystemChangeDefinition  `json:"storeOnly"`
+	Versions          SystemVersionsReply       `json:"versions"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemChangesReply) Validate() error {
+	if v.Ahead == nil {
+		return Missing("ahead")
+	}
+	for i := range v.Ahead {
+		if err := Check(&v.Ahead[i], "ahead"); err != nil {
+			return err
+		}
+	}
+	if v.HarnessDrift == nil {
+		return Missing("harnessDrift")
+	}
+	for i := range v.HarnessDrift {
+		if err := Check(&v.HarnessDrift[i], "harnessDrift"); err != nil {
+			return err
+		}
+	}
+	if v.RepositoryChanged == nil {
+		return Missing("repositoryChanged")
+	}
+	for i := range v.RepositoryChanged {
+		if err := Check(&v.RepositoryChanged[i], "repositoryChanged"); err != nil {
+			return err
+		}
+	}
+	if v.StoreOnly == nil {
+		return Missing("storeOnly")
+	}
+	for i := range v.StoreOnly {
+		if err := Check(&v.StoreOnly[i], "storeOnly"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Versions, "versions"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type SystemChangesRequest = map[string]json.RawMessage
+
 // SystemPurgeReply: more: the call stopped at its time budget (60 s, under the 100 s of the site proxy) with objects left unchecked (deferred, in random order per call); run it again; a preview with more is partial. removed and kept: one entry per requested kind, host first; kept are tombstoned objects a live row still references, they stay. rows: what goes with the removed projects and experiments, per kind. retryLater: store object and span deletions not done yet; the next purge retries them.
 type SystemPurgeReply struct {
 	Kept       []PurgeCount `json:"kept,omitempty"`
@@ -2891,6 +2977,7 @@ func init() {
 		"pipeline_run_create":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Start a stored pipeline by pipelineId with projectId and a stable requestId; read its runId with pipeline_get.", InputSchema: json.RawMessage("{\"$comment\":\"Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha.\",\"properties\":{\"draft\":{\"type\":\"boolean\"},\"example\":{\"additionalProperties\":true,\"type\":\"object\"},\"exampleArtifactId\":{\"type\":\"string\"},\"overrides\":{\"additionalProperties\":true,\"type\":\"object\"},\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"pipelineId\",\"requestId\"],\"type\":\"object\"}")},
 		"queue_list":            {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "bound:session", Description: "Queued messages", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"route_decisions":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Why an execution (executionId) was routed to its host and account", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
+		"system_changes":        {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Drift across repository, active store and hosts: repository-changed and store-only definitions, release version alignment, and harness CLI pin drift", Changes: []string{"definition", "host"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"system_purge":          {Read: false, Long: true, Errors: []int{400, 403}, Auth: "owner", Agent: "tool", Description: "Owner only: remove tombstoned objects nothing live references (preview, kinds host|project|experiment|task|session, default all): rows, then store objects and spans. Call preview: true first; removed and kept list ids per kind, rows the counts that go with them, retryLater the store/span deletions still pending. A purged project keeps its id reserved", InputSchema: json.RawMessage("{\"$comment\":\"Owner only. Removes tombstoned objects (kinds, default all) that no live row references, with every row that goes with them (the reference map in go/coordinator/cleanup.go): a removed host with no execution, session, command, store or artifact copy naming it; a deleted experiment or project whose rows no row outside it names. A purged project keeps its definition row, so its id is never reused. preview true counts them and changes nothing; the confirm recomputes with the same queries, deletes the rows, then the store objects no remaining artifact shares and the ClickHouse spans of the removed executions.\",\"properties\":{\"kinds\":{\"items\":{\"$comment\":\"Tombstoned objects system_purge removes: hosts removed by hosts_remove, projects, experiments, tasks and sessions deleted by object_delete.\",\"enum\":[\"host\",\"project\",\"experiment\",\"task\",\"session\"],\"type\":\"string\"},\"type\":\"array\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"preview\"],\"type\":\"object\"}")},
 		"system_versions":       {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Versions of the coordinator, the app and every host's executor", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 	} {
