@@ -43,11 +43,11 @@ func TestDefinitionScalarsAndExecutionTime(t *testing.T) {
 		doc{"kind": "agent", "id": "coder", "revision": int64(7)},
 		doc{"kind": "pipeline", "id": "build-release", "revision": float64(3)},
 	}
-	pid, prev, plid, plrev := definitionScalars(defs, doc{"profileId": "fallback"})
+	pid, prev, plid, plrev := definitionScalars(defs, "fallback")
 	if pid != "coder" || prev != int64(7) || plid != "build-release" || plrev != int64(3) {
 		t.Fatalf("unexpected scalars: (%v, %v, %v, %v)", pid, prev, plid, plrev)
 	}
-	pid2, prev2, plid2, plrev2 := definitionScalars(nil, doc{"profileId": "fallback"})
+	pid2, prev2, plid2, plrev2 := definitionScalars(nil, "fallback")
 	if pid2 != "fallback" || prev2 != nil || plid2 != nil || plrev2 != nil {
 		t.Fatalf("unexpected fallback scalars: (%v, %v, %v, %v)", pid2, prev2, plid2, plrev2)
 	}

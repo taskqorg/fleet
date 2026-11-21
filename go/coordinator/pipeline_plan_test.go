@@ -55,7 +55,7 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 		return run
 	}
 	connection := doc{"id": "connection:fixture", "name": "fixture", "provider": "typesafe", "intake": "all", "tools": []any{"system_one"}, "access": doc{"projects": []any{"hello-world"}}}
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error { return put(q, "api-connection", connection) }); err != nil {
+	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error { return recPut(q, recAPIConnection, &connection) }); err != nil {
 		t.Fatal(err)
 	}
 	run := seed("api-claim")
@@ -112,7 +112,7 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 	}
 	reserved := seed("api-revoked")
 	connection["intake"] = "none"
-	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error { return put(q, "api-connection", connection) }); err != nil {
+	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error { return recPut(q, recAPIConnection, &connection) }); err != nil {
 		t.Fatal(err)
 	}
 	err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
@@ -245,11 +245,11 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			native, err = get(q, nativeID, "execution")
+			native, err = recGet[doc](q, recExecution, nativeID)
 			if err != nil {
 				return err
 			}
-			commands, err := all(q, "command", doc{"executionId": nativeID, "kind": "script"})
+			commands, err := recAll[doc](q, recCommand, doc{"executionId": nativeID, "kind": "script"})
 			if err != nil {
 				return err
 			}
@@ -278,7 +278,7 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 			if !ok {
 				return errors.New("current authorized host handoff was refused")
 			}
-			fresh, err := get(q, command["id"], "command")
+			fresh, err := recGet[doc](q, recCommand, astr(command["id"]))
 			if err != nil {
 				return err
 			}
@@ -323,7 +323,7 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 		if fresh["state"] != "cancelled" || pipelineEntry(fresh, 1).Activation != "blocked" || pipelineEntry(fresh, 2).Activation != "blocked" {
 			return errors.New("cancel did not block future plan entries")
 		}
-		stored, err := get(q, pending["id"], "command")
+		stored, err := recGet[doc](q, recCommand, astr(pending["id"]))
 		if err != nil {
 			return err
 		}
@@ -360,7 +360,7 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 			step := mapOf(anys(run["steps"])[0])
 			step["state"], step["executionId"] = "running", nativeID
 			dispatch := pipelineEntry(run, 0).Dispatch
-			commands, err := all(q, "command", doc{"executionId": nativeID, "kind": "script"})
+			commands, err := recAll[doc](q, recCommand, doc{"executionId": nativeID, "kind": "script"})
 			if err != nil || len(commands) != 1 {
 				return fmt.Errorf("script command: %v %d", err, len(commands))
 			}
@@ -369,13 +369,13 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 				return err
 			}
 			teardown := doc{"id": newID(), "executionId": nativeID, "hostId": "plan-host", "kind": "teardown", "payload": doc{}, "status": "pending"}
-			if err := put(q, "command", teardown); err != nil {
+			if err := recPut(q, recCommand, &teardown); err != nil {
 				return err
 			}
 			ids[id+":script"], ids[id+":teardown"], ids[id+":native"] = astr(commands[0]["id"]), astr(teardown["id"]), nativeID
 			for _, kind := range []string{"steer", "input"} {
 				c := doc{"id": newID(), "executionId": nativeID, "hostId": "plan-host", "kind": kind, "payload": doc{}, "status": "pending"}
-				if err := put(q, "command", c); err != nil {
+				if err := recPut(q, recCommand, &c); err != nil {
 					return err
 				}
 				ids[id+":"+kind] = astr(c["id"])
@@ -418,7 +418,7 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 			if got[ids[id+":script"]] {
 				return fmt.Errorf("%s run's script was delivered", id)
 			}
-			c, err := get(q, ids[id+":script"], "command")
+			c, err := recGet[doc](q, recCommand, ids[id+":script"])
 			if err != nil {
 				return err
 			}

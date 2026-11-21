@@ -231,6 +231,7 @@ var referenceMap = []objectRef{
 	{table: "pipeline_work", column: "run_id", mode: refNone},
 	{table: "lab_work", column: "experiment_id", mode: refNone},
 	{table: "delegation_source_work", column: "delegation_id", mode: refNone},
+	{table: "upload_finish_work", column: "upload_id", mode: refNone}, // goes with its upload (foreign key)
 	// A pipeline run's plan (migration 81, pipelines.go): it goes with its run by foreign key; the ids an entry names
 	// (its step, the executions, command, host and claim of its dispatch, its step's native execution, output artifact
 	// and provider job) are evidence of the run, not references.
@@ -434,7 +435,7 @@ func (c *cascade) counts(q *Request) ([]contract.KindCount, int64, error) {
 
 // blockedBy: the first live row outside the cascade that keeps one of its objects, "" when none:
 // "<table>.<column> by <document kind or table> <row id>" (a conversation table names the record field its column
-// holds, convFieldOf). One scan per table: its refKeep columns are ORed.
+// holds, recordFieldOf). One scan per table: its refKeep columns are ORed.
 func (c *cascade) blockedBy(q *Request) (string, error) {
 	// An open session working for a task depends on it (an archived one outlives it; the reference goes stale).
 	if len(c.sets["task"]) > 0 {
@@ -487,7 +488,7 @@ func (c *cascade) blockedBy(q *Request) (string, error) {
 		}
 		if len(rs) > 0 {
 			r := refs[t][rs[0].Ref]
-			return strings.TrimSpace(fmt.Sprintf("%s.%s by %s %s", t, convFieldOf(t, r.sql()), t, rs[0].Rid)), nil
+			return strings.TrimSpace(fmt.Sprintf("%s.%s by %s %s", t, recordFieldOf(t, r.sql()), t, rs[0].Rid)), nil
 		}
 	}
 	return "", nil
@@ -1159,4 +1160,27 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 // reserve of that same content, holding GLOBAL, waits for one store round trip; a pending-delete marker if that shows.
 func objectLock(ctx context.Context, tx pgx.Tx, storeID, key string) error {
 	return db.New(tx).AdvisoryXactLock(ctx, "object:"+storeID+":"+key)
+}
+
+// recordTables: the tables whose rows are records (queries/records.sql): a reason names a column by its record field.
+var recordTables = []string{"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition",
+	"worker_done", "host", "host_observation", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
+	"connection_key", "run_token", "watch", "person_setting"}
+
+// recordFieldOf: the record field a record table's column holds (project_id: projectId), else col.
+func recordFieldOf(table, col string) string {
+	if !slices.Contains(recordTables, table) {
+		return col
+	}
+	switch {
+	case table == "event" && col == "event_seq":
+		return "seq"
+	case table == "event" && col == "at":
+		return "timestamp"
+	}
+	parts := strings.Split(col, "_")
+	for i := 1; i < len(parts); i++ {
+		parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+	}
+	return strings.Join(parts, "")
 }

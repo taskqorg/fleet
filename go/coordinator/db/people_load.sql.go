@@ -16,7 +16,7 @@ SELECT (h.payload || jsonb_strip_nulls(jsonb_build_object('id', h.id, 'hostId', 
 FROM host h JOIN person p ON p.email = h.holder WHERE h.secret_hash = $1
 `
 
-// The host record (as convTables serves the kind host, typed_records.go) whose secret matches, while its holder is a person.
+// The host record (as its record reads, queries/records.sql) whose secret matches, while its holder is a person.
 func (q *Queries) HostRecordBySecret(ctx context.Context, secretHash *string) ([]byte, error) {
 	row := q.db.QueryRow(ctx, hostRecordBySecret, secretHash)
 	var record []byte

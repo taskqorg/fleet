@@ -273,7 +273,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 	var hasPending bool
 	var removed bool
 	if err := runTx(ctx, a, nil, false, "", func(rq *Request) error {
-		if h, err := maybe(rq, "host:"+host, "host"); err != nil {
+		if h, err := recFind[doc](rq, recHost, "host:"+host); err != nil {
 			return err
 		} else if h != nil && hostRemoved(h) {
 			removed = true
@@ -301,7 +301,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 		locks = append([]string{GLOBAL}, locks...)
 	}
 	err := runTxLocks(ctx, a, nil, true, locks, func(wq *Request) error {
-		h, err := maybe(wq, "host:"+host, "host")
+		h, err := recFind[doc](wq, recHost, "host:"+host)
 		if err != nil {
 			return err
 		}
@@ -312,7 +312,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 		if hostDoc == nil {
 			hostDoc = docOf(pollHost{HostID: host})
 		}
-		pending, err := all(wq, "command", docOf(pollPending{HostID: host, Status: "pending"}))
+		pending, err := recAll[doc](wq, recCommand, pollPending{HostID: host, Status: "pending"})
 		if err != nil {
 			return err
 		}
@@ -439,10 +439,10 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, 
 		if !locked {
 			// A busy row is retried. A missing row still goes through
 			// the poll's permanent 404 refusal and retires its command.
-			_, err := get(wq, cv.ExecutionID, "execution")
+			_, err := recGet[doc](wq, recExecution, cv.ExecutionID)
 			return nil, err
 		}
-		c, err = get(wq, cv.ID, "command")
+		c, err = recGet[doc](wq, recCommand, cv.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -450,7 +450,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, 
 			return nil, nil
 		}
 	}
-	e, err := get(wq, cv.ExecutionID, "execution")
+	e, err := recGet[doc](wq, recExecution, cv.ExecutionID)
 	if err != nil {
 		return nil, err
 	}
@@ -480,7 +480,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, 
 			return nil, err
 		}
 	}
-	out, err := get(wq, cv.ID, "command")
+	out, err := recGet[doc](wq, recCommand, cv.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -601,7 +601,7 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 	if !pipelineDispatchKind(cmd.Kind) {
 		return nil
 	}
-	e, err := maybe(wq, cmd.ExecutionID, "execution")
+	e, err := recFind[doc](wq, recExecution, cmd.ExecutionID)
 	if err != nil || e == nil {
 		return err
 	}
@@ -627,7 +627,7 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 	e["state"], e["stopDetail"], e["finishedAt"], e["updatedAt"] = "cancelled", reason, now, now
 	delete(e, "waitReason")
 	delete(e, "waitDetail")
-	if err := put(wq, "execution", e); err != nil {
+	if err := recPut(wq, recExecution, &e); err != nil {
 		return err
 	}
 	// The dispatch pass runs the pipeline engine's sweeps: the step sees its native execution end.
@@ -658,7 +658,7 @@ func pollObserved(q *Request, run func() (any, error)) (any, error) {
 	if err != nil && q.ctx().Err() != nil {
 		// The host left (a restart mid long-poll): whatever error that surfaced as, it is not a failure to record.
 	} else if err != nil {
-		a.notePollFailure(q.ctx(), host, q.host["holder"], err)
+		a.notePollFailure(q.ctx(), host, q.host.Holder, err)
 	} else {
 		a.notePollSuccess(q.ctx(), host)
 	}
@@ -670,7 +670,7 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	open := q.obj() // the open parts (stores, update) as the host's plain JSON
 	stores := rawAny(open.Stores)
 	now := nowMs()
-	obs := hostPollObservation{ID: host, Holder: q.host["holder"], Version: b.Version}
+	obs := hostPollObservation{ID: host, Holder: q.host.Holder, Version: b.Version}
 	if b.Platform.Valid() {
 		obs.Platform = string(b.Platform)
 	}
@@ -722,10 +722,10 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 				}
 			}
 			if flushObs {
-				prev, err := kindMaybe[struct {
+				prev, err := recMaybe[struct {
 					Update    json.RawMessage `json:"update"`
 					PollError json.RawMessage `json:"pollError"`
-				}](wq, host, "host-observation")
+				}](wq, recHostObservation, host)
 				if err != nil {
 					return err
 				}
@@ -740,11 +740,11 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 				}
 				// Look at update question only when the update result changes.
 				if hasUpd && js(prevUpdate) != js(upd) {
-					if err := updateQuestion(wq, host, q.host["holder"], updResult); err != nil {
+					if err := updateQuestion(wq, host, q.host.Holder, updResult); err != nil {
 						return err
 					}
 				}
-				if err := kindPut(wq, "host-observation", row); err != nil {
+				if err := recWrite(wq, recHostObservation, row); err != nil {
 					return err
 				}
 			}

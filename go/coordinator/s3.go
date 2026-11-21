@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"html"
 	"io"
-	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -266,24 +265,14 @@ func (s *S3) once(method, path string, q, headers map[string]string, body []byte
 }
 
 func (s *S3) send(method, path string, q, headers map[string]string, body []byte) (*http.Response, error) {
-	for attempt := 0; ; attempt++ {
-		res, err := s.once(method, path, q, headers, body)
-		if err == nil {
-			return res, nil
-		}
+	return retryCall(3, 100*time.Millisecond, 20*time.Second, func(err error) bool {
 		var se *S3Error
-		retry := false
 		if errors.As(err, &se) {
-			retry = retryStatus[se.Status] || retryCodes[se.Code]
-		} else {
-			var ne net.Error
-			retry = errors.As(err, &ne) || errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(err.Error(), "connection")
+			return retryStatus[se.Status] || retryCodes[se.Code]
 		}
-		if !retry || attempt+1 >= 3 {
-			return nil, err
-		}
-		time.Sleep(time.Duration(rand.Float64() * float64(min(20000, 100<<attempt)) * float64(time.Millisecond)))
-	}
+		var ne net.Error
+		return errors.As(err, &ne) || errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(err.Error(), "connection")
+	}, func() (*http.Response, error) { return s.once(method, path, q, headers, body) })
 }
 
 func (s *S3) text(method, path string, q, headers map[string]string, body []byte) (string, error) {

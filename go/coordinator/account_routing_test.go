@@ -63,7 +63,7 @@ func TestAccountInspectionRouting(t *testing.T) {
 					if id == target && tc.wrongHolder {
 						holder = "outsider@trial.test"
 					}
-					if err := put(q, "host-observation", doc{"id": id, "holder": holder, "platform": "darwin", "lastSeenAt": at, "capabilities": []string{"codex"}}); err != nil {
+					if err := recWrite(q, recHostObservation, doc{"id": id, "holder": holder, "platform": "darwin", "lastSeenAt": at, "capabilities": []string{"codex"}}); err != nil {
 						return err
 					}
 				}

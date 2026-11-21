@@ -5,12 +5,10 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
-	"slices"
+	"maps"
 	"strings"
 
 	"fleet/contract"
-	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -161,20 +159,21 @@ func sessionsPage(q *Request, r *contract.SessionsListRequest) (contract.Session
 	return out, nil
 }
 
-func related(q *Request, d doc) (doc, error) {
-	out := doc{}
-	for k, v := range d {
-		out[k] = v
-	}
-	for k, id := range map[string]any{"parentState": d["parentExecutionId"], "childState": d["childExecutionId"], "continuationState": d["continuationExecutionId"]} {
-		e, err := maybe(q, id, "execution")
+// related: a delegation record with the states of its parent, child and continuation runs.
+func related(q *Request, d rawObject) (rawObject, error) {
+	out := rawObject{}
+	maps.Copy(out, d)
+	for _, r := range []struct{ key, field string }{{"parentState", "parentExecutionId"}, {"childState", "childExecutionId"}, {"continuationState", "continuationExecutionId"}} {
+		e, err := recMaybe[rawObject](q, recExecution, d.text(r.field))
 		if err != nil {
 			return nil, err
 		}
-		out[k] = nil
+		out[r.key] = json.RawMessage("null")
 		if e != nil {
-			out[k] = e["state"]
-		} else if k != "continuationState" && id != nil {
+			if st, ok := (*e)["state"]; ok {
+				out[r.key] = st
+			}
+		} else if r.key != "continuationState" && d.has(r.field) {
 			return nil, errNotFound
 		}
 	}
@@ -182,13 +181,13 @@ func related(q *Request, d doc) (doc, error) {
 }
 
 // delegationsOf: the delegations read (SessionDelegations, ExecutionDelegations), each with the states of its runs.
-func delegationsOf(q *Request, ds [][]byte, err error) ([]doc, error) {
+func delegationsOf(q *Request, ds [][]byte, err error) ([]rawObject, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := []doc{}
+	out := []rawObject{}
 	for _, raw := range ds {
-		var d doc
+		var d rawObject
 		if json.Unmarshal(raw, &d) != nil {
 			continue
 		}
@@ -201,8 +200,8 @@ func delegationsOf(q *Request, ds [][]byte, err error) ([]doc, error) {
 	return out, nil
 }
 
-func sessionGet(q *Request, sid string) (doc, error) {
-	s, err := get(q, sid, "session")
+func sessionGet(q *Request, sid string) (rawObject, error) {
+	s, err := recGet[rawObject](q, recSession, sid)
 	if err != nil {
 		return nil, err
 	}
@@ -211,200 +210,247 @@ func sessionGet(q *Request, sid string) (doc, error) {
 		return nil, err
 	}
 	for k, x := range v {
-		s[k] = x
+		s[k] = jsonBytes(x)
 	}
-	s["sessionId"] = sid
+	s["sessionId"] = jsonBytes(sid)
 	code, err := q.db().SessionCode(q.ctx(), sid)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	s["code"] = nil
-	if code != nil {
-		s["code"] = *code
-	}
+	s["code"] = jsonBytes(code)
 	ds, err := q.db().SessionDelegations(q.ctx(), sid)
-	if s["delegations"], err = delegationsOf(q, ds, err); err != nil {
+	delegations, err := delegationsOf(q, ds, err)
+	if err != nil {
 		return nil, err
 	}
-	if s["messages"], err = all(q, "message", doc{"sessionId": sid}); err != nil {
+	s["delegations"] = jsonBytes(delegations)
+	messages, err := recAll[rawObject](q, recMessage, agentFilter{SessionID: &sid})
+	if err != nil {
 		return nil, err
 	}
-	if s["executions"], err = sessionExecutions(q, sid); err != nil {
+	s["messages"] = jsonBytes(messages)
+	executions, err := recAll[rawObject](q, recExecution, agentFilter{SessionID: &sid})
+	if err != nil {
 		return nil, err
 	}
+	s["executions"] = jsonBytes(executions)
 	res, err := sessionResourceRollup(q, sid)
 	if err != nil {
 		return nil, err
 	}
-	s["cost"], s["resources"] = res.Total.Cost, res
+	s["cost"], s["resources"] = jsonBytes(res.Total.Cost), jsonBytes(res)
 	return s, nil
 }
 
-func sessionProfile(q *Request, sid string, b doc) (doc, error) {
-	s, err := get(q, sid, "session")
+func sessionProfile(q *Request, r *contract.SessionProfileRequest) (contract.SessionProfileReply, error) {
+	var none contract.SessionProfileReply
+	sid := r.SessionId
+	s, err := recGet[agentSession](q, recSession, sid)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
-	for k := range b {
-		if k != "profileId" && k != "account" && k != "workingDirectory" {
-			return nil, fail(400, "Expected profileId only")
-		}
-	}
-	pid, ok := b["profileId"].(string)
-	if !ok {
-		return nil, fail(400, "Expected profileId only")
-	}
-	if a, err := activeOf(q, sid); err != nil || a != nil {
+	pid := r.ProfileId
+	if a, err := agentActive(q, sid); err != nil || a != nil {
 		if err == nil {
 			err = fail(409, "Execution active")
 		}
-		return nil, err
+		return none, err
 	}
-	if a, ok := b["account"]; ok {
-		if as, isStr := a.(string); !isStr || !accountPattern.MatchString(as) {
-			return nil, fail(400, "Invalid named host account")
+	if r.Account != nil && !accountPattern.MatchString(*r.Account) {
+		return none, fail(400, "Invalid named host account")
+	}
+	if w := r.WorkingDirectory; w != nil {
+		if !strings.HasPrefix(*w, "/") || strings.Contains(*w, "..") {
+			return none, fail(400, "Invalid working directory")
+		}
+		s.WorkingDirectory = *w
+		if err := recPut(q, recSession, &s); err != nil {
+			return none, err
 		}
 	}
-	if w, ok := b["workingDirectory"]; ok {
-		ws, isStr := w.(string)
-		if !isStr || !strings.HasPrefix(ws, "/") || strings.Contains(ws, "..") {
-			return nil, fail(400, "Invalid working directory")
+	if s.NativeSessionID != "" {
+		args := agentTransitionArgs{SessionID: sid, ProfileID: pid}
+		if r.Account != nil {
+			args.Account = jsonBytes(*r.Account)
 		}
-		s["workingDirectory"] = ws
-		if err := put(q, "session", s); err != nil {
-			return nil, err
+		t, err := agentTransition(q, args)
+		if err != nil {
+			return none, err
 		}
-	}
-	if astr(s["nativeSessionId"]) != "" {
-		return sessionTransition(q, doc{"sessionId": sid, "profileId": pid, "account": b["account"]})
+		return asT[contract.SessionProfileReply](t)
 	}
 	p, err := readTrustedProfile(q, pid)
 	if err != nil {
-		return nil, err
+		return none, err
 	}
-	if a, ok := b["account"]; ok {
-		s["account"] = a
-	} else {
-		delete(s, "account")
+	s.Account = deref(r.Account)
+	if r.Account == nil {
+		delete(s.rest, "account")
 	}
-	s["agentConfig"] = p
-	return doc{"sessionId": sid, "profileId": p["id"], "account": s["account"]}, put(q, "session", s)
+	s.AgentConfig = jsonBytes(p)
+	if err := recPut(q, recSession, &s); err != nil {
+		return none, err
+	}
+	profileID, _ := p["id"].(string)
+	return contract.SessionProfileReply{SessionId: sid, ProfileId: profileID, Account: r.Account}, nil
+}
+
+// teardownFilter: a session's teardown commands no host has fetched yet.
+func teardownFilter(sid string) agentFilter {
+	return agentFilter{SessionID: &sid, Kind: ptr("teardown"), Status: ptr("pending")}
+}
+
+// lastOnHost: the last of a session's executions that ran on a host, nil when none did.
+func lastOnHost(es []agentExecution) *agentExecution {
+	var last *agentExecution
+	for i := range es {
+		if deref(es[i].HostID) != "" {
+			last = &es[i]
+		}
+	}
+	return last
+}
+
+// sessionArchived: session_archive's answer when no execution ran on a host.
+type sessionArchived struct {
+	SessionID  string    `json:"sessionId"`
+	ArchivedAt int64     `json:"archivedAt"`
+	Teardown   *struct{} `json:"teardown"`
 }
 
 // sessionArchive: one teardown command on the last execution's host.
-func sessionArchive(q *Request, sid string) (doc, error) {
-	s, err := get(q, sid, "session")
+func sessionArchive(q *Request, sid string) (any, error) {
+	s, err := recGet[agentSession](q, recSession, sid)
 	if err != nil {
 		return nil, err
 	}
-	es, err := sessionExecutions(q, sid)
+	es, err := agentExecutions(q, sid)
 	if err != nil {
 		return nil, err
 	}
-	var last doc
-	for _, e := range es {
-		if !terminal(e) && !unconfirmed(e) {
+	for i := range es {
+		if !es[i].terminal() && !es[i].unconfirmed() {
 			return nil, fail(409, "Execution active")
 		}
-		if astr(e["hostId"]) != "" {
-			last = e
-		}
 	}
+	last := lastOnHost(es)
 	// A teardown still on its way is the answer; a finished one (kept, or sent on delivery) does not stop a new one.
-	if old, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"}); err != nil || len(old) > 0 {
+	if old, err := recAll[agentCommand](q, recCommand, teardownFilter(sid)); err != nil || len(old) > 0 {
 		if err != nil {
 			return nil, err
 		}
 		return old[0], nil
 	}
-	s["archivedAt"] = nowMs()
-	if err := put(q, "session", s); err != nil {
+	at := nowMs()
+	s.ArchivedAt = &at
+	if err := recPut(q, recSession, &s); err != nil {
 		return nil, err
 	}
-	if err := audit(q, "session:"+sid, "archivedAt", nil, s["archivedAt"], auditExtra{}); err != nil {
+	if err := audit(q, "session:"+sid, "archivedAt", nil, at, auditExtra{}); err != nil {
 		return nil, err
 	}
 	if last == nil {
-		return doc{"sessionId": sid, "archivedAt": s["archivedAt"], "teardown": nil}, nil
+		return sessionArchived{SessionID: sid, ArchivedAt: at}, nil
 	}
-	return teardownCommand(q, s, last, false)
+	return teardownCommand(q, s, *last, false)
 }
 
 // sessionDeleteArchive: a deleted session is archived (object_delete, cleanup.go tombstone) and its worktree torn down
 // on the host of its last execution, unless it is archived already or a teardown is on its way; torn: one was queued.
 func sessionDeleteArchive(q *Request, sid string) (bool, error) {
-	s, err := get(q, sid, "session")
+	s, err := recGet[agentSession](q, recSession, sid)
 	if err != nil {
 		return false, err
 	}
-	if s["archivedAt"] != nil {
+	if s.ArchivedAt != nil {
 		return false, nil
 	}
-	if pending, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"}); err != nil || len(pending) > 0 {
+	if pending, err := recAll[agentCommand](q, recCommand, teardownFilter(sid)); err != nil || len(pending) > 0 {
 		return false, err
 	}
-	es, err := sessionExecutions(q, sid)
+	es, err := agentExecutions(q, sid)
 	if err != nil {
 		return false, err
 	}
-	var last doc
-	for _, e := range es {
-		if astr(e["hostId"]) != "" {
-			last = e
-		}
-	}
-	s["archivedAt"] = nowMs()
-	if err := put(q, "session", s); err != nil {
+	last := lastOnHost(es)
+	at := nowMs()
+	s.ArchivedAt = &at
+	if err := recPut(q, recSession, &s); err != nil {
 		return false, err
 	}
 	if last == nil {
 		return false, nil
 	}
 	// Queued after the stop: the executor keeps a worktree with uncommitted or unpushed work (cleanup.keepWhen).
-	t, err := teardownCommand(q, s, last, false)
-	return err == nil && t["kind"] == "teardown", err
+	t, err := teardownCommand(q, s, *last, false)
+	_, torn := t.(agentCommand)
+	return err == nil && torn, err
 }
 
-// teardownCommand: the teardown of a session's worktree on the host of its last execution. deleteBranch: the work was
-// delivered (its task accepted), so the local branch goes even when squash-merged (git branch -D); the executor still
-// keeps the worktree for any cleanup.keepWhen reason (uncommitted, unpushed, teardown-failed).
-func teardownCommand(q *Request, s, last doc, deleteBranch bool) (doc, error) {
-	sid := astr(s["id"])
+// teardownSkipped: no teardown was queued (cleanup skipped or unknown) and why.
+type teardownSkipped struct {
+	SessionID string `json:"sessionId"`
+	Cleanup   string `json:"cleanup"`
+	Reason    string `json:"reason"`
+}
+
+// teardownPayload: a teardown command's payload: the worktree to remove and how.
+type teardownPayload struct {
+	WorkspaceKey     json.RawMessage `json:"workspaceKey,omitempty"`
+	DeleteBranch     bool            `json:"deleteBranch,omitempty"`
+	ProjectID        string          `json:"projectId,omitempty"`
+	Project          json.RawMessage `json:"project,omitempty"`
+	WorkingDirectory string          `json:"workingDirectory,omitempty"`
+	Branch           *bool           `json:"branch,omitempty"`
+}
+
+// teardownCommand: the teardown of a session's worktree on the host of its last execution (an agentCommand), or why
+// none was queued (teardownSkipped). deleteBranch: the work was delivered (its task accepted), so the local branch goes
+// even when squash-merged (git branch -D); the executor still keeps the worktree for any cleanup.keepWhen reason
+// (uncommitted, unpushed, teardown-failed).
+func teardownCommand(q *Request, s agentSession, last agentExecution, deleteBranch bool) (any, error) {
+	sid, host := s.ID, deref(last.HostID)
 	// A removed host never fetches it: its worktrees went with it, and a pending command would keep purge waiting.
-	if live, err := knownHost(q, astr(last["hostId"])); err != nil || !live {
-		return doc{"sessionId": sid, "cleanup": "skipped", "reason": "host-gone"}, err
+	if live, err := knownHost(q, host); err != nil || !live {
+		return teardownSkipped{SessionID: sid, Cleanup: "skipped", Reason: "host-gone"}, err
 	}
-	payload := doc{}
-	d := mapOf(last["dispatch"])
-	if d["workspaceKey"] != nil {
-		payload["workspaceKey"] = d["workspaceKey"]
+	var payload teardownPayload
+	d := rawObject{}
+	if last.Dispatch != nil {
+		json.Unmarshal(jsonBytes(last.Dispatch), &d)
 	}
-	workingDirectory := d["workingDirectory"]
-	if deleteBranch {
-		payload["deleteBranch"] = true
+	if d.has("workspaceKey") {
+		payload.WorkspaceKey = d["workspaceKey"]
 	}
-	if p := astr(d["projectId"]); p != "" {
-		workspace := mapOf(last["workspaceSnapshot"])
+	workingDirectory := d.val("workingDirectory")
+	payload.DeleteBranch = deleteBranch
+	if p := d.text("projectId"); p != "" {
+		workspace := rawObject(last.rest).object("workspaceSnapshot")
+		snapshots := rawObject(s.rest).object("workspaceSnapshots")
 		if workspace == nil {
-			workspace = mapOf(mapOf(s["workspaceSnapshots"])[astr(last["hostId"])+":"+p+":"+astr(d["workspaceKey"])])
+			workspace = snapshots.object(host + ":" + p + ":" + d.text("workspaceKey"))
 		}
 		if workspace == nil {
-			workspace = mapOf(mapOf(s["workspaceSnapshots"])[astr(last["hostId"])])
+			workspace = snapshots.object(host)
 		}
-		if workspace == nil || (workspace["projectId"] != nil && workspace["projectId"] != p) {
-			return doc{"sessionId": sid, "cleanup": "unknown", "reason": "cleanup_context_unknown: original workspace settings unavailable"}, nil
+		if workspace == nil || (workspace.has("projectId") && workspace.val("projectId") != any(p)) {
+			return teardownSkipped{SessionID: sid, Cleanup: "unknown", Reason: "cleanup_context_unknown: original workspace settings unavailable"}, nil
 		}
-		payload["projectId"], payload["project"] = p, workspace["project"]
-		workingDirectory = workspace["workingDirectory"]
+		payload.ProjectID, payload.Project = p, json.RawMessage("null")
+		if workspace.has("project") {
+			payload.Project = workspace["project"]
+		}
+		workingDirectory = workspace.val("workingDirectory")
 	}
-	if w := astr(workingDirectory); w != "" {
-		payload["workingDirectory"] = w
+	if w, _ := workingDirectory.(string); w != "" {
+		payload.WorkingDirectory = w
 	}
-	if s["branch"] == false { // a session started without a branch (presets.go): its worktree was detached
-		payload["branch"] = false
+	if s.Branch != nil && !*s.Branch { // a session started without a branch (presets.go): its worktree was detached
+		payload.Branch = s.Branch
 	}
-	c := doc{"id": newID(), "executionId": last["id"], "sessionId": sid, "hostId": last["hostId"], "kind": "teardown", "payload": payload, "status": "pending"}
-	return c, put(q, "command", c)
+	c := agentCommand{ID: newID(), ExecutionID: last.ID, SessionID: sid, HostID: host, Kind: "teardown", Payload: jsonBytes(payload), Status: "pending"}
+	err := recPut(q, recCommand, &c)
+	return c, err
 }
 
 // deliveredTeardown: an accepted task's sessions get their worktree teardown (fleet-system-management.md, Worktree on
@@ -415,34 +461,31 @@ func deliveredTeardown(q *Request, taskID string) error {
 		return err
 	}
 	for _, sid := range sids {
-		s, err := get(q, sid, "session")
+		s, err := recGet[agentSession](q, recSession, sid)
 		if errors.Is(err, errNotFound) {
 			continue
 		} else if err != nil {
 			return err
 		}
-		if old, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"}); err != nil || len(old) > 0 {
+		if old, err := recAll[agentCommand](q, recCommand, teardownFilter(sid)); err != nil || len(old) > 0 {
 			if err != nil {
 				return err
 			}
 			continue
 		}
-		es, err := sessionExecutions(q, sid)
+		es, err := agentExecutions(q, sid)
 		if err != nil {
 			return err
 		}
-		var last doc
 		active := false
-		for _, e := range es {
-			active = active || (!terminal(e) && !unconfirmed(e))
-			if astr(e["hostId"]) != "" {
-				last = e
-			}
+		for i := range es {
+			active = active || (!es[i].terminal() && !es[i].unconfirmed())
 		}
+		last := lastOnHost(es)
 		if active || last == nil {
 			continue
 		}
-		if _, err := teardownCommand(q, s, last, true); err != nil {
+		if _, err := teardownCommand(q, s, *last, true); err != nil {
 			return err
 		}
 	}
@@ -452,19 +495,17 @@ func deliveredTeardown(q *Request, taskID string) error {
 // errSessionCreateKeys: session_create takes an empty object.
 var errSessionCreateKeys = fail(400, "session_create takes no identity or linkage fields")
 
-func sessionCreate(q *Request) (doc, error) {
-	s := doc{"id": newID(), "createdAt": nowMs(), "directedBy": director(q)}
+func sessionCreate(q *Request) (contract.SessionCreateReply, error) {
+	s := agentSession{ID: newID(), CreatedAt: nowMs(), DirectedBy: director(q)}
 	if callerReadOnly(q) { // an agent of a read-only conversation creates read-only sessions (presets.go)
-		s["access"], s["branch"] = "read", false
+		s.Access, s.Branch = "read", ptr(false)
 	}
-	if err := put(q, "session", s); err != nil {
-		return nil, err
+	if err := recWrite(q, recSession, s); err != nil {
+		return contract.SessionCreateReply{}, err
 	}
-	out := doc{"sessionId": s["id"]}
-	for k, v := range s {
-		out[k] = v
-	}
-	return out, nil
+	out, err := asT[contract.SessionCreateReply](s)
+	out.SessionId = s.ID
+	return out, err
 }
 
 // sessionArg: a required sessionId, not empty.
@@ -478,18 +519,20 @@ func sessionArg(sid string) (string, error) {
 func init() {
 	route("GET /api/executions/{id}/delegations", func(q *Request) (any, error) {
 		id := q.r.PathValue("id")
-		if _, err := get(q, id, "execution"); err != nil {
+		if _, err := recGet[rawObject](q, recExecution, id); err != nil {
 			return nil, err
 		}
 		raw, err := q.db().ExecutionDelegations(q.ctx(), id)
 		ds, err := delegationsOf(q, raw, err)
-		return doc{"delegations": ds}, err
+		return struct {
+			Delegations []rawObject `json:"delegations"`
+		}{ds}, err
 	})
 	op("session_create", func(q *Request, r *contract.SessionCreateRequest) (contract.SessionCreateReply, error) {
 		if len(*r) > 0 {
 			return contract.SessionCreateReply{}, errSessionCreateKeys
 		}
-		return replyAs[contract.SessionCreateReply](sessionCreate(q))
+		return sessionCreate(q)
 	})
 	op("session_get", func(q *Request, r *contract.SessionGetRequest) (contract.SessionGetReply, error) {
 		sid, err := sessionArg(r.SessionId)
@@ -503,9 +546,8 @@ func init() {
 		if err != nil {
 			return contract.SessionProfileReply{}, err
 		}
-		b := docOf(r)
-		delete(b, "sessionId")
-		return replyAs[contract.SessionProfileReply](sessionProfile(q, sid, b))
+		r.SessionId = sid
+		return sessionProfile(q, r)
 	})
 	op("session_archive", func(q *Request, r *contract.SessionArchiveRequest) (contract.SessionArchiveReply, error) {
 		sid, err := sessionArg(r.SessionId)
@@ -599,30 +641,26 @@ func sessionUnarchive(q *Request, r *contract.SessionUnarchiveRequest) (contract
 	if reason == "" {
 		return none, fail(400, "Expected reason")
 	}
-	s, err := get(q, sid, "session")
+	s, err := recGet[agentSession](q, recSession, sid)
 	if err != nil {
 		return none, err
 	}
-	if s == nil {
-		return none, fail(404, "Unknown session")
-	}
-	at, archived := s["archivedAt"]
-	if !archived {
+	if s.ArchivedAt == nil {
 		return none, fail(409, "Session is not archived")
 	}
-	delete(s, "archivedAt")
-	s["id"] = sid
-	if err := put(q, "session", s); err != nil {
+	at := *s.ArchivedAt
+	s.ArchivedAt, s.ID = nil, sid
+	if err := recPut(q, recSession, &s); err != nil {
 		return none, err
 	}
 	// A teardown no host has fetched yet would remove the worktree of a live session again.
-	pending, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"})
+	pending, err := recAll[agentCommand](q, recCommand, teardownFilter(sid))
 	if err != nil {
 		return none, err
 	}
 	for _, x := range pending {
-		x["status"] = "stopped"
-		if err := put(q, "command", x); err != nil {
+		x.Status = "stopped"
+		if err := recPut(q, recCommand, &x); err != nil {
 			return none, err
 		}
 	}
@@ -630,346 +668,4 @@ func sessionUnarchive(q *Request, r *contract.SessionUnarchiveRequest) (contract
 		return none, err
 	}
 	return contract.SessionUnarchiveReply{SessionId: sid, TeardownsWithdrawn: int64(len(pending))}, nil
-}
-
-// Conversation records (migration 77, docs/designs/fleet-standard.md S1): the kinds a conversation is made of live in
-// their own tables. A record field a query filters, joins, orders or a state machine owns is a column; payload holds the
-// record's other fields. all/get/put (records.go) serve these kinds through convTables, so a caller still reads and
-// writes the record shape while each field has one column. A field whose value does not have its column's type stays
-// in payload.
-type convCol struct{ field, col, typ string } // typ: text, bool, int, count (int, absent as 0), ms (epoch ms as timestamptz)
-
-type convTable struct {
-	table string
-	cols  []convCol
-	// keep: the columns a put never overwrites while the project stays (their own writers update them in place: the
-	// session title fields of session_rename and the title pass). A command's status is commandTransition's (commandPut).
-	keep []string
-	// delta: the table holds two kinds (event and event-delta), told apart by the delta column.
-	delta *bool
-	// state: the table's state machine column (typed_records.go): set on insert, moved only by its owner afterwards.
-	state *convState
-}
-
-var convFalse, convTrue = false, true
-
-var convTables = map[string]*convTable{
-	"session": {table: "session", cols: []convCol{{"projectId", "project_id", "text"}, {"taskId", "task_id", "text"}, {"hostId", "host_id", "text"},
-		{"actor", "actor", "text"}, {"directedBy", "directed_by", "text"}, {"directorAccessRevokedAt", "director_access_revoked_at", "ms"},
-		{"parentExecutionId", "parent_execution_id", "text"}, {"createdByExecutionId", "created_by_execution_id", "text"},
-		{"createdBySessionId", "created_by_session_id", "text"}, {"sourceSessionId", "source_session_id", "text"},
-		{"pipelineRunId", "pipeline_run_id", "text"}, {"createdAt", "created_at", "ms"}, {"archivedAt", "archived_at", "ms"},
-		{"title", "title", "text"}, {"titleBy", "title_by", "text"}, {"titleCall", "title_call", "text"},
-		{"titleAttemptAt", "title_attempt_at", "ms"}, {"titleAttempts", "title_attempts", "count"}, {"titleUnknownCall", "title_unknown_call", "text"}},
-		keep: []string{"title", "title_by", "title_call", "title_attempt_at", "title_attempts", "title_unknown_call"}},
-	"message": {table: "message", cols: []convCol{{"sessionId", "session_id", "text"}, {"executionId", "execution_id", "text"}, {"projectId", "project_id", "text"},
-		{"requestId", "request_id", "text"}, {"text", "text", "text"}, {"sentBy", "sent_by", "text"}, {"source", "source", "text"}}},
-	"event":       {table: "event", cols: convEventCols, delta: &convFalse},
-	"event-delta": {table: "event", cols: convEventCols, delta: &convTrue},
-	"queued-message": {table: "queued_message", cols: []convCol{{"sessionId", "session_id", "text"}, {"projectId", "project_id", "text"}, {"taskId", "task_id", "text"},
-		{"requestId", "request_id", "text"}, {"text", "text", "text"}, {"state", "state", "text"}, {"executionId", "execution_id", "text"},
-		{"steerCommandId", "steer_command_id", "text"}, {"sentBy", "sent_by", "text"}, {"source", "source", "text"}, {"createdAt", "created_at", "ms"}}},
-	"command": {table: "command", cols: []convCol{{"executionId", "execution_id", "text"}, {"sessionId", "session_id", "text"}, {"hostId", "host_id", "text"},
-		{"projectId", "project_id", "text"}, {"kind", "kind", "text"}, {"status", "status", "status"}, {"stopDetail", "stop_detail", "text"},
-		{"handedOut", "handed_out", "bool"}, {"traceparent", "traceparent", "text"}}},
-	"handoff":            {table: "handoff", cols: []convCol{{"sessionId", "session_id", "text"}, {"projectId", "project_id", "text"}, {"state", "state", "text"}}},
-	"session-fork":       {table: "session_fork", cols: []convCol{{"sessionId", "session_id", "text"}, {"sourceSessionId", "source_session_id", "text"}, {"projectId", "project_id", "text"}, {"requestId", "request_id", "text"}}},
-	"session-transition": {table: "session_transition", cols: []convCol{{"sessionId", "session_id", "text"}, {"projectId", "project_id", "text"}}},
-	"worker-done":        {table: "worker_done", cols: []convCol{{"executionId", "execution_id", "text"}, {"projectId", "project_id", "text"}}},
-}
-
-// convEventAny: the event table with both kinds (eventsWhere).
-var convEventAny = &convTable{table: "event", cols: convEventCols}
-
-var convEventCols = []convCol{{"executionId", "execution_id", "text"}, {"sessionId", "session_id", "text"}, {"projectId", "project_id", "text"},
-	{"seq", "event_seq", "int"}, {"type", "type", "text"}, {"timestamp", "at", "ms"}}
-
-// convFieldOf: the record field a conversation table's column holds (a reason names what the record shows), else col.
-func convFieldOf(table, col string) string {
-	for _, t := range convTables {
-		if t.table == table {
-			for _, c := range t.cols {
-				if c.col == col {
-					return c.field
-				}
-			}
-		}
-	}
-	return col
-}
-
-// record: the SQL expression of a row as its record.
-func (t *convTable) record() string {
-	parts := []string{"'id',id"}
-	for _, c := range t.cols {
-		x := c.col
-		switch c.typ {
-		case "ms":
-			x = "(extract(epoch FROM " + c.col + ")*1000)::bigint"
-		case "count":
-			x = "nullif(" + c.col + ",0)"
-		case "status":
-			x = c.col + "::text"
-		case "hoststate":
-			x = "nullif(" + c.col + ",'" + hostStateActive + "')"
-		}
-		parts = append(parts, "'"+c.field+"',"+x)
-	}
-	return "(payload||jsonb_strip_nulls(jsonb_build_object(" + strings.Join(parts, ",") + ")))"
-}
-
-func (t *convTable) kindWhere() string {
-	if t.delta == nil {
-		return "true"
-	}
-	if *t.delta {
-		return "delta"
-	}
-	return "NOT delta"
-}
-
-// colValue: v as the column's parameter, ok false when v does not have the column's type.
-func (c convCol) value(v any) (any, bool) {
-	switch c.typ {
-	case "text", "status", "hoststate":
-		s, ok := v.(string)
-		return s, ok
-	case "bool":
-		b, ok := v.(bool)
-		return b, ok
-	case "int", "count", "ms":
-		var f float64
-		switch n := v.(type) {
-		case float64:
-			f = n
-		case int64:
-			f = float64(n)
-		case int:
-			f = float64(n)
-		case json.Number:
-			x, err := n.Float64()
-			if err != nil {
-				return nil, false
-			}
-			f = x
-		default:
-			return nil, false
-		}
-		if c.typ == "ms" {
-			return f, true
-		}
-		if f != float64(int64(f)) {
-			return nil, false
-		}
-		return int64(f), true
-	}
-	return nil, false
-}
-
-func (c convCol) param(n int) string {
-	p := fmt.Sprintf("$%d", n)
-	switch c.typ {
-	case "ms":
-		return "to_timestamp(" + p + "::float8/1000)"
-	case "int":
-		return p + "::bigint"
-	case "count":
-		return "coalesce(" + p + "::int,0)"
-	case "bool":
-		return p + "::boolean"
-	case "status":
-		return p + "::command_status"
-	}
-	return p + "::text"
-}
-
-func convAll(q *Request, t *convTable, f doc) ([]doc, error) {
-	where, args := []string{t.kindWhere()}, []any{}
-	rest := doc{}
-	for _, k := range sortedKeysOf(f) {
-		if k == "id" {
-			args = append(args, f[k])
-			where = append(where, fmt.Sprintf("id=$%d::text", len(args)))
-			continue
-		}
-		c, found := t.col(k)
-		if !found {
-			rest[k] = f[k]
-			continue
-		}
-		v, ok := c.value(f[k])
-		if !ok {
-			return []doc{}, nil // no column value equals a value of another type
-		}
-		args = append(args, v)
-		where = append(where, c.col+"="+c.param(len(args)))
-	}
-	if len(rest) > 0 {
-		args = append(args, js(rest))
-		where = append(where, fmt.Sprintf("payload @> $%d::jsonb", len(args)))
-	}
-	return rows(q, "SELECT "+t.record()+" FROM "+t.table+" WHERE "+strings.Join(where, " AND ")+" ORDER BY seq", args...)
-}
-
-func (t *convTable) col(field string) (convCol, bool) {
-	for _, c := range t.cols {
-		if c.field == field {
-			return c, true
-		}
-	}
-	return convCol{}, false
-}
-
-func convGet(q *Request, t *convTable, id string, forUpdate bool) (doc, error) {
-	lock := ""
-	if forUpdate {
-		lock = " FOR UPDATE"
-	}
-	return one(q, "SELECT "+t.record()+" FROM "+t.table+" WHERE id=$1 AND "+t.kindWhere()+lock, id)
-}
-
-// convPut writes a record: every column from its field (absent: NULL), payload from the other fields. A put of an
-// existing row keeps the keep columns while the project stays (a new project clears the session title fields, as a
-// title belongs to its project's conversation); a command's status moves only through commandTransition.
-func convPut(q *Request, kind string, t *convTable, v doc) error {
-	id, _ := v["id"].(string)
-	if id == "" {
-		return fmt.Errorf("%s record without an id", kind)
-	}
-	rest := doc{}
-	for k, x := range v {
-		if _, found := t.col(k); !found && k != "id" {
-			rest[k] = x
-		}
-	}
-	if t.table == "command" {
-		return commandPut(q, t, v, rest)
-	}
-	prevState, wantState := "", ""
-	if t.state != nil {
-		var err error
-		if prevState, err = t.state.of(q, id); err != nil {
-			return err
-		}
-		wantState, _ = v[t.state.field].(string) // a record without its state keeps the stored one
-	}
-	cols, vals, args := []string{"id"}, []string{"$1::text"}, []any{id}
-	for _, c := range t.cols {
-		x, given := v[c.field]
-		if t.state != nil && c.col == t.state.col {
-			if _, ok := x.(string); !ok { // a new row without a state starts in the column's default state
-				cols, vals = append(cols, c.col), append(vals, "DEFAULT")
-				continue
-			}
-		}
-		if !given || x == nil {
-			cols, vals = append(cols, c.col), append(vals, "NULL")
-			if c.typ == "count" {
-				vals[len(vals)-1] = "0"
-			}
-			continue
-		}
-		p, ok := c.value(x)
-		if !ok {
-			rest[c.field] = x
-			cols, vals = append(cols, c.col), append(vals, "NULL")
-			if c.typ == "count" {
-				vals[len(vals)-1] = "0"
-			}
-			continue
-		}
-		args = append(args, p)
-		cols, vals = append(cols, c.col), append(vals, c.param(len(args)))
-	}
-	args = append(args, js(rest))
-	cols, vals = append(cols, "payload"), append(vals, fmt.Sprintf("$%d::jsonb", len(args)))
-	if t.delta != nil {
-		cols, vals = append(cols, "delta"), append(vals, fmt.Sprint(*t.delta))
-	}
-	sets := []string{"payload=excluded.payload", "updated_at=now()"}
-	for _, c := range cols[1:] {
-		switch {
-		case c == "payload" || c == "delta":
-		case t.state != nil && c == t.state.col:
-		case slices.Contains(t.keep, c):
-			reset := "NULL"
-			if c == "title_attempts" {
-				reset = "0"
-			}
-			sets = append(sets, fmt.Sprintf("%s=CASE WHEN %s.project_id IS NOT DISTINCT FROM excluded.project_id THEN %s.%s ELSE %s END", c, t.table, t.table, c, reset))
-		default:
-			sets = append(sets, c+"=excluded."+c)
-		}
-	}
-	guard := ""
-	if t.delta != nil {
-		guard = " WHERE " + t.table + ".delta=excluded.delta"
-	}
-	if _, err := q.tx.Exec(q.ctx(), "INSERT INTO "+t.table+"("+strings.Join(cols, ",")+") VALUES("+strings.Join(vals, ",")+") ON CONFLICT(id) DO UPDATE SET "+strings.Join(sets, ",")+guard, args...); err != nil {
-		return err
-	}
-	if prevState != "" && wantState != "" && wantState != prevState {
-		if err := t.state.move(q, id, wantState); err != nil {
-			return err
-		}
-	}
-	switch kind {
-	case "queued-message", "host", "managed-account":
-		if q.app != nil {
-			afterCommit(q, func() { q.app.wakeDispatch() })
-		}
-	}
-	return nil
-}
-
-// commandPut: a command record through its state owner (commands.go): a new command is created with its status, an
-// existing one keeps its status unless the record names another, which commandTransition moves it to.
-func commandPut(q *Request, t *convTable, v doc, rest doc) error {
-	id, _ := v["id"].(string)
-	text := func(field string) *string {
-		if c, ok := t.col(field); ok {
-			if x, ok := c.value(v[field]); ok {
-				s := x.(string)
-				return &s
-			}
-		}
-		return nil
-	}
-	kind, status := text("kind"), text("status")
-	if kind == nil {
-		return fmt.Errorf("command %s without a kind", id)
-	}
-	prev, err := commandStatus(q, id)
-	if err != nil {
-		return err
-	}
-	if status == nil {
-		p := firstString(prev, "pending")
-		status = &p
-	}
-	if _, ok := commandTransitions[*status]; !ok {
-		return fmt.Errorf("command %s: unknown status %q", id, *status)
-	}
-	var handed *bool
-	if b, ok := v["handedOut"].(bool); ok {
-		handed = &b
-	}
-	if err := commandCreate(q, db.CommandUpsertParams{ID: id, ExecutionID: text("executionId"), SessionID: text("sessionId"), HostID: text("hostId"),
-		ProjectID: text("projectId"), Kind: *kind, Status: db.CommandStatus(*status), StopDetail: text("stopDetail"), HandedOut: handed,
-		Traceparent: text("traceparent"), Payload: jsonBytes(rest)}); err != nil {
-		return err
-	}
-	if prev != "" && prev != *status {
-		if err := commandTransition(q, id, *status, text("stopDetail")); err != nil {
-			return err
-		}
-	} else if prev != "" {
-		if err := commandDetail(q, id, text("stopDetail")); err != nil {
-			return err
-		}
-	}
-	if hid := text("hostId"); *status == "pending" && hid != nil && q.app != nil {
-		afterCommit(q, func() { q.app.wakeHost(*hid) })
-	}
-	return nil
 }

@@ -26,12 +26,20 @@ func conflict(reason contract.ConflictReason, head int64, repoSha *string, msg s
 }
 
 // conflictExtra: DefinitionConflict as the error body's extra fields (repoSha null when unknown).
-func conflictExtra(reason contract.ConflictReason, head int64, repoSha *string) doc {
-	return docOf(struct {
-		Reason  contract.ConflictReason `json:"reason"`
-		Head    int64                   `json:"head"`
-		RepoSha *string                 `json:"repoSha"`
-	}{reason, head, repoSha})
+func conflictExtra(reason contract.ConflictReason, head int64, repoSha *string) definitionConflictExtra {
+	return definitionConflictExtra{reason, head, repoSha}
+}
+
+// definitionConflictExtra: DefinitionConflict, the extra fields of a definition write's 409.
+type definitionConflictExtra struct {
+	Reason  contract.ConflictReason `json:"reason"`
+	Head    int64                   `json:"head"`
+	RepoSha *string                 `json:"repoSha"`
+}
+
+// reasonExtra: the extra field of a 409 that names its reason.
+type reasonExtra struct {
+	Reason string `json:"reason"`
 }
 
 // definitionChange: the audit of a definition (a project's carries its project).

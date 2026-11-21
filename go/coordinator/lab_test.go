@@ -268,7 +268,7 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 		return linkLabAssessments(q, mustRunOf(trial), &labCheckRun{ProjectAssessments: []labAssessmentRef{changedT}})
 	})
 	var conflict *HTTPError
-	if !errors.As(err, &conflict) || conflict.Code != 409 || conflict.Extra["reason"] != "assessment_identity_conflict" {
+	if !errors.As(err, &conflict) || conflict.Code != 409 || conflict.Extra != (reasonExtra{"assessment_identity_conflict"}) {
 		t.Fatal("changed assessment bytes accepted", err)
 	}
 	failedStorage := &labCheckRun{Assessments: []labAssessmentCapture{{CheckID: "contract", SchemaID: "synthetic.assessment.v1", Bytes: []byte("{}"), Sha256: sha256hex([]byte("{}"))}}}

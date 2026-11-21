@@ -1,6 +1,6 @@
 -- Execution events (host_events.go, event_batch.go, docs/designs/fleet-standard.md S2): an event and a stream delta share
 -- one table, told apart by delta. The record a reader sees is payload with the columns under their record names
--- (eventRecordOf); a write splits a record the same way (eventColumnsOf), so the generic record API (records.go) reads it alike.
+-- (eventRecordOf); a write splits a record the same way (eventColumnsOf), so its record (records.go recEvent) reads alike.
 
 -- name: EventsByIdentity :many
 -- The stored events and deltas of an execution at one of @seqs or with one of @ids (a host batch's snapshot).

@@ -46,5 +46,5 @@ SELECT EXISTS (
 SELECT EXISTS(SELECT 1 FROM definition WHERE kind='project' AND id = @id AND retired_at IS NULL);
 
 -- name: AgentSessionPayload :one
--- A session's payload: the record fields without a column (convTables "session").
+-- A session's payload: the record fields without a column (queries/records.sql "session").
 SELECT payload FROM session WHERE id = @id;

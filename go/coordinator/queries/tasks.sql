@@ -323,3 +323,7 @@ SELECT coalesce(data->>'traceparent','')::text AS traceparent FROM execution WHE
 -- The tasks whose stored derived row differs from the one their executions and questions give (task_derived_check).
 SELECT coalesce(jsonb_agg(jsonb_build_object('taskId', d.task_id, 'stored', d.stored, 'expected', d.expected)), '[]')::jsonb AS drifted
 FROM task_derived_drift() d;
+
+-- name: TaskRowRecord :one
+-- The task's row as a record keyed by column name (taskRow).
+SELECT to_jsonb(t)::jsonb FROM task t WHERE t.id=$1;

@@ -141,7 +141,7 @@ const agentSessionPayload = `-- name: AgentSessionPayload :one
 SELECT payload FROM session WHERE id = $1
 `
 
-// A session's payload: the record fields without a column (convTables "session").
+// A session's payload: the record fields without a column (queries/records.sql "session").
 func (q *Queries) AgentSessionPayload(ctx context.Context, id string) ([]byte, error) {
 	row := q.db.QueryRow(ctx, agentSessionPayload, id)
 	var payload []byte

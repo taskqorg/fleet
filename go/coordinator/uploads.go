@@ -10,7 +10,6 @@ import (
 	"errors"
 	"hash"
 	"io"
-	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -172,10 +171,6 @@ func (b *byteSemaphore) wake() {
 	}
 }
 
-// finishing: uploads whose finish runs in the background (a copy too long for one request); a retried part answers
-// {received, finishing} until the record names the artifact.
-var finishing sync.Map
-
 // attachmentName: a file name safe for the store, the agent's input folder and the turn text: the base name only, no
 // control or line-separator characters, no leading dots, at most 255 bytes; empty becomes "attachment".
 func attachmentName(s string) string {
@@ -323,7 +318,7 @@ type uploadProgress struct {
 }
 
 func uploadConflict(code int, msg string, received int64) error {
-	return &HTTPError{Code: code, Msg: msg, Extra: docOf(uploadProgress{Received: received})}
+	return &HTTPError{Code: code, Msg: msg, Extra: uploadProgress{Received: received}}
 }
 
 // sweepUploads, in the background after a begin: aborts uploads left unfinished for uploadStaleAfter (the store's
@@ -603,17 +598,32 @@ func (a *App) uploadStore(ctx context.Context, u upload) (*StoreRow, *S3, error)
 // finishLocked: a finish running in the background is answered at once, never queued behind its lock (a probe would
 // wait past the proxy's request time); otherwise the finish runs under the upload's lock.
 func (a *App) finishLocked(ctx context.Context, p *Person, id string) (any, error) {
-	if _, busy := finishing.Load(id); busy {
-		if u, err := a.uploadRecord(ctx, p, id); err == nil {
-			return uploadProgress{Received: u.Size, Finishing: true}, nil
+	if busy, err := a.uploadFinishing(ctx, p, id); err != nil {
+		return nil, err
+	} else if busy {
+		u, err := a.uploadRecord(ctx, p, id)
+		if err != nil {
+			return nil, err
 		}
+		return uploadProgress{Received: u.Size, Finishing: true}, nil
 	}
 	defer uploadLock(id)()
 	return a.finishUpload(ctx, p, id)
 }
 
+// uploadFinishing: the upload's finish runs in the background (its upload_finish_work row, upload_work.go).
+func (a *App) uploadFinishing(ctx context.Context, p *Person, id string) (bool, error) {
+	var busy bool
+	err := a.store.Tx(ctx, scopeOf(p), false, "", func(tx pgx.Tx) error {
+		var err error
+		busy, err = db.New(tx).UploadFinishing(ctx, id)
+		return err
+	})
+	return busy, err
+}
+
 // finishUpload (under the upload's lock) answers the artifact when it is recorded, {received, finishing} while a long
-// finish runs, and otherwise finishes: in this request up to finishInline, else in the background (completing many parts
+// finish runs, and otherwise finishes: in this request up to finishInline, else on the work kit (upload_work.go: completing many parts
 // and copying gigabytes could outlast one request through the proxy); the client then probes with "bytes */size".
 func (a *App) finishUpload(ctx context.Context, p *Person, id string) (any, error) {
 	u, err := a.uploadRecord(ctx, p, id)
@@ -623,21 +633,22 @@ func (a *App) finishUpload(ctx context.Context, p *Person, id string) (any, erro
 	if aid := deref(u.ArtifactID); aid != "" {
 		return a.uploadView(ctx, p, aid)
 	}
-	if _, busy := finishing.Load(id); busy {
-		return uploadProgress{Received: u.Size, Finishing: true}, nil
+	if busy, err := a.uploadFinishing(ctx, p, id); err != nil || busy {
+		return uploadProgress{Received: u.Size, Finishing: true}, err
 	}
 	if u.Size <= finishInline {
 		return a.finishNow(ctx, p, u)
 	}
-	finishing.Store(id, true)
-	// The entry in finishing is this finish's exclusion: every finish path answers {finishing} while it is there, so
-	// the goroutine takes no lock a probe could queue behind.
-	go func() {
-		defer finishing.Delete(id)
-		if _, err := a.finishNow(context.Background(), p, u); err != nil {
-			log.Printf("upload %s: finish: %v", id, err) // the next retried part finishes again
+	// The work row is this finish's exclusion: every finish path answers {finishing} while it is there, without the
+	// upload's lock, which the kit's call holds while it finishes.
+	if err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
+		if err := q.db().UploadFinishWorkAdd(q.ctx(), id); err != nil {
+			return err
 		}
-	}()
+		return kitNotify(q, "upload-finish")
+	}); err != nil {
+		return nil, err
+	}
 	return uploadProgress{Received: u.Size, Finishing: true}, nil
 }
 

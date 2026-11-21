@@ -1,6 +1,6 @@
 // Host commands (docs/designs/fleet-standard.md S5): a command's status is a state machine; commandTransition is the only
 // writer of command.status after the command is created, and commandStop stops open commands in bulk through the same
-// table. The record shape callers read and write (all/get/put of "command") is in sessions.go (convTables).
+// table. The record shape callers read and write (all/get/put of "command") is in records.go (recCommand, commandRecPut).
 package main
 
 import (
@@ -28,7 +28,7 @@ var commandTransitions = map[string][]string{
 // commandOpen: the statuses a stop moves to stopped.
 var commandOpen = []db.CommandStatus{db.CommandStatusPending, db.CommandStatusAccepted, db.CommandStatusStarted, db.CommandStatusUnknown}
 
-// commandCreate writes a command; a new one starts with its status, an existing one keeps it (commandPut, sessions.go,
+// commandCreate writes a command; a new one starts with its status, an existing one keeps it (commandRecPut, records.go,
 // moves it through commandTransition).
 func commandCreate(q *Request, p db.CommandUpsertParams) error {
 	return q.db().CommandUpsert(q.ctx(), p)

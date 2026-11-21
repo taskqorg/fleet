@@ -12,8 +12,8 @@ import (
 type rawObject map[string]json.RawMessage
 
 // eventRecord: an event as its record, the host's open object: payload with the typed columns under their record
-// names (id, executionId, sessionId, projectId, seq, type, timestamp), as the generic record API shows it (sessions.go
-// convEventCols).
+// names (id, executionId, sessionId, projectId, seq, type, timestamp), as its record shows it (queries/records.sql
+// RecEventAll).
 type eventRecord = rawObject
 
 // eventRecordOf: a stored event as its record. A NULL column is absent, a column overrides a payload key.
@@ -78,7 +78,7 @@ func (r rawObject) seq() (int64, bool) {
 // value: the record as a decoded JSON value, the form frameHash and same compare.
 func (r rawObject) value() any { return norm(r) }
 
-// eventColumns: a record split into the event table's columns, as convPut splits it: a field whose value has its column's
+// eventColumns: a record split into the event table's columns, as a record write splits it: a field whose value has its column's
 // type is the column, any other field (or a field of the wrong type) stays in payload.
 type eventColumns struct {
 	ID          string          `json:"id"`

@@ -233,7 +233,7 @@ func executionCommands(q *Request, id string, kind, status *string) ([]doc, erro
 	}
 	out := []doc{}
 	for _, c := range ids {
-		d, err := get(q, c, "command")
+		d, err := recGet[doc](q, recCommand, c)
 		if err != nil {
 			return nil, err
 		}
@@ -267,7 +267,7 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 	if err := q.db().DispExecLock(q.ctx(), id); err != nil {
 		return rep, err
 	}
-	e, err := get(q, id, "execution")
+	e, err := recGet[doc](q, recExecution, id)
 	if err != nil {
 		return rep, err
 	}
@@ -289,7 +289,7 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 			Payload     struct{} `json:"payload"`
 			Status      string   `json:"status"`
 		}{ID: newID(), ExecutionID: e["id"], SessionID: e["sessionId"], HostID: e["hostId"], Kind: stopKind, Status: pendingStatus})
-		if err := put(q, "command", c); err != nil {
+		if err := recPut(q, recCommand, &c); err != nil {
 			return rep, err
 		}
 	}
@@ -317,7 +317,7 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 		}
 		for _, x := range pending {
 			x["status"] = "stopped"
-			if err := put(q, "command", x); err != nil {
+			if err := recPut(q, recCommand, &x); err != nil {
 				return rep, err
 			}
 		}
@@ -325,11 +325,12 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 		if !known && e["hostId"] != nil {
 			e["stopDetail"] = "host never registered"
 		}
-		if c, err = get(q, c["id"], "command"); err != nil {
+		cid, _ := c["id"].(string)
+		if c, err = recGet[doc](q, recCommand, cid); err != nil {
 			return rep, err
 		}
 	}
-	if err := put(q, "execution", e); err != nil {
+	if err := recPut(q, recExecution, &e); err != nil {
 		return rep, err
 	}
 	out, err := stopOutcome(q, e)
@@ -390,7 +391,7 @@ func settleWaiting(ctx context.Context, a *App, id string) error {
 func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 	err := a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
 		q := &Request{app: a, tx: tx, r: (&http.Request{}).WithContext(ctx)}
-		e, err := maybe(q, id, "execution")
+		e, err := recFind[doc](q, recExecution, id)
 		if err != nil || e == nil || e["state"] != "waiting" || e["waitReason"] != "artifacts" {
 			return err
 		}
@@ -415,7 +416,7 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 			}
 			e["error"] = docOf(executionArtifactError{Code: "artifact-required", Message: msg, Missing: r.Missing, Failed: r.Failed, Pending: &r.Pending})
 		}
-		if err := put(q, "execution", e); err != nil {
+		if err := recPut(q, recExecution, &e); err != nil {
 			return err
 		}
 		start := "start"
@@ -455,11 +456,11 @@ func executionDifferences(q *Request, id, previousID string) (contract.Execution
 	if len(previousID) > 300 {
 		previousID = previousID[:300]
 	}
-	current, err := get(q, id, "execution")
+	current, err := recGet[doc](q, recExecution, id)
 	if err != nil {
 		return rep, err
 	}
-	previous, err := get(q, previousID, "execution")
+	previous, err := recGet[doc](q, recExecution, previousID)
 	if err != nil {
 		return rep, err
 	}
@@ -746,7 +747,7 @@ func executionAbandon(q *Request, id, reason string) (string, error) {
 		}
 		return "", audit(q, "execution:"+id, "state", row.State, "failed", auditExtra{ProjectID: row.ProjectID, Reason: reason})
 	}
-	e, err := get(q, id, "execution")
+	e, err := recGet[doc](q, recExecution, id)
 	if err != nil {
 		return "", err
 	}
@@ -760,7 +761,7 @@ func executionAbandon(q *Request, id, reason string) (string, error) {
 	}
 	now := nowMs()
 	e["state"], e["stopRequested"], e["stopDetail"], e["error"], e["updatedAt"], e["finishedAt"] = "failed", true, "abandoned", "abandoned: "+reason, now, now
-	if err := put(q, "execution", e); err != nil {
+	if err := recPut(q, recExecution, &e); err != nil {
 		return "", err
 	}
 	if err := q.db().DispAbandonProblem(q.ctx(), id); err != nil {

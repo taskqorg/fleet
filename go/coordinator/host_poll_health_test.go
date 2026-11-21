@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"fleet/contract"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -35,7 +37,7 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 			}
 			step := mapOf(anys(run["steps"])[0])
 			step["state"], step["executionId"] = "running", nativeID
-			commands, err := all(q, "command", doc{"executionId": nativeID, "kind": "script"})
+			commands, err := recAll[doc](q, recCommand, doc{"executionId": nativeID, "kind": "script"})
 			if err != nil || len(commands) != 1 {
 				return fmt.Errorf("script command: %v %d", err, len(commands))
 			}
@@ -53,7 +55,7 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 		// A command of an execution that no longer exists.
 		orphan := doc{"id": newID(), "executionId": "no-such-execution", "hostId": "iso-host", "kind": "input", "payload": doc{}, "status": "pending"}
 		ids["orphan"] = astr(orphan["id"])
-		return put(q, "command", orphan)
+		return recPut(q, recCommand, &orphan)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +72,7 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 	}
 	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
 		for id, want := range map[string]string{"refused": "refused: Pipeline initiating actor no longer has project access", "orphan": "handoff failed: Not found"} {
-			c, err := get(q, ids[id], "command")
+			c, err := recGet[doc](q, recCommand, ids[id])
 			if err != nil {
 				return err
 			}
@@ -85,7 +87,7 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		native, err := get(q, optString(run.entry(0).Dispatch.NativeExecutionId), "execution")
+		native, err := recGet[doc](q, recExecution, deref(run.entry(0).Dispatch.NativeExecutionId))
 		if err != nil {
 			return err
 		}
@@ -210,8 +212,10 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 		t.Helper()
 		var q doc
 		if err := runTx(env.ctx, env.app, nil, false, "", func(rq *Request) error {
-			var err error
-			q, err = first(rq, "SELECT id,state,text,cause FROM question WHERE data->>'cause'=$1 ORDER BY seq DESC LIMIT 1", hostPollCause("sick-host"))
+			err := rq.tx.QueryRow(rq.ctx(), "SELECT to_jsonb(r) FROM (SELECT id,state,text,cause FROM question WHERE data->>'cause'=$1 ORDER BY seq DESC LIMIT 1) r", hostPollCause("sick-host")).Scan(&q)
+			if errors.Is(err, pgx.ErrNoRows) {
+				q, err = nil, nil
+			}
 			return err
 		}); err != nil {
 			t.Fatal(err)
@@ -245,7 +249,7 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 	// An observation flush (here a poll's own part, before its commands) keeps the record.
 	env.app.clearHostCache("sick-host")
 	body, _ := json.Marshal(good)
-	if _, err := env.app.pollOnce(&Request{app: env.app, r: httptest.NewRequestWithContext(env.ctx, "POST", "/api/hosts/poll", nil), host: doc{"hostId": "sick-host", "holder": testOwnerEmail}, body: body}, &good); err != nil {
+	if _, err := env.app.pollOnce(&Request{app: env.app, r: httptest.NewRequestWithContext(env.ctx, "POST", "/api/hosts/poll", nil), host: &authHost{HostID: "sick-host", Holder: testOwnerEmail}, body: body}, &good); err != nil {
 		t.Fatal(err)
 	}
 	if pe := pollError("hosts_list"); pe == nil || num(pe["since"]) != since {

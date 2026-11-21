@@ -734,7 +734,7 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 	return contract.ArtifactReserveReply{ArtifactId: id, State: "pending", StoreId: &target.ID, PartSize: &ps}, nil
 }
 
-func (q *Request) hostID() string { return q.host["hostId"].(string) }
+func (q *Request) hostID() string { return q.host.HostID }
 
 type copyRow struct {
 	StoreID, State       string
@@ -889,7 +889,7 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 	return contract.ArtifactStateReply{State: "verifying"}, nil
 }
 
-// The records of a queued tool command, for put and putExecution (records.go), which take them as documents.
+// The records of a queued tool command, written through recWrite (records.go).
 type (
 	jobSession struct {
 		ID        string `json:"id"`
@@ -922,14 +922,14 @@ func queueCommand(ctx context.Context, a *App, hostID, kind string, payload doc)
 	return txCtx(ctx, a, func(tx pgx.Tx) error {
 		q := backgroundRequest(ctx, a, tx) // carries app: put wakes the host's held poll once the command commits
 		sid, id := newID(), newID()
-		if err := put(q, "session", docOf(jobSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"})); err != nil {
+		if err := recWrite(q, recSession, jobSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
 			return err
 		}
-		if err := putExecution(q, docOf(jobExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker",
-			ArtifactID: payload["artifactId"]})); err != nil {
+		if err := recWrite(q, recExecution, jobExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker",
+			ArtifactID: payload["artifactId"]}); err != nil {
 			return err
 		}
-		return put(q, "command", docOf(jobCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: kind, Status: "pending", Payload: payload}))
+		return recWrite(q, recCommand, jobCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: kind, Status: "pending", Payload: payload})
 	})
 }
 

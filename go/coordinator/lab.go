@@ -2508,9 +2508,7 @@ type labBudgetAsk struct {
 
 // labConflict: a 409 whose body names its reason.
 func labConflict(msg, reason string) error {
-	return &HTTPError{Code: 409, Msg: msg, Extra: docOf(struct {
-		Reason string `json:"reason"`
-	}{reason})}
+	return &HTTPError{Code: 409, Msg: msg, Extra: reasonExtra{reason}}
 }
 
 func expSetState(q *Request, id string, from []string, to string, reason any) error {

@@ -177,11 +177,12 @@ func refreshRequestAccess(q *Request) error {
 }
 
 func projectAgentArguments(q *Request, args doc, executionID string, preparedRead bool) (doc, error) {
-	e, err := get(q, executionID, "execution")
+	e, err := recGet[doc](q, recExecution, executionID)
 	if err != nil {
 		return nil, err
 	}
-	session, err := get(q, e["sessionId"], "session")
+	sessionID, _ := e["sessionId"].(string)
+	session, err := recGet[doc](q, recSession, sessionID)
 	if err != nil {
 		return nil, err
 	}

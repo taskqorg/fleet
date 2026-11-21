@@ -12,6 +12,7 @@ import (
 	"fleet/coordinator/db"
 	"fmt"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -309,13 +310,27 @@ func scopeOf(p *Person) *Scope {
 
 func secretHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
 
+// authHost: the host a host request's secret names (hostFromSecret): the fields of its record the handlers read.
+type authHost struct {
+	HostID     string `json:"hostId"`
+	Holder     string `json:"holder"`
+	AutoUpdate string `json:"autoUpdate"` // on, off or a hold until an RFC 3339 time (validAutoUpdate)
+}
+
+// errorBody: the JSON body of an error answer; an HTTPError's Extra fields join it (writeError).
+type errorBody struct {
+	StatusCode int    `json:"statusCode"`
+	Error      string `json:"error"`
+	Message    string `json:"message"`
+}
+
 // Request: the credential check's outcome and the route's transaction.
 type Request struct {
 	app        *App
 	r          *http.Request
 	person     *Person
 	peopleView *peopleSnapshot
-	host       map[string]any
+	host       *authHost
 	agent      string // execution:<id> when a host agent calls on behalf of person (its director)
 	body       json.RawMessage
 	tx         pgx.Tx
@@ -352,13 +367,16 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
-	body := map[string]any{"statusCode": code, "error": http.StatusText(code), "message": msg}
-	if he != nil {
-		for k, v := range he.Extra {
-			body[k] = v
+	body := jsonBytes(errorBody{StatusCode: code, Error: http.StatusText(code), Message: msg})
+	if he != nil && he.Extra != nil {
+		// Extra is a struct: its fields join the body's object, over a field of the same name.
+		var fields, extra rawObject
+		if json.Unmarshal(body, &fields) == nil && json.Unmarshal(jsonBytes(he.Extra), &extra) == nil {
+			maps.Copy(fields, extra)
+			body = jsonBytes(fields)
 		}
 	}
-	json.NewEncoder(w).Encode(body)
+	w.Write(append(body, '\n'))
 }
 
 // readBody keeps the JSON body and applies the host preHandler: a body hostId of another host is 403, a missing one is the
@@ -386,7 +404,7 @@ func (a *App) readBody(q *Request) error {
 	if json.Unmarshal(raw, &obj) != nil || obj == nil {
 		return nil
 	}
-	id := q.host["hostId"].(string)
+	id := q.host.HostID
 	if h, ok := obj["hostId"]; ok {
 		var s string
 		if json.Unmarshal(h, &s) != nil || s != id {
@@ -465,7 +483,7 @@ func (a *App) removedHostSecret(ctx context.Context, secret string) (bool, error
 }
 
 // hostFromSecret: the host document whose secretHash matches, if its holder is still a person.
-func (a *App) hostFromSecret(ctx context.Context, secret string) (map[string]any, error) {
+func (a *App) hostFromSecret(ctx context.Context, secret string) (*authHost, error) {
 	if secret == "" {
 		return nil, nil
 	}
@@ -499,12 +517,13 @@ func (a *App) hostFromSecret(ctx context.Context, secret string) (map[string]any
 		}
 		s.authMu.Unlock()
 	}
-	var host map[string]any
-	json.Unmarshal(data, &host)
-	if holder, _ := host["holder"].(string); a.peopleSnapshot().person(holder) == nil {
+	var rec rawObject // a field of another type reads as empty, as a stored record may hold one in its payload
+	json.Unmarshal(data, &rec)
+	host := authHost{HostID: rec.text("hostId"), Holder: rec.text("holder"), AutoUpdate: rec.text("autoUpdate")}
+	if a.peopleSnapshot().person(host.Holder) == nil {
 		return nil, nil
 	}
-	return host, nil
+	return &host, nil
 }
 
 func pgCode(err error) string {
@@ -534,3 +553,6 @@ func activatedListener(addr string) (net.Listener, error) {
 	}
 	return net.Listen("tcp", addr)
 }
+
+// hostOf: the authenticated host's id.
+func hostOf(q *Request) string { return q.host.HostID }

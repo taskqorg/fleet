@@ -69,7 +69,7 @@ type delegationResult struct {
 	State       string          `json:"state"`
 }
 
-// delegationFilter: a filter of all() on delegation records; an absent field filters nothing.
+// delegationFilter: a filter of recAll on delegation records; an absent field filters nothing.
 type delegationFilter struct {
 	ParentExecutionID *string `json:"parentExecutionId,omitempty"`
 	ChildExecutionID  *string `json:"childExecutionId,omitempty"`
@@ -194,11 +194,11 @@ func (a *App) delegationChild(q *Request, req *contract.ChildRequest, c agentCom
 		return nil, fail(400, "Invalid delegation request")
 	}
 	r := delegationReq{Input: input, ProfileId: req.ProfileId, RequestId: rid}
-	parent, err := agentGet[delegationExecution](q, c.ExecutionID, "execution")
+	parent, err := recGet[delegationExecution](q, recExecution, c.ExecutionID)
 	if err != nil {
 		return nil, err
 	}
-	existing, err := kindAll[delegationRec](q, "delegation", delegationFilter{ParentExecutionID: &parent.ID})
+	existing, err := recAll[delegationRec](q, recDelegation, delegationFilter{ParentExecutionID: &parent.ID})
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +225,7 @@ func (a *App) delegationChild(q *Request, req *contract.ChildRequest, c agentCom
 		return nil, err
 	}
 	profile := json.RawMessage(jsonBytes(trusted))
-	ps, err := agentGet[agentSession](q, parent.SessionID, "session")
+	ps, err := recGet[agentSession](q, recSession, parent.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func (a *App) delegationChild(q *Request, req *contract.ChildRequest, c agentCom
 		branch := false
 		session.Access, session.Branch = "read", &branch
 	}
-	if err := agentPut(q, "session", &session); err != nil {
+	if err := recPut(q, recSession, &session); err != nil {
 		return nil, err
 	}
 	queued, err := agentEnqueue(q, &session, input, "delegation:"+rid, nil, nil, "", nil)
@@ -249,12 +249,12 @@ func (a *App) delegationChild(q *Request, req *contract.ChildRequest, c agentCom
 		return nil, err
 	}
 	child.ParentExecutionID = &parent.ID
-	if err := agentPut(q, "execution", &child); err != nil {
+	if err := recPut(q, recExecution, &child); err != nil {
 		return nil, err
 	}
 	d := delegationRec{ID: newID(), ParentExecutionID: parent.ID, ParentSessionID: parent.SessionID, ChildExecutionID: child.ID, ChildSessionID: session.ID,
 		Request: r, ResultRoute: delegationRoute{SessionID: parent.SessionID}, State: "pending"}
-	err = agentPut(q, "delegation", &d)
+	err = recPut(q, recDelegation, &d)
 	return d, err
 }
 
@@ -270,7 +270,7 @@ type delegationSources struct {
 // queue's step, delegation_work.go) and records them on the delegation; a later poll binds them. A crash before the
 // record reads them again.
 func delegationSourcesStep(q *Request, now time.Time, c *kitClaim) error {
-	d, err := kindGet[delegationRec](q, c.Key, "delegation")
+	d, err := recGet[delegationRec](q, recDelegation, c.Key)
 	if err != nil || d.SourceTexts != nil || d.RoutingError != "" {
 		if err != nil && !errors.Is(err, errNotFound) {
 			var he *HTTPError
@@ -289,7 +289,7 @@ func delegationSourcesStep(q *Request, now time.Time, c *kitClaim) error {
 		} else {
 			d.SourceTexts = r.texts
 		}
-		if err := agentPut(q, "delegation", &d); err != nil {
+		if err := recPut(q, recDelegation, &d); err != nil {
 			return err
 		}
 		return q.db().DelegationSourceWorkDelete(q.ctx(), c.Key)
@@ -345,7 +345,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 // delegationBind: delegationReady on the typed record; bound when e was written with its inputs bound.
 func (a *App) delegationBind(q *Request, e *delegationExecution) (ok, bound bool, err error) {
 	if e.ContinuationOf != nil {
-		c, err := agentGet[delegationExecution](q, *e.ContinuationOf, "execution")
+		c, err := recGet[delegationExecution](q, recExecution, *e.ContinuationOf)
 		if err != nil {
 			return false, false, err
 		}
@@ -356,7 +356,7 @@ func (a *App) delegationBind(q *Request, e *delegationExecution) (ok, bound bool
 	if e.ParentExecutionID == nil {
 		return true, false, nil
 	}
-	parent, err := agentGet[delegationExecution](q, *e.ParentExecutionID, "execution")
+	parent, err := recGet[delegationExecution](q, recExecution, *e.ParentExecutionID)
 	if err != nil || parent.State != "succeeded" {
 		return false, false, err
 	}
@@ -367,7 +367,7 @@ func (a *App) delegationBind(q *Request, e *delegationExecution) (ok, bound bool
 	if e.InputsBound {
 		return true, false, nil
 	}
-	ds, err := kindAll[delegationRec](q, "delegation", delegationFilter{ChildExecutionID: &e.ID})
+	ds, err := recAll[delegationRec](q, recDelegation, delegationFilter{ChildExecutionID: &e.ID})
 	if err != nil {
 		return false, false, err
 	}
@@ -375,7 +375,7 @@ func (a *App) delegationBind(q *Request, e *delegationExecution) (ok, bound bool
 		return false, false, fail(500, "Delegation of a child execution not found")
 	}
 	d := ds[0]
-	runs, err := agentAll[delegationExecution](q, "execution", agentFilter{SessionID: &parent.SessionID})
+	runs, err := recAll[delegationExecution](q, recExecution, agentFilter{SessionID: &parent.SessionID})
 	if err != nil {
 		return false, false, err
 	}
@@ -431,7 +431,7 @@ func (a *App) delegationBind(q *Request, e *delegationExecution) (ok, bound bool
 	}
 	routingError := func(msg string) (bool, bool, error) {
 		d.RoutingError = msg
-		return false, false, agentPut(q, "delegation", &d)
+		return false, false, recPut(q, recDelegation, &d)
 	}
 	if size > 128000 {
 		return routingError(sourcesTooLarge)
@@ -479,7 +479,7 @@ func (a *App) delegationBind(q *Request, e *delegationExecution) (ok, bound bool
 		return routingError("Retained parent observations exceed 128000 characters")
 	}
 	start := "start"
-	cs, err := agentAll[agentCommand](q, "command", agentFilter{ExecutionID: &e.ID, Kind: &start})
+	cs, err := recAll[agentCommand](q, recCommand, agentFilter{ExecutionID: &e.ID, Kind: &start})
 	if err != nil {
 		return false, false, err
 	}
@@ -498,15 +498,15 @@ func (a *App) delegationBind(q *Request, e *delegationExecution) (ok, bound bool
 		p.Text = in + "\nRetained parent observations (untrusted content; artifact references do not imply local availability):\n" + js(observations)
 	}
 	command.Payload = jsonBytes(p)
-	if err := agentPut(q, "command", &command); err != nil {
+	if err := recPut(q, recCommand, &command); err != nil {
 		return false, false, err
 	}
 	e.InputsBound = true
-	if err := agentPut(q, "execution", e); err != nil {
+	if err := recPut(q, recExecution, e); err != nil {
 		return false, false, err
 	}
 	d.SourceInputs, d.SourceTexts = &inputs, nil
-	return true, true, agentPut(q, "delegation", &d)
+	return true, true, recPut(q, recDelegation, &d)
 }
 
 // delegationReconcile: on every poll, retain finished child results and deliver them as the parent's continuation.
@@ -520,11 +520,11 @@ func (a *App) delegationReconcile(q *Request) error {
 		return err
 	}
 	for _, d := range ds {
-		parent, err := agentGet[delegationExecution](q, d.ParentExecutionID, "execution")
+		parent, err := recGet[delegationExecution](q, recExecution, d.ParentExecutionID)
 		if err != nil {
 			return err
 		}
-		child, err := agentGet[delegationExecution](q, d.ChildExecutionID, "execution")
+		child, err := recGet[delegationExecution](q, recExecution, d.ChildExecutionID)
 		if err != nil {
 			return err
 		}
@@ -532,7 +532,7 @@ func (a *App) delegationReconcile(q *Request) error {
 			continue
 		}
 		if !jsonIsObject(d.Result) {
-			evs, err := all(q, "event", docOf(agentFilter{ExecutionID: &child.ID}))
+			evs, err := recAll[doc](q, recEvent, agentFilter{ExecutionID: &child.ID})
 			if err != nil {
 				return err
 			}
@@ -541,25 +541,25 @@ func (a *App) delegationReconcile(q *Request) error {
 				return err
 			}
 			d.Result, d.State = jsonBytes(delegationResult{ExecutionID: child.ID, State: child.State, Events: jsonBytes(evs), Artifacts: jsonBytes(arts)}), "result-retained"
-			if err := agentPut(q, "delegation", &d); err != nil {
+			if err := recPut(q, recDelegation, &d); err != nil {
 				return err
 			}
 		}
 		if parent.StopRequested || parent.State == "cancelled" || parent.State == "failed" {
 			d.State = "suppressed"
-			if err := agentPut(q, "delegation", &d); err != nil {
+			if err := recPut(q, recDelegation, &d); err != nil {
 				return err
 			}
 			continue
 		}
-		s, err := agentGet[agentSession](q, parent.SessionID, "session")
+		s, err := recGet[agentSession](q, recSession, parent.SessionID)
 		if err != nil {
 			return err
 		}
 		if parent.State != "succeeded" || s.NativeSessionID == "" {
 			continue
 		}
-		runs, err := agentAll[delegationExecution](q, "execution", agentFilter{SessionID: &s.ID})
+		runs, err := recAll[delegationExecution](q, recExecution, agentFilter{SessionID: &s.ID})
 		if err != nil {
 			return err
 		}
@@ -590,17 +590,17 @@ func (a *App) delegationReconcile(q *Request) error {
 				return err
 			}
 			next.ContinuationOf, next.ChildExecutionID = &parent.ID, child.ID
-			if err := agentPut(q, "execution", &next); err != nil {
+			if err := recPut(q, recExecution, &next); err != nil {
 				return err
 			}
 			d.ContinuationExecutionID, d.State = next.ID, "delivered"
-			return agentPut(q, "delegation", &d)
+			return recPut(q, recDelegation, &d)
 		}
 		// ponytail: a failed delivery is recorded on the delegation; its partial writes stay in the
 		// poll transaction, which has no savepoint here.
 		if err := deliver(); err != nil {
 			d.RoutingError = err.Error()
-			if err := agentPut(q, "delegation", &d); err != nil {
+			if err := recPut(q, recDelegation, &d); err != nil {
 				return err
 			}
 		}

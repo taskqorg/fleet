@@ -109,9 +109,7 @@ func (run *runRecord) requirePlan() error {
 
 // conflictWithReason: a 409 whose body names its reason (HTTPError's extra fields).
 func conflictWithReason(msg, reason string) error {
-	return &HTTPError{Code: 409, Msg: msg, Extra: docOf(struct {
-		Reason string `json:"reason"`
-	}{reason})}
+	return &HTTPError{Code: 409, Msg: msg, Extra: reasonExtra{reason}}
 }
 
 func pipelineFormatError() error {
@@ -504,7 +502,7 @@ func handoffPipelineCommand(q *Request, execution, command doc) (bool, error) {
 		}
 		payload["runToken"], payload["connections"] = jsonBytes(*grants.Token), jsonBytes(grants.Connections)
 		cmd.Payload = jsonBytes(payload)
-		if err := kindPut(q, "command", cmd); err != nil {
+		if err := recWrite(q, recCommand, cmd); err != nil {
 			return false, err
 		}
 	}
@@ -1120,7 +1118,7 @@ func recoveryFence(q *Request, run *runRecord) error {
 		if execution == nil || job.PipelineRunID != run.ID || !same(derefAny(job.ProjectID), derefAny(run.ProjectID)) {
 			return fail(409, "Interrupted script ownership proof unavailable")
 		}
-		commands, err := all(q, "command", docOf(agentFilter{ExecutionID: &native}))
+		commands, err := recAll[doc](q, recCommand, agentFilter{ExecutionID: &native})
 		if err != nil {
 			return err
 		}
@@ -1137,7 +1135,7 @@ func recoveryFence(q *Request, run *runRecord) error {
 		if d == nil || deref(d.CommandId) != command.ID || d.CommandId == nil || deref(d.NativeExecutionId) != native || d.Phase != contract.PipelineDispatchPhaseHandedOff {
 			return fail(409, "Interrupted script handoff proof unavailable")
 		}
-		events, err := eventsWhere(q, docOf(pipelineEventFilter{ExecutionID: native, Type: "process.reconciled"}))
+		events, err := eventsWhere(q, pipelineEventFilter{ExecutionID: native, Type: "process.reconciled"})
 		if err != nil {
 			return err
 		}

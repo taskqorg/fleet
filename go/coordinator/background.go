@@ -1,11 +1,13 @@
 // Background scheduling (docs/designs/fleet-standard.md S6): the coordinator's periodic passes run only through every()
 // (everyWake when a wake also runs them) and its coalesced after-commit effects only through coalesced(); retried item work is the work kit's (work_kit.go).
-// This file owns the goroutines and timers those need (designRulesOwned).
+// Inside one call, a bounded fan-out runs only through parallel() and a bounded retry of one remote call only through
+// retryCall(). This file owns the goroutines and timers those need (designRulesOwned).
 package main
 
 import (
 	"context"
 	"log"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -112,4 +114,34 @@ func untilDone(ctx context.Context, name string, d time.Duration, fn func(contex
 			}
 		}
 	}()
+}
+
+// parallel runs fn for 0..n-1 inside the caller's call, at most workers at a time, and returns the results and errors
+// by index once all have run (a pass's side-by-side remote reads).
+func parallel[T any](n, workers int, fn func(i int) (T, error)) ([]T, []error) {
+	out, errs := make([]T, n), make([]error, n)
+	sem, wg := make(chan struct{}, max(workers, 1)), sync.WaitGroup{}
+	for i := range n {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			out[i], errs[i] = fn(i)
+		}()
+	}
+	wg.Wait()
+	return out, errs
+}
+
+// retryCall runs fn up to tries times inside the caller's call while retry holds for its error, waiting a full-jitter
+// pause of up to base*2^attempt (at most limit) between tries: a remote call's transient failure (an object store's
+// 5xx or a dropped connection), not item work that outlives the call (the work kit's).
+func retryCall[T any](tries int, base, limit time.Duration, retry func(error) bool, fn func() (T, error)) (T, error) {
+	for attempt := 0; ; attempt++ {
+		v, err := fn()
+		if err == nil || !retry(err) || attempt+1 >= tries {
+			return v, err
+		}
+		time.Sleep(time.Duration(rand.Float64() * float64(min(limit, base<<attempt))))
+	}
 }

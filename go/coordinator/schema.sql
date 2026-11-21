@@ -4301,3 +4301,14 @@ DO $$ DECLARE t text; BEGIN
  END LOOP;
 END $$;
 DROP TABLE document;
+
+-- migration 84: the background finish of a large upload on the work kit (docs/designs/fleet-standard.md S6, stage 8e):
+-- an upload whose finish runs outside its request has one upload_finish_work row until the finish is recorded
+-- (upload_work.go); the row is what every finish path answers {finishing} by, on any coordinator.
+CREATE TABLE upload_finish_work (
+ upload_id text PRIMARY KEY REFERENCES upload(id) ON DELETE CASCADE,
+ attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ last_error text NULL
+);
+CREATE INDEX upload_finish_work_due ON upload_finish_work(next_attempt_at);

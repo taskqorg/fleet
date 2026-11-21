@@ -140,7 +140,7 @@ func TestSessionTitles(t *testing.T) {
 	}
 	// A writer that read the session before the title and puts it back keeps the title (convPut).
 	if err := runTx(e.ctx, e.app, nil, true, NOLOCK, func(q *Request) error {
-		return put(q, "session", doc{"id": "s-done", "createdAt": 1, "workingDirectory": "/w"})
+		return recWrite(q, recSession, doc{"id": "s-done", "createdAt": 1, "workingDirectory": "/w"})
 	}); err != nil {
 		t.Fatal(err)
 	}

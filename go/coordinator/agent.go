@@ -3,8 +3,8 @@
 // host-agent binding (/api/hosts/agent-tools) of every call to the caller's own session.
 //
 // The records this area reads and writes (session, execution, command, message, queued message, handoff, question,
-// transition, fork) are Go structs: each is decoded once from the record helpers of records.go (get/all/put, which
-// still speak doc) and encoded once on the way back (agentGet/agentAll/agentPut). A record keeps the fields its struct
+// transition, fork) are Go structs: each is decoded once from its kind's typed queries (records.go: recGet, recAll) and
+// encoded once on the way back (recPut). A record keeps the fields its struct
 // does not name as stored (recordRest), since other areas write them.
 package main
 
@@ -117,7 +117,7 @@ func restEncode(v any, rest recordRest) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// agentFilter: a filter of all() (records.go) as its fields; an absent field filters nothing.
+// agentFilter: a record filter (recAll, records.go) as its fields; an absent field filters nothing.
 type agentFilter struct {
 	SessionID        *string `json:"sessionId,omitempty"`
 	SourceSessionID  *string `json:"sourceSessionId,omitempty"`
@@ -128,64 +128,7 @@ type agentFilter struct {
 	StartRequest     *string `json:"startRequest,omitempty"`
 	State            *string `json:"state,omitempty"`
 	Kind             *string `json:"kind,omitempty"`
-}
-
-// agentGet, agentGetForUpdate, agentMaybe, agentAll, agentPut: the record helpers of records.go on typed records, each
-// record converted once at the call.
-func agentGet[T any](q *Request, id, kind string) (T, error) {
-	d, err := get(q, id, kind)
-	if err != nil {
-		var none T
-		return none, err
-	}
-	return asT[T](d)
-}
-
-func agentGetForUpdate[T any](q *Request, id, kind string) (T, error) {
-	d, err := getForUpdate(q, id, kind)
-	if err != nil {
-		var none T
-		return none, err
-	}
-	return asT[T](d)
-}
-
-func agentMaybe[T any](q *Request, id, kind string) (*T, error) {
-	d, err := maybe(q, id, kind)
-	if err != nil || d == nil {
-		return nil, err
-	}
-	v, err := asT[T](d)
-	return &v, err
-}
-
-func agentAll[T any](q *Request, kind string, f agentFilter) ([]T, error) {
-	ds, err := all(q, kind, docOf(f))
-	if err != nil {
-		return nil, err
-	}
-	out := make([]T, 0, len(ds))
-	for _, d := range ds {
-		v, err := asT[T](d)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, nil
-}
-
-// agentPut writes v and reads back what put completed (a trace, a default).
-func agentPut[T any](q *Request, kind string, v *T) error {
-	d := docOf(*v)
-	if err := put(q, kind, d); err != nil {
-		return err
-	}
-	back, err := asT[T](d)
-	if err == nil {
-		*v = back
-	}
-	return err
+	Status           *string `json:"status,omitempty"`
 }
 
 // agentView: the fields T names of a value another area hands over as a map (a project, a profile, a run); a field of
@@ -307,10 +250,11 @@ type agentTransitionArgs struct {
 	CallerSessionID string          `json:"callerSessionId,omitempty"`
 }
 
-// agentSession: the session record (convTables "session").
+// agentSession: the session record (queries/records.sql "session").
 type agentSession struct {
 	ID                   string                 `json:"id"`
 	CreatedAt            int64                  `json:"createdAt,omitempty"`
+	ArchivedAt           *int64                 `json:"archivedAt,omitempty"`
 	ProjectID            string                 `json:"projectId,omitempty"`
 	TaskID               string                 `json:"taskId,omitempty"`
 	DeliveryID           string                 `json:"deliveryId,omitempty"`
@@ -436,7 +380,7 @@ func (e agentExecution) MarshalJSON() ([]byte, error) {
 func (e *agentExecution) terminal() bool    { return executionEnds(e.State) }
 func (e *agentExecution) unconfirmed() bool { return e.Observation == "unconfirmed" }
 
-// agentCommand: a host command record (convTables "command"; commandPut writes it).
+// agentCommand: a host command record (recCommand; commandRecPut writes it).
 type agentCommand struct {
 	ID          string          `json:"id"`
 	ExecutionID string          `json:"executionId,omitempty"`
@@ -459,7 +403,7 @@ func (c agentCommand) MarshalJSON() ([]byte, error) {
 	return restEncode(plain(c), c.rest)
 }
 
-// agentMessage: a sent message record (convTables "message").
+// agentMessage: a sent message record (queries/records.sql "message").
 type agentMessage struct {
 	ID                string          `json:"id"`
 	SessionID         string          `json:"sessionId,omitempty"`
@@ -484,7 +428,7 @@ func (m agentMessage) MarshalJSON() ([]byte, error) {
 	return restEncode(plain(m), m.rest)
 }
 
-// agentQueued: a queued message record (convTables "queued-message"): waiting, steering or started.
+// agentQueued: a queued message record (queries/records.sql "queued-message"): waiting, steering or started.
 type agentQueued struct {
 	ID                string          `json:"id"`
 	SessionID         string          `json:"sessionId,omitempty"`
@@ -516,7 +460,7 @@ func (m agentQueued) MarshalJSON() ([]byte, error) {
 	return restEncode(plain(m), m.rest)
 }
 
-// agentHandoff: a context handoff record (convTables "handoff").
+// agentHandoff: a context handoff record (queries/records.sql "handoff").
 type agentHandoff struct {
 	ID          string   `json:"id"`
 	SessionID   string   `json:"sessionId,omitempty"`
@@ -635,12 +579,12 @@ func (s *agentSession) continuationKey() string {
 
 // agentExecutions: the executions of a session, in order.
 func agentExecutions(q *Request, sid string) ([]agentExecution, error) {
-	return agentAll[agentExecution](q, "execution", agentFilter{SessionID: &sid})
+	return recAll[agentExecution](q, recExecution, agentFilter{SessionID: &sid})
 }
 
 // sessionExecutions: agentExecutions as records, for other areas.
 func sessionExecutions(q *Request, sid string) ([]doc, error) {
-	return all(q, "execution", docOf(agentFilter{SessionID: &sid}))
+	return recAll[doc](q, recExecution, agentFilter{SessionID: &sid})
 }
 
 func agentActive(q *Request, sid string) (*agentExecution, error) {
@@ -740,7 +684,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 		if transitionErr != nil {
 			return none, transitionErr
 		}
-		fresh, err := agentGet[agentSession](q, s.ID, "session")
+		fresh, err := recGet[agentSession](q, recSession, s.ID)
 		if err != nil {
 			return none, err
 		}
@@ -749,7 +693,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 	if s.DirectedBy == "" {
 		d := ""
 		for _, id := range []string{s.CreatedByExecutionID, s.ParentExecutionID} {
-			if x, err := agentMaybe[agentExecution](q, id, "execution"); err != nil {
+			if x, err := recMaybe[agentExecution](q, recExecution, id); err != nil {
 				return none, err
 			} else if d == "" && x != nil {
 				d = x.DirectedBy
@@ -765,7 +709,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 			}
 		}
 		s.DirectedBy = firstString(d, director(q))
-		if err := agentPut(q, "session", s); err != nil {
+		if err := recPut(q, recSession, s); err != nil {
 			return none, err
 		}
 	}
@@ -861,7 +805,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 	if prov != nil && validTraceparent(prov.Traceparent) {
 		e.Traceparent, e.TraceActor = prov.Traceparent, prov.TraceActor
 	}
-	if err := agentPut(q, "execution", &e); err != nil {
+	if err := recPut(q, recExecution, &e); err != nil {
 		return none, err
 	}
 	m := agentMessage{ID: newID(), SessionID: s.ID, ExecutionID: id, RequestID: requestID, Text: input, ProjectID: s.ProjectID, SentBy: director(q)}
@@ -879,7 +823,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 			m.Source = prov.Source
 		}
 	}
-	return e, agentPut(q, "message", &m)
+	return e, recPut(q, recMessage, &m)
 }
 
 func refreshProfile(q *Request, s *agentSession) error {
@@ -895,7 +839,7 @@ func refreshProfile(q *Request, s *agentSession) error {
 
 // queueView: a queued message as message_send and queue_list show it: its record, queued and its place in the queue.
 func queueView(q *Request, m agentQueued) (map[string]json.RawMessage, error) {
-	qs, err := agentAll[agentQueued](q, "queued-message", agentFilter{SessionID: &m.SessionID, State: ptr("queued")})
+	qs, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SessionID: &m.SessionID, State: ptr("queued")})
 	if err != nil {
 		return nil, err
 	}
@@ -964,7 +908,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 	if sid == "" {
 		return none, fail(400, "Expected sessionId")
 	}
-	s, err := agentGetForUpdate[agentSession](q, sid, "session")
+	s, err := recLocked[agentSession](q, recSession, sid)
 	if err != nil {
 		return none, err
 	}
@@ -986,20 +930,20 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 			return none, fail(400, "Expected setup run|skip")
 		}
 		s.Setup = setup
-		if err := agentPut(q, "session", &s); err != nil {
+		if err := recPut(q, recSession, &s); err != nil {
 			return none, err
 		}
 	}
-	if sent, err := agentAll[agentMessage](q, "message", agentFilter{SessionID: &sid, RequestID: &requestID}); err != nil {
+	if sent, err := recAll[agentMessage](q, recMessage, agentFilter{SessionID: &sid, RequestID: &requestID}); err != nil {
 		return none, err
 	} else if len(sent) > 0 {
 		if sent[0].Text != text || strings.Join(sent[0].AttachmentRequest, ",") != strings.Join(ids, ",") {
 			return none, fail(409, "Request identity conflict")
 		}
-		e, err := agentGet[agentExecution](q, sent[0].ExecutionID, "execution")
+		e, err := recGet[agentExecution](q, recExecution, sent[0].ExecutionID)
 		return agentSubmitted{execution: &e}, err
 	}
-	if queued, err := agentAll[agentQueued](q, "queued-message", agentFilter{SessionID: &sid, RequestID: &requestID}); err != nil {
+	if queued, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SessionID: &sid, RequestID: &requestID}); err != nil {
 		return none, err
 	} else if len(queued) > 0 {
 		if queued[0].Text != text || strings.Join(queued[0].AttachmentRequest, ",") != strings.Join(ids, ",") {
@@ -1020,7 +964,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 	if err != nil {
 		return none, err
 	}
-	waiting, err := agentAll[agentQueued](q, "queued-message", agentFilter{SessionID: &sid, State: ptr("queued")})
+	waiting, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SessionID: &sid, State: ptr("queued")})
 	if err != nil {
 		return none, err
 	}
@@ -1058,13 +1002,13 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 				NativeSessionID string `json:"nativeSessionId,omitempty"`
 			}{text, s.NativeSessionID}
 			c := agentCommand{ID: newID(), ExecutionID: active.ID, SessionID: sid, HostID: deref(active.HostID), ProjectID: s.ProjectID, Kind: "steer", Payload: jsonBytes(payload), Status: "pending"}
-			if err := agentPut(q, "command", &c); err != nil {
+			if err := recPut(q, recCommand, &c); err != nil {
 				return none, err
 			}
 			m.State, m.SteerCommandID, m.ExecutionID = "steering", c.ID, active.ID
 		}
 	}
-	if err := agentPut(q, "queued-message", &m); err != nil {
+	if err := recPut(q, recQueuedMessage, &m); err != nil {
 		return none, err
 	}
 	v, err := queueView(q, m)
@@ -1074,7 +1018,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 // agentPromote starts the oldest queued message of every idle session (call after an execution ends).
 // It acquires canonical session:<id> locks in order to serialize with concurrent message_send calls.
 func agentPromote(q *Request) error {
-	queued, err := agentAll[agentQueued](q, "queued-message", agentFilter{State: ptr("queued")})
+	queued, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{State: ptr("queued")})
 	if err != nil || len(queued) == 0 {
 		return err
 	}
@@ -1103,7 +1047,7 @@ func agentPromote(q *Request) error {
 		if err := acquireTxLock(q, orderable...); err != nil {
 			return err
 		}
-		queued, err = agentAll[agentQueued](q, "queued-message", agentFilter{State: ptr("queued")})
+		queued, err = recAll[agentQueued](q, recQueuedMessage, agentFilter{State: ptr("queued")})
 		if err != nil {
 			return err
 		}
@@ -1136,7 +1080,7 @@ func agentPromote(q *Request) error {
 			continue
 		}
 		e, err := func() (agentExecution, error) {
-			s, err := agentGetForUpdate[agentSession](q, sid, "session")
+			s, err := recLocked[agentSession](q, recSession, sid)
 			if err != nil {
 				return agentExecution{}, err
 			}
@@ -1159,7 +1103,7 @@ func agentPromote(q *Request) error {
 		} else {
 			m.State, m.ExecutionID, m.Error = "started", e.ID, ""
 		}
-		if err := agentPut(q, "queued-message", &m); err != nil {
+		if err := recPut(q, recQueuedMessage, &m); err != nil {
 			return err
 		}
 	}
@@ -1182,7 +1126,7 @@ func agentOnReceipt(q *Request, c, e doc, status string) error {
 // agentCommandReceipt: steer queue state, the completion wake and handoff delivery state for a receipt (status legacy).
 func agentCommandReceipt(q *Request, c *agentCommand, e *agentExecution, status string) error {
 	if c.Kind == "steer" {
-		ms, err := agentAll[agentQueued](q, "queued-message", agentFilter{SteerCommandID: &c.ID})
+		ms, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SteerCommandID: &c.ID})
 		if err != nil || len(ms) == 0 {
 			return err
 		}
@@ -1198,7 +1142,7 @@ func agentCommandReceipt(q *Request, c *agentCommand, e *agentExecution, status 
 		case "unknown":
 			m.State = "steer_unknown"
 		}
-		return agentPut(q, "queued-message", &m)
+		return recPut(q, recQueuedMessage, &m)
 	}
 	if c.Kind != "start" {
 		return nil
@@ -1211,7 +1155,7 @@ func agentCommandReceipt(q *Request, c *agentCommand, e *agentExecution, status 
 	if e.HandoffID == "" {
 		return nil
 	}
-	h, err := agentGet[agentHandoff](q, e.HandoffID, "handoff")
+	h, err := recGet[agentHandoff](q, recHandoff, e.HandoffID)
 	if err != nil || h.State != "sent" {
 		return err
 	}
@@ -1222,23 +1166,23 @@ func agentCommandReceipt(q *Request, c *agentCommand, e *agentExecution, status 
 		h.State = "unconfirmed"
 	case "failed", "stopped":
 		h.State = "pending"
-		s, err := agentGet[agentSession](q, e.SessionID, "session")
+		s, err := recGet[agentSession](q, recSession, e.SessionID)
 		if err != nil {
 			return err
 		}
 		if s.PendingHandoffID == "" && !jsonGiven(e.StartedAt) {
 			s.PendingHandoffID = h.ID
-			if err := agentPut(q, "session", &s); err != nil {
+			if err := recPut(q, recSession, &s); err != nil {
 				return err
 			}
 		}
 	}
-	return agentPut(q, "handoff", &h)
+	return recPut(q, recHandoff, &h)
 }
 
 // wake: a child session's finished turn becomes the next message of the session that created it.
 func wake(q *Request, e *agentExecution, status string) error {
-	s, err := agentGet[agentSession](q, e.SessionID, "session")
+	s, err := recGet[agentSession](q, recSession, e.SessionID)
 	if err != nil {
 		return err
 	}
@@ -1251,7 +1195,7 @@ func wake(q *Request, e *agentExecution, status string) error {
 			return err
 		}
 	}
-	fresh, err := agentGet[agentExecution](q, e.ID, "execution")
+	fresh, err := recGet[agentExecution](q, recExecution, e.ID)
 	if err != nil {
 		return err
 	}
@@ -1306,29 +1250,29 @@ func agentDecorateStart(q *Request, s *agentSession, e *agentExecution, payload 
 		e.ForkOfNativeSessionID = f
 	}
 	if hid := s.PendingHandoffID; hid != "" {
-		h, err := agentGet[agentHandoff](q, hid, "handoff")
+		h, err := recGet[agentHandoff](q, recHandoff, hid)
 		if err != nil {
 			return err
 		}
 		text := h.Text + "\n\nCurrent request:\n" + deref(payload.Text)
 		payload.Text = &text
 		h.State, h.ExecutionID = "sent", e.ID
-		if err := agentPut(q, "handoff", &h); err != nil {
+		if err := recPut(q, recHandoff, &h); err != nil {
 			return err
 		}
 		e.HandoffID = h.ID
-		fresh, err := agentGet[agentSession](q, s.ID, "session")
+		fresh, err := recGet[agentSession](q, recSession, s.ID)
 		if err != nil {
 			return err
 		}
 		fresh.PendingHandoffID, s.PendingHandoffID = "", ""
-		return agentPut(q, "session", &fresh)
+		return recPut(q, recSession, &fresh)
 	}
 	return nil
 }
 
 func agentKnownNative(q *Request, e *agentExecution) (string, error) {
-	s, err := agentGet[agentSession](q, e.SessionID, "session")
+	s, err := recGet[agentSession](q, recSession, e.SessionID)
 	if err != nil {
 		return "", err
 	}
@@ -1341,7 +1285,7 @@ func agentKnownNative(q *Request, e *agentExecution) (string, error) {
 
 // agentCaptureNative: keep the native id per continuation identity as the executor reports it.
 func agentCaptureNative(q *Request, e *agentExecution, id string) error {
-	s, err := agentGetForUpdate[agentSession](q, e.SessionID, "session")
+	s, err := recLocked[agentSession](q, recSession, e.SessionID)
 	if err != nil {
 		return err
 	}
@@ -1363,7 +1307,7 @@ func agentCaptureNative(q *Request, e *agentExecution, id string) error {
 	if key == s.continuationKey() {
 		s.NativeSessionID, s.ForkNativeSessionID = id, ""
 	}
-	return agentPut(q, "session", &s)
+	return recPut(q, recSession, &s)
 }
 func resumeArgv(h, id, effort string) any {
 	switch h {
@@ -1473,7 +1417,7 @@ func transcript(q *Request, sid string) ([]agentTurn, error) {
 	if err != nil {
 		return nil, err
 	}
-	msgs, err := agentAll[agentMessage](q, "message", agentFilter{SessionID: &sid})
+	msgs, err := recAll[agentMessage](q, recMessage, agentFilter{SessionID: &sid})
 	if err != nil {
 		return nil, err
 	}
@@ -1534,7 +1478,7 @@ func makeHandoff(q *Request, s *agentSession, turns []agentTurn, strategy, sourc
 	}
 	h := agentHandoff{ID: newID(), SessionID: s.ID, Strategy: strategy, Source: source, ToKey: s.continuationKey(), Turns: ids, Text: renderHandoff(turns, strategy, source), State: "pending", CreatedAt: nowMs()}
 	s.PendingHandoffID = h.ID
-	return &h, agentPut(q, "handoff", &h)
+	return &h, recPut(q, recHandoff, &h)
 }
 
 var accountPattern = regexp.MustCompile(`^(?:[a-z][a-z0-9-]{0,79}|[a-f0-9-]{36})$`)
@@ -1576,7 +1520,7 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 	if sid == "" {
 		return none, fail(400, "Expected sessionId")
 	}
-	s, err := agentGetForUpdate[agentSession](q, sid, "session")
+	s, err := recLocked[agentSession](q, recSession, sid)
 	if err != nil {
 		return none, err
 	}
@@ -1645,7 +1589,7 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 			}
 		}
 		s.PendingTransition = &pending
-		if err := agentPut(q, "session", &s); err != nil {
+		if err := recPut(q, recSession, &s); err != nil {
 			return none, err
 		}
 		return contract.SessionTransitionReply{SessionId: sid, ProfileId: pid, ProjectId: &project, Transition: "queued"}, nil
@@ -1684,7 +1628,7 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 				continue
 			}
 			seen[key] = true
-			cleanup, err := teardownCommand(q, docOf(s), docOf(old), false)
+			cleanup, err := teardownCommand(q, s, old, false)
 			if err != nil {
 				return none, err
 			}
@@ -1729,7 +1673,7 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 			return none, err
 		}
 	}
-	if err := agentPut(q, "session", &next); err != nil {
+	if err := recPut(q, recSession, &next); err != nil {
 		return none, err
 	}
 	var hid *string
@@ -1737,7 +1681,7 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 		hid = &h.ID
 	}
 	t := agentTransitionRecord{ID: newID(), SessionID: sid, Type: typ, FromKey: fromKey, ToKey: toKey, ProfileID: target.ID, HandoffID: hid, At: nowMs()}
-	if err := agentPut(q, "session-transition", &t); err != nil {
+	if err := recPut(q, recSessionTransition, &t); err != nil {
 		return none, err
 	}
 	return contract.SessionTransitionReply{SessionId: sid, ProfileId: target.ID, Account: agentOpt(next.Account), ProjectId: agentOpt(next.ProjectID), Transition: typ, HandoffId: hid,
@@ -1758,7 +1702,7 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 	if sid == "" {
 		return none, fail(400, "Expected sessionId")
 	}
-	source, err := agentGet[agentSession](q, sid, "session")
+	source, err := recGet[agentSession](q, recSession, sid)
 	if err != nil {
 		return none, err
 	}
@@ -1766,7 +1710,7 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 	if rid == "" {
 		return none, fail(400, "Expected requestId")
 	}
-	if old, err := agentAll[agentForkRecord](q, "session-fork", agentFilter{SourceSessionID: &sid, RequestID: &rid}); err != nil || len(old) > 0 {
+	if old, err := recAll[agentForkRecord](q, recSessionFork, agentFilter{SourceSessionID: &sid, RequestID: &rid}); err != nil || len(old) > 0 {
 		if err != nil {
 			return none, err
 		}
@@ -1804,7 +1748,7 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 	if r.CallerSessionId != nil {
 		s.CreatedBySessionID = *r.CallerSessionId
 	}
-	if err := agentPut(q, "session", &s); err != nil {
+	if err := recPut(q, recSession, &s); err != nil {
 		return none, err
 	}
 	if strategy == "native" {
@@ -1818,11 +1762,11 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 			return none, err
 		}
 	}
-	if err := agentPut(q, "session", &s); err != nil {
+	if err := recPut(q, recSession, &s); err != nil {
 		return none, err
 	}
 	f := agentForkRecord{ID: newID(), RequestID: rid, SourceSessionID: sid, SessionID: s.ID, Strategy: strategy, HandoffID: agentOpt(s.PendingHandoffID), At: nowMs()}
-	if err := agentPut(q, "session-fork", &f); err != nil {
+	if err := recPut(q, recSessionFork, &f); err != nil {
 		return none, err
 	}
 	if t := deref(r.Text); t != "" {
@@ -1850,7 +1794,7 @@ func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
 	if eid == "" {
 		return nil, fail(400, "Expected executionId")
 	}
-	e, err := agentGet[agentExecution](q, eid, "execution")
+	e, err := recGet[agentExecution](q, recExecution, eid)
 	if err != nil {
 		return nil, err
 	}
@@ -1858,7 +1802,7 @@ func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
 		if r.Question != nil || r.RequestId != nil || r.TaskId != nil {
 			return nil, fail(400, "Use question + requestId for a fresh ask, or resume=<questionId> alone to read an existing answer; resume is not continuation prose")
 		}
-		qu, err := agentGet[agentQuestion](q, rid, "question")
+		qu, err := recGet[agentQuestion](q, recQuestion, rid)
 		if err != nil {
 			return nil, err
 		}
@@ -1901,7 +1845,7 @@ func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
 		}
 		taskID, projectID = tid, tp
 	}
-	if old, err := agentAll[agentQuestion](q, "question", agentFilter{ExecutionID: &eid, RequestID: &rid}); err != nil {
+	if old, err := recAll[agentQuestion](q, recQuestion, agentFilter{ExecutionID: &eid, RequestID: &rid}); err != nil {
 		return nil, err
 	} else if len(old) > 0 {
 		if old[0].Question != question || deref(old[0].TaskID) != taskID {
@@ -1909,7 +1853,7 @@ func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
 		}
 		return recOf(old[0]), nil
 	}
-	s, err := agentGet[agentSession](q, e.SessionID, "session")
+	s, err := recGet[agentSession](q, recSession, e.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -1922,7 +1866,7 @@ func agentAsk(q *Request, r *contract.AskRequest) (contract.AskReply, error) {
 		}
 	}
 	qu := agentQuestion{ID: newID(), ExecutionID: eid, SessionID: e.SessionID, ProjectID: agentOpt(projectID), TaskID: agentOpt(taskID), RequestID: rid, Question: question, State: "open", CreatedAt: nowMs()}
-	if err := agentPut(q, "question", &qu); err != nil {
+	if err := recPut(q, recQuestion, &qu); err != nil {
 		return nil, err
 	}
 	out := recOf(qu) // a fresh question shows its missing project and task as null
@@ -1948,7 +1892,7 @@ func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, er
 	if qid == "" {
 		return nil, fail(400, "Expected questionId")
 	}
-	qu, err := agentGet[agentQuestion](q, qid, "question")
+	qu, err := recGet[agentQuestion](q, recQuestion, qid)
 	if err != nil {
 		return nil, err
 	}
@@ -1963,7 +1907,7 @@ func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, er
 		return recOf(qu), nil
 	}
 	if qu.ProjectID == nil { // a question asked before it carried its session's project
-		s, err := agentGet[agentSession](q, qu.SessionID, "session")
+		s, err := recGet[agentSession](q, recSession, qu.SessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -1980,7 +1924,7 @@ func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, er
 	} else {
 		qu.Delivery = &agentQuestionDelivery{ExecutionID: d.execution.ID}
 	}
-	err = agentPut(q, "question", &qu)
+	err = recPut(q, recQuestion, &qu)
 	return recOf(qu), err
 }
 
@@ -1990,12 +1934,12 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 	if eid == "" {
 		return none, fail(400, "Expected executionId")
 	}
-	e, err := agentGet[agentExecution](q, eid, "execution")
+	e, err := recGet[agentExecution](q, recExecution, eid)
 	if err != nil {
 		return none, err
 	}
 	record := func(r contract.WorkerDoneReply) (contract.WorkerDoneReply, error) {
-		return r, put(q, "worker-done", docOf(r))
+		return r, recWrite(q, recWorkerDone, r)
 	}
 	reject := func(code, reason string) (contract.WorkerDoneReply, error) {
 		id, at := newID(), nowMs()
@@ -2033,14 +1977,14 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 	}
 	report := contract.WorkerReport{Outcome: outcome, Summary: summary, At: nowMs()}
 	e.Report = &report
-	if err := agentPut(q, "execution", &e); err != nil {
+	if err := recPut(q, recExecution, &e); err != nil {
 		return none, err
 	}
-	if ds, err := agentAll[agentDelegation](q, "delegation", agentFilter{ChildExecutionID: &eid}); err != nil {
+	if ds, err := recAll[agentDelegation](q, recDelegation, agentFilter{ChildExecutionID: &eid}); err != nil {
 		return none, err
 	} else if len(ds) > 0 {
 		ds[0].Report = &report
-		if err := agentPut(q, "delegation", &ds[0]); err != nil {
+		if err := recPut(q, recDelegation, &ds[0]); err != nil {
 			return none, err
 		}
 	}
@@ -2070,7 +2014,7 @@ func stopOutcome(q *Request, e doc) (contract.StopOutcome, error) {
 
 // agentStopOutcome: proven only when a host receipt ended the execution; otherwise unknown.
 func agentStopOutcome(q *Request, e *agentExecution) (contract.StopOutcome, error) {
-	cs, err := agentAll[agentCommand](q, "command", agentFilter{ExecutionID: &e.ID, Kind: ptr("stop")})
+	cs, err := recAll[agentCommand](q, recCommand, agentFilter{ExecutionID: &e.ID, Kind: ptr("stop")})
 	if err != nil {
 		return contract.StopOutcome{}, err
 	}
@@ -2098,7 +2042,7 @@ func executionStatus(q *Request, r *contract.ExecutionStatusRequest) (contract.E
 	if eid == "" {
 		return rep, fail(400, "Expected executionId")
 	}
-	e, err := agentGet[agentExecution](q, eid, "execution")
+	e, err := recGet[agentExecution](q, recExecution, eid)
 	if err != nil {
 		return rep, err
 	}
@@ -2176,48 +2120,48 @@ type (
 // agentReconcile settles coordinator-owned queue and handoff state and reports unproven executions; nothing is replayed.
 func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 	items := []any{}
-	steering, err := agentAll[agentQueued](q, "queued-message", agentFilter{State: ptr("steering")})
+	steering, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{State: ptr("steering")})
 	if err != nil {
 		return nil, err
 	}
 	for _, m := range steering {
-		c, err := agentGet[agentCommand](q, m.SteerCommandID, "command")
+		c, err := recGet[agentCommand](q, recCommand, m.SteerCommandID)
 		if err != nil {
 			return nil, err
 		}
-		e, err := agentGet[agentExecution](q, m.ExecutionID, "execution")
+		e, err := recGet[agentExecution](q, recExecution, m.ExecutionID)
 		if err != nil {
 			return nil, err
 		}
 		if e.terminal() && c.Status == "pending" {
 			m.State, m.SteerCommandID = "queued", ""
-			if err := agentPut(q, "queued-message", &m); err != nil {
+			if err := recPut(q, recQueuedMessage, &m); err != nil {
 				return nil, err
 			}
 			items = append(items, agentSteerRequeued{"steer_requeued", m.ID})
 		}
 	}
-	sent, err := agentAll[agentHandoff](q, "handoff", agentFilter{State: ptr("sent")})
+	sent, err := recAll[agentHandoff](q, recHandoff, agentFilter{State: ptr("sent")})
 	if err != nil {
 		return nil, err
 	}
 	for _, h := range sent {
-		e, err := agentGet[agentExecution](q, h.ExecutionID, "execution")
+		e, err := recGet[agentExecution](q, recExecution, h.ExecutionID)
 		if err != nil {
 			return nil, err
 		}
 		if e.terminal() && !jsonGiven(e.StartedAt) {
 			h.State = "pending"
-			if err := agentPut(q, "handoff", &h); err != nil {
+			if err := recPut(q, recHandoff, &h); err != nil {
 				return nil, err
 			}
-			s, err := agentGet[agentSession](q, h.SessionID, "session")
+			s, err := recGet[agentSession](q, recSession, h.SessionID)
 			if err != nil {
 				return nil, err
 			}
 			if s.PendingHandoffID == "" {
 				s.PendingHandoffID = h.ID
-				if err := agentPut(q, "session", &s); err != nil {
+				if err := recPut(q, recSession, &s); err != nil {
 					return nil, err
 				}
 			}
@@ -2227,7 +2171,7 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 	if err := agentPromote(q); err != nil {
 		return nil, err
 	}
-	es, err := agentAll[agentExecution](q, "execution", agentFilter{})
+	es, err := recAll[agentExecution](q, recExecution, agentFilter{})
 	if err != nil {
 		return nil, err
 	}
@@ -2235,7 +2179,7 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 		if e.terminal() {
 			continue
 		}
-		starts, err := agentAll[agentCommand](q, "command", agentFilter{ExecutionID: &e.ID, Kind: ptr("start")})
+		starts, err := recAll[agentCommand](q, recCommand, agentFilter{ExecutionID: &e.ID, Kind: ptr("start")})
 		if err != nil {
 			return nil, err
 		}
@@ -2248,13 +2192,13 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 		}
 		items = append(items, agentExecutionItem{"execution", e.ID, agentNullText(e.SessionID), e.State, class, next})
 	}
-	open, err := agentAll[agentQuestion](q, "question", agentFilter{State: ptr("open")})
+	open, err := recAll[agentQuestion](q, recQuestion, agentFilter{State: ptr("open")})
 	if err != nil {
 		return nil, err
 	}
 	for _, qu := range open {
 		asker := json.RawMessage("null")
-		if e, _ := agentMaybe[agentExecution](q, qu.ExecutionID, "execution"); e != nil {
+		if e, _ := recMaybe[agentExecution](q, recExecution, qu.ExecutionID); e != nil {
 			asker = agentNullText(e.State)
 		}
 		items = append(items, agentQuestionOpen{"question_open", qu.ID, asker})
@@ -2270,7 +2214,7 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 
 // sessionView: a session's queue, questions, handoffs, transitions and forks (session_get), as a map for sessions.go.
 func sessionView(q *Request, sid string) (doc, error) {
-	ms, err := agentAll[agentQueued](q, "queued-message", agentFilter{SessionID: &sid})
+	ms, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SessionID: &sid})
 	if err != nil {
 		return nil, err
 	}
@@ -2289,7 +2233,7 @@ func sessionView(q *Request, sid string) (doc, error) {
 		}
 		out.Queued = append(out.Queued, v)
 	}
-	questions, err := all(q, "question", docOf(agentFilter{SessionID: &sid}))
+	questions, err := recAll[doc](q, recQuestion, agentFilter{SessionID: &sid})
 	if err != nil {
 		return nil, err
 	}
@@ -2297,17 +2241,17 @@ func sessionView(q *Request, sid string) (doc, error) {
 	if out.Handoffs, err = sessionHandoffs(q, sid, false); err != nil {
 		return nil, err
 	}
-	transitions, err := all(q, "session-transition", docOf(agentFilter{SessionID: &sid}))
+	transitions, err := recAll[doc](q, recSessionTransition, agentFilter{SessionID: &sid})
 	if err != nil {
 		return nil, err
 	}
 	out.Transitions = recsOf(transitions)
-	forks, err := all(q, "session-fork", docOf(agentFilter{SourceSessionID: &sid}))
+	forks, err := recAll[doc](q, recSessionFork, agentFilter{SourceSessionID: &sid})
 	out.Forks = recsOf(forks)
 	return docOf(out), err
 }
 
-// sessionHandoffs: a session's handoff records (the handoff record of convTables), with or without their text.
+// sessionHandoffs: a session's handoff records (recHandoff), with or without their text.
 func sessionHandoffs(q *Request, sid string, text bool) ([]map[string]json.RawMessage, error) {
 	hs, err := q.db().AgentSessionHandoffs(q.ctx(), sid)
 	if err != nil {
@@ -2387,11 +2331,11 @@ func projectReadiness(q *Request, r *contract.ProjectReadinessRequest) (contract
 		}
 		sid, id := newID(), newID()
 		s := agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker", ProjectID: pid, ReadinessOfSessionID: deref(r.CallerSessionId)}
-		if err := agentPut(q, "session", &s); err != nil {
+		if err := recPut(q, recSession, &s); err != nil {
 			return none, err
 		}
 		e := agentExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: &hid, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", ProjectID: pid}
-		if err := agentPut(q, "execution", &e); err != nil {
+		if err := recPut(q, recExecution, &e); err != nil {
 			return none, err
 		}
 		roles := map[string]string{}
@@ -2413,7 +2357,7 @@ func projectReadiness(q *Request, r *contract.ProjectReadinessRequest) (contract
 			ProjectID string                     `json:"projectId"`
 			Project   map[string]json.RawMessage `json:"project"`
 		}{pid, pr})}
-		if err := agentPut(q, "command", &c); err != nil {
+		if err := recPut(q, recCommand, &c); err != nil {
 			return none, err
 		}
 		hosts = append(hosts, contract.ProjectReadinessHost{HostId: hid, ExecutionId: &id})
@@ -2446,7 +2390,7 @@ func sessionAttach(q *Request, r *contract.SessionTaskAttachRequest) (contract.S
 	if sid == "" {
 		return none, fail(400, "Expected sessionId")
 	}
-	s, err := agentGetForUpdate[agentSession](q, sid, "session")
+	s, err := recLocked[agentSession](q, recSession, sid)
 	if err != nil {
 		return none, err
 	}
@@ -2483,7 +2427,7 @@ func sessionAttach(q *Request, r *contract.SessionTaskAttachRequest) (contract.S
 		}
 	}
 	s.TaskID = tid
-	return contract.SessionTaskAttachReply{SessionId: sid, TaskId: tid}, agentPut(q, "session", &s)
+	return contract.SessionTaskAttachReply{SessionId: sid, TaskId: tid}, recPut(q, recSession, &s)
 }
 
 func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.SessionStartReply, error) {
@@ -2514,7 +2458,7 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 		}
 		key = "-:" + q.person.Email + ":" + rid
 	}
-	if old, err := agentAll[agentSession](q, "session", agentFilter{StartRequest: &key}); err != nil {
+	if old, err := recAll[agentSession](q, recSession, agentFilter{StartRequest: &key}); err != nil {
 		return none, err
 	} else if len(old) > 0 {
 		o := old[0]
@@ -2621,7 +2565,7 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 	if q.person != nil {
 		directedBy = q.person.Email
 	} else if c := deref(r.CallerExecutionId); c != "" {
-		if e, _ := agentMaybe[agentExecution](q, c, "execution"); e != nil {
+		if e, _ := recMaybe[agentExecution](q, recExecution, c); e != nil {
 			directedBy = e.DirectedBy
 		}
 	}
@@ -2649,7 +2593,7 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 			s.Starter = pre.Name + ": " + pre.Starter
 		}
 	}
-	if err := agentPut(q, "session", &s); err != nil {
+	if err := recPut(q, recSession, &s); err != nil {
 		return none, err
 	}
 	out := contract.SessionStartReply{SessionId: s.ID, ProjectId: agentNullText(pid), TaskId: agentNullText(taskID), Role: agentNullText(role), ProfileId: agentNullText(agentView[agentProfile](profile).ID),
@@ -2722,7 +2666,7 @@ func init() {
 		return out.reply(), nil
 	})
 	op("queue_list", func(q *Request, b *contract.QueueListRequest) (contract.QueueListReply, error) {
-		ms, err := agentAll[agentQueued](q, "queued-message", agentFilter{SessionID: agentOpt(deref(b.SessionId))})
+		ms, err := recAll[agentQueued](q, recQueuedMessage, agentFilter{SessionID: agentOpt(deref(b.SessionId))})
 		out := []map[string]json.RawMessage{}
 		for _, m := range ms {
 			v, err := queueView(q, m)
@@ -2736,7 +2680,7 @@ func init() {
 	op("ask", agentAsk)
 	op("reply", agentReplyTo)
 	op("questions", func(q *Request, b *contract.QuestionsRequest) (contract.QuestionsReply, error) {
-		qs, err := all(q, "question", docOf(agentFilter{SessionID: agentOpt(deref(b.SessionId)), State: agentOpt(deref(b.State))}))
+		qs, err := recAll[doc](q, recQuestion, agentFilter{SessionID: agentOpt(deref(b.SessionId)), State: agentOpt(deref(b.State))})
 		return contract.QuestionsReply{Questions: recsOf(qs)}, err
 	})
 	op("worker_done", workerDone)
@@ -2773,7 +2717,7 @@ func init() {
 					return fail(403, "Execution rejected")
 				}
 			}
-			c, err := agentGet[agentCommand](q, b.CommandId, "command")
+			c, err := recGet[agentCommand](q, recCommand, b.CommandId)
 			if err != nil {
 				return err
 			}
@@ -2781,16 +2725,17 @@ func init() {
 				return fail(403, "Command rejected")
 			}
 			if sid := e.SessionID; sid != "" {
-				if s, err := agentMaybe[agentSession](q, sid, "session"); err != nil {
+				if s, err := recMaybe[agentSession](q, recSession, sid); err != nil {
 					return err
 				} else if s != nil {
 					focus, sessionProject, focused = focusIDsOf(s.Focus), s.ProjectID, s.Focus != nil
 				}
 			}
 			// A call without an execution (initialize, tools/list) acts for the host's holder; never an implicit owner.
-			holder := agentView[struct {
-				Holder string `json:"holder"`
-			}](q.host).Holder
+			holder := ""
+			if q.host != nil {
+				holder = q.host.Holder
+			}
 			d := firstString(e.DirectedBy, holder)
 			if q.person = q.peopleSnapshot().person(d); q.person == nil {
 				return fail(403, "Director "+d+" is not a person of this Fleet")
@@ -3031,7 +2976,7 @@ func focusSet(q *Request, r *contract.FocusSetRequest) (contract.FocusSetReply, 
 	if sid == "" {
 		return none, fail(400, "Expected sessionId")
 	}
-	s, err := agentGet[agentSession](q, sid, "session")
+	s, err := recGet[agentSession](q, recSession, sid)
 	if err != nil {
 		return none, err
 	}
@@ -3054,7 +2999,7 @@ func focusSet(q *Request, r *contract.FocusSetRequest) (contract.FocusSetReply, 
 		v = jsonBytes(ids)
 	}
 	s.Focus = &agentFocus{ProjectIDs: v}
-	if err := agentPut(q, "session", &s); err != nil {
+	if err := recPut(q, recSession, &s); err != nil {
 		return none, err
 	}
 	return contract.FocusSetReply{SessionId: sid, Focus: contract.Focus{ProjectIds: v}}, nil
@@ -3122,13 +3067,13 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 	if a == nil {
 		a = map[string]json.RawMessage{}
 	}
-	e, err := agentGet[agentExecution](q, executionID, "execution")
+	e, err := recGet[agentExecution](q, recExecution, executionID)
 	if err != nil {
 		return nil, err
 	}
 	own := e.SessionID
 	ownProject := func() (string, error) {
-		s, err := agentGet[agentSession](q, own, "session")
+		s, err := recGet[agentSession](q, recSession, own)
 		if err != nil {
 			return "", err
 		}
@@ -3150,7 +3095,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 			return nil
 		}
 		if sid != "" {
-			s, err := agentGet[agentSession](q, sid, "session")
+			s, err := recGet[agentSession](q, recSession, sid)
 			if err != nil {
 				return err
 			}
@@ -3163,7 +3108,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 	sessionArg, _ := jsonText(a["sessionId"])
 	switch {
 	case name == "execution_status" && jsonGiven(a["sessionId"]):
-		s, err := agentMaybe[agentSession](q, sessionArg, "session")
+		s, err := recMaybe[agentSession](q, recSession, sessionArg)
 		if err != nil {
 			return nil, err
 		}
@@ -3188,7 +3133,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 		if qid == "" {
 			return nil, fail(400, "Expected questionId")
 		}
-		qu, err := agentGet[agentQuestion](q, qid, "question")
+		qu, err := recGet[agentQuestion](q, recQuestion, qid)
 		if err != nil {
 			return nil, err
 		}
@@ -3246,7 +3191,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 		}
 	}
 	if name == "session_transition" {
-		target, err := agentGet[agentSession](q, sessionArg, "session")
+		target, err := recGet[agentSession](q, recSession, sessionArg)
 		if err != nil {
 			return nil, err
 		}

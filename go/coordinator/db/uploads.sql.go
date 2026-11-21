@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 )
 
 const uploadArtifactInsert = `-- name: UploadArtifactInsert :exec
@@ -81,6 +82,71 @@ type UploadDropParams struct {
 func (q *Queries) UploadDrop(ctx context.Context, arg UploadDropParams) error {
 	_, err := q.db.Exec(ctx, uploadDrop, arg.ID, arg.AgeSeconds)
 	return err
+}
+
+const uploadFinishWorkAdd = `-- name: UploadFinishWorkAdd :exec
+INSERT INTO upload_finish_work(upload_id) VALUES ($1) ON CONFLICT DO NOTHING
+`
+
+func (q *Queries) UploadFinishWorkAdd(ctx context.Context, uploadID string) error {
+	_, err := q.db.Exec(ctx, uploadFinishWorkAdd, uploadID)
+	return err
+}
+
+const uploadFinishWorkDelete = `-- name: UploadFinishWorkDelete :exec
+DELETE FROM upload_finish_work WHERE upload_id = $1
+`
+
+func (q *Queries) UploadFinishWorkDelete(ctx context.Context, uploadID string) error {
+	_, err := q.db.Exec(ctx, uploadFinishWorkDelete, uploadID)
+	return err
+}
+
+const uploadFinishWorkDue = `-- name: UploadFinishWorkDue :many
+SELECT upload_id, attempts FROM upload_finish_work WHERE next_attempt_at <= $1::pg_catalog.timestamptz ORDER BY next_attempt_at, upload_id LIMIT $2
+`
+
+type UploadFinishWorkDueParams struct {
+	Now time.Time
+	Lim int32
+}
+
+type UploadFinishWorkDueRow struct {
+	UploadID string
+	Attempts int32
+}
+
+// The work kit's due background finishes (upload_work.go).
+func (q *Queries) UploadFinishWorkDue(ctx context.Context, arg UploadFinishWorkDueParams) ([]UploadFinishWorkDueRow, error) {
+	rows, err := q.db.Query(ctx, uploadFinishWorkDue, arg.Now, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UploadFinishWorkDueRow
+	for rows.Next() {
+		var i UploadFinishWorkDueRow
+		if err := rows.Scan(&i.UploadID, &i.Attempts); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const uploadFinishing = `-- name: UploadFinishing :one
+SELECT EXISTS (SELECT 1 FROM upload_finish_work WHERE upload_id = $1)
+`
+
+// The upload's finish runs in the background (its work row is there).
+func (q *Queries) UploadFinishing(ctx context.Context, uploadID string) (bool, error) {
+	row := q.db.QueryRow(ctx, uploadFinishing, uploadID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const uploadGet = `-- name: UploadGet :one
