@@ -264,13 +264,24 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 				return err
 			}
 		}
-		if err := q.PeopleClear(ctx); err != nil {
+		if err := q.PeoplePruneRemoved(ctx, emails); err != nil {
+			return err
+		}
+		// Upsert non-owners before the owner so transferring owner: true between existing people never violates person_one_owner.
+		for _, isOwner := range []bool{false, true} {
+			for _, p := range list {
+				if p.Owner != isOwner {
+					continue
+				}
+				if err := q.PersonUpsert(ctx, db.PersonUpsertParams{Email: p.Email, Name: p.Name, Roles: p.Roles, Owner: p.Owner}); err != nil {
+					return err
+				}
+			}
+		}
+		if err := q.PersonGrantsClear(ctx); err != nil {
 			return err
 		}
 		for _, p := range list {
-			if err := q.PersonInsert(ctx, db.PersonInsertParams{Email: p.Email, Name: p.Name, Roles: p.Roles, Owner: p.Owner}); err != nil {
-				return err
-			}
 			for _, g := range p.Grants {
 				if err := q.PersonGrantInsert(ctx, db.PersonGrantInsertParams{Email: p.Email, ObjectKind: g.Kind, ObjectID: g.ID}); err != nil {
 					return err

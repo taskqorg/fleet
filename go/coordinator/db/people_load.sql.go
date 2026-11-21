@@ -33,15 +33,6 @@ func (q *Queries) PeopleChanged(ctx context.Context) error {
 	return err
 }
 
-const peopleClear = `-- name: PeopleClear :exec
-DELETE FROM person
-`
-
-func (q *Queries) PeopleClear(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, peopleClear)
-	return err
-}
-
 const peopleMarkRemovedRequesters = `-- name: PeopleMarkRemovedRequesters :exec
 UPDATE experiment SET requester_removed_at = now()
 WHERE requester_removed_at IS NULL AND requested_by IN (SELECT email FROM person WHERE NOT (email = ANY ($1::text[])))
@@ -49,6 +40,15 @@ WHERE requester_removed_at IS NULL AND requested_by IN (SELECT email FROM person
 
 func (q *Queries) PeopleMarkRemovedRequesters(ctx context.Context, emails []string) error {
 	_, err := q.db.Exec(ctx, peopleMarkRemovedRequesters, emails)
+	return err
+}
+
+const peoplePruneRemoved = `-- name: PeoplePruneRemoved :exec
+DELETE FROM person WHERE NOT (email = ANY ($1::text[]))
+`
+
+func (q *Queries) PeoplePruneRemoved(ctx context.Context, emails []string) error {
+	_, err := q.db.Exec(ctx, peoplePruneRemoved, emails)
 	return err
 }
 
@@ -111,19 +111,29 @@ func (q *Queries) PersonGrantInsert(ctx context.Context, arg PersonGrantInsertPa
 	return err
 }
 
-const personInsert = `-- name: PersonInsert :exec
-INSERT INTO person(email, name, roles, owner) VALUES ($1, $2, $3::text[], $4)
+const personGrantsClear = `-- name: PersonGrantsClear :exec
+DELETE FROM person_grant
 `
 
-type PersonInsertParams struct {
+func (q *Queries) PersonGrantsClear(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, personGrantsClear)
+	return err
+}
+
+const personUpsert = `-- name: PersonUpsert :exec
+INSERT INTO person(email, name, roles, owner, loaded_at) VALUES ($1, $2, $3::text[], $4, now())
+ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, roles = EXCLUDED.roles, owner = EXCLUDED.owner, loaded_at = now()
+`
+
+type PersonUpsertParams struct {
 	Email string
 	Name  string
 	Roles []string
 	Owner bool
 }
 
-func (q *Queries) PersonInsert(ctx context.Context, arg PersonInsertParams) error {
-	_, err := q.db.Exec(ctx, personInsert,
+func (q *Queries) PersonUpsert(ctx context.Context, arg PersonUpsertParams) error {
+	_, err := q.db.Exec(ctx, personUpsert,
 		arg.Email,
 		arg.Name,
 		arg.Roles,
