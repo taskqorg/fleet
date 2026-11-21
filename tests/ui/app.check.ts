@@ -189,8 +189,8 @@ try {
   c.sql(`INSERT INTO experiment(id,project_id,kind,pipeline_id,variants) VALUES('catalogue-ui-draft','hello-world','single','typed-decision','[{"label":"selected-method","pipelineId":"typed-decision","overrides":{},"config_ref":"digest-ui-fixture","catalogueConfigRef":"identity-ui-fixture","catalogueRef":{"kind":"catalogue","id":"catalogue","revision":1,"contentSha":"fixture"}}]'::jsonb)`);
   await page.goto(origin + '/lab/catalogue-ui-draft');
   await page.getByRole('heading', {name: 'Experiment record', exact: true}).waitFor();
-  await page.getByText('Executable digest: digest-ui-fixture', {exact:false}).waitFor();
-  await page.getByText('Catalogue identity: identity-ui-fixture', {exact:false}).waitFor();
+  await page.getByRole('button', {name: 'Executable digest: digest-ui-fixture', exact: true}).waitFor();
+  await page.getByRole('button', {name: 'Catalogue identity: identity-ui-fixture', exact: true}).waitFor();
   const launch = page.getByRole('button', {name: 'Launch', exact: true});
   assert.equal(await launch.getAttribute('aria-disabled'), 'true');
   for (const [label, value] of [['Goal', 'Inspect Catalogue comparison'], ['Hypothesis', 'The selected method improves the example outcome']]) {

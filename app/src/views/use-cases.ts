@@ -135,24 +135,48 @@ export function useCaseOptionLabel(u: Pick<LabUseCaseEntry, 'id' | 'goal'>, maxG
 export const USE_CASE_COLLECTION_PREFIX = 'col:';
 export const ARCHIVED_COLLECTION_ID = 'col:archived';
 
-const COLLECTION_TITLES: Record<UseCaseCollection['key'], string> = {
+const COLLECTION_TITLES: Record<UseCaseCollection['key'] | 'archived', string> = {
   benchmarks: 'LLM Code Benchmarks',
   'real-work': 'Real Work',
   'fleet-projects': 'Fleet & Projects',
+  archived: 'Archived',
 };
 
-const COLLECTION_ICONS: Record<UseCaseCollection['key'], IconName> = {
+const COLLECTION_ICONS: Record<UseCaseCollection['key'] | 'archived', IconName> = {
   benchmarks: 'chart-no-axes-column',
   'real-work': 'list',
   'fleet-projects': 'folder-open',
+  archived: 'archive',
 };
 
-/** Resolve a CatalogueTree folder node id (`col:<key>`) back to its collection title, or null if unknown. */
+export type SuiteKey = UseCaseCollection['key'] | 'archived';
+
+/** Resolve a URL suite segment or folder id (`benchmarks`, `col:benchmarks`, or title) to a canonical SuiteKey. */
+export function resolveSuiteKey(raw: string | null | undefined): SuiteKey | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  const stripped = trimmed.startsWith(USE_CASE_COLLECTION_PREFIX)
+    ? trimmed.slice(USE_CASE_COLLECTION_PREFIX.length)
+    : trimmed;
+  if (stripped in COLLECTION_TITLES) return stripped as SuiteKey;
+  const lower = stripped.toLowerCase();
+  for (const [key, title] of Object.entries(COLLECTION_TITLES)) {
+    if (title.toLowerCase() === lower) return key as SuiteKey;
+  }
+  if (lower === 'archived / obsolete') return 'archived';
+  return null;
+}
+
+/** Return the registry icon for a collection or suite key. */
+export function collectionIconOf(key: SuiteKey): IconName {
+  return COLLECTION_ICONS[key];
+}
+
+/** Resolve a CatalogueTree folder node id (`col:<key>`) or suite key back to its collection title, or null if unknown. */
 export function collectionTitleOf(folderId: string | null | undefined): string | null {
   if (!folderId || !folderId.startsWith(USE_CASE_COLLECTION_PREFIX)) return null;
-  const key = folderId.slice(USE_CASE_COLLECTION_PREFIX.length);
-  if (key === 'archived') return 'Archived / Obsolete';
-  return (COLLECTION_TITLES as Record<string, string>)[key] ?? null;
+  const key = resolveSuiteKey(folderId);
+  return key ? COLLECTION_TITLES[key] : null;
 }
 
 export type UseCaseTreeOptions = {
@@ -212,7 +236,7 @@ export function buildUseCaseTree(
   const archivedFolder: CatalogueTreeNode | null = archived.length
     ? {
         id: ARCHIVED_COLLECTION_ID,
-        label: 'Archived / Obsolete',
+        label: 'Archived',
         icon: 'archive',
         defaultCollapsed: !opts.separateArchived,
         children: archived.map(leafOf),
