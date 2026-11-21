@@ -298,14 +298,17 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     actor='outsider@trial.test';await focus();await p.getByRole('button',{name:'Create project',exact:true}).click();
     assert.equal(await p.getByLabel('Project ID',{exact:true}).inputValue(),'','another actor never restores creation input');p.off('request',createdIdRead);
     // Lab authored input belongs to the original actor, while restored server receipt fields are quarantined.
+    // Give the second Lab actor architect role (still grants: []) so /lab/new reads do not return 403 and trip signedOut.
+    await call('people_set', { people: people.map(person => person.email === 'member@trial.test' ? { ...person, grants: [{ kind: 'project', id: 'desiign' }] } : person.email === 'outsider@trial.test' ? { ...person, roles: ['operator', 'architect'] } : person) });
     actor = 'owner@trial.test'; await p.goto(origin + '/lab/new');
     const goal = p.getByRole('textbox', { name: 'Goal', exact: true }); await goal.waitFor();
     await goal.fill('Private Lab authored input');
     await focus(); await p.waitForFunction(() => [...document.querySelectorAll('textarea')].some(input => input.value === 'Private Lab authored input'));
     actor = 'outsider@trial.test'; await focus(); await p.getByText('Outsider', { exact: true }).waitFor();
     assert.equal(await p.locator('textarea').evaluateAll(nodes => nodes.some(node => (node as HTMLTextAreaElement).value.includes('Private Lab authored input'))), false);
-    actor = 'owner@trial.test'; await focus(); await goal.waitFor();
+    actor = 'owner@trial.test'; await focus(); await p.getByText('Owner', { exact: true }).waitFor(); await goal.waitFor();
     await p.waitForFunction(() => [...document.querySelectorAll('textarea')].some(input => input.value === 'Private Lab authored input'));
+    assert.equal(await p.getByText('Session expired', { exact: true }).count(), 0);
     // Unknown/created server state is not restored as a current receipt on the next authorized mount.
     await p.evaluate(() => { const key = 'fleet-lab-create:' + JSON.stringify([1, 'owner@trial.test']); const saved = JSON.parse(sessionStorage.getItem(key)!); saved.state = 'created'; saved.id = 'old-private-server-receipt'; sessionStorage.setItem(key, JSON.stringify(saved)); });
     await p.reload(); await goal.waitFor();
@@ -330,8 +333,9 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     await p.unroute('**/api/ops/lab_experiment_create');
     assert.equal(new URL(p.url()).pathname,'/lab/new','late creation cannot navigate a new actor');
     assert.equal(await p.evaluate(()=>{const key='fleet-lab-create:'+JSON.stringify([1,'owner@trial.test']);return JSON.parse(sessionStorage.getItem(key)!).id;}),undefined,'late result cannot repopulate quarantined receipt');
-    actor='owner@trial.test';await focus();await p.getByText('Creation unconfirmed',{exact:true}).waitFor();
+    actor='owner@trial.test';await focus();await p.getByText('Owner',{exact:true}).waitFor();await p.getByText('Creation unconfirmed',{exact:true}).waitFor();
     assert.equal(createPosts,1,'reopening never resends an uncertain creation');
+    await call('people_set', { people: people.map(person => person.email === 'member@trial.test' ? { ...person, grants: [{ kind: 'project', id: 'desiign' }] } : person) });
 
     assert.deepEqual(errors, [], 'mounted browser must have no runtime errors');
     console.log('PASS mounted Projects/access: delayed-summary, dirty conflict/save, real source update, continuous list, pending-me/late-write, identity drafts, actual thread revoke, Results late reply, blocked IDB and Lab quarantine');
