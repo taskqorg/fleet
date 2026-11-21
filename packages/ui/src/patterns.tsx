@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import { createContext, render, type ComponentChildren } from 'preact';
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
+import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, TabBar, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -372,7 +372,7 @@ export function DefinitionEditor({ label, crumb, title, tabs, tab, onTab, onClos
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={label}>
     <header class="detail-h">{onClose && <Button label="Close" icon="x" iconOnly onClick={onClose} />}<span class="muted mono">{crumb}</span><span class="grow" />{actions}</header>
     <h2 class="detail-title">{title}</h2>
-    <div class="tabs detail-tabs" role="tablist">{tabs.map(x => <button type="button" role="tab" key={x} aria-selected={tab === x} onClick={() => onTab(x)}>{x}</button>)}</div>
+    <TabBar cls="detail-tabs" label={`${label} sections`} tabs={tabs.map(x => ({ id: x, label: x }))} value={tab} onChange={onTab} />
     <div class="stack" data-ui="definition-editor" role="tabpanel">{children}</div>
   </article>;
 }

@@ -11,6 +11,7 @@ import { isSubmitEnter } from '../keys.ts';
 import tokens from '../../tokens.json';
 import { Icon, Button, StateBadge, Num, CostFigures, Ago, AgeChip, HarnessMark, Empty, ErrorBanner, copyText, SearchBox } from './primitives.tsx';
 import { EntityCode, linkCodes } from './overlays.tsx';
+import { TabBar } from './tables.tsx';
 
 const ROW = parseInt(tokens.size.row);
 
@@ -74,7 +75,7 @@ export function ResultViewer(p: ResultProps) {
         <span class="muted">{p.type} · {bytes(p.size).text} · {p.source}</span>
         {p.copies.map(c => <StateBadge key={c.where} family="copy" state={c.state} reason={c.where} compact />)}
         <span class="grow" />
-        <span class="tabs" role="tablist">{p.tabs.map(t => <button type="button" role="tab" key={t} aria-selected={t === p.tab} onClick={() => p.onTab(t)}>{t}</button>)}</span>
+        <TabBar label={`${p.name} views`} tabs={p.tabs.map(t => ({ id: t, label: t }))} value={p.tab} onChange={p.onTab} />
         <Button label="Compare" icon="list" iconOnly kbd="c" />
         {p.href ? <a class="btn default icon-only" data-ui="button" href={p.href} download={p.name} aria-label="Download" data-tip="Download"><Icon name={actions.download} /></a> : <Button label="Download" icon={actions.download} iconOnly />}
         <Button label="Share" icon={actions.share} iconOnly />
