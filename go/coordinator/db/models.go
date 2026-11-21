@@ -803,6 +803,44 @@ type Execution struct {
 	SystemActor       *string
 }
 
+type ExecutionSpend struct {
+	ExecutionID   string
+	ProjectID     *string
+	StartedAt     time.Time
+	Kind          ExecutionKind
+	State         ExecutionState
+	SystemActor   *string
+	Purpose       string
+	ProfileID     *string
+	Model         *string
+	HostID        *string
+	AccountID     *string
+	Connection    *string
+	ConnSubject   string
+	ConnUnit      *string
+	ConnAmount    pgtype.Numeric
+	HasConnCost   bool
+	HasDirectCost bool
+	IsSub         bool
+	FailedI       int16
+	TokensInput   *int64
+	TinSubI       int16
+	TinEstI       int16
+	TinExpI       int16
+	TokensOutput  *int64
+	ToutSubI      int16
+	ToutEstI      int16
+	ToutExpI      int16
+	Stale         bool
+	CostCurrency  *string
+	CostBasis     *string
+	CostValue     *float64
+	CostUnpriced  int64
+	CostPriceRefs *string
+	Payload       []byte
+	TombstonedAt  *time.Time
+}
+
 type ExecutionTotal struct {
 	ExecutionID           string
 	ProjectID             *string

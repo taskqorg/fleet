@@ -163,6 +163,11 @@ var referenceMap = []objectRef{
 	{table: "entity_code", column: "entity_id", kind: "question", mode: refOwn},
 	{table: "entity_code", column: "entity_id", kind: "session", mode: refOwn},
 	{table: "entity_code", column: "project_id", kind: "project", mode: refOwn},
+	{table: "execution_spend", column: "execution_id", kind: "execution", mode: refOwn},
+	{table: "execution_spend", column: "project_id", kind: "project", mode: refOwn},
+	{table: "execution_spend", column: "host_id", kind: "host", mode: refKeep},
+	{table: "execution_spend", column: "account_id", mode: refNone},
+	{table: "execution_spend", column: "profile_id", mode: refNone},
 	{table: "execution_totals", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "execution_totals", column: "project_id", kind: "project", mode: refOwn},
 	{table: "experiment", column: "id", kind: "experiment", mode: refOwn},
@@ -314,7 +319,7 @@ var tombstoned = append([]string{"execution", "task", "experiment", "question", 
 var keptRows = map[string]string{}
 
 // purgeOrder: the tables system_purge deletes from, referencing rows before the rows they reference (foreign keys).
-var purgeOrder = append([]string{"score", "experiment_note", "artifact_copy", "artifact", "question", "execution_totals", "route_decision",
+var purgeOrder = append([]string{"score", "experiment_note", "artifact_copy", "artifact", "question", "execution_spend", "execution_totals", "route_decision",
 	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "problem_dismissal",
 	"transport_conflict", "upload", "project_recommendation", "watch", "run_token", "account_inspection", "account_check", "account_catalogue",
 	"connection_key", "api_connection", "managed_account", "host_observation", "host", "person_setting", "message", "event",

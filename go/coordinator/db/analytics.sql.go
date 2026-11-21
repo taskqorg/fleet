@@ -10,6 +10,39 @@ import (
 	"time"
 )
 
+const analyticsAgentCategories = `-- name: AnalyticsAgentCategories :many
+SELECT da.id::text AS id, coalesce(nullif((dar.content::jsonb)->>'category', ''), '')::text AS category
+FROM definition da
+JOIN definition_revision dar ON dar.kind = da.kind AND dar.id = da.id AND dar.revision = da.head
+WHERE da.kind = 'agent' AND dar.content IS NOT NULL AND left(dar.content, 1) = '{'
+`
+
+type AnalyticsAgentCategoriesRow struct {
+	ID       string
+	Category string
+}
+
+// Current head category of each agent definition (parsed once per query instead of per execution row).
+func (q *Queries) AnalyticsAgentCategories(ctx context.Context) ([]AnalyticsAgentCategoriesRow, error) {
+	rows, err := q.db.Query(ctx, analyticsAgentCategories)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AnalyticsAgentCategoriesRow
+	for rows.Next() {
+		var i AnalyticsAgentCategoriesRow
+		if err := rows.Scan(&i.ID, &i.Category); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const analyticsBoundaryLineage = `-- name: AnalyticsBoundaryLineage :one
 WITH scoped_leaves AS (
   SELECT 'boundary'::text AS scope, e.id AS scope_key, e.id AS leaf_id
@@ -179,6 +212,9 @@ const analyticsLeafRows = `-- name: AnalyticsLeafRows :many
 WITH scoped_leaves AS (
  SELECT s.scope, s.scope_key, s.leaf_id FROM ROWS FROM(unnest($1::text[]), unnest($2::text[]), unnest($3::text[])) s(scope, scope_key, leaf_id)
 ),
+conn_meta AS MATERIALIZED (
+ SELECT m.id::text AS id, m.provider::text AS provider FROM fleet_conn_meta_all() m
+),
 leaves AS MATERIALIZED (
  SELECT
   e.id,
@@ -195,7 +231,7 @@ leaves AS MATERIALIZED (
   e.profile_revision,
   e.harness,
   coalesce(t.model, e.model) AS model,
-  coalesce(conn.provider, nullif(e.data->>'provider', ''), CASE e.harness WHEN 'codex' THEN 'openai' WHEN 'claude' THEN 'anthropic' WHEN 'antigravity' THEN 'google' END) AS provider,
+  coalesce(cm_conn.provider, cm_acc.provider, nullif(e.data->>'provider', ''), CASE e.harness WHEN 'codex' THEN 'openai' WHEN 'claude' THEN 'anthropic' WHEN 'antigravity' THEN 'google' END) AS provider,
   e.account_id,
   e.host_id,
   nullif(e.data->>'connection', '') AS connection,
@@ -209,7 +245,7 @@ leaves AS MATERIALIZED (
   e.ended_at,
   coalesce(e.started_at, CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint / 1000.0) END, e.ended_at, e.last_seen_at) AS leaf_at,
   (t.execution_id IS NOT NULL) AS has_totals,
-  (coalesce(t.billing_basis, '') = 'subscription' OR (coalesce(t.billing_basis, '') IN ('', 'unavailable') AND e.account_id IS NOT NULL AND NOT coalesce(conn.is_api_conn, false))) AS is_sub,
+  (coalesce(t.billing_basis, '') = 'subscription' OR (coalesce(t.billing_basis, '') IN ('', 'unavailable') AND e.account_id IS NOT NULL AND cm_acc.id IS NULL)) AS is_sub,
   t.tokens_input,
   coalesce(t.tokens_input_basis, 'unavailable') AS tokens_input_basis,
   t.tokens_reasoning,
@@ -275,11 +311,9 @@ leaves AS MATERIALIZED (
    END) AS leaf_call_errors
  FROM execution e
  LEFT JOIN execution_totals t ON t.execution_id = e.id
- LEFT JOIN LATERAL (
-  SELECT m.provider::text AS provider, m.is_api_conn::boolean AS is_api_conn
-  FROM fleet_exec_conn_meta(e.data->>'connection', e.account_id) m
-  WHERE e.data ? 'connection' OR e.account_id IS NOT NULL
- ) conn ON true WHERE e.kind NOT IN ('pipeline_run', 'pipeline_step') AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL) AND e.id IN (SELECT leaf_id FROM scoped_leaves)),
+ LEFT JOIN conn_meta cm_conn ON e.data ? 'connection' AND nullif(e.data->>'connection', '') IS NOT NULL AND cm_conn.id = 'connection:' || (e.data->>'connection')
+ LEFT JOIN conn_meta cm_acc ON e.account_id IS NOT NULL AND cm_acc.id = e.account_id
+ WHERE e.kind NOT IN ('pipeline_run', 'pipeline_step') AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL) AND e.id IN (SELECT leaf_id FROM scoped_leaves)),
 leaf_priced AS (
  SELECT
   l.id, l.kind, l.state, l.project_id, l.task_id, l.session_id, l.parent_execution_id, l.pipeline_id, l.pipeline_revision, l.step_id, l.profile_id, l.profile_revision, l.harness, l.model, l.provider, l.account_id, l.host_id, l.connection, l.tool_name, l.experiment_id, l.variant, l.system_actor, l.outcome, l.person, l.started_at, l.ended_at, l.leaf_at, l.has_totals, l.is_sub, l.tokens_input, l.tokens_input_basis, l.tokens_reasoning, l.tokens_reasoning_basis, l.api_ms, l.api_ms_basis, l.tokens_output, l.tokens_output_basis, l.tokens_cache_read, l.tokens_cache_read_basis, l.tokens_cache_write, l.tokens_cache_write_basis, l.wall_ms, l.wall_ms_basis, l.active_ms, l.active_ms_basis, l.cpu_ms, l.cpu_ms_basis, l.peak_memory_bytes, l.peak_memory_bytes_basis, l.turn_count, l.tool_calls, l.tool_calls_basis, l.connection_cost, l.connection_cost_basis, l.conn_subject, l.conn_unit, l.credits, l.direct_currency, l.direct_amount, l.conn_amount, l.leaf_calls, l.leaf_call_errors,
@@ -624,6 +658,362 @@ func (q *Queries) AnalyticsSetJIT(ctx context.Context, jit string) error {
 	return err
 }
 
+const analyticsSpendSummary = `-- name: AnalyticsSpendSummary :many
+WITH stale_ids AS MATERIALIZED (
+ SELECT s.execution_id
+ FROM execution_spend s
+ WHERE s.stale
+   AND s.started_at >= $1::pg_catalog.timestamptz
+   AND s.started_at < $2::pg_catalog.timestamptz
+   AND ($3::text IS NULL OR s.project_id = $3::text)
+   AND (
+    $4::text = 'include'
+    OR ($4::text = 'only' AND s.system_actor IS NOT NULL)
+    OR ($4::text = 'exclude' AND s.system_actor IS NULL)
+   )
+),
+stale_conn AS MATERIALIZED (
+ SELECT m.id::text AS id, m.provider::text AS provider FROM fleet_conn_meta_all() m WHERE EXISTS (SELECT 1 FROM stale_ids)
+),
+stale_leaves AS MATERIALIZED (
+ SELECT
+  e.id,
+  e.kind::text AS kind,
+  e.state::text AS state,
+  e.project_id,
+  CASE
+   WHEN e.system_actor IS NOT NULL THEN 'system'
+   WHEN e.experiment_id IS NOT NULL THEN 'lab'
+   WHEN e.task_id IS NOT NULL THEN 'task'
+   WHEN e.session_id IS NOT NULL THEN 'conversation'
+   ELSE 'other'
+  END AS purpose,
+  e.profile_id,
+  coalesce(t.model, e.model) AS model,
+  e.host_id,
+  e.started_at AS leaf_at,
+  (coalesce(t.billing_basis, '') = 'subscription' OR (coalesce(t.billing_basis, '') IN ('', 'unavailable') AND e.account_id IS NOT NULL AND cm_acc.id IS NULL)) AS is_sub,
+  t.tokens_input,
+  coalesce(t.tokens_input_basis, 'unavailable') AS tokens_input_basis,
+  t.tokens_output,
+  coalesce(t.tokens_output_basis, 'unavailable') AS tokens_output_basis,
+  t.tokens_cache_read,
+  t.tokens_cache_write,
+  t.connection_cost,
+  coalesce(e.data->>'connection', '') || '/' || coalesce(e.data->>'tool', '') AS conn_subject,
+  nullif(t.connection_cost->>'unit', '') AS conn_unit,
+  CASE WHEN t.connection_cost IS NOT NULL AND t.connection_cost_basis = 'measured' THEN
+   CASE
+    WHEN nullif(t.connection_cost->>'currency', '') ~ '^[A-Z]{3}$'
+     AND coalesce(t.connection_cost->>'cost', t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'currency')) ~ '^[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?$'
+     THEN t.connection_cost->>'currency'
+    WHEN nullif(t.connection_cost->>'unit', '') ~ '^[A-Z]{3}$'
+     AND coalesce(t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'unit')) ~ '^[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?$'
+     THEN t.connection_cost->>'unit'
+   END
+  END AS direct_currency,
+  CASE WHEN t.connection_cost IS NOT NULL AND t.connection_cost_basis = 'measured' THEN
+   CASE
+    WHEN nullif(t.connection_cost->>'currency', '') ~ '^[A-Z]{3}$'
+     AND coalesce(t.connection_cost->>'cost', t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'currency')) ~ '^[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?$'
+     THEN coalesce(t.connection_cost->>'cost', t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'currency'))::numeric
+    WHEN nullif(t.connection_cost->>'unit', '') ~ '^[A-Z]{3}$'
+     AND coalesce(t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'unit')) ~ '^[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?$'
+     THEN coalesce(t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'unit'))::numeric
+   END
+  END AS direct_amount,
+  CASE
+   WHEN t.connection_cost IS NOT NULL AND coalesce(t.connection_cost->>'amount', CASE WHEN nullif(t.connection_cost->>'unit', '') IS NOT NULL THEN t.connection_cost->>(t.connection_cost->>'unit') END) ~ '^[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?$'
+   THEN coalesce(t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'unit'))::numeric
+  END AS conn_amount
+ FROM execution e
+ JOIN stale_ids si ON si.execution_id = e.id
+ LEFT JOIN execution_totals t ON t.execution_id = e.id
+ LEFT JOIN stale_conn cm_acc ON e.account_id IS NOT NULL AND cm_acc.id = e.account_id
+ WHERE e.kind NOT IN ('pipeline_run', 'pipeline_step') AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL)
+),
+stale_priced AS (
+ SELECT
+  l.id, l.kind, l.state, l.project_id, l.purpose, l.profile_id, l.model, l.host_id, l.leaf_at, l.is_sub, l.tokens_input, l.tokens_input_basis, l.tokens_output, l.tokens_output_basis, l.tokens_cache_read, l.tokens_cache_write, l.connection_cost, l.conn_subject, l.conn_unit, l.direct_currency, l.direct_amount, l.conn_amount,
+  pi.id AS pi_id, pi.price AS pi_price, pi.currency AS pi_currency, pi.obs_ms AS pi_obs,
+  po.id AS po_id, po.price AS po_price, po.currency AS po_currency, po.obs_ms AS po_obs,
+  pcr.id AS pcr_id, pcr.price AS pcr_price, pcr.currency AS pcr_currency, pcr.obs_ms AS pcr_obs,
+  pcw.id AS pcw_id, pcw.price AS pcw_price, pcw.currency AS pcw_currency, pcw.obs_ms AS pcw_obs,
+  pc.id AS pc_id, pc.price AS pc_price, pc.currency AS pc_currency, pc.obs_ms AS pc_obs
+ FROM stale_leaves l
+ LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND l.connection_cost IS NULL AND l.model IS NOT NULL AND l.tokens_input > 0 AND p.subject = l.model AND p.unit = 'input_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pi ON true
+ LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND l.connection_cost IS NULL AND l.model IS NOT NULL AND l.tokens_output > 0 AND p.subject = l.model AND p.unit = 'output_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) po ON true
+ LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND l.connection_cost IS NULL AND l.model IS NOT NULL AND l.tokens_cache_read > 0 AND p.subject = l.model AND p.unit = 'cache_read_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pcr ON true
+ LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND l.connection_cost IS NULL AND l.model IS NOT NULL AND l.tokens_cache_write > 0 AND p.subject = l.model AND p.unit = 'cache_write_tokens' AND l.leaf_at IS NOT NULL AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pcw ON true
+ LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE (l.kind = 'tool_run' OR l.connection_cost IS NOT NULL) AND l.direct_currency IS NULL AND l.conn_unit IS NOT NULL AND l.conn_amount IS NOT NULL AND l.leaf_at IS NOT NULL AND p.subject = l.conn_subject AND p.unit = l.conn_unit AND p.effective_from <= l.leaf_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pc ON true
+),
+stale_cost_items AS (
+ SELECT
+  p.id,
+  CASE $5::text
+   WHEN 'purpose' THEN p.purpose
+   WHEN 'project' THEN coalesce(nullif(p.project_id, ''), 'unknown')
+   WHEN 'profile' THEN coalesce(nullif(p.profile_id, ''), 'unknown')
+   WHEN 'category' THEN coalesce(nullif(p.profile_id, ''), '')
+   WHEN 'model' THEN coalesce(nullif(p.model, ''), 'unknown')
+   WHEN 'host' THEN coalesce(nullif(p.host_id, ''), 'unknown')
+  END AS dim_key,
+  p.purpose,
+  coalesce(p.project_id, '') AS proj_key,
+  p.kind, p.state, p.tokens_input, p.tokens_input_basis, p.tokens_output, p.tokens_output_basis,
+  ci.currency, ci.cost_basis, ci.amount, ci.price_id, ci.obs_ms, ci.unpriced,
+  row_number() OVER (PARTITION BY p.id ORDER BY ci.currency NULLS LAST, ci.cost_basis NULLS LAST, ci.price_id NULLS LAST) AS rn
+ FROM stale_priced p
+ LEFT JOIN LATERAL (
+  SELECT
+   CASE WHEN p.direct_currency IS NOT NULL THEN p.direct_currency WHEN p.pc_id IS NOT NULL THEN p.pc_currency END AS currency,
+   CASE WHEN p.direct_currency IS NOT NULL THEN CASE WHEN p.is_sub THEN 'subscription' ELSE 'measured' END WHEN p.pc_id IS NOT NULL THEN CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END END AS cost_basis,
+   CASE WHEN p.direct_currency IS NOT NULL THEN p.direct_amount WHEN p.pc_id IS NOT NULL THEN p.pc_price * p.conn_amount END AS amount,
+   CASE WHEN p.direct_currency IS NULL THEN p.pc_id END AS price_id,
+   CASE WHEN p.direct_currency IS NULL THEN p.pc_obs END AS obs_ms,
+   CASE WHEN p.direct_currency IS NULL AND p.pc_id IS NULL THEN 1::bigint ELSE 0::bigint END AS unpriced
+  WHERE p.kind = 'tool_run' OR p.connection_cost IS NOT NULL
+  UNION ALL
+  SELECT p.pi_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.pi_price * p.tokens_input::numeric, p.pi_id, p.pi_obs, CASE WHEN p.pi_id IS NULL THEN 1::bigint ELSE 0::bigint END
+  WHERE p.kind <> 'tool_run' AND p.connection_cost IS NULL AND p.tokens_input > 0
+  UNION ALL
+  SELECT p.po_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.po_price * p.tokens_output::numeric, p.po_id, p.po_obs, CASE WHEN p.po_id IS NULL THEN 1::bigint ELSE 0::bigint END
+  WHERE p.kind <> 'tool_run' AND p.connection_cost IS NULL AND p.tokens_output > 0
+  UNION ALL
+  SELECT p.pcr_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.pcr_price * p.tokens_cache_read::numeric, p.pcr_id, p.pcr_obs, CASE WHEN p.pcr_id IS NULL THEN 1::bigint ELSE 0::bigint END
+  WHERE p.kind <> 'tool_run' AND p.connection_cost IS NULL AND p.tokens_cache_read > 0
+  UNION ALL
+  SELECT p.pcw_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.pcw_price * p.tokens_cache_write::numeric, p.pcw_id, p.pcw_obs, CASE WHEN p.pcw_id IS NULL THEN 1::bigint ELSE 0::bigint END
+  WHERE p.kind <> 'tool_run' AND p.connection_cost IS NULL AND p.tokens_cache_write > 0
+  UNION ALL
+  SELECT NULL::text, NULL::text, NULL::numeric, NULL::text, NULL::bigint, 1::bigint
+  WHERE p.kind IN ('agent_run', 'child_agent') AND p.connection_cost IS NULL AND coalesce(p.tokens_input, p.tokens_output, p.tokens_cache_read, p.tokens_cache_write) IS NULL
+ ) ci ON true
+),
+spend_items AS (
+ -- Fast Index-Only Scan path
+ SELECT
+  CASE $5::text
+   WHEN 'purpose' THEN s.purpose
+   WHEN 'project' THEN coalesce(nullif(s.project_id, ''), 'unknown')
+   WHEN 'profile' THEN coalesce(nullif(s.profile_id, ''), 'unknown')
+   WHEN 'category' THEN coalesce(nullif(s.profile_id, ''), '')
+   WHEN 'model' THEN coalesce(nullif(s.model, ''), 'unknown')
+   WHEN 'host' THEN coalesce(nullif(s.host_id, ''), 'unknown')
+  END AS dim_key,
+  s.purpose,
+  coalesce(s.project_id, '') AS proj_key,
+  s.cost_currency,
+  s.cost_basis,
+  s.cost_price_refs,
+  1::bigint AS runs,
+  s.failed_i::bigint AS failed,
+  s.tokens_input::float8 AS tin,
+  CASE WHEN s.tokens_input IS NOT NULL THEN 1::bigint ELSE 0::bigint END AS tin_have,
+  s.tin_sub_i::bigint AS tin_sub,
+  s.tin_est_i::bigint AS tin_est,
+  s.tin_exp_i::bigint AS tin_exp,
+  s.tokens_output::float8 AS tout,
+  CASE WHEN s.tokens_output IS NOT NULL THEN 1::bigint ELSE 0::bigint END AS tout_have,
+  s.tout_sub_i::bigint AS tout_sub,
+  s.tout_est_i::bigint AS tout_est,
+  s.tout_exp_i::bigint AS tout_exp,
+  s.cost_value::float8 AS cost_val,
+  s.cost_unpriced::bigint AS unpriced
+ FROM execution_spend s
+ WHERE NOT s.stale AND s.payload IS NULL
+   AND s.started_at >= $1::pg_catalog.timestamptz
+   AND s.started_at < $2::pg_catalog.timestamptz
+   AND ($3::text IS NULL OR s.project_id = $3::text)
+   AND (
+    $4::text = 'include'
+    OR ($4::text = 'only' AND s.system_actor IS NOT NULL)
+    OR ($4::text = 'exclude' AND s.system_actor IS NULL)
+   )
+
+ UNION ALL
+
+ -- Multi-currency single-leaf overflow path (empty in normal workloads)
+ SELECT
+  CASE $5::text
+   WHEN 'purpose' THEN s.purpose
+   WHEN 'project' THEN coalesce(nullif(s.project_id, ''), 'unknown')
+   WHEN 'profile' THEN coalesce(nullif(s.profile_id, ''), 'unknown')
+   WHEN 'category' THEN coalesce(nullif(s.profile_id, ''), '')
+   WHEN 'model' THEN coalesce(nullif(s.model, ''), 'unknown')
+   WHEN 'host' THEN coalesce(nullif(s.host_id, ''), 'unknown')
+  END AS dim_key,
+  s.purpose,
+  coalesce(s.project_id, '') AS proj_key,
+  ci.currency AS cost_currency,
+  ci.cost_basis AS cost_basis,
+  ci.cost_price_refs AS cost_price_refs,
+  CASE WHEN coalesce(ci.ord, 1) = 1 THEN 1::bigint ELSE 0::bigint END AS runs,
+  CASE WHEN coalesce(ci.ord, 1) = 1 THEN s.failed_i::bigint ELSE 0::bigint END AS failed,
+  CASE WHEN coalesce(ci.ord, 1) = 1 THEN s.tokens_input::float8 END AS tin,
+  CASE WHEN coalesce(ci.ord, 1) = 1 AND s.tokens_input IS NOT NULL THEN 1::bigint ELSE 0::bigint END AS tin_have,
+  CASE WHEN coalesce(ci.ord, 1) = 1 THEN s.tin_sub_i::bigint ELSE 0::bigint END AS tin_sub,
+  CASE WHEN coalesce(ci.ord, 1) = 1 THEN s.tin_est_i::bigint ELSE 0::bigint END AS tin_est,
+  CASE WHEN coalesce(ci.ord, 1) = 1 THEN s.tin_exp_i::bigint ELSE 0::bigint END AS tin_exp,
+  CASE WHEN coalesce(ci.ord, 1) = 1 THEN s.tokens_output::float8 END AS tout,
+  CASE WHEN coalesce(ci.ord, 1) = 1 AND s.tokens_output IS NOT NULL THEN 1::bigint ELSE 0::bigint END AS tout_have,
+  CASE WHEN coalesce(ci.ord, 1) = 1 THEN s.tout_sub_i::bigint ELSE 0::bigint END AS tout_sub,
+  CASE WHEN coalesce(ci.ord, 1) = 1 THEN s.tout_est_i::bigint ELSE 0::bigint END AS tout_est,
+  CASE WHEN coalesce(ci.ord, 1) = 1 THEN s.tout_exp_i::bigint ELSE 0::bigint END AS tout_exp,
+  ci.cost_value AS cost_val,
+  (CASE WHEN coalesce(ci.ord, 1) = 1 THEN s.cost_unpriced ELSE 0::bigint END + coalesce(ci.unpriced, 0))::bigint AS unpriced
+ FROM execution_spend s
+ LEFT JOIN LATERAL (
+  SELECT
+   elem->>'currency' AS currency,
+   elem->>'basis' AS cost_basis,
+   (elem->>'value')::float8 AS cost_value,
+   coalesce((elem->>'unpriced')::bigint, 0) AS unpriced,
+   nullif((elem->'prices')::text, '[]') AS cost_price_refs,
+   ord
+  FROM jsonb_array_elements(s.payload) WITH ORDINALITY AS x(elem, ord)
+ ) ci ON true
+ WHERE NOT s.stale AND s.payload IS NOT NULL
+   AND s.started_at >= $1::pg_catalog.timestamptz
+   AND s.started_at < $2::pg_catalog.timestamptz
+   AND ($3::text IS NULL OR s.project_id = $3::text)
+   AND (
+    $4::text = 'include'
+    OR ($4::text = 'only' AND s.system_actor IS NOT NULL)
+    OR ($4::text = 'exclude' AND s.system_actor IS NULL)
+   )
+
+ UNION ALL
+
+ -- Stale live-pricing fallback path (empty except immediately after backdated price_entry or connection edit)
+ SELECT
+  sc.dim_key,
+  sc.purpose,
+  sc.proj_key,
+  sc.currency AS cost_currency,
+  sc.cost_basis,
+  CASE WHEN sc.price_id IS NOT NULL THEN jsonb_build_array(jsonb_build_object('id', sc.price_id, 'observedAt', sc.obs_ms))::text END AS cost_price_refs,
+  CASE WHEN sc.rn = 1 THEN 1::bigint ELSE 0::bigint END AS runs,
+  CASE WHEN sc.rn = 1 AND sc.state = 'failed' THEN 1::bigint ELSE 0::bigint END AS failed,
+  CASE WHEN sc.rn = 1 THEN sc.tokens_input::float8 END AS tin,
+  CASE WHEN sc.rn = 1 AND sc.tokens_input IS NOT NULL THEN 1::bigint ELSE 0::bigint END AS tin_have,
+  CASE WHEN sc.rn = 1 AND sc.tokens_input IS NOT NULL AND sc.tokens_input_basis = 'subscription' THEN 1::bigint ELSE 0::bigint END AS tin_sub,
+  CASE WHEN sc.rn = 1 AND sc.tokens_input IS NOT NULL AND sc.tokens_input_basis = 'estimated' THEN 1::bigint ELSE 0::bigint END AS tin_est,
+  CASE WHEN sc.rn = 1 AND (sc.kind IN ('agent_run', 'child_agent') OR sc.tokens_input IS NOT NULL) THEN 1::bigint ELSE 0::bigint END AS tin_exp,
+  CASE WHEN sc.rn = 1 THEN sc.tokens_output::float8 END AS tout,
+  CASE WHEN sc.rn = 1 AND sc.tokens_output IS NOT NULL THEN 1::bigint ELSE 0::bigint END AS tout_have,
+  CASE WHEN sc.rn = 1 AND sc.tokens_output IS NOT NULL AND sc.tokens_output_basis = 'subscription' THEN 1::bigint ELSE 0::bigint END AS tout_sub,
+  CASE WHEN sc.rn = 1 AND sc.tokens_output IS NOT NULL AND sc.tokens_output_basis = 'estimated' THEN 1::bigint ELSE 0::bigint END AS tout_est,
+  CASE WHEN sc.rn = 1 AND (sc.kind IN ('agent_run', 'child_agent') OR sc.tokens_output IS NOT NULL) THEN 1::bigint ELSE 0::bigint END AS tout_exp,
+  sc.amount::float8 AS cost_val,
+  coalesce(sc.unpriced, 0)::bigint AS unpriced
+ FROM stale_cost_items sc
+)
+SELECT
+ dim_key::text AS dim_key,
+ purpose::text AS purpose,
+ proj_key::text AS proj_key,
+ cost_currency,
+ cost_basis,
+ cost_price_refs,
+ sum(runs)::bigint AS runs,
+ sum(failed)::bigint AS failed,
+ coalesce(sum(tin), 0)::float8 AS tin,
+ sum(tin_have)::bigint AS tin_have,
+ sum(tin_sub)::bigint AS tin_sub,
+ sum(tin_est)::bigint AS tin_est,
+ sum(tin_exp)::bigint AS tin_exp,
+ coalesce(sum(tout), 0)::float8 AS tout,
+ sum(tout_have)::bigint AS tout_have,
+ sum(tout_sub)::bigint AS tout_sub,
+ sum(tout_est)::bigint AS tout_est,
+ sum(tout_exp)::bigint AS tout_exp,
+ coalesce(sum(cost_val), 0)::float8 AS cost_val,
+ sum(unpriced)::bigint AS unpriced
+FROM spend_items
+GROUP BY 1, 2, 3, 4, 5, 6
+`
+
+type AnalyticsSpendSummaryParams struct {
+	WinFrom    time.Time
+	WinTo      time.Time
+	ProjectID  *string
+	SystemMode string
+	GroupBy    string
+}
+
+type AnalyticsSpendSummaryRow struct {
+	DimKey        string
+	Purpose       string
+	ProjKey       string
+	CostCurrency  *string
+	CostBasis     *string
+	CostPriceRefs *string
+	Runs          int64
+	Failed        int64
+	Tin           float64
+	TinHave       int64
+	TinSub        int64
+	TinEst        int64
+	TinExp        int64
+	Tout          float64
+	ToutHave      int64
+	ToutSub       int64
+	ToutEst       int64
+	ToutExp       int64
+	CostVal       float64
+	Unpriced      int64
+}
+
+// Single-pass spend_summary rollup over precomputed execution_spend (Index-Only Scan on fast path),
+// falling back to live LATERAL price_entry only for stale rows.
+func (q *Queries) AnalyticsSpendSummary(ctx context.Context, arg AnalyticsSpendSummaryParams) ([]AnalyticsSpendSummaryRow, error) {
+	rows, err := q.db.Query(ctx, analyticsSpendSummary,
+		arg.WinFrom,
+		arg.WinTo,
+		arg.ProjectID,
+		arg.SystemMode,
+		arg.GroupBy,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AnalyticsSpendSummaryRow
+	for rows.Next() {
+		var i AnalyticsSpendSummaryRow
+		if err := rows.Scan(
+			&i.DimKey,
+			&i.Purpose,
+			&i.ProjKey,
+			&i.CostCurrency,
+			&i.CostBasis,
+			&i.CostPriceRefs,
+			&i.Runs,
+			&i.Failed,
+			&i.Tin,
+			&i.TinHave,
+			&i.TinSub,
+			&i.TinEst,
+			&i.TinExp,
+			&i.Tout,
+			&i.ToutHave,
+			&i.ToutSub,
+			&i.ToutEst,
+			&i.ToutExp,
+			&i.CostVal,
+			&i.Unpriced,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const analyticsTaskHiddenLineage = `-- name: AnalyticsTaskHiddenLineage :one
 SELECT fleet_task_hidden_lineage_count($1::text)::bigint AS n
 `
@@ -788,6 +1178,26 @@ type AnalyticsWindowLeafCountParams struct {
 // Every leaf execution in [from, to), past the caller's row scope (CA-05).
 func (q *Queries) AnalyticsWindowLeafCount(ctx context.Context, arg AnalyticsWindowLeafCountParams) (int64, error) {
 	row := q.db.QueryRow(ctx, analyticsWindowLeafCount, arg.WinFrom, arg.WinTo)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
+const analyticsWindowVisibleLeafCount = `-- name: AnalyticsWindowVisibleLeafCount :one
+SELECT count(*)::bigint AS n
+FROM execution_spend
+WHERE started_at >= $1::pg_catalog.timestamptz
+  AND started_at < $2::pg_catalog.timestamptz
+`
+
+type AnalyticsWindowVisibleLeafCountParams struct {
+	WinFrom time.Time
+	WinTo   time.Time
+}
+
+// Unfiltered visible leaf count in [win_from, win_to) under caller RLS.
+func (q *Queries) AnalyticsWindowVisibleLeafCount(ctx context.Context, arg AnalyticsWindowVisibleLeafCountParams) (int64, error) {
+	row := q.db.QueryRow(ctx, analyticsWindowVisibleLeafCount, arg.WinFrom, arg.WinTo)
 	var n int64
 	err := row.Scan(&n)
 	return n, err

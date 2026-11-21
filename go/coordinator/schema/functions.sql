@@ -2,6 +2,147 @@
 -- (store.go) whenever the file changes. Edit here, never in a migration; TestMigrationSchemaFiles keeps the file in
 -- the database's deparsed form (FLEET_UPDATE_SCHEMA_FILES=1 go test ./coordinator -run TestMigrationSchemaFiles).
 
+CREATE OR REPLACE FUNCTION public.execution_spend_on_conn()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+ prev_scope text := current_setting('fleet.project_ids', true);
+ prev_del text := current_setting('fleet.deleted', true);
+ cid text := CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END;
+ cname text;
+BEGIN
+ IF TG_OP = 'UPDATE' AND OLD.id IS NOT DISTINCT FROM NEW.id AND OLD.provider IS NOT DISTINCT FROM NEW.provider AND (OLD.payload->>'provider') IS NOT DISTINCT FROM (NEW.payload->>'provider') AND OLD.tombstoned_at IS NOT DISTINCT FROM NEW.tombstoned_at THEN
+  RETURN NULL;
+ END IF;
+ cname := CASE WHEN cid LIKE 'connection:%' THEN substr(cid, 12) END;
+ PERFORM set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+ BEGIN
+  UPDATE execution_spend
+  SET stale = true
+  WHERE NOT stale
+    AND (account_id = cid OR (cname IS NOT NULL AND connection = cname));
+ EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
+  RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
+ RETURN NULL;
+END $function$;
+REVOKE ALL ON FUNCTION execution_spend_on_conn() FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.execution_spend_on_execution()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+ prev_scope text := current_setting('fleet.project_ids', true);
+ prev_del text := current_setting('fleet.deleted', true);
+BEGIN
+ IF TG_OP = 'DELETE' THEN
+  IF coalesce(current_setting('fleet.purge', true), '') = 'on' THEN
+   RETURN NULL;
+  END IF;
+  PERFORM set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+  BEGIN
+   DELETE FROM execution_spend WHERE execution_id = OLD.id;
+  EXCEPTION WHEN OTHERS THEN
+   PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
+   RAISE;
+  END;
+  PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
+  RETURN NULL;
+ END IF;
+ IF TG_OP = 'INSERT' THEN
+  IF NEW.started_at IS NULL OR NEW.kind IN ('pipeline_run', 'pipeline_step', 'child_agent') THEN
+   RETURN NULL;
+  END IF;
+  PERFORM fleet_refresh_execution_spend(NEW.id);
+  RETURN NULL;
+ END IF;
+ IF (OLD.kind, OLD.state, OLD.project_id, OLD.task_id, OLD.session_id, OLD.experiment_id, OLD.system_actor, OLD.profile_id, OLD.model, OLD.host_id, OLD.account_id, OLD.harness, OLD.started_at, OLD.tombstoned_at, OLD.data->>'connection', OLD.data->>'tool')
+    IS NOT DISTINCT FROM
+    (NEW.kind, NEW.state, NEW.project_id, NEW.task_id, NEW.session_id, NEW.experiment_id, NEW.system_actor, NEW.profile_id, NEW.model, NEW.host_id, NEW.account_id, NEW.harness, NEW.started_at, NEW.tombstoned_at, NEW.data->>'connection', NEW.data->>'tool') THEN
+  RETURN NULL;
+ END IF;
+ IF OLD.tombstoned_at IS DISTINCT FROM NEW.tombstoned_at AND
+    (OLD.kind, OLD.state, OLD.project_id, OLD.task_id, OLD.session_id, OLD.experiment_id, OLD.system_actor, OLD.profile_id, OLD.model, OLD.host_id, OLD.account_id, OLD.harness, OLD.started_at, OLD.data->>'connection', OLD.data->>'tool')
+    IS NOT DISTINCT FROM
+    (NEW.kind, NEW.state, NEW.project_id, NEW.task_id, NEW.session_id, NEW.experiment_id, NEW.system_actor, NEW.profile_id, NEW.model, NEW.host_id, NEW.account_id, NEW.harness, NEW.started_at, NEW.data->>'connection', NEW.data->>'tool') THEN
+  PERFORM set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+  BEGIN
+   UPDATE execution_spend SET tombstoned_at = NEW.tombstoned_at WHERE execution_id = NEW.id;
+  EXCEPTION WHEN OTHERS THEN
+   PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
+   RAISE;
+  END;
+  PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
+  IF FOUND THEN
+   RETURN NULL;
+  END IF;
+ END IF;
+ PERFORM fleet_refresh_execution_spend(NEW.id);
+ RETURN NULL;
+END $function$;
+REVOKE ALL ON FUNCTION execution_spend_on_execution() FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.execution_spend_on_price()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+ prev_scope text := current_setting('fleet.project_ids', true);
+ prev_del text := current_setting('fleet.deleted', true);
+BEGIN
+ PERFORM set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+ BEGIN
+  UPDATE execution_spend
+  SET stale = true
+  WHERE NOT stale
+    AND started_at >= NEW.effective_from
+    AND (
+     (kind <> 'tool_run' AND NOT has_conn_cost AND NOT has_direct_cost AND model = NEW.subject)
+     OR ((kind = 'tool_run' OR has_conn_cost) AND NOT has_direct_cost AND conn_subject = NEW.subject AND conn_unit = NEW.unit)
+    );
+ EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
+  RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
+ RETURN NULL;
+END $function$;
+REVOKE ALL ON FUNCTION execution_spend_on_price() FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.execution_spend_on_totals()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE eid text;
+BEGIN
+ IF TG_OP = 'DELETE' THEN
+  IF coalesce(current_setting('fleet.purge', true), '') = 'on' THEN
+   RETURN NULL;
+  END IF;
+  eid := OLD.execution_id;
+ ELSE
+  IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - ARRAY['execution_id','computed_at','rate_limit_last','rate_limit_last_basis']) IS NOT DISTINCT FROM (to_jsonb(NEW) - ARRAY['execution_id','computed_at','rate_limit_last','rate_limit_last_basis']) THEN
+   RETURN NULL;
+  END IF;
+  eid := NEW.execution_id;
+ END IF;
+ PERFORM fleet_refresh_execution_spend(eid);
+ RETURN NULL;
+END $function$;
+REVOKE ALL ON FUNCTION execution_spend_on_totals() FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION public.fleet_append_only()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -16,6 +157,23 @@ CREATE OR REPLACE FUNCTION public.fleet_change()
  RETURNS trigger
  LANGUAGE plpgsql
 AS $function$ DECLARE r record; k text; i text; t text; s text; h text; w text; ek text; st text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'audit_log' THEN k := 'setting-change'; i := r.id; w := r.holder; st := nullif(r.target, ''); ELSIF TG_TABLE_NAME = 'project_recommendation' THEN k := 'project-recommendation'; i := r.id; ELSIF TG_TABLE_NAME IN ('delivery_state', 'delivery_pr', 'delivery_run', 'delivery_release', 'delivery_check') THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - '{updated_at,attempts,next_attempt_at,last_error}'::text[]) = (to_jsonb(NEW) - '{updated_at,attempts,next_attempt_at,last_error}'::text[]) THEN RETURN NULL; END IF; k := 'delivery'; i := r.id; ELSIF TG_TABLE_NAME = 'host_observation' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - '{last_seen_at,updated_at}'::text[]) = (to_jsonb(NEW) - '{last_seen_at,updated_at}'::text[]) THEN RETURN NULL; END IF; k := 'host'; i := r.id; h := r.id; ELSIF TG_TABLE_NAME IN ('managed_account', 'api_connection') THEN k := replace(TG_TABLE_NAME, '_', '-'); i := r.id; w := r.holder; ELSIF TG_TABLE_NAME = 'connection_key' THEN k := 'connection-key'; i := r.id; ELSIF TG_TABLE_NAME = 'session' THEN k := 'session'; i := r.id; s := r.id; ELSIF TG_TABLE_NAME IN ('message', 'event') THEN k := 'event'; i := r.id; s := r.session_id; ELSIF TG_TABLE_NAME = 'command' THEN k := 'command'; i := r.id; h := r.host_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN IF r.kind = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN SELECT e.kind::text, e.task_id, e.session_id, e.host_id INTO ek, t, s, h FROM execution e WHERE e.id = r.execution_id; IF ek = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; ELSIF TG_TABLE_NAME = 'definition' THEN k := 'definition'; i := r.kind || '/' || r.id; ELSE RETURN NULL; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op, actor, holder, setting_target) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1), nullif(current_setting('fleet.actor', true), ''), w, st); PERFORM fleet_enqueue_wake('fleet_change', ''); RETURN NULL; END $function$;
+
+CREATE OR REPLACE FUNCTION public.fleet_conn_meta_all()
+ RETURNS TABLE(id text, provider text)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE prev text := current_setting('fleet.project_ids', true);
+BEGIN
+ PERFORM set_config('fleet.project_ids', '*', true);
+ BEGIN
+  RETURN QUERY SELECT c.id, coalesce(c.provider, c.payload->>'provider') FROM api_connection c;
+ EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true); RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+END $function$;
 
 CREATE OR REPLACE FUNCTION public.fleet_deleted_projects()
  RETURNS text[]
@@ -231,6 +389,229 @@ BEGIN
  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
  RETURN p_code;
 END $function$;
+
+CREATE OR REPLACE FUNCTION public.fleet_refresh_execution_spend(eid text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+ prev_scope text := current_setting('fleet.project_ids', true);
+ prev_del text := current_setting('fleet.deleted', true);
+BEGIN
+ IF eid IS NULL THEN
+  RETURN;
+ END IF;
+ PERFORM set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+ BEGIN
+  IF NOT EXISTS (
+   SELECT 1
+   FROM execution e
+   LEFT JOIN execution_totals t ON t.execution_id = e.id
+   WHERE e.id = eid
+     AND e.started_at IS NOT NULL
+     AND e.kind NOT IN ('pipeline_run', 'pipeline_step')
+     AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL)
+  ) THEN
+   DELETE FROM execution_spend WHERE execution_id = eid;
+   PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
+   RETURN;
+  END IF;
+
+  WITH active_conns AS (
+   SELECT c.id FROM api_connection c
+   WHERE c.tombstoned_at IS NULL AND (c.project_id IS NULL OR NOT (c.project_id = ANY (fleet_deleted_projects())))
+  ),
+  leaves AS (
+   SELECT
+    e.id AS execution_id,
+    e.project_id,
+    e.started_at,
+    e.kind,
+    e.state,
+    e.system_actor,
+    CASE
+     WHEN e.system_actor IS NOT NULL THEN 'system'
+     WHEN e.experiment_id IS NOT NULL THEN 'lab'
+     WHEN e.task_id IS NOT NULL THEN 'task'
+     WHEN e.session_id IS NOT NULL THEN 'conversation'
+     ELSE 'other'
+    END AS purpose,
+    e.profile_id,
+    coalesce(t.model, e.model) AS model,
+    e.host_id,
+    e.account_id,
+    nullif(e.data->>'connection', '') AS connection,
+    coalesce(e.data->>'connection', '') || '/' || coalesce(e.data->>'tool', '') AS conn_subject,
+    nullif(t.connection_cost->>'unit', '') AS conn_unit,
+    CASE
+     WHEN t.connection_cost IS NOT NULL AND coalesce(t.connection_cost->>'amount', CASE WHEN nullif(t.connection_cost->>'unit', '') IS NOT NULL THEN t.connection_cost->>(t.connection_cost->>'unit') END) ~ '^[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?$'
+     THEN coalesce(t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'unit'))::numeric
+    END AS conn_amount,
+    (t.connection_cost IS NOT NULL) AS has_conn_cost,
+    CASE WHEN t.connection_cost IS NOT NULL AND t.connection_cost_basis = 'measured' THEN
+     CASE
+      WHEN nullif(t.connection_cost->>'currency', '') ~ '^[A-Z]{3}$'
+       AND coalesce(t.connection_cost->>'cost', t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'currency')) ~ '^[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?$'
+       THEN t.connection_cost->>'currency'
+      WHEN nullif(t.connection_cost->>'unit', '') ~ '^[A-Z]{3}$'
+       AND coalesce(t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'unit')) ~ '^[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?$'
+       THEN t.connection_cost->>'unit'
+     END
+    END AS direct_currency,
+    CASE WHEN t.connection_cost IS NOT NULL AND t.connection_cost_basis = 'measured' THEN
+     CASE
+      WHEN nullif(t.connection_cost->>'currency', '') ~ '^[A-Z]{3}$'
+       AND coalesce(t.connection_cost->>'cost', t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'currency')) ~ '^[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?$'
+       THEN coalesce(t.connection_cost->>'cost', t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'currency'))::numeric
+      WHEN nullif(t.connection_cost->>'unit', '') ~ '^[A-Z]{3}$'
+       AND coalesce(t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'unit')) ~ '^[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][-+]?[0-9]+)?$'
+       THEN coalesce(t.connection_cost->>'amount', t.connection_cost->>(t.connection_cost->>'unit'))::numeric
+     END
+    END AS direct_amount,
+    (coalesce(t.billing_basis, '') = 'subscription' OR (coalesce(t.billing_basis, '') IN ('', 'unavailable') AND e.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM active_conns ac WHERE ac.id = e.account_id))) AS is_sub,
+    CASE WHEN e.state = 'failed' THEN 1::smallint ELSE 0::smallint END AS failed_i,
+    t.tokens_input,
+    CASE WHEN t.tokens_input IS NOT NULL AND coalesce(t.tokens_input_basis, 'unavailable') = 'subscription' THEN 1::smallint ELSE 0::smallint END AS tin_sub_i,
+    CASE WHEN t.tokens_input IS NOT NULL AND coalesce(t.tokens_input_basis, 'unavailable') = 'estimated' THEN 1::smallint ELSE 0::smallint END AS tin_est_i,
+    CASE WHEN e.kind IN ('agent_run', 'child_agent') OR t.tokens_input IS NOT NULL THEN 1::smallint ELSE 0::smallint END AS tin_exp_i,
+    t.tokens_output,
+    CASE WHEN t.tokens_output IS NOT NULL AND coalesce(t.tokens_output_basis, 'unavailable') = 'subscription' THEN 1::smallint ELSE 0::smallint END AS tout_sub_i,
+    CASE WHEN t.tokens_output IS NOT NULL AND coalesce(t.tokens_output_basis, 'unavailable') = 'estimated' THEN 1::smallint ELSE 0::smallint END AS tout_est_i,
+    CASE WHEN e.kind IN ('agent_run', 'child_agent') OR t.tokens_output IS NOT NULL THEN 1::smallint ELSE 0::smallint END AS tout_exp_i,
+    t.tokens_cache_read,
+    t.tokens_cache_write,
+    e.tombstoned_at
+   FROM execution e
+   LEFT JOIN execution_totals t ON t.execution_id = e.id
+   WHERE e.id = eid
+  ),
+  priced AS (
+   SELECT
+    l.*,
+    pi.id AS pi_id, pi.price AS pi_price, pi.currency AS pi_currency, pi.obs_ms AS pi_obs,
+    po.id AS po_id, po.price AS po_price, po.currency AS po_currency, po.obs_ms AS po_obs,
+    pcr.id AS pcr_id, pcr.price AS pcr_price, pcr.currency AS pcr_currency, pcr.obs_ms AS pcr_obs,
+    pcw.id AS pcw_id, pcw.price AS pcw_price, pcw.currency AS pcw_currency, pcw.obs_ms AS pcw_obs,
+    pc.id AS pc_id, pc.price AS pc_price, pc.currency AS pc_currency, pc.obs_ms AS pc_obs
+   FROM leaves l
+   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND NOT l.has_conn_cost AND l.model IS NOT NULL AND l.tokens_input > 0 AND p.subject = l.model AND p.unit = 'input_tokens' AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pi ON true
+   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND NOT l.has_conn_cost AND l.model IS NOT NULL AND l.tokens_output > 0 AND p.subject = l.model AND p.unit = 'output_tokens' AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) po ON true
+   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND NOT l.has_conn_cost AND l.model IS NOT NULL AND l.tokens_cache_read > 0 AND p.subject = l.model AND p.unit = 'cache_read_tokens' AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pcr ON true
+   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE l.kind <> 'tool_run' AND NOT l.has_conn_cost AND l.model IS NOT NULL AND l.tokens_cache_write > 0 AND p.subject = l.model AND p.unit = 'cache_write_tokens' AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pcw ON true
+   LEFT JOIN LATERAL (SELECT p.id, p.price, p.currency, (extract(epoch FROM p.observed_at) * 1000)::bigint AS obs_ms FROM price_entry p WHERE (l.kind = 'tool_run' OR l.has_conn_cost) AND l.direct_currency IS NULL AND l.conn_unit IS NOT NULL AND l.conn_amount IS NOT NULL AND p.subject = l.conn_subject AND p.unit = l.conn_unit AND p.effective_from <= l.started_at ORDER BY p.effective_from DESC, p.seq DESC LIMIT 1) pc ON true
+  ),
+  cost_items AS (
+   SELECT p.execution_id, ci.currency, ci.cost_basis, ci.amount, ci.price_id, ci.obs_ms, ci.unpriced
+   FROM priced p
+   CROSS JOIN LATERAL (
+    SELECT
+     CASE WHEN p.direct_currency IS NOT NULL THEN p.direct_currency WHEN p.pc_id IS NOT NULL THEN p.pc_currency END AS currency,
+     CASE WHEN p.direct_currency IS NOT NULL THEN CASE WHEN p.is_sub THEN 'subscription' ELSE 'measured' END WHEN p.pc_id IS NOT NULL THEN CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END END AS cost_basis,
+     CASE WHEN p.direct_currency IS NOT NULL THEN p.direct_amount WHEN p.pc_id IS NOT NULL THEN p.pc_price * p.conn_amount END AS amount,
+     CASE WHEN p.direct_currency IS NULL THEN p.pc_id END AS price_id,
+     CASE WHEN p.direct_currency IS NULL THEN p.pc_obs END AS obs_ms,
+     CASE WHEN p.direct_currency IS NULL AND p.pc_id IS NULL THEN 1::bigint ELSE 0::bigint END AS unpriced
+    WHERE p.kind = 'tool_run' OR p.has_conn_cost
+    UNION ALL
+    SELECT p.pi_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.pi_price * p.tokens_input::numeric, p.pi_id, p.pi_obs, CASE WHEN p.pi_id IS NULL THEN 1::bigint ELSE 0::bigint END
+    WHERE p.kind <> 'tool_run' AND NOT p.has_conn_cost AND p.tokens_input > 0
+    UNION ALL
+    SELECT p.po_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.po_price * p.tokens_output::numeric, p.po_id, p.po_obs, CASE WHEN p.po_id IS NULL THEN 1::bigint ELSE 0::bigint END
+    WHERE p.kind <> 'tool_run' AND NOT p.has_conn_cost AND p.tokens_output > 0
+    UNION ALL
+    SELECT p.pcr_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.pcr_price * p.tokens_cache_read::numeric, p.pcr_id, p.pcr_obs, CASE WHEN p.pcr_id IS NULL THEN 1::bigint ELSE 0::bigint END
+    WHERE p.kind <> 'tool_run' AND NOT p.has_conn_cost AND p.tokens_cache_read > 0
+    UNION ALL
+    SELECT p.pcw_currency, CASE WHEN p.is_sub THEN 'subscription' ELSE 'estimated' END, p.pcw_price * p.tokens_cache_write::numeric, p.pcw_id, p.pcw_obs, CASE WHEN p.pcw_id IS NULL THEN 1::bigint ELSE 0::bigint END
+    WHERE p.kind <> 'tool_run' AND NOT p.has_conn_cost AND p.tokens_cache_write > 0
+    UNION ALL
+    SELECT NULL::text, NULL::text, NULL::numeric, NULL::text, NULL::bigint, 1::bigint
+    WHERE p.kind IN ('agent_run', 'child_agent') AND NOT p.has_conn_cost AND coalesce(p.tokens_input, p.tokens_output, p.tokens_cache_read, p.tokens_cache_write) IS NULL
+   ) ci
+  ),
+  cost_grouped AS (
+   SELECT
+    ci.execution_id,
+    ci.currency,
+    ci.cost_basis,
+    sum(ci.amount)::double precision AS value,
+    sum(ci.unpriced)::bigint AS unpriced,
+    (SELECT jsonb_agg(jsonb_build_object('id', x.price_id, 'observedAt', x.obs_ms) ORDER BY x.price_id, x.obs_ms)
+     FROM (SELECT DISTINCT ci2.price_id, ci2.obs_ms FROM cost_items ci2 WHERE ci2.execution_id = ci.execution_id AND ci2.currency IS NOT DISTINCT FROM ci.currency AND ci2.cost_basis IS NOT DISTINCT FROM ci.cost_basis AND ci2.price_id IS NOT NULL) x) AS prices
+   FROM cost_items ci
+   GROUP BY ci.execution_id, ci.currency, ci.cost_basis
+  ),
+  cost_rolled AS (
+   SELECT
+    cg.execution_id,
+    max(cg.currency) FILTER (WHERE cg.currency IS NOT NULL) AS cost_currency,
+    max(cg.cost_basis) FILTER (WHERE cg.currency IS NOT NULL) AS cost_basis,
+    sum(cg.value) FILTER (WHERE cg.currency IS NOT NULL) AS cost_value,
+    coalesce(sum(cg.unpriced), 0)::bigint AS cost_unpriced,
+    (array_agg(cg.prices::text) FILTER (WHERE cg.currency IS NOT NULL AND cg.prices IS NOT NULL))[1] AS cost_price_refs,
+    CASE WHEN count(*) FILTER (WHERE cg.currency IS NOT NULL) > 1 THEN
+     jsonb_agg(jsonb_build_object('currency', cg.currency, 'basis', cg.cost_basis, 'value', cg.value, 'prices', coalesce(cg.prices, '[]'::jsonb), 'unpriced', cg.unpriced))
+    END AS payload
+   FROM cost_grouped cg
+   GROUP BY cg.execution_id
+  )
+  INSERT INTO execution_spend(
+   execution_id, project_id, started_at, kind, state, system_actor, purpose, profile_id, model, host_id,
+   account_id, connection, conn_subject, conn_unit, conn_amount, has_conn_cost, has_direct_cost, is_sub,
+   failed_i, tokens_input, tin_sub_i, tin_est_i, tin_exp_i, tokens_output, tout_sub_i, tout_est_i, tout_exp_i,
+   stale, cost_currency, cost_basis, cost_value, cost_unpriced, cost_price_refs, payload, tombstoned_at
+  )
+  SELECT
+   l.execution_id, l.project_id, l.started_at, l.kind, l.state, l.system_actor, l.purpose, l.profile_id, l.model, l.host_id,
+   l.account_id, l.connection, l.conn_subject, l.conn_unit, l.conn_amount, l.has_conn_cost, (l.direct_currency IS NOT NULL), l.is_sub,
+   l.failed_i, l.tokens_input, l.tin_sub_i, l.tin_est_i, l.tin_exp_i, l.tokens_output, l.tout_sub_i, l.tout_est_i, l.tout_exp_i,
+   false, cr.cost_currency, cr.cost_basis, cr.cost_value, coalesce(cr.cost_unpriced, 0), cr.cost_price_refs, cr.payload, l.tombstoned_at
+  FROM leaves l
+  LEFT JOIN cost_rolled cr ON cr.execution_id = l.execution_id
+  ON CONFLICT (execution_id) DO UPDATE SET
+   project_id = excluded.project_id,
+   started_at = excluded.started_at,
+   kind = excluded.kind,
+   state = excluded.state,
+   system_actor = excluded.system_actor,
+   purpose = excluded.purpose,
+   profile_id = excluded.profile_id,
+   model = excluded.model,
+   host_id = excluded.host_id,
+   account_id = excluded.account_id,
+   connection = excluded.connection,
+   conn_subject = excluded.conn_subject,
+   conn_unit = excluded.conn_unit,
+   conn_amount = excluded.conn_amount,
+   has_conn_cost = excluded.has_conn_cost,
+   has_direct_cost = excluded.has_direct_cost,
+   is_sub = excluded.is_sub,
+   failed_i = excluded.failed_i,
+   tokens_input = excluded.tokens_input,
+   tin_sub_i = excluded.tin_sub_i,
+   tin_est_i = excluded.tin_est_i,
+   tin_exp_i = excluded.tin_exp_i,
+   tokens_output = excluded.tokens_output,
+   tout_sub_i = excluded.tout_sub_i,
+   tout_est_i = excluded.tout_est_i,
+   tout_exp_i = excluded.tout_exp_i,
+   stale = false,
+   cost_currency = excluded.cost_currency,
+   cost_basis = excluded.cost_basis,
+   cost_value = excluded.cost_value,
+   cost_unpriced = excluded.cost_unpriced,
+   cost_price_refs = excluded.cost_price_refs,
+   payload = excluded.payload,
+   tombstoned_at = excluded.tombstoned_at;
+ EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
+  RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
+END $function$;
+REVOKE ALL ON FUNCTION fleet_refresh_execution_spend(eid text) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.fleet_resource_summary_change()
  RETURNS trigger
@@ -537,12 +918,9 @@ BEGIN
  PERFORM set_config('fleet.project_ids', '*', true);
  BEGIN
   SELECT count(*)::bigint INTO total_n
-  FROM execution e
-  LEFT JOIN execution_totals t ON t.execution_id = e.id
-  WHERE e.kind NOT IN ('pipeline_run', 'pipeline_step')
-    AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL)
-    AND e.started_at >= win_from
-    AND e.started_at < win_to;
+  FROM execution_spend
+  WHERE started_at >= win_from
+    AND started_at < win_to;
  EXCEPTION WHEN OTHERS THEN
   PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
   RAISE;

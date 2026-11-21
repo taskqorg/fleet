@@ -1,6 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 	"time"
@@ -205,4 +209,194 @@ func TestSummarizeResourceLeavesPartialTokensAndToolBasis(t *testing.T) {
 	if gotPartial.Tools.Basis != contract.ResourceBasisEstimated || gotPartial.Tools.TotalCalls != 3 {
 		t.Fatalf("estimated tool calls gave Tools=%+v, want basis=estimated totalCalls=3", gotPartial.Tools)
 	}
+}
+
+// Requirement: fleet-analytics.md spend_summary matches analytics_query totals/dimensions/costs, respects fleet.project_ids RLS and hidden count, and stays consistent across backdated price_entry stale invalidation. Risk: execution_spend rollup drifts from live analytics_query, leaks hidden project counts, or serves stale cached prices after price_entry updates.
+func TestSpendSummaryInvariant(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	ctx := e.ctx
+	t0 := time.Now().UTC().Truncate(time.Second)
+
+	tx, err := e.ownerStore.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{`SET LOCAL fleet.project_ids='*'`, nil},
+		{`INSERT INTO api_connection(id,name,provider,payload) VALUES ('conn:gh','github','github','{}')`, nil},
+		{`INSERT INTO definition(kind,id,path,head,ever_shipped,access_version) VALUES ('agent','coder','agents/coder.json',1,true,1)`, nil},
+		{`INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message,at) VALUES ('agent','coder',1,'{"category":"engineering"}','sha1','editor','person','init',$1)`, []any{t0.Add(-5 * time.Minute)}},
+		{`INSERT INTO task(id,project_id,title,state,priority,completion_requirements,created_at,updated_at,state_at,accepted_at) VALUES ('t-done','p1','Done task','completed','normal','{}',$1,$1,$1,$1)`, []any{t0.Add(-5 * time.Minute)}},
+		{`INSERT INTO price_entry(id,subject,unit,price,currency,source,observed_at,effective_from) VALUES
+			('pr:m1:in','m1','input_tokens',0.000002,'USD','owner',$1,$2),
+			('pr:m1:out','m1','output_tokens',0.000010,'USD','owner',$1,$2),
+			('pr:m2:in','m2','input_tokens',0.000005,'EUR','owner',$1,$2),
+			('pr:gh:call','github','call',0.5,'USD','owner',$1,$2)`, []any{t0.Add(-5 * time.Minute), t0.Add(-time.Hour)}},
+		{`INSERT INTO execution(id,kind,state,project_id,task_id,session_id,profile_id,model,host_id,started_at,ended_at,system_actor,tombstoned_at,data) VALUES
+			('e-p1-task','agent_run','succeeded','p1','t-done',NULL,'coder','m1','h1',$1,$2,NULL,NULL,'{}'),
+			('e-p1-conv','agent_run','failed','p1',NULL,'s1','coder','m2','h1',$1,$2,NULL,NULL,'{"account":{"id":"acct-1"}}'),
+			('e-p1-tool','tool_run','succeeded','p1','t-done',NULL,'coder',NULL,'h1',$1,$2,NULL,NULL,'{"connection":"github"}'),
+			('e-p1-unpriced','agent_run','succeeded','p1',NULL,NULL,NULL,'unknown-model','h2',$1,$2,NULL,NULL,'{}'),
+			('e-p1-sys','tool_run','succeeded','p1',NULL,NULL,NULL,NULL,'h1',$1,$2,'coordinator',NULL,'{"connection":"github"}'),
+			('e-p1-tomb','agent_run','succeeded','p1','t-done',NULL,'coder','m1','h1',$1,$2,NULL,$1,'{}'),
+			('e-p2-other','agent_run','succeeded','p2',NULL,NULL,'coder','m1','h2',$1,$2,NULL,NULL,'{}'),
+			('e-directed','agent_run','succeeded',NULL,NULL,NULL,NULL,'m1','h1',$1,$2,NULL,NULL,'{}')`, []any{t0.Add(-5 * time.Minute), t0.Add(-4 * time.Minute)}},
+		{`INSERT INTO execution_totals(execution_id,project_id,tokens_input,tokens_input_basis,tokens_output,tokens_output_basis,connection_cost,connection_cost_basis,billing_basis,model) VALUES
+			('e-p1-task','p1',1000000,'measured',500000,'measured',NULL,'unavailable','api','m1'),
+			('e-p1-conv','p1',500000,'measured',0,'unavailable','{"unit":"call","amount":2,"currency":"EUR"}','measured','api','m2'),
+			('e-p1-tool','p1',NULL,'unavailable',NULL,'unavailable','{"unit":"call","amount":3}','measured','api',NULL),
+			('e-p1-unpriced','p1',100,'measured',0,'measured',NULL,'unavailable','api','unknown-model'),
+			('e-p2-other','p2',1000000,'measured',0,'measured',NULL,'unavailable','api','m1'),
+			('e-directed',NULL,1000000,'measured',0,'measured',NULL,'unavailable','api','m1')`, nil},
+	} {
+		if _, err := tx.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	win := contract.AnalyticsWindow{
+		From: json.RawMessage(fmt.Sprintf("%d", t0.Add(-10*time.Minute).UnixMilli())),
+		To:   json.RawMessage(fmt.Sprintf("%d", t0.Add(10*time.Minute).UnixMilli())),
+	}
+	measureInt := func(m map[string]contract.MeasuredNumber, k string) int64 {
+		v, ok := m[k]
+		if !ok || v.Value == nil {
+			return 0
+		}
+		return int64(math.Round(*v.Value))
+	}
+
+	checkParity := func(label string, person *Person, sys *contract.SystemActivity) {
+		t.Helper()
+		dims := []contract.SpendGroupBy{
+			contract.SpendGroupByPurpose,
+			contract.SpendGroupByProject,
+			contract.SpendGroupByCategory,
+			contract.SpendGroupByProfile,
+			contract.SpendGroupByModel,
+			contract.SpendGroupByHost,
+		}
+		for _, by := range dims {
+			var sum contract.SpendSummaryReply
+			var aq contract.AnalyticsQueryReply
+			var req *Request
+			if person != nil {
+				req = &Request{person: person, r: httptest.NewRequest("POST", "/", nil)}
+			}
+			adim, err := spendDimension(by)
+			if err != nil {
+				t.Fatalf("%s/%s: %v", label, by, err)
+			}
+			if err := e.app.store.Read(ctx, req, func(q *Request) error {
+				var err error
+				sum, err = spendSummary(q, &contract.SpendSummaryRequest{By: by, Window: win, System: sys})
+				if err != nil {
+					return err
+				}
+				aq, err = analyticsQuery(q, &contract.AnalyticsQueryRequest{
+					Window:     win,
+					System:     sys,
+					Dimensions: []contract.AnalyticsDimension{adim},
+					Measures: []contract.AnalyticsMeasure{
+						contract.AnalyticsMeasureExecutions,
+						contract.AnalyticsMeasureFailed,
+						contract.AnalyticsMeasureTokensInput,
+						contract.AnalyticsMeasureTokensOutput,
+						contract.AnalyticsMeasureCost,
+					},
+				})
+				return err
+			}); err != nil {
+				t.Fatalf("%s/%s: %v", label, by, err)
+			}
+
+			for _, m := range []string{"executions", "failed", "tokens_input", "tokens_output"} {
+				sm, am := sum.Totals.Measures[m], aq.Totals.Measures[m]
+				if (sm.Value == nil) != (am.Value == nil) || (sm.Value != nil && math.Abs(*sm.Value-*am.Value) > 1e-9) || sm.Basis != am.Basis {
+					t.Fatalf("%s/%s total %s mismatch: spend=%+v analytics=%+v", label, by, m, sm, am)
+				}
+			}
+			if !reflect.DeepEqual(sum.Totals.Cost, aq.Totals.Cost) {
+				t.Fatalf("%s/%s total cost mismatch: spend=%+v analytics=%+v", label, by, sum.Totals.Cost, aq.Totals.Cost)
+			}
+			if len(sum.Rows) != len(aq.Rows) {
+				t.Fatalf("%s/%s row count mismatch: spend=%d analytics=%d", label, by, len(sum.Rows), len(aq.Rows))
+			}
+			aqByKey := make(map[string]contract.AnalyticsBucketRow, len(aq.Rows))
+			for _, ar := range aq.Rows {
+				k := ar.Dimensions[string(adim)]
+				if k == "" {
+					k = "unknown"
+				}
+				aqByKey[k] = ar
+			}
+			for _, sr := range sum.Rows {
+				ar, ok := aqByKey[sr.Key]
+				if !ok {
+					t.Fatalf("%s/%s missing bucket %q in analytics_query", label, by, sr.Key)
+				}
+				if sr.Runs != measureInt(ar.Measures, "executions") || sr.Failed != measureInt(ar.Measures, "failed") {
+					t.Fatalf("%s/%s bucket %q runs/failed mismatch: spend=%+v analytics=%+v", label, by, sr.Key, sr, ar.Measures)
+				}
+				if !reflect.DeepEqual(sr.Cost, ar.Cost) {
+					t.Fatalf("%s/%s bucket %q cost mismatch: spend=%+v analytics=%+v", label, by, sr.Key, sr.Cost, ar.Cost)
+				}
+			}
+		}
+	}
+
+	// Owner sees everything (including p2 and directed NULL project execution); hidden must be 0.
+	checkParity("owner", nil, nil)
+	var ownerSum contract.SpendSummaryReply
+	if err := e.app.store.Read(ctx, nil, func(q *Request) error {
+		var err error
+		ownerSum, err = spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByCategory, Window: win})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if ownerSum.Bought.CompletedTasks != 1 || ownerSum.Hidden != 0 || len(ownerSum.ByPurpose) == 0 {
+		t.Fatalf("unexpected owner spend_summary metadata: bought=%+v hidden=%d", ownerSum.Bought, ownerSum.Hidden)
+	}
+
+	// Restricted member granted only p1: cannot see p2 or project_id IS NULL directed execution, and sees hidden=2.
+	var member Person
+	_ = json.Unmarshal([]byte(`{"email":"m@x","roles":["operator"],"grants":[{"kind":"project","id":"p1"}]}`), &member)
+	checkParity("member-p1", &member, nil)
+	var memSum contract.SpendSummaryReply
+	if err := e.app.store.Read(ctx, &Request{person: &member, r: httptest.NewRequest("POST", "/", nil)}, func(q *Request) error {
+		var err error
+		memSum, err = spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByProject, Window: win})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if memSum.Hidden != 2 {
+		t.Fatalf("member hidden = %d, want 2 (p2 + directed)", memSum.Hidden)
+	}
+
+	// Backdated price_entry triggers stale fallback on e-p1-task/e-p2-other/e-directed; spend_summary must still match live analytics_query.
+	if _, err := e.ownerStore.pool.Exec(ctx, `
+		INSERT INTO price_entry(id,subject,unit,price,currency,source,observed_at,effective_from)
+		VALUES ('pr:m1:in:v2','m1','input_tokens',0.000004,'USD','owner',$1,$2)
+	`, t0, t0.Add(-30*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	var staleCount int64
+	if err := e.app.store.Read(ctx, nil, func(q *Request) error {
+		return q.tx.QueryRow(q.ctx(), `SELECT count(*) FROM execution_spend WHERE stale`).Scan(&staleCount)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if staleCount == 0 {
+		t.Fatal("expected backdated price_entry to mark execution_spend rows stale")
+	}
+	checkParity("after-backdated-price", nil, nil)
 }
