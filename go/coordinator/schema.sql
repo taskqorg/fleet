@@ -4317,3 +4317,10 @@ CREATE INDEX upload_finish_work_due ON upload_finish_work(next_attempt_at);
 -- stops it as not found) is deleted first.
 DELETE FROM command c WHERE c.execution_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM execution e WHERE e.id = c.execution_id);
 ALTER TABLE command ADD CONSTRAINT command_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES execution(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+
+-- migration 86: a person's settings go when the person leaves (docs/designs/fleet-standard.md S1). People reload now
+-- upserts and prunes removed people instead of deleting every row, so person_setting keeps its foreign key; dangling
+-- rows are removed under unrestricted scope first.
+SELECT set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+DELETE FROM person_setting ps WHERE ps.email IS NOT NULL AND NOT EXISTS (SELECT 1 FROM person p WHERE p.email = ps.email);
+ALTER TABLE person_setting ADD CONSTRAINT person_setting_email_fkey FOREIGN KEY (email) REFERENCES person(email) ON DELETE CASCADE;

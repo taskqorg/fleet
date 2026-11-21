@@ -22,11 +22,15 @@ WHERE directed_by IS NOT NULL AND director_access_revoked_at IS NULL AND NOT (di
 UPDATE experiment SET requester_removed_at = now()
 WHERE requester_removed_at IS NULL AND requested_by IN (SELECT email FROM person WHERE NOT (email = ANY (@emails::text[])));
 
--- name: PeopleClear :exec
-DELETE FROM person;
+-- name: PeoplePruneRemoved :exec
+DELETE FROM person WHERE NOT (email = ANY (@emails::text[]));
 
--- name: PersonInsert :exec
-INSERT INTO person(email, name, roles, owner) VALUES (@email, @name, @roles::text[], @owner);
+-- name: PersonUpsert :exec
+INSERT INTO person(email, name, roles, owner, loaded_at) VALUES (@email, @name, @roles::text[], @owner, now())
+ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, roles = EXCLUDED.roles, owner = EXCLUDED.owner, loaded_at = now();
+
+-- name: PersonGrantsClear :exec
+DELETE FROM person_grant;
 
 -- name: PersonGrantInsert :exec
 INSERT INTO person_grant(email, object_kind, object_id) VALUES (@email, @object_kind, @object_id) ON CONFLICT DO NOTHING;
