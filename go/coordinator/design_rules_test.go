@@ -30,6 +30,25 @@ var designTimeCalls = map[string]bool{"NewTicker": true, "Tick": true, "Sleep": 
 
 var designOpCalls = map[string]bool{"gatedOp": true, "gatedObjOp": true, "shaped": true, "operation": true, "agentTool": true, "longOp": true, "projectOp": true, "threadOp": true, "checkFirst": true, "ownerFirst": true}
 
+// designCallExprName returns the called identifier or pkg.Name of fun, unwrapping generic type arguments.
+func designCallExprName(fun ast.Expr) string {
+	switch g := fun.(type) {
+	case *ast.IndexExpr:
+		fun = g.X
+	case *ast.IndexListExpr:
+		fun = g.X
+	}
+	switch x := fun.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.SelectorExpr:
+		if id, ok := x.X.(*ast.Ident); ok {
+			return id.Name + "." + x.Sel.Name
+		}
+	}
+	return ""
+}
+
 // designRuleHits returns rule ID -> positions of its violations in one file.
 func designRuleHits(f *ast.File) map[string][]token.Pos {
 	hits := map[string][]token.Pos{}
@@ -54,25 +73,15 @@ func designRuleHits(f *ast.File) map[string][]token.Pos {
 				}
 			}
 		case *ast.CallExpr:
-			fun := x.Fun
-			switch g := fun.(type) {
-			case *ast.IndexExpr:
-				fun = g.X
-			case *ast.IndexListExpr:
-				fun = g.X
+			name := designCallExprName(x.Fun)
+			if designMapCalls[name] {
+				add("R-MAP", x)
 			}
-			if id, ok := fun.(*ast.Ident); ok {
-				if designMapCalls[id.Name] {
-					add("R-MAP", x)
-				}
-				if designOpCalls[id.Name] {
-					add("R-OP", x)
-				}
+			if designOpCalls[name] {
+				add("R-OP", x)
 			}
-			if sel, ok := fun.(*ast.SelectorExpr); ok {
-				if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "time" && designTimeCalls[sel.Sel.Name] {
-					add("R-GO", x)
-				}
+			if sel, ok := strings.CutPrefix(name, "time."); ok && designTimeCalls[sel] {
+				add("R-GO", x)
 			}
 		case *ast.CompositeLit:
 			if id, ok := x.Type.(*ast.Ident); ok && id.Name == "doc" {
@@ -138,6 +147,13 @@ func TestDesignRules(t *testing.T) {
 			}
 		}
 	}
+	for file, rules := range designRulesOwned {
+		for rule := range rules {
+			if len(found[file][rule]) == 0 {
+				t.Errorf("%s no longer breaks %s: remove it from designRulesOwned", file, rule)
+			}
+		}
+	}
 }
 
 // The S5/S6 checks of the work kit and its queues (DESIGN_RULES.md). designKitAreas: the file-name prefixes of the
@@ -172,9 +188,12 @@ func designSources(t *testing.T, tests bool) []designFile {
 		if strings.HasSuffix(n, "_test.go") != tests {
 			continue
 		}
-		f, err := parser.ParseFile(fset, n, nil, 0)
+		f, err := parser.ParseFile(fset, n, nil, parser.ParseComments)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if !tests && ast.IsGenerated(f) {
+			continue
 		}
 		out = append(out, designFile{n, f})
 	}
@@ -354,36 +373,261 @@ func TestDesignStateWrites(t *testing.T) {
 	}
 }
 
-// S6: in the kit's areas only the kit schedules: tickers, timers, sleeps, its own connections, randomness, every() and
-// the statement clock (time reaches their SQL only as the kit's $now).
+var (
+	designBackgroundHelpers    = map[string]bool{"every": true, "everyWake": true, "coalesced": true, "untilDone": true, "parallel": true, "retryCall": true}
+	designBackgroundOwnedFuncs = map[string]bool{"everyWake": true, "coalesced": true, "untilDone": true, "parallel": true, "retryCall": true}
+	designBackgroundStartCalls = map[string]bool{"every": true, "everyWake": true, "untilDone": true}
+	designSchedulingBanned     = map[string]bool{
+		"time.NewTicker": true, "time.After": true, "time.NewTimer": true,
+		"time.Sleep": true, "time.Tick": true, "time.AfterFunc": true,
+		"pgx.Connect": true, "go": true,
+		"every": true, "everyWake": true, "coalesced": true, "untilDone": true,
+	}
+)
+
+func designSchedulingHit(n ast.Node, includeRand bool) string {
+	switch x := n.(type) {
+	case *ast.GoStmt:
+		return "go"
+	case *ast.SelectorExpr:
+		if id, ok := x.X.(*ast.Ident); ok {
+			name := id.Name + "." + x.Sel.Name
+			if (includeRand && id.Name == "rand") || designSchedulingBanned[name] {
+				return name
+			}
+		}
+	case *ast.CallExpr:
+		if name := designCallExprName(x.Fun); designBackgroundHelpers[name] {
+			return name
+		}
+	}
+	return ""
+}
+
+func designCheckBackgroundFile(t *testing.T, f *ast.File) {
+	t.Helper()
+	defined := map[string]bool{}
+	bgHits := map[string]int{}
+	everyDelegates := false
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil {
+			ast.Inspect(decl, func(n ast.Node) bool {
+				if name := designSchedulingHit(n, false); name != "" && !designBackgroundHelpers[name] {
+					t.Errorf("background.go uses %s outside its owned helpers (DESIGN_RULES.md S6)", name)
+				}
+				return true
+			})
+			continue
+		}
+		fnName := fn.Name.Name
+		defined[fnName] = true
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if fnName == "every" {
+				if call, ok := n.(*ast.CallExpr); ok && designCallExprName(call.Fun) == "everyWake" {
+					everyDelegates = true
+				}
+			}
+			if name := designSchedulingHit(n, false); name != "" && !designBackgroundHelpers[name] {
+				if designBackgroundOwnedFuncs[fnName] {
+					bgHits[fnName]++
+				} else {
+					t.Errorf("background.go (%s) uses %s outside its owned helpers (DESIGN_RULES.md S6)", fnName, name)
+				}
+			}
+			return true
+		})
+	}
+	for name := range designBackgroundHelpers {
+		if !defined[name] {
+			t.Errorf("background.go must define %s (DESIGN_RULES.md S6)", name)
+		}
+	}
+	if !everyDelegates {
+		t.Error("background.go: every() must delegate to everyWake() (DESIGN_RULES.md S6)")
+	}
+	for name := range designBackgroundOwnedFuncs {
+		if bgHits[name] == 0 {
+			t.Errorf("background.go: owned helper %s has no scheduling hit (stale exemption)", name)
+		}
+	}
+}
+
+// designStartupFuncs returns the package-level functions registered via onStart(...) or called solely from main()
+// or an onStart(...) callback, excluding general helpers used elsewhere and callbacks passed into background helpers.
+func designStartupFuncs(sources []designFile) map[string]bool {
+	startup := map[string]bool{"main": true}
+	calledInStartup := map[string]bool{}
+	usedOutside := map[string]bool{}
+	var walkStartup func(n ast.Node)
+	var walkOther func(n ast.Node, inInit bool)
+	handleOnStart := func(call *ast.CallExpr, inInit bool) bool {
+		if !inInit || designCallExprName(call.Fun) != "onStart" || len(call.Args) != 1 {
+			return false
+		}
+		switch a := call.Args[0].(type) {
+		case *ast.Ident:
+			startup[a.Name] = true
+		case *ast.FuncLit:
+			walkStartup(a.Body)
+		default:
+			walkOther(a, false)
+		}
+		return true
+	}
+	walkStartup = func(n ast.Node) {
+		if n == nil {
+			return
+		}
+		ast.Inspect(n, func(cur ast.Node) bool {
+			switch x := cur.(type) {
+			case *ast.GoStmt:
+				walkOther(x, false)
+				return false
+			case *ast.FuncLit:
+				walkOther(x.Body, false)
+				return false
+			case *ast.CallExpr:
+				name := designCallExprName(x.Fun)
+				if name != "" && !strings.Contains(name, ".") && !designBackgroundHelpers[name] {
+					calledInStartup[name] = true
+				} else if name == "" || strings.Contains(name, ".") {
+					walkOther(x.Fun, false)
+				}
+				for _, arg := range x.Args {
+					if designBackgroundHelpers[name] {
+						if fl, ok := arg.(*ast.FuncLit); ok {
+							walkOther(fl.Body, false)
+							continue
+						}
+					}
+					walkStartup(arg)
+				}
+				return false
+			}
+			return true
+		})
+	}
+	walkOther = func(n ast.Node, inInit bool) {
+		if n == nil {
+			return
+		}
+		ast.Inspect(n, func(cur ast.Node) bool {
+			switch x := cur.(type) {
+			case *ast.FuncLit:
+				walkOther(x.Body, false)
+				return false
+			case *ast.CallExpr:
+				if handleOnStart(x, inInit) {
+					return false
+				}
+			case *ast.Ident:
+				usedOutside[x.Name] = true
+			case *ast.SelectorExpr:
+				walkOther(x.X, false)
+				return false
+			}
+			return true
+		})
+	}
+	for _, src := range sources {
+		for _, decl := range src.ast.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				walkOther(decl, false)
+				continue
+			}
+			if fn.Recv == nil && fn.Name.Name == "main" {
+				walkStartup(fn.Body)
+				continue
+			}
+			walkOther(fn.Body, fn.Recv == nil && fn.Name.Name == "init")
+		}
+	}
+	for name := range calledInStartup {
+		if !usedOutside[name] {
+			startup[name] = true
+		}
+	}
+	return startup
+}
+
+func designCheckNonKitFile(t *testing.T, f designFile, startup map[string]bool) {
+	t.Helper()
+	for _, decl := range f.ast.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			ast.Inspect(decl, func(n ast.Node) bool {
+				if call, ok := n.(*ast.CallExpr); ok {
+					if name := designCallExprName(call.Fun); designBackgroundStartCalls[name] {
+						t.Errorf("%s calls %s in a package variable initializer instead of onStart/main (DESIGN_RULES.md S6)", f.name, name)
+					}
+				}
+				return true
+			})
+			continue
+		}
+		inInit := fn.Recv == nil && fn.Name.Name == "init"
+		inStartup := fn.Recv == nil && startup[fn.Name.Name]
+		var walk func(n ast.Node, okStartup, allowOnStart bool)
+		walk = func(n ast.Node, okStartup, allowOnStart bool) {
+			if n == nil {
+				return
+			}
+			ast.Inspect(n, func(cur ast.Node) bool {
+				switch x := cur.(type) {
+				case *ast.FuncLit:
+					walk(x.Body, false, false)
+					return false
+				case *ast.CallExpr:
+					name := designCallExprName(x.Fun)
+					if allowOnStart && name == "onStart" && len(x.Args) == 1 {
+						if fl, ok := x.Args[0].(*ast.FuncLit); ok {
+							walk(fl.Body, true, false)
+							return false
+						}
+					}
+					if designBackgroundStartCalls[name] && !okStartup {
+						t.Errorf("%s (%s) calls %s outside startup (onStart/main) (DESIGN_RULES.md S6)", f.name, fn.Name.Name, name)
+					}
+					if name == "coalesced" && !okStartup {
+						t.Errorf("%s (%s) calls coalesced outside package init/startup (DESIGN_RULES.md S6)", f.name, fn.Name.Name)
+					}
+				}
+				return true
+			})
+		}
+		walk(fn.Body, inStartup, inInit)
+	}
+}
+
+// S6: background.go owns periodic passes (every/everyWake) and background helpers in its named functions; non-kit files
+// schedule periodic passes only at startup; in the kit's areas only the kit schedules (no goroutines, tickers, timers,
+// sleeps, own connections, randomness, background helpers or statement clock).
 func TestDesignScheduling(t *testing.T) {
-	banned := map[string]bool{"time.NewTicker": true, "time.After": true, "time.NewTimer": true, "time.Sleep": true, "time.Tick": true, "time.AfterFunc": true, "pgx.Connect": true, "every": true}
-	seen := 0
-	for _, f := range designSources(t, false) {
+	sources := designSources(t, false)
+	startup := designStartupFuncs(sources)
+	seenKit := 0
+	seenBg := false
+	for _, f := range sources {
+		if f.name == "background.go" {
+			seenBg = true
+			designCheckBackgroundFile(t, f.ast)
+			continue
+		}
+		for _, decl := range f.ast.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && designBackgroundHelpers[fn.Name.Name] {
+				t.Errorf("%s defines %s; background helpers belong only in background.go (DESIGN_RULES.md S6)", f.name, fn.Name.Name)
+			}
+		}
 		if !designKitArea(f.name) && f.name != "work_kit.go" {
+			designCheckNonKitFile(t, f, startup)
 			continue
 		}
 		ast.Inspect(f.ast, func(n ast.Node) bool {
-			name := ""
-			switch x := n.(type) {
-			case *ast.SelectorExpr:
-				if id, ok := x.X.(*ast.Ident); ok {
-					name = id.Name + "." + x.Sel.Name
-					if id.Name == "rand" {
-						banned[name] = true
-					}
-				}
-			case *ast.GoStmt:
-				name = "go"
-				banned[name] = true
-			case *ast.CallExpr:
-				if id, ok := x.Fun.(*ast.Ident); ok {
-					name = id.Name
-				}
-			}
-			if banned[name] {
+			if name := designSchedulingHit(n, true); name != "" {
 				if f.name == "work_kit.go" {
-					seen++
+					seenKit++
 				} else {
 					t.Errorf("%s uses %s; only the work kit schedules (DESIGN_RULES.md S6)", f.name, name)
 				}
@@ -396,7 +640,10 @@ func TestDesignScheduling(t *testing.T) {
 			}
 		}
 	}
-	if seen == 0 {
+	if !seenBg {
+		t.Fatal("background.go was not scanned")
+	}
+	if seenKit == 0 {
 		t.Fatal("the scheduling scanner found nothing in work_kit.go")
 	}
 }

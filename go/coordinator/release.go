@@ -99,16 +99,31 @@ func autoUpdateOf(h *authHost) string {
 	return "on"
 }
 
+// readPDS18State reads pds18-state.json into the shared contract type. Missing or non-object/syntactically invalid
+// files return false; a JSON object with one malformed field still preserves the remaining valid fields.
+func readPDS18State() (contract.Pds18StateFile, bool) {
+	b, err := os.ReadFile(pds18StateFile)
+	if err != nil {
+		return contract.Pds18StateFile{}, false
+	}
+	var st contract.Pds18StateFile
+	if err := json.Unmarshal(b, &st); err != nil {
+		var te *json.UnmarshalTypeError
+		if !errors.As(err, &te) || te.Struct == "" {
+			return contract.Pds18StateFile{}, false
+		}
+	}
+	return st, true
+}
+
 // pds18Host: the host id of the executor on the coordinator's machine, as fleet-update records it in pds18-state.json
 // (from that executor's update.json). The coordinator's FLEET_HOST_ID names the default work host, not its machine.
 func pds18Host() string {
-	var st struct {
-		HostID string `json:"hostId"`
+	st, ok := readPDS18State()
+	if !ok || st.HostId == nil {
+		return ""
 	}
-	if b, err := os.ReadFile(pds18StateFile); err == nil {
-		json.Unmarshal(b, &st)
-	}
-	return st.HostID
+	return *st.HostId
 }
 
 // ownAutoUpdate reads autoUpdate of the coordinator machine's host record for /api/health (no request context there).
@@ -145,23 +160,21 @@ type mergedUpdate struct {
 
 // mergeUpdate: the worse of the polled result and the PDS18 parts; parts lists coordinator and executor results.
 func mergeUpdate(polled any) any {
-	b, err := os.ReadFile(pds18StateFile)
-	if err != nil {
-		return polled
-	}
-	var st map[string]json.RawMessage
-	if json.Unmarshal(b, &st) != nil {
+	st, ok := readPDS18State()
+	if !ok {
 		return polled
 	}
 	var worst *contract.UpdateResult
 	parts := map[string]*contract.UpdateResult{}
-	for _, k := range []string{"coordinator", "executor"} {
-		var part struct {
-			Last *contract.UpdateResult `json:"last"`
-		}
-		json.Unmarshal(st[k], &part)
-		if r := part.Last; r != nil {
-			parts[k] = r
+	for _, part := range []struct {
+		name string
+		last *contract.UpdateResult
+	}{
+		{"coordinator", st.Coordinator.Last},
+		{"executor", st.Executor.Last},
+	} {
+		if r := part.last; r != nil {
+			parts[part.name] = r
 			if worst == nil || updateRank[r.State] > updateRank[worst.State] {
 				worst = r
 			}
