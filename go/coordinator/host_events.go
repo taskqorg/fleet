@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
@@ -428,8 +430,53 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 	return contract.OkReply{Ok: true}, writeTotals(q, xid)
 }
 
+// compactProblemDetail collapses whitespace to single spaces and bounds the detail on a UTF-8 rune boundary.
+func compactProblemDetail(s string, maxRunes int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if maxRunes <= 0 || utf8.RuneCountInString(s) <= maxRunes {
+		return s
+	}
+	if maxRunes <= 3 {
+		return string([]rune(s)[:maxRunes])
+	}
+	return string([]rune(s)[:maxRunes-3]) + "..."
+}
+
+func eventErrorDetail(raw json.RawMessage) string {
+	if isNull(raw) {
+		return ""
+	}
+	if s, ok := jsonString(raw); ok {
+		return compactProblemDetail(s, 180)
+	}
+	m, ok := labRawObject(raw)
+	if !ok {
+		return ""
+	}
+	eo := rawObject(m)
+	code := firstString(eo.text("codexErrorInfo"), eo.text("code"), eo.text("type"))
+	if code == "" && eo.has("codexErrorInfo") {
+		if info := eo.object("codexErrorInfo"); len(info) > 0 {
+			keys := make([]string, 0, len(info))
+			for k := range info {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			code = keys[0]
+		}
+	}
+	msg := firstString(eo.text("message"), eo.text("error"), eo.text("reason"))
+	if code != "" && msg != "" {
+		if strings.HasPrefix(msg, code) {
+			return compactProblemDetail(msg, 180)
+		}
+		return compactProblemDetail(code+": "+msg, 180)
+	}
+	return compactProblemDetail(firstString(code, msg), 180)
+}
+
 // eventProblem: the cause an agent failure records on its execution: a preparation that failed, a protocol failure,
-// or a harness that exited non-zero (with the last line of its stderr). Empty for every other event.
+// a harness that exited non-zero (with the last line of its stderr), or a failed native turn/result. Empty for every other event.
 func eventProblem(kind string, data any) string {
 	var d rawObject
 	jsonRoundTrip(data, &d)
@@ -449,6 +496,37 @@ func eventProblem(kind string, data any) string {
 			p += ": " + lines[len(lines)-1]
 		}
 		return p
+	case "turn.failed":
+		detail := firstString(
+			eventErrorDetail(d["error"]),
+			eventErrorDetail(d.object("fleetNormalized")["error"]),
+			compactProblemDetail(firstString(d.text("message"), d.text("reason"), d.text("stopReason")), 180),
+		)
+		if detail != "" {
+			return "turn.failed: " + detail
+		}
+		return "turn.failed"
+	case "result":
+		isErr, _ := rawValue(d["is_error"]).(bool)
+		if !isErr && !strings.EqualFold(d.text("status"), "ERROR") {
+			return ""
+		}
+		var firstArrayErr string
+		for _, item := range jsonList(d["errors"]) {
+			if firstArrayErr = eventErrorDetail(item); firstArrayErr != "" {
+				break
+			}
+		}
+		detail := firstString(
+			eventErrorDetail(d["error"]),
+			eventErrorDetail(d.object("fleetNormalized")["error"]),
+			firstArrayErr,
+			compactProblemDetail(firstString(d.text("result"), d.text("message"), d.text("subtype")), 180),
+		)
+		if detail != "" {
+			return "harness result error: " + detail
+		}
+		return "harness result error"
 	}
 	return ""
 }

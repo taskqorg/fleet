@@ -220,6 +220,39 @@ func labText(raw json.RawMessage) string {
 	return s
 }
 
+// labExampleArtifactID extracts an example artifact ID from either a plain string ("uuid")
+// or an object carrying "artifact_id" / "artifactId" (as returned by lab_experiment_get / lab_examples_list).
+func labExampleArtifactID(x json.RawMessage) (string, error) {
+	if m, ok := labRawObject(x); ok {
+		snakeRaw, hasSnake := m["artifact_id"]
+		camelRaw, hasCamel := m["artifactId"]
+		snakeSet := hasSnake && !isNull(snakeRaw)
+		camelSet := hasCamel && !isNull(camelRaw)
+		switch {
+		case snakeSet && camelSet:
+			id1, err := expID(rawValue(snakeRaw), "example artifact")
+			if err != nil {
+				return "", err
+			}
+			id2, err := expID(rawValue(camelRaw), "example artifact")
+			if err != nil {
+				return "", err
+			}
+			if id1 != id2 {
+				return "", fail(400, "Invalid example artifact")
+			}
+			return id1, nil
+		case snakeSet:
+			return expID(rawValue(snakeRaw), "example artifact")
+		case camelSet:
+			return expID(rawValue(camelRaw), "example artifact")
+		default:
+			return "", fail(400, "Invalid example artifact")
+		}
+	}
+	return expID(rawValue(x), "example artifact")
+}
+
 // expCreate: a draft experiment from a create request; exact keeps the request's numbers as their text (the variants'
 // overrides of a catalogue method, lab_compare_methods).
 func expCreate(q *Request, r *contract.LabExperimentCreateRequest, exact bool) (labExperimentView, error) {
@@ -275,7 +308,7 @@ func expCreate(q *Request, r *contract.LabExperimentCreateRequest, exact bool) (
 	}
 	examples, seen := []labPin{}, map[string]bool{}
 	for _, x := range exl {
-		id, err := expID(rawValue(x), "example artifact")
+		id, err := labExampleArtifactID(x)
 		if err != nil {
 			return none, err
 		}
@@ -553,6 +586,37 @@ func labNull(raw json.RawMessage) json.RawMessage {
 	return raw
 }
 
+// trialProblem returns the trial's problem, enriching generic step/start failures from the failed step's detail when available.
+func trialProblem(t *labRun) json.RawMessage {
+	cur, _ := jsonString(t.Problem)
+	generic := cur == "" || cur == "step:failed" || cur == "unknown:failed" || cur == "step:start" || cur == "infra:start"
+	if !generic || t.State != "failed" || t.run == nil {
+		return labNull(t.Problem)
+	}
+	for _, s := range t.run.Steps {
+		if s.State != "failed" {
+			continue
+		}
+		base := firstString(s.Problem, cur, "step:failed")
+		if base == "step:failed" && t.Observation == "unconfirmed" {
+			base = "unknown:failed"
+		}
+		var detail string
+		if m, ok := labRawObject(s.Error); ok {
+			if msg := strings.TrimSpace(rawObject(m).text("message")); msg != "" && msg != "Step execution failed" && msg != "Step execution cancelled" {
+				detail = msg
+			}
+		}
+		if detail != "" {
+			return jsonBytes(stepProblemWithDetail(base, detail))
+		}
+		if s.Problem != "" && s.Problem != cur {
+			return jsonBytes(compactProblemDetail(s.Problem, stepProblemMax))
+		}
+	}
+	return labNull(t.Problem)
+}
+
 func expGet(q *Request, id string) (labExperimentView, error) {
 	var out labExperimentView
 	exp, err := expRow(q, id)
@@ -652,7 +716,7 @@ func expGet(q *Request, id string) (labExperimentView, error) {
 		if err != nil {
 			return contract.LabTrialRecord{}, err
 		}
-		v := contract.LabTrialRecord{Id: t.ID, Cell: cell, State: contract.ExecutionState(t.State), Observation: contract.PipelineObservation(t.Observation), Problem: labNull(t.Problem),
+		v := contract.LabTrialRecord{Id: t.ID, Cell: cell, State: contract.ExecutionState(t.State), Observation: contract.PipelineObservation(t.Observation), Problem: trialProblem(t),
 			Comparable: comparable(t), StartedAt: labNull(t.StartedAt), FinishedAt: labNull(t.FinishedAt), DurationMs: t.DurationMs,
 			Spend: contract.LabTrialSpend{Calls: &calls, Credits: &credit, Basis: &basis}, Cost: append([]contract.CostFigure{}, trialCost[t.ID]...),
 			Confounders: contract.LabConfounders{Hosts: uniq(hosts), Harnesses: uniq(harnesses), Models: uniq(models), WebRoute: web}, Scores: mine, PlanSummary: planSummary(t.run.entries())}

@@ -2,12 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"fleet/contract"
 )
@@ -320,5 +326,258 @@ func TestLabAssessmentSkipsSupersededScriptEvaluation(t *testing.T) {
 	complete, err := expEvaluate(nil, labExpOf(exp), labRunsOf([]doc{old, latest}), nil, nil, &launched, nil)
 	if err != nil || !complete || len(launched) != 0 {
 		t.Fatal("superseded unscored trial obstructed grading", complete, err, launched)
+	}
+}
+
+// Requirement: lab_experiment_create accepts symmetrical example shapes (plain string, artifact_id, artifactId) while
+// rejecting invalid entries; script:example.checks:metric records passed/total and rationale; failed agent steps surface
+// concise bounded failure detail (preserving step:/infra:/unknown: prefixes) on lab_experiment_get.
+// Risk: callers passing lab_experiment_get/lab_examples_list objects hit 400; multi-check benchmarks collapse to binary
+// pass/fail or drop failed IDs; failed trials hide modelNotFound/turn.failed causes behind generic "step:failed".
+func TestLabSymmetricalCreateMetricAndStepFailure(t *testing.T) {
+	env := openTestCoordinator(t, false)
+	var mu sync.Mutex
+	objects := map[string][]byte{}
+	s3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "PUT":
+			b, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			mu.Lock()
+			objects[r.URL.Path] = b
+			mu.Unlock()
+			w.WriteHeader(200)
+		case "GET", "HEAD":
+			mu.Lock()
+			b, ok := objects[r.URL.Path]
+			mu.Unlock()
+			if !ok {
+				w.WriteHeader(404)
+				return
+			}
+			w.WriteHeader(200)
+			if r.Method == "GET" {
+				_, _ = w.Write(b)
+			}
+		default:
+			w.WriteHeader(204)
+		}
+	}))
+	defer s3.Close()
+	prevSecrets := storeSecretsDir
+	storeSecretsDir = t.TempDir()
+	defer func() { storeSecretsDir = prevSecrets }()
+	if err := os.WriteFile(filepath.Join(storeSecretsDir, "st-lab.key"), []byte(`{"accessKeyId":"AKIAINVENTED","secretAccessKey":"invented"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hostSecret := env.registerHost(t, "pds18")
+	runTestPSQL(t, env.binDir, env.sockDir, env.pgPort, env.dbName, "postgres",
+		"INSERT INTO store(id,host_id,bucket,endpoint,state) VALUES ('st-lab','pds18','b','"+s3.URL+"','reachable');")
+
+	// Import one approved example via lab_examples_add.
+	exPayload := doc{
+		"id":          "sym-ex",
+		"use_case_id": "bench:bug-finding",
+		"version":     1,
+		"origin":      "synthetic",
+		"fixture":     nil,
+		"prompt":      "Fix bug",
+		"inputs":      []any{},
+		"references":  []any{},
+		"checks":      []any{doc{"id": "first", "run": "true"}, doc{"id": "second", "run": "false"}},
+		"split":       "held_out",
+	}
+	code, added := env.callJSON(t, "POST", "/api/ops/lab_examples_add", doc{"projectId": "hello-world", "examples": []any{exPayload}, "approved": true}, env.ownerHeaders())
+	if code != 200 {
+		t.Fatalf("lab_examples_add = %d %v", code, added)
+	}
+	exList := anys(added["examples"])
+	artID := astr(mapOf(exList[0])["artifactId"])
+	if artID == "" {
+		t.Fatalf("missing artifactId: %v", added)
+	}
+
+	// 1) Symmetrical examples[] shapes accepted, invalid/empty/conflicting shapes rejected with 400.
+	baseCreate := func(examples []any) (int, map[string]any) {
+		return env.callJSON(t, "POST", "/api/ops/lab_experiment_create", doc{
+			"kind":             "single",
+			"projectId":        "hello-world",
+			"pipelineId":       "web-research",
+			"examples":         examples,
+			"variants":         []any{doc{"label": "v"}},
+			"evaluators":       []any{doc{"kind": "script", "ref": "example.checks", "form": "metric"}},
+			"primaryEvaluator": "script:example.checks:metric",
+		}, env.ownerHeaders())
+	}
+	var expID string
+	for name, shape := range map[string][]any{
+		"plain-string":        {artID},
+		"lab-experiment-get":  {doc{"id": "sym-ex@1", "artifact_id": artID, "split": "held_out"}},
+		"lab-examples-list":   {doc{"artifactId": artID, "name": "examples/sym-ex@1.json", "state": "approved"}},
+		"both-matching-cases": {doc{"artifact_id": artID, "artifactId": artID}},
+	} {
+		c, body := baseCreate(shape)
+		if c != 200 {
+			t.Fatalf("%s: status = %d %v", name, c, body)
+		}
+		if expID == "" {
+			expID = astr(body["id"])
+		}
+	}
+	for name, bad := range map[string][]any{
+		"empty-string":   {""},
+		"null":           {nil},
+		"number":         {123},
+		"empty-object":   {doc{}},
+		"empty-snake":    {doc{"artifact_id": ""}},
+		"blank-camel":    {doc{"artifactId": "   "}},
+		"mismatch-cases": {doc{"artifact_id": artID, "artifactId": "other-id"}},
+	} {
+		if c, body := baseCreate(bad); c != 400 {
+			t.Fatalf("%s: got status %d want 400 (%v)", name, c, body)
+		}
+	}
+
+	// 2) script:example.checks:metric stores passed/total and rationale with passed count + failed IDs.
+	trialMetric := planFixture(t, "trial-metric")
+	metricDef := doc{"version": float64(2), "id": "metric-pipe", "steps": []any{doc{"id": "route", "kind": "script", "command": "true"}}}
+	trialMetric["definition"], trialMetric["definitionSha256"], trialMetric["pipelineId"] = metricDef, sha256hex([]byte(canonical(metricDef))), "metric-pipe"
+	trialMetric["steps"] = anys(trialMetric["steps"])[:1]
+	trialMetric["experimentId"], trialMetric["variant"], trialMetric["cell"] = expID, "v", doc{"iteration": float64(0), "example": "sym-ex@1", "variant": "v", "repeat": float64(0), "attempt": float64(0)}
+	if err := initPipelinePlan(trialMetric); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		if err := putRun(q, trialMetric); err != nil {
+			return err
+		}
+		if err := selectPipelineStep(q, trialMetric, 0); err != nil {
+			return err
+		}
+		output := doc{"ok": true}
+		if err := exec(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES('metric-result','hello-world','lab',$1,$2,'application/json','output.json',$3,'stored')`, sha256hex(jsonBytes(output)), len(jsonBytes(output)), stepRow(trialMetric, 0)); err != nil {
+			return err
+		}
+		entry := pipelineEntry(trialMetric, 0)
+		entry.Inputs = []contract.PipelineInputBinding{}
+		entry.Dispatch.Phase = "handed_off"
+		mapOf(anys(trialMetric["steps"])[0])["outputArtifactId"] = "metric-result"
+		if err := completeStep(q, trialMetric, 0, output, nil); err != nil {
+			return err
+		}
+		if err := finishRun(q, trialMetric, "succeeded", ""); err != nil {
+			return err
+		}
+		exp, err := expRow(q, expID)
+		if err != nil {
+			return err
+		}
+		runs, err := expRuns(q, expID)
+		if err != nil {
+			return err
+		}
+		cur, err := scoresCurrent(q, expID)
+		if err != nil {
+			return err
+		}
+		launched := []string{}
+		checked := map[string]*labCheckRun{"trial-metric": {Passed: 1, Total: 2, Failed: []string{"second"}}}
+		ok, err := expEvaluate(q, exp, expTrials(runs), runs, cur, &launched, checked)
+		if err != nil || !ok {
+			t.Fatalf("expEvaluate = %v, %v", ok, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, gotMetric := env.callJSON(t, "POST", "/api/ops/lab_experiment_get", doc{"experimentId": expID}, env.ownerHeaders())
+	if code != 200 {
+		t.Fatalf("lab_experiment_get = %d %v", code, gotMetric)
+	}
+	scores := anys(gotMetric["scores"])
+	if len(scores) != 1 {
+		t.Fatalf("scores = %v", scores)
+	}
+	sc := mapOf(scores[0])
+	if sc["form"] != "metric" || sc["value"] != 0.5 || sc["rationale"] != "1 of 2 checks pass (failed: second)" {
+		t.Fatalf("unexpected metric score: %v", sc)
+	}
+
+	// 3) Failed agent step with turn.failed / modelNotFound surfaces concise bounded detail on trial.problem.
+	cFail, bodyFail := baseCreate([]any{doc{"artifact_id": artID}})
+	if cFail != 200 {
+		t.Fatalf("create failed-trial exp = %d %v", cFail, bodyFail)
+	}
+	failExpID := astr(bodyFail["id"])
+	nativeID := "native-agent-fail"
+	trialFail := planFixture(t, "trial-agent-fail")
+	trialFail["definition"] = doc{"version": float64(2), "id": "agent-pipe", "steps": []any{doc{"id": "solve", "kind": "agent", "profile": "baseline", "prompt": "Solve"}}}
+	trialFail["definitionSha256"], trialFail["pipelineId"] = sha256hex([]byte(canonical(trialFail["definition"]))), "agent-pipe"
+	trialFail["steps"] = []any{doc{"id": "solve", "kind": "agent", "state": "running"}}
+	trialFail["experimentId"], trialFail["variant"], trialFail["cell"] = failExpID, "v", doc{"iteration": float64(0), "example": "sym-ex@1", "variant": "v", "repeat": float64(0), "attempt": float64(0)}
+	if err := initPipelinePlan(trialFail); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		if err := putRun(q, trialFail); err != nil {
+			return err
+		}
+		if err := selectPipelineStep(q, trialFail, 0); err != nil {
+			return err
+		}
+		if _, err := executionTransition(q, stepRow(trialFail, 0), executionEvent{To: "running"}); err != nil {
+			return err
+		}
+		if err := exec(q, `UPDATE pipeline_step SET native_execution_id=$1 WHERE run_id='trial-agent-fail' AND step_index=0`, nativeID); err != nil {
+			return err
+		}
+		return exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,host_id,experiment_id,variant,data) VALUES($1,'agent_run','failed','confirmed','hello-world','pds18',$2,'v','{"id":"native-agent-fail","hostId":"pds18"}')`, nativeID, failExpID)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	evCode, evBody := env.callJSON(t, "POST", "/api/hosts/events", doc{
+		"hostId":      "pds18",
+		"executionId": nativeID,
+		"events": []any{doc{
+			"id":        "ev-turn-failed",
+			"seq":       1,
+			"type":      "turn.failed",
+			"timestamp": time.Now().UnixMilli(),
+			"data":      doc{"type": "turn.failed", "error": doc{"message": "The model 'gpt-99' does not exist", "codexErrorInfo": "modelNotFound"}},
+		}},
+	}, map[string]string{"Authorization": "Bearer " + hostSecret})
+	if evCode != 200 {
+		t.Fatalf("events ingest = %d %v", evCode, evBody)
+	}
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		return pipelineWorkStep(q, time.Now(), &kitClaim{Key: "trial-agent-fail"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, gotFail := env.callJSON(t, "POST", "/api/ops/lab_experiment_get", doc{"experimentId": failExpID}, env.ownerHeaders())
+	if code != 200 {
+		t.Fatalf("lab_experiment_get(fail) = %d %v", code, gotFail)
+	}
+	trials := anys(gotFail["trials"])
+	if len(trials) != 1 {
+		t.Fatalf("trials = %v", trials)
+	}
+	prob := astr(mapOf(trials[0])["problem"])
+	if !strings.HasPrefix(prob, "step:failed: ") || !strings.Contains(prob, "turn.failed: modelNotFound: The model 'gpt-99' does not exist") {
+		t.Fatalf("trial problem = %q, want step:failed with turn.failed/modelNotFound detail", prob)
+	}
+
+	// Prefix preservation and bounded single-line detail invariants.
+	infraProb, _ := nativeStepFailure("failed", "confirmed", "", json.RawMessage(`{"code":"connection-unavailable","message":"gateway down"}`), "")
+	if !strings.HasPrefix(infraProb, "infra:connection-unavailable") {
+		t.Fatalf("infra prefix lost: %q", infraProb)
+	}
+	longMsg := strings.Repeat("line1\nline2\t", 60)
+	longProb, _ := nativeStepFailure("failed", "unconfirmed", "", json.RawMessage(`"`+strings.ReplaceAll(strings.ReplaceAll(longMsg, "\n", "\\n"), "\t", "\\t")+`"`), "")
+	if !strings.HasPrefix(longProb, "unknown:failed: ") || strings.Contains(longProb, "\n") || utf8.RuneCountInString(longProb) > stepProblemMax {
+		t.Fatalf("unbounded or invalid unknown problem: %q (runes=%d)", longProb, utf8.RuneCountInString(longProb))
 	}
 }
