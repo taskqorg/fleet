@@ -10,12 +10,12 @@ import (
 )
 
 const recAccountCatalogueAll = `-- name: RecAccountCatalogueAll :many
-SELECT (account_catalogue.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'hostId',host_id,'harness',harness,'projectId',project_id)))::jsonb FROM account_catalogue
+SELECT (account_catalogue.payload||jsonb_strip_nulls(jsonb_build_object('id',account_catalogue.id,'hostId',account_catalogue.host_id,'harness',account_catalogue.harness,'projectId',account_catalogue.project_id)))::jsonb FROM account_catalogue
 WHERE ($1::jsonb->>'id' IS NULL OR account_catalogue.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'hostId' IS NULL OR account_catalogue.host_id=$1::jsonb->>'hostId')
   AND ($1::jsonb->>'harness' IS NULL OR account_catalogue.harness=$1::jsonb->>'harness')
   AND ($1::jsonb->>'projectId' IS NULL OR account_catalogue.project_id=$1::jsonb->>'projectId')
-  AND (account_catalogue.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'hostId',host_id,'harness',harness,'projectId',project_id)))::jsonb @> $1::jsonb
+  AND account_catalogue.payload @> ($1::jsonb - 'id' - 'hostId' - 'harness' - 'projectId')
 ORDER BY account_catalogue.seq
 `
 
@@ -40,7 +40,7 @@ func (q *Queries) RecAccountCatalogueAll(ctx context.Context, filter []byte) ([]
 }
 
 const recAccountCatalogueGet = `-- name: RecAccountCatalogueGet :one
-SELECT (account_catalogue.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'hostId',host_id,'harness',harness,'projectId',project_id)))::jsonb FROM account_catalogue WHERE id=$1
+SELECT (account_catalogue.payload||jsonb_strip_nulls(jsonb_build_object('id',account_catalogue.id,'hostId',account_catalogue.host_id,'harness',account_catalogue.harness,'projectId',account_catalogue.project_id)))::jsonb FROM account_catalogue WHERE id=$1
 `
 
 func (q *Queries) RecAccountCatalogueGet(ctx context.Context, id string) ([]byte, error) {
@@ -71,13 +71,13 @@ func (q *Queries) RecAccountCataloguePut(ctx context.Context, record []byte) err
 }
 
 const recAccountCheckAll = `-- name: RecAccountCheckAll :many
-SELECT (account_check.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'accountId',account_id,'hostId',host_id,'binding',binding,'projectId',project_id)))::jsonb FROM account_check
+SELECT (account_check.payload||jsonb_strip_nulls(jsonb_build_object('id',account_check.id,'accountId',account_check.account_id,'hostId',account_check.host_id,'binding',account_check.binding,'projectId',account_check.project_id)))::jsonb FROM account_check
 WHERE ($1::jsonb->>'id' IS NULL OR account_check.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'accountId' IS NULL OR account_check.account_id=$1::jsonb->>'accountId')
   AND ($1::jsonb->>'hostId' IS NULL OR account_check.host_id=$1::jsonb->>'hostId')
   AND ($1::jsonb->>'binding' IS NULL OR account_check.binding=$1::jsonb->>'binding')
   AND ($1::jsonb->>'projectId' IS NULL OR account_check.project_id=$1::jsonb->>'projectId')
-  AND (account_check.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'accountId',account_id,'hostId',host_id,'binding',binding,'projectId',project_id)))::jsonb @> $1::jsonb
+  AND account_check.payload @> ($1::jsonb - 'id' - 'accountId' - 'hostId' - 'binding' - 'projectId')
 ORDER BY account_check.seq
 `
 
@@ -102,7 +102,7 @@ func (q *Queries) RecAccountCheckAll(ctx context.Context, filter []byte) ([][]by
 }
 
 const recAccountCheckGet = `-- name: RecAccountCheckGet :one
-SELECT (account_check.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'accountId',account_id,'hostId',host_id,'binding',binding,'projectId',project_id)))::jsonb FROM account_check WHERE id=$1
+SELECT (account_check.payload||jsonb_strip_nulls(jsonb_build_object('id',account_check.id,'accountId',account_check.account_id,'hostId',account_check.host_id,'binding',account_check.binding,'projectId',account_check.project_id)))::jsonb FROM account_check WHERE id=$1
 `
 
 func (q *Queries) RecAccountCheckGet(ctx context.Context, id string) ([]byte, error) {
@@ -135,13 +135,13 @@ func (q *Queries) RecAccountCheckPut(ctx context.Context, record []byte) error {
 }
 
 const recAccountInspectionAll = `-- name: RecAccountInspectionAll :many
-SELECT (account_inspection.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'accountId',account_id,'executionId',execution_id,'hostId',host_id,'projectId',project_id)))::jsonb FROM account_inspection
+SELECT (account_inspection.payload||jsonb_strip_nulls(jsonb_build_object('id',account_inspection.id,'accountId',account_inspection.account_id,'executionId',account_inspection.execution_id,'hostId',account_inspection.host_id,'projectId',account_inspection.project_id)))::jsonb FROM account_inspection
 WHERE ($1::jsonb->>'id' IS NULL OR account_inspection.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'accountId' IS NULL OR account_inspection.account_id=$1::jsonb->>'accountId')
   AND ($1::jsonb->>'executionId' IS NULL OR account_inspection.execution_id=$1::jsonb->>'executionId')
   AND ($1::jsonb->>'hostId' IS NULL OR account_inspection.host_id=$1::jsonb->>'hostId')
   AND ($1::jsonb->>'projectId' IS NULL OR account_inspection.project_id=$1::jsonb->>'projectId')
-  AND (account_inspection.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'accountId',account_id,'executionId',execution_id,'hostId',host_id,'projectId',project_id)))::jsonb @> $1::jsonb
+  AND account_inspection.payload @> ($1::jsonb - 'id' - 'accountId' - 'executionId' - 'hostId' - 'projectId')
 ORDER BY account_inspection.seq
 `
 
@@ -166,7 +166,7 @@ func (q *Queries) RecAccountInspectionAll(ctx context.Context, filter []byte) ([
 }
 
 const recAccountInspectionGet = `-- name: RecAccountInspectionGet :one
-SELECT (account_inspection.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'accountId',account_id,'executionId',execution_id,'hostId',host_id,'projectId',project_id)))::jsonb FROM account_inspection WHERE id=$1
+SELECT (account_inspection.payload||jsonb_strip_nulls(jsonb_build_object('id',account_inspection.id,'accountId',account_inspection.account_id,'executionId',account_inspection.execution_id,'hostId',account_inspection.host_id,'projectId',account_inspection.project_id)))::jsonb FROM account_inspection WHERE id=$1
 `
 
 func (q *Queries) RecAccountInspectionGet(ctx context.Context, id string) ([]byte, error) {
@@ -199,13 +199,13 @@ func (q *Queries) RecAccountInspectionPut(ctx context.Context, record []byte) er
 }
 
 const recApiConnectionAll = `-- name: RecApiConnectionAll :many
-SELECT (api_connection.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'name',name,'provider',provider,'holder',holder,'projectId',project_id)))::jsonb FROM api_connection
+SELECT (api_connection.payload||jsonb_strip_nulls(jsonb_build_object('id',api_connection.id,'name',api_connection.name,'provider',api_connection.provider,'holder',api_connection.holder,'projectId',api_connection.project_id)))::jsonb FROM api_connection
 WHERE ($1::jsonb->>'id' IS NULL OR api_connection.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'name' IS NULL OR api_connection.name=$1::jsonb->>'name')
   AND ($1::jsonb->>'provider' IS NULL OR api_connection.provider=$1::jsonb->>'provider')
   AND ($1::jsonb->>'holder' IS NULL OR api_connection.holder=$1::jsonb->>'holder')
   AND ($1::jsonb->>'projectId' IS NULL OR api_connection.project_id=$1::jsonb->>'projectId')
-  AND (api_connection.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'name',name,'provider',provider,'holder',holder,'projectId',project_id)))::jsonb @> $1::jsonb
+  AND api_connection.payload @> ($1::jsonb - 'id' - 'name' - 'provider' - 'holder' - 'projectId')
 ORDER BY api_connection.seq
 `
 
@@ -230,7 +230,7 @@ func (q *Queries) RecApiConnectionAll(ctx context.Context, filter []byte) ([][]b
 }
 
 const recApiConnectionGet = `-- name: RecApiConnectionGet :one
-SELECT (api_connection.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'name',name,'provider',provider,'holder',holder,'projectId',project_id)))::jsonb FROM api_connection WHERE id=$1
+SELECT (api_connection.payload||jsonb_strip_nulls(jsonb_build_object('id',api_connection.id,'name',api_connection.name,'provider',api_connection.provider,'holder',api_connection.holder,'projectId',api_connection.project_id)))::jsonb FROM api_connection WHERE id=$1
 `
 
 func (q *Queries) RecApiConnectionGet(ctx context.Context, id string) ([]byte, error) {
@@ -241,7 +241,7 @@ func (q *Queries) RecApiConnectionGet(ctx context.Context, id string) ([]byte, e
 }
 
 const recApiConnectionGetLocked = `-- name: RecApiConnectionGetLocked :one
-SELECT (api_connection.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'name',name,'provider',provider,'holder',holder,'projectId',project_id)))::jsonb FROM api_connection WHERE id=$1 FOR UPDATE
+SELECT (api_connection.payload||jsonb_strip_nulls(jsonb_build_object('id',api_connection.id,'name',api_connection.name,'provider',api_connection.provider,'holder',api_connection.holder,'projectId',api_connection.project_id)))::jsonb FROM api_connection WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) RecApiConnectionGetLocked(ctx context.Context, id string) ([]byte, error) {
@@ -274,16 +274,18 @@ func (q *Queries) RecApiConnectionPut(ctx context.Context, record []byte) error 
 }
 
 const recCommandAll = `-- name: RecCommandAll :many
-SELECT (command.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'hostId',host_id,'projectId',project_id,'kind',kind,'status',status::text,'stopDetail',stop_detail,'handedOut',handed_out,'traceparent',traceparent)))::jsonb FROM command
+SELECT (command.payload||jsonb_strip_nulls(jsonb_build_object('id',command.id,'executionId',command.execution_id,'sessionId',command.session_id,'hostId',command.host_id,'projectId',command.project_id,'kind',command.kind,'status',command.status::text,'stopDetail',command.stop_detail,'handedOut',command.handed_out,'traceparent',command.traceparent)))::jsonb FROM command
 WHERE ($1::jsonb->>'id' IS NULL OR command.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'executionId' IS NULL OR command.execution_id=$1::jsonb->>'executionId')
   AND ($1::jsonb->>'sessionId' IS NULL OR command.session_id=$1::jsonb->>'sessionId')
   AND ($1::jsonb->>'hostId' IS NULL OR command.host_id=$1::jsonb->>'hostId')
   AND ($1::jsonb->>'projectId' IS NULL OR command.project_id=$1::jsonb->>'projectId')
   AND ($1::jsonb->>'kind' IS NULL OR command.kind=$1::jsonb->>'kind')
+  AND ($1::jsonb->>'status' IS NULL OR command.status=($1::jsonb->>'status')::command_status)
   AND ($1::jsonb->>'stopDetail' IS NULL OR command.stop_detail=$1::jsonb->>'stopDetail')
+  AND ($1::jsonb->'handedOut' IS NULL OR to_jsonb(command.handed_out)=$1::jsonb->'handedOut')
   AND ($1::jsonb->>'traceparent' IS NULL OR command.traceparent=$1::jsonb->>'traceparent')
-  AND (command.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'hostId',host_id,'projectId',project_id,'kind',kind,'status',status::text,'stopDetail',stop_detail,'handedOut',handed_out,'traceparent',traceparent)))::jsonb @> $1::jsonb
+  AND command.payload @> ($1::jsonb - 'id' - 'executionId' - 'sessionId' - 'hostId' - 'projectId' - 'kind' - 'status' - 'stopDetail' - 'handedOut' - 'traceparent')
 ORDER BY command.seq
 `
 
@@ -308,7 +310,7 @@ func (q *Queries) RecCommandAll(ctx context.Context, filter []byte) ([][]byte, e
 }
 
 const recCommandGet = `-- name: RecCommandGet :one
-SELECT (command.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'hostId',host_id,'projectId',project_id,'kind',kind,'status',status::text,'stopDetail',stop_detail,'handedOut',handed_out,'traceparent',traceparent)))::jsonb FROM command WHERE id=$1
+SELECT (command.payload||jsonb_strip_nulls(jsonb_build_object('id',command.id,'executionId',command.execution_id,'sessionId',command.session_id,'hostId',command.host_id,'projectId',command.project_id,'kind',command.kind,'status',command.status::text,'stopDetail',command.stop_detail,'handedOut',command.handed_out,'traceparent',command.traceparent)))::jsonb FROM command WHERE id=$1
 `
 
 func (q *Queries) RecCommandGet(ctx context.Context, id string) ([]byte, error) {
@@ -319,13 +321,14 @@ func (q *Queries) RecCommandGet(ctx context.Context, id string) ([]byte, error) 
 }
 
 const recConnectionKeyAll = `-- name: RecConnectionKeyAll :many
-SELECT (connection_key.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'connectionId',connection_id,'fingerprint',fingerprint,'state',state,'addedAt',(extract(epoch FROM added_at)*1000)::bigint,'projectId',project_id)))::jsonb FROM connection_key
+SELECT (connection_key.payload||jsonb_strip_nulls(jsonb_build_object('id',connection_key.id,'connectionId',connection_key.connection_id,'fingerprint',connection_key.fingerprint,'state',connection_key.state,'addedAt',(extract(epoch FROM connection_key.added_at)*1000)::bigint,'projectId',connection_key.project_id)))::jsonb FROM connection_key
 WHERE ($1::jsonb->>'id' IS NULL OR connection_key.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'connectionId' IS NULL OR connection_key.connection_id=$1::jsonb->>'connectionId')
   AND ($1::jsonb->>'fingerprint' IS NULL OR connection_key.fingerprint=$1::jsonb->>'fingerprint')
   AND ($1::jsonb->>'state' IS NULL OR connection_key.state=$1::jsonb->>'state')
+  AND ($1::jsonb->'addedAt' IS NULL OR to_jsonb((extract(epoch FROM connection_key.added_at)*1000)::bigint)=$1::jsonb->'addedAt')
   AND ($1::jsonb->>'projectId' IS NULL OR connection_key.project_id=$1::jsonb->>'projectId')
-  AND (connection_key.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'connectionId',connection_id,'fingerprint',fingerprint,'state',state,'addedAt',(extract(epoch FROM added_at)*1000)::bigint,'projectId',project_id)))::jsonb @> $1::jsonb
+  AND connection_key.payload @> ($1::jsonb - 'id' - 'connectionId' - 'fingerprint' - 'state' - 'addedAt' - 'projectId')
 ORDER BY connection_key.seq
 `
 
@@ -350,7 +353,7 @@ func (q *Queries) RecConnectionKeyAll(ctx context.Context, filter []byte) ([][]b
 }
 
 const recConnectionKeyGet = `-- name: RecConnectionKeyGet :one
-SELECT (connection_key.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'connectionId',connection_id,'fingerprint',fingerprint,'state',state,'addedAt',(extract(epoch FROM added_at)*1000)::bigint,'projectId',project_id)))::jsonb FROM connection_key WHERE id=$1
+SELECT (connection_key.payload||jsonb_strip_nulls(jsonb_build_object('id',connection_key.id,'connectionId',connection_key.connection_id,'fingerprint',connection_key.fingerprint,'state',connection_key.state,'addedAt',(extract(epoch FROM connection_key.added_at)*1000)::bigint,'projectId',connection_key.project_id)))::jsonb FROM connection_key WHERE id=$1
 `
 
 func (q *Queries) RecConnectionKeyGet(ctx context.Context, id string) ([]byte, error) {
@@ -383,13 +386,15 @@ func (q *Queries) RecConnectionKeyPut(ctx context.Context, record []byte) error 
 }
 
 const recEventAll = `-- name: RecEventAll :many
-SELECT (event.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'projectId',project_id,'seq',event_seq,'type',type,'timestamp',(extract(epoch FROM at)*1000)::bigint)))::jsonb FROM event
+SELECT (event.payload||jsonb_strip_nulls(jsonb_build_object('id',event.id,'executionId',event.execution_id,'sessionId',event.session_id,'projectId',event.project_id,'seq',event.event_seq,'type',event.type,'timestamp',(extract(epoch FROM event.at)*1000)::bigint)))::jsonb FROM event
 WHERE ($1::jsonb->>'id' IS NULL OR event.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'executionId' IS NULL OR event.execution_id=$1::jsonb->>'executionId')
   AND ($1::jsonb->>'sessionId' IS NULL OR event.session_id=$1::jsonb->>'sessionId')
   AND ($1::jsonb->>'projectId' IS NULL OR event.project_id=$1::jsonb->>'projectId')
-  AND ($1::jsonb->>'type' IS NULL OR event.type=$1::jsonb->>'type') AND NOT event.delta
-  AND (event.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'projectId',project_id,'seq',event_seq,'type',type,'timestamp',(extract(epoch FROM at)*1000)::bigint)))::jsonb @> $1::jsonb
+  AND ($1::jsonb->'seq' IS NULL OR to_jsonb(event.event_seq)=$1::jsonb->'seq')
+  AND ($1::jsonb->>'type' IS NULL OR event.type=$1::jsonb->>'type')
+  AND ($1::jsonb->'timestamp' IS NULL OR to_jsonb((extract(epoch FROM event.at)*1000)::bigint)=$1::jsonb->'timestamp')
+  AND event.payload @> ($1::jsonb - 'id' - 'executionId' - 'sessionId' - 'projectId' - 'seq' - 'type' - 'timestamp') AND NOT event.delta
 ORDER BY event.seq
 `
 
@@ -414,13 +419,15 @@ func (q *Queries) RecEventAll(ctx context.Context, filter []byte) ([][]byte, err
 }
 
 const recEventAnyAll = `-- name: RecEventAnyAll :many
-SELECT (event.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'projectId',project_id,'seq',event_seq,'type',type,'timestamp',(extract(epoch FROM at)*1000)::bigint)))::jsonb FROM event
+SELECT (event.payload||jsonb_strip_nulls(jsonb_build_object('id',event.id,'executionId',event.execution_id,'sessionId',event.session_id,'projectId',event.project_id,'seq',event.event_seq,'type',event.type,'timestamp',(extract(epoch FROM event.at)*1000)::bigint)))::jsonb FROM event
 WHERE ($1::jsonb->>'id' IS NULL OR event.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'executionId' IS NULL OR event.execution_id=$1::jsonb->>'executionId')
   AND ($1::jsonb->>'sessionId' IS NULL OR event.session_id=$1::jsonb->>'sessionId')
   AND ($1::jsonb->>'projectId' IS NULL OR event.project_id=$1::jsonb->>'projectId')
+  AND ($1::jsonb->'seq' IS NULL OR to_jsonb(event.event_seq)=$1::jsonb->'seq')
   AND ($1::jsonb->>'type' IS NULL OR event.type=$1::jsonb->>'type')
-  AND (event.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'projectId',project_id,'seq',event_seq,'type',type,'timestamp',(extract(epoch FROM at)*1000)::bigint)))::jsonb @> $1::jsonb
+  AND ($1::jsonb->'timestamp' IS NULL OR to_jsonb((extract(epoch FROM event.at)*1000)::bigint)=$1::jsonb->'timestamp')
+  AND event.payload @> ($1::jsonb - 'id' - 'executionId' - 'sessionId' - 'projectId' - 'seq' - 'type' - 'timestamp')
 ORDER BY event.seq
 `
 
@@ -445,7 +452,7 @@ func (q *Queries) RecEventAnyAll(ctx context.Context, filter []byte) ([][]byte, 
 }
 
 const recEventGet = `-- name: RecEventGet :one
-SELECT (event.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'projectId',project_id,'seq',event_seq,'type',type,'timestamp',(extract(epoch FROM at)*1000)::bigint)))::jsonb FROM event WHERE id=$1 AND NOT event.delta
+SELECT (event.payload||jsonb_strip_nulls(jsonb_build_object('id',event.id,'executionId',event.execution_id,'sessionId',event.session_id,'projectId',event.project_id,'seq',event.event_seq,'type',event.type,'timestamp',(extract(epoch FROM event.at)*1000)::bigint)))::jsonb FROM event WHERE id=$1 AND NOT event.delta
 `
 
 func (q *Queries) RecEventGet(ctx context.Context, id string) ([]byte, error) {
@@ -456,12 +463,12 @@ func (q *Queries) RecEventGet(ctx context.Context, id string) ([]byte, error) {
 }
 
 const recHandoffAll = `-- name: RecHandoffAll :many
-SELECT (handoff.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'projectId',project_id,'state',state)))::jsonb FROM handoff
+SELECT (handoff.payload||jsonb_strip_nulls(jsonb_build_object('id',handoff.id,'sessionId',handoff.session_id,'projectId',handoff.project_id,'state',handoff.state)))::jsonb FROM handoff
 WHERE ($1::jsonb->>'id' IS NULL OR handoff.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'sessionId' IS NULL OR handoff.session_id=$1::jsonb->>'sessionId')
   AND ($1::jsonb->>'projectId' IS NULL OR handoff.project_id=$1::jsonb->>'projectId')
   AND ($1::jsonb->>'state' IS NULL OR handoff.state=$1::jsonb->>'state')
-  AND (handoff.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'projectId',project_id,'state',state)))::jsonb @> $1::jsonb
+  AND handoff.payload @> ($1::jsonb - 'id' - 'sessionId' - 'projectId' - 'state')
 ORDER BY handoff.seq
 `
 
@@ -486,7 +493,7 @@ func (q *Queries) RecHandoffAll(ctx context.Context, filter []byte) ([][]byte, e
 }
 
 const recHandoffGet = `-- name: RecHandoffGet :one
-SELECT (handoff.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'projectId',project_id,'state',state)))::jsonb FROM handoff WHERE id=$1
+SELECT (handoff.payload||jsonb_strip_nulls(jsonb_build_object('id',handoff.id,'sessionId',handoff.session_id,'projectId',handoff.project_id,'state',handoff.state)))::jsonb FROM handoff WHERE id=$1
 `
 
 func (q *Queries) RecHandoffGet(ctx context.Context, id string) ([]byte, error) {
@@ -517,15 +524,16 @@ func (q *Queries) RecHandoffPut(ctx context.Context, record []byte) error {
 }
 
 const recHostAll = `-- name: RecHostAll :many
-SELECT (host.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'hostId',host_id,'holder',holder,'state',nullif(state,'active'),'intake',intake,'secretHash',secret_hash,'removedSecretHash',removed_secret_hash,'projectId',project_id)))::jsonb FROM host
+SELECT (host.payload||jsonb_strip_nulls(jsonb_build_object('id',host.id,'hostId',host.host_id,'holder',host.holder,'state',nullif(host.state,'active'),'intake',host.intake,'secretHash',host.secret_hash,'removedSecretHash',host.removed_secret_hash,'projectId',host.project_id)))::jsonb FROM host
 WHERE ($1::jsonb->>'id' IS NULL OR host.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'hostId' IS NULL OR host.host_id=$1::jsonb->>'hostId')
   AND ($1::jsonb->>'holder' IS NULL OR host.holder=$1::jsonb->>'holder')
+  AND ($1::jsonb->'state' IS NULL OR to_jsonb(nullif(host.state,'active'))=$1::jsonb->'state')
   AND ($1::jsonb->>'intake' IS NULL OR host.intake=$1::jsonb->>'intake')
   AND ($1::jsonb->>'secretHash' IS NULL OR host.secret_hash=$1::jsonb->>'secretHash')
   AND ($1::jsonb->>'removedSecretHash' IS NULL OR host.removed_secret_hash=$1::jsonb->>'removedSecretHash')
   AND ($1::jsonb->>'projectId' IS NULL OR host.project_id=$1::jsonb->>'projectId')
-  AND (host.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'hostId',host_id,'holder',holder,'state',nullif(state,'active'),'intake',intake,'secretHash',secret_hash,'removedSecretHash',removed_secret_hash,'projectId',project_id)))::jsonb @> $1::jsonb
+  AND host.payload @> ($1::jsonb - 'id' - 'hostId' - 'holder' - 'state' - 'intake' - 'secretHash' - 'removedSecretHash' - 'projectId')
 ORDER BY host.seq
 `
 
@@ -550,7 +558,7 @@ func (q *Queries) RecHostAll(ctx context.Context, filter []byte) ([][]byte, erro
 }
 
 const recHostGet = `-- name: RecHostGet :one
-SELECT (host.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'hostId',host_id,'holder',holder,'state',nullif(state,'active'),'intake',intake,'secretHash',secret_hash,'removedSecretHash',removed_secret_hash,'projectId',project_id)))::jsonb FROM host WHERE id=$1
+SELECT (host.payload||jsonb_strip_nulls(jsonb_build_object('id',host.id,'hostId',host.host_id,'holder',host.holder,'state',nullif(host.state,'active'),'intake',host.intake,'secretHash',host.secret_hash,'removedSecretHash',host.removed_secret_hash,'projectId',host.project_id)))::jsonb FROM host WHERE id=$1
 `
 
 func (q *Queries) RecHostGet(ctx context.Context, id string) ([]byte, error) {
@@ -561,11 +569,12 @@ func (q *Queries) RecHostGet(ctx context.Context, id string) ([]byte, error) {
 }
 
 const recHostObservationAll = `-- name: RecHostObservationAll :many
-SELECT (host_observation.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'holder',holder,'lastSeenAt',(extract(epoch FROM last_seen_at)*1000)::bigint,'projectId',project_id)))::jsonb FROM host_observation
+SELECT (host_observation.payload||jsonb_strip_nulls(jsonb_build_object('id',host_observation.id,'holder',host_observation.holder,'lastSeenAt',(extract(epoch FROM host_observation.last_seen_at)*1000)::bigint,'projectId',host_observation.project_id)))::jsonb FROM host_observation
 WHERE ($1::jsonb->>'id' IS NULL OR host_observation.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'holder' IS NULL OR host_observation.holder=$1::jsonb->>'holder')
+  AND ($1::jsonb->'lastSeenAt' IS NULL OR to_jsonb((extract(epoch FROM host_observation.last_seen_at)*1000)::bigint)=$1::jsonb->'lastSeenAt')
   AND ($1::jsonb->>'projectId' IS NULL OR host_observation.project_id=$1::jsonb->>'projectId')
-  AND (host_observation.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'holder',holder,'lastSeenAt',(extract(epoch FROM last_seen_at)*1000)::bigint,'projectId',project_id)))::jsonb @> $1::jsonb
+  AND host_observation.payload @> ($1::jsonb - 'id' - 'holder' - 'lastSeenAt' - 'projectId')
 ORDER BY host_observation.seq
 `
 
@@ -590,7 +599,7 @@ func (q *Queries) RecHostObservationAll(ctx context.Context, filter []byte) ([][
 }
 
 const recHostObservationGet = `-- name: RecHostObservationGet :one
-SELECT (host_observation.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'holder',holder,'lastSeenAt',(extract(epoch FROM last_seen_at)*1000)::bigint,'projectId',project_id)))::jsonb FROM host_observation WHERE id=$1
+SELECT (host_observation.payload||jsonb_strip_nulls(jsonb_build_object('id',host_observation.id,'holder',host_observation.holder,'lastSeenAt',(extract(epoch FROM host_observation.last_seen_at)*1000)::bigint,'projectId',host_observation.project_id)))::jsonb FROM host_observation WHERE id=$1
 `
 
 func (q *Queries) RecHostObservationGet(ctx context.Context, id string) ([]byte, error) {
@@ -647,7 +656,7 @@ func (q *Queries) RecHostPut(ctx context.Context, record []byte) error {
 }
 
 const recManagedAccountAll = `-- name: RecManagedAccountAll :many
-SELECT (managed_account.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'name',name,'holder',holder,'intake',intake,'harness',harness,'provider',provider,'projectId',project_id)))::jsonb FROM managed_account
+SELECT (managed_account.payload||jsonb_strip_nulls(jsonb_build_object('id',managed_account.id,'name',managed_account.name,'holder',managed_account.holder,'intake',managed_account.intake,'harness',managed_account.harness,'provider',managed_account.provider,'projectId',managed_account.project_id)))::jsonb FROM managed_account
 WHERE ($1::jsonb->>'id' IS NULL OR managed_account.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'name' IS NULL OR managed_account.name=$1::jsonb->>'name')
   AND ($1::jsonb->>'holder' IS NULL OR managed_account.holder=$1::jsonb->>'holder')
@@ -655,7 +664,7 @@ WHERE ($1::jsonb->>'id' IS NULL OR managed_account.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'harness' IS NULL OR managed_account.harness=$1::jsonb->>'harness')
   AND ($1::jsonb->>'provider' IS NULL OR managed_account.provider=$1::jsonb->>'provider')
   AND ($1::jsonb->>'projectId' IS NULL OR managed_account.project_id=$1::jsonb->>'projectId')
-  AND (managed_account.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'name',name,'holder',holder,'intake',intake,'harness',harness,'provider',provider,'projectId',project_id)))::jsonb @> $1::jsonb
+  AND managed_account.payload @> ($1::jsonb - 'id' - 'name' - 'holder' - 'intake' - 'harness' - 'provider' - 'projectId')
 ORDER BY managed_account.seq
 `
 
@@ -680,7 +689,7 @@ func (q *Queries) RecManagedAccountAll(ctx context.Context, filter []byte) ([][]
 }
 
 const recManagedAccountGet = `-- name: RecManagedAccountGet :one
-SELECT (managed_account.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'name',name,'holder',holder,'intake',intake,'harness',harness,'provider',provider,'projectId',project_id)))::jsonb FROM managed_account WHERE id=$1
+SELECT (managed_account.payload||jsonb_strip_nulls(jsonb_build_object('id',managed_account.id,'name',managed_account.name,'holder',managed_account.holder,'intake',managed_account.intake,'harness',managed_account.harness,'provider',managed_account.provider,'projectId',managed_account.project_id)))::jsonb FROM managed_account WHERE id=$1
 `
 
 func (q *Queries) RecManagedAccountGet(ctx context.Context, id string) ([]byte, error) {
@@ -717,7 +726,7 @@ func (q *Queries) RecManagedAccountPut(ctx context.Context, record []byte) error
 }
 
 const recMessageAll = `-- name: RecMessageAll :many
-SELECT (message.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'executionId',execution_id,'projectId',project_id,'requestId',request_id,'text',text,'sentBy',sent_by,'source',source)))::jsonb FROM message
+SELECT (message.payload||jsonb_strip_nulls(jsonb_build_object('id',message.id,'sessionId',message.session_id,'executionId',message.execution_id,'projectId',message.project_id,'requestId',message.request_id,'text',message.text,'sentBy',message.sent_by,'source',message.source)))::jsonb FROM message
 WHERE ($1::jsonb->>'id' IS NULL OR message.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'sessionId' IS NULL OR message.session_id=$1::jsonb->>'sessionId')
   AND ($1::jsonb->>'executionId' IS NULL OR message.execution_id=$1::jsonb->>'executionId')
@@ -726,7 +735,7 @@ WHERE ($1::jsonb->>'id' IS NULL OR message.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'text' IS NULL OR message.text=$1::jsonb->>'text')
   AND ($1::jsonb->>'sentBy' IS NULL OR message.sent_by=$1::jsonb->>'sentBy')
   AND ($1::jsonb->>'source' IS NULL OR message.source=$1::jsonb->>'source')
-  AND (message.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'executionId',execution_id,'projectId',project_id,'requestId',request_id,'text',text,'sentBy',sent_by,'source',source)))::jsonb @> $1::jsonb
+  AND message.payload @> ($1::jsonb - 'id' - 'sessionId' - 'executionId' - 'projectId' - 'requestId' - 'text' - 'sentBy' - 'source')
 ORDER BY message.seq
 `
 
@@ -751,7 +760,7 @@ func (q *Queries) RecMessageAll(ctx context.Context, filter []byte) ([][]byte, e
 }
 
 const recMessageGet = `-- name: RecMessageGet :one
-SELECT (message.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'executionId',execution_id,'projectId',project_id,'requestId',request_id,'text',text,'sentBy',sent_by,'source',source)))::jsonb FROM message WHERE id=$1
+SELECT (message.payload||jsonb_strip_nulls(jsonb_build_object('id',message.id,'sessionId',message.session_id,'executionId',message.execution_id,'projectId',message.project_id,'requestId',message.request_id,'text',message.text,'sentBy',message.sent_by,'source',message.source)))::jsonb FROM message WHERE id=$1
 `
 
 func (q *Queries) RecMessageGet(ctx context.Context, id string) ([]byte, error) {
@@ -790,7 +799,7 @@ func (q *Queries) RecMessagePut(ctx context.Context, record []byte) error {
 }
 
 const recQueuedMessageAll = `-- name: RecQueuedMessageAll :many
-SELECT (queued_message.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'projectId',project_id,'taskId',task_id,'requestId',request_id,'text',text,'state',state,'executionId',execution_id,'steerCommandId',steer_command_id,'sentBy',sent_by,'source',source,'createdAt',(extract(epoch FROM created_at)*1000)::bigint)))::jsonb FROM queued_message
+SELECT (queued_message.payload||jsonb_strip_nulls(jsonb_build_object('id',queued_message.id,'sessionId',queued_message.session_id,'projectId',queued_message.project_id,'taskId',queued_message.task_id,'requestId',queued_message.request_id,'text',queued_message.text,'state',queued_message.state,'executionId',queued_message.execution_id,'steerCommandId',queued_message.steer_command_id,'sentBy',queued_message.sent_by,'source',queued_message.source,'createdAt',(extract(epoch FROM queued_message.created_at)*1000)::bigint)))::jsonb FROM queued_message
 WHERE ($1::jsonb->>'id' IS NULL OR queued_message.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'sessionId' IS NULL OR queued_message.session_id=$1::jsonb->>'sessionId')
   AND ($1::jsonb->>'projectId' IS NULL OR queued_message.project_id=$1::jsonb->>'projectId')
@@ -802,7 +811,8 @@ WHERE ($1::jsonb->>'id' IS NULL OR queued_message.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'steerCommandId' IS NULL OR queued_message.steer_command_id=$1::jsonb->>'steerCommandId')
   AND ($1::jsonb->>'sentBy' IS NULL OR queued_message.sent_by=$1::jsonb->>'sentBy')
   AND ($1::jsonb->>'source' IS NULL OR queued_message.source=$1::jsonb->>'source')
-  AND (queued_message.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'projectId',project_id,'taskId',task_id,'requestId',request_id,'text',text,'state',state,'executionId',execution_id,'steerCommandId',steer_command_id,'sentBy',sent_by,'source',source,'createdAt',(extract(epoch FROM created_at)*1000)::bigint)))::jsonb @> $1::jsonb
+  AND ($1::jsonb->'createdAt' IS NULL OR to_jsonb((extract(epoch FROM queued_message.created_at)*1000)::bigint)=$1::jsonb->'createdAt')
+  AND queued_message.payload @> ($1::jsonb - 'id' - 'sessionId' - 'projectId' - 'taskId' - 'requestId' - 'text' - 'state' - 'executionId' - 'steerCommandId' - 'sentBy' - 'source' - 'createdAt')
 ORDER BY queued_message.seq
 `
 
@@ -827,7 +837,7 @@ func (q *Queries) RecQueuedMessageAll(ctx context.Context, filter []byte) ([][]b
 }
 
 const recQueuedMessageGet = `-- name: RecQueuedMessageGet :one
-SELECT (queued_message.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'projectId',project_id,'taskId',task_id,'requestId',request_id,'text',text,'state',state,'executionId',execution_id,'steerCommandId',steer_command_id,'sentBy',sent_by,'source',source,'createdAt',(extract(epoch FROM created_at)*1000)::bigint)))::jsonb FROM queued_message WHERE id=$1
+SELECT (queued_message.payload||jsonb_strip_nulls(jsonb_build_object('id',queued_message.id,'sessionId',queued_message.session_id,'projectId',queued_message.project_id,'taskId',queued_message.task_id,'requestId',queued_message.request_id,'text',queued_message.text,'state',queued_message.state,'executionId',queued_message.execution_id,'steerCommandId',queued_message.steer_command_id,'sentBy',queued_message.sent_by,'source',queued_message.source,'createdAt',(extract(epoch FROM queued_message.created_at)*1000)::bigint)))::jsonb FROM queued_message WHERE id=$1
 `
 
 func (q *Queries) RecQueuedMessageGet(ctx context.Context, id string) ([]byte, error) {
@@ -874,15 +884,19 @@ func (q *Queries) RecQueuedMessagePut(ctx context.Context, record []byte) error 
 }
 
 const recRunTokenAll = `-- name: RecRunTokenAll :many
-SELECT (run_token.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sha256',sha256,'executionId',execution_id,'pipelineRunId',pipeline_run_id,'personal',personal,'step',step,'directedBy',directed_by,'createdAt',(extract(epoch FROM created_at)*1000)::bigint,'revokedAt',(extract(epoch FROM revoked_at)*1000)::bigint,'directorAccessRevokedAt',(extract(epoch FROM director_access_revoked_at)*1000)::bigint,'projectId',project_id)))::jsonb FROM run_token
+SELECT (run_token.payload||jsonb_strip_nulls(jsonb_build_object('id',run_token.id,'sha256',run_token.sha256,'executionId',run_token.execution_id,'pipelineRunId',run_token.pipeline_run_id,'personal',run_token.personal,'step',run_token.step,'directedBy',run_token.directed_by,'createdAt',(extract(epoch FROM run_token.created_at)*1000)::bigint,'revokedAt',(extract(epoch FROM run_token.revoked_at)*1000)::bigint,'directorAccessRevokedAt',(extract(epoch FROM run_token.director_access_revoked_at)*1000)::bigint,'projectId',run_token.project_id)))::jsonb FROM run_token
 WHERE ($1::jsonb->>'id' IS NULL OR run_token.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'sha256' IS NULL OR run_token.sha256=$1::jsonb->>'sha256')
   AND ($1::jsonb->>'executionId' IS NULL OR run_token.execution_id=$1::jsonb->>'executionId')
   AND ($1::jsonb->>'pipelineRunId' IS NULL OR run_token.pipeline_run_id=$1::jsonb->>'pipelineRunId')
   AND ($1::jsonb->>'personal' IS NULL OR run_token.personal=$1::jsonb->>'personal')
+  AND ($1::jsonb->'step' IS NULL OR to_jsonb(run_token.step)=$1::jsonb->'step')
   AND ($1::jsonb->>'directedBy' IS NULL OR run_token.directed_by=$1::jsonb->>'directedBy')
+  AND ($1::jsonb->'createdAt' IS NULL OR to_jsonb((extract(epoch FROM run_token.created_at)*1000)::bigint)=$1::jsonb->'createdAt')
+  AND ($1::jsonb->'revokedAt' IS NULL OR to_jsonb((extract(epoch FROM run_token.revoked_at)*1000)::bigint)=$1::jsonb->'revokedAt')
+  AND ($1::jsonb->'directorAccessRevokedAt' IS NULL OR to_jsonb((extract(epoch FROM run_token.director_access_revoked_at)*1000)::bigint)=$1::jsonb->'directorAccessRevokedAt')
   AND ($1::jsonb->>'projectId' IS NULL OR run_token.project_id=$1::jsonb->>'projectId')
-  AND (run_token.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sha256',sha256,'executionId',execution_id,'pipelineRunId',pipeline_run_id,'personal',personal,'step',step,'directedBy',directed_by,'createdAt',(extract(epoch FROM created_at)*1000)::bigint,'revokedAt',(extract(epoch FROM revoked_at)*1000)::bigint,'directorAccessRevokedAt',(extract(epoch FROM director_access_revoked_at)*1000)::bigint,'projectId',project_id)))::jsonb @> $1::jsonb
+  AND run_token.payload @> ($1::jsonb - 'id' - 'sha256' - 'executionId' - 'pipelineRunId' - 'personal' - 'step' - 'directedBy' - 'createdAt' - 'revokedAt' - 'directorAccessRevokedAt' - 'projectId')
 ORDER BY run_token.seq
 `
 
@@ -907,7 +921,7 @@ func (q *Queries) RecRunTokenAll(ctx context.Context, filter []byte) ([][]byte, 
 }
 
 const recRunTokenGet = `-- name: RecRunTokenGet :one
-SELECT (run_token.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sha256',sha256,'executionId',execution_id,'pipelineRunId',pipeline_run_id,'personal',personal,'step',step,'directedBy',directed_by,'createdAt',(extract(epoch FROM created_at)*1000)::bigint,'revokedAt',(extract(epoch FROM revoked_at)*1000)::bigint,'directorAccessRevokedAt',(extract(epoch FROM director_access_revoked_at)*1000)::bigint,'projectId',project_id)))::jsonb FROM run_token WHERE id=$1
+SELECT (run_token.payload||jsonb_strip_nulls(jsonb_build_object('id',run_token.id,'sha256',run_token.sha256,'executionId',run_token.execution_id,'pipelineRunId',run_token.pipeline_run_id,'personal',run_token.personal,'step',run_token.step,'directedBy',run_token.directed_by,'createdAt',(extract(epoch FROM run_token.created_at)*1000)::bigint,'revokedAt',(extract(epoch FROM run_token.revoked_at)*1000)::bigint,'directorAccessRevokedAt',(extract(epoch FROM run_token.director_access_revoked_at)*1000)::bigint,'projectId',run_token.project_id)))::jsonb FROM run_token WHERE id=$1
 `
 
 func (q *Queries) RecRunTokenGet(ctx context.Context, id string) ([]byte, error) {
@@ -952,23 +966,28 @@ func (q *Queries) RecRunTokenPut(ctx context.Context, record []byte) error {
 }
 
 const recSessionAll = `-- name: RecSessionAll :many
-SELECT (session.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'projectId',project_id,'taskId',task_id,'hostId',host_id,'actor',actor,'directedBy',directed_by,'directorAccessRevokedAt',(extract(epoch FROM director_access_revoked_at)*1000)::bigint,'parentExecutionId',parent_execution_id,'createdByExecutionId',created_by_execution_id,'createdBySessionId',created_by_session_id,'sourceSessionId',source_session_id,'pipelineRunId',pipeline_run_id,'createdAt',(extract(epoch FROM created_at)*1000)::bigint,'archivedAt',(extract(epoch FROM archived_at)*1000)::bigint,'title',title,'titleBy',title_by,'titleCall',title_call,'titleAttemptAt',(extract(epoch FROM title_attempt_at)*1000)::bigint,'titleAttempts',nullif(title_attempts,0),'titleUnknownCall',title_unknown_call)))::jsonb FROM session
+SELECT (session.payload||jsonb_strip_nulls(jsonb_build_object('id',session.id,'projectId',session.project_id,'taskId',session.task_id,'hostId',session.host_id,'actor',session.actor,'directedBy',session.directed_by,'directorAccessRevokedAt',(extract(epoch FROM session.director_access_revoked_at)*1000)::bigint,'parentExecutionId',session.parent_execution_id,'createdByExecutionId',session.created_by_execution_id,'createdBySessionId',session.created_by_session_id,'sourceSessionId',session.source_session_id,'pipelineRunId',session.pipeline_run_id,'createdAt',(extract(epoch FROM session.created_at)*1000)::bigint,'archivedAt',(extract(epoch FROM session.archived_at)*1000)::bigint,'title',session.title,'titleBy',session.title_by,'titleCall',session.title_call,'titleAttemptAt',(extract(epoch FROM session.title_attempt_at)*1000)::bigint,'titleAttempts',nullif(session.title_attempts,0),'titleUnknownCall',session.title_unknown_call)))::jsonb FROM session
 WHERE ($1::jsonb->>'id' IS NULL OR session.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'projectId' IS NULL OR session.project_id=$1::jsonb->>'projectId')
   AND ($1::jsonb->>'taskId' IS NULL OR session.task_id=$1::jsonb->>'taskId')
   AND ($1::jsonb->>'hostId' IS NULL OR session.host_id=$1::jsonb->>'hostId')
   AND ($1::jsonb->>'actor' IS NULL OR session.actor=$1::jsonb->>'actor')
   AND ($1::jsonb->>'directedBy' IS NULL OR session.directed_by=$1::jsonb->>'directedBy')
+  AND ($1::jsonb->'directorAccessRevokedAt' IS NULL OR to_jsonb((extract(epoch FROM session.director_access_revoked_at)*1000)::bigint)=$1::jsonb->'directorAccessRevokedAt')
   AND ($1::jsonb->>'parentExecutionId' IS NULL OR session.parent_execution_id=$1::jsonb->>'parentExecutionId')
   AND ($1::jsonb->>'createdByExecutionId' IS NULL OR session.created_by_execution_id=$1::jsonb->>'createdByExecutionId')
   AND ($1::jsonb->>'createdBySessionId' IS NULL OR session.created_by_session_id=$1::jsonb->>'createdBySessionId')
   AND ($1::jsonb->>'sourceSessionId' IS NULL OR session.source_session_id=$1::jsonb->>'sourceSessionId')
   AND ($1::jsonb->>'pipelineRunId' IS NULL OR session.pipeline_run_id=$1::jsonb->>'pipelineRunId')
+  AND ($1::jsonb->'createdAt' IS NULL OR to_jsonb((extract(epoch FROM session.created_at)*1000)::bigint)=$1::jsonb->'createdAt')
+  AND ($1::jsonb->'archivedAt' IS NULL OR to_jsonb((extract(epoch FROM session.archived_at)*1000)::bigint)=$1::jsonb->'archivedAt')
   AND ($1::jsonb->>'title' IS NULL OR session.title=$1::jsonb->>'title')
   AND ($1::jsonb->>'titleBy' IS NULL OR session.title_by=$1::jsonb->>'titleBy')
   AND ($1::jsonb->>'titleCall' IS NULL OR session.title_call=$1::jsonb->>'titleCall')
+  AND ($1::jsonb->'titleAttemptAt' IS NULL OR to_jsonb((extract(epoch FROM session.title_attempt_at)*1000)::bigint)=$1::jsonb->'titleAttemptAt')
+  AND ($1::jsonb->'titleAttempts' IS NULL OR to_jsonb(nullif(session.title_attempts,0))=$1::jsonb->'titleAttempts')
   AND ($1::jsonb->>'titleUnknownCall' IS NULL OR session.title_unknown_call=$1::jsonb->>'titleUnknownCall')
-  AND (session.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'projectId',project_id,'taskId',task_id,'hostId',host_id,'actor',actor,'directedBy',directed_by,'directorAccessRevokedAt',(extract(epoch FROM director_access_revoked_at)*1000)::bigint,'parentExecutionId',parent_execution_id,'createdByExecutionId',created_by_execution_id,'createdBySessionId',created_by_session_id,'sourceSessionId',source_session_id,'pipelineRunId',pipeline_run_id,'createdAt',(extract(epoch FROM created_at)*1000)::bigint,'archivedAt',(extract(epoch FROM archived_at)*1000)::bigint,'title',title,'titleBy',title_by,'titleCall',title_call,'titleAttemptAt',(extract(epoch FROM title_attempt_at)*1000)::bigint,'titleAttempts',nullif(title_attempts,0),'titleUnknownCall',title_unknown_call)))::jsonb @> $1::jsonb
+  AND session.payload @> ($1::jsonb - 'id' - 'projectId' - 'taskId' - 'hostId' - 'actor' - 'directedBy' - 'directorAccessRevokedAt' - 'parentExecutionId' - 'createdByExecutionId' - 'createdBySessionId' - 'sourceSessionId' - 'pipelineRunId' - 'createdAt' - 'archivedAt' - 'title' - 'titleBy' - 'titleCall' - 'titleAttemptAt' - 'titleAttempts' - 'titleUnknownCall')
 ORDER BY session.seq
 `
 
@@ -993,13 +1012,13 @@ func (q *Queries) RecSessionAll(ctx context.Context, filter []byte) ([][]byte, e
 }
 
 const recSessionForkAll = `-- name: RecSessionForkAll :many
-SELECT (session_fork.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'sourceSessionId',source_session_id,'projectId',project_id,'requestId',request_id)))::jsonb FROM session_fork
+SELECT (session_fork.payload||jsonb_strip_nulls(jsonb_build_object('id',session_fork.id,'sessionId',session_fork.session_id,'sourceSessionId',session_fork.source_session_id,'projectId',session_fork.project_id,'requestId',session_fork.request_id)))::jsonb FROM session_fork
 WHERE ($1::jsonb->>'id' IS NULL OR session_fork.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'sessionId' IS NULL OR session_fork.session_id=$1::jsonb->>'sessionId')
   AND ($1::jsonb->>'sourceSessionId' IS NULL OR session_fork.source_session_id=$1::jsonb->>'sourceSessionId')
   AND ($1::jsonb->>'projectId' IS NULL OR session_fork.project_id=$1::jsonb->>'projectId')
   AND ($1::jsonb->>'requestId' IS NULL OR session_fork.request_id=$1::jsonb->>'requestId')
-  AND (session_fork.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'sourceSessionId',source_session_id,'projectId',project_id,'requestId',request_id)))::jsonb @> $1::jsonb
+  AND session_fork.payload @> ($1::jsonb - 'id' - 'sessionId' - 'sourceSessionId' - 'projectId' - 'requestId')
 ORDER BY session_fork.seq
 `
 
@@ -1024,7 +1043,7 @@ func (q *Queries) RecSessionForkAll(ctx context.Context, filter []byte) ([][]byt
 }
 
 const recSessionForkGet = `-- name: RecSessionForkGet :one
-SELECT (session_fork.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'sourceSessionId',source_session_id,'projectId',project_id,'requestId',request_id)))::jsonb FROM session_fork WHERE id=$1
+SELECT (session_fork.payload||jsonb_strip_nulls(jsonb_build_object('id',session_fork.id,'sessionId',session_fork.session_id,'sourceSessionId',session_fork.source_session_id,'projectId',session_fork.project_id,'requestId',session_fork.request_id)))::jsonb FROM session_fork WHERE id=$1
 `
 
 func (q *Queries) RecSessionForkGet(ctx context.Context, id string) ([]byte, error) {
@@ -1058,12 +1077,12 @@ func (q *Queries) RecSessionForkPut(ctx context.Context, record []byte) error {
 
 const recSessionGet = `-- name: RecSessionGet :one
 
-SELECT (session.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'projectId',project_id,'taskId',task_id,'hostId',host_id,'actor',actor,'directedBy',directed_by,'directorAccessRevokedAt',(extract(epoch FROM director_access_revoked_at)*1000)::bigint,'parentExecutionId',parent_execution_id,'createdByExecutionId',created_by_execution_id,'createdBySessionId',created_by_session_id,'sourceSessionId',source_session_id,'pipelineRunId',pipeline_run_id,'createdAt',(extract(epoch FROM created_at)*1000)::bigint,'archivedAt',(extract(epoch FROM archived_at)*1000)::bigint,'title',title,'titleBy',title_by,'titleCall',title_call,'titleAttemptAt',(extract(epoch FROM title_attempt_at)*1000)::bigint,'titleAttempts',nullif(title_attempts,0),'titleUnknownCall',title_unknown_call)))::jsonb FROM session WHERE id=$1
+SELECT (session.payload||jsonb_strip_nulls(jsonb_build_object('id',session.id,'projectId',session.project_id,'taskId',session.task_id,'hostId',session.host_id,'actor',session.actor,'directedBy',session.directed_by,'directorAccessRevokedAt',(extract(epoch FROM session.director_access_revoked_at)*1000)::bigint,'parentExecutionId',session.parent_execution_id,'createdByExecutionId',session.created_by_execution_id,'createdBySessionId',session.created_by_session_id,'sourceSessionId',session.source_session_id,'pipelineRunId',session.pipeline_run_id,'createdAt',(extract(epoch FROM session.created_at)*1000)::bigint,'archivedAt',(extract(epoch FROM session.archived_at)*1000)::bigint,'title',session.title,'titleBy',session.title_by,'titleCall',session.title_call,'titleAttemptAt',(extract(epoch FROM session.title_attempt_at)*1000)::bigint,'titleAttempts',nullif(session.title_attempts,0),'titleUnknownCall',session.title_unknown_call)))::jsonb FROM session WHERE id=$1
 `
 
 // Records of the conversation, host and account kinds (generated once from the former convTables, stage 8e): each
-// kind's row as its record (the payload under the columns, a column absent when NULL), its rows whose record contains
-// a filter (an indexed text column compared first) and its write: every column from its field when the field has the
+// kind's row as its record (the payload under the columns, a column absent when NULL), its rows whose record holds a
+// filter's fields (a column compared as a column, the other fields contained in payload) and its write: every column from its field when the field has the
 // column's type (absent or another type: NULL, the value kept in payload), payload the other fields. A state machine's
 // column (host.state, connection_key.state) is not written here: a new row starts in its default state, which the
 // machine's transition moves (records.go recStateful).
@@ -1075,7 +1094,7 @@ func (q *Queries) RecSessionGet(ctx context.Context, id string) ([]byte, error) 
 }
 
 const recSessionGetLocked = `-- name: RecSessionGetLocked :one
-SELECT (session.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'projectId',project_id,'taskId',task_id,'hostId',host_id,'actor',actor,'directedBy',directed_by,'directorAccessRevokedAt',(extract(epoch FROM director_access_revoked_at)*1000)::bigint,'parentExecutionId',parent_execution_id,'createdByExecutionId',created_by_execution_id,'createdBySessionId',created_by_session_id,'sourceSessionId',source_session_id,'pipelineRunId',pipeline_run_id,'createdAt',(extract(epoch FROM created_at)*1000)::bigint,'archivedAt',(extract(epoch FROM archived_at)*1000)::bigint,'title',title,'titleBy',title_by,'titleCall',title_call,'titleAttemptAt',(extract(epoch FROM title_attempt_at)*1000)::bigint,'titleAttempts',nullif(title_attempts,0),'titleUnknownCall',title_unknown_call)))::jsonb FROM session WHERE id=$1 FOR UPDATE
+SELECT (session.payload||jsonb_strip_nulls(jsonb_build_object('id',session.id,'projectId',session.project_id,'taskId',session.task_id,'hostId',session.host_id,'actor',session.actor,'directedBy',session.directed_by,'directorAccessRevokedAt',(extract(epoch FROM session.director_access_revoked_at)*1000)::bigint,'parentExecutionId',session.parent_execution_id,'createdByExecutionId',session.created_by_execution_id,'createdBySessionId',session.created_by_session_id,'sourceSessionId',session.source_session_id,'pipelineRunId',session.pipeline_run_id,'createdAt',(extract(epoch FROM session.created_at)*1000)::bigint,'archivedAt',(extract(epoch FROM session.archived_at)*1000)::bigint,'title',session.title,'titleBy',session.title_by,'titleCall',session.title_call,'titleAttemptAt',(extract(epoch FROM session.title_attempt_at)*1000)::bigint,'titleAttempts',nullif(session.title_attempts,0),'titleUnknownCall',session.title_unknown_call)))::jsonb FROM session WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) RecSessionGetLocked(ctx context.Context, id string) ([]byte, error) {
@@ -1138,11 +1157,11 @@ func (q *Queries) RecSessionPut(ctx context.Context, record []byte) error {
 }
 
 const recSessionTransitionAll = `-- name: RecSessionTransitionAll :many
-SELECT (session_transition.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'projectId',project_id)))::jsonb FROM session_transition
+SELECT (session_transition.payload||jsonb_strip_nulls(jsonb_build_object('id',session_transition.id,'sessionId',session_transition.session_id,'projectId',session_transition.project_id)))::jsonb FROM session_transition
 WHERE ($1::jsonb->>'id' IS NULL OR session_transition.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'sessionId' IS NULL OR session_transition.session_id=$1::jsonb->>'sessionId')
   AND ($1::jsonb->>'projectId' IS NULL OR session_transition.project_id=$1::jsonb->>'projectId')
-  AND (session_transition.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'projectId',project_id)))::jsonb @> $1::jsonb
+  AND session_transition.payload @> ($1::jsonb - 'id' - 'sessionId' - 'projectId')
 ORDER BY session_transition.seq
 `
 
@@ -1167,7 +1186,7 @@ func (q *Queries) RecSessionTransitionAll(ctx context.Context, filter []byte) ([
 }
 
 const recSessionTransitionGet = `-- name: RecSessionTransitionGet :one
-SELECT (session_transition.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'sessionId',session_id,'projectId',project_id)))::jsonb FROM session_transition WHERE id=$1
+SELECT (session_transition.payload||jsonb_strip_nulls(jsonb_build_object('id',session_transition.id,'sessionId',session_transition.session_id,'projectId',session_transition.project_id)))::jsonb FROM session_transition WHERE id=$1
 `
 
 func (q *Queries) RecSessionTransitionGet(ctx context.Context, id string) ([]byte, error) {
@@ -1196,11 +1215,11 @@ func (q *Queries) RecSessionTransitionPut(ctx context.Context, record []byte) er
 }
 
 const recWorkerDoneAll = `-- name: RecWorkerDoneAll :many
-SELECT (worker_done.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'projectId',project_id)))::jsonb FROM worker_done
+SELECT (worker_done.payload||jsonb_strip_nulls(jsonb_build_object('id',worker_done.id,'executionId',worker_done.execution_id,'projectId',worker_done.project_id)))::jsonb FROM worker_done
 WHERE ($1::jsonb->>'id' IS NULL OR worker_done.id=$1::jsonb->>'id')
   AND ($1::jsonb->>'executionId' IS NULL OR worker_done.execution_id=$1::jsonb->>'executionId')
   AND ($1::jsonb->>'projectId' IS NULL OR worker_done.project_id=$1::jsonb->>'projectId')
-  AND (worker_done.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'projectId',project_id)))::jsonb @> $1::jsonb
+  AND worker_done.payload @> ($1::jsonb - 'id' - 'executionId' - 'projectId')
 ORDER BY worker_done.seq
 `
 
@@ -1225,7 +1244,7 @@ func (q *Queries) RecWorkerDoneAll(ctx context.Context, filter []byte) ([][]byte
 }
 
 const recWorkerDoneGet = `-- name: RecWorkerDoneGet :one
-SELECT (worker_done.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'projectId',project_id)))::jsonb FROM worker_done WHERE id=$1
+SELECT (worker_done.payload||jsonb_strip_nulls(jsonb_build_object('id',worker_done.id,'executionId',worker_done.execution_id,'projectId',worker_done.project_id)))::jsonb FROM worker_done WHERE id=$1
 `
 
 func (q *Queries) RecWorkerDoneGet(ctx context.Context, id string) ([]byte, error) {

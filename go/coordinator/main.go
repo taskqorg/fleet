@@ -12,6 +12,7 @@ import (
 	"fleet/coordinator/db"
 	"fmt"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -366,11 +367,13 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
-	body, _ := json.Marshal(errorBody{StatusCode: code, Error: http.StatusText(code), Message: msg})
+	body := jsonBytes(errorBody{StatusCode: code, Error: http.StatusText(code), Message: msg})
 	if he != nil && he.Extra != nil {
-		// Extra is a struct: its fields join the body's object.
-		if extra, err := json.Marshal(he.Extra); err == nil && len(extra) > 2 && extra[0] == '{' {
-			body = append(append(body[:len(body)-1], ','), extra[1:]...)
+		// Extra is a struct: its fields join the body's object, over a field of the same name.
+		var fields, extra rawObject
+		if json.Unmarshal(body, &fields) == nil && json.Unmarshal(jsonBytes(he.Extra), &extra) == nil {
+			maps.Copy(fields, extra)
+			body = jsonBytes(fields)
 		}
 	}
 	w.Write(append(body, '\n'))
@@ -514,10 +517,9 @@ func (a *App) hostFromSecret(ctx context.Context, secret string) (*authHost, err
 		}
 		s.authMu.Unlock()
 	}
-	var host authHost
-	if err := json.Unmarshal(data, &host); err != nil {
-		return nil, err
-	}
+	var rec rawObject // a field of another type reads as empty, as a stored record may hold one in its payload
+	json.Unmarshal(data, &rec)
+	host := authHost{HostID: rec.text("hostId"), Holder: rec.text("holder"), AutoUpdate: rec.text("autoUpdate")}
 	if a.peopleSnapshot().person(host.Holder) == nil {
 		return nil, nil
 	}

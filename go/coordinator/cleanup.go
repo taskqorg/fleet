@@ -1165,7 +1165,7 @@ func objectLock(ctx context.Context, tx pgx.Tx, storeID, key string) error {
 // recordTables: the tables whose rows are records (queries/records.sql): a reason names a column by its record field.
 var recordTables = []string{"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition",
 	"worker_done", "host", "host_observation", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
-	"connection_key", "run_token"}
+	"connection_key", "run_token", "watch", "person_setting"}
 
 // recordFieldOf: the record field a record table's column holds (project_id: projectId), else col.
 func recordFieldOf(table, col string) string {

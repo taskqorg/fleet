@@ -601,9 +601,11 @@ func (a *App) finishLocked(ctx context.Context, p *Person, id string) (any, erro
 	if busy, err := a.uploadFinishing(ctx, p, id); err != nil {
 		return nil, err
 	} else if busy {
-		if u, err := a.uploadRecord(ctx, p, id); err == nil {
-			return uploadProgress{Received: u.Size, Finishing: true}, nil
+		u, err := a.uploadRecord(ctx, p, id)
+		if err != nil {
+			return nil, err
 		}
+		return uploadProgress{Received: u.Size, Finishing: true}, nil
 	}
 	defer uploadLock(id)()
 	return a.finishUpload(ctx, p, id)
@@ -637,8 +639,8 @@ func (a *App) finishUpload(ctx context.Context, p *Person, id string) (any, erro
 	if u.Size <= finishInline {
 		return a.finishNow(ctx, p, u)
 	}
-	// The work row is this finish's exclusion: every finish path answers {finishing} while it is there, on any
-	// coordinator, and the kit's call takes no lock a probe could queue behind.
+	// The work row is this finish's exclusion: every finish path answers {finishing} while it is there, without the
+	// upload's lock, which the kit's call holds while it finishes.
 	if err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
 		if err := q.db().UploadFinishWorkAdd(q.ctx(), id); err != nil {
 			return err
