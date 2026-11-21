@@ -12,7 +12,7 @@
 * Withdrawn ratings stay visible as history with their reason and no answer controls; they never count as pending or as owner scores.
 * "Waiting for you": open ratings count; drafted examples awaiting approval as [decision blocks](../controls/decision-block.md) (pass or fail).
 * Experiments: [data list](../controls/data-list.md), state first, title = pipeline · kind · variants, short ID, age.
-* Use-case registry: data list, drift state first ([state badge](../controls/state-badge.md) family `source`), goal with ID, fit, maturity.
+* Use-case registry: organized by source/collection — `LLM Code Benchmarks` (`bench:*` or `llm-code-benchmarks` tag), `Real Work` (`real:*` or `real-work` tag), `Fleet & Projects` (active `fleet:*`, `cs:*`, and other non-archived entries), plus a folded `Archived / Obsolete` disclosure (`status === 'obsolete' || status === 'duplicate'`). Each row shows drift state first ([state badge](../controls/state-badge.md) family `source`), goal with ID, fit, maturity.
 
 **Layout of `/lab/<id>`.**
 * Head: experiment state, title, ID, Launch / Resume / Stop.

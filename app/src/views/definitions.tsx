@@ -45,10 +45,10 @@ export function Definitions({ kind, id }: { kind: Kind; id?: string }) {
       </div>
     </section>
   </>;
-  return <ListDetail list={list} detailKey={id} detail={id && <Editor key={`${kind}/${id}`} kind={kind} id={id} onClose={() => go(route)} />} />;
+  return <ListDetail list={list} detailKey={id} detail={id && <DefinitionDetail key={`${kind}/${id}`} kind={kind} id={id} onClose={() => go(route)} />} />;
 }
 
-function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => void }) {
+export function DefinitionDetail({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => void }) {
   const [tab, setTab] = useState(kind === 'catalogue' ? 'Methods' : 'Configuration');
   const got = useOp('definition_get', { kind, id });
   const drafted = useOp('definition_draft_get', got.data?.draft ? { kind, id } : null);
@@ -215,6 +215,18 @@ function CompatibilityTab({ id }: { id: string }) {
 }
 
 
+type CatalogueMethodExt = Ops['catalogue']['reply']['methods'][number] & {
+  status?: string;
+  capability?: string;
+  description?: string;
+};
+
+const methodStatusTone = (s: string) =>
+  s === 'recommended' ? 'success' : s === 'experimental' ? 'attention' : s === 'deprecated' ? 'danger' : 'neutral';
+
+const methodStatusIcon = (s: string) =>
+  s === 'recommended' ? 'circle-check' : s === 'experimental' ? 'circle-dashed' : s === 'deprecated' ? 'circle-slash' : 'info';
+
 function CatalogueMethods() {
   const [, go] = useLocation();
   const list = useOp('project_list', {}), projects = projectIds(list.data);
@@ -240,10 +252,21 @@ function CatalogueMethods() {
     {catalogueError && <div class="error" role="alert">Catalogue unavailable: {catalogueError}. No current evidence loaded for {project}.<Button label="Retry Catalogue" icon="rotate-cw" onClick={catalogue.reload} /></div>}
     {c && <p class="muted">Evidence project: {c.projectId}{restored ? ' · restored, read-only until current confirmation' : ''}</p>}
     <DetailSection title="Methods"><SearchField label="Find method" value={search} onInput={setSearch} onSearch={() => {}} />
-      {methods.filter(m => matchSearch(search, `${m.name} ${m.id}`)).map(m => {
+      {methods.filter(m => {
+        const mx = m as CatalogueMethodExt;
+        return matchSearch(search, `${m.name} ${m.id} ${mx.capability ?? ''} ${mx.description ?? ''} ${mx.status ?? ''}`);
+      }).map(m => {
+        const mx = m as CatalogueMethodExt;
         const a = m.assessment;
         return <div key={m.id}>
-          <KvRow icon="circle-check" label={`${m.name} · ${m.id}`} meta={`${m.scope} · ${m.pipeline}`} value={<><Choice label={`Select ${m.name}`} value={selected} options={[{id:m.id,label:selected.includes(m.id) ? 'Selected' : 'Select'}]} onChange={choose} /><Button label="Recommend for project" icon="check" iconOnly busy={busy} disabledReason={restored ? 'Await current scoped Catalogue read' : undefined} onClick={() => act(async () => {await op('recommendation_set', {projectId:project,methodId:m.id});catalogue.reload();})} /></>} />
+          <KvRow icon="circle-check" label={`${m.name} · ${m.id}`}
+            meta={<span class="tag-row">
+              <span>{m.scope} · {m.pipeline}</span>
+              {mx.capability && <span class="chip">{mx.capability}</span>}
+              {mx.status && <span class={`badge t-${methodStatusTone(mx.status)}`}><Icon name={methodStatusIcon(mx.status)} /><span>{mx.status}</span></span>}
+            </span>}
+            value={<><Choice label={`Select ${m.name}`} value={selected} options={[{id:m.id,label:selected.includes(m.id) ? 'Selected' : 'Select'}]} onChange={choose} /><Button label="Recommend for project" icon="check" iconOnly busy={busy} disabledReason={restored ? 'Await current scoped Catalogue read' : undefined} onClick={() => act(async () => {await op('recommendation_set', {projectId:project,methodId:m.id});catalogue.reload();})} /></>} />
+          {mx.description && <p class="muted">{mx.description}</p>}
           <KvRow icon="chart-no-axes-column" label={a.scoreForm === 'typed' ? 'Comparison score' : 'Quality'} meta={a.score == null ? 'Unavailable' : `${a.score.toFixed(3)}${a.partial ? ' · partial/incomplete' : ''}`} value={`${a.basis} · ${a.eligibleCells ?? 0}/${a.expectedCells ?? 0} cells · ${a.examples ?? 0} ${a.examples === 1 ? 'example' : 'examples'}`} />
           <KvRow icon="clock" label="Time / cost" meta={a.wallMsMedian == null ? 'Time unavailable' : `${a.wallMsMedian} ms · ${a.durationSamples == null ? 'pipeline usage window' : `${a.durationSamples} samples`}`} value={`${a.costUsd == null ? 'Cost unavailable' : `$${a.costUsd} · ${a.costBasis}`}`} />
           <KvRow icon="folder-open" label="Recommended for" meta={m.recommendedFor.join(', ') || 'None'} />

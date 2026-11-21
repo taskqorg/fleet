@@ -114,27 +114,44 @@ function Undecided({ experiments, onOpen }: { experiments: LabExperimentRecord[]
   </>;
 }
 
+type RegistryUseCase = LabUseCaseEntry & { tags?: readonly string[] };
+
 // The use-case registry fills the work area while no experiment is open. It scrolls with the work area, so its rows are plain.
 // ponytail: static rows, fine for tens of use cases; make it its own catalogue with a virtual list if the registry grows past a few hundred.
 function Registry({ useCases, head }: { useCases: LabUseCaseEntry[]; head?: ComponentChildren }) {
-  // Obsolete and duplicate entries collapse under their source; maps_to names what covers them.
-  const replaced = (u: LabUseCaseEntry) => u.status === 'obsolete' || u.status === 'duplicate';
-  const live = useCases.filter(u => !replaced(u)), gone = useCases.filter(replaced);
-  const repos = [...new Set(gone.map(u => u.source?.repo ?? '?'))];
+  // Organize active use cases by collection and fold obsolete/duplicate prototype rows away.
+  const isArchived = (u: RegistryUseCase) => u.status === 'obsolete' || u.status === 'duplicate';
+  const isBenchmark = (u: RegistryUseCase) => u.id.startsWith('bench:') || (u.tags ?? []).includes('llm-code-benchmarks');
+  const isRealWork = (u: RegistryUseCase) => u.id.startsWith('real:') || (u.tags ?? []).includes('real-work');
+  const active = useCases.filter(u => !isArchived(u));
+  const archived = useCases.filter(isArchived);
+  const benchmarks = active.filter(isBenchmark);
+  const realWork = active.filter(u => !isBenchmark(u) && isRealWork(u));
+  const fleetAndProjects = active.filter(u => !isBenchmark(u) && !isRealWork(u));
+
   const row = (u: LabUseCaseEntry) => <div key={u.id} role="row" class="vl-row static">
     <StateBadge family="source" state={u.source_status as StateOf<'source'>} reason={u.source ? `${u.source.repo}/${u.source.path}#${u.source.anchor}` : undefined} compact />
     <span class="tt"><span class="title">{u.goal}</span><span class="id">{u.id}{u.maps_to?.length ? ` → ${u.maps_to.join(', ')}` : ''}</span></span>
     <span class="muted">{u.status ?? 'current'}</span><span class="muted">{u.lab_fit}</span><span class="muted">{u.maturity}</span>
   </div>;
+
+  const table = (items: LabUseCaseEntry[]) => <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 6rem 5rem 9rem' }}>
+    <div class="vl-head" role="row"><span /><span>Use case</span><span>Status</span><span>Fit</span><span>Maturity</span></div>
+    {items.map(row)}
+  </div>;
+
+  const collections = [
+    { key: 'benchmarks', title: 'LLM Code Benchmarks', items: benchmarks },
+    { key: 'real-work', title: 'Real Work', items: realWork },
+    { key: 'fleet-projects', title: 'Fleet & Projects', items: fleetAndProjects },
+  ].filter(c => c.items.length > 0);
+
   return <>
     {head}
     <h2 class="detail-title">Use-case registry</h2>
-    <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 6rem 5rem 9rem' }}>
-      <div class="vl-head" role="row"><span /><span>Use case</span><span>Status</span><span>Fit</span><span>Maturity</span></div>
-      {live.map(row)}
-      {repos.map(repo => { const of = gone.filter(u => (u.source?.repo ?? '?') === repo);
-        return <Disclosure key={repo} summaryClass="muted" summary={`${repo}: ${of.length} replaced`}>{of.map(row)}</Disclosure>; })}
-    </div>
+    {useCases.length === 0 && <Empty text="No use cases in registry." />}
+    {collections.map(c => <DetailSection key={c.key} title={`${c.title} (${c.items.length})`}>{table(c.items)}</DetailSection>)}
+    {archived.length > 0 && <Disclosure summaryClass="muted" summary={`Archived / Obsolete (${archived.length})`}>{table(archived)}</Disclosure>}
   </>;
 }
 
