@@ -354,7 +354,8 @@ func opArtifactList(q *Request, r *contract.ArtifactListRequest) (contract.Artif
 	if r.Limit != nil && *r.Limit <= 0 {
 		return contract.ArtifactListReply{}, fail(400, "Expected positive integer limit")
 	}
-	rows, err := artifactList(withTx(q), q.app, f)
+	ctx := withTx(q)
+	rows, err := artifactList(ctx, q.app, f)
 	if err == nil {
 		err = withTaskCodes(q, rows)
 	}
@@ -365,6 +366,19 @@ func opArtifactList(q *Request, r *contract.ArtifactListRequest) (contract.Artif
 	if f.Limit != nil && int64(len(rows)) > *f.Limit {
 		out.Artifacts = rows[:*f.Limit]
 		out.NextBefore = ptr(out.Artifacts[*f.Limit-1].Seq)
+	}
+	if len(f.States) == 0 && f.Before == nil && (f.Limit == nil || int64(len(rows)) <= *f.Limit) {
+		counts := zeroCounts(contract.Vocabulary.Lists["results"].States)
+		for _, row := range out.Artifacts {
+			counts[row.State]++
+		}
+		out.Counts = counts
+	} else {
+		counts, err := artifactCounts(ctx, q.app, f)
+		if err != nil {
+			return contract.ArtifactListReply{}, err
+		}
+		out.Counts = counts
 	}
 	return out, nil
 }

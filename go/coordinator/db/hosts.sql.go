@@ -140,6 +140,43 @@ func (q *Queries) HostKnown(ctx context.Context, hostID string) (bool, error) {
 	return exists, err
 }
 
+const hostLastSeen = `-- name: HostLastSeen :many
+SELECT h.host_id AS id, o.last_seen_at
+FROM host h
+LEFT JOIN host_observation o ON o.id = h.host_id
+WHERE h.state <> 'removed'
+UNION ALL
+SELECT o.id, o.last_seen_at
+FROM host_observation o
+WHERE NOT EXISTS (SELECT 1 FROM host h WHERE h.host_id = o.id)
+`
+
+type HostLastSeenRow struct {
+	ID         string
+	LastSeenAt *time.Time
+}
+
+// Non-removed hosts and any unremoved observed hosts with their last_seen_at, for nav_counts offline check.
+func (q *Queries) HostLastSeen(ctx context.Context) ([]HostLastSeenRow, error) {
+	rows, err := q.db.Query(ctx, hostLastSeen)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HostLastSeenRow
+	for rows.Next() {
+		var i HostLastSeenRow
+		if err := rows.Scan(&i.ID, &i.LastSeenAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const hostMove = `-- name: HostMove :exec
 UPDATE host SET state= $1, updated_at=now() WHERE id= $2
 `

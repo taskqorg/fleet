@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"sort"
 
@@ -310,38 +309,43 @@ func init() {
 				return nil, fail(403, "Execution rejected")
 			}
 		}
-		// The proof and the director's access, in one read; each call then runs in its own transaction (runOp).
-		if err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
-			if err := prove(); err != nil {
-				return err
-			}
-			return refreshRequestAccess(q)
-		}); err != nil {
-			return nil, err
+		isReadOp := func(name string) bool {
+			reg, ok := operations[name]
+			return ok && reg.read && longOperations[name] == nil
 		}
 		receipt := func(payload any) *toolReceipt {
 			return &toolReceipt{key: b.AgentToolKey, execution: executionID, payload: payload}
 		}
-		// tableCall: an agent-table tool, its arguments bound to the caller's own session (boundArguments).
-		tableCall := func(name string, raw json.RawMessage) (any, error) {
+		focusBound := func() []string {
+			if focused && focus != nil {
+				return focus
+			}
+			if !focused && sessionProject != "" {
+				return []string{sessionProject}
+			}
+			return nil
+		}
+		checkBoundProjectID := func(bound []string, raw json.RawMessage) error {
+			pid, ok := jsonText(raw)
+			if !ok || !slices.Contains(bound, pid) {
+				return fail(403, "Project outside the session focus")
+			}
+			return nil
+		}
+		// prepareTable: bind agent-table arguments to the caller's own session inside the proof read transaction.
+		prepareTable := func(q *Request, name string, raw json.RawMessage) (json.RawMessage, *toolReceipt, error) {
 			var args map[string]json.RawMessage
 			json.Unmarshal(raw, &args)
-			err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
-				if err := refreshRequestAccess(q); err != nil {
-					return err
-				}
-				var err error
-				args, err = agentBoundArguments(q, name, args, executionID)
-				return err
-			})
+			var err error
+			args, err = agentBoundArguments(q, name, args, executionID)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			bound := jsonValue(jsonBytes(args))
-			return q.app.runOp(q, name, json.RawMessage(js(bound)), receipt(bound))
+			return json.RawMessage(js(bound)), receipt(bound), nil
 		}
-		// operationCall: any other operation the director may call, with the focus defaults of an agent (§2).
-		operationCall := func(name string, raw json.RawMessage) (any, error) {
+		// prepareOp: validate and bind focus/project arguments for a non-table operation inside the proof read transaction.
+		prepareOp := func(q *Request, name string, raw json.RawMessage) (json.RawMessage, error) {
 			if isResourceRead(name) && !resourceReadsEnabled {
 				return nil, fail(503, "Prepared project reads disabled")
 			}
@@ -365,20 +369,13 @@ func init() {
 				}
 			}
 			if name == "analytics_query" {
-				var bound []string
-				if focused && focus != nil {
-					bound = focus
-				} else if !focused && sessionProject != "" {
-					bound = []string{sessionProject}
-				}
-				if bound != nil {
+				if bound := focusBound(); bound != nil {
 					if len(bound) == 0 {
 						return nil, fail(403, "Project outside the session focus")
 					}
 					if jsonGiven(a["projectId"]) {
-						pid, ok := jsonText(a["projectId"])
-						if !ok || !slices.Contains(bound, pid) {
-							return nil, fail(403, "Project outside the session focus")
+						if err := checkBoundProjectID(bound, a["projectId"]); err != nil {
+							return nil, err
 						}
 					}
 					var f map[string]json.RawMessage
@@ -401,6 +398,37 @@ func init() {
 					}
 				}
 			}
+			if name == "spend_summary" {
+				if bound := focusBound(); bound != nil {
+					if len(bound) == 0 {
+						return nil, fail(403, "Project outside the session focus")
+					}
+					if jsonGiven(a["projectId"]) {
+						if err := checkBoundProjectID(bound, a["projectId"]); err != nil {
+							return nil, err
+						}
+					}
+					var pids []string
+					if jsonGiven(a["projectIds"]) {
+						var xs []json.RawMessage
+						if err := json.Unmarshal(a["projectIds"], &xs); err != nil {
+							return nil, fail(400, "Invalid projectIds")
+						}
+						pids = jsonStrings(a["projectIds"])
+						if len(pids) != len(xs) {
+							return nil, fail(400, "Invalid projectIds")
+						}
+						for _, pid := range pids {
+							if !slices.Contains(bound, pid) {
+								return nil, fail(403, "Project outside the session focus")
+							}
+						}
+					}
+					if !jsonGiven(a["projectId"]) && len(pids) == 0 {
+						a["projectIds"] = jsonBytes(bound)
+					}
+				}
+			}
 			// An operation that requires projectId, called without the key, gets the one focus project, or the session's
 			// own project when it has no focus (§2). Optional projectIds stay absent (scope-wide reads), an explicit null
 			// stays null, and the operation's own gates still refuse a project the director cannot reach.
@@ -418,29 +446,73 @@ func init() {
 				return nil, fail(404, "Unknown project")
 			}
 			if name == "project_update" || name == "project_context" || name == "project_readiness" || isResourceRead(name) {
-				err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
-					out, err := projectAgentArguments(q, maps.Clone(a), executionID, isResourceRead(name)) // a retried attempt starts again from a
-					if err == nil {
-						a = out
-					}
-					return err
-				})
+				out, err := projectAgentArguments(q, a, executionID, isResourceRead(name))
 				if err != nil {
 					return nil, err
 				}
+				a = out
 			}
-			return q.app.runOp(q, name, json.RawMessage(js(jsonValue(jsonBytes(a)))), receipt(nil))
+			return json.RawMessage(js(jsonValue(jsonBytes(a)))), nil
 		}
-		out, err := mcpserve.Server{Name: "fleet-agent", Tools: agentTools(q.person), Call: func(name string, raw json.RawMessage) (any, error) {
+		// Combine proof, director access refresh, argument binding, and (for read ops) the operation itself in one read snapshot.
+		if rpc.Method != "tools/call" || isReadOp(rpc.Params.Name) {
+			var out any
+			err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
+				if err := prove(); err != nil {
+					return err
+				}
+				if err := refreshRequestAccess(q); err != nil {
+					return err
+				}
+				var handleErr error
+				out, handleErr = mcpserve.Server{Name: "fleet-agent", Tools: agentTools(q.person), Call: func(name string, raw json.RawMessage) (any, error) {
+					if agentTable(name) {
+						bound, rc, err := prepareTable(q, name, raw)
+						if err != nil {
+							return nil, err
+						}
+						return q.app.runOp(q, name, bound, rc)
+					}
+					bound, err := prepareOp(q, name, raw)
+					if err != nil {
+						return nil, err
+					}
+					return q.app.runOp(q, name, bound, receipt(nil))
+				}}.Handle(b.Request)
+				return handleErr
+			})
+			if errors.Is(err, mcpserve.ErrUnknownMethod) {
+				return nil, fail(400, "Unknown tool")
+			}
+			return out, err
+		}
+		name := rpc.Params.Name
+		var bound json.RawMessage
+		var rc *toolReceipt
+		if err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
+			if err := prove(); err != nil {
+				return err
+			}
+			if err := refreshRequestAccess(q); err != nil {
+				return err
+			}
 			if agentTable(name) {
-				return tableCall(name, raw)
+				var err error
+				bound, rc, err = prepareTable(q, name, rpc.Params.Arguments)
+				return err
 			}
-			return operationCall(name, raw)
-		}}.Handle(b.Request)
-		if errors.Is(err, mcpserve.ErrUnknownMethod) {
-			return nil, fail(400, "Unknown tool")
+			var err error
+			bound, err = prepareOp(q, name, rpc.Params.Arguments)
+			rc = receipt(nil)
+			return err
+		}); err != nil {
+			return nil, err
 		}
-		return out, err
+		opOut, err := q.app.runOp(q, name, bound, rc)
+		if err != nil {
+			return nil, err
+		}
+		return mcpserve.Result(rpc.ID, opOut), nil
 	})
 }
 

@@ -1022,7 +1022,31 @@ func (v *LabExperimentsListReply) Validate() error {
 	return nil
 }
 
-type LabExperimentsListRequest = map[string]json.RawMessage
+type LabExperimentsListRequest struct {
+	Limit *int64 `json:"limit,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabExperimentsListRequest) MarshalJSON() ([]byte, error) {
+	type plain LabExperimentsListRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabExperimentsListRequest) UnmarshalJSON(b []byte) error {
+	type plain LabExperimentsListRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExperimentsListRequest) Validate() error {
+	return nil
+}
 
 type LabFile struct {
 	ArtifactId string `json:"artifactId"`
@@ -2250,7 +2274,7 @@ func init() {
 		"lab_experiment_decide": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Decide a Lab experiment (experimentId, decision, reason)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"decision\":{\"$comment\":\"adopt \\u003cvariant\\u003e | keep baseline | inconclusive (pending is the coordinator's, never a person's)\",\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"},\"reason\":{\"$comment\":\"Required to override a decision already made; the override is an amendment.\",\"type\":\"string\"}},\"required\":[\"experimentId\",\"decision\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"lab_experiment_get":    {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "A Lab experiment (experimentId) with its variants, trials and scores", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\"],\"type\":\"object\"}")},
 		"lab_experiment_note":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Add a note to a Lab experiment (experimentId, kind, text, optional field and value)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"field\":{\"$comment\":\"Amendment only: goal, hypothesis, decisionRule, labGroup or primaryEvaluator.\",\"type\":\"string\"},\"kind\":{\"enum\":[\"amendment\",\"note\"],\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"value\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"experimentId\",\"kind\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
-		"lab_experiments_list":  {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Lab experiments", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"lab_experiments_list":  {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Lab experiments", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"limit\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
 		"lab_leaderboard":       {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Aggregate Lab benchmark and real-work results across experiments by use case, pipeline, variant, model, profile and evaluator", Changes: []string{"experiment", "score", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"collection\":{\"type\":\"string\"},\"days\":{\"minimum\":1,\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"useCaseId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"lab_promote":           {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Promote a variant of a Lab experiment (experimentId, variant) to the catalogue recommendation", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"variant\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"variant\"],\"type\":\"object\"}")},
 		"lab_rating_create":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask for a human rating of Lab trials (experimentId, form, trialIds)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"form\":{\"enum\":[\"pass_fail\",\"pick_best\",\"scale\"],\"type\":\"string\"},\"trialIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"experimentId\",\"form\",\"trialIds\"],\"type\":\"object\"}")},

@@ -530,11 +530,11 @@ func (q *Queries) LabExperimentTouch(ctx context.Context, id string) error {
 }
 
 const labExperiments = `-- name: LabExperiments :many
-SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at FROM experiment ORDER BY seq DESC
+SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at FROM experiment ORDER BY seq DESC LIMIT $1::bigint
 `
 
-func (q *Queries) LabExperiments(ctx context.Context) ([]Experiment, error) {
-	rows, err := q.db.Query(ctx, labExperiments)
+func (q *Queries) LabExperiments(ctx context.Context, lim *int64) ([]Experiment, error) {
+	rows, err := q.db.Query(ctx, labExperiments, lim)
 	if err != nil {
 		return nil, err
 	}

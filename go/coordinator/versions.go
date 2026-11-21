@@ -27,6 +27,10 @@ func systemVersions(q *Request) (contract.SystemVersionsReply, error) {
 	if err != nil {
 		return contract.SystemVersionsReply{}, err
 	}
+	return systemVersionsFromHosts(list), nil
+}
+
+func systemVersionsFromHosts(list contract.HostsListReply) contract.SystemVersionsReply {
 	target := healthyTarget()
 	hosts := []contract.HostVersion{}
 	for _, h := range list.Hosts {
@@ -44,7 +48,7 @@ func systemVersions(q *Request) (contract.SystemVersionsReply, error) {
 		coord.Commit = &c
 	}
 	return contract.SystemVersionsReply{Coordinator: coord, Ui: uiRelease(), Hosts: hosts, ServerNow: list.ServerNow, StaleAfterMs: list.StaleAfterMs,
-		Gateway: gatewayVersion()}, nil
+		Gateway: gatewayVersion()}
 }
 
 // Missing or non-release values do not establish an update comparison.

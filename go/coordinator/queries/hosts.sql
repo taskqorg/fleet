@@ -124,6 +124,17 @@ UPDATE host SET removed_secret_hash=secret_hash, secret_hash=NULL, payload=(payl
 -- Every host observation in record order; payload holds what the host reported (host_poll.go).
 SELECT id, holder, last_seen_at, payload FROM host_observation ORDER BY seq;
 
+-- name: HostLastSeen :many
+-- Non-removed hosts and any unremoved observed hosts with their last_seen_at, for nav_counts offline check.
+SELECT h.host_id AS id, o.last_seen_at
+FROM host h
+LEFT JOIN host_observation o ON o.id = h.host_id
+WHERE h.state <> 'removed'
+UNION ALL
+SELECT o.id, o.last_seen_at
+FROM host_observation o
+WHERE NOT EXISTS (SELECT 1 FROM host h WHERE h.host_id = o.id);
+
 -- name: HostObservationOf :one
 SELECT id, holder, last_seen_at, project_id, payload FROM host_observation WHERE id=$1;
 

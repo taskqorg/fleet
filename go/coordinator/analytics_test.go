@@ -365,6 +365,44 @@ func TestSpendSummaryInvariant(t *testing.T) {
 	if ownerSum.Bought.CompletedTasks != 1 || ownerSum.Hidden != 0 || len(ownerSum.ByPurpose) == 0 {
 		t.Fatalf("unexpected owner spend_summary metadata: bought=%+v hidden=%d", ownerSum.Bought, ownerSum.Hidden)
 	}
+	// Multi-project filters (projectIds, excludeProjectIds, '-' for no project) must agree across equivalent selectors.
+	if err := e.app.store.Read(ctx, nil, func(q *Request) error {
+		p1Single, err := spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByProject, Window: win, ProjectId: ptr("p1")})
+		if err != nil {
+			return err
+		}
+		p1List, err := spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByProject, Window: win, ProjectIds: []string{"p1"}})
+		if err != nil {
+			return err
+		}
+		p1Excl, err := spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByProject, Window: win, ExcludeProjectIds: []string{"p2", "-"}})
+		if err != nil {
+			return err
+		}
+		p1Both, err := spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByProject, Window: win, ProjectIds: []string{"p1", "p2"}, ExcludeProjectIds: []string{"p2"}})
+		if err != nil {
+			return err
+		}
+		for i, got := range []contract.SpendSummaryReply{p1List, p1Excl, p1Both} {
+			if !reflect.DeepEqual(got, p1Single) {
+				t.Fatalf("p1 multi-project variant %d mismatch: got=%+v want=%+v", i, got, p1Single)
+			}
+		}
+		p1Dash, err := spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByProject, Window: win, ProjectIds: []string{"p1", "-"}})
+		if err != nil {
+			return err
+		}
+		exclP2, err := spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByProject, Window: win, ExcludeProjectIds: []string{"p2"}})
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(p1Dash, exclP2) || len(p1Dash.Rows) != 2 {
+			t.Fatalf("p1 + '-' vs exclude p2 mismatch: p1Dash=%+v exclP2=%+v", p1Dash, exclP2)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Restricted member granted only p1: cannot see p2 or project_id IS NULL directed execution, and sees hidden=2.
 	var member Person

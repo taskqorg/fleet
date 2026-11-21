@@ -667,8 +667,8 @@ func rawJSON(b []byte) json.RawMessage {
 }
 
 // questionsList: projects keeps those projects only, exclude leaves those out ('-' is no project in both; OR-34).
-func questionsList(q *Request, taskID, state, kind string, projects, exclude []string) ([]contract.QuestionRow, error) {
-	return questionRows(q, db.TaskQuestionsParams{TaskID: strPtr(taskID), State: strPtr(state), Kind: strPtr(kind)}, projects, exclude)
+func questionsList(q *Request, taskID, state, kind string, projects, exclude []string, limit *int64) ([]contract.QuestionRow, error) {
+	return questionRows(q, db.TaskQuestionsParams{TaskID: strPtr(taskID), State: strPtr(state), Kind: strPtr(kind), Lim: limit}, projects, exclude)
 }
 
 func questionRows(q *Request, p db.TaskQuestionsParams, projects, exclude []string) ([]contract.QuestionRow, error) {
@@ -916,7 +916,7 @@ func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
 	for _, x := range deps {
 		d.Dependencies = append(d.Dependencies, contract.TaskDependency{Id: x.ID, Kind: x.Kind, Code: x.Code})
 	}
-	d.Questions, err = questionsList(q, id, "", "", nil, nil)
+	d.Questions, err = questionsList(q, id, "", "", nil, nil, nil)
 	return d, err
 }
 
@@ -1269,7 +1269,10 @@ func init() {
 		if err := excludeCheck(r.ExcludeProjectIds); err != nil {
 			return contract.QuestionsListReply{}, err
 		}
-		qs, err := questionsList(q, deref(r.TaskId), deref(r.State), deref(r.Kind), r.ProjectIds, r.ExcludeProjectIds)
+		if r.Limit != nil && *r.Limit <= 0 {
+			return contract.QuestionsListReply{}, fail(400, "Expected positive integer limit")
+		}
+		qs, err := questionsList(q, deref(r.TaskId), deref(r.State), deref(r.Kind), r.ProjectIds, r.ExcludeProjectIds, r.Limit)
 		return contract.QuestionsListReply{Questions: qs}, err
 	})
 	// questions_withdraw: the owner (or full access) withdraws open questions that no longer need anyone, with one

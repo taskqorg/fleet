@@ -81,14 +81,21 @@ WHERE state = 'completed'
   AND coalesce(accepted_at, state_at) >= $1::pg_catalog.timestamptz
   AND coalesce(accepted_at, state_at) < $2::pg_catalog.timestamptz
   AND ($3::text IS NULL OR project_id = $3::text)
+  AND ($4::text[] IS NULL OR project_id = ANY($4::text[]) OR ($5::boolean AND project_id IS NULL))
+  AND NOT coalesce(project_id = ANY($6::text[]), false)
+  AND (NOT $7::boolean OR project_id IS NOT NULL)
 GROUP BY coalesce(project_id, '')
 ORDER BY n DESC, project_id ASC
 `
 
 type AnalyticsCompletedTasksByProjectParams struct {
-	WinFrom   time.Time
-	WinTo     time.Time
-	ProjectID *string
+	WinFrom        time.Time
+	WinTo          time.Time
+	ProjectID      *string
+	ProjectIds     []string
+	ProjectIdsNull bool
+	ExcludeIds     []string
+	ExcludeNull    bool
 }
 
 type AnalyticsCompletedTasksByProjectRow struct {
@@ -98,7 +105,15 @@ type AnalyticsCompletedTasksByProjectRow struct {
 
 // Completed non-tombstoned tasks per project within [win_from, win_to), visible under the caller's RLS scope.
 func (q *Queries) AnalyticsCompletedTasksByProject(ctx context.Context, arg AnalyticsCompletedTasksByProjectParams) ([]AnalyticsCompletedTasksByProjectRow, error) {
-	rows, err := q.db.Query(ctx, analyticsCompletedTasksByProject, arg.WinFrom, arg.WinTo, arg.ProjectID)
+	rows, err := q.db.Query(ctx, analyticsCompletedTasksByProject,
+		arg.WinFrom,
+		arg.WinTo,
+		arg.ProjectID,
+		arg.ProjectIds,
+		arg.ProjectIdsNull,
+		arg.ExcludeIds,
+		arg.ExcludeNull,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -666,10 +681,13 @@ WITH stale_ids AS MATERIALIZED (
    AND s.started_at >= $1::pg_catalog.timestamptz
    AND s.started_at < $2::pg_catalog.timestamptz
    AND ($3::text IS NULL OR s.project_id = $3::text)
+   AND ($4::text[] IS NULL OR s.project_id = ANY($4::text[]) OR ($5::boolean AND s.project_id IS NULL))
+   AND NOT coalesce(s.project_id = ANY($6::text[]), false)
+   AND (NOT $7::boolean OR s.project_id IS NOT NULL)
    AND (
-    $4::text = 'include'
-    OR ($4::text = 'only' AND s.system_actor IS NOT NULL)
-    OR ($4::text = 'exclude' AND s.system_actor IS NULL)
+    $8::text = 'include'
+    OR ($8::text = 'only' AND s.system_actor IS NOT NULL)
+    OR ($8::text = 'exclude' AND s.system_actor IS NULL)
    )
 ),
 stale_conn AS MATERIALIZED (
@@ -750,7 +768,7 @@ stale_priced AS (
 stale_cost_items AS (
  SELECT
   p.id,
-  CASE $5::text
+  CASE $9::text
    WHEN 'purpose' THEN p.purpose
    WHEN 'project' THEN coalesce(nullif(p.project_id, ''), 'unknown')
    WHEN 'profile' THEN coalesce(nullif(p.profile_id, ''), 'unknown')
@@ -793,7 +811,7 @@ stale_cost_items AS (
 spend_items AS (
  -- Fast Index-Only Scan path
  SELECT
-  CASE $5::text
+  CASE $9::text
    WHEN 'purpose' THEN s.purpose
    WHEN 'project' THEN coalesce(nullif(s.project_id, ''), 'unknown')
    WHEN 'profile' THEN coalesce(nullif(s.profile_id, ''), 'unknown')
@@ -825,17 +843,20 @@ spend_items AS (
    AND s.started_at >= $1::pg_catalog.timestamptz
    AND s.started_at < $2::pg_catalog.timestamptz
    AND ($3::text IS NULL OR s.project_id = $3::text)
+   AND ($4::text[] IS NULL OR s.project_id = ANY($4::text[]) OR ($5::boolean AND s.project_id IS NULL))
+   AND NOT coalesce(s.project_id = ANY($6::text[]), false)
+   AND (NOT $7::boolean OR s.project_id IS NOT NULL)
    AND (
-    $4::text = 'include'
-    OR ($4::text = 'only' AND s.system_actor IS NOT NULL)
-    OR ($4::text = 'exclude' AND s.system_actor IS NULL)
+    $8::text = 'include'
+    OR ($8::text = 'only' AND s.system_actor IS NOT NULL)
+    OR ($8::text = 'exclude' AND s.system_actor IS NULL)
    )
 
  UNION ALL
 
  -- Multi-currency single-leaf overflow path (empty in normal workloads)
  SELECT
-  CASE $5::text
+  CASE $9::text
    WHEN 'purpose' THEN s.purpose
    WHEN 'project' THEN coalesce(nullif(s.project_id, ''), 'unknown')
    WHEN 'profile' THEN coalesce(nullif(s.profile_id, ''), 'unknown')
@@ -877,10 +898,13 @@ spend_items AS (
    AND s.started_at >= $1::pg_catalog.timestamptz
    AND s.started_at < $2::pg_catalog.timestamptz
    AND ($3::text IS NULL OR s.project_id = $3::text)
+   AND ($4::text[] IS NULL OR s.project_id = ANY($4::text[]) OR ($5::boolean AND s.project_id IS NULL))
+   AND NOT coalesce(s.project_id = ANY($6::text[]), false)
+   AND (NOT $7::boolean OR s.project_id IS NOT NULL)
    AND (
-    $4::text = 'include'
-    OR ($4::text = 'only' AND s.system_actor IS NOT NULL)
-    OR ($4::text = 'exclude' AND s.system_actor IS NULL)
+    $8::text = 'include'
+    OR ($8::text = 'only' AND s.system_actor IS NOT NULL)
+    OR ($8::text = 'exclude' AND s.system_actor IS NULL)
    )
 
  UNION ALL
@@ -935,11 +959,15 @@ GROUP BY 1, 2, 3, 4, 5, 6
 `
 
 type AnalyticsSpendSummaryParams struct {
-	WinFrom    time.Time
-	WinTo      time.Time
-	ProjectID  *string
-	SystemMode string
-	GroupBy    string
+	WinFrom        time.Time
+	WinTo          time.Time
+	ProjectID      *string
+	ProjectIds     []string
+	ProjectIdsNull bool
+	ExcludeIds     []string
+	ExcludeNull    bool
+	SystemMode     string
+	GroupBy        string
 }
 
 type AnalyticsSpendSummaryRow struct {
@@ -972,6 +1000,10 @@ func (q *Queries) AnalyticsSpendSummary(ctx context.Context, arg AnalyticsSpendS
 		arg.WinFrom,
 		arg.WinTo,
 		arg.ProjectID,
+		arg.ProjectIds,
+		arg.ProjectIdsNull,
+		arg.ExcludeIds,
+		arg.ExcludeNull,
 		arg.SystemMode,
 		arg.GroupBy,
 	)

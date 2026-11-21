@@ -71,7 +71,10 @@ func (s *Store) run(ctx context.Context, q *Request, write bool, locks []string,
 	}
 	return s.txLocks(ctx, scopeOf(q.person), write, locks, retry, func(tx pgx.Tx) error {
 		q.tx = tx
-		defer func() { q.tx = nil }()
+		defer func() {
+			q.tx = nil
+			q.accessTx = nil
+		}()
 		return fn(q)
 	})
 }

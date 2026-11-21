@@ -906,9 +906,12 @@ func init() {
 	op("lab_experiment_decide", func(q *Request, r *contract.LabExperimentDecideRequest) (contract.LabExperimentDecideReply, error) {
 		return labMapReply(expDecide(q, r))
 	})
-	op("lab_experiments_list", func(q *Request, _ *contract.LabExperimentsListRequest) (contract.LabExperimentsListReply, error) {
+	op("lab_experiments_list", func(q *Request, r *contract.LabExperimentsListRequest) (contract.LabExperimentsListReply, error) {
 		out := contract.LabExperimentsListReply{Experiments: []contract.LabExperimentRecord{}}
-		rs, err := q.db().LabExperiments(q.ctx())
+		if r.Limit != nil && *r.Limit <= 0 {
+			return out, fail(400, "Expected positive integer limit")
+		}
+		rs, err := q.db().LabExperiments(q.ctx(), r.Limit)
 		if err != nil {
 			return out, err
 		}

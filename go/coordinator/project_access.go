@@ -152,6 +152,9 @@ func refreshRequestAccess(q *Request) error {
 	if q.person == nil {
 		return nil
 	}
+	if q.tx != nil && q.accessTx == q.tx {
+		return nil
+	}
 	var p *Person
 	var err error
 	if q.tx != nil {
@@ -170,6 +173,9 @@ func refreshRequestAccess(q *Request) error {
 			ids, person = sc.ProjectIDs, sc.Person
 		}
 		err = q.db().DefSetScope(q.ctx(), db.DefSetScopeParams{Ids: ids, Person: person})
+		if err == nil {
+			q.accessTx = q.tx
+		}
 	}
 	return err
 }

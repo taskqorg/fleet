@@ -577,6 +577,9 @@ WHERE state = 'completed'
   AND coalesce(accepted_at, state_at) >= sqlc.arg(win_from)::pg_catalog.timestamptz
   AND coalesce(accepted_at, state_at) < sqlc.arg(win_to)::pg_catalog.timestamptz
   AND (sqlc.narg(project_id)::text IS NULL OR project_id = sqlc.narg(project_id)::text)
+  AND (sqlc.narg(project_ids)::text[] IS NULL OR project_id = ANY(sqlc.narg(project_ids)::text[]) OR (sqlc.arg(project_ids_null)::boolean AND project_id IS NULL))
+  AND NOT coalesce(project_id = ANY(sqlc.narg(exclude_ids)::text[]), false)
+  AND (NOT sqlc.arg(exclude_null)::boolean OR project_id IS NOT NULL)
 GROUP BY coalesce(project_id, '')
 ORDER BY n DESC, project_id ASC;
 
@@ -604,6 +607,9 @@ WITH stale_ids AS MATERIALIZED (
    AND s.started_at >= sqlc.arg(win_from)::pg_catalog.timestamptz
    AND s.started_at < sqlc.arg(win_to)::pg_catalog.timestamptz
    AND (sqlc.narg(project_id)::text IS NULL OR s.project_id = sqlc.narg(project_id)::text)
+   AND (sqlc.narg(project_ids)::text[] IS NULL OR s.project_id = ANY(sqlc.narg(project_ids)::text[]) OR (sqlc.arg(project_ids_null)::boolean AND s.project_id IS NULL))
+   AND NOT coalesce(s.project_id = ANY(sqlc.narg(exclude_ids)::text[]), false)
+   AND (NOT sqlc.arg(exclude_null)::boolean OR s.project_id IS NOT NULL)
    AND (
     sqlc.arg(system_mode)::text = 'include'
     OR (sqlc.arg(system_mode)::text = 'only' AND s.system_actor IS NOT NULL)
@@ -763,6 +769,9 @@ spend_items AS (
    AND s.started_at >= sqlc.arg(win_from)::pg_catalog.timestamptz
    AND s.started_at < sqlc.arg(win_to)::pg_catalog.timestamptz
    AND (sqlc.narg(project_id)::text IS NULL OR s.project_id = sqlc.narg(project_id)::text)
+   AND (sqlc.narg(project_ids)::text[] IS NULL OR s.project_id = ANY(sqlc.narg(project_ids)::text[]) OR (sqlc.arg(project_ids_null)::boolean AND s.project_id IS NULL))
+   AND NOT coalesce(s.project_id = ANY(sqlc.narg(exclude_ids)::text[]), false)
+   AND (NOT sqlc.arg(exclude_null)::boolean OR s.project_id IS NOT NULL)
    AND (
     sqlc.arg(system_mode)::text = 'include'
     OR (sqlc.arg(system_mode)::text = 'only' AND s.system_actor IS NOT NULL)
@@ -815,6 +824,9 @@ spend_items AS (
    AND s.started_at >= sqlc.arg(win_from)::pg_catalog.timestamptz
    AND s.started_at < sqlc.arg(win_to)::pg_catalog.timestamptz
    AND (sqlc.narg(project_id)::text IS NULL OR s.project_id = sqlc.narg(project_id)::text)
+   AND (sqlc.narg(project_ids)::text[] IS NULL OR s.project_id = ANY(sqlc.narg(project_ids)::text[]) OR (sqlc.arg(project_ids_null)::boolean AND s.project_id IS NULL))
+   AND NOT coalesce(s.project_id = ANY(sqlc.narg(exclude_ids)::text[]), false)
+   AND (NOT sqlc.arg(exclude_null)::boolean OR s.project_id IS NOT NULL)
    AND (
     sqlc.arg(system_mode)::text = 'include'
     OR (sqlc.arg(system_mode)::text = 'only' AND s.system_actor IS NOT NULL)

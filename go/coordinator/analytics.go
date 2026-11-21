@@ -1405,6 +1405,14 @@ func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSu
 	if r.ProjectId != nil && *r.ProjectId == "" {
 		return out, fail(400, "Invalid projectId")
 	}
+	if slices.Contains(r.ProjectIds, "") {
+		return out, fail(400, "projectIds: an empty id; '-' is work outside projects")
+	}
+	if err := excludeCheck(r.ExcludeProjectIds); err != nil {
+		return out, err
+	}
+	projIDs, projNull := projectSplit(r.ProjectIds)
+	exclIDs, exclNull := projectSplit(r.ExcludeProjectIds)
 
 	sysMode := "exclude"
 	if r.System != nil {
@@ -1417,11 +1425,15 @@ func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSu
 	}
 
 	summaryRows, err := q.db().AnalyticsSpendSummary(q.ctx(), db.AnalyticsSpendSummaryParams{
-		WinFrom:    from,
-		WinTo:      to,
-		ProjectID:  r.ProjectId,
-		SystemMode: sysMode,
-		GroupBy:    string(r.By),
+		WinFrom:        from,
+		WinTo:          to,
+		ProjectID:      r.ProjectId,
+		ProjectIds:     projIDs,
+		ProjectIdsNull: projNull,
+		ExcludeIds:     exclIDs,
+		ExcludeNull:    exclNull,
+		SystemMode:     sysMode,
+		GroupBy:        string(r.By),
 	})
 	if err != nil {
 		return out, fmt.Errorf("spend_summary: %w", err)
@@ -1442,9 +1454,13 @@ func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSu
 	}
 
 	completedRows, err := q.db().AnalyticsCompletedTasksByProject(q.ctx(), db.AnalyticsCompletedTasksByProjectParams{
-		WinFrom:   from,
-		WinTo:     to,
-		ProjectID: r.ProjectId,
+		WinFrom:        from,
+		WinTo:          to,
+		ProjectID:      r.ProjectId,
+		ProjectIds:     projIDs,
+		ProjectIdsNull: projNull,
+		ExcludeIds:     exclIDs,
+		ExcludeNull:    exclNull,
 	})
 	if err != nil {
 		return out, err
@@ -1581,7 +1597,7 @@ func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSu
 	var hiddenCnt int64
 	if q.person != nil && !fullAccess(q.person) {
 		windowVisible := totalAcc.runs
-		if r.ProjectId != nil || sysMode != "include" {
+		if r.ProjectId != nil || len(r.ProjectIds) > 0 || len(r.ExcludeProjectIds) > 0 || sysMode != "include" {
 			windowVisible, err = q.db().AnalyticsWindowVisibleLeafCount(q.ctx(), db.AnalyticsWindowVisibleLeafCountParams{WinFrom: from, WinTo: to})
 			if err != nil {
 				return out, err

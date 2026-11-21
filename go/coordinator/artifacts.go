@@ -1225,9 +1225,7 @@ func splitNull(xs []*string) ([]string, bool) {
 	return named, null
 }
 
-// artifactList: mediaType ending in '/' matches a family, newest-first pages by seq when limit is given (one row more
-// than the page, so the caller knows another follows).
-func artifactList(ctx context.Context, a *App, f listFilter) ([]contract.ArtifactRow, error) {
+func artListParams(f listFilter) (db.ArtListParams, bool) {
 	p := db.ArtListParams{ExecutionID: f.ExecutionID, TaskID: f.TaskID, ProjectID: f.ProjectID, NoExamples: f.NoExamples}
 	paged := false
 	if f.MediaType != nil {
@@ -1274,6 +1272,13 @@ func artifactList(ctx context.Context, a *App, f listFilter) ([]contract.Artifac
 	if f.Limit != nil && *f.Limit > 0 {
 		paged, p.RowLimit, p.Before = true, ptr(*f.Limit+1), f.Before
 	}
+	return p, paged
+}
+
+// artifactList: mediaType ending in '/' matches a family, newest-first pages by seq when limit is given (one row more
+// than the page, so the caller knows another follows).
+func artifactList(ctx context.Context, a *App, f listFilter) ([]contract.ArtifactRow, error) {
+	p, paged := artListParams(f)
 	rows, err := connDB(ctx, a).ArtList(ctx, p)
 	if err != nil {
 		return nil, err
@@ -1287,6 +1292,27 @@ func artifactList(ctx context.Context, a *App, f listFilter) ([]contract.Artifac
 		out = append(out, x.row())
 	}
 	return out, nil
+}
+
+// artifactCounts: rows per state matching f without states, before or limit.
+func artifactCounts(ctx context.Context, a *App, f listFilter) (map[string]int64, error) {
+	p, _ := artListParams(f)
+	rows, err := connDB(ctx, a).ArtStateCounts(ctx, db.ArtStateCountsParams{
+		ExecutionID: p.ExecutionID, TaskID: p.TaskID, ProjectID: p.ProjectID,
+		MediaType: p.MediaType, MediaLike: p.MediaLike,
+		ProjectIds: p.ProjectIds, ProjectIdsNull: p.ProjectIdsNull,
+		ExcludeIds: p.ExcludeIds, ExcludeNull: p.ExcludeNull,
+		Since: p.Since, Words: p.Words, ProjectLike: p.ProjectLike,
+		SearchState: p.SearchState, Never: p.Never, NoExamples: p.NoExamples,
+	})
+	if err != nil {
+		return nil, err
+	}
+	counts := zeroCounts(contract.Vocabulary.Lists["results"].States)
+	for _, r := range rows {
+		counts[r.State] += r.N
+	}
+	return counts, nil
 }
 
 // artifactPurge (operator): every store, now where reachable, pending where not; the hash is refused from then on.
