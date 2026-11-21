@@ -1,6 +1,6 @@
 # Target Information Architecture, Core Journeys & Agentic Method
 
-Status: **Accepted target direction** (not yet fully shipped; verify current implementation in [registry.ts](../../packages/ui/src/registry.ts) and [main.tsx](../../app/src/main.tsx)).
+Status: **Shipped (8-section rail + Library / Infrastructure sub-tabs)** — the navigation rail in [registry.ts](../../packages/ui/src/registry.ts) and [main.tsx](../../app/src/main.tsx) now consolidates into the 8 top-level sections (`Work`: Overview, Conversations, Projects, Tasks, Spend; `System`: Lab, Library, Infrastructure) with top sub-navigation tabs for `Library` (`/agents`, `/pipelines`, `/catalogue`, `/changes`) and `Infrastructure` (`/hosts`, `/runners`, `/keys`), while preserving all deep links, manifests, and Spotlight (`⌘K`) access.
 
 This specification establishes the closed top-level navigation map, column contracts, end-to-end user journeys (`J1`–`J5`), and the agentic product-development method for Fleet, building on [fleet.md](../../fleet.md), [owner rules](../design-system/owner-rules.md), and [navigation and columns](../design-system/patterns/navigation-and-columns.md).
 

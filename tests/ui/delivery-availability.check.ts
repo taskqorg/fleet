@@ -133,7 +133,7 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     for (let i = 0; i < 100 && !(await stored()).includes('installed'); i++) await page.waitForTimeout(50);
     assert.deepEqual(await stored(), ['installed'], 'leaving the section stored the opened Installed');
     const back: string[] = await page.evaluate(async rec => {
-      (0, eval)(rec); (document.querySelector('.rail [data-id="delivery"] a') as HTMLElement).click();
+      (0, eval)(rec); window.history.back();
       for (let f = 0; f < 300 && (window as any).__inst.at(-1) !== 'true'; f++) await new Promise(r => requestAnimationFrame(r));
       return (window as any).__inst;
     }, RECORD);
