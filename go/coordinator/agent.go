@@ -117,7 +117,7 @@ func restEncode(v any, rest recordRest) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// agentFilter: a filter of all() (records.go) as its fields; an absent field filters nothing.
+// agentFilter: a record filter (recAll, records.go) as its fields; an absent field filters nothing.
 type agentFilter struct {
 	SessionID        *string `json:"sessionId,omitempty"`
 	SourceSessionID  *string `json:"sourceSessionId,omitempty"`
@@ -250,7 +250,7 @@ type agentTransitionArgs struct {
 	CallerSessionID string          `json:"callerSessionId,omitempty"`
 }
 
-// agentSession: the session record (convTables "session").
+// agentSession: the session record (queries/records.sql "session").
 type agentSession struct {
 	ID                   string                 `json:"id"`
 	CreatedAt            int64                  `json:"createdAt,omitempty"`
@@ -380,7 +380,7 @@ func (e agentExecution) MarshalJSON() ([]byte, error) {
 func (e *agentExecution) terminal() bool    { return executionEnds(e.State) }
 func (e *agentExecution) unconfirmed() bool { return e.Observation == "unconfirmed" }
 
-// agentCommand: a host command record (convTables "command"; commandPut writes it).
+// agentCommand: a host command record (recCommand; commandRecPut writes it).
 type agentCommand struct {
 	ID          string          `json:"id"`
 	ExecutionID string          `json:"executionId,omitempty"`
@@ -403,7 +403,7 @@ func (c agentCommand) MarshalJSON() ([]byte, error) {
 	return restEncode(plain(c), c.rest)
 }
 
-// agentMessage: a sent message record (convTables "message").
+// agentMessage: a sent message record (queries/records.sql "message").
 type agentMessage struct {
 	ID                string          `json:"id"`
 	SessionID         string          `json:"sessionId,omitempty"`
@@ -428,7 +428,7 @@ func (m agentMessage) MarshalJSON() ([]byte, error) {
 	return restEncode(plain(m), m.rest)
 }
 
-// agentQueued: a queued message record (convTables "queued-message"): waiting, steering or started.
+// agentQueued: a queued message record (queries/records.sql "queued-message"): waiting, steering or started.
 type agentQueued struct {
 	ID                string          `json:"id"`
 	SessionID         string          `json:"sessionId,omitempty"`
@@ -460,7 +460,7 @@ func (m agentQueued) MarshalJSON() ([]byte, error) {
 	return restEncode(plain(m), m.rest)
 }
 
-// agentHandoff: a context handoff record (convTables "handoff").
+// agentHandoff: a context handoff record (queries/records.sql "handoff").
 type agentHandoff struct {
 	ID          string   `json:"id"`
 	SessionID   string   `json:"sessionId,omitempty"`
@@ -2251,7 +2251,7 @@ func sessionView(q *Request, sid string) (doc, error) {
 	return docOf(out), err
 }
 
-// sessionHandoffs: a session's handoff records (the handoff record of convTables), with or without their text.
+// sessionHandoffs: a session's handoff records (recHandoff), with or without their text.
 func sessionHandoffs(q *Request, sid string, text bool) ([]map[string]json.RawMessage, error) {
 	hs, err := q.db().AgentSessionHandoffs(q.ctx(), sid)
 	if err != nil {

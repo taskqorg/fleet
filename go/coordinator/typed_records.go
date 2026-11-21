@@ -1,8 +1,8 @@
 // Hosts, subscriptions, connections and tokens as tables (migration 78, docs/designs/fleet-standard.md S1, stage 5):
 // their records are read and written through their typed queries (queries/records.sql, records.go) like the
 // conversation kinds. A record field a query filters, joins or orders, a policy reads (holder) or a state machine owns is
-// a column; payload holds the other fields. host.state and connection_key.state are state machines: a put creates a row
-// with its state and moves an existing one only through hostTransition (host_states.go) or connectionKeyTransition
+// a column; payload holds the other fields. host.state and connection_key.state are state machines: a put leaves the state
+// alone (a new row starts active) and moves it only through hostTransition (host_states.go) or connectionKeyTransition
 // (key_states.go).
 package main
 

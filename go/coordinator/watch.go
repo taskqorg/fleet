@@ -65,7 +65,7 @@ func watchPut(q *Request, w *watchRow) error {
 	return q.db().WatchPut(q.ctx(), db.WatchPutParams{ID: w.ID, SessionID: w.SessionID, ProjectID: w.ProjectID, Payload: jsonBytes(w.watchPayload)})
 }
 
-// watchSession: the session fields a watch reads; deliveryId and focus are payload fields (convTables "session").
+// watchSession: the session fields a watch reads; deliveryId and focus are payload fields (queries/records.sql "session").
 type watchSession struct {
 	ProjectID, TaskID, DirectedBy *string         `json:"-"`
 	DeliveryID                    any             `json:"deliveryId"`

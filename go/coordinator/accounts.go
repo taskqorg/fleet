@@ -172,7 +172,7 @@ func accountInspectionJob(q *Request, host string, p contract.AccountInspectPayl
 		Status: "pending", Payload: p})
 }
 
-// accountRec: a subscription as all/get/put serve it: the managed_account columns and the payload fields its writers
+// accountRec: a subscription as its record reads (queries/records.sql): the managed_account columns and the payload fields its writers
 // (accountCreate, accountUpdate, accountReport) write. Bindings stay as stored; bindings() reads them.
 type accountRec struct {
 	ID         string            `json:"id"`
@@ -515,7 +515,7 @@ func accountList(q *Request) (any, error) {
 	}{cats, out}, nil
 }
 
-// accountOnly, accountCheckFilter, catalogueFilter: record filters (kindAll).
+// accountOnly, accountCheckFilter, catalogueFilter: record filters (recAll).
 type accountOnly struct {
 	AccountID string `json:"accountId,omitempty"`
 }

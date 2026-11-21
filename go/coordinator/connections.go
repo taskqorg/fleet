@@ -58,7 +58,7 @@ func connDir(name string) (string, error) {
 	return filepath.Join(secretDir(), "connections", name), nil
 }
 
-// apiConnection: a connection as all/get/put serve it (api_connection: the columns and the payload fields).
+// apiConnection: a connection as its record reads (queries/records.sql) (api_connection: the columns and the payload fields).
 type apiConnection struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
@@ -100,7 +100,7 @@ func (a connAccess) stored() connAccess {
 	return a
 }
 
-// connKey: a connection key as all/get/put serve it (connection_key; its state moves through key_states.go).
+// connKey: a connection key as its record reads (queries/records.sql) (connection_key; its state moves through key_states.go).
 type connKey struct {
 	ID             string         `json:"id"`
 	ConnectionID   string         `json:"connectionId"`
@@ -140,7 +140,7 @@ type usageBaseline struct {
 	At    json.RawMessage `json:"at"`
 }
 
-// runToken: a run token as all/get/put serve it (run_token).
+// runToken: a run token as its record reads (queries/records.sql) (run_token).
 type runToken struct {
 	ID                      string          `json:"id"`
 	Sha256                  string          `json:"sha256"`

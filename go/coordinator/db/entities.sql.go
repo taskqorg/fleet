@@ -653,7 +653,7 @@ SELECT (data || jsonb_build_object('state',state,'observation',observation,'last
  WHERE kind IN ('agent_run','host_job') AND data @> $1::jsonb ORDER BY seq
 `
 
-// Records by kind (records.go all/get/put): an execution record is execution.data with its typed state, observation
+// Records by kind (records.go recExecution, recQuestion, recDelegation): an execution record is execution.data with its typed state, observation
 // and last contact (records.go execJSON); an agent question record is its columns over the open rest in data
 // (agentQuestionJSON); a delegation record is execution.delegation; no kind is a document any more.
 func (q *Queries) EntExecutionRecords(ctx context.Context, filter []byte) ([][]byte, error) {

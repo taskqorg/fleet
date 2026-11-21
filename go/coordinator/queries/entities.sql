@@ -333,7 +333,7 @@ SELECT EXISTS (SELECT 1 FROM question WHERE id=$1);
 -- An agent question record's fields without a column, and its project once known.
 UPDATE question SET data= @data, project_id=coalesce(project_id, sqlc.narg(project_id)) WHERE id= @id;
 
--- Records by kind (records.go all/get/put): an execution record is execution.data with its typed state, observation
+-- Records by kind (records.go recExecution, recQuestion, recDelegation): an execution record is execution.data with its typed state, observation
 -- and last contact (records.go execJSON); an agent question record is its columns over the open rest in data
 -- (agentQuestionJSON); a delegation record is execution.delegation; no kind is a document any more.
 

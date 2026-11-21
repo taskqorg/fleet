@@ -1,7 +1,9 @@
 -- Records of the conversation, host and account kinds (generated once from the former convTables, stage 8e): each
 -- kind's row as its record (the payload under the columns, a column absent when NULL), its rows whose record contains
 -- a filter (an indexed text column compared first) and its write: every column from its field when the field has the
--- column's type (absent or another type: NULL, the value kept in payload), payload the other fields.
+-- column's type (absent or another type: NULL, the value kept in payload), payload the other fields. A state machine's
+-- column (host.state, connection_key.state) is not written here: a new row starts in its default state, which the
+-- machine's transition moves (records.go recStateful).
 
 -- name: RecSessionGet :one
 SELECT (session.payload||jsonb_strip_nulls(jsonb_build_object('id',id,'projectId',project_id,'taskId',task_id,'hostId',host_id,'actor',actor,'directedBy',directed_by,'directorAccessRevokedAt',(extract(epoch FROM director_access_revoked_at)*1000)::bigint,'parentExecutionId',parent_execution_id,'createdByExecutionId',created_by_execution_id,'createdBySessionId',created_by_session_id,'sourceSessionId',source_session_id,'pipelineRunId',pipeline_run_id,'createdAt',(extract(epoch FROM created_at)*1000)::bigint,'archivedAt',(extract(epoch FROM archived_at)*1000)::bigint,'title',title,'titleBy',title_by,'titleCall',title_call,'titleAttemptAt',(extract(epoch FROM title_attempt_at)*1000)::bigint,'titleAttempts',nullif(title_attempts,0),'titleUnknownCall',title_unknown_call)))::jsonb FROM session WHERE id=$1;
@@ -318,11 +320,10 @@ WHERE (sqlc.arg(filter)::jsonb->>'id' IS NULL OR host.id=sqlc.arg(filter)::jsonb
 ORDER BY host.seq;
 
 -- name: RecHostPut :exec
-INSERT INTO host(id, host_id, holder, state, intake, secret_hash, removed_secret_hash, project_id, payload)
+INSERT INTO host(id, host_id, holder, intake, secret_hash, removed_secret_hash, project_id, payload)
 SELECT r->>'id',
   CASE WHEN jsonb_typeof(r->'hostId')='string' THEN r->>'hostId' END,
   CASE WHEN jsonb_typeof(r->'holder')='string' THEN r->>'holder' END,
-  coalesce(CASE WHEN jsonb_typeof(r->'state')='string' THEN r->>'state' END,'active'),
   CASE WHEN jsonb_typeof(r->'intake')='string' THEN r->>'intake' END,
   CASE WHEN jsonb_typeof(r->'secretHash')='string' THEN r->>'secretHash' END,
   CASE WHEN jsonb_typeof(r->'removedSecretHash')='string' THEN r->>'removedSecretHash' END,
@@ -528,11 +529,10 @@ WHERE (sqlc.arg(filter)::jsonb->>'id' IS NULL OR connection_key.id=sqlc.arg(filt
 ORDER BY connection_key.seq;
 
 -- name: RecConnectionKeyPut :exec
-INSERT INTO connection_key(id, connection_id, fingerprint, state, added_at, project_id, payload)
+INSERT INTO connection_key(id, connection_id, fingerprint, added_at, project_id, payload)
 SELECT r->>'id',
   CASE WHEN jsonb_typeof(r->'connectionId')='string' THEN r->>'connectionId' END,
   CASE WHEN jsonb_typeof(r->'fingerprint')='string' THEN r->>'fingerprint' END,
-  coalesce(CASE WHEN jsonb_typeof(r->'state')='string' THEN r->>'state' END,'active'),
   CASE WHEN jsonb_typeof(r->'addedAt')='number' THEN to_timestamp((r->>'addedAt')::float8/1000) END,
   CASE WHEN jsonb_typeof(r->'projectId')='string' THEN r->>'projectId' END,
   r - 'id' - (CASE WHEN jsonb_typeof(r->'connectionId')='null' OR jsonb_typeof(r->'connectionId')='string' THEN 'connectionId' ELSE '' END) - (CASE WHEN jsonb_typeof(r->'fingerprint')='null' OR jsonb_typeof(r->'fingerprint')='string' THEN 'fingerprint' ELSE '' END) - (CASE WHEN jsonb_typeof(r->'state')='null' OR jsonb_typeof(r->'state')='string' THEN 'state' ELSE '' END) - (CASE WHEN jsonb_typeof(r->'addedAt')='null' OR jsonb_typeof(r->'addedAt')='number' THEN 'addedAt' ELSE '' END) - (CASE WHEN jsonb_typeof(r->'projectId')='null' OR jsonb_typeof(r->'projectId')='string' THEN 'projectId' ELSE '' END)

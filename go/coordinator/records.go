@@ -48,21 +48,16 @@ func recW(kind string, f func(*db.Queries, context.Context, []byte) error, wake 
 	}
 }
 
-// recStateful: a write of a kind whose state column is a state machine (host_states.go, key_states.go): a new row is
-// created with the record's state, an existing one keeps its state unless the record names another, which the machine's
-// transition moves it to.
-func recStateful(write func(*Request, rawObject) error, of func(q *Request, id string) (string, error), move func(q *Request, id, to string) error) func(*Request, rawObject) error {
+// recStateful: a write of a kind whose state column is a state machine (host_states.go, key_states.go): the write
+// leaves the state alone (a new row starts in the column's default, active), and a record naming another state is moved
+// there by the machine's transition.
+func recStateful(write func(*Request, rawObject) error, move func(q *Request, id, to string) error) func(*Request, rawObject) error {
 	return func(q *Request, r rawObject) error {
-		id := r.text("id")
-		prev, err := of(q, id)
-		if err != nil {
-			return err
-		}
 		if err := write(q, r); err != nil {
 			return err
 		}
-		if want := r.text("state"); prev != "" && want != "" && want != prev {
-			return move(q, id, want)
+		if want := r.text("state"); want != "" {
+			return move(q, r.text("id"), want)
 		}
 		return nil
 	}
@@ -87,7 +82,7 @@ var (
 	recWorkerDone = &recTable{kind: "worker-done", get: recQ((*db.Queries).RecWorkerDoneGet), all: recQ((*db.Queries).RecWorkerDoneAll),
 		put: recW("worker-done", (*db.Queries).RecWorkerDonePut, false)}
 	recHost = &recTable{kind: "host", get: recQ((*db.Queries).RecHostGet), all: recQ((*db.Queries).RecHostAll),
-		put: recStateful(recW("host", (*db.Queries).RecHostPut, true), hostState, hostTransition)}
+		put: recStateful(recW("host", (*db.Queries).RecHostPut, true), hostTransition)}
 	recHostObservation = &recTable{kind: "host-observation", get: recQ((*db.Queries).RecHostObservationGet), all: recQ((*db.Queries).RecHostObservationAll),
 		put: recW("host-observation", (*db.Queries).RecHostObservationPut, false)}
 	recManagedAccount = &recTable{kind: "managed-account", get: recQ((*db.Queries).RecManagedAccountGet), all: recQ((*db.Queries).RecManagedAccountAll),
@@ -101,7 +96,7 @@ var (
 	recAPIConnection = &recTable{kind: "api-connection", get: recQ((*db.Queries).RecApiConnectionGet), locked: recQ((*db.Queries).RecApiConnectionGetLocked),
 		all: recQ((*db.Queries).RecApiConnectionAll), put: recW("api-connection", (*db.Queries).RecApiConnectionPut, false)}
 	recConnectionKey = &recTable{kind: "connection-key", get: recQ((*db.Queries).RecConnectionKeyGet), all: recQ((*db.Queries).RecConnectionKeyAll),
-		put: recStateful(recW("connection-key", (*db.Queries).RecConnectionKeyPut, false), connectionKeyState, connectionKeyTransition)}
+		put: recStateful(recW("connection-key", (*db.Queries).RecConnectionKeyPut, false), connectionKeyTransition)}
 	recRunToken = &recTable{kind: "run-token", get: recQ((*db.Queries).RecRunTokenGet), all: recQ((*db.Queries).RecRunTokenAll),
 		put: recW("run-token", (*db.Queries).RecRunTokenPut, false)}
 	recExecution = &recTable{kind: "execution", get: recQ((*db.Queries).EntExecutionRecord), all: recQ((*db.Queries).EntExecutionRecords),

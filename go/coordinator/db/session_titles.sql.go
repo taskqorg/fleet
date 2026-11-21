@@ -50,7 +50,7 @@ type TitleCandidatesRow struct {
 }
 
 // Conversation titles (session_titles.go, docs/designs/fleet-conversations.md, Titles): the title columns of a session
-// are written only here (session_rename and the title pass); a session put keeps them (sessions.go, convTables).
+// are written only here (session_rename and the title pass); a session put keeps them (queries/records.sql RecSessionPut).
 // Unarchived untitled sessions with a first message and a reply (a run that ended or started before @wait_before),
 // not host command sessions, not tried since @tried_before nor @tries times; newest first.
 func (q *Queries) TitleCandidates(ctx context.Context, arg TitleCandidatesParams) ([]TitleCandidatesRow, error) {

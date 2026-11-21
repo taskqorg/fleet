@@ -889,7 +889,7 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 	return contract.ArtifactStateReply{State: "verifying"}, nil
 }
 
-// The records of a queued tool command, for put and putExecution (records.go), which take them as documents.
+// The records of a queued tool command, written through recWrite (records.go).
 type (
 	jobSession struct {
 		ID        string `json:"id"`

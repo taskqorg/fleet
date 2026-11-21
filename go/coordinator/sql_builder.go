@@ -1077,7 +1077,7 @@ const sqlSessionState = `coalesce((SELECT e.state::text FROM execution e WHERE e
 // session_id (migration 77): activity_at is the latest change of the session, its messages and events, or the start or
 // end of its executions (the default sort). Not execution.updated_at: host receipts touch it on every observation,
 // which is not conversation activity. created_at and archived_at are the session record's (its columns, else its
-// payload, as convTables serves the kind session).
+// payload, as its record shows it, queries/records.sql).
 var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.seq, nullif(d.title,'') AS title,
  d.archived_at, d.actor, d.host_id, d.payload->'agentConfig'->>'harness' AS agent_harness, d.payload->'agentConfig'->>'id' AS profile_id,
  CASE WHEN d.created_at IS NOT NULL THEN (extract(epoch FROM d.created_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'createdAt')='number' THEN (d.payload->>'createdAt')::float8 END AS created_ms,

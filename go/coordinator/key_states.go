@@ -1,7 +1,7 @@
 // Connection key state (docs/designs/fleet-standard.md S5, docs/designs/fleet-connections.md): a key is active,
 // disabled (the provider refused it, or a holder turned it off) or retired (its value is gone; terminal).
-// connectionKeyTransition is the only writer of connection_key.state once the key exists; put of a "connection-key"
-// record (typed_records.go) creates it with its state and moves it here.
+// connectionKeyTransition is the only writer of connection_key.state: a put of a connection key record (records.go)
+// creates it active and moves it here to the state it names.
 package main
 
 import (

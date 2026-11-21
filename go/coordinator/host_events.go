@@ -70,7 +70,7 @@ func executionEventRecords(q *Request, id string) ([]eventRecord, error) {
 	return eventRecordsOf(es), err
 }
 
-// executionEventsOf: executionEventRecords as the records the generic record API reads (lab_loop.go).
+// executionEventsOf: executionEventRecords as records (lab_loop.go).
 func executionEventsOf(q *Request, id string) ([]doc, error) {
 	es, err := executionEventRecords(q, id)
 	if err != nil {
@@ -105,7 +105,7 @@ func frameHash(v any) string {
 	return hex.EncodeToString(h[:])
 }
 
-// eventsWhere: the events of either kind matching a record filter, for callers on the generic record API
+// eventsWhere: the events of either kind matching a record filter, for callers reading records
 // (lab_retry.go, pipeline_plan.go).
 func eventsWhere(q *Request, f any) ([]doc, error) { return recAll[doc](q, recEventAny, f) }
 

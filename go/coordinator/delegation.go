@@ -69,7 +69,7 @@ type delegationResult struct {
 	State       string          `json:"state"`
 }
 
-// delegationFilter: a filter of all() on delegation records; an absent field filters nothing.
+// delegationFilter: a filter of recAll on delegation records; an absent field filters nothing.
 type delegationFilter struct {
 	ParentExecutionID *string `json:"parentExecutionId,omitempty"`
 	ChildExecutionID  *string `json:"childExecutionId,omitempty"`
