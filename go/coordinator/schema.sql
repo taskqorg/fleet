@@ -2901,8 +2901,7 @@ CREATE INDEX queued_message_open ON queued_message(state, seq) WHERE state IN ('
 CREATE INDEX queued_message_steer ON queued_message(steer_command_id) WHERE steer_command_id IS NOT NULL;
 CREATE TABLE command(
  id text PRIMARY KEY,
- -- No foreign key to execution: a command may outlive its execution, and the poll stops it with that refusal.
- execution_id text NULL,
+ execution_id text NULL, -- its foreign key is migration 85
  session_id text NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
  host_id text NULL,
  project_id text NULL,
@@ -4312,3 +4311,9 @@ CREATE TABLE upload_finish_work (
  last_error text NULL
 );
 CREATE INDEX upload_finish_work_due ON upload_finish_work(next_attempt_at);
+
+-- migration 85: a command goes with its execution (docs/designs/fleet-standard.md S1, stage 11). Stage 4 left
+-- command.execution_id without its foreign key; a command whose execution is gone (none can be handed off: the poll
+-- stops it as not found) is deleted first.
+DELETE FROM command c WHERE c.execution_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM execution e WHERE e.id = c.execution_id);
+ALTER TABLE command ADD CONSTRAINT command_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES execution(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
