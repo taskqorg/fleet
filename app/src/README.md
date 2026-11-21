@@ -41,6 +41,7 @@
 
 - Run: `pnpm run typecheck`
 - Build: `pnpm run app:build`
+- S9 AST design rules (`UI-ANY`, `UI-OP`, `UI-VOCAB`): `node --test tests/ui/design-rules.test.ts` ([`design-rules.test.ts`](../../tests/ui/design-rules.test.ts), part of `node --test tests/ui/*.test.ts`)
 - Design warnings: `pnpm run check:design`
 
 ## Authorized prepared reads
