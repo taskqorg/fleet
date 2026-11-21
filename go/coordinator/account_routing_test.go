@@ -2,6 +2,7 @@ package main
 
 import (
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fmt"
 	"testing"
 )
@@ -63,7 +64,12 @@ func TestAccountInspectionRouting(t *testing.T) {
 					if id == target && tc.wrongHolder {
 						holder = "outsider@trial.test"
 					}
-					if err := recWrite(q, recHostObservation, doc{"id": id, "holder": holder, "platform": "darwin", "lastSeenAt": at, "capabilities": []string{"codex"}}); err != nil {
+					if err := q.db().HostObservationPut(q.ctx(), db.HostObservationPutParams{
+						ID:         id,
+						Holder:     &holder,
+						LastSeenAt: floatMsPtr(float64(at)),
+						Payload:    jsonBytes(doc{"platform": "darwin", "capabilities": []string{"codex"}}),
+					}); err != nil {
 						return err
 					}
 				}

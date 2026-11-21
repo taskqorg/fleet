@@ -1,7 +1,7 @@
-// Records (docs/designs/fleet-data-foundation.md §7, fleet-standard.md S2): the record shape of the conversation, host
-// and account kinds (queries/records.sql) and of executions, questions and delegations (queries/entities.sql), read and
-// written through each kind's typed queries. A caller names the kind's recTable and its own type, and converts once at
-// the call: recGet, recLocked, recMaybe, recAll, recPut.
+// Records (docs/designs/fleet-data-foundation.md §7, fleet-standard.md S2): the record shape of the conversation
+// kinds (queries/records.sql) and of executions, questions and delegations (queries/entities.sql), read and written
+// through each kind's typed queries. A caller names the kind's recTable and its own type, and converts once at the
+// call: recGet, recLocked, recMaybe, recAll, recPut.
 package main
 
 import (
@@ -48,21 +48,6 @@ func recW(kind string, f func(*db.Queries, context.Context, []byte) error, wake 
 	}
 }
 
-// recStateful: a write of a kind whose state column is a state machine (host_states.go, key_states.go): the write
-// leaves the state alone (a new row starts in the column's default, active), and a record naming another state is moved
-// there by the machine's transition.
-func recStateful(write func(*Request, rawObject) error, move func(q *Request, id, to string) error) func(*Request, rawObject) error {
-	return func(q *Request, r rawObject) error {
-		if err := write(q, r); err != nil {
-			return err
-		}
-		if want := r.text("state"); want != "" {
-			return move(q, r.text("id"), want)
-		}
-		return nil
-	}
-}
-
 var (
 	recSession = &recTable{kind: "session", get: recQ((*db.Queries).RecSessionGet), locked: recQ((*db.Queries).RecSessionGetLocked),
 		all: recQ((*db.Queries).RecSessionAll), put: recW("session", (*db.Queries).RecSessionPut, false)}
@@ -81,24 +66,6 @@ var (
 		all: recQ((*db.Queries).RecSessionTransitionAll), put: recW("session-transition", (*db.Queries).RecSessionTransitionPut, false)}
 	recWorkerDone = &recTable{kind: "worker-done", get: recQ((*db.Queries).RecWorkerDoneGet), all: recQ((*db.Queries).RecWorkerDoneAll),
 		put: recW("worker-done", (*db.Queries).RecWorkerDonePut, false)}
-	recHost = &recTable{kind: "host", get: recQ((*db.Queries).RecHostGet), all: recQ((*db.Queries).RecHostAll),
-		put: recStateful(recW("host", (*db.Queries).RecHostPut, true), hostTransition)}
-	recHostObservation = &recTable{kind: "host-observation", get: recQ((*db.Queries).RecHostObservationGet), all: recQ((*db.Queries).RecHostObservationAll),
-		put: recW("host-observation", (*db.Queries).RecHostObservationPut, false)}
-	recManagedAccount = &recTable{kind: "managed-account", get: recQ((*db.Queries).RecManagedAccountGet), all: recQ((*db.Queries).RecManagedAccountAll),
-		put: recW("managed-account", (*db.Queries).RecManagedAccountPut, true)}
-	recAccountInspection = &recTable{kind: "account-inspection", get: recQ((*db.Queries).RecAccountInspectionGet),
-		all: recQ((*db.Queries).RecAccountInspectionAll), put: recW("account-inspection", (*db.Queries).RecAccountInspectionPut, false)}
-	recAccountCheck = &recTable{kind: "account-check", get: recQ((*db.Queries).RecAccountCheckGet), all: recQ((*db.Queries).RecAccountCheckAll),
-		put: recW("account-check", (*db.Queries).RecAccountCheckPut, false)}
-	recAccountCatalogue = &recTable{kind: "account-catalogue", get: recQ((*db.Queries).RecAccountCatalogueGet), all: recQ((*db.Queries).RecAccountCatalogueAll),
-		put: recW("account-catalogue", (*db.Queries).RecAccountCataloguePut, false)}
-	recAPIConnection = &recTable{kind: "api-connection", get: recQ((*db.Queries).RecApiConnectionGet), locked: recQ((*db.Queries).RecApiConnectionGetLocked),
-		all: recQ((*db.Queries).RecApiConnectionAll), put: recW("api-connection", (*db.Queries).RecApiConnectionPut, false)}
-	recConnectionKey = &recTable{kind: "connection-key", get: recQ((*db.Queries).RecConnectionKeyGet), all: recQ((*db.Queries).RecConnectionKeyAll),
-		put: recStateful(recW("connection-key", (*db.Queries).RecConnectionKeyPut, false), connectionKeyTransition)}
-	recRunToken = &recTable{kind: "run-token", get: recQ((*db.Queries).RecRunTokenGet), all: recQ((*db.Queries).RecRunTokenAll),
-		put: recW("run-token", (*db.Queries).RecRunTokenPut, false)}
 	recExecution = &recTable{kind: "execution", get: recQ((*db.Queries).EntExecutionRecord), all: recQ((*db.Queries).EntExecutionRecords),
 		put: func(q *Request, r rawObject) error { return putExecution(q, r) }}
 	recQuestion = &recTable{kind: "question", get: recQ((*db.Queries).EntAgentQuestion), all: agentQuestions,

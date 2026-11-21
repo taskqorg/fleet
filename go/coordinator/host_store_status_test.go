@@ -49,11 +49,17 @@ func TestHostStorePollProjection(t *testing.T) {
 	check := func(want string) {
 		t.Helper()
 		if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
-			o, err := recGet[doc](q, recHostObservation, "h-store-check")
+			o, err := q.db().HostObservationOf(q.ctx(), "h-store-check")
 			if err != nil {
 				return err
 			}
-			got, reason := hostStoreStatus(o["stores"], env.app.effectiveHostSeen("h-store-check", num(o["lastSeenAt"])), nowMs())
+			var p struct {
+				Stores any `json:"stores"`
+			}
+			if err := lenientDecode(o.Payload, &p); err != nil {
+				return err
+			}
+			got, reason := hostStoreStatus(p.Stores, env.app.effectiveHostSeen("h-store-check", timeMs(o.LastSeenAt)), nowMs())
 			if got != want || reason == "" {
 				t.Fatalf("got %s %s want %s", got, reason, want)
 			}

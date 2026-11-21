@@ -1,7 +1,7 @@
 // Host state (docs/designs/fleet-standard.md S5): a registered host is active until hosts_remove tombstones it
 // (removed); a removed host stays removed until system_purge deletes its record or hosts_register registers its id
 // again. hostTransition is the only writer of
-// host.state: a put of a host record (records.go) creates it active and moves it here to the state it names.
+// host.state: HostRegister (hosts.go) creates it active and moves it here to the state it names.
 package main
 
 import (

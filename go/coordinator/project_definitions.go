@@ -156,11 +156,15 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 		}
 		json.Unmarshal(raw, &environment)
 		hostID, _ := environment.HostID.(string)
-		h, err := recFind[hostShim](q, recHost, "host:"+hostID) // absent: no holder
-		if err != nil {
-			return nil, err
+		var h *hostRecord
+		if hostID != "" {
+			var err error
+			h, err = hostRecordByID(q, hostID)
+			if err != nil {
+				return nil, err
+			}
 		}
-		if h.Holder != q.person.Email {
+		if h == nil || h.holder() != q.person.Email {
 			return nil, fail(403, "Host binding is not granted")
 		}
 	}
@@ -490,10 +494,7 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 			used[c] = true
 		}
 	}
-	obs, err := recAll[struct {
-		ID             string          `json:"id"`
-		GitConnections json.RawMessage `json:"gitConnections"`
-	}](q, recHostObservation, nil)
+	obs, err := q.db().HostObservations(q.ctx())
 	if err != nil {
 		return nil, err
 	}
@@ -508,7 +509,11 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 	live := []hostConnections{} // a removed host never fetches a removal
 	for _, o := range obs {
 		if !slices.Contains(removed, o.ID) {
-			live = append(live, hostConnections{o.ID, jsonStrings(o.GitConnections)})
+			var p struct {
+				GitConnections json.RawMessage `json:"gitConnections"`
+			}
+			_ = lenientDecode(o.Payload, &p)
+			live = append(live, hostConnections{o.ID, jsonStrings(p.GitConnections)})
 		}
 	}
 	for _, c := range conns {

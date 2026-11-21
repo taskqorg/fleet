@@ -496,7 +496,7 @@ func (a *App) removedHostSecret(ctx context.Context, secret string) (bool, error
 	return n > 0, err
 }
 
-// hostFromSecret: the host document whose secretHash matches, if its holder is still a person.
+// hostFromSecret: the host credentials whose secretHash matches, if its holder is still a person.
 func (a *App) hostFromSecret(ctx context.Context, secret string) (*authHost, error) {
 	if secret == "" {
 		return nil, nil
@@ -505,39 +505,45 @@ func (a *App) hostFromSecret(ctx context.Context, secret string) (*authHost, err
 	key := secretHash(secret)
 	s.authMu.Lock()
 	generation := s.authGeneration
-	var data []byte
+	var cached *authHost
 	if s.authWrites == 0 {
-		data = s.authHosts[key]
+		if h, ok := s.authHosts[key]; ok {
+			cached = &h
+		}
 	}
 	s.authMu.Unlock()
-	if data == nil {
-		var err error
-		data, err = db.New(s.readPool).HostRecordBySecret(ctx, &key)
+	if cached == nil {
+		row, err := db.New(s.readPool).HostBySecret(ctx, &key)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		if err != nil {
 			return nil, err
 		}
+		var payload struct {
+			AutoUpdate json.RawMessage `json:"autoUpdate"`
+		}
+		_ = json.Unmarshal(row.Payload, &payload)
+		var autoUpdate string
+		_ = json.Unmarshal(payload.AutoUpdate, &autoUpdate)
+		h := authHost{HostID: row.HostID, Holder: deref(row.Holder), AutoUpdate: autoUpdate}
 		s.authMu.Lock()
 		if s.authWrites == 0 && s.authGeneration == generation {
 			if len(s.authHosts) >= 1024 {
 				s.authHosts = nil
 			}
 			if s.authHosts == nil {
-				s.authHosts = map[string][]byte{}
+				s.authHosts = map[string]authHost{}
 			}
-			s.authHosts[key] = append([]byte(nil), data...)
+			s.authHosts[key] = h
 		}
 		s.authMu.Unlock()
+		cached = &h
 	}
-	var rec rawObject // a field of another type reads as empty, as a stored record may hold one in its payload
-	json.Unmarshal(data, &rec)
-	host := authHost{HostID: rec.text("hostId"), Holder: rec.text("holder"), AutoUpdate: rec.text("autoUpdate")}
-	if a.peopleSnapshot().person(host.Holder) == nil {
+	if a.peopleSnapshot().person(cached.Holder) == nil {
 		return nil, nil
 	}
-	return &host, nil
+	return cached, nil
 }
 
 func pgCode(err error) string {

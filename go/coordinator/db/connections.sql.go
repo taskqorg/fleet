@@ -7,7 +7,112 @@ package db
 
 import (
 	"context"
+	"time"
 )
+
+const aPIConnectionByID = `-- name: APIConnectionByID :one
+SELECT id, name, provider, holder, project_id, payload, seq, updated_at, tombstoned_at FROM api_connection WHERE id=$1
+`
+
+func (q *Queries) APIConnectionByID(ctx context.Context, id string) (ApiConnection, error) {
+	row := q.db.QueryRow(ctx, aPIConnectionByID, id)
+	var i ApiConnection
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Provider,
+		&i.Holder,
+		&i.ProjectID,
+		&i.Payload,
+		&i.Seq,
+		&i.UpdatedAt,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
+const aPIConnectionByIDLocked = `-- name: APIConnectionByIDLocked :one
+SELECT id, name, provider, holder, project_id, payload, seq, updated_at, tombstoned_at FROM api_connection WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) APIConnectionByIDLocked(ctx context.Context, id string) (ApiConnection, error) {
+	row := q.db.QueryRow(ctx, aPIConnectionByIDLocked, id)
+	var i ApiConnection
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Provider,
+		&i.Holder,
+		&i.ProjectID,
+		&i.Payload,
+		&i.Seq,
+		&i.UpdatedAt,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
+const aPIConnectionPut = `-- name: APIConnectionPut :exec
+INSERT INTO api_connection(id, name, provider, holder, project_id, payload)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ name=excluded.name, provider=excluded.provider, holder=excluded.holder, project_id=excluded.project_id
+`
+
+type APIConnectionPutParams struct {
+	ID        string
+	Name      string
+	Provider  *string
+	Holder    *string
+	ProjectID *string
+	Payload   []byte
+}
+
+func (q *Queries) APIConnectionPut(ctx context.Context, arg APIConnectionPutParams) error {
+	_, err := q.db.Exec(ctx, aPIConnectionPut,
+		arg.ID,
+		arg.Name,
+		arg.Provider,
+		arg.Holder,
+		arg.ProjectID,
+		arg.Payload,
+	)
+	return err
+}
+
+const aPIConnections = `-- name: APIConnections :many
+SELECT id, name, provider, holder, project_id, payload, seq, updated_at, tombstoned_at FROM api_connection ORDER BY seq
+`
+
+func (q *Queries) APIConnections(ctx context.Context) ([]ApiConnection, error) {
+	rows, err := q.db.Query(ctx, aPIConnections)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ApiConnection
+	for rows.Next() {
+		var i ApiConnection
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Provider,
+			&i.Holder,
+			&i.ProjectID,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
 
 const connCallParent = `-- name: ConnCallParent :one
 SELECT task_id, session_id, directed_by, pipeline_id, pipeline_revision, step_id, profile_id, profile_revision FROM execution WHERE id=$1
@@ -322,6 +427,28 @@ func (q *Queries) ConnUsageKeyCount(ctx context.Context, arg ConnUsageKeyCountPa
 	return count, err
 }
 
+const connectionKeyByID = `-- name: ConnectionKeyByID :one
+SELECT id, connection_id, fingerprint, state, added_at, project_id, payload, seq, updated_at, tombstoned_at FROM connection_key WHERE id=$1
+`
+
+func (q *Queries) ConnectionKeyByID(ctx context.Context, id string) (ConnectionKey, error) {
+	row := q.db.QueryRow(ctx, connectionKeyByID, id)
+	var i ConnectionKey
+	err := row.Scan(
+		&i.ID,
+		&i.ConnectionID,
+		&i.Fingerprint,
+		&i.State,
+		&i.AddedAt,
+		&i.ProjectID,
+		&i.Payload,
+		&i.Seq,
+		&i.UpdatedAt,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
 const connectionKeyMove = `-- name: ConnectionKeyMove :exec
 UPDATE connection_key SET state= $1, updated_at=now() WHERE id= $2
 `
@@ -333,6 +460,35 @@ type ConnectionKeyMoveParams struct {
 
 func (q *Queries) ConnectionKeyMove(ctx context.Context, arg ConnectionKeyMoveParams) error {
 	_, err := q.db.Exec(ctx, connectionKeyMove, arg.State, arg.ID)
+	return err
+}
+
+const connectionKeyPut = `-- name: ConnectionKeyPut :exec
+INSERT INTO connection_key(id, connection_id, fingerprint, added_at, project_id, payload)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ connection_id=excluded.connection_id, fingerprint=excluded.fingerprint, added_at=excluded.added_at, project_id=excluded.project_id
+`
+
+type ConnectionKeyPutParams struct {
+	ID           string
+	ConnectionID string
+	Fingerprint  *string
+	AddedAt      *time.Time
+	ProjectID    *string
+	Payload      []byte
+}
+
+// Writes a connection key without touching state (new rows start active; key_states.go alone moves state).
+func (q *Queries) ConnectionKeyPut(ctx context.Context, arg ConnectionKeyPutParams) error {
+	_, err := q.db.Exec(ctx, connectionKeyPut,
+		arg.ID,
+		arg.ConnectionID,
+		arg.Fingerprint,
+		arg.AddedAt,
+		arg.ProjectID,
+		arg.Payload,
+	)
 	return err
 }
 
@@ -348,6 +504,42 @@ func (q *Queries) ConnectionKeyStateOf(ctx context.Context, id string) (string, 
 	var state string
 	err := row.Scan(&state)
 	return state, err
+}
+
+const connectionKeys = `-- name: ConnectionKeys :many
+SELECT id, connection_id, fingerprint, state, added_at, project_id, payload, seq, updated_at, tombstoned_at FROM connection_key
+WHERE ($1::text IS NULL OR connection_id = $1) ORDER BY seq
+`
+
+func (q *Queries) ConnectionKeys(ctx context.Context, connectionID *string) ([]ConnectionKey, error) {
+	rows, err := q.db.Query(ctx, connectionKeys, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConnectionKey
+	for rows.Next() {
+		var i ConnectionKey
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConnectionID,
+			&i.Fingerprint,
+			&i.State,
+			&i.AddedAt,
+			&i.ProjectID,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deleteAPIConnection = `-- name: DeleteAPIConnection :exec
@@ -419,4 +611,113 @@ type RevokeStepTokensBeforeParams struct {
 func (q *Queries) RevokeStepTokensBefore(ctx context.Context, arg RevokeStepTokensBeforeParams) error {
 	_, err := q.db.Exec(ctx, revokeStepTokensBefore, arg.At, arg.Started)
 	return err
+}
+
+const runTokenByID = `-- name: RunTokenByID :one
+SELECT id, sha256, execution_id, pipeline_run_id, personal, step, directed_by, created_at, revoked_at, director_access_revoked_at, project_id, payload, seq, updated_at, tombstoned_at FROM run_token WHERE id=$1
+`
+
+func (q *Queries) RunTokenByID(ctx context.Context, id string) (RunToken, error) {
+	row := q.db.QueryRow(ctx, runTokenByID, id)
+	var i RunToken
+	err := row.Scan(
+		&i.ID,
+		&i.Sha256,
+		&i.ExecutionID,
+		&i.PipelineRunID,
+		&i.Personal,
+		&i.Step,
+		&i.DirectedBy,
+		&i.CreatedAt,
+		&i.RevokedAt,
+		&i.DirectorAccessRevokedAt,
+		&i.ProjectID,
+		&i.Payload,
+		&i.Seq,
+		&i.UpdatedAt,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
+const runTokenPut = `-- name: RunTokenPut :exec
+INSERT INTO run_token(id, sha256, execution_id, pipeline_run_id, personal, step, directed_by, created_at, revoked_at, director_access_revoked_at, project_id, payload)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ sha256=excluded.sha256, execution_id=excluded.execution_id, pipeline_run_id=excluded.pipeline_run_id, personal=excluded.personal,
+ step=excluded.step, directed_by=excluded.directed_by, created_at=excluded.created_at, revoked_at=excluded.revoked_at,
+ director_access_revoked_at=excluded.director_access_revoked_at, project_id=excluded.project_id
+`
+
+type RunTokenPutParams struct {
+	ID                      string
+	Sha256                  *string
+	ExecutionID             *string
+	PipelineRunID           *string
+	Personal                *string
+	Step                    *bool
+	DirectedBy              *string
+	CreatedAt               *time.Time
+	RevokedAt               *time.Time
+	DirectorAccessRevokedAt *time.Time
+	ProjectID               *string
+	Payload                 []byte
+}
+
+func (q *Queries) RunTokenPut(ctx context.Context, arg RunTokenPutParams) error {
+	_, err := q.db.Exec(ctx, runTokenPut,
+		arg.ID,
+		arg.Sha256,
+		arg.ExecutionID,
+		arg.PipelineRunID,
+		arg.Personal,
+		arg.Step,
+		arg.DirectedBy,
+		arg.CreatedAt,
+		arg.RevokedAt,
+		arg.DirectorAccessRevokedAt,
+		arg.ProjectID,
+		arg.Payload,
+	)
+	return err
+}
+
+const runTokens = `-- name: RunTokens :many
+SELECT id, sha256, execution_id, pipeline_run_id, personal, step, directed_by, created_at, revoked_at, director_access_revoked_at, project_id, payload, seq, updated_at, tombstoned_at FROM run_token ORDER BY seq
+`
+
+func (q *Queries) RunTokens(ctx context.Context) ([]RunToken, error) {
+	rows, err := q.db.Query(ctx, runTokens)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RunToken
+	for rows.Next() {
+		var i RunToken
+		if err := rows.Scan(
+			&i.ID,
+			&i.Sha256,
+			&i.ExecutionID,
+			&i.PipelineRunID,
+			&i.Personal,
+			&i.Step,
+			&i.DirectedBy,
+			&i.CreatedAt,
+			&i.RevokedAt,
+			&i.DirectorAccessRevokedAt,
+			&i.ProjectID,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

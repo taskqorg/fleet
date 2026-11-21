@@ -38,3 +38,47 @@ SELECT id, last_seen_at FROM host_observation ORDER BY seq;
 -- Whether a host that is not removed allows a harness (host setting harnesses.<harness>.allowed; only false refuses).
 SELECT coalesce(payload->'harnesses'->(sqlc.arg(harness)::text)->'allowed', 'true'::jsonb) <> 'false'::jsonb AS allowed
  FROM host WHERE host_id= @host_id::text AND state<>'removed' ORDER BY seq LIMIT 1;
+
+-- name: AccountRowOf :one
+SELECT * FROM managed_account WHERE id=$1;
+
+-- name: AccountPut :exec
+INSERT INTO managed_account(id, name, holder, intake, harness, provider, project_id, payload)
+VALUES (@id, sqlc.narg(name), sqlc.narg(holder), sqlc.narg(intake), sqlc.narg(harness), sqlc.narg(provider), sqlc.narg(project_id), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ name=excluded.name, holder=excluded.holder, intake=excluded.intake, harness=excluded.harness, provider=excluded.provider, project_id=excluded.project_id;
+
+-- name: AccountInspections :many
+SELECT * FROM account_inspection
+WHERE (sqlc.narg(account_id)::text IS NULL OR account_id = sqlc.narg(account_id)) ORDER BY seq;
+
+-- name: AccountInspectionPut :exec
+INSERT INTO account_inspection(id, account_id, execution_id, host_id, project_id, payload)
+VALUES (@id, sqlc.narg(account_id), sqlc.narg(execution_id), sqlc.narg(host_id), sqlc.narg(project_id), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ account_id=excluded.account_id, execution_id=excluded.execution_id, host_id=excluded.host_id, project_id=excluded.project_id;
+
+-- name: AccountChecks :many
+SELECT * FROM account_check
+WHERE account_id = @account_id::text
+ AND (sqlc.narg(host_id)::text IS NULL OR host_id = sqlc.narg(host_id))
+ AND (sqlc.narg(binding)::text IS NULL OR binding = sqlc.narg(binding))
+ORDER BY seq;
+
+-- name: AccountCheckPut :exec
+INSERT INTO account_check(id, account_id, host_id, binding, project_id, payload)
+VALUES (@id, sqlc.narg(account_id), sqlc.narg(host_id), sqlc.narg(binding), sqlc.narg(project_id), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ account_id=excluded.account_id, host_id=excluded.host_id, binding=excluded.binding, project_id=excluded.project_id;
+
+-- name: AccountCatalogues :many
+SELECT * FROM account_catalogue
+WHERE (sqlc.narg(host_id)::text IS NULL OR host_id = sqlc.narg(host_id))
+ AND (sqlc.narg(harness)::text IS NULL OR harness = sqlc.narg(harness))
+ORDER BY seq;
+
+-- name: AccountCataloguePut :exec
+INSERT INTO account_catalogue(id, host_id, harness, project_id, payload)
+VALUES (@id, sqlc.narg(host_id), sqlc.narg(harness), sqlc.narg(project_id), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ host_id=excluded.host_id, harness=excluded.harness, project_id=excluded.project_id;

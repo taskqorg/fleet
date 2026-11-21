@@ -102,3 +102,46 @@ SELECT coalesce((SELECT state::text FROM execution WHERE id=$1 AND kind IN ('age
 -- The cost recorded for a key's calls since a time (ms).
 SELECT coalesce(sum((t.connection_cost->>'amount')::numeric),0)::float8 FROM execution e JOIN execution_totals t ON t.execution_id=e.id
  WHERE e.kind='tool_run' AND e.data->>'keyFingerprint'= @fingerprint::text AND (e.data->>'startedAt')::bigint>= @since::bigint;
+
+-- name: APIConnectionByID :one
+SELECT * FROM api_connection WHERE id=$1;
+
+-- name: APIConnectionByIDLocked :one
+SELECT * FROM api_connection WHERE id=$1 FOR UPDATE;
+
+-- name: APIConnections :many
+SELECT * FROM api_connection ORDER BY seq;
+
+-- name: APIConnectionPut :exec
+INSERT INTO api_connection(id, name, provider, holder, project_id, payload)
+VALUES (@id, @name, sqlc.narg(provider), sqlc.narg(holder), sqlc.narg(project_id), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ name=excluded.name, provider=excluded.provider, holder=excluded.holder, project_id=excluded.project_id;
+
+-- name: ConnectionKeyByID :one
+SELECT * FROM connection_key WHERE id=$1;
+
+-- name: ConnectionKeys :many
+SELECT * FROM connection_key
+WHERE (sqlc.narg(connection_id)::text IS NULL OR connection_id = sqlc.narg(connection_id)) ORDER BY seq;
+
+-- name: ConnectionKeyPut :exec
+-- Writes a connection key without touching state (new rows start active; key_states.go alone moves state).
+INSERT INTO connection_key(id, connection_id, fingerprint, added_at, project_id, payload)
+VALUES (@id, @connection_id, sqlc.narg(fingerprint), sqlc.narg(added_at), sqlc.narg(project_id), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ connection_id=excluded.connection_id, fingerprint=excluded.fingerprint, added_at=excluded.added_at, project_id=excluded.project_id;
+
+-- name: RunTokenByID :one
+SELECT * FROM run_token WHERE id=$1;
+
+-- name: RunTokens :many
+SELECT * FROM run_token ORDER BY seq;
+
+-- name: RunTokenPut :exec
+INSERT INTO run_token(id, sha256, execution_id, pipeline_run_id, personal, step, directed_by, created_at, revoked_at, director_access_revoked_at, project_id, payload)
+VALUES (@id, sqlc.narg(sha256), sqlc.narg(execution_id), sqlc.narg(pipeline_run_id), sqlc.narg(personal), sqlc.narg(step), sqlc.narg(directed_by), sqlc.narg(created_at), sqlc.narg(revoked_at), sqlc.narg(director_access_revoked_at), sqlc.narg(project_id), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ sha256=excluded.sha256, execution_id=excluded.execution_id, pipeline_run_id=excluded.pipeline_run_id, personal=excluded.personal,
+ step=excluded.step, directed_by=excluded.directed_by, created_at=excluded.created_at, revoked_at=excluded.revoked_at,
+ director_access_revoked_at=excluded.director_access_revoked_at, project_id=excluded.project_id;

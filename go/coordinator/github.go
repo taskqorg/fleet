@@ -79,7 +79,7 @@ type githubCached struct {
 // An owner connection that cannot serve (no active key yet, intake closed) falls back to github.
 func githubConnectionOf(q *Request, owner string) (name string, c *apiConnection, keyed bool, err error) {
 	serves := func(n string) (*apiConnection, bool, error) {
-		c, err := recMaybe[apiConnection](q, recAPIConnection, "connection:"+n)
+		c, err := apiConnectionMaybe(q, "connection:"+n)
 		if err != nil || c == nil || gatewayURL() == "" || c.Intake != "all" {
 			return c, false, err
 		}

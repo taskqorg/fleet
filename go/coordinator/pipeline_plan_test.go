@@ -54,8 +54,8 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 		}
 		return run
 	}
-	connection := doc{"id": "connection:fixture", "name": "fixture", "provider": "typesafe", "intake": "all", "tools": []any{"system_one"}, "access": doc{"projects": []any{"hello-world"}}}
-	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error { return recPut(q, recAPIConnection, &connection) }); err != nil {
+	connection := apiConnection{ID: "connection:fixture", Name: "fixture", Provider: "typesafe", Intake: "all", Tools: []string{"system_one"}, Access: connAccess{Projects: []string{"hello-world"}}.stored()}
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error { return apiConnectionPut(q, connection) }); err != nil {
 		t.Fatal(err)
 	}
 	run := seed("api-claim")
@@ -111,8 +111,8 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	reserved := seed("api-revoked")
-	connection["intake"] = "none"
-	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error { return recPut(q, recAPIConnection, &connection) }); err != nil {
+	connection.Intake = "none"
+	if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error { return apiConnectionPut(q, connection) }); err != nil {
 		t.Fatal(err)
 	}
 	err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
