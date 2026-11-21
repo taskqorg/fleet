@@ -9,19 +9,23 @@ import (
 	"context"
 )
 
-const hostRecordBySecret = `-- name: HostRecordBySecret :one
-SELECT (h.payload || jsonb_strip_nulls(jsonb_build_object('id', h.id, 'hostId', h.host_id, 'holder', h.holder,
-  'state', nullif(h.state, 'active'), 'intake', h.intake, 'secretHash', h.secret_hash, 'removedSecretHash', h.removed_secret_hash,
-  'projectId', h.project_id)))::jsonb AS record
+const hostBySecret = `-- name: HostBySecret :one
+SELECT h.host_id, h.holder, h.payload
 FROM host h JOIN person p ON p.email = h.holder WHERE h.secret_hash = $1
 `
 
-// The host record (as its record reads, queries/records.sql) whose secret matches, while its holder is a person.
-func (q *Queries) HostRecordBySecret(ctx context.Context, secretHash *string) ([]byte, error) {
-	row := q.db.QueryRow(ctx, hostRecordBySecret, secretHash)
-	var record []byte
-	err := row.Scan(&record)
-	return record, err
+type HostBySecretRow struct {
+	HostID  string
+	Holder  *string
+	Payload []byte
+}
+
+// The host credentials whose secret matches, while its holder is a person.
+func (q *Queries) HostBySecret(ctx context.Context, secretHash *string) (HostBySecretRow, error) {
+	row := q.db.QueryRow(ctx, hostBySecret, secretHash)
+	var i HostBySecretRow
+	err := row.Scan(&i.HostID, &i.Holder, &i.Payload)
+	return i, err
 }
 
 const peopleChanged = `-- name: PeopleChanged :exec

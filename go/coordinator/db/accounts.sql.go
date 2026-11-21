@@ -10,6 +10,145 @@ import (
 	"time"
 )
 
+const accountCataloguePut = `-- name: AccountCataloguePut :exec
+INSERT INTO account_catalogue(id, host_id, harness, project_id, payload)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ host_id=excluded.host_id, harness=excluded.harness, project_id=excluded.project_id
+`
+
+type AccountCataloguePutParams struct {
+	ID        string
+	HostID    *string
+	Harness   *string
+	ProjectID *string
+	Payload   []byte
+}
+
+func (q *Queries) AccountCataloguePut(ctx context.Context, arg AccountCataloguePutParams) error {
+	_, err := q.db.Exec(ctx, accountCataloguePut,
+		arg.ID,
+		arg.HostID,
+		arg.Harness,
+		arg.ProjectID,
+		arg.Payload,
+	)
+	return err
+}
+
+const accountCatalogues = `-- name: AccountCatalogues :many
+SELECT id, host_id, harness, project_id, payload, seq, updated_at, tombstoned_at FROM account_catalogue
+WHERE ($1::text IS NULL OR host_id = $1)
+ AND ($2::text IS NULL OR harness = $2)
+ORDER BY seq
+`
+
+type AccountCataloguesParams struct {
+	HostID  *string
+	Harness *string
+}
+
+func (q *Queries) AccountCatalogues(ctx context.Context, arg AccountCataloguesParams) ([]AccountCatalogue, error) {
+	rows, err := q.db.Query(ctx, accountCatalogues, arg.HostID, arg.Harness)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AccountCatalogue
+	for rows.Next() {
+		var i AccountCatalogue
+		if err := rows.Scan(
+			&i.ID,
+			&i.HostID,
+			&i.Harness,
+			&i.ProjectID,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const accountCheckPut = `-- name: AccountCheckPut :exec
+INSERT INTO account_check(id, account_id, host_id, binding, project_id, payload)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ account_id=excluded.account_id, host_id=excluded.host_id, binding=excluded.binding, project_id=excluded.project_id
+`
+
+type AccountCheckPutParams struct {
+	ID        string
+	AccountID *string
+	HostID    *string
+	Binding   *string
+	ProjectID *string
+	Payload   []byte
+}
+
+func (q *Queries) AccountCheckPut(ctx context.Context, arg AccountCheckPutParams) error {
+	_, err := q.db.Exec(ctx, accountCheckPut,
+		arg.ID,
+		arg.AccountID,
+		arg.HostID,
+		arg.Binding,
+		arg.ProjectID,
+		arg.Payload,
+	)
+	return err
+}
+
+const accountChecks = `-- name: AccountChecks :many
+SELECT id, account_id, host_id, binding, project_id, payload, seq, updated_at, tombstoned_at FROM account_check
+WHERE account_id = $1::text
+ AND ($2::text IS NULL OR host_id = $2)
+ AND ($3::text IS NULL OR binding = $3)
+ORDER BY seq
+`
+
+type AccountChecksParams struct {
+	AccountID string
+	HostID    *string
+	Binding   *string
+}
+
+func (q *Queries) AccountChecks(ctx context.Context, arg AccountChecksParams) ([]AccountCheck, error) {
+	rows, err := q.db.Query(ctx, accountChecks, arg.AccountID, arg.HostID, arg.Binding)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AccountCheck
+	for rows.Next() {
+		var i AccountCheck
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.HostID,
+			&i.Binding,
+			&i.ProjectID,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const accountHostHarnessAllowed = `-- name: AccountHostHarnessAllowed :one
 SELECT coalesce(payload->'harnesses'->($1::text)->'allowed', 'true'::jsonb) <> 'false'::jsonb AS allowed
  FROM host WHERE host_id= $2::text AND state<>'removed' ORDER BY seq LIMIT 1
@@ -73,6 +212,69 @@ func (q *Queries) AccountInspectionExecution(ctx context.Context, id string) ([]
 	return record, err
 }
 
+const accountInspectionPut = `-- name: AccountInspectionPut :exec
+INSERT INTO account_inspection(id, account_id, execution_id, host_id, project_id, payload)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ account_id=excluded.account_id, execution_id=excluded.execution_id, host_id=excluded.host_id, project_id=excluded.project_id
+`
+
+type AccountInspectionPutParams struct {
+	ID          string
+	AccountID   *string
+	ExecutionID *string
+	HostID      *string
+	ProjectID   *string
+	Payload     []byte
+}
+
+func (q *Queries) AccountInspectionPut(ctx context.Context, arg AccountInspectionPutParams) error {
+	_, err := q.db.Exec(ctx, accountInspectionPut,
+		arg.ID,
+		arg.AccountID,
+		arg.ExecutionID,
+		arg.HostID,
+		arg.ProjectID,
+		arg.Payload,
+	)
+	return err
+}
+
+const accountInspections = `-- name: AccountInspections :many
+SELECT id, account_id, execution_id, host_id, project_id, payload, seq, updated_at, tombstoned_at FROM account_inspection
+WHERE ($1::text IS NULL OR account_id = $1) ORDER BY seq
+`
+
+func (q *Queries) AccountInspections(ctx context.Context, accountID *string) ([]AccountInspection, error) {
+	rows, err := q.db.Query(ctx, accountInspections, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AccountInspection
+	for rows.Next() {
+		var i AccountInspection
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.ExecutionID,
+			&i.HostID,
+			&i.ProjectID,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const accountNameTaken = `-- name: AccountNameTaken :one
 
 SELECT EXISTS (SELECT 1 FROM managed_account WHERE name=$1)
@@ -84,6 +286,61 @@ func (q *Queries) AccountNameTaken(ctx context.Context, name *string) (bool, err
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const accountPut = `-- name: AccountPut :exec
+INSERT INTO managed_account(id, name, holder, intake, harness, provider, project_id, payload)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ name=excluded.name, holder=excluded.holder, intake=excluded.intake, harness=excluded.harness, provider=excluded.provider, project_id=excluded.project_id
+`
+
+type AccountPutParams struct {
+	ID        string
+	Name      *string
+	Holder    *string
+	Intake    *string
+	Harness   *string
+	Provider  *string
+	ProjectID *string
+	Payload   []byte
+}
+
+func (q *Queries) AccountPut(ctx context.Context, arg AccountPutParams) error {
+	_, err := q.db.Exec(ctx, accountPut,
+		arg.ID,
+		arg.Name,
+		arg.Holder,
+		arg.Intake,
+		arg.Harness,
+		arg.Provider,
+		arg.ProjectID,
+		arg.Payload,
+	)
+	return err
+}
+
+const accountRowOf = `-- name: AccountRowOf :one
+SELECT id, name, holder, intake, harness, provider, project_id, payload, seq, updated_at, tombstoned_at FROM managed_account WHERE id=$1
+`
+
+func (q *Queries) AccountRowOf(ctx context.Context, id string) (ManagedAccount, error) {
+	row := q.db.QueryRow(ctx, accountRowOf, id)
+	var i ManagedAccount
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Holder,
+		&i.Intake,
+		&i.Harness,
+		&i.Provider,
+		&i.ProjectID,
+		&i.Payload,
+		&i.Seq,
+		&i.UpdatedAt,
+		&i.TombstonedAt,
+	)
+	return i, err
 }
 
 const accountRows = `-- name: AccountRows :many

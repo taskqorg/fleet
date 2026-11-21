@@ -38,9 +38,7 @@ INSERT INTO person_grant(email, object_kind, object_id) VALUES (@email, @object_
 -- name: PeopleChanged :exec
 SELECT fleet_enqueue_wake('fleet_change', '');
 
--- name: HostRecordBySecret :one
--- The host record (as its record reads, queries/records.sql) whose secret matches, while its holder is a person.
-SELECT (h.payload || jsonb_strip_nulls(jsonb_build_object('id', h.id, 'hostId', h.host_id, 'holder', h.holder,
-  'state', nullif(h.state, 'active'), 'intake', h.intake, 'secretHash', h.secret_hash, 'removedSecretHash', h.removed_secret_hash,
-  'projectId', h.project_id)))::jsonb AS record
+-- name: HostBySecret :one
+-- The host credentials whose secret matches, while its holder is a person.
+SELECT h.host_id, h.holder, h.payload
 FROM host h JOIN person p ON p.email = h.holder WHERE h.secret_hash = @secret_hash;

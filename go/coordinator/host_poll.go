@@ -275,7 +275,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 	var hasPending bool
 	var removed bool
 	if err := a.store.Read(ctx, nil, func(rq *Request) error {
-		if h, err := recMaybe[hostShim](rq, recHost, "host:"+host); err != nil {
+		if h, err := hostRecordByID(rq, host); err != nil {
 			return err
 		} else if h != nil && h.removed() {
 			removed = true
@@ -297,13 +297,13 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 		return []contract.Command{}, nil
 	}
 	out := []contract.Command{}
-	var hostDoc hostShim // none yet: no holder
+	var hostDoc hostRecord // none yet: no holder
 	locks := []string{"host:" + host}
 	if pipelinePending {
 		locks = append([]string{GLOBAL}, locks...)
 	}
 	err := a.store.Write(ctx, nil, locks, func(wq *Request) error {
-		h, err := recMaybe[hostShim](wq, recHost, "host:"+host)
+		h, err := hostRecordByID(wq, host)
 		if err != nil {
 			return err
 		}
@@ -477,7 +477,7 @@ type pollExecutionView struct {
 
 // pollReadyCommand: command c as the host gets it now, or nil while it is not ready. The ready filter may rewrite the
 // command (delegation inputs), so the reply is the command as stored after it.
-func (a *App) pollReadyCommand(wq *Request, hostDoc hostShim, cv pollCommandView, prepared map[string]pollPreparedEntry) (*contract.Command, error) {
+func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandView, prepared map[string]pollPreparedEntry) (*contract.Command, error) {
 	ok, err := agentReady(wq, cv.Kind, cv.ExecutionID)
 	if err != nil || !ok {
 		return nil, err
@@ -740,7 +740,8 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	open := q.obj() // the open parts (stores, update) as the host's plain JSON
 	stores := rawAny(open.Stores)
 	now := nowMs()
-	obs := hostPollObservation{ID: host, Holder: q.host.Holder, Version: b.Version}
+	obs := hostPollObservation{ID: host, Holder: q.host.Holder}
+	obs.Version = b.Version
 	if b.Platform.Valid() {
 		obs.Platform = string(b.Platform)
 	}
@@ -792,11 +793,20 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 				}
 			}
 			if flushObs {
-				prev, err := recMaybe[struct {
+				var prev *struct {
 					Update    json.RawMessage `json:"update"`
 					PollError json.RawMessage `json:"pollError"`
-				}](wq, recHostObservation, host)
-				if err != nil {
+				}
+				if r, err := wq.db().HostObservationOf(wq.ctx(), host); err == nil {
+					var p struct {
+						Update    json.RawMessage `json:"update"`
+						PollError json.RawMessage `json:"pollError"`
+					}
+					if err := lenientDecode(r.Payload, &p); err != nil {
+						return err
+					}
+					prev = &p
+				} else if !errors.Is(err, pgx.ErrNoRows) {
 					return err
 				}
 				var prevUpdate any
@@ -814,7 +824,12 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 						return err
 					}
 				}
-				if err := recWrite(wq, recHostObservation, row); err != nil {
+				if err := wq.db().HostObservationPut(wq.ctx(), db.HostObservationPutParams{
+					ID:         row.ID,
+					Holder:     &row.Holder,
+					LastSeenAt: floatMsPtr(float64(row.LastSeenAt)),
+					Payload:    jsonBytes(row.hostPollObservationPayload),
+				}); err != nil {
 					return err
 				}
 			}
@@ -989,32 +1004,15 @@ func hostList(q *Request) ([]rawObject, error) {
 	return out, err
 }
 
-// hostShim: the fields of a host record the poll and dispatch read.
-type hostShim struct {
-	State  string `json:"state"`
-	Holder string `json:"holder"`
-}
-
-// UnmarshalJSON: a field of another JSON type reads as absent.
-func (h *hostShim) UnmarshalJSON(b []byte) error {
-	type plain hostShim
-	return lenientDecode(b, (*plain)(h))
-}
-
-func (h *hostShim) removed() bool { return h.State == "removed" }
-
 // hostMayRun: h is a host record; projectID and director are a record's values (text, else none).
-func (a *App) hostMayRun(h any, projectID any, director any) bool {
+func (a *App) hostMayRun(h hostRecord, projectID any, director any) bool {
 	p, _ := projectID.(string)
 	d, _ := director.(string)
-	return a.holderMayRun(agentView[hostShim](h).Holder, p, d)
+	return a.holderMayRun(h.holder(), p, d)
 }
 
-// hostPollObservation: what a poll observes of its host (the host-observation record): its platform, capabilities,
-// versions, problems, update and stores; a recorded poll failure stays on it.
-type hostPollObservation struct {
-	ID              string                     `json:"id"`
-	Holder          any                        `json:"holder"`
+// hostPollObservationPayload holds the payload fields of a host observation (host_observation.payload).
+type hostPollObservationPayload struct {
 	Platform        string                     `json:"platform,omitempty"`
 	Capabilities    *[]string                  `json:"capabilities,omitempty"`
 	HarnessVersions *[]contract.HarnessVersion `json:"harnessVersions,omitempty"`
@@ -1024,8 +1022,16 @@ type hostPollObservation struct {
 	Problems        []hostProblem              `json:"problems,omitempty"`
 	Update          any                        `json:"update,omitempty"`
 	Stores          any                        `json:"stores"`
-	LastSeenAt      int64                      `json:"lastSeenAt,omitempty"`
 	PollError       json.RawMessage            `json:"pollError,omitempty"`
+}
+
+// hostPollObservation: what a poll observes of its host (the host-observation record): its platform, capabilities,
+// versions, problems, update and stores; a recorded poll failure stays on it.
+type hostPollObservation struct {
+	ID         string `json:"id"`
+	Holder     string `json:"holder"`
+	LastSeenAt int64  `json:"lastSeenAt,omitempty"`
+	hostPollObservationPayload
 }
 
 // pollOpen: the open parts of a poll body (stores, update) as the host's plain JSON.

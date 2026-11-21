@@ -123,3 +123,12 @@ UPDATE host SET removed_secret_hash=secret_hash, secret_hash=NULL, payload=(payl
 -- name: HostObservations :many
 -- Every host observation in record order; payload holds what the host reported (host_poll.go).
 SELECT id, holder, last_seen_at, payload FROM host_observation ORDER BY seq;
+
+-- name: HostObservationOf :one
+SELECT id, holder, last_seen_at, project_id, payload FROM host_observation WHERE id=$1;
+
+-- name: HostObservationPut :exec
+INSERT INTO host_observation(id, holder, last_seen_at, project_id, payload)
+VALUES (@id, sqlc.narg(holder), sqlc.narg(last_seen_at), sqlc.narg(project_id), @payload)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ holder=excluded.holder, last_seen_at=excluded.last_seen_at, project_id=excluded.project_id;

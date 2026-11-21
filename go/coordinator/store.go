@@ -33,7 +33,7 @@ type Store struct {
 	authWrites     int
 	authGeneration uint64
 	authPeople     map[string]*Person
-	authHosts      map[string][]byte
+	authHosts      map[string]authHost
 }
 
 // Scope: nil is the coordinator's own '*' scope (the owner, hosts).

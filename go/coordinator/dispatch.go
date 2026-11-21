@@ -212,39 +212,22 @@ type dispatchHost struct {
 
 // hostSeen: the fields dispatch reads of a host observation.
 type hostSeen struct {
-	ID             string    `json:"id"`
-	LastSeenAt     float64   `json:"lastSeenAt"`
 	Capabilities   []string  `json:"capabilities"`
 	GitConnections *[]string `json:"gitConnections"`
 	ProjectRoots   *[]string `json:"projectRoots"`
 }
 
-func (o *hostSeen) UnmarshalJSON(b []byte) error {
-	type plain hostSeen
-	return lenientDecode(b, (*plain)(o))
-}
-
-// dispatchAccountRec: a subscription (managed-account record) decoded once for dispatch.
+// dispatchAccountRec: a subscription (managed_account) decoded once for dispatch.
 type dispatchAccountRec struct {
-	ID             string            `json:"id"`
-	Name           *string           `json:"name"`
-	Holder         *string           `json:"holder"`
-	Harness        *string           `json:"harness"`
+	ID             string            `json:"-"`
+	Name           *string           `json:"-"`
+	Holder         *string           `json:"-"`
+	Harness        *string           `json:"-"`
 	SwitchPct      *float64          `json:"switchPct"`
 	Take           json.RawMessage   `json:"take"`
 	Bindings       []json.RawMessage `json:"bindings"`
 	takeProjects   []string
 	parsedBindings []accountBinding
-}
-
-func (a *dispatchAccountRec) UnmarshalJSON(b []byte) error {
-	type plain dispatchAccountRec
-	if err := lenientDecode(b, (*plain)(a)); err != nil {
-		return err
-	}
-	a.takeProjects = takeProjectsOf(a.Take)
-	a.parsedBindings = bindingsIn(a.Bindings)
-	return nil
 }
 
 func loadDispatchContext(q *Request) (*dispatchContext, error) {
@@ -262,23 +245,38 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 		k.hostIDs = append(k.hostIDs, v.ID)
 		k.hosts[v.ID] = v
 	}
-	obs, err := recAll[hostSeen](q, recHostObservation, nil)
+	obs, err := q.db().HostObservations(q.ctx())
 	if err != nil {
 		return nil, err
 	}
-	for _, o := range obs {
-		k.caps[o.ID] = nonNilStrings(o.Capabilities)
-		k.seen[o.ID] = q.app.effectiveHostSeen(o.ID, o.LastSeenAt)
+	for _, r := range obs {
+		var o hostSeen
+		if err := lenientDecode(r.Payload, &o); err != nil {
+			return nil, err
+		}
+		k.caps[r.ID] = nonNilStrings(o.Capabilities)
+		k.seen[r.ID] = q.app.effectiveHostSeen(r.ID, timeMs(r.LastSeenAt))
 		if o.GitConnections != nil {
-			k.conns[o.ID] = nonNilStrings(*o.GitConnections)
+			k.conns[r.ID] = nonNilStrings(*o.GitConnections)
 		}
 		if o.ProjectRoots != nil {
-			k.roots[o.ID] = nonNilStrings(*o.ProjectRoots)
+			k.roots[r.ID] = nonNilStrings(*o.ProjectRoots)
 		}
 	}
-	accounts, err := recAll[dispatchAccountRec](q, recManagedAccount, nil)
+	accountRows, err := q.db().AccountRows(q.ctx())
 	if err != nil {
 		return nil, err
+	}
+	accounts := make([]dispatchAccountRec, 0, len(accountRows))
+	for _, r := range accountRows {
+		var a dispatchAccountRec
+		if err := lenientDecode(r.Payload, &a); err != nil {
+			return nil, err
+		}
+		a.ID, a.Name, a.Holder, a.Harness = r.ID, r.Name, r.Holder, r.Harness
+		a.takeProjects = takeProjectsOf(a.Take)
+		a.parsedBindings = bindingsIn(a.Bindings)
+		accounts = append(accounts, a)
 	}
 	k.accounts = accounts
 	// The dispatch transaction's own connection: a second pool connection, taken while this transaction holds the

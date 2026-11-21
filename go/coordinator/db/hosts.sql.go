@@ -154,6 +154,57 @@ func (q *Queries) HostMove(ctx context.Context, arg HostMoveParams) error {
 	return err
 }
 
+const hostObservationOf = `-- name: HostObservationOf :one
+SELECT id, holder, last_seen_at, project_id, payload FROM host_observation WHERE id=$1
+`
+
+type HostObservationOfRow struct {
+	ID         string
+	Holder     *string
+	LastSeenAt *time.Time
+	ProjectID  *string
+	Payload    []byte
+}
+
+func (q *Queries) HostObservationOf(ctx context.Context, id string) (HostObservationOfRow, error) {
+	row := q.db.QueryRow(ctx, hostObservationOf, id)
+	var i HostObservationOfRow
+	err := row.Scan(
+		&i.ID,
+		&i.Holder,
+		&i.LastSeenAt,
+		&i.ProjectID,
+		&i.Payload,
+	)
+	return i, err
+}
+
+const hostObservationPut = `-- name: HostObservationPut :exec
+INSERT INTO host_observation(id, holder, last_seen_at, project_id, payload)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+ holder=excluded.holder, last_seen_at=excluded.last_seen_at, project_id=excluded.project_id
+`
+
+type HostObservationPutParams struct {
+	ID         string
+	Holder     *string
+	LastSeenAt *time.Time
+	ProjectID  *string
+	Payload    []byte
+}
+
+func (q *Queries) HostObservationPut(ctx context.Context, arg HostObservationPutParams) error {
+	_, err := q.db.Exec(ctx, hostObservationPut,
+		arg.ID,
+		arg.Holder,
+		arg.LastSeenAt,
+		arg.ProjectID,
+		arg.Payload,
+	)
+	return err
+}
+
 const hostObservations = `-- name: HostObservations :many
 SELECT id, holder, last_seen_at, payload FROM host_observation ORDER BY seq
 `

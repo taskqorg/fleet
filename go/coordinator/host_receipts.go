@@ -377,32 +377,25 @@ func agentAccountList(q *Request, project, executionID string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	accounts, err := recAll[rawObject](q, recManagedAccount, nil)
+	accounts, err := accountsAll(q)
 	if err != nil {
 		return nil, err
 	}
 	// agentListedAccount: what a native agent sees of a subscription.
 	type agentListedAccount struct {
-		ID      json.RawMessage `json:"id"`
-		Name    json.RawMessage `json:"name"`
-		Harness json.RawMessage `json:"harness"`
-		Holder  json.RawMessage `json:"holder"`
-		Intake  json.RawMessage `json:"intake"`
+		ID      string          `json:"id"`
+		Name    *string         `json:"name"`
+		Harness *string         `json:"harness"`
+		Holder  *string         `json:"holder"`
+		Intake  *string         `json:"intake"`
 		Plan    json.RawMessage `json:"plan"`
 	}
 	out := []agentListedAccount{}
-	for _, record := range accounts {
-		a := agentView[struct {
-			agentListedAccount
-			Take struct {
-				Projects []string `json:"projects"`
-			} `json:"take"`
-		}](record)
-		holder, _ := jsonText(a.Holder)
-		if holder != e.DirectedBy && !inList(a.Take.Projects, project) {
+	for _, a := range accounts {
+		if deref(a.Holder) != e.DirectedBy && !inList(a.takeProjects(), project) {
 			continue
 		}
-		out = append(out, a.agentListedAccount)
+		out = append(out, agentListedAccount{ID: a.ID, Name: a.Name, Harness: a.Harness, Holder: a.Holder, Intake: a.Intake, Plan: a.Plan})
 	}
 	return struct {
 		Accounts []agentListedAccount `json:"accounts"`
