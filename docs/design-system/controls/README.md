@@ -5,7 +5,9 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | Control | Main inventory need |
 |---|---|
 | [button](button.md) | Every action |
+| [catalogue-tree](catalogue-tree.md) | Planned 1–3 level structural navigator for libraries, suites and runs |
 | [data-list](data-list.md) | Long lists that scroll well |
+| [entity-picker](entity-picker.md) | Planned compact chip + searchable tree picker for entities and variants |
 | [row-menu](row-menu.md) | Row actions on right click, no hover buttons |
 | [selection](selection.md) | Several rows at once: select square, checkbox column, selection bar |
 | [row-pin](row-pin.md) | A pinned row's pin, unpin in one click |
