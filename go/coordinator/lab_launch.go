@@ -464,9 +464,20 @@ func labPendingChecks(q *Request, id string) (map[string]labPending, error) {
 			if !comparable(t) {
 				continue
 			}
-			done := false
-			for _, s := range cur {
-				done = done || strings.HasPrefix(s.Evaluator, "script:") && s.first() == t.ID
+			done := true
+			for _, e := range exp.Evaluators {
+				if e.Kind != "script" {
+					continue
+				}
+				name := e.name()
+				has := false
+				for _, s := range cur {
+					has = has || s.Evaluator == name && s.first() == t.ID
+				}
+				if !has {
+					done = false
+					break
+				}
 			}
 			if done {
 				continue

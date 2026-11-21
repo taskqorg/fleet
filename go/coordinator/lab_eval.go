@@ -434,11 +434,11 @@ func expEvaluate(q *Request, exp *labExperiment, trials, runs []*labRun, current
 					}
 				}
 				rat := fmt.Sprintf("%v of %v checks pass", r.Passed, r.Total)
+				if len(r.Failed) > 0 {
+					rat += " (failed: " + strings.Join(r.Failed, ", ") + ")"
+				}
 				if len(r.ProjectAssessments) > 0 {
 					rat += "; project assessment contract only, see retained artifacts for quality"
-				}
-				if len(r.Failed) > 0 {
-					rat = "failed: " + strings.Join(r.Failed, ", ")
 				}
 				if _, err := scoreInsert(q, labNewScore{ExperimentID: exp.ID, ProjectID: exp.ProjectID, TrialIDs: []string{t.ID}, Evaluator: name,
 					EvaluatorVersion: sha256hex(jsonBytes(full.Checks))[:16], Form: e.Form, Value: value, Rationale: &rat}); err != nil {

@@ -16,7 +16,7 @@
    {
     "kind": "script",
     "ref": "example.checks",
-    "metric": "pass_fail"
+    "metric": "metric"
    }
   ],
   "lab_fit": "work",
@@ -44,7 +44,7 @@
    {
     "kind": "script",
     "ref": "example.checks",
-    "metric": "pass_fail"
+    "metric": "metric"
    }
   ],
   "lab_fit": "work",
@@ -72,7 +72,7 @@
    {
     "kind": "script",
     "ref": "example.checks",
-    "metric": "pass_fail"
+    "metric": "metric"
    }
   ],
   "lab_fit": "work",
@@ -100,7 +100,7 @@
    {
     "kind": "script",
     "ref": "example.checks",
-    "metric": "pass_fail"
+    "metric": "metric"
    }
   ],
   "lab_fit": "work",
@@ -128,7 +128,7 @@
    {
     "kind": "script",
     "ref": "example.checks",
-    "metric": "pass_fail"
+    "metric": "metric"
    }
   ],
   "lab_fit": "work",

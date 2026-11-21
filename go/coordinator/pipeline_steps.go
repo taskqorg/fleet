@@ -145,11 +145,51 @@ func pipelineGateway(ctx context.Context, a *App, row, token, connection, tool s
 	return line
 }
 
-// pipelineNative: a step's own execution (an agent run or host job) as the runner reads it.
-type pipelineNative struct {
-	State       string          `json:"state"`
-	Observation string          `json:"observation"`
-	Error       json.RawMessage `json:"error"`
+const (
+	stepProblemDetailMax = 180
+	stepProblemMax       = 220
+)
+
+func stepProblemWithDetail(base, detail string) string {
+	d := compactProblemDetail(detail, stepProblemDetailMax)
+	if d == "" || d == base || strings.HasSuffix(base, ":"+d) {
+		return compactProblemDetail(base, stepProblemMax)
+	}
+	return compactProblemDetail(base+": "+d, stepProblemMax)
+}
+
+func nativeStepFailure(state, obs, nativeProblem string, errRaw json.RawMessage, fallbackEventProblem string) (string, string) {
+	why := pipelineRuleOf(errRaw)
+	errStr, _ := jsonString(errRaw)
+	whyMsg, _ := jsonString(why["message"])
+	if state == "cancelled" {
+		return "step:cancelled", firstString(whyMsg, errStr, "Step execution cancelled")
+	}
+	code := "failed"
+	if why != nil && !isNull(why["code"]) {
+		if c := strings.TrimSpace(fmt.Sprint(rawAny(why["code"]))); c != "" {
+			code = c
+		}
+	}
+	detail := firstString(strings.TrimSpace(nativeProblem), whyMsg, errStr, strings.TrimSpace(fallbackEventProblem))
+	msg := compactProblemDetail(firstString(whyMsg, errStr, strings.TrimSpace(nativeProblem), strings.TrimSpace(fallbackEventProblem), "Step execution "+state), 500)
+
+	if np := strings.TrimSpace(nativeProblem); strings.HasPrefix(np, "infra:") || strings.HasPrefix(np, "unknown:") || strings.HasPrefix(np, "step:") {
+		if obs == "unconfirmed" && !strings.HasPrefix(np, "unknown:") {
+			_, rest, _ := strings.Cut(np, ":")
+			return compactProblemDetail("unknown:"+rest, stepProblemMax), msg
+		}
+		return compactProblemDetail(np, stepProblemMax), msg
+	}
+
+	prefix := "step:"
+	switch {
+	case obs == "unconfirmed":
+		prefix = "unknown:"
+	case infraCode.MatchString(code):
+		prefix = "infra:"
+	}
+	return stepProblemWithDetail(prefix+code, detail), msg
 }
 
 // pipelineStepAt moves step i of a running run: a preparing step leaves its inputs to materialize; a running api step
@@ -218,29 +258,38 @@ func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run *runRecord, i in
 		return nil
 	}
 	// Agent or script step running: wait for its execution.
-	e, err := executionMaybeAs[pipelineNative](q, s.ExecutionID)
+	execRow, err := q.db().ExecutionByID(q.ctx(), s.ExecutionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pipelineLater(q, runID)
+	}
 	if err != nil {
 		return err
 	}
-	if e == nil || !executionEnds(e.State) {
+	eState, eObs := string(execRow.State), string(execRow.Observation)
+	if !executionEnds(eState) {
 		return pipelineLater(q, runID) // an unconfirmed running state is not final: the host may still report the real outcome
 	}
-	if st := e.State; st != "succeeded" {
-		problem, why := "step:cancelled", pipelineRuleOf(e.Error)
-		if st != "cancelled" {
-			code := "failed"
-			if !isNull(why["code"]) {
-				code = fmt.Sprint(rawAny(why["code"]))
+	if eState != "succeeded" {
+		data, err := recordRaw(execRow.Data)
+		if err != nil {
+			return err
+		}
+		nativeProblem := deref(execRow.Problem)
+		errRaw := data["error"]
+		var eventDetail string
+		if eState != "cancelled" && nativeProblem == "" && isNull(errRaw) {
+			evs, err := executionEventRecords(q, s.ExecutionID)
+			if err != nil {
+				return err
 			}
-			problem = "step:" + code
-			if e.Observation == "unconfirmed" { // the host lost the step: its outcome is unknown
-				problem = "unknown:" + code
+			for _, ev := range evs {
+				if p := eventProblem(ev.text("type"), ev.object("data")); p != "" {
+					eventDetail = p
+					break
+				}
 			}
 		}
-		msg, _ := jsonString(why["message"])
-		if msg == "" {
-			msg = "Step execution " + st
-		}
+		problem, msg := nativeStepFailure(eState, eObs, nativeProblem, errRaw, eventDetail)
 		return run.failStep(q, i, problem, msg)
 	}
 	pending, err := q.db().PipelinePendingArtifacts(q.ctx(), &s.ExecutionID)
@@ -282,7 +331,7 @@ func pipelinePrepared(q *Request, c *kitClaim, run *runRecord, i int, prepared *
 	s, def := &run.Steps[i], run.def(i)
 	kind, connection, row := def.Kind, def.Connection, run.row(i)
 	if inputsErr != nil {
-		return run.failStep(q, i, "infra:inputs", inputsErr.Error())
+		return run.failStep(q, i, stepProblemWithDetail("infra:inputs", inputsErr.Error()), inputsErr.Error())
 	}
 	outputs := run.outputs(i)
 	freezePipelineInputs(run, i, prepared)
@@ -400,7 +449,7 @@ func pipelinePrepared(q *Request, c *kitClaim, run *runRecord, i int, prepared *
 	s.ExecutionID = ""
 	run.Plan.Revision = revision
 	run.entry(i).Dispatch = dispatchBefore
-	return run.failStep(q, i, problem, msg)
+	return run.failStep(q, i, stepProblemWithDetail(problem, msg), msg)
 }
 
 // pipelineSubmit hands an api step's call off (claimPipelineAPI, committed with this step) and leaves the call.
