@@ -18,6 +18,7 @@ import { listKey, toPageParams, type View } from '../../packages/view-url/view-u
 import { withFocus, prefsRead } from './prefs.ts';
 
 export type Freshness = 'current' | 'updating' | 'offline' | 'signed-out';
+const errMsg = (e: unknown) => e instanceof Error ? e.message : typeof e === 'object' && e !== null && 'message' in e && typeof (e as { message: unknown }).message === 'string' ? (e as { message: string }).message : String(e);
 export const freshness = (restored: boolean): Freshness => signedOut.value ? 'signed-out' : !online.value ? 'offline' : restored ? 'updating' : 'current';
 
 export type Kind = 'tasks' | 'sessions';
@@ -114,10 +115,10 @@ export async function loadList(kind: Kind, key: string, view: View, abort?: Abor
     const rows = rowsOf(r);
     setList(key, e, { ...idsAndKeys(rows), counts: r.counts, total: r.total, groups: 'groups' in r ? r.groups : [], nextAfter: r.nextAfter, at: Date.now(), restored: false, error: null });
     e.pageError = false; putRows(rows, from); e.seq = from; persist(key, e); pruneRecords();
-  } catch (err: any) {
+  } catch (err) {
     if (err instanceof AccessChanged || !isAccessCurrent(generation) || err instanceof OpError && err.message === 'aborted') return;
-    const s = e.state.value; e.pageError = false; // the load's error now; a page must not clear it
-    setList(key, e, s ? { ...s, error: err.message } : { ids: [], keys: {}, counts: {}, total: 0, groups: [], nextAfter: null, at: 0, restored: false, error: err.message });
+    const s = e.state.value, msg = errMsg(err); e.pageError = false; // the load's error now; a page must not clear it
+    setList(key, e, s ? { ...s, error: msg } : { ids: [], keys: {}, counts: {}, total: 0, groups: [], nextAfter: null, at: 0, restored: false, error: msg });
     if (!s?.ids.length) restore(key, e); // offline: show what was stored, marked as not loaded
   } finally {
     e.loading--; e.busy.value = e.loading > 0;
@@ -145,7 +146,7 @@ export async function nextPage(key: string) {
     setList(key, e, { ...now, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter, error: e.pageError ? null : now.error });
     e.pageError = false;
     putRows(rows, from); persist(key, e);
-  } catch (err: any) {
+  } catch (err) {
     // A reload got there first, or is running and will replace the cursor.
     if (!isAccessCurrent(generation) || !e.state.value || e.state.value.nextAfter !== st.nextAfter || e.loading) return;
     if (err instanceof OpError && err.status === 400 && !e.cursorReset) {
@@ -155,7 +156,7 @@ export async function nextPage(key: string) {
       if (fresh && !fresh.error && fresh.nextAfter && fresh.nextAfter !== st.nextAfter) { e.paging = false; await nextPage(key); }
       return;
     }
-    setList(key, e, { ...e.state.value, error: err.message }); e.pageError = true;
+    setList(key, e, { ...e.state.value, error: errMsg(err) }); e.pageError = true;
   } finally { e.paging = false; }
 }
 
@@ -264,10 +265,10 @@ async function startDoc(name: string, f: DocFlight) {
     const d = await reader.fetch();
     // A later read's failure stays visible over this older answer.
     if (newest()) { f.shown = read; s.value = { data: d, restored: false, error: f.failed > read ? s.value?.error ?? null : null }; save('doc:' + name, d, currentCursor()); }
-  } catch (e: any) {
+  } catch (e) {
     if (!newest() || read < f.failed) return; // newer data or a newer failure is already shown
     f.failed = read;
-    s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e?.message ?? String(e), status: e instanceof OpError ? e.status : null };
+    s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: errMsg(e), status: e instanceof OpError ? e.status : null };
     if (s.value.data === null) restoreDoc(name, f); // offline: show what was stored
   }
 }
@@ -406,7 +407,7 @@ type PreparedReply = ProjectResourcesReply | ProjectResourceItemsReply;
 export type PreparedState<T> = { data: T | null; progress: ResourceProgress | null; error: string | null; restored: boolean; state: 'idle' | 'loading' | 'ready' | 'preparing' | 'error' | 'disposed' };
 type PreparedFetcher<T> = (context: { signal: AbortSignal; knownVersion?: string }) => Promise<T>;
 type PreparedEntry<T> = { value: Signal<PreparedState<T>>; fetcher: PreparedFetcher<T>; subscribers: number; visible: number; controller: AbortController | null; request: number; pending: boolean; version?: string; timer?: ReturnType<typeof setInterval>; disposed: boolean; refresh(reason?: string): void };
-const prepared = new Map<string, PreparedEntry<any>>();
+const prepared = new Map<string, PreparedEntry<PreparedReply>>();
 export function preparedKey(operation: 'project_resources' | 'project_resource_items', projectId: string, request: Omit<ProjectResourceItemsRequest, 'projectId' | 'knownVersion'> | null = null) {
   const r = request;
   // Fixed fields; packed positions/cursors remain exact opaque server strings.
@@ -420,7 +421,7 @@ export function olderPreparedVersion(candidate: string, current?: string) {
   const a = versionParts(candidate), b = versionParts(current); return a.epoch === b.epoch && a.revision < b.revision;
 }
 export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: PreparedFetcher<T>, visible = true, interval = 2000) {
-  let entry = prepared.get(key) as PreparedEntry<T> | undefined;
+  let entry = prepared.get(key) as unknown as PreparedEntry<T> | undefined;
   if (!entry) {
     const generation = accessGeneration();
     const e: PreparedEntry<T> = { value: signal({ data: null, progress: null, error: null, restored: false, state: 'idle' }), fetcher, subscribers: 0, visible: 0, controller: null, request: 0, pending: false, disposed: false,
@@ -446,15 +447,15 @@ export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: P
               e.version = result.version ?? undefined;
               e.value.value = { data: result, progress: result.progress, error: null, restored: false, state: 'ready' };
             }
-          } catch (error: any) {
-            if (!e.disposed && !c.signal.aborted && isAccessCurrent(generation)) e.value.value = { ...e.value.value, error: error.message, state: 'error' };
+          } catch (error) {
+            if (!e.disposed && !c.signal.aborted && isAccessCurrent(generation)) e.value.value = { ...e.value.value, error: errMsg(error), state: 'error' };
           } finally {
             if (e.controller === c) e.controller = null;
             if (e.pending && !e.disposed) { e.pending = false; e.refresh('pending'); }
           }
         })();
       } };
-    prepared.set(key, entry = e);
+    prepared.set(key, (entry = e) as unknown as PreparedEntry<PreparedReply>);
   }
   const e = entry; e.fetcher = fetcher; e.subscribers++; if (visible) e.visible++;
   if (!e.timer && e.visible) e.timer = setInterval(() => { if (e.visible && (typeof document === 'undefined' || document.visibilityState === 'visible')) e.refresh('interval'); }, Math.min(interval, 2000));

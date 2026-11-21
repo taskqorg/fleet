@@ -25,3 +25,4 @@
 - Run: `pnpm run check:design`
 - Build the book: `pnpm run book`
 - Type-check: `pnpm run typecheck`
+- S9 AST design rules (`UI-ANY`, `UI-VOCAB` over `src/`): `node --test tests/ui/design-rules.test.ts` ([`design-rules.test.ts`](../../tests/ui/design-rules.test.ts))

@@ -29,6 +29,7 @@
 ## Verification
 
 - Run: `pnpm run typecheck`
+- S9 AST design rules (`UI-ANY`, `UI-VOCAB` over `src/`): `node --test tests/ui/design-rules.test.ts` ([`design-rules.test.ts`](../../../tests/ui/design-rules.test.ts))
 - Design warnings: `pnpm run check:design`
 
 `VirtualListHandle` exposes `getAnchor()` and `restoreAnchor(key, offsetPx)` in addition to key jumps; `fill` makes it the owning column's only scroller. `Composer` accepts an injected `draftPersistence` adapter and is memory-only without one; completion clears only unchanged original text. `Composer` is one box ([composer](../../../docs/design-system/controls/composer.md)): attachment chips (`attachments`, `onAttach` from the `+` picker and paste, `onRemoveAttachment`), the target `chips`, and one Send button that is Stop with `onStop` while the box is empty; the app uploads and owns the files. `DropZone` overlays a drop highlight over its children and hands dropped files over; `MessageFiles` (used by `TextRow` through `Thread.resultSrc`) shows a message's files. `StatusLine` reserves two lines for visible asynchronous feedback without moving adjacent controls.

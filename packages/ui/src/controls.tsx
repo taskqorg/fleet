@@ -449,7 +449,7 @@ export function ArtifactView({ a, src }: { a: ArtifactMeta; src: string }) {
     try { const r = await fetch(src, { headers: { range: `bytes=${next}-${Math.min(a.size, next + PAGE_BYTES) - 1}` }, credentials: 'same-origin' });
       if (!r.ok) throw new Error(`${r.status}`); const b = new Uint8Array(await r.arrayBuffer());
       setText(t => t + decoder.current.decode(b, { stream: next + b.length < a.size })); /* one decoder per artifact: a character split across pages stays whole */ setNext(n => n + b.length); setErr(null); }
-    catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   useEffect(() => { setText(''); setNext(0); setMode(fmt ? modeOf(fmt) : 'source'); decoder.current = new TextDecoder(); }, [a.id]);
   useEffect(() => { if (kind === 'text' && next === 0 && a.size > 0) more(); }, [a.id, next]);

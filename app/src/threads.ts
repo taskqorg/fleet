@@ -89,7 +89,7 @@ export function useThread(key: ThreadKey | null) {
     const g = gen.current;
     try { const p = await op('thread_entries', { key: ref.current?.key ?? key, resolve: true, limit: PAGE, ...args }); if (g !== gen.current) return;
       if (p.key) follow.current.task = 'task' in p.key ? p.key.task : undefined; for (const s of p.sessionIds ?? []) follow.current.sessions.add(s); place(p as Page); setError(null); await catchUp(p.feedCursor, g); }
-    catch (e: any) { if (g === gen.current) setError(e.message); }
+    catch (e) { if (g === gen.current) setError(e instanceof Error ? e.message : String(e)); }
   };
   const newest = () => { gen.current++; return load({}, p => setWin(fromPage(p))); };
   useEffect(() => {

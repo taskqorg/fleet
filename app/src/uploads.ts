@@ -8,8 +8,10 @@ import { op, OpError } from './api.ts';
 export type UploadTarget = { sessionId?: string; projectId?: string | null };
 type Item = ComposerAttachment & { artifactId?: string; done: Promise<string>; abort: AbortController };
 
+type PartBody = { id?: string; received?: number; finishing?: boolean; message?: string } | null;
+
 /** PUT one part; progress reports the bytes of this part sent so far. */
-function putPart(url: string, body: Blob, range: string, signal: AbortSignal, progress: (sent: number) => void): Promise<{ status: number; body: any }> {
+function putPart(url: string, body: Blob, range: string, signal: AbortSignal, progress: (sent: number) => void): Promise<{ status: number; body: PartBody }> {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
     x.open('PUT', url);
@@ -17,7 +19,7 @@ function putPart(url: string, body: Blob, range: string, signal: AbortSignal, pr
     // One listener per part, removed when the part ends, so a long upload keeps no finished requests alive.
     const stop = () => x.abort(), done = () => signal.removeEventListener('abort', stop);
     x.upload.onprogress = e => progress(e.loaded);
-    x.onload = () => { done(); let b: any = null; try { b = JSON.parse(x.responseText); } catch { /* not JSON: the status says enough */ } resolve({ status: x.status, body: b }); };
+    x.onload = () => { done(); let b: PartBody = null; try { const parsed: unknown = JSON.parse(x.responseText); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) b = parsed as PartBody; } catch { /* not JSON: the status says enough */ } resolve({ status: x.status, body: b }); };
     x.onerror = () => { done(); resolve({ status: 0, body: null }); }; // a dropped connection: sent again, resuming at the server's received
     x.onabort = () => { done(); reject(new OpError('aborted', 0)); };
     signal.addEventListener('abort', stop, { once: true });
@@ -59,7 +61,7 @@ export function uploadFile(file: File, target: UploadTarget, signal: AbortSignal
       const probe = first >= file.size, last = Math.min(file.size, first + part) - 1;
       const range = probe ? `bytes */${file.size}` : `bytes ${first}-${last}/${file.size}`;
       const r = await putPart(begun.url, probe ? new Blob([]) : file.slice(first, last + 1), range, signal, sent => progress(file.size ? Math.min(1, (first + sent) / file.size) : 1));
-      if (r.status === 200 && r.body?.id) { progress(1); return r.body.id as string; }
+      if (r.status === 200 && r.body?.id) { progress(1); return r.body.id; }
       const received = r.body?.received;
       if ((r.status === 200 || r.status === 409) && typeof received === 'number') {
         // Progress resets the counters; the same answer again (a cut-off part, a finish running) waits a little longer.
