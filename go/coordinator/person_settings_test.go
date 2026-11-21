@@ -7,7 +7,7 @@ import "testing"
 // stay where they are. Risk: limit about to reset is wasted while a candidate with a later reset is used.
 func TestSoonestResetOrder(t *testing.T) {
 	pf := func(v float64) *float64 { return &v }
-	sub := func(id string) rawObject { return openOf(doc{"id": id}) }
+	sub := func(id string) *candidateSubscription { return &candidateSubscription{ID: id} }
 	cs := []*candidate{{Subscription: sub("late")}, {Subscription: sub("skip"), Skipped: "offline"}, {Subscription: sub("full")}, {Subscription: sub("soon")}, {Subscription: sub("none")}}
 	readings := map[string][]Reading{
 		"late": {{Period: "weekly", Pct: pf(10), ResetsAt: pf(9e12), State: "known"}},
@@ -17,7 +17,7 @@ func TestSoonestResetOrder(t *testing.T) {
 	soonestReset(cs, readings)
 	got := ""
 	for _, c := range cs {
-		got += astr(c.Subscription["id"]) + " "
+		got += c.Subscription.ID + " "
 	}
 	if got != "soon skip late full none " {
 		t.Fatal(got)
@@ -28,12 +28,13 @@ func TestSoonestResetOrder(t *testing.T) {
 // per-model weekly window resets sooner. Risk: a used-up subscription is ranked first.
 func TestSoonestResetSkipsUsedUpWeekly(t *testing.T) {
 	pf := func(v float64) *float64 { return &v }
-	cs := []*candidate{{Subscription: openOf(doc{"id": "a"})}, {Subscription: openOf(doc{"id": "b"})}}
+	sub := func(id string) *candidateSubscription { return &candidateSubscription{ID: id} }
+	cs := []*candidate{{Subscription: sub("a")}, {Subscription: sub("b")}}
 	soonestReset(cs, map[string][]Reading{
 		"a": {{Period: "weekly", Pct: pf(100), ResetsAt: pf(5e12), State: "known"}, {Period: "weekly-opus", Pct: pf(50), ResetsAt: pf(1e12), State: "known"}},
 		"b": {{Period: "weekly", Pct: pf(10), ResetsAt: pf(3e12), State: "known"}},
 	})
-	if astr(cs[0].Subscription["id"]) != "b" {
-		t.Fatal(astr(cs[0].Subscription["id"]))
+	if cs[0].Subscription.ID != "b" {
+		t.Fatal(cs[0].Subscription.ID)
 	}
 }

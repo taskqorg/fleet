@@ -515,7 +515,10 @@ func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 func soonestReset(cs []*candidate, readings map[string][]Reading) {
 	key := func(c *candidate) float64 {
 		best := -1.0
-		id := c.Subscription.text("id")
+		var id string
+		if c.Subscription != nil {
+			id = c.Subscription.ID
+		}
 		list := readings[id]
 		for _, r := range list {
 			if r.Period == "weekly" && r.State == "known" && r.Pct != nil && *r.Pct >= 100 {
