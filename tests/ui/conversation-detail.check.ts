@@ -27,9 +27,9 @@ export async function checkConversationDetail(browser: Browser, origin: string, 
     await p.goto(`${origin}/conversations/${S}`);
     const title = p.locator('.detail-h .conv-title');
     check(await until(async () => (await title.textContent()) === TITLE), `${width}: the header shows the conversation title`);
-    // Title first, then the code and the profile, muted (the code is a copy icon: a conversation has no human code here).
-    const order = await p.locator('.detail-h').evaluate(h => [...h.children].map(c => c.classList.contains('conv-title') ? 'title' : c.matches('[data-ui="entity-code"], .ec-reference') ? 'code' : c.classList.contains('conv-profile') ? 'profile' : '').filter(Boolean).join(' '));
-    check(order === 'title code profile', `${width}: header order title, code, profile (${order})`);
+    // Title first, then the code (the profile chip lives in the composer below).
+    const order = await p.locator('.detail-h').evaluate(h => [...h.children].map(c => c.classList.contains('conv-title') ? 'title' : c.matches('[data-ui="entity-code"], .ec-reference') ? 'code' : '').filter(Boolean).join(' '));
+    check(order === 'title code', `${width}: header order title, code (${order})`);
     const overflow = await p.locator('.detail-h').evaluate(h => h.scrollWidth - h.clientWidth);
     check(overflow <= 1, `${width}: the header fits its width (${overflow} px over)`);
     if (width === 390) {
