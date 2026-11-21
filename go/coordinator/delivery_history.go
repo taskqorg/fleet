@@ -287,20 +287,9 @@ const dhRetries = 5
 // the backfill's hundreds of reads run side by side, and each batch is stored before the next.
 const dhBatch, dhWorkers = 32, 8
 
-// dhParallel runs fn for 0..n-1, dhWorkers at a time, and returns the results and errors by index.
+// dhParallel runs fn for 0..n-1, dhWorkers at a time (parallel, background.go), and returns the results and errors by index.
 func dhParallel[T any](n int, fn func(i int) (T, error)) ([]T, []error) {
-	out, errs := make([]T, n), make([]error, n)
-	sem, wg := make(chan struct{}, dhWorkers), sync.WaitGroup{}
-	for i := range n {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer func() { <-sem; wg.Done() }()
-			out[i], errs[i] = fn(i)
-		}()
-	}
-	wg.Wait()
-	return out, errs
+	return parallel(n, dhWorkers, fn)
 }
 
 type dhRun struct {

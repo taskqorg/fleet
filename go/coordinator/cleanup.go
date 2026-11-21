@@ -231,6 +231,7 @@ var referenceMap = []objectRef{
 	{table: "pipeline_work", column: "run_id", mode: refNone},
 	{table: "lab_work", column: "experiment_id", mode: refNone},
 	{table: "delegation_source_work", column: "delegation_id", mode: refNone},
+	{table: "upload_finish_work", column: "upload_id", mode: refNone}, // goes with its upload (foreign key)
 	// A pipeline run's plan (migration 81, pipelines.go): it goes with its run by foreign key; the ids an entry names
 	// (its step, the executions, command, host and claim of its dispatch, its step's native execution, output artifact
 	// and provider job) are evidence of the run, not references.

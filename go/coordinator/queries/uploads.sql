@@ -36,3 +36,17 @@ INSERT INTO artifact_copy(artifact_id, store_id, project_id, state, verified_at)
 -- name: UploadSessionProject :one
 -- The project of the session an upload attaches to (its record's projectId); no row when the caller does not see it.
 SELECT project_id, (payload->'projectId')::jsonb AS payload_project FROM session WHERE id = @id;
+
+-- name: UploadFinishWorkDue :many
+-- The work kit's due background finishes (upload_work.go).
+SELECT upload_id, attempts FROM upload_finish_work WHERE next_attempt_at <= sqlc.arg(now)::pg_catalog.timestamptz ORDER BY next_attempt_at, upload_id LIMIT sqlc.arg(lim);
+
+-- name: UploadFinishWorkAdd :exec
+INSERT INTO upload_finish_work(upload_id) VALUES (@upload_id) ON CONFLICT DO NOTHING;
+
+-- name: UploadFinishing :one
+-- The upload's finish runs in the background (its work row is there).
+SELECT EXISTS (SELECT 1 FROM upload_finish_work WHERE upload_id = @upload_id);
+
+-- name: UploadFinishWorkDelete :exec
+DELETE FROM upload_finish_work WHERE upload_id = @upload_id;

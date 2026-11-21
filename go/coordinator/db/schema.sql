@@ -1062,6 +1062,12 @@ CREATE TABLE upload (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE upload_finish_work (
+  "upload_id" text NOT NULL,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text
+);
 CREATE TABLE wake_outbox (
   "wake_id" uuid NOT NULL,
   "source_xid" xid8 NOT NULL,

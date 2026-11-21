@@ -1527,6 +1527,13 @@ type Upload struct {
 	TombstonedAt *time.Time
 }
 
+type UploadFinishWork struct {
+	UploadID      string
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     *string
+}
+
 type WakeOutbox struct {
 	WakeID    pgtype.UUID
 	SourceXid pgtype.Uint64

@@ -172,7 +172,7 @@ func designRulesAllowlist(found map[string]map[string][]token.Pos) string {
 
 // The S5/S6 checks of the work kit and its queues (DESIGN_RULES.md). designKitAreas: the file-name prefixes of the
 // areas whose item work runs on the kit; an area moving onto the kit adds its prefix.
-var designKitAreas = []string{"resource_", "pipeline_work", "delegation_work"}
+var designKitAreas = []string{"resource_", "pipeline_work", "delegation_work", "upload_work"}
 
 func designKitArea(name string) bool {
 	for _, p := range designKitAreas {
@@ -627,7 +627,7 @@ func TestDesignRulesList(t *testing.T) {
 // entries stay.
 var designRulesOwned = map[string]map[string]string{
 	"background.go": {
-		"R-GO": "S6: every()/everyWake() is the one periodic-pass loop (everyWake also runs on a wake channel and at start), coalesced() the one runner of a coalesced after-commit effect (the gateway snapshot) and untilDone() the one retried start-up step (the span schema)",
+		"R-GO": "S6: every()/everyWake() is the one periodic-pass loop (everyWake also runs on a wake channel and at start), coalesced() the one runner of a coalesced after-commit effect (the gateway snapshot), untilDone() the one retried start-up step (the span schema), parallel() the one bounded fan-out inside a call (Delivery's side-by-side gateway reads) and retryCall() the one bounded retry of a remote call (an object store request)",
 	},
 	"main.go": {
 		"R-GO": "S6: HTTP plumbing: the signal handler that stops the long polls and the stream and drains the server",
@@ -656,12 +656,9 @@ var designRulesOwned = map[string]map[string]string{
 // designRulesLegacy: file -> rules it may still break, generated from the tree
 // at stage 0. Entries are only removed.
 var designRulesLegacy = map[string]map[string]bool{
-	"delivery_history.go": {"R-GO": true},
-	"json.go":             {"R-MAP": true},
-	"main.go":             {"R-MAP": true},
-	"records.go":          {"R-MAP": true, "R-SQL": true},
-	"registry.go":         {"R-MAP": true},
-	"s3.go":               {"R-GO": true},
-	"sessions.go":         {"R-MAP": true, "R-SQL": true},
-	"uploads.go":          {"R-GO": true},
+	"json.go":     {"R-MAP": true},
+	"main.go":     {"R-MAP": true},
+	"records.go":  {"R-MAP": true, "R-SQL": true},
+	"registry.go": {"R-MAP": true},
+	"sessions.go": {"R-MAP": true, "R-SQL": true},
 }
