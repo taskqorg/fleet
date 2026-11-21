@@ -68,7 +68,7 @@ type connectionView struct {
 	apiConnection
 	Keys    []connKey         `json:"keys"`
 	Spend   connSpend         `json:"spend"`
-	History []json.RawMessage `json:"history"`
+	History []json.RawMessage `json:"history,omitempty"`
 }
 
 type connSpend struct {
@@ -81,28 +81,21 @@ func connectionsList(q *Request) (any, error) {
 		return nil, err
 	}
 	sort.SliceStable(keys, func(i, j int) bool { return keys[i].AddedAt < keys[j].AddedAt })
-	hist, err := q.db().AuditOfKind(q.ctx(), "connection")
-	if err != nil {
-		return nil, err
-	}
 	connections, err := apiConnectionAll(q)
 	if err != nil {
 		return nil, err
 	}
-	out := []connectionView{}
+	keysByConn := make(map[string][]connKey, len(connections))
+	for _, k := range keys {
+		keysByConn[k.ConnectionID] = append(keysByConn[k.ConnectionID], k)
+	}
+	out := make([]connectionView, 0, len(connections))
 	for _, c := range connections {
-		v := connectionView{apiConnection: c, Keys: []connKey{}, Spend: connSpend{Basis: "unavailable"}, History: []json.RawMessage{}}
-		for _, k := range keys {
-			if k.ConnectionID == c.Name {
-				v.Keys = append(v.Keys, k)
-			}
+		ks := keysByConn[c.Name]
+		if ks == nil {
+			ks = []connKey{}
 		}
-		for _, h := range hist {
-			if h.Target == "connection:"+c.Name {
-				v.History = append(v.History, json.RawMessage(h.Data))
-			}
-		}
-		out = append(out, v)
+		out = append(out, connectionView{apiConnection: c, Keys: ks, Spend: connSpend{Basis: "unavailable"}})
 	}
 	return struct {
 		Providers   map[string]json.RawMessage `json:"providers"`

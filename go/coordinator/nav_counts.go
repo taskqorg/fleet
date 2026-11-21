@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -234,13 +235,18 @@ func navCount(q *Request, section string, v navView, saved *navSaved, s navScope
 		return n.InFocus, n.Total - n.InFocus, err
 	case "hosts":
 		// Hosts have no project: one number. Offline is the Hosts list's own judgement: not seen within staleAfterMs.
-		r, err := hostsListReply(q, false)
+		rows, err := q.db().HostLastSeen(q.ctx())
 		if err != nil {
 			return 0, 0, err
 		}
 		n, now := int64(0), float64(nowMs())
-		for _, h := range r.Hosts {
-			if h.LastSeenAt == nil || *h.LastSeenAt <= 0 || now-*h.LastSeenAt >= hostStaleMs {
+		for _, r := range rows {
+			var dbSeen float64
+			if r.LastSeenAt != nil {
+				dbSeen = math.Round(float64(r.LastSeenAt.UnixMicro()) / 1000)
+			}
+			seen := q.app.effectiveHostSeen(r.ID, dbSeen)
+			if seen <= 0 || now-seen >= hostStaleMs {
 				n++
 			}
 		}
@@ -262,9 +268,35 @@ func navDelivery(q *Request, v navView, saved *navSaved, s navScope) (int64, int
 	if saved != nil {
 		text = saved.Q
 	}
+	parsed := parseSearchQuery(strings.ToLower(text))
+	words := strings.Fields(parsed.text)
 	match := func(it contract.DeliveryItem) bool {
-		return (len(v.states) == 0 || slices.Contains(v.states, string(it.Stage))) &&
-			matchSearch(text, fmt.Sprintf("%s #%d %s", it.Title, it.Number, it.Repo), map[string]string{"state": string(it.Stage), "project": it.ProjectId})
+		if len(v.states) > 0 && !slices.Contains(v.states, string(it.Stage)) {
+			return false
+		}
+		if len(words) > 0 {
+			hay := strings.ToLower(fmt.Sprintf("%s #%d %s", it.Title, it.Number, it.Repo))
+			for _, w := range words {
+				if !strings.Contains(hay, w) {
+					return false
+				}
+			}
+		}
+		for k, want := range parsed.fields {
+			var got string
+			switch k {
+			case "state":
+				got = string(it.Stage)
+			case "project":
+				got = it.ProjectId
+			default:
+				return false
+			}
+			if got == "" || (k == "state" && strings.ToLower(got) != want) || (k != "state" && !strings.Contains(strings.ToLower(got), want)) {
+				return false
+			}
+		}
+		return true
 	}
 	// Two passes, as the list reads them: an item names the first listing project the caller sees, which the focus changes.
 	count := func(may func(string) bool) (n int64) {
@@ -281,21 +313,4 @@ func navDelivery(q *Request, v navView, saved *navSaved, s navScope) (int64, int
 	}
 	in := count(func(p string) bool { return may(p) && s.inFocus(p) })
 	return in, max(0, all-in), nil
-}
-
-// matchSearch: the list search syntax for rows filtered in the browser (packages/ui/src/search.ts matchSearch): every
-// word in text; agent, host and project terms contained in that field, state equal; a term for a field the row lacks
-// matches nothing.
-func matchSearch(query, text string, fields map[string]string) bool {
-	s := parseSearchQuery(strings.ToLower(query))
-	if !hasText(text, s.text) {
-		return false
-	}
-	for k, want := range s.fields {
-		got, ok := fields[k]
-		if !ok || got == "" || (k == "state" && strings.ToLower(got) != want) || (k != "state" && !strings.Contains(strings.ToLower(got), want)) {
-			return false
-		}
-	}
-	return true
 }

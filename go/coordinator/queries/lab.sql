@@ -94,7 +94,7 @@ SELECT * FROM experiment WHERE id=sqlc.arg(id) FOR UPDATE;
 SELECT * FROM experiment WHERE id=sqlc.arg(id) FOR SHARE;
 
 -- name: LabExperiments :many
-SELECT * FROM experiment ORDER BY seq DESC;
+SELECT * FROM experiment ORDER BY seq DESC LIMIT sqlc.narg(lim)::bigint;
 
 -- name: LabExperimentInsert :exec
 INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets,goal,hypothesis,decision_rule,lab_group,strategy,requested_by)

@@ -72,16 +72,11 @@ func systemChanges(q *Request, _ *contract.SystemChangesRequest) (contract.Syste
 		return out.StoreOnly[i].Id < out.StoreOnly[j].Id
 	})
 
-	vers, err := systemVersions(q)
-	if err != nil {
-		return out, err
-	}
-	out.Versions = vers
-
 	hosts, err := hostsListReply(q, false)
 	if err != nil {
 		return out, err
 	}
+	out.Versions = systemVersionsFromHosts(hosts)
 	for _, h := range hosts.Hosts {
 		for _, hv := range h.HarnessVersions {
 			if hv.Expected == "" {

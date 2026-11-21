@@ -914,6 +914,86 @@ func (q *Queries) ArtStartPayloads(ctx context.Context, arg ArtStartPayloadsPara
 	return items, nil
 }
 
+const artStateCounts = `-- name: ArtStateCounts :many
+SELECT state, count(*)::bigint AS n FROM artifact
+WHERE tombstoned_at IS NULL
+ AND ($1::text IS NULL OR execution_id=$1::text)
+ AND ($2::text IS NULL OR task_id=$2::text)
+ AND ($3::text IS NULL OR project_id=$3::text)
+ AND ($4::text IS NULL OR media_type=$4::text)
+ AND ($5::text IS NULL OR media_type LIKE $5::text)
+ AND ($6::text[] IS NULL OR project_id=ANY($6::text[]) OR $7::boolean AND project_id IS NULL)
+ AND ($8::text[] IS NULL OR NOT coalesce(project_id=ANY($8::text[]),false))
+ AND (NOT $9::boolean OR project_id IS NOT NULL)
+ AND ($10::timestamptz IS NULL OR created_at>=$10::timestamptz)
+ AND ($11::text[] IS NULL OR NOT EXISTS (SELECT 1 FROM unnest($11::text[]) w WHERE NOT lower(name) LIKE w))
+ AND ($12::text IS NULL OR lower(coalesce(project_id,'')) LIKE $12::text)
+ AND ($13::text IS NULL OR state=$13::text)
+ AND NOT $14::boolean
+ AND (NOT $15::boolean OR role<>'example')
+GROUP BY state
+`
+
+type ArtStateCountsParams struct {
+	ExecutionID    *string
+	TaskID         *string
+	ProjectID      *string
+	MediaType      *string
+	MediaLike      *string
+	ProjectIds     []string
+	ProjectIdsNull bool
+	ExcludeIds     []string
+	ExcludeNull    bool
+	Since          pgtype.Timestamptz
+	Words          []string
+	ProjectLike    *string
+	SearchState    *string
+	Never          bool
+	NoExamples     bool
+}
+
+type ArtStateCountsRow struct {
+	State string
+	N     int64
+}
+
+// Counts per state matching the artifact_list filters without states, before or limit.
+func (q *Queries) ArtStateCounts(ctx context.Context, arg ArtStateCountsParams) ([]ArtStateCountsRow, error) {
+	rows, err := q.db.Query(ctx, artStateCounts,
+		arg.ExecutionID,
+		arg.TaskID,
+		arg.ProjectID,
+		arg.MediaType,
+		arg.MediaLike,
+		arg.ProjectIds,
+		arg.ProjectIdsNull,
+		arg.ExcludeIds,
+		arg.ExcludeNull,
+		arg.Since,
+		arg.Words,
+		arg.ProjectLike,
+		arg.SearchState,
+		arg.Never,
+		arg.NoExamples,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ArtStateCountsRow
+	for rows.Next() {
+		var i ArtStateCountsRow
+		if err := rows.Scan(&i.State, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const artStoreHost = `-- name: ArtStoreHost :one
 SELECT host_id FROM store WHERE id=$1
 `

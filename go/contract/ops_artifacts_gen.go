@@ -81,10 +81,11 @@ func (v *ArtifactGetRequest) Validate() error {
 	return nil
 }
 
-// ArtifactListReply: nextBefore: only with limit; null on the last page.
+// ArtifactListReply: nextBefore: only with limit; null on the last page. counts: rows per state matching the filter without states.
 type ArtifactListReply struct {
-	Artifacts  []ArtifactRow `json:"artifacts"`
-	NextBefore *int64        `json:"nextBefore,omitempty"`
+	Artifacts  []ArtifactRow    `json:"artifacts"`
+	Counts     map[string]int64 `json:"counts"`
+	NextBefore *int64           `json:"nextBefore,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -96,6 +97,9 @@ func (v *ArtifactListReply) Validate() error {
 		if err := Check(&v.Artifacts[i], "artifacts"); err != nil {
 			return err
 		}
+	}
+	if v.Counts == nil {
+		return Missing("counts")
 	}
 	return nil
 }

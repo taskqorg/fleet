@@ -348,6 +348,7 @@ type Request struct {
 	agent      string // execution:<id> when a host agent calls on behalf of person (its director)
 	body       json.RawMessage
 	tx         pgx.Tx
+	accessTx   pgx.Tx // tx on which refreshRequestAccess already ran
 }
 
 func (q *Request) ctx() context.Context { return q.r.Context() }

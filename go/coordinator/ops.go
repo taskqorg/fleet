@@ -28,12 +28,17 @@ func (a *App) runOp(q *Request, name string, b json.RawMessage, rc *toolReceipt)
 	}
 	sub := *q
 	sub.body = b
-	sub.tx = nil
 	if h, ok := longOperations[name]; ok {
+		sub.tx = nil
+		sub.accessTx = nil
 		if err := authorizeOp(&sub, name); err != nil {
 			return nil, err
 		}
 		return h(&sub)
+	}
+	if !reg.read || sub.tx == nil {
+		sub.tx = nil
+		sub.accessTx = nil
 	}
 	var out any
 	run := func(sub *Request) error {

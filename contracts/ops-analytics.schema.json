@@ -166,6 +166,8 @@
         "window": {"$ref": "#/$defs/AnalyticsWindow"},
         "by": {"$ref": "#/$defs/SpendGroupBy"},
         "projectId": {"type": "string"},
+        "projectIds": {"type": "array", "items": {"type": "string"}, "$comment": "keep rows of these projects only (the app passes the person's focus, OR-34); '-' is no project"},
+        "excludeProjectIds": {"type": "array", "items": {"type": "string"}, "$comment": "leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); '-' is no project (an empty id or null is a 400); applied after projectIds, so a project in both is left out."},
         "system": {"$ref": "ops.schema.json#/$defs/SystemActivity"}
       },
       "additionalProperties": false

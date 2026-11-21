@@ -1070,6 +1070,7 @@ WHERE ($1::text IS NULL OR id = $1)
  AND ($5::text[] IS NULL OR project_id = ANY($5::text[]) OR ($6::boolean AND project_id IS NULL))
  AND NOT coalesce(project_id = ANY($7::text[]), false) AND (NOT $8::boolean OR project_id IS NOT NULL)
 ORDER BY seq
+LIMIT $9::bigint
 `
 
 type TaskQuestionsParams struct {
@@ -1081,6 +1082,7 @@ type TaskQuestionsParams struct {
 	ProjectsNull bool
 	Excluded     []string
 	ExcludeNull  bool
+	Lim          *int64
 }
 
 type TaskQuestionsRow struct {
@@ -1115,6 +1117,7 @@ func (q *Queries) TaskQuestions(ctx context.Context, arg TaskQuestionsParams) ([
 		arg.ProjectsNull,
 		arg.Excluded,
 		arg.ExcludeNull,
+		arg.Lim,
 	)
 	if err != nil {
 		return nil, err

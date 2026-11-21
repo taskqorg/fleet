@@ -122,7 +122,8 @@ WHERE (sqlc.narg(id)::text IS NULL OR id = sqlc.narg(id))
  AND (sqlc.narg(kind)::text IS NULL OR kind::text = sqlc.narg(kind))
  AND (sqlc.narg(projects)::text[] IS NULL OR project_id = ANY(sqlc.narg(projects)::text[]) OR (@projects_null::boolean AND project_id IS NULL))
  AND NOT coalesce(project_id = ANY(sqlc.narg(excluded)::text[]), false) AND (NOT @exclude_null::boolean OR project_id IS NOT NULL)
-ORDER BY seq;
+ORDER BY seq
+LIMIT sqlc.narg(lim)::bigint;
 
 -- name: TaskExecutionsPage :many
 -- Execution rows (executions_list) in (seq, id) order after the cursor, each filter optional. system: include, only

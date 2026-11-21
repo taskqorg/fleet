@@ -548,25 +548,34 @@ func hostsListReply(q *Request, includeRemoved bool) (contract.HostsListReply, e
 	if err != nil {
 		return reply, err
 	}
-	live := map[string]hostRecord{}
+	live := make(map[string]hostRecord, len(records))
 	removedAt := map[string]*float64{}
-	ids, configured := []string{}, []string{}
+	seenID := make(map[string]bool, len(records)+len(observed))
+	ids := make([]string, 0, len(records)+len(observed))
 	for _, r := range records {
 		if r.removed() {
 			removedAt[r.ID] = r.RemovedAt
 		} else {
 			live[r.ID] = r
-			ids, configured = append(ids, r.ID), append(configured, r.ID)
+			if !seenID[r.ID] {
+				seenID[r.ID] = true
+				ids = append(ids, r.ID)
+			}
 		}
 	}
-	for _, o := range observed {
-		if _, gone := removedAt[o.ID]; !slices.Contains(ids, o.ID) && !gone {
+	obsByID := make(map[string]*hostObservation, len(observed))
+	for i := range observed {
+		o := &observed[i]
+		obsByID[o.ID] = o
+		if _, gone := removedAt[o.ID]; !seenID[o.ID] && !gone {
+			seenID[o.ID] = true
 			ids = append(ids, o.ID)
 		}
 	}
 	if includeRemoved {
 		for _, r := range records {
-			if r.removed() && !slices.Contains(ids, r.ID) {
+			if r.removed() && !seenID[r.ID] {
+				seenID[r.ID] = true
 				ids = append(ids, r.ID)
 			}
 		}
@@ -575,39 +584,41 @@ func hostsListReply(q *Request, includeRemoved bool) (contract.HostsListReply, e
 	if err != nil {
 		return reply, err
 	}
+	runningByHost := make(map[string]map[string]int64)
+	runningTotal := make(map[string]int64)
+	for _, r := range running {
+		m := runningByHost[r.HostID]
+		if m == nil {
+			m = map[string]int64{}
+			runningByHost[r.HostID] = m
+		}
+		harness := r.Harness
+		if harness == "" {
+			harness = "unknown"
+		}
+		m[harness] = int64(r.N)
+		runningTotal[r.HostID] += int64(r.N)
+	}
 	queued, err := q.db().PendingCommandsByHost(q.ctx())
 	if err != nil {
 		return reply, err
 	}
+	queuedByHost := make(map[string]int64, len(queued))
+	for _, r := range queued {
+		queuedByHost[r.HostID] = int64(r.N)
+	}
 	now := nowMs()
-	out := []contract.HostRow{}
+	out := make([]contract.HostRow, 0, len(ids))
 	for _, id := range ids {
-		var o *hostObservation
-		for i := range observed {
-			if observed[i].ID == id {
-				o = &observed[i]
-			}
+		o := obsByID[id]
+		by := runningByHost[id]
+		if by == nil {
+			by = map[string]int64{}
 		}
-		by := map[string]int64{}
-		var total int64
-		for _, r := range running {
-			if r.HostID == id {
-				h := r.Harness
-				if h == "" {
-					h = "unknown"
-				}
-				by[h], total = int64(r.N), total+int64(r.N)
-			}
-		}
-		var n int64
-		for _, r := range queued {
-			if r.HostID == id {
-				n = int64(r.N)
-			}
-		}
-		h := contract.HostRow{Id: id, Configured: slices.Contains(configured, id), Capabilities: []string{}, Problems: []contract.HostProblem{},
-			RunningByHarness: by, Running: total, Queued: n, Stores: "unknown", StoresReason: ptr("not observed"), AutoUpdate: jsonBytes("on")}
-		if r, ok := live[id]; ok {
+		r, configured := live[id]
+		h := contract.HostRow{Id: id, Configured: configured, Capabilities: []string{}, Problems: []contract.HostProblem{},
+			RunningByHarness: by, Running: runningTotal[id], Queued: queuedByHost[id], Stores: "unknown", StoresReason: ptr("not observed"), AutoUpdate: jsonBytes("on")}
+		if configured {
 			h.AutoUpdate = jsonBytes(r.autoUpdate())
 		}
 		if at, gone := removedAt[id]; gone {

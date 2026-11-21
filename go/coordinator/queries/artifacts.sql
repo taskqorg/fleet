@@ -155,6 +155,26 @@ WHERE tombstoned_at IS NULL
 ORDER BY seq DESC
 LIMIT sqlc.narg(row_limit)::bigint;
 
+-- name: ArtStateCounts :many
+-- Counts per state matching the artifact_list filters without states, before or limit.
+SELECT state, count(*)::bigint AS n FROM artifact
+WHERE tombstoned_at IS NULL
+ AND (sqlc.narg(execution_id)::text IS NULL OR execution_id=sqlc.narg(execution_id)::text)
+ AND (sqlc.narg(task_id)::text IS NULL OR task_id=sqlc.narg(task_id)::text)
+ AND (sqlc.narg(project_id)::text IS NULL OR project_id=sqlc.narg(project_id)::text)
+ AND (sqlc.narg(media_type)::text IS NULL OR media_type=sqlc.narg(media_type)::text)
+ AND (sqlc.narg(media_like)::text IS NULL OR media_type LIKE sqlc.narg(media_like)::text)
+ AND (sqlc.narg(project_ids)::text[] IS NULL OR project_id=ANY(sqlc.narg(project_ids)::text[]) OR sqlc.arg(project_ids_null)::boolean AND project_id IS NULL)
+ AND (sqlc.narg(exclude_ids)::text[] IS NULL OR NOT coalesce(project_id=ANY(sqlc.narg(exclude_ids)::text[]),false))
+ AND (NOT sqlc.arg(exclude_null)::boolean OR project_id IS NOT NULL)
+ AND (sqlc.narg(since)::timestamptz IS NULL OR created_at>=sqlc.narg(since)::timestamptz)
+ AND (sqlc.narg(words)::text[] IS NULL OR NOT EXISTS (SELECT 1 FROM unnest(sqlc.narg(words)::text[]) w WHERE NOT lower(name) LIKE w))
+ AND (sqlc.narg(project_like)::text IS NULL OR lower(coalesce(project_id,'')) LIKE sqlc.narg(project_like)::text)
+ AND (sqlc.narg(search_state)::text IS NULL OR state=sqlc.narg(search_state)::text)
+ AND NOT sqlc.arg(never)::boolean
+ AND (NOT sqlc.arg(no_examples)::boolean OR role<>'example')
+GROUP BY state;
+
 -- name: ArtTaskCodes :many
 SELECT id,code FROM task WHERE id=ANY(sqlc.arg(ids)::text[]);
 
