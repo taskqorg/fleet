@@ -245,7 +245,7 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 	// An observation flush (here a poll's own part, before its commands) keeps the record.
 	env.app.clearHostCache("sick-host")
 	body, _ := json.Marshal(good)
-	if _, err := env.app.pollOnce(&Request{app: env.app, r: httptest.NewRequestWithContext(env.ctx, "POST", "/api/hosts/poll", nil), host: doc{"hostId": "sick-host", "holder": testOwnerEmail}, body: body}, &good); err != nil {
+	if _, err := env.app.pollOnce(&Request{app: env.app, r: httptest.NewRequestWithContext(env.ctx, "POST", "/api/hosts/poll", nil), host: &authHost{HostID: "sick-host", Holder: testOwnerEmail}, body: body}, &good); err != nil {
 		t.Fatal(err)
 	}
 	if pe := pollError("hosts_list"); pe == nil || num(pe["since"]) != since {

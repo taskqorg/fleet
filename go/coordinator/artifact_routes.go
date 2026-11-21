@@ -56,8 +56,7 @@ func init() {
 	})
 	hostRoute(contract.RouteArtifactsList, executionOwned(func(b *contract.HostArtifactListRequest) string { return b.ExecutionId }, hostArtifactList))
 	hostRoute(contract.RouteStores, replyOf[contract.StoresRequest, contract.StoresReply](func(q *Request, b *contract.StoresRequest) (any, error) {
-		holder, _ := q.host["holder"].(string)
-		return storeRegister(q, q.hostID(), &b.Store, holder)
+		return storeRegister(q, q.hostID(), &b.Store, q.host.Holder)
 	}))
 	route("GET /api/results/{id}", resultBytes)
 	route("GET /api/results/{id}/preview", resultPreview)
@@ -232,8 +231,7 @@ func hostMayRead(q *Request, b *contract.HostArtifactGetRequest) (*Artifact, err
 	}
 	hostID := q.hostID()
 	if x.ProjectID != nil {
-		holder, _ := q.host["holder"].(string)
-		if !mayAccessProject(q.peopleSnapshot().person(holder), x.ProjectID) {
+		if !mayAccessProject(q.peopleSnapshot().person(q.host.Holder), x.ProjectID) {
 			return nil, fail(403, "Artifact not readable by this host")
 		}
 	}

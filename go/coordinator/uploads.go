@@ -318,7 +318,7 @@ type uploadProgress struct {
 }
 
 func uploadConflict(code int, msg string, received int64) error {
-	return &HTTPError{Code: code, Msg: msg, Extra: docOf(uploadProgress{Received: received})}
+	return &HTTPError{Code: code, Msg: msg, Extra: uploadProgress{Received: received}}
 }
 
 // sweepUploads, in the background after a begin: aborts uploads left unfinished for uploadStaleAfter (the store's

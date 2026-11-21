@@ -92,9 +92,9 @@ func validAutoUpdate(v any) bool {
 	return ok && err == nil && strings.HasSuffix(s, "Z")
 }
 
-func autoUpdateOf(h doc) string {
-	if s, ok := h["autoUpdate"].(string); ok && s != "" {
-		return s
+func autoUpdateOf(h *authHost) string {
+	if h.AutoUpdate != "" {
+		return h.AutoUpdate
 	}
 	return "on"
 }

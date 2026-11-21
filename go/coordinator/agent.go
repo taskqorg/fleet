@@ -2788,9 +2788,10 @@ func init() {
 				}
 			}
 			// A call without an execution (initialize, tools/list) acts for the host's holder; never an implicit owner.
-			holder := agentView[struct {
-				Holder string `json:"holder"`
-			}](q.host).Holder
+			holder := ""
+			if q.host != nil {
+				holder = q.host.Holder
+			}
 			d := firstString(e.DirectedBy, holder)
 			if q.person = q.peopleSnapshot().person(d); q.person == nil {
 				return fail(403, "Director "+d+" is not a person of this Fleet")

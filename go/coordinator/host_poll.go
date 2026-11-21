@@ -658,7 +658,7 @@ func pollObserved(q *Request, run func() (any, error)) (any, error) {
 	if err != nil && q.ctx().Err() != nil {
 		// The host left (a restart mid long-poll): whatever error that surfaced as, it is not a failure to record.
 	} else if err != nil {
-		a.notePollFailure(q.ctx(), host, q.host["holder"], err)
+		a.notePollFailure(q.ctx(), host, q.host.Holder, err)
 	} else {
 		a.notePollSuccess(q.ctx(), host)
 	}
@@ -670,7 +670,7 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	open := q.obj() // the open parts (stores, update) as the host's plain JSON
 	stores := rawAny(open.Stores)
 	now := nowMs()
-	obs := hostPollObservation{ID: host, Holder: q.host["holder"], Version: b.Version}
+	obs := hostPollObservation{ID: host, Holder: q.host.Holder, Version: b.Version}
 	if b.Platform.Valid() {
 		obs.Platform = string(b.Platform)
 	}
@@ -740,7 +740,7 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 				}
 				// Look at update question only when the update result changes.
 				if hasUpd && js(prevUpdate) != js(upd) {
-					if err := updateQuestion(wq, host, q.host["holder"], updResult); err != nil {
+					if err := updateQuestion(wq, host, q.host.Holder, updResult); err != nil {
 						return err
 					}
 				}

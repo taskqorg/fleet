@@ -72,8 +72,13 @@ func (e *HTTPError) extraReason() (string, bool) {
 	if e == nil {
 		return "", false
 	}
-	r, ok := e.Extra["reason"].(string)
-	return r, ok
+	var x struct {
+		Reason *string `json:"reason"`
+	}
+	if b, err := json.Marshal(e.Extra); err != nil || json.Unmarshal(b, &x) != nil || x.Reason == nil {
+		return "", false
+	}
+	return *x.Reason, true
 }
 
 // pollFailureSeq numbers failed polls across hosts; a host's entry keeps the last one (hostHeartbeat.pollFailures).

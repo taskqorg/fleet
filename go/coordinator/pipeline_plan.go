@@ -109,9 +109,7 @@ func (run *runRecord) requirePlan() error {
 
 // conflictWithReason: a 409 whose body names its reason (HTTPError's extra fields).
 func conflictWithReason(msg, reason string) error {
-	return &HTTPError{Code: 409, Msg: msg, Extra: docOf(struct {
-		Reason string `json:"reason"`
-	}{reason})}
+	return &HTTPError{Code: 409, Msg: msg, Extra: reasonExtra{reason}}
 }
 
 func pipelineFormatError() error {

@@ -59,7 +59,7 @@ func jsonRoundTrip(v any, out any) { b, _ := json.Marshal(v); json.Unmarshal(b, 
 type HTTPError struct {
 	Code  int
 	Msg   string
-	Extra map[string]any // more fields of the error body (a 409's DefinitionConflict)
+	Extra any // a struct whose JSON fields join the error body (a 409's DefinitionConflict or reason, an upload's received)
 	// Refused marks a refusal by design (a removed host): its span outcome is refused, not error.
 	Refused bool
 }

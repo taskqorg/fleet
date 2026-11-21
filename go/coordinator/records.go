@@ -563,7 +563,7 @@ func decode(raw json.RawMessage, v any) error {
 	return nil
 }
 
-func hostOf(q *Request) string { return q.host["hostId"].(string) }
+func hostOf(q *Request) string { return q.host.HostID }
 
 // taskRow: the task's row as a record (column names), for callers outside this file; errNotFound when absent.
 func taskRow(q *Request, id string) (doc, error) {

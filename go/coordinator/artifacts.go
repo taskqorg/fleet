@@ -734,7 +734,7 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 	return contract.ArtifactReserveReply{ArtifactId: id, State: "pending", StoreId: &target.ID, PartSize: &ps}, nil
 }
 
-func (q *Request) hostID() string { return q.host["hostId"].(string) }
+func (q *Request) hostID() string { return q.host.HostID }
 
 type copyRow struct {
 	StoreID, State       string

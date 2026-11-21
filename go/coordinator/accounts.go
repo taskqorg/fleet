@@ -41,7 +41,7 @@ func init() {
 		return replyAs[contract.AccountUpdateReply](accountUpdate(q, r))
 	})
 	hostRoute(contract.RouteAccounts, func(q *Request, b *contract.AccountObservation) (any, error) {
-		if !q.app.hostMaySee(q.host, nil) {
+		if !q.app.holderMaySee(q.host.Holder, "") {
 			return nil, fail(403, "Account observations need an owner-held host")
 		}
 		return accountReport(q, b, q.hostID())
