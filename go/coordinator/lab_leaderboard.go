@@ -22,7 +22,148 @@ const (
 	labCollectionFleet      = "Fleet & Projects"
 	labCollectionArchived   = "Archived"
 	labLeaderboardDaysDef   = 90
+	labLeaderboardCacheTTL  = 30 * time.Second
+	labLeaderboardCacheMax  = 64
 )
+
+type labLeaderboardCacheKey struct {
+	app        *App
+	scope      string
+	projectID  string
+	useCaseID  string
+	collection string
+	days       int32
+}
+
+type labLeaderboardCacheEntry struct {
+	reply    contract.LabLeaderboardReply
+	storedAt time.Time
+	lastUsed time.Time
+}
+
+var (
+	labLeaderboardCacheMu sync.Mutex
+	labLeaderboardCache   = map[labLeaderboardCacheKey]labLeaderboardCacheEntry{}
+	labLeaderboardNow     = time.Now
+)
+
+func labLeaderboardScopeKey(q *Request) string {
+	if q == nil {
+		return "*"
+	}
+	showDeleted := false
+	if q.r != nil {
+		showDeleted, _ = q.ctx().Value(showDeletedKey{}).(bool)
+	}
+	sc := scopeOf(q.person)
+	var scopeStr string
+	if sc == nil {
+		scopeStr = "*"
+	} else {
+		var ids []string
+		seen := map[string]bool{}
+		for _, g := range q.person.Grants {
+			if g.Kind == "project" && !seen[g.ID] {
+				seen[g.ID] = true
+				ids = append(ids, g.ID)
+			}
+		}
+		sort.Strings(ids)
+		prefix := ""
+		if hasRole(q.person, "architect") {
+			prefix = ","
+		}
+		scopeStr = prefix + strings.Join(ids, ",") + "\x00" + sc.Person
+	}
+	if showDeleted {
+		scopeStr += "\x00deleted"
+	}
+	return scopeStr
+}
+
+func clonePtr[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+func cloneLabLeaderboardReply(in contract.LabLeaderboardReply) contract.LabLeaderboardReply {
+	cols := make([]string, len(in.Collections))
+	copy(cols, in.Collections)
+	entries := make([]contract.LabLeaderboardEntry, len(in.Entries))
+	for i, e := range in.Entries {
+		e.ConfigRef = clonePtr(e.ConfigRef)
+		e.CostUsd = clonePtr(e.CostUsd)
+		e.Model = clonePtr(e.Model)
+		e.Profile = clonePtr(e.Profile)
+		e.ScoreMax = clonePtr(e.ScoreMax)
+		e.ScoreMean = clonePtr(e.ScoreMean)
+		e.ScoreMin = clonePtr(e.ScoreMin)
+		e.WallMsMedian = clonePtr(e.WallMsMedian)
+		entries[i] = e
+	}
+	return contract.LabLeaderboardReply{
+		Collections: cols,
+		Entries:     entries,
+	}
+}
+
+func labLeaderboardCacheGet(key labLeaderboardCacheKey) (contract.LabLeaderboardReply, bool) {
+	now := labLeaderboardNow()
+	labLeaderboardCacheMu.Lock()
+	defer labLeaderboardCacheMu.Unlock()
+	ent, ok := labLeaderboardCache[key]
+	if !ok {
+		return contract.LabLeaderboardReply{}, false
+	}
+	if now.Sub(ent.storedAt) >= labLeaderboardCacheTTL {
+		delete(labLeaderboardCache, key)
+		return contract.LabLeaderboardReply{}, false
+	}
+	ent.lastUsed = now
+	labLeaderboardCache[key] = ent
+	return cloneLabLeaderboardReply(ent.reply), true
+}
+
+func labLeaderboardCachePut(key labLeaderboardCacheKey, reply contract.LabLeaderboardReply) {
+	now := labLeaderboardNow()
+	cloned := cloneLabLeaderboardReply(reply)
+	labLeaderboardCacheMu.Lock()
+	defer labLeaderboardCacheMu.Unlock()
+	if _, exists := labLeaderboardCache[key]; !exists && len(labLeaderboardCache) >= labLeaderboardCacheMax {
+		for k, v := range labLeaderboardCache {
+			if now.Sub(v.storedAt) >= labLeaderboardCacheTTL {
+				delete(labLeaderboardCache, k)
+			}
+		}
+		for len(labLeaderboardCache) >= labLeaderboardCacheMax {
+			var oldestKey labLeaderboardCacheKey
+			var oldestAt time.Time
+			first := true
+			for k, v := range labLeaderboardCache {
+				if first || v.lastUsed.Before(oldestAt) {
+					oldestKey = k
+					oldestAt = v.lastUsed
+					first = false
+				}
+			}
+			delete(labLeaderboardCache, oldestKey)
+		}
+	}
+	labLeaderboardCache[key] = labLeaderboardCacheEntry{
+		reply:    cloned,
+		storedAt: now,
+		lastUsed: now,
+	}
+}
+
+func labLeaderboardCacheReset() {
+	labLeaderboardCacheMu.Lock()
+	defer labLeaderboardCacheMu.Unlock()
+	clear(labLeaderboardCache)
+}
 
 var labCollectionOrder = []string{
 	labCollectionBenchmarks,
@@ -304,6 +445,26 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		collectionFilter = normalizeLabCollectionFilter(*r.Collection)
 	}
 
+	var appPtr *App
+	if q != nil {
+		appPtr = q.app
+	}
+	projKey := ""
+	if projectID != nil {
+		projKey = *projectID
+	}
+	cacheKey := labLeaderboardCacheKey{
+		app:        appPtr,
+		scope:      labLeaderboardScopeKey(q),
+		projectID:  projKey,
+		useCaseID:  useCaseFilter,
+		collection: collectionFilter,
+		days:       days,
+	}
+	if cached, ok := labLeaderboardCacheGet(cacheKey); ok {
+		return cached, nil
+	}
+
 	ucs, err := useCases()
 	if err != nil {
 		return out, err
@@ -327,6 +488,7 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		return out, err
 	}
 	if len(trials) == 0 {
+		labLeaderboardCachePut(cacheKey, out)
 		return out, nil
 	}
 
@@ -391,6 +553,7 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		}
 	}
 	if len(filtered) == 0 {
+		labLeaderboardCachePut(cacheKey, out)
 		return out, nil
 	}
 
@@ -681,5 +844,6 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		return deref(a.ConfigRef) < deref(b.ConfigRef)
 	})
 
+	labLeaderboardCachePut(cacheKey, out)
 	return out, nil
 }

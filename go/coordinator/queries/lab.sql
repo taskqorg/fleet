@@ -187,83 +187,85 @@ SELECT count(*)::int FROM question WHERE kind='rating' AND options->>'example_ar
 -- name: LabTrialsLineage :one
 -- Non-reused leaf executions per trial ID, traversing strictly downward via indexed lookups (lab.go expGet, lab_leaderboard.go).
 WITH RECURSIVE
- trials AS (
+ trials AS MATERIALIZED (
   SELECT DISTINCT t.trial_id FROM unnest(sqlc.arg(trial_ids)::text[]) AS t(trial_id)
  ),
- reused_steps AS (
-  SELECT p.run_id AS trial_id, (p.run_id || ':step:' || p.step_index::text) AS step_exec_id
+ trial_steps AS MATERIALIZED (
+  SELECT
+   p.run_id AS trial_id,
+   (p.run_id || ':step:' || p.step_index::text) AS step_exec_id,
+   p.ref_mode,
+   p.ref_execution_id,
+   p.native_execution_id
   FROM pipeline_step p
   JOIN trials t ON t.trial_id = p.run_id
-  WHERE p.ref_mode = 'reused'
+ ),
+ reused_steps AS MATERIALIZED (
+  SELECT trial_id, step_exec_id
+  FROM trial_steps
+  WHERE ref_mode = 'reused'
  ),
  seed AS (
-  SELECT t.trial_id, c.id AS exec_id
+  SELECT t.trial_id, c.id AS exec_id, c.kind
   FROM trials t
   JOIN execution c ON c.data ? 'pipelineRunId' AND c.data->>'pipelineRunId' = t.trial_id
-  WHERE NOT EXISTS (
-   SELECT 1 FROM reused_steps rs
-   WHERE rs.trial_id = t.trial_id AND (rs.step_exec_id = c.id OR rs.step_exec_id = c.parent_execution_id)
-  )
-  UNION
-  SELECT t.trial_id, c.id AS exec_id
+  LEFT JOIN reused_steps rs_self ON rs_self.trial_id = t.trial_id AND rs_self.step_exec_id = c.id
+  LEFT JOIN reused_steps rs_par ON rs_par.trial_id = t.trial_id AND rs_par.step_exec_id = c.parent_execution_id
+  WHERE rs_self.trial_id IS NULL AND rs_par.trial_id IS NULL
+  UNION ALL
+  SELECT t.trial_id, c.id AS exec_id, c.kind
   FROM trials t
   JOIN execution c ON c.parent_execution_id = t.trial_id
-  WHERE NOT EXISTS (
-   SELECT 1 FROM reused_steps rs
-   WHERE rs.trial_id = t.trial_id AND rs.step_exec_id = c.id
-  )
-  UNION
-  SELECT t.trial_id, c.id AS exec_id
-  FROM trials t
-  JOIN pipeline_step p ON p.run_id = t.trial_id AND p.ref_mode IS DISTINCT FROM 'reused'
-  JOIN execution c ON c.parent_execution_id = (p.run_id || ':step:' || p.step_index::text)
-  UNION
-  SELECT t.trial_id, c.id AS exec_id
-  FROM trials t
-  JOIN pipeline_step p ON p.run_id = t.trial_id AND p.ref_mode IS DISTINCT FROM 'reused' AND p.ref_execution_id IS NOT NULL
-  JOIN execution c ON c.parent_execution_id = p.ref_execution_id
-  UNION
-  SELECT t.trial_id, c.id AS exec_id
-  FROM trials t
-  JOIN pipeline_step p ON p.run_id = t.trial_id AND p.ref_mode IS DISTINCT FROM 'reused' AND p.native_execution_id IS NOT NULL
-  JOIN execution c ON c.id = p.native_execution_id
-  UNION
-  SELECT t.trial_id, c.id AS exec_id
+  LEFT JOIN reused_steps rs ON rs.trial_id = t.trial_id AND rs.step_exec_id = c.id
+  WHERE rs.trial_id IS NULL
+  UNION ALL
+  SELECT s.trial_id, c.id AS exec_id, c.kind
+  FROM trial_steps s
+  JOIN execution c ON c.parent_execution_id = s.step_exec_id
+  WHERE s.ref_mode IS DISTINCT FROM 'reused'
+  UNION ALL
+  SELECT s.trial_id, c.id AS exec_id, c.kind
+  FROM trial_steps s
+  JOIN execution c ON c.parent_execution_id = s.ref_execution_id
+  WHERE s.ref_mode IS DISTINCT FROM 'reused' AND s.ref_execution_id IS NOT NULL
+  UNION ALL
+  SELECT s.trial_id, c.id AS exec_id, c.kind
+  FROM trial_steps s
+  JOIN execution c ON c.id = s.native_execution_id
+  WHERE s.ref_mode IS DISTINCT FROM 'reused' AND s.native_execution_id IS NOT NULL
+  UNION ALL
+  SELECT t.trial_id, c.id AS exec_id, c.kind
   FROM trials t
   JOIN session s ON s.pipeline_run_id = t.trial_id
   JOIN execution c ON c.session_id = s.id
-  WHERE NOT EXISTS (
-   SELECT 1 FROM reused_steps rs
-   WHERE rs.trial_id = t.trial_id AND (rs.step_exec_id = c.id OR rs.step_exec_id = c.parent_execution_id)
-  )
+  LEFT JOIN reused_steps rs_self ON rs_self.trial_id = t.trial_id AND rs_self.step_exec_id = c.id
+  LEFT JOIN reused_steps rs_par ON rs_par.trial_id = t.trial_id AND rs_par.step_exec_id = c.parent_execution_id
+  WHERE rs_self.trial_id IS NULL AND rs_par.trial_id IS NULL
  ),
  tree AS (
-  SELECT trial_id, exec_id FROM seed
+  SELECT trial_id, exec_id, kind FROM seed
   UNION
-  SELECT tr.trial_id, ch.exec_id
+  SELECT tr.trial_id, ch.exec_id, ch.kind
   FROM tree tr
   CROSS JOIN LATERAL (
-   SELECT c.id AS exec_id
+   SELECT c.id AS exec_id, c.kind
    FROM execution c
    WHERE c.parent_execution_id = tr.exec_id
-   UNION
-   SELECT c.id AS exec_id
+   UNION ALL
+   SELECT c.id AS exec_id, c.kind
    FROM session s
    JOIN execution c ON c.session_id = s.id
    WHERE s.parent_execution_id = tr.exec_id
   ) ch
-  WHERE NOT EXISTS (
-   SELECT 1 FROM reused_steps rs
-   WHERE rs.trial_id = tr.trial_id AND rs.step_exec_id = ch.exec_id
-  )
+  LEFT JOIN reused_steps rs ON rs.trial_id = tr.trial_id AND rs.step_exec_id = ch.exec_id
+  WHERE tr.kind <> 'tool_run'
+    AND rs.trial_id IS NULL
  ),
  scoped_leaves AS (
-  SELECT DISTINCT 'trial'::text AS scope, tr.trial_id AS scope_key, e.id AS leaf_id
+  SELECT 'trial'::text AS scope, tr.trial_id AS scope_key, tr.exec_id AS leaf_id
   FROM tree tr
-  JOIN execution e ON e.id = tr.exec_id
-  LEFT JOIN execution_totals tot ON tot.execution_id = e.id
-  WHERE e.kind NOT IN ('pipeline_run', 'pipeline_step')
-    AND NOT (e.kind = 'child_agent' AND tot.execution_id IS NULL)
+  WHERE tr.kind NOT IN ('pipeline_run', 'pipeline_step')
+    AND (tr.kind <> 'child_agent' OR EXISTS (SELECT 1 FROM execution_totals tot WHERE tot.execution_id = tr.exec_id))
  )
 SELECT
  coalesce(array_agg(scope ORDER BY scope, scope_key, leaf_id), '{}')::text[] AS scopes,

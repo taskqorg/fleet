@@ -445,4 +445,94 @@ func TestLabLeaderboard(t *testing.T) {
 	if codexWide == nil || codexWide.Trials != 4 || codexWide.TokensTotal != 3350 {
 		t.Fatalf("180d codex entry = %+v, want 4 trials & 3350 tokens", codexWide)
 	}
+
+	t.Run("cache_rls_ttl_bound", func(t *testing.T) {
+		labLeaderboardCacheReset()
+		fakeNow := time.Now()
+		prevNow := labLeaderboardNow
+		labLeaderboardNow = func() time.Time { return fakeNow }
+		t.Cleanup(func() {
+			labLeaderboardNow = prevNow
+			labLeaderboardCacheReset()
+		})
+
+		// 1. Owner populates cache for {} (3 entries).
+		ownerRep := callLB(doc{})
+		if len(ownerRep.Entries) != 3 {
+			t.Fatalf("owner {} entries = %d, want 3", len(ownerRep.Entries))
+		}
+
+		// 2. Scoped architect without hello-world grant must NOT read owner's cached entry (RLS isolation).
+		var deniedRep contract.LabLeaderboardReply
+		deniedPerson := &Person{
+			Email:  "denied-arch@example.com",
+			Roles:  []string{"architect"},
+			Grants: []personGrant{{Kind: "project", ID: "other-project"}},
+		}
+		if err := env.app.store.Read(env.ctx, scopedRequest(env.ctx, env.app, deniedPerson), func(q *Request) error {
+			var err error
+			deniedRep, err = labLeaderboard(q, &contract.LabLeaderboardRequest{})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if len(deniedRep.Entries) != 0 {
+			t.Fatalf("denied architect got %d entries (RLS cache leak!), want 0", len(deniedRep.Entries))
+		}
+
+		// 3. Scoped architect with hello-world grant gets 3 entries in its own cache slot, and clone safety holds.
+		var allowedRep1, allowedRep2 contract.LabLeaderboardReply
+		allowedPerson := &Person{
+			Email:  "allowed-arch@example.com",
+			Roles:  []string{"architect"},
+			Grants: []personGrant{{Kind: "project", ID: "hello-world"}},
+		}
+		if err := env.app.store.Read(env.ctx, scopedRequest(env.ctx, env.app, allowedPerson), func(q *Request) error {
+			var err error
+			allowedRep1, err = labLeaderboard(q, &contract.LabLeaderboardRequest{})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if len(allowedRep1.Entries) != 3 || allowedRep1.Entries[0].Model == nil {
+			t.Fatalf("allowed architect entries = %+v", allowedRep1.Entries)
+		}
+		origModel := *allowedRep1.Entries[0].Model
+		allowedRep1.Entries[0].VariantLabel = "mutated"
+		*allowedRep1.Entries[0].Model = "mutated"
+
+		if err := env.app.store.Read(env.ctx, scopedRequest(env.ctx, env.app, allowedPerson), func(q *Request) error {
+			var err error
+			allowedRep2, err = labLeaderboard(q, &contract.LabLeaderboardRequest{})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if allowedRep2.Entries[0].VariantLabel == "mutated" || deref(allowedRep2.Entries[0].Model) != origModel {
+			t.Fatalf("cache mutation leaked across clones: %+v", allowedRep2.Entries[0])
+		}
+
+		// 4. TTL expiry after 30s.
+		ownerKey := labLeaderboardCacheKey{app: env.app, scope: "*", days: labLeaderboardDaysDef}
+		if _, ok := labLeaderboardCacheGet(ownerKey); !ok {
+			t.Fatal("expected owner cache hit before TTL expiry")
+		}
+		fakeNow = fakeNow.Add(labLeaderboardCacheTTL + time.Second)
+		if _, ok := labLeaderboardCacheGet(ownerKey); ok {
+			t.Fatal("expected owner cache miss after 30s TTL expiry")
+		}
+
+		// 5. Bounded max 64 entries.
+		labLeaderboardCacheReset()
+		for i := range int32(70) {
+			labLeaderboardCachePut(labLeaderboardCacheKey{app: env.app, scope: "*", days: i + 1}, ownerRep)
+			fakeNow = fakeNow.Add(time.Millisecond)
+		}
+		labLeaderboardCacheMu.Lock()
+		n := len(labLeaderboardCache)
+		labLeaderboardCacheMu.Unlock()
+		if n != labLeaderboardCacheMax {
+			t.Fatalf("cache size = %d, want %d", n, labLeaderboardCacheMax)
+		}
+	})
 }
