@@ -27,6 +27,7 @@ const CONV: Record<string, ConvTable> = {
     ['state', 'state', 'text'], ['executionId', 'execution_id', 'text'], ['steerCommandId', 'steer_command_id', 'text'], ['sentBy', 'sent_by', 'text'], ['source', 'source', 'text'], ['createdAt', 'created_at', 'ms']]},
   command: {table: 'command', cols: [['executionId', 'execution_id', 'text'], ['sessionId', 'session_id', 'text'], ['hostId', 'host_id', 'text'], ['projectId', 'project_id', 'text'], ['kind', 'kind', 'text'],
     ['status', 'status', 'status'], ['stopDetail', 'stop_detail', 'text'], ['handedOut', 'handed_out', 'bool'], ['traceparent', 'traceparent', 'text']]},
+  'host-observation': {table: 'host_observation', cols: [['holder', 'holder', 'text'], ['lastSeenAt', 'last_seen_at', 'ms'], ['projectId', 'project_id', 'text']]},
 };
 
 export function seeder(c: Coordinator, store?: {port: number, objects: Map<string, Buffer>, secrets: string}) {
