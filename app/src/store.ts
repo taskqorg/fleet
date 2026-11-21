@@ -28,6 +28,7 @@ const FRESH_MS = 30_000;
 const MAX_UNMOUNTED_DOCS = 100;
 const MAX_UNMOUNTED_LISTS = 30;
 const APPLY_THROTTLE_MS = 1000;
+const PREPARED_PREPARING_MS = 5_000;
 const PREPARED_POLL_MS = 10_000;
 
 const lists = new Map<string, Entry>();
@@ -420,7 +421,7 @@ import type { ProjectResourcesReply, ProjectResourceItemsReply, ResourceProgress
 type PreparedReply = ProjectResourcesReply | ProjectResourceItemsReply;
 export type PreparedState<T> = { data: T | null; progress: ResourceProgress | null; error: string | null; restored: boolean; state: 'idle' | 'loading' | 'ready' | 'preparing' | 'error' | 'disposed' };
 type PreparedFetcher<T> = (context: { signal: AbortSignal; knownVersion?: string }) => Promise<T>;
-type PreparedEntry<T> = { value: Signal<PreparedState<T>>; fetcher: PreparedFetcher<T>; subscribers: number; visible: number; controller: AbortController | null; request: number; pending: boolean; version?: string; timer?: ReturnType<typeof setInterval>; disposed: boolean; refresh(reason?: string): void };
+type PreparedEntry<T> = { value: Signal<PreparedState<T>>; fetcher: PreparedFetcher<T>; subscribers: number; visible: number; controller: AbortController | null; request: number; pending: boolean; version?: string; timer?: ReturnType<typeof setInterval>; pollMs?: number; disposed: boolean; refresh(reason?: string): void };
 const prepared = new Map<string, PreparedEntry<PreparedReply>>();
 export function preparedKey(operation: 'project_resources' | 'project_resource_items', projectId: string, request: Omit<ProjectResourceItemsRequest, 'projectId' | 'knownVersion'> | null = null) {
   const r = request;
@@ -436,13 +437,13 @@ export function olderPreparedVersion(candidate: string, current?: string) {
 export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: PreparedFetcher<T>, visible = true, interval = PREPARED_POLL_MS) {
   let entry = prepared.get(key) as unknown as PreparedEntry<T> | undefined;
   const syncTimer = (e: PreparedEntry<T>) => {
-    const shouldPoll = !e.disposed && e.visible > 0 && e.value.value.state === 'preparing';
-    if (shouldPoll && !e.timer) {
+    const want = !e.disposed && e.visible > 0 ? (e.value.value.state === 'preparing' ? Math.min(interval, PREPARED_PREPARING_MS) : interval) : 0;
+    if (want === (e.pollMs ?? 0) && (!want || e.timer)) return;
+    clearInterval(e.timer); e.timer = undefined; e.pollMs = want;
+    if (want > 0) {
       e.timer = setInterval(() => {
-        if (e.visible && !e.disposed && e.value.value.state === 'preparing' && (typeof document === 'undefined' || document.visibilityState === 'visible')) e.refresh('interval');
-      }, interval);
-    } else if (!shouldPoll && e.timer) {
-      clearInterval(e.timer); e.timer = undefined;
+        if (e.visible && !e.disposed && (typeof document === 'undefined' || document.visibilityState === 'visible')) e.refresh('interval');
+      }, want);
     }
   };
   if (!entry) {
@@ -490,7 +491,7 @@ export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: P
   return { key, value: e.value, refresh: e.refresh, release: () => {
     e.subscribers--; if (visible) e.visible--;
     syncTimer(e);
-    if (!e.subscribers) { e.disposed = true; e.pending = false; e.request++; e.controller?.abort(); clearInterval(e.timer); e.timer = undefined; prepared.delete(key); e.value.value = { data: null, progress: null, error: null, restored: false, state: 'disposed' }; }
+    if (!e.subscribers) { e.disposed = true; e.pending = false; e.request++; e.controller?.abort(); clearInterval(e.timer); e.timer = undefined; e.pollMs = 0; prepared.delete(key); e.value.value = { data: null, progress: null, error: null, restored: false, state: 'disposed' }; }
   } };
 }
 onClear.add(() => { for (const e of prepared.values()) { e.disposed = true; e.request++; e.controller?.abort(); clearInterval(e.timer); e.value.value = { data: null, progress: null, error: null, restored: false, state: 'disposed' }; } prepared.clear(); });
