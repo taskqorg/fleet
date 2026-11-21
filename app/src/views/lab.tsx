@@ -9,7 +9,7 @@ import {
   StateBadge, Button, Disclosure, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck,
   AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, DataTable, SortColHead, Choice, TextField,
   SearchField, CatalogueTree, ContextMenu, ErrorBanner, ROW2, percent, SettingField, StepList, msMeasured,
-  agentLabel, type StepItem, type StateOf, type Basis, type CatalogueTreeNode, type MenuItem, ShellStatus, actions,
+  agentLabel, type StepItem, type StateOf, type Basis, type CatalogueTreeNode, type MenuItem, type TotalItem, ShellStatus, actions,
 } from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type OpName, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
@@ -18,10 +18,10 @@ import { listGroups, setListGroups, usePins } from '../prefs.ts';
 import { LabCreate } from './lab-create.tsx';
 import {
   ARCHIVED_COLLECTION_ID, buildUseCaseTree, collectionTitleOf, groupUseCases, isLabEligibleUseCase,
-  matchesUseCaseSlug, useCaseSlug, type RegistryUseCase,
+  matchingExamplesForUseCase, type RegistryUseCase,
 } from './use-cases.ts';
 import type {
-  LabExperimentRecord, LabLeaderboardEntry, LabRating, LabScoreSummary, ProjectAssessmentRef,
+  LabExampleEntry, LabExperimentRecord, LabLeaderboardEntry, LabRating, LabScoreSummary, ProjectAssessmentRef,
 } from '../../../contracts/generated/ops.ts';
 
 const ms = (t: string | number | null | undefined) => typeof t === 'number' ? t : Date.parse(t ?? '');
@@ -285,9 +285,51 @@ function LabView({ id }: { id?: string }) {
   const activeRunFolder = selectedRunFolderId ? RUN_FOLDERS.find(f => f.id === selectedRunFolderId) : null;
   const shownExperiments = activeRunFolder ? data.experiments.filter(activeRunFolder.match) : data.experiments;
 
+  const groupedUseCases = useMemo(() => groupUseCases(rawUseCases), [rawUseCases]);
+  const selectedCollection = selectedFolderId?.startsWith('col:') && selectedFolderId !== ARCHIVED_COLLECTION_ID
+    ? groupedUseCases.collections.find(c => `col:${c.key}` === selectedFolderId) ?? null
+    : null;
+  const activeUseCaseCount = selectedFolderId === ARCHIVED_COLLECTION_ID
+    ? 0
+    : selectedCollection
+      ? selectedCollection.items.length
+      : groupedUseCases.active.length;
+  const waitingExperiments = data.experiments.filter(undecided);
+  const waitingSeriesCount = new Set(waitingExperiments.map(e => e.labGroup || e.pipelineId)).size;
+  const summaryTotals: TotalItem[] = [
+    {
+      label: 'Active use cases',
+      m: registry.data ? { value: activeUseCaseCount, basis: 'measured' } : { value: null, basis: 'unavailable', reason: 'loading' },
+      kind: 'count',
+      note: selectedCollection
+        ? `${groupedUseCases.active.length} total`
+        : groupedUseCases.archived.length > 0
+          ? `${groupedUseCases.archived.length} archived`
+          : undefined,
+    },
+    {
+      label: 'Approved examples',
+      m: approvedExamples.data ? { value: rawExamples.length, basis: 'measured' } : { value: null, basis: 'unavailable', reason: 'loading' },
+      kind: 'count',
+    },
+    {
+      label: 'Leaderboard entries',
+      m: leaderboard.data ? { value: (leaderboard.data.entries ?? []).length, basis: 'measured' } : { value: null, basis: 'unavailable', reason: 'loading' },
+      kind: 'count',
+      note: leaderboardWindowLabel,
+    },
+    {
+      label: 'Undecided series',
+      m: { value: waitingSeriesCount, basis: 'measured' },
+      kind: 'count',
+      note: waitingExperiments.length > 0 ? `${waitingExperiments.length} waiting` : undefined,
+    },
+  ];
+
   const idle = navMode === 'use-cases'
     ? <article class="detail" aria-label={selectedUseCase ? selectedUseCase.goal : (selectedCollectionTitle ?? 'Lab suite leaderboard')}>
         <Undecided experiments={data.experiments} onOpen={x => go(`/lab/${x}`)} />
+        {!selectedUseCase && <Totals items={summaryTotals} />}
         {selectedUseCase && (
           <UseCaseCard
             useCase={selectedUseCase}
@@ -308,14 +350,6 @@ function LabView({ id }: { id?: string }) {
           onOpenPipeline={p => go(`/pipelines/${p}`)}
           onSelectUseCase={u => { setSelectedUseCaseId(u); setSelectedFolderId(null); }}
         />
-        {!selectedUseCase && (
-          <Registry
-            useCases={rawUseCases}
-            collectionTitle={selectedCollectionTitle}
-            onSelect={u => { setSelectedUseCaseId(u); setSelectedFolderId(null); }}
-            onRun={u => go(`/lab/new?useCase=${encodeURIComponent(u)}`)}
-          />
-        )}
       </article>
     : <article class="detail" aria-label="Lab questions">
         <Questions experiments={shownExperiments} onOpen={x => go(`/lab/${x}`)} />
@@ -382,16 +416,15 @@ function UseCaseCard({
   onRun,
 }: {
   useCase: RegistryUseCase;
-  examples: readonly { artifactId: string; name: string }[];
+  examples: readonly LabExampleEntry[];
   onClose: () => void;
   onRun: (useCaseId: string) => void;
 }) {
-  const slug = useCaseSlug(useCase.id);
-  const matched = examples.filter(ex => matchesUseCaseSlug(ex.name, slug));
+  const matched = matchingExamplesForUseCase(examples, useCase.id);
   const eligible = isLabEligibleUseCase(useCase);
   const readiness = matched.length > 0
     ? `${matched.length} approved (${matched.slice(0, 4).map(e => e.name).join(', ')}${matched.length > 4 ? `, +${matched.length - 4}` : ''})`
-    : `0 approved matching ${slug} (maturity: ${useCase.maturity})`;
+    : `0 approved matching ${useCase.id} (maturity: ${useCase.maturity})`;
   return (
     <section class="panel" aria-label={`Use case ${useCase.id}`}>
       <header class="panel-h">
@@ -433,7 +466,7 @@ function UseCaseCard({
   );
 }
 
-type LeaderboardSortCol = 'variant' | 'pipeline' | 'score' | 'runs' | 'wall' | 'tokens' | 'cost';
+type LeaderboardSortCol = 'variant' | 'pipeline' | 'score' | 'runs' | 'wall' | 'cost';
 const lbCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 function SuiteLeaderboard({
@@ -461,6 +494,10 @@ function SuiteLeaderboard({
 }) {
   const [sortCol, setSortCol] = useState<LeaderboardSortCol | null>(null);
   const [sortDir, setSortDir] = useState<'ascending' | 'descending'>('descending');
+  const [promotingKey, setPromotingKey] = useState<string | null>(null);
+  const [promoted, setPromoted] = useState<{ key: string; reply: Ops['lab_promote']['reply'] } | null>(null);
+  const [promoteError, setPromoteError] = useState<string | null>(null);
+  const alive = useAlive();
 
   const toggleSort = (col: LeaderboardSortCol) => {
     if (sortCol === col) {
@@ -470,6 +507,17 @@ function SuiteLeaderboard({
       setSortDir(col === 'variant' || col === 'pipeline' || col === 'wall' || col === 'cost' ? 'ascending' : 'descending');
     }
   };
+
+  const bestByGroup = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const entry of entries) {
+      if (entry.succeededTrials <= 0 || entry.scoreMean == null || entry.scoreMean <= 0) continue;
+      const gk = `${entry.useCaseId}\0${entry.evaluator}`;
+      const prev = map.get(gk);
+      if (prev === undefined || entry.scoreMean > prev) map.set(gk, entry.scoreMean);
+    }
+    return map;
+  }, [entries]);
 
   const sorted = useMemo(() => {
     if (!sortCol) return [...entries];
@@ -487,13 +535,27 @@ function SuiteLeaderboard({
         case 'score': return cmpNum(a.scoreMean, b.scoreMean);
         case 'runs': return cmpNum(a.succeededTrials / Math.max(1, a.trials), b.succeededTrials / Math.max(1, b.trials)) || cmpNum(a.trials, b.trials);
         case 'wall': return cmpNum(a.wallMsMedian, b.wallMsMedian);
-        case 'tokens': return cmpNum(a.tokensTotal, b.tokensTotal);
-        case 'cost': return cmpNum(a.costUsd, b.costUsd);
+        case 'cost': return cmpNum(a.costUsd, b.costUsd) || cmpNum(a.tokensTotal, b.tokensTotal);
       }
     });
   }, [entries, sortCol, sortDir]);
 
+  const promoteRow = async (key: string, entry: LabLeaderboardEntry) => {
+    if (promotingKey) return;
+    setPromotingKey(key);
+    setPromoteError(null);
+    try {
+      const reply = await op('lab_promote', { experimentId: entry.latestExperimentId, variant: entry.variantLabel }, { signal: alive });
+      if (!alive.aborted) setPromoted({ key, reply });
+    } catch (x) {
+      if (!alive.aborted) setPromoteError(message(x));
+    } finally {
+      if (!alive.aborted) setPromotingKey(null);
+    }
+  };
+
   const sortStatus = sortCol ? `Sorted by ${sortCol}, ${sortDir}, ${sorted.length} rows` : '';
+  const ellipsisStyle = { overflow: 'hidden', textOverflow: 'ellipsis' } as const;
 
   return (
     <section class="panel" aria-label={`Suite leaderboard: ${scopeLabel}`}>
@@ -506,6 +568,17 @@ function SuiteLeaderboard({
       </header>
       <span class="sr-only" role="status">{sortStatus}</span>
       {error && <ErrorBanner text={error} onRetry={onRetry} />}
+      {promoteError && <ProblemRow title="Promote refused" facts={promoteError} severity="failure" actions={[]} />}
+      {promoted && (
+        <DetailSection title="Promote">
+          <KvRow
+            icon="check"
+            label={`Recommendation set to ${promoted.reply.method.id ?? ''}`}
+            meta={promoted.reply.catalogue ? <span class="mono">catalogue r{promoted.reply.catalogue.revision}</span> : 'method already in the catalogue'}
+          />
+          {promoted.reply.note && <KvRow icon="circle-alert" label={String(promoted.reply.note)} />}
+        </DetailSection>
+      )}
       {loading && !error ? (
         <Empty text="Loading leaderboard…" />
       ) : sorted.length === 0 ? (
@@ -517,48 +590,73 @@ function SuiteLeaderboard({
             <tr>
               <SortColHead label="Variant" active={sortCol === 'variant'} dir={sortDir} onSort={() => toggleSort('variant')} />
               <SortColHead label="Pipeline" active={sortCol === 'pipeline'} dir={sortDir} onSort={() => toggleSort('pipeline')} />
-              <th scope="col">Model / Profile</th>
-              <th scope="col">Evaluator</th>
               <SortColHead label="Score" active={sortCol === 'score'} dir={sortDir} numeric onSort={() => toggleSort('score')} />
               <SortColHead label="Runs" active={sortCol === 'runs'} dir={sortDir} numeric onSort={() => toggleSort('runs')} />
-              <SortColHead label="Median time" active={sortCol === 'wall'} dir={sortDir} numeric onSort={() => toggleSort('wall')} />
-              <SortColHead label="Tokens" active={sortCol === 'tokens'} dir={sortDir} numeric onSort={() => toggleSort('tokens')} />
-              <SortColHead label="Cost" active={sortCol === 'cost'} dir={sortDir} numeric onSort={() => toggleSort('cost')} />
-              <th scope="col">Latest</th>
+              <SortColHead label="Median" active={sortCol === 'wall'} dir={sortDir} numeric onSort={() => toggleSort('wall')} />
+              <SortColHead label="Tokens / Cost" active={sortCol === 'cost'} dir={sortDir} numeric onSort={() => toggleSort('cost')} />
+              <th scope="col">Actions</th>
             </tr>
           }
         >
           {sorted.map((entry, idx) => {
             const key = `${entry.useCaseId}|${entry.pipelineId}|${entry.variantLabel}|${entry.model ?? ''}|${entry.profile ?? ''}|${entry.configRef ?? ''}|${entry.evaluator}|${idx}`;
-            const modelText = entry.model ? agentLabel(entry.model) : '—';
+            const modelText = entry.model ? agentLabel(entry.model) : '';
+            const modelLine = [modelText, entry.profile].filter(Boolean).join(' · ');
             const rangeText = entry.scoreMin != null && entry.scoreMax != null && entry.scoreMin !== entry.scoreMax
-              ? ` (${entry.scoreMin.toFixed(2)}–${entry.scoreMax.toFixed(2)})`
+              ? `${entry.scoreMin.toFixed(2)}–${entry.scoreMax.toFixed(2)}`
               : '';
             const runsTip = `${entry.succeededTrials} succeeded, ${entry.failedTrials} failed of ${entry.trials} trials`;
             const modelTip = [entry.model, entry.profile, entry.configRef].filter(Boolean).join(' · ') || undefined;
+            const isWinner =
+              entry.succeededTrials > 0 &&
+              entry.scoreMean != null &&
+              entry.scoreMean > 0 &&
+              entry.scoreMean === bestByGroup.get(`${entry.useCaseId}\0${entry.evaluator}`);
+            const isPromoted = promoted?.key === key;
             return (
               <tr key={key}>
                 <th scope="row">
-                  <div>{entry.variantLabel || 'baseline'}</div>
+                  <div style={{ maxWidth: '6.75rem', ...ellipsisStyle }} data-tip={(entry.variantLabel || '').length > 16 ? entry.variantLabel : undefined}>
+                    {entry.variantLabel || 'baseline'}
+                  </div>
+                  {modelLine && (
+                    <div class="muted" style={{ maxWidth: '6.75rem', ...ellipsisStyle }} data-tip={modelTip}>
+                      {modelLine}
+                    </div>
+                  )}
                   {showUseCase && (
-                    <div class="muted">
-                      <Button label={entry.useCaseId} kind="quiet" rowLink onClick={() => onSelectUseCase(entry.useCaseId)} />
+                    <div class="muted" style={{ maxWidth: '6.75rem', ...ellipsisStyle }}>
+                      <a
+                        href={`/lab?useCase=${encodeURIComponent(entry.useCaseId)}`}
+                        data-tip={entry.useCaseId.length > 16 ? entry.useCaseId : undefined}
+                        style={{ display: 'block', ...ellipsisStyle }}
+                        onClick={ev => { ev.preventDefault(); onSelectUseCase(entry.useCaseId); }}
+                      >
+                        {entry.useCaseId}
+                      </a>
                     </div>
                   )}
                 </th>
                 <td>
-                  <a href={`/pipelines/${entry.pipelineId}`} onClick={ev => { ev.preventDefault(); onOpenPipeline(entry.pipelineId); }}>
-                    {entry.pipelineId}
-                  </a>
+                  <div style={{ maxWidth: '5.75rem', ...ellipsisStyle }}>
+                    <a
+                      href={`/pipelines/${entry.pipelineId}`}
+                      data-tip={entry.pipelineId.length > 14 ? entry.pipelineId : undefined}
+                      style={{ display: 'block', ...ellipsisStyle }}
+                      onClick={ev => { ev.preventDefault(); onOpenPipeline(entry.pipelineId); }}
+                    >
+                      {entry.pipelineId}
+                    </a>
+                  </div>
+                  <div class="muted" style={{ maxWidth: '5.75rem', ...ellipsisStyle }} data-tip={entry.evaluator}>
+                    {evaluatorLabel(entry.evaluator)}
+                  </div>
                 </td>
-                <td data-tip={modelTip}>
-                  <div>{modelText}</div>
-                  {entry.profile && <div class="muted">{entry.profile}</div>}
-                </td>
-                <td>{evaluatorLabel(entry.evaluator)}</td>
                 <td class="num">
-                  <Num m={{ value: entry.scoreMean, basis: entry.scoreMean == null ? 'unavailable' : 'measured' }} kind="score" />
-                  {rangeText && <span class="muted">{rangeText}</span>}
+                  <div>
+                    <Num m={{ value: entry.scoreMean, basis: entry.scoreMean == null ? 'unavailable' : 'measured' }} kind="score" />
+                  </div>
+                  {rangeText && <div class="muted">{rangeText}</div>}
                 </td>
                 <td class="num" data-tip={runsTip}>
                   {entry.succeededTrials}/{entry.trials}
@@ -567,18 +665,36 @@ function SuiteLeaderboard({
                   <Num m={msMeasured(entry.wallMsMedian)} kind="duration" />
                 </td>
                 <td class="num">
-                  <Num m={{ value: entry.tokensTotal, basis: entry.tokensTotal > 0 || entry.trials === 0 ? 'measured' : 'unavailable', reason: 'no token usage' }} kind="count" />
-                </td>
-                <td class="num">
-                  <Num m={{ value: entry.costUsd, basis: costBasisOf(entry.costBasis), currency: 'USD', reason: entry.costBasis }} kind="money" />
-                  <span class="muted"> {entry.costBasis}</span>
+                  <div>
+                    <Num m={{ value: entry.tokensTotal, basis: entry.tokensTotal > 0 || entry.trials === 0 ? 'measured' : 'unavailable', reason: 'no token usage' }} kind="count" />
+                    <span class="muted"> tok</span>
+                  </div>
+                  <div>
+                    <Num m={{ value: entry.costUsd, basis: costBasisOf(entry.costBasis), currency: 'USD', reason: entry.costBasis }} kind="money" />
+                    {entry.costBasis && entry.costBasis !== 'measured' && entry.costBasis !== 'unavailable' && entry.costUsd != null && (
+                      <span class="muted"> {entry.costBasis === 'subscription' ? 'sub' : entry.costBasis}</span>
+                    )}
+                  </div>
                 </td>
                 <td>
-                  <span class="deps">
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)' }}>
                     <EntityCode id={entry.latestExperimentId} kind="experiment" />
-                    <Button label="Open" kind="quiet" onClick={() => onOpenExperiment(entry.latestExperimentId)} />
+                    <Button label="Open experiment" icon="external-link" iconOnly kind="quiet" tip="Open latest experiment" onClick={() => onOpenExperiment(entry.latestExperimentId)} />
                     <AgeChip t={ms(entry.latestAt)} />
-                  </span>
+                  </div>
+                  {isWinner && (
+                    <div>
+                      <Button
+                        label={isPromoted ? 'Promoted' : 'Promote'}
+                        icon="check-check"
+                        kind="quiet"
+                        busy={promotingKey === key}
+                        disabledReason={promotingKey && promotingKey !== key ? 'Promotion in progress' : undefined}
+                        tip={`Promote ${entry.variantLabel || 'baseline'} to Library recommendation`}
+                        onClick={() => promoteRow(key, entry)}
+                      />
+                    </div>
+                  )}
                 </td>
               </tr>
             );
@@ -587,59 +703,6 @@ function SuiteLeaderboard({
       )}
     </section>
   );
-}
-
-// The use-case registry fills the work area below the leaderboard while no specific use case or experiment is open.
-function Registry({
-  useCases,
-  collectionTitle,
-  onSelect,
-  onRun,
-}: {
-  useCases: RegistryUseCase[];
-  collectionTitle: string | null;
-  onSelect: (useCaseId: string) => void;
-  onRun: (useCaseId: string) => void;
-}) {
-  const { collections, archived } = groupUseCases(useCases);
-  const shownCollections = collectionTitle && collectionTitle !== 'Archived / Obsolete'
-    ? collections.filter(c => c.title === collectionTitle)
-    : collectionTitle === 'Archived / Obsolete'
-      ? []
-      : collections;
-
-  const row = (u: RegistryUseCase) => (
-    <div key={u.id} role="row" class="vl-row static">
-      <StateBadge family="source" state={u.source_status as StateOf<'source'>} reason={u.source ? `${u.source.repo}/${u.source.path}#${u.source.anchor}` : undefined} compact />
-      <span class="tt">
-        <Button label={u.goal} rowLink kind="quiet" onClick={() => onSelect(u.id)} />
-        <span class="id">{u.id}{u.maps_to?.length ? ` → ${u.maps_to.join(', ')}` : ''}</span>
-      </span>
-      <span class="muted">{u.status ?? 'current'}</span>
-      <span class="muted">{u.lab_fit}</span>
-      <span class="muted">{u.maturity}</span>
-      {isLabEligibleUseCase(u) ? <Button label="Run in Lab" icon="play" kind="quiet" tip={`Run ${u.id} in Lab`} onClick={() => onRun(u.id)} /> : <span />}
-    </div>
-  );
-
-  const table = (items: RegistryUseCase[]) => (
-    <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 6rem 5rem 9rem auto' }}>
-      <div class="vl-head" role="row"><span /><span>Use case</span><span>Status</span><span>Fit</span><span>Maturity</span><span /></div>
-      {items.map(row)}
-    </div>
-  );
-
-  return <>
-    <h2 class="detail-title">{collectionTitle ?? 'Use-case registry'}</h2>
-    {useCases.length === 0 && <Empty text="No use cases in registry." />}
-    {shownCollections.map(c => <DetailSection key={c.key} title={`${c.title} (${c.items.length})`}>{table(c.items)}</DetailSection>)}
-    {collectionTitle === 'Archived / Obsolete' && archived.length > 0 && (
-      <DetailSection title={`Archived / Obsolete (${archived.length})`}>{table(archived)}</DetailSection>
-    )}
-    {!collectionTitle && archived.length > 0 && (
-      <Disclosure summaryClass="muted" summary={`Archived / Obsolete (${archived.length})`}>{table(archived)}</Disclosure>
-    )}
-  </>;
 }
 
 // One rating or approval question with its blind outputs and keyboard answers.
@@ -676,10 +739,53 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const [planTrial, setPlanTrial] = useState<string>();
   const [msg, setMsg] = useState<{ text: string; tone: 'warning' | 'failure' } | null>(null);
   const [patch, setPatch] = useState<Ops['lab_promote']['reply'] | null>(null);
+  const [promotingVariant, setPromotingVariant] = useState<string | null>(null);
+  const [promotedVariant, setPromotedVariant] = useState<string | null>(null);
   useEffect(() => { if (e && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView(); }, [!!e]);
   const now = Date.now();
   if (!e) return <article class="detail" data-ui="detail" tabIndex={-1}><Empty text="Loading…" /></article>;
   const act = <K extends OpName>(name: K, body: Ops[K]['request']): Promise<Ops[K]['reply'] | undefined> => op(name, body).then(r => { const w = (r as { warnings?: string[] }).warnings; setMsg(w?.length ? { text: w.join('; '), tone: 'warning' } : null); return r; }).catch((x: unknown) => { setMsg({ text: message(x), tone: 'failure' }); return undefined; });
+  const promoteVariant = async (variantLabel: string) => {
+    if (promotingVariant) return;
+    setPromotingVariant(variantLabel);
+    try {
+      const r = await act('lab_promote', { experimentId: id, variant: variantLabel });
+      if (r) {
+        setPatch(r);
+        setPromotedVariant(variantLabel);
+      }
+    } finally {
+      setPromotingVariant(null);
+    }
+  };
+  const variantScore = (s: LabScoreSummary | undefined): number | null => {
+    if (!s) return null;
+    if (s.form === 'pick_best') return s.n ? (s.wins ?? 0) / s.n : null;
+    if (s.form === 'pass_fail') return s.n ? (s.passed ?? 0) / s.n : null;
+    return s.mean ?? null;
+  };
+  const winningVariant = (() => {
+    if (e.state !== 'done') return null;
+    if (e.decision?.startsWith('adopt ')) {
+      const target = e.decision.slice('adopt '.length).trim();
+      const adopted = e.variants.find(v => (v.label ?? '').trim() === target);
+      if (adopted) return adopted;
+    }
+    let best: (typeof e.variants)[number] | null = null;
+    let bestScore = 0;
+    for (const v of e.variants) {
+      const summaryMap = v.summary ?? {};
+      const key = e.primaryEvaluator && summaryMap[e.primaryEvaluator]
+        ? e.primaryEvaluator
+        : Object.keys(summaryMap)[0];
+      const sc = key ? variantScore(summaryMap[key]) : null;
+      if (sc != null && sc > bestScore) {
+        bestScore = sc;
+        best = v;
+      }
+    }
+    return best;
+  })();
   const trial = (key: string) => e.trials.filter(t => `${t.cell.example}|${t.cell.variant}|${t.cell.repeat}` === key).sort((a, b) => (b.cell.attempt ?? 0) - (a.cell.attempt ?? 0))[0];
   const toggle = (t: string) => setSel(s => s.includes(t) ? s.filter(x => x !== t) : [...s, t]);
   const rate = (form: Ops['lab_rating_create']['request']['form']) => act('lab_rating_create', { experimentId: id, form, trialIds: sel }).then(r => { if (r?.id) { setSel([]); location.hash = 'rating-' + r.id; } });
@@ -705,6 +811,16 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
       {e.state === 'draft' && <Button label="Launch" icon="play" kind="primary" disabledReason={savingRecord ? 'Saving experiment record' : Object.values(recordErrors).some(Boolean) || Object.entries(recordDraft).some(([field, value]) => value !== String(savedRecord[field] ?? record(field) ?? '')) ? 'Save the experiment record successfully before launch' : !String(savedRecord.goal ?? e.goal ?? '').trim() || !String(savedRecord.hypothesis ?? e.hypothesis ?? '').trim() ? 'Save a goal and hypothesis before launch' : undefined} onClick={() => act('lab_experiment_action', { experimentId: id, action: 'launch' })} />}
       {e.state === 'paused' && <Button label="Resume" icon="play" kind="primary" onClick={() => act('lab_experiment_action', { experimentId: id, action: 'resume' })} />}
       {(e.state === 'running' || e.state === 'paused') && <Button label="Stop" icon="square" kind="danger" onClick={() => act('lab_experiment_action', { experimentId: id, action: 'stop' })} />}
+      {e.state === 'done' && winningVariant && (
+        <Button
+          label={promotedVariant === (winningVariant.label ?? '') ? `Promoted ${winningVariant.label ?? ''}` : `Promote ${winningVariant.label ?? ''}`}
+          icon="check-check"
+          kind="primary"
+          busy={promotingVariant === (winningVariant.label ?? '')}
+          disabledReason={promotingVariant && promotingVariant !== (winningVariant.label ?? '') ? 'Promotion in progress' : undefined}
+          onClick={() => promoteVariant(winningVariant.label ?? '')}
+        />
+      )}
       <OfflineMarker state={state} now={now} /></header>
     <h2 class="detail-title">{title(e)}</h2>
     {e.state === 'draft' && <DetailSection title="Experiment record">{(['goal', 'hypothesis'] as const).map(field => <SettingField key={field} label={field === 'goal' ? 'Goal' : 'Hypothesis'} help="Saved in the experiment record before explicit launch" value={recordDraft[field] ?? savedRecord[field] ?? record(field) ?? ''} now={now} status={recordErrors[field] ? {kind: 'apply_error', error: recordErrors[field]} : {kind: 'pending'}} onSave={async value => {
@@ -727,6 +843,9 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
       </div>}
     </DetailSection>}
     {msg && <ProblemRow title={msg.tone === 'warning' ? 'Launched with warnings' : 'Action refused'} facts={msg.text} severity={msg.tone} actions={[]} />}
+    {patch && <DetailSection title="Promote"><KvRow icon="check" label={`Recommendation set to ${patch.method.id ?? ''}`}
+      meta={patch.catalogue ? <span class="mono">catalogue r{patch.catalogue.revision}</span> : 'method already in the catalogue'} />
+      {patch.note && <KvRow icon="circle-alert" label={String(patch.note)} />}</DetailSection>}
     <Totals items={[
       { label: 'Trials', m: { value: e.spend.trials.value, basis: 'measured' }, kind: 'count', note: note('trials') },
       { label: 'Wall time', m: { value: e.spend.wall_ms.value / 1000, basis: 'measured' }, kind: 'duration', note: note('wall_ms') },
@@ -781,10 +900,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
     <section class="panel"><header class="panel-h"><Icon name="sliders-horizontal" /><h2>Variants</h2></header>
       <DetailSection title="Spread across repeats">{e.variants.map(v => <KvRow key={v.label} icon="git-merge" label={v.proposalLabel ? `${v.proposalLabel} · ${v.label}` : v.label ?? ''}
         meta={<><span>{Object.entries(v.summary ?? {}).map(([k, s]) => `${evaluatorLabel(k)} ${scoreText(s)}`).join(' · ') || 'no scores yet'}</span><span> · Pipeline: <a href={`/pipelines/${v.pipelineId ?? e.pipelineId}`}>{v.pipelineId ?? e.pipelineId}</a></span><span class="id"> · Executable digest: {v.config_ref}</span>{v.catalogueConfigRef && <span class="id"> · Catalogue identity: {v.catalogueConfigRef}</span>}{v.catalogueRef && <span> · <a href={`/catalogue/${v.catalogueRef.id}`}>Catalogue r{v.catalogueRef.revision}</a></span>}</>}
-        value={<Button label="Promote" icon="check-check" onClick={() => act('lab_promote', { experimentId: id, variant: v.label ?? '' }).then(r => setPatch(r ?? null))} />} />)}</DetailSection>
-      {patch && <DetailSection title="Promote"><KvRow icon="check" label={`Recommendation set to ${patch.method.id ?? ''}`}
-        meta={patch.catalogue ? <span class="mono">catalogue r{patch.catalogue.revision}</span> : 'method already in the catalogue'} />
-        {patch.note && <KvRow icon="circle-alert" label={String(patch.note)} />}</DetailSection>}
+        value={<Button label="Promote" icon="check-check" busy={promotingVariant === (v.label ?? '')} disabledReason={promotingVariant && promotingVariant !== (v.label ?? '') ? 'Promotion in progress' : undefined} onClick={() => promoteVariant(v.label ?? '')} />} />)}</DetailSection>
       {(e.typed ?? []).map(t => <DetailSection key={`${t.variant}/${t.split}`} title={`${t.variant} · typed answers · ${t.split === 'tune' ? 'tune (bands are set here)' : 'held out (reported)'}`}>
         {t.stats.map(s => { const cov = percent(s.confident, s.n), esc = percent(100 - parseInt(cov.text, 10), 100);
           return <KvRow key={s.aggregate ? '\u0000all' : s.tag} icon={s.aggregate ? 'chart-no-axes-column' : 'file-text'} label={s.aggregate ? 'All languages' : s.tag}

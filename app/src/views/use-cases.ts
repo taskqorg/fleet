@@ -1,9 +1,10 @@
 // Shared Lab use-case registry grouping, filtering, tree mapping, and slug helpers.
 import type { ComponentChildren } from 'preact';
 import type { CatalogueTreeNode, IconName } from '../../../packages/ui/src/index.ts';
-import type { LabUseCaseEntry } from '../../../contracts/generated/ops.ts';
+import type { LabExampleEntry, LabUseCaseEntry } from '../../../contracts/generated/ops.ts';
 
 export type RegistryUseCase = LabUseCaseEntry & { tags?: readonly string[]; expected_outcome?: string };
+export type ExampleUseCaseCandidate = Pick<LabExampleEntry, 'artifactId' | 'name'> & { useCaseId?: string | null };
 
 export interface UseCaseCollection {
   key: 'benchmarks' | 'real-work' | 'fleet-projects';
@@ -71,6 +72,56 @@ export function matchesUseCaseSlug(exampleName: string, slug: string): boolean {
   if (!slug) return false;
   const escaped = slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:[^a-z0-9]|$)`).test(exampleName.toLowerCase());
+}
+
+const EXAMPLE_TOKEN_ALIASES: Record<string, string> = {
+  py: 'python',
+  ts: 'typescript',
+  js: 'javascript',
+};
+
+const tokenizeForUseCaseMatch = (raw: string): string[] =>
+  raw
+    .toLowerCase()
+    .replace(/\buc-?0*(\d+)\b/g, 'uc$1')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map(t => EXAMPLE_TOKEN_ALIASES[t] ?? t);
+
+/**
+ * Match an approved example to a use case by explicit API `useCaseId` first,
+ * falling back to slug boundary matching and symmetric token-set matching.
+ */
+export function matchesUseCaseExample(ex: ExampleUseCaseCandidate, useCaseId: string): boolean {
+  const explicit = (ex as { useCaseId?: string | null }).useCaseId?.trim();
+  if (explicit) return explicit === useCaseId;
+
+  const slug = useCaseSlug(useCaseId);
+  if (matchesUseCaseSlug(ex.name, slug)) return true;
+
+  const cleanName = ex.name.trim().replace(/^examples\//i, '').replace(/(?:@[^.]+)?\.json$/i, '');
+  const ucTokens = tokenizeForUseCaseMatch(useCaseId);
+  const exTokens = tokenizeForUseCaseMatch(cleanName);
+  if (ucTokens.length < 2 || exTokens.length < 2) return false;
+
+  const prefix = ucTokens[0];
+  const ucSet = new Set(ucTokens);
+  const exSet = new Set(exTokens);
+  if (!exSet.has(prefix)) return false;
+
+  const sharedNonPrefix = ucTokens.slice(1).filter(t => exSet.has(t));
+  if (sharedNonPrefix.length === 0) return false;
+
+  if (ucTokens.every(t => exSet.has(t))) return true;
+  return sharedNonPrefix.length >= 2 && exTokens.every(t => ucSet.has(t));
+}
+
+/** Return approved examples matching the given use-case ID. */
+export function matchingExamplesForUseCase<T extends ExampleUseCaseCandidate>(
+  examples: readonly T[],
+  useCaseId: string,
+): T[] {
+  return examples.filter(ex => matchesUseCaseExample(ex, useCaseId));
 }
 
 /** Format a concise picker label combining the use-case id and a short goal summary. */

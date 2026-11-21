@@ -10,7 +10,7 @@ import { op, online, signedOut, OpError, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import { access, accessGeneration, isAccessCurrent } from '../access.ts';
 import { onClear } from '../offline.ts';
-import { buildUseCaseTree, matchesUseCaseSlug, useCaseSlug, type RegistryUseCase } from './use-cases.ts';
+import { buildUseCaseTree, matchingExamplesForUseCase, useCaseSlug, type RegistryUseCase } from './use-cases.ts';
 import type { DefinitionListItem } from '../../../contracts/generated/ops.ts';
 
 type Variant = { label: string; pipelineId: string; overrides: string };
@@ -190,7 +190,8 @@ export function LabCreate() {
         if (!actor || !isAccessCurrent(generation)) return;
         const k = PREFIX + JSON.stringify([1, actor]); identity.current = k;
         let saved: Receipt | null = null; try { saved = JSON.parse(sessionStorage.getItem(k) ?? 'null'); } catch { /* start an empty draft */ }
-        if (saved?.draft && typeof saved.draft.projectId === 'string' && typeof saved.draft.pipelineId === 'string' && typeof saved.draft.repeats === 'string' && Array.isArray(saved.draft.examples) && Array.isArray(saved.draft.variants) && Array.isArray(saved.draft.evaluators) && Array.isArray(saved.draft.budgets) && ['editing', 'pending', 'uncertain', 'created'].includes(saved.state)) {
+        const canRestoreSaved = !!saved?.draft && typeof saved.draft.projectId === 'string' && typeof saved.draft.pipelineId === 'string' && typeof saved.draft.repeats === 'string' && Array.isArray(saved.draft.examples) && Array.isArray(saved.draft.variants) && Array.isArray(saved.draft.evaluators) && Array.isArray(saved.draft.budgets) && ['editing', 'pending', 'uncertain', 'created'].includes(saved.state) && (saved.state !== 'editing' || !requestedUseCase || saved.draft.useCaseId === requestedUseCase);
+        if (canRestoreSaved && saved) {
           if (saved.state === 'pending') saved = { ...saved, state: 'uncertain', message: 'The previous request has no confirmed reply. Review experiments before starting another draft.' };
           if (saved.state === 'created') saved = saved.id ? { ...saved, message: 'Creation confirmed. Read the retained details to continue.' } : { ...saved, state: 'uncertain', message: 'The saved reply has no experiment identity. Review experiments.' };
           if (saved.draft.projectId) {
@@ -267,8 +268,7 @@ export function LabCreate() {
     if (pending.examples && exampleList.data) {
       pending.examples = false;
       if (cur.examples.length === 0) {
-        const slug = useCaseSlug(targetUseCase);
-        const matched = exampleList.data.examples.filter(e => matchesUseCaseSlug(e.name, slug)).map(e => e.artifactId);
+        const matched = matchingExamplesForUseCase(exampleList.data.examples, targetUseCase).map(e => e.artifactId);
         if (matched.length) patch.examples = matched;
       }
     }
@@ -291,7 +291,7 @@ export function LabCreate() {
     const slug = useCaseSlug(useCaseId);
     const ev = defaultEvaluatorForUseCase(u);
     const prose = u ? defaultProseForUseCase(u) : { goal: d.goal, hypothesis: d.hypothesis, decisionRule: d.decisionRule };
-    const matched = (exampleList.data?.examples ?? []).filter(e => matchesUseCaseSlug(e.name, slug)).map(e => e.artifactId);
+    const matched = matchingExamplesForUseCase(exampleList.data?.examples ?? [], useCaseId).map(e => e.artifactId);
     const nextProjectId = d.projectId || projects.find(p => p.id === 'fleet')?.id || (projects.length === 1 ? projects[0].id : '');
     const nextPipelineId = d.pipelineId || (nextProjectId === d.projectId ? (pipelines.find(p => p.id === 'coding-task')?.id ?? (pipelines.length === 1 ? pipelines[0].id : '')) : '');
     if (nextProjectId && !nextPipelineId) prefillPending.current.pipeline = true;
@@ -305,7 +305,7 @@ export function LabCreate() {
       variants: nextVariants,
       evaluators: [ev],
       primary: `${ev.kind}:${ev.ref}:${ev.form}`,
-      ...(matched.length ? { examples: matched } : {}),
+      ...(matched.length || d.useCaseId ? { examples: matched } : {}),
       ...(nextProjectId ? { projectId: nextProjectId } : {}),
       ...(nextPipelineId ? { pipelineId: nextPipelineId } : {}),
       ...prose,

@@ -12,15 +12,15 @@
   * `Runs` tree: `Active`, `Drafts`, `Completed`, and folded `Stopped` folders (max 3 levels), with experiment state, series/goal, kind/variants, undecided marker, and age.
 * Work area (`Use cases` mode):
   * Undecided finished experiments warning above the workspace when experiments wait for a decision.
-  * **Use-case Card** (when a use case is selected): `id`, `goal`, `tags`, `status`, `lab_fit`, `maturity`, approved example count/readiness, source reference, and a 1-click `"Run in Lab"` CTA opening `/lab/new?useCase=<id>`.
-  * **Suite Leaderboard** (`lab_leaderboard` scoped to `{ useCaseId }`, `{ collection }`, or `{}`): sortable semantic table comparing `(variantLabel, pipelineId, model, profile)` by evaluator, mean score (with min–max spread), runs (`succeededTrials / trials`), median wall time, tokens, USD cost + basis (`measured` / `subscription` / `estimated` / `unavailable`), and link to `latestExperimentId`.
-  * Collection use-case table below the leaderboard when viewing a collection or overview, with click-to-open card and `"Run in Lab"`.
+  * **Summary strip** (`<Totals />`, when no specific use case is open): `Active use cases`, `Approved examples`, `Leaderboard entries`, and `Undecided series` — replacing the duplicate registry table so the `Use cases` `CatalogueTree` remains the single suite navigator.
+  * **Use-case Card** (when a use case is selected): `id`, `goal`, `tags`, `status`, `lab_fit`, `maturity`, approved example count/readiness (matched by `useCaseId` first, falling back to slug and token-set matching), source reference, and a 1-click `"Run in Lab"` CTA opening `/lab/new?useCase=<id>`.
+  * **Suite Leaderboard** (`lab_leaderboard` scoped to `{ useCaseId }`, `{ collection }`, or `{}`): compact 7-column sortable semantic table designed to fit inside the 1440 px work area without horizontal clipping, with two-line cells for `Variant` (model/profile subline + use-case link when unscoped), `Pipeline` (evaluator subline), `Score` (mean with min–max spread), `Runs` (`succeededTrials / trials`), `Median` wall time, `Tokens / Cost` (tokens and USD cost + basis `measured` / `subscription` / `estimated` / `unavailable`), and `Actions` (`EntityCode`, open link, age, and 1-click `Promote` via `lab_promote` on winning rows).
 * Work area (`Runs` mode): [Questions view](../../designs/fleet-lab.md#lab-screen) grouping series by `labGroup` (newest goal, hypothesis, experiments table, and decision).
 * Withdrawn ratings stay visible as history with their reason and no answer controls; they never count as pending or as owner scores.
 * "Waiting for you": open ratings count; drafted examples awaiting approval as [decision blocks](../controls/decision-block.md) (pass or fail).
 
 **Layout of `/lab/<id>`.**
-* Head: experiment state, title, ID, Launch / Resume / Stop.
+* Head: experiment state, title, ID, Launch / Resume / Stop, and 1-click `Promote` for the winning or adopted variant when `done`.
 * Spend: [totals](../controls/number.md) for trials, wall time, Pipe calls and credits, each with its basis and the budget limit and action.
 * Matrix: rows are examples, columns variants. A cell shows a summary per evaluator (never combined across forms) and one line per repeat: trial state (reason when failed or left out of comparison, both in the state tooltip and concisely inline below the trial line), select for rating, repeat, live step progress (`step k/n` from `planSummary` while running/preparing), time, credits, tokens (`spend.tokens`), USD cost with cost basis (`cost`), scores, run link, cancel or retry. Confounders (host, harness and version, model, web route) on the repeat's tooltip.
 * Loop strategies: retained iteration, state, output reason and execution ID; explicit stop reason in the experiment state. Proposal labels remain beside generated variant IDs.
