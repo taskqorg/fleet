@@ -5,7 +5,7 @@
 // the composer (picker, paste, drop over the page) upload into the chosen project and go with the first message.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
-  Composer, DropZone, DetailSection, ErrorBanner, ProjectPick, PresetPicker, Skeleton, agentLabel, harnesses,
+  Button, Composer, DropZone, DetailSection, ErrorBanner, ProjectPick, PresetPicker, Skeleton, agentLabel, harnesses,
   type Harness, type IconName, type PickProject, type PresetOption, type StartFact, type ComposerChip } from '../../../packages/ui/src/index.ts';
 import { op, online, writeOnce, sendingId, prepareSending, submissionKey, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
@@ -26,7 +26,7 @@ function factsOf(p: Preset, inProject: boolean): string[] {
 /** A start fact as a chip in the composer's bottom row, where a conversation shows its profile and permissions. */
 const chipOf = (f: StartFact): ComposerChip => ({ key: f.key, icon: f.icon, harness: f.harness, label: f.text, tip: f.tip, onClick: f.onClick });
 
-export function NewConversation({ initialProject, initialRole, onStarted }: { initialProject: string | null; initialRole?: string | null; onStarted: (sessionId: string) => void }) {
+export function NewConversation({ initialProject, initialRole, onClose, onStarted }: { initialProject: string | null; initialRole?: string | null; onClose: () => void; onStarted: (sessionId: string) => void }) {
   const alive = useAlive();
   const projects = useOp('project_list', {});
   // Recent: the projects of the latest conversations, newest first (sessions_list, latest activity first).
@@ -112,6 +112,10 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
     }
   };
   return <article class="detail new-conversation" data-ui="detail" tabIndex={-1} aria-label="New conversation"><DropZone onFiles={files.add} disabledReason={reason}>
+    <header class="detail-h">
+      <Button label="Close" icon="x" iconOnly onClick={onClose} />
+      <h2 class="detail-title">New conversation</h2>
+    </header>
     <DetailSection title="Project">
       {projects.data ? <ProjectPick projects={ordered} value={project} onChange={p => { setTouched(true); setProject(p); }} /> : <Skeleton rows={1} />}
     </DetailSection>

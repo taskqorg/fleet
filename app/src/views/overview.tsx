@@ -5,7 +5,7 @@ import { useState } from 'preact/hooks';
 import { useLocation, useSearch } from 'wouter-preact';
 import {
   NeedsYou, OpsSummary, VirtualList, GroupHeader, catalogueRow, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, Button,
-  ListDetail, DetailSection, KvRow, AgeChip, Ago, keyConnection, actor, ShellStatus, type IconName, type Stat,
+  ListDetail, DetailSection, KvRow, AgeChip, Ago, EntityCode, keyConnection, actor, ShellStatus, type IconName, type Stat,
 } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useOp, type Freshness } from '../store.ts';
@@ -21,7 +21,7 @@ type Overview = { questions: QuestionRow[]; problems: ExecutionRow[]; counts: Re
 function useOverview(scope: ReturnType<typeof scopeIds>) {
   const ready = prefsRead.value, { projectIds, excludeProjectIds } = scope;
   const q = useOp('questions_list', ready ? { state: 'open', ...scope } : null);
-  const p = useOp('executions_list', ready ? { needsYou: true, ...scope } : null);
+  const p = useOp('executions_list', ready ? { needsYou: true, ...scope } : null, { quiet: 30_000 });
   // One grouped call: each project's per-state counts (groupCounts); tasks without a project are their own group.
   const page = useOp('task_page', ready ? { group: 'project', groupCounts: true, limit: 1, filter: { ...(projectIds && { projectId: projectIds.map(noProject) }), ...(excludeProjectIds && { excludeProjectId: excludeProjectIds.map(noProject) }) } } : null);
   const data: Overview | null = q.data && p.data && page.data ? {
@@ -82,48 +82,56 @@ export function Overview({ id }: { id?: string }) {
   const hostsRead = useOp('hosts_list', {}, { every: 5000 }), hosts = hostsRead.data, offset = useClockOffset(hostsRead);
   const now = Date.now();
   const hostNow = now + offset;
-  if (!data) return <>{error ? <ErrorBanner text={`Overview did not load: ${error}`} /> : <Skeleton rows={6} />}</>;
   const keep = all ? '?all' : '';
   const open = (x: string | null) => go(x ? `/overview/${encodeURIComponent(x)}${keep}` : `/overview${keep}`);
-  const items = needsYou(data, now), groups = groupsOf(items), sel = items.find(x => x.id === id);
+  const items = data ? needsYou(data, now) : [], groups = groupsOf(items), sel = items.find(x => x.id === id);
   const rows: { g?: string; n?: number; x?: Item }[] = groups.flatMap(g => [{ g: g.cause, n: g.items.length }, ...(closed.includes(g.cause) ? [] : g.items.map(x => ({ x })))]);
   const fresh = (h: HostRow) => !!h.lastSeenAt && !!hosts && hostNow - h.lastSeenAt < hosts.staleAfterMs;
   const hostList = hosts?.hosts ?? [], online_ = hostList.filter(fresh).length;
-  const stats: Stat[] = [
+  const openProjects = (data?.projects ?? []).filter(p => (p.counts.waiting ?? 0) + (p.counts.failed ?? 0) + (p.counts.in_progress ?? 0) + (p.counts.queued ?? 0) > 0);
+  const stats: Stat[] = data ? [
     { label: 'need you', icon: 'bell', value: { value: items.length, basis: 'measured' }, tone: items.length ? 'attention' : undefined },
     ...(hostList.length ? [{ label: 'hosts online', icon: 'panels-top-left', value: { value: online_, basis: 'measured' }, of: hostList.length, tone: online_ < hostList.length ? 'attention' : undefined } satisfies Stat] : []),
     { label: 'failed', icon: 'octagon-x', value: { value: data.counts.failed ?? 0, basis: 'measured' }, tone: data.counts.failed ? 'danger' : undefined, href: '/tasks?state=failed' },
     { label: 'running', icon: 'activity', value: { value: data.counts.in_progress ?? 0, basis: 'measured' }, href: '/tasks?state=in_progress' },
     { label: 'queued', icon: 'list-ordered', value: { value: data.counts.queued ?? 0, basis: 'measured' }, href: '/tasks?state=queued' },
-  ];
+  ] : [];
   const ops = stats.filter(x => (x.value.value ?? 0) > 0);
 
   const list = <>
     <ShellStatus><OfflineMarker state={state} now={now} /></ShellStatus>
     {all && <header class="page-h"><span class="muted">Focus not applied</span><Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} /></header>}
     <NeedsYou>
-      {!items.length && <Empty text={!all && prefs.value.focus.length ? 'Nothing is waiting for you in the focused projects.' : 'Nothing is waiting for you.'} />}
-      {/* One virtual list (OR-9): a group header per cause, then its items as one-line rows. */}
-      {items.length > 0 && <VirtualList items={rows} getKey={r => r.g ? 'g:' + r.g : r.x!.id} rowHeight={catalogueRow()} follow="top" label="Needs you"
-        columns="1.25rem minmax(0,1fr) auto" rowClass={r => r.g ? 'grp' : r.x!.id === id ? 'sel' : ''}
-        render={r => r.g ? <GroupHeader icon={r.g === 'Runs' ? 'triangle-alert' : 'bell'} tone="attention" label={r.g} count={r.n!} open={!closed.includes(r.g)}
-          onToggle={() => setClosed(c => c.includes(r.g!) ? c.filter(x => x !== r.g) : [...c, r.g!])} /> : <>
-          <span class="lead ny-ic"><Icon name={(r.x!.q ? (r.x!.q.kind === 'acceptance' ? 'circle-check' : 'bell') : 'triangle-alert') as IconName} label={r.x!.q ? 'Question' : 'Problem'} /></span>
-          <span class="tt"><a class="title row-link" href={`/overview/${encodeURIComponent(r.x!.id)}${keep}`} onClick={ev => { ev.preventDefault(); open(r.x!.id); }}>{r.x!.title}</a>
-            <span class="id">{r.x!.q ? r.x!.q.code : [r.x!.e.hostId, r.x!.e.harness].filter(Boolean).join(' · ')}</span></span>
-          <Ago t={r.x!.at} />
-        </>} />}
+      {error && !data ? <ErrorBanner text={`Overview did not load: ${error}`} /> : !data ? <Skeleton rows={6} /> : !items.length ? (
+        <Empty text={!all && prefs.value.focus.length ? 'Nothing is waiting for you in the focused projects.' : 'Nothing is waiting for you.'} />
+      ) : (
+        /* One virtual list (OR-9): a group header per cause, then its items as one-line rows. */
+        <VirtualList items={rows} getKey={r => r.g ? 'g:' + r.g : r.x!.id} rowHeight={catalogueRow()} follow="top" label="Needs you"
+          columns="1.25rem minmax(0,1fr) auto" rowClass={r => r.g ? 'grp' : r.x!.id === id ? 'sel' : ''}
+          render={r => r.g ? <GroupHeader icon={r.g === 'Runs' ? 'triangle-alert' : 'bell'} tone="attention" label={r.g} count={r.n!} open={!closed.includes(r.g)}
+            onToggle={() => setClosed(c => c.includes(r.g!) ? c.filter(x => x !== r.g) : [...c, r.g!])} /> : <>
+            <span class="lead ny-ic"><Icon name={(r.x!.q ? (r.x!.q.kind === 'acceptance' ? 'circle-check' : 'bell') : 'triangle-alert') as IconName} label={r.x!.q ? 'Question' : 'Problem'} /></span>
+            <span class="tt"><a class="title row-link" href={`/overview/${encodeURIComponent(r.x!.id)}${keep}`} onClick={ev => { ev.preventDefault(); open(r.x!.id); }}>{r.x!.title}</a>
+              {r.x!.q ? <EntityCode code={r.x!.q.code} id={r.x!.q.id} kind="question" /> : <span class="id">{[r.x!.e.hostId, r.x!.e.harness].filter(Boolean).join(' · ')}</span>}</span>
+            <Ago t={r.x!.at} />
+          </>} />
+      )}
     </NeedsYou>
   </>;
 
-  const detail = sel && <article class="detail" data-ui="detail" tabIndex={-1} aria-label={sel.title}>
+  const detail = !data && id ? (
+    <article class="detail" data-ui="detail" tabIndex={-1}>
+      <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => open(null)} /></header>
+      {error ? <ErrorBanner text={`Overview did not load: ${error}`} /> : <Skeleton rows={6} />}
+    </article>
+  ) : sel && <article class="detail" data-ui="detail" tabIndex={-1} aria-label={sel.title}>
     <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => open(null)} />
       {sel.q ? <StateBadge family="question" state="open" /> : <Icon name="triangle-alert" label="Problem" />}
-      {sel.q?.code && <span class="mono muted">{sel.q.code}</span>}<span class="muted">{[(sel.q ?? sel.e).projectId, sel.cause].filter(Boolean).join(' · ')}</span>
+      {sel.q && <EntityCode code={sel.q.code} id={sel.q.id} kind="question" />}<span class="muted">{[(sel.q ?? sel.e).projectId, sel.cause].filter(Boolean).join(' · ')}</span>
       <span class="grow" /><AgeChip t={sel.at} /></header>
     <h2 class="detail-title">{sel.title}</h2>
     {sel.q ? <DecisionBlock question={sel.q.text} askedBy={actor(sel.q.askedBy) || sel.q.kind} addressedTo="you" since={sel.at} now={now}
-      waits={sel.q.taskId ? <a class="row-link" href={`/tasks/${encodeURIComponent(sel.q.taskId)}`} aria-label="Open task" data-tip="Open task" onClick={ev => { ev.preventDefault(); go(`/tasks/${encodeURIComponent(sel.q!.taskId!)}`); }}><Icon name="external-link" label="Open task" /></a> : undefined}
+      waits={sel.q.taskId ? <EntityCode id={sel.q.taskId} kind="task" /> : undefined}
       options={(Array.isArray(sel.q.options) ? sel.q.options as unknown[] : sel.q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(sel.q.options) ? ['decline'] : []).map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
       onAnswer={a => { if (online.value) writeOnce('questions_answer', { questionId: sel.q!.id, answer: a }, () => {}, { signal: alive }).then(() => open(null), () => { /* the question stays open */ }); }}
       onSecret={keyConnection(sel.q.options) ? v => addRequestedKey(sel.q!.id, keyConnection(sel.q!.options)!, v, alive) : undefined} />
@@ -131,31 +139,50 @@ export function Overview({ id }: { id?: string }) {
         actions={sel.e.taskId ? [{ label: 'Open task', onClick: () => go(`/tasks/${encodeURIComponent(sel.e!.taskId!)}`) }] : []} />}
     {(() => { const same = groups.find(g => g.cause === sel.cause)!.items.filter(x => x.id !== sel.id);
       return same.length > 0 && <DetailSection title={`Same cause, ${same.length} more`}>
-        {same.map(x => <KvRow key={x.id} icon={x.q ? 'bell' : 'triangle-alert'} label={x.title} meta={x.q?.code ?? undefined} value={<Button label="Open" kind="quiet" onClick={() => open(x.id)} />} />)}
+        <ul class="kv">
+          {same.map(x => (
+            <li key={x.id}>
+              <Icon name={x.q ? 'bell' : 'triangle-alert'} />
+              <a class="row-link" href={`/overview/${encodeURIComponent(x.id)}${keep}`} onClick={ev => { ev.preventDefault(); open(x.id); }}>{x.title}</a>
+              {x.q && <EntityCode code={x.q.code} id={x.q.id} kind="question" />}
+              <span class="grow" />
+              <AgeChip t={x.at} />
+            </li>
+          ))}
+        </ul>
       </DetailSection>; })()}
   </article>;
 
   // Nothing picked: the fleet's state, so the work area is never an empty "pick a row" (2026-11-20 decision).
   const idle = <article class="detail" aria-label="Fleet now">
     <OpsSummary>
-    {ops.length > 0 && <StatStrip label="Fleet now" stats={ops} />}
-    <div class="cols">
-      <DetailSection title="Hosts">
-        {hostList.map(h => { const live = fresh(h); return <KvRow key={h.id} icon="panels-top-left" label={h.id}
-          meta={[h.platform, h.version].filter(Boolean).join(' · ')}
-          value={<><StateBadge family="host" state={live ? 'online' : 'offline'} lastSeen={live ? undefined : h.lastSeenAt ?? undefined} now={hostNow} compact />
-            {live && h.running > 0 && <><Num m={{ value: h.running, basis: 'measured' }} kind="count" /><HarnessCounts counts={h.runningByHarness} label={`${h.id} workers by harness`} /></>}
-            {live && h.queued > 0 && <span class="muted">{h.queued} queued</span>}</>} />; })}
-      </DetailSection>
-      <DetailSection title="Projects">
-        {data.projects.map(p => { const counts = { waiting: p.counts.waiting ?? 0, failed: p.counts.failed ?? 0, in_progress: p.counts.in_progress ?? 0, queued: p.counts.queued ?? 0 };
-          const total = Object.values(p.counts).reduce((n, v) => n + (v ?? 0), 0);
-          return <KvRow key={p.id} icon="folder-open" label={p.id} meta={Object.values(counts).some(n => n > 0) ? undefined : `${total} tasks, none open`}
-            value={Object.values(counts).some(n => n > 0) ? <StateCounters family="task" label={`${p.id} by state`} counts={counts} active={[]} hideZero
-              onAll={() => go(formatView({ view: 'tasks', state: Object.keys(counts), project: [p.project] }))} onToggle={s => go(formatView({ view: 'tasks', state: [s], project: [p.project] }))} /> : undefined} />; })}
-      </DetailSection>
-    </div>
-    <InFlight scope={scope} onOpen={go} />
+      {error && !data ? <ErrorBanner text={`Overview did not load: ${error}`} /> : !data ? <Skeleton rows={6} /> : (
+        <>
+          {ops.length > 0 && <StatStrip label="Fleet now" stats={ops} />}
+          {(hostList.length > 0 || openProjects.length > 0) && (
+            <div class="cols">
+              {hostList.length > 0 && (
+                <DetailSection title="Hosts">
+                  {hostList.map(h => { const live = fresh(h); return <KvRow key={h.id} icon="panels-top-left" label={h.id}
+                    meta={[h.platform, h.version].filter(Boolean).join(' · ')}
+                    value={<><StateBadge family="host" state={live ? 'online' : 'offline'} lastSeen={live ? undefined : h.lastSeenAt ?? undefined} now={hostNow} compact />
+                      {live && h.running > 0 && <><Num m={{ value: h.running, basis: 'measured' }} kind="count" /><HarnessCounts counts={h.runningByHarness} label={`${h.id} workers by harness`} /></>}
+                      {live && h.queued > 0 && <span class="hc" data-tip="Queued commands"><Icon name="list-ordered" label="Queued commands" /><Num m={{ value: h.queued, basis: 'measured' }} kind="count" /></span>}</>} />; })}
+                </DetailSection>
+              )}
+              {openProjects.length > 0 && (
+                <DetailSection title="Projects">
+                  {openProjects.map(p => { const counts = { waiting: p.counts.waiting ?? 0, failed: p.counts.failed ?? 0, in_progress: p.counts.in_progress ?? 0, queued: p.counts.queued ?? 0 };
+                    return <KvRow key={p.id} icon="folder-open" label={p.id}
+                      value={<StateCounters family="task" label={`${p.id} by state`} counts={counts} active={[]} hideZero
+                        onAll={() => go(formatView({ view: 'tasks', state: Object.keys(counts), project: [p.project] }))} onToggle={s => go(formatView({ view: 'tasks', state: [s], project: [p.project] }))} />} />; })}
+                </DetailSection>
+              )}
+            </div>
+          )}
+          <InFlight scope={scope} />
+        </>
+      )}
     </OpsSummary>
   </article>;
 
@@ -163,14 +190,14 @@ export function Overview({ id }: { id?: string }) {
 }
 
 /** Pull requests in flight: the Delivery page's own read (the same doc, so one fetch serves both), under the focus (OR-34). */
-function InFlight({ scope, onOpen }: { scope: ReturnType<typeof scopeIds>; onOpen: (path: string) => void }) {
+function InFlight({ scope }: { scope: ReturnType<typeof scopeIds> }) {
   const { data, error } = useOp('delivery_status', prefsRead.value ? scope : null, { every: 300000 });
   const moving = (data?.items ?? []).filter(it => it.stage !== 'installed' && it.stage !== 'merged');
   if (error && !data) return <DetailSection title="Delivery in flight"><ErrorBanner text={`Delivery did not load: ${error}`} /></DetailSection>;
   if (!moving.length) return null;
   return <DetailSection title="Delivery in flight">
-    {moving.map(it => { const path = `/delivery/${idOf(it)}`; return <KvRow key={it.repo + it.number} icon="git-pull-request" label={it.title}
-      meta={<a class="row-link mono" href={path} onClick={e => { e.preventDefault(); onOpen(path); }}>#{it.number}</a>}
-      value={<><StateBadge family="delivery" state={it.stage} compact /><AgeChip t={Date.parse(it.since)} /></>} />; })}
+    {moving.map(it => <KvRow key={it.repo + it.number} icon="git-pull-request" label={it.title}
+      meta={<EntityCode code={`#${it.number}`} id={idOf(it)} kind="pull_request" />}
+      value={<><StateBadge family="delivery" state={it.stage} compact /><AgeChip t={Date.parse(it.since)} /></>} />)}
   </DetailSection>;
 }

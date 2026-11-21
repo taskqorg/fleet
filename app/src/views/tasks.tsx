@@ -3,25 +3,27 @@
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  ListDetail, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, AgeChip, Button,
+  ListDetail, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, StageChip, AgeChip, Button,
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
-  type TreeNode, type Harness, type StateOf, states as states_,
+  OpsSummary, StatStrip, StateCounters, KvRow, Num,
+  type TreeNode, type Harness, type Stage, type StateOf, type Stat, states as states_, stages,
   keyConnection, EntityCode, actor, fileLabel, viewOf, ShellStatus } from '../../../packages/ui/src/index.ts';
-import { op, online, addRequestedKey, writeOnce, useAlive, type Ops } from '../api.ts';
+import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useOp } from '../store.ts';
 import type { TaskRow as ContractTaskRow } from '../../../contracts/generated/ops.ts';
 import { DEFAULT_TASK_SORT, DEFAULT_TASK_GROUP, type View } from '../../../packages/view-url/view-url.ts';
 import { usePins, prefs, setFocus } from '../prefs.ts';
-import { useListPage, ListPagePanel } from '../list-page.tsx';
+import { useListPage, ListPagePanel, type ListPage } from '../list-page.tsx';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { ScopedRollupBar, buildExecTree } from './resources.tsx';
 
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
 const SORTS = [['changed', 'Changed'], ['created', 'Created']] as const;
 /** The contract's task row; its state is a list state (held included). */
-type TaskRow = ContractTaskRow & { state: StateOf<'task'> };
+type TaskRow = ContractTaskRow & { state: StateOf<'task'>; stage?: Stage | null };
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
+const isStage = (s: string | null | undefined): s is Stage => !!s && s in stages;
 
 // System presets (P5): system-views.ts. Running: every non-terminal state.
 // Saved views from before the project default kept no group: they were grouped by priority.
@@ -63,20 +65,79 @@ export function Tasks({ id }: { id?: string }) {
       before={t => rowsGroup !== 'priority' && <PriorityChip p={t.priority} />}
       facts={t => <TaskFacts t={t} />} />
   </>;
-  return <ListDetail list={listPane} detail={id ? <TaskDetail id={id} onClose={() => set({ focus: undefined })} /> : undefined} detailKey={id} />;
+  return <ListDetail list={listPane} detail={id ? <TaskDetail id={id} onClose={() => set({ focus: undefined })} /> : undefined} idle={<TasksSummary page={page} filtered={filtered} focused={focused} />} detailKey={id} />;
+}
+
+function TasksSummary({ page, filtered, focused }: { page: ListPage<TaskRow>; filtered: boolean; focused: boolean }) {
+  const { list, view, set, rowsGroup } = page;
+  const counts = list.counts as Partial<Record<StateOf<'task'>, number>>;
+  const activeStats: Stat[] = ([
+    { label: 'total', icon: 'list', value: { value: list.total, basis: 'measured' } },
+    { label: 'waiting', icon: states_.task.waiting.icon, value: { value: counts.waiting ?? 0, basis: 'measured' }, tone: (counts.waiting ?? 0) > 0 ? 'attention' : undefined },
+    { label: 'failed', icon: states_.task.failed.icon, value: { value: counts.failed ?? 0, basis: 'measured' }, tone: (counts.failed ?? 0) > 0 ? 'danger' : undefined },
+    { label: 'in progress', icon: states_.task.in_progress.icon, value: { value: counts.in_progress ?? 0, basis: 'measured' } },
+    { label: 'queued', icon: states_.task.queued.icon, value: { value: counts.queued ?? 0, basis: 'measured' } },
+    { label: 'paused', icon: states_.task.paused.icon, value: { value: counts.paused ?? 0, basis: 'measured' } },
+  ] satisfies Stat[]).filter(s => (s.value.value ?? 0) > 0);
+  const nonZeroGroups = list.groups.filter(g => g.count > 0);
+  const groupTitle = GROUPS.find(g => g[0] === rowsGroup)?.[1] ?? rowsGroup;
+  const hasCounts = Object.values(counts).some(n => (n ?? 0) > 0);
+
+  return (
+    <article class="detail" aria-label="Tasks summary">
+      <OpsSummary>
+        {list.pending && !list.total ? <Skeleton rows={3} /> : (
+          <>
+            {activeStats.length > 0 && <StatStrip label="Tasks" stats={activeStats} />}
+            {nonZeroGroups.length > 0 && rowsGroup !== 'none' ? (
+              <DetailSection title={`By ${groupTitle.toLowerCase()}`}>
+                {nonZeroGroups.map(g => (
+                  <KvRow
+                    key={g.key}
+                    icon={rowsGroup === 'priority' ? 'list-ordered' : rowsGroup === 'agent' ? 'bot' : rowsGroup === 'host' ? 'panels-top-left' : 'folder-open'}
+                    label={groupLabel(rowsGroup, g.label) || g.key}
+                    value={<Num m={{ value: g.count, basis: 'measured' }} kind="count" />}
+                  />
+                ))}
+              </DetailSection>
+            ) : hasCounts ? (
+              <DetailSection title="By state">
+                <StateCounters
+                  family="task"
+                  label="Tasks by state"
+                  counts={counts}
+                  active={(view.state ?? []) as StateOf<'task'>[]}
+                  hideZero
+                  onAll={() => set({ state: [] })}
+                  onToggle={s => {
+                    const cur = (view.state ?? []) as StateOf<'task'>[];
+                    set({ state: cur.includes(s) ? cur.filter(x => x !== s) : [...cur, s] });
+                  }}
+                />
+              </DetailSection>
+            ) : (
+              <Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} />
+            )}
+          </>
+        )}
+      </OpsSummary>
+    </article>
+  );
 }
 
 const TERMINAL = ['completed', 'failed', 'cancelled'];
-/** Row facts of a task (OR-37): time since taken into work, executions from two, time in the current state, agent. */
+/** Row facts of a task (OR-37): open questions, delivery stage, time since taken into work, executions from two, time in state, agent while running. */
 function TaskFacts({ t }: { t: TaskRow }) {
-  const taken = ms(t.startedAt), since = ms(t.stateAt), agent = t.lastAgent ?? t.agent, n = t.executions ?? 0;
+  const taken = ms(t.startedAt), since = ms(t.stateAt), agent = t.lastAgent ?? t.agent, n = t.executions ?? 0, q = t.openQuestions ?? 0;
   const label = states_.task[t.pauseReason === 'held' ? 'held' : t.state].label;
   return <RowFacts>
+    {q > 0 && <span class="chip-age t-attention alert" data-tip={q === 1 ? '1 open question' : `${q} open questions`} aria-label={q === 1 ? '1 open question' : `${q} open questions`}>{q}</span>}
+    {isStage(t.stage) && <StageChip stage={t.stage} />}
     {taken !== null && !TERMINAL.includes(t.state) && <Fact icon="clock" tip="Since taken into work"><AgeChip t={taken} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" /></Fact>}
     {/* One run is the usual case and says nothing (OR-17): the count shows from two; the host is in the detail. */}
     {n > 1 && <Fact icon={actions.runs} text={String(n)} tip={`${n} executions`} />}
     {since !== null && <Fact tip={`${label} for`}><AgeChip t={since} /></Fact>}
-    {isHarness(agent) && <HarnessMark h={agent} />}
+    {t.state === 'in_progress' && isHarness(agent) && <HarnessMark h={agent} />}
   </RowFacts>;
 }
 
@@ -108,7 +169,7 @@ function dependsOn(ds: { id: string; code?: string | null }[]) {
 
 function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
-  const { data: t, error, state } = useOp('task_get', { taskId: id });
+  const { data: t, error } = useOp('task_get', { taskId: id });
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const alive = useAlive();
@@ -134,15 +195,14 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={t.title}>
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
-      <span class="muted mono">{t.projectId ?? 'no project'}</span><span class="grow" />
-      <OfflineMarker state={state} now={now} />
+      {t.projectId ? <EntityCode code={t.projectId} id={t.projectId} kind="project" /> : <span class="muted">No project</span>}<span class="grow" />
       <Button label={pins.has(id) ? 'Unpin' : 'Pin'} icon={pins.has(id) ? 'pin-off' : 'pin'} iconOnly pressed={pins.has(id)} onClick={() => pins.toggle(id)} />
       {t.state === 'paused'
         ? <Button label={t.pauseReason === 'held' ? 'Release' : 'Continue'} icon="rotate-cw" busy={busy === 'resume'} disabledReason={disabled} onClick={() => act('resume')} />
         : !['completed', 'failed', 'cancelled'].includes(t.state) && <SplitButton main={{ label: 'Pause', icon: 'pause', onClick: () => !off && act('pause') }} alternatives={[{ label: 'Cancel task', icon: 'circle-slash', onClick: () => setConfirming(true) }]} />}
     </header>
-    {confirming && <div class="problem warning" role="group" aria-label="Confirm cancel"><b>Cancel this task?</b><span class="facts">Running work is asked to stop; finished external effects stay.</span>
-      <span class="acts"><Button label="Yes, cancel" kind="danger" busy={busy === 'cancel'} disabledReason={off ? 'offline' : undefined} onClick={() => act('cancel')} /><Button label="Keep" onClick={() => setConfirming(false)} /></span></div>}
+    {confirming && <ProblemRow severity="warning" title="Cancel this task?" facts="Running work is asked to stop; finished external effects stay."
+      actions={[{ label: 'Yes, cancel', primary: true, onClick: () => { if (!off && !busy) void act('cancel'); } }, { label: 'Keep', onClick: () => setConfirming(false) }]} />}
     {failure && <ErrorBanner text={failure} />}
     <h2 class="detail-title">{t.title}<EntityCode code={t.code} id={t.id} kind="task" /></h2>
     <div class="state-line"><StateBadge family="task" state={t.pauseReason === 'held' ? 'held' : t.state} reason={t.waitReason ?? undefined} />{t.createdBy && <span class="muted">by {actor(t.createdBy)}</span>}{ms(t.createdAt) && <AgeChip t={ms(t.createdAt)!} />}</div>
@@ -159,7 +219,7 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     {reported && <DetailSection title="Latest available worker report">
       <AgeChip t={reported.at} />
       <StateBadge family="execution" state={reported.outcome === 'succeeded' ? 'succeeded' : 'failed'} />
-      {reported.summary ? <Markdown text={reported.summary} /> : <p class="muted">No report summary provided.</p>}
+      {reported.summary && <Markdown text={reported.summary} />}
     </DetailSection>}
     {decided.length > 0 && <DetailSection title="Previous answers">
     {decided.map(q => <p key={q.id} class="state-line"><Icon name={q.answer === 'accepted' ? 'circle-check' : q.answer === 'rejected' ? 'circle-x' : 'message-circle-question'} />
@@ -167,7 +227,6 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     </DetailSection>}
     {(t.expectedOutcome || req.length > 0 || t.dependencies.length > 0) && <OutcomeBlock outcome={t.expectedOutcome ?? ''} requirements={req} inputs={[]} depends={t.dependencies.length ? dependsOn(t.dependencies) : undefined} />}
     <ScopedRollupBar rollup={rollup} cost={t.cost} />
-    <h3 class="sub-h">Executions</h3>
-    {nodes.length ? <ExecTree nodes={nodes} now={now} label="Executions" /> : <Empty text="No executions yet." />}
+    {nodes.length > 0 && <DetailSection title="Executions"><ExecTree nodes={nodes} now={now} label="Executions" /></DetailSection>}
   </article>;
 }

@@ -4,7 +4,7 @@
 // delivery_status (GitHub read by the coordinator every minute with a key), delivery_history, delivery_baseline and
 // delivery_regressions (the fleet repository's recorded history). Both reach the page through the change stream (kind
 // delivery), so nothing here waits for a poll. Red everywhere means past the stage's P90 over the last 14 days.
-import { useCallback, useEffect } from 'preact/hooks';
+import { useCallback, useEffect, useMemo } from 'preact/hooks';
 import {
   EntityCode, ListDetail, StateBadge, AgeChip, Empty, ErrorBanner, Fact, RowFacts,
   matchSearch, states, actions, ShellStatus,
@@ -30,7 +30,8 @@ const SORTS = [['since', 'In stage since'], ['opened', 'Opened']] as const;
 /** Delivery screen showing live pull request stages, release history, and pace analytics. */
 export function Delivery({ id }: { id?: string }) {
   const scope = scopeIds(), focus = scope.projectIds ?? [];
-  const now = Date.now();
+  const minute = Math.floor(Date.now() / 60_000);
+  const now = useMemo(() => Date.now(), [minute]);
   const status = useOp('delivery_status', prefsRead.value ? scope : null, { every: 300000 });
   // The norms: every stage's P50 and P90 over the last 14 days (the fleet repository's history); 404 is no history kept.
   const baseDoc = useOp('delivery_baseline', prefsRead.value ? { days: 14 } : null, { every: 600000 });

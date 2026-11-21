@@ -1,7 +1,7 @@
 // Delivery work-area panels: overview (needs a look, moving now, pace) and pull request detail.
 import {
   EntityCode, StateBadge, AgeChip, Ago, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button,
-  Choice, Empty, ErrorBanner, Skeleton, Latest, DayChart, ShareBar, NormBar, states, capOf, day,
+  Choice, Empty, ErrorBanner, Skeleton, Latest, DayChart, ShareBar, NormBar, VirtualList, catalogueRow, count, states, capOf, day,
   type DayMark, type SharePart,
 } from '../../../packages/ui/src/index.ts';
 import { useOp } from '../store.ts';
@@ -58,26 +58,37 @@ export function Overview({ now, items, incomplete, norms, hist, regressions, his
     : regressions.map(g => <ProblemRow key={'r' + g.key + g.metric} severity="warning" title={`${keyLabel(g.key)} ${g.metric.toUpperCase()} is ${fmt(g.currentMs)}, baseline ${fmt(g.baselineMs)}`}
       facts={`${g.firstPr ? `Since #${g.firstPr} · ` : ''}${g.n} pull requests in the last 24 h`} actions={[...(g.compareUrl ? [{ label: 'Compare', onClick: () => window.open(g.compareUrl!, '_blank', 'noopener') }] : [])]} />)),
     ...failedItems.map(it => <ProblemRow key={'f' + idOf(it)} severity="failure" title={`#${it.number} ${it.stage === 'mq_failed' ? 'removed from the merge queue' : 'checks failed'}`} facts={<>{it.title} · <Ago t={ms(it.since)} /></>}
-      actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
+      actions={[{ label: 'Open', primary: true, onClick: () => onOpen(it) }]} />),
     ...stuck.map(it => <ProblemRow key={'s' + idOf(it)} severity="warning" title={`#${it.number} ${it.stage === 'installing' && uiOnly(it.release) ? 'waiting for the UI on site' : states.delivery[it.stage].label.toLowerCase()} for ${fmt(now - ms(it.since))}, P90 ${fmt(norms.stage(it)![1])}`}
-      facts={it.title} actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
+      facts={it.title} actions={[{ label: 'Open', primary: true, onClick: () => onOpen(it) }]} />),
   ];
+  const rowH = catalogueRow();
   return <div class="stack-pad" data-ui="delivery-overview">
     {look.length > 0 && <DetailSection title="Needs a look"><Latest items={look} n={3} /></DetailSection>}
     <DetailSection title="Moving now">
       {!moving.length ? <Empty text={incomplete ? 'Unavailable. GitHub data is incomplete.' : 'Nothing in flight.'} />
-        : <div class="vl-wrap" role="grid" aria-label="Pull requests in flight" style={{ '--cols': '1.25rem 3.5rem minmax(0,1fr) minmax(0,1.3fr) 2.75rem 4.5rem' }}>{moving.map(it => {
-          const n = norms.stage(it), el = Math.max(0, now - ms(it.since)), red = over(it);
-          return <div key={idOf(it)} class="vl-row static" role="row">
-            <span class="lead"><StateBadge family="delivery" state={it.stage} compact /></span>
-            <a class="mono row-link" href={href(it)} onClick={e => { e.preventDefault(); onOpen(it); }}>#{it.number}</a>
-            <span class="muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.title}</span>
-            <NormBar elapsed={el} p50={n?.[0]} p90={n?.[1]} label={`${states.delivery[it.stage].label} #${it.number}`} value={fmt} />
-            <span class="r"><AgeChip t={ms(it.since)} alertAfter={alertOf(norms, it)} alertLabel="past the stage's P90" /></span>
-            <span class={`r mono type-sm${red ? ' t-danger' : ' muted'}`} style={red ? { color: 'var(--tone-fg)' } : undefined}
-              data-tip={n ? `${states.delivery[it.stage].label}: P50 ${fmt(n[0])}, P90 ${fmt(n[1])} over 14 days` : undefined}>{n ? `P90 ${fmt(n[1])}` : 'no norm'}</span>
-          </div>;
-        })}</div>}
+        : <div style={{ '--list-height': `calc(${moving.length} * ${rowH > 32 ? 'var(--size-row-phone)' : 'var(--size-row)'})` }}>
+          <VirtualList
+            items={moving}
+            getKey={idOf}
+            rowHeight={rowH}
+            follow="top"
+            label="Pull requests in flight"
+            columns="1.25rem 3.5rem minmax(0,1fr) minmax(0,1.3fr) 2.75rem 4.5rem"
+            render={it => {
+              const n = norms.stage(it), el = Math.max(0, now - ms(it.since)), red = over(it);
+              return <>
+                <span class="lead"><StateBadge family="delivery" state={it.stage} compact /></span>
+                <a class="mono row-link" href={href(it)} onClick={e => { e.preventDefault(); onOpen(it); }}>#{it.number}</a>
+                <span class="muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.title}</span>
+                <NormBar elapsed={el} p50={n?.[0]} p90={n?.[1]} label={`${states.delivery[it.stage].label} #${it.number}`} value={fmt} />
+                <span class="r"><AgeChip t={ms(it.since)} alertAfter={alertOf(norms, it)} alertLabel="past the stage's P90" /></span>
+                <span class={`r mono type-sm${red ? ' t-danger' : ' muted'}`} style={red ? { color: 'var(--tone-fg)' } : undefined}
+                  data-tip={n ? `${states.delivery[it.stage].label}: P50 ${fmt(n[0])}, P90 ${fmt(n[1])} over 14 days` : undefined}>{n ? `P90 ${fmt(n[1])}` : 'no norm'}</span>
+              </>;
+            }}
+          />
+        </div>}
       {incomplete && moving.length > 0 && <p class="muted type-sm">The last rows read; GitHub coverage is incomplete.</p>}
     </DetailSection>
     {fleetShown && <Pace hist={hist} error={histError} now={now} norms={norms} range={range} buckets={buckets} picked={picked} onRange={onRange} onPick={onPick} />}
@@ -109,16 +120,16 @@ function Pace({ hist, error, now, norms, range, buckets, picked, onRange, onPick
     <Totals items={[
       { label: 'Open to installed P50', m: sec(q(totals, 0.5)), kind: 'duration', note: base ? `baseline ${fmt(base[0])}` : undefined },
       { label: 'Open to installed P90', m: sec(q(totals, 0.9)), kind: 'duration', note: base ? `baseline ${fmt(base[1])}` : undefined },
-      { label: 'Merged', m: { value: prs.length, basis: 'measured' }, kind: 'count', note: range === '24h' ? undefined : `${(prs.length / days).toFixed(prs.length / days < 10 ? 1 : 0)} a day` },
-      { label: 'Queue removals', m: { value: removals, basis: 'measured' }, kind: 'count', note: flakes ? `${flakes} flaky` : undefined },
+      { label: 'Merged', m: { value: prs.length, basis: 'measured' }, kind: 'count', note: range === '24h' ? undefined : `${prs.length / days < 10 ? (prs.length / days).toFixed(1) : count(Math.round(prs.length / days)).text} a day` },
+      { label: 'Queue removals', m: { value: removals, basis: 'measured' }, kind: 'count', note: flakes ? `${count(flakes).text} flaky` : undefined },
     ]} />
     <DayChart title="Open to installed" label="Open to installed per day, P50 and P90" kind="range" cols={buckets} marks={total} value={fmt}
       cap={capOf(total.flatMap(m => [m.v, m.hi]), { floor: 10 * MIN, unit: MIN })} capNote="about P95 of the figures shown; a figure over four times their median is drawn cut, with its value"
       names={['P50', 'P90']} values alertAbove={base?.[1]} alertLabel={base ? `above the 14-day P90 ${fmt(base[1])}` : undefined} selected={picked?.key ?? null} onSelect={pick} />
-    <DayChart title="Merged" label="Pull requests merged per day" kind="bar" size="sm" cols={buckets} marks={merged} value={v => String(Math.round(v))}
+    <DayChart title="Merged" label="Pull requests merged per day" kind="bar" size="sm" cols={buckets} marks={merged} value={v => count(Math.round(v)).text}
       cap={capOf(merged.map(m => m.v), { floor: 4, fence: Infinity })} tone="d2" axis selected={picked?.key ?? null} onSelect={pick} />
     <ShareBar title="Where the time goes" label="Where the time goes" parts={share} value={fmt}
-      note={`mean per pull request, ${done.length} of ${scope.length} with every stage measured${picked ? ` · ${picked.tip ?? picked.label}` : ''}`} />
+      note={`mean per pull request, ${count(done.length).text} of ${count(scope.length).text} with every stage measured${picked ? ` · ${picked.tip ?? picked.label}` : ''}`} />
   </div></DetailSection>;
 }
 
@@ -144,7 +155,7 @@ export function PrDetail({ id, item, now, norms, onClose }: { id: string; item?:
   const t0 = ms(x?.opened ?? item?.opened ?? item?.since), t1 = now;
   const url = item?.url || x?.url;
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={title}>
-    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><span class="muted mono">{owner}/{repo} #{number}</span><span class="grow" />
+    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><EntityCode code={`${owner}/${repo}#${number}`} id={id} kind="pull_request" /><span class="grow" />
       {url && <Button label="Open on GitHub" icon="external-link" iconOnly onClick={() => window.open(url, '_blank', 'noopener')} />}</header>
     <h2 class="detail-title">{title}</h2>
     <div class="state-line">{item && <StateBadge family="delivery" state={item.stage} />}{x?.author && <span class="muted">by {x.author}</span>}{t0 > 0 && <AgeChip t={t0} />}

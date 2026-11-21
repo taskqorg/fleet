@@ -1,8 +1,9 @@
 // Project configuration editor and readiness checks (docs/design-system/pages/projects.md).
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { useLocation } from 'wouter-preact';
 import {
-  Button, CodeEditor, DetailSection, Empty, ErrorBanner, KvRow, StatusLine, TextField, Totals,
+  Button, CodeEditor, DetailSection, Disclosure, Empty, ErrorBanner, KvRow, Skeleton, StatusLine, TextField,
 } from '../../../packages/ui/src/index.ts';
 import {
   op, useAlive, writeOnce, preparedResourcesAvailable, createDraftPersistence, authorizedDraftScope,
@@ -10,11 +11,12 @@ import {
 } from '../api.ts';
 import { useOp } from '../store.ts';
 import { accessGeneration, isAccessCurrent } from '../access.ts';
-import { resourceTotals, useProjectResources, PreparedProjectResources } from './resources.tsx';
+import { useProjectResources, PreparedProjectResources } from './resources.tsx';
 import type { ProjectBundle, ProjectInitialAccess } from '../../../contracts/generated/ops.ts';
 
 type Bundle = ProjectBundle;
-type Detail = Ops['project_detail']['reply'] | Ops['project_context']['reply'];
+export type ProjectDetailData = Ops['project_detail']['reply'] | Ops['project_context']['reply'];
+type Detail = ProjectDetailData;
 type Readiness = Ops['project_readiness']['reply'];
 // Project settings, list rows and readiness records are open JSON in the contract: read their fields by type here.
 export const str = (v: unknown) => typeof v === 'string' ? v : '';
@@ -27,11 +29,14 @@ const fresh = (): Bundle => ({
 });
 
 /** Configuration and creation editor for a project, including draft persistence, readiness checks, and resource breakdown. */
-export function ProjectEditor({ id, onSaved, renderAnalytics }: {
+export function ProjectEditor({ id, onClose, onSaved, renderWork, renderAnalytics }: {
   id?: string;
+  onClose?: () => void;
   onSaved: (id: string) => void;
+  renderWork?: (projectId: string, detail: Detail | null) => ComponentChildren;
   renderAnalytics: (projectId: string) => ComponentChildren;
 }) {
+  const [, go] = useLocation();
   const editorGeneration = useRef(accessGeneration()).current;
   const [bundle, applyBundle] = useState<Bundle>(fresh);
   const baseline = useRef(JSON.stringify(bundle)), latest = useRef(bundle); latest.current = bundle;
@@ -63,7 +68,6 @@ export function ProjectEditor({ id, onSaved, renderAnalytics }: {
   const saving = useRef(false);
   const [ready, setReady] = useState<Readiness | null>(null);
   const [access, setAccess] = useState<ProjectInitialAccess | undefined>(undefined);
-  const [resources, setResources] = useState<Ops['project_context']['reply']['resources']>(undefined);
   const [repoSha, setRepoSha] = useState<string | null>(null);
   const [sourceState, setSourceState] = useState('');
   const requestId = useRef<string>(crypto.randomUUID()), alive = useAlive();
@@ -101,7 +105,6 @@ export function ProjectEditor({ id, onSaved, renderAnalytics }: {
       baseline.current = JSON.stringify(editBase.current.content);
       requestId.current = saved?.requestId ?? crypto.randomUUID(); pendingSave.current = saved?.pendingSave ?? null; setPriorSave(!!pendingSave.current);
       setError(''); setBundle(saved?.bundle ?? p.content); setRevision(editBase.current.revision); setAccess(p.initialAccess);
-      setResources('resources' in p ? p.resources : undefined);
       setRepoSha(editBase.current.repoSha); setSourceState(p.sourceState ?? '');
       setConflict(saved && saved.base.contentSha !== p.contentSha ? 'Project definition changed while you were editing. Review your edits before saving; reload cannot discard them.' : ''); setLoaded(true);
     } catch (e) { if (!(e instanceof AccessChanged)) setError(e instanceof Error ? e.message : String(e)); }
@@ -128,7 +131,7 @@ export function ProjectEditor({ id, onSaved, renderAnalytics }: {
   const load = () => { const now = currentRef.current; if (now && !saving.current) apply(now); doc.reload(); };
   const setting = (key: string, value: unknown) => setBundle(b => ({ ...b, settings: { ...b.settings, [key]: value } }));
   const field = (label: string, value: string, save: (s: string) => void) => (
-    <TextField help="Save project applies the complete version." label={label} value={value} onChange={save} />
+    <TextField label={label} value={value} onChange={save} />
   );
   const save = async () => {
     if (saving.current) return;
@@ -160,7 +163,6 @@ export function ProjectEditor({ id, onSaved, renderAnalytics }: {
       editBase.current = { content: check.content, revision: check.revision, contentSha: check.contentSha, repoSha: check.repoSha ?? null };
       if (JSON.stringify(latest.current) === JSON.stringify(submitted)) setBundle(check.content); else remember(latest.current);
       setRevision(check.revision); setAccess(check.initialAccess);
-      setResources('resources' in check ? check.resources : undefined);
       setRepoSha(check.repoSha ?? null); setSourceState(check.sourceState ?? '');
       setConflict(''); onSaved(p.projectId);
     } catch (e) { if (isAccessCurrent(generation) && !alive.aborted) {
@@ -189,26 +191,52 @@ export function ProjectEditor({ id, onSaved, renderAnalytics }: {
       </DetailSection>
     );
   };
-  if (!loaded) return error ? <ErrorBanner text={error} onRetry={load} /> : <Empty text="Loading project…" />;
+  if (!loaded) return (
+    <article class="detail" data-ui="detail" tabIndex={-1}>
+      <header class="detail-h">{onClose && <Button label="Close" icon="x" iconOnly onClick={onClose} />}</header>
+      {error ? <ErrorBanner text={error} onRetry={load} /> : <Skeleton rows={6} />}
+    </article>
+  );
   if (id && prepared && breakdown) return <PreparedProjectResources projectId={id} summary={summary} category={breakdown} onClose={() => setBreakdown(null)} />;
-  const ctxTotals = resources ? resourceTotals(resources, { hideUnavailable: false }) : [];
   return (
-    <article class="detail" data-ui="detail">
+    <article class="detail" data-ui="detail" tabIndex={-1}>
       <header class="detail-h">
-        <h2>{id ? str(bundle.settings.name) : 'Create project'}</h2><span class="grow" />
+        {onClose && <Button label="Close" icon="x" iconOnly onClick={onClose} />}
+        <h2 class="detail-title">{id ? str(bundle.settings.name) : 'Create project'}</h2><span class="grow" />
         <Button label={priorSave && !busy ? "Retry original save" : "Save project"} icon="save" busy={busy} onClick={save} />
         {id && <Button label={conflict ? "Discard edits and reload" : "Reload project"} icon="rotate-cw" onClick={() => { if (conflict) { pendingSave.current = null; setPriorSave(false); try { draft.current?.write(''); } catch (e) { if (e instanceof AccessChanged) return; /* cleared in authorized memory before optional persistence */ } baseline.current = JSON.stringify(latest.current); } load(); }} />}
       </header>
       <StatusLine>{conflict || error || (priorSave && !busy ? 'Previous save has no verified readback. Retry original save keeps its request identity and original body; newer edits remain local.' : '')}</StatusLine>
       {sourceState === 'repository-changed' && <p>Source configuration changed. Saving keeps this edited project version.</p>}
+      {id && (
+        <DetailSection title="Readiness">
+          <Button label="Check readiness" icon="circle-check" onClick={() => op('project_readiness', { projectId: id }).then(setReady, e => setError(e.message))} />
+          {ready && (
+            <>
+              {ready.hosts.length === 0 ? <Empty text="No environment is configured." /> : ready.hosts.map((h, i) =>
+                h.executionId ? <ReadinessResult key={h.executionId} hostId={h.hostId} executionId={h.executionId} /> : (
+                  <KvRow key={h.hostId ?? `host-${i}`} icon="panels-top-left" label={h.hostId ?? 'Environment'} value="Unavailable" meta={h.problem ?? 'Readiness check unavailable'} />
+                )
+              )}
+            </>
+          )}
+          <Button label="Open PM conversation" icon="messages-square" onClick={() => go('/conversations/new?in=' + encodeURIComponent(id) + '&role=pm')} />
+        </DetailSection>
+      )}
+      {id && renderWork?.(id, current)}
       {id && prepared && <DetailSection title="Project resources"><PreparedProjectResources projectId={id} summary={summary} onOpen={setBreakdown} /></DetailSection>}
+      {id && (
+        <DetailSection title="Resource analytics">
+          {renderAnalytics(id)}
+        </DetailSection>
+      )}
       <DetailSection title="Context">
         {!id && field('Project ID', str(bundle.settings.id), v => setting('id', v))}
         {field('Name', str(bundle.settings.name), v => setting('name', v))}
         {bundle.contextFiles.map((f, i) => (
-          <div key={f.path}>
+          <Disclosure key={f.path} summary={f.path} summaryClass="muted">
             <CodeEditor label={`Project context ${f.path}`} value={f.text} onChange={text => setBundle(b => ({ ...b, contextFiles: b.contextFiles.map((old, n) => i === n ? { ...old, text } : old) }))} />
-          </div>
+          </Disclosure>
         ))}
         <KvRow icon="folder-open" label="Saved version" value={revision ? String(revision) : 'Not saved'} />
       </DetailSection>
@@ -217,21 +245,6 @@ export function ProjectEditor({ id, onSaved, renderAnalytics }: {
       <DetailSection title="Agent roles">
         {Object.entries(isRec(bundle.settings.roles) ? bundle.settings.roles : {}).map(([role, profile]) => field(role, String(profile), v => setting('roles', { ...(isRec(bundle.settings.roles) ? bundle.settings.roles : {}), [role]: v })))}
       </DetailSection>
-      {id && (
-        <DetailSection title="Readiness">
-          <Button label="Check readiness" icon="circle-check" onClick={() => op('project_readiness', { projectId: id }).then(setReady, e => setError(e.message))} />
-          {ready && (
-            <>
-              {ready.hosts.length === 0 ? <Empty text="No environment is configured." /> : ready.hosts.map(h =>
-                h.executionId ? <ReadinessResult key={h.executionId} hostId={h.hostId} executionId={h.executionId} /> : (
-                  <KvRow icon="panels-top-left" label={h.hostId ?? 'Environment'} value="Unavailable" meta={h.problem ?? 'Readiness check unavailable'} />
-                )
-              )}
-            </>
-          )}
-          <Button label="Open PM conversation" icon="messages-square" onClick={() => location.assign('/conversations/new?in=' + encodeURIComponent(id) + '&role=pm')} />
-        </DetailSection>
-      )}
       {access && (
         <DetailSection title="Initial access">
           <KvRow icon="folder-open" label="Initial member" value={access.member ?? 'None'} />
@@ -240,16 +253,6 @@ export function ProjectEditor({ id, onSaved, renderAnalytics }: {
             <Button label="Revoke initial access" icon="shield" onClick={() => op('project_initial_access_revoke', { projectId: id, baseAccessVersion: access.version }).then(load, e => setError(e.message))} />
           )}
           <p>Separate explicit grants and full administrator access remain effective.</p>
-        </DetailSection>
-      )}
-      {id && !prepared && ctxTotals.length > 0 && (
-        <DetailSection title="Project resources">
-          <Totals items={ctxTotals} />
-        </DetailSection>
-      )}
-      {id && (
-        <DetailSection title="Resource analytics">
-          {renderAnalytics(id)}
         </DetailSection>
       )}
     </article>
@@ -262,7 +265,7 @@ function ReadinessResult({ hostId, executionId }: { hostId: string; executionId:
   return (
     <>
       <KvRow icon="panels-top-left" label={hostId} value={result.error ? 'Observation unavailable' : latest ? (latest.ok === true ? 'Ready' : 'Not ready') : result.data?.state ?? 'Check requested'} meta={result.error ?? (latest ? undefined : 'Awaiting readiness result')} />
-      {recs(latest?.checks).map(check => <KvRow icon="circle-check" label={str(check.check)} value={str(check.status)} meta={[str(check.target), str(check.reason)].filter(Boolean).join(' · ')} />)}
+      {recs(latest?.checks).map((check, i) => <KvRow key={`${str(check.check)}:${str(check.target)}:${i}`} icon="circle-check" label={str(check.check)} value={str(check.status)} meta={[str(check.target), str(check.reason)].filter(Boolean).join(' · ')} />)}
     </>
   );
 }

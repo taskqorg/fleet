@@ -1,18 +1,18 @@
 // Projects configuration, tabs (Work & Rules · Methods · Delivery · Results), OR-45 diff-from-default, and resource analytics (docs/design-system/pages/projects.md).
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   AgeChip, AreaChart, Button, Choice, CostFigures, DataTable, DetailSection, Disclosure, Empty, EntityCode,
-  ErrorBanner, Icon, KvRow, Latest, ListDetail, Num, SearchField, Skeleton, StateBadge, StateCounters, TabBar,
+  ErrorBanner, FilterBar, Icon, KvRow, Latest, ListDetail, ListFrame, Num, SearchField, ShellActions, Skeleton, StateBadge, StateCounters, TabBar,
   Totals, VirtualList, bytes, catalogueRow, fileLabel, matchSearch, msMeasured, numMeasured, states as states_,
   type ChartBucket, type ChartSeries, type IconName, type Measured, type StateOf, type TotalItem,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
-import { AccessChanged, op, preparedResourcesAvailable, type Ops } from '../api.ts';
+import { op, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { idOf } from './delivery-model.tsx';
-import { ProjectEditor, str } from './projects-editor.tsx';
+import { ProjectEditor, str, type ProjectDetailData } from './projects-editor.tsx';
 
 type AnalyticsReply = Ops['analytics_query']['reply'];
 type AnalyticsDim = NonNullable<Ops['analytics_query']['request']['dimensions']>[number];
@@ -78,57 +78,74 @@ function sumTokens(m: AnalyticsReply['rows'][number]['measures']): Measured {
   return { value: sum, basis, ...(partial ? { partial } : {}) };
 }
 
+function projectStateBadge(p: Record<string, unknown>) {
+  const sourceState = str(p.sourceState);
+  const settings = isRec(p.settings) ? p.settings : null;
+  const envs = Array.isArray(settings?.environments) ? settings.environments : [];
+  if (sourceState === 'repository-deleted') return <StateBadge family="source" state="missing" reason="Repository deleted" compact />;
+  if (sourceState === 'repository-changed') return <StateBadge family="source" state="changed" reason="Repository changed" compact />;
+  if (sourceState === 'ahead') return <StateBadge family="definition" state="draft" reason="Local changes ahead" compact />;
+  if (envs.length > 0) return <StateBadge family="definition" state="ready" compact />;
+  return <StateBadge family="definition" state="unchecked" reason="No environment configured" compact />;
+}
+
 /** Projects catalogue screen with resource analytics overview and tabbed project detail. */
 export function Projects({ id }: { id?: string }) {
   const [, go] = useLocation();
   const [creating, setCreating] = useState(false);
-  const [mobileAnalytics, setMobileAnalytics] = useState(false);
   const [query, setQuery] = useState('');
   const list = useOp('project_list', {});
-  const rows = (list.data?.projects ?? []).map(p => ({ id: str(p.id), name: str(p.name) })).filter(p => matchSearch(query, `${p.name} ${p.id}`, { project: p.id }));
+  const allProjects = list.data?.projects ?? [];
+  const rows = allProjects.map(p => ({ id: str(p.id), name: str(p.name), raw: p })).filter(p => matchSearch(query, `${p.name} ${p.id}`, { project: p.id }));
+  const selectedName = rows.find(r => r.id === id)?.name || str(allProjects.find(p => str(p.id) === id)?.name);
   const pane = (
     <>
-      <header class="page-h">
-        <span class="grow" />
-        <Button label="Analytics" icon="chart-no-axes-column" kind="quiet" onClick={() => { setCreating(false); setMobileAnalytics(true); go('/projects'); }} />
-        <Button label="Create project" icon="plus" onClick={() => { setMobileAnalytics(false); setCreating(true); }} />
-      </header>
-      <SearchField label="Find project" value={query} onInput={setQuery} onSearch={() => {}} />
-      {list.error ? <div role="alert">{list.error}</div> : !list.data ? <Empty text="Loading…" /> : (
-        <VirtualList
-          items={rows}
-          getKey={p => p.id}
-          rowHeight={catalogueRow()}
-          follow="top"
-          label="Projects"
-          columns="1.25rem minmax(0,1fr)"
-          rowClass={p => !creating && p.id === id ? 'sel' : ''}
-          render={p => (
-            <>
-              {/* One line: the icon, the name, then its id apart from it (it used to run into the name: "cyprus.bzcs"). */}
-              <span class="lead"><Icon name="folder-open" /></span>
-              <span class="tt">
-                <a
-                  class="title row-link"
-                  href={'/projects/' + encodeURIComponent(p.id)}
-                  onClick={e => { e.preventDefault(); setCreating(false); setMobileAnalytics(false); go('/projects/' + encodeURIComponent(p.id)); }}
-                >{p.name || p.id}</a>
-                {p.name && p.name.toLowerCase() !== p.id.toLowerCase() && <span class="id">{p.id}</span>}
-              </span>
-            </>
+      <ShellActions>
+        <Button label="Create project" icon="plus" iconOnly kind="primary" pressed={creating} onClick={() => setCreating(true)} />
+      </ShellActions>
+      {list.error && <ErrorBanner text={`Projects did not load: ${list.error}`} onRetry={list.reload} />}
+      <section class="panel">
+        <ListFrame
+          pending={!list.data && !list.error}
+          bar={<FilterBar query={query} onQuery={setQuery} placeholder="Find project" shown={rows.length} total={allProjects.length} />}
+        >
+          {!list.data && !list.error ? <Skeleton rows={6} /> : rows.length === 0 ? (
+            <Empty text={query ? 'No projects match.' : 'No projects yet.'} />
+          ) : (
+            <VirtualList
+              fill
+              items={rows}
+              getKey={p => p.id}
+              rowHeight={catalogueRow()}
+              follow="top"
+              label="Projects"
+              columns="1.25rem minmax(0,1fr)"
+              rowClass={p => !creating && p.id === id ? 'sel' : ''}
+              render={p => (
+                <>
+                  <span class="lead">{projectStateBadge(p.raw)}</span>
+                  <span class="tt">
+                    <a
+                      class="title row-link"
+                      href={'/projects/' + encodeURIComponent(p.id)}
+                      onClick={e => { e.preventDefault(); setCreating(false); go('/projects/' + encodeURIComponent(p.id)); }}
+                    >{p.name || p.id}</a>
+                    {p.name && p.name.toLowerCase() !== p.id.toLowerCase() && <span class="id">{p.id}</span>}
+                  </span>
+                </>
+              )}
+            />
           )}
-        />
-      )}
-      <span>{rows.length} of {list.data?.projects.length ?? '—'}</span>
+        </ListFrame>
+      </section>
     </>
   );
   const overview = (
     <article class="detail" data-ui="detail" tabIndex={-1} aria-label="Projects analytics">
       <header class="detail-h">
-        {mobileAnalytics && <Button label="Close" icon="x" iconOnly onClick={() => setMobileAnalytics(false)} />}
         <h2 class="detail-title">Resource analytics</h2>
       </header>
-      <ProjectAnalytics onOpenProject={pid => { setMobileAnalytics(false); go('/projects/' + encodeURIComponent(pid)); }} />
+      <ProjectAnalytics onOpenProject={pid => go('/projects/' + encodeURIComponent(pid))} />
     </article>
   );
   return (
@@ -138,6 +155,7 @@ export function Projects({ id }: { id?: string }) {
         <ProjectEditor
           key="create"
           id={undefined}
+          onClose={() => setCreating(false)}
           onSaved={p => { setCreating(false); go('/projects/' + encodeURIComponent(p)); }}
           renderAnalytics={pid => <ProjectAnalytics projectId={pid} onOpenProject={target => go('/projects/' + encodeURIComponent(target))} />}
         />
@@ -145,17 +163,19 @@ export function Projects({ id }: { id?: string }) {
         <ProjectDetail
           key={id}
           id={id}
+          name={selectedName}
+          onClose={() => go('/projects')}
           onSaved={p => go('/projects/' + encodeURIComponent(p))}
         />
-      ) : mobileAnalytics ? overview : undefined}
+      ) : undefined}
       idle={overview}
-      detailKey={creating ? 'create' : id || (mobileAnalytics ? 'analytics' : undefined)}
+      detailKey={creating ? 'create' : id}
     />
   );
 }
 
 /** Tabbed project detail: Work & Rules, Methods, Delivery, and Results (docs/designs/fleet-ia-and-journeys.md). */
-function ProjectDetail({ id, onSaved }: { id: string; onSaved: (id: string) => void }) {
+function ProjectDetail({ id, name, onClose, onSaved }: { id: string; name?: string; onClose: () => void; onSaved: (id: string) => void }) {
   const [, go] = useLocation();
   const [tab, setTab] = useState<ProjectTab>('work');
   const tabs: { id: ProjectTab; label: string }[] = [
@@ -181,18 +201,25 @@ function ProjectDetail({ id, onSaved }: { id: string; onSaved: (id: string) => v
         <div role="tabpanel" aria-label="Work & Rules" style={{ display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', minWidth: 0, minHeight: 0 }}>
           <ProjectEditor
             id={id}
+            onClose={onClose}
             onSaved={onSaved}
-            renderAnalytics={pid => (
+            renderWork={(pid, detail) => (
               <>
-                <ProjectAnalytics projectId={pid} onOpenProject={target => go('/projects/' + encodeURIComponent(target))} />
                 <ProjectWorkSection projectId={pid} />
-                <ProjectSettingsDiff projectId={pid} />
+                <ProjectSettingsDiff reply={detail} />
               </>
+            )}
+            renderAnalytics={pid => (
+              <ProjectAnalytics projectId={pid} onOpenProject={target => go('/projects/' + encodeURIComponent(target))} />
             )}
           />
         </div>
       ) : (
         <article class="detail" data-ui="detail" tabIndex={-1} aria-label={`${id} ${tab}`}>
+          <header class="detail-h">
+            <Button label="Close" icon="x" iconOnly onClick={onClose} />
+            <h2 class="detail-title">{name || id}</h2>
+          </header>
           <div role="tabpanel" aria-label={tabs.find(t => t.id === tab)?.label ?? tab} class="stack">
             {tab === 'methods' && <ProjectMethodsTab projectId={id} />}
             {tab === 'delivery' && <ProjectDeliveryTab projectId={id} />}
@@ -253,8 +280,7 @@ function ProjectWorkSection({ projectId }: { projectId: string }) {
             meta={
               <span class="deps">
                 <StateBadge family="task" state={taskState} reason={t.waitReason ?? undefined} compact />
-                {t.code && <EntityCode code={t.code} id={t.id} kind="task" />}
-                <a class="row-link" href={'/tasks/' + encodeURIComponent(t.id)} onClick={e => { e.preventDefault(); go('/tasks/' + encodeURIComponent(t.id)); }}>Open</a>
+                <EntityCode code={t.code} id={t.id} kind="task" />
               </span>
             }
             value={t.stateAt ? <AgeChip t={Date.parse(t.stateAt)} /> : undefined}
@@ -269,9 +295,10 @@ function ProjectWorkSection({ projectId }: { projectId: string }) {
           meta={
             <span class="deps">
               <StateBadge family="execution" state={ex.state} compact />
+              <EntityCode id={ex.id} kind="execution" />
               {ex.harness && <span class="mono">{ex.harness}</span>}
               {ex.hostId && <span class="mono">{ex.hostId}</span>}
-              {ex.taskId && <a class="row-link" href={'/tasks/' + encodeURIComponent(ex.taskId)} onClick={e => { e.preventDefault(); go('/tasks/' + encodeURIComponent(ex.taskId!)); }}>Task</a>}
+              {ex.taskId && <EntityCode id={ex.taskId} kind="task" />}
             </span>
           }
           value={ex.startedAt ? <AgeChip t={Date.parse(ex.startedAt)} /> : undefined}
@@ -315,21 +342,7 @@ function fmtVal(v: unknown, emptyLabel = 'none'): string {
   return String(v);
 }
 
-function ProjectSettingsDiff({ projectId }: { projectId: string }) {
-  const [prepared, setPrepared] = useState<boolean | null>(null);
-  useEffect(() => {
-    let active = true;
-    preparedResourcesAvailable()
-      .then(v => { if (active) setPrepared(v); })
-      .catch(e => { if (active && !(e instanceof AccessChanged)) setPrepared(false); });
-    return () => { active = false; };
-  }, []);
-  const detailDoc = useOp('project_detail', prepared === true ? { projectId } : null);
-  const contextDoc = useOp('project_context', prepared === false ? { projectId } : null);
-  useEffect(() => { if (detailDoc.status === 503) setPrepared(false); }, [detailDoc.status]);
-  const doc = prepared ? detailDoc : contextDoc;
-  const reply = doc.data;
-
+function ProjectSettingsDiff({ reply }: { reply: ProjectDetailData | null }) {
   const { diffs, inherited, unknownKeys } = useMemo(() => {
     if (!reply) return { diffs: [] as DiffField[], inherited: [] as DiffField[], unknownKeys: [] as string[] };
     const resolved = isRec(reply.settings) ? reply.settings : {};
@@ -383,7 +396,7 @@ function ProjectSettingsDiff({ projectId }: { projectId: string }) {
     check('repos', 'git-pull-request', 'Repositories', [], get('repos'));
     check('environments', 'panels-top-left', 'Environments', [], get('environments'));
     check('capability', 'rows-3', 'Capability', null, authored.capability ?? null);
-    check('recommendedMethod', 'circle-check', 'Project method override', null, authored.recommendedMethod ?? null, { empty: 'shared default' });
+    check('recommendedMethod', 'circle-check', 'Recommended method', null, authored.recommendedMethod ?? null, { empty: 'shared default' });
 
     return {
       diffs: rows.filter(r => r.diff),
@@ -392,45 +405,40 @@ function ProjectSettingsDiff({ projectId }: { projectId: string }) {
     };
   }, [reply]);
 
+  if (!reply) return null;
+
   return (
     <DetailSection title="Settings from defaults">
-      {doc.error && !reply && <ErrorBanner text={`Project settings did not load: ${doc.error}`} onRetry={doc.reload} />}
-      {!reply && !doc.error && <Empty text="Loading settings comparison…" />}
-      {reply && (
-        <>
-          {diffs.length > 0 ? (
-            diffs.map(f => (
-              <KvRow
-                key={f.key}
-                icon={f.icon}
-                label={f.label}
-                meta={
-                  <span>
-                    {f.isCode ? <code>{f.baseText}</code> : f.baseText} → {f.isCode ? <code>{f.currentText}</code> : f.currentText}
-                  </span>
-                }
-                value={<span class="badge t-attention">override</span>}
-              />
-            ))
-          ) : (
-            <KvRow icon="circle-check" label="Matches base defaults" meta="No overrides from shared project defaults" />
-          )}
-          {unknownKeys.length > 0 && (
-            <KvRow icon="triangle-alert" label="Unknown keys" meta={unknownKeys.join(', ')} />
-          )}
-          {inherited.length > 0 && (
-            <Disclosure summary={`Inherited defaults (${inherited.length})`} summaryClass="muted">
-              {inherited.map(f => (
-                <KvRow
-                  key={f.key}
-                  icon={f.icon}
-                  label={f.label}
-                  meta={f.isCode ? <code>{f.currentText}</code> : f.currentText}
-                />
-              ))}
-            </Disclosure>
-          )}
-        </>
+      {diffs.length > 0 ? (
+        diffs.map(f => (
+          <KvRow
+            key={f.key}
+            icon={f.icon}
+            label={f.label}
+            meta={
+              <span data-tip={`Default: ${f.baseText}`}>
+                {f.isCode ? <code>{f.currentText}</code> : f.currentText}
+              </span>
+            }
+          />
+        ))
+      ) : (
+        <KvRow icon="circle-check" label="Matches base defaults" meta="All settings match shared project defaults" />
+      )}
+      {unknownKeys.length > 0 && (
+        <KvRow icon="triangle-alert" label="Unknown keys" meta={unknownKeys.join(', ')} />
+      )}
+      {inherited.length > 0 && (
+        <Disclosure summary={`Inherited defaults (${inherited.length})`} summaryClass="muted">
+          {inherited.map(f => (
+            <KvRow
+              key={f.key}
+              icon={f.icon}
+              label={f.label}
+              meta={f.isCode ? <code>{f.currentText}</code> : f.currentText}
+            />
+          ))}
+        </Disclosure>
       )}
     </DetailSection>
   );
@@ -484,7 +492,6 @@ function ProjectMethodsTab({ projectId }: { projectId: string }) {
   const filtered = c.methods.filter(m =>
     matchSearch(search, `${m.name} ${m.id} ${m.capability ?? ''} ${m.description ?? ''} ${m.status ?? ''} ${m.pipeline}`),
   );
-  const overridesDefault = !!recommendedMethod && !!sharedDefault && recommendedMethod !== sharedDefault;
 
   return (
     <>
@@ -500,13 +507,11 @@ function ProjectMethodsTab({ projectId }: { projectId: string }) {
           icon="circle-check"
           label={recommendedMethod ?? 'None'}
           meta={
-            <span>
+            <span data-tip={sharedDefault ? `Shared default: ${sharedDefault}` : undefined}>
               source: <code>{source}</code>
               {capability ? <> · capability: <code>{capability}</code></> : null}
-              {sharedDefault ? <> · shared default: <code>{sharedDefault}</code></> : null}
             </span>
           }
-          value={overridesDefault ? <span class="badge t-attention">override</span> : undefined}
         />
       </DetailSection>
       <DetailSection title={`Methods (${filtered.length})`}>
@@ -708,7 +713,6 @@ function ProjectResultsTab({ projectId }: { projectId: string }) {
                         <StateBadge family="artifact" state={artState} compact />
                         <EntityCode id={a.id} kind="result" />
                         {a.taskId && a.taskCode && <EntityCode code={a.taskCode} id={a.taskId} kind="task" />}
-                        <a class="row-link" href={'/results/' + encodeURIComponent(a.id)} onClick={e => { e.preventDefault(); go('/results/' + encodeURIComponent(a.id)); }}>Open</a>
                       </span>
                     }
                     value={

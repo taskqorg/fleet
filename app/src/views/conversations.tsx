@@ -3,8 +3,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  EntityCode, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
-  StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
+  EntityCode, EntityPicker, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
+  StateBadge, StateCounters, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection,
+  OpsSummary, StatStrip, KvRow, Num, type VirtualListHandle, type CatalogueTreeNode, type IconName, type Stat,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, TextField,
   writeClip, zone, DropZone, agentLabel, InlineForm, type ComposerChip,
   keyConnection, ShellStatus, ShellActions } from '../../../packages/ui/src/index.ts';
@@ -16,7 +17,7 @@ import type { SessionRow as ContractSessionRow, SessionGetReply, SessionExecutio
 import { DEFAULT_SESSION_GROUP, DEFAULT_SESSION_SORT } from '../../../packages/view-url/view-url.ts';
 import { nextUrl } from '../url.ts';
 import { prefs } from '../prefs.ts';
-import { useListPage, ListPagePanel } from '../list-page.tsx';
+import { useListPage, ListPagePanel, type ListPage } from '../list-page.tsx';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, inside, range, type Selection } from '../selection.ts';
@@ -29,7 +30,7 @@ type SessionRow = ContractSessionRow & { state: StateOf<'session'> };
 const errText = (e: unknown) => e instanceof Error ? e.message : String(e);
 const rec = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const str = (v: unknown) => typeof v === 'string' ? v : undefined;
-const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
+const isHarness = (h: string | null | undefined): h is Harness => !!h && h in harnesses;
 const reqId = () => crypto.randomUUID();
 const TERMINAL = ['succeeded', 'failed', 'cancelled'];
 const titleOf = (s: SessionRow) => s.title ?? 'New conversation';
@@ -89,17 +90,74 @@ export function Conversations({ id }: { id?: string }) {
       state={s => <StateBadge family="session" state={s.state} compact />}
       facts={s => <SessionFacts s={s} />} />
   </>;
-  const detail = isNew ? <NewConversation key="new" initialProject={initial.get('in')} initialRole={initial.get('role')} onStarted={sessionId => set({ focus: sessionId, extra: { ...view.extra, in: undefined, role: undefined } })} />
+  const detail = isNew ? <NewConversation key="new" initialProject={initial.get('in')} initialRole={initial.get('role')} onClose={() => set({ focus: undefined, extra: { ...view.extra, in: undefined, role: undefined } })} onStarted={sessionId => set({ focus: sessionId, extra: { ...view.extra, in: undefined, role: undefined } })} />
     : id ? <Conversation key={id} id={id} onClose={() => set({ focus: undefined })} /> : undefined;
-  return <ListDetail list={pane} detail={detail} detailKey={id} />;
+  return <ListDetail list={pane} detail={detail} idle={<ConversationsSummary page={page} filtered={filtered} archived={archived} />} detailKey={id} />;
 }
 
-/** Row facts of a conversation (OR-37): time since the last activity, open questions, executions, agent. */
+function ConversationsSummary({ page, filtered, archived }: { page: ListPage<SessionRow>; filtered: boolean; archived: boolean }) {
+  const { list, view, set, rowsGroup } = page;
+  const counts = list.counts as Partial<Record<StateOf<'session'>, number>>;
+  const activeStats: Stat[] = ([
+    { label: archived ? 'archived' : 'total', icon: archived ? 'archive' : 'messages-square', value: { value: list.total, basis: 'measured' } },
+    { label: 'waiting', icon: states_.session.waiting.icon, value: { value: counts.waiting ?? 0, basis: 'measured' }, tone: (counts.waiting ?? 0) > 0 ? 'attention' : undefined },
+    { label: 'failed', icon: states_.session.failed.icon, value: { value: counts.failed ?? 0, basis: 'measured' }, tone: (counts.failed ?? 0) > 0 ? 'danger' : undefined },
+    { label: 'running', icon: states_.session.running.icon, value: { value: counts.running ?? 0, basis: 'measured' } },
+    { label: 'preparing', icon: states_.session.preparing.icon, value: { value: counts.preparing ?? 0, basis: 'measured' } },
+    { label: 'idle', icon: states_.session.idle.icon, value: { value: counts.idle ?? 0, basis: 'measured' } },
+  ] satisfies Stat[]).filter(s => (s.value.value ?? 0) > 0);
+  const nonZeroGroups = list.groups.filter(g => g.count > 0);
+  const groupTitle = GROUPS.find(g => g[0] === rowsGroup)?.[1] ?? rowsGroup;
+  const hasCounts = Object.values(counts).some(n => (n ?? 0) > 0);
+
+  return (
+    <article class="detail" aria-label="Conversations summary">
+      <OpsSummary>
+        {list.pending && !list.total ? <Skeleton rows={3} /> : (
+          <>
+            {activeStats.length > 0 && <StatStrip label="Conversations" stats={activeStats} />}
+            {nonZeroGroups.length > 0 && rowsGroup !== 'none' ? (
+              <DetailSection title={`By ${groupTitle.toLowerCase()}`}>
+                {nonZeroGroups.map(g => (
+                  <KvRow
+                    key={g.key}
+                    icon={rowsGroup === 'state' ? 'activity' : rowsGroup === 'agent' ? 'bot' : 'folder-open'}
+                    label={groupLabel(rowsGroup, g.label) || g.key}
+                    value={<Num m={{ value: g.count, basis: 'measured' }} kind="count" />}
+                  />
+                ))}
+              </DetailSection>
+            ) : hasCounts ? (
+              <DetailSection title="By state">
+                <StateCounters
+                  family="session"
+                  label="Conversations by state"
+                  counts={counts}
+                  active={(view.state ?? []) as StateOf<'session'>[]}
+                  hideZero
+                  onAll={() => set({ state: [] })}
+                  onToggle={s => {
+                    const cur = (view.state ?? []) as StateOf<'session'>[];
+                    set({ state: cur.includes(s) ? cur.filter(x => x !== s) : [...cur, s] });
+                  }}
+                />
+              </DetailSection>
+            ) : (
+              <Empty text={filtered ? 'No matching conversations to summarize.' : archived ? 'Archived summary is empty.' : 'No conversations to summarize.'} />
+            )}
+          </>
+        )}
+      </OpsSummary>
+    </article>
+  );
+}
+
+/** Row facts of a conversation (OR-37): open questions, executions from two, time since the last activity, agent. */
 function SessionFacts({ s }: { s: SessionRow }) {
   const at = s.activityAt ? Date.parse(s.activityAt) : NaN, n = s.executions ?? 0, q = s.openQuestions ?? 0;
   return <RowFacts>
     {q > 0 && <span class="chip-age t-attention alert" aria-label={q === 1 ? '1 open question' : `${q} open questions`}>{q}</span>}
-    {n > 0 && <Fact icon={actions.runs} text={String(n)} tip={n === 1 ? '1 execution' : `${n} executions`} />}
+    {n > 1 && <Fact icon={actions.runs} text={String(n)} tip={`${n} executions`} />}
     {!isNaN(at) && <Fact tip="Last activity"><AgeChip t={at} /></Fact>}
     {isHarness(s.harness) && <HarnessMark h={s.harness} />}
   </RowFacts>;
@@ -114,7 +172,7 @@ function groupLabel(group: string, label: string | null) {
 function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
   const [verifiedTarget, setVerifiedTarget] = useState<string | null>(null);
-  const { data: s, error, state, restored, reload: reloadSession } = useOp('session_get', { sessionId: id });
+  const { data: s, error, restored, reload: reloadSession } = useOp('session_get', { sessionId: id });
   // A fresh answer (not the stored copy) for this conversation validates the composer's target.
   useEffect(() => { if (s && !restored) setVerifiedTarget(id); }, [s, restored, id]);
   const projects = useOp('project_list', s?.projectId ? {} : null);
@@ -232,14 +290,19 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
       <h2 class="detail-title conv-title" data-tip={title}>{title}</h2>
-      <EntityCode code={s.code} id={id} kind="conversation" />{str(rec(s.agentConfig).id) && <span class="muted mono conv-profile">{str(rec(s.agentConfig).id)}</span>}<span class="grow" />
+      <EntityCode code={s.code} id={id} kind="conversation" /><span class="grow" />
       <SearchField label="Search thread" value={q} onInput={setQ} onSearch={search} />
-      <div class="conv-search-results" data-active={!!hits} data-partial={!!w && w.blocks.length < w.total}>
-        <span class="count" aria-live="polite">{hits ? `${hits.length ? hit + 1 : 0} of ${hits.length}` : w ? `${w.blocks.length.toLocaleString('en')} of ${w.total.toLocaleString('en')}` : ''}</span>
-        <Button label="Previous hit" icon="arrow-up" iconOnly disabledReason={!hits || hit <= 0 ? 'no earlier hit' : undefined} onClick={() => hits && open(hits, hit - 1)} />
-        <Button label="Next hit" icon="arrow-down" iconOnly disabledReason={!hits || hit >= hits.length - 1 ? 'no later hit' : undefined} onClick={() => hits && open(hits, hit + 1)} />
-      </div>
-      <OfflineMarker state={state} now={now} />
+      {(hits !== null || (!!w && w.blocks.length < w.total)) && (
+        <div class="conv-search-results" data-active={!!hits} data-partial={!!w && w.blocks.length < w.total}>
+          <span class="count" aria-live="polite">{hits ? `${hits.length ? hit + 1 : 0} of ${hits.length}` : `${w!.blocks.length.toLocaleString('en')} of ${w!.total.toLocaleString('en')}`}</span>
+          {hits && (
+            <>
+              <Button label="Previous hit" icon="arrow-up" iconOnly disabledReason={hit <= 0 ? 'no earlier hit' : undefined} onClick={() => open(hits, hit - 1)} />
+              <Button label="Next hit" icon="arrow-down" iconOnly disabledReason={hit >= hits.length - 1 ? 'no later hit' : undefined} onClick={() => open(hits, hit + 1)} />
+            </>
+          )}
+        </div>
+      )}
       <Button label="Copy thread as markdown" icon="file-text" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => copySel(all()!)} />
       {/* Menu actions (design "Controls"): each calls the existing operation; the result shows as a new boundary in this thread. */}
       <ActionMenu label="Actions" disabledReason={off ? 'offline' : undefined} items={[
@@ -272,9 +335,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
         options={(Array.isArray(q.options) ? q.options as unknown[] : keyConnection(q.options) ? ['decline'] : []).map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
         onAnswer={a => run(() => answerQuestion(q.id, a))}
         onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive.current.signal) : undefined} />)}
-      <div class="composer-bar">
-        {active && <EntityCode id={active.id} kind="execution" />}
-      </div>
+      {active && <div class="composer-bar"><EntityCode id={active.id} kind="execution" /></div>}
       <Composer draftPersistence={s && !restored && verifiedTarget === id ? createDraftPersistence(authorizedDraftScope({ kind: 'session', id })) : undefined} disabledReason={off ? 'offline' : verifiedTarget !== id ? 'Validating conversation' : undefined} placeholder={active ? 'Steer' : 'Message'}
         onAttach={files.add} attachments={files.items} onRemoveAttachment={files.remove} chips={composerChips(s, active, () => setPanel('switch'))}
         onStop={active ? () => run(() => op('execution_stop', { executionId: active.id })) : undefined} stopReason={off ? 'offline' : undefined}
@@ -359,9 +420,45 @@ function SwitchPanel({ sessionId, handoff, current, onDone, run }: { sessionId: 
   const selectedProfile = list.find(p => p.id === profile);
   const named = (accounts?.accounts ?? []).filter(a => a.intake === 'all' && selectedProfile && a.harness === (selectedProfile.harness ?? 'codex'));
   const go = () => run(async () => { const r = await op('session_transition', { sessionId, profileId: profile ?? undefined, ...(account ? { account } : {}) }); setDone(r.transition); setNext(r.sessionId && r.sessionId !== sessionId ? r.sessionId : null); });
+  const profileNodes: CatalogueTreeNode[] = list.map(p => ({
+    id: p.id,
+    label: p.id,
+    sub: [p.harness ?? 'codex', p.model].filter(Boolean).join(' · '),
+    icon: (isHarness(p.harness) ? harnesses[p.harness].icon : 'bot') as IconName,
+    right: p.id === current ? <span class="muted">current</span> : undefined,
+    searchText: `${p.id} ${p.harness ?? ''} ${p.model ?? ''}`,
+  }));
+  const accountNodes: CatalogueTreeNode[] = named.map(a => ({
+    id: a.name,
+    label: a.name,
+    sub: a.harness ?? 'codex',
+    icon: (isHarness(a.harness) ? harnesses[a.harness].icon : 'bot') as IconName,
+    searchText: `${a.name} ${a.harness ?? ''}`,
+  }));
   return <DetailSection title={handoff ? 'Hand off to another agent' : 'Switch profile or model'}>
-    <div class="answers" role="group" aria-label="Profile">{list.map(p => <Button key={p.id} label={`${p.id} · ${p.harness ?? 'codex'}${p.model ? ` ${p.model}` : ''}`} pressed={profile === p.id} kind={p.id === current ? 'quiet' : 'default'} onClick={() => { setProfile(p.id); setAccount(null); }} />)}</div>
-    {handoff && <div class="answers" role="group" aria-label="Account">{named.map(a => <Button key={a.id} label={`${a.name} · ${a.harness ?? 'codex'}`} pressed={account === a.name} onClick={() => setAccount(account === a.name ? null : a.name)} />)}</div>}
-    <div class="answers"><Button label={handoff ? 'Hand off' : 'Switch'} kind="primary" disabledReason={profile ? undefined : 'pick a profile'} onClick={go} /><Button label="Close" kind="quiet" onClick={() => onDone(done ?? undefined)} />{done && <span class="muted" role="status">{done}</span>}{next && <a class="row-link" href={`/conversations/${encodeURIComponent(next)}`} onClick={e => { e.preventDefault(); onDone(done ?? undefined); nav(`/conversations/${encodeURIComponent(next)}`); }}>Open the new conversation</a>}</div>
+    <div class="stack">
+      <EntityPicker
+        label="Profile"
+        nodes={profileNodes}
+        value={profile}
+        placeholder="Pick a profile"
+        searchPlaceholder="Find profile"
+        loading={!profiles}
+        onChange={v => { setProfile(v); setAccount(null); }}
+      />
+      {handoff && (
+        <EntityPicker
+          label="Account"
+          nodes={accountNodes}
+          value={account}
+          placeholder={profile ? 'Auto account' : 'Pick a profile first'}
+          searchPlaceholder="Find account"
+          loading={!accounts}
+          disabledReason={profile ? undefined : 'Pick a profile first'}
+          onChange={setAccount}
+        />
+      )}
+      <div class="answers"><Button label={handoff ? 'Hand off' : 'Switch'} kind="primary" disabledReason={profile ? undefined : 'pick a profile'} onClick={go} /><Button label="Close" kind="quiet" onClick={() => onDone(done ?? undefined)} />{done && <span class="muted" role="status">{done}</span>}{next && <a class="row-link" href={`/conversations/${encodeURIComponent(next)}`} onClick={e => { e.preventDefault(); onDone(done ?? undefined); nav(`/conversations/${encodeURIComponent(next)}`); }}>Open the new conversation</a>}</div>
+    </div>
   </DetailSection>;
 }
