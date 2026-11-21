@@ -88,17 +88,17 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 	if err := q.db().FailArtifactsOnlyOnHost(q.ctx(), b.Id); err != nil {
 		return none, err
 	}
-	if err := q.db().DeleteCopiesOnHost(q.ctx(), b.Id); err != nil {
+	if err := artifactCopiesDeleteOnHost(q, b.Id); err != nil {
 		return none, err
 	}
-	if err := q.db().StoresOfHostUnreachable(q.ctx(), b.Id); err != nil {
+	if err := storesHostUnreachable(q, b.Id); err != nil {
 		return none, err
 	}
 	if err := audit(q, "host:"+b.Id, "state", "active", "removed", auditExtra{Holder: deref(h.Holder), Note: js(r)}); err != nil {
 		return none, err
 	}
-	onEnd(q.tx, func(committed bool) {
-		if committed && q.app != nil {
+	afterCommit(q, func() {
+		if q.app != nil {
 			q.app.clearHostCache(b.Id)
 			q.app.wakeDispatch()
 		}
@@ -147,8 +147,8 @@ func purgeHosts(q *Request, preview bool) (removed, kept contract.PurgeCount, er
 			return removed, kept, err
 		}
 		hid := id
-		onEnd(q.tx, func(committed bool) {
-			if committed && q.app != nil {
+		afterCommit(q, func() {
+			if q.app != nil {
 				q.app.clearHostCache(hid)
 			}
 		})

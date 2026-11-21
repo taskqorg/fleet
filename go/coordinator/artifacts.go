@@ -241,7 +241,7 @@ func storeRegister(q *Request, hostID string, b *contract.StoreRegistration, hol
 		return nil, fail(403, "Store belongs to another host")
 	}
 	err = artWrite(ctx, a, func(d *db.Queries) error {
-		return d.ArtStoreUpsert(ctx, db.ArtStoreUpsertParams{ID: id, HostID: hostID, Zone: optStr(deref(b.Zone)), Bucket: bucket, Endpoint: endpoint, LocalEndpoint: local,
+		return storeUpsert(ctx, d, db.ArtStoreUpsertParams{ID: id, HostID: hostID, Zone: optStr(deref(b.Zone)), Bucket: bucket, Endpoint: endpoint, LocalEndpoint: local,
 			CapacityBytes: b.CapacityBytes, UsedBytes: b.UsedBytes, RequiresLogon: b.RequiresLogon != nil && *b.RequiresLogon, Holder: &holder})
 	})
 	if err != nil {
@@ -294,7 +294,7 @@ func storesObserve(ctx context.Context, tx pgx.Tx, hostID string, stores any) er
 		if !ok {
 			continue
 		}
-		if err := db.New(tx).ArtStoreObserve(ctx, db.ArtStoreObserveParams{ID: id, HostID: hostID, Capacity: num(s.CapacityBytes), Used: num(s.UsedBytes),
+		if err := storeObserve(ctx, db.New(tx), db.ArtStoreObserveParams{ID: id, HostID: hostID, Capacity: num(s.CapacityBytes), Used: num(s.UsedBytes),
 			Reachable: s.Reachable == true}); err != nil {
 			return err
 		}
@@ -669,7 +669,7 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 			if err := insert(tx, "stored"); err != nil {
 				return err
 			}
-			return db.New(tx).ArtCopyInsertVerified(ctx, db.ArtCopyInsertVerifiedParams{ArtifactID: id, StoreID: at.ID, ProjectID: e.ProjectID})
+			return artifactCopyInsertVerified(ctx, db.New(tx), id, at.ID, e.ProjectID)
 		})
 		if err != nil {
 			return nil, err
@@ -698,7 +698,7 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 		if err := insert(tx, "pending"); err != nil {
 			return err
 		}
-		return db.New(tx).ArtCopyInsertPending(ctx, db.ArtCopyInsertPendingParams{ArtifactID: id, StoreID: target.ID, ProjectID: e.ProjectID, UploadID: &upload,
+		return artifactCopyInsertPending(ctx, db.New(tx), db.ArtCopyInsertPendingParams{ArtifactID: id, StoreID: target.ID, ProjectID: e.ProjectID, UploadID: &upload,
 			StagingKey: &staging, LeaseMs: leaseMS})
 	})
 	if err != nil {
@@ -922,7 +922,7 @@ func reject(ctx context.Context, a *App, x *Artifact, s *StoreRow, key, why stri
 		}
 	}
 	err := artWrite(ctx, a, func(d *db.Queries) error {
-		if err := d.ArtCopyReject(ctx, db.ArtCopyRejectParams{ArtifactID: x.ID, StoreID: s.ID, Why: &why, RetryWindowMs: retryWindowMS}); err != nil {
+		if err := artifactCopyTransition(ctx, d, x.ID, s.ID, artifactCopyEvent{To: "failed", Why: &why, RetryWindowMs: retryWindowMS}); err != nil {
 			return err
 		}
 		return d.ArtFailUnstored(ctx, db.ArtFailUnstoredParams{ID: x.ID, Why: &why})
@@ -1036,7 +1036,7 @@ func artifactVerified(q *Request, b *contract.ArtifactVerifiedRequest) (any, err
 		return nil, err
 	}
 	err = artWrite(ctx, a, func(d *db.Queries) error {
-		if err := d.ArtCopyVerified(ctx, db.ArtCopyVerifiedParams{ArtifactID: x.ID, StoreID: s.ID}); err != nil {
+		if err := artifactCopyTransition(ctx, d, x.ID, s.ID, artifactCopyEvent{To: "verified"}); err != nil {
 			return err
 		}
 		return d.ArtStoredNow(ctx, x.ID)
@@ -1342,7 +1342,7 @@ func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *s
 				pending++
 			}
 			if err := artWrite(ctx, a, func(d *db.Queries) error {
-				return d.ArtCopySetState(ctx, db.ArtCopySetStateParams{ArtifactID: x.ID, StoreID: c.StoreID, State: state})
+				return artifactCopyTransition(ctx, d, x.ID, c.StoreID, artifactCopyEvent{To: state})
 			}); err != nil {
 				return none, err
 			}
@@ -1574,7 +1574,7 @@ func saveObject(ctx context.Context, a *App, projectID *string, scope, execution
 			Name: name, ExecutionID: &executionID}); err != nil {
 			return err
 		}
-		return d.ArtCopyInsertVerified(ctx, db.ArtCopyInsertVerifiedParams{ArtifactID: id, StoreID: target.ID, ProjectID: projectID})
+		return artifactCopyInsertVerified(ctx, d, id, target.ID, projectID)
 	}
 	var err error
 	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {

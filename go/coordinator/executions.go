@@ -591,10 +591,7 @@ func executionPutRaw(q *Request, e rawObject) error {
 		needDispatch := state == "preparing" && !e.has("hostId") && kind == "agent_run"
 		newlySucceeded := state == "succeeded" && !executionEnds(prev)
 		if needDispatch || newlySucceeded {
-			onEnd(q.tx, func(committed bool) {
-				if !committed {
-					return
-				}
+			afterCommit(q, func() {
 				q.app.wakeDispatch()
 				if newlySucceeded {
 					q.app.wakeAllHosts()
@@ -1147,10 +1144,8 @@ func init() {
 					return nil
 				}
 				publish(q)
-				onEnd(q.tx, func(committed bool) {
-					if committed {
-						a.wakeDispatch()
-					}
+				afterCommit(q, func() {
+					a.wakeDispatch()
 				})
 				return nil
 			})

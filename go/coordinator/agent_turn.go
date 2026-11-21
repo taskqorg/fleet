@@ -402,8 +402,8 @@ func agentPromote(q *Request) error {
 		}
 	}
 	if deferred {
-		onEnd(q.tx, func(committed bool) {
-			if committed && q.app != nil {
+		afterCommit(q, func() {
+			if q.app != nil {
 				q.app.wakeDispatch()
 			}
 		})

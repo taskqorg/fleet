@@ -114,3 +114,13 @@ func afterCommit(q *Request, fn func()) {
 		}
 	})
 }
+
+// afterRollback runs fn once q's transaction has rolled back, in the caller's goroutine (cleanup of staged files,
+// spans or in-memory state on abort or retry).
+func afterRollback(q *Request, fn func()) {
+	onEnd(q.tx, func(committed bool) {
+		if !committed {
+			fn()
+		}
+	})
+}

@@ -33,7 +33,19 @@ type taskRule struct {
 	to   string
 }
 
-var taskTransitions = map[string]taskRule{
+// taskTransitions: the states (schema.sql, task_state) a task may move each state to.
+// A paused task resumes or releases to its state before pause (queued, in_progress or waiting).
+var taskTransitions = map[string][]string{
+	"queued":      {"in_progress", "waiting", "paused", "cancelled"},
+	"in_progress": {"in_progress", "waiting", "paused", "completed", "failed", "cancelled"},
+	"waiting":     {"in_progress", "paused", "failed", "cancelled"},
+	"paused":      {"queued", "in_progress", "waiting", "cancelled"},
+	"completed":   nil,
+	"failed":      nil,
+	"cancelled":   nil,
+}
+
+var taskRules = map[string]taskRule{
 	"first_execution": {[]string{"queued"}, "in_progress"},
 	"blocked":         {[]string{"queued", "in_progress"}, "waiting"},
 	"unblocked":       {[]string{"waiting"}, "in_progress"},
@@ -99,7 +111,7 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rule := taskTransitions[trigger]
+	rule := taskRules[trigger]
 	state := string(t.State)
 	if !slices.Contains(rule.from, state) {
 		return "", fail(409, fmt.Sprintf("Task %s cannot %s", state, strings.Replace(trigger, "_", " ", 1)))
@@ -131,6 +143,9 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 	to := rule.to
 	if to == "previous" && t.StateBeforePause != nil {
 		to = string(*t.StateBeforePause)
+	}
+	if !slices.Contains(taskTransitions[state], to) {
+		return "", fail(409, fmt.Sprintf("Task %s cannot become %s", state, to))
 	}
 	set := db.TaskSetStateParams{ID: id, State: db.TaskState(to)}
 	if to == "waiting" {

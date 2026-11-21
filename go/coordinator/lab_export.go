@@ -131,7 +131,7 @@ func storeExampleFiles(q *Request, projectID *string, ex labExample, write bool)
 			Name: "examples/" + ex.ID + "/" + path}); err != nil {
 			return err
 		}
-		if err := q.db().LabArtifactCopyVerified(q.ctx(), db.LabArtifactCopyVerifiedParams{ArtifactID: aid, StoreID: storeID, ProjectID: projectID}); err != nil {
+		if err := artifactCopyInsertVerified(q.ctx(), q.db(), aid, storeID, projectID); err != nil {
 			return err
 		}
 	}
@@ -470,7 +470,7 @@ func labExamplesAdd(q *Request, r *contract.LabExamplesAddRequest) (contract.Lab
 				return out, err
 			}
 			if len(rs) > 0 {
-				if err := q.db().LabArtifactCopyVerified(q.ctx(), db.LabArtifactCopyVerifiedParams{ArtifactID: id, StoreID: storeID, ProjectID: projectID}); err != nil {
+				if err := artifactCopyInsertVerified(q.ctx(), q.db(), id, storeID, projectID); err != nil {
 					return out, err
 				}
 				added = append(added, labExampleAdded{ArtifactID: id, ID: p.ex.ID, Version: p.ex.Version, Hash: p.hash, Created: true})

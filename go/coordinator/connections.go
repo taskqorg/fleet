@@ -829,12 +829,13 @@ func connectionsKeyAdd(q *Request, r *contract.ConnectionsKeyAddRequest) (any, e
 		return nil, err
 	}
 	os.Chmod(staged, 0o600)
-	onEnd(q.tx, func(committed bool) {
-		if !committed {
-			os.Remove(staged)
-		} else if err := os.Rename(staged, final); err != nil {
+	afterCommit(q, func() {
+		if err := os.Rename(staged, final); err != nil {
 			log.Printf("key %s: %v", fp, err)
 		}
+	})
+	afterRollback(q, func() {
+		os.Remove(staged)
 	})
 	if qid != "" { // the agent's question gets the fingerprint only, never the value
 		if _, err := answerQuestion(q, qid, keyAnswer(c.Name, fp, "active"), actor(q, "operator"), nil); err != nil {
@@ -959,11 +960,9 @@ func connectionsDelete(q *Request, r *contract.ConnectionsDeleteRequest) (contra
 		return no, err
 	}
 	if dir, err := connDir(name); err == nil {
-		onEnd(q.tx, func(committed bool) {
-			if committed { // every key is retired: only stale stages can remain, and connSync must not re-register them
-				if err := os.RemoveAll(dir); err != nil {
-					log.Printf("connection %s: %v", name, err)
-				}
+		afterCommit(q, func() { // every key is retired: only stale stages can remain, and connSync must not re-register them
+			if err := os.RemoveAll(dir); err != nil {
+				log.Printf("connection %s: %v", name, err)
 			}
 		})
 	}
@@ -1024,10 +1023,8 @@ func connectionsKeyState(q *Request, r *contract.ConnectionsKeyStateRequest) (an
 		if dir, err := connDir(c.Name); err == nil {
 			// The value goes only once the retirement committed; connSync removes it if a crash came in between.
 			path := filepath.Join(dir, k.Fingerprint)
-			onEnd(q.tx, func(committed bool) {
-				if committed {
-					os.Remove(path)
-				}
+			afterCommit(q, func() {
+				os.Remove(path)
 			})
 		}
 	}

@@ -288,7 +288,7 @@ func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID,
 			return queued, deleted, err
 		}
 		if err := txCtx(ctx, a, func(tx pgx.Tx) error {
-			return db.New(tx).DispCopyStart(ctx, db.DispCopyStartParams{ArtifactID: x.ID, StoreID: s.ID, ProjectID: x.ProjectID, UploadID: &upload, StagingKey: &staging})
+			return artifactCopyStart(ctx, db.New(tx), db.DispCopyStartParams{ArtifactID: x.ID, StoreID: s.ID, ProjectID: x.ProjectID, UploadID: &upload, StagingKey: &staging})
 		}); err != nil {
 			return queued, deleted, err
 		}
@@ -366,7 +366,7 @@ func removeCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, survivors
 // copyDeleted: the copy of artifact on store is gone.
 func copyDeleted(ctx context.Context, a *App, artifact, store string) error {
 	return txCtx(ctx, a, func(tx pgx.Tx) error {
-		return db.New(tx).DispCopyDeleted(ctx, db.DispCopyDeletedParams{ArtifactID: artifact, StoreID: store})
+		return artifactCopyTransition(ctx, db.New(tx), artifact, store, artifactCopyEvent{To: "deleted"})
 	})
 }
 

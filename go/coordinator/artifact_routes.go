@@ -21,8 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 func init() {
@@ -108,14 +106,11 @@ func init() {
 			}
 			v = ptr(int64(*b.Bytes))
 		}
-		r, err := q.db().ArtStoreSetWarning(q.ctx(), db.ArtStoreSetWarningParams{ID: b.StoreId, Bytes: v})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return none, fail(404, "Unknown store "+b.StoreId)
-		}
+		state, err := storeTransition(q, b.StoreId, storeEvent{SetWarning: true, WarningBytes: v})
 		if err != nil {
 			return none, err
 		}
-		return contract.StoreSetFreeSpaceWarningReply{Id: r.ID, State: r.State}, nil
+		return contract.StoreSetFreeSpaceWarningReply{Id: b.StoreId, State: state}, nil
 	})
 	op("subscription_limits", subscriptionLimits)
 	// changes_since: the stream's read for the app's catch-up and polling fallback; no cursor is the head.
@@ -161,7 +156,7 @@ func init() {
 			return reconcileArtifactWaits(ctx, a)
 		})
 		every(ctx, "placement", placementTick, func(ctx context.Context) error {
-			sweep := artWrite(ctx, a, func(d *db.Queries) error { return d.ArtStoresSweep(ctx, storeUnseenMS) })
+			sweep := artWrite(ctx, a, func(d *db.Queries) error { return storesSweepUnreachable(ctx, d, storeUnseenMS) })
 			if sweep != nil {
 				log.Printf("store sweep: %v", sweep)
 			}

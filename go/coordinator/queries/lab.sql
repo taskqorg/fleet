@@ -41,10 +41,6 @@ SELECT count(*)::int FROM artifact WHERE role='example-file' AND scope='lab' AND
 INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state)
 VALUES(sqlc.arg(id),sqlc.narg(project_id),'lab',sqlc.arg(content_hash),sqlc.arg(size),sqlc.arg(media_type),sqlc.arg(name),'example-file','stored');
 
--- name: LabArtifactCopyVerified :exec
--- The verified copy of an object a Lab artifact was just written to.
-INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES(sqlc.arg(artifact_id),sqlc.arg(store_id),sqlc.narg(project_id),'verified',now());
-
 -- name: LabExampleByName :one
 -- A live example of the project (or of no project) by name (lab.go labExamplesAdd).
 SELECT id,content_hash,approved_at FROM artifact WHERE role='example' AND state<>'deleted' AND name=sqlc.arg(name) AND coalesce(project_id,'')=sqlc.arg(project)::text;

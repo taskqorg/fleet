@@ -55,21 +55,6 @@ func (q *Queries) UploadContentPurged(ctx context.Context, arg UploadContentPurg
 	return exists, err
 }
 
-const uploadCopyInsert = `-- name: UploadCopyInsert :exec
-INSERT INTO artifact_copy(artifact_id, store_id, project_id, state, verified_at) VALUES ($1, $2, $3, 'verified', now())
-`
-
-type UploadCopyInsertParams struct {
-	ArtifactID string
-	StoreID    string
-	ProjectID  *string
-}
-
-func (q *Queries) UploadCopyInsert(ctx context.Context, arg UploadCopyInsertParams) error {
-	_, err := q.db.Exec(ctx, uploadCopyInsert, arg.ArtifactID, arg.StoreID, arg.ProjectID)
-	return err
-}
-
 const uploadDrop = `-- name: UploadDrop :exec
 DELETE FROM upload WHERE id = $1 AND updated_at < now() - make_interval(secs => $2::float8)
 `

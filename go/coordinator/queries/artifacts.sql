@@ -1,4 +1,4 @@
--- Artifacts, their copies and the stores that hold them (artifacts.go, artifact_routes.go;
+-- Artifacts, their copies and the stores that hold them (artifacts.go, artifact_routes.go, artifact_states.go;
 -- docs/designs/fleet-data-foundation.md §3).
 
 -- name: ArtStores :many
@@ -30,10 +30,14 @@ WHERE id= @id AND host_id= @host_id AND (
  OR used_bytes IS DISTINCT FROM coalesce(sqlc.narg(used)::bigint,used_bytes)
  OR (sqlc.arg(reachable)::boolean AND (observed_at IS NULL OR observed_at < now() - interval '30 seconds')));
 
--- name: ArtStoreSetWarning :one
-UPDATE store SET free_space_warning_bytes=sqlc.narg(bytes)::bigint,
- state=CASE WHEN state='unreachable' THEN state WHEN sqlc.narg(bytes)::bigint IS NOT NULL AND capacity_bytes < sqlc.narg(bytes)::bigint THEN 'full' ELSE 'reachable' END
-WHERE id= @id RETURNING id,state;
+-- name: ArtStoreLockState :one
+SELECT state, capacity_bytes FROM store WHERE id=$1 FOR UPDATE;
+
+-- name: ArtStoreMove :exec
+UPDATE store SET
+ free_space_warning_bytes=CASE WHEN sqlc.arg(set_warning)::boolean THEN sqlc.narg(bytes)::bigint ELSE free_space_warning_bytes END,
+ state= @state
+WHERE id= @id;
 
 -- name: ArtStoresSweep :exec
 -- Stores a host has not reported for unseen_ms are unreachable.
@@ -65,6 +69,9 @@ VALUES(@id,sqlc.narg(project_id),@scope,@content_hash,@size,@media_type,@name,sq
 -- An object the coordinator wrote itself for an execution.
 INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state)
 VALUES(@id,sqlc.narg(project_id),@scope,@content_hash,@size,@media_type,@name,@execution_id,'stored');
+
+-- name: ArtCopyStateForUpdate :one
+SELECT state FROM artifact_copy WHERE artifact_id=$1 AND store_id=$2 FOR UPDATE;
 
 -- name: ArtCopyInsertVerified :exec
 INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES(@artifact_id,@store_id,sqlc.narg(project_id),'verified',now());

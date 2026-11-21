@@ -1,6 +1,6 @@
 # Fleet standard: one way per layer
 
-Status: stages 0–11 merged, 2026-11-21; what remains is listed under [What remains](#what-remains). Owner decision:
+Status: stages 0–11 and closing S1–S10 cleanups merged, 2026-11-21; see [What remains](#what-remains). Owner decision:
 refactor every layer onto these standards first, with no new tests; tests come after, only where a check earns its
 place.
 
@@ -48,7 +48,9 @@ No SQL string literals in Go, no `map[string]any` read from the database, no `do
 
 **S3 Transactions.** Two entry points: `store.Read(ctx, q, fn)` and `store.Write(ctx, q, locks, fn)`.
 Locks are entity keys declared by the caller (GLOBAL only by name, where truly global). Effects after
-commit only through `afterCommit(fn)`. The auth cache is cleared only by person/grant/host writes.
+commit or rollback only through `afterCommit(q, fn)` and `afterRollback(q, fn)` (`onEnd` stays internal to
+`store.go` and `tx.go`). The auth cache is fenced and cleared only by writes holding `GLOBAL` (which all
+person, grant, initial-member and host writes hold).
 
 **S4 Operations.** The contract (`contracts/ops-*.schema.json`) fully declares an operation: request,
 reply, `read`, `long`, `errors`, `auth` (`person` | `project:<path>` | `holder:<kind>` | `architect` |
@@ -85,11 +87,13 @@ Contract list rows are closed types. One JSON source for presets, view grammar a
 
 **S10 Enforcement.** `go/coordinator/DESIGN_RULES.md` lists S1–S10; `design_rules_test.go` scans the
 coordinator source (go/parser) and fails on SQL literals (`R-SQL`), map accessors and `map[string]any`
-(`R-MAP`), goroutines, sleeps and tickers (`R-GO`), non-S3 transaction calls (`R-TX`) and raw op registration (`R-OP`) in every file (the legacy
+(`R-MAP`), goroutines, sleeps and tickers (`R-GO`), non-S3 transaction and `onEnd` calls (`R-TX`) and raw op registration (`R-OP`) in every file (the legacy
 allowlist emptied with the `doc` map type and `docOf`, stage 8f). A short owner list names what one file owns (the work kit: its
 loop and the retry-column writes; `background.go`: periodic passes and background helpers in its named functions, verified
-alongside startup-only pass registration and kit-area bans by `TestDesignScheduling`). State-column writes outside the owner are checked for the machines on the kit
-(stage 7), as are `execution`, `question` and `experiment` state and `question.cause` (owned by `problems.go`).
+alongside startup-only pass registration and kit-area bans by `TestDesignScheduling`). State-column writes outside the owner
+and transition tables are checked by `TestDesignStateWrites` and `TestDesignTransitions` across all declared state machines
+(`resource_build`, `resource_project_summary`, `resource_metadata_repair`, `command`, `execution`, `pipeline step`,
+`task`, `question`, `experiment`, `host`, `connection_key`, `artifact_copy`, `store`, `question.cause` and `audit_log`).
 
 ## How the work runs
 
@@ -120,12 +124,10 @@ alongside startup-only pass registration and kit-area bans by `TestDesignSchedul
 
 ## What remains
 
-- **Executor:** 3 `jStr` uses on in-memory maps (`harness_codex.go`, `mcp_code.go`); `jObj` and `jBoolOr` are read by
-  tests only.
-- **Schema:** `person_setting.email` has no foreign key (the people reload deletes and reinserts `person`).
+None: every S1–S10 standard and enforcement gap is closed.
 
-Stage 11 also fixed what the stages had deferred: `command.execution_id` has its foreign key again (migration 85), a
-coordinator read token is revoked when the last read of an ended token releases it (the 10 s pass stays as the
-backstop), a start with `"harness": null` fails as an unknown harness instead of starting codex, and a host poll
-answers a pending command whose stored row is unchanged from the reply it prepared before (`pollPrepared`,
-host_poll.go) instead of decoding it again.
+The remaining items from Stage 11 and post-Stage 11 cleanups are all resolved:
+- **Executor:** `jStr`, `jObj` and `jBoolOr` are gone from non-test code and forbidden by `E-MAP` in `go/executor/design_rules_test.go`; all five stdio MCP servers serve through `go/mcpserve`.
+- **Schema:** `command.execution_id` (migration 85) and `person_setting.email` (migration 86) both carry their foreign keys again; people reload upserts and prunes removed people instead of deleting every row.
+- **Coordinator S3/S5/S6/S10:** `task`, `artifact_copy` (`artifact_states.go`) and `store` (`artifact_states.go`) transition tables and write ownership are enforced by `TestDesignStateWrites` and `TestDesignTransitions`; `background.go` scheduling helpers are verified directly by `TestDesignScheduling`; `onEnd` is internal to `store.go` and `tx.go` (`R-TX`) with callers on `afterCommit` / `afterRollback`; and `Store.txLocks` fences and invalidates the auth cache only on writes holding `GLOBAL`.
+- **Stage 11 fixes:** a coordinator read token is revoked when the last read of an ended token releases it (the 10 s pass stays as the backstop), a start with `"harness": null` fails as an unknown harness instead of starting codex, and a host poll answers a pending command whose stored row is unchanged from the reply it prepared before (`pollPrepared`, `host_poll.go`) instead of decoding it again.

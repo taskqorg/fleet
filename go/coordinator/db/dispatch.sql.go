@@ -206,20 +206,6 @@ func (q *Queries) DispCommandIDs(ctx context.Context, arg DispCommandIDsParams) 
 	return items, nil
 }
 
-const dispCopyDeleted = `-- name: DispCopyDeleted :exec
-UPDATE artifact_copy SET state='deleted' WHERE artifact_id=$1 AND store_id=$2
-`
-
-type DispCopyDeletedParams struct {
-	ArtifactID string
-	StoreID    string
-}
-
-func (q *Queries) DispCopyDeleted(ctx context.Context, arg DispCopyDeletedParams) error {
-	_, err := q.db.Exec(ctx, dispCopyDeleted, arg.ArtifactID, arg.StoreID)
-	return err
-}
-
 const dispCopyRetry = `-- name: DispCopyRetry :one
 UPDATE artifact_copy SET next_attempt_at=now(),attempts=0 WHERE artifact_id=$1 AND store_id=$2 AND state='failed' RETURNING artifact_id
 `

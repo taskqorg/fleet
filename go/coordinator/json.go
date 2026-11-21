@@ -6,6 +6,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"math"
+	"strconv"
 	"time"
 )
 
@@ -83,4 +85,73 @@ type HTTPError struct {
 	Extra any // a struct whose JSON fields join the error body (a 409's DefinitionConflict or reason, an upload's received)
 	// Refused marks a refusal by design (a removed host): its span outcome is refused, not error.
 	Refused bool
+}
+
+// numOK: a JSON number or a SQL integer column (pgx scans integer as int32, smallint as int16).
+func numOK(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case int32:
+		return float64(x), true
+	case int16:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	}
+	return 0, false
+}
+
+// num: a finite number of any JSON or SQL integer or float type, or a numeric text (a ->> read); 0 otherwise. numOK
+// refuses text. A SQL numeric column needs ::float8 (pgx scans it as pgtype.Numeric).
+func num(v any) float64 {
+	f, ok := numOK(v)
+	if s, isText := v.(string); isText {
+		f, ok = parseNum(s)
+	}
+	if !ok || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0
+	}
+	return f
+}
+
+func parseNum(s string) (float64, bool) {
+	f, err := strconv.ParseFloat(s, 64)
+	return f, err == nil
+}
+
+// msTime: a millisecond time (JSON or SQL number) as a timestamp, or nil.
+func msTime(v any) any {
+	f, ok := numOK(v)
+	if !ok || math.IsInf(f, 0) || math.IsNaN(f) {
+		return nil
+	}
+	return time.UnixMilli(int64(f)).UTC()
+}
+
+func intOK(v any) (int64, bool) {
+	f, ok := numOK(v)
+	if !ok || f != float64(int64(f)) || f > 1<<53 || f < -(1<<53) {
+		return 0, false
+	}
+	return int64(f), true
+}
+
+func keysOnly(b rawObject, allowed ...string) bool {
+	for k := range b {
+		ok := false
+		for _, a := range allowed {
+			if k == a {
+				ok = true
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
 }

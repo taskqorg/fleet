@@ -549,11 +549,12 @@ func guardPipelineWrite(q *Request, run *runRecord) error {
 	state = previous.(*pipelineWriteState)
 	state.plans = append(state.plans, plan)
 	if !loaded {
-		onEnd(q.tx, func(committed bool) {
-			if !committed {
-				for _, p := range state.plans {
-					p.Revision = state.revision
-				}
+		afterCommit(q, func() {
+			pipelineWrites.Delete(key)
+		})
+		afterRollback(q, func() {
+			for _, p := range state.plans {
+				p.Revision = state.revision
 			}
 			pipelineWrites.Delete(key)
 		})

@@ -30,9 +30,6 @@ SELECT EXISTS (SELECT 1 FROM purged_hash WHERE project_id = @project_key AND sco
 INSERT INTO artifact(id, project_id, scope, content_hash, size, media_type, name, session_id, role, state)
 VALUES (@id, sqlc.narg(project_id), 'prod', @content_hash, @size, @media_type, @name, sqlc.narg(session_id), 'attachment', 'stored');
 
--- name: UploadCopyInsert :exec
-INSERT INTO artifact_copy(artifact_id, store_id, project_id, state, verified_at) VALUES (@artifact_id, @store_id, sqlc.narg(project_id), 'verified', now());
-
 -- name: UploadSessionProject :one
 -- The project of the session an upload attaches to (its record's projectId); no row when the caller does not see it.
 SELECT project_id, (payload->'projectId')::jsonb AS payload_project FROM session WHERE id = @id;

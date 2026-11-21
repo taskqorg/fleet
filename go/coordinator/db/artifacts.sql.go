@@ -239,6 +239,22 @@ func (q *Queries) ArtCopySetState(ctx context.Context, arg ArtCopySetStateParams
 	return err
 }
 
+const artCopyStateForUpdate = `-- name: ArtCopyStateForUpdate :one
+SELECT state FROM artifact_copy WHERE artifact_id=$1 AND store_id=$2 FOR UPDATE
+`
+
+type ArtCopyStateForUpdateParams struct {
+	ArtifactID string
+	StoreID    string
+}
+
+func (q *Queries) ArtCopyStateForUpdate(ctx context.Context, arg ArtCopyStateForUpdateParams) (string, error) {
+	row := q.db.QueryRow(ctx, artCopyStateForUpdate, arg.ArtifactID, arg.StoreID)
+	var state string
+	err := row.Scan(&state)
+	return state, err
+}
+
 const artCopyStates = `-- name: ArtCopyStates :many
 SELECT store_id,state FROM artifact_copy WHERE artifact_id=$1 ORDER BY store_id
 `
@@ -909,6 +925,46 @@ func (q *Queries) ArtStoreHost(ctx context.Context, id string) (string, error) {
 	return host_id, err
 }
 
+const artStoreLockState = `-- name: ArtStoreLockState :one
+SELECT state, capacity_bytes FROM store WHERE id=$1 FOR UPDATE
+`
+
+type ArtStoreLockStateRow struct {
+	State         string
+	CapacityBytes *int64
+}
+
+func (q *Queries) ArtStoreLockState(ctx context.Context, id string) (ArtStoreLockStateRow, error) {
+	row := q.db.QueryRow(ctx, artStoreLockState, id)
+	var i ArtStoreLockStateRow
+	err := row.Scan(&i.State, &i.CapacityBytes)
+	return i, err
+}
+
+const artStoreMove = `-- name: ArtStoreMove :exec
+UPDATE store SET
+ free_space_warning_bytes=CASE WHEN $1::boolean THEN $2::bigint ELSE free_space_warning_bytes END,
+ state= $3
+WHERE id= $4
+`
+
+type ArtStoreMoveParams struct {
+	SetWarning bool
+	Bytes      *int64
+	State      string
+	ID         string
+}
+
+func (q *Queries) ArtStoreMove(ctx context.Context, arg ArtStoreMoveParams) error {
+	_, err := q.db.Exec(ctx, artStoreMove,
+		arg.SetWarning,
+		arg.Bytes,
+		arg.State,
+		arg.ID,
+	)
+	return err
+}
+
 const artStoreObserve = `-- name: ArtStoreObserve :exec
 UPDATE store SET
  state=CASE WHEN NOT $1::boolean THEN 'unreachable' WHEN free_space_warning_bytes IS NOT NULL AND coalesce($2::bigint,capacity_bytes) < free_space_warning_bytes THEN 'full' ELSE 'reachable' END,
@@ -941,29 +997,6 @@ func (q *Queries) ArtStoreObserve(ctx context.Context, arg ArtStoreObserveParams
 		arg.HostID,
 	)
 	return err
-}
-
-const artStoreSetWarning = `-- name: ArtStoreSetWarning :one
-UPDATE store SET free_space_warning_bytes=$1::bigint,
- state=CASE WHEN state='unreachable' THEN state WHEN $1::bigint IS NOT NULL AND capacity_bytes < $1::bigint THEN 'full' ELSE 'reachable' END
-WHERE id= $2 RETURNING id,state
-`
-
-type ArtStoreSetWarningParams struct {
-	Bytes *int64
-	ID    string
-}
-
-type ArtStoreSetWarningRow struct {
-	ID    string
-	State string
-}
-
-func (q *Queries) ArtStoreSetWarning(ctx context.Context, arg ArtStoreSetWarningParams) (ArtStoreSetWarningRow, error) {
-	row := q.db.QueryRow(ctx, artStoreSetWarning, arg.Bytes, arg.ID)
-	var i ArtStoreSetWarningRow
-	err := row.Scan(&i.ID, &i.State)
-	return i, err
 }
 
 const artStoreUpsert = `-- name: ArtStoreUpsert :exec
@@ -1069,7 +1102,7 @@ const artStores = `-- name: ArtStores :many
 SELECT id, kind, host_id, zone, bucket, endpoint, local_endpoint, state, capacity_bytes, used_bytes, requires_logon, free_space_warning_bytes, observed_at, registered_at, updated_at, holder FROM store ORDER BY id
 `
 
-// Artifacts, their copies and the stores that hold them (artifacts.go, artifact_routes.go;
+// Artifacts, their copies and the stores that hold them (artifacts.go, artifact_routes.go, artifact_states.go;
 // docs/designs/fleet-data-foundation.md §3).
 func (q *Queries) ArtStores(ctx context.Context) ([]Store, error) {
 	rows, err := q.db.Query(ctx, artStores)
