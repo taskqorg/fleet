@@ -373,6 +373,7 @@ type LabExampleEntry struct {
 	Name       string          `json:"name"`
 	ProjectId  *string         `json:"projectId,omitempty"`
 	State      string          `json:"state"`
+	UseCaseId  *string         `json:"useCaseId,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }

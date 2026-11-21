@@ -24,6 +24,7 @@ func TestLabLeaderboard(t *testing.T) {
 	env := openTestCoordinator(t, false)
 	var mu sync.Mutex
 	objects := map[string][]byte{}
+	getCount := 0
 	s3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case "PUT":
@@ -38,6 +39,9 @@ func TestLabLeaderboard(t *testing.T) {
 			w.WriteHeader(200)
 		case "GET", "HEAD":
 			mu.Lock()
+			if r.Method == "GET" {
+				getCount++
+			}
 			b, ok := objects[r.URL.Path]
 			mu.Unlock()
 			if !ok {
@@ -533,6 +537,56 @@ func TestLabLeaderboard(t *testing.T) {
 		labLeaderboardCacheMu.Unlock()
 		if n != labLeaderboardCacheMax {
 			t.Fatalf("cache size = %d, want %d", n, labLeaderboardCacheMax)
+		}
+	})
+
+	t.Run("lab_examples_list_usecase_id", func(t *testing.T) {
+		artPricing := addExample("bench-pricing-engine-py", "bench:python-pricing-engine")
+		mu.Lock()
+		getsBefore := getCount
+		mu.Unlock()
+
+		listExamples := func() contract.LabExamplesListReply {
+			t.Helper()
+			c, raw := env.callJSON(t, "POST", "/api/ops/lab_examples_list", doc{"state": "approved"}, env.ownerHeaders())
+			if c != 200 {
+				t.Fatalf("lab_examples_list = %d %v", c, raw)
+			}
+			var rep contract.LabExamplesListReply
+			if err := json.Unmarshal(jsonBytes(raw), &rep); err != nil {
+				t.Fatal(err)
+			}
+			return rep
+		}
+
+		rep1 := listExamples()
+		byID := map[string]contract.LabExampleEntry{}
+		for _, ex := range rep1.Examples {
+			byID[ex.ArtifactId] = ex
+		}
+		if got := deref(byID[artBench].UseCaseId); got != "bench:bug-finding" {
+			t.Fatalf("artBench useCaseId = %q, want bench:bug-finding", got)
+		}
+		if got := deref(byID[artReal].UseCaseId); got != "real:prod-alert-triage" {
+			t.Fatalf("artReal useCaseId = %q, want real:prod-alert-triage", got)
+		}
+		if got := deref(byID[artPricing].UseCaseId); got != "bench:python-pricing-engine" {
+			t.Fatalf("artPricing useCaseId = %q, want bench:python-pricing-engine", got)
+		}
+
+		mu.Lock()
+		getsAfterFirst := getCount
+		mu.Unlock()
+		if getsAfterFirst-getsBefore != 1 {
+			t.Fatalf("S3 GETs on first lab_examples_list = %d, want 1", getsAfterFirst-getsBefore)
+		}
+
+		_ = listExamples()
+		mu.Lock()
+		getsAfterSecond := getCount
+		mu.Unlock()
+		if getsAfterSecond != getsAfterFirst {
+			t.Fatalf("S3 GETs on second lab_examples_list = %d, want 0", getsAfterSecond-getsAfterFirst)
 		}
 	})
 }
