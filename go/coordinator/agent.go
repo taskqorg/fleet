@@ -132,7 +132,7 @@ type agentFilter struct {
 	Status           *string `json:"status,omitempty"`
 }
 
-// agentView: the fields T names of a value another area hands over as a map (a project, a profile, a run); a field of
+// agentView: the fields T names of an open value another area hands over (a project, a profile, a run); a field of
 // another JSON type reads as zero.
 func agentView[T any](v any) T {
 	t, _ := asT[T](v)
@@ -2784,8 +2784,10 @@ func init() {
 				err := q.app.store.Tx(q.ctx(), scopeOf(q.person), false, "", func(tx pgx.Tx) error {
 					q.tx = tx
 					defer func() { q.tx = nil }()
-					var err error
-					a, err = projectAgentArguments(q, a, executionID, isResourceRead(name))
+					out, err := projectAgentArguments(q, maps.Clone(a), executionID, isResourceRead(name)) // a retried attempt starts again from a
+					if err == nil {
+						a = out
+					}
 					return err
 				})
 				if err != nil {

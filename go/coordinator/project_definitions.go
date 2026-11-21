@@ -396,8 +396,8 @@ func projectContext(q *Request, id string) (rawObject, error) {
 	if err = json.Unmarshal(jsonBytes(b), &parts); err != nil {
 		return nil, err
 	}
-	settings, err := openObject(parts.Settings)
-	if err != nil {
+	var settings rawObject // a value of b: already in openObject's form
+	if err := json.Unmarshal(orNull(parts.Settings), &settings); err != nil {
 		return nil, err
 	}
 	parsed, unknown, err := projectSettings(settings)

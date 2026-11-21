@@ -414,6 +414,13 @@ type executionWait struct {
 	DeclaredArtifacts []string `json:"declaredArtifacts"`
 }
 
+// executionWaitOf: the wait fields of a stored execution record; a list item that is not text is left out.
+type executionWaitOf struct {
+	State             string          `json:"state"`
+	WaitReason        string          `json:"waitReason"`
+	DeclaredArtifacts json.RawMessage `json:"declaredArtifacts"`
+}
+
 // settleWaiting: a waiting execution finishes once its artifacts are settled.
 func settleWaiting(ctx context.Context, a *App, id string) error {
 	return settleWaitingAs(ctx, a, id, "")
@@ -427,12 +434,12 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 		if err != nil || e == nil {
 			return err
 		}
-		var w executionWait
+		var w executionWaitOf
 		lenientDecode(jsonBytes(e), &w)
 		if w.State != "waiting" || w.WaitReason != "artifacts" {
 			return nil
 		}
-		r, err := artifactRequirement(withTx(q), a, id, declaredNames(w.DeclaredArtifacts))
+		r, err := artifactRequirement(withTx(q), a, id, declaredNames(jsonStrings(w.DeclaredArtifacts)))
 		if err != nil {
 			return err
 		}

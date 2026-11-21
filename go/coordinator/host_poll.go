@@ -995,6 +995,12 @@ type hostShim struct {
 	Holder string `json:"holder"`
 }
 
+// UnmarshalJSON: a field of another JSON type reads as absent.
+func (h *hostShim) UnmarshalJSON(b []byte) error {
+	type plain hostShim
+	return lenientDecode(b, (*plain)(h))
+}
+
 func (h *hostShim) removed() bool { return h.State == "removed" }
 
 // hostMayRun: h is a host record; projectID and director are a record's values (text, else none).

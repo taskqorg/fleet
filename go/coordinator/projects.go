@@ -428,7 +428,7 @@ func shippedProjectContext(id string) (rawObject, error) {
 	return p, nil
 }
 
-// projectSettingsView: the settings of a project context (the map its readers hold).
+// projectSettingsView: the settings of a project context.
 type projectSettingsView struct {
 	Settings rawObject `json:"settings"`
 }

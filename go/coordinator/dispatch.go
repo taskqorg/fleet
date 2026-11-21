@@ -224,6 +224,8 @@ type dispatchAccount struct {
 		Projects []string `json:"projects"`
 	} `json:"take"`
 	rec rawObject
+	// vals: the record's id, name, holder and harness as decoded values (absent: nil), read once for the comparisons.
+	vals struct{ id, name, holder, harness any }
 }
 
 func loadDispatchContext(q *Request) (*dispatchContext, error) {
@@ -261,6 +263,7 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	for _, x := range accounts {
 		s, _ := asT[dispatchAccount](x)
 		s.rec = x
+		s.vals.id, s.vals.name, s.vals.holder, s.vals.harness = x.val("id"), x.val("name"), x.val("holder"), x.val("harness")
 		k.accounts = append(k.accounts, s)
 	}
 	// The dispatch transaction's own connection: a second pool connection, taken while this transaction holds the
@@ -462,7 +465,7 @@ func (a *App) rankCandidates(q *Request, e rawObject, k *dispatchContext) ([]*ca
 	}
 	named := func(v string) func(*dispatchAccount) bool {
 		return func(s *dispatchAccount) bool {
-			if s.rec.val("id") == v || s.rec.val("name") == v {
+			if s.vals.id == v || s.vals.name == v {
 				return true
 			}
 			for _, b := range bindingsOf(s.rec) {
@@ -509,19 +512,19 @@ func (a *App) rankCandidates(q *Request, e rawObject, k *dispatchContext) ([]*ca
 			if len(order) > 0 {
 				host = order[0]
 			}
-			return []*candidate{{Subscription: subOf(s), Host: host, Warnings: []string{}, Skipped: fmt.Sprintf("%s is a %s subscription, not %s", s.rec.val("name"), s.rec.val("harness"), harness), Cause: "subscription:" + s.ID + ":harness"}}, nil
+			return []*candidate{{Subscription: subOf(s), Host: host, Warnings: []string{}, Skipped: fmt.Sprintf("%s is a %s subscription, not %s", s.vals.name, s.vals.harness, harness), Cause: "subscription:" + s.ID + ":harness"}}, nil
 		}
 		subs = []*dispatchAccount{s}
 	} else {
 		list := nonNilStrings(settings.Subscriptions)
 		pos := func(s *dispatchAccount) int {
 			for i, n := range list {
-				if n == s.rec.val("name") {
+				if n == s.vals.name {
 					return i
 				}
 			}
 			for i, n := range list {
-				if n == s.rec.val("id") {
+				if n == s.vals.id {
 					return i
 				}
 			}
@@ -534,11 +537,11 @@ func (a *App) rankCandidates(q *Request, e rawObject, k *dispatchContext) ([]*ca
 		p, owner := q.peopleSnapshot().person(dir), ownerEmail(q)
 		full := p != nil && fullAccess(p)
 		mine := func(s *dispatchAccount) bool {
-			return s.rec.val("holder") == director || full && s.rec.val("holder") == owner || inList(nonNilStrings(s.Take.Projects), deref(x.ProjectID)) && projectID != nil
+			return s.vals.holder == director || full && s.vals.holder == owner || inList(nonNilStrings(s.Take.Projects), deref(x.ProjectID)) && projectID != nil
 		}
 		weight := func(s *dispatchAccount) int {
 			w := pos(s)
-			if s.rec.val("holder") != director {
+			if s.vals.holder != director {
 				w += 1000000
 			}
 			return w
@@ -559,7 +562,7 @@ func (a *App) rankCandidates(q *Request, e rawObject, k *dispatchContext) ([]*ca
 			subs = append(subs, def)
 		}
 		for _, s := range ranked {
-			if def == nil || s.rec.val("id") != def.rec.val("id") {
+			if def == nil || s.vals.id != def.vals.id {
 				subs = append(subs, s)
 			}
 		}
@@ -678,7 +681,7 @@ func (a *App) rankCandidates(q *Request, e rawObject, k *dispatchContext) ([]*ca
 					skip(over, "subscription:"+s.ID+":limit")
 					continue
 				}
-				if s.rec.val("harness") == "claude" && s.rec.val("holder") != h.val("holder") {
+				if s.vals.harness == "claude" && s.vals.holder != h.val("holder") {
 					c.Warnings = append(c.Warnings, fmt.Sprintf("%s can read this login (Claude on a host held by someone else)", h.val("holder")))
 				}
 			} else {

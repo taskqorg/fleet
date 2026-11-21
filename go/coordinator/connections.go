@@ -1025,7 +1025,7 @@ type mintRun struct {
 	Step                                                                                   bool
 }
 
-// mintRunOf: a run record's fields (the pipeline and dispatch files hold the run as a map); a field that is not text is
+// mintRunOf: a run record's fields (dispatch.go passes the execution's); a field that is not text is
 // absent.
 func mintRunOf(run any) mintRun {
 	r, _ := asT[struct {

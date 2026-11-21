@@ -9,12 +9,15 @@ import (
 )
 
 // projectBundle validates only owned context, never reads a caller-selected host path. v is the open bundle
-// ({settings, contextFiles}, any JSON value of it); projectSettings (projects.go) checks the settings. The bundle comes
-// back as openObject reads it.
+// ({settings, contextFiles}, any JSON value of it, a rawObject as openObject read it); projectSettings (projects.go)
+// checks the settings. The bundle comes back as openObject reads it.
 func projectBundle(id string, bundle any) (rawObject, error) {
-	v, err := openObject(jsonBytes(bundle))
-	if err != nil {
-		return nil, fail(400, "Expected settings and contextFiles")
+	v, read := bundle.(rawObject)
+	if !read {
+		var err error
+		if v, err = openObject(jsonBytes(bundle)); err != nil {
+			return nil, fail(400, "Expected settings and contextFiles")
+		}
 	}
 	if !keysOnly(v, "settings", "contextFiles") {
 		return nil, fail(400, "Expected settings and contextFiles")

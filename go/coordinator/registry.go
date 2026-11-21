@@ -210,7 +210,7 @@ func namedFold(named map[string]bool, k string) bool {
 	return false
 }
 
-// asT: rows and records read as maps, as their contract type. For values whose map keys are fixed by the query or the
+// asT: rows and records read as open values, as their contract type. For values whose map keys are fixed by the query or the
 // builder (a SELECT column list); a reply built field by field names its struct directly.
 func asT[T any](v any) (T, error) {
 	var t T
@@ -218,14 +218,18 @@ func asT[T any](v any) (T, error) {
 	return t, err
 }
 
-// replyAs: a handler's map reply (keys fixed by the handler) as its contract type.
+// replyAs: a handler's open reply (an object whose keys the handler fixed) as its contract type.
 func replyAs[T any](v any, err error) (T, error) {
 	var t T
 	if err != nil {
 		return t, err
 	}
-	// A key the contract requires that the handler did not write is a contract break, not a zero value.
-	if m, ok := v.(rawObject); ok {
+	// A key the contract requires that the handler did not write is a contract break, not a zero value. Checked for an
+	// open object the handler built (a rawObject, or a decoded object), not a record list it passed through.
+	_, open := v.(rawObject)
+	if rv := reflect.ValueOf(v); open || rv.Kind() == reflect.Map && rv.Type().Elem().Kind() == reflect.Interface {
+		var m rawObject
+		json.Unmarshal(jsonBytes(v), &m)
 		if rt := reflect.TypeOf(t); rt.Kind() == reflect.Struct {
 			for i := 0; i < rt.NumField(); i++ {
 				tag, opts, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")

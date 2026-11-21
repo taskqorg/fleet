@@ -209,8 +209,11 @@ func sessionGet(q *Request, sid string) (rawObject, error) {
 	if err != nil {
 		return nil, err
 	}
-	s["queued"], s["questions"], s["handoffs"] = jsonBytes(v.Queued), jsonBytes(v.Questions), jsonBytes(v.Handoffs)
-	s["transitions"], s["forks"] = jsonBytes(v.Transitions), jsonBytes(v.Forks)
+	add, err := asT[rawObject](v)
+	if err != nil {
+		return nil, err
+	}
+	maps.Copy(s, add)
 	s["sessionId"] = jsonBytes(sid)
 	code, err := q.db().SessionCode(q.ctx(), sid)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
