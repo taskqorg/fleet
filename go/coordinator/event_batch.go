@@ -55,6 +55,14 @@ func (r rawObject) str(k string) (string, bool) {
 // text: field k as a string, "" when absent or not a string.
 func (r rawObject) text(k string) string { s, _ := r.str(k); return s }
 
+// ptr: field k as a string, nil when absent, null or not a string.
+func (r rawObject) ptr(k string) *string {
+	if s, ok := r.str(k); ok {
+		return &s
+	}
+	return nil
+}
+
 // has: field k is present and not null (a decoded map's value is not nil).
 func (r rawObject) has(k string) bool { return len(r[k]) > 0 && !bytes.Equal(r[k], []byte("null")) }
 

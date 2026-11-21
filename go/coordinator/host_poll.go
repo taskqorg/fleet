@@ -492,7 +492,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandVi
 		if !locked {
 			// A busy row is retried. A missing row still goes through
 			// the poll's permanent 404 refusal and retires its command.
-			_, err := recGet[json.RawMessage](wq, recExecution, cv.ExecutionID)
+			_, err := getExecution(wq, cv.ExecutionID)
 			return nil, err
 		}
 		// The command as it is under the lock (a stop may have settled it, a writer changed it).
@@ -509,7 +509,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandVi
 		}
 		cv = pollCommandOf(rows[0], cv.HostID)
 	}
-	e, err := recGet[rawObject](wq, recExecution, cv.ExecutionID) // open: the delegation and handoff gates may rewrite it
+	e, err := executionRawGet(wq, cv.ExecutionID) // open: the delegation and handoff gates may rewrite it
 	if err != nil {
 		return nil, err
 	}
@@ -670,11 +670,11 @@ func (a *App) refusePollCommand(wq *Request, c pollGateCommand, reason string) e
 	if !pipelineDispatchKind(cmd.Kind) {
 		return nil
 	}
-	e, err := recMaybe[rawObject](wq, recExecution, cmd.ExecutionID)
+	e, err := executionRawMaybe(wq, cmd.ExecutionID)
 	if err != nil || e == nil {
 		return err
 	}
-	native := agentView[pipelineRefused](*e)
+	native := agentView[pipelineRefused](e)
 	if native.PipelineRunID == "" || executionEnds(native.State) || native.State == "running" {
 		return nil
 	}
@@ -693,11 +693,11 @@ func (a *App) refusePollCommand(wq *Request, c pollGateCommand, reason string) e
 		return nil
 	}
 	now := nowMs()
-	ex := *e
+	ex := e
 	ex["state"], ex["stopDetail"], ex["finishedAt"], ex["updatedAt"] = jsonBytes("cancelled"), jsonBytes(reason), jsonBytes(now), jsonBytes(now)
 	delete(ex, "waitReason")
 	delete(ex, "waitDetail")
-	if err := recPut(wq, recExecution, &ex); err != nil {
+	if err := executionPutRaw(wq, ex); err != nil {
 		return err
 	}
 	// The dispatch pass runs the pipeline engine's sweeps: the step sees its native execution end.

@@ -13,7 +13,7 @@ import (
 
 // agentExecutions: the executions of a session, in order.
 func agentExecutions(q *Request, sid string) ([]agentExecution, error) {
-	return recAll[agentExecution](q, recExecution, agentFilter{SessionID: &sid})
+	return executionsAs[agentExecution](q, &sid)
 }
 
 func agentActive(q *Request, sid string) (*agentExecution, error) {
@@ -65,7 +65,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 	if s.DirectedBy == "" {
 		d := ""
 		for _, id := range []string{s.CreatedByExecutionID, s.ParentExecutionID} {
-			if x, err := recMaybe[agentExecution](q, recExecution, id); err != nil {
+			if x, err := executionMaybe(q, id); err != nil {
 				return none, err
 			} else if d == "" && x != nil {
 				d = x.DirectedBy
@@ -181,7 +181,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 	if prov != nil && validTraceparent(prov.Traceparent) {
 		e.Traceparent, e.TraceActor = prov.Traceparent, prov.TraceActor
 	}
-	if err := recPut(q, recExecution, &e); err != nil {
+	if err := executionPut(q, &e); err != nil {
 		return none, err
 	}
 	m := agentMessage{ID: newID(), SessionID: s.ID, ExecutionID: id, RequestID: requestID, Text: input, ProjectID: s.ProjectID, SentBy: director(q)}
@@ -292,7 +292,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 		if sent[0].Text != text || strings.Join(sent[0].AttachmentRequest, ",") != strings.Join(ids, ",") {
 			return none, fail(409, "Request identity conflict")
 		}
-		e, err := recGet[agentExecution](q, recExecution, sent[0].ExecutionID)
+		e, err := getExecution(q, sent[0].ExecutionID)
 		return agentSubmitted{execution: &e}, err
 	}
 	if queued, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: &sid, RequestID: &requestID}); err != nil {
@@ -528,7 +528,7 @@ func wake(q *Request, e *agentExecution, status string) error {
 			return err
 		}
 	}
-	fresh, err := recGet[agentExecution](q, recExecution, e.ID)
+	fresh, err := getExecution(q, e.ID)
 	if err != nil {
 		return err
 	}
@@ -634,7 +634,7 @@ func executionStatus(q *Request, r *contract.ExecutionStatusRequest) (contract.E
 	if eid == "" {
 		return rep, fail(400, "Expected executionId")
 	}
-	e, err := recGet[agentExecution](q, recExecution, eid)
+	e, err := getExecution(q, eid)
 	if err != nil {
 		return rep, err
 	}
@@ -721,7 +721,7 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 		if err != nil {
 			return nil, err
 		}
-		e, err := recGet[agentExecution](q, recExecution, m.ExecutionID)
+		e, err := getExecution(q, m.ExecutionID)
 		if err != nil {
 			return nil, err
 		}
@@ -738,7 +738,7 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 		return nil, err
 	}
 	for _, h := range sent {
-		e, err := recGet[agentExecution](q, recExecution, h.ExecutionID)
+		e, err := getExecution(q, h.ExecutionID)
 		if err != nil {
 			return nil, err
 		}
@@ -763,7 +763,7 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 	if err := agentPromote(q); err != nil {
 		return nil, err
 	}
-	es, err := recAll[agentExecution](q, recExecution, agentFilter{})
+	es, err := executionsAs[agentExecution](q, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -784,13 +784,13 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 		}
 		items = append(items, agentExecutionItem{"execution", e.ID, agentNullText(e.SessionID), e.State, class, next})
 	}
-	open, err := recAll[agentQuestion](q, recQuestion, agentFilter{State: ptr("open")})
+	open, err := agentQuestionsList(q, db.AgentQuestionsParams{State: ptr("open")})
 	if err != nil {
 		return nil, err
 	}
 	for _, qu := range open {
 		asker := json.RawMessage("null")
-		if e, _ := recMaybe[agentExecution](q, recExecution, qu.ExecutionID); e != nil {
+		if e, _ := executionMaybe(q, qu.ExecutionID); e != nil {
 			asker = agentNullText(e.State)
 		}
 		items = append(items, agentQuestionOpen{"question_open", qu.ID, asker})

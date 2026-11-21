@@ -129,7 +129,7 @@ func harnessAllowed(q *Request, host, harness string) (bool, error) {
 	return ok, err
 }
 
-// accountJobExecution: the execution record of an inspection's host job, as recExecution writes it.
+// accountJobExecution: the execution record of an inspection's host job, as executionWrite writes it.
 type accountJobExecution struct {
 	ID          string `json:"id"`
 	ExecutionID string `json:"executionId"`
@@ -148,7 +148,7 @@ func accountInspectionJob(q *Request, host string, p contract.AccountInspectPayl
 	if err := sessionPut(q, &agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
 		return "", err
 	}
-	if err := recWrite(q, recExecution, accountJobExecution{ID: eid, ExecutionID: eid, SessionID: sid, HostID: host, State: "preparing", CreatedAt: nowMs(),
+	if err := executionWrite(q, accountJobExecution{ID: eid, ExecutionID: eid, SessionID: sid, HostID: host, State: "preparing", CreatedAt: nowMs(),
 		Actor: "program-worker", AccountID: p.AccountId}); err != nil {
 		return "", err
 	}

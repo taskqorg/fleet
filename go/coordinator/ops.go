@@ -220,3 +220,13 @@ func jsonPathString(body json.RawMessage, path string) string {
 	}
 	return s
 }
+
+// body: the request body as its decoded JSON value, {} when it is none.
+func body(q *Request) any {
+	var b any
+	json.Unmarshal(q.body, &b)
+	if b == nil {
+		return struct{}{}
+	}
+	return b
+}

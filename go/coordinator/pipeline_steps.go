@@ -42,7 +42,7 @@ func problemOf(outcome, c string) string {
 	return "step:" + c
 }
 
-// pipelineHostJob: a script step's host job (putExecution writes it), the step's child in the run's project (session)
+// pipelineHostJob: a script step's host job (executionPutRaw writes it), the step's child in the run's project (session)
 // and experiment.
 type pipelineHostJob struct {
 	ID              string          `json:"id"`
@@ -80,7 +80,7 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 	id := newID()
 	e := pipelineHostJob{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", PipelineStepID: stepExecutionID,
 		PipelineRunID: run.ID, ProjectSnapshot: orNull(run.ProjectSnapshot), DirectedBy: dir, ExperimentID: run.ExperimentID}
-	if err := recWrite(q, recExecution, e); err != nil { // a host job, the step's child in the run's project (session) and experiment
+	if err := executionWrite(q, e); err != nil { // a host job, the step's child in the run's project (session) and experiment
 		return "", err
 	}
 	if inputs == nil {
@@ -218,7 +218,7 @@ func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run *runRecord, i in
 		return nil
 	}
 	// Agent or script step running: wait for its execution.
-	e, err := recMaybe[pipelineNative](q, recExecution, s.ExecutionID)
+	e, err := executionMaybeAs[pipelineNative](q, s.ExecutionID)
 	if err != nil {
 		return err
 	}

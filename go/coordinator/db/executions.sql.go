@@ -10,6 +10,108 @@ import (
 	"time"
 )
 
+const executionByID = `-- name: ExecutionByID :one
+
+SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor FROM execution WHERE id=$1 AND kind IN ('agent_run','host_job')
+`
+
+// Execution record reads, updates and leaf totals (executions.go).
+func (q *Queries) ExecutionByID(ctx context.Context, id string) (Execution, error) {
+	row := q.db.QueryRow(ctx, executionByID, id)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.State,
+		&i.Observation,
+		&i.LastSeenAt,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.ExperimentID,
+		&i.Variant,
+		&i.ParentExecutionID,
+		&i.SessionID,
+		&i.AccountID,
+		&i.HostID,
+		&i.EnvironmentID,
+		&i.Harness,
+		&i.HarnessVersion,
+		&i.Model,
+		&i.ConfigRef,
+		&i.Problem,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.UpdatedAt,
+		&i.Delegation,
+		&i.Data,
+		&i.Seq,
+		&i.RequestID,
+		&i.DirectedBy,
+		&i.WaitReason,
+		&i.Definitions,
+		&i.ProfileID,
+		&i.ProfileRevision,
+		&i.PipelineID,
+		&i.PipelineRevision,
+		&i.StepID,
+		&i.TombstonedAt,
+		&i.SystemActor,
+	)
+	return i, err
+}
+
+const executionDefinitions = `-- name: ExecutionDefinitions :exec
+UPDATE execution SET definitions= $1, profile_id=coalesce($2,profile_id), profile_revision=coalesce($3,profile_revision),
+ pipeline_id=coalesce($4,pipeline_id), pipeline_revision=coalesce($5,pipeline_revision) WHERE id= $6
+`
+
+type ExecutionDefinitionsParams struct {
+	Definitions      []byte
+	ProfileID        *string
+	ProfileRevision  *int64
+	PipelineID       *string
+	PipelineRevision *int64
+	ID               string
+}
+
+func (q *Queries) ExecutionDefinitions(ctx context.Context, arg ExecutionDefinitionsParams) error {
+	_, err := q.db.Exec(ctx, executionDefinitions,
+		arg.Definitions,
+		arg.ProfileID,
+		arg.ProfileRevision,
+		arg.PipelineID,
+		arg.PipelineRevision,
+		arg.ID,
+	)
+	return err
+}
+
+const executionDirectedBy = `-- name: ExecutionDirectedBy :exec
+UPDATE execution SET directed_by= $1::text WHERE id= $2 AND directed_by IS DISTINCT FROM $1::text
+`
+
+type ExecutionDirectedByParams struct {
+	DirectedBy string
+	ID         string
+}
+
+func (q *Queries) ExecutionDirectedBy(ctx context.Context, arg ExecutionDirectedByParams) error {
+	_, err := q.db.Exec(ctx, executionDirectedBy, arg.DirectedBy, arg.ID)
+	return err
+}
+
+const executionEnded = `-- name: ExecutionEnded :exec
+INSERT INTO event(id,execution_id,session_id,project_id,type,at,payload) SELECT 'ended:'||e.id,e.id,e.session_id,e.project_id,'execution.ended',
+ coalesce(e.ended_at,now()),jsonb_build_object('data',jsonb_build_object('fleetNormalized',jsonb_build_object('blocks','[]'::jsonb)))
+ FROM execution e WHERE e.id=$1 AND e.kind='agent_run' ON CONFLICT(id) DO NOTHING
+`
+
+// The end of an agent run in its thread, one event with a fixed id.
+func (q *Queries) ExecutionEnded(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, executionEnded, id)
+	return err
+}
+
 const executionInsert = `-- name: ExecutionInsert :one
 
 INSERT INTO execution(id,kind,state,observation,project_id,task_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,
@@ -90,6 +192,18 @@ func (q *Queries) ExecutionInsert(ctx context.Context, arg ExecutionInsertParams
 	return id, err
 }
 
+const executionLockKind = `-- name: ExecutionLockKind :one
+SELECT kind::text FROM execution WHERE id=$1 FOR UPDATE
+`
+
+// Locks an execution before its totals (parent before totals, the order every totals writer takes).
+func (q *Queries) ExecutionLockKind(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, executionLockKind, id)
+	var kind string
+	err := row.Scan(&kind)
+	return kind, err
+}
+
 const executionLockState = `-- name: ExecutionLockState :one
 SELECT kind,state FROM execution WHERE id=$1 FOR UPDATE
 `
@@ -135,5 +249,335 @@ func (q *Queries) ExecutionMove(ctx context.Context, arg ExecutionMoveParams) er
 		arg.Reopens,
 		arg.ID,
 	)
+	return err
+}
+
+const executionPipelineRef = `-- name: ExecutionPipelineRef :one
+SELECT pipeline_id, pipeline_revision, step_id FROM execution WHERE id=$1
+`
+
+type ExecutionPipelineRefRow struct {
+	PipelineID       *string
+	PipelineRevision *int64
+	StepID           *string
+}
+
+func (q *Queries) ExecutionPipelineRef(ctx context.Context, id string) (ExecutionPipelineRefRow, error) {
+	row := q.db.QueryRow(ctx, executionPipelineRef, id)
+	var i ExecutionPipelineRefRow
+	err := row.Scan(&i.PipelineID, &i.PipelineRevision, &i.StepID)
+	return i, err
+}
+
+const executionSessionHasOtherRun = `-- name: ExecutionSessionHasOtherRun :one
+SELECT EXISTS (SELECT 1 FROM execution WHERE session_id= $1 AND id<> $2 AND kind IN ('agent_run','host_job'))
+`
+
+type ExecutionSessionHasOtherRunParams struct {
+	SessionID *string
+	ID        string
+}
+
+// Another agent run or host job of the session than id.
+func (q *Queries) ExecutionSessionHasOtherRun(ctx context.Context, arg ExecutionSessionHasOtherRunParams) (bool, error) {
+	row := q.db.QueryRow(ctx, executionSessionHasOtherRun, arg.SessionID, arg.ID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const executionStateOf = `-- name: ExecutionStateOf :one
+SELECT coalesce((SELECT state::text FROM execution WHERE id=$1),'')::text
+`
+
+// An execution's state, ” when there is none.
+func (q *Queries) ExecutionStateOf(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, executionStateOf, id)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const executionTaskOf = `-- name: ExecutionTaskOf :one
+SELECT e.task_id FROM execution e JOIN task k ON k.id=e.task_id WHERE e.id=$1
+`
+
+// The task of an execution, when the task exists.
+func (q *Queries) ExecutionTaskOf(ctx context.Context, id string) (*string, error) {
+	row := q.db.QueryRow(ctx, executionTaskOf, id)
+	var task_id *string
+	err := row.Scan(&task_id)
+	return task_id, err
+}
+
+const executionUpdate = `-- name: ExecutionUpdate :exec
+UPDATE execution SET observation= $1, project_id= $2, task_id=coalesce(task_id, $3), experiment_id= $4,
+ variant= $5, parent_execution_id= $6, session_id= $7, account_id= $8,
+ host_id= $9, harness= $10, model= $11, config_ref= $12, started_at= $13, ended_at= $14,
+ data= $15::jsonb || jsonb_strip_nulls(jsonb_build_object('traceparent',data->'traceparent','traceActor',data->'traceActor')),
+ directed_by=coalesce($16,directed_by), profile_id=coalesce($17,profile_id), profile_revision=coalesce($18,profile_revision),
+ pipeline_id=coalesce($19,pipeline_id), pipeline_revision=coalesce($20,pipeline_revision), step_id=coalesce($21,step_id)
+ WHERE id= $22
+`
+
+type ExecutionUpdateParams struct {
+	Observation       Observation
+	ProjectID         *string
+	TaskID            *string
+	ExperimentID      *string
+	Variant           *string
+	ParentExecutionID *string
+	SessionID         *string
+	AccountID         *string
+	HostID            *string
+	Harness           *string
+	Model             *string
+	ConfigRef         []byte
+	StartedAt         *time.Time
+	EndedAt           *time.Time
+	Data              []byte
+	DirectedBy        *string
+	ProfileID         *string
+	ProfileRevision   *int64
+	PipelineID        *string
+	PipelineRevision  *int64
+	StepID            *string
+	ID                string
+}
+
+// executionPutRaw's write of an existing run: its columns and the open rest in data, keeping the trace of its first write.
+func (q *Queries) ExecutionUpdate(ctx context.Context, arg ExecutionUpdateParams) error {
+	_, err := q.db.Exec(ctx, executionUpdate,
+		arg.Observation,
+		arg.ProjectID,
+		arg.TaskID,
+		arg.ExperimentID,
+		arg.Variant,
+		arg.ParentExecutionID,
+		arg.SessionID,
+		arg.AccountID,
+		arg.HostID,
+		arg.Harness,
+		arg.Model,
+		arg.ConfigRef,
+		arg.StartedAt,
+		arg.EndedAt,
+		arg.Data,
+		arg.DirectedBy,
+		arg.ProfileID,
+		arg.ProfileRevision,
+		arg.PipelineID,
+		arg.PipelineRevision,
+		arg.StepID,
+		arg.ID,
+	)
+	return err
+}
+
+const executions = `-- name: Executions :many
+SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor FROM execution
+WHERE kind IN ('agent_run','host_job')
+ AND ($1::text IS NULL OR session_id=$1::text)
+ORDER BY seq
+`
+
+func (q *Queries) Executions(ctx context.Context, sessionID *string) ([]Execution, error) {
+	rows, err := q.db.Query(ctx, executions, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Execution
+	for rows.Next() {
+		var i Execution
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.State,
+			&i.Observation,
+			&i.LastSeenAt,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.ExperimentID,
+			&i.Variant,
+			&i.ParentExecutionID,
+			&i.SessionID,
+			&i.AccountID,
+			&i.HostID,
+			&i.EnvironmentID,
+			&i.Harness,
+			&i.HarnessVersion,
+			&i.Model,
+			&i.ConfigRef,
+			&i.Problem,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.UpdatedAt,
+			&i.Delegation,
+			&i.Data,
+			&i.Seq,
+			&i.RequestID,
+			&i.DirectedBy,
+			&i.WaitReason,
+			&i.Definitions,
+			&i.ProfileID,
+			&i.ProfileRevision,
+			&i.PipelineID,
+			&i.PipelineRevision,
+			&i.StepID,
+			&i.TombstonedAt,
+			&i.SystemActor,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const totalsConfirmedUsage = `-- name: TotalsConfirmedUsage :exec
+INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,computed_at)
+ SELECT id,project_id,directed_by,CASE
+ WHEN account_id IS NOT NULL AND NOT coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('',account_id) m),false) THEN 'subscription'
+ WHEN kind IN ('agent_run','child_agent','tool_run') THEN 'metered' ELSE 'unavailable' END,now()
+ FROM execution WHERE id=$1
+ ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,directed_by=excluded.directed_by,
+ computed_at=now()
+`
+
+// The totals row of accepted native usage, without completion or process resources.
+func (q *Queries) TotalsConfirmedUsage(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, totalsConfirmedUsage, id)
+	return err
+}
+
+const totalsModel = `-- name: TotalsModel :exec
+SELECT fleet_write_model($1::text)
+`
+
+// The model the harness reports (migration 45).
+func (q *Queries) TotalsModel(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, totalsModel, id)
+	return err
+}
+
+const totalsNativeObservations = `-- name: TotalsNativeObservations :exec
+SELECT fleet_write_native_observations($1::text)
+`
+
+func (q *Queries) TotalsNativeObservations(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, totalsNativeObservations, id)
+	return err
+}
+
+const totalsProcessClosed = `-- name: TotalsProcessClosed :exec
+WITH pc AS (
+ SELECT payload->'data'->'resources' AS r
+ FROM event
+ WHERE NOT delta AND execution_id= $1::text AND type='process.closed'
+ ORDER BY seq DESC LIMIT 1
+), parsed AS (
+ SELECT
+  jsonb_typeof(r)='object' AS has_obj,
+  fleet_token_count(r->'cpuMs') AS cpu_ms,
+  fleet_token_count(r->'peakMemoryBytes') AS peak_mem,
+  fleet_token_count(r->'activeMs') AS active_ms,
+  fleet_token_count(r->'turnCount') AS turn_count,
+  CASE WHEN jsonb_typeof(r->'cpuMissingReason')='string' THEN r->>'cpuMissingReason' END AS cpu_reason,
+  CASE WHEN jsonb_typeof(r->'memoryMissingReason')='string' THEN r->>'memoryMissingReason' END AS mem_reason,
+  CASE WHEN $2::text='agent_run' AND jsonb_typeof(r)='object' THEN
+   jsonb_strip_nulls(jsonb_build_object(
+    'byTool', CASE WHEN jsonb_typeof(r->'toolCalls')='object' THEN r->'toolCalls' ELSE '{}'::jsonb END,
+    'other', CASE WHEN jsonb_typeof(r->'toolCallsOther')='object' THEN r->'toolCallsOther' END
+   ))
+  END AS tool_calls
+ FROM pc
+)
+UPDATE execution_totals t SET
+ cpu_ms=coalesce(p.cpu_ms,t.cpu_ms),
+ cpu_ms_basis=CASE WHEN coalesce(p.cpu_ms,t.cpu_ms) IS NOT NULL THEN 'measured' ELSE t.cpu_ms_basis END,
+ cpu_missing_reason=CASE
+  WHEN coalesce(p.cpu_ms,t.cpu_ms) IS NOT NULL THEN NULL
+  WHEN p.has_obj THEN coalesce(p.cpu_reason,t.cpu_missing_reason)
+  ELSE coalesce(t.cpu_missing_reason,'executor_version')
+ END,
+ peak_memory_bytes=coalesce(p.peak_mem,t.peak_memory_bytes),
+ peak_memory_bytes_basis=CASE WHEN coalesce(p.peak_mem,t.peak_memory_bytes) IS NOT NULL THEN 'measured' ELSE t.peak_memory_bytes_basis END,
+ memory_missing_reason=CASE
+  WHEN coalesce(p.peak_mem,t.peak_memory_bytes) IS NOT NULL THEN NULL
+  WHEN p.has_obj THEN coalesce(p.mem_reason,t.memory_missing_reason)
+  ELSE coalesce(t.memory_missing_reason,'executor_version')
+ END,
+ active_ms=coalesce(p.active_ms,t.active_ms),
+ active_ms_basis=CASE WHEN coalesce(p.active_ms,t.active_ms) IS NOT NULL THEN 'measured' ELSE t.active_ms_basis END,
+ turn_count=coalesce(p.turn_count,t.turn_count),
+ turn_count_basis=CASE WHEN coalesce(p.turn_count,t.turn_count) IS NOT NULL THEN 'measured' ELSE t.turn_count_basis END,
+ tool_calls=coalesce(p.tool_calls,t.tool_calls),
+ tool_calls_basis=CASE WHEN coalesce(p.tool_calls,t.tool_calls) IS NOT NULL THEN 'measured' ELSE t.tool_calls_basis END,
+ computed_at=now()
+FROM parsed p
+WHERE t.execution_id= $1::text
+`
+
+type TotalsProcessClosedParams struct {
+	ID   string
+	Kind string
+}
+
+// The process resources of the last process.closed event; tool calls for an agent run (kind).
+func (q *Queries) TotalsProcessClosed(ctx context.Context, arg TotalsProcessClosedParams) error {
+	_, err := q.db.Exec(ctx, totalsProcessClosed, arg.ID, arg.Kind)
+	return err
+}
+
+const totalsRateLimit = `-- name: TotalsRateLimit :exec
+UPDATE execution_totals SET rate_limit_last=r.payload->'data',rate_limit_last_basis='measured'
+ FROM (SELECT payload FROM event WHERE NOT delta AND execution_id= $1::text AND type='limit_reading' ORDER BY seq DESC LIMIT 1) r WHERE execution_id= $1::text
+`
+
+// The last rate-limit reading of the execution.
+func (q *Queries) TotalsRateLimit(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, totalsRateLimit, id)
+	return err
+}
+
+const totalsTokens = `-- name: TotalsTokens :exec
+SELECT fleet_write_tokens($1::text)
+`
+
+// Tokens from the harness's usage report (migrations 40, 44, 50).
+func (q *Queries) TotalsTokens(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, totalsTokens, id)
+	return err
+}
+
+const totalsWrite = `-- name: TotalsWrite :exec
+INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,wall_ms,wall_ms_basis,computed_at)
+ SELECT id,project_id,directed_by,
+  CASE
+   WHEN account_id IS NOT NULL AND NOT coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('', account_id) m), false) THEN 'subscription'
+   WHEN kind IN ('agent_run','child_agent','tool_run') THEN 'metered'
+   ELSE 'unavailable'
+  END,
+  CASE WHEN started_at IS NOT NULL AND ended_at IS NOT NULL AND problem IS DISTINCT FROM 'unknown:abandoned' THEN greatest(0,(extract(epoch FROM ended_at-started_at)*1000)::bigint) END,
+  CASE WHEN started_at IS NOT NULL AND ended_at IS NOT NULL AND problem IS DISTINCT FROM 'unknown:abandoned' THEN 'measured' ELSE 'unavailable' END,
+  now()
+ FROM execution WHERE id= $1::text
+ ON CONFLICT(execution_id) DO UPDATE SET
+  project_id=excluded.project_id,
+  directed_by=coalesce(excluded.directed_by,execution_totals.directed_by),
+  billing_basis=CASE WHEN execution_totals.billing_basis='metered' AND execution_totals.connection_cost IS NOT NULL THEN 'metered' ELSE excluded.billing_basis END,
+  wall_ms=CASE WHEN (SELECT problem FROM execution WHERE id= $1::text)='unknown:abandoned' THEN NULL ELSE coalesce(excluded.wall_ms,execution_totals.wall_ms) END,
+  wall_ms_basis=CASE WHEN (SELECT problem FROM execution WHERE id= $1::text)='unknown:abandoned' THEN 'unavailable' WHEN coalesce(excluded.wall_ms,execution_totals.wall_ms) IS NOT NULL THEN 'measured' ELSE 'unavailable' END,
+  computed_at=now()
+`
+
+// The totals row of a leaf execution, merged so a receipt and process.closed converge in any order; the wall time is
+// measured when the run has both ends, unless it was abandoned (it ended when given up).
+func (q *Queries) TotalsWrite(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, totalsWrite, id)
 	return err
 }

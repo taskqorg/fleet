@@ -535,7 +535,7 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 			if err := sessionPut(q, &agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
 				return nil, err
 			}
-			if err := recWrite(q, recExecution, struct {
+			if err := executionWrite(q, struct {
 				ID          string `json:"id"`
 				ExecutionID string `json:"executionId"`
 				SessionID   string `json:"sessionId"`
@@ -582,7 +582,7 @@ func withdrawConnectionRemovals(q *Request, conns []string) error {
 		}
 		if !e.terminal() {
 			e.State, e.StopDetail, e.FinishedAt = "cancelled", "connection in use again", jsonBytes(nowMs())
-			if err := recPut(q, recExecution, &e); err != nil {
+			if err := executionPut(q, &e); err != nil {
 				return err
 			}
 		}

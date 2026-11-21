@@ -110,7 +110,7 @@ func ownedBody(q *Request, hostID, executionID string) error {
 		return fail(403, "Host rejected")
 	}
 	if executionID != "" {
-		e, err := recGet[agentExecution](q, recExecution, executionID)
+		e, err := getExecution(q, executionID)
 		if err != nil {
 			return err
 		}
@@ -248,7 +248,7 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	native := deref(b.NativeSessionId)
 	hasNative := native != ""
 	if hasNative {
-		e, err := recGet[agentExecution](q, recExecution, b.ExecutionId)
+		e, err := getExecution(q, b.ExecutionId)
 		if err != nil {
 			return nil, "", err
 		}
@@ -264,7 +264,7 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	if err := commandPut(q, &c); err != nil {
 		return nil, "", err
 	}
-	e, err := recGet[agentExecution](q, recExecution, b.ExecutionId)
+	e, err := getExecution(q, b.ExecutionId)
 	if err != nil {
 		return nil, "", err
 	}
@@ -311,7 +311,7 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 			return nil, "", err
 		}
 	}
-	if err := recPut(q, recExecution, &e); err != nil {
+	if err := executionPut(q, &e); err != nil {
 		return nil, "", err
 	}
 	// Once an execution is terminal, withheld pending work no longer owns
@@ -373,7 +373,7 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 // agentAccountList: the subscriptions a native agent's work may use (its director's, or taken for its project), without
 // host roots or bindings. Fixed: the TypeScript coordinator handed a native agent every subscription with every host's roots.
 func agentAccountList(q *Request, project, executionID string) (any, error) {
-	e, err := recGet[agentExecution](q, recExecution, executionID)
+	e, err := getExecution(q, executionID)
 	if err != nil {
 		return nil, err
 	}

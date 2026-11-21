@@ -898,7 +898,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		}
 	}
 	for _, id := range ids {
-		e, err := recGet[dispatchExecution](q, recExecution, id)
+		e, err := executionGetAs[dispatchExecution](q, id)
 		if err != nil {
 			return err
 		}
@@ -912,7 +912,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				}
 				// Re-read after acquiring the session lock so any concurrent session write is visible (a stop does not take it:
 				// the row lock of claimRow serializes with that).
-				e, err = recGet[dispatchExecution](q, recExecution, id)
+				e, err = executionGetAs[dispatchExecution](q, id)
 				if err != nil {
 					return err
 				}
@@ -980,7 +980,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 					return err
 				}
 				queued.State, queued.StopDetail = "cancelled", "start refused: "+he.Msg
-				if err := recPut(q, recExecution, &queued); err != nil {
+				if err := executionPut(q, &queued); err != nil {
 					return err
 				}
 				if err := q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id}); err != nil {
@@ -1024,7 +1024,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			claimed.WaitReason, claimed.WaitDetail = &kind, &reason
 			delete(claimed.rest, "waitReason")
 			delete(claimed.rest, "waitDetail")
-			if err := recPut(q, recExecution, claimed); err != nil {
+			if err := executionPut(q, claimed); err != nil {
 				return err
 			}
 			if err := recordDecision(q, claimed, polling, cs, nil); err != nil {
@@ -1049,7 +1049,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			cur.WaitReason, cur.WaitDetail = &kind, &reason
 			delete(cur.rest, "waitReason")
 			delete(cur.rest, "waitDetail")
-			if err := recPut(q, recExecution, cur); err != nil {
+			if err := executionPut(q, cur); err != nil {
 				return err
 			}
 			if err := q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id, WaitReason: &kind}); err != nil {
@@ -1094,7 +1094,7 @@ func claimRow(q *Request, id string) (*dispatchExecution, error) {
 	if err := q.db().DispExecLock(q.ctx(), id); err != nil {
 		return nil, err
 	}
-	e, err := recGet[dispatchExecution](q, recExecution, id)
+	e, err := executionGetAs[dispatchExecution](q, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1415,7 +1415,7 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 		HandedOut:   false,
 		Payload:     jsonBytes(p), // the payload as completed above
 	}
-	if err := recPut(q, recExecution, e); err != nil {
+	if err := executionPut(q, e); err != nil {
 		return none, err
 	}
 	if err := commandPut(q, &agentCommand{ID: command.ID, ExecutionID: command.ExecutionID, SessionID: command.SessionID, HostID: command.HostID, Kind: command.Kind, Status: command.Status, HandedOut: ptr(command.HandedOut), Payload: command.Payload}); err != nil {

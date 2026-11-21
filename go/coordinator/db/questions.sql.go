@@ -10,6 +10,108 @@ import (
 	"time"
 )
 
+const agentQuestionByID = `-- name: AgentQuestionByID :one
+SELECT id, kind, project_id, task_id, execution_id, session_id, text, options, asked_by, asked_at, answer, answered_by, answered_at, state, updated_at, data, seq, cause, addressed_to, request_id, code, tombstoned_at FROM question WHERE id=$1 AND kind='agent_question'
+`
+
+func (q *Queries) AgentQuestionByID(ctx context.Context, id string) (Question, error) {
+	row := q.db.QueryRow(ctx, agentQuestionByID, id)
+	var i Question
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.ExecutionID,
+		&i.SessionID,
+		&i.Text,
+		&i.Options,
+		&i.AskedBy,
+		&i.AskedAt,
+		&i.Answer,
+		&i.AnsweredBy,
+		&i.AnsweredAt,
+		&i.State,
+		&i.UpdatedAt,
+		&i.Data,
+		&i.Seq,
+		&i.Cause,
+		&i.AddressedTo,
+		&i.RequestID,
+		&i.Code,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
+const agentQuestions = `-- name: AgentQuestions :many
+SELECT id, kind, project_id, task_id, execution_id, session_id, text, options, asked_by, asked_at, answer, answered_by, answered_at, state, updated_at, data, seq, cause, addressed_to, request_id, code, tombstoned_at FROM question WHERE kind='agent_question'
+ AND ($1::text IS NULL OR execution_id=$1::text)
+ AND ($2::text IS NULL OR session_id=$2::text)
+ AND ($3::text IS NULL OR project_id=$3::text)
+ AND ($4::text IS NULL OR request_id=$4::text)
+ AND ($5::text IS NULL OR state::text=$5::text)
+ ORDER BY seq
+`
+
+type AgentQuestionsParams struct {
+	ExecutionID *string
+	SessionID   *string
+	ProjectID   *string
+	RequestID   *string
+	State       *string
+}
+
+// Agent question rows matching optional column filters.
+func (q *Queries) AgentQuestions(ctx context.Context, arg AgentQuestionsParams) ([]Question, error) {
+	rows, err := q.db.Query(ctx, agentQuestions,
+		arg.ExecutionID,
+		arg.SessionID,
+		arg.ProjectID,
+		arg.RequestID,
+		arg.State,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Question
+	for rows.Next() {
+		var i Question
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.ExecutionID,
+			&i.SessionID,
+			&i.Text,
+			&i.Options,
+			&i.AskedBy,
+			&i.AskedAt,
+			&i.Answer,
+			&i.AnsweredBy,
+			&i.AnsweredAt,
+			&i.State,
+			&i.UpdatedAt,
+			&i.Data,
+			&i.Seq,
+			&i.Cause,
+			&i.AddressedTo,
+			&i.RequestID,
+			&i.Code,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const questionAnswer = `-- name: QuestionAnswer :exec
 UPDATE question SET state='answered',answer=$1,answered_by=$2,
  answered_at=CASE WHEN $3::boolean THEN now() ELSE $4 END WHERE id=$5
@@ -34,6 +136,17 @@ func (q *Queries) QuestionAnswer(ctx context.Context, arg QuestionAnswerParams) 
 	return err
 }
 
+const questionExists = `-- name: QuestionExists :one
+SELECT EXISTS (SELECT 1 FROM question WHERE id=$1)
+`
+
+func (q *Queries) QuestionExists(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, questionExists, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const questionLockState = `-- name: QuestionLockState :one
 
 SELECT state FROM question WHERE id=$1 FOR UPDATE
@@ -45,6 +158,22 @@ func (q *Queries) QuestionLockState(ctx context.Context, id string) (QuestionSta
 	var state QuestionState
 	err := row.Scan(&state)
 	return state, err
+}
+
+const questionRestPut = `-- name: QuestionRestPut :exec
+UPDATE question SET data= $1, project_id=coalesce(project_id, $2) WHERE id= $3
+`
+
+type QuestionRestPutParams struct {
+	Data      []byte
+	ProjectID *string
+	ID        string
+}
+
+// An agent question record's fields without a column, and its project once known.
+func (q *Queries) QuestionRestPut(ctx context.Context, arg QuestionRestPutParams) error {
+	_, err := q.db.Exec(ctx, questionRestPut, arg.Data, arg.ProjectID, arg.ID)
+	return err
 }
 
 const questionRowRecord = `-- name: QuestionRowRecord :one

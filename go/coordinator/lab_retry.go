@@ -484,7 +484,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 			}
 			continue
 		}
-		record, err := recGet[rawObject](q, recExecution, xid)
+		record, err := executionRawGet(q, xid)
 		if err != nil {
 			return nil, err
 		}
