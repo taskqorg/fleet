@@ -86,8 +86,9 @@ function LabView({ id }: { id?: string }) {
     if (id || navMode !== 'use-cases') return null;
     if (selectedUseCaseId) return { useCaseId: selectedUseCaseId };
     if (selectedCollectionTitle && selectedCollectionTitle !== 'Archived / Obsolete') return { collection: selectedCollectionTitle };
-    return {};
+    return { days: 30 };
   }, [id, navMode, selectedUseCaseId, selectedCollectionTitle]);
+  const leaderboardWindowLabel = leaderboardReq?.days === 30 ? 'Last 30 days' : 'Last 90 days';
 
   const leaderboard = useOp('lab_leaderboard', leaderboardReq);
   const approvedExamples = useOp('lab_examples_list', !id && navMode === 'use-cases' ? { state: 'approved' } : null);
@@ -297,6 +298,7 @@ function LabView({ id }: { id?: string }) {
         )}
         <SuiteLeaderboard
           scopeLabel={selectedUseCase ? selectedUseCase.id : (selectedCollectionTitle ?? 'All suites')}
+          windowLabel={leaderboardWindowLabel}
           entries={leaderboard.data?.entries ?? []}
           loading={!leaderboard.data && !leaderboard.error}
           error={leaderboard.error}
@@ -436,6 +438,7 @@ const lbCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'b
 
 function SuiteLeaderboard({
   scopeLabel,
+  windowLabel,
   entries,
   loading,
   error,
@@ -446,6 +449,7 @@ function SuiteLeaderboard({
   onSelectUseCase,
 }: {
   scopeLabel: string;
+  windowLabel: string;
   entries: readonly LabLeaderboardEntry[];
   loading: boolean;
   error: string | null;
@@ -496,7 +500,7 @@ function SuiteLeaderboard({
       <header class="panel-h">
         <Icon name="chart-no-axes-column" />
         <h2>Suite leaderboard</h2>
-        <span class="muted">{scopeLabel}</span>
+        <span class="muted">{scopeLabel} · {windowLabel}</span>
         <span class="grow" />
         <span class="muted mono">{entries.length}</span>
       </header>
