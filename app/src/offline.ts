@@ -3,10 +3,15 @@ import { onAccessInvalidated } from './access.ts';
 
 export const onClear = new Set<() => void>();
 
-/** Synchronously reset all in-memory stores and preference caches on sign-out, identity, or grant changes. */
+let clearing: Promise<void> | null = null;
+
+/** Synchronously reset all in-memory stores and preference caches once per invalidation turn. */
 export function clearAll(_stopSaving = false): Promise<void> {
+  if (clearing) return clearing;
+  const done = Promise.resolve().then(() => { if (clearing === done) clearing = null; });
+  clearing = done;
   for (const f of onClear) f();
-  return Promise.resolve();
+  return done;
 }
 
 onAccessInvalidated.add(() => { void clearAll(); });
