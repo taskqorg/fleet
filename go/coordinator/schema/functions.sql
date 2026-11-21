@@ -538,8 +538,7 @@ BEGIN
     ci.cost_basis,
     sum(ci.amount)::double precision AS value,
     sum(ci.unpriced)::bigint AS unpriced,
-    (SELECT jsonb_agg(jsonb_build_object('id', x.price_id, 'observedAt', x.obs_ms) ORDER BY x.price_id, x.obs_ms)
-     FROM (SELECT DISTINCT ci2.price_id, ci2.obs_ms FROM cost_items ci2 WHERE ci2.execution_id = ci.execution_id AND ci2.currency IS NOT DISTINCT FROM ci.currency AND ci2.cost_basis IS NOT DISTINCT FROM ci.cost_basis AND ci2.price_id IS NOT NULL) x) AS prices
+    jsonb_agg(DISTINCT jsonb_build_object('id', ci.price_id, 'observedAt', ci.obs_ms)) FILTER (WHERE ci.price_id IS NOT NULL) AS prices
    FROM cost_items ci
    GROUP BY ci.execution_id, ci.currency, ci.cost_basis
   ),
