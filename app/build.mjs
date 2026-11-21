@@ -35,8 +35,16 @@ for (const f of res.outputFiles) if (f.path.endsWith('.js.map')) {
   writeFileSync(new URL(basename(f.path), maps), JSON.stringify({ ...map, debug_id: id, debugId: id }));
 }
 for (const p of Object.keys(res.metafile.outputs)) if (p.endsWith('.map')) delete res.metafile.outputs[p];
-const files = Object.keys(res.metafile.outputs).map(p => p.split('/dist/app/')[1] ?? p.replace(/^.*dist\/app\//, ''));
+const toRel = p => p.split('/dist/app/')[1] ?? p.replace(/^.*dist\/app\//, '');
+const files = Object.keys(res.metafile.outputs).map(toRel);
 const main = files.find(f => /assets\/main-.*\.js$/.test(f));
+const mainOut = Object.entries(res.metafile.outputs).find(([p]) => toRel(p) === main)?.[1];
+const preloads = (mainOut?.imports ?? [])
+  .filter(i => i.kind === 'import-statement')
+  .map(i => toRel(i.path))
+  .filter(f => f.startsWith('assets/') && f.endsWith('.js'))
+  .map(f => `<link rel="modulepreload" href="/${f}">`)
+  .join('');
 
 const css = uiCss('html,body,#app{height:100%}');
 const cssName = `assets/app-${createHash('sha256').update(css).digest('hex').slice(0, 10)}.css`;
@@ -73,12 +81,12 @@ const html = `<!doctype html>
 <link rel="icon" type="image/svg+xml" href="${brand['fleet.svg']}">
 <link rel="apple-touch-icon" sizes="180x180" href="${brand['fleet-180.png']}">
 <script>(function(){var v=location.pathname.split('/')[1];if(!${JSON.stringify(Object.keys(VIEWS))}.includes(v))v='overview';var l=document.createElement('link');l.rel='manifest';l.crossOrigin='use-credentials';l.href='/manifests/'+v+'.webmanifest';document.head.appendChild(l)})()</script>
-<script type="module" src="/${main}"></script>
+${preloads}<script type="module" src="/${main}"></script>
 </head><body><div id="app"></div><noscript>Fleet needs JavaScript.</noscript></body></html>
 `;
 writeFileSync(new URL('index.html', out), html);
 
-const version = createHash('sha256').update(files.join() + css).digest('hex').slice(0, 10);
+const version = createHash('sha256').update([...files].sort().join() + css).digest('hex').slice(0, 10);
 const precache = ['/' + cssName, ...files.filter(f => f.startsWith('assets/')).map(f => '/' + f)];
 writeFileSync(new URL('sw.js', out), `// Fleet service worker ${version}: app shell only; /api is never cached (design §5).
 const CACHE='fleet-${version}',ASSETS=${JSON.stringify(precache)};
@@ -87,7 +95,7 @@ self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addA
 self.addEventListener('message',e=>{if(e.data==='skip-waiting')self.skipWaiting()});
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET'||u.origin!==location.origin||u.pathname.startsWith('/api/'))return;
- if(u.pathname.startsWith('/assets/'))return e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)));
+ if(u.pathname.startsWith('/assets/'))return e.respondWith(caches.match(e.request,{cacheName:CACHE}).then(r=>r||fetch(e.request).then(res=>{if(res.ok){const c=res.clone();caches.open(CACHE).then(x=>x.put(e.request,c))}return res})));
  // Only the app's own routes are cached, each under its own path; others are never cached.
  const app=/^\\/(${Object.keys(VIEWS).join('|')})(\\/[^/]*)?$/.test(u.pathname);
  if(e.request.mode==='navigate'&&app)return e.respondWith(fetch(e.request).then(r=>{if(r.ok&&r.headers.get('content-type')?.startsWith('text/html')){const c=r.clone();caches.open(CACHE).then(x=>x.put(u.pathname,c))}return r}).catch(()=>caches.match(u.pathname).then(r=>r||caches.match('/overview'))));});

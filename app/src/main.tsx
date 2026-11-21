@@ -1,7 +1,6 @@
 // Fleet operator app entry (docs/designs/fleet-operator-app.md): shell, routes, identity check, feed start, service worker.
 // errors.ts first: error tracking starts before the other modules run.
 import { captureRender, configureErrors } from './errors.ts';
-import { Projects } from './views/projects.tsx';
 import { render, Component, type ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation, useSearch } from 'wouter-preact';
@@ -17,19 +16,42 @@ import { entityCards } from './entity-cards.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
 import { startStore } from './store.ts';
 import { clearAll } from './offline.ts';
-import { Overview } from './views/overview.tsx';
-import { Tasks } from './views/tasks.tsx';
-import { Conversations } from './views/conversations.tsx';
-import { Hosts } from './views/hosts.tsx';
-import { Runners } from './views/runners.tsx';
-import { Lab } from './views/lab.tsx';
-import { Keys } from './views/keys.tsx';
-import { Results } from './views/results.tsx';
-import { Definitions } from './views/definitions.tsx';
-import { Agents } from './views/agents.tsx';
-import { Changes } from './views/changes.tsx';
-import { Spend } from './views/spend.tsx';
-import { Delivery } from './views/delivery.tsx';
+
+/** Dynamically loads a routed screen chunk once, caches it, and forwards load failures to RenderBoundary. */
+function lazy<P extends object>(load: () => Promise<(props: P) => ComponentChildren>): (props: P) => ComponentChildren {
+  let cached: ((props: P) => ComponentChildren) | null = null;
+  let pending: Promise<void> | null = null;
+  return function LazyView(props: P): ComponentChildren {
+    const [View, setView] = useState<((props: P) => ComponentChildren) | null>(() => cached);
+    const [err, setErr] = useState<unknown>(null);
+    useEffect(() => {
+      if (cached) { setView(() => cached); return; }
+      let live = true;
+      (pending ??= load().then(c => { cached = c; })).then(
+        () => { if (live) setView(() => cached); },
+        e => { pending = null; if (live) setErr(() => e); },
+      );
+      return () => { live = false; };
+    }, []);
+    if (err) throw err;
+    return View ? <View {...props} /> : <Empty text="Loading…" />;
+  };
+}
+
+const Projects = lazy(async () => (await import('./views/projects.tsx')).Projects);
+const Overview = lazy(async () => (await import('./views/overview.tsx')).Overview);
+const Tasks = lazy(async () => (await import('./views/tasks.tsx')).Tasks);
+const Conversations = lazy(async () => (await import('./views/conversations.tsx')).Conversations);
+const Results = lazy(async () => (await import('./views/results.tsx')).Results);
+const Delivery = lazy(async () => (await import('./views/delivery.tsx')).Delivery);
+const Hosts = lazy(async () => (await import('./views/hosts.tsx')).Hosts);
+const Runners = lazy(async () => (await import('./views/runners.tsx')).Runners);
+const Lab = lazy(async () => (await import('./views/lab.tsx')).Lab);
+const Keys = lazy(async () => (await import('./views/keys.tsx')).Keys);
+const Agents = lazy(async () => (await import('./views/agents.tsx')).Agents);
+const Definitions = lazy(async () => (await import('./views/definitions.tsx')).Definitions);
+const Changes = lazy(async () => (await import('./views/changes.tsx')).Changes);
+const Spend = lazy(async () => (await import('./views/spend.tsx')).Spend);
 
 // Not reported: an operation's own failure (OpError) is in the coordinator's spans, and an access change aborts reads on
 // purpose. The release is the version this tab runs.
