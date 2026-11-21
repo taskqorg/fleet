@@ -26,6 +26,9 @@ import { Lab } from './views/lab.tsx';
 import { Keys } from './views/keys.tsx';
 import { Results } from './views/results.tsx';
 import { Definitions } from './views/definitions.tsx';
+import { Agents } from './views/agents.tsx';
+import { Changes } from './views/changes.tsx';
+import { Spend } from './views/spend.tsx';
 import { Delivery } from './views/delivery.tsx';
 
 // Not reported: an operation's own failure (OpError) is in the coordinator's spans, and an access change aborts reads on
@@ -55,9 +58,11 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   runners: { focus: false, view: () => <Runners /> },
   lab: { focus: true, view: p => <Lab id={p.id} /> },
   keys: { focus: true, view: p => <Keys id={p.id} /> },
-  agents: { focus: true, view: p => <Definitions kind="agent" id={p.id} /> },
+  agents: { focus: true, view: p => <Agents id={p.id} /> },
   pipelines: { focus: true, view: p => <Definitions kind="pipeline" id={p.id} /> },
   catalogue: { focus: true, view: p => <Definitions kind="catalogue" id={p.id} /> },
+  changes: { focus: false, view: () => <Changes /> },
+  spend: { focus: false, view: () => <Spend /> },
 };
 const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
 const NAV: NavItem[] = BUILT;

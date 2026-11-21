@@ -237,9 +237,16 @@
   .stat.toned .icon, .stat.toned .sv { color: var(--tone-fg); }
   .stat .sv { font-size: var(--font-size-lg); font-family: var(--font-mono); }
   .stat .of, .stat .sl { color: var(--fg-muted); font-size: var(--font-size-sm); }
-  .tabs { display: flex; gap: var(--space-4); }
-  .tabs button { height: var(--size-control); padding: 0; border: 0; border-radius: 0; background: none; color: var(--fg-muted); font-weight: var(--font-weight-medium); cursor: pointer; }
-  .tabs button[aria-selected=true] { background: none; color: var(--accent); box-shadow: inset 0 -2px var(--accent); }
+  .tabs { display: flex; gap: var(--space-4); overflow-x: auto; scrollbar-width: none; }
+  .tabs button { position: relative; flex: none; display: inline-flex; align-items: center; gap: var(--space-1); height: var(--size-control); padding: 0; border: 0; border-radius: 0; background: none; color: var(--fg-muted); font-weight: var(--font-weight-medium); white-space: nowrap; cursor: pointer; }
+  .tabs button[aria-selected=true] { background: none; color: var(--accent); }
+  .tabs button[aria-selected=true]::after { content: ""; position: absolute; inset: auto 0 0; border-block-end: 2px solid var(--accent); }
+  .tabs .tab-n { font-size: var(--font-size-xs); color: var(--fg-muted); }
+  .monogram { display: inline-grid; place-items: center; min-width: var(--size-control); height: var(--size-control); padding: 0 var(--space-1); border-radius: var(--radius-md); background: var(--surface-sunken); color: var(--fg); font-family: var(--font-mono); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); }
+  .tag-row { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; }
+  .skill-body { margin: 0; padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface-sunken); font-size: var(--font-size-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .bar-track { display: block; inline-size: 6rem; block-size: var(--space-2); border-radius: var(--radius-pill); background: var(--surface-sunken); overflow: hidden; }
+  .bar-fill { display: block; block-size: 100%; border-radius: var(--radius-pill); background: var(--accent); }
 
   /* Harness marks, outcome, settings, problems, status states */
   .harness { display: inline-flex; color: var(--fg-muted); }
