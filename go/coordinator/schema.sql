@@ -4534,3 +4534,6 @@ SELECT
 FROM leaves l
 LEFT JOIN cost_rolled cr ON cr.execution_id = l.execution_id
 ON CONFLICT (execution_id) DO NOTHING;
+
+-- migration 88: partial B-tree index on pipelineRunId for fast downward lab trial lineage.
+CREATE INDEX IF NOT EXISTS execution_pipeline_run_id ON execution ((data->>'pipelineRunId')) WHERE data ? 'pipelineRunId';

@@ -199,7 +199,7 @@ WITH RECURSIVE
  seed AS (
   SELECT t.trial_id, c.id AS exec_id
   FROM trials t
-  JOIN execution c ON c.data @> jsonb_build_object('pipelineRunId', t.trial_id)
+  JOIN execution c ON c.data ? 'pipelineRunId' AND c.data->>'pipelineRunId' = t.trial_id
   WHERE NOT EXISTS (
    SELECT 1 FROM reused_steps rs
    WHERE rs.trial_id = t.trial_id AND (rs.step_exec_id = c.id OR rs.step_exec_id = c.parent_execution_id)
@@ -266,9 +266,10 @@ WITH RECURSIVE
     AND NOT (e.kind = 'child_agent' AND tot.execution_id IS NULL)
  )
 SELECT
- coalesce((SELECT array_agg(scope ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scopes,
- coalesce((SELECT array_agg(scope_key ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scope_keys,
- coalesce((SELECT array_agg(leaf_id ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS leaf_ids;
+ coalesce(array_agg(scope ORDER BY scope, scope_key, leaf_id), '{}')::text[] AS scopes,
+ coalesce(array_agg(scope_key ORDER BY scope, scope_key, leaf_id), '{}')::text[] AS scope_keys,
+ coalesce(array_agg(leaf_id ORDER BY scope, scope_key, leaf_id), '{}')::text[] AS leaf_ids
+FROM scoped_leaves;
 
 -- name: LabLeafSpend :many
 -- Precomputed spend and token totals for leaf executions (lab_leaderboard.go).

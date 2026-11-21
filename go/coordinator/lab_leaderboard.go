@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"fleet/contract"
@@ -101,6 +102,8 @@ type leaderboardAcc struct {
 	latestAt           time.Time
 }
 
+var labExampleUseCaseCache sync.Map // artifactID -> use_case_id (approved example artifacts are immutable by ID/hash)
+
 func labTrialUseCaseID(q *Request, tr db.LabLeaderboardTrialsRow, exp *labExperiment, exCache map[string]string) string {
 	if tr.ExampleUseCaseID != "" {
 		return tr.ExampleUseCaseID
@@ -115,11 +118,17 @@ func labTrialUseCaseID(q *Request, tr db.LabLeaderboardTrialsRow, exp *labExperi
 	if uc, ok := exCache[pin.ArtifactID]; ok {
 		return uc
 	}
+	if v, ok := labExampleUseCaseCache.Load(pin.ArtifactID); ok {
+		uc, _ := v.(string)
+		exCache[pin.ArtifactID] = uc
+		return uc
+	}
 	stored, err := labExampleRead(q, pin.ArtifactID)
 	if err != nil {
 		exCache[pin.ArtifactID] = ""
 		return ""
 	}
+	labExampleUseCaseCache.Store(pin.ArtifactID, stored.example.UseCaseID)
 	exCache[pin.ArtifactID] = stored.example.UseCaseID
 	return stored.example.UseCaseID
 }
@@ -441,7 +450,6 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		for _, m := range metaRows {
 			metaByID[m.ID] = m
 		}
-		var staleScopes, staleKeys, staleLeaves []string
 		for i, lid := range lineage.LeafIds {
 			if i >= len(lineage.ScopeKeys) || i >= len(lineage.Scopes) {
 				continue
@@ -458,7 +466,7 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 			if sp.Kind == "agent_run" || sp.Kind == "child_agent" || sp.TokensInput != nil || sp.TokensOutput != nil {
 				ts.tokensTotal += int64OrZero(sp.TokensInput) + int64OrZero(sp.TokensOutput) + int64OrZero(sp.TokensCacheRead) + int64OrZero(sp.TokensCacheWrite)
 			}
-			if sp.HasSpend && !sp.Stale {
+			if sp.HasSpend {
 				if len(sp.Payload) > 0 {
 					figs, err := decodeCostFigures(sp.Payload)
 					if err != nil {
@@ -479,19 +487,7 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 					}
 				}
 			} else {
-				staleScopes = append(staleScopes, lineage.Scopes[i])
-				staleKeys = append(staleKeys, trialID)
-				staleLeaves = append(staleLeaves, lid)
-			}
-		}
-		if len(staleLeaves) > 0 {
-			fallbackRes, err := summarizeResourceQuery(q, staleScopes, staleKeys, staleLeaves)
-			if err != nil {
-				return out, err
-			}
-			for scopeKey, res := range fallbackRes {
-				tid := strings.TrimPrefix(scopeKey, "trial\x00")
-				addTrialCostFigures(ensureTrialSpend(tid), res.Cost)
+				ts.costUnpriced++
 			}
 		}
 	}
