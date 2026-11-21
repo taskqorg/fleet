@@ -1,14 +1,17 @@
-// Projects configuration & resource analytics (docs/design-system/pages/projects.md).
-import { useMemo, useState } from 'preact/hooks';
+// Projects configuration, tabs (Work & Rules · Methods · Delivery · Results), OR-45 diff-from-default, and resource analytics (docs/design-system/pages/projects.md).
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  AreaChart, Button, Choice, CostFigures, DataTable, Empty, ErrorBanner, Icon, ListDetail, Num, SearchField,
-  Totals, VirtualList, matchSearch, catalogueRow, numMeasured,
-  type ChartBucket, type ChartSeries, type Measured, type TotalItem,
+  AgeChip, AreaChart, Button, Choice, CostFigures, DataTable, DetailSection, Disclosure, Empty, EntityCode,
+  ErrorBanner, Icon, KvRow, Latest, ListDetail, Num, SearchField, Skeleton, StateBadge, StateCounters, TabBar,
+  Totals, VirtualList, bytes, catalogueRow, fileLabel, matchSearch, msMeasured, numMeasured, states as states_,
+  type ChartBucket, type ChartSeries, type IconName, type Measured, type StateOf, type TotalItem,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
-import type { Ops } from '../api.ts';
+import { AccessChanged, op, preparedResourcesAvailable, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
+import { SYSTEM_VIEWS } from '../system-views.ts';
+import { idOf } from './delivery-model.tsx';
 import { ProjectEditor, str } from './projects-editor.tsx';
 
 type AnalyticsReply = Ops['analytics_query']['reply'];
@@ -17,6 +20,7 @@ type AnalyticsFilter = NonNullable<Ops['analytics_query']['request']['filters']>
 type WindowKey = '24h' | '7d' | '30d';
 type GrainKey = 'hour' | 'day' | 'week';
 type ChartMetric = 'tokens' | 'executions' | 'cost';
+type ProjectTab = 'work' | 'methods' | 'delivery' | 'results';
 
 const ANALYTICS_MEASURES: NonNullable<Ops['analytics_query']['request']['measures']> = [
   'executions', 'failed', 'tokens_input', 'tokens_output', 'tokens_cache_read', 'tokens_cache_write',
@@ -33,6 +37,13 @@ const DIMS: { id: AnalyticsDim; label: string }[] = [
   { id: 'outcome', label: 'Outcome' },
   { id: 'state', label: 'State' },
 ];
+
+const RUNNING_TASK_STATES = SYSTEM_VIEWS.tasks.find(v => v.name === 'Running')?.view.state ?? ['in_progress', 'waiting'];
+const ACTIVE_EXEC_STATES = new Set(['preparing', 'running', 'waiting']);
+
+function isRec(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
 
 function parseBucketMs(key: string, grain: GrainKey): [number, number] | null {
   const start = Date.parse(key.includes('T') ? key : `${key}T00:00:00Z`);
@@ -67,7 +78,7 @@ function sumTokens(m: AnalyticsReply['rows'][number]['measures']): Measured {
   return { value: sum, basis, ...(partial ? { partial } : {}) };
 }
 
-/** Projects catalogue screen with resource analytics overview and configuration editor detail pane. */
+/** Projects catalogue screen with resource analytics overview and tabbed project detail. */
 export function Projects({ id }: { id?: string }) {
   const [, go] = useLocation();
   const [creating, setCreating] = useState(false);
@@ -91,6 +102,7 @@ export function Projects({ id }: { id?: string }) {
           follow="top"
           label="Projects"
           columns="1.25rem minmax(0,1fr)"
+          rowClass={p => !creating && p.id === id ? 'sel' : ''}
           render={p => (
             <>
               {/* One line: the icon, the name, then its id apart from it (it used to run into the name: "cyprus.bzcs"). */}
@@ -122,17 +134,602 @@ export function Projects({ id }: { id?: string }) {
   return (
     <ListDetail
       list={pane}
-      detail={creating || id ? (
+      detail={creating ? (
         <ProjectEditor
-          key={creating ? 'create' : id}
-          id={creating ? undefined : id}
+          key="create"
+          id={undefined}
           onSaved={p => { setCreating(false); go('/projects/' + encodeURIComponent(p)); }}
           renderAnalytics={pid => <ProjectAnalytics projectId={pid} onOpenProject={target => go('/projects/' + encodeURIComponent(target))} />}
+        />
+      ) : id ? (
+        <ProjectDetail
+          key={id}
+          id={id}
+          onSaved={p => go('/projects/' + encodeURIComponent(p))}
         />
       ) : mobileAnalytics ? overview : undefined}
       idle={overview}
       detailKey={creating ? 'create' : id || (mobileAnalytics ? 'analytics' : undefined)}
     />
+  );
+}
+
+/** Tabbed project detail: Work & Rules, Methods, Delivery, and Results (docs/designs/fleet-ia-and-journeys.md). */
+function ProjectDetail({ id, onSaved }: { id: string; onSaved: (id: string) => void }) {
+  const [, go] = useLocation();
+  const [tab, setTab] = useState<ProjectTab>('work');
+  const tabs: { id: ProjectTab; label: string }[] = [
+    { id: 'work', label: 'Work & Rules' },
+    { id: 'methods', label: 'Methods' },
+    { id: 'delivery', label: 'Delivery' },
+    { id: 'results', label: 'Results' },
+  ];
+
+  // Outer CSS grid keeps TabBar fixed at the top while the active .detail remains the column's sole vertical scroller (OR-25).
+  return (
+    <div style={{ display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', minWidth: 0, minHeight: 0, background: 'var(--surface)' }}>
+      <div style={{ paddingInline: 'clamp(var(--space-3), calc(8% - var(--space-7)), var(--space-6))', paddingTop: 'var(--space-3)' }}>
+        <TabBar
+          cls="detail-tabs"
+          label="Project sections"
+          tabs={tabs}
+          value={tab}
+          onChange={setTab}
+        />
+      </div>
+      {tab === 'work' ? (
+        <div role="tabpanel" aria-label="Work & Rules" style={{ display: 'grid', gridTemplateRows: 'minmax(0, 1fr)', minWidth: 0, minHeight: 0 }}>
+          <ProjectEditor
+            id={id}
+            onSaved={onSaved}
+            renderAnalytics={pid => (
+              <>
+                <ProjectAnalytics projectId={pid} onOpenProject={target => go('/projects/' + encodeURIComponent(target))} />
+                <ProjectWorkSection projectId={pid} />
+                <ProjectSettingsDiff projectId={pid} />
+              </>
+            )}
+          />
+        </div>
+      ) : (
+        <article class="detail" data-ui="detail" tabIndex={-1} aria-label={`${id} ${tab}`}>
+          <div role="tabpanel" aria-label={tabs.find(t => t.id === tab)?.label ?? tab} class="stack">
+            {tab === 'methods' && <ProjectMethodsTab projectId={id} />}
+            {tab === 'delivery' && <ProjectDeliveryTab projectId={id} />}
+            {tab === 'results' && <ProjectResultsTab projectId={id} />}
+          </div>
+        </article>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Work & Rules: active work overview + OR-45 diff from default ---------- */
+
+function ProjectWorkSection({ projectId }: { projectId: string }) {
+  const [, go] = useLocation();
+  const tasksDoc = useOp('task_page', {
+    filter: { projectId: [projectId], state: RUNNING_TASK_STATES },
+    group: 'none',
+    sort: '-changed',
+    limit: 6,
+  });
+  const execsDoc = useOp('executions_list', { projectId, limit: 6 });
+  const tasksHref = formatView({ view: 'tasks', project: [projectId] });
+  const tasks = tasksDoc.data?.tasks ?? [];
+  const counts = tasksDoc.data?.counts ?? {};
+  const hasCounts = Object.values(counts).some(n => n > 0);
+  const activeExecs = (execsDoc.data?.executions ?? []).filter(e => ACTIVE_EXEC_STATES.has(e.state));
+
+  return (
+    <DetailSection title="Active work">
+      <div class="res-bar">
+        {hasCounts && (
+          <StateCounters
+            family="task"
+            label="Project tasks by state"
+            counts={counts as Partial<Record<StateOf<'task'>, number>>}
+            active={[]}
+            hideZero
+            onToggle={s => go(formatView({ view: 'tasks', project: [projectId], state: [String(s)] }))}
+          />
+        )}
+        <span class="grow" />
+        <a class="row-link" href={tasksHref} onClick={e => { e.preventDefault(); go(tasksHref); }}>Open in Tasks</a>
+      </div>
+      {tasksDoc.error && <ErrorBanner text={`Tasks did not load: ${tasksDoc.error}`} onRetry={tasksDoc.reload} />}
+      {!tasksDoc.data && !tasksDoc.error && <Empty text="Loading active tasks…" />}
+      {tasksDoc.data && tasks.length === 0 && activeExecs.length === 0 && (
+        <Empty text="No active tasks or executions for this project." />
+      )}
+      {tasks.map(t => {
+        const rawState = t.pauseReason === 'held' ? 'held' : t.state;
+        const taskState = (rawState in states_.task ? rawState : 'queued') as StateOf<'task'>;
+        return (
+          <KvRow
+            key={t.id}
+            icon={states_.task[taskState].icon}
+            label={t.title}
+            meta={
+              <span class="deps">
+                <StateBadge family="task" state={taskState} reason={t.waitReason ?? undefined} compact />
+                {t.code && <EntityCode code={t.code} id={t.id} kind="task" />}
+                <a class="row-link" href={'/tasks/' + encodeURIComponent(t.id)} onClick={e => { e.preventDefault(); go('/tasks/' + encodeURIComponent(t.id)); }}>Open</a>
+              </span>
+            }
+            value={t.stateAt ? <AgeChip t={Date.parse(t.stateAt)} /> : undefined}
+          />
+        );
+      })}
+      {activeExecs.map(ex => (
+        <KvRow
+          key={ex.id}
+          icon="activity"
+          label={ex.kind}
+          meta={
+            <span class="deps">
+              <StateBadge family="execution" state={ex.state} compact />
+              {ex.harness && <span class="mono">{ex.harness}</span>}
+              {ex.hostId && <span class="mono">{ex.hostId}</span>}
+              {ex.taskId && <a class="row-link" href={'/tasks/' + encodeURIComponent(ex.taskId)} onClick={e => { e.preventDefault(); go('/tasks/' + encodeURIComponent(ex.taskId!)); }}>Task</a>}
+            </span>
+          }
+          value={ex.startedAt ? <AgeChip t={Date.parse(ex.startedAt)} /> : undefined}
+        />
+      ))}
+    </DetailSection>
+  );
+}
+
+type DiffField = {
+  key: string;
+  icon: IconName;
+  label: string;
+  baseText: string;
+  currentText: string;
+  isCode?: boolean;
+  diff: boolean;
+};
+
+function stableVal(v: unknown): string {
+  if (v === undefined) return 'null';
+  if (Array.isArray(v)) return JSON.stringify(v.map(x => (isRec(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x)));
+  if (isRec(v)) return JSON.stringify(Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))));
+  return JSON.stringify(v);
+}
+
+function fmtVal(v: unknown, emptyLabel = 'none'): string {
+  if (v === null || v === undefined || v === '') return emptyLabel;
+  if (typeof v === 'boolean' || typeof v === 'number') return String(v);
+  if (typeof v === 'string') return v;
+  if (Array.isArray(v)) {
+    if (v.length === 0) return emptyLabel;
+    if (v.every(x => typeof x === 'string')) return (v as string[]).join(', ');
+    return `${v.length} configured`;
+  }
+  if (isRec(v)) {
+    const entries = Object.entries(v);
+    if (entries.length === 0) return emptyLabel;
+    return entries.map(([k, val]) => `${k}=${typeof val === 'string' ? val : JSON.stringify(val)}`).join(', ');
+  }
+  return String(v);
+}
+
+function ProjectSettingsDiff({ projectId }: { projectId: string }) {
+  const [prepared, setPrepared] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    preparedResourcesAvailable()
+      .then(v => { if (active) setPrepared(v); })
+      .catch(e => { if (active && !(e instanceof AccessChanged)) setPrepared(false); });
+    return () => { active = false; };
+  }, []);
+  const detailDoc = useOp('project_detail', prepared === true ? { projectId } : null);
+  const contextDoc = useOp('project_context', prepared === false ? { projectId } : null);
+  useEffect(() => { if (detailDoc.status === 503) setPrepared(false); }, [detailDoc.status]);
+  const doc = prepared ? detailDoc : contextDoc;
+  const reply = doc.data;
+
+  const { diffs, inherited, unknownKeys } = useMemo(() => {
+    if (!reply) return { diffs: [] as DiffField[], inherited: [] as DiffField[], unknownKeys: [] as string[] };
+    const resolved = isRec(reply.settings) ? reply.settings : {};
+    const authored = isRec(reply.content?.settings) ? reply.content.settings : {};
+    const get = (k: string, sub?: string): unknown => {
+      const top = k in resolved ? resolved[k] : authored[k];
+      if (!sub) return top;
+      return isRec(top) ? top[sub] : undefined;
+    };
+    const rows: DiffField[] = [];
+    const check = (key: string, icon: IconName, label: string, def: unknown, curRaw: unknown, opts: { empty?: string; isCode?: boolean } = {}) => {
+      const cur = curRaw === undefined ? def : curRaw;
+      const isCode = opts.isCode ?? (typeof def === 'string' || typeof def === 'boolean' || typeof def === 'number');
+      rows.push({
+        key,
+        icon,
+        label,
+        baseText: fmtVal(def, opts.empty ?? 'none'),
+        currentText: fmtVal(cur, opts.empty ?? 'none'),
+        isCode,
+        diff: stableVal(cur) !== stableVal(def),
+      });
+    };
+
+    // Defaults match go/coordinator/projects.go settingsDefaults.
+    check('worktree.envMode', 'git-pull-request', 'Worktree mode', 'worktree', get('worktree', 'envMode'));
+    check('worktree.branchPrefix', 'git-pull-request', 'Branch prefix', 'fleet', get('worktree', 'branchPrefix'));
+    check('worktree.baseRef', 'git-pull-request', 'Base ref', null, get('worktree', 'baseRef'), { isCode: true });
+    check('worktree.startFromOrigin', 'git-pull-request', 'Start from origin', true, get('worktree', 'startFromOrigin'));
+    check('worktree.linkPaths', 'link', 'Link paths', [], get('worktree', 'linkPaths'));
+    check('worktree.sharedDirectories', 'folder-open', 'Shared directories', [], get('worktree', 'sharedDirectories'));
+    check('scripts.setup', 'terminal', 'Setup script', null, get('scripts', 'setup'), { isCode: true });
+    check('scripts.teardown', 'terminal', 'Teardown script', null, get('scripts', 'teardown'), { isCode: true });
+    check('setupStart', 'play', 'Setup start', 'wait', get('setupStart'));
+    check('integration.mode', 'git-merge', 'Integration mode', 'pr', get('integration', 'mode'));
+    check('integration.mergeMethod', 'git-merge', 'Merge method', 'squash', get('integration', 'mergeMethod'));
+    check('integration.autoMerge', 'git-merge', 'Auto-merge', true, get('integration', 'autoMerge'));
+    check('integration.syncCheckoutAfterMerge', 'rotate-cw', 'Sync checkout after merge', true, get('integration', 'syncCheckoutAfterMerge'));
+    check('cleanup.keepWhen', 'archive', 'Keep worktree when', ['uncommitted', 'unpushed', 'teardown-failed'], get('cleanup', 'keepWhen'));
+    check('identity', 'bot', 'Git identity', null, get('identity'));
+    check('subscriptions', 'bell', 'Subscriptions', [], get('subscriptions'));
+    check('execution.tools', 'settings', 'Execution tools', [], get('execution', 'tools'));
+    check('execution.forge', 'git-pull-request', 'Execution forge', false, get('execution', 'forge'));
+    check('execution.profiles', 'bot', 'Execution profiles', [], get('execution', 'profiles'));
+    check('errors.bugsink', 'circle-alert', 'Bugsink projects', [], get('errors', 'bugsink'));
+    check('presets', 'messages-square', 'Conversation presets', [], get('presets'), { empty: 'system defaults' });
+    check('contextSources', 'file-text', 'Context sources', [], get('contextSources'));
+    check('artifact_locations', 'save', 'Artifact locations', null, get('artifact_locations'));
+    check('artifact_rules', 'archive', 'Artifact rules', [], get('artifact_rules'));
+    check('roles', 'bot', 'Agent roles', {}, get('roles'));
+    check('repos', 'git-pull-request', 'Repositories', [], get('repos'));
+    check('environments', 'panels-top-left', 'Environments', [], get('environments'));
+    check('capability', 'rows-3', 'Capability', null, authored.capability ?? null);
+    check('recommendedMethod', 'circle-check', 'Project method override', null, authored.recommendedMethod ?? null, { empty: 'shared default' });
+
+    return {
+      diffs: rows.filter(r => r.diff),
+      inherited: rows.filter(r => !r.diff),
+      unknownKeys: Array.isArray(reply.unknownKeys) ? reply.unknownKeys : [],
+    };
+  }, [reply]);
+
+  return (
+    <DetailSection title="Settings from defaults">
+      {doc.error && !reply && <ErrorBanner text={`Project settings did not load: ${doc.error}`} onRetry={doc.reload} />}
+      {!reply && !doc.error && <Empty text="Loading settings comparison…" />}
+      {reply && (
+        <>
+          {diffs.length > 0 ? (
+            diffs.map(f => (
+              <KvRow
+                key={f.key}
+                icon={f.icon}
+                label={f.label}
+                meta={
+                  <span>
+                    {f.isCode ? <code>{f.baseText}</code> : f.baseText} → {f.isCode ? <code>{f.currentText}</code> : f.currentText}
+                  </span>
+                }
+                value={<span class="badge t-attention">override</span>}
+              />
+            ))
+          ) : (
+            <KvRow icon="circle-check" label="Matches base defaults" meta="No overrides from shared project defaults" />
+          )}
+          {unknownKeys.length > 0 && (
+            <KvRow icon="triangle-alert" label="Unknown keys" meta={unknownKeys.join(', ')} />
+          )}
+          {inherited.length > 0 && (
+            <Disclosure summary={`Inherited defaults (${inherited.length})`} summaryClass="muted">
+              {inherited.map(f => (
+                <KvRow
+                  key={f.key}
+                  icon={f.icon}
+                  label={f.label}
+                  meta={f.isCode ? <code>{f.currentText}</code> : f.currentText}
+                />
+              ))}
+            </Disclosure>
+          )}
+        </>
+      )}
+    </DetailSection>
+  );
+}
+
+/* ---------- Methods tab ---------- */
+
+function methodStatusTone(s: string | undefined): 'success' | 'attention' | 'neutral' {
+  return s === 'recommended' ? 'success' : s === 'experimental' ? 'attention' : 'neutral';
+}
+
+function methodStatusIcon(s: string | undefined): IconName {
+  return s === 'recommended' ? 'circle-check' : s === 'experimental' ? 'activity' : 'circle-slash';
+}
+
+function ProjectMethodsTab({ projectId }: { projectId: string }) {
+  const [, go] = useLocation();
+  const [search, setSearch] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const cat = useOp('catalogue', { projectId });
+  const c = cat.data;
+
+  const recommend = async (methodId: string) => {
+    setBusy(methodId);
+    setActionError(null);
+    try {
+      await op('recommendation_set', { projectId, methodId });
+      cat.reload();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (cat.status === 404) {
+    return <Empty text="No method catalogue is configured." />;
+  }
+  if (cat.error && !c) {
+    return <ErrorBanner text={`Methods did not load: ${cat.error}`} onRetry={cat.reload} />;
+  }
+  if (!c) {
+    return <Skeleton rows={5} />;
+  }
+
+  const recommendedMethod = typeof c.recommendedMethod === 'string' ? c.recommendedMethod : null;
+  const sharedDefault = typeof c.sharedDefault === 'string' ? c.sharedDefault : null;
+  const source = typeof c.recommendationSource === 'string' ? c.recommendationSource : 'shared';
+  const capability = typeof c.capability === 'string' ? c.capability : null;
+  const filtered = c.methods.filter(m =>
+    matchSearch(search, `${m.name} ${m.id} ${m.capability ?? ''} ${m.description ?? ''} ${m.status ?? ''} ${m.pipeline}`),
+  );
+  const overridesDefault = !!recommendedMethod && !!sharedDefault && recommendedMethod !== sharedDefault;
+
+  return (
+    <>
+      <div class="res-bar">
+        <SearchField label="Find method" value={search} onInput={setSearch} onSearch={() => {}} />
+        <span class="grow" />
+        <a class="row-link" href="/catalogue" onClick={e => { e.preventDefault(); go('/catalogue'); }}>Open in Library</a>
+        <a class="row-link" href="/lab" onClick={e => { e.preventDefault(); go('/lab'); }}>Open in Lab</a>
+      </div>
+      {actionError && <ErrorBanner text={actionError} />}
+      <DetailSection title="Current recommendation">
+        <KvRow
+          icon="circle-check"
+          label={recommendedMethod ?? 'None'}
+          meta={
+            <span>
+              source: <code>{source}</code>
+              {capability ? <> · capability: <code>{capability}</code></> : null}
+              {sharedDefault ? <> · shared default: <code>{sharedDefault}</code></> : null}
+            </span>
+          }
+          value={overridesDefault ? <span class="badge t-attention">override</span> : undefined}
+        />
+      </DetailSection>
+      <DetailSection title={`Methods (${filtered.length})`}>
+        {filtered.length === 0 ? <Empty text="No methods match." /> : filtered.map(m => {
+          const isCurrent = m.id === recommendedMethod;
+          const a = m.assessment;
+          return (
+            <div key={m.id} class="stack">
+              <KvRow
+                icon={isCurrent ? 'circle-check' : 'network'}
+                label={m.name}
+                meta={
+                  <span class="deps">
+                    <code>{m.id}</code>
+                    <span>{m.scope}</span>
+                    <a class="row-link" href={'/pipelines/' + encodeURIComponent(m.pipeline)} onClick={e => { e.preventDefault(); go('/pipelines/' + encodeURIComponent(m.pipeline)); }}>{m.pipeline}</a>
+                    {m.status && (
+                      <span class={`badge t-${methodStatusTone(m.status)}`}>
+                        <Icon name={methodStatusIcon(m.status)} /><span>{m.status}</span>
+                      </span>
+                    )}
+                  </span>
+                }
+                value={
+                  <span class="deps">
+                    {isCurrent && <span class="badge t-success">Recommended</span>}
+                    <Button
+                      label={isCurrent ? 'Selected' : 'Recommend'}
+                      icon="check"
+                      kind={isCurrent ? 'quiet' : 'default'}
+                      busy={busy === m.id}
+                      disabledReason={isCurrent ? 'Already recommended for this project' : undefined}
+                      onClick={() => void recommend(m.id)}
+                    />
+                  </span>
+                }
+              />
+              {m.description && <p class="muted">{m.description}</p>}
+              <KvRow
+                icon="chart-no-axes-column"
+                label="Assessment"
+                meta={
+                  <span class="deps">
+                    <span>{a.basis}</span>
+                    {a.score != null && <Num m={{ value: a.score, basis: a.basis === 'none' ? 'unavailable' : 'measured' }} kind="score" />}
+                    {a.wallMsMedian != null && <Num m={msMeasured(a.wallMsMedian, 'measured')} kind="duration" />}
+                    {a.costUsd != null && <Num m={{ value: a.costUsd, basis: a.costBasis === 'subscription' ? 'subscription' : 'measured', currency: 'USD' }} kind="money" />}
+                    {a.examples != null && <span>{a.examples} {a.examples === 1 ? 'example' : 'examples'}</span>}
+                  </span>
+                }
+                value={a.experimentId ? (
+                  <a class="row-link" href={'/lab/' + encodeURIComponent(a.experimentId)} onClick={e => { e.preventDefault(); go('/lab/' + encodeURIComponent(a.experimentId!)); }}>Experiment</a>
+                ) : undefined}
+              />
+            </div>
+          );
+        })}
+      </DetailSection>
+    </>
+  );
+}
+
+/* ---------- Delivery tab ---------- */
+
+function ProjectDeliveryTab({ projectId }: { projectId: string }) {
+  const [, go] = useLocation();
+  const [search, setSearch] = useState('');
+  const [stageFilter, setStageFilter] = useState<StateOf<'delivery'>[]>([]);
+  const status = useOp('delivery_status', { projectIds: [projectId] }, { every: 300000 });
+  const deliveryHref = formatView({ view: 'delivery', q: `project:${projectId}` });
+  const items = (status.data?.items ?? []).filter(it => it.stage in states_.delivery);
+
+  const searched = items.filter(it =>
+    matchSearch(search, `${it.title} #${it.number} ${it.repo} ${it.release ?? ''}`, { state: it.stage, project: it.projectId }),
+  );
+  const counts: Partial<Record<StateOf<'delivery'>, number>> = {};
+  for (const it of searched) counts[it.stage] = (counts[it.stage] ?? 0) + 1;
+  const shown = stageFilter.length ? searched.filter(it => stageFilter.includes(it.stage)) : searched;
+
+  return (
+    <>
+      <div class="res-bar">
+        <SearchField label="Find pull requests" value={search} onInput={setSearch} onSearch={() => {}} />
+        {status.data?.refreshedAt && <AgeChip t={Date.parse(status.data.refreshedAt)} alertAfter={900} alertLabel="GitHub read is stale" />}
+        <span class="grow" />
+        <a class="row-link" href={deliveryHref} onClick={e => { e.preventDefault(); go(deliveryHref); }}>Open in Delivery</a>
+      </div>
+      {items.length > 0 && (
+        <StateCounters
+          family="delivery"
+          label="Project pull requests by stage"
+          counts={counts}
+          active={stageFilter}
+          hideZero
+          onAll={() => setStageFilter([])}
+          onToggle={s => setStageFilter(cur => cur.includes(s) ? cur.filter(x => x !== s) : [...cur, s])}
+        />
+      )}
+      {status.error && !status.data && <ErrorBanner text={`Delivery did not load: ${status.error}`} onRetry={status.reload} />}
+      {status.data?.error && <ErrorBanner text={`GitHub: ${status.data.error}`} onRetry={status.reload} />}
+      {!status.data && !status.error ? <Skeleton rows={5} /> : (
+        <DetailSection title={`Pull requests (${shown.length})`}>
+          {shown.length === 0 ? (
+            <Empty text={items.length ? 'No pull requests match.' : 'No pull requests in flight for this project.'} />
+          ) : (
+            <DataTable
+              label="Project pull requests"
+              head={
+                <tr>
+                  <th scope="col">Stage</th>
+                  <th scope="col">PR</th>
+                  <th scope="col">Title</th>
+                  <th scope="col">Repository</th>
+                  <th scope="col" class="num">In stage</th>
+                </tr>
+              }
+            >
+              {shown.map(it => {
+                const prId = idOf(it);
+                return (
+                  <tr key={prId}>
+                    <td><StateBadge family="delivery" state={it.stage} /></td>
+                    <td><EntityCode code={`#${it.number}`} id={prId} kind="pull_request" /></td>
+                    <th scope="row">
+                      <a class="row-link" href={'/delivery/' + encodeURIComponent(prId)} onClick={e => { e.preventDefault(); go('/delivery/' + encodeURIComponent(prId)); }}>
+                        {it.title || `#${it.number}`}
+                      </a>
+                      {it.release && <> <EntityCode code={it.release} id={it.release} kind="release" /></>}
+                    </th>
+                    <td><code>{it.repo}</code></td>
+                    <td class="num"><AgeChip t={Date.parse(it.since)} /></td>
+                  </tr>
+                );
+              })}
+            </DataTable>
+          )}
+        </DetailSection>
+      )}
+    </>
+  );
+}
+
+/* ---------- Results tab ---------- */
+
+function ProjectResultsTab({ projectId }: { projectId: string }) {
+  const [, go] = useLocation();
+  const [search, setSearch] = useState('');
+  const [stateFilter, setStateFilter] = useState<StateOf<'artifact'>[]>([]);
+  const read = useOp('artifact_list', { projectIds: [projectId], limit: 100 });
+  const resultsHref = formatView({ view: 'results', project: [projectId] });
+  const artifacts = read.data?.artifacts ?? [];
+  const nextBefore = read.data?.nextBefore ?? null;
+
+  const searched = artifacts.filter(a =>
+    matchSearch(search, `${fileLabel(a.name) || a.name} ${a.mediaType} ${a.taskCode ?? ''}`, { state: a.state, project: a.projectId ?? undefined }),
+  );
+  const counts: Partial<Record<StateOf<'artifact'>, number>> = {};
+  for (const a of searched) {
+    const s = a.state as StateOf<'artifact'>;
+    counts[s] = (counts[s] ?? 0) + 1;
+  }
+  const shown = stateFilter.length ? searched.filter(a => stateFilter.includes(a.state as StateOf<'artifact'>)) : searched;
+
+  return (
+    <>
+      <div class="res-bar">
+        <SearchField label="Find results" value={search} onInput={setSearch} onSearch={() => {}} />
+        <span class="grow" />
+        <a class="row-link" href={resultsHref} onClick={e => { e.preventDefault(); go(resultsHref); }}>Open in Results</a>
+      </div>
+      {artifacts.length > 0 && (
+        <StateCounters
+          family="artifact"
+          label="Project results by state"
+          counts={counts}
+          active={stateFilter}
+          hideZero
+          onAll={() => setStateFilter([])}
+          onToggle={s => setStateFilter(cur => cur.includes(s) ? cur.filter(x => x !== s) : [...cur, s])}
+        />
+      )}
+      {read.error && !read.data && <ErrorBanner text={`Results did not load: ${read.error}`} onRetry={read.reload} />}
+      {!read.data && !read.error ? <Skeleton rows={5} /> : (
+        <DetailSection title={`Results (${shown.length}${nextBefore != null ? '+' : ''})`}>
+          {shown.length === 0 ? (
+            <Empty text={artifacts.length ? 'No results match.' : 'No results stored for this project.'} />
+          ) : (
+            <Latest
+              n={25}
+              items={shown.map(a => {
+                const artState = (a.state in states_.artifact ? a.state : 'stored') as StateOf<'artifact'>;
+                return (
+                  <KvRow
+                    key={a.id}
+                    icon={states_.artifact[artState].icon}
+                    label={fileLabel(a.name) || a.name}
+                    meta={
+                      <span class="deps">
+                        <StateBadge family="artifact" state={artState} compact />
+                        <EntityCode id={a.id} kind="result" />
+                        {a.taskId && a.taskCode && <EntityCode code={a.taskCode} id={a.taskId} kind="task" />}
+                        <a class="row-link" href={'/results/' + encodeURIComponent(a.id)} onClick={e => { e.preventDefault(); go('/results/' + encodeURIComponent(a.id)); }}>Open</a>
+                      </span>
+                    }
+                    value={
+                      <span class="deps">
+                        <span class="muted">{bytes(a.size).text}</span>
+                        <AgeChip t={a.createdAt} />
+                      </span>
+                    }
+                  />
+                );
+              })}
+            />
+          )}
+          {nextBefore != null && (
+            <p class="muted">
+              More results exist for this project. <a class="row-link" href={resultsHref} onClick={e => { e.preventDefault(); go(resultsHref); }}>View all in Results</a>
+            </p>
+          )}
+        </DetailSection>
+      )}
+    </>
   );
 }
 
