@@ -33,7 +33,7 @@ BEGIN
 END $function$;
 REVOKE ALL ON FUNCTION execution_spend_on_conn() FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION public.execution_spend_on_execution()
+CREATE OR REPLACE FUNCTION public.execution_spend_on_exec_del()
  RETURNS trigger
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -42,53 +42,68 @@ AS $function$
 DECLARE
  prev_scope text := current_setting('fleet.project_ids', true);
  prev_del text := current_setting('fleet.deleted', true);
+ eids text[];
 BEGIN
- IF TG_OP = 'DELETE' THEN
-  IF coalesce(current_setting('fleet.purge', true), '') = 'on' THEN
-   RETURN NULL;
-  END IF;
-  PERFORM set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
-  BEGIN
-   DELETE FROM execution_spend WHERE execution_id = OLD.id;
-  EXCEPTION WHEN OTHERS THEN
-   PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
-   RAISE;
-  END;
+ IF coalesce(current_setting('fleet.purge', true), '') = 'on' THEN
+  RETURN NULL;
+ END IF;
+ SELECT array_agg(id) INTO eids FROM old_rows;
+ IF eids IS NULL OR array_length(eids, 1) IS NULL THEN
+  RETURN NULL;
+ END IF;
+ PERFORM set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+ BEGIN
+  DELETE FROM execution_spend WHERE execution_id = ANY(eids);
+ EXCEPTION WHEN OTHERS THEN
   PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
-  RETURN NULL;
- END IF;
- IF TG_OP = 'INSERT' THEN
-  IF NEW.started_at IS NULL OR NEW.kind IN ('pipeline_run', 'pipeline_step', 'child_agent') THEN
-   RETURN NULL;
-  END IF;
-  PERFORM fleet_refresh_execution_spend(NEW.id);
-  RETURN NULL;
- END IF;
- IF (OLD.kind, OLD.state, OLD.project_id, OLD.task_id, OLD.session_id, OLD.experiment_id, OLD.system_actor, OLD.profile_id, OLD.model, OLD.host_id, OLD.account_id, OLD.harness, OLD.started_at, OLD.tombstoned_at, OLD.data->>'connection', OLD.data->>'tool')
-    IS NOT DISTINCT FROM
-    (NEW.kind, NEW.state, NEW.project_id, NEW.task_id, NEW.session_id, NEW.experiment_id, NEW.system_actor, NEW.profile_id, NEW.model, NEW.host_id, NEW.account_id, NEW.harness, NEW.started_at, NEW.tombstoned_at, NEW.data->>'connection', NEW.data->>'tool') THEN
-  RETURN NULL;
- END IF;
- IF OLD.tombstoned_at IS DISTINCT FROM NEW.tombstoned_at AND
-    (OLD.kind, OLD.state, OLD.project_id, OLD.task_id, OLD.session_id, OLD.experiment_id, OLD.system_actor, OLD.profile_id, OLD.model, OLD.host_id, OLD.account_id, OLD.harness, OLD.started_at, OLD.data->>'connection', OLD.data->>'tool')
-    IS NOT DISTINCT FROM
-    (NEW.kind, NEW.state, NEW.project_id, NEW.task_id, NEW.session_id, NEW.experiment_id, NEW.system_actor, NEW.profile_id, NEW.model, NEW.host_id, NEW.account_id, NEW.harness, NEW.started_at, NEW.data->>'connection', NEW.data->>'tool') THEN
-  PERFORM set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
-  BEGIN
-   UPDATE execution_spend SET tombstoned_at = NEW.tombstoned_at WHERE execution_id = NEW.id;
-  EXCEPTION WHEN OTHERS THEN
-   PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
-   RAISE;
-  END;
-  PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
-  IF FOUND THEN
-   RETURN NULL;
-  END IF;
- END IF;
- PERFORM fleet_refresh_execution_spend(NEW.id);
+  RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
  RETURN NULL;
 END $function$;
-REVOKE ALL ON FUNCTION execution_spend_on_execution() FROM PUBLIC;
+REVOKE ALL ON FUNCTION execution_spend_on_exec_del() FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.execution_spend_on_exec_ins()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+ eids text[];
+BEGIN
+ SELECT array_agg(id) INTO eids
+ FROM new_rows
+ WHERE started_at IS NOT NULL
+   AND kind NOT IN ('pipeline_run', 'pipeline_step', 'child_agent');
+ IF eids IS NOT NULL THEN
+  PERFORM fleet_refresh_execution_spend_ids(eids);
+ END IF;
+ RETURN NULL;
+END $function$;
+REVOKE ALL ON FUNCTION execution_spend_on_exec_ins() FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.execution_spend_on_exec_upd()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+ eids text[];
+BEGIN
+ SELECT array_agg(n.id) INTO eids
+ FROM new_rows n
+ JOIN old_rows o ON o.id = n.id
+ WHERE (o.kind, o.state, o.project_id, o.task_id, o.session_id, o.experiment_id, o.system_actor, o.profile_id, o.model, o.host_id, o.account_id, o.harness, o.started_at, o.tombstoned_at, o.data->>'connection', o.data->>'tool')
+    IS DISTINCT FROM
+    (n.kind, n.state, n.project_id, n.task_id, n.session_id, n.experiment_id, n.system_actor, n.profile_id, n.model, n.host_id, n.account_id, n.harness, n.started_at, n.tombstoned_at, n.data->>'connection', n.data->>'tool');
+ IF eids IS NOT NULL THEN
+  PERFORM fleet_refresh_execution_spend_ids(eids);
+ END IF;
+ RETURN NULL;
+END $function$;
+REVOKE ALL ON FUNCTION execution_spend_on_exec_upd() FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.execution_spend_on_price()
  RETURNS trigger
@@ -119,29 +134,64 @@ BEGIN
 END $function$;
 REVOKE ALL ON FUNCTION execution_spend_on_price() FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION public.execution_spend_on_totals()
+CREATE OR REPLACE FUNCTION public.execution_spend_on_totals_del()
  RETURNS trigger
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-DECLARE eid text;
+DECLARE
+ eids text[];
 BEGIN
- IF TG_OP = 'DELETE' THEN
-  IF coalesce(current_setting('fleet.purge', true), '') = 'on' THEN
-   RETURN NULL;
-  END IF;
-  eid := OLD.execution_id;
- ELSE
-  IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - ARRAY['execution_id','computed_at','rate_limit_last','rate_limit_last_basis']) IS NOT DISTINCT FROM (to_jsonb(NEW) - ARRAY['execution_id','computed_at','rate_limit_last','rate_limit_last_basis']) THEN
-   RETURN NULL;
-  END IF;
-  eid := NEW.execution_id;
+ IF coalesce(current_setting('fleet.purge', true), '') = 'on' THEN
+  RETURN NULL;
  END IF;
- PERFORM fleet_refresh_execution_spend(eid);
+ SELECT array_agg(execution_id) INTO eids FROM old_rows;
+ IF eids IS NOT NULL THEN
+  PERFORM fleet_refresh_execution_spend_ids(eids);
+ END IF;
  RETURN NULL;
 END $function$;
-REVOKE ALL ON FUNCTION execution_spend_on_totals() FROM PUBLIC;
+REVOKE ALL ON FUNCTION execution_spend_on_totals_del() FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.execution_spend_on_totals_ins()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+ eids text[];
+BEGIN
+ SELECT array_agg(execution_id) INTO eids FROM new_rows;
+ IF eids IS NOT NULL THEN
+  PERFORM fleet_refresh_execution_spend_ids(eids);
+ END IF;
+ RETURN NULL;
+END $function$;
+REVOKE ALL ON FUNCTION execution_spend_on_totals_ins() FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.execution_spend_on_totals_upd()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+ eids text[];
+BEGIN
+ SELECT array_agg(n.execution_id) INTO eids
+ FROM new_rows n
+ JOIN old_rows o ON o.execution_id = n.execution_id
+ WHERE (to_jsonb(o) - ARRAY['execution_id','computed_at','rate_limit_last','rate_limit_last_basis'])
+    IS DISTINCT FROM
+    (to_jsonb(n) - ARRAY['execution_id','computed_at','rate_limit_last','rate_limit_last_basis']);
+ IF eids IS NOT NULL THEN
+  PERFORM fleet_refresh_execution_spend_ids(eids);
+ END IF;
+ RETURN NULL;
+END $function$;
+REVOKE ALL ON FUNCTION execution_spend_on_totals_upd() FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.fleet_append_only()
  RETURNS trigger
@@ -390,7 +440,7 @@ BEGIN
  RETURN p_code;
 END $function$;
 
-CREATE OR REPLACE FUNCTION public.fleet_refresh_execution_spend(eid text)
+CREATE OR REPLACE FUNCTION public.fleet_refresh_execution_spend_ids(eids text[])
  RETURNS void
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -400,24 +450,22 @@ DECLARE
  prev_scope text := current_setting('fleet.project_ids', true);
  prev_del text := current_setting('fleet.deleted', true);
 BEGIN
- IF eid IS NULL THEN
+ IF eids IS NULL OR array_length(eids, 1) IS NULL THEN
   RETURN;
  END IF;
  PERFORM set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
  BEGIN
-  IF NOT EXISTS (
-   SELECT 1
-   FROM execution e
-   LEFT JOIN execution_totals t ON t.execution_id = e.id
-   WHERE e.id = eid
-     AND e.started_at IS NOT NULL
-     AND e.kind NOT IN ('pipeline_run', 'pipeline_step')
-     AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL)
-  ) THEN
-   DELETE FROM execution_spend WHERE execution_id = eid;
-   PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
-   RETURN;
-  END IF;
+  DELETE FROM execution_spend s
+  WHERE s.execution_id = ANY(eids)
+    AND NOT EXISTS (
+     SELECT 1
+     FROM execution e
+     LEFT JOIN execution_totals t ON t.execution_id = e.id
+     WHERE e.id = s.execution_id
+       AND e.started_at IS NOT NULL
+       AND e.kind NOT IN ('pipeline_run', 'pipeline_step')
+       AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL)
+    );
 
   WITH active_conns AS (
    SELECT c.id FROM api_connection c
@@ -485,7 +533,10 @@ BEGIN
     e.tombstoned_at
    FROM execution e
    LEFT JOIN execution_totals t ON t.execution_id = e.id
-   WHERE e.id = eid
+   WHERE e.id = ANY(eids)
+     AND e.started_at IS NOT NULL
+     AND e.kind NOT IN ('pipeline_run', 'pipeline_step')
+     AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL)
   ),
   priced AS (
    SELECT
@@ -538,8 +589,7 @@ BEGIN
     ci.cost_basis,
     sum(ci.amount)::double precision AS value,
     sum(ci.unpriced)::bigint AS unpriced,
-    (SELECT jsonb_agg(jsonb_build_object('id', x.price_id, 'observedAt', x.obs_ms) ORDER BY x.price_id, x.obs_ms)
-     FROM (SELECT DISTINCT ci2.price_id, ci2.obs_ms FROM cost_items ci2 WHERE ci2.execution_id = ci.execution_id AND ci2.currency IS NOT DISTINCT FROM ci.currency AND ci2.cost_basis IS NOT DISTINCT FROM ci.cost_basis AND ci2.price_id IS NOT NULL) x) AS prices
+    jsonb_agg(DISTINCT jsonb_build_object('id', ci.price_id, 'observedAt', ci.obs_ms)) FILTER (WHERE ci.price_id IS NOT NULL) AS prices
    FROM cost_items ci
    GROUP BY ci.execution_id, ci.currency, ci.cost_basis
   ),
@@ -611,7 +661,7 @@ BEGIN
  END;
  PERFORM set_config('fleet.project_ids', coalesce(prev_scope, ''), true), set_config('fleet.deleted', coalesce(prev_del, ''), true);
 END $function$;
-REVOKE ALL ON FUNCTION fleet_refresh_execution_spend(eid text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION fleet_refresh_execution_spend_ids(eids text[]) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.fleet_resource_summary_change()
  RETURNS trigger

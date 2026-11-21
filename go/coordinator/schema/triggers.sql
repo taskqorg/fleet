@@ -54,14 +54,18 @@ CREATE OR REPLACE TRIGGER event_tombstone BEFORE INSERT ON event FOR EACH ROW EX
 -- execution
 CREATE OR REPLACE TRIGGER execution_change AFTER INSERT OR DELETE OR UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER execution_derived AFTER INSERT OR DELETE OR UPDATE OF task_id, state, host_id, harness, started_at, seq ON execution FOR EACH ROW EXECUTE FUNCTION fleet_task_derived_touch();
-CREATE OR REPLACE TRIGGER execution_spend_exec AFTER INSERT OR DELETE OR UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION execution_spend_on_execution();
+CREATE OR REPLACE TRIGGER execution_spend_exec_del AFTER DELETE ON execution REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION execution_spend_on_exec_del();
+CREATE OR REPLACE TRIGGER execution_spend_exec_ins AFTER INSERT ON execution REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION execution_spend_on_exec_ins();
+CREATE OR REPLACE TRIGGER execution_spend_exec_upd AFTER UPDATE ON execution REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION execution_spend_on_exec_upd();
 CREATE OR REPLACE TRIGGER execution_tombstone BEFORE INSERT ON execution FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('parent_execution_id');
 CREATE OR REPLACE TRIGGER execution_touch BEFORE UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 CREATE OR REPLACE TRIGGER resource_align_totals_owner AFTER UPDATE OF project_id ON execution FOR EACH ROW EXECUTE FUNCTION resource_align_totals_owner();
 CREATE OR REPLACE TRIGGER resource_capture_execution AFTER INSERT OR DELETE OR UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION resource_capture_execution();
 
 -- execution_totals
-CREATE OR REPLACE TRIGGER execution_spend_totals AFTER INSERT OR DELETE OR UPDATE ON execution_totals FOR EACH ROW EXECUTE FUNCTION execution_spend_on_totals();
+CREATE OR REPLACE TRIGGER execution_spend_totals_del AFTER DELETE ON execution_totals REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION execution_spend_on_totals_del();
+CREATE OR REPLACE TRIGGER execution_spend_totals_ins AFTER INSERT ON execution_totals REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION execution_spend_on_totals_ins();
+CREATE OR REPLACE TRIGGER execution_spend_totals_upd AFTER UPDATE ON execution_totals REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION execution_spend_on_totals_upd();
 CREATE OR REPLACE TRIGGER execution_totals_change AFTER INSERT OR DELETE OR UPDATE ON execution_totals FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER resource_capture_totals AFTER INSERT OR DELETE OR UPDATE ON execution_totals FOR EACH ROW EXECUTE FUNCTION resource_capture_totals();
 
