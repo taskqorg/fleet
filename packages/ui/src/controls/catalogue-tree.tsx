@@ -542,7 +542,7 @@ export function CatalogueTree(props: CatalogueTreeProps) {
   return (
     <div
       ref={treeRef}
-      class={`cat-tree${props.fill ? ' fill' : ''}${props.class ? ' ' + props.class : ''}`}
+      class={`cat-tree${props.fill ? ' cat-tree-fill' : ''}${props.class ? ' ' + props.class : ''}`}
       data-ui="catalogue-tree"
       role="tree"
       aria-label={props.label}
