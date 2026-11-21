@@ -292,13 +292,23 @@ export function useAnchoredPopover(
     const el = popoverRef.current as PopoverElement | null;
     const trigger = triggerRef.current;
     if (!open || !el) return;
-    const onToggle = (e: Event) => {
+    const onCloseEvent = (e: Event) => {
       if ((e as Event & { newState?: string }).newState === 'closed') onCloseRef.current();
     };
-    el.addEventListener('toggle', onToggle);
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && el.matches(':popover-open')) {
+        e.preventDefault();
+        onCloseRef.current();
+      }
+    };
+    el.addEventListener('beforetoggle', onCloseEvent);
+    el.addEventListener('toggle', onCloseEvent);
+    document.addEventListener('keydown', onEscape);
     if (!el.matches(':popover-open')) el.showPopover(trigger ? { source: trigger } : undefined);
     return () => {
-      el.removeEventListener('toggle', onToggle);
+      el.removeEventListener('beforetoggle', onCloseEvent);
+      el.removeEventListener('toggle', onCloseEvent);
+      document.removeEventListener('keydown', onEscape);
       if (el.matches(':popover-open')) el.hidePopover();
     };
   }, [open]);

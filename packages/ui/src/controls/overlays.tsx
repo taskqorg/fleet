@@ -4,9 +4,10 @@ import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'preact
 import { type IconName, type Harness, type EntityKind, entityKinds, codeKind, ENTITY_CODE, states, actions, harnesses } from '../registry.ts';
 import { bytes, count, duration } from '../format.ts';
 import type { EntityCardReply } from '../../../../contracts/generated/ops.ts';
+import tokens from '../../tokens.json';
 import { Icon, Button, StateBadge, HarnessMark, Ago, CopyButton, popoverAttr, type PopoverElement } from './primitives.tsx';
 
-/* ---------- Tooltip (OR-20, modern-web-guidance: hint popover + CSS Anchor Positioning) ---------- */
+/* ---------- Tooltip (OR-20, modern-web-guidance: hint popover + visualViewport edge clamping) ---------- */
 
 /** One small tooltip for the whole app, for elements with data-tip. Shows after a delay on hover or focus,
  *  about that element only, never over a field being typed in, hidden on any key press or scroll. Mount once. */
@@ -17,6 +18,20 @@ export function TooltipLayer({ delay = 600 }: { delay?: number }) {
     const el = box.current as PopoverElement | null;
     if (!tip || !el) return;
     if (!el.matches(':popover-open')) el.showPopover({ source: tip.anchor });
+    const anchor = tip.anchor.getBoundingClientRect();
+    const gap = parseInt(tokens.space[2]);
+    const viewport = window.visualViewport;
+    const viewWidth = viewport?.width ?? innerWidth;
+    const viewHeight = viewport?.height ?? innerHeight;
+    const x = viewport?.offsetLeft ?? 0;
+    const y = viewport?.offsetTop ?? 0;
+    el.style.maxWidth = `min(var(--size-tip), ${Math.max(0, viewWidth - 2 * gap)}px)`;
+    const { width, height } = el.getBoundingClientRect();
+    const left = Math.max(x + gap, Math.min(anchor.left + (anchor.width - width) / 2, x + viewWidth - gap - width));
+    const above = anchor.top - height - gap;
+    const top = above >= y + gap ? above : Math.max(y + gap, Math.min(anchor.bottom + gap, y + viewHeight - gap - height));
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
     return () => { if (el.matches(':popover-open')) el.hidePopover(); };
   }, [tip]);
   useEffect(() => {
@@ -33,8 +48,14 @@ export function TooltipLayer({ delay = 600 }: { delay?: number }) {
     };
     const opts = { capture: true, passive: true };
     document.addEventListener('pointerover', show, opts); document.addEventListener('focusin', show, opts);
+    window.addEventListener('resize', hide);
+    window.visualViewport?.addEventListener('resize', hide);
+    window.visualViewport?.addEventListener('scroll', hide);
     for (const ev of ['pointerout', 'focusout', 'keydown', 'scroll', 'input', 'pointerdown']) document.addEventListener(ev, hide, opts);
     return () => { hide(); document.removeEventListener('pointerover', show, opts); document.removeEventListener('focusin', show, opts);
+      window.removeEventListener('resize', hide);
+      window.visualViewport?.removeEventListener('resize', hide);
+      window.visualViewport?.removeEventListener('scroll', hide);
       for (const ev of ['pointerout', 'focusout', 'keydown', 'scroll', 'input', 'pointerdown']) document.removeEventListener(ev, hide, opts); };
   }, [delay]);
   return tip && <div ref={box} {...popoverAttr('hint')} class="tooltip" role="tooltip">{tip.text}</div>;
@@ -54,7 +75,6 @@ export const EntityCards = createContext<EntityCardSource | null>(null);
 // The one open card (one at a time): which reference, the code it hangs from, and whether a key opened it.
 type Shown = { ref: EntityRef; anchor: HTMLElement; keyboard: boolean };
 let shown: Shown | null = null;
-let suppressedAnchor: HTMLElement | null = null;
 const watchers = new Set<() => void>();
 const showCard = (s: Shown | null) => { shown = s; for (const w of watchers) w(); };
 /** The open card; with `mine`, re-renders only when that element's own card opens or closes (not on every other code's). */
@@ -84,7 +104,6 @@ export function EntityCode({ code, id, kind, cls, label }: { code?: string | nul
   const open = !!cur && !!el.current && cur.anchor === el.current;
   const toggle = (e: TargetedMouseEvent<HTMLButtonElement>) => {
     e.preventDefault(); e.stopPropagation();
-    if (suppressedAnchor === e.currentTarget) { suppressedAnchor = null; return; }
     // The open card is read now, not from the last render: a second click before a re-render still closes it. A click
     // from the keyboard (Enter, Space) has no pointer detail: focus then moves into the card.
     showCard(shown?.anchor === e.currentTarget ? null : { ref: id ? { kind: k, id, ...(code ? { code } : {}) } : { kind: k, code: code! }, anchor: e.currentTarget, keyboard: e.detail === 0 });
@@ -122,35 +141,38 @@ export function EntityCardLayer() {
     const el = box.current as PopoverElement | null;
     if (!cur || !el) return;
     const anchor = cur.anchor;
+    const place = () => {
+      const a = anchor.getBoundingClientRect(), r = el.getBoundingClientRect(), gap = 4, edge = 8;
+      const below = a.bottom + gap + r.height <= innerHeight - edge || a.top - gap - r.height < edge && innerHeight - a.bottom > a.top;
+      el.style.top = `${Math.max(edge, Math.min(innerHeight - edge - r.height, below ? a.bottom + gap : a.top - gap - r.height))}px`;
+      el.style.left = `${Math.max(edge, Math.min(a.left, innerWidth - edge - r.width))}px`;
+      el.dataset.side = below ? 'below' : 'above';
+    };
     const close = (refocus: boolean) => { showCard(null); if (refocus && anchor.isConnected) anchor.focus({ preventScroll: true }); };
     const inside = (n: EventTarget | null) => n instanceof Node && (el.contains(n) || anchor.contains(n));
-    const onToggle = (e: Event) => {
-      if ((e as Event & { newState?: string }).newState === 'closed' && shown?.anchor === anchor) showCard(null);
-    };
-    // Prevent re-clicking the anchor button from dismissing on pointerdown and immediately reopening on click.
-    const onAnchorDown = () => {
-      if (el.matches(':popover-open')) {
-        suppressedAnchor = anchor;
-        setTimeout(() => { if (suppressedAnchor === anchor) suppressedAnchor = null; }, 400);
-      }
-    };
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { const mine = inside(document.activeElement); if (mine) { e.stopPropagation(); e.preventDefault(); } close(mine); return; }
       if (e.key !== 'Tab' || !el.contains(document.activeElement)) return;
       const all = [...el.querySelectorAll<HTMLElement>('a[tabindex],a[href],button')], at = all.indexOf(document.activeElement as HTMLElement);
       if (e.shiftKey ? at <= 0 : at === all.length - 1) { e.preventDefault(); close(true); }
     };
+    const down = (e: PointerEvent) => { if (!inside(e.target)) close(false); };
+    const out = (e: FocusEvent) => { if (e.relatedTarget && !inside(e.relatedTarget)) close(false); };
+    const sized = new ResizeObserver(place); sized.observe(el);
     const seen = new IntersectionObserver(es => { if (es.some(x => !x.isIntersecting)) close(el.contains(document.activeElement)); });
     seen.observe(anchor);
-    el.addEventListener('toggle', onToggle);
-    anchor.addEventListener('pointerdown', onAnchorDown, true);
+    document.addEventListener('pointerdown', down, true);
+    document.addEventListener('focusout', out, true);
     document.addEventListener('keydown', key, true);
+    addEventListener('scroll', place, true); addEventListener('resize', place);
     if (!el.matches(':popover-open')) el.showPopover({ source: anchor });
+    place();
     return () => {
-      seen.disconnect();
-      el.removeEventListener('toggle', onToggle);
-      anchor.removeEventListener('pointerdown', onAnchorDown, true);
+      sized.disconnect(); seen.disconnect();
+      document.removeEventListener('pointerdown', down, true);
+      document.removeEventListener('focusout', out, true);
       document.removeEventListener('keydown', key, true);
+      removeEventListener('scroll', place, true); removeEventListener('resize', place);
       if (el.matches(':popover-open')) el.hidePopover();
     };
   }, [cur]);
@@ -174,7 +196,7 @@ export function EntityCardLayer() {
   const k = entityKinds[cur.ref.kind];
   // The card takes its code's theme where a region sets one (the book's light and dark frames).
   const theme = cur.anchor.closest('.th-dark') ? ' th-dark' : cur.anchor.closest('.th-light') ? ' th-light' : '';
-  return <div ref={box} id={CARD_ID} {...popoverAttr('auto')} class={`ecard${theme}`} data-ui="entity-card" role="dialog" aria-label={`${k.label}${cur.ref.code ? ' ' + cur.ref.code : ''}`}>
+  return <div ref={box} id={CARD_ID} {...popoverAttr('manual')} class={`ecard${theme}`} data-ui="entity-card" role="dialog" aria-label={`${k.label}${cur.ref.code ? ' ' + cur.ref.code : ''}`}>
     <CardBody key={JSON.stringify(cur.ref)} r={cur.ref} onOpen={() => { const a = cur.anchor; showCard(null); if (a.isConnected) a.focus({ preventScroll: true }); }} /></div>;
 }
 

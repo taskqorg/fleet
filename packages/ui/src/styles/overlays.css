@@ -1,13 +1,12 @@
 /* Native Chromium top-layer overlays: popover="auto"/"hint", CSS Anchor Positioning, <dialog closedby="any">, and @starting-style. */
 @layer overlays {
-  /* Top-layer entry/exit animations (animate-to-from-top-layer) */
+  /* Top-layer entry transitions (@starting-style) */
   dialog.spotlight,
   [popover]:where(.tooltip, .ecard, .anchored-menu, .focus-panel) {
     opacity: 0;
-    transition-property: opacity, transform, display, overlay;
+    transition-property: opacity, transform;
     transition-duration: var(--motion-fast);
     transition-timing-function: var(--motion-ease);
-    transition-behavior: allow-discrete;
     @media (prefers-reduced-motion: no-preference) {
       transform: translateY(-2px);
     }
@@ -50,13 +49,13 @@
     }
   }
 
-  /* Tooltip (popover="hint", anchored to source trigger) */
+  /* Tooltip (popover="hint", positioned relative to trigger and clamped to visualViewport) */
   .tooltip[popover] {
+    position: fixed;
     inset: auto;
+    left: 0;
+    top: 0;
     margin: 0;
-    margin-block: var(--space-2);
-    position-area: block-start;
-    position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
     width: max-content;
     max-width: min(var(--size-tip), calc(100% - 2 * var(--space-2)));
     padding: var(--space-1) var(--space-2);
@@ -230,13 +229,13 @@
     .focus-list label, .focus-ignored > .group-h { min-height: var(--size-hit-phone); }
   }
 
-  /* Entity card (popover="auto", anchored to EntityCode) */
+  /* Entity card (popover="auto", positioned relative to EntityCode and kept inside viewport) */
   .ecard[popover] {
+    position: fixed;
     inset: auto;
+    top: 0;
+    left: 0;
     margin: 0;
-    margin-block: var(--space-1);
-    position-area: block-end span-inline-end;
-    position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
     flex-direction: column;
     gap: var(--space-3);
     max-block-size: calc(100dvb - 16px);
