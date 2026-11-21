@@ -922,14 +922,14 @@ func queueCommand(ctx context.Context, a *App, hostID, kind string, payload doc)
 	return txCtx(ctx, a, func(tx pgx.Tx) error {
 		q := backgroundRequest(ctx, a, tx) // carries app: put wakes the host's held poll once the command commits
 		sid, id := newID(), newID()
-		if err := put(q, "session", docOf(jobSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"})); err != nil {
+		if err := recWrite(q, recSession, jobSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
 			return err
 		}
-		if err := putExecution(q, docOf(jobExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker",
-			ArtifactID: payload["artifactId"]})); err != nil {
+		if err := recWrite(q, recExecution, jobExecution{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker",
+			ArtifactID: payload["artifactId"]}); err != nil {
 			return err
 		}
-		return put(q, "command", docOf(jobCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: kind, Status: "pending", Payload: payload}))
+		return recWrite(q, recCommand, jobCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: kind, Status: "pending", Payload: payload})
 	})
 }
 

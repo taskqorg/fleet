@@ -1152,6 +1152,18 @@ func (q *Queries) TaskQuestions(ctx context.Context, arg TaskQuestionsParams) ([
 	return items, nil
 }
 
+const taskRowRecord = `-- name: TaskRowRecord :one
+SELECT to_jsonb(t)::jsonb FROM task t WHERE t.id=$1
+`
+
+// The task's row as a record keyed by column name (taskRow).
+func (q *Queries) TaskRowRecord(ctx context.Context, id string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, taskRowRecord, id)
+	var column_1 []byte
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const taskSetDirector = `-- name: TaskSetDirector :exec
 UPDATE task SET directed_by= $1,taken_from=$2,updated_at=now() WHERE id= $3
 `

@@ -49,7 +49,7 @@ func TestHostStorePollProjection(t *testing.T) {
 	check := func(want string) {
 		t.Helper()
 		if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
-			o, err := get(q, "h-store-check", "host-observation")
+			o, err := recGet[doc](q, recHostObservation, "h-store-check")
 			if err != nil {
 				return err
 			}

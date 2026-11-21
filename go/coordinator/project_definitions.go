@@ -156,7 +156,7 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 		}
 		json.Unmarshal(raw, &environment)
 		hostID, _ := environment.HostID.(string)
-		h, err := maybe(q, "host:"+hostID, "host")
+		h, err := recFind[doc](q, recHost, "host:"+hostID)
 		if err != nil {
 			return nil, err
 		}
@@ -204,11 +204,12 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 		return nil, err
 	}
 	if create && q.agent != "" {
-		e, err := get(q, strings.TrimPrefix(q.agent, "execution:"), "execution")
+		e, err := recGet[doc](q, recExecution, strings.TrimPrefix(q.agent, "execution:"))
 		if err != nil {
 			return nil, err
 		}
-		session, err := get(q, e["sessionId"], "session")
+		sessionID, _ := e["sessionId"].(string)
+		session, err := recGet[doc](q, recSession, sessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -224,7 +225,7 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 			session["focus"] = struct {
 				ProjectIDs []string `json:"projectIds"`
 			}{ids}
-			if err := put(q, "session", session); err != nil {
+			if err := recPut(q, recSession, &session); err != nil {
 				return nil, err
 			}
 		}
@@ -498,7 +499,7 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 			used[c] = true
 		}
 	}
-	obs, err := all(q, "host-observation", nil)
+	obs, err := recAll[doc](q, recHostObservation, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -532,14 +533,14 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 				continue
 			}
 			sid, xid := newID(), newID()
-			if err := put(q, "session", docOf(struct {
+			if err := recWrite(q, recSession, struct {
 				ID        string `json:"id"`
 				CreatedAt int64  `json:"createdAt"`
 				Actor     string `json:"actor"`
-			}{sid, nowMs(), "program-worker"})); err != nil {
+			}{sid, nowMs(), "program-worker"}); err != nil {
 				return nil, err
 			}
-			if err := put(q, "execution", docOf(struct {
+			if err := recWrite(q, recExecution, struct {
 				ID          string `json:"id"`
 				ExecutionID string `json:"executionId"`
 				SessionID   string `json:"sessionId"`
@@ -547,10 +548,10 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 				State       string `json:"state"`
 				CreatedAt   int64  `json:"createdAt"`
 				Actor       string `json:"actor"`
-			}{xid, xid, sid, host, "preparing", nowMs(), "program-worker"})); err != nil {
+			}{xid, xid, sid, host, "preparing", nowMs(), "program-worker"}); err != nil {
 				return nil, err
 			}
-			if err := put(q, "command", docOf(struct {
+			if err := recWrite(q, recCommand, struct {
 				ID          string                           `json:"id"`
 				ExecutionID string                           `json:"executionId"`
 				SessionID   string                           `json:"sessionId"`
@@ -558,7 +559,7 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 				Kind        string                           `json:"kind"`
 				Status      string                           `json:"status"`
 				Payload     contract.ConnectionRemovePayload `json:"payload"`
-			}{newID(), xid, sid, host, string(contract.CommandKindConnectionRemove), "pending", contract.ConnectionRemovePayload{Connection: c}})); err != nil {
+			}{newID(), xid, sid, host, string(contract.CommandKindConnectionRemove), "pending", contract.ConnectionRemovePayload{Connection: c}}); err != nil {
 				return nil, err
 			}
 			out = append(out, host+"/"+c)
@@ -579,21 +580,22 @@ func withdrawConnectionRemovals(q *Request, conns []string) error {
 		return err
 	}
 	for _, id := range ids {
-		c, err := get(q, id, "command")
+		c, err := recGet[doc](q, recCommand, id)
 		if err != nil {
 			return err
 		}
 		c["status"], c["stopDetail"] = "stopped", "connection in use again"
-		if err := put(q, "command", c); err != nil {
+		if err := recPut(q, recCommand, &c); err != nil {
 			return err
 		}
-		e, err := get(q, c["executionId"], "execution")
+		executionID, _ := c["executionId"].(string)
+		e, err := recGet[doc](q, recExecution, executionID)
 		if err != nil {
 			return err
 		}
 		if !terminal(e) {
 			e["state"], e["stopDetail"], e["finishedAt"] = "cancelled", "connection in use again", nowMs()
-			if err := put(q, "execution", e); err != nil {
+			if err := recPut(q, recExecution, &e); err != nil {
 				return err
 			}
 		}

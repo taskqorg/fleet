@@ -26,13 +26,13 @@ func TestDurableCommandTraceAndDiscovery(t *testing.T) {
 	})
 	defer obs.SetSink(nil)
 	if err := runTx(ctx, env.app, nil, true, "", func(q *Request) error {
-		return put(q, "execution", doc{"id": "x-trace", "executionId": "x-trace", "actor": "program-worker", "hostId": host, "state": "preparing"})
+		return recWrite(q, recExecution, doc{"id": "x-trace", "executionId": "x-trace", "actor": "program-worker", "hostId": host, "state": "preparing"})
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// Detached transaction models dispatch after request completion or coordinator restart.
 	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
-		return put(q, "command", doc{"id": "c-trace", "executionId": "x-trace", "hostId": host, "kind": "script", "status": "pending", "payload": doc{"command": "true"}})
+		return recWrite(q, recCommand, doc{"id": "c-trace", "executionId": "x-trace", "hostId": host, "kind": "script", "status": "pending", "payload": doc{"command": "true"}})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -58,15 +58,15 @@ func TestDurableCommandTraceAndDiscovery(t *testing.T) {
 		t.Fatalf("dispatch %+v", dispatched)
 	}
 	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
-		saved, err := get(q, "c-trace", "command")
+		saved, err := recGet[doc](q, recCommand, "c-trace")
 		if err != nil {
 			return err
 		}
 		saved["status"] = "accepted"
-		if err := put(q, "command", saved); err != nil {
+		if err := recPut(q, recCommand, &saved); err != nil {
 			return err
 		}
-		again, err := get(q, "c-trace", "command")
+		again, err := recGet[doc](q, recCommand, "c-trace")
 		if err != nil {
 			return err
 		}
@@ -87,8 +87,8 @@ func TestDurableCommandTraceAndDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
-		data, err := one(q, "SELECT data FROM execution WHERE id=$1", "typed-trace")
-		if err != nil {
+		var data doc
+		if err := q.tx.QueryRow(q.ctx(), "SELECT data FROM execution WHERE id=$1", "typed-trace").Scan(&data); err != nil {
 			return err
 		}
 		if data["traceparent"] != "00-"+parent.TraceID+"-"+parent.SpanID+"-01" || data["retained"] != "value" {

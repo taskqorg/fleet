@@ -139,7 +139,7 @@ func callerReadOnly(q *Request) bool {
 	if !ok {
 		return false
 	}
-	e, _ := maybe(q, id, "execution")
+	e, _ := recFind[doc](q, recExecution, id)
 	if e == nil {
 		return false
 	}
@@ -147,7 +147,7 @@ func callerReadOnly(q *Request) bool {
 		SessionId string `json:"sessionId"`
 	}
 	jsonRoundTrip(e, &ex)
-	s, _ := maybe(q, ex.SessionId, "session")
+	s, _ := recFind[doc](q, recSession, ex.SessionId)
 	return s != nil && s["access"] == "read"
 }
 

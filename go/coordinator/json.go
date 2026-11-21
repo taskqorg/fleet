@@ -23,11 +23,8 @@ func newID() string {
 // nowMs: the current time in Unix milliseconds.
 func nowMs() int64 { return time.Now().UnixMilli() }
 
-func astr(v any) string          { s, _ := v.(string); return s }
-func mapOf(v any) map[string]any { m, _ := v.(map[string]any); return m }
-func anys(v any) []any           { xs, _ := v.([]any); return xs }
-func js(v any) string            { b, _ := json.Marshal(v); return string(b) }
-func jsonBytes(v any) []byte     { b, _ := json.Marshal(v); return b }
+func js(v any) string        { b, _ := json.Marshal(v); return string(b) }
+func jsonBytes(v any) []byte { b, _ := json.Marshal(v); return b }
 
 // clone deep-copies a JSON value (maps and slices), so a stored record never aliases another.
 func clone(v any) any { var out any; json.Unmarshal(jsonBytes(v), &out); return out }
@@ -45,7 +42,8 @@ func firstString(vs ...any) string {
 // strList: the strings of a JSON array; other elements are skipped.
 func strList(v any) []string {
 	out := []string{}
-	for _, x := range anys(v) {
+	xs, _ := v.([]any)
+	for _, x := range xs {
 		if s, ok := x.(string); ok {
 			out = append(out, s)
 		}

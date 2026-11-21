@@ -496,7 +496,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 			}
 			continue
 		}
-		record, err := get(q, xid, "execution")
+		record, err := recGet[doc](q, recExecution, xid)
 		if err != nil {
 			return nil, err
 		}
@@ -511,7 +511,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 		if !owned {
 			return nil, suffixConflict("wrong execution project")
 		}
-		records, err := all(q, "command", docOf(labExecutionFilter{ExecutionID: xid}))
+		records, err := recAll[doc](q, recCommand, labExecutionFilter{ExecutionID: xid})
 		if err != nil {
 			return nil, err
 		}
@@ -530,7 +530,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 			x.CommandId == nil || *x.CommandId != command.ID || x.NativeExecutionId == nil || *x.NativeExecutionId != xid {
 			return nil, suffixConflict("selected launch plan binding changed")
 		}
-		sessionRecord, err := get(q, e.SessionID, "session")
+		sessionRecord, err := recGet[doc](q, recSession, e.SessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -552,7 +552,7 @@ func suffixRead(q *Request, identity labSuffixIdentity, lock bool) (*suffixSnaps
 			return nil, suffixConflict("original script command changed")
 		}
 
-		events, err := eventsWhere(q, docOf(labExecutionFilter{ExecutionID: xid, Type: "process.reconciled"}))
+		events, err := eventsWhere(q, labExecutionFilter{ExecutionID: xid, Type: "process.reconciled"})
 		if err != nil {
 			return nil, err
 		}

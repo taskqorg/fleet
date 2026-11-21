@@ -44,17 +44,17 @@ type commandRun struct {
 }
 
 // commandTrace records a durable dispatch edge only once. Its parent and identity are coordinator-owned.
-func commandTrace(q *Request, c doc) error {
-	if validTraceparent(c["traceparent"]) {
+func commandTrace(q *Request, c rawObject) error {
+	if validTraceparent(c.text("traceparent")) {
 		return nil
 	}
-	if id, _ := c["id"].(string); id != "" {
+	if id := c.text("id"); id != "" {
 		old, err := q.db().TaskTraceCommand(q.ctx(), id)
 		if err == nil { // An old command remains explicitly unlinked; updating its receipt must not invent history.
 			if old.Traceparent != nil && validTraceparent(*old.Traceparent) {
-				c["traceparent"], c["run"] = *old.Traceparent, json.RawMessage(old.Run)
+				c["traceparent"], c["run"] = jsonBytes(*old.Traceparent), json.RawMessage(old.Run)
 				if old.Run == nil {
-					c["run"] = nil
+					c["run"] = json.RawMessage("null")
 				}
 			}
 			return nil
@@ -63,7 +63,7 @@ func commandTrace(q *Request, c doc) error {
 			return err
 		}
 	}
-	eid, _ := c["executionId"].(string)
+	eid := c.text("executionId")
 	if eid == "" {
 		return nil
 	}
@@ -85,9 +85,8 @@ func commandTrace(q *Request, c doc) error {
 	run := commandRun{ProjectID: deref(e.ProjectID), TaskID: deref(e.TaskID), ExecutionID: eid, AccountID: deref(e.AccountID), ExperimentID: deref(e.ExperimentID), Actor: actor}
 	ctx := obs.WithRun(obs.WithRemote(context.Background(), tp), obs.Run{ProjectID: run.ProjectID, TaskID: run.TaskID, ExecutionID: eid, AccountID: run.AccountID, ExperimentID: run.ExperimentID, Actor: actor})
 	ctx, s := obs.Start(ctx, "dispatch.command", obs.KindInternal)
-	kind, _ := c["kind"].(string)
-	s.Set("fleet.command.kind", kind)
-	c["traceparent"], c["run"] = obs.Traceparent(ctx), run
+	s.Set("fleet.command.kind", c.text("kind"))
+	c["traceparent"], c["run"] = jsonBytes(obs.Traceparent(ctx)), jsonBytes(run)
 	onEnd(q.tx, func(committed bool) {
 		if committed {
 			s.End(nil)

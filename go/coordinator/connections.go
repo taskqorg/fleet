@@ -166,7 +166,7 @@ func connNamed(q *Request, name string) (apiConnection, error) {
 	if !connName.MatchString(name) {
 		return apiConnection{}, fail(400, "Expected connection name")
 	}
-	c, err := kindMaybe[apiConnection](q, "connection:"+name, "api-connection")
+	c, err := recMaybe[apiConnection](q, recAPIConnection, "connection:"+name)
 	if err == nil && c == nil {
 		err = fail(404, "Unknown API key "+name)
 	}
@@ -195,7 +195,7 @@ type connOnly struct {
 }
 
 func connKeys(q *Request, name string) ([]connKey, error) {
-	return kindAll[connKey](q, "connection-key", connOnly{ConnectionID: name})
+	return recAll[connKey](q, recConnectionKey, connOnly{ConnectionID: name})
 }
 
 // Snapshot (§3). Built in its own read transaction, so it shows only committed rows.
@@ -206,7 +206,7 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 	if err != nil {
 		return snap, err
 	}
-	connections, err := kindAll[apiConnection](q, "api-connection", nil)
+	connections, err := recAll[apiConnection](q, recAPIConnection, nil)
 	if err != nil {
 		return snap, err
 	}
@@ -260,7 +260,7 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 		}
 		snap.Connections[c.Name] = gc
 	}
-	toks, err := kindAll[runToken](q, "run-token", nil)
+	toks, err := recAll[runToken](q, recRunToken, nil)
 	if err != nil {
 		return snap, err
 	}
@@ -340,7 +340,7 @@ func connSync(q *Request) error {
 		if !connName.MatchString(name) || !ent.IsDir() {
 			continue
 		}
-		c, err := kindMaybe[apiConnection](q, "connection:"+name, "api-connection")
+		c, err := recMaybe[apiConnection](q, recAPIConnection, "connection:"+name)
 		if err != nil {
 			return err
 		}
@@ -354,7 +354,7 @@ func connSync(q *Request) error {
 			}
 			nc := apiConnection{ID: "connection:" + name, Name: name, Provider: name, Holder: owner, Access: connAccess{Projects: []string{"*"}}.stored(),
 				Intake: "all", Tools: toolNames(name), Comment: "", CreatedAt: jsonBytes(nowMs())}
-			if err := kindPut(q, "api-connection", nc); err != nil {
+			if err := recWrite(q, recAPIConnection, nc); err != nil {
 				return err
 			}
 		}
@@ -362,7 +362,7 @@ func connSync(q *Request) error {
 		for _, f := range files {
 			if m := stagedKey.FindStringSubmatch(f.Name()); m != nil {
 				// An add a crash interrupted: its bytes count only when the row committed.
-				k, err := kindMaybe[connKey](q, "key:"+m[1], "connection-key")
+				k, err := recMaybe[connKey](q, recConnectionKey, "key:"+m[1])
 				if err != nil {
 					return err
 				}
@@ -385,13 +385,13 @@ func connSync(q *Request) error {
 			if fingerprint(strings.TrimSpace(string(b))) != f.Name() {
 				continue // a renamed or edited file never registers under a wrong fingerprint
 			}
-			if k, err := kindMaybe[connKey](q, "key:"+f.Name(), "connection-key"); err != nil {
+			if k, err := recMaybe[connKey](q, recConnectionKey, "key:"+f.Name()); err != nil {
 				return err
 			} else if k != nil && k.State == "retired" {
 				os.Remove(filepath.Join(root, name, f.Name())) // a retirement committed before a crash removed the value
 			} else if k == nil {
 				by := "import"
-				if err := kindPut(q, "connection-key", connKey{ID: "key:" + f.Name(), ConnectionID: name, Fingerprint: f.Name(), State: "active", AddedAt: float64(nowMs()), AddedBy: &by}); err != nil {
+				if err := recWrite(q, recConnectionKey, connKey{ID: "key:" + f.Name(), ConnectionID: name, Fingerprint: f.Name(), State: "active", AddedAt: float64(nowMs()), AddedBy: &by}); err != nil {
 					return err
 				}
 			}
@@ -482,7 +482,7 @@ type connSpend struct {
 }
 
 func connectionsList(q *Request) (any, error) {
-	keys, err := kindAll[connKey](q, "connection-key", nil)
+	keys, err := recAll[connKey](q, recConnectionKey, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +491,7 @@ func connectionsList(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	connections, err := kindAll[apiConnection](q, "api-connection", nil)
+	connections, err := recAll[apiConnection](q, recAPIConnection, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -524,7 +524,7 @@ func connectionsCreate(q *Request, r *contract.ConnectionsCreateRequest) (any, e
 	if slices.Contains(contract.ExecutorMCPServers, name) {
 		return nil, fail(400, "Connection name "+name+" is an executor MCP server name")
 	}
-	if old, err := kindMaybe[apiConnection](q, "connection:"+name, "api-connection"); err != nil {
+	if old, err := recMaybe[apiConnection](q, recAPIConnection, "connection:"+name); err != nil {
 		return nil, err
 	} else if old != nil {
 		return nil, fail(409, "API key name exists")
@@ -542,7 +542,7 @@ func connectionsCreate(q *Request, r *contract.ConnectionsCreateRequest) (any, e
 	}
 	c := apiConnection{ID: "connection:" + name, Name: name, Provider: provider, Holder: holder, Access: connAccess{}.stored(),
 		Intake: "all", Tools: toolNames(provider), Comment: comment, CreatedAt: jsonBytes(nowMs())}
-	if err := kindPut(q, "api-connection", c); err != nil {
+	if err := recWrite(q, recAPIConnection, c); err != nil {
 		return nil, err
 	}
 	publish(q)
@@ -566,7 +566,7 @@ func connectionsKeyAdd(q *Request, r *contract.ConnectionsKeyAddRequest) (any, e
 			return nil, err
 		}
 	}
-	if old, err := kindMaybe[connKey](q, "key:"+fp, "connection-key"); err != nil {
+	if old, err := recMaybe[connKey](q, recConnectionKey, "key:"+fp); err != nil {
 		return nil, err
 	} else if old != nil {
 		if qid != "" && old.ConnectionID == c.Name && old.State == "active" { // Fleet already holds it: answer with it
@@ -583,7 +583,7 @@ func connectionsKeyAdd(q *Request, r *contract.ConnectionsKeyAddRequest) (any, e
 	}
 	by := actor(q, "operator")
 	k := connKey{ID: "key:" + fp, ConnectionID: c.Name, Fingerprint: fp, State: "active", AddedAt: float64(nowMs()), AddedBy: &by}
-	if err := kindPut(q, "connection-key", k); err != nil {
+	if err := recWrite(q, recConnectionKey, k); err != nil {
 		return nil, err
 	}
 	// The value is staged before commit and takes its key name only after the row committed; a rolled-back add removes
@@ -684,7 +684,7 @@ func connectionsDelete(q *Request, r *contract.ConnectionsDeleteRequest) (contra
 		return no, err
 	}
 	name := c.Name
-	if _, err := getForUpdate(q, c.ID, "api-connection"); err != nil {
+	if _, err := recLocked[doc](q, recAPIConnection, c.ID); err != nil {
 		return no, err
 	}
 	keys, err := connKeys(q, name)
@@ -696,14 +696,14 @@ func connectionsDelete(q *Request, r *contract.ConnectionsDeleteRequest) (contra
 			return no, fail(409, "Retire every key of "+name+" first")
 		}
 	}
-	toks, err := kindAll[runToken](q, "run-token", nil)
+	toks, err := recAll[runToken](q, recRunToken, nil)
 	if err != nil {
 		return no, err
 	}
 	for _, t := range toks {
 		if slices.Contains(t.Connections, name) {
 			t.Connections = slices.DeleteFunc(t.Connections, func(n string) bool { return n == name })
-			if err := kindPut(q, "run-token", t); err != nil {
+			if err := recWrite(q, recRunToken, t); err != nil {
 				return no, err
 			}
 		}
@@ -743,7 +743,7 @@ func connectionsKeyState(q *Request, r *contract.ConnectionsKeyStateRequest) (an
 	if id != "" && !strings.HasPrefix(id, "key:") {
 		id = "key:" + id
 	}
-	kp, err := kindMaybe[connKey](q, id, "connection-key")
+	kp, err := recMaybe[connKey](q, recConnectionKey, id)
 	if err != nil {
 		return nil, err
 	}
@@ -778,7 +778,7 @@ func connectionsKeyState(q *Request, r *contract.ConnectionsKeyStateRequest) (an
 		enabled := float64(now)
 		k.DisabledReason, k.DisabledAt, k.Problem, k.EnabledAt = nil, nil, nil, &enabled
 	}
-	if err := kindPut(q, "connection-key", k); err != nil {
+	if err := recWrite(q, recConnectionKey, k); err != nil {
 		return nil, err
 	}
 	// The key left disabled (enabled again or retired): its refused-key question no longer needs the owner.
@@ -804,7 +804,7 @@ func connectionsKeyState(q *Request, r *contract.ConnectionsKeyStateRequest) (an
 func connUpdated(q *Request, c apiConnection) error {
 	now := nowMs()
 	c.UpdatedAt = &now
-	if err := kindPut(q, "api-connection", c); err != nil {
+	if err := recWrite(q, recAPIConnection, c); err != nil {
 		return err
 	}
 	publish(q)
@@ -813,7 +813,7 @@ func connUpdated(q *Request, c apiConnection) error {
 
 // connectionsSetTools (owner): the explicit provider tool grant.
 func connectionsSetTools(q *Request, r *contract.ConnectionsSetToolsRequest) (any, error) {
-	if _, err := getForUpdate(q, "connection:"+r.Connection, "api-connection"); err != nil && !errors.Is(err, errNotFound) {
+	if _, err := recLocked[doc](q, recAPIConnection, "connection:"+r.Connection); err != nil && !errors.Is(err, errNotFound) {
 		return nil, err
 	}
 	c, err := connNamed(q, r.Connection)
@@ -933,7 +933,7 @@ func connectionsTokenCreate(q *Request, r *contract.ConnectionsTokenCreateReques
 	if !connName.MatchString(name) {
 		return nil, fail(400, "Expected token name")
 	}
-	toks, err := kindAll[runToken](q, "run-token", nil)
+	toks, err := recAll[runToken](q, recRunToken, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -958,7 +958,7 @@ func connectionsTokenCreate(q *Request, r *contract.ConnectionsTokenCreateReques
 
 func connectionsTokenList(q *Request) (contract.ConnectionsTokenListReply, error) {
 	out := contract.ConnectionsTokenListReply{Tokens: []contract.TokenInfo{}}
-	toks, err := kindAll[runToken](q, "run-token", nil)
+	toks, err := recAll[runToken](q, recRunToken, nil)
 	if err != nil {
 		return out, err
 	}
@@ -973,7 +973,7 @@ func connectionsTokenList(q *Request) (contract.ConnectionsTokenListReply, error
 
 func connectionsTokenRevoke(q *Request, r *contract.ConnectionsTokenRevokeRequest) (contract.ConnectionsTokenRevokeReply, error) {
 	var no contract.ConnectionsTokenRevokeReply
-	toks, err := kindAll[runToken](q, "run-token", nil)
+	toks, err := recAll[runToken](q, recRunToken, nil)
 	if err != nil {
 		return no, err
 	}
@@ -981,7 +981,7 @@ func connectionsTokenRevoke(q *Request, r *contract.ConnectionsTokenRevokeReques
 	for _, t := range toks {
 		if deref(t.Personal) == r.Name && !t.revoked() {
 			t.RevokedAt = jsonBytes(nowMs())
-			if err := kindPut(q, "run-token", t); err != nil {
+			if err := recWrite(q, recRunToken, t); err != nil {
 				return no, err
 			}
 			n++
@@ -1142,7 +1142,7 @@ func mintGrantFor(q *Request, run mintRun, requested []string) (mintGrant, error
 	}
 	granted := []apiConnection{}
 	for _, name := range uniq {
-		c, err := kindMaybe[apiConnection](q, "connection:"+name, "api-connection")
+		c, err := recMaybe[apiConnection](q, recAPIConnection, "connection:"+name)
 		if err != nil {
 			return mintGrant{}, err
 		}
@@ -1189,7 +1189,7 @@ func mintGrantFor(q *Request, run mintRun, requested []string) (mintGrant, error
 	row := runToken{ID: "run-token:" + sha, Sha256: sha, ExecutionID: run.ExecutionID, DirectedBy: run.DirectedBy, ProjectID: project,
 		ExperimentID: run.ExperimentID, PipelineRunID: run.PipelineRunID, Connections: names, CreatedAt: jsonBytes(nowMs()), FileDownloads: fileDownloads,
 		Step: run.Step, Personal: run.Personal, SystemActor: run.SystemActor} // systemActor: its calls are Fleet's own activity (connRecord)
-	if err := kindPut(q, "run-token", row); err != nil {
+	if err := recWrite(q, recRunToken, row); err != nil {
 		return mintGrant{}, err
 	}
 	publish(q)
@@ -1377,7 +1377,7 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 	if l.CallId == "" || l.TokenSha256 == nil || l.ExecutionId == nil {
 		return false, nil
 	}
-	t, err := kindMaybe[runToken](q, "run-token:"+*l.TokenSha256, "run-token")
+	t, err := recMaybe[runToken](q, recRunToken, "run-token:"+*l.TokenSha256)
 	if err != nil || t == nil {
 		return false, err
 	}
@@ -1482,7 +1482,7 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 		}
 	}
 	if p := l.KeyProblem; p != nil && p.Key != "" {
-		k, err := kindMaybe[connKey](q, "key:"+p.Key, "connection-key")
+		k, err := recMaybe[connKey](q, recConnectionKey, "key:"+p.Key)
 		if err != nil {
 			return err
 		}
@@ -1498,7 +1498,7 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 				return nil
 			}
 			k.Problem = &keyProblem{Status: p.Status, Message: msg, At: at}
-			if err := kindPut(q, "connection-key", *k); err != nil {
+			if err := recWrite(q, recConnectionKey, *k); err != nil {
 				return err
 			}
 		}
@@ -1570,7 +1570,7 @@ func connComplete(q *Request, l contract.CallLine) error {
 }
 
 func connDisable(q *Request, fp string, status, attemptedAt int64) error {
-	k, err := kindMaybe[connKey](q, "key:"+fp, "connection-key")
+	k, err := recMaybe[connKey](q, recConnectionKey, "key:"+fp)
 	if err != nil || k == nil || k.State == "retired" || k.State == "disabled" {
 		return err
 	}
@@ -1580,7 +1580,7 @@ func connDisable(q *Request, fp string, status, attemptedAt int64) error {
 	st := fmt.Sprint(status)
 	reason, now := "provider answered HTTP "+st, nowMs()
 	k.State, k.DisabledReason, k.DisabledAt = "disabled", &reason, &now
-	if err := kindPut(q, "connection-key", *k); err != nil {
+	if err := recWrite(q, recConnectionKey, *k); err != nil {
 		return err
 	}
 	publish(q)
@@ -1683,7 +1683,7 @@ func connReconcile(ctx context.Context, a *App) {
 	at := orNull(report.At)
 	err = runTx(ctx, a, nil, true, "", func(q *Request) error {
 		for _, row := range report.Keys {
-			k, err := kindMaybe[connKey](q, "key:"+row.Key, "connection-key")
+			k, err := recMaybe[connKey](q, recConnectionKey, "key:"+row.Key)
 			if err != nil {
 				return err
 			}
@@ -1716,7 +1716,7 @@ func connReconcile(ctx context.Context, a *App) {
 				difference := delta - recorded
 				k.Reconcile = &keyReconcile{At: at, ProviderDelta: &delta, Recorded: &recorded, Difference: &difference}
 			}
-			if err := kindPut(q, "connection-key", *k); err != nil {
+			if err := recWrite(q, recConnectionKey, *k); err != nil {
 				return err
 			}
 		}
@@ -1815,7 +1815,7 @@ func keyAnswerCheck(q *Request, question doc, answer string) error {
 	if json.Unmarshal([]byte(answer), &a) != nil || a.Connection != conn || keyAnswer(a.Connection, a.Fingerprint, a.State) != answer {
 		return fail(400, "Answer decline, or add the key in its field")
 	}
-	k, err := kindMaybe[connKey](q, "key:"+a.Fingerprint, "connection-key")
+	k, err := recMaybe[connKey](q, recConnectionKey, "key:"+a.Fingerprint)
 	if err != nil {
 		return err
 	}

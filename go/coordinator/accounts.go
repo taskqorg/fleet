@@ -161,50 +161,16 @@ type accountJobCommand struct {
 // (account_discover, account_connect, subscription_limits_refresh); the execution's id.
 func accountInspectionJob(q *Request, host string, p contract.AccountInspectPayload) (string, error) {
 	sid, eid := newID(), newID()
-	if err := put(q, "session", docOf(accountJobSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"})); err != nil {
+	if err := recWrite(q, recSession, accountJobSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
 		return "", err
 	}
-	if err := put(q, "execution", docOf(accountJobExecution{ID: eid, ExecutionID: eid, SessionID: sid, HostID: host, State: "preparing", CreatedAt: nowMs(),
-		Actor: "program-worker", AccountID: p.AccountId})); err != nil {
+	if err := recWrite(q, recExecution, accountJobExecution{ID: eid, ExecutionID: eid, SessionID: sid, HostID: host, State: "preparing", CreatedAt: nowMs(),
+		Actor: "program-worker", AccountID: p.AccountId}); err != nil {
 		return "", err
 	}
-	return eid, put(q, "command", docOf(accountJobCommand{ID: newID(), ExecutionID: eid, SessionID: sid, HostID: host, Kind: string(contract.CommandKindAccountInspect),
-		Status: "pending", Payload: p}))
+	return eid, recWrite(q, recCommand, accountJobCommand{ID: newID(), ExecutionID: eid, SessionID: sid, HostID: host, Kind: string(contract.CommandKindAccountInspect),
+		Status: "pending", Payload: p})
 }
-
-// kindGet, kindMaybe, kindAll, kindPut: records of a kind (get, maybe, all and put, records.go) as T, decoded once here;
-// a filter is a struct whose JSON fields (omitempty) are the record fields matched.
-func kindGet[T any](q *Request, id, kind string) (T, error) {
-	d, err := get(q, id, kind)
-	if err != nil {
-		var none T
-		return none, err
-	}
-	return asT[T](d)
-}
-
-func kindMaybe[T any](q *Request, id, kind string) (*T, error) {
-	d, err := maybe(q, id, kind)
-	if err != nil || d == nil {
-		return nil, err
-	}
-	t, err := asT[T](d)
-	return &t, err
-}
-
-func kindAll[T any](q *Request, kind string, filter any) ([]T, error) {
-	var f doc
-	if filter != nil {
-		f = docOf(filter)
-	}
-	ds, err := all(q, kind, f)
-	if err != nil {
-		return nil, err
-	}
-	return asT[[]T](ds)
-}
-
-func kindPut(q *Request, kind string, v any) error { return put(q, kind, docOf(v)) }
 
 // accountRec: a subscription as all/get/put serve it: the managed_account columns and the payload fields its writers
 // (accountCreate, accountUpdate, accountReport) write. Bindings stay as stored; bindings() reads them.
@@ -296,7 +262,7 @@ func accountHostBeat(q *Request, id string) (*hostBeat, error) {
 	if err != nil || h == nil {
 		return nil, err
 	}
-	b, err := kindMaybe[hostBeat](q, id, "host-observation")
+	b, err := recMaybe[hostBeat](q, recHostObservation, id)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +308,7 @@ func accountHosts(q *Request, harness string) ([]accountHost, error) {
 			ids = append(ids, id)
 		}
 	}
-	accounts, err := kindAll[accountRec](q, "managed-account", nil)
+	accounts, err := recAll[accountRec](q, recManagedAccount, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +410,7 @@ func accountHostsOp(q *Request, r *contract.AccountHostsRequest) (any, error) {
 		harness = *r.Harness
 	}
 	if r.AccountId != nil {
-		a, err := kindGet[accountRec](q, *r.AccountId, "managed-account")
+		a, err := recGet[accountRec](q, recManagedAccount, *r.AccountId)
 		if err != nil {
 			return nil, err
 		}
@@ -503,11 +469,11 @@ type accountView struct {
 }
 
 func accountList(q *Request) (any, error) {
-	cats, err := kindAll[json.RawMessage](q, "account-catalogue", nil)
+	cats, err := recAll[json.RawMessage](q, recAccountCatalogue, nil)
 	if err != nil {
 		return nil, err
 	}
-	as, err := kindAll[accountRec](q, "managed-account", nil)
+	as, err := recAll[accountRec](q, recManagedAccount, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -518,7 +484,7 @@ func accountList(q *Request) (any, error) {
 	out := []accountView{}
 	for _, a := range as {
 		v := accountView{accountRec: a, Inspections: []accountInspectionView{}, History: []json.RawMessage{}}
-		ins, err := kindAll[accountInspectionRec](q, "account-inspection", accountOnly{AccountID: a.ID})
+		ins, err := recAll[accountInspectionRec](q, recAccountInspection, accountOnly{AccountID: a.ID})
 		if err != nil {
 			return nil, err
 		}
@@ -533,7 +499,7 @@ func accountList(q *Request) (any, error) {
 			}
 			v.Inspections = append(v.Inspections, accountInspectionView{accountInspectionRec: i, State: e.State, Error: errValue})
 		}
-		if v.Checks, err = kindAll[json.RawMessage](q, "account-check", accountOnly{AccountID: a.ID}); err != nil {
+		if v.Checks, err = recAll[json.RawMessage](q, recAccountCheck, accountOnly{AccountID: a.ID}); err != nil {
 			return nil, err
 		}
 		for _, h := range changes {
@@ -599,7 +565,7 @@ func accountCreate(q *Request, r *contract.AccountCreateRequest) (any, error) {
 	a := accountRec{ID: newID(), Name: r.Name, Harness: harness, Holder: holder, Kind: &kind, Plan: &plan, Intake: "all",
 		Take: json.RawMessage(`{"projects":[]}`), SwitchPct: json.RawMessage("null"), Comment: &comment, CreatedAt: jsonBytes(nowMs()),
 		Bindings: []json.RawMessage{}, Login: &login}
-	return a, kindPut(q, "managed-account", a)
+	return a, recWrite(q, recManagedAccount, a)
 }
 
 func integrationHost(q *Request) (string, error) {
@@ -608,7 +574,7 @@ func integrationHost(q *Request) (string, error) {
 
 // accountBound: the error when a subscription other than a already has binding name on host.
 func accountBound(q *Request, a accountRec, host string, name *string) error {
-	others, err := kindAll[accountRec](q, "managed-account", nil)
+	others, err := recAll[accountRec](q, recManagedAccount, nil)
 	if err != nil {
 		return err
 	}
@@ -624,7 +590,7 @@ func accountBound(q *Request, a accountRec, host string, name *string) error {
 // binding is nil (account_discover), else the status of that binding (account_connect). host "" is the default host.
 func accountInspect(q *Request, accountID, host string, wanted *string) (any, error) {
 	catalogue := wanted == nil
-	a, err := kindGet[accountRec](q, accountID, "managed-account")
+	a, err := recGet[accountRec](q, recManagedAccount, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -660,7 +626,7 @@ func accountInspect(q *Request, accountID, host string, wanted *string) (any, er
 			return nil, err
 		}
 	}
-	olds, err := kindAll[accountInspectionRec](q, "account-inspection", nil)
+	olds, err := recAll[accountInspectionRec](q, recAccountInspection, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -685,7 +651,7 @@ func accountInspect(q *Request, accountID, host string, wanted *string) (any, er
 	}
 	action := "Read-only inspection; no authentication changes. Await host result, then explicit login handoff only if needed."
 	r := accountInspectionRec{ID: newID(), AccountID: a.ID, HostID: host, Binding: binding, ExecutionID: id, CreatedAt: jsonBytes(nowMs()), LoginAction: &action}
-	return r, kindPut(q, "account-inspection", r)
+	return r, recWrite(q, recAccountInspection, r)
 }
 
 // loginArgv: the login arguments of each harness's binary; nil where the bound agent logs in on its own.
@@ -732,7 +698,7 @@ func orNull(v json.RawMessage) json.RawMessage {
 
 func accountLoginHandoff(q *Request, r *contract.AccountLoginHandoffRequest) (contract.AccountLoginHandoffReply, error) {
 	var no contract.AccountLoginHandoffReply
-	a, err := kindGet[accountRec](q, r.AccountId, "managed-account")
+	a, err := recGet[accountRec](q, recManagedAccount, r.AccountId)
 	if err != nil {
 		return no, err
 	}
@@ -744,9 +710,9 @@ func accountLoginHandoff(q *Request, r *contract.AccountLoginHandoffRequest) (co
 	if host == nil || !host.Eligible || !host.OnboardingSupported || host.Connectivity != "online" {
 		return no, fail(409, "No eligible supported online native login host")
 	}
-	cats, err := kindAll[struct {
+	cats, err := recAll[struct {
 		Bindings []json.RawMessage `json:"bindings"`
-	}](q, "account-catalogue", catalogueFilter{HostID: host.ID, Harness: a.Harness})
+	}](q, recAccountCatalogue, catalogueFilter{HostID: host.ID, Harness: a.Harness})
 	if err != nil {
 		return no, err
 	}
@@ -767,7 +733,7 @@ func accountLoginHandoff(q *Request, r *contract.AccountLoginHandoffRequest) (co
 			existing = &b
 		}
 	}
-	checks, err := kindAll[accountCheckRec](q, "account-check", accountCheckFilter{AccountID: a.ID, HostID: host.ID, Binding: r.Binding})
+	checks, err := recAll[accountCheckRec](q, recAccountCheck, accountCheckFilter{AccountID: a.ID, HostID: host.ID, Binding: r.Binding})
 	if err != nil {
 		return no, err
 	}
@@ -816,7 +782,7 @@ func accountUpdate(q *Request, r *contract.AccountUpdateRequest) (any, error) {
 		LowPct     json.RawMessage `json:"lowPct"`
 	}
 	_ = json.Unmarshal(q.body, &sent)
-	a, err := kindGet[accountRec](q, r.AccountId, "managed-account")
+	a, err := recGet[accountRec](q, recManagedAccount, r.AccountId)
 	if err != nil {
 		return nil, err
 	}
@@ -942,7 +908,7 @@ func accountUpdate(q *Request, r *contract.AccountUpdateRequest) (any, error) {
 	}
 	now := nowMs()
 	a.UpdatedAt = &now
-	return a, kindPut(q, "managed-account", a)
+	return a, recWrite(q, recManagedAccount, a)
 }
 
 var checkReasons = []string{"ready", "login-absent", "executable-missing", "binding-unprovisioned", "binding-absent", "status-unknown", "catalogue-only", "configuration-error"}
@@ -971,7 +937,7 @@ type accountBindingOut struct {
 
 // accountReport: a host's observation of one binding of a subscription.
 func accountReport(q *Request, b *contract.AccountObservation, host string) (any, error) {
-	a, err := kindGet[accountRec](q, b.AccountId, "managed-account")
+	a, err := recGet[accountRec](q, recManagedAccount, b.AccountId)
 	if err != nil {
 		return nil, err
 	}
@@ -1034,7 +1000,7 @@ func accountReport(q *Request, b *contract.AccountObservation, host string) (any
 		LastCheck: last, ReadinessBasis: basis, Authority: "host-owned native registry; no credentials transferred"}
 	check := accountCheckRec{ID: newID(), AccountID: a.ID, HostID: host, Binding: b.Binding, Readiness: b.Readiness, Roots: roots,
 		Reason: jsonBytes(reason), NativeLoginObserved: b.NativeLoginObserved, Quota: "unknown", ObservedAt: jsonBytes(observedAt)}
-	if err := kindPut(q, "account-check", check); err != nil {
+	if err := recWrite(q, recAccountCheck, check); err != nil {
 		return nil, err
 	}
 	current := a.binding(host, nil, false)
@@ -1050,12 +1016,12 @@ func accountReport(q *Request, b *contract.AccountObservation, host string) (any
 	if a.Bindings == nil {
 		a.Bindings = []json.RawMessage{}
 	}
-	return a, kindPut(q, "managed-account", a)
+	return a, recWrite(q, recManagedAccount, a)
 }
 
 // accountCatalogue: the safe binding metadata the default host's inspector reports.
 func accountCatalogue(q *Request, b *contract.AccountCatalogue, host string) (any, error) {
-	a, err := kindGet[accountRec](q, b.AccountId, "managed-account")
+	a, err := recGet[accountRec](q, recManagedAccount, b.AccountId)
 	if err != nil {
 		return nil, err
 	}
@@ -1080,7 +1046,7 @@ func accountCatalogue(q *Request, b *contract.AccountCatalogue, host string) (an
 		name := m.Name
 		out = append(out, catalogueBinding{Name: &name, Executable: jsonBytes(m.Executable), Environment: jsonBytes(env), BehaviorApproved: jsonBytes(m.BehaviorApproved)})
 	}
-	err = kindPut(q, "account-catalogue", struct {
+	err = recWrite(q, recAccountCatalogue, struct {
 		ID         string             `json:"id"`
 		HostID     string             `json:"hostId"`
 		Harness    string             `json:"harness"`
@@ -1115,7 +1081,7 @@ func resolveAccount(q *Request, selection *string, harness, host string, directo
 	if requested == "" {
 		return nil, nil
 	}
-	as, err := kindAll[accountRec](q, "managed-account", nil)
+	as, err := recAll[accountRec](q, recManagedAccount, nil)
 	if err != nil {
 		return nil, err
 	}

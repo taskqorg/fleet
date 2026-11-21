@@ -703,7 +703,7 @@ func (run *runRecord) put(q *Request) error {
 		return err
 	}
 	cfg := pipelineConfigRef{Method: agentOpt(run.SelectedMethod), DefinitionSha256: run.DefinitionSha256}
-	_, _, pipeID, pipeRev := definitionScalars(run.Definitions, nil)
+	_, _, pipeID, pipeRev := definitionScalars(run.Definitions, "")
 	if pipeID == nil {
 		pipeID = nilIf(run.PipelineID)
 	}
@@ -1201,7 +1201,7 @@ func startRun(q *Request, o pipelineStartOptions) (*runRecord, error) {
 			}
 		}
 		if parent.SessionID != nil {
-			session, e := kindGet[pipelineSessionOwner](q, *parent.SessionID, "session")
+			session, e := recGet[pipelineSessionOwner](q, recSession, *parent.SessionID)
 			if e != nil {
 				return nil, e
 			}
@@ -1687,7 +1687,7 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 	dir := run.director()
 	// A host command session like the others (actor program-worker): it holds the step's host job, not a conversation.
 	s := agentSession{ID: sid, CreatedAt: nowMs(), PipelineRunID: run.ID, Actor: "program-worker", DirectedBy: dir, ProjectID: run.project()}
-	if err := agentPut(q, "session", &s); err != nil {
+	if err := recPut(q, recSession, &s); err != nil {
 		return "", err
 	}
 	if hostID == "" {
@@ -1696,7 +1696,7 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 	id := newID()
 	e := pipelineHostJob{ID: id, ExecutionID: id, SessionID: sid, HostID: hostID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker", PipelineStepID: stepExecutionID,
 		PipelineRunID: run.ID, ProjectSnapshot: orNull(run.ProjectSnapshot), DirectedBy: dir, ExperimentID: run.ExperimentID}
-	if err := putExecution(q, docOf(e)); err != nil { // a host job, the step's child in the run's project (session) and experiment
+	if err := recWrite(q, recExecution, e); err != nil { // a host job, the step's child in the run's project (session) and experiment
 		return "", err
 	}
 	if inputs == nil {
@@ -1706,7 +1706,7 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 	if !isNull(timeout) {
 		payload.TimeoutMs = timeout
 	}
-	return id, kindPut(q, "command", pipelineScriptCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: "script", Payload: payload, Status: "pending"})
+	return id, recWrite(q, recCommand, pipelineScriptCommand{ID: newID(), ExecutionID: id, SessionID: sid, HostID: hostID, Kind: "script", Payload: payload, Status: "pending"})
 }
 
 // pipelineClaimCall claims a provider call of a pipeline api step in q's transaction (claimPipelineAPI: a submit is handed
@@ -2079,7 +2079,7 @@ func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run *runRecord, i in
 		return nil
 	}
 	// Agent or script step running: wait for its execution.
-	e, err := kindMaybe[pipelineNative](q, s.ExecutionID, "execution")
+	e, err := recMaybe[pipelineNative](q, recExecution, s.ExecutionID)
 	if err != nil {
 		return err
 	}
@@ -3104,7 +3104,7 @@ func startAgentStep(q *Request, run *runRecord, step *pipelineDefStep, stepExecu
 	}
 	s := agentSession{ID: newID(), CreatedAt: nowMs(), AgentConfig: jsonBytes(profile), PipelineRunID: run.ID, DirectedBy: run.director(), Account: overrides.Account,
 		ProjectID: run.project()}
-	if err := agentPut(q, "session", &s); err != nil {
+	if err := recPut(q, recSession, &s); err != nil {
 		return "", err
 	}
 	if inputs == nil {

@@ -107,9 +107,7 @@ func frameHash(v any) string {
 
 // eventsWhere: the events of either kind matching a record filter, for callers on the generic record API
 // (lab_retry.go, pipeline_plan.go).
-func eventsWhere(q *Request, f doc) ([]doc, error) {
-	return convAll(q, convEventAny, f)
-}
+func eventsWhere(q *Request, f any) ([]doc, error) { return recAll[doc](q, recEventAny, f) }
 
 func eventKind(v eventRecord) string {
 	if v.object("data").object("fleetNormalized").has("deltaOf") {

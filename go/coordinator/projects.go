@@ -778,7 +778,8 @@ func agentReady(q *Request, c doc) (bool, error) {
 	if c["kind"] != "steer" {
 		return true, nil
 	}
-	e, err := get(q, c["executionId"], "execution")
+	executionID, _ := c["executionId"].(string)
+	e, err := recGet[doc](q, recExecution, executionID)
 	return err == nil && !terminal(e), err
 }
 

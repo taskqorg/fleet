@@ -657,7 +657,5 @@ var designRulesOwned = map[string]map[string]string{
 // at stage 0. Entries are only removed.
 var designRulesLegacy = map[string]map[string]bool{
 	"json.go":     {"R-MAP": true},
-	"records.go":  {"R-MAP": true, "R-SQL": true},
 	"registry.go": {"R-MAP": true},
-	"sessions.go": {"R-MAP": true, "R-SQL": true},
 }

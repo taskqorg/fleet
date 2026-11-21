@@ -14,3 +14,7 @@ UPDATE question SET state='withdrawn',data=CASE WHEN sqlc.narg(withdrawal)::json
 -- name: QuestionsWithdrawOpen :many
 -- Withdraws the open questions of ids; the ids withdrawn.
 UPDATE question SET state='withdrawn' WHERE id=ANY(sqlc.arg(ids)::text[]) AND state='open' RETURNING id;
+
+-- name: QuestionRowRecord :one
+-- The question's row as a record keyed by column name (questionRecord: the answer checks and the answer replies).
+SELECT to_jsonb(qu)::jsonb FROM question qu WHERE qu.id=$1;

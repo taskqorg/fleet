@@ -47,6 +47,18 @@ func (q *Queries) QuestionLockState(ctx context.Context, id string) (QuestionSta
 	return state, err
 }
 
+const questionRowRecord = `-- name: QuestionRowRecord :one
+SELECT to_jsonb(qu)::jsonb FROM question qu WHERE qu.id=$1
+`
+
+// The question's row as a record keyed by column name (questionRecord: the answer checks and the answer replies).
+func (q *Queries) QuestionRowRecord(ctx context.Context, id string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, questionRowRecord, id)
+	var column_1 []byte
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const questionWithdraw = `-- name: QuestionWithdraw :exec
 UPDATE question SET state='withdrawn',data=CASE WHEN $1::jsonb IS NULL THEN data ELSE coalesce(data,'{}'::jsonb)||jsonb_build_object('withdrawal',$1::jsonb) END WHERE id=$2
 `

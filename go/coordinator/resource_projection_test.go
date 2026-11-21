@@ -1928,7 +1928,7 @@ func TestResourceProjectlessToolRunPostgres(t *testing.T) {
 	if err := runTx(ctx, a, nil, true, GLOBAL, func(q *Request) error {
 		// A token minted before the fix stored projectId "".
 		row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": parent, "projectId": "", "step": true, "connections": []any{"bugsink"}, "createdAt": nowMs()}
-		if err := put(q, "run-token", row); err != nil {
+		if err := recPut(q, recRunToken, &row); err != nil {
 			return err
 		}
 		_, err := connRecord(q, contract.CallLine{CallId: callID, Connection: "bugsink", Tool: "issue_get", Outcome: contract.CallOutcomeOk, Status: 200,

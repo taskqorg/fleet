@@ -92,7 +92,7 @@ func commandOf(q *Request, hostID, executionID, commandID, msg string) (agentCom
 	if err := ownedBody(q, hostID, executionID); err != nil {
 		return none, err
 	}
-	c, err := agentGet[agentCommand](q, commandID, "command")
+	c, err := recGet[agentCommand](q, recCommand, commandID)
 	if err != nil {
 		return none, err
 	}
@@ -108,7 +108,7 @@ func ownedBody(q *Request, hostID, executionID string) error {
 		return fail(403, "Host rejected")
 	}
 	if executionID != "" {
-		e, err := agentGet[agentExecution](q, executionID, "execution")
+		e, err := recGet[agentExecution](q, recExecution, executionID)
 		if err != nil {
 			return err
 		}
@@ -187,7 +187,7 @@ func projectReceiptIn(q *Request, b *contract.ProjectReceipt) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	s, err := agentGet[agentSession](q, c.SessionID, "session")
+	s, err := recGet[agentSession](q, recSession, c.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +246,7 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	native := deref(b.NativeSessionId)
 	hasNative := native != ""
 	if hasNative {
-		e, err := agentGet[agentExecution](q, b.ExecutionId, "execution")
+		e, err := recGet[agentExecution](q, recExecution, b.ExecutionId)
 		if err != nil {
 			return nil, "", err
 		}
@@ -259,10 +259,10 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 		}
 	}
 	c.Status = status
-	if err := agentPut(q, "command", &c); err != nil {
+	if err := recPut(q, recCommand, &c); err != nil {
 		return nil, "", err
 	}
-	e, err := agentGet[agentExecution](q, b.ExecutionId, "execution")
+	e, err := recGet[agentExecution](q, recExecution, b.ExecutionId)
 	if err != nil {
 		return nil, "", err
 	}
@@ -306,7 +306,7 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 			return nil, "", err
 		}
 	}
-	if err := agentPut(q, "execution", &e); err != nil {
+	if err := recPut(q, recExecution, &e); err != nil {
 		return nil, "", err
 	}
 	// Once an execution is terminal, withheld pending work no longer owns
@@ -368,11 +368,11 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 // agentAccountList: the subscriptions a native agent's work may use (its director's, or taken for its project), without
 // host roots or bindings. Fixed: the TypeScript coordinator handed a native agent every subscription with every host's roots.
 func agentAccountList(q *Request, project, executionID string) (any, error) {
-	e, err := agentGet[agentExecution](q, executionID, "execution")
+	e, err := recGet[agentExecution](q, recExecution, executionID)
 	if err != nil {
 		return nil, err
 	}
-	accounts, err := all(q, "managed-account", nil)
+	accounts, err := recAll[doc](q, recManagedAccount, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -1317,3 +1317,10 @@ func sqlTombstoneRows(table, where, kept string) string {
 func sqlPurgeRows(table, where, kept string) string {
 	return "DELETE FROM " + table + " WHERE " + andFilter(kept, where)
 }
+
+// has: whether the statement sql (built here: a resource item page's next row) returns a row.
+func has(q *Request, sql string, args ...any) (bool, error) {
+	var ok bool
+	err := q.tx.QueryRow(q.ctx(), "SELECT EXISTS("+sql+")", args...).Scan(&ok)
+	return ok, err
+}

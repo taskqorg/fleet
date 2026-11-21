@@ -238,7 +238,7 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 			k.byID[v.ID], k.views[v.ID] = h, v
 		}
 	}
-	obs, err := all(q, "host-observation", nil)
+	obs, err := recAll[doc](q, recHostObservation, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +253,7 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 			k.roots[o.ID] = nonNilStrings(*o.ProjectRoots)
 		}
 	}
-	accounts, err := all(q, "managed-account", nil)
+	accounts, err := recAll[doc](q, recManagedAccount, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -819,7 +819,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		}
 	}
 	for _, id := range ids {
-		e, err := get(q, id, "execution")
+		e, err := recGet[doc](q, recExecution, id)
 		if err != nil {
 			return err
 		}
@@ -833,7 +833,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				}
 				// Re-read after acquiring the session lock so any concurrent session write is visible (a stop does not take it:
 				// the row lock of claimRow serializes with that).
-				e, err = get(q, id, "execution")
+				e, err = recGet[doc](q, recExecution, id)
 				if err != nil {
 					return err
 				}
@@ -898,7 +898,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 					return err
 				}
 				queued["state"], queued["stopDetail"] = "cancelled", "start refused: "+he.Msg
-				if err := put(q, "execution", queued); err != nil {
+				if err := recPut(q, recExecution, &queued); err != nil {
 					return err
 				}
 				if err := q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id}); err != nil {
@@ -937,7 +937,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				continue
 			}
 			e["state"], e["stopDetail"], e["waitReason"], e["waitDetail"] = "cancelled", reason, waitKindOf(cause), reason
-			if err := put(q, "execution", e); err != nil {
+			if err := recPut(q, recExecution, &e); err != nil {
 				return err
 			}
 			if err := recordDecision(q, e, polling, cs, nil); err != nil {
@@ -957,7 +957,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		if e["waitDetail"] != reason {
 			kind := waitKindOf(cause)
 			e["waitReason"], e["waitDetail"] = kind, reason
-			if err := put(q, "execution", e); err != nil {
+			if err := recPut(q, recExecution, &e); err != nil {
 				return err
 			}
 			if err := q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id, WaitReason: &kind}); err != nil {
@@ -1003,7 +1003,7 @@ func claimRow(q *Request, id string) (doc, error) {
 	if err := q.db().DispExecLock(q.ctx(), id); err != nil {
 		return nil, err
 	}
-	e, err := get(q, id, "execution")
+	e, err := recGet[doc](q, recExecution, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1035,7 +1035,8 @@ type startBinding struct {
 
 // startCommand: the start command of a claimed execution, from the session as it is now and the chosen binding.
 func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, error) {
-	liveSession, err := get(q, e["sessionId"], "session")
+	sessionID, _ := e["sessionId"].(string)
+	liveSession, err := recGet[doc](q, recSession, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -1143,7 +1144,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 				WorkingDirectory any             `json:"workingDirectory"`
 			}{e["id"], optAny(d.ProjectID), optAny(d.WorkspaceKey), snapshot.Settings, nullRaw(snapshot.Revision), nullRaw(snapshot.ContentSha), s["workingDirectory"]})
 			liveSession["workspaceSnapshots"] = workspaces
-			if err := put(q, "session", liveSession); err != nil {
+			if err := recPut(q, recSession, &liveSession); err != nil {
 				return nil, err
 			}
 		}
@@ -1197,10 +1198,10 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 			}
 		}
 	}
-	if err := put(q, "execution", e); err != nil {
+	if err := recPut(q, recExecution, &e); err != nil {
 		return nil, err
 	}
-	if err := put(q, "command", command); err != nil {
+	if err := recPut(q, recCommand, &command); err != nil {
 		return nil, err
 	}
 	if err := preparePipelineCommand(q, e, command); err != nil {

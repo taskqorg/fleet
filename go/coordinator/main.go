@@ -551,3 +551,6 @@ func activatedListener(addr string) (net.Listener, error) {
 	}
 	return net.Listen("tcp", addr)
 }
+
+// hostOf: the authenticated host's id.
+func hostOf(q *Request) string { return q.host.HostID }
