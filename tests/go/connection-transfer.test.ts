@@ -5,7 +5,7 @@
 import {after, before, test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash, randomUUID} from 'node:crypto';
-import {appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync} from 'node:fs';
+import {appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startCoordinator, type Coordinator} from '../harness.ts';
@@ -26,7 +26,13 @@ before(async () => {
 after(async () => { await c?.stop(); });
 
 const today = () => new Date().toISOString().slice(0, 10);
-const write = (file: string, ...lines: object[]) => appendFileSync(join(spool, file + '.jsonl'), lines.map(l => JSON.stringify(l) + '\n').join(''));
+const write = (file: string, ...lines: object[]) => {
+  const path = join(spool, file + '.jsonl'), body = lines.map(l => JSON.stringify(l) + '\n').join('');
+  if (existsSync(path)) { appendFileSync(path, body); return; }
+  const tmp = join(spool, `.tmp-${file}-${randomUUID()}`);
+  writeFileSync(tmp, body);
+  renameSync(tmp, path);
+};
 const row = (id: string) => { const t = c.sql(`SELECT row_to_json(r)::text FROM (SELECT e.state, e.problem, e.updated_at, e.data,
   (extract(epoch FROM e.ended_at-e.started_at)*1000)::int AS span, x.wall_ms, x.connection_cost, x.computed_at
   FROM execution e LEFT JOIN execution_totals x ON x.execution_id=e.id WHERE e.id='call:${id}') r`).trim(); return t ? JSON.parse(t) : undefined; };
@@ -73,7 +79,12 @@ test('C12 download completion line updates its row (requirement: docs/designs/fl
   const day1 = `19${10 + Math.floor(Math.random() * 80)}-03-01`, day2 = day1.slice(0, 4) + '-03-02', crossing = randomUUID();
   write(day1, started(crossing, at));
   await until(() => row(crossing), 'started row of the first day');
-  write(day2, completed(crossing, at));
+  // A freshly opened empty past-day spool file must survive ingest ticks until its first line lands.
+  const day2Path = join(spool, day2 + '.jsonl');
+  writeFileSync(day2Path, '');
+  await new Promise(res => setTimeout(res, 250));
+  assert.ok(existsSync(day2Path), 'fresh empty past-day spool file deleted before first line was written');
+  appendFileSync(day2Path, JSON.stringify(completed(crossing, at)) + '\n');
   await until(() => row(crossing)?.state === 'succeeded' || undefined, 'completed from the next day');
   await until(() => (!existsSync(join(spool, day1 + '.jsonl')) && !existsSync(join(spool, day2 + '.jsonl'))) || undefined, 'past days deleted once imported');
   // (e) a completed line whose started line was lost: one row from it alone.
@@ -102,8 +113,10 @@ test('TGT-3 commit intent and completion account for one upload (requirement: §
   assert.deepEqual([r.state, r.problem, r.data.phase, r.data.transfer, r.data.keyFingerprint], ['succeeded', null, 'completed', up, 'fp-files-key']);
   assert.deepEqual(r.connection_cost, {unit: 'calls', calls: 1, amount: 1, connection: 'youtrack'});
   // An older coordinator can complete the row without applying the upload's usage.
-  c.sql(`UPDATE execution SET data=(data-'uploadAccounted')||'{"keyFingerprint":null,"usage":null}'::jsonb WHERE id='call:${callId}';
-    UPDATE execution_totals SET connection_cost=NULL, connection_cost_basis='unavailable' WHERE execution_id='call:${callId}';`);
+  c.sql(`BEGIN;
+    UPDATE execution SET data=(data-'uploadAccounted')||'{"keyFingerprint":null,"usage":null}'::jsonb WHERE id='call:${callId}';
+    UPDATE execution_totals SET connection_cost=NULL, connection_cost_basis='unavailable' WHERE execution_id='call:${callId}';
+    COMMIT;`);
   r = await until(() => { const x = row(callId); return x?.data.uploadAccounted ? x : undefined; }, 'repair rollback accounting');
   assert.deepEqual(r.connection_cost, {unit: 'calls', calls: 1, amount: 1, connection: 'youtrack'});
   await new Promise(res => setTimeout(res, 400));

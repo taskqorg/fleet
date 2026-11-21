@@ -1185,6 +1185,8 @@ func revokeSteps(q *Request) error {
 	return q.db().RevokeStepTokensBefore(q.ctx(), db.RevokeStepTokensBeforeParams{At: float64(nowMs()), Started: float64(processStarted)})
 }
 
+var ingestMu sync.Mutex
+
 // Spool ingest (§3): every gateway line becomes one tool_run with connection_cost, idempotent by callId. Each
 // unrecorded line runs in its own transaction locked only by "usageKey:" + key (or NOLOCK when no usageKey), never
 // acquiring GLOBAL. A past day's file is deleted once its lines are committed; a file with a line that could not be
@@ -1193,6 +1195,8 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 	if gatewayDir() == "" {
 		return 0, nil
 	}
+	ingestMu.Lock()
+	defer ingestMu.Unlock()
 	dir := filepath.Join(gatewayDir(), "state", "spool")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -1209,7 +1213,8 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 	sort.Strings(names)
 	for _, f := range names {
 		// ponytail: the whole file is read each pass (one day of lines); keep a read offset if a day's file gets large.
-		b, err := os.ReadFile(filepath.Join(dir, f))
+		path := filepath.Join(dir, f)
+		b, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
@@ -1298,7 +1303,10 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 		if past && unimported > 0 {
 			log.Printf("spool %s: past day kept, %d line(s) not imported", f, unimported)
 		} else if past {
-			os.Remove(filepath.Join(dir, f))
+			// Keep a newly created empty file (e.g. open(O_CREAT) before write) and any file that grew while imported.
+			if info, err := os.Stat(path); err == nil && info.Size() == int64(len(b)) && (len(parsed) > 0 || time.Since(info.ModTime()) >= time.Minute) {
+				os.Remove(path)
+			}
 		}
 	}
 	return added, nil
