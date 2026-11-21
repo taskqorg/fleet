@@ -136,7 +136,7 @@ try {
   await page.goto(origin + '/catalogue/catalogue');
   await page.getByRole('heading', {name: 'Methods', exact: true}).waitFor();
   await page.getByRole('heading', {name: 'Compare methods in Lab', exact: true}).waitFor();
-  await page.getByRole('button', {name: 'hello-world', exact: true}).click();
+  await page.getByRole('button', {name: 'Hello World', exact: true}).click();
   await page.getByText('Basic source discovery · search-basic', {exact: true}).waitFor();
   assert.ok(await page.getByText('Recommended for', {exact: true}).count());
   // Controlled render fixture: a measured partial comparison score must stay visible with its population.
@@ -144,14 +144,14 @@ try {
   preview.methods[0].assessment = {...preview.methods[0].assessment, basis:'lab', score:0.5, scoreForm:'typed', partial:true, eligibleCells:1,expectedCells:2,examples:1,failedCells:1,excludedCells:1,state:'stopped',stopReason:'fixture',variant:'preview-variant',split:'held_out',evaluator:'typed:labels:typed',evaluatorVersion:'fixture-version',reason:'One observed cell; one failed cell is excluded'};
   await page.route('**/api/ops/catalogue', route => route.request().postDataJSON().projectId === 'hello-world' ? route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(preview)}) : route.continue());
   await page.reload();
-  await page.getByRole('button', {name:'hello-world',exact:true}).click();
+  await page.getByRole('button', {name:'Hello World',exact:true}).click();
   await page.getByText('0.500 · partial/incomplete', {exact:true}).waitFor();
   assert.ok(await page.getByText('Comparison score', {exact:true}).count());
   for (const colorScheme of ['dark', 'light'] as const) { await page.emulateMedia({colorScheme}); await page.screenshot({path: `${shots}/catalogue-methods-${colorScheme}.png`}); }
   await page.unroute('**/api/ops/catalogue');
   expectedCatalogueFailure = true;
   await page.route('**/api/ops/catalogue', route => route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({message:'fixture catalogue unavailable',error:'Service Unavailable',statusCode:503})}));
-  await page.getByRole('button', {name:'cs',exact:true}).click();
+  await page.getByRole('button', {name:'cyprus.bz',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'Catalogue unavailable:'}).waitFor();
   assert.equal(await page.getByText('0.500 · partial/incomplete', {exact:true}).count(), 0);
   assert.equal(await page.getByRole('group', {name:'Baseline',exact:true}).getByRole('button').count(), 0);
@@ -171,12 +171,12 @@ try {
     previousRequested(); await previousGate;
     await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(preview)});
   });
-  await page.getByRole('group', {name:'Select Basic source discovery',exact:true}).getByRole('button').click();
-  await page.getByRole('button', {name:'hello-world',exact:true}).click();
+  await page.getByRole('checkbox', {name:'Select Basic source discovery',exact:true}).click();
+  await page.getByRole('button', {name:'Hello World',exact:true}).click();
   try {
     await previousHit;
     assert.equal(await page.getByRole('button', {name:'Recommend for project',exact:true}).count(), 0);
-    await page.getByRole('button', {name:'cs',exact:true}).click();
+    await page.getByRole('button', {name:'cyprus.bz',exact:true}).click();
     await page.getByText('Evidence project: cs', {exact:true}).waitFor();
   } finally {releasePrevious();}
   await page.waitForResponse(r => r.url().endsWith('/api/ops/catalogue') && r.request().postDataJSON()?.projectId === 'hello-world');

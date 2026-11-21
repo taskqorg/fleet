@@ -48,9 +48,7 @@ const Hosts = lazy(async () => (await import('./views/hosts.tsx')).Hosts);
 const Runners = lazy(async () => (await import('./views/runners.tsx')).Runners);
 const Lab = lazy(async () => (await import('./views/lab.tsx')).Lab);
 const Keys = lazy(async () => (await import('./views/keys.tsx')).Keys);
-const Agents = lazy(async () => (await import('./views/agents.tsx')).Agents);
-const Definitions = lazy(async () => (await import('./views/definitions.tsx')).Definitions);
-const Changes = lazy(async () => (await import('./views/changes.tsx')).Changes);
+const Library = lazy(async () => (await import('./views/agents.tsx')).Agents);
 const Spend = lazy(async () => (await import('./views/spend.tsx')).Spend);
 
 // Not reported: an operation's own failure (OpError) is in the coordinator's spans, and an access change aborts reads on
@@ -80,25 +78,16 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   runners: { focus: false, view: () => <Runners /> },
   lab: { focus: true, view: p => <Lab id={p.id} /> },
   keys: { focus: true, view: p => <Keys id={p.id} /> },
-  agents: { focus: true, view: p => <Agents id={p.id} /> },
-  pipelines: { focus: true, view: p => <Definitions kind="pipeline" id={p.id} /> },
-  catalogue: { focus: true, view: p => <Definitions kind="catalogue" id={p.id} /> },
-  changes: { focus: false, view: () => <Changes /> },
+  agents: { focus: true, view: p => <Library section="agents" id={p.id} /> },
+  pipelines: { focus: true, view: p => <Library section="pipelines" id={p.id} /> },
+  catalogue: { focus: true, view: p => <Library section="catalogue" id={p.id} /> },
+  changes: { focus: false, view: () => <Library section="changes" /> },
   spend: { focus: false, view: () => <Spend /> },
 };
 const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
 const NAV: NavItem[] = BUILT.filter(w => w.nav);
 type SubTab = { id: string; label: string };
 const SUB_NAVS = {
-  agents: {
-    label: 'Library sections',
-    tabs: [
-      { id: 'agents', label: 'Agents' },
-      { id: 'pipelines', label: 'Pipelines' },
-      { id: 'catalogue', label: 'Catalogue' },
-      { id: 'changes', label: 'Changes' },
-    ] as readonly SubTab[],
-  },
   hosts: {
     label: 'Infrastructure sections',
     tabs: [
@@ -109,9 +98,9 @@ const SUB_NAVS = {
   },
 } as const;
 const PARENT_NAV: Record<string, keyof typeof SUB_NAVS> = {
-  agents: 'agents', pipelines: 'agents', catalogue: 'agents', changes: 'agents',
   hosts: 'hosts', runners: 'hosts', keys: 'hosts',
 };
+const LIBRARY_SECTIONS = new Set(['agents', 'pipelines', 'catalogue', 'changes']);
 // Each kind the server finds: its group label, icon, the registry state family of its hits, where a hit opens (a question
 // opens its task) and the list section that takes the same query (the "All N" row).
 type Hit = Ops['search']['reply']['hits'][number];
@@ -182,7 +171,7 @@ function App() {
   const query = useSearch();
   const current = loc.split('/')[1] || 'overview';
   const parentNav = PARENT_NAV[current];
-  const activeNav = parentNav ?? current;
+  const activeNav = parentNav ?? (LIBRARY_SECTIONS.has(current) ? 'agents' : current);
   const subNav = parentNav ? SUB_NAVS[parentNav] : null;
   const shellTitle = BUILT.find(w => w.id === activeNav)?.label ?? BUILT.find(w => w.id === current)?.label;
   const search = useRef([subPages(go), ...(Object.keys(KINDS) as Hit['kind'][]).map(k => found(k, go))]).current;
@@ -286,7 +275,16 @@ function App() {
   </AppShell></EntityCards.Provider>;
 }
 
+const decodeSegment = (s: string): string => { try { return decodeURIComponent(s); } catch { return s; } };
+
 function PrivateRoutes({ go }: { go: (to: string) => void }) {
+  const [loc] = useLocation();
+  const libMatch = /^\/(agents|pipelines|catalogue)(?:\/([^/]+))?\/?$|^\/(changes)\/?$/.exec(loc);
+  if (libMatch) {
+    const section = (libMatch[1] ?? libMatch[3]) as 'agents' | 'pipelines' | 'catalogue' | 'changes';
+    const id = libMatch[2] ? decodeSegment(libMatch[2]) : undefined;
+    return <Library section={section} id={id} />;
+  }
   return <Switch>
       <Route path="/"><Redirect to="/overview" /></Route>
       {BUILT.map(s => <Route key={s.id} path={s.focus ? `/${s.id}/:id?` : `/${s.id}`}>{(p: { id?: string }) => s.view(p)}</Route>)}

@@ -1,26 +1,31 @@
-// Agent Library screen (FLT-7, docs/designs/fleet-definition-editors.md, docs/design-system/pages/agents.md):
-// one consistent control-column list of agents/skills, idle Library Summary + Skills rollout in the work area,
-// and DefinitionDetail in the work area when an agent is opened.
+// Unified Library screen (docs/designs/fleet-ia-and-journeys.md, docs/design-system/pages/agents.md):
+// one 4-root CatalogueTree (Methods, Pipelines, Agents, Skills) in the control column, Library summary + drift banner
+// when idle, and DefinitionDetail / SkillDetail / Changes in the work area.
 import { useMemo, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  Button, CatalogueTree, Choice, ContextMenu, DetailSection, Disclosure, Empty, ErrorBanner, HarnessMark, Icon, KvRow,
-  ListDetail, Num, OfflineMarker, ProblemRow, SearchField, ShellStatus, StateBadge, TabBar, Totals, VirtualList,
-  actions, catalogueRow, copyText, harnesses, matchSearch,
+  Button, CatalogueTree, Choice, ContextMenu, DetailSection, Empty, EntityCode, ErrorBanner, HarnessMark, Icon, KvRow,
+  ListDetail, Num, OfflineMarker, ProblemRow, SearchField, ShellActions, ShellStatus, Skeleton, StateBadge, Totals,
+  actions, copyText, harnesses, matchSearch,
   type CatalogueTreeNode, type Harness, type IconName, type StateOf, type TotalItem,
 } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
-import { flipGroup } from '../lists.ts';
+import { closedGroups, flipGroup } from '../lists.ts';
 import { listGroups, setListGroups, usePins } from '../prefs.ts';
 import { useOp } from '../store.ts';
-import { DefinitionDetail } from './definitions.tsx';
+import { Changes } from './changes.tsx';
+import { DefinitionDetail, baseAgentDefaults } from './definitions.tsx';
 import type { DefinitionKey, DefinitionListItem, SkillSummary } from '../../../contracts/generated/ops.ts';
 
-type LibTab = 'agents' | 'skills';
+export type LibrarySection = 'agents' | 'pipelines' | 'catalogue' | 'changes';
 type AgentRoleGroup = 'core' | 'research-design' | 'assets-3d' | 'other' | 'lab-variants';
 
-const AGENT_TREE_LIST = 'agents';
-const AGENT_TREE_GROUPS = 'agents:role';
+const LIBRARY_PINS = 'library';
+const LIBRARY_TREE_GROUPS = 'library:tree';
+const ROOT_METHODS_ID = 'root:methods';
+const ROOT_PIPELINES_ID = 'root:pipelines';
+const ROOT_AGENTS_ID = 'root:agents';
+const ROOT_SKILLS_ID = 'root:skills';
 
 const ROLE_GROUPS: readonly { key: AgentRoleGroup; id: string; label: string; icon: IconName; defaultCollapsed: boolean }[] = [
   { key: 'core', id: 'group:core', label: 'Core', icon: 'bot', defaultCollapsed: false },
@@ -71,108 +76,133 @@ const agentSearchText = (a: DefinitionListItem): string =>
     ...(a.agent?.roles ?? []),
   ].filter(Boolean).join(' ');
 
-function agentDeltaSub(d: DefinitionListItem, byId: ReadonlyMap<string, DefinitionListItem>): string | undefined {
+function agentDeltaSub(
+  d: DefinitionListItem,
+  byId: ReadonlyMap<string, DefinitionListItem>,
+  baseline?: DefinitionListItem['agent'],
+): string | undefined {
   const a = d.agent;
   if (!a) return undefined;
   const parent = a.variantOf ? byId.get(a.variantOf) : undefined;
-  const baseHarness = parent?.agent?.harness ?? 'codex';
-  const baseModel = parent?.agent?.model ?? 'gpt-6.2-sol';
-  const baseEffort = parent
-    ? (parent.agent?.effort ?? null)
-    : (a.harness && a.harness !== 'codex' ? null : 'medium');
+  const defaults = baseAgentDefaults(parent?.agent, baseline, a.harness);
+  const baseEffort = parent ? (parent.agent?.effort ?? null) : (a.harness && a.harness !== defaults.harness ? null : defaults.effort);
 
   const parts: string[] = [];
-  if (a.model && a.model !== baseModel) parts.push(a.model);
+  if (a.model && a.model !== defaults.model) parts.push(a.model);
   if (a.effort && a.effort !== baseEffort) parts.push(a.effort);
   if (a.variantOf && parts.length === 0) {
     const parentSkills = parent?.agent?.skills ?? [];
     const curSkills = a.skills ?? [];
     const skillsDiffer = parent && (curSkills.length !== parentSkills.length || curSkills.some(s => !parentSkills.includes(s)));
     parts.push(skillsDiffer ? `${curSkills.length} skills` : `var of ${a.variantOf}`);
-  } else if (!a.variantOf && a.harness !== baseHarness && parts.length === 0) {
+  } else if (!a.variantOf && a.harness !== defaults.harness && parts.length === 0) {
     parts.push(a.harness);
   }
   return parts.length ? parts.join(' · ') : undefined;
 }
 
-export function Agents({ id }: { id?: string }) {
+const rawNodeId = (nodeId: string): string => {
+  const idx = nodeId.indexOf(':');
+  return idx >= 0 ? nodeId.slice(idx + 1) : nodeId;
+};
+
+export function Agents({ section = 'agents', id }: { section?: LibrarySection; id?: string }) {
   const [, go] = useLocation();
-  const [tab, setTab] = useState<LibTab>('agents');
   const [q, setQ] = useState('');
-  const [harness, setHarness] = useState('');
-  const [category, setCategory] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ severity: 'warning' | 'failure'; title: string; facts: string } | null>(null);
   const [previewRepoKeys, setPreviewRepoKeys] = useState<DefinitionKey[] | null>(null);
-  const [previewSkill, setPreviewSkill] = useState<{ skill: string; category?: string; agents?: string[] } | null>(null);
-  const [skillTargetCat, setSkillTargetCat] = useState<Record<string, string>>({});
   const [menu, setMenu] = useState<{ node: CatalogueTreeNode; at: { x: number; y: number } } | null>(null);
 
-  const pins = usePins(AGENT_TREE_LIST);
-  const flippedGroups = listGroups(AGENT_TREE_GROUPS);
+  const pins = usePins(LIBRARY_PINS);
+  const treeFlipped = listGroups(LIBRARY_TREE_GROUPS);
 
   const agentsOp = useOp('definition_list', { kind: 'agent' });
+  const pipelinesOp = useOp('definition_list', { kind: 'pipeline' });
+  const catalogueOp = useOp('definition_list', { kind: 'catalogue' });
   const skillsOp = useOp('skills_list', {});
+  const changesOp = useOp('system_changes', {});
 
   const agentItems = agentsOp.data?.items ?? [];
+  const pipelineItems = pipelinesOp.data?.items ?? [];
+  const catalogueItems = catalogueOp.data?.items ?? [];
   const skillItems = skillsOp.data?.skills ?? [];
 
   const categories = useMemo(
     () => [...new Set(agentItems.map(a => a.agent?.category).filter((x): x is string => !!x))].sort(),
     [agentItems],
   );
-
   const agentById = useMemo(() => new Map(agentItems.map(a => [a.id, a])), [agentItems]);
+  const baselineAgent = agentById.get('baseline')?.agent;
 
-  const facetAgents = useMemo(() => {
-    const agentTerm = q.toLowerCase().split(/\s+/).find(w => w.startsWith('agent:') && w.length > 6)?.slice(6) ?? '';
-    return agentItems.filter(a => (!harness || a.agent?.harness === harness)
-      && (!category || a.agent?.category === category)
-      && (!agentTerm || (a.agent?.harness ?? '').toLowerCase().includes(agentTerm)));
-  }, [agentItems, harness, category, q]);
-
-  const filteredAgents = useMemo(() => {
-    return agentItems
-      .filter(a => (!harness || a.agent?.harness === harness)
-        && (!category || a.agent?.category === category)
-        && matchSearch(q, agentSearchText(a), {
-          agent: a.agent?.harness ?? null,
-          state: a.draft ? 'draft' : compatibilityState(a.compatibility),
-        }))
-      .toSorted((a, b) => Number(!!b.draft) - Number(!!a.draft) || b.last30.runs - a.last30.runs || a.name.localeCompare(b.name));
-  }, [agentItems, harness, category, q]);
+  const isSkillRoute = section === 'agents' && !!id && id.startsWith('skill:');
+  const skillId = isSkillRoute ? id!.slice('skill:'.length) : undefined;
+  const selectedTreeId = section === 'catalogue' && id
+    ? `catalogue:${id}`
+    : section === 'pipelines' && id
+      ? `pipeline:${id}`
+      : isSkillRoute && skillId
+        ? `skill:${skillId}`
+        : section === 'agents' && id
+          ? `agent:${id}`
+          : null;
 
   const treeQuery = useMemo(() => q.replace(/\b(?:agent|host|project):(\S+)/gi, '$1'), [q]);
 
-  const collapsedMap = useMemo(() => {
-    const map: Record<string, boolean> = {};
-    if (flippedGroups.includes('__pinned__')) map['__pinned__'] = true;
-    for (const g of ROLE_GROUPS) {
-      if (flippedGroups.includes(g.id)) map[g.id] = !g.defaultCollapsed;
-    }
-    return map;
-  }, [flippedGroups]);
+  const sortDefs = (items: readonly DefinitionListItem[]) =>
+    items.toSorted((a, b) => Number(!!b.draft) - Number(!!a.draft) || b.last30.runs - a.last30.runs || a.name.localeCompare(b.name));
 
-  const agentTreeNodes = useMemo<CatalogueTreeNode[]>(() => {
+  const libraryTreeNodes = useMemo<CatalogueTreeNode[]>(() => {
+    const methodLeaves: CatalogueTreeNode[] = sortDefs(catalogueItems).map(d => {
+      const nodeId = `catalogue:${d.id}`;
+      return {
+        id: nodeId,
+        label: d.name,
+        sub: d.name !== d.id ? d.id : undefined,
+        state: { family: 'definition', state: d.draft ? 'draft' : 'ready' },
+        right: d.state === 'repository-changed' ? <Icon name="download" label="Repository update waiting" /> : undefined,
+        pinned: pins.has(nodeId),
+        href: `/catalogue/${encodeURIComponent(d.id)}`,
+        searchText: [d.id, d.name, d.scope, d.state].filter(Boolean).join(' '),
+      };
+    });
+
+    const pipelineLeaves: CatalogueTreeNode[] = sortDefs(pipelineItems).map(d => {
+      const nodeId = `pipeline:${d.id}`;
+      const hasRight = d.state === 'repository-changed' || d.last30.runs > 0;
+      return {
+        id: nodeId,
+        label: d.name,
+        sub: d.name !== d.id ? d.id : undefined,
+        state: { family: 'definition', state: d.draft ? 'draft' : d.last30.runs > 0 ? 'ready' : 'never' },
+        right: hasRight ? (
+          <>
+            {d.state === 'repository-changed' && <Icon name="download" label="Repository update waiting" />}
+            {d.last30.runs > 0 && <Num m={{ value: d.last30.runs, basis: 'measured' }} kind="count" />}
+          </>
+        ) : undefined,
+        pinned: pins.has(nodeId),
+        href: `/pipelines/${encodeURIComponent(d.id)}`,
+        searchText: [d.id, d.name, d.scope, d.state].filter(Boolean).join(' '),
+      };
+    });
+
     const buckets = new Map<AgentRoleGroup, DefinitionListItem[]>(ROLE_GROUPS.map(g => [g.key, []]));
-    for (const a of facetAgents) {
-      buckets.get(agentRoleGroup(a))!.push(a);
-    }
-    const sortItems = (items: DefinitionListItem[]) =>
-      items.toSorted((a, b) => Number(!!b.draft) - Number(!!a.draft) || b.last30.runs - a.last30.runs || a.name.localeCompare(b.name));
+    for (const a of agentItems) buckets.get(agentRoleGroup(a))!.push(a);
 
-    const out: CatalogueTreeNode[] = [];
+    const agentFolders: CatalogueTreeNode[] = [];
     for (const group of ROLE_GROUPS) {
-      const items = sortItems(buckets.get(group.key) ?? []);
+      const items = sortDefs(buckets.get(group.key) ?? []);
       if (!items.length) continue;
-      out.push({
+      agentFolders.push({
         id: group.id,
         label: group.label,
         icon: group.icon,
         defaultCollapsed: group.defaultCollapsed,
         children: items.map(d => {
-          const parentHarness = d.agent?.variantOf ? agentById.get(d.agent.variantOf)?.agent?.harness : undefined;
-          const baseHarness = parentHarness ?? 'codex';
+          const nodeId = `agent:${d.id}`;
+          const parent = d.agent?.variantOf ? agentById.get(d.agent.variantOf)?.agent : undefined;
+          const baseHarness = baseAgentDefaults(parent, baselineAgent, d.agent?.harness).harness;
           const showHarness = !!(d.agent && d.agent.harness !== baseHarness && harnesses[d.agent.harness]);
           const right = (d.state === 'repository-changed' || showHarness) ? (
             <>
@@ -181,15 +211,15 @@ export function Agents({ id }: { id?: string }) {
             </>
           ) : undefined;
           return {
-            id: d.id,
+            id: nodeId,
             label: d.name,
-            sub: agentDeltaSub(d, agentById),
+            sub: agentDeltaSub(d, agentById, baselineAgent),
             state: {
               family: 'definition',
               state: d.draft ? 'draft' : compatibilityState(d.compatibility),
             },
             right,
-            pinned: pins.has(d.id),
+            pinned: pins.has(nodeId),
             href: `/agents/${encodeURIComponent(d.id)}`,
             searchText: agentSearchText(d),
             problem: d.compatibility === 'failed',
@@ -197,28 +227,168 @@ export function Agents({ id }: { id?: string }) {
         }),
       });
     }
-    return out;
-  }, [facetAgents, agentById, pins.ids]);
 
-  const filteredSkills = useMemo(
-    () => skillItems.filter(s => matchSearch(q, `${s.id} ${s.name} ${s.description}`)),
-    [skillItems, q],
+    const skillLeaves: CatalogueTreeNode[] = skillItems
+      .toSorted((a, b) => a.name.localeCompare(b.name))
+      .map(s => {
+        const nodeId = `skill:${s.id}`;
+        return {
+          id: nodeId,
+          label: s.name,
+          sub: s.id !== s.name ? s.id : undefined,
+          state: { family: 'definition', state: s.agents.length ? 'ready' : 'never' },
+          right: <span class="mono muted" data-tip="Enabled agents">{s.agents.length}/{s.totalAgents}</span>,
+          pinned: pins.has(nodeId),
+          href: `/agents/skill:${encodeURIComponent(s.id)}`,
+          searchText: [s.id, s.name, s.description, ...s.agents.map(a => `agent:${a} ${a}`)].filter(Boolean).join(' '),
+        };
+      });
+
+    return [
+      { id: ROOT_METHODS_ID, label: 'Methods', icon: 'rows-3', defaultCollapsed: false, children: methodLeaves },
+      { id: ROOT_PIPELINES_ID, label: 'Pipelines', icon: 'network', defaultCollapsed: false, children: pipelineLeaves },
+      { id: ROOT_AGENTS_ID, label: 'Agents', icon: 'bot', defaultCollapsed: false, children: agentFolders },
+      { id: ROOT_SKILLS_ID, label: 'Skills', icon: 'file-text', defaultCollapsed: false, children: skillLeaves },
+    ];
+  }, [catalogueItems, pipelineItems, agentItems, skillItems, agentById, baselineAgent, pins.ids]);
+
+  const selectedIsLabVariant = section === 'agents' && !!id && !isSkillRoute && (() => {
+    const a = agentById.get(id);
+    return !!a && agentRoleGroup(a) === 'lab-variants';
+  })();
+
+  const defaultClosed = useMemo(
+    () => (selectedIsLabVariant ? [] : ['group:lab-variants']),
+    [selectedIsLabVariant],
+  );
+  const treeClosed = closedGroups(defaultClosed, treeFlipped);
+  const collapsedMap = useMemo<Record<string, boolean>>(() => {
+    const map: Record<string, boolean> = {
+      __pinned__: treeClosed.has('__pinned__'),
+      [ROOT_METHODS_ID]: treeClosed.has(ROOT_METHODS_ID),
+      [ROOT_PIPELINES_ID]: treeClosed.has(ROOT_PIPELINES_ID),
+      [ROOT_AGENTS_ID]: treeClosed.has(ROOT_AGENTS_ID),
+      [ROOT_SKILLS_ID]: treeClosed.has(ROOT_SKILLS_ID),
+    };
+    for (const g of ROLE_GROUPS) map[g.id] = treeClosed.has(g.id);
+    return map;
+  }, [treeClosed]);
+
+  const toggleTreeFolder = (folderId: string) => {
+    setListGroups(LIBRARY_TREE_GROUPS, flipGroup(treeFlipped, folderId));
+  };
+
+  const countMatchingLeaves = (nodes: readonly CatalogueTreeNode[]): number => {
+    let total = 0;
+    for (const n of nodes) {
+      if (Array.isArray(n.children)) {
+        total += countMatchingLeaves(n.children);
+      } else if (!treeQuery.trim() || matchSearch(treeQuery, [n.label, n.id, n.sub, n.searchText].filter(Boolean).join(' '), n.state ? { state: n.state.state } : {})) {
+        total++;
+      }
+    }
+    return total;
+  };
+  const totalCount = catalogueItems.length + pipelineItems.length + agentItems.length + skillItems.length;
+  const shownCount = treeQuery.trim() ? countMatchingLeaves(libraryTreeNodes) : totalCount;
+
+  const initialLoading = !agentsOp.data && !pipelinesOp.data && !catalogueOp.data && !skillsOp.data
+    && !agentsOp.error && !pipelinesOp.error && !catalogueOp.error && !skillsOp.error;
+  const loadError = (agentsOp.error && !agentsOp.data ? agentsOp.error : null)
+    ?? (pipelinesOp.error && !pipelinesOp.data ? pipelinesOp.error : null)
+    ?? (catalogueOp.error && !catalogueOp.data ? catalogueOp.error : null)
+    ?? (skillsOp.error && !skillsOp.data ? skillsOp.error : null);
+
+  const reloadAll = () => {
+    void Promise.all([agentsOp.reload(), pipelinesOp.reload(), catalogueOp.reload(), skillsOp.reload(), changesOp.reload()]);
+  };
+
+  const listPane = (
+    <>
+      <ShellStatus><OfflineMarker state={agentsOp.state} now={Date.now()} /></ShellStatus>
+      <ShellActions>
+        <Button
+          label="System changes"
+          icon="git-pull-request"
+          iconOnly
+          kind="quiet"
+          pressed={section === 'changes'}
+          onClick={() => go(section === 'changes' ? '/agents' : '/changes')}
+        />
+      </ShellActions>
+      <header class="page-h">
+        <SearchField label="Find in library" value={q} onInput={setQ} onSearch={() => {}} />
+        <span class="grow" />
+        <span class="muted mono" aria-label={`${shownCount} of ${totalCount} library items`}>
+          {shownCount < totalCount ? `${shownCount} of ${totalCount}` : totalCount}
+        </span>
+      </header>
+      {loadError && <ErrorBanner text={loadError} onRetry={reloadAll} />}
+      <section class="panel">
+        {initialLoading ? (
+          <Skeleton rows={8} />
+        ) : (
+          <CatalogueTree
+            fill
+            nodes={libraryTreeNodes}
+            label="Library"
+            selectedId={selectedTreeId}
+            query={treeQuery}
+            collapsed={collapsedMap}
+            emptyText="No matching items."
+            onToggle={toggleTreeFolder}
+            onSelect={node => {
+              if (Array.isArray(node.children)) {
+                toggleTreeFolder(node.id);
+              } else if (node.href) {
+                go(node.href);
+              }
+            }}
+            onPin={node => pins.toggle(node.id)}
+            onRowMenu={(node, at) => {
+              if (!Array.isArray(node.children)) setMenu({ node, at });
+            }}
+          />
+        )}
+        {menu && (
+          <ContextMenu
+            at={menu.at}
+            label={menu.node.label}
+            onClose={() => setMenu(null)}
+            items={[
+              { label: 'Open', icon: actions.open, onClick: () => { if (menu.node.href) go(menu.node.href); } },
+              { label: pins.has(menu.node.id) ? 'Unpin' : 'Pin', icon: pins.has(menu.node.id) ? actions.unpin : actions.pin, onClick: () => pins.toggle(menu.node.id) },
+              { label: 'Copy id', icon: actions.copy, onClick: () => copyText(rawNodeId(menu.node.id)) },
+            ]}
+          />
+        )}
+      </section>
+    </>
   );
 
-  const repoChangedAgents = useMemo(
-    () => agentItems.filter(a => a.state === 'repository-changed'),
-    [agentItems],
-  );
-  const repoChangedKeys: DefinitionKey[] = useMemo(
-    () => repoChangedAgents.map(a => ({ kind: 'agent', id: a.id })),
-    [repoChangedAgents],
-  );
+  const runTakeRepo = async (keys: DefinitionKey[], preview: boolean) => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const r = await op('definition_take_repository', { keys, preview, message: 'Take repository version from Library' });
+      if (preview) {
+        setPreviewRepoKeys(keys);
+        setNotice({ severity: 'warning', title: `Preview: take repository version for ${r.items.filter(i => i.status === 'would-apply').length} definitions`, facts: r.items.map(i => `${i.kind}/${i.id}: ${i.status}`).join(' · ') });
+      } else {
+        setPreviewRepoKeys(null);
+        setNotice({ severity: 'warning', title: `Updated ${r.applied} definitions from repository`, facts: r.items.map(i => `${i.kind}/${i.id}: ${i.status}`).join(' · ') });
+        await Promise.all([agentsOp.reload(), pipelinesOp.reload(), catalogueOp.reload(), changesOp.reload()]);
+      }
+    } catch (e) {
+      setNotice({ severity: 'failure', title: 'Repository sync failed', facts: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
 
-  const harnessSummary = useMemo(() => {
-    const base = agentItems.filter(a => (!category || a.agent?.category === category)
-      && matchSearch(q, agentSearchText(a), { agent: a.agent?.harness ?? null }));
-    return Object.entries(harnesses).map(([key, info]) => {
-      const items = base.filter(a => a.agent?.harness === key);
+  const harnessSummary = useMemo(() =>
+    Object.entries(harnesses).map(([key, info]) => {
+      const items = agentItems.filter(a => a.agent?.harness === key);
       return {
         key,
         label: info.label,
@@ -227,14 +397,12 @@ export function Agents({ id }: { id?: string }) {
         runs: items.reduce((s, a) => s + a.last30.runs, 0),
         tokens: items.reduce((s, a) => s + a.last30.tokens, 0),
       };
-    }).filter(x => x.count > 0);
-  }, [agentItems, category, q]);
+    }).filter(x => x.count > 0),
+  [agentItems]);
 
   const categorySummary = useMemo(() => {
-    const base = agentItems.filter(a => (!harness || a.agent?.harness === harness)
-      && matchSearch(q, agentSearchText(a), { agent: a.agent?.harness ?? null }));
     const byCat = new Map<string, DefinitionListItem[]>();
-    for (const a of base) {
+    for (const a of agentItems) {
       const cat = a.agent?.category;
       if (!cat) continue;
       const arr = byCat.get(cat);
@@ -249,27 +417,188 @@ export function Agents({ id }: { id?: string }) {
         runs: items.reduce((s, a) => s + a.last30.runs, 0),
         tokens: items.reduce((s, a) => s + a.last30.tokens, 0),
       }));
-  }, [agentItems, harness, q]);
+  }, [agentItems]);
 
-  const runTakeRepo = async (keys: DefinitionKey[], preview: boolean) => {
-    setBusy(true);
-    setNotice(null);
-    try {
-      const r = await op('definition_take_repository', { keys, preview, message: 'Take repository version from Agent Library' });
-      if (preview) {
-        setPreviewRepoKeys(keys);
-        setNotice({ severity: 'warning', title: `Preview: take repository version for ${r.items.filter(i => i.status === 'would-apply').length} agents`, facts: r.items.map(i => `${i.id}: ${i.status}`).join(' · ') });
-      } else {
-        setPreviewRepoKeys(null);
-        setNotice({ severity: 'warning', title: `Updated ${r.applied} agents from repository`, facts: r.items.map(i => `${i.id}: ${i.status}`).join(' · ') });
-        await agentsOp.reload();
-      }
-    } catch (e) {
-      setNotice({ severity: 'failure', title: 'Repository sync failed', facts: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setBusy(false);
-    }
-  };
+  const primaryAgents = agentItems.filter(a => !a.agent?.variantOf);
+  const variantAgents = agentItems.filter(a => !!a.agent?.variantOf);
+  const activePipelines = pipelineItems.filter(p => p.last30.runs > 0).length;
+  const activeSkills = skillItems.filter(s => s.agents.length > 0).length;
+  const totalRuns = agentItems.reduce((s, a) => s + a.last30.runs, 0) + pipelineItems.reduce((s, p) => s + p.last30.runs, 0);
+  const totalTokens = agentItems.reduce((s, a) => s + a.last30.tokens, 0) + pipelineItems.reduce((s, p) => s + p.last30.tokens, 0);
+
+  const summaryTotals: TotalItem[] = [
+    { label: 'Methods', m: { value: catalogueItems.length, basis: 'measured' }, kind: 'count' },
+    {
+      label: 'Pipelines',
+      m: { value: pipelineItems.length, basis: 'measured' },
+      kind: 'count',
+      note: activePipelines > 0 ? `${activePipelines} active (30d)` : undefined,
+    },
+    {
+      label: 'Agents',
+      m: { value: agentItems.length, basis: 'measured' },
+      kind: 'count',
+      note: variantAgents.length ? `${primaryAgents.length} primary · ${variantAgents.length} variants` : undefined,
+    },
+    {
+      label: 'Skills',
+      m: { value: skillItems.length, basis: 'measured' },
+      kind: 'count',
+      note: activeSkills > 0 ? `${activeSkills} enabled` : undefined,
+    },
+    { label: '30d runs', m: { value: totalRuns, basis: 'measured' }, kind: 'count' },
+    { label: '30d tokens', m: { value: totalTokens, basis: 'measured' }, kind: 'count' },
+  ];
+
+  const changesData = changesOp.data;
+  const takeableKeys: DefinitionKey[] = changesData
+    ? changesData.repositoryChanged.filter(d => d.state === 'repository-changed').map(d => ({ kind: d.kind, id: d.id }))
+    : [...agentItems, ...pipelineItems, ...catalogueItems]
+        .filter(d => d.state === 'repository-changed')
+        .map(d => ({ kind: d.kind, id: d.id }));
+  const behindHosts = changesData?.versions.hosts.filter(h => h.behind) ?? [];
+  const behindHarnesses = changesData?.harnessDrift.filter(h => h.behind) ?? [];
+  const driftFacts = changesData ? [
+    changesData.repositoryChanged.length > 0 && `${changesData.repositoryChanged.length} repo changed`,
+    changesData.storeOnly.length > 0 && `${changesData.storeOnly.length} store-only`,
+    changesData.ahead.length > 0 && `${changesData.ahead.length} ahead`,
+    behindHosts.length > 0 && `${behindHosts.length} hosts behind`,
+    behindHarnesses.length > 0 && `${behindHarnesses.length} harness pins drifting`,
+  ].filter((x): x is string => !!x) : (takeableKeys.length > 0 ? [`${takeableKeys.length} repo changed`] : []);
+
+  const idleSummary = (
+    <article class="detail stack" aria-label="Library summary">
+      {notice && (
+        <ProblemRow
+          severity={notice.severity}
+          title={notice.title}
+          facts={notice.facts}
+          actions={previewRepoKeys
+            ? [
+                { label: 'Apply repository versions', primary: true, onClick: () => void runTakeRepo(previewRepoKeys, false) },
+                { label: 'Dismiss', onClick: () => { setPreviewRepoKeys(null); setNotice(null); } },
+              ]
+            : [{ label: 'Dismiss', onClick: () => setNotice(null) }]}
+        />
+      )}
+
+      {driftFacts.length > 0 && (
+        <ProblemRow
+          severity="warning"
+          title="System drift"
+          facts={driftFacts.join(' · ')}
+          actions={[
+            ...(takeableKeys.length > 0 ? [{ label: `Take repo (${takeableKeys.length})`, icon: 'download' as const, primary: true, onClick: () => void runTakeRepo(takeableKeys, true) }] : []),
+            { label: 'Changes', icon: 'git-pull-request' as const, onClick: () => go('/changes') },
+          ]}
+        />
+      )}
+
+      <Totals items={summaryTotals} />
+
+      {harnessSummary.length > 0 && (
+        <DetailSection title="By harness">
+          {harnessSummary.map(h => (
+            <KvRow
+              key={h.key}
+              icon={h.icon}
+              label={h.label}
+              meta={`${h.count} agent${h.count === 1 ? '' : 's'} · ${h.runs} runs (30d)`}
+              value={<Num m={{ value: h.tokens, basis: 'measured' }} kind="count" />}
+            />
+          ))}
+        </DetailSection>
+      )}
+
+      {categorySummary.length > 0 && (
+        <DetailSection title="By category">
+          {categorySummary.map(c => (
+            <KvRow
+              key={c.cat}
+              icon="layers-2"
+              label={c.cat}
+              meta={`${c.count} agent${c.count === 1 ? '' : 's'} · ${c.runs} runs (30d)`}
+              value={<Num m={{ value: c.tokens, basis: 'measured' }} kind="count" />}
+            />
+          ))}
+        </DetailSection>
+      )}
+    </article>
+  );
+
+  const detail = section === 'changes'
+    ? <Changes key="changes" onClose={() => go('/agents')} />
+    : isSkillRoute && skillId
+      ? (
+        <SkillDetail
+          key={`skill/${skillId}`}
+          skillId={skillId}
+          skills={skillItems}
+          loading={!skillsOp.data && !skillsOp.error}
+          error={skillsOp.error}
+          onRetry={skillsOp.reload}
+          categories={categories}
+          agentItems={agentItems}
+          busy={busy}
+          setBusy={setBusy}
+          onChanged={async () => { await Promise.all([skillsOp.reload(), agentsOp.reload()]); }}
+          onClose={() => go('/agents')}
+        />
+      )
+      : section === 'catalogue' && id
+        ? <DefinitionDetail key={`catalogue/${id}`} kind="catalogue" id={id} agentById={agentById} onClose={() => go('/catalogue')} />
+        : section === 'pipelines' && id
+          ? <DefinitionDetail key={`pipeline/${id}`} kind="pipeline" id={id} agentById={agentById} onClose={() => go('/pipelines')} />
+          : section === 'agents' && id
+            ? <DefinitionDetail key={`agent/${id}`} kind="agent" id={id} agentById={agentById} onClose={() => go('/agents')} />
+            : undefined;
+
+  return (
+    <ListDetail
+      list={listPane}
+      detail={detail}
+      detailKey={section === 'changes' ? 'changes' : selectedTreeId ?? undefined}
+      idle={idleSummary}
+    />
+  );
+}
+
+function SkillDetail({
+  skillId,
+  skills,
+  loading,
+  error,
+  onRetry,
+  categories,
+  agentItems,
+  busy,
+  setBusy,
+  onChanged,
+  onClose,
+}: {
+  skillId: string;
+  skills: readonly SkillSummary[];
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  categories: readonly string[];
+  agentItems: readonly DefinitionListItem[];
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+  onChanged: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [targetCat, setTargetCat] = useState('');
+  const [notice, setNotice] = useState<{ severity: 'warning' | 'failure'; title: string; facts: string } | null>(null);
+  const [previewSkill, setPreviewSkill] = useState<{ skill: string; category?: string; agents?: string[] } | null>(null);
+
+  const skill = skills.find(s => s.id === skillId);
+  const chosenCat = targetCat || categories[0] || '';
+  const missingAgents = useMemo(
+    () => agentItems.filter(a => !(a.agent?.skills ?? []).includes(skillId)).map(a => a.id),
+    [agentItems, skillId],
+  );
+  const repoOnly = skill ? skill.repoAgents.filter(a => !skill.agents.includes(a)) : [];
 
   const runAddSkill = async (req: { skill: string; category?: string; agents?: string[] }, preview: boolean) => {
     setBusy(true);
@@ -283,7 +612,7 @@ export function Agents({ id }: { id?: string }) {
       } else {
         setPreviewSkill(null);
         setNotice({ severity: 'warning', title: `Added skill ${req.skill} to ${r.applied} agents`, facts: r.items.map(i => `${i.id}: ${i.status}`).join(' · ') });
-        await Promise.all([skillsOp.reload(), agentsOp.reload()]);
+        await onChanged();
       }
     } catch (e) {
       setNotice({ severity: 'failure', title: 'Add skill failed', facts: e instanceof Error ? e.message : String(e) });
@@ -292,278 +621,101 @@ export function Agents({ id }: { id?: string }) {
     }
   };
 
-  // When an agent detail is open, keep the Control Column on the Agents catalogue with that row selected.
-  const listTab: LibTab = id ? 'agents' : tab;
-
-  const listPane = (
-    <>
-      <ShellStatus><OfflineMarker state={agentsOp.state} now={Date.now()} /></ShellStatus>
-      <header class="page-h">
-        <SearchField label={listTab === 'agents' ? 'Find agents' : 'Find skills'} value={q} onInput={setQ} onSearch={() => {}} />
-        {listTab === 'agents' && harness && (
-          <Button label={harnesses[harness]?.label ?? harness} icon="x" kind="quiet" onClick={() => setHarness('')} />
-        )}
-        {listTab === 'agents' && category && (
-          <Button label={category} icon="x" kind="quiet" onClick={() => setCategory('')} />
-        )}
-        <span class="grow" />
-        <span class="muted mono" aria-label={listTab === 'agents' ? `${filteredAgents.length} of ${agentItems.length} agents` : `${filteredSkills.length} of ${skillItems.length} skills`}>
-          {listTab === 'agents'
-            ? (filteredAgents.length < agentItems.length ? `${filteredAgents.length} of ${agentItems.length}` : agentItems.length)
-            : (filteredSkills.length < skillItems.length ? `${filteredSkills.length} of ${skillItems.length}` : skillItems.length)}
-        </span>
-      </header>
-      {listTab === 'agents' && agentsOp.error && <ErrorBanner text={agentsOp.error} onRetry={agentsOp.reload} />}
-      {listTab === 'skills' && skillsOp.error && <ErrorBanner text={skillsOp.error} onRetry={skillsOp.reload} />}
-      <section class="panel">
-        {listTab === 'agents' && (
-          !agentsOp.data && !agentsOp.error ? <Empty text="Loading…" /> :
-          agentTreeNodes.length ? (
-            <CatalogueTree
-              fill
-              nodes={agentTreeNodes}
-              label="Agents"
-              selectedId={id ?? null}
-              query={treeQuery}
-              collapsed={collapsedMap}
-              emptyText="No matching agents."
-              onToggle={folderId => setListGroups(AGENT_TREE_GROUPS, flipGroup(listGroups(AGENT_TREE_GROUPS), folderId))}
-              onSelect={node => {
-                if (Array.isArray(node.children)) {
-                  setListGroups(AGENT_TREE_GROUPS, flipGroup(listGroups(AGENT_TREE_GROUPS), node.id));
-                } else {
-                  go(`/agents/${encodeURIComponent(node.id)}`);
-                }
-              }}
-              onPin={node => pins.toggle(node.id)}
-              onRowMenu={(node, at) => {
-                if (!Array.isArray(node.children)) setMenu({ node, at });
-              }}
-            />
-          ) : <Empty text="No matching agents." />
-        )}
-        {menu && (
-          <ContextMenu
-            at={menu.at}
-            label={menu.node.label}
-            onClose={() => setMenu(null)}
-            items={[
-              { label: 'Open', icon: actions.open, onClick: () => go(`/agents/${encodeURIComponent(menu.node.id)}`) },
-              { label: pins.has(menu.node.id) ? 'Unpin' : 'Pin', icon: pins.has(menu.node.id) ? actions.unpin : actions.pin, onClick: () => pins.toggle(menu.node.id) },
-              { label: 'Copy id', icon: actions.copy, onClick: () => copyText(menu.node.id) },
-            ]}
-          />
-        )}
-        {listTab === 'skills' && (
-          !skillsOp.data && !skillsOp.error ? <Empty text="Loading…" /> :
-          filteredSkills.length ? (
-            <VirtualList
-              items={filteredSkills}
-              getKey={s => s.id}
-              rowHeight={catalogueRow()}
-              follow="top"
-              label="Skills"
-              columns="1.5rem minmax(0,1fr) auto"
-              render={s => (
-                <>
-                  <span class="lead"><StateBadge family="definition" state={s.agents.length ? 'ready' : 'never'} compact /></span>
-                  <span class="tt"><span class="title">{s.name}</span><span class="sub muted">{s.id}</span></span>
-                  <span class="mono muted">{s.agents.length}/{s.totalAgents}</span>
-                </>
-              )}
-            />
-          ) : <Empty text="No shipped skills found." />
-        )}
-      </section>
-    </>
-  );
-
-  const primaryAgents = filteredAgents.filter(a => !a.agent?.variantOf);
-  const variantAgents = filteredAgents.filter(a => !!a.agent?.variantOf);
-  const activeCount = filteredAgents.filter(a => a.last30.runs > 0).length;
-  const unusedAgents = filteredAgents.filter(a => a.last30.runs === 0 && !a.agent?.variantOf);
-  const totalRuns = filteredAgents.reduce((s, a) => s + a.last30.runs, 0);
-  const totalTokens = filteredAgents.reduce((s, a) => s + a.last30.tokens, 0);
-
-  const summaryTotals: TotalItem[] = [
-    {
-      label: 'Agents',
-      m: { value: filteredAgents.length, basis: 'measured' },
-      kind: 'count',
-      note: variantAgents.length ? `${primaryAgents.length} primary · ${variantAgents.length} variants` : undefined,
-    },
-    {
-      label: 'Active (30d)',
-      m: { value: activeCount, basis: 'measured' },
-      kind: 'count',
-      note: unusedAgents.length ? `${unusedAgents.length} unused` : undefined,
-    },
-    { label: '30d runs', m: { value: totalRuns, basis: 'measured' }, kind: 'count' },
-    { label: '30d tokens', m: { value: totalTokens, basis: 'measured' }, kind: 'count' },
-  ];
-
-  const workArea = (
-    <article class="detail stack" aria-label="Agent Library">
+  return (
+    <article class="detail stack" data-ui="detail" tabIndex={-1} aria-label={skill?.name ?? skillId}>
       <header class="detail-h">
-        <TabBar
-          label="Library sections"
-          tabs={[
-            { id: 'agents', label: 'Summary', count: agentItems.length },
-            { id: 'skills', label: 'Skills', count: skillItems.length },
-          ]}
-          value={tab}
-          onChange={setTab}
-        />
+        <Button label="Close" icon="x" iconOnly onClick={onClose} />
+        <span class="muted mono">{skill?.path ?? `skill:${skillId}`}</span>
         <span class="grow" />
-        {tab === 'agents' && repoChangedKeys.length > 0 && (
-          <Button label={`Take repo (${repoChangedKeys.length})`} icon="download" busy={busy} onClick={() => void runTakeRepo(repoChangedKeys, true)} />
-        )}
-        <Button label="Pipelines" icon="network" kind="quiet" onClick={() => go('/pipelines')} />
+        {skill && <StateBadge family="definition" state={skill.agents.length ? 'ready' : 'never'} />}
       </header>
+      <h2 class="detail-title">{skill?.name ?? skillId}</h2>
 
       {notice && (
         <ProblemRow
           severity={notice.severity}
           title={notice.title}
           facts={notice.facts}
-          actions={previewRepoKeys
+          actions={previewSkill
             ? [
-                { label: 'Apply repository versions', primary: true, onClick: () => void runTakeRepo(previewRepoKeys, false) },
-                { label: 'Dismiss', onClick: () => { setPreviewRepoKeys(null); setNotice(null); } },
+                { label: `Add ${previewSkill.skill}`, primary: true, onClick: () => void runAddSkill(previewSkill, false) },
+                { label: 'Dismiss', onClick: () => { setPreviewSkill(null); setNotice(null); } },
               ]
-            : previewSkill
-              ? [
-                  { label: `Add ${previewSkill.skill}`, primary: true, onClick: () => void runAddSkill(previewSkill, false) },
-                  { label: 'Dismiss', onClick: () => { setPreviewSkill(null); setNotice(null); } },
-                ]
-              : [{ label: 'Dismiss', onClick: () => setNotice(null) }]}
+            : [{ label: 'Dismiss', onClick: () => setNotice(null) }]}
         />
       )}
 
-      <div role="tabpanel">
-        {tab === 'agents' && (
-          <div class="stack">
-            <Totals items={summaryTotals} />
-
-            {repoChangedAgents.length > 0 && (
-              <DetailSection title={`Pending repository updates (${repoChangedAgents.length})`}>
-                {repoChangedAgents.map(d => (
-                  <KvRow
-                    key={d.id}
-                    icon="download"
-                    label={d.name}
-                    meta={d.path}
-                    value={
-                      <span class="acts">
-                        <Button label="Open" kind="quiet" onClick={() => go(`/agents/${d.id}`)} />
-                        <Button label="Take repo" icon="download" kind="quiet" busy={busy} onClick={() => void runTakeRepo([{ kind: 'agent', id: d.id }], true)} />
-                      </span>
-                    }
-                  />
-                ))}
-              </DetailSection>
+      {error ? (
+        <ErrorBanner text={error} onRetry={onRetry} />
+      ) : loading ? (
+        <Empty text="Loading…" />
+      ) : !skill ? (
+        <Empty text={`Skill ${skillId} not found.`} />
+      ) : (
+        <>
+          <DetailSection title="Rollout">
+            <KvRow
+              icon={skill.agents.length ? 'circle-check' : 'file-text'}
+              label={skill.description || 'Shipped skill'}
+              meta={`Active in ${skill.agents.length} of ${skill.totalAgents} store agents · ${skill.repoAgents.length} in repository`}
+            />
+            {skill.agents.length > 0 && (
+              <KvRow
+                icon="bot"
+                label="Enabled on"
+                meta={<span class="acts">{skill.agents.map(a => <EntityCode key={a} code={a} id={a} kind="agent" cls="inline" />)}</span>}
+              />
             )}
-
-            {harnessSummary.length > 0 && (
-              <DetailSection title="By harness">
-                {harnessSummary.map(h => (
-                  <KvRow
-                    key={h.key}
-                    icon={h.icon}
-                    label={h.label}
-                    meta={`${h.count} agent${h.count === 1 ? '' : 's'} · ${h.runs} runs (30d)`}
-                    value={
-                      <span class="acts">
-                        <Num m={{ value: h.tokens, basis: 'measured' }} kind="count" />
-                        <Button label={harness === h.key ? 'All harnesses' : 'Filter'} kind={harness === h.key ? 'primary' : 'quiet'} onClick={() => setHarness(harness === h.key ? '' : h.key)} />
-                      </span>
-                    }
-                  />
-                ))}
-              </DetailSection>
+            {repoOnly.length > 0 && (
+              <KvRow
+                icon="git-merge"
+                label="Repository only"
+                meta={<span class="acts">{repoOnly.map(a => <EntityCode key={a} code={a} id={a} kind="agent" cls="inline" />)}</span>}
+              />
             )}
-
-            {categorySummary.length > 0 && (
-              <DetailSection title="By category">
-                {categorySummary.map(c => (
-                  <KvRow
-                    key={c.cat}
-                    icon="layers-2"
-                    label={c.cat}
-                    meta={`${c.count} agent${c.count === 1 ? '' : 's'} · ${c.runs} runs (30d)`}
-                    value={
-                      <span class="acts">
-                        <Num m={{ value: c.tokens, basis: 'measured' }} kind="count" />
-                        <Button label={category === c.cat ? 'All categories' : 'Filter'} kind={category === c.cat ? 'primary' : 'quiet'} onClick={() => setCategory(category === c.cat ? '' : c.cat)} />
-                      </span>
-                    }
-                  />
-                ))}
-              </DetailSection>
+            {(categories.length > 0 || missingAgents.length > 0) && (
+              <KvRow
+                icon="plus"
+                label="Add to agents"
+                value={
+                  <span class="acts">
+                    {categories.length > 0 && (
+                      <>
+                        <Choice
+                          label={`Target category for ${skill.id}`}
+                          value={chosenCat}
+                          options={categories.map(c => ({ id: c, label: c }))}
+                          onChange={setTargetCat}
+                        />
+                        <Button
+                          label={`Add to ${chosenCat}`}
+                          icon="plus"
+                          kind="quiet"
+                          busy={busy}
+                          onClick={() => void runAddSkill({ skill: skill.id, category: chosenCat }, true)}
+                        />
+                      </>
+                    )}
+                    {missingAgents.length > 0 && (
+                      <Button
+                        label={`Add to all missing (${missingAgents.length})`}
+                        icon="plus"
+                        kind="quiet"
+                        busy={busy}
+                        onClick={() => void runAddSkill({ skill: skill.id, agents: missingAgents }, true)}
+                      />
+                    )}
+                  </span>
+                }
+              />
             )}
+          </DetailSection>
 
-            {variantAgents.length > 0 && (
-              <Disclosure summary={`Lab variants (${variantAgents.length})`} summaryClass="muted">
-                {variantAgents.map(d => (
-                  <KvRow
-                    key={d.id}
-                    icon="bot"
-                    label={d.name}
-                    meta={`variant of ${d.agent?.variantOf}${d.agent?.experiment ? ` (${d.agent.experiment})` : ''}`}
-                    value={<Button label="Open" kind="quiet" onClick={() => go(`/agents/${d.id}`)} />}
-                  />
-                ))}
-              </Disclosure>
-            )}
-          </div>
-        )}
-
-        {tab === 'skills' && (
-          <div class="stack">
-            {skillsOp.error && <ErrorBanner text={skillsOp.error} onRetry={skillsOp.reload} />}
-            {filteredSkills.length ? filteredSkills.map((s: SkillSummary) => {
-              const targetCat = skillTargetCat[s.id] || categories[0] || '';
-              const missingAgents = agentItems.filter(a => !(a.agent?.skills ?? []).includes(s.id)).map(a => a.id);
-              return (
-                <DetailSection key={s.id} title={`${s.name} (${s.id})`}>
-                  <KvRow icon={(s.agents.length ? 'circle-check' : 'file-text') as IconName} label={s.description || 'Shipped skill'}
-                    meta={`${s.path} · active in ${s.agents.length} of ${s.totalAgents} store agents (repo: ${s.repoAgents.length})`}
-                    value={
-                      <span class="acts">
-                        {categories.length > 0 && (
-                          <>
-                            <Choice label={`Target category for ${s.id}`} value={targetCat}
-                              options={categories.map(c => ({ id: c, label: c }))}
-                              onChange={c => setSkillTargetCat(prev => ({ ...prev, [s.id]: c }))} />
-                            <Button label={`Add to ${targetCat}`} icon="plus" kind="quiet" busy={busy}
-                              onClick={() => void runAddSkill({ skill: s.id, category: targetCat }, true)} />
-                          </>
-                        )}
-                        {missingAgents.length > 0 && (
-                          <Button label={`Add to all missing (${missingAgents.length})`} icon="plus" kind="quiet" busy={busy}
-                            onClick={() => void runAddSkill({ skill: s.id, agents: missingAgents }, true)} />
-                        )}
-                      </span>
-                    } />
-                  {s.agents.length > 0 && <KvRow icon="bot" label="Enabled on agents" meta={s.agents.join(', ')} />}
-                  <Disclosure summary={`Instructions (${s.path})`} summaryClass="muted">
-                    <pre class="skill-body">{s.body}</pre>
-                  </Disclosure>
-                </DetailSection>
-              );
-            }) : <Empty text="No shipped skills match your search." />}
-          </div>
-        )}
-      </div>
+          <DetailSection title="Instructions">
+            <pre class="skill-body">{skill.body}</pre>
+          </DetailSection>
+        </>
+      )}
     </article>
-  );
-
-  return (
-    <ListDetail
-      list={listPane}
-      detail={id ? <DefinitionDetail key={`agent/${id}`} kind="agent" id={id} onClose={() => go('/agents')} /> : undefined}
-      detailKey={id}
-      idle={workArea}
-    />
   );
 }

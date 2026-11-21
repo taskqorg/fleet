@@ -3,75 +3,67 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  ListDetail, DefinitionEditor, DraftBar, DetailSection, Disclosure, EntityPicker, KvRow, StateBadge, Empty,
-  SettingField, CodeEditor, DiffText, StepList, AgeChip, Choice, Button, DataTable, Totals, CostFigures, Num, Icon,
-  msMeasured, matchSearch, SearchField,
-  type CatalogueTreeNode, type CostFigureLike, type IconName, type StepItem, type TotalItem,
+  DefinitionEditor, DraftBar, DetailSection, Disclosure, EntityCode, EntityPicker, KvRow, ProjectPick, RowCheck,
+  StateBadge, Empty, SettingField, CodeEditor, CopyButton, DiffText, StepList, AgeChip, Choice, Button, DataTable,
+  Totals, CostFigures, Num, Icon, duration, msMeasured, matchSearch, SearchField,
+  type CostFigureLike, type IconName, type PickProject, type StepItem, type TotalItem,
 } from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type Ops } from '../api.ts';
 import { usePins } from '../prefs.ts';
 import { useOp } from '../store.ts';
+import { Agents } from './agents.tsx';
 import { resourceTotals } from './resources.tsx';
-import { groupUseCases, isArchivedUseCase, type RegistryUseCase } from './use-cases.ts';
+import { buildUseCaseTree, isArchivedUseCase, type RegistryUseCase } from './use-cases.ts';
+import type { DefinitionListItem } from '../../../contracts/generated/ops.ts';
 import type { AntigravitySettings, Profile, ProfileMcpGrant } from '../../../contracts/generated/profile.ts';
 
 type Kind = 'agent' | 'pipeline' | 'catalogue';
 type Get = Ops['definition_get']['reply'];
 type Draft = { base: number; text: string; changes: number; stale: boolean; problems: { path: string; message: string }[] };
-const SECTION: Record<Kind, { title: string; route: string }> = {
-  agent: { title: 'Agents', route: '/agents' }, pipeline: { title: 'Pipelines', route: '/pipelines' }, catalogue: { title: 'Catalogue', route: '/catalogue' },
-};
 type Content = Ops['definition_save']['request']['content'];
+
+export const SYSTEM_AGENT_DEFAULTS = {
+  harness: 'codex',
+  model: 'gpt-6.2-sol',
+  effort: 'medium',
+} as const;
+
+export const defaultInstructionRole = (harness: string): string =>
+  harness === 'claude' ? 'system' : harness === 'antigravity' || harness === 'acp' ? 'user' : 'developer';
+
+export function baseAgentDefaults(
+  parent?: { harness?: string; model?: string; effort?: string | null } | null,
+  baseline?: { harness?: string; model?: string; effort?: string | null } | null,
+  currentHarness?: string,
+): { harness: string; model: string; effort: string } {
+  const harness = parent?.harness ?? baseline?.harness ?? SYSTEM_AGENT_DEFAULTS.harness;
+  const model = parent?.model ?? baseline?.model ?? SYSTEM_AGENT_DEFAULTS.model;
+  const effort = parent
+    ? (parent.effort ?? 'none')
+    : (currentHarness && currentHarness !== harness
+        ? 'none'
+        : (baseline?.effort ?? SYSTEM_AGENT_DEFAULTS.effort));
+  return { harness, model, effort };
+}
+
 /** The typed content of a definition's text: JSON.parse checks the syntax, the server the shape (draft problems). */
 const contentOf = (kind: Kind, text: string) => ({ [kind]: JSON.parse(text) }) as Content;
 const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
-/** The project ids of project_list, for the project choices. */
-const projectIds = (r: Ops['project_list']['reply'] | null) => (r?.projects ?? []).map(p => String(p.id));
+/** Project options for ProjectPick, preserving human names. */
+const projectOptions = (r: Ops['project_list']['reply'] | null): PickProject[] =>
+  (r?.projects ?? []).map(p => ({ id: String(p.id), name: String(p.name ?? p.id) }));
 
 export function Definitions({ kind, id }: { kind: Kind; id?: string }) {
-  const [, go] = useLocation();
-  const [q, setQ] = useState('');
-  useEffect(() => setQ(''), [kind]);
-  const { title, route } = SECTION[kind];
-  const { data } = useOp('definition_list', { kind });
-  const items = data?.items ?? [];
-  const shown = useMemo(
-    () => items
-      .filter(x => matchSearch(q, `${x.id} ${x.name} ${x.state}`))
-      .toSorted((a, b) => Number(!!b.draft) - Number(!!a.draft)),
-    [items, q],
-  );
-  const list = <>
-    <header class="page-h">
-      <SearchField label={`Find ${title.toLowerCase()}`} value={q} onInput={setQ} onSearch={() => {}} />
-      <span class="grow" />
-      <span class="muted mono" aria-label={`${shown.length} of ${items.length} ${title.toLowerCase()}`}>
-        {shown.length < items.length ? `${shown.length} of ${items.length}` : items.length}
-      </span>
-    </header>
-    <section class="panel">
-      <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
-        {data && items.length === 0 && <Empty text={`No ${title.toLowerCase()} yet`} />}
-        {data && items.length > 0 && shown.length === 0 && <Empty text={`No matching ${title.toLowerCase()}`} />}
-        {!data && <Empty text="Loading…" />}
-        {shown.map(x =>
-          <div key={x.id} role="row" class={`vl-row static${x.id === id ? ' sel' : ''}`} onClick={() => go(`${route}/${x.id}`)}>
-            <span class="lead"><StateBadge family="definition" state={x.draft ? 'draft' : 'ready'} compact /></span>
-            <span class="tt"><a class="title row-link" href={`${route}/${x.id}`} onClick={e => { e.preventDefault(); go(`${route}/${x.id}`); }}>{x.name}</a>
-              {x.name !== x.id && <span class="id">{x.id}</span>}{x.agent && <span class="muted">{x.agent.harness} · {x.agent.model}</span>}
-              {kind !== 'catalogue' && x.last30?.runs > 0 && <>
-                <span class="hc" data-tip="Runs in last 30 days"><Icon name="activity" label="Runs" /><Num m={{ value: x.last30.runs, basis: 'measured' }} kind="count" /></span>
-                {x.last30.cost?.length ? <CostFigures cost={x.last30.cost} /> : x.last30.costUsd != null && <Num m={{ value: x.last30.costUsd, currency: 'USD', basis: costBasisOf(x.last30.costBasis), ...(x.last30.costBasis === 'tokens' ? { reason: 'tokens' } : {}) }} kind="money" />}
-              </>}</span>
-            <span class="r mono" data-tip={x.state}>r{x.revision}{x.state !== 'synced' ? ` · ${x.state}` : ''}</span>
-          </div>)}
-      </div>
-    </section>
-  </>;
-  return <ListDetail list={list} detailKey={id} detail={id && <DefinitionDetail key={`${kind}/${id}`} kind={kind} id={id} onClose={() => go(route)} />} />;
+  const section = kind === 'pipeline' ? 'pipelines' : kind === 'catalogue' ? 'catalogue' : 'agents';
+  return <Agents section={section} id={id} />;
 }
 
-export function DefinitionDetail({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => void }) {
+export function DefinitionDetail({ kind, id, agentById, onClose }: {
+  kind: Kind;
+  id: string;
+  agentById?: ReadonlyMap<string, DefinitionListItem>;
+  onClose: () => void;
+}) {
   const [tab, setTab] = useState(kind === 'catalogue' ? 'Methods' : 'Configuration');
   const got = useOp('definition_get', { kind, id });
   const drafted = useOp('definition_draft_get', got.data?.draft ? { kind, id } : null);
@@ -127,7 +119,14 @@ export function DefinitionDetail({ kind, id, onClose }: { kind: Kind; id: string
   const discard = () => run(async () => { clearTimeout(timer.current); pending.current = null; await op('definition_draft_discard', { kind, id }); load(); });
   const alive = useAlive();
   const runDraft = () => run(async () => { await flush(); const requestId = crypto.randomUUID(); await writeOnce('pipeline_run_create', { pipelineId: id, requestId, draft: true }, () => setError('unknown, retrying'), { signal: alive }); });
-  if (!def) return <article class="detail" data-ui="detail" tabIndex={-1}>{error ? <div class="error" role="alert">{error}</div> : <Empty text="Loading…" />}</article>;
+  if (!def) {
+    return (
+      <article class="detail stack" data-ui="detail" tabIndex={-1} aria-label={id}>
+        <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><span class="muted mono">{id}</span></header>
+        {error ? <div class="error" role="alert">{error}</div> : <Empty text="Loading…" />}
+      </article>
+    );
+  }
   const tabs = kind === 'agent' ? ['Configuration', 'Effective', 'Diff', 'Compatibility', 'Usage', 'History'] : kind === 'catalogue' ? ['Methods', 'Configuration', 'Diff', 'History'] : ['Configuration', 'Usage', 'Diff', 'History'];
   return <DefinitionEditor label={id} crumb={`shared · ${def.path} · r${def.head}${def.state !== 'synced' ? ` · ${def.state}` : ''}`} title={def.id}
     tabs={tabs} tab={tab} onTab={setTab} onClose={onClose}>
@@ -143,10 +142,10 @@ export function DefinitionDetail({ kind, id, onClose }: { kind: Kind; id: string
       {draft && <SettingField label="Message" value={message} help="Says what the revision changes; shown in History." now={Date.now()} status={{ kind: 'pending' }} onSave={setMessage} />}
       {kind === 'pipeline' && <PipelineFacts text={text} def={def} />}
       {kind === 'pipeline' && <Steps text={text} />}
-      {kind === 'agent' && <AgentFacts text={text} def={def} />}
-      <DetailSection title="Definition">
+      {kind === 'agent' && <AgentFacts text={text} def={def} agentById={agentById} />}
+      <Disclosure summary="Definition JSON" summaryClass="muted">
         <CodeEditor label={def.path} value={text} onChange={edit} problems={draft?.problems ?? []} />
-      </DetailSection>
+      </Disclosure>
     </>}
     {tab === 'Methods' && kind === 'catalogue' && <CatalogueMethods />}
     {tab === 'Diff' && <DiffTab kind={kind} id={id} hasDraft={!!draft} head={def.head} />}
@@ -174,7 +173,7 @@ type StepJson = {
   when?: { source?: { step?: string; path?: string[] }; equals?: unknown };
 };
 type PipelineJson = { id?: string; version?: number; resultStep?: string; description?: string; steps?: unknown };
-type DiffFieldRow = { key: string; icon: IconName; label: string; baseText: string; currentText: string; diff: boolean; badgeLabel?: string };
+type DiffFieldRow = { key: string; icon: IconName; label: string; baseText: string; currentText: string; diff: boolean; draft?: boolean; note?: string };
 
 const parseJsonObj = <T extends object>(raw: string): T | null => {
   try {
@@ -206,8 +205,8 @@ function DiffFromDefault({ fields, emptyLabel, emptyMeta, loadingText }: {
             key={f.key}
             icon={f.icon}
             label={f.label}
-            meta={<span class="mono">{f.baseText} → {f.currentText}</span>}
-            value={<span class="badge t-attention">{f.badgeLabel ?? 'override'}</span>}
+            meta={<span class="mono" data-tip={`Default: ${f.baseText}`}>{f.currentText}</span>}
+            value={f.draft ? <StateBadge family="definition" state="draft" compact /> : f.note ? <span class="muted">{f.note}</span> : undefined}
           />
         ))
       ) : (
@@ -308,7 +307,7 @@ function PipelineFacts({ text, def }: { text: string; def: Get }) {
       icon: 'clock',
       label: 'Script timeout',
       baseText: 'default',
-      currentText: timeoutSteps.length ? timeoutSteps.map(s => `${s.id || '?'}: ${s.timeout_ms}ms`).join(', ') : 'default',
+      currentText: timeoutSteps.length ? timeoutSteps.map(s => `${s.id || '?'}: ${duration(s.timeout_ms! / 1000).text}`).join(', ') : 'default',
       diff: timeoutSteps.length > 0,
     },
   ];
@@ -328,7 +327,7 @@ function PipelineFacts({ text, def }: { text: string; def: Get }) {
         baseText: `r${def.head} (${savedSteps.length})`,
         currentText: `${steps.length} (${changed} changed)`,
         diff: true,
-        badgeLabel: 'draft',
+        draft: true,
       });
     }
   }
@@ -353,13 +352,12 @@ function PipelineFacts({ text, def }: { text: string; def: Get }) {
     <DiffFromDefault
       fields={fields}
       emptyLabel="Matches pipeline defaults"
-      emptyMeta="No non-default plan or step overrides"
+      emptyMeta="Matches standard plan and step defaults"
     />
   </>;
 }
 
-function AgentFacts({ text, def }: { text: string; def: Get }) {
-  const [, go] = useLocation();
+function AgentFacts({ text, def, agentById }: { text: string; def: Get; agentById?: ReadonlyMap<string, DefinitionListItem> }) {
   let a: Partial<Profile> | null = null;
   try {
     const parsed: unknown = JSON.parse(text);
@@ -368,18 +366,17 @@ function AgentFacts({ text, def }: { text: string; def: Get }) {
 
   const variantOf = a && typeof a.variantOf === 'string' && a.variantOf && a.variantOf !== def.id ? a.variantOf : '';
   const baseOp = useOp('definition_get', variantOf ? { kind: 'agent', id: variantOf } : null);
-  const listOp = useOp('definition_list', { kind: 'agent' });
 
   if (!a) return null;
 
   const baseProfile: Profile | null = variantOf && baseOp.data?.content?.agent ? baseOp.data.content.agent : null;
-  const listItem = listOp.data?.items.find(x => x.id === def.id);
+  const listItem = agentById?.get(def.id);
+  const baselineAgent = agentById?.get('baseline')?.agent;
   const roles = listItem?.agent?.roles ?? [];
 
-  const curHarness = a.harness ?? 'codex';
-  const baseHarness = baseProfile ? (baseProfile.harness ?? 'codex') : 'codex';
-  const defaultEffort = (h: string) => (h === 'codex' ? 'medium' : 'none');
-  const defaultRole = (h: string) => (h === 'claude' ? 'system' : h === 'antigravity' || h === 'acp' ? 'user' : 'developer');
+  const curHarness = a.harness ?? baselineAgent?.harness ?? SYSTEM_AGENT_DEFAULTS.harness;
+  const defaults = baseAgentDefaults(baseProfile, baselineAgent, curHarness);
+  const baseHarness = defaults.harness;
 
   const normList = (xs: unknown): string[] =>
     Array.isArray(xs) ? xs.filter((x): x is string => typeof x === 'string') : [];
@@ -419,7 +416,7 @@ function AgentFacts({ text, def }: { text: string; def: Get }) {
   });
 
   const curModel = typeof a.model === 'string' ? a.model : '';
-  const baseModel = baseProfile ? baseProfile.model : 'gpt-6.2-sol';
+  const baseModel = defaults.model;
   fields.push({
     key: 'model',
     icon: 'bot',
@@ -429,8 +426,8 @@ function AgentFacts({ text, def }: { text: string; def: Get }) {
     diff: !!curModel && curModel !== baseModel,
   });
 
-  const curEffort = a.effort ?? (curHarness === 'codex' ? 'medium' : 'none');
-  const baseEffort = baseProfile ? (baseProfile.effort ?? 'none') : defaultEffort(curHarness);
+  const curEffort = a.effort ?? (curHarness === SYSTEM_AGENT_DEFAULTS.harness ? defaults.effort : 'none');
+  const baseEffort = defaults.effort;
   fields.push({
     key: 'effort',
     icon: 'gauge',
@@ -440,8 +437,8 @@ function AgentFacts({ text, def }: { text: string; def: Get }) {
     diff: curEffort !== baseEffort,
   });
 
-  const curRole = a.instructionRole ?? defaultRole(curHarness);
-  const baseRole = baseProfile ? (baseProfile.instructionRole ?? defaultRole(baseHarness)) : defaultRole(curHarness);
+  const curRole = a.instructionRole ?? defaultInstructionRole(curHarness);
+  const baseRole = baseProfile ? (baseProfile.instructionRole ?? defaultInstructionRole(baseHarness)) : defaultInstructionRole(curHarness);
   fields.push({
     key: 'instructionRole',
     icon: 'messages-square',
@@ -492,8 +489,9 @@ function AgentFacts({ text, def }: { text: string; def: Get }) {
     icon: 'link',
     label: 'Connections',
     baseText: fmtList(baseConn),
-    currentText: curConn.length ? `${fmtList(curConn)} · credentials stay in the connection` : 'none',
+    currentText: fmtList(curConn),
     diff: !sameList(curConn, baseConn),
+    note: curConn.length ? 'credentials stay in the connection' : undefined,
   });
 
   const curMcp = fmtMcp(a.mcpServers);
@@ -579,10 +577,10 @@ function AgentFacts({ text, def }: { text: string; def: Get }) {
         <KvRow
           icon="chart-no-axes-column"
           label="Variant of"
-          meta={<>
-            <a class="row-link" href={`/agents/${encodeURIComponent(a.variantOf)}`} onClick={e => { e.preventDefault(); go(`/agents/${encodeURIComponent(a.variantOf!)}`); }}>{a.variantOf}</a>
-            {a.experiment && <span class="mono"> · {a.experiment}</span>}
-          </>}
+          meta={<span class="acts">
+            <EntityCode code={a.variantOf} id={a.variantOf} kind="agent" cls="inline" />
+            {a.experiment && <EntityCode id={a.experiment} kind="experiment" label cls="inline" />}
+          </span>}
         />
       )}
       {a.purpose && <KvRow icon="info" label="Purpose" meta={a.purpose} />}
@@ -594,7 +592,7 @@ function AgentFacts({ text, def }: { text: string; def: Get }) {
       fields={fields}
       loadingText={variantOf && !baseOp.data && !baseOp.error ? `Loading base profile ${variantOf}…` : undefined}
       emptyLabel="Matches base defaults"
-      emptyMeta={`No overrides from ${baseSourceLabel}`}
+      emptyMeta={`Matches ${baseSourceLabel} defaults`}
     />
   </>;
 }
@@ -611,29 +609,41 @@ function HistoryTab({ kind, id }: { kind: Kind; id: string }) {
   const { data: h, error } = useOp('definition_history', { kind, id });
   if (error) return <DetailSection title="Revisions"><div class="error" role="alert">{error}</div></DetailSection>;
   return <DetailSection title="Revisions">
-    {!h ? <Empty text="Loading…" /> : h.revisions.map(r => <KvRow key={r.revision} icon={r.source === 'agent' ? 'bot' : r.source === 'repo' ? 'git-merge' : 'file-plus-2'} label={`r${r.revision} · ${r.message}`}
-      meta={<span class="mono">{r.actor.person?.name ?? (r.actor.executionId ? 'agent' : 'Fleet')}{r.actor.kind === 'agent' && r.actor.directedBy ? ` for ${r.actor.directedBy.name}` : ''} · {r.contentSha.slice(0, 7)}</span>}
-      value={<AgeChip t={Date.parse(r.at)} />} />)}
+    {!h ? <Empty text="Loading…" /> : h.revisions.map(r => (
+      <KvRow
+        key={r.revision}
+        icon={r.source === 'agent' ? 'bot' : r.source === 'repo' ? 'git-merge' : 'file-plus-2'}
+        label={`r${r.revision} · ${r.message}`}
+        meta={`${r.actor.person?.name ?? (r.actor.executionId ? 'agent' : 'Fleet')}${r.actor.kind === 'agent' && r.actor.directedBy ? ` for ${r.actor.directedBy.name}` : ''}`}
+        value={<span class="acts"><CopyButton label={`sha256: ${r.contentSha}`} value={r.contentSha} iconOnly /><AgeChip t={Date.parse(r.at)} /></span>}
+      />
+    ))}
   </DetailSection>;
 }
 
 function EffectiveTab({ id, draft, version }: { id: string; draft: boolean; version: string }) {
-  const list = useOp('project_list', {}), projects = projectIds(list.data);
-  const [chosen, setProject] = useState(''), project = chosen || projects[0] || '';
+  const list = useOp('project_list', {}), projects = projectOptions(list.data);
+  const [chosen, setProject] = useState<string | null | undefined>(undefined);
+  const project = chosen === undefined ? (projects[0]?.id ?? '') : (chosen ?? '');
   const effective = useOp('agent_effective', project ? { id, projectId: project, draft } : null), e = effective.data;
   const error = list.error ?? effective.error;
   // The draft's text changed: read the effective settings again once typing pauses.
   const reread = useRef(effective.reload); reread.current = effective.reload;
   useEffect(() => { if (!version) return; const t = setTimeout(() => reread.current(), 800); return () => clearTimeout(t); }, [version]);
   return <>
-    {projects.length > 0 && <DetailSection title="Project"><Choice label="Project" value={project} onChange={setProject} options={projects.map(p => ({ id: p, label: p }))} /></DetailSection>}
+    {projects.length > 0 && (
+      <DetailSection title="Project">
+        <ProjectPick projects={projects} value={project || null} onChange={p => setProject(p)} />
+      </DetailSection>
+    )}
     {error && <div class="error" role="alert">{error}</div>}
+    {!project && projects.length > 0 && <Empty text="Pick a project to preview effective layers." />}
     {e && <DetailSection title="Layers, in the order the agent receives them">
       {e.layers.map(l => <KvRow key={l.name} icon={l.name === 'role' ? 'bot' : l.name === 'project' ? 'folder-open' : 'file-plus-2'} label={l.name}
         meta={<span class="mono">{l.source}{l.revision ? ` · ${l.revision}` : ''}{l.fields.length ? ` · ${l.fields.join(', ')}` : ''}</span>} />)}
     </DetailSection>}
     {e && <DetailSection title="Effective settings">
-      <KvRow icon="settings" label="Harness" meta={<span class="mono">{e.result.harness ?? 'codex'}</span>} />
+      <KvRow icon="settings" label="Harness" meta={<span class="mono">{e.result.harness ?? SYSTEM_AGENT_DEFAULTS.harness}</span>} />
       <KvRow icon="bot" label="Model" meta={<span class="mono">{e.result.model}{e.result.effort ? ` · ${e.result.effort}` : ''}</span>} />
     </DetailSection>}
   </>;
@@ -665,9 +675,10 @@ const methodStatusIcon = (s: string) =>
 
 function CatalogueMethods() {
   const [, go] = useLocation();
-  const list = useOp('project_list', {}), projects = projectIds(list.data);
-  const [chosen, setProject] = useState(''), project = chosen || projects[0] || '';
-  const [search, setSearch] = useState(''), [scopeSearch, setScopeSearch] = useState('');
+  const list = useOp('project_list', {}), projects = projectOptions(list.data);
+  const [chosen, setProject] = useState<string | null | undefined>(undefined);
+  const project = chosen === undefined ? (projects[0]?.id ?? '') : (chosen ?? '');
+  const [search, setSearch] = useState('');
   const registry = useOp('lab_registry', {}), useCases = registry.data?.useCases ?? [];
   const [selectedUseCases, setSelectedUseCases] = useState<string[]>([]);
   const useCasePins = usePins('catalogue-use-cases');
@@ -682,44 +693,25 @@ function CatalogueMethods() {
   const c = candidate && candidate !== picked.current.held && candidate.projectId === project && !catalogueError ? candidate : null;
   const methods = c?.methods ?? [];
 
-  const { useCaseNodes, archivedUseCaseNodes } = useMemo(() => {
-    const grouped = groupUseCases(useCases.filter(u => isArchivedUseCase(u) || u.lab_fit !== 'none'));
-    const toNode = (u: RegistryUseCase): CatalogueTreeNode => {
-      const goal = u.goal.trim();
-      const shortGoal = goal.length > 48 ? `${goal.slice(0, 47).trimEnd()}…` : goal;
-      return {
-        id: u.id,
-        label: u.id,
-        sub: shortGoal || undefined,
-        icon: 'chart-no-axes-column',
-        pinned: useCasePins.has(u.id),
-        disabled: u.lab_fit === 'none',
-        disabledReason: u.lab_fit === 'none' ? 'Not eligible for Lab evaluation' : undefined,
-        searchText: `${u.id} ${u.goal} ${u.status} ${(u.tags ?? []).join(' ')}`,
-      };
-    };
-    const activeNodes: CatalogueTreeNode[] = grouped.collections.map(col => ({
-      id: `group:${col.key}`,
-      label: col.title,
-      icon: col.key === 'benchmarks' ? 'chart-no-axes-column' : col.key === 'real-work' ? 'activity' : 'folder-open',
-      children: col.items.map(toNode),
-    }));
-    const archived: CatalogueTreeNode[] = grouped.archived.length > 0
-      ? [{
-          id: 'group:archived',
-          label: 'Archived',
-          icon: 'archive',
-          defaultCollapsed: false,
-          children: grouped.archived.map(toNode),
-        }]
-      : [];
-    return { useCaseNodes: activeNodes, archivedUseCaseNodes: archived };
-  }, [useCases, useCasePins.ids]);
+  const { nodes: useCaseNodes, archivedNodes: archivedUseCaseNodes } = useMemo(
+    () => buildUseCaseTree(useCases.filter(u => isArchivedUseCase(u) || u.lab_fit !== 'none'), {
+      pinnedIds: useCasePins.ids,
+      separateArchived: true,
+      eligibleOnly: true,
+    }),
+    [useCases, useCasePins.ids],
+  );
 
   const choose = (id: string) => { if (!c || restored || busy) return; const next = selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]; setSelected(next); if (!next.includes(baseline)) setBaseline(next.includes(String(c?.recommendedMethod)) ? String(c?.recommendedMethod) : ''); };
   const act = async (run: () => Promise<void>) => { setBusy(true); try { await run(); setError(null); } catch (x) {setError(errorText(x));} finally {setBusy(false);} };
   return <>
-    <DetailSection title="Project"><SearchField label="Find project" value={scopeSearch} onInput={setScopeSearch} onSearch={() => {}} /><Choice label="Project" value={project} options={projects.filter(p => p.includes(scopeSearch)).map(p => ({id:p,label:p}))} onChange={p => {setProject(p);setSelected([]);setBaseline('');setSelectedUseCases([]);setError(null);}} /></DetailSection>
+    <DetailSection title="Project">
+      <ProjectPick
+        projects={projects}
+        value={project || null}
+        onChange={p => { setProject(p); setSelected([]); setBaseline(''); setSelectedUseCases([]); setError(null); }}
+      />
+    </DetailSection>
     {error && <div class="error" role="alert">{error}</div>}
     {catalogueError && <div class="error" role="alert">Catalogue unavailable: {catalogueError}. No current evidence loaded for {project}.<Button label="Retry Catalogue" icon="rotate-cw" onClick={catalogue.reload} /></div>}
     {c && <p class="muted">Evidence project: {c.projectId}{restored ? ' · restored, read-only until current confirmation' : ''}</p>}
@@ -737,17 +729,25 @@ function CatalogueMethods() {
               {mx.capability && <span class="chip">{mx.capability}</span>}
               {mx.status && <span class={`badge t-${methodStatusTone(mx.status)}`}><Icon name={methodStatusIcon(mx.status)} /><span>{mx.status}</span></span>}
             </span>}
-            value={<><Choice label={`Select ${m.name}`} value={selected} options={[{id:m.id,label:selected.includes(m.id) ? 'Selected' : 'Select'}]} onChange={choose} /><Button label="Recommend for project" icon="check" iconOnly busy={busy} disabledReason={restored ? 'Await current scoped Catalogue read' : undefined} onClick={() => act(async () => {await op('recommendation_set', {projectId:project,methodId:m.id});catalogue.reload();})} /></>} />
+            value={<span class="acts">
+              <RowCheck checked={selected.includes(m.id)} label={`Select ${m.name}`} onToggle={() => choose(m.id)} />
+              <Button label="Recommend for project" icon="check" iconOnly busy={busy} disabledReason={restored ? 'Await current scoped Catalogue read' : undefined} onClick={() => act(async () => {await op('recommendation_set', {projectId:project,methodId:m.id});catalogue.reload();})} />
+            </span>} />
           {mx.description && <p class="muted">{mx.description}</p>}
           <KvRow icon="chart-no-axes-column" label={a.scoreForm === 'typed' ? 'Comparison score' : 'Quality'} meta={a.score == null ? 'Unavailable' : `${a.score.toFixed(3)}${a.partial ? ' · partial/incomplete' : ''}`} value={`${a.basis} · ${a.eligibleCells ?? 0}/${a.expectedCells ?? 0} cells · ${a.examples ?? 0} ${a.examples === 1 ? 'example' : 'examples'}`} />
-          <KvRow icon="clock" label="Time / cost" meta={a.wallMsMedian == null ? 'Time unavailable' : `${a.wallMsMedian} ms · ${a.durationSamples == null ? 'pipeline usage window' : `${a.durationSamples} samples`}`} value={`${a.costUsd == null ? 'Cost unavailable' : `$${a.costUsd} · ${a.costBasis}`}`} />
+          <KvRow
+            icon="clock"
+            label="Time / cost"
+            meta={a.wallMsMedian == null ? 'Time unavailable' : <><Num m={msMeasured(a.wallMsMedian, 'measured')} kind="duration" /> · {a.durationSamples == null ? 'pipeline usage window' : `${a.durationSamples} samples`}</>}
+            value={a.costUsd == null ? 'Cost unavailable' : <Num m={{ value: a.costUsd, currency: 'USD', basis: costBasisOf(a.costBasis) }} kind="money" />}
+          />
           <KvRow icon="folder-open" label="Recommended for" meta={m.recommendedFor.join(', ') || 'None'} />
           {a.state && <p class="muted">{a.state} · {a.stopReason ?? ''} · {a.failedCells ?? 0} failed · {a.excludedCells ?? 0} excluded</p>}
           {a.reason && <p>{a.reason}</p>}{a.exclusions && <p>{a.exclusions}</p>}
           {a.evaluator && <p class="muted">{a.variant} · {a.split} · {a.evaluator} · {a.evaluatorVersion}</p>}
-          {a.experimentId && <a href={`/lab/${a.experimentId}`}>Assessment experiment</a>}
-          {a.sourceExperimentId && <a href={`/lab/${a.sourceExperimentId}`}>Source experiment</a>}
-          {a.ongoingExperimentId && <a href={`/lab/${a.ongoingExperimentId}`}>Current experiment · {a.ongoingState}</a>}
+          {a.experimentId && <KvRow icon="chart-no-axes-column" label="Assessment" value={<EntityCode id={a.experimentId} kind="experiment" />} />}
+          {a.sourceExperimentId && <KvRow icon="chart-no-axes-column" label="Source" value={<EntityCode id={a.sourceExperimentId} kind="experiment" />} />}
+          {a.ongoingExperimentId && <KvRow icon="chart-no-axes-column" label="Current" meta={a.ongoingState ? String(a.ongoingState) : undefined} value={<EntityCode id={a.ongoingExperimentId} kind="experiment" />} />}
         </div>;
       })}
     </DetailSection>
@@ -774,12 +774,12 @@ function CatalogueMethods() {
         busy={busy}
         disabledReason={catalogueError || restored || !c ? 'Await current scoped Catalogue read' : !project || selected.length < 2 || !baseline || !selected.includes(baseline) || selected.some(id => !methods.some(m => m.id === id)) || selectedUseCases.length === 0 ? 'Select two methods, a baseline and use case' : undefined}
         onClick={() => act(async () => {
-          let firstExperimentId = '';
-          for (const uc of selectedUseCases) {
-            const r = await op('lab_compare_methods', { projectId: project, capability: String(c?.capability), methods: selected, baseline, useCase: uc });
-            if (!firstExperimentId) firstExperimentId = r.experimentId;
-          }
-          if (firstExperimentId) go(`/lab/${firstExperimentId}`);
+          const results = await Promise.all(
+            selectedUseCases.map(uc =>
+              op('lab_compare_methods', { projectId: project, capability: String(c?.capability), methods: selected, baseline, useCase: uc }),
+            ),
+          );
+          if (results[0]?.experimentId) go(`/lab/${results[0].experimentId}`);
         })}
       />
     </DetailSection>
@@ -820,9 +820,16 @@ function UsageTab({ kind, id }: { kind: 'agent' | 'pipeline'; id: string }) {
     </div>
     <DetailSection title={`Summary (${days} days)`}><Totals items={totalItems} /></DetailSection>
     <DetailSection title="Used by">
-      {u.usedBy.length ? u.usedBy.map(x => <KvRow key={`${x.kind}:${x.id}`} icon={x.kind === 'pipeline' ? 'network' : x.kind === 'agent' ? 'bot' : 'rows-3'}
-        label={x.kind} meta={<a class="row-link" href={`${routeFor(x.kind)}/${x.id}`} onClick={e => { e.preventDefault(); go(`${routeFor(x.kind)}/${x.id}`); }}>{x.id}</a>} />)
-        : <span class="muted">not referenced by other definitions</span>}
+      {u.usedBy.length ? u.usedBy.map(x => (
+        <KvRow
+          key={`${x.kind}:${x.id}`}
+          icon={x.kind === 'pipeline' ? 'network' : x.kind === 'agent' ? 'bot' : 'rows-3'}
+          label={x.kind}
+          meta={x.kind === 'agent' || x.kind === 'pipeline' || x.kind === 'project'
+            ? <EntityCode code={x.id} id={x.id} kind={x.kind} cls="inline" />
+            : <a class="row-link" href={`${routeFor(x.kind)}/${encodeURIComponent(x.id)}`} onClick={e => { e.preventDefault(); go(`${routeFor(x.kind)}/${encodeURIComponent(x.id)}`); }}>{x.id}</a>}
+        />
+      )) : <span class="muted">not referenced by other definitions</span>}
     </DetailSection>
     {u.byRevision.length > 0 && <DetailSection title="By revision">
       <DataTable label="By revision" head={<tr><th scope="col">Revision</th><th scope="col">Runs</th><th scope="col">Succeeded</th><th scope="col">Median wall</th><th scope="col">Tokens</th><th scope="col">Cost</th></tr>}>
