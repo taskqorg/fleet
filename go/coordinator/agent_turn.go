@@ -538,6 +538,11 @@ func wake(q *Request, e *agentExecution, status string) error {
 			return err
 		}
 	}
+	if terminal, err := boardSessionParentTerminal(q, parentSid); err != nil {
+		return err
+	} else if terminal {
+		return nil
+	}
 	fresh, err := getExecution(q, e.ID)
 	if err != nil {
 		return err
