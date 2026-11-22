@@ -1,11 +1,11 @@
 // Tasks list and detail (docs/design-system/pages/tasks.md). Server-ordered list with views, state counters, grouping and
 // search (list-view pattern, list-page.tsx); the detail shows outcome, totals, open decisions and the execution tree.
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   ListDetail, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, StageChip, AgeChip, Button,
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
-  OpsSummary, StatStrip, StateCounters, KvRow, Num,
+  OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar,
   type TreeNode, type Harness, type Stage, type StateOf, type Stat, states as states_, stages,
   keyConnection, EntityCode, actor, fileLabel, viewOf, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
@@ -16,6 +16,7 @@ import { usePins, prefs, setFocus } from '../prefs.ts';
 import { useListPage, ListPagePanel, type ListPage } from '../list-page.tsx';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { ScopedRollupBar, buildExecTree } from './resources.tsx';
+import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
 
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
 const SORTS = [['changed', 'Changed'], ['created', 'Created']] as const;
@@ -170,6 +171,10 @@ function dependsOn(ds: { id: string; code?: string | null }[]) {
 function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
   const { data: t, error } = useOp('task_get', { taskId: id });
+  const board = useSwarmBoard('task', id);
+  const hasSwarm = hasSwarmBoard(board.data);
+  const [tab, setTab] = useState<'details' | 'swarm'>('details');
+  useEffect(() => { setTab('details'); }, [id]);
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const alive = useAlive();
@@ -179,6 +184,8 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const act = async (action: string) => { setBusy(action); setFailure(null); try { await op('task_update', { taskId: id, action }); } catch (e) { setFailure(e instanceof Error ? e.message : String(e)); } finally { setBusy(null); setConfirming(false); } };
   if (error && !t) return <article class="detail" data-ui="detail" tabIndex={-1}><ErrorBanner text={`Task did not load: ${error}`} /></article>;
   if (!t) return <article class="detail" data-ui="detail" tabIndex={-1}><Skeleton rows={6} /></article>;
+  const activeTab = hasSwarm ? tab : 'details';
+  const swarmCount = board.data ? (board.data.summary.messagesTotal || board.data.roster.length || undefined) : undefined;
   const result = latestResult(t.latestResult);
   const req = t.completionRequirements && typeof t.completionRequirements === 'object'
     ? Object.entries(t.completionRequirements).map(([key, value]) => ({
@@ -192,6 +199,29 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const latestExecution = t.executions.at(-1); // task_get preserves execution sequence.
   const reported = t.executions.flatMap(e => e.report ? [e.report] : []).sort((a, b) => b.at - a.at)[0];
   const decided = t.questions.filter(q => q.state === 'answered').sort((a, b) => (ms(b.answeredAt) ?? 0) - (ms(a.answeredAt) ?? 0)).slice(0, 3);
+  const detailsBody = (
+    <>
+      {open.map(q => <DecisionBlock key={q.id} question={q.text} askedBy={actor(q.askedBy) || q.kind} addressedTo="you" since={ms(q.askedAt) ?? now} now={now}
+        options={(Array.isArray(q.options) ? q.options as unknown[] : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
+        onAnswer={a => { if (!off) writeOnce('questions_answer', { questionId: q.id, answer: a }, () => setFailure('unknown, retrying'), { signal: alive }).then(() => setFailure(null), e => setFailure(e.message)); }}
+        onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive) : undefined} />)}
+      {latestExecution?.problem && <DetailSection title="Latest execution problem">
+        <ErrorBanner text={latestExecution.problem} />
+      </DetailSection>}
+      {reported && <DetailSection title="Latest available worker report">
+        <AgeChip t={reported.at} />
+        <StateBadge family="execution" state={reported.outcome === 'succeeded' ? 'succeeded' : 'failed'} />
+        {reported.summary && <Markdown text={reported.summary} />}
+      </DetailSection>}
+      {decided.length > 0 && <DetailSection title="Previous answers">
+      {decided.map(q => <p key={q.id} class="state-line"><Icon name={q.answer === 'accepted' ? 'circle-check' : q.answer === 'rejected' ? 'circle-x' : 'message-circle-question'} />
+        <span>{q.kind === 'acceptance' ? q.answer : `${q.text}: ${q.answer}`}</span>{q.answeredBy && <span class="muted">by {actor(q.answeredBy)}</span>}{ms(q.answeredAt) && <AgeChip t={ms(q.answeredAt)!} />}</p>)}
+      </DetailSection>}
+      {(t.expectedOutcome || req.length > 0 || t.dependencies.length > 0) && <OutcomeBlock outcome={t.expectedOutcome ?? ''} requirements={req} inputs={[]} depends={t.dependencies.length ? dependsOn(t.dependencies) : undefined} />}
+      <ScopedRollupBar rollup={rollup} cost={t.cost} />
+      {nodes.length > 0 && <DetailSection title="Executions"><ExecTree nodes={nodes} now={now} label="Executions" /></DetailSection>}
+    </>
+  );
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={t.title}>
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
@@ -209,24 +239,19 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     {result && <p class="state-line"><Icon name={viewOf(result.mediaType ?? '') === 'download' ? 'archive' : 'file-text'} label={result.mediaType ?? 'Result'} />
       <a class="row-link" href={`/results/${encodeURIComponent(result.id)}`} onClick={ev => { ev.preventDefault(); go(`/results/${encodeURIComponent(result.id)}`); }}>{fileLabel(result.path ?? result.name ?? '') || 'Result'}</a>
       <EntityCode id={result.artifactId ?? result.id} kind="result" /></p>}
-    {open.map(q => <DecisionBlock key={q.id} question={q.text} askedBy={actor(q.askedBy) || q.kind} addressedTo="you" since={ms(q.askedAt) ?? now} now={now}
-      options={(Array.isArray(q.options) ? q.options as unknown[] : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-      onAnswer={a => { if (!off) writeOnce('questions_answer', { questionId: q.id, answer: a }, () => setFailure('unknown, retrying'), { signal: alive }).then(() => setFailure(null), e => setFailure(e.message)); }}
-      onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive) : undefined} />)}
-    {latestExecution?.problem && <DetailSection title="Latest execution problem">
-      <ErrorBanner text={latestExecution.problem} />
-    </DetailSection>}
-    {reported && <DetailSection title="Latest available worker report">
-      <AgeChip t={reported.at} />
-      <StateBadge family="execution" state={reported.outcome === 'succeeded' ? 'succeeded' : 'failed'} />
-      {reported.summary && <Markdown text={reported.summary} />}
-    </DetailSection>}
-    {decided.length > 0 && <DetailSection title="Previous answers">
-    {decided.map(q => <p key={q.id} class="state-line"><Icon name={q.answer === 'accepted' ? 'circle-check' : q.answer === 'rejected' ? 'circle-x' : 'message-circle-question'} />
-      <span>{q.kind === 'acceptance' ? q.answer : `${q.text}: ${q.answer}`}</span>{q.answeredBy && <span class="muted">by {actor(q.answeredBy)}</span>}{ms(q.answeredAt) && <AgeChip t={ms(q.answeredAt)!} />}</p>)}
-    </DetailSection>}
-    {(t.expectedOutcome || req.length > 0 || t.dependencies.length > 0) && <OutcomeBlock outcome={t.expectedOutcome ?? ''} requirements={req} inputs={[]} depends={t.dependencies.length ? dependsOn(t.dependencies) : undefined} />}
-    <ScopedRollupBar rollup={rollup} cost={t.cost} />
-    {nodes.length > 0 && <DetailSection title="Executions"><ExecTree nodes={nodes} now={now} label="Executions" /></DetailSection>}
+    {hasSwarm && (
+      <TabBar
+        cls="detail-tabs"
+        label="Task views"
+        tabs={[{ id: 'details', label: 'Details' }, { id: 'swarm', label: 'Swarm', count: swarmCount }]}
+        value={activeTab}
+        onChange={setTab}
+      />
+    )}
+    {hasSwarm ? (
+      <div role="tabpanel" aria-label={activeTab === 'swarm' ? 'Swarm' : 'Details'} class="stack">
+        {activeTab === 'swarm' ? <SwarmPanel scopeKind="task" scopeId={id} board={board} /> : detailsBody}
+      </div>
+    ) : detailsBody}
   </article>;
 }

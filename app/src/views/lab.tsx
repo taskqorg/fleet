@@ -23,6 +23,7 @@ import {
 import type {
   LabExampleEntry, LabExperimentRecord, LabLeaderboardEntry, LabRating, LabScoreSummary, LabVariant, ProjectAssessmentRef,
 } from '../../../contracts/generated/ops.ts';
+import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
 
 const ms = (t: string | number | null | undefined) => typeof t === 'number' ? t : Date.parse(t ?? '');
 const message = (x: unknown) => x instanceof Error ? x.message : String(x);
@@ -1066,6 +1067,23 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const [patch, setPatch] = useState<Ops['lab_promote']['reply'] | null>(null);
   const [promotingVariant, setPromotingVariant] = useState<string | null>(null);
   const [promotedVariant, setPromotedVariant] = useState<string | null>(null);
+  const defaultSwarmTrial = useMemo(() => {
+    if (!e || e.trials.length === 0) return null;
+    const swarmVariants = new Set(
+      e.variants.filter(v => (v.pipelineId ?? e.pipelineId).includes('swarm')).map(v => v.label),
+    );
+    const candidates = swarmVariants.size > 0
+      ? e.trials.filter(t => swarmVariants.has(t.cell.variant))
+      : e.trials;
+    const pool = candidates.length > 0 ? candidates : e.trials;
+    return pool.toSorted((a, b) => {
+      const aActive = a.state === 'running' || a.state === 'preparing' ? 1 : 0;
+      const bActive = b.state === 'running' || b.state === 'preparing' ? 1 : 0;
+      if (aActive !== bActive) return bActive - aActive;
+      return (b.cell.attempt ?? 0) - (a.cell.attempt ?? 0);
+    })[0] ?? null;
+  }, [e]);
+  const swarmBoard = useSwarmBoard('pipeline_run', !planTrial && defaultSwarmTrial ? defaultSwarmTrial.id : null);
   useEffect(() => { if (e && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView(); }, [!!e]);
   const now = Date.now();
   if (!e) {
@@ -1253,6 +1271,11 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
       </DataTable>
     </section>
     {planTrial && <TrialPlan key={planTrial} id={planTrial} projectId={e.projectId} trialProblem={problemText(e.trials.find(t => t.id === planTrial)?.problem)} assessments={e.trials.find(t => t.id === planTrial)?.projectAssessments ?? []} onOpen={setPlanTrial} onClose={() => setPlanTrial(undefined)} />}
+    {!planTrial && defaultSwarmTrial && hasSwarmBoard(swarmBoard.data) && (
+      <DetailSection title={`Swarm · ${defaultSwarmTrial.cell.variant} r${(defaultSwarmTrial.cell.repeat ?? 0) + 1}`}>
+        <SwarmPanel scopeKind="pipeline_run" scopeId={defaultSwarmTrial.id} board={swarmBoard} />
+      </DetailSection>
+    )}
     <section class="panel"><header class="panel-h"><Icon name="sliders-horizontal" /><h2>Variants</h2></header>
       <DetailSection title="Spread across repeats">
         {e.variants.map((v, vi) => {
@@ -1357,6 +1380,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
 function TrialPlan({ id, projectId, trialProblem, assessments, onOpen, onClose }: { id: string; projectId: string; trialProblem?: string; assessments: ProjectAssessmentRef[]; onOpen: (runId: string) => void; onClose: () => void }) {
   const [pollMs, setPollMs] = useState<number | undefined>(5000);
   const { data: run, state, error } = useOp('pipeline_get', { runId: id, projectId }, { every: pollMs });
+  const swarmBoard = useSwarmBoard('pipeline_run', id);
   const isTerminal = !!run && TERMINAL_STATES.has(run.state);
   useEffect(() => {
     setPollMs(isTerminal ? undefined : 5000);
@@ -1371,7 +1395,8 @@ function TrialPlan({ id, projectId, trialProblem, assessments, onOpen, onClose }
       run: execution ? { state: execution.state, reason: execution.observation, note: entry.executionRef?.mode === 'reused' ? 'reused · original resources' : execution.observation === 'unconfirmed' ? 'unconfirmed' : undefined,
         time: msMeasured(execution.durationMs), cost: { value: null, basis: 'unavailable' as const }, error: execution.error ? JSON.stringify(execution.error) : undefined } : undefined };
   });
-  return <DetailSection title="Trial plan">
+  return <>
+  <DetailSection title="Trial plan">
     <KvRow icon="network" label="Trial" value={<><EntityCode id={id} kind="execution" /><Button label="Close trial plan" icon="x" iconOnly onClick={onClose} /></>} />
     <OfflineMarker state={state} now={Date.now()} />
     {trialProblem && <ProblemRow title="Trial problem" facts={trialProblem} severity="failure" actions={[]} />}
@@ -1417,5 +1442,11 @@ function TrialPlan({ id, projectId, trialProblem, assessments, onOpen, onClose }
         }
       />
     ))}
-  </DetailSection>;
+  </DetailSection>
+  {hasSwarmBoard(swarmBoard.data) && (
+    <DetailSection title="Swarm">
+      <SwarmPanel scopeKind="pipeline_run" scopeId={id} board={swarmBoard} />
+    </DetailSection>
+  )}
+  </>;
 }
