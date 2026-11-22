@@ -1,7 +1,3 @@
-# ЦЕЛЬ — ЗАКОНЧЕННЫЙ РЕЗУЛЬТАТ В main, А НЕ ПРОВЕРКИ.
-
-Прямое указание владельца: каждая задача начинается с условия остановки и заканчивается влитым PR. Новых тестов без явной просьбы не добавлять; если проверка нужна, то одна умная проверка инварианта. Локально запускать только сборку и проверки, названные в задаче; полный набор тестов гоняет CI, один и тот же набор не перезапускать больше одного раза. Собственных денежных лимитов не вводить, но и не крутить попытки без результата: если за отведённое время не получилось, остановиться и доложить. Ненужные экспериментальные сессии, процессы и данные Fleet можно останавливать и удалять. Не подменять результаты проверок; секреты и чужие проекты не затрагивать. Эту инструкцию ставить первой в каждой дочерней агентской задаче.
-
 # Agent notes
 
 Every agent attempt: read [fleet.md](fleet.md) first, then every shared-core file named in [specq rule delivery](https://github.com/taskqorg/specq/blob/1fc3716cc0971f8ca11f313d383db09751ffc132/engineering/rule-delivery.md#attempt-context). Shared rules are binding at specq commit `1fc3716cc0971f8ca11f313d383db09751ffc132`; use that revision for the core and load linked area rules when needed. The project contract takes precedence on conflicts.
