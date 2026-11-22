@@ -449,6 +449,9 @@ func boardResolveWakeTargets(q *Request, scopeKind, scopeID, authorMember, autho
 		if ref.sessionID == "" || seenSessions[ref.sessionID] {
 			return
 		}
+		if (authorSessionID != "" && ref.sessionID == authorSessionID) || strings.EqualFold(ref.member, authorMember) {
+			return
+		}
 		seenSessions[ref.sessionID] = true
 		targets = append(targets, contract.BoardWakeTarget{
 			Member:    ref.member,
@@ -459,11 +462,7 @@ func boardResolveWakeTargets(q *Request, scopeKind, scopeID, authorMember, autho
 	}
 	if slices.Contains(mentions, "all") {
 		for _, name := range order {
-			ref := directory[name]
-			if ref.member == authorMember || (authorSessionID != "" && ref.sessionID == authorSessionID) {
-				continue
-			}
-			addTarget(ref)
+			addTarget(directory[name])
 		}
 	}
 	for _, m := range mentions {
@@ -524,8 +523,14 @@ func boardWakeScope(requestID, sessionID string) (string, string, bool) {
 	return kind, scopeID, true
 }
 
+func boardSessionParentTerminal(q *Request, sessionID string) (bool, error) {
+	return unscoped(q, func() (bool, error) {
+		return q.db().BoardSessionParentTerminal(q.ctx(), sessionID)
+	})
+}
+
 func boardWakeTerminal(q *Request, m agentQueued) (bool, error) {
-	if !strings.HasPrefix(m.RequestID, "board-wake:") {
+	if !strings.HasPrefix(m.RequestID, "board-wake:") && !strings.HasPrefix(m.RequestID, "wake:") {
 		return false, nil
 	}
 	return unscoped(q, func() (bool, error) {
@@ -648,17 +653,6 @@ func boardPost(q *Request, r *contract.BoardPostRequest) (contract.BoardPostRepl
 			if info.SessionID != nil && *info.SessionID != "" {
 				authorSessID = info.SessionID
 			}
-		} else if strings.HasPrefix(q.agent, "execution:") {
-			eid := strings.TrimPrefix(q.agent, "execution:")
-			if eid != "" {
-				info, err := q.db().BoardExecutionInfo(q.ctx(), eid)
-				if err == nil {
-					authorExecID = &info.ID
-					if info.SessionID != nil && *info.SessionID != "" {
-						authorSessID = info.SessionID
-					}
-				}
-			}
 		}
 		if r.AuthorSessionId != nil && strings.TrimSpace(*r.AuthorSessionId) != "" {
 			sid := strings.TrimSpace(*r.AuthorSessionId)
@@ -670,6 +664,22 @@ func boardPost(q *Request, r *contract.BoardPostRequest) (contract.BoardPostRepl
 				return fail(404, "Unknown authorSessionId")
 			}
 			authorSessID = &sid
+		}
+		if authorExecID == nil || authorSessID == nil {
+			if eid, ok := strings.CutPrefix(q.agent, "execution:"); ok && eid != "" {
+				info, err := q.db().BoardExecutionInfo(q.ctx(), eid)
+				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return err
+				}
+				if err == nil {
+					if authorExecID == nil {
+						authorExecID = &info.ID
+					}
+					if authorSessID == nil && info.SessionID != nil && *info.SessionID != "" {
+						authorSessID = info.SessionID
+					}
+				}
+			}
 		}
 		var artifactID *string
 		if r.ArtifactId != nil && strings.TrimSpace(*r.ArtifactId) != "" {

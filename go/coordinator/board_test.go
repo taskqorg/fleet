@@ -5,6 +5,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"fleet/contract"
 )
 
 // Requirement: Fleet Swarm Variant C (docs/designs/fleet-swarm.md): work_plan_set, board_post, board_read, and
@@ -861,5 +863,225 @@ UPDATE execution SET state='succeeded', ended_at=now() WHERE id='e-v3-w1';
 	}
 	if n := psqlLines(t, e, "SELECT count(*) FROM execution WHERE session_id='s-v3-w1'"); len(n) != 1 || n[0] != "1" {
 		t.Fatalf("expected 0 orphan executions started on s-v3-w1 after agentPromote, got %v", n)
+	}
+}
+
+// Requirement: FLT-19 swarm-v4 (docs/designs/fleet-swarm.md): boardPost resolves authorSessionId from q.agent when
+// omitted and never self-wakes the author session or member (including explicit @coordinator mentions in briefs),
+// BoardCancelQueuedBoardWakesForPipelineRun and boardWakeTerminal/wake purge and skip both board-wake:% and wake:%
+// messages once the ancestor pipeline_run/task is terminal while leaving active/non-terminal parent-child wakes intact.
+// Risk: coordinator briefs quoting "@coordinator" wake the coordinator itself, or child completion wake:% turns
+// accumulate and fire post-trial orphan executions after pipeline_run termination.
+func TestBoardV4SelfWakeAndChildWakePurge(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	owner := e.ownerHeaders()
+
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+INSERT INTO definition(kind,id,path,head,project_id) VALUES
+ ('project','board-v4','config/projects/board-v4/project.json',1,'board-v4');
+INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message) VALUES
+ ('project','board-v4',1,'{"settings":{"id":"board-v4","name":"Board V4","contextFiles":[]},"contextFiles":[]}','bv4','editor','person','t');
+INSERT INTO host(id,host_id,project_id,state) VALUES ('h-v4','h-v4','board-v4','active');
+`)
+
+	def := doc{
+		"version": float64(2),
+		"id":      "swarm-plan-execute",
+		"steps": []any{
+			doc{"id": "coordinate", "kind": "agent", "profile": "swarm-coordinator", "prompt": "Solve"},
+		},
+	}
+	runDoc := doc{
+		"id":               "run-v4",
+		"pipelineId":       "swarm-plan-execute",
+		"projectId":        "board-v4",
+		"requestedBy":      doc{"email": testOwnerEmail},
+		"definition":       def,
+		"definitionSha256": sha256hex([]byte(canonical(def))),
+		"state":            "running",
+		"startedAt":        nowMs(),
+		"steps":            []any{doc{"id": "coordinate", "kind": "agent", "state": "running", "startedAt": nowMs()}},
+	}
+	if err := initPipelinePlan(runDoc); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.app.store.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		if err := putRun(q, runDoc); err != nil {
+			return err
+		}
+		return selectPipelineStep(q, runDoc, 0)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+INSERT INTO session(id,project_id,host_id,pipeline_run_id,created_by_session_id,created_by_execution_id,payload) VALUES
+ ('s-v4-coord','board-v4','h-v4','run-v4',NULL,NULL,'{"agentConfig":{"id":"swarm-coordinator","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('s-v4-w1','board-v4','h-v4',NULL,'s-v4-coord','e-v4-coord','{"agentConfig":{"id":"swarm-worker","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('s-v4-pm','board-v4','h-v4',NULL,NULL,NULL,'{"agentConfig":{"id":"coding-worker","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('s-v4-pm-child','board-v4','h-v4',NULL,'s-v4-pm','e-v4-pm','{"agentConfig":{"id":"coding-worker","harness":"codex","model":"gpt-6.2-sol"}}');
+INSERT INTO execution(id,kind,state,project_id,parent_execution_id,session_id,host_id,harness,model,started_at,data) VALUES
+ ('e-v4-coord','agent_run','running','board-v4','run-v4:step:0','s-v4-coord','h-v4','codex','gpt-6.2-sol',now(),'{"id":"e-v4-coord","parentExecutionId":"run-v4:step:0","pipelineRunId":"run-v4","sessionId":"s-v4-coord","agentConfig":{"id":"swarm-coordinator","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('e-v4-w1','agent_run','running','board-v4','e-v4-coord','s-v4-w1','h-v4','codex','gpt-6.2-sol',now(),'{"id":"e-v4-w1","parentExecutionId":"e-v4-coord","sessionId":"s-v4-w1","agentConfig":{"id":"swarm-worker","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('e-v4-pm','agent_run','succeeded','board-v4',NULL,'s-v4-pm','h-v4','codex','gpt-6.2-sol',now(),'{"id":"e-v4-pm","sessionId":"s-v4-pm"}'),
+ ('e-v4-pm-child','agent_run','succeeded','board-v4','e-v4-pm','s-v4-pm-child','h-v4','codex','gpt-6.2-sol',now(),'{"id":"e-v4-pm-child","parentExecutionId":"e-v4-pm","sessionId":"s-v4-pm-child"}');
+`)
+
+	call := func(op string, body any) (int, map[string]any) {
+		return e.callJSON(t, "POST", "/api/ops/"+op, body, owner)
+	}
+	c, wp := call("work_plan_set", doc{
+		"projectId": "board-v4",
+		"scopeKind": "session",
+		"scopeId":   "s-v4-coord",
+		"title":     "V4 Self-Wake & Child-Wake Purge",
+		"threads": []any{
+			doc{
+				"id":     "th-1",
+				"title":  "Execute",
+				"status": "active",
+				"tasks": []any{
+					doc{"id": "tk-1", "title": "Implement", "ownerMember": "worker-1", "role": "worker", "sessionId": "s-v4-w1", "executionId": "e-v4-w1", "status": "in_progress"},
+				},
+			},
+		},
+	})
+	if c != 200 {
+		t.Fatalf("work_plan_set = %d %v", c, wp)
+	}
+
+	// 1. Agent caller (q.agent="execution:e-v4-coord") posting with omitted AuthorSessionId resolves authorSessID="s-v4-coord"
+	//    and NEVER self-wakes even when quoting "@coordinator" in a brief after coordinator is in the board directory.
+	agentReq := func() *Request {
+		r := backgroundRequest(t.Context(), e.app, nil)
+		r.person = e.app.peopleSnapshot().person(testOwnerEmail)
+		r.agent = "execution:e-v4-coord"
+		return r
+	}
+	p1, err := boardPost(agentReq(), &contract.BoardPostRequest{
+		ProjectId:    "board-v4",
+		ScopeKind:    contract.BoardScopeKindSession,
+		ScopeId:      "s-v4-coord",
+		ThreadId:     ptr("th-1"),
+		AuthorMember: "coordinator",
+		AuthorRole:   ptr("coordinator"),
+		Kind:         ptr(contract.BoardMessageKindMessage),
+		Text:         "Kickoff; report to @coordinator.",
+	})
+	if err != nil {
+		t.Fatalf("boardPost p1 = %v", err)
+	}
+	if deref(p1.Message.AuthorSessionId) != "s-v4-coord" || deref(p1.Message.AuthorExecutionId) != "e-v4-coord" {
+		t.Fatalf("expected agent-resolved authorSessionId=s-v4-coord and authorExecutionId=e-v4-coord, got sess=%v exec=%v", p1.Message.AuthorSessionId, p1.Message.AuthorExecutionId)
+	}
+	if len(p1.WakeTargets) != 0 {
+		t.Fatalf("expected 0 wakeTargets on self-mention p1, got %+v", p1.WakeTargets)
+	}
+	p2, err := boardPost(agentReq(), &contract.BoardPostRequest{
+		ProjectId:    "board-v4",
+		ScopeKind:    contract.BoardScopeKindSession,
+		ScopeId:      "s-v4-coord",
+		ThreadId:     ptr("th-1"),
+		AuthorMember: "coordinator",
+		AuthorRole:   ptr("coordinator"),
+		Kind:         ptr(contract.BoardMessageKindBrief),
+		Text:         "Start @worker-1 and report to @coordinator (@Coordinator) or @all when done.",
+	})
+	if err != nil {
+		t.Fatalf("boardPost p2 = %v", err)
+	}
+	if len(p2.WakeTargets) != 1 || p2.WakeTargets[0].SessionId != "s-v4-w1" || p2.WakeTargets[0].Member != "worker-1" || p2.WakeTargets[0].Woken == nil || !*p2.WakeTargets[0].Woken {
+		t.Fatalf("expected only worker-1 woken without coordinator self-wake, got %+v", p2.WakeTargets)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM queued_message WHERE session_id='s-v4-coord'"); len(n) != 1 || n[0] != "0" {
+		t.Fatalf("expected 0 self-wake queued messages on s-v4-coord, got %v", n)
+	}
+
+	// 2. While run-v4 is active, worker board-wake and child wake:% messages queue normally, and standalone parent-child wake() works.
+	c, p3 := call("board_post", doc{
+		"projectId":       "board-v4",
+		"scopeKind":       "session",
+		"scopeId":         "s-v4-coord",
+		"threadId":        "th-1",
+		"authorMember":    "worker-1",
+		"authorRole":      "worker",
+		"authorSessionId": "s-v4-w1",
+		"kind":            "progress",
+		"text":            "Progress update @coordinator",
+	})
+	if c != 200 || len(anys(p3["wakeTargets"])) != 1 || mapOf(anys(p3["wakeTargets"])[0])["woken"] != true {
+		t.Fatalf("board_post p3 = %d %v", c, p3)
+	}
+	if err := e.app.store.Write(e.ctx, nil, []string{"session:s-v4-coord", "session:s-v4-pm"}, func(q *Request) error {
+		exW1, err := getExecution(q, "e-v4-w1")
+		if err != nil {
+			return err
+		}
+		if err := wake(q, &exW1, "completed"); err != nil {
+			return err
+		}
+		exPMChild, err := getExecution(q, "e-v4-pm-child")
+		if err != nil {
+			return err
+		}
+		return wake(q, &exPMChild, "completed")
+	}); err != nil {
+		t.Fatalf("active wake() = %v", err)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM queued_message WHERE state='queued' AND session_id='s-v4-coord' AND (request_id LIKE 'board-wake:%' OR request_id LIKE 'wake:%')"); len(n) != 1 || n[0] != "2" {
+		t.Fatalf("expected 2 queued wakes (board-wake + wake:) on busy s-v4-coord, got %v", n)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM message WHERE session_id='s-v4-pm' AND request_id='wake:e-v4-pm-child'"); len(n) != 1 || n[0] != "1" {
+		t.Fatalf("expected non-terminal standalone parent-child wake message on s-v4-pm, got %v", n)
+	}
+
+	// 3. Terminating run-v4 via pipelineCancel purges BOTH board-wake:% and wake:% queued messages on descendant sessions.
+	if _, err := pipelineCancel(t.Context(), e.app, "run-v4"); err != nil {
+		t.Fatalf("pipelineCancel = %v", err)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM queued_message WHERE state IN ('queued','steering') AND session_id IN ('s-v4-coord','s-v4-w1') AND (request_id LIKE 'board-wake:%' OR request_id LIKE 'wake:%')"); len(n) != 1 || n[0] != "0" {
+		t.Fatalf("expected 0 pending board-wake/wake messages after pipelineCancel, got %v", n)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM queued_message WHERE state='cancelled' AND session_id IN ('s-v4-coord','s-v4-w1') AND (request_id LIKE 'board-wake:%' OR request_id LIKE 'wake:%')"); len(n) != 1 || n[0] != "3" {
+		t.Fatalf("expected 3 cancelled wake messages across s-v4-coord and s-v4-w1, got %v", n)
+	}
+
+	// 4. After run-v4 is terminal: agentPromote cancels late wake:% queued messages, and wake() skips starting orphan turns on idle parent.
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+UPDATE execution SET state='succeeded', ended_at=now() WHERE id='e-v4-coord';
+`)
+	if err := e.app.store.Write(e.ctx, nil, []string{"session:s-v4-coord"}, func(q *Request) error {
+		if err := queuedMessagePut(q, &agentQueued{
+			ID:        "qm-late-v4-wake",
+			SessionID: "s-v4-coord",
+			ProjectID: "board-v4",
+			RequestID: "wake:e-v4-w1-late",
+			Text:      "Late child wake",
+			State:     "queued",
+			CreatedAt: nowMs(),
+			SentBy:    "Fleet",
+			Source:    "wake",
+		}); err != nil {
+			return err
+		}
+		return agentPromote(q)
+	}); err != nil {
+		t.Fatalf("agentPromote = %v", err)
+	}
+	if n := psqlLines(t, e, "SELECT state FROM queued_message WHERE id='qm-late-v4-wake'"); len(n) != 1 || n[0] != "cancelled" {
+		t.Fatalf("expected late wake:%% queued_message cancelled by agentPromote, got %v", n)
+	}
+	if err := e.app.store.Write(e.ctx, nil, []string{"session:s-v4-coord"}, func(q *Request) error {
+		exW1, err := getExecution(q, "e-v4-w1")
+		if err != nil {
+			return err
+		}
+		exW1.ID = "e-v4-w1-post-terminal"
+		return wake(q, &exW1, "completed")
+	}); err != nil {
+		t.Fatalf("post-terminal wake() = %v", err)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM execution WHERE session_id='s-v4-coord'"); len(n) != 1 || n[0] != "1" {
+		t.Fatalf("expected 0 orphan executions started on s-v4-coord after run-v4 ended, got %v", n)
 	}
 }

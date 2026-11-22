@@ -142,7 +142,7 @@ UPDATE queued_message
 SET state = 'cancelled', updated_at = now()
 WHERE state IN ('queued', 'steering')
   AND tombstoned_at IS NULL
-  AND request_id LIKE 'board-wake:%'
+  AND (request_id LIKE 'board-wake:%' OR request_id LIKE 'wake:%')
   AND (
     session_id IN (SELECT id FROM sess_tree)
     OR request_id LIKE 'board-wake:pipeline_run:' || @run_id::text || ':%'
