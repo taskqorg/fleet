@@ -178,17 +178,26 @@ func (s *acpSession) selectModel(result acpResult, model string) (M, error) {
 	return acpRequest(3, "session/set_model", M{"sessionId": s.session, "modelId": model}), nil
 }
 
-// Antigravity requests ACP permission even for tools supplied by Fleet. This
-// permits a single call to the injected Code Mode server during its owning turn.
-func (s *acpSession) codePermission(params acpParams) string {
-	mode := launchOf(s.config()).CodeMode
-	if pharness(s.profile) != "antigravity" || (mode != "add" && mode != "only") || !has(s.servers, "code") ||
-		s.stage != 5 || s.session == "" || params.SessionID != s.session {
+// Antigravity requests ACP permission during its active turn. Fleet grants a single
+// allow_once only for explicitly injected Code Mode MCP tools, or for run_command
+// (kind "execute") when the session runs in sandboxed accept-edits mode.
+func (s *acpSession) permission(params acpParams) string {
+	if pharness(s.profile) != "antigravity" || s.stage != 5 || s.session == "" || params.SessionID != s.session {
 		return ""
 	}
 	call := params.ToolCall
-	if (call.Name != "mcp_code_code" && call.Name != "mcp_code_poll") || call.Kind != "other" ||
-		call.Status != "pending" || call.ToolCallID == "" {
+	if call.Status != "pending" || call.ToolCallID == "" {
+		return ""
+	}
+	allowed := false
+	switch {
+	case (call.Name == "mcp_code_code" || call.Name == "mcp_code_poll") && call.Kind == "other":
+		mode := launchOf(s.config()).CodeMode
+		allowed = (mode == "add" || mode == "only") && has(s.servers, "code")
+	case call.Name == "run_command" && call.Kind == "execute":
+		allowed = s.mode == "accept-edits" && !jIsTrue(s.profile, "readOnly") && jIsTrue(s.config(), "settings", "sandbox")
+	}
+	if !allowed {
 		return ""
 	}
 	for _, opt := range params.Options {
@@ -205,7 +214,7 @@ func (s *acpSession) Receive(v map[string]any) ([]map[string]any, map[string]any
 		id := f.ID.V
 		reply := M{"jsonrpc": "2.0", "id": id, "error": M{"code": -32601, "message": "Fleet does not grant client file/terminal operations"}}
 		if f.method() == "session/request_permission" {
-			if option := s.codePermission(typed[acpParams](f.Params)); option != "" {
+			if option := s.permission(typed[acpParams](f.Params)); option != "" {
 				reply = M{"jsonrpc": "2.0", "id": id, "result": M{"outcome": M{"outcome": "selected", "optionId": option}}}
 				return []M{reply}, M{"type": "permission.granted", "native": v}, false, nil
 			}
