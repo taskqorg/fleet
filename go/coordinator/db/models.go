@@ -506,6 +506,26 @@ type AuditLog struct {
 	Seq        int64
 }
 
+type BoardMessage struct {
+	ID                string
+	ProjectID         string
+	ScopeKind         string
+	ScopeID           string
+	Seq               int64
+	ThreadID          string
+	AuthorMember      string
+	AuthorRole        string
+	AuthorSessionID   *string
+	AuthorExecutionID *string
+	Kind              string
+	Mentions          []string
+	Text              string
+	ArtifactID        *string
+	Payload           []byte
+	CreatedAt         time.Time
+	TombstonedAt      *time.Time
+}
+
 type Budget struct {
 	ID      string
 	Scope   string
@@ -1586,6 +1606,21 @@ type Watch struct {
 	ProjectID    *string
 	Payload      []byte
 	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
+type WorkPlan struct {
+	ID           string
+	ProjectID    string
+	ScopeKind    string
+	ScopeID      string
+	Version      int32
+	Title        string
+	Goal         string
+	Strategy     string
+	Payload      []byte
+	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	TombstonedAt *time.Time
 }

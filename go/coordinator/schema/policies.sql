@@ -56,6 +56,13 @@ ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS project_scope ON audit_log;
 CREATE POLICY project_scope ON audit_log FOR ALL TO public USING ((fleet_visible(project_id) OR (holder = current_setting('fleet.person'::text, true))));
 
+-- board_message
+ALTER TABLE board_message ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON board_message;
+CREATE POLICY live ON board_message AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
+DROP POLICY IF EXISTS project_scope ON board_message;
+CREATE POLICY project_scope ON board_message FOR ALL TO public USING (fleet_visible(project_id));
+
 -- budget
 ALTER TABLE budget ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS project_scope ON budget;
@@ -520,6 +527,13 @@ DROP POLICY IF EXISTS live ON watch;
 CREATE POLICY live ON watch AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
 DROP POLICY IF EXISTS project_scope ON watch;
 CREATE POLICY project_scope ON watch FOR ALL TO public USING (fleet_visible(project_id));
+
+-- work_plan
+ALTER TABLE work_plan ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON work_plan;
+CREATE POLICY live ON work_plan AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
+DROP POLICY IF EXISTS project_scope ON work_plan;
+CREATE POLICY project_scope ON work_plan FOR ALL TO public USING (fleet_visible(project_id));
 
 -- worker_done
 ALTER TABLE worker_done ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;

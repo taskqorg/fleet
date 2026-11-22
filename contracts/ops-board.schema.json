@@ -1,0 +1,338 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Coordinator operations of the Swarm work-board domain (work_plan and board_message); the rules are in ops.schema.json $comment and contracts/README.md.",
+  "operations": {
+    "work_plan_set": {
+      "read": false,
+      "errors": [400, 404, 409],
+      "auth": "project:projectId",
+      "agent": "tool",
+      "description": "Create or update the durable Swarm work_plan for (scopeKind, scopeId), incrementing version and validating threads[] and tasks[]"
+    },
+    "board_post": {
+      "read": false,
+      "errors": [400, 404, 409],
+      "auth": "project:projectId",
+      "agent": "tool",
+      "description": "Append a durable Swarm board message for (scopeKind, scopeId) with monotonic seq, automatic @mention parsing, and wakeTargets resolution"
+    },
+    "board_read": {
+      "read": true,
+      "errors": [400, 404],
+      "auth": "person",
+      "agent": "tool",
+      "changes": ["board"],
+      "description": "Read durable board_message rows for (scopeKind, scopeId) after seq cursor since, with optional threadId, kind, mention, authorMember, and limit filters"
+    },
+    "work_board_get": {
+      "read": true,
+      "errors": [400, 404],
+      "auth": "person",
+      "agent": "tool",
+      "changes": ["board", "execution", "session", "question"],
+      "description": "Unified Swarm work board read for GUI and agents returning { plan, roster, messages, summary } with live session/execution/totals join"
+    }
+  },
+  "$defs": {
+    "BoardScopeKind": {
+      "type": "string",
+      "enum": ["task", "pipeline_run", "session"]
+    },
+    "BoardMessageKind": {
+      "type": "string",
+      "enum": ["brief", "message", "progress", "blocker", "done", "screenshot"]
+    },
+    "WorkspaceMode": {
+      "type": "string",
+      "enum": ["inherit", "share", "branch"]
+    },
+    "WorkPlanThreadStatus": {
+      "type": "string",
+      "enum": ["planned", "active", "blocked", "done", "failed", "cancelled"]
+    },
+    "WorkPlanTaskStatus": {
+      "type": "string",
+      "enum": ["pending", "in_progress", "blocked", "review", "done", "failed", "cancelled"]
+    },
+    "WorkPlanTask": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "ownerMember": {"type": "string"},
+        "role": {"type": "string"},
+        "harness": {"type": "string"},
+        "model": {"type": "string"},
+        "workspaceMode": {"$ref": "#/$defs/WorkspaceMode"},
+        "ownedPaths": {"type": "array", "items": {"type": "string"}},
+        "sessionId": {"type": "string"},
+        "executionId": {"type": "string"},
+        "taskId": {"type": "string"},
+        "dependsOn": {"type": "array", "items": {"type": "string"}},
+        "status": {"$ref": "#/$defs/WorkPlanTaskStatus"}
+      }
+    },
+    "WorkPlanThread": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "tasks"],
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "goal": {"type": "string"},
+        "status": {"$ref": "#/$defs/WorkPlanThreadStatus"},
+        "tasks": {"type": "array", "items": {"$ref": "#/$defs/WorkPlanTask"}}
+      }
+    },
+    "WorkPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "projectId", "scopeKind", "scopeId", "version", "title", "goal", "strategy", "threads", "createdAt", "updatedAt"],
+      "properties": {
+        "id": {"type": "string"},
+        "projectId": {"type": "string"},
+        "scopeKind": {"$ref": "#/$defs/BoardScopeKind"},
+        "scopeId": {"type": "string"},
+        "version": {"type": "integer"},
+        "title": {"type": "string"},
+        "goal": {"type": "string"},
+        "strategy": {"type": "string"},
+        "threads": {"type": "array", "items": {"$ref": "#/$defs/WorkPlanThread"}},
+        "createdAt": {"type": "integer"},
+        "updatedAt": {"type": "integer"}
+      }
+    },
+    "WorkPlanSetRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": ["projectId", "scopeKind", "scopeId", "title", "threads"],
+      "properties": {
+        "projectId": {"type": "string"},
+        "scopeKind": {"$ref": "#/$defs/BoardScopeKind"},
+        "scopeId": {"type": "string"},
+        "title": {"type": "string"},
+        "goal": {"type": "string"},
+        "strategy": {"type": "string"},
+        "expectedVersion": {"type": "integer", "minimum": 1},
+        "threads": {"type": "array", "items": {"$ref": "#/$defs/WorkPlanThread"}}
+      }
+    },
+    "WorkPlanSetReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan"],
+      "properties": {
+        "plan": {"$ref": "#/$defs/WorkPlan"}
+      }
+    },
+    "BoardMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "projectId",
+        "scopeKind",
+        "scopeId",
+        "seq",
+        "threadId",
+        "authorMember",
+        "authorRole",
+        "authorSessionId",
+        "authorExecutionId",
+        "kind",
+        "mentions",
+        "text",
+        "artifactId",
+        "payload",
+        "createdAt"
+      ],
+      "properties": {
+        "id": {"type": "string"},
+        "projectId": {"type": "string"},
+        "scopeKind": {"$ref": "#/$defs/BoardScopeKind"},
+        "scopeId": {"type": "string"},
+        "seq": {"type": "integer"},
+        "threadId": {"type": "string"},
+        "authorMember": {"type": "string"},
+        "authorRole": {"type": "string"},
+        "authorSessionId": {"type": ["string", "null"]},
+        "authorExecutionId": {"type": ["string", "null"]},
+        "kind": {"$ref": "#/$defs/BoardMessageKind"},
+        "mentions": {"type": "array", "items": {"type": "string"}},
+        "text": {"type": "string"},
+        "artifactId": {"type": ["string", "null"]},
+        "payload": {"type": "object", "additionalProperties": true},
+        "createdAt": {"type": "integer"}
+      }
+    },
+    "BoardWakeTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["member", "sessionId"],
+      "properties": {
+        "member": {"type": "string"},
+        "sessionId": {"type": "string"},
+        "role": {"type": ["string", "null"]},
+        "threadId": {"type": ["string", "null"]}
+      }
+    },
+    "BoardPostRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": ["projectId", "scopeKind", "scopeId", "authorMember", "text"],
+      "properties": {
+        "projectId": {"type": "string"},
+        "scopeKind": {"$ref": "#/$defs/BoardScopeKind"},
+        "scopeId": {"type": "string"},
+        "threadId": {"type": "string"},
+        "authorMember": {"type": "string"},
+        "authorRole": {"type": "string"},
+        "authorSessionId": {"type": "string"},
+        "authorExecutionId": {"type": "string"},
+        "kind": {"$ref": "#/$defs/BoardMessageKind"},
+        "mentions": {"type": "array", "items": {"type": "string"}},
+        "text": {"type": "string"},
+        "artifactId": {"type": "string"},
+        "payload": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "BoardPostReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message", "wakeTargets"],
+      "properties": {
+        "message": {"$ref": "#/$defs/BoardMessage"},
+        "wakeTargets": {"type": "array", "items": {"$ref": "#/$defs/BoardWakeTarget"}}
+      }
+    },
+    "BoardReadRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": ["scopeKind", "scopeId"],
+      "properties": {
+        "scopeKind": {"$ref": "#/$defs/BoardScopeKind"},
+        "scopeId": {"type": "string"},
+        "since": {"type": "integer", "minimum": 0},
+        "threadId": {"type": "string"},
+        "kind": {"$ref": "#/$defs/BoardMessageKind"},
+        "mention": {"type": "string"},
+        "authorMember": {"type": "string"},
+        "limit": {"type": "integer", "minimum": 1}
+      }
+    },
+    "BoardReadReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scopeKind", "scopeId", "messages", "headSeq", "hasMore"],
+      "properties": {
+        "scopeKind": {"$ref": "#/$defs/BoardScopeKind"},
+        "scopeId": {"type": "string"},
+        "messages": {"type": "array", "items": {"$ref": "#/$defs/BoardMessage"}},
+        "headSeq": {"type": "integer"},
+        "hasMore": {"type": "boolean"}
+      }
+    },
+    "WorkBoardRosterEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "memberName",
+        "role",
+        "threadId",
+        "sessionId",
+        "executionId",
+        "state",
+        "harness",
+        "model",
+        "hostId",
+        "startedAt",
+        "endedAt",
+        "durationMs",
+        "tokensInput",
+        "tokensOutput",
+        "cost",
+        "lastPostSeq"
+      ],
+      "properties": {
+        "memberName": {"type": "string"},
+        "role": {"type": "string"},
+        "threadId": {"type": "string"},
+        "sessionId": {"type": ["string", "null"]},
+        "sessionCode": {"type": ["string", "null"]},
+        "executionId": {"type": ["string", "null"]},
+        "state": {"type": ["string", "null"]},
+        "harness": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]},
+        "hostId": {"type": ["string", "null"]},
+        "workspaceMode": {"type": ["string", "null"]},
+        "startedAt": {"type": ["integer", "null"]},
+        "endedAt": {"type": ["integer", "null"]},
+        "durationMs": {"type": ["integer", "null"]},
+        "tokensInput": {"type": ["integer", "null"]},
+        "tokensOutput": {"type": ["integer", "null"]},
+        "cost": {"type": "array", "items": {"$ref": "ops.schema.json#/$defs/CostFigure"}},
+        "lastPostSeq": {"type": ["integer", "null"]}
+      }
+    },
+    "WorkBoardSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "threadsTotal",
+        "threadsByStatus",
+        "tasksTotal",
+        "tasksByStatus",
+        "membersTotal",
+        "membersByState",
+        "messagesTotal",
+        "blockersCount",
+        "screenshotsCount",
+        "harnessCounts"
+      ],
+      "properties": {
+        "threadsTotal": {"type": "integer"},
+        "threadsByStatus": {"type": "object", "additionalProperties": {"type": "integer"}},
+        "tasksTotal": {"type": "integer"},
+        "tasksByStatus": {"type": "object", "additionalProperties": {"type": "integer"}},
+        "membersTotal": {"type": "integer"},
+        "membersByState": {"type": "object", "additionalProperties": {"type": "integer"}},
+        "messagesTotal": {"type": "integer"},
+        "blockersCount": {"type": "integer"},
+        "screenshotsCount": {"type": "integer"},
+        "harnessCounts": {"type": "object", "additionalProperties": {"type": "integer"}}
+      }
+    },
+    "WorkBoardGetRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "unevaluatedProperties": false,
+      "required": ["scopeKind", "scopeId"],
+      "properties": {
+        "scopeKind": {"$ref": "#/$defs/BoardScopeKind"},
+        "scopeId": {"type": "string"},
+        "since": {"type": "integer", "minimum": 0},
+        "limit": {"type": "integer", "minimum": 1}
+      }
+    },
+    "WorkBoardGetReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scopeKind", "scopeId", "projectId", "roster", "messages", "headSeq", "summary"],
+      "properties": {
+        "scopeKind": {"$ref": "#/$defs/BoardScopeKind"},
+        "scopeId": {"type": "string"},
+        "projectId": {"type": ["string", "null"]},
+        "plan": {"$ref": "#/$defs/WorkPlan"},
+        "roster": {"type": "array", "items": {"$ref": "#/$defs/WorkBoardRosterEntry"}},
+        "messages": {"type": "array", "items": {"$ref": "#/$defs/BoardMessage"}},
+        "headSeq": {"type": "integer"},
+        "summary": {"$ref": "#/$defs/WorkBoardSummary"}
+      }
+    }
+  }
+}
