@@ -97,6 +97,82 @@ func (a *App) closeLongPolls() {
 	a.stopOnce.Do(func() { close(a.stopCh) })
 }
 
+type shutdownTimeouts struct {
+	http       time.Duration
+	background time.Duration
+	store      time.Duration
+}
+
+var defaultShutdownTimeouts = shutdownTimeouts{
+	http:       10 * time.Second,
+	background: 5 * time.Second,
+	store:      3 * time.Second,
+}
+
+func (a *App) shutdown(srv *http.Server, bgCancel context.CancelFunc, bg *bgTracker, reqCancel context.CancelFunc, timeouts shutdownTimeouts) {
+	a.closeLongPolls()
+	if a.stream != nil {
+		a.stream.close()
+	}
+	if bgCancel != nil {
+		bgCancel()
+	}
+	if srv != nil {
+		c, cancel := context.WithTimeout(context.Background(), timeouts.http)
+		if err := srv.Shutdown(c); err != nil {
+			log.Printf("http shutdown: %v", err)
+			if reqCancel != nil {
+				reqCancel()
+			}
+			_ = srv.Close()
+		}
+		cancel()
+	}
+	if reqCancel != nil {
+		reqCancel()
+	}
+	if bg != nil && !waitBackground(bg, timeouts.background) {
+		log.Printf("shutdown: timed out waiting for background workers")
+	}
+	stopTelemetry() // the queued spans get their last flush
+	if a.store != nil && !closeStoreWithTimeout(a.store, timeouts.store) {
+		log.Printf("shutdown: timed out closing store")
+	}
+}
+
+func waitBackground(bg *bgTracker, timeout time.Duration) bool {
+	bg.close()
+	done := make(chan struct{})
+	go func() {
+		bg.wait()
+		close(done)
+	}()
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case <-done:
+		return true
+	case <-t.C:
+		return false
+	}
+}
+
+func closeStoreWithTimeout(s *Store, timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		s.Close()
+		close(done)
+	}()
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case <-done:
+		return true
+	case <-t.C:
+		return false
+	}
+}
+
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "selftest" {
 		if err := selftest(); err != nil {
@@ -105,7 +181,8 @@ func main() {
 		fmt.Printf("fleet-coordinator %s: selftest ok\n", version)
 		return
 	}
-	ctx := context.Background()
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stopSignals()
 	need := func(k string) string {
 		v := os.Getenv(k)
 		if v == "" {
@@ -118,43 +195,59 @@ func main() {
 	if migration == "" {
 		migration = database
 	}
-	if err := migrate(ctx, migration); err != nil {
+	if err := migrate(sigCtx, migration); err != nil {
 		log.Fatal(err)
 	}
-	store, err := openStore(ctx, database)
+	store, err := openStore(sigCtx, database)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer store.Close()
+	var storeClosed atomic.Bool
+	defer func() {
+		if !storeClosed.Load() {
+			store.Close()
+		}
+	}()
 	a := &App{store: store, browserSecret: os.Getenv("FLEET_BROWSER_SECRET"), hostID: os.Getenv("FLEET_HOST_ID")}
 	a.ensureRuntime()
 	if a.hostID == "" {
 		a.hostID = "owner-mac"
 	}
-	if err := a.loadPeople(ctx, peopleFile); err != nil {
+	if err := a.loadPeople(sigCtx, peopleFile); err != nil {
 		log.Fatal(err)
 	}
-	a.stream = listen(ctx, database, store)
-	startTelemetry(ctx, a)
-	startAll(ctx, a)
+	bgCtx, bgCancel := context.WithCancel(sigCtx)
+	defer bgCancel()
+	var bg bgTracker
+	bgCtx = withBackgroundTracker(bgCtx, &bg)
+	restoreCoalesced := setCoalescedScope(bgCtx, &bg)
+	defer restoreCoalesced()
+
+	reqCtx, reqCancel := context.WithCancel(context.Background())
+	defer reqCancel()
+
+	a.stream = listen(bgCtx, database, store)
+	startTelemetry(bgCtx, a)
+	startAll(bgCtx, a)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8787"
 	}
-	srv := &http.Server{Addr: "127.0.0.1:" + port, Handler: obs.Handler(a.routes(), spanName), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second}
+	srv := &http.Server{
+		Addr:              "127.0.0.1:" + port,
+		Handler:           obs.Handler(a.routes(), spanName),
+		BaseContext:       func(net.Listener) context.Context { return reqCtx },
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       90 * time.Second,
+	}
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)
-		ch := make(chan os.Signal, 1)
-		signal.Notify(ch, syscall.SIGTERM, os.Interrupt)
-		<-ch
-		a.closeLongPolls()
-		a.stream.close()
-		stopTelemetry() // the queued spans get their last flush
-		// In-flight requests finish; with socket activation new ones wait in the held socket for the next process.
-		c, cancel := context.WithTimeout(ctx, 20*time.Second)
-		defer cancel()
-		srv.Shutdown(c)
+		<-sigCtx.Done()
+		stopSignals()
+		storeClosed.Store(true)
+		a.shutdown(srv, bgCancel, &bg, reqCancel, defaultShutdownTimeouts)
 	}()
 	ln, err := activatedListener(srv.Addr)
 	if err != nil {
@@ -163,7 +256,7 @@ func main() {
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
-	<-drained // Serve returns when Shutdown starts; in-flight requests finish first
+	<-drained // Serve returns when Shutdown starts; in-flight requests and background workers finish first
 }
 
 // loadPeople loads people.json at start (docs/designs/fleet-people-access.md); refreshPeople (browser_checks.go) re-reads it

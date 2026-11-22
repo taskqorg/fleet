@@ -77,6 +77,8 @@ func (a *App) waitDispatchCaughtUp(ctx context.Context, target uint64) error {
 		}
 		select {
 		case <-ch:
+		case <-a.stoppedCh():
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}

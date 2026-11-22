@@ -22,11 +22,19 @@ func init() { onStart(startWakeOutbox) }
 
 // Always enabled: resource rollout flags cannot disable legacy or prepared notifications.
 func startWakeOutbox(ctx context.Context, a *App) {
+	bg := backgroundTracker(ctx)
+	if !bg.tryAdd() {
+		return
+	}
 	go func() {
+		defer bg.done()
 		for ctx.Err() == nil {
 			n, err := wakeOutboxPass(ctx, a)
 			if err != nil && ctx.Err() == nil {
 				log.Printf("wake dispatcher: %v", err)
+			}
+			if ctx.Err() != nil {
+				return
 			}
 			if err == nil && n == wakeBatchSize {
 				continue

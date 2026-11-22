@@ -222,6 +222,8 @@ func pipelineWait(ctx context.Context, a *App, runID string) (recordRest, error)
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-a.stoppedCh():
+			return nil, fail(503, "Coordinator shutting down")
 		case <-time.After(200 * time.Millisecond):
 		}
 	}

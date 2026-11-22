@@ -84,7 +84,7 @@ func startTelemetry(ctx context.Context, a *App) {
 			obs.SetSink(func(*obs.Span) { spanWriter.Discard(1) }) // telemetry off: dropped and counted
 			return
 		}
-		wctx, cancel := context.WithCancel(ctx)
+		wctx, cancel := context.WithCancel(context.Background())
 		stopTelemetry = func() { cancel(); spanWriter.Wait(2 * time.Second) }
 		spanWriter.Run(wctx)
 		obs.SetSink(spanWriter.Add)
@@ -108,7 +108,7 @@ func telemetryProblem(ctx context.Context, a *App, open bool) {
 		}
 		return problemClose(q, "problem:telemetry:clickhouse")
 	})
-	if err != nil {
+	if err != nil && ctx.Err() == nil {
 		log.Printf("telemetry problem: %v", err)
 	}
 }
