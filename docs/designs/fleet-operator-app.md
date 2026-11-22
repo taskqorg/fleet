@@ -511,7 +511,7 @@ A representative path is: expensive model generation -> execution -> costly step
 
 ## Character workflow prototype
 
-The [CSGO storyboard](../prototypes/csgo-workflow.html) is a historical navigation study with synthetic data. It overemphasizes sequential screens and does not establish the interaction model above, native harness fidelity or project acceptance. Do not use it as an approved layout or required workflow.
+The CSGO storyboard (in git history) was a historical navigation study with synthetic data. It overemphasizes sequential screens and does not establish the interaction model above, native harness fidelity or project acceptance. Do not use it as an approved layout or required workflow.
 
 Inspect the same result across operator and architect views. Compare a replacement with its predecessor, then distinguish applying it to existing work from recommending its method for future work. Application follows project checks; it does not imply immediate publication.
 

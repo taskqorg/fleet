@@ -381,7 +381,7 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
 
 *   **External boards.** None. A future export reads from this table.
 
-*   **Human codes.** Tasks, questions, experiments and spec rules carry a human code next to the UUID. The UUID stays the key; the code is for reading and recognition only. Brief: [entity-ids-brief.md](entity-ids-brief.md).
+*   **Human codes.** Tasks, questions, experiments and spec rules carry a human code next to the UUID. The UUID stays the key; the code is for reading and recognition only.
     *   Format: `T-FLT-42` (type, project code, number) for `T` task, `Q` question, `C` conversation (session), `E` experiment. Spec rules carry a mandatory section letter: `S-FLT-D3`. Hyphens, uppercase, no leading zeros, case-insensitive lookup. Regex: `\b(?:([TQEC])-([A-Z][A-Z0-9]{1,4})-([1-9][0-9]*)|S-([A-Z][A-Z0-9]{1,4})-([A-DF-PRU-Z])([1-9][0-9]*))\b`.
     *   Scope `ALL` is reserved for general rules and rows with no project (`S-ALL-C4`). Project codes are 2 to 5 characters, start with a letter, are not hex-only, avoid I and O, and are never reused. Any uppercase letter may be a section letter; positions are fixed, so `S-FLT-S5` is unambiguous.
     *   Column `code text unique` on `task`, `question`, the session document (`document.code`, kind `session`), the experiment row and the spec rule row. Executions, artifacts (results), hosts and projects get no code; a result shows its task's code (`taskCode` in `artifact_list`).
