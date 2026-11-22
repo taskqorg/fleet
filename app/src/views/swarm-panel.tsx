@@ -300,12 +300,22 @@ function SwarmOverviewTab({
     <>
       {plan && (
         <section class="panel" aria-label={plan.title}>
-          <header class="panel-h">
+          <header class="panel-h" style={{ flexWrap: 'wrap' }}>
             <Icon name="network" />
-            <h2>{plan.title}</h2>
+            <h2 style={{ minInlineSize: 0, overflowWrap: 'anywhere' }}>{plan.title}</h2>
             <span class="grow" />
-            {plan.strategy && <span class="chip mono" data-tip="Coordination strategy">{plan.strategy}</span>}
-            <span class="chip mono" data-tip={`Updated ${exact(plan.updatedAt)}`}>v{plan.version}</span>
+            {plan.strategy && (
+              <span
+                class="chip in"
+                data-tip={plan.strategy}
+                style={{ minInlineSize: 0, maxInlineSize: '100%' }}
+              >
+                <span style={{ minInlineSize: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {plan.strategy}
+                </span>
+              </span>
+            )}
+            <span class="chip in mono" data-tip={`Updated ${exact(plan.updatedAt)}`}>v{plan.version}</span>
           </header>
           {plan.goal && (
             <div class="stack">

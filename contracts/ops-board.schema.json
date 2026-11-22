@@ -18,12 +18,13 @@
       "description": "Append a durable Swarm board message for (scopeKind, scopeId) with monotonic seq, automatic @mention parsing, wakeTargets resolution, and event-driven auto-wake"
     },
     "board_read": {
-      "read": true,
+      "read": false,
+      "long": true,
       "errors": [400, 404],
       "auth": "person",
       "agent": "tool",
       "changes": ["board"],
-      "description": "Read durable board_message rows for (scopeKind, scopeId) after seq cursor since, with optional threadId, kind, mention, authorMember, and limit filters"
+      "description": "Read durable board_message rows for (scopeKind, scopeId) after seq cursor since, with optional threadId, kind, mention, authorMember, limit, and waitSeconds (0..45) long-poll wait"
     },
     "work_board_get": {
       "read": true,
@@ -226,7 +227,8 @@
         "kind": {"$ref": "#/$defs/BoardMessageKind"},
         "mention": {"type": "string"},
         "authorMember": {"type": "string"},
-        "limit": {"type": "integer", "minimum": 1}
+        "limit": {"type": "integer", "minimum": 1},
+        "waitSeconds": {"type": "integer", "minimum": 0, "$comment": "Optional server-side long-poll wait in seconds (0..45; values above 45 clamp to 45) until matching messages exist after since."}
       }
     },
     "BoardReadReply": {
@@ -320,7 +322,8 @@
         "scopeKind": {"$ref": "#/$defs/BoardScopeKind"},
         "scopeId": {"type": "string"},
         "since": {"type": "integer", "minimum": 0},
-        "limit": {"type": "integer", "minimum": 1}
+        "limit": {"type": "integer", "minimum": 1},
+        "waitSeconds": {"type": "integer", "minimum": 0, "$comment": "Optional server-side long-poll wait in seconds (0..45; values above 45 clamp to 45) until matching messages exist after since."}
       }
     },
     "WorkBoardGetReply": {

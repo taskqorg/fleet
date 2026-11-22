@@ -24,6 +24,87 @@ SELECT EXISTS(SELECT 1 FROM session WHERE id = $1);
 -- name: BoardExecutionInfo :one
 SELECT id, session_id, project_id FROM execution WHERE id = $1;
 
+-- name: BoardPipelineRunPrimarySession :one
+SELECT session_id
+FROM execution
+WHERE parent_execution_id = @run_id::text
+  AND session_id IS NOT NULL
+  AND session_id <> ''
+ORDER BY
+  (EXISTS (SELECT 1 FROM work_plan wp WHERE wp.scope_kind = 'session' AND wp.scope_id = execution.session_id)) DESC,
+  (EXISTS (SELECT 1 FROM board_message bm WHERE bm.scope_kind = 'session' AND bm.scope_id = execution.session_id)) DESC,
+  seq ASC,
+  id ASC
+LIMIT 1;
+
+-- name: BoardScopeIsTerminal :one
+SELECT CASE
+  WHEN @scope_kind::text = 'task' THEN
+    EXISTS(SELECT 1 FROM task WHERE id = @scope_id::text AND state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped'))
+  WHEN @scope_kind::text = 'pipeline_run' THEN
+    EXISTS(SELECT 1 FROM execution WHERE id = @scope_id::text AND state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped'))
+  ELSE false
+END;
+
+-- name: BoardSessionParentTerminal :one
+WITH RECURSIVE chain(id, task_id, pipeline_run_id, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, depth) AS (
+  SELECT id, task_id, pipeline_run_id, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, 0
+  FROM session
+  WHERE id = @session_id::text
+  UNION ALL
+  SELECT s.id, s.task_id, s.pipeline_run_id, s.parent_execution_id, s.created_by_execution_id, s.created_by_session_id, s.source_session_id, c.depth + 1
+  FROM session s
+  JOIN chain c ON s.id = COALESCE(NULLIF(c.created_by_session_id, ''), NULLIF(c.source_session_id, ''))
+  WHERE c.depth < 10
+)
+SELECT EXISTS (
+  SELECT 1
+  FROM chain c
+  WHERE (
+    c.task_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM task t
+      WHERE t.id = c.task_id
+        AND t.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')
+    )
+  ) OR (
+    c.pipeline_run_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM execution r
+      WHERE r.id = c.pipeline_run_id
+        AND r.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')
+    )
+  ) OR (
+    c.parent_execution_id IS NOT NULL AND EXISTS (
+      SELECT 1
+      FROM execution pe
+      LEFT JOIN execution pr ON pr.id = pe.parent_execution_id
+      WHERE pe.id = c.parent_execution_id
+        AND (
+          (pe.kind = 'pipeline_run' AND pe.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped'))
+          OR (pe.kind = 'pipeline_step' AND pr.kind = 'pipeline_run' AND pr.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped'))
+        )
+    )
+  ) OR EXISTS (
+    SELECT 1
+    FROM execution ps
+    JOIN execution pr ON pr.id = ps.parent_execution_id
+    WHERE ps.session_id = c.id
+      AND ps.kind = 'pipeline_step'
+      AND pr.kind = 'pipeline_run'
+      AND pr.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')
+  ) OR (
+    c.created_by_execution_id IS NOT NULL AND EXISTS (
+      SELECT 1
+      FROM execution ce
+      LEFT JOIN execution pr ON pr.id = COALESCE(NULLIF(ce.data->>'pipelineRunId', ''), ce.parent_execution_id)
+      WHERE ce.id = c.created_by_execution_id
+        AND (
+          (ce.kind = 'pipeline_run' AND ce.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped'))
+          OR (pr.kind = 'pipeline_run' AND pr.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped'))
+        )
+    )
+  )
+);
+
 -- name: WorkPlanGet :one
 SELECT * FROM work_plan
 WHERE scope_kind = @scope_kind::text AND scope_id = @scope_id::text;

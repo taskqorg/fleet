@@ -512,15 +512,41 @@ func boardWakeText(seq int64, authorMember string, kind contract.BoardMessageKin
 	return prefix + string(bodyRunes) + "..." + suffix
 }
 
+var errBoardScopeTerminal = errors.New("scope already terminal")
+
+func boardScopeTerminal(q *Request, scopeKind contract.BoardScopeKind, scopeID string) (bool, error) {
+	if scopeKind == contract.BoardScopeKindSession {
+		return q.db().BoardSessionParentTerminal(q.ctx(), scopeID)
+	}
+	return q.db().BoardScopeIsTerminal(q.ctx(), db.BoardScopeIsTerminalParams{
+		ScopeKind: string(scopeKind),
+		ScopeID:   scopeID,
+	})
+}
+
 func boardWakeTarget(q *Request, scopeKind contract.BoardScopeKind, scopeID string, seq int64, sessionID, wakeText string) error {
 	reqID := boardWakeRequestID(scopeKind, scopeID, seq, sessionID)
 	return q.app.store.Write(q.ctx(), q, []string{"session:" + sessionID}, func(q *Request) error {
+		terminal, err := boardScopeTerminal(q, scopeKind, scopeID)
+		if err != nil {
+			return err
+		}
+		if terminal {
+			return errBoardScopeTerminal
+		}
 		s, err := sessionLocked(q, sessionID)
 		if err != nil {
 			return err
 		}
 		if s.ArchivedAt != nil {
 			return fail(409, "Session is archived")
+		}
+		terminal, err = q.db().BoardSessionParentTerminal(q.ctx(), sessionID)
+		if err != nil {
+			return err
+		}
+		if terminal {
+			return errBoardScopeTerminal
 		}
 		_, err = agentSubmit(q, &contract.MessageSendRequest{
 			SessionId: &sessionID,
@@ -664,6 +690,18 @@ func boardPost(q *Request, r *contract.BoardPostRequest) (contract.BoardPostRepl
 		}
 		return out, nil
 	}
+	var scopeTerminal bool
+	if err := q.app.store.Read(q.ctx(), q, func(rq *Request) error {
+		var err error
+		scopeTerminal, err = boardScopeTerminal(rq, r.ScopeKind, scopeID)
+		return err
+	}); err == nil && scopeTerminal {
+		for i := range out.WakeTargets {
+			out.WakeTargets[i].Woken = ptr(false)
+			out.WakeTargets[i].WakeError = ptr(errBoardScopeTerminal.Error())
+		}
+		return out, nil
+	}
 	wakeText := boardWakeText(out.Message.Seq, authorMember, kind, r.Text)
 	for i := range out.WakeTargets {
 		target := &out.WakeTargets[i]
@@ -677,13 +715,12 @@ func boardPost(q *Request, r *contract.BoardPostRequest) (contract.BoardPostRepl
 	return out, nil
 }
 
+const boardReadMaxWaitSeconds = 45
+
 func boardRead(q *Request, r *contract.BoardReadRequest) (contract.BoardReadReply, error) {
 	var out contract.BoardReadReply
 	scopeID, err := boardNormalizeScope(r.ScopeKind, r.ScopeId)
 	if err != nil {
-		return out, err
-	}
-	if _, _, err := boardScopeResolveVisible(q, r.ScopeKind, scopeID); err != nil {
 		return out, err
 	}
 	var since int64
@@ -692,6 +729,13 @@ func boardRead(q *Request, r *contract.BoardReadRequest) (contract.BoardReadRepl
 			return out, fail(400, "Invalid since")
 		}
 		since = *r.Since
+	}
+	waitSeconds := int64(0)
+	if r.WaitSeconds != nil {
+		if *r.WaitSeconds < 0 {
+			return out, fail(400, "Invalid waitSeconds")
+		}
+		waitSeconds = min(*r.WaitSeconds, boardReadMaxWaitSeconds)
 	}
 	limit := 100
 	if r.Limit != nil {
@@ -716,39 +760,96 @@ func boardRead(q *Request, r *contract.BoardReadRequest) (contract.BoardReadRepl
 	if r.AuthorMember != nil && strings.TrimSpace(*r.AuthorMember) != "" {
 		authorMember = ptr(strings.TrimSpace(*r.AuthorMember))
 	}
-	rows, err := q.db().BoardMessagesRead(q.ctx(), db.BoardMessagesReadParams{
-		ScopeKind:    string(r.ScopeKind),
-		ScopeID:      scopeID,
-		Since:        since,
-		ThreadID:     threadID,
-		Kind:         kind,
-		Mention:      mention,
-		AuthorMember: authorMember,
-		Lim:          int32(limit + 1),
-	})
-	if err != nil {
+
+	readBoardBatch := func() (contract.BoardReadReply, error) {
+		var reply contract.BoardReadReply
+		err := q.app.store.Read(q.ctx(), q, func(rq *Request) error {
+			if err := refreshRequestAccess(rq); err != nil {
+				return err
+			}
+			if _, _, err := boardScopeResolveVisible(rq, r.ScopeKind, scopeID); err != nil {
+				return err
+			}
+			rows, err := rq.db().BoardMessagesRead(rq.ctx(), db.BoardMessagesReadParams{
+				ScopeKind:    string(r.ScopeKind),
+				ScopeID:      scopeID,
+				Since:        since,
+				ThreadID:     threadID,
+				Kind:         kind,
+				Mention:      mention,
+				AuthorMember: authorMember,
+				Lim:          int32(limit + 1),
+			})
+			if err != nil {
+				return err
+			}
+			headSeq, err := rq.db().BoardHeadSeq(rq.ctx(), db.BoardHeadSeqParams{
+				ScopeKind: string(r.ScopeKind),
+				ScopeID:   scopeID,
+			})
+			if err != nil {
+				return err
+			}
+			hasMore := len(rows) > limit
+			if hasMore {
+				rows = rows[:limit]
+			}
+			msgs := make([]contract.BoardMessage, 0, len(rows))
+			for _, row := range rows {
+				msgs = append(msgs, boardMessageToContract(row))
+			}
+			reply = contract.BoardReadReply{
+				ScopeKind: r.ScopeKind,
+				ScopeId:   scopeID,
+				Messages:  msgs,
+				HeadSeq:   headSeq,
+				HasMore:   hasMore,
+			}
+			return nil
+		})
+		return reply, err
+	}
+
+	// Subscribe to fleet_change before the initial snapshot so a post committed during it cannot be missed.
+	var wake chan struct{}
+	var streamDone <-chan struct{}
+	if waitSeconds > 0 && q.app != nil && q.app.stream != nil {
+		wake = q.app.stream.join()
+		defer q.app.stream.leave(wake)
+		streamDone = q.app.stream.done
+	}
+
+	out, err = readBoardBatch()
+	if err != nil || waitSeconds == 0 || len(out.Messages) > 0 {
 		return out, err
 	}
-	headSeq, err := q.db().BoardHeadSeq(q.ctx(), db.BoardHeadSeqParams{
-		ScopeKind: string(r.ScopeKind),
-		ScopeID:   scopeID,
-	})
-	if err != nil {
-		return out, err
+
+	timer := time.NewTimer(time.Duration(waitSeconds) * time.Second)
+	defer timer.Stop()
+	var stopped <-chan struct{}
+	if q.app != nil {
+		stopped = q.app.stoppedCh()
 	}
-	hasMore := len(rows) > limit
-	if hasMore {
-		rows = rows[:limit]
+	for len(out.Messages) == 0 {
+		select {
+		case <-q.ctx().Done():
+			return out, q.ctx().Err()
+		case <-stopped:
+			return out, nil
+		case <-streamDone:
+			return out, nil
+		case <-timer.C:
+			return readBoardBatch()
+		case _, ok := <-wake:
+			if !ok {
+				return readBoardBatch()
+			}
+			out, err = readBoardBatch()
+			if err != nil {
+				return out, err
+			}
+		}
 	}
-	msgs := make([]contract.BoardMessage, 0, len(rows))
-	for _, row := range rows {
-		msgs = append(msgs, boardMessageToContract(row))
-	}
-	out.ScopeKind = r.ScopeKind
-	out.ScopeId = scopeID
-	out.Messages = msgs
-	out.HeadSeq = headSeq
-	out.HasMore = hasMore
 	return out, nil
 }
 
@@ -921,6 +1022,47 @@ type boardRosterDraft struct {
 	lastPostSeq    *int64
 }
 
+func boardLoadScopeData(q *Request, scopeKind, scopeID string, wpRow *db.WorkPlan, since int64, limit int) (*contract.WorkPlan, []contract.BoardMessage, db.BoardScopeSummaryCountsRow, []db.BoardMemberPostsRow, error) {
+	var plan *contract.WorkPlan
+	if wpRow != nil {
+		p, err := workPlanToContract(*wpRow)
+		if err != nil {
+			return nil, nil, db.BoardScopeSummaryCountsRow{}, nil, err
+		}
+		plan = &p
+	}
+
+	msgRows, err := q.db().BoardMessagesRead(q.ctx(), db.BoardMessagesReadParams{
+		ScopeKind: scopeKind,
+		ScopeID:   scopeID,
+		Since:     since,
+		Lim:       int32(limit),
+	})
+	if err != nil {
+		return nil, nil, db.BoardScopeSummaryCountsRow{}, nil, err
+	}
+	messages := make([]contract.BoardMessage, 0, len(msgRows))
+	for _, row := range msgRows {
+		messages = append(messages, boardMessageToContract(row))
+	}
+
+	counts, err := q.db().BoardScopeSummaryCounts(q.ctx(), db.BoardScopeSummaryCountsParams{
+		ScopeKind: scopeKind,
+		ScopeID:   scopeID,
+	})
+	if err != nil {
+		return nil, nil, db.BoardScopeSummaryCountsRow{}, nil, err
+	}
+	memberPosts, err := q.db().BoardMemberPosts(q.ctx(), db.BoardMemberPostsParams{
+		ScopeKind: scopeKind,
+		ScopeID:   scopeID,
+	})
+	if err != nil {
+		return nil, nil, db.BoardScopeSummaryCountsRow{}, nil, err
+	}
+	return plan, messages, counts, memberPosts, nil
+}
+
 func workBoardGet(q *Request, r *contract.WorkBoardGetRequest) (contract.WorkBoardGetReply, error) {
 	var out contract.WorkBoardGetReply
 	scopeID, err := boardNormalizeScope(r.ScopeKind, r.ScopeId)
@@ -943,42 +1085,33 @@ func workBoardGet(q *Request, r *contract.WorkBoardGetRequest) (contract.WorkBoa
 		limit = pageLimit(float64(*r.Limit), 500)
 	}
 
-	var plan *contract.WorkPlan
-	if wpRow != nil {
-		p, err := workPlanToContract(*wpRow)
-		if err != nil {
+	plan, messages, counts, memberPosts, err := boardLoadScopeData(q, string(r.ScopeKind), scopeID, wpRow, since, limit)
+	if err != nil {
+		return out, err
+	}
+	if r.ScopeKind == contract.BoardScopeKindPipelineRun && plan == nil && len(messages) == 0 && counts.MessagesTotal == 0 {
+		stepSessID, err := q.db().BoardPipelineRunPrimarySession(q.ctx(), scopeID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return out, err
 		}
-		plan = &p
-	}
-
-	msgRows, err := q.db().BoardMessagesRead(q.ctx(), db.BoardMessagesReadParams{
-		ScopeKind: string(r.ScopeKind),
-		ScopeID:   scopeID,
-		Since:     since,
-		Lim:       int32(limit),
-	})
-	if err != nil {
-		return out, err
-	}
-	messages := make([]contract.BoardMessage, 0, len(msgRows))
-	for _, row := range msgRows {
-		messages = append(messages, boardMessageToContract(row))
-	}
-
-	counts, err := q.db().BoardScopeSummaryCounts(q.ctx(), db.BoardScopeSummaryCountsParams{
-		ScopeKind: string(r.ScopeKind),
-		ScopeID:   scopeID,
-	})
-	if err != nil {
-		return out, err
-	}
-	memberPosts, err := q.db().BoardMemberPosts(q.ctx(), db.BoardMemberPostsParams{
-		ScopeKind: string(r.ScopeKind),
-		ScopeID:   scopeID,
-	})
-	if err != nil {
-		return out, err
+		if err == nil && deref(stepSessID) != "" {
+			sessID := *stepSessID
+			var sessWP *db.WorkPlan
+			wp, wpErr := q.db().WorkPlanGet(q.ctx(), db.WorkPlanGetParams{
+				ScopeKind: string(contract.BoardScopeKindSession),
+				ScopeID:   sessID,
+			})
+			if wpErr != nil && !errors.Is(wpErr, pgx.ErrNoRows) {
+				return out, wpErr
+			}
+			if wpErr == nil {
+				sessWP = &wp
+			}
+			plan, messages, counts, memberPosts, err = boardLoadScopeData(q, string(contract.BoardScopeKindSession), sessID, sessWP, since, limit)
+			if err != nil {
+				return out, err
+			}
+		}
 	}
 
 	drafts := map[string]*boardRosterDraft{}
