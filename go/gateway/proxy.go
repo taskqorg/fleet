@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -21,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -207,18 +209,159 @@ func (e errBody) orNil() error {
 	return e
 }
 
+const (
+	defaultCooldownSec      = int64(60)
+	defaultQuotaCooldownSec = int64(3600)
+)
+
+func hasFailoverStatus(p *contract.GatewayKeyPolicy, status int) bool {
+	return p != nil && slices.Contains(p.FailoverStatuses, int64(status))
+}
+
+func cooldownDurationSec(p *contract.GatewayKeyPolicy, status int, retryAfterHeader string) int64 {
+	cooldownSec := defaultCooldownSec
+	quotaCooldownSec := defaultQuotaCooldownSec
+	if p != nil {
+		if p.CooldownSeconds != nil && *p.CooldownSeconds > 0 {
+			cooldownSec = *p.CooldownSeconds
+		}
+		if p.QuotaCooldownSeconds != nil && *p.QuotaCooldownSeconds > 0 {
+			quotaCooldownSec = *p.QuotaCooldownSeconds
+		}
+	}
+	if ra, err := strconv.ParseInt(strings.TrimSpace(retryAfterHeader), 10, 64); err == nil && ra > 0 {
+		return max(ra, cooldownSec)
+	}
+	if status == 432 {
+		return quotaCooldownSec
+	}
+	return cooldownSec
+}
+
+func (g *gateway) setCooldown(id string, setAt, until int64) {
+	g.cooldownLock.Lock()
+	defer g.cooldownLock.Unlock()
+	if cur, ok := g.cooldown[id]; ok && cur.until > until {
+		return
+	}
+	g.cooldown[id] = cooldownKey{until: until, setAt: setAt}
+}
+
+func (g *gateway) advanceCurrent(name string) {
+	g.currentLock.Lock()
+	g.current[name]++
+	g.currentLock.Unlock()
+}
+
+// orderedKeys returns candidate key IDs in the order dictated by c.KeyPolicy, filtering out disabled and
+// cooling-down keys. If active non-disabled keys exist but all are cooling down, it returns nil and a positive
+// Retry-After duration in seconds.
+func (g *gateway) orderedKeys(name string, c connection) ([]string, int64) {
+	g.disabledLock.Lock()
+	active := make([]contract.GatewayKey, 0, len(c.Keys))
+	for _, k := range c.Keys {
+		if d, off := g.disabled[k.Id]; k.State == "active" && (!off || k.EnabledAt != nil && *k.EnabledAt > d.at) {
+			active = append(active, k)
+		}
+	}
+	g.disabledLock.Unlock()
+	if len(active) == 0 {
+		return nil, 0
+	}
+
+	now := nowMs()
+	var earliestUntil int64
+	ready := make([]contract.GatewayKey, 0, len(active))
+	g.cooldownLock.Lock()
+	for _, k := range active {
+		if cd, ok := g.cooldown[k.Id]; ok {
+			if now >= cd.until || (k.EnabledAt != nil && *k.EnabledAt > cd.setAt) {
+				delete(g.cooldown, k.Id)
+				ready = append(ready, k)
+			} else if earliestUntil == 0 || cd.until < earliestUntil {
+				earliestUntil = cd.until
+			}
+			continue
+		}
+		ready = append(ready, k)
+	}
+	g.cooldownLock.Unlock()
+	if len(ready) == 0 {
+		return nil, max(int64(1), (earliestUntil-now+999)/1000)
+	}
+
+	strategy := contract.GatewayKeyStrategySticky
+	if c.KeyPolicy != nil && c.KeyPolicy.Strategy != nil && *c.KeyPolicy.Strategy != "" {
+		strategy = *c.KeyPolicy.Strategy
+	}
+	n := len(ready)
+	out := make([]string, n)
+	switch strategy {
+	case contract.GatewayKeyStrategyRoundRobin:
+		g.currentLock.Lock()
+		start := g.current[name]
+		g.current[name] = start + 1
+		g.currentLock.Unlock()
+		start = ((start % n) + n) % n
+		for i := range ready {
+			out[i] = ready[(start+i)%n].Id
+		}
+	case contract.GatewayKeyStrategyLeastUsed:
+		g.currentLock.Lock()
+		offset := g.current[name]
+		g.current[name] = offset + 1
+		g.currentLock.Unlock()
+		offset = ((offset % n) + n) % n
+		type candidate struct {
+			id    string
+			usage int64
+			tie   int
+		}
+		g.usedLock.Lock()
+		cands := make([]candidate, n)
+		for i, k := range ready {
+			u := g.used[k.Id]
+			if k.Usage != nil {
+				u += *k.Usage
+			}
+			cands[i] = candidate{id: k.Id, usage: u, tie: (i - offset + n) % n}
+		}
+		slices.SortFunc(cands, func(a, b candidate) int {
+			if diff := cmp.Compare(a.usage, b.usage); diff != 0 {
+				return diff
+			}
+			return cmp.Compare(a.tie, b.tie)
+		})
+		g.used[cands[0].id]++
+		g.usedLock.Unlock()
+		for i, cand := range cands {
+			out[i] = cand.id
+		}
+	default:
+		g.currentLock.Lock()
+		start := g.current[name]
+		g.currentLock.Unlock()
+		start = ((start % n) + n) % n
+		for i := range ready {
+			out[i] = ready[(start+i)%n].Id
+		}
+	}
+	return out, 0
+}
+
 func (g *gateway) call(ctx context.Context, name string, c connection, p provider, t tool, path string, b body) *answer {
-	keys := g.usable(c)
+	keys, retryAfterSec := g.orderedKeys(name, c)
 	if len(keys) == 0 {
+		if retryAfterSec > 0 {
+			a := refusal(503, "error", "all-keys-cooling-down", "all active keys are cooling down; retry later")
+			a.retryAfter = strconv.FormatInt(retryAfterSec, 10)
+			return a
+		}
 		return refusal(503, "error", "no-usable-key", "no active key; the holder or the owner must act")
 	}
-	g.currentLock.Lock()
-	start := g.current[name]
-	g.currentLock.Unlock()
 	lastFailure := ""
-	for step := range keys {
-		index := (start + step) % len(keys)
-		id := keys[index]
+	for step, id := range keys {
+		hasNext := step+1 < len(keys)
 		value, ok := g.value(id)
 		if !ok {
 			lastFailure = "key " + id + " has no value file"
@@ -271,9 +414,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 				a.key = id
 				return a
 			}
-			g.currentLock.Lock()
-			g.current[name] = (index + 1) % len(keys)
-			g.currentLock.Unlock()
+			g.advanceCurrent(name)
 			continue
 		}
 		status := response.StatusCode
@@ -284,9 +425,23 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 			return a
 		}
 		if status == 401 || status == 402 {
+			if b.open == nil && hasNext && c.KeyPolicy != nil && len(c.KeyPolicy.FailoverStatuses) > 0 {
+				g.onDisabled(id, status, attemptedAt)
+				g.advanceCurrent(name)
+				continue
+			}
 			a := refusal(502, "error", fmt.Sprintf("key-disabled-%d", status), fmt.Sprintf("the provider refused key %s with HTTP %d; the key is disabled", id, status))
 			a.key, a.disabled, a.attemptedAt = id, status, attemptedAt
 			return a
+		}
+		if hasFailoverStatus(c.KeyPolicy, status) {
+			cdSec := cooldownDurationSec(c.KeyPolicy, status, response.Header.Get("Retry-After"))
+			now := nowMs()
+			g.setCooldown(id, now, now+cdSec*1000)
+			g.advanceCurrent(name)
+			if b.open == nil && hasNext {
+				continue
+			}
 		}
 		// Success and every other provider reply, quota and 429 included, reach the caller unchanged, except that a key
 		// value the provider echoed is replaced: the caller never sees a key.

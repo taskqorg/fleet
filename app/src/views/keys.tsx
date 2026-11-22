@@ -2,10 +2,11 @@
 // only), access and intake. Key values go in, never come out: the add field is write-only and the answer is a fingerprint.
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { AgeChip, Button, DetailSection, Disclosure, Empty, ErrorBanner, KvRow, ProblemRow, SettingField, Skeleton, StateBadge, bytes, duration, type StateOf } from '../../../packages/ui/src/index.ts';
+import { AgeChip, Button, Choice, DetailSection, Disclosure, Empty, ErrorBanner, KvRow, ProblemRow, SettingField, Skeleton, StateBadge, bytes, duration, type StateOf } from '../../../packages/ui/src/index.ts';
 import { op, type OpName, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import type { ConnectionView, ConnectionKey } from '../../../contracts/generated/ops.ts';
+import type { GatewayKeyStrategy } from '../../../contracts/generated/gateway.ts';
 
 /** A connection as the screen shows it: the lists the reply omits when empty filled in. */
 export type Conn = Omit<ConnectionView, 'keys' | 'tools' | 'access'> & {
@@ -36,6 +37,13 @@ export const connectionScope = (c: Conn): string =>
 type LimitKey = 'fileBytes' | 'replyBytes' | 'stallMs' | 'answerMs';
 const DEFAULT_STALL_MS = 60_000;
 const DEFAULT_ANSWER_MS = 120_000;
+const DEFAULT_COOLDOWN_S = 60;
+const DEFAULT_QUOTA_COOLDOWN_S = 3600;
+const KEY_STRATEGY_OPTIONS: { id: GatewayKeyStrategy; label: string }[] = [
+  { id: 'sticky', label: 'Sticky' },
+  { id: 'round_robin', label: 'Round robin' },
+  { id: 'least_used', label: 'Least used' },
+];
 
 type LimitFieldDef = {
   key: LimitKey;
@@ -141,6 +149,47 @@ export function KeyDetail({
     void run('connections_set_limits', { connection: sel.name, limits: next });
   };
 
+  const kp = sel.keyPolicy;
+  const strategy: GatewayKeyStrategy = kp?.strategy ?? 'sticky';
+  const saveKeyPolicy = (patch: Partial<NonNullable<ConnectionView['keyPolicy']>>) => {
+    const next: NonNullable<ConnectionView['keyPolicy']> = { ...(kp ?? {}), ...patch };
+    if (next.strategy === 'sticky' || !next.strategy) delete next.strategy;
+    if (!next.failoverStatuses?.length) delete next.failoverStatuses;
+    if (next.cooldownSeconds == null || next.cooldownSeconds === DEFAULT_COOLDOWN_S) delete next.cooldownSeconds;
+    if (next.quotaCooldownSeconds == null || next.quotaCooldownSeconds === DEFAULT_QUOTA_COOLDOWN_S) delete next.quotaCooldownSeconds;
+    void run('connections_set_key_policy', { connection: sel.name, keyPolicy: next });
+  };
+  const saveFailoverStatuses = (raw: string) => {
+    const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+    const seen = new Set<number>();
+    const parsed: number[] = [];
+    for (const p of parts) {
+      const n = Number(p);
+      if (!Number.isInteger(n) || n < 400 || n > 599) {
+        setActionError('Failover HTTP statuses must be integers between 400 and 599 (e.g. 429, 432).');
+        return;
+      }
+      if (!seen.has(n)) {
+        seen.add(n);
+        parsed.push(n);
+      }
+    }
+    saveKeyPolicy({ failoverStatuses: parsed.length ? parsed : undefined });
+  };
+  const saveCooldown = (field: 'cooldownSeconds' | 'quotaCooldownSeconds', raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      saveKeyPolicy({ [field]: undefined });
+      return;
+    }
+    const n = Number(trimmed);
+    if (!Number.isInteger(n) || n < 1) {
+      setActionError(`${field} must be a positive integer.`);
+      return;
+    }
+    saveKeyPolicy({ [field]: n });
+  };
+
   return (
     <article class="detail stack" data-ui="detail" tabIndex={-1} aria-label={sel.name}>
       <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><h2 class="detail-title">{sel.name}</h2></header>
@@ -184,6 +233,38 @@ export function KeyDetail({
         <SettingField label="Experiments" value={sel.access.experiments.join(', ')} help="Lab experiment ids" now={now} status={{ kind: 'applied', at: updatedAt }}
           onSave={v => run('connections_set_access', { connection: sel.name, access: { ...sel.access, experiments: ids(v) } })} />
         <KvRow icon="activity" label="Intake" value={<Button label={sel.intake === 'all' ? 'Pause' : 'Resume'} icon={sel.intake === 'all' ? 'pause' : 'play'} onClick={() => run('connections_set_intake', { connection: sel.name, intake: sel.intake === 'all' ? 'paused' : 'all' })} />} />
+      </DetailSection>
+      <DetailSection title="Key balancing & failover">
+        <KvRow
+          icon="activity"
+          label="Strategy"
+          meta="Sticky keeps one key; round robin rotates per call; least used prefers lowest recorded usage"
+          value={<Choice label="Key balancing strategy" options={KEY_STRATEGY_OPTIONS} value={strategy} onChange={id => saveKeyPolicy({ strategy: id as GatewayKeyStrategy })} />}
+        />
+        <SettingField
+          label="Failover statuses"
+          value={(kp?.failoverStatuses ?? []).join(', ')}
+          help="Comma-separated HTTP 400–599 codes that cool down the key and fail over (e.g. 429, 432); empty disables"
+          now={now}
+          status={{ kind: 'applied', at: updatedAt }}
+          onSave={saveFailoverStatuses}
+        />
+        <SettingField
+          label="Cooldown (s)"
+          value={String(kp?.cooldownSeconds ?? DEFAULT_COOLDOWN_S)}
+          help={`Seconds before retrying a failed-over key; default ${duration(DEFAULT_COOLDOWN_S).text} (${DEFAULT_COOLDOWN_S}s)`}
+          now={now}
+          status={{ kind: 'applied', at: updatedAt }}
+          onSave={v => saveCooldown('cooldownSeconds', v)}
+        />
+        <SettingField
+          label="Quota cooldown (s)"
+          value={String(kp?.quotaCooldownSeconds ?? DEFAULT_QUOTA_COOLDOWN_S)}
+          help={`Seconds before retrying a key after HTTP 432; default ${duration(DEFAULT_QUOTA_COOLDOWN_S).text} (${DEFAULT_QUOTA_COOLDOWN_S}s)`}
+          now={now}
+          status={{ kind: 'applied', at: updatedAt }}
+          onSave={v => saveCooldown('quotaCooldownSeconds', v)}
+        />
       </DetailSection>
       <DetailSection title="Limits">
         {diffLimits.length > 0 ? diffLimits.map(f => (

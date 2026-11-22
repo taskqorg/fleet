@@ -74,6 +74,7 @@ type apiConnection struct {
 	CreatedAt json.RawMessage `json:"createdAt,omitempty"`
 	UpdatedAt *int64          `json:"updatedAt,omitempty"`
 	Limits    json.RawMessage `json:"limits,omitempty"`
+	KeyPolicy json.RawMessage `json:"keyPolicy,omitempty"`
 }
 
 type apiConnectionPayload struct {
@@ -84,6 +85,7 @@ type apiConnectionPayload struct {
 	CreatedAt json.RawMessage `json:"createdAt,omitempty"`
 	UpdatedAt *int64          `json:"updatedAt,omitempty"`
 	Limits    json.RawMessage `json:"limits,omitempty"`
+	KeyPolicy json.RawMessage `json:"keyPolicy,omitempty"`
 }
 
 func apiConnectionOf(r db.ApiConnection) (apiConnection, error) {
@@ -94,7 +96,7 @@ func apiConnectionOf(r db.ApiConnection) (apiConnection, error) {
 	return apiConnection{
 		ID: r.ID, Name: r.Name, Provider: deref(r.Provider), Holder: deref(r.Holder), ProjectID: r.ProjectID,
 		Access: p.Access, Intake: p.Intake, Tools: p.Tools, Comment: p.Comment,
-		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, Limits: p.Limits,
+		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, Limits: p.Limits, KeyPolicy: p.KeyPolicy,
 	}, nil
 }
 
@@ -138,7 +140,7 @@ func apiConnectionPut(q *Request, c apiConnection) error {
 	}
 	p := apiConnectionPayload{
 		Access: c.Access, Intake: c.Intake, Tools: c.Tools, Comment: c.Comment,
-		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, Limits: c.Limits,
+		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, Limits: c.Limits, KeyPolicy: c.KeyPolicy,
 	}
 	return q.db().APIConnectionPut(q.ctx(), db.APIConnectionPutParams{
 		ID:        c.ID,
@@ -157,6 +159,19 @@ func (c apiConnection) limits() (contract.GatewayLimits, error) {
 		return l, nil
 	}
 	return l, json.Unmarshal(c.Limits, &l)
+}
+
+// keyPolicy: the stored key balancing and failover policy; none is the zero value.
+func (c apiConnection) keyPolicy() (contract.GatewayKeyPolicy, error) {
+	var p contract.GatewayKeyPolicy
+	if isNull(c.KeyPolicy) {
+		return p, nil
+	}
+	return p, json.Unmarshal(c.KeyPolicy, &p)
+}
+
+func keyPolicyEmpty(p contract.GatewayKeyPolicy) bool {
+	return p.Strategy == nil && len(p.FailoverStatuses) == 0 && p.CooldownSeconds == nil && p.QuotaCooldownSeconds == nil
 }
 
 // connAccess: who a connection is granted to; all three empty means its holder only.

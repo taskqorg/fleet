@@ -41,13 +41,20 @@
       "intake": {"type": "string"},
       "keys": {"type": "array", "items": {"$ref": "#/$defs/GatewayKey"}},
       "blocked": {"$comment": "Reached pause/stop budgets: \"connection\" (every call) or a run scope (person:, project:, experiment:).", "type": "array", "items": {"type": "string"}},
-      "limits": {"$ref": "#/$defs/GatewayLimits"}}},
+      "limits": {"$ref": "#/$defs/GatewayLimits"},
+      "keyPolicy": {"$ref": "#/$defs/GatewayKeyPolicy"}}},
     "GatewayLimits": {"unevaluatedProperties": false, "$comment": "File tool limits of a connection (connections_set_limits); an absent field takes its default: fileBytes and replyBytes no cap, stallMs 60000, answerMs 120000.", "type": "object", "properties": {
       "fileBytes": {"$comment": "Largest upload in bytes.", "type": "integer", "minimum": 1},
       "replyBytes": {"$comment": "Largest download in bytes.", "type": "integer", "minimum": 1},
       "stallMs": {"$comment": "Longest time without progress in either direction.", "type": "integer", "minimum": 1},
       "answerMs": {"$comment": "Wait from the last byte sent to the provider's response headers (file tools).", "type": "integer", "minimum": 1}}, "additionalProperties": false},
-    "GatewayKey": {"type": "object", "required": ["id", "state"], "properties": {"id": {"type": "string"}, "state": {"type": "string"}, "enabledAt": {"type": "integer"}}},
+    "GatewayKeyStrategy": {"$comment": "Key selection strategy for a connection.", "type": "string", "enum": ["sticky", "round_robin", "least_used"]},
+    "GatewayKeyPolicy": {"unevaluatedProperties": false, "$comment": "Key balancing and failover policy of a connection (connections_set_key_policy); an absent field takes its default: strategy sticky, no failover statuses, cooldownSeconds 60, quotaCooldownSeconds 3600.", "type": "object", "properties": {
+      "strategy": {"$ref": "#/$defs/GatewayKeyStrategy"},
+      "failoverStatuses": {"$comment": "HTTP status codes (400..599) that cool down the key and fail over to the next candidate.", "type": "array", "items": {"type": "integer", "minimum": 400}},
+      "cooldownSeconds": {"$comment": "Cooldown duration in seconds after a failover status.", "type": "integer", "minimum": 1},
+      "quotaCooldownSeconds": {"$comment": "Cooldown duration in seconds after a quota exhaustion status (HTTP 432).", "type": "integer", "minimum": 1}}, "additionalProperties": false},
+    "GatewayKey": {"type": "object", "required": ["id", "state"], "properties": {"id": {"type": "string"}, "state": {"type": "string"}, "enabledAt": {"type": "integer"}, "usage": {"$comment": "Recorded usage for least_used key balancing.", "type": "integer", "minimum": 0}}},
     "GatewayRunToken": {"type": "object", "required": ["sha256", "executionId", "connections", "directedBy", "projectId", "experimentId"], "properties": {
       "sha256": {"type": "string"},
       "executionId": {"type": "string"},

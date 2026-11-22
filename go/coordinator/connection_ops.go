@@ -53,6 +53,10 @@ func init() {
 		out, err := connectionsSetLimits(q, r)
 		return replyAs[contract.ConnectionsSetLimitsReply](out, err)
 	})
+	op("connections_set_key_policy", func(q *Request, r *contract.ConnectionsSetKeyPolicyRequest) (contract.ConnectionsSetKeyPolicyReply, error) {
+		out, err := connectionsSetKeyPolicy(q, r)
+		return replyAs[contract.ConnectionsSetKeyPolicyReply](out, err)
+	})
 	op("connections_token_create", func(q *Request, r *contract.ConnectionsTokenCreateRequest) (contract.ConnectionsTokenCreateReply, error) {
 		out, err := connectionsTokenCreate(q, r)
 		return replyAs[contract.ConnectionsTokenCreateReply](out, err)
@@ -307,6 +311,64 @@ func connectionsSetLimits(q *Request, r *contract.ConnectionsSetLimitsRequest) (
 		c.Limits = nil
 		if next != (contract.GatewayLimits{}) {
 			c.Limits = jsonBytes(next)
+		}
+		if err := connUpdated(q, c); err != nil {
+			return nil, err
+		}
+	}
+	return c, nil
+}
+
+// connectionsSetKeyPolicy: key balancing and failover policy; the stored object is replaced as a whole; an omitted
+// field takes the gateway's default.
+func connectionsSetKeyPolicy(q *Request, r *contract.ConnectionsSetKeyPolicyRequest) (any, error) {
+	c, err := connNamed(q, r.Connection)
+	if err != nil {
+		return nil, err
+	}
+	next := r.KeyPolicy
+	if next.Strategy != nil {
+		if *next.Strategy == "" {
+			next.Strategy = nil
+		} else if !next.Strategy.Valid() {
+			return nil, fail(400, "keyPolicy.strategy must be sticky, round_robin or least_used")
+		}
+	}
+	if len(next.FailoverStatuses) > 0 {
+		seen := make(map[int64]bool, len(next.FailoverStatuses))
+		statuses := make([]int64, 0, len(next.FailoverStatuses))
+		for _, s := range next.FailoverStatuses {
+			if s < 400 || s > 599 {
+				return nil, fail(400, "keyPolicy.failoverStatuses must be HTTP status codes between 400 and 599")
+			}
+			if !seen[s] {
+				seen[s] = true
+				statuses = append(statuses, s)
+			}
+		}
+		next.FailoverStatuses = statuses
+	} else {
+		next.FailoverStatuses = nil
+	}
+	for _, f := range []struct {
+		name string
+		v    *int64
+	}{{"cooldownSeconds", next.CooldownSeconds}, {"quotaCooldownSeconds", next.QuotaCooldownSeconds}} {
+		if f.v != nil && (*f.v < 1 || *f.v > 1<<53) {
+			return nil, fail(400, "keyPolicy."+f.name+" must be a positive integer")
+		}
+	}
+	previous := json.RawMessage("{}")
+	if !isNull(c.KeyPolicy) {
+		previous = c.KeyPolicy
+	}
+	if stored, err := c.keyPolicy(); err != nil || js(next) != js(stored) {
+		if err := connChange(q, c, "keyPolicy", previous, next); err != nil {
+			return nil, err
+		}
+		c.KeyPolicy = nil
+		if !keyPolicyEmpty(next) {
+			c.KeyPolicy = jsonBytes(next)
 		}
 		if err := connUpdated(q, c); err != nil {
 			return nil, err
