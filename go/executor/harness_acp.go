@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 )
 
 type acpSession struct {
@@ -179,8 +180,9 @@ func (s *acpSession) selectModel(result acpResult, model string) (M, error) {
 }
 
 // Antigravity requests ACP permission during its active turn. Fleet grants a single
-// allow_once only for explicitly injected Code Mode MCP tools, or for run_command
-// (kind "execute") when the session runs in sandboxed accept-edits mode.
+// allow_once only for explicitly injected Code Mode MCP tools (when codeMode is
+// enabled), other Fleet-injected s.servers MCP tools, or run_command (kind
+// "execute") when the session runs in sandboxed accept-edits mode.
 func (s *acpSession) permission(params acpParams) string {
 	if pharness(s.profile) != "antigravity" || s.stage != 5 || s.session == "" || params.SessionID != s.session {
 		return ""
@@ -194,6 +196,8 @@ func (s *acpSession) permission(params acpParams) string {
 	case (call.Name == "mcp_code_code" || call.Name == "mcp_code_poll") && call.Kind == "other":
 		mode := launchOf(s.config()).CodeMode
 		allowed = (mode == "add" || mode == "only") && has(s.servers, "code")
+	case call.Kind == "other" && s.hasInjectedMCPTool(call.Name):
+		allowed = true
 	case call.Name == "run_command" && call.Kind == "execute":
 		allowed = s.mode == "accept-edits" && !jIsTrue(s.profile, "readOnly") && jIsTrue(s.config(), "settings", "sandbox")
 	}
@@ -206,6 +210,36 @@ func (s *acpSession) permission(params acpParams) string {
 		}
 	}
 	return ""
+}
+
+// acpSanitizeMCPServer mirrors Antigravity ACP's sanitizeMCPServerName: ASCII
+// letters, digits, '_' and '-' are kept; any other rune becomes '_'.
+func acpSanitizeMCPServer(name string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			return r
+		}
+		return '_'
+	}, name)
+}
+
+func (s *acpSession) hasInjectedMCPTool(callName string) bool {
+	if !strings.HasPrefix(callName, "mcp_") {
+		return false
+	}
+	for srv := range s.servers {
+		if srv == "" || srv == "code" {
+			continue
+		}
+		sanitized := acpSanitizeMCPServer(srv)
+		for _, candidate := range []string{sanitized, strings.ReplaceAll(sanitized, "-", "_")} {
+			prefix := "mcp_" + candidate + "_"
+			if strings.HasPrefix(callName, prefix) && len(callName) > len(prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *acpSession) Receive(v map[string]any) ([]map[string]any, map[string]any, bool, error) {
