@@ -163,7 +163,7 @@ func codeDescription(spec codeSpec) string {
 	can := func(n string) bool { return slices.Contains(host, n) }
 	var b strings.Builder
 	b.WriteString("Run JavaScript in this execution's persistent Node runtime: the body of an async function. The last expression is the result (or return one); return values themselves, not JSON.stringify(...).\n\n" +
-		"Few, full scripts: do a step's investigating in as few code calls as the dependencies between its steps allow, reading and searching more widely than you strictly need, because each extra call is a round trip and each extra read inside one is nearly free. IMPORTANT: batch ALL operations of a step into ONE code call. Use Promise.all() for parallel operations. Only the result and print() output reach you: filter in code and return a compact object.\n\nFunctions (paths are relative to the working directory):\n")
+		"Few, full scripts: do a step's investigating in as few code calls as the dependencies between its steps allow, reading and searching more widely than you strictly need, because each extra call is a round trip and each extra read inside one is nearly free. IMPORTANT: batch ALL operations of a step into ONE code call. Use Promise.all() for parallel operations. Only the result and print() output reach you. NEVER return raw tool, search, or file bodies or full result arrays: parse/extract only needed fields in JS (regex, .match(), .map(), .slice()), keep large intermediate data in state for follow-up calls, and return a compact object (target < 2 KB).\n\nFunctions (paths are relative to the working directory):\n")
 	if can("read") {
 		b.WriteString("- read(path) -> text; glob(pattern, {path}) -> paths, pattern like \"**/*.go\"; grep(regex, {path, glob, ignoreCase}) -> [{file, line, text}].\n")
 	} else {
@@ -204,8 +204,8 @@ func codeDescription(spec codeSpec) string {
 		fields = append(fields, "log: log.lines()")
 	}
 	if len(spec.Connections) > 0 {
-		lines = append(lines, `const bugs = await conn["tracker"].search({query: "open bugs"})`)
-		fields = append(fields, "bugs: bugs.map(b => b.id)")
+		lines = append(lines, `state.hits = await conn["tracker"].search({query: "open bugs"})`)
+		fields = append(fields, `hits: state.hits.slice(0, 5).map(h => ({id: h.id, url: h.url, num: h.text?.match(/#\d+/)?.[0]}))`)
 	} else if spec.Journal != "" { // Fleet tools
 		lines = append(lines, `const me = await fleet.execution_status({})`)
 		fields = append(fields, "status: me.status")

@@ -493,6 +493,9 @@ func TestCodeModeLaunchServers(t *testing.T) {
 	if d := codeDescription(codeSpec{Shell: &codeShell{Sandbox: true, ReadOnly: true}}); !strings.Contains(d, "Commands write nothing and have no network.") {
 		t.Fatalf("read-only description: %s", d)
 	}
+	if d := codeDescription(codeSpec{Connections: []jsonValue{{}}}); !strings.Contains(d, "NEVER return raw") || !strings.Contains(d, "target < 2 KB") || !strings.Contains(d, "state.hits = await conn[") {
+		t.Fatalf("compact-return description: %s", d)
+	}
 	// only hides the Claude tools that host functions cover; add keeps them.
 	for mode, want := range map[string]string{"only": "Read,Task,TaskStop", "add": "Read,Edit,Write,Bash,Glob,Grep,Task,TaskStop"} {
 		c := exec.Command("not-executed")
