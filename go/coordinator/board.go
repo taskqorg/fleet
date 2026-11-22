@@ -5,9 +5,11 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -482,6 +484,53 @@ func nonEmptyPtr(s string) *string {
 	return &s
 }
 
+func boardLockKey(scopeKind, scopeID string) string {
+	return "board:" + scopeKind + ":" + scopeID
+}
+
+func boardWakeRequestID(scopeKind contract.BoardScopeKind, scopeID string, seq int64, sessionID string) string {
+	return "board-wake:" + string(scopeKind) + ":" + scopeID + ":" + strconv.FormatInt(seq, 10) + ":" + sessionID
+}
+
+const boardWakeMaxRunes = 32000
+
+func boardWakeText(seq int64, authorMember string, kind contract.BoardMessageKind, text string) string {
+	prefix := fmt.Sprintf("[board #%d] %s (%s): ", seq, authorMember, string(kind))
+	suffix := "\nRead new board posts with board_read and reply via board_post."
+	full := prefix + text + suffix
+	if len([]rune(full)) <= boardWakeMaxRunes {
+		return full
+	}
+	budget := boardWakeMaxRunes - len([]rune(prefix)) - len([]rune(suffix)) - 3
+	if budget <= 0 {
+		return string([]rune(full)[:boardWakeMaxRunes])
+	}
+	bodyRunes := []rune(text)
+	if budget < len(bodyRunes) {
+		bodyRunes = bodyRunes[:budget]
+	}
+	return prefix + string(bodyRunes) + "..." + suffix
+}
+
+func boardWakeTarget(q *Request, scopeKind contract.BoardScopeKind, scopeID string, seq int64, sessionID, wakeText string) error {
+	reqID := boardWakeRequestID(scopeKind, scopeID, seq, sessionID)
+	return q.app.store.Write(q.ctx(), q, []string{"session:" + sessionID}, func(q *Request) error {
+		s, err := sessionLocked(q, sessionID)
+		if err != nil {
+			return err
+		}
+		if s.ArchivedAt != nil {
+			return fail(409, "Session is archived")
+		}
+		_, err = agentSubmit(q, &contract.MessageSendRequest{
+			SessionId: &sessionID,
+			RequestId: &reqID,
+			Text:      &wakeText,
+		}, "wake")
+		return err
+	})
+}
+
 func boardPost(q *Request, r *contract.BoardPostRequest) (contract.BoardPostReply, error) {
 	var out contract.BoardPostReply
 	scopeID, err := boardNormalizeScope(r.ScopeKind, r.ScopeId)
@@ -495,9 +544,6 @@ func boardPost(q *Request, r *contract.BoardPostRequest) (contract.BoardPostRepl
 	if strings.TrimSpace(r.Text) == "" {
 		return out, fail(400, "Expected text")
 	}
-	if err := boardScopeCheckProject(q, r.ProjectId, r.ScopeKind, scopeID); err != nil {
-		return out, err
-	}
 	kind := contract.BoardMessageKindMessage
 	if r.Kind != nil {
 		if !r.Kind.Valid() {
@@ -505,97 +551,129 @@ func boardPost(q *Request, r *contract.BoardPostRequest) (contract.BoardPostRepl
 		}
 		kind = *r.Kind
 	}
-	authorRole := firstString(strings.TrimSpace(deref(r.AuthorRole)), "worker")
-	var authorExecID, authorSessID *string
-	if r.AuthorExecutionId != nil && strings.TrimSpace(*r.AuthorExecutionId) != "" {
-		eid := strings.TrimSpace(*r.AuthorExecutionId)
-		info, err := q.db().BoardExecutionInfo(q.ctx(), eid)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return out, fail(404, "Unknown authorExecutionId")
+
+	if err := q.app.store.Write(q.ctx(), q, []string{boardLockKey(string(r.ScopeKind), scopeID)}, func(q *Request) error {
+		if err := boardScopeCheckProject(q, r.ProjectId, r.ScopeKind, scopeID); err != nil {
+			return err
 		}
-		if err != nil {
-			return out, err
-		}
-		authorExecID = &info.ID
-		if info.SessionID != nil && *info.SessionID != "" {
-			authorSessID = info.SessionID
-		}
-	} else if strings.HasPrefix(q.agent, "execution:") {
-		eid := strings.TrimPrefix(q.agent, "execution:")
-		if eid != "" {
+		authorRole := firstString(strings.TrimSpace(deref(r.AuthorRole)), "worker")
+		var authorExecID, authorSessID *string
+		if r.AuthorExecutionId != nil && strings.TrimSpace(*r.AuthorExecutionId) != "" {
+			eid := strings.TrimSpace(*r.AuthorExecutionId)
 			info, err := q.db().BoardExecutionInfo(q.ctx(), eid)
-			if err == nil {
-				authorExecID = &info.ID
-				if info.SessionID != nil && *info.SessionID != "" {
-					authorSessID = info.SessionID
+			if errors.Is(err, pgx.ErrNoRows) {
+				return fail(404, "Unknown authorExecutionId")
+			}
+			if err != nil {
+				return err
+			}
+			authorExecID = &info.ID
+			if info.SessionID != nil && *info.SessionID != "" {
+				authorSessID = info.SessionID
+			}
+		} else if strings.HasPrefix(q.agent, "execution:") {
+			eid := strings.TrimPrefix(q.agent, "execution:")
+			if eid != "" {
+				info, err := q.db().BoardExecutionInfo(q.ctx(), eid)
+				if err == nil {
+					authorExecID = &info.ID
+					if info.SessionID != nil && *info.SessionID != "" {
+						authorSessID = info.SessionID
+					}
 				}
 			}
 		}
-	}
-	if r.AuthorSessionId != nil && strings.TrimSpace(*r.AuthorSessionId) != "" {
-		sid := strings.TrimSpace(*r.AuthorSessionId)
-		ok, err := q.db().BoardSessionExists(q.ctx(), sid)
+		if r.AuthorSessionId != nil && strings.TrimSpace(*r.AuthorSessionId) != "" {
+			sid := strings.TrimSpace(*r.AuthorSessionId)
+			ok, err := q.db().BoardSessionExists(q.ctx(), sid)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fail(404, "Unknown authorSessionId")
+			}
+			authorSessID = &sid
+		}
+		var artifactID *string
+		if r.ArtifactId != nil && strings.TrimSpace(*r.ArtifactId) != "" {
+			aid := strings.TrimSpace(*r.ArtifactId)
+			ap, err := q.db().BoardArtifactProject(q.ctx(), aid)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return fail(404, "Unknown artifactId")
+			}
+			if err != nil {
+				return err
+			}
+			if deref(ap) != strings.TrimSpace(r.ProjectId) {
+				return fail(409, "Artifact belongs to another project")
+			}
+			artifactID = &aid
+		}
+		mentions := boardParseMentions(r.Text, r.Mentions)
+		payloadBytes := []byte("{}")
+		if r.Payload != nil {
+			payloadBytes = jsonBytes(r.Payload)
+		}
+		nextSeq, err := q.db().BoardNextSeq(q.ctx(), db.BoardNextSeqParams{
+			ScopeKind: string(r.ScopeKind),
+			ScopeID:   scopeID,
+		})
 		if err != nil {
-			return out, err
+			return err
 		}
-		if !ok {
-			return out, fail(404, "Unknown authorSessionId")
-		}
-		authorSessID = &sid
-	}
-	var artifactID *string
-	if r.ArtifactId != nil && strings.TrimSpace(*r.ArtifactId) != "" {
-		aid := strings.TrimSpace(*r.ArtifactId)
-		ap, err := q.db().BoardArtifactProject(q.ctx(), aid)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return out, fail(404, "Unknown artifactId")
-		}
+		row, err := q.db().BoardMessageInsert(q.ctx(), db.BoardMessageInsertParams{
+			ID:                newID(),
+			ProjectID:         strings.TrimSpace(r.ProjectId),
+			ScopeKind:         string(r.ScopeKind),
+			ScopeID:           scopeID,
+			Seq:               nextSeq,
+			ThreadID:          strings.TrimSpace(deref(r.ThreadId)),
+			AuthorMember:      authorMember,
+			AuthorRole:        authorRole,
+			AuthorSessionID:   authorSessID,
+			AuthorExecutionID: authorExecID,
+			Kind:              string(kind),
+			Mentions:          mentions,
+			Text:              r.Text,
+			ArtifactID:        artifactID,
+			Payload:           payloadBytes,
+		})
 		if err != nil {
-			return out, err
+			return err
 		}
-		if deref(ap) != strings.TrimSpace(r.ProjectId) {
-			return out, fail(409, "Artifact belongs to another project")
+		wakeTargets, err := boardResolveWakeTargets(q, string(r.ScopeKind), scopeID, authorMember, deref(authorSessID), mentions)
+		if err != nil {
+			return err
 		}
-		artifactID = &aid
-	}
-	mentions := boardParseMentions(r.Text, r.Mentions)
-	payloadBytes := []byte("{}")
-	if r.Payload != nil {
-		payloadBytes = jsonBytes(r.Payload)
-	}
-	nextSeq, err := q.db().BoardNextSeq(q.ctx(), db.BoardNextSeqParams{
-		ScopeKind: string(r.ScopeKind),
-		ScopeID:   scopeID,
-	})
-	if err != nil {
+		out.Message = boardMessageToContract(row)
+		out.WakeTargets = wakeTargets
+		return nil
+	}); err != nil {
 		return out, err
 	}
-	row, err := q.db().BoardMessageInsert(q.ctx(), db.BoardMessageInsertParams{
-		ID:                newID(),
-		ProjectID:         strings.TrimSpace(r.ProjectId),
-		ScopeKind:         string(r.ScopeKind),
-		ScopeID:           scopeID,
-		Seq:               nextSeq,
-		ThreadID:          strings.TrimSpace(deref(r.ThreadId)),
-		AuthorMember:      authorMember,
-		AuthorRole:        authorRole,
-		AuthorSessionID:   authorSessID,
-		AuthorExecutionID: authorExecID,
-		Kind:              string(kind),
-		Mentions:          mentions,
-		Text:              r.Text,
-		ArtifactID:        artifactID,
-		Payload:           payloadBytes,
-	})
-	if err != nil {
-		return out, err
+
+	if q.tx != nil {
+		return out, fail(500, "board_post: unexpected active transaction after commit")
 	}
-	wakeTargets, err := boardResolveWakeTargets(q, string(r.ScopeKind), scopeID, authorMember, deref(authorSessID), mentions)
-	if err != nil {
-		return out, err
+	if len(out.WakeTargets) == 0 {
+		return out, nil
 	}
-	out.Message = boardMessageToContract(row)
-	out.WakeTargets = wakeTargets
+	if r.Wake != nil && !*r.Wake {
+		for i := range out.WakeTargets {
+			out.WakeTargets[i].Woken = ptr(false)
+		}
+		return out, nil
+	}
+	wakeText := boardWakeText(out.Message.Seq, authorMember, kind, r.Text)
+	for i := range out.WakeTargets {
+		target := &out.WakeTargets[i]
+		if err := boardWakeTarget(q, r.ScopeKind, scopeID, out.Message.Seq, target.SessionId, wakeText); err != nil {
+			target.Woken = ptr(false)
+			target.WakeError = ptr(err.Error())
+			continue
+		}
+		target.Woken = ptr(true)
+	}
 	return out, nil
 }
 

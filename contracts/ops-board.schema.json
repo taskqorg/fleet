@@ -11,10 +11,11 @@
     },
     "board_post": {
       "read": false,
+      "long": true,
       "errors": [400, 404, 409],
       "auth": "project:projectId",
       "agent": "tool",
-      "description": "Append a durable Swarm board message for (scopeKind, scopeId) with monotonic seq, automatic @mention parsing, and wakeTargets resolution"
+      "description": "Append a durable Swarm board message for (scopeKind, scopeId) with monotonic seq, automatic @mention parsing, wakeTargets resolution, and event-driven auto-wake"
     },
     "board_read": {
       "read": true,
@@ -176,7 +177,9 @@
         "member": {"type": "string"},
         "sessionId": {"type": "string"},
         "role": {"type": ["string", "null"]},
-        "threadId": {"type": ["string", "null"]}
+        "threadId": {"type": ["string", "null"]},
+        "woken": {"type": "boolean"},
+        "wakeError": {"type": "string"}
       }
     },
     "BoardPostRequest": {
@@ -197,7 +200,8 @@
         "mentions": {"type": "array", "items": {"type": "string"}},
         "text": {"type": "string"},
         "artifactId": {"type": "string"},
-        "payload": {"type": "object", "additionalProperties": true}
+        "payload": {"type": "object", "additionalProperties": true},
+        "wake": {"type": "boolean", "$comment": "Automatically wake resolved @mention target sessions after commit (default true)."}
       }
     },
     "BoardPostReply": {
