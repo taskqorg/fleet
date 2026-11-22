@@ -121,6 +121,11 @@ type disabledKey struct {
 	at     int64
 }
 
+type cooldownKey struct {
+	until int64
+	setAt int64
+}
+
 type gateway struct {
 	config   *config
 	client   *http.Client
@@ -134,8 +139,14 @@ type gateway struct {
 	// Keys the provider refused here, persisted in <state>/disabled-keys.
 	disabledLock sync.Mutex
 	disabled     map[string]disabledKey
-	currentLock  sync.Mutex
-	current      map[string]int
+	// Keys temporarily cooling down after a configured failover status.
+	cooldownLock sync.Mutex
+	cooldown     map[string]cooldownKey
+	// In-memory per-key selection count for least_used balancing.
+	usedLock    sync.Mutex
+	used        map[string]int64
+	currentLock sync.Mutex
+	current     map[string]int
 	spool        *spool
 	draining     atomic.Bool
 	started      time.Time
@@ -166,7 +177,7 @@ func newGateway(c *config) (*gateway, error) {
 		}
 		logf("removed %d staged upload(s) left by an earlier process", len(left))
 	}
-	g := &gateway{config: c, disabled: map[string]disabledKey{}, current: map[string]int{}, started: time.Now(), staging: map[string]func(){},
+	g := &gateway{config: c, disabled: map[string]disabledKey{}, cooldown: map[string]cooldownKey{}, used: map[string]int64{}, current: map[string]int{}, started: time.Now(), staging: map[string]func(){},
 		// Redirects are never followed: a 307/308 resends the method and body, which could charge a call twice.
 		client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 64}}}
 	if err := os.MkdirAll(g.uploadDir(), 0o700); err != nil {

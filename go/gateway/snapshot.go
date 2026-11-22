@@ -121,6 +121,33 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 				s.Connections[name] = c
 			}
 		}
+		if kp := c.KeyPolicy; kp != nil {
+			if kp.Strategy != nil && !kp.Strategy.Valid() {
+				logf("connection %s: unknown keyPolicy.strategy %q is ignored; sticky applies", name, *kp.Strategy)
+				kp.Strategy = nil
+			}
+			if len(kp.FailoverStatuses) > 0 {
+				valid := make([]int64, 0, len(kp.FailoverStatuses))
+				for _, code := range kp.FailoverStatuses {
+					if code >= 400 && code <= 599 {
+						valid = append(valid, code)
+					} else {
+						logf("connection %s: keyPolicy.failoverStatuses %d outside 400..599 is ignored", name, code)
+					}
+				}
+				kp.FailoverStatuses = valid
+			}
+			for _, v := range []**int64{&kp.CooldownSeconds, &kp.QuotaCooldownSeconds} {
+				if *v != nil && **v < 1 {
+					logf("connection %s: a keyPolicy cooldown below 1 is ignored; its default applies", name)
+					*v = nil
+				}
+			}
+			if kp.Strategy == nil && len(kp.FailoverStatuses) == 0 && kp.CooldownSeconds == nil && kp.QuotaCooldownSeconds == nil {
+				c.KeyPolicy = nil
+			}
+			s.Connections[name] = c
+		}
 		if c.Intake == "" {
 			c.Intake = "all"
 			s.Connections[name] = c

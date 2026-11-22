@@ -172,18 +172,24 @@ func (v *CallUsage) Validate() error {
 }
 
 type GatewayConnection struct {
-	Blocked  []string       `json:"blocked"`
-	Intake   string         `json:"intake"`
-	Keys     []GatewayKey   `json:"keys"`
-	Limits   *GatewayLimits `json:"limits,omitempty"`
-	Provider string         `json:"provider"`
-	Tools    []string       `json:"tools"`
+	Blocked   []string          `json:"blocked"`
+	Intake    string            `json:"intake"`
+	KeyPolicy *GatewayKeyPolicy `json:"keyPolicy,omitempty"`
+	Keys      []GatewayKey      `json:"keys"`
+	Limits    *GatewayLimits    `json:"limits,omitempty"`
+	Provider  string            `json:"provider"`
+	Tools     []string          `json:"tools"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *GatewayConnection) Validate() error {
 	if v.Blocked == nil {
 		return Missing("blocked")
+	}
+	if v.KeyPolicy != nil {
+		if err := Check(v.KeyPolicy, "keyPolicy"); err != nil {
+			return err
+		}
 	}
 	if v.Keys == nil {
 		return Missing("keys")
@@ -242,11 +248,55 @@ type GatewayKey struct {
 	EnabledAt *int64 `json:"enabledAt,omitempty"`
 	Id        string `json:"id"`
 	State     string `json:"state"`
+	Usage     *int64 `json:"usage,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *GatewayKey) Validate() error {
 	return nil
+}
+
+// GatewayKeyPolicy: Key balancing and failover policy of a connection (connections_set_key_policy); an absent field takes its default: strategy sticky, no failover statuses, cooldownSeconds 60, quotaCooldownSeconds 3600.
+type GatewayKeyPolicy struct {
+	CooldownSeconds      *int64              `json:"cooldownSeconds,omitempty"`
+	FailoverStatuses     []int64             `json:"failoverStatuses,omitempty"`
+	QuotaCooldownSeconds *int64              `json:"quotaCooldownSeconds,omitempty"`
+	Strategy             *GatewayKeyStrategy `json:"strategy,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayKeyPolicy) Validate() error {
+	if v.Strategy != nil {
+		if err := Check(v.Strategy, "strategy"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*GatewayKeyPolicy) Closed() bool { return true }
+
+// GatewayKeyStrategy: Key selection strategy for a connection.
+type GatewayKeyStrategy string
+
+const (
+	GatewayKeyStrategySticky     GatewayKeyStrategy = "sticky"
+	GatewayKeyStrategyRoundRobin GatewayKeyStrategy = "round_robin"
+	GatewayKeyStrategyLeastUsed  GatewayKeyStrategy = "least_used"
+)
+
+// GatewayKeyStrategyValues lists every GatewayKeyStrategy in schema order.
+var GatewayKeyStrategyValues = []GatewayKeyStrategy{GatewayKeyStrategySticky, GatewayKeyStrategyRoundRobin, GatewayKeyStrategyLeastUsed}
+
+// Valid: v is one of the schema's values.
+func (v GatewayKeyStrategy) Valid() bool {
+	for _, x := range GatewayKeyStrategyValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // GatewayLimits: File tool limits of a connection (connections_set_limits); an absent field takes its default: fileBytes and replyBytes no cap, stallMs 60000, answerMs 120000.

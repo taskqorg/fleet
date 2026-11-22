@@ -1597,3 +1597,145 @@ func TestDownloadEmptyFileProviderStalls(t *testing.T) {
 	gw.halt() // The client can finish reading before the download handler appends its completed line.
 	expect(t, []any{response.StatusCode, len(data), err == nil, field(lastLine(t, gw), "transfer", "sha256")}, []any{200, 0, true, shaHex(nil)}, "empty file")
 }
+
+// Requirement: docs/designs/fleet-connections.md §2 keyPolicy: round_robin rotates evenly and least_used picks the lowest usage key.
+// Risk: multi-key connections burn one key to exhaustion while sibling keys sit unused.
+func TestKeyPolicyRoundRobinAndLeastUsed(t *testing.T) {
+	p := newProvider(t, func(string) int { return 200 })
+	gw := newFixture(t, p.url, "k-policy-1", "k-policy-2", "k-policy-3")
+
+	snap := testSnapshot(p.url, []keyState{{"k-policy-1", "active"}, {"k-policy-2", "active"}, {"k-policy-3", "active"}}, []string{testToken}, "all")
+	snap["connections"].(map[string]any)["tavily"].(map[string]any)["keyPolicy"] = map[string]any{"strategy": "round_robin"}
+	gw.write(snap)
+	gw.adoptWritten()
+
+	for range 6 {
+		status, _, _ := gw.call("web_search", testToken)
+		expect(t, status, 200, "round_robin status")
+	}
+	var gotRR []string
+	for _, c := range p.calls() {
+		gotRR = append(gotRR, c.key)
+	}
+	expect(t, gotRR, []string{"k-policy-1", "k-policy-2", "k-policy-3", "k-policy-1", "k-policy-2", "k-policy-3"}, "round_robin order")
+
+	// Switch to least_used with k1 heavily used (100), k2 unused (0), k3 lightly used (1).
+	p2 := newProvider(t, func(string) int { return 200 })
+	gw2 := newFixture(t, p2.url, "k-lu-1", "k-lu-2", "k-lu-3")
+	snap2 := testSnapshot(p2.url, []keyState{{"k-lu-1", "active"}, {"k-lu-2", "active"}, {"k-lu-3", "active"}}, []string{testToken}, "all")
+	conn2 := snap2["connections"].(map[string]any)["tavily"].(map[string]any)
+	ks := conn2["keys"].([]map[string]any)
+	ks[0]["usage"] = 100
+	ks[1]["usage"] = 0
+	ks[2]["usage"] = 1
+	conn2["keyPolicy"] = map[string]any{"strategy": "least_used"}
+	gw2.write(snap2)
+	gw2.adoptWritten()
+
+	for range 5 {
+		status, _, _ := gw2.call("web_search", testToken)
+		expect(t, status, 200, "least_used status")
+	}
+	counts := map[string]int{}
+	for _, c := range p2.calls() {
+		counts[c.key]++
+	}
+	expect(t, counts["k-lu-1"], 0, "heavily used key skipped")
+	expect(t, counts["k-lu-2"], 3, "least used key equalized (0+3=3)")
+	expect(t, counts["k-lu-3"], 2, "second least used key equalized (1+2=3)")
+}
+
+// Requirement: docs/designs/fleet-connections.md §2 keyPolicy: failoverStatuses rotate within a call and cool down failed keys.
+// Risk: an exhausted or rate-limited key fails the request or is immediately retried on subsequent calls.
+func TestKeyPolicyFailoverAndCooldown(t *testing.T) {
+	p := newProvider(t, func(key string) int {
+		switch key {
+		case "k-fail-1":
+			return 432
+		case "k-fail-2":
+			return 429
+		default:
+			return 200
+		}
+	})
+	gw := newFixture(t, p.url, "k-fail-1", "k-fail-2", "k-fail-3")
+	snap := testSnapshot(p.url, []keyState{{"k-fail-1", "active"}, {"k-fail-2", "active"}, {"k-fail-3", "active"}}, []string{testToken}, "all")
+	snap["connections"].(map[string]any)["tavily"].(map[string]any)["keyPolicy"] = map[string]any{
+		"strategy":             "sticky",
+		"failoverStatuses":     []int{429, 432},
+		"cooldownSeconds":      60,
+		"quotaCooldownSeconds": 3600,
+	}
+	gw.write(snap)
+	gw.adoptWritten()
+
+	status, _, _ := gw.call("web_search", testToken)
+	expect(t, status, 200, "failover succeeds on third key")
+	var firstKeys []string
+	for _, c := range p.calls() {
+		firstKeys = append(firstKeys, c.key)
+	}
+	expect(t, firstKeys, []string{"k-fail-1", "k-fail-2", "k-fail-3"}, "first call tried all three")
+
+	// Second call skips cooled-down k-fail-1 and k-fail-2 and goes straight to k-fail-3.
+	status2, _, _ := gw.call("web_search", testToken)
+	expect(t, status2, 200, "second call succeeds directly")
+	all := p.calls()
+	expect(t, len(all), 4, "only one additional provider call")
+	expect(t, all[3].key, "k-fail-3", "cooled-down keys skipped")
+}
+
+// Requirement: docs/designs/fleet-connections.md §2 keyPolicy: when all active keys are cooling down, return 503 all-keys-cooling-down with Retry-After.
+// Risk: gateway hammers exhausted provider keys when no live candidate remains.
+func TestKeyPolicyAllKeysCoolingDown(t *testing.T) {
+	p := newProvider(t, func(string) int { return 432 })
+	gw := newFixture(t, p.url, "k-cd-1", "k-cd-2")
+	snap := testSnapshot(p.url, []keyState{{"k-cd-1", "active"}, {"k-cd-2", "active"}}, []string{testToken}, "all")
+	snap["connections"].(map[string]any)["tavily"].(map[string]any)["keyPolicy"] = map[string]any{
+		"failoverStatuses":     []int{432},
+		"quotaCooldownSeconds": 120,
+	}
+	gw.write(snap)
+	gw.adoptWritten()
+
+	// First call exhausts both candidates and returns the last provider 432 unchanged.
+	status, _, _ := gw.call("web_search", testToken)
+	expect(t, status, 432, "last candidate 432 returned")
+	expect(t, len(p.calls()), 2, "both keys attempted once")
+
+	// Subsequent call is refused locally without touching the provider.
+	status2, hdr, body := gw.call("web_search", testToken)
+	expect(t, status2, 503, "cooling down status")
+	expect(t, hdr.Get("X-Fleet-Error"), "all-keys-cooling-down", "error header")
+	expect(t, body["error"], "all-keys-cooling-down", "error body")
+	ra, err := strconv.Atoi(hdr.Get("Retry-After"))
+	if err != nil || ra < 1 || ra > 120 {
+		t.Fatalf("expected Retry-After in 1..120, got %q (err=%v)", hdr.Get("Retry-After"), err)
+	}
+	expect(t, len(p.calls()), 2, "provider not hammered while cooling down")
+}
+
+// Requirement: docs/designs/fleet-connections.md §2 keyPolicy: nil keyPolicy preserves default pass-through of 429 and 432 without failover.
+// Risk: enabling keyPolicy support breaks existing connections that expect 429/432 pass-through.
+func TestKeyPolicyDefaultNilPassesThrough(t *testing.T) {
+	var code atomic.Int32
+	code.Store(429)
+	p := newProvider(t, func(key string) int {
+		if key == "k-def-1" {
+			return int(code.Load())
+		}
+		return 200
+	})
+	gw := newFixture(t, p.url, "k-def-1", "k-def-2")
+
+	status, hdr, _ := gw.call("web_search", testToken)
+	expect(t, status, 429, "default 429 pass-through")
+	expect(t, hdr.Get("Retry-After"), "7", "Retry-After preserved")
+	expect(t, len(p.calls()), 1, "no failover on 429")
+
+	code.Store(432)
+	status2, _, _ := gw.call("web_search", testToken)
+	expect(t, status2, 432, "default 432 pass-through")
+	expect(t, len(p.calls()), 2, "no failover on 432")
+	expect(t, p.calls()[1].key, "k-def-1", "stayed on key 1")
+}

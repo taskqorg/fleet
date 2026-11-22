@@ -72,6 +72,10 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 				ms := int64(*k.EnabledAt)
 				e.EnabledAt = &ms
 			}
+			if k.Reconcile != nil && k.Reconcile.Recorded != nil && *k.Reconcile.Recorded >= 0 {
+				u := int64(*k.Reconcile.Recorded)
+				e.Usage = &u
+			}
 			keys = append(keys, e)
 		}
 		bl := []string{}
@@ -88,6 +92,11 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 			log.Printf("connection %s: limits not published: %v", c.Name, err)
 		} else if limits != (contract.GatewayLimits{}) {
 			gc.Limits = &limits
+		}
+		if policy, err := c.keyPolicy(); err != nil {
+			log.Printf("connection %s: keyPolicy not published: %v", c.Name, err)
+		} else if !keyPolicyEmpty(policy) {
+			gc.KeyPolicy = &policy
 		}
 		if gc.Provider == "youtrack" {
 			// Keep issue_get URLs for connections and existing tokens without the replacement download tool.

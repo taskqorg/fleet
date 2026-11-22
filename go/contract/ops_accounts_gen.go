@@ -581,6 +581,7 @@ type ConnectionView struct {
 	Holder    string                       `json:"holder"`
 	Id        string                       `json:"id"`
 	Intake    string                       `json:"intake"`
+	KeyPolicy *GatewayKeyPolicy            `json:"keyPolicy,omitempty"`
 	Keys      []ConnectionKey              `json:"keys,omitempty"`
 	Limits    *GatewayLimits               `json:"limits,omitempty"`
 	Name      string                       `json:"name"`
@@ -594,6 +595,11 @@ type ConnectionView struct {
 func (v *ConnectionView) Validate() error {
 	if err := Check(&v.Access, "access"); err != nil {
 		return err
+	}
+	if v.KeyPolicy != nil {
+		if err := Check(v.KeyPolicy, "keyPolicy"); err != nil {
+			return err
+		}
 	}
 	for i := range v.Keys {
 		if err := Check(&v.Keys[i], "keys"); err != nil {
@@ -824,6 +830,25 @@ func (v *ConnectionsSetIntakeRequest) Validate() error {
 	}
 	return nil
 }
+
+type ConnectionsSetKeyPolicyReply = ConnectionView
+
+// ConnectionsSetKeyPolicyRequest: Holder or owner. keyPolicy replaces the stored key balancing and failover policy as a whole; an omitted field returns to its default.
+type ConnectionsSetKeyPolicyRequest struct {
+	Connection string           `json:"connection"`
+	KeyPolicy  GatewayKeyPolicy `json:"keyPolicy"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsSetKeyPolicyRequest) Validate() error {
+	if err := Check(&v.KeyPolicy, "keyPolicy"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ConnectionsSetKeyPolicyRequest) Closed() bool { return true }
 
 type ConnectionsSetLimitsReply = ConnectionView
 
@@ -1553,6 +1578,7 @@ func init() {
 		"connections_list":            {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Connections visible to the caller: provider, tools, access, intake, limits and key state, never key values", Changes: []string{"api-connection", "connection-key", "setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_set_access":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "access: {people, projects, experiments}, each a list of ids.", InputSchema: json.RawMessage("{\"$comment\":\"access: {people, projects, experiments}, each a list of ids.\",\"additionalProperties\":true,\"properties\":{\"access\":{\"$comment\":\"Who besides the holder may use the API key: people (emails), projects and experiments.\",\"additionalProperties\":false,\"properties\":{\"experiments\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"people\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\",\"unevaluatedProperties\":false},\"connection\":{\"type\":\"string\"}},\"required\":[\"connection\",\"access\"],\"type\":\"object\"}")},
 		"connections_set_intake":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "intake all or paused.", InputSchema: json.RawMessage("{\"$comment\":\"intake all or paused.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"intake\":{\"$comment\":\"Whether new work may use a subscription or API key.\",\"enum\":[\"all\",\"paused\"],\"type\":\"string\"}},\"required\":[\"connection\",\"intake\"],\"type\":\"object\"}")},
+		"connections_set_key_policy":  {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "Holder or owner. keyPolicy replaces the stored key balancing and failover policy as a whole; an omitted field returns to its default.", InputSchema: json.RawMessage("{\"$comment\":\"Holder or owner. keyPolicy replaces the stored key balancing and failover policy as a whole; an omitted field returns to its default.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"keyPolicy\":{\"$comment\":\"Key balancing and failover policy of a connection (connections_set_key_policy); an absent field takes its default: strategy sticky, no failover statuses, cooldownSeconds 60, quotaCooldownSeconds 3600.\",\"additionalProperties\":false,\"properties\":{\"cooldownSeconds\":{\"$comment\":\"Cooldown duration in seconds after a failover status.\",\"minimum\":1,\"type\":\"integer\"},\"failoverStatuses\":{\"$comment\":\"HTTP status codes (400..599) that cool down the key and fail over to the next candidate.\",\"items\":{\"minimum\":400,\"type\":\"integer\"},\"type\":\"array\"},\"quotaCooldownSeconds\":{\"$comment\":\"Cooldown duration in seconds after a quota exhaustion status (HTTP 432).\",\"minimum\":1,\"type\":\"integer\"},\"strategy\":{\"$comment\":\"Key selection strategy for a connection.\",\"enum\":[\"sticky\",\"round_robin\",\"least_used\"],\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}},\"required\":[\"connection\",\"keyPolicy\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"connections_set_limits":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.", InputSchema: json.RawMessage("{\"$comment\":\"Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"limits\":{\"$comment\":\"File tool limits of a connection (connections_set_limits); an absent field takes its default: fileBytes and replyBytes no cap, stallMs 60000, answerMs 120000.\",\"additionalProperties\":false,\"properties\":{\"answerMs\":{\"$comment\":\"Wait from the last byte sent to the provider's response headers (file tools).\",\"minimum\":1,\"type\":\"integer\"},\"fileBytes\":{\"$comment\":\"Largest upload in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"replyBytes\":{\"$comment\":\"Largest download in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"stallMs\":{\"$comment\":\"Longest time without progress in either direction.\",\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\",\"unevaluatedProperties\":false}},\"required\":[\"connection\",\"limits\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"connections_set_tools":       {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "owner", Agent: "tool", Description: "Owner-only explicit recognized provider tool grant; does not change people/project/experiment access.", InputSchema: json.RawMessage("{\"$comment\":\"Owner-only explicit recognized provider tool grant; does not change people/project/experiment access.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"tools\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"connection\",\"tools\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"connections_token_create":    {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "owner", Agent: "no", Description: "The owner only (not an agent). The token value is answered once.", InputSchema: json.RawMessage("{\"$comment\":\"The owner only (not an agent). The token value is answered once.\",\"additionalProperties\":true,\"properties\":{\"connections\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"name\":{\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"}")},
