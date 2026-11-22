@@ -577,6 +577,98 @@ type codedError struct {
 
 func (e *codedError) Unwrap() error { return &e.HTTPError }
 
+func isMissingUpload(err error) bool {
+	var se *S3Error
+	if errors.As(err, &se) && (se.Code == "NoSuchUpload" || se.Status == 404 && strings.Contains(strings.ToLower(se.Msg), "upload not found")) {
+		return true
+	}
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "upload not found")
+}
+
+func isMissingKey(err error) bool {
+	var se *S3Error
+	return errors.As(err, &se) && (se.Code == "NoSuchKey" || se.Status == 404)
+}
+
+// reopenPendingCopy creates a fresh multipart upload session when a pending reservation's upload session or staging
+// object is missing or its store became unreachable, avoiding duplicate pending artifact rows.
+func reopenPendingCopy(ctx context.Context, a *App, id, executionID, hostID string) (*contract.ArtifactReserveReply, error) {
+	c, err := copyOf(ctx, a, id, "")
+	if err != nil {
+		return nil, err
+	}
+	needNew := c == nil || (c.State != "pending" && c.State != "copying") || c.UploadID == nil
+	if !needNew {
+		oldStore, err := storeGet(ctx, a, c.StoreID)
+		if err != nil {
+			oldStore = nil
+		}
+		if oldStore == nil || oldStore.State != "reachable" {
+			needNew = true
+		} else if t, err := tunnel(oldStore); err == nil {
+			if _, err := t.text("GET", t.path(oldStore.Bucket, deref(c.StagingKey)), map[string]string{"uploadId": *c.UploadID, "max-parts": "1"}, nil, nil); err != nil && isMissingUpload(err) {
+				needNew = true
+			}
+		}
+	}
+	if !needNew {
+		return nil, nil
+	}
+	x, err := artifactRow(ctx, a, id)
+	if err != nil {
+		return nil, err
+	}
+	e, err := execGet(ctx, a, executionID)
+	if err != nil {
+		return nil, err
+	}
+	target, err := selectStore(ctx, a, artifactLocations(a, e.ProjectID), hostID)
+	if err != nil {
+		return nil, err
+	}
+	if target == nil {
+		return nil, failCode(409, "No reachable store in the project locations", "no_store")
+	}
+	staging := stagingOf(x, target.ID)
+	t, err := tunnel(target)
+	if err != nil {
+		return nil, err
+	}
+	upload, err := t.CreateMultipartUpload(target.Bucket, staging, x.MediaType)
+	if err != nil {
+		return nil, err
+	}
+	if err := txCtx(ctx, a, func(tx pgx.Tx) error {
+		tctx := context.WithValue(ctx, txKey{}, tx)
+		if err := objectLock(tctx, tx, target.ID, keyOf(x)); err != nil {
+			return err
+		}
+		qd := db.New(tx)
+		if c != nil && c.StoreID != target.ID && (c.State == "pending" || c.State == "copying") {
+			if err := artifactCopyTransition(tctx, qd, id, c.StoreID, artifactCopyEvent{To: "failed", Why: ptr("re-reserved on another store"), RetryWindowMs: retryWindowMS}); err != nil {
+				return err
+			}
+		}
+		tc, err := copyOf(tctx, a, id, target.ID)
+		if err != nil {
+			return err
+		}
+		if tc == nil {
+			return artifactCopyInsertPending(tctx, qd, db.ArtCopyInsertPendingParams{ArtifactID: id, StoreID: target.ID, ProjectID: x.ProjectID, UploadID: &upload, StagingKey: &staging, LeaseMs: leaseMS})
+		}
+		if tc.State != "failed" && tc.State != "deleted" {
+			if err := artifactCopyTransition(tctx, qd, id, target.ID, artifactCopyEvent{To: "failed", Why: ptr("upload session replaced"), RetryWindowMs: retryWindowMS}); err != nil {
+				return err
+			}
+		}
+		return artifactCopyStart(tctx, qd, db.DispCopyStartParams{ArtifactID: id, StoreID: target.ID, ProjectID: x.ProjectID, UploadID: &upload, StagingKey: &staging})
+	}); err != nil {
+		return nil, err
+	}
+	ps := int64(partSize)
+	return &contract.ArtifactReserveReply{ArtifactId: id, State: "pending", StoreId: &target.ID, PartSize: &ps}, nil
+}
+
 var artifactIDPattern = regexp.MustCompile(`^[a-zA-Z0-9-]{8,80}$`)
 
 func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error) {
@@ -594,6 +686,11 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 			return nil, fail(409, "Artifact id in use")
 		}
 		ps := int64(partSize)
+		if old.State == "pending" {
+			if rep, err := reopenPendingCopy(ctx, a, id, b.ExecutionId, q.hostID()); err != nil || rep != nil {
+				return rep, err
+			}
+		}
 		out := contract.ArtifactReserveReply{ArtifactId: id, State: old.State, PartSize: &ps}
 		if sid, err := d.ArtLiveCopyStore(ctx, id); err == nil {
 			out.StoreId = &sid
@@ -857,6 +954,10 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 	}
 	if c.UploadID != nil {
 		if err := t.CompleteMultipartUpload(s.Bucket, *c.StagingKey, *c.UploadID, parts); err != nil {
+			if isMissingUpload(err) {
+				_ = lease(ctx, a, x.ID, s.ID, true, false)
+				return nil, failCode(409, "Multipart upload session not found (NoSuchUpload)", "no_such_upload")
+			}
 			return nil, err
 		}
 	}
@@ -864,12 +965,12 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 	if err != nil {
 		return nil, err
 	}
+	if size < 0 {
+		_ = lease(ctx, a, x.ID, s.ID, true, false)
+		return nil, failCode(409, "Staging object not found (NoSuchKey)", "no_such_key")
+	}
 	if size != x.Size {
-		got := strconv.FormatInt(size, 10)
-		if size < 0 {
-			got = "missing"
-		}
-		return contract.ArtifactStateReply{State: "failed"}, reject(ctx, a, x, s, *c.StagingKey, fmt.Sprintf("size %s differs from reserved %d", got, x.Size))
+		return contract.ArtifactStateReply{State: "failed"}, reject(ctx, a, x, s, *c.StagingKey, fmt.Sprintf("size %d differs from reserved %d", size, x.Size))
 	}
 	if err := lease(ctx, a, x.ID, s.ID, true, false); err != nil {
 		return nil, err
@@ -1061,6 +1162,9 @@ func artifactVerified(q *Request, b *contract.ArtifactVerifiedRequest) (any, err
 		return nil, err
 	}
 	if err := promote(t, s.Bucket, staging, keyOf(x), x.Size); err != nil {
+		if isMissingKey(err) {
+			return nil, failCode(409, "Staging object not found (NoSuchKey)", "no_such_key")
+		}
 		return nil, err
 	}
 	if err := t.Delete(s.Bucket, staging); err != nil {
