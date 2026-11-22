@@ -657,3 +657,48 @@ func TestACPSandboxRunCommandPermission(t *testing.T) {
 		})
 	}
 }
+
+// Requirement: FLT-4 — Antigravity 1.5.10 sessions can invoke Fleet-injected MCP server tools (connections, fleet, design-rules, project-forge) via session/request_permission.
+// Risk: refusing injected mcp_<server>_<tool> requests breaks all direct MCP and Fleet tools on antigravity 1.5.10, while a blanket kind=="other" allow or unsanitized prefix match would authorize uninjected MCP servers, disabled code servers, or native antigravity tools.
+func TestACPInjectedMCPPermission(t *testing.T) {
+	const req = `{"jsonrpc":"2.0","id":9,"method":"session/request_permission","params":{"sessionId":"s","toolCall":{"toolCallId":"call-1","name":"mcp_tavily_web_search","kind":"other","status":"pending"},"options":[{"kind":"allow_always","optionId":"all"},{"kind":"allow_once","optionId":"once"}]}}`
+	servers := M{
+		"tavily":       M{},
+		"fleet":        M{},
+		"design-rules": M{},
+		"custom.srv":   M{},
+		"code":         M{},
+	}
+	for _, tc := range []struct {
+		name    string
+		harness string
+		stage   int
+		request string
+		want    string
+	}{
+		{"injected connection mcp_tavily_web_search", "antigravity", 5, req, "once"},
+		{"injected fleet mcp_fleet_execution_status", "antigravity", 5, strings.Replace(req, "mcp_tavily_web_search", "mcp_fleet_execution_status", 1), "once"},
+		{"hyphenated server kept mcp_design-rules_get_design_rules", "antigravity", 5, strings.Replace(req, "mcp_tavily_web_search", "mcp_design-rules_get_design_rules", 1), "once"},
+		{"hyphenated server sanitized mcp_design_rules_get_design_rules", "antigravity", 5, strings.Replace(req, "mcp_tavily_web_search", "mcp_design_rules_get_design_rules", 1), "once"},
+		{"sanitized punctuation server mcp_custom_srv_ping", "antigravity", 5, strings.Replace(req, "mcp_tavily_web_search", "mcp_custom_srv_ping", 1), "once"},
+		{"uninjected mcp server refused", "antigravity", 5, strings.Replace(req, "mcp_tavily_web_search", "mcp_youtrack_issue_get", 1), ""},
+		{"prefix collision refused", "antigravity", 5, strings.Replace(req, "mcp_tavily_web_search", "mcp_tavily2_web_search", 1), ""},
+		{"empty tool suffix refused", "antigravity", 5, strings.Replace(req, "mcp_tavily_web_search", "mcp_tavily_", 1), ""},
+		{"disabled code server still refused", "antigravity", 5, strings.Replace(req, "mcp_tavily_web_search", "mcp_code_code", 1), ""},
+		{"native tool with kind other refused", "antigravity", 5, strings.Replace(req, "mcp_tavily_web_search", "read_file", 1), ""},
+		{"non-other kind refused", "antigravity", 5, strings.Replace(req, `"kind":"other"`, `"kind":"execute"`, 1), ""},
+		{"non-antigravity acp refused", "acp", 5, req, ""},
+		{"wrong stage refused", "antigravity", 3, req, ""},
+		{"wrong session refused", "antigravity", 5, strings.Replace(req, `"sessionId":"s"`, `"sessionId":"other"`, 1), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newACPSession("/work", "", M{"harness": tc.harness}, servers)
+			s.session, s.stage = "s", tc.stage
+			r, ev, _, err := s.Receive(j(tc.request))
+			if err != nil || jStr(r[0], "result", "outcome", "optionId") != tc.want ||
+				(ev["type"] == "permission.granted") != (tc.want != "") {
+				t.Fatal(r, ev, err)
+			}
+		})
+	}
+}
