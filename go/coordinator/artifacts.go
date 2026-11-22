@@ -145,6 +145,31 @@ func storeList(ctx context.Context, a *App) ([]StoreRow, error) {
 	return out, nil
 }
 
+// storeListAll reads every store on ctx's transaction (temporarily widening row scope when ctx carries a scoped
+// request transaction) for internal store routing after artifact or project access has already been verified.
+func storeListAll(ctx context.Context, a *App) ([]StoreRow, error) {
+	tx, ok := ctx.Value(txKey{}).(pgx.Tx)
+	if !ok {
+		return storeList(ctx, a)
+	}
+	d := db.New(tx)
+	was, err := d.TxScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if was.ProjectIds == "*" {
+		return storeList(ctx, a)
+	}
+	if err := d.TxSetScope(ctx, db.TxSetScopeParams{ProjectIds: "*", Person: ""}); err != nil {
+		return nil, err
+	}
+	out, err := storeList(ctx, a)
+	if rerr := d.TxSetScope(ctx, db.TxSetScopeParams{ProjectIds: was.ProjectIds, Person: was.Person}); rerr != nil && err == nil {
+		err = rerr
+	}
+	return out, err
+}
+
 // storeHost: the host of a store, "" when there is none.
 func storeHost(ctx context.Context, a *App, id string) (string, error) {
 	h, err := connDB(ctx, a).ArtStoreHost(ctx, id)
@@ -509,7 +534,7 @@ func declaredRequired(e *execInfo) []string {
 
 // selectStore: the writer's host when listed, else the first listed reachable store.
 func selectStore(ctx context.Context, a *App, locations []string, hostID string) (*StoreRow, error) {
-	all, err := storeList(ctx, a)
+	all, err := storeListAll(ctx, a)
 	if err != nil {
 		return nil, err
 	}
@@ -1083,7 +1108,7 @@ func source(ctx context.Context, a *App, x *Artifact, hostID string) (*StoreRow,
 	if err != nil {
 		return nil, err
 	}
-	all, err := storeList(ctx, a)
+	all, err := storeListAll(ctx, a)
 	if err != nil {
 		return nil, err
 	}
