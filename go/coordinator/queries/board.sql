@@ -105,6 +105,13 @@ SELECT (
     FROM exec_chain ec
     WHERE ec.kind IN ('pipeline_run', 'pipeline_step')
       AND ec.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')
+  ) OR EXISTS (
+    SELECT 1
+    FROM exec_chain ec
+    JOIN execution p ON p.id = COALESCE(NULLIF(ec.parent_execution_id, ''), NULLIF(ec.pipeline_step_id, ''))
+    WHERE ec.kind IN ('agent_run', 'host_job')
+      AND p.kind = 'pipeline_step'
+      AND ec.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')
   )
 )::boolean;
 

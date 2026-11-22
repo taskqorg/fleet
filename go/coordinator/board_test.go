@@ -1138,7 +1138,7 @@ INSERT INTO session(id,project_id,host_id,pipeline_run_id,created_by_session_id,
  ('s-v5-coord','board-v5','h-v5','run-v5',NULL,NULL,'{"agentConfig":{"id":"swarm-coordinator","harness":"codex","model":"gpt-6.2-sol"}}'),
  ('s-v5-v1','board-v5','h-v5',NULL,'s-v5-coord','e-v5-coord','{"agentConfig":{"id":"swarm-verifier-claude","harness":"claude","model":"sonnet"}}');
 INSERT INTO execution(id,kind,state,project_id,parent_execution_id,session_id,host_id,harness,model,started_at,data) VALUES
- ('e-v5-coord','agent_run','succeeded','board-v5','run-v5:step:0','s-v5-coord','h-v5','codex','gpt-6.2-sol',now(),'{"id":"e-v5-coord","parentExecutionId":"run-v5:step:0","pipelineStepId":"run-v5:step:0","pipelineRunId":"run-v5","sessionId":"s-v5-coord","agentConfig":{"id":"swarm-coordinator","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('e-v5-coord','agent_run','running','board-v5','run-v5:step:0','s-v5-coord','h-v5','codex','gpt-6.2-sol',now(),'{"id":"e-v5-coord","parentExecutionId":"run-v5:step:0","pipelineStepId":"run-v5:step:0","pipelineRunId":"run-v5","sessionId":"s-v5-coord","agentConfig":{"id":"swarm-coordinator","harness":"codex","model":"gpt-6.2-sol"}}'),
  ('e-v5-v1','agent_run','succeeded','board-v5','e-v5-coord','s-v5-v1','h-v5','claude','sonnet',now(),'{"id":"e-v5-v1","parentExecutionId":"e-v5-coord","sessionId":"s-v5-v1","agentConfig":{"id":"swarm-verifier-claude","harness":"claude","model":"sonnet"}}');
 `)
 
@@ -1182,9 +1182,9 @@ INSERT INTO execution(id,kind,state,project_id,parent_execution_id,session_id,ho
 		t.Fatal(err)
 	}
 
-	// (b) Transition run-v5:step:0 to succeeded while run-v5 (pipeline_run) remains state='running' / finishedAt IS NULL.
+	// (b) Transition run-v5:step:0 (and its native execution e-v5-coord) to succeeded while run-v5 (pipeline_run) remains state='running' / finishedAt IS NULL.
 	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
-UPDATE execution SET state='succeeded', ended_at=now() WHERE id='run-v5:step:0';
+UPDATE execution SET state='succeeded', ended_at=now() WHERE id IN ('run-v5:step:0','e-v5-coord');
 `)
 	if n := psqlLines(t, e, "SELECT state, COALESCE(data->>'finishedAt','') FROM execution WHERE id='run-v5'"); len(n) != 1 || n[0] != "running|" {
 		t.Fatalf("expected parent pipeline_run run-v5 to remain running with finishedAt NULL, got %v", n)
@@ -1229,5 +1229,268 @@ UPDATE execution SET state='succeeded', ended_at=now() WHERE id='run-v5:step:0';
 	}
 	if n := psqlLines(t, e, "SELECT count(*) FROM execution WHERE session_id IN ('s-v5-coord','s-v5-v1')"); len(n) != 1 || n[0] != "2" {
 		t.Fatalf("expected 0 orphan executions promoted after pipeline_step ended, got %v", n)
+	}
+}
+
+// Requirement: FLT-19 native-step-end wake race (docs/designs/fleet-swarm.md): BoardSessionParentTerminal,
+// boardWakeTerminal, wake, board_post, and agentPromote must treat a session as terminal as soon as the
+// pipeline_step's native execution (direct parent.kind='pipeline_step', excluding child_agent rows) ends,
+// closing the ~4s window before completeStep transitions pipeline_step to succeeded, while leaving active
+// step sessions and non-pipeline sessions unaffected.
+// Risk: queued wake:% or board-wake:% messages promote orphan turns on the step session after its native
+// execution finishes but before pipeline_step becomes terminal, or sibling child_agent / non-pipeline runs
+// are falsely treated as terminal.
+func TestBoardStepNativeTerminalWakeGuard(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	owner := e.ownerHeaders()
+
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+INSERT INTO definition(kind,id,path,head,project_id) VALUES
+ ('project','board-nat','config/projects/board-nat/project.json',1,'board-nat');
+INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message) VALUES
+ ('project','board-nat',1,'{"settings":{"id":"board-nat","name":"Board Nat","contextFiles":[]},"contextFiles":[]}','bnat','editor','person','t');
+INSERT INTO host(id,host_id,project_id,state) VALUES ('h-nat','h-nat','board-nat','active');
+`)
+
+	def := doc{
+		"version": float64(2),
+		"id":      "swarm-plan-execute",
+		"steps": []any{
+			doc{"id": "coordinate", "kind": "agent", "profile": "swarm-coordinator", "prompt": "Solve"},
+		},
+	}
+	runDoc := doc{
+		"id":               "run-nat",
+		"pipelineId":       "swarm-plan-execute",
+		"projectId":        "board-nat",
+		"requestedBy":      doc{"email": testOwnerEmail},
+		"definition":       def,
+		"definitionSha256": sha256hex([]byte(canonical(def))),
+		"state":            "running",
+		"startedAt":        nowMs(),
+		"steps":            []any{doc{"id": "coordinate", "kind": "agent", "state": "running", "startedAt": nowMs()}},
+	}
+	if err := initPipelinePlan(runDoc); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.app.store.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		if err := putRun(q, runDoc); err != nil {
+			return err
+		}
+		return selectPipelineStep(q, runDoc, 0)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+UPDATE execution SET state='running' WHERE id='run-nat:step:0';
+INSERT INTO session(id,project_id,host_id,pipeline_run_id,created_by_session_id,created_by_execution_id,directed_by,payload) VALUES
+ ('s-nat-coord','board-nat','h-nat','run-nat',NULL,NULL,'owner@trial.test','{"agentConfig":{"id":"swarm-coordinator","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('s-nat-w1','board-nat','h-nat',NULL,'s-nat-coord','e-nat-coord','owner@trial.test','{"agentConfig":{"id":"swarm-worker","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('s-nat-pm','board-nat','h-nat',NULL,NULL,NULL,'owner@trial.test','{"agentConfig":{"id":"coding-worker","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('s-nat-pm-child','board-nat','h-nat',NULL,'s-nat-pm','e-nat-pm','owner@trial.test','{"agentConfig":{"id":"coding-worker","harness":"codex","model":"gpt-6.2-sol"}}');
+INSERT INTO execution(id,kind,state,project_id,parent_execution_id,session_id,host_id,harness,model,started_at,data) VALUES
+ ('e-nat-coord','agent_run','running','board-nat','run-nat:step:0','s-nat-coord','h-nat','codex','gpt-6.2-sol',now(),'{"id":"e-nat-coord","parentExecutionId":"run-nat:step:0","pipelineStepId":"run-nat:step:0","pipelineRunId":"run-nat","sessionId":"s-nat-coord","agentConfig":{"id":"swarm-coordinator","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('e-nat-coord:child:1','child_agent','succeeded','board-nat','e-nat-coord','s-nat-coord','h-nat','codex','gpt-6.2-sol',now(),'{"id":"e-nat-coord:child:1","parentExecutionId":"e-nat-coord","sessionId":"s-nat-coord"}'),
+ ('e-nat-w1','agent_run','succeeded','board-nat','e-nat-coord','s-nat-w1','h-nat','codex','gpt-6.2-sol',now(),'{"id":"e-nat-w1","parentExecutionId":"e-nat-coord","sessionId":"s-nat-w1","agentConfig":{"id":"swarm-worker","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('e-nat-pm','agent_run','succeeded','board-nat',NULL,'s-nat-pm','h-nat','codex','gpt-6.2-sol',now(),'{"id":"e-nat-pm","sessionId":"s-nat-pm"}'),
+ ('e-nat-pm-child','agent_run','succeeded','board-nat','e-nat-pm','s-nat-pm-child','h-nat','codex','gpt-6.2-sol',now(),'{"id":"e-nat-pm-child","parentExecutionId":"e-nat-pm","sessionId":"s-nat-pm-child"}');
+`)
+
+	c, wp := e.callJSON(t, "POST", "/api/ops/work_plan_set", doc{
+		"projectId": "board-nat",
+		"scopeKind": "session",
+		"scopeId":   "s-nat-coord",
+		"title":     "Native Step End Guard",
+		"threads": []any{
+			doc{
+				"id":     "th-1",
+				"title":  "Work",
+				"status": "active",
+				"tasks": []any{
+					doc{"id": "tk-1", "title": "Worker", "ownerMember": "worker-1", "role": "worker", "sessionId": "s-nat-w1", "executionId": "e-nat-w1", "status": "in_progress"},
+				},
+			},
+		},
+	}, owner)
+	if c != 200 {
+		t.Fatalf("work_plan_set = %d %v", c, wp)
+	}
+	c, p0 := e.callJSON(t, "POST", "/api/ops/board_post", doc{
+		"projectId":       "board-nat",
+		"scopeKind":       "session",
+		"scopeId":         "s-nat-coord",
+		"threadId":        "th-1",
+		"authorMember":    "coordinator",
+		"authorRole":      "coordinator",
+		"authorSessionId": "s-nat-coord",
+		"kind":            "brief",
+		"text":            "Start @worker-1",
+	}, owner)
+	if c != 200 {
+		t.Fatalf("board_post p0 = %d %v", c, p0)
+	}
+
+	// 1. While e-nat-coord is running, child_agent completion and child session completion must NOT mark s-nat-coord or s-nat-w1 terminal.
+	if err := e.app.store.Read(e.ctx, nil, func(q *Request) error {
+		for _, tc := range []struct {
+			sid string
+			rid string
+		}{
+			{"s-nat-coord", "wake:e-nat-w1"},
+			{"s-nat-coord", "board-wake:session:s-nat-coord:1:s-nat-coord"},
+			{"s-nat-w1", "board-wake:session:s-nat-coord:2:s-nat-w1"},
+			{"s-nat-pm", "wake:e-nat-pm-child"},
+			{"s-nat-pm-child", "wake:e-nat-pm-sub"},
+		} {
+			skip, err := boardWakeTerminal(q, agentQueued{SessionID: tc.sid, RequestID: tc.rid})
+			if err != nil {
+				return err
+			}
+			if skip {
+				t.Fatalf("expected boardWakeTerminal=false while native execution is running/non-pipeline for %+v", tc)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Queue a wake: and board-wake: on s-nat-coord while e-nat-coord is still running.
+	if err := e.app.store.Write(e.ctx, nil, []string{"session:s-nat-coord"}, func(q *Request) error {
+		for _, m := range []agentQueued{
+			{
+				ID:        "qm-nat-wake",
+				SessionID: "s-nat-coord",
+				ProjectID: "board-nat",
+				RequestID: "wake:e-nat-w1",
+				Text:      "Queued child wake before native end",
+				State:     "queued",
+				CreatedAt: nowMs(),
+				SentBy:    "Fleet",
+				Source:    "wake",
+			},
+			{
+				ID:        "qm-nat-board-wake",
+				SessionID: "s-nat-coord",
+				ProjectID: "board-nat",
+				RequestID: "board-wake:session:s-nat-coord:10:s-nat-coord",
+				Text:      "Queued board wake before native end",
+				State:     "queued",
+				CreatedAt: nowMs() + 1,
+				SentBy:    "Fleet",
+				Source:    "wake",
+			},
+		} {
+			if err := queuedMessagePut(q, &m); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Native execution e-nat-coord finishes ('succeeded') while BOTH run-nat:step:0 (pipeline_step) and run-nat (pipeline_run) are STILL running.
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+UPDATE execution SET state='succeeded', ended_at=now() WHERE id='e-nat-coord';
+`)
+	if n := psqlLines(t, e, "SELECT state FROM execution WHERE id IN ('run-nat','run-nat:step:0') ORDER BY id"); len(n) != 2 || n[0] != "running" || n[1] != "running" {
+		t.Fatalf("expected both pipeline_run and pipeline_step to still be running, got %v", n)
+	}
+
+	if err := e.app.store.Read(e.ctx, nil, func(q *Request) error {
+		for _, tc := range []struct {
+			sid string
+			rid string
+		}{
+			{"s-nat-coord", "wake:e-nat-w1"},
+			{"s-nat-coord", "board-wake:session:s-nat-coord:10:s-nat-coord"},
+			{"s-nat-w1", "board-wake:session:s-nat-coord:11:s-nat-w1"},
+		} {
+			skip, err := boardWakeTerminal(q, agentQueued{SessionID: tc.sid, RequestID: tc.rid})
+			if err != nil {
+				return err
+			}
+			if !skip {
+				t.Fatalf("expected boardWakeTerminal=true once step native execution ended for %+v", tc)
+			}
+		}
+		// Non-pipeline sessions remain unaffected.
+		for _, sid := range []string{"s-nat-pm", "s-nat-pm-child"} {
+			skip, err := boardWakeTerminal(q, agentQueued{SessionID: sid, RequestID: "wake:e-nat-pm-child"})
+			if err != nil {
+				return err
+			}
+			if skip {
+				t.Fatalf("expected boardWakeTerminal=false for non-pipeline session %s", sid)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Queue a non-pipeline wake on s-nat-pm and run agentPromote across s-nat-coord and s-nat-pm.
+	if err := e.app.store.Write(e.ctx, nil, []string{"session:s-nat-coord", "session:s-nat-pm"}, func(q *Request) error {
+		if err := queuedMessagePut(q, &agentQueued{
+			ID:        "qm-nat-pm-wake",
+			SessionID: "s-nat-pm",
+			ProjectID: "board-nat",
+			RequestID: "wake:e-nat-pm-child",
+			Text:      "Non-pipeline wake should still promote",
+			State:     "queued",
+			CreatedAt: nowMs(),
+			SentBy:    "Fleet",
+			Source:    "wake",
+		}); err != nil {
+			return err
+		}
+		return agentPromote(q)
+	}); err != nil {
+		t.Fatalf("agentPromote = %v", err)
+	}
+
+	if n := psqlLines(t, e, "SELECT state FROM queued_message WHERE id IN ('qm-nat-wake','qm-nat-board-wake') ORDER BY id"); len(n) != 2 || n[0] != "cancelled" || n[1] != "cancelled" {
+		t.Fatalf("expected queued wake:/board-wake: on s-nat-coord cancelled once e-nat-coord ended, got %v", n)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM execution WHERE session_id='s-nat-coord'"); len(n) != 1 || n[0] != "2" {
+		t.Fatalf("expected 0 orphan executions promoted on s-nat-coord (only e-nat-coord + child_agent), got %v", n)
+	}
+	if n := psqlLines(t, e, "SELECT state FROM queued_message WHERE id='qm-nat-pm-wake'"); len(n) != 1 || n[0] != "started" {
+		t.Fatalf("expected non-pipeline wake on s-nat-pm to promote normally, got %v", n)
+	}
+
+	// board_post and wake() during the 4s window must also refuse to enqueue new wakes on s-nat-coord.
+	c, p1 := e.callJSON(t, "POST", "/api/ops/board_post", doc{
+		"projectId":       "board-nat",
+		"scopeKind":       "session",
+		"scopeId":         "s-nat-coord",
+		"threadId":        "th-1",
+		"authorMember":    "worker-1",
+		"authorRole":      "worker",
+		"authorSessionId": "s-nat-w1",
+		"kind":            "progress",
+		"text":            "Late mention @coordinator",
+	}, owner)
+	if c != 200 || len(anys(p1["wakeTargets"])) != 1 {
+		t.Fatalf("board_post p1 = %d %v", c, p1)
+	}
+	wt := mapOf(anys(p1["wakeTargets"])[0])
+	if wt["woken"] != false || astr(wt["wakeError"]) != "scope already terminal" {
+		t.Fatalf("expected board_post wake skipped with 'scope already terminal' during 4s window, got %v", wt)
+	}
+	if err := e.app.store.Write(e.ctx, nil, []string{"session:s-nat-coord"}, func(q *Request) error {
+		exW1, err := getExecution(q, "e-nat-w1")
+		if err != nil {
+			return err
+		}
+		exW1.ID = "e-nat-w1-late"
+		return wake(q, &exW1, "completed")
+	}); err != nil {
+		t.Fatalf("wake() = %v", err)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM execution WHERE session_id='s-nat-coord'"); len(n) != 1 || n[0] != "2" {
+		t.Fatalf("expected 0 orphan executions started on s-nat-coord from board_post/wake during 4s window, got %v", n)
 	}
 }
