@@ -473,6 +473,11 @@ func pipelineEnded(q *Request, run *runRecord) error {
 			return err
 		}
 	}
+	if _, err := unscoped(q, func() (int64, error) {
+		return q.db().BoardCancelQueuedBoardWakesForPipelineRun(q.ctx(), run.ID)
+	}); err != nil {
+		return err
+	}
 	if id := run.ExperimentID; id != "" {
 		if err := labEnqueue(q, id); err != nil {
 			return err

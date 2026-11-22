@@ -25,14 +25,25 @@ SELECT EXISTS(SELECT 1 FROM session WHERE id = $1);
 SELECT id, session_id, project_id FROM execution WHERE id = $1;
 
 -- name: BoardPipelineRunPrimarySession :one
+WITH RECURSIVE tree(id, session_id, seq, depth) AS (
+  SELECT id, session_id, seq, 0
+  FROM execution
+  WHERE id = @run_id::text
+  UNION ALL
+  SELECT e.id, e.session_id, e.seq, t.depth + 1
+  FROM execution e
+  JOIN tree t ON e.parent_execution_id = t.id
+  WHERE t.depth < 4
+)
 SELECT session_id
-FROM execution
-WHERE parent_execution_id = @run_id::text
+FROM tree
+WHERE depth > 0
   AND session_id IS NOT NULL
   AND session_id <> ''
 ORDER BY
-  (EXISTS (SELECT 1 FROM work_plan wp WHERE wp.scope_kind = 'session' AND wp.scope_id = execution.session_id)) DESC,
-  (EXISTS (SELECT 1 FROM board_message bm WHERE bm.scope_kind = 'session' AND bm.scope_id = execution.session_id)) DESC,
+  (EXISTS (SELECT 1 FROM work_plan wp WHERE wp.scope_kind = 'session' AND wp.scope_id = tree.session_id)) DESC,
+  (EXISTS (SELECT 1 FROM board_message bm WHERE bm.scope_kind = 'session' AND bm.scope_id = tree.session_id)) DESC,
+  depth ASC,
   seq ASC,
   id ASC
 LIMIT 1;
@@ -47,63 +58,95 @@ SELECT CASE
 END;
 
 -- name: BoardSessionParentTerminal :one
-WITH RECURSIVE chain(id, task_id, pipeline_run_id, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, depth) AS (
-  SELECT id, task_id, pipeline_run_id, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, 0
-  FROM session
-  WHERE id = @session_id::text
-  UNION ALL
-  SELECT s.id, s.task_id, s.pipeline_run_id, s.parent_execution_id, s.created_by_execution_id, s.created_by_session_id, s.source_session_id, c.depth + 1
-  FROM session s
-  JOIN chain c ON s.id = COALESCE(NULLIF(c.created_by_session_id, ''), NULLIF(c.source_session_id, ''))
-  WHERE c.depth < 10
-)
-SELECT EXISTS (
-  SELECT 1
-  FROM chain c
-  WHERE (
-    c.task_id IS NOT NULL AND EXISTS (
-      SELECT 1 FROM task t
-      WHERE t.id = c.task_id
-        AND t.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')
-    )
-  ) OR (
-    c.pipeline_run_id IS NOT NULL AND EXISTS (
-      SELECT 1 FROM execution r
-      WHERE r.id = c.pipeline_run_id
-        AND r.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')
-    )
-  ) OR (
-    c.parent_execution_id IS NOT NULL AND EXISTS (
-      SELECT 1
-      FROM execution pe
-      LEFT JOIN execution pr ON pr.id = pe.parent_execution_id
-      WHERE pe.id = c.parent_execution_id
-        AND (
-          (pe.kind = 'pipeline_run' AND pe.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped'))
-          OR (pe.kind = 'pipeline_step' AND pr.kind = 'pipeline_run' AND pr.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped'))
-        )
+WITH RECURSIVE
+  chain(id, task_id, pipeline_run_id, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, depth) AS (
+    SELECT id, task_id, pipeline_run_id, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, 0
+    FROM session
+    WHERE id = @session_id::text
+    UNION ALL
+    SELECT s.id, s.task_id, s.pipeline_run_id, s.parent_execution_id, s.created_by_execution_id, s.created_by_session_id, s.source_session_id, c.depth + 1
+    FROM session s
+    JOIN chain c ON s.id = COALESCE(NULLIF(c.created_by_session_id, ''), NULLIF(c.source_session_id, ''))
+    WHERE c.depth < 10
+  ),
+  exec_chain(id, kind, state, parent_execution_id, pipeline_run_id, depth) AS (
+    SELECT e.id, e.kind, e.state, e.parent_execution_id, NULLIF(e.data->>'pipelineRunId', ''), 0
+    FROM execution e
+    WHERE e.id IN (
+      SELECT c.parent_execution_id FROM chain c WHERE c.parent_execution_id IS NOT NULL
+      UNION
+      SELECT c.created_by_execution_id FROM chain c WHERE c.created_by_execution_id IS NOT NULL
+    ) OR e.session_id IN (SELECT c.id FROM chain c)
+    UNION ALL
+    SELECT p.id, p.kind, p.state, p.parent_execution_id, NULLIF(p.data->>'pipelineRunId', ''), ec.depth + 1
+    FROM execution p
+    JOIN exec_chain ec ON p.id = ec.parent_execution_id OR p.id = ec.pipeline_run_id
+    WHERE ec.depth < 6
+  )
+SELECT (
+  EXISTS (
+    SELECT 1
+    FROM chain c
+    WHERE (
+      c.task_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM task t
+        WHERE t.id = c.task_id
+          AND t.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')
+      )
+    ) OR (
+      c.pipeline_run_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM execution r
+        WHERE r.id = c.pipeline_run_id
+          AND r.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')
+      )
     )
   ) OR EXISTS (
     SELECT 1
-    FROM execution ps
-    JOIN execution pr ON pr.id = ps.parent_execution_id
-    WHERE ps.session_id = c.id
-      AND ps.kind = 'pipeline_step'
-      AND pr.kind = 'pipeline_run'
-      AND pr.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')
-  ) OR (
-    c.created_by_execution_id IS NOT NULL AND EXISTS (
-      SELECT 1
-      FROM execution ce
-      LEFT JOIN execution pr ON pr.id = COALESCE(NULLIF(ce.data->>'pipelineRunId', ''), ce.parent_execution_id)
-      WHERE ce.id = c.created_by_execution_id
-        AND (
-          (ce.kind = 'pipeline_run' AND ce.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped'))
-          OR (pr.kind = 'pipeline_run' AND pr.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped'))
-        )
-    )
+    FROM exec_chain ec
+    WHERE ec.kind = 'pipeline_run'
+      AND ec.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')
   )
-);
+)::boolean;
+
+-- name: BoardCancelQueuedBoardWakesForPipelineRun :execrows
+WITH RECURSIVE
+  exec_tree(id, session_id, depth) AS (
+    SELECT id, session_id, 0
+    FROM execution
+    WHERE id = @run_id::text
+    UNION ALL
+    SELECT e.id, e.session_id, et.depth + 1
+    FROM execution e
+    JOIN exec_tree et ON e.parent_execution_id = et.id
+    WHERE et.depth < 6
+  ),
+  seed_sessions(id) AS (
+    SELECT id FROM session WHERE pipeline_run_id = @run_id::text
+    UNION
+    SELECT session_id FROM exec_tree WHERE depth > 0 AND session_id IS NOT NULL AND session_id <> ''
+    UNION
+    SELECT id FROM session WHERE parent_execution_id IN (SELECT id FROM exec_tree)
+       OR created_by_execution_id IN (SELECT id FROM exec_tree)
+    UNION
+    SELECT session_id FROM execution WHERE data->>'pipelineRunId' = @run_id::text AND session_id IS NOT NULL AND session_id <> ''
+  ),
+  sess_tree(id, depth) AS (
+    SELECT id, 0 FROM seed_sessions
+    UNION
+    SELECT s.id, st.depth + 1
+    FROM session s
+    JOIN sess_tree st ON s.created_by_session_id = st.id OR s.source_session_id = st.id
+    WHERE st.depth < 10
+  )
+UPDATE queued_message
+SET state = 'cancelled', updated_at = now()
+WHERE state IN ('queued', 'steering')
+  AND tombstoned_at IS NULL
+  AND request_id LIKE 'board-wake:%'
+  AND (
+    session_id IN (SELECT id FROM sess_tree)
+    OR request_id LIKE 'board-wake:pipeline_run:' || @run_id::text || ':%'
+  );
 
 -- name: WorkPlanGet :one
 SELECT * FROM work_plan

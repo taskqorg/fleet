@@ -414,6 +414,16 @@ func agentPromote(q *Request) error {
 		if !txHasLock(q.tx, "session:"+sid) {
 			continue
 		}
+		if skip, err := boardWakeTerminal(q, m); err != nil {
+			return err
+		} else if skip {
+			m.State = "cancelled"
+			queued[i].State = "cancelled"
+			if err := queuedMessagePut(q, &m); err != nil {
+				return err
+			}
+			continue
+		}
 		earlier := false
 		for _, x := range queued[:i] {
 			if x.SessionID == m.SessionID && x.State == "queued" && x.CreatedAt < m.CreatedAt {
