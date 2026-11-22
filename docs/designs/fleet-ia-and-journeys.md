@@ -1,6 +1,6 @@
 # Target Information Architecture, Core Journeys & Agentic Method
 
-Status: **Shipped (8-section rail + Library / Infrastructure sub-tabs)** — the navigation rail in [registry.ts](../../packages/ui/src/registry.ts) and [main.tsx](../../app/src/main.tsx) now consolidates into the 8 top-level sections (`Work`: Overview, Conversations, Projects, Tasks, Spend; `System`: Lab, Library, Infrastructure) with top sub-navigation tabs for `Library` (`/agents`, `/pipelines`, `/catalogue`, `/changes`) and `Infrastructure` (`/hosts`, `/runners`, `/keys`), while preserving all deep links, manifests, and Spotlight (`⌘K`) access.
+Status: **Shipped (8-section rail)** — the navigation rail in [registry.ts](../../packages/ui/src/registry.ts) and [main.tsx](../../app/src/main.tsx) uses the 8 top-level sections (`Work`: Overview, Conversations, Projects, Tasks, Spend; `System`: Lab, Library, Infrastructure), with unified `CatalogueTree` navigation in the Control Column for `Lab`, `Library`, and `Infrastructure` (no horizontal `sub-nav` bars, `OR-46`), while preserving all legacy deep links (`/agents`, `/pipelines`, `/catalogue`, `/changes`, `/hosts`, `/runners`, `/keys`), manifests, and Spotlight (`⌘K`) access.
 
 This specification establishes the closed top-level navigation map, column contracts, end-to-end user journeys (`J1`–`J5`), and the agentic product-development method for Fleet, building on [fleet.md](../../fleet.md), [owner rules](../design-system/owner-rules.md), and [navigation and columns](../design-system/patterns/navigation-and-columns.md).
 
@@ -8,7 +8,7 @@ This specification establishes the closed top-level navigation map, column contr
 
 ## 1. Closed 8-Section Information Architecture
 
-The current 15-section rail splits tightly coupled operator and architect workflows across thin single-file screens (`Catalogue`, `Changes`, `Runners`, `API keys`, `Results`). Fleet consolidates into **8 top-level sections** in two role groups (`WORK` and `SYSTEM`), leaving global navigation/filtering to the shell header (`Focus` + `Spotlight ⌘K`, `OR-32`, `OR-34`):
+Fleet uses **8 top-level sections** in two role groups (`Work` and `System`), with unified `CatalogueTree` navigation inside `Lab`, `Library`, and `Infrastructure` and global navigation/filtering in the shell header (`Focus` + `Spotlight ⌘K`, `OR-32`, `OR-34`, `OR-46`):
 
 | Group | Section | Core Question Answered | Control Column (`size-ctl`) | Work Area (idle) | Work Area (open item) |
 |---|---|---|---|---|---|
@@ -19,13 +19,13 @@ The current 15-section rail splits tightly coupled operator and architect workfl
 | **Work** | **Spend** | Where do time, tokens and money go across projects and models? | Optional window/grouping controls | Latency/cost/token breakdown by project, purpose, model, subscription vs API (`spend_summary`) | Drill-down to supporting executions |
 | **System** | **Lab** | Which model, harness or pipeline is best for each use case right now? | `CatalogueTree` of **Use Cases** (`LLM Code Benchmarks`, `Real Work`, `Fleet & Projects`, folded `Archived`) & **Runs** | **Leaderboard / Suite Matrix** (Model × Pipeline pass rate/metric, median time, cost/tokens) + **2-click Run launcher** | **Use-case card** (examples + run history + quick A/B launch) OR **Experiment detail** (live step progress, metric matrix, Promote) |
 | **System** | **Library** | What methods, pipelines, agents and skills are available and recommended? | `CatalogueTree` grouped by role/domain (`Methods`, `Pipelines`, `Agents`, `Skills`; Lab variants folded by default) | Library summary (`Totals` by harness/status, pending Git sync banner if drifted) + Skills rollout | Editor/Detail obeying `OR-45 Diff from default` (`Methods` with status badge, `Pipelines` DAG, `Agents` overrides) |
-| **System** | **Infrastructure** | Are hosts, accounts and connections healthy and compatible with our models? | Section tree (`Hosts`, `Accounts`, `Connections & API keys`, `Runners`) | Live readiness matrix (hosts × harnesses × probed models + runner queue health) | Host detail (capabilities, logs, updates), Account detail (probed supported models & rate limits), Connection/Key config |
+| **System** | **Infrastructure** | Are hosts, accounts and connections healthy and compatible with our models? | `CatalogueTree` (`Hosts`, `Accounts & Limits`, `Connections & API keys`, `Runners`) | Live readiness matrix (hosts × harnesses × probed models + runner queue health) | Host detail (capabilities, logs, updates), Limits/Accounts detail (probed supported models & rate limits), Connection/Key config, Runners |
 
-### Route Consolidation Map (15 → 8)
+### Historical Route Consolidation Map (15 → 8)
 
-Agents **must not** add a new top-level navigation item or a duplicate always-open search input (`OR-31`, `OR-32`) without updating this specification first.
+The earlier 15-section rail was consolidated into the 8 sections above (`Library` and `Infrastructure` later replaced top sub-navigation tabs with unified `CatalogueTree` roots per `OR-46`). Legacy routes remain reachable as deep links and via Spotlight (`⌘K`); agents **must not** add a new top-level navigation item, a `<nav class="sub-nav">` bar, or a duplicate always-open search input (`OR-31`, `OR-32`, `OR-46`) without updating this specification first.
 
-| Current Section (`registry.ts`) | Target Destination | Transition Notes |
+| Legacy Section (`registry.ts`) | Consolidated Destination | Notes |
 |---|---|---|
 | `Overview`, `Tasks`, `Conversations`, `Projects`, `Spend` | Unchanged (5 top-level sections) | `Projects` and `Tasks` absorb project-scoped results and delivery tabs. |
 | `Results` | Embedded inside `Tasks` and `Projects` + reachable via `Spotlight (⌘K)` | Unlinked raw artifacts do not justify a standalone top-level rail item. |
@@ -71,6 +71,6 @@ Every feature PR affecting operator or architect workflows validates the affecte
 To prevent fragmented screens and misaligned contracts across parallel agent PRs (both in Fleet and in downstream products built through Fleet):
 
 1. **Closed IA Map before UI code:** Every section and new control has an agreed entry in this map and [navigation and columns](../design-system/patterns/navigation-and-columns.md) before implementation starts.
-2. **Journey-driven task briefs:** Parallel `/swarm` workers own disjoint slices anchored to `J1`–`J5` and `OR-1`–`OR-45` (not isolated single-file tickets unaware of adjacent workflows).
+2. **Journey-driven task briefs:** Parallel `/swarm` workers own disjoint slices anchored to `J1`–`J5` and `OR-1`–`OR-49` (not isolated single-file tickets unaware of adjacent workflows).
 3. **One core query, two consumers (`R2`/`R7`):** Every aggregation shown in the UI (such as use-case leaderboards or per-account model compatibility) lives in a single shared Go coordinator operation so agents and people see identical facts.
 4. **Live Playwright journey verification:** After merge-queue landing on prod, automated checks walk `J1`–`J5` end-to-end against real data, verifying zero console errors, `OR-45 Diff from default` conciseness, and honest error/cost states.
