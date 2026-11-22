@@ -175,7 +175,7 @@ Bridge calls follow the existing rule: an uncertain effect stays unknown and is 
 
 ## Coordination through code
 
-A coordinator is an ordinary role ([orchestration](../orchestration.md)): a profile with `codeMode`, Fleet tools and instructions. No new entity or agent type exists for it.
+A coordinator is an ordinary role ([orchestration](../orchestration.md)): a profile with `codeMode`, Fleet tools and instructions. No new entity or agent type exists for it. For multi-agent Swarm runs across homogeneous or mixed harnesses, [Fleet Swarm](fleet-swarm.md) pairs this `codeMode` orchestration loop with configurable decomposition strategies, durable board channels, and visual Swarm reporting.
 
 Example (invented) of one `code` call by a coordinator:
 
@@ -201,7 +201,7 @@ The Lab compares variants on the same examples ([Lab](fleet-lab.md)):
 
 Not built: the Lab examples and variants for this comparison.
 
-Each harness is qualified separately. A Claude result does not qualify Codex or Antigravity.
+Each harness (`codex`, `claude`, `antigravity`, `acp`) is qualified separately — a Claude result does not qualify Codex or Antigravity. Cross-harness Swarm strategies ([Fleet Swarm](fleet-swarm.md#5-synergy-with-universal-code-mode-and-lab-evaluation)) likewise qualify `codeMode` alongside coordinator algorithms and harness pairings on quality, latency, token/cost efficiency and progress observability.
 
 ## Verification
 

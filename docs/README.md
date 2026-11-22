@@ -27,6 +27,7 @@
 | Error tracking | [designs/fleet-error-tracking.md](designs/fleet-error-tracking.md) | Bugsink for browser and server errors: the `/api/errors` tunnel, `sentry-go`, the `bugsink` connection, alerts into Needs you, source maps, project onboarding. | |
 | System management | [designs/fleet-system-management.md](designs/fleet-system-management.md) | Host remove, archive, delete and purge, worktree removal on delivery, problems as questions, backups, the audit journal and the System screen. | |
 | PM agent | [designs/fleet-pm-agent.md](designs/fleet-pm-agent.md) | Director-scoped agent tools, task tools, Held tasks, focus, watch mode. | [system-operations.md](system-operations.md), [execution-contract.md](execution-contract.md) |
+| Swarm | [designs/fleet-swarm.md](designs/fleet-swarm.md) | Universal cross-harness Swarm coordination, configurable strategies, shared board, Swarm GUI and Lab evaluation. | none |
 | Code mode | [designs/fleet-code-mode.md](designs/fleet-code-mode.md) | The `code` and `poll` executor MCP tools: JavaScript with Fleet tools and connections as functions, for every harness; profile `codeMode`. | none |
 | Orchestration | [orchestration.md](orchestration.md) | Coordination semantics over executions. | none |
 | Allocation | [work-allocation.md](work-allocation.md) | Which host, environment and agent configuration runs a task; balancing and operator steering. | none |

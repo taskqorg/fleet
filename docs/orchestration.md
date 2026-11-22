@@ -38,6 +38,10 @@ Cancellation blocks pending entries, stops prepared commands before handoff and 
 
 Present the overall assignment and its nested work, with questions and interruptions requiring attention. Existing pause, cancellation, authority and budget rules apply across coordinated work. An available child result is retained even when its parent cannot continue.
 
+## Swarm coordination and Code Mode
+
+For multi-agent teamwork across arbitrary Fleet harnesses (`codex`, `claude`, `antigravity`, `acp`), [Fleet Swarm](designs/fleet-swarm.md) builds on these coordination semantics: a coordinator profile decomposes a goal into structured threads and disjoint worker assignments using configurable strategies (sizing, verifier ratio, stall monitoring, workspace isolation `inherit`/`share`/`branch`, per-worker tools and instructions), and coordinates over a durable shared message board (`@mention`, `@all`, channels, cursor-based event wakes without polling) with structured progress, blocker, `[done]` and screenshot reports. Coordinators and workers combine this with universal [Code Mode](designs/fleet-code-mode.md) to orchestrate parallel turns in JavaScript and return compact syntheses into model context.
+
 ## Examples
 
 | Scenario | Decision maker | Fleet coordination |
