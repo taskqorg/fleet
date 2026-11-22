@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"maps"
 	"net/http"
@@ -327,18 +328,50 @@ func connReconcile(ctx context.Context, a *App) {
 	if gatewayURL() == "" {
 		return
 	}
-	req, _ := http.NewRequestWithContext(ctx, "GET", gatewayURL()+"/v1/usage", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", gatewayURL()+"/v1/usage", nil)
+	if err != nil {
+		connReconcileMarkUnknown(ctx, a, "usage request: invalid gateway URL")
+		return
+	}
 	req.Header.Set("Authorization", "Bearer "+usageToken)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
+		reason := fmt.Sprintf("usage request: %v", err)
+		if usageToken != "" {
+			reason = strings.ReplaceAll(reason, usageToken, "[redacted]")
+		}
+		connReconcileMarkUnknown(ctx, a, reason)
 		return
 	}
 	defer res.Body.Close()
-	var report usageReport
-	if res.StatusCode/100 != 2 || json.NewDecoder(res.Body).Decode(&report) != nil {
+	if res.StatusCode/100 != 2 {
+		connReconcileMarkUnknown(ctx, a, fmt.Sprintf("usage HTTP %d", res.StatusCode))
 		return
 	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20+1))
+	if err != nil {
+		connReconcileMarkUnknown(ctx, a, "usage reply read error")
+		return
+	}
+	if len(body) > 1<<20 {
+		connReconcileMarkUnknown(ctx, a, "usage reply too large")
+		return
+	}
+	var report usageReport
+	if err := json.Unmarshal(body, &report); err != nil || report.Keys == nil {
+		connReconcileMarkUnknown(ctx, a, "usage reply invalid JSON")
+		return
+	}
+	if !isNull(report.At) {
+		if _, ok := jsonAs[float64](report.At); !ok {
+			connReconcileMarkUnknown(ctx, a, "usage reply invalid JSON")
+			return
+		}
+	}
 	at := orNull(report.At)
+	if isNull(at) {
+		at = jsonBytes(nowMs())
+	}
 	err = a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
 		for _, row := range report.Keys {
 			k, err := connKeyMaybe(q, "key:"+row.Key)
@@ -375,6 +408,51 @@ func connReconcile(ctx context.Context, a *App) {
 				k.Reconcile = &keyReconcile{At: at, ProviderDelta: &delta, Recorded: &recorded, Difference: &difference}
 			}
 			if err := connKeyPut(q, *k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("usage reconcile: %v", err)
+	}
+}
+
+// connReconcileMarkUnknown records a top-level /v1/usage failure on each reconcilable non-retired key while preserving
+// any prior measurement fields.
+func connReconcileMarkUnknown(ctx context.Context, a *App, reason string) {
+	if ctx.Err() != nil {
+		return
+	}
+	at := jsonBytes(nowMs())
+	err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		connections, err := apiConnectionAll(q)
+		if err != nil {
+			return err
+		}
+		reconcilable := make(map[string]bool, len(connections))
+		for _, c := range connections {
+			p := gatewayProviders[c.Provider]
+			if p.Usage != nil && p.Usage.Path != "" && p.Usage.Field != "" {
+				reconcilable[c.Name] = true
+			}
+		}
+		keys, err := connKeysList(q, nil)
+		if err != nil {
+			return err
+		}
+		for _, k := range keys {
+			if k.State == "retired" || (!reconcilable[k.ConnectionID] && k.Reconcile == nil) {
+				continue
+			}
+			rc := keyReconcile{}
+			if k.Reconcile != nil {
+				rc = *k.Reconcile
+			}
+			r := reason
+			rc.At, rc.Unknown = at, &r
+			k.Reconcile = &rc
+			if err := connKeyPut(q, k); err != nil {
 				return err
 			}
 		}
