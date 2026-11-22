@@ -9,10 +9,85 @@ import (
 	"log"
 	"math/rand/v2"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fleet/obs"
 )
+
+type bgTrackerKey struct{}
+
+// bgTracker coordinates graceful shutdown of background goroutines without racing WaitGroup.Add against Wait.
+type bgTracker struct {
+	mu     sync.Mutex
+	closed bool
+	wg     sync.WaitGroup
+}
+
+func (b *bgTracker) tryAdd() bool {
+	if b == nil {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return false
+	}
+	b.wg.Add(1)
+	return true
+}
+
+func (b *bgTracker) done() {
+	if b != nil {
+		b.wg.Done()
+	}
+}
+
+func (b *bgTracker) close() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	b.closed = true
+	b.mu.Unlock()
+}
+
+func (b *bgTracker) wait() {
+	if b != nil {
+		b.wg.Wait()
+	}
+}
+
+func withBackgroundTracker(ctx context.Context, bg *bgTracker) context.Context {
+	if bg == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, bgTrackerKey{}, bg)
+}
+
+func backgroundTracker(ctx context.Context) *bgTracker {
+	if ctx == nil {
+		return nil
+	}
+	bg, _ := ctx.Value(bgTrackerKey{}).(*bgTracker)
+	return bg
+}
+
+type coalescedScopeState struct {
+	ctx context.Context
+	bg  *bgTracker
+}
+
+var coalescedScope atomic.Pointer[coalescedScopeState]
+
+// setCoalescedScope binds coalesced triggers to ctx and bg for coordinator shutdown draining, returning a restore func.
+func setCoalescedScope(ctx context.Context, bg *bgTracker) func() {
+	s := &coalescedScopeState{ctx: ctx, bg: bg}
+	prev := coalescedScope.Swap(s)
+	return func() {
+		coalescedScope.CompareAndSwap(s, prev)
+	}
+}
 
 // every runs fn on a ticker until ctx ends, each run as the pass span pass.<name> in fn's ctx; single flight (a slow
 // pass never overlaps the next); d <= 0 turns it off.
@@ -29,6 +104,10 @@ func everyWake(ctx context.Context, name string, d time.Duration, wake <-chan st
 	if d <= 0 && wake == nil {
 		return
 	}
+	bg := backgroundTracker(ctx)
+	if !bg.tryAdd() {
+		return
+	}
 	var tick <-chan time.Time
 	var t *time.Timer
 	if d > 0 {
@@ -40,6 +119,7 @@ func everyWake(ctx context.Context, name string, d time.Duration, wake <-chan st
 		tick = t.C
 	}
 	go func() {
+		defer bg.done()
 		if t != nil {
 			defer t.Stop()
 		}
@@ -61,7 +141,13 @@ func everyWake(ctx context.Context, name string, d time.Duration, wake <-chan st
 				}
 			}
 			runNow = false
+			if ctx.Err() != nil {
+				return
+			}
 			obs.Pass(ctx, name, func(ctx context.Context) (int, error) { return 0, fn(ctx, woken) })
+			if ctx.Err() != nil {
+				return
+			}
 			if t != nil {
 				t.Reset(d)
 			}
@@ -85,13 +171,28 @@ func coalesced[T any](name string, fn func(context.Context, T) error) func(T) {
 		if queued {
 			return
 		}
+		ctx := context.Background()
+		var bg *bgTracker
+		if sc := coalescedScope.Load(); sc != nil {
+			if sc.ctx != nil {
+				if sc.ctx.Err() != nil {
+					return
+				}
+				ctx = sc.ctx
+			}
+			bg = sc.bg
+		}
+		if !bg.tryAdd() {
+			return
+		}
 		queued = true
 		go func() {
+			defer bg.done()
 			mu.Lock()
 			queued = false
 			v := arg
 			mu.Unlock()
-			if err := fn(context.Background(), v); err != nil {
+			if err := fn(ctx, v); err != nil && ctx.Err() == nil {
 				log.Printf("%s: %v", name, err)
 			}
 		}()
@@ -101,16 +202,24 @@ func coalesced[T any](name string, fn func(context.Context, T) error) func(T) {
 // untilDone runs fn now and then every d until it succeeds or ctx ends (a start-up step that waits for a dependency,
 // such as the span store's schema). A failure is logged as name.
 func untilDone(ctx context.Context, name string, d time.Duration, fn func(context.Context) error) {
+	bg := backgroundTracker(ctx)
+	if !bg.tryAdd() {
+		return
+	}
 	go func() {
+		defer bg.done()
 		for ctx.Err() == nil {
 			err := fn(ctx)
-			if err == nil {
+			if err == nil || ctx.Err() != nil {
 				return
 			}
 			log.Printf("%s: %v", name, err)
+			t := time.NewTimer(d)
 			select {
 			case <-ctx.Done():
-			case <-time.After(d):
+				t.Stop()
+				return
+			case <-t.C:
 			}
 		}
 	}()

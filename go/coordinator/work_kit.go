@@ -319,7 +319,7 @@ func (k *workKit) run(ctx context.Context, q *kitQueue, now time.Time, claims []
 			}
 			continue
 		}
-		kitBisect(cohort, batch, single)
+		kitBisectCtx(ctx, cohort, batch, single)
 	}
 	return stepErr, bookErr
 }
@@ -328,16 +328,23 @@ func (k *workKit) run(ctx context.Context, q *kitQueue, now time.Time, claims []
 // its own retry. One failing claim among n costs about 2*log2(n) cohort transactions. A skipped cohort waits for the
 // next pass whole.
 func kitBisect(cs []*kitClaim, batch func([]*kitClaim) error, single func(*kitClaim)) {
+	kitBisectCtx(context.Background(), cs, batch, single)
+}
+
+func kitBisectCtx(ctx context.Context, cs []*kitClaim, batch func([]*kitClaim) error, single func(*kitClaim)) {
+	if ctx.Err() != nil {
+		return
+	}
 	if len(cs) == 1 {
 		single(cs[0])
 		return
 	}
-	if err := batch(cs); err == nil || errors.Is(err, errKitSkip) || errors.Is(err, context.Canceled) {
+	if err := batch(cs); err == nil || errors.Is(err, errKitSkip) || errors.Is(err, context.Canceled) || ctx.Err() != nil {
 		return
 	}
 	mid := len(cs) / 2
-	kitBisect(cs[:mid], batch, single)
-	kitBisect(cs[mid:], batch, single)
+	kitBisectCtx(ctx, cs[:mid], batch, single)
+	kitBisectCtx(ctx, cs[mid:], batch, single)
 }
 
 // kitCohorts keeps first-unconsumed priority and order within the selected claims: each claim with a group gathers the
@@ -513,8 +520,14 @@ func startWorkKit(ctx context.Context, a *App) {
 	if len(queues) == 0 {
 		return
 	}
+	bg := backgroundTracker(ctx)
 	wake := make(chan string, 64)
-	go kitListen(ctx, a.store.pool.Config().ConnConfig.ConnString(), wake)
+	if bg.tryAdd() {
+		go func() {
+			defer bg.done()
+			kitListen(ctx, a.store.pool.Config().ConnConfig.ConnString(), wake)
+		}()
+	}
 	// Each lane (the queue name up to its first '-': resource-build, resource-repair and resource-work are one) has its own
 	// loop, one pass at a time, so one lane's slow work (a pipeline's provider call) never holds another's.
 	lanes := map[string][]*kitQueue{}
@@ -530,26 +543,35 @@ func startWorkKit(ctx context.Context, a *App) {
 	for _, lane := range order {
 		w := make(chan string, 64)
 		wakes[lane] = w
-		go kitLoop(ctx, k, lanes[lane], w)
+		if bg.tryAdd() {
+			qs := lanes[lane]
+			go func() {
+				defer bg.done()
+				kitLoop(ctx, k, qs, w)
+			}()
+		}
 	}
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case name := <-wake:
-				lane, _, _ := strings.Cut(name, "-")
-				for l, w := range wakes {
-					if name == "" || l == lane {
-						select {
-						case w <- name:
-						default:
+	if bg.tryAdd() {
+		go func() {
+			defer bg.done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case name := <-wake:
+					lane, _, _ := strings.Cut(name, "-")
+					for l, w := range wakes {
+						if name == "" || l == lane {
+							select {
+							case w <- name:
+							default:
+							}
 						}
 					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 }
 
 // kitLoop passes each queue of one lane every Period and at once on a wake naming it (an empty name names every
@@ -562,6 +584,9 @@ func kitLoop(ctx context.Context, k *workKit, queues []*kitQueue, wake <-chan st
 		now := time.Now()
 		soonest := now.Add(time.Hour)
 		for _, q := range queues {
+			if ctx.Err() != nil {
+				return
+			}
 			if !now.Before(next[q.Name]) {
 				if err := k.passQueue(ctx, q); err != nil && ctx.Err() == nil {
 					log.Printf("work kit: %v", err)
@@ -602,12 +627,16 @@ func kitListen(ctx context.Context, url string, wake chan<- string) {
 					}
 				}
 			}
-			_ = conn.Close(context.Background())
+			c, ccancel := context.WithTimeout(context.Background(), time.Second)
+			_ = conn.Close(c)
+			ccancel()
 		}
+		t := time.NewTimer(time.Second)
 		select {
 		case <-ctx.Done():
+			t.Stop()
 			return
-		case <-time.After(time.Second):
+		case <-t.C:
 		}
 	}
 }

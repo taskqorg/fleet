@@ -23,6 +23,8 @@ import (
 type Broadcast struct {
 	mu                  sync.Mutex
 	subs                map[chan struct{}]bool
+	closed              bool
+	ctx                 context.Context
 	cancel              context.CancelFunc
 	done                chan struct{}
 	feedWake            chan struct{}
@@ -40,31 +42,50 @@ const heldWait = 250 * time.Millisecond
 
 func listen(parent context.Context, url string, store *Store) *Broadcast {
 	ctx, cancel := context.WithCancel(parent)
-	b := &Broadcast{subs: map[chan struct{}]bool{}, cancel: cancel, done: make(chan struct{}), feedWake: make(chan struct{}, 1)}
-	go b.runFeed(ctx, store)
+	b := &Broadcast{subs: map[chan struct{}]bool{}, ctx: ctx, cancel: cancel, done: make(chan struct{}), feedWake: make(chan struct{}, 1)}
+	bg := backgroundTracker(parent)
+	if bg.tryAdd() {
+		go func() {
+			defer bg.done()
+			b.runFeed(ctx, store)
+		}()
+	}
 	every(ctx, "change-prune", time.Minute, func(ctx context.Context) error { return b.pruneChanges(ctx, store) })
-	go func() {
-		defer close(b.done)
-		for ctx.Err() == nil {
-			conn, err := pgx.Connect(ctx, url)
-			if err == nil {
-				if _, err = conn.Exec(ctx, "LISTEN fleet_change"); err == nil {
-					b.signalFeed() // anything committed while not listening
-					for err == nil {
-						_, err = conn.WaitForNotification(ctx)
-						if err == nil {
-							b.signalFeed()
+	if bg.tryAdd() {
+		go func() {
+			defer bg.done()
+			defer close(b.done)
+			for ctx.Err() == nil {
+				conn, err := pgx.Connect(ctx, url)
+				if err == nil {
+					if _, err = conn.Exec(ctx, "LISTEN fleet_change"); err == nil {
+						b.signalFeed() // anything committed while not listening
+						for err == nil {
+							_, err = conn.WaitForNotification(ctx)
+							if err == nil {
+								b.signalFeed()
+							}
 						}
 					}
+					c, ccancel := context.WithTimeout(context.Background(), time.Second)
+					_ = conn.Close(c)
+					ccancel()
 				}
-				conn.Close(context.Background())
+				if ctx.Err() == nil {
+					log.Printf("listen: %v; again in 1 s", err)
+					t := time.NewTimer(time.Second)
+					select {
+					case <-ctx.Done():
+						t.Stop()
+						return
+					case <-t.C:
+					}
+				}
 			}
-			if ctx.Err() == nil {
-				log.Printf("listen: %v; again in 1 s", err)
-				time.Sleep(time.Second)
-			}
-		}
-	}()
+		}()
+	} else {
+		close(b.done)
+	}
 	return b
 }
 
@@ -82,6 +103,11 @@ func (b *Broadcast) wake() {
 func (b *Broadcast) join() chan struct{} {
 	c := make(chan struct{}, 1)
 	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		close(c)
+		return c
+	}
 	b.subs[c] = true
 	b.mu.Unlock()
 	return c
@@ -91,6 +117,7 @@ func (b *Broadcast) leave(c chan struct{}) { b.mu.Lock(); delete(b.subs, c); b.m
 
 func (b *Broadcast) close() {
 	b.mu.Lock()
+	b.closed = true
 	for c := range b.subs {
 		close(c)
 	}
@@ -168,13 +195,25 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 		}
 		cursor = n
 	}
-	ctx := q.ctx()
+	ctx, cancel := context.WithCancel(q.ctx())
+	defer cancel()
+	if a.stream.ctx != nil {
+		stop := context.AfterFunc(a.stream.ctx, cancel)
+		defer stop()
+	}
 	initialVersion := ""
 	if q.person != nil {
 		initialVersion = grantsVersion(q.person)
 	}
 	wake := a.stream.join() // before the first read: a NOTIFY during it is not lost
 	defer a.stream.leave(wake)
+	select {
+	case <-a.stoppedCh():
+		return fail(503, "Coordinator shutting down")
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 	if cursor < 0 {
 		if err := a.store.Read(ctx, q, func(q *Request) (err error) { cursor, err = head(ctx, q.tx); return }); err != nil {
 			return err
@@ -256,6 +295,8 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 		}
 		select {
 		case <-ctx.Done():
+			return nil
+		case <-a.stoppedCh():
 			return nil
 		case _, ok := <-wake:
 			if !ok {
