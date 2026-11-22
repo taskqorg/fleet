@@ -572,7 +572,7 @@ var errBoardScopeTerminal = errors.New("scope already terminal")
 
 func boardScopeTerminal(q *Request, scopeKind contract.BoardScopeKind, scopeID string) (bool, error) {
 	if scopeKind == contract.BoardScopeKindSession {
-		return q.db().BoardSessionParentTerminal(q.ctx(), scopeID)
+		return boardSessionParentTerminal(q, scopeID)
 	}
 	return q.db().BoardScopeIsTerminal(q.ctx(), db.BoardScopeIsTerminalParams{
 		ScopeKind: string(scopeKind),
@@ -597,7 +597,7 @@ func boardWakeTarget(q *Request, scopeKind contract.BoardScopeKind, scopeID stri
 		if s.ArchivedAt != nil {
 			return fail(409, "Session is archived")
 		}
-		terminal, err = q.db().BoardSessionParentTerminal(q.ctx(), sessionID)
+		terminal, err = boardSessionParentTerminal(q, sessionID)
 		if err != nil {
 			return err
 		}
