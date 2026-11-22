@@ -69,8 +69,8 @@ WITH RECURSIVE
     JOIN chain c ON s.id = COALESCE(NULLIF(c.created_by_session_id, ''), NULLIF(c.source_session_id, ''))
     WHERE c.depth < 10
   ),
-  exec_chain(id, kind, state, parent_execution_id, pipeline_run_id, depth) AS (
-    SELECT e.id, e.kind, e.state, e.parent_execution_id, NULLIF(e.data->>'pipelineRunId', ''), 0
+  exec_chain(id, kind, state, parent_execution_id, pipeline_run_id, pipeline_step_id, depth) AS (
+    SELECT e.id, e.kind, e.state, e.parent_execution_id, NULLIF(e.data->>'pipelineRunId', ''), NULLIF(e.data->>'pipelineStepId', ''), 0
     FROM execution e
     WHERE e.id IN (
       SELECT c.parent_execution_id FROM chain c WHERE c.parent_execution_id IS NOT NULL
@@ -78,9 +78,9 @@ WITH RECURSIVE
       SELECT c.created_by_execution_id FROM chain c WHERE c.created_by_execution_id IS NOT NULL
     ) OR e.session_id IN (SELECT c.id FROM chain c)
     UNION ALL
-    SELECT p.id, p.kind, p.state, p.parent_execution_id, NULLIF(p.data->>'pipelineRunId', ''), ec.depth + 1
+    SELECT p.id, p.kind, p.state, p.parent_execution_id, NULLIF(p.data->>'pipelineRunId', ''), NULLIF(p.data->>'pipelineStepId', ''), ec.depth + 1
     FROM execution p
-    JOIN exec_chain ec ON p.id = ec.parent_execution_id OR p.id = ec.pipeline_run_id
+    JOIN exec_chain ec ON p.id = ec.parent_execution_id OR p.id = ec.pipeline_run_id OR p.id = ec.pipeline_step_id
     WHERE ec.depth < 6
   )
 SELECT (
@@ -103,7 +103,7 @@ SELECT (
   ) OR EXISTS (
     SELECT 1
     FROM exec_chain ec
-    WHERE ec.kind = 'pipeline_run'
+    WHERE ec.kind IN ('pipeline_run', 'pipeline_step')
       AND ec.state::text IN ('succeeded', 'completed', 'failed', 'cancelled', 'stopped')
   )
 )::boolean;

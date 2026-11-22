@@ -1085,3 +1085,149 @@ UPDATE execution SET state='succeeded', ended_at=now() WHERE id='e-v4-coord';
 		t.Fatalf("expected 0 orphan executions started on s-v4-coord after run-v4 ended, got %v", n)
 	}
 }
+
+// Requirement: FLT-19 cross-harness swarm (docs/designs/fleet-swarm.md): swarm-coordinator is authorized to spawn
+// profileId "swarm-verifier-claude" (claude/sonnet) even when project settings.roles omits it, and
+// boardWakeTerminal/agentPromote skip and cancel queued board-wake:% messages once a session's owning pipeline_step
+// execution is terminal even while the parent pipeline_run still has state='running' and finishedAt IS NULL.
+// Risk: swarm-coordinator hits 403 spawning swarm-verifier-claude, or a queued board-wake promotes an orphan turn
+// during the window after completeStep marks pipeline_step succeeded before pipeline_run finishes.
+func TestBoardV5CrossHarnessAuthAndStepTerminalWakeRace(t *testing.T) {
+	e := openTestCoordinator(t, false)
+
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+INSERT INTO definition(kind,id,path,head,project_id) VALUES
+ ('project','board-v5','config/projects/board-v5/project.json',1,'board-v5');
+INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message) VALUES
+ ('project','board-v5',1,'{"settings":{"id":"board-v5","name":"Board V5","contextFiles":[]},"contextFiles":[]}','bv5','editor','person','t');
+INSERT INTO host(id,host_id,project_id,state) VALUES ('h-v5','h-v5','board-v5','active');
+`)
+
+	def := doc{
+		"version": float64(2),
+		"id":      "swarm-plan-execute",
+		"steps": []any{
+			doc{"id": "coordinate", "kind": "agent", "profile": "swarm-coordinator", "prompt": "Verify"},
+		},
+	}
+	runDoc := doc{
+		"id":               "run-v5",
+		"pipelineId":       "swarm-plan-execute",
+		"projectId":        "board-v5",
+		"requestedBy":      doc{"email": testOwnerEmail},
+		"definition":       def,
+		"definitionSha256": sha256hex([]byte(canonical(def))),
+		"state":            "running",
+		"startedAt":        nowMs(),
+		"steps":            []any{doc{"id": "coordinate", "kind": "agent", "state": "running", "startedAt": nowMs()}},
+	}
+	if err := initPipelinePlan(runDoc); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.app.store.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		if err := putRun(q, runDoc); err != nil {
+			return err
+		}
+		return selectPipelineStep(q, runDoc, 0)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+INSERT INTO session(id,project_id,host_id,pipeline_run_id,created_by_session_id,created_by_execution_id,payload) VALUES
+ ('s-v5-coord','board-v5','h-v5','run-v5',NULL,NULL,'{"agentConfig":{"id":"swarm-coordinator","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('s-v5-v1','board-v5','h-v5',NULL,'s-v5-coord','e-v5-coord','{"agentConfig":{"id":"swarm-verifier-claude","harness":"claude","model":"sonnet"}}');
+INSERT INTO execution(id,kind,state,project_id,parent_execution_id,session_id,host_id,harness,model,started_at,data) VALUES
+ ('e-v5-coord','agent_run','succeeded','board-v5','run-v5:step:0','s-v5-coord','h-v5','codex','gpt-6.2-sol',now(),'{"id":"e-v5-coord","parentExecutionId":"run-v5:step:0","pipelineStepId":"run-v5:step:0","pipelineRunId":"run-v5","sessionId":"s-v5-coord","agentConfig":{"id":"swarm-coordinator","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('e-v5-v1','agent_run','succeeded','board-v5','e-v5-coord','s-v5-v1','h-v5','claude','sonnet',now(),'{"id":"e-v5-v1","parentExecutionId":"e-v5-coord","sessionId":"s-v5-v1","agentConfig":{"id":"swarm-verifier-claude","harness":"claude","model":"sonnet"}}');
+`)
+
+	// (a) swarm-coordinator is authorized to spawn swarm-verifier-claude even when project settings.roles omits it.
+	if err := e.app.store.Read(e.ctx, nil, func(q *Request) error {
+		q.agent = "execution:e-v5-coord"
+		if _, err := agentBoundArguments(q, "session_start", rawObject{
+			"profileId": jsonBytes("swarm-verifier-claude"),
+			"role":      jsonBytes("reviewer"),
+			"requestId": jsonBytes("req-svc"),
+		}, "e-v5-coord"); err != nil {
+			t.Fatalf("expected swarm-coordinator to allow profileId=swarm-verifier-claude, got %v", err)
+		}
+		if _, err := agentBoundArguments(q, "session_start", rawObject{
+			"profileId": jsonBytes("claude-reviewer"),
+			"requestId": jsonBytes("req-unmapped"),
+		}, "e-v5-coord"); err == nil {
+			t.Fatal("expected unmapped non-swarm profileId to fail 403")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// While run-v5:step:0 is still running, boardWakeTerminal must not skip wakes for its sessions.
+	if err := e.app.store.Read(e.ctx, nil, func(q *Request) error {
+		for _, sid := range []string{"s-v5-coord", "s-v5-v1"} {
+			skip, err := boardWakeTerminal(q, agentQueued{
+				SessionID: sid,
+				RequestID: "board-wake:session:s-v5-coord:1:" + sid,
+			})
+			if err != nil {
+				return err
+			}
+			if skip {
+				t.Fatalf("expected boardWakeTerminal=false while pipeline_step is still running for %s", sid)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// (b) Transition run-v5:step:0 to succeeded while run-v5 (pipeline_run) remains state='running' / finishedAt IS NULL.
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+UPDATE execution SET state='succeeded', ended_at=now() WHERE id='run-v5:step:0';
+`)
+	if n := psqlLines(t, e, "SELECT state, COALESCE(data->>'finishedAt','') FROM execution WHERE id='run-v5'"); len(n) != 1 || n[0] != "running|" {
+		t.Fatalf("expected parent pipeline_run run-v5 to remain running with finishedAt NULL, got %v", n)
+	}
+
+	if err := e.app.store.Write(e.ctx, nil, []string{"session:s-v5-coord", "session:s-v5-v1"}, func(q *Request) error {
+		for _, m := range []agentQueued{
+			{
+				ID:        "qm-step-term-coord",
+				SessionID: "s-v5-coord",
+				ProjectID: "board-v5",
+				RequestID: "board-wake:session:s-v5-coord:2:s-v5-coord",
+				Text:      "Late wake after step ended",
+				State:     "queued",
+				CreatedAt: nowMs(),
+				SentBy:    "Fleet",
+				Source:    "wake",
+			},
+			{
+				ID:        "qm-step-term-v1",
+				SessionID: "s-v5-v1",
+				ProjectID: "board-v5",
+				RequestID: "board-wake:session:s-v5-coord:3:s-v5-v1",
+				Text:      "Late verifier wake after step ended",
+				State:     "queued",
+				CreatedAt: nowMs(),
+				SentBy:    "Fleet",
+				Source:    "wake",
+			},
+		} {
+			if err := queuedMessagePut(q, &m); err != nil {
+				return err
+			}
+		}
+		return agentPromote(q)
+	}); err != nil {
+		t.Fatalf("agentPromote = %v", err)
+	}
+
+	if n := psqlLines(t, e, "SELECT state FROM queued_message WHERE id IN ('qm-step-term-coord','qm-step-term-v1') ORDER BY id"); len(n) != 2 || n[0] != "cancelled" || n[1] != "cancelled" {
+		t.Fatalf("expected queued board-wake messages cancelled once pipeline_step ended, got %v", n)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM execution WHERE session_id IN ('s-v5-coord','s-v5-v1')"); len(n) != 1 || n[0] != "2" {
+		t.Fatalf("expected 0 orphan executions promoted after pipeline_step ended, got %v", n)
+	}
+}
