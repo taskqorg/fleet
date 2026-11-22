@@ -343,6 +343,9 @@ export function touchedBy(c: Change, name: OpName, request: unknown): boolean {
     if (CARD_OWN[r.kind]) return CARD_OWN[r.kind](c, r.id);
     if (CARD_FIELD[r.kind]) r[CARD_FIELD[r.kind]] = r.id;
   }
+  if (c.kind === 'board' && typeof r.scopeKind === 'string' && typeof r.scopeId === 'string') {
+    return c.id === `${r.scopeKind}:${r.scopeId}`;
+  }
   for (const { field, of } of SCOPE) { const want = r[field], got = of(c); if (typeof want === 'string' && got !== undefined && got !== want) return false; }
   if (Array.isArray(r.ids) && ![c.taskId, c.sessionId, c.id].some(x => !!x && (r.ids as unknown[]).includes(x))) return false;
   const me = identityKey(), t = c.settingTarget;

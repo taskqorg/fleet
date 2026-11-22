@@ -5,7 +5,7 @@ import { useLocation } from 'wouter-preact';
 import {
   EntityCode, EntityPicker, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
   StateBadge, StateCounters, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection,
-  OpsSummary, StatStrip, KvRow, Num, type VirtualListHandle, type CatalogueTreeNode, type IconName, type Stat,
+  OpsSummary, StatStrip, KvRow, Num, TabBar, type VirtualListHandle, type CatalogueTreeNode, type IconName, type Stat,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, TextField,
   writeClip, zone, DropZone, agentLabel, InlineForm, type ComposerChip,
   keyConnection, ShellStatus, ShellActions } from '../../../packages/ui/src/index.ts';
@@ -22,6 +22,7 @@ import { SYSTEM_VIEWS } from '../system-views.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, inside, range, type Selection } from '../selection.ts';
 import { ScopedRollupBar, ScopedRollupDetails } from './resources.tsx';
+import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
 
 const GROUPS = [['project', 'Project'], ['state', 'State'], ['agent', 'Agent'], ['none', 'None']] as const;
 const SORTS = [['activity', 'Activity'], ['created', 'Created']] as const;
@@ -231,21 +232,30 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const [panel, setPanel] = useState<'switch' | 'handoff' | 'rename' | null>(null);
   const [q, setQ] = useState(''), [hits, setHits] = useState<{ key: string; snippet: string }[] | null>(null), [hit, setHit] = useState(0), [marked, setMarked] = useState<string | null>(null);
   const handle = useRef<VirtualListHandle | null>(null);
+  const board = useSwarmBoard('session', id);
+  const hasSwarm = hasSwarmBoard(board.data);
+  const [convTab, setConvTab] = useState<'transcript' | 'swarm'>('transcript');
+  const activeConvTab = hasSwarm ? convTab : 'transcript';
   const [showRelated, setShowRelated] = useState(false);
   const related = s?.resources;
   const hasRelated = !!related && (related.delegated.executions > 0 || related.spawned.executions > 0 || related.spawnedTasks.length > 0 || related.hidden > 0 || related.total.tools.byTool.length > 0);
   const inRelated = showRelated && hasRelated;
   const reading = useRef<ReturnType<VirtualListHandle['getAnchor']>>(null);
   const toggleRelated = () => {
+    if (activeConvTab === 'swarm') {
+      setConvTab('transcript');
+      setShowRelated(true);
+      return;
+    }
     if (!inRelated) reading.current = handle.current?.getAnchor() ?? null;
     setShowRelated(!inRelated);
   };
   useLayoutEffect(() => {
     const anchor = reading.current;
-    if (inRelated || !anchor || !handle.current) return;
+    if (inRelated || activeConvTab === 'swarm' || !anchor || !handle.current) return;
     reading.current = null;
     handle.current.restoreAnchor(anchor.key, anchor.offsetPx);
-  }, [inRelated]);
+  }, [inRelated, activeConvTab]);
   // Files for the next message: uploaded as they are added (picker, paste, drop over the conversation).
   const files = useAttachments({ sessionId: id });
   // The hit is scrolled to once the replaced window is on screen.
@@ -323,7 +333,30 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       {hasRelated && <Button label="Related work" icon="folder-open" kind="quiet" pressed={inRelated} onClick={toggleRelated} />}
     </div>
     <ScopedRollupBar rollup={s.resources} cost={s.cost} inlineDetails={false} />
+    {hasSwarm && (
+      <TabBar
+        cls="detail-tabs"
+        label="Conversation views"
+        tabs={[
+          { id: 'transcript', label: 'Transcript' },
+          { id: 'swarm', label: 'Swarm', count: board.data!.summary.messagesTotal || board.data!.roster.length || undefined },
+        ]}
+        value={activeConvTab}
+        onChange={nextTab => {
+          if (nextTab === 'swarm' && !inRelated) reading.current = handle.current?.getAnchor() ?? null;
+          if (nextTab === 'swarm') setShowRelated(false);
+          setConvTab(nextTab);
+        }}
+      />
+    )}
     <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
+    {activeConvTab === 'swarm' ? (
+      <div class="pane" role="tabpanel" aria-label="Swarm">
+        <section class="related-work" aria-label="Swarm" tabIndex={0}>
+          <SwarmPanel scopeKind="session" scopeId={id} board={board} />
+        </section>
+      </div>
+    ) : (
     <div class="pane" data-related-work={inRelated}><DropZone onFiles={files.add} disabledReason={off ? 'offline' : undefined}>
       {!w ? <Skeleton rows={6} /> : <Thread blocks={blocks} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} resultSrc={r => '/api/results/' + encodeURIComponent(r)} handle={handle} onStart={inRelated ? undefined : thread.older} onEnd={inRelated ? undefined : thread.newer}
         stopReason={off ? 'offline' : undefined} onStop={x => run(() => op('execution_stop', { executionId: x }))}
@@ -354,6 +387,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
           try { await writeOnce('message_send', request, unknown, { signal: alive.current.signal }); sendingId(scope, null, key); files.clear(attachments); setFailure(null); }
           catch (e) { if (!(e instanceof AccessChanged) && !(e instanceof OpError && e.message === 'aborted')) { if (!unknownOutcome(e)) sendingId(scope, null, key); setFailure({ text: errText(e) }); } throw e; } }} />
     </DropZone></div>
+    )}
   </article>;
 }
 
