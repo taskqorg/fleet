@@ -57,8 +57,8 @@ func labEnqueue(q *Request, id string) error {
 	return kitWake(q, "lab", id, time.Now())
 }
 
-// labRunNow: an operation that changed experiment id (launch, stop, resume, a cell retry) looks at it at once, as a kit
-// pass would, so its answer shows the launched trials.
+// labRunNow: an operation that changed experiment id (a cell retry or suffix retry) looks at it at once, as a kit
+// pass would, so its answer shows the updated trials.
 func labRunNow(ctx context.Context, a *App, id string) error {
 	return kitOf(a).runOne(ctx, "lab", &kitClaim{Key: id, Guard: []any{int32(0)}})
 }
