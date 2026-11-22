@@ -754,7 +754,7 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 					}
 				}
 			}
-			allowSwarmWorker := callerProfile == "swarm-coordinator" && id == "swarm-worker"
+			allowSwarmWorker := callerProfile == "swarm-coordinator" && (id == "swarm-worker" || id == "swarm-verifier-claude")
 			if !allowSwarmWorker && !profileInRoles(projectSettingsOf(q, p), id) {
 				return nil, fail(403, "Profile not in project roles")
 			}
