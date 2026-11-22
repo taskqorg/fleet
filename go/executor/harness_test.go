@@ -622,3 +622,38 @@ func TestACPCodePermission(t *testing.T) {
 		})
 	}
 }
+
+// Requirement: sandboxed Antigravity sessions in accept-edits mode can execute commands via run_command (#640).
+// Risk: refusing run_command prevents Antigravity workers from writing results, while granting it without sandbox=true or accept-edits mode allows unsandboxed or read-only shell execution.
+func TestACPSandboxRunCommandPermission(t *testing.T) {
+	const req = `{"jsonrpc":"2.0","id":9,"method":"session/request_permission","params":{"sessionId":"s","toolCall":{"toolCallId":"call-1","name":"run_command","title":"mkdir -p output","kind":"execute","status":"pending"},"options":[{"kind":"allow_always","optionId":"all"},{"kind":"allow_once","optionId":"once"}]}}`
+	for _, tc := range []struct {
+		name    string
+		profile M
+		stage   int
+		request string
+		want    string
+	}{
+		{"sandboxed accept-edits agentConfig", M{"harness": "antigravity", "agentConfig": M{"settings": M{"mode": "accept-edits", "sandbox": true}}}, 5, req, "once"},
+		{"sandboxed accept-edits top-level", M{"harness": "antigravity", "settings": M{"mode": "accept-edits", "sandbox": true}}, 5, req, "once"},
+		{"sandbox false refused", M{"harness": "antigravity", "agentConfig": M{"settings": M{"mode": "accept-edits", "sandbox": false}}}, 5, req, ""},
+		{"sandbox omitted refused", M{"harness": "antigravity", "agentConfig": M{"settings": M{"mode": "accept-edits"}}}, 5, req, ""},
+		{"plan mode refused", M{"harness": "antigravity", "agentConfig": M{"settings": M{"mode": "plan", "sandbox": true}}}, 5, req, ""},
+		{"readOnly overrides accept-edits", M{"harness": "antigravity", "readOnly": true, "agentConfig": M{"settings": M{"mode": "accept-edits", "sandbox": true}}}, 5, req, ""},
+		{"non-antigravity acp refused", M{"harness": "acp", "agentConfig": M{"settings": M{"mode": "accept-edits", "sandbox": true}}}, 5, req, ""},
+		{"wrong stage refused", M{"harness": "antigravity", "agentConfig": M{"settings": M{"mode": "accept-edits", "sandbox": true}}}, 3, req, ""},
+		{"wrong session refused", M{"harness": "antigravity", "agentConfig": M{"settings": M{"mode": "accept-edits", "sandbox": true}}}, 5, strings.Replace(req, `"sessionId":"s"`, `"sessionId":"other"`, 1), ""},
+		{"non-run_command execute refused", M{"harness": "antigravity", "agentConfig": M{"settings": M{"mode": "accept-edits", "sandbox": true}}}, 5, strings.Replace(req, `"run_command"`, `"send_command_input"`, 1), ""},
+		{"non-execute kind refused", M{"harness": "antigravity", "agentConfig": M{"settings": M{"mode": "accept-edits", "sandbox": true}}}, 5, strings.Replace(req, `"execute"`, `"edit"`, 1), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newACPSession("/work", "", tc.profile, M{})
+			s.session, s.stage = "s", tc.stage
+			r, ev, _, err := s.Receive(j(tc.request))
+			if err != nil || jStr(r[0], "result", "outcome", "optionId") != tc.want ||
+				(ev["type"] == "permission.granted") != (tc.want != "") {
+				t.Fatal(r, ev, err)
+			}
+		})
+	}
+}
