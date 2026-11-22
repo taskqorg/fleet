@@ -129,7 +129,7 @@ An execution may start or continue a session according to harness capabilities. 
 
 Execution states are preparing, running, waiting, succeeded, failed and cancelled. Available controls depend on the harness or tool.
 
-**Universal Code Mode** ([design](docs/designs/fleet-code-mode.md)): every supported harness (`codex`, `claude`, `antigravity`, `acp`) can run JavaScript tool orchestration through one executor MCP runtime (`code` and `poll`), calling granted Fleet tools, connections and host functions within the execution's authority without passing every intermediate result through model context.
+**Universal Code Mode** ([design](docs/designs/fleet-code-mode.md)): every supported harness (`codex`, `claude`, `antigravity`, `acp`) runs JavaScript tool orchestration through one `code`/`poll` MCP runtime over granted Fleet tools, connections and host functions within execution authority, keeping intermediate results out of model context.
 
 ### Environments
 
@@ -177,7 +177,9 @@ Honor explicit tool, method or pipeline choices made when planning work with the
 
 Provide agent operations to find and launch agents, select and use environments, create and configure projects, create and track tasks, run pipelines, retrieve results and query Fleet state within granted permissions.
 
-**Universal Swarm coordination** ([design](docs/designs/fleet-swarm.md)): across any homogeneous or mixed set of Fleet harnesses (`codex`, `claude`, `antigravity`, `acp`), a coordinator agent can decompose a goal into structured threads and disjoint worker tasks using configurable strategies (sizing, verifier ratio, stall monitoring, workspace isolation `inherit`/`share`/`branch`, and per-worker tools, connections, roles and instructions). Workers coordinate over a durable shared message board (`@mention`, `@all`, channels, event-driven wake without polling) with structured progress, blocker, `[done]` and screenshot reports, surfaced visually in Fleet's web app and evaluated in Lab alongside Universal Code Mode.
+**Universal Swarm coordination** ([design](docs/designs/fleet-swarm.md)): across any homogeneous or mixed set of Fleet harnesses (`codex`, `claude`, `antigravity`, `acp`), a coordinator decomposes a goal into structured threads and disjoint worker tasks using configurable strategies (sizing, verifier ratio, stall monitoring, `inherit`/`share`/`branch` workspaces, and per-worker tools, connections, roles and instructions).
+
+Workers coordinate over a durable shared message board (`@mention`, `@all`, channels, event-driven wake without polling) with structured progress, blocker, `[done]` and screenshot reports, surfaced visually in Fleet's web app and evaluated in Lab alongside Code Mode.
 
 ### Knowledge and rules
 
