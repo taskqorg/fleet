@@ -1,6 +1,6 @@
 # Owner rules: decision table
 
-Decision 2 of the [methodology brief](methodology-brief.md). The owner decides per row: accept, change or reject the proposed OR wording, the check and the precedence. Source wording: [specq owner preferences](https://github.com/taskqorg/specq/blob/main/design/owner-preferences.md) (P1–P16, verbatim there; short paraphrase here).
+Decision 2 of the design methodology (see [README.md](README.md)). The owner decides per row: accept, change or reject the proposed OR wording, the check and the precedence. Source wording: [specq owner preferences](https://github.com/taskqorg/specq/blob/main/design/owner-preferences.md) (P1–P16, verbatim there; short paraphrase here).
 
 Check types: **test** fails `pnpm test`; **lint** fails the design gate on code or rendered HTML; **review item** blocks page approval and is listed in the approval record.
 

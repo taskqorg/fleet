@@ -9,7 +9,7 @@ Append only. Each entry: date, question, options, choice, reason.
 
 ## 2026-11-09 D2: Visual direction (open)
 
-* **Options:** [A Quiet ledger](explorations/archive/a-quiet-ledger.html), [B Console](explorations/archive/b-console.html), [C Soft paper](explorations/archive/c-soft-paper.html).
+* **Options:** A Quiet ledger, B Console, C Soft paper (archived in git history).
 * **Choice:** resolved in D3.
 
 ## 2026-11-09 D3: Visual direction chosen
@@ -147,7 +147,7 @@ Append only. Each entry: date, question, options, choice, reason.
 
 ## 2026-11-10 D14: Review fixes and automatic checks
 
-Source: the [independent review](reviews/2026-11-10/SUMMARY.md) found 0 blockers, 11 majors and 21 nits. `check:design` caught none of them.
+Source: the 2026-11-10 independent review (in git history) found 0 blockers, 11 majors and 21 nits. `check:design` caught none of them.
 
 **Majors fixed**
 
@@ -243,7 +243,7 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
 * **Options:** `T-FLT-A-42` (optional section), `T-FLT-42`, `FLT-42`, `T-4217`, host plus base32.
 * **Choice:** `T-FLT-42` for tasks (`T`), questions (`Q`), conversations (`C`, owner 2026-11-13) and experiments (`E`); spec rules carry a mandatory section letter, `S-FLT-D3`. Scope `ALL` for general rules. Regex: `\b(?:([TQEC])-([A-Z][A-Z0-9]{1,4})-([1-9][0-9]*)|S-([A-Z][A-Z0-9]{1,4})-([A-DF-PRU-Z])([1-9][0-9]*))\b`. Grammar and allocation: [data foundation §2](../designs/fleet-data-foundation.md#2-task-production-work-item).
 * **Display:** one formatter in `packages/ui` renders the code. The code sits directly after the title (OR-22), in monospace. The UUID is shown only in a tooltip and a "copy UUID" action, never as a second visible ID (OR-17). An entity without a code shows no ID (OR-38: a UUID is never shown). The formatter is `EntityCode`; a click or Enter copies the UUID without opening the row. A section or area of a task is a chip, not part of the code. `packages/ui/book/open-questions.tsx` renders `T-{t.id}` today and moves to the formatter.
-* **Reason:** the type and project are visible outside the app (messengers, branches, prompts); hyphens and a leading letter keep codes apart from short SHAs and GitHub `#N`; no dots or slashes, so messengers do not auto-link them. Brief: [entity-ids-brief.md](../designs/entity-ids-brief.md).
+* **Reason:** the type and project are visible outside the app (messengers, branches, prompts); hyphens and a leading letter keep codes apart from short SHAs and GitHub `#N`; no dots or slashes, so messengers do not auto-link them.
 
 ## 2026-11-10 D18: Lab screen, first build (Lab Stage 3)
 
