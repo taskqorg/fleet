@@ -68,15 +68,15 @@ func failf(code int, f string, v ...any) error { return fail(code, fmt.Sprintf(f
 
 // ---- short transactions of the long routes (q.tx is nil there) ----
 
-// An operation already runs in the dispatcher's transaction (in the context, see withTx); a long route has none and takes
+// An operation already runs in the dispatcher's transaction (in q.ctx(), via withTx); a long route has none and takes
 // short ones of its own.
 type txKey struct{}
 
 func withTx(q *Request) context.Context {
-	if q.tx == nil {
-		return q.ctx()
+	if q == nil || q.tx == nil {
+		return q.baseCtx()
 	}
-	return context.WithValue(q.ctx(), txKey{}, q.tx)
+	return context.WithValue(q.baseCtx(), txKey{}, q.tx)
 }
 
 type querier interface {
@@ -84,6 +84,7 @@ type querier interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// conn returns the transaction carried by ctx (always present for q.ctx() while q.tx is set), else the write pool.
 func conn(ctx context.Context, a *App) querier {
 	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
 		return tx
@@ -91,8 +92,13 @@ func conn(ctx context.Context, a *App) querier {
 	return a.store.pool
 }
 
+// txCtx runs fn in the transaction carried by ctx (refusing write helpers inside a read-only transaction), else opens a
+// short GLOBAL write transaction on the pool.
 func txCtx(ctx context.Context, a *App, fn func(pgx.Tx) error) error {
 	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+		if !txWrites(tx) {
+			return errors.New("txCtx inside a read transaction")
+		}
 		return fn(tx)
 	}
 	return a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error { return fn(q.tx) })
@@ -137,6 +143,31 @@ func storeList(ctx context.Context, a *App) ([]StoreRow, error) {
 			CapacityBytes: s.CapacityBytes, UsedBytes: s.UsedBytes, FreeSpaceWarningBytes: s.FreeSpaceWarningBytes, RequiresLogon: s.RequiresLogon, Zone: s.Zone, Holder: s.Holder})
 	}
 	return out, nil
+}
+
+// storeListAll reads every store on ctx's transaction (temporarily widening row scope when ctx carries a scoped
+// request transaction) for internal store routing after artifact or project access has already been verified.
+func storeListAll(ctx context.Context, a *App) ([]StoreRow, error) {
+	tx, ok := ctx.Value(txKey{}).(pgx.Tx)
+	if !ok {
+		return storeList(ctx, a)
+	}
+	d := db.New(tx)
+	was, err := d.TxScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if was.ProjectIds == "*" {
+		return storeList(ctx, a)
+	}
+	if err := d.TxSetScope(ctx, db.TxSetScopeParams{ProjectIds: "*", Person: ""}); err != nil {
+		return nil, err
+	}
+	out, err := storeList(ctx, a)
+	if rerr := d.TxSetScope(ctx, db.TxSetScopeParams{ProjectIds: was.ProjectIds, Person: was.Person}); rerr != nil && err == nil {
+		err = rerr
+	}
+	return out, err
 }
 
 // storeHost: the host of a store, "" when there is none.
@@ -503,7 +534,7 @@ func declaredRequired(e *execInfo) []string {
 
 // selectStore: the writer's host when listed, else the first listed reachable store.
 func selectStore(ctx context.Context, a *App, locations []string, hostID string) (*StoreRow, error) {
-	all, err := storeList(ctx, a)
+	all, err := storeListAll(ctx, a)
 	if err != nil {
 		return nil, err
 	}
@@ -1077,7 +1108,7 @@ func source(ctx context.Context, a *App, x *Artifact, hostID string) (*StoreRow,
 	if err != nil {
 		return nil, err
 	}
-	all, err := storeList(ctx, a)
+	all, err := storeListAll(ctx, a)
 	if err != nil {
 		return nil, err
 	}
