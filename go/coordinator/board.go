@@ -492,6 +492,57 @@ func boardWakeRequestID(scopeKind contract.BoardScopeKind, scopeID string, seq i
 	return "board-wake:" + string(scopeKind) + ":" + scopeID + ":" + strconv.FormatInt(seq, 10) + ":" + sessionID
 }
 
+func boardWakeScope(requestID, sessionID string) (string, string, bool) {
+	rest, ok := strings.CutPrefix(requestID, "board-wake:")
+	if !ok {
+		return "", "", false
+	}
+	kind, rest, ok := strings.Cut(rest, ":")
+	if !ok || (kind != string(contract.BoardScopeKindTask) && kind != string(contract.BoardScopeKindPipelineRun)) {
+		return "", "", false
+	}
+	if sessionID != "" {
+		rest, ok = strings.CutSuffix(rest, ":"+sessionID)
+		if !ok {
+			return "", "", false
+		}
+	} else {
+		idx := strings.LastIndexByte(rest, ':')
+		if idx <= 0 {
+			return "", "", false
+		}
+		rest = rest[:idx]
+	}
+	idx := strings.LastIndexByte(rest, ':')
+	if idx <= 0 {
+		return "", "", false
+	}
+	scopeID := rest[:idx]
+	if scopeID == "" {
+		return "", "", false
+	}
+	return kind, scopeID, true
+}
+
+func boardWakeTerminal(q *Request, m agentQueued) (bool, error) {
+	if !strings.HasPrefix(m.RequestID, "board-wake:") {
+		return false, nil
+	}
+	return unscoped(q, func() (bool, error) {
+		terminal, err := q.db().BoardSessionParentTerminal(q.ctx(), m.SessionID)
+		if err != nil || terminal {
+			return terminal, err
+		}
+		if scopeKind, scopeID, ok := boardWakeScope(m.RequestID, m.SessionID); ok {
+			return q.db().BoardScopeIsTerminal(q.ctx(), db.BoardScopeIsTerminalParams{
+				ScopeKind: scopeKind,
+				ScopeID:   scopeID,
+			})
+		}
+		return false, nil
+	})
+}
+
 const boardWakeMaxRunes = 32000
 
 func boardWakeText(seq int64, authorMember string, kind contract.BoardMessageKind, text string) string {

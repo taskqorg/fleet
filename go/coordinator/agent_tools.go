@@ -745,7 +745,17 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 		}
 		a["projectId"], a["callerSessionId"], a["callerExecutionId"] = jsonBytes(p), jsonBytes(own), jsonBytes(executionID)
 		if pid, ok := a["profileId"]; ok {
-			if id, _ := jsonText(pid); !profileInRoles(projectSettingsOf(q, p), id) {
+			id, _ := jsonText(pid)
+			callerProfile := agentView[agentProfile](e.AgentConfig).ID
+			if callerProfile == "" && own != "" {
+				if s, err := sessionMaybe(q, own); err == nil && s != nil {
+					if cp, ok := s.profile(); ok {
+						callerProfile = cp.ID
+					}
+				}
+			}
+			allowSwarmWorker := callerProfile == "swarm-coordinator" && id == "swarm-worker"
+			if !allowSwarmWorker && !profileInRoles(projectSettingsOf(q, p), id) {
 				return nil, fail(403, "Profile not in project roles")
 			}
 		}

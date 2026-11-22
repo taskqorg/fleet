@@ -680,3 +680,186 @@ UPDATE execution SET state='succeeded', ended_at=now() WHERE id='run-v2';
 		t.Fatalf("expected 0 wake messages on terminal task session, got %v", n)
 	}
 }
+
+// Requirement: FLT-19 swarm-v3 (docs/designs/fleet-swarm.md): swarm-coordinator can spawn profileId "swarm-worker" even
+// when project settings.roles omits it, BoardPipelineRunPrimarySession resolves 2-hop pipeline_run -> pipeline_step ->
+// agent_run sessions for Lab GUI work_board_get("pipeline_run", ...), and terminal pipeline_run purges & skips
+// queued board-wake:% messages without starting post-run orphan executions.
+// Risk: swarm-coordinator hits 403 spawning swarm-worker, Lab trial SwarmPanel shows empty on 2-hop pipeline runs, or
+// queued board-wake messages drain into post-cancel/post-completion executions once an active step exits.
+func TestBoardV3TwoHopAndQueuedWakePurge(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	owner := e.ownerHeaders()
+
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+INSERT INTO definition(kind,id,path,head,project_id) VALUES
+ ('project','board-v3','config/projects/board-v3/project.json',1,'board-v3');
+INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message) VALUES
+ ('project','board-v3',1,'{"settings":{"id":"board-v3","name":"Board V3","contextFiles":[]},"contextFiles":[]}','bv3','editor','person','t');
+INSERT INTO host(id,host_id,project_id,state) VALUES ('h-v3','h-v3','board-v3','active');
+`)
+
+	def := doc{
+		"version": float64(2),
+		"id":      "swarm-plan-execute",
+		"steps": []any{
+			doc{"id": "coordinate", "kind": "agent", "profile": "swarm-coordinator", "prompt": "Solve"},
+		},
+	}
+	runDoc := doc{
+		"id":               "run-v3",
+		"pipelineId":       "swarm-plan-execute",
+		"projectId":        "board-v3",
+		"requestedBy":      doc{"email": testOwnerEmail},
+		"definition":       def,
+		"definitionSha256": sha256hex([]byte(canonical(def))),
+		"state":            "running",
+		"startedAt":        nowMs(),
+		"steps":            []any{doc{"id": "coordinate", "kind": "agent", "state": "running", "startedAt": nowMs()}},
+	}
+	if err := initPipelinePlan(runDoc); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.app.store.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		if err := putRun(q, runDoc); err != nil {
+			return err
+		}
+		return selectPipelineStep(q, runDoc, 0)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+INSERT INTO session(id,project_id,host_id,pipeline_run_id,created_by_session_id,created_by_execution_id,payload) VALUES
+ ('s-v3-coord','board-v3','h-v3','run-v3',NULL,NULL,'{"agentConfig":{"id":"swarm-coordinator","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('s-v3-w1','board-v3','h-v3',NULL,'s-v3-coord','e-v3-coord','{"agentConfig":{"id":"swarm-worker","harness":"codex","model":"gpt-6.2-sol"}}');
+INSERT INTO execution(id,kind,state,project_id,parent_execution_id,session_id,host_id,harness,model,started_at,data) VALUES
+ ('e-v3-coord','agent_run','running','board-v3','run-v3:step:0','s-v3-coord','h-v3','codex','gpt-6.2-sol',now(),'{"id":"e-v3-coord","parentExecutionId":"run-v3:step:0","pipelineRunId":"run-v3","sessionId":"s-v3-coord","agentConfig":{"id":"swarm-coordinator","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('e-v3-w1','agent_run','running','board-v3','e-v3-coord','s-v3-w1','h-v3','codex','gpt-6.2-sol',now(),'{"id":"e-v3-w1","parentExecutionId":"e-v3-coord","sessionId":"s-v3-w1","agentConfig":{"id":"swarm-worker","harness":"codex","model":"gpt-6.2-sol"}}');
+`)
+
+	// 1. swarm-coordinator can spawn swarm-worker even when project settings.roles omits it, while unmapped non-swarm profiles remain 403.
+	if err := e.app.store.Read(e.ctx, nil, func(q *Request) error {
+		q.agent = "execution:e-v3-coord"
+		if _, err := agentBoundArguments(q, "session_start", rawObject{"profileId": jsonBytes("swarm-worker"), "role": jsonBytes("worker"), "requestId": jsonBytes("req-sw")}, "e-v3-coord"); err != nil {
+			t.Fatalf("expected swarm-coordinator to allow profileId=swarm-worker, got %v", err)
+		}
+		if _, err := agentBoundArguments(q, "session_start", rawObject{"profileId": jsonBytes("claude-reviewer"), "requestId": jsonBytes("req-rev")}, "e-v3-coord"); err == nil {
+			t.Fatal("expected unmapped non-swarm-worker profileId to fail 403")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	call := func(op string, body any) (int, map[string]any) {
+		return e.callJSON(t, "POST", "/api/ops/"+op, body, owner)
+	}
+
+	// 2. 2-hop pipeline_run -> pipeline_step (session_id NULL) -> agent_run (session_id set) resolves via work_board_get("pipeline_run", runID).
+	c, wp := call("work_plan_set", doc{
+		"projectId": "board-v3",
+		"scopeKind": "session",
+		"scopeId":   "s-v3-coord",
+		"title":     "V3 2-hop Swarm",
+		"threads": []any{
+			doc{
+				"id":     "th-1",
+				"title":  "Execute",
+				"status": "active",
+				"tasks": []any{
+					doc{"id": "tk-1", "title": "Implement", "ownerMember": "worker-1", "role": "worker", "sessionId": "s-v3-w1", "executionId": "e-v3-w1", "status": "in_progress"},
+				},
+			},
+		},
+	})
+	if c != 200 {
+		t.Fatalf("work_plan_set = %d %v", c, wp)
+	}
+	c, p1 := call("board_post", doc{
+		"projectId":       "board-v3",
+		"scopeKind":       "session",
+		"scopeId":         "s-v3-coord",
+		"threadId":        "th-1",
+		"authorMember":    "coordinator",
+		"authorRole":      "coordinator",
+		"authorSessionId": "s-v3-coord",
+		"kind":            "brief",
+		"text":            "Start @worker-1",
+	})
+	if c != 200 || len(anys(p1["wakeTargets"])) != 1 || mapOf(anys(p1["wakeTargets"])[0])["woken"] != true {
+		t.Fatalf("board_post p1 = %d %v", c, p1)
+	}
+	c, p2 := call("board_post", doc{
+		"projectId":       "board-v3",
+		"scopeKind":       "session",
+		"scopeId":         "s-v3-coord",
+		"threadId":        "th-1",
+		"authorMember":    "worker-1",
+		"authorRole":      "worker",
+		"authorSessionId": "s-v3-w1",
+		"kind":            "progress",
+		"text":            "Update @coordinator",
+	})
+	if c != 200 || len(anys(p2["wakeTargets"])) != 1 || mapOf(anys(p2["wakeTargets"])[0])["woken"] != true {
+		t.Fatalf("board_post p2 = %d %v", c, p2)
+	}
+
+	c, wb := call("work_board_get", doc{
+		"scopeKind": "pipeline_run",
+		"scopeId":   "run-v3",
+	})
+	if c != 200 {
+		t.Fatalf("work_board_get pipeline_run 2-hop = %d %v", c, wb)
+	}
+	if astr(mapOf(wb["plan"])["title"]) != "V3 2-hop Swarm" || num(wb["headSeq"]) != 2 || len(anys(wb["messages"])) != 2 {
+		t.Fatalf("expected 2-hop pipeline_run fallback to s-v3-coord board, got %v", wb)
+	}
+
+	// Verify both board-wake queued messages are queued while sessions are busy.
+	if n := psqlLines(t, e, "SELECT count(*) FROM queued_message WHERE state='queued' AND request_id LIKE 'board-wake:%' AND session_id IN ('s-v3-coord','s-v3-w1')"); len(n) != 1 || n[0] != "2" {
+		t.Fatalf("expected 2 queued board-wake messages before cancel, got %v", n)
+	}
+
+	// 3. Terminating run-v3 via pipelineCancel purges queued board-wake:% messages on descendant sessions.
+	if _, err := pipelineCancel(t.Context(), e.app, "run-v3"); err != nil {
+		t.Fatalf("pipelineCancel = %v", err)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM queued_message WHERE state IN ('queued','steering') AND request_id LIKE 'board-wake:%' AND session_id IN ('s-v3-coord','s-v3-w1')"); len(n) != 1 || n[0] != "0" {
+		t.Fatalf("expected 0 pending board-wake messages after pipelineCancel, got %v", n)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM queued_message WHERE state='cancelled' AND request_id LIKE 'board-wake:%' AND session_id IN ('s-v3-coord','s-v3-w1')"); len(n) != 1 || n[0] != "2" {
+		t.Fatalf("expected 2 cancelled board-wake messages after pipelineCancel, got %v", n)
+	}
+
+	// 4. Dequeue-time guard in agentPromote: a late board-wake queued message on an idle descendant session of a terminal pipeline_run is cancelled and never starts a turn.
+	if err := e.app.store.Write(e.ctx, nil, []string{"session:s-v3-w1"}, func(q *Request) error {
+		return queuedMessagePut(q, &agentQueued{
+			ID:        "qm-late-v3",
+			SessionID: "s-v3-w1",
+			ProjectID: "board-v3",
+			RequestID: "board-wake:session:s-v3-coord:99:s-v3-w1",
+			Text:      "Late wake",
+			State:     "queued",
+			CreatedAt: nowMs(),
+			SentBy:    "Fleet",
+			Source:    "wake",
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+UPDATE execution SET state='succeeded', ended_at=now() WHERE id='e-v3-w1';
+`)
+	if err := e.app.store.Write(e.ctx, nil, []string{"session:s-v3-w1"}, func(q *Request) error {
+		return agentPromote(q)
+	}); err != nil {
+		t.Fatalf("agentPromote = %v", err)
+	}
+	if n := psqlLines(t, e, "SELECT state FROM queued_message WHERE id='qm-late-v3'"); len(n) != 1 || n[0] != "cancelled" {
+		t.Fatalf("expected late board-wake queued_message to be cancelled on agentPromote, got %v", n)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM execution WHERE session_id='s-v3-w1'"); len(n) != 1 || n[0] != "1" {
+		t.Fatalf("expected 0 orphan executions started on s-v3-w1 after agentPromote, got %v", n)
+	}
+}
