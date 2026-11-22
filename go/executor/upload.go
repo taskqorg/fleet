@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -48,6 +49,7 @@ type transferJob struct {
 	Filter      *transferFilter `json:"filter"`
 	Done        []donePart      `json:"done"`
 	Command     jsonValue       `json:"command"` // present (even null): the job sends the command's final receipt
+	Recoveries  int             `json:"recoveries"`
 }
 
 type transferSource struct {
@@ -171,20 +173,37 @@ func newTransferClient(url, token, host string, access *[2]string) *transferClie
 		store: streamClient(20*time.Second, 300*time.Second)}
 }
 
-// failure: retry true is retried with backoff; false is permanent.
+// failure: retry true is retried with backoff; false is permanent; recoverable true indicates a vanished staging
+// object (NoSuchKey) or vanished multipart upload session (NoSuchUpload / Upload not found) that an upload job can
+// recover from by clearing stale session state and re-reserving from the local file copy.
 type failure struct {
-	retry bool
-	msg   string
+	retry       bool
+	recoverable bool
+	msg         string
 }
 
 func (f *failure) Error() string             { return f.msg }
-func retryf(f string, a ...any) *failure     { return &failure{true, fmt.Sprintf(f, a...)} }
-func permanentf(f string, a ...any) *failure { return &failure{false, fmt.Sprintf(f, a...)} }
+func retryf(f string, a ...any) *failure     { return &failure{retry: true, msg: fmt.Sprintf(f, a...)} }
+func permanentf(f string, a ...any) *failure { return &failure{msg: fmt.Sprintf(f, a...)} }
 
-// ioFailure: a transfer step's error as a failure, by the one classifier (outcome).
+func isRecoverableUploadText(s string) bool {
+	l := strings.ToLower(s)
+	return strings.Contains(l, "nosuchkey") ||
+		strings.Contains(l, "nosuchupload") ||
+		strings.Contains(l, "upload not found") ||
+		strings.Contains(l, "no upload in progress")
+}
+
+// ioFailure: a transfer step's error as a failure, by the one classifier (outcome). Local filesystem path errors
+// (such as a missing or unreadable local file) are permanent because *os.PathError wraps syscall.Errno which satisfies
+// net.Error in Go's stdlib.
 func ioFailure(err error) *failure {
+	var pe *os.PathError
+	if errors.As(err, &pe) && !errors.Is(err, syscall.EINTR) && !errors.Is(err, syscall.EAGAIN) {
+		return permanentf("%s", err)
+	}
 	a := outcome(err)
-	return &failure{a.kind == answerRetry, a.text}
+	return &failure{retry: a.kind == answerRetry, msg: a.text}
 }
 
 func (c *transferClient) post(route string, body any) (json.RawMessage, *failure) {
@@ -196,13 +215,17 @@ func (c *transferClient) post(route string, body any) (json.RawMessage, *failure
 	case answerEdge:
 		return nil, retryf("coordinator edge answered %d (%s)", a.status, a.text)
 	case answerRetry:
+		if isRecoverableUploadText(a.text) {
+			return nil, &failure{recoverable: true, msg: a.text}
+		}
 		return nil, retryf("%s", a.text)
 	}
 	// 409 no_store: no listed store is reachable now: wait and retry.
 	if a.status == 409 && strings.Contains(a.text, "No reachable store") {
 		return nil, retryf("409 %s", a.text)
 	}
-	return nil, permanentf("%d %s", a.status, a.text)
+	msg := fmt.Sprintf("%d %s", a.status, a.text)
+	return nil, &failure{recoverable: isRecoverableUploadText(a.text), msg: msg}
 }
 
 // Decode coordinator-owned fields once; opaque MCP results are still forwarded as raw JSON.
@@ -261,7 +284,8 @@ func (c *transferClient) storeDo(method, url string, body []byte) (*http.Respons
 	r.Body.Close()
 	if statusClass(r.StatusCode, false) == classReject {
 		edgeOK(key)
-		return nil, permanentf("store %d %s", r.StatusCode, b)
+		msg := fmt.Sprintf("store %d %s", r.StatusCode, b)
+		return nil, &failure{recoverable: isRecoverableUploadText(msg), msg: msg}
 	}
 	return nil, retryf("store %d %s", r.StatusCode, b)
 }
@@ -306,6 +330,9 @@ func hashFile(path string) (string, int64, error) {
 // sendParts uploads the file parts to the reservation, commits, and, when the coordinator answers with a verify URL
 // (this host owns the store), re-hashes over loopback.
 func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID string, size, partSize uint64) (contract.ArtifactStateReply, *failure) {
+	if partSize == 0 {
+		partSize = 32 << 20
+	}
 	count := max((size+partSize-1)/partSize, 1)
 	var bodyText string
 	db.QueryRow("SELECT body FROM transfers WHERE id=?", jobID).Scan(&bodyText)
@@ -391,6 +418,37 @@ func verifyArtifact(c *transferClient, artifactID, storeID, url string) (contrac
 	return transferReply(c, contract.RouteArtifactsVerified, contract.ArtifactVerifiedRequest{HostId: c.host, ArtifactId: artifactID, StoreId: storeID, Sha256: digest})
 }
 
+const maxUploadRecoveries = 3
+
+func clearUploadState(db *sql.DB, id string, body *transferJob, recoveries int) {
+	body.ArtifactId = nil
+	body.StoreId = ""
+	body.Url = ""
+	body.PartSize = nil
+	body.Done = nil
+	body.Recoveries = recoveries
+	if db != nil {
+		db.Exec("UPDATE transfers SET body=json_set(json_remove(body,'$.artifactId','$.storeId','$.url','$.partSize','$.done'),'$.recoveries',?),attempts=0 WHERE id=?", recoveries, id)
+	}
+}
+
+// recoverUpload clears stale session state and re-hashes the local file copy for bounded recovery.
+func recoverUpload(db *sql.DB, id, path string, body *transferJob, digest *string, size *int64, f *failure) (*failure, bool) {
+	if !f.recoverable {
+		return f, false
+	}
+	if body.Recoveries >= maxUploadRecoveries {
+		return permanentf("upload recovery exhausted after %d attempts: %s", body.Recoveries, f.msg), false
+	}
+	clearUploadState(db, id, body, body.Recoveries+1)
+	d, sz, err := hashFile(path)
+	if err != nil {
+		return ioFailure(err), false
+	}
+	*digest, *size = d, sz
+	return nil, true
+}
+
 func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (any, *failure) {
 	switch kind {
 	case "upload":
@@ -400,33 +458,83 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 			return nil, ioFailure(err)
 		}
 		required := body.Required
-		req := contract.ArtifactReserveRequest{HostId: c.host, ExecutionId: body.ExecutionId, ArtifactId: optStr(id), Name: body.Name, MediaType: body.MediaType,
-			Size: int64(size), Sha256: digest, Required: &required, DerivedFrom: optStr(body.DerivedFrom), Role: optStr(body.Role)}
-		r, f := transferReply(c, contract.RouteArtifactsReserve, req)
-		if f != nil {
-			return nil, f
+		for {
+			if body.Url == "verifying" && body.ArtifactId != nil && *body.ArtifactId != "" {
+				renew, f := transferReply(c, contract.RouteArtifactsRenew, contract.ArtifactLeaseRequest{HostId: c.host, ArtifactId: *body.ArtifactId, StoreId: optStr(body.StoreId)})
+				if f != nil {
+					if outErr, ok := recoverUpload(db, id, path, &body, &digest, &size, f); ok {
+						continue
+					} else {
+						return nil, outErr
+					}
+				}
+				switch renew.State {
+				case "stored":
+					return M{"artifactId": *body.ArtifactId, "state": "stored"}, nil
+				case "pending", "verifying", "copying":
+					return nil, retryf("awaiting sha256 verification")
+				default:
+					if outErr, ok := recoverUpload(db, id, path, &body, &digest, &size, &failure{recoverable: true, msg: "artifact verification failed (" + renew.State + ")"}); ok {
+						continue
+					} else {
+						return nil, outErr
+					}
+				}
+			}
+			if body.ArtifactId == nil || *body.ArtifactId == "" {
+				req := contract.ArtifactReserveRequest{HostId: c.host, ExecutionId: body.ExecutionId, ArtifactId: optStr(id), Name: body.Name, MediaType: body.MediaType,
+					Size: int64(size), Sha256: digest, Required: &required, DerivedFrom: optStr(body.DerivedFrom), Role: optStr(body.Role)}
+				r, f := transferReply(c, contract.RouteArtifactsReserve, req)
+				if f != nil {
+					return nil, f
+				}
+				a := id
+				if r.ArtifactId != "" {
+					a = r.ArtifactId
+				}
+				partSize := uint64(32 << 20)
+				if r.PartSize != nil && *r.PartSize > 0 {
+					partSize = uint64(*r.PartSize)
+				}
+				storeID := str0(r.StoreId)
+				body.ArtifactId = &a
+				body.StoreId = storeID
+				body.PartSize = &partSize
+				if db != nil {
+					db.Exec("UPDATE transfers SET body=json_set(body,'$.artifactId',?,'$.storeId',?,'$.partSize',?),response=? WHERE id=?",
+						a, storeID, int64(partSize), enc(M{"artifactId": r.ArtifactId, "state": r.State}), id)
+					wake(db, id)
+				}
+				switch r.State {
+				case "stored":
+					return M{"artifactId": r.ArtifactId, "state": "stored"}, nil
+				case "failed":
+					return nil, permanentf("artifact failed")
+				}
+			}
+			a := str0(body.ArtifactId)
+			if a == "" {
+				a = id
+			}
+			partSize := orU64(body.PartSize, 32<<20)
+			out, f := sendParts(c, db, id, path, a, "", uint64(size), partSize)
+			if f != nil {
+				if outErr, ok := recoverUpload(db, id, path, &body, &digest, &size, f); ok {
+					continue
+				} else {
+					return nil, outErr
+				}
+			}
+			if out.State != "stored" {
+				// Keep local spool intact until SHA-256 verification succeeds on the remote store host.
+				body.Url = "verifying"
+				if db != nil {
+					db.Exec("UPDATE transfers SET body=json_set(body,'$.url','verifying') WHERE id=?", id)
+				}
+				return nil, retryf("awaiting sha256 verification")
+			}
+			return M{"artifactId": a, "state": out.State}, nil
 		}
-		db.Exec("UPDATE transfers SET response=? WHERE id=?", enc(M{"artifactId": r.ArtifactId, "state": r.State}), id)
-		wake(db, id)
-		switch r.State {
-		case "stored":
-			return M{"artifactId": r.ArtifactId, "state": "stored"}, nil
-		case "failed":
-			return nil, permanentf("artifact failed")
-		}
-		a := id
-		if r.ArtifactId != "" {
-			a = r.ArtifactId
-		}
-		partSize := uint64(32 << 20)
-		if r.PartSize != nil && *r.PartSize >= 0 {
-			partSize = uint64(*r.PartSize)
-		}
-		out, f := sendParts(c, db, id, path, a, "", uint64(size), partSize)
-		if f != nil {
-			return nil, f
-		}
-		return M{"artifactId": r.ArtifactId, "state": out.State}, nil
 	case "verify":
 		return verifyArtifact(c, str0(body.ArtifactId), body.StoreId, body.Url)
 	case "copy":
@@ -454,7 +562,9 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 			return nil, ioFailure(err)
 		}
 		out, f := sendParts(c, db, id, tmp, str0(body.ArtifactId), body.StoreId, uint64(st.Size()), orU64(body.PartSize, 32<<20))
-		os.Remove(tmp)
+		if f == nil || !f.retry {
+			os.Remove(tmp)
+		}
 		return out, f
 	case "get":
 		r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(body.ExecutionId), ArtifactId: str0(body.ArtifactId)})
@@ -606,7 +716,12 @@ func transferWork(db *sql.DB, c *transferClient, lane string, after afterJob) {
 		}
 		body := readJob(bodyText)
 		v, f := runJob(c, db, id, kind, body)
-		db.QueryRow("SELECT attempts FROM transfers WHERE id=?", id).Scan(&attempts) // a run that journaled parts reset it
+		var freshBody string
+		if db.QueryRow("SELECT body,attempts FROM transfers WHERE id=?", id).Scan(&freshBody, &attempts) == nil {
+			body = readJob(freshBody)
+		} else {
+			db.QueryRow("SELECT attempts FROM transfers WHERE id=?", id).Scan(&attempts) // a run that journaled parts reset it
+		}
 		// The terminal state and its outbound notices commit together. In this process a failed commit is retried as a
 		// commit, not by running the job again (a crash before the commit leaves the row running, and the job runs again
 		// after restart: transfers resume by their journal row). The cleanup callback runs only after the commit; a crash
@@ -664,7 +779,11 @@ func settleJob(x execer, host, id, kind string, body transferJob, attempts int64
 			}
 		}
 		if kind == "upload" {
-			return queueTo(x, contract.RouteArtifactsFailed, contract.ArtifactFailedRequest{HostId: host, ArtifactId: id, Error: f.msg})
+			aid := id
+			if body.ArtifactId != nil && *body.ArtifactId != "" {
+				aid = *body.ArtifactId
+			}
+			return queueTo(x, contract.RouteArtifactsFailed, contract.ArtifactFailedRequest{HostId: host, ArtifactId: aid, Error: f.msg})
 		}
 	}
 	return nil

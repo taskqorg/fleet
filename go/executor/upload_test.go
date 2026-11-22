@@ -1,11 +1,16 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -81,4 +86,350 @@ func TestTypedReserveMismatchRetainsTransfer(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal("accepted output bytes removed")
 	}
+}
+
+// Requirement: FLT-6 artifact upload recovery from NoSuchKey staging verification failure and vanished multipart
+// upload session (NoSuchUpload / Upload not found) using the local file copy.
+// Risk: transient missing staging object or vanished multipart upload fails an optional/required upload permanently or
+// retries infinitely with stale ArtifactId/Url/Done parts, blocking fleet-update.
+func TestUploadRecoversFromNoSuchKeyAndVanishedUpload(t *testing.T) {
+	payload := []byte(`{"status":"ok","value":42}`)
+	wantHash := fmt.Sprintf("%x", sha256.Sum256(payload))
+
+	t.Run("NoSuchKey_on_verify_recovers_from_local_copy", func(t *testing.T) {
+		e, _ := scriptExecutor(t)
+		db := e.db
+		path := filepath.Join(t.TempDir(), "code_mode_result.json")
+		if err := os.WriteFile(path, payload, 0600); err != nil {
+			t.Fatal(err)
+		}
+		body := M{"path": path, "spool": true, "name": "code_mode_result.json", "mediaType": "application/json", "executionId": "ex-1"}
+		if err := enqueue(db, "job-nosuchkey", "upload", body); err != nil {
+			t.Fatal(err)
+		}
+
+		var reserves atomic.Int32
+		var verifiedCalls atomic.Int32
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/hosts/artifacts/reserve":
+				n := reserves.Add(1)
+				if n > 1 {
+					// Stale ArtifactId/Url/Done must be cleared before re-reserving.
+					var rawBody string
+					if err := db.QueryRow("SELECT body FROM transfers WHERE id='job-nosuchkey'").Scan(&rawBody); err != nil {
+						t.Fatal(err)
+					}
+					j := readJob(rawBody)
+					if j.ArtifactId != nil || j.Url != "" || len(j.Done) != 0 {
+						t.Fatalf("stale transfer fields not cleared before re-reserve: %s", rawBody)
+					}
+					if _, err := os.Stat(path); err != nil {
+						t.Fatalf("local file copy missing during recovery: %v", err)
+					}
+				}
+				fmt.Fprintf(w, `{"artifactId":"art-%d","state":"pending","storeId":"s1","partSize":33554432}`, n)
+			case "/api/hosts/artifacts/parts":
+				var req struct {
+					ArtifactId string `json:"artifactId"`
+				}
+				json.NewDecoder(r.Body).Decode(&req)
+				fmt.Fprintf(w, `{"storeId":"s1","parts":[{"partNumber":1,"url":"%s/s3/part/%s"}]}`, server.URL, req.ArtifactId)
+			case "/s3/part/art-1", "/s3/part/art-2":
+				io.Copy(io.Discard, r.Body)
+				w.Header().Set("ETag", `"etag-1"`)
+				w.WriteHeader(http.StatusOK)
+			case "/api/hosts/artifacts/commit":
+				var req struct {
+					ArtifactId string `json:"artifactId"`
+				}
+				json.NewDecoder(r.Body).Decode(&req)
+				fmt.Fprintf(w, `{"state":"verifying","verify":{"artifactId":%q,"storeId":"s1","url":"%s/s3/verify/%s"}}`, req.ArtifactId, server.URL, req.ArtifactId)
+			case "/s3/verify/art-1":
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>`)
+			case "/s3/verify/art-2":
+				w.WriteHeader(http.StatusOK)
+				w.Write(payload)
+			case "/api/hosts/artifacts/verified":
+				var req struct {
+					ArtifactId string `json:"artifactId"`
+					Sha256     string `json:"sha256"`
+				}
+				json.NewDecoder(r.Body).Decode(&req)
+				if req.ArtifactId != "art-2" || req.Sha256 != wantHash {
+					t.Fatalf("unexpected verified payload: %+v", req)
+				}
+				verifiedCalls.Add(1)
+				fmt.Fprint(w, `{"state":"stored"}`)
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+		defer server.Close()
+
+		var bodyText string
+		if err := db.QueryRow("SELECT body FROM transfers WHERE id='job-nosuchkey'").Scan(&bodyText); err != nil {
+			t.Fatal(err)
+		}
+		v, f := runJob(newTransferClient(server.URL, "tok", "h1", nil), db, "job-nosuchkey", "upload", readJob(bodyText))
+		if f != nil {
+			t.Fatalf("expected recovery to succeed, got failure: %+v", f)
+		}
+		var freshBody string
+		db.QueryRow("SELECT body FROM transfers WHERE id='job-nosuchkey'").Scan(&freshBody)
+		if err := (dbExec{db}).tx(func(x execer) error {
+			return settleJob(x, "h1", "job-nosuchkey", "upload", readJob(freshBody), 0, v, f)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if reserves.Load() != 2 || verifiedCalls.Load() != 1 {
+			t.Fatalf("expected 2 reserves and 1 verified call, got reserves=%d verified=%d", reserves.Load(), verifiedCalls.Load())
+		}
+		var state string
+		db.QueryRow("SELECT state FROM transfers WHERE id='job-nosuchkey'").Scan(&state)
+		if state != "done" || count(db, "outbox") != 0 {
+			t.Fatalf("unexpected transfer state=%s outbox=%d", state, count(db, "outbox"))
+		}
+	})
+
+	t.Run("Upload_not_found_and_NoSuchUpload_recover_from_local_copy", func(t *testing.T) {
+		e, _ := scriptExecutor(t)
+		db := e.db
+		path := filepath.Join(t.TempDir(), "result.json")
+		if err := os.WriteFile(path, payload, 0600); err != nil {
+			t.Fatal(err)
+		}
+		body := M{"path": path, "spool": true, "name": "result.json", "mediaType": "application/json", "executionId": "ex-2"}
+		if err := enqueue(db, "job-nosuchupload", "upload", body); err != nil {
+			t.Fatal(err)
+		}
+
+		var reserves atomic.Int32
+		var verifiedCalls atomic.Int32
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/hosts/artifacts/reserve":
+				n := reserves.Add(1)
+				if n > 1 {
+					var rawBody string
+					if err := db.QueryRow("SELECT body FROM transfers WHERE id='job-nosuchupload'").Scan(&rawBody); err != nil {
+						t.Fatal(err)
+					}
+					j := readJob(rawBody)
+					if j.ArtifactId != nil || j.Url != "" || len(j.Done) != 0 {
+						t.Fatalf("stale transfer fields not cleared before re-reserve on attempt %d: %s", n, rawBody)
+					}
+				}
+				fmt.Fprintf(w, `{"artifactId":"u-%d","state":"pending","storeId":"s1","partSize":33554432}`, n)
+			case "/api/hosts/artifacts/parts":
+				var req struct {
+					ArtifactId string `json:"artifactId"`
+				}
+				json.NewDecoder(r.Body).Decode(&req)
+				fmt.Fprintf(w, `{"storeId":"s1","parts":[{"partNumber":1,"url":"%s/s3/part/%s"}]}`, server.URL, req.ArtifactId)
+			case "/s3/part/u-1":
+				io.Copy(io.Discard, r.Body)
+				w.Header().Set("ETag", `"e1"`)
+				w.WriteHeader(http.StatusOK)
+			case "/s3/part/u-2":
+				io.Copy(io.Discard, r.Body)
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `<Error><Code>NoSuchUpload</Code><Message>Upload not found</Message></Error>`)
+			case "/s3/part/u-3":
+				io.Copy(io.Discard, r.Body)
+				w.Header().Set("ETag", `"e3"`)
+				w.WriteHeader(http.StatusOK)
+			case "/api/hosts/artifacts/commit":
+				var req struct {
+					ArtifactId string `json:"artifactId"`
+				}
+				json.NewDecoder(r.Body).Decode(&req)
+				if req.ArtifactId == "u-1" {
+					// Simulate coordinator returning 500 Upload not found on vanished multipart session.
+					w.WriteHeader(http.StatusInternalServerError)
+					fmt.Fprint(w, `{"message":"Upload not found"}`)
+					return
+				}
+				fmt.Fprintf(w, `{"state":"verifying","verify":{"artifactId":%q,"storeId":"s1","url":"%s/s3/verify/%s"}}`, req.ArtifactId, server.URL, req.ArtifactId)
+			case "/s3/verify/u-3":
+				w.WriteHeader(http.StatusOK)
+				w.Write(payload)
+			case "/api/hosts/artifacts/verified":
+				var req struct {
+					ArtifactId string `json:"artifactId"`
+					Sha256     string `json:"sha256"`
+				}
+				json.NewDecoder(r.Body).Decode(&req)
+				if req.ArtifactId != "u-3" || req.Sha256 != wantHash {
+					t.Fatalf("unexpected verified payload: %+v", req)
+				}
+				verifiedCalls.Add(1)
+				fmt.Fprint(w, `{"state":"stored"}`)
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+		defer server.Close()
+
+		var bodyText string
+		db.QueryRow("SELECT body FROM transfers WHERE id='job-nosuchupload'").Scan(&bodyText)
+		v, f := runJob(newTransferClient(server.URL, "tok", "h1", nil), db, "job-nosuchupload", "upload", readJob(bodyText))
+		if f != nil {
+			t.Fatalf("expected recovery to succeed, got failure: %+v", f)
+		}
+		var freshBody string
+		db.QueryRow("SELECT body FROM transfers WHERE id='job-nosuchupload'").Scan(&freshBody)
+		if err := (dbExec{db}).tx(func(x execer) error {
+			return settleJob(x, "h1", "job-nosuchupload", "upload", readJob(freshBody), 0, v, f)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if reserves.Load() != 3 || verifiedCalls.Load() != 1 {
+			t.Fatalf("expected 3 reserves and 1 verified call, got reserves=%d verified=%d", reserves.Load(), verifiedCalls.Load())
+		}
+		var state string
+		db.QueryRow("SELECT state FROM transfers WHERE id='job-nosuchupload'").Scan(&state)
+		if state != "done" || count(db, "outbox") != 0 {
+			t.Fatalf("unexpected transfer state=%s outbox=%d", state, count(db, "outbox"))
+		}
+	})
+}
+
+// Requirement: FLT-6 unrecoverable upload failures (missing local file or exhausted recovery) record the exact
+// terminal cause and terminate the transfers job so the host update queue (fleet-update) is released.
+// Risk: failed or unrecoverable uploads remain queued/running in transfers and deadlock update drain indefinitely.
+func TestUploadTerminalFailureReleasesUpdateQueue(t *testing.T) {
+	t.Run("missing_local_file_terminates_and_releases_update_queue", func(t *testing.T) {
+		e, _ := scriptExecutor(t)
+		lastSignal = nil
+		t.Cleanup(func() {
+			lastSignal = nil
+			if e.activity != nil {
+				e.activity.Close()
+				e.activity = nil
+			}
+		})
+		target := "1.261113.20"
+		lastSignal = &updateSignal{Target: &target, Running: "1.261113.19", AutoUpdate: "on"}
+
+		missing := filepath.Join(t.TempDir(), "missing.json")
+		body := M{"path": missing, "spool": true, "name": "result.json", "mediaType": "application/json", "executionId": "ex-missing"}
+		if err := enqueue(e.db, "job-missing", "upload", body); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.drainUpdate(); err != nil {
+			t.Fatal(err)
+		}
+		if e.updateReady.Load() != nil {
+			t.Fatal("pending transfer must block update drain before failure settles")
+		}
+
+		v, f := runJob(newTransferClient("http://127.0.0.1:0", "tok", "h1", nil), e.db, "job-missing", "upload", readJob(enc(body)))
+		if f == nil || f.retry {
+			t.Fatalf("expected terminal non-retryable failure for missing file, got: %+v", f)
+		}
+		if err := (dbExec{e.db}).tx(func(x execer) error {
+			return settleJob(x, "h1", "job-missing", "upload", readJob(enc(body)), 0, v, f)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var state, resp string
+		if err := e.db.QueryRow("SELECT state,response FROM transfers WHERE id='job-missing'").Scan(&state, &resp); err != nil {
+			t.Fatal(err)
+		}
+		if state != "failed" || !strings.Contains(resp, "no such file") && !strings.Contains(resp, "cannot find") {
+			t.Fatalf("unexpected state=%s resp=%s", state, resp)
+		}
+		var route, outBody string
+		if err := e.db.QueryRow("SELECT route,body FROM outbox LIMIT 1").Scan(&route, &outBody); err != nil {
+			t.Fatal(err)
+		}
+		if route != "/api/hosts/artifacts/failed" || !strings.Contains(outBody, f.msg) {
+			t.Fatalf("unexpected outbox route=%s body=%s", route, outBody)
+		}
+		if _, err := e.db.Exec("DELETE FROM outbox"); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.drainUpdate(); err != nil {
+			t.Fatal(err)
+		}
+		if p := e.updateReady.Load(); p == nil || *p != target {
+			t.Fatalf("update queue stayed blocked after terminal transfer failure: %v", p)
+		}
+	})
+
+	t.Run("exhausted_recovery_terminates_and_releases_update_queue", func(t *testing.T) {
+		e, _ := scriptExecutor(t)
+		lastSignal = nil
+		t.Cleanup(func() {
+			lastSignal = nil
+			if e.activity != nil {
+				e.activity.Close()
+				e.activity = nil
+			}
+		})
+		target := "1.261113.20"
+		lastSignal = &updateSignal{Target: &target, Running: "1.261113.19", AutoUpdate: "on"}
+
+		path := filepath.Join(t.TempDir(), "result.json")
+		if err := os.WriteFile(path, []byte(`{"ok":true}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		body := M{"path": path, "spool": true, "name": "result.json", "mediaType": "application/json", "executionId": "ex-exhausted"}
+		if err := enqueue(e.db, "job-exhausted", "upload", body); err != nil {
+			t.Fatal(err)
+		}
+
+		var reserves atomic.Int32
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/hosts/artifacts/reserve":
+				n := reserves.Add(1)
+				fmt.Fprintf(w, `{"artifactId":"art-%d","state":"pending","storeId":"s1","partSize":33554432}`, n)
+			case "/api/hosts/artifacts/parts":
+				fmt.Fprintf(w, `{"storeId":"s1","parts":[{"partNumber":1,"url":"%s/s3/missing"}]}`, server.URL)
+			case "/s3/missing":
+				io.Copy(io.Discard, r.Body)
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `<Error><Code>NoSuchUpload</Code><Message>Upload not found</Message></Error>`)
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+		defer server.Close()
+
+		v, f := runJob(newTransferClient(server.URL, "tok", "h1", nil), e.db, "job-exhausted", "upload", readJob(enc(body)))
+		if f == nil || f.retry {
+			t.Fatalf("expected terminal failure after bounded recovery, got: %+v", f)
+		}
+		if !strings.Contains(f.msg, "Upload not found") {
+			t.Fatalf("terminal cause lost exact error: %s", f.msg)
+		}
+		if reserves.Load() != maxUploadRecoveries+1 {
+			t.Fatalf("expected %d bounded reserve attempts, got %d", maxUploadRecoveries+1, reserves.Load())
+		}
+		var freshBody string
+		e.db.QueryRow("SELECT body FROM transfers WHERE id='job-exhausted'").Scan(&freshBody)
+		if err := (dbExec{e.db}).tx(func(x execer) error {
+			return settleJob(x, "h1", "job-exhausted", "upload", readJob(freshBody), 0, v, f)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("local file copy prematurely removed: %v", err)
+		}
+		if _, err := e.db.Exec("DELETE FROM outbox"); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.drainUpdate(); err != nil {
+			t.Fatal(err)
+		}
+		if p := e.updateReady.Load(); p == nil || *p != target {
+			t.Fatalf("update queue stayed blocked after exhausted upload recovery: %v", p)
+		}
+	})
 }
