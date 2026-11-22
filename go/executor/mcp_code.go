@@ -156,6 +156,93 @@ func codeHostNames(spec codeSpec) []string {
 	return names
 }
 
+const (
+	codeSignatureMaxParams        = 6
+	codeSignatureCompactThreshold = 16
+)
+
+// codeToolSignature formats one tool spec as `name({req1, opt1?, ...})` with required parameters sorted first,
+// optional parameters sorted with `?`, and optional parameters capped at maxParams total (or required-only when 0).
+func codeToolSignature(toolSpec any, maxParams int) string {
+	t := typed[struct {
+		Name        string `json:"name"`
+		InputSchema struct {
+			Properties map[string]jsonValue `json:"properties"`
+			Required   []string             `json:"required"`
+		} `json:"inputSchema"`
+	}](toolSpec)
+	if t.Name == "" {
+		return ""
+	}
+	reqSet := map[string]bool{}
+	var req []string
+	for _, r := range t.InputSchema.Required {
+		if r != "" && !reqSet[r] {
+			reqSet[r] = true
+			req = append(req, r)
+		}
+	}
+	slices.Sort(req)
+	var opt []string
+	for k := range t.InputSchema.Properties {
+		if !reqSet[k] {
+			opt = append(opt, k)
+		}
+	}
+	slices.Sort(opt)
+	params := make([]string, 0, len(req)+len(opt))
+	params = append(params, req...)
+	for _, k := range opt {
+		params = append(params, k+"?")
+	}
+	limit := max(len(req), maxParams)
+	if len(params) > limit {
+		params = append(params[:limit], "...")
+	}
+	return t.Name + "({" + strings.Join(params, ", ") + "})"
+}
+
+// codeToolSignatures renders compact one-line signature lists for each granted connection and (when present) Fleet tools.
+func codeToolSignatures(spec codeSpec) string {
+	var b strings.Builder
+	for _, raw := range spec.Connections {
+		c := codeConnOf(raw.V)
+		if c.name == "" || len(c.tools) == 0 {
+			continue
+		}
+		maxParams := codeSignatureMaxParams
+		if len(c.tools) > codeSignatureCompactThreshold {
+			maxParams = 0
+		}
+		var sigs []string
+		for _, t := range c.tools {
+			if sig := codeToolSignature(t.spec, maxParams); sig != "" {
+				sigs = append(sigs, sig)
+			}
+		}
+		if len(sigs) > 0 {
+			fmt.Fprintf(&b, "- conn[%q]: %s\n", c.name, strings.Join(sigs, ", "))
+		}
+	}
+	if spec.Journal != "" {
+		tools, _ := mcpTools(spec.Context.V)["tools"].([]any)
+		maxParams := codeSignatureMaxParams
+		if len(tools) > codeSignatureCompactThreshold {
+			maxParams = 0
+		}
+		var sigs []string
+		for _, t := range tools {
+			if sig := codeToolSignature(t, maxParams); sig != "" {
+				sigs = append(sigs, sig)
+			}
+		}
+		if len(sigs) > 0 {
+			fmt.Fprintf(&b, "- fleet: %s\n", strings.Join(sigs, ", "))
+		}
+	}
+	return b.String()
+}
+
 // codeDescription is the code tool's description for this execution: Claude Code's REPL rules, the functions it has, and
 // an example built from them.
 func codeDescription(spec codeSpec) string {
@@ -190,8 +277,11 @@ func codeDescription(spec codeSpec) string {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("- fleet.<tool>(args) calls a Fleet tool; conn[\"<name>\"].<tool>(args) a granted connection. fleet.$tools() and conn[\"<name>\"].$tools() return names and input schemas: use them only to look up what you do not know.\n" +
-		"- A failed call throws FleetCallError {tool, outcome, code, output}; outcome unknown means it may have happened: inspect, never repeat.\n" +
+	b.WriteString("- fleet.<tool>(args) calls a Fleet tool; conn[\"<name>\"].<tool>(args) a granted connection. Call the listed tools directly on your first code turn; use fleet.$tools() or conn[\"<name>\"].$tools() only when you need detailed nested schemas or descriptions.\n")
+	if sigs := codeToolSignatures(spec); sigs != "" {
+		b.WriteString(sigs)
+	}
+	b.WriteString("- A failed call throws FleetCallError {tool, outcome, code, output}; outcome unknown means it may have happened: inspect, never repeat.\n" +
 		"- `state` keeps values between calls; let/const/var do not. print() and console.log add to the output.\n" +
 		"- Still running after detachAfterSeconds (default 25): replies with a jobId for poll.\n\nExample (invented names):\n")
 	var lines, fields []string
