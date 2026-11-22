@@ -887,3 +887,68 @@ func TestCodeModeShellHost(t *testing.T) {
 		t.Fatalf("control: %v, accepted %d", r, accepted.Load())
 	}
 }
+
+// Risk: codeMode:only agents waste a first-turn $tools() discovery round-trip when tool signatures are absent from the
+// code tool description, or bloat prompt tokens when large schemas are not capped (FLT-5).
+func TestCodeDescriptionToolSignatures(t *testing.T) {
+	conn := M{
+		"name": "tracker",
+		"tools": []any{
+			M{
+				"name": "search",
+				"inputSchema": M{
+					"type": "object",
+					"properties": M{
+						"query":  M{"type": "string"},
+						"org":    M{"type": "string"},
+						"limit":  M{"type": "integer"},
+						"cursor": M{"type": "string"},
+					},
+					"required": []any{"query", "org"},
+				},
+			},
+			M{
+				"name": "ping",
+				"inputSchema": M{
+					"type":       "object",
+					"properties": M{},
+				},
+			},
+			M{
+				"name": "many",
+				"inputSchema": M{
+					"type": "object",
+					"properties": M{
+						"id": M{"type": "string"},
+						"a":  M{"type": "string"},
+						"b":  M{"type": "string"},
+						"c":  M{"type": "string"},
+						"d":  M{"type": "string"},
+						"e":  M{"type": "string"},
+						"f":  M{"type": "string"},
+						"g":  M{"type": "string"},
+					},
+					"required": []any{"id"},
+				},
+			},
+		},
+	}
+	d := codeDescription(codeSpec{
+		Connections: []jsonValue{{V: conn}},
+		Journal:     "/journal",
+	})
+	wantConn := `- conn["tracker"]: search({org, query, cursor?, limit?}), ping({}), many({id, a?, b?, c?, d?, e?, ...})`
+	if !strings.Contains(d, wantConn) {
+		t.Fatalf("missing compact connection signatures:\nwant: %s\ngot:\n%s", wantConn, d)
+	}
+	if !strings.Contains(d, "\n- fleet: ") {
+		t.Fatalf("missing fleet tool signatures:\n%s", d)
+	}
+	if !strings.Contains(d, "Call the listed tools directly on your first code turn") {
+		t.Fatalf("missing direct-call guidance:\n%s", d)
+	}
+	noFleet := codeDescription(codeSpec{Connections: []jsonValue{{V: conn}}})
+	if strings.Contains(noFleet, "\n- fleet: ") {
+		t.Fatalf("unexpected fleet line without journal:\n%s", noFleet)
+	}
+}
