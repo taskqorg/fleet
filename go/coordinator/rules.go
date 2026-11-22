@@ -107,17 +107,31 @@ func rulesPass(ctx context.Context, a *App) error {
 		ps = append(ps, p)
 		execs = append(execs, f.ExecutionId)
 	}
-	if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
-		for i := range ps {
-			if execs[i] != nil && ps[i].ProjectID != "" {
-				// A project cause goes to the project's director: the execution's directedBy.
-				by, err := q.db().RulesExecutionDirector(q.ctx(), *execs[i])
-				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-					return err
-				}
-				ps[i].AddressedTo = deref(by)
-			}
+	needDirector := false
+	for i := range ps {
+		if execs[i] != nil && ps[i].ProjectID != "" {
+			needDirector = true
+			break
 		}
+	}
+	if needDirector {
+		if err := a.store.Read(ctx, nil, func(q *Request) error {
+			for i := range ps {
+				if execs[i] != nil && ps[i].ProjectID != "" {
+					// A project cause goes to the project's director: the execution's directedBy.
+					by, err := q.db().RulesExecutionDirector(q.ctx(), *execs[i])
+					if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+						return err
+					}
+					ps[i].AddressedTo = deref(by)
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	if err := a.store.Write(ctx, nil, []string{"problems:rules"}, func(q *Request) error {
 		return problemsSync(q, "rules", ps)
 	}); err != nil {
 		return err
