@@ -119,6 +119,25 @@ CREATE TABLE audit_log (
   "payload" jsonb NOT NULL,
   "seq" bigint NOT NULL
 );
+CREATE TABLE board_message (
+  "id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "scope_kind" text NOT NULL,
+  "scope_id" text NOT NULL,
+  "seq" bigint NOT NULL,
+  "thread_id" text NOT NULL,
+  "author_member" text NOT NULL,
+  "author_role" text NOT NULL,
+  "author_session_id" text,
+  "author_execution_id" text,
+  "kind" text NOT NULL,
+  "mentions" text[] NOT NULL,
+  "text" text NOT NULL,
+  "artifact_id" text,
+  "payload" jsonb NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
 CREATE TABLE budget (
   "id" text NOT NULL,
   "scope" text NOT NULL,
@@ -1118,6 +1137,20 @@ CREATE TABLE watch (
   "project_id" text,
   "payload" jsonb NOT NULL,
   "seq" bigint NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE work_plan (
+  "id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "scope_kind" text NOT NULL,
+  "scope_id" text NOT NULL,
+  "version" integer NOT NULL,
+  "title" text NOT NULL,
+  "goal" text NOT NULL,
+  "strategy" text NOT NULL,
+  "payload" jsonb NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );

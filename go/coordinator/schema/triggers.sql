@@ -22,6 +22,9 @@ CREATE OR REPLACE TRIGGER artifact_copy_touch BEFORE UPDATE ON artifact_copy FOR
 -- audit_log
 CREATE OR REPLACE TRIGGER audit_log_change AFTER INSERT OR DELETE OR UPDATE ON audit_log FOR EACH ROW EXECUTE FUNCTION fleet_change();
 
+-- board_message
+CREATE OR REPLACE TRIGGER board_message_change AFTER INSERT OR DELETE OR UPDATE ON board_message FOR EACH ROW EXECUTE FUNCTION fleet_change();
+
 -- command
 CREATE OR REPLACE TRIGGER command_change AFTER INSERT OR DELETE OR UPDATE ON command FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER command_tombstone BEFORE INSERT ON command FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
@@ -161,6 +164,10 @@ CREATE OR REPLACE TRIGGER upload_tombstone BEFORE INSERT ON upload FOR EACH ROW 
 
 -- watch
 CREATE OR REPLACE TRIGGER watch_tombstone BEFORE INSERT ON watch FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+
+-- work_plan
+CREATE OR REPLACE TRIGGER work_plan_change AFTER INSERT OR DELETE OR UPDATE ON work_plan FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE OR REPLACE TRIGGER work_plan_touch BEFORE UPDATE ON work_plan FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
 -- worker_done
 CREATE OR REPLACE TRIGGER worker_done_tombstone BEFORE INSERT ON worker_done FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');

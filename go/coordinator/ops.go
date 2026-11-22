@@ -88,6 +88,18 @@ var opLocks = map[string]func(b json.RawMessage) string{
 		}
 		return ""
 	},
+	"work_plan_set": func(b json.RawMessage) string {
+		if k, id := jsonPathString(b, "scopeKind"), jsonPathString(b, "scopeId"); k != "" && id != "" {
+			return "board:" + k + ":" + id
+		}
+		return ""
+	},
+	"board_post": func(b json.RawMessage) string {
+		if k, id := jsonPathString(b, "scopeKind"), jsonPathString(b, "scopeId"); k != "" && id != "" {
+			return "board:" + k + ":" + id
+		}
+		return ""
+	},
 }
 
 // opGates: a check of an operation that runs after its auth and before its body is decoded (prepared reads off: 503).

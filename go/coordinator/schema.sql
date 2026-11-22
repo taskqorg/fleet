@@ -4537,3 +4537,44 @@ ON CONFLICT (execution_id) DO NOTHING;
 
 -- migration 88: partial B-tree index on pipelineRunId for fast downward lab trial lineage.
 CREATE INDEX IF NOT EXISTS execution_pipeline_run_id ON execution ((data->>'pipelineRunId')) WHERE data ? 'pipelineRunId';
+
+-- migration 89: durable Swarm work_plan and board_message tables (FLT-19 Slice 1).
+CREATE TABLE work_plan (
+ id text PRIMARY KEY,
+ project_id text NOT NULL,
+ scope_kind text NOT NULL CHECK (scope_kind IN ('task', 'pipeline_run', 'session')),
+ scope_id text NOT NULL,
+ version integer NOT NULL DEFAULT 1 CHECK (version >= 1),
+ title text NOT NULL,
+ goal text NOT NULL DEFAULT '',
+ strategy text NOT NULL DEFAULT '',
+ payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL,
+ UNIQUE (scope_kind, scope_id)
+);
+CREATE INDEX work_plan_project ON work_plan(project_id, updated_at DESC);
+
+CREATE TABLE board_message (
+ id text PRIMARY KEY,
+ project_id text NOT NULL,
+ scope_kind text NOT NULL CHECK (scope_kind IN ('task', 'pipeline_run', 'session')),
+ scope_id text NOT NULL,
+ seq bigint NOT NULL CHECK (seq >= 1),
+ thread_id text NOT NULL DEFAULT '',
+ author_member text NOT NULL,
+ author_role text NOT NULL DEFAULT 'worker',
+ author_session_id text NULL REFERENCES session(id) ON DELETE SET NULL,
+ author_execution_id text NULL REFERENCES execution(id) ON DELETE SET NULL,
+ kind text NOT NULL CHECK (kind IN ('brief', 'message', 'progress', 'blocker', 'done', 'screenshot')),
+ mentions text[] NOT NULL DEFAULT '{}'::text[],
+ text text NOT NULL,
+ artifact_id text NULL REFERENCES artifact(id) ON DELETE SET NULL,
+ payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL,
+ UNIQUE (scope_kind, scope_id, seq)
+);
+CREATE INDEX board_message_scope_seq ON board_message(scope_kind, scope_id, seq);
+CREATE INDEX board_message_project ON board_message(project_id, created_at DESC);
