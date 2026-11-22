@@ -17,6 +17,7 @@ import (
 )
 
 // expLaunch: draft to running, refused without a goal and a hypothesis; the record is frozen from here on.
+// Transitions to paused/stopped immediately if the stored requester is invalid, otherwise enqueues lab_work.
 func expLaunch(q *Request, id string) error {
 	e, err := q.db().LabExperiment(q.ctx(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -28,7 +29,13 @@ func expLaunch(q *Request, id string) error {
 	if strings.TrimSpace(deref(e.Goal)) == "" || strings.TrimSpace(deref(e.Hypothesis)) == "" {
 		return fail(400, "Launch needs the experiment's goal and hypothesis")
 	}
-	return expSetState(q, id, []string{"draft"}, "running", nil) // the experiment_record trigger stamps launched_at
+	if err := expSetState(q, id, []string{"draft"}, "running", nil); err != nil { // the experiment_record trigger stamps launched_at
+		return err
+	}
+	if ok, err := labVerifyRequester(q, id); err != nil || !ok {
+		return err
+	}
+	return labEnqueue(q, id)
 }
 
 // labRun: a Lab run (a trial, a judge run or a loop strategy run) as the Lab reads it, decoded once from its record
@@ -546,16 +553,7 @@ func labRecord(q *Request, id string, checked map[string]*labCheckRun) error {
 		_, err := expEvaluate(q, exp, trials, runs, cur, &launched, checked)
 		return err
 	}
-	if _, err := labRequester(q, id); err != nil {
-		var reason *codedError
-		if errors.As(err, &reason) && strings.HasPrefix(reason.code, "requester:") {
-			state := "stopped"
-			if reason.code == "requester:access-revoked" {
-				state = "paused"
-			}
-			_, err := experimentTransition(q, id, experimentEvent{To: state, StopReason: &reason.code})
-			return err
-		}
+	if ok, err := labVerifyRequester(q, id); err != nil || !ok {
 		return err
 	}
 	if strings.HasPrefix(deref(exp.StopReason), "requester:") {
@@ -693,22 +691,63 @@ func expGetTx(q *Request, id string) (out labExperimentView, err error) {
 	return
 }
 
+// labVerifyRequester checks the experiment's stored requester; on a requester:* failure it pauses or stops the
+// experiment with that reason and returns ok=false.
+func labVerifyRequester(q *Request, id string) (bool, error) {
+	if _, err := labRequester(q, id); err != nil {
+		var reason *codedError
+		if errors.As(err, &reason) && strings.HasPrefix(reason.code, "requester:") {
+			state := "stopped"
+			if reason.code == "requester:access-revoked" {
+				state = "paused"
+			}
+			_, err := experimentTransition(q, id, experimentEvent{To: state, StopReason: &reason.code})
+			return false, err
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func expAction(q *Request, id, action string) (labExperimentView, error) {
 	var err error
+	locks := []string{GLOBAL, "experiment:" + id}
 	switch action {
 	case "launch":
-		err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error { return expLaunch(q, id) })
+		err = q.app.store.Write(q.ctx(), q, locks, func(q *Request) error { return expLaunch(q, id) })
 	case "stop":
-		err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error { return expSetState(q, id, []string{"running", "paused"}, "stopped", "owner") })
+		err = q.app.store.Write(q.ctx(), q, locks, func(q *Request) error {
+			if err := expSetState(q, id, []string{"running", "paused"}, "stopped", "owner"); err != nil {
+				return err
+			}
+			return labEnqueue(q, id)
+		})
 	case "resume":
-		err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error { return expSetState(q, id, []string{"paused"}, "running", nil) })
+		err = q.app.store.Write(q.ctx(), q, locks, func(q *Request) error {
+			e, err := q.db().LabExperiment(q.ctx(), id)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return fail(404, "Unknown experiment")
+			}
+			if err != nil {
+				return err
+			}
+			if err := expSetState(q, id, []string{"paused"}, "running", nil); err != nil {
+				return err
+			}
+			if ok, err := labVerifyRequester(q, id); err != nil || !ok {
+				return err
+			}
+			if strings.HasPrefix(deref(e.StopReason), "requester:") {
+				if err := q.db().LabExperimentStopReasonClear(q.ctx(), id); err != nil {
+					return err
+				}
+			}
+			return labEnqueue(q, id)
+		})
 	default:
 		return labExperimentView{}, fail(400, "action is launch, stop or resume")
 	}
 	if err != nil {
-		return labExperimentView{}, err
-	}
-	if err := labRunNow(q.ctx(), q.app, id); err != nil {
 		return labExperimentView{}, err
 	}
 	out, err := expGetTx(q, id)
