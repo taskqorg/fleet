@@ -148,6 +148,7 @@ INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execu
 		t.Fatalf("wakeTargets = %v", targets)
 	}
 
+	// Suppress auto-wake on p2 so e-v1 remains verifier-1's latest execution for work_board_get telemetry assertions.
 	c, p2 := call("board_post", doc{
 		"projectId":         "board-priv",
 		"scopeKind":         "task",
@@ -160,6 +161,7 @@ INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execu
 		"artifactId":        "art-shot-1",
 		"text":              "Captured board UI screenshot; @all please note schema frozen.",
 		"payload":           doc{"caption": "initial"},
+		"wake":              false,
 	}, owner)
 	if c != 200 || num(mapOf(p2["message"])["seq"]) != 2 {
 		t.Fatalf("board_post 2 = %d %v", c, p2)
@@ -272,5 +274,158 @@ INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execu
 	}
 	if n := psqlLines(t, e, "SELECT count(*) FROM change WHERE kind='board' AND task_id='t-board-priv'"); len(n) == 0 || n[0] == "0" {
 		t.Fatalf("expected fleet_change board rows for t-board-priv, got %v", n)
+	}
+}
+
+// Requirement: FLT-19 Slice 4 Step 1 (docs/designs/fleet-swarm.md): board_post automatically wakes resolved @mention
+// targets after committing board_message without holding board:* across session:* agentSubmit transactions, respects
+// wake=false, and isolates wake failures (archived/invalid sessions) in BoardWakeTarget.wakeError.
+// Risk: board_post drops wake submission on sleeping/busy workers, violates lockRank (session:* < board:*), ignores
+// wake=false, or rolls back/fails the committed board message when one target session is archived or missing.
+func TestBoardMentionAutoWake(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	owner := e.ownerHeaders()
+
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+INSERT INTO definition(kind,id,path,head,project_id) VALUES
+ ('project','board-wake','config/projects/board-wake/project.json',1,'board-wake');
+INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message) VALUES
+ ('project','board-wake',1,'{"settings":{"id":"board-wake","name":"Board Wake","contextFiles":[]},"contextFiles":[]}','bw1','editor','person','t');
+INSERT INTO host(id,host_id,project_id,state) VALUES ('h-wake','h-wake','board-wake','active');
+INSERT INTO task(id,title,project_id,state) VALUES ('t-wake','Wake task','board-wake','in_progress');
+INSERT INTO session(id,project_id,task_id,host_id,archived_at,payload) VALUES
+ ('s-wake-idle','board-wake','t-wake','h-wake',NULL,'{"agentConfig":{"id":"coding-worker","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('s-wake-busy','board-wake','t-wake','h-wake',NULL,'{"agentConfig":{"id":"coding-worker","harness":"codex","model":"gpt-6.2-sol"}}'),
+ ('s-wake-arch','board-wake','t-wake','h-wake',now(),'{"agentConfig":{"id":"coding-worker","harness":"codex","model":"gpt-6.2-sol"}}');
+INSERT INTO execution(id,kind,state,project_id,task_id,session_id,host_id,harness,model,started_at,data) VALUES
+ ('e-wake-busy','agent_run','running','board-wake','t-wake','s-wake-busy','h-wake','codex','gpt-6.2-sol',now(),'{"id":"e-wake-busy","sessionId":"s-wake-busy"}');
+`)
+
+	call := func(op string, body any) (int, map[string]any) {
+		return e.callJSON(t, "POST", "/api/ops/"+op, body, owner)
+	}
+
+	c, wp := call("work_plan_set", doc{
+		"projectId": "board-wake",
+		"scopeKind": "task",
+		"scopeId":   "t-wake",
+		"title":     "Wake plan",
+		"threads": []any{
+			doc{
+				"id":     "th-1",
+				"title":  "Workers",
+				"status": "active",
+				"tasks": []any{
+					doc{"id": "tk-idle", "title": "Idle worker", "ownerMember": "worker-idle", "role": "worker", "sessionId": "s-wake-idle", "status": "pending"},
+					doc{"id": "tk-busy", "title": "Busy worker", "ownerMember": "worker-busy", "role": "worker", "sessionId": "s-wake-busy", "executionId": "e-wake-busy", "status": "in_progress"},
+					doc{"id": "tk-arch", "title": "Archived worker", "ownerMember": "worker-arch", "role": "worker", "sessionId": "s-wake-arch", "status": "pending"},
+					doc{"id": "tk-miss", "title": "Missing session worker", "ownerMember": "worker-miss", "role": "worker", "sessionId": "s-wake-missing", "status": "pending"},
+				},
+			},
+		},
+	})
+	if c != 200 {
+		t.Fatalf("work_plan_set = %d %v", c, wp)
+	}
+
+	// 1. Default wake=true on @worker-idle (creates execution+message) and @worker-busy (queues queued_message) with idempotent request_id.
+	c, p1 := call("board_post", doc{
+		"projectId":    "board-wake",
+		"scopeKind":    "task",
+		"scopeId":      "t-wake",
+		"threadId":     "th-1",
+		"authorMember": "coordinator",
+		"authorRole":   "coordinator",
+		"kind":         "brief",
+		"text":         "Wake @worker-idle and @worker-busy now.",
+	})
+	if c != 200 {
+		t.Fatalf("board_post wake=default = %d %v", c, p1)
+	}
+	targets1 := anys(p1["wakeTargets"])
+	if len(targets1) != 2 {
+		t.Fatalf("wakeTargets len = %d %v", len(targets1), targets1)
+	}
+	for _, raw := range targets1 {
+		wt := mapOf(raw)
+		if wt["woken"] != true || wt["wakeError"] != nil {
+			t.Fatalf("expected woken=true without wakeError, got %v", wt)
+		}
+	}
+	idleReqID := "board-wake:task:t-wake:1:s-wake-idle"
+	busyReqID := "board-wake:task:t-wake:1:s-wake-busy"
+	expectedWakeText := "[board #1] coordinator (brief): Wake @worker-idle and @worker-busy now.\nRead new board posts with board_read and reply via board_post."
+	if n := psqlLines(t, e, "SELECT count(*) FROM message WHERE session_id='s-wake-idle' AND request_id='"+idleReqID+"' AND source='wake' AND text LIKE '[board #1] coordinator (brief): Wake @worker-idle and @worker-busy now.%Read new board posts with board_read and reply via board_post.'"); len(n) != 1 || n[0] != "1" {
+		t.Fatalf("expected 1 wake message for s-wake-idle with request_id %s, got %v", idleReqID, n)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM queued_message WHERE session_id='s-wake-busy' AND request_id='"+busyReqID+"' AND state='queued' AND source='wake'"); len(n) != 1 || n[0] != "1" {
+		t.Fatalf("expected 1 queued wake message for s-wake-busy with request_id %s, got %v", busyReqID, n)
+	}
+	// Replaying wake submission with the same idempotent request_id must not create duplicate executions or messages.
+	if err := boardWakeTarget(backgroundRequest(t.Context(), e.app, nil), "task", "t-wake", 1, "s-wake-idle", expectedWakeText); err != nil {
+		t.Fatalf("idempotent boardWakeTarget replay = %v", err)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM execution WHERE session_id='s-wake-idle'"); len(n) != 1 || n[0] != "1" {
+		t.Fatalf("expected 1 execution after idempotent wake replay, got %v", n)
+	}
+
+	// 2. wake: false skips submission and reports woken: false.
+	c, p2 := call("board_post", doc{
+		"projectId":    "board-wake",
+		"scopeKind":    "task",
+		"scopeId":      "t-wake",
+		"threadId":     "th-1",
+		"authorMember": "coordinator",
+		"authorRole":   "coordinator",
+		"kind":         "message",
+		"text":         "FYI only @worker-idle @worker-busy",
+		"wake":         false,
+	})
+	if c != 200 {
+		t.Fatalf("board_post wake=false = %d %v", c, p2)
+	}
+	for _, raw := range anys(p2["wakeTargets"]) {
+		wt := mapOf(raw)
+		if wt["woken"] != false || wt["wakeError"] != nil {
+			t.Fatalf("expected woken=false without wakeError for wake=false, got %v", wt)
+		}
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM message WHERE session_id='s-wake-idle' AND request_id='board-wake:task:t-wake:2:s-wake-idle'"); len(n) != 1 || n[0] != "0" {
+		t.Fatalf("wake=false created message on s-wake-idle: %v", n)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM queued_message WHERE session_id='s-wake-busy' AND request_id='board-wake:task:t-wake:2:s-wake-busy'"); len(n) != 1 || n[0] != "0" {
+		t.Fatalf("wake=false created queued_message on s-wake-busy: %v", n)
+	}
+
+	// 3. Archived and missing target sessions record woken=false + wakeError without failing board_post, while valid targets still wake.
+	c, p3 := call("board_post", doc{
+		"projectId":    "board-wake",
+		"scopeKind":    "task",
+		"scopeId":      "t-wake",
+		"threadId":     "th-1",
+		"authorMember": "coordinator",
+		"authorRole":   "coordinator",
+		"kind":         "message",
+		"text":         "Ping @worker-arch @worker-miss @worker-busy",
+	})
+	if c != 200 || num(mapOf(p3["message"])["seq"]) != 3 {
+		t.Fatalf("board_post with invalid/archived targets failed: %d %v", c, p3)
+	}
+	byMember := map[string]map[string]any{}
+	for _, raw := range anys(p3["wakeTargets"]) {
+		wt := mapOf(raw)
+		byMember[astr(wt["member"])] = wt
+	}
+	if wt := byMember["worker-arch"]; wt == nil || wt["woken"] != false || astr(wt["wakeError"]) == "" {
+		t.Fatalf("expected archived target wakeError, got %v", wt)
+	}
+	if wt := byMember["worker-miss"]; wt == nil || wt["woken"] != false || astr(wt["wakeError"]) == "" {
+		t.Fatalf("expected missing target wakeError, got %v", wt)
+	}
+	if wt := byMember["worker-busy"]; wt == nil || wt["woken"] != true || wt["wakeError"] != nil {
+		t.Fatalf("expected valid sibling target woken=true, got %v", wt)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM board_message WHERE scope_kind='task' AND scope_id='t-wake' AND seq=3"); len(n) != 1 || n[0] != "1" {
+		t.Fatalf("expected committed board_message seq=3 despite wake errors, got %v", n)
 	}
 }
