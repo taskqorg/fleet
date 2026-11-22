@@ -180,3 +180,79 @@ func TestDetachedWorktreeHasNoBranch(t *testing.T) {
 		t.Fatalf("its own commit keeps it: %+v", r)
 	}
 }
+
+// Requirement: docs/execution-continuity.md Working areas cleanup removes the session worktree, including read-only
+// directory trees (such as Go module caches) created inside it, without traversing symlinks outside the worktree.
+// Risk: permission-denied errors on 0555/0444 tool caches leave orphaned session worktrees behind after teardown.
+func TestTeardownReadOnlyTree(t *testing.T) {
+	top, dir, outside := t.TempDir(), t.TempDir(), t.TempDir()
+	outsideFile := filepath.Join(outside, "keep.txt")
+	if err := os.WriteFile(outsideFile, []byte("keep"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(outside, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(outside, 0o755)
+		_ = os.Chmod(outsideFile, 0o644)
+	})
+
+	git := func(d string, args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", d, "-c", "user.email=t@t", "-c", "user.name=t"}, args...)...)
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatal(args, err, string(out))
+		}
+	}
+	git(top, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(top, ".gitignore"), []byte("go/.cache/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(top, "add", ".gitignore")
+	git(top, "commit", "-q", "-m", "base")
+	git(top, "remote", "add", "origin", "https://example.invalid/r.git")
+	git(top, "update-ref", "refs/remotes/origin/main", "main")
+
+	w := filepath.Join(dir, "worktree")
+	git(top, "worktree", "add", "-q", "--no-track", "-b", "fleet/s1", w, "main")
+
+	modDir := filepath.Join(w, "go", ".cache", "modules", "golang.org", "x", "crypto@v0.37.0")
+	if err := os.MkdirAll(modDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modDir, "go.mod"), []byte("module golang.org/x/crypto\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(w, "go", ".cache", "outside-link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{
+		modDir,
+		filepath.Join(w, "go", ".cache", "modules", "golang.org", "x"),
+		filepath.Join(w, "go", ".cache", "modules", "golang.org"),
+		filepath.Join(w, "go", ".cache", "modules"),
+	} {
+		if err := os.Chmod(d, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := teardown(dir, "s1", top, proj(M{}), false, false)
+	if !r.Removed || r.Reason != nil {
+		t.Fatalf("teardown failed on read-only tree: removed=%v reason=%q", r.Removed, str0(r.Reason))
+	}
+	if _, err := os.Stat(w); !os.IsNotExist(err) {
+		t.Fatalf("worktree still exists after teardown: err=%v", err)
+	}
+	st, err := os.Lstat(outside)
+	if err != nil {
+		t.Fatalf("external symlink target missing: %v", err)
+	}
+	if st.Mode().Perm() != 0o555 {
+		t.Fatalf("external symlink target permissions modified: got %o want 0555", st.Mode().Perm())
+	}
+	if !exists(outsideFile) {
+		t.Fatal("external symlink target file missing")
+	}
+}

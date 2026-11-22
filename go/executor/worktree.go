@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fleet/contract"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -302,7 +303,44 @@ func trialWorktree(dir, repo, commit string, roots, forbidden []string) (string,
 }
 
 func removeTrial(top, w string) bool {
+	makeTreeWritable(w)
 	return hardenedGit("-C", top, "worktree", "remove", "--force", w).Run() == nil
+}
+
+// makeTreeWritable adds owner write/search bits to directories (0o700) and owner write to regular files (0o200)
+// inside w so read-only tool caches (e.g. Go module caches) can be removed, without following symlinks.
+func makeTreeWritable(w string) {
+	st, err := os.Lstat(w)
+	if err != nil || st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
+		return
+	}
+	root, err := os.OpenRoot(w)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	_ = fs.WalkDir(root.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
+		if err != nil || d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		need := fs.FileMode(0)
+		switch {
+		case d.IsDir():
+			need = 0o700
+		case d.Type().IsRegular():
+			need = 0o200
+		default:
+			return nil
+		}
+		info, err := root.Lstat(rel)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if mode := info.Mode().Perm(); mode&need != need {
+			_ = root.Chmod(rel, mode|need)
+		}
+		return nil
+	})
 }
 
 // projectScript runs a project script in the worktree and waits; event data with exit code and truncated output.
@@ -397,6 +435,7 @@ func teardown(dir, session, top string, project contract.ProjectContext, deleteB
 	for _, r := range links {
 		os.Remove(filepath.Join(w, r))
 	}
+	makeTreeWritable(w)
 	removed := hardenedGit("-C", top, "worktree", "remove", w).Run() == nil
 	out.Removed = removed
 	if !removed {
