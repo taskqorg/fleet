@@ -351,7 +351,21 @@ type Request struct {
 	accessTx   pgx.Tx // tx on which refreshRequestAccess already ran
 }
 
-func (q *Request) ctx() context.Context { return q.r.Context() }
+func (q *Request) baseCtx() context.Context {
+	if q != nil && q.r != nil {
+		return q.r.Context()
+	}
+	return context.Background()
+}
+
+// ctx returns the request context, carrying q.tx via withTx whenever a transaction is active so helpers using
+// conn/txCtx stay on the same connection instead of taking a second pool connection.
+func (q *Request) ctx() context.Context {
+	if q != nil && q.tx != nil {
+		return withTx(q)
+	}
+	return q.baseCtx()
+}
 
 type handler func(*Request) (any, error)
 
