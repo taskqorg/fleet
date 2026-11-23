@@ -16,6 +16,7 @@ import { useOp } from '../store.ts';
 import { closedGroups, flipGroup } from '../lists.ts';
 import { listGroups, setListGroups, usePins } from '../prefs.ts';
 import { LabCreate } from './lab-create.tsx';
+import { selectDefaultSwarmTrial } from './lab-swarm.ts';
 import {
   ARCHIVED_COLLECTION_ID, USE_CASE_COLLECTION_PREFIX, buildUseCaseTree, collectionIconOf, collectionTitleOf,
   groupUseCases, isLabEligibleUseCase, matchingExamplesForUseCase, resolveSuiteKey, type RegistryUseCase, type SuiteKey,
@@ -1067,22 +1068,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const [patch, setPatch] = useState<Ops['lab_promote']['reply'] | null>(null);
   const [promotingVariant, setPromotingVariant] = useState<string | null>(null);
   const [promotedVariant, setPromotedVariant] = useState<string | null>(null);
-  const defaultSwarmTrial = useMemo(() => {
-    if (!e || e.trials.length === 0) return null;
-    const swarmVariants = new Set(
-      e.variants.filter(v => (v.pipelineId ?? e.pipelineId).includes('swarm')).map(v => v.label),
-    );
-    const candidates = swarmVariants.size > 0
-      ? e.trials.filter(t => swarmVariants.has(t.cell.variant))
-      : e.trials;
-    const pool = candidates.length > 0 ? candidates : e.trials;
-    return pool.toSorted((a, b) => {
-      const aActive = a.state === 'running' || a.state === 'preparing' ? 1 : 0;
-      const bActive = b.state === 'running' || b.state === 'preparing' ? 1 : 0;
-      if (aActive !== bActive) return bActive - aActive;
-      return (b.cell.attempt ?? 0) - (a.cell.attempt ?? 0);
-    })[0] ?? null;
-  }, [e]);
+  const defaultSwarmTrial = useMemo(() => selectDefaultSwarmTrial(e), [e]);
   const swarmBoard = useSwarmBoard('pipeline_run', !planTrial && defaultSwarmTrial ? defaultSwarmTrial.id : null);
   useEffect(() => { if (e && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView(); }, [!!e]);
   const now = Date.now();

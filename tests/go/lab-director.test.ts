@@ -6,6 +6,7 @@ import {mkdtempSync,readFileSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {hostCommand, startCoordinator} from '../harness.ts';
 import {fakeS3} from '../s3-fake.ts';
+import {selectDefaultSwarmTrial} from '../../app/src/views/lab-swarm.ts';
 
 // Requirement: fleet-people-access §5 Lab creator inheritance; risk: background runs escalate to owner authority.
 test('Lab retains authenticated requester through background enqueue, revocation, deletion and recovery without owner escalation', {timeout:60_000}, async t=>{
@@ -104,9 +105,13 @@ test('Lab retains authenticated requester through background enqueue, revocation
    const pending = await read();
    assert.equal(pending.state,'waiting');
    assert.deepEqual([pending.plan.entries[0].execution.state,pending.plan.entries[0].execution.waitDetail],['waiting',wait]);
-   const trial = (await get(experiment.id)).trials.find((t:any)=>t.id===child.pipelineRunId);
+   const lab = await get(experiment.id);
+   const trial = lab.trials.find((t:any)=>t.id===child.pipelineRunId);
    assert.deepEqual([trial.state,trial.waitDetail],['waiting',wait]);
    assert.equal(trial.spend.tokens,undefined,'missing usage stays unknown');
+   // The default Lab Swarm board follows a live trial even when a completed attempt has a higher number.
+   const finishedAttempt = {...trial,id:'finished-swarm-attempt',state:'succeeded',cell:{...trial.cell,attempt:(trial.cell.attempt ?? 0)+1}};
+   assert.equal(selectDefaultSwarmTrial({...lab,trials:[trial,finishedAttempt]})?.id,trial.id,'a placement-waiting trial outranks a later finished attempt');
    assert.ok(!findings.some((f:any)=>[child.pipelineRunId,child.pipelineStepId].includes(f.executionId)));
    assert.deepEqual((await op('execution_events',{executionId:child.id})).events,[]);
 
