@@ -13,7 +13,7 @@ Use an ordinary task for project work. Use the `swarm-plan-execute` pipeline in 
 Use Cloudflare Access credentials issued for your Fleet identity. For a service token, send `CF-Access-Client-Id` and `CF-Access-Client-Secret` only to the Fleet origin. Send `Origin: https://fleet.ufobe.com` on POSTs to the deployed site. Fleet records the authenticated person as `directedBy` on the task and coordinator session. Use an identity authorized to create and release tasks and start sessions in the target project. Delegation stays within that director's grants. [Agent access](fleet-people-access.md#agent-access-to-the-web-app)
 
 - **Operations API.** Send JSON to `POST /api/ops/<operation>` with `Content-Type: application/json`. Call `me {}` to confirm your identity and `project_list {}` to find the project ID.
-- **MCP.** Connect to `https://fleet.ufobe.com/api/tools` over HTTP with the same authentication and origin headers. Use `tools/list` for schemas and `tools/call` for calls. Both transports accept the operation arguments below. Check the MCP result for a tool error even when the HTTP status is 200.
+- **MCP.** Connect to `https://fleet.ufobe.com/api/tools` over HTTP with the same authentication and origin headers. Use `tools/list` for schemas and `tools/call` for calls. Both transports accept the operation arguments below. Operation errors can return a non-2xx HTTP status. For example, `execution_status` without `executionId` returns HTTP 400. After checking the status, check the JSON-RPC response for errors before decoding the successful operation reply from `result.content[0].text` as JSON.
 - **Profile.** Call `session_presets {"projectId":"<project-id>"}` for project presets, resolved profiles and unavailability reasons. With architect access, call `profiles_list {}` to find the installed `swarm-coordinator` profile. Confirm authorization and host readiness separately. Fleet-hosted callers use their execution's bound tools, where project role restrictions also apply.
 
 For example, POST this JSON-RPC request to `/api/tools` to confirm the calling identity.
@@ -24,12 +24,12 @@ For example, POST this JSON-RPC request to `/api/tools` to confirm the calling i
 
 ### Create, release and start
 
-Use the same project throughout. Replace placeholders with your IDs and generate a request ID unique to this start within the project.
+Use the same project throughout. Replace placeholders with your IDs. Generate a unique marker for this task create and a request ID unique to this session start within the project.
 
 1. Call `task_create` to create a Held task. Save the response's `id` as the task ID.
 
    ```json
-   {"projectId":"<project-id>","title":"Check the project documentation links","expectedOutcome":"Report broken links with file paths and verification results.","held":true}
+   {"projectId":"<project-id>","title":"Check the project documentation links [<create-marker>]","expectedOutcome":"Report broken links with file paths and verification results.","held":true}
    ```
 
 2. After the director authorizes the start, call `task_release` using the authorized identity.
@@ -38,19 +38,24 @@ Use the same project throughout. Replace placeholders with your IDs and generate
    {"taskId":"<task-id>"}
    ```
 
-3. Call `session_start` and save the returned `sessionId` and `executionId` when present. Include the goal, acceptance requirements and task board scope in the first-turn text.
+3. Call `session_start` and save the returned `sessionId` and first-turn `executionId`. Include the goal, acceptance requirements and task board scope in the first-turn text.
 
    ```json
    {"projectId":"<project-id>","profileId":"swarm-coordinator","taskId":"<task-id>","requestId":"<start-request-id>","text":"Check the project documentation links. Keep the plan and all posts on scopeKind task, scopeId <task-id>. Report broken links with file paths and verification results. Leave repository files unchanged."}
    ```
 
-Retry an uncertain `session_start` with the same project, request ID and payload. Fleet returns the existing session with `existing: true` on replay. Read its executions with `session_get {"sessionId":"<session-id>"}` if the reply has no execution ID. `task_create` has no idempotency key. After an uncertain create, use `task_list {"projectId":"<project-id>"}` to look up the task in the project before trying again. After an uncertain release, read `task_get {"taskId":"<task-id>"}` and retry release only if the task still has `state: "paused"` and `pauseReason: "held"`.
+The example defaults to a write workspace with a branch. The prompt asks the coordinator to leave repository files unchanged. To enforce read-only workspace access, add `"access":"read","branch":false` to the start arguments. A read-only coordinator can start only read-only child sessions.
+
+- **Uncertain create.** `task_create` has no idempotency key. Read `task_list {"projectId":"<project-id>"}` and reuse a task ID only if you can identify the task unambiguously by its marker and create details. Multiple matches or an empty read while the original request may be in flight leave the outcome unresolved. Resolve that ambiguity before releasing a task or repeating create. Repeat create only once you have confirmed the original request ended without creating a task.
+- **Uncertain release.** Read `task_get {"taskId":"<task-id>"}` and retry release only if the task still has `state: "paused"` and `pauseReason: "held"`.
+- **Uncertain start.** Retry `session_start` with the same project, request ID and payload. A replay returns the existing `sessionId` with `existing: true` and omits `executionId`. Call `session_get {"sessionId":"<session-id>"}` and use the `executionId` on the message whose `requestId` is `start:<start-request-id>`. Later turns in the same session have their own execution IDs.
 
 ### Read back progress and completion
 
-- **Accepted.** A successful start returns a session ID and acknowledges first-turn submission. An execution ID can be absent while placement is pending. Read `session_get` for the queue and executions.
+- **Accepted.** A fresh successful start with the example's nonempty `text` returns `sessionId` and `executionId`. Fleet creates that execution in `preparing` before a host is assigned, so you can read its status and readiness before placement.
 - **Preparing or running.** Call `execution_status {"executionId":"<execution-id>"}` for the specific coordinator or member turn. `preparing` covers launch preparation. `running` with `observation: "confirmed"` shows that the turn is running. Inspect `readiness`, `reason` or `report` when present. Treat `unconfirmed` as unknown.
 - **Board progress.** Call `work_board_get {"scopeKind":"task","scopeId":"<task-id>"}`. Read `plan`, `roster`, `messages` and `summary` for the plan, linked sessions and executions, reports and blockers. The task board can be empty until the coordinator writes its plan or first post.
+- **Page through Board posts.** The first read returns up to 200 messages by default, earliest first. For each next page, set `since` to the last message's `seq`. For example, if a page ends at sequence 2, call `work_board_get {"scopeKind":"task","scopeId":"<task-id>","since":2,"limit":2}` to read the next two posts. Continue until the last sequence read reaches `headSeq` from the latest reply. Keep that cursor for later reads to pick up new posts, including the final reports.
 - **Complete.** `execution_status` can return `succeeded` for one turn while the task is still in progress. Read the final board reports and verify the retained result and required checks. Read `task_get {"taskId":"<task-id>"}` for the result, acceptance and task state. Fleet records task completion as `completed`.
 
 ### Inspect the task in Fleet
