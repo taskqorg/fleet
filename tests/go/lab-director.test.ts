@@ -56,20 +56,38 @@ test('Lab retains authenticated requester through background enqueue, revocation
   // Risk: Fleet reports two stuck executions for one undispatched child, or stops reconciling the original run.
   await t.test('a coding trial waits on forge capability, then dispatches and reconciles the original child', async () => {
    const id = 'lab-coding-placement';
+   const codingHost = 'lab-coding-host';
+   const codingHostRegistration = await op('hosts_register',{id:codingHost,holder:creator});
+   const codingHostCall = async(path:string,body:any) => ok(await request(path,body,owner,codingHostRegistration.secret));
    const settings = {
     id, name: 'Coding placement fixture', contextFiles: [],
     repos: [{id:'main',remote:'https://github.com/invented/project.git',forge:'github',defaultBranch:'main'}],
-    environments: [{hostId:'trial-host',checkoutPath:'/invented/project'}],
+    environments: [{hostId:codingHost,checkoutPath:'/invented/project'}],
     execution: {profiles:['coding-worker'],tools:['node','pnpm','browser'],forge:true},
    };
    await op('project_create',{id,requestId:id,content:{settings,contextFiles:[]}});
+   await op('people_set',{people:people.map((p:any)=>p.email===creator?{...p,grants:[...p.grants,{kind:'project',id}]}:p)});
+   // The shipped coding profile declares this connection. Grant it only in the fixture, without a provider key.
+   const connections = (await op('connections_list',{})).connections;
+   if (!connections.some((c:any)=>c.name==='youtrack')) await op('connections_create',{name:'youtrack',provider:'youtrack'});
+   await op('connections_set_access',{connection:'youtrack',access:{projects:[id]}});
+   const tools = ['tool:node','tool:pnpm','tool:browser'];
+   const codingPoll = {...poll,capabilities:tools,stores:[]};
+   await codingHostCall('/api/hosts/poll',codingPoll);
    const experiment = await op('lab_experiment_create',{
-    ...body,projectId:id,pipelineId:'coding-task',variants:[{label:'placement',overrides:{host:'trial-host'}}],
-   });
+    ...body,projectId:id,pipelineId:'coding-task',variants:[{label:'placement',overrides:{host:codingHost}}],
+   },creator);
+   assert.equal(experiment.requestedBy,creator);
    await launch(experiment.id);
-   const child = await until(async()=>agentRows(experiment.id)[0]);
-   const read = () => op('pipeline_get',{runId:child.pipelineRunId});
-   const wait = 'project forge connection unavailable on trial-host';
+   const child = await until(async()=>{
+    const row = agentRows(experiment.id)[0];
+    if (row) return row;
+    const trial = (await get(experiment.id)).trials[0];
+    assert.ok(!trial || !['failed','cancelled'].includes(trial.state),JSON.stringify({state:trial?.state,problem:trial?.problem}));
+   });
+   assert.equal(child.directedBy,creator);
+   const read = () => op('pipeline_get',{runId:child.pipelineRunId},creator);
+   const wait = 'project forge connection unavailable on '+codingHost;
    await until(async()=> {
     const route = await op('route_decisions',{executionId:child.id});
     return route.decisions.some((d:any)=>!d.winner&&d.candidates.some((candidate:any)=>candidate.skipped===wait));
@@ -89,15 +107,15 @@ test('Lab retains authenticated requester through background enqueue, revocation
    assert.ok(!findings.some((f:any)=>[child.pipelineRunId,child.pipelineStepId].includes(f.executionId)));
    assert.deepEqual((await op('execution_events',{executionId:child.id})).events,[]);
 
-   const capable = {...poll,capabilities:['tool:node','tool:pnpm','tool:browser','forge:invented/project']};
-   const command = await hostCommand(q=>hostCall('/api/hosts/poll'+q,capable),(x:any)=>x.executionId===child.id);
+   const capable = {...codingPoll,capabilities:[...tools,'forge:invented/project']};
+   const command = await hostCommand(q=>codingHostCall('/api/hosts/poll'+q,capable),(x:any)=>x.executionId===child.id);
    assert.ok(command,'the original child dispatches once the host is eligible');
-   await hostCall('/api/hosts/receipts',{commandId:command.id,executionId:child.id,status:'started'});
+   await codingHostCall('/api/hosts/receipts',{commandId:command.id,executionId:child.id,status:'started'});
    const active = await read();
    assert.equal(active.state,'running');
    assert.equal(active.plan.entries[0].dispatch.phase,'handed_off');
    assert.equal(active.plan.entries[0].execution.waitDetail,undefined);
-   await hostCall('/api/hosts/receipts',{commandId:command.id,executionId:child.id,status:'failed',error:'fixture failure'});
+   await codingHostCall('/api/hosts/receipts',{commandId:command.id,executionId:child.id,status:'failed',error:'fixture failure'});
    const ended = await until(async()=>{const run=await read();return run.state==='failed'&&run;});
    assert.equal(ended.plan.entries[0].execution.state,'failed');
    assert.equal(ended.plan.entries[0].execution.nativeExecutionId,child.id);

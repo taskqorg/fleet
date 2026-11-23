@@ -181,6 +181,17 @@ type placementTiming struct {
 	copies, policy time.Duration
 }
 
+// recordPlacementPhase records a phase that ran. An omitted phase was not reached.
+func recordPlacementPhase(s *obs.Span, phase string, start time.Time, err error) {
+	name := "fleet.placement." + phase
+	s.Set(name+"_ms", strconv.FormatInt(time.Since(start).Milliseconds(), 10))
+	failures := "0"
+	if err != nil {
+		failures = "1"
+	}
+	s.Set(name+"_failed", failures)
+}
+
 // runPlacement: one pass; store calls run between short transactions.
 func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) {
 	if !placementRunning.TryLock() {
@@ -193,13 +204,14 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 	span := obs.From(ctx)
 	start := time.Now()
 	err = reconcilePurges(ctx, a)
-	span.Set("fleet.placement.purges_ms", strconv.FormatInt(time.Since(start).Milliseconds(), 10))
+	recordPlacementPhase(span, "purges", start, err)
 	if err != nil {
 		return 0, 0, err
 	}
 	start = time.Now()
 	stores, err := storeList(ctx, a)
 	if err != nil {
+		recordPlacementPhase(span, "scan", start, err)
 		return 0, 0, err
 	}
 	byID, byHost, hosts := map[string]*StoreRow{}, map[string]*StoreRow{}, map[string]bool{}
@@ -207,13 +219,12 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 		byID[stores[i].ID], byHost[stores[i].HostID], hosts[stores[i].HostID] = &stores[i], &stores[i], true
 	}
 	all, err := storedArtifactRows(ctx, a)
-	span.Set("fleet.placement.scan_ms", strconv.FormatInt(time.Since(start).Milliseconds(), 10))
+	recordPlacementPhase(span, "scan", start, err)
 	if err != nil {
 		return 0, 0, err
 	}
 	start = time.Now()
 	var timing placementTiming
-	var firstFailure error
 	var failures int
 	for i := range all {
 		if err := ctx.Err(); err != nil {
@@ -223,9 +234,6 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 		q, d, err := placeOne(ctx, a, x, byID, byHost, hosts, &timing)
 		if err != nil {
 			failures++
-			if firstFailure == nil {
-				firstFailure = err
-			}
 			problem(struct {
 				Kind       string `json:"kind"`
 				ArtifactID string `json:"artifactId"`
@@ -241,11 +249,10 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 	span.Set("fleet.placement.policy_ms", strconv.FormatInt(timing.policy.Milliseconds(), 10))
 	start = time.Now()
 	leaseErr := expireLeases(ctx, a)
-	span.Set("fleet.placement.expire_leases_ms", strconv.FormatInt(time.Since(start).Milliseconds(), 10))
-	if firstFailure != nil {
-		firstFailure = fmt.Errorf("%d artifacts failed placement: %w", failures, firstFailure)
-	}
-	return queued, deleted, errors.Join(firstFailure, leaseErr)
+	recordPlacementPhase(span, "expire_leases", start, leaseErr)
+	// Partial placement failures stay in the artifact problems and span counter.
+	// Propagate a lease phase failure even when individual artifacts also failed.
+	return queued, deleted, leaseErr
 }
 
 func placeOne(ctx context.Context, a *App, x *Artifact, byID, byHost map[string]*StoreRow, hosts map[string]bool, timing *placementTiming) (queued, deleted int, err error) {
