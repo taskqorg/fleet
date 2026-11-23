@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import {
   Button, Choice, CostFigures, DataTable, DetailSection, Empty, EntityCode, ErrorBanner, GroupControl, KvRow, Num,
   ShareBar, ShellStatus, OfflineMarker, Skeleton, SortColHead, Totals, count, measured, money, percent,
-  type CostFigureLike, type DataTone, type SharePart,
+  type CostFigureLike, type DataTone,
 } from '../../../packages/ui/src/index.ts';
 import { scopeIds, prefsRead } from '../prefs.ts';
 import { useOp } from '../store.ts';
@@ -35,17 +35,24 @@ const PURPOSE_LABELS: Record<string, string> = {
 };
 
 const TONES: DataTone[] = ['d1', 'd2', 'd3', 'd4'];
+const SHARE_BASES = [
+  { id: 'billed', label: 'Billed USD' },
+  { id: 'subscription', label: 'Estimated subscription value' },
+] as const;
+type ShareBasis = typeof SHARE_BASES[number]['id'];
 
 type SortCol = 'label' | 'runs' | 'failed' | 'tokens' | 'usd' | 'unpriced';
 
 const usdOf = (cost: readonly CostFigureLike[]) =>
   cost.reduce((sum, c) => (c.basis !== 'unavailable' && c.currency === 'USD' && typeof c.value === 'number' ? sum + c.value : sum), 0);
 
-function spendShare(row: SpendRow, hasUsdTotal: boolean): number | null {
-  if (row.share != null) return row.share;
-  // The operation omits shares for zero USD as well as for unavailable USD.
-  const hasUsdValue = row.cost.some(c => c.basis !== 'unavailable' && c.currency === 'USD' && typeof c.value === 'number');
-  return hasUsdTotal && hasUsdValue && usdOf(row.cost as CostFigureLike[]) === 0 ? 0 : null;
+function shareAmount(cost: readonly CostFigureLike[], basis: ShareBasis): number | null {
+  let amount: number | null = null;
+  for (const figure of cost) {
+    if (figure.currency !== 'USD' || figure.value == null || figure.basis === 'unavailable') continue;
+    if ((figure.basis === 'subscription') === (basis === 'subscription')) amount = (amount ?? 0) + figure.value;
+  }
+  return amount;
 }
 
 function shareText(share: number): string {
@@ -136,25 +143,14 @@ export function Spend() {
     else { setSortCol(col); setSortDir(col === 'label' ? 'ascending' : 'descending'); }
   };
 
-  const purposeParts: SharePart[] = useMemo(() => {
-    if (!data) return [];
-    const totalUsd = usdOf(data.totals.cost as CostFigureLike[]);
-    const useCost = totalUsd > 0;
-    return data.byPurpose.map((r, i) => ({
-      label: PURPOSE_LABELS[r.key] ?? r.label,
-      v: useCost ? usdOf(r.cost as CostFigureLike[]) : r.runs,
-      tone: TONES[i % TONES.length],
-    }));
-  }, [data]);
-
   const sortedRows = useMemo(() => sortRows(data?.rows ?? []), [data, sortCol, sortDir]);
 
   const totalCost = (data?.totals.cost ?? []) as CostFigureLike[];
+  const shareBases = SHARE_BASES.map(basis => ({ ...basis, total: shareAmount(totalCost, basis.id) }));
   const totalRuns = data ? measureNum(data.totals.measures, 'executions') : 0;
   const totalFailed = data ? measureNum(data.totals.measures, 'failed') : 0;
   const totalTokens = data ? measureNum(data.totals.measures, 'tokens_input') + measureNum(data.totals.measures, 'tokens_output') : 0;
   const totalUnpriced = data ? data.rows.reduce((s, r) => s + r.unpriced, 0) : 0;
-  const useUsdShare = usdOf(totalCost) > 0;
 
   return (
     <article class="detail stack" aria-label="Spend">
@@ -192,7 +188,7 @@ export function Spend() {
         <GroupControl value={by} options={GROUP_OPTIONS} onChange={setBy} />
       </div>
       {data && <>
-        <p class="small-note">Share is based on available USD spend for this period.</p>
+        <p class="small-note">Each share uses its own USD total for this period and scope. Billed USD includes measured charges and tariff estimates. Subscription value is a list-price estimate.</p>
         {by === 'category' && data.rows.some(r => r.key === 'unknown') &&
           <p class="small-note">Unknown category means no category is recorded for this usage.</p>}
         <section class="panel">
@@ -203,7 +199,7 @@ export function Spend() {
                 <tr>
                   <SortColHead label={GROUP_OPTIONS.find(([id]) => id === by)?.[1] ?? by} active={sortCol === 'label'} dir={sortDir} onSort={() => toggleSort('label')} />
                   <SortColHead label="Cost" active={sortCol === 'usd'} dir={sortDir} numeric onSort={() => toggleSort('usd')} />
-                  <th scope="col" class="num">Share of spend</th>
+                  {shareBases.map(({ id, label }) => <th key={id} scope="col" class="num">{label} share</th>)}
                   <SortColHead label="Runs" active={sortCol === 'runs'} dir={sortDir} numeric onSort={() => toggleSort('runs')} />
                   <SortColHead label="Failed" active={sortCol === 'failed'} dir={sortDir} numeric onSort={() => toggleSort('failed')} />
                   <SortColHead label="Tokens" active={sortCol === 'tokens'} dir={sortDir} numeric onSort={() => toggleSort('tokens')} />
@@ -211,7 +207,6 @@ export function Spend() {
                 </tr>
               }>
               {sortedRows.map(r => {
-                const share = spendShare(r, useUsdShare);
                 const cost = r.cost as CostFigureLike[];
                 const label = by === 'purpose' ? PURPOSE_LABELS[r.key] ?? r.label
                   : by === 'category' && r.key === 'unknown' ? 'Unknown category' : r.label;
@@ -223,9 +218,16 @@ export function Spend() {
                         : label}
                     </th>
                     <CostCell cost={cost} label="Cost" />
-                    {share == null
-                      ? <UnavailableCell label="Share of spend" reason={useUsdShare ? missingCostReason(cost) : 'no positive USD total in this period'} />
-                      : <td class="num">{shareText(share)}</td>}
+                    {shareBases.map(({ id, label, total }) => {
+                      const amount = shareAmount(cost, id);
+                      if (total != null && total > 0 && amount != null) {
+                        return <td key={id} class="num">{shareText(amount / total)}</td>;
+                      }
+                      const reason = total == null || total <= 0
+                        ? 'no positive USD total for this basis in the selected period and scope'
+                        : missingCostReason(cost) ?? 'no USD amount for this basis';
+                      return <UnavailableCell key={id} label={`${label} share`} reason={reason} />;
+                    })}
                     <td class="num"><Num m={{ value: r.runs, basis: 'measured' }} kind="count" /></td>
                     <td class="num"><Num m={{ value: r.failed, basis: 'measured' }} kind="count" /></td>
                     <td class="num"><Num m={{ value: r.tokens, basis: 'measured' }} kind="count" /></td>
@@ -237,16 +239,24 @@ export function Spend() {
           ) : <Empty text="No execution activity in this window." />}
         </section>
 
-        {purposeParts.length > 0 && (
-          <section class="panel">
-            <ShareBar
-              label="Spend by purpose"
-              title="By purpose"
-              parts={purposeParts}
-              value={v => useUsdShare ? money(v, 'USD').text : count(Math.round(v)).text}
-              note={useUsdShare ? 'USD spend by purpose · rounded shares' : 'Run counts (no positive USD total) · rounded shares'}
-            />
-          </section>
+        {data.byPurpose.length > 0 && (
+          <DetailSection title="By purpose">
+            <div class="stack">
+              {shareBases.map(({ id, label, total }) => {
+                if (total == null || total <= 0) {
+                  return <p key={id} class="small-note">{label} share unavailable. No positive USD total for this period and scope.</p>;
+                }
+                const parts = data.byPurpose.flatMap((row, i) => {
+                  const amount = shareAmount(row.cost as CostFigureLike[], id);
+                  return amount == null ? [] : [{ label: PURPOSE_LABELS[row.key] ?? row.label, v: amount, tone: TONES[i % TONES.length] }];
+                });
+                return <div key={id} class="panel">
+                  <ShareBar label={`${label} by purpose`} title={label} parts={parts}
+                    value={v => money(v, 'USD').text} note="Rounded shares" />
+                </div>;
+              })}
+            </div>
+          </DetailSection>
         )}
 
         <DetailSection title="What it bought">
