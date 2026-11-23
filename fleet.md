@@ -85,7 +85,9 @@ Created tasks continue without an open PM session; closing a session window does
 
 Manual acceptance is not required for every task. Project rules determine which results need human acceptance and which can be accepted automatically. Operators can inspect results and intervene.
 
-Task acceptance selects a specific eligible result. Automatic acceptance for a task-bound agent run requires a confirmed successful execution and a successful work report; an explicit acceptance request can also offer a confirmed successful execution whose work report was not filed, unless incomplete work was reported. Required artifacts must be stored for that execution and the acceptance identifies the retained artifacts it offers. Active or queued continuation supersedes a pending acceptance. An operator may explicitly select an eligible earlier result after work ends, or supply an external result for a task without a Fleet execution.
+Task acceptance selects a specific eligible result. Automatic acceptance for a task-bound agent run requires a confirmed successful execution and a successful work report; an explicit acceptance request can also offer a confirmed successful execution whose work report was not filed, unless incomplete work was reported.
+
+Required artifacts must be stored for that execution and the acceptance identifies the retained artifacts it offers. Active or queued continuation supersedes a pending acceptance. An operator may explicitly select an eligible earlier result after work ends, or supply an external result for a task without a Fleet execution.
 
 An operator may reject an open offer after its result loses eligibility. The rejection applies to the offered result. Missing completion evidence leaves the task open without a generated question. A failed execution or explicit report of incomplete work can require an operator decision.
 
