@@ -4,7 +4,7 @@
 // running-young, running-silent, running-unconfirmed, waiting and open-question executions, runs the real rules pass on a short
 // tick while operator writes overlap, and samples pg_locks. Measured here: operator write acknowledgement (server-local HTTP),
 // advisory-lock wait/hold lower bounds (sampled), rules findings per case. Not measured: browser render, publication.
-import {spawn} from 'node:child_process';
+import {execFileSync, spawn} from 'node:child_process';
 import {mkdirSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {startCoordinator} from '../harness.ts';
@@ -12,12 +12,16 @@ import {startCoordinator} from '../harness.ts';
 const arg = (k: string, d: string) => process.argv.find(a => a.startsWith('--' + k + '='))?.slice(k.length + 3) ?? d;
 const out = resolve(arg('out', '.egm/mixed-rules')), seconds = Number(arg('seconds', '20')), writers = Number(arg('writers', '4')), tick = arg('tick', '100'), SAMPLE_MS = 20;
 mkdirSync(out, {recursive: true});
-const P = 'desiign', OWNER = 'owner@trial.test';
-const c = await startCoordinator({name: 'mixed', env: {FLEET_RULES_TICK_MS: tick}});
+const attach = arg('attach', ''), OWNER = 'owner@trial.test', P = arg('project', 'desiign');
+// --attach=<origin>: load an already running interface.ts serve fixture (same database, its proxy supplies credentials) instead of a new coordinator.
+const pg = (db: string, sql: string) => execFileSync('psql', ['-h', process.env.FLEET_TRIAL_PGDATA!, '-p', process.env.FLEET_TRIAL_PGPORT!, '-U', 'fleet', '-d', db, '-At', '-q', '-v', 'ON_ERROR_STOP=1'], {input: "SET fleet.project_ids = '*';\n" + sql, encoding: 'utf8'});
+const attachedDb = attach ? execFileSync('psql', ['-h', process.env.FLEET_TRIAL_PGDATA!, '-p', process.env.FLEET_TRIAL_PGPORT!, '-U', 'postgres', '-d', 'postgres', '-At', '-c', "SELECT datname FROM pg_database WHERE datname LIKE 'fleet_trial_%' ORDER BY datname"], {encoding: 'utf8'}).trim().split('\n') : [];
+if (attach && attachedDb.length !== 1) throw Error('attach needs exactly one fleet_trial_ database, found ' + attachedDb.join(','));
+const c = attach ? {base: attach, secret: '', sql: (t: string) => pg(attachedDb[0], t), stop: async () => {}} : await startCoordinator({name: 'mixed', env: {FLEET_RULES_TICK_MS: tick}});
 const q = (sql: string) => c.sql(sql).trim();
 const op = async (name: string, body: object) => {
   const t = performance.now();
-  const r = await fetch(c.base + '/api/ops/' + name, {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': OWNER, 'content-type': 'application/json'}, body: JSON.stringify(body)});
+  const r = await fetch(c.base + '/api/ops/' + name, {method: 'POST', headers: attach ? {'content-type': 'application/json'} : {authorization: 'Bearer ' + c.secret, 'x-fleet-person': OWNER, 'content-type': 'application/json'}, body: JSON.stringify(body)});
   const text = await r.text(); return {status: r.status, ms: performance.now() - t, text};
 };
 const ex = (id: string, state: string, obs: string, ageMin: number) => `INSERT INTO execution(id,kind,state,observation,project_id,directed_by,started_at,data) VALUES ('${id}','agent_run','${state}','${obs}','${P}','${OWNER}',now()-interval '${ageMin} minutes','${state === 'waiting' ? '{"waitReason":"capacity","waitingSince":1}' : '{}'}');`;
@@ -40,7 +44,7 @@ q(sql);
 const names = ['fleet:write', 'dispatch', 'problems:rules', 'project:' + P, 'project:hello-world'];
 const keyCase = names.map(n => `WHEN ((l.classid::bigint<<32)|l.objid::bigint)=hashtextextended('${n}',0) THEN '${n}'`).join(' ');
 const sampleSql = `SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint,l.pid,l.granted,CASE ${keyCase} ELSE 'other' END,left(replace(a.query,E'\\n',' '),50) FROM pg_locks l JOIN pg_stat_activity a USING(pid) WHERE l.locktype='advisory' AND a.datname=current_database();`;
-const url = `postgresql://fleet@/${q('SELECT current_database()')}?host=${encodeURIComponent(process.env.FLEET_TRIAL_PGDATA!)}&port=${process.env.FLEET_TRIAL_PGPORT}`;
+const url = `postgresql://fleet@/${attach ? attachedDb[0] : q('SELECT current_database()')}?host=${encodeURIComponent(process.env.FLEET_TRIAL_PGDATA!)}&port=${process.env.FLEET_TRIAL_PGPORT}`;
 const samples: string[] = [];
 const sampler = spawn('psql', [url, '-At', '-F', '|', '-q'], {stdio: ['pipe', 'pipe', 'inherit']});
 let buf = ''; sampler.stdout.on('data', d => { buf += d; const l = buf.split('\n'); buf = l.pop()!; for (const x of l) samples.push(x); });
