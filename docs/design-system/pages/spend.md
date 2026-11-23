@@ -5,13 +5,13 @@
 **Purpose.** Answer "where did the agents' money go, and what did it buy" for the owner; agents read the same figures through `spend_summary`.
 
 **Layout.** [App shell](../patterns/app-shell.md) and one scrolling page, no control column (OR-24: no catalogue).
-* **Head:** window (`24h`, `7d`, `30d`, `90d`), breakdown (`purpose`, `project`, `category`, `profile`, `model`, `host`), optional project filter, and Refresh.
-* **Window total:** total spend (`CostFigures`), runs, failed runs, tokens, unpriced leaves, and hidden outside-access-scope leaves when `> 0`.
-* **Spend by purpose:** a [share bar](../controls/share-bar.md) across task, lab, conversation, system, and other work.
-* **Breakdown:** sortable table (`DataTable`) of runs, failed, tokens, cost (`CostFigures`), share, and unpriced runs for the chosen breakdown dimension.
+* **Period and total first.** Offer `24h`, `7d`, `30d`, and `90d`, show the UTC dates included in the selected period, and keep Refresh and project focus available. Show total spend (`CostFigures`), runs, failed runs, tokens, and any leaves outside access scope. Explain the estimate marker `≈`, including subscription list-price equivalents.
+* **Unpriced usage.** Show the reported count when present. A usage amount or price entry is missing, so this usage contributes no dollar figure. Use the [measurement basis](../principles.md#2-measurement-basis) unavailable display where a dollar figure is missing.
+* **Breakdown.** Use the shared grouping control for Purpose, Project, Category, Agent, Model, and Host. Lead the sortable `DataTable` with cost (`CostFigures`) and **Share of spend**, then show runs, failures, tokens, and unpriced usage. Share is the fraction of available USD spend in the selected period and scope. Use neutral percentages, including `100%` and a known `0%`. Show unavailable shares with a dash and distinguish small nonzero shares from zero. In Category, label the unclassified row **Unknown category**, explain that no category is recorded, and keep its available spend and share visible.
+* **Spend by purpose:** a [share bar](../controls/share-bar.md) across task, lab, conversation, system, and other work. Label the basis when the bar shows run counts.
 * **What it bought:** completed tasks and task spend, conversation runs and spend, plus per-project completed tasks, task spend, estimated cost per task ([number](../controls/number.md)), and unpriced count.
 
-Subscription list-price figures and metered money never sum; unpriced is never 0 ([measurement basis](../principles.md#2-measurement-basis)).
+Monetary figures keep their currency and basis. At narrow widths, the shared table frames scroll sideways and the period, total, and breakdown controls stay within the work area.
 
 | Inventory item | Shown by |
 |---|---|

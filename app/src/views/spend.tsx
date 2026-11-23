@@ -1,8 +1,8 @@
 // Spend breakdown and efficiency ("What it bought") screen (FLT-7, docs/designs/fleet-analytics.md).
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import {
-  Button, Choice, CostFigures, DataTable, DetailSection, Empty, EntityCode, ErrorBanner, FillBar, KvRow, Num,
-  ShareBar, ShellStatus, OfflineMarker, Skeleton, SortColHead, count, money,
+  Button, Choice, CostFigures, DataTable, DetailSection, Empty, EntityCode, ErrorBanner, GroupControl, KvRow, Num,
+  ShareBar, ShellStatus, OfflineMarker, Skeleton, SortColHead, Totals, count, money, percent,
   type CostFigureLike, type DataTone, type SharePart,
 } from '../../../packages/ui/src/index.ts';
 import { scopeIds, prefsRead } from '../prefs.ts';
@@ -17,13 +17,13 @@ const WINDOWS = [
   { id: '90', label: '90d' },
 ] as const;
 
-const GROUP_OPTIONS: { id: SpendGroupBy; label: string }[] = [
-  { id: 'purpose', label: 'Purpose' },
-  { id: 'project', label: 'Project' },
-  { id: 'category', label: 'Category' },
-  { id: 'profile', label: 'Agent' },
-  { id: 'model', label: 'Model' },
-  { id: 'host', label: 'Host' },
+const GROUP_OPTIONS: readonly (readonly [SpendGroupBy, string])[] = [
+  ['purpose', 'Purpose'],
+  ['project', 'Project'],
+  ['category', 'Category'],
+  ['profile', 'Agent'],
+  ['model', 'Model'],
+  ['host', 'Host'],
 ];
 
 const PURPOSE_LABELS: Record<string, string> = {
@@ -40,6 +40,19 @@ type SortCol = 'label' | 'runs' | 'failed' | 'tokens' | 'usd' | 'unpriced';
 
 const usdOf = (cost: readonly CostFigureLike[]) =>
   cost.reduce((sum, c) => (c.basis !== 'unavailable' && c.currency === 'USD' && typeof c.value === 'number' ? sum + c.value : sum), 0);
+
+function spendShare(row: SpendRow, hasUsdTotal: boolean): number | null {
+  if (row.share != null) return row.share;
+  // The operation omits shares for zero USD as well as for unavailable USD.
+  const hasUsdValue = row.cost.some(c => c.basis !== 'unavailable' && c.currency === 'USD' && typeof c.value === 'number');
+  return hasUsdTotal && hasUsdValue && usdOf(row.cost as CostFigureLike[]) === 0 ? 0 : null;
+}
+
+function shareText(share: number): string {
+  if (share > 0 && share < 0.005) return '<1%';
+  if (share >= 0.995 && share < 1) return '>99%';
+  return percent(share, 1).text;
+}
 
 function windowBounds(days: number): { from: string; to: string } {
   const now = new Date();
@@ -61,6 +74,8 @@ export function Spend() {
   const [multiSupported, setMultiSupported] = useState(true);
 
   const bounds = useMemo(() => windowBounds(Number(days) || 30), [days]);
+  const lastDate = new Date(Date.parse(bounds.to) - 86_400_000).toISOString().slice(0, 10);
+  const periodDates = bounds.from === lastDate ? bounds.from : `${bounds.from} to ${lastDate}`;
   const scope = scopeIds();
   const singleProject = scope.projectIds?.length === 1 && scope.projectIds[0] !== '-' ? scope.projectIds[0] : undefined;
   const hasMultiScope = !singleProject && !!(scope.projectIds?.length || scope.excludeProjectIds?.length);
@@ -103,9 +118,6 @@ export function Spend() {
     else { setSortCol(col); setSortDir(col === 'label' ? 'ascending' : 'descending'); }
   };
 
-  const labelFor = (row: SpendRow, dim: SpendGroupBy) =>
-    dim === 'purpose' ? (PURPOSE_LABELS[row.key] ?? row.label) : row.label;
-
   const purposeParts: SharePart[] = useMemo(() => {
     if (!data) return [];
     const totalUsd = usdOf(data.totals.cost as CostFigureLike[]);
@@ -130,8 +142,9 @@ export function Spend() {
     <article class="detail stack" aria-label="Spend">
       <ShellStatus><OfflineMarker state={state} now={Date.now()} /></ShellStatus>
       <header class="page-h">
-        <Choice label="Window" value={days} options={[...WINDOWS]} onChange={setDays} />
-        <Choice label="Breakdown" value={by} options={GROUP_OPTIONS} onChange={v => setBy(v as SpendGroupBy)} />
+        <b>Period</b>
+        <Choice label="Period" value={days} options={[...WINDOWS]} onChange={setDays} />
+        <span class="muted">{periodDates} UTC</span>
         <span class="grow" />
         <Button label="Refresh" icon="rotate-ccw" iconOnly kind="quiet" onClick={reload} />
       </header>
@@ -139,13 +152,69 @@ export function Spend() {
       {error && <ErrorBanner text={error} onRetry={reload} />}
       {!data && !error && <Skeleton rows={6} />}
 
-      {data && <>
-        <DetailSection title={`Window total (${bounds.from} to ${bounds.to})`}>
-          <KvRow icon="gauge" label="Total spend" value={totalCost.length ? <CostFigures cost={totalCost} /> : <span class="muted">No priced usage</span>}
-            meta={`${count(totalRuns).text} runs · ${count(totalFailed).text} failed · ${count(totalTokens).text} tokens`} />
-          {totalUnpriced > 0 && <KvRow icon="circle-alert" label="Unpriced leaves" meta="Some runs had missing pricing or usage figures" value={<Num m={{ value: totalUnpriced, basis: 'measured' }} kind="count" />} />}
+      {data && (
+        <DetailSection title="Total spend">
+          <strong><CostFigures cost={totalCost} empty="No priced usage" /></strong>
+          <p class="small-note">Amounts marked ≈ are estimates, including subscription list-price equivalents.</p>
+          <Totals compact items={[
+            { label: 'Runs', kind: 'count', m: { value: totalRuns, basis: 'measured' } },
+            { label: 'Failed', kind: 'count', m: { value: totalFailed, basis: 'measured' } },
+            { label: 'Tokens', kind: 'count', m: { value: totalTokens, basis: 'measured' } },
+            ...(totalUnpriced > 0 ? [{
+              label: 'Unpriced usage', kind: 'count' as const, m: { value: totalUnpriced, basis: 'measured' as const },
+            }] : []),
+          ]} />
+          {totalUnpriced > 0 && <p class="small-note">Unpriced usage is excluded from dollar figures because a usage amount or price entry is missing.</p>}
           {data.hidden > 0 && <KvRow icon="shield" label="Outside access scope" meta="Leaf executions excluded by project access" value={<span class="mono">{count(data.hidden).text} hidden</span>} />}
         </DetailSection>
+
+      )}
+      <div class="page-h">
+        <b>Breakdown</b>
+        <GroupControl value={by} options={GROUP_OPTIONS} onChange={setBy} />
+      </div>
+      {data && <>
+        <p class="small-note">Share is based on available USD spend for this period.</p>
+        {by === 'category' && data.rows.some(r => r.key === 'unknown') &&
+          <p class="small-note">Unknown category means no category is recorded for this usage.</p>}
+        <section class="panel">
+          {sortedRows.length ? (
+            <DataTable
+              label={`Spend breakdown by ${by}`}
+              head={
+                <tr>
+                  <SortColHead label={GROUP_OPTIONS.find(([id]) => id === by)?.[1] ?? by} active={sortCol === 'label'} dir={sortDir} onSort={() => toggleSort('label')} />
+                  <SortColHead label="Cost" active={sortCol === 'usd'} dir={sortDir} numeric onSort={() => toggleSort('usd')} />
+                  <th scope="col" class="num">Share of spend</th>
+                  <SortColHead label="Runs" active={sortCol === 'runs'} dir={sortDir} numeric onSort={() => toggleSort('runs')} />
+                  <SortColHead label="Failed" active={sortCol === 'failed'} dir={sortDir} numeric onSort={() => toggleSort('failed')} />
+                  <SortColHead label="Tokens" active={sortCol === 'tokens'} dir={sortDir} numeric onSort={() => toggleSort('tokens')} />
+                  <SortColHead label="Unpriced" active={sortCol === 'unpriced'} dir={sortDir} numeric onSort={() => toggleSort('unpriced')} />
+                </tr>
+              }>
+              {sortedRows.map(r => {
+                const share = spendShare(r, useUsdShare);
+                const label = by === 'purpose' ? PURPOSE_LABELS[r.key] ?? r.label
+                  : by === 'category' && r.key === 'unknown' ? 'Unknown category' : r.label;
+                return (
+                  <tr key={r.key}>
+                    <th scope="row">
+                      {by === 'project' && r.key && r.key !== 'unknown' && r.key !== '-'
+                        ? <EntityCode code={r.label || r.key} id={r.key} kind="project" />
+                        : label}
+                    </th>
+                    <td class="num"><CostFigures cost={r.cost as CostFigureLike[]} empty="—" /></td>
+                    <td class="num">{share == null ? <span aria-label="Share unavailable">—</span> : shareText(share)}</td>
+                    <td class="num"><Num m={{ value: r.runs, basis: 'measured' }} kind="count" /></td>
+                    <td class="num"><Num m={{ value: r.failed, basis: 'measured' }} kind="count" /></td>
+                    <td class="num"><Num m={{ value: r.tokens, basis: 'measured' }} kind="count" /></td>
+                    <td class="num">{r.unpriced > 0 ? <Num m={{ value: r.unpriced, basis: 'measured' }} kind="count" /> : ''}</td>
+                  </tr>
+                );
+              })}
+            </DataTable>
+          ) : <Empty text="No execution activity in this window." />}
+        </section>
 
         {purposeParts.length > 0 && (
           <section class="panel">
@@ -154,54 +223,16 @@ export function Spend() {
               title="By purpose"
               parts={purposeParts}
               value={v => useUsdShare ? money(v, 'USD').text : count(Math.round(v)).text}
-              note={useUsdShare ? 'USD spend across purpose' : 'Run counts (no USD pricing in window)'}
+              note={useUsdShare ? 'USD spend by purpose · rounded shares' : 'Run counts (no positive USD total) · rounded shares'}
             />
           </section>
         )}
 
-        <section class="panel">
-          {sortedRows.length ? (
-            <DataTable
-              label={`Spend breakdown by ${by}`}
-              head={
-                <tr>
-                  <SortColHead label={GROUP_OPTIONS.find(g => g.id === by)?.label ?? by} active={sortCol === 'label'} dir={sortDir} onSort={() => toggleSort('label')} />
-                  <SortColHead label="Runs" active={sortCol === 'runs'} dir={sortDir} numeric onSort={() => toggleSort('runs')} />
-                  <SortColHead label="Failed" active={sortCol === 'failed'} dir={sortDir} numeric onSort={() => toggleSort('failed')} />
-                  <SortColHead label="Tokens" active={sortCol === 'tokens'} dir={sortDir} numeric onSort={() => toggleSort('tokens')} />
-                  <SortColHead label="Cost" active={sortCol === 'usd'} dir={sortDir} numeric onSort={() => toggleSort('usd')} />
-                  <th scope="col">Share</th>
-                  <SortColHead label="Unpriced" active={sortCol === 'unpriced'} dir={sortDir} numeric onSort={() => toggleSort('unpriced')} />
-                </tr>
-              }>
-              {sortedRows.map(r => (
-                <tr key={r.key}>
-                  <th scope="row">
-                    {by === 'project' && r.key && r.key !== 'unknown' && r.key !== '-'
-                      ? <EntityCode code={r.label || r.key} id={r.key} kind="project" />
-                      : labelFor(r, by)}
-                  </th>
-                  <td class="num"><Num m={{ value: r.runs, basis: 'measured' }} kind="count" /></td>
-                  <td class="num"><Num m={{ value: r.failed, basis: 'measured' }} kind="count" /></td>
-                  <td class="num"><Num m={{ value: r.tokens, basis: 'measured' }} kind="count" /></td>
-                  <td class="num">{r.cost.length ? <CostFigures cost={r.cost as CostFigureLike[]} /> : '—'}</td>
-                  <td>
-                    {r.share != null
-                      ? <span class="limit-cell"><FillBar total={100} segments={[{ label: labelFor(r, by), bytes: Math.min(100, Math.max(0, Math.round(r.share * 100))) }]} unit="percent" /></span>
-                      : '—'}
-                  </td>
-                  <td class="num">{r.unpriced > 0 ? <Num m={{ value: r.unpriced, basis: 'measured' }} kind="count" /> : ''}</td>
-                </tr>
-              ))}
-            </DataTable>
-          ) : <Empty text="No execution activity in this window." />}
-        </section>
-
         <DetailSection title="What it bought">
           <KvRow icon="circle-check" label="Completed tasks" value={<Num m={{ value: data.bought.completedTasks, basis: 'measured' }} kind="count" />}
-            meta={data.bought.taskCost.length ? <CostFigures cost={data.bought.taskCost as CostFigureLike[]} /> : 'No priced task spend'} />
+            meta={<CostFigures cost={data.bought.taskCost as CostFigureLike[]} empty="No priced task spend" />} />
           <KvRow icon="messages-square" label="Conversation runs" value={<Num m={{ value: data.bought.conversationRuns, basis: 'measured' }} kind="count" />}
-            meta={data.bought.conversationCost.length ? <CostFigures cost={data.bought.conversationCost as CostFigureLike[]} /> : 'No priced conversation spend'} />
+            meta={<CostFigures cost={data.bought.conversationCost as CostFigureLike[]} empty="No priced conversation spend" />} />
           {data.bought.byProject.length > 0 && (
             <DataTable
               label="Completed tasks and cost per task by project"
@@ -222,7 +253,7 @@ export function Spend() {
                       : 'No project'}
                   </th>
                   <td class="num"><Num m={{ value: p.completedTasks, basis: 'measured' }} kind="count" /></td>
-                  <td class="num">{p.taskCost.length ? <CostFigures cost={p.taskCost as CostFigureLike[]} /> : '—'}</td>
+                  <td class="num"><CostFigures cost={p.taskCost as CostFigureLike[]} empty="—" /></td>
                   <td class="num">
                     {p.costPerTaskUsd != null
                       ? <Num m={{ value: p.costPerTaskUsd, basis: 'estimated', currency: 'USD' }} kind="money" />
