@@ -227,9 +227,6 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 	var timing placementTiming
 	var failures int
 	for i := range all {
-		if err := ctx.Err(); err != nil {
-			return queued, deleted, err
-		}
 		x := &all[i]
 		q, d, err := placeOne(ctx, a, x, byID, byHost, hosts, &timing)
 		if err != nil {

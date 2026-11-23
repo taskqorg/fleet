@@ -1,14 +1,40 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"fleet/obs"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+type cancelPlacementAfterScan struct {
+	pgx.Tx
+	cancel context.CancelFunc
+}
+
+func (tx cancelPlacementAfterScan) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	rows, err := tx.Tx.Query(ctx, sql, args...)
+	if err == nil && strings.HasPrefix(sql, "-- name: ArtStoredAll ") {
+		return cancelOnPlacementRowsClose{Rows: rows, cancel: tx.cancel}, nil
+	}
+	return rows, err
+}
+
+type cancelOnPlacementRowsClose struct {
+	pgx.Rows
+	cancel context.CancelFunc
+}
+
+func (rows cancelOnPlacementRowsClose) Close() {
+	rows.Rows.Close()
+	rows.cancel()
+}
 
 // Requirement: a confirmed retention rule keeps its confirmation (artifact_rule_confirmation.rule_hash) across the rewrite.
 // Risk: a different hash silently un-confirms every rule, so moves and deletes stop. Hashes pinned from the TypeScript coordinator's rule hash.
@@ -89,6 +115,37 @@ INSERT INTO artifact_copy(artifact_id,store_id,state,lease_expires_at) VALUES
 		placementProblems.Lock()
 		placementProblems.list = nil
 		placementProblems.Unlock()
+	})
+
+	// Requirement: cancellation after scanning preserves the lease phase and records both reached phases.
+	// Risk: an early return bypasses lease expiry and hides the placement telemetry.
+	t.Run("cancel after artifact scan", func(t *testing.T) {
+		tx, err := env.ownerStore.pool.Begin(env.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(env.ctx)
+		ctx, cancel := context.WithCancel(env.ctx)
+		defer cancel()
+		ctx = context.WithValue(ctx, txKey{}, cancelPlacementAfterScan{Tx: tx, cancel: cancel})
+		ctx, span := obs.Start(ctx, "pass.placement", obs.KindPass)
+		queued, deleted, err := runPlacement(ctx, env.app)
+		span.End(err)
+		if !errors.Is(err, context.Canceled) || queued != 0 || deleted != 0 {
+			t.Fatalf("cancelled placement = %d queued, %d deleted, %v", queued, deleted, err)
+		}
+		for key, want := range map[string]string{
+			"scan_failed": "0", "artifacts": "3", "failed": "3", "expire_leases_failed": "1",
+		} {
+			if got := span.Attrs["fleet.placement."+key]; got != want {
+				t.Errorf("%s = %q, want %q", key, got, want)
+			}
+		}
+		for _, key := range []string{"place_ms", "expire_leases_ms"} {
+			if _, ok := span.Attrs["fleet.placement."+key]; !ok {
+				t.Errorf("missing timing for reached phase %s", key)
+			}
+		}
 	})
 
 	if err := run("0", obs.OK); err != nil {
