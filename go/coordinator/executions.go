@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/errtrack"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -584,7 +586,31 @@ func executionPutRaw(q *Request, e rawObject) error {
 			}
 		}
 		if _, err = settleTask(q, *t, ""); err == nil && executionEnds(state) && !executionEnds(prev) {
-			_, err = settleIdleTask(q, *t)
+			if q.tx != nil {
+				if serr := exec(q, "SAVEPOINT settle_idle_task"); serr != nil {
+					return serr
+				}
+				if _, serr := settleIdleTask(q, *t); serr != nil {
+					if pgCode(serr) != "" {
+						return serr
+					}
+					if rerr := exec(q, "ROLLBACK TO SAVEPOINT settle_idle_task"); rerr != nil {
+						return rerr
+					}
+					if rerr := exec(q, "RELEASE SAVEPOINT settle_idle_task"); rerr != nil {
+						return rerr
+					}
+					log.Printf("execution %s settleIdleTask(%s): %v", id, *t, serr)
+					capErr, taskID, execID := serr, *t, id
+					afterCommit(q, func() {
+						errtrack.Capture(capErr, map[string]string{"task": taskID, "execution": execID})
+					})
+				} else if rerr := exec(q, "RELEASE SAVEPOINT settle_idle_task"); rerr != nil {
+					return rerr
+				}
+			} else {
+				_, err = settleIdleTask(q, *t)
+			}
 		}
 	}
 	if err == nil && q.app != nil {
@@ -1116,41 +1142,80 @@ func init() {
 		return out, nil
 	})
 	onStart(func(ctx context.Context, a *App) {
-		every(ctx, "lost", lostAfter/12, func(ctx context.Context) error {
-			return a.store.Write(ctx, nil, nil, func(q *Request) error {
-				// Still lost (DispLostIDs), re-checked under the row lock so a receipt that just arrived wins. A host job is also
-				// lost when its host keeps polling but sent no receipt for it in lostAfter: host jobs last minutes (p99 5 min),
-				// so a confirmed one that went silent was dropped by an executor restart. ponytail: a host job meant to run
-				// longer than lostAfter needs a progress receipt or its own limit.
-				ids, err := q.db().DispLostIDs(q.ctx(), lostAfter.Seconds())
-				if err != nil {
-					return err
-				}
-				n := 0
-				for _, id := range ids {
-					still, err := q.db().DispLostStill(q.ctx(), db.DispLostStillParams{ID: id, Secs: lostAfter.Seconds()})
-					if err != nil {
-						return err
-					}
-					if !still {
-						continue
-					}
-					if _, err := executionAbandon(q, id, "no host receipt for "+lostAfter.String()+" after the host lost track, the stop went unanswered, or the host kept polling without it"); err != nil {
-						return err
-					}
-					n++
-				}
-				if n == 0 {
-					return nil
-				}
-				publish(q)
-				afterCommit(q, func() {
-					a.wakeDispatch()
-				})
-				return nil
-			})
+		a.ensureRuntime()
+		grace := lostClosedGrace()
+		period := lostAfter / 12
+		if grace > 0 && (period <= 0 || grace/2 < period) {
+			period = grace / 2
+		}
+		if lostAfter <= 0 {
+			period = 0
+		}
+		everyWake(ctx, "lost", period, a.lostCh, true, func(ctx context.Context, _ bool) error {
+			return reconcileLostExecutions(ctx, a)
 		})
 	})
+}
+
+func (a *App) wakeLost() {
+	if a == nil {
+		return
+	}
+	a.ensureRuntime()
+	select {
+	case a.lostCh <- struct{}{}:
+	default:
+	}
+}
+
+func lostClosedGrace() time.Duration {
+	defMs := 60000
+	if lostAfter > 0 && int(lostAfter/time.Millisecond) < defMs {
+		defMs = int(lostAfter / time.Millisecond)
+	}
+	return envMs("FLEET_PROCESS_CLOSED_GRACE_MS", defMs)
+}
+
+func reconcileLostExecutions(ctx context.Context, a *App) error {
+	grace := lostClosedGrace()
+	var ids []string
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
+		var err error
+		ids, err = q.db().DispLostIDs(q.ctx(), db.DispLostIDsParams{
+			Secs:            lostAfter.Seconds(),
+			ClosedGraceSecs: grace.Seconds(),
+		})
+		return err
+	}); err != nil || len(ids) == 0 {
+		return err
+	}
+	for _, id := range ids {
+		if err := a.store.Write(ctx, nil, []string{GLOBAL, DISPATCH}, func(q *Request) error {
+			// Re-check under row lock so a concurrent receipt wins.
+			still, err := q.db().DispLostStill(q.ctx(), db.DispLostStillParams{
+				ID:              id,
+				Secs:            lostAfter.Seconds(),
+				ClosedGraceSecs: grace.Seconds(),
+			})
+			if err != nil || !still {
+				return err
+			}
+			if _, err := executionAbandon(q, id, "no host terminal receipt after process closed, host stopped reporting the run, or host lost track"); err != nil {
+				return err
+			}
+			publish(q)
+			if err := agentPromote(q); err != nil {
+				return err
+			}
+			afterCommit(q, func() {
+				a.wakeDispatch()
+			})
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // executionAbandon ends an unfinished agent run or host job no host will finish: failed with problem unknown:abandoned
@@ -1205,6 +1270,9 @@ func executionAbandon(q *Request, id, reason string) (string, error) {
 		return "", err
 	}
 	if err := q.db().DispAbandonProblem(q.ctx(), id); err != nil {
+		return "", err
+	}
+	if err := markObservation(q, id, "unconfirmed"); err != nil {
 		return "", err
 	}
 	// Its end is when it was given up, not when it stopped running: the run's time is unknown, never start-to-abandon.

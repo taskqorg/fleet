@@ -528,13 +528,31 @@ SELECT execution.id FROM execution WHERE state IN ('preparing','running','waitin
   AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1::float8))
  OR (kind='host_job' AND state='running' AND observation='confirmed' AND coalesce(last_seen_at, started_at, updated_at) < now() - make_interval(secs => $1::float8)
   AND EXISTS (SELECT 1 FROM host_observation h WHERE h.id=execution.host_id AND h.last_seen_at > now() - interval '300 seconds'))
+ OR (kind IN ('agent_run','host_job') AND state IN ('preparing','running') AND EXISTS (
+  SELECT 1 FROM event ev WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='outbox.failed'
+   AND ev.payload->'data'->>'route'='/api/hosts/receipts'
+   AND (execution.state='running' OR EXISTS (SELECT 1 FROM event pc WHERE NOT pc.delta AND pc.execution_id=execution.id AND pc.type='process.closed')
+    OR ev.updated_at < now() - make_interval(secs => $2::float8))))
+ OR (kind IN ('agent_run','host_job') AND state IN ('preparing','running') AND EXISTS (
+  SELECT 1 FROM event ev WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='process.closed'
+   AND ev.updated_at < now() - make_interval(secs => $2::float8)))
+ OR (kind IN ('agent_run','host_job') AND state='running' AND host_id IS NOT NULL AND EXISTS (
+  SELECT 1 FROM host_observation h WHERE h.id=execution.host_id AND h.last_seen_at > now() - interval '300 seconds'
+   AND h.payload ? 'activeExecutions' AND NOT (h.payload->'activeExecutions' ? execution.id)
+   AND coalesce(execution.last_seen_at, execution.started_at, execution.updated_at) < h.last_seen_at - make_interval(secs => $2::float8)
+   AND coalesce(execution.last_seen_at, execution.started_at, execution.updated_at) < now() - make_interval(secs => $2::float8)))
  OR (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $1::float8)
   AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))))
 `
 
-// Unfinished runs no host will finish (lostCond in executions.go), silent for secs.
-func (q *Queries) DispLostIDs(ctx context.Context, secs float64) ([]string, error) {
-	rows, err := q.db.Query(ctx, dispLostIDs, secs)
+type DispLostIDsParams struct {
+	Secs            float64
+	ClosedGraceSecs float64
+}
+
+// Unfinished runs no host will finish (executions.go), silent for secs or finished/dropped by their host.
+func (q *Queries) DispLostIDs(ctx context.Context, arg DispLostIDsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, dispLostIDs, arg.Secs, arg.ClosedGraceSecs)
 	if err != nil {
 		return nil, err
 	}
@@ -560,19 +578,33 @@ SELECT EXISTS(SELECT 1 FROM execution WHERE execution.id = $1 AND state IN ('pre
   AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $2::float8))
  OR (kind='host_job' AND state='running' AND observation='confirmed' AND coalesce(last_seen_at, started_at, updated_at) < now() - make_interval(secs => $2::float8)
   AND EXISTS (SELECT 1 FROM host_observation h WHERE h.id=execution.host_id AND h.last_seen_at > now() - interval '300 seconds'))
+ OR (kind IN ('agent_run','host_job') AND state IN ('preparing','running') AND EXISTS (
+  SELECT 1 FROM event ev WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='outbox.failed'
+   AND ev.payload->'data'->>'route'='/api/hosts/receipts'
+   AND (execution.state='running' OR EXISTS (SELECT 1 FROM event pc WHERE NOT pc.delta AND pc.execution_id=execution.id AND pc.type='process.closed')
+    OR ev.updated_at < now() - make_interval(secs => $3::float8))))
+ OR (kind IN ('agent_run','host_job') AND state IN ('preparing','running') AND EXISTS (
+  SELECT 1 FROM event ev WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='process.closed'
+   AND ev.updated_at < now() - make_interval(secs => $3::float8)))
+ OR (kind IN ('agent_run','host_job') AND state='running' AND host_id IS NOT NULL AND EXISTS (
+  SELECT 1 FROM host_observation h WHERE h.id=execution.host_id AND h.last_seen_at > now() - interval '300 seconds'
+   AND h.payload ? 'activeExecutions' AND NOT (h.payload->'activeExecutions' ? execution.id)
+   AND coalesce(execution.last_seen_at, execution.started_at, execution.updated_at) < h.last_seen_at - make_interval(secs => $3::float8)
+   AND coalesce(execution.last_seen_at, execution.started_at, execution.updated_at) < now() - make_interval(secs => $3::float8)))
  OR (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $2::float8)
   AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))))
  FOR UPDATE SKIP LOCKED)::boolean
 `
 
 type DispLostStillParams struct {
-	ID   string
-	Secs float64
+	ID              string
+	Secs            float64
+	ClosedGraceSecs float64
 }
 
 // DispLostIDs for one execution, re-checked under its row lock (a receipt that just arrived wins).
 func (q *Queries) DispLostStill(ctx context.Context, arg DispLostStillParams) (bool, error) {
-	row := q.db.QueryRow(ctx, dispLostStill, arg.ID, arg.Secs)
+	row := q.db.QueryRow(ctx, dispLostStill, arg.ID, arg.Secs, arg.ClosedGraceSecs)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err

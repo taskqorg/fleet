@@ -60,6 +60,7 @@ type App struct {
 	dispatchDoneCh      chan struct{}
 	dispatchReqGen      uint64
 	dispatchDoneGen     uint64
+	lostCh              chan struct{}
 
 	envCacheGen  atomic.Uint64
 	envMu        sync.RWMutex
@@ -81,6 +82,7 @@ func (a *App) ensureRuntime() {
 		}
 		a.dispatchCh = make(chan struct{}, 1)
 		a.dispatchDoneCh = make(chan struct{})
+		a.lostCh = make(chan struct{}, 1)
 		a.hostWake = map[string]*hostWakeEntry{}
 		a.heartbeats = map[string]*hostHeartbeat{}
 		a.stopCh = make(chan struct{})

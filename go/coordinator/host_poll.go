@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -755,6 +756,11 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	if b.ProjectRoots != nil {
 		obs.ProjectRoots = &b.ProjectRoots
 	}
+	if b.ActiveExecutions != nil {
+		active := append([]string(nil), b.ActiveExecutions...)
+		sort.Strings(active)
+		obs.ActiveExecutions = &active
+	}
 	ps := hostProblems(b.Problems)
 	if b.Version != nil {
 		v := *b.Version
@@ -1007,10 +1013,11 @@ func (a *App) hostMayRun(h hostRecord, projectID any, director any) bool {
 // hostPollObservationPayload holds the payload fields of a host observation (host_observation.payload).
 type hostPollObservationPayload struct {
 	Platform        string                     `json:"platform,omitempty"`
-	Capabilities    *[]string                  `json:"capabilities,omitempty"`
-	HarnessVersions *[]contract.HarnessVersion `json:"harnessVersions,omitempty"`
-	GitConnections  *[]string                  `json:"gitConnections,omitempty"`
-	ProjectRoots    *[]string                  `json:"projectRoots,omitempty"`
+	Capabilities     *[]string                  `json:"capabilities,omitempty"`
+	HarnessVersions  *[]contract.HarnessVersion `json:"harnessVersions,omitempty"`
+	GitConnections   *[]string                  `json:"gitConnections,omitempty"`
+	ProjectRoots     *[]string                  `json:"projectRoots,omitempty"`
+	ActiveExecutions *[]string                  `json:"activeExecutions,omitempty"`
 	Version         *string                    `json:"version,omitempty"`
 	Problems        []hostProblem              `json:"problems,omitempty"`
 	Update          any                        `json:"update,omitempty"`

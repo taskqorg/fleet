@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -302,10 +303,38 @@ func (e *executor) poll() (*pollReply, error) {
 	return e.pollWait(e.baseCtx(), 0)
 }
 
+// activeExecutions returns the sorted, deduplicated execution IDs currently open in the journal or still holding
+// an undelivered status receipt in the outbox. Reading SQLite avoids racing with the main goroutine's e.live map.
+func (e *executor) activeExecutions() []string {
+	out := []string{}
+	if e.db == nil {
+		return out
+	}
+	rows, err := e.db.Query(
+		`SELECT DISTINCT json_extract(body,'$.executionId') FROM commands WHERE terminal=0
+		 UNION
+		 SELECT DISTINCT json_extract(body,'$.executionId') FROM outbox WHERE route=?`,
+		contract.RouteReceipts.Path,
+	)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id sql.NullString
+		if rows.Scan(&id) == nil && id.Valid && id.String != "" {
+			out = append(out, id.String)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply, error) {
 	v, roots := version, reportedRoots()
 	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
-		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, HarnessVersions: managedVersions(), Update: lastUpdate(e.root), GitConnections: gitConnections(connectionsDir())}
+		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, HarnessVersions: managedVersions(), Update: lastUpdate(e.root),
+		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: e.activeExecutions()}
 	var a answer
 	if wait > 0 {
 		a = sendPoll(ctx, e.url, e.token, pollRoute+"?wait="+wait.String(), body)
