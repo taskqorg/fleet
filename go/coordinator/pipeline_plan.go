@@ -996,7 +996,8 @@ func (run *runRecord) planRead(q *Request) (recordRest, error) {
 	}
 	delete(out, "steps")
 	if wait := run.placementWait(); wait != nil {
-		out["state"], out["waitDetail"] = jsonBytes("waiting"), jsonBytes(wait)
+		// The run is still active. Keep its lifecycle state for pipeline clients that poll it.
+		out["waitDetail"] = jsonBytes(wait)
 	}
 	plan := run.Plan
 	view := &contract.PipelinePlan{DefinitionSha256: plan.DefinitionSha256, Revision: plan.Revision, Entries: []contract.PipelinePlanEntry{}}

@@ -103,7 +103,8 @@ test('Lab retains authenticated requester through background enqueue, revocation
     return reply.findings.some((f:any)=>f.executionId==='placement-stuck-control')&&reply.findings;
    });
    const pending = await read();
-   assert.equal(pending.state,'waiting');
+   assert.equal(pending.state,'running','pipeline clients must keep polling during a placement wait');
+   assert.equal(pending.waitDetail,wait);
    assert.deepEqual([pending.plan.entries[0].execution.state,pending.plan.entries[0].execution.waitDetail],['waiting',wait]);
    const lab = await get(experiment.id);
    const trial = lab.trials.find((t:any)=>t.id===child.pipelineRunId);
