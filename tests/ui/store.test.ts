@@ -207,8 +207,10 @@ test('a late membership answer is discarded when access generation changes', asy
     await asked.p;
     invalidateAccess('fixture grant change');
     assert.equal(peek.list('access-list'), null);
+    await nextPage('access-list'); // an old viewport edge can still fire while access is closed
     await ensureAccessGeneration();
-    answer = async () => page([row('new-visible')]);
+    const visible = row('new-visible');
+    answer = async () => page([visible], visible.sortKey);
     await loadList('tasks', 'access-list', view);
     const authorized = peek.list('access-list');
     pending.ok(membership([row('old-private', 'late private title')], { queued: 72 }));
@@ -216,6 +218,9 @@ test('a late membership answer is discarded when access generation changes', asy
     assert.equal(peek.list('access-list'), authorized);
     assert.deepEqual(idsOf('access-list'), ['new-visible']);
     assert.equal(authorized!.counts.queued, 1);
+    answer = async () => page([row('new-next')]);
+    await nextPage('access-list');
+    assert.deepEqual(idsOf('access-list'), ['new-visible', 'new-next'], 'the reopened list can still page');
   } finally { unmount(); }
 });
 

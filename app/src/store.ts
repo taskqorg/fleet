@@ -153,6 +153,7 @@ export async function nextPage(key: string) {
   const e = lists.get(key);
   if (!e || e.paging || e.loading) return;
   const generation = accessGeneration();
+  if (!isAccessCurrent(generation)) return;
   e.paging = true;
   if (e.reconciling) await e.reconciling;
   if (!isAccessCurrent(generation) || lists.get(key) !== e) return;
