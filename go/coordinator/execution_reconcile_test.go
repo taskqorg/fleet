@@ -80,6 +80,17 @@ INSERT INTO command(id,execution_id,session_id,host_id,project_id,kind,status,ha
 		t.Fatalf("e-tool-ok status = %d %v", code, statusOK)
 	}
 	code, taskOK := e.callJSON(t, "POST", "/api/ops/task_get", contract.TaskGetRequest{TaskId: "t-tool-ok"}, owner)
+	if code != 200 || len(anys(taskOK["openQuestions"])) != 0 || taskOK["completionReportMissing"] != true {
+		t.Fatalf("t-tool-ok before worker_done expected 0 openQuestions and completionReportMissing=true, got %d %v", code, taskOK)
+	}
+	code, wdOK := e.callJSON(t, "POST", "/api/ops/worker_done", contract.WorkerDoneRequest{
+		ExecutionId: "e-tool-ok",
+		Outcome:     json.RawMessage(`"succeeded"`),
+	}, owner)
+	if code != 200 || wdOK["action"] != "accepted" {
+		t.Fatalf("worker_done e-tool-ok = %d %v", code, wdOK)
+	}
+	code, taskOK = e.callJSON(t, "POST", "/api/ops/task_get", contract.TaskGetRequest{TaskId: "t-tool-ok"}, owner)
 	if code != 200 || len(anys(taskOK["openQuestions"])) != 1 {
 		t.Fatalf("t-tool-ok expected 1 acceptance question, got %d %v", code, taskOK)
 	}
