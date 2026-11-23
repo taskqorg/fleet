@@ -23,6 +23,9 @@ test('sessions_list and membership with production-shaped RLS history retain tit
       ('list-foreign-message','list-0','hidden-project','Foreign title canary'),
       ('list-first','list-0','desiign','Needle first title'),
       ('list-second','list-0','desiign','Later message is not the title');
+    INSERT INTO execution(id,kind,state,session_id,project_id) VALUES
+      ('hidden-agent-run','agent_run','failed','list-0','hidden-project'),
+      ('idle-tool-run','tool_run','succeeded','list-1','desiign');
     INSERT INTO event(id,session_id,project_id,payload)
     SELECT 'list-event-'||i,'list-'||(i%1600),'desiign',jsonb_build_object('payload',repeat(md5(i::text),32)) FROM generate_series(1,9500) i;
     INSERT INTO event(id,session_id,project_id) VALUES ('list-last','list-0','desiign');
@@ -105,4 +108,58 @@ test('sessions_list groups, sorts and pages by last activity; membership answers
   assert.deepEqual(m.lists[0].groups.map((g: any) => g.key), ['1', '5']);
   assert.deepEqual(m.lists[1].rows.map((s: any) => s.id), ['g-a', 'g-e']); assert.equal(m.lists[1].rows[0].sortKey[0], 'alpha');
   assert.equal((await send('list_membership', {ids: ['g-a'], lists: [{name: 'sessions', group: 'host'}]})).status, 400);
+});
+
+// Requirement: Fleet conversation status comes from the latest visible agent run throughout the operator interface.
+// Risk: a newer tool execution hides an active conversation or supplies its terminal status.
+test('conversation surfaces agree across tool completion and the agent state transition', {timeout: 30_000}, async t => {
+  const c = await startCoordinator({name: 'convstate'}); t.after(() => c.stop());
+  const op = async (name: string, body: object) => {
+    const r = await fetch(c.base + '/api/ops/' + name, {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json'}, body: JSON.stringify(body)});
+    const d: any = await r.json(); assert.equal(r.status, 200, name + ' ' + JSON.stringify(d)); return d;
+  };
+  const id = 'conversation-status-fixture';
+  c.sql(`INSERT INTO session(id,project_id,title) VALUES ('${id}','desiign','Conversation status fixture');
+    INSERT INTO execution(id,kind,state,project_id,session_id,data) VALUES
+      ('previous-agent','agent_run','succeeded','desiign','${id}','{"id":"previous-agent"}'),
+      ('current-agent','agent_run','running','desiign','${id}','{"id":"current-agent"}');
+    INSERT INTO execution(id,kind,state,project_id,session_id,parent_execution_id,data) VALUES
+      ('successful-tool','tool_run','succeeded','desiign','${id}','current-agent','{"tool":"fixture-ok"}'),
+      ('failed-tool','tool_run','failed','desiign','${id}','current-agent','{"tool":"fixture-error"}');
+    INSERT INTO event(id,session_id,execution_id,project_id,type,event_seq,payload) VALUES
+      ('tool-event','${id}','current-agent','desiign','item.completed',1,
+       '{"data":{"fleetNormalized":{"blocks":[{"kind":"tool","name":"fixture-ok","state":"completed","output":"Fixture tool result"}]}}}');`);
+
+  const runningFilter = {state: ['running', 'preparing', 'waiting']};
+  const check = async (state: string, inRunning: boolean) => {
+    const page = await op('sessions_list', {group: 'state'});
+    assert.deepEqual(page.sessions.map((s: any) => [s.id, s.state, s.executions]), [[id, state, 4]]);
+    assert.equal(page.counts[state], 1);
+    assert.deepEqual(page.groups.map((g: any) => [g.label, g.count]), [[state, 1]]);
+    assert.equal((await op('sessions_list', {filter: runningFilter})).sessions.length, Number(inRunning));
+    assert.equal((await op('sessions_list', {filter: {search: 'state:' + state}})).sessions[0]?.id, id);
+    const membership = (await op('list_membership', {ids: [id], lists: [{name: 'sessions', filter: runningFilter}]})).lists[0];
+    assert.deepEqual(membership.rows.map((s: any) => [s.id, s.state]), inRunning ? [[id, state]] : []);
+    assert.equal(membership.counts[state], 1);
+    assert.equal((await op('nav_counts', {})).sections.conversations.inFocus, Number(inRunning));
+
+    const detail = await op('session_get', {sessionId: id});
+    assert.equal(detail.state, state);
+    assert.deepEqual(detail.executions.map((e: any) => [e.id, e.state]), [['previous-agent', 'succeeded'], ['current-agent', state]]);
+    assert.equal(detail.executions.at(-1).observation, 'confirmed');
+    assert.equal(detail.resources.total.tools.totalCalls, 2);
+    assert.equal(detail.resources.total.tools.failedCalls, 1);
+    assert.equal((await op('entity_card', {kind: 'conversation', id})).state, state);
+    const search = await op('search', {query: 'fixture state:' + state});
+    assert.deepEqual(search.hits.filter((hit: any) => hit.kind === 'conversation').map((hit: any) => [hit.id, hit.state]), [[id, state]]);
+    assert.equal(search.counts.conversation, 1);
+  };
+
+  await check('running', true);
+  const thread = await op('thread_entries', {key: {session: id}, limit: 10});
+  assert.ok(thread.entries.some((b: any) => b.kind === 'tool' && b.name === 'fixture-ok'));
+  c.sql("UPDATE execution SET state='waiting' WHERE id='current-agent'");
+  await check('waiting', true);
+  c.sql("UPDATE execution SET state='succeeded', ended_at=now() WHERE id='current-agent'");
+  await check('succeeded', false);
 });

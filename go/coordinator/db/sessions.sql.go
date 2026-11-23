@@ -307,15 +307,20 @@ func (q *Queries) SessionByIDLocked(ctx context.Context, id string) (Session, er
 	return i, err
 }
 
-const sessionCode = `-- name: SessionCode :one
-SELECT code FROM session WHERE id = $1
+const sessionCodeAndState = `-- name: SessionCodeAndState :one
+SELECT d.code, (SELECT state FROM fleet_conversation_state(d.id))::text AS state FROM session d WHERE d.id = $1
 `
 
-func (q *Queries) SessionCode(ctx context.Context, id string) (*string, error) {
-	row := q.db.QueryRow(ctx, sessionCode, id)
-	var code *string
-	err := row.Scan(&code)
-	return code, err
+type SessionCodeAndStateRow struct {
+	Code  *string
+	State string
+}
+
+func (q *Queries) SessionCodeAndState(ctx context.Context, id string) (SessionCodeAndStateRow, error) {
+	row := q.db.QueryRow(ctx, sessionCodeAndState, id)
+	var i SessionCodeAndStateRow
+	err := row.Scan(&i.Code, &i.State)
+	return i, err
 }
 
 const sessionDelegations = `-- name: SessionDelegations :many

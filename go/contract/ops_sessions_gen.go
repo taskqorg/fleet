@@ -541,6 +541,7 @@ type SessionGetReply struct {
 	Setup                   json.RawMessage              `json:"setup,omitempty"`
 	StartRequest            json.RawMessage              `json:"startRequest,omitempty"`
 	Starter                 *string                      `json:"starter,omitempty"`
+	State                   *string                      `json:"state,omitempty"`
 	TaskId                  *string                      `json:"taskId,omitempty"`
 	Title                   *string                      `json:"title,omitempty"`
 	TitleBy                 *string                      `json:"titleBy,omitempty"`

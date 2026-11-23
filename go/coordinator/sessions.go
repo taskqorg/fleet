@@ -541,11 +541,12 @@ func sessionGet(q *Request, sid string) (rawObject, error) {
 	}
 	maps.Copy(s, add)
 	s["sessionId"] = jsonBytes(sid)
-	code, err := q.db().SessionCode(q.ctx(), sid)
+	status, err := q.db().SessionCodeAndState(q.ctx(), sid)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	s["code"] = jsonBytes(code)
+	s["code"] = jsonBytes(status.Code)
+	s["state"] = jsonBytes(status.State)
 	ds, err := q.db().SessionDelegations(q.ctx(), sid)
 	delegations, err := delegationsOf(q, ds, err)
 	if err != nil {

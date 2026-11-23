@@ -225,6 +225,16 @@ BEGIN
  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
 END $function$;
 
+CREATE OR REPLACE FUNCTION public.fleet_conversation_state(sid text)
+ RETURNS TABLE(state text)
+ LANGUAGE sql
+ STABLE ROWS 1
+AS $function$
+ SELECT coalesce((SELECT e.state::text FROM execution e
+   WHERE e.session_id = sid AND e.kind = 'agent_run'
+   ORDER BY e.seq DESC LIMIT 1), 'idle');
+$function$;
+
 CREATE OR REPLACE FUNCTION public.fleet_deleted_projects()
  RETURNS text[]
  LANGUAGE sql
