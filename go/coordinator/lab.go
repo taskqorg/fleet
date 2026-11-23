@@ -690,10 +690,6 @@ func expGet(q *Request, id string) (labExperimentView, error) {
 			}
 		}
 		res := trialResources["trial\x00"+t.ID]
-		var tokens int64
-		if res.Tokens.Total != nil {
-			tokens = *res.Tokens.Total
-		}
 		trialCosts := append([]contract.CostFigure{}, res.Cost...)
 		var o struct {
 			WebRoute json.RawMessage `json:"web_route"`
@@ -719,8 +715,11 @@ func expGet(q *Request, id string) (labExperimentView, error) {
 		}
 		v := contract.LabTrialRecord{Id: t.ID, Cell: cell, State: contract.ExecutionState(t.State), Observation: contract.PipelineObservation(t.Observation), Problem: trialProblem(t),
 			Comparable: comparable(t), StartedAt: labNull(t.StartedAt), FinishedAt: labNull(t.FinishedAt), DurationMs: t.DurationMs,
-			Spend: contract.LabTrialSpend{Calls: &calls, Credits: &credit, Tokens: &tokens, Basis: &basis}, Cost: trialCosts,
+			Spend: contract.LabTrialSpend{Calls: &calls, Credits: &credit, Tokens: res.Tokens.Total, Basis: &basis}, Cost: trialCosts,
 			Confounders: contract.LabConfounders{Hosts: uniq(hosts), Harnesses: uniq(harnesses), Models: uniq(models), WebRoute: web}, Scores: mine, PlanSummary: planSummary(t.run.entries())}
+		if wait := t.run.placementWait(); wait != nil {
+			v.State, v.WaitDetail = contract.ExecutionStateWaiting, wait
+		}
 		if rawValue(t.CanonicalResult) != nil {
 			r, err := asT[contract.PipelineCanonicalResult](t.CanonicalResult)
 			if err != nil {

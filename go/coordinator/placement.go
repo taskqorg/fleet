@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/obs"
 )
 
 const copySourceSeconds = 6 * 3600
@@ -175,6 +177,10 @@ func effective(ctx context.Context, a *App, x *Artifact, hosts map[string]bool) 
 
 var placementRunning sync.Mutex
 
+type placementTiming struct {
+	copies, policy time.Duration
+}
+
 // runPlacement: one pass; store calls run between short transactions.
 func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) {
 	if !placementRunning.TryLock() {
@@ -184,9 +190,14 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 	placementProblems.Lock()
 	placementProblems.list = nil
 	placementProblems.Unlock()
-	if err := reconcilePurges(ctx, a); err != nil {
+	span := obs.From(ctx)
+	start := time.Now()
+	err = reconcilePurges(ctx, a)
+	span.Set("fleet.placement.purges_ms", strconv.FormatInt(time.Since(start).Milliseconds(), 10))
+	if err != nil {
 		return 0, 0, err
 	}
+	start = time.Now()
 	stores, err := storeList(ctx, a)
 	if err != nil {
 		return 0, 0, err
@@ -196,13 +207,25 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 		byID[stores[i].ID], byHost[stores[i].HostID], hosts[stores[i].HostID] = &stores[i], &stores[i], true
 	}
 	all, err := storedArtifactRows(ctx, a)
+	span.Set("fleet.placement.scan_ms", strconv.FormatInt(time.Since(start).Milliseconds(), 10))
 	if err != nil {
 		return 0, 0, err
 	}
+	start = time.Now()
+	var timing placementTiming
+	var firstFailure error
+	var failures int
 	for i := range all {
+		if err := ctx.Err(); err != nil {
+			return queued, deleted, err
+		}
 		x := &all[i]
-		q, d, err := placeOne(ctx, a, x, stores, byID, byHost, hosts)
+		q, d, err := placeOne(ctx, a, x, byID, byHost, hosts, &timing)
 		if err != nil {
+			failures++
+			if firstFailure == nil {
+				firstFailure = err
+			}
 			problem(struct {
 				Kind       string `json:"kind"`
 				ArtifactID string `json:"artifactId"`
@@ -211,14 +234,24 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 		}
 		queued, deleted = queued+q, deleted+d
 	}
-	if err := expireLeases(ctx, a); err != nil {
-		return queued, deleted, err
+	span.Set("fleet.placement.artifacts", strconv.Itoa(len(all)))
+	span.Set("fleet.placement.failed", strconv.Itoa(failures))
+	span.Set("fleet.placement.place_ms", strconv.FormatInt(time.Since(start).Milliseconds(), 10))
+	span.Set("fleet.placement.copy_lookup_ms", strconv.FormatInt(timing.copies.Milliseconds(), 10))
+	span.Set("fleet.placement.policy_ms", strconv.FormatInt(timing.policy.Milliseconds(), 10))
+	start = time.Now()
+	leaseErr := expireLeases(ctx, a)
+	span.Set("fleet.placement.expire_leases_ms", strconv.FormatInt(time.Since(start).Milliseconds(), 10))
+	if firstFailure != nil {
+		firstFailure = fmt.Errorf("%d artifacts failed placement: %w", failures, firstFailure)
 	}
-	return queued, deleted, nil
+	return queued, deleted, errors.Join(firstFailure, leaseErr)
 }
 
-func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID, byHost map[string]*StoreRow, hosts map[string]bool) (queued, deleted int, err error) {
+func placeOne(ctx context.Context, a *App, x *Artifact, byID, byHost map[string]*StoreRow, hosts map[string]bool, timing *placementTiming) (queued, deleted int, err error) {
+	start := time.Now()
 	copies, err := connDB(ctx, a).DispArtifactCopies(ctx, x.ID)
+	timing.copies += time.Since(start)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -230,7 +263,9 @@ func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID,
 			}
 		}
 	}
+	start = time.Now()
 	p, err := effective(ctx, a, x, hosts)
+	timing.policy += time.Since(start)
 	if err != nil {
 		return 0, 0, err
 	}

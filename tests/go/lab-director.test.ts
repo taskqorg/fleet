@@ -13,7 +13,7 @@ test('Lab retains authenticated requester through background enqueue, revocation
  const dir=mkdtempSync(tmpdir()+'/fleet-lab-director-');
  const people=JSON.parse(readFileSync('tests/trial/people.json','utf8'));people.push({email:creator,name:'Architect',roles:['operator','architect'],grants:[{kind:'project',id:project}]});writeFileSync(dir+'/people.json',JSON.stringify(people));
  const store=await fakeS3();
- const c=await startCoordinator({name:'lab_director',people:dir+'/people.json',env:{FLEET_PIPELINE_TICK_MS:'100',FLEET_SECRET_DIR:dir+'/secret',FLEET_STORE_SECRETS:dir+'/stores',FLEET_STORE_ENDPOINT_HOSTS:'127.0.0.1',FLEET_DEFAULT_ARTIFACT_LOCATIONS:'trial-host',FLEET_GATEWAY_DIR:dir+'/gateway',FLEET_GATEWAY_URL:'http://127.0.0.1:1'}});
+ const c=await startCoordinator({name:'lab_director',people:dir+'/people.json',env:{FLEET_PIPELINE_TICK_MS:'100',FLEET_RULES_TICK_MS:'100',FLEET_SECRET_DIR:dir+'/secret',FLEET_STORE_SECRETS:dir+'/stores',FLEET_STORE_ENDPOINT_HOSTS:'127.0.0.1',FLEET_DEFAULT_ARTIFACT_LOCATIONS:'trial-host',FLEET_GATEWAY_DIR:dir+'/gateway',FLEET_GATEWAY_URL:'http://127.0.0.1:1'}});
  const request=async(path:string,body:any,person=owner,token=c.secret)=>{const r=await fetch(c.base+path,{method:body===undefined?'GET':'POST',headers:{authorization:'Bearer '+token,...(token===c.secret?{'x-fleet-person':person}:{}),'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return{status:r.status,body:await r.json() as any}};
  const ok=(r:{status:number,body:any})=>{assert.equal(r.status,200,JSON.stringify(r.body));return r.body};
  const op=async(name:string,body:any,person=owner)=>ok(await request('/api/ops/'+name,body,person));
@@ -51,6 +51,57 @@ test('Lab retains authenticated requester through background enqueue, revocation
    const revoked=await request('/api/hosts/agent-tools',{executionId:row.id,commandId:command.id,request:{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'task_get',arguments:{taskId:mine.id}}}},owner,host.secret);
    assert.equal(revoked.status,404,'native bound request refreshes revoked authority');
    await op('people_set',{people});
+  });
+  // Requirement: a selected trial step waiting for placement shows its durable reason through dispatch and settlement.
+  // Risk: Fleet reports two stuck executions for one undispatched child, or stops reconciling the original run.
+  await t.test('a coding trial waits on forge capability, then dispatches and reconciles the original child', async () => {
+   const id = 'lab-coding-placement';
+   const settings = {
+    id, name: 'Coding placement fixture', contextFiles: [],
+    repos: [{id:'main',remote:'https://github.com/invented/project.git',forge:'github',defaultBranch:'main'}],
+    environments: [{hostId:'trial-host',checkoutPath:'/invented/project'}],
+    execution: {profiles:['coding-worker'],tools:['node','pnpm','browser'],forge:true},
+   };
+   await op('project_create',{id,requestId:id,content:{settings,contextFiles:[]}});
+   const experiment = await op('lab_experiment_create',{
+    ...body,projectId:id,pipelineId:'coding-task',variants:[{label:'placement',overrides:{host:'trial-host'}}],
+   });
+   await launch(experiment.id);
+   const child = await until(async()=>agentRows(experiment.id)[0]);
+   const read = () => op('pipeline_get',{runId:child.pipelineRunId});
+   const wait = 'project forge connection unavailable on trial-host';
+   await until(async()=> {
+    const route = await op('route_decisions',{executionId:child.id});
+    return route.decisions.some((d:any)=>!d.winner&&d.candidates.some((candidate:any)=>candidate.skipped===wait));
+   });
+   c.sql(`UPDATE execution SET started_at=now()-interval '1 hour' WHERE id IN ('${child.pipelineRunId}','${child.pipelineStepId}');
+    INSERT INTO execution(id,kind,state,project_id,started_at) VALUES ('placement-stuck-control','agent_run','running','${id}',now()-interval '1 hour');`);
+   const findings = await until(async()=> {
+    const reply = await op('telemetry_findings',{projectId:id});
+    return reply.findings.some((f:any)=>f.executionId==='placement-stuck-control')&&reply.findings;
+   });
+   const pending = await read();
+   assert.equal(pending.state,'waiting');
+   assert.deepEqual([pending.plan.entries[0].execution.state,pending.plan.entries[0].execution.waitDetail],['waiting',wait]);
+   const trial = (await get(experiment.id)).trials.find((t:any)=>t.id===child.pipelineRunId);
+   assert.deepEqual([trial.state,trial.waitDetail],['waiting',wait]);
+   assert.equal(trial.spend.tokens,undefined,'missing usage stays unknown');
+   assert.ok(!findings.some((f:any)=>[child.pipelineRunId,child.pipelineStepId].includes(f.executionId)));
+   assert.deepEqual((await op('execution_events',{executionId:child.id})).events,[]);
+
+   const capable = {...poll,capabilities:['tool:node','tool:pnpm','tool:browser','forge:invented/project']};
+   const command = await hostCommand(q=>hostCall('/api/hosts/poll'+q,capable),(x:any)=>x.executionId===child.id);
+   assert.ok(command,'the original child dispatches once the host is eligible');
+   await hostCall('/api/hosts/receipts',{commandId:command.id,executionId:child.id,status:'started'});
+   const active = await read();
+   assert.equal(active.state,'running');
+   assert.equal(active.plan.entries[0].dispatch.phase,'handed_off');
+   assert.equal(active.plan.entries[0].execution.waitDetail,undefined);
+   await hostCall('/api/hosts/receipts',{commandId:command.id,executionId:child.id,status:'failed',error:'fixture failure'});
+   const ended = await until(async()=>{const run=await read();return run.state==='failed'&&run;});
+   assert.equal(ended.plan.entries[0].execution.state,'failed');
+   assert.equal(ended.plan.entries[0].execution.nativeExecutionId,child.id);
+   assert.equal(agentRows(experiment.id).length,1);
   });
   // Requirement: Fleet Lab variant lineage; risk: script jobs cannot be attributed to their trial.
   await t.test('script steps retain the trial variant independently of an agent profile',async()=>{

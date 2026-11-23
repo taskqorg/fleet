@@ -175,12 +175,14 @@ func spanRules(ctx context.Context) ([]contract.Finding, error) {
 			out = append(out, f)
 		}
 	}
-	// absence-pass: a coordinator pass with no span for rulePassMisses of its intervals (this coordinator's passes only).
+	// A single-flight pass publishes its span at completion and waits its interval before running again.
+	// Measure silence from that completion, since the span's start includes time the pass was working.
 	var passes []struct {
-		Name string
-		Age  float64
+		Name, TraceID string
+		Age, Duration float64
 	}
-	if err := spanStore.Query(ctx, `SELECT name AS Name, dateDiff('second', max(start), now64()) AS Age FROM span
+	if err := spanStore.Query(ctx, `SELECT name AS Name, dateDiff('millisecond', max(start), now64()) / 1000 AS Age,
+	argMax(duration_ns, start) / 1e9 AS Duration, argMax(trace_id, start) AS TraceID FROM span
 	WHERE service = 'coordinator' AND name LIKE 'pass.%' AND kind = 'pass' AND host_id = {h:String} GROUP BY name`, map[string]string{"h": obs.HostID}, &passes); err != nil {
 		return nil, err
 	}
@@ -189,9 +191,10 @@ func spanRules(ctx context.Context) ([]contract.Finding, error) {
 		if !ok || p.Name == "pass.rules" {
 			continue
 		}
-		if limit := d.(time.Duration) * time.Duration(rulePassMisses); p.Age >= limit.Seconds() && limit > 0 {
-			f := contract.Finding{Rule: "absence-pass", Subject: p.Name, Value: p.Age, Cause: "problem:absence:" + p.Name, Exemplars: []string{}}
-			text(&f, fmt.Sprintf("Coordinator pass %s has not run for %d seconds.", p.Name, int(p.Age)))
+		silence := p.Age - p.Duration
+		if limit := d.(time.Duration) * time.Duration(rulePassMisses); silence >= limit.Seconds() && limit > 0 {
+			f := contract.Finding{Rule: "absence-pass", Subject: p.Name, Value: silence, Cause: "problem:absence:" + p.Name, Exemplars: []string{p.TraceID}}
+			text(&f, fmt.Sprintf("Coordinator pass %s last completed %d seconds ago.", p.Name, int(silence)))
 			out = append(out, f)
 		}
 	}

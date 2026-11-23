@@ -1043,8 +1043,11 @@ func (q *Queries) PipelineStepUpdate(ctx context.Context, arg PipelineStepUpdate
 
 const pipelineSteps = `-- name: PipelineSteps :many
 SELECT e.id,e.parent_execution_id,e.project_id,(e.data || jsonb_build_object('state',e.state,'observation',e.observation,'lastSeenAt',e.last_seen_at))::jsonb AS record,
- p.native_execution_id,p.arguments,p.output,p.output_artifact_id,p.job_id,p.polls,p.usage,p.error,p.step_problem,p.started_at_ms,p.finished_at_ms,p.duration_ms
+ p.native_execution_id,p.arguments,p.output,p.output_artifact_id,p.job_id,p.polls,p.usage,p.error,p.step_problem,p.started_at_ms,p.finished_at_ms,p.duration_ms,
+ coalesce(native.data->>'waitDetail','')::text AS placement_wait
 FROM execution e LEFT JOIN pipeline_step p ON p.run_id=e.parent_execution_id AND p.ref_mode='fresh' AND p.ref_execution_id=e.id
+LEFT JOIN execution native ON native.id=p.native_execution_id AND native.parent_execution_id=e.id
+ AND p.dispatch_phase='reserved' AND native.kind='agent_run' AND native.state='preparing' AND native.host_id IS NULL AND native.wait_reason IS NOT NULL
 WHERE e.kind='pipeline_step' AND e.id=ANY($1::text[])
 `
 
@@ -1065,6 +1068,7 @@ type PipelineStepsRow struct {
 	StartedAtMs       *int64
 	FinishedAtMs      *int64
 	DurationMs        *int64
+	PlacementWait     string
 }
 
 // The step rows of selected plan entries: owner run, project, the record's open remainder (as execJSON shows it) and
@@ -1095,6 +1099,7 @@ func (q *Queries) PipelineSteps(ctx context.Context, ids []string) ([]PipelineSt
 			&i.StartedAtMs,
 			&i.FinishedAtMs,
 			&i.DurationMs,
+			&i.PlacementWait,
 		); err != nil {
 			return nil, err
 		}

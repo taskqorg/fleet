@@ -1977,6 +1977,7 @@ type LabTrialRecord struct {
 	Spend              LabTrialSpend            `json:"spend"`
 	StartedAt          json.RawMessage          `json:"startedAt"`
 	State              ExecutionState           `json:"state"`
+	WaitDetail         *string                  `json:"waitDetail,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

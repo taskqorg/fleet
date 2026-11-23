@@ -94,6 +94,15 @@ SELECT e.id,e.project_id,e.host_id,extract(epoch FROM now()-coalesce((SELECT max
  AND d.execution_id=e.id AND d.type <> 'resource.observation'), e.started_at))::float8 AS idle
 FROM execution e WHERE e.state='running' AND e.observation='confirmed' AND NOT coalesce((e.data->>'stopRequested')::boolean,false)
  AND e.started_at < now() - make_interval(secs => $1::float8)
+ AND (e.kind NOT IN ('pipeline_run','pipeline_step') OR NOT EXISTS (
+  SELECT 1 FROM pipeline_step p
+  JOIN execution step ON step.id=p.ref_execution_id AND step.state='running'
+  JOIN execution native ON native.id=p.native_execution_id AND native.parent_execution_id=step.id
+  WHERE p.run_id=CASE WHEN e.kind='pipeline_run' THEN e.id ELSE e.parent_execution_id END
+   AND (e.kind='pipeline_run' OR step.id=e.id)
+   AND p.ref_mode='fresh' AND p.dispatch_phase='reserved' AND native.kind='agent_run'
+   AND native.state='preparing' AND native.host_id IS NULL AND native.wait_reason IS NOT NULL AND coalesce(native.data->>'waitDetail','')<>''
+ ))
 `
 
 type RulesStuckExecutionsRow struct {
@@ -104,6 +113,7 @@ type RulesStuckExecutionsRow struct {
 }
 
 // Confirmed running executions started over stuck_secs ago, with the seconds since their last non-delta event (else their start).
+// A selected step and its run already have an actionable dispatch finding while the reserved child is waiting for placement.
 func (q *Queries) RulesStuckExecutions(ctx context.Context, stuckSecs float64) ([]RulesStuckExecutionsRow, error) {
 	rows, err := q.db.Query(ctx, rulesStuckExecutions, stuckSecs)
 	if err != nil {

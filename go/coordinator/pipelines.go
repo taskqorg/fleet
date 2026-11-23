@@ -114,6 +114,7 @@ type runStep struct {
 	AdoptedAfter     string          `json:"adoptedAfter,omitempty"`
 	ReusedFrom       string          `json:"reusedFrom,omitempty"`
 	Calls            []pipelineCall  `json:"calls,omitempty"`
+	placementWait    string
 	rest             recordRest
 }
 
@@ -715,6 +716,9 @@ func withSteps(q *Request, runs []*runRecord) ([]*runRecord, error) {
 		var s runStep
 		if err := json.Unmarshal(jsonBytes(data), &s); err != nil {
 			return nil, err
+		}
+		if s.State == "running" {
+			s.placementWait = r.PlacementWait
 		}
 		byID[r.ID] = stepRecord{r.ParentExecutionID, r.ProjectID, s}
 	}
