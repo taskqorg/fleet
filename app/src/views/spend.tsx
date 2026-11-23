@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import {
   Button, Choice, CostFigures, DataTable, DetailSection, Empty, EntityCode, ErrorBanner, GroupControl, KvRow, Num,
-  ShareBar, ShellStatus, OfflineMarker, Skeleton, SortColHead, Totals, count, money, percent,
+  ShareBar, ShellStatus, OfflineMarker, Skeleton, SortColHead, Totals, count, measured, money, percent,
   type CostFigureLike, type DataTone, type SharePart,
 } from '../../../packages/ui/src/index.ts';
 import { scopeIds, prefsRead } from '../prefs.ts';
@@ -11,7 +11,7 @@ import type { Ops } from '../api.ts';
 import type { SpendGroupBy, SpendRow } from '../../../contracts/generated/ops.ts';
 
 const WINDOWS = [
-  { id: '1', label: '24h' },
+  { id: '1', label: 'UTC day' },
   { id: '7', label: '7d' },
   { id: '30', label: '30d' },
   { id: '90', label: '90d' },
@@ -52,6 +52,24 @@ function shareText(share: number): string {
   if (share > 0 && share < 0.005) return '<1%';
   if (share >= 0.995 && share < 1) return '>99%';
   return percent(share, 1).text;
+}
+
+function missingCostReason(cost: readonly CostFigureLike[]) {
+  const figure = cost.find(c => (c.basis === 'unavailable' || c.value == null) && (c.reason || c.note));
+  return figure?.reason || figure?.note;
+}
+
+function UnavailableCell({ label, reason }: { label: string; reason?: string }) {
+  const value = measured({ value: null, basis: 'unavailable', reason }, 'money');
+  const description = `${label} ${value.long}`;
+  return <td class="num b-unavailable" aria-label={description} data-tip={description} tabIndex={0}>{value.text}</td>;
+}
+
+function CostCell({ cost, label }: { cost: readonly CostFigureLike[]; label: string }) {
+  if (cost.some(c => c.value != null && c.basis !== 'unavailable')) {
+    return <td class="num"><CostFigures cost={cost} /></td>;
+  }
+  return <UnavailableCell label={label} reason={missingCostReason(cost)} />;
 }
 
 function windowBounds(days: number): { from: string; to: string } {
@@ -194,6 +212,7 @@ export function Spend() {
               }>
               {sortedRows.map(r => {
                 const share = spendShare(r, useUsdShare);
+                const cost = r.cost as CostFigureLike[];
                 const label = by === 'purpose' ? PURPOSE_LABELS[r.key] ?? r.label
                   : by === 'category' && r.key === 'unknown' ? 'Unknown category' : r.label;
                 return (
@@ -203,8 +222,10 @@ export function Spend() {
                         ? <EntityCode code={r.label || r.key} id={r.key} kind="project" />
                         : label}
                     </th>
-                    <td class="num"><CostFigures cost={r.cost as CostFigureLike[]} empty="—" /></td>
-                    <td class="num">{share == null ? <span aria-label="Share unavailable">—</span> : shareText(share)}</td>
+                    <CostCell cost={cost} label="Cost" />
+                    {share == null
+                      ? <UnavailableCell label="Share of spend" reason={useUsdShare ? missingCostReason(cost) : 'no positive USD total in this period'} />
+                      : <td class="num">{shareText(share)}</td>}
                     <td class="num"><Num m={{ value: r.runs, basis: 'measured' }} kind="count" /></td>
                     <td class="num"><Num m={{ value: r.failed, basis: 'measured' }} kind="count" /></td>
                     <td class="num"><Num m={{ value: r.tokens, basis: 'measured' }} kind="count" /></td>
@@ -253,12 +274,12 @@ export function Spend() {
                       : 'No project'}
                   </th>
                   <td class="num"><Num m={{ value: p.completedTasks, basis: 'measured' }} kind="count" /></td>
-                  <td class="num"><CostFigures cost={p.taskCost as CostFigureLike[]} empty="—" /></td>
-                  <td class="num">
-                    {p.costPerTaskUsd != null
-                      ? <Num m={{ value: p.costPerTaskUsd, basis: 'estimated', currency: 'USD' }} kind="money" />
-                      : '—'}
-                  </td>
+                  <CostCell cost={p.taskCost as CostFigureLike[]} label="Task spend" />
+                  {p.costPerTaskUsd != null
+                    ? <td class="num"><Num m={{ value: p.costPerTaskUsd, basis: 'estimated', currency: 'USD' }} kind="money" /></td>
+                    : <UnavailableCell label="Cost / task" reason={p.completedTasks === 0
+                      ? 'no completed tasks'
+                      : missingCostReason(p.taskCost as CostFigureLike[]) ?? 'no positive USD task spend'} />}
                   <td class="num">{p.unpriced > 0 ? <Num m={{ value: p.unpriced, basis: 'measured' }} kind="count" /> : ''}</td>
                 </tr>
               ))}
