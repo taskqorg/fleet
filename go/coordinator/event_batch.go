@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"math"
 
 	"fleet/coordinator/db"
@@ -41,6 +42,27 @@ func eventRecordsOf(es []db.Event) []eventRecord {
 		out = append(out, eventRecordOf(e))
 	}
 	return out
+}
+
+// Project ownership is coordinator metadata, outside the host's transport identity.
+func eventFrameOf(e db.Event) eventRecord {
+	r := eventRecordOf(e)
+	delete(r, "projectId")
+	return r
+}
+
+func matchesClosedEvent(digest string, value, incoming eventRecord) bool {
+	if digest == frameHash(value.value()) {
+		return true
+	}
+	// Older compact hashes could include a host-supplied project. Accept the
+	// exact legacy frame without using that field for ownership.
+	if !incoming.has("projectId") {
+		return false
+	}
+	legacy := maps.Clone(value)
+	legacy["projectId"] = incoming["projectId"]
+	return digest == frameHash(legacy.value())
 }
 
 // str: field k as a string, false when absent, null or not a string.
@@ -157,7 +179,7 @@ func eventBatchSnapshot(q *Request, executionID string, evs []eventRecord) (map[
 	}
 	byID, bySeq := map[string]eventRecord{}, map[int64]eventRecord{}
 	for _, e := range existing {
-		r := eventRecordOf(e)
+		r := eventFrameOf(e)
 		byID[e.ID] = r
 		var seq int64
 		if e.EventSeq != nil {
@@ -195,7 +217,7 @@ func cleanupClosedDeltas(q *Request, executionID string) error {
 			seq = *e.EventSeq
 		}
 		seqs = append(seqs, seq)
-		hashes = append(hashes, frameHash(eventRecordOf(e).value()))
+		hashes = append(hashes, frameHash(eventFrameOf(e).value()))
 		types = append(types, deref(e.Type))
 	}
 	if err := q.db().EventsClosedIdentityInsert(q.ctx(), db.EventsClosedIdentityInsertParams{Ids: ids, ExecutionID: executionID, Seqs: seqs, Digests: hashes, Types: types}); err != nil {
@@ -205,7 +227,7 @@ func cleanupClosedDeltas(q *Request, executionID string) error {
 }
 
 // putEventBatch inserts a host's new events in one statement (an event already stored stays as it is).
-func putEventBatch(q *Request, prepared []preparedEvent) error {
+func putEventBatch(q *Request, prepared []preparedEvent, projectID *string) error {
 	rows := []eventColumns{}
 	seen := map[string]bool{}
 	for _, p := range prepared {
@@ -214,6 +236,7 @@ func putEventBatch(q *Request, prepared []preparedEvent) error {
 			continue
 		}
 		seen[row.ID] = true
+		row.ProjectID = projectID
 		rows = append(rows, row)
 	}
 	if len(rows) == 0 {

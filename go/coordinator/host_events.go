@@ -229,8 +229,18 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 		return none, err
 	}
 	hostID, xid := b.text("hostId"), b.text("executionId")
-	if err := ownedBody(q, hostID, xid); err != nil {
+	if hostID == "" {
+		return none, fail(403, "Host rejected")
+	}
+	execution, err := q.db().ExecutionByID(q.ctx(), xid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return none, errNotFound
+	}
+	if err != nil {
 		return none, err
+	}
+	if deref(execution.HostID) != hostID {
+		return none, fail(403, "Execution rejected")
 	}
 	// batch: the type check of the batch (hostRoute decoded it); each event's data stays the host's raw record.
 	var raws []json.RawMessage
@@ -241,7 +251,7 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 	for i, raw := range raws {
 		json.Unmarshal(raw, &evs[i])
 	}
-	execution, err := eventsExecution(q, xid)
+	record, err := executionRawOf(execution)
 	if err != nil {
 		return none, err
 	}
@@ -264,9 +274,10 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 			value[k] = v
 		}
 		value["id"], value["executionId"] = jsonBytes(key), jsonBytes(xid)
+		delete(value, "projectId")
 		delete(value, "sessionId")
-		if execution.has("sessionId") {
-			value["sessionId"] = execution["sessionId"]
+		if record.has("sessionId") {
+			value["sessionId"] = record["sessionId"]
 		}
 		for k := range value { // a stored event keeps no null field (its record strips them), so a retry compares equal
 			if !value.has(k) {
@@ -274,7 +285,7 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 			}
 		}
 		if digest, closed := closedHashes[key]; closed {
-			if digest != frameHash(value.value()) {
+			if !matchesClosedEvent(digest, value, ev) {
 				return none, fail(409, "Event conflict")
 			}
 			continue
@@ -325,7 +336,7 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 		}{eid, seq, digest, c.ID})
 		bad := false
 		old, err := q.db().EventByID(q.ctx(), mappedID)
-		if err == nil && !same(eventRecordOf(old), mapped) {
+		if err == nil && !same(eventFrameOf(old), mapped) {
 			bad = true
 		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return none, err
@@ -364,7 +375,7 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 		}
 		seen[s] = k
 	}
-	if err := putEventBatch(q, prepared); err != nil {
+	if err := putEventBatch(q, prepared, execution.ProjectID); err != nil {
 		return none, err
 	}
 	for _, p := range prepared {
