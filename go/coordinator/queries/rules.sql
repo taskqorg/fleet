@@ -9,10 +9,16 @@ SELECT directed_by FROM execution WHERE id=$1;
 SELECT id,host_id,state,capacity_bytes,free_space_warning_bytes FROM store WHERE observed_at IS NOT NULL AND state IN ('full','unreachable');
 
 -- name: RulesStuckExecutions :many
--- Confirmed running executions started over stuck_secs ago, with the seconds since their last non-delta event (else their start).
+-- Confirmed running executions started over stuck_secs ago, with idle time since their last event or fresh dispatch handoff.
 -- A selected step and its run already have an actionable dispatch finding while the reserved child is waiting for placement.
-SELECT e.id,e.project_id,e.host_id,extract(epoch FROM now()-coalesce((SELECT max(d.updated_at) FROM event d WHERE NOT d.delta
- AND d.execution_id=e.id AND d.type <> 'resource.observation'), e.started_at))::float8 AS idle
+SELECT e.id,e.project_id,e.host_id,extract(epoch FROM now()-greatest(
+ coalesce((SELECT max(d.updated_at) FROM event d WHERE NOT d.delta
+  AND d.execution_id=e.id AND d.type <> 'resource.observation'), e.started_at),
+ CASE WHEN e.kind IN ('pipeline_run','pipeline_step') THEN (
+  SELECT to_timestamp(max(p.dispatch_handed_off_at_ms) / 1000.0) FROM pipeline_step p
+  WHERE p.run_id=CASE WHEN e.kind='pipeline_run' THEN e.id ELSE e.parent_execution_id END
+   AND p.ref_mode='fresh' AND (e.kind='pipeline_run' OR p.ref_execution_id=e.id)
+ ) END))::float8 AS idle
 FROM execution e WHERE e.state='running' AND e.observation='confirmed' AND NOT coalesce((e.data->>'stopRequested')::boolean,false)
  AND e.started_at < now() - make_interval(secs => sqlc.arg(stuck_secs)::float8)
  AND (e.kind NOT IN ('pipeline_run','pipeline_step') OR NOT EXISTS (

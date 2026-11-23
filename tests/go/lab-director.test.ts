@@ -125,6 +125,15 @@ test('Lab retains authenticated requester through background enqueue, revocation
    assert.equal(active.state,'running');
    assert.equal(active.plan.entries[0].dispatch.phase,'handed_off');
    assert.equal(active.plan.entries[0].execution.waitDetail,undefined);
+   // A completed dispatch counts as progress even when the run and step events predate the wait.
+   c.sql(`UPDATE execution SET started_at=now()-interval '1 hour' WHERE id IN ('${child.pipelineRunId}','${child.pipelineStepId}');
+    UPDATE event SET updated_at=now()-interval '1 hour' WHERE execution_id IN ('${child.pipelineRunId}','${child.pipelineStepId}');
+    INSERT INTO execution(id,kind,state,project_id,started_at) VALUES ('placement-handed-off-control','agent_run','running','${id}',now()-interval '1 hour');`);
+   const afterHandoff = await until(async()=>{
+    const reply = await op('telemetry_findings',{projectId:id});
+    return reply.findings.some((f:any)=>f.executionId==='placement-handed-off-control')&&reply.findings;
+   });
+   assert.ok(!afterHandoff.some((f:any)=>[child.pipelineRunId,child.pipelineStepId].includes(f.executionId)), 'a recent handoff resets the idle clock after a long placement wait');
    await codingHostCall('/api/hosts/receipts',{commandId:command.id,executionId:child.id,status:'failed',error:'fixture failure'});
    const ended = await until(async()=>{const run=await read();return run.state==='failed'&&run;});
    assert.equal(ended.plan.entries[0].execution.state,'failed');
