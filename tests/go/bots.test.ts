@@ -19,15 +19,17 @@ test('Bot revisions survive restart and are isolated by project (requirement: fl
 
     const botId = randomUUID(), otherId = randomUUID();
     const settings = {
-      name: 'Queue and health', purpose: 'Check fixture work', profileId: 'pm',
+      name: 'HAL0', purpose: 'Check fixture work', profileId: 'pm',
       instructions: 'Read current task state', soul: 'Use confirmed evidence',
       scheduleTime: '09:00', scheduleZone: 'Asia/Bangkok', wakeOnNeedsYou: true,
     };
     const original = { botId, projectId: 'hello-world', baseRevision: 0, settings };
     const created = (await op('bot_settings_save', original)).bot;
+    assert.equal(created.settings.name, 'HAL0');
     assert.deepEqual((await op('bot_settings_save', original)).bot, created);
     assert.equal(created.revision, 1);
-    await op('bot_settings_save', { ...original, botId: otherId, projectId: 'hello-world-alt' });
+    const other = { ...original, botId: otherId, projectId: 'hello-world-alt', settings: { ...settings, name: 'Alternate fixture' } };
+    await op('bot_settings_save', other);
     assert.deepEqual((await op('bot_list', { excludeProjectIds: ['hello-world-alt'] })).bots.map((b: { id: string }) => b.id), [botId]);
     assert.deepEqual((await op('bot_list', {}, 'outsider@trial.test')).bots, []);
     await op('bot_get', { botId }, 'outsider@trial.test', 404);
@@ -46,7 +48,9 @@ test('Bot revisions survive restart and are isolated by project (requirement: fl
     const retained = (await op('bot_get', { botId })).bot;
     assert.deepEqual(retained.settings, updated);
     assert.equal(retained.memory, memory.memory);
-    assert.equal((await op('bot_get', { botId: otherId })).bot.memory, '');
+    const retainedOther = (await op('bot_get', { botId: otherId })).bot;
+    assert.equal(retainedOther.settings.name, other.settings.name);
+    assert.equal(retainedOther.memory, '');
     const changes = (await op('setting_changes', { target: 'bot:' + botId })).changes;
     assert.deepEqual(changes.map((c: { field: string; value: number }) => [c.field, c.value]), [
       ['memoryRevision', 1], ['settingsRevision', 2], ['settingsRevision', 1],
