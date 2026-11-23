@@ -386,13 +386,16 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 	if err := markObservation(q, xid, "confirmed"); err != nil {
 		return none, err
 	}
-	hasProcessClosed, hasConfirmedUsage := false, false
+	hasProcessClosed, hasConfirmedUsage, hasReceiptOutboxFailed := false, false, false
 	for _, p := range prepared {
 		typ := p.value.text("type")
 		if typ == string(contract.FleetEventTypeProcessClosed) {
 			hasProcessClosed = true
 		}
 		d := p.value.object("data")
+		if typ == string(contract.FleetEventTypeOutboxFailed) && d.text("route") == contract.RouteReceipts.Path {
+			hasReceiptOutboxFailed = true
+		}
 		normalized := d.object("fleetNormalized")
 		lifecycle := firstString(normalized.text("lifecycle"), typ)
 		if normalized.has("nativeUsage") || lifecycle == "assistant" || lifecycle == "result" || lifecycle == "turn.completed" || lifecycle == "usage.observation" || d.text("type") == "assistant" {
@@ -420,6 +423,9 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 	ended, err := executionEnded(q, xid)
 	if err != nil {
 		return none, err
+	}
+	if hasReceiptOutboxFailed && q.app != nil {
+		afterCommit(q, func() { q.app.wakeLost() })
 	}
 	if !ended && !hasProcessClosed {
 		if hasConfirmedUsage {

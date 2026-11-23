@@ -63,20 +63,21 @@ VALUES( @id, @kind,sqlc.narg(project_id),sqlc.narg(task_id),sqlc.narg(execution_
 -- A newer failed run supersedes an unanswered success prompt (not an earlier result's).
 SELECT coalesce(array_agg(qq.id),'{}')::text[] FROM question qq WHERE qq.task_id=$1 AND qq.kind='acceptance' AND qq.state='open'
  AND coalesce(qq.data->>'earlierResult','false')<>'true'
- AND EXISTS (SELECT 1 FROM execution x WHERE x.id=(SELECT e.id FROM execution e WHERE e.task_id=$1 AND e.kind<>'child_agent' ORDER BY e.seq DESC LIMIT 1)
+ AND EXISTS (SELECT 1 FROM execution x WHERE x.id=(SELECT e.id FROM execution e WHERE e.task_id=$1 AND e.kind NOT IN ('child_agent','tool_run') ORDER BY e.ended_at DESC NULLS LAST, e.seq DESC LIMIT 1)
  AND (x.state IN ('failed','cancelled') OR x.data->'report'->>'outcome'='failed'));
 
 -- name: TaskIdle :one
--- The task when it is in progress with nothing that can move it: no open execution (child agent rows do not count: no
--- writer ends them), no queued message, no open question, and no rejected acceptance since the run that ended last (a
--- rejection waits for a new run, data foundation §3). l is the run that ended last; null when the task has no run.
+-- The task when it is in progress with nothing that can move it: no open execution (child agent and tool call rows do
+-- not count: no writer ends child agents, and tool calls are per-call records), no queued message, no open question,
+-- and no rejected acceptance since the run that ended last (a rejection waits for a new run, data foundation §3).
+-- l is the run that ended last; null when the task has no run.
 SELECT t.id,t.title,t.project_id,coalesce(l.id,'')::text AS latest_id,coalesce(l.state::text,'')::text AS latest,l.session_id AS latest_session,
  (l.data->'report')::jsonb AS report,
- EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.state='succeeded' AND coalesce(x.data->'report'->>'outcome','succeeded')='succeeded')::boolean AS succeeded
-FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.session_id, x.ended_at, x.data FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent'
+ EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind NOT IN ('child_agent','tool_run') AND x.state='succeeded' AND coalesce(x.data->'report'->>'outcome','succeeded')='succeeded')::boolean AS succeeded
+FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.session_id, x.ended_at, x.data FROM execution x WHERE x.task_id=t.id AND x.kind NOT IN ('child_agent','tool_run')
  ORDER BY x.ended_at DESC NULLS LAST, x.seq DESC LIMIT 1) l ON true
 WHERE t.id=$1 AND t.state='in_progress'
-AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent' AND x.state NOT IN ('succeeded','failed','cancelled'))
+AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind NOT IN ('child_agent','tool_run') AND x.state NOT IN ('succeeded','failed','cancelled'))
 AND NOT EXISTS (SELECT 1 FROM queued_message qm JOIN session ss ON ss.id=qm.session_id WHERE qm.state IN ('queued','steering') AND ss.task_id=t.id::text)
 AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')
 AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.kind='acceptance' AND qq.answer='rejected' AND qq.answered_at >= coalesce(l.ended_at, '-infinity'));
@@ -88,10 +89,10 @@ SELECT id FROM task WHERE state IN ('in_progress','waiting') ORDER BY created_at
 SELECT coalesce(array_agg(id),'{}')::text[] FROM question WHERE task_id=$1 AND state='open' AND data->>'idle'='true';
 
 -- name: TaskAcceptanceExecution :one
--- The task's latest run (not a child agent); with earlier, its latest run that succeeded.
-SELECT id,state,coalesce(data->'report'->>'outcome','')::text AS outcome FROM execution WHERE task_id= @task_id AND kind<>'child_agent'
+-- The task's latest run (not a child agent or tool call); with earlier, its latest run that succeeded.
+SELECT id,state,coalesce(data->'report'->>'outcome','')::text AS outcome FROM execution WHERE task_id= @task_id AND kind NOT IN ('child_agent','tool_run')
  AND (NOT @earlier::boolean OR (state='succeeded' AND coalesce(data->'report'->>'outcome','succeeded')='succeeded'))
-ORDER BY seq DESC LIMIT 1;
+ORDER BY (NOT @earlier::boolean AND state IN ('preparing','running','waiting')) DESC, ended_at DESC NULLS LAST, seq DESC LIMIT 1;
 
 -- name: TaskAcceptanceArtifacts :many
 -- The task's stored originals (of execution, when given) offered for acceptance.
