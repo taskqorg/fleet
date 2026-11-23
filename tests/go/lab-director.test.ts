@@ -57,7 +57,7 @@ test('Lab retains authenticated requester through background enqueue, revocation
   await t.test('a coding trial waits on forge capability, then dispatches and reconciles the original child', async () => {
    const id = 'lab-coding-placement';
    const codingHost = 'lab-coding-host';
-   const codingHostRegistration = await op('hosts_register',{id:codingHost,holder:creator});
+   const codingHostRegistration = await op('hosts_register',{id:codingHost,holder:owner});
    const codingHostCall = async(path:string,body:any) => ok(await request(path,body,owner,codingHostRegistration.secret));
    const settings = {
     id, name: 'Coding placement fixture', contextFiles: [],
@@ -76,8 +76,8 @@ test('Lab retains authenticated requester through background enqueue, revocation
    await codingHostCall('/api/hosts/poll',codingPoll);
    const experiment = await op('lab_experiment_create',{
     ...body,projectId:id,pipelineId:'coding-task',variants:[{label:'placement',overrides:{host:codingHost}}],
-   },creator);
-   assert.equal(experiment.requestedBy,creator);
+   },owner);
+   assert.equal(experiment.requestedBy,owner);
    await launch(experiment.id);
    const child = await until(async()=>{
     const row = agentRows(experiment.id)[0];
@@ -85,13 +85,16 @@ test('Lab retains authenticated requester through background enqueue, revocation
     const trial = (await get(experiment.id)).trials[0];
     assert.ok(!trial || !['failed','cancelled'].includes(trial.state),JSON.stringify({state:trial?.state,problem:trial?.problem}));
    });
-   assert.equal(child.directedBy,creator);
+   assert.equal(child.directedBy,owner);
    const read = () => op('pipeline_get',{runId:child.pipelineRunId},creator);
    const wait = 'project forge connection unavailable on '+codingHost;
-   await until(async()=> {
+   const decision = await until(async()=> {
     const route = await op('route_decisions',{executionId:child.id});
-    return route.decisions.some((d:any)=>!d.winner&&d.candidates.some((candidate:any)=>candidate.skipped===wait));
+    return route.decisions.at(-1);
    });
+   assert.equal(decision.winner,null);
+   assert.deepEqual(decision.candidates.map((candidate:any)=>candidate.host),[codingHost]);
+   assert.equal(decision.candidates[0].skipped,wait);
    c.sql(`UPDATE execution SET started_at=now()-interval '1 hour' WHERE id IN ('${child.pipelineRunId}','${child.pipelineStepId}');
     INSERT INTO execution(id,kind,state,project_id,started_at) VALUES ('placement-stuck-control','agent_run','running','${id}',now()-interval '1 hour');`);
    const findings = await until(async()=> {
@@ -110,6 +113,8 @@ test('Lab retains authenticated requester through background enqueue, revocation
    const capable = {...codingPoll,capabilities:[...tools,'forge:invented/project']};
    const command = await hostCommand(q=>codingHostCall('/api/hosts/poll'+q,capable),(x:any)=>x.executionId===child.id);
    assert.ok(command,'the original child dispatches once the host is eligible');
+   const routed = await op('route_decisions',{executionId:child.id});
+   assert.equal(routed.decisions.at(-1).winner?.host,codingHost);
    await codingHostCall('/api/hosts/receipts',{commandId:command.id,executionId:child.id,status:'started'});
    const active = await read();
    assert.equal(active.state,'running');
@@ -120,6 +125,7 @@ test('Lab retains authenticated requester through background enqueue, revocation
    assert.equal(ended.plan.entries[0].execution.state,'failed');
    assert.equal(ended.plan.entries[0].execution.nativeExecutionId,child.id);
    assert.equal(agentRows(experiment.id).length,1);
+   await until(async()=>(await get(experiment.id)).state==='done');
   });
   // Requirement: Fleet Lab variant lineage; risk: script jobs cannot be attributed to their trial.
   await t.test('script steps retain the trial variant independently of an agent profile',async()=>{
