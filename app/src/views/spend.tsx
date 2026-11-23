@@ -173,6 +173,12 @@ export function Spend() {
 
   const totalCost = (data?.totals.cost ?? []) as CostFigureLike[];
   const shareBases = SHARE_BASES.map(basis => ({ ...basis, total: shareAmount(totalCost, basis.id) }));
+  const adjustedBases = data ? shareBases.filter(({ id, total }) =>
+    total != null && total > 0 && Number.isFinite(total)
+    && [data.rows, data.byPurpose].some(rows => rows.some(row => {
+      const amount = shareAmount(row.cost as CostFigureLike[], id);
+      return amount != null && amount < 0;
+    }))) : [];
   const totalRuns = data ? measureNum(data.totals.measures, 'executions') : 0;
   const totalFailed = data ? measureNum(data.totals.measures, 'failed') : 0;
   const totalTokens = data ? measureNum(data.totals.measures, 'tokens_input') + measureNum(data.totals.measures, 'tokens_output') : 0;
@@ -215,6 +221,9 @@ export function Spend() {
       </div>
       {data && <>
         <p class="small-note">Each share uses its own USD total for this period and scope. Billed USD includes measured charges and tariff estimates. Subscription value is a list-price estimate.</p>
+        {adjustedBases.map(({ id, label }) => (
+          <p key={id} class="small-note">Refunds and other negative adjustments reduce the {label} total. Positive shares can add up to more than 100%.</p>
+        ))}
         {by === 'category' && data.rows.some(r => r.key === 'unknown') &&
           <p class="small-note">Unknown category means no category is recorded for this usage.</p>}
         <section class="panel">
