@@ -1,10 +1,10 @@
 // Cross-message selection (docs/designs/fleet-conversations.md, "Copy", Stage 3 item 22). Selection is app state over block keys,
 // so it spans rows outside the rendering window; Cmd+C asks the server for the markdown of the range (one builder, thread_export).
-// Rows are selected whole; native browser selection stays for copying part of one row.
+// Pointer ranges can cut the endpoint rows. Native browser selection stays for copying part of one row.
 import { cmpKey } from './threads.ts';
 
 export type Point = { key: string; offset: number };
-export type Selection = { start: Point; end: Point } | null;
+export type Selection = { start: Point; end: Point; partial?: true } | null;
 /** End offset that covers a whole text block (the server cuts text by its plain offsets and clamps). */
 const WHOLE = Number.MAX_SAFE_INTEGER;
 
@@ -15,6 +15,21 @@ export function click(sel: Selection, key: string, shift: boolean): Selection {
   const anchor = sel.start.key;
   return cmpKey(key, anchor) < 0 ? { start: { key, offset: 0 }, end: { key: anchor, offset: WHOLE } } : { start: { key: anchor, offset: 0 }, end: { key, offset: WHOLE } };
 }
+/** A drag across replies, in either direction. Offsets are Unicode code points in each reply's source. */
+export function drag(anchor: Point, focus: Point): Selection {
+  if (anchor.key === focus.key) return null;
+  return cmpKey(anchor.key, focus.key) < 0
+    ? { start: anchor, end: focus, partial: true }
+    : { start: focus, end: anchor, partial: true };
+}
+
+/** Each partial endpoint uses an in-text highlight. Rows between the endpoints keep the whole-row tint. */
+export function textBounds(sel: Selection, key: string) {
+  if (!sel?.partial) return;
+  if (key === sel.start.key) return { from: sel.start.offset, to: WHOLE };
+  if (key === sel.end.key) return { from: 0, to: sel.end.offset };
+}
+
 /** Cmd+A: the whole thread, loaded or not: keys below and above every real key. */
 export const all = (): Selection => ({ start: { key: '0:0', offset: 0 }, end: { key: `${Number.MAX_SAFE_INTEGER}:0`, offset: WHOLE } });
 /** Whether a row is inside the selection (for the highlight of rendered rows). */

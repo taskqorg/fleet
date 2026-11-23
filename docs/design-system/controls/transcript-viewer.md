@@ -13,6 +13,7 @@
 **Copy and result names.** The copy icon of a message, tool or reasoning row (`.th-copy`) and of a code block (`.code-copy`) shows while its row or block is hovered or the icon has focus, and always on a touch screen (`pointer: coarse`), like the navigation pin; it keeps its space, so showing it moves nothing (OR-23). The agent mark, duration and Stop of a boundary row always show when available. Results (`ResultRow`) are a vertical list with one file per line. A name longer than the column ends in an ellipsis. Its tooltip has the full name, media type and size. Matching short names get ordinal numbers within that result block.
 
 **Behaviour.**
+* In Conversations, drag across reply bodies to select partial endpoints. The selection highlight follows the endpoints as rows enter and leave the viewport. Click and Shift+click select whole rows, and a drag within one reply uses native text selection.
 * Virtualised with measured, cached entry heights; older pages load when scrolling up, keeping the anchor entry in place.
 * Follow mode: at the bottom, new entries stick to the bottom. Scrolling up turns follow off; the pill turns it back on.
 * Expanding an entry above the viewport does not move the viewport.

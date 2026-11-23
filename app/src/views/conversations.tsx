@@ -1,6 +1,6 @@
 // Conversations (docs/design-system/pages/conversations.md): sessions list and one conversation with its live transcript.
 // Actions use the same operations agents use: session_start (conversation-new.tsx), message_send, execution_stop, session_fork.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   EntityCode, EntityPicker, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
@@ -20,7 +20,7 @@ import { prefs } from '../prefs.ts';
 import { useListPage, ListPagePanel, type ListPage } from '../list-page.tsx';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
-import { click, all, inside, range, type Selection } from '../selection.ts';
+import { click, all, drag, inside, range, textBounds, type Selection } from '../selection.ts';
 import { ScopedRollupBar, ScopedRollupDetails } from './resources.tsx';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
 
@@ -188,25 +188,33 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const thread = useThread({ session: id });
   const key: ThreadKey = thread.win?.key ?? { session: id };
   // A plain click marks where a selection starts (no tint, so reading stays quiet); Shift+click selects up to that row.
-  const [sel, setSel] = useState<Selection>(null), pickFrom = useRef<string | null>(null);
+  const [selection, renderSelection] = useState<{ scope: string; range: Selection } | null>(null);
+  const pickFrom = useRef<string | null>(null);
+  const scope = JSON.stringify(key);
+  const sel = selection?.scope === scope ? selection.range : null;
+  const setSel = (range: Selection) => {
+    live.current.sel = range;
+    renderSelection({ scope, range });
+  };
+  useEffect(() => { pickFrom.current = null; }, [scope]);
   // Cmd+A selects the thread; Cmd+C copies the selected rows from the server as markdown and chat-safe HTML. The clipboard write starts inside the
   // key handler with a promise, so the browser keeps the user gesture while the export loads.
   const copySel = (s0: NonNullable<Selection>) => {
     try {
       // Both formats (formats.md "Copy"); times in the reader's own zone.
-      const text = op('thread_export', { key, ...range(s0), tz: zone() }).then(r => r.markdown);
+      const text = op('thread_export', { key, ...range(s0), tz: zone() }, { signal: alive.current.signal }).then(r => r.markdown);
       writeClip(text).catch(e => copyFail(e, () => copySel(s0)));
     } catch (e) { copyFail(e, () => copySel(s0)); } // no async clipboard (plain http): say so instead of failing silently
   };
   // The key handler reads the latest selection through a ref: effects run after paint, and a key can come first.
-  const live = useRef({ sel, copySel }); live.current = { sel, copySel };
+  const live = useRef({ sel, setSel, copySel }); live.current = { sel, setSel, copySel };
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
-      const sel = live.current.sel, copySel = live.current.copySel;
+      const { sel, setSel, copySel } = live.current;
       const t = e.target as HTMLElement;
       // Only inside the conversation (or with nothing focused); code, not key, so other keyboard layouts work too.
-      if (!(e.metaKey || e.ctrlKey) || t?.closest?.('input,textarea') || !(t?.closest?.('.conversation') || t === document.body)) return;
-      if (e.code === 'KeyA') { e.preventDefault(); setSel(all()); }
+      if (!(e.metaKey || e.ctrlKey) || t?.closest?.('input,textarea,[contenteditable]') || !(t?.closest?.('.conversation') || t === document.body)) return;
+      if (e.code === 'KeyA') { e.preventDefault(); getSelection()?.removeAllRanges(); setSel(all()); }
       // A native selection inside one row is the browser's own copy.
       if (e.code === 'KeyC' && sel && (getSelection()?.isCollapsed ?? true)) { e.preventDefault(); copySel(sel); }
     };
@@ -263,7 +271,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   useEffect(() => { if (jumpTo && thread.win?.blocks.some(b => b.key === jumpTo)) { handle.current?.scrollToKey(jumpTo, 'center'); setJumpTo(null); } }, [thread.win, jumpTo]);
   const now = Date.now(), off = !online.value;
   const run = async (fn: () => Promise<unknown>) => { setFailure(null); try { await fn(); } catch (e) { setFailure({ text: errText(e), retry: () => run(fn) }); } };
-  const copyFail = (e: unknown, retry?: () => void) => setFailure({ text: `Copy failed: ${errText(e)}`, retry });
+  const copyFail = useCallback((e: unknown, retry?: () => void) => setFailure({ text: `Copy failed: ${errText(e)}`, retry }), []);
   // A jump replaces the window with entries around the hit, then puts the hit row in view and marks it.
   const open = async (list: { key: string }[], i: number) => {
     const key = list[i]?.key;
@@ -358,7 +366,9 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       </div>
     ) : (
     <div class="pane" data-related-work={inRelated}><DropZone onFiles={files.add} disabledReason={off ? 'offline' : undefined}>
-      {!w ? <Skeleton rows={6} /> : <Thread blocks={blocks} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} resultSrc={r => '/api/results/' + encodeURIComponent(r)} handle={handle} onStart={inRelated ? undefined : thread.older} onEnd={inRelated ? undefined : thread.newer}
+      {!w ? <Skeleton rows={6} /> : <Thread key={scope} blocks={blocks} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k) && !textBounds(sel, k)} textBounds={k => textBounds(sel, k)}
+        onTextRange={(anchor, focus) => { pickFrom.current = anchor.key; setSel(drag(anchor, focus)); }}
+        onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} resultSrc={r => '/api/results/' + encodeURIComponent(r)} handle={handle} onStart={inRelated ? undefined : thread.older} onEnd={inRelated ? undefined : thread.newer}
         stopReason={off ? 'offline' : undefined} onStop={x => run(() => op('execution_stop', { executionId: x }))}
         onAnswer={(questionId, answer) => run(() => answerQuestion(questionId, answer))} onCopyFail={copyFail} onSecret={(q: string, c: string, v: string) => addRequestedKey(q, c, v, alive.current.signal)}
         pending={{ count: w.fresh, onJump: () => { setMarked(null); setHits(null); thread.newest(); } }} />}

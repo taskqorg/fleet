@@ -1,7 +1,7 @@
 // Markdown block parser for agent replies (packages/ui/src/markdown.ts).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parse, SAFE_LINK } from '../../packages/ui/src/markdown.ts';
+import { parse, SAFE_LINK, sliceText } from '../../packages/ui/src/markdown.ts';
 
 test('blocks: headings, paragraphs, rules, fences with inner fences, quotes', () => {
   assert.deepEqual(parse('# Title\n\nOne\ntwo\n\n---\n\n````md\n```js\nx\n```\n````\n> quoted\n> more'), [
@@ -18,6 +18,23 @@ test('lists: bullets, ordered with start, nested by indent', () => {
 
 test('tables with alignment and escaped pipes', () => {
   assert.deepEqual(parse('| a | b |\n|:--|--:|\n| 1 | x \\| y |'), [{ t: 'table', head: ['a', 'b'], align: ['left', 'right'], rows: [['1', 'x | y']] }]);
+});
+
+test('selection source positions survive quote, list, CRLF and escaped table syntax', () => {
+  const source = '> - lead\r\n>   😀body\r\n\r\n| x \\| y |\r\n| --- |';
+  const [quote, table] = parse(source, text => text);
+  assert.equal(quote?.t, 'quote');
+  const [list] = quote.blocks;
+  assert.equal(list?.t, 'list');
+  const [paragraph] = list.items[0];
+  assert.equal(paragraph?.t, 'p');
+  assert.equal(paragraph.text.text, 'lead\n😀body');
+  assert.deepEqual(sliceText(paragraph.text, 'lead\n😀'.length).fragments, [{ at: source.indexOf('body'), text: 'body' }]);
+
+  assert.equal(table?.t, 'table');
+  const [cell] = table.head;
+  assert.equal(cell.text, 'x | y');
+  assert.deepEqual(sliceText(cell, 2, 3).fragments, [{ at: source.indexOf('| y'), text: '|' }]);
 });
 
 test('only http, https and mailto links are kept', () => {
