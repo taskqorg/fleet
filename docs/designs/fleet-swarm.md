@@ -2,11 +2,13 @@
 
 Universal cross-harness multi-agent coordination over Fleet's shared core ([R2, R7](../../fleet.md#principles)). Under **Variant C**, Fleet Swarm adds a thin durable coordination layer (`work_plan` and `board_message`) directly over Fleet's existing `task`, `pipeline_run`, `session`, and `execution` primitives rather than duplicating entity or membership tables. A Swarm coordinator decomposes a goal into structured threads and disjoint worker tasks across any mix of Fleet harnesses (`codex`, `claude`, `antigravity`, `acp`), coordinates via a durable shared message board, and surfaces live progress in Fleet's web app and Lab.
 
-Fleet ships the shared board, mention-driven wakes, the `swarm-coordinator` profile, the `swarm-plan-execute` pipeline and Swarm views. The live task [T-FLT-22](https://fleet.ufobe.com/tasks/486357fa-2fe2-4d31-95d9-14a90b005574) showed a task-scoped board with a Codex coordinator, a Codex implementation worker and a Claude verifier. The task was in progress and a board wake was queued. Completion and other harness pairings require their own evidence.
+Fleet ships the shared board, mention-driven wakes, the `swarm-coordinator` profile, the `swarm-plan-execute` pipeline and the shared Swarm panel.
 
 ## External-agent quickstart
 
-Use an ordinary task for project work. Use the `swarm-plan-execute` pipeline in [Lab](fleet-lab.md) to evaluate Swarm variants on examples. Lab boards use `scopeKind: "pipeline_run"` with the run ID. The task launch below starts a coordinator session and uses the task ID for the shared board.
+Use an ordinary task for project work. Use the `swarm-plan-execute` pipeline in [Lab](fleet-lab.md) to evaluate Swarm variants on examples. The task launch below starts a coordinator session and uses the task ID for the shared board.
+
+For a Lab run, call `work_board_get` with `scopeKind: "pipeline_run"` and the run ID. When the run board is empty, the operation can return posts and `headSeq` from the primary step's session board while the reply still names the requested run. For a pagination cursor tied to one board, use `board_read` with an explicit scope. Use the run ID for the run's own posts or, if you know the primary step's session ID, use `scopeKind: "session"` and that ID to page the session posts. Start with a fresh cursor in each scope. A cursor from the Lab `work_board_get` snapshot may refer to either board, so discard it when starting an explicit read.
 
 ### Authenticate and discover the profile
 
@@ -66,9 +68,9 @@ In **Roster**, select the conversation code in the **Transcript** column, then s
 
 ### Independent verification
 
-On T-FLT-22 the default Claude Swarm verifier (`swarm-verifier-claude`) could inspect files and use Fleet tools. Its effective grants offered no shell or browser checks, so its baseline left those checks unverified.
+The default Claude Swarm verifier (`swarm-verifier-claude`) can inspect files and use its granted Fleet tools. Shell and browser checks depend on the execution's effective grants. When either capability is unavailable, record its checks as unverified until an authorized reviewer runs them.
 
-The project's authorized independent review route requires a separate reviewer with read access to the frozen revision and a host and profile with the required project-granted tools. T-FLT-22 recorded browser and forge readiness for the `coding-worker` grant on `owner-mac`. That placement offered a way to run candidate checks in an authorized workspace. Independent verification still requires the reviewer to run the checks and retain their results. If access, readiness or check evidence is missing, record the gap on the board. [Fleet delivery review](fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests)
+Use a separate reviewer with read access to the frozen revision and a host and profile with the required project-granted tools. Check the effective grant and host readiness before assigning the review. The reviewer runs the checks and retains the results. Record missing access, readiness or check evidence on the board. [Fleet delivery review](fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests)
 
 ## 1. Purpose
 
@@ -115,6 +117,8 @@ Delegation never expands authority: every coordinator and worker call stays insi
 
 The shipped task view is described in [Inspect the task in Fleet](#inspect-the-task-in-fleet). The table below describes the target panels.
 
+Not built: the Dependency & Handoff Graph panel.
+
 All Swarm views live inside Fleet's closed **8-section IA** ([IA and journeys](fleet-ia-and-journeys.md#1-closed-8-section-information-architecture)) and follow `OR-1`–`OR-49` using `packages/ui` controls exclusively, backed directly by `work_board_get` and `board_read`:
 
 - **No new top-level section and no second shell bar (`OR-46`, `OR-47`).** Swarm views open inside the Work Area (`detail` slot of `ListDetail`) for:
@@ -144,6 +148,8 @@ All Swarm views live inside Fleet's closed **8-section IA** ([IA and journeys](f
 ## 6. Incremental delivery slices
 
 1. **Slice 1 — Shared core board and coordination primitives (shipped):** Variant C `work_plan` and `board_message` tables (migration 89) with `live` + `project_scope` RLS and `fleet_change` triggers (`board` kind); `work_plan_set`, `board_post` (monotonic `seq` under `board:*` lock, `@mention` parsing, `wakeTargets` resolution), `board_read` (`since` cursor & filters), and `work_board_get` (live `session`/`execution`/`execution_totals`/`execution_spend` roster join + summary counts); starter `swarm-coordinator` agent profile and `swarm-plan-execute` pipeline.
-2. **Slice 2 — Cross-harness Code Mode, wake delivery, and Swarm qualification:** `board_post` submits mention wakes to eligible sessions and reports `woken` and any `wakeError` per target. A busy session can queue a wake. Use `wake: false` for posts that only need to appear on the board. The qualification target covers `codeMode` (`add`/`only`) and Swarm tools across `codex`, `claude`, `antigravity`, and `acp`, including `inherit`/`share`/`branch` isolation, per-worker profile and tool scope, and mixed-harness handoffs.
+2. **Slice 2 — Cross-harness Code Mode, wake delivery, and Swarm qualification:** `board_post` submits mention wakes to eligible sessions and reports `woken` and any `wakeError` per target. A busy session can queue a wake. Use `wake: false` for posts that only need to appear on the board.
+
+   Not built: full qualification of `codeMode` (`add`/`only`) and Swarm tools across `codex`, `claude`, `antigravity`, and `acp`, including `inherit`/`share`/`branch` isolation, per-worker profile and tool scope, and mixed-harness handoffs.
 3. **Slice 3 — Fleet Swarm GUI:** the shared panel provides `Overview`, `Board`, `Roster` and `Timeline & Screenshots` under the matching task, session or pipeline run scope. The target panels are listed in [Visual Swarm GUI in Fleet](#4-visual-swarm-gui-in-fleet).
-4. **Slice 4 — Lab comparative benchmarks:** parameterized Swarm strategy variants in Lab comparing single-agent baselines vs `swarm-plan-execute` variants, `codeMode` modes, and harness pairings on quality, latency, token/cost efficiency, and observability, ready for `Promote` to `Library → Methods`.
+4. **Slice 4 — Lab comparative benchmarks.** Not built: the parameterized Lab benchmark suite comparing single-agent baselines vs `swarm-plan-execute` variants, `codeMode` modes, and harness pairings on quality, latency, token/cost efficiency, and observability, ready for `Promote` to `Library → Methods`.
