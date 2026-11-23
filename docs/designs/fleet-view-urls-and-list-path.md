@@ -141,31 +141,11 @@ The allowed keys, defaults and values per view are one constant table in the mod
 
 ### 2. List data path (entity store, D4)
 
-```text
- URL ─parseView─▶ View ─listKey─▶ lists[key]   : Entry { view, params, state: signal<{ ids, keys, counts, total, groups, nextAfter, at, restored, error }>, seq, ... }
-                                  records[id]  : { row, seq }       (one per task or session, shared by all lists)
-                                  holders[id]  : list keys          (which lists hold the id: only those re-render on a change)
-                                  docs[name]   : signal<data>       (task_get / session_get details, overview, hosts)
-  task_page / sessions_list ─loadList─▶ records at the request's start cursor, lists[key] replaced in one write
-  feed changes ─applyChanges─▶ list_membership (two lists per call, 1,000 ids per call) ─▶ records at the batch cursor; ids placed by keys[id]
-  IndexedDB (D3, app/src/offline.ts) ◀── list:<key> and doc:<name>, written lazily at most once a second
-```
-
-* **`app/src/store.ts`** holds `records`, `lists` (an `Entry` per canonical list key: its view, page params, a state signal, a busy signal, the cursor it reflects, mount count) and `docs`, plus the `holders` index. A list holds ordered `ids`, a sort key per id (`keys[id]`, because the key depends on the grouping and cannot live in the shared record), counts, group summaries, `nextAfter`, `at` (time of the last server answer, 0 for stored data) and `error`. `app/src/url.ts` holds the URL hooks.
-* **`useList(kind, view)`** returns `{ rows, counts, total, groups, at, error, pending, shownKey, shownView, more, reload, state }`. `shownKey` is the list on screen, derived during render: the wanted list (from the URL) as soon as it has data, else the last shown one; `pending` is true while they differ or a request runs. `shownView` is the view of the rows on screen; group headers use it while a new grouping is pending. The skeleton shows only when nothing was ever shown.
-* **Never reset.** A page answer replaces `ids`, counts and groups in one signal write; nothing is cleared first.
-* **Order.** Every record and every list remembers the change cursor its data reflects. A page answer is applied at the cursor its request started from, a membership answer at the cursor of its change batch; an older answer never overwrites a newer record or list. Changes that arrive while a list's page is loading are kept and asked about once the page has landed. A new request of a view aborts the previous one (`op(name, body, { signal })`; an abort, also while the body is read, is not "offline").
-* **Paging.** `nextPage(key)` pages the shown list with that list's own params and does nothing while its first page loads.
-* **Changes.** One feed subscription for the whole store (`startStore()` in `main.tsx`). Only mounted lists are asked; unmounted lists keep their data in memory, so Back renders in the first frame, and revalidate when mounted again. If membership fails, the list reloads its first page. `list_membership` returns `groups` for grouped task lists.
-* **Offline and start.** The feed starts at the server head: every mounted list and doc loads fresh data on mount, and stored data only fills the first frame (also after a failed load, marked as not current). When the feed turns live, lists still showing stored rows or a failed load reload. Stored cursors are not used; keys of the old per-view layout are deleted once on start.
-* **Clearing.** Sign-out and a grants change clear IndexedDB and the store's memory; mounted lists and docs load again (entries and doc signals stay, because mounted hooks hold them).
-* **Memory.** Records no list holds are dropped after each page. Lists are not evicted: no limit is set until a memory measurement asks for one.
-* **Docs.** `useDoc(name, fetch, touches, refreshMs?)` replaces `useLiveRecord` with the same parameters and keeps the previous value visible while re-reading.
-* **One mounted view.** `main.tsx` routes `/tasks/:id?` and `/conversations/:id?` as one route each, so focus changes never unmount the view.
-* **URL changes** are built from the URL at the moment of the change (`app/src/url.ts`), never from a captured value, so a debounced search cannot undo a click made meanwhile. A search session ends on any navigation the view did not make.
-* **Search.** The input updates its own text at once; the URL and the request follow after 300 ms without a key press.
-* **Visible states.** Pending: counters and rows keep their values, dimmed (`--fg-muted`), under a thin progress bar (`ListFrame` and `StateCounters` take `pending`). Error with rows: rows stay with the error banner. Answered and empty: the empty state.
-* **Checkboxes.** Task and conversation rows get a native checkbox (`RowCheck`) in the last cell; the state badge stays the first cell (OR-22). Checked rows are the URL's `sel`.
+* **`app/src/store.ts`** holds an authorized snapshot per canonical list key (rows with sort keys, counts, group summaries, paging cursor, last read time, and error). A list key includes the effective project scope. Mounted lists reconcile the feed. Unmounted lists retain their last snapshot and revalidate when needed.
+* **`useList(kind, view)`** returns the shown rows and their view, counts, groups, paging and retry. Its pending flag is for initial and operator-requested reads. While an explicit query loads, the previous authorized rows stay mounted. Quiet reads keep the progress strip idle and retain normal row and counter tones. A read failure leaves the last confirmed values visible with a retry.
+* **Membership.** The store queues affected IDs per list, then sends the same filter, grouping and sort as the snapshot to `list_membership`. Tasks use task changes, including the derived task row. Conversations use the session ID from session, execution, question and event changes. The server decides membership under the current person's access and returns authoritative rows, counts and groups. The store applies them together and skips publication when the answer is unchanged.
+* **Order and paging.** Merge affected rows by the server sort tuple inside the loaded range. Its inclusive upper boundary is the last server-supplied paging cursor, even if that row moves or leaves. An unproven membership or boundary triggers a quiet replacement snapshot. Paging reads the shown list's own query. A refused paging cursor reopens from the first page once and resumes paging.
+* **Fencing and recovery.** Feed cursors are opaque. Keep changes delivered during a read for the next batch and fence all replies by the requested list and access generation. A reconnect catches up through the feed cursor. A resync starts a fresh authorized baseline and clears data from the preceding generation.
 
 ### 3. `task_page` query: side table `task_derived`
 

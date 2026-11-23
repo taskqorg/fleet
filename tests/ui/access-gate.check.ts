@@ -236,10 +236,10 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     actor='member@trial.test';await focus();await p.getByRole('button',{name:'Retry original save',exact:true}).waitFor();await p.getByRole('button',{name:'Retry original save',exact:true}).click();await idleSave();
 
     // Mounted thread/Composer: preserve author text for the same freshly authorized target only.
-    seed.put('session', { id: 'browser-access-session', projectId: 'desiign', createdAt: Date.now() });
+    seed.put('session', { id: 'browser-access-session', title: 'Private list marker', titleBy: 'operator', projectId: 'desiign', createdAt: Date.now() });
     seed.execution({ id: 'browser-access-run', kind: 'agent_run', state: 'succeeded', projectId: 'desiign', sessionId: 'browser-access-session' });
     seed.put('message', { id: 'browser-private-message', projectId: 'desiign', sessionId: 'browser-access-session', executionId: 'browser-access-run', text: 'Private thread marker' });
-    await p.goto(origin + '/conversations/browser-access-session');
+    await p.goto(origin + '/conversations/browser-access-session?q=Private%20list%20marker');
     const composer = p.getByPlaceholder('Message', { exact: true }); await composer.waitFor(); await composer.fill('Unsent owner-specific browser text');
     await focus(); await composer.waitFor(); await p.waitForFunction(() => document.querySelector<HTMLTextAreaElement>('[data-ui="composer"] textarea')?.value === 'Unsent owner-specific browser text');
     actor = 'outsider@trial.test'; await focus();
@@ -253,10 +253,39 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     await p.route('**/api/ops/thread_entries', async route => { const response = await route.fetch(); threadStarted(); await threadWait; await route.fulfill({ response }).catch(() => {}); });
     // A change-stream resync re-reads the mounted thread (focus with the same person no longer re-reads anything).
     await resync(); await threadPending;
+    // Hold a confirmed old-scope membership reply across the same grant fence as the thread.
+    const privateRow = p.locator('.split-list .vl-row[data-key="browser-access-session"]');
+    await privateRow.getByRole('link', { name: 'Private list marker', exact: true }).waitFor();
+    let releaseMembership!: () => void, membershipStarted!: () => void;
+    const membershipWait = new Promise<void>(resolve => { releaseMembership = resolve; });
+    const membershipPending = new Promise<void>(resolve => { membershipStarted = resolve; });
+    let authorizedTitle: string | undefined;
+    const holdMembership = async (route: Route) => {
+      if (!route.request().postDataJSON().ids.includes('browser-access-session')) { await route.continue(); return; }
+      try {
+        const response = await route.fetch({ timeout: 8000 });
+        const result = await response.json();
+        authorizedTitle = result.lists[0].rows.find((row: { id: string }) => row.id === 'browser-access-session')?.title;
+        membershipStarted();
+        await membershipWait;
+        await route.fulfill({ response }).catch(() => {});
+      } finally { membershipStarted(); }
+    };
+    await p.route('**/api/ops/list_membership', holdMembership);
+    const membershipRequest = p.waitForRequest(r => r.url().endsWith('/api/ops/list_membership')
+      && r.postDataJSON().ids.includes('browser-access-session'), { timeout: 8000 });
+    seed.sql("UPDATE session SET title='Late private list marker' WHERE id='browser-access-session';");
+    await membershipRequest;
+    await membershipPending;
+    assert.equal(authorizedTitle, 'Late private list marker', 'the held response contains the old authorized row');
     const people = [ { email: 'owner@trial.test', name: 'Owner', owner: true, roles: ['operator', 'architect'] }, { email: 'member@trial.test', name: 'Member', roles: ['operator'], grants: [] }, { email: 'outsider@trial.test', name: 'Outsider', roles: ['operator'], grants: [] } ];
-    await call('people_set', { people }); await resync(); releaseThread();
+    try { await call('people_set', { people }); await resync(); }
+    finally { releaseThread(); releaseMembership(); }
     await p.waitForFunction(() => !document.body.textContent?.includes('Private thread marker'));
     await p.unroute('**/api/ops/thread_entries');
+    await p.unroute('**/api/ops/list_membership', holdMembership);
+    await privateRow.waitFor({ state: 'detached' });
+    assert.equal(await p.getByText('Late private list marker', { exact: true }).count(), 0, 'the old membership reply did not apply');
     assert.equal(await p.locator('textarea').evaluateAll(nodes => nodes.some(node => (node as HTMLTextAreaElement).value.includes('Unsent owner-specific'))), false);
     await shot('access-revoked');
     // Restore the fixture's grant for subsequent checks; no source facts are changed by access.
@@ -338,7 +367,7 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     await call('people_set', { people: people.map(person => person.email === 'member@trial.test' ? { ...person, grants: [{ kind: 'project', id: 'desiign' }] } : person) });
 
     assert.deepEqual(errors, [], 'mounted browser must have no runtime errors');
-    console.log('PASS mounted Projects/access: delayed-summary, dirty conflict/save, real source update, continuous list, pending-me/late-write, identity drafts, actual thread revoke, Results late reply, blocked IDB and Lab quarantine');
+    console.log('PASS mounted Projects/access: delayed-summary, dirty conflict/save, real source update, continuous list, pending-me/late-write, identity drafts, actual thread and list membership revoke, Results late reply, blocked IDB and Lab quarantine');
   } catch (error) { await shot('browser-failure'); throw error; } finally { releaseSummary(); await context.close(); await new Promise<void>(resolve => { proxy.closeAllConnections(); proxy.close(() => resolve()); }); }
 }
 if (process.argv[1]?.endsWith('/access-gate.check.ts')) {

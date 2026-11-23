@@ -1,7 +1,7 @@
 // Entity store (docs/designs/fleet-view-urls-and-list-path.md §2) against a fake /api/ops: paging, ordering, clearing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { registerAccessValidator, registerAccessBaseline, ensureAccessGeneration } from '../../app/src/access.ts';
+import { registerAccessValidator, registerAccessBaseline, ensureAccessGeneration, invalidateAccess } from '../../app/src/access.ts';
 registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsVersion: 'one' }));
 registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
 await ensureAccessGeneration();
@@ -96,27 +96,127 @@ test('a refused cursor while a reload runs leaves the cursor to that reload', as
   slow.ok(page([row('t1')], ['g', 's', 't1'])); await reloading;
 });
 
-test('affected feed changes reload mounted lists and coalesce bursts during an active load', async () => {
+const taskChange = (seq: number, id: string) => ({ seq, kind: 'task' as const, id, taskId: id, sessionId: null, hostId: null, op: 'U', touches: [] });
+const membership = (rows: any[], counts: Record<string, number>, groups: object[] = []) => ({ lists: [{ name: 'tasks', rows, counts, groups }] });
+
+test('live task membership retains the paging boundary, confirmed order and unchanged snapshot identity', async () => {
+  // Requirement: scoped live row and summary updates. Risk: a burst replaces a page, skips a
+  // boundary row or renders an identical answer. Cover an insertion, a move past the window and a removal.
+  await clearAll();
+  const P = { view: 'tasks', group: 'state', sort: 'created', state: ['queued'] } as const;
+  const view = { ...P, state: [...P.state] };
+  const ordered = (id: string, order: number) => ({ ...row(id), sortKey: ['4', order, id] });
+  const a = ordered('a', 1), b = ordered('b', 2), c = ordered('c', 3), d = ordered('d', 4);
+  const groups = [{ key: '4', label: 'queued', count: 4 }];
+  const snapshot = { ...page([a, b], b.sortKey), counts: { queued: 4, completed: 0 }, groups, total: 4 };
+  const unmount = peek.mount('tasks', 'live', view);
+  try {
+    answer = async () => snapshot;
+    await loadList('tasks', 'live', view);
+    const before = peek.list('live');
+    calls = [];
+    await applyChanges([{ ...taskChange(9, a.id), kind: 'artifact' }]);
+    assert.equal(calls.length, 0, 'an artifact cannot affect the task list');
+    answer = async () => membership([a], snapshot.counts, groups);
+    await applyChanges(Array.from({ length: 36 }, (_, i) => taskChange(10 + i, a.id)));
+    assert.deepEqual(calls, [{ name: 'list_membership', body: { ids: ['a'], lists: [{ name: 'tasks', filter: { state: ['queued'] }, group: 'state', sort: 'created' }] } }]);
+    assert.equal(peek.list('live'), before, 'no new state signal for an unchanged answer');
+    // Read the next page using the original server tuple after a row moved out of that window.
+    // An independent mounted key lets the second case run without waiting for the burst throttle.
+  } finally { unmount(); }
+
+  const unmountWindow = peek.mount('tasks', 'window', view);
+  try {
+    answer = async () => snapshot;
+    await loadList('tasks', 'window', view);
+    const groupsAfter = [{ key: '4', label: 'queued', count: 3 }];
+    const inside = ordered('new', 0), outside = ordered('b', 5);
+    answer = async () => membership([outside, inside], { queued: 3, completed: 1 }, groupsAfter);
+    calls = [];
+    await applyChanges([taskChange(51, 'new'), taskChange(39, 'b'), taskChange(54, 'a')]);
+    assert.deepEqual(calls.map(call => call.name), ['list_membership']);
+    assert.deepEqual(idsOf('window'), ['new']);
+    const changed = peek.list('window')!;
+    assert.deepEqual(changed.nextAfter, b.sortKey);
+    assert.deepEqual(changed.groups, groupsAfter);
+    assert.deepEqual(changed.counts, { queued: 3, completed: 1 });
+    assert.equal(changed.total, 4);
+    answer = async (_name, body) => { assert.deepEqual(body.after, b.sortKey); return page([c, d, outside]); };
+    await nextPage('window');
+    assert.deepEqual(idsOf('window'), ['new', 'c', 'd', 'b']);
+  } finally { unmountWindow(); }
+});
+
+test('feed IDs delivered while a snapshot is in flight are reconciled once after it lands', async () => {
+  // Requirement: cursor fencing. Risk: losing commits delivered during a read or treating opaque
+  // change sequence IDs as monotone. This batch is delivered in feed order, with decreasing IDs.
   await clearAll();
   const P = { view: 'tasks' } as const;
-  answer = async () => page([row('t1', 'old')]);
-  peek.mount('tasks', 'L', P); await loadList('tasks', 'L', P);
-  answer = async () => page([row('t1', 'new')]);
-  await applyChanges([{ seq: 10, kind: 'task', id: 't1', taskId: 't1', sessionId: null, hostId: null, op: 'U', touches: [] }]);
-  assert.equal(peek.list('L')!.rows[0].title, 'new');
-  const slow = deferred();
-  let phase = 0;
-  answer = async () => (phase++ === 0 ? slow.p : page([row('t1', 'newer'), row('t2')]));
-  const loading = loadList('tasks', 'L', P);
-  await new Promise(r => setImmediate(r));
-  calls = [];
-  await applyChanges([{ seq: 11, kind: 'task', id: 't2', taskId: 't2', sessionId: null, hostId: null, op: 'I', touches: [] }]);
-  assert.equal(calls.length, 0, 'not reloaded while the page is already loading');
-  slow.ok(page([row('t1', 'stale')]));
-  await loading;
-  assert.equal(calls.length, 1, 'coalesced into one follow-up reload once the active load landed');
-  assert.deepEqual(idsOf('L'), ['t1', 't2']);
-  assert.equal(peek.list('L')!.rows[0].title, 'newer');
+  const unmount = peek.mount('tasks', 'refresh', P);
+  try {
+    const slow = deferred();
+    answer = async name => name === 'task_page' ? slow.p : membership([row('t2'), row('t3')], { queued: 3 });
+    const loading = loadList('tasks', 'refresh', P);
+    await new Promise(r => setImmediate(r));
+    calls = [];
+    await applyChanges([taskChange(21, 't2'), taskChange(19, 't3'), taskChange(18, 't2')]);
+    assert.equal(calls.length, 0, 'the active snapshot is allowed to finish');
+    slow.ok(page([row('t1')]));
+    await loading;
+    assert.deepEqual(calls.map(c => [c.name, c.body.ids]), [['list_membership', ['t2', 't3']]]);
+    assert.deepEqual(idsOf('refresh'), ['t3', 't2', 't1']);
+    assert.equal(peek.list('refresh')!.counts.queued, 3);
+  } finally { unmount(); }
+});
+
+test('an unproven membership response recovers the loaded extent with a snapshot', async () => {
+  // Requirement: quiet recovery. Risk: first-page fallback drops the rows and cursor already read.
+  await clearAll();
+  const P = { view: 'tasks' } as const;
+  const a = row('t3'), b = row('t2'), c = row('t1');
+  const unmount = peek.mount('tasks', 'fallback', P);
+  try {
+    answer = async (_name, body) => body.after ? page([b, c]) : page([a], a.sortKey);
+    await loadList('tasks', 'fallback', P);
+    await nextPage('fallback');
+    assert.deepEqual(idsOf('fallback'), ['t3', 't2', 't1']);
+    answer = async (name, body) => name === 'list_membership' ? { httpStatus: 500, message: 'Unavailable' }
+      : body.after ? page([b, { ...c, title: 'Updated' }]) : { ...page([a], a.sortKey), counts: { queued: 3 }, total: 3 };
+    calls = [];
+    await applyChanges([taskChange(61, c.id)]);
+    assert.deepEqual(calls.map(c => [c.name, c.body.after ?? null]), [
+      ['list_membership', null], ['task_page', null], ['task_page', a.sortKey],
+    ]);
+    assert.equal(peek.list('fallback')!.rows[2].title, 'Updated');
+    assert.equal(peek.list('fallback')!.counts.queued, 3);
+  } finally { unmount(); }
+});
+
+test('a late membership answer is discarded when access generation changes', async () => {
+  // Requirement: only the current access scope can populate a list. Risk: an old authorized
+  // reply arrives after an access reset and restores a row or counts the new scope cannot see.
+  await clearAll();
+  const view = { view: 'tasks', group: 'none' } as const;
+  const unmount = peek.mount('tasks', 'access-list', view);
+  try {
+    answer = async () => page([row('old-private')]);
+    await loadList('tasks', 'access-list', view);
+    const pending = deferred(), asked = deferred();
+    answer = async () => { asked.ok(undefined); return pending.p; };
+    const syncing = applyChanges([taskChange(72, 'old-private')]);
+    await asked.p;
+    invalidateAccess('fixture grant change');
+    assert.equal(peek.list('access-list'), null);
+    await ensureAccessGeneration();
+    answer = async () => page([row('new-visible')]);
+    await loadList('tasks', 'access-list', view);
+    const authorized = peek.list('access-list');
+    pending.ok(membership([row('old-private', 'late private title')], { queued: 72 }));
+    await syncing;
+    assert.equal(peek.list('access-list'), authorized);
+    assert.deepEqual(idsOf('access-list'), ['new-visible']);
+    assert.equal(authorized!.counts.queued, 1);
+  } finally { unmount(); }
 });
 
 test('review #33-4: clearing stored data also forgets lists in memory', async () => {

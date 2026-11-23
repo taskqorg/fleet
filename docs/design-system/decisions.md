@@ -484,3 +484,9 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
   * **OR-49 (One control per job):** `TabBar` (`packages/ui`) is the only tab control (no raw `role="tablist"`). `Choice` is only for 2–5 fixed options (never project/entity lists or single-option checkboxes). `EntityCode` (`OR-44`) is used for every entity link.
   * **Unified `CatalogueTree` for `Lab`, `Library`, and `Infrastructure`:** each of those three System sections uses one `CatalogueTree` in the Control Column (`Use Cases` + `Runs` in `Lab`; `Methods` + `Pipelines` + `Agents` + `Skills` in `Library`; `Hosts` + `Accounts` + `Connections & API keys` + `Runners` in `Infrastructure`) instead of sub-nav bars or Control Column mode switchers.
 * **Reason:** enforces a single predictable left-to-right navigation model, eliminates redundant chrome and state loss on load/tab switches, and provides machine-checkable rules in `packages/ui/scripts/check-design.mjs`.
+
+## 2026-11-23: Quiet live list updates
+
+* **Question:** when should the list show loading progress?
+* **Options:** show progress for every read, or for initial and operator-initiated reads.
+* **Choice:** show progress for initial and operator-initiated reads. Keep background updates quiet and surface failures with retry. Repeated feed changes with identical results had been flashing progress and dimming the list ([T-FLT-22](https://fleet.ufobe.com/tasks/486357fa-2fe2-4d31-95d9-14a90b005574)).

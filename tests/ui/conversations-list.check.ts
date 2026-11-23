@@ -159,4 +159,158 @@ export async function checkConversationsList(browser: Browser, origin: string, s
     assert.deepEqual(errors, []);
     console.log('ok Conversations list: project groups, preset keeps grouping, group and sort order, pin under a filter, selection mode, archive, archived toggle and unarchive, remembered collapsed groups');
   } finally { await context.close(); }
+  await checkLiveListUpdates(browser, origin, seed);
+}
+
+// Requirement: quiet live Conversations and Tasks. Risks: a burst flashes or reloads an
+// unchanged list, authoritative row/count changes are missed, or catch-up resets the view.
+export async function checkLiveListUpdates(browser: Browser, origin: string, seed: ReturnType<typeof seeder>) {
+  const prefix = 'Livefeedfixture';
+  seed.bulk(() => {
+    for (let i = 0; i < 48; i++) {
+      const id = 'livefeed-' + i;
+      seed.put('session', { id, title: prefix + ' ' + i, projectId: 'site-redesign', createdAt: Date.now(), titleBy: 'operator' });
+      seed.execution({ id: id + '-run', kind: 'agent_run', state: 'running', projectId: 'site-redesign', sessionId: id, startedAt: Date.now() });
+    }
+    seed.sql("UPDATE execution SET observation='confirmed' WHERE id LIKE 'livefeed-%-run'");
+  });
+  const context = await browser.newContext({ colorScheme: 'dark', viewport: { width: 1280, height: 640 } });
+  await context.addInitScript(() => {
+    const streams: EventSource[] = [];
+    let received = 0;
+    const Source = window.EventSource;
+    window.EventSource = class extends Source {
+      constructor(url: string | URL, config?: EventSourceInit) {
+        super(url, config); streams.push(this);
+        this.addEventListener('message', e => {
+          const c = JSON.parse(e.data);
+          if (c.sessionId === 'livefeed-47' && (c.kind === 'session' || c.kind === 'execution')) received++;
+        });
+      }
+    };
+    Object.assign(window, { liveListFeed: { streams, count: () => received } });
+  });
+  const p = await context.newPage(), errors: string[] = [];
+  p.on('pageerror', error => errors.push(error.message));
+  const snapshots: string[] = [];
+  p.on('request', r => {
+    if (r.url().endsWith('/api/ops/sessions_list') || r.url().endsWith('/api/ops/task_page')) snapshots.push(r.url().split('/').at(-1)!);
+  });
+  const frame = p.locator('.split-list [data-ui=list-view]');
+  const counters = frame.locator('[data-ui=state-counters]');
+  const counter = (name: string) => counters.getByRole('button', { name, exact: true });
+  const updating = frame.getByRole('progressbar', { name: 'Updating' });
+  const row = (id: string) => frame.locator(`.vl-row[data-key="${id}"]`);
+  const grid = frame.locator('.vl');
+  const membershipFor = (id: string) => p.waitForResponse(r => r.url().endsWith('/api/ops/list_membership')
+    && r.ok() && r.request().postDataJSON().ids.includes(id));
+  const shot = async (name: string) => {
+    if (process.env.CONV_SHOTS) await p.screenshot({ path: process.env.CONV_SHOTS + '/' + name + '.png' });
+  };
+  const frames = () => p.evaluate(() => new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+  try {
+    await p.goto(origin + '/conversations?group=state&q=' + prefix + '&sort=-created&state=preparing,running,waiting');
+    await counter('Running: 48').waitFor();
+    await updating.waitFor({ state: 'hidden' });
+    assert.deepEqual(snapshots, ['sessions_list']);
+    await grid.evaluate(el => { el.scrollTop = 430; });
+    await p.waitForFunction(() => (document.querySelector('.split-list .vl')?.scrollTop ?? 0) > 0);
+    const id = await grid.evaluate(el => {
+      const top = el.getBoundingClientRect().top;
+      const link = [...el.querySelectorAll<HTMLElement>('.row-link')].find(l => l.getBoundingClientRect().top >= top)!;
+      link.focus({ preventScroll: true });
+      return link.closest<HTMLElement>('.vl-row')!.dataset.key!;
+    });
+    await p.keyboard.press('x');
+    await frame.getByText(/1 selected/).waitFor();
+    const anchor = () => row(id).evaluate(el => el.getBoundingClientRect().top - el.closest('.vl')!.getBoundingClientRect().top);
+    const previousOffset = await anchor();
+    const previousTop = await grid.evaluate(el => el.scrollTop);
+    await p.evaluate(() => {
+      const list = document.querySelector('.split-list [data-ui=list-view]')!;
+      const bar = list.querySelector('.fbar')!;
+      const capture = () => JSON.stringify({
+        busy: list.getAttribute('aria-busy'), progress: !!list.querySelector('progress:not([aria-hidden=true])'),
+        bar: bar.getBoundingClientRect().toJSON(),
+        buttons: [...bar.querySelectorAll('.counter')].map(button => [
+          button.getAttribute('aria-label'), button.getBoundingClientRect().toJSON(), getComputedStyle(button).color,
+          button.querySelector('svg') && getComputedStyle(button.querySelector('svg')!).color,
+        ]),
+      });
+      const baseline = capture(), seen = new Set<string>();
+      let frame = 0, samples = 0;
+      const sample = () => { samples++; const value = capture(); if (value !== baseline) seen.add(value); };
+      const tick = () => { sample(); frame = requestAnimationFrame(tick); };
+      const mutations = new MutationObserver(sample);
+      mutations.observe(list, { subtree: true, attributes: true, childList: true });
+      frame = requestAnimationFrame(tick);
+      Object.assign(window, { stopLiveListSamples: () => { mutations.disconnect(); cancelAnimationFrame(frame); return { samples, changes: [...seen] }; } });
+    });
+    const membership = membershipFor('livefeed-47');
+    // Both trigger kinds reach the real authorized stream. Neither update changes the list projection.
+    seed.sql("DO $$ BEGIN FOR i IN 1..18 LOOP UPDATE session SET title=title WHERE id='livefeed-47'; UPDATE execution SET updated_at=updated_at WHERE id='livefeed-47-run'; END LOOP; END $$;");
+    await p.waitForFunction(() => (window as any).liveListFeed.count() >= 36);
+    const firstMembership = await membership;
+    assert.deepEqual(firstMembership.request().postDataJSON().ids, ['livefeed-47'], 'a burst is coalesced by session ID');
+    await firstMembership.finished();
+    await frames();
+    const burst = await p.evaluate(() => (window as any).stopLiveListSamples());
+    assert.ok(burst.samples > 0);
+    assert.deepEqual(burst.changes, [], 'no progress, counter color or filter geometry changes on any sampled frame');
+    assert.deepEqual(snapshots, ['sessions_list'], 'unchanged burst sent no additional full list request');
+    assert.equal(await grid.evaluate(el => el.scrollTop), previousTop);
+    assert.equal(await row(id).locator('.row-link').evaluate(el => el === document.activeElement), true);
+    await shot('live-list-quiet');
+
+    seed.sql("UPDATE execution SET state='waiting' WHERE id='livefeed-47-run';");
+    await counter('Waiting: 1').waitFor();
+    await counter('Running: 47').waitFor();
+    assert.equal(await anchor(), previousOffset, 'a live reorder preserves the visible row offset');
+    assert.equal(await row(id).locator('.row-link').evaluate(el => el === document.activeElement), true);
+    assert.equal(await row(id).locator('input:checked').count(), 1);
+    assert.deepEqual(snapshots, ['sessions_list'], 'state transition used membership');
+    await grid.evaluate(el => { el.scrollTop = 0; });
+    await frame.locator('.group-h', { hasText: /Waiting.*1/ }).waitFor();
+    await row('livefeed-47').waitFor();
+    assert.match(await row('livefeed-47').textContent() ?? '', /Livefeedfixture 47/);
+    assert.ok(await row('livefeed-47').locator('[data-tip="Waiting"]').count());
+
+    // Force a transport error before committing the next change. Catch-up uses the real saved cursor.
+    const catchUp = p.waitForResponse(r => r.url().endsWith('/api/ops/changes_since') && r.ok() && Number.isInteger(r.request().postDataJSON()?.cursor));
+    await p.evaluate(() => (window as any).liveListFeed.streams.at(-1).dispatchEvent(new Event('error')));
+    seed.sql("UPDATE execution SET state='succeeded' WHERE id='livefeed-47-run';");
+    const caught = await (await catchUp).json();
+    assert.ok(caught.changes.some((c: { id: string }) => c.id === 'livefeed-47-run'), 'reconnect replayed the committed state change');
+    await counter('Succeeded: 1').waitFor();
+    await row('livefeed-47').waitFor({ state: 'detached' });
+    await updating.waitFor({ state: 'hidden' });
+    assert.deepEqual(snapshots, ['sessions_list'], 'resumable reconnect kept the active window');
+
+    let finish!: () => void;
+    const held = new Promise<void>(r => { finish = r; });
+    await p.route('**/api/ops/sessions_list', async route => {
+      if (!route.request().postDataJSON().filter.state) await held;
+      await route.continue().catch(() => {});
+    });
+    try {
+      await counters.getByRole('button', { name: /^All:/ }).click();
+      await updating.waitFor();
+      assert.equal(await row(id).count(), 1, 'old rows remain during an explicit filter change');
+      await shot('live-list-explicit-filter');
+    } finally { finish(); }
+    await updating.waitFor({ state: 'hidden' });
+    assert.deepEqual(snapshots, ['sessions_list', 'sessions_list']);
+
+    const task = seed.task({ title: 'Livefeedtask owner check', projectId: 'site-redesign', state: 'queued' });
+    await p.goto(origin + '/tasks?group=state&q=Livefeedtask&state=queued');
+    await row(task).waitFor();
+    await counter('Queued: 1').waitFor();
+    seed.sql(`UPDATE task SET state='completed' WHERE id='${task}';`);
+    await counter('Completed: 1').waitFor();
+    await counter('Queued: 0').waitFor();
+    await row(task).waitFor({ state: 'detached' });
+    assert.deepEqual(snapshots, ['sessions_list', 'sessions_list', 'task_page']);
+    assert.deepEqual(errors, []);
+    console.log('PASS live lists: 36 unchanged feed events, zero progress/color/geometry changes and reloads, status/group/counter changes, scroll/focus/selection, cursor catch-up and explicit progress');
+  } finally { await context.close(); }
 }

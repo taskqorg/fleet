@@ -256,7 +256,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
     <ListFrame pending={list.pending} bar={<FilterBar query={g.query} placeholder={p.placeholder} onQuery={g.setQuery} shown={g.shown} total={list.total} chips={p.chips} onRemove={p.onRemoveChip}
       extra={<Presets system={views.list.filter(v => v.system).map(v => v.name)} presets={views.list.filter(v => !v.system).map(v => v.name)} active={g.activePreset} onPick={g.pick}
         onSave={g.save} onUnpin={views.remove} counted={navCounted(view.view, views.list.map(v => v.name))} onCount={view.view in NAV_COUNTER_DEFAULTS ? n => setNavCounter(view.view, n) : undefined} />}
-      counters={<StateCounters family={p.family} label={p.countersLabel ?? `${p.noun} by state`} pending={list.pending} counts={(p.countsUnknown ? Object.fromEntries(Object.keys(list.counts).map(k => [k, null])) : list.counts) as Partial<Record<StateOf<F>, number | null>>} active={g.states as StateOf<F>[]} onAll={() => set({ state: [], preset: undefined })}
+      counters={<StateCounters family={p.family} label={p.countersLabel ?? `${p.noun} by state`} pending={list.pending} unknown={!g.isLocal && !list.at} counts={(p.countsUnknown ? Object.fromEntries(Object.keys(list.counts).map(k => [k, null])) : list.counts) as Partial<Record<StateOf<F>, number | null>>} active={g.states as StateOf<F>[]} onAll={() => set({ state: [], preset: undefined })}
         onToggle={(x: StateOf<F>) => { const s = String(x); set({ state: g.states.includes(s) ? g.states.filter(y => y !== s) : [...g.states, s], preset: undefined }); }} />}
       tools={<>
         <SelectToggle on={selecting} onClick={() => selecting ? g.leave() : g.setSelectOn(true)} />
@@ -271,11 +271,11 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
       ]} />} />}>
       {p.confirm}
       {g.bulkError && <ErrorBanner text={g.bulkError} />}
-      {list.error && <ErrorBanner text={`${p.noun} did not load: ${list.error}`} onRetry={list.reload} />}
+      {list.error && <ErrorBanner text={list.at ? `${p.noun} may be out of date: ${list.error}` : `${p.noun} did not load: ${list.error}`} onRetry={list.reload} />}
       {pinnedDoc.error && <ErrorBanner text={`Pinned ${p.noun.toLowerCase()} did not load: ${pinnedDoc.error}`} onRetry={pinnedDoc.reload} />}
       {!displayed.length && (list.shownKey === null || list.pending || (!g.isLocal && pins.ids.length > 0 && pinnedDoc.data === null && !pinnedDoc.error)) ? <Skeleton rows={8} />
         : !displayed.length ? (list.error || pinnedDoc.error ? null : p.empty)
-        : <VirtualList items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={catalogueRow()} follow="top" label={p.listLabel} onEnd={list.more} endKey={g.endKey}
+        : <VirtualList keepRowFocus items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={catalogueRow()} follow="top" label={p.listLabel} onEnd={list.more} endKey={g.endKey}
           columns={`${selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.r.id === p.focused ? 'sel' : ''}${sel.includes(i.r.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
           onRowMenu={(i, at) => { if (i.kind === 'row') g.setMenu({ r: i.r, at }); }}
           render={i => i.kind === 'group'

@@ -171,8 +171,9 @@
 
   /* List view state & pills */
   .list-view .vl { height: var(--list-height, var(--size-list)); }
-  .list-progress { height: var(--space-1); background: transparent; }
-  .list-view.pending .list-progress { background: var(--accent); }
+  .list-progress { display: block; flex: none; width: 100%; height: var(--space-1); appearance: none; border: 0; background: transparent; visibility: hidden; }
+  .list-progress::-webkit-progress-bar { background: transparent; }
+  .list-view.pending .list-progress { background: var(--accent); visibility: visible; }
   .list-view.pending .vl-row, .counters.pending .counter { color: var(--fg-muted); }
   .pill { position: absolute; left: 50%; transform: translateX(-50%); padding: var(--space-1) var(--space-4); border: 0; border-radius: var(--radius-pill); background: var(--accent); color: var(--on-accent); box-shadow: var(--elevation-pill); font-size: var(--font-size-sm); cursor: pointer; z-index: 2; }
   .pill-top { top: calc(var(--size-row) + var(--space-3)); }

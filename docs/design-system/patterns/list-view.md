@@ -27,4 +27,10 @@
 * Clicking anywhere on a row opens the item in the work area ([list-detail](list-detail.md), OR-26). The row stays selected.
 * New items arrive without moving the row being read. A "N new" pill appears when the person has scrolled away (OR-6, OR-7).
 
+## Loading and live updates
+
+* First load and operator changes to search, filters, grouping or sort show progress in the reserved strip. Keep the last authorized rows and their group labels during an explicit query change. When there are no rows to show yet, use the list skeleton.
+* Quiet live reads keep the progress strip idle and the counters and rows at their normal color. Keep the same controls, selection and row identities. The virtual list keeps the visible anchor when other rows enter or leave, and applies a confirmed reorder in the same visual and keyboard order.
+* When a read fails, keep the last confirmed authorized values and offer retry. A new access generation clears the previous generation’s rows, counts, pins and pending responses.
+
 **Server note.** The mockups compute counts and groups on the client. The app gets counts per state from the server for the active filters, so counts stay correct for lists that are only partly loaded.

@@ -503,6 +503,13 @@ Permissions:
 
 Agent replies return summaries and IDs by default. Raw transcript text is returned only by `transcript.read`.
 
+#### Live read policy
+
+* Conversations and Tasks load a server snapshot for the active query. Coalesce committed changes by list and affected entity. Ask `list_membership` for authoritative rows, sort keys, state counts and group summaries for the same query and person. Apply these together. Ignore changes outside the operation’s dependencies and leave the rendered state alone when the answer is identical.
+* For a partly loaded list, apply changes inside its loaded sort-key range and retain the server’s paging boundary. Fetch a replacement snapshot when membership or the boundary cannot be established. Preserve the loaded extent where possible during recovery. Replay changes received during a read once it settles. Treat the feed cursor as opaque and fence reads and queued work by access generation.
+* Details revalidate the affected authorized entity with the smallest applicable operation. Keep confirmed content and authored input during a quiet reread. Clear data that is no longer authorized on a grant transition.
+* Aggregates revalidate the affected authorized scope and use published server totals or revisions. Keep the last confirmed values during a quiet read, show stale or unknown when verification fails, and apply related figures together. A detail or aggregate surface adopts this policy when it is migrated.
+
 ### 7. Migration from `records`
 
 *   **In scope.** These kinds map to the new tables:
