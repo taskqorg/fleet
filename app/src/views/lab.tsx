@@ -16,6 +16,7 @@ import { useOp } from '../store.ts';
 import { closedGroups, flipGroup } from '../lists.ts';
 import { listGroups, setListGroups, usePins } from '../prefs.ts';
 import { LabCreate } from './lab-create.tsx';
+import { selectDefaultSwarmTrial } from './lab-swarm.ts';
 import {
   ARCHIVED_COLLECTION_ID, USE_CASE_COLLECTION_PREFIX, buildUseCaseTree, collectionIconOf, collectionTitleOf,
   groupUseCases, isLabEligibleUseCase, matchingExamplesForUseCase, resolveSuiteKey, type RegistryUseCase, type SuiteKey,
@@ -1049,7 +1050,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const exp = useOp('lab_experiment_get', { experimentId: id }, { every: pollMs });
   const rated = useOp('lab_ratings_list', { experimentId: id }, { every: pollMs });
   const e = exp.data, state = exp.state, ratings = rated.data?.ratings ?? [];
-  const isTerminal = !!e && TERMINAL_STATES.has(e.state) && !e.trials.some(t => t.state === 'running' || t.state === 'preparing');
+  const isTerminal = !!e && TERMINAL_STATES.has(e.state) && e.trials.every(t => TERMINAL_STATES.has(t.state));
   useEffect(() => {
     setPollMs(isTerminal ? undefined : 5000);
   }, [isTerminal]);
@@ -1067,22 +1068,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const [patch, setPatch] = useState<Ops['lab_promote']['reply'] | null>(null);
   const [promotingVariant, setPromotingVariant] = useState<string | null>(null);
   const [promotedVariant, setPromotedVariant] = useState<string | null>(null);
-  const defaultSwarmTrial = useMemo(() => {
-    if (!e || e.trials.length === 0) return null;
-    const swarmVariants = new Set(
-      e.variants.filter(v => (v.pipelineId ?? e.pipelineId).includes('swarm')).map(v => v.label),
-    );
-    const candidates = swarmVariants.size > 0
-      ? e.trials.filter(t => swarmVariants.has(t.cell.variant))
-      : e.trials;
-    const pool = candidates.length > 0 ? candidates : e.trials;
-    return pool.toSorted((a, b) => {
-      const aActive = a.state === 'running' || a.state === 'preparing' ? 1 : 0;
-      const bActive = b.state === 'running' || b.state === 'preparing' ? 1 : 0;
-      if (aActive !== bActive) return bActive - aActive;
-      return (b.cell.attempt ?? 0) - (a.cell.attempt ?? 0);
-    })[0] ?? null;
-  }, [e]);
+  const defaultSwarmTrial = useMemo(() => selectDefaultSwarmTrial(e), [e]);
   const swarmBoard = useSwarmBoard('pipeline_run', !planTrial && defaultSwarmTrial ? defaultSwarmTrial.id : null);
   useEffect(() => { if (e && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView(); }, [!!e]);
   const now = Date.now();
@@ -1229,19 +1215,20 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
                     {(c?.trials ?? []).map(key => { const t = trial(key); if (!t) return null;
                       const conf = [(t.confounders.hosts ?? []).join(', '), (t.confounders.harnesses ?? []).join(', '), (t.confounders.models ?? []).join(', '), 'web ' + String(t.confounders.webRoute)].filter(Boolean).join(' · ');
                       const problem = problemText(t.problem);
+                      const detail = t.waitDetail ?? problem;
                       const repeatTag = `r${(t.cell.repeat ?? 0) + 1}${t.cell.attempt ? `.${t.cell.attempt}` : ''}`;
                       const plannedSteps = t.planSummary?.planned ?? 0;
                       const activeStep = Math.min(plannedSteps, Math.max(0, t.planSummary?.selected ?? 0));
-                      const showSteps = (t.state === 'running' || t.state === 'preparing') && plannedSteps > 0;
+                      const showSteps = !TERMINAL_STATES.has(t.state) && plannedSteps > 0;
                       const stepTip = `${activeStep} of ${plannedSteps} steps selected${t.planSummary.pending ? ` · ${t.planSummary.pending} pending` : ''}${t.planSummary.blocked ? ` · ${t.planSummary.blocked} blocked` : ''}`;
                       return <Fragment key={key}>
                         <span class="lab-trial">
                           <Button label="View trial plan" icon="network" iconOnly kind="quiet" onClick={() => setPlanTrial(t.id)} />
-                          <StateBadge family="trial" state={(t.observation === 'unconfirmed' ? 'unknown' : t.state) as StateOf<'trial'>} reason={problem ?? (t.comparable ? undefined : 'left out of comparison')} compact />
+                          <StateBadge family="trial" state={(t.observation === 'unconfirmed' ? 'unknown' : t.state) as StateOf<'trial'>} reason={detail ?? (t.comparable ? undefined : 'left out of comparison')} compact />
                           {t.comparable && <RowCheck checked={sel.includes(t.id)} label={`Select repeat ${(t.cell.repeat ?? 0) + 1} for rating`} onToggle={() => toggle(t.id)} />}
                           <span class="muted" data-tip={conf}>{repeatTag}</span>
                           {showSteps && <span class="chip-age num" data-tip={stepTip}>step {activeStep}/{plannedSteps}</span>}
-                          <Num m={{ value: t.durationMs == null ? null : t.durationMs / 1000, basis: t.durationMs == null ? 'unavailable' : 'measured', reason: 'running' }} kind="duration" />
+                          <Num m={{ value: t.durationMs == null ? null : t.durationMs / 1000, basis: t.durationMs == null ? 'unavailable' : 'measured', reason: t.state }} kind="duration" />
                           <Num m={{ value: t.spend.credits ?? null, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" />
                           {t.spend.tokens != null && (t.spend.tokens > 0 || t.state !== 'preparing') && (
                             <span class="muted" data-tip={`Tokens: ${t.spend.tokens.toLocaleString('en')}`}><Num m={{ value: t.spend.tokens, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" /> tok</span>
@@ -1256,10 +1243,10 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
                           {t.scores.filter(s => s.trialIds?.length === 1).map(s => s.form === 'typed'
                             ? <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator ?? '')}${s.rationale ? ': ' + s.rationale : ''}`}><Icon name={typedIcon(s.value)} label={`${evaluatorLabel(s.evaluator ?? '')} ${String(typedValue(s.value).answer)}, label ${String(typedValue(s.value).label ?? 'none')}`} />{String(typedValue(s.value).answer)}</span>
                             : <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator ?? '')}${s.rationale ? ': ' + s.rationale : ''}`}><Icon name={s.form === 'pass_fail' ? (s.value ? 'circle-check' : 'circle-x') : 'sliders-horizontal'} label={`${evaluatorLabel(s.evaluator ?? '')} ${String(s.value)}`} />{s.form === 'pass_fail' ? '' : String(s.form === 'metric' ? Number(s.value).toFixed(2) : s.value)}</span>)}
-                          {t.state === 'running' ? <Button label="Cancel cell" icon="x" iconOnly kind="quiet" onClick={() => act('lab_cell_action', { experimentId: id, cell: key, action: 'cancel' })} />
+                          {t.state === 'running' || t.state === 'waiting' ? <Button label="Cancel cell" icon="x" iconOnly kind="quiet" onClick={() => act('lab_cell_action', { experimentId: id, cell: key, action: 'cancel' })} />
                             : <Button label="Retry cell" icon="rotate-ccw" iconOnly kind="quiet" onClick={() => act('lab_cell_action', { experimentId: id, cell: key, action: 'retry' })} />}
                         </span>
-                        {problem && <span class="reason" data-tip={problem}>{e.repeats > 1 ? `${repeatTag}: ` : ''}{problem}</span>}
+                        {detail && <span class="reason">{e.repeats > 1 ? `${repeatTag}: ` : ''}{detail}</span>}
                       </Fragment>;
                     })}
                   </div>
@@ -1392,7 +1379,7 @@ function TrialPlan({ id, projectId, trialProblem, assessments, onOpen, onClose }
     const definition = definitions.find(step => step.id === entry.id);
     return { id: entry.id, kind: definition?.kind === 'api' ? 'tool' : definition?.kind === 'agent' ? 'agent' : 'program', executor: definition?.kind ?? '', reads: '', writes: '', activation: entry.activation, activationReason: entry.problem?.code ?? entry.decision?.reason,
       result: entry.id === run?.canonicalResult?.stepId,
-      run: execution ? { state: execution.state, reason: execution.observation, note: entry.executionRef?.mode === 'reused' ? 'reused · original resources' : execution.observation === 'unconfirmed' ? 'unconfirmed' : undefined,
+      run: execution ? { state: execution.state, reason: execution.waitDetail ?? execution.observation, note: execution.waitDetail ?? (entry.executionRef?.mode === 'reused' ? 'reused · original resources' : execution.observation === 'unconfirmed' ? 'unconfirmed' : undefined),
         time: msMeasured(execution.durationMs), cost: { value: null, basis: 'unavailable' as const }, error: execution.error ? JSON.stringify(execution.error) : undefined } : undefined };
   });
   return <>

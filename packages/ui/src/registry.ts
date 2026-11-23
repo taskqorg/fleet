@@ -81,6 +81,7 @@ export const states = {
   trial: {
     preparing: { label: 'Preparing', tone: 'running', icon: 'rotate-cw' },
     running: { label: 'Running', tone: 'running', icon: 'activity' },
+    waiting: { label: 'Waiting', tone: 'attention', icon: 'circle-pause' },
     succeeded: { label: 'Completed', tone: 'success', icon: 'circle-check' },
     failed: { label: 'Failed', tone: 'danger', icon: 'octagon-x' },
     unknown: { label: 'Unknown', tone: 'attention', icon: 'circle-question-mark' },

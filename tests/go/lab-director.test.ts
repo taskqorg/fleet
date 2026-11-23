@@ -6,6 +6,7 @@ import {mkdtempSync,readFileSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {hostCommand, startCoordinator} from '../harness.ts';
 import {fakeS3} from '../s3-fake.ts';
+import {selectDefaultSwarmTrial} from '../../app/src/views/lab-swarm.ts';
 
 // Requirement: fleet-people-access §5 Lab creator inheritance; risk: background runs escalate to owner authority.
 test('Lab retains authenticated requester through background enqueue, revocation, deletion and recovery without owner escalation', {timeout:60_000}, async t=>{
@@ -13,7 +14,7 @@ test('Lab retains authenticated requester through background enqueue, revocation
  const dir=mkdtempSync(tmpdir()+'/fleet-lab-director-');
  const people=JSON.parse(readFileSync('tests/trial/people.json','utf8'));people.push({email:creator,name:'Architect',roles:['operator','architect'],grants:[{kind:'project',id:project}]});writeFileSync(dir+'/people.json',JSON.stringify(people));
  const store=await fakeS3();
- const c=await startCoordinator({name:'lab_director',people:dir+'/people.json',env:{FLEET_PIPELINE_TICK_MS:'100',FLEET_SECRET_DIR:dir+'/secret',FLEET_STORE_SECRETS:dir+'/stores',FLEET_STORE_ENDPOINT_HOSTS:'127.0.0.1',FLEET_DEFAULT_ARTIFACT_LOCATIONS:'trial-host',FLEET_GATEWAY_DIR:dir+'/gateway',FLEET_GATEWAY_URL:'http://127.0.0.1:1'}});
+ const c=await startCoordinator({name:'lab_director',people:dir+'/people.json',env:{FLEET_PIPELINE_TICK_MS:'100',FLEET_RULES_TICK_MS:'100',FLEET_SECRET_DIR:dir+'/secret',FLEET_STORE_SECRETS:dir+'/stores',FLEET_STORE_ENDPOINT_HOSTS:'127.0.0.1',FLEET_DEFAULT_ARTIFACT_LOCATIONS:'trial-host',FLEET_GATEWAY_DIR:dir+'/gateway',FLEET_GATEWAY_URL:'http://127.0.0.1:1'}});
  const request=async(path:string,body:any,person=owner,token=c.secret)=>{const r=await fetch(c.base+path,{method:body===undefined?'GET':'POST',headers:{authorization:'Bearer '+token,...(token===c.secret?{'x-fleet-person':person}:{}),'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return{status:r.status,body:await r.json() as any}};
  const ok=(r:{status:number,body:any})=>{assert.equal(r.status,200,JSON.stringify(r.body));return r.body};
  const op=async(name:string,body:any,person=owner)=>ok(await request('/api/ops/'+name,body,person));
@@ -51,6 +52,95 @@ test('Lab retains authenticated requester through background enqueue, revocation
    const revoked=await request('/api/hosts/agent-tools',{executionId:row.id,commandId:command.id,request:{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'task_get',arguments:{taskId:mine.id}}}},owner,host.secret);
    assert.equal(revoked.status,404,'native bound request refreshes revoked authority');
    await op('people_set',{people});
+  });
+  // Requirement: a selected trial step waiting for placement shows its durable reason through dispatch and settlement.
+  // Risk: Fleet reports two stuck executions for one undispatched child, or stops reconciling the original run.
+  await t.test('a coding trial waits on forge capability, then dispatches and reconciles the original child', async () => {
+   const id = 'lab-coding-placement';
+   const codingHost = 'lab-coding-host';
+   const codingHostRegistration = await op('hosts_register',{id:codingHost,holder:owner});
+   const codingHostCall = async(path:string,body:any) => ok(await request(path,body,owner,codingHostRegistration.secret));
+   const settings = {
+    id, name: 'Coding placement fixture', contextFiles: [],
+    repos: [{id:'main',remote:'https://github.com/invented/project.git',forge:'github',defaultBranch:'main'}],
+    environments: [{hostId:codingHost,checkoutPath:'/invented/project'}],
+    execution: {profiles:['coding-worker'],tools:['node','pnpm','browser'],forge:true},
+   };
+   await op('project_create',{id,requestId:id,content:{settings,contextFiles:[]}});
+   await op('people_set',{people:people.map((p:any)=>p.email===creator?{...p,grants:[...p.grants,{kind:'project',id}]}:p)});
+   // The shipped coding profile declares this connection. Grant it only in the fixture, without a provider key.
+   const connections = (await op('connections_list',{})).connections;
+   if (!connections.some((c:any)=>c.name==='youtrack')) await op('connections_create',{name:'youtrack',provider:'youtrack'});
+   await op('connections_set_access',{connection:'youtrack',access:{projects:[id]}});
+   const tools = ['tool:node','tool:pnpm','tool:browser'];
+   const codingPoll = {...poll,capabilities:tools,stores:[]};
+   await codingHostCall('/api/hosts/poll',codingPoll);
+   const experiment = await op('lab_experiment_create',{
+    ...body,projectId:id,pipelineId:'coding-task',variants:[{label:'placement',overrides:{host:codingHost}}],
+   },owner);
+   assert.equal(experiment.requestedBy,owner);
+   await launch(experiment.id);
+   const child = await until(async()=>{
+    const row = agentRows(experiment.id)[0];
+    if (row) return row;
+    const trial = (await get(experiment.id)).trials[0];
+    assert.ok(!trial || !['failed','cancelled'].includes(trial.state),JSON.stringify({state:trial?.state,problem:trial?.problem}));
+   });
+   assert.equal(child.directedBy,owner);
+   const read = () => op('pipeline_get',{runId:child.pipelineRunId},creator);
+   const wait = 'project forge connection unavailable on '+codingHost;
+   const decision = await until(async()=> {
+    const route = await op('route_decisions',{executionId:child.id});
+    return route.decisions.at(-1);
+   });
+   assert.equal(decision.winner,null);
+   assert.deepEqual(decision.candidates.map((candidate:any)=>candidate.host),[codingHost]);
+   assert.equal(decision.candidates[0].skipped,wait);
+   c.sql(`UPDATE execution SET started_at=now()-interval '1 hour' WHERE id IN ('${child.pipelineRunId}','${child.pipelineStepId}');
+    INSERT INTO execution(id,kind,state,project_id,started_at) VALUES ('placement-stuck-control','agent_run','running','${id}',now()-interval '1 hour');`);
+   const findings = await until(async()=> {
+    const reply = await op('telemetry_findings',{projectId:id});
+    return reply.findings.some((f:any)=>f.executionId==='placement-stuck-control')&&reply.findings;
+   });
+   const pending = await read();
+   assert.equal(pending.state,'running','pipeline clients must keep polling during a placement wait');
+   assert.equal(pending.waitDetail,wait);
+   assert.deepEqual([pending.plan.entries[0].execution.state,pending.plan.entries[0].execution.waitDetail],['waiting',wait]);
+   const lab = await get(experiment.id);
+   const trial = lab.trials.find((t:any)=>t.id===child.pipelineRunId);
+   assert.deepEqual([trial.state,trial.waitDetail],['waiting',wait]);
+   assert.equal(trial.spend.tokens,undefined,'missing usage stays unknown');
+   // The default Lab Swarm board follows a live trial even when a completed attempt has a higher number.
+   const finishedAttempt = {...trial,id:'finished-swarm-attempt',state:'succeeded',cell:{...trial.cell,attempt:(trial.cell.attempt ?? 0)+1}};
+   assert.equal(selectDefaultSwarmTrial({...lab,trials:[trial,finishedAttempt]})?.id,trial.id,'a placement-waiting trial outranks a later finished attempt');
+   assert.ok(!findings.some((f:any)=>[child.pipelineRunId,child.pipelineStepId].includes(f.executionId)));
+   assert.deepEqual((await op('execution_events',{executionId:child.id})).events,[]);
+
+   const capable = {...codingPoll,capabilities:[...tools,'forge:invented/project']};
+   const command = await hostCommand(q=>codingHostCall('/api/hosts/poll'+q,capable),(x:any)=>x.executionId===child.id);
+   assert.ok(command,'the original child dispatches once the host is eligible');
+   const routed = await op('route_decisions',{executionId:child.id});
+   assert.equal(routed.decisions.at(-1).winner?.host,codingHost);
+   await codingHostCall('/api/hosts/receipts',{commandId:command.id,executionId:child.id,status:'started'});
+   const active = await read();
+   assert.equal(active.state,'running');
+   assert.equal(active.plan.entries[0].dispatch.phase,'handed_off');
+   assert.equal(active.plan.entries[0].execution.waitDetail,undefined);
+   // A completed dispatch counts as progress even when the run and step events predate the wait.
+   c.sql(`UPDATE execution SET started_at=now()-interval '1 hour' WHERE id IN ('${child.pipelineRunId}','${child.pipelineStepId}');
+    UPDATE event SET updated_at=now()-interval '1 hour' WHERE execution_id IN ('${child.pipelineRunId}','${child.pipelineStepId}');
+    INSERT INTO execution(id,kind,state,project_id,started_at) VALUES ('placement-handed-off-control','agent_run','running','${id}',now()-interval '1 hour');`);
+   const afterHandoff = await until(async()=>{
+    const reply = await op('telemetry_findings',{projectId:id});
+    return reply.findings.some((f:any)=>f.executionId==='placement-handed-off-control')&&reply.findings;
+   });
+   assert.ok(!afterHandoff.some((f:any)=>[child.pipelineRunId,child.pipelineStepId].includes(f.executionId)), 'a recent handoff resets the idle clock after a long placement wait');
+   await codingHostCall('/api/hosts/receipts',{commandId:command.id,executionId:child.id,status:'failed',error:'fixture failure'});
+   const ended = await until(async()=>{const run=await read();return run.state==='failed'&&run;});
+   assert.equal(ended.plan.entries[0].execution.state,'failed');
+   assert.equal(ended.plan.entries[0].execution.nativeExecutionId,child.id);
+   assert.equal(agentRows(experiment.id).length,1);
+   await until(async()=>(await get(experiment.id)).state==='done');
   });
   // Requirement: Fleet Lab variant lineage; risk: script jobs cannot be attributed to their trial.
   await t.test('script steps retain the trial variant independently of an agent profile',async()=>{

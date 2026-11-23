@@ -971,6 +971,19 @@ func (run *runRecord) planShape() error {
 	return nil
 }
 
+// placementWait projects the current placement decision from the ordered run's active step.
+// The engine keeps its running state so it continues reconciling the same plan and child.
+func (run *runRecord) placementWait() *string {
+	if run.State == "running" {
+		for _, step := range run.Steps {
+			if step.placementWait != "" {
+				return ptr(step.placementWait)
+			}
+		}
+	}
+	return nil
+}
+
 // planRead: the run as its readers get it: its record without the runner's steps, its plan with each selected entry's
 // execution and verified output, and the plan's summary.
 func (run *runRecord) planRead(q *Request) (recordRest, error) {
@@ -982,6 +995,10 @@ func (run *runRecord) planRead(q *Request) (recordRest, error) {
 		return nil, err
 	}
 	delete(out, "steps")
+	if wait := run.placementWait(); wait != nil {
+		// The run is still active. Keep its lifecycle state for pipeline clients that poll it.
+		out["waitDetail"] = jsonBytes(wait)
+	}
 	plan := run.Plan
 	view := &contract.PipelinePlan{DefinitionSha256: plan.DefinitionSha256, Revision: plan.Revision, Entries: []contract.PipelinePlanEntry{}}
 	for i := range plan.Entries {
@@ -989,6 +1006,9 @@ func (run *runRecord) planRead(q *Request) (recordRest, error) {
 		if entry.Activation == contract.PipelineActivationSelected {
 			step := &run.Steps[i]
 			execution := &contract.PipelineExecutionView{ExecutionId: refExecutionID(&entry), State: contract.ExecutionState(step.State), Observation: contract.PipelineObservationConfirmed}
+			if step.placementWait != "" {
+				execution.State, execution.WaitDetail = contract.ExecutionStateWaiting, &step.placementWait
+			}
 			if step.Observation != "" {
 				execution.Observation = contract.PipelineObservation(step.Observation)
 			}

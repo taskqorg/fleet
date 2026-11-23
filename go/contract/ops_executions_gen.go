@@ -1881,6 +1881,7 @@ type PipelineExecutionView struct {
 	StartedAt         json.RawMessage     `json:"startedAt,omitempty"`
 	State             ExecutionState      `json:"state"`
 	Usage             json.RawMessage     `json:"usage,omitempty"`
+	WaitDetail        *string             `json:"waitDetail,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }
@@ -1947,6 +1948,7 @@ type PipelineGetReply struct {
 	State             ExecutionState           `json:"state"`
 	TaskId            *string                  `json:"taskId,omitempty"`
 	Usage             json.RawMessage          `json:"usage,omitempty"`
+	WaitDetail        *string                  `json:"waitDetail,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }

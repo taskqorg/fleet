@@ -1,10 +1,49 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"fleet/obs"
 )
+
+// Requirement: absence-pass measures time without a completed pass and links the last trace.
+// Risk: slow but continuous single-flight work opens periodic false absence findings.
+func TestPassAbsenceUsesLastCompletion(t *testing.T) {
+	const trace = "12345678901234567890123456789012"
+	var age atomic.Int32
+	age.Store(261)
+	ch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(query), "name LIKE 'pass.%'") {
+			fmt.Fprintf(w, "{\"Name\":\"pass.placement-fixture\",\"Age\":%d,\"Duration\":104,\"TraceID\":%q}\n", age.Load(), trace)
+		}
+	}))
+	t.Cleanup(ch.Close)
+	oldStore := spanStore
+	spanStore = &obs.ClickHouse{URL: ch.URL}
+	t.Cleanup(func() { spanStore = oldStore })
+	passIntervals.Store("placement-fixture", time.Minute)
+	t.Cleanup(func() { passIntervals.Delete("placement-fixture") })
+
+	findings, err := spanRules(context.Background())
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("157 seconds since completion: findings=%+v err=%v", findings, err)
+	}
+	age.Store(290)
+	findings, err = spanRules(context.Background())
+	if err != nil || len(findings) != 1 || findings[0].Value != 186 || len(findings[0].Exemplars) != 1 || findings[0].Exemplars[0] != trace {
+		t.Fatalf("186 seconds since completion: findings=%+v err=%v", findings, err)
+	}
+}
 
 // Requirement: #548 — rulesPass reads execution directors before writing under the scoped "problems:rules" lock
 // rather than acquiring GLOBAL.
