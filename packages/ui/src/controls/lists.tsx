@@ -46,18 +46,20 @@ export function FilterBar(p: FilterBarProps) {
 
 /* ---------- State counters: quick filter by state with totals (state-counters.md) ---------- */
 
-export function StateCounters<F extends Family>({ family, counts, active, onToggle, onAll, label, pending, hideZero }: {
+export function StateCounters<F extends Family>({ family, counts, active, onToggle, onAll, label, pending, unknown, hideZero }: {
   family: F; counts: Partial<Record<StateOf<F>, number | null>>; active: StateOf<F>[]; onToggle: (s: StateOf<F>) => void;
   /** Σ button: show all (clear the state filter). Omit to hide the Σ button. */
   onAll?: () => void; label: string;
   /** A newer answer is loading: the last counts stay, dimmed (docs/designs/fleet-view-urls-and-list-path.md §2). */
   pending?: boolean;
+  /** Whether the total has been confirmed by a read. */
+  unknown?: boolean;
   /** A counter block, not a quick filter (OR-29): zero chips are hidden, and the caller hides an all-zero block. */
   hideZero?: boolean;
 }) {
   const all = Object.keys(states[family]) as StateOf<F>[];
   const values = all.map(s => counts[s]).filter(n => n !== undefined) as (number | null)[];
-  const total = values.includes(null) ? null : (values as number[]).reduce((a, b) => a + b, 0);
+  const total = unknown || values.includes(null) ? null : (values as number[]).reduce((a, b) => a + b, 0);
   return (
     <div class={`counters${pending ? ' pending' : ''}`} data-ui="state-counters" role="group" aria-label={label} aria-busy={pending || undefined}>
       {onAll && <button type="button" class={`counter t-neutral sigma${active.length === 0 ? ' on' : ''}`} aria-pressed={active.length === 0}

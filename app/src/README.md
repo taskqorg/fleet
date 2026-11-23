@@ -23,7 +23,7 @@
 
 - `op` treats an aborted request separately from offline state, and a successful response whose JSON body cannot be read is an `OpError` rather than an empty success (`api.ts:op`).
 - `writeOnce` retries only unknown write outcomes with the same request body and stops on a definite error or aborted signal (`api.ts:writeOnce`).
-- The server decides list membership and ordering (`store.ts:loadList` reloads touched mounted lists and coalesces bursts with `dirty`; `list-page.tsx` reads pinned rows separately via `useOp('list_membership', ...)`).
+- The server decides list membership and ordering (`store.ts` coalesces affected row IDs per mounted list, reconciles via `list_membership`, and falls back to quiet `loadList` when membership or the paging boundary cannot be proved; `list-page.tsx` reads pinned rows separately via `useOp('list_membership', ...)`).
 - Feed delivery de-duplicates sequence numbers and batches subscribers per animation frame (`feed.ts:deliver`).
 - A doc name identifies its read: every request for one name within one task (a feed batch reaching all its readers, mounts in one render) sends one request. Reads never wait for a running one, and an answer is shown only when it started after the answer on screen, so a stalled request neither blocks nor overwrites newer data; clearing memory discards running reads (`store.ts:readDoc`).
 - Invalidation has one rule, `store.ts:touchedBy`: the change's `touches` names the operation, and the change names no other task, session, host, artifact, execution, experiment, question or project than the request (a definition other than `project/<id>` touches every project); a setting-change of another known person touches nothing. Views write no predicates.

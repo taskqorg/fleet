@@ -36,6 +36,8 @@ Conversation with a product manager (PM) is the primary way to discuss and assig
 - Decisions: answer questions and resolve blockers.
 - Results: inspect what was done, where to find it, what was checked and what remains; accept work under project rules.
 
+Server-backed lists show progress when first opened or when an operator changes or retries the query. Live updates keep the current list interactive and apply confirmed changes in place. If the server cannot confirm the current list, show its freshness or failure and a recovery path. [List view behaviour](docs/design-system/patterns/list-view.md#loading-and-live-updates) and [read policy](docs/designs/fleet-data-foundation.md#live-read-policy) define the presentation and data paths.
+
 ## Architect interface
 
 A web interface for a separate architect role. Configure and qualify the agents and facilities available to operators.

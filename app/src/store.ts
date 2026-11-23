@@ -1,13 +1,12 @@
 // Entity store (operator-app D4; docs/designs/fleet-view-urls-and-list-path.md §2): shared in-memory lists and docs,
-// kept current from the change feed via `touches` and list reloads. Nothing is ever blanked while reloading: a view
-// keeps showing its last rows while the next answer loads, and swaps in place.
+// kept current from the change feed. Lists reconcile affected rows and their summaries in place.
 import { AccessChanged, accessGeneration, ensureAccessGeneration, isAccessCurrent, assertAccessGeneration } from './access.ts';
 import { signal, effect, type Signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { op, online, signedOut, OpError, type Ops, type OpName } from './api.ts';
 import { subscribe, feedState, type Change } from './feed.ts';
-import { type Row } from './lists.ts';
-import type { ListGroup, TaskRow, SessionRow } from '../../contracts/generated/ops.ts';
+import { compareKeys, type Row, type SortKey } from './lists.ts';
+import type { ListGroup, MembershipAnswer, TaskRow, SessionRow } from '../../contracts/generated/ops.ts';
 import { onClear } from './offline.ts';
 import { listKey, toPageParams, type View } from '../../packages/view-url/view-url.ts';
 import { withFocus, prefsRead } from './prefs.ts';
@@ -20,7 +19,12 @@ export type Kind = 'tasks' | 'sessions';
 type Params = ReturnType<typeof toPageParams>;
 type Group = ListGroup;
 export type ListState = { rows: Row[]; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; error: string | null };
-type Entry = { kind: Kind; view: View; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>; started: number; shown: number; mounted: number; loading: number; dirty: boolean; paging: boolean; cursorReset: boolean; pageError: boolean; fetchedAt: number; lastReloadAt: number; throttleTimer?: ReturnType<typeof setTimeout> };
+type Entry = {
+  kind: Kind; view: View; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>;
+  started: number; mounted: number; loading: boolean; dirty: boolean; paging: boolean; cursorReset: boolean;
+  pageError: boolean; fetchedAt: number; affected: Set<string>; lastMembershipAt: number;
+  reconciling?: Promise<void>; throttleTimer?: ReturnType<typeof setTimeout>;
+};
 type Doc = { data: unknown; error: string | null; status?: number | null };
 type DocEntry = { signal: Signal<Doc | null>; fetchedAt: number; dirty: boolean; dirtySeq: number; name?: OpName; request?: unknown };
 
@@ -28,6 +32,7 @@ const FRESH_MS = 30_000;
 const MAX_UNMOUNTED_DOCS = 100;
 const MAX_UNMOUNTED_LISTS = 30;
 const APPLY_THROTTLE_MS = 1000;
+const MAX_MEMBERSHIP_IDS = 1000;
 const PREPARED_PREPARING_MS = 5_000;
 const PREPARED_POLL_MS = 10_000;
 
@@ -65,7 +70,9 @@ function evictDocs() {
 export function clearMemory() {
   for (const [key, e] of lists) {
     clearTimeout(e.throttleTimer); e.throttleTimer = undefined;
-    e.state.value = null; e.shown = e.started; e.dirty = false; e.fetchedAt = 0; e.lastReloadAt = 0;
+    e.started++; e.loading = false; e.paging = false; e.reconciling = undefined;
+    e.affected.clear(); e.dirty = false; e.fetchedAt = 0; e.lastMembershipAt = 0;
+    e.state.value = null; e.busy.value = false;
     if (!e.mounted) lists.delete(key);
     else if (isAccessCurrent(accessGeneration())) void loadList(e.kind, key, e.view);
   }
@@ -81,7 +88,7 @@ onClear.add(clearMemory);
 function entry(kind: Kind, key: string, view: View): Entry {
   let e = lists.get(key);
   if (!e) {
-    lists.set(key, e = { kind, view, params: toPageParams(view), state: signal(null), busy: signal(false), started: 0, shown: 0, mounted: 0, loading: 0, dirty: false, paging: false, cursorReset: false, pageError: false, fetchedAt: 0, lastReloadAt: 0 });
+    lists.set(key, e = { kind, view, params: toPageParams(view), state: signal(null), busy: signal(false), started: 0, mounted: 0, loading: false, dirty: false, paging: false, cursorReset: false, pageError: false, fetchedAt: 0, affected: new Set(), lastMembershipAt: 0 });
     evictLists();
   }
   return e;
@@ -89,130 +96,228 @@ function entry(kind: Kind, key: string, view: View): Entry {
 const rowsOf = (r: Ops['task_page']['reply'] | Ops['sessions_list']['reply']): Row[] => 'tasks' in r ? r.tasks : r.sessions;
 const opName = (k: Kind) => k === 'tasks' ? 'task_page' : 'sessions_list';
 
-/**
- * Load the first page of a list. An older slow response never overwrites a newer one (`read < e.shown`); a change
- * arriving while a load is running marks the entry dirty so one follow-up reload runs once it lands.
- */
-export async function loadList(kind: Kind, key: string, view: View, abort?: AbortSignal, cursorReset = false) {
+type ListRead = { signal?: AbortSignal; quiet?: boolean; cursorReset?: boolean; preserveExtent?: boolean };
+const PAGE_SIZE = 100;
+
+/** Replace the authorized snapshot. Quiet recovery keeps the loaded extent in one state update. */
+export async function loadList(kind: Kind, key: string, view: View, opts: ListRead = {}) {
   const e = entry(kind, key, view), read = ++e.started, generation = accessGeneration();
-  const wasDirty = e.dirty;
+  const extent = opts.quiet || opts.preserveExtent ? e.state.peek()?.rows.length ?? 0 : 0;
+  const interrupted = e.dirty || e.affected.size > 0 || !!e.reconciling;
   clearTimeout(e.throttleTimer); e.throttleTimer = undefined;
-  e.dirty = false; e.cursorReset = cursorReset; e.loading++; e.busy.value = true;
+  e.affected.clear(); e.dirty = false; e.cursorReset = !!opts.cursorReset;
+  e.loading = true; e.busy.value = !opts.quiet;
+  const current = () => read === e.started && isAccessCurrent(generation) && lists.get(key) === e;
   try {
     await ensureAccessGeneration(); assertAccessGeneration(generation);
-    const r = await op(opName(kind), { ...e.params, limit: 100 }, { signal: abort });
-    assertAccessGeneration(generation);
-    if (read < e.shown) return;
-    e.shown = read;
+    const fetchPage = (after?: unknown[]) => op(opName(kind), { ...e.params, limit: PAGE_SIZE, after }, { signal: opts.signal });
+    const first = await fetchPage();
+    const rows = rowsOf(first).slice();
+    let nextAfter = first.nextAfter;
+    if (rows.length < extent && nextAfter) {
+      const seen = new Set(rows.map(r => r.id));
+      while (rows.length < extent && nextAfter && current()) {
+        const page = await fetchPage(nextAfter as unknown[]);
+        for (const r of rowsOf(page)) if (!seen.has(r.id)) { seen.add(r.id); rows.push(r); }
+        if (page.nextAfter && canonical(page.nextAfter) === canonical(nextAfter)) throw Error('Paging cursor did not advance');
+        nextAfter = page.nextAfter;
+      }
+    }
+    if (!current()) return;
     const now = Date.now();
-    e.state.value = { rows: rowsOf(r), counts: r.counts, total: r.total, groups: 'groups' in r ? r.groups : [], nextAfter: r.nextAfter, at: now, error: null };
+    e.state.value = { rows, counts: first.counts, total: first.total, groups: first.groups ?? [], nextAfter, at: now, error: null };
     e.fetchedAt = now;
     e.pageError = false;
     touchList(key, e);
   } catch (err) {
-    if (err instanceof AccessChanged || !isAccessCurrent(generation) || err instanceof OpError && err.message === 'aborted') {
-      if (wasDirty && read >= e.shown) e.dirty = true;
+    if (!current()) return;
+    if (err instanceof AccessChanged || err instanceof OpError && err.message === 'aborted') {
+      if (interrupted) e.dirty = true;
       return;
     }
-    if (read < e.shown) return;
-    const s = e.state.value, msg = errMsg(err); e.pageError = false; e.fetchedAt = 0;
+    const s = e.state.peek(), msg = errMsg(err); e.pageError = false; e.fetchedAt = 0;
     e.state.value = s ? { ...s, error: msg } : { rows: [], counts: {}, total: 0, groups: [], nextAfter: null, at: 0, error: msg };
   } finally {
-    e.loading--; e.busy.value = e.loading > 0;
-    if (isAccessCurrent(generation) && !e.loading && e.dirty && e.mounted) { e.dirty = false; await loadList(e.kind, key, e.view); }
+    if (read === e.started) {
+      e.loading = false; e.busy.value = false;
+      if (isAccessCurrent(generation)) await settleChanges(key, e);
+    }
   }
 }
 
 /**
- * The next page of the list stored under key, with that list's own params; not while its first page is loading.
- * A refused cursor (400) reloads from the first page once per list load, keeping rows on screen.
+ * The next page of the list stored under key, with that list's own params. A refused cursor (400)
+ * reloads the first page once per list load, keeping rows on screen.
  */
 export async function nextPage(key: string) {
-  const e = lists.get(key), st = e?.state.value;
-  if (!e || !st?.nextAfter || e.paging || e.loading) return;
-  e.paging = true; const generation = accessGeneration();
+  const e = lists.get(key);
+  if (!e || e.paging || e.loading) return;
+  const generation = accessGeneration();
+  if (!isAccessCurrent(generation)) return;
+  e.paging = true;
+  if (e.reconciling) await e.reconciling;
+  if (!isAccessCurrent(generation) || lists.get(key) !== e) return;
+  const st = e.state.peek();
+  if (!st?.nextAfter || e.loading) { e.paging = false; await settleChanges(key, e); return; }
+  const read = e.started;
+  const current = () => isAccessCurrent(generation) && read === e.started && e.state.peek()?.nextAfter === st.nextAfter;
   try {
-    const r = await op(opName(e.kind), { ...e.params, limit: 100, after: st.nextAfter as unknown[] });
+    const r = await op(opName(e.kind), { ...e.params, limit: PAGE_SIZE, after: st.nextAfter as unknown[] });
     assertAccessGeneration(generation);
-    const now = e.state.value;
-    if (!now || now.nextAfter !== st.nextAfter) return;
+    const now = e.state.peek();
+    if (!current() || !now) return;
     const have = new Set(now.rows.map(x => x.id)), add = rowsOf(r).filter(x => !have.has(x.id));
     e.state.value = { ...now, rows: [...now.rows, ...add], nextAfter: r.nextAfter, error: e.pageError ? null : now.error };
     e.pageError = false;
   } catch (err) {
-    if (!isAccessCurrent(generation) || !e.state.value || e.state.value.nextAfter !== st.nextAfter || e.loading) return;
+    const now = e.state.peek();
+    if (!current() || !now) return;
     if (err instanceof OpError && err.status === 400 && !e.cursorReset) {
-      await loadList(e.kind, key, e.view, undefined, true);
-      const fresh = e.state.value;
-      if (fresh && !fresh.error && fresh.nextAfter && fresh.nextAfter !== st.nextAfter) { e.paging = false; await nextPage(key); }
+      await loadList(e.kind, key, e.view, { quiet: true, cursorReset: true });
+      const fresh = e.state.peek();
+      if (isAccessCurrent(generation) && fresh && !fresh.error && fresh.nextAfter && fresh.nextAfter !== st.nextAfter) {
+        e.paging = false; await nextPage(key);
+      }
       return;
     }
-    e.state.value = { ...e.state.value, error: errMsg(err) }; e.pageError = true;
-  } finally { e.paging = false; }
+    e.state.value = { ...now, error: errMsg(err) }; e.pageError = true;
+  } finally {
+    if (isAccessCurrent(generation)) { e.paging = false; await settleChanges(key, e); }
+  }
 }
 
-type ScopedChange = Change & { projectId?: string | null };
-const changeProjectId = (c: ScopedChange): string | null | undefined => {
-  if ('projectId' in c && c.projectId !== undefined) return c.projectId;
-  if (c.kind === 'resource_summary') return c.id;
-  if (c.kind === 'definition' && c.id.startsWith('project/') && c.id.length > 8) return c.id.slice(8);
+// Task rows read task and task_derived (both emit task changes). Session projections also read
+// execution, question, message and non-delta event data. The feed's event kind covers messages too.
+function affectedRow(c: Change, kind: Kind): string | null | undefined {
+  if (kind === 'tasks') return c.kind === 'task' ? c.taskId || c.id || null : undefined;
+  if (c.kind === 'session') return c.sessionId || c.id || null;
+  if (c.kind === 'execution' || c.kind === 'question' || c.kind === 'event') return c.sessionId || undefined;
   return undefined;
-};
-const listProjectMatches = (c: Change, params: Params): boolean => {
-  const pid = changeProjectId(c as ScopedChange);
-  if (pid === undefined) return true;
-  const inc = params.filter.projectId;
-  if (inc?.length && !inc.includes(pid)) return false;
-  const exc = params.filter.excludeProjectId;
-  if (exc?.length && exc.includes(pid)) return false;
-  return true;
-};
-const listAffected = (c: Change, kind: Kind, params: Params) =>
-  (kind === 'tasks' ? !!(c.taskId || c.kind === 'task') : !!(c.sessionId || c.kind === 'session')) && listProjectMatches(c, params);
+}
 
-/** One batch of feed changes: every mounted list with affected rows reloads (coalesced/throttled to 1000 ms). */
-export async function applyChanges(cs: Change[]) {
-  if (!isAccessCurrent(accessGeneration())) return;
-  const reloads: Promise<void>[] = [];
-  const now = Date.now();
-  for (const [key, e] of lists) {
-    if (!cs.some(c => listAffected(c, e.kind, e.params))) continue;
-    if (!e.mounted) { e.dirty = true; continue; }
-    if (e.loading) { e.dirty = true; continue; }
-    const wait = e.lastReloadAt + APPLY_THROTTLE_MS - now;
-    if (wait <= 0) {
-      clearTimeout(e.throttleTimer); e.throttleTimer = undefined;
-      e.lastReloadAt = now;
-      reloads.push(loadList(e.kind, key, e.view));
-    } else {
-      e.dirty = true;
-      if (!e.throttleTimer) {
-        e.throttleTimer = setTimeout(() => {
-          e.throttleTimer = undefined;
-          if (!e.mounted || !isAccessCurrent(accessGeneration())) return;
-          if (e.loading) { e.dirty = true; return; }
-          e.lastReloadAt = Date.now();
-          void loadList(e.kind, key, e.view);
-        }, wait);
-      }
+function sortKey(value: unknown): value is SortKey {
+  return Array.isArray(value) && value.length === 3 && typeof value[0] === 'string'
+    && typeof value[1] === 'number' && Number.isFinite(value[1]) && typeof value[2] === 'string';
+}
+
+function reconcileRows(s: ListState, ids: Set<string>, answer: MembershipAnswer, kind: Kind): ListState | null {
+  if (answer.name !== kind || !Array.isArray(answer.rows) || !answer.counts
+    || (answer.groups != null && !Array.isArray(answer.groups))) return null;
+  const boundary = s.nextAfter;
+  if (boundary != null && !sortKey(boundary)) return null;
+  const changed = new Map<string, Row>();
+  for (const row of answer.rows) {
+    if (!ids.has(row.id) || changed.has(row.id) || !sortKey(row.sortKey) || row.sortKey[2] !== row.id) return null;
+    changed.set(row.id, row);
+  }
+  const rows: Row[] = [];
+  const insert = (row: Row) => {
+    if (boundary == null || compareKeys(row.sortKey, boundary) <= 0) rows.push(row);
+  };
+  let reorder = false;
+  for (const previous of s.rows) {
+    if (!ids.has(previous.id)) { rows.push(previous); continue; }
+    const row = changed.get(previous.id);
+    changed.delete(previous.id);
+    if (row && compareKeys(previous.sortKey, row.sortKey) === 0) {
+      rows.push(canonical(previous) === canonical(row) ? previous : row);
+    } else if (row) {
+      insert(row); reorder = true;
     }
   }
-  await Promise.all(reloads);
+  for (const row of changed.values()) insert(row);
+  if (rows.length === 0 && boundary != null) return null; // there is no visible edge left from which to page
+  if (reorder || changed.size > 0) rows.sort((a, b) => compareKeys(a.sortKey, b.sortKey));
+  const counts = answer.counts, groups = answer.groups ?? [];
+  const total = Object.values(counts).reduce((n, value) => n + value, 0);
+  if (!Number.isSafeInteger(total) || total < 0) return null;
+  if (rows.length === s.rows.length && rows.every((r, i) => r === s.rows[i])
+    && canonical(counts) === canonical(s.counts) && canonical(groups) === canonical(s.groups)) return s;
+  return { ...s, rows, counts, total, groups, at: Date.now() };
+}
+
+async function reconcileList(key: string, e: Entry, s: ListState, ids: Set<string>) {
+  const generation = accessGeneration(), read = e.started;
+  const current = () => isAccessCurrent(generation) && read === e.started && lists.get(key) === e && !!e.mounted;
+  try {
+    // Cursors are opaque, in delivery order rather than numeric order. Only one membership read
+    // may land per list at a time. Changes delivered during this read go into the next batch.
+    const { lists: [answer] } = await op('list_membership', { ids: [...ids], lists: [{ name: e.kind, ...e.params }] });
+    if (!current()) return;
+    const next = answer && reconcileRows(s, ids, answer, e.kind);
+    if (next) {
+      if (next !== s) e.state.value = next;
+      e.fetchedAt = Date.now();
+      return;
+    }
+  } catch {
+    if (!current()) return;
+  }
+  // A failed or unproven membership answer cannot update the loaded window.
+  if (current()) await loadList(e.kind, key, e.view, { quiet: true });
+}
+
+async function settleChanges(key: string, e: Entry) {
+  if (!e.mounted || e.loading || e.paging || e.reconciling || !isAccessCurrent(accessGeneration())) return;
+  if (!e.dirty && !e.affected.size) return;
+  const s = e.state.peek();
+  if (e.dirty || !s || !s.at || (s.error && !e.pageError)) {
+    await loadList(e.kind, key, e.view, { quiet: true });
+    return;
+  }
+  const wait = e.lastMembershipAt + APPLY_THROTTLE_MS - Date.now();
+  if (wait > 0) {
+    e.throttleTimer ??= setTimeout(() => {
+      e.throttleTimer = undefined;
+      void settleChanges(key, e);
+    }, wait);
+    return;
+  }
+  clearTimeout(e.throttleTimer); e.throttleTimer = undefined;
+  const ids = e.affected; e.affected = new Set();
+  e.lastMembershipAt = Date.now();
+  const read = e.reconciling = reconcileList(key, e, s, ids);
+  try { await read; }
+  finally {
+    if (e.reconciling === read) { e.reconciling = undefined; await settleChanges(key, e); }
+  }
+}
+
+/** Queue one authoritative read per active list, deduplicating entity IDs across a burst. */
+export async function applyChanges(cs: Change[]) {
+  if (!isAccessCurrent(accessGeneration())) return;
+  const reads: Promise<void>[] = [];
+  for (const [key, e] of lists) {
+    for (const c of cs) {
+      if (e.dirty) break;
+      const id = affectedRow(c, e.kind);
+      if (id === undefined) continue;
+      // The feed identifies the changed entity, but not the old project or whether it used to
+      // contribute to a summary. Let the server decide which IDs count in this scope.
+      if (!e.mounted || id === null) { e.dirty = true; break; }
+      e.affected.add(id);
+      if (e.affected.size > MAX_MEMBERSHIP_IDS) { e.affected.clear(); e.dirty = true; }
+    }
+    if (e.mounted) reads.push(settleChanges(key, e));
+  }
+  await Promise.all(reads);
 }
 
 let started = false;
 /** One feed subscription for all lists (started once from main.tsx). */
 export function startStore() {
   if (started) return; started = true;
-  const reloadMounted = (only?: (s: ListState | null) => boolean) => {
+  const reloadMounted = (retryOnly = false) => {
     for (const [key, e] of lists) {
-      if (e.mounted) { if (!only || only(e.state.value)) void loadList(e.kind, key, e.view); }
-      else if (!only) e.dirty = true;
+      const s = e.state.peek();
+      if (e.mounted && !e.loading && (!retryOnly || !s || s.error)) {
+        void loadList(e.kind, key, e.view, { quiet: !!s?.at });
+      } else if (!e.mounted && !retryOnly) e.dirty = true;
     }
-    if (!only) for (const [k, d] of docs) if (!flights.get(k)?.readers.size) { d.dirty = true; d.dirtySeq++; }
+    if (!retryOnly) for (const [k, d] of docs) if (!flights.get(k)?.readers.size) { d.dirty = true; d.dirtySeq++; }
   };
   subscribe({ resync: () => reloadMounted(), changes: applyChanges });
-  effect(() => { if (feedState.value === 'live') reloadMounted(s => !s || !!s.error); });
+  effect(() => { if (feedState.value === 'live') reloadMounted(true); });
 }
 
 /** The row type of each list kind. */
@@ -221,6 +326,7 @@ export function useList<K extends Kind>(kind: K, urlView: View) {
   const view = withFocus(urlView), key = listKey(view), e = entry(kind, key, view);
   const [last, setLast] = useState<string | null>(() => e.state.value ? key : null);
   const ctrl = useRef<AbortController | null>(null);
+  const previousKey = useRef<string | undefined>(undefined);
   const shown = e.state.value ? key : last;
   useEffect(() => { if (shown !== last) setLast(shown); }, [shown]);
   const ready = prefsRead.value;
@@ -230,13 +336,17 @@ export function useList<K extends Kind>(kind: K, urlView: View) {
     touchList(key, e);
     ctrl.current?.abort(); const c = ctrl.current = new AbortController();
     const cur = e.state.value;
-    const fresh = feedState.value === 'live' && !!cur && !cur.error && !e.dirty && e.fetchedAt > 0 && (Date.now() - e.fetchedAt < FRESH_MS);
-    if (!fresh) void loadList(kind, key, view, c.signal);
+    const fresh = feedState.value === 'live' && !!cur && !cur.error && !e.dirty && !e.affected.size && e.fetchedAt > 0 && (Date.now() - e.fetchedAt < FRESH_MS);
+    const warm = !!cur?.at;
+    const quiet = warm && (previousKey.current === undefined || previousKey.current === key);
+    previousKey.current = key;
+    if (!fresh) void loadList(kind, key, view, { signal: c.signal, quiet, preserveExtent: warm });
     return () => {
       e.mounted--;
       c.abort();
       if (!e.mounted) {
-        if (e.throttleTimer) { clearTimeout(e.throttleTimer); e.throttleTimer = undefined; e.dirty = true; }
+        clearTimeout(e.throttleTimer); e.throttleTimer = undefined;
+        if (e.affected.size || e.reconciling) { e.affected.clear(); e.dirty = true; }
         evictLists();
       }
     };
@@ -245,7 +355,7 @@ export function useList<K extends Kind>(kind: K, urlView: View) {
   return {
     rows: (cur?.rows ?? []) as RowOf<K>[], counts: cur?.counts ?? {}, total: cur?.total ?? 0, groups: cur?.groups ?? [], at: cur?.at ?? 0, error: cur?.error ?? null,
     pending: !ready || shown !== key || e.busy.value, shownKey: shown, shownView: se?.view ?? view,
-    more: () => ready && shown ? nextPage(shown) : Promise.resolve(), reload: () => ready ? loadList(kind, key, view) : Promise.resolve(),
+    more: () => ready && shown ? nextPage(shown) : Promise.resolve(), reload: () => ready ? loadList(kind, key, view, { preserveExtent: true }) : Promise.resolve(),
     state: freshness(false),
   };
 }
@@ -417,7 +527,7 @@ export function useOp<K extends OpName>(name: K, request: Ops[K]['request'] | nu
 }
 
 /** For tests: the stored list under key and a doc. */
-export const peek = { generation: () => generation.value, doc: (name: string) => docs.get(name)?.signal.value ?? null, list: (key: string) => lists.get(key)?.state.value ?? null, mount: (kind: Kind, key: string, view: View) => { entry(kind, key, view).mounted++; } };
+export const peek = { generation: () => generation.value, doc: (name: string) => docs.get(name)?.signal.value ?? null, list: (key: string) => lists.get(key)?.state.value ?? null, mount: (kind: Kind, key: string, view: View) => { const e = entry(kind, key, view); e.mounted++; return () => { e.mounted--; }; } };
 
 // Prepared readers share scheduling by normalized request AND access generation.
 import type { ProjectResourcesReply, ProjectResourceItemsReply, ResourceProgress, ProjectResourceItemsRequest } from '../../contracts/generated/ops.ts';

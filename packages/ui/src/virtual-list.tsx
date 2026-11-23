@@ -3,7 +3,7 @@
 import type { ComponentChildren } from 'preact';
 import { useLayoutEffect, useReducer, useRef, useState } from 'preact/hooks';
 import tokens from '../tokens.json';
-import { Virtualizer, elementScroll, observeElementOffset, observeElementRect } from '@tanstack/virtual-core';
+import { Virtualizer, defaultRangeExtractor, elementScroll, observeElementOffset, observeElementRect } from '@tanstack/virtual-core';
 
 export type VirtualListProps<T> = {
   items: T[];
@@ -22,6 +22,8 @@ export type VirtualListProps<T> = {
   columns?: string;
   header?: ComponentChildren;
   class?: string;
+  /** Keep a focused row mounted and restore its focus if a live reorder moves it. */
+  keepRowFocus?: boolean;
   /** Extra class per row, e.g. group headers. */
   rowClass?: (item: T) => string;
   /** Right click (or long press) on a row: the page opens its row menu (ContextMenu) at the pointer. */
@@ -65,12 +67,22 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     const el = instance.scrollElement;
     if (el) prev.current.top = el.scrollTop;
   };
+  const active = p.keepRowFocus && document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const activeRow = active?.closest<HTMLElement>('.vl-row');
+  const focused = activeRow && scroller.current?.contains(activeRow) ? active : null;
+  const focusIndex = focused ? p.items.findIndex(item => p.getKey(item) === activeRow?.dataset.key) : -1;
   const opts = {
     count: p.items.length,
     getScrollElement: () => scroller.current,
     estimateSize: () => p.rowHeight,
     getItemKey: (i: number) => p.getKey(p.items[i]),
     overscan: 10,
+    rangeExtractor: focusIndex < 0 ? defaultRangeExtractor : (range: Parameters<typeof defaultRangeExtractor>[0]) => {
+      const indices = defaultRangeExtractor(range);
+      if (indices.includes(focusIndex)) return indices;
+      indices.push(focusIndex);
+      return indices.sort((a, b) => a - b);
+    },
     scrollToFn: scrollTo,
     observeElementRect,
     observeElementOffset,
@@ -129,6 +141,12 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     }
     if (added) setUnseen(n => n + added);
   }, [p.items]);
+
+  useLayoutEffect(() => {
+    if (focused && document.activeElement === document.body) {
+      (focused.isConnected ? focused : scroller.current)?.focus({ preventScroll: true });
+    }
+  });
 
   // Viewport and measured heights can change without a new items array.
   useLayoutEffect(() => {
