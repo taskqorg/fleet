@@ -66,6 +66,11 @@ function shareText(share: number): string {
   return percent(share, 1).text;
 }
 
+function sameAmount(amount: number, total: number, terms = 4): boolean {
+  // Relative roundoff from accumulating the reported amounts and adding the cost figures.
+  return Math.abs(amount - total) <= Math.abs(total) * Number.EPSILON * terms;
+}
+
 function missingCostReason(cost: readonly CostFigureLike[]) {
   const figure = cost.find(c => (c.basis === 'unavailable' || c.value == null) && (c.reason || c.note));
   return figure?.reason || figure?.note;
@@ -75,6 +80,22 @@ function UnavailableCell({ label, reason }: { label: string; reason?: string }) 
   const value = measured({ value: null, basis: 'unavailable', reason }, 'money');
   const description = `${label} ${value.long}`;
   return <td class="num b-unavailable" aria-label={description} data-tip={description} tabIndex={0}>{value.text}</td>;
+}
+
+function ShareCell({ label, amount, total }: { label: string; amount: number | null; total: number | null }) {
+  if (total == null || total <= 0 || !Number.isFinite(total)) {
+    return <UnavailableCell label={label} reason="no positive USD total for this basis in the selected period and scope" />;
+  }
+  if (amount == null) {
+    return <UnavailableCell label={label} reason="no USD amount is available for this row and basis" />;
+  }
+  if (amount < 0) {
+    return <UnavailableCell label={label} reason="the recorded amount is negative" />;
+  }
+  if (amount > total && !sameAmount(amount, total)) {
+    return <UnavailableCell label={label} reason="the recorded amount exceeds the selected period and scope total" />;
+  }
+  return <td class="num">{shareText(amount / total)}</td>;
 }
 
 function CostCell({ cost, label }: { cost: readonly CostFigureLike[]; label: string }) {
@@ -223,17 +244,8 @@ export function Spend() {
                         : label}
                     </th>
                     <CostCell cost={cost} label="Cost" />
-                    {shareBases.map(({ id, label, total }) => {
-                      const amount = shareAmount(cost, id);
-                      if (total != null && total > 0 && amount != null) {
-                        return <td key={id} class="num">{shareText(amount / total)}</td>;
-                      }
-                      const missing = cost.find(figure => figure.value == null && matchesShareBasis(figure, id) && figure.reason);
-                      const reason = total == null || total <= 0
-                        ? 'no positive USD total for this basis in the selected period and scope'
-                        : missing?.reason ?? 'no USD amount is available for this row and basis';
-                      return <UnavailableCell key={id} label={`${label} share`} reason={reason} />;
-                    })}
+                    {shareBases.map(({ id, label, total }) =>
+                      <ShareCell key={id} label={`${label} share`} amount={shareAmount(cost, id)} total={total} />)}
                     <td class="num"><Num m={{ value: r.runs, basis: 'measured' }} kind="count" /></td>
                     <td class="num"><Num m={{ value: r.failed, basis: 'measured' }} kind="count" /></td>
                     <td class="num"><Num m={{ value: r.tokens, basis: 'measured' }} kind="count" /></td>
@@ -249,9 +261,6 @@ export function Spend() {
           <DetailSection title="By purpose">
             <div class="stack">
               {shareBases.map(({ id, label, total }) => {
-                if (total == null || total <= 0) {
-                  return <p key={id} class="small-note">{label} share unavailable. No positive USD total for this period and scope.</p>;
-                }
                 const parts = data.byPurpose.flatMap((row, i) => {
                   const amount = shareAmount(row.cost as CostFigureLike[], id);
                   return amount == null ? [] : [{ label: PURPOSE_LABELS[row.key] ?? row.label, v: amount, tone: TONES[i % TONES.length] }];
@@ -260,8 +269,10 @@ export function Spend() {
                   return <p key={id} class="small-note">{label} share unavailable. No USD amounts by purpose.</p>;
                 }
                 const sum = parts.reduce((amount, part) => amount + part.v, 0);
-                const addsUp = Math.abs(sum - total) <= Number.EPSILON * Math.max(sum, total) * parts.length;
-                if (!addsUp || parts.some(part => part.v < 0)) {
+                const canDraw = total != null && total > 0 && Number.isFinite(total)
+                  && sameAmount(sum, total, parts.length + 4) && parts.every(part =>
+                    part.v >= 0 && (part.v <= total || sameAmount(part.v, total)));
+                if (!canDraw) {
                   return <div key={id} class="stack">
                     <b>{label}</b>
                     <p class="small-note">Shares use the selected period and scope total. A bar requires nonnegative purpose amounts that add up to that total.</p>
@@ -270,7 +281,7 @@ export function Spend() {
                     </tr>}>
                       {parts.map(part => <tr key={part.label}>
                         <th scope="row">{part.label}</th><td class="num">{money(part.v, 'USD').text}</td>
-                        <td class="num">{shareText(part.v / total)}</td>
+                        <ShareCell label={`${label} share`} amount={part.v} total={total} />
                       </tr>)}
                     </DataTable>
                   </div>;
