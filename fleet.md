@@ -148,6 +148,18 @@ Conversation status is the state of its latest visible agent run by execution se
 
 **Universal Code Mode** ([design](docs/designs/fleet-code-mode.md)): every supported harness (`codex`, `claude`, `antigravity`, `acp`) runs JavaScript tool orchestration through one `code`/`poll` MCP runtime over granted Fleet tools, connections and host functions within execution authority, keeping intermediate results out of model context.
 
+#### Persistent bots
+
+A bot is a saved operator with a director, allowed projects, a Fleet profile, versioned instructions and SOUL, and durable project-scoped memory. Bot settings and memory grant no new authority. Use the profile and current project grants for placement, runtime, native tools and Code Mode. Pin the settings revision, memory revision and execution project for each turn.
+
+Give each bot one stable Home in Conversations. Use the standard input queue, sender provenance, transcript, questions and execution links. Keep managed tasks in Fleet with their own histories. Continue the native session when project, workspace, host, profile and account are compatible. Otherwise use the retained handoff with context scoped to the execution project. Recheck authority before launching queued work and before returning historical context or usage.
+
+Run now, scheduled wakes and new Needs you entries use the same execution flow. Retain the cause and deduplication identity of each wake and admit one active bot run at a time. Persist the schedule and wake state across coordinator restarts. Pause blocks future wakes. Stop separately requests cancellation through the execution lifecycle and reports the observed outcome. Keep quiet wakes and skipped, queued, failed and unconfirmed work inspectable in Runs.
+
+Show active, waiting and historical managed tasks, bot runs, triggers, questions and errors in Web. Reuse Fleet analytics for all-time and period totals by bot and recorded execution project, including wall time, active time, tokens and costs with source execution links. Capture direct and delegated attribution when work is created. Count each execution once and preserve its attribution across reassignment and continuation. Retain cost basis, currency and unknown observations.
+
+The first operations bot wakes on new Needs you entries and a schedule. It checks tasks, executions, telemetry and rendered Fleet Web. It uses Fleet questions for genuine owner decisions and continues or creates authorized, deduplicated Fleet fixes for confirmed technical causes. It verifies those fixes on the affected surface, retains unconfirmed observations, and uses audited dismissal for proved obsolete or duplicate entries. Qualify those cases in isolation before any bounded live pilot and coordinate that pilot with the existing queue operator.
+
 ### Environments
 
 An environment provides:

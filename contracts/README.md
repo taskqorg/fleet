@@ -30,6 +30,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   | `ops-accounts` | `account`, `subscription`, `connections`, `transport`, `budget`, `budgets`, `price`, `prices` |
   | `ops-analytics` | `analytics` |
   | `ops-artifacts` | `artifact`, `store`, `stores` |
+  | `ops-bots` | `bot` |
   | `ops-definitions` | `definition`, `agent`, `harness`, `profiles`, `catalogue`, `setting`, `reconcile` |
   | `ops-executions` | `execution`, `executions`, `pipeline`, `queue`, `route`, `hosts`, `system`, `object` |
   | `ops-lab` | `lab` |

@@ -38,6 +38,7 @@ function lazy<P extends object>(load: () => Promise<(props: P) => ComponentChild
   };
 }
 
+const Bots = lazy(async () => (await import('./views/bots.tsx')).Bots);
 const Projects = lazy(async () => (await import('./views/projects.tsx')).Projects);
 const Overview = lazy(async () => (await import('./views/overview.tsx')).Overview);
 const Tasks = lazy(async () => (await import('./views/tasks.tsx')).Tasks);
@@ -66,6 +67,7 @@ class RenderBoundary extends Component<{ at: string; children: ComponentChildren
 // The view of each screen the registry marks `app: true` (the type requires every one). Nav and routes follow registry
 // order. A list screen takes an optional focus segment, so focusing a row never unmounts the list.
 const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => ComponentChildren }> = {
+  bots: { focus: true, view: p => <Bots id={p.id} /> },
   projects: { focus: true, view: p => <Projects id={p.id} /> },
   overview: { focus: true, view: p => <Overview id={p.id} /> },
   tasks: { focus: true, view: p => <Tasks id={p.id} /> },

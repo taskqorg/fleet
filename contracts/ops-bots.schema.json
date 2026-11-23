@@ -1,0 +1,286 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "operations": {
+    "bot_list": {
+      "read": true,
+      "errors": [
+        404
+      ],
+      "auth": "person",
+      "agent": "no",
+      "description": "List bot settings visible in granted projects, optionally for one project.",
+      "changes": [
+        "setting-change"
+      ]
+    },
+    "bot_get": {
+      "read": true,
+      "errors": [
+        404
+      ],
+      "auth": "person",
+      "agent": "no",
+      "description": "Read the saved settings and scoped memory of a bot by id.",
+      "changes": [
+        "setting-change"
+      ]
+    },
+    "bot_settings_save": {
+      "read": false,
+      "errors": [
+        400,
+        404,
+        409
+      ],
+      "auth": "project:projectId",
+      "agent": "no",
+      "description": "Save a new settings revision. A caller-generated botId and baseRevision 0 create a bot."
+    },
+    "bot_memory_save": {
+      "read": false,
+      "errors": [
+        400,
+        404,
+        409
+      ],
+      "auth": "person",
+      "agent": "no",
+      "description": "Save a new project-scoped bot memory revision."
+    }
+  },
+  "$defs": {
+    "BotSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "purpose",
+        "profileId",
+        "instructions",
+        "soul",
+        "scheduleTime",
+        "scheduleZone",
+        "wakeOnNeedsYou"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "profileId": {
+          "type": "string"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "soul": {
+          "type": "string"
+        },
+        "scheduleTime": {
+          "type": "string"
+        },
+        "scheduleZone": {
+          "type": "string"
+        },
+        "wakeOnNeedsYou": {
+          "type": "boolean"
+        }
+      }
+    },
+    "BotRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "projectId",
+        "director",
+        "revision",
+        "settings",
+        "memory",
+        "memoryRevision"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "director": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "settings": {
+          "$ref": "#/$defs/BotSettings"
+        },
+        "memory": {
+          "type": "string"
+        },
+        "memoryRevision": {
+          "type": "integer"
+        }
+      }
+    },
+    "BotListRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "projectIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "excludeProjectIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "BotListItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "projectId",
+        "name",
+        "purpose",
+        "revision"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        }
+      }
+    },
+    "BotListReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bots"
+      ],
+      "properties": {
+        "bots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BotListItem"
+          }
+        }
+      }
+    },
+    "BotGetRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        }
+      }
+    },
+    "BotGetReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot"
+      ],
+      "properties": {
+        "bot": {
+          "$ref": "#/$defs/BotRecord"
+        }
+      }
+    },
+    "BotSettingsSaveRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId",
+        "projectId",
+        "baseRevision",
+        "settings"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "integer"
+        },
+        "settings": {
+          "$ref": "#/$defs/BotSettings"
+        }
+      }
+    },
+    "BotSettingsSaveReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot"
+      ],
+      "properties": {
+        "bot": {
+          "$ref": "#/$defs/BotRecord"
+        }
+      }
+    },
+    "BotMemorySaveRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId",
+        "baseRevision",
+        "memory"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "integer"
+        },
+        "memory": {
+          "type": "string"
+        }
+      }
+    },
+    "BotMemorySaveReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot"
+      ],
+      "properties": {
+        "bot": {
+          "$ref": "#/$defs/BotRecord"
+        }
+      }
+    }
+  }
+}

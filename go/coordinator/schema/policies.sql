@@ -541,3 +541,18 @@ DROP POLICY IF EXISTS live ON worker_done;
 CREATE POLICY live ON worker_done AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
 DROP POLICY IF EXISTS project_scope ON worker_done;
 CREATE POLICY project_scope ON worker_done FOR ALL TO public USING (fleet_visible(project_id));
+
+-- bot
+ALTER TABLE bot ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON bot;
+CREATE POLICY live ON bot AS RESTRICTIVE FOR SELECT TO public USING (fleet_show_deleted() OR (tombstoned_at IS NULL AND NOT (project_id = ANY (fleet_deleted_projects()))));
+DROP POLICY IF EXISTS project_scope ON bot;
+CREATE POLICY project_scope ON bot FOR ALL TO public USING (fleet_visible(project_id));
+
+-- The parent supplies both the current project scope and the live check.
+ALTER TABLE bot_revision ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON bot_revision;
+CREATE POLICY project_scope ON bot_revision FOR ALL TO public USING (EXISTS (SELECT 1 FROM bot b WHERE b.id = bot_id));
+ALTER TABLE bot_memory_revision ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON bot_memory_revision;
+CREATE POLICY project_scope ON bot_memory_revision FOR ALL TO public USING (EXISTS (SELECT 1 FROM bot b WHERE b.id = bot_id));

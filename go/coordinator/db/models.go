@@ -526,6 +526,36 @@ type BoardMessage struct {
 	TombstonedAt      *time.Time
 }
 
+type Bot struct {
+	ID             string
+	ProjectID      string
+	Director       string
+	Revision       int32
+	MemoryRevision int32
+	TombstonedAt   *time.Time
+}
+
+type BotMemoryRevision struct {
+	BotID     string
+	Revision  int32
+	Memory    string
+	CreatedAt time.Time
+}
+
+type BotRevision struct {
+	BotID          string
+	Revision       int32
+	Name           string
+	Purpose        string
+	ProfileID      string
+	Instructions   string
+	Soul           string
+	ScheduleTime   string
+	ScheduleZone   string
+	WakeOnNeedsYou bool
+	CreatedAt      time.Time
+}
+
 type Budget struct {
 	ID      string
 	Scope   string
