@@ -4578,3 +4578,15 @@ CREATE TABLE board_message (
 );
 CREATE INDEX board_message_scope_seq ON board_message(scope_kind, scope_id, seq);
 CREATE INDEX board_message_project ON board_message(project_id, created_at DESC);
+
+-- migration 90: restore project visibility of retained host events from their execution.
+SELECT set_config('fleet.project_ids', '*', true);
+UPDATE event e
+SET project_id = x.project_id
+FROM execution x
+WHERE e.execution_id = x.id
+  AND e.project_id IS NULL AND x.project_id IS NOT NULL
+  AND e.tombstoned_at IS NULL AND x.tombstoned_at IS NULL
+  AND x.kind IN ('agent_run', 'host_job')
+  AND e.session_id IS NOT DISTINCT FROM x.session_id
+  AND starts_with(e.id, 'event:' || x.id || ':');
