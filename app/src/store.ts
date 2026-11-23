@@ -326,6 +326,7 @@ export function useList<K extends Kind>(kind: K, urlView: View) {
   const view = withFocus(urlView), key = listKey(view), e = entry(kind, key, view);
   const [last, setLast] = useState<string | null>(() => e.state.value ? key : null);
   const ctrl = useRef<AbortController | null>(null);
+  const previousKey = useRef<string | undefined>(undefined);
   const shown = e.state.value ? key : last;
   useEffect(() => { if (shown !== last) setLast(shown); }, [shown]);
   const ready = prefsRead.value;
@@ -336,7 +337,10 @@ export function useList<K extends Kind>(kind: K, urlView: View) {
     ctrl.current?.abort(); const c = ctrl.current = new AbortController();
     const cur = e.state.value;
     const fresh = feedState.value === 'live' && !!cur && !cur.error && !e.dirty && !e.affected.size && e.fetchedAt > 0 && (Date.now() - e.fetchedAt < FRESH_MS);
-    if (!fresh) void loadList(kind, key, view, { signal: c.signal });
+    const warm = !!cur?.at;
+    const quiet = warm && (previousKey.current === undefined || previousKey.current === key);
+    previousKey.current = key;
+    if (!fresh) void loadList(kind, key, view, { signal: c.signal, quiet, preserveExtent: warm });
     return () => {
       e.mounted--;
       c.abort();

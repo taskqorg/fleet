@@ -301,6 +301,35 @@ export async function checkLiveListUpdates(browser: Browser, origin: string, see
     await updating.waitFor({ state: 'hidden' });
     assert.deepEqual(snapshots, ['sessions_list', 'sessions_list']);
 
+
+    // Back to an already shown view is automatic revalidation. Make the cache dirty while
+    // unmounted and hold the new snapshot to inspect the old rows throughout the read.
+    await p.unroute('**/api/ops/sessions_list');
+    await p.locator('.rail [data-id="hosts"] a').first().click();
+    await p.waitForURL('**/hosts**');
+    await frames();
+    const delivered = await p.evaluate(() => (window as any).liveListFeed.count());
+    seed.sql("UPDATE session SET title='Livefeedfixture returned' WHERE id='livefeed-47';");
+    await p.waitForFunction(n => (window as any).liveListFeed.count() > n, delivered);
+    await frames();
+
+    let releaseRemount!: () => void;
+    const remountGate = new Promise<void>(r => { releaseRemount = r; });
+    await p.route('**/api/ops/sessions_list', async route => { await remountGate; await route.continue().catch(() => {}); });
+    const remountRequest = p.waitForRequest(r => r.url().endsWith('/api/ops/sessions_list'));
+    const remounted = p.waitForResponse(r => r.url().endsWith('/api/ops/sessions_list') && r.ok());
+    try {
+      await p.locator('.rail [data-id="conversations"] a').first().click();
+      await remountRequest;
+      await counter('Running: 47').waitFor();
+      assert.equal(await row('livefeed-46').count(), 1, 'cached rows render during the remount read');
+      assert.equal(await updating.count(), 0, 'a cached view remount stays quiet');
+      await shot('live-list-warm-remount');
+    } finally { releaseRemount(); }
+    await (await remounted).finished();
+    await p.unroute('**/api/ops/sessions_list');
+    assert.deepEqual(snapshots, ['sessions_list', 'sessions_list', 'sessions_list']);
+
     const task = seed.task({ title: 'Livefeedtask owner check', projectId: 'site-redesign', state: 'queued' });
     await p.goto(origin + '/tasks?group=state&q=Livefeedtask&state=queued');
     await row(task).waitFor();
@@ -309,8 +338,8 @@ export async function checkLiveListUpdates(browser: Browser, origin: string, see
     await counter('Completed: 1').waitFor();
     await counter('Queued: 0').waitFor();
     await row(task).waitFor({ state: 'detached' });
-    assert.deepEqual(snapshots, ['sessions_list', 'sessions_list', 'task_page']);
+    assert.deepEqual(snapshots, ['sessions_list', 'sessions_list', 'sessions_list', 'task_page']);
     assert.deepEqual(errors, []);
-    console.log('PASS live lists: 36 unchanged feed events, zero progress/color/geometry changes and reloads, status/group/counter changes, scroll/focus/selection, cursor catch-up and explicit progress');
+    console.log('PASS live lists: 36 unchanged feed events, zero progress/color/geometry changes and reloads, status/group/counter changes, scroll/focus/selection, cursor catch-up, quiet warm remount and explicit progress');
   } finally { await context.close(); }
 }
