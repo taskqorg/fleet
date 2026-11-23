@@ -31,8 +31,8 @@ case "$part:$mode" in
     # Generated code is committed (go/contract): regenerating must not change it.
     (cd go && go generate ./...) && { test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }; }
     "$self" vet build
-    # The executor's MCP adapter from Node against the Go binary: replayed stdio exchanges and artifact path confinement.
-    FLEET_EXECUTOR_BIN="$bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts ;;
+    # Outside checks of the built executor: MCP replay, artifact paths and captured Conversations projection equality.
+    FLEET_EXECUTOR_BIN="$bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts tests/executor/conversation-projection.test.ts ;;
   # -race needs cgo on Linux; release binaries stay CGO_ENABLED=0 (deploy/build-release.sh).
   unit:build) (cd go && CGO_ENABLED=1 go test -race -count=1 -run '^$' ./...) ;;
   # Every PostgreSQL unit test must run (FLEET_REQUIRE_PG); the Go halves of outside tests run in the outside parts.
