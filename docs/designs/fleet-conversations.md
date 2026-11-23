@@ -204,17 +204,15 @@ Rules, one invariant ("the anchor row moves 0 px"):
 
 ### Copy
 
-Not built: character-offset endpoints and pointer dragging across messages. The current UI selects whole rows with click/Shift-click; server export supports partial offsets. The target below remains unchanged ([tracked gaps](https://github.com/taskqorg/fleet/issues/327)).
-
 *   **Reply and code block**: a copy icon in the row's service zone and on each code block. Reply copy gives the block's `markdown`. The icon shows while the row (or the code block) is hovered or the icon has focus, and always on a touch screen; showing it moves nothing (OR-23).
-*   **Cross-message selection**: selection is app state, `{ start: { key, offset }, end: { key, offset } }`, set from pointer and Shift+click on rendered rows and from Cmd+A. The app draws the highlight. Cmd+C calls `navigator.clipboard.write([new ClipboardItem({ 'text/plain': promise })])` synchronously in the key handler, where the promise is `thread_export({ key, from: start, to: end })`. If the write fails, the status line says so and offers a retry button.
+*   **Cross-message selection**: selection is app state, `{ start: { key, offset }, end: { key, offset } }`, set by dragging between reply bodies, by click and Shift+click for whole rows, or by Cmd+A for the whole thread. Dragging retains the anchor by key when its row leaves the window. The app highlights the selected portions of the endpoints and the intervening rows. Cmd+C calls `navigator.clipboard.write([new ClipboardItem({ 'text/plain': promise })])` synchronously in the key handler, where the promise is `thread_export({ key, from: start, to: end })`. If the write fails, the status line says so and offers a retry button.
 *   **Whole thread**: the same `thread_export({ key })` without bounds. There is one markdown builder, on the server. The HTTP route streams the markdown as `text/markdown`, so a long thread is not held in memory as one string.
 
 ```text
 thread_export({ key, from?: { key, offset }, to?: { key, offset } }) -> { markdown: string }
 ```
 
-Offsets cut `text` and `reasoning` blocks by their `plain` offsets. Other blocks (tool, question, result, boundary) are included whole when their key is inside the range, each as a short markdown line or a fenced block for tool input and output.
+Offsets count Unicode code points in the block’s `plain` source and use an exclusive end. A text caret in rendered Markdown maps to that source, including positions after hidden Markdown syntax. Offsets cut `text` and `reasoning` blocks. Other blocks (tool, question, result, boundary) are included whole when their key is inside the range, each as a short markdown line or a fenced block for tool input and output.
 
 Native browser selection is kept inside one row, for copying part of a reply.
 

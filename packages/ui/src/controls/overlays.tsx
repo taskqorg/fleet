@@ -119,15 +119,15 @@ export function EntityCode({ code, id, kind, cls, label }: { code?: string | nul
 }
 
 /** D17 codes in a text as references (agent messages, OR-38): every other part stays text. */
-export function linkCodes(text: string, key: number): ComponentChildren {
+export function linkCodes(text: string, key: number, literal = (value: string, _start: number): ComponentChildren => value): ComponentChildren {
   const out: ComponentChildren[] = []; let last = 0;
   for (const m of text.matchAll(ENTITY_CODE)) {
-    if (m.index! > last) out.push(text.slice(last, m.index));
+    if (m.index! > last) out.push(literal(text.slice(last, m.index), last));
     out.push(<EntityCode key={`${key}:${m.index}`} code={m[0]} cls="inline" />);
     last = m.index! + m[0].length;
   }
-  if (!out.length) return text;
-  if (last < text.length) out.push(text.slice(last));
+  if (!out.length) return literal(text, 0);
+  if (last < text.length) out.push(literal(text.slice(last), last));
   return out;
 }
 

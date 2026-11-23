@@ -1,11 +1,11 @@
 // Thread transcript viewer, message/tool/question/result/boundary rows, decision block, markdown, and artifact viewer.
 import type { ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { type IconName, type StateOf, type Harness, actions, harnesses } from '../registry.ts';
 import { bytes, exact, duration, agentLabel, actor, fileLabel } from '../format.ts';
 import type { Block as ThreadBlock, ResourceSummary } from '../../../../contracts/generated/ops.ts';
 import { VirtualList, type VirtualListHandle } from '../virtual-list.tsx';
-import { parse, renderBlocks } from '../markdown.tsx';
+import { parse, renderBlocks, type TextHook } from '../markdown.tsx';
 import { author, clipMessage, writeClip } from '../clip.ts';
 import { isSubmitEnter } from '../keys.ts';
 import tokens from '../../tokens.json';
@@ -159,10 +159,53 @@ export function ArtifactView({ a, src }: { a: ArtifactMeta; src: string }) {
 
 /* ---------- Thread rows (transcript-viewer.md; docs/designs/fleet-conversations.md) ---------- */
 
-/** Markdown (markdown.tsx): built as nodes, never as HTML; each fenced code block has its own copy button; D17 codes in
- *  its text are entity references (linkCodes). */
-export function Markdown({ text, onCopyFail }: { text: string; onCopyFail?: (e: unknown) => void }) {
-  return <div class="md">{renderBlocks(parse(text), (code, _lang, k) => <div class="code" key={k}><pre><code>{code}</code></pre><span class="code-copy"><Button label="Copy code" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(code).catch(e => onCopyFail?.(e))} /></span></div>, linkCodes)}</div>;
+type TextBounds = { from: number; to: number };
+export type ThreadTextPoint = { key: string; offset: number };
+
+let selectionHighlight: Highlight | undefined;
+
+/** Built as nodes. Fenced code has a copy button, and D17 codes use the shared entity reference. */
+export function Markdown({ text, onCopyFail, selectable, bounds }: {
+  text: string; onCopyFail?: (e: unknown) => void; selectable?: boolean; bounds?: TextBounds;
+}) {
+  const body = useRef<HTMLDivElement>(null);
+  const rendered = useMemo(() => {
+    const literal: TextHook = (value, key, entities) => {
+      if (!selectable) return entities ? linkCodes(value.text, key) : value.text;
+      return value.fragments.map(({ text, at }) => {
+        const span = (t: string, start: number) => <span key={at + start} data-thread-offset={at + start}>{t}</span>;
+        return entities ? linkCodes(text, at, span) : span(text, 0);
+      });
+    };
+    return renderBlocks(parse(text, value => value), (code, k) => <div class="code" key={k}>
+      <pre><code>{literal(code, 0, false)}</code></pre>
+      <span class="code-copy"><Button label="Copy code" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(code.text).catch(e => onCopyFail?.(e))} /></span>
+    </div>, literal);
+  }, [text, selectable, onCopyFail]);
+  useLayoutEffect(() => {
+    if (!bounds || !body.current || !selectable) return;
+    // The server indexes code points. DOM ranges use UTF-16.
+    const characters = Array.from(text);
+    const from = characters.slice(0, bounds.from).join('').length;
+    const to = characters.slice(0, bounds.to).join('').length;
+    const highlight = selectionHighlight ??= new Highlight();
+    CSS.highlights.set('thread-selection', highlight);
+    const ranges: Range[] = [];
+    for (const span of body.current.querySelectorAll<HTMLElement>('[data-thread-offset]')) {
+      const node = span.firstChild;
+      if (!node) continue;
+      const at = Number(span.dataset.threadOffset);
+      const start = Math.max(0, from - at), end = Math.min(node.textContent!.length, to - at);
+      if (start >= end) continue;
+      const range = new Range();
+      range.setStart(node, start);
+      range.setEnd(node, end);
+      highlight.add(range);
+      ranges.push(range);
+    }
+    return () => ranges.forEach(range => highlight.delete(range));
+  }, [bounds?.from, bounds?.to, text, selectable, rendered]);
+  return <div class="md" ref={body}>{rendered}</div>;
 }
 
 type Mark = { harness?: string | null; model?: string | null; effort?: string | null };
@@ -183,13 +226,13 @@ function ThreadService({ at, timing, action, meta, reveal }: {
 
 /** An operator or agent message: a head line with who wrote it and when (OR-2), with a left-aligned metadata row below the content (OR-21).
  *  Copy writes the head line and the body as plain markdown and as chat-safe HTML (clip.ts, formats.md "Copy"). */
-export function TextRow({ who, markdown, mark, by, at, now, onCopyFail, attachments, onOpen, src }: { who: 'operator' | 'agent'; markdown: string; mark?: Mark; by?: string | null; at?: number | null; now?: number; onCopyFail?: (e: unknown) => void;
+export function TextRow({ who, markdown, mark, by, at, now, onCopyFail, attachments, onOpen, src, selectable, bounds }: { selectable?: boolean; bounds?: TextBounds; who: 'operator' | 'agent'; markdown: string; mark?: Mark; by?: string | null; at?: number | null; now?: number; onCopyFail?: (e: unknown) => void;
   /** The files the message carried; images show a thumbnail from src, every one opens in the result viewer. */
   attachments?: ArtifactMeta[]; onOpen?: (id: string) => void; src?: (id: string) => string }) {
   const t = now ?? Date.now(), name = author({ role: who, by, ...mark });
   return <div class={`th-row th-text ${who}`} data-ui="thread-row">
     <div class="th-main">
-      {markdown && <Markdown text={markdown} onCopyFail={onCopyFail} />}
+      {markdown && <Markdown text={markdown} onCopyFail={onCopyFail} selectable={selectable} bounds={bounds} />}
       {attachments?.length ? <MessageFiles files={attachments} onOpen={onOpen} src={src} /> : null}
     </div>
     <ThreadService at={at} reveal
@@ -245,9 +288,9 @@ export function ToolRow({ name, input, output, state, startedAt, endedAt, open, 
     head={<span class="th-line"><span class="mono ell" data-tip={name}>{name}</span><span class={`svc${['failed', 'unfinished'].includes(state) ? ' t-danger' : ''}`}>{state}</span></span>}
     body={<>{input != null && <CodeBlock text={raw(input)} onCopyFail={onCopyFail} />}{output != null && <CodeBlock text={raw(output)} onCopyFail={onCopyFail} />}</>} />;
 }
-export function ReasoningRow({ markdown, at, open, onToggle, onCopyFail }: { markdown: string; at?: number | null; open: boolean; onToggle: () => void; onCopyFail?: (e: unknown) => void }) {
+export function ReasoningRow({ markdown, at, open, onToggle, onCopyFail, selectable, bounds }: { selectable?: boolean; bounds?: TextBounds; markdown: string; at?: number | null; open: boolean; onToggle: () => void; onCopyFail?: (e: unknown) => void }) {
   return <Fold icon="bot" at={at} open={open} onToggle={onToggle} copy={markdown} onCopyFail={onCopyFail}
-    head={<span class="th-line"><span>Reasoning</span><span class="svc ell">{markdown.split('\n')[0]}</span></span>} body={<Markdown text={markdown} onCopyFail={onCopyFail} />} />;
+    head={<span class="th-line"><span>Reasoning</span><span class="svc ell">{markdown.split('\n')[0]}</span></span>} body={<Markdown text={markdown} onCopyFail={onCopyFail} selectable={selectable} bounds={bounds} />} />;
 }
 /** A question in the thread (DecisionBlock); answered, it collapses to one line with the answer and who gave it. */
 export function QuestionRow({ text, options, state, answer, answeredBy, askedAt, answeredAt, now, onAnswer, onSecret, technicalAnswer }: { text: string; options: unknown[]; state: string; answer?: string; answeredBy?: string; askedAt?: number | null; answeredAt?: number | null; now: number; onAnswer?: (a: string) => void; onSecret?: (value: string) => Promise<unknown>; technicalAnswer?: boolean }) {
@@ -312,10 +355,12 @@ export type { ThreadBlock };
  * A thread: one row per block in a measured VirtualList that follows the bottom, loads older rows upward (onStart) and
  * newer ones downward (onEnd), and jumps through `handle`. Open tool and reasoning rows are kept by key across the window.
  */
-export function Thread({ blocks, label, now, marked, selected, onRowClick, showSession, onOpenResult, resultSrc, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail, onSecret }: {
+export function Thread({ blocks, label, now, marked, selected, textBounds, onRowClick, onTextRange, showSession, onOpenResult, resultSrc, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail, onSecret }: {
   blocks: ThreadBlock[]; label: string; now: number; marked?: string | null;
   /** Cross-message selection: rows in it are tinted; a click on a row (Shift extends) selects it, buttons and links excepted. */
-  selected?: (key: string) => boolean; onRowClick?: (key: string, shift: boolean) => void; showSession?: boolean; onOpenResult?: (id: string) => void; /** The bytes URL of a result, for message image thumbnails. */ resultSrc?: (id: string) => string; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
+  selected?: (key: string) => boolean; textBounds?: (key: string) => TextBounds | undefined;
+  onTextRange?: (anchor: ThreadTextPoint, focus: ThreadTextPoint) => void;
+  onRowClick?: (key: string, shift: boolean) => void; showSession?: boolean; onOpenResult?: (id: string) => void; /** The bytes URL of a result, for message image thumbnails. */ resultSrc?: (id: string) => string; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
   onStart?: () => void; onEnd?: () => void; onStop?: (executionId: string) => void; stopReason?: string;
   onAnswer?: (questionId: string, answer: string) => void; onCopyFail?: (e: unknown) => void;
   /** A key request row (its options name a connection): the owner's value goes here, never to onAnswer. */
@@ -324,11 +369,74 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (k: string) => setOpen(o => { const n = new Set(o); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const markOf = (b: Mark): Mark => ({ harness: b.harness, model: b.model, effort: b.effort });
+  const root = useRef<HTMLDivElement>(null);
+  const canSelectText = !!onTextRange;
+  const current = useRef({ blocks, onTextRange });
+  current.current = { blocks, onTextRange };
+  const pointAt = (e: PointerEvent): ThreadTextPoint | undefined => {
+    const caret = document.caretPositionFromPoint(e.clientX, e.clientY);
+    if (caret?.offsetNode.nodeType !== Node.TEXT_NODE) return;
+    const span = caret.offsetNode.parentElement;
+    if (span?.dataset.threadOffset === undefined || !root.current?.contains(span)) return;
+    const key = span.closest<HTMLElement>('.vl-row')?.dataset.key;
+    const block = current.current.blocks.find(b => b.key === key);
+    if (block?.kind !== 'text' && block?.kind !== 'reasoning') return;
+    const source = block.plain || block.markdown || '';
+    const offset = Number(span.dataset.threadOffset) + caret.offset;
+    return { key: block.key, offset: Array.from(source.slice(0, offset)).length };
+  };
+  const gesture = useRef<{ id: number; anchor: ThreadTextPoint; focus?: ThreadTextPoint } | null>(null);
+  useEffect(() => {
+    if (!canSelectText) return;
+    const update = (drag: NonNullable<typeof gesture.current>, focus?: ThreadTextPoint) => {
+      if (!focus || !drag.focus && focus.key === drag.anchor.key) return;
+      if (drag.focus?.key === focus.key && drag.focus.offset === focus.offset) return;
+      drag.focus = focus;
+      current.current.onTextRange?.(drag.anchor, focus);
+    };
+    const move = (e: PointerEvent) => {
+      const drag = gesture.current;
+      if (e.pointerId === drag?.id) update(drag, pointAt(e));
+    };
+    const cancel = () => {
+      const drag = gesture.current;
+      gesture.current = null;
+      if (drag?.focus) {
+        getSelection()?.removeAllRanges();
+        current.current.onTextRange?.(drag.anchor, drag.anchor);
+      }
+    };
+    const end = (e: PointerEvent) => {
+      const drag = gesture.current;
+      if (e.pointerId !== drag?.id) return;
+      if (e.type === 'pointercancel') { cancel(); return; }
+      update(drag, pointAt(e));
+      gesture.current = null;
+      if (!drag.focus || drag.focus.key === drag.anchor.key) return;
+      getSelection()?.removeAllRanges();
+      root.current?.querySelector<HTMLElement>('.vl')?.focus({ preventScroll: true });
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', end);
+    window.addEventListener('blur', cancel);
+    return () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', end);
+      document.removeEventListener('pointercancel', end);
+      window.removeEventListener('blur', cancel);
+      gesture.current = null;
+    };
+  }, [canSelectText]);
   const row = (b: ThreadBlock) => {
+    // The current projection exposes its Markdown as plain source. Keep full-row copy available for other projections.
+    const selectable = canSelectText && (b.kind === 'text' || b.kind === 'reasoning') &&
+      (!b.plain || b.plain === b.markdown);
+    const bounds = textBounds?.(b.key);
     switch (b.kind) {
-      case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} by={b.by} at={b.at} now={now} onCopyFail={onCopyFail} attachments={b.attachments} onOpen={onOpenResult} src={resultSrc} />;
+      case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} selectable={selectable} bounds={bounds} mark={markOf(b)} by={b.by} at={b.at} now={now} onCopyFail={onCopyFail} attachments={b.attachments} onOpen={onOpenResult} src={resultSrc} />;
       case 'tool': return <ToolRow name={b.name} input={b.input} output={b.output} state={b.state} startedAt={b.startedAt} endedAt={b.endedAt} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
-      case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} at={b.at} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
+      case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} selectable={selectable} bounds={bounds} at={b.at} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'question': { const conn = keyConnection(b.options); return <QuestionRow text={b.text} options={Array.isArray(b.options) ? b.options : conn ? ['decline'] : []} state={b.state} answer={b.answer === undefined || typeof b.answer === 'string' ? b.answer : JSON.stringify(b.answer)} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} technicalAnswer={!!conn || typeof b.answer === 'object'} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} onSecret={conn && onSecret ? v => onSecret(b.questionId, conn, v) : undefined} />; }
       case 'result': return <ResultRow artifacts={b.artifacts} onOpen={onOpenResult} />;
       case 'boundary': return <BoundaryRow session={showSession ? b.sessionId ?? undefined : undefined} executionId={b.executionId} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} resources={b.resources} stopReason={stopReason}
@@ -336,7 +444,13 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
       default: return null;
     }
   };
-  return <div class="transcript" data-ui="transcript-viewer">
+  return <div class="transcript" data-ui="transcript-viewer" ref={root}
+    onPointerDown={e => {
+      if (!onTextRange || e.button !== 0 || !e.isPrimary || e.pointerType === 'touch' || e.shiftKey || (e.target as Element).closest('button,input,textarea')) return;
+      const anchor = pointAt(e);
+      if (anchor) gesture.current = { id: e.pointerId, anchor };
+    }}
+    onDragStart={e => { if (gesture.current) e.preventDefault(); }}>
     <VirtualList class="tr-body" items={blocks} getKey={b => b.key} rowHeight={ROW} dynamic follow="bottom" label={label} handle={handle} pending={pending} onStart={onStart} onEnd={onEnd}
       rowClass={b => [b.key === marked ? 'marked' : '', selected?.(b.key) ? 'picked' : ''].join(' ')}
       render={b => <div class="th-pick" style={{ display: 'contents' }} onClick={e => { if (!onRowClick || (e.target as HTMLElement).closest('button,a,input') || !(getSelection()?.isCollapsed ?? true) && !e.shiftKey) return; if (e.shiftKey) getSelection()?.removeAllRanges(); ((e.currentTarget as HTMLElement).closest('.vl') as HTMLElement | null)?.focus({ preventScroll: true }); onRowClick(b.key, e.shiftKey); }}>{row(b)}</div>} />

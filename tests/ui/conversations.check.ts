@@ -21,6 +21,7 @@ import { checkConversationsList } from './conversations-list.check.ts';
 import { checkNewConversation } from './conversation-new.check.ts';
 import { checkAttachments } from './attachments.check.ts';
 import { checkConversationDetail } from './conversation-detail.check.ts';
+import { checkThreadSelection, checkThreadSelectionAuthority, seedThreadSelection } from './thread-selection.check.ts';
 
 execFileSync(process.execPath, ['--test', 'tests/ui/composer.test.ts', 'tests/ui/virtual-list.test.ts', 'tests/ui/interface-browser-failure.test.ts', 'tests/ui/interface-eventsource.test.ts', 'tests/ui/scoped-invalidation.test.ts', 'tests/ui/version.test.ts'], { stdio: 'inherit', env: { ...process.env, FLEET_CONTROL_BROWSER: '1' } });
 
@@ -29,6 +30,7 @@ const check = (ok: boolean, what: string) => { console.log(`${ok ? 'ok  ' : 'FAI
 const time = (what: string, ms: number) => { timings.push(`${what}: ${ms.toFixed(0)} ms`); };
 
 const { origin, seed, host, close, c } = await checkServer({ store: true, env: { FLEET_RESOURCE_READS: 'on', FLEET_RESOURCE_PROCESSOR: 'on' } });
+const selectionKeys = seedThreadSelection(seed);
 const lit = (v: unknown) => v === null ? 'NULL' : typeof v === 'number' ? String(v) : "'" + String(typeof v === 'string' ? v : JSON.stringify(v)).replace(/'/g, "''") + "'";
 // Captured fixtures, as stored.
 for (const name of ['codex-6a55ab8b', 'claude-127d6fd7', 'lost-receipt-d89cc199']) {
@@ -96,6 +98,8 @@ try {
   p.on('request', r => { if (r.url().includes('/api/ops/thread_entries')) started.set(r, performance.now()); });
   p.on('requestfinished', r => { const s = started.get(r); if (s !== undefined) rtt.push(performance.now() - s); });
 
+  await checkThreadSelectionAuthority(c, selectionKeys);
+  await checkThreadSelection(p, origin, selectionKeys);
   // Captured fixtures: each reply shows with its agent mark.
   for (const [sid, reply, label] of [['c2c11096-a08e-4b86-88d9-eb6c46785b11', 'Hi! What would you like to work on?', 'gpt-6.1-sol · low'], ['05e696a1-f925-4d58-abe1-8073f74eb965', 'I’ll continue when Fleet wakes me', 'gpt-6.1-sol · low']] as const) {
     await p.goto(`${origin}/conversations/${sid}`);
