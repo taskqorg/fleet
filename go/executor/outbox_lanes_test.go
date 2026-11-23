@@ -18,9 +18,9 @@ type laneServer struct {
 	waiting chan struct{} // an events request is waiting for its release
 }
 
-// laneFixture: /api/hosts/events answers wait until an agent tool request arrived (2 s at most), as a coordinator busy
-// with event backlog; every other route answers at once.
-func laneFixture(t *testing.T) (*httptest.Server, *laneServer) {
+// Event replies wait for the agent tool request. A watchdog fails the request if the tool never arrives.
+// With no watchdog, events may finish on their own so a tool in the same lane can run.
+func laneFixture(t *testing.T, watchdog <-chan struct{}) (*httptest.Server, *laneServer) {
 	t.Helper()
 	s := &laneServer{events: map[string][]string{}, release: make(chan struct{}), waiting: make(chan struct{}, 1000)}
 	var once sync.Once
@@ -30,9 +30,16 @@ func laneFixture(t *testing.T) (*httptest.Server, *laneServer) {
 		execution := jStr(body, "executionId")
 		if r.URL.Path == "/api/hosts/events" {
 			s.waiting <- struct{}{}
+			var fallback <-chan time.Time
+			if watchdog == nil {
+				fallback = time.After(2 * time.Second)
+			}
 			select {
 			case <-s.release:
-			case <-time.After(2 * time.Second):
+			case <-fallback:
+			case <-watchdog:
+				http.Error(w, "agent tool did not release events", http.StatusGatewayTimeout)
+				return
 			}
 		}
 		s.mu.Lock()
@@ -56,7 +63,8 @@ func laneFixture(t *testing.T) (*httptest.Server, *laneServer) {
 // executions waited minutes behind hundreds of event rows sent one request each, and answered pending.
 func TestAgentToolRowOvertakesOtherExecutionsEvents(t *testing.T) {
 	resetRetryRows(t)
-	srv, s := laneFixture(t)
+	watchdog := make(chan struct{})
+	srv, s := laneFixture(t, watchdog)
 	db := journal(t)
 	defer db.Close()
 	for i := range 200 {
@@ -69,13 +77,14 @@ func TestAgentToolRowOvertakesOtherExecutionsEvents(t *testing.T) {
 	if _, err := db.Exec("INSERT INTO delegation_requests(id,body) VALUES(?,'{}')", key); err != nil {
 		t.Fatal(err)
 	}
-	queue(db, "/api/hosts/agent-tools", M{"hostId": "h", "commandId": "cmd", "executionId": "caller", "agentToolKey": key})
-	start := time.Now()
-	if err := flush(db, srv.URL, "invented-token", "fixture-host"); err != nil {
+	if err := queue(db, "/api/hosts/agent-tools", M{"hostId": "h", "commandId": "cmd", "executionId": "caller", "agentToolKey": key}); err != nil {
 		t.Fatal(err)
 	}
-	if took := time.Since(start); took > time.Second {
-		t.Fatalf("pass took %v: the event requests waited out their 2 s instead of the agent tool request going first", took)
+	// Bound a broken gate without making successful delivery depend on elapsed time.
+	timer := time.AfterFunc(10*time.Second, func() { close(watchdog) })
+	defer timer.Stop()
+	if err := flush(db, srv.URL, "invented-token", "fixture-host"); err != nil {
+		t.Fatal(err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -103,7 +112,7 @@ func TestAgentToolRowOvertakesOtherExecutionsEvents(t *testing.T) {
 // earlier events. Risk: a receipt or tool call reaches the coordinator before the events it follows.
 func TestAgentToolRowKeepsItsExecutionOrder(t *testing.T) {
 	resetRetryRows(t)
-	srv, s := laneFixture(t)
+	srv, s := laneFixture(t, nil)
 	db := journal(t)
 	defer db.Close()
 	queue(db, "/api/hosts/events", M{"hostId": "h", "executionId": "x", "events": []any{M{"id": "1"}}})
@@ -126,7 +135,7 @@ func TestAgentToolRowKeepsItsExecutionOrder(t *testing.T) {
 // ends.
 func TestNewRowLeavesWhileAnotherLaneDelivers(t *testing.T) {
 	resetRetryRows(t)
-	srv, s := laneFixture(t)
+	srv, s := laneFixture(t, nil)
 	db := journal(t)
 	defer db.Close()
 	queue(db, "/api/hosts/events", M{"hostId": "h", "executionId": "slow", "events": []any{M{"id": "1"}}})
