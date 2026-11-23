@@ -1292,6 +1292,47 @@ func (v FleetEventType) Valid() bool {
 	return false
 }
 
+type ForgeReviewReply struct {
+	Actor             string  `json:"actor"`
+	ArtifactId        string  `json:"artifactId"`
+	ArtifactSha256    string  `json:"artifactSha256"`
+	ExecutionId       string  `json:"executionId"`
+	Independent       bool    `json:"independent"`
+	OnBehalfOf        *string `json:"onBehalfOf,omitempty"`
+	ReviewExecutionId *string `json:"reviewExecutionId,omitempty"`
+	ReviewSessionId   *string `json:"reviewSessionId,omitempty"`
+	SessionId         string  `json:"sessionId"`
+	TargetUrl         *string `json:"targetUrl,omitempty"`
+	Verified          bool    `json:"verified"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ForgeReviewReply) Validate() error {
+	return nil
+}
+
+// ForgeReviewRequest: Verify auditable review evidence and permission before posting exact-SHA code-review status.
+type ForgeReviewRequest struct {
+	AgentToolKey string `json:"agentToolKey"`
+	ArtifactId   string `json:"artifactId"`
+	Branch       string `json:"branch"`
+	CommandId    string `json:"commandId"`
+	Description  string `json:"description"`
+	ExecutionId  string `json:"executionId"`
+	GithubActor  string `json:"githubActor"`
+	HeadSha      string `json:"headSha"`
+	HostId       string `json:"hostId"`
+	Repo         string `json:"repo"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ForgeReviewRequest) Validate() error {
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ForgeReviewRequest) Closed() bool { return true }
+
 type HarnessVersion struct {
 	Expected string  `json:"expected"`
 	Harness  string  `json:"harness"`
@@ -2968,6 +3009,7 @@ var (
 	RouteArtifactsVerified = HostRoute[ArtifactVerifiedRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/verified", Long: true, Plain: false}
 	RouteDelegations       = HostRoute[ChildReceipt, any]{Path: "/api/hosts/delegations", Long: true, Plain: false}
 	RouteEvents            = HostRoute[HostEvents, OkReply]{Path: "/api/hosts/events", Long: true, Plain: true}
+	RouteForgeReview       = HostRoute[ForgeReviewRequest, ForgeReviewReply]{Path: "/api/hosts/forge/review", Long: true, Plain: false}
 	RoutePoll              = HostRoute[PollRequest, PollReply]{Path: "/api/hosts/poll", Long: true, Plain: true}
 	RouteProjectOperations = HostRoute[ProjectReceipt, any]{Path: "/api/hosts/project-operations", Long: true, Plain: false}
 	RouteReceipts          = HostRoute[Receipt, ReceiptReply]{Path: "/api/hosts/receipts", Long: true, Plain: false}
@@ -2992,6 +3034,7 @@ var HostRoutes = []string{
 	"/api/hosts/artifacts/verified",
 	"/api/hosts/delegations",
 	"/api/hosts/events",
+	"/api/hosts/forge/review",
 	"/api/hosts/poll",
 	"/api/hosts/project-operations",
 	"/api/hosts/receipts",

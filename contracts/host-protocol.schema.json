@@ -22,6 +22,7 @@
     "/api/hosts/artifacts/get": {"request": "HostArtifactGetRequest", "reply": "ops-artifacts.schema.json#/$defs/ArtifactGetReply", "long": true, "decode": "checked"},
     "/api/hosts/artifacts/read": {"$comment": "answers the artifact's bytes", "request": "HostArtifactGetRequest", "long": true, "decode": "checked"},
     "/api/hosts/artifacts/list": {"$comment": "answers HostArtifactListReply with the full artifact rows", "request": "HostArtifactListRequest", "long": true, "decode": "checked"},
+    "/api/hosts/forge/review": {"request": "ForgeReviewRequest", "reply": "ForgeReviewReply", "long": true, "decode": "checked"},
     "/api/hosts/stores": {"request": "StoresRequest", "reply": "StoresReply", "long": true, "decode": "checked"}
   },
   "$defs": {
@@ -2385,6 +2386,103 @@
         }
       },
       "$comment": "Coordinator-owned observation identity only; no credentials or permission grants."
+    },
+    "ForgeReviewRequest": {
+      "$comment": "Verify auditable review evidence and permission before posting exact-SHA code-review status.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": [
+        "hostId",
+        "commandId",
+        "executionId",
+        "agentToolKey",
+        "repo",
+        "branch",
+        "headSha",
+        "artifactId",
+        "description",
+        "githubActor"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string"
+        },
+        "commandId": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "agentToolKey": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "headSha": {
+          "type": "string"
+        },
+        "artifactId": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "githubActor": {
+          "type": "string"
+        }
+      }
+    },
+    "ForgeReviewReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verified",
+        "artifactId",
+        "artifactSha256",
+        "executionId",
+        "sessionId",
+        "actor",
+        "independent"
+      ],
+      "properties": {
+        "verified": {
+          "type": "boolean"
+        },
+        "artifactId": {
+          "type": "string"
+        },
+        "artifactSha256": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "reviewExecutionId": {
+          "type": "string"
+        },
+        "reviewSessionId": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "onBehalfOf": {
+          "type": "string"
+        },
+        "independent": {
+          "type": "boolean"
+        },
+        "targetUrl": {
+          "type": "string"
+        }
+      }
     }
   }
 }
