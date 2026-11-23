@@ -281,7 +281,7 @@ export async function checkLiveListUpdates(browser: Browser, origin: string, see
     seed.sql("UPDATE execution SET state='succeeded' WHERE id='livefeed-47-run';");
     const caught = await (await catchUp).json();
     assert.ok(caught.changes.some((c: { id: string }) => c.id === 'livefeed-47-run'), 'reconnect replayed the committed state change');
-    await counter('Succeeded: 1').waitFor();
+    await counter('Done: 1').waitFor();
     await row('livefeed-47').waitFor({ state: 'detached' });
     await updating.waitFor({ state: 'hidden' });
     assert.deepEqual(snapshots, ['sessions_list'], 'resumable reconnect kept the active window');
