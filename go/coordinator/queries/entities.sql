@@ -35,12 +35,12 @@ SELECT x.id, x.code, x.text, x.state::text AS state, x.project_id, x.task_id, x.
 -- name: EntCardConversation :one
 -- One session with the sessions_list columns (sessions.go sessionBase), read for this session only.
 SELECT d.id, d.code, d.project_id, coalesce(d.payload->'agentConfig'->>'id','')::text AS profile, t.code AS task_code,
- coalesce(last.state,'idle')::text AS state, coalesce(last.harness,d.payload->'agentConfig'->>'harness','')::text AS harness,
+ (SELECT state FROM fleet_conversation_state(d.id))::text AS state, coalesce(last.harness,d.payload->'agentConfig'->>'harness','')::text AS harness,
  coalesce((SELECT m.text FROM message m WHERE m.session_id=d.id ORDER BY m.seq LIMIT 1),'')::text AS first_message,
  greatest(d.updated_at,(SELECT max(a.updated_at) FROM message a WHERE a.session_id=d.id),(SELECT max(a.updated_at) FROM event a WHERE a.session_id=d.id AND NOT a.delta),ex.last_at)::timestamptz AS activity_at,
  ex.n::bigint AS runs, (SELECT count(*) FROM question x WHERE x.session_id=d.id AND x.state='open')::bigint AS open_questions
  FROM session d LEFT JOIN task t ON t.id=d.task_id
- LEFT JOIN LATERAL (SELECT e.state::text AS state, e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) last ON true
+ LEFT JOIN LATERAL (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) last ON true
  LEFT JOIN LATERAL (SELECT count(*) AS n, max(greatest(e.started_at,e.ended_at)) AS last_at FROM execution e WHERE e.session_id=d.id) ex ON true
  WHERE d.id=$1;
 
@@ -119,7 +119,7 @@ SELECT x.id, x.code, x.text, x.state::text AS state, x.project_id, x.task_id, x.
 -- (archived ones left out); host command sessions (program-worker) are no conversations. The focus first, then activity.
 WITH x AS (SELECT d.id, d.code, d.project_id, d.seq, nullif(d.title,'') AS title, d.archived_at, d.actor, d.host_id,
  d.payload->'agentConfig'->>'harness' AS agent_harness,
- coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle') AS state,
+ (SELECT state FROM fleet_conversation_state(d.id))::text AS state,
  (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
  (SELECT m.text FROM message m WHERE m.session_id=d.id ORDER BY m.seq LIMIT 1) AS first_message,
  greatest(d.updated_at,ex.last_at,(SELECT max(m.updated_at) FROM message m WHERE m.session_id=d.id),(SELECT max(v.updated_at) FROM event v WHERE v.session_id=d.id AND NOT v.delta)) AS activity_at
@@ -143,7 +143,7 @@ SELECT x.id, x.code, coalesce(x.title,'')::text AS title, coalesce(x.first_messa
 -- sessions_list's count for the search in the focus, ignored left out.
 WITH x AS (SELECT d.id, d.code, d.project_id, nullif(d.title,'') AS title, d.archived_at, d.actor, d.host_id,
  d.payload->'agentConfig'->>'harness' AS agent_harness,
- coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle') AS state,
+ (SELECT state FROM fleet_conversation_state(d.id))::text AS state,
  (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
  (SELECT m.text FROM message m WHERE m.session_id=d.id ORDER BY m.seq LIMIT 1) AS first_message
  FROM session d)

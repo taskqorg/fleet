@@ -1164,6 +1164,7 @@ CREATE TABLE worker_done (
   "tombstoned_at" timestamp with time zone
 );
 CREATE FUNCTION fleet_conn_meta_all() RETURNS TABLE(id text, provider text) LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_conversation_state(sid text) RETURNS TABLE(state text) LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_deleted_projects() RETURNS text[] LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_enqueue_wake(ch text, body text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_exec_conn_meta(conn_name text, aid text) RETURNS TABLE(provider text, is_api_conn boolean) LANGUAGE sql AS $$ SELECT NULL $$;

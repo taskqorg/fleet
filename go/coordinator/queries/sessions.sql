@@ -18,8 +18,8 @@ FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d
 WHERE e.definitions @> @defs::jsonb AND d->>'kind'='agent' AND d->>'id'= @id::text AND coalesce(e.started_at,e.updated_at) >= now() - interval '30 days'
 ORDER BY coalesce(e.harness,'codex'),coalesce(e.harness_version,''),coalesce(e.model,''),coalesce(e.data->>'effort',''),e.seq DESC;
 
--- name: SessionCode :one
-SELECT code FROM session WHERE id = @id;
+-- name: SessionCodeAndState :one
+SELECT d.code, (SELECT state FROM fleet_conversation_state(d.id))::text AS state FROM session d WHERE d.id = @id;
 
 -- name: TaskSessionIDs :many
 -- The sessions a task's executions ran in (deliveredTeardown).

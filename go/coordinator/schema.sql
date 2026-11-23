@@ -4590,3 +4590,6 @@ WHERE e.execution_id = x.id
   AND x.kind IN ('agent_run', 'host_job')
   AND e.session_id IS NOT DISTINCT FROM x.session_id
   AND starts_with(e.id, 'event:' || x.id || ':');
+
+-- migration 91: conversation status can seek directly to the last agent run past any number of later tool calls.
+CREATE INDEX execution_session_agent_run ON execution(session_id, seq DESC) WHERE kind = 'agent_run';

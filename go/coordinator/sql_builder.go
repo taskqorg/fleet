@@ -1125,8 +1125,8 @@ func sqlTaskCount(f rowFilter, focus func(p *[]any, col string) string) (string,
 
 var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeeded", "failed", "cancelled"}
 
-// sqlSessionState: a session's state, its latest execution's (idle without one).
-const sqlSessionState = `coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle')`
+// Keep the status subquery inlineable in PostgreSQL for list and counter scans.
+const sqlSessionState = `(SELECT state FROM fleet_conversation_state(d.id))`
 
 // sqlSessionBase: every session as a list row. The first message and the activity are read per session by its indexed
 // session_id (migration 77): activity_at is the latest change of the session, its messages and events, or the start or

@@ -293,7 +293,8 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   // Composer target: the newest running execution; with none, a new message starts one (design "Controls").
   const active = s.executions.filter(running).at(-1);
   const latest = s.executions.at(-1);
-  const sessionState = (latest?.state ?? 'idle') as StateOf<'session'>;
+  // Older coordinator replies and retained detail snapshots carry only the run list.
+  const sessionState = (s.state ?? latest?.state ?? 'idle') as StateOf<'session'>;
   const unconfirmed = latest?.observation === 'unconfirmed';
   const lastSeen = unconfirmed ? (typeof latest.lastSeenAt === 'number' ? latest.lastSeenAt : Date.parse(String(latest.lastSeenAt))) : NaN;
   const openQs = s.questions.filter(q => (answers[q.id] ?? q).state === 'open');
