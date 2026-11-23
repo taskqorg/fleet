@@ -46,11 +46,16 @@ type SortCol = 'label' | 'runs' | 'failed' | 'tokens' | 'usd' | 'unpriced';
 const usdOf = (cost: readonly CostFigureLike[]) =>
   cost.reduce((sum, c) => (c.basis !== 'unavailable' && c.currency === 'USD' && typeof c.value === 'number' ? sum + c.value : sum), 0);
 
+function matchesShareBasis(figure: CostFigureLike, basis: ShareBasis): boolean {
+  return figure.currency === 'USD' && (basis === 'subscription'
+    ? figure.basis === 'subscription'
+    : figure.basis === 'measured' || figure.basis === 'estimated');
+}
+
 function shareAmount(cost: readonly CostFigureLike[], basis: ShareBasis): number | null {
   let amount: number | null = null;
   for (const figure of cost) {
-    if (figure.currency !== 'USD' || figure.value == null || figure.basis === 'unavailable') continue;
-    if ((figure.basis === 'subscription') === (basis === 'subscription')) amount = (amount ?? 0) + figure.value;
+    if (figure.value != null && matchesShareBasis(figure, basis)) amount = (amount ?? 0) + figure.value;
   }
   return amount;
 }
@@ -223,9 +228,10 @@ export function Spend() {
                       if (total != null && total > 0 && amount != null) {
                         return <td key={id} class="num">{shareText(amount / total)}</td>;
                       }
+                      const missing = cost.find(figure => figure.value == null && matchesShareBasis(figure, id) && figure.reason);
                       const reason = total == null || total <= 0
                         ? 'no positive USD total for this basis in the selected period and scope'
-                        : missingCostReason(cost) ?? 'no USD amount for this basis';
+                        : missing?.reason ?? 'no USD amount is available for this row and basis';
                       return <UnavailableCell key={id} label={`${label} share`} reason={reason} />;
                     })}
                     <td class="num"><Num m={{ value: r.runs, basis: 'measured' }} kind="count" /></td>
@@ -250,6 +256,25 @@ export function Spend() {
                   const amount = shareAmount(row.cost as CostFigureLike[], id);
                   return amount == null ? [] : [{ label: PURPOSE_LABELS[row.key] ?? row.label, v: amount, tone: TONES[i % TONES.length] }];
                 });
+                if (!parts.length) {
+                  return <p key={id} class="small-note">{label} share unavailable. No USD amounts by purpose.</p>;
+                }
+                const sum = parts.reduce((amount, part) => amount + part.v, 0);
+                const addsUp = Math.abs(sum - total) <= Number.EPSILON * Math.max(sum, total) * parts.length;
+                if (!addsUp || parts.some(part => part.v < 0)) {
+                  return <div key={id} class="stack">
+                    <b>{label}</b>
+                    <p class="small-note">Shares use the selected period and scope total. A bar requires nonnegative purpose amounts that add up to that total.</p>
+                    <DataTable label={`${label} by purpose`} head={<tr>
+                      <th scope="col">Purpose</th><th scope="col" class="num">Amount</th><th scope="col" class="num">Share</th>
+                    </tr>}>
+                      {parts.map(part => <tr key={part.label}>
+                        <th scope="row">{part.label}</th><td class="num">{money(part.v, 'USD').text}</td>
+                        <td class="num">{shareText(part.v / total)}</td>
+                      </tr>)}
+                    </DataTable>
+                  </div>;
+                }
                 return <div key={id} class="panel">
                   <ShareBar label={`${label} by purpose`} title={label} parts={parts}
                     value={v => money(v, 'USD').text} note="Rounded shares" />
