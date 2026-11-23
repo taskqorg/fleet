@@ -341,5 +341,8 @@ export async function checkLiveListUpdates(browser: Browser, origin: string, see
     assert.deepEqual(snapshots, ['sessions_list', 'sessions_list', 'sessions_list', 'task_page']);
     assert.deepEqual(errors, []);
     console.log('PASS live lists: 36 unchanged feed events, zero progress/color/geometry changes and reloads, status/group/counter changes, scroll/focus/selection, cursor catch-up, quiet warm remount and explicit progress');
-  } finally { await context.close(); }
+  } finally {
+    await context.close();
+    seed.sql("UPDATE session SET archived_at=now() WHERE id LIKE 'livefeed-%'");
+  }
 }
