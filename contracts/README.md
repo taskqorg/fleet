@@ -5,8 +5,8 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
 * `host-protocol.schema.json`: the host protocol (`/api/hosts/poll` request and reply, `/api/hosts/receipts` status
   receipts, one route per other receipt envelope: `/api/hosts/project-operations` `ProjectReceipt`,
   `/api/hosts/delegations` `ChildReceipt`, `/api/hosts/accounts/report` `AccountReceipt`; `/api/hosts/events` batches; the artifact
-  transfer requests `Artifact*Request` and `HostArtifact*Request` of `/api/hosts/artifacts/*`, `StoresRequest`, `AgentToolsRequest`) and
-  event payloads. It is the source of the types on all three sides
+  transfer requests `Artifact*Request` and `HostArtifact*Request` of `/api/hosts/artifacts/*`, `/api/hosts/forge/review`
+  (`ForgeReviewRequest` -> `ForgeReviewReply`), `StoresRequest`, `AgentToolsRequest`) and event payloads. It is the source of the types on all three sides
   (docs/designs/fleet-contracts.md); `go/coordinator/schema.sql` stays the source of table rows only. Its `routes` map
   names every host route: `request` and `reply` (`$defs` names; no reply: not described, such as an operation's record
   or a byte stream), `long` (no surrounding transaction) and `decode` (`checked`: required keys and `Validate`, unknown

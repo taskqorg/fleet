@@ -430,7 +430,25 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 				autoMerge = *in.AutoMerge
 			}
 		}
-		context := forgeContext{Repositories: os.Getenv("FLEET_FORGE_REPOSITORIES"), CredentialHome: os.Getenv("HOME"), Repo: remote, Base: str0(repo.DefaultBranch), Branch: strings.TrimSpace(string(branchBytes)), Prefix: prefix, AutoMerge: autoMerge, MergeMethod: mergeMethod, Workdir: work, Home: commandHome(cmd), Store: store}
+		context := forgeContext{
+			Repositories:   os.Getenv("FLEET_FORGE_REPOSITORIES"),
+			CredentialHome: os.Getenv("HOME"),
+			Repo:           remote,
+			Base:           str0(repo.DefaultBranch),
+			Branch:         strings.TrimSpace(string(branchBytes)),
+			Prefix:         prefix,
+			AutoMerge:      autoMerge,
+			MergeMethod:    mergeMethod,
+			Workdir:        work,
+			Home:           commandHome(cmd),
+			Store:          store,
+			HostId:         e.host,
+			CommandId:      cid,
+			ExecutionId:    execution,
+			ProjectId:      str0(sp.ProjectId),
+			Journal:        filepath.Join(e.root, "journal.sqlite"),
+			ReadOnly:       sp.ReadOnly != nil && *sp.ReadOnly,
+		}
 		servers["project-forge"] = M{"command": exe(), "args": []any{"mcp", "project-forge", enc(context)}, "tools": []any{"publish_draft", "delivery"}}
 	}
 	profiles := anyStrings(profile.DelegationProfiles)
