@@ -28,18 +28,21 @@ func (q *Queries) TaskAccept(ctx context.Context, arg TaskAcceptParams) error {
 }
 
 const taskAcceptanceArtifacts = `-- name: TaskAcceptanceArtifacts :many
-SELECT coalesce(legacy_id,id)::text AS id FROM artifact WHERE task_id= $1 AND state='stored' AND role='original'
- AND ($2::text IS NULL OR execution_id=$2) AND name NOT LIKE 'mcp-lifecycle-%' ORDER BY seq
+SELECT coalesce(legacy_id,id)::text AS id FROM artifact
+WHERE state='stored' AND role='original' AND name NOT LIKE 'mcp-lifecycle-%'
+ AND (($1::text IS NULL AND task_id= $2)
+  OR ($1::text IS NOT NULL AND execution_id=$1 AND (task_id IS NULL OR task_id= $2)))
+ORDER BY seq
 `
 
 type TaskAcceptanceArtifactsParams struct {
-	TaskID      *string
 	ExecutionID *string
+	TaskID      *string
 }
 
 // The task's stored originals (of execution, when given) offered for acceptance.
 func (q *Queries) TaskAcceptanceArtifacts(ctx context.Context, arg TaskAcceptanceArtifactsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, taskAcceptanceArtifacts, arg.TaskID, arg.ExecutionID)
+	rows, err := q.db.Query(ctx, taskAcceptanceArtifacts, arg.ExecutionID, arg.TaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -80,9 +83,11 @@ func (q *Queries) TaskAcceptanceAskAgain(ctx context.Context, arg TaskAcceptance
 }
 
 const taskAcceptanceExecution = `-- name: TaskAcceptanceExecution :one
-SELECT id,state,coalesce(data->'report'->>'outcome','')::text AS outcome FROM execution WHERE task_id= $1 AND kind NOT IN ('child_agent','tool_run')
- AND (NOT $2::boolean OR (state='succeeded' AND coalesce(data->'report'->>'outcome','succeeded')='succeeded'))
-ORDER BY (NOT $2::boolean AND state IN ('preparing','running','waiting')) DESC, ended_at DESC NULLS LAST, seq DESC LIMIT 1
+SELECT id,kind,state,observation,problem,coalesce(data->'report'->>'outcome','')::text AS outcome FROM execution
+ WHERE task_id= $1 AND kind NOT IN ('child_agent','tool_run')
+ AND (NOT $2::boolean OR (state='succeeded' AND observation='confirmed'
+ AND coalesce(data->'report'->>'outcome',CASE WHEN kind='agent_run' THEN '' ELSE 'succeeded' END)='succeeded'))
+ORDER BY seq DESC LIMIT 1
 `
 
 type TaskAcceptanceExecutionParams struct {
@@ -91,16 +96,26 @@ type TaskAcceptanceExecutionParams struct {
 }
 
 type TaskAcceptanceExecutionRow struct {
-	ID      string
-	State   ExecutionState
-	Outcome string
+	ID          string
+	Kind        ExecutionKind
+	State       ExecutionState
+	Observation Observation
+	Problem     *string
+	Outcome     string
 }
 
-// The task's latest run (not a child agent or tool call); with earlier, its latest run that succeeded.
+// The task's latest primary run; with earlier, its latest run with a confirmed success.
 func (q *Queries) TaskAcceptanceExecution(ctx context.Context, arg TaskAcceptanceExecutionParams) (TaskAcceptanceExecutionRow, error) {
 	row := q.db.QueryRow(ctx, taskAcceptanceExecution, arg.TaskID, arg.Earlier)
 	var i TaskAcceptanceExecutionRow
-	err := row.Scan(&i.ID, &i.State, &i.Outcome)
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.State,
+		&i.Observation,
+		&i.Problem,
+		&i.Outcome,
+	)
 	return i, err
 }
 
@@ -576,6 +591,22 @@ func (q *Queries) TaskHasOpenDependency(ctx context.Context, taskID string) (boo
 	return column_1, err
 }
 
+const taskHasPendingWork = `-- name: TaskHasPendingWork :one
+SELECT (
+ EXISTS (SELECT 1 FROM execution x WHERE x.task_id= $1 AND x.kind NOT IN ('child_agent','tool_run')
+ AND x.state IN ('preparing','running','waiting'))
+ OR EXISTS (SELECT 1 FROM queued_message qm JOIN session ss ON ss.id=qm.session_id
+ WHERE qm.state IN ('queued','steering') AND qm.tombstoned_at IS NULL AND coalesce(nullif(qm.task_id,''),ss.task_id)= $1)
+)::boolean
+`
+
+func (q *Queries) TaskHasPendingWork(ctx context.Context, taskID *string) (bool, error) {
+	row := q.db.QueryRow(ctx, taskHasPendingWork, taskID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const taskHasStartedExecution = `-- name: TaskHasStartedExecution :one
 SELECT EXISTS (SELECT 1 FROM execution WHERE task_id=$1 AND state<>'preparing')::boolean
 `
@@ -588,16 +619,13 @@ func (q *Queries) TaskHasStartedExecution(ctx context.Context, taskID *string) (
 }
 
 const taskIdle = `-- name: TaskIdle :one
-SELECT t.id,t.title,t.project_id,coalesce(l.id,'')::text AS latest_id,coalesce(l.state::text,'')::text AS latest,l.session_id AS latest_session,
- (l.data->'report')::jsonb AS report,
- EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind NOT IN ('child_agent','tool_run') AND x.state='succeeded' AND coalesce(x.data->'report'->>'outcome','succeeded')='succeeded')::boolean AS succeeded
-FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.session_id, x.ended_at, x.data FROM execution x WHERE x.task_id=t.id AND x.kind NOT IN ('child_agent','tool_run')
- ORDER BY x.ended_at DESC NULLS LAST, x.seq DESC LIMIT 1) l ON true
+SELECT t.id,t.title,t.project_id,coalesce(l.id,'')::text AS latest_id,coalesce(l.state::text,'')::text AS latest,l.session_id AS latest_session
+FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.session_id FROM execution x
+ WHERE x.task_id=t.id AND x.kind NOT IN ('child_agent','tool_run') ORDER BY x.seq DESC LIMIT 1) l ON true
 WHERE t.id=$1 AND t.state='in_progress'
-AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind NOT IN ('child_agent','tool_run') AND x.state NOT IN ('succeeded','failed','cancelled'))
-AND NOT EXISTS (SELECT 1 FROM queued_message qm JOIN session ss ON ss.id=qm.session_id WHERE qm.state IN ('queued','steering') AND ss.task_id=t.id::text)
 AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')
-AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.kind='acceptance' AND qq.answer='rejected' AND qq.answered_at >= coalesce(l.ended_at, '-infinity'))
+AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.kind='acceptance'
+ AND qq.state='answered' AND qq.answer='rejected' AND qq.execution_id IS NOT DISTINCT FROM l.id)
 `
 
 type TaskIdleRow struct {
@@ -607,14 +635,10 @@ type TaskIdleRow struct {
 	LatestID      string
 	Latest        string
 	LatestSession *string
-	Report        []byte
-	Succeeded     bool
 }
 
-// The task when it is in progress with nothing that can move it: no open execution (child agent and tool call rows do
-// not count: no writer ends child agents, and tool calls are per-call records), no queued message, no open question,
-// and no rejected acceptance since the run that ended last (a rejection waits for a new run, data foundation §3).
-// l is the run that ended last; null when the task has no run.
+// An in-progress task with no open question or rejection of its latest primary run.
+// The caller has already checked for pending work.
 func (q *Queries) TaskIdle(ctx context.Context, id string) (TaskIdleRow, error) {
 	row := q.db.QueryRow(ctx, taskIdle, id)
 	var i TaskIdleRow
@@ -625,14 +649,13 @@ func (q *Queries) TaskIdle(ctx context.Context, id string) (TaskIdleRow, error) 
 		&i.LatestID,
 		&i.Latest,
 		&i.LatestSession,
-		&i.Report,
-		&i.Succeeded,
 	)
 	return i, err
 }
 
 const taskIdleDecisions = `-- name: TaskIdleDecisions :one
-SELECT coalesce(array_agg(id),'{}')::text[] FROM question WHERE task_id=$1 AND state='open' AND data->>'idle'='true'
+SELECT coalesce(array_agg(id),'{}')::text[] FROM question WHERE task_id=$1 AND state='open'
+ AND kind='operator_decision' AND asked_by='fleet' AND data->>'idle'='true'
 `
 
 func (q *Queries) TaskIdleDecisions(ctx context.Context, taskID *string) ([]string, error) {
@@ -756,15 +779,40 @@ func (q *Queries) TaskList(ctx context.Context, arg TaskListParams) ([]TaskListR
 	return items, nil
 }
 
-const taskOpenAcceptance = `-- name: TaskOpenAcceptance :one
-SELECT id FROM question WHERE task_id=$1 AND kind='acceptance' AND state='open' ORDER BY asked_at DESC LIMIT 1
+const taskOpenAcceptances = `-- name: TaskOpenAcceptances :many
+SELECT id,execution_id,asked_by,data FROM question WHERE task_id=$1 AND kind='acceptance' AND state='open'
 `
 
-func (q *Queries) TaskOpenAcceptance(ctx context.Context, taskID *string) (string, error) {
-	row := q.db.QueryRow(ctx, taskOpenAcceptance, taskID)
-	var id string
-	err := row.Scan(&id)
-	return id, err
+type TaskOpenAcceptancesRow struct {
+	ID          string
+	ExecutionID *string
+	AskedBy     *string
+	Data        []byte
+}
+
+func (q *Queries) TaskOpenAcceptances(ctx context.Context, taskID *string) ([]TaskOpenAcceptancesRow, error) {
+	rows, err := q.db.Query(ctx, taskOpenAcceptances, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskOpenAcceptancesRow
+	for rows.Next() {
+		var i TaskOpenAcceptancesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExecutionID,
+			&i.AskedBy,
+			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const taskOpenIDs = `-- name: TaskOpenIDs :many
@@ -1217,21 +1265,6 @@ func (q *Queries) TaskStateForShare(ctx context.Context, id string) (TaskState, 
 	var state TaskState
 	err := row.Scan(&state)
 	return state, err
-}
-
-const taskSupersededAcceptances = `-- name: TaskSupersededAcceptances :one
-SELECT coalesce(array_agg(qq.id),'{}')::text[] FROM question qq WHERE qq.task_id=$1 AND qq.kind='acceptance' AND qq.state='open'
- AND coalesce(qq.data->>'earlierResult','false')<>'true'
- AND EXISTS (SELECT 1 FROM execution x WHERE x.id=(SELECT e.id FROM execution e WHERE e.task_id=$1 AND e.kind NOT IN ('child_agent','tool_run') ORDER BY e.ended_at DESC NULLS LAST, e.seq DESC LIMIT 1)
- AND (x.state IN ('failed','cancelled') OR x.data->'report'->>'outcome'='failed'))
-`
-
-// A newer failed run supersedes an unanswered success prompt (not an earlier result's).
-func (q *Queries) TaskSupersededAcceptances(ctx context.Context, taskID *string) ([]string, error) {
-	row := q.db.QueryRow(ctx, taskSupersededAcceptances, taskID)
-	var column_1 []string
-	err := row.Scan(&column_1)
-	return column_1, err
 }
 
 const taskTraceCommand = `-- name: TaskTraceCommand :one

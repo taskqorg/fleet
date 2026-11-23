@@ -287,15 +287,21 @@ func (q *Queries) ExecutionSessionHasOtherRun(ctx context.Context, arg Execution
 }
 
 const executionStateOf = `-- name: ExecutionStateOf :one
-SELECT coalesce((SELECT state::text FROM execution WHERE id=$1),'')::text
+SELECT coalesce(e.state::text,'')::text AS state, coalesce(e.observation::text,'')::text AS observation
+FROM (VALUES (1)) AS single(n) LEFT JOIN execution e ON e.id=$1
 `
 
-// An execution's state, ” when there is none.
-func (q *Queries) ExecutionStateOf(ctx context.Context, id string) (string, error) {
+type ExecutionStateOfRow struct {
+	State       string
+	Observation string
+}
+
+// An execution's state and observation, both empty when there is none.
+func (q *Queries) ExecutionStateOf(ctx context.Context, id string) (ExecutionStateOfRow, error) {
 	row := q.db.QueryRow(ctx, executionStateOf, id)
-	var column_1 string
-	err := row.Scan(&column_1)
-	return column_1, err
+	var i ExecutionStateOfRow
+	err := row.Scan(&i.State, &i.Observation)
+	return i, err
 }
 
 const executionTaskOf = `-- name: ExecutionTaskOf :one

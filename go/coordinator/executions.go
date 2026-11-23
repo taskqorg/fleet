@@ -138,7 +138,14 @@ func nullTime(v any) *time.Time {
 // markObservation: the execution's observation; a confirmed one is a contact now. id is the record's id (a string).
 func markObservation(q *Request, id any, observation string) error {
 	sid, _ := id.(string)
-	return q.db().DispMarkObservation(q.ctx(), db.DispMarkObservationParams{ID: sid, Observation: db.Observation(observation)})
+	taskID, err := q.db().DispMarkObservation(q.ctx(), db.DispMarkObservationParams{ID: sid, Column2: db.Observation(observation)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err == nil && taskID != "" {
+		_, err = settleIdleTask(q, taskID)
+	}
+	return err
 }
 
 func setHarnessVersion(q *Request, id any, version string) error {
@@ -440,10 +447,11 @@ func executionWrite(q *Request, v any) error {
 // kind is fixed by the first write. Both live in their columns only, then the record's task settles.
 func executionPutRaw(q *Request, e rawObject) error {
 	id := e.text("id")
-	prev, err := q.db().ExecutionStateOf(q.ctx(), id)
+	previous, err := q.db().ExecutionStateOf(q.ctx(), id)
 	if err != nil {
 		return err
 	}
+	prev := previous.State
 	state := firstString(e.text("state"), prev, "preparing")
 	if _, ok := executionTransitions[state]; !ok {
 		return fmt.Errorf("execution %s: unknown state %q", id, state)
@@ -580,12 +588,7 @@ func executionPutRaw(q *Request, e rawObject) error {
 		return err
 	}
 	if t != nil {
-		if prev == "" && !executionEnds(state) { // a new run
-			if err := withdrawIdleDecision(q, *t); err != nil {
-				return err
-			}
-		}
-		if _, err = settleTask(q, *t, ""); err == nil && executionEnds(state) && !executionEnds(prev) {
+		if prev == "" || executionEnds(state) && (state != prev || observation != previous.Observation) {
 			if q.tx != nil {
 				if serr := exec(q, "SAVEPOINT settle_idle_task"); serr != nil {
 					return serr
@@ -611,6 +614,8 @@ func executionPutRaw(q *Request, e rawObject) error {
 			} else {
 				_, err = settleIdleTask(q, *t)
 			}
+		} else {
+			_, err = settleTask(q, *t, "")
 		}
 	}
 	if err == nil && q.app != nil {
@@ -1264,12 +1269,20 @@ func executionAbandon(q *Request, id, reason string) (string, error) {
 	if _, err := commandStop(q, commandStopFilter{executionID: &id, statuses: []db.CommandStatus{db.CommandStatusPending, db.CommandStatusUnknown}, detail: &abandoned}); err != nil {
 		return "", err
 	}
-	now := nowMs()
-	e.State, e.StopRequested, e.StopDetail, e.Error, e.UpdatedAt, e.FinishedAt = "failed", ptr(true), "abandoned", "abandoned: "+reason, now, jsonBytes(now)
-	if err := executionPut(q, &e); err != nil {
+	// Record the loss and withdraw questions that need the old turn before executionPut settles its task.
+	asked, err := q.db().DispOpenQuestions(q.ctx(), &id)
+	if err != nil {
+		return "", err
+	}
+	if err := questionsWithdraw(q, asked); err != nil {
 		return "", err
 	}
 	if err := q.db().DispAbandonProblem(q.ctx(), id); err != nil {
+		return "", err
+	}
+	now := nowMs()
+	e.State, e.StopRequested, e.StopDetail, e.Error, e.UpdatedAt, e.FinishedAt = "failed", ptr(true), "abandoned", "abandoned: "+reason, now, jsonBytes(now)
+	if err := executionPut(q, &e); err != nil {
 		return "", err
 	}
 	if err := markObservation(q, id, "unconfirmed"); err != nil {
@@ -1292,13 +1305,5 @@ func executionAbandon(q *Request, id, reason string) (string, error) {
 			return "", err
 		}
 	}
-	// Its open questions have no living asker any more.
-	asked, err := q.db().DispOpenQuestions(q.ctx(), &id)
-	if err != nil {
-		return "", err
-	}
-	if asked == nil {
-		asked = []string{}
-	}
-	return "", questionsWithdraw(q, asked)
+	return "", nil
 }

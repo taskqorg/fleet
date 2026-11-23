@@ -85,6 +85,12 @@ Created tasks continue without an open PM session; closing a session window does
 
 Manual acceptance is not required for every task. Project rules determine which results need human acceptance and which can be accepted automatically. Operators can inspect results and intervene.
 
+Task acceptance selects a specific eligible result. Automatic acceptance for a task-bound agent run requires a confirmed successful execution and a successful work report; an explicit acceptance request can also offer a confirmed successful execution whose work report was not filed, unless incomplete work was reported. Required artifacts must be stored for that execution and the acceptance identifies the retained artifacts it offers. Active or queued continuation supersedes a pending acceptance. An operator may explicitly select an eligible earlier result after work ends, or supply an external result for a task without a Fleet execution.
+
+An operator may reject an open offer after its result loses eligibility. The rejection applies to the offered result. Missing completion evidence leaves the task open without a generated question. A failed execution or explicit report of incomplete work can require an operator decision.
+
+Task details show an informational note when the latest task-bound agent run ended with confirmed success and has no completion report. The note clears when work continues, an explicit offer covers it, or valid completion evidence is available. It leaves task state and decisions independent.
+
 #### Task states
 
 | State | Meaning |
@@ -98,6 +104,8 @@ Manual acceptance is not required for every task. Project rules determine which 
 | Cancelled | A decision ended further work on the task. |
 
 Show each wait's reason and release condition. Missing executors, environments, access or capacity before launch keep the task queued with the missing prerequisite visible.
+
+A question wait requires an open blocking question. When an execution is abandoned, withdraw the agent questions that depended on that execution and settle the task against its remaining work and questions. An unconfirmed active execution retains its last observed state and shows the missing confirmation.
 
 Show review, merge and deployment as operations or stages alongside task state. Merge, publication and deployment use project connections; track their state and results even without an active agent. Running CI or deployment counts as work.
 

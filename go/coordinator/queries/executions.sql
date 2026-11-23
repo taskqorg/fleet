@@ -35,8 +35,9 @@ WHERE kind IN ('agent_run','host_job')
 ORDER BY seq;
 
 -- name: ExecutionStateOf :one
--- An execution's state, '' when there is none.
-SELECT coalesce((SELECT state::text FROM execution WHERE id=$1),'')::text;
+-- An execution's state and observation, both empty when there is none.
+SELECT coalesce(e.state::text,'')::text AS state, coalesce(e.observation::text,'')::text AS observation
+FROM (VALUES (1)) AS single(n) LEFT JOIN execution e ON e.id=$1;
 
 -- name: ExecutionSessionHasOtherRun :one
 -- Another agent run or host job of the session than id.

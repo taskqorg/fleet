@@ -610,19 +610,25 @@ func (q *Queries) DispLostStill(ctx context.Context, arg DispLostStillParams) (b
 	return column_1, err
 }
 
-const dispMarkObservation = `-- name: DispMarkObservation :exec
-UPDATE execution SET observation = $1::observation,
- last_seen_at=CASE WHEN $1::text='confirmed' THEN now() ELSE last_seen_at END WHERE id = $2
+const dispMarkObservation = `-- name: DispMarkObservation :one
+WITH prior AS MATERIALIZED (SELECT id,state,observation,task_id FROM execution WHERE id=$1 FOR UPDATE)
+UPDATE execution e SET observation = $2::observation,
+ last_seen_at=CASE WHEN $2::text='confirmed' THEN now() ELSE e.last_seen_at END
+FROM prior WHERE e.id=$1 AND e.id=prior.id
+RETURNING coalesce(CASE WHEN prior.state IN ('succeeded','failed','cancelled')
+ AND prior.observation IS DISTINCT FROM $2::observation THEN (SELECT id FROM task WHERE id=prior.task_id) END,'')::text AS task_id
 `
 
 type DispMarkObservationParams struct {
-	Observation Observation
-	ID          string
+	ID      string
+	Column2 Observation
 }
 
-func (q *Queries) DispMarkObservation(ctx context.Context, arg DispMarkObservationParams) error {
-	_, err := q.db.Exec(ctx, dispMarkObservation, arg.Observation, arg.ID)
-	return err
+func (q *Queries) DispMarkObservation(ctx context.Context, arg DispMarkObservationParams) (string, error) {
+	row := q.db.QueryRow(ctx, dispMarkObservation, arg.ID, arg.Column2)
+	var task_id string
+	err := row.Scan(&task_id)
+	return task_id, err
 }
 
 const dispNeedsSweep = `-- name: DispNeedsSweep :one
@@ -665,9 +671,10 @@ func (q *Queries) DispOpenDelegations(ctx context.Context) ([][]byte, error) {
 }
 
 const dispOpenQuestions = `-- name: DispOpenQuestions :many
-SELECT id FROM question WHERE execution_id=$1 AND state='open'
+SELECT id FROM question WHERE execution_id=$1 AND state='open' AND kind='agent_question'
 `
 
+// Questions answered back into this execution lose their recipient on abandonment.
 func (q *Queries) DispOpenQuestions(ctx context.Context, executionID *string) ([]string, error) {
 	rows, err := q.db.Query(ctx, dispOpenQuestions, executionID)
 	if err != nil {

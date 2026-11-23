@@ -360,6 +360,11 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 	if err := queuedMessagePut(q, &m); err != nil {
 		return none, err
 	}
+	if m.TaskID != "" {
+		if _, err := settleIdleTask(q, m.TaskID); err != nil {
+			return none, err
+		}
+	}
 	v, err := queueView(q, m)
 	return agentSubmitted{queued: &m, view: v}, err
 }

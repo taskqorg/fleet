@@ -18,6 +18,7 @@ import { SYSTEM_VIEWS } from '../system-views.ts';
 import { describeTaskFacts, isUnconfirmedActiveTask, parseMs as ms, TERMINAL_TASK_STATES as TERMINAL } from '../task-facts.ts';
 import { ScopedRollupBar, buildExecTree } from './resources.tsx';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
+import { TaskQuestionContext } from './task-question-context.tsx';
 
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
 const SORTS = [['changed', 'Changed'], ['created', 'Created']] as const;
@@ -225,18 +226,26 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const rollup = t.resources;
   const nodes: TreeNode[] = buildExecTree(t.executions);
   const disabled = off ? 'offline' : undefined;
-  const latestExecution = t.executions.at(-1); // task_get preserves execution sequence.
+  const latestExecution = t.executions.findLast(e => e.kind !== 'child_agent'); // task_get preserves execution sequence.
+  const unconfirmed = !!latestExecution && latestExecution.observation === 'unconfirmed'
+    && ['preparing', 'running', 'waiting'].includes(latestExecution.state) && !TERMINAL.includes(t.state) && t.state !== 'paused';
+  const conversation = latestExecution?.sessionId;
   const reported = t.executions.flatMap(e => e.report ? [e.report] : []).sort((a, b) => b.at - a.at)[0];
   const decided = t.questions.filter(q => q.state === 'answered').sort((a, b) => (ms(b.answeredAt) ?? 0) - (ms(a.answeredAt) ?? 0)).slice(0, 3);
   const detailsBody = (
     <>
+      {unconfirmed && <ProblemRow severity="warning" title="Execution status is unconfirmed"
+        facts="Wait for the host to confirm the outcome. Review the conversation before starting new work."
+        actions={conversation ? [{ label: 'Open conversation', onClick: () => go(`/conversations/${encodeURIComponent(conversation)}`) }] : []} />}
       {open.map(q => <DecisionBlock key={q.id} question={q.text} askedBy={actor(q.askedBy) || q.kind} addressedTo="you" since={ms(q.askedAt) ?? now} now={now}
+        context={<TaskQuestionContext question={q} />}
         options={(Array.isArray(q.options) ? q.options as unknown[] : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
         onAnswer={a => { if (!off) writeOnce('questions_answer', { questionId: q.id, answer: a }, () => setFailure('unknown, retrying'), { signal: alive }).then(() => setFailure(null), e => setFailure(e.message)); }}
         onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive) : undefined} />)}
       {latestExecution?.problem && <DetailSection title="Latest execution problem">
         <ErrorBanner text={latestExecution.problem} />
       </DetailSection>}
+      {t.completionReportMissing && <p class="muted">The latest run finished successfully. No completion report is available for that run.</p>}
       {reported && <DetailSection title="Latest available worker report">
         <AgeChip t={reported.at} />
         <StateBadge family="execution" state={reported.outcome === 'succeeded' ? 'succeeded' : 'failed'} />
@@ -264,7 +273,7 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
       actions={[{ label: 'Yes, cancel', primary: true, onClick: () => { if (!off && !busy) void act('cancel'); } }, { label: 'Keep', onClick: () => setConfirming(false) }]} />}
     {failure && <ErrorBanner text={failure} />}
     <h2 class="detail-title">{t.title}<EntityCode code={t.code} id={t.id} kind="task" /></h2>
-    <div class="state-line"><StateBadge family="task" state={t.pauseReason === 'held' ? 'held' : t.state} reason={t.waitReason ?? undefined} />{t.createdBy && <span class="muted">by {actor(t.createdBy)}</span>}{ms(t.createdAt) && <AgeChip t={ms(t.createdAt)!} />}</div>
+    <div class="state-line"><StateBadge family="task" state={t.pauseReason === 'held' ? 'held' : t.state} unconfirmed={unconfirmed} reason={t.waitReason ?? undefined} />{t.createdBy && <span class="muted">by {actor(t.createdBy)}</span>}{ms(t.createdAt) && <AgeChip t={ms(t.createdAt)!} />}</div>
     {result && <p class="state-line"><Icon name={viewOf(result.mediaType ?? '') === 'download' ? 'archive' : 'file-text'} label={result.mediaType ?? 'Result'} />
       <a class="row-link" href={`/results/${encodeURIComponent(result.id)}`} onClick={ev => { ev.preventDefault(); go(`/results/${encodeURIComponent(result.id)}`); }}>{fileLabel(result.path ?? result.name ?? '') || 'Result'}</a>
       <EntityCode id={result.artifactId ?? result.id} kind="result" /></p>}

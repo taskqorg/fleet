@@ -343,16 +343,17 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     | `queued` | the first execution of the task starts and all dependencies are `completed` | `in_progress` |
     | `queued` | an open question of kind `operator_decision` blocks the task before its first execution, or a dependency is not `completed` | `waiting`, with `wait_reason` |
     | `in_progress` | an open question of kind `operator_decision` or `agent_question` blocks the task, or a dependency is not `completed` | `waiting`, with `wait_reason` |
-    | `waiting` | the blocking question is answered, or the dependency completes | `in_progress` |
-    | `in_progress` | its last open execution ends, the run that ended last succeeded and it has no open question (checked on every execution end, and for every task in progress when the coordinator starts) | `in_progress`; Fleet asks one `acceptance` question, so a finished task waits on the operator, not silently |
+    | `waiting` | the blocking question is answered or withdrawn, or the dependency completes | `in_progress` when all blockers clear, otherwise `waiting` with the remaining reason |
+    | `in_progress` | the latest execution has an eligible result under [the task acceptance rule](../../fleet.md#work-management), with no pending continuation or open question | `in_progress`; Fleet asks one `acceptance` question for that result |
     | `in_progress` | the completion requirements are met and an `acceptance` question is answered `accepted` | `completed` |
     | `in_progress` | an `acceptance` question is answered `rejected` | `in_progress`, with a new execution expected |
     | `in_progress` or `waiting` | the operator stops the task, or its last execution fails and the operator marks it failed | `failed` |
-    | `in_progress` | its last open execution ends, the run that ended last did not succeed and it has no open question (checked on every execution end, and for every task in progress when the coordinator starts) | `waiting`: Fleet asks one `operator_decision` (`fail task`, plus `accept earlier result` when an earlier run succeeded); a new run withdraws it (the retry), `fail task` makes the task `failed`, `accept earlier result` asks acceptance. No task sits in progress with nothing that can move it |
+    | `in_progress` | execution failed, was cancelled or abandoned, or explicitly reported incomplete work, with no pending work or open question | `waiting`; Fleet asks one `operator_decision`. A retry withdraws it. `fail task` makes the task `failed`. When offered, `accept earlier result` asks for acceptance of an eligible earlier result. |
     | any open state | the operator pauses or resumes it | `paused`, or back to the state before |
     | any open state | the operator cancels it | `cancelled` |
 
 *   **Acceptance.** A task reaches `completed` only through an answered `acceptance` question. The answer records who accepted, when, and the accepted artifact IDs. A result with no task (a lab run, an ad hoc agent run) is not accepted; it stays a result of its execution.
+*   **Reconciliation.** Fleet checks eligibility when a continuation is queued, when work starts or ends, when terminal observation changes or a late report arrives, and at coordinator startup. Acceptance revalidates its execution and artifacts. Rejection records the answer for that offer. An unbound legacy offer cannot accept a Fleet execution. Abandonment withdraws agent questions routed to the lost turn before task settlement. Independent open decisions remain actionable. A still-active execution with unconfirmed observation keeps its last known state.
 *   **Table `question`.** One typed table replaces the legacy `project-question` and `question` documents:
     *   `id`, `kind` (`operator_decision`, `agent_question` or `acceptance`), `project_id`;
     *   `task_id` and `execution_id`, both nullable and indexed. `task_id` is set when the question is created: from the task for operator decisions and acceptance, and from `execution.task_id` for agent questions;

@@ -14,6 +14,7 @@ import { scopeIds, noProject, prefsRead, prefs } from '../prefs.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 import { idOf } from './delivery.tsx';
 import { useClockOffset } from './hosts.tsx';
+import { TaskQuestionContext } from './task-question-context.tsx';
 
 /** The Overview's reads joined: open questions, runs that need a look, task counts and each project's counts. */
 type Overview = { questions: QuestionRow[]; problems: ExecutionRow[]; counts: Record<string, number>; projects: { id: string; project: string | null; counts: Record<string, number> }[] };
@@ -37,7 +38,21 @@ function useOverview(scope: ReturnType<typeof scopeIds>) {
 type Item = { id: string; rank: number; at: number; cause: string; title: string } & ({ q: QuestionRow; e: null } | { q: null; e: ExecutionRow });
 
 // The cause family names a group: the coordinator's problem causes (problem:delivery:…, problem:host:…) and question kinds.
-const CAUSES: Record<string, string> = { delivery: 'Delivery got slower', host: 'Hosts', store: 'Stores', absence: 'Coordinator', bugsink: 'Errors' };
+const CAUSES: Record<string, string> = {
+  delivery: 'Delivery got slower',
+  host: 'Hosts',
+  'host-poll': 'Hosts',
+  store: 'Stores',
+  absence: 'Coordinator',
+  resource: 'Coordinator',
+  work: 'Coordinator',
+  telemetry: 'Coordinator',
+  unknown: 'Coordinator',
+  bugsink: 'Errors',
+  'error-spike': 'Errors',
+  'client-error': 'Errors',
+  execution: 'Runs',
+};
 function causeOf(q: QuestionRow): string {
   const c = typeof q.cause === 'string' ? q.cause.split(':') : [];
   if (c[0] === 'problem' && c[1]) return CAUSES[c[1]] ?? c[1];
@@ -52,7 +67,7 @@ export function headline(text: string): string {
 
 /** Needs you order (OR-40): urgency first (a blocking question, then a problem, then an acceptance), then the most recent. */
 function needsYou(d: Overview, now: number): Item[] {
-  const rank = (q: QuestionRow) => (q.kind === 'acceptance' ? 2 : 0);
+  const rank = (q: QuestionRow) => (q.kind === 'acceptance' ? 2 : q.cause ? 1 : 0);
   return [
     ...d.questions.map(q => { const cause = causeOf(q), t = headline(q.text);
       // A word once per region (OR-17): a title that repeats its group's name drops it ("Delivery got slower: queue P50 …").
@@ -108,13 +123,24 @@ export function Overview({ id }: { id?: string }) {
         /* One virtual list (OR-9): a group header per cause, then its items as one-line rows. */
         <VirtualList items={rows} getKey={r => r.g ? 'g:' + r.g : r.x!.id} rowHeight={catalogueRow()} follow="top" label="Needs you"
           columns="1.25rem minmax(0,1fr) auto" rowClass={r => r.g ? 'grp' : r.x!.id === id ? 'sel' : ''}
-          render={r => r.g ? <GroupHeader icon={r.g === 'Runs' ? 'triangle-alert' : 'bell'} tone="attention" label={r.g} count={r.n!} open={!closed.includes(r.g)}
-            onToggle={() => setClosed(c => c.includes(r.g!) ? c.filter(x => x !== r.g) : [...c, r.g!])} /> : <>
-            <span class="lead ny-ic"><Icon name={(r.x!.q ? (r.x!.q.kind === 'acceptance' ? 'circle-check' : 'bell') : 'triangle-alert') as IconName} label={r.x!.q ? 'Question' : 'Problem'} /></span>
-            <span class="tt"><a class="title row-link" href={`/overview/${encodeURIComponent(r.x!.id)}${keep}`} onClick={ev => { ev.preventDefault(); open(r.x!.id); }}>{r.x!.title}</a>
-              {r.x!.q ? <EntityCode code={r.x!.q.code} id={r.x!.q.id} kind="question" /> : <span class="id">{[r.x!.e.hostId, r.x!.e.harness].filter(Boolean).join(' · ')}</span>}</span>
-            <Ago t={r.x!.at} />
-          </>} />
+          render={r => {
+            if (r.g) {
+              const gItems = groups.find(g => g.cause === r.g)?.items ?? [];
+              const gIcon: IconName = gItems.some(x => x.e || x.q?.cause) ? 'triangle-alert' : gItems.some(x => x.q?.kind === 'acceptance') ? 'circle-check' : 'bell';
+              return <GroupHeader icon={gIcon} tone="attention" label={r.g} count={r.n!} open={!closed.includes(r.g)}
+                onToggle={() => setClosed(c => c.includes(r.g!) ? c.filter(x => x !== r.g) : [...c, r.g!])} />;
+            }
+            const x = r.x!;
+            const isProblem = !x.q || !!x.q.cause;
+            const leadIcon: IconName = isProblem ? 'triangle-alert' : x.q!.kind === 'acceptance' ? 'circle-check' : 'bell';
+            const leadLabel = isProblem ? (x.q ? 'System problem' : 'Problem') : x.q!.kind === 'acceptance' ? 'Result acceptance' : 'Blocking decision';
+            return <>
+              <span class="lead ny-ic"><Icon name={leadIcon} label={leadLabel} /></span>
+              <span class="tt"><a class="title row-link" href={`/overview/${encodeURIComponent(x.id)}${keep}`} onClick={ev => { ev.preventDefault(); open(x.id); }}>{x.title}</a>
+                {x.q ? <EntityCode code={x.q.code} id={x.q.id} kind="question" /> : <span class="id">{[x.e.hostId, x.e.harness].filter(Boolean).join(' · ')}</span>}</span>
+              <Ago t={x.at} />
+            </>;
+          }} />
       )}
     </NeedsYou>
   </>;
@@ -126,12 +152,13 @@ export function Overview({ id }: { id?: string }) {
     </article>
   ) : sel && <article class="detail" data-ui="detail" tabIndex={-1} aria-label={sel.title}>
     <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => open(null)} />
-      {sel.q ? <StateBadge family="question" state="open" /> : <Icon name="triangle-alert" label="Problem" />}
+      {sel.q && !sel.q.cause ? <StateBadge family="question" state="open" /> : <Icon name="triangle-alert" label={sel.q ? 'System problem' : 'Problem'} />}
       {sel.q && <EntityCode code={sel.q.code} id={sel.q.id} kind="question" />}<span class="muted">{[(sel.q ?? sel.e).projectId, sel.cause].filter(Boolean).join(' · ')}</span>
       <span class="grow" /><AgeChip t={sel.at} /></header>
     <h2 class="detail-title">{sel.title}</h2>
     {sel.q ? <DecisionBlock question={sel.q.text} askedBy={actor(sel.q.askedBy) || sel.q.kind} addressedTo="you" since={sel.at} now={now}
       waits={sel.q.taskId ? <EntityCode id={sel.q.taskId} kind="task" /> : undefined}
+      context={<TaskQuestionContext question={sel.q} />}
       options={(Array.isArray(sel.q.options) ? sel.q.options as unknown[] : sel.q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(sel.q.options) ? ['decline'] : []).map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
       onAnswer={a => { if (online.value) writeOnce('questions_answer', { questionId: sel.q!.id, answer: a }, () => {}, { signal: alive }).then(() => open(null), () => { /* the question stays open */ }); }}
       onSecret={keyConnection(sel.q.options) ? v => addRequestedKey(sel.q!.id, keyConnection(sel.q!.options)!, v, alive) : undefined} />

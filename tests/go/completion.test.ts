@@ -6,7 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {hostCommand, startCoordinator} from '../harness.ts';
+import {hostCommand, lit, startCoordinator} from '../harness.ts';
 import {fakeS3} from '../s3-fake.ts';
 
 test('G1 every declared artifact reaches the completion gate, also past 10,000 (requirement: a completed run waits for every declared output while it uploads, and task completion requirements for every matching one; risk: a silent cap drops a late required output and the execution finishes without it)', {timeout: 60_000}, async () => {
@@ -77,6 +77,10 @@ test('G3 a task whose last execution succeeds asks for acceptance (requirement: 
     const command = await hostCommand(q => call('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null), (x: any) => x.executionId === e.id);
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'completed'}, secret, null);
+    const before = await call('/api/ops/task_get', {taskId});
+    assert.deepEqual(before.openQuestions, [], 'a process exit without a work report creates no auto-acceptance');
+    assert.equal(before.completionReportMissing, true, 'task detail notes missing completion report');
+    assert.equal((await call('/api/ops/worker_done', {executionId: e.id, outcome: 'succeeded'})).action, 'accepted');
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'completed'}, secret, null);
     const asked = () => c.sql(`SELECT count(*) FROM question WHERE task_id='${taskId}' AND kind='acceptance' AND state='open'`).trim();
     assert.equal(asked(), '1', 'one acceptance question, also after a repeated receipt');
@@ -110,6 +114,7 @@ test('G4 a task whose run fails asks the operator, a new run withdraws it, fail 
       await call('/api/ops/task_get', {taskId});
       const command = await hostCommand(q => call('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null), (x: any) => x.executionId === e.id);
       await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
+      if (status === 'completed') assert.equal((await call('/api/ops/worker_done', {executionId: e.id, outcome: 'succeeded'})).action, 'accepted');
       await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status}, secret, null);
     };
     const open = () => JSON.parse(c.sql(`SELECT coalesce(json_agg(kind::text),'[]') FROM question WHERE task_id='${taskId}' AND state='open'`));
@@ -137,7 +142,10 @@ test('G5 a task left idle before the guard settles when the coordinator starts (
   try {
     const ids = {ok: randomUUID(), bad: randomUUID(), live: randomUUID()};
     for (const [k, id] of Object.entries(ids)) c.sql(`INSERT INTO task(id,project_id,title,state,delivery_method) VALUES('${id}','hello-world','stuck ${k}','in_progress','{"methodId":"legacy"}')`);
-    c.sql(`INSERT INTO execution(id,kind,state,project_id,task_id) VALUES('${randomUUID()}','agent_run','succeeded','hello-world','${ids.ok}'),('${randomUUID()}','agent_run','failed','hello-world','${ids.bad}'),('${randomUUID()}','agent_run','running','hello-world','${ids.live}')`);
+    c.sql(`INSERT INTO execution(id,kind,state,project_id,task_id,data) VALUES
+      ('${randomUUID()}','agent_run','succeeded','hello-world','${ids.ok}','{"report":{"outcome":"succeeded","at":1}}'),
+      ('${randomUUID()}','agent_run','failed','hello-world','${ids.bad}','{}'),
+      ('${randomUUID()}','agent_run','running','hello-world','${ids.live}','{}')`);
     await c.restart();
     const open = (id: string) => c.sql(`SELECT coalesce(string_agg(kind::text, ','), '') FROM question WHERE task_id='${id}' AND state='open'`).trim();
     assert.equal(open(ids.ok), 'acceptance');
@@ -210,7 +218,7 @@ test('Acceptance shared paths reject failed current work and retain deliberate e
     await call('questions_answer',{questionId:externalQuestion.id,answer:'accepted'});
     const earlier = randomUUID(), success = randomUUID();
     c.sql(`INSERT INTO task(id,project_id,title,state) VALUES('${earlier}','hello-world','earlier result','in_progress');
-      INSERT INTO execution(id,kind,state,project_id,task_id) VALUES('${success}','agent_run','succeeded','hello-world','${earlier}');
+      INSERT INTO execution(id,kind,state,project_id,task_id,data) VALUES('${success}','agent_run','succeeded','hello-world','${earlier}','{"report":{"outcome":"succeeded","at":1}}');
       INSERT INTO execution(id,kind,state,project_id,task_id) VALUES('${randomUUID()}','agent_run','failed','hello-world','${earlier}')`);
     await c.restart();
     const decision = (await call('task_get',{taskId:earlier})).questions.find((q:any)=>q.state==='open');
@@ -219,6 +227,21 @@ test('Acceptance shared paths reject failed current work and retain deliberate e
     assert.equal(acceptance.executionId,success);
     await call('questions_answer',{questionId:acceptance.id,answer:'accepted'});
     assert.equal((await call('task_get',{taskId:earlier})).state,'completed');
+    // Explicit task_request_acceptance works for a confirmed succeeded run without worker_done, even with a required mcp-lifecycle log.
+    const manual = randomUUID(), manualRun = randomUUID(), manualOut = randomUUID();
+    c.sql(`INSERT INTO task(id,project_id,title,state) VALUES('${manual}','hello-world','explicit without report','in_progress');
+      INSERT INTO execution(id,kind,state,observation,project_id,task_id) VALUES('${manualRun}','agent_run','succeeded','confirmed','hello-world','${manual}');
+      INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,task_id,required,state) VALUES
+        ('${manualOut}','prod','okhash',5,'text/plain','deliverable.txt','${manualRun}','${manual}',false,'stored'),
+        ('${randomUUID()}','prod','loghash',5,'application/x-ndjson','mcp-lifecycle-trace.jsonl','${manualRun}','${manual}',true,'stored')`);
+    await c.restart();
+    assert.deepEqual((await call('task_get',{taskId:manual})).openQuestions,[],'no auto-acceptance without report');
+    const manualOffer = await call('task_request_acceptance',{taskId:manual});
+    assert.deepEqual([manualOffer.executionId,manualOffer.artifactIds],[manualRun,[manualOut]]);
+    await c.restart();
+    assert.equal((await call('task_get',{taskId:manual})).openQuestions.length,1,'explicit acceptance stays open across restart');
+    await call('questions_answer',{questionId:manualOffer.id,answer:'accepted'});
+    assert.equal((await call('task_get',{taskId:manual})).state,'completed');
   } finally { await c.stop(); }
 });
 
@@ -256,11 +279,10 @@ test('Late failed work report reconciles the canonical task bound through its se
     await call('/api/hosts/receipts',{commandId:command.id,executionId:e.id,status:'started'},secret,null);
     await call('/api/hosts/receipts',{commandId:command.id,executionId:e.id,status:'completed'},secret,null);
     const before=await call('/api/ops/task_get',{taskId});
-    const acceptance=before.questions.find((q:any)=>q.kind==='acceptance'&&q.state==='open'); assert.ok(acceptance);
+    assert.deepEqual(before.openQuestions,[]);
     const report=await call('/api/ops/worker_done',{executionId:e.id,outcome:'failed',summary:'Required deliverable absent'}); assert.equal(report.action,'accepted');
     const after=await call('/api/ops/task_get',{taskId});
     assert.equal(after.state,'waiting'); assert.equal(after.waitReason,'question');
-    assert.equal(after.questions.find((q:any)=>q.id===acceptance.id).state,'withdrawn');
     assert.deepEqual(after.openQuestions.map((q:any)=>q.kind),['operator_decision']);
     assert.equal(after.executions[0].state,'succeeded'); assert.equal(after.executions[0].report.outcome,'failed');
   } finally { await c.stop(); }
@@ -284,9 +306,13 @@ test('self-delivery queued continuation retains the canonical task and suppresse
     const poll=(q='')=>call('/api/hosts/poll'+q,{platform:'darwin',capabilities:[],stores:[],problems:[]},secret,null);
     const command=await hostCommand(poll,(x:any)=>x.executionId===e.id);
     await call('/api/hosts/receipts',{commandId:command.id,executionId:e.id,status:'started'},secret,null);
+    const stale = randomUUID();
+    c.sql(`INSERT INTO question(id,kind,task_id,execution_id,project_id,text,asked_by) VALUES
+      ('${stale}','acceptance','${tid}','${e.id}','hello-world','Intermediate offer','fleet')`);
     const request={requestId:randomUUID(),text:'Checkpoint stored; verify landing after executor replacement'};
     const queue=await call('/api/ops/message_send',{sessionId:sessionId,...request});
     assert.equal(queue.queued,true);
+    assert.equal(c.sql(`SELECT state FROM question WHERE id='${stale}'`).trim(),'withdrawn','continuation supersedes the offer before promotion');
     const queuedTask=c.sql(`SELECT task_id FROM queued_message WHERE request_id='${request.requestId}'`).trim();assert.equal(queuedTask,tid);
     await c.restart();
     assert.equal((await call('/api/ops/message_send',{sessionId:sessionId,...request})).queued,true,'idempotent retained queue');
@@ -296,6 +322,7 @@ test('self-delivery queued continuation retains the canonical task and suppresse
     const next=JSON.parse(c.sql(`SELECT json_build_object('id',id,'task',task_id,'state',state) FROM execution WHERE session_id='${sessionId}' AND id<>'${e.id}' ORDER BY seq DESC LIMIT 1`));
     assert.equal(next.task,tid);assert.equal(next.state,'preparing');
     const promoted=await hostCommand(poll,(x:any)=>x.executionId===next.id);assert.ok(promoted,'queued continuation eventually dispatched');
+    assert.equal((await call('/api/ops/worker_done',{executionId:next.id,outcome:'succeeded'})).action,'accepted');
     await call('/api/hosts/receipts',{commandId:promoted.id,executionId:next.id,status:'completed'},secret,null);
     assert.equal(acceptance(),'1','acceptance only after the final continuation');
   } finally {await c.stop();}
@@ -387,5 +414,266 @@ test('coordinator restart recovers artifact waits (requirement: the artifact com
       WHERE id IN ('elapsed-stored','elapsed-pending','still-uploading','failed-required','shared-name')`));
     await until(() => states()['shared-name'] === 'waiting' ? undefined : true);
     assert.deepEqual(states(), expected);
+  } finally { await c.stop(); }
+});
+
+test('lost task executions reconcile questions and acceptance (requirement: truthful task waits and exact completion; risk: falsely accepting work or waiting for a withdrawn question)', async () => {
+  const c = await startCoordinator({name: 'completion-lost', env: {FLEET_LOST_AFTER_MS: '3600000'}});
+  const call = async (op: string, body: unknown, status = 200) => {
+    const response = await fetch(c.base + '/api/ops/' + op, {method: 'POST', headers: {
+      authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json',
+    }, body: JSON.stringify(body)});
+    const result = await response.json();
+    assert.equal(response.status, status, JSON.stringify(result));
+    return result;
+  };
+  try {
+    const seed = async (title: string) => {
+      const taskId = randomUUID(), executionId = randomUUID();
+      const {sessionId} = await call('session_create', {});
+      c.sql(`INSERT INTO task(id,project_id,title,state) VALUES('${taskId}','hello-world','${title}','in_progress');
+        UPDATE session SET task_id='${taskId}' WHERE id='${sessionId}';
+        INSERT INTO execution(id,kind,state,observation,project_id,task_id,session_id,data)
+        VALUES('${executionId}','agent_run','running','unconfirmed','hello-world','${taskId}','${sessionId}',
+          '{"id":"${executionId}","sessionId":"${sessionId}","projectId":"hello-world","taskId":"${taskId}"}')`);
+      return {taskId, executionId};
+    };
+    const lost = await seed('Lost after asking');
+    const abandonedQuestion = randomUUID();
+    const owner = await seed('Independent owner decision');
+    const ownerQuestion = randomUUID();
+    c.sql(`UPDATE task SET state='waiting',wait_reason='question' WHERE id IN ('${lost.taskId}','${owner.taskId}');
+      INSERT INTO question(id,task_id,execution_id,project_id,kind,text,options) VALUES
+      ('${abandonedQuestion}','${lost.taskId}','${lost.executionId}','hello-world','agent_question','Which target?', NULL),
+      ('${ownerQuestion}','${owner.taskId}','${owner.executionId}','hello-world','operator_decision','Choose the release scope', '["keep","change"]')`);
+    const read = (id: string) => call('task_get', {taskId: id});
+    const open = (task: any) => task.questions.filter((q: any) => q.state === 'open');
+    assert.equal((await read(lost.taskId)).waitReason, 'question');
+    await call('executions_abandon', {ids: [lost.executionId, owner.executionId], reason: 'Fixture lost host acknowledgement'});
+    const after = await read(lost.taskId);
+    assert.equal(after.executions[0].problem, 'unknown:abandoned');
+    assert.equal(after.executions[0].observation, 'unconfirmed');
+    assert.equal(after.questions.find((q: any) => q.id === abandonedQuestion).state, 'withdrawn');
+    assert.deepEqual([after.state, after.waitReason, open(after).map((q: any) => q.kind)], ['waiting', 'question', ['operator_decision']]);
+    assert.match(open(after)[0].text, /outcome is unknown/);
+    assert.deepEqual(open(await read(owner.taskId)).map((q: any) => q.id), [ownerQuestion]);
+
+    const unconfirmed = await seed('Awaiting host observation');
+    await call('task_request_acceptance', {taskId: unconfirmed.taskId}, 409);
+    const legacy = await seed('Legacy empty question wait');
+    c.sql(`UPDATE task SET state='waiting',wait_reason='question' WHERE id='${legacy.taskId}';
+      UPDATE execution SET state='failed',problem='unknown:abandoned',ended_at=now() WHERE id='${legacy.executionId}'`);
+    assert.deepEqual(open(await read(legacy.taskId)), []);
+    const stale = randomUUID();
+    c.sql(`INSERT INTO question(id,task_id,execution_id,project_id,kind,text) VALUES
+      ('${stale}','${unconfirmed.taskId}','${unconfirmed.executionId}','hello-world','acceptance','Premature prompt')`);
+    await call('questions_answer', {questionId: stale, answer: 'accepted'}, 409);
+    await c.restart();
+    const pending = await read(unconfirmed.taskId);
+    assert.equal(pending.state, 'in_progress');
+    assert.equal(pending.waitReason ?? null, null);
+    assert.equal(pending.executions[0].observation, 'unconfirmed');
+    assert.deepEqual(open(pending), []);
+    assert.deepEqual(open(await read(legacy.taskId)).map((q: any) => q.kind), ['operator_decision']);
+  } finally { await c.stop(); }
+});
+
+test('acceptance binds to the execution and its retained artifacts (requirement: exact eligible delivery; risk: accepting an older artifact after a new run)', async () => {
+  const c = await startCoordinator({name: 'completion-version'});
+  const call = async (op: string, body: unknown, status = 200) => {
+    const response = await fetch(c.base + '/api/ops/' + op, {method: 'POST', headers: {
+      authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json',
+    }, body: JSON.stringify(body)});
+    const result = await response.json();
+    assert.equal(response.status, status, JSON.stringify(result));
+    return result;
+  };
+  try {
+    const taskId = randomUUID(), old = randomUUID(), current = randomUUID(), oldOutput = randomUUID(), newOutput = randomUUID();
+    const report = '{"report":{"outcome":"succeeded","at":1}}';
+    c.sql(`INSERT INTO task(id,project_id,title,state,completion_requirements)
+      VALUES('${taskId}','hello-world','Versioned report','in_progress','{"artifacts":["report.txt"]}');
+      INSERT INTO execution(id,kind,state,project_id,task_id,data) VALUES('${old}','agent_run','succeeded','hello-world','${taskId}','${report}');
+      INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,task_id,state)
+      VALUES('${oldOutput}','prod','older',1,'text/plain','report.txt','${old}','${taskId}','stored')`);
+    const older = await call('task_request_acceptance', {taskId});
+    assert.deepEqual([older.executionId, older.artifactIds], [old, [oldOutput]]);
+    c.sql(`INSERT INTO execution(id,kind,state,project_id,task_id,data) VALUES('${current}','agent_run','succeeded','hello-world','${taskId}','${report}')`);
+    await call('task_request_acceptance', {taskId}, 409);
+    await call('questions_answer', {questionId: older.id, answer: 'accepted'}, 409);
+    c.sql(`INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,task_id,state)
+      VALUES('${newOutput}','prod','newer',1,'text/plain','report.txt','${current}','${taskId}','stored')`);
+    await call('questions_answer', {questionId: older.id, answer: 'accepted'}, 409);
+    const rejected = await call('questions_answer', {questionId: older.id, answer: 'rejected'});
+    assert.equal(rejected.answer, 'rejected', 'rejecting an obsolete result cannot reject the current one');
+    const legacy = randomUUID();
+    c.sql(`INSERT INTO question(id,kind,task_id,project_id,text,asked_by) VALUES
+      ('${legacy}','acceptance','${taskId}','hello-world','Unbound legacy offer','fleet')`);
+    await call('questions_answer', {questionId: legacy, answer: 'accepted'}, 409);
+    await c.restart();
+    const task = await call('task_get', {taskId});
+    const offer = task.questions.find((q: any) => q.state === 'open');
+    assert.equal(task.questions.find((q: any) => q.id === legacy).state, 'withdrawn');
+    assert.deepEqual([offer.kind, offer.executionId, offer.artifactIds], ['acceptance', current, [newOutput]]);
+    await call('questions_answer', {questionId: offer.id, answer: 'accepted', artifactIds: [oldOutput]}, 409);
+    await call('questions_answer', {questionId: offer.id, answer: 'accepted'});
+    assert.deepEqual((await call('task_get', {taskId})).acceptedArtifactIds, [newOutput]);
+  } finally { await c.stop(); }
+});
+
+test('terminal observation confirmation advances acceptance without restart (requirement: evidence-driven reconciliation; risk: a late host event leaves an eligible result behind an obsolete decision)', async () => {
+  const c = await startCoordinator({name: 'completion-observation'});
+  const call = async (path: string, body: unknown, hostSecret?: string) => {
+    const r = await fetch(c.base + path, {method: 'POST', headers: {
+      authorization: 'Bearer ' + (hostSecret ?? c.secret),
+      ...(hostSecret ? {} : {'x-fleet-person': 'owner@trial.test'}), 'content-type': 'application/json',
+    }, body: JSON.stringify(body)});
+    const result = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(result));
+    return result;
+  };
+  try {
+    const {secret} = await call('/api/ops/hosts_register', {id: 'trial-host'});
+    const {sessionId} = await call('/api/ops/session_create', {});
+    const taskId = randomUUID(), run = randomUUID(), stale = randomUUID();
+    c.sql(`INSERT INTO task(id,project_id,title,state,wait_reason) VALUES('${taskId}','hello-world','Awaiting proof','waiting','question');
+      INSERT INTO execution(id,kind,state,observation,project_id,task_id,session_id,host_id,data)
+      VALUES('${run}','agent_run','succeeded','unconfirmed','hello-world','${taskId}','${sessionId}','trial-host',
+        '{"id":"${run}","sessionId":"${sessionId}","hostId":"trial-host","report":{"outcome":"succeeded","at":1}}');
+      INSERT INTO question(id,kind,task_id,execution_id,project_id,text,asked_by,data) VALUES
+        ('${stale}','operator_decision','${taskId}','${run}','hello-world','Obsolete generated decision','fleet','{"idle":true}')`);
+    const event = {executionId: run, events: [{id: randomUUID(), seq: 0, type: 'resource.observation', timestamp: 1, data: {}}]};
+    await call('/api/hosts/events', event, secret);
+    await call('/api/hosts/events', event, secret);
+    const task = await call('/api/ops/task_get', {taskId});
+    assert.equal(task.executions[0].observation, 'confirmed');
+    assert.equal(task.questions.find((q: any) => q.id === stale).state, 'withdrawn');
+    assert.deepEqual(task.openQuestions.map((q: any) => q.kind), ['acceptance']);
+    assert.equal(task.questions.find((q: any) => q.state === 'open').executionId, run);
+  } finally { await c.stop(); }
+});
+
+test('restart keeps withdrawn checkpoints out of Needs you (requirement: genuine human actions only; risk: rollout replaces stale acceptance with new blocking decisions)', async () => {
+  const c = await startCoordinator({name: 'flt25-burst-restart'});
+  const post = async (name: string, body: unknown, status = 200) => {
+    const response = await fetch(c.base + '/api/ops/' + name, {method: 'POST', headers: {
+      authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json',
+    }, body: JSON.stringify(body)});
+    const data = await response.json();
+    assert.equal(response.status, status, JSON.stringify(data));
+    return data;
+  };
+  try {
+    const fixtures = Array.from({length: 10}, (_, i) => ({
+      task: randomUUID(), run: randomUUID(), tool: i < 5 ? randomUUID() : null,
+      question: randomUUID(), artifact: randomUUID(),
+    }));
+    const eligible = {task: randomUUID(), run: randomUUID()};
+    c.sql(fixtures.map(({task,run,tool,question,artifact}, i) => `
+      INSERT INTO task(id,project_id,title,state) VALUES(${lit(task)},'hello-world',${lit('Intermediate checkpoint '+(i+1))},'in_progress');
+      INSERT INTO execution(id,kind,state,observation,project_id,task_id,ended_at)
+        VALUES(${lit(run)},'agent_run','succeeded','confirmed','hello-world',${lit(task)},now()-interval '2 seconds');
+      ${tool ? `INSERT INTO execution(id,kind,state,observation,project_id,task_id,parent_execution_id,ended_at)
+        VALUES(${lit(tool)},'tool_run','succeeded','confirmed','hello-world',${lit(task)},${lit(run)},now()-interval '1 second');` : ''}
+      INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,task_id,state)
+        VALUES(${lit(artifact)},'prod',${lit('invented-fixture-hash-'+i)},1,'text/plain','checkpoint.txt',${lit(run)},${lit(task)},'stored');
+      INSERT INTO question(id,kind,project_id,task_id,execution_id,text,asked_by,data)
+        VALUES(${lit(question)},'acceptance','hello-world',${lit(task)},${lit(tool??run)},'Accept checkpoint?','fleet',
+          ${lit({artifactIds:tool?[]:[artifact]})});
+    `).join('\n')+`
+      INSERT INTO task(id,project_id,title,state) VALUES(${lit(eligible.task)},'hello-world','Eligible completed work','in_progress');
+      INSERT INTO execution(id,kind,state,project_id,task_id,ended_at,data)
+        VALUES(${lit(eligible.run)},'agent_run','succeeded','hello-world',${lit(eligible.task)},now(),
+          '{"report":{"outcome":"succeeded","at":1}}');
+    `);
+    const tasks = fixtures.map(f=>lit(f.task)).join(',');
+    const questions = fixtures.map(f=>lit(f.question)).join(',');
+    const artifacts = fixtures.map(f=>lit(f.artifact)).join(',');
+    const counts = () => JSON.parse(c.sql(`
+      SELECT json_build_object(
+        'withdrawnOriginals',(SELECT count(*) FROM question WHERE state='withdrawn' AND id IN (${questions})),
+        'acceptances',(SELECT count(*) FROM question WHERE kind='acceptance' AND task_id IN (${tasks})),
+        'openAcceptances',(SELECT count(*) FROM question WHERE state='open' AND kind='acceptance' AND task_id IN (${tasks})),
+        'openDecisions',(SELECT count(*) FROM question WHERE state='open' AND kind='operator_decision' AND task_id IN (${tasks})),
+        'storedArtifacts',(SELECT count(*) FROM artifact WHERE state='stored' AND id IN (${artifacts})),
+        'completedTasks',(SELECT count(*) FROM task WHERE state='completed' AND id IN (${tasks})));
+    `));
+    const withdrawn = await post('questions_withdraw',{ids:fixtures.map(x=>x.question),reason:'Fixture withdrawal of intermediate checkpoint offers'});
+    assert.equal(withdrawn.withdrawn.length,10);
+    const initial = {withdrawnOriginals:10,acceptances:10,openAcceptances:0,openDecisions:0,storedArtifacts:10,completedTasks:0};
+    assert.deepEqual(counts(),initial);
+    const generated = randomUUID();
+    let eligibleOffer: string | undefined;
+    for (let restart=1; restart<=2; restart++) {
+      if (restart === 2) {
+        const {task, run} = fixtures[0];
+        c.sql(`UPDATE task SET state='waiting',wait_reason='question' WHERE id=${lit(task)};
+          INSERT INTO question(id,kind,project_id,task_id,execution_id,text,asked_by,data)
+          VALUES(${lit(generated)},'operator_decision','hello-world',${lit(task)},${lit(run)},
+            'Legacy generated decision','fleet','{"idle":true}')`);
+      }
+      await c.restart();
+      const observed = counts();
+      assert.deepEqual(observed,initial);
+      const task = await post('task_get',{taskId:eligible.task});
+      const open = task.questions.filter((q: {state:string})=>q.state==='open');
+      assert.equal(open.length,1);
+      assert.equal(open[0].kind,'acceptance');
+      assert.equal(open[0].executionId,eligible.run);
+      if (eligibleOffer) assert.equal(open[0].id, eligibleOffer);
+      eligibleOffer = open[0].id;
+      assert.equal(task.state,'in_progress');
+    }
+    assert.equal(c.sql(`SELECT state FROM question WHERE id=${lit(generated)}`).trim(), 'withdrawn');
+    assert.equal((await post('task_get', {taskId: fixtures[0].task})).state, 'in_progress');
+  } finally {
+    await c.stop();
+  }
+});
+
+test('task detail explains a missing completion report without asking for action (requirement: informational completion evidence; risk: a successful process is mistaken for either completed task work or failed work)', async () => {
+  const c = await startCoordinator({name: 'completion-report-note'});
+  try {
+    const cases = [
+      {name: 'missing', state: 'succeeded', observation: 'confirmed', outcome: null, note: true},
+      {name: 'eligible', state: 'succeeded', observation: 'confirmed', outcome: 'succeeded'},
+      {name: 'failed', state: 'failed', observation: 'confirmed', outcome: null},
+      {name: 'reported incomplete', state: 'succeeded', observation: 'confirmed', outcome: 'failed'},
+      {name: 'unconfirmed', state: 'succeeded', observation: 'unconfirmed', outcome: null},
+      {name: 'active', state: 'succeeded', observation: 'confirmed', outcome: null},
+      {name: 'queued', state: 'succeeded', observation: 'confirmed', outcome: null},
+      {name: 'valid earlier offer', state: 'succeeded', observation: 'confirmed', outcome: null},
+      {name: 'stale earlier offer', state: 'succeeded', observation: 'confirmed', outcome: null, note: true},
+    ];
+    for (const x of cases) {
+      const taskId = randomUUID(), executionId = randomUUID(), earlierId = randomUUID(), sessionId = randomUUID();
+      const earlier = x.name.endsWith('earlier offer');
+      c.sql(`INSERT INTO task(id,project_id,title,state) VALUES(${lit(taskId)},'hello-world',${lit(x.name)},'in_progress');
+        ${earlier ? `INSERT INTO execution(id,kind,state,project_id,task_id,ended_at,data)
+          VALUES(${lit(earlierId)},'agent_run','succeeded','hello-world',${lit(taskId)},now(),
+            '{"report":{"outcome":"succeeded","at":1}}');
+          INSERT INTO question(id,kind,task_id,execution_id,project_id,text,data)
+          VALUES(${lit(randomUUID())},'acceptance',${lit(taskId)},${lit(x.name==='valid earlier offer'?earlierId:executionId)},
+            'hello-world','Earlier result','{"earlierResult":true,"artifactIds":[]}');` : ''}
+        ${x.name === 'active' ? `INSERT INTO execution(id,kind,state,project_id,task_id)
+          VALUES(${lit(randomUUID())},'agent_run','running','hello-world',${lit(taskId)});` : ''}
+        INSERT INTO execution(id,kind,state,observation,project_id,task_id,ended_at,data)
+        VALUES(${lit(executionId)},'agent_run',${lit(x.state)},${lit(x.observation)},'hello-world',${lit(taskId)},now(),
+          ${lit(x.outcome ? {report:{outcome:x.outcome,at:1}} : {})});
+        ${x.name === 'queued' ? `INSERT INTO session(id,project_id,task_id) VALUES(${lit(sessionId)},'hello-world',${lit(taskId)});
+          INSERT INTO execution(id,kind,state,project_id,session_id)
+          VALUES(${lit(randomUUID())},'agent_run','running','hello-world',${lit(sessionId)});
+          INSERT INTO queued_message(id,session_id,task_id,project_id,state)
+          VALUES(${lit(randomUUID())},${lit(sessionId)},${lit(taskId)},'hello-world','queued');` : ''}`);
+      const response = await fetch(c.base + '/api/ops/task_get', {method:'POST', headers:{
+        authorization:'Bearer ' + c.secret, 'x-fleet-person':'owner@trial.test', 'content-type':'application/json',
+      }, body:JSON.stringify({taskId})});
+      const task = await response.json();
+      assert.equal(response.status, 200, JSON.stringify(task));
+      assert.equal(task.completionReportMissing === true, x.note === true, x.name);
+      assert.equal(task.state, 'in_progress', x.name);
+      assert.equal(task.questions.length, earlier ? 1 : 0, x.name);
+      if (x.name === 'queued') assert.deepEqual(task.executions.map((e: any) => e.state), ['succeeded']);
+    }
   } finally { await c.stop(); }
 });
