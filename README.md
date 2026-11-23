@@ -1,5 +1,7 @@
 # Fleet Blueprint
 
+[Launch and inspect a Swarm task from an external agent](docs/designs/fleet-swarm.md#external-agent-quickstart).
+
 ## System Overview
 
 Fleet coordinates agent work across projects and hosts. The [system specification](fleet.md) owns product rules; [AGENTS.md](AGENTS.md) names the pinned shared rules and task-entry requirements. These directory contracts map implemented boundaries and side effects; they do not replace product specifications.
