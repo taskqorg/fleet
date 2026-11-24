@@ -57,6 +57,7 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [host-band](host-band.md) | One host: health, slots, runs |
 | [worker-slot](worker-slot.md) | What runs in one worker slot |
 | [live-row](live-row.md) | A project, pull request, runner or event on Live |
+| [matrix-cell](matrix-cell.md) | One example × variant of a Lab experiment |
 | [tab-bar](tab-bar.md) | Facets of one opened entity |
 | [quiet-summary](quiet-summary.md) | What happened while you were away, when nothing waits |
 
@@ -91,5 +92,11 @@ The screens of the conversation-first interface, and the catalogues and opened i
 | Tab bar | [tab-bar](tab-bar.md) | `TabBar` | Opened items with facets |
 | Text field | [text field](text-field.md#board) | `TextField` | Forms in the work area |
 | Setting field | [setting field](setting-field.md#board) | `SettingField` | Settings in System and Projects |
+| Table row | [data list, table row](data-list.md#table-row) | `DataTable` | Lab leaderboard, Spend, project Delivery and Results |
+| Diff row | [definition editor, diff row](../patterns/definition-editor.md#diff-row) | `DefinitionEditor` | Library, project Rules & methods, Lab variant |
+| Share bar | [share bar](share-bar.md#board) | `ShareBar` | Spend, Delivery |
+| Step row | [step list](step-list.md#board) | `StepList` | Library pipelines, Lab trial plan, session plan |
+| Matrix cell | [matrix-cell](matrix-cell.md) | New | Lab experiment matrix |
+| Problem row | [problem row](problem-row.md#board) | `ProblemRow` | System readiness, Library sync, Delivery |
 | Navigation rail, phone bottom bar | [nav-rail](nav-rail.md#board) | `NavRail`, bottom bar new | Every page |
 | Shell header | [app-shell](../patterns/app-shell.md#board) | `AppShell` | Every page except wall mode |

@@ -25,3 +25,11 @@
 * Links open the same object, not a copy: the agent named in a pipeline step opens that agent's editor.
 * Tools grant capability; credentials are never shown or entered here. They stay in [connections](../../designs/fleet-connections.md).
 * State comes first in the catalogue row (OR-22): draft, ready, not checked, incompatible for agents; the last run's state for pipelines.
+
+## Diff row
+
+How a configuration shows only what differs from its base ([OR-45](../owner-rules.md)). Master `Diff row` on [blocks.bl](../board/blocks.bl), board *Data*:
+* `changed`: the field in mono and its value; the base default is in the tooltip only, never as a second value or an arrow on the row ([OR-7](../owner-rules.md), [OR-20](../owner-rules.md)).
+* `inherited`: the folded "Inherited defaults (N)" row, which opens the unchanged fields in place.
+
+Text names: `field`, `value`, `label`. Used in the Library definition editor, a project's Rules & methods and a Lab variant.

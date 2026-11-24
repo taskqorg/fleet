@@ -17,3 +17,7 @@
 **Do.** Offer the real actions (raise capacity, change locations, add retention rule). **Don't.** Show a problem without a next step or a dismiss-only alert.
 
 **Used in.** Overview waiting list, Hosts, task detail, Projects readiness.
+
+## Board
+
+Master `Problem row` on [blocks.bl](../board/blocks.bl), board *Data*, tones `attention` and `danger` ([OR-56](../owner-rules.md)); up to three action buttons, the recommended one primary, then Details. Repeats aggregate into one row with `×N` ([OR-58](../owner-rules.md)). Text names: `title`, `facts`, `details`; buttons take `label`.
