@@ -360,16 +360,22 @@ export function LabCreate(props: { onClose?: () => void } = {}) {
   const variants = (i: number, change: Partial<Variant>) => edit({ variants: current.draft.variants.map((v, j) => j === i ? { ...v, ...change } : v) });
   const evaluators = (i: number, change: Partial<Evaluator>) => edit({ evaluators: current.draft.evaluators.map((v, j) => j === i ? { ...v, ...change } : v) });
   const budgets = (i: number, change: Partial<Budget>) => edit({ budgets: current.draft.budgets.map((v, j) => j === i ? { ...v, ...change } : v) });
-  const readback = async (id: string, draft: Draft, k: string) => {
+  // Launch (J2, at most 3 clicks from a use case): the person's one press creates the draft, confirms it by readback and then
+  // asks for launch once. A refused or unconfirmed launch leaves the confirmed draft, which shows its own Launch.
+  const readback = async (id: string, draft: Draft, k: string, launch = false) => {
     try {
       const e = await op('lab_experiment_get', { experimentId: id });
       if (e.id !== id || e.projectId !== draft.projectId || e.pipelineId !== draft.pipelineId || e.state !== 'draft') throw Error('Created experiment readback differs. Review its retained record.');
       if (!isAccessCurrent(generation) || identity !== k) return;
       try { sessionStorage.removeItem(k); } catch { /* memory still keeps the receipt */ }
+      if (launch) {
+        try { await op('lab_experiment_action', { experimentId: id, action: 'launch' }); }
+        catch (x) { persist({ draft, state: 'created', id, message: `Draft created; launch refused: ${message(x)} Read details again to open the draft and launch it there.` }); return; }
+      }
       if (live) go('/lab/' + encodeURIComponent(id));
     } catch (e) { if (isAccessCurrent(generation) && identity === k) persist({ draft, state: 'created', id, message: `Creation confirmed; details unavailable: ${message(e)}` }); }
   };
-  const create = async () => {
+  const create = async (launch = false) => {
     if (!key() || busy || current.state !== 'editing' || !online.value || signedOut.value) return;
     const draft = current.draft; let body: Ops['lab_experiment_create']['request'];
     try { body = request(draft); } catch (e) { setError(message(e)); return; }
@@ -378,7 +384,7 @@ export function LabCreate(props: { onClose?: () => void } = {}) {
       const e = await op('lab_experiment_create', body);
       if (typeof e.id !== 'string' || !e.id) throw Error('The create reply did not identify the experiment.');
       if (!isAccessCurrent(generation) || identity !== k) return;
-      persist({ draft, state: 'created', id: e.id }); await readback(e.id, draft, k);
+      persist({ draft, state: 'created', id: e.id }); await readback(e.id, draft, k, launch);
     } catch (e) {
       if (!isAccessCurrent(generation) || identity !== k) return;
       if (e instanceof OpError && [400, 403, 404, 409].includes(e.status)) { persist({ draft, state: 'editing' }); setError(e.message); }
@@ -441,7 +447,9 @@ export function LabCreate(props: { onClose?: () => void } = {}) {
       <Button label="Close" icon="x" iconOnly onClick={close} />
       <h2>New experiment</h2>
       <span class="grow" />
-      <Button label="Create draft" icon="plus" kind="primary" busy={receipt().state === 'pending'} disabledReason={disabled() || invalid() || undefined} onClick={create} />
+      <Button label="Create draft" icon="plus" busy={receipt().state === 'pending'} disabledReason={disabled() || invalid() || undefined} onClick={() => create()} />
+      <Button label="Launch" icon="play" kind="primary" busy={receipt().state === 'pending'} disabledReason={disabled() || invalid() || (!d().goal.trim() || !d().hypothesis.trim() ? 'Set a goal and hypothesis first' : undefined)}
+        tip="Create the experiment and launch it" onClick={() => create(true)} />
     </header>
     <StatusLine>{receipt().state === 'pending' ? 'Creating draft…' : invalid() && !error() ? invalid() : ''}</StatusLine>
     <Show when={error()}>{err => <ProblemRow title="Draft not created" facts={err()} severity="failure" actions={[]} />}</Show>

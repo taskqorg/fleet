@@ -60,11 +60,13 @@ const JOURNEYS: Journey[] = [
       const rows = await leaderboard(c.page).locator('tbody tr').count();
       return `${rows} rows`;
     }],
-    ['Columns: score, median wall time, tokens/cost, failure rate', async c => {
+    ['Cells: score, median wall time, failure rate; tokens/cost in Details', async c => {
       const head = (await leaderboard(c.page).innerText()).split('\n').slice(0, 40).join(' ');
-      const want: [string, RegExp][] = [['score', /Score/], ['median wall time', /Median/], ['tokens/cost', /Tokens|Cost/], ['failure rate', /Fail/i]];
+      const want: [string, RegExp][] = [['score', /Score/i], ['median wall time', /Median/i], ['failure rate', /Fail/i]];
       const absent = want.filter(([, r]) => !r.test(head)).map(([n]) => n);
-      if (absent.length) c.gap(`no ${absent.join(', ')} column`);
+      // The target matrix folds tokens and cost into each cell's Details (pages/laboratory.md#target, OR-54, OR-59).
+      if (!await leaderboard(c.page).locator('[data-tip*="tokens"]').count()) absent.push('tokens/cost');
+      if (absent.length) c.gap(`no ${absent.join(', ')} in the comparison`);
     }],
     ['No raw commit hashes or UUIDs (OR-38)', async c => {
       const m = (await leaderboard(c.page).innerText()).match(RAW_ID);
