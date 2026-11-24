@@ -392,7 +392,7 @@ function SessionsFacet(props: { sessions?: Session[]; error: string | null; relo
         name={label ? `${label} · ${s.title ?? s.code ?? 'session'}` : s.title ?? s.code ?? 'Untitled session'}
         avatar={{ letter: (label ?? s.title ?? 'S').slice(0, 1).toUpperCase(), harness: (s.harness ?? undefined) as never }}
         state={q ? 'waiting' : lifeOfSession(s.state)}
-        now={s.title ?? 'No title yet'}
+        now={s.now ?? s.title ?? 'No title yet'}
         meta={[...(s.code ? [<span class="mono">{s.code}</span>] : []), ...(s.activityAt ? [<Ago t={Date.parse(s.activityAt)} />] : [])]}
         question={q ? <AskCard q={q} /> : undefined}
         onOpen={() => go(sessionPath(s))}
