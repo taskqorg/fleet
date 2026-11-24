@@ -33,9 +33,11 @@ Conversation with a product manager (PM) is the primary way to discuss and assig
 
 - Projects and tasks: create and configure projects, describe work and set priorities.
 - Execution: balance work and track progress.
-- Tasks, Conversations and Projects show cumulative spend on each list row, with the existing detail breakdown reachable from the row. The figures use the same visible attribution and pricing as the resource breakdowns, with separate currencies and cost bases and explicit unknown or partial coverage. A list page reads spend in one batch using stored execution valuations where current. Usage updates refresh the figures in place while retaining the operator's list and last confirmed values.
+- Spend: show cumulative spend on each Tasks, Conversations and Projects list row, linking to its detail breakdown.
 - Decisions: answer questions and resolve blockers.
 - Results: inspect what was done, where to find it, what was checked and what remains; accept work under project rules.
+
+List spend reads one batch per page from current stored execution valuations, preserving visible attribution, separate currencies and bases, and unknown or partial coverage, and updates quietly in place while retaining the operator's list and last confirmed values.
 
 Server-backed lists show progress when first opened or when an operator changes or retries the query. Live updates keep the current list interactive and apply confirmed changes in place. If the server cannot confirm the current list, show its freshness or failure and a recovery path. [List view behaviour](docs/design-system/patterns/list-view.md#loading-and-live-updates) and [read policy](docs/designs/fleet-data-foundation.md#live-read-policy) define the presentation and data paths.
 
