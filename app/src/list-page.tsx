@@ -356,7 +356,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
     { label: g.pins.has(r.id) ? 'Unpin' : 'Pin', icon: g.pins.has(r.id) ? 'pin-off' : 'pin', onClick: () => g.pins.toggle(r.id) },
     { label: g.sel.includes(r.id) ? 'Deselect' : 'Select', icon: 'square', onClick: () => g.select(r) },
     { label: 'Copy code', icon: actions.copy, onClick: () => copyText(r.code ?? r.id) },
-    { label: 'Copy link', icon: 'link', onClick: () => copyText(location.origin + targetUrl(formatView({ view: g.view.view, focus: g.focusOf(r), project: g.scope() ? [g.scope()!] : undefined }))) },
+    { label: 'Copy link', icon: 'link', onClick: () => copyText(location.origin + targetUrl(formatView({ view: g.view.view, focus: g.focusOf(r), project: g.scope() ? [g.scope()!] : undefined, extra: g.view.extra?.project ? { project: g.view.extra.project } : undefined }))) },
     ...p.menu(r),
   ];
   return <section class="panel">

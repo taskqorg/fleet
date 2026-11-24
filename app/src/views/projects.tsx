@@ -8,7 +8,7 @@ import {
   Avatar, Button, DetailHead, DetailSection, DiffRow, Empty, ErrorBanner, FilterBar, Icon, InheritedRows, KvRow, Latest, ListDetail, ListFrame,
   Num, QuestionCard, RowFacts, Fact, SearchField, SessionCard, ShellActions, Skeleton, StateBadge, StateDot, TabBar, Ago, VirtualList,
   catalogueRow, keyConnection, matchSearch, msMeasured, lifeOf,
-  type IconName, type Life, type StateOf,
+  harnesses, type Harness, type IconName, type Life, type StateOf,
 } from '../../../packages/ui/src/index.ts';
 import { op, online, writeOnce, useAlive, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
@@ -339,7 +339,9 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
     const roles = isRec(settings.roles) ? settings.roles : {};
     return str(roles.pm) || 'pm';
   });
-  const talk = () => go('/conversations/new?in=' + encodeURIComponent(props.id) + '&role=pm');
+  // Talk to PM opens the project's PM session (OR-51); with none yet, a new conversation on the project's pm role.
+  const pmSession = createMemo(() => (sessions.data?.sessions ?? []).find(s => s.profileId === pmProfile()));
+  const talk = () => { const pm = pmSession(); go(pm ? sessionPath(pm) : '/conversations/new?in=' + encodeURIComponent(props.id) + '&role=pm'); };
   return (
     <section class="pwork" data-ui="project-work" aria-label={props.p?.name ?? props.id}>
       <DetailHead
@@ -378,7 +380,7 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
 const lifeOfSession = (s: string): Life => (lifeOf.session as Record<string, Life>)[s] ?? 'asleep';
 const sessionPath = (s: Session) => '/conversations/' + encodeURIComponent(s.code ?? s.id);
 
-/** Sessions facet: the PM first, then the project's active sessions as cards, then the latest finished ones as rows (OR-50, OR-51). */
+/** Sessions facet: the PM first, then the project's active sessions as cards, then the others (finished or asleep) as rows, newest first (OR-50, OR-51). */
 function SessionsFacet(props: { sessions?: Session[]; error: string | null; reload: () => void; questions: Question[]; pm: string; name: string; onTalk: () => void }) {
   const [, go] = useLocation();
   const pm = createMemo(() => (props.sessions ?? []).find(s => s.profileId === props.pm));
@@ -390,7 +392,7 @@ function SessionsFacet(props: { sessions?: Session[]; error: string | null; relo
     return (
       <SessionCard
         name={label ? `${label} · ${s.title ?? s.code ?? 'session'}` : s.title ?? s.code ?? 'Untitled session'}
-        avatar={{ letter: (label ?? s.title ?? 'S').slice(0, 1).toUpperCase(), harness: (s.harness ?? undefined) as never }}
+        avatar={{ letter: (label ?? s.title ?? 'S').slice(0, 1).toUpperCase(), harness: s.harness && s.harness in harnesses ? s.harness as Harness : undefined }}
         state={q ? 'waiting' : lifeOfSession(s.state)}
         now={s.now ?? s.title ?? 'No title yet'}
         meta={[...(s.code ? [<span class="mono">{s.code}</span>] : []), ...(s.activityAt ? [<Ago t={Date.parse(s.activityAt)} />] : [])]}
@@ -410,7 +412,7 @@ function SessionsFacet(props: { sessions?: Session[]; error: string | null; relo
             <For each={active()}>{s => card(s)}</For>
           </div>
           <Show when={finished().length > 0}>
-            <DetailSection title={`Finished · ${finished().length}`}>
+            <DetailSection title={`Earlier · ${finished().length}`}>
               <Latest n={8} items={finished().map(s => (
                 <a class="pw-row row-link" href={sessionPath(s)} onClick={e => { e.preventDefault(); go(sessionPath(s)); }}>
                   <span class="muted mono">{s.activityAt ? <Ago t={Date.parse(s.activityAt)} /> : ''}</span>
