@@ -32,7 +32,7 @@ Checked on 2026-11-25 against release `1.261124.39`, with Playwright at 1440 × 
 
 Worst broken items:
 
-1. **Unknown and retired routes.** `/publishing` and any unknown path get the server's JSON `404 Route GET:… not found`, not the app. The client-side redirect from `/publishing` to `/delivery` and "This page does not exist" never run, so old deep links die (UR-69, UR-70).
+1. *Fixed by FLT-43:* `/publishing` and unknown paths now reach the app's redirect and its not-found page (UR-69, UR-70).
 2. **Library › Changes.** `/changes` still says "Checking repository and host drift…" after 5 s. System's own service list shows `system_changes` with 8 errors of 19 calls and 5 s responses in the last hour.
 3. **Result detail shows internals.** `/results/<id>` uses the result's UUID in the URL, shows a file name made of a hash and a UUID, and shows raw JSON as the content (OR-38, UR-61).
 4. **Bot run causes are raw codes.** `/bots/<id>` lists a run problem as `unknown:abandoned message` (UR-4).

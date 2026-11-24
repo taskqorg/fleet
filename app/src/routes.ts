@@ -33,7 +33,8 @@ const swap = (path: string, from: string, to: string) => to + path.slice(from.le
 /** The path a view understands for an address-bar path (target or earlier); unknown paths stay as they are. */
 export function toInternal(path: string): string {
   if (path === '/' || path === '') return '/overview';
-  // A project's facet (`/projects/FLT/tasks/T-FLT-42`) opens the cross-project facet with the item.
+  // A project's facet (`/projects/FLT/tasks/T-FLT-42`) opens the cross-project facet with the item. `tasks`, `results`
+  // and `delivery` are reserved under /projects: they name the cross-project facets, never a project.
   const facet = /^\/projects\/[^/]+\/(tasks|results|delivery)(\/.*)?$/.exec(path);
   if (facet && !['tasks', 'results', 'delivery'].includes(path.split('/')[2])) return '/' + facet[1] + (facet[2] ?? '');
   if (ROOTS[path.replace(/\/$/, '')]) return ROOTS[path.replace(/\/$/, '')];

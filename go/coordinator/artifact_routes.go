@@ -15,7 +15,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -711,13 +710,13 @@ func appRoutes() {
 		writeError(w, fail(404, "Unknown icon"))
 	})
 	// The app shell for every page path outside /api/: the app redirects earlier routes to their target routes and shows its
-	// own not-found page (app/src/routes.ts), so no page path answers the JSON 404. A path whose last segment names a file
-	// (a dot in it) is not a page and stays a 404.
+	// own not-found page (app/src/routes.ts), so no page path answers the JSON 404. A root file name (`/favicon.ico`) is not
+	// a page and stays a 404; an item id deeper down may hold a dot (`/system/hosts/mac.local`).
 	appScreen = func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method != "GET" && r.Method != "HEAD" {
 			return false
 		}
-		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") || strings.Contains(path.Base(r.URL.Path), ".") {
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") || (strings.Count(r.URL.Path, "/") == 1 && strings.Contains(r.URL.Path, ".")) {
 			return false
 		}
 		b, err := os.ReadFile(filepath.Join(appDir(), "index.html"))

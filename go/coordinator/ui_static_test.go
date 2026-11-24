@@ -71,6 +71,7 @@ func TestIndependentUIStatic(t *testing.T) {
 	request("/newscreen", "bundled")
 	request("/publishing/o~r~3", "bundled")
 	request("/projects/FLT/tasks/T-FLT-42", "bundled")
+	request("/system/hosts/mac.local", "bundled")
 	w := httptest.NewRecorder()
 	for _, p := range []string{"/api/stream", "/api", "/favicon.ico"} {
 		if appScreen(w, httptest.NewRequest("GET", p, nil)) {
