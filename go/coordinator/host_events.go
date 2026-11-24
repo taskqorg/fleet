@@ -397,15 +397,20 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 	if err := markObservation(q, xid, "confirmed"); err != nil {
 		return none, err
 	}
-	hasProcessClosed, hasConfirmedUsage, hasReceiptOutboxFailed := false, false, false
+	hasProcessClosed, hasConfirmedUsage, hasReceiptOutboxFailed, hasArtifactOutboxFailed := false, false, false, false
 	for _, p := range prepared {
 		typ := p.value.text("type")
 		if typ == string(contract.FleetEventTypeProcessClosed) {
 			hasProcessClosed = true
 		}
 		d := p.value.object("data")
-		if typ == string(contract.FleetEventTypeOutboxFailed) && d.text("route") == contract.RouteReceipts.Path {
-			hasReceiptOutboxFailed = true
+		if typ == string(contract.FleetEventTypeOutboxFailed) {
+			switch d.text("route") {
+			case contract.RouteReceipts.Path:
+				hasReceiptOutboxFailed = true
+			case contract.RouteArtifactsFailed.Path:
+				hasArtifactOutboxFailed = true
+			}
 		}
 		normalized := d.object("fleetNormalized")
 		lifecycle := firstString(normalized.text("lifecycle"), typ)
@@ -437,6 +442,9 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 	}
 	if hasReceiptOutboxFailed && q.app != nil {
 		afterCommit(q, func() { q.app.wakeLost() })
+	}
+	if hasArtifactOutboxFailed && q.app != nil {
+		afterCommit(q, func() { q.app.wakeArtifactWaits() })
 	}
 	if !ended && !hasProcessClosed {
 		if hasConfirmedUsage {

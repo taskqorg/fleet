@@ -149,10 +149,11 @@ func init() {
 	// Reconcile artifact waits independently of the copy, purge, retention and lease work, and once at start (before the
 	// server takes requests), so a restart recovers a callback it missed without waiting a tick.
 	onStart(func(ctx context.Context, a *App) {
+		a.ensureRuntime()
 		if err := reconcileArtifactWaits(ctx, a); err != nil {
 			log.Printf("recover artifact waits: %v", err)
 		}
-		every(ctx, "artifact-waits", placementTick, func(ctx context.Context) error {
+		everyWake(ctx, "artifact-waits", placementTick, a.artifactWaitsCh, false, func(ctx context.Context, _ bool) error {
 			return reconcileArtifactWaits(ctx, a)
 		})
 		every(ctx, "placement", placementTick, func(ctx context.Context) error {

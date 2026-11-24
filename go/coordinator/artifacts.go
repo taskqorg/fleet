@@ -695,6 +695,11 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 		if sid, err := d.ArtLiveCopyStore(ctx, id); err == nil {
 			out.StoreId = &sid
 		}
+		if old.State == "stored" || old.State == "failed" {
+			if err := settleWaiting(ctx, a, b.ExecutionId); err != nil {
+				return nil, err
+			}
+		}
 		return out, nil
 	}
 	size := b.Size
@@ -1148,6 +1153,11 @@ func artifactVerified(q *Request, b *contract.ArtifactVerifiedRequest) (any, err
 		return contract.ArtifactStateReply{State: "unknown"}, nil
 	}
 	if c.State != "pending" && c.State != "copying" {
+		if x.ExecutionID != nil && (c.State == "verified" || c.State == "failed") {
+			if err := settleWaiting(ctx, a, *x.ExecutionID); err != nil {
+				return nil, err
+			}
+		}
 		return contract.ArtifactStateReply{State: c.State}, nil
 	}
 	staging := ""
@@ -1613,11 +1623,12 @@ func artifactRequirement(ctx context.Context, a *App, executionID string, declar
 	for _, r := range rows {
 		have[r.Name] = true
 	}
+	isDiagnostic := func(name string) bool { return strings.HasPrefix(name, "mcp-lifecycle-") }
 	out := &ArtifactRequirement{Pending: []string{}, Failed: []artifactFailure{}, Missing: []string{}}
 	for _, r := range rows {
 		if r.Required || contains(named, r.Name) || match(r.Name) {
 			if r.State == "stored" {
-				if r.Role == "original" && !strings.HasPrefix(r.Name, "mcp-lifecycle-") {
+				if r.Role == "original" && !isDiagnostic(r.Name) {
 					out.storedRequired = append(out.storedRequired, firstString(deref(r.LegacyID), r.ID))
 				}
 			} else if r.State == "pending" {
@@ -1625,7 +1636,7 @@ func artifactRequirement(ctx context.Context, a *App, executionID string, declar
 			} else if r.State == "failed" {
 				out.Failed = append(out.Failed, artifactFailure{Name: r.Name, Error: r.LastError})
 			}
-		} else if contains(declared, r.Name) && r.State == "pending" {
+		} else if contains(declared, r.Name) && r.State == "pending" && !isDiagnostic(r.Name) {
 			// An output the completed receipt declared is still uploading: the run is not done until it is stored
 			// (a failed optional output does not fail the run). Lab script steps read output.json too early otherwise.
 			out.Pending = append(out.Pending, r.Name)
@@ -1635,7 +1646,8 @@ func artifactRequirement(ctx context.Context, a *App, executionID string, declar
 	unreserved := []string{}
 	for _, n := range append(append([]string{}, declared...), named...) {
 		// A declared output not reserved yet is pending too: the receipt arrives before the executor's uploads start.
-		if (contains(named, n) || match(n) || contains(declared, n)) && !have[n] && !seen[n] {
+		// Diagnostic mcp-lifecycle-* files never block completion unless explicitly required.
+		if (contains(named, n) || match(n) || (contains(declared, n) && !isDiagnostic(n))) && !have[n] && !seen[n] {
 			seen[n] = true
 			unreserved = append(unreserved, n)
 		}

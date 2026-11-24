@@ -857,7 +857,13 @@ func settleWaiting(ctx context.Context, a *App, id string) error {
 
 // settleWaitingAs: after the retry window, a still-pending artifact fails the execution.
 func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
-	err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
+	err := a.store.Write(ctx, nil, []string{GLOBAL, DISPATCH}, func(q *Request) error {
+		if err := lockExecutionTask(q, id); err != nil {
+			return err
+		}
+		if err := q.db().HostReceiptLockExecution(q.ctx(), id); err != nil {
+			return err
+		}
 		e, err := executionRawMaybe(q, id) // open: the wait's fields are removed and an error object set
 		if err != nil || e == nil {
 			return err
@@ -904,11 +910,8 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 			if err := agentCommandReceipt(q, &cs[0], &ex, status); err != nil {
 				return err
 			}
-			if err := agentPromote(q); err != nil {
-				return err
-			}
 		}
-		return nil
+		return agentPromote(q)
 	})
 	return err
 }

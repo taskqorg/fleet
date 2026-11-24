@@ -468,6 +468,18 @@ func reconcilePurges(ctx context.Context, a *App) error {
 	return nil
 }
 
+// wakeArtifactWaits nudges the artifact-waits pass when a host reports a permanent upload failure.
+func (a *App) wakeArtifactWaits() {
+	if a == nil {
+		return
+	}
+	a.ensureRuntime()
+	select {
+	case a.artifactWaitsCh <- struct{}{}:
+	default:
+	}
+}
+
 // reconcileArtifactWaits recovers missed storage callbacks and enforces the retry window.
 func reconcileArtifactWaits(ctx context.Context, a *App) error {
 	rs, err := connDB(ctx, a).DispArtifactWaits(ctx, nowMs()-int64(retryWindowMS))
