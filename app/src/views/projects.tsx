@@ -192,8 +192,9 @@ function Catalogue(props: {
   );
 }
 
-/** A list facet in one column: the opened item replaces the list; the view's summary is left out (the Summary facet holds the glance). */
-const column: Frame = p => <>{p.detail ?? p.list}</>;
+/** A list facet in one column: the opened item replaces the list; with nothing open the view's summary (Delivery's
+ * stages and pace, the Tasks and Results totals) sits under the list. */
+const column: Frame = p => <>{p.detail ?? <div class="pw-split">{p.list}<Show when={p.idle}>{idle => <div class="pw-idle">{idle()}</div>}</Show></div>}</>;
 
 /** One list facet's view, scoped to a project or across the projects in focus. */
 function ListFacetView(props: { facet: ListFacet; item?: string; project?: string }) {

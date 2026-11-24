@@ -53,6 +53,11 @@
   .pw-facet > .panel { display: flex; flex-direction: column; flex: 1; min-height: 0; border: 0; border-radius: 0; background: none; }
   .pw-facet > .panel .list-view, .pw-facet > .panel .vl-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .pw-facet > .detail { flex: 1; }
+  .pw-split { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .pw-split > .panel { display: flex; flex-direction: column; flex: 1; min-height: calc(var(--size-row) * 6); border: 0; border-radius: 0; background: none; }
+  .pw-split > .panel .list-view, .pw-split > .panel .vl-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .pw-idle { flex: none; max-height: 45vh; overflow-y: auto; border-top: 1px solid var(--line); }
+  .pw-idle > .work-idle, .pw-idle > * { overflow: visible; }
   .pw-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); align-items: start; }
   @container (min-width: 720px) { .pw-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .pw-pm-empty { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-4); border: 1px dashed var(--line); border-radius: var(--radius-lg); color: var(--fg-muted); font-size: var(--font-size-sm); }

@@ -252,12 +252,12 @@ try {
   await p.getByRole('button', { name: 'Hand off', exact: true }).click();
   check(await until(async () => handoffBody?.account === 'claude-ready' && handoffBody?.profileId === 'handoff-claude'), 'handoff submits selected managed account name through session_transition');
   await p.unroute('**/api/ops/profiles_list'); await p.unroute('**/api/ops/account_list'); await p.unroute('**/api/ops/session_transition');
-  // Results page: state first, filters, and the viewer for an image, a long text read in pages, and HTML without scripts.
+  // Results (the cross-project Results facet; the control column holds the project catalogue): state first, filters, and the viewer for an image, a long text read in pages, and HTML without scripts.
   await p.goto(`${origin}/results`);
-  check(await until(async () => await p.locator('.vl-row', { hasText: 'result-0.png' }).count() === 1), 'results page lists results');
-  check(await p.locator('.vl-row').first().locator('[data-ui=state-badge]').count() === 1, 'each result row starts with its state');
+  check(await until(async () => await p.locator('.pw-facet .vl-row', { hasText: 'result-0.png' }).count() === 1), 'results page lists results');
+  check(await p.locator('.pw-facet .vl-row').first().locator('[data-ui=state-badge]').count() === 1, 'each result row starts with its state');
   await p.locator('[data-ui=state-counters] button[aria-label^="Failed"]').click();
-  check(await until(async () => await p.locator('.vl-row').count() === 1 && await p.locator('.vl-row', { hasText: 'result-2.txt' }).count() === 1), 'state filter narrows the list');
+  check(await until(async () => await p.locator('.pw-facet .vl-row').count() === 1 && await p.locator('.pw-facet .vl-row', { hasText: 'result-2.txt' }).count() === 1), 'state filter narrows the list');
   await p.goto(`${origin}/results/shot-1`);
   check(await until(async () => await p.locator('.av-frame img').evaluate((i: any) => i.complete && i.naturalWidth === 1).catch(() => false)), 'image result shows in the viewer');
   await p.goto(`${origin}/results/log-1`);

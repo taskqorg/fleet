@@ -81,7 +81,7 @@ export async function checkEntityCard(browser: Browser, origin: string, seed: Re
     assert.ok(await code.evaluate(e => document.activeElement === e), 'Shift+Tab out of the card returns to the code');
     // Open goes to the task.
     await code.click(); await card.getByRole('link', { name: 'Open' }).click();
-    await p.waitForURL('**/tasks/' + task.id); assert.equal(await card.count(), 0);
+    await p.waitForURL(u => new RegExp(`/tasks/(${task.code}|${task.id})$`).test(new URL(u).pathname)); // the task's facet route names it by code assert.equal(await card.count(), 0);
     // A code in an agent message is a reference with the same card.
     await p.goto(origin + '/conversations/' + sid);
     const inText = p.locator('.md [data-ui=entity-code]', { hasText: task.code });
