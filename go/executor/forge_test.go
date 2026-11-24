@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -426,4 +427,198 @@ exit 1
 	t.Run("readback-missing-status", func(t *testing.T) {
 		runCase(t, "readback-missing-status", func(d string) { os.WriteFile(filepath.Join(d, "bad-readback"), nil, 0600) }, nil, nil, nil, "readback-unconfirmed")
 	})
+}
+
+// Requirement: T-FLT-34 — project-forge delivery marks draft PRs ready idempotently, enables auto-merge without conflicting --<method> flags on merge-queue branches, reports mergeQueueEntry in status, and scrubs token-like patterns from failure stderr.
+// Risk: coding-worker runs stall at draft PR when mergeMethod differs from a repository's merge_queue ruleset, or leak credentials in error output.
+func TestForgeDeliveryMergeQueueAndReady(t *testing.T) {
+	dir := t.TempDir()
+	mergeLog := filepath.Join(dir, "merge-calls.log")
+	readyLog := filepath.Join(dir, "ready-calls.log")
+
+	gitScript := `#!/bin/sh
+case "$*" in
+  *"check-ref-format"*) exit 0 ;;
+  *"symbolic-ref"*) echo "fleet/sess-34" ;;
+  *) exit 1 ;;
+esac
+`
+	ghScript := `#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "token" ]; then
+  echo "ghp_secret_forge_token_value"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  draft=false
+  if [ -f "` + dir + `/is-draft" ] && [ ! -f "` + dir + `/ready-done" ]; then
+    draft=true
+  fi
+  echo '{"number":99,"url":"https://github.com/invented/project/pull/99","isDraft":'"$draft"',"state":"OPEN","baseRefName":"main","headRefOid":"` + strings.Repeat("a", 40) + `","headRefName":"fleet/sess-34","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","autoMergeRequest":null}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "ready" ]; then
+  echo "$*" >> "` + readyLog + `"
+  : > "` + dir + `/ready-done"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
+  if [ -f "` + dir + `/fail-merge-with-secret" ]; then
+    echo "GraphQL: ghp_secret_forge_token_value leaked" >&2
+    echo "Pull request cannot be merged cleanly" >&2
+    exit 1
+  fi
+  echo "$*" >> "` + mergeLog + `"
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$*" in
+    *"repos/invented/project/rules/branches/main"*)
+      if [ -f "` + dir + `/no-queue" ]; then
+        echo '[{"type":"pull_request"}]'
+      else
+        echo '[{"type":"pull_request"},{"type":"merge_queue"}]'
+      fi
+      exit 0
+      ;;
+    *"graphql"*)
+      echo '{"data":{"repository":{"pullRequest":{"mergeQueueEntry":{"state":"QUEUED","position":1}}}}}'
+      exit 0
+      ;;
+  esac
+fi
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(gitScript), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(ghScript), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "hosts.yml"), []byte("github.com:\n  user: fleet-bot\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "is-draft"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	ctx := M{
+		"repo":           "invented/project",
+		"repositories":   "invented/project",
+		"branch":         "fleet/sess-34",
+		"prefix":         "fleet",
+		"base":           "main",
+		"autoMerge":      true,
+		"mergeMethod":    "squash",
+		"store":          dir,
+		"workdir":        dir,
+		"home":           dir,
+		"credentialHome": dir,
+	}
+
+	// Draft PR must refuse auto_merge until marked ready.
+	if _, err := forgeCall("delivery", M{"action": "auto_merge"}, ctx); err == nil || !strings.Contains(err.Error(), "still a draft") {
+		t.Fatalf("expected draft refusal, got %v", err)
+	}
+
+	textOf := func(v any) string {
+		if items := jArr(v, "content"); len(items) > 0 {
+			s, _ := jAt(items[0], "text").(string)
+			return s
+		}
+		return enc(v)
+	}
+
+	// Mark ready transitions draft -> ready, and second ready is idempotent without invoking gh pr ready again.
+	res, err := forgeCall("delivery", M{"action": "ready"}, ctx)
+	if err != nil {
+		t.Fatalf("ready failed: %v", err)
+	}
+	if !strings.Contains(textOf(res), `"requested":true`) {
+		t.Fatalf("unexpected ready reply: %v", res)
+	}
+	res, err = forgeCall("delivery", M{"action": "ready"}, ctx)
+	if err != nil {
+		t.Fatalf("second ready failed: %v", err)
+	}
+	if !strings.Contains(textOf(res), `"alreadyReady":true`) {
+		t.Fatalf("expected alreadyReady on second ready, got %v", res)
+	}
+	readyBytes, err := os.ReadFile(readyLog)
+	if err != nil || strings.Count(strings.TrimSpace(string(readyBytes)), "\n") != 0 {
+		t.Fatalf("expected exactly 1 gh pr ready call, got %q (err=%v)", string(readyBytes), err)
+	}
+
+	// Merge-queue branch must omit --squash even when project mergeMethod is squash.
+	if _, err := forgeCall("delivery", M{"action": "auto_merge"}, ctx); err != nil {
+		t.Fatalf("auto_merge on merge_queue branch failed: %v", err)
+	}
+	// Non-queue branch keeps --squash.
+	if err := os.WriteFile(filepath.Join(dir, "no-queue"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := forgeCall("delivery", M{"action": "auto_merge"}, ctx); err != nil {
+		t.Fatalf("auto_merge on non-queue branch failed: %v", err)
+	}
+	mergeCalls := strings.Split(strings.TrimSpace(func() string { b, _ := os.ReadFile(mergeLog); return string(b) }()), "\n")
+	if len(mergeCalls) != 2 {
+		t.Fatalf("expected 2 merge calls, got %v", mergeCalls)
+	}
+	if strings.Contains(mergeCalls[0], "--squash") || !strings.Contains(mergeCalls[0], "--auto") {
+		t.Fatalf("merge-queue call should omit --squash: %q", mergeCalls[0])
+	}
+	if !strings.Contains(mergeCalls[1], "--squash") || !strings.Contains(mergeCalls[1], "--auto") {
+		t.Fatalf("non-queue call should pass --squash: %q", mergeCalls[1])
+	}
+
+	// Status includes mergeQueueEntry when open and non-draft.
+	stRes, err := forgeCall("delivery", M{"action": "status"}, ctx)
+	if err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	if !strings.Contains(enc(stRes), "QUEUED") {
+		t.Fatalf("expected mergeQueueEntry in status, got %v", stRes)
+	}
+
+	// Failure stderr scrubs token prefixes while keeping actionable reason.
+	if err := os.WriteFile(filepath.Join(dir, "fail-merge-with-secret"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = forgeCall("delivery", M{"action": "auto_merge"}, ctx)
+	if err == nil || strings.Contains(err.Error(), "ghp_secret") || !strings.Contains(err.Error(), "Pull request cannot be merged cleanly") {
+		t.Fatalf("expected sanitized merge error without secret, got %v", err)
+	}
+}
+
+// Requirement: T-FLT-34 — coding-worker profile ships the code-review skill and injects it into Codex developer_instructions.
+// Risk: managed coding-worker runs lack /code-review or try running sandboxed nested `codex review` and stall before posting status.
+func TestCodingWorkerIncludesCodeReviewSkill(t *testing.T) {
+	profileBytes, err := os.ReadFile(filepath.Join("..", "..", "config", "agents", "coding-worker.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	skillBytes, err := os.ReadFile(filepath.Join("..", "..", "config", "skills", "code-review", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw M
+	if err := json.Unmarshal(profileBytes, &raw); err != nil {
+		t.Fatal(err)
+	}
+	skills := []any{M{"id": "code-review", "text": string(skillBytes)}}
+	ev, _, err := profilePrepare(raw, "acc-1", skills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied := typed[struct {
+		Applied struct {
+			Instructions string `json:"instructions"`
+		} `json:"applied"`
+	}](ev).Applied.Instructions
+	if !strings.Contains(applied, "# Skill: code-review") || !strings.Contains(applied, "origin/<base>...HEAD") || !strings.Contains(applied, "artifact_save") {
+		t.Fatalf("coding-worker developer_instructions missing code-review skill content: %s", applied)
+	}
+	if !strings.Contains(string(profileBytes), `"code-review"`) {
+		t.Fatalf("coding-worker.json missing code-review in skills")
+	}
 }

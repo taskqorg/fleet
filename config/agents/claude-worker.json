@@ -13,6 +13,7 @@
   "mcpServers": [],
   "model": "sonnet",
   "skills": [
+    "code-review",
     "modern-web-guidance"
   ],
   "tools": [

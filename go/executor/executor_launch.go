@@ -419,22 +419,28 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		if err != nil || remote == "" || !forgeGranted(remote) || !filepath.IsAbs(store) {
 			return fail(1, "project-forge-unready")
 		}
-		var prefix, mergeMethod string
+		prefix, mergeMethod := "fleet", "squash"
 		var autoMerge bool
-		if project.Worktree != nil {
+		if project.Worktree != nil && str0(project.Worktree.BranchPrefix) != "" {
 			prefix = str0(project.Worktree.BranchPrefix)
 		}
 		if in := project.Integration; in != nil {
-			mergeMethod = str0(in.MergeMethod)
+			if m := str0(in.MergeMethod); m != "" {
+				mergeMethod = m
+			}
 			if in.AutoMerge != nil {
 				autoMerge = *in.AutoMerge
 			}
+		}
+		base := str0(repo.DefaultBranch)
+		if base == "" {
+			base = "main"
 		}
 		context := forgeContext{
 			Repositories:   os.Getenv("FLEET_FORGE_REPOSITORIES"),
 			CredentialHome: os.Getenv("HOME"),
 			Repo:           remote,
-			Base:           str0(repo.DefaultBranch),
+			Base:           base,
 			Branch:         strings.TrimSpace(string(branchBytes)),
 			Prefix:         prefix,
 			AutoMerge:      autoMerge,

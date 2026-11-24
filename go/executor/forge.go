@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"fleet/contract"
@@ -114,8 +116,108 @@ type forgePRView struct {
 	URL         string `json:"url"`
 	IsDraft     bool   `json:"isDraft"`
 	State       string `json:"state"`
+	BaseRefName string `json:"baseRefName"`
 	HeadRefOid  string `json:"headRefOid"`
 	HeadRefName string `json:"headRefName"`
+}
+
+type forgeBranchRule struct {
+	Type string `json:"type"`
+}
+
+type forgeGraphQLQueueReply struct {
+	Data struct {
+		Repository struct {
+			PullRequest struct {
+				MergeQueueEntry *struct {
+					State    string `json:"state"`
+					Position *int64 `json:"position"`
+				} `json:"mergeQueueEntry"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	} `json:"data"`
+}
+
+func forgeRun(cmd *exec.Cmd) ([]byte, string, error) {
+	var se bytes.Buffer
+	cmd.Stderr = &se
+	b, err := boundedOutput(cmd, probeWait)
+	return b, se.String(), err
+}
+
+func forgeSanitizeErr(prefix, stderr string, err error) error {
+	line := ""
+	for _, raw := range strings.Split(stderr, "\n") {
+		t := strings.TrimSpace(raw)
+		if t == "" {
+			continue
+		}
+		lower := strings.ToLower(t)
+		if strings.Contains(lower, "ghp_") || strings.Contains(lower, "gho_") || strings.Contains(lower, "ghs_") || strings.Contains(lower, "ghr_") || strings.Contains(lower, "ghu_") || strings.Contains(lower, "github_pat_") || strings.Contains(lower, "bearer ") {
+			continue
+		}
+		line = t
+		break
+	}
+	if line == "" && err != nil {
+		line = strings.TrimSpace(err.Error())
+	}
+	if len(line) > 200 {
+		line = line[:200]
+	}
+	if line == "" {
+		return errors.New(prefix + "; inspect status before retry")
+	}
+	return errors.New(prefix + ": " + line)
+}
+
+func forgeLivePRStatus(ctx forgeContext) (forgePRView, error) {
+	b, stderr, err := forgeRun(forgeCommand(ctx, "gh", "pr", "view", ctx.Branch, "--repo", ctx.Repo, "--json", "number,url,isDraft,state,baseRefName,headRefOid,headRefName"))
+	if err != nil {
+		return forgePRView{}, forgeSanitizeErr("project-delivery-unconfirmed", stderr, err)
+	}
+	pr := typedRaw[forgePRView](b)
+	if pr.State != "OPEN" || pr.Number <= 0 {
+		return forgePRView{}, errors.New("pull request is not open for this execution branch")
+	}
+	return pr, nil
+}
+
+func forgeBaseHasMergeQueue(ctx forgeContext, base string) bool {
+	if base == "" {
+		return false
+	}
+	b, _, err := forgeRun(forgeCommand(ctx, "gh", "api", "--hostname", "github.com", "repos/"+ctx.Repo+"/rules/branches/"+url.PathEscape(base)))
+	if err != nil {
+		return false
+	}
+	for _, r := range typedRaw[[]forgeBranchRule](b) {
+		if r.Type == "merge_queue" {
+			return true
+		}
+	}
+	return false
+}
+
+func forgeMergeQueueEntry(ctx forgeContext, number int64) any {
+	parts := strings.Split(ctx.Repo, "/")
+	if len(parts) != 2 || number <= 0 {
+		return nil
+	}
+	q := `query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){pullRequest(number:$n){mergeQueueEntry{state position}}}}`
+	b, _, err := forgeRun(forgeCommand(ctx, "gh", "api", "--hostname", "github.com", "graphql", "-f", "query="+q, "-f", "owner="+parts[0], "-f", "name="+parts[1], "-F", "n="+strconv.FormatInt(number, 10)))
+	if err != nil {
+		return nil
+	}
+	r := typedRaw[forgeGraphQLQueueReply](b)
+	if r.Data.Repository.PullRequest.MergeQueueEntry == nil {
+		return nil
+	}
+	out := M{"state": r.Data.Repository.PullRequest.MergeQueueEntry.State}
+	if r.Data.Repository.PullRequest.MergeQueueEntry.Position != nil {
+		out["position"] = *r.Data.Repository.PullRequest.MergeQueueEntry.Position
+	}
+	return out
 }
 
 type forgeCommitStatusView struct {
@@ -386,32 +488,64 @@ func forgeCall(name string, arguments, context any) (any, error) {
 		if a.Action == "code_review" {
 			return forgeCodeReview(ctx, a)
 		}
-		args := []string{"pr", "view", branch, "--repo", repo, "--json", "number,url,isDraft,state,headRefOid,statusCheckRollup,mergeStateStatus,autoMergeRequest"}
-		switch a.Action {
-		case "ready":
-			args = []string{"pr", "ready", branch, "--repo", repo}
-		case "auto_merge":
-			if !ctx.AutoMerge {
-				return nil, errors.New("project auto-merge not granted")
-			}
-			method := ctx.MergeMethod
-			if method != "squash" && method != "merge" && method != "rebase" {
-				return nil, errors.New("project merge method unavailable")
-			}
-			args = []string{"pr", "merge", branch, "--repo", repo, "--auto", "--" + method}
-		}
-		b, err := boundedOutput(forgeCommand(ctx, "gh", args...), probeWait)
-		if err != nil {
-			return nil, errors.New("project-delivery-unconfirmed; inspect status before retry")
-		}
 		if a.Action == "status" {
+			b, stderr, err := forgeRun(forgeCommand(ctx, "gh", "pr", "view", branch, "--repo", repo, "--json", "number,url,isDraft,state,baseRefName,headRefOid,mergeable,statusCheckRollup,mergeStateStatus,autoMergeRequest"))
+			if err != nil {
+				return nil, forgeSanitizeErr("project-delivery-unconfirmed", stderr, err)
+			}
 			v, err := dec(string(b))
 			if err != nil {
 				return nil, errors.New("invalid forge response")
 			}
+			pr := typedRaw[forgePRView](b)
+			if pr.State == "OPEN" && pr.Number > 0 && !pr.IsDraft {
+				if mq := forgeMergeQueueEntry(ctx, pr.Number); mq != nil {
+					if m, ok := v.(M); ok {
+						m["mergeQueueEntry"] = mq
+					}
+				}
+			}
 			return mcpText(v, &no), nil
 		}
-		return mcpText(M{"action": a.Action, "requested": true, "note": "Read status to establish the resulting state; required checks and independent review still apply."}, &no), nil
+		if a.Action == "ready" {
+			pr, err := forgeLivePRStatus(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if !pr.IsDraft {
+				return mcpText(M{"action": a.Action, "requested": true, "alreadyReady": true, "prNumber": pr.Number, "prUrl": pr.URL, "note": "Pull request is already ready for review."}, &no), nil
+			}
+			if _, stderr, err := forgeRun(forgeCommand(ctx, "gh", "pr", "ready", branch, "--repo", repo)); err != nil {
+				return nil, forgeSanitizeErr("project-delivery-unconfirmed", stderr, err)
+			}
+			return mcpText(M{"action": a.Action, "requested": true, "prNumber": pr.Number, "prUrl": pr.URL, "note": "Read status to establish the resulting state; required checks and independent review still apply."}, &no), nil
+		}
+		if !ctx.AutoMerge {
+			return nil, errors.New("project auto-merge not granted")
+		}
+		method := ctx.MergeMethod
+		if method != "squash" && method != "merge" && method != "rebase" {
+			return nil, errors.New("project merge method unavailable")
+		}
+		pr, err := forgeLivePRStatus(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if pr.IsDraft {
+			return nil, errors.New("pull request is still a draft; mark ready before enabling auto-merge")
+		}
+		base := pr.BaseRefName
+		if base == "" {
+			base = ctx.Base
+		}
+		args := []string{"pr", "merge", branch, "--repo", repo, "--auto"}
+		if !forgeBaseHasMergeQueue(ctx, base) {
+			args = append(args, "--"+method)
+		}
+		if _, stderr, err := forgeRun(forgeCommand(ctx, "gh", args...)); err != nil {
+			return nil, forgeSanitizeErr("project-delivery-unconfirmed", stderr, err)
+		}
+		return mcpText(M{"action": a.Action, "requested": true, "prNumber": pr.Number, "prUrl": pr.URL, "note": "Read status to establish the resulting state; required checks and independent review still apply."}, &no), nil
 	}
 	rewrites, err := boundedOutput(forgeCommand(ctx, "git", "config", "--get-regexp", `^(url\.|http\.|https\.|core\.gitproxy$)`), probeWait)
 	var absent *exec.ExitError

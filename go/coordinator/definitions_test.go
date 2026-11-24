@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -52,6 +53,40 @@ func TestDefinitionState(t *testing.T) {
 	for _, c := range cases {
 		if got := definitionState(c.shipped, c.repo, c.repoCSha, c.head, c.base); got != c.want {
 			t.Errorf("%+v: got %s, want %s", c, got, c.want)
+		}
+	}
+}
+
+// Requirement: T-FLT-34 — coding and reviewer profiles resolve the shipped code-review skill from config/skills/code-review/SKILL.md.
+// Risk: missing skill files or broken profile references fail agent turn preparation at runtime.
+func TestCodingProfilesResolveCodeReviewSkill(t *testing.T) {
+	root := filepath.Join("..", "..")
+	t.Setenv("FLEET_PROFILES_DIRECTORY", filepath.Join(root, "config", "agents"))
+	t.Setenv("FLEET_PROJECT_CONFIG_DIRECTORY", filepath.Join(root, "config"))
+	for _, id := range []string{"coding-worker", "claude-worker", "claude-reviewer"} {
+		files, _ := shippedDefinitions()
+		var raw []byte
+		for _, f := range files {
+			if f.kind == "agent" && f.id == id {
+				raw = f.raw
+				break
+			}
+		}
+		if len(raw) == 0 {
+			t.Fatalf("missing shipped agent profile %s", id)
+		}
+		skills, err := profileSkills(json.RawMessage(raw))
+		if err != nil {
+			t.Fatalf("profileSkills(%s) failed: %v", id, err)
+		}
+		found := false
+		for _, sk := range skills {
+			if sk.ID == "code-review" && sk.Text != "" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("profile %s did not resolve non-empty code-review skill", id)
 		}
 	}
 }
