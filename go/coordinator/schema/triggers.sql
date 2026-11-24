@@ -177,6 +177,10 @@ CREATE OR REPLACE TRIGGER transport_conflict_tombstone BEFORE INSERT ON transpor
 CREATE OR REPLACE TRIGGER upload_tombstone BEFORE INSERT ON upload FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
 
 -- watch
+CREATE OR REPLACE TRIGGER watch_change AFTER INSERT OR DELETE ON watch FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE OR REPLACE TRIGGER watch_update AFTER UPDATE ON watch FOR EACH ROW
+WHEN ((OLD.payload - '{cursor,limitsSignaled}'::text[]) IS DISTINCT FROM (NEW.payload - '{cursor,limitsSignaled}'::text[]))
+EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER watch_tombstone BEFORE INSERT ON watch FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
 
 -- work_plan

@@ -252,6 +252,15 @@ Menu actions:
 
 Hand off is the existing context handoff (`makeHandoff`, `go/coordinator/agent.go`). Quota-driven handoff is not part of this design (it is also out of scope in [fleet-data-foundation.md](fleet-data-foundation.md)).
 
+### Conversation context
+
+The ShellHeader control immediately after search opens one context panel inside the conversation work area. The panel starts closed for each conversation. It sits beside chat when the work area is wide enough and docks below it as a bounded, scrolling sheet on phones. Opening or closing it keeps the transcript and composer mounted and preserves the reading anchor or follow-to-latest position. Closing it from inside returns focus to the header control.
+
+- **Watch.** `watch_get` supplies the event types, timer interval, pause state, next recorded wake and last error. The coordinator supplies timer write permission. Edit saves an interval in seconds and starts a new countdown when active. Pause retains the interval and clears the countdown. Resume starts a full interval. Cancel removes the timer after inline confirmation. These timer-only changes preserve subscriptions and their cursor, and reject a stale timer configuration. The complete watch can still be replaced or stopped through its existing operations.
+- **Automations.** Resolve the bot by its saved Home session link. Show each visible automation's trigger, schedule or event filter, and enabled or paused state. Open its existing Bots workspace to manage automations or inspect read-only settings. A conversation without a linked bot has no bot automations.
+- **Plan, tasks and Swarm.** Read the session's structured work plan and roster from the Swarm board. Show steps in order with completion marked, and show member roles, assignments and recorded progress. Keep the full board available from the panel. Related work combines the conversation's attached and spawned tasks, visible board task references and the Home bot's managed tasks. Show the Fleet task state and open it through its entity card. A transcript mention alone creates neither a task link nor a plan step.
+- Each scoped read updates while the panel is open. Successful empty reads show an empty state. Failed reads show that the information is unavailable and provide a retry. A permission refusal, offline state or failed Watch read disables timer mutations.
+
 ### Start a conversation
 
 A preset is what a new conversation does now. It names a project role and a system profile to fall back on, the access, whether the session gets its own branch, and a starter instruction. Presets live in the project definition, `settings.presets` ([configuration](../configuration.md#project-settings)), so people and agents edit them with `project_update`; a project with none gets the system presets (`go/coordinator/presets.go`):

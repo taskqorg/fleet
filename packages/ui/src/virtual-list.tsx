@@ -41,6 +41,7 @@ export type VirtualListProps<T> = {
   handle?: { current: VirtualListHandle | null };
 };
 export type VirtualListHandle = {
+  isAtEdge(): boolean;
   getAnchor(): { key: string; offsetPx: number } | null;
   restoreAnchor(key: string, offsetPx: number): void;
   scrollToKey: (key: string, align: 'start' | 'center' | 'end') => void;
@@ -283,6 +284,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   createEffect(() => props.handle, h => {
     if (!h) return;
     h.current = {
+      isAtEdge: atEdge,
       getAnchor: () => {
         const first = scroller ? v.getVirtualItemForOffset(scroller.scrollTop) : undefined;
         return scroller && first ? { key: String(first.key), offsetPx: first.start - scroller.scrollTop } : null;

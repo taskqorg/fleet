@@ -19,6 +19,20 @@ const eventOptions = [
   { id: 'execution', label: 'Execution problems' },
 ];
 
+export function automationTrigger(settings: Settings, includeDetails = true) {
+  const trigger = triggerOptions.find(t => t.id === settings.kind)?.label ?? 'Unknown trigger';
+  if (!includeDetails) return trigger;
+  if (settings.kind === 'schedule') return `${trigger} · ${settings.scheduleTime} ${settings.scheduleZone}`;
+  if (settings.kind === 'needs_you') {
+    return `${trigger} · ${eventOptions.find(t => t.id === settings.event)?.label ?? 'Unknown event filter'}`;
+  }
+  return trigger;
+}
+
+export function automationStatus(settings: Settings, botPaused: boolean) {
+  return !settings.enabled ? 'Paused' : botPaused ? 'Bot paused' : 'Enabled';
+}
+
 export function BotAutomations(props: {
   bot: Ops['bot_get']['reply']['bot'];
   projectName: string;
@@ -103,7 +117,7 @@ export function BotAutomations(props: {
               <For each={read.data?.automations}>{automation => (
                 <DetailSection title={automation.settings.name}>
                   <KvRow icon="folder-open" label="Project" value={props.projectName} />
-                  <KvRow icon="bell" label="Trigger" value={triggerOptions.find(t => t.id === automation.settings.kind)?.label} />
+                  <KvRow icon="bell" label="Trigger" value={automationTrigger(automation.settings, false)} />
                   <Show when={automation.settings.kind === 'needs_you'}>
                     <KvRow icon="bell" label="Events" value={<span>{eventOptions.find(t => t.id === automation.settings.event)?.label}</span>} />
                   </Show>
@@ -111,7 +125,7 @@ export function BotAutomations(props: {
                     <KvRow icon="clock" label="Daily time" value={`${automation.settings.scheduleTime} · ${automation.settings.scheduleZone}`} />
                   </Show>
                   <KvRow icon="play" label="Status" value={
-                    !automation.settings.enabled ? 'Paused' : props.bot.paused ? 'Bot paused' : 'Enabled'
+                    automationStatus(automation.settings, props.bot.paused)
                   } />
                   <Show when={automation.nextRunAt} keyed>{next => (
                     <KvRow icon="clock" label="Next scheduled run" value={<time datetime={next}>{zonedTime(Date.parse(next), automation.settings.scheduleZone)}</time>} />

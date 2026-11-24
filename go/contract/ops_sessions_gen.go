@@ -1486,7 +1486,8 @@ func (v *ToolBlock) Validate() error {
 
 // WatchGetReply: No watch: watch is absent.
 type WatchGetReply struct {
-	Watch *WatchRecord `json:"watch,omitempty"`
+	CanManageTimer *bool        `json:"canManageTimer,omitempty"`
+	Watch          *WatchRecord `json:"watch,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1527,15 +1528,16 @@ func (v *WatchGetRequest) Validate() error {
 
 // WatchRecord: A session's watch: kinds of foreign changes that wake it, an optional timer, and its wake count.
 type WatchRecord struct {
-	Cursor     int64           `json:"cursor"`
-	Id         string          `json:"id"`
-	Kinds      []string        `json:"kinds"`
-	LastError  *string         `json:"lastError,omitempty"`
-	LastWakeAt json.RawMessage `json:"lastWakeAt,omitempty"`
-	NextWakeAt *int64          `json:"nextWakeAt,omitempty"`
-	SessionId  string          `json:"sessionId"`
-	TimerMs    *float64        `json:"timerMs,omitempty"`
-	Wakes      int64           `json:"wakes"`
+	Cursor      int64           `json:"cursor"`
+	Id          string          `json:"id"`
+	Kinds       []string        `json:"kinds"`
+	LastError   *string         `json:"lastError,omitempty"`
+	LastWakeAt  json.RawMessage `json:"lastWakeAt,omitempty"`
+	NextWakeAt  *int64          `json:"nextWakeAt,omitempty"`
+	SessionId   string          `json:"sessionId"`
+	TimerMs     *float64        `json:"timerMs,omitempty"`
+	TimerPaused *bool           `json:"timerPaused,omitempty"`
+	Wakes       int64           `json:"wakes"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1613,6 +1615,46 @@ func (v *WatchStopRequest) UnmarshalJSON(b []byte) error {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *WatchStopRequest) Validate() error {
+	return nil
+}
+
+type WatchTimerAction string
+
+const (
+	WatchTimerActionEdit   WatchTimerAction = "edit"
+	WatchTimerActionPause  WatchTimerAction = "pause"
+	WatchTimerActionResume WatchTimerAction = "resume"
+	WatchTimerActionCancel WatchTimerAction = "cancel"
+)
+
+// WatchTimerActionValues lists every WatchTimerAction in schema order.
+var WatchTimerActionValues = []WatchTimerAction{WatchTimerActionEdit, WatchTimerActionPause, WatchTimerActionResume, WatchTimerActionCancel}
+
+// Valid: v is one of the schema's values.
+func (v WatchTimerAction) Valid() bool {
+	for _, x := range WatchTimerActionValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type WatchTimerSetReply = WatchRecord
+
+type WatchTimerSetRequest struct {
+	Action      WatchTimerAction `json:"action"`
+	BasePaused  bool             `json:"basePaused"`
+	BaseTimerMs float64          `json:"baseTimerMs"`
+	SessionId   string           `json:"sessionId"`
+	TimerMs     *float64         `json:"timerMs,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *WatchTimerSetRequest) Validate() error {
+	if err := Check(&v.Action, "action"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1701,14 +1743,15 @@ func init() {
 		"session_transition":  {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Select this session’s granted project checkout with projectId, or switch profileId/account (profileId defaults to current). A changed project selection during an active execution returns queued: end this turn; Fleet applies it and automatically starts the next execution to continue the request with frozen context. Focus is separate (focus_set). Other transitions return reuse|switch_model_in_session|restart_and_resume|create_with_handoff", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"account\":{\"type\":\"string\"},\"callerSessionId\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"session_unarchive":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A worktree already torn down is not restored; the next start prepares a new one.", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A worktree already torn down is not restored; the next start prepares a new one.\",\"additionalProperties\":false,\"properties\":{\"reason\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"reason\"],\"type\":\"object\"}")},
 		"sessions_list":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "after: the nextAfter of the previous page.", InputSchema: json.RawMessage("{\"$comment\":\"after: the nextAfter of the previous page.\",\"additionalProperties\":true,\"properties\":{\"after\":{\"items\":{},\"type\":\"array\"},\"filter\":{\"$comment\":\"The list filter of packages/view-url toPageParams; a null projectId is work outside projects; an empty projectId list is refused; archived applies to sessions only. A field a list does not implement is a 400.\",\"additionalProperties\":false,\"properties\":{\"archived\":{\"type\":\"boolean\"},\"excludeProjectId\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); null (or '-', as in excludeProjectIds) is work outside projects; applied after projectId, so a project in both is left out. Agents see every project unless they pass it.\",\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"projectId\":{\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"search\":{\"$comment\":\"free text; tasks also take key:value terms agent:, host:, state:, project: (substring match)\",\"type\":\"string\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"group\":{\"$comment\":\"project, state, agent or none; default project; state groups in attention order (waiting, failed, running, preparing, idle, succeeded, cancelled)\",\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"sort\":{\"$comment\":\"order inside a group: last activity or creation, - before it is descending; default -activity (latest activity first)\",\"type\":\"string\"}},\"type\":\"object\"}")},
-		"thread_blocks":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "rows: changed records; the reply has their current blocks.", InputSchema: json.RawMessage("{\"$comment\":\"rows: changed records; the reply has their current blocks.\",\"properties\":{\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"rows\":{\"items\":{\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"The kinds the change triggers write (fleet_change and fleet_artifact_change in go/coordinator/schema/functions.sql); a go test checks the triggers against this list.\",\"enum\":[\"api-connection\",\"artifact\",\"board\",\"bot\",\"bot-run\",\"command\",\"connection-key\",\"definition\",\"delivery\",\"event\",\"execution\",\"experiment\",\"host\",\"managed-account\",\"project-recommendation\",\"question\",\"resource_summary\",\"score\",\"session\",\"setting-change\",\"task\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"key\",\"rows\"],\"type\":\"object\"}")},
+		"thread_blocks":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "rows: changed records; the reply has their current blocks.", InputSchema: json.RawMessage("{\"$comment\":\"rows: changed records; the reply has their current blocks.\",\"properties\":{\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"rows\":{\"items\":{\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"The kinds the change triggers write (fleet_change and fleet_artifact_change in go/coordinator/schema/functions.sql); a go test checks the triggers against this list.\",\"enum\":[\"api-connection\",\"artifact\",\"board\",\"bot\",\"bot-run\",\"command\",\"connection-key\",\"definition\",\"delivery\",\"event\",\"execution\",\"experiment\",\"host\",\"managed-account\",\"project-recommendation\",\"question\",\"resource_summary\",\"score\",\"session\",\"setting-change\",\"task\",\"watch\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"key\",\"rows\"],\"type\":\"object\"}")},
 		"thread_composer":     {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Resolve the current message and Stop target from the open conversation, independent of the transcript page.", Changes: []string{"session", "execution", "task"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"conversationId\":{\"type\":\"string\"}},\"required\":[\"conversationId\"],\"type\":\"object\"}")},
 		"thread_entries":      {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Entries of a thread (key), paged with before, after or around and limit", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"after\":{\"type\":\"string\"},\"around\":{\"type\":\"string\"},\"before\":{\"type\":\"string\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"resolve\":{\"type\":\"boolean\"}},\"required\":[\"key\"],\"type\":\"object\"}")},
 		"thread_export":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "A thread (key) as text, optionally between from and to in timezone tz", InputSchema: json.RawMessage("{\"properties\":{\"from\":{\"properties\":{\"key\":{\"type\":\"string\"},\"offset\":{\"type\":\"integer\"}},\"required\":[\"key\"],\"type\":\"object\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"to\":{\"properties\":{\"key\":{\"type\":\"string\"},\"offset\":{\"type\":\"integer\"}},\"required\":[\"key\"],\"type\":\"object\"},\"tz\":{\"type\":\"string\"}},\"required\":[\"key\"],\"type\":\"object\"}")},
 		"thread_search":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Find text in a thread (key, q), paged with before and limit", InputSchema: json.RawMessage("{\"properties\":{\"before\":{\"type\":\"string\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"q\":{\"type\":\"string\"}},\"required\":[\"key\",\"q\"],\"type\":\"object\"}")},
-		"watch_get":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:session", Description: "Your watch: kinds, timer, wakes, last wake, last error", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
+		"watch_get":           {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "bound:session", Description: "Your watch: kinds, timer, wakes, last wake, last error and timer management permission", Changes: []string{"watch", "session"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"watch_set":           {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "bound:session", Description: "Watch your focus: kinds (task, question, execution, host, limits) and optional timerMs; Fleet sends you one message per batch of foreign changes and on the timer; limits: a pool of your subscriptions projected empty before its next reset", InputSchema: json.RawMessage("{\"$comment\":\"kinds: task, question, execution, host.\",\"additionalProperties\":true,\"properties\":{\"kinds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"sessionId\":{\"type\":\"string\"},\"timerMs\":{\"type\":[\"number\",\"null\"]}},\"required\":[\"sessionId\",\"kinds\"],\"type\":\"object\"}")},
 		"watch_stop":          {Read: false, Long: false, Errors: []int{400, 403}, Auth: "person", Agent: "bound:session", Description: "Stop watching", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
+		"watch_timer_set":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Edit, pause, resume or cancel only the timer of an existing watch, preserving event subscriptions. Compare the supplied timer interval and pause state with the saved settings.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"action\":{\"enum\":[\"edit\",\"pause\",\"resume\",\"cancel\"],\"type\":\"string\"},\"basePaused\":{\"type\":\"boolean\"},\"baseTimerMs\":{\"type\":\"number\"},\"sessionId\":{\"type\":\"string\"},\"timerMs\":{\"type\":\"number\"}},\"required\":[\"sessionId\",\"action\",\"baseTimerMs\",\"basePaused\"],\"type\":\"object\"}")},
 		"worker_done":         {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Report the current execution done (checked against the current execution; captures native session)", InputSchema: json.RawMessage("{\"$comment\":\"outcome succeeded or failed; anything else is recorded as rejected (invalid_outcome). summary: a string; any other value is stored as null.\",\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"nativeSessionId\":{\"type\":\"string\"},\"outcome\":{},\"summary\":{}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)

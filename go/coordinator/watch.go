@@ -11,6 +11,7 @@ import (
 	"fleet/coordinator/db"
 	"fmt"
 	"log"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -22,14 +23,16 @@ var watchKinds = []string{"task", "question", "execution", "host", "limits"}
 
 // watchPayload: a watch row's payload, the record fields that are not columns (session and project are).
 type watchPayload struct {
-	Kinds          []string        `json:"kinds"`
-	Wakes          int64           `json:"wakes"`
-	LastWakeAt     json.RawMessage `json:"lastWakeAt,omitempty"`
-	Cursor         int64           `json:"cursor"`
-	TimerMs        *float64        `json:"timerMs,omitempty"`
-	NextWakeAt     *int64          `json:"nextWakeAt,omitempty"`
-	LimitsSignaled []string        `json:"limitsSignaled,omitempty"`
-	LastError      *string         `json:"lastError,omitempty"`
+	Kinds      []string        `json:"kinds"`
+	Wakes      int64           `json:"wakes"`
+	LastWakeAt json.RawMessage `json:"lastWakeAt,omitempty"`
+	Cursor     int64           `json:"cursor"`
+	TimerMs    *float64        `json:"timerMs,omitempty"`
+	// Keeping the interval out of timerMs prevents older coordinators from waking paused timers.
+	PausedTimerMs  *float64 `json:"pausedTimerMs,omitempty"`
+	NextWakeAt     *int64   `json:"nextWakeAt,omitempty"`
+	LimitsSignaled []string `json:"limitsSignaled,omitempty"`
+	LastError      *string  `json:"lastError,omitempty"`
 }
 
 // watchRow: one watch, its columns and payload.
@@ -40,8 +43,12 @@ type watchRow struct {
 }
 
 func (w watchRow) record() contract.WatchRecord {
+	interval, paused := w.TimerMs, w.PausedTimerMs != nil
+	if paused {
+		interval = w.PausedTimerMs
+	}
 	return contract.WatchRecord{Id: w.ID, SessionId: w.SessionID, Kinds: w.Kinds, Wakes: w.Wakes, LastWakeAt: w.LastWakeAt, Cursor: w.Cursor,
-		TimerMs: w.TimerMs, NextWakeAt: w.NextWakeAt, LastError: w.LastError}
+		TimerMs: interval, TimerPaused: &paused, NextWakeAt: w.NextWakeAt, LastError: w.LastError}
 }
 
 // watchOf: the watch of id, nil when there is none.
@@ -178,8 +185,73 @@ func watchSet(q *Request, b *contract.WatchSetRequest) (contract.WatchRecord, er
 	return w.record(), watchPut(q, w)
 }
 
+func watchTimerSet(q *Request, b *contract.WatchTimerSetRequest) (contract.WatchRecord, error) {
+	var out contract.WatchRecord
+	s, err := watchSessionOf(q, b.SessionId)
+	if err != nil {
+		return out, err
+	}
+	if s == nil {
+		return out, errNotFound
+	}
+	if err := s.directs(q); err != nil {
+		return out, err
+	}
+	if err := taskAllowsWork(q, s.task()); err != nil {
+		return out, err
+	}
+	w, err := watchOf(q, "watch:"+b.SessionId)
+	if err != nil {
+		return out, err
+	}
+	if w == nil {
+		return out, fail(409, "Watch no longer exists. Reload before changing the timer")
+	}
+	current := w.record()
+	if current.TimerMs == nil || *current.TimerMs != b.BaseTimerMs || *current.TimerPaused != b.BasePaused {
+		return out, fail(409, "Watch timer changed. Reload before changing it")
+	}
+	now := time.Now().UnixMilli()
+	schedule := func(interval *float64) error {
+		// The persisted wake must be representable as a browser Date.
+		if *interval < 1 || *interval > float64(8_640_000_000_000_000-now) {
+			return fail(400, "Timer interval is outside the supported range")
+		}
+		next := now + int64(*interval)
+		w.TimerMs, w.NextWakeAt, w.PausedTimerMs = interval, &next, nil
+		return nil
+	}
+	switch string(b.Action) {
+	case "edit":
+		if b.TimerMs == nil || *b.TimerMs < 1 || math.Trunc(*b.TimerMs) != *b.TimerMs || *b.TimerMs > float64(8_640_000_000_000_000-now) {
+			return out, fail(400, "Enter a positive timer interval in whole milliseconds within the supported range")
+		}
+		if b.BasePaused {
+			w.PausedTimerMs = b.TimerMs
+		} else if err := schedule(b.TimerMs); err != nil {
+			return out, err
+		}
+	case "pause":
+		if b.BasePaused {
+			return out, fail(409, "Watch timer is already paused")
+		}
+		w.PausedTimerMs, w.TimerMs, w.NextWakeAt = w.TimerMs, nil, nil
+	case "resume":
+		if !b.BasePaused {
+			return out, fail(409, "Watch timer is already active")
+		}
+		if err := schedule(w.PausedTimerMs); err != nil {
+			return out, err
+		}
+	case "cancel":
+		w.TimerMs, w.PausedTimerMs, w.NextWakeAt = nil, nil, nil
+	}
+	return w.record(), watchPut(q, w)
+}
+
 func init() {
 	op("watch_set", watchSet)
+	op("watch_timer_set", watchTimerSet)
 	op("watch_stop", func(q *Request, b *contract.WatchStopRequest) (contract.WatchStopReply, error) {
 		sid := b.SessionId
 		if sid == "" {
@@ -198,12 +270,28 @@ func init() {
 		if b.SessionId == "" {
 			return contract.WatchGetReply{}, fail(400, "Expected sessionId")
 		}
-		w, err := watchOf(q, "watch:"+b.SessionId)
-		if err != nil || w == nil {
+		s, err := watchSessionOf(q, b.SessionId)
+		if err != nil {
 			return contract.WatchGetReply{}, err
 		}
-		x := w.record()
-		return contract.WatchGetReply{Watch: &x}, nil
+		if s == nil {
+			return contract.WatchGetReply{}, errNotFound
+		}
+		canManage := s.directs(q) == nil
+		if task := s.task(); canManage && task != "" {
+			cancelled, err := q.db().TaskCancelled(q.ctx(), task)
+			if err != nil {
+				return contract.WatchGetReply{}, err
+			}
+			canManage = !cancelled
+		}
+		out := contract.WatchGetReply{CanManageTimer: &canManage}
+		w, err := watchOf(q, "watch:"+b.SessionId)
+		if err == nil && w != nil {
+			x := w.record()
+			out.Watch = &x
+		}
+		return out, err
 	})
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "watch", envMs("FLEET_WATCH_TICK_MS", 15000), func(ctx context.Context) error { watchPass(ctx, a); return nil })

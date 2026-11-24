@@ -382,7 +382,7 @@ export function useList<K extends Kind>(kind: K, urlViewInput: MaybeAccessor<Vie
  * a running one, and an answer is shown only when it started after the one on screen.
  */
 type DocReader = { fetch: () => Promise<unknown> };
-type DocFlight = { readers: Set<DocReader>; started: number; shown: number; failed: number; scheduled: boolean; cleared: number };
+type DocFlight = { readers: Set<DocReader>; started: number; shown: number; failed: number; scheduled?: Promise<void>; cleared: number };
 const flights = new Map<string, DocFlight>();
 function docEntry(name: string): DocEntry {
   let e = docs.get(name);
@@ -412,13 +412,16 @@ async function startDoc(name: string, f: DocFlight) {
 }
 /** Ask for a fresh read of a mounted doc; every ask in the same task sends one request. */
 export function readDoc(name: string) {
-  const f = flights.get(name); if (!f || f.scheduled) return;
-  f.scheduled = true;
-  queueMicrotask(() => { f.scheduled = false; void startDoc(name, f); });
+  const f = flights.get(name);
+  if (!f) return Promise.resolve();
+  return f.scheduled ??= Promise.resolve().then(() => {
+    f.scheduled = undefined;
+    return startDoc(name, f);
+  });
 }
 /** Mount a reader and fetch unless fresh cached data is already held while live. Returns the release. */
 export function holdDoc(name: string, fetch: () => Promise<unknown>, opts?: { name?: OpName; request?: unknown; maxAge?: number }) {
-  let f = flights.get(name); if (!f) flights.set(name, f = { readers: new Set(), started: 0, shown: 0, failed: 0, scheduled: false, cleared: 0 });
+  let f = flights.get(name); if (!f) flights.set(name, f = { readers: new Set(), started: 0, shown: 0, failed: 0, cleared: 0 });
   const flight = f, reader: DocReader = { fetch }; flight.readers.add(reader);
   const entry = docEntry(name);
   if (opts?.name) { entry.name = opts.name; entry.request = opts.request; }
@@ -515,7 +518,7 @@ export type OpOptions = {
   /** Fields added to the request for touchedBy only, not the key: the entity a read concerns once its reply named it. */
   scope?: MaybeAccessor<Record<string, unknown> | undefined>;
 };
-export type OpRead<T> = { data: T | null; restored: boolean; error: string | null; status: number | null; state: Freshness; reload: () => void };
+export type OpRead<T> = { data: T | null; restored: boolean; error: string | null; status: number | null; state: Freshness; reload: () => Promise<void> };
 
 /**
  * The one way a view reads an operation: useOp(name, request). The cache key is the operation and its canonical request,
@@ -533,13 +536,13 @@ export function useOp<K extends OpName>(name: K, request: MaybeAccessor<Ops[K]['
     return k ? docSignal(k) : null;
   });
   let currentReq: Ops[K]['request'] | null = null;
-  let reloadFn = () => {};
+  let reloadFn = () => Promise.resolve();
   createEffect(
     () => [key(), readValue(opts.every), readValue(opts.quiet), generation.value] as const,
     ([k, every, quiet]) => {
       currentReq = untrack(resolved);
       if (!k || currentReq === null) {
-        reloadFn = () => {};
+        reloadFn = () => Promise.resolve();
         return;
       }
       const maxAge = every ? Math.min(FRESH_MS, every) : FRESH_MS;
@@ -548,7 +551,7 @@ export function useOp<K extends OpName>(name: K, request: MaybeAccessor<Ops[K]['
       const t = throttle(() => readDoc(k), quiet);
       const off = watch({ name, request: () => ({ ...(currentReq as Record<string, unknown>), ...readValue(opts.scope) }), read: t.read });
       const timer = every ? setInterval(() => readDoc(k), every) : 0;
-      return () => { reloadFn = () => {}; release(); off(); t.stop(); clearInterval(timer); };
+      return () => { reloadFn = () => Promise.resolve(); release(); off(); t.stop(); clearInterval(timer); };
     },
   );
   return {

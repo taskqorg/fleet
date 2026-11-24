@@ -162,9 +162,9 @@
   .shell-title { flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); letter-spacing: -.01em; }
   .shell-h > .grow { flex: 1 0 0; }
   .shell-status { display: flex; align-items: center; gap: var(--space-2); min-width: 0; overflow: hidden; white-space: nowrap; }
-  .shell-status:empty, .shell-actions:empty { display: none; }
+  .shell-status:empty, .shell-actions:empty, .shell-context-action:empty { display: none; }
   .shell-actions { flex: none; display: flex; align-items: center; gap: var(--space-1); }
-  .nav-toggle, .shell-search { flex: none; }
+  .nav-toggle, .shell-search, .shell-context-action { flex: none; }
   .nav-toggle .btn { border-color: transparent; background: none; }
   .shell-search:hover { background: var(--hover); color: var(--fg); }
 

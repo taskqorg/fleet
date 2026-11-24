@@ -22,8 +22,9 @@ export function Icon(p: { name: IconName; label?: string }) {
 }
 
 type ButtonProps = {
-  label: string; icon?: IconName; iconOnly?: boolean; kind?: 'primary' | 'default' | 'quiet' | 'attention' | 'danger';
+  label: string; type?: 'submit'; icon?: IconName; iconOnly?: boolean; kind?: 'primary' | 'default' | 'quiet' | 'attention' | 'danger';
   kbd?: string; rowLink?: boolean; busy?: boolean; disabledReason?: string; tip?: string; pressed?: boolean;
+  expanded?: boolean; controls?: string;
   /** A fuller accessible name than the visible label ("Wake Release manager"). */
   name?: string;
   onClick?: (event: MouseEvent) => void;
@@ -33,11 +34,14 @@ export function Button(p: ButtonProps) {
   return (
     <SdkButton
       data-ui="button"
+      type={p.type}
       class={['btn', p.kind ?? 'default', { 'icon-only': !!p.iconOnly, 'row-link': !!p.rowLink, busy: !!p.busy }]}
       disabled={disabled()}
       focusableWhenDisabled={true}
       aria-label={p.iconOnly ? p.label : p.name}
       data-tip={p.disabledReason ?? p.tip ?? (p.iconOnly ? p.label : undefined)}
+      aria-controls={p.controls}
+      aria-expanded={p.expanded === undefined ? undefined : p.expanded ? 'true' : 'false'}
       aria-pressed={p.pressed === undefined ? undefined : p.pressed ? 'true' : 'false'}
       onClick={e => {
         if (!disabled()) p.onClick?.(e);

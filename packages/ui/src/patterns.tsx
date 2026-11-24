@@ -307,6 +307,13 @@ export function ShellActions(p: { children: JSX.Element }) {
   return <Show when={slot()} keyed>{el => <Portal mount={el}>{p.children}</Portal>}</Show>;
 }
 
+const ContextSlot = createContext<Accessor<HTMLElement | null>>(() => null);
+/** The optional work-area panel toggle in the reserved slot after search (OR-43). */
+export function ShellContextAction(p: { children: JSX.Element }) {
+  const slot = useContext(ContextSlot);
+  return <Show when={slot()} keyed>{el => <Portal mount={el}>{p.children}</Portal>}</Show>;
+}
+
 export function AppShell(p: {
   nav: NavItem[]; current: string; onGo: (id: string) => void; waiting: number; children: JSX.Element;
   /** Spotlight providers after the built-in sections one (OR-32): codes, tasks, projects, hosts in the app. */ search?: SpotlightProvider[];
@@ -334,6 +341,7 @@ export function AppShell(p: {
   let spotSeq = 0;
   const [spot, setSpot] = createSignal<{ gen: number; seq: number } | null>(null);
   const [slot, setSlot] = createSignal<HTMLElement | null>(null, { ownedWrite: true });
+  const [contextSlot, setContextSlot] = createSignal<HTMLElement | null>(null, { ownedWrite: true });
   const [acts, setActs] = createSignal<HTMLElement | null>(null, { ownedWrite: true });
 
   // The palette's query, results, highlighted row and recent items, kept while it is closed: per tab and access generation, in memory only.
@@ -437,11 +445,12 @@ export function AppShell(p: {
             >
               <Icon name={actions.search} />
             </button>
+            <span class="shell-context-action" ref={el => setContextSlot(el)} />
           </header>
           <main class="shell-main" id="main" tabindex={-1}>
             <ActionsSlot value={acts}>
               <StatusSlot value={slot}>
-                {p.children}
+                <ContextSlot value={contextSlot}>{p.children}</ContextSlot>
               </StatusSlot>
             </ActionsSlot>
           </main>

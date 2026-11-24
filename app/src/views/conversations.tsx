@@ -6,10 +6,10 @@ import { useLocation, useSearch } from '../router.ts';
 import {
   EntityCode, EntityPicker, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
   StateBadge, StateCounters, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection,
-  OpsSummary, StatStrip, KvRow, Num, TabBar, type VirtualListHandle, type CatalogueTreeNode, type IconName, type Stat,
+  OpsSummary, StatStrip, KvRow, Num, type VirtualListHandle, type CatalogueTreeNode, type IconName, type Stat,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, TextField, Disclosure,
   writeClip, zone, DropZone, agentLabel, InlineForm, type ComposerChip,
-  keyConnection, ShellStatus, ShellActions,
+  keyConnection, ShellStatus, ShellActions, ShellContextAction,
 } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, sendingId, prepareSending, submissionKey, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
 import { NewConversation } from './conversation-new.tsx';
@@ -24,7 +24,7 @@ import { SYSTEM_VIEWS } from '../system-views.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, drag, inside, range, textBounds, type Selection } from '../selection.ts';
 import { RowSpend, useRowSpend, ScopedRollupBar, ScopedRollupDetails } from './resources.tsx';
-import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
+import { ConversationContext } from './conversation-context.tsx';
 
 const GROUPS = [['project', 'Project'], ['state', 'State'], ['agent', 'Agent'], ['none', 'None']] as const;
 const SORTS = [['activity', 'Activity'], ['created', 'Created']] as const;
@@ -301,7 +301,7 @@ function Conversation(props: { id: string; onClose: () => void }) {
       const curSel = untrack(sel);
       const t = e.target as HTMLElement;
       // Only inside the conversation (or with nothing focused); code, not key, so other keyboard layouts work too.
-      if (!(e.metaKey || e.ctrlKey) || t?.closest?.('input,textarea,[contenteditable]') || !(t?.closest?.('.conversation') || t === document.body)) return;
+      if (!(e.metaKey || e.ctrlKey) || t?.closest?.('input,textarea,[contenteditable]') || !(t?.closest?.('.conversation-chat') || t === document.body)) return;
       if (e.code === 'KeyA') { e.preventDefault(); getSelection()?.removeAllRanges(); setSel(all()); }
       // A native selection inside one row is the browser's own copy.
       if (e.code === 'KeyC' && curSel && (getSelection()?.isCollapsed ?? true)) { e.preventDefault(); copySel(curSel); }
@@ -351,10 +351,27 @@ function Conversation(props: { id: string; onClose: () => void }) {
   const [hit, setHit] = createSignal(0);
   const [marked, setMarked] = createSignal<string | null>(null);
   const handle: { current: VirtualListHandle | null } = { current: null };
-  const board = useSwarmBoard('session', () => props.id);
-  const hasSwarm = createMemo(() => hasSwarmBoard(board.data));
-  const [convTab, setConvTab] = createSignal<'transcript' | 'swarm'>('transcript');
-  const activeConvTab = () => (hasSwarm() ? convTab() : 'transcript');
+  const [contextOpen, setContextOpen] = createSignal(false);
+  const contextId = 'conversation-context';
+  let layoutChange = 0;
+  const setContext = (opened: boolean) => {
+    const view = handle.current;
+    const anchor = view?.isAtEdge() ? null : view?.getAnchor();
+    const change = ++layoutChange;
+    setContextOpen(opened);
+    if (!anchor) return;
+    // Let the narrower or wider transcript remeasure its wrapped rows before restoring the anchor.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (change === layoutChange && view === handle.current && !alive.aborted) {
+        view?.restoreAnchor(anchor.key, anchor.offsetPx);
+      }
+    }));
+  };
+  const closeContext = () => {
+    const toggle = document.querySelector<HTMLButtonElement>(`[aria-controls="${contextId}"]`);
+    setContext(false);
+    toggle?.focus({ preventScroll: true });
+  };
   const [showRelated, setShowRelated] = createSignal(false);
   const related = () => sDoc.data?.resources;
   const hasRelated = createMemo(() => {
@@ -364,19 +381,14 @@ function Conversation(props: { id: string; onClose: () => void }) {
   const inRelated = () => showRelated() && hasRelated();
   let reading: ReturnType<VirtualListHandle['getAnchor']> = null;
   const toggleRelated = () => {
-    if (activeConvTab() === 'swarm') {
-      setConvTab('transcript');
-      setShowRelated(true);
-      return;
-    }
     if (!untrack(inRelated)) reading = handle.current?.getAnchor() ?? null;
     setShowRelated(!untrack(inRelated));
   };
   createEffect(
-    () => [inRelated(), activeConvTab()] as const,
-    ([rel, tab]) => {
+    () => inRelated(),
+    rel => {
       const anchor = reading;
-      if (rel || tab === 'swarm' || !anchor || !handle.current) return;
+      if (rel || !anchor || !handle.current) return;
       reading = null;
       handle.current.restoreAnchor(anchor.key, anchor.offsetPx);
     },
@@ -477,139 +489,127 @@ function Conversation(props: { id: string; onClose: () => void }) {
     <Switch
       fallback={
         <article class="detail conversation" data-ui="detail" tabindex={-1} aria-label="Conversation">
-          <header class="detail-h">
-            <Button label="Close" icon="x" iconOnly onClick={props.onClose} />
-            <h2 class="detail-title conv-title" data-tip={title()}>{title()}</h2>
-            <EntityCode code={s()!.code} id={props.id} kind="conversation" />
-            <span class="grow" />
-            <SearchField label="Search thread" value={q()} onInput={setQ} onSearch={search} />
-            <Show when={hits() !== null || (!!thread.win && thread.win.blocks.length < thread.win.total)}>
-              <div class="conv-search-results" data-active={String(!!hits())} data-partial={String(!!thread.win && thread.win.blocks.length < thread.win.total)}>
-                <span class="count" aria-live="polite">
-                  {hits() ? `${hits()!.length ? hit() + 1 : 0} of ${hits()!.length}` : `${thread.win!.blocks.length.toLocaleString('en')} of ${thread.win!.total.toLocaleString('en')}`}
-                </span>
-                <Show when={hits()} keyed>
-                  {hs => (
+          <ShellContextAction>
+            <Button label="Conversation context" icon="panels-top-left" kind="quiet" iconOnly
+              expanded={contextOpen()} controls={contextOpen() ? contextId : undefined}
+              onClick={() => setContext(!contextOpen())} />
+          </ShellContextAction>
+          <div class="conversation-layout">
+            <div class="conversation-chat">
+              <header class="detail-h">
+                <Button label="Close" icon="x" iconOnly onClick={props.onClose} />
+                <h2 class="detail-title conv-title" data-tip={title()}>{title()}</h2>
+                <EntityCode code={s()!.code} id={props.id} kind="conversation" />
+                <span class="grow" />
+                <SearchField label="Search thread" value={q()} onInput={setQ} onSearch={search} />
+                <Show when={hits() !== null || (!!thread.win && thread.win.blocks.length < thread.win.total)}>
+                  <div class="conv-search-results" data-active={String(!!hits())} data-partial={String(!!thread.win && thread.win.blocks.length < thread.win.total)}>
+                    <span class="count" aria-live="polite">
+                      {hits() ? `${hits()!.length ? hit() + 1 : 0} of ${hits()!.length}` : `${thread.win!.blocks.length.toLocaleString('en')} of ${thread.win!.total.toLocaleString('en')}`}
+                    </span>
+                    <Show when={hits()} keyed>
+                      {hs => (
+                        <>
+                          <Button label="Previous hit" icon="arrow-up" iconOnly disabledReason={hit() <= 0 ? 'no earlier hit' : undefined} onClick={() => open(hs, hit() - 1)} />
+                          <Button label="Next hit" icon="arrow-down" iconOnly disabledReason={hit() >= hs.length - 1 ? 'no later hit' : undefined} onClick={() => open(hs, hit() + 1)} />
+                        </>
+                      )}
+                    </Show>
+                  </div>
+                </Show>
+                <Button label="Copy thread as markdown" icon="file-text" iconOnly disabledReason={off() ? 'offline' : undefined} onClick={() => copySel(all()!)} />
+                {/* Menu actions (design "Controls"): each calls the existing operation; the result shows as a new boundary in this thread. */}
+                <ActionMenu
+                  label="Actions"
+                  disabledReason={off() ? 'offline' : undefined}
+                  items={[
+                    { label: 'Rename', icon: 'type', onClick: () => setPanel('rename') },
+                    {
+                      label: 'Retry last message',
+                      icon: 'rotate-ccw',
+                      disabledReason: lastMessage() || lastFiles().length ? undefined : 'no message yet',
+                      onClick: () => {
+                        const requestId = reqId(), msg = lastMessage(), fs = lastFiles();
+                        run(() => writeOnce('message_send', { sessionId: props.id, requestId, text: msg ?? '', ...(fs.length ? { attachments: fs } : {}) }, unknown, { signal: alive }));
+                      },
+                    },
+                    { label: 'Switch profile or model', icon: 'sliders-horizontal', onClick: () => setPanel({ session: s()!, handoff: false }) },
+                    { label: 'Hand off to another agent', icon: 'bot', onClick: () => setPanel({ session: s()!, handoff: true }) },
+                    { label: 'Fork', icon: 'git-merge', onClick: () => fork() },
+                    { label: 'Start fresh with context', icon: 'git-merge', disabledReason: latest() ? undefined : 'Send a message first', onClick: () => setPanel('fresh') },
+                  ]}
+                />
+              </header>
+              <Show when={panel() === 'rename'}>
+                <RenamePanel
+                  sessionId={props.id}
+                  current={s()!.title ?? ''}
+                  onDone={() => setPanel(null)}
+                  onSaved={() => { setFailure(null); sDoc.reload(); }}
+                  run={run}
+                  onUnknown={() => { setFailure({ text: 'Rename outcome unknown. Check the current title.' }); sDoc.reload(); }}
+                />
+              </Show>
+              <Show when={panel() === 'fresh'}>
+                <DetailSection title="Start fresh with context">
+                  <InlineForm cls="stack" onSubmit={e => { e.preventDefault(); const text = nextInstruction().trim(); if (!off() && text) fork(text); }}>
+                    <TextField label="Next instruction" value={nextInstruction()} multiline onChange={setNextInstruction} />
+                    <div class="answers">
+                      <Button label="Start fresh" kind="primary" busy={forking()} disabledReason={off() ? 'offline' : nextInstruction().trim() ? undefined : 'Enter the next instruction'} onClick={() => fork(nextInstruction().trim())} />
+                      <Button label="Cancel" kind="quiet" onClick={() => setPanel(null)} />
+                    </div>
+                  </InlineForm>
+                </DetailSection>
+              </Show>
+              <Show when={switchPanel()} keyed>{action => (
+                <SwitchPanel
+                  sessionId={action.session.sessionId}
+                  handoff={action.handoff}
+                  current={str(rec(action.session.agentConfig).id)}
+                  onDone={note => { setPanel(null); if (note) setFailure(null); }}
+                  run={run}
+                />
+              )}</Show>
+              <div class="state-line">
+                <Show when={sessionState() in states_.session}>
+                  <StateBadge
+                    family="session"
+                    state={sessionState()}
+                    unconfirmed={unconfirmed()}
+                    lastSeen={Number.isFinite(lastSeen()) ? lastSeen() : undefined}
+                  />
+                </Show>
+                <Show when={s()!.projectId} keyed>
+                  {pid => (
                     <>
-                      <Button label="Previous hit" icon="arrow-up" iconOnly disabledReason={hit() <= 0 ? 'no earlier hit' : undefined} onClick={() => open(hs, hit() - 1)} />
-                      <Button label="Next hit" icon="arrow-down" iconOnly disabledReason={hit() >= hs.length - 1 ? 'no later hit' : undefined} onClick={() => open(hs, hit() + 1)} />
+                      <Show when={project()?.name}>{n => <span class="muted">{n()}</span>}</Show>
+                      <EntityCode code={str(rec(project()).code)} id={pid} kind="project" />
                     </>
                   )}
                 </Show>
-              </div>
-            </Show>
-            <Button label="Copy thread as markdown" icon="file-text" iconOnly disabledReason={off() ? 'offline' : undefined} onClick={() => copySel(all()!)} />
-            {/* Menu actions (design "Controls"): each calls the existing operation; the result shows as a new boundary in this thread. */}
-            <ActionMenu
-              label="Actions"
-              disabledReason={off() ? 'offline' : undefined}
-              items={[
-                { label: 'Rename', icon: 'type', onClick: () => setPanel('rename') },
-                {
-                  label: 'Retry last message',
-                  icon: 'rotate-ccw',
-                  disabledReason: lastMessage() || lastFiles().length ? undefined : 'no message yet',
-                  onClick: () => {
-                    const requestId = reqId(), msg = lastMessage(), fs = lastFiles();
-                    run(() => writeOnce('message_send', { sessionId: props.id, requestId, text: msg ?? '', ...(fs.length ? { attachments: fs } : {}) }, unknown, { signal: alive }));
-                  },
-                },
-                { label: 'Switch profile or model', icon: 'sliders-horizontal', onClick: () => setPanel({ session: s()!, handoff: false }) },
-                { label: 'Hand off to another agent', icon: 'bot', onClick: () => setPanel({ session: s()!, handoff: true }) },
-                { label: 'Fork', icon: 'git-merge', onClick: () => fork() },
-                { label: 'Start fresh with context', icon: 'git-merge', disabledReason: latest() ? undefined : 'Send a message first', onClick: () => setPanel('fresh') },
-              ]}
-            />
-          </header>
-          <Show when={panel() === 'rename'}>
-            <RenamePanel
-              sessionId={props.id}
-              current={s()!.title ?? ''}
-              onDone={() => setPanel(null)}
-              onSaved={() => { setFailure(null); sDoc.reload(); }}
-              run={run}
-              onUnknown={() => { setFailure({ text: 'Rename outcome unknown. Check the current title.' }); sDoc.reload(); }}
-            />
-          </Show>
-          <Show when={panel() === 'fresh'}>
-            <DetailSection title="Start fresh with context">
-              <InlineForm cls="stack" onSubmit={e => { e.preventDefault(); const text = nextInstruction().trim(); if (!off() && text) fork(text); }}>
-                <TextField label="Next instruction" value={nextInstruction()} multiline onChange={setNextInstruction} />
-                <div class="answers">
-                  <Button label="Start fresh" kind="primary" busy={forking()} disabledReason={off() ? 'offline' : nextInstruction().trim() ? undefined : 'Enter the next instruction'} onClick={() => fork(nextInstruction().trim())} />
-                  <Button label="Cancel" kind="quiet" onClick={() => setPanel(null)} />
-                </div>
-              </InlineForm>
-            </DetailSection>
-          </Show>
-          <Show when={switchPanel()} keyed>{action => (
-            <SwitchPanel
-              sessionId={action.session.sessionId}
-              handoff={action.handoff}
-              current={str(rec(action.session.agentConfig).id)}
-              onDone={note => { setPanel(null); if (note) setFailure(null); }}
-              run={run}
-            />
-          )}</Show>
-          <div class="state-line">
-            <Show when={sessionState() in states_.session}>
-              <StateBadge
-                family="session"
-                state={sessionState()}
-                unconfirmed={unconfirmed()}
-                lastSeen={Number.isFinite(lastSeen()) ? lastSeen() : undefined}
-              />
-            </Show>
-            <Show when={s()!.projectId} keyed>
-              {pid => (
-                <>
-                  <Show when={project()?.name}>{n => <span class="muted">{n()}</span>}</Show>
-                  <EntityCode code={str(rec(project()).code)} id={pid} kind="project" />
-                </>
-              )}
-            </Show>
-            <Show when={hasRelated()}>
-              <Button label="Related work" icon="folder-open" kind="quiet" pressed={inRelated()} onClick={toggleRelated} />
-            </Show>
-          </div>
-          <ScopedRollupBar rollup={s()!.resources} cost={s()!.cost} inlineDetails={false} />
-          <ForkDetails session={s()!} open={openConversation} />
-          <Show when={hasSwarm()}>
-            <TabBar
-              cls="detail-tabs"
-              label="Conversation views"
-              tabs={[
-                { id: 'transcript', label: 'Transcript' },
-                { id: 'swarm', label: 'Swarm', count: board.data!.summary.messagesTotal || board.data!.roster.length || undefined },
-              ]}
-              value={activeConvTab()}
-              onChange={nextTab => {
-                if (nextTab === 'swarm' && !untrack(inRelated)) reading = handle.current?.getAnchor() ?? null;
-                if (nextTab === 'swarm') setShowRelated(false);
-                setConvTab(nextTab);
-              }}
-            />
-          </Show>
-          <div class="status-line" role="status">
-            <Show
-              when={failure()}
-              keyed
-              fallback={
-                <Show when={targetDoc.error || targetSessionDoc.error} fallback={
-                  <Show when={thread.error}>
-                    {err => <ErrorBanner text={`Thread did not load: ${err()}`} onRetry={thread.newest} />}
-                  </Show>
-                }>
-                  {err => <ErrorBanner text={`Conversation target did not load: ${err()}`} onRetry={() => { targetDoc.reload(); targetSessionDoc.reload(); }} />}
+                <Show when={hasRelated()}>
+                  <Button label="Related work" icon="folder-open" kind="quiet" pressed={inRelated()} onClick={toggleRelated} />
                 </Show>
-              }
-            >
-              {f => <ErrorBanner text={f.text} onRetry={f.retry} />}
-            </Show>
-          </div>
-          <Show
-            when={activeConvTab() === 'swarm'}
-            fallback={
+              </div>
+              <ScopedRollupBar rollup={s()!.resources} cost={s()!.cost} inlineDetails={false} />
+              <ForkDetails session={s()!} open={openConversation} />
+              <div class="status-line" role="status">
+                <Show
+                  when={failure()}
+                  keyed
+                  fallback={
+                    <Show when={targetDoc.error || targetSessionDoc.error} fallback={
+                      <Show when={thread.error}>
+                        {err => <ErrorBanner text={`Thread did not load: ${err()}`} onRetry={thread.newest} />}
+                      </Show>
+                    }>
+                      {err => <ErrorBanner text={`Conversation target did not load: ${err()}`} onRetry={() => { targetDoc.reload(); targetSessionDoc.reload(); }} />}
+                    </Show>
+                  }
+                >
+                  {f => <ErrorBanner text={f.text} onRetry={f.retry} />}
+                </Show>
+              </div>
               <div class="pane" data-related-work={String(inRelated())}>
                 <DropZone onFiles={files.add} disabledReason={composerReason()}>
                   <Show when={!!thread.win} fallback={<Skeleton rows={6} />}>
@@ -711,14 +711,11 @@ function Conversation(props: { id: string; onClose: () => void }) {
                   />
                 </DropZone>
               </div>
-            }
-          >
-            <div class="pane" role="tabpanel" aria-label="Swarm">
-              <section class="related-work" aria-label="Swarm" tabindex={0}>
-                <SwarmPanel scopeKind="session" scopeId={props.id} board={board} />
-              </section>
             </div>
-          </Show>
+            <Show when={contextOpen()}>
+              <ConversationContext id={contextId} session={s()!} onClose={closeContext} />
+            </Show>
+          </div>
         </article>
       }
     >
