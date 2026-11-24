@@ -306,9 +306,11 @@ The full fallback merge-gate command is `pnpm install --frozen-lockfile && pnpm 
 
 CI records an exact-candidate impact plan from `scripts/test-selection.ts`. The core runs contract lint, test metadata/self-checks, selector fixtures and documentation checks; candidates that execute app tests also run the pure view-URL check. Required `go`, `app` and `browser` statuses validate the plan and actual results before release.
 
-After successful exact-base CI, prose uses the core; app/src and packages/ui use app and all browser checks; executor, gateway and updater changes use go; the merge queue's release build, which the app status of a merge group requires, keeps the clean native archive builds/selftests for every candidate.
+After successful exact-base CI, prose uses the core; app/src and packages/ui use app and browser checks; executor, gateway, updater, obs and Go test-only edits use go; the merge queue's release build keeps native archive builds, selftests and migration checks.
 
-Coordinator, shared Go/runtime/contracts/config, new tests, selector changes and unknown history, impact, paths or comparisons run the full fallback. Mixed known changes use their union. Nonempty `FLEET_TEST_FULL` restores full execution.
+Non-test coordinator changes, shared Go/runtime/contracts/config, new tests, selector changes and unknown history, impact, paths or comparisons run the full fallback. Mixed known changes use their union. Nonempty `FLEET_TEST_FULL` restores full execution.
+
+Pull requests execute their selected families directly before entering the queue. Merge-queue runs enable matrix fail-fast and abort sibling heavy jobs as soon as any required family fails.
 
 [Selected-gate qualification](docs/designs/fleet-delivery-pipeline.md#selected-gate-qualification) defines the narrow rollout and rollback. Native archives, migrations, provenance and signing remain checked before publication.
 

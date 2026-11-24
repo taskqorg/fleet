@@ -59,6 +59,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
+      actions: read
     services:
       clickhouse:
         # An empty image skips the service. The host port is chosen per job: the pool's runners share one guest.
