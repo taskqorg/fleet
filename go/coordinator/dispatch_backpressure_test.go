@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,17 +186,17 @@ func TestDispatchHostLoadBackpressureAndRecovery(t *testing.T) {
 
 	// 4. Memory pressure (< 5% free) via host.heartbeat span also blocks launches until memory recovers.
 	hbSpan, _ := json.Marshal(obs.Span{
-		TraceID:   "0123456789abcdef0123456789abcdef",
-		SpanID:    "0123456789abcdef",
-		Service:   "executor",
-		HostID:    mac,
-		Name:      "host.heartbeat",
-		Kind:      obs.KindCheck,
-		Start:     time.Now().UTC().Format(obs.TimeFormat),
-		Outcome:   obs.OK,
-		Load1:     ptr(1.0),
-		MemFree:   ptr(100.0),
-		Attrs:     map[string]string{"fleet.cpus": "8", "fleet.mem_total": "10000"},
+		TraceID: "0123456789abcdef0123456789abcdef",
+		SpanID:  "0123456789abcdef",
+		Service: "executor",
+		HostID:  mac,
+		Name:    "host.heartbeat",
+		Kind:    obs.KindCheck,
+		Start:   time.Now().UTC().Format(obs.TimeFormat),
+		Outcome: obs.OK,
+		Load1:   ptr(1.0),
+		MemFree: ptr(100.0),
+		Attrs:   map[string]string{"fleet.cpus": "8", "fleet.mem_total": "10000"},
 	})
 	code, spanBody := env.callJSON(t, "POST", "/api/hosts/spans", contract.SpanBatchRequest{
 		BatchId: "bp-mem-span-1",
@@ -372,22 +373,46 @@ func TestDispatchSkipsHostDrainingForUpdate(t *testing.T) {
 		t.Fatalf("updated host commands = %v, want start of %s", cmds, eid2)
 	}
 
-	// A continuation of a session that ran on the host waits for that host's next update instead of moving: its native
-	// session and worktree live there.
+	// A continuation of a session that ran on the host waits, unplaced, for that host's update: its native session and
+	// worktree live there. Past continuationHostWait it moves, with no native id and the earlier turns handed over.
 	macHdr := map[string]string{"Authorization": "Bearer " + macSecret}
+	native := "01a20ebe-42f4-7f01-ac08-a0dc70233565"
 	for _, st := range []contract.ReceiptStatus{contract.ReceiptStatusStarted, contract.ReceiptStatusCompleted} {
-		if code, body := env.callJSON(t, "POST", "/api/hosts/receipts", contract.Receipt{HostId: mac, CommandId: astr(cmds[0]["id"]), ExecutionId: eid2, Status: st}, macHdr); code != 200 {
+		if code, body := env.callJSON(t, "POST", "/api/hosts/receipts", contract.Receipt{HostId: mac, CommandId: astr(cmds[0]["id"]), ExecutionId: eid2, Status: st, NativeSessionId: &native}, macHdr); code != 200 {
 			t.Fatalf("receipt %s = %d %v", st, code, body)
 		}
 	}
 	poll(mac, macSecret, "1.261124.43", &contract.UpdateResult{At: "2026-11-24T19:30:00Z", State: contract.UpdateStatePending, Version: "1.261124.53", Error: ptr("executor work is draining")})
+	poll(pds, pdsSecret, "1.261124.53", &contract.UpdateResult{At: "2026-11-24T19:30:00Z", State: contract.UpdateStateOk, Version: "1.261124.53"})
+	// The session was started pinned to upd-mac; unpinned, only the wait keeps its continuation there.
+	runTestPSQL(t, env.binDir, env.sockDir, env.pgPort, env.dbName, "postgres", `UPDATE session SET host_id=NULL WHERE id='`+sid2+`'`)
 	code, msg := env.callJSON(t, "POST", "/api/ops/message_send", doc{"sessionId": sid2, "requestId": "req-upd-3", "text": "continue"}, env.ownerHeaders())
 	if code != 200 {
 		t.Fatalf("message_send = %d %v", code, msg)
 	}
+	eid3 := astr(msg["id"])
 	_ = env.app.waitDispatchCaughtUp(env.ctx, env.app.triggerDispatch())
-	if ex := dispatchTestExecution(t, env, sid2, astr(msg["id"])); ex["hostId"] != mac {
-		t.Fatalf("continuation placed on %v, want its own host %s", ex["hostId"], mac)
+	if ex := dispatchTestExecution(t, env, sid2, eid3); ex["hostId"] != nil || !strings.Contains(astr(ex["waitDetail"]), "upd-mac") {
+		t.Fatalf("continuation = hostId %v waitDetail %v, want unplaced waiting for upd-mac", ex["hostId"], ex["waitDetail"])
+	}
+	runTestPSQL(t, env.binDir, env.sockDir, env.pgPort, env.dbName, "postgres",
+		`UPDATE execution SET data=jsonb_set(data,'{createdAt}',to_jsonb((extract(epoch from now())*1000 - 16*60*1000)::bigint)) WHERE id='`+eid3+`'`)
+	_ = env.app.waitDispatchCaughtUp(env.ctx, env.app.triggerDispatch())
+	moved := poll(pds, pdsSecret, "1.261124.53", &contract.UpdateResult{At: "2026-11-24T19:46:00Z", State: contract.UpdateStateOk, Version: "1.261124.53"})
+	var payload map[string]any
+	for _, c := range moved {
+		if c["executionId"] == eid3 {
+			payload = mapOf(c["payload"])
+		}
+	}
+	if payload == nil {
+		t.Fatalf("after the wait the continuation did not move to %s: %v", pds, moved)
+	}
+	if n, _ := payload["nativeSessionId"].(string); n != "" {
+		t.Fatalf("moved run resumes native %q from another host", n)
+	}
+	if !strings.Contains(fmt.Sprint(payload), "Fleet context handoff (host_move)") {
+		t.Fatalf("moved run has no context handoff: %v", payload)
 	}
 }
 
