@@ -75,7 +75,11 @@ func formatBotInstructions(base string, bc *botExecutionContext) string {
 	if s := strings.TrimSpace(base); s != "" {
 		parts = append(parts, s)
 	}
-	header := fmt.Sprintf("Bot %s (settings rev %d, memory rev %d, project %s)", bc.Name, bc.BotRevision, bc.MemoryRevision, bc.ProjectID)
+	header := fmt.Sprintf("Bot %s (id %s, settings rev %d, memory rev %d, project %s", bc.Name, bc.BotID, bc.BotRevision, bc.MemoryRevision, bc.ProjectID)
+	if bc.BotRunID != "" {
+		header += fmt.Sprintf(", run %s", bc.BotRunID)
+	}
+	header += ")"
 	if strings.TrimSpace(bc.Purpose) != "" {
 		header += ": " + strings.TrimSpace(bc.Purpose)
 	}

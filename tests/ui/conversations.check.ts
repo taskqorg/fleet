@@ -13,6 +13,7 @@ import { checkProjectEditor } from './project-editor.check.ts';
 import { checkQuestionReplies } from './question-replies.check.ts';
 import { checkTaskStory } from './task-story.check.ts';
 import { checkDeliveryAvailability, checkDeliveryList } from './delivery-availability.check.ts';
+import { checkBots } from './bots.check.ts';
 import { checkSpotlight } from './spotlight.check.ts';
 import { checkEntityCard } from './entity-card.check.ts';
 import { checkShellHeader } from './shell-header.check.ts';
@@ -376,6 +377,7 @@ try {
   await checkDeliveryAvailability(b, origin);
   await checkDeliveryList(b, origin);
   await checkQuestionReplies(b, origin);
+  await checkBots(b, origin, seed);
 } finally { await b.close(); await close(); }
 
 console.log('\nTimings (reported, not asserted):'); for (const l of timings) console.log('  ' + l);

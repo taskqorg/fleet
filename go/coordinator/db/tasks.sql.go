@@ -1364,6 +1364,7 @@ WHERE ($1::text IS NULL OR id = $1)
  AND ($3::text IS NULL
   OR session_id = (SELECT b.home_session_id FROM bot b WHERE b.id = $3 AND b.tombstoned_at IS NULL)
   OR execution_id IN (SELECT e.id FROM execution e WHERE e.bot_id = $3)
+  OR EXISTS (SELECT 1 FROM execution e WHERE e.bot_id = $3 AND question.asked_by = 'execution:' || e.id)
   OR task_id IN (SELECT bt.task_id FROM bot_task bt WHERE bt.bot_id = $3 AND bt.tombstoned_at IS NULL))
  AND ($4::text IS NULL OR state::text = $4)
  AND ($5::text IS NULL OR kind::text = $5)
