@@ -44,7 +44,7 @@ async function close() {
         await bounded(new Promise((resolve,reject)=>{child.once('exit',resolve);child.once('error',()=>reject(Error('browser-close-failed')));child.kill('SIGTERM');}));
       }catch {failed=true;}
     }
-    if(directory)fs.rmSync(directory,{recursive:true,force:true});
+    if(directory)await fs.promises.rm(directory,{recursive:true,force:true,maxRetries:20,retryDelay:100});
     if(failed)throw Error('browser-close-failed');
   })();
   try {await closing;}finally{closing=undefined;}
