@@ -1535,6 +1535,8 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	if sess.PendingHandoffID == "" {
 		liveSession.PendingHandoffID = ""
 		delete(liveSession.rest, "pendingHandoffId")
+	} else {
+		liveSession.PendingHandoffID = sess.PendingHandoffID // a handoff made here (host_move) and not delivered stays linked
 	}
 	if granted := jsonStrings(prof.Connections); len(granted) > 0 && e.PipelineRunID == nil {
 		minted, err := mintGrantFor(q, mintRun{ExecutionID: &e.ID, DirectedBy: e.DirectedBy, ProjectID: d.ProjectID,

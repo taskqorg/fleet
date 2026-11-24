@@ -411,7 +411,7 @@ func TestDispatchSkipsHostDrainingForUpdate(t *testing.T) {
 	if n, _ := payload["nativeSessionId"].(string); n != "" {
 		t.Fatalf("moved run resumes native %q from another host", n)
 	}
-	if !strings.Contains(fmt.Sprint(payload), "Fleet context handoff (host_move)") {
+	if s := fmt.Sprint(payload); !strings.Contains(s, "Fleet context handoff (host_move)") || !strings.Contains(s, "local commits are not here") {
 		t.Fatalf("moved run has no context handoff: %v", payload)
 	}
 }
