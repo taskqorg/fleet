@@ -242,6 +242,11 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     const focused = await url();
     rule(N, /^\/projects\/(?:[^/]+\/)?tasks\/T-/.test(focused), `an opened task is not under its project's Tasks facet: ${focused}`);
     rule(N, new URL(origin + focused).searchParams.get('sel') === new URL(origin + beforeFocus).searchParams.get('sel'), 'focus changed sel');
+    // A copied task link opens the same task in its facet.
+    const taskTab = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await taskTab.goto(origin + focused); await taskTab.waitForSelector('[data-ui=detail] .detail-title');
+    rule(N, await taskTab.evaluate(() => location.pathname + location.search) === focused, 'a copied task link did not reopen the task');
+    await taskTab.close();
     await page.goBack(); await page.waitForSelector('.pw-facet [data-ui=data-list] .vl-row .row-link');
     await page.locator('[data-ui=group-control] button').first().click();
     await page.locator('[data-ui=group-control] [role=menuitemradio]', { hasText: 'Project' }).click(); await page.waitForURL(u => !u.search.includes('group=state'));
