@@ -316,6 +316,11 @@ func executionRawOf(r db.Execution) (rawObject, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Routing uses the execution columns even when the retained payload omits or predates them.
+	out["id"] = jsonBytes(r.ID)
+	out["sessionId"] = jsonBytes(r.SessionID)
+	out["projectId"] = jsonBytes(r.ProjectID)
+	out["hostId"] = jsonBytes(r.HostID)
 	out["state"] = jsonBytes(string(r.State))
 	out["observation"] = jsonBytes(string(r.Observation))
 	if r.LastSeenAt != nil {
