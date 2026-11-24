@@ -195,6 +195,20 @@ CREATE TABLE bot_run (
   "payload" jsonb NOT NULL,
   "seq" bigint NOT NULL
 );
+CREATE TABLE bot_task (
+  "bot_id" text NOT NULL,
+  "task_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "bot_run_id" text,
+  "session_id" text,
+  "execution_id" text,
+  "link_kind" text NOT NULL,
+  "created_by" text NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone,
+  "seq" bigint NOT NULL
+);
 CREATE TABLE bot_wake_cursor (
   "bot_id" text NOT NULL,
   "project_id" text NOT NULL,

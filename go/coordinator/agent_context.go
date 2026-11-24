@@ -171,7 +171,7 @@ func sessionResume(q *Request, sid string) (contract.SessionResumeReply, error) 
 		to   *json.RawMessage
 		from json.RawMessage
 		zero string
-	}{{&rep.Account, s.Account, "null"}, {&rep.NativeSessions, s.NativeSessions, "{}"}, {&rep.ForkOf, s.ForkOf, "null"}} {
+	}{{&rep.Account, s.Account, "null"}, {&rep.NativeSessions, filterNativeSessionsByAccess(q, s.NativeSessions), "{}"}, {&rep.ForkOf, s.ForkOf, "null"}} {
 		if *f.to = json.RawMessage(f.zero); len(f.from) > 0 && string(f.from) != "null" {
 			if *f.to, err = sortedJSON(f.from); err != nil {
 				return none, err
@@ -179,6 +179,25 @@ func sessionResume(q *Request, sid string) (contract.SessionResumeReply, error) 
 		}
 	}
 	return rep, nil
+}
+
+func filterNativeSessionsByAccess(q *Request, raw json.RawMessage) json.RawMessage {
+	if q == nil || q.person == nil || fullAccess(q.person) || len(raw) == 0 || string(raw) == "null" {
+		return raw
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil || len(m) == 0 {
+		return raw
+	}
+	filtered := map[string]json.RawMessage{}
+	for k, v := range m {
+		parts := strings.SplitN(k, ":", 5)
+		if len(parts) >= 3 && parts[2] != "" && !mayAccessProjectID(q.person, parts[2]) {
+			continue
+		}
+		filtered[k] = v
+	}
+	return jsonBytes(filtered)
 }
 
 // agentTurn: one retained turn of a session (transcript), the context a handoff carries.
@@ -190,6 +209,16 @@ type agentTurn struct {
 
 // transcript: retained turns of a session as untrusted context.
 func transcript(q *Request, sid string) ([]agentTurn, error) {
+	return transcriptScoped(q, sid, nil)
+}
+
+// transcriptForProject: retained turns of a session scoped to a single execution project so bot handoffs never leak
+// cross-project transcript context.
+func transcriptForProject(q *Request, sid, projectID string) ([]agentTurn, error) {
+	return transcriptScoped(q, sid, &projectID)
+}
+
+func transcriptScoped(q *Request, sid string, projectID *string) ([]agentTurn, error) {
 	es, err := agentExecutions(q, sid)
 	if err != nil {
 		return nil, err
@@ -204,6 +233,9 @@ func transcript(q *Request, sid string) ([]agentTurn, error) {
 	}
 	out := []agentTurn{}
 	for _, e := range es {
+		if projectID != nil && firstString(e.ProjectID, e.dispatchProject()) != *projectID {
+			continue
+		}
 		user := ""
 		for _, m := range msgs {
 			if m.ExecutionID == e.ID {
@@ -405,6 +437,9 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 	if hasAcct {
 		next.Account = acct
 	}
+	if b.WorkingDirectory != nil && *b.WorkingDirectory != next.WorkingDirectory {
+		next.WorkingDirectory = *b.WorkingDirectory
+	}
 	toKey := next.continuationKey()
 	typ := "create_with_handoff"
 	if s.NativeSessionID != "" {
@@ -421,7 +456,13 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 	}
 	var h *agentHandoff
 	if typ == "create_with_handoff" {
-		turns, err := transcript(q, sid)
+		var turns []agentTurn
+		var err error
+		if s.BotID != "" {
+			turns, err = transcriptForProject(q, sid, next.ProjectID)
+		} else {
+			turns, err = transcript(q, sid)
+		}
 		if err != nil {
 			return none, err
 		}
@@ -868,6 +909,22 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 	}
 	if err := sessionPut(q, &s); err != nil {
 		return none, err
+	}
+	if taskID != "" && s.CreatedBySessionID != "" {
+		if callerSess, err := sessionMaybe(q, s.CreatedBySessionID); err != nil {
+			return none, err
+		} else if callerSess != nil && callerSess.BotID != "" && callerSess.ProjectID == pid {
+			var botRunID *string
+			if s.CreatedByExecutionID != "" {
+				var err error
+				if botRunID, err = botRunIDForExecution(q, &s.CreatedByExecutionID); err != nil {
+					return none, err
+				}
+			}
+			if err := linkBotTask(q, callerSess.BotID, taskID, pid, "continued", actor(q, directedBy), botRunID, &callerSess.ID, strPtr(s.CreatedByExecutionID)); err != nil {
+				return none, err
+			}
+		}
 	}
 	out := contract.SessionStartReply{SessionId: s.ID, ProjectId: agentNullText(pid), TaskId: agentNullText(taskID), Role: agentNullText(role), ProfileId: agentNullText(agentView[agentProfile](profile).ID),
 		Account: agentNullText(account), Preset: agentNullText(presetID), Access: jsonBytes(access), Branch: jsonBytes(branch), ExecutionId: json.RawMessage("null"), HostId: json.RawMessage("null")}

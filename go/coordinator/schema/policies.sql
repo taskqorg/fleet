@@ -91,6 +91,13 @@ CREATE POLICY live ON bot_run AS RESTRICTIVE FOR SELECT TO public USING ((fleet_
 DROP POLICY IF EXISTS project_scope ON bot_run;
 CREATE POLICY project_scope ON bot_run FOR ALL TO public USING (fleet_visible(project_id));
 
+-- bot_task
+ALTER TABLE bot_task ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON bot_task;
+CREATE POLICY live ON bot_task AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND (NOT (project_id = ANY (fleet_deleted_projects()))))));
+DROP POLICY IF EXISTS project_scope ON bot_task;
+CREATE POLICY project_scope ON bot_task FOR ALL TO public USING (fleet_visible(project_id));
+
 -- bot_wake_cursor
 ALTER TABLE bot_wake_cursor ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS project_scope ON bot_wake_cursor;

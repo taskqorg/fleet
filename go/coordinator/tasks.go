@@ -1025,6 +1025,7 @@ func projectIn(c []string, p []any, ids []string) ([]string, []any) {
 // newTask: task_create's fields; CreatedBy "execution:<id>" also records that execution and its session.
 type newTask struct {
 	ProjectID, ExpectedOutcome, Priority, ResultDestination *string
+	BotID, BotRunID                                         *string
 	Title, CreatedBy, DirectedBy                            string
 	CompletionRequirements                                  json.RawMessage
 	DependsOn                                               []string
@@ -1048,14 +1049,6 @@ func createTask(q *Request, v newTask) (string, error) {
 	if len(cr) == 0 || string(cr) == "null" {
 		cr = []byte("{}")
 	}
-	if pid := deref(v.ProjectID); pid != "" {
-		if retired, err := projectRetired(q, pid); err != nil || retired {
-			if err == nil {
-				err = fail(404, "Unknown project")
-			}
-			return "", err
-		}
-	}
 	var createdByExec, createdBySess *string
 	if eid, ok := strings.CutPrefix(v.CreatedBy, "execution:"); ok && eid != "" {
 		createdByExec = &eid
@@ -1071,6 +1064,80 @@ func createTask(q *Request, v newTask) (string, error) {
 		}
 		createdBySess = strPtr(sid)
 	}
+	var resolvedBotID, linkKind string
+	var linkRunID, linkSessionID, linkExecID *string
+	if deref(v.BotID) != "" {
+		b, err := readBotFull(q, *v.BotID)
+		if err != nil {
+			return "", err
+		}
+		if q.agent != "" {
+			if err := botAuthorityCheck(q, &b); err != nil {
+				return "", err
+			}
+		}
+		if deref(v.ProjectID) == "" {
+			v.ProjectID = &b.ProjectId
+		} else if *v.ProjectID != b.ProjectId {
+			return "", fail(400, "Task project does not match bot project")
+		}
+		resolvedBotID = b.Id
+		linkKind = string(contract.BotTaskLinkKindManaged)
+		linkSessionID = b.HomeSessionId
+		if deref(v.BotRunID) != "" {
+			run, err := q.db().BotRunGet(q.ctx(), *v.BotRunID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", errNotFound
+			}
+			if err != nil {
+				return "", err
+			}
+			if run.BotID != b.Id {
+				return "", fail(400, "Bot run does not belong to bot")
+			}
+			linkRunID = v.BotRunID
+			if run.SessionID != nil {
+				linkSessionID = run.SessionID
+			}
+			linkExecID = run.ExecutionID
+		} else if createdByExec != nil {
+			if s, err := sessionMaybe(q, deref(createdBySess)); err != nil {
+				return "", err
+			} else if s != nil && s.BotID == b.Id {
+				linkKind = string(contract.BotTaskLinkKindCreated)
+				linkSessionID = &s.ID
+				linkExecID = createdByExec
+				if linkRunID, err = botRunIDForExecution(q, createdByExec); err != nil {
+					return "", err
+				}
+			}
+		}
+	} else if createdBySess != nil && *createdBySess != "" {
+		if s, err := sessionMaybe(q, *createdBySess); err != nil {
+			return "", err
+		} else if s != nil && s.BotID != "" {
+			if deref(v.ProjectID) == "" && s.ProjectID != "" {
+				v.ProjectID = &s.ProjectID
+			}
+			if deref(v.ProjectID) == s.ProjectID {
+				resolvedBotID = s.BotID
+				linkKind = string(contract.BotTaskLinkKindCreated)
+				linkSessionID = &s.ID
+				linkExecID = createdByExec
+				if linkRunID, err = botRunIDForExecution(q, createdByExec); err != nil {
+					return "", err
+				}
+			}
+		}
+	}
+	if pid := deref(v.ProjectID); pid != "" {
+		if retired, err := projectRetired(q, pid); err != nil || retired {
+			if err == nil {
+				err = fail(404, "Unknown project")
+			}
+			return "", err
+		}
+	}
 	if err := q.db().TaskInsert(q.ctx(), db.TaskInsertParams{ID: id, ProjectID: v.ProjectID, Title: v.Title, ExpectedOutcome: v.ExpectedOutcome, CompletionRequirements: cr,
 		ResultDestination: v.ResultDestination, CreatedBy: strPtr(v.CreatedBy), CreatedByExecutionID: createdByExec, CreatedBySessionID: createdBySess, Held: v.Held,
 		DirectedBy: strPtr(v.DirectedBy), Priority: priority}); err != nil {
@@ -1078,6 +1145,11 @@ func createTask(q *Request, v newTask) (string, error) {
 	}
 	for _, d := range v.DependsOn {
 		if err := q.db().TaskDependencyAdd(q.ctx(), db.TaskDependencyAddParams{TaskID: id, DependsOn: d, ProjectID: v.ProjectID}); err != nil {
+			return "", err
+		}
+	}
+	if resolvedBotID != "" {
+		if err := linkBotTask(q, resolvedBotID, id, deref(v.ProjectID), linkKind, v.CreatedBy, linkRunID, linkSessionID, linkExecID); err != nil {
 			return "", err
 		}
 	}
@@ -1276,7 +1348,16 @@ func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
 		d.Dependencies = append(d.Dependencies, contract.TaskDependency{Id: x.ID, Kind: x.Kind, Code: x.Code})
 	}
 	d.Questions, err = questionsList(q, id, "", "", nil, nil, nil)
-	return d, err
+	if err != nil {
+		return none, err
+	}
+	if bl, err := q.db().BotTaskGetByTask(q.ctx(), id); err == nil {
+		link := botTaskLinkToContract(bl.BotID, bl.BotName, bl.TaskID, bl.ProjectID, bl.BotRunID, bl.SessionID, bl.ExecutionID, bl.LinkKind, bl.CreatedBy, bl.CreatedAt)
+		d.BotLink = &link
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return none, err
+	}
+	return d, nil
 }
 
 func likePattern(s string) string {
@@ -1488,7 +1569,7 @@ func init() {
 			}
 			deps = append(deps, d)
 		}
-		id, err := createTask(q, newTask{ProjectID: strPtr(r.ProjectId), Title: r.Title, ExpectedOutcome: r.ExpectedOutcome, Priority: r.Priority,
+		id, err := createTask(q, newTask{ProjectID: strPtr(r.ProjectId), BotID: strPtr(r.BotId), BotRunID: strPtr(r.BotRunId), Title: r.Title, ExpectedOutcome: r.ExpectedOutcome, Priority: r.Priority,
 			CompletionRequirements: r.CompletionRequirements, ResultDestination: r.ResultDestination, CreatedBy: actor(q, "operator"), DirectedBy: director(q),
 			DependsOn: deps, Held: q.agent != "" || (r.Held != nil && *r.Held)})
 		if err != nil {

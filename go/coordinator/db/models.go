@@ -587,6 +587,21 @@ type BotRun struct {
 	Seq             int64
 }
 
+type BotTask struct {
+	BotID        string
+	TaskID       string
+	ProjectID    string
+	BotRunID     *string
+	SessionID    *string
+	ExecutionID  *string
+	LinkKind     string
+	CreatedBy    string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+	Seq          int64
+}
+
 type BotWakeCursor struct {
 	BotID             string
 	ProjectID         string

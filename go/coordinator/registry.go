@@ -347,6 +347,11 @@ func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler
 		out, err = h(q)
 	} else if err == nil {
 		run := func(q *Request) error {
+			if q.person != nil {
+				if err := refreshRequestAccess(q); err != nil {
+					return err
+				}
+			}
 			var err error
 			out, err = h(q)
 			return err

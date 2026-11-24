@@ -187,6 +187,9 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 			e.DirectedBy = b.Director
 		}
 	}
+	if s.BotID != "" {
+		e.TaskID = ""
+	}
 	if err := executionPut(q, &e); err != nil {
 		return none, err
 	}
@@ -666,19 +669,35 @@ func agentDecorateStart(q *Request, s *agentSession, e *agentExecution, payload 
 		if err != nil {
 			return err
 		}
-		text := h.Text + "\n\nCurrent request:\n" + deref(payload.Text)
-		payload.Text = &text
-		h.State, h.ExecutionID = "sent", e.ID
-		if err := handoffPut(q, &h); err != nil {
-			return err
+		execProject := deref(payload.ProjectId)
+		if (s.BotID != "" || e.BotContext != nil) && execProject != "" && deref(h.ProjectID) != execProject {
+			h.State = "superseded"
+			if err := handoffPut(q, &h); err != nil {
+				return err
+			}
+			fresh, err := sessionByID(q, s.ID)
+			if err != nil {
+				return err
+			}
+			fresh.PendingHandoffID, s.PendingHandoffID = "", ""
+			if err := sessionPut(q, &fresh); err != nil {
+				return err
+			}
+		} else {
+			text := h.Text + "\n\nCurrent request:\n" + deref(payload.Text)
+			payload.Text = &text
+			h.State, h.ExecutionID = "sent", e.ID
+			if err := handoffPut(q, &h); err != nil {
+				return err
+			}
+			e.HandoffID = h.ID
+			fresh, err := sessionByID(q, s.ID)
+			if err != nil {
+				return err
+			}
+			fresh.PendingHandoffID, s.PendingHandoffID = "", ""
+			return sessionPut(q, &fresh)
 		}
-		e.HandoffID = h.ID
-		fresh, err := sessionByID(q, s.ID)
-		if err != nil {
-			return err
-		}
-		fresh.PendingHandoffID, s.PendingHandoffID = "", ""
-		return sessionPut(q, &fresh)
 	}
 	return nil
 }

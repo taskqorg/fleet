@@ -253,8 +253,83 @@ WHERE project_id = @project_id::text
 ORDER BY seq;
 
 -- name: BotLastSessionDispatch :one
-SELECT id, host_id, coalesce(data->'effectiveAccount'->>'binding', '')::text AS account_binding
+SELECT id,
+       coalesce(project_id, data->'dispatch'->>'projectId', '')::text AS project_id,
+       coalesce(host_id, '')::text AS host_id,
+       coalesce(harness, data->'dispatch'->>'harness', '')::text AS harness,
+       coalesce(profile_id, data->'agentConfig'->>'id', '')::text AS profile_id,
+       coalesce(data->'dispatch'->>'workspaceKey', '')::text AS workspace_key,
+       coalesce(data->'dispatch'->>'workingDirectory', data->'workspaceSnapshot'->>'workingDirectory', '')::text AS working_directory,
+       coalesce(data->'workspaceSnapshot'->'project', '{}'::jsonb)::jsonb AS workspace_project,
+       coalesce(data->'effectiveAccount'->>'binding', '')::text AS account_binding
 FROM execution
-WHERE session_id = $1 AND id <> $2 AND tombstoned_at IS NULL AND kind = 'agent_run'
+WHERE session_id = $1 AND id <> $2 AND tombstoned_at IS NULL AND kind = 'agent_run' AND host_id IS NOT NULL
 ORDER BY seq DESC
 LIMIT 1;
+
+-- name: BotRunIDByExecution :one
+SELECT id
+FROM bot_run
+WHERE execution_id = $1 AND tombstoned_at IS NULL
+LIMIT 1;
+
+-- name: BotTaskUpsert :exec
+INSERT INTO bot_task(bot_id, task_id, project_id, bot_run_id, session_id, execution_id, link_kind, created_by)
+VALUES ($1, $2, $3, sqlc.narg(bot_run_id), sqlc.narg(session_id), sqlc.narg(execution_id), $4, $5)
+ON CONFLICT (bot_id, task_id) DO UPDATE SET
+  project_id = excluded.project_id,
+  bot_run_id = coalesce(excluded.bot_run_id, bot_task.bot_run_id),
+  session_id = coalesce(excluded.session_id, bot_task.session_id),
+  execution_id = coalesce(excluded.execution_id, bot_task.execution_id),
+  link_kind = CASE WHEN bot_task.tombstoned_at IS NULL AND bot_task.link_kind = 'created' THEN bot_task.link_kind ELSE excluded.link_kind END,
+  tombstoned_at = NULL,
+  updated_at = now();
+
+-- name: BotTaskGetByTask :one
+SELECT bt.bot_id, br.name AS bot_name, bt.task_id, bt.project_id, bt.bot_run_id, bt.session_id, bt.execution_id,
+       bt.link_kind, bt.created_by, bt.created_at
+FROM bot_task bt
+JOIN bot b ON b.id = bt.bot_id AND b.tombstoned_at IS NULL
+JOIN bot_revision br ON br.bot_id = b.id AND br.revision = b.revision
+WHERE bt.task_id = $1 AND bt.tombstoned_at IS NULL
+ORDER BY bt.seq DESC
+LIMIT 1;
+
+-- name: BotTaskGet :one
+SELECT bt.bot_id, br.name AS bot_name, bt.task_id, bt.project_id, bt.bot_run_id, bt.session_id, bt.execution_id,
+       bt.link_kind, bt.created_by, bt.created_at, bt.seq,
+       t.code AS task_code, t.title,
+       t.state::text AS state, t.wait_reason, t.pause_reason, t.priority,
+       t.accepted_at, t.accepted_by, t.updated_at,
+       v.open_questions, v.execution_count, v.executions_by_state
+FROM bot_task bt
+JOIN bot b ON b.id = bt.bot_id AND b.tombstoned_at IS NULL
+JOIN bot_revision br ON br.bot_id = b.id AND br.revision = b.revision
+JOIN task t ON t.id = bt.task_id AND t.tombstoned_at IS NULL
+JOIN task_view v ON v.task_id = t.id
+WHERE bt.bot_id = $1 AND bt.task_id = $2 AND bt.tombstoned_at IS NULL;
+
+-- name: BotTasksList :many
+SELECT bt.bot_id, br.name AS bot_name, bt.task_id, bt.project_id, bt.bot_run_id, bt.session_id, bt.execution_id,
+       bt.link_kind, bt.created_by, bt.created_at, bt.seq,
+       t.code AS task_code, t.title,
+       t.state::text AS state, t.wait_reason, t.pause_reason, t.priority,
+       t.accepted_at, t.accepted_by, t.updated_at,
+       v.open_questions, v.execution_count, v.executions_by_state
+FROM bot_task bt
+JOIN bot b ON b.id = bt.bot_id AND b.tombstoned_at IS NULL
+JOIN bot_revision br ON br.bot_id = b.id AND br.revision = b.revision
+JOIN task t ON t.id = bt.task_id AND t.tombstoned_at IS NULL
+JOIN task_view v ON v.task_id = t.id
+WHERE bt.bot_id = @bot_id::text
+  AND bt.tombstoned_at IS NULL
+  AND (sqlc.narg(state)::text IS NULL OR (CASE WHEN t.state = 'paused' AND t.pause_reason = 'held' THEN 'held' ELSE t.state::text END) = sqlc.narg(state))
+  AND (sqlc.narg(after_seq)::bigint IS NULL OR (bt.seq, bt.task_id) < (sqlc.narg(after_seq)::bigint, sqlc.narg(after_task_id)::text))
+ORDER BY bt.seq DESC, bt.task_id DESC
+LIMIT sqlc.arg(lim)::int;
+
+-- name: BotTasksByRunIDs :many
+SELECT bot_run_id, task_id
+FROM bot_task
+WHERE bot_run_id = ANY(@run_ids::text[]) AND tombstoned_at IS NULL
+ORDER BY seq;
