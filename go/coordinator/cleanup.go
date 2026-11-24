@@ -96,6 +96,7 @@ var referenceMap = []objectRef{
 	{table: "run_token", column: "project_id", kind: "project", mode: refOwn},
 	{table: "person_setting", column: "id", mode: refNone},
 	{table: "person_setting", column: "project_id", kind: "project", mode: refOwn},
+	{table: "personal_lab_draft", column: "id", mode: refNone}, // private draft identity, owned by its author
 	// Conversations (migration 77). A session working for a task outlives it (session and task lifecycles are separate):
 	// the reference goes stale. A session's transcript (messages, queued messages, transitions, handoffs) belongs to the
 	// session: a task's runs in a live session leave its turns in place; events and commands go with their execution too.
@@ -346,6 +347,7 @@ var tombstoned = append([]string{"execution", "task", "experiment", "question", 
 	"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done",
 	"host", "host_observation", "watch", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
 	"connection_key", "run_token", "person_setting", "upload", "problem_dismissal", "project_recommendation", "transport_conflict", "bot", "bot_run", "bot_task", "work_plan", "board_message"}, deliveryTables...)
+
 // keptRows: rows of a table that neither go with an object nor keep one. None now: the audit records that outlive what
 // they describe (the journal of M0) have their own tables without a refOwn column (migration 82).
 var keptRows = map[string]string{}
