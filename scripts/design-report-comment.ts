@@ -49,15 +49,19 @@ export function appNotRun(report: string): string | undefined {
 
 // GitHub caps a comment at 65536 characters; each block keeps well under a quarter of that.
 const clip = (t: string, max = 14000) => t.length <= max ? t : t.slice(0, max).replace(/\n[^\n]*$/, '') + '\n… (full report in the design-report artifact)';
-const block = (t: string, lang = '') => '```' + lang + '\n' + clip(t) + '\n```';
+// Report text comes from the change under review: a fence or code span longer than its longest backtick run keeps it inert.
+const ticks = (t: string, min: number) => '`'.repeat(Math.max(min, ...[...t.matchAll(/`+/g)].map(m => m[0].length + 1)));
+const block = (t: string, lang = '') => { const c = clip(t), f = ticks(c, 3); return f + lang + '\n' + c + '\n' + f; };
+const code = (t: string) => { const f = ticks(t, 1); return `${f} ${t} ${f}`; };
 
-function section(title: string, report: string | undefined, base: string | undefined, baseLabel: string, link: string) {
+function section(title: string, report: string | undefined, base: string | undefined, hasBase: boolean, baseLabel: string, link: string) {
   if (report === undefined) return `**${title}** · not produced (see the job log).`;
   const head = `**${title}** (warnings only, never blocks merge)${link}`;
   const full = `<details><summary>Full ${title.toLowerCase()} (${report.trimEnd().split('\n').length} lines)</summary>\n\n${block(report.trimEnd())}\n\n</details>`;
-  if (base === undefined) return `${head}\n\nNo \`main\` baseline found (${baseLabel}); the full report:\n\n${block(report.trimEnd())}`;
+  if (base === undefined) return `${head}\n\nNo \`main\` baseline for this report (${hasBase ? `missing from ${baseLabel}` : baseLabel}); the full report:\n\n${block(report.trimEnd())}`;
   const d = diffReport(base, report);
-  const parts = [`${head}\n\nAgainst ${baseLabel}:`];
+  // The baseline is the newest main artifact, not the merge base: what landed on main after the branch point shows too.
+  const parts = [`${head}\n\nAgainst ${baseLabel} (the newest main report; changes landed on main since this branch was cut show here too):`];
   if (!d.added.length && !d.fixed.length && !d.changed.length) parts.push('No change against `main`.');
   if (d.added.length) parts.push(`New (${d.added.length}):\n${block(d.added.map(l => '+ ' + l).join('\n'), 'diff')}`);
   if (d.fixed.length) parts.push(`Fixed (${d.fixed.length}):\n${block(d.fixed.map(l => '- ' + l).join('\n'), 'diff')}`);
@@ -70,9 +74,9 @@ export function comment(o: { pr: { design?: string; docs?: string }; base?: { de
   const drop = (t?: string) => t === undefined || !o.dropDrift ? t : t.split('\n').filter(l => !/ docs\.drift /.test(l)).join('\n');
   const out = ['<!-- fleet-design-report -->'];
   const cause = o.pr.design === undefined ? undefined : appNotRun(o.pr.design);
-  if (cause !== undefined) out.push(`**Operator app check did not run:** ${cause}. Its routes, console errors and latency are missing from this report.`);
-  out.push(section('Design report', o.pr.design, o.base?.design, o.baseLabel, o.run ? ` · [run and artifacts](${o.run})` : ''));
-  out.push(section('Docs report', drop(o.pr.docs), drop(o.base?.docs), o.baseLabel, o.issues ? ` · [open docs-order issue](${o.issues})` : ''));
+  if (cause !== undefined) out.push(`**Operator app check did not run:** ${code(cause)}. Its routes, console errors and latency are missing from this report.`);
+  out.push(section('Design report', o.pr.design, o.base?.design, !!o.base, o.baseLabel, o.run ? ` · [run and artifacts](${o.run})` : ''));
+  out.push(section('Docs report', drop(o.pr.docs), drop(o.base?.docs), !!o.base, o.baseLabel, o.issues ? ` · [open docs-order issue](${o.issues})` : ''));
   return out.join('\n\n') + '\n';
 }
 
@@ -90,8 +94,9 @@ function selfCheck() {
   assert.equal(appNotRun(report), 'timed out after 300 s');
   assert.equal(appNotRun('- operator app (x):\n    /overview: ok'), undefined);
   const c = comment({ pr: { design: report }, baseLabel: 'none: no artifact' });
-  assert.match(c.split('\n')[2], /^\*\*Operator app check did not run:\*\* timed out after 300 s\./);
-  assert.match(c, /No `main` baseline found \(none: no artifact\)/);
+  assert.match(c.split('\n')[2], /^\*\*Operator app check did not run:\*\* ` timed out after 300 s `\./);
+  assert.match(comment({ pr: { design: 'a ```x``` b' }, baseLabel: 'none' }), /^````\na ```x``` b\n````$/m);
+  assert.match(c, /No `main` baseline for this report \(none: no artifact\)/);
   assert.match(c, /\*\*Docs report\*\* · not produced/);
   console.log('design-report-comment self-check: ok');
 }

@@ -10,7 +10,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Page } from 'playwright';
 
-const origin = process.argv[2] ?? 'https://fleet.ufobe.com';
+const origin = new URL(process.argv[2] ?? 'https://fleet.ufobe.com').origin;
 
 function access(): { id: string; secret: string } | null {
   let id = process.env.CF_ACCESS_CLIENT_ID, secret = process.env.CF_ACCESS_CLIENT_SECRET;
@@ -103,8 +103,8 @@ const JOURNEYS: Journey[] = [
     ['Promote on a leaderboard row', async c => {
       const p = leaderboard(c.page).getByRole('button', { name: /Promote/ });
       if (!await visible(p, 5000)) missing('Promote on a leaderboard row');
-      const scope = await visible(c.page.getByText(/scope|project|system/i), 1000);
-      if (!scope) c.gap('no scope choice (project or system) next to Promote');
+      // The scope (project or system) is chosen with Promote, inside the leaderboard; the header's project focus does not count.
+      if (!await visible(leaderboard(c.page).getByText(/\bscope\b|\bsystem\b/i), 1000)) c.gap('no scope choice (project or system) next to Promote');
       return 'Promote present (not pressed: the walk never writes)';
     }],
     ['Library › Methods shows lifecycle status', async c => {
@@ -135,9 +135,9 @@ const JOURNEYS: Journey[] = [
       if (!await visible(c.page.locator('[data-ui=detail] .detail-title'))) throw new Stop('task detail did not open', 'broken');
       await c.page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
     }],
-    ['Task shows host, method, artifacts, delivery stage, tokens/cost/time', async c => {
+    ['Task shows executions, host, delivery stage, tokens/cost and time', async c => {
       const d = await c.page.locator('[data-ui=detail]').first().innerText();
-      const want: [string, RegExp][] = [['executions', /Execution/i], ['host', /host|pds18|mac|windows/i], ['tokens or cost', /token|\$|cost/i], ['time', /\d+\s?(ms|s|min|m|h)\b/]];
+      const want: [string, RegExp][] = [['executions', /Execution/i], ['host', /\bhost\b|\bpds18\b|owner-mac|\bwindows\b/i], ['delivery stage', /PR open|merged|released|installed|publishing|delivery/i], ['tokens or cost', /token|\$|cost/i], ['time', /\d+\s?(ms|s|min|m|h)\b/]];
       const absent = want.filter(([, r]) => !r.test(d)).map(([n]) => n);
       if (absent.length) c.gap(`task detail lacks ${absent.join(', ')}`);
     }],
@@ -202,8 +202,9 @@ async function walk(page: Page, j: Journey): Promise<Outcome> {
 const out: string[] = [`## J1–J5 walk on ${origin}`];
 const cred = access();
 if (!cred) { out.push('', 'Not run: no Access service token (CF_ACCESS_CLIENT_ID/CF_ACCESS_CLIENT_SECRET or ~/.config/ufobe-agents/site-access.env).'); console.log(out.join('\n')); process.exit(0); }
-const browser = await chromium.launch();
+let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 try {
+  browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, extraHTTPHeaders: { 'CF-Access-Client-Id': cred.id, 'CF-Access-Client-Secret': cred.secret } });
   // The token goes only to this origin: other hosts are not opened.
   await context.route(u => new URL(u).origin !== origin, r => r.abort());
@@ -228,6 +229,6 @@ try {
 } catch (e) {
   out.push('', `Walk stopped: ${String((e as Error).message ?? e).split('\n')[0]}`);
 } finally {
-  await browser.close();
+  await browser?.close().catch(() => {});
 }
 console.log(out.join('\n'));
