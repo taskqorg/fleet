@@ -43,7 +43,7 @@ Board drawings use Fleet's tokens through the board's style file ([tokens](token
 | `controls/<control>.md` | One file per control: purpose, anatomy, states, behaviour, keyboard, accessibility, do and don't, and where it is used. | A control is added or changed. |
 | `patterns/<pattern>.md` | Compositions of controls for recurring jobs, including [navigation and columns](patterns/navigation-and-columns.md), the decision block, the result viewer or the problem row. | A pattern is added or changed. |
 | `pages/<page>.md` | Each page: purpose, the inventory items it covers, the layout, and which controls and patterns it uses. | A page is added or changed. |
-| `decisions.md` | Dated design decisions with the options considered and the reason. Append only. | Every owner decision. |
+| `decisions.md` | Dated design decisions with the options considered and the reason. Append only; `.gitattributes` merges it with `union`, so two pull requests that each append an entry rebase without a conflict (the blank line between the two new entries can drop; the page still renders, and the next edit adds it back). | Every owner decision. |
 
 ## Process (spec-driven design)
 

@@ -1,0 +1,3 @@
+# Merge rules for files that parallel pull requests change at the same place.
+# decisions.md: parallel pull requests each append an entry at the end; union keeps both on rebase or merge.
+docs/design-system/decisions.md merge=union
