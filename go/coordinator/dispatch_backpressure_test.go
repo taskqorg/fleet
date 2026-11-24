@@ -395,8 +395,11 @@ func TestDispatchSkipsHostDrainingForUpdate(t *testing.T) {
 	if ex := dispatchTestExecution(t, env, sid2, eid3); ex["hostId"] != nil || !strings.Contains(astr(ex["waitDetail"]), "upd-mac") {
 		t.Fatalf("continuation = hostId %v waitDetail %v, want unplaced waiting for upd-mac", ex["hostId"], ex["waitDetail"])
 	}
+	if out := runTestPSQL(t, env.binDir, env.sockDir, env.pgPort, env.dbName, "postgres", `SELECT data ? 'holdSince' FROM execution WHERE id='`+eid3+`'`); strings.TrimSpace(out) != "t" {
+		t.Fatalf("the hold did not record when it began: %q", out)
+	}
 	runTestPSQL(t, env.binDir, env.sockDir, env.pgPort, env.dbName, "postgres",
-		`UPDATE execution SET data=jsonb_set(data,'{createdAt}',to_jsonb((extract(epoch from now())*1000 - 16*60*1000)::bigint)) WHERE id='`+eid3+`'`)
+		`UPDATE execution SET data=jsonb_set(data,'{holdSince}',to_jsonb((extract(epoch from now())*1000 - 16*60*1000)::bigint)) WHERE id='`+eid3+`'`)
 	_ = env.app.waitDispatchCaughtUp(env.ctx, env.app.triggerDispatch())
 	moved := poll(pds, pdsSecret, "1.261124.53", &contract.UpdateResult{At: "2026-11-24T19:46:00Z", State: contract.UpdateStateOk, Version: "1.261124.53"})
 	var payload map[string]any
@@ -428,5 +431,18 @@ func TestNativeForOtherHost(t *testing.T) {
 	}
 	if got := nativeFor(native, nil, "pds18-native"); got != native {
 		t.Fatalf("no last host: %v", got)
+	}
+}
+
+// Requirement: a host_move handoff stays within its budget however long the conversation is.
+// Risk: a PM session moved between hosts again and again starts each run with its whole history.
+func TestHostMoveHandoffIsBounded(t *testing.T) {
+	turns := make([]agentTurn, 40)
+	for i := range turns {
+		turns[i] = agentTurn{harness: "codex", state: "succeeded", user: strings.Repeat("x", 3000), assistant: []string{"ok"}}
+	}
+	out := renderHandoff(turns, "host_move", "session s on owner-mac")
+	if n := len([]rune(out)); n > hostMoveRunes || !strings.Contains(out, "local commits are not here") || !strings.Contains(out, "Only the last 12 of 40 turns") {
+		t.Fatalf("host_move handoff: %d runes", n)
 	}
 }

@@ -542,7 +542,8 @@ type dispatchExecution struct {
 	ForkOfNativeSessionID string               `json:"forkOfNativeSessionId,omitempty"`
 	HandoffID             string               `json:"handoffId,omitempty"`
 	BotContext            *botExecutionContext `json:"botContext,omitempty"`
-	CreatedAt             *float64             `json:"createdAt,omitempty"`
+	HoldSince             *float64             `json:"holdSince,omitempty"` // first pass that held it for its updating host
+	holdStart             float64              // this pass began the hold (written with the wait reason)
 	rest                  recordRest
 }
 
@@ -830,8 +831,16 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 			if v := k.updating[id]; v != "" {
 				// A continuation waits, unplaced, for its own host's update, where its native session and worktree live,
 				// for up to continuationHostWait; past that it moves and starts with a context handoff (startCommand).
-				if id == deref(x.Last) && e.CreatedAt != nil && float64(now)-*e.CreatedAt < continuationHostWait {
-					holdFor = id
+				if id == deref(x.Last) {
+					since := float64(now)
+					if e.HoldSince != nil {
+						since = *e.HoldSince
+					} else {
+						e.holdStart = since
+					}
+					if float64(now)-since < continuationHostWait {
+						holdFor = id
+					}
 				}
 				skip(fmt.Sprintf("%s is updating to %s and starts no new work until then", id, v), "host:"+id+":updating")
 				continue
@@ -1126,7 +1135,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			continue
 		}
 		cur := &e
-		if deref(cur.WaitDetail) != reason {
+		if deref(cur.WaitDetail) != reason || e.holdStart != 0 {
 			claimed, err := claimRow(q, id)
 			if err != nil {
 				return err
@@ -1137,6 +1146,14 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			cur = claimed
 		}
 		// Checked again on the locked row: an overlapping pass may have written the same wait meanwhile.
+		if e.holdStart != 0 && cur.HoldSince == nil {
+			cur.HoldSince = &e.holdStart
+			if deref(cur.WaitDetail) == reason {
+				if err := executionPut(q, cur); err != nil {
+					return err
+				}
+			}
+		}
 		if deref(cur.WaitDetail) != reason {
 			kind := waitKindOf(cause)
 			cur.WaitReason, cur.WaitDetail = &kind, &reason
