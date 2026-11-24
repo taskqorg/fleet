@@ -4597,3 +4597,37 @@ CREATE INDEX execution_session_agent_run ON execution(session_id, seq DESC) WHER
 -- migration 92: scoped list spend and detail rollups walk indexed delegation links.
 CREATE INDEX execution_delegation_parent_execution ON execution ((delegation->>'parentExecutionId')) WHERE delegation IS NOT NULL;
 CREATE INDEX execution_delegation_parent_session ON execution ((delegation->>'parentSessionId')) WHERE delegation IS NOT NULL;
+
+-- migration 93: saved bot identity, immutable settings and project memory revisions.
+CREATE TABLE bot (
+ id text PRIMARY KEY,
+ project_id text NOT NULL,
+ director text NOT NULL,
+ revision integer NOT NULL CHECK (revision > 0),
+ memory_revision integer NOT NULL DEFAULT 0 CHECK (memory_revision >= 0),
+ tombstoned_at timestamptz
+);
+CREATE INDEX bot_project ON bot (project_id, id);
+
+CREATE TABLE bot_revision (
+ bot_id text NOT NULL REFERENCES bot(id) ON DELETE CASCADE,
+ revision integer NOT NULL CHECK (revision > 0),
+ name text NOT NULL,
+ purpose text NOT NULL,
+ profile_id text NOT NULL,
+ instructions text NOT NULL,
+ soul text NOT NULL,
+ schedule_time text NOT NULL,
+ schedule_zone text NOT NULL,
+ wake_on_needs_you boolean NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (bot_id, revision)
+);
+
+CREATE TABLE bot_memory_revision (
+ bot_id text NOT NULL REFERENCES bot(id) ON DELETE CASCADE,
+ revision integer NOT NULL CHECK (revision > 0),
+ memory text NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY (bot_id, revision)
+);

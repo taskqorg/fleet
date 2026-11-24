@@ -19,6 +19,7 @@ import (
 //go:generate go run ../gen ../../contracts/ops-analytics.schema.json contract ops_analytics_gen.go
 //go:generate go run ../gen ../../contracts/ops-artifacts.schema.json contract ops_artifacts_gen.go
 //go:generate go run ../gen ../../contracts/ops-board.schema.json contract ops_board_gen.go
+//go:generate go run ../gen ../../contracts/ops-bots.schema.json contract ops_bots_gen.go
 //go:generate go run ../gen ../../contracts/ops-definitions.schema.json contract ops_definitions_gen.go
 //go:generate go run ../gen ../../contracts/ops-executions.schema.json contract ops_executions_gen.go
 //go:generate go run ../gen ../../contracts/ops-lab.schema.json contract ops_lab_gen.go

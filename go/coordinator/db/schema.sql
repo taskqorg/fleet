@@ -138,6 +138,33 @@ CREATE TABLE board_message (
   "created_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE bot (
+  "id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "director" text NOT NULL,
+  "revision" integer NOT NULL,
+  "memory_revision" integer NOT NULL,
+  "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE bot_memory_revision (
+  "bot_id" text NOT NULL,
+  "revision" integer NOT NULL,
+  "memory" text NOT NULL,
+  "created_at" timestamp with time zone NOT NULL
+);
+CREATE TABLE bot_revision (
+  "bot_id" text NOT NULL,
+  "revision" integer NOT NULL,
+  "name" text NOT NULL,
+  "purpose" text NOT NULL,
+  "profile_id" text NOT NULL,
+  "instructions" text NOT NULL,
+  "soul" text NOT NULL,
+  "schedule_time" text NOT NULL,
+  "schedule_zone" text NOT NULL,
+  "wake_on_needs_you" boolean NOT NULL,
+  "created_at" timestamp with time zone NOT NULL
+);
 CREATE TABLE budget (
   "id" text NOT NULL,
   "scope" text NOT NULL,

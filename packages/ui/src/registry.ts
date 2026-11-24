@@ -151,6 +151,7 @@ export const workspaces = [
   { id: 'projects', label: 'Projects', icon: 'folder-open', group: 'Work', app: true, nav: true },
   { id: 'tasks', label: 'Tasks', icon: 'list', group: 'Work', app: true, nav: true },
   { id: 'spend', label: 'Spend', icon: 'gauge', group: 'Work', app: true, nav: true },
+  { id: 'bots', label: 'Bots', icon: 'bot', group: 'Work', app: true, nav: false },
   { id: 'results', label: 'Results', icon: 'file-text', group: 'Work', app: true, nav: false },
   { id: 'delivery', label: 'Delivery', icon: 'git-merge', group: 'Work', app: true, nav: false },
   { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', group: 'System', app: true, nav: true },

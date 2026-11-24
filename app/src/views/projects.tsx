@@ -103,6 +103,7 @@ export function Projects({ id }: { id?: string }) {
   const pane = (
     <>
       <ShellActions>
+        <Button label="Bots" icon="bot" iconOnly onClick={() => go('/bots')} />
         <Button label="Create project" icon="plus" iconOnly kind="primary" pressed={creating} onClick={() => setCreating(true)} />
       </ShellActions>
       {list.error && <ErrorBanner text={`Projects did not load: ${list.error}`} onRetry={list.reload} />}
