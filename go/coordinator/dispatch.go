@@ -542,6 +542,8 @@ type dispatchExecution struct {
 	ForkOfNativeSessionID string               `json:"forkOfNativeSessionId,omitempty"`
 	HandoffID             string               `json:"handoffId,omitempty"`
 	BotContext            *botExecutionContext `json:"botContext,omitempty"`
+	HoldSince             *float64             `json:"holdSince,omitempty"` // first pass that held it for its updating host
+	holdStart             float64              // this pass began the hold (written with the wait reason)
 	rest                  recordRest
 }
 
@@ -571,6 +573,7 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 	dir := deref(e.DirectedBy)
 	projectID := x.ProjectID
 	harness := x.Harness
+	holdFor := "" // the updating host a continuation waits for (its last host)
 	order := []string{}
 	if deref(x.Host) != "" {
 		order = []string{*x.Host}
@@ -826,6 +829,19 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 				continue
 			}
 			if v := k.updating[id]; v != "" {
+				// A continuation waits, unplaced, for its own host's update, where its native session and worktree live,
+				// for up to continuationHostWait; past that it moves and starts with a context handoff (startCommand).
+				if id == deref(x.Last) {
+					since := float64(now)
+					if e.HoldSince != nil {
+						since = *e.HoldSince
+					} else {
+						e.holdStart = since
+					}
+					if float64(now)-since < continuationHostWait {
+						holdFor = id
+					}
+				}
 				skip(fmt.Sprintf("%s is updating to %s and starts no new work until then", id, v), "host:"+id+":updating")
 				continue
 			}
@@ -864,6 +880,14 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 				if len(subs) > 1 && c.Skipped == "" && c.Subscription != nil {
 					c.Warnings = append(c.Warnings, "order soonest_reset: round-robin across accounts may conflict with provider terms")
 				}
+			}
+		}
+	}
+	// Held for its own host: no other host takes it now. It stays unplaced, so every pass ranks it again.
+	if holdFor != "" {
+		for _, c := range out {
+			if c.Skipped == "" {
+				c.Skipped, c.Cause = fmt.Sprintf("waits for %s to finish its update: the conversation's native session lives there", holdFor), "host:"+holdFor+":updating"
 			}
 		}
 	}
@@ -1111,7 +1135,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			continue
 		}
 		cur := &e
-		if deref(cur.WaitDetail) != reason {
+		if deref(cur.WaitDetail) != reason || e.holdStart != 0 {
 			claimed, err := claimRow(q, id)
 			if err != nil {
 				return err
@@ -1122,6 +1146,14 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			cur = claimed
 		}
 		// Checked again on the locked row: an overlapping pass may have written the same wait meanwhile.
+		if e.holdStart != 0 && cur.HoldSince == nil {
+			cur.HoldSince = &e.holdStart
+			if deref(cur.WaitDetail) == reason {
+				if err := executionPut(q, cur); err != nil {
+					return err
+				}
+			}
+		}
 		if deref(cur.WaitDetail) != reason {
 			kind := waitKindOf(cause)
 			cur.WaitReason, cur.WaitDetail = &kind, &reason
@@ -1313,6 +1345,20 @@ type dispatchStartCommand struct {
 	Payload     json.RawMessage `json:"payload"`
 }
 
+// continuationHostWait: how long a continuation waits for its own updating host before it moves (a release drains in
+// minutes; 2026-11-24 a drain held by an undeliverable receipt never ended).
+const continuationHostWait = 15 * 60 * 1000 // milliseconds
+
+// nativeFor: the session's native id when the run starts on the host of its last run. A native session lives in that
+// host's harness home, so on another host the executor refuses to resume it ("native account/session binding
+// mismatch") on every run; there the run starts a fresh native session instead.
+func nativeFor(native, last *string, host string) *string {
+	if native == nil || last == nil || *last == "" || *last == host {
+		return native
+	}
+	return ptr("")
+}
+
 // startCommand: the start command of a claimed execution, from the session as it is now and the chosen binding.
 func (a *App) startCommand(q *Request, e *dispatchExecution, host string, binding *resolvedAccount) (dispatchStartCommand, error) {
 	var none dispatchStartCommand
@@ -1472,14 +1518,26 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	if err := checkBotDispatchCompatibility(q, e, &liveSession, host, deref(p.Account), d); err != nil {
 		return none, err
 	}
-	p.NativeSessionId = liveSession.NativeSessionID
+	p.NativeSessionId = nativeFor(liveSession.NativeSessionID, d.Last, host)
+	moved := deref(liveSession.NativeSessionID) != "" && deref(p.NativeSessionId) == ""
 	if e.BotContext != nil {
 		p.Instructions = ptr(formatBotInstructions(deref(p.Instructions), e.BotContext))
 	}
 	// agentDecorateStart completes the payload for the session's dispatch project/checkout and clears any pending handoff.
 	sess := agentSession{ID: liveSession.ID, AgentConfig: liveSession.AgentConfig, Account: deref(liveSession.Account),
 		ProjectID: deref(d.ProjectID), WorkingDirectory: deref(d.WorkingDirectory), WorkspaceKey: deref(d.WorkspaceKey),
-		NativeSessionID: deref(liveSession.NativeSessionID), ForkNativeSessionID: liveSession.ForkNativeSessionID, PendingHandoffID: liveSession.PendingHandoffID}
+		NativeSessionID: deref(p.NativeSessionId), ForkNativeSessionID: liveSession.ForkNativeSessionID, PendingHandoffID: liveSession.PendingHandoffID}
+	// Off the native session's host the new native session knows nothing: hand it the earlier turns, as a fork without
+	// a native fork does.
+	if moved && sess.PendingHandoffID == "" {
+		turns, err := transcriptForProject(q, sess.ID, sess.ProjectID)
+		if err != nil {
+			return none, err
+		}
+		if _, err := makeHandoff(q, &sess, turns, "host_move", "session "+sess.ID+" on "+deref(d.Last)); err != nil {
+			return none, err
+		}
+	}
 	ex := agentExecution{ID: e.ID}
 	if err := agentDecorateStart(q, &sess, &ex, p); err != nil {
 		return none, err
@@ -1494,6 +1552,8 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	if sess.PendingHandoffID == "" {
 		liveSession.PendingHandoffID = ""
 		delete(liveSession.rest, "pendingHandoffId")
+	} else {
+		liveSession.PendingHandoffID = sess.PendingHandoffID // a handoff made here (host_move) and not delivered stays linked
 	}
 	if granted := jsonStrings(prof.Connections); len(granted) > 0 && e.PipelineRunID == nil {
 		minted, err := mintGrantFor(q, mintRun{ExecutionID: &e.ID, DirectedBy: e.DirectedBy, ProjectID: d.ProjectID,

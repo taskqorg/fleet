@@ -89,9 +89,11 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 	if err != nil {
 		return none, err
 	}
+	// last: the host of the latest run that started. A run refused before it started (a preparation failure) ran
+	// nothing there, so it does not move the session's native session and worktree home.
 	last := ""
 	for _, e := range es {
-		if h := deref(e.HostID); h != "" {
+		if h := deref(e.HostID); h != "" && jsonGiven(e.StartedAt) {
 			last = h
 		}
 	}
