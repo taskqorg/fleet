@@ -13,7 +13,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall 
 1. **Status bar.**
    * The product mark and the fleet status pill: "All systems working" in the success tone, or the first problem in words in the danger tone, with a count when there are more ([OR-56](../owner-rules.md)).
    * The focus (OR-34) and the clock.
-2. **Figures.** Six tiles, each with a 12-point sparkline of the same figure:
+2. **Figures.** Six tiles, each with a sparkline of the same figure's recent trend:
    * Agents working (busy slots of all slots)
    * Agent runs today (plus host jobs and tool calls)
    * Tasks done today (with the lead-time median)
