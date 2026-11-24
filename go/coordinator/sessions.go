@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
 	"strings"
 	"time"
 
@@ -32,6 +33,8 @@ type sessionListDBRow struct {
 	ActivityAt    *string  `db:"activity_at"`
 	Executions    int64    `db:"executions"`
 	OpenQuestions int64    `db:"open_questions"`
+	NowText       *string  `db:"now_text"`
+	TaskTitle     *string  `db:"task_title"`
 	G             string   `db:"g"`
 	Sk            float64  `db:"sk"`
 }
@@ -47,8 +50,70 @@ func (x sessionListDBRow) row() contract.SessionRow {
 		harness = x.AgentHarness
 	}
 	return contract.SessionRow{Id: x.ID, Code: x.Code, Title: title, State: x.State, Harness: harness, ProfileId: x.ProfileID, ProjectId: x.ProjectID,
-		CreatedAt: x.CreatedAt, ActivityAt: x.ActivityAt, Executions: x.Executions, OpenQuestions: x.OpenQuestions, ArchivedAt: x.ArchivedAt,
+		CreatedAt: x.CreatedAt, ActivityAt: x.ActivityAt, Now: nowLine(deref(x.NowText), deref(x.TaskTitle)), Executions: x.Executions, OpenQuestions: x.OpenQuestions, ArchivedAt: x.ArchivedAt,
 		SortKey: sortKey(x.G, x.Sk, x.ID)}
+}
+
+// nowLineRunes: the longest now line; a longer sentence is cut at a word and ends with an ellipsis.
+const nowLineRunes = 160
+
+var (
+	nowLink   = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
+	nowMarker = regexp.MustCompile(`^(>\s*|[-*+]\s+|\d+[.)]\s+)+`)
+	nowEnd    = regexp.MustCompile(`[.!?…](\s|$)`)
+)
+
+// nowLine: what a session does now, in one line (docs/design-system/pages/home.md "Session card"): the first sentence
+// of the latest agent message, else the attached task's title; nil when there is neither. The agent's own words come
+// first because every session has them (bots and PMs have no task) and they move with the work; a task title is set
+// once. Markdown is reduced to its text: the first line outside a code fence that is no heading, without list or quote markers,
+// emphasis, code ticks or link targets.
+func nowLine(markdown, taskTitle string) *string {
+	if l := firstSentence(markdown); l != "" {
+		return &l
+	}
+	if l := clipRunes(strings.Join(strings.Fields(taskTitle), " "), nowLineRunes); l != "" {
+		return &l
+	}
+	return nil
+}
+
+func firstSentence(markdown string) string {
+	fence := false
+	for _, line := range strings.Split(markdown, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+			fence = !fence
+			continue
+		}
+		if fence || t == "" || strings.HasPrefix(t, "#") || strings.Trim(t, "-*_=|: ") == "" { // headings, rules and table separators say no sentence
+			continue
+		}
+		t = nowMarker.ReplaceAllString(t, "")
+		t = nowLink.ReplaceAllString(t, "$1")
+		t = strings.NewReplacer("**", "", "__", "", "`", "").Replace(t)
+		t = strings.Join(strings.Fields(t), " ")
+		if loc := nowEnd.FindStringIndex(t); loc != nil {
+			t = strings.TrimSpace(t[:loc[1]])
+		}
+		if t != "" {
+			return clipRunes(t, nowLineRunes)
+		}
+	}
+	return ""
+}
+
+// clipRunes: s cut to at most n runes, at the last space when there is one, ending with an ellipsis.
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	cut := string(r[:n-1])
+	if i := strings.LastIndex(cut, " "); i > len(cut)/2 {
+		cut = cut[:i]
+	}
+	return strings.TrimRight(cut, " ,;:") + "…"
 }
 
 // sortKey: a list row's position, [group key, sort key, id].

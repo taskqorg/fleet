@@ -82,18 +82,20 @@ Behaviour:
 
 | Part | Read or action |
 |---|---|
-| Groups and cards | `sessions_list` grouped by state, in attention order (waiting, failed, running, preparing); rows carry `activityAt` |
+| Groups and cards | `sessions_list` grouped by state, in attention order (waiting, failed, running, preparing); rows carry `activityAt` and `now` |
+| Now line | `now` on each `sessions_list` row: the first sentence of the latest agent message as plain text, else the attached task's title, at most 160 characters |
+| Progress | `session_context` `plan` (`done` of `total`), read for a card that is open or in view |
+| Quiet summary | `person_visit {page: "home"}` on each Home open: it records the visit and answers `previousAt`, the visit before; the summary counts from there |
 | Questions on cards | `questions_list` for the person, matched to the asking session; answered with `reply` / `question_answer` |
 | Asleep bots | `bot_list`; Wake is `bot_run`; a message to a bot's Home is `message_send` |
 | Composer | `session_presets`, `session_start`, `message_send` |
 | Pulse line | `nav_counts`, `task_page` counts for done today, `executions_list` failures grouped by cause |
 | Live updates | `changes_since` over sessions, questions, bot runs and executions |
 
-## Open
+## Decisions
 
-* **"Now" line source:** no field holds a one-line summary of what a session does. Candidates: the attached task title with its current step, or the first sentence of the latest agent message.
-* **Progress and plan steps:** these come from the session context panel ([FLT-30](https://youtrack.ufobe.com/issue/FLT-30)).
-* **Quiet summary:** the "since your last visit" summary needs the person's last-visit time.
+* **Now line source** ([FLT-46](https://youtrack.ufobe.com/issue/FLT-46)): the first sentence of the latest agent message, else the attached task's title. Every session has agent messages, bots and PMs often have no task, and the agent's words move with the work while a task title is set once.
+* **Last visit:** kept per person and page on the server (`person_visit`), not in the browser, so a phone and a desktop share it. An agent reads its director's last visit without moving it.
 
 
 ## Blocks

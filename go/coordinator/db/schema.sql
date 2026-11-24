@@ -727,6 +727,11 @@ CREATE TABLE person_setting (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE person_visit (
+  "email" text NOT NULL,
+  "page" text NOT NULL,
+  "visited_at" timestamp with time zone NOT NULL
+);
 CREATE TABLE personal_lab_draft (
   "id" text NOT NULL,
   "author" text NOT NULL,
