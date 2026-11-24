@@ -26,6 +26,11 @@ func streamClient(dial, header time.Duration) *http.Client {
 var sharedTransport = func() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.MaxIdleConnsPerHost = 100
+	// Every request to the coordinator shares one HTTP/2 connection through the edge. When that connection goes
+	// half-dead (no reset arrives, e.g. after a network change), each request only times out its own stream and the next
+	// one reuses the dead connection until TCP gives up, about 15 minutes: on 2026-11-24 owner-mac and windows each
+	// lost the coordinator for 16 minutes. A ping after 15 s of silence, answered within 10 s, closes such a connection.
+	t.HTTP2 = &http.HTTP2Config{SendPingTimeout: 15 * time.Second, PingTimeout: 10 * time.Second}
 	return t
 }()
 
