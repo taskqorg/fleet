@@ -15,3 +15,7 @@
 **Do.** Keep the part order and tones fixed (pipeline order). **Don't.** Use it for a fill against capacity; that is the [fill bar](fill-bar.md).
 
 **Used in.** [Delivery](../pages/delivery.md) Pace.
+
+## Board
+
+Master `Share bar` on [blocks.bl](../board/blocks.bl), board *Data*: `normal`, and `partial`, where the segments are hollow outlines because not every part was measured; the note says how many were, and the qualifier detail is in the tooltip ([OR-59](../owner-rules.md)). Text names: `legend`, `note`.

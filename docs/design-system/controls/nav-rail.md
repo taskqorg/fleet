@@ -54,4 +54,4 @@ When the site serves a newer app than the tab runs, an Update button (icon) show
 
 ## Board
 
-Masters on [blocks.bl](../board/blocks.bl): `Nav rail` (the seven sections of [OR-46](../owner-rules.md), built from `Nav item`, whose `current` variant marks the open section), and the phone `Bottom bar` of five `Tab item`s ([OR-60](../owner-rules.md)). A screen sets its section by switching the nested item to `current`.
+Masters on [blocks.bl](../board/blocks.bl): `Nav rail` (with the "N need you" chip in its head) (the seven sections of [OR-46](../owner-rules.md), built from `Nav item`, whose `current` variant marks the open section), and the phone `Bottom bar` of five `Tab item`s ([OR-60](../owner-rules.md)). A screen sets its section by switching the nested item to `current`.

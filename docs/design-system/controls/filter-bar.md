@@ -25,3 +25,7 @@
 **Do.** Show the filters in the query text, so they can be read and edited in one place. **Don't.** Hide filters in a side panel; reset filters when navigating away.
 
 **Used in.** Every list page.
+
+## Board
+
+Masters on [blocks.bl](../board/blocks.bl), board *Sections*: `Filter bar` composes `Search` ([OR-31](../owner-rules.md), variants `icon` and `open`), `View chip` (saved views, [OR-33](../owner-rules.md), variants `default` and `active`), the count "84 of 1,240" shown only while a filter narrows the list, `State counters` ([OR-29](../owner-rules.md)), then Group and Sort as icons ([OR-35](../owner-rules.md)). There is no Filter button ([OR-36](../owner-rules.md)).

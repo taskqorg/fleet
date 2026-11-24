@@ -43,3 +43,14 @@ Every list follows the same order: state first, then name with ID, then the serv
 ## Prepared windows
 
 `VirtualListHandle.getAnchor()` returns the first visible key and `offsetPx` from the viewport top. `restoreAnchor(key, offsetPx)` preserves that position after layout; an empty window resets to zero. Prepared windows capture the full server sort tuple, preferring an opaque item position when supplied. Refresh uses `around`; a deleted key restores the server's nearest surviving key at the top. Epoch replacement discards cursors and revalidates the captured position. Continuous loading, filtered count, search and start/end jumps share the same control and scroller.
+
+## Board
+
+Masters on [blocks.bl](../board/blocks.bl), board *Sections*, for a catalogue in the control column ([list and detail](../patterns/list-detail.md)):
+* `Catalogue row`, variants `rest`, `selected` (the `selected` fill and the accent bar on the left) and `pinned` (the pin before the state, [OR-37](../owner-rules.md)). Order per [OR-22](../owner-rules.md): state icon, title with its code ([OR-38](../owner-rules.md)), then row facts on the right ([OR-21](../owner-rules.md)). Text names: `title`, `code`, `fact`, `age`.
+* `State icon`: the icon-only state of a row, one variant per state of [OR-55](../owner-rules.md) except Asleep.
+* `List group`: a group header, `open` and `folded`, with its count.
+
+## Table row
+
+A list with column heads, for figures compared across rows: the Lab leaderboard, the Spend breakdown, a project's Delivery and Results facets. Master `Table row` on [blocks.bl](../board/blocks.bl), board *Data*, variants `header`, `row` and `selected`. The name column takes the free width ([OR-21](../owner-rules.md)); figures are right aligned in mono with fixed-width digits ([OR-6](../owner-rules.md), [OR-28](../owner-rules.md)); a row whose item has a state starts with the [state icon](#board) ([OR-22](../owner-rules.md)). The whole row opens its item ([OR-26](../owner-rules.md)). Text names: `name`, `c1`, `c2`, `c3`. A table wider than its column scrolls sideways inside its own frame ([OR-25](../owner-rules.md)).

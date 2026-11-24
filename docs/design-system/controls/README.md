@@ -57,11 +57,13 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [host-band](host-band.md) | One host: health, slots, runs |
 | [worker-slot](worker-slot.md) | What runs in one worker slot |
 | [live-row](live-row.md) | A project, pull request, runner or event on Live |
+| [matrix-cell](matrix-cell.md) | One example × variant of a Lab experiment |
+| [tab-bar](tab-bar.md) | Facets of one opened entity |
 | [quiet-summary](quiet-summary.md) | What happened while you were away, when nothing waits |
 
 ## Blocks of Home, Live and the session view
 
-The screens of the conversation-first interface ([OR-50](../owner-rules.md) to [OR-61](../owner-rules.md)) are composed of these blocks. Each block is a component on the design board ([blocks.bl](../board/blocks.bl)) with all its states, and the screen canvases use its instances, so a block change reaches every screen. *New* means the block has no `packages/ui` code yet; it is built from its spec before the page that uses it (OR-13).
+The screens of the conversation-first interface, and the catalogues and opened items of the other sections, ([OR-50](../owner-rules.md) to [OR-61](../owner-rules.md)) are composed of these blocks. Each block is a component on the design board ([blocks.bl](../board/blocks.bl)) with all its states, and the screen canvases use its instances, so a block change reaches every screen. *New* means the block has no `packages/ui` code yet; it is built from its spec before the page that uses it (OR-13).
 
 | Block | Spec | `packages/ui` | Screens |
 |---|---|---|---|
@@ -83,5 +85,18 @@ The screens of the conversation-first interface ([OR-50](../owner-rules.md) to [
 | Worker slot | [worker-slot](worker-slot.md) | New (`WorkerSlot`) | Live |
 | Run strip | [time strip, run strip](time-strip.md#run-strip) | `TimeStrip`, new run strip form | Live |
 | Live row | [live-row](live-row.md) | New (`LiveRow`), stage by `StageChip` | Live |
+| Catalogue row, state icon, list group | [data list](data-list.md#board) | `VirtualList` rows, `GroupHeader` | Catalogues in the control column |
+| Filter bar, search, view chip, state counters | [filter bar](filter-bar.md#board) | `FilterBar`, `SearchBox`, `Presets`, `StateCounters` | Catalogues in the control column |
+| Detail head | [list and detail](../patterns/list-detail.md#board) | `ListDetail` work area | Every opened item |
+| Detail section, key row | [detail section](detail-section.md#board) | `DetailSection`, `KvRow` | Opened items |
+| Tab bar | [tab-bar](tab-bar.md) | `TabBar` | Opened items with facets |
+| Text field | [text field](text-field.md#board) | `TextField` | Forms in the work area |
+| Setting field | [setting field](setting-field.md#board) | `SettingField` | Settings in System and Projects |
+| Table row | [data list, table row](data-list.md#table-row) | `DataTable` | Lab leaderboard, Spend, project Delivery and Results |
+| Diff row | [definition editor, diff row](../patterns/definition-editor.md#diff-row) | `DefinitionEditor` | Library, project Rules & methods, Lab variant |
+| Share bar | [share bar](share-bar.md#board) | `ShareBar` | Spend, Delivery |
+| Step row | [step list](step-list.md#board) | `StepList` | Library pipelines, Lab trial plan, session plan |
+| Matrix cell | [matrix-cell](matrix-cell.md) | New | Lab experiment matrix |
+| Problem row | [problem row](problem-row.md#board) | `ProblemRow` | System readiness, Library sync, Delivery |
 | Navigation rail, phone bottom bar | [nav-rail](nav-rail.md#board) | `NavRail`, bottom bar new | Every page |
 | Shell header | [app-shell](../patterns/app-shell.md#board) | `AppShell` | Every page except wall mode |

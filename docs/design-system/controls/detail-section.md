@@ -9,3 +9,7 @@
 * Key row: icon, bold name, muted meta, and an optional right-aligned value (a number, an age chip, a state).
 
 **Used in.** Host detail (environments, account users, harnesses, store and tunnel).
+
+## Board
+
+Masters `Detail section` and `Key row` on [blocks.bl](../board/blocks.bl), board *Sections*. Key row text names: `name`, `meta`, `value`; the icon is a registry icon ([OR-1](../owner-rules.md)).

@@ -24,3 +24,7 @@
 **Used in.** Pipelines.
 
 **Conditional activation.** A run may carry the independent activation family pending, selected, not_selected and blocked. An inactive row shows its activation and reason without an execution badge, time or cost. A selected row keeps its actual execution badge and may name reused or unconfirmed provenance. Definition rows show the literal condition source/path/equality and the canonical result step; conditions do not imply a general expression language.
+
+## Board
+
+Master `Step row` on [blocks.bl](../board/blocks.bl), board *Data*. Variant `definition` is the step in a definition: number, kind icon (named `kind`; swap the icon for agent, tool, program or pipeline), name, executor, what it reads and writes. Variants `pending`, `running`, `done` and `failed` are the step in a run: the [state icon](data-list.md#board) takes the kind icon's place, and the second line gives way to the note chip, time and cost. A failed step shows its whole error under the name ([OR-19](../owner-rules.md)). Text names: `number`, `name`, `executor`, `io`, `time`.
