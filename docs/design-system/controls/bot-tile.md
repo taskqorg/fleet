@@ -16,7 +16,7 @@
 * Typing to the bot in the [composer](composer.md#target-picker) also wakes it with its memory.
 * Tiles share one row, as many as fit, then `+K` ([OR-30](../owner-rules.md)).
 
-**Keyboard.** One focus stop per tile; `Enter` opens, `w` wakes.
+**Keyboard.** One focus stop per tile; `Enter` opens; `Tab` moves to Wake.
 
 **Accessibility.** The tile is named "<bot>, asleep, last used 6 hours ago"; Wake is named "Wake <bot>".
 

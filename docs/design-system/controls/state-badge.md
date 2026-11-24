@@ -45,4 +45,4 @@ The form sessions, bots, tasks and runs share on cards, slots and the context pa
 | Stopped | neutral | hollow |
 | Asleep | neutral | dashed ring |
 
-Synonyms (Succeeded, Completed, Cancelled) map to this set and never show.
+Synonyms map to this set and never show: Succeeded and Completed are Done, Cancelled is Stopped, Idle is Asleep, Preparing and Running are Working. Until this form is built, the mapping table above stays what the app shows.

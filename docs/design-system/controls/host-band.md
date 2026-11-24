@@ -6,7 +6,7 @@
 
 **Anatomy.** A `surface` band with a `line` border and `radius-lg`, full width of the main column. Top to bottom:
 
-1. **Head.** The host's state dot, its name in `font-size-lg`, `font-weight-bold`, the platform and free disk in `fg-muted`; on the right three gauges (CPU, MEM, DISK) and the day's runs and active time in mono.
+1. **Head.** The host's state dot, its name in `font-size-lg`, `font-weight-bold` (600), the platform and free disk in `fg-muted`; on the right three gauges (CPU, MEM, DISK) and the day's runs and active time in mono.
 2. **Problem line.** Only while the host has a problem: what fails, since when and what still works, in `danger-fg` on `danger-bg` ([OR-56](../owner-rules.md)).
 3. **Slots.** One [worker slot](worker-slot.md) per slot, in a row that wraps.
 4. **Run strip.** The 24-hour [run strip](time-strip.md#run-strip).

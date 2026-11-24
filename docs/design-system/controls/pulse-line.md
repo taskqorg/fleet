@@ -12,7 +12,7 @@
 
 **States.**
 * *Normal:* counts, no chips.
-* *Blocked:* one chip per cause, newest cause first; more than two causes show two chips and `+K` ([OR-30](../owner-rules.md)).
+* *Blocked:* one chip per cause, newest cause first; chips that do not fit the line fold into `+K` ([OR-30](../owner-rules.md)).
 * *Stale:* the counts keep their last value with the [offline marker](offline-marker.md) age.
 
 **Behaviour.**
