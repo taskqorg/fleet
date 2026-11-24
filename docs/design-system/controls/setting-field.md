@@ -17,3 +17,7 @@
 **Do.** Show the applied status next to the value. **Don't.** Show "Saved" as if it were applied.
 
 **Used in.** Hosts and stores, Projects, Connections.
+
+## Board
+
+Master `Setting field` on [blocks.bl](../board/blocks.bl), board *Sections*, variants `applied`, `editing`, `pending` and `error`; the apply status uses the [state dot and word](state-badge.md#dot-and-word). Text names `label`, `value`, `help`.

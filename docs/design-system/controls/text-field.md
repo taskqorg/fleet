@@ -13,3 +13,7 @@
 **Do.** Preserve edits on failure. **Don't.** Present an unsaved input as an applied host setting or silently submit on restoration.
 
 **Used in.** Lab experiment creation. The book includes prose, error and pending fixtures. CI owns browser/visual verification under the current local no-launch guard.
+
+## Board
+
+Master `Text field` on [blocks.bl](../board/blocks.bl), board *Sections*, variants `editable`, `invalid` and `disabled`; text names `label`, `value`, `help`. A form opens in the work area or inline, never floating ([OR-14](../owner-rules.md)).
