@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 
 	"time"
@@ -19,6 +21,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/obs"
 )
 
 var taskStates = []string{"queued", "in_progress", "waiting", "paused", "completed", "failed", "cancelled"}
@@ -71,9 +74,147 @@ func priorityClass(v any) (string, error) {
 func taskLoad(q *Request, id string) (db.Task, error) {
 	t, err := q.db().TaskGet(q.ctx(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
+		logTaskLoadNotFound(q, id, err)
 		return t, errNotFound
 	}
 	return t, err
+}
+
+type taskNotFoundDiag struct {
+	txProjectIDs   string
+	txPerson       string
+	txDeleted      string
+	exists         bool
+	rowProjectID   string
+	tombstoned     bool
+	projectDeleted bool
+	diagErr        error
+}
+
+// inspectTaskVisibility reads the current transaction's RLS/deleted settings and probes whether id exists outside RLS
+// or deleted filtering in the same snapshot, then restores the caller's transaction settings.
+func inspectTaskVisibility(q *Request, id string) (out taskNotFoundDiag) {
+	if q == nil || q.tx == nil {
+		return out
+	}
+	ctx := q.ctx()
+	d := q.db()
+	vis, err := d.TxVisibility(ctx)
+	if err != nil {
+		out.diagErr = err
+		return out
+	}
+	out.txProjectIDs, out.txPerson, out.txDeleted = vis.ProjectIds, vis.Person, vis.Deleted
+	if vis.ProjectIds != "*" || vis.Person != "" {
+		if err := d.TxSetScope(ctx, db.TxSetScopeParams{ProjectIds: "*", Person: ""}); err != nil {
+			out.diagErr = err
+			return out
+		}
+		defer func() {
+			if rerr := d.TxSetScope(ctx, db.TxSetScopeParams{ProjectIds: vis.ProjectIds, Person: vis.Person}); rerr != nil && out.diagErr == nil {
+				out.diagErr = rerr
+			}
+		}()
+	}
+	if vis.Deleted != "on" {
+		if err := d.TxShowDeleted(ctx, "on"); err != nil {
+			out.diagErr = err
+			return out
+		}
+		defer func() {
+			if rerr := d.TxShowDeleted(ctx, vis.Deleted); rerr != nil && out.diagErr == nil {
+				out.diagErr = rerr
+			}
+		}()
+	}
+	row, err := d.TaskNotFoundDiag(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out
+	}
+	if err != nil {
+		out.diagErr = err
+		return out
+	}
+	out.exists = true
+	out.rowProjectID = row.ProjectID
+	out.tombstoned = row.Tombstoned
+	out.projectDeleted = row.ProjectDeleted
+	return out
+}
+
+// logTaskLoadNotFound records structured diagnostic fields and span attributes on a taskLoad 404 without leaking secrets.
+func logTaskLoadNotFound(q *Request, id string, loadErr error) {
+	var personEmail, actorName, route, hostID string
+	var full, accessTxSynced bool
+	expectedScope := "*"
+	ctx := context.Background()
+	if q != nil {
+		ctx = q.ctx()
+		if q.person != nil {
+			personEmail = q.person.Email
+		}
+		full = fullAccess(q.person)
+		actorName = actor(q, "")
+		if sc := scopeOf(q.person); sc != nil {
+			expectedScope = sc.ProjectIDs
+		}
+		accessTxSynced = q.tx != nil && q.accessTx == q.tx
+		if q.r != nil && q.r.URL != nil {
+			route = q.r.URL.Path
+		}
+		if q.host != nil {
+			hostID = q.host.HostID
+		}
+	}
+	diag := inspectTaskVisibility(q, id)
+	deletedVisible := diag.txDeleted == "on"
+	if span := obs.From(ctx); span != nil {
+		span.Set("fleet.task.not_found.task_id", id)
+		span.Set("fleet.task.not_found.person", personEmail)
+		span.Set("fleet.task.not_found.actor", actorName)
+		span.Set("fleet.task.not_found.expected_project_ids", expectedScope)
+		span.Set("fleet.task.not_found.project_ids", diag.txProjectIDs)
+		span.Set("fleet.task.not_found.tx_person", diag.txPerson)
+		span.Set("fleet.task.not_found.deleted_visible", strconv.FormatBool(deletedVisible))
+		span.Set("fleet.task.not_found.exists", strconv.FormatBool(diag.exists))
+		span.Set("fleet.task.not_found.tombstoned", strconv.FormatBool(diag.tombstoned))
+		span.Set("fleet.task.not_found.project_deleted", strconv.FormatBool(diag.projectDeleted))
+		if diag.exists {
+			span.Set("fleet.task.not_found.row_project_id", diag.rowProjectID)
+		}
+		span.Set("fleet.task.not_found.err", loadErr.Error())
+		if diag.diagErr != nil {
+			span.Set("fleet.task.not_found.diag_err", diag.diagErr.Error())
+		}
+	}
+	attrs := []slog.Attr{
+		slog.String("task_id", id),
+		slog.String("person", personEmail),
+		slog.String("actor", actorName),
+		slog.Bool("full_access", full),
+		slog.String("expected_project_ids", expectedScope),
+		slog.String("project_ids", diag.txProjectIDs),
+		slog.String("tx_person", diag.txPerson),
+		slog.Bool("deleted_visible", deletedVisible),
+		slog.Bool("access_tx_synced", accessTxSynced),
+		slog.Bool("exists", diag.exists),
+		slog.Bool("tombstoned", diag.tombstoned),
+		slog.Bool("project_deleted", diag.projectDeleted),
+	}
+	if diag.exists {
+		attrs = append(attrs, slog.String("row_project_id", diag.rowProjectID))
+	}
+	if route != "" {
+		attrs = append(attrs, slog.String("route", route))
+	}
+	if hostID != "" {
+		attrs = append(attrs, slog.String("host_id", hostID))
+	}
+	attrs = append(attrs, slog.String("err", loadErr.Error()))
+	if diag.diagErr != nil {
+		attrs = append(attrs, slog.String("diag_err", diag.diagErr.Error()))
+	}
+	slog.LogAttrs(ctx, slog.LevelWarn, "taskLoad: not found", attrs...)
 }
 
 // taskRow: the task's row as a record (column names); errNotFound when absent.

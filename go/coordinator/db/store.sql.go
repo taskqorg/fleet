@@ -142,3 +142,22 @@ func (q *Queries) TxShowDeleted(ctx context.Context, shown string) error {
 	_, err := q.db.Exec(ctx, txShowDeleted, shown)
 	return err
 }
+
+const txVisibility = `-- name: TxVisibility :one
+SELECT coalesce(current_setting('fleet.project_ids', true), '')::text AS project_ids,
+  coalesce(current_setting('fleet.person', true), '')::text AS person,
+  coalesce(current_setting('fleet.deleted', true), '')::text AS deleted
+`
+
+type TxVisibilityRow struct {
+	ProjectIds string
+	Person     string
+	Deleted    string
+}
+
+func (q *Queries) TxVisibility(ctx context.Context) (TxVisibilityRow, error) {
+	row := q.db.QueryRow(ctx, txVisibility)
+	var i TxVisibilityRow
+	err := row.Scan(&i.ProjectIds, &i.Person, &i.Deleted)
+	return i, err
+}

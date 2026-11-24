@@ -4,6 +4,15 @@
 -- name: TaskGet :one
 SELECT * FROM task WHERE id=$1;
 
+-- name: TaskNotFoundDiag :one
+-- Diagnostic visibility lookup for a task row after a 404 (called only with widened scope and fleet.deleted=on).
+SELECT
+  coalesce(project_id, '')::text AS project_id,
+  (tombstoned_at IS NOT NULL)::boolean AS tombstoned,
+  (project_id IS NOT NULL AND project_id = ANY (fleet_deleted_projects()))::boolean AS project_deleted
+FROM task
+WHERE id = $1;
+
 -- name: TaskStateForShare :one
 -- The task's state, held against a concurrent cancellation until the caller commits.
 SELECT state FROM task WHERE id=$1 FOR SHARE;
