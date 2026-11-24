@@ -4,7 +4,7 @@ Fleet's languages, toolchain, contract source, rule delivery and the order in wh
 
 ## Decision
 
-Every Fleet service is written in Go. The browser app stays TypeScript (Preact, esbuild). Reasons and compared options: [why this stack](#why-this-stack).
+Every Fleet service is written in Go. The browser app stays TypeScript (SolidJS 2.0, `@ui-sdk/core` / `@ui-sdk/solid`, esbuild with `@solidjs/compiler`). Reasons and compared options: [why this stack](#why-this-stack).
 
 Order:
 
@@ -32,6 +32,7 @@ The owner's first goal is fast agent work in parallel worktrees: the Mac must st
 | `modernc.org/sqlite`, purego (executor) | stdlib journal; cgo | Journal: hand-written queries and cross-process waits, cannot read existing files (breaks Python tests, in-place upgrade), 200 commits/s against 14k/s, no Windows build. modernc lost 0 acknowledged commits under kill -9; purego reaches libproc without C. |
 | One-pass rewrite by four parallel areas | Go front door proxying to TypeScript | No live users and no data to keep: the speed of development decides (owner, 2026-11-11). A proxy would keep two coordinators and their shared-lock ordering alive. |
 | Typed seams after the port (quality round, 2026-11-11) | hand checks on raw JSON | After the port the generated types were used in 0 places, and every live regression came through a seam (host protocol, `jsonb` payloads, app operations). |
+| SolidJS 2.0 + `@ui-sdk/core` / `@ui-sdk/solid` (browser app) | Preact + hand-written overlays/menus | Fine-grained reactivity without virtual-DOM diffing, accessible `@ui-sdk/solid` headless primitives (Dialog, Popover, Menu, Tabs, Field, Toggle), and `@ui-sdk/core/agent` Agent Bridge; compiles via `@solidjs/compiler` inside esbuild with lazy view chunks (`main` 141 KB raw). |
 
 ## Delivery order and change cycles
 
@@ -54,9 +55,9 @@ The labels D1 and D3 are cited by code comments. Each stays while the code it go
 ### D1. Node 22 and pnpm
 
 - Node 22 (`engines.node` `>=22.18`). Bun and Deno were rejected: they broke tests and did not beat pnpm on install time or disk ([evidence](../../evidence/fleet-stack.md#toolchain-measurements)).
-- pnpm 10, pinned in `packageManager`. `pnpm-workspace.yaml` sets `minimumReleaseAge: 1440` (one day; seven days rejected the pins of the switch) and allows install scripts only for `esbuild`. Every version is pinned.
+- pnpm 10, pinned in `packageManager`. `pnpm-workspace.yaml` sets `minimumReleaseAge: 1440` (excluding `@ui-sdk/core` and `@ui-sdk/solid` while pinned to beta) and allows install scripts only for `esbuild`. Every version is pinned.
 - Imports use `.ts` specifiers. `tsconfig.json` sets `noEmit`, `allowImportingTsExtensions` and `erasableSyntaxOnly`; tests and scripts run with Node's native type stripping, without `tsx`.
-- The type check is TypeScript 7 (`typescript` 7.0.2, the native compiler) in `pnpm run typecheck`. The app build is esbuild (`app/build.mjs`).
+- The type check is TypeScript 7 (`typescript` 7.0.2, the native compiler) in `pnpm run typecheck` (`jsxImportSource: "@solidjs/web"`). The app build is esbuild with `@solidjs/compiler` (`app/build.mjs`).
 - Holds for the app, the browser checks and the outside tests.
 
 The label D2 (shared Rust target per machine) ended with the Rust executor and gateway.

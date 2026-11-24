@@ -3,15 +3,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
+import { transform } from '@solidjs/compiler';
+// @ts-expect-error ESM helper module
+import { solidEsbuildPlugin } from '../../packages/ui/scripts/solid-esbuild.mjs';
 import { chromium } from 'playwright';
 test('mounted Composer: original-text clear, newer input, adapter reset and memory-only default', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
-  const result = await build({ stdin: { contents: `
-    import {render} from 'preact'; import {Composer} from './packages/ui/src/index.ts';
+  const src = `
+    import { createSignal, flush } from 'solid-js'; import { render } from '@solidjs/web'; import { Composer } from './packages/ui/src/index.ts';
     const w=window; w.record='restored'; w.key='one'; w.refuse=false;
     const adapter=()=>({key:w.key,read:()=>w.record,write:text=>{w.record=text},clearIfUnchanged:text=>{if(w.refuse)throw Error('stale');if(w.record===text)w.record=''}});
-    w.draw=()=>render(<Composer draftPersistence={adapter()} onSend={()=>new Promise((resolve,reject)=>{w.sent=resolve;w.failed=reject})}/>,document.body);
-    w.memory=()=>render(<Composer onSend={()=>{}}/>,document.body);w.draw();
-  `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
+    const [dp, setDp] = createSignal(adapter());
+    w.draw=()=>{ setDp(adapter()); flush(); };
+    w.memory=()=>{ setDp(undefined); flush(); };
+    render(()=><Composer draftPersistence={dp()} onSend={()=>new Promise((resolve,reject)=>{w.sent=resolve;w.failed=reject})}/>,document.body);
+  `;
+  const compiled = transform(src, { filename: 'fixture.tsx', generate: 'dom', moduleName: '@solidjs/web' });
+  const result = await build({ stdin: { contents: compiled.code, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, format: 'iife', conditions: ['solid'], plugins: [solidEsbuildPlugin()] });
   const browser = await chromium.launch({ headless: true }), page = await browser.newPage();
   try {
     await page.setContent('<body></body>'); await page.addScriptTag({ content: result.outputFiles[0].text });

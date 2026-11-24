@@ -6,7 +6,7 @@
 
 Fleet coordinates agent work across projects and hosts. The [system specification](fleet.md) owns product rules; [AGENTS.md](AGENTS.md) names the pinned shared rules and task-entry requirements. These directory contracts map implemented boundaries and side effects; they do not replace product specifications.
 
-The Preact app calls coordinator operations over HTTP and consumes its change feed. The coordinator owns shared work state in PostgreSQL, queries ClickHouse telemetry, coordinates object transfers and dispatches commands to host executors. Executors run harnesses and host jobs and send durable receipts. The gateway handles provider calls and the Access origin guard; the updater verifies and installs published releases. See each child contract for the actual interfaces and limits.
+The SolidJS 2.0 app calls coordinator operations over HTTP and consumes its change feed. The coordinator owns shared work state in PostgreSQL, queries ClickHouse telemetry, coordinates object transfers and dispatches commands to host executors. Executors run harnesses and host jobs and send durable receipts. The gateway handles provider calls and the Access origin guard; the updater verifies and installs published releases. See each child contract for the actual interfaces and limits.
 
 ## Subdirectories & System Boundaries
 

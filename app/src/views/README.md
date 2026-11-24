@@ -2,7 +2,7 @@
 
 ## Overview
 
-Each file exports one routed Preact screen. `main.tsx:SCREENS` maps the registry's application workspaces to these components.
+Each file exports one routed SolidJS 2.0 screen. `main.tsx:SCREENS` maps the registry's application workspaces to these components via `lazy`.
 
 ## Interface
 

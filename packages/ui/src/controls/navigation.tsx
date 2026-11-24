@@ -1,10 +1,11 @@
 // Navigation rail, global project focus control, and Spotlight search palette.
-import { Fragment, type ComponentChildren } from 'preact';
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { createEffect, createMemo, createSignal, createUniqueId, For, onSettled, Show, untrack } from 'solid-js';
+import type { JSX } from '@solidjs/web';
+import { Input, Popover, PopoverContent, PopoverTrigger } from '@ui-sdk/solid';
 import { type IconName, type Family, type StateDef, type Tone, states, actions } from '../registry.ts';
 import { matchSearch, searchFields } from '../search.ts';
 import { isSubmitEnter } from '../keys.ts';
-import { Icon, Button, StateBadge, Ago, SearchBox, popoverAttr, useAnchoredPopover, focusOnMount } from './primitives.tsx';
+import { Icon, Button, StateBadge, Ago, SearchBox, focusOnMount } from './primitives.tsx';
 
 /* ---------- Focus: one project multi-select for the whole app, with presets and ignore (OR-34, controls/focus-control.md) ---------- */
 
@@ -15,20 +16,45 @@ const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every(x
 /** The focus presets as one-click chips: "All projects" (the system preset, an empty focus) and the saved ones. The
  *  empty Spotlight palette shows them. Unlike the focus chip panel, which keeps a preset of only ignored projects disabled
  *  so it can be removed, the palette offers only presets it can apply. Children follow on the same line. */
-export function FocusPresets({ value, presets, ignored = [], onChange, onRemove, icon, children }: {
+export function FocusPresets(p: {
   value: string[]; presets: FocusPreset[]; onChange: (ids: string[]) => void; onRemove?: (name: string) => void;
   /** Ignored projects (OR-34): left out of each preset; a preset of only ignored projects is not offered. */ ignored?: string[];
-  /** Leads with the focus icon, where nothing else says what the chips are. */ icon?: boolean; children?: ComponentChildren;
+  /** Leads with the focus icon, where nothing else says what the chips are. */ icon?: boolean; children?: JSX.Element;
 }) {
-  return <div class="presets" role="group" aria-label="Focus presets" data-ui="focus-presets">
-    {icon && <span class="presets-h" data-tip="Focus"><Icon name="focus" label="Focus" /></span>}
-    <span class={`preset${value.length === 0 ? ' on' : ''}`}><button type="button" aria-pressed={value.length === 0} onClick={() => onChange([])}>All projects</button></span>
-    {presets.map(p => ({ ...p, projects: p.projects.filter(x => !ignored.includes(x)) })).filter(p => p.projects.length).map(p => <span key={p.name} class={`preset${sameSet(p.projects, value) && value.length ? ' on' : ''}`}>
-      <button type="button" aria-pressed={!!value.length && sameSet(p.projects, value)} onClick={() => onChange(p.projects)}>{p.name}</button>
-      {onRemove && <button type="button" class="x" aria-label={`Remove focus preset ${p.name}`} data-tip="Remove" onClick={() => onRemove(p.name)}><Icon name="x" /></button>}</span>)}
-    {children}
-  </div>;
+  const ignored = createMemo(() => p.ignored ?? []);
+  const livePresets = createMemo(() =>
+    p.presets
+      .map(pr => ({ ...pr, projects: pr.projects.filter(x => !ignored().includes(x)) }))
+      .filter(pr => pr.projects.length > 0),
+  );
+  return (
+    <div class="presets" role="group" aria-label="Focus presets" data-ui="focus-presets">
+      <Show when={p.icon}><span class="presets-h" data-tip="Focus"><Icon name="focus" label="Focus" /></span></Show>
+      <span class={['preset', { on: p.value.length === 0 }]}>
+        <button type="button" aria-pressed={p.value.length === 0 ? 'true' : 'false'} onClick={() => p.onChange([])}>All projects</button>
+      </span>
+      <For each={livePresets()}>
+        {pr => {
+          const active = createMemo(() => p.value.length > 0 && sameSet(pr.projects, p.value));
+          return (
+            <span class={['preset', { on: active() }]}>
+              <button type="button" aria-pressed={active() ? 'true' : 'false'} onClick={() => p.onChange(pr.projects)}>{pr.name}</button>
+              <Show when={p.onRemove} keyed>
+                {rem => (
+                  <button type="button" class="x" aria-label={`Remove focus preset ${pr.name}`} data-tip="Remove" onClick={() => rem(pr.name)}>
+                    <Icon name="x" />
+                  </button>
+                )}
+              </Show>
+            </span>
+          );
+        }}
+      </For>
+      {p.children}
+    </div>
+  );
 }
+
 /**
  * The focus chip in the shell header (OR-43): the focused project names (two, then +N), toned when a focus is set, and a
  * panel anchored under it (an overlay that moves nothing, an OR-14 exception like Spotlight). The panel holds the presets
@@ -36,57 +62,185 @@ export function FocusPresets({ value, presets, ignored = [], onChange, onRemove,
  * section to restore them. Ignored projects are never offered for the focus. `outside` is the count of items that need the
  * person in projects outside the focus that are not ignored; it shows only when above 0.
  */
-export function FocusControl({ projects, value, presets, ignored = [], outside, onChange, onSavePreset, onRemovePreset, onIgnore }: {
+export function FocusControl(p: {
   projects: FocusProject[]; value: string[]; presets: { name: string; projects: string[] }[]; ignored?: string[];
   outside?: { n: number; onOpen: () => void };
   onChange: (ids: string[]) => void; onSavePreset: (name: string) => void; onRemovePreset: (name: string) => void; onIgnore?: (id: string, ignored: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false), [q, setQ] = useState(''), [naming, setNaming] = useState<string | null>(null), [showIgnored, setShowIgnored] = useState(false);
-  const btnRef = useRef<HTMLButtonElement>(null), panelRef = useRef<HTMLDivElement>(null);
-  useAnchoredPopover(open, () => { setOpen(false); setNaming(null); }, btnRef, panelRef);
+  const [open, setOpen] = createSignal(false);
+  const [q, setQ] = createSignal('');
+  const [naming, setNaming] = createSignal<string | null>(null);
+  const [showIgnored, setShowIgnored] = createSignal(false);
+  let wrap: HTMLDivElement | undefined;
+
+  const ignored = createMemo(() => p.ignored ?? []);
   // '-' is work outside projects; it is listed when the focus or a preset holds it.
-  const name = (id: string) => id === '-' ? 'No project' : projects.find(p => p.id === id)?.name ?? id;
-  if (value.includes('-') || presets.some(p => p.projects.includes('-'))) projects = [{ id: '-', name: 'No project' }, ...projects.filter(p => p.id !== '-')];
-  const offered = projects.filter(p => !ignored.includes(p.id)), hidden = ignored.map(id => ({ id, name: name(id) }));
-  const names = value.slice(0, 2).map(name), more = value.length - names.length;
-  const label = value.length ? names.join(', ') : 'All projects', summary = label + (more > 0 ? ` and ${more} more` : '');
-  const same = (a: string[], b: string[]) => { const x = a.filter(p => !ignored.includes(p)); return x.length === b.length && x.every(p => b.includes(p)); };
-  const shown = offered.filter(p => `${p.name} ${p.id}`.toLowerCase().includes(q.toLowerCase()));
-  const toggle = (id: string) => onChange(value.includes(id) ? value.filter(x => x !== id) : [...value, id]);
-  const save = () => { if (naming?.trim()) onSavePreset(naming.trim()); setNaming(null); };
-  return <div class={`focus-ctl${open ? ' open' : ''}${value.length ? ' set' : ''}`} data-ui="focus-control">
-    {outside && outside.n > 0 && <button type="button" class="focus-outside t-attention" aria-label={`${outside.n} need you outside focus: show every project`} data-tip="Show every project" onClick={() => { setOpen(false); outside.onOpen(); }}>
-      <Icon name="bell" /><span class="num">{outside.n}</span><span class="nm">need you outside focus</span></button>}
-    <button ref={btnRef} type="button" class="focus-btn" aria-expanded={open} aria-label={`Focus: ${summary}`} onClick={() => setOpen(!open)}>
-      <span class="focus-ic" data-tip={`Focus: ${summary}`} data-tip-narrow><Icon name="focus" /></span>
-      <span class="nm">{label}</span>{more > 0 && <span class="more">+{more}</span>}<Icon name="chevron-down" /></button>
-    {open && <div ref={panelRef} {...popoverAttr('auto')} class="focus-panel" role="group" aria-label="Focus projects">
-      <div class="presets">
-        <span class={`preset${value.length === 0 ? ' on' : ''}`}><button type="button" aria-pressed={value.length === 0} onClick={() => onChange([])}>All projects</button></span>
-        {presets.map(p => { const live = p.projects.filter(x => !ignored.includes(x)); return <span key={p.name} class={`preset${value.length && same(p.projects, value) ? ' on' : ''}`}>
-          {/* A preset whose projects are all ignored would clear the focus: it cannot be picked until one is restored. */}
-          <button type="button" aria-pressed={!!value.length && same(p.projects, value)} aria-disabled={!live.length || undefined} data-tip={live.length ? undefined : 'Every project in it is ignored'}
-            onClick={() => { if (live.length) onChange(live); }}>{p.name}</button>
-          <button type="button" class="x" aria-label={`Remove focus preset ${p.name}`} data-tip="Remove" onClick={() => onRemovePreset(p.name)}><Icon name="x" /></button></span>; })}
-        {value.length > 0 && (naming === null
-          ? <Button label="Save focus preset" icon="save" iconOnly kind="quiet" onClick={() => setNaming('')} />
-          : <span class="naming"><input value={naming} placeholder="Preset name" aria-label="Preset name" ref={focusOnMount} onInput={e => setNaming((e.target as HTMLInputElement).value)}
-              onKeyDown={e => { if (isSubmitEnter(e)) save(); if (e.key === 'Escape') setNaming(null); }} />
-              <Button label="Save" kind="primary" onClick={save} /></span>)}
-      </div>
-      {offered.length > 8 && <SearchBox label="Find project" value={q} onInput={setQ} always />}
-      <ul class="focus-list" aria-label="Projects">{shown.map(p => { const only = value.length === 1 && value[0] === p.id; return <li key={p.id}><label><input type="checkbox" class="row-check" checked={value.includes(p.id)} onChange={() => toggle(p.id)} />
-        <span class="nm">{p.name}</span></label>
-        {onIgnore && p.id !== '-' && <button type="button" class="focus-act" aria-label={`Ignore ${p.name}`} aria-disabled={only || undefined}
-          data-tip={only ? 'The only focused project: focus another first' : 'Ignore: hide everywhere'} onClick={() => { if (!only) onIgnore(p.id, true); }}><Icon name="circle-slash" /></button>}</li>; })}</ul>
-      {hidden.length > 0 && <div class="focus-ignored">
-        <button type="button" class="group-h" aria-expanded={showIgnored} onClick={() => setShowIgnored(!showIgnored)}>
-          <span class={showIgnored ? 'chev open' : 'chev'}><Icon name="chevron-down" /></span><Icon name="circle-slash" /><b>Ignored</b><span class="num">{hidden.length}</span></button>
-        {showIgnored && <ul class="focus-list" aria-label="Ignored projects">{hidden.map(p => <li key={p.id}><span class="nm muted">{p.name}</span>
-          {onIgnore && <button type="button" class="focus-act" aria-label={`Restore ${p.name}`} data-tip="Restore" onClick={() => onIgnore(p.id, false)}><Icon name="undo-2" /></button>}</li>)}</ul>}
-      </div>}
-    </div>}
-  </div>;
+  const projects = createMemo(() =>
+    p.value.includes('-') || p.presets.some(pr => pr.projects.includes('-'))
+      ? [{ id: '-', name: 'No project' }, ...p.projects.filter(pr => pr.id !== '-')]
+      : p.projects,
+  );
+  const name = (id: string) => id === '-' ? 'No project' : projects().find(pr => pr.id === id)?.name ?? id;
+  const offered = createMemo(() => projects().filter(pr => !ignored().includes(pr.id)));
+  const hidden = createMemo(() => ignored().map(id => ({ id, name: name(id) })));
+  const names = createMemo(() => p.value.slice(0, 2).map(name));
+  const more = createMemo(() => p.value.length - names().length);
+  const label = createMemo(() => p.value.length ? names().join(', ') : 'All projects');
+  const summary = createMemo(() => label() + (more() > 0 ? ` and ${more()} more` : ''));
+  const same = (a: string[], b: string[]) => {
+    const x = a.filter(id => !ignored().includes(id));
+    return x.length === b.length && x.every(id => b.includes(id));
+  };
+  const shown = createMemo(() => {
+    const needle = q().toLowerCase();
+    return offered().filter(pr => `${pr.name} ${pr.id}`.toLowerCase().includes(needle));
+  });
+  const toggle = (id: string) => p.onChange(p.value.includes(id) ? p.value.filter(x => x !== id) : [...p.value, id]);
+  const save = () => {
+    const v = naming()?.trim();
+    if (v) p.onSavePreset(v);
+    setNaming(null);
+  };
+
+  return (
+    <div ref={el => { wrap = el; }} class={['focus-ctl', { open: open(), set: p.value.length > 0 }]} data-ui="focus-control">
+      <Show when={p.outside && p.outside.n > 0}>
+        <button
+          type="button"
+          class="focus-outside t-attention"
+          aria-label={`${p.outside!.n} need you outside focus: show every project`}
+          data-tip="Show every project"
+          onClick={() => { setOpen(false); p.outside!.onOpen(); }}
+        >
+          <Icon name="bell" />
+          <span class="num">{p.outside!.n}</span>
+          <span class="nm">need you outside focus</span>
+        </button>
+      </Show>
+      <Popover
+        open={open()}
+        onOpenChange={next => {
+          setOpen(next);
+          if (!next) setNaming(null);
+        }}
+        container={wrap}
+      >
+        <PopoverTrigger class="focus-btn" aria-label={`Focus: ${summary()}`}>
+          <span class="focus-ic" data-tip={`Focus: ${summary()}`} data-tip-narrow><Icon name="focus" /></span>
+          <span class="nm">{label()}</span>
+          <Show when={more() > 0}><span class="more">+{more()}</span></Show>
+          <Icon name="chevron-down" />
+        </PopoverTrigger>
+        <PopoverContent class="focus-panel" side="bottom" align="end" aria-label="Focus projects" render={cp => <div {...cp} role="group" aria-labelledby={undefined} />}>
+          <div class="presets">
+            <span class={['preset', { on: p.value.length === 0 }]}>
+              <button type="button" aria-pressed={p.value.length === 0 ? 'true' : 'false'} onClick={() => p.onChange([])}>All projects</button>
+            </span>
+            <For each={p.presets}>
+              {pr => {
+                const live = createMemo(() => pr.projects.filter(x => !ignored().includes(x)));
+                const on = createMemo(() => p.value.length > 0 && same(pr.projects, p.value));
+                return (
+                  <span class={['preset', { on: on() }]}>
+                    {/* A preset whose projects are all ignored would clear the focus: it cannot be picked until one is restored. */}
+                    <button
+                      type="button"
+                      aria-pressed={on() ? 'true' : 'false'}
+                      aria-disabled={!live().length ? 'true' : undefined}
+                      data-tip={live().length ? undefined : 'Every project in it is ignored'}
+                      onClick={() => { if (live().length) p.onChange(live()); }}
+                    >
+                      {pr.name}
+                    </button>
+                    <button type="button" class="x" aria-label={`Remove focus preset ${pr.name}`} data-tip="Remove" onClick={() => p.onRemovePreset(pr.name)}>
+                      <Icon name="x" />
+                    </button>
+                  </span>
+                );
+              }}
+            </For>
+            <Show when={p.value.length > 0}>
+              <Show
+                when={naming() !== null}
+                fallback={<Button label="Save focus preset" icon="save" iconOnly kind="quiet" onClick={() => setNaming('')} />}
+              >
+                <span class="naming">
+                  <Input
+                    value={naming() ?? ''}
+                    placeholder="Preset name"
+                    aria-label="Preset name"
+                    ref={focusOnMount}
+                    onValueChange={v => setNaming(v)}
+                    onKeyDown={e => {
+                      if (isSubmitEnter(e)) save();
+                      if (e.key === 'Escape') setNaming(null);
+                    }}
+                  />
+                  <Button label="Save" kind="primary" onClick={save} />
+                </span>
+              </Show>
+            </Show>
+          </div>
+          <Show when={offered().length > 8}>
+            <SearchBox label="Find project" value={q()} onInput={setQ} always />
+          </Show>
+          <ul class="focus-list" aria-label="Projects">
+            <For each={shown()}>
+              {pr => {
+                const only = createMemo(() => p.value.length === 1 && p.value[0] === pr.id);
+                return (
+                  <li>
+                    <label>
+                      <input type="checkbox" class="row-check" checked={p.value.includes(pr.id)} onChange={() => toggle(pr.id)} />
+                      <span class="nm">{pr.name}</span>
+                    </label>
+                    <Show when={p.onIgnore && pr.id !== '-'}>
+                      <button
+                        type="button"
+                        class="focus-act"
+                        aria-label={`Ignore ${pr.name}`}
+                        aria-disabled={only() ? 'true' : undefined}
+                        data-tip={only() ? 'The only focused project: focus another first' : 'Ignore: hide everywhere'}
+                        onClick={() => { if (!only()) p.onIgnore!(pr.id, true); }}
+                      >
+                        <Icon name="circle-slash" />
+                      </button>
+                    </Show>
+                  </li>
+                );
+              }}
+            </For>
+          </ul>
+          <Show when={hidden().length > 0}>
+            <div class="focus-ignored">
+              <button type="button" class="group-h" aria-expanded={showIgnored() ? 'true' : 'false'} onClick={() => setShowIgnored(v => !v)}>
+                <span class={['chev', { open: showIgnored() }]}><Icon name="chevron-down" /></span>
+                <Icon name="circle-slash" />
+                <b>Ignored</b>
+                <span class="num">{hidden().length}</span>
+              </button>
+              <Show when={showIgnored()}>
+                <ul class="focus-list" aria-label="Ignored projects">
+                  <For each={hidden()}>
+                    {pr => (
+                      <li>
+                        <span class="nm muted">{pr.name}</span>
+                        <Show when={p.onIgnore}>
+                          <button type="button" class="focus-act" aria-label={`Restore ${pr.name}`} data-tip="Restore" onClick={() => p.onIgnore!(pr.id, false)}>
+                            <Icon name="undo-2" />
+                          </button>
+                        </Show>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
+            </div>
+          </Show>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
 }
 
 /* ---------- Navigation rail with pinned sections (nav-rail.md) ---------- */
@@ -98,80 +252,156 @@ export function FocusControl({ projects, value, presets, ignored = [], outside, 
 export type NavItem = { id: string; label: string; icon: IconName; group: string; count?: NavCount };
 export type NavCount = { n: number; outside?: number; tone: Tone; label: string };
 /** The counter after a section name: `12·30` (in focus bright, outside dim), `·30` with none in focus, `12` without a focus; nothing at zero. */
-function NavCounter({ c }: { c: NavCount }) {
-  const out = c.outside ?? 0;
-  if (c.n <= 0 && out <= 0) return null;
-  const words = c.outside === undefined ? `${c.n} ${c.label}` : `${c.n > 0 ? c.n : 'none'} ${c.label} in focus, ${out} outside`;
-  return <span class={`nav-count t-${c.tone}${c.n > 0 ? '' : ' out-only'}`} aria-label={words}>
-    {c.n > 0 && <span class="nav-in">{c.n.toLocaleString('en')}</span>}{out > 0 && <span class="nav-out">·{out.toLocaleString('en')}</span>}</span>;
+function NavCounter(p: { c: NavCount }) {
+  const out = () => p.c.outside ?? 0;
+  const words = () => p.c.outside === undefined ? `${p.c.n} ${p.c.label}` : `${p.c.n > 0 ? p.c.n : 'none'} ${p.c.label} in focus, ${out()} outside`;
+  return (
+    <Show when={p.c.n > 0 || out() > 0}>
+      <span class={['nav-count', `t-${p.c.tone}`, { 'out-only': p.c.n <= 0 }]} aria-label={words()}>
+        <Show when={p.c.n > 0}><span class="nav-in">{p.c.n.toLocaleString('en')}</span></Show>
+        <Show when={out() > 0}><span class="nav-out">·{out().toLocaleString('en')}</span></Show>
+      </span>
+    </Show>
+  );
 }
-export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, head, foot }: {
+export function NavRail(p: {
   items: NavItem[]; current: string; onGo: (id: string) => void;
   /** The person's pinned ids in their order; onPins gets the whole new list (pin, unpin, reorder). */ pinned: string[]; onPins: (ids: string[]) => void;
-  /** Collapsed to icons. */ mini?: boolean; /** Product name and need-you chip (app shell). */ head?: ComponentChildren; /** The current user block, at the bottom. */ foot?: ComponentChildren;
+  /** Collapsed to icons. */ mini?: boolean; /** Product name and need-you chip (app shell). */ head?: JSX.Element; /** The current user block, at the bottom. */ foot?: JSX.Element;
 }) {
   // Ids of sections that no longer exist are dropped here, so they never take a position and leave on the next save.
-  const pinned = stored.filter(id => items.some(i => i.id === id));
-  const [menu, setMenu] = useState<string | null>(null);
-  const [drag, setDrag] = useState<string | null>(null);
-  const navRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (!menu) return;
+  const pinned = createMemo(() => p.pinned.filter(id => p.items.some(i => i.id === id)));
+  const [menu, setMenu] = createSignal<string | null>(null);
+  const [drag, setDrag] = createSignal<string | null>(null);
+  let navRef: HTMLElement | undefined;
+
+  const focusItem = (id: string, inPinned: boolean) => requestAnimationFrame(() =>
+    navRef?.querySelector<HTMLElement>(`.rail-g${inPinned ? '.pinned' : ':not(.pinned)'} [data-id="${id}"] a`)?.focus(),
+  );
+
+  createEffect(menu, cur => {
+    if (!cur) return;
     const close = (e: Event) => {
-      if (e instanceof KeyboardEvent) { if (e.key !== 'Escape') return; e.stopPropagation(); focusItem(menu.slice(2), menu[0] === 'p'); }
+      if (e instanceof KeyboardEvent) { if (e.key !== 'Escape') return; e.stopPropagation(); focusItem(cur.slice(2), cur[0] === 'p'); }
       else if ((e.target as Element).closest?.('.rail-menu')) return;
       setMenu(null);
     };
-    document.addEventListener('pointerdown', close); document.addEventListener('keydown', close, true);
-    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close, true); };
-  }, [menu]);
-  const focusItem = (id: string, inPinned: boolean) => requestAnimationFrame(() =>
-    navRef.current?.querySelector<HTMLElement>(`.rail-g${inPinned ? '.pinned' : ':not(.pinned)'} [data-id="${id}"] a`)?.focus());
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', close, true);
+    return () => {
+      document.removeEventListener('pointerdown', close);
+      document.removeEventListener('keydown', close, true);
+    };
+  });
+
   // An item unpinned from the pinned group leaves it: focus follows to the same item in its group.
-  const toggle = (id: string, inPinned = false) => { onPins(pinned.includes(id) ? pinned.filter(x => x !== id) : [...pinned, id]); if (inPinned) focusItem(id, false); };
+  const toggle = (id: string, inPinned = false) => {
+    const cur = pinned();
+    p.onPins(cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]);
+    if (inPinned) focusItem(id, false);
+  };
   // move: the pinned item to position `to` (clamped); keeps focus on the moved item for keyboard reorder.
   const move = (id: string, to: number, refocus = false) => {
-    const rest = pinned.filter(x => x !== id), at = Math.max(0, Math.min(rest.length, to));
-    if (pinned.indexOf(id) === at) return;
-    onPins([...rest.slice(0, at), id, ...rest.slice(at)]);
+    const cur = pinned(), rest = cur.filter(x => x !== id), at = Math.max(0, Math.min(rest.length, to));
+    if (cur.indexOf(id) === at) return;
+    p.onPins([...rest.slice(0, at), id, ...rest.slice(at)]);
     if (refocus) focusItem(id, true);
   };
-  const item = (it: NavItem, inPinned: boolean) => {
-    const isPinned = pinned.includes(it.id), i = pinned.indexOf(it.id);
-    return <li key={it.id} data-id={it.id} class={`nav-i${it.id === current ? ' cur' : ''}${isPinned ? ' pinned' : ''}${drag === it.id && inPinned ? ' dragging' : ''}`}
-      draggable={inPinned} onDragStart={inPinned ? e => { setDrag(it.id); e.dataTransfer?.setData('text/plain', it.id); } : undefined}
-      onDragOver={inPinned && drag ? e => e.preventDefault() : undefined}
-      onDrop={inPinned && drag ? e => { e.preventDefault(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
-        if (drag !== it.id) move(drag, pinned.filter(x => x !== drag).indexOf(it.id) + (after ? 1 : 0)); setDrag(null); } : undefined}
-      onDragEnd={() => setDrag(null)}
-      onContextMenu={e => { e.preventDefault(); setMenu(`${inPinned ? 'p' : 'g'}:${it.id}`); }}>
-      <a href={`#/${it.id}`} aria-current={it.id === current ? 'page' : undefined} aria-keyshortcuts={inPinned ? 'Alt+ArrowUp Alt+ArrowDown' : undefined} onClick={e => { e.preventDefault(); onGo(it.id); }}
-        onKeyDown={e => {
-          if (e.key === 'p' && !e.altKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggle(it.id, inPinned); }
-          else if (inPinned && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); move(it.id, i + (e.key === 'ArrowUp' ? -1 : 1), true); }
-          else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); setMenu(`${inPinned ? 'p' : 'g'}:${it.id}`); }
-        }}>
-        <span data-tip={it.label} data-tip-narrow class="nav-ic"><Icon name={it.icon} /></span><span class="nm">{it.label}</span>
-        {it.count && <NavCounter c={it.count} />}
-      </a>
-      <button type="button" class={`nav-pin${isPinned ? ' on' : ''}`} aria-pressed={isPinned} aria-label={`${isPinned ? 'Unpin' : 'Pin'} ${it.label}`} data-tip={isPinned ? 'Unpin' : 'Pin'} onClick={() => toggle(it.id, inPinned)}>
-        <Icon name="pin" /></button>
-      {menu === `${inPinned ? 'p' : 'g'}:${it.id}` && <span class="menu rail-menu" role="menu" aria-label={it.label}>
-        <button type="button" role="menuitem" ref={focusOnMount} onClick={act(() => toggle(it.id, inPinned))}><Icon name={i < 0 ? 'pin' : 'pin-off'} />{i < 0 ? 'Pin' : 'Unpin'}</button>
-        {i > 0 && <button type="button" role="menuitem" onClick={act(() => move(it.id, i - 1, true))}><Icon name="arrow-up" />Move up</button>}
-        {i >= 0 && i < pinned.length - 1 && <button type="button" role="menuitem" onClick={act(() => move(it.id, i + 1, true))}><Icon name="arrow-down" />Move down</button>}
-      </span>}
-    </li>;
-  };
-  const groups = [...new Set(items.map(i => i.group))];
-  const pins = pinned.map(id => items.find(i => i.id === id)).filter(Boolean) as NavItem[];
   const act = (f: () => void) => () => { setMenu(null); f(); };
+
+  const renderItem = (it: NavItem, inPinned: boolean) => {
+    const isPinned = createMemo(() => pinned().includes(it.id));
+    const idx = createMemo(() => pinned().indexOf(it.id));
+    const menuKey = () => `${inPinned ? 'p' : 'g'}:${it.id}`;
+    return (
+      <li
+        data-id={it.id}
+        class={['nav-i', { cur: it.id === p.current, pinned: isPinned(), dragging: drag() === it.id && inPinned }]}
+        draggable={inPinned ? 'true' : undefined}
+        onDragStart={e => {
+          if (!inPinned) return;
+          setDrag(it.id);
+          e.dataTransfer?.setData('text/plain', it.id);
+        }}
+        onDragOver={e => { if (inPinned && drag()) e.preventDefault(); }}
+        onDrop={e => {
+          const d = drag();
+          if (!inPinned || !d) return;
+          e.preventDefault();
+          const r = e.currentTarget.getBoundingClientRect();
+          const after = e.clientY > r.top + r.height / 2;
+          if (d !== it.id) move(d, pinned().filter(x => x !== d).indexOf(it.id) + (after ? 1 : 0));
+          setDrag(null);
+        }}
+        onDragEnd={() => setDrag(null)}
+        onContextMenu={e => { e.preventDefault(); setMenu(menuKey()); }}
+      >
+        <a
+          href={`#/${it.id}`}
+          aria-current={it.id === p.current ? 'page' : undefined}
+          aria-keyshortcuts={inPinned ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
+          onClick={e => { e.preventDefault(); p.onGo(it.id); }}
+          onKeyDown={e => {
+            if (e.key === 'p' && !e.altKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); toggle(it.id, inPinned); }
+            else if (inPinned && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); move(it.id, idx() + (e.key === 'ArrowUp' ? -1 : 1), true); }
+            else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); setMenu(menuKey()); }
+          }}
+        >
+          <span data-tip={it.label} data-tip-narrow class="nav-ic"><Icon name={it.icon} /></span>
+          <span class="nm">{it.label}</span>
+          <Show when={it.count} keyed>{c => <NavCounter c={c} />}</Show>
+        </a>
+        <button
+          type="button"
+          class={['nav-pin', { on: isPinned() }]}
+          aria-pressed={isPinned() ? 'true' : 'false'}
+          aria-label={`${isPinned() ? 'Unpin' : 'Pin'} ${it.label}`}
+          data-tip={isPinned() ? 'Unpin' : 'Pin'}
+          onClick={() => toggle(it.id, inPinned)}
+        >
+          <Icon name="pin" />
+        </button>
+        <Show when={menu() === menuKey()}>
+          <span class="menu rail-menu" role="menu" aria-label={it.label}>
+            <button type="button" role="menuitem" ref={focusOnMount} onClick={act(() => toggle(it.id, inPinned))}>
+              <Icon name={idx() < 0 ? 'pin' : 'pin-off'} />{idx() < 0 ? 'Pin' : 'Unpin'}
+            </button>
+            <Show when={idx() > 0}>
+              <button type="button" role="menuitem" onClick={act(() => move(it.id, idx() - 1, true))}>
+                <Icon name="arrow-up" />Move up
+              </button>
+            </Show>
+            <Show when={idx() >= 0 && idx() < pinned().length - 1}>
+              <button type="button" role="menuitem" onClick={act(() => move(it.id, idx() + 1, true))}>
+                <Icon name="arrow-down" />Move down
+              </button>
+            </Show>
+          </span>
+        </Show>
+      </li>
+    );
+  };
+
+  const groups = createMemo(() => [...new Set(p.items.map(i => i.group))]);
+  const pins = createMemo(() => pinned().map(id => p.items.find(i => i.id === id)).filter((x): x is NavItem => !!x));
+
   return (
-    <nav class={`rail${mini ? ' mini' : ''}`} data-ui="nav-rail" aria-label="Sections" ref={navRef}>
-      {head && <div class="rail-head">{head}</div>}
-      {pins.length > 0 && <ul class="rail-g pinned" aria-label="Pinned">{pins.map(i => item(i, true))}</ul>}
-      {groups.map(g => <ul key={g} class="rail-g" aria-label={g}><li class="rail-h">{g}</li>{items.filter(i => i.group === g).map(i => item(i, false))}</ul>)}
-      {foot && <div class="rail-foot">{foot}</div>}
+    <nav class={['rail', { mini: !!p.mini }]} data-ui="nav-rail" aria-label="Sections" ref={el => { navRef = el; }}>
+      <Show when={p.head} keyed>{h => <div class="rail-head">{h}</div>}</Show>
+      <Show when={pins().length > 0}>
+        <ul class="rail-g pinned" aria-label="Pinned">
+          <For each={pins()}>{i => renderItem(i, true)}</For>
+        </ul>
+      </Show>
+      <For each={groups()}>
+        {g => (
+          <ul class="rail-g" aria-label={g}>
+            <li class="rail-h">{g}</li>
+            <For each={p.items.filter(i => i.group === g)}>{i => renderItem(i, false)}</For>
+          </ul>
+        )}
+      </For>
+      <Show when={p.foot} keyed>{f => <div class="rail-foot">{f}</div>}</Show>
     </nav>
   );
 }
@@ -207,129 +437,281 @@ const splitFocus = (found: SpotGroup[]): SpotGroup[] => [
 
 /** The palette: the only floating working tool (OR-32). Arrow keys move, Enter opens, Alt+Enter runs the row's action,
  *  Escape or a click outside closes. With an empty query it shows idle (the focus presets), recent items and the terms. */
-export function Spotlight({ providers, onClose, memory, idle, terms = searchFields }: {
+export function Spotlight(p: {
   providers: SpotlightProvider[]; onClose: () => void;
   /** Kept between openings; without it the palette opens empty. */ memory?: SpotlightMemory;
-  /** Shown while the query is empty, above the recent items. */ idle?: ComponentChildren;
+  /** Shown while the query is empty, above the recent items. */ idle?: JSX.Element;
   /** Field terms suggested while the query is empty; a click adds one to the query. */ terms?: readonly string[];
 }) {
-  const mem = useRef(memory ?? spotlightMemory()).current;
-  const [q, setQ] = useState(mem.q);
-  const [found, setFound] = useState<SpotGroup[]>(mem.found);
-  const shownOf = (q: string, found: SpotGroup[]) => q.trim() ? splitFocus(found) : mem.recent.length ? [{ id: 'recent', label: 'Recent', items: mem.recent }] : [];
-  const [at, setAt] = useState(() => Math.max(0, shownOf(mem.q, mem.found).flatMap(g => g.items).findIndex(i => i.key === mem.key)));
+  const mem = untrack(() => p.memory) ?? spotlightMemory();
+  const shownOf = (queryText: string, groups: SpotGroup[]) =>
+    queryText.trim() ? splitFocus(groups) : mem.recent.length ? [{ id: 'recent', label: 'Recent', items: mem.recent }] : [];
+
+  const [q, setQ] = createSignal(mem.q);
+  const [found, setFound] = createSignal<SpotGroup[]>(mem.found, { ownedWrite: true });
+  const [at, setAt] = createSignal(
+    Math.max(0, shownOf(mem.q, mem.found).flatMap(g => g.items).findIndex(i => i.key === mem.key)),
+    { ownedWrite: true },
+  );
   // keep: the highlighted row's key, found again when results change (a reopened palette, an action); typing clears it.
   // typed: the query changed by typing, so the old rows go; a reopen or a refresh keeps them until their provider answers.
-  const keep = useRef(mem.key), typed = useRef(false), [refresh, setRefresh] = useState(0);
+  let keep = mem.key;
+  let typed = false;
+  const [refresh, setRefresh] = createSignal(0);
   // waiting: providers not answered yet (a kept query counts as asked from the start, so "Nothing found" never flickers); failed: one of them failed, so "nothing found" would be a guess.
-  const [waiting, setWaiting] = useState(mem.q.trim() ? 1 : 0), [failed, setFailed] = useState(false);
+  const [waiting, setWaiting] = createSignal(mem.q.trim() ? 1 : 0, { ownedWrite: true });
+  const [failed, setFailed] = createSignal(false, { ownedWrite: true });
   // asked: the query the providers were last asked; until it is the field's query, results belong to an older one.
-  const [asked, setAsked] = useState(mem.q);
-  const closedByAny: Record<string, string> = { closedby: 'any' };
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  const [asked, setAsked] = createSignal(mem.q, { ownedWrite: true });
+  const [enter, setEnter] = createSignal(false, { ownedWrite: true });
+
   // Focus returns to where it was only when the palette closes without opening an item.
-  const back = useRef<Element | null>(document.activeElement), opened = useRef(false);
-  // Native top-layer modal dialog (<dialog closedby="any">) handles backdrop light-dismiss and focus trapping.
-  const field = useRef<HTMLInputElement | null>(null), dialogRef = useRef<HTMLDialogElement>(null);
-  useLayoutEffect(() => {
-    const d = dialogRef.current;
+  const back = document.activeElement;
+  let opened = false;
+  let field: HTMLInputElement | undefined;
+  let dialogRef: HTMLDialogElement | undefined;
+  let inputText = mem.q;
+
+  onSettled(() => {
+    const d = dialogRef;
     if (!d) return;
     if (!d.open) d.showModal();
-    field.current?.focus();
-    field.current?.select();
-    const close = () => onCloseRef.current();
+    field?.focus();
+    field?.select();
+    // Solid 2 commits the <input value={q()}> property effect after onSettled, which resets selection if non-empty.
+    queueMicrotask(() => {
+      if (d.open && field && !typed) {
+        field.focus();
+        field.select();
+      }
+    });
+    const close = () => p.onClose();
     d.addEventListener('close', close);
-    return () => { d.removeEventListener('close', close); if (d.open) d.close(); };
-  }, []);
-  useEffect(() => () => { if (!opened.current) (back.current as HTMLElement | null)?.focus?.(); }, []);
-  useEffect(() => {
+    return () => {
+      d.removeEventListener('close', close);
+      if (d.open) d.close();
+      if (!opened) (back as HTMLElement | null)?.focus?.();
+    };
+  });
+
+  createEffect(() => [q(), refresh()] as const, ([curQ]) => {
     // Each provider's results show as they arrive, in provider order; local ones are not held back by the server.
-    const c = new AbortController(), text = q.trim(), got: (SpotlightItem[] | undefined)[] = providers.map(() => undefined);
-    const restore = !typed.current, before = found;
-    typed.current = false;
+    const c = new AbortController(), text = curQ.trim();
+    const providers = untrack(() => p.providers);
+    const got: (SpotlightItem[] | undefined)[] = providers.map(() => undefined);
+    const restore = !typed, before = untrack(found);
+    typed = false;
     const show = () => {
       if (c.signal.aborted) return;
-      const next = providers.map((p, i) => ({ id: p.id, label: p.label, items: got[i] ?? (restore ? before.find(g => g.id === p.id)?.items ?? [] : []) })).filter(g => g.items.length);
+      const next = providers.map((pr, i) => ({
+        id: pr.id,
+        label: pr.label,
+        items: got[i] ?? (restore ? before.find(g => g.id === pr.id)?.items ?? [] : []),
+      })).filter(g => g.items.length);
       setFound(next);
-      const i = keep.current ? splitFocus(next).flatMap(g => g.items).findIndex(x => x.key === keep.current) : -1;
+      const i = keep ? splitFocus(next).flatMap(g => g.items).findIndex(x => x.key === keep) : -1;
       if (i >= 0) setAt(i);
-      else if (keep.current) { keep.current = undefined; setAt(0); } // the kept row is gone: the first row, never a neighbour by position
+      else if (keep) { keep = undefined; setAt(0); } // the kept row is gone: the first row, never a neighbour by position
     };
     setFailed(false);
     if (!restore) setAt(0);
-    setAsked(q);
+    setAsked(curQ);
     if (!text) { setFound([]); setWaiting(0); return; }
     let left = 0;
-    providers.forEach((p, i) => {
-      const r = p.find(text, c.signal);
+    providers.forEach((pr, i) => {
+      const r = pr.find(text, c.signal);
       if (Array.isArray(r)) { got[i] = r; return; }
       left++;
-      r.then(x => { got[i] = x; }, () => { got[i] = []; if (!c.signal.aborted) setFailed(true); }).then(() => { if (!c.signal.aborted) { setWaiting(--left); show(); } });
+      r.then(x => { got[i] = x; }, () => { got[i] = []; if (!c.signal.aborted) setFailed(true); })
+        .then(() => { if (!c.signal.aborted) { setWaiting(--left); show(); } });
     });
-    setWaiting(left); show();
+    setWaiting(left);
+    show();
     return () => c.abort();
-  }, [q, refresh]);
-  const groups = shownOf(q, found), flat = groups.flatMap(g => g.items), cur = Math.min(at, flat.length - 1);
+  });
+
+  const groups = createMemo(() => shownOf(q(), found()));
+  const flat = createMemo(() => groups().flatMap(g => g.items));
+  const cur = createMemo(() => Math.min(at(), flat().length - 1));
+
   // Kept for the next opening: results only of the query they answer (before its providers are asked, they are an older one's).
-  mem.q = q; mem.found = asked === q ? found : []; mem.key = asked === q ? flat[cur]?.key : undefined;
-  const move = (k: number) => { setAt(k); keep.current = flat[k]?.key; };
+  createEffect(
+    () => [q(), asked(), found(), cur(), flat()] as const,
+    ([curQ, curAsked, curFound, curIdx, curFlat]) => {
+      mem.q = curQ;
+      mem.found = curAsked === curQ ? curFound : [];
+      mem.key = curAsked === curQ ? curFlat[curIdx]?.key : undefined;
+    },
+  );
+
+  const move = (k: number) => {
+    setAt(k);
+    keep = flat()[k]?.key;
+  };
   const open = (i: SpotlightItem | undefined) => {
     if (!i) return;
     // A recent item is a way back, not a live row: its state and age at the time it was opened would be stale.
     if (!i.more) mem.recent = [{ ...i, outside: false, action: undefined, state: undefined, at: undefined, snippet: undefined }, ...mem.recent.filter(x => x.key !== i.key)].slice(0, RECENT);
-    opened.current = true; onClose(); i.run();
+    opened = true;
+    if (dialogRef?.open) dialogRef.close();
+    p.onClose();
+    i.run();
   };
   // An action changes what the results show (a project added to the focus): they are asked again, the row stays highlighted.
-  const act = (i: SpotlightItem) => { i.action?.run(); keep.current = i.key; setRefresh(n => n + 1); field.current?.focus(); };
+  const act = (i: SpotlightItem) => {
+    i.action?.run();
+    keep = i.key;
+    setRefresh(n => n + 1);
+    field?.focus();
+  };
   // An unchanged value asks nothing (no effect runs), so it marks nothing as typed.
-  // Compared with the last input, not the render's q: two inputs can arrive before one render.
-  const input = useRef(mem.q);
-  const type = (v: string) => { if (v === input.current) return; input.current = v; typed.current = true; keep.current = undefined; setEnter(false); setQ(v); };
-  const addTerm = (t: string) => { type(q.trim() ? `${q.trimEnd()} ${t}:` : `${t}:`); field.current?.focus(); };
-  // Enter before every provider answered opens the first result once they have, not a section that happened to answer
-  // first, and not a result of the query before the last keys (the providers are asked after the next paint).
-  const [enter, setEnter] = useState(false);
-  useEffect(() => { if (enter && !waiting && asked === q) { setEnter(false); open(flat[cur]); } }, [enter, waiting, asked]);
+  const type = (v: string) => {
+    if (v === inputText) return;
+    inputText = v;
+    typed = true;
+    keep = undefined;
+    setEnter(false);
+    setQ(v);
+  };
+  const addTerm = (t: string) => {
+    const curQ = q();
+    type(curQ.trim() ? `${curQ.trimEnd()} ${t}:` : `${t}:`);
+    field?.focus();
+  };
+
+  createEffect(
+    () => [enter(), waiting(), asked(), q()] as const,
+    ([isEnter, isWait, curAsked, curQ]) => {
+      if (isEnter && !isWait && curAsked === curQ) {
+        setEnter(false);
+        open(flat()[cur()]);
+      }
+    },
+  );
+
   const key = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
+    const items = flat(), idx = cur();
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); p.onClose(); }
     else if (e.key === 'Tab') e.preventDefault(); // aria-modal: focus stays on the field
-    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (flat.length) move((cur + (e.key === 'ArrowDown' ? 1 : -1) + flat.length) % flat.length); }
-    else if (e.key === 'Enter' && e.altKey && !e.isComposing && flat[cur]?.action) { e.preventDefault(); act(flat[cur]); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (items.length) move((idx + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length); }
+    else if (e.key === 'Enter' && e.altKey && !e.isComposing && items[idx]?.action) { e.preventDefault(); act(items[idx]); }
     else if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { // 229: Safari's Enter that ends an IME composition
       e.preventDefault();
       // A key typed just before Enter may not have rendered yet: the field's own text tells, and the press waits for it.
-      const typedNow = e.target instanceof HTMLInputElement ? e.target.value : q;
-      if (waiting || asked !== q || typedNow !== q) setEnter(true); else open(flat[cur]);
+      const typedNow = e.target instanceof HTMLInputElement ? e.target.value : q();
+      if (waiting() || asked() !== q() || typedNow !== q()) setEnter(true); else open(items[idx]);
     }
   };
-  const list = useId(), text = q.trim(), now = Date.now();
-  let n = -1;
-  const row = (i: SpotlightItem) => {
-    const k = ++n, st = i.state && (states[i.state.family] as Record<string, StateDef>)[i.state.state] ? i.state : undefined;
-    return <li key={i.key} id={`${list}-${k}`} role="option" aria-selected={k === cur} aria-keyshortcuts={i.action ? "Alt+Enter" : undefined} aria-description={i.action ? `Alt+Enter: ${i.action.label}` : undefined} class={[k === cur && 'cur', i.outside && 'out', i.more && 'more', i.snippet && 'snip'].filter(Boolean).join(' ')}
-      onPointerMove={() => k !== cur && move(k)} onClick={() => open(i)}>
-      {st ? <StateBadge family={st.family} state={st.state as never} compact /> : <Icon name={i.icon} />}
-      {i.snippet ? <span class="txt"><span class="title">{i.label}</span><span class="snippet">{i.snippet}</span></span> : <span class="title">{i.label}</span>}{i.code && <span class="id">{i.code}</span>}<span class="grow" />{i.sub && <span class="sub">{i.sub}</span>}
-      {i.at !== undefined && <Ago t={i.at} />}
-      {i.action && <button type="button" class="btn quiet icon-only" tabIndex={-1} aria-pressed={i.action.pressed} aria-label={i.action.label} data-tip={`${i.action.label}  ⌥⏎`}
-        onPointerDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); act(i); }}><Icon name={i.action.icon} /></button>}
-      {i.more && <Icon name="arrow-right" />}
-    </li>;
+
+  const list = createUniqueId();
+  const text = createMemo(() => q().trim());
+  const terms = createMemo(() => p.terms ?? searchFields);
+  const indexedGroups = createMemo(() => {
+    let n = 0;
+    return groups().map((g, gi) => ({
+      ...g,
+      showOutsideHeader: !!g.out && !groups()[gi - 1]?.out,
+      indexedItems: g.items.map(item => ({ item, k: n++ })),
+    }));
+  });
+
+  const row = (i: SpotlightItem, k: number) => {
+    const st = i.state && (states[i.state.family] as Record<string, StateDef>)[i.state.state] ? i.state : undefined;
+    return (
+      <li
+        id={`${list}-${k}`}
+        role="option"
+        aria-selected={k === cur() ? 'true' : 'false'}
+        aria-keyshortcuts={i.action ? 'Alt+Enter' : undefined}
+        aria-description={i.action ? `Alt+Enter: ${i.action.label}` : undefined}
+        class={[{ cur: k === cur(), out: !!i.outside, more: !!i.more, snip: !!i.snippet }]}
+        onPointerMove={() => { if (k !== cur()) move(k); }}
+        onClick={() => open(i)}
+      >
+        {st ? <StateBadge family={st.family} state={st.state as never} compact /> : <Icon name={i.icon} />}
+        <Show
+          when={i.snippet}
+          keyed
+          fallback={<span class="title">{i.label}</span>}
+        >
+          {snip => <span class="txt"><span class="title">{i.label}</span><span class="snippet">{snip}</span></span>}
+        </Show>
+        <Show when={i.code} keyed>{cd => <span class="id">{cd}</span>}</Show>
+        <span class="grow" />
+        <Show when={i.sub} keyed>{s => <span class="sub">{s}</span>}</Show>
+        <Show when={i.at !== undefined}><Ago t={i.at!} /></Show>
+        <Show when={i.action} keyed>
+          {action => (
+            <button
+              type="button"
+              class="btn quiet icon-only"
+              tabindex={-1}
+              aria-pressed={action.pressed === undefined ? undefined : action.pressed ? 'true' : 'false'}
+              aria-label={action.label}
+              data-tip={`${action.label}  ⌥⏎`}
+              onPointerDown={e => e.preventDefault()}
+              onClick={e => { e.stopPropagation(); act(i); }}
+            >
+              <Icon name={action.icon} />
+            </button>
+          )}
+        </Show>
+        <Show when={i.more}><Icon name="arrow-right" /></Show>
+      </li>
+    );
   };
-  return <dialog ref={dialogRef} {...closedByAny} class="spotlight" data-ui="spotlight" aria-label="Search" onKeyDown={key}>
-      <label class="search"><Icon name={actions.search} /><input type="search" ref={field} placeholder="Code, task, conversation, result, project, agent · agent:claude host:mac" aria-label="Search"
-        role="combobox" list={undefined} aria-expanded={flat.length > 0} aria-controls={list} aria-activedescendant={flat[cur] ? `${list}-${cur}` : undefined}
-        value={q} onInput={e => type((e.target as HTMLInputElement).value)} /></label>
-      {!text && idle && <div class="spot-idle" onClick={() => field.current?.focus()}>{idle}</div>}
-      {flat.length > 0 && <ul class="spot-list" id={list} role="listbox" aria-label={text ? 'Results' : 'Recent'}>{groups.map((g, gi) => <Fragment key={g.id}>
-        {g.out && !groups[gi - 1]?.out && <li class="rail-h spot-out" role="presentation"><Icon name="focus" />Outside focus</li>}
-        <li class="rail-h" role="presentation">{g.label}</li>
-        {g.items.map(row)}
-      </Fragment>)}</ul>}
-      {!text && terms.length > 0 && <p class="spot-terms muted">{terms.map(t => <button key={t} type="button" tabIndex={-1} class="id" onPointerDown={e => e.preventDefault()} onClick={() => addTerm(t)}>{t}:</button>)}<span>narrow the search</span></p>}
-      {text && !waiting && asked === q && (failed || !flat.length) && <p class="muted spot-none" role="status">{failed ? flat.length ? 'Some kinds failed; try again' : 'Search failed; try again' : 'Nothing found'}</p>}
-  </dialog>;
+
+  return (
+    <dialog ref={el => { dialogRef = el; }} closedby="any" class="spotlight" data-ui="spotlight" aria-label="Search" onKeyDown={key}>
+      <label class="search">
+        <Icon name={actions.search} />
+        <input
+          type="search"
+          ref={el => { field = el; }}
+          placeholder="Code, task, conversation, result, project, agent · agent:claude host:mac"
+          aria-label="Search"
+          role="combobox"
+          list={undefined}
+          aria-expanded={flat().length > 0 ? 'true' : 'false'}
+          aria-controls={list}
+          aria-activedescendant={flat()[cur()] ? `${list}-${cur()}` : undefined}
+          value={q()}
+          onInput={e => type(e.currentTarget.value)}
+        />
+      </label>
+      <Show when={!text() && p.idle}>
+        <div class="spot-idle" onClick={() => field?.focus()}>{p.idle}</div>
+      </Show>
+      <Show when={flat().length > 0}>
+        <ul class="spot-list" id={list} role="listbox" aria-label={text() ? 'Results' : 'Recent'}>
+          <For each={indexedGroups()}>
+            {g => (
+              <>
+                <Show when={g.showOutsideHeader}>
+                  <li class="rail-h spot-out" role="presentation"><Icon name="focus" />Outside focus</li>
+                </Show>
+                <li class="rail-h" role="presentation">{g.label}</li>
+                <For each={g.indexedItems}>{entry => row(entry.item, entry.k)}</For>
+              </>
+            )}
+          </For>
+        </ul>
+      </Show>
+      <Show when={!text() && terms().length > 0}>
+        <p class="spot-terms muted">
+          <For each={terms()}>
+            {t => <button type="button" tabindex={-1} class="id" onPointerDown={e => e.preventDefault()} onClick={() => addTerm(t)}>{t}:</button>}
+          </For>
+          <span>narrow the search</span>
+        </p>
+      </Show>
+      <Show when={text() && !waiting() && asked() === q() && (failed() || !flat().length)}>
+        <p class="muted spot-none" role="status">
+          {failed() ? (flat().length ? 'Some kinds failed; try again' : 'Search failed; try again') : 'Nothing found'}
+        </p>
+      </Show>
+    </dialog>
+  );
 }
 
 /** Sections as a palette provider: the navigation items whose label holds the text. A field term (agent:x) finds none. */

@@ -1,12 +1,12 @@
 // The sole browser authority: fence -> identity/clear -> fresh baseline -> open.
 // Deliberately independent of api, feed and views.
-import { signal } from '@preact/signals';
+import { cell } from './signal.ts';
 export class AccessChanged extends Error { constructor() { super('Access changed'); this.name = 'AccessChanged'; } }
 export type AccessIdentity = { identityKey: string; grantsVersion: string };
 export type AccessToken = AccessIdentity & { generation: number };
 type Context = { generation: number; signal: AbortSignal };
 export type AccessBaseline = { cursor: number; activate(): void; dispose(): void };
-export const access = signal<{ generation: number; state: 'closed' | 'validating' | 'open'; identity: AccessIdentity | null; cursor: number | null }>({ generation: 0, state: 'closed', identity: null, cursor: null });
+export const access = cell<{ generation: number; state: 'closed' | 'validating' | 'open'; identity: AccessIdentity | null; cursor: number | null }>({ generation: 0, state: 'closed', identity: null, cursor: null });
 let validator: ((c: Context) => Promise<AccessIdentity>) | undefined;
 let baseline: ((c: Context & AccessIdentity) => Promise<AccessBaseline>) | undefined;
 let controller = new AbortController();

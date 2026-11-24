@@ -242,7 +242,7 @@
   .stat.toned .icon, .stat.toned .sv { color: var(--tone-fg); }
   .stat .sv { font-size: var(--font-size-lg); font-family: var(--font-mono); }
   .stat .of, .stat .sl { color: var(--fg-muted); font-size: var(--font-size-sm); }
-  .tabs { display: flex; gap: var(--space-4); overflow-x: auto; scrollbar-width: none; }
+  .tabs { display: flex; flex: none; gap: var(--space-4); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .tabs button { position: relative; flex: none; display: inline-flex; align-items: center; gap: var(--space-1); height: var(--size-control); padding: 0; border: 0; border-radius: 0; background: none; color: var(--fg-muted); font-weight: var(--font-weight-medium); white-space: nowrap; cursor: pointer; }
   .tabs button[aria-selected=true] { background: none; color: var(--accent); }
   .tabs button[aria-selected=true]::after { content: ""; position: absolute; inset: auto 0 0; border-block-end: 2px solid var(--accent); }

@@ -1,6 +1,7 @@
 // Entity references and their cards in the book: one fixture card per kind (synthetic data), a reference that stays
 // loading and one that fails, served through EntityCards as the app serves entity_card.
-import type { ComponentChildren } from 'preact';
+import { For } from 'solid-js';
+import type { JSX } from '@solidjs/web';
 import { EntityCode, EntityCards, entityKinds, type EntityCardData, type EntityCardSource, type EntityRef, Markdown } from '../src/index.ts';
 
 const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
@@ -46,12 +47,12 @@ export const bookCards: EntityCardSource = {
   open: () => {},
 };
 
-export const CardsProvider = ({ children }: { children: ComponentChildren }) => <EntityCards.Provider value={bookCards}>{children}</EntityCards.Provider>;
+export const CardsProvider = (props: { children: JSX.Element }) => <EntityCards value={bookCards}>{props.children}</EntityCards>;
 
 /** Every kind as a reference, with its card on click, Enter or Space; and codes inside an agent message. */
 export function EntityCardDemo() {
   return <div class="stack">
-    <div class="ec-demo">{CARDS.map(c => <span key={c.kind} class="ec-demo-i"><span class="muted">{c.kind.replace('_', ' ')}</span><EntityCode kind={c.kind} id={c.id} code={c.code ?? (c.uuid ? undefined : c.id)} /></span>)}
+    <div class="ec-demo"><For each={CARDS}>{c => <span class="ec-demo-i"><span class="muted">{c.kind.replace('_', ' ')}</span><EntityCode kind={c.kind} id={c.id} code={c.code ?? (c.uuid ? undefined : c.id)} /></span>}</For>
       <span class="ec-demo-i"><span class="muted">loading</span><EntityCode kind="task" id="slow" code="T-FLT-1" /></span>
       <span class="ec-demo-i"><span class="muted">no access</span><EntityCode kind="task" id="gone" code="T-ABC-9" /></span></div>
     <Markdown text={'Done with **T-FLT-42**; the open decision is Q-FLT-7, discussed in C-FLT-311. `T-FLT-42` in code stays text.'} />

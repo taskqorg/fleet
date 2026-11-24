@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { uiCss, tokens } from '../packages/ui/scripts/tokens.mjs';
+import { solidEsbuildPlugin } from '../packages/ui/scripts/solid-esbuild.mjs';
 
 const root = new URL('..', import.meta.url), out = new URL('../dist/app/', import.meta.url);
 // Source maps go to dist/app/sourcemaps, which the coordinator never serves (it serves assets/ and named entry files);
@@ -17,7 +18,8 @@ mkdirSync(new URL('assets/', out), { recursive: true }); mkdirSync(new URL('mani
 
 const res = await build({
   entryPoints: [new URL('app/src/main.tsx', root).pathname], bundle: true, splitting: true, format: 'esm', minify: true, target: 'es2022',
-  outdir: new URL('assets/', out).pathname, entryNames: 'main-[hash]', chunkNames: 'chunk-[hash]', jsx: 'automatic', jsxImportSource: 'preact',
+  outdir: new URL('assets/', out).pathname, entryNames: 'main-[hash]', chunkNames: 'chunk-[hash]',
+  conditions: ['solid'], plugins: [solidEsbuildPlugin({ sourceMap: true })],
   loader: { '.json': 'json' }, legalComments: 'none', metafile: true, write: false, sourcemap: 'external', sourcesContent: true,
 });
 // Each script gets a debug ID (the form `sentry-cli sourcemaps inject` writes): a stack frame of the script names its

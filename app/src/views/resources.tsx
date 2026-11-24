@@ -1,6 +1,7 @@
 // Shared resource rollup and recursive execution tree helpers (docs/design-system/pages/{tasks,conversations,projects,definitions,runners,hosts}.md).
-import { useState, useRef, useLayoutEffect } from 'preact/hooks';
-import { useLocation } from 'wouter-preact';
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onSettled, untrack } from 'solid-js';
+import { useLocation } from '../router.ts';
+import { readValue, type MaybeAccessor } from '../signal.ts';
 import {
   StatusLine, AgeChip, Button, DataTable, Disclosure, SearchBox, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals, CopyButton,
   formatRowSpend, msMeasured, numMeasured, splitCostFigures,
@@ -15,36 +16,54 @@ import type { CostFigure, ExecutionRow, ListSpendRequest, ResourceSummary, Scope
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
 
 /** A single scoped read for the loaded rows, independent of list membership refresh. */
-export function useRowSpend(kind: ListSpendRequest['kind'], rows: readonly { id: string }[]) {
-  const rowIds = Array.from(new Set(rows.map(row => row.id))).sort();
-  const read = useOp('list_spend', rowIds.length ? { kind, rowIds } : null, { quiet: 1000 });
-  const generation = accessGeneration();
-  const retained = useRef<{ generation: number; rows: ReadonlyMap<string, CostFigure[]> }>({ generation, rows: new Map() });
-  const previous = retained.current.generation === generation ? retained.current.rows : new Map<string, CostFigure[]>();
-  const current = new Map<string, CostFigure[]>();
-  for (const id of rowIds) {
-    const figures = read.data ? (Object.hasOwn(read.data.rows, id) ? read.data.rows[id] : undefined) : previous.get(id);
-    if (figures) current.set(id, figures);
-  }
-  retained.current = { generation, rows: current };
-  return { cost: current, error: read.error };
+export function useRowSpend(kind: ListSpendRequest['kind'], rowsInput: MaybeAccessor<readonly { id: string }[]>) {
+  const rowIds = createMemo(() => Array.from(new Set(readValue(rowsInput).map(row => row.id))).sort());
+  const read = useOp('list_spend', () => (rowIds().length ? { kind, rowIds: rowIds() } : null), { quiet: 1000 });
+  let retained: { generation: number; rows: ReadonlyMap<string, CostFigure[]> } = { generation: -1, rows: new Map() };
+  const cost = createMemo(() => {
+    const ids = rowIds();
+    const generation = accessGeneration();
+    const previous = retained.generation === generation ? retained.rows : new Map<string, CostFigure[]>();
+    const data = read.data;
+    const current = new Map<string, CostFigure[]>();
+    for (const id of ids) {
+      const figures = data ? (Object.hasOwn(data.rows, id) ? data.rows[id] : undefined) : previous.get(id);
+      if (figures) current.set(id, figures);
+    }
+    retained = { generation, rows: current };
+    return current;
+  });
+  return {
+    get cost() { return cost(); },
+    get error() { return read.error; },
+  };
 }
 
-export function RowSpend({ cost, href, open, stale, name }: {
+export function RowSpend(props: {
   cost?: readonly CostFigure[]; href: string; open: (extend: boolean) => void; stale: boolean; name?: string;
 }) {
-  const { primaryText, suffix, subscription, hasFigures, tip, ariaLabel } = formatRowSpend(cost, stale, name);
-  return <a class="fact row-spend" href={href} data-tip={tip} aria-label={ariaLabel}
-    onClick={e => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      e.preventDefault();
-      open(e.shiftKey);
-    }}>
-    {hasFigures ? <>
-      <span class="spend-primary">{subscription && <Icon name="rotate-cw" />}{primaryText}</span>
-      {suffix && <span>{suffix}</span>}
-    </> : primaryText}
-  </a>;
+  const fmt = createMemo(() => formatRowSpend(props.cost, props.stale, props.name));
+  return (
+    <a
+      class="fact row-spend"
+      href={props.href}
+      data-tip={fmt().tip}
+      aria-label={fmt().ariaLabel}
+      onClick={e => {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        e.preventDefault();
+        props.open(e.shiftKey);
+      }}
+    >
+      <Show when={fmt().hasFigures} fallback={fmt().primaryText}>
+        <span class="spend-primary">
+          <Show when={fmt().subscription}><Icon name="rotate-cw" /></Show>
+          {fmt().primaryText}
+        </span>
+        <Show when={fmt().suffix}>{s => <span>{s()}</span>}</Show>
+      </Show>
+    </a>
+  );
 }
 
 export const EXEC_STATE: Record<string, StateOf<'execution'>> = {
@@ -148,47 +167,79 @@ export function resourceTotals(
   return items;
 }
 
-function ResourceCells({ s }: { s: ResourceSummary }) {
+function ResourceCells(props: { s: ResourceSummary }) {
   return (
     <>
-      <td class="num"><Num m={{ value: s.executions, basis: 'measured' }} kind="count" /></td>
-      <td class="num"><Num m={resNum(s.durations.elapsedMs, s.durations.basis, 0.001)} kind="duration" /></td>
-      <td class="num"><Num m={resNum(s.durations.executionWallMs, s.durations.basis, 0.001)} kind="duration" /></td>
-      <td class="num">{s.durations.cpuMs != null ? <Num m={msMeasured(s.durations.cpuMs, 'measured')} kind="duration" /> : <span class="muted">—</span>}</td>
-      <td class="num">{s.peakMemoryBytes.value != null ? <Num m={resNum(s.peakMemoryBytes.value, s.peakMemoryBytes.basis)} kind="bytes" /> : <span class="muted">—</span>}</td>
-      <td class="num"><Num m={resNum(s.tokens.total, s.tokens.basis)} kind="count" /></td>
-      <td class="num">{s.tools.totalCalls > 0 ? <><Num m={resNum(s.tools.totalCalls, s.tools.basis)} kind="count" />{s.tools.failedCalls > 0 && <span class="chip t-danger">{s.tools.failedCalls} err</span>}</> : <span class="muted">—</span>}</td>
-      <td class="num"><CostFigures cost={s.cost} showUnavailable empty="—" /></td>
+      <td class="num"><Num m={{ value: props.s.executions, basis: 'measured' }} kind="count" /></td>
+      <td class="num"><Num m={resNum(props.s.durations.elapsedMs, props.s.durations.basis, 0.001)} kind="duration" /></td>
+      <td class="num"><Num m={resNum(props.s.durations.executionWallMs, props.s.durations.basis, 0.001)} kind="duration" /></td>
+      <td class="num">
+        <Show when={props.s.durations.cpuMs != null} fallback={<span class="muted">—</span>}>
+          <Num m={msMeasured(props.s.durations.cpuMs!, 'measured')} kind="duration" />
+        </Show>
+      </td>
+      <td class="num">
+        <Show when={props.s.peakMemoryBytes.value != null} fallback={<span class="muted">—</span>}>
+          <Num m={resNum(props.s.peakMemoryBytes.value, props.s.peakMemoryBytes.basis)} kind="bytes" />
+        </Show>
+      </td>
+      <td class="num"><Num m={resNum(props.s.tokens.total, props.s.tokens.basis)} kind="count" /></td>
+      <td class="num">
+        <Show when={props.s.tools.totalCalls > 0} fallback={<span class="muted">—</span>}>
+          <Num m={resNum(props.s.tools.totalCalls, props.s.tools.basis)} kind="count" />
+          <Show when={props.s.tools.failedCalls > 0}>
+            <span class="chip t-danger">{props.s.tools.failedCalls} err</span>
+          </Show>
+        </Show>
+      </td>
+      <td class="num"><CostFigures cost={props.s.cost} showUnavailable empty="—" /></td>
     </>
   );
 }
 
 /** Displays ScopedResourceRollup breakdown (own, delegated, spawned, total), spawned task links, and hidden count. */
-export function ScopedRollupDetails({ rollup, foldTools }: { rollup: ScopedResourceRollup; foldTools?: boolean }) {
+export function ScopedRollupDetails(props: { rollup: ScopedResourceRollup; foldTools?: boolean }) {
   const [, go] = useLocation();
-  const [taskQuery, setTaskQuery] = useState('');
-  const term = taskQuery.trim().toLowerCase();
-  const tasks = rollup.spawnedTasks.filter(task => !term || task.title.toLowerCase().includes(term) || task.code?.toLowerCase().includes(term));
-  const shown = tasks.slice(0, 8);
-  const rows: { label: string; s: ResourceSummary }[] = [
-    { label: 'Own', s: rollup.own },
-    ...(rollup.delegated.executions > 0 ? [{ label: 'Delegated', s: rollup.delegated }] : []),
-    ...(rollup.spawned.executions > 0 || rollup.spawnedTasks.length > 0 ? [{ label: 'Spawned', s: rollup.spawned }] : []),
-  ];
-  const tools = rollup.total.tools;
-  const topTools = tools.byTool.slice(0, 6);
-  const toolBreakdown = topTools.length > 0 && <div class="res-bar">
-    {topTools.map(tool => <span key={tool.name} class="chip" data-tip={tool.connection ? `connection: ${tool.connection}` : undefined}>
-      <Icon name="terminal" label="Tool" />
-      <span class="mono">{tool.name}</span> · {tool.calls}{tool.errors > 0 ? ` (${tool.errors} err)` : ''}
-    </span>)}
-    {(tools.other ?? 0) > 0 && <span class="muted">+{tools.other} other calls</span>}
-  </div>;
-  if (rows.length === 1 && rollup.hidden === 0 && !toolBreakdown) return null;
+  const [taskQuery, setTaskQuery] = createSignal('');
+  const tasks = createMemo(() => {
+    const term = taskQuery().trim().toLowerCase();
+    return props.rollup.spawnedTasks.filter(task => !term || task.title.toLowerCase().includes(term) || task.code?.toLowerCase().includes(term));
+  });
+  const shown = createMemo(() => tasks().slice(0, 8));
+  const rows = createMemo(() => {
+    const r = props.rollup;
+    const out: { label: string; s: ResourceSummary }[] = [
+      { label: 'Own', s: r.own },
+      ...(r.delegated.executions > 0 ? [{ label: 'Delegated', s: r.delegated }] : []),
+      ...(r.spawned.executions > 0 || r.spawnedTasks.length > 0 ? [{ label: 'Spawned', s: r.spawned }] : []),
+    ];
+    return out;
+  });
+  const tools = () => props.rollup.total.tools;
+  const topTools = createMemo(() => tools().byTool.slice(0, 6));
+  const renderToolBreakdown = () => (
+    <div class="res-bar">
+      <For each={topTools()}>
+        {tool => (
+          <span class="chip" data-tip={tool.connection ? `connection: ${tool.connection}` : undefined}>
+            <Icon name="terminal" label="Tool" />
+            <span class="mono">{tool.name}</span> · {tool.calls}{tool.errors > 0 ? ` (${tool.errors} err)` : ''}
+          </span>
+        )}
+      </For>
+      <Show when={(tools().other ?? 0) > 0}>
+        <span class="muted">+{tools().other} other calls</span>
+      </Show>
+    </div>
+  );
+
   return (
-    <DetailSection title="Resource breakdown">
-      {rows.length > 1 && (
-        <DataTable label="Resource breakdown" head={
+    <Show when={rows().length > 1 || props.rollup.hidden > 0 || topTools().length > 0}>
+      <DetailSection title="Resource breakdown">
+        <Show when={rows().length > 1}>
+          <DataTable
+            label="Resource breakdown"
+            head={
               <tr>
                 <th scope="col">Scope</th>
                 <th scope="col" class="num">Runs</th>
@@ -200,68 +251,91 @@ export function ScopedRollupDetails({ rollup, foldTools }: { rollup: ScopedResou
                 <th scope="col" class="num">Tools</th>
                 <th scope="col" class="num">Cost</th>
               </tr>
-        }>
-              {rows.map(r => (
-                <tr key={r.label}>
+            }
+          >
+            <For each={rows()}>
+              {r => (
+                <tr>
                   <th scope="row">{r.label}</th>
                   <ResourceCells s={r.s} />
                 </tr>
-              ))}
-        </DataTable>
-      )}
-      {toolBreakdown && (foldTools
-        ? <Disclosure summary="Top tools">{toolBreakdown}</Disclosure>
-        : <><h4 class="sub-h">Top tools</h4>{toolBreakdown}</>)}
-      {rollup.spawnedTasks.length > 0 && (
-        <div class="stack spawned-tasks">
-          {rollup.spawnedTasks.length > 8 && <SearchBox label="Find spawned tasks" value={taskQuery} onInput={setTaskQuery} always />}
-          {shown.length < tasks.length && <span class="muted">{shown.length} of {tasks.length} tasks</span>}
-          {!shown.length && <Empty text="No spawned tasks match." />}
-          {shown.map(st => (
-            <div key={st.taskId} class="kv-row">
-              <StateBadge family="task" state={(st.state as StateOf<'task'>) || 'queued'} compact />
-              <EntityCode code={st.code} id={st.taskId} kind="task" />
-              <a class="row-link" href={`/tasks/${encodeURIComponent(st.taskId)}`} onClick={e => { e.preventDefault(); go(`/tasks/${encodeURIComponent(st.taskId)}`); }}>
-                {st.title}
-              </a>
-              <span class="grow" />
-              <span class="res-bar">
-                {(() => {
-                  const stWall = resNum(st.resources.durations.executionWallMs, st.resources.durations.basis, 0.001);
-                  const stTok = resNum(st.resources.tokens.total, st.resources.tokens.basis);
-                  return <>
-                    {stWall.basis !== 'unavailable' && <Num m={stWall} kind="duration" />}
-                    {stTok.basis !== 'unavailable' && <Num m={stTok} kind="count" />}
-                  </>;
-                })()}
-                <CostFigures cost={st.resources.cost} />
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-      {rollup.hidden > 0 && (
-        <div class="res-bar">
-          <span class="chip" data-tip="Spawned or delegated records omitted due to project access limits">
-            <Icon name="circle-alert" label="Hidden" />
-            <Num m={{ value: rollup.hidden, basis: 'measured' }} kind="count" /> hidden (restricted project)
-          </span>
-        </div>
-      )}
-    </DetailSection>
+              )}
+            </For>
+          </DataTable>
+        </Show>
+        <Show when={topTools().length > 0}>
+          <Show when={props.foldTools} fallback={<><h4 class="sub-h">Top tools</h4>{renderToolBreakdown()}</>}>
+            <Disclosure summary="Top tools">{renderToolBreakdown()}</Disclosure>
+          </Show>
+        </Show>
+        <Show when={props.rollup.spawnedTasks.length > 0}>
+          <div class="stack spawned-tasks">
+            <Show when={props.rollup.spawnedTasks.length > 8}>
+              <SearchBox label="Find spawned tasks" value={taskQuery()} onInput={setTaskQuery} always />
+            </Show>
+            <Show when={shown().length < tasks().length}>
+              <span class="muted">{shown().length} of {tasks().length} tasks</span>
+            </Show>
+            <Show when={!shown().length}>
+              <Empty text="No spawned tasks match." />
+            </Show>
+            <For each={shown()}>
+              {st => {
+                const stWall = resNum(st.resources.durations.executionWallMs, st.resources.durations.basis, 0.001);
+                const stTok = resNum(st.resources.tokens.total, st.resources.tokens.basis);
+                return (
+                  <div class="kv-row">
+                    <StateBadge family="task" state={(st.state as StateOf<'task'>) || 'queued'} compact />
+                    <EntityCode code={st.code} id={st.taskId} kind="task" />
+                    <a
+                      class="row-link"
+                      href={`/tasks/${encodeURIComponent(st.taskId)}`}
+                      onClick={e => { e.preventDefault(); go(`/tasks/${encodeURIComponent(st.taskId)}`); }}
+                    >
+                      {st.title}
+                    </a>
+                    <span class="grow" />
+                    <span class="res-bar">
+                      <Show when={stWall.basis !== 'unavailable'}><Num m={stWall} kind="duration" /></Show>
+                      <Show when={stTok.basis !== 'unavailable'}><Num m={stTok} kind="count" /></Show>
+                      <CostFigures cost={st.resources.cost} />
+                    </span>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </Show>
+        <Show when={props.rollup.hidden > 0}>
+          <div class="res-bar">
+            <span class="chip" data-tip="Spawned or delegated records omitted due to project access limits">
+              <Icon name="circle-alert" label="Hidden" />
+              <Num m={{ value: props.rollup.hidden, basis: 'measured' }} kind="count" /> hidden (restricted project)
+            </span>
+          </div>
+        </Show>
+      </DetailSection>
+    </Show>
   );
 }
 
-export function ScopedRollupBar({ rollup, cost, inlineDetails = true }: { rollup?: ScopedResourceRollup | null; cost?: readonly CostFigure[]; inlineDetails?: boolean }) {
-  const totals = resourceTotals(rollup?.total, { extraCost: cost, hideUnavailable: true });
-  const hidden = inlineDetails ? 0 : rollup?.hidden ?? 0;
-  return <>
-    {(totals.length > 0 || hidden > 0) && <div data-ui="resource-bar" aria-label="Resources">
-      {totals.length > 0 && <Totals items={totals} compact />}
-      {hidden > 0 && <span class="res-bar"><Icon name="circle-alert" />{hidden} hidden (restricted project)</span>}
-    </div>}
-    {inlineDetails && rollup && <ScopedRollupDetails rollup={rollup} foldTools />}
-  </>;
+export function ScopedRollupBar(props: { rollup?: ScopedResourceRollup | null; cost?: readonly CostFigure[]; inlineDetails?: boolean }) {
+  const inlineDetails = () => props.inlineDetails ?? true;
+  const totals = createMemo(() => resourceTotals(props.rollup?.total, { extraCost: props.cost, hideUnavailable: true }));
+  const hidden = createMemo(() => (inlineDetails() ? 0 : props.rollup?.hidden ?? 0));
+  return (
+    <>
+      <Show when={totals().length > 0 || hidden() > 0}>
+        <div data-ui="resource-bar" aria-label="Resources">
+          <Show when={totals().length > 0}><Totals items={totals()} compact /></Show>
+          <Show when={hidden() > 0}><span class="res-bar"><Icon name="circle-alert" />{hidden()} hidden (restricted project)</span></Show>
+        </div>
+      </Show>
+      <Show when={inlineDetails() && props.rollup} keyed>
+        {r => <ScopedRollupDetails rollup={r} foldTools />}
+      </Show>
+    </>
+  );
 }
 
 /** Builds recursive TreeNode[] from ExecutionRow.parentExecutionId, grouping tool_run siblings cleanly (CA-09). */
@@ -354,8 +428,11 @@ export function resourcePositionKey(key: ResourceSortKey): string {
   return JSON.stringify(key.kind === 'tool-position' ? [key.kind, key.encoded] : key.kind === 'tool' ? [key.kind, key.name, key.connection] : key.kind === 'cost' ? [key.kind, key.currency, key.basis] : [key.kind, key.priceId, key.observedAt]);
 }
 export const resourceItemKey = (item: ResourceItem) => resourcePositionKey(resourcePosition(item));
-export function useProjectResources(projectId: string | undefined, enabled: boolean) {
-  return usePreparedOp('project_resources', projectId && enabled ? { projectId } : null);
+export function useProjectResources(projectId: MaybeAccessor<string | undefined>, enabled: MaybeAccessor<boolean>) {
+  return usePreparedOp('project_resources', () => {
+    const id = readValue(projectId);
+    return id && readValue(enabled) ? { projectId: id } : null;
+  });
 }
 type ProjectResourceState = ReturnType<typeof useProjectResources>;
 const preparedTotals = (header: PreparedHeaderV1 | null): TotalItem[] => {
@@ -375,98 +452,260 @@ const preparedTotals = (header: PreparedHeaderV1 | null): TotalItem[] => {
     { label: 'Credits', m: metric(header?.credits, header?.credits == null ? 'unavailable' : 'measured'), kind: 'count' },
   ];
 };
-function ResourceProgressLine({ progress, error }: { progress: ResourceProgress | null; error: string | null }) {
-  const now = Date.now();
-  return <StatusLine>{error ? 'Refresh failed: ' + error : progress ? <>
-    {progress.state === 'current' ? 'Confirmed' : progress.state}{progress.errorClass ? ' · ' + progress.errorClass : ''}
-    {' · checked '}<AgeChip t={Date.parse(progress.validatedAt)} />
-    {progress.pending && <> · Pending {progress.oldestPendingAt ? <AgeChip t={Date.parse(progress.oldestPendingAt)} /> : 'age unknown'}</>}
-  </> : 'Preparing confirmed resources…'}</StatusLine>;
+function ResourceProgressLine(props: { progress: ResourceProgress | null; error: string | null }) {
+  return (
+    <StatusLine>
+      <Show
+        when={!props.error}
+        fallback={<>{'Refresh failed: ' + props.error}</>}
+      >
+        <Show when={props.progress} keyed fallback="Preparing confirmed resources…">
+          {p => (
+            <>
+              {p.state === 'current' ? 'Confirmed' : p.state}{p.errorClass ? ' · ' + p.errorClass : ''}
+              {' · checked '}<AgeChip t={Date.parse(p.validatedAt)} />
+              <Show when={p.pending}>
+                {' · Pending '}
+                <Show when={p.oldestPendingAt} fallback="age unknown">
+                  {at => <AgeChip t={Date.parse(at())} />}
+                </Show>
+              </Show>
+            </>
+          )}
+        </Show>
+      </Show>
+    </StatusLine>
+  );
 }
-export function PreparedProjectResources({ projectId, summary, category, onOpen, onClose }: { projectId: string; summary: ProjectResourceState; category?: 'tools' | 'costs'; onOpen?: (category: 'tools' | 'costs') => void; onClose?: () => void }) {
-  const reply = summary.data, header = reply && 'header' in reply ? reply.header : null;
-  if (category) return <PreparedResourceWindow key={projectId + category} projectId={projectId} category={category} onClose={onClose!} />;
-  return <section data-resource-project={projectId} data-resource-version={reply?.version ?? ''} data-resource-state={summary.progress?.state ?? 'initializing'}>
-    <ResourceProgressLine progress={summary.progress} error={summary.error} />
-    <Totals items={preparedTotals(header)} /><div class="answers">
-      <Button label={`Tools · ${header?.itemCounts.tools ?? '—'}`} icon="terminal" disabledReason={!header ? 'Preparing confirmed figures' : undefined} onClick={() => onOpen?.('tools')} />
-      <Button label={`Costs · ${header?.itemCounts.costs ?? '—'}`} icon="chart-no-axes-column" disabledReason={!header ? 'Preparing confirmed figures' : undefined} onClick={() => onOpen?.('costs')} />
-    </div><p class="muted">Latest confirmed facts. Underlying observation time is unavailable; checked time is not measurement time.</p>
-    <Button label="Refresh resources" icon="rotate-cw" iconOnly onClick={() => summary.refresh('retry')} />
-  </section>;
+export function PreparedProjectResources(props: { projectId: string; summary: ProjectResourceState; category?: 'tools' | 'costs'; onOpen?: (category: 'tools' | 'costs') => void; onClose?: () => void }) {
+  const reply = () => props.summary.data;
+  const header = createMemo(() => {
+    const r = reply();
+    return r && 'header' in r ? r.header : null;
+  });
+  return (
+    <Show
+      when={props.category}
+      keyed
+      fallback={
+        <section
+          data-resource-project={props.projectId}
+          data-resource-version={reply()?.version ?? ''}
+          data-resource-state={props.summary.progress?.state ?? 'initializing'}
+        >
+          <ResourceProgressLine progress={props.summary.progress} error={props.summary.error} />
+          <Totals items={preparedTotals(header())} />
+          <div class="answers">
+            <Button
+              label={`Tools · ${header()?.itemCounts.tools ?? '—'}`}
+              icon="terminal"
+              disabledReason={!header() ? 'Preparing confirmed figures' : undefined}
+              onClick={() => props.onOpen?.('tools')}
+            />
+            <Button
+              label={`Costs · ${header()?.itemCounts.costs ?? '—'}`}
+              icon="chart-no-axes-column"
+              disabledReason={!header() ? 'Preparing confirmed figures' : undefined}
+              onClick={() => props.onOpen?.('costs')}
+            />
+          </div>
+          <p class="muted">Latest confirmed facts. Underlying observation time is unavailable; checked time is not measurement time.</p>
+          <Button label="Refresh resources" icon="rotate-cw" iconOnly onClick={() => props.summary.refresh('retry')} />
+        </section>
+      }
+    >
+      {cat => <PreparedResourceWindow projectId={props.projectId} category={cat} onClose={props.onClose!} />}
+    </Show>
+  );
 }
-function PreparedResourceWindow({ projectId, category, group, onClose }: { projectId: string; category: ResourceCategory; group?: ResourceGroup; onClose: () => void }) {
-  const handle = useRef<VirtualListHandle | null>(null);
-  const [query, setQuery] = useState('');
-  const [request, setRequest] = useState<Omit<ProjectResourceItemsRequest, 'projectId'>>({ category, group, limit: 50, anchor: 'start' });
-  const [rows, setRows] = useState<ResourceItem[]>([]), [page, setPage] = useState<ResourceItemsPage | null>(null);
-  const [prices, setPrices] = useState<ResourceGroup | null>(null);
-  const frame = useRef({ rows, page }); frame.current = { rows, page };
-  const movement = useRef<'replace' | 'append' | 'prepend'>('replace');
-  const firstRequest = useRef<string | null>(null);
-  const responseContext = useRef(new WeakMap<object, { requestKey: string; movement: 'replace' | 'append' | 'prepend'; jump?: 'start' | 'end'; anchor: { key: string; offsetPx: number } | null }>());
-  const restore = useRef<{ key: string; offsetPx: number; alignEnd?: boolean } | null>(null);
-  const [loadingWindow, setLoadingWindow] = useState(false);
-  const captured = useRef<{ key: string; offsetPx: number } | null>(null);
-  const last = useRef<unknown>(null);
-  const windowPages = useRef<ResourceItemsPage[]>([]);
-  const retainedPosition = useRef<ResourceSortKey | null>(null);
-  const requestKey = preparedKey('project_resource_items', projectId, request);
-  const result = usePreparedOp('project_resource_items', { projectId, ...request }, { read: async ({ signal }) => {
-    const first = firstRequest.current !== requestKey;
-    const context = { requestKey, movement: first ? movement.current : 'replace' as const, jump: first ? request.anchor : undefined, anchor: null as { key: string; offsetPx: number } | null };
-    const anchor = handle.current?.getAnchor() ?? null; if (anchor) captured.current = anchor;
-    const item = anchor ? frame.current.rows.find(row => resourceItemKey(row) === anchor.key) : null;
-    const position = item ? resourcePosition(item) : retainedPosition.current;
-    if (position) retainedPosition.current = position;
-    context.anchor = captured.current;
-    const base = { projectId, category, group, ...(category === 'tools' ? { query: request.query ?? '' } : {}), limit: 50 };
-    let next: ProjectResourceItemsRequest = first ? { ...base, ...request } : position ? { ...base, around: { key: position, direction: 'atOrAfter' } } : { ...base, anchor: 'start' };
-    let value;
-    try { value = await op('project_resource_items', next, { signal }); }
-    catch (e) { if (!(e instanceof OpError) || e.status !== 409) throw e; next = position ? { ...base, around: { key: position, direction: 'atOrAfter' } } : { ...base, anchor: 'start' }; value = await op('project_resource_items', next, { signal }); }
-    responseContext.current.set(value, context); return value;
-  } });
-  useLayoutEffect(() => {
-    const value = result.data;
-    if (result.state === 'preparing') {
-      windowPages.current = []; last.current = null; setLoadingWindow(false);
-      setRows([]); setPage(null); restore.current = { key: '', offsetPx: 0 }; return;
+function PreparedResourceWindow(props: { projectId: string; category: ResourceCategory; group?: ResourceGroup; onClose: () => void }) {
+  const handle: { current: VirtualListHandle | null } = { current: null };
+  const [query, setQuery] = createSignal('');
+  const [request, setRequest] = createSignal<Omit<ProjectResourceItemsRequest, 'projectId'>>({
+    category: untrack(() => props.category),
+    group: untrack(() => props.group),
+    limit: 50,
+    anchor: 'start',
+  });
+  const [rows, setRows] = createSignal<ResourceItem[]>([], { ownedWrite: true });
+  const [page, setPage] = createSignal<ResourceItemsPage | null>(null, { ownedWrite: true });
+  const [prices, setPrices] = createSignal<ResourceGroup | null>(null);
+  let frameRows: ResourceItem[] = [];
+  let framePage: ResourceItemsPage | null = null;
+  let movement: 'replace' | 'append' | 'prepend' = 'replace';
+  let firstRequest: string | null = null;
+  const responseContext = new WeakMap<object, { requestKey: string; movement: 'replace' | 'append' | 'prepend'; jump?: 'start' | 'end'; anchor: { key: string; offsetPx: number } | null }>();
+  let restore: { key: string; offsetPx: number; alignEnd?: boolean } | null = null;
+  const [loadingWindow, setLoadingWindow] = createSignal(false, { ownedWrite: true });
+  let captured: { key: string; offsetPx: number } | null = null;
+  let last: unknown = null;
+  let windowPages: ResourceItemsPage[] = [];
+  let retainedPosition: ResourceSortKey | null = null;
+  const requestKey = createMemo(() => preparedKey('project_resource_items', props.projectId, request()));
+  const result = usePreparedOp(
+    'project_resource_items',
+    () => ({ projectId: props.projectId, ...request() }),
+    {
+      read: async ({ signal }) => {
+        const req = untrack(request);
+        const rk = untrack(requestKey);
+        const pid = untrack(() => props.projectId);
+        const cat = untrack(() => props.category);
+        const grp = untrack(() => props.group);
+        const first = firstRequest !== rk;
+        const context = { requestKey: rk, movement: first ? movement : 'replace' as const, jump: first ? req.anchor : undefined, anchor: null as { key: string; offsetPx: number } | null };
+        const anchor = handle.current?.getAnchor() ?? null; if (anchor) captured = anchor;
+        const item = anchor ? frameRows.find(row => resourceItemKey(row) === anchor.key) : null;
+        const position = item ? resourcePosition(item) : retainedPosition;
+        if (position) retainedPosition = position;
+        context.anchor = captured;
+        const base = { projectId: pid, category: cat, group: grp, ...(cat === 'tools' ? { query: req.query ?? '' } : {}), limit: 50 };
+        let next: ProjectResourceItemsRequest = first ? { ...base, ...req } : position ? { ...base, around: { key: position, direction: 'atOrAfter' } } : { ...base, anchor: 'start' };
+        let value;
+        try { value = await op('project_resource_items', next, { signal }); }
+        catch (e) { if (!(e instanceof OpError) || e.status !== 409) throw e; next = position ? { ...base, around: { key: position, direction: 'atOrAfter' } } : { ...base, anchor: 'start' }; value = await op('project_resource_items', next, { signal }); }
+        responseContext.set(value, context); return value;
+      },
+    },
+  );
+  createEffect(
+    () => [result.data, result.state] as const,
+    ([value, state]) => {
+      if (state === 'preparing') {
+        windowPages = []; last = null; setLoadingWindow(false);
+        frameRows = []; framePage = null;
+        setRows([]); setPage(null); restore = { key: '', offsetPx: 0 }; return;
+      }
+      if (!value || !('items' in value) || last === value) return;
+      last = value;
+      const context = responseContext.get(value);
+      // A preparing/error reply must not consume the requested jump or edge transition.
+      if (context) firstRequest = context.requestKey;
+      const direction = context?.movement ?? 'replace';
+      const sameEpoch = !framePage || framePage.version.split(':')[0] === value.version.split(':')[0];
+      const segments = sameEpoch && direction === 'append' ? [...windowPages, value] : sameEpoch && direction === 'prepend' ? [value, ...windowPages] : [value];
+      windowPages = direction === 'prepend' ? segments.slice(0, 3) : segments.slice(-3);
+      const bounded = [...new Map(windowPages.flatMap(segment => segment.items).map(item => [resourceItemKey(item), item])).values()];
+      // Cursors belong to the actual retained edges, not the most recently fetched page.
+      const edges = { previousCursor: windowPages[0]?.previousCursor ?? null, nextCursor: windowPages.at(-1)?.nextCursor ?? null };
+      const a = context?.anchor;
+      if (context?.jump === 'end' && bounded.length) restore = { key: resourceItemKey(bounded.at(-1)!), offsetPx: 0, alignEnd: true };
+      else if (context?.jump === 'start') restore = { key: bounded.length ? resourceItemKey(bounded[0]) : '', offsetPx: 0 };
+      else if (a && bounded.some(row => resourceItemKey(row) === a.key)) restore = a;
+      else if (value.resolvedAnchor) restore = { key: resourcePositionKey(value.resolvedAnchor), offsetPx: 0 };
+      else restore = { key: '', offsetPx: 0 };
+      const nextPage = { ...value, ...edges };
+      frameRows = bounded; framePage = nextPage;
+      setRows(bounded); setPage(nextPage);
+    },
+  );
+  createEffect(
+    () => rows(),
+    () => {
+      if (restore) {
+        if (restore.alignEnd) handle.current?.scrollToKey(restore.key, 'end');
+        else handle.current?.restoreAnchor(restore.key, restore.offsetPx);
+        restore = null;
+        setLoadingWindow(false);
+      }
+    },
+  );
+  const move = (position: Pick<ProjectResourceItemsRequest, 'anchor' | 'cursor'>, kind: typeof movement = 'replace') => {
+    if (position.anchor) { retainedPosition = null; captured = null; }
+    setLoadingWindow(true); firstRequest = null; movement = kind;
+    const next = { category: props.category, group: props.group, query: props.category === 'tools' ? query() : undefined, limit: 50, ...position };
+    if (preparedKey('project_resource_items', props.projectId, next) === requestKey()) { result.refresh('jump'); } else setRequest(next);
+  };
+  onSettled(() => {
+    const r = restore;
+    if (r) {
+      if (r.alignEnd) handle.current?.scrollToKey(r.key, 'end');
+      else handle.current?.restoreAnchor(r.key, r.offsetPx);
+      restore = null;
+      setLoadingWindow(false);
     }
-    if (!value || !('items' in value) || last.current === value) return;
-    last.current = value;
-    const context = responseContext.current.get(value);
-    // A preparing/error reply must not consume the requested jump or edge transition.
-    if (context) firstRequest.current = context.requestKey;
-    const direction = context?.movement ?? 'replace';
-    const sameEpoch = !frame.current.page || frame.current.page.version.split(':')[0] === value.version.split(':')[0];
-    const segments = sameEpoch && direction === 'append' ? [...windowPages.current, value] : sameEpoch && direction === 'prepend' ? [value, ...windowPages.current] : [value];
-    windowPages.current = direction === 'prepend' ? segments.slice(0, 3) : segments.slice(-3);
-    const bounded = [...new Map(windowPages.current.flatMap(segment => segment.items).map(item => [resourceItemKey(item), item])).values()];
-    // Cursors belong to the actual retained edges, not the most recently fetched page.
-    const edges = { previousCursor: windowPages.current[0]?.previousCursor ?? null, nextCursor: windowPages.current.at(-1)?.nextCursor ?? null };
-    const a = context?.anchor;
-    if (context?.jump === 'end' && bounded.length) restore.current = { key: resourceItemKey(bounded.at(-1)!), offsetPx: 0, alignEnd: true };
-    else if (context?.jump === 'start') restore.current = { key: bounded.length ? resourceItemKey(bounded[0]) : '', offsetPx: 0 };
-    else if (a && bounded.some(row => resourceItemKey(row) === a.key)) restore.current = a;
-    else if (value.resolvedAnchor) restore.current = { key: resourcePositionKey(value.resolvedAnchor), offsetPx: 0 };
-    else restore.current = { key: '', offsetPx: 0 };
-    setRows(bounded); setPage({ ...value, ...edges });
-  }, [result.data, result.state]);
-  useLayoutEffect(() => { if (restore.current) { if (restore.current.alignEnd) handle.current?.scrollToKey(restore.current.key, 'end'); else handle.current?.restoreAnchor(restore.current.key, restore.current.offsetPx); restore.current = null; setLoadingWindow(false); } }, [rows]);
-  const move = (position: Pick<ProjectResourceItemsRequest, 'anchor' | 'cursor'>, kind: typeof movement.current = 'replace') => { if (position.anchor) { retainedPosition.current = null; captured.current = null; } setLoadingWindow(true); firstRequest.current = null; movement.current = kind; const next = { category, group, query: category === 'tools' ? query : undefined, limit: 50, ...position }; if (preparedKey('project_resource_items', projectId, next) === requestKey) { result.refresh('jump'); } else setRequest(next); };
-  if (prices) return <PreparedResourceWindow projectId={projectId} category="prices" group={prices} onClose={() => setPrices(null)} />;
-  return <article class="detail conversation" data-ui="detail" data-resource-window={category} data-window-first={rows.length ? resourceItemKey(rows[0]) : ''} data-window-last={rows.length ? resourceItemKey(rows.at(-1)!) : ''} data-resource-version={page?.version ?? ''}>
-    <header class="detail-h"><h2>{category === 'prices' ? 'Price basis' : category === 'tools' ? 'Tools' : 'Costs'}</h2><span class="grow" /><Button label="Close resources" icon="x" iconOnly onClick={onClose} /></header>
-    <ResourceProgressLine progress={result.progress} error={result.error} />
-    {page && <Totals items={preparedTotals(page.header)} />}
-    <div class="answers">{category === 'tools' && <SearchField label="Search tools" value={query} onInput={value => { setLoadingWindow(true); setQuery(value.slice(0, 200)); retainedPosition.current = null; captured.current = null; firstRequest.current = null; movement.current = 'replace'; setRequest({ category, query: value.slice(0, 200), limit: 50, anchor: 'start' }); }} onSearch={() => {}} />}
-      <span>{rows.length} of {page?.total ?? '—'}</span><Button label="Jump to start" icon="arrow-up" iconOnly onClick={() => move({ anchor: 'start' })} /><Button label="Jump to end" icon="arrow-down" iconOnly onClick={() => move({ anchor: 'end' })} />
-      {result.error && <Button label="Retry resources" icon="rotate-cw" onClick={() => result.refresh('retry')} />}</div>
-    <VirtualList fill handle={handle} items={rows} getKey={resourceItemKey} label={`Project ${category}`} rowHeight={ROW2} follow="top" columns="1.25rem minmax(0,1fr) auto"
-      onEnd={!loadingWindow && page?.nextCursor ? () => move({ cursor: page.nextCursor! }, 'append') : undefined}
-      onStart={!loadingWindow && page?.previousCursor ? () => move({ cursor: page.previousCursor! }, 'prepend') : undefined}
-      render={item => <><StateBadge family="source" state="current" compact />{item.kind === 'tool' ? <><span>{item.name}</span><span class="num">{item.calls} · {item.errors} failed</span></> : item.kind === 'cost' ? <><CostFigures cost={[{ ...item, reason: item.reason ?? undefined, note: item.note ?? undefined, usages: item.usages ?? undefined }]} showUnavailable /><Button label={`Price basis · ${item.priceCount}`} onClick={() => setPrices({ currency: item.currency, basis: item.basis })} /></> : <><span><CopyButton label="Copy price id" value={item.priceId} iconOnly /> Recorded rate</span><AgeChip t={item.observedAt} /></>}</>} />
-    {!rows.length && page && <Empty text="No matching confirmed items." />}
-  </article>;
+  });
+  return (
+    <Show
+      when={prices()}
+      keyed
+      fallback={
+        <article
+          class="detail conversation"
+          data-ui="detail"
+          data-resource-window={props.category}
+          data-window-first={rows().length ? resourceItemKey(rows()[0]) : ''}
+          data-window-last={rows().length ? resourceItemKey(rows().at(-1)!) : ''}
+          data-resource-version={page()?.version ?? ''}
+        >
+          <header class="detail-h">
+            <h2>{props.category === 'prices' ? 'Price basis' : props.category === 'tools' ? 'Tools' : 'Costs'}</h2>
+            <span class="grow" />
+            <Button label="Close resources" icon="x" iconOnly onClick={props.onClose} />
+          </header>
+          <ResourceProgressLine progress={result.progress} error={result.error} />
+          <Show when={page()} keyed>{pg => <Totals items={preparedTotals(pg.header)} />}</Show>
+          <div class="answers">
+            <Show when={props.category === 'tools'}>
+              <SearchField
+                label="Search tools"
+                value={query()}
+                onInput={value => {
+                  setLoadingWindow(true);
+                  setQuery(value.slice(0, 200));
+                  retainedPosition = null; captured = null; firstRequest = null; movement = 'replace';
+                  setRequest({ category: props.category, query: value.slice(0, 200), limit: 50, anchor: 'start' });
+                }}
+                onSearch={() => {}}
+              />
+            </Show>
+            <span>{rows().length} of {page()?.total ?? '—'}</span>
+            <Button label="Jump to start" icon="arrow-up" iconOnly onClick={() => move({ anchor: 'start' })} />
+            <Button label="Jump to end" icon="arrow-down" iconOnly onClick={() => move({ anchor: 'end' })} />
+            <Show when={result.error}><Button label="Retry resources" icon="rotate-cw" onClick={() => result.refresh('retry')} /></Show>
+          </div>
+          <VirtualList
+            fill
+            handle={handle}
+            items={rows()}
+            getKey={resourceItemKey}
+            label={`Project ${props.category}`}
+            rowHeight={ROW2}
+            follow="top"
+            columns="1.25rem minmax(0,1fr) auto"
+            onEnd={!loadingWindow() && page()?.nextCursor ? () => move({ cursor: page()!.nextCursor! }, 'append') : undefined}
+            onStart={!loadingWindow() && page()?.previousCursor ? () => move({ cursor: page()!.previousCursor! }, 'prepend') : undefined}
+            render={item => (
+              <>
+                <StateBadge family="source" state="current" compact />
+                <Switch
+                  fallback={
+                    <>
+                      <span><CopyButton label="Copy price id" value={(item as Extract<ResourceItem, { kind: 'price' }>).priceId} iconOnly /> Recorded rate</span>
+                      <AgeChip t={(item as Extract<ResourceItem, { kind: 'price' }>).observedAt} />
+                    </>
+                  }
+                >
+                  <Match when={item.kind === 'tool' ? item : null} keyed>
+                    {t => <><span>{t.name}</span><span class="num">{t.calls} · {t.errors} failed</span></>}
+                  </Match>
+                  <Match when={item.kind === 'cost' ? item : null} keyed>
+                    {c => (
+                      <>
+                        <CostFigures cost={[{ ...c, reason: c.reason ?? undefined, note: c.note ?? undefined, usages: c.usages ?? undefined }]} showUnavailable />
+                        <Button label={`Price basis · ${c.priceCount}`} onClick={() => setPrices({ currency: c.currency, basis: c.basis })} />
+                      </>
+                    )}
+                  </Match>
+                </Switch>
+              </>
+            )}
+          />
+          <Show when={!rows().length && page()}><Empty text="No matching confirmed items." /></Show>
+        </article>
+      }
+    >
+      {g => <PreparedResourceWindow projectId={props.projectId} category="prices" group={g} onClose={() => setPrices(null)} />}
+    </Show>
+  );
 }

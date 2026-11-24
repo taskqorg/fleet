@@ -1,8 +1,8 @@
 // Unified Library screen (docs/designs/fleet-ia-and-journeys.md, docs/design-system/pages/agents.md):
 // one 4-root CatalogueTree (Methods, Pipelines, Agents, Skills) in the control column, Library summary + drift banner
 // when idle, and DefinitionDetail / SkillDetail / Changes in the work area.
-import { useMemo, useState } from 'preact/hooks';
-import { useLocation } from 'wouter-preact';
+import { createMemo, createSignal, For, Match, Show, Switch } from 'solid-js';
+import { useLocation } from '../router.ts';
 import {
   Button, CatalogueTree, Choice, ContextMenu, DetailSection, Empty, EntityCode, ErrorBanner, HarnessMark, Icon, KvRow,
   ListDetail, Num, OfflineMarker, ProblemRow, SearchField, ShellActions, ShellStatus, Skeleton, StateBadge, Totals,
@@ -106,16 +106,17 @@ const rawNodeId = (nodeId: string): string => {
   return idx >= 0 ? nodeId.slice(idx + 1) : nodeId;
 };
 
-export function Agents({ section = 'agents', id }: { section?: LibrarySection; id?: string }) {
+export function Agents(props: { section?: LibrarySection; id?: string }) {
+  const section = () => props.section ?? 'agents';
   const [, go] = useLocation();
-  const [q, setQ] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ severity: 'warning' | 'failure'; title: string; facts: string } | null>(null);
-  const [previewRepoKeys, setPreviewRepoKeys] = useState<DefinitionKey[] | null>(null);
-  const [menu, setMenu] = useState<{ node: CatalogueTreeNode; at: { x: number; y: number } } | null>(null);
+  const [q, setQ] = createSignal('');
+  const [busy, setBusy] = createSignal(false);
+  const [notice, setNotice] = createSignal<{ severity: 'warning' | 'failure'; title: string; facts: string } | null>(null);
+  const [previewRepoKeys, setPreviewRepoKeys] = createSignal<DefinitionKey[] | null>(null);
+  const [menu, setMenu] = createSignal<{ node: CatalogueTreeNode; at: { x: number; y: number } } | null>(null);
 
   const pins = usePins(LIBRARY_PINS);
-  const treeFlipped = listGroups(LIBRARY_TREE_GROUPS);
+  const treeFlipped = createMemo(() => listGroups(LIBRARY_TREE_GROUPS));
 
   const agentsOp = useOp('definition_list', { kind: 'agent' });
   const pipelinesOp = useOp('definition_list', { kind: 'pipeline' });
@@ -123,37 +124,40 @@ export function Agents({ section = 'agents', id }: { section?: LibrarySection; i
   const skillsOp = useOp('skills_list', {});
   const changesOp = useOp('system_changes', {});
 
-  const agentItems = agentsOp.data?.items ?? [];
-  const pipelineItems = pipelinesOp.data?.items ?? [];
-  const catalogueItems = catalogueOp.data?.items ?? [];
-  const skillItems = skillsOp.data?.skills ?? [];
+  const agentItems = createMemo(() => agentsOp.data?.items ?? []);
+  const pipelineItems = createMemo(() => pipelinesOp.data?.items ?? []);
+  const catalogueItems = createMemo(() => catalogueOp.data?.items ?? []);
+  const skillItems = createMemo(() => skillsOp.data?.skills ?? []);
 
-  const categories = useMemo(
-    () => [...new Set(agentItems.map(a => a.agent?.category).filter((x): x is string => !!x))].sort(),
-    [agentItems],
+  const categories = createMemo(
+    () => [...new Set(agentItems().map(a => a.agent?.category).filter((x): x is string => !!x))].sort(),
   );
-  const agentById = useMemo(() => new Map(agentItems.map(a => [a.id, a])), [agentItems]);
-  const baselineAgent = agentById.get('baseline')?.agent;
+  const agentById = createMemo(() => new Map(agentItems().map(a => [a.id, a])));
+  const baselineAgent = createMemo(() => agentById().get('baseline')?.agent);
 
-  const isSkillRoute = section === 'agents' && !!id && id.startsWith('skill:');
-  const skillId = isSkillRoute ? id!.slice('skill:'.length) : undefined;
-  const selectedTreeId = section === 'catalogue' && id
-    ? `catalogue:${id}`
-    : section === 'pipelines' && id
-      ? `pipeline:${id}`
-      : isSkillRoute && skillId
-        ? `skill:${skillId}`
-        : section === 'agents' && id
-          ? `agent:${id}`
-          : null;
+  const isSkillRoute = createMemo(() => section() === 'agents' && !!props.id && props.id.startsWith('skill:'));
+  const skillId = createMemo(() => (isSkillRoute() ? props.id!.slice('skill:'.length) : undefined));
+  const selectedTreeId = createMemo(() => {
+    const sec = section(), id = props.id, sid = skillId();
+    return sec === 'catalogue' && id
+      ? `catalogue:${id}`
+      : sec === 'pipelines' && id
+        ? `pipeline:${id}`
+        : isSkillRoute() && sid
+          ? `skill:${sid}`
+          : sec === 'agents' && id
+            ? `agent:${id}`
+            : null;
+  });
 
-  const treeQuery = useMemo(() => q.replace(/\b(?:agent|host|project):(\S+)/gi, '$1'), [q]);
+  const treeQuery = createMemo(() => q().replace(/\b(?:agent|host|project):(\S+)/gi, '$1'));
 
   const sortDefs = (items: readonly DefinitionListItem[]) =>
     items.toSorted((a, b) => Number(!!b.draft) - Number(!!a.draft) || b.last30.runs - a.last30.runs || a.name.localeCompare(b.name));
 
-  const libraryTreeNodes = useMemo<CatalogueTreeNode[]>(() => {
-    const methodLeaves: CatalogueTreeNode[] = sortDefs(catalogueItems).map(d => {
+  const libraryTreeNodes = createMemo<CatalogueTreeNode[]>(() => {
+    const byId = agentById(), base = baselineAgent();
+    const methodLeaves: CatalogueTreeNode[] = sortDefs(catalogueItems()).map(d => {
       const nodeId = `catalogue:${d.id}`;
       return {
         id: nodeId,
@@ -167,7 +171,7 @@ export function Agents({ section = 'agents', id }: { section?: LibrarySection; i
       };
     });
 
-    const pipelineLeaves: CatalogueTreeNode[] = sortDefs(pipelineItems).map(d => {
+    const pipelineLeaves: CatalogueTreeNode[] = sortDefs(pipelineItems()).map(d => {
       const nodeId = `pipeline:${d.id}`;
       const hasRight = d.state === 'repository-changed' || d.last30.runs > 0;
       return {
@@ -188,7 +192,7 @@ export function Agents({ section = 'agents', id }: { section?: LibrarySection; i
     });
 
     const buckets = new Map<AgentRoleGroup, DefinitionListItem[]>(ROLE_GROUPS.map(g => [g.key, []]));
-    for (const a of agentItems) buckets.get(agentRoleGroup(a))!.push(a);
+    for (const a of agentItems()) buckets.get(agentRoleGroup(a))!.push(a);
 
     const agentFolders: CatalogueTreeNode[] = [];
     for (const group of ROLE_GROUPS) {
@@ -201,8 +205,8 @@ export function Agents({ section = 'agents', id }: { section?: LibrarySection; i
         defaultCollapsed: group.defaultCollapsed,
         children: items.map(d => {
           const nodeId = `agent:${d.id}`;
-          const parent = d.agent?.variantOf ? agentById.get(d.agent.variantOf)?.agent : undefined;
-          const baseHarness = baseAgentDefaults(parent, baselineAgent, d.agent?.harness).harness;
+          const parent = d.agent?.variantOf ? byId.get(d.agent.variantOf)?.agent : undefined;
+          const baseHarness = baseAgentDefaults(parent, base, d.agent?.harness).harness;
           const showHarness = !!(d.agent && d.agent.harness !== baseHarness && harnesses[d.agent.harness]);
           const right = (d.state === 'repository-changed' || showHarness) ? (
             <>
@@ -213,7 +217,7 @@ export function Agents({ section = 'agents', id }: { section?: LibrarySection; i
           return {
             id: nodeId,
             label: d.name,
-            sub: agentDeltaSub(d, agentById, baselineAgent),
+            sub: agentDeltaSub(d, byId, base),
             state: {
               family: 'definition',
               state: d.draft ? 'draft' : compatibilityState(d.compatibility),
@@ -228,7 +232,7 @@ export function Agents({ section = 'agents', id }: { section?: LibrarySection; i
       });
     }
 
-    const skillLeaves: CatalogueTreeNode[] = skillItems
+    const skillLeaves: CatalogueTreeNode[] = skillItems()
       .toSorted((a, b) => a.name.localeCompare(b.name))
       .map(s => {
         const nodeId = `skill:${s.id}`;
@@ -250,54 +254,58 @@ export function Agents({ section = 'agents', id }: { section?: LibrarySection; i
       { id: ROOT_AGENTS_ID, label: 'Agents', icon: 'bot', defaultCollapsed: false, children: agentFolders },
       { id: ROOT_SKILLS_ID, label: 'Skills', icon: 'file-text', defaultCollapsed: false, children: skillLeaves },
     ];
-  }, [catalogueItems, pipelineItems, agentItems, skillItems, agentById, baselineAgent, pins.ids]);
+  });
 
-  const selectedIsLabVariant = section === 'agents' && !!id && !isSkillRoute && (() => {
-    const a = agentById.get(id);
+  const selectedIsLabVariant = createMemo(() => {
+    if (section() !== 'agents' || !props.id || isSkillRoute()) return false;
+    const a = agentById().get(props.id);
     return !!a && agentRoleGroup(a) === 'lab-variants';
-  })();
+  });
 
-  const defaultClosed = useMemo(
-    () => (selectedIsLabVariant ? [] : ['group:lab-variants']),
-    [selectedIsLabVariant],
-  );
-  const treeClosed = closedGroups(defaultClosed, treeFlipped);
-  const collapsedMap = useMemo<Record<string, boolean>>(() => {
+  const defaultClosed = createMemo(() => (selectedIsLabVariant() ? [] : ['group:lab-variants']));
+  const treeClosed = createMemo(() => closedGroups(defaultClosed(), treeFlipped()));
+  const collapsedMap = createMemo<Record<string, boolean>>(() => {
+    const closed = treeClosed();
     const map: Record<string, boolean> = {
-      __pinned__: treeClosed.has('__pinned__'),
-      [ROOT_METHODS_ID]: treeClosed.has(ROOT_METHODS_ID),
-      [ROOT_PIPELINES_ID]: treeClosed.has(ROOT_PIPELINES_ID),
-      [ROOT_AGENTS_ID]: treeClosed.has(ROOT_AGENTS_ID),
-      [ROOT_SKILLS_ID]: treeClosed.has(ROOT_SKILLS_ID),
+      __pinned__: closed.has('__pinned__'),
+      [ROOT_METHODS_ID]: closed.has(ROOT_METHODS_ID),
+      [ROOT_PIPELINES_ID]: closed.has(ROOT_PIPELINES_ID),
+      [ROOT_AGENTS_ID]: closed.has(ROOT_AGENTS_ID),
+      [ROOT_SKILLS_ID]: closed.has(ROOT_SKILLS_ID),
     };
-    for (const g of ROLE_GROUPS) map[g.id] = treeClosed.has(g.id);
+    for (const g of ROLE_GROUPS) map[g.id] = closed.has(g.id);
     return map;
-  }, [treeClosed]);
+  });
 
   const toggleTreeFolder = (folderId: string) => {
-    setListGroups(LIBRARY_TREE_GROUPS, flipGroup(treeFlipped, folderId));
+    setListGroups(LIBRARY_TREE_GROUPS, flipGroup(treeFlipped(), folderId));
   };
 
   const countMatchingLeaves = (nodes: readonly CatalogueTreeNode[]): number => {
     let total = 0;
+    const tq = treeQuery();
     for (const n of nodes) {
       if (Array.isArray(n.children)) {
         total += countMatchingLeaves(n.children);
-      } else if (!treeQuery.trim() || matchSearch(treeQuery, [n.label, n.id, n.sub, n.searchText].filter(Boolean).join(' '), n.state ? { state: n.state.state } : {})) {
+      } else if (!tq.trim() || matchSearch(tq, [n.label, n.id, n.sub, n.searchText].filter(Boolean).join(' '), n.state ? { state: n.state.state } : {})) {
         total++;
       }
     }
     return total;
   };
-  const totalCount = catalogueItems.length + pipelineItems.length + agentItems.length + skillItems.length;
-  const shownCount = treeQuery.trim() ? countMatchingLeaves(libraryTreeNodes) : totalCount;
+  const totalCount = createMemo(() => catalogueItems().length + pipelineItems().length + agentItems().length + skillItems().length);
+  const shownCount = createMemo(() => treeQuery().trim() ? countMatchingLeaves(libraryTreeNodes()) : totalCount());
 
-  const initialLoading = !agentsOp.data && !pipelinesOp.data && !catalogueOp.data && !skillsOp.data
-    && !agentsOp.error && !pipelinesOp.error && !catalogueOp.error && !skillsOp.error;
-  const loadError = (agentsOp.error && !agentsOp.data ? agentsOp.error : null)
+  const initialLoading = createMemo(() =>
+    !agentsOp.data && !pipelinesOp.data && !catalogueOp.data && !skillsOp.data
+    && !agentsOp.error && !pipelinesOp.error && !catalogueOp.error && !skillsOp.error,
+  );
+  const loadError = createMemo(() =>
+    (agentsOp.error && !agentsOp.data ? agentsOp.error : null)
     ?? (pipelinesOp.error && !pipelinesOp.data ? pipelinesOp.error : null)
     ?? (catalogueOp.error && !catalogueOp.data ? catalogueOp.error : null)
-    ?? (skillsOp.error && !skillsOp.data ? skillsOp.error : null);
+    ?? (skillsOp.error && !skillsOp.data ? skillsOp.error : null),
+  );
 
   const reloadAll = () => {
     void Promise.all([agentsOp.reload(), pipelinesOp.reload(), catalogueOp.reload(), skillsOp.reload(), changesOp.reload()]);
@@ -312,29 +320,27 @@ export function Agents({ section = 'agents', id }: { section?: LibrarySection; i
           icon="git-pull-request"
           iconOnly
           kind="quiet"
-          pressed={section === 'changes'}
-          onClick={() => go(section === 'changes' ? '/agents' : '/changes')}
+          pressed={section() === 'changes'}
+          onClick={() => go(section() === 'changes' ? '/agents' : '/changes')}
         />
       </ShellActions>
       <header class="page-h">
-        <SearchField label="Find in library" value={q} onInput={setQ} onSearch={() => {}} />
+        <SearchField label="Find in library" value={q()} onInput={setQ} onSearch={() => {}} />
         <span class="grow" />
-        <span class="muted mono" aria-label={`${shownCount} of ${totalCount} library items`}>
-          {shownCount < totalCount ? `${shownCount} of ${totalCount}` : totalCount}
+        <span class="muted mono" aria-label={`${shownCount()} of ${totalCount()} library items`}>
+          {shownCount() < totalCount() ? `${shownCount()} of ${totalCount()}` : totalCount()}
         </span>
       </header>
-      {loadError && <ErrorBanner text={loadError} onRetry={reloadAll} />}
+      <Show when={loadError()}>{err => <ErrorBanner text={err()} onRetry={reloadAll} />}</Show>
       <section class="panel">
-        {initialLoading ? (
-          <Skeleton rows={8} />
-        ) : (
+        <Show when={!initialLoading()} fallback={<Skeleton rows={8} />}>
           <CatalogueTree
             fill
-            nodes={libraryTreeNodes}
+            nodes={libraryTreeNodes()}
             label="Library"
-            selectedId={selectedTreeId}
-            query={treeQuery}
-            collapsed={collapsedMap}
+            selectedId={selectedTreeId()}
+            query={treeQuery()}
+            collapsed={collapsedMap()}
             emptyText="No matching items."
             onToggle={toggleTreeFolder}
             onSelect={node => {
@@ -349,19 +355,19 @@ export function Agents({ section = 'agents', id }: { section?: LibrarySection; i
               if (!Array.isArray(node.children)) setMenu({ node, at });
             }}
           />
-        )}
-        {menu && (
+        </Show>
+        <Show when={menu()}>{m => (
           <ContextMenu
-            at={menu.at}
-            label={menu.node.label}
+            at={m().at}
+            label={m().node.label}
             onClose={() => setMenu(null)}
             items={[
-              { label: 'Open', icon: actions.open, onClick: () => { if (menu.node.href) go(menu.node.href); } },
-              { label: pins.has(menu.node.id) ? 'Unpin' : 'Pin', icon: pins.has(menu.node.id) ? actions.unpin : actions.pin, onClick: () => pins.toggle(menu.node.id) },
-              { label: 'Copy id', icon: actions.copy, onClick: () => copyText(rawNodeId(menu.node.id)) },
+              { label: 'Open', icon: actions.open, onClick: () => { const href = m().node.href; if (href) go(href); } },
+              { label: pins.has(m().node.id) ? 'Unpin' : 'Pin', icon: pins.has(m().node.id) ? actions.unpin : actions.pin, onClick: () => pins.toggle(m().node.id) },
+              { label: 'Copy id', icon: actions.copy, onClick: () => copyText(rawNodeId(m().node.id)) },
             ]}
           />
-        )}
+        )}</Show>
       </section>
     </>
   );
@@ -386,9 +392,9 @@ export function Agents({ section = 'agents', id }: { section?: LibrarySection; i
     }
   };
 
-  const harnessSummary = useMemo(() =>
+  const harnessSummary = createMemo(() =>
     Object.entries(harnesses).map(([key, info]) => {
-      const items = agentItems.filter(a => a.agent?.harness === key);
+      const items = agentItems().filter(a => a.agent?.harness === key);
       return {
         key,
         label: info.label,
@@ -398,11 +404,11 @@ export function Agents({ section = 'agents', id }: { section?: LibrarySection; i
         tokens: items.reduce((s, a) => s + a.last30.tokens, 0),
       };
     }).filter(x => x.count > 0),
-  [agentItems]);
+  );
 
-  const categorySummary = useMemo(() => {
+  const categorySummary = createMemo(() => {
     const byCat = new Map<string, DefinitionListItem[]>();
-    for (const a of agentItems) {
+    for (const a of agentItems()) {
       const cat = a.agent?.category;
       if (!cat) continue;
       const arr = byCat.get(cat);
@@ -417,165 +423,164 @@ export function Agents({ section = 'agents', id }: { section?: LibrarySection; i
         runs: items.reduce((s, a) => s + a.last30.runs, 0),
         tokens: items.reduce((s, a) => s + a.last30.tokens, 0),
       }));
-  }, [agentItems]);
+  });
 
-  const primaryAgents = agentItems.filter(a => !a.agent?.variantOf);
-  const variantAgents = agentItems.filter(a => !!a.agent?.variantOf);
-  const activePipelines = pipelineItems.filter(p => p.last30.runs > 0).length;
-  const activeSkills = skillItems.filter(s => s.agents.length > 0).length;
-  const totalRuns = agentItems.reduce((s, a) => s + a.last30.runs, 0) + pipelineItems.reduce((s, p) => s + p.last30.runs, 0);
-  const totalTokens = agentItems.reduce((s, a) => s + a.last30.tokens, 0) + pipelineItems.reduce((s, p) => s + p.last30.tokens, 0);
+  const summaryTotals = createMemo<TotalItem[]>(() => {
+    const agents = agentItems(), pipelines = pipelineItems(), cats = catalogueItems(), skills = skillItems();
+    const primaryAgents = agents.filter(a => !a.agent?.variantOf);
+    const variantAgents = agents.filter(a => !!a.agent?.variantOf);
+    const activePipelines = pipelines.filter(p => p.last30.runs > 0).length;
+    const activeSkills = skills.filter(s => s.agents.length > 0).length;
+    const totalRuns = agents.reduce((s, a) => s + a.last30.runs, 0) + pipelines.reduce((s, p) => s + p.last30.runs, 0);
+    const totalTokens = agents.reduce((s, a) => s + a.last30.tokens, 0) + pipelines.reduce((s, p) => s + p.last30.tokens, 0);
+    return [
+      { label: 'Methods', m: { value: cats.length, basis: 'measured' }, kind: 'count' },
+      {
+        label: 'Pipelines',
+        m: { value: pipelines.length, basis: 'measured' },
+        kind: 'count',
+        note: activePipelines > 0 ? `${activePipelines} active (30d)` : undefined,
+      },
+      {
+        label: 'Agents',
+        m: { value: agents.length, basis: 'measured' },
+        kind: 'count',
+        note: variantAgents.length ? `${primaryAgents.length} primary · ${variantAgents.length} variants` : undefined,
+      },
+      {
+        label: 'Skills',
+        m: { value: skills.length, basis: 'measured' },
+        kind: 'count',
+        note: activeSkills > 0 ? `${activeSkills} enabled` : undefined,
+      },
+      { label: '30d runs', m: { value: totalRuns, basis: 'measured' }, kind: 'count' },
+      { label: '30d tokens', m: { value: totalTokens, basis: 'measured' }, kind: 'count' },
+    ];
+  });
 
-  const summaryTotals: TotalItem[] = [
-    { label: 'Methods', m: { value: catalogueItems.length, basis: 'measured' }, kind: 'count' },
-    {
-      label: 'Pipelines',
-      m: { value: pipelineItems.length, basis: 'measured' },
-      kind: 'count',
-      note: activePipelines > 0 ? `${activePipelines} active (30d)` : undefined,
-    },
-    {
-      label: 'Agents',
-      m: { value: agentItems.length, basis: 'measured' },
-      kind: 'count',
-      note: variantAgents.length ? `${primaryAgents.length} primary · ${variantAgents.length} variants` : undefined,
-    },
-    {
-      label: 'Skills',
-      m: { value: skillItems.length, basis: 'measured' },
-      kind: 'count',
-      note: activeSkills > 0 ? `${activeSkills} enabled` : undefined,
-    },
-    { label: '30d runs', m: { value: totalRuns, basis: 'measured' }, kind: 'count' },
-    { label: '30d tokens', m: { value: totalTokens, basis: 'measured' }, kind: 'count' },
-  ];
-
-  const changesData = changesOp.data;
-  const takeableKeys: DefinitionKey[] = changesData
-    ? changesData.repositoryChanged.filter(d => d.state === 'repository-changed').map(d => ({ kind: d.kind, id: d.id }))
-    : [...agentItems, ...pipelineItems, ...catalogueItems]
-        .filter(d => d.state === 'repository-changed')
-        .map(d => ({ kind: d.kind, id: d.id }));
-  const behindHosts = changesData?.versions.hosts.filter(h => h.behind) ?? [];
-  const behindHarnesses = changesData?.harnessDrift.filter(h => h.behind) ?? [];
-  const driftFacts = changesData ? [
-    changesData.repositoryChanged.length > 0 && `${changesData.repositoryChanged.length} repo changed`,
-    changesData.storeOnly.length > 0 && `${changesData.storeOnly.length} store-only`,
-    changesData.ahead.length > 0 && `${changesData.ahead.length} ahead`,
-    behindHosts.length > 0 && `${behindHosts.length} hosts behind`,
-    behindHarnesses.length > 0 && `${behindHarnesses.length} harness pins drifting`,
-  ].filter((x): x is string => !!x) : (takeableKeys.length > 0 ? [`${takeableKeys.length} repo changed`] : []);
+  const takeableKeys = createMemo<DefinitionKey[]>(() => {
+    const changesData = changesOp.data;
+    return changesData
+      ? changesData.repositoryChanged.filter(d => d.state === 'repository-changed').map(d => ({ kind: d.kind, id: d.id }))
+      : [...agentItems(), ...pipelineItems(), ...catalogueItems()]
+          .filter(d => d.state === 'repository-changed')
+          .map(d => ({ kind: d.kind, id: d.id }));
+  });
+  const driftFacts = createMemo(() => {
+    const changesData = changesOp.data;
+    if (!changesData) return takeableKeys().length > 0 ? [`${takeableKeys().length} repo changed`] : [];
+    const behindHosts = changesData.versions.hosts.filter(h => h.behind);
+    const behindHarnesses = changesData.harnessDrift.filter(h => h.behind);
+    return [
+      changesData.repositoryChanged.length > 0 && `${changesData.repositoryChanged.length} repo changed`,
+      changesData.storeOnly.length > 0 && `${changesData.storeOnly.length} store-only`,
+      changesData.ahead.length > 0 && `${changesData.ahead.length} ahead`,
+      behindHosts.length > 0 && `${behindHosts.length} hosts behind`,
+      behindHarnesses.length > 0 && `${behindHarnesses.length} harness pins drifting`,
+    ].filter((x): x is string => !!x);
+  });
 
   const idleSummary = (
     <article class="detail stack" aria-label="Library summary">
-      {notice && (
+      <Show when={notice()}>{n => (
         <ProblemRow
-          severity={notice.severity}
-          title={notice.title}
-          facts={notice.facts}
-          actions={previewRepoKeys
+          severity={n().severity}
+          title={n().title}
+          facts={n().facts}
+          actions={previewRepoKeys()
             ? [
-                { label: 'Apply repository versions', primary: true, onClick: () => void runTakeRepo(previewRepoKeys, false) },
+                { label: 'Apply repository versions', primary: true, onClick: () => void runTakeRepo(previewRepoKeys()!, false) },
                 { label: 'Dismiss', onClick: () => { setPreviewRepoKeys(null); setNotice(null); } },
               ]
             : [{ label: 'Dismiss', onClick: () => setNotice(null) }]}
         />
-      )}
+      )}</Show>
 
-      {driftFacts.length > 0 && (
+      <Show when={driftFacts().length > 0}>
         <ProblemRow
           severity="warning"
           title="System drift"
-          facts={driftFacts.join(' · ')}
+          facts={driftFacts().join(' · ')}
           actions={[
-            ...(takeableKeys.length > 0 ? [{ label: `Take repo (${takeableKeys.length})`, icon: 'download' as const, primary: true, onClick: () => void runTakeRepo(takeableKeys, true) }] : []),
+            ...(takeableKeys().length > 0 ? [{ label: `Take repo (${takeableKeys().length})`, icon: 'download' as const, primary: true, onClick: () => void runTakeRepo(takeableKeys(), true) }] : []),
             { label: 'Changes', icon: 'git-pull-request' as const, onClick: () => go('/changes') },
           ]}
         />
-      )}
+      </Show>
 
-      <Totals items={summaryTotals} />
+      <Totals items={summaryTotals()} />
 
-      {harnessSummary.length > 0 && (
+      <Show when={harnessSummary().length > 0}>
         <DetailSection title="By harness">
-          {harnessSummary.map(h => (
+          <For each={harnessSummary()}>{h => (
             <KvRow
-              key={h.key}
               icon={h.icon}
               label={h.label}
               meta={`${h.count} agent${h.count === 1 ? '' : 's'} · ${h.runs} runs (30d)`}
               value={<Num m={{ value: h.tokens, basis: 'measured' }} kind="count" />}
             />
-          ))}
+          )}</For>
         </DetailSection>
-      )}
+      </Show>
 
-      {categorySummary.length > 0 && (
+      <Show when={categorySummary().length > 0}>
         <DetailSection title="By category">
-          {categorySummary.map(c => (
+          <For each={categorySummary()}>{c => (
             <KvRow
-              key={c.cat}
               icon="layers-2"
               label={c.cat}
               meta={`${c.count} agent${c.count === 1 ? '' : 's'} · ${c.runs} runs (30d)`}
               value={<Num m={{ value: c.tokens, basis: 'measured' }} kind="count" />}
             />
-          ))}
+          )}</For>
         </DetailSection>
-      )}
+      </Show>
     </article>
   );
-
-  const detail = section === 'changes'
-    ? <Changes key="changes" onClose={() => go('/agents')} />
-    : isSkillRoute && skillId
-      ? (
-        <SkillDetail
-          key={`skill/${skillId}`}
-          skillId={skillId}
-          skills={skillItems}
-          loading={!skillsOp.data && !skillsOp.error}
-          error={skillsOp.error}
-          onRetry={skillsOp.reload}
-          categories={categories}
-          agentItems={agentItems}
-          busy={busy}
-          setBusy={setBusy}
-          onChanged={async () => { await Promise.all([skillsOp.reload(), agentsOp.reload()]); }}
-          onClose={() => go('/agents')}
-        />
-      )
-      : section === 'catalogue' && id
-        ? <DefinitionDetail key={`catalogue/${id}`} kind="catalogue" id={id} agentById={agentById} onClose={() => go('/catalogue')} />
-        : section === 'pipelines' && id
-          ? <DefinitionDetail key={`pipeline/${id}`} kind="pipeline" id={id} agentById={agentById} onClose={() => go('/pipelines')} />
-          : section === 'agents' && id
-            ? <DefinitionDetail key={`agent/${id}`} kind="agent" id={id} agentById={agentById} onClose={() => go('/agents')} />
-            : undefined;
 
   return (
     <ListDetail
       list={listPane}
-      detail={detail}
-      detailKey={section === 'changes' ? 'changes' : selectedTreeId ?? undefined}
+      detailKey={section() === 'changes' ? 'changes' : selectedTreeId() ?? undefined}
       idle={idleSummary}
+      detail={
+        section() === 'changes' || (isSkillRoute() && skillId()) || (!!props.id && (section() === 'catalogue' || section() === 'pipelines' || section() === 'agents')) ? (
+          <Switch>
+            <Match when={section() === 'changes'}><Changes onClose={() => go('/agents')} /></Match>
+            <Match when={isSkillRoute() && skillId()}>
+              <Show when={skillId()} keyed>{sid => (
+                <SkillDetail
+                  skillId={sid}
+                  skills={skillItems()}
+                  loading={!skillsOp.data && !skillsOp.error}
+                  error={skillsOp.error}
+                  onRetry={skillsOp.reload}
+                  categories={categories()}
+                  agentItems={agentItems()}
+                  busy={busy()}
+                  setBusy={setBusy}
+                  onChanged={async () => { await Promise.all([skillsOp.reload(), agentsOp.reload()]); }}
+                  onClose={() => go('/agents')}
+                />
+              )}</Show>
+            </Match>
+            <Match when={section() === 'catalogue' && props.id}>
+              <Show when={props.id} keyed>{did => <DefinitionDetail kind="catalogue" id={did} agentById={agentById()} onClose={() => go('/catalogue')} />}</Show>
+            </Match>
+            <Match when={section() === 'pipelines' && props.id}>
+              <Show when={props.id} keyed>{did => <DefinitionDetail kind="pipeline" id={did} agentById={agentById()} onClose={() => go('/pipelines')} />}</Show>
+            </Match>
+            <Match when={section() === 'agents' && props.id}>
+              <Show when={props.id} keyed>{did => <DefinitionDetail kind="agent" id={did} agentById={agentById()} onClose={() => go('/agents')} />}</Show>
+            </Match>
+          </Switch>
+        ) : undefined
+      }
     />
   );
 }
 
-function SkillDetail({
-  skillId,
-  skills,
-  loading,
-  error,
-  onRetry,
-  categories,
-  agentItems,
-  busy,
-  setBusy,
-  onChanged,
-  onClose,
-}: {
+function SkillDetail(props: {
   skillId: string;
   skills: readonly SkillSummary[];
   loading: boolean;
@@ -588,20 +593,20 @@ function SkillDetail({
   onChanged: () => Promise<void>;
   onClose: () => void;
 }) {
-  const [targetCat, setTargetCat] = useState('');
-  const [notice, setNotice] = useState<{ severity: 'warning' | 'failure'; title: string; facts: string } | null>(null);
-  const [previewSkill, setPreviewSkill] = useState<{ skill: string; category?: string; agents?: string[] } | null>(null);
+  const [targetCat, setTargetCat] = createSignal('');
+  const [notice, setNotice] = createSignal<{ severity: 'warning' | 'failure'; title: string; facts: string } | null>(null);
+  const [previewSkill, setPreviewSkill] = createSignal<{ skill: string; category?: string; agents?: string[] } | null>(null);
 
-  const skill = skills.find(s => s.id === skillId);
-  const chosenCat = targetCat || categories[0] || '';
-  const missingAgents = useMemo(
-    () => agentItems.filter(a => !(a.agent?.skills ?? []).includes(skillId)).map(a => a.id),
-    [agentItems, skillId],
-  );
-  const repoOnly = skill ? skill.repoAgents.filter(a => !skill.agents.includes(a)) : [];
+  const skill = createMemo(() => props.skills.find(s => s.id === props.skillId));
+  const chosenCat = createMemo(() => targetCat() || props.categories[0] || '');
+  const missingAgents = createMemo(() => props.agentItems.filter(a => !(a.agent?.skills ?? []).includes(props.skillId)).map(a => a.id));
+  const repoOnly = createMemo(() => {
+    const s = skill();
+    return s ? s.repoAgents.filter(a => !s.agents.includes(a)) : [];
+  });
 
   const runAddSkill = async (req: { skill: string; category?: string; agents?: string[] }, preview: boolean) => {
-    setBusy(true);
+    props.setBusy(true);
     setNotice(null);
     try {
       const r = await op('definition_add_skill', { ...req, preview, message: `Add skill ${req.skill}` });
@@ -612,110 +617,104 @@ function SkillDetail({
       } else {
         setPreviewSkill(null);
         setNotice({ severity: 'warning', title: `Added skill ${req.skill} to ${r.applied} agents`, facts: r.items.map(i => `${i.id}: ${i.status}`).join(' · ') });
-        await onChanged();
+        await props.onChanged();
       }
     } catch (e) {
       setNotice({ severity: 'failure', title: 'Add skill failed', facts: e instanceof Error ? e.message : String(e) });
     } finally {
-      setBusy(false);
+      props.setBusy(false);
     }
   };
 
   return (
-    <article class="detail stack" data-ui="detail" tabIndex={-1} aria-label={skill?.name ?? skillId}>
+    <article class="detail stack" data-ui="detail" tabindex={-1} aria-label={skill()?.name ?? props.skillId}>
       <header class="detail-h">
-        <Button label="Close" icon="x" iconOnly onClick={onClose} />
-        <span class="muted mono">{skill?.path ?? `skill:${skillId}`}</span>
+        <Button label="Close" icon="x" iconOnly onClick={() => props.onClose()} />
+        <span class="muted mono">{skill()?.path ?? `skill:${props.skillId}`}</span>
         <span class="grow" />
-        {skill && <StateBadge family="definition" state={skill.agents.length ? 'ready' : 'never'} />}
+        <Show when={skill()}>{s => <StateBadge family="definition" state={s().agents.length ? 'ready' : 'never'} />}</Show>
       </header>
-      <h2 class="detail-title">{skill?.name ?? skillId}</h2>
+      <h2 class="detail-title">{skill()?.name ?? props.skillId}</h2>
 
-      {notice && (
+      <Show when={notice()}>{n => (
         <ProblemRow
-          severity={notice.severity}
-          title={notice.title}
-          facts={notice.facts}
-          actions={previewSkill
+          severity={n().severity}
+          title={n().title}
+          facts={n().facts}
+          actions={previewSkill()
             ? [
-                { label: `Add ${previewSkill.skill}`, primary: true, onClick: () => void runAddSkill(previewSkill, false) },
+                { label: `Add ${previewSkill()!.skill}`, primary: true, onClick: () => void runAddSkill(previewSkill()!, false) },
                 { label: 'Dismiss', onClick: () => { setPreviewSkill(null); setNotice(null); } },
               ]
             : [{ label: 'Dismiss', onClick: () => setNotice(null) }]}
         />
-      )}
+      )}</Show>
 
-      {error ? (
-        <ErrorBanner text={error} onRetry={onRetry} />
-      ) : loading ? (
-        <Empty text="Loading…" />
-      ) : !skill ? (
-        <Empty text={`Skill ${skillId} not found.`} />
-      ) : (
-        <>
-          <DetailSection title="Rollout">
-            <KvRow
-              icon={skill.agents.length ? 'circle-check' : 'file-text'}
-              label={skill.description || 'Shipped skill'}
-              meta={`Active in ${skill.agents.length} of ${skill.totalAgents} store agents · ${skill.repoAgents.length} in repository`}
-            />
-            {skill.agents.length > 0 && (
+      <Show when={props.error} fallback={
+        <Show when={!props.loading} fallback={<Empty text="Loading…" />}>
+          <Show when={skill()} fallback={<Empty text={`Skill ${props.skillId} not found.`} />}>{s => <>
+            <DetailSection title="Rollout">
               <KvRow
-                icon="bot"
-                label="Enabled on"
-                meta={<span class="acts">{skill.agents.map(a => <EntityCode key={a} code={a} id={a} kind="agent" cls="inline" />)}</span>}
+                icon={s().agents.length ? 'circle-check' : 'file-text'}
+                label={s().description || 'Shipped skill'}
+                meta={`Active in ${s().agents.length} of ${s().totalAgents} store agents · ${s().repoAgents.length} in repository`}
               />
-            )}
-            {repoOnly.length > 0 && (
-              <KvRow
-                icon="git-merge"
-                label="Repository only"
-                meta={<span class="acts">{repoOnly.map(a => <EntityCode key={a} code={a} id={a} kind="agent" cls="inline" />)}</span>}
-              />
-            )}
-            {(categories.length > 0 || missingAgents.length > 0) && (
-              <KvRow
-                icon="plus"
-                label="Add to agents"
-                value={
-                  <span class="acts">
-                    {categories.length > 0 && (
-                      <>
+              <Show when={s().agents.length > 0}>
+                <KvRow
+                  icon="bot"
+                  label="Enabled on"
+                  meta={<span class="acts"><For each={s().agents}>{a => <EntityCode code={a} id={a} kind="agent" cls="inline" />}</For></span>}
+                />
+              </Show>
+              <Show when={repoOnly().length > 0}>
+                <KvRow
+                  icon="git-merge"
+                  label="Repository only"
+                  meta={<span class="acts"><For each={repoOnly()}>{a => <EntityCode code={a} id={a} kind="agent" cls="inline" />}</For></span>}
+                />
+              </Show>
+              <Show when={props.categories.length > 0 || missingAgents().length > 0}>
+                <KvRow
+                  icon="plus"
+                  label="Add to agents"
+                  value={
+                    <span class="acts">
+                      <Show when={props.categories.length > 0}>
                         <Choice
-                          label={`Target category for ${skill.id}`}
-                          value={chosenCat}
-                          options={categories.map(c => ({ id: c, label: c }))}
+                          label={`Target category for ${s().id}`}
+                          value={chosenCat()}
+                          options={props.categories.map(c => ({ id: c, label: c }))}
                           onChange={setTargetCat}
                         />
                         <Button
-                          label={`Add to ${chosenCat}`}
+                          label={`Add to ${chosenCat()}`}
                           icon="plus"
                           kind="quiet"
-                          busy={busy}
-                          onClick={() => void runAddSkill({ skill: skill.id, category: chosenCat }, true)}
+                          busy={props.busy}
+                          onClick={() => void runAddSkill({ skill: s().id, category: chosenCat() }, true)}
                         />
-                      </>
-                    )}
-                    {missingAgents.length > 0 && (
-                      <Button
-                        label={`Add to all missing (${missingAgents.length})`}
-                        icon="plus"
-                        kind="quiet"
-                        busy={busy}
-                        onClick={() => void runAddSkill({ skill: skill.id, agents: missingAgents }, true)}
-                      />
-                    )}
-                  </span>
-                }
-              />
-            )}
-          </DetailSection>
+                      </Show>
+                      <Show when={missingAgents().length > 0}>
+                        <Button
+                          label={`Add to all missing (${missingAgents().length})`}
+                          icon="plus"
+                          kind="quiet"
+                          busy={props.busy}
+                          onClick={() => void runAddSkill({ skill: s().id, agents: missingAgents() }, true)}
+                        />
+                      </Show>
+                    </span>
+                  }
+                />
+              </Show>
+            </DetailSection>
 
-          <DetailSection title="Instructions">
-            <pre class="skill-body">{skill.body}</pre>
-          </DetailSection>
-        </>
-      )}
+            <DetailSection title="Instructions">
+              <pre class="skill-body">{s().body}</pre>
+            </DetailSection>
+          </>}</Show>
+        </Show>
+      }>{err => <ErrorBanner text={err()} onRetry={() => props.onRetry()} />}</Show>
     </article>
   );
 }

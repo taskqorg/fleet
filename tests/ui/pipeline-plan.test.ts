@@ -4,21 +4,24 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdirSync} from 'node:fs';
 import {build} from 'esbuild';
+import {transform} from '@solidjs/compiler';
+// @ts-expect-error ESM helper module
+import {solidEsbuildPlugin} from '../../packages/ui/scripts/solid-esbuild.mjs';
 import {chromium} from 'playwright';
 
 test('pipeline activation is its own finite state family', async () => {
-  const bundle=await build({stdin:{contents:"export {states} from './packages/ui/src/registry.ts'",resolveDir:process.cwd(),loader:'ts'},bundle:true,write:false,platform:'node',format:'esm'});
+  const bundle=await build({stdin:{contents:"export {states} from './packages/ui/src/registry.ts'",resolveDir:process.cwd(),loader:'ts'},bundle:true,write:false,platform:'node',format:'esm',conditions:['solid'],plugins:[solidEsbuildPlugin()]});
   const {states}=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'));
   assert.deepEqual(Object.keys(states.activation), ['pending','selected','not_selected','blocked']);
   assert.equal('not_selected' in states.execution, false);
 });
 
 test('mounted plan distinguishes inactive, actual, reused and unconfirmed rows', {skip: !process.env.FLEET_CONTROL_BROWSER}, async () => {
-  const result = await build({stdin:{contents:`
-    import {render} from 'preact';import {StepList} from './packages/ui/src/index.ts';
+  const src = `
+    import {render} from '@solidjs/web';import {StepList} from './packages/ui/src/index.ts';
     const u={value:null,basis:'unavailable'};
     const base={kind:'program',executor:'local',reads:'packet',writes:'result'};
-    render(<StepList label="Conditional plan" items={[
+    render(()=><StepList label="Conditional plan" items={[
       {...base,id:'pending',activation:'pending'},
       {...base,id:'inactive',activation:'not_selected',activationReason:'condition_false'},
       {...base,id:'blocked',activation:'blocked',activationReason:'source_missing'},
@@ -27,7 +30,9 @@ test('mounted plan distinguishes inactive, actual, reused and unconfirmed rows',
       {...base,id:'reused',activation:'selected',run:{state:'succeeded',note:'reused · original resources',time:u,cost:u}},
       {...base,id:'unknown',activation:'selected',run:{state:'failed',note:'unconfirmed',time:u,cost:u}},
     ]}/>,document.body);
-  `,resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,format:'iife',jsx:'automatic',jsxImportSource:'preact'});
+  `;
+  const compiled = transform(src, { filename: 'fixture.tsx', generate: 'dom', moduleName: '@solidjs/web' });
+  const result = await build({stdin:{contents:compiled.code,resolveDir:process.cwd(),loader:'ts'},bundle:true,write:false,format:'iife',conditions:['solid'],plugins:[solidEsbuildPlugin()]});
   const {uiCss}=await import(new URL('../../packages/ui/scripts/tokens.mjs',import.meta.url).href) as {uiCss:()=>string};
   const browser=await chromium.launch({headless:true}),page=await browser.newPage();
   try {

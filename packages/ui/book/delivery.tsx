@@ -1,8 +1,8 @@
 // Delivery mockup (docs/design-system/pages/delivery.md): the pull requests by stage in the control column; the work area
 // answers what needs a look, what moves now and the pace, or shows the opened pull request. Fixture data only.
 // Pace: small charts stacked on one calendar-day axis (variant A, owner 2026-11-17; decisions.md D-delivery-pace).
-import type { ComponentChildren } from 'preact';
-import { useState } from 'preact/hooks';
+import { createMemo, createSignal, For, Show } from 'solid-js';
+import type { JSX } from '@solidjs/web';
 import {
   ListDetail, ListFrame, FilterBar, StateCounters, GroupHeader, GroupControl, SortControl, SelectToggle, StateBadge, AgeChip, Num, Totals,
   TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Stale, Fact, RowFacts, Presets, Latest, DayChart, ShareBar, NormBar,
@@ -75,47 +75,59 @@ const PRESETS: Record<string, (p: Pr) => boolean> = { 'Needs me': needsMe, 'In f
 
 /* ---------- The control column (all variants) ---------- */
 
-function PrList({ sel, onSel, picked, onUnpick }: { sel?: number; onSel: (n: number) => void; picked: { label: string; rows: Pr[] } | null; onUnpick: () => void }) {
-  const [preset, setPreset] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Stage[]>([]);
-  const [closed, setClosed] = useState<Stage[]>(['installed']);
-  const [group, setGroup] = useState<'stage' | 'project' | 'none'>('stage');
-  const [sort, setSort] = useState('-since');
-  const source = picked?.rows ?? PRS;
-  const pre = preset ? source.filter(PRESETS[preset]) : source;
-  const counts: Partial<Record<Stage, number>> = {};
-  for (const s of ORDER) counts[s] = pre.filter(p => p.stage === s).length;
-  const shown = (filter.length ? pre.filter(p => filter.includes(p.stage)) : pre).sort((a, b) => sort.startsWith('-') ? b.since - a.since : a.since - b.since);
-  const row = (p: Pr) => <div key={p.n} role="row" class={`vl-row static${p.n === sel ? ' sel' : ''}`}>
+function PrList(props: { sel?: number; onSel: (n: number) => void; picked: { label: string; rows: Pr[] } | null; onUnpick: () => void }) {
+  const [preset, setPreset] = createSignal<string | null>(null);
+  const [filter, setFilter] = createSignal<Stage[]>([]);
+  const [closed, setClosed] = createSignal<Stage[]>(['installed']);
+  const [group, setGroup] = createSignal<'stage' | 'project' | 'none'>('stage');
+  const [sort, setSort] = createSignal('-since');
+  const source = createMemo(() => props.picked?.rows ?? PRS);
+  const pre = createMemo(() => { const p = preset(); return p ? source().filter(PRESETS[p]) : source(); });
+  const counts = createMemo(() => {
+    const c: Partial<Record<Stage, number>> = {};
+    const list = pre();
+    for (const s of ORDER) c[s] = list.filter(p => p.stage === s).length;
+    return c;
+  });
+  const shown = createMemo(() => {
+    const f = filter(), s = sort();
+    return (f.length ? pre().filter(p => f.includes(p.stage)) : pre()).toSorted((a, b) => s.startsWith('-') ? b.since - a.since : a.since - b.since);
+  });
+  const row = (p: Pr) => <div role="row" class={`vl-row static${p.n === props.sel ? ' sel' : ''}`}>
     <span class="lead"><StateBadge family="delivery" state={p.stage} compact /></span>
-    <span class="tt" style={{ flexWrap: 'wrap', rowGap: 0 }}><a class="title row-link" style={{ flex: '0 0 100%' }} href="#/delivery" onClick={e => { e.preventDefault(); onSel(p.n); }}>{p.title}</a>
+    <span class="tt" style={{ 'flex-wrap': 'wrap', 'row-gap': '0' }}><a class="title row-link" style={{ flex: '0 0 100%' }} href="#/delivery" onClick={e => { e.preventDefault(); props.onSel(p.n); }}>{p.title}</a>
       <span class="id">#{p.n}</span>{p.repo && <span class="id">{p.repo}</span>}{p.release && <span class="id">{p.release}</span>}</span>
     <span class="rz"><RowFacts>
       {p.removals > 0 && <Fact icon="rotate-ccw" text={String(p.removals)} tip={`${p.removals} removed from the queue`} />}
       <Fact tip={`${states.delivery[p.stage].label} for`}><AgeChip t={p.since} alertAfter={NORM[p.stage] && NORM[p.stage]![1] / 1000} alertLabel="past the stage norm (P90)" /></Fact>
     </RowFacts></span>
   </div>;
-  const keys = group === 'stage' ? ORDER : group === 'project' ? [...new Set(shown.map(p => p.repo ?? 'taskqorg/fleet'))] : [];
+  const keys = createMemo(() => {
+    const g = group();
+    return g === 'stage' ? ORDER : g === 'project' ? [...new Set(shown().map(p => p.repo ?? 'taskqorg/fleet'))] : [];
+  });
   return <>
     <header class="page-h"><span class="grow" /><Stale at={NOW - 2 * min} now={NOW} /></header>
     <section class="panel">
-      <ListFrame bar={<FilterBar query="" onQuery={() => {}} placeholder="Search pull requests, state:mq_wait project:fleet" shown={shown.length} total={source.length}
-        chips={picked ? [{ field: 'Merged', value: picked.label }] : []} onRemove={onUnpick}
-        extra={<Presets system={Object.keys(PRESETS)} presets={[]} active={preset} onPick={n => { setPreset(preset === n ? null : n); setFilter([]); }} onSave={() => {}} onUnpin={() => {}} />}
-        counters={<StateCounters family="delivery" label="Pull requests by stage" counts={counts} active={filter} onAll={() => setFilter([])} onToggle={s => setFilter(filter.includes(s) ? filter.filter(x => x !== s) : [...filter, s])} />}
-        tools={<><SelectToggle on={false} onClick={() => {}} /><GroupControl value={group} options={[['stage', 'Stage'], ['project', 'Project'], ['none', 'None']] as const} onChange={setGroup} />
-          <SortControl value={sort} fields={[['since', 'In stage since'], ['opened', 'Opened']]} onChange={setSort} /></>} />}>
+      <ListFrame bar={<FilterBar query="" onQuery={() => {}} placeholder="Search pull requests, state:mq_wait project:fleet" shown={shown().length} total={source().length}
+        chips={props.picked ? [{ field: 'Merged', value: props.picked.label }] : []} onRemove={props.onUnpick}
+        extra={<Presets system={Object.keys(PRESETS)} presets={[]} active={preset()} onPick={n => { setPreset(preset() === n ? null : n); setFilter([]); }} onSave={() => {}} onUnpin={() => {}} />}
+        counters={<StateCounters family="delivery" label="Pull requests by stage" counts={counts()} active={filter()} onAll={() => setFilter([])} onToggle={s => setFilter(filter().includes(s) ? filter().filter(x => x !== s) : [...filter(), s])} />}
+        tools={<><SelectToggle on={false} onClick={() => {}} /><GroupControl value={group()} options={[['stage', 'Stage'], ['project', 'Project'], ['none', 'None']] as const} onChange={setGroup} />
+          <SortControl value={sort()} fields={[['since', 'In stage since'], ['opened', 'Opened']]} onChange={setSort} /></>} />}>
         <div class="vl-wrap" role="grid" aria-label="Pull requests" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
-          {group === 'none' ? shown.map(row) : keys.map(k => {
-            const its = shown.filter(p => group === 'stage' ? p.stage === k : (p.repo ?? 'taskqorg/fleet') === k);
-            if (!its.length) return null;
-            const st = group === 'stage' ? k as Stage : null, open = !(st && closed.includes(st) && !picked);
-            return <>
-              <div class="vl-row static grp" key={'g' + k} role="row"><GroupHeader icon={st ? states.delivery[st].icon : 'folder-open'} label={st ? states.delivery[st].label : k} tone={st ? states.delivery[st].tone : 'neutral'}
-                count={its.length} open={open} onToggle={() => st && setClosed(closed.includes(st) ? closed.filter(x => x !== st) : [...closed, st])} /></div>
-              {open && its.map(row)}
-            </>;
-          })}
+          <Show when={group() === 'none'} fallback={<For each={keys()}>{k => {
+            const its = createMemo(() => shown().filter(p => group() === 'stage' ? p.stage === k : (p.repo ?? 'taskqorg/fleet') === k));
+            const st = group() === 'stage' ? k as Stage : null;
+            const open = createMemo(() => !(st && closed().includes(st) && !props.picked));
+            return <Show when={its().length > 0}>
+              <div class="vl-row static grp" role="row"><GroupHeader icon={st ? states.delivery[st].icon : 'folder-open'} label={st ? states.delivery[st].label : k} tone={st ? states.delivery[st].tone : 'neutral'}
+                count={its().length} open={open()} onToggle={() => st && setClosed(closed().includes(st) ? closed().filter(x => x !== st) : [...closed(), st])} /></div>
+              <Show when={open()}><For each={its()}>{row}</For></Show>
+            </Show>;
+          }}</For>}>
+            <For each={shown()}>{row}</For>
+          </Show>
         </div>
       </ListFrame>
     </section>
@@ -171,98 +183,106 @@ function usePace(range: Range, at: string | null) {
 type PaceData = ReturnType<typeof usePace>;
 
 const sec = (v: number | null) => ({ value: v === null ? null : v / 1000, basis: v === null ? 'unavailable' as const : 'measured' as const });
-function PaceTotals({ d, range }: { d: PaceData; range: Range }) {
+function PaceTotals(props: { d: PaceData; range: Range }) {
   return <Totals items={[
-    { label: 'To installed P50', m: sec(d.p50), kind: 'duration', note: `baseline ${fmt(BASE_TOTAL[0])}` },
-    { label: 'To installed P90', m: sec(d.p90), kind: 'duration', note: `baseline ${fmt(BASE_TOTAL[1])}` },
-    { label: 'Merged', m: { value: d.prs.length, basis: 'measured' }, kind: 'count', note: range === '24h' ? undefined : `${Math.round(d.prs.length / d.days)} a day` },
-    { label: 'Queue removals', m: { value: d.removals, basis: 'measured' }, kind: 'count', note: d.flakes ? `${d.flakes} flaky` : undefined },
+    { label: 'To installed P50', m: sec(props.d.p50), kind: 'duration', note: `baseline ${fmt(BASE_TOTAL[0])}` },
+    { label: 'To installed P90', m: sec(props.d.p90), kind: 'duration', note: `baseline ${fmt(BASE_TOTAL[1])}` },
+    { label: 'Merged', m: { value: props.d.prs.length, basis: 'measured' }, kind: 'count', note: props.range === '24h' ? undefined : `${Math.round(props.d.prs.length / props.d.days)} a day` },
+    { label: 'Queue removals', m: { value: props.d.removals, basis: 'measured' }, kind: 'count', note: props.d.flakes ? `${props.d.flakes} flaky` : undefined },
   ]} />;
 }
 const RANGES = [{ id: '24h', label: '24 h' }, { id: '7d', label: '7 days' }, { id: '30d', label: '30 days' }];
-function Where({ d }: { d: PaceData }) {
-  return <ShareBar title="Where the time goes" label="Where the time goes" parts={d.share} value={fmt}
-    note={`mean per pull request, ${d.done.length} of ${d.scope.length} with every stage measured${d.picked ? ` · ${d.picked.tip}` : ''}`} />;
+function Where(props: { d: PaceData }) {
+  return <ShareBar title="Where the time goes" label="Where the time goes" parts={props.d.share} value={fmt}
+    note={`mean per pull request, ${props.d.done.length} of ${props.d.scope.length} with every stage measured${props.d.picked ? ` · ${props.d.picked.tip}` : ''}`} />;
 }
 
 /* ---------- Moving now: each pull request in flight against its stage's norm ---------- */
 
-function Moving({ compact }: { compact?: boolean }) {
+function Moving(props: { compact?: boolean }) {
   const moving = ORDER.flatMap(s => PRS.filter(p => p.stage === s && s !== 'installed' && s !== 'merged'));
-  return <div class="vl-wrap" role="grid" aria-label="Pull requests in flight" style={{ '--cols': compact ? '1.25rem 3rem minmax(0,1fr) 2.75rem' : '1.25rem 3.25rem minmax(0,1fr) minmax(0,1.3fr) 2.75rem 4.5rem' }}>
-    {moving.map(p => {
+  return <div class="vl-wrap" role="grid" aria-label="Pull requests in flight" style={{ '--cols': props.compact ? '1.25rem 3rem minmax(0,1fr) 2.75rem' : '1.25rem 3.25rem minmax(0,1fr) minmax(0,1.3fr) 2.75rem 4.5rem' }}>
+    <For each={moving}>{p => {
       const nm = NORM[p.stage], el = NOW - p.since, over = late(p);
       const bar = <NormBar elapsed={el} p50={nm?.[0]} p90={nm?.[1]} label={`${states.delivery[p.stage].label} ${pr(p.n)}`} value={fmt} />;
-      return <div key={p.n} class="vl-row static" role="row">
+      return <div class="vl-row static" role="row">
         <span class="lead"><StateBadge family="delivery" state={p.stage} compact /></span>
         <a class="mono row-link" href="#/delivery">{pr(p.n)}</a>
-        {compact ? bar : <span class="muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.title}</span>}
-        {!compact && bar}
+        {props.compact ? bar : <span class="muted" style={{ overflow: 'hidden', 'text-overflow': 'ellipsis' }}>{p.title}</span>}
+        {!props.compact && bar}
         <span class="r"><AgeChip t={p.since} alertAfter={nm && nm[1] / 1000} alertLabel="past the stage norm (P90)" /></span>
-        {!compact && <span class={`r mono type-sm ${over ? 't-danger' : 'muted'}`} style={over ? { color: 'var(--tone-fg)' } : undefined} data-tip={nm ? `${states.delivery[p.stage].label}: P50 ${fmt(nm[0])}, P90 ${fmt(nm[1])} over 14 days` : undefined}>
+        {!props.compact && <span class={`r mono type-sm ${over ? 't-danger' : 'muted'}`} style={over ? { color: 'var(--tone-fg)' } : undefined} data-tip={nm ? `${states.delivery[p.stage].label}: P50 ${fmt(nm[0])}, P90 ${fmt(nm[1])} over 14 days` : undefined}>
           {nm ? `P90 ${fmt(nm[1])}` : 'no norm'}</span>}
       </div>;
-    })}
+    }}</For>
   </div>;
 }
 
-const look = [
-  <ProblemRow key="r" severity="warning" title="Merge queue P90 is 26m, baseline 16m" facts={`Since ${pr(598)} · 7 runs · 3 removals for flaky browser checks`} actions={[{ label: 'Compare', primary: true }]} />,
-  <ProblemRow key="f" severity="failure" title={`${pr(612)} checks failed`} facts="Delivery: pace by calendar day · 25m ago" actions={[{ label: `Open ${pr(612)}`, primary: true }]} />,
-  <ProblemRow key="q" severity="failure" title={`${pr(611)} removed from the merge queue`} facts="browser-tests (1) failed · removed once before" actions={[{ label: `Open ${pr(611)}`, primary: true }]} />,
-  <ProblemRow key="w" severity="warning" title={`${pr(610)} waiting in queue for 11m, norm 8m`} facts="Version beside the person; one reliable update control" actions={[{ label: `Open ${pr(610)}`, primary: true }]} />,
+const look = () => [
+  <ProblemRow severity="warning" title="Merge queue P90 is 26m, baseline 16m" facts={`Since ${pr(598)} · 7 runs · 3 removals for flaky browser checks`} actions={[{ label: 'Compare', primary: true }]} />,
+  <ProblemRow severity="failure" title={`${pr(612)} checks failed`} facts="Delivery: pace by calendar day · 25m ago" actions={[{ label: `Open ${pr(612)}`, primary: true }]} />,
+  <ProblemRow severity="failure" title={`${pr(611)} removed from the merge queue`} facts="browser-tests (1) failed · removed once before" actions={[{ label: `Open ${pr(611)}`, primary: true }]} />,
+  <ProblemRow severity="warning" title={`${pr(610)} waiting in queue for 11m, norm 8m`} facts="Version beside the person; one reliable update control" actions={[{ label: `Open ${pr(610)}`, primary: true }]} />,
 ];
 
-const Gap = ({ children }: { children: ComponentChildren }) => <div style={{ display: 'grid', gap: 'var(--space-4)', minWidth: 0 }}>{children}</div>;
-function RangeLine(p: PaceProps) {
-  const from = bucketsOf(p.range)[0].start;
-  return <div class="state-line"><Choice label="Range" options={RANGES} value={p.range} onChange={r => p.onRange(r as Range)} />
-    {p.range === '30d' && from === D0 && <span class="muted type-sm">recorded from {day(D0)}</span>}</div>;
+const Gap = (props: { children: JSX.Element }) => <div style={{ display: 'grid', gap: 'var(--space-4)', 'min-width': '0' }}>{props.children}</div>;
+function RangeLine(props: PaceProps) {
+  const from = createMemo(() => bucketsOf(props.range)[0].start);
+  return <div class="state-line"><Choice label="Range" options={RANGES} value={props.range} onChange={r => props.onRange(r as Range)} />
+    {props.range === '30d' && from() === D0 && <span class="muted type-sm">recorded from {day(D0)}</span>}</div>;
 }
 type PaceProps = { range: Range; onRange: (r: Range) => void; at: string | null; onAt: (k: string | null) => void };
 const pickOf = (p: PaceProps) => (k: string) => p.onAt(p.at === k ? null : k);
 
 /** A: what needs a look, what moves now, then the pace as small charts stacked on one day axis. */
-function IdleA(p: PaceProps) {
-  const d = usePace(p.range, p.at), pick = pickOf(p);
+function IdleA(props: PaceProps) {
+  const d = createMemo(() => usePace(props.range, props.at));
+  const pick = pickOf(props);
   return <div class="stack-pad">
-    <DetailSection title="Needs a look"><Latest items={look} n={3} /></DetailSection>
+    <DetailSection title="Needs a look"><Latest items={look()} n={3} /></DetailSection>
     <DetailSection title="Moving now"><Moving /></DetailSection>
     <DetailSection title="Pace"><Gap>
-      <RangeLine {...p} />
-      <PaceTotals d={d} range={p.range} />
-      <DayChart title="Open to installed" label="Open to installed per day, P50 and P90" kind="range" cols={d.bs} marks={d.total} value={fmt} cap={d.capTotal}
+      <RangeLine range={props.range} onRange={props.onRange} at={props.at} onAt={props.onAt} />
+      <PaceTotals d={d()} range={props.range} />
+      <DayChart title="Open to installed" label="Open to installed per day, P50 and P90" kind="range" cols={d().bs} marks={d().total} value={fmt} cap={d().capTotal}
         capNote="about P95 of the figures shown; a figure over four times their median is drawn cut, with its value" names={['P50', 'P90']} values
-        alertAbove={BASE_TOTAL[1]} alertLabel={`above the 14-day P90 ${fmt(BASE_TOTAL[1])}`} selected={p.at} onSelect={pick} />
-      <DayChart title="Merged" label="Pull requests merged per day" kind="bar" size="sm" cols={d.bs} marks={d.merged} value={v => String(Math.round(v))} cap={d.capMerged} tone="d2" axis selected={p.at} onSelect={pick} />
-      <Where d={d} />
+        alertAbove={BASE_TOTAL[1]} alertLabel={`above the 14-day P90 ${fmt(BASE_TOTAL[1])}`} selected={props.at} onSelect={pick} />
+      <DayChart title="Merged" label="Pull requests merged per day" kind="bar" size="sm" cols={d().bs} marks={d().merged} value={v => String(Math.round(v))} cap={d().capMerged} tone="d2" axis selected={props.at} onSelect={pick} />
+      <Where d={d()} />
     </Gap></DetailSection>
   </div>;
 }
 
 /** The opened pull request (all variants): stages on one time axis, queue runs, release and installs per host. */
-function PrDetail({ p, onClose }: { p: Pr; onClose: () => void }) {
-  const t0 = p.opened, stages: [Stage, number, number | null][] = [['pr_ci', t0 + 2 * min, t0 + 14 * min], ['mq_wait', t0 + 14 * min, t0 + 30 * min], ['mq_ci', t0 + 30 * min, t0 + 52 * min], ['releasing', t0 + 52 * min, t0 + 58 * min], ['installing', t0 + 58 * min, null]];
-  return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={p.title}>
-    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><span class="muted mono">{p.repo ?? 'taskqorg/fleet'} #{p.n}</span><span class="grow" /><Button label="Open on GitHub" icon="external-link" iconOnly /></header>
-    <h2 class="detail-title">{p.title}</h2>
-    <div class="state-line"><StateBadge family="delivery" state={p.stage} /><span class="muted">by {p.author}</span><AgeChip t={p.opened} /></div>
+function PrDetail(props: { p: Pr; onClose: () => void }) {
+  const t0 = () => props.p.opened;
+  const stagesList = createMemo<[Stage, number, number | null][]>(() => {
+    const t = t0();
+    return [['pr_ci', t + 2 * min, t + 14 * min], ['mq_wait', t + 14 * min, t + 30 * min], ['mq_ci', t + 30 * min, t + 52 * min], ['releasing', t + 52 * min, t + 58 * min], ['installing', t + 58 * min, null]];
+  });
+  return <article class="detail" data-ui="detail" tabindex={-1} aria-label={props.p.title}>
+    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={props.onClose} /><span class="muted mono">{props.p.repo ?? 'taskqorg/fleet'} #{props.p.n}</span><span class="grow" /><Button label="Open on GitHub" icon="external-link" iconOnly /></header>
+    <h2 class="detail-title">{props.p.title}</h2>
+    <div class="state-line"><StateBadge family="delivery" state={props.p.stage} /><span class="muted">by {props.p.author}</span><AgeChip t={props.p.opened} /></div>
     <div class="stack-pad">
-      <Totals items={[{ label: 'Lead so far', m: { value: (NOW - p.opened) / 1000, basis: 'measured' }, kind: 'duration' }, { label: 'Queue runs', m: { value: p.runs, basis: 'measured' }, kind: 'count' }, { label: 'Removed', m: { value: p.removals, basis: 'measured' }, kind: 'count' }]} />
-      <DetailSection title="Stages">{stages.map(([s, a, b]) => <KvRow key={s} icon={states.delivery[s].icon} label={states.delivery[s].label}
-        value={<span style={{ display: 'inline-flex', gap: 'var(--space-2)', alignItems: 'center' }}><TimeStrip from={t0} to={NOW} start={a} end={b && Math.min(b, NOW)} now={NOW} state={b && b < NOW ? 'succeeded' : 'running'} label={states.delivery[s].label} />
-          <Num m={{ value: ((b && b < NOW ? b : NOW) - a) / 1000, basis: 'measured' }} kind="duration" /></span>} />)}</DetailSection>
+      <Totals items={[{ label: 'Lead so far', m: { value: (NOW - props.p.opened) / 1000, basis: 'measured' }, kind: 'duration' }, { label: 'Queue runs', m: { value: props.p.runs, basis: 'measured' }, kind: 'count' }, { label: 'Removed', m: { value: props.p.removals, basis: 'measured' }, kind: 'count' }]} />
+      <DetailSection title="Stages"><For each={stagesList()}>{([s, a, b]) => <KvRow icon={states.delivery[s].icon} label={states.delivery[s].label}
+        value={<span style={{ display: 'inline-flex', gap: 'var(--space-2)', 'align-items': 'center' }}><TimeStrip from={t0()} to={NOW} start={a} end={b && Math.min(b, NOW)} now={NOW} state={b && b < NOW ? 'succeeded' : 'running'} label={states.delivery[s].label} />
+          <Num m={{ value: ((b && b < NOW ? b : NOW) - a) / 1000, basis: 'measured' }} kind="duration" /></span>} />}</For></DetailSection>
     </div>
   </article>;
 }
 
 export function Delivery() {
-  const [sel, setSel] = useState<number | undefined>(undefined);
-  const [at, setAt] = useState<string | null>(null);
-  const [range, setRange] = useState<Range>('7d');
-  const p = PRS.find(x => x.n === sel);
-  const b = at ? bucketsOf(range).find(x => x.key === at) : undefined;
-  const picked = b ? { label: b.tip ?? b.label, rows: inB(b).map(h => PRS.find(x => x.n === h.n) ?? { n: h.n, title: h.title, stage: 'installed' as Stage, since: h.merged + h.d.release + (h.d.install ?? 0), opened: h.merged - h.d.pr_ci, runs: 1 + h.removals, removals: h.removals, author: 'agent' }) } : null;
-  return <ListDetail list={<PrList sel={sel} onSel={setSel} picked={picked} onUnpick={() => setAt(null)} />} detailKey={sel}
-    idle={<IdleA range={range} onRange={r => { setRange(r); setAt(null); }} at={at} onAt={setAt} />} detail={p && <PrDetail p={p} onClose={() => setSel(undefined)} />} />;
+  const [sel, setSel] = createSignal<number | undefined>(undefined);
+  const [at, setAt] = createSignal<string | null>(null);
+  const [range, setRange] = createSignal<Range>('7d');
+  const p = createMemo(() => PRS.find(x => x.n === sel()));
+  const b = createMemo(() => { const k = at(); return k ? bucketsOf(range()).find(x => x.key === k) : undefined; });
+  const picked = createMemo(() => {
+    const bk = b();
+    return bk ? { label: bk.tip ?? bk.label, rows: inB(bk).map(h => PRS.find(x => x.n === h.n) ?? { n: h.n, title: h.title, stage: 'installed' as Stage, since: h.merged + h.d.release + (h.d.install ?? 0), opened: h.merged - h.d.pr_ci, runs: 1 + h.removals, removals: h.removals, author: 'agent' }) } : null;
+  });
+  return <ListDetail list={<PrList sel={sel()} onSel={setSel} picked={picked()} onUnpick={() => setAt(null)} />} detailKey={sel()}
+    idle={<IdleA range={range()} onRange={r => { setRange(r); setAt(null); }} at={at()} onAt={setAt} />} detail={p() ? <Show when={p()} keyed>{prItem => <PrDetail p={prItem} onClose={() => setSel(undefined)} />}</Show> : undefined} />;
 }

@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { build } from 'esbuild';
+// @ts-expect-error ESM helper module
+import { solidEsbuildPlugin } from '../../packages/ui/scripts/solid-esbuild.mjs';
 import type { CatalogueTreeNode, FlattenCatalogueTreeOptions, FlattenedCatalogueRow } from '../../packages/ui/src/controls/catalogue-tree.tsx';
 
 const bundle = await build({
@@ -15,8 +17,8 @@ const bundle = await build({
   write: false,
   platform: 'node',
   format: 'esm',
-  jsx: 'automatic',
-  jsxImportSource: 'preact',
+  conditions: ['solid', 'browser'],
+  plugins: [solidEsbuildPlugin()],
   loader: { '.json': 'json' },
 });
 const mod = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64')) as {

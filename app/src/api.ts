@@ -1,13 +1,13 @@
 // Same-origin calls to coordinator operations (docs/designs/fleet-operator-app.md §3, §5). The browser holds no secret:
 // Cloudflare Access and the guard add the credential. A redirect, 401 or 403 means the Access session expired: "signed out".
-import { signal } from '@preact/signals';
-import { useEffect, useRef } from 'preact/hooks';
-import { AccessChanged, access, accessGeneration, accessSignal, assertAccessGeneration, ensureAccessGeneration, isAccessCurrent } from './access.ts';
+import { onCleanup } from 'solid-js';
+import { cell } from './signal.ts';
+import { AccessChanged, access, accessGeneration, accessSignal, assertAccessGeneration, ensureAccessGeneration } from './access.ts';
 export { AccessChanged } from './access.ts';
 import type { Ops } from '../../contracts/generated/ops.ts';
 
-export const online = signal(typeof navigator === 'undefined' ? true : navigator.onLine);
-export const signedOut = signal(false);
+export const online = cell(typeof navigator === 'undefined' ? true : navigator.onLine);
+export const signedOut = cell(false);
 if (typeof window !== 'undefined') {
   addEventListener('online', () => { online.value = true; });
   addEventListener('offline', () => { online.value = false; });
@@ -143,9 +143,9 @@ export async function prepareSending<K extends 'message_send' | 'session_start'>
 
 /** A signal that aborts when the component unmounts: pass it to writeOnce so a retry loop ends with its view. */
 export function useAlive(): AbortSignal {
-  const c = useRef<AbortController | null>(null); c.current ??= new AbortController();
-  useEffect(() => () => c.current!.abort(), []);
-  return c.current.signal;
+  const c = new AbortController();
+  onCleanup(() => c.abort());
+  return c.signal;
 }
 
 /** Default-on selection still requires server advertisement; explicit per-tab opt-out survives. */

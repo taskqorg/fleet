@@ -3,15 +3,26 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
+import { transform } from '@solidjs/compiler';
+// @ts-expect-error ESM helper module
+import { solidEsbuildPlugin } from '../../packages/ui/scripts/solid-esbuild.mjs';
 import { chromium } from 'playwright';
 // @ts-expect-error ESM helper module
 import { uiCss } from '../../packages/ui/scripts/tokens.mjs';
+
+const buildSolid = async (src: string) => {
+  const compiled = transform(src, { filename: 'fixture.tsx', generate: 'dom', moduleName: '@solidjs/web' });
+  return build({ stdin: { contents: compiled.code, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, format: 'iife', conditions: ['solid'], plugins: [solidEsbuildPlugin()] });
+};
+
 test('mounted VirtualList anchor capture/restore, nearest deleted-key survivor and empty reset', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
-  const result = await build({ stdin: { contents: `
-    import {render} from 'preact';import {VirtualList} from './packages/ui/src/index.ts';
+  const result = await buildSolid(`
+    import {createSignal,flush} from 'solid-js';import {render} from '@solidjs/web';import {VirtualList} from './packages/ui/src/index.ts';
     const w=window;w.items=Array.from({length:200},(_,i)=>'row-'+i);w.handle={current:null};
-    w.draw=()=>render(<VirtualList items={w.items} getKey={x=>x} rowHeight={32} follow="top" label="Fixture" handle={w.handle} render={x=><span>{x}</span>}/>,document.body);w.draw();
-  `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
+    const [items,setItems]=createSignal(w.items);
+    w.draw=()=>{setItems([...w.items]);flush();};
+    render(()=><VirtualList items={items()} getKey={x=>x} rowHeight={32} follow="top" label="Fixture" handle={w.handle} render={x=><span>{x}</span>}/>,document.body);
+  `);
   const browser = await chromium.launch({ headless: true }), page = await browser.newPage();
   try {
     await page.setContent('<body></body>'); await page.addStyleTag({ content: uiCss('.vl{height:300px}.vl-wrap{width:500px}') });
@@ -33,11 +44,13 @@ test('mounted VirtualList anchor capture/restore, nearest deleted-key survivor a
 // Risk: a render between the reader's scroll up and its scroll event pulls the view back to the end; the next row then
 // shows no pill and moves the row being read (CI flake "scrolled up: the pill counts the new entry").
 test('mounted bottom VirtualList keeps a scroll up that a render overtakes, and counts the next row in the pill', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
-  const result = await build({ stdin: { contents: `
-    import {render} from 'preact';import {VirtualList} from './packages/ui/src/index.ts';
+  const result = await buildSolid(`
+    import {createSignal,flush} from 'solid-js';import {render} from '@solidjs/web';import {VirtualList} from './packages/ui/src/index.ts';
     const w=window;w.items=Array.from({length:200},(_,i)=>'row-'+i);
-    w.draw=()=>render(<VirtualList items={w.items} getKey={x=>x} rowHeight={32} dynamic follow="bottom" label="Fixture" render={x=><span>{x}</span>}/>,document.body);w.draw();
-  `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
+    const [items,setItems]=createSignal(w.items);
+    w.draw=()=>{setItems([...w.items]);flush();};
+    render(()=><VirtualList items={items()} getKey={x=>x} rowHeight={32} dynamic follow="bottom" label="Fixture" render={x=><span>{x}</span>}/>,document.body);
+  `);
   const browser = await chromium.launch({ headless: true }), page = await browser.newPage();
   try {
     await page.setContent('<body></body>'); await page.addStyleTag({ content: uiCss('.vl{height:300px}.vl-wrap{width:500px}.vl-row.dyn{height:32px}') });
@@ -80,11 +93,13 @@ test('mounted bottom VirtualList keeps a scroll up that a render overtakes, and 
 // Requirement: a 'top' list (newest first) keeps the row being read when rows arrive above it.
 // Risk: the same race on a newest-first list: an insert before the scroll event follows the top it already left.
 test('mounted top VirtualList keeps the row being read when an insert overtakes a scroll down', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
-  const result = await build({ stdin: { contents: `
-    import {render} from 'preact';import {VirtualList} from './packages/ui/src/index.ts';
+  const result = await buildSolid(`
+    import {createSignal,flush} from 'solid-js';import {render} from '@solidjs/web';import {VirtualList} from './packages/ui/src/index.ts';
     const w=window;w.items=Array.from({length:200},(_,i)=>'row-'+i);
-    w.draw=()=>render(<VirtualList items={w.items} getKey={x=>x} rowHeight={32} follow="top" label="Fixture" render={x=><span>{x}</span>}/>,document.body);w.draw();
-  `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
+    const [items,setItems]=createSignal(w.items);
+    w.draw=()=>{setItems([...w.items]);flush();};
+    render(()=><VirtualList items={items()} getKey={x=>x} rowHeight={32} follow="top" label="Fixture" render={x=><span>{x}</span>}/>,document.body);
+  `);
   const browser = await chromium.launch({ headless: true }), page = await browser.newPage();
   try {
     await page.setContent('<body></body>'); await page.addStyleTag({ content: uiCss('.vl{height:300px}.vl-wrap{width:500px}') });

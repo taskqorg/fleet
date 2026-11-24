@@ -7,7 +7,8 @@ These Node ESM scripts derive token CSS, build the static design book, and repor
 ## Interface
 
 - `tokens.mjs` exports `tokens`, `tokensCss`, `PAIRS`, and `contrastProblems`.
-- `build-book.mjs` bundles the book entries with esbuild and writes the generated book pages.
+- `solid-esbuild.mjs` exports `solidEsbuildPlugin` to compile Solid 2 JSX/TSX modules via `@solidjs/compiler`.
+- `build-book.mjs` bundles the book entries with esbuild + `solidEsbuildPlugin` and writes the generated book pages.
 - `check-design.mjs` scans UI/app source, bundles the public UI entry, and prints the warning report used by `pnpm run check:design`.
 
 ## Invariants

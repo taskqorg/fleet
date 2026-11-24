@@ -1,8 +1,9 @@
 // Message attachments in the browser (docs/designs/fleet-conversations.md, Attachments): each file is uploaded into the
 // artifact store as soon as it is added (artifact_upload_begin, then PUT parts with Content-Range), with its progress
 // shown on its chip; a send waits until every file is stored and passes their artifact ids.
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { createEffect, createMemo, createSignal } from 'solid-js';
 import type { ComposerAttachment } from '../../packages/ui/src/index.ts';
+import { readValue, type MaybeAccessor } from './signal.ts';
 import { op, OpError } from './api.ts';
 
 export type UploadTarget = { sessionId?: string; projectId?: string | null };
@@ -79,14 +80,29 @@ export function uploadFile(file: File, target: UploadTarget, signal: AbortSignal
 }
 
 /** The composer's attachments for one target: add, remove, wait for all, clear after a send. */
-export function useAttachments(target: UploadTarget) {
-  const [items, setItems] = useState<Item[]>([]);
-  const live = useRef(items); live.current = items;
-  const key = JSON.stringify(target);
+export function useAttachments(targetInput: MaybeAccessor<UploadTarget>) {
+  const [items, setItems] = createSignal<Item[]>([], { ownedWrite: true });
+  let live: Item[] = [];
+  const updateItems = (fn: (xs: Item[]) => Item[]) => {
+    live = fn(live);
+    setItems(live);
+  };
+  let currentTarget: UploadTarget = {};
+  const key = createMemo(() => JSON.stringify(readValue(targetInput)));
   // A new target starts empty; unmounting stops uploads and frees previews.
-  useEffect(() => () => { for (const i of live.current) { i.abort.abort(); if (i.preview) URL.revokeObjectURL(i.preview); } setItems([]); }, [key]);
-  const patch = (id: string, p: Partial<Item>) => setItems(xs => xs.map(x => x.id === id ? { ...x, ...p } : x));
+  createEffect(
+    () => [key(), readValue(targetInput)] as const,
+    ([, target]) => {
+      currentTarget = target;
+      return () => {
+        for (const i of live) { i.abort.abort(); if (i.preview) URL.revokeObjectURL(i.preview); }
+        updateItems(() => []);
+      };
+    },
+  );
+  const patch = (id: string, p: Partial<Item>) => updateItems(xs => xs.map(x => x.id === id ? { ...x, ...p } : x));
   const add = (files: File[]) => {
+    const target = currentTarget;
     const fresh = files.map(file => {
       const id = crypto.randomUUID(), abort = new AbortController();
       const item: Item = { id, name: file.name || 'file', size: file.size, mediaType: file.type || 'application/octet-stream', state: 'uploading', progress: 0, abort,
@@ -97,22 +113,22 @@ export function useAttachments(target: UploadTarget) {
       item.done.catch(() => { /* shown on the chip */ });
       return item;
     });
-    setItems(xs => [...xs, ...fresh]);
+    updateItems(xs => [...xs, ...fresh]);
   };
-  const remove = (id: string) => setItems(xs => xs.filter(x => { if (x.id !== id) return true; x.abort.abort(); if (x.preview) URL.revokeObjectURL(x.preview); return false; }));
+  const remove = (id: string) => updateItems(xs => xs.filter(x => { if (x.id !== id) return true; x.abort.abort(); if (x.preview) URL.revokeObjectURL(x.preview); return false; }));
   /** The artifact ids of every file, once all are stored; a failed file fails the send. */
   const ready = async (): Promise<string[]> => {
     // A file removed while the send waits drops out of it; the files still there decide.
     for (;;) {
-      const now = live.current;
+      const now = live;
       const settled = await Promise.allSettled(now.map(x => x.done));
-      if (now.every(x => live.current.includes(x)) && live.current.length === now.length) {
+      if (now.every(x => live.includes(x)) && live.length === now.length) {
         const failed = settled.find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
         if (failed) throw failed.reason;
         return settled.map(r => (r as PromiseFulfilledResult<string>).value);
       }
     }
   };
-  const clear = (sent: string[]) => setItems(xs => xs.filter(x => { if (!x.artifactId || !sent.includes(x.artifactId)) return true; if (x.preview) URL.revokeObjectURL(x.preview); return false; }));
-  return { items: items as ComposerAttachment[], add, remove, ready, clear };
+  const clear = (sent: string[]) => updateItems(xs => xs.filter(x => { if (!x.artifactId || !sent.includes(x.artifactId)) return true; if (x.preview) URL.revokeObjectURL(x.preview); return false; }));
+  return { get items() { return items() as ComposerAttachment[]; }, add, remove, ready, clear };
 }

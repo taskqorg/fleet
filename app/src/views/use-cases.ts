@@ -1,5 +1,5 @@
 // Shared Lab use-case registry grouping, filtering, tree mapping, and slug helpers.
-import type { ComponentChildren } from 'preact';
+import type { JSX } from '@solidjs/web';
 import type { CatalogueTreeNode, IconName } from '../../../packages/ui/src/index.ts';
 import type { LabExampleEntry, LabUseCaseEntry } from '../../../contracts/generated/ops.ts';
 
@@ -183,9 +183,9 @@ export type UseCaseTreeOptions = {
   /** Pinned use-case IDs hoisted into the top Pinned group (OR-12). */
   pinnedIds?: readonly string[];
   /** Optional right-aligned marker for each leaf node (e.g. score or run count). */
-  rightOf?: (u: RegistryUseCase) => ComponentChildren;
+  rightOf?: (u: RegistryUseCase) => JSX.Element;
   /** Optional right-aligned marker for each collection folder (e.g. best score). */
-  collectionRightOf?: (c: UseCaseCollection) => ComponentChildren;
+  collectionRightOf?: (c: UseCaseCollection) => JSX.Element;
   /** Optional href for each leaf node. */
   hrefOf?: (u: RegistryUseCase) => string;
   /** Return archived entries in `archivedNodes` (for EntityPicker) instead of folding them at the bottom of `nodes`. */
