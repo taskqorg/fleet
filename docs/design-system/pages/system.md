@@ -36,9 +36,12 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, the section's a
 
 As each root's spec says ([hosts](hosts.md), [runners](runners.md), [spend](spend.md)); plus connections and keys (`/keys` today) and people and access (`/humans` today).
 
-## Kept from the current build
+## Review of the current build
 
-Everything the root specs describe stays ([hosts](hosts.md), [runners](runners.md), [spend](spend.md)), and today's `/keys` (connections with keys, access, intake, balancing and limits) and `/humans` (people, access, Cloudflare Access state, New person) pages.
+Checked against the [product map](../product-map.md) rows for System.
+* **Keep:** everything the root specs describe for one host, limits, connections and keys (`/keys`), people and access (`/humans`, with the Cloudflare Access state), CI runners and Spend.
+* **Change:** release and harness-pin drift shows on each host instead of on Changes; the idle screen leads with problems to fix.
+* **Drop:** the spend table on Runners (Spend is the one place for cost, [OR-54](../owner-rules.md)); the "updated 40s" page head on Hosts (the offline marker covers it); services without errors on the idle screen (only services with errors in the last hour show).
 
 ## Data
 

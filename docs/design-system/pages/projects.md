@@ -48,9 +48,12 @@ Tasks, results and delivery of all projects in focus are one facet away: on `/pr
 
 A project opens on Sessions (owner, 2026-11-25).
 
-### Kept from the current build
+### Review of the current build
 
-Everything in **Current build** below stays: New project and the project editor (context, repository, environments, agent roles, initial access, readiness with Open PM conversation) with its single Save and revision check, in Rules & methods; settings from defaults ([OR-45](../owner-rules.md)); methods with Lab evidence; resource analytics (`analytics_query`), as the Resources detail under the project head and across projects on `/projects`; the Tasks, Delivery and Results lists with their filter bars, saved views, grouping, sorting, pins, selection and row menus, as [Tasks](tasks.md), [Delivery](delivery.md) and [Results](results.md) specify.
+Checked against the [product map](../product-map.md) rows for Projects, Tasks, Results and Delivery.
+* **Keep:** New project and the project editor (context, repository, environments, roles, initial access, readiness with Talk to PM) with one Save and the revision check, now in Rules & methods; settings from defaults ([OR-45](../owner-rules.md)); methods with Lab evidence; the Tasks, Delivery and Results lists and details with their filter bars, saved views, grouping, sorting, pins, selection and row menus, as [Tasks](tasks.md), [Delivery](delivery.md) and [Results](results.md) specify.
+* **Change:** the four tabs Work & Rules, Methods, Delivery, Results become the five facets; Tasks, Results and Delivery lose their rail items.
+* **Drop:** the resource analytics block on `/projects` and on a project (area chart, dimension picker, breakdown): cost is the question only on System › Spend ([OR-54](../owner-rules.md)), which filters by project; the project head keeps one Resources line in Details. The `override` badge and `default → value` pairs (replaced by the diff row, [OR-45](../owner-rules.md), [OR-7](../owner-rules.md)). The links out to `/catalogue`, `/lab` and `/tasks?project=` (the facets and the method links replace them).
 
 ### Open (target)
 

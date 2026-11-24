@@ -51,9 +51,12 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New (`plus`, a 
 
 As each root's spec says: `catalogue`, `definition_get`, `definition_usage`, `pipeline_get`, `bot_list`, `bot_get`, `definition_take_repository`, `definition_export`. The tree reads one list per root and stays mounted while a definition loads ([OR-47](../owner-rules.md)).
 
-## Kept from the current build
+## Review of the current build
 
-Everything the root specs describe stays ([catalogue](catalogue.md), [agents](agents.md), [pipelines](pipelines.md), [changes](changes.md)), and the bot pages of today: status, runs with causes, automations (trigger, state, next time, last outcome), questions, analytics, settings, New bot, enable, pause and Run now. The tree keeps search, pins, persisted folding and the filter words.
+Checked against the [product map](../product-map.md) rows for Library and Bots.
+* **Keep:** everything the root specs describe ([catalogue](catalogue.md), [agents](agents.md), [pipelines](pipelines.md), [changes](changes.md)); bot status, runs with causes, automations (trigger, state, next time, last outcome), settings, New bot, enable, pause and Run now; tree search, pins, persisted folding and filter words.
+* **Change:** Agents and Skills tabs, the `/pipelines` and `/catalogue` pages and `/bots` become roots of one tree; a bot's open questions show on Home, not on its page.
+* **Drop:** the Library Summary breakdowns by harness and by category (counts per root are enough); the Pipelines link in the Agents header (the tree has the root); the bot Analytics tab (bot cost is a purpose on System › Spend, [OR-54](../owner-rules.md)).
 
 ## Open
 

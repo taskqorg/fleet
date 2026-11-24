@@ -78,9 +78,12 @@ Decided by the owner on 2026-11-25 ([decisions](../decisions.md)):
 1. **Frame from Home:** `/home/C-…`, full width, Home stays highlighted; from anywhere else `/conversations/C-…` with the list.
 2. **Context panel:** a column right of the transcript; on a phone, a sheet.
 
-## Kept from the current build
+## Review of the current build
 
-Everything the current conversation page does stays ([product map](../product-map.md)): the transcript with paging and search (`thread_search`, a search icon in the session head), copy of a message or a selection, attachments in the composer, Fork and Start fresh with context, handoff to another agent or account, Stop, Archive and Unarchive, the start picker of `/conversations/new`. The metrics header and per-boundary resource rows move into Details ([OR-54](../owner-rules.md)); nothing in them is dropped.
+Checked against the [product map](../product-map.md) rows for one conversation.
+* **Keep:** transcript paging and search (a search icon in the session head, `thread_search`), copy of a message or a selection, attachments, Fork and Start fresh with context, handoff to another agent or account, Stop, steer or queue, Archive and Unarchive, the start picker of `/conversations/new`.
+* **Change:** decision blocks become the question card above the transcript; tool rows fold into one line per run of tools.
+* **Drop:** the metrics header and the inline resource summary (cost and tokens are not the question here, [OR-54](../owner-rules.md); they stay one click away in Details); per-boundary resource rows in the transcript (same reason); repeated attachments, heartbeats and internal notices ([OR-52](../owner-rules.md)).
 
 ## Open
 

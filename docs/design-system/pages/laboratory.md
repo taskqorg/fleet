@@ -28,9 +28,12 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New experiment 
 
 The idle Lab screen shows the Model × Pipeline matrix (owner, 2026-11-25). On a phone a use case shows its variants as a ranked table.
 
-### Kept from the current build
+### Review of the current build
 
-Everything in **Current build** below stays: the use-case card, the suite leaderboard with Promote, the Runs questions view, Waiting for you with ratings and example approvals, New experiment with its EntityPicker form and its uncertain-reply handling, the experiment page (spend, matrix, loops, variants, decision gate, ratings), trial plan inspection, and Personal Lab as the saved view "Mine".
+Checked against the [product map](../product-map.md) rows for Lab.
+* **Keep:** the use-case card with Run in Lab, the leaderboard with Promote, the Runs questions view, ratings and example approvals, New experiment with its EntityPicker form and its uncertain-reply handling, the experiment page (spend, matrix, loops, variants, decision gate, ratings), trial plan inspection.
+* **Change:** Personal Lab becomes the saved view "Mine"; undecided experiments and ratings become question cards; the leaderboard table becomes the Model × Pipeline matrix on the idle screen.
+* **Drop:** the `Use cases | Runs` mode switch (two roots of one tree, [OR-46](../owner-rules.md)); the summary strip of counts (active use cases, approved examples, leaderboard entries, undecided series), which the matrix and the questions already answer ([OR-17](../owner-rules.md)); the "undecided experiments" warning banner (it is a question now).
 
 ### Blocks
 

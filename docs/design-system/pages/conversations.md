@@ -30,9 +30,12 @@ Three columns ([OR-24](../owner-rules.md)): navigation, control column, work are
 
 Grouping is not fixed by the design: grouping, sorting and saved views stay configurable per person, as they are today ([OR-33](../owner-rules.md), [OR-35](../owner-rules.md); owner, 2026-11-25). The default view is Waiting for you first, then by project.
 
-### Kept from the current build
+### Review of the current build
 
-Everything in **Current build** below stays: the filter bar with query search and saved views, system presets Needs me and Running, Group and Sort with direction, the Archived toggle, pins and the Pinned group, selection mode with its bar, the row menu, `p` and `x` keys, and New conversation with the start picker.
+Checked against the [product map](../product-map.md) rows for Conversations.
+* **Keep:** the filter bar with query search, saved views and the presets Needs me and Running, Group and Sort with direction set per person, the Archived toggle, pins and the Pinned group, selection mode with its bar, the row menu, `p` and `x`, New conversation with the start picker.
+* **Change:** the row title is the bot or PM name, else the first message, with the code after it as a pair; the idle work area leads with questions instead of the summary table.
+* **Drop:** the code on its own second line (it sits after the title, [OR-22](../owner-rules.md)); the harness mark in each row (a technical detail, [OR-54](../owner-rules.md); it stays in the session's Details).
 
 ### Blocks
 
