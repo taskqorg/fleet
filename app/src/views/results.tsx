@@ -393,7 +393,7 @@ export function Results(props: { id?: string }) {
     list={list}
     detailKey={props.id}
     idle={<ResultsIdle rows={allRows()} counts={replyCounts()} hasMore={tailNextBefore() != null} busy={page.list.pending && !allRows().length} />}
-    detail={<Show when={props.id} keyed>{id => <Result id={id} onClose={() => set({ focus: undefined })} onFilter={(field, value) => set({ extra: { ...basePage.view.extra, [field]: value } })} />}</Show>}
+    detail={props.id ? <Show when={props.id} keyed>{id => <Result id={id} onClose={() => set({ focus: undefined })} onFilter={(field, value) => set({ extra: { ...basePage.view.extra, [field]: value } })} />}</Show> : undefined}
   />;
 }
 

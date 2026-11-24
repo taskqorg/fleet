@@ -221,8 +221,7 @@ function EntityCardDialog(p: { cur: Shown }) {
       id={CARD_ID}
       {...popoverAttr('manual')}
       class={['ecard', theme()]}
-      data-ui="entity-card"
-      role="dialog"
+      data-ui="entity-card" role="dialog"
       aria-label={`${k().label}${p.cur.ref.code ? ' ' + p.cur.ref.code : ''}`}
     >
       <CardBody

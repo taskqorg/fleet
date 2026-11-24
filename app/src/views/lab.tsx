@@ -459,56 +459,58 @@ export function Lab(props: { id?: string }) {
     detailKey={detailKey()}
     idle={idle}
     detail={
-      <Switch>
-        <Match when={route().kind === 'new'}>
-          <Show when={`new:${search()}`} keyed>{_k => <LabCreate onClose={() => go('/lab')} />}</Show>
-        </Match>
-        <Match when={route().kind === 'use-case'}>
-          <UseCaseDetail
-            useCaseId={(route() as { kind: 'use-case'; useCaseId: string }).useCaseId}
-            useCase={useCaseById().get((route() as { kind: 'use-case'; useCaseId: string }).useCaseId) ?? null}
-            loading={!registry.data && !registry.error}
-            error={registry.error}
-            onRetry={registry.reload}
-            examples={rawExamples()}
-            leaderboardEntries={leaderboard.data?.entries ?? []}
-            leaderboardLoading={!leaderboard.data && !leaderboard.error}
-            leaderboardError={leaderboard.error}
-            onRetryLeaderboard={leaderboard.reload}
-            windowLabel={leaderboardWindowLabel()}
-            onClose={() => go('/lab')}
-            onRun={u => go(`/lab/new?useCase=${encodeURIComponent(u)}`)}
-            onOpenExperiment={x => go(`/lab/${encodeURIComponent(x)}`)}
-            onOpenPipeline={p => go(`/pipelines/${encodeURIComponent(p)}`)}
-            onSelectUseCase={u => go(`/lab/use-case:${encodeURIComponent(u)}`)}
-          />
-        </Match>
-        <Match when={route().kind === 'suite'}>
-          <SuiteDetail
-            rawSuite={(route() as { kind: 'suite'; rawSuite: string; suiteKey: SuiteKey | null }).rawSuite}
-            suiteKey={(route() as { kind: 'suite'; rawSuite: string; suiteKey: SuiteKey | null }).suiteKey}
-            title={selectedCollectionTitle() ?? (route() as { kind: 'suite'; rawSuite: string }).rawSuite}
-            icon={(route() as { kind: 'suite'; suiteKey: SuiteKey | null }).suiteKey ? collectionIconOf((route() as { kind: 'suite'; suiteKey: SuiteKey }).suiteKey) : 'folder-open'}
-            archivedUseCases={groupedUseCases().archived}
-            experiments={rawExperiments()}
-            totals={summaryTotals()}
-            leaderboardEntries={leaderboard.data?.entries ?? []}
-            leaderboardLoading={!!leaderboardReq() && !leaderboard.data && !leaderboard.error}
-            leaderboardError={leaderboard.error}
-            onRetryLeaderboard={leaderboard.reload}
-            windowLabel={leaderboardWindowLabel()}
-            onClose={() => go('/lab')}
-            onOpenExperiment={x => go(`/lab/${encodeURIComponent(x)}`)}
-            onOpenPipeline={p => go(`/pipelines/${encodeURIComponent(p)}`)}
-            onSelectUseCase={u => go(`/lab/use-case:${encodeURIComponent(u)}`)}
-          />
-        </Match>
-        <Match when={route().kind === 'experiment'}>
-          <Show when={(route() as { kind: 'experiment'; experimentId: string }).experimentId} keyed>{eid => (
-            <Experiment id={eid} onClose={() => go('/lab')} />
-          )}</Show>
-        </Match>
-      </Switch>
+      detailKey() !== undefined ? (
+        <Switch>
+          <Match when={route().kind === 'new'}>
+            <Show when={`new:${search()}`} keyed>{_k => <LabCreate onClose={() => go('/lab')} />}</Show>
+          </Match>
+          <Match when={route().kind === 'use-case'}>
+            <UseCaseDetail
+              useCaseId={(route() as { kind: 'use-case'; useCaseId: string }).useCaseId}
+              useCase={useCaseById().get((route() as { kind: 'use-case'; useCaseId: string }).useCaseId) ?? null}
+              loading={!registry.data && !registry.error}
+              error={registry.error}
+              onRetry={registry.reload}
+              examples={rawExamples()}
+              leaderboardEntries={leaderboard.data?.entries ?? []}
+              leaderboardLoading={!leaderboard.data && !leaderboard.error}
+              leaderboardError={leaderboard.error}
+              onRetryLeaderboard={leaderboard.reload}
+              windowLabel={leaderboardWindowLabel()}
+              onClose={() => go('/lab')}
+              onRun={u => go(`/lab/new?useCase=${encodeURIComponent(u)}`)}
+              onOpenExperiment={x => go(`/lab/${encodeURIComponent(x)}`)}
+              onOpenPipeline={p => go(`/pipelines/${encodeURIComponent(p)}`)}
+              onSelectUseCase={u => go(`/lab/use-case:${encodeURIComponent(u)}`)}
+            />
+          </Match>
+          <Match when={route().kind === 'suite'}>
+            <SuiteDetail
+              rawSuite={(route() as { kind: 'suite'; rawSuite: string; suiteKey: SuiteKey | null }).rawSuite}
+              suiteKey={(route() as { kind: 'suite'; rawSuite: string; suiteKey: SuiteKey | null }).suiteKey}
+              title={selectedCollectionTitle() ?? (route() as { kind: 'suite'; rawSuite: string }).rawSuite}
+              icon={(route() as { kind: 'suite'; suiteKey: SuiteKey | null }).suiteKey ? collectionIconOf((route() as { kind: 'suite'; suiteKey: SuiteKey }).suiteKey) : 'folder-open'}
+              archivedUseCases={groupedUseCases().archived}
+              experiments={rawExperiments()}
+              totals={summaryTotals()}
+              leaderboardEntries={leaderboard.data?.entries ?? []}
+              leaderboardLoading={!!leaderboardReq() && !leaderboard.data && !leaderboard.error}
+              leaderboardError={leaderboard.error}
+              onRetryLeaderboard={leaderboard.reload}
+              windowLabel={leaderboardWindowLabel()}
+              onClose={() => go('/lab')}
+              onOpenExperiment={x => go(`/lab/${encodeURIComponent(x)}`)}
+              onOpenPipeline={p => go(`/pipelines/${encodeURIComponent(p)}`)}
+              onSelectUseCase={u => go(`/lab/use-case:${encodeURIComponent(u)}`)}
+            />
+          </Match>
+          <Match when={route().kind === 'experiment'}>
+            <Show when={(route() as { kind: 'experiment'; experimentId: string }).experimentId} keyed>{eid => (
+              <Experiment id={eid} onClose={() => go('/lab')} />
+            )}</Show>
+          </Match>
+        </Switch>
+      ) : undefined
     }
   />;
 }

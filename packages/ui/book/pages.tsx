@@ -1,13 +1,11 @@
 // Page mockups (stage 3): built only from packages/ui controls and patterns, with fixture data.
 // Specs: docs/design-system/pages/*.md. Built by scripts/build-book.mjs into docs/design-system/pages/mockups.html.
-import { render, type ComponentChildren } from 'preact';
-import { useState } from 'preact/hooks';
-import { Router, Route, Switch, useLocation } from 'wouter-preact';
-import { useHashLocation } from 'wouter-preact/use-hash-location';
+import { createEffect, createMemo, createSignal, For, Match, onSettled, Show, Switch } from 'solid-js';
+import { render, type JSX } from '@solidjs/web';
 import {
   AppShell, TaskListView, ROW2, StatStrip, AreaChart, DecisionBlock, ProblemRow, FillBar, StateBadge, Num, Totals, AgeChip, ExecTree, Thread,
-  ResultViewer, EntityCode, SettingField, SplitButton, Button, Empty, VirtualList, Icon, Stale, StateCounters, FilterBar,
-  ListDetail, DefinitionEditor, Choice, DraftBar, StepList, FlowStrip, HarnessMark, type StepItem, type FlowNode, type Harness, type StateOf, NeedsYou, OpsSummary, ListFrame, OutcomeBlock, DetailSection, KvRow, HarnessCounts, type TaskRow,
+  ResultViewer, EntityCode, SettingField, SplitButton, Button, Empty, VirtualList, Icon, Stale, StateCounters, FilterBar, TabBar,
+  ListDetail, DefinitionEditor, Choice, DraftBar, StepList, FlowStrip, HarnessMark, type StepItem, type FlowNode, type Harness, type StateOf, type IconName, NeedsYou, OpsSummary, ListFrame, OutcomeBlock, DetailSection, KvRow, HarnessCounts, type TaskRow,
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
 import { Delivery } from './delivery.tsx';
@@ -17,6 +15,21 @@ import { NOW, min, hr, tasks, TREE, transcript, hosts, PROJECTS } from './fixtur
 import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);
+
+const [hashLoc, setHashLoc] = createSignal(typeof location !== 'undefined' ? (location.hash.replace(/^#/, '') || '/') : '/');
+function useHashLocation() {
+  onSettled(() => {
+    const sync = () => setHashLoc(location.hash.replace(/^#/, '') || '/');
+    addEventListener('hashchange', sync);
+    return () => removeEventListener('hashchange', sync);
+  });
+  const go = (to: string) => {
+    const path = to.startsWith('/') ? to : '/' + to;
+    location.hash = path;
+    setHashLoc(path);
+  };
+  return [hashLoc, go] as const;
+}
 
 const BOOK_VERSION = { current: '1.261115.6', tone: 'attention' as const, summary: '1 part needs a look', updateReady: true, onUpdate: () => {}, rows: [
   { key: 'tab', part: 'This tab', icon: 'panels-top-left' as const, version: '1.261115.5', state: 'update ready', tone: 'running' as const },
@@ -29,35 +42,37 @@ const BOOK_VERSION = { current: '1.261115.6', tone: 'attention' as const, summar
 ] };
 
 /** A page's own tools under the shell header, which holds the section title (OR-43); none: no head. */
-function PageHead({ title, children }: { title: string; children?: ComponentChildren }) {
-  return children ? <header class="page-h" aria-label={title}><span class="grow" />{children}</header> : null;
+function PageHead(props: { title: string; children?: JSX.Element }) {
+  return <Show when={props.children} keyed>{ch => <header class="page-h" aria-label={props.title}><span class="grow" />{ch}</header>}</Show>;
 }
 
-
-const Panel = ({ title, actions, children, class: c }: { title?: string; actions?: ComponentChildren; children: ComponentChildren; class?: string }) => (
-  <section class={`panel ${c ?? ''}`}>{title && <header class="panel-h"><h2>{title}</h2><span class="grow" />{actions}</header>}{children}</section>
+const Panel = (props: { title?: string; actions?: JSX.Element; children: JSX.Element; class?: string }) => (
+  <section class={`panel ${props.class ?? ''}`}>
+    <Show when={props.title} keyed>{t => <header class="panel-h"><h2>{t}</h2><span class="grow" />{props.actions}</header>}</Show>
+    {props.children}
+  </section>
 );
 const m = (value: number | null, basis: 'measured' | 'estimated' | 'unavailable' = 'measured', reason?: string) => ({ value, basis, reason });
-const kvs = (rows: readonly [any, string, ComponentChildren?, ComponentChildren?][]) =>
-  rows.map(([icon, label, meta, value]) => <KvRow key={label} icon={icon} label={label} meta={meta} value={value} />);
+const kvs = (rows: readonly [IconName, string, JSX.Element?, JSX.Element?][]) =>
+  <For each={rows}>{([icon, label, meta, value]) => <KvRow icon={icon} label={label} meta={meta} value={value} />}</For>;
 
 /* ---------- Overview ---------- */
 
-function Overview({ id }: { id?: string }) {
-  const [, go] = useLocation();
+function Overview(props: { id?: string }) {
+  const [, go] = useHashLocation();
   const byProject = PROJECTS.map(p => { const ts = ALL.filter(t => t.project === p); const c: Record<string, number> = {}; for (const t of ts) c[t.state] = (c[t.state] ?? 0) + 1; return { p, c }; });
   // Overview B (2026-11-20 decision): the Needs-you inbox is the control column; with nothing picked the work area shows the fleet.
   const inbox = [
-    { cause: 'Acceptance', rows: [{ id: 'q1', icon: 'circle-check', title: 'Accept this result?', code: 'Q-FLT-201', at: NOW - 12 * min }] },
-    { cause: 'Decisions', rows: [{ id: 'q2', icon: 'bell', title: 'Use the Windows store for the game bundle?', code: 'Q-FLT-198', at: NOW - 40 * min }] },
-    { cause: 'Accounts', rows: [{ id: 'p1', icon: 'triangle-alert', title: 'Claude quota exhausted', code: 'T-9937', at: NOW - 2 * hr }] },
-    { cause: 'Stores', rows: [{ id: 'p2', icon: 'triangle-alert', title: 'Low space on windows store', code: 'windows', at: NOW - 3 * hr }] },
+    { cause: 'Acceptance', rows: [{ id: 'q1', icon: 'circle-check' as const, title: 'Accept this result?', code: 'Q-FLT-201', at: NOW - 12 * min }] },
+    { cause: 'Decisions', rows: [{ id: 'q2', icon: 'bell' as const, title: 'Use the Windows store for the game bundle?', code: 'Q-FLT-198', at: NOW - 40 * min }] },
+    { cause: 'Accounts', rows: [{ id: 'p1', icon: 'triangle-alert' as const, title: 'Claude quota exhausted', code: 'T-9937', at: NOW - 2 * hr }] },
+    { cause: 'Stores', rows: [{ id: 'p2', icon: 'triangle-alert' as const, title: 'Low space on windows store', code: 'windows', at: NOW - 3 * hr }] },
   ] as const;
-  const list = <NeedsYou>{inbox.map(g => <div key={g.cause} class="ny-group" role="group" aria-label={g.cause}>
+  const list = <NeedsYou><For each={inbox}>{g => <div class="ny-group" role="group" aria-label={g.cause}>
     <div class="ny-h"><span class="mono">{g.cause}</span><span class="grow" /><span class="mono">{g.rows.length}</span></div>
-    {g.rows.map(r => <a key={r.id} class={`ny-row${r.id === id ? ' sel' : ''}`} href={`#/overview/${r.id}`}><Icon name={r.icon} label={r.icon === 'triangle-alert' ? 'Problem' : 'Question'} />
-      <span class="ny-t"><span class="title">{r.title}</span><span class="id">{r.code}</span></span><AgeChip t={r.at} /></a>)}
-  </div>)}</NeedsYou>;
+    <For each={g.rows}>{r => <a class={`ny-row${r.id === props.id ? ' sel' : ''}`} href={`#/overview/${r.id}`}><Icon name={r.icon} label={r.icon === 'triangle-alert' ? 'Problem' : 'Question'} />
+      <span class="ny-t"><span class="title">{r.title}</span><span class="id">{r.code}</span></span><AgeChip t={r.at} /></a>}</For>
+  </div>}</For></NeedsYou>;
   const idle = <article class="detail" aria-label="Fleet now">
     <PageHead title="Fleet now"><Stale at={NOW - 20e3} now={NOW} /></PageHead>
     <OpsSummary>
@@ -70,69 +85,69 @@ function Overview({ id }: { id?: string }) {
     ]} />
     <div class="cols">
         <Panel title="Workers per host" actions={<Button label="Hosts" icon="external-link" iconOnly onClick={() => go('/hosts')} />}>
-          <ul class="kv">{hosts.map(h => <li key={h.id}>
+          <ul class="kv"><For each={hosts}>{h => <li>
             <StateBadge family="host" state={h.online ? 'online' : 'offline'} compact />
             <span class="k">{h.id}</span>
             <span class="v"><Num m={{ value: h.running, basis: 'measured', partial: h.online ? undefined : 'last known' }} kind="count" /><span class="muted">/{h.slots}</span></span>
             <HarnessCounts counts={h.byHarness} label={`${h.id} workers by harness`} />
             <span class="v muted">{h.queued ? `${h.queued} queued` : ''}</span>
-          </li>)}</ul>
+          </li>}</For></ul>
         </Panel>
         <Panel title="Accounts">
           <ul class="kv">
-            {[{ a: 'claude-max', used: 0.97, reset: NOW - 3 * hr }, { a: 'codex-pro', used: 0.41, reset: NOW - 1 * hr }, { a: 'antigravity', used: null as number | null, reset: 0 }].map(x => <li key={x.a}>
+            <For each={[{ a: 'claude-max', used: 0.97, reset: NOW - 3 * hr }, { a: 'codex-pro', used: 0.41, reset: NOW - 1 * hr }, { a: 'antigravity', used: null as number | null, reset: 0 }]}>{x => <li>
               <Icon name="bot" /><span class="k">{x.a}</span>
               <FillBar total={x.used === null ? null : 100} segments={x.used === null ? [] : [{ label: 'used', bytes: x.used * 100 }]} warnAt={10} unit="percent" />
-            </li>)}
+            </li>}</For>
           </ul>
         </Panel>
         <Panel title="Projects">
-          <ul class="kv">{byProject.map(({ p, c }) => <li key={p}><Icon name="folder-open" /><span class="k">{p}</span>
-            <StateCounters family="task" label={`${p} by state`} counts={{ waiting: c.waiting ?? 0, failed: c.failed ?? 0, in_progress: c.in_progress ?? 0, queued: c.queued ?? 0 }} active={[]} onToggle={() => go('/tasks')} /></li>)}</ul>
+          <ul class="kv"><For each={byProject}>{({ p, c }) => <li><Icon name="folder-open" /><span class="k">{p}</span>
+            <StateCounters family="task" label={`${p} by state`} counts={{ waiting: c.waiting ?? 0, failed: c.failed ?? 0, in_progress: c.in_progress ?? 0, queued: c.queued ?? 0 }} active={[]} onToggle={() => go('/tasks')} /></li>}</For></ul>
         </Panel>
     </div>
     </OpsSummary>
   </article>;
-  const picked = inbox.flatMap(g => g.rows.map(r => ({ ...r, cause: g.cause }))).find(r => r.id === id);
-  const detail = picked && <article class="detail" data-ui="detail" aria-label={picked.title}>
-    <h2 class="detail-title">{picked.title}</h2>
-    {picked.icon === 'triangle-alert'
-      ? <ProblemRow severity="failure" title={picked.title} facts={<>resets in <span class="mono">2h</span> · T-9937 interrupted</>} actions={[{ label: 'Continue on codex', primary: true }, { label: 'Wait for reset' }]} />
-      : <DecisionBlock question={picked.title} askedBy="reviewer (claude)" addressedTo="you" since={picked.at} now={NOW} waits="T-9989 Write release notes 95" options={[{ label: 'Accept', kbd: 'a', primary: true }, { label: 'Request rework', kbd: 'r' }]} />}
-  </article>;
-  return <ListDetail list={list} detail={detail || undefined} detailKey={id} idle={idle} />;
+  const picked = createMemo(() => inbox.flatMap(g => g.rows.map(r => ({ ...r, cause: g.cause }))).find(r => r.id === props.id));
+  const detail = <Show when={picked()} keyed>{pk => <article class="detail" data-ui="detail" aria-label={pk.title}>
+    <h2 class="detail-title">{pk.title}</h2>
+    {pk.icon === 'triangle-alert'
+      ? <ProblemRow severity="failure" title={pk.title} facts={<>resets in <span class="mono">2h</span> · T-9937 interrupted</>} actions={[{ label: 'Continue on codex', primary: true }, { label: 'Wait for reset' }]} />
+      : <DecisionBlock question={pk.title} askedBy="reviewer (claude)" addressedTo="you" since={pk.at} now={NOW} waits="T-9989 Write release notes 95" options={[{ label: 'Accept', kbd: 'a', primary: true }, { label: 'Request rework', kbd: 'r' }]} />}
+  </article>}</Show>;
+  return <ListDetail list={list} detail={picked() ? detail : undefined} detailKey={props.id} idle={idle} />;
 }
 
 /* ---------- Tasks: list and detail ---------- */
 
 const ALL: TaskRow[] = tasks(3000);
 
-function Tasks({ id }: { id?: string }) {
-  const [items, setItems] = useState(ALL);
-  const [, go] = useLocation();
-  const sel = items.find(t => String(t.id) === id);
+function Tasks(props: { id?: string }) {
+  const [items, setItems] = createSignal(ALL);
+  const [, go] = useHashLocation();
+  const sel = createMemo(() => items().find(t => String(t.id) === props.id));
   return <ListDetail
     list={<>
       <PageHead title="Tasks"><Button label="New task" icon="plus" kind="primary" /></PageHead>
-      <Panel><TaskListView items={items} now={NOW} selected={sel?.id} row={ROW2} onOpen={t => go(`/tasks/${t.id}`)}
+      <Panel><TaskListView items={items()} now={NOW} selected={sel()?.id} row={ROW2} onOpen={t => go(`/tasks/${t.id}`)}
         onPin={pid => setItems(xs => xs.map(x => x.id === pid ? { ...x, pinned: !x.pinned } : x))} /></Panel>
     </>}
-    detail={sel && <TaskDetail t={sel} onClose={() => go('/tasks')} />} detailKey={sel?.id} />;
+    detail={sel() ? <Show when={sel()} keyed>{t => <TaskDetail t={t} onClose={() => go('/tasks')} />}</Show> : undefined} detailKey={sel()?.id} />;
 }
 
-function TaskDetail({ t, onClose }: { t: TaskRow; onClose: () => void }) {
-  const [tab, setTab] = useState('Executions');
-  const [rtab, setRtab] = useState('Diff');
-  const [answer, setAnswer] = useState<string | null>(null);
-  return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={t.title}>
+function TaskDetail(props: { t: TaskRow; onClose: () => void }) {
+  const [tab, setTab] = createSignal('Executions');
+  const [rtab, setRtab] = createSignal('Diff');
+  const [answer, setAnswer] = createSignal<string | null>(null);
+  return <article class="detail" data-ui="detail" tabindex={-1} aria-label={props.t.title}>
     <header class="detail-h">
-      <Button label="Close" icon="x" iconOnly onClick={onClose} />
-      <span class="muted mono">{t.project} · T-{t.id}</span><span class="grow" />
+      <Button label="Close" icon="x" iconOnly onClick={props.onClose} />
+      <span class="muted mono">{props.t.project} · T-{props.t.id}</span><span class="grow" />
       <SplitButton main={{ label: 'Pause', icon: 'pause' }} alternatives={[{ label: 'Cancel task', icon: 'circle-slash' }, { label: 'Change account', icon: 'bot' }, { label: 'Hand off', icon: 'messages-square' }]} />
       <Button label="Share" icon="paperclip" iconOnly />
     </header>
-    <h2 class="detail-title">{t.title}</h2>
-    <div class="state-line"><StateBadge family="task" state={t.state} reason={t.reason} /><AgeChip t={t.started} /></div>
+    <h2 class="detail-title">{props.t.title}</h2>
+    <div class="state-line"><StateBadge family="task" state={props.t.state} reason={props.t.reason} /><AgeChip t={props.t.started} /></div>
     <OutcomeBlock outcome="Release notes for 0.4 in releases/0.4.md, reviewed, linked from the changelog."
       requirements={[{ text: 'Covers every merged PR since 0.3', met: true }, { text: 'Reviewed by the reviewer role', met: false }, { text: 'Linked from CHANGELOG.md', met: false }]}
       inputs={[{ icon: 'file-text', label: 'template.md' }, { icon: 'git-pull-request', label: '14 merged PRs' }, { icon: 'messages-square', label: 'PM session' }]}
@@ -140,20 +155,20 @@ function TaskDetail({ t, onClose }: { t: TaskRow; onClose: () => void }) {
     <Totals items={[
       { label: 'Time', m: m(860), kind: 'duration' },
       { label: 'Tokens', m: { ...m(182000), partial: '2 of 3 measured' }, kind: 'count', note: '2 of 3 measured' },
-      { label: 'Cost', cost: t.cost === null ? [{ value: null, currency: 'USD', basis: 'unavailable', reason: 'no meter' }] : [{ value: t.cost, currency: 'USD', basis: t.est ? 'estimated' : 'measured', reason: 'tokens' }, { value: 0.45, currency: 'USD', basis: 'subscription', note: 'Claude Max' }], showUnavailable: true },
+      { label: 'Cost', cost: props.t.cost === null ? [{ value: null, currency: 'USD', basis: 'unavailable', reason: 'no meter' }] : [{ value: props.t.cost, currency: 'USD', basis: props.t.est ? 'estimated' : 'measured', reason: 'tokens' }, { value: 0.45, currency: 'USD', basis: 'subscription', note: 'Claude Max' }], showUnavailable: true },
       { label: 'API calls', m: m(null, 'unavailable', 'no gateway'), kind: 'count', note: 'no gateway' },
     ]} />
-    {t.state === 'waiting' && <DecisionBlock question="Accept this result?" askedBy="reviewer (claude)" addressedTo="you" since={NOW - 12 * min} now={NOW}
+    <Show when={props.t.state === 'waiting'}><DecisionBlock question="Accept this result?" askedBy="reviewer (claude)" addressedTo="you" since={NOW - 12 * min} now={NOW}
       context={<>Checks passed: links, contrast, screenshots.</>} options={[{ label: 'Accept', kbd: 'a', primary: true }, { label: 'Request rework', kbd: 'r' }]}
-      answered={answer ? { by: 'you', answer, at: NOW, delivered: false } : undefined} onAnswer={setAnswer} />}
-    {t.state === 'failed' && <ProblemRow severity="failure" title="render-07 failed" facts="exit 1 · dependants not started" actions={[{ label: 'Retry step', primary: true }, { label: 'Open log' }]} />}
-    <div class="tabs detail-tabs" role="tablist">{['Executions', 'Transcript', 'Results'].map(x => <button type="button" role="tab" key={x} aria-selected={tab === x} onClick={() => setTab(x)}>{x}</button>)}</div>
-    {tab === 'Executions' && <ExecTree nodes={TREE} now={NOW} label="Executions" />}
-    {tab === 'Transcript' && <div class="pane"><Thread blocks={transcript()} label="Transcript" now={NOW} /></div>}
-    {tab === 'Results' && <ResultViewer name="index.html" type="diff" size={4200} source="Worker · codex" tab={rtab} onTab={setRtab} tabs={['Diff', 'Preview', 'Checks 3']}
+      answered={answer() ? { by: 'you', answer: answer()!, at: NOW, delivered: false } : undefined} onAnswer={setAnswer} /></Show>
+    <Show when={props.t.state === 'failed'}><ProblemRow severity="failure" title="render-07 failed" facts="exit 1 · dependants not started" actions={[{ label: 'Retry step', primary: true }, { label: 'Open log' }]} /></Show>
+    <TabBar label="Task detail" cls="detail-tabs" tabs={['Executions', 'Transcript', 'Results'].map(x => ({ id: x, label: x }))} value={tab()} onChange={setTab} />
+    <Show when={tab() === 'Executions'}><ExecTree nodes={TREE} now={NOW} label="Executions" /></Show>
+    <Show when={tab() === 'Transcript'}><div class="pane"><Thread blocks={transcript()} label="Transcript" now={NOW} /></div></Show>
+    <Show when={tab() === 'Results'}><ResultViewer name="index.html" type="diff" size={4200} source="Worker · codex" tab={rtab()} onTab={setRtab} tabs={['Diff', 'Preview', 'Checks 3']}
       copies={[{ where: 'windows', state: 'stored' }, { where: 'mac', state: 'pending' }]}>
-      {rtab === 'Diff' ? <pre class="diff"><span class="del">- &lt;h1&gt;Welcome&lt;/h1&gt;</span><span class="add">+ &lt;h1&gt;Good things work together.&lt;/h1&gt;</span></pre> : <Empty text={`${rtab} viewer`} />}
-    </ResultViewer>}
+      {rtab() === 'Diff' ? <pre class="diff"><span class="del">- &lt;h1&gt;Welcome&lt;/h1&gt;</span><span class="add">+ &lt;h1&gt;Good things work together.&lt;/h1&gt;</span></pre> : <Empty text={`${rtab()} viewer`} />}
+    </ResultViewer></Show>
   </article>;
 }
 
@@ -165,20 +180,23 @@ const RESULTS: Res[] = Array.from({ length: 2000 }, (_, i) => ({ id: `r${i}`, na
   project: PROJECTS[i % 4], task: 9989 - i, at: NOW - i * 7 * min, copy: (['stored', 'placed', 'placed', 'pending', 'unavailable'] as const)[i * 3 % 5] }));
 
 function Results() {
-  const [sel, setSel] = useState<Res>(RESULTS[0]);
-  const [tab, setTab] = useState('View');
-  const [query, setQuery] = useState('');
-  const [copies, setCopies] = useState<Res['copy'][]>([]);
+  const [sel, setSel] = createSignal<Res>(RESULTS[0]);
+  const [tab, setTab] = createSignal('View');
+  const [query, setQuery] = createSignal('');
+  const [copies, setCopies] = createSignal<Res['copy'][]>([]);
   const counts = { stored: 0, placed: 0, pending: 0, unavailable: 0 } as Record<Res['copy'], number>;
   for (const r of RESULTS) counts[r.copy]++;
-  const shown = RESULTS.filter(r => (!copies.length || copies.includes(r.copy)) && (!query || r.name.includes(query) || `t-${r.task}`.includes(query.toLowerCase())));
+  const shown = createMemo(() => {
+    const c = copies(), q = query();
+    return RESULTS.filter(r => (!c.length || c.includes(r.copy)) && (!q || r.name.includes(q) || `t-${r.task}`.includes(q.toLowerCase())));
+  });
   return <ListDetail
     list={<>
       <PageHead title="Results" />
-      <Panel><ListFrame bar={<FilterBar query={query} onQuery={setQuery} placeholder="Search results"
-          shown={shown.length} total={RESULTS.length}
-          counters={<StateCounters family="copy" label="Results by copy state" counts={counts} active={copies} onAll={() => setCopies([])} onToggle={c => setCopies(copies.includes(c) ? copies.filter(x => x !== c) : [...copies, c])} />} />}>
-        <VirtualList items={shown} getKey={r => r.id} rowHeight={ROW} follow="top" label="Results" rowClass={r => r.id === sel.id ? 'sel' : ''}
+      <Panel><ListFrame bar={<FilterBar query={query()} onQuery={setQuery} placeholder="Search results"
+          shown={shown().length} total={RESULTS.length}
+          counters={<StateCounters family="copy" label="Results by copy state" counts={counts} active={copies()} onAll={() => setCopies([])} onToggle={c => setCopies(copies().includes(c) ? copies().filter(x => x !== c) : [...copies(), c])} />} />}>
+        <VirtualList items={shown()} getKey={r => r.id} rowHeight={ROW} follow="top" label="Results" rowClass={r => r.id === sel().id ? 'sel' : ''}
           columns="1.25rem minmax(0,1fr) 4rem 4.5rem 2.75rem"
           header={<><span /><span>Result</span><span>Project</span><span class="r">Size</span><span class="r">Age</span></>}
           render={r => <>
@@ -190,11 +208,11 @@ function Results() {
           </>} />
       </ListFrame></Panel>
     </>}
-    detailKey={sel.id}
-    detail={<article class="detail" data-ui="detail" tabIndex={-1} aria-label={sel.name}>
-      <ResultViewer name={sel.name} type={sel.type} size={sel.size} source={`T-${sel.task}`} tab={tab} onTab={setTab} tabs={['View', 'Checks 2', 'Versions 3']}
-        copies={[{ where: 'windows', state: sel.copy }, { where: 'mac', state: 'pending' }]}>
-        {sel.copy === 'unavailable' ? <Empty text="No holding store is online. Last copy on mac, seen 2h ago." action={<Button label="Notify when online" icon="bell" />} /> : <Empty text={`${sel.type} viewer for ${sel.name}`} />}
+    detailKey={sel().id}
+    detail={<article class="detail" data-ui="detail" tabindex={-1} aria-label={sel().name}>
+      <ResultViewer name={sel().name} type={sel().type} size={sel().size} source={`T-${sel().task}`} tab={tab()} onTab={setTab} tabs={['View', 'Checks 2', 'Versions 3']}
+        copies={[{ where: 'windows', state: sel().copy }, { where: 'mac', state: 'pending' }]}>
+        {sel().copy === 'unavailable' ? <Empty text="No holding store is online. Last copy on mac, seen 2h ago." action={<Button label="Notify when online" icon="bell" />} /> : <Empty text={`${sel().type} viewer for ${sel().name}`} />}
       </ResultViewer>
     </article>} />;
 }
@@ -217,19 +235,20 @@ function LimitsMock() {
     </div>
     <Panel title="Subscriptions"><div class="table-frame"><table class="limit-table">
       <thead><tr><th scope="col">Subscription</th><th scope="col">5h</th><th scope="col">weekly</th><th scope="col">weekly-opus</th><th scope="col"><span class="sr-only">Refresh</span></th></tr></thead>
-      <tbody>{([
+      <tbody><For each={[
         ['alex-pro', 'codex', '', [[62, '3h', 'ahead', 4, 'execution', ''], [55, '2d', 'on', 40, 'probe', ''], null]],
         ['team-max', 'claude', '×2.5', [[91, '1h', 'Low', 2, 'execution', 't-danger'], [30, '5d', 'under', 2, 'execution', ''], [70, '5d', 'ahead', 2, 'execution', '']]],
-      ] as const).map(([sub, har, mul, cells]) => <tr key={sub}><th scope="row"><span class="title">{sub}</span> <span class="id">{har}</span>{mul && <span class="num muted"> {mul}</span>}</th>
-        {cells.map((c, i) => c ? <td key={i}><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: c[0] }]} warnAt={20} unit="percent" /><time>{c[1]}</time><span class={`chip ${c[5] || (c[2] === 'ahead' ? 't-attention' : '')}`}>{c[5] && <Icon name="triangle-alert" />}{c[2]}</span><AgeChip t={NOW - c[3] * min} /><span class="muted">{c[4]}</span></span></td> : <td key={i} class="muted">—</td>)}
-        <td><Button label={`Refresh ${sub}`} icon="rotate-cw" iconOnly /></td></tr>)}</tbody>
+      ] as const}>{([sub, har, mul, cells]) => <tr><th scope="row"><span class="title">{sub}</span> <span class="id">{har}</span>{mul && <span class="num muted"> {mul}</span>}</th>
+        <For each={cells}>{c => c ? <td><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: c[0] }]} warnAt={20} unit="percent" /><time>{c[1]}</time><span class={`chip ${c[5] || (c[2] === 'ahead' ? 't-attention' : '')}`}>{c[5] && <Icon name="triangle-alert" />}{c[2]}</span><AgeChip t={NOW - c[3] * min} /><span class="muted">{c[4]}</span></span></td> : <td class="muted">—</td>}</For>
+        <td><Button label={`Refresh ${sub}`} icon="rotate-cw" iconOnly /></td></tr>}</For></tbody>
     </table></div></Panel>
   </section>;
 }
 
-function Hosts({ limits }: { limits?: boolean }) {
-  const [sel, setSel] = useState<string | null>(limits ? null : hosts[1].id);
-  const h = hosts.find(x => x.id === sel);
+function Hosts(props: { limits?: boolean }) {
+  const [sel, setSel] = createSignal<string | null>(props.limits ? null : hosts[1].id);
+  createEffect(() => props.limits, lim => { setSel(lim ? null : hosts[1].id); }, { defer: true });
+  const h = createMemo(() => hosts.find(x => x.id === sel()));
   // Control column: the section's problem, then the hosts catalogue (patterns/list-detail.md). Rows are two-line; the store fill wraps under them.
   const list = <>
     <PageHead title="Hosts"><Stale at={NOW - 40e3} now={NOW} /></PageHead>
@@ -237,7 +256,7 @@ function Hosts({ limits }: { limits?: boolean }) {
       actions={[{ label: 'Raise capacity', primary: true }, { label: 'Change game locations' }, { label: 'Add retention rule' }]} />
     <Panel>
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
-        {hosts.map(x => <div key={x.id} role="row" class={`vl-row static${x.id === sel ? ' sel' : ''}`}>
+        <For each={hosts}>{x => <div role="row" class={`vl-row static${x.id === sel() ? ' sel' : ''}`}>
           <span class="lead"><StateBadge family="host" state={x.online ? 'online' : 'offline'} compact lastSeen={x.online ? undefined : x.lastSeen} now={NOW} /></span>
           <span class="tt"><a class="title row-link" href="#/hosts" onClick={e => { e.preventDefault(); setSel(x.id); }}>{x.id}</a>
             {!x.id.includes(x.platform.slice(0, 3)) && <span class="id">{x.platform}</span>}
@@ -246,13 +265,13 @@ function Hosts({ limits }: { limits?: boolean }) {
             {x.queued > 0 && <span class="hc"><Icon name="list-ordered" label="Queued commands" /><Num m={{ value: x.queued, basis: 'measured' }} kind="count" /></span>}
             <FillBar total={x.store.total} segments={x.store.segments} warnAt={x.store.warnAt} stale={x.store.stale} now={NOW} /></span>
           <span><AgeChip t={x.lastSeen} alertAfter={15 * 60} tone="attention" /></span>
-        </div>)}
+        </div>}</For>
       </div>
     </Panel>
   </>;
-  return <ListDetail list={list} detailKey={sel ?? undefined} idle={<LimitsMock />} detail={h && <article class="detail" data-ui="detail" tabIndex={-1} aria-label={h.id}>
-    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => setSel(null)} />{!h.id.includes(h.platform.slice(0, 3)) && <span class="muted mono">{h.platform}</span>}</header>
-    <h2 class="detail-title">{h.id}</h2>
+  return <ListDetail list={list} detailKey={sel() ?? undefined} idle={<LimitsMock />} detail={h() ? <Show when={h()} keyed>{host => <article class="detail" data-ui="detail" tabindex={-1} aria-label={host.id}>
+    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => setSel(null)} />{!host.id.includes(host.platform.slice(0, 3)) && <span class="muted mono">{host.platform}</span>}</header>
+    <h2 class="detail-title">{host.id}</h2>
 
       <div class="stack-pad">
         <DetailSection title="Environments">{kvs([
@@ -267,14 +286,14 @@ function Hosts({ limits }: { limits?: boolean }) {
         ])}</DetailSection>
         <DetailSection title="Store and tunnel">
           <KvRow icon="shield" label="Tunnel" meta="connected" value={<AgeChip t={NOW - 12 * min} />} />
-          {([
-            ['Store capacity', h.capacity.value, 'Garage layout capacity.', h.capacity.status, { by: 'Alex', at: NOW - 20 * min }],
+          <For each={[
+            ['Store capacity', host.capacity.value, 'Garage layout capacity.', host.capacity.status, { by: 'Alex', at: NOW - 20 * min }],
             ['Free-space warning', '25 GB', 'Below this, the store shows a problem.', { kind: 'applied', at: NOW - 2 * hr }],
             ['ClickHouse memory', '4 GB', 'systemd MemoryMax for the Fleet unit.', { kind: 'applied', at: NOW - 5 * hr }],
-          ] as const).map(([l, v, help, st, ch]) => <SettingField key={l} label={l} value={v} help={help} now={NOW} status={st} changed={ch} />)}
+          ] as const}>{([l, v, help, st, ch]) => <SettingField label={l} value={v} help={help} now={NOW} status={st} changed={ch} />}</For>
         </DetailSection>
       </div>
-  </article>} />;
+  </article>}</Show> : undefined} />;
 }
 
 /* ---------- Laboratory ---------- */
@@ -285,16 +304,16 @@ const VARIANTS = [
   { v: 'C claude', score: 0.79, judge: null as number | null, tokens: 210000, time: 1020, cost: null as number | null, est: false, trials: 75, failed: 9 },
 ];
 function Laboratory() {
-  const [note, setNote] = useState<string | null>(null);
-  const [tab, setTab] = useState('Compare');
+  const [note, setNote] = createSignal<string | null>(null);
+  const [tab, setTab] = createSignal('Compare');
   return <>
     <PageHead title="Laboratory"><span class="muted">Experiment: hero copy method · 3 variants × 75</span><SplitButton kind="primary" main={{ label: 'Repeat trials', icon: 'rotate-ccw' }} alternatives={[{ label: 'Add variant', icon: 'plus' }, { label: 'Run on new task set', icon: 'list' }]} /></PageHead>
-    <div class="tabs" role="tablist">{['Compare', 'Trials', 'Assessments'].map(x => <button type="button" role="tab" key={x} aria-selected={tab === x} onClick={() => setTab(x)}>{x}</button>)}</div>
-    {tab === 'Compare' && <Panel title="Variants">
+    <TabBar label="Experiment views" tabs={['Compare', 'Trials', 'Assessments'].map(x => ({ id: x, label: x }))} value={tab()} onChange={setTab} />
+    <Show when={tab() === 'Compare'}><Panel title="Variants">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 4rem 4rem 4.5rem 4rem 4.5rem 5rem' }}>
         <div class="vl-head" role="row"><span /><span>Variant</span><span class="r">Score</span><span class="r">Judge</span><span class="r">Tokens</span><span class="r">Time</span><span class="r">Cost</span><span class="r">Failed</span></div>
-        {VARIANTS.map((x, i) => <div key={x.v} role="row" class="vl-row static">
-          <span class="lead"><StateBadge family="execution" state={i === 2 ? 'running' : 'succeeded'} reason={i === 2 ? 'trials still running' : 'all trials finished'} compact /></span>
+        <For each={VARIANTS}>{(x, i) => <div role="row" class="vl-row static">
+          <span class="lead"><StateBadge family="execution" state={i() === 2 ? 'running' : 'succeeded'} reason={i() === 2 ? 'trials still running' : 'all trials finished'} compact /></span>
           <span class="title">{x.v}</span>
           <span class="r"><Num m={m(x.score)} kind="score" /></span>
           <span class="r"><Num m={m(x.judge, x.judge === null ? 'unavailable' : 'measured', 'judge not run')} kind="score" /></span>
@@ -302,15 +321,15 @@ function Laboratory() {
           <span class="r"><Num m={m(x.time)} kind="duration" /></span>
           <span class="r"><Num m={m(x.cost, x.cost === null ? 'unavailable' : x.est ? 'estimated' : 'measured', x.cost === null ? 'no meter' : 'tokens')} kind="money" /></span>
           <span class="r"><span class={`chip-age${x.failed > 5 ? ' t-danger alert' : ''}`} aria-label={`${x.failed} of ${x.trials} trials failed`}>{x.failed > 5 && <Icon name="triangle-alert" />}{x.failed}/{x.trials}</span></span>
-        </div>)}
+        </div>}</For>
       </div>
-    </Panel>}
-    {tab === 'Trials' && <Panel><TaskListView items={ALL.slice(0, 300)} now={NOW} onPin={() => {}} height="420px" /></Panel>}
-    {tab === 'Assessments' && <Empty text="No assessments yet. Write one from the comparison." />}
+    </Panel></Show>
+    <Show when={tab() === 'Trials'}><Panel><TaskListView items={ALL.slice(0, 300)} now={NOW} onPin={() => {}} height="420px" /></Panel></Show>
+    <Show when={tab() === 'Assessments'}><Empty text="No assessments yet. Write one from the comparison." /></Show>
     <Panel>
       <DecisionBlock question="Use B new skill for hero copy in cs?" askedBy="lab agent" addressedTo="architect" since={NOW - 3 * hr} now={NOW}
         context="B scores 0.83 against 0.71 with fewer tokens; 2 failed trials kept for review." options={[{ label: 'Yes', kbd: 'a', primary: true }, { label: 'Keep current' }]}
-        answered={note ? { by: 'you', answer: note, at: NOW, delivered: true } : undefined} onAnswer={setNote} />
+        answered={note() ? { by: 'you', answer: note()!, at: NOW, delivered: true } : undefined} onAnswer={setNote} />
     </Panel>
   </>;
 }
@@ -318,11 +337,11 @@ function Laboratory() {
 /* ---------- Definitions kept in git: agents, pipelines, catalogue (patterns/definition-editor.md, D20) ---------- */
 
 // A catalogue row built by hand: state, name with its second-line facts, one fact on the right.
-function CatRow({ id, sel, onOpen, state, children, right }: { id: string; sel: boolean; onOpen: () => void; state: ComponentChildren; children?: ComponentChildren; right?: ComponentChildren }) {
-  return <div role="row" class={`vl-row static${sel ? ' sel' : ''}`}>
-    <span class="lead">{state}</span>
-    <span class="tt"><a class="title row-link" href="#" onClick={e => { e.preventDefault(); onOpen(); }}>{id}</a>{children}</span>
-    <span class="muted mono">{right}</span>
+function CatRow(props: { id: string; sel: boolean; onOpen: () => void; state: JSX.Element; children?: JSX.Element; right?: JSX.Element }) {
+  return <div role="row" class={`vl-row static${props.sel ? ' sel' : ''}`}>
+    <span class="lead">{props.state}</span>
+    <span class="tt"><a class="title row-link" href="#" onClick={e => { e.preventDefault(); props.onOpen(); }}>{props.id}</a>{props.children}</span>
+    <span class="muted mono">{props.right}</span>
   </div>;
 }
 const CAT_COLS = { '--cols': '1.25rem minmax(0,1fr) auto' };
@@ -340,29 +359,29 @@ const AGENT_DEFS: AgentDef[] = [
 const HARNESS_TOOLS = ['Read', 'Glob', 'Grep', 'Bash (read-only)', 'Edit', 'Write', 'WebFetch', 'Agent'];
 
 function Agents() {
-  const [sel, setSel] = useState<string | null>('claude-reviewer');
-  const [tab, setTab] = useState('Configuration');
-  const [role, setRole] = useState('reviewer');
-  const [tools, setTools] = useState(['Read', 'Glob', 'Grep', 'Bash (read-only)']);
-  const a = AGENT_DEFS.find(x => x.id === sel);
+  const [sel, setSel] = createSignal<string | null>('claude-reviewer');
+  const [tab, setTab] = createSignal('Configuration');
+  const [role, setRole] = createSignal('reviewer');
+  const [tools, setTools] = createSignal(['Read', 'Glob', 'Grep', 'Bash (read-only)']);
+  const a = createMemo(() => AGENT_DEFS.find(x => x.id === sel()));
   const list = <>
     <PageHead title="Agents"><Button label="New agent" icon="plus" iconOnly kind="primary" /></PageHead>
     <Panel><div class="vl-wrap" style={CAT_COLS}>
-      {AGENT_DEFS.map(x => <CatRow key={x.id} id={x.id} sel={x.id === sel} onOpen={() => setSel(x.id)} right={x.right}
+      <For each={AGENT_DEFS}>{x => <CatRow id={x.id} sel={x.id === sel()} onOpen={() => setSel(x.id)} right={x.right}
         state={<StateBadge family="definition" state={x.state} compact />}>
-        <HarnessMark h={x.h} /><span class="id">{x.model}</span>{!x.id.includes(x.role) && <span class="muted">{x.role}</span>}</CatRow>)}
+        <HarnessMark h={x.h} /><span class="id">{x.model}</span>{!x.id.includes(x.role) && <span class="muted">{x.role}</span>}</CatRow>}</For>
     </div></Panel>
   </>;
-  return <ListDetail list={list} detailKey={sel ?? undefined} detail={a && <DefinitionEditor label={a.id} crumb={`shared · config/agents/${a.id}.json · 4e5bf83`}
-    title={<>{a.id}<HarnessMark h={a.h} /></>} tabs={['Configuration', 'Effective', 'Diff', 'Compatibility', 'Usage']} tab={tab} onTab={setTab} onClose={() => setSel(null)}>
-    {tab === 'Configuration' && <>
+  return <ListDetail list={list} detailKey={sel() ?? undefined} detail={a() ? <Show when={a()} keyed>{ag => <DefinitionEditor label={ag.id} crumb={`shared · config/agents/${ag.id}.json · 4e5bf83`}
+    title={<>{ag.id}<HarnessMark h={ag.h} /></>} tabs={['Configuration', 'Effective', 'Diff', 'Compatibility', 'Usage']} tab={tab()} onTab={setTab} onClose={() => setSel(null)}>
+    <Show when={tab() === 'Configuration'}>
       <DraftBar changes={2} base="4e5bf83" note="Instructions and tools differ. New executions keep using the committed revision."
         actions={[{ label: 'Test', icon: 'play' }, { label: 'Diff', onClick: () => setTab('Diff') }, { label: 'Save as commit', icon: 'save', primary: true }]} />
       <DetailSection title="Identity">
         <SettingField label="Purpose" value="Reviews a finished change against the task and the project rules. Never edits." help="One line; shown wherever this agent is picked." now={NOW} status={{ kind: 'applied', at: NOW - 2 * hr }} />
-        <KvRow icon="bot" label="Role" value={<Choice label="Role" value={role} onChange={setRole} options={['PM', 'worker', 'reviewer', 'judge', 'custom'].map(r => ({ id: r, label: r }))} />} />
-        <KvRow icon="settings" label="Harness" value={<Choice label="Harness" value={a.h} options={[{ id: 'claude', label: 'Claude', icon: 'claude' }, { id: 'codex', label: 'Codex', icon: 'openai' }, { id: 'antigravity', label: 'Antigravity', icon: 'antigravity' }]} />} />
-        <SettingField label="Model" value={a.model} help="The harness lists the models it can run." now={NOW} status={{ kind: 'applied', at: NOW - 2 * hr }} />
+        <KvRow icon="bot" label="Role" value={<Choice label="Role" value={role()} onChange={setRole} options={['PM', 'worker', 'reviewer', 'judge', 'custom'].map(r => ({ id: r, label: r }))} />} />
+        <KvRow icon="settings" label="Harness" value={<Choice label="Harness" value={ag.h} options={[{ id: 'claude', label: 'Claude', icon: 'claude' }, { id: 'codex', label: 'Codex', icon: 'openai' }, { id: 'antigravity', label: 'Antigravity', icon: 'antigravity' }]} />} />
+        <SettingField label="Model" value={ag.model} help="The harness lists the models it can run." now={NOW} status={{ kind: 'applied', at: NOW - 2 * hr }} />
       </DetailSection>
       <DetailSection title="Instructions">
         <pre class="diff block">{'Review the explicit supplied task and retained materials.\nDo not modify files or delegate work.\n'}<span class="add">Report each finding as: file, line, rule, severity (blocker | major | nit).</span><span class="add">Return "changes requested" when any blocker or major finding exists; otherwise "pass".</span></pre>
@@ -373,12 +392,12 @@ function Agents() {
         ['file-text', 'review-checklist', <span class="mono">9d02f71 · 2 agents</span>, <Button label="Remove" icon="x" iconOnly />],
       ])}<div><Button label="Add skill" icon="plus" /></div></DetailSection>
       <DetailSection title="Tools">{kvs([
-        ['terminal', 'Harness', undefined, <Choice label="Harness tools" value={tools} onChange={t => setTools(tools.includes(t) ? tools.filter(x => x !== t) : [...tools, t])} options={HARNESS_TOOLS.map(t => ({ id: t, label: t }))} />],
+        ['terminal', 'Harness', undefined, <Choice label="Harness tools" value={tools()} onChange={t => setTools(tools().includes(t) ? tools().filter(x => x !== t) : [...tools(), t])} options={HARNESS_TOOLS.map(t => ({ id: t, label: t }))} />],
         ['link', 'Connections', 'credentials stay in the connection', <Choice label="Connections" value={['fleet']} options={[{ id: 'fleet', label: 'fleet · questions, reply' }, { id: 'tavily', label: 'tavily · web_search' }, { id: 'github', label: 'github · pr_read' }]} />],
         ['panels-top-left', 'Environment', undefined, <Choice label="Environment needs" value={['checkout', 'os']} options={[{ id: 'checkout', label: 'checkout: read' }, { id: 'os', label: 'os: any' }, { id: 'gpu', label: 'gpu' }]} />],
       ])}</DetailSection>
-    </>}
-    {tab === 'Effective' && <>
+    </Show>
+    <Show when={tab() === 'Effective'}>
       <DetailSection title="Instruction layers, in the order the agent receives them">{kvs([
         ['shield', 'Shared rules', <span class="mono">specq @ 13772b7 · 3.1k tokens</span>],
         ['bot', 'Role', <span class="mono">config/roles/reviewer.md @ 77ab102 · 420 tokens</span>],
@@ -389,25 +408,25 @@ function Agents() {
         ['settings', 'Model', <span class="mono">sonnet</span>],
         ['terminal', 'Tools', "what this file allows, within the project grant and the task's choice"],
       ])}</DetailSection>
-    </>}
-    {tab === 'Diff' && <>
+    </Show>
+    <Show when={tab() === 'Diff'}>
       <pre class="diff block">{'  "instructions": "Review supplied task and retained files.'}<span class="add">{' Report findings with file, line, severity (blocker|major|nit).'}</span>{'",\n  "tools": ["Read", "Glob", '}<span class="del">{'"Grep"]'}</span><span class="add">{'"Grep", "Bash(read-only)"]'}</span></pre>
       <div><Button label="Compare in Lab" icon="chart-no-axes-column" /></div>
-    </>}
-    {tab === 'Compatibility' && <DetailSection title="Checked combinations">
-      {([['ready', 'claude 2.1.0 · sonnet · mac, pds18', 'at 4e5bf83'], ['ready', 'claude 2.0.4 · sonnet · windows', 'at 0c1d7aa'], ['unchecked', 'claude 2.1.0 · sonnet · draft', 'tools changed'], ['incompatible', 'claude 1.9.8 · sonnet · windows', 'this version does not know the Bash sandbox flag']] as const).map(r =>
-        <div key={r[1]} class="kv-row"><StateBadge family="definition" state={r[0]} compact /><span class="mono">{r[1]}</span><span class="muted">{r[2]}</span></div>)}
+    </Show>
+    <Show when={tab() === 'Compatibility'}><DetailSection title="Checked combinations">
+      <For each={[['ready', 'claude 2.1.0 · sonnet · mac, pds18', 'at 4e5bf83'], ['ready', 'claude 2.0.4 · sonnet · windows', 'at 0c1d7aa'], ['unchecked', 'claude 2.1.0 · sonnet · draft', 'tools changed'], ['incompatible', 'claude 1.9.8 · sonnet · windows', 'this version does not know the Bash sandbox flag']] as const}>{r =>
+        <div class="kv-row"><StateBadge family="definition" state={r[0]} compact /><span class="mono">{r[1]}</span><span class="muted">{r[2]}</span></div>}</For>
       <div><Button label="Check now" icon="play" /></div>
-    </DetailSection>}
-    {tab === 'Usage' && <>
+    </DetailSection></Show>
+    <Show when={tab() === 'Usage'}>
       <DetailSection title="Used by">{kvs([
         ['network', 'issue-to-pr', 'pipeline · step review-code'],
         ['network', 'website-page', 'pipeline · step review'],
         ['rows-3', 'code-review', 'catalogue method · recommended for cs, fleet'],
       ])}</DetailSection>
       <Totals items={[{ label: 'Executions, 30 days', m: m(58), kind: 'count', note: '3 failed' }, { label: 'Median time', m: m(250), kind: 'duration' }, { label: 'Cost', m: m(41.2, 'estimated', 'tokens'), kind: 'money' }]} />
-    </>}
-  </DefinitionEditor>} />;
+    </Show>
+  </DefinitionEditor>}</Show> : undefined} />;
 }
 
 const FACTORY: StepItem[] = [
@@ -442,11 +461,11 @@ const PIPE_DEFS: readonly [string, boolean, StateOf<'definition'> | StateOf<'exe
   ['draft-examples', true, 'never', '2 steps · 1 agent · shared', 'never'],
 ];
 
-function StepEditor({ onAgent }: { onAgent: () => void }) {
+function StepEditor(props: { onAgent: () => void }) {
   return <>
     {kvs([
       ['settings', 'Kind', undefined, <Choice label="Kind" value="agent" options={[{ id: 'agent', label: 'Agent', icon: 'bot' }, { id: 'tool', label: 'Tool', icon: 'settings' }, { id: 'program', label: 'Program', icon: 'terminal' }, { id: 'pipeline', label: 'Pipeline', icon: 'network' }]} />],
-      ['bot', 'Agent', 'claude-reviewer', <Button label="Open configuration" icon="external-link" onClick={onAgent} />],
+      ['bot', 'Agent', 'claude-reviewer', <Button label="Open configuration" icon="external-link" onClick={props.onAgent} />],
       ['play', 'Runs', undefined, <Choice label="Runs" value="always" options={[{ id: 'always', label: 'always' }, { id: 'when', label: 'when an earlier output says so' }]} />],
       ['sliders-horizontal', 'Model', 'haiku when intake rates the risk low, otherwise sonnet', <Button label="Add rule" icon="plus" iconOnly />],
     ])}
@@ -466,40 +485,41 @@ function StepEditor({ onAgent }: { onAgent: () => void }) {
   </>;
 }
 
-function Pipelines({ id = 'issue-to-pr' }: { id?: string }) {
-  const [, go] = useLocation();
-  const [open, setOpen] = useState<string | undefined>('review-code');
-  const [tab, setTab] = useState(id === 'render-props' ? 'Runs' : 'Definition');
-  const failed = id === 'render-props';
+function Pipelines(props: { id?: string }) {
+  const id = () => props.id ?? 'issue-to-pr';
+  const [, go] = useHashLocation();
+  const [open, setOpen] = createSignal<string | undefined>('review-code');
+  const [tab, setTab] = createSignal(id() === 'render-props' ? 'Runs' : 'Definition');
+  const failed = () => id() === 'render-props';
   const list = <>
     <PageHead title="Pipelines"><Button label="New pipeline" icon="plus" iconOnly kind="primary" /></PageHead>
     <Panel><div class="vl-wrap" style={CAT_COLS}>
-      {PIPE_DEFS.map(([pid, isDef, st, facts, right]) => <CatRow key={pid} id={pid} sel={pid === id} onOpen={() => go(pid === 'render-props' ? '/pipelines/render-props' : '/pipelines')} state={isDef ? <StateBadge family="definition" state={st as StateOf<'definition'>} compact /> : <StateBadge family="execution" state={st as StateOf<'execution'>} compact />} right={right}><span class="facts">{facts}</span></CatRow>)}
+      <For each={PIPE_DEFS}>{([pid, isDef, st, facts, right]) => <CatRow id={pid} sel={pid === id()} onOpen={() => go(pid === 'render-props' ? '/pipelines/render-props' : '/pipelines')} state={isDef ? <StateBadge family="definition" state={st as StateOf<'definition'>} compact /> : <StateBadge family="execution" state={st as StateOf<'execution'>} compact />} right={right}><span class="facts">{facts}</span></CatRow>}</For>
     </div></Panel>
   </>;
-  return <ListDetail list={list} detailKey={id} detail={<DefinitionEditor key={id} label={id} crumb={failed ? 'csgo · config/pipelines/render-props.json · run 41 at 94e588a' : 'shared · config/pipelines/issue-to-pr.json · 5eefade'}
-    title={id} tabs={['Definition', 'Runs', 'Used by', 'History']} tab={tab} onTab={setTab} onClose={() => go('/pipelines')}>
-    {tab === 'Definition' && !failed && <>
+  return <ListDetail list={list} detailKey={id()} detail={<DefinitionEditor label={id()} crumb={failed() ? 'csgo · config/pipelines/render-props.json · run 41 at 94e588a' : 'shared · config/pipelines/issue-to-pr.json · 5eefade'}
+    title={id()} tabs={['Definition', 'Runs', 'Used by', 'History']} tab={tab()} onTab={setTab} onClose={() => go('/pipelines')}>
+    <Show when={tab() === 'Definition' && !failed()}>
       <DraftBar changes={1} base="5eefade" note="The review-code step reads one more input." actions={[{ label: 'Run', icon: 'play' }, { label: 'Diff' }, { label: 'Save as commit', icon: 'save', primary: true }]} />
       <DetailSection title="Starts when">
         <Choice label="Triggers" value={['label', 'hand']} options={[{ id: 'label', label: 'an issue gets the label factory', icon: 'github' }, { id: 'hand', label: 'a person or an agent starts it' }, { id: 'add', label: 'Add trigger', icon: 'plus' }]} />
       </DetailSection>
-      <DetailSection title="Flow"><FlowStrip nodes={FACTORY_FLOW(open)} label="intake, spec, then a loop of build, gate and parallel reviews, then approve and deliver" /></DetailSection>
+      <DetailSection title="Flow"><FlowStrip nodes={FACTORY_FLOW(open())} label="intake, spec, then a loop of build, gate and parallel reviews, then approve and deliver" /></DetailSection>
       <DetailSection title="Steps">
-        <StepList items={FACTORY} open={open} onOpen={s => setOpen(open === s ? undefined : s)} label="Steps of issue-to-pr"><StepEditor onAgent={() => go('/agents')} /></StepList>
+        <StepList items={FACTORY} open={open()} onOpen={s => setOpen(open() === s ? undefined : s)} label="Steps of issue-to-pr"><StepEditor onAgent={() => go('/agents')} /></StepList>
       </DetailSection>
-    </>}
-    {tab === 'Definition' && failed && <DetailSection title="Steps"><StepList items={RENDER_RUN.map(s => 'band' in s ? s : { ...s, run: undefined })} label="Steps of render-props" /></DetailSection>}
-    {tab === 'Runs' && failed && <>
+    </Show>
+    <Show when={tab() === 'Definition' && failed()}><DetailSection title="Steps"><StepList items={RENDER_RUN.map(s => 'band' in s ? s : { ...s, run: undefined })} label="Steps of render-props" /></DetailSection></Show>
+    <Show when={tab() === 'Runs' && failed()}>
       <ProblemRow severity="failure" title="Run 41 stopped at render" facts="Repeating asset-07 and assemble is enough: prepare and 7 renders are kept."
         actions={[{ label: 'Rerun failed', icon: 'rotate-ccw', primary: true }, { label: 'Repeat all steps' }, { label: 'Edit definition' }]} />
       <DetailSection title="Flow"><FlowStrip label="prepare, eight parallel renders with one failed, then assemble waiting"
         nodes={[{ id: 'prepare', kind: 'program', state: 'succeeded' }, { parallel: [{ id: 'render × 7', kind: 'tool', state: 'succeeded' }, { id: 'asset-07', kind: 'tool', state: 'failed', current: true }] }, { id: 'assemble', kind: 'agent', state: 'waiting' }]} /></DetailSection>
       <DetailSection title="Steps of run 41"><StepList items={RENDER_RUN} label="Steps of run 41" /></DetailSection>
       <Totals items={[{ label: 'Wall time', m: m(374), kind: 'duration' }, { label: 'Cost', m: m(3.4, 'estimated', 'tokens'), kind: 'money' }, { label: 'Renders kept', m: m(7), kind: 'count', note: 'of 8' }]} />
-    </>}
-    {tab === 'Runs' && !failed && <Empty text="41 runs. Open render-props to see a run with a failed step." />}
-    {(tab === 'Used by' || tab === 'History') && <Empty text={`${tab} is not mocked up.`} />}
+    </Show>
+    <Show when={tab() === 'Runs' && !failed()}><Empty text="41 runs. Open render-props to see a run with a failed step." /></Show>
+    <Show when={tab() === 'Used by' || tab() === 'History'}><Empty text={`${tab()} is not mocked up.`} /></Show>
   </DefinitionEditor>} />;
 }
 
@@ -509,17 +529,17 @@ const CAPS = [
   { id: '3d-model-from-description', state: 'unchecked', facts: '3 methods · comparing in Lab', right: '12' },
 ] as const;
 function Catalogue() {
-  const [sel, setSel] = useState<string | null>('web-research');
-  const [tab, setTab] = useState('Methods');
+  const [sel, setSel] = createSignal<string | null>('web-research');
+  const [tab, setTab] = createSignal('Methods');
   const list = <>
     <PageHead title="Catalogue" />
     <Panel><div class="vl-wrap" style={CAT_COLS}>
-      {CAPS.map(c => <CatRow key={c.id} id={c.id} sel={c.id === sel} onOpen={() => setSel(c.id)} state={<StateBadge family="definition" state={c.state} compact />} right={c.right}><span class="facts">{c.facts}</span></CatRow>)}
+      <For each={CAPS}>{c => <CatRow id={c.id} sel={c.id === sel()} onOpen={() => setSel(c.id)} state={<StateBadge family="definition" state={c.state} compact />} right={c.right}><span class="facts">{c.facts}</span></CatRow>}</For>
     </div></Panel>
   </>;
-  return <ListDetail list={list} detailKey={sel ?? undefined} detail={sel && <DefinitionEditor label={sel} crumb="shared · config/catalogue.json · 5eefade" title={sel}
-    tabs={['Methods', 'Contract', 'Assessments']} tab={tab} onTab={setTab} onClose={() => setSel(null)} actions={<Button label="Add method" icon="plus" />}>
-    {tab === 'Methods' && <>
+  return <ListDetail list={list} detailKey={sel() ?? undefined} detail={sel() ? <Show when={sel()} keyed>{s => <DefinitionEditor label={s} crumb="shared · config/catalogue.json · 5eefade" title={s}
+    tabs={['Methods', 'Contract', 'Assessments']} tab={tab()} onTab={setTab} onClose={() => setSel(null)} actions={<Button label="Add method" icon="plus" />}>
+    <Show when={tab() === 'Methods'}>
       <DetailSection title="What the caller gets">{kvs([
         ['arrow-down', 'Input', <span class="mono">prompt · max sources</span>],
         ['arrow-up', 'Result', <span class="mono">summary.md · sources · pages (optional)</span>],
@@ -527,13 +547,13 @@ function Catalogue() {
       <DetailSection title="Methods">
         <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1.4fr) 4rem minmax(0,1fr) 4rem 4rem 4.5rem minmax(0,1.2fr)' }}>
           <div class="vl-head" role="row"><span /><span>Method</span><span>Scope</span><span>Runs</span><span class="r">Quality</span><span class="r">Time</span><span class="r">Cost</span><span>For</span></div>
-          {([
+          <For each={[
             ['ready', 'Source discovery', 'shared', 'search-basic', m(0.82), m(8), m(0.02), 'everyone', false],
             ['ready', 'Summary with sources', 'shared', 'web-research', m(0.91), m(130), m(0.38, 'estimated', 'tokens'), 'cs, fleet', false],
             ['unchecked', 'Guided delivery', 'csgo', 'prop-search', m(null, 'unavailable', 'not assessed'), m(null, 'unavailable', 'not assessed'), m(null, 'unavailable', 'not assessed'), 'nobody yet', true],
-          ] as const).map(([st, title, scope, pipe, q, tm, c, forW, mute]) => <div key={pipe} role="row" class="vl-row static">
+          ] as const}>{([st, title, scope, pipe, q, tm, c, forW, mute]) => <div role="row" class="vl-row static">
             <StateBadge family="definition" state={st} compact /><span class="title">{title}</span><span class="muted">{scope}</span><span class="mono" data-tip={`config/pipelines/${pipe}.json`}>{pipe}</span>
-            <span class="r"><Num m={q} kind="score" /></span><span class="r"><Num m={tm} kind="duration" /></span><span class="r"><Num m={c} kind="money" /></span><span class={mute ? 'muted' : undefined}>{forW}</span></div>)}
+            <span class="r"><Num m={q} kind="score" /></span><span class="r"><Num m={tm} kind="duration" /></span><span class="r"><Num m={c} kind="money" /></span><span class={mute ? 'muted' : undefined}>{forW}</span></div>}</For>
         </div>
       </DetailSection>
       <DetailSection title="Which method a call uses">{kvs([
@@ -542,35 +562,36 @@ function Catalogue() {
         ['rows-3', 'Else the shared default', 'Source discovery'],
       ])}</DetailSection>
       <div class="state-line"><Button label="Recommend for a project" icon="check-check" /><Button label="Compare in Lab" icon="chart-no-axes-column" /></div>
-    </>}
-    {tab !== 'Methods' && <Empty text={`${tab} is not mocked up.`} />}
-  </DefinitionEditor>} />;
+    </Show>
+    <Show when={tab() !== 'Methods'}><Empty text={`${tab()} is not mocked up.`} /></Show>
+  </DefinitionEditor>}</Show> : undefined} />;
 }
 
 /* ---------- Shell and routes ---------- */
 
 function App() {
-  const [loc, go] = useLocation();
-  const cur = loc.split('/')[1] || 'overview';
-  return <CardsProvider><AppShell nav={NAV} current={cur} onGo={id => go(`/${id}`)} waiting={3} focus={<FocusDemo />} user={{ name: 'Alex Kirs', onLogout: () => go('/overview'), version: BOOK_VERSION }}>
-    <Switch>
-      <Route path="/tasks/:id">{(p: { id: string }) => <Tasks id={p.id} />}</Route>
-      <Route path="/tasks"><Tasks /></Route>
-      <Route path="/results"><Results /></Route>
-      <Route path="/hosts"><Hosts /></Route>
-      <Route path="/hosts/limits"><Hosts limits /></Route>
-      <Route path="/lab"><Laboratory /></Route>
-      <Route path="/agents"><Agents /></Route>
-      <Route path="/pipelines/:id">{(p: { id: string }) => <Pipelines key={p.id} id={p.id} />}</Route>
-      <Route path="/pipelines"><Pipelines key="issue-to-pr" /></Route>
-      <Route path="/catalogue"><Catalogue /></Route>
-      <Route path="/delivery"><Delivery /></Route>
-      <Route path="/"><Overview /></Route>
-      <Route path="/overview"><Overview /></Route>
-      <Route path="/overview/:id">{(p: { id: string }) => <Overview id={p.id} />}</Route>
-      <Route><Empty text="This section is not mocked up in stage 3." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>
+  const [loc, go] = useHashLocation();
+  const cur = createMemo(() => loc().split('/')[1] || 'overview');
+  const taskId = createMemo(() => /^\/tasks\/([^/]+)$/.exec(loc())?.[1]);
+  const pipeId = createMemo(() => /^\/pipelines\/([^/]+)$/.exec(loc())?.[1]);
+  const overviewId = createMemo(() => /^\/overview\/([^/]+)$/.exec(loc())?.[1]);
+  return <CardsProvider><AppShell nav={NAV} current={cur()} onGo={id => go(`/${id}`)} waiting={3} focus={<FocusDemo />} user={{ name: 'Alex Kirs', onLogout: () => go('/overview'), version: BOOK_VERSION }}>
+    <Switch fallback={<Empty text="This section is not mocked up in stage 3." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} />}>
+      <Match when={taskId()}>{id => <Tasks id={id()} />}</Match>
+      <Match when={loc() === '/tasks'}><Tasks /></Match>
+      <Match when={loc() === '/results'}><Results /></Match>
+      <Match when={loc() === '/hosts'}><Hosts /></Match>
+      <Match when={loc() === '/hosts/limits'}><Hosts limits /></Match>
+      <Match when={loc() === '/lab'}><Laboratory /></Match>
+      <Match when={loc() === '/agents'}><Agents /></Match>
+      <Match when={pipeId()}>{id => <Pipelines id={id()} />}</Match>
+      <Match when={loc() === '/pipelines'}><Pipelines id="issue-to-pr" /></Match>
+      <Match when={loc() === '/catalogue'}><Catalogue /></Match>
+      <Match when={loc() === '/delivery'}><Delivery /></Match>
+      <Match when={loc() === '/' || loc() === '/overview'}><Overview /></Match>
+      <Match when={overviewId()}>{id => <Overview id={id()} />}</Match>
     </Switch>
   </AppShell></CardsProvider>;
 }
 
-render(<Router hook={useHashLocation}><App /></Router>, document.getElementById('app')!);
+render(() => <App />, document.getElementById('app')!);

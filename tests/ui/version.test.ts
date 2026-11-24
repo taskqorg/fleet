@@ -3,7 +3,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-const bundle = await build({ stdin: { contents: "export * from './app/src/version.ts';export * from './app/src/access.ts';", resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, platform: 'node', format: 'esm', jsx: 'automatic', jsxImportSource: 'preact' });
+import { transform } from '@solidjs/compiler';
+// @ts-expect-error ESM helper module
+import { solidEsbuildPlugin } from '../../packages/ui/scripts/solid-esbuild.mjs';
+const bundle = await build({ stdin: { contents: "export * from './app/src/version.ts';export * from './app/src/access.ts';", resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, platform: 'node', format: 'esm', conditions: ['solid'], plugins: [solidEsbuildPlugin()] });
+const buildSolid = async (src: string) => {
+  const compiled = transform(src, { filename: 'fixture.tsx', generate: 'dom', moduleName: '@solidjs/web' });
+  return build({ stdin: { contents: compiled.code, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, format: 'iife', conditions: ['solid'], plugins: [solidEsbuildPlugin()] });
+};
 const v = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'));
 v.registerAccessValidator(async () => ({ identityKey: 'fixture@trial.test', grantsVersion: 'one' }));
 v.registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
@@ -86,11 +93,11 @@ test('worker activation timeout remains retryable and does not reload', async ()
 test('narrow rail exposes Versions and a long overview stays within the viewport', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
   const { chromium } = await import('playwright');
   const { uiCss } = await import(new URL('../../packages/ui/scripts/tokens.mjs', import.meta.url).href) as { uiCss: () => string };
-  const fixture = await build({ stdin: { contents: `
-    import {render} from 'preact';import {AppShell} from './packages/ui/src/index.ts';
+  const fixture = await buildSolid(`
+    import {render} from '@solidjs/web';import {AppShell} from './packages/ui/src/index.ts';
     const version={current:'1.261115.5',tone:'neutral',updateReady:false,onUpdate:()=>{},rows:Array.from({length:50},(_,i)=>({key:String(i),part:'host '+i,icon:'terminal',version:'1.261115.5',state:'unknown',tone:'attention'}))};
-    render(<AppShell nav={[]} current="tasks" onGo={()=>{}} waiting={0} user={{name:'Fixture person',onLogout:()=>{},version}}><p>Fixture work</p></AppShell>,document.body);
-  `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
+    render(()=><AppShell nav={[]} current="tasks" onGo={()=>{}} waiting={0} user={{name:'Fixture person',onLogout:()=>{},version}}><p>Fixture work</p></AppShell>,document.body);
+  `);
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 640, height: 480 } });
   try {
@@ -108,11 +115,11 @@ test('narrow rail exposes Versions and a long overview stays within the viewport
 
 test('the open version overview recounts its ages on a timer', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
   const { chromium } = await import('playwright');
-  const fixture = await build({ stdin: { contents: `
-    import {render} from 'preact';import {AppShell} from './packages/ui/src/index.ts';
+  const fixture = await buildSolid(`
+    import {render} from '@solidjs/web';import {AppShell} from './packages/ui/src/index.ts';
     const checked=Date.now()-40000, info=now=>({current:'1.261115.5',tone:'neutral',updateReady:false,onUpdate:()=>{},at:info,rows:[{key:'gateway',part:'Gateway',icon:'shield',version:'1.261115.5',state:now-checked>60000?'unknown':'ok',tone:'success',times:[{label:'checked',at:checked,now}]}]}), version=info(Date.now());
-    render(<AppShell nav={[]} current="tasks" onGo={()=>{}} waiting={0} user={{name:'Fixture person',onLogout:()=>{},version}}><p>Fixture work</p></AppShell>,document.body);
-  `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
+    render(()=><AppShell nav={[]} current="tasks" onGo={()=>{}} waiting={0} user={{name:'Fixture person',onLogout:()=>{},version}}><p>Fixture work</p></AppShell>,document.body);
+  `);
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   try {

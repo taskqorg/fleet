@@ -162,5 +162,5 @@ export function Delivery(props: { id?: string }) {
     idle={<Overview now={now()} items={items()} incomplete={incomplete()} norms={norms()} hist={hist()} regressions={regressions()} histError={failed(histDoc)} fleetShown={fleetShown() && !missing(histDoc)}
       range={pace().range} buckets={pace().buckets} picked={p()} href={it => page.href({ focus: idOf(it) })} onOpen={go}
       onRange={r => setPace({ range: r, at: undefined })} onPick={k => setPace({ at: pace().ex.at === k ? undefined : k })} />}
-    detail={<Show when={props.id} keyed>{id => <PrDetail id={id} item={open()} now={now()} norms={norms()} onClose={() => go()} />}</Show>} />;
+    detail={props.id ? <Show when={props.id} keyed>{id => <PrDetail id={id} item={open()} now={now()} norms={norms()} onClose={() => go()} />}</Show> : undefined} />;
 }

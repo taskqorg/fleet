@@ -2,12 +2,17 @@
 // Risk: failed reports appear complete, obsolete acceptance remains actionable, or the statement buries the decision.
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
+import {transform} from '@solidjs/compiler';
+// @ts-expect-error ESM helper module
+import {solidEsbuildPlugin} from '../../packages/ui/scripts/solid-esbuild.mjs';
 import type {Browser} from 'playwright';
 export async function checkTaskStory(browser: Browser, origin: string) {
   const context = await browser.newContext(), page = await context.newPage();
   // Shared error contract: read-only errors retain alert text without an inert action; supplied retries invoke the caller.
-  const fixture = await build({stdin: {contents: `import {render} from 'preact'; import {AgeChip, ErrorBanner} from './packages/ui/src/index.ts';
-    render(<><AgeChip t={Date.now() - 58000}/><AgeChip t={Date.now()} clockOffsetMs={60000}/><ErrorBanner text="Read-only problem"/><ErrorBanner text="Retriable problem" onRetry={()=>document.querySelector('output').textContent='retried'}/><output/></>,document.body);`, resolveDir: process.cwd(), loader: 'tsx'}, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact'});
+  const fixtureSrc = `import {render} from '@solidjs/web'; import {AgeChip, ErrorBanner} from './packages/ui/src/index.ts';
+    render(()=><><AgeChip t={Date.now() - 58000}/><AgeChip t={Date.now()} clockOffsetMs={60000}/><ErrorBanner text="Read-only problem"/><ErrorBanner text="Retriable problem" onRetry={()=>document.querySelector('output').textContent='retried'}/><output/></>,document.body);`;
+  const fixtureCompiled = transform(fixtureSrc, { filename: 'fixture.tsx', generate: 'dom', moduleName: '@solidjs/web' });
+  const fixture = await build({stdin: {contents: fixtureCompiled.code, resolveDir: process.cwd(), loader: 'ts'}, bundle: true, write: false, format: 'iife', conditions: ['solid'], plugins: [solidEsbuildPlugin()]});
   await page.goto('about:blank');
   await page.setContent('<body></body>');
   const clock = new Date('2026-11-18T12:00:00Z');

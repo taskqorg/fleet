@@ -2,7 +2,7 @@
 
 ## Overview
 
-`src/` supplies Fleet's reusable Preact components and browser helpers. `index.ts` is the only intended import barrel for app code.
+`src/` supplies Fleet's reusable SolidJS 2.0 + `@ui-sdk/solid` components and browser helpers. `index.ts` is the only intended import barrel for app code.
 
 ## Interface
 
@@ -11,7 +11,7 @@
   - `controls/overlays.tsx`: `TooltipLayer` (`popover="hint"`), `EntityCode`, `EntityCardLayer` (`popover="auto"`, mounted once by `AppShell`, reading through `EntityCards`), `linkCodes`, `ContextMenu`, and `MenuItem`.
   - `controls/navigation.tsx`: `NavRail`, `FocusPresets`, `FocusControl` (`popover="auto"` header focus chip with presets, ignore, and outside-focus count), `Spotlight` (`<dialog closedby="any">`), and `sectionProvider`.
   - `controls/lists.tsx`: `FilterBar`, `StateCounters`, `GroupHeader`, `Presets`, `GroupControl`, `SortControl`, `RowFacts`, `Fact`, `SelectBar`, `SelectToggle`, `RowCheck`, and `RowPin`.
-  - `controls/tables.tsx`: `DataTable` and `Disclosure`.
+  - `controls/tables.tsx`: `DataTable`, `TabBar` (`@ui-sdk/solid` `Tabs`), and `Disclosure`.
   - `controls/forms.tsx`: `TextField`, `SettingField`, `Composer`, `DropZone`, `CodeEditor`, `DiffText`, `DraftBar`, `InlineForm`, `Choice`, `ProjectPick`, `PresetPicker`, and `StartFacts`.
   - `controls/thread.tsx`: `Thread` and row renderers (`TextRow`, `ToolRow`, `ReasoningRow`, `QuestionRow`, `ResultRow`, `BoundaryRow`, `AgentMark`, `MessageFiles`), `DecisionBlock`, `Markdown` (turns D17 codes in text into references via `linkCodes`), `ResultViewer`, `ArtifactView`, and `SearchField`.
   - `controls/metrics.tsx`: `FillBar`, `StatStrip`, `ExecTree`, `OutcomeBlock`, `StepList`, `FlowStrip`, `AreaChart`, and `TimeStrip`.
@@ -19,7 +19,7 @@
 - `patterns.tsx` exports assembled layouts including `AppShell` (navigation rail plus the shell header: collapse toggle, section title, focus chip slot, search icon), `ListDetail`, `ListFrame`, `TaskListView`, and `DefinitionEditor`. `controls/navigation.tsx:FocusControl` is the header's focus chip with presets, ignore and the outside-focus count.
 - `virtual-list.tsx:VirtualList` exports keyed virtual rendering and `VirtualListHandle`.
 - `registry.ts` exports icons, state families, workspaces, actions, harnesses, and stages; `format.ts` exports compact value formatting (including calendar days in the viewer's zone: `day`, `dayStart`, `hourLabel`) and actor/file helpers.
-- `markdown.ts`/`markdown.tsx` export parsing and Preact markdown rendering; `clip.ts` exports clipboard message/HTML helpers; `search.ts:matchSearch` applies supported search fields.
+- `markdown.ts`/`markdown.tsx` export parsing and SolidJS 2.0 markdown rendering; `clip.ts` exports clipboard message/HTML helpers; `search.ts:matchSearch` applies supported search fields.
 
 ## Invariants
 

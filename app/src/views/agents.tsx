@@ -544,35 +544,37 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
       detailKey={section() === 'changes' ? 'changes' : selectedTreeId() ?? undefined}
       idle={idleSummary}
       detail={
-        <Switch>
-          <Match when={section() === 'changes'}><Changes onClose={() => go('/agents')} /></Match>
-          <Match when={isSkillRoute() && skillId()}>
-            <Show when={skillId()} keyed>{sid => (
-              <SkillDetail
-                skillId={sid}
-                skills={skillItems()}
-                loading={!skillsOp.data && !skillsOp.error}
-                error={skillsOp.error}
-                onRetry={skillsOp.reload}
-                categories={categories()}
-                agentItems={agentItems()}
-                busy={busy()}
-                setBusy={setBusy}
-                onChanged={async () => { await Promise.all([skillsOp.reload(), agentsOp.reload()]); }}
-                onClose={() => go('/agents')}
-              />
-            )}</Show>
-          </Match>
-          <Match when={section() === 'catalogue' && props.id}>
-            <Show when={props.id} keyed>{did => <DefinitionDetail kind="catalogue" id={did} agentById={agentById()} onClose={() => go('/catalogue')} />}</Show>
-          </Match>
-          <Match when={section() === 'pipelines' && props.id}>
-            <Show when={props.id} keyed>{did => <DefinitionDetail kind="pipeline" id={did} agentById={agentById()} onClose={() => go('/pipelines')} />}</Show>
-          </Match>
-          <Match when={section() === 'agents' && props.id}>
-            <Show when={props.id} keyed>{did => <DefinitionDetail kind="agent" id={did} agentById={agentById()} onClose={() => go('/agents')} />}</Show>
-          </Match>
-        </Switch>
+        section() === 'changes' || (isSkillRoute() && skillId()) || (!!props.id && (section() === 'catalogue' || section() === 'pipelines' || section() === 'agents')) ? (
+          <Switch>
+            <Match when={section() === 'changes'}><Changes onClose={() => go('/agents')} /></Match>
+            <Match when={isSkillRoute() && skillId()}>
+              <Show when={skillId()} keyed>{sid => (
+                <SkillDetail
+                  skillId={sid}
+                  skills={skillItems()}
+                  loading={!skillsOp.data && !skillsOp.error}
+                  error={skillsOp.error}
+                  onRetry={skillsOp.reload}
+                  categories={categories()}
+                  agentItems={agentItems()}
+                  busy={busy()}
+                  setBusy={setBusy}
+                  onChanged={async () => { await Promise.all([skillsOp.reload(), agentsOp.reload()]); }}
+                  onClose={() => go('/agents')}
+                />
+              )}</Show>
+            </Match>
+            <Match when={section() === 'catalogue' && props.id}>
+              <Show when={props.id} keyed>{did => <DefinitionDetail kind="catalogue" id={did} agentById={agentById()} onClose={() => go('/catalogue')} />}</Show>
+            </Match>
+            <Match when={section() === 'pipelines' && props.id}>
+              <Show when={props.id} keyed>{did => <DefinitionDetail kind="pipeline" id={did} agentById={agentById()} onClose={() => go('/pipelines')} />}</Show>
+            </Match>
+            <Match when={section() === 'agents' && props.id}>
+              <Show when={props.id} keyed>{did => <DefinitionDetail kind="agent" id={did} agentById={agentById()} onClose={() => go('/agents')} />}</Show>
+            </Match>
+          </Switch>
+        ) : undefined
       }
     />
   );

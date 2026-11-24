@@ -2,7 +2,7 @@
 
 ## Overview
 
-`packages/ui` is Fleet's shared Preact UI layer. App screens and the design book consume its exported controls, patterns, registry, formatting, URL helpers, and tokens.
+`packages/ui` is Fleet's shared SolidJS 2.0 + `@ui-sdk/solid` UI layer. App screens and the design book consume its exported controls, patterns, registry, formatting, URL helpers, and tokens.
 
 ## Interface
 

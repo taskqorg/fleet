@@ -6,7 +6,7 @@
 
 ## Interface
 
-- [`ui`](ui/README.md) provides shared Preact controls, patterns, registry values, formatting, visual tokens, the design book, and its build/check scripts.
+- [`ui`](ui/README.md) provides shared SolidJS 2.0 + `@ui-sdk/solid` controls, patterns, registry values, formatting, visual tokens, the design book, and its build/check scripts.
 - [`view-url`](view-url/README.md) parses and formats supported view URLs.
 
 ## Invariants

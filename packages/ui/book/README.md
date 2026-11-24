@@ -2,7 +2,7 @@
 
 ## Overview
 
-`book/` is the interactive Preact demonstration of shared controls, patterns, token values, and screen compositions. It is built as a separate static design book.
+`book/` is the interactive SolidJS 2.0 demonstration of shared controls, patterns, token values, and screen compositions. `scripts/build-book.mjs` bundles it with `solidEsbuildPlugin` into standalone design-book HTML files.
 
 ## Interface
 

@@ -278,37 +278,39 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
       list={listPane}
       detailKey={detailKey()}
       detail={
-        <Switch>
-          <Match when={section() === 'runners'}><Runners onClose={() => go('/hosts')} /></Match>
-          <Match when={section() === 'keys' && props.id}>
-            <Show when={props.id} keyed>{keyId => (
-              <KeyDetail id={keyId} conn={selConn()} loading={!connsOp.data && !connsOp.error} error={connsOp.error} onRetry={connsOp.reload} onClose={() => go('/keys')} />
-            )}</Show>
-          </Match>
-          <Match when={isLimits()}><Limits onClose={() => go('/hosts')} /></Match>
-          <Match when={section() === 'hosts' && props.id}>
-            <Show when={selHost()?.id} keyed fallback={
-              <article class="detail stack" data-ui="detail" tabindex={-1} aria-label={props.id}>
-                <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => go('/hosts')} /><h2 class="detail-title">{props.id}</h2></header>
-                <Show when={hostsOp.error}>{err => <ErrorBanner text={`Hosts did not load: ${err()}`} onRetry={hostsOp.reload} />}</Show>
-                <Show when={!hostsOp.data && !hostsOp.error} fallback={!hostsOp.error ? <Empty text={`Host "${props.id}" not found.`} /> : undefined}>
-                  <Skeleton rows={6} />
-                </Show>
-              </article>
-            }>{hostId => (
-              <HostDetail
-                host={selHost()!}
-                live={fresh(selHost()!)}
-                reading={reading(hostId)}
-                processes={(tele.data?.processes ?? []).filter(p => p.hostId === hostId)}
-                runs={(tele.data?.runs ?? []).filter(r => r.hostId === hostId)}
-                clockOffsetMs={clockOffsetMs()}
-                onGone={() => go('/hosts')}
-                onOpen={go}
-              />
-            )}</Show>
-          </Match>
-        </Switch>
+        detailKey() !== undefined ? (
+          <Switch>
+            <Match when={section() === 'runners'}><Runners onClose={() => go('/hosts')} /></Match>
+            <Match when={section() === 'keys' && props.id}>
+              <Show when={props.id} keyed>{keyId => (
+                <KeyDetail id={keyId} conn={selConn()} loading={!connsOp.data && !connsOp.error} error={connsOp.error} onRetry={connsOp.reload} onClose={() => go('/keys')} />
+              )}</Show>
+            </Match>
+            <Match when={isLimits()}><Limits onClose={() => go('/hosts')} /></Match>
+            <Match when={section() === 'hosts' && props.id}>
+              <Show when={selHost()?.id} keyed fallback={
+                <article class="detail stack" data-ui="detail" tabindex={-1} aria-label={props.id}>
+                  <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => go('/hosts')} /><h2 class="detail-title">{props.id}</h2></header>
+                  <Show when={hostsOp.error}>{err => <ErrorBanner text={`Hosts did not load: ${err()}`} onRetry={hostsOp.reload} />}</Show>
+                  <Show when={!hostsOp.data && !hostsOp.error} fallback={!hostsOp.error ? <Empty text={`Host "${props.id}" not found.`} /> : undefined}>
+                    <Skeleton rows={6} />
+                  </Show>
+                </article>
+              }>{hostId => (
+                <HostDetail
+                  host={selHost()!}
+                  live={fresh(selHost()!)}
+                  reading={reading(hostId)}
+                  processes={(tele.data?.processes ?? []).filter(p => p.hostId === hostId)}
+                  runs={(tele.data?.runs ?? []).filter(r => r.hostId === hostId)}
+                  clockOffsetMs={clockOffsetMs()}
+                  onGone={() => go('/hosts')}
+                  onOpen={go}
+                />
+              )}</Show>
+            </Match>
+          </Switch>
+        ) : undefined
       }
       idle={
         section() === 'keys' && !props.id ? (
