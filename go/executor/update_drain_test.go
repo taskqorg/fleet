@@ -108,6 +108,46 @@ func TestUpdateDrainTargetAndHold(t *testing.T) {
 	}
 }
 
+// requirement: an idle executor keeps its target ready while fleet-update owns the exclusive activity lease.
+// risk: repeated idle ticks contend for activity.lock or withdraw readiness during replacement.
+func TestUpdateDrainKeepsIdleReadinessDuringReplacement(t *testing.T) {
+	e, root := scriptExecutor(t)
+	target := "1.261113.20"
+	lastSignal = &updateSignal{Target: &target, Running: "1.261113.19", AutoUpdate: "on"}
+	t.Cleanup(func() {
+		lastSignal = nil
+		if e.activity != nil {
+			e.activity.Close()
+		}
+	})
+	if err := e.tick(); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(root, "update", "activity.lock"), os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal("idle executor blocked exclusive lease", err)
+	}
+	for range 3 {
+		if err := e.tick(); err != nil {
+			t.Fatal(err)
+		}
+		if ready := e.updateReady.Load(); ready == nil || *ready != target {
+			t.Fatal("idle readiness withdrawn while the updater held the lease")
+		}
+	}
+	lastSignal.AutoUpdate = "off"
+	if err := e.tick(); err != nil {
+		t.Fatal(err)
+	}
+	if e.updateReady.Load() != nil {
+		t.Fatal("held target remained ready")
+	}
+}
+
 // Requirement: executor replacement waits for owned work and retained delivery; risk: a race interrupts active work or admits a start during replacement.
 func TestUpdateTargetAndStartSamePollRemainUnclaimed(t *testing.T) {
 	e, _ := scriptExecutor(t)
