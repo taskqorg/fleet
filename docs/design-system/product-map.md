@@ -32,13 +32,38 @@ Checked on 2026-11-25 against release `1.261124.39`, with Playwright at 1440 × 
 
 Worst broken items:
 
-1. **Unknown and retired routes.** `/publishing` and any unknown path get the server's JSON `404 Route GET:… not found`, not the app. The client-side redirect from `/publishing` to `/delivery` and "This page does not exist" never run, so old deep links die (UX-69, UX-70).
+1. **Unknown and retired routes.** `/publishing` and any unknown path get the server's JSON `404 Route GET:… not found`, not the app. The client-side redirect from `/publishing` to `/delivery` and "This page does not exist" never run, so old deep links die (UR-69, UR-70).
 2. **Library › Changes.** `/changes` still says "Checking repository and host drift…" after 5 s. System's own service list shows `system_changes` with 8 errors of 19 calls and 5 s responses in the last hour.
-3. **Result detail shows internals.** `/results/<id>` uses the result's UUID in the URL, shows a file name made of a hash and a UUID, and shows raw JSON as the content (OR-38, UX-61).
-4. **Bot run causes are raw codes.** `/bots/<id>` lists a run problem as `unknown:abandoned message` (UX-4).
+3. **Result detail shows internals.** `/results/<id>` uses the result's UUID in the URL, shows a file name made of a hash and a UUID, and shows raw JSON as the content (OR-38, UR-61).
+4. **Bot run causes are raw codes.** `/bots/<id>` lists a run problem as `unknown:abandoned message` (UR-4).
 5. **Lab and Library reads fail under load.** The screens opened, but System's service list shows `lab_examples_list` with 11 errors of 21 calls (15 s), `catalogue` 5 of 9 (10 s) and `lab_leaderboard` 4 of 15 (7 s) in the last hour.
 
-Also seen: `/results`, `/results/<id>`, `/delivery/<id>`, Humans and Personal Lab highlight no rail item (OR-57, UX-66); task, conversation, bot, result and experiment links carry UUIDs (OR-38); `/agents`, `/pipelines` and `/catalogue` render one page; `site-agents` cannot open Humans.
+Also seen: `/results`, `/results/<id>`, `/delivery/<id>`, Humans and Personal Lab highlight no rail item (OR-57, UR-66); task, conversation, bot, result and experiment links carry UUIDs (OR-38); `/agents`, `/pipelines` and `/catalogue` render one page; `site-agents` cannot open Humans.
+
+## Pages and rules
+
+Which rules apply to each [page spec](pages/README.md) and whether the built page meets them today. This is a view for people and agents, never a check that fails. Evidence is the prod run above; a rule not named in a row is not checked.
+
+Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner rules that are not *Target* ([owner rules](owner-rules.md)). The third column adds what applies to that page in particular.
+
+| Page | Route today | Applies beyond the common set | Meets | Breaks | Not checked |
+|---|---|---|---|---|---|
+| [Home](pages/home.md) | none | OR-50, OR-53, OR-54, OR-55, OR-58, UR-51 to UR-61 | — | — | all: not built, `/home` answers 404 |
+| [Live](pages/live.md) | none | OR-56, OR-58, OR-59, UR-51 to UR-55 | — | — | all: not built, `/live` answers 404 |
+| [Overview](pages/overview.md) | `/overview` | OR-29, OR-30, OR-40 | UR-38 (no console error or failed read), UR-50 (no sideways scroll at 390 px), UR-71 (title matches the rail item) | UR-69, OR-38: 33 of 43 links carry a UUID | UR-51 (to be measured on Home) |
+| [Conversations](pages/conversations.md) | `/conversations`, `/conversations/<id>` | OR-51, OR-52, OR-53, OR-54, UR-56 to UR-61 | UR-38, UR-50, UR-71 | OR-54 (Target): a metrics header (elapsed, CPU, memory, tokens, cost) opens the conversation; UR-69, OR-38: the URL is a UUID | UR-57, UR-59, UR-81 |
+| [Projects](pages/projects.md) | `/projects`, `/projects/<id>` | OR-45, OR-46 (facets) | UR-38, UR-50, UR-69 (no UUID links), OR-45 (inherited defaults folded) | OR-59 (Target): `≈`, `≥` and "partial" fill the main view | UR-63 |
+| [Tasks](pages/tasks.md) | `/tasks`, `/tasks/<id>` | OR-22, OR-37, OR-39 | UR-38, UR-71 | UR-69, OR-38: 66 of 76 links and the URL carry a UUID | UR-63, UR-77 |
+| [Results](pages/results.md) | `/results`, `/results/<id>` | OR-22, OR-38 | UR-38 | UR-66, OR-57: no rail item highlighted; OR-38, UR-61: the name holds a hash and a UUID, the content is raw JSON | UR-64 |
+| [Delivery](pages/delivery.md) | `/delivery`, `/delivery/<id>` | OR-22 (stage chip) | UR-38, UR-69 (no UUID links) | UR-66, OR-57: no rail item highlighted; UR-82: one concept, three names (route Delivery, title Publishing, spec Delivery); UR-69: old `/publishing` links answer 404 | UR-72 (merge actions not clicked) |
+| [Agents](pages/agents.md) | `/agents`, `/agents/<id>` | OR-45, OR-48 | UR-38, UR-69, UR-71 | UR-68: `/agents` opens the same page as `/pipelines` and `/catalogue`, so the link does not restore the root | the definition editor (no agent opened) |
+| [Pipelines](pages/pipelines.md) | `/pipelines`, `/pipelines/<id>` | OR-45 | UR-38, UR-69, OR-45 (only differences shown, inherited defaults folded) | UR-68: as Agents | UR-64 |
+| [Catalogue](pages/catalogue.md) | `/catalogue`, `/catalogue/<id>` | OR-45 | UR-38, UR-69 | UR-68: as Agents | UR-60 |
+| [Changes](pages/changes.md) | `/changes` | OR-30 | UR-69 | UR-36: still "Checking repository and host drift…" after 5 s, with no error or retry | UR-72 (take and export not clicked) |
+| [Laboratory](pages/laboratory.md) | `/lab`, `/lab/new`, `/lab/<id>` | J1, J2 ([journeys](../designs/fleet-ia-and-journeys.md#3-core-user-journeys-j1j5)), OR-45 | UR-38, UR-71, UR-52 (decisions waiting lead the idle page) | UR-69, OR-38: experiment links and URLs carry a UUID | J1 under 5 s, J2 in 3 clicks |
+| [Hosts](pages/hosts.md) | `/hosts`, `/hosts/<id>`, `/hosts/limits`, `/keys` | OR-56, UR-32 | UR-38, UR-50, UR-69, UR-71 | — | UR-33 (no setting changed) |
+| [Runners](pages/runners.md) | `/runners` | OR-29 | UR-38, UR-52 (today's CI total leads) | — | UR-37 |
+| [Spend](pages/spend.md) | `/spend` | OR-54 (cost is the question here), OR-59 | UR-38, UR-69, UR-8 (unpriced usage is named) | OR-59 (Target): `≈` marks in the main totals | UR-63 |
 
 ## Routes
 
@@ -82,7 +107,7 @@ Also seen: `/results`, `/results/<id>`, `/delivery/<id>`, Humans and Personal La
 | One connection | System | `/keys/<id>`, keys, access, intake, balancing, limits | built | checked: `tavily` | `connections_key_add`, `connections_key_state`, `connections_set_access`, `connections_set_intake`, `connections_set_key_policy`, `connections_set_limits` |
 | Spend | System | `/spend`, totals and breakdown by purpose | built | checked | `spend_summary` |
 | People and access | System › People | `/humans`, `/humans/<id>`, `/humans/new` | built | not checked: `site-agents` sees "Only the Fleet owner can manage Humans." | `people_list`, `people_update`, `people_access_sync`, `project_list`, `me` |
-| Unknown route | — | any other path | partly | broken: the server answers JSON 404; the app's "This page does not exist" never shows (UX-70) | — |
+| Unknown route | — | any other path | partly | broken: the server answers JSON 404; the app's "This page does not exist" never shows (UR-70) | — |
 | Phone width | all | `/overview`, `/conversations`, a conversation, `/projects`, `/hosts` at 390 × 844 | partly: rail is not the bottom bar of five (OR-60) | checked: no page scroll sideways | — |
 | Palette | all | ⌘K over any route | built | not checked in this run | `search` |
 | Entity card | all | any `EntityCode` | built | not checked in this run | `entity_card` |
@@ -101,7 +126,7 @@ Also seen: `/results`, `/results/<id>`, `/delivery/<id>`, Humans and Personal La
 | Live state with observation state | all | rows and details | built | checked: hosts "now", runs live | `changes_since` |
 | One state vocabulary | all | every state badge | partly: Done, Completed and Succeeded still all appear (OR-55) | checked | — |
 | Measurement basis per number | all | totals and resources | built; *Target* OR-59 moves marks to Details | checked: `≈` and `≥` shown in lists and headers | `analytics_query`, `spend_summary` |
-| Drill-down from a total or problem to its cause | all | totals, Needs you | partly: often two or more clicks (UX-63) | not checked: not walked | `executions_list`, `analytics_query` |
+| Drill-down from a total or problem to its cause | all | totals, Needs you | partly: often two or more clicks (UR-63) | not checked: not walked | `executions_list`, `analytics_query` |
 | Decisions inline, in the work and in one place | Home | Overview Needs you, task, conversation | partly: no session card on Home (OR-53) | checked: 35 need you shown, not answered | `questions_list`, `questions_answer` |
 | Result viewers (text, diff, image, video) | Projects | `/results/<id>` | partly: raw JSON and text only seen | broken: see one result | `artifact_get` |
 | Light and dark, desktop and phone | all | the shell | partly: phone rail not built (OR-60) | checked at 390 px in dark | — |
