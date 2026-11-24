@@ -1,6 +1,6 @@
 # Agents (architect)
 
-**Target home.** [Library](library.md) › Agents and › Skills: `/library/agents/<id>`, `/library/skills/<id>`; `/agents` redirects there.
+**Target home.** [Library](library.md) › Agents and › Skills: `/library/agents/<id>`, `/library/skills/<id>`; `/agents` redirects there. The Library Summary breakdowns by harness and category and the Pipelines header link are dropped ([library](library.md#review-of-the-current-build)).
 
 **App routes:** `/agents` and `/agents/<agent id>` (`app/src/views/agents.tsx` with `DefinitionDetail` from `app/src/views/definitions.tsx`). **Mockup routes:** `#/agents` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 
