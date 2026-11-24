@@ -594,7 +594,12 @@ func admitBotWake(q *Request, b *botFull, req botWakeReq) (contract.BotRunRecord
 		return none, false, err
 	}
 	if hasActiveRun || activeExec != nil {
-		return recordTerminalSkip("skipped", "active_run", optStr(req.DedupKey))
+		dedupKey := req.DedupKey
+		if req.Cause == "needs_you" {
+			// Keep the real event identity available for admission after the active run ends.
+			dedupKey = "active_skip:" + dedupKey
+		}
+		return recordTerminalSkip("skipped", "active_run", optStr(dedupKey))
 	}
 
 	if err := botAuthorityCheck(q, b); err != nil {
@@ -1307,37 +1312,7 @@ func botProcessNeedsYou(q *Request, b *botFull, s agentSession, cur db.BotWakeCu
 	primaryDedup := candidates[0].dedupKey
 	prompt := fmt.Sprintf("Fleet: %d new Needs you entry(s) in %s: %s", len(triggers), b.ProjectId, strings.Join(summaries, "; "))
 
-	// If a run is already active (and bot is not paused), keep the Needs-you cursor deferred so the item wakes
-	// as soon as the active run completes, while recording a single deduplicated skipped run for observability.
-	if !b.Paused {
-		if err := acquireTxLock(q, "session:"+s.ID); err != nil {
-			return err
-		}
-		activeRun, err := q.db().BotRunActiveForBot(q.ctx(), b.Id)
-		hasActive := err == nil && activeRun.ID != ""
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		activeExec, err := agentActive(q, s.ID)
-		if err != nil {
-			return err
-		}
-		if hasActive || activeExec != nil {
-			_, _, err := admitBotWake(q, b, botWakeReq{
-				Automation: automation,
-				Cause:      "needs_you",
-				DedupKey:   "active_skip:" + primaryDedup,
-				Text:       prompt,
-				SentBy:     "Fleet",
-				Source:     "needs_you",
-				Triggers:   triggers,
-				CheckPause: true,
-			})
-			return err
-		}
-	}
-
-	if _, _, err := admitBotWake(q, b, botWakeReq{
+	run, _, err := admitBotWake(q, b, botWakeReq{
 		Automation: automation,
 		Cause:      "needs_you",
 		DedupKey:   primaryDedup,
@@ -1347,7 +1322,8 @@ func botProcessNeedsYou(q *Request, b *botFull, s agentSession, cur db.BotWakeCu
 		Source:     "needs_you",
 		Triggers:   triggers,
 		CheckPause: true,
-	}); err != nil {
+	})
+	if err != nil || deref(run.Reason) == "active_run" {
 		return err
 	}
 	return advance()
