@@ -444,7 +444,7 @@ function Conversation(props: { id: string; onClose: () => void }) {
             <span class="grow" />
             <SearchField label="Search thread" value={q()} onInput={setQ} onSearch={search} />
             <Show when={hits() !== null || (!!thread.win && thread.win.blocks.length < thread.win.total)}>
-              <div class="conv-search-results" data-active={!!hits()} data-partial={!!thread.win && thread.win.blocks.length < thread.win.total}>
+              <div class="conv-search-results" data-active={String(!!hits())} data-partial={String(!!thread.win && thread.win.blocks.length < thread.win.total)}>
                 <span class="count" aria-live="polite">
                   {hits() ? `${hits()!.length ? hit() + 1 : 0} of ${hits()!.length}` : `${thread.win!.blocks.length.toLocaleString('en')} of ${thread.win!.total.toLocaleString('en')}`}
                 </span>
@@ -563,7 +563,7 @@ function Conversation(props: { id: string; onClose: () => void }) {
           <Show
             when={activeConvTab() === 'swarm'}
             fallback={
-              <div class="pane" data-related-work={inRelated()}>
+              <div class="pane" data-related-work={String(inRelated())}>
                 <DropZone onFiles={files.add} disabledReason={off() ? 'offline' : undefined}>
                   <Show when={!!thread.win} fallback={<Skeleton rows={6} />}>
                     <Show when={!!scope()}>

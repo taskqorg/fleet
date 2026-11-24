@@ -131,11 +131,15 @@ export async function checkThreadSelection(page: Page, origin: string, keys: str
     await page.getByRole('button', { name: 'Search thread', exact: true }).click();
     const search = page.getByRole('searchbox', { name: 'Search thread' });
     await search.fill('KEEP first');
+    const jumping = page.waitForRequest(r => new URL(r.url()).pathname === '/api/ops/thread_entries' && !!r.postDataJSON().around);
+    const response = page.waitForResponse(r => new URL(r.url()).pathname === '/api/ops/thread_entries' && !!r.request().postDataJSON().around);
     await search.press('Enter');
+    await jumping;
+    await page.getByRole('button', { name: 'Previous hit' }).waitFor();
+    await page.evaluate(() => new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
     const anchor = await page.evaluate(locateCaret, { text: ' KEEP last OUTSIDE', offset: ' KEEP last'.length });
     await page.mouse.move(anchor.x, anchor.y);
     await page.mouse.down();
-    const response = page.waitForResponse(r => new URL(r.url()).pathname === '/api/ops/thread_entries' && !!r.request().postDataJSON().around);
     releaseJump();
     const window = await (await response).json() as { entries: { key: string }[] };
     assert.ok(window.entries.every(entry => entry.key !== keys[250] && entry.key !== keys.at(-1)));
