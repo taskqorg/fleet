@@ -89,6 +89,18 @@ Every element opens its detail in the app: a host in System, a slot or event in 
 * **Slot identity:** `slots` is a count, not a list. Placing a run in a slot tile needs the run-to-slot assignment, or tiles drawn from the running executions in start order.
 * **Wall mode:** read-only access for the wall mode needs a viewer grant without other rights.
 
+
+## Blocks
+
+* [Status pill](../controls/status-pill.md): the fleet's state in the status bar.
+* [Figure tile](../controls/figure-tile.md): the six figures with sparklines.
+* [Host band](../controls/host-band.md): one band per host.
+* [Gauge](../controls/fill-bar.md#gauge): CPU, memory and disk in a band head.
+* [Worker slot](../controls/worker-slot.md): one tile per slot in a band.
+* [Run strip](../controls/time-strip.md#run-strip): the 24-hour strip of a band.
+* [Live row](../controls/live-row.md): projects, delivery, CI runners and events in the side column.
+* [State dot and word](../controls/state-badge.md#dot-and-word): states in slots and rows.
+
 ## Design board
 
 The rendered states are on the [design board](../README.md#design-board), canvas [screens/live.bl](../board/screens/live.bl): normal, and "something breaks". Totals were taken from the live Runners screen on 24 Nov; slot contents are illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).
