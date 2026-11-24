@@ -2,7 +2,7 @@
 import { createSignal, For } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import {
-  StateDot, Avatar, ProjectChip, Button, QuestionCard, SessionCard, SessionCardSkeleton, BotTile, PulseLine, TargetPicker, Composer, Ago,
+  StateDot, Avatar, ProjectChip, Button, QuestionCard, SessionCard, SessionCardSkeleton, BotTile, PulseLine, TargetPicker, Composer, QuietSummary, Ago,
   states, lifeOf, type Life, type LifeFamily, type LifeRef, type Target,
 } from '../src/index.ts';
 import { NOW, min, hr } from './fixtures.ts';
@@ -92,6 +92,14 @@ function TargetDemo() {
   </div>;
 }
 
+function QuietDemo() {
+  return <div class="col">
+    <QuietSummary span="Overnight" facts="12 tasks done, 2 pull requests merged, 0 failures" watcher="HAL0" onAsk={() => {}} onLive={() => {}} />
+    <QuietSummary span="Today" facts="3 sessions done, 1 pull request merged" onLive={() => {}} />
+    <QuietSummary loading />
+  </div>;
+}
+
 export const HOME_BLOCKS: BookSection[] = [
   ['state-dot', 'State dot and word', 'state-badge', () => <StateDotDemo />, () => <>OR-55: one word, tone and dot per state. Working pulses, Stopped is hollow, Asleep is a dashed ring. Below: today's task, execution, bot-run and session states mapped to it (registry <span class="mono">lifeOf</span>).</>],
   ['avatar', 'Avatar, project chip, button kinds', 'session-card', () => <AtomsDemo />, () => <>A letter in a tone (P for a project PM) or the bot's harness mark; md and sm. The attention kind is a question's other choice.</>],
@@ -99,5 +107,6 @@ export const HOME_BLOCKS: BookSection[] = [
   ['session-card', 'Session card', 'session-card', () => <SessionCardDemo />, () => <>OR-50: working with progress, waiting for you with its question, queued, failed with the recovery question, done (leaves Home), stale and loading. The whole card opens the session; the question acts in place.</>],
   ['bot-tile', 'Bot tile', 'bot-tile', () => <BotTileDemo />, () => <>Asleep, waking and wake failed. Wake on the first tile runs the sequence.</>],
   ['pulse-line', 'Pulse line and blocker chip', 'pulse-line', () => <PulseDemo />, () => <>Normal, blocked (two chips, then +K; a zero count is hidden) and stale.</>],
+  ['quiet-summary', 'Quiet summary', 'quiet-summary', () => <QuietDemo />, () => <>OR-50: nothing waits and nothing failed. Since the last visit with a watcher, a first visit (today) without one, and loading.</>],
   ['target-picker', 'Composer target picker', 'composer', () => <TargetDemo />, () => <>Idle and typing. Click the chip: search, project PMs, bots with their state, then a new session; arrows move, Enter picks, Escape closes.</>],
 ];

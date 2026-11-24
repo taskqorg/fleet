@@ -1,6 +1,6 @@
 # Quiet summary
 
-**Code.** *Target*: `QuietSummary` in `packages/ui`, not built yet. Board: [blocks.bl](../board/blocks.bl), master `Quiet summary`.
+**Code.** `QuietSummary` in `packages/ui`. Demo: [book](../book/index.html#quiet-summary). Board: [blocks.bl](../board/blocks.bl), master `Quiet summary`.
 
 **Purpose.** The quiet state of [Home](../pages/home.md): when nothing waits and nothing failed, it says what happened while the person was away and who keeps watch ([OR-50](../owner-rules.md); [useful idle work area](../patterns/list-detail.md)).
 

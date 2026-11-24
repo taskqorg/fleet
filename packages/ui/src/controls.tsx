@@ -16,6 +16,7 @@ export * from './controls/session-card.tsx';
 export * from './controls/bot-tile.tsx';
 export * from './controls/pulse-line.tsx';
 export * from './controls/target-picker.tsx';
+export * from './controls/quiet-summary.tsx';
 export * from './controls/tool-line.tsx';
 export * from './controls/context-panel.tsx';
 export * from './controls/status-pill.tsx';

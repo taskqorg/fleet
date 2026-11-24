@@ -68,8 +68,8 @@ try {
     assert.ok(!(await r.text()).includes('"mappings"'), `${path} serves no source map`);
   }
 
-  // A render crash: Overview receives a reply it cannot render, shows a recoverable error and reports it.
-  await page.route('**/api/ops/questions_list', route => route.fulfill({ json: { questions: null } }));
+  // A render crash: Home receives a reply it cannot render, shows a recoverable error and reports it.
+  await page.route('**/api/ops/questions_list', route => route.fulfill({ json: { questions: [null] } }));
   await page.goto(server.origin + '/overview');
   await page.getByText('This page failed to render.', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Reload' }).waitFor();

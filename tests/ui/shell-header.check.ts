@@ -90,7 +90,7 @@ export async function checkShellHeader(browser: Browser, origin: string, seed: R
     await panel.getByRole('button', { name: 'Restore Bravo' }).click();
     assert.ok(await until(async () => await row('Bravo').count() === 1), 'a restored project shows again');
     await p.keyboard.press('Escape');
-    // The outside indicator opens the Overview without the focus.
+    // The outside indicator opens Home without the focus.
     await call('person_settings_set', { focus: ['hdr-alpha'] });
     await p.reload(); assert.ok(await until(async () => await outside.count() === 1), 'the indicator shows after a reload');
     // Other checks of the same run leave needs-you items of their own (some outside projects): compare counts, not zero.
@@ -104,7 +104,7 @@ export async function checkShellHeader(browser: Browser, origin: string, seed: R
     await p.goto(origin + '/tasks'); await row('Alpha').waitFor();
     assert.ok(await until(async () => await n() === before - 1, 5000), `an ignored project is not counted (${before} before, ${await n()} after)`);
     assert.deepEqual(errors, []);
-    console.log('ok Shell header: title, search icon opens Spotlight, focus chip toned, ignore hides a project from list and picker and restores, outside-focus indicator opens the Overview');
+    console.log('ok Shell header: title, search icon opens Spotlight, focus chip toned, ignore hides a project from list and picker and restores, outside-focus indicator opens Home');
   } finally {
     await call('person_settings_set', { focus: [], ignored: [], focusPresetDelete: 'Core' }).catch(() => {});
     await context.close();

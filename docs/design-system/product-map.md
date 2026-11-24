@@ -69,11 +69,11 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 
 | Capability | Section | Route and screen | Built | Prod | Read or action |
 |---|---|---|---|---|---|
-| Start screen | Home | `/`, redirects to `/home` (the Overview until wave 1) | partly: Home not built (OR-50) | checked | — |
-| Home: sessions, their questions, composer, pulse | Home | `/home`, none | not built | not checked: not built; the server answers 404 | target: `sessions_list`, `questions_list`, `bot_list`, `session_presets`, `session_start`, `message_send`, `nav_counts` ([home](pages/home.md#data)) |
+| Start screen | Home | `/`, redirects to `/home` | built | checked: fixtures | — |
+| Home: sessions, their questions, composer, pulse | Home | `/home`, Home | built (FLT-48) | checked: fixtures at 1440 and 390 px (`tests/ui/home.check.ts`) | `sessions_list`, `questions_list`, `executions_list`, `bot_list`, `bot_run`, `project_list`, `session_presets`, `session_start`, `message_send`, `questions_answer`, `person_visit`, `publishing_status` ([home](pages/home.md#data)) |
 | Live: hosts, slots, delivery, CI, events | Live | `/live`, Live | built | checked at 1440 and 390 px against production data | `hosts_list`, `executions_runners`, `executions_list`, `task_page`, `delivery_status`, `executions_ci`, `project_list` ([live](pages/live.md#data)) |
-| Overview: Needs you, hosts, delivery in flight | Home and Live | `/overview`, Overview | built | checked: ready in 2.5 s, 35 need you, 3 hosts | `questions_list`, `executions_list`, `hosts_list`, `publishing_status`, `task_page`, `questions_answer` |
-| Overview item | Home | `/overview/<id>`, Overview with the item | built | not checked: no item opened | as above |
+| Overview: Needs you, hosts, delivery in flight | Home and Live | `/overview`, redirects to `/home` | retired: Home replaces it (FLT-48) | — | — |
+| Session from Home | Home | `/home/<code>`, the session | partly: the conversation view until FLT-49 | checked: fixtures | `entity_resolve`, as Conversations |
 | Conversation list with summary | Conversations | `/conversations`, list and summary by project | built | checked: 539 conversations | `sessions_list`, `project_list`, `nav_counts` |
 | New conversation from a preset | Conversations | `/conversations/new`, preset picker in the work area | built | checked: presets listed | `session_presets`, `project_list`, `session_start` |
 | One conversation | Conversations | `/conversations/<uuid>`, transcript, composer, metrics header | partly: metrics header and tool rows shown (OR-51, OR-52, OR-54), UUID in the URL (OR-38) | checked | `session_get`, `thread_entries`, `thread_blocks`, `thread_composer`, `thread_search`, `thread_export`, `message_send`, `questions_answer`, `session_rename`, `session_archive`, `session_unarchive`, `session_transition`, `session_fork`, `session_handoffs`, `execution_stop`, `account_list`, `profiles_list` |
@@ -127,7 +127,7 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 | One state vocabulary | all | every state badge | partly: Done, Completed and Succeeded still all appear (OR-55) | checked | — |
 | Measurement basis per number | all | totals and resources | built; *Target* OR-59 moves marks to Details | checked: `≈` and `≥` shown in lists and headers | `analytics_query`, `spend_summary` |
 | Drill-down from a total or problem to its cause | all | totals, Needs you | partly: often two or more clicks (UR-63) | not checked: not walked | `executions_list`, `analytics_query` |
-| Decisions inline, in the work and in one place | Home | Overview Needs you, task, conversation | partly: no session card on Home (OR-53) | checked: 35 need you shown, not answered | `questions_list`, `questions_answer` |
+| Decisions inline, in the work and in one place | Home | Home cards, task, conversation | built | checked: fixtures, answered in place | `questions_list`, `questions_answer` |
 | Result viewers (text, diff, image, video) | Projects | `/results/<id>` | partly: raw JSON and text only seen | broken: see one result | `artifact_get` |
 | Light and dark, desktop and phone | all | the shell | partly: phone rail not built (OR-60) | checked at 390 px in dark | — |
 
@@ -136,12 +136,12 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 | Capability | Section | Route and screen | Built | Prod | Read or action |
 |---|---|---|---|---|---|
 | Tasks across projects by state, priority and progress | Home (pulse), Projects | `/tasks` | built | checked | `task_page` |
-| Everything waiting for a person | Home | `/overview` Needs you | partly: list, not session cards (OR-50, OR-53) | checked | `questions_list`, `executions_list` |
+| Everything waiting for a person | Home | `/home` Waiting for you | built | checked: fixtures | `questions_list`, `sessions_list` |
 | Change priority; pause or continue work | Projects | `/tasks/<id>` | built | not checked: action | `task_update` |
-| Problems aggregated by cause with count and newest time | Home, Live | `/overview` | partly: repeats not yet one item `×N` (OR-58) | checked | `executions_list`, `hosts_list` |
-| Sessions with what each does now | Home | none | not built: no "now" line source ([home](pages/home.md#open)) | not checked: not built | `sessions_list` |
-| Composer that picks who to talk to | Home | none (`/conversations/new` today) | partly | checked: presets on `/conversations/new` | `session_presets`, `session_start`, `message_send` |
-| Quiet Home: what happened while away | Home | none | not built | not checked: not built | — |
+| Problems aggregated by cause with count and newest time | Home, Live | `/home` blocker chips | partly: Home chips with `×N`; Live not built | checked: fixtures | `executions_list`, `questions_list` |
+| Sessions with what each does now | Home | `/home` session cards | built | checked: fixtures | `sessions_list` `now` ([home](pages/home.md#data)) |
+| Composer that picks who to talk to | Home | `/home` composer | built | checked: fixtures, picker | `session_presets`, `session_start`, `message_send`, `bot_run` |
+| Quiet Home: what happened while away | Home | `/home` quiet summary | built | checked: fixtures | `person_visit`, `sessions_list`, `publishing_status` |
 
 ### Live
 
@@ -174,7 +174,7 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 | Bot name, instructions, schedule under its grants | Library › Bots | `/bots/<id>` Settings | built | not checked: action | `bot_automation_save`, `bot_settings_save` |
 | Create, edit, enable, pause, run now | Home, Library › Bots | `/bots/<id>`, `/bots/new` | built | not checked: actions | `bot_run`, `bot_pause`, `bot_stop`, `bot_automation_save` |
 | Run history with causes and links | Library › Bots | `/bots/<id>` Runs | partly | broken: a cause shows as the raw code `unknown:abandoned message` | `bot_runs` |
-| Active and asleep bots; wake one | Home | `/bots` | partly: no Asleep row on Home (OR-50) | checked: state shown | `bot_list`, `bot_run`, `message_send` |
+| Active and asleep bots; wake one | Home | `/home` Asleep row, `/bots` | built | checked: fixtures | `bot_list`, `bot_run`, `message_send` |
 
 ### Conversations
 

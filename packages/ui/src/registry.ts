@@ -185,7 +185,7 @@ export const workspaces = [
   { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', section: 'lab', root: 'lab', app: true, nav: true },
   { id: 'library', label: 'Library', icon: 'rows-3', section: 'library', root: 'agents', app: false, nav: true },
   { id: 'system', label: 'System', icon: 'settings', section: 'system', root: 'hosts', app: false, nav: true },
-  { id: 'overview', label: 'Overview', icon: 'house', section: 'home', app: true, nav: false },
+  { id: 'overview', label: 'Home', icon: 'house', section: 'home', app: true, nav: false },
   { id: 'tasks', label: 'Tasks', icon: 'list', section: 'projects', app: true, nav: false },
   { id: 'results', label: 'Results', icon: 'file-text', section: 'projects', app: true, nav: false },
   { id: 'delivery', label: 'Delivery', icon: 'git-merge', section: 'projects', app: true, nav: false },

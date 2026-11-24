@@ -1,6 +1,6 @@
 # Home (screen 1)
 
-**Status.** Target ([OR-50](../owner-rules.md)). Until it is built, `/` opens the [Overview](overview.md).
+**Status.** Built ([OR-50](../owner-rules.md), [FLT-48](https://youtrack.ufobe.com/issue/FLT-48)): `app/src/views/home.tsx`. It replaces the [Overview](overview.md). A card opens the session at `/home/<code>`; until the one session view ([FLT-49](https://youtrack.ufobe.com/issue/FLT-49)) lands there, that address shows the conversation view.
 
 **App route:** `/home`, and `/` opens it. Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 
@@ -84,13 +84,17 @@ Behaviour:
 |---|---|
 | Groups and cards | `sessions_list` grouped by state, in attention order (waiting, failed, running, preparing); rows carry `activityAt` and `now` |
 | Now line | `now` on each `sessions_list` row: the first sentence of the latest agent message as plain text, else the attached task's title, at most 160 characters |
-| Progress | `session_context` `plan` (`done` of `total`), read for a card that is open or in view |
 | Quiet summary | `person_visit {page: "home"}` on each Home open: it records the visit and answers `previousAt`, the visit before; the summary counts from there |
-| Questions on cards | `questions_list` for the person, matched to the asking session; answered with `reply` / `question_answer` |
-| Asleep bots | `bot_list`; Wake is `bot_run`; a message to a bot's Home is `message_send` |
-| Composer | `session_presets`, `session_start`, `message_send` |
-| Pulse line | `nav_counts`, `task_page` counts for done today, `executions_list` failures grouped by cause |
+| Questions on cards | `questions_list` (open, in the focus), matched to the asking session; a question no listed session asks (a task's acceptance) is a card of its own. A problem question (`cause` `problem:…`) is a blocker chip instead. Answered with `questions_answer`; a key request opens Connections |
+| Asleep bots | `bot_list` rows with no `activeRunId`; Wake is `bot_run`; a message to a bot's Home is `message_send`, or `bot_run` with the text when it sleeps |
+| Composer | Project PMs from `project_list` and their open `pm` sessions (`message_send`); a PM with none starts from the project's PM preset (`session_presets`, `session_start`); bots from `bot_list`. The last target picked stays in this browser |
+| Pulse line | Working (`running`) and queued (`preparing`) sessions from the groups' read; done today: `sessions_list` succeeded since midnight; blockers: `executions_list` `needsYou` failures grouped by `failure.cause` and host, plus problem questions grouped by what they are about |
 | Live updates | `changes_since` over sessions, questions, bot runs and executions |
+
+## Open
+
+* **Progress and meta facts:** cards show the latest activity only. The plan bar (`session_context` `plan`), step, host and next timer need one read per card; a batched read for the cards in view is not built.
+* **Wake failed reason:** shown from the `bot_run` reply; a run that fails after it was admitted shows on the bot's card once it runs.
 
 ## Decisions
 
