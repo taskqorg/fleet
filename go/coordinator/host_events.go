@@ -394,12 +394,12 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 	if err := cleanupClosedDeltas(q, xid); err != nil {
 		return none, err
 	}
-	if err := markObservation(q, xid, "confirmed"); err != nil {
-		return none, err
-	}
-	hasProcessClosed, hasConfirmedUsage, hasReceiptOutboxFailed, hasArtifactOutboxFailed := false, false, false, false
+	hasLiveEvent, hasProcessClosed, hasConfirmedUsage, hasReceiptOutboxFailed, hasArtifactOutboxFailed := false, false, false, false, false
 	for _, p := range prepared {
 		typ := p.value.text("type")
+		if typ != string(contract.FleetEventTypeTeardown) && typ != string(contract.FleetEventTypeOutboxFailed) {
+			hasLiveEvent = true
+		}
 		if typ == string(contract.FleetEventTypeProcessClosed) {
 			hasProcessClosed = true
 		}
@@ -434,6 +434,11 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 			if err := q.db().EventsExecutionProblem(q.ctx(), db.EventsExecutionProblemParams{ID: xid, Problem: &problem}); err != nil {
 				return none, err
 			}
+		}
+	}
+	if hasLiveEvent && !(executionEnds(string(execution.State)) && execution.Observation == db.ObservationUnconfirmed) {
+		if err := markObservation(q, xid, "confirmed"); err != nil {
+			return none, err
 		}
 	}
 	ended, err := executionEnded(q, xid)

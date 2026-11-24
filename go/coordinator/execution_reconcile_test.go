@@ -468,3 +468,278 @@ func queryScalarTest(t *testing.T, e *testCoordEnv, sql string) string {
 	}
 	return out
 }
+
+// Requirement: fleet.md Reliability, T-FLT-36 (executions_reconcile, DispLostCandidates, executionAbandon, host_events):
+// 1) Historical executions stuck in preparing/running/waiting after missed or rejected completion acks
+//    (non-artifact waiting + process.closed or outbox.failed, accepted start dropped from activeExecutions,
+//    terminal command with open execution, teardown on open execution, or removed host) reconcile safely via
+//    executions_reconcile (preview & apply) to failed/unconfirmed/unknown:abandoned with cleared wait_reason and
+//    operator audit provenance, while preserving live runs, artifact waits, and queued preparing runs.
+// 2) Non-owner callers receive 403 on executions_reconcile, and late teardown events do not overwrite
+//    observation='unconfirmed' back to 'confirmed' on already-abandoned executions.
+// Risk: historical stuck runs remain wedged forever or are misclassified as confirmed by late teardown events,
+// or an unsafe bulk recovery op kills live executions or artifact waits without audit provenance.
+func TestReconcileHistoricalStuckExecutions(t *testing.T) {
+	t.Setenv("FLEET_PROCESS_CLOSED_GRACE_MS", "200")
+	e := openTestCoordinator(t, false)
+	owner := e.ownerHeaders()
+	member := map[string]string{
+		"Authorization":  "Bearer " + e.browserSecret,
+		"X-Fleet-Person": "member@trial.test",
+	}
+	sec := e.registerHost(t, "h-hist")
+	hostHdr := map[string]string{"Authorization": "Bearer " + sec}
+	_ = e.registerHost(t, "h-gone")
+
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+INSERT INTO definition(kind,id,path,head,project_id) VALUES
+ ('project','hist-proj','config/projects/hist-proj/project.json',1,'hist-proj');
+INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message) VALUES
+ ('project','hist-proj',1,'{"settings":{"id":"hist-proj","name":"Hist Proj","contextFiles":[]},"contextFiles":[]}','h1','editor','person','t');
+INSERT INTO task(id,title,project_id,state) VALUES
+ ('t-wait-pc','Waiting after process.closed','hist-proj','in_progress'),
+ ('t-wait-ob','Waiting after outbox.failed','hist-proj','in_progress'),
+ ('t-prep-acc','Preparing accepted dropped','hist-proj','in_progress'),
+ ('t-term-cmd','Terminal command open exec','hist-proj','in_progress'),
+ ('t-teardown','Teardown open exec','hist-proj','in_progress'),
+ ('t-removed','Removed host open exec','hist-proj','in_progress'),
+ ('t-live','Live control','hist-proj','in_progress'),
+ ('t-wait-art','Artifact wait control','hist-proj','in_progress'),
+ ('t-prep-q','Queued preparing control','hist-proj','queued');
+INSERT INTO session(id,project_id,task_id,host_id,payload) VALUES
+ ('s-wait-pc','hist-proj','t-wait-pc','h-hist','{"agentConfig":{"id":"claude-worker","harness":"claude","model":"sonnet"}}'),
+ ('s-wait-ob','hist-proj','t-wait-ob','h-hist','{"agentConfig":{"id":"claude-worker","harness":"claude","model":"sonnet"}}'),
+ ('s-prep-acc','hist-proj','t-prep-acc','h-hist','{"agentConfig":{"id":"claude-worker","harness":"claude","model":"sonnet"}}'),
+ ('s-term-cmd','hist-proj','t-term-cmd','h-hist','{"agentConfig":{"id":"claude-worker","harness":"claude","model":"sonnet"}}'),
+ ('s-teardown','hist-proj','t-teardown','h-hist','{"agentConfig":{"id":"claude-worker","harness":"claude","model":"sonnet"}}'),
+ ('s-removed','hist-proj','t-removed','h-gone','{"agentConfig":{"id":"claude-worker","harness":"claude","model":"sonnet"}}'),
+ ('s-live','hist-proj','t-live','h-hist','{"agentConfig":{"id":"claude-worker","harness":"claude","model":"sonnet"}}'),
+ ('s-wait-art','hist-proj','t-wait-art','h-hist','{"agentConfig":{"id":"claude-worker","harness":"claude","model":"sonnet"}}'),
+ ('s-prep-q','hist-proj','t-prep-q','h-hist','{"agentConfig":{"id":"claude-worker","harness":"claude","model":"sonnet"}}');
+INSERT INTO execution(id,kind,state,observation,project_id,task_id,session_id,host_id,harness,model,wait_reason,started_at,last_seen_at,data) VALUES
+ ('e-wait-pc','agent_run','waiting','confirmed','hist-proj','t-wait-pc','s-wait-pc','h-hist','claude','sonnet','question',now()-interval '10 minutes',now()-interval '9 minutes','{"id":"e-wait-pc","sessionId":"s-wait-pc","hostId":"h-hist","taskId":"t-wait-pc","waitReason":"question","waitDetail":"stale wait"}'),
+ ('e-wait-ob','agent_run','waiting','confirmed','hist-proj','t-wait-ob','s-wait-ob','h-hist','claude','sonnet','question',now()-interval '10 minutes',now()-interval '9 minutes','{"id":"e-wait-ob","sessionId":"s-wait-ob","hostId":"h-hist","taskId":"t-wait-ob","waitReason":"question"}'),
+ ('e-prep-acc','agent_run','preparing','confirmed','hist-proj','t-prep-acc','s-prep-acc','h-hist','claude','sonnet',NULL,now()-interval '10 minutes',now()-interval '9 minutes','{"id":"e-prep-acc","sessionId":"s-prep-acc","hostId":"h-hist","taskId":"t-prep-acc"}'),
+ ('e-term-cmd','agent_run','running','confirmed','hist-proj','t-term-cmd','s-term-cmd','h-hist','claude','sonnet',NULL,now()-interval '10 minutes',now()-interval '9 minutes','{"id":"e-term-cmd","sessionId":"s-term-cmd","hostId":"h-hist","taskId":"t-term-cmd"}'),
+ ('e-teardown','agent_run','running','confirmed','hist-proj','t-teardown','s-teardown','h-hist','claude','sonnet',NULL,now()-interval '10 minutes',now()-interval '9 minutes','{"id":"e-teardown","sessionId":"s-teardown","hostId":"h-hist","taskId":"t-teardown"}'),
+ ('e-removed','agent_run','running','confirmed','hist-proj','t-removed','s-removed','h-gone','claude','sonnet',NULL,now()-interval '10 minutes',now()-interval '9 minutes','{"id":"e-removed","sessionId":"s-removed","hostId":"h-gone","taskId":"t-removed"}'),
+ ('e-live','agent_run','running','confirmed','hist-proj','t-live','s-live','h-hist','claude','sonnet',NULL,now()-interval '2 minutes',now()-interval '10 seconds','{"id":"e-live","sessionId":"s-live","hostId":"h-hist","taskId":"t-live"}'),
+ ('e-wait-art','agent_run','waiting','confirmed','hist-proj','t-wait-art','s-wait-art','h-hist','claude','sonnet',NULL,now()-interval '2 minutes',now()-interval '1 minute','{"id":"e-wait-art","sessionId":"s-wait-art","hostId":"h-hist","taskId":"t-wait-art","waitReason":"artifacts","waitingSince":`+jsonMilliLiteral(time.Now().Add(-1*time.Minute))+`,"pendingArtifacts":["out.txt"],"declaredArtifacts":["out.txt"]}'),
+ ('e-prep-q','agent_run','preparing','confirmed','hist-proj','t-prep-q','s-prep-q','h-hist','claude','sonnet',NULL,NULL,NULL,'{"id":"e-prep-q","sessionId":"s-prep-q","hostId":"h-hist","taskId":"t-prep-q"}');
+INSERT INTO command(id,execution_id,session_id,host_id,project_id,kind,status,handed_out,payload,updated_at) VALUES
+ ('cmd-wait-pc','e-wait-pc','s-wait-pc','h-hist','hist-proj','start','started',true,'{}',now()-interval '9 minutes'),
+ ('cmd-wait-ob','e-wait-ob','s-wait-ob','h-hist','hist-proj','start','started',true,'{}',now()-interval '9 minutes'),
+ ('cmd-prep-acc','e-prep-acc','s-prep-acc','h-hist','hist-proj','start','accepted',true,'{}',now()-interval '9 minutes'),
+ ('cmd-term-cmd','e-term-cmd','s-term-cmd','h-hist','hist-proj','start','completed',true,'{}',now()-interval '9 minutes'),
+ ('cmd-teardown','e-teardown','s-teardown','h-hist','hist-proj','start','started',true,'{}',now()-interval '9 minutes'),
+ ('cmd-removed','e-removed','s-removed','h-gone','hist-proj','start','started',true,'{}',now()-interval '9 minutes'),
+ ('cmd-live','e-live','s-live','h-hist','hist-proj','start','started',true,'{}',now()-interval '10 seconds'),
+ ('cmd-wait-art','e-wait-art','s-wait-art','h-hist','hist-proj','start','completed',true,'{}',now()-interval '1 minute'),
+ ('cmd-prep-q','e-prep-q','s-prep-q','h-hist','hist-proj','start','pending',false,'{}',now()-interval '10 minutes');
+INSERT INTO event(id,execution_id,session_id,project_id,event_seq,type,payload,updated_at) VALUES
+ ('ev-wait-pc','e-wait-pc','s-wait-pc','hist-proj',1,'process.closed','{"type":"process.closed","data":{"exitCode":0}}',now()-interval '5 minutes'),
+ ('ev-wait-ob','e-wait-ob','s-wait-ob','hist-proj',1,'outbox.failed','{"type":"outbox.failed","data":{"route":"/api/hosts/receipts","status":409}}',now()-interval '5 minutes'),
+ ('ev-teardown','e-teardown','s-teardown','hist-proj',1,'teardown','{"type":"teardown","data":{"removed":true}}',now()-interval '5 minutes'),
+ ('ev-wait-art-pc','e-wait-art','s-wait-art','hist-proj',1,'process.closed','{"type":"process.closed","data":{"exitCode":0}}',now()-interval '1 minute');
+UPDATE host SET state='removed', updated_at=now()-interval '5 minutes' WHERE host_id='h-gone';
+`)
+
+	// Live host reports only e-live as active (plus e-prep-q is still pending pickup).
+	time.Sleep(300 * time.Millisecond)
+	code, body := e.callJSON(t, "POST", "/api/hosts/poll", contract.PollRequest{
+		HostId:           "h-hist",
+		Platform:         contract.Platform("darwin"),
+		Capabilities:     []string{"claude"},
+		Stores:           []contract.StoreReport{},
+		Problems:         []contract.EdgeProblem{},
+		ProjectRoots:     []string{},
+		GitConnections:   []string{},
+		ActiveExecutions: []string{"e-live"},
+	}, hostHdr)
+	if code != 200 {
+		t.Fatalf("poll = %d %v", code, body)
+	}
+
+	// Non-owner must be refused.
+	code, _ = e.callJSON(t, "POST", "/api/ops/executions_reconcile", doc{"preview": true}, member)
+	if code != 403 {
+		t.Fatalf("non-owner executions_reconcile = %d, want 403", code)
+	}
+
+	// Preview with explicit ids including both stuck runs and protected controls.
+	allIDs := []string{
+		"e-wait-pc", "e-wait-ob", "e-prep-acc", "e-term-cmd", "e-teardown", "e-removed",
+		"e-live", "e-wait-art", "e-prep-q", "missing-id",
+	}
+	code, prev := e.callJSON(t, "POST", "/api/ops/executions_reconcile", doc{"preview": true, "ids": allIDs}, owner)
+	if code != 200 || prev["preview"] != true || len(anys(prev["reconciled"])) != 0 {
+		t.Fatalf("executions_reconcile preview = %d %v", code, prev)
+	}
+	wantCauses := map[string]string{
+		"e-wait-pc":  "process_closed_no_receipt",
+		"e-wait-ob":  "outbox_failed_receipt",
+		"e-prep-acc": "missing_from_host_active_executions",
+		"e-term-cmd": "terminal_command_open_execution",
+		"e-teardown": "workspace_teardown",
+		"e-removed":  "host_removed",
+	}
+	gotCandidates := map[string]string{}
+	for _, raw := range anys(prev["candidates"]) {
+		c := mapOf(raw)
+		id, _ := c["id"].(string)
+		cause, _ := c["cause"].(string)
+		gotCandidates[id] = cause
+	}
+	for id, want := range wantCauses {
+		if gotCandidates[id] != want {
+			t.Fatalf("preview candidate %s cause = %q, want %q (all=%v)", id, gotCandidates[id], want, gotCandidates)
+		}
+	}
+	if len(anys(prev["skipped"])) != 4 {
+		t.Fatalf("preview skipped = %v, want 4 controls+missing", prev["skipped"])
+	}
+	// Verify preview mutated nothing.
+	code, stBefore := e.callJSON(t, "POST", "/api/ops/execution_status", contract.ExecutionStatusRequest{ExecutionId: "e-wait-pc"}, owner)
+	if code != 200 || stBefore["state"] != "waiting" {
+		t.Fatalf("preview mutated e-wait-pc: %d %v", code, stBefore)
+	}
+
+	// Execute reconciliation with explicit audit reason (scanning without ids).
+	opReason := "T-FLT-36 operator reconciliation: no live worker process"
+	code, rec := e.callJSON(t, "POST", "/api/ops/executions_reconcile", doc{"preview": false, "reason": opReason}, owner)
+	if code != 200 || rec["preview"] != false {
+		t.Fatalf("executions_reconcile apply = %d %v", code, rec)
+	}
+	reconciledSet := map[string]bool{}
+	for _, raw := range anys(rec["reconciled"]) {
+		if id, ok := raw.(string); ok {
+			reconciledSet[id] = true
+		}
+	}
+	for id := range wantCauses {
+		if !reconciledSet[id] {
+			t.Fatalf("expected %s reconciled, got %v", id, rec["reconciled"])
+		}
+		code, st := e.callJSON(t, "POST", "/api/ops/execution_status", contract.ExecutionStatusRequest{ExecutionId: id}, owner)
+		if code != 200 || st["state"] != "failed" || st["observation"] != "unconfirmed" {
+			t.Fatalf("reconciled %s status = %d %v, want failed/unconfirmed", id, code, st)
+		}
+		code, sc := e.callJSON(t, "POST", "/api/ops/setting_changes", doc{"target": "execution:" + id}, owner)
+		if code != 200 || len(anys(sc["changes"])) != 1 {
+			t.Fatalf("audit for %s = %d %v, want 1 row", id, code, sc)
+		}
+		ch := mapOf(anys(sc["changes"])[0])
+		if ch["actor"] != testOwnerEmail || ch["value"] != "failed" || ch["reason"] != opReason {
+			t.Fatalf("audit row for %s = %v", id, ch)
+		}
+	}
+	// Verify waitReason and wait_reason were cleared on waiting runs.
+	var waitCol string
+	err := e.appStore.Read(e.ctx, nil, func(q *Request) error {
+		rows, err := q.db().DispExecStates(q.ctx(), []string{"e-wait-pc", "e-wait-ob"})
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			if r.WaitReason != "" {
+				waitCol = r.ID + ":" + r.WaitReason
+			}
+		}
+		return nil
+	})
+	if err != nil || waitCol != "" {
+		t.Fatalf("expected cleared waitReason, got err=%v waitCol=%q", err, waitCol)
+	}
+
+	// Verify controls were NOT touched.
+	for id, wantState := range map[string]string{
+		"e-live":     "running",
+		"e-wait-art": "waiting",
+		"e-prep-q":   "preparing",
+	} {
+		code, st := e.callJSON(t, "POST", "/api/ops/execution_status", contract.ExecutionStatusRequest{ExecutionId: id}, owner)
+		if code != 200 || st["state"] != wantState {
+			t.Fatalf("control %s state = %d %v, want %s", id, code, st, wantState)
+		}
+	}
+
+	// Idempotent re-run with explicit ids skips already-reconciled runs and controls.
+	code, rerun := e.callJSON(t, "POST", "/api/ops/executions_reconcile", doc{"preview": false, "ids": allIDs}, owner)
+	if code != 200 || len(anys(rerun["reconciled"])) != 0 || len(anys(rerun["skipped"])) != len(allIDs) {
+		t.Fatalf("idempotent rerun = %d %v", code, rerun)
+	}
+
+	// A late teardown event on an abandoned failed/unconfirmed execution MUST NOT mark observation='confirmed'.
+	tdData, _ := json.Marshal(contract.Teardown{Removed: true})
+	code, body = e.callJSON(t, "POST", "/api/hosts/events", contract.HostEvents{
+		HostId: "h-hist", ExecutionId: "e-wait-pc",
+		Events: []contract.HostEvent{{Id: "td-late", Seq: 99, Timestamp: nowMs(), Type: string(contract.FleetEventTypeTeardown), Data: tdData}},
+	}, hostHdr)
+	if code != 200 {
+		t.Fatalf("late teardown event = %d %v", code, body)
+	}
+	code, stAfterTd := e.callJSON(t, "POST", "/api/ops/execution_status", contract.ExecutionStatusRequest{ExecutionId: "e-wait-pc"}, owner)
+	if code != 200 || stAfterTd["state"] != "failed" || stAfterTd["observation"] != "unconfirmed" {
+		t.Fatalf("late teardown flipped observation: %d %v", code, stAfterTd)
+	}
+}
+
+// Requirement: fleet.md Reliability, T-FLT-36 (reconcileLostExecutions background pass):
+// The background lost pass reconciles historical non-artifact waiting runs, accepted preparing runs missing from
+// activeExecutions, terminal-command open runs, teardown open runs, and removed-host open runs automatically with
+// actor='fleet' audit rows, without touching live runs, artifact waits, or queued runs.
+// Risk: background reconciliation skips historical waiting/preparing/teardown/removed-host runs unless manually invoked.
+func TestReconcileLostPassHealsWaitingAndTeardown(t *testing.T) {
+	t.Setenv("FLEET_PROCESS_CLOSED_GRACE_MS", "200")
+	e := openTestCoordinator(t, false)
+	owner := e.ownerHeaders()
+	sec := e.registerHost(t, "h-bg")
+	hostHdr := map[string]string{"Authorization": "Bearer " + sec}
+
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+INSERT INTO definition(kind,id,path,head,project_id) VALUES
+ ('project','bg-proj','config/projects/bg-proj/project.json',1,'bg-proj');
+INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message) VALUES
+ ('project','bg-proj',1,'{"settings":{"id":"bg-proj","name":"BG Proj","contextFiles":[]},"contextFiles":[]}','b1','editor','person','t');
+INSERT INTO task(id,title,project_id,state) VALUES
+ ('tb-wait','Waiting stuck','bg-proj','in_progress'),
+ ('tb-live','Live control','bg-proj','in_progress');
+INSERT INTO session(id,project_id,task_id,host_id,payload) VALUES
+ ('sb-wait','bg-proj','tb-wait','h-bg','{"agentConfig":{"id":"claude-worker","harness":"claude","model":"sonnet"}}'),
+ ('sb-live','bg-proj','tb-live','h-bg','{"agentConfig":{"id":"claude-worker","harness":"claude","model":"sonnet"}}');
+INSERT INTO execution(id,kind,state,observation,project_id,task_id,session_id,host_id,harness,model,started_at,last_seen_at,data) VALUES
+ ('eb-wait','agent_run','waiting','confirmed','bg-proj','tb-wait','sb-wait','h-bg','claude','sonnet',now()-interval '5 minutes',now()-interval '4 minutes','{"id":"eb-wait","sessionId":"sb-wait","hostId":"h-bg","taskId":"tb-wait","waitReason":"question"}'),
+ ('eb-live','agent_run','running','confirmed','bg-proj','tb-live','sb-live','h-bg','claude','sonnet',now()-interval '2 minutes',now()-interval '10 seconds','{"id":"eb-live","sessionId":"sb-live","hostId":"h-bg","taskId":"tb-live"}');
+INSERT INTO event(id,execution_id,session_id,project_id,event_seq,type,payload,updated_at) VALUES
+ ('evb-pc','eb-wait','sb-wait','bg-proj',1,'process.closed','{"type":"process.closed","data":{"exitCode":0}}',now()-interval '2 minutes');
+`)
+	time.Sleep(300 * time.Millisecond)
+	code, body := e.callJSON(t, "POST", "/api/hosts/poll", contract.PollRequest{
+		HostId:           "h-bg",
+		Platform:         contract.Platform("darwin"),
+		Capabilities:     []string{"claude"},
+		Stores:           []contract.StoreReport{},
+		Problems:         []contract.EdgeProblem{},
+		ProjectRoots:     []string{},
+		GitConnections:   []string{},
+		ActiveExecutions: []string{"eb-live"},
+	}, hostHdr)
+	if code != 200 {
+		t.Fatalf("poll = %d %v", code, body)
+	}
+	if err := reconcileLostExecutions(e.ctx, e.app); err != nil {
+		t.Fatalf("reconcileLostExecutions: %v", err)
+	}
+	code, stWait := e.callJSON(t, "POST", "/api/ops/execution_status", contract.ExecutionStatusRequest{ExecutionId: "eb-wait"}, owner)
+	if code != 200 || stWait["state"] != "failed" || stWait["observation"] != "unconfirmed" {
+		t.Fatalf("eb-wait = %d %v, want failed/unconfirmed", code, stWait)
+	}
+	code, sc := e.callJSON(t, "POST", "/api/ops/setting_changes", doc{"target": "execution:eb-wait"}, owner)
+	if code != 200 || len(anys(sc["changes"])) != 1 || mapOf(anys(sc["changes"])[0])["actor"] != "fleet" {
+		t.Fatalf("eb-wait audit = %d %v, want 1 row by fleet", code, sc)
+	}
+	code, stLive := e.callJSON(t, "POST", "/api/ops/execution_status", contract.ExecutionStatusRequest{ExecutionId: "eb-live"}, owner)
+	if code != 200 || stLive["state"] != "running" || stLive["observation"] != "confirmed" {
+		t.Fatalf("eb-live = %d %v, want running/confirmed", code, stLive)
+	}
+}
