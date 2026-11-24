@@ -198,9 +198,12 @@ export async function checkLiveListUpdates(browser: Browser, origin: string, see
   p.on('request', r => {
     // The idle work area's Latest finished is its own short read (finished states only), not a list snapshot.
     if (r.url().endsWith('/api/ops/sessions_list') && String(r.postDataJSON()?.filter?.state) === 'succeeded,failed,cancelled') return;
-    if (r.url().endsWith('/api/ops/sessions_list') || r.url().endsWith('/api/ops/task_page')) snapshots.push(r.url().split('/').at(-1)!);
+    // The list's own reads; the project catalogue's per-project counts (limit 1, Projects facets) are other reads.
+    if ((r.url().endsWith('/api/ops/sessions_list') || r.url().endsWith('/api/ops/task_page')) && r.postDataJSON()?.limit !== 1) snapshots.push(r.url().split('/').at(-1)!);
   });
-  const frame = p.locator('.split-list [data-ui=list-view]');
+  // Conversations' list is in the control column; Tasks' is in its Projects facet (docs/design-system/pages/projects.md),
+  // where the control column holds the project catalogue.
+  const frame = p.locator('.split-list:not(:has([data-ui=project-catalogue])) [data-ui=list-view], .pw-facet [data-ui=list-view]');
   const counters = frame.locator('[data-ui=state-counters]');
   const counter = (name: string) => counters.getByRole('button', { name, exact: true });
   const updating = frame.getByRole('progressbar', { name: 'Updating' });

@@ -151,7 +151,7 @@ function Catalogue(props: {
         <Button label="New project" icon="plus" iconOnly kind="primary" pressed={props.creating} onClick={props.onCreate} />
       </ShellActions>
       <Show when={props.error}>{err => <ErrorBanner text={`Projects did not load: ${err()}`} onRetry={props.reload} />}</Show>
-      <section class="panel">
+      <section class="panel" data-ui="project-catalogue">
         <ListFrame pending={props.pending} bar={<FilterBar query={query()} onQuery={setQuery} placeholder="Find project" shown={shown().length} total={props.rows.length} />}>
           <Switch
             fallback={
