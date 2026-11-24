@@ -242,5 +242,35 @@ func putEventBatch(q *Request, prepared []preparedEvent, projectID *string) erro
 	if len(rows) == 0 {
 		return nil
 	}
-	return q.db().EventsInsert(q.ctx(), jsonBytes(rows))
+	return q.db().EventsInsert(q.ctx(), jsonNulFree(jsonBytes(rows)))
+}
+
+// jsonNulFree replaces each JSON escape \u0000 with \ufffd. PostgreSQL jsonb refuses U+0000 ("unsupported Unicode
+// escape sequence", 22P05), and a host event can carry one from a tool's output: the whole batch then failed with 500
+// and its host retried it every few minutes (2026-11-24). An escaped backslash before "u0000" is text, not an escape,
+// and stays.
+func jsonNulFree(b []byte) []byte {
+	const nul, repl = `\u0000`, `\ufffd`
+	if !bytes.Contains(b, []byte(nul)) {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); i++ {
+		if b[i] != '\\' {
+			out = append(out, b[i])
+			continue
+		}
+		if bytes.HasPrefix(b[i:], []byte(nul)) {
+			out = append(out, repl...)
+			i += len(nul) - 1
+			continue
+		}
+		// Any other escape is copied whole, so the backslash it starts never begins a match.
+		out = append(out, b[i])
+		if i+1 < len(b) {
+			i++
+			out = append(out, b[i])
+		}
+	}
+	return out
 }
