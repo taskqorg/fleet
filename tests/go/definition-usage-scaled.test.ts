@@ -5,7 +5,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startCoordinator} from '../harness.ts';
 
-test('scaled definition usage preserves all edge kinds, cycles, duplicate paths, saved revisions and scoped counts (requirement: definition usage complete leaf accounting; risk: recursive optimization omits descendants, double counts or leaks grants)', {timeout:60_000}, async()=>{
+// `-race` CI shards take ~67-70s for this scaled fixture (GitHub issue #349).
+test('scaled definition usage preserves all edge kinds, cycles, duplicate paths, saved revisions and scoped counts (requirement: definition usage complete leaf accounting; risk: recursive optimization omits descendants, double counts or leaks grants)', {timeout:120_000}, async()=>{
  const dir=mkdtempSync(join(tmpdir(),'fleet-definition-usage-'));
  const people=join(dir,'people.json');
  writeFileSync(people,JSON.stringify([{email:'owner@trial.test',owner:true,roles:['operator','architect']},{email:'scoped@trial.test',roles:['operator','architect'],grants:[{kind:'project',id:'desiign'}]}]));

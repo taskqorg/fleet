@@ -452,7 +452,7 @@ export function AppShell(p: {
               providers={[sectionProvider(p.nav, p.onGo), ...(p.search ?? [])]}
               memory={memoryFor(s.gen)}
               idle={p.searchIdle}
-              onClose={() => setSpot(null)}
+              onClose={() => setSpot(cur => cur?.seq === s.seq ? null : cur)}
             />
           )}
         </Show>
