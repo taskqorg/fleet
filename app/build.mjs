@@ -62,12 +62,16 @@ for (const name of ['fleet.svg', 'fleet-180.png', 'fleet-192.png', 'fleet-512.pn
   brand[name] = '/' + path;
   files.push(path);
 }
-// The installable views are the registry workspaces marked app: true (packages/ui/src/registry.ts), read through esbuild.
+// The installable views are the registry's seven rail sections (packages/ui/src/registry.ts, nav: true), read through esbuild:
+// the address bar shows their target routes (app/src/routes.ts), whose first segment names the section.
 const reg = await build({ entryPoints: [new URL('packages/ui/src/registry.ts', root).pathname], bundle: true, format: 'esm', write: false, loader: { '.json': 'json' } });
 const { workspaces } = await import('data:text/javascript;base64,' + Buffer.from(reg.outputFiles[0].text).toString('base64'));
-const VIEWS = Object.fromEntries(workspaces.filter(w => w.app).map(w => [w.id, ['Fleet ' + w.label, w.icon]]));
-// The coordinator serves index.html for these screens only (go/coordinator/artifact_routes.go appRoutes).
+const VIEWS = Object.fromEntries(workspaces.filter(w => w.nav).map(w => [w.id, ['Fleet ' + w.label, w.icon]]));
+// The sections with a manifest. The coordinator serves index.html for every path outside /api/ and the static files, so
+// earlier routes and unknown paths reach the app's redirect and not-found page (go/coordinator/artifact_routes.go appRoutes).
 writeFileSync(new URL('screens.json', out), JSON.stringify(Object.keys(VIEWS)));
+// The paths the service worker caches: the sections and the earlier screens that redirect to them.
+const ROUTED = [...new Set(workspaces.filter(w => w.nav || w.app).map(w => w.id))];
 const accent = tokens.color.light.accent;
 for (const [view, [name]] of Object.entries(VIEWS)) {
   writeFileSync(new URL(`manifests/${view}.webmanifest`, out), JSON.stringify({ id: `/${view}`, name, short_name: name.replace('Fleet ', ''), start_url: `/${view}`, scope: '/', display: 'standalone', background_color: tokens.color.light.bg, theme_color: accent, icons: [
@@ -90,7 +94,7 @@ const html = `<!doctype html>
   manifest.crossOrigin = 'use-credentials';
   function updateManifest() {
     const view = location.pathname.split('/')[1];
-    const href = '/manifests/' + (workspaces.includes(view) ? view : 'overview') + '.webmanifest';
+    const href = '/manifests/' + (workspaces.includes(view) ? view : 'home') + '.webmanifest';
     if (manifest.getAttribute('href') !== href) manifest.href = href;
   }
   updateManifest();
@@ -107,15 +111,15 @@ const version = createHash('sha256').update([...files].sort().join()).update(htm
 const precache = ['/' + cssName, ...files.filter(f => f.startsWith('assets/')).map(f => '/' + f)];
 writeFileSync(new URL('sw.js', out), `// Fleet service worker ${version}: app shell only; /api is never cached (design §5).
 const CACHE='fleet-${version}',ASSETS=${JSON.stringify(precache)};
-self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll([...ASSETS,'/overview']))));
+self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll([...ASSETS,'/home']))));
 // The app's Update button asks a waiting worker to take over at once (app/src/version.ts), so one click updates.
 self.addEventListener('message',e=>{if(e.data==='skip-waiting')self.skipWaiting()});
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET'||u.origin!==location.origin||u.pathname.startsWith('/api/'))return;
  if(u.pathname.startsWith('/assets/'))return e.respondWith(caches.match(e.request,{cacheName:CACHE}).then(r=>r||fetch(e.request).then(res=>{if(res.ok){const c=res.clone();caches.open(CACHE).then(x=>x.put(e.request,c))}return res})));
- // Only the app's own routes are cached, each under its own path; others are never cached.
- const app=/^\\/(${Object.keys(VIEWS).join('|')})(\\/[^/]*)?$/.test(u.pathname);
- if(e.request.mode==='navigate'&&app)return e.respondWith(fetch(e.request).then(r=>{if(r.ok&&r.headers.get('content-type')?.startsWith('text/html')){const c=r.clone();caches.open(CACHE).then(x=>x.put(u.pathname,c))}return r}).catch(()=>caches.match(u.pathname).then(r=>r||caches.match('/overview'))));});
+ // Only the app's own routes are cached (a section or an earlier screen, up to three segments deep), each under its own path; others are never cached.
+ const app=/^\\/(${ROUTED.join('|')})(\\/[^/]+){0,3}$/.test(u.pathname);
+ if(e.request.mode==='navigate'&&app)return e.respondWith(fetch(e.request).then(r=>{if(r.ok&&r.headers.get('content-type')?.startsWith('text/html')){const c=r.clone();caches.open(CACHE).then(x=>x.put(u.pathname,c))}return r}).catch(()=>caches.match(u.pathname).then(r=>r||caches.match('/home'))));});
 `);
 
 let total = 0, totalGz = 0;

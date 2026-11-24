@@ -2,12 +2,12 @@
 
 **Code.** `NavRail` in `packages/ui`. Demo: [book](../book/index.html#nav-rail).
 
-**Purpose.** Moves between sections. There can be many sections, so each person pins the ones they follow ([D9](../decisions.md)).
+**Purpose.** Moves between the seven sections (OR-46): Home, Live, Conversations, Projects, Lab, Library, System. Each person may pin the ones they follow first ([D9](../decisions.md)).
 
 **Anatomy.** A left column of width `size-rail`, from top to bottom:
 0. The head: the Fleet mark and name ([D23](../decisions.md#2026-11-11-d23-name-and-mark)) and the "N need you" chip. The collapse button, the search icon and the focus chip are not here: they sit in the shell header beside the rail (OR-42, OR-43, [app shell](../patterns/app-shell.md)).
 1. The pinned group, in the order the person set.
-2. All other sections, grouped (Operator, Architect) under small group headings.
+2. The seven sections in their fixed order, with no group headings. Every other screen belongs to one of them and highlights it while open (OR-57): Tasks, Results and Delivery are Projects, Bots and the definitions are Library, Hosts, Runners, keys, Spend and People are System.
 3. At the bottom, the current user block: avatar and name. A click (or right-click) opens a short menu with Logout, the Cloudflare Access logout (OR-42). After the name, the version (**Version** below).
 
 Each item has a registry icon (OR-3), a name, an optional counter (**Counters** below) and a pin button.
@@ -19,21 +19,22 @@ Each item has a registry icon (OR-3), a name, an optional counter (**Counters** 
 * Pins and their order are a person setting (`pins` in `person_settings_get`/`person_settings_set`) and are restored on every device.
 * A section opens with its list as the person left it: sort, grouping, filters and search (`lastViews`, a person setting kept per section as its list path; the open item and checked rows are not kept, so a deleted item never traps the section). It is saved when the person leaves the section or the tab hides. Clicking the current section from an open item returns to that list. Spotlight's section jumps do the same.
 * The current section has the `selected` background.
-* Collapsed and expanded map 1:1 (OR-42): the same rows with the same icons and heights; only names, pin buttons and the brand name go. Every icon (the mark, section icons, the avatar) keeps its exact position: the paddings do not change and the collapsed rail is just its icon column wide. Group headings keep their height, the user block keeps its avatar. The toggle shows `panel-left-close` expanded and `panel-left-open` collapsed.
+* Collapsed and expanded map 1:1 (OR-42): the same rows with the same icons and heights; only names, pin buttons and the brand name go. Every icon (the mark, section icons, the avatar) keeps its exact position: the paddings do not change and the collapsed rail is just its icon column wide. The user block keeps its avatar. The toggle shows `panel-left-close` expanded and `panel-left-open` collapsed.
 * The divider on the rail's right edge resizes it (OR-41): drag, or focus it and press Left and Right; a double-click resets the width. Collapsed, the rail has no divider.
-* The collapse button shrinks the rail to icons, and below 760 px it is always collapsed: pins first and counters as badges on the icons. Names appear in tooltips, shown only while names are hidden (OR-20). This is interim; open question (d) holds the variants ([D10](../decisions.md)). The rail never disappears. *Target:* at phone width the rail becomes a bottom bar of five ([OR-60](../owner-rules.md)).
+* The collapse button shrinks the rail to icons: pins first and counters as badges on the icons. Names appear in tooltips, shown only while names are hidden (OR-20).
+* At phone width (760 px and below) the bottom bar of five replaces the rail ([OR-60](../owner-rules.md), [app shell](../patterns/app-shell.md)): Home, Live, Conversations, Projects and More, whose short menu holds Lab, Library, System and the user block.
 
 **Counters.** A section's counter counts its *counter view*, a person setting (`navCounters` in `person_settings_get`/`person_settings_set`; agents write it too):
 
 | Section | Default | Choice |
 |---|---|---|
-| Tasks | Running | any system preset or saved view of the list |
 | Conversations | Running | any system preset or saved view of the list |
-| Delivery | In flight | any system preset or saved view of the list |
-| Results | Last 24 h (the list with `since:1d`) | on or off |
-| Hosts | Offline (not seen within the Hosts list's stale limit), attention tone | on or off |
+| Projects (its Tasks facet) | Running | any system preset or saved view of the Tasks list |
+| System (its Hosts list) | Offline (not seen within the Hosts list's stale limit), attention tone | on or off |
 
-* Other sections have no counter: Overview is answered by the "N need you" chip in the head, which is not a counter; Projects, Runners, Lab, API keys and the architect sections have no amount that changes often enough to watch.
+`nav_counts` also counts Delivery (In flight) and Results (Last 24 h); they have no place on the rail until their facets get one.
+
+* Other sections have no counter: Home is answered by the "N need you" chip in the head, which is not a counter; Live, Lab and Library have no amount that changes often enough to watch.
 * One read gives every counter: `nav_counts` (agents call the same tool). Each section counts with its list's own filters (the view's states, search and the projects it names), so a counter equals the list it stands for, with one exception: ignored projects are never counted, also when a saved view names one, which its list still shows (OR-34). A saved view that names its projects is that list whatever the focus, so it is one number with no split (`split` false in the reply). Removing a saved view removes its counter choice, and a view the list no longer takes (a state since renamed) counts the default: the section's default counts again.
 * Without a focus a counter is one number: `12`. With a focus it splits: the count in the focus in the foreground colour, then `·` and the rest outside the focus (not ignored) in muted colour, `12·30`. With nothing in the focus but some outside it shows `·30` on no fill, so a bare number always means "in focus". Zero in and out shows nothing (OR-29). Hosts have no project and stay one number.
 * Collapsed (and below 760 px) only the in-focus number stays, as a badge on the icon's top right; `·30` alone shows no badge. The badge is positioned over the icon, so no icon moves (OR-42, OR-23).

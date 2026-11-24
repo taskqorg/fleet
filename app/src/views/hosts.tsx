@@ -162,7 +162,8 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
       { id: NAV_LIMITS_ID, label: 'Accounts & Limits', icon: 'gauge', pinned: pins.has(NAV_LIMITS_ID), href: '/hosts/limits', searchText: 'accounts limits subscriptions quota' },
       { id: ROOT_KEYS_ID, label: 'Connections & API keys', icon: 'shield', sub: holder ? `held by ${person(holder)}` : undefined, defaultCollapsed: false, href: '/keys', children: keyLeaves },
       { id: NAV_RUNNERS_ID, label: 'Runners', icon: 'play', pinned: pins.has(NAV_RUNNERS_ID), href: '/runners', searchText: 'runners executions spend ci' },
-      ...(me.data?.owner ? [{ id: "nav:humans", label: "Humans", icon: "shield" as const, href: "/humans" }] : []),
+      { id: 'nav:spend', label: 'Spend', icon: 'gauge', href: '/spend', searchText: 'spend cost money' },
+      ...(me.data?.owner ? [{ id: 'nav:humans', label: 'People', icon: 'shield' as const, href: '/humans', searchText: 'people humans access' }] : []),
     ];
   });
 

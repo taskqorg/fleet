@@ -25,7 +25,7 @@ test('built manifests and HTML reference the shared Fleet icons', () => {
       location, navigation,
       document: { createElement: () => link, head: { appendChild: (element: typeof links[number]) => links.push(element) } },
     });
-    for (const next of [path, '/tasks', '/tasks/invented-detail', '/conversations', path]) {
+    for (const next of [path, '/projects/tasks', '/projects/tasks/invented-detail', '/conversations', path]) {
       if (next !== location.pathname) {
         location.pathname = next;
         navigation.dispatchEvent(new Event('currententrychange'));
@@ -34,7 +34,7 @@ test('built manifests and HTML reference the shared Fleet icons', () => {
       assert.equal(links[0].rel, 'manifest');
       assert.equal(links[0].crossOrigin, 'use-credentials');
       const view = next.split('/')[1];
-      assert.equal(links[0].href, `/manifests/${screens.includes(view) ? view : 'overview'}.webmanifest`);
+      assert.equal(links[0].href, `/manifests/${screens.includes(view) ? view : 'home'}.webmanifest`);
     }
   }
   let shared;

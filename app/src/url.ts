@@ -2,12 +2,12 @@
 // the moment of the change, never from a value captured earlier (a debounced search must not undo a click made meanwhile).
 import { createEffect, createMemo, createSignal, untrack } from 'solid-js';
 import { readValue, type MaybeAccessor } from './signal.ts';
-import { useLocation, useSearch } from './router.ts';
+import { currentUrl, useLocation, useSearch } from './router.ts';
 import { parseView, formatView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
 
 /** The URL after applying patch to the view in current (path and query). Pure, for the hooks below and tests. */
 export const nextUrl = (current: string, name: ViewName, patch: Partial<View>) => formatView({ ...(parseView(current) ?? { view: name }), ...patch });
-const here = () => location.pathname + location.search;
+const here = currentUrl;
 
 /** Discrete changes push a history entry; a search pushes once when typing starts and replaces while it goes on. */
 export function useUrlView(name: ViewName) {

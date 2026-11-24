@@ -253,6 +253,8 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
       { id: ROOT_PIPELINES_ID, label: 'Pipelines', icon: 'network', defaultCollapsed: false, children: pipelineLeaves },
       { id: ROOT_AGENTS_ID, label: 'Agents', icon: 'bot', defaultCollapsed: false, children: agentFolders },
       { id: ROOT_SKILLS_ID, label: 'Skills', icon: 'file-text', defaultCollapsed: false, children: skillLeaves },
+      // Bots are Library definitions (fleet-ia-and-journeys.md §1); their screen opens from here until wave 2 moves it.
+      { id: 'nav:bots', label: 'Bots', icon: 'bot', href: '/bots', searchText: 'bots automations' },
     ];
   });
 

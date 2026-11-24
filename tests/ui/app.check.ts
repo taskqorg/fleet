@@ -135,7 +135,7 @@ try {
   out.push(`change-to-screen: ${ms < 0 ? 'NOT SEEN within 2 s' : ms + ' ms'} (target <= 1000 ms)${ms > 1000 ? '  OVER TARGET' : ''}`);
   // Pins (nav-rail.md): pin from the item, it stays in its group too; Alt+ArrowUp reorders; the order survives a reload (person settings).
   await page.goto(origin + '/overview'); await page.waitForSelector('[data-ui=nav-rail]');
-  for (const n of ['Tasks', 'Infrastructure']) { await page.locator('.rail-g:not(.pinned)').getByRole('button', { name: 'Pin ' + n, exact: true }).click(); await page.waitForTimeout(150); }
+  for (const n of ['Projects', 'System']) { await page.locator('.rail-g:not(.pinned)').getByRole('button', { name: 'Pin ' + n, exact: true }).click(); await page.waitForTimeout(150); }
   const pinsOf = () => page.$$eval('.rail-g.pinned .nav-i', els => els.map(e => e.getAttribute('data-id')));
   const twice = await page.locator('.rail-g:not(.pinned) .nav-i.pinned[data-id=tasks]').count();
   await page.locator('.rail-g.pinned [data-id=hosts] a').focus(); await page.keyboard.press('Alt+ArrowUp'); await page.waitForTimeout(300);

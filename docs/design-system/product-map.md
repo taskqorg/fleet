@@ -32,7 +32,7 @@ Checked on 2026-11-25 against release `1.261124.39`, with Playwright at 1440 × 
 
 Worst broken items:
 
-1. **Unknown and retired routes.** `/publishing` and any unknown path get the server's JSON `404 Route GET:… not found`, not the app. The client-side redirect from `/publishing` to `/delivery` and "This page does not exist" never run, so old deep links die (UR-69, UR-70).
+1. *Fixed by FLT-43:* `/publishing` and unknown paths now reach the app's redirect and its not-found page (UR-69, UR-70).
 2. **Library › Changes.** `/changes` still says "Checking repository and host drift…" after 5 s. System's own service list shows `system_changes` with 8 errors of 19 calls and 5 s responses in the last hour.
 3. **Result detail shows internals.** `/results/<id>` uses the result's UUID in the URL, shows a file name made of a hash and a UUID, and shows raw JSON as the content (OR-38, UR-61).
 4. **Bot run causes are raw codes.** `/bots/<id>` lists a run problem as `unknown:abandoned message` (UR-4).
@@ -48,8 +48,8 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 
 | Page | Route today | Applies beyond the common set | Meets | Breaks | Not checked |
 |---|---|---|---|---|---|
-| [Home](pages/home.md) | none | OR-50, OR-53, OR-54, OR-55, OR-58, UR-51 to UR-61 | — | — | all: not built, `/home` answers 404 |
-| [Live](pages/live.md) | none | OR-56, OR-58, OR-59, UR-51 to UR-55 | — | — | all: not built, `/live` answers 404 |
+| [Home](pages/home.md) | none | OR-50, OR-53, OR-54, OR-55, OR-58, UR-51 to UR-61 | — | — | all: not built; `/home` shows the Overview until wave 1 |
+| [Live](pages/live.md) | none | OR-56, OR-58, OR-59, UR-51 to UR-55 | — | — | all: not built; `/live` points to System and Projects until wave 1 |
 | [Overview](pages/overview.md) | `/overview` | OR-29, OR-30, OR-40 | UR-38 (no console error or failed read), UR-50 (no sideways scroll at 390 px), UR-71 (title matches the rail item) | UR-69, OR-38: 33 of 43 links carry a UUID | UR-51 (to be measured on Home) |
 | [Conversations](pages/conversations.md) | `/conversations`, `/conversations/<id>` | OR-51, OR-52, OR-53, OR-54, UR-56 to UR-61 | UR-38, UR-50, UR-71 | OR-54 (Target): a metrics header (elapsed, CPU, memory, tokens, cost) opens the conversation; UR-69, OR-38: the URL is a UUID | UR-57, UR-59, UR-81 |
 | [Projects](pages/projects.md) | `/projects`, `/projects/<id>` | OR-45, OR-46 (facets) | UR-38, UR-50, UR-69 (no UUID links), OR-45 (inherited defaults folded) | OR-59 (Target): `≈`, `≥` and "partial" fill the main view | UR-63 |
@@ -69,7 +69,7 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 
 | Capability | Section | Route and screen | Built | Prod | Read or action |
 |---|---|---|---|---|---|
-| Start screen | Home | `/`, redirects to `/overview` | partly: Home not built (OR-50) | checked | — |
+| Start screen | Home | `/`, redirects to `/home` (the Overview until wave 1) | partly: Home not built (OR-50) | checked | — |
 | Home: sessions, their questions, composer, pulse | Home | `/home`, none | not built | not checked: not built; the server answers 404 | target: `sessions_list`, `questions_list`, `bot_list`, `session_presets`, `session_start`, `message_send`, `nav_counts` ([home](pages/home.md#data)) |
 | Live: hosts, slots, delivery, CI, events | Live | `/live`, none | not built | not checked: not built; the server answers 404 | target: `hosts_list`, `telemetry_summary`, `executions_runners`, `executions_list`, `spend_summary`, `delivery_status`, `executions_ci` ([live](pages/live.md#data)) |
 | Overview: Needs you, hosts, delivery in flight | Home and Live | `/overview`, Overview | built | checked: ready in 2.5 s, 35 need you, 3 hosts | `questions_list`, `executions_list`, `hosts_list`, `publishing_status`, `task_page`, `questions_answer` |
@@ -85,7 +85,7 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 | One result | Projects (facet) | `/results/<uuid>`, file viewer | partly | broken: UUID in the URL and the name, raw JSON shown (OR-38) | `artifact_get` |
 | Delivery list | Projects (facet) | `/delivery`, pull requests by stage; title "Publishing" | built | checked: 33 pull requests | `publishing_status`, `delivery_history`, `delivery_baseline`, `delivery_regressions` |
 | One pull request | Projects (facet) | `/delivery/<owner~repo~n>`, stage, head, merge actions | built | checked: `#834`; no rail item highlighted (OR-57) | `publishing_status`, `publishing_mark_ready`, `publishing_request_merge`, `publishing_cancel_merge_request`, `delivery_history` |
-| Old delivery route | Projects | `/publishing`, client redirect to `/delivery` | partly | broken: the server answers JSON 404 before the app loads | — |
+| Old delivery route | Projects | `/publishing`, redirects to `/projects/delivery` | built | not checked: the server now serves the app shell for it | — |
 | Bot list | Home and Library › Bots | `/bots`, bots with state | built | checked: HAL0 listed | `bot_list`, `project_list` |
 | One bot | Home and Library › Bots | `/bots/<uuid>`, status, runs, automations, questions, analytics, settings | partly: UUID in the URL (OR-38) | broken: run problems show the raw cause code `unknown:abandoned message` | `bot_get`, `bot_runs`, `bot_tasks`, `bot_run`, `bot_pause`, `bot_stop`, `bot_settings_save`, `bot_memory_save`, `bot_automations`, `bot_automation_save`, `questions_list`, `questions_answer`, `executions_list`, `analytics_query`, `session_presets` |
 | New bot | Library › Bots | `/bots/new`, create form | built | checked: form shown, not submitted | `bot_settings_save`, `project_list`, `session_presets` |
@@ -107,8 +107,8 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 | One connection | System | `/keys/<id>`, keys, access, intake, balancing, limits | built | checked: `tavily` | `connections_key_add`, `connections_key_state`, `connections_set_access`, `connections_set_intake`, `connections_set_key_policy`, `connections_set_limits` |
 | Spend | System | `/spend`, totals and breakdown by purpose | built | checked | `spend_summary` |
 | People and access | System › People | `/humans`, `/humans/<id>`, `/humans/new` | built | not checked: `site-agents` sees "Only the Fleet owner can manage Humans." | `people_list`, `people_update`, `people_access_sync`, `project_list`, `me` |
-| Unknown route | — | any other path | partly | broken: the server answers JSON 404; the app's "This page does not exist" never shows (UR-70) | — |
-| Phone width | all | `/overview`, `/conversations`, a conversation, `/projects`, `/hosts` at 390 × 844 | partly: rail is not the bottom bar of five (OR-60) | checked: no page scroll sideways | — |
+| Unknown route | — | any other path | built: the server serves the app shell, which shows "This page does not exist" (UR-70) | not checked | — |
+| Phone width | all | `/overview`, `/conversations`, a conversation, `/projects`, `/hosts` at 390 × 844 | built: the bottom bar of five (OR-60) | checked: no page scroll sideways | — |
 | Palette | all | ⌘K over any route | built | not checked in this run | `search` |
 | Entity card | all | any `EntityCode` | built | not checked in this run | `entity_card` |
 | Navigation counters | all | the rail | built | checked: Conversations and Tasks counters shown | `nav_counts` |

@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import { createContext, createEffect, createMemo, createSignal, For, onSettled, Show, untrack, useContext, type Accessor } from 'solid-js';
 import { Portal, type JSX } from '@solidjs/web';
-import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, TabBar, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
+import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, BottomBar, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, TabBar, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -321,7 +321,7 @@ export function AppShell(p: {
   widths?: Record<string, number>; onWidth?: (key: string, px: number) => void; collapsed?: boolean; onCollapsed?: (on: boolean) => void;
   /** False until those settings are read: the shell stays hidden, so nothing jumps when they arrive (OR-23). */ ready?: boolean;
 }) {
-  const [own, setOwn] = createSignal<string[]>(['tasks', 'hosts']);
+  const [own, setOwn] = createSignal<string[]>([]);
   const pinned = createMemo(() => p.pins ?? own());
   const setPinned = (ids: string[]) => (p.onPins ?? setOwn)(ids);
   const [ownMini, setOwnMini] = createSignal(false);
@@ -398,8 +398,8 @@ export function AppShell(p: {
               <span class="brand-mark" role="img" aria-label="Fleet" />
               <b class="brand">Fleet</b>
               <span class="grow" />
-              <Show when={p.waiting > 0 && p.current !== 'overview'}>
-                <a class="nav-count t-attention waiting" href="#/overview" onClick={e => { e.preventDefault(); p.onGo('overview'); }}>
+              <Show when={p.waiting > 0 && p.current !== 'home'}>
+                <a class="nav-count t-attention waiting" href="#/home" onClick={e => { e.preventDefault(); p.onGo('home'); }}>
                   {p.waiting} need you
                 </a>
               </Show>
@@ -407,6 +407,8 @@ export function AppShell(p: {
           }
           foot={<Show when={p.user} keyed>{u => <UserBlock name={u.name} onLogout={u.onLogout} version={u.version} />}</Show>}
         />
+        {/* OR-60: below 760 px the bottom bar of five replaces the rail (CSS shows one of them). */}
+        <BottomBar items={p.nav} current={p.current} onGo={p.onGo} foot={<Show when={p.user} keyed>{u => <UserBlock name={u.name} onLogout={u.onLogout} version={u.version} />}</Show>} />
         <div class="shell-col">
           <Show when={!mini()}><Divider name="rail" /></Show>
           {/* OR-43: one header over the control column and the work area, whatever page is below: the collapse toggle (OR-42),

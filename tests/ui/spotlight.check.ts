@@ -66,7 +66,7 @@ export async function checkSpotlight(browser: Browser, origin: string) {
     // "All N in Tasks" opens the Tasks list with the same query as its search (OR-36), showing every match.
     await p.keyboard.press('ControlOrMeta+k'); await dialog.waitFor(); await input.fill('spotlight bulk');
     const all = dialog.getByRole('option', {name: 'All 10 in Tasks'}); await all.waitFor();
-    await all.click(); await p.waitForURL(u => u.pathname === '/tasks' && u.searchParams.get('q') === 'spotlight bulk');
+    await all.click(); await p.waitForURL(u => u.pathname === '/projects/tasks' && u.searchParams.get('q') === 'spotlight bulk');
     for (let i = 0; i < 10; i++) await p.getByText(`Spotlight bulk ${i}`, {exact: true}).first().waitFor();
     assert.deepEqual(errors, []); console.log('ok Spotlight Cmd+K: sections, tasks via search, code jump, kept query and results, conversation, All N opens the list');
   } finally { await context.close(); await call('person_settings_set', {focus: before}); }

@@ -38,7 +38,7 @@ export async function checkShellHeader(browser: Browser, origin: string, seed: R
   try {
     await call('person_settings_set', { focus: [], ignored: [] });
     await p.goto(origin + '/tasks'); await row('Alpha').waitFor();
-    assert.equal((await head.locator('h1').textContent())?.trim(), 'Tasks', 'the header shows the section title');
+    assert.equal((await head.locator('h1').textContent())?.trim(), 'Projects', 'the header shows the section that owns Tasks (OR-57)');
     assert.equal(await p.locator('.shell-main h1').count(), 0, 'the column has no heading of its own');
     // Search is the header icon (OR-31): it opens Spotlight, Escape closes it.
     const dialog = p.getByRole('dialog', { name: 'Search' });
@@ -96,7 +96,7 @@ export async function checkShellHeader(browser: Browser, origin: string, seed: R
     // Other checks of the same run leave needs-you items of their own (some outside projects): compare counts, not zero.
     const n = async () => await outside.count() ? Number((await outside.getAttribute('aria-label'))?.split(' ')[0]) : 0;
     const before = await n();
-    await outside.click(); await p.waitForURL('**/overview?all');
+    await outside.click(); await p.waitForURL('**/home?all');
     await p.getByText('Ship Charlie today?').waitFor();
     assert.ok(await p.getByText('Focus not applied').count() === 1, 'its head says the focus is off');
     // Ignore is full silence: an ignored project's question is not counted outside the focus.
