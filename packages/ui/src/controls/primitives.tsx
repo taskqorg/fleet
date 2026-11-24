@@ -1,6 +1,7 @@
 // Primitive controls, badges, numbers, age clocks, harness marks, status states, copy, and search input.
-import type { ComponentChildren, TargetedMouseEvent } from 'preact';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { createEffect, createMemo, createSignal, For, onSettled, Repeat, Show, untrack, type Accessor } from 'solid-js';
+import type { JSX } from '@solidjs/web';
+import { Button as SdkButton, Input, Menu, MenuContent, MenuItem, MenuTrigger } from '@ui-sdk/solid';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages } from '../registry.ts';
 import { type Measured, type Kind, type CostFigureLike, costMeasured, splitCostFigures, measured, age, exact } from '../format.ts';
 import { isSubmitEnter } from '../keys.ts';
@@ -8,25 +9,42 @@ import { isSubmitEnter } from '../keys.ts';
 /* ---------- Icon and button ---------- */
 
 /** Registry icon. With `label` it is meaningful (tooltip + accessible name); without, decorative. */
-export function Icon({ name, label }: { name: IconName; label?: string }) {
-  return <span class="icon" role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true}
-    dangerouslySetInnerHTML={{ __html: iconSvg(name) }} />;
+export function Icon(p: { name: IconName; label?: string }) {
+  return (
+    <span
+      class="icon"
+      role={p.label ? 'img' : undefined}
+      aria-label={p.label}
+      aria-hidden={p.label ? undefined : 'true'}
+      innerHTML={iconSvg(p.name)}
+    />
+  );
 }
 
 type ButtonProps = {
   label: string; icon?: IconName; iconOnly?: boolean; kind?: 'primary' | 'default' | 'quiet' | 'danger';
-  kbd?: string; rowLink?: boolean; busy?: boolean; disabledReason?: string; tip?: string; pressed?: boolean; onClick?: (event: TargetedMouseEvent<HTMLButtonElement>) => void;
+  kbd?: string; rowLink?: boolean; busy?: boolean; disabledReason?: string; tip?: string; pressed?: boolean;
+  onClick?: (event: MouseEvent) => void;
 };
 export function Button(p: ButtonProps) {
-  const disabled = p.busy || !!p.disabledReason;
+  const disabled = () => !!(p.busy || p.disabledReason);
   return (
-    <button type="button" data-ui="button" class={`btn ${p.kind ?? 'default'}${p.iconOnly ? ' icon-only' : ''}${p.rowLink ? ' row-link' : ''}${p.busy ? ' busy' : ''}`}
-      aria-label={p.iconOnly ? p.label : undefined} data-tip={p.disabledReason ?? p.tip ?? (p.iconOnly ? p.label : undefined)}
-      aria-disabled={disabled || undefined} aria-pressed={p.pressed} onClick={disabled ? undefined : p.onClick}>
-      {p.icon && <Icon name={p.icon} />}
-      {!p.iconOnly && <span>{p.label}</span>}
-      {p.kbd && <kbd>{p.kbd}</kbd>}
-    </button>
+    <SdkButton
+      data-ui="button"
+      class={['btn', p.kind ?? 'default', { 'icon-only': !!p.iconOnly, 'row-link': !!p.rowLink, busy: !!p.busy }]}
+      disabled={disabled()}
+      focusableWhenDisabled={true}
+      aria-label={p.iconOnly ? p.label : undefined}
+      data-tip={p.disabledReason ?? p.tip ?? (p.iconOnly ? p.label : undefined)}
+      aria-pressed={p.pressed === undefined ? undefined : p.pressed ? 'true' : 'false'}
+      onClick={e => {
+        if (!disabled()) p.onClick?.(e);
+      }}
+    >
+      <Show when={p.icon} keyed>{icon => <Icon name={icon} />}</Show>
+      <Show when={!p.iconOnly}><span>{p.label}</span></Show>
+      <Show when={p.kbd} keyed>{kbd => <kbd>{kbd}</kbd>}</Show>
+    </SdkButton>
   );
 }
 
@@ -40,16 +58,29 @@ type BadgeProps<F extends Family> = {
   compact?: boolean;
 };
 export function StateBadge<F extends Family>(p: BadgeProps<F>) {
-  const d = states[p.family][p.state] as StateDef;
-  const unconf = p.unconfirmed || p.lastSeen !== undefined;
-  const seen = p.lastSeen !== undefined ? exact(p.lastSeen) : null;
-  const name = [d.label, unconf && 'unconfirmed', seen && `last seen ${seen}`, p.reason].filter(Boolean).join(', ');
+  const d = createMemo(() => states[p.family][p.state] as StateDef);
+  const unconf = createMemo(() => p.unconfirmed || p.lastSeen !== undefined);
+  const seen = createMemo(() => p.lastSeen !== undefined ? exact(p.lastSeen) : null);
+  const name = createMemo(() => [d().label, unconf() && 'unconfirmed', seen() && `last seen ${seen()}`, p.reason].filter(Boolean).join(', '));
   return (
     <span class="state" data-ui="state-badge">
-      <span class={`badge t-${d.tone}${unconf ? ' unconf' : ''}${p.compact ? ' compact' : ''}`} role="img" aria-label={name} data-tip={p.compact || unconf ? name : undefined}>
-        <Icon name={d.icon} />{!p.compact && <span>{d.label}</span>}
+      <span
+        class={['badge', `t-${d().tone}`, { unconf: unconf(), compact: !!p.compact }]}
+        role="img"
+        aria-label={name()}
+        data-tip={p.compact || unconf() ? name() : undefined}
+      >
+        <Icon name={d().icon} />
+        <Show when={!p.compact}><span>{d().label}</span></Show>
       </span>
-      {(unconf || p.reason) && !p.compact && <span class={`reason${unconf ? ' unconf' : ''}`} aria-hidden="true">{unconf && <>Unconfirmed{p.lastSeen !== undefined && <> · seen <Ago t={p.lastSeen} /></>}</>}{unconf && p.reason ? ' · ' : ''}{p.reason}</span>}
+      <Show when={(unconf() || p.reason) && !p.compact}>
+        <span class={['reason', { unconf: unconf() }]} aria-hidden="true">
+          <Show when={unconf()}>
+            <>Unconfirmed<Show when={p.lastSeen !== undefined}> <> · seen <Ago t={p.lastSeen!} /></></Show></>
+          </Show>
+          {unconf() && p.reason ? ' · ' : ''}{p.reason}
+        </span>
+      </Show>
     </span>
   );
 }
@@ -61,77 +92,103 @@ type NumProps = {
   /** What a rise means: tint green/red only when known (OR-6). */
   rise?: 'good' | 'bad' | 'neutral';
 };
-export function Num({ m, kind, rise = 'neutral' }: NumProps) {
-  const f = measured(m, kind);
-  const last = useRef(m.value);
-  const [tint, setTint] = useState('');
-  useEffect(() => {
-    const before = last.current; last.current = m.value;
-    if (before === null || m.value === null || before === m.value) return;
-    const up = m.value > before;
+export function Num(p: NumProps) {
+  const f = createMemo(() => measured(p.m, p.kind));
+  let last = untrack(() => p.m.value);
+  const [tint, setTint] = createSignal('', { ownedWrite: true });
+  createEffect(() => p.m.value, val => {
+    const before = last;
+    last = val;
+    if (before === null || val === null || before === val) return;
+    const up = val > before;
+    const rise = p.rise ?? 'neutral';
     setTint(rise === 'neutral' ? 'tint-neutral' : (up === (rise === 'good')) ? 'tint-good' : 'tint-bad');
     const t = setTimeout(() => setTint(''), 2000);
     return () => clearTimeout(t);
-  }, [m.value]);
-  const tip = m.basis === 'measured' && !m.partial ? undefined : f.long;
-  return <span data-ui="number" class={`num b-${m.basis}${m.value === null ? ' null' : ''}${m.partial ? ' partial' : ''} ${tint}`} data-tip={tip} aria-label={f.long} tabIndex={tip ? 0 : undefined}>
-    {m.basis === 'subscription' && <Icon name="rotate-cw" />}{f.text}</span>;
+  });
+  const tip = createMemo(() => p.m.basis === 'measured' && !p.m.partial ? undefined : f().long);
+  return (
+    <span
+      data-ui="number"
+      class={['num', `b-${p.m.basis}`, { null: p.m.value === null, partial: !!p.m.partial }, tint()]}
+      data-tip={tip()}
+      aria-label={f().long}
+      tabindex={tip() ? 0 : undefined}
+    >
+      <Show when={p.m.basis === 'subscription'}><Icon name="rotate-cw" /></Show>
+      {f().text}
+    </span>
+  );
 }
 
 export type TotalItem =
   | { label: string; m: Measured; kind: Kind; note?: string; cost?: never }
   | { label: string; cost: readonly CostFigureLike[]; note?: string; showUnavailable?: boolean; m?: never; kind?: never };
 
-export function Totals({ items, compact }: { items: TotalItem[]; compact?: boolean }) {
+export function Totals(p: { items: TotalItem[]; compact?: boolean }) {
   return (
-    <dl class={compact ? "totals compact" : "totals"} data-ui="number">
-      {items.map(i => (
-        <div key={i.label}>
-          <dt>{i.label}</dt>
-          <dd>{i.cost !== undefined ? <CostFigures cost={i.cost} showUnavailable={i.showUnavailable} empty="—" /> : <Num m={i.m} kind={i.kind} />}</dd>
-          {i.note && <dd class="note">{i.note}</dd>}
-        </div>
-      ))}
+    <dl class={['totals', { compact: !!p.compact }]} data-ui="number">
+      <For each={p.items}>
+        {i => (
+          <div>
+            <dt>{i.label}</dt>
+            <dd>
+              {i.cost !== undefined ? <CostFigures cost={i.cost} showUnavailable={i.showUnavailable} empty="—" /> : <Num m={i.m!} kind={i.kind!} />}
+            </dd>
+            <Show when={i.note} keyed>{n => <dd class="note">{n}</dd>}</Show>
+          </div>
+        )}
+      </For>
     </dl>
   );
 }
 
 /** Renders multi-currency CostFigure[] while keeping metered spend and subscription equivalents separate. */
-export function CostFigures({ cost, showUnavailable = false, empty }: { cost: readonly CostFigureLike[] | null | undefined; showUnavailable?: boolean; empty?: string }) {
-  const { metered, subscription } = splitCostFigures(cost);
-  const visMetered = showUnavailable ? metered : metered.filter(c => c.value !== null && c.basis !== 'unavailable');
-  if (!visMetered.length && !subscription.length) {
-    return empty ? <span class="muted">{empty}</span> : null;
-  }
+export function CostFigures(p: { cost: readonly CostFigureLike[] | null | undefined; showUnavailable?: boolean; empty?: string }) {
+  const split = createMemo(() => splitCostFigures(p.cost));
+  const visMetered = createMemo(() => p.showUnavailable ? split().metered : split().metered.filter(c => c.value !== null && c.basis !== 'unavailable'));
+  const subscription = createMemo(() => split().subscription);
   return (
-    <span class="cost-figs" data-ui="number">
-      {visMetered.map((c, i) => <Num key={`m:${c.currency ?? i}:${i}`} m={costMeasured(c)} kind="money" />)}
-      {subscription.map((c, i) => <Num key={`s:${c.currency ?? i}:${i}`} m={costMeasured(c)} kind="money" />)}
-    </span>
+    <Show
+      when={visMetered().length > 0 || subscription().length > 0}
+      fallback={<Show when={p.empty} keyed>{e => <span class="muted">{e}</span>}</Show>}
+    >
+      <span class="cost-figs" data-ui="number">
+        <For each={visMetered()}>{c => <Num m={costMeasured(c)} kind="money" />}</For>
+        <For each={subscription()}>{c => <Num m={costMeasured(c)} kind="money" />}</For>
+      </span>
+    </Show>
   );
 }
 
-/** Re-render every ms while active (open layers whose ages count on; views that judge liveness by the clock). */
-export function useTick(ms: number, active = true) {
-  const [, set] = useState(0);
-  useEffect(() => { if (!active) return; const t = setInterval(() => set(n => n + 1), ms); return () => clearInterval(t); }, [ms, active]);
+/** Live clock accessor updating every `ms` while `active` (open layers whose ages count on; views that judge liveness by the clock). */
+export function useTick(ms: number, active: boolean | Accessor<boolean> = true): Accessor<number> {
+  const [now, setNow] = createSignal(Date.now(), { ownedWrite: true });
+  const isActive = createMemo(() => typeof active === 'function' ? active() : active);
+  createEffect(() => [ms, isActive()] as const, ([intervalMs, on]) => {
+    if (!on) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(t);
+  });
+  return now;
 }
 
 const ageListeners = new Set<(now: number) => void>();
 let ageTimer: ReturnType<typeof setInterval> | undefined;
 
-function useAgeClock(t: number, alertAfter: number | undefined, offset: number) {
-  const [, refresh] = useState(0);
-  const now = Date.now() + offset;
-  useEffect(() => {
-    if (!Number.isFinite(t)) return;
-    const updateKey = (now: number) => `${age(t, now).text}:${alertAfter !== undefined && now - t >= alertAfter * 1000}`;
-    let previous = updateKey(now);
+function useAgeClock(t: Accessor<number>, alertAfter: Accessor<number | undefined>, offset: Accessor<number>): Accessor<number> {
+  const [now, setNow] = createSignal(Date.now() + untrack(offset), { ownedWrite: true });
+  createEffect(() => [t(), alertAfter(), offset()] as const, ([ts, after, off]) => {
+    if (!Number.isFinite(ts)) return;
+    const updateKey = (cur: number) => `${age(ts, cur).text}:${after !== undefined && cur - ts >= after * 1000}`;
+    let previous = updateKey(Date.now() + off);
     const update = (clock: number) => {
-      const next = updateKey(clock + offset);
+      const nextNow = clock + off;
+      const next = updateKey(nextNow);
       if (next === previous) return;
       previous = next;
-      refresh(n => n + 1);
+      setNow(nextNow);
     };
     update(Date.now());
     ageListeners.add(update);
@@ -146,96 +203,178 @@ function useAgeClock(t: number, alertAfter: number | undefined, offset: number) 
         ageTimer = undefined;
       }
     };
-  }, [t, alertAfter, offset]);
+  });
   return now;
 }
 
 type AgeProps = { t: number; clockOffsetMs?: number; alertAfter?: number; tone?: Tone; alertLabel?: string };
 
 /** Compact live age with the original timestamp available on hover. */
-export function Ago({ t, chip, clockOffsetMs = 0, alertAfter, tone = 'danger', alertLabel = 'needs a look' }: AgeProps & { chip?: boolean }) {
-  const now = useAgeClock(t, alertAfter, clockOffsetMs);
-  const cls = chip ? 'chip-age' : 'when';
-  if (!Number.isFinite(t)) return <span class={cls} aria-label="Time unavailable">—</span>;
-  const a = age(t, now);
-  const alert = alertAfter !== undefined && now - t >= alertAfter * 1000;
-  return <time class={cls + (alert ? ` t-${tone} alert` : '')} data-ui={chip ? 'number' : undefined}
-    dateTime={new Date(t).toISOString()} data-tip={alert ? `${alertLabel} · ${exact(t)}` : exact(t)}
-    aria-label={alert ? `${a.long}, ${alertLabel}` : a.long}>
-    {alert && <Icon name="triangle-alert" />}{a.text}</time>;
+export function Ago(p: AgeProps & { chip?: boolean }) {
+  const now = useAgeClock(() => p.t, () => p.alertAfter, () => p.clockOffsetMs ?? 0);
+  const cls = () => p.chip ? 'chip-age' : 'when';
+  return (
+    <Show
+      when={Number.isFinite(p.t)}
+      fallback={<span class={cls()} aria-label="Time unavailable">—</span>}
+    >
+      {(() => {
+        const a = createMemo(() => age(p.t, now()));
+        const alert = createMemo(() => p.alertAfter !== undefined && now() - p.t >= p.alertAfter * 1000);
+        const alertLabel = () => p.alertLabel ?? 'needs a look';
+        const tone = () => p.tone ?? 'danger';
+        return (
+          <time
+            class={[cls(), alert() ? `t-${tone()} alert` : '']}
+            data-ui={p.chip ? 'number' : undefined}
+            datetime={new Date(p.t).toISOString()}
+            data-tip={alert() ? `${alertLabel()} · ${exact(p.t)}` : exact(p.t)}
+            aria-label={alert() ? `${a().long}, ${alertLabel()}` : a().long}
+          >
+            <Show when={alert()}><Icon name="triangle-alert" /></Show>
+            {a().text}
+          </time>
+        );
+      })()}
+    </Show>
+  );
 }
 
 export function AgeChip(props: AgeProps) {
-  return <Ago {...props} chip />;
+  return <Ago t={props.t} clockOffsetMs={props.clockOffsetMs} alertAfter={props.alertAfter} tone={props.tone} alertLabel={props.alertLabel} chip />;
 }
 
 /* ---------- Harness mark, harness counts, stage chip (D11) ---------- */
 
 /** Which harness runs it: the mark only, name in the tooltip (OR-1, OR-20). */
-export const HarnessMark = ({ h }: { h: Harness }) =>
-  <span class="harness" data-ui="harness-counts" data-tip={harnesses[h].label} role="img" aria-label={harnesses[h].label}><Icon name={harnesses[h].icon} /></span>;
+export function HarnessMark(p: { h: Harness }) {
+  return (
+    <span class="harness" data-ui="harness-counts" data-tip={harnesses[p.h].label} role="img" aria-label={harnesses[p.h].label}>
+      <Icon name={harnesses[p.h].icon} />
+    </span>
+  );
+}
 
 /** Counts per harness as mark + number; zero counts are omitted. */
-export function HarnessCounts({ counts, label }: { counts: Partial<Record<Harness, number>>; label: string }) {
-  const parts = (Object.keys(harnesses) as Harness[]).filter(h => (counts[h] ?? 0) > 0);
-  return <span class="harness-counts" data-ui="harness-counts" role="group" aria-label={label}>
-    {parts.map(h => <span key={h} class="hc" data-tip={harnesses[h].label} aria-label={`${harnesses[h].label} ${counts[h]}`}><Icon name={harnesses[h].icon} /><span class="num">{counts[h]}</span></span>)}
-  </span>;
+export function HarnessCounts(p: { counts: Partial<Record<Harness, number>>; label: string }) {
+  const parts = createMemo(() => (Object.keys(harnesses) as Harness[]).filter(h => (p.counts[h] ?? 0) > 0));
+  return (
+    <span class="harness-counts" data-ui="harness-counts" role="group" aria-label={p.label}>
+      <For each={parts()}>
+        {h => (
+          <span class="hc" data-tip={harnesses[h].label} aria-label={`${harnesses[h].label} ${p.counts[h]}`}>
+            <Icon name={harnesses[h].icon} />
+            <span class="num">{p.counts[h]}</span>
+          </span>
+        )}
+      </For>
+    </span>
+  );
 }
 
 /** Delivery stage as a compact chip: icon, plus the short name only where the icon is not enough. */
-export function StageChip({ stage }: { stage: Stage }) {
-  const d = stages[stage] as StateDef;
-  return <span class={`badge compact t-${d.tone}`} data-ui="stage-chip" role="img" aria-label={d.label} data-tip={d.label}><Icon name={d.icon} /></span>;
+export function StageChip(p: { stage: Stage }) {
+  const d = createMemo(() => stages[p.stage] as StateDef);
+  return (
+    <span class={['badge', 'compact', `t-${d().tone}`]} data-ui="stage-chip" role="img" aria-label={d().label} data-tip={d().label}>
+      <Icon name={d().icon} />
+    </span>
+  );
 }
 
 /* ---------- Empty, loading, error, stale (§8) ---------- */
 
-export const Skeleton = ({ rows }: { rows: number }) => (
-  <div class="skeleton" data-ui="status-states" aria-busy="true" aria-label="Loading">{Array.from({ length: rows }, (_, i) => <div key={i} class="sk-row"><i style={{ width: `${55 + (i * 17) % 35}%` }} /><i /></div>)}</div>
-);
-export const Empty = ({ text, action }: { text: string; action?: ComponentChildren }) => <div class="empty" data-ui="status-states"><p>{text}</p>{action}</div>;
-export const ErrorBanner = ({ text, onRetry }: { text: string; onRetry?: () => void }) => (
-  <div class="err-banner" data-ui="status-states" role="alert"><Icon name="circle-alert" /><span>{text}</span><span class="grow" />{onRetry && <Button label="Retry" icon={actions.retry} onClick={onRetry} />}</div>
-);
-export const Stale = ({ at, onRefresh }: { at: number; now: number; onRefresh?: () => void }) => (
-  <span class="stale" data-ui="status-states">updated <Ago t={at} /> <Button label="Refresh" icon={actions.retry} iconOnly onClick={onRefresh} /></span>
-);
+export function Skeleton(p: { rows: number }) {
+  return (
+    <div class="skeleton" data-ui="status-states" aria-busy="true" aria-label="Loading">
+      <Repeat count={p.rows}>{i => <div class="sk-row"><i style={{ width: `${55 + (i * 17) % 35}%` }} /><i /></div>}</Repeat>
+    </div>
+  );
+}
+export function Empty(p: { text: string; action?: JSX.Element }) {
+  return <div class="empty" data-ui="status-states"><p>{p.text}</p>{p.action}</div>;
+}
+export function ErrorBanner(p: { text: string; onRetry?: () => void }) {
+  return (
+    <div class="err-banner" data-ui="status-states" role="alert">
+      <Icon name="circle-alert" />
+      <span>{p.text}</span>
+      <span class="grow" />
+      <Show when={p.onRetry} keyed>{retry => <Button label="Retry" icon={actions.retry} onClick={retry} />}</Show>
+    </div>
+  );
+}
+export function Stale(p: { at: number; now: number; onRefresh?: () => void }) {
+  return (
+    <span class="stale" data-ui="status-states">
+      updated <Ago t={p.at} /> <Button label="Refresh" icon={actions.retry} iconOnly onClick={p.onRefresh} />
+    </span>
+  );
+}
 
 /* ---------- Offline marker (controls/offline-marker.md) ---------- */
 
 /** Says whether shown data is current: offline, updating (stale but online) or signed out; hidden when current. */
-export function OfflineMarker({ state, since }: { state: 'current' | 'offline' | 'updating' | 'signed-out'; since?: number; now: number }) {
-  if (state === 'current') return null;
-  const lastUpdate = since ? exact(since) : null;
-  const word = state === 'offline' ? 'offline' : state === 'updating' ? 'updating' : 'signed out';
-  const long = state === 'signed-out' ? 'Session expired. Sign in again.' : `${word}${lastUpdate ? `, last updated ${lastUpdate}` : ''}`;
-  return <span class={`offline-marker t-${state === 'signed-out' ? 'danger' : state === 'offline' ? 'attention' : 'neutral'}`} data-ui="offline-marker" role="status" aria-label={long}>
-    <Icon name={state === 'updating' ? 'rotate-cw' : state === 'offline' ? 'circle-slash' : 'circle-alert'} />{word}{since && state !== 'signed-out' ? <> · <Ago t={since} /></> : ''}
-    {state === 'signed-out' && <a href={location.pathname}>Sign in again</a>}
-  </span>;
+export function OfflineMarker(p: { state: 'current' | 'offline' | 'updating' | 'signed-out'; since?: number; now: number }) {
+  return (
+    <Show when={p.state !== 'current'}>
+      {(() => {
+        const lastUpdate = createMemo(() => p.since ? exact(p.since) : null);
+        const word = createMemo(() => p.state === 'offline' ? 'offline' : p.state === 'updating' ? 'updating' : 'signed out');
+        const long = createMemo(() => p.state === 'signed-out' ? 'Session expired. Sign in again.' : `${word()}${lastUpdate() ? `, last updated ${lastUpdate()}` : ''}`);
+        const tone = createMemo(() => p.state === 'signed-out' ? 'danger' : p.state === 'offline' ? 'attention' : 'neutral');
+        return (
+          <span class={['offline-marker', `t-${tone()}`]} data-ui="offline-marker" role="status" aria-label={long()}>
+            <Icon name={p.state === 'updating' ? 'rotate-cw' : p.state === 'offline' ? 'circle-slash' : 'circle-alert'} />
+            {word()}
+            <Show when={p.since && p.state !== 'signed-out'}> <> · <Ago t={p.since!} /></></Show>
+            <Show when={p.state === 'signed-out'}><a href={location.pathname}>Sign in again</a></Show>
+          </span>
+        );
+      })()}
+    </Show>
+  );
 }
 
 /** Reserved two-line feedback region; updates never displace adjacent controls. */
-export const StatusLine = ({ children }: { children?: ComponentChildren }) => <div role="status" style={{ minHeight: '2lh' }}>{children}</div>;
+export function StatusLine(p: { children?: JSX.Element }) {
+  return <div role="status" style={{ 'min-height': '2lh' }}>{p.children}</div>;
+}
 
 /** Writes text to the clipboard; the caller shows a failure (status line with retry). */
 export const copyText = (text: string) => navigator.clipboard.writeText(text);
 
 /** A copy action: its icon turns into a check (a cross when the copy failed) for a moment and the result is announced;
  *  the button keeps its width (OR-23). */
-export function CopyButton({ label, value, iconOnly }: { label: string; value: string; iconOnly?: boolean }) {
-  const [done, setDone] = useState<boolean | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  const show = (ok: boolean) => { setDone(ok); clearTimeout(timer.current); timer.current = setTimeout(() => setDone(null), 1500); };
-  return <><Button label={label} icon={done === null ? actions.copy : done ? 'check' : 'circle-x'} kind="quiet" iconOnly={iconOnly} onClick={() => copyText(value).then(() => show(true), () => show(false))} />
-    <span class="sr-only" role="status">{done === null ? '' : done ? `${label.replace(/^Copy /, '')} copied` : 'Copy failed'}</span></>;
+export function CopyButton(p: { label: string; value: string; iconOnly?: boolean }) {
+  const [done, setDone] = createSignal<boolean | null>(null);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  onSettled(() => () => clearTimeout(timer));
+  const show = (ok: boolean) => {
+    setDone(ok);
+    clearTimeout(timer);
+    timer = setTimeout(() => setDone(null), 1500);
+  };
+  return (
+    <>
+      <Button
+        label={p.label}
+        icon={done() === null ? actions.copy : done() ? 'check' : 'circle-x'}
+        kind="quiet"
+        iconOnly={p.iconOnly}
+        onClick={() => copyText(p.value).then(() => show(true), () => show(false))}
+      />
+      <span class="sr-only" role="status">
+        {done() === null ? '' : done() ? `${p.label.replace(/^Copy /, '')} copied` : 'Copy failed'}
+      </span>
+    </>
+  );
 }
 
-/** Focuses an element when it mounts. Preact does not do this for `autoFocus`, and browsers honour the attribute
- *  only while the page loads, so a dialog or menu opened later kept focus on its opener. One stable function, so it runs once. */
-export const focusOnMount = (el: HTMLElement | null) => el?.focus();
+/** Focuses an element once it is attached to the DOM. */
+export const focusOnMount = (el: HTMLElement | null) => {
+  if (el) queueMicrotask(() => { if (el.isConnected) el.focus(); });
+};
 
 /* ---------- Anchored native popovers (modern-web-guidance: viewport-aware-dropdowns) ---------- */
 
@@ -253,29 +392,27 @@ export const popoverAttr = (kind: 'auto' | 'hint' | 'manual'): Record<string, st
  * immediately re-open the popover on `click`.
  */
 export function useAnchoredPopover(
-  open: boolean,
+  open: Accessor<boolean>,
   onClose: () => void,
-  triggerRef: { current: HTMLElement | null },
-  popoverRef: { current: HTMLElement | null },
+  triggerRef: () => HTMLElement | null | undefined,
+  popoverRef: () => HTMLElement | null | undefined,
 ) {
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  const suppressClickRef = useRef(false);
-  useEffect(() => {
-    const trigger = triggerRef.current;
+  let suppressClick = false;
+  onSettled(() => {
+    const trigger = triggerRef();
     if (!trigger) return;
     let clearTimer = 0;
     const onTriggerPointerDown = () => {
-      const el = popoverRef.current as PopoverElement | null;
+      const el = popoverRef() as PopoverElement | null | undefined;
       if (el?.matches(':popover-open')) {
-        suppressClickRef.current = true;
+        suppressClick = true;
         clearTimeout(clearTimer);
-        clearTimer = window.setTimeout(() => { suppressClickRef.current = false; }, 400);
+        clearTimer = window.setTimeout(() => { suppressClick = false; }, 400);
       }
     };
     const onTriggerClick = (e: MouseEvent) => {
-      if (!suppressClickRef.current) return;
-      suppressClickRef.current = false;
+      if (!suppressClick) return;
+      suppressClick = false;
       clearTimeout(clearTimer);
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -287,18 +424,18 @@ export function useAnchoredPopover(
       trigger.removeEventListener('pointerdown', onTriggerPointerDown, true);
       trigger.removeEventListener('click', onTriggerClick, true);
     };
-  }, []);
-  useLayoutEffect(() => {
-    const el = popoverRef.current as PopoverElement | null;
-    const trigger = triggerRef.current;
-    if (!open || !el) return;
+  });
+  createEffect(open, isOpen => {
+    const el = popoverRef() as PopoverElement | null | undefined;
+    const trigger = triggerRef();
+    if (!isOpen || !el) return;
     const onCloseEvent = (e: Event) => {
-      if ((e as Event & { newState?: string }).newState === 'closed') onCloseRef.current();
+      if ((e as Event & { newState?: string }).newState === 'closed') onClose();
     };
     const onEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && el.matches(':popover-open')) {
         e.preventDefault();
-        onCloseRef.current();
+        onClose();
       }
     };
     el.addEventListener('beforetoggle', onCloseEvent);
@@ -311,78 +448,161 @@ export function useAnchoredPopover(
       document.removeEventListener('keydown', onEscape);
       if (el.matches(':popover-open')) el.hidePopover();
     };
-  }, [open]);
+  });
 }
 
 /* ---------- Split button (split-button.md) ---------- */
 
 /** Default action plus a short menu of alternatives for the same place (OR-14 allows short action menus). */
-export function SplitButton({ main, alternatives, kind = 'default' }: {
+export function SplitButton(p: {
   main: { label: string; icon?: IconName; onClick?: () => void };
   alternatives: { label: string; icon?: IconName; onClick?: () => void }[]; kind?: 'primary' | 'default';
 }) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null), menuRef = useRef<HTMLDivElement>(null);
-  useAnchoredPopover(open, () => setOpen(false), triggerRef, menuRef);
+  let wrap: HTMLSpanElement | undefined;
   return (
-    <span class={`split ${kind}`} data-ui="split-button">
-      <Button label={main.label} icon={main.icon} kind={kind} onClick={main.onClick} />
-      <button ref={triggerRef} type="button" class={`btn ${kind} split-more`} aria-haspopup="menu" aria-expanded={open} aria-label={`More actions for ${main.label}`} onClick={() => setOpen(!open)}><Icon name="chevron-down" /></button>
-      {open && <div ref={menuRef} {...popoverAttr('auto')} class="menu anchored-menu" role="menu">{alternatives.map(a =>
-        <button type="button" role="menuitem" key={a.label} onClick={() => { setOpen(false); a.onClick?.(); }}>{a.icon && <Icon name={a.icon} />}{a.label}</button>)}</div>}
+    <span ref={el => { wrap = el; }} class={['split', p.kind ?? 'default']} data-ui="split-button">
+      <Button label={p.main.label} icon={p.main.icon} kind={p.kind ?? 'default'} onClick={p.main.onClick} />
+      <Menu container={wrap?.closest<HTMLElement>('.th-dark, .th-light') ?? undefined}>
+        <MenuTrigger
+          class={['btn', p.kind ?? 'default', 'split-more']}
+          aria-label={`More actions for ${p.main.label}`}
+        >
+          <Icon name="chevron-down" />
+        </MenuTrigger>
+        <MenuContent class="menu" side="bottom" align="end">
+          <For each={p.alternatives}>
+            {a => (
+              <MenuItem
+                render={itemProps => <button {...itemProps} type="button" />}
+                onSelect={() => a.onClick?.()}
+              >
+                <Show when={a.icon} keyed>{icon => <Icon name={icon} />}</Show>
+                {a.label}
+              </MenuItem>
+            )}
+          </For>
+        </MenuContent>
+      </Menu>
     </span>
   );
 }
 
 /* ---------- Action menu: one icon button, a short left-aligned menu with icons (OR-13, OR-14) ---------- */
 
-export function ActionMenu({ label, items, disabledReason }: { label: string; items: { label: string; icon: IconName; onClick: () => void; disabledReason?: string }[]; disabledReason?: string }) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null), menuRef = useRef<HTMLDivElement>(null);
-  useAnchoredPopover(open, () => setOpen(false), triggerRef, menuRef);
-  return <span class="split action-menu" data-ui="split-button">
-    <button ref={triggerRef} type="button" class="btn default icon-only" aria-haspopup="menu" aria-expanded={open} aria-label={label} data-tip={disabledReason ?? label} aria-disabled={!!disabledReason || undefined}
-      onClick={() => !disabledReason && setOpen(!open)}><Icon name={actions.more} /></button>
-    {open && <div ref={menuRef} {...popoverAttr('auto')} class="menu anchored-menu" role="menu">{items.map(a =>
-      <button type="button" role="menuitem" key={a.label} aria-disabled={!!a.disabledReason || undefined} data-tip={a.disabledReason} onClick={() => { if (a.disabledReason) return; setOpen(false); a.onClick(); }}><Icon name={a.icon} />{a.label}</button>)}</div>}
-  </span>;
+export function ActionMenu(p: {
+  label: string;
+  items: { label: string; icon: IconName; onClick: () => void; disabledReason?: string }[];
+  disabledReason?: string;
+}) {
+  let wrap: HTMLSpanElement | undefined;
+  return (
+    <span ref={el => { wrap = el; }} class="split action-menu" data-ui="split-button">
+      <Menu container={wrap?.closest<HTMLElement>('.th-dark, .th-light') ?? undefined}>
+        <MenuTrigger
+          class="btn default icon-only"
+          disabled={!!p.disabledReason}
+          focusableWhenDisabled={true}
+          aria-label={p.label}
+          data-tip={p.disabledReason ?? p.label}
+        >
+          <Icon name={actions.more} />
+        </MenuTrigger>
+        <MenuContent class="menu" side="bottom" align="end">
+          <For each={p.items}>
+            {a => (
+              <MenuItem
+                render={itemProps => <button {...itemProps} type="button" />}
+                disabled={!!a.disabledReason}
+                data-tip={a.disabledReason}
+                onSelect={() => { if (!a.disabledReason) a.onClick(); }}
+              >
+                <Icon name={a.icon} />
+                {a.label}
+              </MenuItem>
+            )}
+          </For>
+        </MenuContent>
+      </Menu>
+    </span>
+  );
 }
 
 /**
  * Search as an icon (OR-31): the field shows only while focused or not empty. Filters are typed in it (OR-36), e.g.
  * `agent:claude host:mac`; the list's server reads the terms.
  */
-export function SearchBox({ label, value, onInput, onEnter, always }: { label: string; value: string; onInput: (v: string) => void; onEnter?: () => void;
-  /** A picker whose job is typing keeps the field shown. */ always?: boolean }) {
-  const [focused, setOpen] = useState(false), open = focused || !!always;
-  // grab: focus the field once, right after the icon was clicked; closing waits for the click that moved focus (OR-23).
-  const grab = useRef(false), closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  if (!open && !value) return <Button label={label} icon={actions.search} iconOnly kind="quiet" onClick={() => { grab.current = true; setOpen(true); }} />;
-  return <label class="search" data-ui="search"><Icon name={actions.search} /><input type="search" value={value} placeholder={label} aria-label={label}
-    ref={e => { if (grab.current && e) { grab.current = false; e.focus(); } }}
-    onFocus={() => { clearTimeout(closing.current); setOpen(true); }} onBlur={() => { closing.current = setTimeout(() => setOpen(false), 250); }}
-    onKeyDown={e => { if (isSubmitEnter(e)) onEnter?.(); if (e.key === 'Escape') { onInput(''); (e.target as HTMLInputElement).blur(); } }}
-    onInput={e => onInput((e.target as HTMLInputElement).value)} /></label>;
+export function SearchBox(p: {
+  label: string; value: string; onInput: (v: string) => void; onEnter?: () => void;
+  /** A picker whose job is typing keeps the field shown. */ always?: boolean;
+}) {
+  const [focused, setOpen] = createSignal(false);
+  const open = createMemo(() => focused() || !!p.always);
+  let grab = false;
+  let closing: ReturnType<typeof setTimeout> | undefined;
+  onSettled(() => () => clearTimeout(closing));
+  return (
+    <Show
+      when={open() || !!p.value}
+      fallback={<Button label={p.label} icon={actions.search} iconOnly kind="quiet" onClick={() => { grab = true; setOpen(true); }} />}
+    >
+      <label class="search" data-ui="search">
+        <Icon name={actions.search} />
+        <Input
+          type="search"
+          value={p.value}
+          placeholder={p.label}
+          aria-label={p.label}
+          ref={el => {
+            if (grab) {
+              grab = false;
+              queueMicrotask(() => { if (el.isConnected) el.focus(); });
+            }
+          }}
+          onFocus={() => { clearTimeout(closing); setOpen(true); }}
+          onBlur={() => { closing = setTimeout(() => setOpen(false), 250); }}
+          onKeyDown={e => {
+            if (isSubmitEnter(e)) p.onEnter?.();
+            if (e.key === 'Escape') { p.onInput(''); e.currentTarget.blur(); }
+          }}
+          onValueChange={v => p.onInput(v)}
+        />
+      </label>
+    </Show>
+  );
 }
 
 /* ---------- Problem row ---------- */
 
-export function ProblemRow({ title, facts, severity, actions: acts }: {
-  title: string; facts: ComponentChildren; severity: 'warning' | 'failure';
+export function ProblemRow(p: {
+  title: string; facts: JSX.Element; severity: 'warning' | 'failure';
   actions: { label: string; icon?: IconName; primary?: boolean; onClick?: () => void }[];
 }) {
   return (
-    <div data-ui="problem-row" class={`problem ${severity}`} role="group" aria-label={`${severity === 'failure' ? 'Failure' : 'Warning'}: ${title}`}>
-      <Icon name={severity === 'failure' ? 'octagon-x' : 'triangle-alert'} />
-      <b>{title}</b><span class="facts" data-important="">{facts}</span>
-      <span class="acts">{acts.map(a => <Button key={a.label} label={a.label} icon={a.icon} kind={a.primary ? 'primary' : 'default'} onClick={a.onClick} />)}</span>
+    <div data-ui="problem-row" class={['problem', p.severity]} role="group" aria-label={`${p.severity === 'failure' ? 'Failure' : 'Warning'}: ${p.title}`}>
+      <Icon name={p.severity === 'failure' ? 'octagon-x' : 'triangle-alert'} />
+      <b>{p.title}</b><span class="facts" data-important="">{p.facts}</span>
+      <span class="acts">
+        <For each={p.actions}>
+          {a => <Button label={a.label} icon={a.icon} kind={a.primary ? 'primary' : 'default'} onClick={a.onClick} />}
+        </For>
+      </span>
     </div>
   );
 }
 
 /* ---------- Detail sections (D11, C3) ---------- */
 
-export const DetailSection = ({ title, children }: { title: string; children: ComponentChildren }) =>
-  <section class="dsec" data-ui="detail-section"><h3>{title}</h3>{children}</section>;
-export const KvRow = ({ icon, label, meta, value }: { icon: IconName; label: string; meta?: ComponentChildren; value?: ComponentChildren }) =>
-  <div class="kv-row"><Icon name={icon} /><b>{label}</b>{meta && <span class="muted">{meta}</span>}<span class="grow" />{value}</div>;
+export function DetailSection(p: { title: string; children: JSX.Element }) {
+  return <section class="dsec" data-ui="detail-section"><h3>{p.title}</h3>{p.children}</section>;
+}
+export function KvRow(p: { icon: IconName; label: string; meta?: JSX.Element; value?: JSX.Element }) {
+  return (
+    <div class="kv-row">
+      <Icon name={p.icon} />
+      <b>{p.label}</b>
+      <Show when={p.meta} keyed>{m => <span class="muted">{m}</span>}</Show>
+      <span class="grow" />
+      {p.value}
+    </div>
+  );
+}

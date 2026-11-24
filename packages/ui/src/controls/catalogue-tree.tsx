@@ -1,7 +1,7 @@
 // Virtualized hierarchical catalogue tree (1–3 levels) with pinned hoisting and keyboard navigation.
 // Specs: docs/design-system/controls/catalogue-tree.md (OR-9, OR-12, OR-22, OR-37, OR-45).
-import type { ComponentChildren } from 'preact';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { createEffect, createMemo, createSignal, onSettled, Show, untrack } from 'solid-js';
+import type { JSX } from '@solidjs/web';
 import { type Family, type IconName, actions, states } from '../registry.ts';
 import { matchSearch } from '../search.ts';
 import { VirtualList, type VirtualListHandle } from '../virtual-list.tsx';
@@ -22,7 +22,7 @@ export type CatalogueTreeNode = {
   icon?: IconName;
   state?: CatalogueTreeNodeState;
   /** Right-aligned marker (OR-45 delta badge, metric score, or run count). */
-  right?: ComponentChildren;
+  right?: JSX.Element;
   /** Folder/collection children; when defined, the node is treated as a folder. */
   children?: CatalogueTreeNode[];
   /** Explicit folder item count (otherwise derived from descendant leaves). */
@@ -278,62 +278,61 @@ export function flattenCatalogueTree(
 }
 
 export function CatalogueTree(props: CatalogueTreeProps) {
-  const mode = props.mode ?? 'single';
-  const rowHeight = props.rowHeight ?? defaultRowHeight();
-  const [ownCollapsed, setOwnCollapsed] = useState<Record<string, boolean>>({});
-  const collapsedMap = props.collapsed ?? ownCollapsed;
+  const mode = () => props.mode ?? 'single';
+  const rowHeight = () => props.rowHeight ?? defaultRowHeight();
+  const [ownCollapsed, setOwnCollapsed] = createSignal<Record<string, boolean>>({});
+  const collapsedMap = createMemo(() => props.collapsed ?? ownCollapsed());
 
-  const rows = useMemo(
-    () => flattenCatalogueTree(props.nodes, { query: props.query, collapsed: collapsedMap }),
-    [props.nodes, props.query, collapsedMap],
-  );
+  const rows = createMemo(() => flattenCatalogueTree(props.nodes, { query: props.query, collapsed: collapsedMap() }));
+  const selectedSet = createMemo(() => new Set(props.selectedIds ?? []));
+  const [focusedKey, setFocusedKey] = createSignal<string | null>(untrack(() => props.selectedId ?? null), { ownedWrite: true });
+  let treeRef: HTMLDivElement | undefined;
+  const ownHandle: { current: VirtualListHandle | null } = { current: null };
+  const listHandle = () => props.handle ?? ownHandle;
 
-  const selectedSet = useMemo(() => new Set(props.selectedIds ?? []), [props.selectedIds]);
-  const [focusedKey, setFocusedKey] = useState<string | null>(props.selectedId ?? null);
-  const treeRef = useRef<HTMLDivElement>(null);
-  const ownHandle = useRef<VirtualListHandle | null>(null);
-  const listHandle = props.handle ?? ownHandle;
+  createEffect(() => props.selectedId, selId => {
+    if (selId) setFocusedKey(selId);
+  });
 
-  useEffect(() => {
-    if (props.selectedId) setFocusedKey(props.selectedId);
-  }, [props.selectedId]);
-
-  const activeIndex = useMemo(() => {
-    if (!rows.length) return -1;
-    if (focusedKey) {
-      const i = rows.findIndex(r => r.key === focusedKey);
+  const activeIndex = createMemo(() => {
+    const curRows = rows();
+    if (!curRows.length) return -1;
+    const fk = focusedKey();
+    if (fk) {
+      const i = curRows.findIndex(r => r.key === fk);
       if (i >= 0) return i;
     }
     if (props.selectedId) {
-      const i = rows.findIndex(r => r.node.id === props.selectedId);
+      const i = curRows.findIndex(r => r.node.id === props.selectedId);
       if (i >= 0) return i;
     }
     return 0;
-  }, [rows, focusedKey, props.selectedId]);
+  });
 
   // Keep VirtualList's internal grid/row roles transparent inside role="tree" so assistive tech sees a single tree.
-  useLayoutEffect(() => {
-    const root = treeRef.current;
+  const syncRoles = () => {
+    const root = treeRef;
     if (!root) return;
-    const syncRoles = () => {
-      const vl = root.querySelector<HTMLElement>('.vl');
-      if (vl) {
-        if (vl.getAttribute('role') !== 'presentation') vl.setAttribute('role', 'presentation');
-        if (vl.getAttribute('tabindex') !== '-1') vl.setAttribute('tabindex', '-1');
-        if (vl.hasAttribute('aria-rowcount')) vl.removeAttribute('aria-rowcount');
-      }
-      for (const r of root.querySelectorAll<HTMLElement>('.vl-row')) {
-        if (r.getAttribute('role') !== 'presentation') r.setAttribute('role', 'presentation');
-        if (r.hasAttribute('aria-rowindex')) r.removeAttribute('aria-rowindex');
-      }
-    };
+    const vl = root.querySelector<HTMLElement>('.vl');
+    if (vl) {
+      if (vl.getAttribute('role') !== 'presentation') vl.setAttribute('role', 'presentation');
+      if (vl.getAttribute('tabindex') !== '-1') vl.setAttribute('tabindex', '-1');
+      if (vl.hasAttribute('aria-rowcount')) vl.removeAttribute('aria-rowcount');
+    }
+    for (const r of root.querySelectorAll<HTMLElement>('.vl-row')) {
+      if (r.getAttribute('role') !== 'presentation') r.setAttribute('role', 'presentation');
+      if (r.hasAttribute('aria-rowindex')) r.removeAttribute('aria-rowindex');
+    }
+  };
+  createEffect(() => rows(), () => {
     syncRoles();
-    const space = root.querySelector('.vl-space');
+    const space = treeRef?.querySelector('.vl-space');
     if (!space || typeof MutationObserver === 'undefined') return;
     const obs = new MutationObserver(syncRoles);
     obs.observe(space, { childList: true });
     return () => obs.disconnect();
   });
+  onSettled(syncRoles);
 
   const toggleFolder = (row: FlattenedCatalogueRow, nextCollapsed = !row.collapsed) => {
     if (props.collapsed === undefined) {
@@ -344,16 +343,16 @@ export function CatalogueTree(props: CatalogueTreeProps) {
 
   const focusKey = (key: string, align: 'start' | 'center' | 'end' = 'center') => {
     setFocusedKey(key);
-    listHandle.current?.scrollToKey(key, align);
+    listHandle().current?.scrollToKey(key, align);
     requestAnimationFrame(() => {
-      const el = treeRef.current?.querySelector<HTMLElement>(`[data-tree-key="${CSS.escape(key)}"]`);
+      const el = treeRef?.querySelector<HTMLElement>(`[data-tree-key="${CSS.escape(key)}"]`);
       el?.focus({ preventScroll: true });
     });
   };
 
   const handleRowActivate = (row: FlattenedCatalogueRow) => {
     if (row.node.disabled) return;
-    if (mode === 'multiple' && !row.isFolder) {
+    if (mode() === 'multiple' && !row.isFolder) {
       (props.onToggleSelect ?? props.onSelect)?.(row.node);
       return;
     }
@@ -370,33 +369,34 @@ export function CatalogueTree(props: CatalogueTreeProps) {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     const target = e.target as HTMLElement | null;
     if (target?.closest('input,textarea')) return;
-    if (!rows.length || activeIndex < 0) return;
-    const cur = rows[activeIndex];
+    const curRows = rows(), idx = activeIndex();
+    if (!curRows.length || idx < 0) return;
+    const cur = curRows[idx];
     if (!cur) return;
 
     switch (e.key) {
       case 'ArrowDown':
       case 'j': {
         e.preventDefault();
-        const next = rows[Math.min(rows.length - 1, activeIndex + 1)];
+        const next = curRows[Math.min(curRows.length - 1, idx + 1)];
         if (next) focusKey(next.key, 'end');
         break;
       }
       case 'ArrowUp':
       case 'k': {
         e.preventDefault();
-        const prev = rows[Math.max(0, activeIndex - 1)];
+        const prev = curRows[Math.max(0, idx - 1)];
         if (prev) focusKey(prev.key, 'start');
         break;
       }
       case 'Home': {
         e.preventDefault();
-        focusKey(rows[0].key, 'start');
+        focusKey(curRows[0].key, 'start');
         break;
       }
       case 'End': {
         e.preventDefault();
-        focusKey(rows[rows.length - 1].key, 'end');
+        focusKey(curRows[curRows.length - 1].key, 'end');
         break;
       }
       case 'ArrowRight': {
@@ -405,7 +405,7 @@ export function CatalogueTree(props: CatalogueTreeProps) {
         if (cur.collapsed) {
           toggleFolder(cur, false);
         } else {
-          const child = rows[activeIndex + 1];
+          const child = curRows[idx + 1];
           if (child && child.parentId === cur.node.id) focusKey(child.key, 'end');
         }
         break;
@@ -415,7 +415,7 @@ export function CatalogueTree(props: CatalogueTreeProps) {
         if (cur.isFolder && !cur.collapsed) {
           toggleFolder(cur, true);
         } else if (cur.parentId) {
-          const parent = rows.find(r => r.node.id === cur.parentId);
+          const parent = curRows.find(r => r.node.id === cur.parentId);
           if (parent) focusKey(parent.key, 'start');
         }
         break;
@@ -430,7 +430,7 @@ export function CatalogueTree(props: CatalogueTreeProps) {
       case ' ': {
         if (cur.node.disabled) return;
         e.preventDefault();
-        if (mode === 'multiple' && !cur.isFolder) {
+        if (mode() === 'multiple' && !cur.isFolder) {
           (props.onToggleSelect ?? props.onSelect)?.(cur.node);
         } else {
           handleRowActivate(cur);
@@ -440,15 +440,15 @@ export function CatalogueTree(props: CatalogueTreeProps) {
     }
   };
 
-  const leafCount = useMemo(() => rows.filter(r => !r.isFolder).length, [rows]);
-  const hasQuery = !!(props.query && props.query.trim());
-  const statusMessage = hasQuery ? `${leafCount} matching ${leafCount === 1 ? 'item' : 'items'}` : '';
+  const leafCount = createMemo(() => rows().filter(r => !r.isFolder).length);
+  const hasQuery = createMemo(() => !!(props.query && props.query.trim()));
+  const statusMessage = createMemo(() => hasQuery() ? `${leafCount()} matching ${leafCount() === 1 ? 'item' : 'items'}` : '');
 
   const renderRow = (row: FlattenedCatalogueRow, index: number) => {
     const { node } = row;
-    const isActive = index === activeIndex;
-    const isSelected = mode === 'multiple'
-      ? (!row.isFolder && selectedSet.has(node.id)) || props.selectedId === node.id
+    const isActive = () => index === activeIndex();
+    const isSelected = () => mode() === 'multiple'
+      ? (!row.isFolder && selectedSet().has(node.id)) || props.selectedId === node.id
       : props.selectedId === node.id;
     const st = node.state && node.state.state in states[node.state.family] ? node.state : undefined;
 
@@ -458,123 +458,131 @@ export function CatalogueTree(props: CatalogueTreeProps) {
         data-tree-key={row.key}
         data-node-id={node.id}
         aria-level={row.depth + 1}
-        aria-expanded={row.isFolder ? !row.collapsed : undefined}
-        aria-selected={isSelected}
-        aria-disabled={node.disabled || undefined}
+        aria-expanded={row.isFolder ? (!row.collapsed ? 'true' : 'false') : undefined}
+        aria-selected={isSelected() ? 'true' : 'false'}
+        aria-disabled={node.disabled ? 'true' : undefined}
         data-tip={node.disabled ? node.disabledReason : undefined}
-        tabIndex={isActive ? 0 : -1}
-        class={`cat-row depth-${row.depth}${row.isFolder ? ' folder' : ' leaf'}${node.disabled ? ' disabled' : ''}`}
+        tabindex={isActive() ? 0 : -1}
+        class={['cat-row', `depth-${row.depth}`, row.isFolder ? 'folder' : 'leaf', { disabled: !!node.disabled }]}
         onFocus={() => setFocusedKey(row.key)}
         onClick={() => handleRowActivate(row)}
       >
-        {row.isFolder ? (
-          <>
-            <button
-              type="button"
-              class="tw cat-tw"
-              tabIndex={-1}
-              aria-label={row.collapsed ? `Expand ${node.label}` : `Collapse ${node.label}`}
-              data-dir={row.collapsed ? 'right' : 'down'}
-              onClick={e => {
-                e.stopPropagation();
-                toggleFolder(row);
-              }}
-            >
-              <span class={row.collapsed ? 'chev' : 'chev open'}>
-                <Icon name={actions.expand} />
-              </span>
-            </button>
-            <Icon name={node.icon ?? 'folder-open'} />
-            <span class="cat-label">{node.label}</span>
-            {node.sub && <span class="cat-sub muted">{node.sub}</span>}
-            <span class="cat-right">
-              {node.right}
-              <span class="cat-count num">{row.count.toLocaleString('en')}</span>
-            </span>
-          </>
-        ) : (
-          <>
-            {mode === 'multiple' && (
-              <RowCheck
-                checked={selectedSet.has(node.id)}
-                label={`Select ${node.label}`}
-                onToggle={() => {
-                  if (!node.disabled) (props.onToggleSelect ?? props.onSelect)?.(node);
-                }}
-              />
-            )}
-            {row.isPinned && props.onPin && (
-              <RowPin label={node.label} onUnpin={() => props.onPin!(node)} />
-            )}
-            {st ? (
-              <StateBadge family={st.family} state={st.state as never} reason={st.reason} compact />
-            ) : node.icon ? (
-              <span class="cat-ic"><Icon name={node.icon} /></span>
-            ) : null}
-            {st && node.icon && <span class="cat-ic"><Icon name={node.icon} /></span>}
-            {node.href ? (
-              <a
-                class="cat-link"
-                href={node.href}
-                tabIndex={-1}
-                onClick={e => {
-                  if (node.disabled) { e.preventDefault(); return; }
-                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
-                    e.stopPropagation();
-                    return;
-                  }
-                  if (props.onSelect || mode === 'multiple') e.preventDefault();
-                }}
+        <Show
+          when={row.isFolder}
+          fallback={
+            <>
+              <Show when={mode() === 'multiple'}>
+                <RowCheck
+                  checked={selectedSet().has(node.id)}
+                  label={`Select ${node.label}`}
+                  onToggle={() => {
+                    if (!node.disabled) (props.onToggleSelect ?? props.onSelect)?.(node);
+                  }}
+                />
+              </Show>
+              <Show when={row.isPinned && props.onPin}>
+                <RowPin label={node.label} onUnpin={() => props.onPin!(node)} />
+              </Show>
+              {st ? (
+                <StateBadge family={st.family} state={st.state as never} reason={st.reason} compact />
+              ) : node.icon ? (
+                <span class="cat-ic"><Icon name={node.icon} /></span>
+              ) : null}
+              {st && node.icon ? <span class="cat-ic"><Icon name={node.icon} /></span> : null}
+              <Show
+                when={node.href}
+                keyed
+                fallback={<span class="cat-label">{node.label}</span>}
               >
-                {node.label}
-              </a>
-            ) : (
-              <span class="cat-label">{node.label}</span>
-            )}
-            {node.sub && <span class="cat-sub muted">{node.sub}</span>}
-            {node.right !== undefined && node.right !== null && <span class="cat-right">{node.right}</span>}
-          </>
-        )}
+                {href => (
+                  <a
+                    class="cat-link"
+                    href={href}
+                    tabindex={-1}
+                    onClick={e => {
+                      if (node.disabled) { e.preventDefault(); return; }
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+                        e.stopPropagation();
+                        return;
+                      }
+                      if (props.onSelect || mode() === 'multiple') e.preventDefault();
+                    }}
+                  >
+                    {node.label}
+                  </a>
+                )}
+              </Show>
+              <Show when={node.sub} keyed>{sub => <span class="cat-sub muted">{sub}</span>}</Show>
+              <Show when={node.right !== undefined && node.right !== null}>
+                <span class="cat-right">{node.right}</span>
+              </Show>
+            </>
+          }
+        >
+          <button
+            type="button"
+            class="tw cat-tw"
+            tabindex={-1}
+            aria-label={row.collapsed ? `Expand ${node.label}` : `Collapse ${node.label}`}
+            data-dir={row.collapsed ? 'right' : 'down'}
+            onClick={e => {
+              e.stopPropagation();
+              toggleFolder(row);
+            }}
+          >
+            <span class={['chev', { open: !row.collapsed }]}>
+              <Icon name={actions.expand} />
+            </span>
+          </button>
+          <Icon name={node.icon ?? 'folder-open'} />
+          <span class="cat-label">{node.label}</span>
+          <Show when={node.sub} keyed>{sub => <span class="cat-sub muted">{sub}</span>}</Show>
+          <span class="cat-right">
+            {node.right}
+            <span class="cat-count num">{row.count.toLocaleString('en')}</span>
+          </span>
+        </Show>
       </div>
     );
   };
 
   return (
     <div
-      ref={treeRef}
+      ref={el => { treeRef = el; }}
       class={`cat-tree${props.fill ? ' cat-tree-fill' : ''}${props.class ? ' ' + props.class : ''}`}
       data-ui="catalogue-tree"
       role="tree"
       aria-label={props.label}
-      aria-multiselectable={mode === 'multiple' || undefined}
+      aria-multiselectable={mode() === 'multiple' ? 'true' : undefined}
       onKeyDown={onTreeKeyDown}
     >
-      {rows.length === 0 ? (
-        <Empty text={props.emptyText ?? (hasQuery ? 'No matching items.' : 'No items.')} />
-      ) : (
+      <Show
+        when={rows().length > 0}
+        fallback={<Empty text={props.emptyText ?? (hasQuery() ? 'No matching items.' : 'No items.')} />}
+      >
         <VirtualList
-          items={rows}
+          items={rows()}
           fill={props.fill}
           getKey={r => r.key}
-          rowHeight={rowHeight}
+          rowHeight={rowHeight()}
           follow="top"
           label={props.label}
-          handle={listHandle}
+          handle={listHandle()}
           rowClass={r => {
-            const sel = mode === 'multiple'
-              ? !r.isFolder && selectedSet.has(r.node.id)
+            const sel = mode() === 'multiple'
+              ? !r.isFolder && selectedSet().has(r.node.id)
               : props.selectedId === r.node.id;
             return [
               r.isFolder ? 'cat-folder-row' : 'cat-leaf-row',
-              sel ? (mode === 'multiple' ? 'checked' : 'sel') : '',
+              sel ? (mode() === 'multiple' ? 'checked' : 'sel') : '',
               r.node.problem ? 'cat-problem' : '',
             ].filter(Boolean).join(' ');
           }}
           onRowMenu={props.onRowMenu ? (r, at) => props.onRowMenu!(r.node, at) : undefined}
           render={renderRow}
         />
-      )}
-      <span class="sr-only" aria-live="polite">{statusMessage}</span>
+      </Show>
+      <span class="sr-only" aria-live="polite">{statusMessage()}</span>
     </div>
   );
 }
