@@ -62,23 +62,13 @@ async function startFakeClickHouse() {
   return { url: `http://127.0.0.1:${port}`, seen, close: () => new Promise<void>((r) => srv.close(() => r())) };
 }
 
-async function until<T>(fn: () => Promise<T | null | undefined | false>, what: string, ms = 10_000): Promise<T> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    const v = await fn();
-    if (v) return v;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  assert.fail('timed out waiting for: ' + what);
-}
-
 test('HAL0 qualifies across two isolated projects: checks tasks/executions/telemetry, raises owner questions, deduplicates/continues fixes, verifies fixes, retains unconfirmed observations, and audits dismissals (requirement: fleet.md Persistent bots; risk: cross-project leakage, duplicate fix tasks, premature dismissal of unconfirmed runs, or missed question_ask/audit history)', async () => {
   const ch = await startFakeClickHouse();
   const coordinator: Coordinator = await startCoordinator({
     name: 'hal0-qual',
     env: {
       FLEET_BOT_TICK_MS: '200',
-      FLEET_LOST_AFTER_MS: '60000',
+      FLEET_LOST_AFTER_MS: '120000',
       FLEET_CLICKHOUSE_URL: ch.url,
     },
   });
@@ -199,11 +189,13 @@ test('HAL0 qualifies across two isolated projects: checks tasks/executions/telem
     const nowSec = Math.floor(Date.now() / 1000) - 60;
 
     coordinator.sql(`
+      BEGIN;
       INSERT INTO session(id, project_id, payload) VALUES (${lit(foreignSessA)}, ${lit(PROJ_A)}, '{}'::jsonb);
       INSERT INTO execution(id, kind, state, observation, project_id, task_id, session_id, host_id, model, problem, started_at, ended_at, data) VALUES
         (${lit(eConfirmedA)}, 'agent_run', 'failed', 'confirmed', ${lit(PROJ_A)}, ${lit(tExistingA)}, ${lit(foreignSessA)}, ${lit(hostId)}, 'gpt-6.2-sol', 'exit 2: nil pointer in parser', to_timestamp(${nowSec - 30}), to_timestamp(${nowSec - 10}), ${lit({ id: eConfirmedA, traceparent: `00-${traceA}-${'2'.repeat(16)}-01` })}::jsonb),
         (${lit(eDupA)}, 'agent_run', 'failed', 'confirmed', ${lit(PROJ_A)}, ${lit(tExistingA)}, ${lit(foreignSessA)}, ${lit(hostId)}, 'gpt-6.2-sol', 'exit 2: nil pointer in parser', to_timestamp(${nowSec - 8}), to_timestamp(${nowSec - 2}), ${lit({ id: eDupA })}::jsonb),
         (${lit(eUnconfA)}, 'agent_run', 'running', 'unconfirmed', ${lit(PROJ_A)}, NULL, ${lit(foreignSessA)}, ${lit(hostId)}, 'gpt-6.2-sol', 'host contact lost mid-run', now(), NULL, ${lit({ id: eUnconfA })}::jsonb);
+      COMMIT;
     `);
 
     // 3. Wait for HAL0-A to wake automatically on Needs you in Project A; HAL0-B in Project B must NOT wake!
@@ -335,11 +327,13 @@ test('HAL0 qualifies across two isolated projects: checks tasks/executions/telem
     const eProbB = 'exec-prob-b-' + randomUUID().slice(0, 8);
     const foreignSessB = 'sess-foreign-b-' + randomUUID().slice(0, 8);
     coordinator.sql(`
+      BEGIN;
       INSERT INTO session(id, project_id, payload) VALUES (${lit(foreignSessB)}, ${lit(PROJ_B)}, '{}'::jsonb);
       INSERT INTO question(id, kind, project_id, session_id, text, options, asked_by, state)
       VALUES (${lit(qObsB)}, 'operator_decision', ${lit(PROJ_B)}, ${lit(foreignSessB)}, 'Obsolete deploy gate from yesterday?', '["yes","no"]', ${lit(OWNER)}, 'open');
       INSERT INTO execution(id, kind, state, observation, project_id, session_id, host_id, model, problem, started_at, ended_at, data)
       VALUES (${lit(eProbB)}, 'agent_run', 'failed', 'confirmed', ${lit(PROJ_B)}, ${lit(foreignSessB)}, ${lit(hostId)}, 'gpt-6.2-sol', 'timeout fetching fixture index', to_timestamp(${nowSec - 15}), to_timestamp(${nowSec - 5}), ${lit({ id: eProbB })}::jsonb);
+      COMMIT;
     `);
 
     const startCmdB = await hostCommand(poll, (c) => c.kind === 'start' && c.sessionId === createdB.homeSessionId);
@@ -399,8 +393,10 @@ test('HAL0 qualifies across two isolated projects: checks tasks/executions/telem
     assert.equal(rowB?.label, 'HAL0');
     assert.equal(rowB?.runs, 1);
 
-    // Confirm HAL0-A never woke during Project B activity.
-    await until(async () => (await op('bot_runs', { botId: halB })).runs.length === 1, 'HAL0-B run recorded');
+    // Confirm HAL0-B recorded its single succeeded run (no split active_skip) and HAL0-A never woke during Project B activity.
+    const botRunsB = await op('bot_runs', { botId: halB });
+    assert.equal(botRunsB.runs.length, 1, `unexpected botRunsB: ${JSON.stringify(botRunsB.runs)}`);
+    assert.equal(botRunsB.runs[0].state, 'succeeded');
     assert.equal((await op('bot_runs', { botId: halA })).runs.length, 2);
   } finally {
     await coordinator.stop();
