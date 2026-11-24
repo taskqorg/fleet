@@ -1,15 +1,15 @@
 // The list-view pattern shared by Tasks and Conversations (docs/design-system/patterns/list-view.md): saved views (OR-33),
 // pins read by id (OR-12), grouping with collapse, selection mode and the row menu (OR-37). A page keeps its rows, facts,
 // actions, server kind and fields; useListPage holds the state and ListPagePanel renders the list section.
-import type { ComponentChildren } from 'preact';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { createEffect, createMemo, createSignal, onSettled, Show, untrack, type Accessor } from 'solid-js';
+import type { JSX } from '@solidjs/web';
 import {
   ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, VirtualList, ContextMenu, SelectBar, SelectToggle, RowPin, RowCheck, copyText, actions,
   EntityCode, ErrorBanner, type EntityKind, Skeleton, catalogueRow, type IconName, type Family, type StateOf, type Chip, type Tone, type SortField,
 } from '../../packages/ui/src/index.ts';
-import { op, online } from './api.ts';
+import { online } from './api.ts';
 import { useList, useOp, type Kind } from './store.ts';
-import { compareKeys, closedGroups, flipGroup, type Row } from './lists.ts';
+import { compareKeys, closedGroups, flipGroup } from './lists.ts';
 import { listKey, formatView, parseView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from './url.ts';
 import { usePins, useViews, listGroups, setListGroups, setNavCounter, type SavedView } from './prefs.ts';
@@ -67,143 +67,233 @@ export type ListPageOptions = {
 };
 
 export function useListPage<R extends ListRow>(o: ListPageOptions) {
-  const { view, set, href } = useUrlView(o.view);
+  const url = useUrlView(o.view);
   // A new query ends the preset that was active when the person typed it. A preset picked while the debounced query waits
   // stays: the commit reads the URL as it is then (url.ts) and leaves a different preset alone.
-  const typedPreset = useRef<string | undefined>(undefined);
-  const [query, setText] = useSearchBox(view.q, q => {
+  let typedPreset: string | undefined;
+  const [query, setText] = useSearchBox(() => url.view.q, q => {
     const now = parseView(location.pathname + location.search)?.preset;
-    set({ q: q || undefined, ...(now === typedPreset.current ? { preset: undefined } : {}) }, 'type');
+    url.set({ q: q || undefined, ...(now === typedPreset ? { preset: undefined } : {}) }, 'type');
   });
-  const setQuery = (t: string) => { typedPreset.current = view.preset; setText(t); };
+  const setQuery = (t: string) => { typedPreset = untrack(() => url.view.preset); setText(t); };
   const pins = usePins(o.view);
   const views = useViews(o.view, o.system);
-  // A page passes `local` for its whole life or never, so the hook order never changes between renders.
-  const local = o.local?.(view);
-  const list = local ? localList(local, view) : useList(o.kind!, view);
-  const group = view.group ?? o.defaultGroup, sort = view.sort ?? o.defaultSort, states = view.state ?? [];
+  // A page passes `local` for its whole life or never.
+  const localMemo = o.local ? createMemo(() => o.local!(url.view)) : null;
+  const list = localMemo ? localList(localMemo, () => url.view) : useList(o.kind!, () => url.view);
+  const group = createMemo(() => url.view.group ?? o.defaultGroup);
+  const sort = createMemo(() => url.view.sort ?? o.defaultSort);
+  const states = createMemo(() => url.view.state ?? []);
   // Rows on screen may still be the previous list (pending): headers and chips follow that list's own grouping.
-  const rowsGroup = list.shownView.group ?? o.defaultGroup;
-  const rows = list.rows as unknown as R[];
-  const sel = view.sel ?? [], selNow = useRef(sel), toggleSel = (x: string) => set({ sel: sel.includes(x) ? sel.filter(i => i !== x) : [...sel, x] });
-  selNow.current = sel;
+  const rowsGroup = createMemo(() => list.shownView.group ?? o.defaultGroup);
+  const rows = createMemo(() => list.rows as unknown as R[]);
+  const sel = createMemo(() => url.view.sel ?? []);
+  const toggleSel = (x: string) => {
+    const cur = untrack(sel);
+    url.set({ sel: cur.includes(x) ? cur.filter(i => i !== x) : [...cur, x] });
+  };
   // Selection mode (OR-37): a checkbox column left of the state, the action bar under the tools.
-  const [selectOn, setSelectOn] = useState(false);
-  const selecting = selectOn || sel.length > 0;
-  const [confirm, setConfirm] = useState<R[] | null>(null);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const leave = () => { setSelectOn(false); setConfirm(null); setBulkError(null); set({ sel: undefined }); };
-  const [menu, setMenu] = useState<{ r: R; at: { x: number; y: number } } | null>(null);
-  const closeMenu = useCallback(() => setMenu(null), []);
+  const [selectOn, setSelectOn] = createSignal(false, { ownedWrite: true });
+  const selecting = createMemo(() => selectOn() || sel().length > 0);
+  const [confirm, setConfirm] = createSignal<R[] | null>(null, { ownedWrite: true });
+  const [bulkError, setBulkError] = createSignal<string | null>(null, { ownedWrite: true });
+  const [busy, setBusy] = createSignal(false);
+  const leave = () => { setSelectOn(false); setConfirm(null); setBulkError(null); url.set({ sel: undefined }); };
+  const [menu, setMenu] = createSignal<{ r: R; at: { x: number; y: number } } | null>(null);
+  const closeMenu = () => setMenu(null);
   // A switch to another list by any path ends selection mode and a pending confirmation.
-  const firstList = useRef(true);
-  useEffect(() => { if (firstList.current) { firstList.current = false; return; } setSelectOn(false); setConfirm(null); setBulkError(null); }, [o.listId?.(view)]);
+  createEffect(() => o.listId?.(url.view), () => { setSelectOn(false); setConfirm(null); setBulkError(null); }, { defer: true });
   // Pinned rows stay in the list whatever the filter, search or grouping (OR-12): they are read by id with the page's pin
   // filter and live through row changes; the filtered page supplies the rest.
-  const pinRead = o.pinRead?.(view) ?? { filter: {} };
-  // One list_membership read (the server's bound is 1,000 ids); it rereads when a change names a pinned row (touchedBy ids).
-  const pinnedDoc = useOp('list_membership', pins.ids.length && !local ? { ids: pins.ids.slice(0, 1000), lists: [{ name: o.kind!, filter: pinRead.filter, group: 'none', sort }] } : null);
-  const pinRows = pinnedDoc.data?.lists[0]?.rows as R[] | undefined;
-  const byId = new Map(((local?.all as R[] | undefined) ?? pinRows ?? []).map(r => [r.id, r]));
+  const pinnedDoc = useOp('list_membership', () => {
+    if (!pins.ids.length || localMemo) return null;
+    const pinRead = o.pinRead?.(url.view) ?? { filter: {} };
+    return { ids: pins.ids.slice(0, 1000), lists: [{ name: o.kind!, filter: pinRead.filter, group: 'none', sort: sort() }] };
+  });
+  const byId = createMemo(() => {
+    const pinRows = pinnedDoc.data?.lists[0]?.rows as R[] | undefined;
+    return new Map(((localMemo?.().all as R[] | undefined) ?? pinRows ?? []).map(r => [r.id, r]));
+  });
   // The page supplies a just-pinned row while its independent read is pending. Its grouping key is irrelevant here.
-  const pinned = pins.ids.map(x => byId.get(x) ?? rows.find(r => r.id === x))
-    .filter((r): r is R => !!r).sort((a, b) => compareKeys(a.sortKey.slice(1), b.sortKey.slice(1)));
-  const rest = rows.filter(r => !pins.has(r.id)), displayed = [...pinned, ...rest];
+  const pinned = createMemo(() =>
+    pins.ids.map(x => byId().get(x) ?? rows().find(r => r.id === x))
+      .filter((r): r is R => !!r).sort((a, b) => compareKeys(a.sortKey.slice(1), b.sortKey.slice(1))),
+  );
+  const rest = createMemo(() => rows().filter(r => !pins.has(r.id)));
+  const displayed = createMemo(() => [...pinned(), ...rest()]);
   // Collapsed groups: the page's defaults for the grouping on screen with the person's flips (prefs listGroups), read in
   // render, so the first frame after the preferences load already has them. The Pinned group is one list per view.
-  const context = o.groupsContext?.(list.shownView), grouping = context ? `${rowsGroup}-${context}` : rowsGroup;
-  const groupsList = `${o.view}:${grouping}`, pinList = `${o.view}:pinned`;
-  const closed = closedGroups(o.closedGroups?.[grouping] ?? [], listGroups(groupsList));
-  if (listGroups(pinList).includes('pinned')) closed.add(PINNED);
+  const grouping = createMemo(() => {
+    const rg = rowsGroup();
+    const context = o.groupsContext?.(list.shownView);
+    return context ? `${rg}-${context}` : rg;
+  });
+  const groupsList = createMemo(() => `${o.view}:${grouping()}`);
+  const pinList = `${o.view}:pinned`;
+  const closed = createMemo(() => {
+    const c = closedGroups(o.closedGroups?.[grouping()] ?? [], listGroups(groupsList()));
+    if (listGroups(pinList).includes('pinned')) c.add(PINNED);
+    return c;
+  });
   const toggleGroup = (key: string) => key === PINNED ? setListGroups(pinList, flipGroup(listGroups(pinList), 'pinned'))
-    : setListGroups(groupsList, flipGroup(listGroups(groupsList), key));
+    : setListGroups(untrack(groupsList), flipGroup(listGroups(untrack(groupsList)), key));
   // A project group is labelled with the project's name, as the focus control names it; its key stays the project id.
-  const projects = useOp('project_list', rowsGroup === 'project' ? {} : null);
-  const names = new Map<string, string>((projects.data?.projects ?? []).map(p => [String(p.id), String(p.name ?? p.id)]));
-  const label = (key: string, meta: string | null) => o.groupLabel(rowsGroup, rowsGroup === 'project' ? names.get(key) ?? meta : meta);
-  const items: ListItem<R>[] = [];
-  // Pinned rows come first, as a group of their own (OR-12); each shows its pin before the state (RowPin).
-  if (pinned.length) {
-    items.push({ kind: 'group', key: PINNED, label: 'Pinned', count: pinned.length, icon: 'pin' });
-    if (!closed.has(PINNED)) for (const r of pinned) items.push({ kind: 'row', r, pinned: true });
-  }
-  let last: string | null = null;
-  const shownGroups = new Set<string>();
-  for (const r of rest) {
-    const g = String(r.sortKey[0]);
-    if (rowsGroup !== 'none' && g !== last) { shownGroups.add(g); const meta = list.groups.find(x => x.key === g); items.push({ kind: 'group', key: g, label: label(g, meta?.label ?? null), count: meta?.count ?? 0 }); last = g; }
-    if (!closed.has(g)) items.push({ kind: 'row', r });
-  }
-  // Loaded rows that end inside a collapsed group show no new items, so the list end would stop asking for pages. The
-  // collapsed groups after it (the server's groups, in row order) show their headers without reading their rows, up to and
-  // with the first open group, whose rows each loaded page keeps asking for (endKey). Collapsed groups at the end (Completed, Cancelled)
-  // are not read through.
-  const tail = rest.length && rowsGroup !== 'none' ? String(rest[rest.length - 1].sortKey[0]) : null;
-  let endKey = '';
-  if (tail !== null && closed.has(tail)) {
-    const at = list.groups.findIndex(x => x.key === tail);
-    if (at < 0) endKey = String(rows.length); // the group counts do not know the tail yet: keep loading
-    for (const meta of at < 0 ? [] : list.groups.slice(at + 1)) {
-      if (shownGroups.has(meta.key)) continue; // a live row placed it already
-      items.push({ kind: 'group', key: meta.key, label: label(meta.key, meta.label ?? null), count: meta.count });
-      if (!closed.has(meta.key)) { endKey = String(rows.length); break; }
+  const projects = useOp('project_list', () => (rowsGroup() === 'project' ? {} : null));
+  const names = createMemo(() => new Map<string, string>((projects.data?.projects ?? []).map(p => [String(p.id), String(p.name ?? p.id)])));
+  const label = (key: string, meta: string | null) => o.groupLabel(rowsGroup(), rowsGroup() === 'project' ? names().get(key) ?? meta : meta);
+  const layout = createMemo(() => {
+    const out: ListItem<R>[] = [];
+    const pinRows = pinned(), restRows = rest(), cl = closed(), rg = rowsGroup();
+    // Pinned rows come first, as a group of their own (OR-12); each shows its pin before the state (RowPin).
+    if (pinRows.length) {
+      out.push({ kind: 'group', key: PINNED, label: 'Pinned', count: pinRows.length, icon: 'pin' });
+      if (!cl.has(PINNED)) for (const r of pinRows) out.push({ kind: 'row', r, pinned: true });
     }
-  }
-  const chosen = displayed.filter(r => sel.includes(r.id));
+    let last: string | null = null;
+    const shownGroups = new Set<string>();
+    for (const r of restRows) {
+      const g = String(r.sortKey[0]);
+      if (rg !== 'none' && g !== last) {
+        shownGroups.add(g);
+        const meta = list.groups.find(x => x.key === g);
+        out.push({ kind: 'group', key: g, label: label(g, meta?.label ?? null), count: meta?.count ?? 0 });
+        last = g;
+      }
+      if (!cl.has(g)) out.push({ kind: 'row', r });
+    }
+    // Loaded rows that end inside a collapsed group show no new items, so the list end would stop asking for pages. The
+    // collapsed groups after it (the server's groups, in row order) show their headers without reading their rows, up to and
+    // with the first open group, whose rows each loaded page keeps asking for (endKey). Collapsed groups at the end (Completed, Cancelled)
+    // are not read through.
+    const tail = restRows.length && rg !== 'none' ? String(restRows[restRows.length - 1].sortKey[0]) : null;
+    let endKey = '';
+    if (tail !== null && cl.has(tail)) {
+      const at = list.groups.findIndex(x => x.key === tail);
+      if (at < 0) endKey = String(rows().length); // the group counts do not know the tail yet: keep loading
+      for (const meta of at < 0 ? [] : list.groups.slice(at + 1)) {
+        if (shownGroups.has(meta.key)) continue; // a live row placed it already
+        out.push({ kind: 'group', key: meta.key, label: label(meta.key, meta.label ?? null), count: meta.count });
+        if (!cl.has(meta.key)) { endKey = String(rows().length); break; }
+      }
+    }
+    return { items: out, endKey };
+  });
+  const chosen = createMemo(() => {
+    const s = sel();
+    return displayed().filter(r => s.includes(r.id));
+  });
   // One operation per row; failures are counted in one banner. The rows that succeeded leave the selection as it is now
   // (not when the operation began), whatever the others did; failed rows stay selected.
   // A bulk action that settles after the page closed leaves the URL alone: set() would write into whatever view is open then.
-  const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  let mounted = true;
+  onSettled(() => () => { mounted = false; });
   const bulk = async (rs: R[], run: (r: R) => Promise<unknown>, failText: string) => {
-    if (busy || !rs.length) return;
+    if (untrack(busy) || !rs.length) return;
     setBulkError(null); setBusy(true);
     const r = await Promise.allSettled(rs.map(run));
     setBusy(false);
     const failed = r.filter(x => x.status === 'rejected') as PromiseRejectedResult[];
     if (failed.length) setBulkError(`${failed.length} of ${rs.length} ${failText}: ${failed[0].reason?.message ?? failed[0].reason}`);
     const done = rs.filter((_, i) => r[i].status === 'fulfilled').map(x => x.id);
-    if (done.length && mounted.current) set({ sel: selNow.current.filter(x => !done.includes(x)) });
+    if (done.length && mounted) url.set({ sel: untrack(sel).filter(x => !done.includes(x)) });
   };
-  const off = !online.value ? 'offline' : busy ? 'Working' : undefined;
-  const pinAll = (on: boolean) => { for (const r of chosen) if (pins.has(r.id) !== on) pins.toggle(r.id); };
+  const off = createMemo(() => (!online.value ? 'offline' : busy() ? 'Working' : undefined));
+  const pinAll = (on: boolean) => { for (const r of untrack(chosen)) if (pins.has(r.id) !== on) pins.toggle(r.id); };
   const select = (r: R) => { setSelectOn(true); setConfirm(null); toggleSel(r.id); };
   // A personal view matches the whole view and wins over a system preset with the same states; a system preset matches the
   // states alone.
   const savedView = o.savedView ?? ((v: View) => v);
   const presetKey = (v: View) => listKey({ ...v, view: o.view });
-  const stateKey = (state?: string[]) => listKey({ view: o.view, state: state ?? [] });
-  const activePreset = views.list.find(v => !v.system && presetKey(savedView(v.view)) === listKey(view))?.name
-    ?? (view.state?.length ? views.list.find(v => v.system && stateKey(v.view.state) === stateKey(view.state))?.name : undefined) ?? null;
+  const stateKey = (st?: string[]) => listKey({ view: o.view, state: st ?? [] });
+  const activePreset = createMemo(() => {
+    const v = url.view;
+    return views.list.find(x => !x.system && presetKey(savedView(x.view)) === listKey(v))?.name
+      ?? (v.state?.length ? views.list.find(x => x.system && stateKey(x.view.state) === stateKey(v.state))?.name : undefined) ?? null;
+  });
   // A system preset sets the states only; a personal view restores everything it saved.
   const pick = (n: string) => {
+    const v = untrack(() => url.view);
     const p = views.list.find(x => x.name === n)!, sv = savedView(p.view);
-    set(p.system ? { state: p.view.state ?? [], preset: n } : { state: sv.state ?? [], group: sv.group, sort: sv.sort, project: sv.project ?? [], q: sv.q, ...o.pickExtra?.(sv), preset: n, ...(o.listId && o.listId(sv) !== o.listId(view) ? { sel: undefined } : {}) });
+    url.set(p.system ? { state: p.view.state ?? [], preset: n } : { state: sv.state ?? [], group: sv.group, sort: sv.sort, project: sv.project ?? [], q: sv.q, ...o.pickExtra?.(sv), preset: n, ...(o.listId && o.listId(sv) !== o.listId(v) ? { sel: undefined } : {}) });
   };
-  const save = (n: string) => views.save({ name: n, view: { view: o.view, state: view.state, group: view.group ?? o.saveGroup, sort: view.sort, project: view.project, q: view.q, ...o.saveExtra?.(view) } });
+  const save = (n: string) => {
+    const v = untrack(() => url.view);
+    views.save({ name: n, view: { view: o.view, state: v.state, group: v.group ?? o.saveGroup, sort: v.sort, project: v.project, q: v.q, ...o.saveExtra?.(v) } });
+  };
   // The empty state's Clear filters: states, search, projects and the active preset.
   // setQuery('') also drops a typed query not yet committed, which the URL sync alone would leave in the box.
-  const filtered = !!(states.length || view.q || view.project?.length);
-  const clearFilters = () => { setQuery(''); set({ state: [], q: undefined, project: [], preset: undefined }); };
-  const shown = local ? local.rows.length : states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total;
+  const filtered = createMemo(() => !!(states().length || url.view.q || url.view.project?.length));
+  const clearFilters = () => { setQuery(''); url.set({ state: [], q: undefined, project: [], preset: undefined }); };
+  const shown = createMemo(() => {
+    if (localMemo) return localMemo().rows.length;
+    const st = states();
+    return st.length ? st.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total;
+  });
   return {
-    view, set, href, query, setQuery, pins, views, list, group, sort, states, rowsGroup, rows, items, endKey, displayed, chosen, closed, toggleGroup,
-    sel, selecting, setSelectOn, select, leave, confirm, setConfirm, bulkError, busy, bulk, off, pinAll, menu, setMenu, closeMenu,
-    pinnedDoc, activePreset, pick, save, filtered, clearFilters, shown, isLocal: !!local, entity: o.entity,
+    get view() { return url.view; },
+    set: url.set,
+    href: url.href,
+    get query() { return query(); },
+    setQuery,
+    pins,
+    views,
+    list,
+    get group() { return group(); },
+    get sort() { return sort(); },
+    get states() { return states(); },
+    get rowsGroup() { return rowsGroup(); },
+    get rows() { return rows(); },
+    get items() { return layout().items; },
+    get endKey() { return layout().endKey; },
+    get displayed() { return displayed(); },
+    get chosen() { return chosen(); },
+    get closed() { return closed(); },
+    toggleGroup,
+    get sel() { return sel(); },
+    get selecting() { return selecting(); },
+    setSelectOn,
+    select,
+    leave,
+    get confirm() { return confirm(); },
+    setConfirm,
+    get bulkError() { return bulkError(); },
+    get busy() { return busy(); },
+    bulk,
+    get off() { return off(); },
+    pinAll,
+    get menu() { return menu(); },
+    setMenu,
+    closeMenu,
+    pinnedDoc,
+    get activePreset() { return activePreset(); },
+    pick,
+    save,
+    get filtered() { return filtered(); },
+    clearFilters,
+    get shown() { return shown(); },
+    isLocal: !!localMemo,
+    entity: o.entity,
   };
 }
 export type ListPage<R extends ListRow> = ReturnType<typeof useListPage<R>>;
 
 /** A page-built list in the shape useList returns: always loaded, one page, counts from the page. */
-function localList(l: LocalList<ListRow>, view: View) {
+function localList(l: Accessor<LocalList<ListRow>>, view: Accessor<View>) {
   return {
-    rows: l.rows as unknown as ReturnType<typeof useList>['rows'], counts: l.counts, total: l.total, groups: l.groups, at: 0, error: l.error,
-    pending: l.pending, shownKey: l.pending && !l.rows.length ? null : listKey(view), shownView: view, more: () => Promise.resolve(), reload: () => { l.reload(); return Promise.resolve(); },
+    get rows() { return l().rows as unknown as ReturnType<typeof useList>['rows']; },
+    get counts() { return l().counts; },
+    get total() { return l().total; },
+    get groups() { return l().groups; },
+    at: 0,
+    get error() { return l().error; },
+    get pending() { return l().pending; },
+    get shownKey() { const cur = l(); return cur.pending && !cur.rows.length ? null : listKey(view()); },
+    get shownView() { return view(); },
+    more: () => Promise.resolve(),
+    reload: () => { l().reload(); return Promise.resolve(); },
     state: 'current' as const,
   };
 }
-
 
 /** The list section: filter bar (search, saved views, state counters, tools, selection bar), banners, the rows and the row menu. */
 export function ListPagePanel<R extends ListRow, F extends Family, G extends string>(p: {
@@ -215,7 +305,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
   groups: readonly (readonly [G, string])[];
   sorts: readonly SortField[];
   /** Tools after Select, Group and Sort. */
-  tools?: ComponentChildren;
+  tools?: JSX.Element;
   /** Filters applied from outside the query (Delivery: the picked pace day), each removable. */
   chips?: Chip[]; onRemoveChip?: (c: Chip) => void;
   /** Optional tooltip / accessible description per system preset name. */
@@ -229,9 +319,9 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
   /** Row menu items after Open, Pin, Select, Copy code and Copy link. */
   menu: (r: R) => MenuItems;
   /** A pending confirmation, shown above the banners. */
-  confirm?: ComponentChildren;
+  confirm?: JSX.Element;
   /** The empty state when nothing loaded and nothing failed. */
-  empty: ComponentChildren;
+  empty: JSX.Element;
   listLabel: string;
   title: (r: R) => string;
   /** A group header's icon, from the grouping and the group key. */
@@ -239,68 +329,68 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
   /** A group header's tone (Delivery: the stage's); neutral by default. */
   groupTone?: (group: string, key: string) => Tone;
   /** The state icon cell. */
-  state: (r: R) => ComponentChildren;
+  state: (r: R) => JSX.Element;
   /** Content before the title link. */
-  before?: (r: R) => ComponentChildren;
-  facts: (r: R) => ComponentChildren;
+  before?: (r: R) => JSX.Element;
+  facts: (r: R) => JSX.Element;
   focused?: string;
 }) {
-  const { page: g } = p, { view, set, list, pins, views, sel, selecting, chosen, displayed, pinnedDoc } = g;
+  const g = p.page;
   const rowMenu = (r: R): MenuItems => [
-    { label: 'Open', icon: actions.open, onClick: () => set({ focus: r.id }) },
-    { label: pins.has(r.id) ? 'Unpin' : 'Pin', icon: pins.has(r.id) ? 'pin-off' : 'pin', onClick: () => pins.toggle(r.id) },
-    { label: sel.includes(r.id) ? 'Deselect' : 'Select', icon: 'square', onClick: () => g.select(r) },
+    { label: 'Open', icon: actions.open, onClick: () => g.set({ focus: r.id }) },
+    { label: g.pins.has(r.id) ? 'Unpin' : 'Pin', icon: g.pins.has(r.id) ? 'pin-off' : 'pin', onClick: () => g.pins.toggle(r.id) },
+    { label: g.sel.includes(r.id) ? 'Deselect' : 'Select', icon: 'square', onClick: () => g.select(r) },
     { label: 'Copy code', icon: actions.copy, onClick: () => copyText(r.code ?? r.id) },
-    { label: 'Copy link', icon: 'link', onClick: () => copyText(location.origin + formatView({ view: view.view, focus: r.id })) },
+    { label: 'Copy link', icon: 'link', onClick: () => copyText(location.origin + formatView({ view: g.view.view, focus: r.id })) },
     ...p.menu(r),
   ];
   return <section class="panel">
-    <ListFrame pending={list.pending} bar={<FilterBar query={g.query} placeholder={p.placeholder} onQuery={g.setQuery} shown={g.shown} total={list.total} chips={p.chips} onRemove={p.onRemoveChip}
-      extra={<Presets system={views.list.filter(v => v.system).map(v => v.name)} systemTips={p.systemTips} presets={views.list.filter(v => !v.system).map(v => v.name)} active={g.activePreset} onPick={g.pick}
-        onSave={g.save} onUnpin={views.remove} counted={navCounted(view.view, views.list.map(v => v.name))} onCount={view.view in NAV_COUNTER_DEFAULTS ? n => setNavCounter(view.view, n) : undefined} />}
-      counters={<StateCounters family={p.family} label={p.countersLabel ?? `${p.noun} by state`} pending={list.pending} unknown={!g.isLocal && !list.at} counts={(p.countsUnknown ? Object.fromEntries(Object.keys(list.counts).map(k => [k, null])) : list.counts) as Partial<Record<StateOf<F>, number | null>>} active={g.states as StateOf<F>[]} onAll={() => set({ state: [], preset: undefined })}
-        onToggle={(x: StateOf<F>) => { const s = String(x); set({ state: g.states.includes(s) ? g.states.filter(y => y !== s) : [...g.states, s], preset: undefined }); }} />}
+    <ListFrame pending={g.list.pending} bar={<FilterBar query={g.query} placeholder={p.placeholder} onQuery={g.setQuery} shown={g.shown} total={g.list.total} chips={p.chips} onRemove={p.onRemoveChip}
+      extra={<Presets system={g.views.list.filter(v => v.system).map(v => v.name)} systemTips={p.systemTips} presets={g.views.list.filter(v => !v.system).map(v => v.name)} active={g.activePreset} onPick={g.pick}
+        onSave={g.save} onUnpin={g.views.remove} counted={navCounted(g.view.view, g.views.list.map(v => v.name))} onCount={g.view.view in NAV_COUNTER_DEFAULTS ? n => setNavCounter(g.view.view, n) : undefined} />}
+      counters={<StateCounters family={p.family} label={p.countersLabel ?? `${p.noun} by state`} pending={g.list.pending} unknown={!g.isLocal && !g.list.at} counts={(p.countsUnknown ? Object.fromEntries(Object.keys(g.list.counts).map(k => [k, null])) : g.list.counts) as Partial<Record<StateOf<F>, number | null>>} active={g.states as StateOf<F>[]} onAll={() => g.set({ state: [], preset: undefined })}
+        onToggle={(x: StateOf<F>) => { const s = String(x); g.set({ state: g.states.includes(s) ? g.states.filter(y => y !== s) : [...g.states, s], preset: undefined }); }} />}
       tools={<>
-        <SelectToggle on={selecting} onClick={() => selecting ? g.leave() : g.setSelectOn(true)} />
-        <GroupControl value={g.group as G} options={p.groups} onChange={x => set({ group: x, preset: undefined })} />
-        <SortControl value={g.sort} fields={p.sorts} onChange={v => set({ sort: v, preset: undefined })} />
+        <SelectToggle on={g.selecting} onClick={() => g.selecting ? g.leave() : g.setSelectOn(true)} />
+        <GroupControl value={g.group as G} options={p.groups} onChange={x => g.set({ group: x, preset: undefined })} />
+        <SortControl value={g.sort} fields={p.sorts} onChange={v => g.set({ sort: v, preset: undefined })} />
         {p.tools}
       </>}
-      selection={selecting && <SelectBar count={chosen.length} total={displayed.length} onAll={() => { g.setSelectOn(true); g.setConfirm(null); set({ sel: displayed.map(r => r.id) }); }} onNone={() => { g.setSelectOn(true); g.setConfirm(null); set({ sel: [] }); }} onExit={g.leave} actions={[
-        { label: 'Pin', icon: 'pin', onClick: () => g.pinAll(true), disabledReason: chosen.length && chosen.every(r => pins.has(r.id)) ? 'All pinned' : undefined },
-        { label: 'Unpin', icon: 'pin-off', onClick: () => g.pinAll(false), disabledReason: chosen.some(r => pins.has(r.id)) ? undefined : 'None pinned' },
+      selection={g.selecting && <SelectBar count={g.chosen.length} total={g.displayed.length} onAll={() => { g.setSelectOn(true); g.setConfirm(null); g.set({ sel: g.displayed.map(r => r.id) }); }} onNone={() => { g.setSelectOn(true); g.setConfirm(null); g.set({ sel: [] }); }} onExit={g.leave} actions={[
+        { label: 'Pin', icon: 'pin', onClick: () => g.pinAll(true), disabledReason: g.chosen.length && g.chosen.every(r => g.pins.has(r.id)) ? 'All pinned' : undefined },
+        { label: 'Unpin', icon: 'pin-off', onClick: () => g.pinAll(false), disabledReason: g.chosen.some(r => g.pins.has(r.id)) ? undefined : 'None pinned' },
         ...p.actions(),
       ]} />} />}>
       {p.confirm}
       {g.bulkError && <ErrorBanner text={g.bulkError} />}
-      {list.error && <ErrorBanner text={list.at ? `${p.noun} may be out of date: ${list.error}` : `${p.noun} did not load: ${list.error}`} onRetry={list.reload} />}
-      {pinnedDoc.error && <ErrorBanner text={`Pinned ${p.noun.toLowerCase()} did not load: ${pinnedDoc.error}`} onRetry={pinnedDoc.reload} />}
-      {!displayed.length && (list.shownKey === null || list.pending || (!g.isLocal && pins.ids.length > 0 && pinnedDoc.data === null && !pinnedDoc.error)) ? <Skeleton rows={8} />
-        : !displayed.length ? (list.error || pinnedDoc.error ? null : p.empty)
-        : <VirtualList keepRowFocus items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={catalogueRow()} follow="top" label={p.listLabel} onEnd={list.more} endKey={g.endKey}
-          columns={`${selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.r.id === p.focused ? 'sel' : ''}${sel.includes(i.r.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
+      {g.list.error && <ErrorBanner text={g.list.at ? `${p.noun} may be out of date: ${g.list.error}` : `${p.noun} did not load: ${g.list.error}`} onRetry={g.list.reload} />}
+      {g.pinnedDoc.error && <ErrorBanner text={`Pinned ${p.noun.toLowerCase()} did not load: ${g.pinnedDoc.error}`} onRetry={g.pinnedDoc.reload} />}
+      {!g.displayed.length && (g.list.shownKey === null || g.list.pending || (!g.isLocal && g.pins.ids.length > 0 && g.pinnedDoc.data === null && !g.pinnedDoc.error)) ? <Skeleton rows={8} />
+        : !g.displayed.length ? (g.list.error || g.pinnedDoc.error ? null : p.empty)
+        : <VirtualList keepRowFocus items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={catalogueRow()} follow="top" label={p.listLabel} onEnd={g.list.more} endKey={g.endKey}
+          columns={`${g.selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.r.id === p.focused ? 'sel' : ''}${g.sel.includes(i.r.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
           onRowMenu={(i, at) => { if (i.kind === 'row') g.setMenu({ r: i.r, at }); }}
           render={i => i.kind === 'group'
             ? <GroupHeader icon={i.icon ?? p.groupIcon(g.rowsGroup, i.key)} tone={i.icon ? undefined : p.groupTone?.(g.rowsGroup, i.key)} label={i.label} count={i.count} open={!g.closed.has(i.key)} onToggle={() => g.toggleGroup(i.key)} />
             : <>
-              {selecting && <span class="lead"><RowCheck checked={sel.includes(i.r.id)} label={'Select ' + p.title(i.r)} onToggle={() => g.select(i.r)} /></span>}
-              {i.pinned && <span class="lead"><RowPin label={p.title(i.r)} onUnpin={() => {
+              <Show when={g.selecting}><span class="lead"><RowCheck checked={g.sel.includes(i.r.id)} label={'Select ' + p.title(i.r)} onToggle={() => g.select(i.r)} /></span></Show>
+              <Show when={i.pinned}><span class="lead"><RowPin label={p.title(i.r)} onUnpin={() => {
                 // In selection mode the pin selects like the rest of the row; otherwise it unpins and focus follows the row to its group.
-                if (selecting) return g.select(i.r);
-                pins.toggle(i.r.id); requestAnimationFrame(() => document.querySelector<HTMLElement>(`.vl-row[data-key="${CSS.escape(i.r.id)}"] .row-link`)?.focus({ preventScroll: true }));
-              }} /></span>}
+                if (g.selecting) return g.select(i.r);
+                g.pins.toggle(i.r.id); requestAnimationFrame(() => document.querySelector<HTMLElement>(`.vl-row[data-key="${CSS.escape(i.r.id)}"] .row-link`)?.focus({ preventScroll: true }));
+              }} /></span></Show>
               <span class="lead">{p.state(i.r)}</span>
               <span class="tt">{p.before?.(i.r)}<a class="title row-link" href={g.href({ focus: i.r.id })} aria-keyshortcuts="P X"
-                onClick={e => { e.preventDefault(); if (selecting || e.shiftKey) g.select(i.r); else set({ focus: i.r.id }); }}
+                onClick={e => { e.preventDefault(); if (g.selecting || e.shiftKey) g.select(i.r); else g.set({ focus: i.r.id }); }}
                 onKeyDown={e => {
                   if (e.altKey || e.ctrlKey || e.metaKey) return;
-                  if (e.key === 'p') { e.preventDefault(); pins.toggle(i.r.id); }
+                  if (e.key === 'p') { e.preventDefault(); g.pins.toggle(i.r.id); }
                   else if (e.key === 'x') { e.preventDefault(); g.select(i.r); }
                   // The Menu key and Shift+F10 fire contextmenu on the row: onRowMenu opens the menu.
                 }}>{p.title(i.r)}</a><EntityCode code={i.r.code} id={i.r.id} kind={g.entity} /></span>
               <span class="rz">{p.facts(i.r)}</span>
             </>} />}
     </ListFrame>
-    {g.menu && <ContextMenu at={g.menu.at} label={p.title(g.menu.r)} items={rowMenu(g.menu.r)} onClose={g.closeMenu} />}
+    <Show when={g.menu} keyed>{m => <ContextMenu at={m.at} label={p.title(m.r)} items={rowMenu(m.r)} onClose={g.closeMenu} />}</Show>
   </section>;
 }

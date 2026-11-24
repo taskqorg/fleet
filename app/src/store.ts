@@ -1,8 +1,8 @@
 // Entity store (operator-app D4; docs/designs/fleet-view-urls-and-list-path.md §2): shared in-memory lists and docs,
 // kept current from the change feed. Lists reconcile affected rows and their summaries in place.
 import { AccessChanged, accessGeneration, ensureAccessGeneration, isAccessCurrent, assertAccessGeneration } from './access.ts';
-import { signal, effect, type Signal } from '@preact/signals';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { createEffect, createMemo, createSignal, runWithOwner, untrack } from 'solid-js';
+import { cell, readValue, type Cell, type MaybeAccessor } from './signal.ts';
 import { op, online, signedOut, OpError, type Ops, type OpName } from './api.ts';
 import { subscribe, feedState, type Change } from './feed.ts';
 import { compareKeys, type Row, type SortKey } from './lists.ts';
@@ -20,13 +20,13 @@ type Params = ReturnType<typeof toPageParams>;
 type Group = ListGroup;
 export type ListState = { rows: Row[]; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; error: string | null };
 type Entry = {
-  kind: Kind; view: View; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>;
+  kind: Kind; view: View; params: Params; state: Cell<ListState | null>; busy: Cell<boolean>;
   started: number; mounted: number; loading: boolean; dirty: boolean; paging: boolean; cursorReset: boolean;
   pageError: boolean; fetchedAt: number; affected: Set<string>; lastMembershipAt: number;
   reconciling?: Promise<void>; throttleTimer?: ReturnType<typeof setTimeout>;
 };
 type Doc = { data: unknown; error: string | null; status?: number | null };
-type DocEntry = { signal: Signal<Doc | null>; fetchedAt: number; dirty: boolean; dirtySeq: number; name?: OpName; request?: unknown };
+type DocEntry = { signal: Cell<Doc | null>; fetchedAt: number; dirty: boolean; dirtySeq: number; name?: OpName; request?: unknown };
 
 const FRESH_MS = 30_000;
 const MAX_UNMOUNTED_DOCS = 100;
@@ -39,7 +39,7 @@ const PREPARED_POLL_MS = 10_000;
 const lists = new Map<string, Entry>();
 const docs = new Map<string, DocEntry>();
 /** Bumped when stored data is cleared: mounted docs re-read. */
-const generation = signal(0);
+const generation = cell(0);
 
 function touchList(key: string, e: Entry) { lists.delete(key); lists.set(key, e); }
 function evictLists() {
@@ -88,7 +88,7 @@ onClear.add(clearMemory);
 function entry(kind: Kind, key: string, view: View): Entry {
   let e = lists.get(key);
   if (!e) {
-    lists.set(key, e = { kind, view, params: toPageParams(view), state: signal(null), busy: signal(false), started: 0, mounted: 0, loading: false, dirty: false, paging: false, cursorReset: false, pageError: false, fetchedAt: 0, affected: new Set(), lastMembershipAt: 0 });
+    lists.set(key, e = { kind, view, params: toPageParams(view), state: cell<ListState | null>(null), busy: cell(false), started: 0, mounted: 0, loading: false, dirty: false, paging: false, cursorReset: false, pageError: false, fetchedAt: 0, affected: new Set(), lastMembershipAt: 0 });
     evictLists();
   }
   return e;
@@ -317,46 +317,63 @@ export function startStore() {
     if (!retryOnly) for (const [k, d] of docs) if (!flights.get(k)?.readers.size) { d.dirty = true; d.dirtySeq++; }
   };
   subscribe({ resync: () => reloadMounted(), changes: applyChanges });
-  effect(() => { if (feedState.value === 'live') reloadMounted(true); });
+  runWithOwner(null, () => createEffect(() => feedState.value, state => { if (state === 'live') reloadMounted(true); }));
 }
 
 /** The row type of each list kind. */
 export type RowOf<K extends Kind> = K extends 'tasks' ? TaskRow : SessionRow;
-export function useList<K extends Kind>(kind: K, urlView: View) {
-  const view = withFocus(urlView), key = listKey(view), e = entry(kind, key, view);
-  const [last, setLast] = useState<string | null>(() => e.state.value ? key : null);
-  const ctrl = useRef<AbortController | null>(null);
-  const previousKey = useRef<string | undefined>(undefined);
-  const shown = e.state.value ? key : last;
-  useEffect(() => { if (shown !== last) setLast(shown); }, [shown]);
-  const ready = prefsRead.value;
-  useEffect(() => {
-    if (!ready) return;
-    e.mounted++;
-    touchList(key, e);
-    ctrl.current?.abort(); const c = ctrl.current = new AbortController();
-    const cur = e.state.value;
-    const fresh = feedState.value === 'live' && !!cur && !cur.error && !e.dirty && !e.affected.size && e.fetchedAt > 0 && (Date.now() - e.fetchedAt < FRESH_MS);
-    const warm = !!cur?.at;
-    const quiet = warm && (previousKey.current === undefined || previousKey.current === key);
-    previousKey.current = key;
-    if (!fresh) void loadList(kind, key, view, { signal: c.signal, quiet, preserveExtent: warm });
-    return () => {
-      e.mounted--;
-      c.abort();
-      if (!e.mounted) {
-        clearTimeout(e.throttleTimer); e.throttleTimer = undefined;
-        if (e.affected.size || e.reconciling) { e.affected.clear(); e.dirty = true; }
-        evictLists();
-      }
-    };
-  }, [key, ready]);
-  const se = shown ? lists.get(shown) : undefined, cur = se?.state.value ?? null;
+export function useList<K extends Kind>(kind: K, urlViewInput: MaybeAccessor<View>) {
+  const view = createMemo(() => withFocus(readValue(urlViewInput)));
+  const key = createMemo(() => listKey(view()));
+  const currentEntry = createMemo(() => entry(kind, key(), view()));
+  const [last, setLast] = createSignal<string | null>(untrack(() => (currentEntry().state.peek() ? key() : null)), { ownedWrite: true });
+  let previousKey: string | undefined;
+  const shown = createMemo(() => (currentEntry().state.value ? key() : last()));
+  createEffect(() => shown(), s => { if (s !== untrack(last)) setLast(s); });
+  createEffect(
+    () => [key(), prefsRead.value] as const,
+    ([k, ready]) => {
+      if (!ready) return;
+      const v = untrack(view);
+      const e = entry(kind, k, v);
+      e.mounted++;
+      touchList(k, e);
+      const c = new AbortController();
+      const cur = e.state.peek();
+      const fresh = feedState.peek() === 'live' && !!cur && !cur.error && !e.dirty && !e.affected.size && e.fetchedAt > 0 && (Date.now() - e.fetchedAt < FRESH_MS);
+      const warm = !!cur?.at;
+      const quiet = warm && (previousKey === undefined || previousKey === k);
+      previousKey = k;
+      if (!fresh) void loadList(kind, k, v, { signal: c.signal, quiet, preserveExtent: warm });
+      return () => {
+        e.mounted--;
+        c.abort();
+        if (!e.mounted) {
+          clearTimeout(e.throttleTimer); e.throttleTimer = undefined;
+          if (e.affected.size || e.reconciling) { e.affected.clear(); e.dirty = true; }
+          evictLists();
+        }
+      };
+    },
+  );
+  const shownEntry = createMemo(() => {
+    const s = shown();
+    return s ? lists.get(s) : undefined;
+  });
+  const cur = createMemo(() => shownEntry()?.state.value ?? null);
   return {
-    rows: (cur?.rows ?? []) as RowOf<K>[], counts: cur?.counts ?? {}, total: cur?.total ?? 0, groups: cur?.groups ?? [], at: cur?.at ?? 0, error: cur?.error ?? null,
-    pending: !ready || shown !== key || e.busy.value, shownKey: shown, shownView: se?.view ?? view,
-    more: () => ready && shown ? nextPage(shown) : Promise.resolve(), reload: () => ready ? loadList(kind, key, view, { preserveExtent: true }) : Promise.resolve(),
-    state: freshness(false),
+    get rows() { return (cur()?.rows ?? []) as RowOf<K>[]; },
+    get counts() { return cur()?.counts ?? {}; },
+    get total() { return cur()?.total ?? 0; },
+    get groups() { return cur()?.groups ?? []; },
+    get at() { return cur()?.at ?? 0; },
+    get error() { return cur()?.error ?? null; },
+    get pending() { return !prefsRead.value || shown() !== key() || currentEntry().busy.value; },
+    get shownKey() { return shown(); },
+    get shownView() { return shownEntry()?.view ?? view(); },
+    more: () => prefsRead.peek() && untrack(shown) ? nextPage(untrack(shown)!) : Promise.resolve(),
+    reload: () => prefsRead.peek() ? loadList(kind, untrack(key), untrack(view), { preserveExtent: true }) : Promise.resolve(),
+    get state() { return freshness(false); },
   };
 }
 
@@ -369,7 +386,7 @@ type DocFlight = { readers: Set<DocReader>; started: number; shown: number; fail
 const flights = new Map<string, DocFlight>();
 function docEntry(name: string): DocEntry {
   let e = docs.get(name);
-  if (!e) { docs.set(name, e = { signal: signal(null), fetchedAt: 0, dirty: false, dirtySeq: 0 }); evictDocs(); }
+  if (!e) { docs.set(name, e = { signal: cell<Doc | null>(null), fetchedAt: 0, dirty: false, dirtySeq: 0 }); evictDocs(); }
   return e;
 }
 function docSignal(name: string) { return docEntry(name).signal; }
@@ -492,11 +509,11 @@ function throttle(read: () => void, quiet = 0) {
 
 export type OpOptions = {
   /** Also read every ms: values that move without a change row (host liveness, telemetry, runners). */
-  every?: number;
+  every?: MaybeAccessor<number | undefined>;
   /** Reread on touches at most once per quiet ms (counters touched by every busy execution). */
-  quiet?: number;
+  quiet?: MaybeAccessor<number | undefined>;
   /** Fields added to the request for touchedBy only, not the key: the entity a read concerns once its reply named it. */
-  scope?: Record<string, unknown>;
+  scope?: MaybeAccessor<Record<string, unknown> | undefined>;
 };
 export type OpRead<T> = { data: T | null; restored: boolean; error: string | null; status: number | null; state: Freshness; reload: () => void };
 
@@ -505,25 +522,43 @@ export type OpRead<T> = { data: T | null; restored: boolean; error: string | nul
  * so two views asking the same share one read; null request: nothing to read yet. It rereads when the server says a
  * change touches the operation (touchedBy), on resync, and every `every` ms; the last value stays visible while it rereads.
  */
-export function useOp<K extends OpName>(name: K, request: Ops[K]['request'] | null, opts: OpOptions = {}): OpRead<Ops[K]['reply']> {
-  const key = request === null ? null : opKey(name, request);
-  const reqRef = useRef(request); reqRef.current = request;
-  const scopeRef = useRef(opts.scope); scopeRef.current = opts.scope;
-  const reloadRef = useRef<() => void>(() => {});
-  const s = key ? docSignal(key) : null;
-  const gen = generation.value;
-  useEffect(() => {
-    if (!key) return;
-    const maxAge = opts.every ? Math.min(FRESH_MS, opts.every) : FRESH_MS;
-    const release = holdDoc(key, () => op(name, reqRef.current!), { name, request: reqRef.current, maxAge });
-    reloadRef.current = () => readDoc(key);
-    const t = throttle(() => readDoc(key), opts.quiet);
-    const off = watch({ name, request: () => ({ ...reqRef.current, ...scopeRef.current }), read: t.read });
-    const timer = opts.every ? setInterval(() => readDoc(key), opts.every) : 0;
-    return () => { reloadRef.current = () => {}; release(); off(); t.stop(); clearInterval(timer); };
-  }, [key, opts.every, opts.quiet, gen]);
-  const v = s?.value ?? null;
-  return { data: (v?.data ?? null) as Ops[K]['reply'] | null, restored: false, error: v?.error ?? null, status: v?.status ?? null, state: freshness(false), reload: () => reloadRef.current() };
+export function useOp<K extends OpName>(name: K, request: MaybeAccessor<Ops[K]['request'] | null>, opts: OpOptions = {}): OpRead<Ops[K]['reply']> {
+  const resolved = createMemo(() => readValue(request));
+  const key = createMemo(() => {
+    const req = resolved();
+    return req === null ? null : opKey(name, req);
+  });
+  const s = createMemo(() => {
+    const k = key();
+    return k ? docSignal(k) : null;
+  });
+  let currentReq: Ops[K]['request'] | null = null;
+  let reloadFn = () => {};
+  createEffect(
+    () => [key(), readValue(opts.every), readValue(opts.quiet), generation.value] as const,
+    ([k, every, quiet]) => {
+      currentReq = untrack(resolved);
+      if (!k || currentReq === null) {
+        reloadFn = () => {};
+        return;
+      }
+      const maxAge = every ? Math.min(FRESH_MS, every) : FRESH_MS;
+      const release = holdDoc(k, () => op(name, currentReq!), { name, request: currentReq, maxAge });
+      reloadFn = () => readDoc(k);
+      const t = throttle(() => readDoc(k), quiet);
+      const off = watch({ name, request: () => ({ ...(currentReq as Record<string, unknown>), ...readValue(opts.scope) }), read: t.read });
+      const timer = every ? setInterval(() => readDoc(k), every) : 0;
+      return () => { reloadFn = () => {}; release(); off(); t.stop(); clearInterval(timer); };
+    },
+  );
+  return {
+    get data() { return (s()?.value?.data ?? null) as Ops[K]['reply'] | null; },
+    get restored() { return false; },
+    get error() { return s()?.value?.error ?? null; },
+    get status() { return s()?.value?.status ?? null; },
+    get state() { return freshness(false); },
+    reload: () => reloadFn(),
+  };
 }
 
 /** For tests: the stored list under key and a doc. */
@@ -534,7 +569,7 @@ import type { ProjectResourcesReply, ProjectResourceItemsReply, ResourceProgress
 type PreparedReply = ProjectResourcesReply | ProjectResourceItemsReply;
 export type PreparedState<T> = { data: T | null; progress: ResourceProgress | null; error: string | null; restored: boolean; state: 'idle' | 'loading' | 'ready' | 'preparing' | 'error' | 'disposed' };
 type PreparedFetcher<T> = (context: { signal: AbortSignal; knownVersion?: string }) => Promise<T>;
-type PreparedEntry<T> = { value: Signal<PreparedState<T>>; fetcher: PreparedFetcher<T>; subscribers: number; visible: number; controller: AbortController | null; request: number; pending: boolean; version?: string; timer?: ReturnType<typeof setInterval>; pollMs?: number; disposed: boolean; refresh(reason?: string): void };
+type PreparedEntry<T> = { value: Cell<PreparedState<T>>; fetcher: PreparedFetcher<T>; subscribers: number; visible: number; controller: AbortController | null; request: number; pending: boolean; version?: string; timer?: ReturnType<typeof setInterval>; pollMs?: number; disposed: boolean; refresh(reason?: string): void };
 const prepared = new Map<string, PreparedEntry<PreparedReply>>();
 export function preparedKey(operation: 'project_resources' | 'project_resource_items', projectId: string, request: Omit<ProjectResourceItemsRequest, 'projectId' | 'knownVersion'> | null = null) {
   const r = request;
@@ -561,12 +596,12 @@ export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: P
   };
   if (!entry) {
     const generation = accessGeneration();
-    const e: PreparedEntry<T> = { value: signal({ data: null, progress: null, error: null, restored: false, state: 'idle' }), fetcher, subscribers: 0, visible: 0, controller: null, request: 0, pending: false, disposed: false,
+    const e: PreparedEntry<T> = { value: cell<PreparedState<T>>({ data: null, progress: null, error: null, restored: false, state: 'idle' }), fetcher, subscribers: 0, visible: 0, controller: null, request: 0, pending: false, disposed: false,
       refresh: () => {
         if (e.disposed || !e.subscribers) return;
         if (e.controller) { e.pending = true; return; }
         const c = e.controller = new AbortController(), request = ++e.request;
-        e.value.value = { ...e.value.value, state: e.value.value.data ? e.value.value.state : 'loading' };
+        e.value.value = { ...e.value.peek(), state: e.value.peek().data ? e.value.peek().state : 'loading' };
         void (async () => {
           try {
             await ensureAccessGeneration(); assertAccessGeneration(generation);
@@ -574,7 +609,7 @@ export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: P
             assertAccessGeneration(generation);
             if (e.disposed || c.signal.aborted || request !== e.request) return;
             if (result.version && olderPreparedVersion(result.version, e.version)) return;
-            const previous = e.value.value;
+            const previous = e.value.peek();
             if ('kind' in result && result.kind === 'unchanged') {
               e.value.value = { ...previous, progress: result.progress, error: null, state: previous.data ? 'ready' : 'preparing' };
             } else if ('kind' in result && result.kind === 'preparing') {
@@ -587,7 +622,7 @@ export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: P
             syncTimer(e);
           } catch (error) {
             if (!e.disposed && !c.signal.aborted && isAccessCurrent(generation)) {
-              e.value.value = { ...e.value.value, error: errMsg(error), state: 'error' };
+              e.value.value = { ...e.value.peek(), error: errMsg(error), state: 'error' };
               syncTimer(e);
             }
           } finally {
@@ -608,21 +643,40 @@ export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: P
   } };
 }
 onClear.add(() => { for (const e of prepared.values()) { e.disposed = true; e.request++; e.controller?.abort(); clearInterval(e.timer); e.value.value = { data: null, progress: null, error: null, restored: false, state: 'disposed' }; } prepared.clear(); });
-export function usePreparedOp<K extends 'project_resources' | 'project_resource_items'>(name: K, request: Ops[K]['request'] | null,
-  opts: { visible?: boolean; read?: PreparedFetcher<Ops[K]['reply']> } = {}) {
-  const key = request === null ? null : preparedKey(name, request.projectId, name === 'project_resource_items' ? request as ProjectResourceItemsRequest : null);
-  const reqRef = useRef(request); reqRef.current = request;
-  const readRef = useRef(opts.read); readRef.current = opts.read;
-  const [reader, setReader] = useState<ReturnType<typeof acquirePrepared<Ops[K]['reply']>> | null>(null);
-  useEffect(() => {
-    if (!key) { setReader(null); return; }
-    const fetcher: PreparedFetcher<Ops[K]['reply']> = c => readRef.current ? readRef.current(c) : op(name, { ...reqRef.current!, knownVersion: c.knownVersion }, { signal: c.signal });
-    const r = acquirePrepared(key, fetcher, opts.visible !== false); setReader(r);
-    const off = watch({ name, request: () => reqRef.current, read: () => r.refresh('notification') });
-    const focus = () => r.refresh('foreground');
-    addEventListener('visibilitychange', focus); addEventListener('online', focus);
-    return () => { off(); r.release(); removeEventListener('visibilitychange', focus); removeEventListener('online', focus); };
-  }, [key, opts.visible]);
-  const data = (reader?.key === key ? reader.value.value : null) ?? { data: null, progress: null, error: null, restored: false, state: 'idle' as const };
-  return { ...data, refresh: reader?.refresh ?? (() => {}) };
+const IDLE_PREPARED: PreparedState<never> = { data: null, progress: null, error: null, restored: false, state: 'idle' };
+export function usePreparedOp<K extends 'project_resources' | 'project_resource_items'>(name: K, request: MaybeAccessor<Ops[K]['request'] | null>,
+  opts: { visible?: MaybeAccessor<boolean>; read?: PreparedFetcher<Ops[K]['reply']> } = {}) {
+  const resolved = createMemo(() => readValue(request));
+  const key = createMemo(() => {
+    const r = resolved();
+    return r === null ? null : preparedKey(name, r.projectId, name === 'project_resource_items' ? r as ProjectResourceItemsRequest : null);
+  });
+  const visible = createMemo(() => readValue(opts.visible) !== false);
+  const [reader, setReader] = createSignal<ReturnType<typeof acquirePrepared<Ops[K]['reply']>> | null>(null, { ownedWrite: true });
+  let currentReq: Ops[K]['request'] | null = null;
+  createEffect(
+    () => [key(), visible()] as const,
+    ([k, vis]) => {
+      currentReq = untrack(resolved);
+      if (!k || currentReq === null) { setReader(null); return; }
+      const fetcher: PreparedFetcher<Ops[K]['reply']> = c => opts.read ? opts.read(c) : op(name, { ...currentReq!, knownVersion: c.knownVersion }, { signal: c.signal });
+      const r = acquirePrepared(k, fetcher, vis); setReader(r);
+      const off = watch({ name, request: () => currentReq, read: () => r.refresh('notification') });
+      const focus = () => r.refresh('foreground');
+      addEventListener('visibilitychange', focus); addEventListener('online', focus);
+      return () => { off(); r.release(); removeEventListener('visibilitychange', focus); removeEventListener('online', focus); };
+    },
+  );
+  const current = createMemo(() => {
+    const r = reader(), k = key();
+    return (r && r.key === k ? r.value.value : null) ?? (IDLE_PREPARED as PreparedState<Ops[K]['reply']>);
+  });
+  return {
+    get data() { return current().data; },
+    get progress() { return current().progress; },
+    get error() { return current().error; },
+    get restored() { return current().restored; },
+    get state() { return current().state; },
+    refresh: (reason?: string) => reader()?.refresh(reason),
+  };
 }

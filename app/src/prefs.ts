@@ -1,7 +1,7 @@
 // Per-person preferences, stored server-side in the person's settings (person_settings_get / person_settings_set,
 // docs/designs/fleet-people-access.md section 8 "Preferences"): section pins, row pins, saved views, focus, focus
 // presets and ignored projects, column widths, the collapsed navigation, the navigation counter views, the last list views and the folded list groups. Agents read and write the same fields through the same operations.
-import { signal } from '@preact/signals';
+import { cell } from './signal.ts';
 import { op, type Ops } from './api.ts';
 import { onClear } from './offline.ts';
 import type { View } from '../../packages/view-url/view-url.ts';
@@ -10,12 +10,12 @@ import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
 type Settings = Ops['person_settings_get']['reply'];
 type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
 const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], ignored: [], widths: {}, rowPins: {}, navCollapsed: false, lastViews: {}, listGroups: {}, navCounters: {} };
-export const prefs = signal<Settings>(empty);
+export const prefs = cell<Settings>(empty);
 /**
  * The person's preferences are known: read (or the read failed, so lists still load). Focus-dependent loads (useList, the
  * Overview and Delivery docs) wait for it, so a focused person does not load an unfocused list first. A store clear resets it.
  */
-export const prefsRead = signal(false);
+export const prefsRead = cell(false);
 
 // A cleared store (signed out, another person, new grants) forgets the previous person's preferences too.
 onClear.add(() => { seq++; epoch++; readSeq++; refreshAfterSave = false; pending = 0; prefs.value = empty; prefsRead.value = false; loadPrefs(); });
@@ -62,21 +62,26 @@ export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: Pat
 export const prefsSaved = () => chain.then(() => {}, () => {});
 
 export function usePins(list: string) {
-  const ids = prefs.value.rowPins[list] ?? [], set = new Set(ids);
-  return { ids, has: (id: string) => set.has(id), toggle: (id: string) => {
-    const pinned = !(prefs.value.rowPins[list] ?? []).includes(id); // the live state, not the render's
-    savePrefs(s => { const xs = (s.rowPins[list] ?? []).filter(x => x !== id); return { rowPins: { ...s.rowPins, [list]: pinned ? [...xs, id] : xs } }; }, { rowPin: { list, id, pinned } });
-  } };
+  return {
+    get ids() { return prefs.value.rowPins[list] ?? []; },
+    has: (id: string) => (prefs.value.rowPins[list] ?? []).includes(id),
+    toggle: (id: string) => {
+      const pinned = !(prefs.peek().rowPins[list] ?? []).includes(id); // the live state, not the render's
+      savePrefs(s => { const xs = (s.rowPins[list] ?? []).filter(x => x !== id); return { rowPins: { ...s.rowPins, [list]: pinned ? [...xs, id] : xs } }; }, { rowPin: { list, id, pinned } });
+    },
+  };
 }
 
 /** A saved view: a name and the view keys it sets (docs/designs/fleet-view-urls-and-list-path.md §1). */
 export type SavedView = { name: string; view: View; system?: boolean };
 /** System presets (fixed, from the app) come first, then the person's own views of this list. */
 export function useViews(list: string, system: SavedView[]) {
-  const mine: SavedView[] = prefs.value.views.filter(v => v.list === list).map(v => ({ name: v.name, view: v.view as unknown as View }));
   const isSystem = (n: string) => system.some(s => s.name === n);
   return {
-    list: [...system.map(s => ({ ...s, system: true })), ...mine.filter(v => !isSystem(v.name))],
+    get list() {
+      const mine: SavedView[] = prefs.value.views.filter(v => v.list === list).map(v => ({ name: v.name, view: v.view as unknown as View }));
+      return [...system.map(s => ({ ...s, system: true })), ...mine.filter(v => !isSystem(v.name))];
+    },
     save: (v: SavedView) => {
       if (isSystem(v.name)) return;
       const item = { list, name: v.name, view: v.view as unknown as Record<string, unknown> };
@@ -167,7 +172,7 @@ export const sectionPath = (section: string) => here.get(section) ?? prefs.value
  * flipped away from the page default. A toggle shows at once from this tab's copy and is sent debounced, and at once when
  * the person leaves the section or the tab hides, through savePrefs like any other preference.
  */
-const groupsHere = signal<Record<string, string[]>>({});
+const groupsHere = cell<Record<string, string[]>>({});
 let groupsTimer: ReturnType<typeof setTimeout> | undefined;
 onClear.add(() => { clearTimeout(groupsTimer); groupsHere.value = {}; });
 /** The flipped group keys of a list: this tab's unsent toggles first, then the stored ones. */

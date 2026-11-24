@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, appendFileSync, writeFileSync } from 'node:fs';
 import { build } from 'esbuild';
 import { contrastProblems } from './tokens.mjs';
+import { solidEsbuildPlugin } from './solid-esbuild.mjs';
 
 const root = new URL('../../..', import.meta.url).pathname;
 // Everything printed also goes to design-report/report.txt (CI uploads it).
@@ -82,7 +83,7 @@ for (const [name, svg] of Object.entries(JSON.parse(readFileSync(join(root, 'pac
 for (const p of contrastProblems()) warn.push(`tokens.json  contrast  ${p} (needs 4.5:1)`);
 
 // Performance target: initial JavaScript of the UI package (D6: ≤ 200 KB, a target, not a stop).
-const ui = await build({ entryPoints: [join(root, 'packages/ui/src/index.ts')], bundle: true, minify: true, write: false, format: 'esm', jsx: 'automatic', jsxImportSource: 'preact', loader: { '.json': 'json' } });
+const ui = await build({ entryPoints: [join(root, 'packages/ui/src/index.ts')], bundle: true, minify: true, write: false, format: 'esm', conditions: ['solid'], plugins: [solidEsbuildPlugin()], loader: { '.json': 'json' } });
 const kb = ui.outputFiles[0].contents.length / 1024;
 
 let tests = 'passed';

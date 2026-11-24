@@ -3,25 +3,25 @@
 // Update detection compares what this tab runs with what the site serves now: the hashed entry script and stylesheet
 // named in the page this tab loaded against the ones in a fresh copy of the page. It does not depend on service worker
 // events, so it gives the same answer on every check, and after an update the reloaded tab matches the site.
-import { signal } from '@preact/signals';
-import { type Tone, type VersionInfo, type VersionRow } from '../../packages/ui/src/index.ts';
+import { cell } from './signal.ts';
+import type { Tone, VersionInfo, VersionRow } from '../../packages/ui/src/index.ts';
 import { op, type Ops } from './api.ts';
 import { accessGeneration, isAccessCurrent, onAccessInvalidated } from './access.ts';
 
 type Versions = Ops['system_versions']['reply'];
-export const versions = signal<Versions | null>(null);
-export const updateReady = signal(false);
-export const updating = signal(false);
-export const updateChecked = signal(false);
-export const versionObservedAt = signal<number | null>(null);
-export const versionError = signal<string | null>(null);
-export const updateError = signal<string | null>(null);
+export const versions = cell<Versions | null>(null);
+export const updateReady = cell(false);
+export const updating = cell(false);
+export const updateChecked = cell(false);
+export const versionObservedAt = cell<number | null>(null);
+export const versionError = cell<string | null>(null);
+export const updateError = cell<string | null>(null);
 onAccessInvalidated.add(() => {
   versions.value = null; tabVersion.value = null; versionRead++; updateRead++; versionObservedAt.value = null;
   versionError.value = null; updateChecked.value = false; updateReady.value = false; updateError.value = null;
 });
 /** The site's UI version at a moment this tab was known to run the site's app (its assets matched before and after the read). */
-export const tabVersion = signal<string | null>(null);
+export const tabVersion = cell<string | null>(null);
 let versionRead = 0, updateRead = 0;
 
 // The entry script and the stylesheet carry content hashes (app/build.mjs), so a new app always changes one of them.

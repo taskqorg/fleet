@@ -2,13 +2,13 @@
 
 ## Overview
 
-`app/` builds Fleet's Preact operator application into `dist/app`. The coordinator serves its routes; this package does not define a separate API.
+`app/` builds Fleet's SolidJS 2.0 operator application into `dist/app`. The coordinator serves its routes; this package does not define a separate API.
 
 ## Interface
 
-- [`build.mjs`](build.mjs) bundles [`src/main.tsx`](src/main.tsx), emits hashed assets with debug IDs, external source maps (`dist/app/sourcemaps`), per-workspace web manifests, `screens.json`, `sw.js`, and a size report.
-- [`src`](src/README.md) contains the application shell, typed operation client, live-state store, and route views.
-- `tsconfig.json` type-checks the app, UI package, URL package, and UI tests with Preact JSX.
+- [`build.mjs`](build.mjs) bundles [`src/main.tsx`](src/main.tsx) with `@solidjs/compiler`, emits hashed assets with debug IDs, external source maps (`dist/app/sourcemaps`), per-workspace web manifests, `screens.json`, `sw.js`, and a size report.
+- [`src`](src/README.md) contains the application shell, typed operation client, live-state store, History router, Agent Bridge wiring, and route views.
+- `tsconfig.json` type-checks the app, UI package, URL package, and UI tests with `@solidjs/web` Solid 2 JSX.
 
 ## Invariants
 

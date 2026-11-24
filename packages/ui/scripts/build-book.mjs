@@ -3,9 +3,10 @@
 import { build } from 'esbuild';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { uiCss } from './tokens.mjs';
+import { solidEsbuildPlugin } from './solid-esbuild.mjs';
 
 const root = new URL('..', import.meta.url);
-const common = { bundle: true, minify: true, write: false, format: 'iife', target: 'es2022', jsx: 'automatic', jsxImportSource: 'preact', loader: { '.json': 'json' }, legalComments: 'none' };
+const common = { bundle: true, minify: true, write: false, format: 'iife', target: 'es2022', conditions: ['solid'], plugins: [solidEsbuildPlugin()], loader: { '.json': 'json' }, legalComments: 'none' };
 
 async function page(entry, outPath, title, extraCss = '') {
   const res = await build({ ...common, entryPoints: [new URL(entry, root).pathname] });

@@ -21,11 +21,16 @@
   "dependencies": {
     "@preact/signals": "2.11.4",
     "@sentry/browser": "11.10.0",
+    "@solidjs/web": "^2.0.3",
     "@tanstack/virtual-core": "3.19.11",
+    "@ui-sdk/core": "0.1.0-beta.16",
+    "@ui-sdk/solid": "0.1.0-beta.16",
     "preact": "11.2.0",
+    "solid-js": "^2.0.3",
     "wouter-preact": "3.13.0"
   },
   "devDependencies": {
+    "@solidjs/compiler": "^2.0.2",
     "@types/node": "22.18.0",
     "esbuild": "0.28.2",
     "modern-web-guidance": "1.0.1",

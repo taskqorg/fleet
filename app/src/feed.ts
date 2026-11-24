@@ -1,11 +1,11 @@
 // Authorized commit feed. Every transport callback belongs to one access generation.
-import { signal } from '@preact/signals';
-import { op, accessControlOp, online } from './api.ts';
+import { cell } from './signal.ts';
+import { op, accessControlOp } from './api.ts';
 import { accessGeneration, ensureAccessGeneration, invalidateAccess, isAccessCurrent, onAccessInvalidated, registerAccessBaseline, type AccessBaseline } from './access.ts';
 import type { Change, StreamCursor } from '../../contracts/generated/ops.ts';
 export type { Change };
 type Sub = { changes: (c: Change[]) => void; resync: () => void };
-export const feedState = signal<'connecting' | 'live' | 'polling'>('connecting');
+export const feedState = cell<'connecting' | 'live' | 'polling'>('connecting');
 let cursor: number | null = null, source: EventSource | null = null, failures = 0;
 let timer: ReturnType<typeof setTimeout> | undefined, frame = 0, started = false;
 let pending: Change[] = [];

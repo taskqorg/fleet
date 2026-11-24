@@ -1,6 +1,9 @@
 # Supply-chain settings (docs/designs/fleet-stack.md D1).
 # A version must be public for 1 day (pnpm docs default advice) before pnpm installs it.
 minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - "@ui-sdk/core"
+  - "@ui-sdk/solid"
 # Only these packages may run install scripts; pnpm 10 blocks all others.
 onlyBuiltDependencies:
   - esbuild

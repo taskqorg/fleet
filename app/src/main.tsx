@@ -1,72 +1,62 @@
 // Fleet operator app entry (docs/designs/fleet-operator-app.md): shell, routes, identity check, feed start, service worker.
 // errors.ts first: error tracking starts before the other modules run.
 import { captureRender, configureErrors } from './errors.ts';
-import { render, Component, type ComponentChildren } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Router, Route, Switch, Redirect, useLocation, useSearch } from 'wouter-preact';
+import { createEffect, createMemo, createSignal, Errored, lazy, Loading, Match, onSettled, Show, Switch } from 'solid-js';
+import { render, type JSX } from '@solidjs/web';
+import { createAgent, registerTools } from '@ui-sdk/core/agent';
 import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, type NavItem, type AppScreen, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
+import { useLocation, useSearch } from './router.ts';
 import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS, type ViewName } from '../../packages/view-url/view-url.ts';
 import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus, scopeIds } from './prefs.ts';
-import { useOp, touchedBy, setIdentity } from './store.ts';
+import { useOp, touchedBy, setIdentity, startStore } from './store.ts';
 import { useNavCounts } from './nav-counts.ts';
 import { entityCards } from './entity-cards.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
-import { startStore } from './store.ts';
 import { clearAll } from './offline.ts';
 
-/** Dynamically loads a routed screen chunk once, caches it, and forwards load failures to RenderBoundary. */
-function lazy<P extends object>(load: () => Promise<(props: P) => ComponentChildren>): (props: P) => ComponentChildren {
-  let cached: ((props: P) => ComponentChildren) | null = null;
-  let pending: Promise<void> | null = null;
-  return function LazyView(props: P): ComponentChildren {
-    const [View, setView] = useState<((props: P) => ComponentChildren) | null>(() => cached);
-    const [err, setErr] = useState<unknown>(null);
-    useEffect(() => {
-      if (cached) { setView(() => cached); return; }
-      let live = true;
-      (pending ??= load().then(c => { cached = c; })).then(
-        () => { if (live) setView(() => cached); },
-        e => { pending = null; if (live) setErr(() => e); },
-      );
-      return () => { live = false; };
-    }, []);
-    if (err) throw err;
-    return View ? <View {...props} /> : <Empty text="Loading…" />;
-  };
+declare global {
+  interface Window {
+    __fleetAgent?: ReturnType<typeof createAgent>;
+  }
 }
 
-const Bots = lazy(async () => (await import('./views/bots.tsx')).Bots);
-const Projects = lazy(async () => (await import('./views/projects.tsx')).Projects);
-const Overview = lazy(async () => (await import('./views/overview.tsx')).Overview);
-const Tasks = lazy(async () => (await import('./views/tasks.tsx')).Tasks);
-const Conversations = lazy(async () => (await import('./views/conversations.tsx')).Conversations);
-const Results = lazy(async () => (await import('./views/results.tsx')).Results);
-const Delivery = lazy(async () => (await import('./views/delivery.tsx')).Delivery);
-const Infrastructure = lazy(async () => (await import('./views/hosts.tsx')).Hosts);
-const Lab = lazy(async () => (await import('./views/lab.tsx')).Lab);
-const Library = lazy(async () => (await import('./views/agents.tsx')).Agents);
-const Spend = lazy(async () => (await import('./views/spend.tsx')).Spend);
+const Bots = lazy(() => import('./views/bots.tsx'), { export: 'Bots' });
+const Projects = lazy(() => import('./views/projects.tsx'), { export: 'Projects' });
+const Overview = lazy(() => import('./views/overview.tsx'), { export: 'Overview' });
+const Tasks = lazy(() => import('./views/tasks.tsx'), { export: 'Tasks' });
+const Conversations = lazy(() => import('./views/conversations.tsx'), { export: 'Conversations' });
+const Results = lazy(() => import('./views/results.tsx'), { export: 'Results' });
+const Delivery = lazy(() => import('./views/delivery.tsx'), { export: 'Delivery' });
+const Infrastructure = lazy(() => import('./views/hosts.tsx'), { export: 'Hosts' });
+const Lab = lazy(() => import('./views/lab.tsx'), { export: 'Lab' });
+const Library = lazy(() => import('./views/agents.tsx'), { export: 'Agents' });
+const Spend = lazy(() => import('./views/spend.tsx'), { export: 'Spend' });
 
 // Not reported: an operation's own failure (OpError) is in the coordinator's spans, and an access change aborts reads on
 // purpose. The release is the version this tab runs.
 configureErrors({ ignore: e => e instanceof OpError || e instanceof AccessChanged, release: () => tabVersion.value });
 
 /** A render crash shows a recoverable error in the work area instead of a blank page; navigating away clears it. */
-class RenderBoundary extends Component<{ at: string; children: ComponentChildren }, { failed: boolean }> {
-  state = { failed: false };
-  componentDidCatch(error: unknown) { captureRender(error); this.setState({ failed: true }); }
-  componentDidUpdate(prev: { at: string }) { if (prev.at !== this.props.at && this.state.failed) this.setState({ failed: false }); }
-  render() {
-    return this.state.failed ? <Empty text="This page failed to render." action={<Button label="Reload" icon="rotate-ccw" onClick={() => location.reload()} />} /> : this.props.children;
-  }
+function RenderBoundary(props: { at: string; children: JSX.Element }) {
+  let resetErr: (() => void) | undefined;
+  createEffect(() => props.at, () => { resetErr?.(); resetErr = undefined; }, { defer: true });
+  return (
+    <Errored fallback={(err, reset) => {
+      captureRender(err());
+      resetErr = reset;
+      return <Empty text="This page failed to render." action={<Button label="Reload" icon="rotate-ccw" onClick={() => location.reload()} />} />;
+    }}>
+      {props.children}
+    </Errored>
+  );
 }
 
 // The view of each screen the registry marks `app: true` (the type requires every one). Nav and routes follow registry
 // order. A list screen takes an optional focus segment, so focusing a row never unmounts the list.
-const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => ComponentChildren }> = {
+const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => JSX.Element }> = {
   bots: { focus: true, view: p => <Bots id={p.id} /> },
   projects: { focus: true, view: p => <Projects id={p.id} /> },
   overview: { focus: true, view: p => <Overview id={p.id} /> },
@@ -118,7 +108,7 @@ const subPages = (go: (to: string) => void): SpotlightProvider => ({
 });
 
 // The project focus (OR-34): '-' is work outside projects; an empty focus holds everything. The server marks hits outside it.
-const toggleFocus = (id: string) => { const f = prefs.value.focus; setFocus(f.includes(id) ? f.filter(x => x !== id) : [...f, id]); };
+const toggleFocus = (id: string) => { const f = prefs.peek().focus; setFocus(f.includes(id) ? f.filter(x => x !== id) : [...f, id]); };
 
 // Spotlight (OR-32): one provider per kind the server's `search` operation finds (agents call the same tool). The kinds of
 // one query and focus share one request, sent 150 ms after the last key and reused while pending (up to 10 s) and for 2 s
@@ -129,7 +119,7 @@ const found = (kind: Hit['kind'], go: (to: string) => void): SpotlightProvider =
   const w = KINDS[kind];
   return { id: kind, label: w.label, find: async (query, signal) => {
     // The focus without ignored projects, as lists apply it; the server leaves ignored projects out itself.
-    const { ignored } = prefs.value, focus = scopeIds().projectIds ?? [], key = JSON.stringify([query, focus, ignored]);
+    const { ignored } = prefs.peek(), focus = scopeIds().projectIds ?? [], key = JSON.stringify([query, focus, ignored]);
     const fresh = () => last?.key === key && Date.now() - last.at < 2000;
     if (!fresh()) {
       await new Promise(r => setTimeout(r, 150));
@@ -156,22 +146,34 @@ const found = (kind: Hit['kind'], go: (to: string) => void): SpotlightProvider =
 function App() {
   const [loc, go] = useLocation();
   const query = useSearch();
-  const current = loc.split('/')[1] || 'overview';
-  const activeNav = LIBRARY_SECTIONS.has(current) ? 'agents' : INFRA_SECTIONS.has(current) ? 'hosts' : current;
-  const shellTitle = BUILT.find(w => w.id === activeNav)?.label ?? BUILT.find(w => w.id === current)?.label;
-  const search = useRef([subPages(go), ...(Object.keys(KINDS) as Hit['kind'][]).map(k => found(k, go))]).current;
+  const current = createMemo(() => loc().split('/')[1] || 'overview');
+  const activeNav = createMemo(() => {
+    const c = current();
+    return LIBRARY_SECTIONS.has(c) ? 'agents' : INFRA_SECTIONS.has(c) ? 'hosts' : c;
+  });
+  const shellTitle = createMemo(() => BUILT.find(w => w.id === activeNav())?.label ?? BUILT.find(w => w.id === current())?.label);
+  const search = [subPages(go), ...(Object.keys(KINDS) as Hit['kind'][]).map(k => found(k, go))];
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
   // Preferences load only after authorized baseline activation.
   // Focus and online check the person quietly (below); preferences changed elsewhere arrive as setting-change events.
-  const [user, setUser] = useState<string | null>(null);
+  const [user, setUser] = createSignal<string | null>(null);
   // OR-23: the shell shows once the first settings read answers, or after 1.5 s at most; a later store clear does not hide it again.
-  const [shown, setShown] = useState(false);
-  useEffect(() => { if (prefsRead.value) setShown(true); }, [prefsRead.value]);
-  useEffect(() => { const t = setTimeout(() => setShown(true), 1500); return () => clearTimeout(t); }, []);
-  const geometry = useRef({ widths: prefs.value.widths, navCollapsed: prefs.value.navCollapsed });
-  if (access.value.state === 'open' && prefsRead.value) geometry.current = { widths: prefs.value.widths, navCollapsed: prefs.value.navCollapsed };
-  const pins = prefs.value.pins, savePins = (ids: string[]) => savePrefs(() => ({ pins: ids }), { pins: ids });
-  useEffect(() => {
+  const [shown, setShown] = createSignal(false, { ownedWrite: true });
+  createEffect(() => prefsRead.value, r => { if (r) setShown(true); });
+  onSettled(() => {
+    const t = setTimeout(() => setShown(true), 1500);
+    return () => clearTimeout(t);
+  });
+  let lastGeometry = { widths: prefs.peek().widths, navCollapsed: prefs.peek().navCollapsed };
+  const geometry = createMemo(() => {
+    if (access.value.state === 'open' && prefsRead.value) {
+      lastGeometry = { widths: prefs.value.widths, navCollapsed: prefs.value.navCollapsed };
+    }
+    return lastGeometry;
+  });
+  const pins = createMemo(() => (access.value.state === 'open' ? prefs.value.pins : []));
+  const savePins = (ids: string[]) => savePrefs(() => ({ pins: ids }), { pins: ids });
+  onSettled(() => {
     const unregister = registerAccessValidator(async ({ generation, signal }) => {
       last = null;
       const clear = clearAll();
@@ -188,7 +190,7 @@ function App() {
     // at start (docs/designs/fleet-analytics.md, the access gate). Offline keeps what is shown; signed out has its own path.
     let checking = false, again = false;
     const recheck = async (): Promise<void> => {
-      const s = access.value;
+      const s = access.peek();
       // Not open (closed, or a validation still running): validate as before, which restarts a running one.
       if (s.state !== 'open' || !s.identity) return validate();
       // A focus during a quiet check is checked right after it, so a change in between is never missed.
@@ -196,98 +198,123 @@ function App() {
       checking = true;
       try {
         const m = await accessControlOp('me', {}, { signal: AbortSignal.any([accessSignal(s.generation), AbortSignal.timeout(10000)]) });
-        const cur = access.value;
+        const cur = access.peek();
         if (cur.generation !== s.generation || cur.state !== 'open') return;
         // The same person: nothing to redo; preferences and data stay, and the change stream brings what changed.
         if (m.email !== s.identity.identityKey || (m.grantsVersion ?? '') !== s.identity.grantsVersion) validate();
       } catch (e) {
-        if (access.value.generation !== s.generation || access.value.state !== 'open') return;
+        if (access.peek().generation !== s.generation || access.peek().state !== 'open') return;
         // Offline keeps what is shown, and signed out has its own path; any other failure (a timeout, a 5xx, an
         // incomplete reply) leaves the person unverified, so the gate validates as at start.
         if (!(e instanceof OpError && (e.status === 0 && e.message === 'offline' || e.status === 401 || e.status === 403))) validate();
       } finally { checking = false; if (again) { again = false; void recheck(); } }
     };
     // Preferences changed on another device or by an agent (person_settings_set writes a setting-change for this person).
-    setIdentity(() => access.value.identity?.identityKey);
+    setIdentity(() => access.peek().identity?.identityKey);
     const offPrefs = subscribe({ resync: () => { void loadPrefs(); }, changes: cs => { if (cs.some(c => touchedBy(c, 'person_settings_get', {}))) void loadPrefs(); } });
     validate(); addEventListener('focus', recheck); addEventListener('online', recheck);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const stopChecks = startVersionChecks();
     return () => { unregister(); stopFeed(); offPrefs(); stopChecks(); removeEventListener('focus', recheck); removeEventListener('online', recheck); };
-  }, []);
-  useEffect(() => { if (signedOut.value) { invalidateAccess('signed out'); void clearAll(true); } }, [signedOut.value]);
+  });
+  createEffect(() => signedOut.value, out => { if (out) { invalidateAccess('signed out'); void clearAll(true); } });
   // Each section's list view is noted as it changes and saved when the person leaves the section or the tab hides, so the
   // navigation returns to it (prefs.ts). The open item and checked rows are not part of it (view-url drops focus and sel).
   // Unsent list group toggles are sent on the same section leave.
-  const left = useRef<string | null>(null);
-  useEffect(() => {
-    if (access.value.state !== 'open' || !prefsRead.value || !BUILT.some(n => n.id === current)) return;
-    const parsed = (VIEWS as string[]).includes(current) ? parseView(loc + (query ? '?' + query : '')) : null;
+  let left: string | null = null;
+  createEffect(() => [loc(), query(), access.value.state, prefsRead.value, current()] as const, ([l, q, st, pr, cur]) => {
+    if (st !== 'open' || !pr || !BUILT.some(n => n.id === cur)) return;
+    const parsed = (VIEWS as string[]).includes(cur) ? parseView(l + (q ? '?' + q : '')) : null;
     // The Overview keeps no view of its own: /overview?all (every project, from the outside-focus count) is never kept.
-    noteView(current, parsed && current !== 'overview' ? formatView({ ...parsed, focus: undefined, sel: undefined }) : '/' + current);
-    if (left.current && left.current !== current) saveOnLeave(left.current, false);
-    left.current = current;
-  }, [loc, query, access.value.state, prefsRead.value]);
-  useEffect(() => {
+    noteView(cur, parsed && cur !== 'overview' ? formatView({ ...parsed, focus: undefined, sel: undefined }) : '/' + cur);
+    if (left && left !== cur) saveOnLeave(left, false);
+    left = cur;
+  });
+  onSettled(() => {
     // Unsent list group toggles go with them, in one keepalive request: a hidden tab may be closed without pagehide
     // (prefs.ts saveOnLeave; a section leave sends the same request without keepalive above).
-    const flush = () => { if (document.visibilityState === 'hidden') saveOnLeave(left.current); };
-    const leave = () => saveOnLeave(left.current);
+    const flush = () => { if (document.visibilityState === 'hidden') saveOnLeave(left); };
+    const leave = () => saveOnLeave(left);
     document.addEventListener('visibilitychange', flush); addEventListener('pagehide', leave);
     return () => { document.removeEventListener('visibilitychange', flush); removeEventListener('pagehide', leave); };
-  }, []);
-  // The project focus and ignored projects (OR-34) are person settings; lists apply them where their view names no projects.
-  // The empty palette offers the same presets as the focus chip, without ignored projects.
-  const { focus, focusPresets, ignored } = prefs.value;
+  });
   // Each section's counter (nav-rail.md, Counters); Needs you is the head chip, not a counter.
-  const counts = useNavCounts(access.value.state === 'open');
-  const nav = NAV.map(n => counts[n.id] ? { ...n, count: counts[n.id] } : n);
+  const counts = useNavCounts(() => access.value.state === 'open');
+  const nav = createMemo(() => {
+    const c = counts();
+    return NAV.map(n => c[n.id] ? { ...n, count: c[n.id] } : n);
+  });
   // Entity cards (EntityCode) read entity_card through the store; their Open goes to the in-app path.
-  const cards = useMemo(() => entityCards(go), [go]);
-  return <EntityCards.Provider value={cards}><AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={nav} current={activeNav} title={shellTitle} waiting={0} onGo={id => go(sectionPath(id))} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown}
-    searchIdle={<FocusPresets icon value={focus.filter(p => !ignored.includes(p))} presets={focusPresets} ignored={ignored} onChange={setFocus} />}
-    focus={access.value.state === 'open' ? <Focus go={go} /> : undefined}
-    widths={geometry.current.widths} onWidth={setWidth} collapsed={geometry.current.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
+  const cards = entityCards(go);
+  const isOpen = createMemo(() => access.value.state === 'open');
+  return <EntityCards value={cards}><AppShell privateReady={isOpen()} privateGeneration={access.value.generation} nav={nav()} current={activeNav()} title={shellTitle()} waiting={0} onGo={id => go(sectionPath(id))} pins={pins()} onPins={savePins} search={isOpen() ? search : []} ready={shown()}
+    searchIdle={<FocusPresets icon value={prefs.value.focus.filter(p => !prefs.value.ignored.includes(p))} presets={prefs.value.focusPresets} ignored={prefs.value.ignored} onChange={setFocus} />}
+    focus={isOpen() ? <Focus go={go} /> : undefined}
+    widths={geometry().widths} onWidth={setWidth} collapsed={geometry().navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
-    user={access.value.state === 'open' && user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
+    user={isOpen() && user() ? { name: user()!, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
-    {access.value.state === 'open' ? (
-      <RenderBoundary at={access.value.generation + ':' + loc + '?' + query}><PrivateRoutes key={access.value.generation} go={go} /></RenderBoundary>
-    ) : current === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}
-  </AppShell></EntityCards.Provider>;
+    {isOpen() ? (
+      <RenderBoundary at={access.value.generation + ':' + loc() + '?' + query()}>
+        <Show when={access.value.generation} keyed>{_gen => <PrivateRoutes go={go} />}</Show>
+      </RenderBoundary>
+    ) : current() === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}
+  </AppShell></EntityCards>;
 }
 
 const decodeSegment = (s: string): string => { try { return decodeURIComponent(s); } catch { return s; } };
 
-function PrivateRoutes({ go }: { go: (to: string) => void }) {
+function PrivateRoutes(props: { go: (to: string) => void }) {
   const [loc] = useLocation();
-  const libMatch = /^\/(agents|pipelines|catalogue)(?:\/([^/]+))?\/?$|^\/(changes)\/?$/.exec(loc);
-  if (libMatch) {
-    const section = (libMatch[1] ?? libMatch[3]) as 'agents' | 'pipelines' | 'catalogue' | 'changes';
-    const id = libMatch[2] ? decodeSegment(libMatch[2]) : undefined;
-    return <Library section={section} id={id} />;
-  }
-  const infraMatch = /^\/(hosts|keys)(?:\/([^/]+))?\/?$|^\/(runners)\/?$/.exec(loc);
-  if (infraMatch) {
-    const section = (infraMatch[1] ?? infraMatch[3]) as 'hosts' | 'keys' | 'runners';
-    const id = infraMatch[2] ? decodeSegment(infraMatch[2]) : undefined;
-    return <Infrastructure section={section} id={id} />;
-  }
-  return <Switch>
-      <Route path="/"><Redirect to="/overview" /></Route>
-      {BUILT.map(s => <Route key={s.id} path={s.focus ? `/${s.id}/:id?` : `/${s.id}`}>{(p: { id?: string }) => s.view(p)}</Route>)}
-      <Route><Empty text="This page does not exist." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>
-    </Switch>;
+  createEffect(() => loc(), p => { if (p === '/') props.go('/overview'); });
+  const libMatch = createMemo(() => /^\/(agents|pipelines|catalogue)(?:\/([^/]+))?\/?$|^\/(changes)\/?$/.exec(loc()));
+  const infraMatch = createMemo(() => /^\/(hosts|keys)(?:\/([^/]+))?\/?$|^\/(runners)\/?$/.exec(loc()));
+  const libSection = createMemo(() => { const m = libMatch(); return m ? (m[1] ?? m[3]) as 'agents' | 'pipelines' | 'catalogue' | 'changes' : null; });
+  const libId = createMemo(() => { const m = libMatch(); return m?.[2] ? decodeSegment(m[2]) : undefined; });
+  const infraSection = createMemo(() => { const m = infraMatch(); return m ? (m[1] ?? m[3]) as 'hosts' | 'keys' | 'runners' : null; });
+  const infraId = createMemo(() => { const m = infraMatch(); return m?.[2] ? decodeSegment(m[2]) : undefined; });
+  const builtMatch = createMemo(() => {
+    const p = loc();
+    for (const s of BUILT) {
+      if (s.focus) {
+        const m = new RegExp(`^/${s.id}(?:/([^/]+))?/?$`).exec(p);
+        if (m) return { screen: s, id: m[1] ? decodeSegment(m[1]) : undefined };
+      } else if (p === `/${s.id}` || p === `/${s.id}/`) {
+        return { screen: s, id: undefined };
+      }
+    }
+    return null;
+  });
+  const builtScreen = createMemo(() => builtMatch()?.screen ?? null);
+  const builtId = createMemo(() => builtMatch()?.id);
+  return (
+    <Loading fallback={<Empty text="Loading…" />}>
+      <Switch fallback={<Empty text="This page does not exist." action={<Button label="Overview" icon="house" onClick={() => props.go('/overview')} />} />}>
+        <Match when={libSection()}>
+          {sec => <Library section={sec()} id={libId()} />}
+        </Match>
+        <Match when={infraSection()}>
+          {sec => <Infrastructure section={sec()} id={infraId()} />}
+        </Match>
+        {BUILT.map(s => (
+          <Match when={builtScreen() === s}>
+            {s.view({ get id() { return builtId(); } })}
+          </Match>
+        ))}
+      </Switch>
+    </Loading>
+  );
 }
 
 /** The focus chip with its own project list, so a definition change re-renders only the chip. */
-function Focus({ go }: { go: (to: string) => void }) {
+function Focus(props: { go: (to: string) => void }) {
   const projects = useOp('project_list', {});
-  const list: { id: string; name: string }[] = (projects.data?.projects ?? []).map(p => ({ id: String(p.id), name: String(p.name ?? p.id) }));
-  const { focus, focusPresets, ignored } = prefs.value;
+  const list = createMemo<{ id: string; name: string }[]>(() => (projects.data?.projects ?? []).map(p => ({ id: String(p.id), name: String(p.name ?? p.id) })));
   // Not shown where it leads: the Overview without the focus.
-  const [loc] = useLocation(), search = useSearch(), here = loc === '/overview' && new URLSearchParams(search).has('all'), outside = useOutside();
-  return <FocusControl projects={list} value={focus.filter(p => !ignored.includes(p))} presets={focusPresets} ignored={ignored} outside={{ n: here ? 0 : outside, onOpen: () => go('/overview?all') }}
+  const [loc] = useLocation(), search = useSearch();
+  const here = createMemo(() => loc() === '/overview' && new URLSearchParams(search()).has('all'));
+  const outside = useOutside();
+  return <FocusControl projects={list()} value={prefs.value.focus.filter(p => !prefs.value.ignored.includes(p))} presets={prefs.value.focusPresets} ignored={prefs.value.ignored} outside={{ n: here() ? 0 : outside(), onOpen: () => props.go('/overview?all') }}
     onChange={setFocus} onSavePreset={n => saveFocusPreset(n)} onRemovePreset={removeFocusPreset} onIgnore={setIgnored} />;
 }
 
@@ -297,14 +324,20 @@ function Focus({ go }: { go: (to: string) => void }) {
  * shows within a minute.
  */
 function useOutside() {
-  const { focus, ignored } = prefs.value, focused = focus.some(p => !ignored.includes(p));
+  const focused = createMemo(() => prefs.value.focus.some(p => !prefs.value.ignored.includes(p)));
   // The server leaves ignored projects out (scopeIds without the focus); outsideFocus drops the focused ones.
-  const scope = scopeIds(false);
-  const q = useOp('questions_list', focused ? { state: 'open', ...scope } : null);
+  const q = useOp('questions_list', () => (focused() ? { state: 'open', ...scopeIds(false) } : null));
   // Executions change many times a second (gateway calls): problems are read again at most once a minute.
-  const e = useOp('executions_list', focused ? { needsYou: true, ...scope } : null, { quiet: 60_000, every: 60_000 });
-  const projects = [...q.data?.questions ?? [], ...e.data?.executions ?? []].map(x => x.projectId ?? null);
-  return focused ? projects.filter(outsideFocus).length : 0;
+  const e = useOp('executions_list', () => (focused() ? { needsYou: true, ...scopeIds(false) } : null), { quiet: 60_000, every: 60_000 });
+  return createMemo(() => {
+    if (!focused()) return 0;
+    const projects = [...q.data?.questions ?? [], ...e.data?.executions ?? []].map(x => x.projectId ?? null);
+    return projects.filter(outsideFocus).length;
+  });
 }
 
-render(<Router><App /></Router>, document.getElementById('app')!);
+const agent = createAgent();
+if (typeof window !== 'undefined') window.__fleetAgent = agent;
+registerTools(agent, { allow: step => !step.confirm });
+
+render(() => <App />, document.getElementById('app')!);

@@ -2,8 +2,8 @@
 // counter for this person; agents read the same operation. It is read through useOp, so it rereads when a change touches
 // nav_counts (this person's focus, ignored projects and counter views included) at most once per 5 s, and every 30 s for
 // hosts, whose liveness moves without a change row.
-import { useEffect } from 'preact/hooks';
-import { signal } from '@preact/signals';
+import { createEffect, createMemo, type Accessor } from 'solid-js';
+import { cell, readValue, type MaybeAccessor } from './signal.ts';
 import type { Ops } from './api.ts';
 import { useOp } from './store.ts';
 import { prefs, prefsRead } from './prefs.ts';
@@ -12,24 +12,27 @@ import type { NavCount, Tone } from '../../packages/ui/src/index.ts';
 
 type Read = Ops['nav_counts']['reply'];
 /** The last read, for the saved-views menu: which view each counter counts as the server resolved it. */
-const lastRead = signal<Read | null>(null);
+const lastRead = cell<Read | null>(null);
 // Hosts offline needs a look (OR-18); the other counters are plain amounts of work.
 const TONES: Record<string, Tone> = { hosts: 'attention' };
 
 /** Each section's counter by section id, none while unread; ready: access is open and the person's settings are read. */
-export function useNavCounts(ready: boolean): Record<string, NavCount> {
+export function useNavCounts(ready: MaybeAccessor<boolean>): Accessor<Record<string, NavCount>> {
   // The server names nav_counts in every change that can move a count, this person's settings (focus, ignored projects,
   // counter views) included: reread via setting-change SSE at most once per 5 s, and every 30 s for hosts,
   // whose liveness moves without a change row.
-  const doc = useOp('nav_counts', ready && prefsRead.value ? {} : null, { quiet: 5000, every: 30_000 });
+  const doc = useOp('nav_counts', () => (readValue(ready) && prefsRead.value ? {} : null), { quiet: 5000, every: 30_000 });
   // The last counters stay while a changed setting is read (OR-23: nothing blinks out); none once access closes, so the
   // next person never sees them.
-  const read = ready ? doc.data : null;
-  useEffect(() => { lastRead.value = read; }, [read]);
-  if (!read) return {};
-  return Object.fromEntries(Object.entries(read.sections).map(([id, c]) => [id, {
-    n: c.inFocus, outside: c.split ? c.outside : undefined, tone: TONES[id] ?? 'neutral', label: c.label,
-  }]));
+  const read = createMemo(() => (readValue(ready) ? doc.data : null));
+  createEffect(() => read(), r => { lastRead.value = r; });
+  return createMemo(() => {
+    const r = read();
+    if (!r) return {};
+    return Object.fromEntries(Object.entries(r.sections).map(([id, c]) => [id, {
+      n: c.inFocus, outside: c.split ? c.outside : undefined, tone: TONES[id] ?? 'neutral', label: c.label,
+    }]));
+  });
 }
 
 /**

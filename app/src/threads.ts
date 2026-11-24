@@ -1,7 +1,8 @@
 // Thread window state (docs/designs/fleet-conversations.md, Stage 2 item 16). One window of loaded blocks per thread key,
 // paged both ways by block key, followed live from the feed cursor of the page read. The server builds every block; this
 // file only places them. Nothing here reads native harness records.
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { createEffect, createMemo, createSignal } from 'solid-js';
+import { readValue, type MaybeAccessor } from './signal.ts';
 import { op } from './api.ts';
 import { subscribe, type Change } from './feed.ts';
 import type { Block, ThreadEntriesReply } from '../../contracts/generated/ops.ts';
@@ -32,7 +33,7 @@ export function append(w: Win, p: Page): Win {
  * history is not loaded only counts in the pill. `removed` keys (streams a closing event replaced) leave the window.
  */
 export function fed(w: Win, entries: Block[], removed: string[] = []): Win {
-  let blocks = removed.length ? w.blocks.filter(b => !removed.includes(b.key)) : [...w.blocks];
+  const blocks = removed.length ? w.blocks.filter(b => !removed.includes(b.key)) : [...w.blocks];
   let { first, last, total, fresh } = w; const freshKeys = [...(w.freshKeys ?? [])];
   total -= w.blocks.length - blocks.length;
   for (const e of entries) {
@@ -58,62 +59,95 @@ export const touches = (c: Change, sessionIds: Set<string>, taskId?: string) => 
 
 const PAGE = 100;
 /** One thread's window: newest on open, older and newer pages, jump around a key, and live blocks from the feed. */
-export function useThread(key: ThreadKey | null) {
-  const [win, setWin] = useState<Win | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const ref = useRef<Win | null>(null); ref.current = win;
-  const busy = useRef(false), gen = useRef(0), again = useRef<'before' | 'after' | null>(null);
-  const id = key ? JSON.stringify(key) : null;
+export function useThread(keyInput: MaybeAccessor<ThreadKey | null>) {
+  const [win, setWin] = createSignal<Win | null>(null, { ownedWrite: true });
+  const [error, setError] = createSignal<string | null>(null, { ownedWrite: true });
+  let currentWin: Win | null = null;
+  let busy = false;
+  let gen = 0;
+  let again: 'before' | 'after' | null = null;
+  let currentKey: ThreadKey | null = null;
   // The sessions of the thread (a task thread spans several): listed with every page, and joined live when an execution of the
-  // task starts in another session. A ref, because the feed subscription outlives the render that made it.
-  const follow = useRef({ sessions: new Set<string>(), task: undefined as string | undefined });
-  const apply = (f: (w: Win) => Win) => setWin(w => w && f(w));
+  // task starts in another session.
+  let follow = { sessions: new Set<string>(), task: undefined as string | undefined };
+  const commitWin = (next: Win | null | ((w: Win | null) => Win | null)) => {
+    currentWin = typeof next === 'function' ? next(currentWin) : next;
+    setWin(currentWin);
+  };
+  const apply = (f: (w: Win) => Win) => commitWin(w => (w ? f(w) : null));
   const fetchBlocks = async (cs: Change[], g: number) => {
-    const f = follow.current;
-    for (const c of cs) if (f.task && c.kind === 'execution' && c.taskId === f.task && c.sessionId) f.sessions.add(c.sessionId);
-    const rows = cs.filter(c => touches(c, f.sessions, f.task)).map(c => ({ kind: c.kind, id: c.id }));
-    if (!rows.length || !key) return;
-    const r = await op('thread_blocks', { key: ref.current?.key ?? key, rows });
-    if (g === gen.current) apply(w => fed(w, r.entries, r.removed));
+    for (const c of cs) if (follow.task && c.kind === 'execution' && c.taskId === follow.task && c.sessionId) follow.sessions.add(c.sessionId);
+    const rows = cs.filter(c => touches(c, follow.sessions, follow.task)).map(c => ({ kind: c.kind, id: c.id }));
+    if (!rows.length || !currentKey) return;
+    const r = await op('thread_blocks', { key: currentWin?.key ?? currentKey, rows });
+    if (g === gen) apply(w => fed(w, r.entries, r.removed));
   };
   // Changes committed after the page's snapshot: read from its feed cursor, so no row is skipped.
   const catchUp = async (cursor: number, g: number) => {
     for (let c: number | null = cursor; c !== null;) {
       const r: { changes: Change[]; cursor: number; resync?: boolean } = await op('changes_since', { cursor: c, limit: 1000 });
-      if (r.resync || g !== gen.current) return;
+      if (r.resync || g !== gen) return;
       await fetchBlocks(r.changes, g); c = r.changes.length === 1000 ? r.cursor : null;
     }
   };
   const load = async (args: object, place: (p: Page) => void) => {
-    if (!key) return;
-    const g = gen.current;
-    try { const p = await op('thread_entries', { key: ref.current?.key ?? key, resolve: true, limit: PAGE, ...args }); if (g !== gen.current) return;
-      if (p.key) follow.current.task = 'task' in p.key ? p.key.task : undefined; for (const s of p.sessionIds ?? []) follow.current.sessions.add(s); place(p as Page); setError(null); await catchUp(p.feedCursor, g); }
-    catch (e) { if (g === gen.current) setError(e instanceof Error ? e.message : String(e)); }
+    if (!currentKey) return;
+    const g = gen;
+    try {
+      const p = await op('thread_entries', { key: currentWin?.key ?? currentKey, resolve: true, limit: PAGE, ...args });
+      if (g !== gen) return;
+      if (p.key) follow.task = 'task' in p.key ? p.key.task : undefined;
+      for (const s of p.sessionIds ?? []) follow.sessions.add(s);
+      place(p as Page);
+      setError(null);
+      await catchUp(p.feedCursor, g);
+    } catch (e) {
+      if (g === gen) setError(e instanceof Error ? e.message : String(e));
+    }
   };
-  const newest = () => { gen.current++; return load({}, p => setWin(fromPage(p))); };
-  useEffect(() => {
-    setWin(null); ref.current = null; follow.current = { sessions: new Set(key && 'session' in key ? [key.session] : []), task: key && 'task' in key ? key.task : undefined }; if (!key) return;
-    newest();
-    return subscribe({ resync: newest, changes: cs => { if (ref.current) fetchBlocks(cs, gen.current).catch(() => {}); } });
-  }, [id]);
+  const newest = () => { gen++; return load({}, p => commitWin(fromPage(p))); };
+  const id = createMemo(() => {
+    const k = readValue(keyInput);
+    return k ? JSON.stringify(k) : null;
+  });
+  createEffect(
+    () => {
+      const k = readValue(keyInput);
+      return [id(), k] as const;
+    },
+    ([, k]) => {
+      currentKey = k;
+      commitWin(null);
+      setError(null);
+      follow = {
+        sessions: new Set(k && 'session' in k ? [k.session] : []),
+        task: k && 'task' in k ? k.task : undefined,
+      };
+      if (!k) return;
+      void newest();
+      return subscribe({ resync: newest, changes: cs => { if (currentWin) fetchBlocks(cs, gen).catch(() => {}); } });
+    },
+  );
   const page = async (dir: 'before' | 'after') => {
     // The list asks once per length; a request made while a page loads runs after it, so none is lost.
-    if (busy.current) { again.current = dir; return; }
-    const w = ref.current; if (!w) return;
+    if (busy) { again = dir; return; }
+    const w = currentWin; if (!w) return;
     if (dir === 'before' ? !w.hasBefore || !w.first : !w.hasAfter || !w.last) return;
-    busy.current = true;
-    try { await load({ [dir]: dir === 'before' ? w.first : w.last }, p => { const next = dir === 'before' ? prepend(w, p) : append(w, p); ref.current = next; apply(x => dir === 'before' ? prepend(x, p) : append(x, p)); }); }
-    finally { busy.current = false; const d = again.current; again.current = null; if (d) page(d); }
+    busy = true;
+    try { await load({ [dir]: dir === 'before' ? w.first : w.last }, p => apply(x => dir === 'before' ? prepend(x, p) : append(x, p))); }
+    finally { busy = false; const d = again; again = null; if (d) void page(d); }
   };
   return {
-    win, error,
-    older: () => page('before'), newer: () => page('after'), newest,
+    get win() { return win(); },
+    get error() { return error(); },
+    older: () => page('before'),
+    newer: () => page('after'),
+    newest,
     /** Replace the window with entries around a key (a search hit). */
     jump: (k: string, onWindow: () => void) => {
-      gen.current++;
+      gen++;
       return load({ around: k }, p => {
-        setWin(w => fromPage(p, w?.total));
+        commitWin(w => fromPage(p, w?.total));
         onWindow();
       });
     },
