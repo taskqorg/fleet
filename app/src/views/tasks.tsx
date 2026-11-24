@@ -228,7 +228,8 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const disabled = off ? 'offline' : undefined;
   const latestExecution = t.executions.findLast(e => e.kind !== 'child_agent'); // task_get preserves execution sequence.
   const unconfirmed = !!latestExecution && latestExecution.observation === 'unconfirmed'
-    && ['preparing', 'running', 'waiting'].includes(latestExecution.state) && !TERMINAL.includes(t.state) && t.state !== 'paused';
+    && ['preparing', 'running', 'waiting'].includes(latestExecution.state)
+    && !(TERMINAL as readonly string[]).includes(t.state) && t.state !== 'paused';
   const conversation = latestExecution?.sessionId;
   const reported = t.executions.flatMap(e => e.report ? [e.report] : []).sort((a, b) => b.at - a.at)[0];
   const decided = t.questions.filter(q => q.state === 'answered').sort((a, b) => (ms(b.answeredAt) ?? 0) - (ms(a.answeredAt) ?? 0)).slice(0, 3);
