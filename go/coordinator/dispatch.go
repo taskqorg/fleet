@@ -825,7 +825,9 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 				skip(id+" is offline", "host:"+id+":offline")
 				continue
 			}
-			if v := k.updating[id]; v != "" {
+			// A continuation waits for its own host's update: its native session and worktree live there
+			// (2026-11-24: a worker moved off a draining owner-mac failed every run with a binding mismatch).
+			if v := k.updating[id]; v != "" && id != deref(x.Last) {
 				skip(fmt.Sprintf("%s is updating to %s and starts no new work until then", id, v), "host:"+id+":updating")
 				continue
 			}
@@ -1313,6 +1315,16 @@ type dispatchStartCommand struct {
 	Payload     json.RawMessage `json:"payload"`
 }
 
+// nativeFor: the session's native id when the run starts on the host of its last run. A native session lives in that
+// host's harness home, so on another host the executor refuses to resume it ("native account/session binding
+// mismatch") on every run; there the run starts a fresh native session instead.
+func nativeFor(native, last *string, host string) *string {
+	if native == nil || last == nil || *last == "" || *last == host {
+		return native
+	}
+	return ptr("")
+}
+
 // startCommand: the start command of a claimed execution, from the session as it is now and the chosen binding.
 func (a *App) startCommand(q *Request, e *dispatchExecution, host string, binding *resolvedAccount) (dispatchStartCommand, error) {
 	var none dispatchStartCommand
@@ -1368,7 +1380,7 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	// fields, never a blind merge over the fields above (C7).
 	p := &contract.StartPayload{Harness: ptr(harnessOfProfile(liveSession.AgentConfig)), Text: strPtr(d.Input), Setup: strPtr(setup),
 		WorkspaceKey: strPtr(d.WorkspaceKey), WorkingDirectory: strPtr(d.WorkingDirectory), Model: strPtr(e.Model), Effort: strPtr(effort),
-		Instructions: ptr(defaultInstructions), NativeSessionId: liveSession.NativeSessionID} // "" still reaches the executor's check
+		Instructions: ptr(defaultInstructions), NativeSessionId: nativeFor(liveSession.NativeSessionID, d.Last, host)} // "" still reaches the executor's check
 	if liveSession.Account != nil || binding != nil {
 		if binding != nil {
 			p.Account = strPtr(binding.Binding)

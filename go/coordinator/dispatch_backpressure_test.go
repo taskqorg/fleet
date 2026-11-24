@@ -371,4 +371,37 @@ func TestDispatchSkipsHostDrainingForUpdate(t *testing.T) {
 	if len(cmds) != 1 || cmds[0]["executionId"] != eid2 {
 		t.Fatalf("updated host commands = %v, want start of %s", cmds, eid2)
 	}
+
+	// A continuation of a session that ran on the host waits for that host's next update instead of moving: its native
+	// session and worktree live there.
+	macHdr := map[string]string{"Authorization": "Bearer " + macSecret}
+	for _, st := range []contract.ReceiptStatus{contract.ReceiptStatusStarted, contract.ReceiptStatusCompleted} {
+		if code, body := env.callJSON(t, "POST", "/api/hosts/receipts", contract.Receipt{HostId: mac, CommandId: astr(cmds[0]["id"]), ExecutionId: eid2, Status: st}, macHdr); code != 200 {
+			t.Fatalf("receipt %s = %d %v", st, code, body)
+		}
+	}
+	poll(mac, macSecret, "1.261124.43", &contract.UpdateResult{At: "2026-11-24T19:30:00Z", State: contract.UpdateStatePending, Version: "1.261124.53", Error: ptr("executor work is draining")})
+	code, msg := env.callJSON(t, "POST", "/api/ops/message_send", doc{"sessionId": sid2, "requestId": "req-upd-3", "text": "continue"}, env.ownerHeaders())
+	if code != 200 {
+		t.Fatalf("message_send = %d %v", code, msg)
+	}
+	_ = env.app.waitDispatchCaughtUp(env.ctx, env.app.triggerDispatch())
+	if ex := dispatchTestExecution(t, env, sid2, astr(msg["id"])); ex["hostId"] != mac {
+		t.Fatalf("continuation placed on %v, want its own host %s", ex["hostId"], mac)
+	}
+}
+
+// Requirement: a run on another host than the session's last run starts a fresh native session.
+// Risk: the executor refuses to resume a native session that lives on another host, on every run.
+func TestNativeForOtherHost(t *testing.T) {
+	native, mac := ptr("01a20ebe"), ptr("owner-mac")
+	if got := nativeFor(native, mac, "owner-mac"); got != native {
+		t.Fatalf("same host: %v", got)
+	}
+	if got := nativeFor(native, mac, "pds18-native"); got == nil || *got != "" {
+		t.Fatalf("other host: %v", got)
+	}
+	if got := nativeFor(native, nil, "pds18-native"); got != native {
+		t.Fatalf("no last host: %v", got)
+	}
 }
