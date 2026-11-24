@@ -33,7 +33,7 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New experiment 
 * [Navigation rail](../controls/nav-rail.md), [shell header](../patterns/app-shell.md).
 * Catalogue rows (tree), list header, saved views, filter search, detail pane frame and form fields (block list, PR C).
 * [Question card](../controls/decision-block.md#card) for ratings and undecided series; [state dot and word](../controls/state-badge.md#dot-and-word); [button](../controls/button.md) for Promote and Run in Lab.
-* Table row and matrix cell (stand-ins until masters exist).
+* Table row ([data list](../controls/data-list.md)) and matrix cell (stand-ins on the board until their masters exist).
 
 ### Design board
 

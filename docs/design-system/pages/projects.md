@@ -53,7 +53,7 @@ Tasks, results and delivery of all projects in focus are one facet away: on `/pr
 * [Navigation rail](../controls/nav-rail.md) and [shell header](../patterns/app-shell.md).
 * Catalogue row, list header, saved views, filter search, facet tab bar and detail pane frame (block list, PR C); [tab item](../controls/README.md).
 * [Session card](../controls/session-card.md), [question card](../controls/decision-block.md#card), [state dot and word](../controls/state-badge.md#dot-and-word).
-* [Live row](../controls/live-row.md) kind delivery for pull requests; diff rows for Rules & methods (stand-in until a master exists).
+* [Live row](../controls/live-row.md) kind delivery for pull requests; diff rows of the [definition editor](../patterns/definition-editor.md) for Rules & methods (stand-in on the board until the diff row master exists).
 
 ### Design board
 

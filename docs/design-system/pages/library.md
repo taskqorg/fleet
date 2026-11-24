@@ -60,7 +60,7 @@ As each root's spec says: `catalogue`, `definition_get`, `definition_usage`, `pi
 * [Navigation rail](../controls/nav-rail.md), [shell header](../patterns/app-shell.md).
 * Catalogue rows (tree), list header, saved views, filter search, detail pane frame and form fields (block list, PR C); [tab item](../controls/README.md) for definition facets.
 * [State dot and word](../controls/state-badge.md#dot-and-word), [button](../controls/button.md).
-* Diff row and problem row (stand-ins until masters exist).
+* Diff row ([definition editor](../patterns/definition-editor.md)), [problem row](../controls/problem-row.md) and, for pipelines, step row ([step list](../controls/step-list.md)); stand-ins on the board until their masters exist.
 
 ## Design board
 

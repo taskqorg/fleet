@@ -45,7 +45,7 @@ As each root's spec says ([hosts](hosts.md), [runners](runners.md), [spend](spen
 * [Navigation rail](../controls/nav-rail.md), [shell header](../patterns/app-shell.md).
 * Catalogue rows (tree), list header, filter search, detail pane frame and form fields (block list, PR C).
 * [Gauge](../controls/fill-bar.md#gauge), [figure tile](../controls/figure-tile.md), [run strip](../controls/time-strip.md#run-strip), [worker slot](../controls/worker-slot.md) for a host; [question card](../controls/decision-block.md#card) for confirmations.
-* Problem row, table row and share bar (stand-ins until masters exist).
+* [Problem row](../controls/problem-row.md), table row ([data list](../controls/data-list.md)) and [share bar](../controls/share-bar.md); stand-ins on the board until their masters exist.
 
 ## Design board
 
