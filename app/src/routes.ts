@@ -56,6 +56,8 @@ export function toInternal(path: string): string {
 /** The address-bar path (the target route) for a path a view understands. */
 export function toTarget(path: string): string {
   const p = toInternal(path);
+  // System's idle page is the section itself (pages/system.md: `/system`).
+  if (p === '/hosts' || p === '/hosts/') return '/system';
   for (const [earlier, target] of ROUTES) if (under(p, earlier)) return swap(p, earlier, target);
   return p;
 }

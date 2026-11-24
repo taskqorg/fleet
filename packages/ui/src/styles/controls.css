@@ -506,7 +506,7 @@
   .cat-ic .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
   .cat-row .state, .cat-row .badge, .cat-row .badge.compact, .cat-row .row-pin, .cat-row .row-check { flex: none; }
   .cat-label, .cat-link { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--font-weight-medium); color: var(--fg); text-decoration: none; }
-  .cat-row.folder .cat-label { font-size: var(--font-size-sm); }
+  .cat-row.folder :is(.cat-label, .cat-link) { font-size: var(--font-size-sm); }
   .cat-sub { flex: 0 2 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--fg-muted); }
   .cat-right { margin-left: auto; display: inline-flex; align-items: center; gap: var(--space-2); flex: none; font-size: var(--font-size-sm); color: var(--fg-muted); }
   .cat-count { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--font-size-xs); color: var(--fg-muted); }

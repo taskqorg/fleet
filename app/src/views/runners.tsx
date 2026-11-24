@@ -1,48 +1,24 @@
 // Runners (docs/design-system/pages/runners.md): everything that executes work, grouped by host, each run on a 24-hour
-// time strip with its time and resources; spend today and this month per host and kind. Data: executions_runners.
-import { createMemo, createSignal, For, Show } from 'solid-js';
+// time strip with its time and resources. Cost is shown only on Spend (OR-54). Data: executions_runners.
+import { createMemo, For, Show } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
-  AgeChip, Button, Choice, CostFigures, DataTable, Empty, EntityCode, ErrorBanner, Fact, HarnessMark, Icon, Num,
-  OfflineMarker, ProblemRow, RowFacts, ShellStatus, Skeleton, StateBadge, TimeStrip, Totals, age, duration, harnesses,
-  type Harness, type Kind, type Measured, type TotalItem,
+  AgeChip, Button, CostFigures, Empty, EntityCode, ErrorBanner, Fact, HarnessMark, Icon, Num,
+  OfflineMarker, ProblemRow, RowFacts, ShellStatus, Skeleton, StateBadge, TimeStrip, age, duration, harnesses,
+  type Harness, type Measured,
 } from '../../../packages/ui/src/index.ts';
 import { useOp } from '../store.ts';
 import { useClockOffset } from './hosts.tsx';
-import type { RunnerRun, RunnerSpend } from '../../../contracts/generated/ops.ts';
-import { mergeCosts } from './resources.tsx';
+import type { RunnerRun } from '../../../contracts/generated/ops.ts';
 
 const DAY = 864e5;
 const isActive = (r: RunnerRun) => r.state === 'preparing' || r.state === 'running' || r.state === 'waiting';
-const runsOf = (s: RunnerSpend) => s.runs;
 const KINDS: Record<string, string> = { agent_run: 'Agent runs', child_agent: 'Child agents', host_job: 'Host jobs', tool_run: 'Tool calls' };
 const m = (v: number | null | undefined, basis: Measured['basis'] = 'measured'): Measured => ({ value: v ?? null, basis: v == null ? 'unavailable' : basis });
-/** A spend sum: partial when some runs in the group have no recorded totals. */
-const sum = (s: RunnerSpend, v: number | null): Measured => ({ ...m(v), partial: v != null && s.measured < s.runs ? `${s.runs - s.measured} runs without totals` : undefined });
 const hostName = (h: string | null) => h ?? 'coordinator';
-
-function spendTotals(spend: RunnerSpend[]): TotalItem[] {
-  const sumPeriod = (period: 'today' | 'month', label: string): TotalItem[] => {
-    const rows = spend.filter(s => s.period === period);
-    if (!rows.length) return [];
-    const runs = rows.reduce((n, r) => n + (r.runs ?? 0), 0);
-    const measured = rows.reduce((n, r) => n + (r.measured ?? 0), 0);
-    const hasTok = rows.some(r => r.tokens != null);
-    const tokens = hasTok ? rows.reduce((n, r) => n + (r.tokens ?? 0), 0) : null;
-    const partial = hasTok && measured < runs ? `${runs - measured} runs without totals` : undefined;
-    const cost = mergeCosts(rows.map(r => r.cost));
-    return [
-      { label: `${label} runs`, m: { value: runs, basis: 'measured' }, kind: 'count' },
-      { label: `${label} tokens`, m: { value: tokens, basis: tokens == null ? 'unavailable' : 'measured', partial }, kind: 'count', note: partial },
-      ...(cost.length ? [{ label: `${label} cost`, cost, showUnavailable: false }] : []),
-    ];
-  };
-  return [...sumPeriod('today', 'Today'), ...sumPeriod('month', 'Month')];
-}
 
 export function Runners(props: { onClose?: () => void } = {}) {
   const [, go] = useLocation();
-  const [period, setPeriod] = createSignal<'today' | 'month'>('today');
   const runners = useOp('executions_runners', {}, { every: 15000 }); // timer only: gateway calls change executions many times a second
   const clockOffsetMs = useClockOffset(runners);
 
@@ -51,18 +27,9 @@ export function Runners(props: { onClose?: () => void } = {}) {
   const hosts = createMemo(() => {
     const data = runners.data;
     if (!data) return [];
-    return [...new Set<string | null>([...data.runs.map(r => r.hostId), ...data.spend.map(s => s.hostId)])]
+    return [...new Set<string | null>(data.runs.map(r => r.hostId))]
       .sort((a, b) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)));
   });
-  const spendRows = createMemo(() => {
-    const data = runners.data;
-    if (!data) return [];
-    return hosts().flatMap(h => [...new Set<string>(data.spend.filter(s => s.hostId === h).map(s => s.kind))].sort().map((k, i) => ({ hostId: h, kind: k, first: i === 0 })));
-  });
-  const summary = createMemo(() => runners.data ? spendTotals(runners.data.spend) : []);
-  const cell = (s: RunnerSpend | undefined, k: Kind, v: (s: RunnerSpend) => number | null) =>
-    <td class="num">{s ? <Num m={v === runsOf ? m(v(s)) : sum(s, v(s))} kind={k} /> : <span class="muted">—</span>}</td>;
-  const money = (s: RunnerSpend | undefined) => <td class="num"><CostFigures cost={s?.cost} showUnavailable={false} empty="—" /></td>;
   const open = (r: RunnerRun) => r.taskId ? `/tasks/${r.taskId}` : r.sessionId ? `/conversations/${r.sessionId}` : null;
 
   return (
@@ -81,30 +48,6 @@ export function Runners(props: { onClose?: () => void } = {}) {
           <Show when={props.onClose}>{onClose => <Button label="Close" icon="x" iconOnly onClick={onClose()} />}</Show>
           <h2 class="detail-title">Runners</h2>
         </header>
-        <section class="panel" aria-label="Spend">
-          <header class="panel-h">
-            <h2>Spend</h2>
-            <span class="muted">UTC</span>
-            <span class="grow" />
-            <Choice label="Spend period" options={[{ id: 'today', label: 'Today' }, { id: 'month', label: 'Month' }]} value={period()} onChange={v => setPeriod(v as 'today' | 'month')} />
-          </header>
-          <Show when={summary().length > 0}><div class="stack-pad"><Totals items={summary()} /></div></Show>
-          <DataTable label="Spend" head={<tr><th scope="col">Host</th><th scope="col">Kind</th><th scope="col" class="num">Runs</th><th scope="col" class="num">Time</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Cost</th></tr>}>
-            <For each={spendRows()}>{item => {
-              const row = createMemo(() => data().spend.find(s => s.hostId === item.hostId && s.kind === item.kind && s.period === period()));
-              return (
-                <tr>
-                  <th scope="row">{item.first ? (item.hostId ? <EntityCode id={item.hostId} code={item.hostId} kind="host" cls="inline" /> : <span class="title">{hostName(item.hostId)}</span>) : ''}</th>
-                  <td>{KINDS[item.kind] ?? item.kind}</td>
-                  {cell(row(), 'count', runsOf)}
-                  {cell(row(), 'duration', s => s.wallMs == null ? null : s.wallMs / 1000)}
-                  {cell(row(), 'count', s => s.tokens)}
-                  {money(row())}
-                </tr>
-              );
-            }}</For>
-          </DataTable>
-        </section>
         <For each={hosts()}>{h => {
           const runs = createMemo(() => data().runs.filter(r => r.hostId === h));
           const live = createMemo(() => runs().filter(isActive).length);

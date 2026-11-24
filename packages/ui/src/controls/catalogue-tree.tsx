@@ -20,6 +20,9 @@ export type CatalogueTreeNode = {
   label: string;
   sub?: string;
   icon?: IconName;
+  /** A top-level root without children (System's Runners and Spend): drawn like a folder row, chevron space and its
+   *  registry icon (OR-3), never a state slot (OR-22 is for items). A click opens its page. */
+  root?: boolean;
   state?: CatalogueTreeNodeState;
   /** Right-aligned marker (OR-45 delta badge, metric score, or run count). */
   right?: JSX.Element;
@@ -463,7 +466,7 @@ export function CatalogueTree(props: CatalogueTreeProps) {
         aria-disabled={node.disabled ? 'true' : undefined}
         data-tip={node.disabled ? node.disabledReason : undefined}
         tabindex={isActive() ? 0 : -1}
-        class={['cat-row', `depth-${row.depth}`, row.isFolder ? 'folder' : 'leaf', { disabled: !!node.disabled }]}
+        class={['cat-row', `depth-${row.depth}`, row.isFolder || node.root ? 'folder' : 'leaf', { disabled: !!node.disabled }]}
         onFocus={() => setFocusedKey(row.key)}
         onClick={() => handleRowActivate(row)}
       >
@@ -483,12 +486,14 @@ export function CatalogueTree(props: CatalogueTreeProps) {
               <Show when={row.isPinned && props.onPin}>
                 <RowPin label={node.label} onUnpin={() => props.onPin!(node)} />
               </Show>
-              {st ? (
+              {node.root ? (
+                <><span class="cat-tw" aria-hidden="true" /><Icon name={node.icon ?? 'folder-open'} /></>
+              ) : st ? (
                 <StateBadge family={st.family} state={st.state as never} reason={st.reason} compact />
               ) : node.icon ? (
                 <span class="cat-ic"><Icon name={node.icon} /></span>
               ) : null}
-              {st && node.icon ? <span class="cat-ic"><Icon name={node.icon} /></span> : null}
+              {!node.root && st && node.icon ? <span class="cat-ic"><Icon name={node.icon} /></span> : null}
               <Show
                 when={node.href}
                 keyed

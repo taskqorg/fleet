@@ -29,7 +29,7 @@ export async function checkSpotlight(browser: Browser, origin: string) {
     await dialog.getByRole('button', {name: 'agent:'}).waitFor();
     // The field has focus when the palette opens: typing right after the shortcut goes into it.
     await p.keyboard.type('host'); await dialog.getByRole('option', {name: 'Hosts'}).waitFor();
-    await input.press('Enter'); await p.waitForURL('**/hosts'); assert.equal(await dialog.count(), 0);
+    await input.press('Enter'); await p.waitForURL('**/system'); assert.equal(await dialog.count(), 0);
     await p.getByRole('button', {name: 'Search', exact: true}).click(); await input.fill('needle');
     await dialog.getByRole('option', {name: /Spotlight needle task/}).waitFor();
     await input.press('Enter'); await p.waitForURL('**/tasks/' + task);
