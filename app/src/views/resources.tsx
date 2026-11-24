@@ -3,15 +3,49 @@ import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   StatusLine, AgeChip, Button, DataTable, Disclosure, SearchBox, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals, CopyButton,
-  msMeasured, numMeasured, splitCostFigures,
+  formatRowSpend, msMeasured, numMeasured, splitCostFigures,
   type CostFigureLike, type Measured, type StateOf, type TotalItem, type TreeNode,
 } from '../../../packages/ui/src/index.ts';
 import { op, OpError } from '../api.ts';
-import { usePreparedOp, preparedKey } from '../store.ts';
+import { useOp, usePreparedOp, preparedKey } from '../store.ts';
+import { accessGeneration } from '../access.ts';
 import type { ResourceItem, ResourceSortKey, ResourceItemsPage, ProjectResourceItemsRequest, ResourceCategory, ResourceGroup, PreparedHeaderV1, ResourceProgress } from '../../../contracts/generated/ops.ts';
-import type { CostFigure, ExecutionRow, ResourceSummary, ScopedResourceRollup } from '../../../contracts/generated/ops.ts';
+import type { CostFigure, ExecutionRow, ListSpendRequest, ResourceSummary, ScopedResourceRollup } from '../../../contracts/generated/ops.ts';
 
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
+
+/** A single scoped read for the loaded rows, independent of list membership refresh. */
+export function useRowSpend(kind: ListSpendRequest['kind'], rows: readonly { id: string }[]) {
+  const rowIds = Array.from(new Set(rows.map(row => row.id))).sort();
+  const read = useOp('list_spend', rowIds.length ? { kind, rowIds } : null, { quiet: 1000 });
+  const generation = accessGeneration();
+  const retained = useRef<{ generation: number; rows: ReadonlyMap<string, CostFigure[]> }>({ generation, rows: new Map() });
+  const previous = retained.current.generation === generation ? retained.current.rows : new Map<string, CostFigure[]>();
+  const current = new Map<string, CostFigure[]>();
+  for (const id of rowIds) {
+    const figures = read.data ? (Object.hasOwn(read.data.rows, id) ? read.data.rows[id] : undefined) : previous.get(id);
+    if (figures) current.set(id, figures);
+  }
+  retained.current = { generation, rows: current };
+  return { cost: current, error: read.error };
+}
+
+export function RowSpend({ cost, href, open, stale, name }: {
+  cost?: readonly CostFigure[]; href: string; open: (extend: boolean) => void; stale: boolean; name?: string;
+}) {
+  const { primaryText, suffix, subscription, hasFigures, tip, ariaLabel } = formatRowSpend(cost, stale, name);
+  return <a class="fact row-spend" href={href} data-tip={tip} aria-label={ariaLabel}
+    onClick={e => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      e.preventDefault();
+      open(e.shiftKey);
+    }}>
+    {hasFigures ? <>
+      <span class="spend-primary">{subscription && <Icon name="rotate-cw" />}{primaryText}</span>
+      {suffix && <span>{suffix}</span>}
+    </> : primaryText}
+  </a>;
+}
 
 export const EXEC_STATE: Record<string, StateOf<'execution'>> = {
   completed: 'succeeded', stopped: 'cancelled', unknown: 'running', started: 'running', accepted: 'preparing', pending: 'preparing',

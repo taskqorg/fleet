@@ -1012,10 +1012,11 @@ func taskResourceRollupQuery(q *Request, taskID string) (contract.ScopedResource
 		SpawnedTasks: []contract.SpawnedTaskRef{},
 	}
 
-	lineage, err := q.db().AnalyticsTaskLineage(q.ctx(), taskID)
-	if err != nil {
+	rows, err := q.db().AnalyticsTaskLineage(q.ctx(), db.AnalyticsTaskLineageParams{RowIds: []string{taskID}})
+	if err != nil || len(rows) == 0 {
 		return out, err
 	}
+	lineage := rows[0]
 	summaries, err := summarizeResourceQuery(q, lineage.Scopes, lineage.ScopeKeys, lineage.LeafIds)
 	if err != nil {
 		return out, err
@@ -1061,10 +1062,11 @@ func sessionResourceRollupQuery(q *Request, sessionID string) (contract.ScopedRe
 		SpawnedTasks: []contract.SpawnedTaskRef{},
 	}
 
-	lineage, err := q.db().AnalyticsSessionLineage(q.ctx(), sessionID)
-	if err != nil {
+	rows, err := q.db().AnalyticsSessionLineage(q.ctx(), db.AnalyticsSessionLineageParams{RowIds: []string{sessionID}})
+	if err != nil || len(rows) == 0 {
 		return out, err
 	}
+	lineage := rows[0]
 	summaries, err := summarizeResourceQuery(q, lineage.Scopes, lineage.ScopeKeys, lineage.LeafIds)
 	if err != nil {
 		return out, err

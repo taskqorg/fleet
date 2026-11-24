@@ -797,6 +797,116 @@ BEGIN
  RETURN greatest(0::bigint, all_n - vis_n);
 END $function$;
 
+CREATE OR REPLACE FUNCTION public.fleet_session_resource_lineage(row_id text, total_only boolean)
+ RETURNS TABLE(scopes text[], scope_keys text[], leaf_ids text[], spawned_tasks jsonb)
+ LANGUAGE sql
+ STABLE
+AS $function$
+WITH RECURSIVE
+ own_roots AS MATERIALIZED (
+  SELECT e.id, e.session_id FROM execution e
+  WHERE e.session_id = $1 AND e.kind <> 'child_agent' AND e.delegation IS NULL
+ ),
+ own_execs AS (
+  SELECT id, session_id FROM own_roots
+  UNION
+  SELECT e.id, e.session_id FROM own_roots p JOIN execution e ON e.parent_execution_id = p.id
+  WHERE e.kind = 'tool_run' AND e.delegation IS NULL
+ ),
+ delegated_sessions AS (
+  SELECT s.id FROM own_execs p JOIN session s ON s.parent_execution_id = p.id
+  UNION
+  SELECT s.id FROM own_execs p JOIN session s ON s.created_by_execution_id = p.id WHERE nullif(s.task_id, '') IS NULL
+  UNION
+  SELECT s.id FROM (SELECT $1 AS session_id) p JOIN session s ON s.created_by_session_id = p.session_id
+  WHERE nullif(s.task_id, '') IS NULL
+ ),
+ del_seed AS (
+  SELECT e.id, e.session_id, (e.delegation IS NOT NULL) AS follow_session
+  FROM own_execs p JOIN execution e ON e.parent_execution_id = p.id
+  WHERE e.kind = 'child_agent' OR e.delegation IS NOT NULL
+  UNION
+  SELECT e.id, e.session_id, true
+  FROM own_execs p JOIN execution e ON e.delegation->>'parentExecutionId' = p.id WHERE e.delegation IS NOT NULL
+  UNION
+  SELECT e.id, e.session_id, true
+  FROM (SELECT $1 AS session_id) p JOIN execution e ON e.delegation->>'parentSessionId' = p.session_id WHERE e.delegation IS NOT NULL
+  UNION
+  SELECT e.id, e.session_id, true FROM delegated_sessions s JOIN execution e ON e.session_id = s.id WHERE e.session_id <> $1
+ ),
+ del_tree AS (
+  SELECT id, session_id, follow_session FROM del_seed
+  UNION
+  SELECT e.id, e.session_id, (dt.follow_session OR e.delegation IS NOT NULL)
+  FROM del_tree dt
+  CROSS JOIN LATERAL (
+   SELECT id, session_id, delegation FROM execution WHERE parent_execution_id = dt.id
+   UNION ALL
+   SELECT id, session_id, delegation FROM execution WHERE delegation IS NOT NULL AND delegation->>'parentExecutionId' = dt.id
+   UNION ALL
+   SELECT e.id, e.session_id, e.delegation FROM execution e
+   WHERE dt.follow_session AND e.session_id = dt.session_id AND e.task_id IS NULL AND e.session_id <> $1
+  ) e
+ ),
+ spawned_task_roots AS (
+  SELECT t.id FROM (SELECT id FROM own_execs UNION SELECT id FROM del_tree) e JOIN task t ON t.created_by_execution_id = e.id
+  UNION
+  SELECT t.id FROM (SELECT $1
+   UNION SELECT session_id FROM del_tree WHERE session_id IS NOT NULL) s(session_id) JOIN task t ON t.created_by_session_id = s.session_id
+ ),
+ spawned_tasks AS (
+  SELECT t.id, t.code, t.title, t.state::text AS state, t.project_id, t.seq
+  FROM spawned_task_roots x JOIN task t ON t.id = x.id WHERE t.id IS DISTINCT FROM (SELECT nullif(task_id, '') FROM session WHERE id = $1)
+ ),
+ spawned_task_ids AS MATERIALIZED (SELECT id FROM spawned_tasks),
+ spawned_sessions AS MATERIALIZED (
+  SELECT st.id AS task_id, d.id AS session_id
+  FROM spawned_task_ids st
+  JOIN session d ON d.task_id = st.id
+ ),
+ spawned_runs AS MATERIALIZED (
+  SELECT st.id AS task_id, e.id
+  FROM spawned_task_ids st
+  JOIN execution e ON e.task_id = st.id
+  UNION
+  SELECT ss.task_id, e.id
+  FROM spawned_sessions ss
+  JOIN execution e ON e.task_id IS NULL AND e.session_id = ss.session_id
+ ),
+ spawned_execs AS (
+  SELECT task_id, id AS exec_id FROM spawned_runs
+  UNION
+  SELECT sr.task_id, e.id AS exec_id
+  FROM spawned_runs sr
+  JOIN execution e ON e.kind = 'tool_run' AND e.parent_execution_id = sr.id
+ ),
+ classified AS (
+  SELECT 'spawned_task'::text AS scope, task_id AS scope_key, exec_id AS leaf_id FROM spawned_execs
+  UNION
+  SELECT 'delegated'::text AS scope, ''::text AS scope_key, id AS leaf_id
+  FROM del_tree
+  WHERE id NOT IN (SELECT exec_id FROM spawned_execs)
+  UNION
+  SELECT 'own'::text AS scope, ''::text AS scope_key, id AS leaf_id
+  FROM own_execs
+  WHERE id NOT IN (SELECT exec_id FROM spawned_execs) AND id NOT IN (SELECT id FROM del_tree)
+ ),
+ scoped_leaves AS (
+  SELECT scope, scope_key, leaf_id FROM classified WHERE NOT $2
+  UNION
+  SELECT 'spawned'::text AS scope, ''::text AS scope_key, exec_id AS leaf_id FROM spawned_execs WHERE NOT $2
+  UNION
+  SELECT 'total'::text AS scope, ''::text AS scope_key, leaf_id FROM (
+   SELECT id AS leaf_id FROM own_execs UNION SELECT id FROM del_tree UNION SELECT exec_id FROM spawned_execs
+  ) total
+ )
+SELECT
+ coalesce((SELECT array_agg(scope ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scopes,
+ coalesce((SELECT array_agg(scope_key ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scope_keys,
+ coalesce((SELECT array_agg(leaf_id ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS leaf_ids,
+ coalesce((SELECT jsonb_agg(jsonb_build_object('taskId', id, 'code', code, 'title', title, 'state', state, 'projectId', project_id) ORDER BY seq ASC, id ASC) FROM spawned_tasks WHERE NOT $2), '[]')::jsonb AS spawned_tasks
+$function$;
+
 CREATE OR REPLACE FUNCTION public.fleet_show_deleted()
  RETURNS boolean
  LANGUAGE sql
@@ -940,6 +1050,135 @@ BEGIN
  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
  RETURN greatest(0::bigint, all_n - vis_n);
 END $function$;
+
+CREATE OR REPLACE FUNCTION public.fleet_task_resource_lineage(row_id text, total_only boolean)
+ RETURNS TABLE(scopes text[], scope_keys text[], leaf_ids text[], spawned_tasks jsonb)
+ LANGUAGE sql
+ STABLE
+AS $function$
+WITH RECURSIVE
+ candidate_sessions AS (
+  SELECT DISTINCT session_id FROM execution WHERE task_id = $1 AND session_id IS NOT NULL
+ ),
+ first_task AS (
+  SELECT DISTINCT ON (e.session_id) e.session_id, e.task_id
+  FROM execution e
+  WHERE e.task_id IS NOT NULL AND e.session_id IN (SELECT session_id FROM candidate_sessions)
+  ORDER BY e.session_id, e.seq
+ ),
+ direct_sessions AS (
+  SELECT id AS session_id FROM session WHERE task_id = $1 AND parent_execution_id IS NULL
+  UNION
+  SELECT s.id FROM first_task f JOIN session s ON s.id = f.session_id
+  WHERE f.task_id = $1 AND nullif(s.task_id, '') IS NULL AND s.parent_execution_id IS NULL
+ ),
+ own_roots AS MATERIALIZED (
+  SELECT e.id, e.session_id FROM execution e
+  WHERE e.task_id = $1 AND e.kind <> 'child_agent' AND e.delegation IS NULL
+  UNION
+  SELECT e.id, e.session_id FROM direct_sessions s JOIN execution e ON e.session_id = s.session_id
+  WHERE e.task_id IS NULL AND e.kind <> 'child_agent' AND e.delegation IS NULL
+ ),
+ own_execs AS (
+  SELECT id, session_id FROM own_roots
+  UNION
+  SELECT e.id, e.session_id FROM own_roots p JOIN execution e ON e.parent_execution_id = p.id
+  WHERE e.kind = 'tool_run' AND e.delegation IS NULL
+ ),
+ delegated_sessions AS (
+  SELECT s.id FROM own_execs p JOIN session s ON s.parent_execution_id = p.id
+  UNION
+  SELECT s.id FROM own_execs p JOIN session s ON s.created_by_execution_id = p.id WHERE nullif(s.task_id, '') IS NULL
+  UNION
+  SELECT s.id FROM (SELECT session_id FROM direct_sessions) p JOIN session s ON s.created_by_session_id = p.session_id
+  WHERE nullif(s.task_id, '') IS NULL
+ ),
+ del_seed AS (
+  SELECT e.id, e.session_id, (e.delegation IS NOT NULL) AS follow_session
+  FROM own_execs p JOIN execution e ON e.parent_execution_id = p.id
+  WHERE e.kind = 'child_agent' OR e.delegation IS NOT NULL
+  UNION
+  SELECT e.id, e.session_id, true
+  FROM own_execs p JOIN execution e ON e.delegation->>'parentExecutionId' = p.id WHERE e.delegation IS NOT NULL
+  UNION
+  SELECT e.id, e.session_id, true
+  FROM (SELECT session_id FROM direct_sessions) p JOIN execution e ON e.delegation->>'parentSessionId' = p.session_id WHERE e.delegation IS NOT NULL
+  UNION
+  SELECT e.id, e.session_id, true FROM delegated_sessions s JOIN execution e ON e.session_id = s.id
+ ),
+ del_tree AS (
+  SELECT id, session_id, follow_session FROM del_seed
+  UNION
+  SELECT e.id, e.session_id, (dt.follow_session OR e.delegation IS NOT NULL)
+  FROM del_tree dt
+  CROSS JOIN LATERAL (
+   SELECT id, session_id, delegation FROM execution WHERE parent_execution_id = dt.id
+   UNION ALL
+   SELECT id, session_id, delegation FROM execution WHERE delegation IS NOT NULL AND delegation->>'parentExecutionId' = dt.id
+   UNION ALL
+   SELECT e.id, e.session_id, e.delegation FROM execution e
+   WHERE dt.follow_session AND e.session_id = dt.session_id AND e.task_id IS NULL AND e.session_id NOT IN (SELECT session_id FROM direct_sessions)
+  ) e
+ ),
+ spawned_task_roots AS (
+  SELECT t.id FROM (SELECT id FROM own_execs UNION SELECT id FROM del_tree) e JOIN task t ON t.created_by_execution_id = e.id
+  UNION
+  SELECT t.id FROM (SELECT session_id FROM direct_sessions
+   UNION SELECT session_id FROM own_execs WHERE session_id IS NOT NULL
+   UNION SELECT session_id FROM del_tree WHERE session_id IS NOT NULL) s(session_id) JOIN task t ON t.created_by_session_id = s.session_id
+ ),
+ spawned_tasks AS (
+  SELECT t.id, t.code, t.title, t.state::text AS state, t.project_id, t.seq
+  FROM spawned_task_roots x JOIN task t ON t.id = x.id WHERE t.id <> $1
+ ),
+ spawned_task_ids AS MATERIALIZED (SELECT id FROM spawned_tasks),
+ spawned_sessions AS MATERIALIZED (
+  SELECT st.id AS task_id, d.id AS session_id
+  FROM spawned_task_ids st
+  JOIN session d ON d.task_id = st.id
+ ),
+ spawned_runs AS MATERIALIZED (
+  SELECT st.id AS task_id, e.id
+  FROM spawned_task_ids st
+  JOIN execution e ON e.task_id = st.id
+  UNION
+  SELECT ss.task_id, e.id
+  FROM spawned_sessions ss
+  JOIN execution e ON e.task_id IS NULL AND e.session_id = ss.session_id
+ ),
+ spawned_execs AS (
+  SELECT task_id, id AS exec_id FROM spawned_runs
+  UNION
+  SELECT sr.task_id, e.id AS exec_id
+  FROM spawned_runs sr
+  JOIN execution e ON e.kind = 'tool_run' AND e.parent_execution_id = sr.id
+ ),
+ classified AS (
+  SELECT 'spawned_task'::text AS scope, task_id AS scope_key, exec_id AS leaf_id FROM spawned_execs
+  UNION
+  SELECT 'delegated'::text AS scope, ''::text AS scope_key, id AS leaf_id
+  FROM del_tree
+  WHERE id NOT IN (SELECT exec_id FROM spawned_execs)
+  UNION
+  SELECT 'own'::text AS scope, ''::text AS scope_key, id AS leaf_id
+  FROM own_execs
+  WHERE id NOT IN (SELECT exec_id FROM spawned_execs) AND id NOT IN (SELECT id FROM del_tree)
+ ),
+ scoped_leaves AS (
+  SELECT scope, scope_key, leaf_id FROM classified WHERE NOT $2
+  UNION
+  SELECT 'spawned'::text AS scope, ''::text AS scope_key, exec_id AS leaf_id FROM spawned_execs WHERE NOT $2
+  UNION
+  SELECT 'total'::text AS scope, ''::text AS scope_key, leaf_id FROM (
+   SELECT id AS leaf_id FROM own_execs UNION SELECT id FROM del_tree UNION SELECT exec_id FROM spawned_execs
+  ) total
+ )
+SELECT
+ coalesce((SELECT array_agg(scope ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scopes,
+ coalesce((SELECT array_agg(scope_key ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scope_keys,
+ coalesce((SELECT array_agg(leaf_id ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS leaf_ids,
+ coalesce((SELECT jsonb_agg(jsonb_build_object('taskId', id, 'code', code, 'title', title, 'state', state, 'projectId', project_id) ORDER BY seq ASC, id ASC) FROM spawned_tasks WHERE NOT $2), '[]')::jsonb AS spawned_tasks
+$function$;
 
 CREATE OR REPLACE FUNCTION public.fleet_task_state_at()
  RETURNS trigger

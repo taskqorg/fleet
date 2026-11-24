@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 // Conversations (docs/design-system/pages/conversations.md): sessions list and one conversation with its live transcript.
 // Actions use the same operations agents use: session_start (conversation-new.tsx), message_send, execution_stop, session_fork.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -21,7 +22,7 @@ import { useListPage, ListPagePanel, type ListPage } from '../list-page.tsx';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, drag, inside, range, textBounds, type Selection } from '../selection.ts';
-import { ScopedRollupBar, ScopedRollupDetails } from './resources.tsx';
+import { RowSpend, useRowSpend, ScopedRollupBar, ScopedRollupDetails } from './resources.tsx';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
 
 const GROUPS = [['project', 'Project'], ['state', 'State'], ['agent', 'Agent'], ['none', 'None']] as const;
@@ -49,6 +50,7 @@ export function Conversations({ id }: { id?: string }) {
     listId: v => !!v.archived,
   });
   const { view, set, chosen, off, confirm } = page;
+  const spend = useRowSpend('sessions', page.displayed);
   const archived = !!view.archived;
   const canArchive = (s: SessionRow) => s.state === 'idle' || TERMINAL.includes(s.state);
   // Archive and Unarchive are one operation per conversation. session_archive is refused while an execution is active;
@@ -89,7 +91,8 @@ export function Conversations({ id }: { id?: string }) {
           : archived ? <Button label="Show active" onClick={toggleArchived} /> : <Button label="New conversation" onClick={create} />} />}
       listLabel={archived ? 'Archived conversations' : 'Conversations'} title={titleOf} groupIcon={g => g === 'state' ? 'activity' : g === 'agent' ? 'bot' : 'folder-open'}
       state={s => <StateBadge family="session" state={s.state} compact />}
-      facts={s => <SessionFacts s={s} />} />
+      facts={s => <SessionFacts s={s} spend={<RowSpend cost={spend.cost.get(s.id)} stale={!!spend.error} name={s.code ?? titleOf(s)} href={page.href({ focus: s.id })}
+        open={extend => page.selecting || extend ? page.select(s) : set({ focus: s.id })} />} />} />
   </>;
   const detail = isNew ? <NewConversation key="new" initialProject={initial.get('in')} initialRole={initial.get('role')} onClose={() => set({ focus: undefined, extra: { ...view.extra, in: undefined, role: undefined } })} onStarted={sessionId => set({ focus: sessionId, extra: { ...view.extra, in: undefined, role: undefined } })} />
     : id ? <Conversation key={id} id={id} onClose={() => set({ focus: undefined })} /> : undefined;
@@ -154,13 +157,14 @@ function ConversationsSummary({ page, filtered, archived }: { page: ListPage<Ses
 }
 
 /** Row facts of a conversation (OR-37): open questions, executions from two, time since the last activity, agent. */
-function SessionFacts({ s }: { s: SessionRow }) {
+function SessionFacts({ s, spend }: { s: SessionRow; spend: ComponentChildren }) {
   const at = s.activityAt ? Date.parse(s.activityAt) : NaN, n = s.executions ?? 0, q = s.openQuestions ?? 0;
   return <RowFacts>
     {q > 0 && <span class="chip-age t-attention alert" aria-label={q === 1 ? '1 open question' : `${q} open questions`}>{q}</span>}
     {n > 1 && <Fact icon={actions.runs} text={String(n)} tip={`${n} executions`} />}
     {!isNaN(at) && <Fact tip="Last activity"><AgeChip t={at} /></Fact>}
     {isHarness(s.harness) && <HarnessMark h={s.harness} />}
+    {spend}
   </RowFacts>;
 }
 

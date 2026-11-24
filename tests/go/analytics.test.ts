@@ -369,6 +369,19 @@ test('R4 task_get, session_get, threads, definition_usage, executions_runners, p
     assert.ok(pCtx.resources, 'project_context includes resources');
     assert.equal(pCtx.resources.tokens.input, 9070, 'all visible leaves in desiign (ex-pipe excluded)');
 
+    // FLT-21: batched row amounts must match detail attribution without exposing invisible roots or counting a repeated id twice.
+    const amounts = (cost: {currency: string | null; basis: string; value: number | null; usages?: number}[]) =>
+      cost.map(({currency, basis, value, usages}) => ({currency, basis, value: value?.toPrecision(12) ?? null, usages}));
+    for (const [kind, id, cost] of [
+      ['tasks', 'task-1', tGet.cost], ['sessions', 'sess-1', sGet.cost], ['projects', 'desiign', pCtx.resources.cost],
+    ] as const) {
+      const list = await op(c, 'list_spend', {kind, rowIds: [id, id, 'missing']}, member);
+      assert.deepEqual(Object.keys(list.rows), [id]);
+      assert.deepEqual(amounts(list.rows[id]), amounts(cost), `${kind} row agrees with detail`);
+      const hidden = await op(c, 'list_spend', {kind, rowIds: [id]}, outsider);
+      assert.deepEqual(hidden.rows, {}, `${kind} row stays hidden without a grant`);
+    }
+
     // 7. view_link supports 'projects' view parity.
     const vLink = await op(c, 'view_link', {view: {view: 'projects'}});
     assert.equal(vLink.path, '/projects');

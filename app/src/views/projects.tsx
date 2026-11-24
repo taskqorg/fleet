@@ -3,7 +3,7 @@ import { useMemo, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   AgeChip, AreaChart, Button, Choice, CostFigures, DataTable, DetailSection, Disclosure, Empty, EntityCode,
-  ErrorBanner, FilterBar, Icon, KvRow, Latest, ListDetail, ListFrame, Num, SearchField, ShellActions, Skeleton, StateBadge, StateCounters, TabBar,
+  ErrorBanner, FilterBar, Icon, KvRow, Latest, ListDetail, ListFrame, Num, RowFacts, SearchField, ShellActions, Skeleton, StateBadge, StateCounters, TabBar,
   Totals, VirtualList, bytes, catalogueRow, fileLabel, matchSearch, msMeasured, numMeasured, states as states_,
   type ChartBucket, type ChartSeries, type IconName, type Measured, type StateOf, type TotalItem,
 } from '../../../packages/ui/src/index.ts';
@@ -13,6 +13,7 @@ import { useOp } from '../store.ts';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { idOf } from './delivery-model.tsx';
 import { ProjectEditor, str, type ProjectDetailData } from './projects-editor.tsx';
+import { RowSpend, useRowSpend } from './resources.tsx';
 
 type AnalyticsReply = Ops['analytics_query']['reply'];
 type AnalyticsDim = NonNullable<Ops['analytics_query']['request']['dimensions']>[number];
@@ -97,6 +98,7 @@ export function Projects({ id }: { id?: string }) {
   const list = useOp('project_list', {});
   const allProjects = list.data?.projects ?? [];
   const rows = allProjects.map(p => ({ id: str(p.id), name: str(p.name), raw: p })).filter(p => matchSearch(query, `${p.name} ${p.id}`, { project: p.id }));
+  const spend = useRowSpend('projects', rows);
   const selectedName = rows.find(r => r.id === id)?.name || str(allProjects.find(p => str(p.id) === id)?.name);
   const pane = (
     <>
@@ -119,7 +121,7 @@ export function Projects({ id }: { id?: string }) {
               rowHeight={catalogueRow()}
               follow="top"
               label="Projects"
-              columns="1.25rem minmax(0,1fr)"
+              columns="1.25rem minmax(0,1fr) auto"
               rowClass={p => !creating && p.id === id ? 'sel' : ''}
               render={p => (
                 <>
@@ -132,6 +134,9 @@ export function Projects({ id }: { id?: string }) {
                     >{p.name || p.id}</a>
                     {p.name && p.name.toLowerCase() !== p.id.toLowerCase() && <span class="id">{p.id}</span>}
                   </span>
+                  <span class="rz"><RowFacts><RowSpend cost={spend.cost.get(p.id)} stale={!!spend.error} name={p.name || p.id}
+                    href={'/projects/' + encodeURIComponent(p.id)}
+                    open={() => { setCreating(false); go('/projects/' + encodeURIComponent(p.id)); }} /></RowFacts></span>
                 </>
               )}
             />

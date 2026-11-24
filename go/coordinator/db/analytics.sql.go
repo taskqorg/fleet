@@ -551,117 +551,51 @@ func (q *Queries) AnalyticsSessionHiddenLineage(ctx context.Context, sessionID s
 	return n, err
 }
 
-const analyticsSessionLineage = `-- name: AnalyticsSessionLineage :one
-WITH RECURSIVE
- own_execs AS (
-  SELECT e.id, e.session_id
-  FROM execution e
-  WHERE e.kind <> 'child_agent'
-    AND e.delegation IS NULL
-    AND (e.session_id = $1::text OR (e.kind = 'tool_run' AND e.parent_execution_id IN (SELECT id FROM execution WHERE session_id = $1::text AND kind <> 'child_agent' AND delegation IS NULL)))
- ),
- del_seed AS (
-  SELECT e.id, e.session_id, (e.delegation IS NOT NULL) AS follow_session
-  FROM execution e
-  WHERE (e.parent_execution_id IN (SELECT id FROM own_execs) AND (e.kind = 'child_agent' OR e.delegation IS NOT NULL))
-     OR (e.delegation IS NOT NULL AND (e.delegation->>'parentSessionId' = $1::text OR e.delegation->>'parentExecutionId' IN (SELECT id FROM own_execs)))
-  UNION
-  SELECT e.id, e.session_id, true AS follow_session
-  FROM execution e
-  JOIN session s ON s.id = e.session_id
-  WHERE e.session_id <> $1::text
-    AND (
-      s.parent_execution_id IN (SELECT id FROM own_execs)
-      OR (s.created_by_execution_id IN (SELECT id FROM own_execs) AND coalesce(nullif(s.task_id, ''), '') = '')
-      OR (s.created_by_session_id = $1::text AND coalesce(nullif(s.task_id, ''), '') = '')
-    )
- ),
- del_tree AS (
-  SELECT id, session_id, follow_session FROM del_seed
-  UNION
-  SELECT e.id, e.session_id, (dt.follow_session OR e.delegation IS NOT NULL) AS follow_session
-  FROM execution e
-  JOIN del_tree dt ON e.parent_execution_id = dt.id
-     OR (dt.follow_session AND e.session_id IS NOT NULL AND dt.session_id IS NOT NULL AND e.session_id = dt.session_id AND e.session_id <> $1::text AND e.task_id IS NULL)
-     OR (e.delegation IS NOT NULL AND e.delegation->>'parentExecutionId' = dt.id)
- ),
- primary_task AS (
-  SELECT nullif(task_id, '') AS task_id FROM session WHERE id = $1::text
- ),
- spawned_tasks AS (
-  SELECT t.id, t.code, t.title, t.state::text AS state, t.project_id, t.seq
-  FROM task t
-  WHERE t.id IS DISTINCT FROM (SELECT task_id FROM primary_task)
-    AND (
-      t.created_by_session_id = $1::text
-      OR t.created_by_execution_id IN (SELECT id FROM own_execs UNION SELECT id FROM del_tree)
-      OR t.created_by_session_id IN (SELECT session_id FROM del_tree WHERE session_id IS NOT NULL)
-    )
- ),
- spawned_task_ids AS MATERIALIZED (SELECT id FROM spawned_tasks),
- spawned_sessions AS MATERIALIZED (
-  SELECT st.id AS task_id, d.id AS session_id
-  FROM spawned_task_ids st
-  JOIN session d ON d.task_id = st.id
- ),
- spawned_runs AS MATERIALIZED (
-  SELECT st.id AS task_id, e.id
-  FROM spawned_task_ids st
-  JOIN execution e ON e.task_id = st.id
-  UNION
-  SELECT ss.task_id, e.id
-  FROM spawned_sessions ss
-  JOIN execution e ON e.task_id IS NULL AND e.session_id = ss.session_id
- ),
- spawned_execs AS (
-  SELECT task_id, id AS exec_id FROM spawned_runs
-  UNION
-  SELECT sr.task_id, e.id AS exec_id
-  FROM spawned_runs sr
-  JOIN execution e ON e.kind = 'tool_run' AND e.parent_execution_id = sr.id
- ),
- classified AS (
-  SELECT 'spawned_task'::text AS scope, task_id AS scope_key, exec_id AS leaf_id FROM spawned_execs
-  UNION
-  SELECT 'delegated'::text AS scope, ''::text AS scope_key, id AS leaf_id
-  FROM del_tree
-  WHERE id NOT IN (SELECT exec_id FROM spawned_execs)
-  UNION
-  SELECT 'own'::text AS scope, ''::text AS scope_key, id AS leaf_id
-  FROM own_execs
-  WHERE id NOT IN (SELECT exec_id FROM spawned_execs) AND id NOT IN (SELECT id FROM del_tree)
- ),
- scoped_leaves AS (
-  SELECT scope, scope_key, leaf_id FROM classified
-  UNION
-  SELECT 'spawned'::text AS scope, ''::text AS scope_key, exec_id AS leaf_id FROM spawned_execs
-  UNION
-  SELECT 'total'::text AS scope, ''::text AS scope_key, leaf_id FROM classified
- )
-SELECT
- coalesce((SELECT array_agg(scope ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scopes,
- coalesce((SELECT array_agg(scope_key ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scope_keys,
- coalesce((SELECT array_agg(leaf_id ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS leaf_ids,
- coalesce((SELECT jsonb_agg(jsonb_build_object('taskId', id, 'code', code, 'title', title, 'state', state, 'projectId', project_id) ORDER BY seq ASC, id ASC) FROM spawned_tasks), '[]')::jsonb AS spawned_tasks
+const analyticsSessionLineage = `-- name: AnalyticsSessionLineage :many
+SELECT root.id, l.scopes::text[] AS scopes, l.scope_keys::text[] AS scope_keys, l.leaf_ids::text[] AS leaf_ids, l.spawned_tasks::jsonb AS spawned_tasks
+FROM session root
+CROSS JOIN LATERAL fleet_session_resource_lineage(root.id, $1::boolean) l
+WHERE root.id = ANY($2::text[])
+  AND (NOT $1::boolean OR coalesce(root.actor, '') <> 'program-worker')
 `
 
+type AnalyticsSessionLineageParams struct {
+	TotalOnly bool
+	RowIds    []string
+}
+
 type AnalyticsSessionLineageRow struct {
+	ID           string
 	Scopes       []string
 	ScopeKeys    []string
 	LeafIds      []string
 	SpawnedTasks []byte
 }
 
-func (q *Queries) AnalyticsSessionLineage(ctx context.Context, sessionID string) (AnalyticsSessionLineageRow, error) {
-	row := q.db.QueryRow(ctx, analyticsSessionLineage, sessionID)
-	var i AnalyticsSessionLineageRow
-	err := row.Scan(
-		&i.Scopes,
-		&i.ScopeKeys,
-		&i.LeafIds,
-		&i.SpawnedTasks,
-	)
-	return i, err
+func (q *Queries) AnalyticsSessionLineage(ctx context.Context, arg AnalyticsSessionLineageParams) ([]AnalyticsSessionLineageRow, error) {
+	rows, err := q.db.Query(ctx, analyticsSessionLineage, arg.TotalOnly, arg.RowIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AnalyticsSessionLineageRow
+	for rows.Next() {
+		var i AnalyticsSessionLineageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Scopes,
+			&i.ScopeKeys,
+			&i.LeafIds,
+			&i.SpawnedTasks,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const analyticsSetJIT = `-- name: AnalyticsSetJIT :exec
@@ -1057,122 +991,21 @@ func (q *Queries) AnalyticsTaskHiddenLineage(ctx context.Context, taskID string)
 	return n, err
 }
 
-const analyticsTaskLineage = `-- name: AnalyticsTaskLineage :one
+const analyticsTaskLineage = `-- name: AnalyticsTaskLineage :many
 
-WITH RECURSIVE
- candidate_sessions AS (
-  SELECT DISTINCT session_id FROM execution WHERE task_id = $1::text AND session_id IS NOT NULL
- ),
- first_task AS (
-  SELECT DISTINCT ON (e.session_id) e.session_id, e.task_id
-  FROM execution e
-  WHERE e.task_id IS NOT NULL AND e.session_id IN (SELECT session_id FROM candidate_sessions)
-  ORDER BY e.session_id, e.seq
- ),
- direct_sessions AS (
-  SELECT id AS session_id FROM session
-  WHERE (task_id = $1::text OR (coalesce(nullif(task_id, ''), '') = '' AND id IN (SELECT session_id FROM first_task WHERE task_id = $1::text)))
-    AND parent_execution_id IS NULL
- ),
- own_execs AS (
-  SELECT e.id, e.session_id
-  FROM execution e
-  WHERE e.kind <> 'child_agent'
-    AND e.delegation IS NULL
-    AND (
-      e.task_id = $1::text
-      OR (e.task_id IS NULL AND e.session_id IN (SELECT session_id FROM direct_sessions))
-      OR (e.kind = 'tool_run' AND e.parent_execution_id IN (
-         SELECT p.id FROM execution p
-         WHERE p.kind <> 'child_agent'
-           AND p.delegation IS NULL
-           AND (p.task_id = $1::text OR (p.task_id IS NULL AND p.session_id IN (SELECT session_id FROM direct_sessions)))
-      ))
-    )
- ),
- del_seed AS (
-  SELECT e.id, e.session_id, (e.delegation IS NOT NULL) AS follow_session
-  FROM execution e
-  WHERE (e.parent_execution_id IN (SELECT id FROM own_execs) AND (e.kind = 'child_agent' OR e.delegation IS NOT NULL))
-     OR (e.delegation IS NOT NULL AND (e.delegation->>'parentExecutionId' IN (SELECT id FROM own_execs) OR e.delegation->>'parentSessionId' IN (SELECT session_id FROM direct_sessions)))
-  UNION
-  SELECT e.id, e.session_id, true AS follow_session
-  FROM execution e
-  JOIN session s ON s.id = e.session_id
-  WHERE s.parent_execution_id IN (SELECT id FROM own_execs)
-     OR (s.created_by_execution_id IN (SELECT id FROM own_execs) AND coalesce(nullif(s.task_id, ''), '') = '')
-     OR (s.created_by_session_id IN (SELECT session_id FROM direct_sessions) AND coalesce(nullif(s.task_id, ''), '') = '')
- ),
- del_tree AS (
-  SELECT id, session_id, follow_session FROM del_seed
-  UNION
-  SELECT e.id, e.session_id, (dt.follow_session OR e.delegation IS NOT NULL) AS follow_session
-  FROM execution e
-  JOIN del_tree dt ON e.parent_execution_id = dt.id
-     OR (dt.follow_session AND e.session_id IS NOT NULL AND dt.session_id IS NOT NULL AND e.session_id = dt.session_id AND e.session_id NOT IN (SELECT session_id FROM direct_sessions) AND e.task_id IS NULL)
-     OR (e.delegation IS NOT NULL AND e.delegation->>'parentExecutionId' = dt.id)
- ),
- spawned_tasks AS (
-  SELECT t.id, t.code, t.title, t.state::text AS state, t.project_id, t.seq
-  FROM task t
-  WHERE t.id <> $1::text
-    AND (
-      t.created_by_execution_id IN (SELECT id FROM own_execs UNION SELECT id FROM del_tree)
-      OR t.created_by_session_id IN (
-       SELECT session_id FROM direct_sessions
-       UNION SELECT session_id FROM own_execs WHERE session_id IS NOT NULL
-       UNION SELECT session_id FROM del_tree WHERE session_id IS NOT NULL
-      )
-    )
- ),
- spawned_task_ids AS MATERIALIZED (SELECT id FROM spawned_tasks),
- spawned_sessions AS MATERIALIZED (
-  SELECT st.id AS task_id, d.id AS session_id
-  FROM spawned_task_ids st
-  JOIN session d ON d.task_id = st.id
- ),
- spawned_runs AS MATERIALIZED (
-  SELECT st.id AS task_id, e.id
-  FROM spawned_task_ids st
-  JOIN execution e ON e.task_id = st.id
-  UNION
-  SELECT ss.task_id, e.id
-  FROM spawned_sessions ss
-  JOIN execution e ON e.task_id IS NULL AND e.session_id = ss.session_id
- ),
- spawned_execs AS (
-  SELECT task_id, id AS exec_id FROM spawned_runs
-  UNION
-  SELECT sr.task_id, e.id AS exec_id
-  FROM spawned_runs sr
-  JOIN execution e ON e.kind = 'tool_run' AND e.parent_execution_id = sr.id
- ),
- classified AS (
-  SELECT 'spawned_task'::text AS scope, task_id AS scope_key, exec_id AS leaf_id FROM spawned_execs
-  UNION
-  SELECT 'delegated'::text AS scope, ''::text AS scope_key, id AS leaf_id
-  FROM del_tree
-  WHERE id NOT IN (SELECT exec_id FROM spawned_execs)
-  UNION
-  SELECT 'own'::text AS scope, ''::text AS scope_key, id AS leaf_id
-  FROM own_execs
-  WHERE id NOT IN (SELECT exec_id FROM spawned_execs) AND id NOT IN (SELECT id FROM del_tree)
- ),
- scoped_leaves AS (
-  SELECT scope, scope_key, leaf_id FROM classified
-  UNION
-  SELECT 'spawned'::text AS scope, ''::text AS scope_key, exec_id AS leaf_id FROM spawned_execs
-  UNION
-  SELECT 'total'::text AS scope, ''::text AS scope_key, leaf_id FROM classified
- )
-SELECT
- coalesce((SELECT array_agg(scope ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scopes,
- coalesce((SELECT array_agg(scope_key ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS scope_keys,
- coalesce((SELECT array_agg(leaf_id ORDER BY scope, scope_key, leaf_id) FROM scoped_leaves), '{}')::text[] AS leaf_ids,
- coalesce((SELECT jsonb_agg(jsonb_build_object('taskId', id, 'code', code, 'title', title, 'state', state, 'projectId', project_id) ORDER BY seq ASC, id ASC) FROM spawned_tasks), '[]')::jsonb AS spawned_tasks
+SELECT root.id, l.scopes::text[] AS scopes, l.scope_keys::text[] AS scope_keys, l.leaf_ids::text[] AS leaf_ids, l.spawned_tasks::jsonb AS spawned_tasks
+FROM task root
+CROSS JOIN LATERAL fleet_task_resource_lineage(root.id, $1::boolean) l
+WHERE root.id = ANY($2::text[])
 `
 
+type AnalyticsTaskLineageParams struct {
+	TotalOnly bool
+	RowIds    []string
+}
+
 type AnalyticsTaskLineageRow struct {
+	ID           string
 	Scopes       []string
 	ScopeKeys    []string
 	LeafIds      []string
@@ -1183,16 +1016,30 @@ type AnalyticsTaskLineageRow struct {
 // as three parallel arrays (and, for a task or session, its visible spawned tasks in order); AnalyticsLeafRows then
 // reads those leaves once each with their costs, one row per scope a leaf counts in, without double-counting cost
 // items across scopes.
-func (q *Queries) AnalyticsTaskLineage(ctx context.Context, taskID string) (AnalyticsTaskLineageRow, error) {
-	row := q.db.QueryRow(ctx, analyticsTaskLineage, taskID)
-	var i AnalyticsTaskLineageRow
-	err := row.Scan(
-		&i.Scopes,
-		&i.ScopeKeys,
-		&i.LeafIds,
-		&i.SpawnedTasks,
-	)
-	return i, err
+func (q *Queries) AnalyticsTaskLineage(ctx context.Context, arg AnalyticsTaskLineageParams) ([]AnalyticsTaskLineageRow, error) {
+	rows, err := q.db.Query(ctx, analyticsTaskLineage, arg.TotalOnly, arg.RowIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AnalyticsTaskLineageRow
+	for rows.Next() {
+		var i AnalyticsTaskLineageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Scopes,
+			&i.ScopeKeys,
+			&i.LeafIds,
+			&i.SpawnedTasks,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const analyticsWindowLeafCount = `-- name: AnalyticsWindowLeafCount :one

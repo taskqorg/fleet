@@ -77,7 +77,7 @@ func TestTaskResourceJITPostgres(t *testing.T) {
 					stop()
 					t.Fatal(e)
 				}
-				if e = blocker.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock' AND query LIKE '%WITH RECURSIVE%')", c.PgConn().PID()).Scan(&observed); e != nil {
+				if e = blocker.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock' AND (query LIKE '%WITH RECURSIVE%' OR query LIKE '%fleet_%_resource_lineage%'))", c.PgConn().PID()).Scan(&observed); e != nil {
 					stop()
 					t.Fatal(e)
 				}

@@ -228,8 +228,8 @@ func TestSpendSummaryInvariant(t *testing.T) {
 	}{
 		{`SET LOCAL fleet.project_ids='*'`, nil},
 		{`INSERT INTO api_connection(id,name,provider,payload) VALUES ('conn:gh','github','github','{}')`, nil},
-		{`INSERT INTO definition(kind,id,path,head,ever_shipped,access_version) VALUES ('agent','coder','agents/coder.json',1,true,1)`, nil},
-		{`INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message,at) VALUES ('agent','coder',1,'{"category":"engineering"}','sha1','editor','person','init',$1)`, []any{t0.Add(-5 * time.Minute)}},
+		{`INSERT INTO definition(kind,id,path,head,ever_shipped,access_version) VALUES ('agent','coder','agents/coder.json',1,true,1),('project','p1','projects/p1.json',1,true,1),('project','p2','projects/p2.json',1,true,1)`, nil},
+		{`INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message,at) VALUES ('agent','coder',1,'{"category":"engineering"}','sha1','editor','person','init',$1),('project','p1',1,'{"name":"P1"}','sha-p1','editor','person','init',$1),('project','p2',1,'{"name":"P2"}','sha-p2','editor','person','init',$1)`, []any{t0.Add(-5 * time.Minute)}},
 		{`INSERT INTO task(id,project_id,title,state,priority,completion_requirements,created_at,updated_at,state_at,accepted_at) VALUES ('t-done','p1','Done task','completed','normal','{}',$1,$1,$1,$1)`, []any{t0.Add(-5 * time.Minute)}},
 		{`INSERT INTO price_entry(id,subject,unit,price,currency,source,observed_at,effective_from) VALUES
 			('pr:m1:in','m1','input_tokens',0.000002,'USD','owner',$1,$2),
@@ -409,7 +409,7 @@ func TestSpendSummaryInvariant(t *testing.T) {
 	_ = json.Unmarshal([]byte(`{"email":"m@x","roles":["operator"],"grants":[{"kind":"project","id":"p1"}]}`), &member)
 	checkParity("member-p1", &member, nil)
 	var memSum contract.SpendSummaryReply
-	if err := e.app.store.Read(ctx, &Request{person: &member, r: httptest.NewRequest("POST", "/", nil)}, func(q *Request) error {
+	if err := e.app.store.Read(ctx, &Request{app: e.app, person: &member, r: httptest.NewRequest("POST", "/", nil)}, func(q *Request) error {
 		var err error
 		memSum, err = spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByProject, Window: win})
 		return err
@@ -437,4 +437,30 @@ func TestSpendSummaryInvariant(t *testing.T) {
 		t.Fatal("expected backdated price_entry to mark execution_spend rows stale")
 	}
 	checkParity("after-backdated-price", nil, nil)
+	// Requirement: fleet.md list_spend matches canonical projectResources across stale execution_spend rows and enforces project RLS.
+	// Risk: stale cached spend rows or RLS bypass returns drifted or unauthorized list spend.
+	if err := e.app.store.Read(ctx, &Request{app: e.app, person: &member, r: httptest.NewRequest("POST", "/", nil)}, func(q *Request) error {
+		got, err := listSpend(q, &contract.ListSpendRequest{Kind: contract.ListSpendKindProjects, RowIds: []string{"p1", "p2", "p1"}})
+		if err != nil {
+			return err
+		}
+		if _, ok := got.Rows["p2"]; ok {
+			t.Fatalf("restricted member saw unauthorized project p2 in listSpend")
+		}
+		p1Res, err := projectResources(q, "p1")
+		if err != nil {
+			return err
+		}
+		gotJSON, _ := json.Marshal(got.Rows["p1"])
+		for i := range p1Res.Cost {
+			p1Res.Cost[i].Prices = nil
+		}
+		wantJSON, _ := json.Marshal(p1Res.Cost)
+		if string(gotJSON) != string(wantJSON) {
+			t.Fatalf("listSpend(p1) = %s, want %s", gotJSON, wantJSON)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -179,6 +179,23 @@ export function splitCostFigures(all: readonly CostFigureLike[] | null | undefin
   return { metered, subscription };
 }
 
+/** Formats row-level cumulative spend while keeping currencies, bases, partial coverage, and unknown states distinct. */
+export function formatRowSpend(cost?: readonly CostFigureLike[], stale = false, name?: string) {
+  const known = (cost ?? []).filter(figure => figure.value !== null && figure.basis !== 'unavailable');
+  const partial = known.length > 0 && (cost?.some(figure => figure.basis === 'unavailable') ?? false);
+  const unpricedSub = known.length === 0 && (cost?.some(figure => figure.basis === 'subscription') ?? false);
+  const figures = known.map(figure => measured(costMeasured(figure), 'money'));
+  const names = figures.map(figure => figure.long).join(', ');
+  const detail = figures.length ? names + (partial ? ', partial' : '') : unpricedSub ? 'included in subscription' : 'unknown';
+  const primaryText = figures.length ? figures[0].text : 'Spend —';
+  const suffix = figures.length ? (partial ? 'partial' : figures.length > 1 ? `+${figures.length - 1}` : '') : '';
+  const subscription = figures.length > 0 ? known[0].basis === 'subscription' : unpricedSub;
+  const visible = suffix ? `${primaryText} ${suffix}` : primaryText;
+  const tip = `Cumulative spend: ${detail}${stale && cost ? ', last confirmed' : ''}. Open resource breakdown.`;
+  const ariaLabel = `${name ? `${name}: ` : ''}${visible}. ${tip}`;
+  return { primaryText, suffix, subscription, hasFigures: figures.length > 0, tip, ariaLabel };
+}
+
 /** Adapts a contract MeasuredNumber/MeasuredInt into UI Measured with optional unit scaling (e.g. 0.001 for ms to seconds). */
 export function numMeasured(n: { value: number | null; basis: Basis; reason?: string; partial?: string; note?: string } | null | undefined, scale = 1): Measured {
   if (!n) return { value: null, basis: 'unavailable' };
