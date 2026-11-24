@@ -99,8 +99,9 @@ const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as
 // The rail's seven sections (OR-46); each screen highlights the section that owns it (OR-57).
 const NAV: NavItem[] = workspaces.filter(w => w.nav).map(w => ({ id: w.id, label: w.label, icon: w.icon }));
 const sectionOf = (screen: string): string => workspaces.find(w => w.id === screen)?.section ?? '';
-// A section's counter is its first screen's (Conversations, System from Hosts).
 const ROOT: Record<string, string> = Object.fromEntries(workspaces.filter(w => w.nav).map(w => [w.id, (w as { root?: string }).root ?? w.id]));
+// The counter each section shows (nav-rail.md, Counters): Projects its Tasks facet, System its Hosts.
+const COUNTER: Record<string, string> = { conversations: 'conversations', projects: 'tasks', system: 'hosts' };
 // Each kind the server finds: its group label, icon, the registry state family of its hits, where a hit opens (a question
 // opens its task) and the list section that takes the same query (the "All N" row).
 type Hit = Ops['search']['reply']['hits'][number];
@@ -275,7 +276,7 @@ function App() {
   const counts = useNavCounts(() => access.value.state === 'open');
   const nav = createMemo(() => {
     const c = counts();
-    return NAV.map(n => c[ROOT[n.id]] ? { ...n, count: c[ROOT[n.id]] } : n);
+    return NAV.map(n => c[COUNTER[n.id]] ? { ...n, count: c[COUNTER[n.id]] } : n);
   });
   // Entity cards (EntityCode) read entity_card through the store; their Open goes to the in-app path.
   const cards = entityCards(go);

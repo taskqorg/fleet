@@ -31,7 +31,7 @@ export async function checkNavCounter(browser: Browser, origin: string, seed: Re
   const shots = process.env.NAV_SHOTS;
   const context = await browser.newContext({ colorScheme: 'dark', viewport: { width: 1440, height: 900 } }), p = await context.newPage();
   const errors: string[] = []; p.on('pageerror', e => errors.push(e.message));
-  const rail = p.locator('[data-ui=nav-rail]'), count = rail.locator('.rail-g:not(.pinned) [data-id=tasks] .nav-count');
+  const rail = p.locator('[data-ui=nav-rail]'), count = rail.locator('.rail-g:not(.pinned) [data-id=projects] .nav-count');
   // Other checks of the same run seed tasks of their own: the server's count is the expectation, never a fixed number.
   const server = async () => (await call('nav_counts', {})).sections.tasks as { inFocus: number; outside: number; label: string };
   const shows = async (text: string, label: string) => await count.count() === 1 && (await count.textContent())?.trim() === text && await count.getAttribute('aria-label') === label;
@@ -53,7 +53,7 @@ export async function checkNavCounter(browser: Browser, origin: string, seed: Re
     await p.locator('.vl-row', { hasText: 'Nav counter Alpha live' }).waitFor({ timeout: 30_000 });
     assert.ok(await until(async () => (await server()).inFocus === s.inFocus + 1 && await shows(String(s.inFocus + 1), `${s.inFocus + 1} running`)), `a new task is counted live (${await count.textContent()} shown, ${(await server()).inFocus} on the server, ${s.inFocus} before)`);
     // Hosts: offline hosts, one number in attention tone (hosts have no project).
-    const hosts = rail.locator('.rail-g:not(.pinned) [data-id=hosts] .nav-count');
+    const hosts = rail.locator('.rail-g:not(.pinned) [data-id=system] .nav-count');
     assert.ok(await until(async () => await hosts.count() === 1 && await hosts.evaluate(e => e.classList.contains('t-attention')) && /offline$/.test(await hosts.getAttribute('aria-label') ?? '')), 'offline hosts in attention tone');
     await shoot('nav-all');
     // Focus Alpha: bright in focus, dim outside after the separator, said in words.

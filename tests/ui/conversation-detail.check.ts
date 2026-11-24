@@ -127,9 +127,9 @@ export async function checkConversationDetail(browser: Browser, origin: string, 
     const shell = (await p.locator('.shell-h').boundingBox())!, search = (await p.locator('.shell-search').boundingBox())!;
     check(search.width === 44 && search.height === 44 && search.y >= shell.y && search.y + search.height <= shell.y + shell.height,
       'touch: the full 44 px search target fits inside the shell header');
-    const rail = (await p.locator('.rail').boundingBox())!, railItem = (await p.locator('.nav-i a').first().boundingBox())!;
-    check(railItem.width >= 44 && railItem.height >= 44 && railItem.x >= rail.x && railItem.x + railItem.width <= rail.x + rail.width,
-      'touch: the rail contains the full navigation target');
+    const bar = (await p.locator('[data-ui=bottom-bar]').boundingBox())!, tab = (await p.locator('[data-ui=bottom-bar] .tab-i').first().boundingBox())!;
+    check(tab.width >= 44 && tab.height >= 44 && tab.y >= bar.y && tab.y + tab.height <= bar.y + bar.height,
+      'touch: the bottom bar contains the full navigation target');
     const detail = (await p.locator('.detail').boundingBox())!, composer = (await p.locator('.composer').boundingBox())!;
     const heading = (await p.locator('.detail-h').boundingBox())!;
     const message = (await p.locator('.th-text.agent .th-main').first().boundingBox())!;

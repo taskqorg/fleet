@@ -29,11 +29,12 @@ Each item has a registry icon (OR-3), a name, an optional counter (**Counters** 
 | Section | Default | Choice |
 |---|---|---|
 | Conversations | Running | any system preset or saved view of the list |
+| Projects (its Tasks facet) | Running | any system preset or saved view of the Tasks list |
 | System (its Hosts list) | Offline (not seen within the Hosts list's stale limit), attention tone | on or off |
 
-`nav_counts` also counts Tasks (Running), Delivery (In flight) and Results (Last 24 h); a section shows the counter of the screen it opens, so those have no place on the rail until their facets get one.
+`nav_counts` also counts Delivery (In flight) and Results (Last 24 h); they have no place on the rail until their facets get one.
 
-* Other sections have no counter: Home is answered by the "N need you" chip in the head, which is not a counter; Live, Projects, Lab and Library have no amount that changes often enough to watch.
+* Other sections have no counter: Home is answered by the "N need you" chip in the head, which is not a counter; Live, Lab and Library have no amount that changes often enough to watch.
 * One read gives every counter: `nav_counts` (agents call the same tool). Each section counts with its list's own filters (the view's states, search and the projects it names), so a counter equals the list it stands for, with one exception: ignored projects are never counted, also when a saved view names one, which its list still shows (OR-34). A saved view that names its projects is that list whatever the focus, so it is one number with no split (`split` false in the reply). Removing a saved view removes its counter choice, and a view the list no longer takes (a state since renamed) counts the default: the section's default counts again.
 * Without a focus a counter is one number: `12`. With a focus it splits: the count in the focus in the foreground colour, then `·` and the rest outside the focus (not ignored) in muted colour, `12·30`. With nothing in the focus but some outside it shows `·30` on no fill, so a bare number always means "in focus". Zero in and out shows nothing (OR-29). Hosts have no project and stay one number.
 * Collapsed (and below 760 px) only the in-focus number stays, as a badge on the icon's top right; `·30` alone shows no badge. The badge is positioned over the icon, so no icon moves (OR-42, OR-23).
