@@ -38,3 +38,7 @@ At phone width (760 px and below) the toggle hides (the rail is always collapsed
 * Every page renders `AppShell`. The traceability check in `pnpm run check:design` reports any page that does not.
 
 **Private transient state.** Access invalidation removes Spotlight results as well as routed/focus data. `AppShell` keeps its non-private geometry, but closes private search content while validation is pending and keys Spotlight by access generation. The palette's kept query, results, highlighted row and recent items ([Spotlight](../controls/spotlight.md)) belong to one access generation: a new generation starts them empty. The caller also clears its shared search-result cache before identity validation.
+
+## Board
+
+The shell header is the `Shell header` master on [blocks.bl](../board/blocks.bl): collapse toggle, section title, focus chip and search icon, the Home and Live form of [OR-43](../owner-rules.md).

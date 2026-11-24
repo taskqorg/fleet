@@ -92,7 +92,8 @@ Every element opens its detail in the app: a host in System, a slot or event in 
 
 ## Blocks
 
-* [Status pill](../controls/status-pill.md): the fleet's state in the status bar.
+* [Status bar](../controls/status-pill.md#status-bar) with the [status pill](../controls/status-pill.md): the top line.
+* [Navigation rail](../controls/nav-rail.md#board) and [shell header](../patterns/app-shell.md#board): the frame outside wall mode (not drawn yet; the canvas shows wall mode).
 * [Figure tile](../controls/figure-tile.md): the six figures with sparklines.
 * [Host band](../controls/host-band.md): one band per host.
 * [Gauge](../controls/fill-bar.md#gauge): CPU, memory and disk in a band head.
@@ -103,4 +104,4 @@ Every element opens its detail in the app: a host in System, a slot or event in 
 
 ## Design board
 
-The rendered states are on the [design board](../README.md#design-board), canvas [screens/live.bl](../board/screens/live.bl): normal, and "something breaks". Totals were taken from the live Runners screen on 24 Nov; slot contents are illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).
+The rendered states are on the [design board](../README.md#design-board), canvas [screens/live.bl](../board/screens/live.bl): normal, and "something breaks", in wall mode at 1920 px. Every part is an instance of a block on [blocks.bl](../board/blocks.bl) (see Blocks above). Totals were taken from the live Runners screen on 24 Nov; slot contents are illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).

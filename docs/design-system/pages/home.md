@@ -105,8 +105,9 @@ Behaviour:
 * [Question card](../controls/decision-block.md#card): the open question on a card, answered in place.
 * [State dot and word](../controls/state-badge.md#dot-and-word): the state on cards and picker rows.
 * [Bot tile](../controls/bot-tile.md): the Asleep row.
-* [Navigation rail](../controls/nav-rail.md) and [shell header](../patterns/app-shell.md): the frame.
+* [Quiet summary](../controls/quiet-summary.md): replaces the empty groups when nothing needs the person.
+* [Navigation rail and phone bottom bar](../controls/nav-rail.md#board) and [shell header](../patterns/app-shell.md#board): the frame.
 
 ## Design board
 
-The rendered states are on the [design board](../README.md#design-board), canvas [screens/home.bl](../board/screens/home.bl): normal, picker, session open with context panel, quiet, phone and card anatomy. Names are real; content is illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).
+The rendered states are on the [design board](../README.md#design-board), canvas [screens/home.bl](../board/screens/home.bl): normal, picker, session open with context panel, quiet, and phone. Every part is an instance of a block on [blocks.bl](../board/blocks.bl) (see Blocks above), so a block change reaches these states; the card anatomy and its states are on that canvas. Names are real; content is illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).

@@ -51,3 +51,7 @@ When the site serves a newer app than the tab runs, an Update button (icon) show
 **Accessibility.** `nav` named "Sections". Each pinned and group list is named. Pin buttons are named "Pin Tasks" or "Unpin Tasks" and expose `aria-pressed`. Counters have accessible names such as "12 running in focus, 30 outside" (**Counters**).
 
 **Do.** Keep the order the person chose. **Don't.** Reorder sections automatically by frequency (specq "stable adaptation"). Don't add a separate Favourites page (OR-12).
+
+## Board
+
+Masters on [blocks.bl](../board/blocks.bl): `Nav rail` (the seven sections of [OR-46](../owner-rules.md), built from `Nav item`, whose `current` variant marks the open section), and the phone `Bottom bar` of five `Tab item`s ([OR-60](../owner-rules.md)). A screen sets its section by switching the nested item to `current`.
