@@ -70,17 +70,27 @@ WITH RECURSIVE
     WHERE c.depth < 10
   ),
   exec_chain(id, kind, state, parent_execution_id, pipeline_run_id, pipeline_step_id, depth) AS (
-    SELECT e.id, e.kind, e.state, e.parent_execution_id, NULLIF(e.data->>'pipelineRunId', ''), NULLIF(e.data->>'pipelineStepId', ''), 0
-    FROM execution e
-    WHERE e.id IN (
-      SELECT c.parent_execution_id FROM chain c WHERE c.parent_execution_id IS NOT NULL
+    -- Two index lookups (execution_pkey, execution_session), not one OR filter: the OR read every execution
+    -- (2026-11-24 on PDS18: 20k pages, 150 ms warm; cancelled at the hosts' 35 s deadline inside terminal receipts under GLOBAL).
+    SELECT b.id, b.kind, b.state, b.parent_execution_id, b.pipeline_run_id, b.pipeline_step_id, 0
+    FROM (
+      SELECT e.id, e.kind, e.state, e.parent_execution_id, NULLIF(e.data->>'pipelineRunId', '') AS pipeline_run_id, NULLIF(e.data->>'pipelineStepId', '') AS pipeline_step_id
+      FROM execution e
+      WHERE e.id IN (
+        SELECT c.parent_execution_id FROM chain c WHERE c.parent_execution_id IS NOT NULL
+        UNION
+        SELECT c.created_by_execution_id FROM chain c WHERE c.created_by_execution_id IS NOT NULL
+      )
       UNION
-      SELECT c.created_by_execution_id FROM chain c WHERE c.created_by_execution_id IS NOT NULL
-    ) OR e.session_id IN (SELECT c.id FROM chain c)
+      SELECT e.id, e.kind, e.state, e.parent_execution_id, NULLIF(e.data->>'pipelineRunId', ''), NULLIF(e.data->>'pipelineStepId', '')
+      FROM execution e
+      WHERE e.session_id IN (SELECT c.id FROM chain c)
+    ) b
     UNION ALL
     SELECT p.id, p.kind, p.state, p.parent_execution_id, NULLIF(p.data->>'pipelineRunId', ''), NULLIF(p.data->>'pipelineStepId', ''), ec.depth + 1
     FROM execution p
-    JOIN exec_chain ec ON p.id = ec.parent_execution_id OR p.id = ec.pipeline_run_id OR p.id = ec.pipeline_step_id
+    JOIN exec_chain ec ON (p.id = ec.parent_execution_id OR p.id = ec.pipeline_run_id OR p.id = ec.pipeline_step_id)
+     AND p.id <> ec.id -- an agent run names itself as its parent: that row adds nothing
     WHERE ec.depth < 6
   )
 SELECT (
