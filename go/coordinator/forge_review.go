@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -31,6 +30,8 @@ type forgeAuditEntry struct {
 	ExecutionID       string `json:"executionId"`
 	SessionID         string `json:"sessionId"`
 	TaskID            string `json:"taskId,omitempty"`
+	Provider          string `json:"provider,omitempty"`
+	Host              string `json:"host,omitempty"`
 	Repo              string `json:"repo"`
 	Branch            string `json:"branch"`
 	HeadSha           string `json:"headSha"`
@@ -38,7 +39,10 @@ type forgeAuditEntry struct {
 	ArtifactSha256    string `json:"artifactSha256"`
 	ReviewExecutionID string `json:"reviewExecutionId"`
 	ReviewSessionID   string `json:"reviewSessionId"`
+	SourceExecutionID string `json:"sourceExecutionId,omitempty"`
+	RequestID         string `json:"requestId,omitempty"`
 	GithubActor       string `json:"githubActor"`
+	ProviderActor     string `json:"providerActor,omitempty"`
 	Description       string `json:"description"`
 	Independent       bool   `json:"independent"`
 }
@@ -50,8 +54,16 @@ type forgeWorktreeSettings struct {
 }
 
 func validForgeRepoSlug(repo string) bool {
+	return validForgeRepoSlugForProvider(repo, "")
+}
+
+func validForgeRepoSlugForProvider(repo, provider string) bool {
 	parts := strings.Split(repo, "/")
-	if len(parts) != 2 {
+	if provider == "gitlab" {
+		if len(parts) < 2 {
+			return false
+		}
+	} else if len(parts) != 2 {
 		return false
 	}
 	for _, p := range parts {
@@ -132,7 +144,7 @@ func forgeProjectSettings(q *Request, e agentExecution, projectID string) (runSe
 	return settings, prefix, nil
 }
 
-func forgeSelectedRepoSlug(settings runSettings, hostID string) string {
+func forgeSelectedRepoRef(settings runSettings, hostID string) (contract.RepoRef, bool) {
 	var envRepo *string
 	for _, co := range settings.Environments {
 		if co.HostID == hostID {
@@ -142,23 +154,25 @@ func forgeSelectedRepoSlug(settings runSettings, hostID string) string {
 	}
 	for _, r := range settings.Repos {
 		if envRepo == nil || r.ID == *envRepo {
-			u, err := url.Parse(r.Remote)
-			if err == nil && u.Scheme == "https" && u.Host == "github.com" && u.RawQuery == "" && u.Fragment == "" && u.User == nil {
-				slug := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
-				if validForgeRepoSlug(slug) {
-					return slug
-				}
+			ref, ok := contract.ParseRepoRemote(r.Remote, r.Forge, r.Host)
+			if !ok {
+				return contract.RepoRef{}, false
 			}
-			if m := githubRemote.FindStringSubmatch(r.Remote); m != nil {
-				slug := m[1] + "/" + m[2]
-				if validForgeRepoSlug(slug) {
-					return slug
-				}
+			if !validForgeRepoSlugForProvider(ref.Slug, ref.Provider) {
+				return contract.RepoRef{}, false
 			}
-			return ""
+			return ref, true
 		}
 	}
-	return ""
+	return contract.RepoRef{}, false
+}
+
+func forgeSelectedRepoSlug(settings runSettings, hostID string) string {
+	ref, ok := forgeSelectedRepoRef(settings, hostID)
+	if !ok {
+		return ""
+	}
+	return ref.Slug
 }
 
 func forgeResolveActor(q *Request, e agentExecution, projectID, holder string) (*Person, error) {
@@ -192,7 +206,7 @@ func forgeReviewRoute(q *Request, b *contract.ForgeReviewRequest) (contract.Forg
 	if !forgeArtifactPattern.MatchString(b.ArtifactId) || len(b.ArtifactId) > 200 || strings.Contains(b.ArtifactId, "..") {
 		return none, fail(400, "Invalid artifactId")
 	}
-	if !validForgeRepoSlug(b.Repo) {
+	if !validForgeRepoSlugForProvider(b.Repo, deref(b.Provider)) {
 		return none, fail(400, "Invalid repo")
 	}
 	if !validForgeBranch(b.Branch) {
@@ -201,8 +215,12 @@ func forgeReviewRoute(q *Request, b *contract.ForgeReviewRequest) (contract.Forg
 	if !validForgeDescription(b.Description) {
 		return none, fail(400, "Invalid description")
 	}
-	if !validForgeGithubActor(b.GithubActor) {
-		return none, fail(400, "Invalid githubActor")
+	providerActor := b.GithubActor
+	if deref(b.ProviderActor) != "" {
+		providerActor = *b.ProviderActor
+	}
+	if !validForgeGithubActor(providerActor) {
+		return none, fail(400, "Invalid providerActor")
 	}
 	if b.AgentToolKey == "" {
 		return none, fail(400, "Expected agentToolKey")
@@ -218,6 +236,7 @@ func forgeReviewRoute(q *Request, b *contract.ForgeReviewRequest) (contract.Forg
 		revExec     agentExecution
 		independent bool
 		targetURL   string
+		repoRef     contract.RepoRef
 	)
 	err := q.app.store.Read(q.ctx(), q, func(rq *Request) error {
 		c, err := commandOf(rq, b.HostId, b.ExecutionId, b.CommandId, "Command rejected")
@@ -266,7 +285,7 @@ func forgeReviewRoute(q *Request, b *contract.ForgeReviewRequest) (contract.Forg
 			return err
 		}
 		var obs hostPollObservationPayload
-		if err := json.Unmarshal(obsRow.Payload, &obs); err != nil || obs.Capabilities == nil || !contract.HasCapability(*obs.Capabilities, contract.ForgeCapability(b.Repo)) {
+		if err := json.Unmarshal(obsRow.Payload, &obs); err != nil || obs.Capabilities == nil {
 			return fail(403, "Host lacks forge capability for "+b.Repo)
 		}
 		settings, prefix, err := forgeProjectSettings(rq, e, projectID)
@@ -280,9 +299,20 @@ func forgeReviewRoute(q *Request, b *contract.ForgeReviewRequest) (contract.Forg
 		if len(settings.Execution.Profiles) > 0 && !slices.Contains(settings.Execution.Profiles, prof.ID) {
 			return fail(403, "Execution profile is not granted forge access")
 		}
-		if repoSlug := forgeSelectedRepoSlug(settings, b.HostId); repoSlug == "" || repoSlug != b.Repo {
+		ref, ok := forgeSelectedRepoRef(settings, b.HostId)
+		if !ok || !strings.EqualFold(ref.Slug, b.Repo) {
 			return fail(403, "Repository is not granted by project")
 		}
+		if b.Provider != nil && string(*b.Provider) != ref.Provider {
+			return fail(403, "Provider does not match project repository")
+		}
+		if deref(b.Host) != "" && !strings.EqualFold(*b.Host, ref.Host) {
+			return fail(403, "Repository host does not match project repository")
+		}
+		if !hostCapsHaveRepo(*obs.Capabilities, ref) {
+			return fail(403, "Host lacks forge capability for "+b.Repo)
+		}
+		repoRef = ref
 		if !strings.HasPrefix(b.Branch, prefix+"/") {
 			return fail(403, "Branch is outside project branchPrefix")
 		}
@@ -350,6 +380,8 @@ func forgeReviewRoute(q *Request, b *contract.ForgeReviewRequest) (contract.Forg
 			ExecutionID:       e.ID,
 			SessionID:         e.SessionID,
 			TaskID:            taskID,
+			Provider:          repoRef.Provider,
+			Host:              repoRef.Host,
 			Repo:              b.Repo,
 			Branch:            b.Branch,
 			HeadSha:           b.HeadSha,
@@ -357,7 +389,10 @@ func forgeReviewRoute(q *Request, b *contract.ForgeReviewRequest) (contract.Forg
 			ArtifactSha256:    art.ContentHash,
 			ReviewExecutionID: revExec.ID,
 			ReviewSessionID:   revExec.SessionID,
-			GithubActor:       b.GithubActor,
+			SourceExecutionID: deref(b.SourceExecutionId),
+			RequestID:         deref(b.RequestId),
+			GithubActor:       providerActor,
+			ProviderActor:     providerActor,
 			Description:       b.Description,
 			Independent:       independent,
 		}
@@ -386,5 +421,8 @@ func forgeReviewRoute(q *Request, b *contract.ForgeReviewRequest) (contract.Forg
 		OnBehalfOf:        ptr(person.Email),
 		Independent:       independent,
 		TargetUrl:         optStr(targetURL),
+		Provider:          optStr(repoRef.Provider),
+		Host:              optStr(repoRef.Host),
+		ProviderActor:     optStr(providerActor),
 	}, nil
 }

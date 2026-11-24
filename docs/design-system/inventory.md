@@ -54,6 +54,7 @@ These apply to every workspace and are the main input for the controls:
 | Artifact placement: `artifact_locations`, separately for lab and production | Setting | project config |
 | Retention rules, with a preview of what a rule will affect and a confirm step | Setting, Decision | `artifact_rules` |
 | Acceptance rules: which results need a person | Setting | project rules |
+| Repository publishing status, capabilities and actions (ready, request merge, cancel merge) | View, Action | `publishing_status`, `publishing_capabilities`, `publishing_mark_ready`, `publishing_request_merge`, `publishing_cancel_merge_request` |
 | Readiness checks and their results | View, Signal | `project_readiness` |
 
 ### Conversations (sessions, including with the PM)

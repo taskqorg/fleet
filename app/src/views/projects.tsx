@@ -204,7 +204,7 @@ function ProjectDetail(props: { id: string; name?: string; onClose: () => void; 
   const tabs: { id: ProjectTab; label: string }[] = [
     { id: 'work', label: 'Work & Rules' },
     { id: 'methods', label: 'Methods' },
-    { id: 'delivery', label: 'Delivery' },
+    { id: 'delivery', label: 'Publishing' },
     { id: 'results', label: 'Results' },
   ];
 
@@ -633,7 +633,7 @@ function ProjectDeliveryTab(props: { projectId: string }) {
   const [, go] = useLocation();
   const [search, setSearch] = createSignal('');
   const [stageFilter, setStageFilter] = createSignal<StateOf<'delivery'>[]>([]);
-  const status = useOp('delivery_status', () => ({ projectIds: [props.projectId] }), { every: 300000 });
+  const status = useOp('publishing_status', () => ({ projectIds: [props.projectId] }), { every: 300000 });
   const deliveryHref = () => formatView({ view: 'delivery', q: `project:${props.projectId}` });
   const items = createMemo(() => (status.data?.items ?? []).filter(it => it.stage in states_.delivery));
 
@@ -661,7 +661,7 @@ function ProjectDeliveryTab(props: { projectId: string }) {
           {refAt => <AgeChip t={Date.parse(refAt())} alertAfter={900} alertLabel="GitHub read is stale" />}
         </Show>
         <span class="grow" />
-        <a class="row-link" href={deliveryHref()} onClick={e => { e.preventDefault(); go(deliveryHref()); }}>Open in Delivery</a>
+        <a class="row-link" href={deliveryHref()} onClick={e => { e.preventDefault(); go(deliveryHref()); }}>Open in Publishing</a>
       </div>
       <Show when={items().length > 0}>
         <StateCounters

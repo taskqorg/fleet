@@ -401,7 +401,7 @@ export function Overview(props: { id?: string }) {
 
 /** Pull requests in flight: the Delivery page's own read (the same doc, so one fetch serves both), under the focus (OR-34). */
 function InFlight(props: { scope: ReturnType<typeof scopeIds> }) {
-  const res = useOp('delivery_status', () => (prefsRead.value ? props.scope : null), { every: 300000 });
+  const res = useOp('publishing_status', () => (prefsRead.value ? props.scope : null), { every: 300000 });
   const moving = createMemo(() => (res.data?.items ?? []).filter(it => it.stage !== 'installed' && it.stage !== 'merged'));
   return (
     <Switch

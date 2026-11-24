@@ -8,7 +8,8 @@ import { DELIVERY_DONE } from '../system-views.ts';
 import type { View } from '../../../packages/view-url/view-url.ts';
 
 export type Stage = StateOf<'delivery'>;
-export type Status = Ops['delivery_status']['reply'];
+export type Status = Ops['publishing_status']['reply'];
+export type PublishingCapability = Status['capabilities'][number];
 export type Item = Status['items'][number];
 export type History = Ops['delivery_history']['reply'];
 export type HistoryPr = History['prs'][number];
@@ -41,8 +42,10 @@ export const releaseLabel = (tag: string) => { const m = UI_TAG.exec(tag); retur
 export const RANGES = [{ id: '24h', label: '24 h' }, { id: '7d', label: '7 days' }, { id: '30d', label: '30 days' }];
 export const ms = (s?: string | null) => s ? Date.parse(s) : NaN;
 export const fmt = (v: number) => duration(v / 1000).text;
-/** The focus segment of a pull request: owner~repo~number (stable, readable, no slash). */
-export const idOf = (it: { repo: string; number: number }) => `${it.repo.replace('/', '~')}~${it.number}`;
+/** The focus segment of a pull/merge request: repo path (~-joined) plus number (stable, readable, no slash). */
+export const idOf = (it: { repo: string; number: number }) => `${it.repo.replaceAll('/', '~')}~${it.number}`;
+export const providerLabel = (provider?: string | null, kind?: string | null) =>
+  provider === 'gitlab' || kind === 'merge_request' ? 'GitLab MR' : 'GitHub PR';
 // Current rows change with delivery-state:<project>, the recorded history with the other delivery kinds: the server's
 // touches name the operation (contracts: changes). A history read answers 404 when no history is kept: known, unlike loading.
 export const kept = <T,>(d: { data: T | null; status: number | null }) => d.status === 404 ? null : d.data;

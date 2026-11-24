@@ -275,7 +275,10 @@ const decodeSegment = (s: string): string => { try { return decodeURIComponent(s
 
 function PrivateRoutes(props: { go: (to: string) => void }) {
   const [loc] = useLocation();
-  createEffect(() => loc(), p => { if (p === '/') props.go('/overview'); });
+  createEffect(() => loc(), p => {
+    if (p === '/') props.go('/overview');
+    else if (p === '/publishing' || p.startsWith('/publishing/')) props.go('/delivery' + p.slice('/publishing'.length));
+  });
   const libMatch = createMemo(() => /^\/(agents|pipelines|catalogue)(?:\/([^/]+))?\/?$|^\/(changes)\/?$/.exec(loc()));
   const infraMatch = createMemo(() => /^\/(hosts|keys)(?:\/([^/]+))?\/?$|^\/(runners)\/?$/.exec(loc()));
   const libSection = createMemo(() => { const m = libMatch(); return m ? (m[1] ?? m[3]) as 'agents' | 'pipelines' | 'catalogue' | 'changes' : null; });

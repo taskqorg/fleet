@@ -18,8 +18,8 @@ export async function checkDeliveryAvailability(browser: Browser, origin: string
   page.on('pageerror', e => errors.push(e.message));
   try {
     for (const fixture of cases) {
-      await page.route('**/api/ops/delivery_status', route => route.fulfill({json: {source: 'key', refreshedAt: now, ...fixture}}));
-      const response = page.waitForResponse(r => r.url() === origin + '/api/ops/delivery_status');
+      await page.route('**/api/ops/publishing_status', route => route.fulfill({json: {source: 'key', refreshedAt: now, capabilities: [], records: [], ...fixture}}));
+      const response = page.waitForResponse(r => r.url() === origin + '/api/ops/publishing_status');
       await page.goto(origin + '/delivery');
       await (await response).finished();
       await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -59,7 +59,7 @@ export async function checkDeliveryAvailability(browser: Browser, origin: string
         await flip.click(); await page.waitForURL(u => u.searchParams.get('sort') === '-since');
         assert.equal(new URL(page.url()).search, '?sort=-since', 'stale keys stay in the link');
       }
-      await page.unroute('**/api/ops/delivery_status');
+      await page.unroute('**/api/ops/publishing_status');
     }
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
@@ -110,7 +110,7 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
   const base = {from: iso(dayStart(14)), until: iso(now), counts: {prs: 20, runs: 20, removals: 0, flakes: 0},
     stats: [stat('pr_ci', 7, 40), stat('enqueue', 1, 8), stat('queue', 6, 16), stat('release', 1, 4), stat('install', 1, 2), stat('ui_install', 2, 3), stat('total', 21, 74)]};
   const settings = {ratio: 1.5, minSamples: 5, minDeltaMs: 60000, baseline: 'rolling'};
-  await page.route('**/api/ops/delivery_status', r => r.fulfill({json: {source: 'key', refreshedAt: iso(now), items, samples: [], landing: 0}}));
+  await page.route('**/api/ops/publishing_status', r => r.fulfill({json: {source: 'key', refreshedAt: iso(now), capabilities: [], records: [], items, samples: [], landing: 0}}));
   await page.route('**/api/ops/delivery_baseline', r => r.fulfill({json: {rolling: base, snapshots: [], trend: [], settings}}));
   await page.route('**/api/ops/delivery_history', r => r.fulfill({json: {repo: 'taskqorg/fleet', backfilledFrom: iso(dayStart(20)), installsFrom: iso(dayStart(2)), prs, runs: [], releases: []}}));
   await page.route('**/api/ops/delivery_regressions', r => r.fulfill({json: {regressions: [{key: 'run', metric: 'p50', baselineMs: 4 * min, currentMs: 7 * min, n: 38, ratio: 1.75, links: []}], settings}}));

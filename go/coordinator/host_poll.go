@@ -601,7 +601,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc hostRecord, cv pollCommandVi
 		return nil, nil
 	}
 	// Held-host trust: work that carries project content goes only to a host whose holder may see the project.
-	if k := cv.Kind; k == "start" || k == "script" || k == "delivery-step" {
+	if k := cv.Kind; k == "start" || k == "script" || k == "delivery-step" || k == string(contract.CommandKindPublishing) {
 		if !a.hostMayRun(hostDoc, nonNil(rawAny(ev.ProjectID), rawAny(cv.ProjectID)), rawAny(ev.DirectedBy)) {
 			return nil, nil
 		}

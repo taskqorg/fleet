@@ -2046,6 +2046,8 @@ func deliveryPolicyForProject(q *Request, projectID string) deliveryProjectPolic
 	var settings struct {
 		Repos []struct {
 			Remote string `json:"remote"`
+			Forge  string `json:"forge"`
+			Host   string `json:"host"`
 		} `json:"repos"`
 		Integration struct {
 			Mode       string `json:"mode"`
@@ -2055,7 +2057,10 @@ func deliveryPolicyForProject(q *Request, projectID string) deliveryProjectPolic
 	}
 	jsonRoundTrip(raw, &settings)
 	for _, r := range settings.Repos {
-		if m := githubRemote.FindStringSubmatch(r.Remote); len(m) >= 3 {
+		if ref, ok := contract.ParseRepoRemote(r.Remote, r.Forge, r.Host); ok {
+			out.repos[strings.ToLower(ref.Slug)] = true
+			out.repos[strings.ToLower(ref.Host+"/"+ref.Slug)] = true
+		} else if m := githubRemote.FindStringSubmatch(r.Remote); len(m) >= 3 {
 			out.repos[strings.ToLower(m[1]+"/"+m[2])] = true
 		}
 	}

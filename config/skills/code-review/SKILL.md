@@ -1,11 +1,11 @@
 ---
 name: code-review
-description: Whole-branch code review for Fleet managed workers and reviewers against origin/<base>...HEAD, producing exact-SHA review evidence for project-forge code_review.
+description: Whole-branch code review for Fleet managed workers and reviewers against origin/<base>...HEAD, producing exact-SHA review evidence for project-publishing record_code_review (and legacy project-forge code_review).
 ---
 
 # Code review
 
-Perform a thorough whole-branch review of `origin/<base>...HEAD` inside the managed execution worktree and produce auditable exact-SHA review evidence for `project-forge` `delivery` (`action: "code_review"`).
+Perform a thorough whole-branch review of `origin/<base>...HEAD` inside the managed execution worktree and produce auditable exact-SHA review evidence for `project-publishing` `record_code_review` (or compatibility alias `project-forge` `delivery` `action: "code_review"`).
 
 ## Rules
 
@@ -44,9 +44,9 @@ Perform a thorough whole-branch review of `origin/<base>...HEAD` inside the mana
      - Verdict, reviewed scope, concrete findings/disposition, and exact checks run
    - Persist the file via `artifact_save` (`path`, `name`, `media_type: "text/markdown"`) and verify via `artifact_list` that its `state` is `"stored"`. Record its `artifactId`.
 
-5. **Publish via `project-forge` (when granted)**
-   - `publish_draft` with PR `title` and `body` to push the reviewed branch and open or update the draft PR.
-   - `delivery` with `action: "code_review"`, `head_sha` (40-char lowercase SHA), `artifact_id` (stored review artifact ID), and single-line `description` (`<= 140` bytes, e.g. `"medium, 0 findings fixed"`).
-   - `delivery` with `action: "ready"` to mark the PR ready for review.
-   - `delivery` with `action: "auto_merge"` to enable auto-merge / enter the GitHub merge queue (when `integration.autoMerge` is granted).
-   - `delivery` with `action: "status"` to confirm `isDraft: false`, `code-review` success on `headRefOid`, and active `autoMergeRequest` or `mergeQueueEntry`.
+5. **Publish via `project-publishing` (or compatibility alias `project-forge`, when granted)**
+   - `publish_draft` with `requestId`, `title`, `body`, and `expectedHeadSha` to push the reviewed branch and open or update the draft PR/MR.
+   - `record_code_review` with `requestId`, `expectedHeadSha` (40-char lowercase SHA), `artifactId` (stored review artifact ID), and single-line `description` (`<= 140` bytes, e.g. `"medium, 0 findings fixed"`).
+   - `mark_ready` with `requestId` and `expectedHeadSha` to mark the PR/MR ready for review.
+   - `request_merge` with `requestId` and `expectedHeadSha` to enable auto-merge / merge-when-pipeline-succeeds / enter the merge queue (when `integration.autoMerge` is granted).
+   - `status` to confirm `isDraft: false`, `code-review` success on `headSha`, and active auto-merge or merge queue state.

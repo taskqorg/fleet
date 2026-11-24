@@ -1,16 +1,17 @@
-// Delivery work-area panels: overview (needs a look, moving now, pace) and pull request detail.
-import { createMemo, For, Show } from 'solid-js';
+// Delivery work-area panels: overview (needs a look, moving now, pace) and pull/merge request detail.
+import { createMemo, createSignal, For, Show } from 'solid-js';
 import {
   EntityCode, StateBadge, AgeChip, Ago, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button,
   Choice, Empty, ErrorBanner, Skeleton, Latest, DayChart, ShareBar, NormBar, VirtualList, catalogueRow, count, states, capOf, day,
   type DayMark, type SharePart,
 } from '../../../packages/ui/src/index.ts';
+import { op } from '../api.ts';
 import { useOp } from '../store.ts';
 import { DELIVERY_FAILED } from '../system-views.ts';
 import {
-  MIN, DAY, FLEET, ORDER, DONE, RANGES, uiOnly, releaseLabel, idOf, ms, fmt, kept, failed, q, sec,
+  MIN, DAY, FLEET, ORDER, DONE, RANGES, uiOnly, releaseLabel, idOf, providerLabel, ms, fmt, kept, failed, q, sec,
   alertOf, unrecorded, due, doneAt, stageMs, totalMark,
-  type Stage, type Item, type History, type HistoryPr, type Regressions, type Norms, type Bucket,
+  type Stage, type Item, type PublishingCapability, type History, type HistoryPr, type Regressions, type Norms, type Bucket,
 } from './delivery-model.tsx';
 
 const FAILED = DELIVERY_FAILED as Stage[];
@@ -155,13 +156,16 @@ function Pace(props: {
   );
 }
 
-/** The opened pull request: its stages on one time axis, queue runs, release and installs per host (the fleet repository
- *  has a recorded history; other repositories show what the current read knows). */
-export function PrDetail(props: { id: string; item?: Item; now: number; norms: Norms; onClose: () => void }) {
+/** The opened pull/merge request: its stages on one time axis, publishing state/actions, queue runs, release and installs per host. */
+export function PrDetail(props: { id: string; item?: Item; capability?: PublishingCapability; now: number; norms: Norms; onReload?: () => void; onClose: () => void }) {
   const parts = createMemo(() => {
-    const [owner, repo, num] = props.id.split('~');
-    return { owner, repo, number: Number(num), fleet: `${owner}/${repo}` === FLEET };
+    const idx = props.id.lastIndexOf('~');
+    const repoSlug = idx > 0 ? props.id.slice(0, idx).replaceAll('~', '/') : props.id;
+    const number = idx > 0 ? Number(props.id.slice(idx + 1)) : NaN;
+    return { repoSlug, number, fleet: repoSlug === FLEET };
   });
+  const [busyAction, setBusyAction] = createSignal<string | null>(null);
+  const [actionError, setActionError] = createSignal<string | null>(null);
   const hd = useOp('delivery_history', () => (parts().fleet ? { number: parts().number } : null), { every: 600000 });
   const h = createMemo(() => ({ data: kept(hd), error: failed(hd), loading: parts().fleet && hd.data === null && !failed(hd) }));
   const x = createMemo(() => h().data?.prs.find(p => p.number === parts().number));
@@ -185,17 +189,73 @@ export function PrDetail(props: { id: string; item?: Item; now: number; norms: N
   const ended = createMemo(() => known().map(([l, s, a, b], i) => [l, s, a, b ?? known().slice(i + 1).map(k => k[2]).find(Boolean)] as const));
   const t0 = createMemo(() => ms(x()?.opened ?? props.item?.opened ?? props.item?.since));
   const url = createMemo(() => props.item?.url || x()?.url);
+  const isOpen = createMemo(() => {
+    const it = props.item;
+    return !!it && !DONE.includes(it.stage) && it.stage !== 'merged' && it.stage !== 'releasing' && it.stage !== 'installing';
+  });
+  const canAction = (name: string) => !!props.capability?.publicationSupported && props.capability.supportedActions.includes(name);
+  const runPub = async (kind: 'mark_ready' | 'request_merge' | 'cancel_merge_request') => {
+    const it = props.item;
+    if (!it || busyAction()) return;
+    setBusyAction(kind);
+    setActionError(null);
+    const reqId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ui-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const body = {
+      requestId: reqId,
+      projectId: it.projectId,
+      repo: it.repo,
+      number: it.number,
+      branch: it.branch ?? undefined,
+      expectedHeadSha: it.headSha ?? undefined,
+    };
+    try {
+      if (kind === 'mark_ready') await op('publishing_mark_ready', body);
+      else if (kind === 'request_merge') await op('publishing_request_merge', body);
+      else await op('publishing_cancel_merge_request', body);
+      props.onReload?.();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyAction(null);
+    }
+  };
   return <article class="detail" data-ui="detail" tabindex={-1} aria-label={title()}>
-    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => props.onClose()} /><EntityCode code={`${parts().owner}/${parts().repo}#${parts().number}`} id={props.id} kind="pull_request" /><span class="grow" />
-      <Show when={url()}>{u => <Button label="Open on GitHub" icon="external-link" iconOnly onClick={() => window.open(u(), '_blank', 'noopener')} />}</Show></header>
+    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={() => props.onClose()} /><EntityCode code={`${parts().repoSlug}#${parts().number}`} id={props.id} kind="pull_request" /><span class="grow" />
+      <Show when={url()}>{u => <Button label={props.item?.provider === 'gitlab' || props.item?.kind === 'merge_request' ? 'Open on GitLab' : 'Open on GitHub'} icon="external-link" iconOnly onClick={() => window.open(u(), '_blank', 'noopener')} />}</Show></header>
     <h2 class="detail-title">{title()}</h2>
     <div class="state-line">
       <Show when={props.item}>{it => <StateBadge family="delivery" state={it().stage} />}</Show>
+      <Show when={props.item}>{it => <span class="muted">{providerLabel(it().provider, it().kind)}{it().host && it().host !== 'github.com' ? ` (${it().host})` : ''}</span>}</Show>
       <Show when={x()?.author}>{author => <span class="muted">by {author()}</span>}</Show>
       <Show when={t0() > 0}><AgeChip t={t0()} /></Show>
       <Show when={rel()}>{r => <EntityCode code={releaseLabel(r())} id={r()} kind="release" />}</Show>
     </div>
     <div class="stack-pad">
+      <Show when={actionError()}>{err => <ErrorBanner text={`Publishing action failed: ${err()}`} />}</Show>
+      <Show when={props.item}>{it => (
+        <DetailSection title="Publishing">
+          <KvRow icon="git-merge" label="Target" meta={it().baseBranch ? `${it().branch ?? 'head'} → ${it().baseBranch}` : (it().branch ?? undefined)} value={<code>{providerLabel(it().provider, it().kind)}</code>} />
+          <Show when={it().headSha}>{sha => <KvRow icon="circle-check" label="Head commit" value={<code class="mono">{sha()}</code>} />}</Show>
+          <Show when={typeof it().isDraft === 'boolean' || typeof it().autoMergeEnabled === 'boolean'}>
+            <KvRow icon="git-pull-request" label={it().isDraft ? 'Draft' : 'Ready for review'}
+              meta={it().autoMergeEnabled ? `Auto-merge active${it().mergeMethod ? ` (${it().mergeMethod})` : ''}` : 'Auto-merge inactive'}
+              value={isOpen() ? <span class="acts">
+                <Show when={it().isDraft && canAction('mark_ready')}>
+                  <Button label={busyAction() === 'mark_ready' ? 'Marking ready…' : 'Mark ready'} kind="primary" busy={busyAction() === 'mark_ready'} disabledReason={busyAction() ? 'Action in progress' : undefined} onClick={() => runPub('mark_ready')} />
+                </Show>
+                <Show when={!it().isDraft && !it().autoMergeEnabled && canAction('request_merge')}>
+                  <Button label={busyAction() === 'request_merge' ? 'Requesting merge…' : 'Request merge'} kind="primary" busy={busyAction() === 'request_merge'} disabledReason={busyAction() ? 'Action in progress' : undefined} onClick={() => runPub('request_merge')} />
+                </Show>
+                <Show when={it().autoMergeEnabled && canAction('cancel_merge_request')}>
+                  <Button label={busyAction() === 'cancel_merge_request' ? 'Cancelling…' : 'Cancel merge'} busy={busyAction() === 'cancel_merge_request'} disabledReason={busyAction() ? 'Action in progress' : undefined} onClick={() => runPub('cancel_merge_request')} />
+                </Show>
+              </span> : undefined} />
+          </Show>
+          <Show when={props.capability && !props.capability.publicationSupported && props.capability.reason}>
+            {reason => <p class="muted type-sm">{reason()}</p>}
+          </Show>
+        </DetailSection>
+      )}</Show>
       <Show when={h().error && !h().data}><ErrorBanner text={`History did not load: ${h().error}`} /></Show>
       <Show when={x()} fallback={
         <Show when={props.item} fallback={

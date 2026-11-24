@@ -16,9 +16,9 @@ import { useUrlView } from '../url.ts';
 import { DEFAULT_DELIVERY_GROUP, DEFAULT_DELIVERY_SORT, type View } from '../../../packages/view-url/view-url.ts';
 import { scopeIds, prefs, prefsRead } from '../prefs.ts';
 import {
-  FLEET, ORDER, releaseLabel, idOf, deliveryExtra, bucketsOf, doneOnly, normKey, ms,
+  FLEET, ORDER, releaseLabel, idOf, providerLabel, deliveryExtra, bucketsOf, doneOnly, normKey, ms,
   kept, missing, failed, alertOf, fromHistory,
-  type Stage, type Item, type History, type Baseline, type Regressions, type Row, type Norms, type DeliveryExtra,
+  type Stage, type Item, type PublishingCapability, type History, type Baseline, type Regressions, type Row, type Norms, type DeliveryExtra,
 } from './delivery-model.tsx';
 import { Overview, PrDetail } from './delivery-panels.tsx';
 
@@ -37,7 +37,7 @@ export function Delivery(props: { id?: string }) {
     return () => clearInterval(t);
   });
   const now = () => tick();
-  const status = useOp('delivery_status', () => (prefsRead.value ? scope() : null), { every: 300000 });
+  const status = useOp('publishing_status', () => (prefsRead.value ? scope() : null), { every: 300000 });
   // The norms: every stage's P50 and P90 over the last 14 days (the fleet repository's history); 404 is no history kept.
   const baseDoc = useOp('delivery_baseline', () => (prefsRead.value ? { days: 14 } : null), { every: 600000 });
   const base = createMemo<Baseline | null>(() => kept(baseDoc));
@@ -134,6 +134,11 @@ export function Delivery(props: { id?: string }) {
     const h = hist();
     return items().find(it => idOf(it) === id) ?? releaseRows().find(it => idOf(it) === id) ?? (id.startsWith('taskqorg~fleet~') ? h?.prs.filter(x => x.number === Number(id.split('~')[2])).map(x => fromHistory(x, h.installsFrom))[0] : undefined);
   });
+  const openCap = createMemo<PublishingCapability | undefined>(() => {
+    const it = open();
+    if (!it) return undefined;
+    return data()?.capabilities.find(c => c.projectId === it.projectId && c.repo.toLowerCase() === it.repo.toLowerCase());
+  });
   const p = createMemo(() => (keep().at ? pace().picked : null));
 
   const list = <>
@@ -150,9 +155,10 @@ export function Delivery(props: { id?: string }) {
       listLabel="Pull requests" title={r => r.it.title || `#${r.it.number}`}
       groupIcon={(g, k) => g === 'stage' && k in states.delivery ? states.delivery[k as Stage].icon : 'folder-open'} groupTone={(g, k) => g === 'stage' && k in states.delivery ? states.delivery[k as Stage].tone : 'neutral'}
       state={r => <StateBadge family="delivery" state={r.it.stage} compact />} actions={() => []}
-      menu={r => [{ label: 'Open on GitHub', icon: actions.open, onClick: () => window.open(r.it.url, '_blank', 'noopener') }]}
+      menu={r => [{ label: r.it.provider === 'gitlab' || r.it.kind === 'merge_request' ? 'Open on GitLab' : 'Open on GitHub', icon: actions.open, onClick: () => window.open(r.it.url, '_blank', 'noopener') }]}
       empty={<Empty text={p() ? 'No pull requests merged then.' : page.filtered ? 'No pull requests match.' : incomplete() ? 'Unavailable. GitHub data is incomplete.' : 'No pull requests in flight.'} />}
       facts={r => <RowFacts>
+        {r.it.provider === 'gitlab' && <Fact text={`${providerLabel(r.it.provider, r.it.kind)}${r.it.host && r.it.host !== 'gitlab.com' ? ` · ${r.it.host}` : ''}`} tip="Provider" />}
         {r.it.repo !== FLEET && <Fact text={r.it.repo} tip="Repository" />}
         {r.it.release && <EntityCode code={releaseLabel(r.it.release)} id={r.it.release} kind="release" />}
         <Fact tip={`${states.delivery[r.it.stage].label} for`}><AgeChip t={ms(r.it.since)} alertAfter={alertOf(norms(), r.it)} alertLabel="past the stage's P90" /></Fact>
@@ -162,5 +168,5 @@ export function Delivery(props: { id?: string }) {
     idle={<Overview now={now()} items={items()} incomplete={incomplete()} norms={norms()} hist={hist()} regressions={regressions()} histError={failed(histDoc)} fleetShown={fleetShown() && !missing(histDoc)}
       range={pace().range} buckets={pace().buckets} picked={p()} href={it => page.href({ focus: idOf(it) })} onOpen={go}
       onRange={r => setPace({ range: r, at: undefined })} onPick={k => setPace({ at: pace().ex.at === k ? undefined : k })} />}
-    detail={props.id ? <Show when={props.id} keyed>{id => <PrDetail id={id} item={open()} now={now()} norms={norms()} onClose={() => go()} />}</Show> : undefined} />;
+    detail={props.id ? <Show when={props.id} keyed>{id => <PrDetail id={id} item={open()} capability={openCap()} now={now()} norms={norms()} onReload={() => status.reload()} onClose={() => go()} />}</Show> : undefined} />;
 }

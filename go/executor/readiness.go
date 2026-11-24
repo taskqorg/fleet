@@ -232,7 +232,13 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 		checks = append(checks, check("coding-tools", host, "managed-account-unavailable"))
 	}
 	if (len(execution.Profiles) == 0 || len(codingHarnesses) > 0) && execution.Forge != nil && *execution.Forge {
-		checks = append(checks, check("forge", host, forgeReadiness(primaryRemote(project))))
+		var forgeErr string
+		if repo := gitRepo(project, nil); repo != nil {
+			forgeErr = publishingReadiness(str0(repo.Remote), str0(repo.Forge), str0(repo.Host))
+		} else {
+			forgeErr = "forge-repository-not-granted"
+		}
+		checks = append(checks, check("forge", host, forgeErr))
 	}
 	for _, name := range sortedKeysOf(accounts) {
 		a := accounts[name]

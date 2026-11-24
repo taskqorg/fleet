@@ -124,6 +124,15 @@ A host command issued before cancellation may already be in flight. Withhold fur
 
 Neither pause nor cancellation rolls back completed external effects. Rollback requires a separate decision.
 
+#### Project publishing
+
+Fleet models repository change publication through one shared **Publishing** contract (`project-publishing` / `publishing_*`) across GitHub pull requests and GitLab merge requests, including self-hosted GitLab.
+
+- **Distinct lifecycle stages:** separate `publish draft` (push branch and open or reuse draft PR/MR), `code review` (verify exact-SHA review evidence), `ready`, `merge` (request or cancel provider merge), `release` and `host landing`.
+- **Distinct boundaries:** keep ordinary Git access (deploy keys), read-only provider facts (PR/MR, checks, releases) and publication support (`project-publishing` authority) separate.
+- **Authority and secret isolation:** publication authority is the intersection of host capability, project repo/profile grant and active execution branch; credentials stay inside host mediators and never reach harnesses or tool results.
+- **Policy and fencing:** mutations carry `requestId`, preserve `sourceExecutionId` provenance, fence against moved heads via `expectedHeadSha`, and enforce project review, CI and merge policy without admin bypass.
+
 ### Agent execution
 
 Run and control agents through their harnesses under the [runtime boundary](docs/runtime-integration.md). Preserve supported harness capabilities, including images, history and session controls, as harnesses evolve.

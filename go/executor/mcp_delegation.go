@@ -32,7 +32,7 @@ var (
 		}
 		return out
 	}()
-	agentTools    = []string{"session_start", "session_presets", "session_deliver", "session_transition", "session_fork", "session_resume", "session_handoffs", "session_rename", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status"}
+	agentTools    = []string{"session_start", "session_presets", "session_transition", "session_fork", "session_resume", "session_handoffs", "session_rename", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status"}
 	artifactTools = []string{"artifact_save", "artifact_list", "artifact_get"}
 )
 
@@ -593,7 +593,7 @@ func mcpRun(args []string) error {
 	var ctx any
 	var db *sql.DB
 	switch server {
-	case "design-rules", "project-forge":
+	case "design-rules", "project-forge", "project-publishing":
 		s, err := arg(1, "context")
 		if err != nil {
 			return err
@@ -679,6 +679,9 @@ func mcpRun(args []string) error {
 	case "project-forge":
 		srv = mcpserve.Stdio{Name: "fleet-project-forge", Version: "1", Tools: func() any { return forgeTools },
 			Call: func(name string, args json.RawMessage) (any, error) { return forgeCall(name, decRaw(args), ctx) }}
+	case "project-publishing":
+		srv = mcpserve.Stdio{Name: "fleet-project-publishing", Version: "1", Tools: func() any { return publishingTools },
+			Call: func(name string, args json.RawMessage) (any, error) { return publishingCall(name, decRaw(args), ctx) }}
 	}
 	return srv.Serve(os.Stdin, os.Stdout)
 }

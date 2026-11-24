@@ -153,7 +153,7 @@ export const workspaces = [
   { id: 'spend', label: 'Spend', icon: 'gauge', group: 'Work', app: true, nav: true },
   { id: 'bots', label: 'Bots', icon: 'bot', group: 'Work', app: true, nav: false },
   { id: 'results', label: 'Results', icon: 'file-text', group: 'Work', app: true, nav: false },
-  { id: 'delivery', label: 'Delivery', icon: 'git-merge', group: 'Work', app: true, nav: false },
+  { id: 'delivery', label: 'Publishing', icon: 'git-merge', group: 'Work', app: true, nav: false },
   { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', group: 'System', app: true, nav: true },
   { id: 'agents', label: 'Library', icon: 'rows-3', group: 'System', app: true, nav: true },
   { id: 'hosts', label: 'Infrastructure', icon: 'panels-top-left', group: 'System', app: true, nav: true },

@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Coordinator operations for unified project publishing (GitHub PR + GitLab MR parity).",
+  "operations": {
+    "publishing_capabilities": {
+      "read": true,
+      "errors": [400, 404],
+      "auth": "person",
+      "agent": "tool",
+      "description": "Inspect project publishing capabilities per bound repository: detected provider (github or gitlab), host, repository slug, branch/integration policy, eligible hosts, provider facts readiness and publication support."
+    },
+    "publishing_status": {
+      "read": true,
+      "errors": [400, 404],
+      "auth": "person",
+      "agent": "tool",
+      "changes": ["delivery:delivery-state:"],
+      "description": "Read unified publishing status across visible projects (GitHub pull requests and GitLab merge requests, including self-hosted GitLab): lifecycle stage, checks, review state, merge readiness, releases, host landing and project capabilities."
+    },
+    "publishing_publish_draft": {
+      "read": false,
+      "long": true,
+      "errors": [400, 403, 404, 409],
+      "auth": "person",
+      "agent": "bound:session",
+      "description": "Push the bound execution branch and open or reuse a draft pull request (GitHub) or draft merge request (GitLab). Enforces repository, branch, host and profile authority plus optional expectedHeadSha fencing."
+    },
+    "publishing_record_code_review": {
+      "read": false,
+      "long": true,
+      "errors": [400, 403, 404, 409],
+      "auth": "person",
+      "agent": "bound:session",
+      "description": "Verify stored Fleet review evidence referencing expectedHeadSha, write an audit row, and post and read back the code-review commit status on the provider (GitHub or GitLab)."
+    },
+    "publishing_mark_ready": {
+      "read": false,
+      "long": true,
+      "errors": [400, 403, 404, 409],
+      "auth": "person",
+      "agent": "bound:session",
+      "description": "Mark a draft pull request or merge request ready for review idempotently, fenced by optional expectedHeadSha."
+    },
+    "publishing_request_merge": {
+      "read": false,
+      "long": true,
+      "errors": [400, 403, 404, 409],
+      "auth": "person",
+      "agent": "bound:session",
+      "description": "Enable provider auto-merge / merge-when-pipeline-succeeds (or enqueue in merge queue) using project mergeMethod and autoMerge authority without admin bypass, fenced by optional expectedHeadSha."
+    },
+    "publishing_cancel_merge_request": {
+      "read": false,
+      "long": true,
+      "errors": [400, 403, 404, 409],
+      "auth": "person",
+      "agent": "bound:session",
+      "description": "Cancel an active auto-merge request, merge-when-pipeline-succeeds flag, or merge queue entry idempotently, fenced by optional expectedHeadSha."
+    }
+  },
+  "$defs": {
+    "PublishingProvider": {
+      "type": "string",
+      "enum": ["github", "gitlab"]
+    },
+    "PublishingKind": {
+      "type": "string",
+      "enum": ["pull_request", "merge_request"]
+    },
+    "MergeMethod": {
+      "type": "string",
+      "enum": ["squash", "merge", "rebase"]
+    },
+    "PublishingCapabilitiesRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "projectId": {"type": "string"},
+        "repoId": {"type": "string"},
+        "sessionId": {"type": "string"},
+        "executionId": {"type": "string"}
+      }
+    },
+    "PublishingCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projectId",
+        "repoId",
+        "provider",
+        "host",
+        "repo",
+        "defaultBranch",
+        "forgeEnabled",
+        "autoMergeGranted",
+        "mergeMethod",
+        "eligibleHosts",
+        "providerFactsConfigured",
+        "publicationSupported",
+        "supportedActions"
+      ],
+      "properties": {
+        "projectId": {"type": "string"},
+        "repoId": {"type": "string"},
+        "provider": {"$ref": "#/$defs/PublishingProvider"},
+        "host": {"type": "string"},
+        "repo": {"type": "string"},
+        "remote": {"type": "string"},
+        "defaultBranch": {"type": "string"},
+        "gitConnection": {"type": "string"},
+        "forgeEnabled": {"type": "boolean"},
+        "autoMergeGranted": {"type": "boolean"},
+        "mergeMethod": {"type": "string"},
+        "eligibleHosts": {"type": "array", "items": {"type": "string"}},
+        "providerFactsConfigured": {"type": "boolean"},
+        "publicationSupported": {"type": "boolean"},
+        "supportedActions": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string"}
+      }
+    },
+    "PublishingCapabilitiesReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repos"],
+      "properties": {
+        "projectId": {"type": "string"},
+        "repos": {"type": "array", "items": {"$ref": "#/$defs/PublishingCapability"}}
+      }
+    },
+    "PublishingStatusRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "projectId": {"type": "string"},
+        "projectIds": {"type": "array", "items": {"type": "string"}},
+        "excludeProjectIds": {"type": "array", "items": {"type": "string"}},
+        "repoId": {"type": "string"},
+        "branch": {"type": "string"},
+        "sessionId": {"type": "string"},
+        "executionId": {"type": "string"}
+      }
+    },
+    "PublishingRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projectId",
+        "provider",
+        "host",
+        "repo",
+        "kind",
+        "number",
+        "title",
+        "url",
+        "stage",
+        "since"
+      ],
+      "properties": {
+        "projectId": {"type": "string"},
+        "repoId": {"type": "string"},
+        "provider": {"$ref": "#/$defs/PublishingProvider"},
+        "host": {"type": "string"},
+        "repo": {"type": "string"},
+        "kind": {"$ref": "#/$defs/PublishingKind"},
+        "number": {"type": "integer"},
+        "title": {"type": "string"},
+        "url": {"type": "string"},
+        "branch": {"type": "string"},
+        "baseBranch": {"type": "string"},
+        "headSha": {"type": "string"},
+        "isDraft": {"type": "boolean"},
+        "state": {"type": "string"},
+        "stage": {"type": "string"},
+        "since": {"type": "string"},
+        "opened": {"type": "string"},
+        "merged": {"type": "string"},
+        "release": {"type": "string"},
+        "checksState": {"type": "string"},
+        "reviewState": {"type": "string"},
+        "mergeable": {"type": "string"},
+        "autoMergeEnabled": {"type": "boolean"},
+        "mergeMethod": {"type": "string"},
+        "sourceExecutionId": {"type": "string"}
+      }
+    },
+    "PublishingStatusReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "items", "records", "capabilities", "samples", "landing"],
+      "properties": {
+        "refreshedAt": {"type": ["string", "null"]},
+        "source": {"$ref": "ops-executions.schema.json#/$defs/DeliverySource"},
+        "error": {"type": "string"},
+        "items": {"type": "array", "items": {"$ref": "ops-executions.schema.json#/$defs/DeliveryItem"}},
+        "records": {"type": "array", "items": {"$ref": "#/$defs/PublishingRecord"}},
+        "capabilities": {"type": "array", "items": {"$ref": "#/$defs/PublishingCapability"}},
+        "samples": {"type": "array", "items": {"$ref": "ops-executions.schema.json#/$defs/DeliverySample"}},
+        "landing": {"type": "integer"}
+      }
+    },
+    "PublishingPublishDraftRequest": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["requestId", "title", "body"],
+      "properties": {
+        "requestId": {"type": "string"},
+        "projectId": {"type": "string"},
+        "repoId": {"type": "string"},
+        "sourceExecutionId": {"type": "string"},
+        "expectedHeadSha": {"type": "string"},
+        "title": {"type": "string"},
+        "body": {"type": "string"}
+      }
+    },
+    "PublishingPublishDraftReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "provider", "host", "repo", "branch", "baseBranch", "kind", "number", "url", "headSha", "isDraft", "existing"],
+      "properties": {
+        "requestId": {"type": "string"},
+        "provider": {"$ref": "#/$defs/PublishingProvider"},
+        "host": {"type": "string"},
+        "repo": {"type": "string"},
+        "branch": {"type": "string"},
+        "baseBranch": {"type": "string"},
+        "kind": {"$ref": "#/$defs/PublishingKind"},
+        "number": {"type": "integer"},
+        "url": {"type": "string"},
+        "headSha": {"type": "string"},
+        "isDraft": {"type": "boolean"},
+        "existing": {"type": "boolean"},
+        "sourceExecutionId": {"type": "string"}
+      }
+    },
+    "PublishingRecordCodeReviewRequest": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["requestId", "expectedHeadSha", "artifactId", "description"],
+      "properties": {
+        "requestId": {"type": "string"},
+        "projectId": {"type": "string"},
+        "repoId": {"type": "string"},
+        "sourceExecutionId": {"type": "string"},
+        "expectedHeadSha": {"type": "string"},
+        "artifactId": {"type": "string"},
+        "description": {"type": "string"}
+      }
+    },
+    "PublishingRecordCodeReviewReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "verified",
+        "provider",
+        "host",
+        "repo",
+        "branch",
+        "kind",
+        "headSha",
+        "context",
+        "state",
+        "description",
+        "artifactId",
+        "artifactSha256",
+        "providerActor",
+        "fleetActor",
+        "independentReview",
+        "readbackVerified"
+      ],
+      "properties": {
+        "requestId": {"type": "string"},
+        "verified": {"type": "boolean"},
+        "provider": {"$ref": "#/$defs/PublishingProvider"},
+        "host": {"type": "string"},
+        "repo": {"type": "string"},
+        "branch": {"type": "string"},
+        "kind": {"$ref": "#/$defs/PublishingKind"},
+        "number": {"type": "integer"},
+        "url": {"type": "string"},
+        "headSha": {"type": "string"},
+        "context": {"type": "string"},
+        "state": {"type": "string"},
+        "description": {"type": "string"},
+        "artifactId": {"type": "string"},
+        "artifactSha256": {"type": "string"},
+        "providerActor": {"type": "string"},
+        "fleetActor": {"type": "string"},
+        "onBehalfOf": {"type": "string"},
+        "reviewExecutionId": {"type": "string"},
+        "sourceExecutionId": {"type": "string"},
+        "independentReview": {"type": "boolean"},
+        "readbackVerified": {"type": "boolean"},
+        "targetUrl": {"type": "string"},
+        "updatedAt": {"type": "string"}
+      }
+    },
+    "PublishingMarkReadyRequest": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["requestId"],
+      "properties": {
+        "requestId": {"type": "string"},
+        "projectId": {"type": "string"},
+        "repoId": {"type": "string"},
+        "repo": {"type": "string"},
+        "number": {"type": "integer"},
+        "branch": {"type": "string"},
+        "sourceExecutionId": {"type": "string"},
+        "expectedHeadSha": {"type": "string"}
+      }
+    },
+    "PublishingMarkReadyReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "provider", "host", "repo", "branch", "kind", "number", "url", "isDraft", "requested", "alreadyReady"],
+      "properties": {
+        "requestId": {"type": "string"},
+        "provider": {"$ref": "#/$defs/PublishingProvider"},
+        "host": {"type": "string"},
+        "repo": {"type": "string"},
+        "branch": {"type": "string"},
+        "kind": {"$ref": "#/$defs/PublishingKind"},
+        "number": {"type": "integer"},
+        "url": {"type": "string"},
+        "headSha": {"type": "string"},
+        "isDraft": {"type": "boolean"},
+        "requested": {"type": "boolean"},
+        "alreadyReady": {"type": "boolean"},
+        "note": {"type": "string"}
+      }
+    },
+    "PublishingRequestMergeRequest": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["requestId"],
+      "properties": {
+        "requestId": {"type": "string"},
+        "projectId": {"type": "string"},
+        "repoId": {"type": "string"},
+        "repo": {"type": "string"},
+        "number": {"type": "integer"},
+        "branch": {"type": "string"},
+        "sourceExecutionId": {"type": "string"},
+        "expectedHeadSha": {"type": "string"},
+        "mergeMethod": {"$ref": "#/$defs/MergeMethod"}
+      }
+    },
+    "PublishingRequestMergeReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "provider", "host", "repo", "branch", "kind", "number", "url", "requested", "autoMergeEnabled"],
+      "properties": {
+        "requestId": {"type": "string"},
+        "provider": {"$ref": "#/$defs/PublishingProvider"},
+        "host": {"type": "string"},
+        "repo": {"type": "string"},
+        "branch": {"type": "string"},
+        "kind": {"$ref": "#/$defs/PublishingKind"},
+        "number": {"type": "integer"},
+        "url": {"type": "string"},
+        "headSha": {"type": "string"},
+        "requested": {"type": "boolean"},
+        "autoMergeEnabled": {"type": "boolean"},
+        "mergeMethod": {"type": "string"},
+        "note": {"type": "string"}
+      }
+    },
+    "PublishingCancelMergeRequestRequest": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["requestId"],
+      "properties": {
+        "requestId": {"type": "string"},
+        "projectId": {"type": "string"},
+        "repoId": {"type": "string"},
+        "repo": {"type": "string"},
+        "number": {"type": "integer"},
+        "branch": {"type": "string"},
+        "sourceExecutionId": {"type": "string"},
+        "expectedHeadSha": {"type": "string"}
+      }
+    },
+    "PublishingCancelMergeRequestReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "provider", "host", "repo", "branch", "kind", "number", "url", "cancelled", "alreadyInactive"],
+      "properties": {
+        "requestId": {"type": "string"},
+        "provider": {"$ref": "#/$defs/PublishingProvider"},
+        "host": {"type": "string"},
+        "repo": {"type": "string"},
+        "branch": {"type": "string"},
+        "kind": {"$ref": "#/$defs/PublishingKind"},
+        "number": {"type": "integer"},
+        "url": {"type": "string"},
+        "headSha": {"type": "string"},
+        "cancelled": {"type": "boolean"},
+        "alreadyInactive": {"type": "boolean"},
+        "note": {"type": "string"}
+      }
+    }
+  }
+}
