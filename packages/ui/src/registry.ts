@@ -12,6 +12,16 @@ export type Tone = 'attention' | 'danger' | 'running' | 'success' | 'neutral';
 export type StateDef = { label: string; tone: Tone; icon: IconName };
 
 export const states = {
+  /** The one state vocabulary of sessions, bots, tasks and runs (OR-55, controls/state-badge.md#dot-and-word); lifeOf maps the families below to it. */
+  life: {
+    working: { label: 'Working', tone: 'running', icon: 'activity' },
+    waiting: { label: 'Waiting for you', tone: 'attention', icon: 'bell' },
+    queued: { label: 'Queued', tone: 'neutral', icon: 'list-ordered' },
+    done: { label: 'Done', tone: 'success', icon: 'circle-check' },
+    failed: { label: 'Failed', tone: 'danger', icon: 'octagon-x' },
+    stopped: { label: 'Stopped', tone: 'neutral', icon: 'circle-slash' },
+    asleep: { label: 'Asleep', tone: 'neutral', icon: 'circle-dashed' },
+  },
   task: {
     queued: { label: 'Queued', tone: 'neutral', icon: 'list-ordered' },
     in_progress: { label: 'In progress', tone: 'running', icon: 'activity' },
@@ -149,6 +159,18 @@ export const states = {
 
 export type Family = keyof typeof states;
 export type StateOf<F extends Family> = keyof (typeof states)[F];
+export type Life = StateOf<'life'>;
+
+/** OR-55: today's task, execution, bot-run and session states in the one vocabulary. Synonyms never show: Succeeded and
+ *  Completed are Done, Cancelled is Stopped, Idle is Asleep, Preparing and Running are Working. A held task waits for a
+ *  person and a paused one was stopped by one. */
+export const lifeOf = {
+  task: { queued: 'queued', in_progress: 'working', waiting: 'waiting', held: 'waiting', paused: 'stopped', completed: 'done', failed: 'failed', cancelled: 'stopped' },
+  execution: { preparing: 'working', running: 'working', waiting: 'waiting', succeeded: 'done', failed: 'failed', cancelled: 'stopped' },
+  botRun: { queued: 'queued', running: 'working', waiting: 'waiting', succeeded: 'done', failed: 'failed', cancelled: 'stopped', skipped: 'stopped' },
+  session: { idle: 'asleep', preparing: 'working', running: 'working', waiting: 'waiting', succeeded: 'done', failed: 'failed', cancelled: 'stopped' },
+} as const satisfies { [F in 'task' | 'execution' | 'botRun' | 'session']: Record<StateOf<F>, Life> };
+export type LifeFamily = keyof typeof lifeOf;
 
 /** Workspaces and their navigation anchors (OR-3), in nav order: the one list of screens. `app: true` marks a screen the
  * operator app has built; `nav: true` marks a top-level sidebar section (docs/designs/fleet-ia-and-journeys.md);

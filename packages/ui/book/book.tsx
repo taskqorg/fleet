@@ -11,6 +11,8 @@ import {
 import { EntityCardDemo, CardsProvider } from './entity-cards.tsx';
 import { NAV, NAV_FOCUS } from './nav.ts';
 import { FocusDemo } from './focus-demo.tsx';
+import { HOME_BLOCKS } from './home-blocks.tsx';
+import { SESSION_BLOCKS } from './session-blocks.tsx';
 import { NOW, min, hr, tasks, mkTask, TREE, transcript, hosts, type Task } from './fixtures.ts';
 
 const BOOK_TREE: TreeNode[] = [
@@ -475,6 +477,8 @@ const SECTIONS: [string, string, string | undefined, () => JSX.Element, (() => J
   ['offline-marker', 'Offline marker', 'offline-marker', () => <div class="row"><OfflineMarker state="updating" since={NOW - 18 * hr} now={NOW} /><OfflineMarker state="offline" since={NOW - 18 * hr} now={NOW} /><OfflineMarker state="signed-out" now={NOW} /></div>, () => <>Stored data is never shown as current (D3).</>],
   ['problem-row', 'Problem row', 'problem-row', () => <ProblemDemo />],
   ['status-states', 'Loading, empty, error, stale', 'status-states', () => <StatesDemo />],
+  ...HOME_BLOCKS,
+  ...SESSION_BLOCKS,
 ];
 
 const BOOK_DOT = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGN4VqFBEmIY1TCqYfhqAAAUGoYQFRF6QAAAAABJRU5ErkJggg==';

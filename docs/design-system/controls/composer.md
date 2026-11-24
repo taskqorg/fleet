@@ -37,7 +37,7 @@ Submission metadata freezes the complete message/start body and SHA-256, includi
 
 ## Target picker
 
-*Target* ([OR-50](../owner-rules.md)). Board: [blocks.bl](../board/blocks.bl), masters `Composer` and `Target picker`.
+`TargetPicker`, passed to `Composer` as `target` ([OR-50](../owner-rules.md)). Board: [blocks.bl](../board/blocks.bl), masters `Composer` and `Target picker`. Demo: [book](../book/index.html#target-picker).
 
 On [Home](../pages/home.md) the composer starts with a target chip that picks who to talk to.
 

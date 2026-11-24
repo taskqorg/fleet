@@ -6,7 +6,7 @@
 
 **Anatomy.** Label (verb first: "Accept", "Raise capacity"), optional shortcut hint in `kbd`, optional leading registry icon. *Icon-only* buttons (OR-1) show the label as tooltip and accessible name; use them for small actions beside their subject (pin, open, download, retry). Height `size-control`; phone `size-hit-phone`.
 
-**Variants.** *Primary*: `accent` fill, at most one per area. *Default*: `surface` with `line` border. *Quiet*: text only in `accent`, for "Clear" and inline links. *Danger*: `danger-fg` text and border; used only for cancel, revoke, delete. *Toggle*: `pressed` makes a button a two-state switch (`aria-pressed`, `selected` fill while on); its label names the on state, for example the Select square and Conversations "Archived" on the list tools line.
+**Variants.** *Primary*: `accent` fill, at most one per area. *Default*: `surface` with `line` border. *Quiet*: text only in `accent`, for "Clear" and inline links. *Attention*: `attention-fg` text with an `attention-line` border, for the other choices of a [question card](decision-block.md#card). *Danger*: `danger-fg` text and border; used only for cancel, revoke, delete, and Retry after a failure (question card, bot tile). *Toggle*: `pressed` makes a button a two-state switch (`aria-pressed`, `selected` fill while on); its label names the on state, for example the Select square and Conversations "Archived" on the list tools line.
 
 **States.** Rest, hover (`hover` fill), focus (2 px `accent` ring, 2 px offset), pressed, disabled (`fg-faint`, with a tooltip saying why), busy (label stays, a small spinner replaces the icon, button disabled until the operation answers).
 

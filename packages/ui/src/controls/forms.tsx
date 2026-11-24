@@ -115,6 +115,8 @@ export type ComposerProps = {
   /** While the agent runs: the one button of an empty composer is Stop. */
   onStop?: () => void; stopReason?: string;
   longPaste?: number;
+  /** Home: who to talk to (TargetPicker), first in the box; the box is then one line (composer.md#target-picker). */
+  target?: JSX.Element;
 };
 /** Pasted text longer than this many characters becomes a .txt attachment (controls/composer.md). */
 export const LONG_PASTE = 4000;
@@ -137,6 +139,7 @@ export function Composer(props: ComposerProps) {
           onStop={props.onStop}
           stopReason={props.stopReason}
           longPaste={props.longPaste}
+          target={props.target}
         />
       )}
     </Show>
@@ -214,7 +217,7 @@ function ScopedComposer(p: ComposerProps) {
   const stop = createMemo(() => !!p.onStop && !text().trim() && !files() && !busy());
 
   return (
-    <div class={['composer', { off: !!p.disabledReason }]} data-ui="composer">
+    <div class={['composer', { off: !!p.disabledReason, 'with-target': !!p.target }]} data-ui="composer">
       <Show when={files()}>
         <div class="composer-files" role="list" aria-label="Attachments">
           <For each={attachments()}>
@@ -245,11 +248,12 @@ function ScopedComposer(p: ComposerProps) {
           </For>
         </div>
       </Show>
+      <Show when={p.target} keyed>{t => <span class="composer-target">{t}</span>}</Show>
       <Textarea
         value={text()}
         placeholder={placeholder()}
         aria-label={placeholder()}
-        rows={2}
+        rows={p.target ? 1 : 2}
         disabled={!!p.disabledReason}
         onValueChange={v => keep(v)}
         onPaste={paste}

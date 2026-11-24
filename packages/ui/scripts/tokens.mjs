@@ -4,7 +4,7 @@ export const tokens = JSON.parse(readFileSync(new URL('../tokens.json', import.m
 
 const vars = (o, p) => Object.entries(o).map(([k, v]) => `--${p ? p + '-' : ''}${k}:${v}`).join(';');
 const colorVars = (light, dark) => Object.entries(light).map(([k, v]) => `--${k}:light-dark(${v},${dark[k] ?? v})`).join(';');
-const STYLE_FILES = ['base.css', 'layout.css', 'controls.css', 'thread.css', 'tables.css', 'overlays.css'];
+const STYLE_FILES = ['base.css', 'layout.css', 'controls.css', 'thread.css', 'tables.css', 'overlays.css', 'home.css', 'session.css'];
 
 export function tokensCss(t = tokens) {
   const base = ['font', 'space', 'size', 'radius', 'elevation', 'motion'].map(g => vars(t[g], g)).join(';');

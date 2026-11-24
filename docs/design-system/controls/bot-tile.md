@@ -1,6 +1,6 @@
 # Bot tile
 
-**Code.** *Target*: `BotTile` in `packages/ui`, not built yet. Board: [blocks.bl](../board/blocks.bl), master `Bot tile`.
+**Code.** `BotTile` in `packages/ui`. Demo: [book](../book/index.html#bot-tile). Board: [blocks.bl](../board/blocks.bl), master `Bot tile`.
 
 **Purpose.** A bot with no active run on [Home](../pages/home.md): what it is for, when it was last used, and a way to wake it ([OR-50](../owner-rules.md)).
 

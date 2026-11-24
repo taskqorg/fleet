@@ -31,7 +31,7 @@
 
 ## Dot and word
 
-*Target* ([OR-55](../owner-rules.md)). Board: [blocks.bl](../board/blocks.bl), master `State`.
+`StateDot` in `packages/ui` ([OR-55](../owner-rules.md)); the vocabulary is `states.life` and the mapping `lifeOf` in `registry.ts`. Board: [blocks.bl](../board/blocks.bl), master `State`. Demo: [book](../book/index.html#state-dot).
 
 The form sessions, bots, tasks and runs share on cards, slots and the context panel: a 6 px dot and the state word in `font-size-sm`, both in the state's `-fg` tone, no fill. One word, icon and tone per state:
 
@@ -45,4 +45,4 @@ The form sessions, bots, tasks and runs share on cards, slots and the context pa
 | Stopped | neutral | hollow |
 | Asleep | neutral | dashed ring |
 
-Synonyms map to this set and never show: Succeeded and Completed are Done, Cancelled is Stopped, Idle is Asleep, Preparing and Running are Working. Until this form is built, the mapping table above stays what the app shows.
+Synonyms map to this set and never show: Succeeded and Completed are Done, Cancelled is Stopped, Idle is Asleep, Preparing and Running are Working; a held task is Waiting for you, a paused task and a skipped bot run are Stopped. Until this form is built, the mapping table above stays what the app shows.
