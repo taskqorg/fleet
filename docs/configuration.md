@@ -59,6 +59,7 @@ Every setting is per project; absent key means the default below. The coordinato
 | `integration.mode` | `pr` | `pr`: branch, pull request, merge after checks. `direct`: push to the default branch. |
 | `integration.mergeMethod` | `squash` | `squash` \| `merge` \| `rebase`. |
 | `integration.autoMerge` | `true` | Fleet merges the pull request itself after checks pass (`gh pr merge --<method>`); `false` leaves it open for a reviewer or the owner. |
+| `integration.autoAccept` | `null` | Auto-accept and complete a task once its linked PR merges and delivers (`null` follows `integration.mode == "pr" && integration.autoMerge`); `false` keeps an `acceptance` question open for a person. |
 | `integration.syncCheckoutAfterMerge` | `true` | After a verified merge each environment host fast-forwards its clean checkout (`base-updated`); see [Checkout sync](#checkout-sync). |
 | `identity` | `null` | `{name, email}` for `GIT_AUTHOR_*`/`GIT_COMMITTER_*` of agent and delivery commits. |
 | `errors.bugsink` | `[]` | Names of the Bugsink projects holding this project's errors (`^[a-z0-9][a-z0-9_-]{0,63}$`, else 400 `Invalid project setting errors.bugsink`); a Bugsink alert's problem belongs to the project that names its Bugsink project ([error tracking](designs/fleet-error-tracking.md#4-agent-read-access)). |

@@ -10,7 +10,9 @@ import (
 	"log"
 	"log/slog"
 	"math"
+	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -39,7 +41,7 @@ type taskRule struct {
 // taskTransitions: the states (schema.sql, task_state) a task may move each state to.
 // A paused task resumes or releases to its state before pause (queued, in_progress or waiting).
 var taskTransitions = map[string][]string{
-	"queued":      {"in_progress", "waiting", "paused", "cancelled"},
+	"queued":      {"in_progress", "waiting", "paused", "completed", "cancelled"},
 	"in_progress": {"in_progress", "waiting", "paused", "completed", "failed", "cancelled"},
 	"waiting":     {"in_progress", "waiting", "paused", "failed", "cancelled"},
 	"paused":      {"queued", "in_progress", "waiting", "cancelled"},
@@ -52,7 +54,7 @@ var taskRules = map[string]taskRule{
 	"first_execution": {[]string{"queued"}, "in_progress"},
 	"blocked":         {[]string{"queued", "in_progress", "waiting"}, "waiting"},
 	"unblocked":       {[]string{"waiting"}, "in_progress"},
-	"accepted":        {[]string{"in_progress"}, "completed"},
+	"accepted":        {[]string{"queued", "in_progress"}, "completed"},
 	"operator_fail":   {[]string{"in_progress", "waiting"}, "failed"},
 	"pause":           {[]string{"queued", "in_progress", "waiting"}, "paused"},
 	"hold":            {[]string{"queued"}, "paused"},
@@ -275,6 +277,15 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 				err = fail(409, "Task is still blocked")
 			}
 			return "", err
+		}
+	}
+	if trigger == "accepted" {
+		dep, err := openDependency(q, id)
+		if err != nil {
+			return "", err
+		}
+		if dep {
+			return "", fail(409, "Task has an open blocking dependency")
 		}
 	}
 	if trigger == "release" && deref(t.PauseReason) != "held" {
@@ -646,7 +657,34 @@ func acceptanceResult(q *Request, taskID string, earlier, pending, requireReport
 		if earlier {
 			return result, fail(409, "No successful earlier work result is available")
 		}
-		// Results may be supplied without a Fleet execution.
+		// Results may be supplied without a Fleet execution; required task artifacts still apply.
+		rawRules, rerr := q.db().ArtTaskArtifactRules(q.ctx(), taskID)
+		if rerr != nil && !errors.Is(rerr, pgx.ErrNoRows) {
+			return result, rerr
+		}
+		stored, serr := q.db().TaskStoredArtifactNames(q.ctx(), &taskID)
+		if serr != nil {
+			return result, serr
+		}
+		for _, row := range stored {
+			result.artifacts = append(result.artifacts, row.ID)
+		}
+		for _, p := range jsonStrings(rawRules) {
+			g := glob(p)
+			matched := false
+			for _, row := range stored {
+				if g.MatchString(row.Name) {
+					matched = true
+					if !slices.Contains(result.required, row.ID) {
+						result.required = append(result.required, row.ID)
+					}
+				}
+			}
+			if !matched {
+				return taskAcceptanceResult{}, fail(409, "Required artifacts are unavailable for this execution")
+			}
+		}
+		return result, nil
 	} else {
 		if err != nil {
 			return result, err
@@ -701,6 +739,10 @@ type acceptTask struct {
 // requestAcceptance asks the task's acceptance question with the given artifacts (default: its stored originals). An open
 // acceptance question matching the exact execution and artifacts is reused and updated; obsolete ones are withdrawn.
 func requestAcceptance(q *Request, t acceptTask, artifactIDs []string, text *string, askedBy string) (string, error) {
+	return requestAcceptanceWithDelivery(q, t, artifactIDs, text, askedBy, nil)
+}
+
+func requestAcceptanceWithDelivery(q *Request, t acceptTask, artifactIDs []string, text *string, askedBy string, delivery *deliveryMergedPR) (string, error) {
 	pending, err := q.db().TaskHasPendingWork(q.ctx(), &t.ID)
 	if err != nil {
 		return "", err
@@ -730,7 +772,11 @@ func requestAcceptance(q *Request, t acceptTask, artifactIDs []string, text *str
 		if len(question.Data) > 0 {
 			decodeErr = json.Unmarshal(question.Data, &data)
 		}
-		if decodeErr == nil && deref(question.ExecutionID) == selected.id && data.EarlierResult == t.EarlierResult && slices.Equal(data.ArtifactIds, ids) {
+		if decodeErr == nil && deref(question.ExecutionID) == selected.id && data.EarlierResult == t.EarlierResult &&
+			slices.Equal(data.ArtifactIds, ids) && sameDeliveryRef(data.Delivery, delivery) {
+			if delivery != nil && deref(question.AskedBy) == deliveryActor {
+				return question.ID, nil
+			}
 			return question.ID, q.db().TaskAcceptanceAskAgain(q.ctx(), db.TaskAcceptanceAskAgainParams{ID: question.ID, Text: body, ArtifactIds: jsonBytes(ids), AskedBy: &askedBy})
 		}
 		if err := questionsWithdraw(q, []string{question.ID}); err != nil {
@@ -738,9 +784,10 @@ func requestAcceptance(q *Request, t acceptTask, artifactIDs []string, text *str
 		}
 	}
 	data := struct {
-		ArtifactIds   []string `json:"artifactIds"`
-		EarlierResult *bool    `json:"earlierResult"`
-	}{ArtifactIds: ids}
+		ArtifactIds   []string          `json:"artifactIds"`
+		EarlierResult *bool             `json:"earlierResult"`
+		Delivery      *deliveryMergedPR `json:"delivery,omitempty"`
+	}{ArtifactIds: ids, Delivery: delivery}
 	if t.EarlierResult {
 		data.EarlierResult = &t.EarlierResult
 	}
@@ -750,9 +797,20 @@ func requestAcceptance(q *Request, t acceptTask, artifactIDs []string, text *str
 
 // questionData: the fields of a question's data the answer path reads.
 type questionData struct {
-	EarlierResult bool     `json:"earlierResult"`
-	Idle          bool     `json:"idle"`
-	ArtifactIds   []string `json:"artifactIds"`
+	EarlierResult bool              `json:"earlierResult"`
+	Idle          bool              `json:"idle"`
+	ArtifactIds   []string          `json:"artifactIds"`
+	Delivery      *deliveryMergedPR `json:"delivery,omitempty"`
+}
+
+func sameDeliveryRef(a, b *deliveryMergedPR) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Repo == b.Repo && a.Number == b.Number && a.HeadSHA == b.HeadSHA && a.Release == b.Release && a.Stage == b.Stage
 }
 
 // answerQuestion: one answer wins; an acceptance completes (or keeps in progress) its task, other answers unblock it.
@@ -1462,11 +1520,14 @@ func init() {
 			} else if _, err := taskTransition(q, id, trig, ""); err != nil {
 				return none, err
 			}
-			if trig == "resume" { // runs may have ended or a decision been withdrawn while it was paused
+			if trig == "resume" { // runs may have ended, a decision been withdrawn, or a linked PR delivered while paused
 				if _, err := settleTask(q, id, ""); err != nil {
 					return none, err
 				}
 				if _, err := settleIdleTask(q, id); err != nil {
+					return none, err
+				}
+				if _, err := reconcileTaskDeliveryFromCache(q, id); err != nil {
 					return none, err
 				}
 			}
@@ -1510,6 +1571,11 @@ func init() {
 			} else if _, err := taskTransition(q, r.TaskId, x.trig, ""); err != nil {
 				return contract.TaskDetail{}, err
 			}
+			if x.trig == "release" {
+				if _, err := reconcileTaskDeliveryFromCache(q, r.TaskId); err != nil {
+					return contract.TaskDetail{}, err
+				}
+			}
 			return taskDetail(q, r.TaskId)
 		})
 	}
@@ -1530,7 +1596,23 @@ func init() {
 			return none, err
 		}
 		if t.State != db.TaskStateInProgress {
-			return none, fail(409, "Task is not in progress")
+			if t.State != db.TaskStateQueued || q.agent != "" {
+				return none, fail(409, "Task is not in progress")
+			}
+			hasExec, err := q.db().TaskHasPrimaryExecution(q.ctx(), &id)
+			if err != nil {
+				return none, err
+			}
+			if hasExec {
+				return none, fail(409, "Task is not in progress")
+			}
+			dep, err := openDependency(q, id)
+			if err != nil {
+				return none, err
+			}
+			if dep {
+				return none, fail(409, "Task has an open blocking dependency")
+			}
 		}
 		qid, err := requestAcceptance(q, acceptTask{ID: t.ID, Title: t.Title, ProjectID: t.ProjectID}, r.ArtifactIds, r.Text, actor(q, "operator"))
 		if err != nil {
@@ -1727,4 +1809,467 @@ func findQuestion(q *Request, taskID, id string) (any, error) {
 		return nil, err
 	}
 	return rs[0], nil
+}
+
+const deliveryActor = "fleet:delivery"
+
+var (
+	ghPRRefPattern          = regexp.MustCompile(`(?i)https?://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(\d+)`)
+	ghShortRefPattern       = regexp.MustCompile(`(?i)\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)\b`)
+	landingWaitPattern      = regexp.MustCompile(`(?im)^\s*(?:[-*]\s*)?landing:\s*wait\b`)
+	closingRefLinePattern   = regexp.MustCompile(`(?i)(?:closes?|fixes?|resolves?|implements?|completes?)`)
+	nonClosingPrefixPattern = regexp.MustCompile(`(?i)\b(?:follow[- ]up|unlike|previous|prior|see also|related|supersedes|replaces|earlier)\b`)
+)
+
+type deliveryProjectPolicy struct {
+	repos      map[string]bool
+	autoAccept bool
+}
+
+type taskCompletionReq struct {
+	RequireHumanAcceptance *bool  `json:"requireHumanAcceptance"`
+	ManualAcceptance       *bool  `json:"manualAcceptance"`
+	AutoAccept             *bool  `json:"autoAccept"`
+	Acceptance             string `json:"acceptance"`
+	PrNumber               *int64 `json:"prNumber"`
+	PullRequest            any    `json:"pullRequest"`
+	PrURL                  string `json:"prUrl"`
+	Branch                 string `json:"branch"`
+	LiveCheck              any    `json:"liveCheck"`
+}
+
+type taskDeliveryMatch struct {
+	taskID     string
+	pr         deliveryMergedPR
+	autoAccept bool
+}
+
+type deliveryPRRef struct {
+	repo   string
+	number int64
+}
+
+// reconcileDeliveredTasks reconciles open tasks against delivered pull requests after each delivery pass.
+func reconcileDeliveredTasks(ctx context.Context, a *App, delivered []deliveryMergedPR) error {
+	if len(delivered) == 0 {
+		return nil
+	}
+	var matches []taskDeliveryMatch
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
+		var err error
+		matches, err = findTaskDeliveryMatches(q, delivered)
+		return err
+	}); err != nil {
+		return err
+	}
+	for _, m := range matches {
+		if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
+			_, err := reconcileTaskDelivery(q, m.taskID, m.pr, m.autoAccept)
+			return err
+		}); err != nil {
+			log.Printf("reconcile delivered task %s: %v", m.taskID, err)
+		}
+	}
+	return nil
+}
+
+// reconcileTaskDeliveryFromCache checks whether id matches a currently cached delivered PR and reconciles it.
+func reconcileTaskDeliveryFromCache(q *Request, id string) (bool, error) {
+	delivered := snapshotDeliveredPRs()
+	if len(delivered) == 0 {
+		return false, nil
+	}
+	matches, err := findTaskDeliveryMatches(q, delivered)
+	if err != nil {
+		return false, err
+	}
+	for _, m := range matches {
+		if m.taskID == id {
+			return reconcileTaskDelivery(q, m.taskID, m.pr, m.autoAccept)
+		}
+	}
+	return false, nil
+}
+
+func findTaskDeliveryMatches(q *Request, delivered []deliveryMergedPR) ([]taskDeliveryMatch, error) {
+	candidates, err := q.db().TaskDeliveryCandidates(q.ctx())
+	if err != nil || len(candidates) == 0 {
+		return nil, err
+	}
+	taskIDs := make([]string, len(candidates))
+	for i, c := range candidates {
+		taskIDs[i] = c.ID
+	}
+	sessions, err := q.db().TaskDeliverySessions(q.ctx(), taskIDs)
+	if err != nil {
+		return nil, err
+	}
+	forgeRefs, err := q.db().TaskDeliveryForgeRefs(q.ctx(), taskIDs)
+	if err != nil {
+		return nil, err
+	}
+	evidence, err := q.db().TaskDeliveryEvidence(q.ctx(), taskIDs)
+	if err != nil {
+		return nil, err
+	}
+	sessionsByTask := map[string][]string{}
+	for _, s := range sessions {
+		ownerTask := ""
+		if s.TaskID != "" {
+			ownerTask = s.TaskID
+		} else if len(s.ExecTaskIds) == 1 {
+			ownerTask = s.ExecTaskIds[0]
+		}
+		if ownerTask != "" {
+			sessionsByTask[ownerTask] = append(sessionsByTask[ownerTask], s.SessionID)
+		}
+	}
+	forgeByTask := map[string][]db.TaskDeliveryForgeRefsRow{}
+	for _, r := range forgeRefs {
+		forgeByTask[r.TaskID] = append(forgeByTask[r.TaskID], r)
+	}
+	evByTask := map[string][]db.TaskDeliveryEvidenceRow{}
+	for _, e := range evidence {
+		evByTask[e.TaskID] = append(evByTask[e.TaskID], e)
+	}
+	policies := map[string]deliveryProjectPolicy{}
+	var matches []taskDeliveryMatch
+	for _, t := range candidates {
+		pol, ok := policies[t.ProjectID]
+		if !ok {
+			pol = deliveryPolicyForProject(q, t.ProjectID)
+			policies[t.ProjectID] = pol
+		}
+		pr, matched := matchTaskDeliveredPR(t, pol, sessionsByTask[t.ID], forgeByTask[t.ID], evByTask[t.ID], delivered)
+		if !matched {
+			continue
+		}
+		matches = append(matches, taskDeliveryMatch{
+			taskID:     t.ID,
+			pr:         pr,
+			autoAccept: taskAllowsAutoAcceptance(t, pr, pol, evByTask[t.ID]),
+		})
+	}
+	return matches, nil
+}
+
+func deliveryPolicyForProject(q *Request, projectID string) deliveryProjectPolicy {
+	out := deliveryProjectPolicy{repos: map[string]bool{}}
+	if projectID == "" {
+		return out
+	}
+	raw := projectSettingsOf(q, projectID)
+	if raw == nil {
+		return out
+	}
+	var settings struct {
+		Repos []struct {
+			Remote string `json:"remote"`
+		} `json:"repos"`
+		Integration struct {
+			Mode       string `json:"mode"`
+			AutoMerge  bool   `json:"autoMerge"`
+			AutoAccept *bool  `json:"autoAccept"`
+		} `json:"integration"`
+	}
+	jsonRoundTrip(raw, &settings)
+	for _, r := range settings.Repos {
+		if m := githubRemote.FindStringSubmatch(r.Remote); len(m) >= 3 {
+			out.repos[strings.ToLower(m[1]+"/"+m[2])] = true
+		}
+	}
+	out.autoAccept = settings.Integration.Mode == "pr" && settings.Integration.AutoMerge
+	if settings.Integration.AutoAccept != nil {
+		out.autoAccept = *settings.Integration.AutoAccept
+	}
+	return out
+}
+
+func matchTaskDeliveredPR(
+	t db.TaskDeliveryCandidatesRow,
+	pol deliveryProjectPolicy,
+	sessionIDs []string,
+	forgeRefs []db.TaskDeliveryForgeRefsRow,
+	evidence []db.TaskDeliveryEvidenceRow,
+	delivered []deliveryMergedPR,
+) (deliveryMergedPR, bool) {
+	var req taskCompletionReq
+	if len(t.CompletionRequirements) > 0 {
+		_ = json.Unmarshal(t.CompletionRequirements, &req)
+	}
+	var destRefs []deliveryPRRef
+	destRefs = append(destRefs, explicitPRRefs(t.ResultDestination)...)
+	destRefs = append(destRefs, explicitPRRefs(req.PrURL)...)
+	if s, ok := req.PullRequest.(string); ok {
+		destRefs = append(destRefs, explicitPRRefs(s)...)
+	}
+	evTexts := make([]deliveryPRRef, 0)
+	for _, ev := range evidence {
+		evTexts = append(evTexts, explicitPRRefs(ev.Text)...)
+	}
+	var matched []deliveryMergedPR
+	for _, pr := range delivered {
+		if !pr.Delivered {
+			continue
+		}
+		if prMatchesTask(t, req, pol, destRefs, sessionIDs, forgeRefs, evTexts, pr) {
+			matched = append(matched, pr)
+		}
+	}
+	if len(matched) == 0 {
+		return deliveryMergedPR{}, false
+	}
+	sort.Slice(matched, func(i, j int) bool {
+		if matched[i].MergedAt != matched[j].MergedAt {
+			return matched[i].MergedAt > matched[j].MergedAt
+		}
+		return matched[i].Number > matched[j].Number
+	})
+	return matched[0], true
+}
+
+func prMatchesTask(
+	t db.TaskDeliveryCandidatesRow,
+	req taskCompletionReq,
+	pol deliveryProjectPolicy,
+	destRefs []deliveryPRRef,
+	sessionIDs []string,
+	forgeRefs []db.TaskDeliveryForgeRefsRow,
+	evRefs []deliveryPRRef,
+	pr deliveryMergedPR,
+) bool {
+	for _, ref := range destRefs {
+		if strings.EqualFold(ref.repo, pr.Repo) && ref.number == pr.Number {
+			return true
+		}
+	}
+	if !pol.repos[strings.ToLower(pr.Repo)] {
+		return false
+	}
+	if req.PrNumber != nil && *req.PrNumber == pr.Number {
+		return true
+	}
+	switch v := req.PullRequest.(type) {
+	case float64:
+		if int64(v) == pr.Number {
+			return true
+		}
+	case string:
+		if n, err := strconv.ParseInt(strings.TrimSpace(strings.TrimPrefix(v, "#")), 10, 64); err == nil && n == pr.Number {
+			return true
+		}
+	}
+	mergedAt, err := time.Parse(time.RFC3339, pr.MergedAt)
+	mergedAfterTask := err == nil && !mergedAt.Before(t.CreatedAt)
+	if req.Branch != "" && pr.Branch == req.Branch && mergedAfterTask {
+		return true
+	}
+	for _, f := range forgeRefs {
+		if !strings.EqualFold(f.Repo, pr.Repo) {
+			continue
+		}
+		if f.HeadSha != "" && pr.HeadSHA != "" && f.HeadSha == pr.HeadSHA {
+			return true
+		}
+		if f.Branch != "" && pr.Branch != "" && f.Branch == pr.Branch && mergedAfterTask {
+			return true
+		}
+	}
+	if !mergedAfterTask {
+		return false
+	}
+	if pr.Branch != "" {
+		for _, sid := range sessionIDs {
+			if sid != "" && (pr.Branch == sid || strings.HasSuffix(pr.Branch, "/"+sid)) {
+				return true
+			}
+		}
+	}
+	for _, ref := range evRefs {
+		if strings.EqualFold(ref.repo, pr.Repo) && ref.number == pr.Number {
+			return true
+		}
+	}
+	return prTextMatchesTask(t.ID, t.Code, pr.Title, pr.Body)
+}
+
+func prTextMatchesTask(taskID, code, title, body string) bool {
+	if containsTaskRef(title, taskID, code) {
+		return true
+	}
+	if body == "" {
+		return false
+	}
+	taskLink := strings.ToLower("/tasks/" + taskID)
+	for _, line := range strings.Split(body, "\n") {
+		if nonClosingPrefixPattern.MatchString(line) {
+			continue
+		}
+		if strings.Contains(strings.ToLower(line), taskLink) {
+			return true
+		}
+		if closingRefLinePattern.MatchString(line) && containsTaskRef(line, taskID, code) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsTaskRef(text, taskID, code string) bool {
+	if text == "" {
+		return false
+	}
+	if taskID != "" && strings.Contains(strings.ToLower(text), strings.ToLower(taskID)) {
+		return true
+	}
+	if code == "" {
+		return false
+	}
+	pat := regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9-])` + regexp.QuoteMeta(code) + `(?:$|[^A-Za-z0-9-])`)
+	return pat.MatchString(text)
+}
+
+func explicitPRRefs(text string) []deliveryPRRef {
+	if text == "" {
+		return nil
+	}
+	var out []deliveryPRRef
+	for _, m := range ghPRRefPattern.FindAllStringSubmatch(text, -1) {
+		if n, err := strconv.ParseInt(m[2], 10, 64); err == nil {
+			out = append(out, deliveryPRRef{repo: m[1], number: n})
+		}
+	}
+	for _, m := range ghShortRefPattern.FindAllStringSubmatch(text, -1) {
+		if n, err := strconv.ParseInt(m[2], 10, 64); err == nil {
+			out = append(out, deliveryPRRef{repo: m[1], number: n})
+		}
+	}
+	return out
+}
+
+func taskAllowsAutoAcceptance(t db.TaskDeliveryCandidatesRow, pr deliveryMergedPR, pol deliveryProjectPolicy, evidence []db.TaskDeliveryEvidenceRow) bool {
+	if !pol.autoAccept {
+		return false
+	}
+	var req taskCompletionReq
+	if len(t.CompletionRequirements) > 0 && json.Unmarshal(t.CompletionRequirements, &req) == nil {
+		if req.RequireHumanAcceptance != nil && *req.RequireHumanAcceptance {
+			return false
+		}
+		if req.ManualAcceptance != nil && *req.ManualAcceptance {
+			return false
+		}
+		if req.AutoAccept != nil && !*req.AutoAccept {
+			return false
+		}
+		acc := strings.TrimSpace(req.Acceptance)
+		if strings.EqualFold(acc, "manual") || strings.EqualFold(acc, "human") {
+			return false
+		}
+	}
+	needsLiveCheck := landingWaitPattern.MatchString(t.ExpectedOutcome)
+	if !needsLiveCheck && req.LiveCheck != nil {
+		switch v := req.LiveCheck.(type) {
+		case bool:
+			needsLiveCheck = v
+		case string:
+			needsLiveCheck = strings.TrimSpace(v) != ""
+		default:
+			needsLiveCheck = true
+		}
+	}
+	if needsLiveCheck {
+		ts := pr.DeliveredAt
+		if ts == "" {
+			ts = pr.MergedAt
+		}
+		deliveredAt, err := time.Parse(time.RFC3339, ts)
+		if err != nil {
+			return false
+		}
+		verified := false
+		for _, ev := range evidence {
+			if ev.Source == "execution" && ev.Outcome == "succeeded" && ev.At.Valid && !ev.At.Time.Before(deliveredAt) {
+				verified = true
+				break
+			}
+		}
+		if !verified {
+			return false
+		}
+	}
+	return true
+}
+
+func reconcileTaskDelivery(q *Request, taskID string, pr deliveryMergedPR, autoAccept bool) (bool, error) {
+	t, err := taskLoad(q, taskID)
+	if errors.Is(err, errNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if (t.State != db.TaskStateQueued && t.State != db.TaskStateInProgress) || t.AcceptedAt != nil {
+		return false, nil
+	}
+	if reason, err := waitReason(q, t.ID); err != nil || reason != "" {
+		return false, err
+	}
+	pending, err := q.db().TaskHasPendingWork(q.ctx(), &t.ID)
+	if err != nil || pending {
+		return false, err
+	}
+	selected, err := acceptanceResult(q, t.ID, false, false, false)
+	if err != nil {
+		var conflict *HTTPError
+		if errors.As(err, &conflict) && conflict.Code == 409 {
+			return false, nil
+		}
+		return false, err
+	}
+	rejected, err := deliveryRejectedEarlier(q, t.ID, selected.id, pr)
+	if err != nil || rejected {
+		return false, err
+	}
+	offerText := fmt.Sprintf("PR #%d (%s) merged and delivered. Accept the result of: %s", pr.Number, pr.Repo, t.Title)
+	if pr.Release != "" {
+		offerText = fmt.Sprintf("PR #%d (%s) merged and delivered (%s). Accept the result of: %s", pr.Number, pr.Repo, pr.Release, t.Title)
+	}
+	qid, err := requestAcceptanceWithDelivery(q, acceptTask{ID: t.ID, Title: t.Title, ProjectID: t.ProjectID}, nil, &offerText, deliveryActor, &pr)
+	if err != nil {
+		var conflict *HTTPError
+		if errors.As(err, &conflict) && conflict.Code == 409 {
+			return false, nil
+		}
+		return false, err
+	}
+	if !autoAccept {
+		return true, nil
+	}
+	if _, err := answerQuestion(q, qid, "accepted", deliveryActor, nil); err != nil {
+		return false, err
+	}
+	return true, audit(q, t.ID, "delivery_reconciled", nil, pr, auditExtra{ProjectID: t.ProjectID, Reason: "auto_accepted"})
+}
+
+func deliveryRejectedEarlier(q *Request, taskID, executionID string, pr deliveryMergedPR) (bool, error) {
+	rows, err := q.db().TaskDeliveryRejections(q.ctx(), &taskID)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range rows {
+		if executionID != "" && r.ExecutionID == executionID {
+			return true, nil
+		}
+		if len(r.Data) == 0 {
+			continue
+		}
+		var data questionData
+		if json.Unmarshal(r.Data, &data) == nil && data.Delivery != nil {
+			if data.Delivery.Repo == pr.Repo && data.Delivery.Number == pr.Number && data.Delivery.HeadSHA == pr.HeadSHA {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }

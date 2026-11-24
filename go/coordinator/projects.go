@@ -116,7 +116,7 @@ var settingsDefaults = func() map[string]json.RawMessage {
 	"worktree": {"envMode": "worktree", "baseRef": null, "startFromOrigin": true, "branchPrefix": "fleet", "linkPaths": [], "sharedDirectories": []},
 	"scripts": {"setup": null, "teardown": null}, "setupStart": "wait",
 	"execution": {"tools": [], "forge": false, "profiles": []},
-	"integration": {"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "syncCheckoutAfterMerge": true},
+	"integration": {"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "autoAccept": null, "syncCheckoutAfterMerge": true},
 	"cleanup": {"keepWhen": ["uncommitted", "unpushed", "teardown-failed"]}, "identity": null, "subscriptions": [],
 	"errors": {"bugsink": []},
 	"presets": []}`), &d); err != nil {
@@ -311,6 +311,9 @@ func projectSettings(p any) (rawObject, []string, error) {
 							return nil, nil, bad("execution.tools")
 						}
 					}
+				}
+				if k == "integration" && x == "autoAccept" && !isNull(y) && jsType(y) != "boolean" {
+					return nil, nil, bad("integration.autoAccept")
 				}
 				r[x] = y
 			}

@@ -38,10 +38,28 @@ type deliveryState struct {
 }
 
 type deliveryRepo struct {
-	projects []string
-	items    []contract.DeliveryItem
-	landing  int64
-	problem  string
+	projects  []string
+	items     []contract.DeliveryItem
+	landing   int64
+	problem   string
+	delivered []deliveryMergedPR
+}
+
+// deliveryMergedPR records a merged pull request snapshot and whether its delivery/deployment has completed.
+type deliveryMergedPR struct {
+	Repo        string `json:"repo"`
+	Number      int64  `json:"number"`
+	Title       string `json:"title"`
+	Body        string `json:"-"`
+	URL         string `json:"url"`
+	Branch      string `json:"branch,omitempty"`
+	HeadSHA     string `json:"headSha,omitempty"`
+	MergeSHA    string `json:"mergeSha,omitempty"`
+	MergedAt    string `json:"mergedAt"`
+	Stage       string `json:"stage"`
+	Release     string `json:"release,omitempty"`
+	DeliveredAt string `json:"deliveredAt,omitempty"`
+	Delivered   bool   `json:"-"`
 }
 
 var (
@@ -133,17 +151,20 @@ func deliveryReply(last deliveryState, may func(project string) bool) contract.D
 }
 
 // ghPull, ghRun and ghRelease: the fields of the GitHub REST replies the stages need.
+type ghPullHead struct {
+	SHA string `json:"sha"`
+	Ref string `json:"ref"`
+}
 type ghPull struct {
-	Number    int64   `json:"number"`
-	Title     string  `json:"title"`
-	URL       string  `json:"html_url"`
-	CreatedAt string  `json:"created_at"`
-	MergedAt  *string `json:"merged_at"`
-	MergeSHA  string  `json:"merge_commit_sha"`
-	AutoMerge any     `json:"auto_merge"`
-	Head      struct {
-		SHA string `json:"sha"`
-	} `json:"head"`
+	Number    int64      `json:"number"`
+	Title     string     `json:"title"`
+	Body      string     `json:"body"`
+	URL       string     `json:"html_url"`
+	CreatedAt string     `json:"created_at"`
+	MergedAt  *string    `json:"merged_at"`
+	MergeSHA  string     `json:"merge_commit_sha"`
+	AutoMerge any        `json:"auto_merge"`
+	Head      ghPullHead `json:"head"`
 }
 type ghRun struct {
 	Event      string `json:"event"`
@@ -257,7 +278,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 		t := byKey[key]
 		if !keyedRepo[key] && !readKeyless {
 			if p := prev.repos[key]; p != nil {
-				repos[key] = &deliveryRepo{projects: t.projects, items: p.items, landing: p.landing, problem: p.problem}
+				repos[key] = &deliveryRepo{projects: t.projects, items: p.items, landing: p.landing, problem: p.problem, delivered: p.delivered}
 				continue
 			}
 		}
@@ -285,7 +306,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 			// The last good items of this repository stand; it records no sample this pass (a gap, not a dip).
 			r := &deliveryRepo{projects: t.projects, problem: name + ": " + err.Error()}
 			if p := prev.repos[key]; p != nil {
-				r.items, r.landing = p.items, p.landing
+				r.items, r.landing, r.delivered = p.items, p.landing, p.delivered
 			}
 			repos[key] = r
 			continue
@@ -313,8 +334,8 @@ func deliveryPass(ctx context.Context, a *App) error {
 		if strings.EqualFold(name, githubPublicRepo) {
 			g.releases = withReleases(g.releases, recordedUI)
 		}
-		its, l := deliveryStages(t.projects[0], name, g, versions, ui, now)
-		repos[key] = &deliveryRepo{projects: t.projects, items: its, landing: l}
+		its, l, merged := deliveryStagesWithMerged(t.projects[0], name, g, versions, ui, now)
+		repos[key] = &deliveryRepo{projects: t.projects, items: its, landing: l, delivered: merged}
 		c := map[string]int64{}
 		for _, s := range contract.DeliveryStageValues {
 			c[string(s)] = 0
@@ -370,12 +391,45 @@ func deliveryPass(ctx context.Context, a *App) error {
 			log.Printf("delivery state: %v", err)
 		}
 	}
+	var delivered []deliveryMergedPR
+	for _, r := range repos {
+		for _, pr := range r.delivered {
+			if pr.Delivered {
+				delivered = append(delivered, pr)
+			}
+		}
+	}
+	if len(delivered) > 0 {
+		if err := reconcileDeliveredTasks(ctx, a, delivered); err != nil {
+			log.Printf("delivery task reconcile: %v", err)
+		}
+	}
 	return nil
+}
+
+// snapshotDeliveredPRs returns the latest cached delivered pull requests without reading GitHub.
+func snapshotDeliveredPRs() []deliveryMergedPR {
+	deliveryMu.Lock()
+	defer deliveryMu.Unlock()
+	var out []deliveryMergedPR
+	for _, r := range deliveryLast.repos {
+		for _, pr := range r.delivered {
+			if pr.Delivered {
+				out = append(out, pr)
+			}
+		}
+	}
+	return out
 }
 
 // deliveryStages: each pull request's current stage. landing counts the pull requests a worker waits on (auto-merge on
 // or in the merge queue). versions: the hosts' executor versions; ui: the UI version the site serves (uiServed).
 func deliveryStages(project, repo string, g ghRepo, versions []string, ui string, now time.Time) ([]contract.DeliveryItem, int64) {
+	its, l, _ := deliveryStagesWithMerged(project, repo, g, versions, ui, now)
+	return its, l
+}
+
+func deliveryStagesWithMerged(project, repo string, g ghRepo, versions []string, ui string, now time.Time) ([]contract.DeliveryItem, int64, []deliveryMergedPR) {
 	item := func(p ghPull, s contract.DeliveryStage, since string) contract.DeliveryItem {
 		it := contract.DeliveryItem{ProjectId: project, Repo: repo, Number: p.Number, Title: p.Title, Url: p.URL, Stage: s, Since: since}
 		if p.CreatedAt != "" {
@@ -514,12 +568,28 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, ui string
 	}
 	sort.Slice(rels, func(i, j int) bool { return rels[i].published < rels[j].published })
 	day := now.Add(-24 * time.Hour).Format(time.RFC3339)
+	var merged []deliveryMergedPR
 	for _, p := range g.closed {
 		if p.MergedAt == nil {
 			continue
 		}
 		m := *p.MergedAt
+		dm := deliveryMergedPR{
+			Repo:     repo,
+			Number:   p.Number,
+			Title:    p.Title,
+			Body:     p.Body,
+			URL:      p.URL,
+			Branch:   p.Head.Ref,
+			HeadSHA:  p.Head.SHA,
+			MergeSHA: p.MergeSHA,
+			MergedAt: m,
+		}
 		if len(rels) == 0 {
+			dm.Stage = string(contract.DeliveryStageMerged)
+			dm.DeliveredAt = m
+			dm.Delivered = !fleetRepo
+			merged = append(merged, dm)
 			if m >= day {
 				out = append(out, item(p, contract.DeliveryStageMerged, m))
 			}
@@ -534,18 +604,34 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, ui string
 		}
 		switch {
 		case r == nil:
-			out = append(out, item(p, contract.DeliveryStageReleasing, m))
+			dm.Stage = string(contract.DeliveryStageReleasing)
 		case r.uiOnly && versionLess(ui, r.version), !r.uiOnly && !installed(r.version, versions):
+			dm.Stage = string(contract.DeliveryStageInstalling)
+			dm.Release = r.tag
+			if !fleetRepo {
+				dm.Delivered = true
+				dm.DeliveredAt = r.published
+			}
 			it := item(p, contract.DeliveryStageInstalling, r.published)
 			it.Release = &r.tag
 			out = append(out, it)
-		case m >= day && m >= rels[0].covers:
-			it := item(p, contract.DeliveryStageInstalled, r.published)
-			it.Release = &r.tag
-			out = append(out, it)
+		default:
+			dm.Stage = string(contract.DeliveryStageInstalled)
+			dm.Release = r.tag
+			dm.DeliveredAt = r.published
+			dm.Delivered = true
+			if m >= day && m >= rels[0].covers {
+				it := item(p, contract.DeliveryStageInstalled, r.published)
+				it.Release = &r.tag
+				out = append(out, it)
+			}
 		}
+		if dm.Stage == string(contract.DeliveryStageReleasing) {
+			out = append(out, item(p, contract.DeliveryStageReleasing, m))
+		}
+		merged = append(merged, dm)
 	}
-	return out, landing
+	return out, landing, merged
 }
 
 // withReleases: read plus the recorded releases it lacks (by tag), only those published since the oldest one read: an

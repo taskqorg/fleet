@@ -340,3 +340,58 @@ FROM task_derived_drift() d;
 -- name: TaskRowRecord :one
 -- The task's row as a record keyed by column name (taskRow).
 SELECT to_jsonb(t)::jsonb FROM task t WHERE t.id=$1;
+
+-- name: TaskHasPrimaryExecution :one
+SELECT EXISTS (SELECT 1 FROM execution WHERE task_id=$1 AND kind NOT IN ('child_agent','tool_run'))::boolean;
+
+-- name: TaskDeliveryCandidates :many
+-- Open tasks eligible for delivery reconciliation (queued or in_progress, unaccepted).
+SELECT id,coalesce(code,'')::text AS code,coalesce(project_id,'')::text AS project_id,title,
+ coalesce(expected_outcome,'')::text AS expected_outcome,state::text AS state,
+ completion_requirements,coalesce(result_destination,'')::text AS result_destination,created_at
+FROM task
+WHERE state IN ('queued','in_progress') AND accepted_at IS NULL AND tombstoned_at IS NULL
+ORDER BY created_at;
+
+-- name: TaskDeliverySessions :many
+-- Sessions bound to candidate tasks, with all distinct task IDs of their executions.
+SELECT s.id AS session_id,coalesce(s.task_id,'')::text AS task_id,
+ coalesce((SELECT array_agg(DISTINCT e.task_id) FROM execution e WHERE e.session_id=s.id AND e.task_id IS NOT NULL),'{}')::text[] AS exec_task_ids
+FROM session s
+WHERE s.tombstoned_at IS NULL
+ AND (s.task_id = ANY( @task_ids::text[])
+  OR EXISTS (SELECT 1 FROM execution e WHERE e.session_id=s.id AND e.task_id = ANY( @task_ids::text[])));
+
+-- name: TaskDeliveryForgeRefs :many
+-- Forge code-review audit entries recording PR repo/branch/headSha for candidate tasks.
+SELECT (value->>'taskId')::text AS task_id,coalesce(value->>'repo','')::text AS repo,
+ coalesce(value->>'branch','')::text AS branch,coalesce(value->>'headSha','')::text AS head_sha
+FROM audit_log
+WHERE split_part(target,':',1)='forge' AND field='code-review' AND (value->>'taskId') = ANY( @task_ids::text[])
+ORDER BY seq DESC;
+
+-- name: TaskDeliveryEvidence :many
+-- Confirmed worker reports and done board posts referencing PRs or post-delivery verification.
+SELECT 'execution'::text AS source,e.task_id::text AS task_id,
+ coalesce(e.data->'report'->>'outcome','')::text AS outcome,
+ coalesce(e.data->'report'->>'summary','')::text AS text,
+ coalesce(e.ended_at,e.started_at,e.updated_at)::timestamptz AS at
+FROM execution e
+WHERE e.task_id = ANY( @task_ids::text[]) AND e.kind NOT IN ('child_agent','tool_run')
+ AND e.state='succeeded' AND e.observation='confirmed' AND coalesce(e.data->'report'->>'outcome','') <> 'failed'
+ AND (coalesce(e.data->'report'->>'outcome','')='succeeded' OR coalesce(e.data->'report'->>'summary','') <> '')
+UNION ALL
+SELECT 'board'::text AS source,b.scope_id::text AS task_id,''::text AS outcome,b.text,b.created_at AS at
+FROM board_message b
+WHERE b.scope_kind='task' AND b.scope_id = ANY( @task_ids::text[]) AND b.kind='done' AND b.tombstoned_at IS NULL;
+
+-- name: TaskDeliveryRejections :many
+SELECT coalesce(execution_id,'')::text AS execution_id,data
+FROM question
+WHERE task_id=$1 AND kind='acceptance' AND state='answered' AND answer='rejected';
+
+-- name: TaskStoredArtifactNames :many
+SELECT coalesce(legacy_id,id)::text AS id,name
+FROM artifact
+WHERE task_id=$1 AND state='stored' AND role='original' AND name NOT LIKE 'mcp-lifecycle-%' AND tombstoned_at IS NULL
+ORDER BY seq;
