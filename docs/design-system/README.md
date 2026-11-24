@@ -47,7 +47,7 @@ Board drawings use Fleet's tokens through the board's style file ([tokens](token
 
 ## Context for a UI task
 
-The process helps, recommends and shows; it never blocks. No design check fails a build or gates a merge. Consistency comes from what each agent is given: exactly what its task needs, and no more.
+The process helps, recommends and shows; it never blocks. The design and docs reports are warnings (the design report fails only on raw controls in app views); no new check is added that fails a build or gates a merge. Consistency comes from what each agent is given: exactly what its task needs, and no more.
 
 * **One command per page.** `node scripts/ui-context.ts <page>` prints what to read before designing or building that page: its spec, its board canvas, the blocks, controls and patterns it links, the three principles and the text of every rule they cite by ID. A task brief for a page names this command instead of the whole rule list. Without an argument it lists the pages.
 * **A page spec cites, never restates.** It links its blocks in a `## Blocks` section and its controls and patterns where it uses them, and names rules by ID: `OR-<n>` in [owner-rules.md](owner-rules.md), `UR-<n>` in `principles.md`. What the spec does not link or cite, the agent is not told.

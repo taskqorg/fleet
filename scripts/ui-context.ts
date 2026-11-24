@@ -25,7 +25,12 @@ export function principles(owner: string): string[] {
   return [...sec.matchAll(/^\d+\. \*\*([^*]+)\*\* ([^\n]+)$/gm)].map(([, n, t]) => `${n} ${t.split('. ')[0].replace(/\.$/, '')}.`);
 }
 
-export const cited = (text: string) => [...new Set(text.match(/\b(?:OR|UR)-\d+\b/g) ?? [])];
+// Rule IDs in a text; a range such as `OR-24 to OR-27` counts every ID in it.
+export function cited(text: string): string[] {
+  const ids = new Set(text.match(/\b(?:OR|UR)-\d+\b/g) ?? []);
+  for (const [, k, a, b] of text.matchAll(/\b(OR|UR)-(\d+) to \1-(\d+)\b/g)) for (let n = +a; n <= +b; n++) ids.add(`${k}-${n}`);
+  return [...ids];
+}
 
 // Repository paths of the relative Markdown links in the file at `from`, without anchors.
 export function links(text: string, from: string): string[] {
@@ -51,11 +56,17 @@ export function context(page: string): string {
   const why = new Map<string, Set<string>>(); // rule ID -> the files that cite it
   const cite = (t: string, f: string) => { for (const id of cited(t)) (why.get(id) ?? why.set(id, new Set()).get(id)!).add(f); };
   cite(text, 'page');
-  for (const p of links(text, spec)) {
-    const g = group(p);
-    if (!g || !existsSync(join(root, p))) continue;
+  // The spec's own links, then the controls and patterns its blocks link (a page is assembled from blocks).
+  const queue = links(text, spec), seen = new Set<string>();
+  while (queue.length) {
+    const p = queue.shift()!, g = group(p);
+    if (!g || seen.has(p) || !existsSync(join(root, p))) continue;
+    seen.add(p);
     (parts.get(g) ?? parts.set(g, []).get(g)!).push(p);
-    if (g !== 'Canvas') cite(read(p), relative(ds, p));
+    if (g === 'Canvas') continue;
+    const t = read(p);
+    cite(t, relative(ds, p));
+    if (g === 'Blocks') queue.push(...links(t, p).filter(q => group(q) === 'Controls' || group(q) === 'Patterns'));
   }
   const L = [`# UI context: ${page}`, '', `Read first: ${spec}`, ''];
   for (const g of GROUPS) {
