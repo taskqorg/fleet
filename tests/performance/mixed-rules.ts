@@ -4,20 +4,22 @@
 // running-young, running-silent, running-unconfirmed, waiting and open-question executions, runs the real rules pass on a short
 // tick while operator writes overlap, and samples pg_locks. Measured here: operator write acknowledgement (server-local HTTP),
 // advisory-lock wait/hold lower bounds (sampled), rules findings per case. Not measured: browser render, publication.
-import {execFileSync, spawn} from 'node:child_process';
+import {execFileSync, spawn, type ChildProcess} from 'node:child_process';
 import {mkdirSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
-import {startCoordinator} from '../harness.ts';
+import {pgdata, pgport, startCoordinator} from '../harness.ts';
 
 const arg = (k: string, d: string) => process.argv.find(a => a.startsWith('--' + k + '='))?.slice(k.length + 3) ?? d;
 const out = resolve(arg('out', '.egm/mixed-rules')), seconds = Number(arg('seconds', '20')), writers = Number(arg('writers', '4')), tick = arg('tick', '100'), scale = Number(arg('scale', '1')), SAMPLE_MS = 20;
 mkdirSync(out, {recursive: true});
 const attach = arg('attach', ''), OWNER = 'owner@trial.test', P = arg('project', 'desiign');
 // --attach=<origin>: load an already running interface.ts serve fixture (same database, its proxy supplies credentials) instead of a new coordinator.
-const pg = (db: string, sql: string) => execFileSync('psql', ['-h', process.env.FLEET_TRIAL_PGDATA!, '-p', process.env.FLEET_TRIAL_PGPORT!, '-U', 'fleet', '-d', db, '-At', '-q', '-v', 'ON_ERROR_STOP=1'], {input: "SET fleet.project_ids = '*';\n" + sql, encoding: 'utf8'});
-const attachedDb = attach ? execFileSync('psql', ['-h', process.env.FLEET_TRIAL_PGDATA!, '-p', process.env.FLEET_TRIAL_PGPORT!, '-U', 'postgres', '-d', 'postgres', '-At', '-c', "SELECT datname FROM pg_database WHERE datname LIKE 'fleet_trial_%' ORDER BY datname"], {encoding: 'utf8'}).trim().split('\n') : [];
+const pg = (db: string, sql: string) => execFileSync('psql', ['-h', pgdata, '-p', pgport, '-U', 'fleet', '-d', db, '-At', '-q', '-v', 'ON_ERROR_STOP=1'], {input: "SET fleet.project_ids = '*';\n" + sql, encoding: 'utf8'});
+const attachedDb = attach ? execFileSync('psql', ['-h', pgdata, '-p', pgport, '-U', 'postgres', '-d', 'postgres', '-At', '-c', "SELECT datname FROM pg_database WHERE datname LIKE 'fleet_trial_%' ORDER BY datname"], {encoding: 'utf8'}).trim().split('\n').filter(Boolean) : [];
 if (attach && attachedDb.length !== 1) throw Error('attach needs exactly one fleet_trial_ database, found ' + attachedDb.join(','));
 const c = attach ? {base: attach, secret: '', sql: (t: string) => pg(attachedDb[0], t), stop: async () => {}} : await startCoordinator({name: 'mixed', env: {FLEET_RULES_TICK_MS: tick}});
+let sampler: ChildProcess | undefined;
+try {
 const q = (sql: string) => c.sql(sql).trim();
 const op = async (name: string, body: object) => {
   const t = performance.now();
@@ -44,11 +46,11 @@ q(sql);
 const names = ['fleet:write', 'dispatch', 'problems:rules', 'project:' + P, 'project:hello-world'];
 const keyCase = names.map(n => `WHEN ((l.classid::bigint<<32)|l.objid::bigint)=hashtextextended('${n}',0) THEN '${n}'`).join(' ');
 const sampleSql = `SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint,l.pid,l.granted,CASE ${keyCase} ELSE 'other' END,left(replace(a.query,E'\\n',' '),50) FROM pg_locks l JOIN pg_stat_activity a USING(pid) WHERE l.locktype='advisory' AND a.datname=current_database();`;
-const url = `postgresql://fleet@/${attach ? attachedDb[0] : q('SELECT current_database()')}?host=${encodeURIComponent(process.env.FLEET_TRIAL_PGDATA!)}&port=${process.env.FLEET_TRIAL_PGPORT}`;
+const url = `postgresql://fleet@/${attach ? attachedDb[0] : q('SELECT current_database()')}?host=${encodeURIComponent(pgdata)}&port=${pgport}`;
 const samples: string[] = [];
-const sampler = spawn('psql', [url, '-At', '-F', '|', '-q'], {stdio: ['pipe', 'pipe', 'inherit']});
-let buf = ''; sampler.stdout.on('data', d => { buf += d; const l = buf.split('\n'); buf = l.pop()!; for (const x of l) samples.push(x); });
-sampler.stdin.write(`${sampleSql}\n\\watch ${SAMPLE_MS / 1000}\n`);
+sampler = spawn('psql', [url, '-At', '-F', '|', '-q'], {stdio: ['pipe', 'pipe', 'inherit']});
+let buf = ''; sampler.stdout!.on('data', d => { buf += d; const l = buf.split('\n'); buf = l.pop()!; for (const x of l) samples.push(x); });
+sampler.stdin!.write(`${sampleSql}\n\\watch ${SAMPLE_MS / 1000}\n`);
 await new Promise(r => setTimeout(r, 500));
 
 const problems = () => q(`SELECT cause||'|'||state||'|'||coalesce(addressed_to,'') FROM question WHERE cause LIKE 'problem:%' ORDER BY cause`).split('\n').filter(Boolean);
@@ -56,10 +58,14 @@ const findingsOf = async () => { const r = await op('telemetry_findings', {}); t
 const before = problems(), findingsBefore = await findingsOf();
 const acks: Record<string, number[]> = {hosts_register: [], questions_answer: []};
 const failures: string[] = [];
+const record = (bucket: number[], r: {status: number; ms: number; text: string}) => {
+  if (r.status === 200) bucket.push(r.ms);
+  else failures.push(`${r.status} ${r.text.slice(0, 80)}`);
+};
 const end = Date.now() + seconds * 1000; let n = 0;
-const writer = async (w: number) => { while (Date.now() < end) { const r = await op('hosts_register', {id: `mx-host-${w}-${n++}`, holder: OWNER}); (r.status === 200 ? acks.hosts_register : failures).push(r.status === 200 ? r.ms : r.status + ' ' + r.text.slice(0, 80) as any); await new Promise(r => setTimeout(r, 25)); } };
+const writer = async (w: number) => { while (Date.now() < end) { record(acks.hosts_register, await op('hosts_register', {id: `mx-host-${w}-${n++}`, holder: OWNER})); await new Promise(r => setTimeout(r, 25)); } };
 const answering = (async () => { await new Promise(r => setTimeout(r, seconds * 400));
-  for (const id of answerIds) { const r = await op('questions_answer', {questionId: id, answer: 'accepted'}); (r.status === 200 ? acks.questions_answer : failures).push(r.status === 200 ? r.ms : r.status + ' ' + r.text.slice(0, 80) as any); } })();
+  for (const id of answerIds) record(acks.questions_answer, await op('questions_answer', {questionId: id, answer: 'accepted'})); })();
 await Promise.all([...Array.from({length: writers}, (_, w) => writer(w)), answering]);
 const during = problems();
 // A genuinely resolved synthetic problem: a fresh qualifying event on one silent run must close its finding after the clean runs.
@@ -68,14 +74,15 @@ await new Promise(r => setTimeout(r, Number(tick) * 12 + 2000));
 const after = problems();
 const answered = q(`SELECT id||'|'||state FROM question WHERE id LIKE 'mx-q-%' ORDER BY id`).split('\n');
 const states = q(`SELECT id||'|'||state||'|'||observation FROM execution WHERE id LIKE 'mx-%' ORDER BY id`).split('\n');
-sampler.kill('SIGTERM');
+sampler.kill('SIGTERM'); sampler = undefined;
 
 // Wait/hold lower bounds from consecutive samples of the same (pid,key,granted); resolution SAMPLE_MS.
-const spans = new Map<string, {k: string, g: boolean, first: number, last: number, query: string}>(); const byTs = new Map<number, number>();
-for (const s of samples) { const [t, pid, g, key, query] = s.split('|'); if (!t || !key) continue; const ts = Number(t), id = `${pid}|${key}|${g}`; const o = spans.get(id); if (o && ts - o.last <= SAMPLE_MS * 4) o.last = ts; else spans.set(id + '|' + ts, {k: key, g: g === 't', first: ts, last: ts, query}); byTs.set(ts, 0); }
+type Span = {k: string; g: boolean; first: number; last: number; query: string};
+const spans: Span[] = [], active = new Map<string, Span>();
+for (const s of samples) { const [t, pid, g, key, query] = s.split('|'); if (!t || !key) continue; const ts = Number(t), id = `${pid}|${key}|${g}`, o = active.get(id); if (o && ts - o.last <= SAMPLE_MS * 4) o.last = ts; else { const span = {k: key, g: g === 't', first: ts, last: ts, query}; active.set(id, span); spans.push(span); } }
 const stat = (xs: number[]) => { xs = xs.sort((a, b) => a - b); const p = (f: number) => xs[Math.min(xs.length - 1, Math.floor(xs.length * f))]; return xs.length ? {count: xs.length, p50: p(.5), p95: p(.95), max: xs[xs.length - 1]} : {count: 0}; };
 const lock: Record<string, any> = {};
-for (const k of new Set([...spans.values()].map(s => s.k))) lock[k] = {holdMsLowerBound: stat([...spans.values()].filter(s => s.k === k && s.g).map(s => s.last - s.first + SAMPLE_MS)), waitMsLowerBound: stat([...spans.values()].filter(s => s.k === k && !s.g).map(s => s.last - s.first + SAMPLE_MS))};
+for (const k of new Set(spans.map(s => s.k))) lock[k] = {holdMsLowerBound: stat(spans.filter(s => s.k === k && s.g).map(s => s.last - s.first + SAMPLE_MS)), waitMsLowerBound: stat(spans.filter(s => s.k === k && !s.g).map(s => s.last - s.first + SAMPLE_MS))};
 const result = {
   kind: 'FLT-9 mixed rules diagnostic (co-located, not reference qualification)', at: new Date().toISOString(), seconds, writers, scale, rulesTickMs: Number(tick), sampleMs: SAMPLE_MS, sampleRows: samples.length,
   seeded: Object.fromEntries(Object.entries(groups).map(([k, v]) => [k, v.length]).concat([['questions', questions.length]])),
@@ -86,4 +93,4 @@ const result = {
 };
 writeFileSync(join(out, 'mixed-rules.json'), JSON.stringify(result, null, 2)); writeFileSync(join(out, 'lock-samples.psv'), samples.join('\n'));
 console.log(JSON.stringify(result, null, 2));
-await c.stop();
+} finally { sampler?.kill('SIGTERM'); await c.stop(); }
