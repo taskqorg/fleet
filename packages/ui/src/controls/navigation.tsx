@@ -123,7 +123,7 @@ export function FocusControl(p: {
           setOpen(next);
           if (!next) setNaming(null);
         }}
-        container={wrap?.closest<HTMLElement>('.th-dark, .th-light') ?? undefined}
+        container={wrap}
       >
         <PopoverTrigger class="focus-btn" aria-label={`Focus: ${summary()}`}>
           <span class="focus-ic" data-tip={`Focus: ${summary()}`} data-tip-narrow><Icon name="focus" /></span>
@@ -131,7 +131,7 @@ export function FocusControl(p: {
           <Show when={more() > 0}><span class="more">+{more()}</span></Show>
           <Icon name="chevron-down" />
         </PopoverTrigger>
-        <PopoverContent class="focus-panel" side="bottom" align="end" role="group" aria-label="Focus projects">
+        <PopoverContent class="focus-panel" side="bottom" align="end" aria-label="Focus projects" render={cp => <div {...cp} role="group" aria-labelledby={undefined} />}>
           <div class="presets">
             <span class={['preset', { on: p.value.length === 0 }]}>
               <button type="button" aria-pressed={p.value.length === 0 ? 'true' : 'false'} onClick={() => p.onChange([])}>All projects</button>
@@ -478,6 +478,13 @@ export function Spotlight(p: {
     if (!d.open) d.showModal();
     field?.focus();
     field?.select();
+    // Solid 2 commits the <input value={q()}> property effect after onSettled, which resets selection if non-empty.
+    queueMicrotask(() => {
+      if (d.open && field && !typed) {
+        field.focus();
+        field.select();
+      }
+    });
     const close = () => p.onClose();
     d.addEventListener('close', close);
     return () => {
@@ -546,6 +553,7 @@ export function Spotlight(p: {
     // A recent item is a way back, not a live row: its state and age at the time it was opened would be stale.
     if (!i.more) mem.recent = [{ ...i, outside: false, action: undefined, state: undefined, at: undefined, snippet: undefined }, ...mem.recent.filter(x => x.key !== i.key)].slice(0, RECENT);
     opened = true;
+    if (dialogRef?.open) dialogRef.close();
     p.onClose();
     i.run();
   };

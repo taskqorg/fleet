@@ -147,8 +147,8 @@ export function useThread(keyInput: MaybeAccessor<ThreadKey | null>) {
     jump: (k: string, onWindow: () => void) => {
       gen++;
       return load({ around: k }, p => {
-        commitWin(w => fromPage(p, w?.total));
         onWindow();
+        commitWin(w => fromPage(p, w?.total));
       });
     },
   };

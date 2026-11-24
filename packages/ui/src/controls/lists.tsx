@@ -276,7 +276,7 @@ export function GroupControl<G extends string>(p: {
             <MenuGroupLabel class="menu-h">Group by</MenuGroupLabel>
             <For each={nonNone()}>
               {([g, l]) => (
-                <MenuRadioItem value={g} render={itemProps => <button {...itemProps} type="button" />}>
+                <MenuRadioItem value={g} closeOnSelect render={itemProps => <button {...itemProps} type="button" />}>
                   <span class="grow">{l}</span>
                   <Show when={g === p.value}><Icon name="check" /></Show>
                 </MenuRadioItem>
@@ -284,7 +284,7 @@ export function GroupControl<G extends string>(p: {
             </For>
             <Show when={canNone()}>
               <MenuSeparator class="menu-sep" />
-              <MenuRadioItem value={none()} render={itemProps => <button {...itemProps} type="button" />}>
+              <MenuRadioItem value={none()} closeOnSelect render={itemProps => <button {...itemProps} type="button" />}>
                 <span class="grow">No grouping</span>
                 <Show when={!on()}><Icon name="check" /></Show>
               </MenuRadioItem>
@@ -341,7 +341,7 @@ export function SortControl(p: { value: string; fields: readonly SortField[]; on
             <MenuGroupLabel class="menu-h">Sort by</MenuGroupLabel>
             <For each={p.fields}>
               {x => (
-                <MenuRadioItem value={x[0]} render={itemProps => <button {...itemProps} type="button" />}>
+                <MenuRadioItem value={x[0]} closeOnSelect render={itemProps => <button {...itemProps} type="button" />}>
                   <span class="grow">{x[1]}</span>
                   <Show when={x[0] === f()[0]}><Icon name="check" /></Show>
                 </MenuRadioItem>
@@ -350,12 +350,12 @@ export function SortControl(p: { value: string; fields: readonly SortField[]; on
           </MenuRadioGroup>
           <MenuSeparator class="menu-sep" />
           <MenuRadioGroup value={desc() ? 'desc' : 'asc'} onValueChange={v => p.onChange(v === 'desc' ? '-' + f()[0] : f()[0])}>
-            <MenuRadioItem value="desc" render={itemProps => <button {...itemProps} type="button" />}>
+            <MenuRadioItem value="desc" closeOnSelect render={itemProps => <button {...itemProps} type="button" />}>
               <Icon name={iconOf(true)} />
               <span class="grow">{dDesc()}</span>
               <Show when={desc()}><Icon name="check" /></Show>
             </MenuRadioItem>
-            <MenuRadioItem value="asc" render={itemProps => <button {...itemProps} type="button" />}>
+            <MenuRadioItem value="asc" closeOnSelect render={itemProps => <button {...itemProps} type="button" />}>
               <Icon name={iconOf(false)} />
               <span class="grow">{dAsc()}</span>
               <Show when={!desc()}><Icon name="check" /></Show>

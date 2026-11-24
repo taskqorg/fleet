@@ -331,7 +331,8 @@ export function AppShell(p: {
   const ownSet = (k: string, px: number) => setOwnWidths(w => { const n = { ...w }; if (px) n[k] = px; else delete n[k]; return n; });
   const setWidth = (k: string, px: number) => (p.onWidth ?? ownSet)(k, px);
 
-  const [spot, setSpot] = createSignal<number | null>(null);
+  let spotSeq = 0;
+  const [spot, setSpot] = createSignal<{ gen: number; seq: number } | null>(null);
   const [slot, setSlot] = createSignal<HTMLElement | null>(null, { ownedWrite: true });
   const [acts, setActs] = createSignal<HTMLElement | null>(null, { ownedWrite: true });
 
@@ -348,7 +349,7 @@ export function AppShell(p: {
       const gen = p.privateGeneration ?? 0;
       if (ready && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.repeat && (e.key.toLowerCase() === 'k' || (e.code === 'KeyK' && !/^[a-z]$/i.test(e.key)))) {
         e.preventDefault();
-        setSpot(s => s === gen ? null : gen);
+        setSpot(s => s?.gen === gen ? null : { gen, seq: ++spotSeq });
       }
     };
     addEventListener('keydown', k);
@@ -374,8 +375,9 @@ export function AppShell(p: {
 
   const openSpot = createMemo(() => {
     const gen = p.privateGeneration ?? 0;
-    return spot() === gen && (p.privateReady ?? true) ? { gen } : null;
-  }, { equals: (a, b) => a?.gen === b?.gen });
+    const s = spot();
+    return s && s.gen === gen && (p.privateReady ?? true) ? s : null;
+  }, { equals: (a, b) => a?.gen === b?.gen && a?.seq === b?.seq });
 
   const privateReady = () => p.privateReady ?? true;
   const ready = () => p.ready ?? true;
@@ -431,7 +433,7 @@ export function AppShell(p: {
               aria-keyshortcuts="Meta+K Control+K"
               data-tip="Search ⌘K"
               aria-disabled={!privateReady() ? 'true' : undefined}
-              onClick={() => { if (privateReady()) setSpot(p.privateGeneration ?? 0); }}
+              onClick={() => { if (privateReady()) setSpot({ gen: p.privateGeneration ?? 0, seq: ++spotSeq }); }}
             >
               <Icon name={actions.search} />
             </button>
@@ -691,14 +693,16 @@ export function ListDetail(p: {
   idle?: JSX.Element;
 }) {
   let ref: HTMLDivElement | undefined;
+  const detail = createMemo(() => p.detail);
+  const idle = createMemo(() => p.idle);
   createEffect(() => p.detailKey, key => {
     if (key !== undefined) queueMicrotask(() => ref?.querySelector<HTMLElement>('[data-ui=detail]')?.focus({ preventScroll: true }));
   });
   return (
-    <div ref={el => { ref = el; }} data-ui="list-detail" class={['split-view', { 'has-detail': !!p.detail }]}>
+    <div ref={el => { ref = el; }} data-ui="list-detail" class={['split-view', { 'has-detail': !!detail() }]}>
       <div class="split-list">{p.list}</div>
       <Divider name="ctl" />
-      {p.detail ?? <div class={['work-idle', { 'work-empty': !p.idle }]}>{p.idle ?? <Empty text="Pick a row to open it here." />}</div>}
+      {detail() ?? <div class={['work-idle', { 'work-empty': !idle() }]}>{idle() ?? <Empty text="Pick a row to open it here." />}</div>}
     </div>
   );
 }

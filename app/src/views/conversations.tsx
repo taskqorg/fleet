@@ -565,39 +565,35 @@ function Conversation(props: { id: string; onClose: () => void }) {
             fallback={
               <div class="pane" data-related-work={inRelated()}>
                 <DropZone onFiles={files.add} disabledReason={off() ? 'offline' : undefined}>
-                  <Show when={thread.win} keyed fallback={<Skeleton rows={6} />}>
-                    {w => (
-                      <Show when={scope()} keyed>
-                        {_sc => (
-                          <Thread
-                            blocks={blocks()}
-                            label="Transcript"
-                            now={now()}
-                            marked={marked()}
-                            selected={k => inside(sel(), k) && !textBounds(sel(), k)}
-                            textBounds={k => textBounds(sel(), k)}
-                            onTextRange={(anchor, focus) => { pickFrom = anchor.key; setSel(drag(anchor, focus)); }}
-                            onRowClick={(k, shift) => {
-                              if (!shift) { pickFrom = k; setSel(null); return; }
-                              setSel(click(click(null, pickFrom ?? untrack(sel)?.start.key ?? k, false), k, true));
-                              pickFrom ??= k;
-                            }}
-                            showSession={!!key() && 'task' in key()}
-                            onOpenResult={r => go('/results/' + encodeURIComponent(r))}
-                            resultSrc={r => '/api/results/' + encodeURIComponent(r)}
-                            handle={handle}
-                            onStart={inRelated() ? undefined : thread.older}
-                            onEnd={inRelated() ? undefined : thread.newer}
-                            stopReason={off() ? 'offline' : undefined}
-                            onStop={x => run(() => op('execution_stop', { executionId: x }))}
-                            onAnswer={(questionId, answer) => run(() => answerQuestion(questionId, answer))}
-                            onCopyFail={copyFail}
-                            onSecret={(qId: string, c: string, v: string) => addRequestedKey(qId, c, v, alive)}
-                            pending={{ count: w.fresh, onJump: () => { setMarked(null); setHits(null); thread.newest(); } }}
-                          />
-                        )}
-                      </Show>
-                    )}
+                  <Show when={!!thread.win} fallback={<Skeleton rows={6} />}>
+                    <Show when={!!scope()}>
+                      <Thread
+                        blocks={blocks()}
+                        label="Transcript"
+                        now={now()}
+                        marked={marked()}
+                        selected={k => inside(sel(), k) && !textBounds(sel(), k)}
+                        textBounds={k => textBounds(sel(), k)}
+                        onTextRange={(anchor, focus) => { pickFrom = anchor.key; setSel(drag(anchor, focus)); }}
+                        onRowClick={(k, shift) => {
+                          if (!shift) { pickFrom = k; setSel(null); return; }
+                          setSel(click(click(null, pickFrom ?? untrack(sel)?.start.key ?? k, false), k, true));
+                          pickFrom ??= k;
+                        }}
+                        showSession={!!key() && 'task' in key()}
+                        onOpenResult={r => go('/results/' + encodeURIComponent(r))}
+                        resultSrc={r => '/api/results/' + encodeURIComponent(r)}
+                        handle={handle}
+                        onStart={inRelated() ? undefined : thread.older}
+                        onEnd={inRelated() ? undefined : thread.newer}
+                        stopReason={off() ? 'offline' : undefined}
+                        onStop={x => run(() => op('execution_stop', { executionId: x }))}
+                        onAnswer={(questionId, answer) => run(() => answerQuestion(questionId, answer))}
+                        onCopyFail={copyFail}
+                        onSecret={(qId: string, c: string, v: string) => addRequestedKey(qId, c, v, alive)}
+                        pending={{ count: thread.win?.fresh ?? 0, onJump: () => { setMarked(null); setHits(null); thread.newest(); } }}
+                      />
+                    </Show>
                   </Show>
                   <Show when={inRelated()}>
                     <section class="related-work" aria-label="Related work" tabindex={0}>

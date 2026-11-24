@@ -64,6 +64,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   let initialized = false;
   let endFor = '';
   let startFor = '';
+  let pendingFocus: { el: HTMLElement; key: string; rowLink: boolean } | null = null;
 
   const atEdge = () => {
     if (!scroller) return true;
@@ -115,9 +116,9 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     if (prevAtEdge && untrack(unseen)) setUnseen(0);
   };
 
-  const applyRequested = () => {
+  const applyRequested = (): boolean => {
     const r = requested;
-    if (!r || !scroller) return;
+    if (!r || !scroller) return false;
     requested = null;
     const items = untrack(() => props.items);
     const i = items.findIndex(item => props.getKey(item) === r.key);
@@ -126,15 +127,16 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
         v.scrollToOffset(0);
         anchor = null;
       }
-      return;
+      return false;
     }
     const start = v.getOffsetForIndex(i, 'start')?.[0];
-    if (start === undefined) return;
+    if (start === undefined) return false;
     if (r.align) v.scrollToIndex(i, { align: r.align });
     else v.scrollToOffset(Math.max(0, start - (r.offsetPx ?? 0)));
     anchor = { key: r.key, delta: start - scroller.scrollTop };
     prevAtEdge = false;
     setTick(n => n + 1);
+    return true;
   };
 
   const edgeKey = (side: 'start' | 'end') => {
@@ -197,6 +199,10 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
         }
       }
       const { focused, opts } = buildOpts(items, rh, keepFocus);
+      if (focused) {
+        const key = focused.closest<HTMLElement>('.vl-row')?.dataset.key ?? '';
+        pendingFocus = { el: focused, key, rowLink: focused.classList.contains('row-link') };
+      }
       v.setOptions(opts);
       v._willUpdate();
 
@@ -211,9 +217,9 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
         if (replaced) { added = 0; setUnseen(0); }
         const wasAtEdge = prevAtEdge;
         prevKeys = new Set(items.map(props.getKey));
-        if (wasAtEdge) {
+        if (wasAtEdge && !requested) {
           if (props.follow === 'bottom' && items.length) v.scrollToIndex(items.length - 1, { align: 'end' });
-        } else {
+        } else if (!requested) {
           if (anchor) {
             const i = items.findIndex(it => props.getKey(it) === anchor!.key);
             if (i >= 0) v.scrollToOffset(v.getOffsetForIndex(i, 'start')![0] - anchor.delta);
@@ -226,26 +232,37 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
         }
       }
 
-      if (focused && document.activeElement === document.body) {
-        queueMicrotask(() => {
-          if (document.activeElement === document.body) {
-            (focused.isConnected ? focused : scroller)?.focus({ preventScroll: true });
-          }
-        });
-      }
       setTick(n => n + 1);
     },
   );
 
-  // After DOM commit: keep bottom edge when dynamic rows resize, apply pending anchor requests, and trigger edge loading.
+  // After DOM commit: keep bottom edge when dynamic rows resize, restore lost row focus, apply pending anchor requests, and trigger edge loading.
   createEffect(
     () => [tick(), props.items, props.endKey] as const,
     () => {
       if (!initialized) return;
       v._willUpdate();
       const items = untrack(() => props.items);
-      if (props.follow === 'bottom' && prevAtEdge && !atEdge() && items.length) v.scrollToEnd();
-      applyRequested();
+      if (!requested && props.follow === 'bottom' && prevAtEdge && !atEdge() && items.length) v.scrollToEnd();
+      const pf = pendingFocus;
+      pendingFocus = null;
+      if (pf) {
+        const restore = () => {
+          if (document.activeElement !== document.body) return;
+          let target: HTMLElement | null = pf.el.isConnected ? pf.el : null;
+          if (!target && pf.key && scroller) {
+            const rowEl = scroller.querySelector<HTMLElement>(`.vl-row[data-key="${CSS.escape(pf.key)}"]`);
+            if (rowEl) {
+              target = (pf.rowLink ? rowEl.querySelector<HTMLElement>('.row-link') : null)
+                ?? rowEl.querySelector<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), [tabindex]');
+            }
+          }
+          (target ?? scroller)?.focus({ preventScroll: true });
+        };
+        restore();
+        queueMicrotask(restore);
+      }
+      if (applyRequested()) return;
       checkEnd();
       checkStart();
     },
@@ -268,11 +285,11 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
       },
       restoreAnchor: (key, offsetPx) => {
         requested = { key, offsetPx };
-        applyRequested();
+        setTick(n => n + 1);
       },
       scrollToKey: (key, align) => {
         requested = { key, align };
-        applyRequested();
+        setTick(n => n + 1);
       },
     };
   });

@@ -10,7 +10,8 @@ export async function checkTaskStory(browser: Browser, origin: string) {
   const context = await browser.newContext(), page = await context.newPage();
   // Shared error contract: read-only errors retain alert text without an inert action; supplied retries invoke the caller.
   const fixtureSrc = `import {render} from '@solidjs/web'; import {AgeChip, ErrorBanner} from './packages/ui/src/index.ts';
-    render(()=><><AgeChip t={Date.now() - 58000}/><AgeChip t={Date.now()} clockOffsetMs={60000}/><ErrorBanner text="Read-only problem"/><ErrorBanner text="Retriable problem" onRetry={()=>document.querySelector('output').textContent='retried'}/><output/></>,document.body);`;
+    const base = Date.now();
+    render(()=><><AgeChip t={base - 58000}/><AgeChip t={base} clockOffsetMs={60000}/><ErrorBanner text="Read-only problem"/><ErrorBanner text="Retriable problem" onRetry={()=>document.querySelector('output').textContent='retried'}/><output/></>,document.body);`;
   const fixtureCompiled = transform(fixtureSrc, { filename: 'fixture.tsx', generate: 'dom', moduleName: '@solidjs/web' });
   const fixture = await build({stdin: {contents: fixtureCompiled.code, resolveDir: process.cwd(), loader: 'ts'}, bundle: true, write: false, format: 'iife', conditions: ['solid'], plugins: [solidEsbuildPlugin()]});
   await page.goto('about:blank');
