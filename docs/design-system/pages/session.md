@@ -63,7 +63,7 @@ From top to bottom, then the context panel on the right:
 
 | Part | Read or action |
 |---|---|
-| Head and state | `session_get` (by code), state from the one vocabulary |
+| Head and state | the URL code resolves to the session ([D17](../decisions.md#2026-11-10-d17-human-entity-codes)), then `session_get`; state from the one vocabulary |
 | Transcript | `thread_entries` and `thread_blocks` with paging, `thread_search`; tool calls grouped by consecutive run |
 | Question card | `questions_list` for the session; answered with `questions_answer` |
 | Composer | `thread_composer`, `message_send`; Stop is `execution_stop` |

@@ -48,6 +48,10 @@ Tasks, results and delivery of all projects in focus are one facet away: on `/pr
 
 1. **Default facet.** *Recommended:* Sessions, since work is reached through who does it. *Other:* Tasks, the list operators use today. Both are drawn on [screens/projects.bl](../board/screens/projects.bl).
 
+### Open (target)
+
+* Results have no human code yet, so a result route cannot avoid an id ([OR-38](../owner-rules.md), UR-69); a result code is needed before the Results facet is built.
+
 ### Blocks
 
 * [Navigation rail](../controls/nav-rail.md) and [shell header](../patterns/app-shell.md).
