@@ -119,7 +119,7 @@ The shipped task view is described in [Inspect the task in Fleet](#inspect-the-t
 
 Not built: the Dependency & Handoff Graph panel.
 
-All Swarm views live inside Fleet's closed **8-section IA** ([IA and journeys](fleet-ia-and-journeys.md#1-closed-8-section-information-architecture)) and follow `OR-1`–`OR-49` using `packages/ui` controls exclusively, backed directly by `work_board_get` and `board_read`:
+All Swarm views live inside Fleet's closed [information architecture](fleet-ia-and-journeys.md#1-closed-information-architecture) and follow `OR-1`–`OR-49` using `packages/ui` controls exclusively, backed directly by `work_board_get` and `board_read`:
 
 - **No new top-level section and no second shell bar (`OR-46`, `OR-47`).** Swarm views open inside the Work Area (`detail` slot of `ListDetail`) for:
   - a Swarm-backed task in **Tasks** (via a `TabBar` facet, e.g. `Swarm`),

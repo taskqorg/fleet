@@ -1,14 +1,14 @@
 # Target Information Architecture, Core Journeys & Agentic Method
 
-Status: **Shipped (8-section rail)** — the navigation rail in [registry.ts](../../packages/ui/src/registry.ts) and [main.tsx](../../app/src/main.tsx) uses the 8 top-level sections (`Work`: Overview, Conversations, Projects, Tasks, Spend; `System`: Lab, Library, Infrastructure), with unified `CatalogueTree` navigation in the Control Column for `Lab`, `Library`, and `Infrastructure` (no horizontal `sub-nav` bars, `OR-46`), while preserving all legacy deep links (`/agents`, `/pipelines`, `/catalogue`, `/changes`, `/hosts`, `/runners`, `/keys`), manifests, and Spotlight (`⌘K`) access.
-
 This specification establishes the closed top-level navigation map, column contracts, end-to-end user journeys (`J1`–`J5`), and the agentic product-development method for Fleet, building on [fleet.md](../../fleet.md), [owner rules](../design-system/owner-rules.md), and [navigation and columns](../design-system/patterns/navigation-and-columns.md).
 
 ---
 
-## 1. Closed 8-Section Information Architecture
+<a id="1-closed-8-section-information-architecture"></a>
 
-Fleet uses **8 top-level sections** in two role groups (`Work` and `System`), with unified `CatalogueTree` navigation inside `Lab`, `Library`, and `Infrastructure` and global navigation/filtering in the shell header (`Focus` + `Spotlight ⌘K`, `OR-32`, `OR-34`, `OR-46`):
+## 1. Closed Information Architecture
+
+Fleet has nine top-level sections for every signed-in person. The owner also sees Humans. The rail groups them under Work and System, with unified `CatalogueTree` navigation inside `Lab`, `Library`, and `Infrastructure` and global navigation/filtering in the shell header (`Focus` + `Spotlight ⌘K`, `OR-32`, `OR-34`, `OR-46`):
 
 | Group | Section | Core Question Answered | Control Column (`size-ctl`) | Work Area (idle) | Work Area (open item) |
 |---|---|---|---|---|---|
@@ -17,13 +17,15 @@ Fleet uses **8 top-level sections** in two role groups (`Work` and `System`), wi
 | **Work** | **Projects** | What are our real products, rules, recommended methods and outputs? | Project list (`Projects`) | Cross-project active work & health summary | Project detail with tabs: **Work & Rules** · **Methods** (recommendations) · **Delivery** (PRs/releases) · **Results** (artifacts) |
 | **Work** | **Tasks** | What real tasks are queued, running, waiting or finished? | Virtualized task list (`OR-33` saved views + query search) | Summary strip & backlog flow by project | Task detail (`ExecutionTree`, transcript, linked **Results** & **Delivery** stages) |
 | **Work** | **Spend** | Where do time, tokens and money go across projects and models? | Optional window/grouping controls | Latency/cost/token breakdown by project, purpose, model, subscription vs API (`spend_summary`) | Drill-down to supporting executions |
+| **Work** | **Bots** | Which bots manage my projects and what are they doing? | Bot list scoped by project focus | Prompt to choose a bot | Bot settings, managed tasks, wake runs, questions and usage |
 | **System** | **Lab** | Which model, harness or pipeline is best for each use case right now? | `CatalogueTree` of **Use Cases** (`LLM Code Benchmarks`, `Real Work`, `Fleet & Projects`, folded `Archived`) & **Runs** | **Leaderboard / Suite Matrix** (Model × Pipeline pass rate/metric, median time, cost/tokens) + **2-click Run launcher** | **Use-case card** (examples + run history + quick A/B launch) OR **Experiment detail** (live step progress, metric matrix, Promote) |
 | **System** | **Library** | What methods, pipelines, agents and skills are available and recommended? | `CatalogueTree` grouped by role/domain (`Methods`, `Pipelines`, `Agents`, `Skills`; Lab variants folded by default) | Library summary (`Totals` by harness/status, pending Git sync banner if drifted) + Skills rollout | Editor/Detail obeying `OR-45 Diff from default` (`Methods` with status badge, `Pipelines` DAG, `Agents` overrides) |
 | **System** | **Infrastructure** | Are hosts, accounts and connections healthy and compatible with our models? | `CatalogueTree` (`Hosts`, `Accounts & Limits`, `Connections & API keys`, `Runners`) | Live readiness matrix (hosts × harnesses × probed models + runner queue health) | Host detail (capabilities, logs, updates), Limits/Accounts detail (probed supported models & rate limits), Connection/Key config, Runners |
+| **System** | **Humans** | Who can sign in and what access do they have? | Human roster for the owner | Prompt to choose an identity | Effective access, editing and revocation |
 
 ### Historical Route Consolidation Map (15 → 8)
 
-The earlier 15-section rail was consolidated into the 8 sections above (`Library` and `Infrastructure` later replaced top sub-navigation tabs with unified `CatalogueTree` roots per `OR-46`). Legacy routes remain reachable as deep links and via Spotlight (`⌘K`); agents **must not** add a new top-level navigation item, a `<nav class="sub-nav">` bar, or a duplicate always-open search input (`OR-31`, `OR-32`, `OR-46`) without updating this specification first.
+The earlier 15-section rail was consolidated into eight sections (`Library` and `Infrastructure` later replaced top sub-navigation tabs with unified `CatalogueTree` roots per `OR-46`). Legacy routes remain reachable as deep links and via Spotlight (`⌘K`); agents **must not** add a new top-level navigation item, a `<nav class="sub-nav">` bar, or a duplicate always-open search input (`OR-31`, `OR-32`, `OR-46`) without updating this specification first.
 
 | Legacy Section (`registry.ts`) | Consolidated Destination | Notes |
 |---|---|---|

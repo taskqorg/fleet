@@ -151,16 +151,16 @@ export type Family = keyof typeof states;
 export type StateOf<F extends Family> = keyof (typeof states)[F];
 
 /** Workspaces and their navigation anchors (OR-3), in nav order: the one list of screens. `app: true` marks a screen the
- * operator app has built; `nav: true` marks the 8 top-level sidebar sections (docs/designs/fleet-ia-and-journeys.md);
+ * operator app has built; `nav: true` marks a top-level sidebar section (docs/designs/fleet-ia-and-journeys.md);
  * the app routes, the build (manifests, service worker) and the coordinator's app routes follow `app`, while the rail
- * renders `nav`. */
+ * renders `nav` entries available to the current person. */
 export const workspaces = [
   { id: 'overview', label: 'Overview', icon: 'house', group: 'Work', app: true, nav: true },
   { id: 'conversations', label: 'Conversations', icon: 'messages-square', group: 'Work', app: true, nav: true },
   { id: 'projects', label: 'Projects', icon: 'folder-open', group: 'Work', app: true, nav: true },
   { id: 'tasks', label: 'Tasks', icon: 'list', group: 'Work', app: true, nav: true },
   { id: 'spend', label: 'Spend', icon: 'gauge', group: 'Work', app: true, nav: true },
-  { id: 'bots', label: 'Bots', icon: 'bot', group: 'Work', app: true, nav: false },
+  { id: 'bots', label: 'Bots', icon: 'bot', group: 'Work', app: true, nav: true },
   { id: 'results', label: 'Results', icon: 'file-text', group: 'Work', app: true, nav: false },
   { id: 'delivery', label: 'Publishing', icon: 'git-merge', group: 'Work', app: true, nav: false },
   { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', group: 'System', app: true, nav: true },
@@ -171,7 +171,7 @@ export const workspaces = [
   { id: 'changes', label: 'Changes', icon: 'git-pull-request', group: 'System', app: true, nav: false },
   { id: 'runners', label: 'Runners', icon: 'play', group: 'System', app: true, nav: false },
   { id: 'keys', label: 'API keys', icon: 'shield', group: 'System', app: true, nav: false },
-  { id: 'humans', label: 'Humans', icon: 'shield', group: 'System', app: true, nav: false },
+  { id: 'humans', label: 'Humans', icon: 'shield', group: 'System', app: true, nav: true },
   { id: 'personal-lab', label: 'Personal Lab', icon: 'chart-no-axes-column', group: 'System', app: true, nav: false },
   { id: 'access', label: 'Access', icon: 'shield', group: 'System', app: false, nav: false },
 ] as const satisfies readonly { id: string; label: string; icon: IconName; group: string; app: boolean; nav: boolean }[];

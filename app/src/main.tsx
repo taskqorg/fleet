@@ -107,7 +107,7 @@ const KINDS: Record<Hit['kind'], { label: string; icon: IconName; family?: Famil
   pipeline: { label: ws('pipelines').label, icon: ws('pipelines').icon, path: h => itemPath('pipelines', h.id) },
 };
 
-/** Spotlight provider for deep-linked workspaces and consolidated sub-pages not shown directly in the 8-section rail. */
+/** Spotlight provider for deep-linked workspaces and consolidated sub-pages outside the navigation rail. */
 const subPages = (go: (to: string) => void, show: (id: string) => boolean): SpotlightProvider => ({
   id: 'pages',
   label: 'Pages',
@@ -267,7 +267,7 @@ function App() {
   const counts = useNavCounts(() => access.value.state === 'open');
   const nav = createMemo(() => {
     const c = counts();
-    return NAV.map(n => c[n.id] ? { ...n, count: c[n.id] } : n);
+    return NAV.filter(w => showPage(w.id)).map(n => c[n.id] ? { ...n, count: c[n.id] } : n);
   });
   // Entity cards (EntityCode) read entity_card through the store; their Open goes to the in-app path.
   const cards = entityCards(go);

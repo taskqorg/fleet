@@ -6,7 +6,7 @@
 
 | Topic | Target file | Summary | Merges into the target |
 |---|---|---|---|
-| IA & user journeys | [designs/fleet-ia-and-journeys.md](designs/fleet-ia-and-journeys.md) | Closed 8-section target IA (15→8), Lab-first evaluation model, Core Journeys `J1`–`J5`, and agentic method. | none |
+| IA & user journeys | [designs/fleet-ia-and-journeys.md](designs/fleet-ia-and-journeys.md) | Closed navigation map, Lab-first evaluation model, Core Journeys `J1`–`J5`, and agentic method. | none |
 | Benchmarks & real-work cases | [benchmarks/llm-code-benchmarks.md](benchmarks/llm-code-benchmarks.md) | Coding benchmark tracks (`llm-code-benchmarks.json`) and Hermes real-work use cases ([real-work-use-cases.md](benchmarks/real-work-use-cases.md)). | none |
 | Lab | [designs/fleet-lab.md](designs/fleet-lab.md) | Experiments over examples, variants, evaluators and budgets, Promote, the `/lab` screen, work analysis. | |
 | Analytics | [designs/fleet-analytics.md](designs/fleet-analytics.md) | `analytics_query` over work records and the price table for estimated money. | none |
