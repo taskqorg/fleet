@@ -104,4 +104,4 @@ Every element opens its detail in the app: a host in System, a slot or event in 
 
 ## Design board
 
-The rendered states are on the [design board](../README.md#design-board), canvas [screens/live.bl](../board/screens/live.bl): normal, and "something breaks". Totals were taken from the live Runners screen on 24 Nov; slot contents are illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).
+The rendered states are on the [design board](../README.md#design-board), canvas [screens/live.bl](../board/screens/live.bl): normal, and "something breaks", in wall mode at 1920 px. Every part is an instance of a block on [blocks.bl](../board/blocks.bl) (see Blocks above). Totals were taken from the live Runners screen on 24 Nov; slot contents are illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).
