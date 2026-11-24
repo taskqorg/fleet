@@ -520,9 +520,10 @@ type dispatchExecution struct {
 	RequestedAccount      json.RawMessage `json:"requestedAccount,omitempty"`
 	EffectiveAccount      json.RawMessage `json:"effectiveAccount,omitempty"`
 	ConnectionsRefused    []string        `json:"connectionsRefused,omitempty"`
-	ContinuationKey       string          `json:"continuationKey,omitempty"`
-	ForkOfNativeSessionID string          `json:"forkOfNativeSessionId,omitempty"`
-	HandoffID             string          `json:"handoffId,omitempty"`
+	ContinuationKey       string               `json:"continuationKey,omitempty"`
+	ForkOfNativeSessionID string               `json:"forkOfNativeSessionId,omitempty"`
+	HandoffID             string               `json:"handoffId,omitempty"`
+	BotContext            *botExecutionContext `json:"botContext,omitempty"`
 	rest                  recordRest
 }
 
@@ -1171,6 +1172,7 @@ type dispatchSession struct {
 	Branch              *bool                      `json:"branch,omitempty"`
 	Starter             string                     `json:"starter,omitempty"`
 	WorkspaceSnapshots  map[string]json.RawMessage `json:"workspaceSnapshots,omitempty"`
+	BotID               *string                    `json:"-"`
 	row                 db.Session                 `json:"-"`
 	rest                recordRest
 }
@@ -1220,6 +1222,7 @@ func dispatchSessionByID(q *Request, id string) (dispatchSession, error) {
 	s.ID = row.ID
 	s.TaskID = deref(row.TaskID)
 	s.PipelineRunID = row.PipelineRunID
+	s.BotID = row.BotID
 	s.row = row
 	return s, nil
 }
@@ -1417,6 +1420,13 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	}
 	if st := liveSession.Starter; st != "" {
 		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\nThis conversation's preset. " + st))
+	}
+	if err := checkBotDispatchCompatibility(q, e, &liveSession, host, deref(p.Account), d); err != nil {
+		return none, err
+	}
+	p.NativeSessionId = liveSession.NativeSessionID
+	if e.BotContext != nil {
+		p.Instructions = ptr(formatBotInstructions(deref(p.Instructions), e.BotContext))
 	}
 	// agentDecorateStart completes the payload for the session's dispatch project/checkout and clears any pending handoff.
 	sess := agentSession{ID: liveSession.ID, AgentConfig: liveSession.AgentConfig, Account: deref(liveSession.Account),

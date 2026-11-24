@@ -100,6 +100,36 @@ var opLocks = map[string]func(b json.RawMessage) string{
 		}
 		return ""
 	},
+	"bot_settings_save": func(b json.RawMessage) string {
+		if id := jsonPathString(b, "botId"); id != "" {
+			return "bot:" + id
+		}
+		return ""
+	},
+	"bot_memory_save": func(b json.RawMessage) string {
+		if id := jsonPathString(b, "botId"); id != "" {
+			return "bot:" + id
+		}
+		return ""
+	},
+	"bot_run": func(b json.RawMessage) string {
+		if id := jsonPathString(b, "botId"); id != "" {
+			return "bot:" + id
+		}
+		return ""
+	},
+	"bot_pause": func(b json.RawMessage) string {
+		if id := jsonPathString(b, "botId"); id != "" {
+			return "bot:" + id
+		}
+		return ""
+	},
+	"bot_stop": func(b json.RawMessage) string {
+		if id := jsonPathString(b, "botId"); id != "" {
+			return "bot:" + id
+		}
+		return ""
+	},
 }
 
 // opGates: a check of an operation that runs after its auth and before its body is decoded (prepared reads off: 503).

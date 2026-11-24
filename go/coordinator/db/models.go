@@ -533,6 +533,11 @@ type Bot struct {
 	Revision       int32
 	MemoryRevision int32
 	TombstonedAt   *time.Time
+	HomeSessionID  *string
+	Paused         bool
+	PausedAt       *time.Time
+	PausedBy       *string
+	ResumedAt      *time.Time
 }
 
 type BotMemoryRevision struct {
@@ -554,6 +559,41 @@ type BotRevision struct {
 	ScheduleZone   string
 	WakeOnNeedsYou bool
 	CreatedAt      time.Time
+}
+
+type BotRun struct {
+	ID              string
+	BotID           string
+	ProjectID       string
+	BotRevision     int32
+	MemoryRevision  int32
+	SessionID       *string
+	ExecutionID     *string
+	QueuedMessageID *string
+	Cause           string
+	DedupKey        *string
+	State           string
+	Observation     string
+	Quiet           bool
+	Reason          string
+	SentBy          string
+	Source          string
+	CreatedAt       time.Time
+	StartedAt       *time.Time
+	EndedAt         *time.Time
+	UpdatedAt       time.Time
+	TombstonedAt    *time.Time
+	Payload         []byte
+	Seq             int64
+}
+
+type BotWakeCursor struct {
+	BotID             string
+	ProjectID         string
+	NeedsYouChangeSeq int64
+	LastScheduleKey   string
+	LastScheduleAt    *time.Time
+	UpdatedAt         time.Time
 }
 
 type Budget struct {
@@ -1466,6 +1506,7 @@ type Session struct {
 	Seq                     int64
 	UpdatedAt               time.Time
 	TombstonedAt            *time.Time
+	BotID                   *string
 }
 
 type SessionFork struct {

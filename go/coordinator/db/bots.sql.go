@@ -7,7 +7,22 @@ package db
 
 import (
 	"context"
+	"time"
 )
+
+const botByHomeSession = `-- name: BotByHomeSession :one
+SELECT b.id
+FROM bot b
+WHERE b.home_session_id = $1 AND b.tombstoned_at IS NULL
+LIMIT 1
+`
+
+func (q *Queries) BotByHomeSession(ctx context.Context, homeSessionID *string) (string, error) {
+	row := q.db.QueryRow(ctx, botByHomeSession, homeSessionID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
 
 const botCreate = `-- name: BotCreate :execrows
 INSERT INTO bot(id, project_id, director, revision)
@@ -29,31 +44,73 @@ func (q *Queries) BotCreate(ctx context.Context, arg BotCreateParams) (int64, er
 	return result.RowsAffected(), nil
 }
 
+const botExecutionMutated = `-- name: BotExecutionMutated :one
+SELECT (
+  EXISTS (SELECT 1 FROM session s WHERE s.created_by_execution_id = $1::text AND s.tombstoned_at IS NULL)
+  OR EXISTS (SELECT 1 FROM question qu WHERE qu.execution_id = $1::text AND qu.tombstoned_at IS NULL)
+  OR EXISTS (SELECT 1 FROM audit_log al WHERE al.actor = 'execution:' || $1::text)
+  OR EXISTS (SELECT 1 FROM change ch WHERE ch.actor = 'execution:' || $1::text AND ch.kind IN ('task', 'question', 'session', 'bot', 'board', 'delivery'))
+)::boolean AS mutated
+`
+
+func (q *Queries) BotExecutionMutated(ctx context.Context, executionID string) (bool, error) {
+	row := q.db.QueryRow(ctx, botExecutionMutated, executionID)
+	var mutated bool
+	err := row.Scan(&mutated)
+	return mutated, err
+}
+
 const botGet = `-- name: BotGet :one
 SELECT b.id, b.project_id, b.director, b.revision, b.memory_revision,
+       hs.id AS home_session_id,
+       b.paused, b.paused_at, b.paused_by, b.resumed_at,
        s.name, s.purpose, s.profile_id, s.instructions, s.soul, s.schedule_time, s.schedule_zone, s.wake_on_needs_you,
-       coalesce(m.memory, '') AS memory
+       s.created_at AS revision_created_at,
+       coalesce(m.memory, '')::text AS memory,
+       ar.id AS active_run_id, ar.execution_id AS active_execution_id,
+       lr.created_at AS last_run_at, lr.state AS last_run_state
 FROM bot b
 JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
 LEFT JOIN bot_memory_revision m ON m.bot_id = b.id AND m.revision = b.memory_revision
+LEFT JOIN session hs ON hs.id = b.home_session_id AND hs.tombstoned_at IS NULL
+LEFT JOIN bot_run ar ON ar.id = (
+  SELECT r.id FROM bot_run r
+  WHERE r.bot_id = b.id AND r.tombstoned_at IS NULL AND r.execution_id IS NOT NULL AND r.state IN ('queued', 'running', 'waiting')
+  ORDER BY r.seq DESC LIMIT 1
+)
+LEFT JOIN bot_run lr ON lr.id = (
+  SELECT r.id FROM bot_run r
+  WHERE r.bot_id = b.id AND r.tombstoned_at IS NULL
+  ORDER BY r.seq DESC LIMIT 1
+)
 WHERE b.id = $1
 `
 
 type BotGetRow struct {
-	ID             string
-	ProjectID      string
-	Director       string
-	Revision       int32
-	MemoryRevision int32
-	Name           string
-	Purpose        string
-	ProfileID      string
-	Instructions   string
-	Soul           string
-	ScheduleTime   string
-	ScheduleZone   string
-	WakeOnNeedsYou bool
-	Memory         string
+	ID                string
+	ProjectID         string
+	Director          string
+	Revision          int32
+	MemoryRevision    int32
+	HomeSessionID     *string
+	Paused            bool
+	PausedAt          *time.Time
+	PausedBy          *string
+	ResumedAt         *time.Time
+	Name              string
+	Purpose           string
+	ProfileID         string
+	Instructions      string
+	Soul              string
+	ScheduleTime      string
+	ScheduleZone      string
+	WakeOnNeedsYou    bool
+	RevisionCreatedAt time.Time
+	Memory            string
+	ActiveRunID       *string
+	ActiveExecutionID *string
+	LastRunAt         *time.Time
+	LastRunState      *string
 }
 
 func (q *Queries) BotGet(ctx context.Context, id string) (BotGetRow, error) {
@@ -65,6 +122,11 @@ func (q *Queries) BotGet(ctx context.Context, id string) (BotGetRow, error) {
 		&i.Director,
 		&i.Revision,
 		&i.MemoryRevision,
+		&i.HomeSessionID,
+		&i.Paused,
+		&i.PausedAt,
+		&i.PausedBy,
+		&i.ResumedAt,
 		&i.Name,
 		&i.Purpose,
 		&i.ProfileID,
@@ -73,15 +135,92 @@ func (q *Queries) BotGet(ctx context.Context, id string) (BotGetRow, error) {
 		&i.ScheduleTime,
 		&i.ScheduleZone,
 		&i.WakeOnNeedsYou,
+		&i.RevisionCreatedAt,
 		&i.Memory,
+		&i.ActiveRunID,
+		&i.ActiveExecutionID,
+		&i.LastRunAt,
+		&i.LastRunState,
 	)
 	return i, err
 }
 
+const botHandledDedupPayloads = `-- name: BotHandledDedupPayloads :many
+SELECT dedup_key, payload
+FROM bot_run
+WHERE bot_id = $1 AND tombstoned_at IS NULL
+  AND (state <> 'skipped' OR reason = 'paused')
+`
+
+type BotHandledDedupPayloadsRow struct {
+	DedupKey *string
+	Payload  []byte
+}
+
+func (q *Queries) BotHandledDedupPayloads(ctx context.Context, botID string) ([]BotHandledDedupPayloadsRow, error) {
+	rows, err := q.db.Query(ctx, botHandledDedupPayloads, botID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BotHandledDedupPayloadsRow
+	for rows.Next() {
+		var i BotHandledDedupPayloadsRow
+		if err := rows.Scan(&i.DedupKey, &i.Payload); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const botLastSessionDispatch = `-- name: BotLastSessionDispatch :one
+SELECT id, host_id, coalesce(data->'effectiveAccount'->>'binding', '')::text AS account_binding
+FROM execution
+WHERE session_id = $1 AND id <> $2 AND tombstoned_at IS NULL AND kind = 'agent_run'
+ORDER BY seq DESC
+LIMIT 1
+`
+
+type BotLastSessionDispatchParams struct {
+	SessionID *string
+	ID        string
+}
+
+type BotLastSessionDispatchRow struct {
+	ID             string
+	HostID         *string
+	AccountBinding string
+}
+
+func (q *Queries) BotLastSessionDispatch(ctx context.Context, arg BotLastSessionDispatchParams) (BotLastSessionDispatchRow, error) {
+	row := q.db.QueryRow(ctx, botLastSessionDispatch, arg.SessionID, arg.ID)
+	var i BotLastSessionDispatchRow
+	err := row.Scan(&i.ID, &i.HostID, &i.AccountBinding)
+	return i, err
+}
+
 const botList = `-- name: BotList :many
-SELECT b.id, b.project_id, b.revision, s.name, s.purpose
+SELECT b.id, b.project_id, b.revision,
+       hs.id AS home_session_id,
+       b.paused, s.name, s.purpose,
+       ar.id AS active_run_id, lr.state AS last_run_state, lr.created_at AS last_run_at
 FROM bot b
 JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+LEFT JOIN session hs ON hs.id = b.home_session_id AND hs.tombstoned_at IS NULL
+LEFT JOIN bot_run ar ON ar.id = (
+  SELECT r.id FROM bot_run r
+  WHERE r.bot_id = b.id AND r.tombstoned_at IS NULL AND r.execution_id IS NOT NULL AND r.state IN ('queued', 'running', 'waiting')
+  ORDER BY r.seq DESC LIMIT 1
+)
+LEFT JOIN bot_run lr ON lr.id = (
+  SELECT r.id FROM bot_run r
+  WHERE r.bot_id = b.id AND r.tombstoned_at IS NULL
+  ORDER BY r.seq DESC LIMIT 1
+)
 WHERE ($1::text IS NULL OR b.project_id = $1)
   AND (coalesce(cardinality($2::text[]), 0) = 0 OR b.project_id = ANY ($2))
   AND NOT (b.project_id = ANY (coalesce($3::text[], ARRAY[]::text[])))
@@ -95,11 +234,16 @@ type BotListParams struct {
 }
 
 type BotListRow struct {
-	ID        string
-	ProjectID string
-	Revision  int32
-	Name      string
-	Purpose   string
+	ID            string
+	ProjectID     string
+	Revision      int32
+	HomeSessionID *string
+	Paused        bool
+	Name          string
+	Purpose       string
+	ActiveRunID   *string
+	LastRunState  *string
+	LastRunAt     *time.Time
 }
 
 func (q *Queries) BotList(ctx context.Context, arg BotListParams) ([]BotListRow, error) {
@@ -115,8 +259,89 @@ func (q *Queries) BotList(ctx context.Context, arg BotListParams) ([]BotListRow,
 			&i.ID,
 			&i.ProjectID,
 			&i.Revision,
+			&i.HomeSessionID,
+			&i.Paused,
 			&i.Name,
 			&i.Purpose,
+			&i.ActiveRunID,
+			&i.LastRunState,
+			&i.LastRunAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const botListForTriggers = `-- name: BotListForTriggers :many
+SELECT b.id, b.project_id, b.director, b.revision, b.memory_revision,
+       b.home_session_id, b.paused, b.paused_at, b.resumed_at,
+       s.name, s.purpose, s.profile_id, s.instructions, s.soul, s.schedule_time, s.schedule_zone, s.wake_on_needs_you,
+       s.created_at AS revision_created_at,
+       coalesce(m.memory, '') AS memory
+FROM bot b
+JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+LEFT JOIN bot_memory_revision m ON m.bot_id = b.id AND m.revision = b.memory_revision
+WHERE b.tombstoned_at IS NULL
+  AND (s.schedule_time <> '' OR s.wake_on_needs_you)
+ORDER BY b.id
+`
+
+type BotListForTriggersRow struct {
+	ID                string
+	ProjectID         string
+	Director          string
+	Revision          int32
+	MemoryRevision    int32
+	HomeSessionID     *string
+	Paused            bool
+	PausedAt          *time.Time
+	ResumedAt         *time.Time
+	Name              string
+	Purpose           string
+	ProfileID         string
+	Instructions      string
+	Soul              string
+	ScheduleTime      string
+	ScheduleZone      string
+	WakeOnNeedsYou    bool
+	RevisionCreatedAt time.Time
+	Memory            string
+}
+
+func (q *Queries) BotListForTriggers(ctx context.Context) ([]BotListForTriggersRow, error) {
+	rows, err := q.db.Query(ctx, botListForTriggers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BotListForTriggersRow
+	for rows.Next() {
+		var i BotListForTriggersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Director,
+			&i.Revision,
+			&i.MemoryRevision,
+			&i.HomeSessionID,
+			&i.Paused,
+			&i.PausedAt,
+			&i.ResumedAt,
+			&i.Name,
+			&i.Purpose,
+			&i.ProfileID,
+			&i.Instructions,
+			&i.Soul,
+			&i.ScheduleTime,
+			&i.ScheduleZone,
+			&i.WakeOnNeedsYou,
+			&i.RevisionCreatedAt,
+			&i.Memory,
 		); err != nil {
 			return nil, err
 		}
@@ -157,6 +382,663 @@ type BotMemoryRevisionInsertParams struct {
 
 func (q *Queries) BotMemoryRevisionInsert(ctx context.Context, arg BotMemoryRevisionInsertParams) error {
 	_, err := q.db.Exec(ctx, botMemoryRevisionInsert, arg.BotID, arg.Revision, arg.Memory)
+	return err
+}
+
+const botNeedsYouExecutions = `-- name: BotNeedsYouExecutions :many
+SELECT id, project_id, task_id, session_id, state::text AS state, problem
+FROM execution
+WHERE project_id = $1::text
+  AND tombstoned_at IS NULL
+  AND problem IS NOT NULL
+  AND problem NOT IN ('unknown:abandoned', 'cancelled')
+  AND kind <> 'tool_run'
+  AND NOT EXISTS (SELECT 1 FROM problem_dismissal x WHERE x.execution_id = execution.id)
+  AND NOT (state IN ('succeeded', 'failed', 'cancelled') AND (problem LIKE 'unregistered host %' OR problem LIKE 'unregistered account %' OR problem LIKE 'no registered environment of project %'))
+  AND NOT (kind = 'pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind = 'pipeline_run' AND r.problem IS NOT NULL AND r.id = coalesce(execution.parent_execution_id, split_part(execution.id, ':step:', 1))))
+  AND EXISTS (SELECT 1 FROM definition d WHERE d.kind = 'project' AND d.id = execution.project_id)
+  AND ($2::text[] IS NULL OR id = ANY($2::text[]))
+ORDER BY seq
+`
+
+type BotNeedsYouExecutionsParams struct {
+	ProjectID string
+	Ids       []string
+}
+
+type BotNeedsYouExecutionsRow struct {
+	ID        string
+	ProjectID *string
+	TaskID    *string
+	SessionID *string
+	State     string
+	Problem   *string
+}
+
+func (q *Queries) BotNeedsYouExecutions(ctx context.Context, arg BotNeedsYouExecutionsParams) ([]BotNeedsYouExecutionsRow, error) {
+	rows, err := q.db.Query(ctx, botNeedsYouExecutions, arg.ProjectID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BotNeedsYouExecutionsRow
+	for rows.Next() {
+		var i BotNeedsYouExecutionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.SessionID,
+			&i.State,
+			&i.Problem,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const botNeedsYouQuestions = `-- name: BotNeedsYouQuestions :many
+SELECT id, code, project_id, task_id, execution_id, session_id, text, asked_by
+FROM question
+WHERE project_id = $1::text
+  AND state = 'open'
+  AND tombstoned_at IS NULL
+  AND ($2::text[] IS NULL OR id = ANY($2::text[]))
+ORDER BY seq
+`
+
+type BotNeedsYouQuestionsParams struct {
+	ProjectID string
+	Ids       []string
+}
+
+type BotNeedsYouQuestionsRow struct {
+	ID          string
+	Code        *string
+	ProjectID   *string
+	TaskID      *string
+	ExecutionID *string
+	SessionID   *string
+	Text        string
+	AskedBy     *string
+}
+
+func (q *Queries) BotNeedsYouQuestions(ctx context.Context, arg BotNeedsYouQuestionsParams) ([]BotNeedsYouQuestionsRow, error) {
+	rows, err := q.db.Query(ctx, botNeedsYouQuestions, arg.ProjectID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BotNeedsYouQuestionsRow
+	for rows.Next() {
+		var i BotNeedsYouQuestionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.ExecutionID,
+			&i.SessionID,
+			&i.Text,
+			&i.AskedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const botOwnExecutions = `-- name: BotOwnExecutions :many
+SELECT e.id
+FROM execution e
+WHERE e.session_id = $1
+   OR e.session_id IN (SELECT s.id FROM session s WHERE s.created_by_session_id = $1)
+`
+
+func (q *Queries) BotOwnExecutions(ctx context.Context, sessionID *string) ([]string, error) {
+	rows, err := q.db.Query(ctx, botOwnExecutions, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const botRunActiveForBot = `-- name: BotRunActiveForBot :one
+SELECT br.id, br.execution_id, br.session_id, br.queued_message_id, br.state, br.observation
+FROM bot_run br
+LEFT JOIN execution e ON e.id = br.execution_id
+WHERE br.bot_id = $1 AND br.tombstoned_at IS NULL
+  AND (
+    (br.execution_id IS NOT NULL AND coalesce(e.state::text, br.state) IN ('preparing', 'queued', 'running', 'waiting'))
+    OR (br.execution_id IS NULL AND br.state IN ('queued', 'running', 'waiting') AND br.queued_message_id IS NULL)
+  )
+ORDER BY br.seq DESC
+LIMIT 1
+`
+
+type BotRunActiveForBotRow struct {
+	ID              string
+	ExecutionID     *string
+	SessionID       *string
+	QueuedMessageID *string
+	State           string
+	Observation     string
+}
+
+func (q *Queries) BotRunActiveForBot(ctx context.Context, botID string) (BotRunActiveForBotRow, error) {
+	row := q.db.QueryRow(ctx, botRunActiveForBot, botID)
+	var i BotRunActiveForBotRow
+	err := row.Scan(
+		&i.ID,
+		&i.ExecutionID,
+		&i.SessionID,
+		&i.QueuedMessageID,
+		&i.State,
+		&i.Observation,
+	)
+	return i, err
+}
+
+const botRunAttachExecution = `-- name: BotRunAttachExecution :exec
+UPDATE bot_run
+SET execution_id = $2,
+    bot_revision = $3,
+    memory_revision = $4,
+    project_id = $5
+WHERE id = $1
+`
+
+type BotRunAttachExecutionParams struct {
+	ID             string
+	ExecutionID    *string
+	BotRevision    int32
+	MemoryRevision int32
+	ProjectID      string
+}
+
+func (q *Queries) BotRunAttachExecution(ctx context.Context, arg BotRunAttachExecutionParams) error {
+	_, err := q.db.Exec(ctx, botRunAttachExecution,
+		arg.ID,
+		arg.ExecutionID,
+		arg.BotRevision,
+		arg.MemoryRevision,
+		arg.ProjectID,
+	)
+	return err
+}
+
+const botRunByDedup = `-- name: BotRunByDedup :one
+SELECT id FROM bot_run
+WHERE bot_id = $1 AND dedup_key = $2 AND tombstoned_at IS NULL
+LIMIT 1
+`
+
+type BotRunByDedupParams struct {
+	BotID    string
+	DedupKey *string
+}
+
+func (q *Queries) BotRunByDedup(ctx context.Context, arg BotRunByDedupParams) (string, error) {
+	row := q.db.QueryRow(ctx, botRunByDedup, arg.BotID, arg.DedupKey)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const botRunByExecution = `-- name: BotRunByExecution :one
+SELECT id, bot_id, state, observation, cause, quiet, reason, started_at, ended_at
+FROM bot_run
+WHERE execution_id = $1 AND tombstoned_at IS NULL
+FOR UPDATE
+`
+
+type BotRunByExecutionRow struct {
+	ID          string
+	BotID       string
+	State       string
+	Observation string
+	Cause       string
+	Quiet       bool
+	Reason      string
+	StartedAt   *time.Time
+	EndedAt     *time.Time
+}
+
+func (q *Queries) BotRunByExecution(ctx context.Context, executionID *string) (BotRunByExecutionRow, error) {
+	row := q.db.QueryRow(ctx, botRunByExecution, executionID)
+	var i BotRunByExecutionRow
+	err := row.Scan(
+		&i.ID,
+		&i.BotID,
+		&i.State,
+		&i.Observation,
+		&i.Cause,
+		&i.Quiet,
+		&i.Reason,
+		&i.StartedAt,
+		&i.EndedAt,
+	)
+	return i, err
+}
+
+const botRunByQueuedMessage = `-- name: BotRunByQueuedMessage :one
+SELECT id, bot_id, state, observation, cause, quiet, reason
+FROM bot_run
+WHERE queued_message_id = $1 AND tombstoned_at IS NULL
+FOR UPDATE
+`
+
+type BotRunByQueuedMessageRow struct {
+	ID          string
+	BotID       string
+	State       string
+	Observation string
+	Cause       string
+	Quiet       bool
+	Reason      string
+}
+
+func (q *Queries) BotRunByQueuedMessage(ctx context.Context, queuedMessageID *string) (BotRunByQueuedMessageRow, error) {
+	row := q.db.QueryRow(ctx, botRunByQueuedMessage, queuedMessageID)
+	var i BotRunByQueuedMessageRow
+	err := row.Scan(
+		&i.ID,
+		&i.BotID,
+		&i.State,
+		&i.Observation,
+		&i.Cause,
+		&i.Quiet,
+		&i.Reason,
+	)
+	return i, err
+}
+
+const botRunGet = `-- name: BotRunGet :one
+SELECT br.id, br.bot_id, br.project_id, br.bot_revision, br.memory_revision, br.session_id, br.execution_id, br.queued_message_id,
+       br.cause, br.dedup_key,
+       (CASE WHEN e.id IS NOT NULL THEN (CASE WHEN e.state::text = 'preparing' THEN 'queued' ELSE e.state::text END) ELSE br.state END)::text AS state,
+       (CASE WHEN e.id IS NOT NULL THEN e.observation::text ELSE br.observation END)::text AS observation,
+       br.quiet, br.reason, br.sent_by, br.source, e.host_id, e.problem,
+       br.created_at, coalesce(e.started_at, br.started_at) AS started_at, coalesce(e.ended_at, br.ended_at) AS ended_at,
+       br.payload, br.seq
+FROM bot_run br
+LEFT JOIN execution e ON e.id = br.execution_id
+WHERE br.id = $1
+`
+
+type BotRunGetRow struct {
+	ID              string
+	BotID           string
+	ProjectID       string
+	BotRevision     int32
+	MemoryRevision  int32
+	SessionID       *string
+	ExecutionID     *string
+	QueuedMessageID *string
+	Cause           string
+	DedupKey        *string
+	State           string
+	Observation     string
+	Quiet           bool
+	Reason          string
+	SentBy          string
+	Source          string
+	HostID          *string
+	Problem         *string
+	CreatedAt       time.Time
+	StartedAt       *time.Time
+	EndedAt         *time.Time
+	Payload         []byte
+	Seq             int64
+}
+
+func (q *Queries) BotRunGet(ctx context.Context, id string) (BotRunGetRow, error) {
+	row := q.db.QueryRow(ctx, botRunGet, id)
+	var i BotRunGetRow
+	err := row.Scan(
+		&i.ID,
+		&i.BotID,
+		&i.ProjectID,
+		&i.BotRevision,
+		&i.MemoryRevision,
+		&i.SessionID,
+		&i.ExecutionID,
+		&i.QueuedMessageID,
+		&i.Cause,
+		&i.DedupKey,
+		&i.State,
+		&i.Observation,
+		&i.Quiet,
+		&i.Reason,
+		&i.SentBy,
+		&i.Source,
+		&i.HostID,
+		&i.Problem,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.EndedAt,
+		&i.Payload,
+		&i.Seq,
+	)
+	return i, err
+}
+
+const botRunInsert = `-- name: BotRunInsert :execrows
+INSERT INTO bot_run(id, bot_id, project_id, bot_revision, memory_revision, session_id, execution_id, queued_message_id, cause, dedup_key, state, observation, quiet, reason, sent_by, source, payload)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+ON CONFLICT DO NOTHING
+`
+
+type BotRunInsertParams struct {
+	ID              string
+	BotID           string
+	ProjectID       string
+	BotRevision     int32
+	MemoryRevision  int32
+	SessionID       *string
+	ExecutionID     *string
+	QueuedMessageID *string
+	Cause           string
+	DedupKey        *string
+	State           string
+	Observation     string
+	Quiet           bool
+	Reason          string
+	SentBy          string
+	Source          string
+	Payload         []byte
+}
+
+func (q *Queries) BotRunInsert(ctx context.Context, arg BotRunInsertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, botRunInsert,
+		arg.ID,
+		arg.BotID,
+		arg.ProjectID,
+		arg.BotRevision,
+		arg.MemoryRevision,
+		arg.SessionID,
+		arg.ExecutionID,
+		arg.QueuedMessageID,
+		arg.Cause,
+		arg.DedupKey,
+		arg.State,
+		arg.Observation,
+		arg.Quiet,
+		arg.Reason,
+		arg.SentBy,
+		arg.Source,
+		arg.Payload,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const botRunLockState = `-- name: BotRunLockState :one
+SELECT state FROM bot_run WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) BotRunLockState(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, botRunLockState, id)
+	var state string
+	err := row.Scan(&state)
+	return state, err
+}
+
+const botRunMove = `-- name: BotRunMove :exec
+UPDATE bot_run
+SET state = $1,
+    observation = coalesce($2, observation),
+    quiet = CASE WHEN $3::boolean THEN $4::boolean ELSE quiet END,
+    reason = CASE WHEN $5::boolean THEN $6::text ELSE reason END,
+    started_at = CASE WHEN $7::boolean THEN coalesce(started_at, $8) ELSE started_at END,
+    ended_at = CASE WHEN $9::boolean THEN coalesce(ended_at, $10, now()) ELSE ended_at END
+WHERE id = $11
+`
+
+type BotRunMoveParams struct {
+	State       string
+	Observation *string
+	SetQuiet    bool
+	Quiet       bool
+	SetReason   bool
+	Reason      string
+	SetStarted  bool
+	StartedAt   *time.Time
+	SetEnded    bool
+	EndedAt     *time.Time
+	ID          string
+}
+
+func (q *Queries) BotRunMove(ctx context.Context, arg BotRunMoveParams) error {
+	_, err := q.db.Exec(ctx, botRunMove,
+		arg.State,
+		arg.Observation,
+		arg.SetQuiet,
+		arg.Quiet,
+		arg.SetReason,
+		arg.Reason,
+		arg.SetStarted,
+		arg.StartedAt,
+		arg.SetEnded,
+		arg.EndedAt,
+		arg.ID,
+	)
+	return err
+}
+
+const botRunSyncFields = `-- name: BotRunSyncFields :exec
+UPDATE bot_run
+SET observation = coalesce($1, observation),
+    quiet = CASE WHEN $2::boolean THEN $3::boolean ELSE quiet END,
+    reason = CASE WHEN $4::boolean THEN $5::text ELSE reason END,
+    started_at = CASE WHEN $6::boolean THEN coalesce(started_at, $7) ELSE started_at END,
+    ended_at = CASE WHEN $8::boolean THEN coalesce(ended_at, $9) ELSE ended_at END
+WHERE id = $10
+`
+
+type BotRunSyncFieldsParams struct {
+	Observation *string
+	SetQuiet    bool
+	Quiet       bool
+	SetReason   bool
+	Reason      string
+	SetStarted  bool
+	StartedAt   *time.Time
+	SetEnded    bool
+	EndedAt     *time.Time
+	ID          string
+}
+
+func (q *Queries) BotRunSyncFields(ctx context.Context, arg BotRunSyncFieldsParams) error {
+	_, err := q.db.Exec(ctx, botRunSyncFields,
+		arg.Observation,
+		arg.SetQuiet,
+		arg.Quiet,
+		arg.SetReason,
+		arg.Reason,
+		arg.SetStarted,
+		arg.StartedAt,
+		arg.SetEnded,
+		arg.EndedAt,
+		arg.ID,
+	)
+	return err
+}
+
+const botRunsList = `-- name: BotRunsList :many
+SELECT br.id, br.bot_id, br.project_id, br.bot_revision, br.memory_revision, br.session_id, br.execution_id, br.queued_message_id,
+       br.cause, br.dedup_key,
+       (CASE WHEN e.id IS NOT NULL THEN (CASE WHEN e.state::text = 'preparing' THEN 'queued' ELSE e.state::text END) ELSE br.state END)::text AS state,
+       (CASE WHEN e.id IS NOT NULL THEN e.observation::text ELSE br.observation END)::text AS observation,
+       br.quiet, br.reason, br.sent_by, br.source, e.host_id, e.problem,
+       br.created_at, coalesce(e.started_at, br.started_at) AS started_at, coalesce(e.ended_at, br.ended_at) AS ended_at,
+       br.payload, br.seq
+FROM bot_run br
+LEFT JOIN execution e ON e.id = br.execution_id
+WHERE br.tombstoned_at IS NULL
+  AND ($1::text IS NULL OR br.bot_id = $1)
+  AND ($2::text IS NULL OR br.project_id = $2)
+  AND (coalesce(cardinality($3::text[]), 0) = 0 OR br.project_id = ANY ($3))
+  AND NOT (br.project_id = ANY (coalesce($4::text[], ARRAY[]::text[])))
+  AND ($5::text IS NULL OR (CASE WHEN e.id IS NOT NULL THEN (CASE WHEN e.state::text = 'preparing' THEN 'queued' ELSE e.state::text END) ELSE br.state END) = $5)
+  AND ($6::text IS NULL OR br.cause = $6)
+  AND ($7::text IS NULL OR (CASE WHEN e.id IS NOT NULL THEN e.observation::text ELSE br.observation END) = $7)
+  AND ($8::boolean IS NULL OR br.quiet = $8)
+  AND ($9::bigint IS NULL OR (br.seq, br.id) < ($9::bigint, $10::text))
+ORDER BY br.seq DESC, br.id DESC
+LIMIT $11::int
+`
+
+type BotRunsListParams struct {
+	BotID             *string
+	ProjectID         *string
+	ProjectIds        []string
+	ExcludeProjectIds []string
+	State             *string
+	Cause             *string
+	Observation       *string
+	Quiet             *bool
+	AfterSeq          *int64
+	AfterID           *string
+	Lim               int32
+}
+
+type BotRunsListRow struct {
+	ID              string
+	BotID           string
+	ProjectID       string
+	BotRevision     int32
+	MemoryRevision  int32
+	SessionID       *string
+	ExecutionID     *string
+	QueuedMessageID *string
+	Cause           string
+	DedupKey        *string
+	State           string
+	Observation     string
+	Quiet           bool
+	Reason          string
+	SentBy          string
+	Source          string
+	HostID          *string
+	Problem         *string
+	CreatedAt       time.Time
+	StartedAt       *time.Time
+	EndedAt         *time.Time
+	Payload         []byte
+	Seq             int64
+}
+
+func (q *Queries) BotRunsList(ctx context.Context, arg BotRunsListParams) ([]BotRunsListRow, error) {
+	rows, err := q.db.Query(ctx, botRunsList,
+		arg.BotID,
+		arg.ProjectID,
+		arg.ProjectIds,
+		arg.ExcludeProjectIds,
+		arg.State,
+		arg.Cause,
+		arg.Observation,
+		arg.Quiet,
+		arg.AfterSeq,
+		arg.AfterID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BotRunsListRow
+	for rows.Next() {
+		var i BotRunsListRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BotID,
+			&i.ProjectID,
+			&i.BotRevision,
+			&i.MemoryRevision,
+			&i.SessionID,
+			&i.ExecutionID,
+			&i.QueuedMessageID,
+			&i.Cause,
+			&i.DedupKey,
+			&i.State,
+			&i.Observation,
+			&i.Quiet,
+			&i.Reason,
+			&i.SentBy,
+			&i.Source,
+			&i.HostID,
+			&i.Problem,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.Payload,
+			&i.Seq,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const botSetHomeSession = `-- name: BotSetHomeSession :exec
+UPDATE bot SET home_session_id = $2 WHERE id = $1
+`
+
+type BotSetHomeSessionParams struct {
+	ID            string
+	HomeSessionID *string
+}
+
+func (q *Queries) BotSetHomeSession(ctx context.Context, arg BotSetHomeSessionParams) error {
+	_, err := q.db.Exec(ctx, botSetHomeSession, arg.ID, arg.HomeSessionID)
+	return err
+}
+
+const botSetPaused = `-- name: BotSetPaused :exec
+UPDATE bot
+SET paused = $2,
+    paused_at = CASE WHEN $2 THEN now() ELSE paused_at END,
+    paused_by = CASE WHEN $2 THEN $3 ELSE paused_by END,
+    resumed_at = CASE WHEN NOT $2 THEN now() ELSE resumed_at END
+WHERE id = $1
+`
+
+type BotSetPausedParams struct {
+	ID       string
+	Paused   bool
+	PausedBy *string
+}
+
+func (q *Queries) BotSetPaused(ctx context.Context, arg BotSetPausedParams) error {
+	_, err := q.db.Exec(ctx, botSetPaused, arg.ID, arg.Paused, arg.PausedBy)
 	return err
 }
 
@@ -207,6 +1089,56 @@ func (q *Queries) BotSettingsRevisionInsert(ctx context.Context, arg BotSettings
 		arg.ScheduleTime,
 		arg.ScheduleZone,
 		arg.WakeOnNeedsYou,
+	)
+	return err
+}
+
+const botWakeCursorGet = `-- name: BotWakeCursorGet :one
+SELECT bot_id, project_id, needs_you_change_seq, last_schedule_key, last_schedule_at, updated_at
+FROM bot_wake_cursor
+WHERE bot_id = $1
+`
+
+func (q *Queries) BotWakeCursorGet(ctx context.Context, botID string) (BotWakeCursor, error) {
+	row := q.db.QueryRow(ctx, botWakeCursorGet, botID)
+	var i BotWakeCursor
+	err := row.Scan(
+		&i.BotID,
+		&i.ProjectID,
+		&i.NeedsYouChangeSeq,
+		&i.LastScheduleKey,
+		&i.LastScheduleAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const botWakeCursorUpsert = `-- name: BotWakeCursorUpsert :exec
+INSERT INTO bot_wake_cursor(bot_id, project_id, needs_you_change_seq, last_schedule_key, last_schedule_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (bot_id) DO UPDATE SET
+  project_id = excluded.project_id,
+  needs_you_change_seq = excluded.needs_you_change_seq,
+  last_schedule_key = excluded.last_schedule_key,
+  last_schedule_at = excluded.last_schedule_at,
+  updated_at = now()
+`
+
+type BotWakeCursorUpsertParams struct {
+	BotID             string
+	ProjectID         string
+	NeedsYouChangeSeq int64
+	LastScheduleKey   string
+	LastScheduleAt    *time.Time
+}
+
+func (q *Queries) BotWakeCursorUpsert(ctx context.Context, arg BotWakeCursorUpsertParams) error {
+	_, err := q.db.Exec(ctx, botWakeCursorUpsert,
+		arg.BotID,
+		arg.ProjectID,
+		arg.NeedsYouChangeSeq,
+		arg.LastScheduleKey,
+		arg.LastScheduleAt,
 	)
 	return err
 }
