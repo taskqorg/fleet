@@ -62,6 +62,7 @@ The process helps, recommends and shows; it never blocks. The design and docs re
 4. **One source per rule.** A rule lives in one file; other files link to it.
 5. **Check against the book.** A page review checks it against the principles and the control specs it uses, not against taste.
 6. **A rule comes with its check.** A new owner rule names how it is checked ([owner rules](owner-rules.md#how-each-rule-is-checked)): a check on the rendered page where one is possible, otherwise the reviewer. Layout rules are checked on the rendered page, never by searching source text.
+7. **A target keeps what works.** A Target page spec or canvas keeps every capability the page has today: grouping, sorting, saved views, filters, pins, selection, row menus and the rest of its rows in the [product map](product-map.md). Read the current page on the app and its map rows before drawing. A capability leaves only by an owner decision in `decisions.md`; the pull request names each one it drops.
 
 ## Inputs
 
