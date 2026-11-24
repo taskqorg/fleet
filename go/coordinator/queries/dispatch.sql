@@ -10,6 +10,11 @@ SELECT EXISTS(SELECT 1 FROM artifact_rule_confirmation WHERE project_id= @projec
 SELECT store_id,state,last_error,attempts,next_attempt_at,(next_attempt_at IS NULL OR next_attempt_at<=now())::boolean AS due
 FROM artifact_copy WHERE artifact_id=$1;
 
+-- name: DispStoredArtifactCopies :many
+SELECT c.artifact_id,c.store_id,c.state,c.last_error,c.attempts,c.next_attempt_at,(c.next_attempt_at IS NULL OR c.next_attempt_at<=now())::boolean AS due
+FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id
+WHERE a.state='stored';
+
 -- name: DispCopyStart :exec
 -- A copy queued to a store: copying under a six-hour lease, an earlier attempt's backoff and error cleared.
 INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,upload_id,staging_key,lease_expires_at)
@@ -301,3 +306,8 @@ UPDATE execution SET wait_reason=sqlc.narg(wait_reason)::text WHERE id = @id;
 
 -- name: DispExecTask :one
 SELECT task_id FROM execution WHERE id=$1;
+
+-- name: DispRunningByHost :many
+SELECT host_id::text AS host_id, count(*)::int AS n FROM execution
+WHERE host_id IS NOT NULL AND kind IN ('agent_run','host_job') AND state IN ('preparing','running')
+GROUP BY 1;

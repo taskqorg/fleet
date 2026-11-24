@@ -83,12 +83,8 @@ func validRule(raw json.RawMessage, hosts map[string]bool) (artifactRule, error)
 	return r, nil
 }
 
-// projectRules: the artifact_rules of a project's settings, each rule's JSON; a single rule counts as a list of one.
-func projectRules(q *Request, projectID *string) []json.RawMessage {
-	if projectID == nil {
-		return nil
-	}
-	b, ok := projectSettingsOf(q, *projectID)["artifact_rules"]
+func rulesFromSettings(settings rawObject) []json.RawMessage {
+	b, ok := settings["artifact_rules"]
 	if !ok || isNull(b) {
 		return nil
 	}
@@ -97,6 +93,14 @@ func projectRules(q *Request, projectID *string) []json.RawMessage {
 		list = []json.RawMessage{b}
 	}
 	return list
+}
+
+// projectRules: the artifact_rules of a project's settings, each rule's JSON; a single rule counts as a list of one.
+func projectRules(q *Request, projectID *string) []json.RawMessage {
+	if projectID == nil {
+		return nil
+	}
+	return rulesFromSettings(projectSettingsOf(q, *projectID))
 }
 
 // Problems of the last pass, shown by stores_list.
@@ -143,36 +147,105 @@ func ruleProblem(projectID *string, rule int, err error) {
 	placementProblems.Unlock()
 }
 
-// effective: a confirmed matching move rule replaces the project list for the artifact; a delete rule ends it.
-func effective(ctx context.Context, a *App, x *Artifact, hosts map[string]bool) (plan, error) {
+type projectPlacementPolicy struct {
+	locations []string
+	rules     []artifactRule // valid, confirmed, sorted oldest-first by OlderThanDays
+}
+
+type placementPolicyCache struct {
+	hosts    map[string]bool
+	policies map[string]projectPlacementPolicy
+	locs     map[string][]string
+}
+
+func newPlacementPolicyCache(hosts map[string]bool) *placementPolicyCache {
+	return &placementPolicyCache{
+		hosts:    hosts,
+		policies: map[string]projectPlacementPolicy{},
+		locs:     map[string][]string{},
+	}
+}
+
+func (c *placementPolicyCache) locationsFor(ctx context.Context, a *App, projectID *string) []string {
+	key := projectKey(projectID)
+	if locs, ok := c.locs[key]; ok {
+		return locs
+	}
+	if p, ok := c.policies[key]; ok {
+		c.locs[key] = p.locations
+		return p.locations
+	}
+	locs := defaultLocations
+	if projectID != nil {
+		q := backgroundRequest(ctx, a, nil)
+		if l := jsonStrings(projectSettingsOf(q, *projectID)["artifact_locations"]); len(l) > 0 {
+			locs = l
+		}
+	}
+	c.locs[key] = locs
+	return locs
+}
+
+func (c *placementPolicyCache) policyFor(ctx context.Context, a *App, projectID *string) (projectPlacementPolicy, error) {
+	key := projectKey(projectID)
+	if p, ok := c.policies[key]; ok {
+		return p, nil
+	}
 	q := backgroundRequest(ctx, a, nil)
+	var settings rawObject
+	if projectID != nil {
+		settings = projectSettingsOf(q, *projectID)
+	}
+	locs := defaultLocations
+	if l := jsonStrings(settings["artifact_locations"]); len(l) > 0 {
+		locs = l
+	}
+	rawRules := rulesFromSettings(settings)
+	validRules := make([]artifactRule, 0, len(rawRules))
+	for i, raw := range rawRules {
+		r, err := validRule(raw, c.hosts)
+		if err != nil {
+			ruleProblem(projectID, i, err)
+			continue
+		}
+		validRules = append(validRules, r)
+	}
+	sort.SliceStable(validRules, func(i, j int) bool { return validRules[i].OlderThanDays > validRules[j].OlderThanDays })
+	confirmed := make([]artifactRule, 0, len(validRules))
+	for _, r := range validRules {
+		ok, err := connDB(ctx, a).DispRuleConfirmed(ctx, db.DispRuleConfirmedParams{ProjectID: key, RuleHash: ruleHash(r)})
+		if err != nil {
+			return projectPlacementPolicy{}, err
+		}
+		if ok {
+			confirmed = append(confirmed, r)
+		}
+	}
+	p := projectPlacementPolicy{locations: locs, rules: confirmed}
+	c.policies[key] = p
+	c.locs[key] = locs
+	return p, nil
+}
+
+// effective: a confirmed matching move rule replaces the project list for the artifact; a delete rule ends it.
+func effective(ctx context.Context, a *App, x *Artifact, hosts map[string]bool, cache *placementPolicyCache) (plan, error) {
+	if cache == nil {
+		cache = newPlacementPolicyCache(hosts)
+	}
+	p, err := cache.policyFor(ctx, a, x.ProjectID)
+	if err != nil {
+		return plan{}, err
+	}
 	age := time.Since(x.Created).Hours() / 24
-	rules := []artifactRule{}
-	for i, raw := range projectRules(q, x.ProjectID) {
-		r, err := validRule(raw, hosts)
-		if err != nil {
-			ruleProblem(x.ProjectID, i, err)
-			continue
-		}
+	for _, r := range p.rules {
 		if r.Scope == x.Scope && age >= float64(r.OlderThanDays) {
-			rules = append(rules, r)
+			if r.Action == "delete" {
+				return plan{delete: &r}, nil
+			}
+			return plan{locations: r.To}, nil
 		}
 	}
-	sort.SliceStable(rules, func(i, j int) bool { return rules[i].OlderThanDays > rules[j].OlderThanDays })
-	for _, r := range rules {
-		ok, err := connDB(ctx, a).DispRuleConfirmed(ctx, db.DispRuleConfirmedParams{ProjectID: projectKey(x.ProjectID), RuleHash: ruleHash(r)})
-		if err != nil {
-			return plan{}, err
-		}
-		if !ok {
-			continue
-		}
-		if r.Action == "delete" {
-			return plan{delete: &r}, nil
-		}
-		return plan{locations: r.To}, nil
-	}
-	return plan{locations: artifactLocations(a, x.ProjectID)}, nil
+	return plan{locations: p.locations}, nil
 }
 
 var placementRunning sync.Mutex
@@ -226,18 +299,33 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 	start = time.Now()
 	var timing placementTiming
 	var failures int
-	for i := range all {
-		x := &all[i]
-		q, d, err := placeOne(ctx, a, x, byID, byHost, hosts, &timing)
-		if err != nil {
-			failures++
+	copyStart := time.Now()
+	copiesByArtifact, copyErr := loadStoredArtifactCopies(ctx, a)
+	timing.copies = time.Since(copyStart)
+	if copyErr != nil {
+		failures = len(all)
+		for i := range all {
 			problem(struct {
 				Kind       string `json:"kind"`
 				ArtifactID string `json:"artifactId"`
 				Error      string `json:"error"`
-			}{"artifact-placement-error", x.ID, err.Error()})
+			}{"artifact-placement-error", all[i].ID, copyErr.Error()})
 		}
-		queued, deleted = queued+q, deleted+d
+	} else {
+		policies := newPlacementPolicyCache(hosts)
+		for i := range all {
+			x := &all[i]
+			q, d, err := placeOne(ctx, a, x, copiesByArtifact[x.ID], policies, byID, byHost, &timing)
+			if err != nil {
+				failures++
+				problem(struct {
+					Kind       string `json:"kind"`
+					ArtifactID string `json:"artifactId"`
+					Error      string `json:"error"`
+				}{"artifact-placement-error", x.ID, err.Error()})
+			}
+			queued, deleted = queued+q, deleted+d
+		}
 	}
 	span.Set("fleet.placement.artifacts", strconv.Itoa(len(all)))
 	span.Set("fleet.placement.failed", strconv.Itoa(failures))
@@ -248,15 +336,31 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 	leaseErr := expireLeases(ctx, a)
 	recordPlacementPhase(span, "expire_leases", start, leaseErr)
 	// Partial placement failures stay in the artifact problems and span counter.
-	// Propagate a lease phase failure even when individual artifacts also failed.
-	return queued, deleted, leaseErr
+	// Propagate a copy-lookup or lease phase failure even when individual artifacts also failed.
+	return queued, deleted, errors.Join(copyErr, leaseErr)
 }
 
-func placeOne(ctx context.Context, a *App, x *Artifact, byID, byHost map[string]*StoreRow, hosts map[string]bool, timing *placementTiming) (queued, deleted int, err error) {
-	start := time.Now()
-	copies, err := connDB(ctx, a).DispArtifactCopies(ctx, x.ID)
-	timing.copies += time.Since(start)
+func loadStoredArtifactCopies(ctx context.Context, a *App) (map[string][]db.DispArtifactCopiesRow, error) {
+	rows, err := connDB(ctx, a).DispStoredArtifactCopies(ctx)
 	if err != nil {
+		return nil, err
+	}
+	byArtifact := make(map[string][]db.DispArtifactCopiesRow, len(rows))
+	for _, r := range rows {
+		byArtifact[r.ArtifactID] = append(byArtifact[r.ArtifactID], db.DispArtifactCopiesRow{
+			StoreID:       r.StoreID,
+			State:         r.State,
+			LastError:     r.LastError,
+			Attempts:      r.Attempts,
+			NextAttemptAt: r.NextAttemptAt,
+			Due:           r.Due,
+		})
+	}
+	return byArtifact, nil
+}
+
+func placeOne(ctx context.Context, a *App, x *Artifact, copies []db.DispArtifactCopiesRow, policies *placementPolicyCache, byID, byHost map[string]*StoreRow, timing *placementTiming) (queued, deleted int, err error) {
+	if err := ctx.Err(); err != nil {
 		return 0, 0, err
 	}
 	verified := []*StoreRow{}
@@ -267,8 +371,8 @@ func placeOne(ctx context.Context, a *App, x *Artifact, byID, byHost map[string]
 			}
 		}
 	}
-	start = time.Now()
-	p, err := effective(ctx, a, x, hosts)
+	start := time.Now()
+	p, err := effective(ctx, a, x, policies.hosts, policies)
 	timing.policy += time.Since(start)
 	if err != nil {
 		return 0, 0, err
@@ -353,7 +457,7 @@ func placeOne(ctx context.Context, a *App, x *Artifact, byID, byHost map[string]
 				survivors = append(survivors, v)
 			}
 		}
-		ok, err := removeCopy(ctx, a, x, s, survivors)
+		ok, err := removeCopy(ctx, a, x, s, survivors, policies)
 		if err != nil {
 			return queued, deleted, err
 		}
@@ -365,7 +469,7 @@ func placeOne(ctx context.Context, a *App, x *Artifact, byID, byHost map[string]
 }
 
 // removeCopy deletes the object on s only when no other stored row of the same project, scope and hash needs that store.
-func removeCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, survivors []*StoreRow) (bool, error) {
+func removeCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, survivors []*StoreRow, policies *placementPolicyCache) (bool, error) {
 	alive := false
 	for _, v := range survivors {
 		if v.State == "unreachable" {
@@ -386,7 +490,7 @@ func removeCopy(ctx context.Context, a *App, x *Artifact, s *StoreRow, survivors
 	}
 	needed := false
 	for _, o := range others {
-		if contains(artifactLocations(a, o), s.HostID) {
+		if contains(policies.locationsFor(ctx, a, o), s.HostID) {
 			needed = true
 		}
 	}

@@ -13,7 +13,7 @@ func TestDispatchCausesMapToWaitReasons(t *testing.T) {
 	for cause, want := range map[string]string{
 		"host:h:trust": "permission", "host:h:holder": "permission", "subscription:s:not-taken": "permission", "budget:b:reached": "permission",
 		"director:d:claude": "auth", "subscription:s:not-ready": "auth",
-		"host:h:offline": "placement", "host:h:paused": "placement", "execution:e:no-candidate": "placement",
+		"host:h:offline": "placement", "host:h:paused": "placement", "host:h:overloaded": "placement", "host:h:concurrency": "placement", "execution:e:no-candidate": "placement",
 	} {
 		got := waitKindOf(cause)
 		if got != want || !slices.Contains(waitReasons, got) {

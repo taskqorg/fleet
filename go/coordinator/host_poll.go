@@ -28,8 +28,46 @@ import (
 
 const (
 	hostHeartbeatFlushMs = 30000
+	hostLoadStaleMs      = 2 * 60 * 1000
 	maxHostPollWait      = 25 * time.Second
 )
+
+type hostLoadObservation struct {
+	Load1     *float64 `json:"load1,omitempty"`
+	Cpus      *int64   `json:"cpus,omitempty"`
+	MemFree   *float64 `json:"memFree,omitempty"`
+	MemTotal  *float64 `json:"memTotal,omitempty"`
+	UpdatedAt int64    `json:"updatedAt,omitempty"`
+}
+
+func hostLoadFromContract(l *contract.HostLoad, now int64) *hostLoadObservation {
+	if l == nil {
+		return nil
+	}
+	return &hostLoadObservation{
+		Load1:     l.Load1,
+		Cpus:      l.Cpus,
+		MemFree:   l.MemFree,
+		MemTotal:  l.MemTotal,
+		UpdatedAt: now,
+	}
+}
+
+func hostOverloadReason(hostID string, load *hostLoadObservation, now int64) string {
+	if load == nil {
+		return ""
+	}
+	if load.UpdatedAt > 0 && now-load.UpdatedAt >= hostLoadStaleMs {
+		return ""
+	}
+	if load.Cpus != nil && *load.Cpus > 0 && load.Load1 != nil && *load.Load1 > float64(*load.Cpus) {
+		return fmt.Sprintf("%s is overloaded (load %.2f on %d cores)", hostID, *load.Load1, *load.Cpus)
+	}
+	if load.MemTotal != nil && *load.MemTotal > 0 && load.MemFree != nil && *load.MemFree < ruleMemFreeShare*(*load.MemTotal) {
+		return fmt.Sprintf("%s is overloaded (free memory %.0f%% below %.0f%%)", hostID, 100*(*load.MemFree)/(*load.MemTotal), 100*ruleMemFreeShare)
+	}
+	return ""
+}
 
 type hostHeartbeat struct {
 	lastSeenAt      int64
@@ -37,6 +75,8 @@ type hostHeartbeat struct {
 	lastPersistedAt int64
 	stateSig        string
 	storesSig       string
+	load            *hostLoadObservation
+	overloaded      bool
 	// Poll health (host_poll_health.go): pollClean, no failure is recorded in the database; pollProblem, its
 	// needs-you problem is open; pollFailures is the sequence number of its last failed poll (pollFailureSeq, never
 	// reused after a cache clear), so a success does not mark clean over a later failure.
@@ -208,6 +248,46 @@ func (a *App) effectiveHostSeen(hostID string, dbSeen float64) float64 {
 		return cached
 	}
 	return dbSeen
+}
+
+func (a *App) recordHostLoad(hostID string, load *hostLoadObservation, overloaded, onlyIfNewer bool) (changed bool) {
+	if a == nil || hostID == "" || load == nil {
+		return false
+	}
+	a.ensureRuntime()
+	a.pollMu.Lock()
+	defer a.pollMu.Unlock()
+	hb := a.heartbeatOf(hostID)
+	if onlyIfNewer && hb.load != nil && hb.load.UpdatedAt >= load.UpdatedAt {
+		return false
+	}
+	prevKnown := hb.load != nil
+	prevOverloaded := hb.overloaded
+	cp := *load
+	hb.load = &cp
+	hb.overloaded = overloaded
+	return (!prevKnown && overloaded) || (prevKnown && prevOverloaded != overloaded)
+}
+
+func (a *App) effectiveHostLoad(hostID string, dbLoad *hostLoadObservation) *hostLoadObservation {
+	if a == nil {
+		return dbLoad
+	}
+	a.ensureRuntime()
+	a.pollMu.Lock()
+	var cached *hostLoadObservation
+	if hb := a.heartbeats[hostID]; hb != nil && hb.load != nil {
+		cp := *hb.load
+		cached = &cp
+	}
+	a.pollMu.Unlock()
+	if cached == nil {
+		return dbLoad
+	}
+	if dbLoad == nil || cached.UpdatedAt >= dbLoad.UpdatedAt {
+		return cached
+	}
+	return dbLoad
 }
 
 func parsePollWait(r *http.Request) time.Duration {
@@ -782,6 +862,15 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	stateSig := canonical(obs)
 	storesSig := canonical(stores)
 	flushObs, flushStores, stateChanged := a.heartbeatNeedsFlush(host, stateSig, storesSig, now)
+	loadObs := hostLoadFromContract(b.Load, now)
+	if loadObs != nil {
+		overloaded := hostOverloadReason(host, loadObs, now) != ""
+		if a.recordHostLoad(host, loadObs, overloaded, false) {
+			flushObs = true
+			stateChanged = true
+		}
+		obs.Load = loadObs
+	}
 	// Store changes persist with host observations without triggering global state-change work.
 	obs.Stores = stores
 	flushObs = flushObs || flushStores
@@ -1021,8 +1110,9 @@ type hostPollObservationPayload struct {
 	Version         *string                    `json:"version,omitempty"`
 	Problems        []hostProblem              `json:"problems,omitempty"`
 	Update          any                        `json:"update,omitempty"`
-	Stores          any                        `json:"stores"`
-	PollError       json.RawMessage            `json:"pollError,omitempty"`
+	Stores           any                        `json:"stores"`
+	Load             *hostLoadObservation       `json:"load,omitempty"`
+	PollError        json.RawMessage            `json:"pollError,omitempty"`
 }
 
 // hostPollObservation: what a poll observes of its host (the host-observation record): its platform, capabilities,

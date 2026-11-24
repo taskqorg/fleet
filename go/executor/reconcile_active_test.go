@@ -44,6 +44,9 @@ func TestPollReportsActiveExecutions(t *testing.T) {
 	if captured.ActiveExecutions == nil || len(captured.ActiveExecutions) != 0 {
 		t.Fatalf("captured empty ActiveExecutions = %#v", captured.ActiveExecutions)
 	}
+	if captured.Load == nil || captured.Load.Cpus == nil || *captured.Load.Cpus < 1 {
+		t.Fatalf("captured poll Load = %#v, want cpus >= 1", captured.Load)
+	}
 
 	// 2. Open command (terminal=0) and finished command whose receipt is still in outbox both appear, sorted.
 	if _, err := db.Exec(`INSERT INTO commands(id,body,terminal) VALUES

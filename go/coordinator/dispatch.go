@@ -191,12 +191,14 @@ type candidate struct {
 }
 
 type dispatchContext struct {
-	hostIDs  []string                // the ids of hosts in host order
-	hosts    map[string]dispatchHost // registered execution hosts (roles empty)
+	hostIDs  []string                        // the ids of hosts in host order
+	hosts    map[string]dispatchHost         // registered execution hosts (roles empty)
 	seen     map[string]float64
 	caps     map[string][]string
 	roots    map[string][]string
-	conns    map[string][]string // git connection names each host reported; absent: unknown
+	conns    map[string][]string             // git connection names each host reported; absent: unknown
+	loads    map[string]*hostLoadObservation // latest reported load/CPU/memory per host
+	running  map[string]int64                // active executions (preparing/running) per host, updated in-pass
 	accounts []dispatchAccountRec
 	readings map[string][]Reading
 	orders   map[string]contract.DispatchOrder // the directors' order setting, read once per pass
@@ -204,19 +206,21 @@ type dispatchContext struct {
 
 // dispatchHost: the fields dispatch reads of a live execution host record (hostsLive).
 type dispatchHost struct {
-	ID        string
-	Holder    *string
-	Intake    *string
-	Harnesses map[string]struct {
+	ID            string
+	Holder        *string
+	Intake        *string
+	MaxConcurrent *int64
+	Harnesses     map[string]struct {
 		Allowed *bool `json:"allowed"`
 	}
 }
 
 // hostSeen: the fields dispatch reads of a host observation.
 type hostSeen struct {
-	Capabilities   []string  `json:"capabilities"`
-	GitConnections *[]string `json:"gitConnections"`
-	ProjectRoots   *[]string `json:"projectRoots"`
+	Capabilities   []string             `json:"capabilities"`
+	GitConnections *[]string            `json:"gitConnections"`
+	ProjectRoots   *[]string            `json:"projectRoots"`
+	Load           *hostLoadObservation `json:"load"`
 }
 
 // dispatchAccountRec: a subscription (managed_account) decoded once for dispatch.
@@ -237,12 +241,12 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	k := &dispatchContext{hosts: map[string]dispatchHost{}, caps: map[string][]string{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, orders: map[string]contract.DispatchOrder{}}
+	k := &dispatchContext{hosts: map[string]dispatchHost{}, caps: map[string][]string{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, loads: map[string]*hostLoadObservation{}, running: map[string]int64{}, orders: map[string]contract.DispatchOrder{}}
 	for _, h := range hs {
 		if !h.executes() {
 			continue
 		}
-		v := dispatchHost{ID: h.ID, Holder: h.Holder, Intake: h.Intake}
+		v := dispatchHost{ID: h.ID, Holder: h.Holder, Intake: h.Intake, MaxConcurrent: h.MaxConcurrent}
 		_ = lenientDecode(h.Harnesses, &v.Harnesses)
 		k.hostIDs = append(k.hostIDs, v.ID)
 		k.hosts[v.ID] = v
@@ -264,6 +268,23 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 		if o.ProjectRoots != nil {
 			k.roots[r.ID] = nonNilStrings(*o.ProjectRoots)
 		}
+		if l := q.app.effectiveHostLoad(r.ID, o.Load); l != nil {
+			k.loads[r.ID] = l
+		}
+	}
+	for id := range k.hosts {
+		if _, ok := k.loads[id]; !ok {
+			if l := q.app.effectiveHostLoad(id, nil); l != nil {
+				k.loads[id] = l
+			}
+		}
+	}
+	runningRows, err := q.db().DispRunningByHost(q.ctx())
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range runningRows {
+		k.running[r.HostID] = int64(r.N)
 	}
 	accountRows, err := q.db().AccountRows(q.ctx())
 	if err != nil {
@@ -780,8 +801,17 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 					continue
 				}
 			}
-			if !(float64(nowMs())-k.seen[id] < onlineMs) {
+			now := nowMs()
+			if !(float64(now)-k.seen[id] < onlineMs) {
 				skip(id+" is offline", "host:"+id+":offline")
+				continue
+			}
+			if reason := hostOverloadReason(id, k.loads[id], now); reason != "" {
+				skip(reason, "host:"+id+":overloaded")
+				continue
+			}
+			if limit := hostConcurrencyLimit(hv, k.loads[id], now); limit > 0 && k.running[id] >= limit {
+				skip(fmt.Sprintf("%s is at concurrency limit (%d/%d active)", id, k.running[id], limit), "host:"+id+":concurrency")
 				continue
 			}
 			if harness == "antigravity" || harness == "acp" {
@@ -989,6 +1019,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if err := exec(q, "RELEASE SAVEPOINT start_command"); err != nil {
 				return err
 			}
+			k.running[best.Host]++
 			if err := recordDecision(q, claimed, firstString(polling, best.Host), cs, best); err != nil {
 				return err
 			}
@@ -1065,9 +1096,11 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		} else if first != nil && first.Subscription != nil {
 			holder = deref(first.Subscription.Holder)
 		}
-		if _, ok := causes[cause]; !ok {
-			causes[cause] = stall{reason, deref(cur.DirectedBy), holder, deref(cur.projectID())}
-			causeOrder = append(causeOrder, cause)
+		if !isBackpressureCause(cause) {
+			if _, ok := causes[cause]; !ok {
+				causes[cause] = stall{reason, deref(cur.DirectedBy), holder, deref(cur.projectID())}
+				causeOrder = append(causeOrder, cause)
+			}
 		}
 	}
 	// Only the stall causes this pass raises: a key, budget-ask or other area's question keeps its cause.
@@ -1081,6 +1114,20 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		stalls = append(stalls, Problem{Cause: cause, Text: fmt.Sprintf("Work is waiting: %v.%s", c.reason, tail), ProjectID: c.projectID, AddressedTo: c.director, Options: []any{"ok"}})
 	}
 	return problemsSet(q, "", dispatchStallCauses, stalls)
+}
+
+func hostConcurrencyLimit(hv dispatchHost, load *hostLoadObservation, now int64) int64 {
+	if hv.MaxConcurrent != nil && *hv.MaxConcurrent > 0 {
+		return *hv.MaxConcurrent
+	}
+	if load != nil && load.Cpus != nil && *load.Cpus > 0 && (load.UpdatedAt == 0 || now-load.UpdatedAt < hostLoadStaleMs) {
+		return *load.Cpus
+	}
+	return 0
+}
+
+func isBackpressureCause(cause string) bool {
+	return strings.HasSuffix(cause, ":overloaded") || strings.HasSuffix(cause, ":concurrency")
 }
 
 // dispatchStallCauses: the causes a dispatch pass raises and closes (problemsSet).

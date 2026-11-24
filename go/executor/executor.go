@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -41,6 +43,11 @@ type executor struct {
 	declared     []string
 	storeAt      time.Time
 	storeLast    []contract.StoreReport
+	loadMu       sync.Mutex
+	loadMemAt    time.Time
+	loadMemFree  float64
+	loadMemTotal float64
+	loadMemOK    bool
 }
 
 // inTx runs fn with every journal write of the executor inside one transaction.
@@ -330,11 +337,34 @@ func (e *executor) activeExecutions() []string {
 	return out
 }
 
+const hostLoadMemTTL = 15 * time.Second
+
+func (e *executor) sampleHostLoad() *contract.HostLoad {
+	cpus := int64(runtime.NumCPU())
+	out := &contract.HostLoad{Cpus: &cpus}
+	if l, ok := load1(); ok && l >= 0 {
+		out.Load1 = &l
+	}
+	e.loadMu.Lock()
+	if e.loadMemAt.IsZero() || time.Since(e.loadMemAt) >= hostLoadMemTTL {
+		free, total, ok := memory()
+		e.loadMemAt = time.Now()
+		e.loadMemFree, e.loadMemTotal, e.loadMemOK = free, total, ok
+	}
+	free, total, ok := e.loadMemFree, e.loadMemTotal, e.loadMemOK
+	e.loadMu.Unlock()
+	if ok && total > 0 && free >= 0 {
+		out.MemFree = &free
+		out.MemTotal = &total
+	}
+	return out
+}
+
 func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply, error) {
 	v, roots := version, reportedRoots()
 	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
 		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, HarnessVersions: managedVersions(), Update: lastUpdate(e.root),
-		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: e.activeExecutions()}
+		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: e.activeExecutions(), Load: e.sampleHostLoad()}
 	var a answer
 	if wait > 0 {
 		a = sendPoll(ctx, e.url, e.token, pollRoute+"?wait="+wait.String(), body)

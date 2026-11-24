@@ -184,10 +184,21 @@ func hostSpans(q *Request, b *contract.SpanBatchRequest) (any, error) {
 		js, _ := json.Marshal(&s)
 		buf.Write(js)
 		buf.WriteByte('\n')
+		if s.Name == "host.heartbeat" && s.Kind == obs.KindCheck {
+			loadObs := spanHostLoad(&s, nowMs())
+			if loadObs != nil {
+				overloaded := hostOverloadReason(host, loadObs, loadObs.UpdatedAt) != ""
+				if q.app != nil && q.app.recordHostLoad(host, loadObs, overloaded, true) {
+					q.app.wakeDispatch()
+				}
+			}
+		}
 	}
 	accepted := len(b.Spans) - skipped
 	if accepted > 0 && spanStore == nil {
-		spanWriter.Discard(accepted) // telemetry off: dropped and counted, the host does not retry
+		if spanWriter != nil {
+			spanWriter.Discard(accepted) // telemetry off: dropped and counted, the host does not retry
+		}
 	} else if accepted > 0 {
 		if err := spanStore.Insert(q.ctx(), "span", buf.Bytes(), host+":"+b.BatchId); err != nil {
 			log.Printf("telemetry: host spans: %v", err)
@@ -195,6 +206,31 @@ func hostSpans(q *Request, b *contract.SpanBatchRequest) (any, error) {
 		}
 	}
 	return contract.SpanBatchReply{Accepted: int64(accepted), Skipped: int64(skipped)}, nil
+}
+
+func spanHostLoad(s *obs.Span, fallbackNow int64) *hostLoadObservation {
+	if s == nil {
+		return nil
+	}
+	atMs := fallbackNow
+	if t, err := time.Parse(obs.TimeFormat, s.Start); err == nil {
+		atMs = t.UnixMilli()
+	}
+	l := &hostLoadObservation{Load1: s.Load1, MemFree: s.MemFree, UpdatedAt: atMs}
+	if raw := s.Attrs["fleet.cpus"]; raw != "" {
+		if n, err := strconv.ParseInt(raw, 10, 64); err == nil && n > 0 {
+			l.Cpus = &n
+		}
+	}
+	if raw := s.Attrs["fleet.mem_total"]; raw != "" {
+		if n, err := strconv.ParseFloat(raw, 64); err == nil && n > 0 {
+			l.MemTotal = &n
+		}
+	}
+	if l.Load1 == nil && l.Cpus == nil && l.MemFree == nil && l.MemTotal == nil {
+		return nil
+	}
+	return l
 }
 
 // clickhouseStrings: an Array(String) parameter value (ClickHouse literal syntax).

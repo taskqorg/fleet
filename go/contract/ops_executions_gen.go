@@ -1282,18 +1282,19 @@ func (v *HostProblem) Validate() error {
 	return nil
 }
 
-// HostRecord: A registered host (without its secret hash). harnesses: per harness name whether it is allowed; autoUpdate on, off or an RFC 3339 time.
+// HostRecord: A registered host (without its secret hash). harnesses: per harness name whether it is allowed; autoUpdate on, off or an RFC 3339 time; maxConcurrent: owner-configured concurrency limit (null when unset).
 type HostRecord struct {
-	AutoUpdate json.RawMessage `json:"autoUpdate,omitempty"`
-	CreatedAt  float64         `json:"createdAt"`
-	Harnesses  json.RawMessage `json:"harnesses"`
-	Holder     *string         `json:"holder,omitempty"`
-	HostId     *string         `json:"hostId,omitempty"`
-	Id         string          `json:"id"`
-	Intake     string          `json:"intake"`
-	Name       *string         `json:"name,omitempty"`
-	Platform   *string         `json:"platform,omitempty"`
-	Roles      []string        `json:"roles,omitempty"`
+	AutoUpdate    json.RawMessage `json:"autoUpdate,omitempty"`
+	CreatedAt     float64         `json:"createdAt"`
+	Harnesses     json.RawMessage `json:"harnesses"`
+	Holder        *string         `json:"holder,omitempty"`
+	HostId        *string         `json:"hostId,omitempty"`
+	Id            string          `json:"id"`
+	Intake        string          `json:"intake"`
+	MaxConcurrent *int64          `json:"maxConcurrent,omitempty"`
+	Name          *string         `json:"name,omitempty"`
+	Platform      *string         `json:"platform,omitempty"`
+	Roles         []string        `json:"roles,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1454,13 +1455,14 @@ type HostsRegisterReply = HostWriteReply
 
 // HostsRegisterRequest: Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.
 type HostsRegisterRequest struct {
-	Harnesses    json.RawMessage `json:"harnesses,omitempty"`
-	Holder       *string         `json:"holder,omitempty"`
-	Id           string          `json:"id"`
-	Name         *string         `json:"name,omitempty"`
-	Platform     *string         `json:"platform,omitempty"`
-	Roles        []string        `json:"roles,omitempty"`
-	SecretSha256 *string         `json:"secretSha256,omitempty"`
+	Harnesses     json.RawMessage `json:"harnesses,omitempty"`
+	Holder        *string         `json:"holder,omitempty"`
+	Id            string          `json:"id"`
+	MaxConcurrent *int64          `json:"maxConcurrent,omitempty"`
+	Name          *string         `json:"name,omitempty"`
+	Platform      *string         `json:"platform,omitempty"`
+	Roles         []string        `json:"roles,omitempty"`
+	SecretSha256  *string         `json:"secretSha256,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }
@@ -1554,10 +1556,11 @@ func (v *HostsUpdateReply) Validate() error {
 
 // HostsUpdateRequest: Owner, or the holder for their own host.
 type HostsUpdateRequest struct {
-	AutoUpdate json.RawMessage `json:"autoUpdate,omitempty"`
-	Harnesses  json.RawMessage `json:"harnesses,omitempty"`
-	Id         string          `json:"id"`
-	Intake     *string         `json:"intake,omitempty"`
+	AutoUpdate    json.RawMessage `json:"autoUpdate,omitempty"`
+	Harnesses     json.RawMessage `json:"harnesses,omitempty"`
+	Id            string          `json:"id"`
+	Intake        *string         `json:"intake,omitempty"`
+	MaxConcurrent json.RawMessage `json:"maxConcurrent,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }
@@ -3024,10 +3027,10 @@ func init() {
 		"executions_reconcile":  {Read: false, Long: false, Errors: []int{400, 403}, Auth: "owner", Agent: "tool", Description: "Owner or full access: preview or reconcile stuck executions with no live worker process, leaving active runs untouched; writes one audit row each", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: preview or reconcile stuck executions with no live worker process, leaving active runs untouched.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"preview\":{\"type\":\"boolean\"},\"reason\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"executions_runners":    {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "CI runners and the executions they ran", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
 		"hosts_list":            {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "includeRemoved: also hosts removed by hosts_remove (state removed).", Changes: []string{"host", "execution", "command"}, InputSchema: json.RawMessage("{\"$comment\":\"includeRemoved: also hosts removed by hosts_remove (state removed).\",\"additionalProperties\":true,\"properties\":{\"includeRemoved\":{\"type\":\"boolean\"}},\"type\":\"object\"}")},
-		"hosts_register":        {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "owner", Agent: "no", Description: "Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.\",\"additionalProperties\":true,\"properties\":{\"harnesses\":{},\"holder\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"platform\":{\"type\":\"string\"},\"roles\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"secretSha256\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"id\"],\"type\":\"object\"}")},
+		"hosts_register":        {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "owner", Agent: "no", Description: "Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.\",\"additionalProperties\":true,\"properties\":{\"harnesses\":{},\"holder\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"maxConcurrent\":{\"minimum\":1,\"type\":[\"integer\",\"null\"]},\"name\":{\"type\":\"string\"},\"platform\":{\"type\":\"string\"},\"roles\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"secretSha256\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"hosts_remove":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:host", Agent: "tool", Description: "Owner, or the holder of the host: remove a host (id, preview). Preview first: running executions, open sessions, artifacts with no other copy; confirm cancels its running work and drops its secret and settings; the record stays for history until system_purge", InputSchema: json.RawMessage("{\"$comment\":\"Owner, or the holder for their own host (fleet-system-management.md, Hosts). preview true changes nothing and returns the counts; false removes: running work is cancelled, the secret and settings are dropped, the host record stays as a tombstone (state removed) for history.\",\"properties\":{\"id\":{\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"id\",\"preview\"],\"type\":\"object\"}")},
 		"hosts_rotate_secret":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "no", Description: "Owner only.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only.\",\"additionalProperties\":true,\"properties\":{\"id\":{\"type\":\"string\"},\"secretSha256\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"id\"],\"type\":\"object\"}")},
-		"hosts_update":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:host", Agent: "tool", Description: "Owner, or the holder for their own host.", InputSchema: json.RawMessage("{\"$comment\":\"Owner, or the holder for their own host.\",\"additionalProperties\":true,\"properties\":{\"autoUpdate\":{},\"harnesses\":{},\"id\":{\"type\":\"string\"},\"intake\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
+		"hosts_update":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:host", Agent: "tool", Description: "Owner, or the holder for their own host.", InputSchema: json.RawMessage("{\"$comment\":\"Owner, or the holder for their own host.\",\"additionalProperties\":true,\"properties\":{\"autoUpdate\":{},\"harnesses\":{},\"id\":{\"type\":\"string\"},\"intake\":{\"type\":\"string\"},\"maxConcurrent\":{}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"object_delete":         {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner only: delete a test project, a Lab experiment, a task or a session with everything that goes with it (kind project|experiment|task|session, id, preview); a task or session a live one depends on is refused with Kept by <reason>. Call preview: true first and read affected (counts per kind, artifact bytes) and running; preview: false stops its running work (stopDetail deleted), revokes run tokens, withdraws open questions, sends worktree teardowns and tombstones it: it leaves every list, detail, search, queue, dispatch and analytics read. One audit row; system_purge removes the rows later", InputSchema: json.RawMessage("{\"$comment\":\"A task another live task depends on (task_dependency), whose artifacts a live task accepted, or that a live session or task names as its creator stays (409 Kept by); a session that a live session forked or was created from, that created a live task, or whose executions belong to a live task stays too (delete the task first). Owner only (fleet-system-management.md, Archive, delete, purge). preview true changes nothing and returns what goes with the object; both refuse (409) while a live row outside the object keeps one of its objects (another experiment's score citing a trial). false tombstones it with its tasks, executions (and their child runs), sessions, experiments, questions and artifacts: running work is stopped (pipeline runs cancelled, agent runs stopped with stopDetail deleted), run tokens revoked, open questions withdrawn, worktrees of its sessions get a teardown; a project's connections no other project uses are removed as project_archive does. Deleted objects leave every list, detail, search, queue, dispatch and analytics read; system_purge removes their rows later.\",\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"Kinds object_delete deletes. A task takes its executions (with their child runs), questions and artifacts; a session takes its executions, messages and questions.\",\"enum\":[\"project\",\"experiment\",\"task\",\"session\"],\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"kind\",\"id\",\"preview\"],\"type\":\"object\"}")},
 		"pipeline_get":          {Read: true, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "A pipeline run (runId) with its steps, optionally checked against projectId", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\"],\"type\":\"object\"}")},
 		"pipeline_history":      {Read: true, Long: false, Errors: []int{404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Pipeline runs of a project (projectId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},

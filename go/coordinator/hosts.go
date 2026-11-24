@@ -45,13 +45,14 @@ func init() {
 
 // hostPayload: the fields of a host record kept in payload (typed_records.go), under their record names.
 type hostPayload struct {
-	Name       *string         `json:"name,omitempty"`
-	Platform   *string         `json:"platform,omitempty"`
-	Roles      []string        `json:"roles"`
-	Harnesses  json.RawMessage `json:"harnesses,omitempty"`
-	CreatedAt  *float64        `json:"createdAt,omitempty"`
-	AutoUpdate json.RawMessage `json:"autoUpdate,omitempty"`
-	RemovedAt  *float64        `json:"removedAt,omitempty"`
+	Name          *string         `json:"name,omitempty"`
+	Platform      *string         `json:"platform,omitempty"`
+	Roles         []string        `json:"roles"`
+	Harnesses     json.RawMessage `json:"harnesses,omitempty"`
+	CreatedAt     *float64        `json:"createdAt,omitempty"`
+	AutoUpdate    json.RawMessage `json:"autoUpdate,omitempty"`
+	MaxConcurrent *int64          `json:"maxConcurrent,omitempty"`
+	RemovedAt     *float64        `json:"removedAt,omitempty"`
 }
 
 // hostRecord: a row of table host with its bare id. As JSON it is the host record as the record API shows it, the id
@@ -89,7 +90,7 @@ func (h hostRecord) autoUpdate() string {
 // hostView: the host as the host operations answer it, without its secret's hash.
 func (h hostRecord) view() contract.HostRecord {
 	return contract.HostRecord{AutoUpdate: h.AutoUpdate, CreatedAt: valueOr(h.CreatedAt), Harnesses: h.Harnesses, Holder: h.Holder, Id: h.ID,
-		Intake: deref(h.Intake), Name: h.Name, Platform: h.Platform, Roles: h.Roles}
+		Intake: deref(h.Intake), MaxConcurrent: h.MaxConcurrent, Name: h.Name, Platform: h.Platform, Roles: h.Roles}
 }
 
 // valueOr: *p, or the zero value when p is nil.
@@ -341,9 +342,12 @@ func hostsRegister(q *Request, b *contract.HostsRegisterRequest) (contract.HostW
 	if b.Platform != nil {
 		platform = *b.Platform
 	}
+	if b.MaxConcurrent != nil && *b.MaxConcurrent < 1 {
+		return out, fail(400, "maxConcurrent: positive integer or null")
+	}
 	created := float64(nowMs())
 	h := hostRecord{ID: id, Holder: &holder, Intake: ptr("all"), SecretHash: &hash,
-		hostPayload: hostPayload{Name: &name, Platform: &platform, Roles: roles, Harnesses: harnesses, CreatedAt: &created}}
+		hostPayload: hostPayload{Name: &name, Platform: &platform, Roles: roles, Harnesses: harnesses, MaxConcurrent: b.MaxConcurrent, CreatedAt: &created}}
 	if err := q.db().HostRegister(q.ctx(), db.HostRegisterParams{ID: "host:" + id, HostID: id, Holder: h.Holder, Intake: h.Intake, SecretHash: h.SecretHash,
 		Payload: jsonBytes(h.hostPayload)}); err != nil {
 		return out, err
@@ -405,6 +409,21 @@ func hostsUpdate(q *Request, b *contract.HostsUpdateRequest) (contract.HostsUpda
 		maps.Copy(m, add)
 		next = append(next, setting{"harnesses", h.Harnesses, jsonBytes(m)})
 	}
+	if len(b.MaxConcurrent) > 0 {
+		var prev json.RawMessage
+		if h.MaxConcurrent != nil {
+			prev = jsonBytes(*h.MaxConcurrent)
+		}
+		if string(b.MaxConcurrent) == "null" {
+			next = append(next, setting{"maxConcurrent", prev, json.RawMessage("null")})
+		} else {
+			var v float64
+			if json.Unmarshal(b.MaxConcurrent, &v) != nil || v < 1 || v != float64(int64(v)) {
+				return out, fail(400, "maxConcurrent: positive integer or null")
+			}
+			next = append(next, setting{"maxConcurrent", prev, jsonBytes(int64(v))})
+		}
+	}
 	changed := []string{}
 	patch := map[string]json.RawMessage{}
 	var intake *string
@@ -439,6 +458,16 @@ func hostsUpdate(q *Request, b *contract.HostsUpdateRequest) (contract.HostsUpda
 	}
 	if v, ok := patch["harnesses"]; ok {
 		h.Harnesses = v
+	}
+	if v, ok := patch["maxConcurrent"]; ok {
+		if isNull(v) {
+			h.MaxConcurrent = nil
+		} else {
+			var n int64
+			if json.Unmarshal(v, &n) == nil {
+				h.MaxConcurrent = &n
+			}
+		}
 	}
 	out.Host = h.view()
 	return out, nil
@@ -617,9 +646,10 @@ func hostsListReply(q *Request, includeRemoved bool) (contract.HostsListReply, e
 		}
 		r, configured := live[id]
 		h := contract.HostRow{Id: id, Configured: configured, Capabilities: []string{}, Problems: []contract.HostProblem{},
-			RunningByHarness: by, Running: runningTotal[id], Queued: queuedByHost[id], Stores: "unknown", StoresReason: ptr("not observed"), AutoUpdate: jsonBytes("on")}
+			RunningByHarness: by, Running: runningTotal[id], Slots: jsonBytes(nil), Queued: queuedByHost[id], Stores: "unknown", StoresReason: ptr("not observed"), AutoUpdate: jsonBytes("on")}
 		if configured {
 			h.AutoUpdate = jsonBytes(r.autoUpdate())
+			h.Slots = jsonBytes(r.MaxConcurrent)
 		}
 		if at, gone := removedAt[id]; gone {
 			h.RemovedAt, h.Configured = at, false

@@ -1440,6 +1440,18 @@ func (v *HostEvents) Validate() error {
 	return nil
 }
 
+type HostLoad struct {
+	Cpus     *int64   `json:"cpus,omitempty"`
+	Load1    *float64 `json:"load1,omitempty"`
+	MemFree  *float64 `json:"memFree,omitempty"`
+	MemTotal *float64 `json:"memTotal,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostLoad) Validate() error {
+	return nil
+}
+
 type InputArtifact struct {
 	ArtifactId string `json:"artifactId"`
 	Path       string `json:"path"`
@@ -1700,6 +1712,7 @@ type PollRequest struct {
 	GitConnections   []string         `json:"gitConnections"`
 	HarnessVersions  []HarnessVersion `json:"harnessVersions,omitempty"`
 	HostId           string           `json:"hostId"`
+	Load             *HostLoad        `json:"load,omitempty"`
 	Platform         Platform         `json:"platform"`
 	Problems         []EdgeProblem    `json:"problems"`
 	ProjectRoots     []string         `json:"projectRoots"`
@@ -1721,6 +1734,11 @@ func (v *PollRequest) Validate() error {
 	}
 	for i := range v.HarnessVersions {
 		if err := Check(&v.HarnessVersions[i], "harnessVersions"); err != nil {
+			return err
+		}
+	}
+	if v.Load != nil {
+		if err := Check(v.Load, "load"); err != nil {
 			return err
 		}
 	}

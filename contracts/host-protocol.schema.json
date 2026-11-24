@@ -359,7 +359,20 @@
           "items": {
             "type": "string"
           }
+        },
+        "load": {
+          "$comment": "latest host load, CPU count and memory readings sampled by the executor; omitted by older hosts",
+          "$ref": "#/$defs/HostLoad"
         }
+      }
+    },
+    "HostLoad": {
+      "type": "object",
+      "properties": {
+        "load1": { "type": "number", "minimum": 0 },
+        "cpus": { "type": "integer", "minimum": 1 },
+        "memFree": { "type": "number", "minimum": 0 },
+        "memTotal": { "type": "number", "minimum": 0 }
       }
     },
     "HarnessVersion": {

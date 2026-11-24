@@ -1049,6 +1049,37 @@ func (q *Queries) DispRulePreview(ctx context.Context, arg DispRulePreviewParams
 	return items, nil
 }
 
+const dispRunningByHost = `-- name: DispRunningByHost :many
+SELECT host_id::text AS host_id, count(*)::int AS n FROM execution
+WHERE host_id IS NOT NULL AND kind IN ('agent_run','host_job') AND state IN ('preparing','running')
+GROUP BY 1
+`
+
+type DispRunningByHostRow struct {
+	HostID string
+	N      int32
+}
+
+func (q *Queries) DispRunningByHost(ctx context.Context) ([]DispRunningByHostRow, error) {
+	rows, err := q.db.Query(ctx, dispRunningByHost)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DispRunningByHostRow
+	for rows.Next() {
+		var i DispRunningByHostRow
+		if err := rows.Scan(&i.HostID, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const dispStartNeverHandedOut = `-- name: DispStartNeverHandedOut :one
 SELECT EXISTS(SELECT 1 FROM command WHERE execution_id=$1 AND kind IN ('start','script') AND status='pending' AND handed_out=false)::boolean
 `
@@ -1058,6 +1089,50 @@ func (q *Queries) DispStartNeverHandedOut(ctx context.Context, executionID *stri
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const dispStoredArtifactCopies = `-- name: DispStoredArtifactCopies :many
+SELECT c.artifact_id,c.store_id,c.state,c.last_error,c.attempts,c.next_attempt_at,(c.next_attempt_at IS NULL OR c.next_attempt_at<=now())::boolean AS due
+FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id
+WHERE a.state='stored'
+`
+
+type DispStoredArtifactCopiesRow struct {
+	ArtifactID    string
+	StoreID       string
+	State         string
+	LastError     *string
+	Attempts      int32
+	NextAttemptAt *time.Time
+	Due           bool
+}
+
+func (q *Queries) DispStoredArtifactCopies(ctx context.Context) ([]DispStoredArtifactCopiesRow, error) {
+	rows, err := q.db.Query(ctx, dispStoredArtifactCopies)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DispStoredArtifactCopiesRow
+	for rows.Next() {
+		var i DispStoredArtifactCopiesRow
+		if err := rows.Scan(
+			&i.ArtifactID,
+			&i.StoreID,
+			&i.State,
+			&i.LastError,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.Due,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const dispTotalsWallUnknown = `-- name: DispTotalsWallUnknown :exec
