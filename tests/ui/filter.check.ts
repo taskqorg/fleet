@@ -91,11 +91,11 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await step('click group Agent', `[...document.querySelectorAll('[data-ui=group-control] [role=menuitemradio]')].find(b=>b.textContent==='Agent').click()`);
     // The navigation returns to a section as it was left: System and back to Projects opens Tasks with its grouping (prefs.ts noteView).
     const grouped = await url();
-    await page.locator('.rail [data-id="system"] a').first().click(); await page.waitForURL('**/hosts**');
+    await page.locator('.rail [data-id="system"] a').first().click(); await page.waitForURL('**/system');
     await page.locator('.rail [data-id="projects"] a').first().click(); await page.waitForURL('**/tasks**');
     rule(N, await url() === grouped, `back to Tasks lost the view: ${await url()} for ${grouped}`);
     // It is stored for the person: after a reload, Tasks from Spotlight still opens the grouped list.
-    await page.locator('.rail [data-id="system"] a').first().click(); await page.waitForURL('**/hosts**');
+    await page.locator('.rail [data-id="system"] a').first().click(); await page.waitForURL('**/system');
     const prefsRead = page.waitForResponse(r => r.url().endsWith('/api/ops/person_settings_get'));
     await page.reload(); await prefsRead; await page.waitForSelector('.rail [data-id="projects"] a');
     await page.keyboard.press('ControlOrMeta+k'); await page.getByRole('combobox', { name: 'Search' }).fill('Tasks');
@@ -219,7 +219,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     // Every frame's headers 3, 4 and 7 (aria-expanded, - when not on screen), recorded from a start until the list settles.
     const RECORD = `window.__groups = []; const tick = () => { const s = ['3', '4', '7'].map(k => document.querySelector('.vl-row[data-key="g:' + k + '"] .group-h')?.getAttribute('aria-expanded') ?? '-').join(','); if (window.__groups.at(-1) !== s) window.__groups.push(s); requestAnimationFrame(tick); }; requestAnimationFrame(tick);`;
     const flashed = (seen: string[]) => seen.filter(s => s.split(',').some((x, i) => x !== '-' && x !== want.split(',')[i]));
-    await page.locator('.rail [data-id="system"] a').first().click(); await page.waitForURL('**/hosts**');
+    await page.locator('.rail [data-id="system"] a').first().click(); await page.waitForURL('**/system');
     // Every toggle reached the server.
     const stored = () => page.evaluate(() => fetch('/api/ops/person_settings_get', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(r => r.json()).then(s => JSON.stringify(s.listGroups?.['tasks:state'] ?? [])));
     for (let i = 0; i < 100 && await stored() !== '["3","4","7"]'; i++) await page.waitForTimeout(50);

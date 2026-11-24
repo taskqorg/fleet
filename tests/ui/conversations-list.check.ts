@@ -139,7 +139,7 @@ export async function checkConversationsList(browser: Browser, origin: string, s
     // Every distinct frame's headers, from a start until the list settles; a frame that shows Pinned or billing-api open flashed.
     const RECORD = `window.__heads = []; const tick = () => { const s = [...document.querySelectorAll('.vl-row.grp .group-h')].map(b => b.querySelector('b').textContent + '=' + b.getAttribute('aria-expanded')).join(','); if (window.__heads.at(-1) !== s) window.__heads.push(s); requestAnimationFrame(tick); }; requestAnimationFrame(tick);`;
     const flashed = (seen: string[]) => seen.filter(s => /(Pinned|billing-api)=true/.test(s));
-    await p.locator('.rail [data-id="system"] a').first().click(); await p.waitForURL('**/hosts**');
+    await p.locator('.rail [data-id="system"] a').first().click(); await p.waitForURL('**/system');
     // Leaving the section sent the toggles: the server has them, and this tab shows them from the stored copy.
     await settle(async () => (await p.evaluate(() => fetch('/api/ops/person_settings_get', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(r => r.json()).then(s => JSON.stringify(s.listGroups)))).includes('billing-api'), 'toggles stored');
     const returned: string[] = await p.evaluate(async rec => {
@@ -310,7 +310,7 @@ export async function checkLiveListUpdates(browser: Browser, origin: string, see
     // unmounted and hold the new snapshot to inspect the old rows throughout the read.
     await p.unroute('**/api/ops/sessions_list');
     await p.locator('.rail [data-id="system"] a').first().click();
-    await p.waitForURL('**/hosts**');
+    await p.waitForURL('**/system');
     await frames();
     const delivered = await p.evaluate(() => (window as any).liveListFeed.count());
     seed.sql("UPDATE session SET title='Livefeedfixture returned' WHERE id='livefeed-47';");
