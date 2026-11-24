@@ -1,5 +1,5 @@
 // UI context (docs/design-system/README.md, "Context for a UI task"): the minimal reading an agent needs before it
-// designs or builds one page. Reads the page spec, the blocks, controls and patterns it links, its board canvas,
+// designs or builds one page. Reads the page spec, its blocks (the links in its `## Blocks` section), the controls and patterns it and they link, its board canvas,
 // and the text of every rule they cite by ID (OR-<n> in owner-rules.md, UR-<n> in principles.md). Prints Markdown;
 // never fails a build. Node standard library only.
 // Usage: node scripts/ui-context.ts <page>   (a page spec name such as home; without one it lists the pages)
@@ -32,20 +32,35 @@ export function cited(text: string): string[] {
   return [...ids];
 }
 
-// Repository paths of the relative Markdown links in the file at `from`, without anchors.
-export function links(text: string, from: string): string[] {
-  const out = new Set<string>();
+// Relative Markdown links in the file at `from`, as [repository path, anchor] pairs (anchor '' when none).
+export function refs(text: string, from: string): [string, string][] {
+  const out = new Map<string, [string, string]>();
   for (const [, t] of text.matchAll(/\]\(([^)\s]+)\)/g)) {
     if (/^[a-z]+:|^#/.test(t)) continue;
-    out.add(normalize(join(dirname(from), t.split('#')[0])));
+    const [f, a = ''] = t.split('#');
+    const p = normalize(join(dirname(from), f));
+    out.set(`${p}#${a}`, [p, a]);
   }
-  return [...out];
+  return [...out.values()];
+}
+export const links = (text: string, from: string) => [...new Set(refs(text, from).map(([p]) => p))];
+
+const slug = (h: string) => h.toLowerCase().replace(/[^\p{L}\p{N} -]/gu, '').trim().replace(/ /g, '-');
+
+// The part of a Markdown text under the heading named (or slugged) `h`, up to the next heading of the same or a
+// higher level; the whole text when no heading matches.
+export function section(text: string, h: string): string {
+  const lines = text.split('\n');
+  const i = lines.findIndex(l => /^#+ /.test(l) && (l.replace(/^#+ /, '') === h || slug(l.replace(/^#+ /, '')) === h));
+  if (i < 0) return text;
+  const level = lines[i].match(/^#+/)![0].length;
+  const j = lines.findIndex((l, k) => k > i && /^#+ /.test(l) && l.match(/^#+/)![0].length <= level);
+  return lines.slice(i, j < 0 ? undefined : j).join('\n');
 }
 
 const GROUPS = ['Canvas', 'Blocks', 'Controls', 'Patterns'] as const;
 const group = (p: string) =>
-  p.endsWith('.bl') ? 'Canvas' : p.startsWith(`${ds}/blocks/`) ? 'Blocks' : p.startsWith(`${ds}/controls/`) ? 'Controls'
-    : p.startsWith(`${ds}/patterns/`) ? 'Patterns' : null;
+  p.endsWith('.bl') ? 'Canvas' : p.startsWith(`${ds}/controls/`) ? 'Controls' : p.startsWith(`${ds}/patterns/`) ? 'Patterns' : null;
 
 export function context(page: string): string {
   const spec = `${ds}/pages/${page}.md`;
@@ -56,17 +71,26 @@ export function context(page: string): string {
   const why = new Map<string, Set<string>>(); // rule ID -> the files that cite it
   const cite = (t: string, f: string) => { for (const id of cited(t)) (why.get(id) ?? why.set(id, new Set()).get(id)!).add(f); };
   cite(text, 'page');
-  // The spec's own links, then the controls and patterns its blocks link (a page is assembled from blocks).
-  const queue = links(text, spec), seen = new Set<string>();
-  while (queue.length) {
-    const p = queue.shift()!, g = group(p);
-    if (!g || seen.has(p) || !existsSync(join(root, p))) continue;
-    seen.add(p);
-    (parts.get(g) ?? parts.set(g, []).get(g)!).push(p);
-    if (g === 'Canvas') continue;
-    const t = read(p);
-    cite(t, relative(ds, p));
-    if (g === 'Blocks') queue.push(...links(t, p).filter(q => group(q) === 'Controls' || group(q) === 'Patterns'));
+  const add = (g: string, item: string) => { const l = parts.get(g) ?? parts.set(g, []).get(g)!; if (!l.includes(item)) l.push(item); };
+  // Blocks are the links in the spec's `## Blocks` section; a link with an anchor names one section of a control
+  // spec, and only that section is read. Each block's own controls and patterns follow.
+  const blocks = /^## Blocks$/m.test(text) ? refs(section(text, 'Blocks'), spec) : [];
+  const queue: string[] = [];
+  for (const [p, a] of blocks) {
+    if (!existsSync(join(root, p))) continue;
+    const t = a ? section(read(p), a) : read(p), name = relative(ds, p) + (a ? `#${a}` : '');
+    add('Blocks', `${p}${a ? `#${a}` : ''}`);
+    cite(t, name);
+    queue.push(...links(t, p));
+  }
+  queue.unshift(...links(text, spec));
+  const blockFiles = new Set(blocks.map(([p]) => p)); // a block's file is read as the block, never again whole
+  for (const p of queue) {
+    const g = group(p);
+    if (!g || blockFiles.has(p) || !existsSync(join(root, p))) continue;
+    if (parts.get(g)?.includes(p)) continue;
+    add(g, p);
+    if (g !== 'Canvas') cite(read(p), relative(ds, p));
   }
   const L = [`# UI context: ${page}`, '', `Read first: ${spec}`, ''];
   for (const g of GROUPS) {

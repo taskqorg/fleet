@@ -50,7 +50,7 @@ Board drawings use Fleet's tokens through the board's style file ([tokens](token
 The process helps, recommends and shows; it never blocks. The design and docs reports are warnings (the design report fails only on raw controls in app views); no new check is added that fails a build or gates a merge. Consistency comes from what each agent is given: exactly what its task needs, and no more.
 
 * **One command per page.** `node scripts/ui-context.ts <page>` prints what to read before designing or building that page: its spec, its board canvas, the blocks, controls and patterns it links, the three principles and the text of every rule they cite by ID. A task brief for a page names this command instead of the whole rule list. Without an argument it lists the pages.
-* **A page spec cites, never restates.** It links its blocks in a `## Blocks` section and its controls and patterns where it uses them, and names rules by ID: `OR-<n>` in [owner-rules.md](owner-rules.md), `UR-<n>` in `principles.md`. What the spec does not link or cite, the agent is not told.
+* **A page spec cites, never restates.** It links its blocks in a `## Blocks` section (a link with an anchor, such as `decision-block.md#card`, names one section of a control spec) and its controls and patterns where it uses them, and names rules by ID: `OR-<n>` in [owner-rules.md](owner-rules.md), `UR-<n>` in `principles.md`. What the spec does not link or cite, the agent is not told.
 * **Rules review.** Each week the orchestrating session lists, for the owner, the rules that are still *Target*, rules with no check, rules that conflict, and rules no page cites; the owner keeps, rewrites or removes each one.
 
 ## Process (spec-driven design)

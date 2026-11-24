@@ -13,7 +13,7 @@ Build, CI, documentation, Lab import and delivery tools run from the repository 
 | [test-selection.ts](test-selection.ts) | `comparison`, `changedPaths`, `select`, `execution`, `makePlan`, `run`, `previousResult`, `queueQualified`, `verifyEvidence`: exact-candidate family selection and evidence validation; CLI emits a plan or accepts `--verify`. |
 | [pds18-route.ts](pds18-route.ts) | `FAMILIES`, `plan`, `dead`; CLI emits runner matrices, `--watch` cancels stalled pool runs, `--self-check` checks routing fixtures. |
 | [docs-report.ts](docs-report.ts) | `kind`, `linkFixOnly`, `anchors`, `links`; CLI `--base <ref>` or `--self-check`. |
-| [ui-context.ts](ui-context.ts) | `rules`, `principles`, `cited`, `links`, `context`; CLI `<page>` prints the minimal reading for one page (spec, canvas, blocks, controls, patterns, cited rule texts). |
+| [ui-context.ts](ui-context.ts) | `rules`, `principles`, `cited`, `refs`, `links`, `section`, `context`; CLI `<page>` prints the minimal reading for one page (spec, canvas, blocks, controls, patterns, cited rule texts). |
 | [test-rule-report.ts](test-rule-report.ts) | Static test metadata inventory; `--strict` fails missing requirement/risk annotations in outside tests; `--self-check`. |
 | [lab-drift.ts](lab-drift.ts) | `Source`, `Status`, `slug`, `section`, `hash`, `repoDir`, `current`, `check`, `registryDir`, `loadRegistry`, `run`; CLI can report, `--write`, or `--pin` registry sources. |
 | [lab-example-format.ts](lab-example-format.ts) | `ExampleFile`, `Example`, `useCaseIds`, `parseExample`: validated canonical Lab inputs. |
