@@ -1,6 +1,6 @@
 # Session card
 
-**Code.** *Target*: `SessionCard` in `packages/ui`, not built yet. Board: [blocks.bl](../board/blocks.bl), master `Session card`.
+**Code.** `SessionCard` and `SessionCardSkeleton` in `packages/ui`, with `Avatar` and `ProjectChip`. Demo: [book](../book/index.html#session-card). Board: [blocks.bl](../board/blocks.bl), master `Session card`.
 
 **Purpose.** One active session on [Home](../pages/home.md): who it is, what it does now, and what it needs from the person, answered in place ([OR-50](../owner-rules.md), [OR-53](../owner-rules.md)).
 

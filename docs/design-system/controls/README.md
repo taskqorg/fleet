@@ -67,17 +67,17 @@ The screens of the conversation-first interface, and the catalogues and opened i
 
 | Block | Spec | `packages/ui` | Screens |
 |---|---|---|---|
-| Session card | [session-card](session-card.md) | New (`SessionCard`) | Home |
-| Question card | [decision block, card](decision-block.md#card) | `DecisionBlock`, new card form | Home, session view |
-| Bot tile | [bot-tile](bot-tile.md) | New (`BotTile`) | Home |
+| Session card | [session-card](session-card.md) | `SessionCard`, `Avatar`, `ProjectChip` | Home |
+| Question card | [decision block, card](decision-block.md#card) | `QuestionCard` | Home, session view |
+| Bot tile | [bot-tile](bot-tile.md) | `BotTile` | Home |
 | Quiet summary | [quiet-summary](quiet-summary.md) | New (`QuietSummary`) | Home |
-| Composer with target picker | [composer, target picker](composer.md#target-picker) | `Composer`, new picker | Home |
-| Pulse line, blocker chip | [pulse-line](pulse-line.md) | New (`PulseLine`, `BlockerChip`) | Home |
-| State dot and word | [state badge, dot and word](state-badge.md#dot-and-word) | `StateBadge`, new form | Home, Live, session view |
+| Composer with target picker | [composer, target picker](composer.md#target-picker) | `Composer` with `TargetPicker` | Home |
+| Pulse line, blocker chip | [pulse-line](pulse-line.md) | `PulseLine`, `BlockerChip` | Home |
+| State dot and word | [state badge, dot and word](state-badge.md#dot-and-word) | `StateDot` (`states.life`, `lifeOf`) | Home, Live, session view |
 | Session group head | [data list](data-list.md) | `GroupHeader` | Home |
-| Message | [transcript viewer](transcript-viewer.md) | `TextRow`, `MessageFiles` | Session view |
-| Folded tool line | [tool-line](tool-line.md) | `ToolRow`, new folded form | Session view |
-| Context panel | [context-panel](context-panel.md) | New (`ContextPanel`) | Session view |
+| Message | [transcript viewer](transcript-viewer.md) | `TextRow quiet`, `MessageFiles` | Session view |
+| Folded tool line | [tool-line](tool-line.md) | `ToolLine` | Session view |
+| Context panel | [context-panel](context-panel.md) | `ContextPanel`, `PlanItem`, `TimerRow`, `SwarmMember` | Session view |
 | Status pill, status bar | [status-pill](status-pill.md), [status bar](status-pill.md#status-bar) | New (`StatusPill`) | Live |
 | Figure tile with sparkline | [figure-tile](figure-tile.md) | New (`FigureTile`), value by `Num` | Live |
 | Host band | [host-band](host-band.md) | New (`HostBand`) | Live |

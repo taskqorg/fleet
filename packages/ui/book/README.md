@@ -10,6 +10,7 @@
 - `pages.tsx:App` renders page mockups; `open-questions.tsx:Page` renders recorded visual alternatives.
 - `fixtures.ts` exports example tasks, hosts, transcript blocks, and timing constants; `nav.ts:NAV` and `NAV_FOCUS` supply demo navigation with counters without and with a focus.
 - `entity-cards.tsx` holds a fixture card per entity kind and the book's `EntityCards` source (`CardsProvider`); `EntityCardDemo` is its section.
+- `home-blocks.tsx:HOME_BLOCKS` and `session-blocks.tsx:SESSION_BLOCKS` are the book sections of the Home and session-view blocks, appended to `book.tsx` `SECTIONS`.
 - `focus-demo.tsx:FocusDemo` is the focus chip with local state, shared by the book and the mockups' shell header.
 
 ## Invariants

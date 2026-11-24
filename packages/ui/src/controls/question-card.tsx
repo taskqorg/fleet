@@ -1,0 +1,60 @@
+// Question card: the card form of a decision (controls/decision-block.md#card, OR-53, board master `Question card`).
+import { createSignal, For, Show } from 'solid-js';
+import { isSubmitEnter } from '../keys.ts';
+import { Button, Ago } from './primitives.tsx';
+
+export type QuestionChoice = { label: string; primary?: boolean };
+
+/**
+ * Open: the question, its choices as buttons in the asker's order (the asker's default is primary), then a one-line
+ * answer that sends on Enter. Failed: the recovery question in the danger tone (Retry, Open), with no typed answer.
+ * Answered: one muted line; the card's owner then shows the next open question in its place.
+ */
+export function QuestionCard(p: {
+  question: string; choices: QuestionChoice[]; tone?: 'attention' | 'danger';
+  /** The chosen label while its answer is on the way: that button is busy, the others wait. */
+  answering?: string;
+  answered?: { answer: string; at: number };
+  onAnswer?: (answer: string) => void;
+}) {
+  const [text, setText] = createSignal('');
+  const danger = () => p.tone === 'danger';
+  const send = (s: string) => { if (s.trim() && !p.answering) p.onAnswer?.(s.trim()); };
+  return (
+    <Show
+      when={p.answered}
+      keyed
+      fallback={
+        <div class={['qcard', { danger: danger() }]} data-ui="question-card" role="group" aria-label={p.question} onClick={e => e.stopPropagation()}>
+          <p class="qcard-q">{p.question}</p>
+          <div class="qcard-choices">
+            <For each={p.choices}>
+              {c => (
+                <Button
+                  label={c.label}
+                  kind={c.primary ? (danger() ? 'danger' : 'primary') : danger() ? 'default' : 'attention'}
+                  busy={p.answering === c.label}
+                  disabledReason={p.answering && p.answering !== c.label ? 'Sending the answer' : undefined}
+                  onClick={() => send(c.label)}
+                />
+              )}
+            </For>
+          </div>
+          <Show when={!danger()}>
+            <input
+              class="qcard-answer"
+              value={text()}
+              placeholder="Answer…"
+              aria-label={`Answer: ${p.question}`}
+              disabled={!!p.answering}
+              onInput={e => setText(e.currentTarget.value)}
+              onKeyDown={e => { if (isSubmitEnter(e)) { e.preventDefault(); send(text()); } }}
+            />
+          </Show>
+        </div>
+      }
+    >
+      {a => <div class="qcard answered" data-ui="question-card" role="status">Answered · {a.answer} · <Ago t={a.at} /></div>}
+    </Show>
+  );
+}

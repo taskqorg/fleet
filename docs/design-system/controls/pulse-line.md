@@ -1,6 +1,6 @@
 # Pulse line
 
-**Code.** *Target*: `PulseLine` and `BlockerChip` in `packages/ui`, not built yet. Board: [blocks.bl](../board/blocks.bl), masters `Pulse line` and `Blocker chip`.
+**Code.** `PulseLine` and `BlockerChip` in `packages/ui`. Demo: [book](../book/index.html#pulse-line). Board: [blocks.bl](../board/blocks.bl), masters `Pulse line` and `Blocker chip`.
 
 **Purpose.** One line at the top of [Home](../pages/home.md) that answers "how much is in flight and what is stuck?" at a glance (principle 1, [OR-50](../owner-rules.md)).
 

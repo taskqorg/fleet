@@ -38,3 +38,10 @@
 .ec-demo{display:flex;flex-wrap:wrap;gap:var(--space-3) var(--space-5)}
 .ec-demo-i{display:inline-flex;align-items:center;gap:var(--space-2)}
 .ec-demo-i .ec-code.id{margin:0}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr));gap:var(--space-4);align-items:start}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:var(--space-3)}
+.life-map{display:flex;flex-direction:column;gap:var(--space-2)}
+.life-map>div{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-4)}
+.life-pair{display:inline-flex;align-items:center;gap:var(--space-2)}
+.parts{max-width:var(--size-search)}
+.ctx-demo{display:flex;flex-wrap:wrap;gap:var(--space-4);align-items:start}

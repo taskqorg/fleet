@@ -1,6 +1,6 @@
 # Tool line
 
-**Code.** *Target*: the folded form of `ToolRow` in `Thread` ([transcript viewer](transcript-viewer.md)), not built yet. Board: [blocks.bl](../board/blocks.bl), master `Tool line`.
+**Code.** `ToolLine` in `packages/ui`: the folded form of the thread's tool rows ([transcript viewer](transcript-viewer.md)); the session view wires it into `Thread`. Demo: [book](../book/index.html#tool-line). Board: [blocks.bl](../board/blocks.bl), master `Tool line`.
 
 **Purpose.** Keeps a conversation light: consecutive tool calls and system events between two messages become one quiet line ([OR-52](../owner-rules.md), principle 3).
 
@@ -8,7 +8,7 @@
 
 **States.**
 * *Folded:* one line.
-* *Open:* the calls below it, one `ToolRow` each, on `surface-sunken`; it opens downward ([OR-23](../owner-rules.md)).
+* *Open:* the calls below it, one mono row each (tool, target, time), on `surface-sunken`; it opens downward ([OR-23](../owner-rules.md)).
 * *Running:* the caret is a running dot and the time ticks; the words name the current call.
 * *Failed:* a call failed and the agent did not recover: the line turns `danger-fg` and names the failed call ([OR-56](../owner-rules.md)). A failure the agent recovered from stays quiet.
 

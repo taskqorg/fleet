@@ -386,10 +386,12 @@ export function TextRow(p: {
   selectable?: boolean; bounds?: TextBounds; who: 'operator' | 'agent'; markdown: string; mark?: Mark; by?: string | null; at?: number | null; now?: number; onCopyFail?: (e: unknown) => void;
   /** The files the message carried; images show a thumbnail from src, every one opens in the result viewer. */
   attachments?: ArtifactMeta[]; onOpen?: (id: string) => void; src?: (id: string) => string;
+  /** The one session view (OR-51, OR-54): no service row; the operator's words sit in a bubble on the right. */
+  quiet?: boolean;
 }) {
   const name = createMemo(() => author({ role: p.who, by: p.by, ...(p.mark ?? {}) }));
   return (
-    <div class={['th-row th-text', p.who]} data-ui="thread-row">
+    <div class={['th-row th-text', p.who, { quiet: !!p.quiet }]} data-ui="thread-row">
       <div class="th-main">
         <Show when={p.markdown}>
           <Markdown text={p.markdown} onCopyFail={p.onCopyFail} selectable={p.selectable} bounds={p.bounds} />
@@ -398,24 +400,26 @@ export function TextRow(p: {
           <MessageFiles files={p.attachments!} onOpen={p.onOpen} src={p.src} />
         </Show>
       </div>
-      <ThreadService
-        at={p.at}
-        reveal
-        meta={
-          p.who === 'operator'
-            ? <span class="who" data-tip={p.by ?? undefined}>{name()}</span>
-            : <AgentMark harness={p.mark?.harness} model={p.mark?.model} effort={p.mark?.effort} />
-        }
-        action={
-          <Button
-            label="Copy message"
-            icon={actions.copy}
-            iconOnly
-            kind="quiet"
-            onClick={() => writeClip(clipMessage(name(), p.at, p.now ?? Date.now(), [p.markdown, ...(p.attachments ?? []).map(a => `Attachment: ${a.name}`)].filter(Boolean).join('\n\n'))).catch(e => p.onCopyFail?.(e))}
-          />
-        }
-      />
+      <Show when={!p.quiet}>
+        <ThreadService
+          at={p.at}
+          reveal
+          meta={
+            p.who === 'operator'
+              ? <span class="who" data-tip={p.by ?? undefined}>{name()}</span>
+              : <AgentMark harness={p.mark?.harness} model={p.mark?.model} effort={p.mark?.effort} />
+          }
+          action={
+            <Button
+              label="Copy message"
+              icon={actions.copy}
+              iconOnly
+              kind="quiet"
+              onClick={() => writeClip(clipMessage(name(), p.at, p.now ?? Date.now(), [p.markdown, ...(p.attachments ?? []).map(a => `Attachment: ${a.name}`)].filter(Boolean).join('\n\n'))).catch(e => p.onCopyFail?.(e))}
+            />
+          }
+        />
+      </Show>
     </div>
   );
 }

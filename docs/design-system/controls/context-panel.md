@@ -1,6 +1,6 @@
 # Context panel
 
-**Code.** *Target*: `ContextPanel` in `packages/ui`, not built yet ([FLT-30](https://youtrack.ufobe.com/issue/FLT-30)). Board: [blocks.bl](../board/blocks.bl), masters `Context panel`, `Plan item`, `Timer row` and `Swarm member`.
+**Code.** `ContextPanel`, `PlanItem`, `TimerRow` and `SwarmMember` in `packages/ui` ([FLT-30](https://youtrack.ufobe.com/issue/FLT-30)); the phone sheet is the session view's. Demo: [book](../book/index.html#context-panel). Board: [blocks.bl](../board/blocks.bl), masters `Context panel`, `Plan item`, `Timer row` and `Swarm member`.
 
 **Purpose.** Beside a conversation, shows what the session plans and keeps running: its plan, timers, automations and swarm ([OR-51](../owner-rules.md)).
 

@@ -26,7 +26,7 @@
 
 ## Card
 
-*Target* ([OR-53](../owner-rules.md)). Board: [blocks.bl](../board/blocks.bl), master `Question card`.
+`QuestionCard` in `packages/ui` ([OR-53](../owner-rules.md)). Board: [blocks.bl](../board/blocks.bl), master `Question card`. Demo: [book](../book/index.html#question-card).
 
 The form a question takes on a [session card](session-card.md), in the conversation and in Telegram: the same record in every place.
 
