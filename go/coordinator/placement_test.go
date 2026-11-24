@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"fleet/obs"
@@ -174,5 +176,125 @@ CREATE TRIGGER reject_fixture_lease BEFORE UPDATE ON artifact_copy
 	var leaseError *pgconn.PgError
 	if err := run("1", obs.Error); !errors.As(err, &leaseError) || leaseError.Message != "fixture lease expiry failed" {
 		t.Fatalf("pass did not propagate the lease error: %v", err)
+	}
+}
+
+type countingPlacementTx struct {
+	pgx.Tx
+	mu     sync.Mutex
+	counts map[string]int
+}
+
+func (tx *countingPlacementTx) note(sql string) {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	name := "other"
+	if rest, ok := strings.CutPrefix(sql, "-- name: "); ok {
+		if end := strings.IndexByte(rest, ' '); end > 0 {
+			name = rest[:end]
+		}
+	}
+	tx.counts[name]++
+}
+
+func (tx *countingPlacementTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	tx.note(sql)
+	return tx.Tx.Query(ctx, sql, args...)
+}
+
+func (tx *countingPlacementTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	tx.note(sql)
+	return tx.Tx.QueryRow(ctx, sql, args...)
+}
+
+func (tx *countingPlacementTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	tx.note(sql)
+	return tx.Tx.Exec(ctx, sql, args...)
+}
+
+// Requirement: pass.placement batches stored artifact copy lookups and caches project placement policies per pass.
+// Risk: N+1 DispArtifactCopies, DispRuleConfirmed, and projectContext lookups drive pass.placement p95 over 100 s at ~17k artifacts.
+func TestPlacementBatchesCopyAndPolicyQueries(t *testing.T) {
+	env := openTestCoordinator(t, false)
+	locations, secrets := defaultLocations, storeSecretsDir
+	defaultLocations, storeSecretsDir = []string{"batch-target"}, t.TempDir()
+	t.Cleanup(func() { defaultLocations, storeSecretsDir = locations, secrets })
+	t.Cleanup(func() {
+		placementProblems.Lock()
+		placementProblems.list = nil
+		placementProblems.Unlock()
+	})
+
+	runTestPSQL(t, env.binDir, env.sockDir, env.pgPort, env.dbName, "postgres", `
+INSERT INTO store(id,host_id,bucket,endpoint,state) VALUES
+ ('batch-target','batch-target','fixture','http://127.0.0.1:1','reachable');
+INSERT INTO definition(kind,id,path,head,project_id) VALUES
+ ('project','batch-loc','config/projects/batch-loc/project.json',1,'batch-loc'),
+ ('project','batch-rule','config/projects/batch-rule/project.json',1,'batch-rule');
+INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message) VALUES
+ ('project','batch-loc',1,'{"settings":{"id":"batch-loc","name":"Batch Loc","contextFiles":[],"artifact_locations":["batch-target"]},"contextFiles":[]}','bl1','editor','person','t'),
+ ('project','batch-rule',1,'{"settings":{"id":"batch-rule","name":"Batch Rule","contextFiles":[],"artifact_locations":["batch-target"],"artifact_rules":[{"scope":"prod","older_than_days":0,"action":"move","to":["batch-target"]},{"scope":"bad","older_than_days":-1,"action":"move","to":[]}]},"contextFiles":[]}','br1','editor','person','t');`)
+
+	// Confirm the valid move rule on batch-rule so DispRuleConfirmed returns true.
+	validRuleHash := ruleHash(artifactRule{Scope: "prod", OlderThanDays: 0, Action: "move", To: []string{"batch-target"}})
+	if _, err := env.ownerStore.pool.Exec(env.ctx, `INSERT INTO artifact_rule_confirmation(project_id,rule_hash,confirmed_by) VALUES ('batch-rule',$1,'owner@trial.test')`, validRuleHash); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed 25 stored artifacts across both projects, all already placed on batch-target.
+	for i := range 25 {
+		pid := "batch-loc"
+		if i%2 == 1 {
+			pid = "batch-rule"
+		}
+		aid := fmt.Sprintf("art-batch-%02d", i)
+		hash := fmt.Sprintf("hash-batch-%02d", i)
+		if _, err := env.ownerStore.pool.Exec(env.ctx, `
+WITH a AS (
+  INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,state) VALUES ($1,$2,'prod',$3,10,'text/plain','f','stored')
+)
+INSERT INTO artifact_copy(artifact_id,store_id,project_id,state) VALUES ($1,'batch-target',$2,'verified')`, aid, pid, hash); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tx, err := env.ownerStore.pool.Begin(env.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(env.ctx)
+	counter := &countingPlacementTx{Tx: tx, counts: map[string]int{}}
+	ctx := context.WithValue(env.ctx, txKey{}, counter)
+	ctx, span := obs.Start(ctx, "pass.placement", obs.KindPass)
+	queued, deleted, err := runPlacement(ctx, env.app)
+	span.End(err)
+	if err != nil || queued != 0 || deleted != 0 {
+		t.Fatalf("runPlacement = queued=%d deleted=%d err=%v", queued, deleted, err)
+	}
+	if got := span.Attrs["fleet.placement.artifacts"]; got != "25" {
+		t.Fatalf("fleet.placement.artifacts = %q, want 25", got)
+	}
+	if counter.counts["DispArtifactCopies"] != 0 {
+		t.Fatalf("expected 0 per-artifact DispArtifactCopies queries, got %d", counter.counts["DispArtifactCopies"])
+	}
+	if counter.counts["DispStoredArtifactCopies"] != 1 {
+		t.Fatalf("expected 1 bulk DispStoredArtifactCopies query, got %d", counter.counts["DispStoredArtifactCopies"])
+	}
+	if counter.counts["DispRuleConfirmed"] != 1 {
+		t.Fatalf("expected 1 cached DispRuleConfirmed query across 25 artifacts, got %d", counter.counts["DispRuleConfirmed"])
+	}
+	// Invalid rule problem on batch-rule should be recorded once per project, not 12 times.
+	invalidCount := 0
+	for _, p := range lastPlacementProblems() {
+		var item struct {
+			Kind      string  `json:"kind"`
+			ProjectID *string `json:"projectId"`
+		}
+		if err := json.Unmarshal(p.fields, &item); err == nil && item.Kind == "artifact-rule-invalid" {
+			invalidCount++
+		}
+	}
+	if invalidCount != 1 {
+		t.Fatalf("expected 1 deduplicated artifact-rule-invalid problem, got %d", invalidCount)
 	}
 }
