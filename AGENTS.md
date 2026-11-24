@@ -4,7 +4,7 @@ Every agent attempt: read [fleet.md](fleet.md) first, then every shared-core fil
 
 Architecture standard: docs/designs/fleet-standard.md; rules checked by go/coordinator/design_rules_test.go.
 
-Design or UI work: read `docs/design-system/owner-rules.md` first, then `docs/design-system/README.md`. Build screens only from `packages/ui`; read the design report CI posts on the pull request, and run `pnpm run check:design` locally when the task names it.
+Design or UI work: run `node scripts/ui-context.ts <page>` and read what it lists for the page you change; for work across pages, read `docs/design-system/owner-rules.md` first, then `docs/design-system/README.md`. Build screens only from `packages/ui`; read the design report CI posts on the pull request, and run `pnpm run check:design` locally when the task names it.
 
 Web UI, CSS or client-side JS work: before writing it, follow the `modern-web-guidance` skill (`config/skills/modern-web-guidance/SKILL.md`; Fleet profiles that build or review UI carry it): search and retrieve the guides for each feature, apply them within the owner rules and `packages/ui`, which win on conflict, and name the guides you applied in the pull request.
 
