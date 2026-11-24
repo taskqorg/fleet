@@ -54,7 +54,7 @@ export function Live(props: { wall: boolean }) {
   const hostsOp = useOp('hosts_list', {}, { every: 5000 });
   // Runs change many times a second (gateway calls): a timer only, as Runners reads them.
   const runnersOp = useOp('executions_runners', {}, { every: 15_000 });
-  const failuresOp = useOp('executions_list', { needsYou: true, limit: 200 }, { quiet: 30_000, every: 30_000 });
+  const failuresOp = useOp('executions_list', { needsYou: true }, { quiet: 30_000, every: 30_000 });
   const scope = createMemo(() => {
     const { projectIds, excludeProjectIds } = scopeIds();
     return projectIds ? { projectId: projectIds.map(noProject) } : excludeProjectIds ? { excludeProjectId: excludeProjectIds.map(noProject) } : {};
@@ -209,8 +209,14 @@ export function Live(props: { wall: boolean }) {
       const doneHere = d.filter(x => (x.projectId ?? null) === id);
       return { id, name: id ? projectName().get(id) ?? g.label ?? id : 'Outside projects', running: (c.in_progress ?? 0) + (c.waiting ?? 0), queued: (c.queued ?? 0) + (c.held ?? 0), done: doneHere.length,
         trend: buckets(doneHere, x => ms(x.stateAt), t) };
-    }).filter(r => r.running + r.queued + r.done > 0);
-    return rows.toSorted((a, b) => b.running - a.running || b.queued - a.queued || a.name.localeCompare(b.name));
+    });
+    // Projects with only work done today have no open-task group.
+    for (const id of new Set(d.map(x => x.projectId ?? null))) {
+      if (rows.some(r => r.id === id)) continue;
+      const doneHere = d.filter(x => (x.projectId ?? null) === id);
+      rows.push({ id, name: id ? projectName().get(id) ?? id : 'Outside projects', running: 0, queued: 0, done: doneHere.length, trend: buckets(doneHere, x => ms(x.stateAt), t) });
+    }
+    return rows.filter(r => r.running + r.queued + r.done > 0).toSorted((a, b) => b.running - a.running || b.queued - a.queued || a.name.localeCompare(b.name));
   });
   const delivery = createMemo(() => (deliveryOp.data?.items ?? []).filter(i => IN_FLIGHT.has(i.stage)).toSorted((a, b) => ms(b.since) - ms(a.since)));
   const ci = createMemo(() => {
@@ -263,7 +269,7 @@ export function Live(props: { wall: boolean }) {
           <h2 class="live-h">Hosts · worker slots · 24h runs <span class="mono">{bands().length || ''}</span></h2>
           <Show when={hostsOp.data} fallback={<><HostBand name="Loading" state="loading" /><HostBand name="Loading" state="loading" /></>}>
             <Show when={bands().length} fallback={<Empty text="No hosts yet. Register a host to run agents on it." action={props.wall ? undefined : <Button label="System › Hosts" icon="panels-top-left" onClick={() => go('/hosts')} />} />}>
-              <For each={bands()}>{b => <HostBand {...b.props} />}</For>
+              <For each={bands()} keyed={b => b.id}>{b => <HostBand {...b().props} />}</For>
             </Show>
           </Show>
         </section>

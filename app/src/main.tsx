@@ -259,7 +259,8 @@ function App() {
   const lastScreen = new Map<string, string>();
   const openSection = (id: string) => go(sectionPath(lastScreen.get(id) ?? ROOT[id] ?? id));
   createEffect(() => [loc(), query(), access.value.state, prefsRead.value, current()] as const, ([l, q, st, pr, cur]) => {
-    if (st !== 'open' || !pr || !BUILT.some(n => n.id === cur)) return;
+    // A viewer may only read: its views are not kept (person_settings_set answers 403).
+    if (st !== 'open' || !pr || !BUILT.some(n => n.id === cur) || viewer()) return;
     const parsed = (VIEWS as string[]).includes(cur) ? parseView(l + (q ? '?' + q : '')) : null;
     // The Overview keeps no view of its own: /overview?all (every project, from the outside-focus count) is never kept.
     noteView(cur, parsed && cur !== 'overview' ? formatView({ ...parsed, focus: undefined, sel: undefined }) : '/' + cur);
@@ -270,8 +271,8 @@ function App() {
   onSettled(() => {
     // Unsent list group toggles go with them, in one keepalive request: a hidden tab may be closed without pagehide
     // (prefs.ts saveOnLeave; a section leave sends the same request without keepalive above).
-    const flush = () => { if (document.visibilityState === 'hidden') saveOnLeave(left); };
-    const leave = () => saveOnLeave(left);
+    const flush = () => { if (document.visibilityState === 'hidden' && !viewer()) saveOnLeave(left); };
+    const leave = () => { if (!viewer()) saveOnLeave(left); };
     document.addEventListener('visibilitychange', flush); addEventListener('pagehide', leave);
     return () => { document.removeEventListener('visibilitychange', flush); removeEventListener('pagehide', leave); };
   });

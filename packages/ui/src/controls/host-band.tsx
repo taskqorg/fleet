@@ -44,7 +44,8 @@ export function HostBand(p: HostBandProps) {
         <Show when={p.state === 'problem' && p.problem}>
           <p class="hb-problem" role="status">{p.problem}</p>
         </Show>
-        <div class="hb-slots"><For each={p.slots ?? []}>{s => <WorkerSlot {...s} />}</For></div>
+        {/* By position: slot i stays the same tile while its contents change (OR-23), so a tick never rebuilds it. */}
+        <div class="hb-slots"><For each={p.slots ?? []} keyed={false}>{s => <WorkerSlot {...s()} />}</For></div>
         <Show when={p.strip} keyed>{s => <RunStrip {...s} />}</Show>
       </section>
     </Show>
