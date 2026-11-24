@@ -15,6 +15,7 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
   const p = await ctx.newPage();
   const errors: string[] = [];
   p.on('pageerror', e => errors.push(e.stack || e.message));
+  let automationStep = '';
 
   const call = async (name: string, body: object) => {
     const r = await fetch(`${origin}/api/ops/${name}`, {
@@ -178,7 +179,9 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
     assert.equal(await detail.getByText('HAL0 A active fix', { exact: true }).count(), 0);
 
     // FLT-26: the operator can configure and pause independent triggers, and open the selected wake's execution.
+    automationStep = 'open Automations';
     await tabs.getByRole('tab', { name: 'Automations' }).click();
+    automationStep = 'create the daily automation';
     await detail.getByRole('button', { name: 'New automation' }).click();
     await detail.getByLabel('Name', { exact: true }).fill('HAL0 tariff refresh');
     await detail.getByLabel('Instructions', { exact: true }).fill('Compare official provider tariffs in dry-run mode.');
@@ -189,6 +192,7 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
     const daily = detail.locator('section').filter({ has: p.getByRole('heading', { name: 'HAL0 tariff refresh', exact: true }) });
     await daily.getByText('Next scheduled run', { exact: true }).waitFor();
 
+    automationStep = 'create the filtered event automation';
     await detail.getByRole('button', { name: 'New automation' }).click();
     await detail.getByLabel('Name', { exact: true }).fill('Review decisions');
     await detail.getByRole('button', { name: 'Needs you', exact: true }).click();
@@ -196,26 +200,39 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
     await detail.getByRole('button', { name: 'Create automation' }).click();
     const event = detail.locator('section').filter({ has: p.getByRole('heading', { name: 'Review decisions', exact: true }) });
     await event.getByText('Questions', { exact: true }).waitFor();
+    automationStep = 'edit the event automation';
     await event.getByRole('button', { name: 'Edit', exact: true }).click();
     await detail.getByLabel('Name', { exact: true }).fill('Review new decisions');
     await detail.getByRole('button', { name: 'Save changes' }).click();
     const updatedEvent = detail.locator('section').filter({ has: p.getByRole('heading', { name: 'Review new decisions', exact: true }) });
 
+    automationStep = 'run the daily automation';
     await daily.getByRole('button', { name: 'Run now', exact: true }).click();
     await daily.getByRole('img', { name: /Queued|Running/ }).waitFor();
+    automationStep = 'pause the daily automation independently';
     await daily.getByRole('button', { name: 'Pause automation' }).click();
     await daily.getByRole('button', { name: 'Enable automation' }).waitFor();
     assert.equal(await daily.getByText('Next scheduled run', { exact: true }).count(), 0);
     await updatedEvent.getByRole('button', { name: 'Pause automation' }).waitFor();
+    automationStep = 'open the automation run history';
     await daily.getByRole('button', { name: 'Run history' }).click();
     await p.waitForURL(/tab=runs&automation=/);
     const history = detail.getByRole('region', { name: 'Bot runs' });
     await history.getByText('HAL0 tariff refresh · revision 1', { exact: true }).waitFor();
+    automationStep = 'open the Fleet execution card';
     await history.getByRole('button', { name: 'Run: show details', exact: true }).click();
     await p.getByRole('link', { name: 'Open', exact: true }).and(p.locator('a[href]')).waitFor();
 
+    automationStep = 'check browser errors';
     assert.deepEqual(errors, [], `unexpected page errors: ${errors.join('; ')}`);
     console.log('ok Bots Web UI (HAL0 two-project isolation, tasks, runs, questions_answer, errors, analytics, pause/resume)');
+  } catch (err) {
+    if (automationStep && process.env.GITHUB_ACTIONS === 'true') {
+      const line = err instanceof Error ? err.stack?.match(/\/tests\/ui\/bots\.check\.ts:(\d+):/)?.[1] : undefined;
+      const location = line ? `file=tests/ui/bots.check.ts,line=${line}` : 'file=tests/ui/bots.check.ts';
+      console.error(`::error ${location},title=FLT-26 browser check::Failed to ${automationStep}`);
+    }
+    throw err;
   } finally {
     await ctx.close();
   }
