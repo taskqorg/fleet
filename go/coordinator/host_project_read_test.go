@@ -142,3 +142,83 @@ func TestHostReadProjectOperationSkipsGlobal(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// requirement: T-FLT-58 retains the initiating person and lineage when managed workers call pipeline_run.
+// risk: project-tool receipts lose the initiating person, borrow the holder's grants, or return before the run can commit.
+func TestHostPipelineRunInitiatingActor(t *testing.T) {
+	env := openTestCoordinator(t, false)
+	const hostID = "h-pipeline"
+	const member = "member@trial.test"
+	const project = "desiign"
+	auth := map[string]string{"Authorization": "Bearer " + env.registerHost(t, hostID)}
+
+	for _, tc := range []struct {
+		name, executionDirector, sessionDirector, takenFrom, wantActor string
+		wantStatus                                                     int
+	}{
+		{"execution director", member, testOwnerEmail, "", member, 200},
+		{"session director", "", member, "", member, 200},
+		{"taken work", testOwnerEmail, testOwnerEmail, member, member, 200},
+		{"missing initiator", "", "", "", "", 403},
+		{"initiator outside project", testOwnerEmail, testOwnerEmail, "outsider@trial.test", "", 404},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sid, eid, cid, rid := newID(), newID(), newID(), newID()
+			err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+				if err := sessionPut(q, &agentSession{ID: sid, ProjectID: project, DirectedBy: tc.sessionDirector}); err != nil {
+					return err
+				}
+				if err := exec(q, `INSERT INTO execution(id,kind,state,project_id,session_id,host_id,directed_by,data)
+					VALUES ($1,'agent_run','running',$2,$3,$4,$5,$6)`,
+					eid, project, sid, hostID, strPtr(tc.executionDirector), jsonBytes(doc{"takenFrom": tc.takenFrom})); err != nil {
+					return err
+				}
+				return commandPut(q, &agentCommand{ID: cid, Kind: "start", ExecutionID: eid, SessionID: sid, HostID: hostID, ProjectID: project})
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			body := doc{
+				"hostId": hostID, "executionId": eid, "commandId": cid,
+				"delegation": doc{"operation": "pipeline_run", "projectId": project, "requestId": rid,
+					"arguments": doc{"requestId": rid, "query": "fixture"}},
+			}
+			code, reply := env.callJSON(t, "POST", "/api/hosts/project-operations", body, auth)
+			if code != tc.wantStatus {
+				t.Fatalf("pipeline_run = %d %v, want %d", code, reply, tc.wantStatus)
+			}
+			err = env.app.store.Read(env.ctx, nil, func(q *Request) error {
+				if tc.wantActor == "" {
+					var count int
+					if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FROM execution WHERE kind='pipeline_run' AND data->>'requestId'=$1`, rid).Scan(&count); err != nil {
+						return err
+					}
+					if count != 0 {
+						t.Fatalf("rejected call left %d pipeline runs", count)
+					}
+					return nil
+				}
+				id := astr(reply["id"])
+				run, err := getRun(q, id)
+				if err != nil {
+					return err
+				}
+				if run == nil || run.ParentExecutionID != eid || run.SessionID != sid ||
+					run.DirectedBy != tc.wantActor || run.director() != tc.wantActor || run.actor() != tc.wantActor {
+					t.Fatalf("pipeline_run did not retain initiating actor %q and caller lineage: %+v", tc.wantActor, run)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantActor != "" {
+				code, retry := env.callJSON(t, "POST", "/api/hosts/project-operations", body, auth)
+				if code != 200 || retry["id"] != reply["id"] {
+					t.Fatalf("pipeline_run retry = %d %v, want run %v", code, retry, reply["id"])
+				}
+			}
+		})
+	}
+}

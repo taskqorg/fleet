@@ -757,6 +757,11 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 	if err != nil {
 		return nil, err
 	}
+	// The host project receipt owns the outer transaction. Return the run so
+	// the receipt can commit it before the pipeline advances.
+	if q.tx != nil {
+		return pipelineRun(q, run.ID)
+	}
 	if old {
 		return pipelinePublicRead(q.ctx(), q.app, run.ID)
 	}
