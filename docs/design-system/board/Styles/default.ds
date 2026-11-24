@@ -1,0 +1,127 @@
+ds:v1
+// Fleet design tokens for the design board. GENERATED from packages/ui/tokens.json by
+// packages/ui/scripts/board-tokens.mjs (pnpm run board:tokens); edit tokens.json, never this file.
+// Each colour is one Fleet token with its light and dark value. An unstamped frame resolves light;
+// board frames start with ds(, theme(dark)), since the owner works in the dark theme.
+
+modes {
+  theme: [dark, light]
+}
+
+// Fleet colour tokens: fleet.<name> is var(--<name>) in packages/ui. Seeds only; read them bare ($fleet.bg).
+fleet.bg: color(#f3f3f4, dark: #0b0b0c)
+fleet.surface: color(#fcfcfc, dark: #121213)
+fleet.surface-sunken: color(#ebebec, dark: #1a1a1c)
+fleet.fg: color(#161617, dark: #ececec)
+fleet.fg-muted: color(#5c5c61, dark: #9a9a9f)
+fleet.fg-faint: color(#7c7c82, dark: #77777c)
+fleet.line: color(#d4d4d7, dark: #2a2a2d)
+fleet.line-soft: color(#e6e6e8, dark: #1e1e20)
+fleet.hover: color(#ebebec, dark: #1a1a1c)
+fleet.selected: color(#e2e2e5, dark: #232326)
+fleet.accent: color(#161617, dark: #f2f2f2)
+fleet.on-accent: color(#ffffff, dark: #0b0b0c)
+fleet.attention-fg: color(#9a5b00, dark: #f2b44c)
+fleet.attention-bg: color(#fff2d6, dark: #3a2a0c)
+fleet.attention-soft: color(#fffaf0, dark: #221c10)
+fleet.attention-line: color(#f0c56b, dark: #6b5020)
+fleet.danger-fg: color(#b42318, dark: #ff8a7a)
+fleet.danger-bg: color(#fde8e6, dark: #3d1714)
+fleet.running-fg: color(#1f55c0, dark: #7fb0ff)
+fleet.running-bg: color(#e4ecfb, dark: #16233a)
+fleet.success-fg: color(#1d7a46, dark: #5fd08c)
+fleet.success-bg: color(#e3f4ea, dark: #12301f)
+fleet.neutral-fg: color(#5c5c61, dark: #9a9a9f)
+fleet.neutral-bg: color(#e8e8ea, dark: #232326)
+fleet.estimated-fg: color(#6b4fa3, dark: #b9a2ef)
+fleet.data-1: color(#3a3a3d, dark: #d0d0d0)
+fleet.data-2: color(#a0a0a6, dark: #6a6a6e)
+fleet.data-3: color(#1d7a46, dark: #5fd08c)
+fleet.data-4: color(#c48a1a, dark: #e0a640)
+fleet.data-1-ink: color(#ffffff, dark: #0b0b0c)
+fleet.data-2-ink: color(#161617, dark: #ffffff)
+fleet.data-3-ink: color(#ffffff, dark: #0b0b0c)
+fleet.data-4-ink: color(#161617, dark: #0b0b0c)
+fleet.float: color(#ffffff, dark: #202022)
+fleet.rail: color(#e9e9ea, dark: #050505)
+
+// Brilliant's semantic roles mapped onto Fleet tokens, so $color.* rows draw in Fleet colours.
+color.surface: fleet.bg
+color.surface.container: fleet.surface
+color.surface.container.high: fleet.surface-sunken
+color.on-surface: fleet.fg
+color.surface.hover: fleet.hover
+color.surface.pressed: fleet.selected
+color.surface.selected: fleet.selected
+color.on-surface.selected: fleet.fg
+color.outline: fleet.line
+color.outline.variant: fleet.line-soft
+color.text.primary: fleet.fg
+color.text.secondary: fleet.fg-muted
+color.text.disabled: fleet.fg-faint
+color.text.display: fleet.fg
+color.text.display.alt: fleet.fg-muted
+color.primary: fleet.accent
+color.on-primary: fleet.on-accent
+color.primary.container: fleet.selected
+color.success: fleet.success-fg
+color.on-success: fleet.bg
+color.success.container: fleet.success-bg
+color.error: fleet.danger-fg
+color.on-error: fleet.bg
+color.error.container: fleet.danger-bg
+color.warning: fleet.attention-fg
+color.on-warning: fleet.bg
+color.warning.container: fleet.attention-bg
+color.info: fleet.running-fg
+color.on-info: fleet.bg
+color.info.container: fleet.running-bg
+
+// Type. packages/ui uses the platform font (system-ui); the board draws with Inter, the closest bundled face.
+font.family:      Inter
+font.family.sans: font.family
+font.family.mono: "JetBrains Mono"
+font.size:        tshirt(number([11, 12, 13, 15, 18, 22]), transforms: none)
+font.lineHeight:  1.4
+font.weight.regular: 400
+font.weight.medium:  500
+font.weight.bold:    600
+
+// Spacing: space.1 to space.7 of packages/ui, as xs, sm, md, lg, xl, 2xl, 3xl.
+spacing: tshirt(number([2, 4, 8, 12, 16, 24, 32]), min: { none: 0 }, transforms: none)
+
+// Strokes: 1 px borders (line, line-soft) and the focus ring.
+stroke.width.subtle: 1
+stroke.width.mid: 2
+
+// Radius and fixed sizes: Fleet is square-cornered and dense.
+fleet.radius.sm: 2
+fleet.radius.md: 2
+fleet.radius.lg: 3
+fleet.radius.pill: 999
+fleet.size.row: 32
+fleet.size.row-compact: 28
+fleet.size.row-phone: 44
+fleet.size.control: 28
+fleet.size.hit-phone: 44
+fleet.size.focus-ring: 2
+fleet.size.icon: 16
+fleet.size.icon-sm: 14
+fleet.size.badge: 20
+fleet.size.chip: 24
+fleet.size.fill: 160
+fleet.size.search: 220
+fleet.size.list: 320
+fleet.size.total: 120
+fleet.size.clock: 64
+fleet.size.thumb: 72
+fleet.size.label: 160
+fleet.size.input: 120
+fleet.size.tip: 280
+fleet.size.rail: 220
+fleet.size.page-list: 560
+fleet.size.detail: 560
+fleet.size.phone: 390
+fleet.size.phone-h: 560
+fleet.size.ctl: 520
+fleet.size.row-2: 44

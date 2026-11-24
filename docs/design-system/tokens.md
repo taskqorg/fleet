@@ -73,3 +73,14 @@ Spacing scale `space-1..7` = 2, 4, 8, 12, 16, 24, 32 px. Use the scale; no in-be
 ## Themes
 
 Light and dark are defined in `tokens.json`. CSS applies dark under `@media (prefers-color-scheme: dark)` unless `data-theme="light"` is set on the root, and always under `data-theme="dark"`. The person's override is remembered.
+
+## Design board
+
+The [design board](README.md#design-board) draws with these tokens. [Styles/default.ds](board/Styles/default.ds) is generated from `tokens.json` by `pnpm run board:tokens`; edit `tokens.json`, run it, and commit both. `tests/ui/board-tokens.test.ts` fails when the two differ.
+
+* **Colours.** Each colour is `fleet.<name>` with its light and dark value (`$fleet.bg` is `var(--bg)`), and the board's semantic roles map onto them: surface, container, text, outline, primary, success, error, warning, info. A frame without a theme resolves light; board frames start with `ds(, theme(dark))`, since the owner works in dark.
+* **Type, space, radius, size.** `$font.size.xs` to `$font.size.2xl`, `$spacing.xs` to `$spacing.3xl`, `$fleet.radius.*` and `$fleet.size.*` carry the same values.
+* **Font.** The board draws with Inter, the closest bundled face to the platform font that `packages/ui` uses.
+
+[styles.bl](board/styles.bl) shows every colour in both themes and the type scale, drawn from the tokens themselves.
+

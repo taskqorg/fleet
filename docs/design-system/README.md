@@ -10,10 +10,11 @@ This folder is the single knowledge base for Fleet's interface design. It plays 
 
 ## Design board
 
-The board is the visual source of the interface: a [Brilliant](https://brilliant.design) project kept in [board/](board/) as plain-text canvases (`.bl`). Agents read and write it through the Brilliant MCP tools (`init` with the absolute path of `docs/design-system/board` in the checkout, then `read`, `edit` and `export`); the owner opens the same folder in the Brilliant app. Brilliant's caches, thumbnails and stock style file stay out of git (root `.gitignore`); Fleet's own style file joins the board when the tokens are imported.
+The board is the visual source of the interface: a [Brilliant](https://brilliant.design) project kept in [board/](board/) as plain-text canvases (`.bl`). Agents read and write it through the Brilliant MCP tools (`init` with the absolute path of `docs/design-system/board` in the checkout, then `read`, `edit` and `export`); the owner opens the same folder in the Brilliant app. The board's style file is generated from `packages/ui/tokens.json` ([tokens](tokens.md#design-board)); Brilliant's caches and thumbnails stay out of git (root `.gitignore`).
 
 | Canvas | Holds | Changes when |
 |---|---|---|
+| [styles](board/styles.bl) | Every Fleet colour in both themes and the type scale, drawn from the tokens | `tokens.json` changes (`pnpm run board:tokens`) |
 | [rules-v2](board/rules-v2.bl) | The principles and rules as one picture; the text of record is [owner-rules.md](owner-rules.md) | An owner rule changes |
 | [ia](board/ia.bl) | The sections, the question each answers, the journeys | The [information architecture](../designs/fleet-ia-and-journeys.md) changes |
 | `screens/<page>` ([home](board/screens/home.bl), [live](board/screens/live.bl)) | The approved states of one page: a row at 1440 px, then phone 390 px, then the parts it adds | The owner approves a state; the [page spec](pages/README.md) links its canvas |
@@ -26,7 +27,7 @@ How a screen moves through the board:
 4. **Screens.** Draw the approved states on `screens/<page>.bl` in this board, in the same pull request as the page spec.
 5. **Build.** Build from `packages/ui` and the book (OR-13). Compare the app at 1440 and 390 px with the canvas, and run `pnpm run check:design`.
 
-Board drawings use Fleet's tokens ([tokens.md](tokens.md)). A control the board needs and `packages/ui` lacks is a change to the book first (process step 3 below).
+Board drawings use Fleet's tokens through the board's style file ([tokens](tokens.md#design-board)): `$color.*` roles and `$fleet.*` colours, never bare colours. The canvases drawn before the tokens were imported (`rules-v2`, `ia`, `screens/home`, `screens/live`) still hold bare colours copied from `tokens.json`; they move to tokens when next redrawn. A control the board needs and `packages/ui` lacks is a change to the book first (process step 3 below).
 
 ## Files
 
