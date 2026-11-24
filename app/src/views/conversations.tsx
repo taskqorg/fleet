@@ -4,11 +4,11 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onSet
 import type { JSX } from '@solidjs/web';
 import { currentUrl, useLocation, useSearch } from '../router.ts';
 import {
-  EntityCode, EntityPicker, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
-  StateBadge, StateCounters, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection,
-  OpsSummary, StatStrip, KvRow, Num, TabBar, type VirtualListHandle, type CatalogueTreeNode, type IconName, type Stat,
+  EntityCode, EntityPicker, ListDetail, RowFacts, Fact, AgeChip, ProblemRow,
+  StateBadge, StateCounters, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection,
+  OpsSummary, KvRow, Num, TabBar, type VirtualListHandle, type CatalogueTreeNode, type IconName,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, TextField, Disclosure,
-  writeClip, zone, DropZone, agentLabel, InlineForm, type ComposerChip,
+  writeClip, zone, DropZone, agentLabel, InlineForm, type ComposerChip, QuestionCard, Latest, StateDot, type Tone,
   keyConnection, ShellStatus, ShellActions,
 } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, sendingId, prepareSending, submissionKey, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
@@ -18,12 +18,12 @@ import { useOp } from '../store.ts';
 import type { SessionRow as ContractSessionRow, SessionGetReply, SessionExecution } from '../../../contracts/generated/ops.ts';
 import { DEFAULT_SESSION_GROUP, DEFAULT_SESSION_SORT } from '../../../packages/view-url/view-url.ts';
 import { nextUrl } from '../url.ts';
-import { prefs } from '../prefs.ts';
+import { prefs, prefsRead, scopeIds, noProject } from '../prefs.ts';
 import { useListPage, ListPagePanel, type ListPage } from '../list-page.tsx';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, drag, inside, range, textBounds, type Selection } from '../selection.ts';
-import { RowSpend, useRowSpend, ScopedRollupBar, ScopedRollupDetails } from './resources.tsx';
+import { ScopedRollupBar, ScopedRollupDetails } from './resources.tsx';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
 
 const GROUPS = [['project', 'Project'], ['state', 'State'], ['agent', 'Agent'], ['none', 'None']] as const;
@@ -45,14 +45,15 @@ export function Conversations(props: { id?: string }) {
   // pending confirmation; the toggle and a saved view also drop the checked rows. The rows a bulk action finished leave
   // the selection (list-page.tsx).
   const page = useListPage<SessionRow>({
-    view: 'conversations', entity: 'conversation', kind: 'sessions', defaultGroup: DEFAULT_SESSION_GROUP, defaultSort: DEFAULT_SESSION_SORT, system: SYSTEM_VIEWS.conversations, groupLabel,
+    view: 'conversations', entity: 'conversation', kind: 'sessions', defaultGroup: DEFAULT_SESSION_GROUP, defaultSort: DEFAULT_SESSION_SORT, system: SYSTEM_VIEWS.conversations,
+    // The list names a group by its label; the waiting group's label is "waiting" (sessions_list), no project's name.
+    groupLabel: (g, label) => (g === 'project' && label === 'waiting' ? 'Waiting for you' : groupLabel(g, label)),
     pinRead: v => ({ filter: { archived: !!v.archived } }),
     saveExtra: v => ({ archived: v.archived }), pickExtra: sv => ({ archived: sv.archived }),
     listId: v => !!v.archived,
   });
   const { set } = page;
   const search = useSearch();
-  const spend = useRowSpend('sessions', () => page.displayed);
   const archived = () => !!page.view.archived;
   const canArchive = (s: SessionRow) => s.state === 'idle' || TERMINAL.includes(s.state);
   // Archive and Unarchive are one operation per conversation. session_archive is refused while an execution is active;
@@ -118,22 +119,10 @@ export function Conversations(props: { id?: string }) {
         }
         listLabel={archived() ? 'Archived conversations' : 'Conversations'}
         title={titleOf}
-        groupIcon={g => (g === 'state' ? 'activity' : g === 'agent' ? 'bot' : 'folder-open')}
+        groupIcon={(g, key) => groupIcon(g, key)}
+        groupTone={(g, key): Tone => (isWaitingGroup(g, key) ? 'attention' : 'neutral')}
         state={s => <StateBadge family="session" state={s.state} compact />}
-        facts={s => (
-          <SessionFacts
-            s={s}
-            spend={
-              <RowSpend
-                cost={spend.cost.get(s.id)}
-                stale={!!spend.error}
-                name={s.code ?? titleOf(s)}
-                href={page.href({ focus: s.id })}
-                open={extend => (page.selecting || extend ? page.select(s) : set({ focus: s.id }))}
-              />
-            }
-          />
-        )}
+        facts={s => <SessionFacts s={s} />}
       />
     </>
   );
@@ -154,98 +143,178 @@ export function Conversations(props: { id?: string }) {
           </Show>
         ) : undefined
       }
-      idle={<ConversationsSummary page={page} filtered={page.filtered} archived={archived()} />}
+      idle={<ConversationsIdle page={page} filtered={page.filtered} archived={archived()} />}
       detailKey={props.id}
     />
   );
 }
 
-function ConversationsSummary(props: { page: ListPage<SessionRow>; filtered: boolean; archived: boolean }) {
-  const counts = () => props.page.list.counts as Partial<Record<StateOf<'session'>, number>>;
-  const activeStats = createMemo<Stat[]>(() => {
-    const c = counts();
-    return ([
-      { label: props.archived ? 'archived' : 'total', icon: props.archived ? 'archive' : 'messages-square', value: { value: props.page.list.total, basis: 'measured' } },
-      { label: 'waiting', icon: states_.session.waiting.icon, value: { value: c.waiting ?? 0, basis: 'measured' }, tone: (c.waiting ?? 0) > 0 ? 'attention' : undefined },
-      { label: 'failed', icon: states_.session.failed.icon, value: { value: c.failed ?? 0, basis: 'measured' }, tone: (c.failed ?? 0) > 0 ? 'danger' : undefined },
-      { label: 'running', icon: states_.session.running.icon, value: { value: c.running ?? 0, basis: 'measured' } },
-      { label: 'preparing', icon: states_.session.preparing.icon, value: { value: c.preparing ?? 0, basis: 'measured' } },
-      { label: 'idle', icon: states_.session.idle.icon, value: { value: c.idle ?? 0, basis: 'measured' } },
-    ] satisfies Stat[]).filter(s => (s.value.value ?? 0) > 0);
-  });
-  const nonZeroGroups = createMemo(() => props.page.list.groups.filter(g => g.count > 0));
-  const groupTitle = createMemo(() => GROUPS.find(g => g[0] === props.page.rowsGroup)?.[1] ?? props.page.rowsGroup);
-  const hasCounts = createMemo(() => Object.values(counts()).some(n => (n ?? 0) > 0));
+/** The project grouping's first group: the sessions waiting for an answer (sessions_list, key empty, label "waiting"). */
+const isWaitingGroup = (group: string, key: string) => group === 'project' && key === '';
+function groupIcon(group: string, key: string): IconName {
+  if (isWaitingGroup(group, key)) return states_.session.waiting.icon;
+  return group === 'state' ? 'activity' : group === 'agent' ? 'bot' : 'folder-open';
+}
+const FINISHED = ['succeeded', 'failed', 'cancelled'];
+type QuestionRow = Ops['questions_list']['reply']['questions'][number];
 
+/**
+ * The work area while no session is open (pages/conversations.md, Target): what waits for the person first, as question
+ * cards answered in place (OR-53), then the summary by project and state as counters (OR-29), then the latest finished
+ * sessions with their outcome line. Never a second copy of the list.
+ */
+function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolean; archived: boolean }) {
+  const [, go] = useLocation();
+  // The focus and ignored projects (OR-34) narrow the questions as they narrow the list.
+  const questions = useOp('questions_list', () => (prefsRead.value && !props.archived ? { state: 'open', ...scopeIds() } : null));
+  const waiting = createMemo(() => (questions.data?.questions ?? []).filter((q): q is QuestionRow & { sessionId: string } => !!q.sessionId));
+  const finished = useOp('sessions_list', () => {
+    if (!prefsRead.value || props.archived) return null;
+    const { projectIds, excludeProjectIds } = scopeIds();
+    return {
+      group: 'none', sort: '-activity', limit: 5,
+      filter: { state: FINISHED, ...(projectIds && { projectId: projectIds.map(noProject) }), ...(excludeProjectIds && { excludeProjectId: excludeProjectIds.map(noProject) }) },
+    };
+  }, { every: 30_000 }); // sessions_list names no change kinds, so the feed does not reread it
+  const names = createMemo(() => new Map(props.page.displayed.map(r => [r.id, titleOf(r)])));
+  const [answering, setAnswering] = createSignal<Record<string, string>>({});
+  const [answered, setAnswered] = createSignal<Record<string, { answer: string; at: number }>>({});
+  const [failure, setFailure] = createSignal<string | null>(null);
+  const alive = useAlive();
+  const answer = async (q: QuestionRow, a: string) => {
+    setFailure(null);
+    setAnswering(cur => ({ ...cur, [q.id]: a }));
+    try {
+      await writeOnce('questions_answer', { questionId: q.id, answer: a }, () => setFailure('Answer outcome unknown, retrying'), { signal: alive });
+      setAnswered(cur => ({ ...cur, [q.id]: { answer: a, at: Date.now() } }));
+      setFailure(null);
+    } catch (e) {
+      if (!alive.aborted) setFailure(`Answer not sent: ${errText(e)}`);
+    } finally {
+      setAnswering(cur => { const { [q.id]: _, ...rest } = cur; return rest; });
+    }
+  };
+  const counts = () => props.page.list.counts as Partial<Record<StateOf<'session'>, number>>;
+  const hasCounts = createMemo(() => Object.values(counts()).some(n => (n ?? 0) > 0));
+  // Project groups of the list; the waiting group is the cards above.
+  const groups = createMemo(() => props.page.list.groups.filter(g => g.count > 0 && !isWaitingGroup(props.page.rowsGroup, g.key)));
+  const projects = useOp('project_list', () => (props.page.rowsGroup === 'project' ? {} : null));
+  const projectNames = createMemo(() => new Map<string, string>((projects.data?.projects ?? []).map(p => [String(p.id), String(p.name ?? p.id)])));
+  const groupTitle = createMemo(() => GROUPS.find(g => g[0] === props.page.rowsGroup)?.[1] ?? props.page.rowsGroup);
+  const open = (id: string) => go(nextUrl(currentUrl(), 'conversations', { focus: id }));
   return (
     <article class="detail" aria-label="Conversations summary">
       <OpsSummary>
+        <Show when={failure()} keyed>{f => <ErrorBanner text={f} />}</Show>
+        <Show when={questions.error} keyed>{e => <ErrorBanner text={`Questions did not load: ${e}`} onRetry={questions.reload} />}</Show>
+        <Show when={waiting().length > 0}>
+          <DetailSection title={`Waiting for you · ${waiting().length}`}>
+            <div class="stack">
+              <Latest
+                n={3}
+                items={waiting().map(q => {
+                  const options = Array.isArray(q.options) ? (q.options as unknown[]).map(String) : [];
+                  const name = () => names().get(q.sessionId);
+                  return (
+                    <QuestionCard
+                      question={name() ? `${name()}: ${q.text}` : q.text}
+                      choices={options.map((label, i) => ({ label, primary: i === 0 }))}
+                      answering={answering()[q.id]}
+                      answered={answered()[q.id]}
+                      onAnswer={a => answer(q, a)}
+                    />
+                  );
+                })}
+              />
+            </div>
+          </DetailSection>
+        </Show>
         <Show when={!(props.page.list.pending && !props.page.list.total)} fallback={<Skeleton rows={3} />}>
-          <Show when={activeStats().length > 0}>
-            <StatStrip label="Conversations" stats={activeStats()} />
-          </Show>
-          <Switch fallback={<Empty text={props.filtered ? 'No matching conversations to summarize.' : props.archived ? 'Archived summary is empty.' : 'No conversations to summarize.'} />}>
-            <Match when={nonZeroGroups().length > 0 && props.page.rowsGroup !== 'none'}>
+          <Switch fallback={<Show when={!waiting().length}><Empty text={props.filtered ? 'No matching conversations to summarize.' : props.archived ? 'Archived summary is empty.' : 'No conversations to summarize.'} /></Show>}>
+            <Match when={groups().length > 0 && props.page.rowsGroup !== 'none'}>
               <DetailSection title={`By ${groupTitle().toLowerCase()}`}>
-                <For each={nonZeroGroups()}>
+                <For each={groups()}>
                   {g => (
                     <KvRow
-                      icon={props.page.rowsGroup === 'state' ? 'activity' : props.page.rowsGroup === 'agent' ? 'bot' : 'folder-open'}
-                      label={groupLabel(props.page.rowsGroup, g.label) || g.key}
+                      icon={groupIcon(props.page.rowsGroup, g.key)}
+                      label={groupLabel(props.page.rowsGroup, props.page.rowsGroup === 'project' ? projectNames().get(g.key) ?? g.label : g.label) || g.key}
                       value={<Num m={{ value: g.count, basis: 'measured' }} kind="count" />}
                     />
                   )}
                 </For>
               </DetailSection>
             </Match>
-            <Match when={hasCounts()}>
-              <DetailSection title="By state">
-                <StateCounters
-                  family="session"
-                  label="Conversations by state"
-                  counts={counts()}
-                  active={(props.page.view.state ?? []) as StateOf<'session'>[]}
-                  hideZero
-                  onAll={() => props.page.set({ state: [] })}
-                  onToggle={s => {
-                    const cur = (props.page.view.state ?? []) as StateOf<'session'>[];
-                    props.page.set({ state: cur.includes(s) ? cur.filter(x => x !== s) : [...cur, s] });
-                  }}
-                />
-              </DetailSection>
-            </Match>
           </Switch>
+          <Show when={hasCounts()}>
+            <DetailSection title="By state">
+              <StateCounters
+                family="session"
+                label="Conversations by state"
+                counts={counts()}
+                active={(props.page.view.state ?? []) as StateOf<'session'>[]}
+                hideZero
+                onAll={() => props.page.set({ state: [], preset: undefined })}
+                onToggle={st => {
+                  const cur = (props.page.view.state ?? []) as StateOf<'session'>[];
+                  props.page.set({ state: cur.includes(st) ? cur.filter(x => x !== st) : [...cur, st], preset: undefined });
+                }}
+              />
+            </DetailSection>
+          </Show>
+        </Show>
+        <Show when={(finished.data?.sessions.length ?? 0) > 0}>
+          <DetailSection title="Latest finished">
+            <Latest
+              n={3}
+              items={(finished.data?.sessions ?? []).map(raw => {
+                const r = raw as SessionRow;
+                const at = r.activityAt ? Date.parse(r.activityAt) : NaN;
+                // The title, then the outcome line: what the session said last.
+                const line = r.now ? `${titleOf(r)}: ${r.now}` : titleOf(r);
+                return (
+                  <a class="kv-row row-link" href={props.page.href({ focus: r.id })} onClick={e => { e.preventDefault(); open(r.id); }}>
+                    <StateDot family="session" state={r.state} />
+                    <span class="kv-line" data-tip={line}>{line}</span>
+                    <EntityCode code={r.code} id={r.id} kind="conversation" />
+                    <Show when={!isNaN(at)}><AgeChip t={at} /></Show>
+                  </a>
+                );
+              })}
+            />
+          </DetailSection>
         </Show>
       </OpsSummary>
     </article>
   );
 }
 
-/** Row facts of a conversation (OR-37): open questions, executions from two, time since the last activity, agent. */
-function SessionFacts(props: { s: SessionRow; spend: JSX.Element }) {
+/**
+ * Row facts of a conversation (OR-37, pages/conversations.md): the now line, the open questions in the attention tone,
+ * time since the last activity. The harness mark, the executions and the spend are dropped (OR-54): they stay in the
+ * session's details.
+ */
+function SessionFacts(props: { s: SessionRow }) {
   const at = () => (props.s.activityAt ? Date.parse(props.s.activityAt) : NaN);
-  const n = () => props.s.executions ?? 0;
   const q = () => props.s.openQuestions ?? 0;
   return (
     <RowFacts>
-      <Show when={q() > 0}>
-        <span class="chip-age t-attention alert" aria-label={q() === 1 ? '1 open question' : `${q()} open questions`}>{q()}</span>
+      <Show when={props.s.now} keyed>
+        {now => <span class="row-now" data-tip={now}>{now}</span>}
       </Show>
-      <Show when={n() > 1}>
-        <Fact icon={actions.runs} text={String(n())} tip={`${n()} executions`} />
+      <Show when={q() > 0}>
+        <span class="chip-age t-attention alert">{q() === 1 ? '1 question' : `${q()} questions`}</span>
       </Show>
       <Show when={!isNaN(at())}>
         <Fact tip="Last activity"><AgeChip t={at()} /></Fact>
       </Show>
-      <Show when={isHarness(props.s.harness)}><HarnessMark h={props.s.harness!} /></Show>
-      {props.spend}
     </RowFacts>
   );
 }
 
-function groupLabel(group: string, label: string | null) {
+function groupLabel(group: string, label: string | null, key?: string) {
   if (group === 'agent') return label && label in harnesses ? harnesses[label as Harness].label : label ?? 'No agent';
   if (group === 'state') return label && label in states_.session ? states_.session[label as StateOf<'session'>].label : label ?? '';
+  if (key !== undefined && isWaitingGroup(group, key)) return 'Waiting for you';
   return label ?? 'No project';
 }
 

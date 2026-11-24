@@ -35,7 +35,7 @@ Conversation with a product manager (PM) is the primary way to discuss and assig
 
 - Projects and tasks: create and configure projects, describe work and set priorities.
 - Execution: balance work and track progress.
-- Spend: show cumulative spend on each Tasks, Conversations and Projects list row, linking to its detail breakdown.
+- Spend: show cumulative spend on each Tasks and Projects list row, linking to its detail breakdown; a conversation shows its spend under Details only (OR-54).
 - Decisions: answer questions and resolve blockers.
 - Results: inspect what was done, where to find it, what was checked and what remains; accept work under project rules.
 

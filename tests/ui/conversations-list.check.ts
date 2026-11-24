@@ -45,17 +45,19 @@ export async function checkConversationsList(browser: Browser, origin: string, s
   const settle = async (f: () => Promise<boolean>, what: string) => assert.ok(await until(f), what);
   try {
     await p.goto(origin + '/conversations'); await p.waitForSelector('.vl-row .row-link');
-    // Default: grouped by project, latest activity first inside each group; projects in key order, no project last.
+    // Default: Waiting for you first, then grouped by project, latest activity first inside each group; projects in key
+    // order, no project last (pages/conversations.md, owner 2026-11-25).
     await settle(async () => (await mine()).length === rows.length, 'all seeded conversations listed');
     assert.deepEqual(await settled(), ['Fix the invoice rounding bug', 'Write the webhook retry notes', 'Audit image sizes on the blog', 'Plan the next release train']);
     const heads = await groups();
-    assert.ok(heads.some(h => h.includes('site-redesign') && h.includes('3')) && heads.some(h => h.includes('billing-api')) && heads.some(h => h.includes('No project')), 'project group headers with counts: ' + heads.join(' | '));
-    // OR-37: no checkbox outside selection mode; the facts show executions, open questions and the agent.
+    assert.ok(heads.some(h => h.includes('site-redesign') && h.includes('2')) && heads.some(h => h.includes('billing-api')) && heads.some(h => h.includes('No project')), 'project group headers with counts: ' + heads.join(' | '));
+    assert.ok(heads.findIndex(h => h.includes('Waiting for you')) === heads.findIndex(h => !h.includes('Pinned')), 'Waiting for you is the first group: ' + heads.join(' | '));
+    // OR-37: no checkbox outside selection mode; the facts show the open questions and the last activity, no executions or agent (OR-54).
     assert.equal(await p.locator('.vl-row .row-check').count(), 0, 'checkboxes outside selection mode');
     const hero = p.locator('.vl-row', { hasText: 'Refresh the landing hero copy' });
-    assert.ok(await hero.locator('.row-facts .fact[data-tip="3 executions"]').count() === 1, 'executions fact');
+    assert.ok(await hero.locator('.row-facts .fact[data-tip="3 executions"]').count() === 0, 'no executions fact');
     assert.ok(await hero.locator('.row-facts [data-tip="Last activity"]').count() === 1, 'last activity fact');
-    assert.ok(await p.locator('.vl-row', { hasText: 'Compare three pricing layouts' }).locator('.row-facts .t-attention').textContent() === '1', 'open questions fact');
+    assert.ok(await p.locator('.vl-row', { hasText: 'Compare three pricing layouts' }).locator('.row-facts .t-attention').textContent() === '1 question', 'open questions fact');
 
     // Group by state (attention order), then the system preset "Needs me": only the states change, the grouping stays.
     await p.locator('[data-ui=group-control] .pick-b').click();
@@ -194,6 +196,8 @@ export async function checkLiveListUpdates(browser: Browser, origin: string, see
   p.on('pageerror', error => errors.push(error.message));
   const snapshots: string[] = [];
   p.on('request', r => {
+    // The idle work area's Latest finished is its own short read (finished states only), not a list snapshot.
+    if (r.url().endsWith('/api/ops/sessions_list') && String(r.postDataJSON()?.filter?.state) === 'succeeded,failed,cancelled') return;
     if (r.url().endsWith('/api/ops/sessions_list') || r.url().endsWith('/api/ops/task_page')) snapshots.push(r.url().split('/').at(-1)!);
   });
   const frame = p.locator('.split-list [data-ui=list-view]');

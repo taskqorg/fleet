@@ -82,9 +82,10 @@ test('sessions_list groups, sorts and pages by last activity; membership answers
   };
   const def = await op('sessions_list', {});
   assert.deepEqual(ids(def), ['g-c', 'g-a', 'g-e', 'g-b', 'g-d']);
-  assert.deepEqual(def.groups, [{key: 'alpha', label: 'alpha', count: 2}, {key: 'beta', label: 'beta', count: 2}, {key: '~', label: null, count: 1}]);
+  // The project grouping puts the sessions waiting for an answer first, as one group (pages/conversations.md, owner 2026-11-25).
+  assert.deepEqual(def.groups, [{key: '', label: 'waiting', count: 1}, {key: 'alpha', label: 'alpha', count: 1}, {key: 'beta', label: 'beta', count: 2}, {key: '~', label: null, count: 1}]);
   const gc = def.sessions[0];
-  assert.equal(gc.executions, 1); assert.equal(Date.parse(gc.activityAt), Date.parse('2026-11-01T12:00:00Z')); assert.equal(gc.sortKey.length, 3); assert.equal(gc.sortKey[0], 'alpha');
+  assert.equal(gc.executions, 1); assert.equal(Date.parse(gc.activityAt), Date.parse('2026-11-01T12:00:00Z')); assert.equal(gc.sortKey.length, 3); assert.equal(gc.sortKey[0], '');
   assert.equal(Date.parse(def.sessions[2].activityAt), Date.parse('2026-11-01T13:00:00Z'));
   assert.deepEqual(await all({}), ids(def));
   assert.deepEqual(ids(await op('sessions_list', {group: 'project', sort: '-activity'})), ids(def));
@@ -100,7 +101,7 @@ test('sessions_list groups, sorts and pages by last activity; membership answers
   assert.deepEqual((await op('sessions_list', {group: 'none'})).groups, []);
   // The state filter narrows the groups; the state counts stay those of the whole list (the quick filter).
   const waiting = await op('sessions_list', {group: 'project', filter: {state: ['waiting']}});
-  assert.deepEqual(ids(waiting), ['g-c']); assert.deepEqual(waiting.groups, [{key: 'alpha', label: 'alpha', count: 1}]); assert.equal(waiting.counts.idle, 4);
+  assert.deepEqual(ids(waiting), ['g-c']); assert.deepEqual(waiting.groups, [{key: '', label: 'waiting', count: 1}]); assert.equal(waiting.counts.idle, 4);
   for (const body of [{group: 'priority'}, {group: 3}, {sort: 'changed'}, {sort: '-title'}, {after: [1, 'g-a']}, {after: 'x'}]) assert.equal((await send('sessions_list', body)).status, 400, JSON.stringify(body));
   const m = await op('list_membership', {ids: ['g-a', 'g-c', 'g-e'], lists: [{name: 'sessions', filter: {}, group: 'state', sort: 'created'}, {name: 'sessions', filter: {state: ['idle']}}]});
   assert.deepEqual(m.lists[0].rows.map((s: any) => s.id), ['g-c', 'g-a', 'g-e']);
