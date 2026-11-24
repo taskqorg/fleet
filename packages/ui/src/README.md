@@ -6,12 +6,14 @@
 
 ## Interface
 
-- `controls.tsx` re-exports all control modules from `controls/` (`index.ts`, `patterns.tsx`, and book files import through `controls.tsx` or `index.ts`), and `styles/` provides layered CSS (`tokens`, `base`, `layout`, `controls`, `overlays`, `utilities`) assembled by `scripts/tokens.mjs:uiCss`:
+- `controls.tsx` re-exports all control modules from `controls/` (`index.ts`, `patterns.tsx`, and book files import through `controls.tsx` or `index.ts`), and `styles/` provides layered CSS (`tokens`, `base`, `layout`, `controls` from `controls.css`, `thread.css`, `tables.css`, `live.css` and `sections.css`, `overlays`, `utilities`) assembled by `scripts/tokens.mjs:uiCss`:
   - `controls/primitives.tsx`: `Icon`, `Button`, `StateBadge`, numbers and live ages (`Num`, `Totals`, `CostFigures`, `useTick`, `Ago`, `AgeChip`), harness/stage marks (`HarnessMark`, `HarnessCounts`, `StageChip`), status feedback (`Skeleton`, `Empty`, `ErrorBanner`, `Stale`, `OfflineMarker`, `StatusLine`), clipboard/popover/menu helpers (`copyText`, `CopyButton`, `focusOnMount`, `popoverAttr`, `useAnchoredPopover`, `SplitButton`, `ActionMenu`, `SearchBox`), and layout rows (`DetailSection`, `KvRow`, `ProblemRow`).
   - `controls/overlays.tsx`: `TooltipLayer` (`popover="hint"`), `EntityCode`, `EntityCardLayer` (`popover="auto"`, mounted once by `AppShell`, reading through `EntityCards`), `linkCodes`, `ContextMenu`, and `MenuItem`.
   - `controls/navigation.tsx`: `NavRail`, `FocusPresets`, `FocusControl` (`popover="auto"` header focus chip with presets, ignore, and outside-focus count), `Spotlight` (`<dialog closedby="any">`), and `sectionProvider`.
   - `controls/lists.tsx`: `FilterBar`, `StateCounters`, `GroupHeader`, `Presets`, `GroupControl`, `SortControl`, `RowFacts`, `Fact`, `SelectBar`, `SelectToggle`, `RowCheck`, and `RowPin`.
-  - `controls/tables.tsx`: `DataTable`, `TabBar` (`@ui-sdk/solid` `Tabs`), and `Disclosure`.
+  - `controls/tables.tsx`: `DataTable` with `TableRow` and `TableName`, `TabBar` (`@ui-sdk/solid` `Tabs`; tabs that do not fit fold into a More menu), and `Disclosure`.
+  - Live blocks, one file each: `controls/status-pill.tsx` (`StatusPill`), `controls/figure-tile.tsx` (`FigureTile`, `Sparkline`), `controls/gauge.tsx` (`Gauge`), `controls/run-strip.tsx` (`RunStrip`), `controls/worker-slot.tsx` (`WorkerSlot`), `controls/host-band.tsx` (`HostBand`) and `controls/live-row.tsx` (`LiveRow`); styled in `styles/live.css`.
+  - Catalogue-section blocks: `controls/detail-head.tsx` (`DetailHead`), `controls/diff-row.tsx` (`DiffRow`, `InheritedRows`) and `controls/matrix-cell.tsx` (`MatrixCell`); styled in `styles/sections.css`.
   - `controls/forms.tsx`: `TextField`, `SettingField`, `Composer`, `DropZone`, `CodeEditor`, `DiffText`, `DraftBar`, `InlineForm`, `Choice`, `ProjectPick`, `PresetPicker`, and `StartFacts`.
   - `controls/thread.tsx`: `Thread` and row renderers (`TextRow`, `ToolRow`, `ReasoningRow`, `QuestionRow`, `ResultRow`, `BoundaryRow`, `AgentMark`, `MessageFiles`), `DecisionBlock`, `Markdown` (turns D17 codes in text into references via `linkCodes`), `ResultViewer`, `ArtifactView`, and `SearchField`.
   - `controls/metrics.tsx`: `FillBar`, `StatStrip`, `ExecTree`, `OutcomeBlock`, `StepList`, `FlowStrip`, `AreaChart`, and `TimeStrip`.

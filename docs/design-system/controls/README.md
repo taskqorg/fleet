@@ -78,25 +78,25 @@ The screens of the conversation-first interface, and the catalogues and opened i
 | Message | [transcript viewer](transcript-viewer.md) | `TextRow quiet`, `MessageFiles` | Session view |
 | Folded tool line | [tool-line](tool-line.md) | `ToolLine` | Session view |
 | Context panel | [context-panel](context-panel.md) | `ContextPanel`, `PlanItem`, `TimerRow`, `SwarmMember` | Session view |
-| Status pill, status bar | [status-pill](status-pill.md), [status bar](status-pill.md#status-bar) | New (`StatusPill`) | Live |
-| Figure tile with sparkline | [figure-tile](figure-tile.md) | New (`FigureTile`), value by `Num` | Live |
-| Host band | [host-band](host-band.md) | New (`HostBand`) | Live |
-| Gauge | [fill bar, gauge](fill-bar.md#gauge) | `FillBar`, new gauge form | Live |
-| Worker slot | [worker-slot](worker-slot.md) | New (`WorkerSlot`) | Live |
-| Run strip | [time strip, run strip](time-strip.md#run-strip) | `TimeStrip`, new run strip form | Live |
-| Live row | [live-row](live-row.md) | New (`LiveRow`), stage by `StageChip` | Live |
-| Catalogue row, state icon, list group | [data list](data-list.md#board) | `VirtualList` rows, `GroupHeader` | Catalogues in the control column |
+| Status pill, status bar | [status-pill](status-pill.md), [status bar](status-pill.md#status-bar) | `StatusPill`; status bar new | Live |
+| Figure tile with sparkline | [figure-tile](figure-tile.md) | `FigureTile`, `Sparkline`, value by `Num` | Live |
+| Host band | [host-band](host-band.md) | `HostBand` | Live |
+| Gauge | [fill bar, gauge](fill-bar.md#gauge) | `Gauge` (the fill bar's gauge form) | Live |
+| Worker slot | [worker-slot](worker-slot.md) | `WorkerSlot` | Live |
+| Run strip | [time strip, run strip](time-strip.md#run-strip) | `RunStrip` (the time strip's run strip form) | Live |
+| Live row | [live-row](live-row.md) | `LiveRow`, stage by `StageChip` | Live |
+| Catalogue row, state icon, list group | [data list](data-list.md#board) | `CatalogueTree` leaf and folder rows | Catalogues in the control column |
 | Filter bar, search, view chip, state counters | [filter bar](filter-bar.md#board) | `FilterBar`, `SearchBox`, `Presets`, `StateCounters` | Catalogues in the control column |
-| Detail head | [list and detail](../patterns/list-detail.md#board) | `ListDetail` work area | Every opened item |
+| Detail head | [list and detail](../patterns/list-detail.md#board) | `DetailHead` | Every opened item |
 | Detail section, key row | [detail section](detail-section.md#board) | `DetailSection`, `KvRow` | Opened items |
 | Tab bar | [tab-bar](tab-bar.md) | `TabBar` | Opened items with facets |
 | Text field | [text field](text-field.md#board) | `TextField` | Forms in the work area |
 | Setting field | [setting field](setting-field.md#board) | `SettingField` | Settings in System and Projects |
-| Table row | [data list, table row](data-list.md#table-row) | `DataTable` | Lab leaderboard, Spend, project Delivery and Results |
-| Diff row | [definition editor, diff row](../patterns/definition-editor.md#diff-row) | `DefinitionEditor` | Library, project Rules & methods, Lab variant |
+| Table row | [data list, table row](data-list.md#table-row) | `DataTable`, `TableRow`, `TableName` | Lab leaderboard, Spend, project Delivery and Results |
+| Diff row | [definition editor, diff row](../patterns/definition-editor.md#diff-row) | `DiffRow`, `InheritedRows` | Library, project Rules & methods, Lab variant |
 | Share bar | [share bar](share-bar.md#board) | `ShareBar` | Spend, Delivery |
 | Step row | [step list](step-list.md#board) | `StepList` | Library pipelines, Lab trial plan, session plan |
-| Matrix cell | [matrix-cell](matrix-cell.md) | New | Lab experiment matrix |
+| Matrix cell | [matrix-cell](matrix-cell.md) | `MatrixCell` | Lab experiment matrix |
 | Problem row | [problem row](problem-row.md#board) | `ProblemRow` | System readiness, Library sync, Delivery |
 | Navigation rail, phone bottom bar | [nav-rail](nav-rail.md#board) | `NavRail`, bottom bar new | Every page |
 | Shell header | [app-shell](../patterns/app-shell.md#board) | `AppShell` | Every page except wall mode |

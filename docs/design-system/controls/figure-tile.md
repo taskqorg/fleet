@@ -1,6 +1,6 @@
 # Figure tile
 
-**Code.** *Target*: `FigureTile` in `packages/ui`, not built yet; the number is [`Num`](number.md). Board: [blocks.bl](../board/blocks.bl), master `Figure tile`.
+**Code.** `FigureTile` and its `Sparkline` in `packages/ui` (`src/controls/figure-tile.tsx`); the number is [`Num`](number.md), an unknown value is `?`. Demo: [book](../book/index.html#figure-tile). Board: [blocks.bl](../board/blocks.bl), master `Figure tile`.
 
 **Purpose.** One headline figure on [Live](../pages/live.md) with its recent trend, readable from across a room (principle 1).
 

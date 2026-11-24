@@ -1,0 +1,90 @@
+/* Live blocks: status pill, figure tile, sparkline, gauge, run strip, worker slot, host band, live row (controls/*.md). */
+@layer controls {
+  :where(.sp-in, .ft-in, .ws-in, .lr-in, .hb-name):is(button) { border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+  :where(.ft-in, .ws-in, .lr-in):is(button):hover { background: var(--hover); }
+  :where(.spill, .wslot, .hband, .lrow) .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--tone-fg, var(--fg-muted)); }
+  @keyframes live-pulse { 50% { opacity: .3; } }
+
+  .spill { display: inline-flex; max-width: 100%; height: var(--size-chip); border-radius: var(--radius-pill); background: var(--tone-bg); color: var(--tone-fg); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); transition: background-color var(--motion-fast), color var(--motion-fast); }
+  .spill[data-state=problem] { box-shadow: inset 0 0 0 1px var(--tone-fg); }
+  .spill[data-state=stale] .dot { background: none; box-shadow: inset 0 0 0 1px var(--tone-fg); }
+  .sp-in { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0 var(--space-4); border-radius: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .ftile { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+  .ft-in { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-4); width: 100%; padding: var(--space-3) var(--space-4); border-radius: inherit; }
+  .ft-text { display: flex; flex-direction: column; min-width: 0; }
+  .ft-label, .ft-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); }
+  .ft-label { font-size: var(--font-size-sm); }
+  .ft-sub { font-size: var(--font-size-xs); }
+  .ft-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--font-size-2xl); font-weight: var(--font-weight-bold); line-height: 1.25; }
+  .ft-value .of, .ft-of { font-weight: var(--font-weight-regular); }
+  .ftile[data-state=alert] :is(.ft-value, .ft-sub) { color: var(--danger-fg); }
+  .ftile[data-state=stale] { opacity: .55; }
+
+  .spark { display: inline-flex; align-items: flex-end; gap: 2px; height: var(--size-chip); flex: none; }
+  .spark i { width: 3px; background: var(--data-1); border-radius: 1px; }
+  .spark i.gap { width: 2px; height: 2px; border-radius: 50%; background: var(--fg-faint); }
+  .spark i.alert { background: var(--danger-fg); }
+
+  .gauge { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-xs); white-space: nowrap; }
+  .g-label { color: var(--fg-muted); }
+  .g-track { display: inline-flex; width: var(--size-clock); height: 4px; border-radius: var(--radius-pill); background: var(--neutral-bg); overflow: hidden; }
+  .g-track i { background: var(--data-1); border-radius: inherit; }
+  .g-val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; min-width: 4ch; text-align: end; }
+  .gauge.warn :is(.g-track i, .g-val) { --data-1: var(--attention-fg); color: var(--attention-fg); }
+  .gauge.crit :is(.g-track i, .g-val) { --data-1: var(--danger-fg); color: var(--danger-fg); }
+
+  .rstrip { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+  .rs-track { position: relative; height: var(--space-3); border-radius: var(--radius-md); background: var(--neutral-bg); overflow: hidden; }
+  .rs-track i { position: absolute; top: 0; bottom: 0; background: var(--running-fg); }
+  .rs-track i.failed { background: var(--danger-fg); }
+  .rs-marks { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: var(--font-size-xs); color: var(--fg-faint); }
+
+  .wslot { --slot-c: var(--line); min-width: 0; border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--surface-sunken); box-shadow: inset 3px 0 var(--slot-c); }
+  .wslot.c-d1 { --slot-c: var(--data-1); } .wslot.c-d2 { --slot-c: var(--data-2); } .wslot.c-d3 { --slot-c: var(--data-3); } .wslot.c-d4 { --slot-c: var(--data-4); }
+  .ws-in { display: flex; flex-direction: column; justify-content: center; gap: var(--space-1); width: 100%; min-height: calc(var(--size-row-2) + var(--space-3)); padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4); border-radius: inherit; }
+  .ws-l1, .ws-l2 { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .ws-l2 { font-size: var(--font-size-xs); color: var(--fg-muted); }
+  .ws-title, .ws-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ws-title { font-weight: var(--font-weight-medium); }
+  .ws-r { flex: none; font-variant-numeric: tabular-nums; }
+  .ws-l1 .ws-r { font-size: var(--font-size-sm); }
+  .wslot[data-state=busy] .dot { --tone-fg: var(--running-fg); animation: live-pulse 2s ease-in-out infinite; }
+  .wslot[data-state=idle] { border: 1px dashed var(--line); background: none; box-shadow: none; }
+  .wslot[data-state=idle] .ws-in { align-items: center; }
+  .ws-idle { color: var(--fg-faint); font-size: var(--font-size-sm); }
+  .wslot[data-state=failing] { --tone-fg: var(--danger-fg); border-color: var(--danger-fg); background: var(--danger-bg); box-shadow: none; }
+  .wslot[data-state=failing] :is(.ws-l1, .ws-l2 .ws-r) { color: var(--danger-fg); }
+
+  .hband { container-type: inline-size; display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; padding: var(--space-4) var(--space-5); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+  .hband[data-state=problem] { border-color: var(--danger-fg); box-shadow: 0 0 var(--space-5) color-mix(in oklab, var(--danger-fg) 30%, transparent); }
+  .hband[data-state=loading] { min-height: calc(var(--size-row-2) * 3); }
+  .hb-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); min-width: 0; }
+  .hb-name { --tone-fg: var(--success-fg); display: inline-flex; align-items: center; gap: var(--space-3); padding: 0; font-size: var(--font-size-lg); }
+  .hb-name b { font-weight: var(--font-weight-bold); }
+  .hband:is([data-state=problem], [data-state=offline]) .hb-name { --tone-fg: var(--danger-fg); }
+  .hb-facts { min-width: 0; color: var(--fg-muted); font-size: var(--font-size-sm); }
+  .hb-right { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); margin-left: auto; }
+  .hb-day { font-size: var(--font-size-xs); color: var(--fg-muted); }
+  .hb-problem { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--danger-bg); color: var(--danger-fg); font-size: var(--font-size-sm); }
+  .hb-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--size-search), 1fr)); gap: var(--space-3); }
+  .hband[data-state=offline] :is(.hb-right, .hb-slots, .rstrip) { opacity: .55; }
+  @container (max-width: 640px) {
+    .hb-right { margin-left: 0; flex-basis: 100%; }
+    .hb-slots { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  .lrow { list-style: none; min-width: 0; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
+  .lr-in { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: var(--size-row); padding: var(--space-1) var(--space-4); }
+  .lr-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lr-two { display: flex; flex-direction: column; }
+  .lr-two .lr-text { overflow: hidden; text-overflow: ellipsis; }
+  .lr-counts { display: flex; gap: var(--space-3); font-size: var(--font-size-xs); }
+  .lr-counts :is(.t-running, .t-success) { color: var(--tone-fg); }
+  .lr-code { font-size: var(--font-size-sm); color: var(--fg-muted); }
+  .lr-fact, .lr-age { flex: none; font-size: var(--font-size-sm); color: var(--fg-muted); }
+  .lrow[data-state=trouble] .lr-fact { color: var(--danger-fg); }
+  .lrow[data-state=stale] { opacity: .55; }
+
+  @media (prefers-reduced-motion: reduce) { .wslot[data-state=busy] .dot { animation: none; } }
+}

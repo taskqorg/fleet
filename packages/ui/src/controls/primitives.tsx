@@ -580,11 +580,17 @@ export function SearchBox(p: {
 export function ProblemRow(p: {
   title: string; facts: JSX.Element; severity: 'warning' | 'failure';
   actions: { label: string; icon?: IconName; primary?: boolean; onClick?: () => void }[];
+  /** Repeats of the same problem, aggregated into this one row (OR-58). */
+  count?: number;
+  /** Opens the problem's details, on the right of the title line. */
+  onDetails?: () => void;
 }) {
   return (
-    <div data-ui="problem-row" class={['problem', p.severity]} role="group" aria-label={`${p.severity === 'failure' ? 'Failure' : 'Warning'}: ${p.title}`}>
+    <div data-ui="problem-row" class={['problem', p.severity]} role="group" aria-label={`${p.severity === 'failure' ? 'Failure' : 'Warning'}: ${p.title}${(p.count ?? 1) > 1 ? `, ${p.count} times` : ''}`}>
       <Icon name={p.severity === 'failure' ? 'octagon-x' : 'triangle-alert'} />
-      <b>{p.title}</b><span class="facts" data-important="">{p.facts}</span>
+      <b>{p.title}<Show when={(p.count ?? 1) > 1}> <span class="pr-n">×{p.count}</span></Show></b>
+      <Show when={p.onDetails} keyed>{d => <Button label="Details" kind="quiet" onClick={d} />}</Show>
+      <span class="facts" data-important="">{p.facts}</span>
       <span class="acts">
         <For each={p.actions}>
           {a => <Button label={a.label} icon={a.icon} kind={a.primary ? 'primary' : 'default'} onClick={a.onClick} />}

@@ -13,6 +13,7 @@ import { NAV, NAV_FOCUS } from './nav.ts';
 import { FocusDemo } from './focus-demo.tsx';
 import { HOME_BLOCKS } from './home-blocks.tsx';
 import { SESSION_BLOCKS } from './session-blocks.tsx';
+import { BLOCK_SECTIONS } from './blocks.tsx';
 import { NOW, min, hr, tasks, mkTask, TREE, transcript, hosts, type Task } from './fixtures.ts';
 
 const BOOK_TREE: TreeNode[] = [
@@ -479,6 +480,7 @@ const SECTIONS: [string, string, string | undefined, () => JSX.Element, (() => J
   ['status-states', 'Loading, empty, error, stale', 'status-states', () => <StatesDemo />],
   ...HOME_BLOCKS,
   ...SESSION_BLOCKS,
+  ...BLOCK_SECTIONS,
 ];
 
 const BOOK_DOT = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGN4VqFBEmIY1TCqYfhqAAAUGoYQFRF6QAAAAABJRU5ErkJggg==';

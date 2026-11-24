@@ -1,6 +1,6 @@
 # Live row
 
-**Code.** *Target*: `LiveRow` in `packages/ui`, not built yet. Board: [blocks.bl](../board/blocks.bl), master `Live row`.
+**Code.** `LiveRow` in `packages/ui` (`src/controls/live-row.tsx`), a list item; the caller gives the `<ul>`. Demo: [book](../book/index.html#live-row). Board: [blocks.bl](../board/blocks.bl), master `Live row`.
 
 **Purpose.** One compact row of the side column on [Live](../pages/live.md): a project now, a pull request in delivery, a CI runner, or a recent event.
 

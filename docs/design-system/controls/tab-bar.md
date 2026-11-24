@@ -1,6 +1,6 @@
 # Tab bar
 
-**Code.** `TabBar` in `packages/ui` (`@ui-sdk/solid` `Tabs`). Board: [blocks.bl](../board/blocks.bl), masters `Tab bar` and `Tab`, board *Sections*.
+**Code.** `TabBar` in `packages/ui` (`@ui-sdk/solid` `Tabs`); tabs that do not fit fold into the More menu, measured with a `ResizeObserver`, and the current tab stays in the bar. Demo: [book](../book/index.html#detail-head). Board: [blocks.bl](../board/blocks.bl), masters `Tab bar` and `Tab`, board *Sections*.
 
 **Purpose.** Switches between facets of one opened entity inside the work area, for example a project's facets ([OR-46](../owner-rules.md) names them; [OR-49](../owner-rules.md)). The board draws a project's five as an example.
 

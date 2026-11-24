@@ -1,6 +1,6 @@
 # Status pill
 
-**Code.** *Target*: `StatusPill` in `packages/ui`, not built yet. Board: [blocks.bl](../board/blocks.bl), master `Status pill`.
+**Code.** `StatusPill` in `packages/ui` (`src/controls/status-pill.tsx`); the status bar is not built yet. Demo: [book](../book/index.html#status-pill). Board: [blocks.bl](../board/blocks.bl), master `Status pill`.
 
 **Purpose.** The fleet's state in words, the first thing read on [Live](../pages/live.md): all is well, or the first problem (principle 1).
 

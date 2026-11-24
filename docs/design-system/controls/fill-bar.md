@@ -18,6 +18,6 @@
 
 ## Gauge
 
-*Target*. Board: [blocks.bl](../board/blocks.bl), master `Gauge`.
+`Gauge` in `packages/ui` (`src/controls/gauge.tsx`); its thresholds are props the host settings fill. Demo: [book](../book/index.html#gauge). Board: [blocks.bl](../board/blocks.bl), master `Gauge`.
 
 A one-value fill bar for host resources in a [host band](host-band.md) head: a label in `font-size-xs` (`CPU`, `MEM`, `DISK`), a 4 px bar of width `size-clock` in `data-1`, and the percent in mono. It turns `attention-fg` past the host's warning threshold and `danger-fg` past its critical threshold, both host settings, never numbers fixed in the control ([OR-18](../owner-rules.md)). It is `role="img"` named "Memory 74%".
