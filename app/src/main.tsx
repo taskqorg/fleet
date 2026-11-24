@@ -16,6 +16,7 @@ import { useNavCounts } from './nav-counts.ts';
 import { entityCards } from './entity-cards.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
 import { clearAll } from './offline.ts';
+import type { LibrarySection } from './views/agents.tsx';
 
 declare global {
   interface Window {
@@ -23,7 +24,6 @@ declare global {
   }
 }
 
-const Bots = lazy(() => import('./views/bots.tsx'), { export: 'Bots' });
 const Projects = lazy(() => import('./views/projects.tsx'), { export: 'Projects' });
 const Home = lazy(() => import('./views/home.tsx'), { export: 'Home' });
 const Tasks = lazy(() => import('./views/tasks.tsx'), { export: 'Tasks' });
@@ -34,7 +34,7 @@ const Infrastructure = lazy(() => import('./views/hosts.tsx'), { export: 'Hosts'
 const PersonalLab = lazy(() => import('./views/personal-lab.tsx'), { export: 'PersonalLab' });
 const Humans = lazy(() => import('./views/humans.tsx'), { export: 'Humans' });
 const Lab = lazy(() => import('./views/lab.tsx'), { export: 'Lab' });
-const Library = lazy(() => import('./views/agents.tsx'), { export: 'Agents' });
+const Library = lazy(() => import('./views/agents.tsx'), { export: 'Library' });
 const Spend = lazy(() => import('./views/spend.tsx'), { export: 'Spend' });
 const Live = lazy(() => import('./views/live.tsx'), { export: 'Live' });
 
@@ -75,7 +75,8 @@ const viewerOnly = (roles: readonly string[] | undefined) => !!roles && roles.le
 
 const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => JSX.Element }> = {
   live: { focus: false, view: () => <Live wall={isWall(useSearch()())} /> },
-  bots: { focus: true, view: p => <Bots id={p.id} /> },
+  library: { focus: false, view: () => <Library /> },
+  bots: { focus: true, view: p => <Library section="bots" id={p.id} /> },
   projects: { focus: true, view: p => <Projects id={p.id} /> },
   overview: { focus: true, view: p => <Home id={p.id} /> },
   tasks: { focus: true, view: p => <Tasks id={p.id} /> },
@@ -90,7 +91,7 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   keys: { focus: true, view: p => <Infrastructure section="keys" id={p.id} /> },
   agents: { focus: true, view: p => <Library section="agents" id={p.id} /> },
   pipelines: { focus: true, view: p => <Library section="pipelines" id={p.id} /> },
-  catalogue: { focus: true, view: p => <Library section="catalogue" id={p.id} /> },
+  catalogue: { focus: true, view: p => <Library section="methods" id={p.id} /> },
   changes: { focus: false, view: () => <Library section="changes" /> },
   spend: { focus: false, view: () => <Spend /> },
 };
@@ -304,9 +305,10 @@ const decodeSegment = (s: string): string => { try { return decodeURIComponent(s
 
 function PrivateRoutes(props: { go: (to: string) => void }) {
   const [loc] = useLocation();
-  const libMatch = createMemo(() => /^\/(agents|pipelines|catalogue)(?:\/([^/]+))?\/?$|^\/(changes)\/?$/.exec(loc()));
+  // Library speaks its target routes (routes.ts): /library, /library/<root>, /library/<root>/<id>.
+  const libMatch = createMemo(() => /^\/library(?:\/(agents|pipelines|methods|bots|skills|changes)(?:\/([^/]+))?)?\/?$/.exec(loc()));
   const infraMatch = createMemo(() => /^\/(hosts|keys)(?:\/([^/]+))?\/?$|^\/(runners)\/?$/.exec(loc()));
-  const libSection = createMemo(() => { const m = libMatch(); return m ? (m[1] ?? m[3]) as 'agents' | 'pipelines' | 'catalogue' | 'changes' : null; });
+  const libSection = createMemo(() => { const m = libMatch(); return m ? (m[1] ?? 'idle') as LibrarySection : null; });
   const libId = createMemo(() => { const m = libMatch(); return m?.[2] ? decodeSegment(m[2]) : undefined; });
   const infraSection = createMemo(() => { const m = infraMatch(); return m ? (m[1] ?? m[3]) as 'hosts' | 'keys' | 'runners' : null; });
   const infraId = createMemo(() => { const m = infraMatch(); return m?.[2] ? decodeSegment(m[2]) : undefined; });

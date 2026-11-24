@@ -24,11 +24,11 @@ func systemChanges(q *Request, _ *contract.SystemChangesRequest) (contract.Syste
 	if err != nil {
 		return out, err
 	}
-	agentWin, _, err := usageWindows(q, "agent", "", 30)
+	agentRuns, err := usageRuns(q, "agent", 30)
 	if err != nil {
 		return out, err
 	}
-	pipeWin, _, err := usageWindows(q, "pipeline", "", 30)
+	pipeRuns, err := usageRuns(q, "pipeline", 30)
 	if err != nil {
 		return out, err
 	}
@@ -41,9 +41,9 @@ func systemChanges(q *Request, _ *contract.SystemChangesRequest) (contract.Syste
 		var runs int64
 		switch d.Kind {
 		case "agent":
-			runs = agentWin[d.ID].Runs
+			runs = agentRuns[d.ID]
 		case "pipeline":
-			runs = pipeWin[d.ID].Runs
+			runs = pipeRuns[d.ID]
 		}
 		item := contract.SystemChangeDefinition{
 			Kind:    contract.DefinitionKind(d.Kind),

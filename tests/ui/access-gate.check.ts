@@ -328,7 +328,7 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     // Bots and People open from their sections, and the rail marks the section that owns them (OR-57).
     assert.equal(await p.getByRole('button', { name: 'Bots', exact: true }).count(), 0);
     await botsLink.click();
-    await p.waitForURL(origin + '/library/agents');
+    await p.waitForURL(origin + '/library');
     await p.goto(origin + '/bots'); await p.waitForURL(origin + '/library/bots');
     await p.waitForSelector('[data-ui="nav-rail"] [data-id="library"] a[aria-current="page"]');
     await humansLink.click();

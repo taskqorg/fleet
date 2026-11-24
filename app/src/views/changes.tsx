@@ -1,4 +1,4 @@
-// System Changes screen (FLT-7, docs/designs/fleet-system-management.md): drift across repository, store, releases, and hosts.
+// Library › Changes (FLT-7, docs/design-system/pages/changes.md): drift across repository, store, releases, and hosts.
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
@@ -10,7 +10,7 @@ import { useOp } from '../store.ts';
 import type { DefinitionKey, DefinitionState, SystemChangeDefinition } from '../../../contracts/generated/ops.ts';
 
 const defRoute = (d: SystemChangeDefinition) =>
-  d.kind === 'agent' ? `/agents/${encodeURIComponent(d.id)}` : d.kind === 'pipeline' ? `/pipelines/${encodeURIComponent(d.id)}` : `/catalogue/${encodeURIComponent(d.id)}`;
+  `/library/${d.kind === 'agent' ? 'agents' : d.kind === 'pipeline' ? 'pipelines' : 'methods'}/${encodeURIComponent(d.id)}`;
 
 const changeState = (s: DefinitionState): { state: StateOf<'source'>; reason?: string } => {
   switch (s) {
@@ -24,7 +24,8 @@ const changeState = (s: DefinitionState): { state: StateOf<'source'>; reason?: s
 
 export function Changes(props: { onClose?: () => void } = {}) {
   const [, go] = useLocation();
-  const changesOp = useOp('system_changes', {});
+  // Host observations touch system_changes every few seconds; reread it at most every 30 s (FLT-38).
+  const changesOp = useOp('system_changes', {}, { quiet: 30_000 });
   const [previewTake, setPreviewTake] = createSignal<DefinitionKey[] | null>(null);
   const [busy, setBusy] = createSignal(false);
   const [notice, setNotice] = createSignal<{ severity: 'warning' | 'failure'; title: string; facts: string } | null>(null);
@@ -220,7 +221,7 @@ export function Changes(props: { onClose?: () => void } = {}) {
             <Show when={exportRead.error}>{err => <ErrorBanner text={err()} onRetry={exportRead.reload} />}</Show>
           </section>
         </>}</Show>
-      }>{err => <ErrorBanner text={err()} onRetry={changesOp.reload} />}</Show>
+      }>{err => <ErrorBanner text={`Changes could not be read: ${err()}`} onRetry={changesOp.reload} />}</Show>
     </article>
   );
 }

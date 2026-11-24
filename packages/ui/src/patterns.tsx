@@ -751,11 +751,11 @@ export function ListFrame(p: { bar: JSX.Element; children: JSX.Element; pending?
 /** The work area for a definition kept in git: path and revision, name, tabs, then the tab's sections (patterns/definition-editor.md). */
 export function DefinitionEditor(p: {
   label: string; crumb: string; title: JSX.Element; tabs: string[]; tab: string; onTab: (t: string) => void; onClose?: () => void;
-  actions?: JSX.Element; children: JSX.Element;
+  actions?: JSX.Element; state?: JSX.Element; children: JSX.Element;
 }) {
   return (
     <article class="detail" data-ui="detail" tabindex={-1} aria-label={p.label}>
-      <DetailHead crumb={p.crumb} title={p.title} actions={p.actions} onClose={p.onClose} />
+      <DetailHead crumb={p.crumb} title={p.title} state={p.state} actions={p.actions} onClose={p.onClose} />
       <TabBar cls="detail-tabs" label={`${p.label} sections`} tabs={p.tabs.map(x => ({ id: x, label: x }))} value={p.tab} onChange={p.onTab} />
       <div class="stack" data-ui="definition-editor" role="tabpanel">{p.children}</div>
     </article>

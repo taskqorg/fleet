@@ -154,6 +154,8 @@ export const states = {
     unchecked: { label: 'Not checked', tone: 'neutral', icon: 'circle-dashed' },
     incompatible: { label: 'Incompatible', tone: 'danger', icon: 'circle-x' },
     never: { label: 'Never run', tone: 'neutral', icon: 'circle-dashed' },
+    // Library (pages/library.md): the repository has a newer version than the store; Take repository version.
+    repository: { label: 'Waits for repository', tone: 'attention', icon: 'bell' },
   },
 } as const satisfies Record<string, Record<string, StateDef>>;
 
@@ -183,7 +185,7 @@ export const workspaces = [
   { id: 'conversations', label: 'Conversations', icon: 'messages-square', section: 'conversations', root: 'conversations', app: true, nav: true },
   { id: 'projects', label: 'Projects', icon: 'folder-open', section: 'projects', root: 'projects', app: true, nav: true },
   { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', section: 'lab', root: 'lab', app: true, nav: true },
-  { id: 'library', label: 'Library', icon: 'rows-3', section: 'library', root: 'agents', app: false, nav: true },
+  { id: 'library', label: 'Library', icon: 'rows-3', section: 'library', root: 'library', app: true, nav: true },
   { id: 'system', label: 'System', icon: 'settings', section: 'system', root: 'hosts', app: false, nav: true },
   { id: 'overview', label: 'Home', icon: 'house', section: 'home', app: true, nav: false },
   { id: 'tasks', label: 'Tasks', icon: 'list', section: 'projects', app: true, nav: false },

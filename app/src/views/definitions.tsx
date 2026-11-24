@@ -1,9 +1,9 @@
-// Agents, Pipelines and Catalogue (docs/designs/fleet-definition-editors.md, patterns/definition-editor.md): definitions in
-// the coordinator's store. The control column lists one kind; the work area edits one as a draft and saves revisions.
+// A Library definition (docs/designs/fleet-definition-editors.md, patterns/definition-editor.md): an agent, pipeline or
+// catalogue entry in the coordinator's store, edited as a draft and saved as revisions in Library's work area.
 import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
-  DefinitionEditor, DraftBar, DetailSection, Disclosure, EntityCode, EntityPicker, KvRow, ProjectPick, RowCheck,
+  DefinitionEditor, DiffRow, DraftBar, DetailSection, InheritedRows, ProblemRow, Disclosure, EntityCode, EntityPicker, KvRow, ProjectPick, RowCheck,
   StateBadge, Empty, SettingField, CodeEditor, CopyButton, DiffText, StepList, AgeChip, Choice, Button, DataTable,
   Totals, CostFigures, Num, Icon, duration, msMeasured, matchSearch, SearchField,
   type CostFigureLike, type IconName, type PickProject, type StateOf, type StepItem, type TotalItem,
@@ -11,13 +11,19 @@ import {
 import { op, writeOnce, useAlive, type Ops } from '../api.ts';
 import { usePins } from '../prefs.ts';
 import { useOp } from '../store.ts';
-import { Agents } from './agents.tsx';
 import { resourceTotals } from './resources.tsx';
 import { buildUseCaseTree, isArchivedUseCase } from './use-cases.ts';
 import type { DefinitionListItem } from '../../../contracts/generated/ops.ts';
 import type { AntigravitySettings, Profile, ProfileMcpGrant } from '../../../contracts/generated/profile.ts';
 
 type Kind = 'agent' | 'pipeline' | 'catalogue';
+/** The head's word for a definition out of line with its repository file. */
+const STATE_NOTE: Partial<Record<string, string>> = {
+  'repository-changed': 'the repository has a newer version',
+  'store-only': 'made in Fleet, not in the repository',
+  ahead: 'saved in Fleet after the repository version',
+  'repository-deleted': 'deleted in the repository',
+};
 type Get = Ops['definition_get']['reply'];
 type Draft = { base: number; text: string; changes: number; stale: boolean; problems: { path: string; message: string }[] };
 type Content = Ops['definition_save']['request']['content'];
@@ -52,11 +58,6 @@ const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
 /** Project options for ProjectPick, preserving human names. */
 const projectOptions = (r: Ops['project_list']['reply'] | null): PickProject[] =>
   (r?.projects ?? []).map(p => ({ id: String(p.id), name: String(p.name ?? p.id) }));
-
-export function Definitions(props: { kind: Kind; id?: string }) {
-  const section = () => props.kind === 'pipeline' ? 'pipelines' : props.kind === 'catalogue' ? 'catalogue' : 'agents';
-  return <Agents section={section()} id={props.id} />;
-}
 
 export function DefinitionDetail(props: {
   kind: Kind;
@@ -125,6 +126,18 @@ export function DefinitionDetail(props: {
   const alive = useAlive();
   const runDraft = () => run(async () => { await flush(); const requestId = crypto.randomUUID(); await writeOnce('pipeline_run_create', { pipelineId: props.id, requestId, draft: true }, () => setError('unknown, retrying'), { signal: alive }); });
 
+  // Take repository version shows its preview first; applying it replaces the store's head with the repository file.
+  const [repoPreview, setRepoPreview] = createSignal<string | null>(null);
+  const takeRepo = (preview: boolean) => run(async () => {
+    const r = await op('definition_take_repository', { keys: [{ kind: props.kind, id: props.id }], preview, message: 'Take repository version from Library' });
+    if (preview) setRepoPreview(r.items.map(i => `${i.kind}/${i.id}: ${i.status}${i.reason ? ` (${i.reason})` : ''}`).join(' · '));
+    else { setRepoPreview(null); load(); }
+  });
+  const compatibility = (): StateOf<'definition'> => {
+    const c = props.agentById?.get(props.id)?.compatibility;
+    return c === 'checked' ? 'ready' : c === 'failed' ? 'incompatible' : 'unchecked';
+  };
+
   const tabs = createMemo(() =>
     props.kind === 'agent' ? ['Configuration', 'Effective', 'Diff', 'Compatibility', 'Usage', 'History']
     : props.kind === 'catalogue' ? ['Methods', 'Configuration', 'Diff', 'History']
@@ -138,9 +151,23 @@ export function DefinitionDetail(props: {
         <Show when={error()} fallback={<Empty text="Loading…" />}>{err => <div class="error" role="alert">{err()}</div>}</Show>
       </article>
     }>{def => (
-      <DefinitionEditor label={props.id} crumb={`shared · ${def().path} · r${def().head}${def().state !== 'synced' ? ` · ${def().state}` : ''}`} title={def().id}
+      <DefinitionEditor label={props.id} crumb={`library · ${def().path} · r${def().head}`} title={def().id}
+        state={<>
+          <StateBadge family="definition" state={def().state === 'repository-changed' ? 'repository' : draft() ? 'draft' : props.kind === 'agent' ? compatibility() : 'ready'} />
+          <Show when={STATE_NOTE[def().state]}>{n => <span class="muted">{n()}</span>}</Show>
+        </>}
+        actions={<Show when={def().state === 'repository-changed'}>
+          <Button label="Take repository version" icon="download" busy={busy()} onClick={() => void takeRepo(true)} />
+        </Show>}
         tabs={tabs()} tab={tab()} onTab={setTab} onClose={() => props.onClose()}>
         <Show when={error()}>{err => <div class="error" role="alert">{err()}</div>}</Show>
+        <Show when={repoPreview()}>{facts => (
+          <ProblemRow severity="warning" title="Preview: take the repository version" facts={facts()}
+            actions={[
+              { label: 'Take repository version', icon: 'download', primary: true, onClick: busy() ? undefined : () => void takeRepo(false) },
+              { label: 'Dismiss', onClick: () => setRepoPreview(null) },
+            ]} />
+        )}</Show>
         <Show when={draft()}>{d => (
           <DraftBar changes={d().changes} base={`r${d().base}`} note={d().stale ? `The saved revision moved to r${def().head}: look at the diff before saving.` : 'New executions keep using the saved revision.'}
             actions={[
@@ -201,34 +228,26 @@ const parseJsonObj = <T extends object>(raw: string): T | null => {
 const stepArrayOf = (steps: unknown): StepJson[] =>
   Array.isArray(steps) ? (steps as unknown[]).filter((s): s is StepJson => !!s && typeof s === 'object') : [];
 
+// Only what differs from the base default, as diff rows; the unchanged fields fold into "Inherited defaults (N)" (OR-45).
 function DiffFromDefault(props: {
   fields: readonly DiffFieldRow[];
-  emptyLabel: string;
-  emptyMeta: string;
+  base: string;
+  emptyText: string;
   loadingText?: string;
 }) {
   const diffs = createMemo(() => props.fields.filter(f => f.diff));
   const inherited = createMemo(() => props.fields.filter(f => !f.diff));
   return (
-    <DetailSection title="Differences from default">
+    <DetailSection title={`Differs from ${props.base} default${diffs().length ? ` ${diffs().length}` : ''}`}>
       <Show when={!props.loadingText} fallback={<Empty text={props.loadingText!} />}>
-        <Show when={diffs().length > 0} fallback={<KvRow icon="circle-check" label={props.emptyLabel} meta={props.emptyMeta} />}>
-          <For each={diffs()}>{f => (
-            <KvRow
-              icon={f.icon}
-              label={f.label}
-              meta={<span class="mono" data-tip={`Default: ${f.baseText}`}>{f.currentText}</span>}
-              value={f.draft ? <StateBadge family="definition" state="draft" compact /> : f.note ? <span class="muted">{f.note}</span> : undefined}
-            />
-          )}</For>
+        <Show when={diffs().length > 0} fallback={<p class="muted">{props.emptyText}</p>}>
+          <For each={diffs()}>{f => <DiffRow field={f.key} value={f.note ? `${f.currentText} · ${f.note}` : f.currentText} base={f.baseText} />}</For>
         </Show>
       </Show>
       <Show when={inherited().length > 0}>
-        <Disclosure summary={`Inherited defaults (${inherited().length})`} summaryClass="muted">
-          <For each={inherited()}>{f => (
-            <KvRow icon={f.icon} label={f.label} meta={<span class="mono">{f.currentText}</span>} />
-          )}</For>
-        </Disclosure>
+        <InheritedRows count={inherited().length}>
+          <For each={inherited()}>{f => <DiffRow field={f.key} value={f.currentText} base={f.baseText} />}</For>
+        </InheritedRows>
       </Show>
     </DetailSection>
   );
@@ -352,12 +371,6 @@ function PipelineFacts(props: { text: string; def: Get }) {
   return <Show when={model()}>{m => <>
     <DetailSection title="Identity">
       <KvRow
-        icon="network"
-        label={m().p.id || m().def.id}
-        meta={<span class="mono">{m().def.scope} · {m().def.state} · r{m().def.head}{m().def.draft ? ' · draft' : ''}</span>}
-        value={<StateBadge family="definition" state={m().def.draft ? 'draft' : 'ready'} />}
-      />
-      <KvRow
         icon="list-ordered"
         label="Steps"
         meta={<span class="mono">{m().steps.length}{m().kinds.length ? ` · ${m().kinds.join(', ')}` : ''}</span>}
@@ -366,11 +379,7 @@ function PipelineFacts(props: { text: string; def: Get }) {
       <Show when={m().connections.length > 0}><KvRow icon="link" label="Connections" meta={<span class="mono">{m().connections.join(', ')}</span>} /></Show>
       <Show when={m().p.description}>{desc => <KvRow icon="info" label="Description" meta={desc()} />}</Show>
     </DetailSection>
-    <DiffFromDefault
-      fields={m().fields}
-      emptyLabel="Matches pipeline defaults"
-      emptyMeta="Matches standard plan and step defaults"
-    />
+    <DiffFromDefault fields={m().fields} base="pipeline" emptyText="Matches the standard plan and step defaults." />
   </>}</Show>;
 }
 
@@ -586,18 +595,12 @@ function AgentFacts(props: { text: string; def: Get; agentById?: ReadonlyMap<str
     }
 
     const baseSourceLabel = baseProfile ? baseProfile.id : 'system';
-    const compatState: StateOf<'definition'> = def.draft ? 'draft' : listItem?.compatibility === 'checked' ? 'ready' : listItem?.compatibility === 'failed' ? 'incompatible' : 'unchecked';
-    return { a, def, roles, fields, baseSourceLabel, compatState, loadingBase: !!vOf && !baseOp.data && !baseOp.error, vOf };
+    return { a, def, roles, fields, baseSourceLabel, loadingBase: !!vOf && !baseOp.data && !baseOp.error, vOf };
   });
 
   return <Show when={model()}>{m => <>
+    <Show when={m().a.category || m().roles.length > 0 || m().a.variantOf || m().a.purpose || m().a.tags?.length}>
     <DetailSection title="Identity">
-      <KvRow
-        icon="bot"
-        label={m().a.id || m().def.id}
-        meta={<span class="mono">{m().def.scope} · {m().def.state} · r{m().def.head}{m().def.draft ? ' · draft' : ''}</span>}
-        value={<StateBadge family="definition" state={m().compatState} />}
-      />
       <Show when={m().a.category || m().roles.length > 0}>
         <KvRow icon="layers-2" label="Role" meta={[m().a.category, ...m().roles].filter(Boolean).join(' · ')} />
       </Show>
@@ -616,11 +619,12 @@ function AgentFacts(props: { text: string; def: Get; agentById?: ReadonlyMap<str
         <KvRow icon="layers-2" label="Tags" meta={<span class="tag-row"><For each={m().a.tags!}>{t => <span class="chip">{t}</span>}</For></span>} />
       </Show>
     </DetailSection>
+    </Show>
     <DiffFromDefault
       fields={m().fields}
+      base={m().baseSourceLabel}
       loadingText={m().loadingBase ? `Loading base profile ${m().vOf}…` : undefined}
-      emptyLabel="Matches base defaults"
-      emptyMeta={`Matches ${m().baseSourceLabel} defaults`}
+      emptyText={`Matches the ${m().baseSourceLabel} defaults.`}
     />
   </>}</Show>;
 }

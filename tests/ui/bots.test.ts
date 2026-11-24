@@ -1,18 +1,16 @@
 // Requirement: FLT-20 PR 4 Web controls expose active, waiting, and historical managed tasks,
-// bot runs (quiet, skipped, queued, failed, unconfirmed), triggers, Run now / Pause / Stop / Home
-// controls, questions, errors, and all-time/period analytics by bot and recorded execution project.
-// Risk: UI task/run filters, status chips, trigger formatting, or analytics measures misclassify states,
-// collapse basis/currency semantics, or regress SolidJS 2.0 + packages/ui rules.
+// bot runs (quiet, skipped, queued, failed, unconfirmed), triggers and Run now / Pause / Stop / Talk to it
+// controls; in Library a bot's questions show on Home and its cost on System > Spend (pages/library.md).
+// Risk: UI task/run filters, status chips or trigger formatting misclassify states, or regress SolidJS 2.0 +
+// packages/ui rules.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  analyticsWindowBounds,
-  botStatusBadge, bucketProjectSortKey, classifyBotTaskBucket,
-  filterBotRuns, filterBotTasks, formatBotTriggers, sumTokenMeasures,
+  botStatusBadge, classifyBotTaskBucket,
+  filterBotRuns, filterBotTasks, formatBotTriggers,
 } from '../../app/src/bot-view.ts';
 import type { BotRunRecord, BotTaskRecord } from '../../contracts/generated/ops-bots.ts';
-import type { AnalyticsBucketRow } from '../../contracts/generated/ops-analytics.ts';
 
 test('bot task classification separates active, waiting, and historical managed tasks', () => {
   assert.equal(classifyBotTaskBucket('queued'), 'active');
@@ -61,7 +59,7 @@ test('bot runs filtering isolates quiet, skipped, queued, failed, and unconfirme
   assert.deepEqual(filterBotRuns(runs, 'active').map(r => r.id), ['r-queue', 'r-unconf']);
 });
 
-test('bot triggers, status badges, and analytics window/sorting preserve cost and observation semantics', () => {
+test('bot triggers and status badges preserve observation semantics', () => {
   assert.equal(
     formatBotTriggers({ scheduleTime: '09:30', scheduleZone: 'America/New_York', wakeOnNeedsYou: true }),
     'Daily at 09:30 (America/New_York) · Wake on Needs you on',
@@ -75,33 +73,11 @@ test('bot triggers, status badges, and analytics window/sorting preserve cost an
   assert.deepEqual(botStatusBadge({ paused: false, activeRunId: null, lastRunState: 'skipped' }), { family: 'botRun', state: 'skipped' });
   assert.deepEqual(botStatusBadge({ paused: false, activeRunId: null, lastRunState: 'unexpected' }), { family: 'botRun', state: 'queued' });
   assert.equal(botStatusBadge({ paused: false, activeRunId: null, lastRunState: null }), null);
-
-  const now = 1_700_000_000_000;
-  assert.deepEqual(analyticsWindowBounds('all', now), { from: 0, to: now + 60_000 });
-  assert.equal(analyticsWindowBounds('24h', now).to - analyticsWindowBounds('24h', now).from, 86_400_000 + 60_000);
-
-  const row: AnalyticsBucketRow = {
-    dimensions: { project: 'fleet' },
-    measures: {
-      executions: { value: 3, basis: 'measured' },
-      tokens_input: { value: 1200, basis: 'measured' },
-      tokens_output: { value: 300, basis: 'estimated' },
-    },
-    cost: [
-      { value: 1.5, currency: 'USD', basis: 'estimated', prices: [] },
-      { value: 2.0, currency: 'EUR', basis: 'measured', prices: [] },
-    ],
-  };
-  const toks = sumTokenMeasures(row.measures);
-  assert.equal(toks.value, 1500);
-  assert.equal(toks.basis, 'estimated');
-  assert.equal(bucketProjectSortKey(row, 'cost'), 1.5);
-  assert.equal(bucketProjectSortKey(row, 'project'), 'fleet');
 });
 
 test('bots view exposes full Web controls without raw HTML controls or explicit any', () => {
   const src = readFileSync(new URL('../../app/src/views/bots.tsx', import.meta.url), 'utf8');
-  for (const required of ['Run now', 'Pause', 'Resume', 'Stop', 'Home', 'bot_run', 'bot_pause', 'bot_stop', 'bot_tasks', 'bot_runs', 'questions_list', 'questions_answer', 'analytics_query', 'executions_list']) {
+  for (const required of ['Run now', 'Pause', 'Resume', 'Stop', 'Talk to it', 'bot_run', 'bot_pause', 'bot_stop', 'bot_tasks', 'bot_runs']) {
     assert.ok(src.includes(required), `missing ${required} in app/src/views/bots.tsx`);
   }
   assert.ok(!/:\s*any\b|\bas\s+any\b/.test(src), 'bots.tsx must have zero explicit any');
