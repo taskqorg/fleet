@@ -3,10 +3,13 @@ import { createMemo, Show } from 'solid-js';
 import { type Measured, duration, countdown } from '../format.ts';
 import { type DataTone } from '../charts.tsx';
 import { Num, useTick } from './primitives.tsx';
+import { StateDot } from './state-dot.tsx';
 
 export type WorkerSlotProps = {
   /** Slot number on its host, from 1. */
   slot: number;
+  /** Idle: how many free slots this one tile stands for (a host with many slots shows its free ones as one tile). */
+  free?: number;
   state: 'busy' | 'idle' | 'failing';
   /** Busy: the task title; failing: what fails, with ×N for repeats. */
   title?: string;
@@ -29,14 +32,14 @@ export function WorkerSlot(p: WorkerSlotProps) {
   const now = () => p.now ?? tick();
   const elapsed = createMemo(() => p.started === undefined ? null : duration(Math.max(0, (now() - p.started) / 1000)));
   const retry = createMemo(() => p.retryAt === undefined ? null : countdown(p.retryAt, now()));
-  const name = createMemo(() => p.state === 'idle' ? `Slot ${p.slot}, idle`
+  const name = createMemo(() => p.state === 'idle' ? ((p.free ?? 1) > 1 ? `${p.free} slots idle` : `Slot ${p.slot}, idle`)
     : p.state === 'failing' ? `Slot ${p.slot}: ${p.title}${p.cause ? `, ${p.cause}` : ''}${retry() ? `, retry in ${retry()!.long}` : ''}`
     : `Slot ${p.slot}: ${p.title}${p.code ? `, ${p.code}` : ''}${elapsed() ? `, running ${elapsed()!.long}` : ''}`);
   const meta = () => [p.code, p.project, p.harness].filter(Boolean).join(' · ');
   const body = () => (
-    <Show when={p.state !== 'idle'} fallback={<span class="ws-idle">idle</span>}>
+    <Show when={p.state !== 'idle'} fallback={<span class="ws-idle">{(p.free ?? 1) > 1 ? `${p.free} idle` : 'idle'}</span>}>
       <span class="ws-l1">
-        <i class="dot" aria-hidden="true" />
+        <StateDot state={p.state === 'busy' ? 'working' : 'failed'} bare />
         <span class="ws-title">{p.title}</span>
         <Show when={p.state === 'busy'} fallback={<Show when={retry()} keyed>{r => <span class="ws-r mono">retry {r.text}</span>}</Show>}>
           <Show when={elapsed()} keyed>{e => <span class="ws-r mono">{e.text}</span>}</Show>

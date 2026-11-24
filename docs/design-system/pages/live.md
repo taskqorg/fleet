@@ -1,6 +1,6 @@
 # Live (screen 2)
 
-**Status.** Target. Until it is built, the same facts are spread over the [Overview](overview.md), [Hosts](hosts.md), [Runners](runners.md) and [Delivery](delivery.md).
+**Status.** Built (`app/src/views/live.tsx`, FLT-50). [Hosts](hosts.md), [Runners](runners.md) and [Delivery](delivery.md) keep their detail; Live is the glance over them.
 
 **App route:** `/live`. A wall mode, `/live?wall`, hides the navigation and the shell header for a TV.
 
@@ -28,7 +28,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall 
    * The day's runs and active time.
    * One tile per worker slot:
      * A busy slot shows the task title, code, project colour on the left edge, harness, elapsed time and tokens.
-     * A free slot is a dashed "idle" tile.
+     * A free slot is a dashed "idle" tile; past three free slots, one tile counts them (`23 idle`).
      * A failing slot is outlined in the danger tone and says what fails and when it retries.
    * A 24-hour strip of runs, one tick per run window, with failures in the danger tone; marks at −24 h, −18 h, −12 h, −6 h and now.
 4. **Side column.**
@@ -77,16 +77,19 @@ Every element opens its detail in the app: a host in System, a slot or event in 
 |---|---|
 | Host bands | `hosts_list`: `slotLimit`, `running`, `runningByHarness`, `queued`, `problems`, `pollError`, `lastSeenAt` |
 | Gauges | `hosts_list` `load`: CPU (`100 * load1 / cpus`), memory (`memFree` of `memTotal`) and free disk (`diskFree`), while the host polls and the reading is under 2 minutes old |
-| Slot tiles | `hosts_list` `runs` in slot order: tile *i* shows `runs[i]`; a band draws `max(slotLimit, running)` tiles |
+| Slot tiles | `hosts_list` `runs` in slot order: tile *i* shows `runs[i]` (title, harness and tokens from `executions_runners`, code and project from `task_page`); a band covers `max(slotLimit, running)` slots |
 | Failures | `failure` on `executions_list` rows and `bot_runs` records: `text` in plain words, `code` under Details, `cause` to group by |
 | Strips | `executions_runners` (the newest runs, per host, with time strips) |
-| Figures | `execution_totals` (via `executions_runners`), `task_page` counts, `spend_summary` |
+| Figures | `execution_totals` (via `executions_runners`: runs, tokens and list-price spend today and this month), `task_page` (tasks done today and their lead time) |
+| Projects now | `task_page` grouped by project with state counts; done today from the completed tasks |
 | Delivery | `delivery_status` |
 | CI | `executions_ci` |
-| Events and live updates | `changes_since` |
+| Events | the newest runs of `executions_runners` (started, finished, failed) |
+| Live updates | `changes_since` and timers: `hosts_list` every 5 s, `executions_runners` every 15 s |
 
 ## Open
 
+* **Failing slot retry:** no read names when a failed start retries, so the failing tile shows the cause without a countdown.
 * **Disk gauge fill:** hosts report free disk only; a fill needs the disk's size in the heartbeat (a host-protocol change).
 
 Settled on 25 Nov ([FLT-47](https://youtrack.ufobe.com/issue/FLT-47)): CPU load and slot identity come from `hosts_list`, and wall mode uses a viewer grant ([people access, Wall viewer](../../designs/fleet-people-access.md#wall-viewer)). Slot identity is the start order, not a stored slot number: executors run a host's work as one pool with a count limit and number no slots, so a stored number would be a second fact that could disagree with the pool.

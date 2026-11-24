@@ -2,7 +2,9 @@
 @layer controls {
   :where(.sp-in, .ft-in, .ws-in, .lr-in, .hb-name):is(button) { border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
   :where(.ft-in, .ws-in, .lr-in):is(button):hover { background: var(--hover); }
-  :where(.spill, .wslot, .hband, .lrow) .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--tone-fg, var(--fg-muted)); }
+  /* Status pill, host band, delivery and runner rows: a dot in the block's own tone (their states are not session states);
+     slots and events use the shared StateDot (OR-55). */
+  :where(.spill, .hband, .lrow) .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--tone-fg, var(--fg-muted)); }
   @keyframes live-pulse { 50% { opacity: .3; } }
 
   .spill { display: inline-flex; max-width: 100%; height: var(--size-chip); border-radius: var(--radius-pill); background: var(--tone-bg); color: var(--tone-fg); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); transition: background-color var(--motion-fast), color var(--motion-fast); }
@@ -49,7 +51,6 @@
   .ws-title { font-weight: var(--font-weight-medium); }
   .ws-r { flex: none; font-variant-numeric: tabular-nums; }
   .ws-l1 .ws-r { font-size: var(--font-size-sm); }
-  .wslot[data-state=busy] .dot { --tone-fg: var(--running-fg); animation: live-pulse 2s ease-in-out infinite; }
   .wslot[data-state=idle] { border: 1px dashed var(--line); background: none; box-shadow: none; }
   .wslot[data-state=idle] .ws-in { align-items: center; }
   .ws-idle { color: var(--fg-faint); font-size: var(--font-size-sm); }
@@ -86,5 +87,45 @@
   .lrow[data-state=trouble] .lr-fact { color: var(--danger-fg); }
   .lrow[data-state=stale] { opacity: .55; }
 
-  @media (prefers-reduced-motion: reduce) { .wslot[data-state=busy] .dot { animation: none; } }
+
+  /* Live page (pages/live.md): status bar, figures, host bands beside the side column. The page is its own size
+     container, so the columns follow the work area (rail open or collapsed, wall or app), not the window. */
+  .live { container: live / inline-size; display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; padding: var(--space-4) var(--space-5) var(--space-6); }
+  .live-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); min-width: 0; }
+  .live-bar > .spill { min-width: 0; }
+  .live-bar .brand { flex: none; }
+  .live-focus { font-size: var(--font-size-sm); white-space: nowrap; }
+  .live-clock { font-size: var(--font-size-2xl); font-weight: var(--font-weight-bold); font-variant-numeric: tabular-nums; }
+  .live-figures { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--space-3); }
+  .live-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(var(--size-list), calc(var(--size-list) + var(--space-7))); gap: var(--space-4); align-items: start; }
+  .live-hosts, .live-side { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+  .live-side > section { display: flex; flex-direction: column; gap: var(--space-2); }
+  /* A band is a closed layout unit: a slot that ticks or changes never reflows the rest of the page. */
+  .live-hosts > .hband { content-visibility: auto; contain-intrinsic-size: auto 100% auto calc(var(--size-row-2) * 4); }
+  .live-h { margin: 0; font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); }
+  .live-h .mono { margin-inline-start: var(--space-2); }
+  .live-list { display: flex; flex-direction: column; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; }
+  .live-list > .lrow:last-child { border-bottom: 0; }
+  .live-more { margin: 0; font-size: var(--font-size-sm); }
+  /* Stale or offline: the last picture stays, dimmed, and nothing pulses (offline-marker.md). */
+  .live[data-stale] :is(.live-figures, .live-cols) { opacity: .55; }
+  .live[data-stale] .sdot > i { animation: none; }
+  @container live (max-width: 1400px) {
+    .live-figures { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @container live (max-width: 900px) {
+    .live-cols { grid-template-columns: minmax(0, 1fr); }
+  }
+  @container live (max-width: 480px) {
+    .live-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .live-figures .ft-in { grid-template-columns: minmax(0, 1fr); }
+    .live-figures .spark { display: none; }
+  }
+
+  /* Wall mode: no navigation and no shell header; the page fills the screen (app-shell.md). */
+  .shell[data-wall] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .shell[data-wall] > :is(.rail, .bottom-bar, .skip), .shell[data-wall] :is(.shell-h, .divider-rail) { display: none; }
+  .shell[data-wall] > .shell-col { grid-row: 1; }
+  .live[data-wall] { padding: var(--space-6) var(--space-7); }
+  @media (max-width: 760px) { .live[data-wall] { padding: var(--space-5) var(--space-4); } }
 }
