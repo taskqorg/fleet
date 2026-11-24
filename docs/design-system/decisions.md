@@ -490,3 +490,10 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question:** when should the list show loading progress?
 * **Options:** show progress for every read, or for initial and operator-initiated reads.
 * **Choice:** show progress for initial and operator-initiated reads. Keep background updates quiet and surface failures with retry. Repeated feed changes with identical results had been flashing progress and dimming the list ([T-FLT-22](https://fleet.ufobe.com/tasks/486357fa-2fe2-4d31-95d9-14a90b005574)).
+
+## 2026-11-24: Cloudflare admission in Humans
+
+* **Question:** Where should the Fleet owner see and repair Cloudflare email admission for humans?
+* **Options:** Show the most recent sync result or read current email admission when Humans loads.
+* **Choice:** Read current admission, show differences in the existing roster and detail, and offer retry in the detail.
+* **Reason:** A Cloudflare edit can change admission after a successful Fleet sync. The live reading exposes that difference next to Fleet access.

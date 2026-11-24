@@ -46,12 +46,14 @@ type Person struct {
 }
 
 type App struct {
-	store         *Store
-	people        atomic.Pointer[peopleSnapshot]
-	peopleFile    string
-	browserSecret string
-	hostID        string
-	stream        *Broadcast
+	store          *Store
+	people         atomic.Pointer[peopleSnapshot]
+	peopleFile     string
+	peopleAccess   *peopleAccess
+	peopleAccessMu sync.Mutex
+	browserSecret  string
+	hostID         string
+	stream         *Broadcast
 
 	runtimeOnce         sync.Once
 	dispatchLoopStarted atomic.Bool
@@ -215,6 +217,7 @@ func main() {
 		}
 	}()
 	a := &App{store: store, browserSecret: os.Getenv("FLEET_BROWSER_SECRET"), hostID: os.Getenv("FLEET_HOST_ID")}
+	a.peopleAccess = peopleAccessFromEnv()
 	a.ensureRuntime()
 	if a.hostID == "" {
 		a.hostID = "owner-mac"

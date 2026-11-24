@@ -88,7 +88,7 @@ func op[Req, Rep any](name string, h func(q *Request, r *Req) (Rep, error)) {
 		longOperations[name] = t
 		t = func(*Request) (any, error) { return nil, fail(500, "long operation "+name+" ran inside a transaction") }
 	}
-	operations[name] = registeredOp{read: c.Read && !c.Long, h: t}
+	operations[name] = registeredOp{read: c.Read, h: t}
 }
 
 // typedOp: an operation on its generated request and reply types (contracts/ops*.schema.json). The body decodes into Req:

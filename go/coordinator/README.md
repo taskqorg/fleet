@@ -10,7 +10,7 @@ Architecture standard: [docs/designs/fleet-standard.md](../../docs/designs/fleet
 
 ## Interface
 
-- [`people.go`](people.go) projects the private people file and serves the versioned owner-only Humans roster, entry mutations and setting audit. [`personal_lab.go`](personal_lab.go) serves author-scoped drafts and architect-confirmed promotion of submitted shared pipeline references.
+- [`people.go`](people.go) projects the private people file and serves the versioned owner-only Humans roster, entry mutations and setting audit. [`people_access.go`](people_access.go) reads and synchronizes direct email rules in the configured Cloudflare Access group after Fleet applies a roster edit. [`personal_lab.go`](personal_lab.go) serves author-scoped drafts and architect-confirmed promotion of submitted shared pipeline references.
 
 - [`bots.go`](bots.go), [`bots_runtime.go`](bots_runtime.go) and [`bot_states.go`](bot_states.go) own persistent bots: saved settings and project-scoped memory revisions, one stable Home conversation in Conversations (unattached to a single task, with standard input queue and sender provenance), shared wake admission (`bot_run`, scheduled daily wakes and `Needs you` triggers with durable `bot_wake_cursor` deduplication and self-origin exclusion), single active run admission, native continuation vs project-scoped handoff, `bot_pause`/`bot_stop` lifecycle controls, and `bot_runs` observability (`quiet`, `skipped`, `queued`, `failed`, `unconfirmed`).
 

@@ -14,6 +14,16 @@ Host service definitions and administrative scripts for coordinator storage, ori
 - [pds18-ci/](pds18-ci/README.md): isolated trusted-main CI guest setup and runner registration.
 - Service/socket, Quadlet, Caddy, tunnel and launch-helper definitions in this directory are deployment inputs; `.candidate` files remain proposed configuration.
 
+### Cloudflare Access group
+
+On PDS18, the owner creates a Cloudflare API token scoped to the Fleet account with `Access: Organizations, Identity Providers, and Groups Write`. Confirm that the Access application references the `fleet-people` group. Set these variables in the private, mode-0600 `/home/fleet/.config/fleet/coordinator.env` read by [fleet.service](fleet.service).
+
+- `FLEET_CLOUDFLARE_ACCESS_ACCOUNT_ID` holds the Cloudflare account ID.
+- `FLEET_CLOUDFLARE_ACCESS_GROUP_ID` holds the `fleet-people` Access group UUID.
+- `FLEET_CLOUDFLARE_ACCESS_API_TOKEN` holds the scoped token.
+
+Restart the coordinator and open Humans as the owner to check that Cloudflare email admission loads. Verify an approved test identity through admission, sign-in, and revocation. To return to manual management, remove all three variables and restart, then reconcile group membership through the Cloudflare dashboard.
+
 ## Invariants
 
 - `fleet-postgres.sql` gives the runtime role no table ownership or RLS bypass; migrations use the owner role. Peer rules must be configured separately.

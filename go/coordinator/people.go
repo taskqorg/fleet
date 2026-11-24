@@ -322,6 +322,8 @@ func peopleSet(q *Request, people json.RawMessage) (int, error) {
 	if len(people) == 0 || people[0] != '[' {
 		return 0, fail(400, "Expected people: the whole people.json list")
 	}
+	q.app.peopleAccessMu.Lock()
+	defer q.app.peopleAccessMu.Unlock()
 	peopleMu.Lock()
 	defer peopleMu.Unlock()
 	if err := peopleOwner(q); err != nil {
@@ -353,20 +355,30 @@ func peopleUpdate(q *Request, r *contract.PeopleUpdateRequest) (contract.PeopleU
 	if !personEmail.MatchString(out.Email) {
 		return out, fail(400, "Enter a human sign-in email")
 	}
+	q.app.peopleAccessMu.Lock()
+	defer q.app.peopleAccessMu.Unlock()
+	if err := updateFleetHuman(q, r, out.Email); err != nil {
+		return out, err
+	}
+	out.CloudflareSync = ptr(syncPeopleAccess(q, out.Email, !valueOr(r.Revoke)))
+	return out, nil
+}
+
+func updateFleetHuman(q *Request, r *contract.PeopleUpdateRequest, email string) error {
 	peopleMu.Lock()
 	defer peopleMu.Unlock()
 	if err := peopleOwner(q); err != nil {
-		return out, err
+		return err
 	}
 	raw, err := os.ReadFile(q.app.peopleFile)
 	if err != nil {
-		return out, err
+		return err
 	}
-	people, err := updateHuman(q.app.peopleSnapshot().person(out.Email), raw, out.Email, r)
+	people, err := updateHuman(q.app.peopleSnapshot().person(email), raw, email, r)
 	if err != nil {
-		return out, err
+		return err
 	}
-	return out, writePeople(q, raw, people, redactPeople(raw), redactPeople(people))
+	return writePeople(q, raw, people, redactPeople(raw), redactPeople(people))
 }
 
 func updateHuman(current *Person, raw []byte, email string, r *contract.PeopleUpdateRequest) ([]byte, error) {
