@@ -44,15 +44,19 @@ test('Conversations composer targets the newest eligible session across the task
   assert.equal((await op('message_send', { ...message, sessionId: 'foreign' })).status, 404);
   assert.equal((await op('message_send', { ...message, sessionId: 'unrelated' })).status, 409);
   assert.equal((await op('message_send', { ...message, composer: { ...conversation, executionId: 'selected-run' } })).status, 409);
+  c.sql(`INSERT INTO host_observation(id,project_id,payload) VALUES ('trial-host','desiign','{"capabilities":["steer"]}')
+    ON CONFLICT (id) DO UPDATE SET project_id=EXCLUDED.project_id,payload=EXCLUDED.payload;
+    UPDATE execution SET host_id='composer-host' WHERE id='target-run';`);
   const sent = await op('message_send', message);
   assert.equal(sent.status, 200, JSON.stringify(sent.body));
   assert.equal(c.sql("SELECT count(*) FROM queued_message WHERE session_id='running' AND request_id='composer-retry'").trim(), '1');
-  c.sql(`INSERT INTO host_observation(id,project_id,payload) VALUES ('trial-host','desiign','{"capabilities":["steer"]}')
-    ON CONFLICT (id) DO UPDATE SET project_id=EXCLUDED.project_id,payload=EXCLUDED.payload;
-    UPDATE execution SET host_id='trial-host' WHERE id='target-run';`);
+  assert.equal(c.sql("SELECT count(*) FROM command WHERE kind='steer' AND session_id='running'").trim(), '0',
+    'the default host capability cannot authorize steering on another host');
+  c.sql(`INSERT INTO host_observation(id,project_id,payload) VALUES ('composer-host','desiign','{"capabilities":["steer"]}');
+    UPDATE host_observation SET payload='{}' WHERE id='trial-host';`);
   const steered = await op('message_send', { ...message, requestId: 'composer-steer' });
   assert.equal(steered.status, 200, JSON.stringify(steered.body));
-  assert.equal(c.sql("SELECT execution_id || ':' || host_id FROM command WHERE kind='steer' AND session_id='running'").trim(), 'target-run:trial-host');
+  assert.equal(c.sql("SELECT execution_id || ':' || host_id FROM command WHERE kind='steer' AND session_id='running'").trim(), 'target-run:composer-host');
   c.sql("UPDATE execution SET observation='unconfirmed' WHERE id='target-run'");
   const next = await op('thread_composer', conversation);
   assert.equal(next.body.active?.id, 'selected-run');
