@@ -726,7 +726,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			if stop {
 				p.mu.Lock()
 				if p.stopErr == nil {
-					p.stopErr = fmt.Errorf("%s", a.text)
+					p.stopErr = fmt.Errorf("%s: %s", r.route, a.text)
 				}
 				p.mu.Unlock()
 				return nil
@@ -740,7 +740,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			}
 			p.mu.Lock()
 			if p.retryErr == nil {
-				p.retryErr = fmt.Errorf("%s", a.text)
+				p.retryErr = fmt.Errorf("%s: %s", r.route, a.text)
 			}
 			p.mu.Unlock()
 			hold(false)
@@ -866,6 +866,7 @@ func spawnOutbox(db *sql.DB, url, token, host string) {
 
 func logFlush(err error) {
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "executor outbox delivery failed; rows retained, retry pending")
+		// The first failed row's route and answer: a row that keeps failing holds executor update drain.
+		fmt.Fprintf(os.Stderr, "executor outbox delivery failed; rows retained, retry pending: %v\n", err)
 	}
 }
