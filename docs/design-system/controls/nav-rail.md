@@ -21,7 +21,7 @@ Each item has a registry icon (OR-3), a name, an optional counter (**Counters** 
 * The current section has the `selected` background.
 * Collapsed and expanded map 1:1 (OR-42): the same rows with the same icons and heights; only names, pin buttons and the brand name go. Every icon (the mark, section icons, the avatar) keeps its exact position: the paddings do not change and the collapsed rail is just its icon column wide. Group headings keep their height, the user block keeps its avatar. The toggle shows `panel-left-close` expanded and `panel-left-open` collapsed.
 * The divider on the rail's right edge resizes it (OR-41): drag, or focus it and press Left and Right; a double-click resets the width. Collapsed, the rail has no divider.
-* The collapse button shrinks the rail to icons, and below 760 px it is always collapsed: pins first and counters as badges on the icons. Names appear in tooltips, shown only while names are hidden (OR-20). This is interim; open question (d) holds the variants ([D10](../decisions.md)). The rail never disappears.
+* The collapse button shrinks the rail to icons, and below 760 px it is always collapsed: pins first and counters as badges on the icons. Names appear in tooltips, shown only while names are hidden (OR-20). This is interim; open question (d) holds the variants ([D10](../decisions.md)). The rail never disappears. *Target:* at phone width the rail becomes a bottom bar of five ([OR-60](../owner-rules.md)).
 
 **Counters.** A section's counter counts its *counter view*, a person setting (`navCounters` in `person_settings_get`/`person_settings_set`; agents write it too):
 
