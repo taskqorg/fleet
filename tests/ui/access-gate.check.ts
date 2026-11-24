@@ -26,8 +26,8 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
   const p = await context.newPage(), errors: string[] = [];
   const sidebar = p.getByRole('navigation', { name: 'Sections', exact: true });
   // The rail's seven sections (OR-46): Bots are in Library, People in System.
-  const botsLink = sidebar.getByRole('link', { name: 'Library', exact: true });
-  const humansLink = sidebar.getByRole('link', { name: 'System', exact: true });
+  const botsLink = sidebar.locator('[data-id="library"] a').first();
+  const humansLink = sidebar.locator('[data-id="system"] a').first();
   p.on('pageerror', error => errors.push(error.message));
   const call = async (name: string, body: object) => {
     const response = await fetch(coordinator.base + '/api/ops/' + name, { method: 'POST', headers: { authorization: 'Bearer ' + coordinator.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json' }, body: JSON.stringify(body) });
