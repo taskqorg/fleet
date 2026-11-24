@@ -52,7 +52,7 @@ test('Conversations composer targets the newest eligible session across the task
     UPDATE execution SET host_id='trial-host' WHERE id='target-run';`);
   const steered = await op('message_send', { ...message, requestId: 'composer-steer' });
   assert.equal(steered.status, 200, JSON.stringify(steered.body));
-  assert.equal(c.sql("SELECT execution_id FROM command WHERE kind='steer' AND session_id='running'").trim(), 'target-run');
+  assert.equal(c.sql("SELECT execution_id || ':' || host_id FROM command WHERE kind='steer' AND session_id='running'").trim(), 'target-run:trial-host');
   c.sql("UPDATE execution SET observation='unconfirmed' WHERE id='target-run'");
   const next = await op('thread_composer', conversation);
   assert.equal(next.body.active?.id, 'selected-run');
