@@ -627,6 +627,72 @@ func publishingRecordToContract(b *contract.PublishingHostRecord, now string) co
 	}
 }
 
+// threadDeliveryStage maps retained provider facts. A missing check observation never becomes a checks stage.
+func threadDeliveryStage(raw []byte) (*contract.ThreadDeliveryStage, error) {
+	var b contract.PublishingHostRecord
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return nil, err
+	}
+	stage := contract.ThreadDeliveryStageUnknown
+	switch strings.ToLower(b.State) {
+	case "merged", "published":
+		stage = contract.ThreadDeliveryStageMerged
+	case "integrating", "merging":
+		stage = contract.ThreadDeliveryStageMerging
+	case "open", "opened", "pr-open":
+		stage = openPublishingStage(b)
+	}
+	return &stage, nil
+}
+
+func openPublishingStage(b contract.PublishingHostRecord) contract.ThreadDeliveryStage {
+	var result struct {
+		MergeQueueEntry   *struct{ State string }                      `json:"mergeQueueEntry"`
+		HeadPipeline      *struct{ SHA, Status string }                `json:"headPipeline"`
+		StatusCheckRollup []struct{ Status, Conclusion, State string } `json:"statusCheckRollup"`
+	}
+	// Older or partial receipts may carry no provider detail.
+	if json.Unmarshal(b.Result, &result) != nil {
+		result.MergeQueueEntry, result.HeadPipeline, result.StatusCheckRollup = nil, nil, nil
+	}
+	state := deref(b.ChecksState)
+	if state == "" && b.Provider == "gitlab" && result.HeadPipeline != nil && b.HeadSha != "" && result.HeadPipeline.SHA == b.HeadSha {
+		state = result.HeadPipeline.Status
+	}
+	checks := observedPublishingCheck(state)
+	if state == "" && b.Provider == "github" {
+		for _, check := range result.StatusCheckRollup {
+			observed := observedPublishingCheck(firstString(check.Conclusion, check.State, check.Status))
+			if observed == contract.ThreadDeliveryStageChecksFailed {
+				checks = observed
+				break
+			}
+			if observed == contract.ThreadDeliveryStageChecks {
+				checks = observed
+			}
+		}
+	}
+	// Requested auto-merge is permission to merge later. Use the provider's observed queue state.
+	if result.MergeQueueEntry != nil && checks != contract.ThreadDeliveryStageChecksFailed {
+		switch result.MergeQueueEntry.State {
+		case "AWAITING_CHECKS", "LOCKED", "MERGEABLE", "QUEUED":
+			return contract.ThreadDeliveryStageMerging
+		}
+	}
+	return checks
+}
+
+func observedPublishingCheck(state string) contract.ThreadDeliveryStage {
+	switch strings.ToLower(state) {
+	case "failed", "failure", "error", "timed_out", "startup_failure", "action_required":
+		return contract.ThreadDeliveryStageChecksFailed
+	case "running", "pending", "queued", "in_progress":
+		return contract.ThreadDeliveryStageChecks
+	default:
+		return contract.ThreadDeliveryStagePrOpen
+	}
+}
+
 func publishingRecordRoute(q *Request, b *contract.PublishingHostRecord) (contract.OkReply, error) {
 	var none contract.OkReply
 	if b.HostId != q.hostID() {
@@ -642,13 +708,37 @@ func publishingRecordRoute(q *Request, b *contract.PublishingHostRecord) (contra
 		outcome = "failed"
 	}
 	err := q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(wq *Request) error {
+		if !hostHolderAllowsProject(wq, wq.host.Holder, rec.ProjectId) {
+			return fail(403, "Publishing host project rejected")
+		}
+		sourceID := execID
 		if cmdID != "" {
-			if _, err := commandOf(wq, b.HostId, execID, cmdID, "Publishing record rejected"); err != nil {
+			cmd, err := commandOf(wq, b.HostId, execID, cmdID, "Publishing record rejected")
+			if err != nil {
 				return err
+			}
+			if cmd.Kind == string(contract.CommandKindPublishing) {
+				var payload contract.PublishingCommandPayload
+				if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
+					return err
+				}
+				sourceID = deref(payload.SourceExecutionId)
 			}
 		} else if execID != "" {
 			if err := ownedBody(wq, b.HostId, execID); err != nil {
 				return err
+			}
+		}
+		if source := deref(b.SourceExecutionId); source != "" && source != sourceID {
+			return fail(403, "Publishing record source execution rejected")
+		}
+		if execID != "" {
+			execution, err := wq.db().ExecutionByID(wq.ctx(), execID)
+			if err != nil {
+				return err
+			}
+			if rec.ProjectId != "" && deref(execution.ProjectID) != rec.ProjectId {
+				return fail(403, "Publishing record project rejected")
 			}
 		}
 		if err := audit(wq, "publishing:"+b.Repo, action, nil, b, auditExtra{

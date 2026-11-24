@@ -53,9 +53,12 @@ export function fed(w: Win, entries: Block[], removed: string[] = []): Win {
   return { ...w, blocks, first, last, total, fresh, freshKeys };
 }
 /** Change-feed rows that can touch a session thread; thread_blocks checks membership on the server. */
-// question and task changes carry no session: the server keeps only those of this thread (a task change may be a delivery of
-// one of its sessions, whose stage shows on a result card).
-export const touches = (c: Change, sessionIds: Set<string>, taskId?: string) => ['event', 'execution', 'question', 'artifact', 'task'].includes(c.kind) && (c.kind === 'question' || c.kind === 'task' || (!!taskId && c.taskId === taskId) || (!!c.sessionId && sessionIds.has(c.sessionId)));
+export const touches = (c: Change, sessionIds: Set<string>, taskId?: string) => {
+  if (c.kind === 'setting-change') return c.settingTarget?.startsWith('publishing:') === true;
+  if (c.kind === 'question') return true;
+  return ['event', 'execution', 'artifact'].includes(c.kind) &&
+    ((!!taskId && c.taskId === taskId) || (!!c.sessionId && sessionIds.has(c.sessionId)));
+};
 
 const PAGE = 100;
 /** One thread's window: newest on open, older and newer pages, jump around a key, and live blocks from the feed. */
@@ -75,10 +78,18 @@ export function useThread(keyInput: MaybeAccessor<ThreadKey | null>) {
     setWin(currentWin);
   };
   const apply = (f: (w: Win) => Win) => commitWin(w => (w ? f(w) : null));
-  const fetchBlocks = async (cs: Change[], g: number) => {
+  let feedRead: Promise<void> = Promise.resolve();
+  const fetchBlocks = (cs: Change[], g: number) => {
+    // Apply snapshots in read order so a slow earlier reply cannot overwrite newer delivery facts.
+    const read = feedRead.then(() => readBlocks(cs, g));
+    feedRead = read.catch(() => {});
+    return read;
+  };
+  const readBlocks = async (cs: Change[], g: number) => {
+    if (g !== gen || !currentKey) return;
     for (const c of cs) if (follow.task && c.kind === 'execution' && c.taskId === follow.task && c.sessionId) follow.sessions.add(c.sessionId);
     const rows = cs.filter(c => touches(c, follow.sessions, follow.task)).map(c => ({ kind: c.kind, id: c.id }));
-    if (!rows.length || !currentKey) return;
+    if (!rows.length) return;
     const r = await op('thread_blocks', { key: currentWin?.key ?? currentKey, rows });
     if (g === gen) apply(w => fed(w, r.entries, r.removed));
   };
@@ -105,7 +116,11 @@ export function useThread(keyInput: MaybeAccessor<ThreadKey | null>) {
       if (g === gen) setError(e instanceof Error ? e.message : String(e));
     }
   };
-  const newest = () => { gen++; return load({}, p => commitWin(fromPage(p))); };
+  const nextWindow = () => {
+    gen++;
+    feedRead = Promise.resolve();
+  };
+  const newest = () => { nextWindow(); return load({}, p => commitWin(fromPage(p))); };
   const id = createMemo(() => {
     const k = readValue(keyInput);
     return k ? JSON.stringify(k) : null;
@@ -123,7 +138,7 @@ export function useThread(keyInput: MaybeAccessor<ThreadKey | null>) {
         sessions: new Set(k && 'session' in k ? [k.session] : []),
         task: k && 'task' in k ? k.task : undefined,
       };
-      if (!k) return;
+      if (!k) { nextWindow(); return; }
       void newest();
       return subscribe({ resync: newest, changes: cs => { if (currentWin) fetchBlocks(cs, gen).catch(() => {}); } });
     },
@@ -145,7 +160,7 @@ export function useThread(keyInput: MaybeAccessor<ThreadKey | null>) {
     newest,
     /** Replace the window with entries around a key (a search hit). */
     jump: (k: string, onWindow: () => void) => {
-      gen++;
+      nextWindow();
       return load({ around: k }, p => {
         onWindow();
         commitWin(w => fromPage(p, w?.total));

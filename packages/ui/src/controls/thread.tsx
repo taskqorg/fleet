@@ -3,13 +3,13 @@ import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack }
 import type { JSX } from '@solidjs/web';
 import { type IconName, type StateOf, type Harness, actions, harnesses } from '../registry.ts';
 import { bytes, exact, duration, agentLabel, actor, fileLabel } from '../format.ts';
-import type { Block as ThreadBlock, ResourceSummary } from '../../../../contracts/generated/ops.ts';
+import type { Block as ThreadBlock, ResourceSummary, ThreadDeliveryStage } from '../../../../contracts/generated/ops.ts';
 import { VirtualList, type VirtualListHandle } from '../virtual-list.tsx';
 import { parse, renderBlocks, type TextHook } from '../markdown.tsx';
 import { author, clipMessage, writeClip } from '../clip.ts';
 import { isSubmitEnter } from '../keys.ts';
 import tokens from '../../tokens.json';
-import { Icon, Button, StateBadge, Num, CostFigures, Ago, AgeChip, HarnessMark, Empty, ErrorBanner, copyText, SearchBox } from './primitives.tsx';
+import { Icon, Button, StateBadge, StageChip, Num, CostFigures, Ago, AgeChip, HarnessMark, Empty, ErrorBanner, copyText, SearchBox } from './primitives.tsx';
 import { EntityCode, linkCodes } from './overlays.tsx';
 import { TabBar } from './tables.tsx';
 
@@ -579,29 +579,36 @@ export const keyConnection = (options: unknown): string | undefined => {
   return typeof c === 'string' ? c : undefined;
 };
 /** Results are listed one per line. Disambiguate matching short names without exposing full paths. */
-export function ResultRow(p: { artifacts: ArtifactMeta[]; onOpen?: (id: string) => void }) {
+export function ResultRow(p: { artifacts: ArtifactMeta[]; deliveryStage?: ThreadDeliveryStage; onOpen?: (id: string) => void }) {
   const items = createMemo(() => namedFiles(p.artifacts, 'Result'));
+  const stage = () => p.deliveryStage === 'unknown' ? undefined : p.deliveryStage;
   return (
     <div class="th-row th-result" data-ui="thread-row">
-      <ul class="th-links" aria-label="Results">
-        <For each={items()}>
-          {({ file: artifact, name, position, total }) => (
-            <li class="th-file">
-              <EntityCode id={artifact.id} kind="result" />
-              <a
-                href={`/results/${encodeURIComponent(artifact.id)}`}
-                data-tip={`${artifact.name} · ${artifact.mediaType} · ${bytes(artifact.size).text}`}
-                onClick={e => { if (p.onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); p.onOpen(artifact.id); } }}
-              >
-                {name}
-              </a>
-              <Show when={total > 1}>
-                <span class="th-file-index muted" aria-label={`File ${position} of ${total}`}>{position}</span>
-              </Show>
-            </li>
-          )}
-        </For>
-      </ul>
+      <span class="th-svc" aria-live="polite">
+        <Show when={stage()}>{value => <StageChip stage={value()} />}</Show>
+        <Show when={p.deliveryStage === 'unknown'}>Delivery stage unknown</Show>
+      </span>
+      <Show when={items().length > 0}>
+        <ul class="th-links" aria-label="Results">
+          <For each={items()}>
+            {({ file: artifact, name, position, total }) => (
+              <li class="th-file">
+                <EntityCode id={artifact.id} kind="result" />
+                <a
+                  href={`/results/${encodeURIComponent(artifact.id)}`}
+                  data-tip={`${artifact.name} · ${artifact.mediaType} · ${bytes(artifact.size).text}`}
+                  onClick={e => { if (p.onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); p.onOpen(artifact.id); } }}
+                >
+                  {name}
+                </a>
+                <Show when={total > 1}>
+                  <span class="th-file-index muted" aria-label={`File ${position} of ${total}`}>{position}</span>
+                </Show>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
     </div>
   );
 }
@@ -775,7 +782,7 @@ export function Thread(p: {
           />
         );
       }
-      case 'result': return <ResultRow artifacts={b.artifacts} onOpen={p.onOpenResult} />;
+      case 'result': return <ResultRow artifacts={b.artifacts} deliveryStage={b.deliveryStage} onOpen={p.onOpenResult} />;
       case 'boundary': return (
         <BoundaryRow
           session={p.showSession ? b.sessionId ?? undefined : undefined}

@@ -317,13 +317,14 @@ func (v *ResultArtifact) Validate() error {
 	return nil
 }
 
-// ResultBlock: The stored artifacts of an ended execution.
+// ResultBlock: The stored artifacts and observed publishing stage of an ended execution.
 type ResultBlock struct {
-	ArtifactIds []string         `json:"artifactIds"`
-	Artifacts   []ResultArtifact `json:"artifacts"`
-	ExecutionId *string          `json:"executionId,omitempty"`
-	Key         string           `json:"key"`
-	Kind        string           `json:"kind"`
+	ArtifactIds   []string             `json:"artifactIds"`
+	Artifacts     []ResultArtifact     `json:"artifacts"`
+	DeliveryStage *ThreadDeliveryStage `json:"deliveryStage,omitempty"`
+	ExecutionId   *string              `json:"executionId,omitempty"`
+	Key           string               `json:"key"`
+	Kind          string               `json:"kind"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -336,6 +337,11 @@ func (v *ResultBlock) Validate() error {
 	}
 	for i := range v.Artifacts {
 		if err := Check(&v.Artifacts[i], "artifacts"); err != nil {
+			return err
+		}
+	}
+	if v.DeliveryStage != nil {
+		if err := Check(v.DeliveryStage, "deliveryStage"); err != nil {
 			return err
 		}
 	}
@@ -1233,6 +1239,30 @@ func (v *ThreadBlocksRequest) Validate() error {
 		}
 	}
 	return nil
+}
+
+type ThreadDeliveryStage string
+
+const (
+	ThreadDeliveryStageUnknown      ThreadDeliveryStage = "unknown"
+	ThreadDeliveryStagePrOpen       ThreadDeliveryStage = "pr_open"
+	ThreadDeliveryStageChecks       ThreadDeliveryStage = "checks"
+	ThreadDeliveryStageChecksFailed ThreadDeliveryStage = "checks_failed"
+	ThreadDeliveryStageMerging      ThreadDeliveryStage = "merging"
+	ThreadDeliveryStageMerged       ThreadDeliveryStage = "merged"
+)
+
+// ThreadDeliveryStageValues lists every ThreadDeliveryStage in schema order.
+var ThreadDeliveryStageValues = []ThreadDeliveryStage{ThreadDeliveryStageUnknown, ThreadDeliveryStagePrOpen, ThreadDeliveryStageChecks, ThreadDeliveryStageChecksFailed, ThreadDeliveryStageMerging, ThreadDeliveryStageMerged}
+
+// Valid: v is one of the schema's values.
+func (v ThreadDeliveryStage) Valid() bool {
+	for _, x := range ThreadDeliveryStageValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // ThreadEntriesReply: total: only with around. feedCursor: the change cursor of this read, to catch up from.

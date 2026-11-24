@@ -250,6 +250,67 @@ func (q *Queries) ThreadOpenStreams(ctx context.Context, ids []string) ([]Thread
 	return items, nil
 }
 
+const threadPublishingResults = `-- name: ThreadPublishingResults :many
+WITH observations AS (
+  SELECT p.id, p.seq, p.project_id, p.value,
+    p.value->>'sourceExecutionId' AS source_id,
+    jsonb_build_array(p.value->>'provider', lower(p.value->>'host'),
+      lower(p.value->>'repo'), p.value->'number') AS request_key
+  FROM audit_log p
+  WHERE split_part(p.target, ':', 1)='publishing'
+    AND jsonb_typeof(p.value->'number')='number' AND p.value->'number' > '0'::jsonb
+    AND coalesce(p.value->>'error','')=''
+    AND p.project_id IN (SELECT e.project_id FROM execution e WHERE e.id=ANY($2::text[]))
+), linked AS (
+  SELECT DISTINCT ON (e.id) e.id AS execution_id, p.project_id, p.request_key
+  FROM execution e JOIN observations p ON p.project_id=e.project_id AND p.source_id=e.id
+  WHERE e.id=ANY($2::text[])
+  ORDER BY e.id, p.seq DESC
+)
+SELECT l.execution_id, p.value FROM linked l
+CROSS JOIN LATERAL (
+  SELECT x.value FROM observations x
+  WHERE x.project_id=l.project_id AND x.request_key=l.request_key
+  ORDER BY x.seq DESC LIMIT 1
+) p
+WHERE cardinality($1::text[])=0 OR EXISTS (
+  SELECT 1 FROM observations c WHERE c.id=ANY($1::text[])
+    AND c.project_id=l.project_id AND c.request_key=l.request_key
+)
+`
+
+type ThreadPublishingResultsParams struct {
+	Changed []string
+	Ids     []string
+}
+
+type ThreadPublishingResultsRow struct {
+	ExecutionID string
+	Value       []byte
+}
+
+// The newest observed request linked to each execution, refreshed from observations of that exact request.
+// A live read restricts the result to requests affected by the supplied publishing audit rows.
+func (q *Queries) ThreadPublishingResults(ctx context.Context, arg ThreadPublishingResultsParams) ([]ThreadPublishingResultsRow, error) {
+	rows, err := q.db.Query(ctx, threadPublishingResults, arg.Changed, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ThreadPublishingResultsRow
+	for rows.Next() {
+		var i ThreadPublishingResultsRow
+		if err := rows.Scan(&i.ExecutionID, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const threadQuestion = `-- name: ThreadQuestion :many
 SELECT seq, (to_jsonb(q)-'data')::jsonb AS v FROM question q WHERE id= $1::text AND execution_id = ANY ($2::text[])
 `
@@ -738,11 +799,16 @@ SELECT ((SELECT count(*) FROM message WHERE execution_id = ANY ($1::text[]))
  +(SELECT coalesce(sum(jsonb_array_length(coalesce(payload->'data'->'fleetNormalized'->'blocks','[]'::jsonb))),0) FROM event WHERE NOT delta AND execution_id = ANY ($1::text[]))
  +(SELECT count(*) FROM question WHERE execution_id = ANY ($1::text[]))
  +(SELECT count(*) FROM event v WHERE NOT v.delta AND v.type='execution.ended' AND v.execution_id = ANY ($1::text[])
-   AND EXISTS (SELECT 1 FROM artifact a WHERE a.execution_id=v.execution_id AND a.state='stored')))::bigint AS n
+   AND (EXISTS (SELECT 1 FROM artifact a WHERE a.execution_id=v.execution_id AND a.state='stored')
+     OR EXISTS (SELECT 1 FROM execution e JOIN audit_log p ON p.project_id=e.project_id
+       WHERE e.id=v.execution_id AND split_part(p.target, ':', 1)='publishing'
+         AND p.value->>'sourceExecutionId'=e.id
+         AND jsonb_typeof(p.value->'number')='number' AND p.value->'number' > '0'::jsonb
+         AND coalesce(p.value->>'error','')=''))))::bigint AS n
 `
 
 // The blocks of executions @ids, without the execution starts and open streams: messages, event blocks, questions and
-// the result block of each ended execution with stored artifacts.
+// the result block of each ended execution with stored artifacts or a linked publishing observation.
 func (q *Queries) ThreadTotal(ctx context.Context, ids []string) (int64, error) {
 	row := q.db.QueryRow(ctx, threadTotal, ids)
 	var n int64

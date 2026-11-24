@@ -21,6 +21,7 @@ import { checkNavCounter } from './nav-counter.check.ts';
 import { checkConversationsList } from './conversations-list.check.ts';
 import { checkNewConversation } from './conversation-new.check.ts';
 import { checkAttachments } from './attachments.check.ts';
+import { checkDeliveryResults } from './delivery-results.check.ts';
 import { checkConversationDetail } from './conversation-detail.check.ts';
 import { checkThreadSelection, checkThreadSelectionAuthority, seedThreadSelection } from './thread-selection.check.ts';
 
@@ -101,6 +102,7 @@ try {
 
   await checkThreadSelectionAuthority(c, selectionKeys);
   await checkThreadSelection(p, origin, selectionKeys);
+  await checkDeliveryResults(p, { seed, host, origin });
   // Captured fixtures: each reply shows with its agent mark.
   for (const [sid, reply, label] of [['c2c11096-a08e-4b86-88d9-eb6c46785b11', 'Hi! What would you like to work on?', 'gpt-6.1-sol · low'], ['05e696a1-f925-4d58-abe1-8073f74eb965', 'I’ll continue when Fleet wakes me', 'gpt-6.1-sol · low']] as const) {
     await p.goto(`${origin}/conversations/${sid}`);
