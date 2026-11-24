@@ -1149,6 +1149,7 @@ func init() {
 		publish(q)
 		return out, nil
 	})
+	op("executions_reconcile", executionsReconcile)
 	onStart(func(ctx context.Context, a *App) {
 		a.ensureRuntime()
 		grace := lostClosedGrace()
@@ -1184,31 +1185,191 @@ func lostClosedGrace() time.Duration {
 	return envMs("FLEET_PROCESS_CLOSED_GRACE_MS", defMs)
 }
 
+func reconcileLostReason(cause string) string {
+	switch cause {
+	case "outbox_failed_receipt":
+		return "reconciled (outbox_failed_receipt): host terminal receipt failed delivery"
+	case "process_closed_no_receipt":
+		return "reconciled (process_closed_no_receipt): worker process exited without terminal receipt"
+	case "terminal_command_open_execution":
+		return "reconciled (terminal_command_open_execution): start or script command already terminal"
+	case "workspace_teardown":
+		return "reconciled (workspace_teardown): workspace already torn down"
+	case "host_removed":
+		return "reconciled (host_removed): owning host was removed"
+	case "missing_from_host_active_executions":
+		return "reconciled (missing_from_host_active_executions): live host no longer reports execution active"
+	case "silent_host_job":
+		return "reconciled (silent_host_job): host job silent past timeout"
+	case "unconfirmed_expired":
+		return "reconciled (unconfirmed_expired): unconfirmed execution or unanswered stop expired"
+	case "orphan_pipeline_step":
+		return "reconciled (orphan_pipeline_step): parent pipeline run no longer exists"
+	default:
+		return "reconciled: no host terminal receipt after process closed, host stopped reporting the run, or host lost track"
+	}
+}
+
+func executionsReconcile(q *Request, r *contract.ExecutionsReconcileRequest) (contract.ExecutionsReconcileReply, error) {
+	preview := isTrue(r.Preview)
+	out := contract.ExecutionsReconcileReply{
+		Preview:    preview,
+		Reconciled: []string{},
+		Candidates: []contract.ExecutionsReconcileItem{},
+		Skipped:    []contract.ExecutionSkipped{},
+	}
+	if r.Ids != nil {
+		if len(r.Ids) == 0 || len(r.Ids) > 1000 {
+			return out, fail(400, "Expected 1 to 1000 ids")
+		}
+		for _, id := range r.Ids {
+			if !idOK(id) {
+				return out, fail(400, "Expected execution ids")
+			}
+		}
+	}
+	if r.Reason != nil && (strings.TrimSpace(*r.Reason) == "" || len([]rune(*r.Reason)) > 4000) {
+		return out, fail(400, "Expected reason")
+	}
+	grace := lostClosedGrace()
+	candidates, err := q.db().DispLostCandidates(q.ctx(), db.DispLostCandidatesParams{
+		Secs:            lostAfter.Seconds(),
+		ClosedGraceSecs: grace.Seconds(),
+		Ids:             r.Ids,
+	})
+	if err != nil {
+		return out, err
+	}
+	eligible := make(map[string]db.DispLostCandidatesRow, len(candidates))
+	candidateIDs := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		eligible[c.ID] = c
+		candidateIDs = append(candidateIDs, c.ID)
+		out.Candidates = append(out.Candidates, contract.ExecutionsReconcileItem{
+			Id:    c.ID,
+			Kind:  c.Kind,
+			State: c.State,
+			Cause: c.Cause,
+		})
+	}
+	if r.Ids != nil {
+		rows, err := q.db().DispExecStates(q.ctx(), r.Ids)
+		if err != nil {
+			return out, err
+		}
+		byID := make(map[string]db.DispExecStatesRow, len(rows))
+		for _, row := range rows {
+			byID[row.ID] = row
+		}
+		seen := make(map[string]bool, len(r.Ids))
+		for _, id := range r.Ids {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			if _, ok := eligible[id]; ok {
+				continue
+			}
+			row, found := byID[id]
+			if !found {
+				out.Skipped = append(out.Skipped, contract.ExecutionSkipped{Id: id, State: "unknown", Reason: ptr("unknown execution")})
+				continue
+			}
+			why := "active or unverified: no dead-worker evidence"
+			if executionEnds(row.State) {
+				why = "already terminal"
+			} else if row.State == "waiting" && row.WaitReason == "artifacts" {
+				why = "waiting for artifacts"
+			}
+			out.Skipped = append(out.Skipped, contract.ExecutionSkipped{Id: id, State: row.State, Reason: &why})
+		}
+	}
+	if preview || len(candidates) == 0 {
+		return out, nil
+	}
+	if err := acquireTxLock(q, DISPATCH); err != nil {
+		return out, err
+	}
+	sessions, err := q.db().DispExecSessions(q.ctx(), candidateIDs)
+	if err != nil {
+		return out, err
+	}
+	sessLocks := make([]string, 0, len(sessions))
+	for _, sid := range sessions {
+		sessLocks = append(sessLocks, "session:"+sid)
+	}
+	if err := acquireTxLock(q, sessLocks...); err != nil {
+		return out, err
+	}
+	for _, c := range candidates {
+		still, err := q.db().DispLostStill(q.ctx(), db.DispLostStillParams{
+			ID:              c.ID,
+			Secs:            lostAfter.Seconds(),
+			ClosedGraceSecs: grace.Seconds(),
+		})
+		if err != nil {
+			return out, err
+		}
+		if !still {
+			rows, err := q.db().DispExecStates(q.ctx(), []string{c.ID})
+			if err != nil {
+				return out, err
+			}
+			state := "unknown"
+			if len(rows) > 0 {
+				state = rows[0].State
+			}
+			out.Skipped = append(out.Skipped, contract.ExecutionSkipped{Id: c.ID, State: state, Reason: ptr("state changed before lock")})
+			continue
+		}
+		reason := reconcileLostReason(c.Cause)
+		if r.Reason != nil {
+			reason = *r.Reason
+		}
+		state, err := executionAbandon(q, c.ID, reason)
+		if err != nil {
+			return out, err
+		}
+		if state != "" {
+			out.Skipped = append(out.Skipped, contract.ExecutionSkipped{Id: c.ID, State: state, Reason: ptr("already terminal")})
+			continue
+		}
+		out.Reconciled = append(out.Reconciled, c.ID)
+	}
+	if len(out.Reconciled) > 0 {
+		publish(q)
+		if err := agentPromote(q); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
 func reconcileLostExecutions(ctx context.Context, a *App) error {
 	grace := lostClosedGrace()
-	var ids []string
+	var candidates []db.DispLostCandidatesRow
 	if err := a.store.Read(ctx, nil, func(q *Request) error {
 		var err error
-		ids, err = q.db().DispLostIDs(q.ctx(), db.DispLostIDsParams{
+		candidates, err = q.db().DispLostCandidates(q.ctx(), db.DispLostCandidatesParams{
 			Secs:            lostAfter.Seconds(),
 			ClosedGraceSecs: grace.Seconds(),
 		})
 		return err
-	}); err != nil || len(ids) == 0 {
+	}); err != nil || len(candidates) == 0 {
 		return err
 	}
-	for _, id := range ids {
+	for _, c := range candidates {
 		if err := a.store.Write(ctx, nil, []string{GLOBAL, DISPATCH}, func(q *Request) error {
 			// Re-check under row lock so a concurrent receipt wins.
 			still, err := q.db().DispLostStill(q.ctx(), db.DispLostStillParams{
-				ID:              id,
+				ID:              c.ID,
 				Secs:            lostAfter.Seconds(),
 				ClosedGraceSecs: grace.Seconds(),
 			})
 			if err != nil || !still {
 				return err
 			}
-			if _, err := executionAbandon(q, id, "no host terminal receipt after process closed, host stopped reporting the run, or host lost track"); err != nil {
+			if _, err := executionAbandon(q, c.ID, reconcileLostReason(c.Cause)); err != nil {
 				return err
 			}
 			publish(q)
@@ -1231,6 +1392,9 @@ func reconcileLostExecutions(ctx context.Context, a *App) error {
 // the caller promotes queued work once after its batch. It returns the state of an
 // execution it leaves alone ("unknown": not an agent run or host job), "" when it ended it.
 func executionAbandon(q *Request, id, reason string) (string, error) {
+	if err := lockExecutionTask(q, id); err != nil {
+		return "", err
+	}
 	row, err := q.db().DispAbandonRow(q.ctx(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "unknown", nil
@@ -1281,6 +1445,12 @@ func executionAbandon(q *Request, id, reason string) (string, error) {
 		return "", err
 	}
 	if err := q.db().DispAbandonProblem(q.ctx(), id); err != nil {
+		return "", err
+	}
+	for _, k := range []string{"waitReason", "waitDetail", "waitingSince", "pendingArtifacts", "declaredArtifacts"} {
+		delete(e.rest, k)
+	}
+	if err := q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id, WaitReason: nil}); err != nil {
 		return "", err
 	}
 	now := nowMs()
