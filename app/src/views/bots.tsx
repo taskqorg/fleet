@@ -1,6 +1,6 @@
 // Persistent bots directory, runtime controls, tasks, runs, questions/errors, analytics, and settings (FLT-20 PR 4).
 import { For, Match, Show, Switch, createMemo, createSignal, untrack } from 'solid-js';
-import { useLocation } from '../router.ts';
+import { useLocation, useSearch } from '../router.ts';
 import {
   AgeChip, Ago, Button, CatalogueTree, Choice, CostFigures, DataTable, DecisionBlock,
   DetailSection, Disclosure, Empty, EntityCode, EntityPicker, ErrorBanner, FilterBar,
@@ -28,6 +28,7 @@ const asExecState = (s: string): StateOf<'execution'> =>
 import { prefs, prefsRead, scopeIds, usePins } from '../prefs.ts';
 import { useOp } from '../store.ts';
 import { parseMs as ms } from '../task-facts.ts';
+import { BotAutomations } from './bot-automations.tsx';
 
 type Bot = Ops['bot_get']['reply']['bot'];
 type Settings = Bot['settings'];
@@ -111,13 +112,27 @@ function BotDetail(props: {
   onReload: () => void;
 }) {
   const [, go] = useLocation();
-  const [tab, setTab] = createSignal<BotTab>('activity');
+  const search = useSearch();
+  const params = createMemo(() => new URLSearchParams(search()));
+  const tab = () => BOT_TABS.find(t => t.id === params().get('tab'))?.id ?? 'activity';
+  const showTab = (tab: BotTab, extra: Record<string, string> = {}) => {
+    go(tab === 'activity' ? path(props.bot.id)
+      : path(props.bot.id) + '?' + new URLSearchParams({ tab, ...extra }));
+  };
+  const setTab = (tab: BotTab) => showTab(tab);
+  const automationId = () => tab() === 'runs' ? params().get('automation') : null;
   const [actionBusy, setActionBusy] = createSignal(false);
   const [actionNote, setActionNote] = createSignal('');
   const [actionError, setActionError] = createSignal('');
   const signal = useAlive();
 
   const runsOp = useOp('bot_runs', () => ({ botId: props.bot.id, limit: 100 }));
+  const automationRuns = useOp('bot_runs', () => {
+    const id = automationId();
+    if (!id) return null;
+    const after = params().get('after') ?? undefined;
+    return { botId: props.bot.id, automationId: id, limit: 50, after };
+  });
   const tasksOp = useOp('bot_tasks', () => ({ botId: props.bot.id, limit: 100 }));
   const questionsOp = useOp('questions_list', () => ({ botId: props.bot.id, limit: 100 }));
   const execsOp = useOp('executions_list', () => ({ botId: props.bot.id, limit: 100 }));
@@ -125,6 +140,7 @@ function BotDetail(props: {
   const reloadAll = () => {
     props.onReload();
     runsOp.reload();
+    automationRuns.reload();
     tasksOp.reload();
     questionsOp.reload();
     execsOp.reload();
@@ -198,15 +214,15 @@ function BotDetail(props: {
               <Show when={props.bot.paused}><span class="badge t-attention">Paused</span></Show>
             </div>
             <p class="muted" style={{ margin: 0 }}>
-              {props.projectNames.get(props.bot.projectId) ?? props.bot.projectId} · {formatBotTriggers(props.bot.settings)}
+              {props.projectNames.get(props.bot.projectId) ?? props.bot.projectId}
             </p>
           </div>
           <div class="row" style={{ gap: 'var(--space-2)', 'flex-wrap': 'wrap', 'align-items': 'center' }}>
             <Show when={props.bot.homeSessionId}>
               {sid => <Button label="Home" icon="messages-square" onClick={() => go('/conversations/' + encodeURIComponent(sid()))} />}
             </Show>
-            <Button label="Run now" icon="play" kind="primary" busy={actionBusy()} onClick={() => void runAction('run')} />
-            <Button label={props.bot.paused ? 'Resume' : 'Pause'} icon={props.bot.paused ? 'play' : 'pause'} busy={actionBusy()} onClick={() => void runAction('pause')} />
+            <Button label={tab() === 'automations' ? 'Run bot now' : 'Run now'} icon="play" kind="primary" busy={actionBusy()} onClick={() => void runAction('run')} />
+            <Button label={(props.bot.paused ? 'Resume' : 'Pause') + (tab() === 'automations' ? ' bot' : '')} icon={props.bot.paused ? 'play' : 'pause'} busy={actionBusy()} onClick={() => void runAction('pause')} />
             <Show when={props.bot.activeRunId}>
               <Button label="Stop" icon="circle-slash" kind="danger" busy={actionBusy()} onClick={() => void runAction('stop')} />
             </Show>
@@ -231,11 +247,34 @@ function BotDetail(props: {
                 onChanged={reloadAll}
               />
             </Match>
+            <Match when={tab() === 'automations'}>
+              <BotAutomations bot={props.bot} projectName={props.projectNames.get(props.bot.projectId) ?? props.bot.projectId}
+                edit={params().get('edit')}
+                onEdit={id => showTab('automations', id ? { edit: id } : {})}
+                onHistory={id => showTab('runs', { automation: id })}
+                onRun={reloadAll} />
+            </Match>
             <Match when={tab() === 'tasks'}>
               <BotTasksTab tasks={tasks()} projectNames={props.projectNames} loading={!tasksOp.data && !tasksOp.error} error={tasksOp.error} onRetry={tasksOp.reload} />
             </Match>
             <Match when={tab() === 'runs'}>
-              <BotRunsTab runs={runs()} projectNames={props.projectNames} loading={!runsOp.data && !runsOp.error} error={runsOp.error} onRetry={runsOp.reload} />
+              <Show when={automationId()} keyed fallback={
+                <BotRunsTab runs={runs()} projectNames={props.projectNames} loading={!runsOp.data && !runsOp.error} error={runsOp.error} onRetry={runsOp.reload} />
+              }>{id => (
+                <>
+                  <div class="row" style={{ 'flex-wrap': 'wrap', gap: 'var(--space-2)' }}>
+                    <Button label="Automations" icon="arrow-left" iconOnly onClick={() => showTab('automations')} />
+                    <Show when={params().has('after')}>
+                      <Button label="Latest runs" onClick={() => showTab('runs', { automation: id })} />
+                    </Show>
+                    <Show when={automationRuns.data?.nextAfter} keyed>{after => (
+                      <Button label="Older runs" onClick={() => showTab('runs', { automation: id, after })} />
+                    )}</Show>
+                  </div>
+                  <BotRunsTab runs={automationRuns.data?.runs ?? []} projectNames={props.projectNames}
+                    loading={!automationRuns.data && !automationRuns.error} error={automationRuns.error} onRetry={automationRuns.reload} />
+                </>
+              )}</Show>
             </Match>
             <Match when={tab() === 'questions'}>
               <BotQuestionsErrorsTab
@@ -280,10 +319,11 @@ function BotOverviewTab(props: {
 
   return (
     <div class="stack">
-      <DetailSection title="Status & Triggers">
+      <DetailSection title="Status">
         <KvRow icon="bot" label="Purpose" value={<span>{props.bot.settings.purpose || 'No purpose set'}</span>} />
-        <KvRow icon="clock" label="Schedule" value={<span>{props.bot.settings.scheduleTime ? `${props.bot.settings.scheduleTime} (${props.bot.settings.scheduleZone || 'UTC'})` : 'Manual / event-driven only'}</span>} />
-        <KvRow icon="bell" label="Wake on Needs you" value={<span>{props.bot.settings.wakeOnNeedsYou ? 'Enabled' : 'Disabled'}</span>} />
+        <Show when={props.bot.settings.scheduleTime || props.bot.settings.wakeOnNeedsYou}>
+          <KvRow icon="clock" label="Bot settings triggers" value={formatBotTriggers(props.bot.settings)} />
+        </Show>
         <KvRow
           icon="messages-square"
           label="Home conversation"
@@ -484,6 +524,7 @@ function BotRunsTable(props: { runs: BotRun[]; projectNames: Map<string, string>
             </td>
             <td>
               <div><strong>{r.cause}</strong></div>
+              <Show when={r.automation}>{a => <div>{a().name} · revision {a().revision}</div>}</Show>
               <Show when={r.triggers.length > 0}>
                 <div class="muted">{r.triggers.map(tr => tr.summary || `${tr.kind}:${tr.id}`).join(', ')}</div>
               </Show>
@@ -863,10 +904,12 @@ function BotSettingsForm(props: {
           disabledReason={projectId() ? undefined : 'Select a project first'} loading={!!projectId() && !presets.data && !presets.error} error={presets.error} onRetry={presets.reload} />
         <TextField label="Instructions" multiline value={settings().instructions} onChange={v => field('instructions', v)} />
         <TextField label="SOUL" multiline value={settings().soul} onChange={v => field('soul', v)} />
-        <TextField label="Daily wake time" value={settings().scheduleTime} onChange={v => field('scheduleTime', v)} help="Use HH:MM in the selected time zone. Leave blank to omit a schedule." />
-        <TextField label="Time zone" value={settings().scheduleZone} onChange={v => field('scheduleZone', v)} help="Use an IANA time zone, such as Etc/UTC." />
-        <Choice label="Wake on new Needs you entries" value={settings().wakeOnNeedsYou ? 'on' : 'off'} options={[{ id: 'off', label: 'Needs you off' }, { id: 'on', label: 'Needs you on' }]}
-          onChange={v => setSettings(s => ({ ...s, wakeOnNeedsYou: v === 'on' }))} />
+        <Show when={initial && (initial.settings.scheduleTime || initial.settings.wakeOnNeedsYou)}>
+          <TextField label="Bot daily wake time" value={settings().scheduleTime} onChange={v => field('scheduleTime', v)} help="Use HH:MM in the selected time zone. Leave blank to omit a schedule." />
+          <TextField label="Bot schedule time zone" value={settings().scheduleZone} onChange={v => field('scheduleZone', v)} help="Use an IANA time zone, such as Etc/UTC." />
+          <Choice label="Wake on new Needs you entries" value={settings().wakeOnNeedsYou ? 'on' : 'off'} options={[{ id: 'off', label: 'Needs you off' }, { id: 'on', label: 'Needs you on' }]}
+            onChange={v => setSettings(s => ({ ...s, wakeOnNeedsYou: v === 'on' }))} />
+        </Show>
         <Button label={props.bot ? 'Save settings' : 'Create bot'} kind="primary" busy={busy()} disabledReason={projectId() ? undefined : 'Select a project first'} onClick={() => void save('settings')} />
       </DetailSection>
       <Show when={props.bot}>

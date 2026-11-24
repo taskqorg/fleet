@@ -124,6 +124,32 @@
       "auth": "person",
       "agent": "tool",
       "description": "Link a Fleet task in the bot's project as a managed task of the bot without attaching the Home conversation."
+    },
+    "bot_automations": {
+      "read": true,
+      "errors": [
+        404
+      ],
+      "auth": "person",
+      "agent": "no",
+      "description": "List a bot's automations and their next scheduled time and last outcome.",
+      "changes": [
+        "bot",
+        "bot-run",
+        "execution",
+        "setting-change"
+      ]
+    },
+    "bot_automation_save": {
+      "read": false,
+      "errors": [
+        400,
+        404,
+        409
+      ],
+      "auth": "person",
+      "agent": "no",
+      "description": "Create or update one bot automation with an optimistic revision. Enable and pause are settings changes."
     }
   },
   "$defs": {
@@ -627,6 +653,9 @@
           "items": {
             "type": "string"
           }
+        },
+        "automation": {
+          "$ref": "#/$defs/BotAutomationRef"
         }
       }
     },
@@ -644,6 +673,9 @@
           "type": "string"
         },
         "text": {
+          "type": "string"
+        },
+        "automationId": {
           "type": "string"
         }
       }
@@ -776,6 +808,9 @@
           "minimum": 1
         },
         "after": {
+          "type": "string"
+        },
+        "automationId": {
           "type": "string"
         }
       }
@@ -1065,6 +1100,188 @@
       "properties": {
         "link": {
           "$ref": "#/$defs/BotTaskLink"
+        }
+      }
+    },
+    "BotAutomationKind": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "schedule",
+        "needs_you"
+      ]
+    },
+    "BotAutomationEvent": {
+      "type": "string",
+      "enum": [
+        "none",
+        "all",
+        "question",
+        "execution"
+      ]
+    },
+    "BotAutomationSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "instructions",
+        "projectId",
+        "kind",
+        "scheduleTime",
+        "scheduleZone",
+        "event",
+        "enabled"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/BotAutomationKind"
+        },
+        "scheduleTime": {
+          "type": "string"
+        },
+        "scheduleZone": {
+          "type": "string"
+        },
+        "event": {
+          "$ref": "#/$defs/BotAutomationEvent"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "BotAutomationRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision",
+        "settings"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "settings": {
+          "$ref": "#/$defs/BotAutomationSettings"
+        },
+        "nextRunAt": {
+          "type": "string"
+        },
+        "lastRunState": {
+          "$ref": "#/$defs/BotRunState"
+        },
+        "lastRunObservation": {
+          "$ref": "#/$defs/BotRunObservation"
+        },
+        "lastRunAt": {
+          "type": "string"
+        },
+        "lastRunReason": {
+          "type": "string"
+        }
+      }
+    },
+    "BotAutomationRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "BotAutomationsRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        }
+      }
+    },
+    "BotAutomationsReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automations",
+        "canManage"
+      ],
+      "properties": {
+        "automations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BotAutomationRecord"
+          }
+        },
+        "canManage": {
+          "type": "boolean"
+        }
+      }
+    },
+    "BotAutomationSaveRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId",
+        "automationId",
+        "baseRevision",
+        "settings"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "automationId": {
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "settings": {
+          "$ref": "#/$defs/BotAutomationSettings"
+        }
+      }
+    },
+    "BotAutomationSaveReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automation"
+      ],
+      "properties": {
+        "automation": {
+          "$ref": "#/$defs/BotAutomationRecord"
         }
       }
     }

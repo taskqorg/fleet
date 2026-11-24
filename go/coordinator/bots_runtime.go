@@ -18,6 +18,7 @@ import (
 	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (a *App) wakeBots() {
@@ -47,9 +48,11 @@ type botExecutionContext struct {
 }
 
 type botRunPayload struct {
-	Text      string                    `json:"text,omitempty"`
-	Triggers  []contract.BotRunWakeItem `json:"triggers,omitempty"`
-	DedupKeys []string                  `json:"dedupKeys,omitempty"`
+	Text        string                     `json:"text,omitempty"`
+	Triggers    []contract.BotRunWakeItem  `json:"triggers,omitempty"`
+	DedupKeys   []string                   `json:"dedupKeys,omitempty"`
+	Automation  *contract.BotAutomationRef `json:"automation,omitempty"`
+	ManualInput string                     `json:"manualInput,omitempty"`
 }
 
 func botContextOf(b *botFull, runID string) *botExecutionContext {
@@ -452,6 +455,7 @@ func botRunRowToContract(id string, botID string, projectID string, botRev, memR
 		EndedAt:         formatTimePtr(endedAt),
 		Triggers:        triggers,
 		LinkedTaskIds:   linkedTaskIDs,
+		Automation:      p.Automation,
 	}
 }
 
@@ -475,14 +479,16 @@ func readBotRun(q *Request, id string) (contract.BotRunRecord, error) {
 }
 
 type botWakeReq struct {
-	Cause      string
-	DedupKey   string
-	DedupKeys  []string
-	Text       string
-	SentBy     string
-	Source     string
-	Triggers   []contract.BotRunWakeItem
-	CheckPause bool
+	Cause       string
+	DedupKey    string
+	DedupKeys   []string
+	Text        string
+	SentBy      string
+	Source      string
+	Triggers    []contract.BotRunWakeItem
+	CheckPause  bool
+	Automation  *db.BotAutomation
+	ManualInput string
 }
 
 // admitBotWake runs the shared admission flow for Run now, scheduled wakes and Needs you triggers.
@@ -502,7 +508,10 @@ func admitBotWake(q *Request, b *botFull, req botWakeReq) (contract.BotRunRecord
 			if len(existingRow.Payload) > 0 {
 				_ = json.Unmarshal(existingRow.Payload, &p)
 			}
-			if req.Cause == "manual" && req.Text != "" && p.Text != "" && p.Text != req.Text {
+			if req.Cause == "manual" && req.Automation == nil && req.Text != "" && p.Text != "" && p.Text != req.Text {
+				return none, false, fail(409, "Request identity conflict")
+			}
+			if req.Automation != nil && req.Cause == "manual" && p.ManualInput != req.ManualInput {
 				return none, false, fail(409, "Request identity conflict")
 			}
 			rec, err := readBotRun(q, existingID)
@@ -525,7 +534,20 @@ func admitBotWake(q *Request, b *botFull, req botWakeReq) (contract.BotRunRecord
 	}
 
 	runID := newID()
-	payloadBytes := jsonBytes(botRunPayload{Text: req.Text, Triggers: req.Triggers, DedupKeys: req.DedupKeys})
+	payload := botRunPayload{Text: req.Text, Triggers: req.Triggers, DedupKeys: req.DedupKeys, ManualInput: req.ManualInput}
+	var automationID *string
+	if automation := req.Automation; automation != nil {
+		automationID = &automation.ID
+		payload.Automation = &contract.BotAutomationRef{
+			Id: automation.ID, Revision: int64(automation.Revision), Name: automation.Name,
+		}
+		req.Text += fmt.Sprintf("\n\nAutomation %s (revision %d)", automation.Name, automation.Revision)
+		if automation.Instructions != "" {
+			req.Text += "\n" + automation.Instructions
+		}
+		payload.Text = req.Text
+	}
+	payloadBytes := jsonBytes(payload)
 
 	recordTerminalSkip := func(state, reason string, dedup *string) (contract.BotRunRecord, bool, error) {
 		inserted, err := botRunInsert(q, db.BotRunInsertParams{
@@ -543,6 +565,7 @@ func admitBotWake(q *Request, b *botFull, req botWakeReq) (contract.BotRunRecord
 			SentBy:         req.SentBy,
 			Source:         req.Source,
 			Payload:        payloadBytes,
+			AutomationID:   automationID,
 		})
 		if err != nil {
 			return none, false, err
@@ -602,6 +625,7 @@ func admitBotWake(q *Request, b *botFull, req botWakeReq) (contract.BotRunRecord
 		SentBy:         req.SentBy,
 		Source:         req.Source,
 		Payload:        payloadBytes,
+		AutomationID:   automationID,
 	})
 	if err != nil {
 		return none, false, err
@@ -705,12 +729,25 @@ func botRunOp(q *Request, r *contract.BotRunRequest) (contract.BotRunReply, erro
 	if text == "" {
 		text = fmt.Sprintf("Fleet: manual run requested for %s (%s). Inspect your project state and handle any open work.", b.Settings.Name, b.ProjectId)
 	}
+	var automation *db.BotAutomation
+	if r.AutomationId != nil {
+		saved, err := getBotAutomation(q, b.Id, *r.AutomationId)
+		if err != nil {
+			return out, err
+		}
+		if dedupKey != "" {
+			dedupKey = automationDedup(saved.ID, dedupKey)
+		}
+		automation = &saved
+	}
 	run, admitted, err := admitBotWake(q, &b, botWakeReq{
-		Cause:    "manual",
-		DedupKey: dedupKey,
-		Text:     text,
-		SentBy:   director(q),
-		Source:   "bot_run",
+		Automation:  automation,
+		ManualInput: strings.TrimSpace(deref(r.Text)),
+		Cause:       "manual",
+		DedupKey:    dedupKey,
+		Text:        text,
+		SentBy:      director(q),
+		Source:      "bot_run",
 	})
 	if err != nil {
 		return out, err
@@ -851,6 +888,7 @@ func botRunsOp(q *Request, r *contract.BotRunsRequest) (contract.BotRunsReply, e
 	}
 	rows, err := q.db().BotRunsList(q.ctx(), db.BotRunsListParams{
 		BotID:             r.BotId,
+		AutomationID:      r.AutomationId,
 		ProjectID:         r.ProjectId,
 		ProjectIds:        r.ProjectIds,
 		ExcludeProjectIds: r.ExcludeProjectIds,
@@ -1010,7 +1048,7 @@ func botTriggerPass(ctx context.Context, a *App, now time.Time) error {
 			log.Printf("bot %s trigger: %v", sn.bot.ID, err)
 		}
 	}
-	return nil
+	return botAutomationTriggerPass(ctx, a, now)
 }
 
 func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
@@ -1062,6 +1100,20 @@ func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
 	// 2. Needs you trigger
 	if !b.Settings.WakeOnNeedsYou {
 		return nil
+	}
+	return botProcessNeedsYou(q, &b, s, cur, nil)
+}
+
+func botProcessNeedsYou(q *Request, b *botFull, s agentSession, cur db.BotWakeCursor, automation *db.BotAutomation) error {
+	var automationID *string
+	var enabledSince pgtype.Timestamptz
+	event := "all"
+	dedup := func(key string) string { return key }
+	if automation != nil {
+		automationID = &automation.ID
+		event = automation.Event
+		enabledSince = pgtype.Timestamptz{Time: automation.EffectiveSince, Valid: true}
+		dedup = func(key string) string { return automationDedup(automation.ID, key) }
 	}
 	cursor := cur.NeedsYouChangeSeq
 	var qids, eids []string
@@ -1133,7 +1185,7 @@ func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
 	}
 	var candidates []triggerCandidate
 
-	handledRows, err := q.db().BotHandledDedupPayloads(q.ctx(), b.Id)
+	handledRows, err := q.db().BotHandledDedupPayloads(q.ctx(), db.BotHandledDedupPayloadsParams{BotID: b.Id, AutomationID: automationID})
 	if err != nil {
 		return err
 	}
@@ -1154,12 +1206,12 @@ func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
 		}
 	}
 
-	if resynced || len(qids) > 0 {
+	if event != "execution" && (resynced || len(qids) > 0) {
 		var argIDs []string
 		if !resynced {
 			argIDs = qids
 		}
-		qs, err := q.db().BotNeedsYouQuestions(q.ctx(), db.BotNeedsYouQuestionsParams{ProjectID: b.ProjectId, Ids: argIDs})
+		qs, err := q.db().BotNeedsYouQuestions(q.ctx(), db.BotNeedsYouQuestionsParams{ProjectID: b.ProjectId, Ids: argIDs, EnabledSince: enabledSince})
 		if err != nil {
 			return err
 		}
@@ -1173,7 +1225,7 @@ func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
 			if qu.AskedBy != nil && (ownActors[*qu.AskedBy] || ownExecIDs[*qu.AskedBy]) {
 				continue
 			}
-			dk := "needs_you:question:" + qu.ID
+			dk := dedup("needs_you:question:" + qu.ID)
 			if handled[dk] {
 				continue
 			}
@@ -1189,12 +1241,12 @@ func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
 		}
 	}
 
-	if resynced || len(eids) > 0 {
+	if event != "question" && (resynced || len(eids) > 0) {
 		var argIDs []string
 		if !resynced {
 			argIDs = eids
 		}
-		es, err := q.db().BotNeedsYouExecutions(q.ctx(), db.BotNeedsYouExecutionsParams{ProjectID: b.ProjectId, Ids: argIDs})
+		es, err := q.db().BotNeedsYouExecutions(q.ctx(), db.BotNeedsYouExecutionsParams{ProjectID: b.ProjectId, Ids: argIDs, EnabledSince: enabledSince})
 		if err != nil {
 			return err
 		}
@@ -1206,7 +1258,7 @@ func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
 				continue
 			}
 			prob := deref(ex.Problem)
-			dk := "needs_you:execution:" + ex.ID + ":" + problemDedupHash(prob)
+			dk := dedup("needs_you:execution:" + ex.ID + ":" + problemDedupHash(prob))
 			if handled[dk] {
 				continue
 			}
@@ -1222,18 +1274,21 @@ func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
 		}
 	}
 
+	advance := func() error {
+		if cursor == cur.NeedsYouChangeSeq {
+			return nil
+		}
+		if automation != nil {
+			return q.db().BotAutomationEventAdvance(q.ctx(), db.BotAutomationEventAdvanceParams{ID: automation.ID, EventCursor: cursor})
+		}
+		return q.db().BotWakeCursorUpsert(q.ctx(), db.BotWakeCursorUpsertParams{
+			BotID: b.Id, ProjectID: b.ProjectId, NeedsYouChangeSeq: cursor,
+			LastScheduleKey: cur.LastScheduleKey, LastScheduleAt: cur.LastScheduleAt,
+		})
+	}
 	if len(candidates) == 0 {
-		if cursor != cur.NeedsYouChangeSeq {
-			cur.NeedsYouChangeSeq = cursor
-			if err := q.db().BotWakeCursorUpsert(q.ctx(), db.BotWakeCursorUpsertParams{
-				BotID:             b.Id,
-				ProjectID:         b.ProjectId,
-				NeedsYouChangeSeq: cur.NeedsYouChangeSeq,
-				LastScheduleKey:   cur.LastScheduleKey,
-				LastScheduleAt:    cur.LastScheduleAt,
-			}); err != nil {
-				return err
-			}
+		if err := advance(); err != nil {
+			return err
 		}
 		if held && q.app != nil {
 			afterCommit(q, func() { q.app.wakeBots() })
@@ -1255,6 +1310,9 @@ func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
 	// If a run is already active (and bot is not paused), keep the Needs-you cursor deferred so the item wakes
 	// as soon as the active run completes, while recording a single deduplicated skipped run for observability.
 	if !b.Paused {
+		if err := acquireTxLock(q, "session:"+s.ID); err != nil {
+			return err
+		}
 		activeRun, err := q.db().BotRunActiveForBot(q.ctx(), b.Id)
 		hasActive := err == nil && activeRun.ID != ""
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -1265,7 +1323,8 @@ func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
 			return err
 		}
 		if hasActive || activeExec != nil {
-			_, _, err := admitBotWake(q, &b, botWakeReq{
+			_, _, err := admitBotWake(q, b, botWakeReq{
+				Automation: automation,
 				Cause:      "needs_you",
 				DedupKey:   "active_skip:" + primaryDedup,
 				Text:       prompt,
@@ -1278,7 +1337,8 @@ func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
 		}
 	}
 
-	if _, _, err := admitBotWake(q, &b, botWakeReq{
+	if _, _, err := admitBotWake(q, b, botWakeReq{
+		Automation: automation,
 		Cause:      "needs_you",
 		DedupKey:   primaryDedup,
 		DedupKeys:  dedupKeys,
@@ -1290,14 +1350,7 @@ func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
 	}); err != nil {
 		return err
 	}
-	cur.NeedsYouChangeSeq = cursor
-	return q.db().BotWakeCursorUpsert(q.ctx(), db.BotWakeCursorUpsertParams{
-		BotID:             b.Id,
-		ProjectID:         b.ProjectId,
-		NeedsYouChangeSeq: cur.NeedsYouChangeSeq,
-		LastScheduleKey:   cur.LastScheduleKey,
-		LastScheduleAt:    cur.LastScheduleAt,
-	})
+	return advance()
 }
 
 func linkBotTask(q *Request, botID, taskID, projectID, kind, createdBy string, botRunID, sessionID, executionID *string) error {

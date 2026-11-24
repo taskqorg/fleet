@@ -8,6 +8,8 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const botByHomeSession = `-- name: BotByHomeSession :one
@@ -148,17 +150,23 @@ func (q *Queries) BotGet(ctx context.Context, id string) (BotGetRow, error) {
 const botHandledDedupPayloads = `-- name: BotHandledDedupPayloads :many
 SELECT dedup_key, payload
 FROM bot_run
-WHERE bot_id = $1 AND tombstoned_at IS NULL
+WHERE bot_id = $1 AND tombstoned_at IS NULL AND cause = 'needs_you'
+  AND automation_id IS NOT DISTINCT FROM $2::text
   AND (state <> 'skipped' OR reason = 'paused')
 `
+
+type BotHandledDedupPayloadsParams struct {
+	BotID        string
+	AutomationID *string
+}
 
 type BotHandledDedupPayloadsRow struct {
 	DedupKey *string
 	Payload  []byte
 }
 
-func (q *Queries) BotHandledDedupPayloads(ctx context.Context, botID string) ([]BotHandledDedupPayloadsRow, error) {
-	rows, err := q.db.Query(ctx, botHandledDedupPayloads, botID)
+func (q *Queries) BotHandledDedupPayloads(ctx context.Context, arg BotHandledDedupPayloadsParams) ([]BotHandledDedupPayloadsRow, error) {
+	rows, err := q.db.Query(ctx, botHandledDedupPayloads, arg.BotID, arg.AutomationID)
 	if err != nil {
 		return nil, err
 	}
@@ -415,19 +423,21 @@ FROM execution
 WHERE project_id = $1::text
   AND tombstoned_at IS NULL
   AND problem IS NOT NULL
+  AND ($2::timestamptz IS NULL OR updated_at >= $2)
   AND problem NOT IN ('unknown:abandoned', 'cancelled')
   AND kind <> 'tool_run'
   AND NOT EXISTS (SELECT 1 FROM problem_dismissal x WHERE x.execution_id = execution.id)
   AND NOT (state IN ('succeeded', 'failed', 'cancelled') AND (problem LIKE 'unregistered host %' OR problem LIKE 'unregistered account %' OR problem LIKE 'no registered environment of project %'))
   AND NOT (kind = 'pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind = 'pipeline_run' AND r.problem IS NOT NULL AND r.id = coalesce(execution.parent_execution_id, split_part(execution.id, ':step:', 1))))
   AND EXISTS (SELECT 1 FROM definition d WHERE d.kind = 'project' AND d.id = execution.project_id)
-  AND ($2::text[] IS NULL OR id = ANY($2::text[]))
+  AND ($3::text[] IS NULL OR id = ANY($3::text[]))
 ORDER BY seq
 `
 
 type BotNeedsYouExecutionsParams struct {
-	ProjectID string
-	Ids       []string
+	ProjectID    string
+	EnabledSince pgtype.Timestamptz
+	Ids          []string
 }
 
 type BotNeedsYouExecutionsRow struct {
@@ -440,7 +450,7 @@ type BotNeedsYouExecutionsRow struct {
 }
 
 func (q *Queries) BotNeedsYouExecutions(ctx context.Context, arg BotNeedsYouExecutionsParams) ([]BotNeedsYouExecutionsRow, error) {
-	rows, err := q.db.Query(ctx, botNeedsYouExecutions, arg.ProjectID, arg.Ids)
+	rows, err := q.db.Query(ctx, botNeedsYouExecutions, arg.ProjectID, arg.EnabledSince, arg.Ids)
 	if err != nil {
 		return nil, err
 	}
@@ -471,14 +481,16 @@ SELECT id, code, project_id, task_id, execution_id, session_id, text, asked_by
 FROM question
 WHERE project_id = $1::text
   AND state = 'open'
+  AND ($2::timestamptz IS NULL OR asked_at >= $2)
   AND tombstoned_at IS NULL
-  AND ($2::text[] IS NULL OR id = ANY($2::text[]))
+  AND ($3::text[] IS NULL OR id = ANY($3::text[]))
 ORDER BY seq
 `
 
 type BotNeedsYouQuestionsParams struct {
-	ProjectID string
-	Ids       []string
+	ProjectID    string
+	EnabledSince pgtype.Timestamptz
+	Ids          []string
 }
 
 type BotNeedsYouQuestionsRow struct {
@@ -493,7 +505,7 @@ type BotNeedsYouQuestionsRow struct {
 }
 
 func (q *Queries) BotNeedsYouQuestions(ctx context.Context, arg BotNeedsYouQuestionsParams) ([]BotNeedsYouQuestionsRow, error) {
-	rows, err := q.db.Query(ctx, botNeedsYouQuestions, arg.ProjectID, arg.Ids)
+	rows, err := q.db.Query(ctx, botNeedsYouQuestions, arg.ProjectID, arg.EnabledSince, arg.Ids)
 	if err != nil {
 		return nil, err
 	}
@@ -783,8 +795,8 @@ func (q *Queries) BotRunIDByExecution(ctx context.Context, executionID *string) 
 }
 
 const botRunInsert = `-- name: BotRunInsert :execrows
-INSERT INTO bot_run(id, bot_id, project_id, bot_revision, memory_revision, session_id, execution_id, queued_message_id, cause, dedup_key, state, observation, quiet, reason, sent_by, source, payload)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+INSERT INTO bot_run(id, bot_id, project_id, bot_revision, memory_revision, session_id, execution_id, queued_message_id, cause, dedup_key, state, observation, quiet, reason, sent_by, source, payload, automation_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 ON CONFLICT DO NOTHING
 `
 
@@ -806,6 +818,7 @@ type BotRunInsertParams struct {
 	SentBy          string
 	Source          string
 	Payload         []byte
+	AutomationID    *string
 }
 
 func (q *Queries) BotRunInsert(ctx context.Context, arg BotRunInsertParams) (int64, error) {
@@ -827,6 +840,7 @@ func (q *Queries) BotRunInsert(ctx context.Context, arg BotRunInsertParams) (int
 		arg.SentBy,
 		arg.Source,
 		arg.Payload,
+		arg.AutomationID,
 	)
 	if err != nil {
 		return 0, err
@@ -938,20 +952,22 @@ FROM bot_run br
 LEFT JOIN execution e ON e.id = br.execution_id
 WHERE br.tombstoned_at IS NULL
   AND ($1::text IS NULL OR br.bot_id = $1)
-  AND ($2::text IS NULL OR br.project_id = $2)
-  AND (coalesce(cardinality($3::text[]), 0) = 0 OR br.project_id = ANY ($3))
-  AND NOT (br.project_id = ANY (coalesce($4::text[], ARRAY[]::text[])))
-  AND ($5::text IS NULL OR (CASE WHEN e.id IS NOT NULL THEN (CASE WHEN e.state::text = 'preparing' THEN 'queued' ELSE e.state::text END) ELSE br.state END) = $5)
-  AND ($6::text IS NULL OR br.cause = $6)
-  AND ($7::text IS NULL OR (CASE WHEN e.id IS NOT NULL THEN e.observation::text ELSE br.observation END) = $7)
-  AND ($8::boolean IS NULL OR br.quiet = $8)
-  AND ($9::bigint IS NULL OR (br.seq, br.id) < ($9::bigint, $10::text))
+  AND ($2::text IS NULL OR br.automation_id = $2)
+  AND ($3::text IS NULL OR br.project_id = $3)
+  AND (coalesce(cardinality($4::text[]), 0) = 0 OR br.project_id = ANY ($4))
+  AND NOT (br.project_id = ANY (coalesce($5::text[], ARRAY[]::text[])))
+  AND ($6::text IS NULL OR (CASE WHEN e.id IS NOT NULL THEN (CASE WHEN e.state::text = 'preparing' THEN 'queued' ELSE e.state::text END) ELSE br.state END) = $6)
+  AND ($7::text IS NULL OR br.cause = $7)
+  AND ($8::text IS NULL OR (CASE WHEN e.id IS NOT NULL THEN e.observation::text ELSE br.observation END) = $8)
+  AND ($9::boolean IS NULL OR br.quiet = $9)
+  AND ($10::bigint IS NULL OR (br.seq, br.id) < ($10::bigint, $11::text))
 ORDER BY br.seq DESC, br.id DESC
-LIMIT $11::int
+LIMIT $12::int
 `
 
 type BotRunsListParams struct {
 	BotID             *string
+	AutomationID      *string
 	ProjectID         *string
 	ProjectIds        []string
 	ExcludeProjectIds []string
@@ -993,6 +1009,7 @@ type BotRunsListRow struct {
 func (q *Queries) BotRunsList(ctx context.Context, arg BotRunsListParams) ([]BotRunsListRow, error) {
 	rows, err := q.db.Query(ctx, botRunsList,
 		arg.BotID,
+		arg.AutomationID,
 		arg.ProjectID,
 		arg.ProjectIds,
 		arg.ExcludeProjectIds,

@@ -177,6 +177,43 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
     await detail.getByText('HAL0 B isolated task', { exact: true }).waitFor();
     assert.equal(await detail.getByText('HAL0 A active fix', { exact: true }).count(), 0);
 
+    // FLT-26: the operator can configure and pause independent triggers, and open the selected wake's execution.
+    await tabs.getByRole('tab', { name: 'Automations' }).click();
+    await detail.getByRole('button', { name: 'New automation' }).click();
+    await detail.getByLabel('Name', { exact: true }).fill('HAL0 tariff refresh');
+    await detail.getByLabel('Instructions', { exact: true }).fill('Compare official provider tariffs in dry-run mode.');
+    await detail.getByRole('button', { name: 'Daily schedule', exact: true }).click();
+    await detail.getByLabel('Daily wake time', { exact: true }).fill('00:00');
+    await detail.getByLabel('Time zone', { exact: true }).fill('Asia/Tokyo');
+    await detail.getByRole('button', { name: 'Create automation' }).click();
+    const daily = detail.locator('section').filter({ has: p.getByRole('heading', { name: 'HAL0 tariff refresh', exact: true }) });
+    await daily.getByText('Next scheduled run', { exact: true }).waitFor();
+
+    await detail.getByRole('button', { name: 'New automation' }).click();
+    await detail.getByLabel('Name', { exact: true }).fill('Review decisions');
+    await detail.getByRole('button', { name: 'Needs you', exact: true }).click();
+    await detail.getByRole('button', { name: 'Questions', exact: true }).click();
+    await detail.getByRole('button', { name: 'Create automation' }).click();
+    const event = detail.locator('section').filter({ has: p.getByRole('heading', { name: 'Review decisions', exact: true }) });
+    await event.getByText('Questions', { exact: true }).waitFor();
+    await event.getByRole('button', { name: 'Edit', exact: true }).click();
+    await detail.getByLabel('Name', { exact: true }).fill('Review new decisions');
+    await detail.getByRole('button', { name: 'Save changes' }).click();
+    const updatedEvent = detail.locator('section').filter({ has: p.getByRole('heading', { name: 'Review new decisions', exact: true }) });
+
+    await daily.getByRole('button', { name: 'Run now', exact: true }).click();
+    await daily.getByRole('img', { name: /Queued|Running/ }).waitFor();
+    await daily.getByRole('button', { name: 'Pause automation' }).click();
+    await daily.getByRole('button', { name: 'Enable automation' }).waitFor();
+    assert.equal(await daily.getByText('Next scheduled run', { exact: true }).count(), 0);
+    await updatedEvent.getByRole('button', { name: 'Pause automation' }).waitFor();
+    await daily.getByRole('button', { name: 'Run history' }).click();
+    await p.waitForURL(/tab=runs&automation=/);
+    const history = detail.getByRole('table', { name: 'Bot runs' });
+    await history.getByText('HAL0 tariff refresh · revision 1', { exact: true }).waitFor();
+    await history.getByRole('button', { name: /Execution/ }).click();
+    await p.getByRole('button', { name: 'Open', exact: true }).waitFor();
+
     assert.deepEqual(errors, [], `unexpected page errors: ${errors.join('; ')}`);
     console.log('ok Bots Web UI (HAL0 two-project isolation, tasks, runs, questions_answer, errors, analytics, pause/resume)');
   } finally {
