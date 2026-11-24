@@ -62,6 +62,7 @@ The process helps, recommends and shows; it never blocks. The design and docs re
 4. **One source per rule.** A rule lives in one file; other files link to it.
 5. **Check against the book.** A page review checks it against the principles and the control specs it uses, not against taste.
 6. **A rule comes with its check.** A new owner rule names how it is checked ([owner rules](owner-rules.md#how-each-rule-is-checked)): a check on the rendered page where one is possible, otherwise the reviewer. Layout rules are checked on the rendered page, never by searching source text.
+7. **A target looks at what exists.** Before drawing a Target page, read the current page on the app and its rows in the [product map](product-map.md). Decide for each capability: keep it, change it, or drop it; much of today's build is clutter and should go, while working tools people rely on (grouping, sorting and saved views chosen by each person) are not lost by accident. The pull request lists what it drops and why, so the owner sees it.
 
 ## Inputs
 

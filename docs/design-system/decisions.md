@@ -531,3 +531,9 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Owner choices, answered by the owner the same day:** a session opened from Home is `/home/C-…`, full width, Home highlighted; the context panel is a right column and a sheet on a phone; Conversations grouping, sorting and saved views stay configurable per person, as built (the owner asked to keep them user-configurable), with Waiting for you first, then by project as the default view; a project opens on Sessions; Lab's idle screen is the Model × Pipeline matrix. The other options were removed from the canvases.
 * **Review of the current build:** each section spec checks its [product map](product-map.md) rows and says what it keeps, changes and drops; clutter goes, useful tools such as per-person grouping, sorting and saved views stay. Dropped: the conversation metrics header and per-boundary resource rows (into Details); the harness mark in conversation rows; resource analytics on Projects (cost lives on System › Spend); Lab's mode switch, summary strip and undecided banner; Library's harness and category breakdowns and the bot Analytics tab; the spend table on Runners.
 * **Not decided:** result codes for result URLs; a menu master for the Group menu (drawn as a marked stand-in).
+## 2026-11-25: A target keeps what works
+## 2026-11-25: A target looks at what exists
+
+* **Question:** the end-to-end variant proposed a fixed grouping for Conversations, while the app already lets each person choose grouping, sorting and saved views.
+* **Options:** a target keeps every current capability unless a decision removes it; or a target reviews each current capability and keeps, changes or drops it, listing the drops.
+* **Choice (owner):** review, not keep-all: much of the current build is clutter to clean out; the point is that useful tools are not lost by accident. Recorded as process step 7 in [README](README.md#process-spec-driven-design).
