@@ -296,9 +296,12 @@ func (a *App) bugsinkAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var p struct {
-		ID          string `json:"id"`
-		ProjectName string `json:"project_name"`
-		AlertReason string `json:"alert_reason"`
+		ID              string `json:"id"`
+		ProjectName     string `json:"project_name"`
+		AlertReason     string `json:"alert_reason"`
+		Title           string `json:"title"`
+		CalculatedType  string `json:"calculated_type"`
+		CalculatedValue string `json:"calculated_value"`
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, bugsinkBodyMax))
 	if err != nil || json.Unmarshal(body, &p) != nil {
@@ -328,7 +331,7 @@ func (a *App) bugsinkAlert(w http.ResponseWriter, r *http.Request) {
 	}
 	var asked bool
 	if err := a.store.Write(r.Context(), nil, []string{GLOBAL}, func(q *Request) (err error) {
-		asked, err = bugsinkProblem(q, p.ID, name, p.AlertReason)
+		asked, err = bugsinkProblem(q, p.ID, name, p.AlertReason, p.Title+"\n"+p.CalculatedType+": "+p.CalculatedValue)
 		return err
 	}); err != nil {
 		writeError(w, err)
@@ -354,7 +357,10 @@ type bugsinkProblemData struct {
 // bugsinkProblem opens the owner's needs-you problem for an issue: a new issue asks once while its problem holds the
 // cause (Dismiss keeps it quiet); a regression or an unmute is the issue coming back, so an earlier problem is let go
 // and the issue asks again. The problem belongs to the Fleet project whose errors.bugsink names the Bugsink project.
-func bugsinkProblem(q *Request, issue, project, reason string) (bool, error) {
+//
+// title is the issue's reported title, untrusted: it is only matched against the project's errors.ignore, never shown.
+// A matching issue asks nothing; it stays in Bugsink, where people mute or resolve it.
+func bugsinkProblem(q *Request, issue, project, reason, title string) (bool, error) {
 	cause := bugsinkCause + issue
 	if reason == "NEW" {
 		if held, err := problemHeld(q, cause); err != nil || held != nil {
@@ -367,8 +373,33 @@ func bugsinkProblem(q *Request, issue, project, reason string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if ignored, err := bugsinkIgnored(q, fleetProject, title); err != nil || ignored {
+		return false, err
+	}
 	data := bugsinkProblemData{AlertReason: reason, BugsinkProject: project, IssueID: issue}
 	return true, problemAsk(q, "direct", Problem{Cause: cause, Text: bugsinkText(issue, project, reason), ProjectID: fleetProject, Data: data})
+}
+
+// bugsinkIgnored: whether the title holds one of the Fleet project's errors.ignore substrings.
+func bugsinkIgnored(q *Request, fleetProject, title string) (bool, error) {
+	if fleetProject == "" {
+		return false, nil
+	}
+	raw, err := q.db().BugsinkIgnore(q.ctx(), fleetProject)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var subs []string
+	_ = json.Unmarshal(raw, &subs)
+	for _, s := range subs {
+		if s != "" && strings.Contains(title, s) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // bugsinkText: fixed wording, the project name (a checked Bugsink project name), the issue id and its link only. The

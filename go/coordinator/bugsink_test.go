@@ -274,6 +274,19 @@ func TestBugsinkAlert(t *testing.T) {
 	if err := bugsinkResolvedPass(e.ctx, e.app); err != nil || count("open") != 0 || count("withdrawn") != 1 {
 		t.Fatalf("resolved: %v, %d open, %d withdrawn", err, count("open"), count("withdrawn"))
 	}
+	// errors.ignore: an issue whose title holds an ignored substring asks nothing; others still ask.
+	if _, err := e.ownerStore.pool.Exec(e.ctx, `UPDATE definition_revision r SET content=jsonb_set(r.content::jsonb,'{settings,errors}','{"bugsink":["fleet-web"],"ignore":["ResizeObserver loop","rm -rf"]}')::text
+		FROM definition d WHERE d.kind='project' AND d.id='hello-world' AND r.kind=d.kind AND r.id=d.id AND r.revision=d.head`); err != nil {
+		t.Fatal(err)
+	}
+	quiet := "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
+	if code, body := e.post(t, path+"s3cret", alertBody("NEW", quiet), nil); code != 200 || !strings.Contains(body, `"asked":false`) {
+		t.Fatalf("ignored title asked: %d %s", code, body)
+	}
+	other, _ := json.Marshal(map[string]any{"id": quiet, "project_name": "fleet-web", "alert_reason": "NEW", "title": "TypeError: x is undefined"})
+	if code, body := e.post(t, path+"s3cret", other, nil); code != 200 || !strings.Contains(body, `"asked":true`) {
+		t.Fatalf("other title did not ask: %d %s", code, body)
+	}
 }
 
 // Requirement: fleet-error-tracking.md, project mapping: errors.bugsink takes Bugsink project names only. Risk: a typo
@@ -285,6 +298,14 @@ func TestErrorsSetting(t *testing.T) {
 	}
 	if s, _, _ := projectSettings(doc{}); len(anys(mapOf(s["errors"])["bugsink"])) != 0 {
 		t.Fatalf("default: %v", s["errors"])
+	}
+	if s, _, err := projectSettings(doc{"errors": doc{"ignore": []any{"ResizeObserver loop"}}}); err != nil || len(anys(mapOf(s["errors"])["ignore"])) != 1 {
+		t.Fatalf("ignore: %v %v", s["errors"], err)
+	}
+	for _, bad := range []any{"", " ", 3} {
+		if _, _, err := projectSettings(doc{"errors": doc{"ignore": []any{bad}}}); err == nil || !strings.Contains(err.Error(), "errors.ignore") {
+			t.Fatalf("ignore %v: %v", bad, err)
+		}
 	}
 	for _, bad := range []any{"Fleet Web", "", 3, "../x"} {
 		if _, _, err := projectSettings(doc{"errors": doc{"bugsink": []any{bad}}}); err == nil || !strings.Contains(err.Error(), "errors.bugsink") {
