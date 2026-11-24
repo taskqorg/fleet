@@ -232,9 +232,14 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     console.log(`groups 3,4,7 per frame after a reload: ${reloaded.join(' > ')}`);
     rule(N, reloaded.at(-1) === want && !flashed(reloaded).length, `after a reload: groups not as left from the first frame: ${reloaded.join(' > ')}`);
     // Grouping by project and back to state keeps them too.
+    await page.locator('[data-ui=group-control] button').first().click();
+    await page.locator('[data-ui=group-control] [role=menuitemradio]', { hasText: 'Project' }).click(); await page.waitForURL(u => !u.search.includes('group=state'));
+    await page.locator('[data-ui=group-control] button').first().click();
+    await page.locator('[data-ui=group-control] [role=menuitemradio]', { hasText: 'State' }).click(); await header('7').waitFor();
+    rule(N, [await header('3').getAttribute('aria-expanded'), await header('4').getAttribute('aria-expanded'), await header('7').getAttribute('aria-expanded')].join(',') === want, 'switching the grouping back lost the collapsed groups');
     // Opening a task: inside the Tasks facet the task replaces the list (docs/design-system/pages/projects.md) under its
     // project's facet route; Back returns to the list as it was.
-    await page.keyboard.press('Escape');
+    await page.goto(origin + '/tasks?group=none'); await page.waitForSelector('.pw-facet .vl-row .row-link');
     const beforeFocus = await url();
     await page.locator('.pw-facet .vl-row .row-link').first().click();
     await page.waitForSelector('[data-ui=detail] .detail-title');
@@ -248,11 +253,6 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     rule(N, await taskTab.evaluate(() => location.pathname + location.search) === focused, 'a copied task link did not reopen the task');
     await taskTab.close();
     await page.goBack(); await page.waitForSelector('.pw-facet [data-ui=data-list] .vl-row .row-link');
-    await page.locator('[data-ui=group-control] button').first().click();
-    await page.locator('[data-ui=group-control] [role=menuitemradio]', { hasText: 'Project' }).click(); await page.waitForURL(u => !u.search.includes('group=state'));
-    await page.locator('[data-ui=group-control] button').first().click();
-    await page.locator('[data-ui=group-control] [role=menuitemradio]', { hasText: 'State' }).click(); await header('7').waitFor();
-    rule(N, [await header('3').getAttribute('aria-expanded'), await header('4').getAttribute('aria-expanded'), await header('7').getAttribute('aria-expanded')].join(',') === want, 'switching the grouping back lost the collapsed groups');
   } finally { await page.close(); await close(); }
 }
 
