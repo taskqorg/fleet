@@ -495,3 +495,12 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 
 * **Choice:** show the current email rule alongside Fleet admission. Keep a revoked identity with unresolved edge removal available in the existing list and detail workspace. Use the shared error and action controls for retry.
 * **Reason:** the owner can identify and repair a failed edge change after Fleet access is revoked.
+
+## 2026-11-25: Conversation-first Fleet, rules v2
+
+* **Question (owner):** navigation is incoherent, elements differ between screens, data is shown without logic and transitions are unclear. Asked to fix it as a whole, with a rule list that every screen follows.
+* **Evidence (live site, 24 Nov, 1440 and 390 px, dark):** 18 screens and 8 rail items, so 10 screens are reachable only by URL or Spotlight; `/agents`, `/pipelines` and `/catalogue` render the same page, and so do `/hosts`, `/keys` and `/runners`; 22 of 34 Needs-you rows are the same failure; one state is called Done, Completed and Succeeded; a conversation shows a metrics header, one row per tool call, repeated attachments and raw UUIDs; on a phone, task titles shrink to 5–8 characters.
+* **Options:** a host-centric Overview (fleet map, flow board, pulse timeline); three navigation maps (keep 8 sections, 6 sections with one Work list, project first); a conversation-first product. All were rendered on a design board.
+* **Choice (owner):** conversation first. Three principles: glance, work through conversation, details on demand. Screen 1 is Home with sessions; screen 2 is Live, a technical wall of everything that runs. The rail has seven sections: Home, Live, Conversations, Projects, Lab, Library, System. The host-centric Overview options were not taken.
+* **Recorded as:** [principles](owner-rules.md#principles), OR-50 to OR-61 and new wording of OR-19, OR-24, OR-27, OR-40, OR-43 and OR-46 in [owner rules](owner-rules.md); the seven sections in [information architecture](../designs/fleet-ia-and-journeys.md#1-closed-information-architecture); [navigation and columns](patterns/navigation-and-columns.md).
+* **Not decided:** the session context panel ([FLT-30](https://youtrack.ufobe.com/issue/FLT-30)); the Telegram channel's rooms and approval cards ([FLT-31](https://youtrack.ufobe.com/issue/FLT-31) and its subtasks); page specs for Home and Live; each new rule's automated check.

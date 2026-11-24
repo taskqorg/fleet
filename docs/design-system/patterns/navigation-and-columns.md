@@ -6,7 +6,7 @@
 
 ## 1. Three-column roles
 
-Every screen follows one three-column structure (`OR-24`, `OR-41`, `OR-43`):
+Catalogue sections follow one three-column structure (`OR-24`, `OR-41`, `OR-43`); Home and Live are full-width pages, and an open session is the conversation with an optional context panel (`OR-50`, `OR-51`):
 
 * **Nav Rail** (`NavRail`): top-level section anchors, pinned sections (`OR-12`), and the signed-in user block (`OR-42`). Toggled from the shell header without moving rows or icons (`OR-23`).
 * **Control Column** (`size-ctl`): the section's single filterable catalogue (`VirtualList` or compact hand-built list inside `ListDetail`). Opening an item fills the Work Area while keeping the Control Column mounted: active filters, search query, and scroll position remain intact, and the opened row stays highlighted (`.sel`). Never early-return or replace the `ListDetail` Control Column when an item `id` is selected. Sections with no catalogue (`Runners`) omit the Control Column; `Overview` uses the Needs-you inbox as its Control Column. At narrow widths (`<= 1100 px`), CSS toggles visibility between the Control Column and the opened Work Area without unmounting state.
@@ -26,7 +26,7 @@ Every screen follows one three-column structure (`OR-24`, `OR-41`, `OR-43`):
 
 ## 4. Navigation and column causality
 
-The `NavRail` follows the Work and System groups in the [information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture).
+The `NavRail` lists the seven sections of the [information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture); until that rail is built it keeps the Work and System groups.
 
 * **No second shell bar (`OR-46`):** Horizontal `<nav class="sub-nav">` bars above columns are forbidden. One `NavRail` and one `ShellHeader` serve every screen.
 * **No mode tabs in the Control Column (`OR-46`, `OR-48`):** Object navigation inside `Lab` (`Use Cases`, `Runs`), `Library` (`Methods`, `Pipelines`, `Agents`, `Skills`), and `Infrastructure` (`Hosts`, `Accounts`, `Connections & API keys`, `Runners`) lives in one unified `CatalogueTree` inside the Control Column (`ListPagePanel` serves `Overview`, `Conversations`, `Projects`, `Tasks`, and `Delivery`; `Spend` and `Runners` omit a catalogue).
