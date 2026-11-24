@@ -130,7 +130,8 @@ export async function prepareSending<K extends 'message_send' | 'session_start'>
   const digest = async (value: unknown) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value))))].map(byte => byte.toString(16).padStart(2, '0')).join('');
   const retained = previous.operation === operation && previous.body ? previous.body as Ops[K]['request'] : { ...body, requestId } as Ops[K]['request'];
   const fields = retained as Record<string, unknown>;
-  const targetMatches = operation === 'message_send' ? scope.target.kind === 'session' && fields.sessionId === scope.target.id
+  const message = retained as Ops['message_send']['request'];
+  const targetMatches = operation === 'message_send' ? scope.target.kind === 'session' && (message.composer?.conversationId ?? message.sessionId) === scope.target.id
     : scope.target.kind === 'project' && (fields.projectId ?? '-') === scope.target.id && (fields.preset ?? fields.role) === scope.target.roleId;
   if (!targetMatches || fields.text !== text || fields.requestId !== requestId) throw Error('Stored submission does not match its authorized target');
   const bodySha = await digest(retained); checkScope(scope);

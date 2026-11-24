@@ -253,6 +253,7 @@ function Conversation(props: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
   const [verifiedTarget, setVerifiedTarget] = createSignal<string | null>(null, { ownedWrite: true });
   const sDoc = useOp('session_get', () => ({ sessionId: props.id }));
+  const targetDoc = useOp('thread_composer', () => ({ conversationId: props.id }));
   // A fresh answer (not the stored copy) for this conversation validates the composer's target.
   createEffect(
     () => [sDoc.data, sDoc.restored, props.id] as const,
@@ -328,7 +329,8 @@ function Conversation(props: { id: string; onClose: () => void }) {
     setAnswers(current => ({ ...current, [row.id]: row }));
     return row;
   }
-  const [panel, setPanel] = createSignal<'switch' | 'handoff' | 'rename' | 'fresh' | null>(null);
+  const [panel, setPanel] = createSignal<'rename' | 'fresh' | { session: SessionGetReply; handoff: boolean } | null>(null);
+  const switchPanel = createMemo(() => { const current = panel(); return typeof current === 'object' ? current : null; });
   const [nextInstruction, setNextInstruction] = createSignal('');
   const [forking, setForking] = createSignal(false);
   const openConversation = (sessionId: string) => go(nextUrl(location.pathname + location.search, 'conversations', { focus: sessionId }));
@@ -380,7 +382,10 @@ function Conversation(props: { id: string; onClose: () => void }) {
     },
   );
   // Files for the next message: uploaded as they are added (picker, paste, drop over the conversation).
-  const files = useAttachments(() => ({ sessionId: props.id }));
+  const taskUpload = createMemo(() => !!targetDoc.data?.key.task);
+  const uploadProject = createMemo(() => sDoc.data?.projectId);
+  const uploadTarget = createMemo(() => taskUpload() ? { projectId: uploadProject() } : { sessionId: props.id });
+  const files = useAttachments(uploadTarget);
   // The hit is scrolled to once the replaced window is on screen.
   const [jumpTo, setJumpTo] = createSignal<string | null>(null, { ownedWrite: true });
   createEffect(
@@ -418,9 +423,27 @@ function Conversation(props: { id: string; onClose: () => void }) {
   });
 
   const s = () => sDoc.data;
-  const running = (e: SessionExecution) => !['succeeded', 'failed', 'cancelled'].includes(e.state) && e.observation !== 'unconfirmed';
-  // Composer target: the newest running execution; with none, a new message starts one (design "Controls").
-  const active = createMemo(() => s()?.executions.filter(running).at(-1));
+  const active = createMemo(() => targetDoc.data?.active);
+  const targetID = createMemo(() => targetDoc.data?.sessionId);
+  const targetSessionDoc = useOp('session_get', () => {
+    const sid = targetID();
+    return sid && sid !== props.id ? { sessionId: sid } : null;
+  });
+  const targetSession = () => targetID() === props.id ? s() : targetSessionDoc.data;
+  const targetChips = createMemo(() => {
+    const session = targetSession();
+    return session ? composerChips(session, active(), () => setPanel({ session, handoff: false })) : [];
+  });
+  const composerReason = () => {
+    if (off()) return 'offline';
+    if (targetDoc.error || targetSessionDoc.error) return 'Conversation target unavailable';
+    if (!targetDoc.data || verifiedTarget() !== props.id) return 'Validating conversation';
+    if (!targetID()) return 'No session can receive messages';
+  };
+  const stopComposer = createMemo(() => {
+    const executionId = active()?.id;
+    return executionId ? () => run(() => op('execution_stop', { executionId })) : undefined;
+  });
   const latest = createMemo(() => s()?.executions.at(-1));
   // Older coordinator replies and retained detail snapshots carry only the run list.
   const sessionState = () => (s()?.state ?? latest()?.state ?? 'idle') as StateOf<'session'>;
@@ -431,7 +454,9 @@ function Conversation(props: { id: string; onClose: () => void }) {
   });
   const openQs = createMemo(() => {
     const ans = answers();
-    return (s()?.questions ?? []).filter(q => (ans[q.id] ?? q).state === 'open');
+    const questions = new Map((s()?.questions ?? []).map(q => [q.id, q]));
+    for (const q of targetSession()?.questions ?? []) questions.set(q.id, q);
+    return [...questions.values()].filter(q => (ans[q.id] ?? q).state === 'open');
   });
   const last = () => s()?.messages.at(-1);
   const lastMessage = () => last()?.text;
@@ -489,8 +514,8 @@ function Conversation(props: { id: string; onClose: () => void }) {
                     run(() => writeOnce('message_send', { sessionId: props.id, requestId, text: msg ?? '', ...(fs.length ? { attachments: fs } : {}) }, unknown, { signal: alive }));
                   },
                 },
-                { label: 'Switch profile or model', icon: 'sliders-horizontal', onClick: () => setPanel('switch') },
-                { label: 'Hand off to another agent', icon: 'bot', onClick: () => setPanel('handoff') },
+                { label: 'Switch profile or model', icon: 'sliders-horizontal', onClick: () => setPanel({ session: s()!, handoff: false }) },
+                { label: 'Hand off to another agent', icon: 'bot', onClick: () => setPanel({ session: s()!, handoff: true }) },
                 { label: 'Fork', icon: 'git-merge', onClick: () => fork() },
                 { label: 'Start fresh with context', icon: 'git-merge', disabledReason: latest() ? undefined : 'Send a message first', onClick: () => setPanel('fresh') },
               ]}
@@ -517,15 +542,15 @@ function Conversation(props: { id: string; onClose: () => void }) {
               </InlineForm>
             </DetailSection>
           </Show>
-          <Show when={panel() === 'switch' || panel() === 'handoff'}>
+          <Show when={switchPanel()} keyed>{action => (
             <SwitchPanel
-              sessionId={props.id}
-              handoff={panel() === 'handoff'}
-              current={str(rec(s()!.agentConfig).id)}
+              sessionId={action.session.sessionId}
+              handoff={action.handoff}
+              current={str(rec(action.session.agentConfig).id)}
               onDone={note => { setPanel(null); if (note) setFailure(null); }}
               run={run}
             />
-          </Show>
+          )}</Show>
           <div class="state-line">
             <Show when={sessionState() in states_.session}>
               <StateBadge
@@ -570,8 +595,12 @@ function Conversation(props: { id: string; onClose: () => void }) {
               when={failure()}
               keyed
               fallback={
-                <Show when={thread.error}>
-                  {err => <ErrorBanner text={`Thread did not load: ${err()}`} onRetry={thread.newest} />}
+                <Show when={targetDoc.error || targetSessionDoc.error} fallback={
+                  <Show when={thread.error}>
+                    {err => <ErrorBanner text={`Thread did not load: ${err()}`} onRetry={thread.newest} />}
+                  </Show>
+                }>
+                  {err => <ErrorBanner text={`Conversation target did not load: ${err()}`} onRetry={() => { targetDoc.reload(); targetSessionDoc.reload(); }} />}
                 </Show>
               }
             >
@@ -582,7 +611,7 @@ function Conversation(props: { id: string; onClose: () => void }) {
             when={activeConvTab() === 'swarm'}
             fallback={
               <div class="pane" data-related-work={String(inRelated())}>
-                <DropZone onFiles={files.add} disabledReason={off() ? 'offline' : undefined}>
+                <DropZone onFiles={files.add} disabledReason={composerReason()}>
                   <Show when={!!thread.win} fallback={<Skeleton rows={6} />}>
                     <Show when={!!scope()}>
                       <Thread
@@ -633,20 +662,26 @@ function Conversation(props: { id: string; onClose: () => void }) {
                       />
                     )}
                   </For>
-                  <Show when={active()} keyed>
+                  <Show when={active()} keyed fallback={
+                    <Show when={targetID() && targetID() !== props.id}>
+                      <div class="composer-bar"><EntityCode id={targetID()!} kind="conversation" /></div>
+                    </Show>
+                  }>
                     {act => <div class="composer-bar"><EntityCode id={act.id} kind="execution" /></div>}
                   </Show>
                   <Composer
                     draftPersistence={draftPersistence()}
-                    disabledReason={off() ? 'offline' : verifiedTarget() !== props.id ? 'Validating conversation' : undefined}
+                    disabledReason={composerReason()}
                     placeholder={active() ? 'Steer' : 'Message'}
                     onAttach={files.add}
                     attachments={files.items}
                     onRemoveAttachment={files.remove}
-                    chips={composerChips(s()!, active(), () => setPanel('switch'))}
-                    onStop={active() ? () => run(() => op('execution_stop', { executionId: active()!.id })) : undefined}
-                    stopReason={off() ? 'offline' : undefined}
+                    chips={targetChips()}
+                    onStop={stopComposer()}
+                    stopReason={composerReason()}
                     onSend={async text => {
+                      const sid = untrack(targetID), executionId = untrack(active)?.id ?? null;
+                      if (!sid || untrack(composerReason)) throw Error('Conversation target unavailable');
                       // Files still uploading finish first; a failed one fails the send and stays on its chip.
                       let attachments: string[];
                       try { attachments = await files.ready(); } catch (e) { setFailure({ text: `Attachment not uploaded: ${errText(e)}` }); throw e; }
@@ -654,9 +689,9 @@ function Conversation(props: { id: string; onClose: () => void }) {
                       // of the same text and files after a failure or a reload is the same write, never a second one; other files make
                       // a new message (submissionKey). A definite error (nothing stored) clears it. A message with files is queued
                       // while the agent runs (its files are staged before a turn), so it is never a steer.
-                      const curActive = untrack(active);
                       const dScope = authorizedDraftScope({ kind: 'session', id: props.id });
-                      const body = { sessionId: props.id, text, ...(attachments.length ? { attachments } : curActive ? { delivery: 'steer' } : {}) };
+                      const body = { sessionId: sid, text, composer: { conversationId: props.id, executionId },
+                        ...(attachments.length ? { attachments } : executionId ? { delivery: 'steer' } : {}) };
                       const request = await prepareSending(dScope, 'message_send', body), sKey = submissionKey(body);
                       setFailure(null);
                       try {
@@ -667,6 +702,7 @@ function Conversation(props: { id: string; onClose: () => void }) {
                       } catch (e) {
                         if (!(e instanceof AccessChanged) && !(e instanceof OpError && e.message === 'aborted')) {
                           if (!unknownOutcome(e)) sendingId(dScope, null, sKey);
+                          if (e instanceof OpError && e.status === 409) targetDoc.reload();
                           setFailure({ text: errText(e) });
                         }
                         throw e;

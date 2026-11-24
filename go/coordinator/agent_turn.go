@@ -264,6 +264,7 @@ func attachmentIDs(xs []string) ([]string, error) {
 // agentSubmit: a message starts a turn, or is queued (or steered) behind an active execution; nothing is refused for
 // being busy. source is internal provenance, never taken from the caller's arguments.
 func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (agentSubmitted, error) {
+	const changedComposerTarget = "Composer target changed. Review the new target and send again."
 	var none agentSubmitted
 	sid := deref(r.SessionId)
 	if sid == "" {
@@ -272,6 +273,16 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 	s, err := sessionLocked(q, sid)
 	if err != nil {
 		return none, err
+	}
+	var conversation agentSession
+	if r.Composer != nil {
+		conversation, err = sessionByID(q, r.Composer.ConversationId)
+		if err != nil {
+			return none, err
+		}
+		if conversation.ProjectID != s.ProjectID {
+			return none, errNotFound
+		}
 	}
 	requestID := deref(r.RequestId)
 	if requestID == "" {
@@ -313,6 +324,19 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 		v, err := queueView(q, queued[0])
 		return agentSubmitted{queued: &queued[0], view: v}, err
 	}
+	if r.Composer != nil {
+		target, err := composerTarget(q, &conversation)
+		if err != nil {
+			return none, err
+		}
+		var executionID string
+		if target.Active != nil {
+			executionID = target.Active.Id
+		}
+		if deref(target.SessionId) != sid || executionID != deref(r.Composer.ExecutionId) {
+			return none, fail(409, changedComposerTarget)
+		}
+	}
 	if err := taskAllowsWork(q, firstString(s.DeliveryID, s.TaskID)); err != nil {
 		return none, err
 	}
@@ -321,8 +345,17 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 	if err != nil {
 		return none, err
 	}
-	active, err := agentActive(q, sid)
-	if err != nil {
+	var active *agentExecution
+	if r.Composer != nil && r.Composer.ExecutionId != nil {
+		e, err := getExecution(q, *r.Composer.ExecutionId)
+		if err != nil {
+			return none, err
+		}
+		if e.SessionID != sid || e.terminal() || e.unconfirmed() {
+			return none, fail(409, changedComposerTarget)
+		}
+		active = &e
+	} else if active, err = agentActive(q, sid); err != nil {
 		return none, err
 	}
 	waiting, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: &sid, State: ptr("queued")})

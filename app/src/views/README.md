@@ -20,6 +20,7 @@ Each file exports one routed SolidJS 2.0 screen. `main.tsx:SCREENS` maps the reg
 - List screens use server rows through `store.ts:useList`; `Tasks` and `Conversations` share `list-page.tsx:useListPage`, which retains server ordering and membership for the filtered page, reads accessible pinned rows separately by ID in server-sized batches (Tasks unfiltered, Conversations filtered by the archived list the view shows), and keeps those rows visible and selectable across filters. Pin-read failures remain visible and retryable. `Delivery` uses the same pattern over the rows `delivery_status` returns, filtered, grouped and sorted in the browser (`LocalList`); its pins come from those rows.
 - Writes with uncertain outcomes preserve the existing request identity or retain an uncertain receipt for user review (`conversations.tsx:Conversation`, `lab-create.tsx:LabCreate`).
 - Conversations starts a fresh child through `session_fork`. It reads lineage, packet status and recipient execution from `session_get`, and reads the authorized packet text through `session_handoffs`.
+- Conversations reads its composer destination through `thread_composer` independently of transcript pagination. Drafts remain scoped to the open conversation and each submitted request retains its displayed destination.
 - `LabCreate` does not launch an experiment: it creates a draft and validates a readback before navigating to it.
 
 ## Side Effects
