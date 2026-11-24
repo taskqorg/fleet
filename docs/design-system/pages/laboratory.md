@@ -13,7 +13,7 @@
 Three columns ([OR-24](../owner-rules.md)). Shell header: title, New experiment (`plus`), focus chip, search.
 
 * **Control column** (`CatalogueTree`, [OR-48](../owner-rules.md)): two roots, **Use cases** (LLM Code Benchmarks, Real Work, Fleet & Projects, folded Archived) and **Runs** (Active, Drafts, Completed, folded Stopped); one tree, no mode switch ([OR-46](../owner-rules.md)). Above it the list header with search and saved views (Mine, Waiting for a decision). A leaf: state icon, name, code, best score on the right.
-* **Work area, idle** (J1, under 5 s): what waits for the person first (ratings and undecided series as question cards, [OR-53](../owner-rules.md)); then the comparison of the selected collection: **Model × Pipeline** with score, median wall time and failure rate in each cell ([owner choice](#owner-choices-target)); cost and tokens fold into the cell's Details ([OR-54](../owner-rules.md), [OR-59](../owner-rules.md)); a winning cell has Promote (J3).
+* **Work area, idle** (J1, under 5 s): what waits for the person first (ratings and undecided series as question cards, [OR-53](../owner-rules.md)); then the comparison of the selected collection: **Model × Pipeline** with score, median wall time and failure rate in each cell ([owner decision](#owner-decision-target)); cost and tokens fold into the cell's Details ([OR-54](../owner-rules.md), [OR-59](../owner-rules.md)); a winning cell has Promote (J3).
 * **Work area, use case open:** goal and expected outcome, approved examples, the comparison scoped to this use case, and **Run in Lab** (J2).
 * **Work area, experiment open:** head (state, title, code, Launch, Stop, Promote), the matrix (examples × variants, cells with state and score, live step `2/3 · review`), variants as differences from the baseline ([OR-45](../owner-rules.md)), the decision gate, ratings.
 * **Work area, new:** the create form with EntityPicker choices; Launch in at most 3 clicks from a use case (J2).
@@ -24,9 +24,13 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New experiment 
 * **A trial failed:** the cell is in the danger tone with its `problem` cause inline; one click opens the trial (UR-63).
 * **Phone (390 px):** the tree; an opened use case shows the ranked list of variants instead of the matrix.
 
-### Owner choices (target)
+### Owner decision (target)
 
-1. **Idle comparison.** *Recommended:* a Model × Pipeline matrix, the form J1 names. *Other:* a ranked list of variants (score, time, failure rate), one row each, easier on a narrow screen. Both are drawn on [screens/lab.bl](../board/screens/lab.bl).
+The idle Lab screen shows the Model × Pipeline matrix (owner, 2026-11-25). On a phone a use case shows its variants as a ranked table.
+
+### Kept from the current build
+
+Everything in **Current build** below stays: the use-case card, the suite leaderboard with Promote, the Runs questions view, Waiting for you with ratings and example approvals, New experiment with its EntityPicker form and its uncertain-reply handling, the experiment page (spend, matrix, loops, variants, decision gate, ratings), trial plan inspection, and Personal Lab as the saved view "Mine".
 
 ### Blocks
 
@@ -37,7 +41,7 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New experiment 
 
 ### Design board
 
-Canvas [screens/lab.bl](../board/screens/lab.bl): idle with the comparison, an experiment open, both comparison forms, phone.
+Canvas [screens/lab.bl](../board/screens/lab.bl): idle with the matrix, an experiment open, phone.
 
 ## Current build
 

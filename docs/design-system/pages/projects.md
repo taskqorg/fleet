@@ -29,7 +29,7 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New project (`p
   1. Project head: name, code, readiness, and "Talk to PM" (opens the PM session, [OR-51](../owner-rules.md)).
   2. Facet tab bar ([OR-46](../owner-rules.md), [OR-49](../owner-rules.md)): **Sessions · Tasks · Delivery · Results · Rules & methods**. A tab never rebuilds the control column ([OR-47](../owner-rules.md)).
   3. The facet:
-     * **Sessions** (default, [owner choice](#owner-choices-target)): the PM card first, then this project's active session cards as on Home, then the latest finished ones as rows. A card opens the [session view](session.md).
+     * **Sessions** (default, [owner decision](#owner-decision-target)): the PM card first, then this project's active session cards as on Home, then the latest finished ones as rows. A card opens the [session view](session.md).
      * **Tasks:** the task list with saved views (Running is every non-terminal state), rows as [Tasks](tasks.md) specifies; an opened task replaces the list inside the facet with the task detail ([OR-39](../owner-rules.md)) and a link to the session that does it; Close returns to the list ([OR-15](../owner-rules.md)).
      * **Delivery:** the stage list and pace of [Delivery](delivery.md), filtered to the project.
      * **Results:** the result list and viewer of [Results](results.md), filtered to the project.
@@ -44,9 +44,13 @@ Tasks, results and delivery of all projects in focus are one facet away: on `/pr
 * **Not ready:** the project head shows readiness reasons in the attention tone, with the fix action named; the project still opens.
 * **Phone (390 px):** project list; an opened project shows its facets as a scrollable tab bar inside the work area; a task opens full screen.
 
-### Owner choices (target)
+### Owner decision (target)
 
-1. **Default facet.** *Recommended:* Sessions, since work is reached through who does it. *Other:* Tasks, the list operators use today. Both are drawn on [screens/projects.bl](../board/screens/projects.bl).
+A project opens on Sessions (owner, 2026-11-25).
+
+### Kept from the current build
+
+Everything in **Current build** below stays: New project and the project editor (context, repository, environments, agent roles, initial access, readiness with Open PM conversation) with its single Save and revision check, in Rules & methods; settings from defaults ([OR-45](../owner-rules.md)); methods with Lab evidence; resource analytics (`analytics_query`), as the Resources detail under the project head and across projects on `/projects`; the Tasks, Delivery and Results lists with their filter bars, saved views, grouping, sorting, pins, selection and row menus, as [Tasks](tasks.md), [Delivery](delivery.md) and [Results](results.md) specify.
 
 ### Open (target)
 
@@ -61,7 +65,7 @@ Tasks, results and delivery of all projects in focus are one facet away: on `/pr
 
 ### Design board
 
-Canvas [screens/projects.bl](../board/screens/projects.bl): idle, project open on Sessions, a task open in Tasks, Rules & methods, both default facets, phone.
+Canvas [screens/projects.bl](../board/screens/projects.bl): idle, project open on Sessions, a task open in Tasks, Rules & methods, phone.
 
 ## Current build
 

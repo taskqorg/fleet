@@ -36,6 +36,10 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, the section's a
 
 As each root's spec says ([hosts](hosts.md), [runners](runners.md), [spend](spend.md)); plus connections and keys (`/keys` today) and people and access (`/humans` today).
 
+## Kept from the current build
+
+Everything the root specs describe stays ([hosts](hosts.md), [runners](runners.md), [spend](spend.md)), and today's `/keys` (connections with keys, access, intake, balancing and limits) and `/humans` (people, access, Cloudflare Access state, New person) pages.
+
 ## Data
 
 `hosts_list`, `telemetry_summary`, `telemetry_findings`, `account_list`, `subscription_limits`, `connections_list`, `executions_runners`, `executions_ci`, `spend_summary`, `people_list`. The idle summary is one read over the same operations, so agents see the same readiness (fleet.md R2).

@@ -14,7 +14,7 @@ Three columns ([OR-24](../owner-rules.md)): navigation, control column, work are
 
 * **Control column** (`ListPagePanel`, [OR-48](../owner-rules.md)):
   1. List header: the count (`84 of 1,240`, [OR-11](../owner-rules.md)), the search icon ([OR-31](../owner-rules.md)) and the saved views: system presets Needs me, Running, and the person's own ([OR-33](../owner-rules.md)).
-  2. Group and Sort as icons ([OR-35](../owner-rules.md)); grouped by project by default ([owner choice](#owner-choices-target)).
+  2. Group and Sort as icons ([OR-35](../owner-rules.md)). Grouping, sorting and saved views stay set by each person, as in the current build ([owner decision](#owner-decision-target)); the default view groups Waiting for you first, then by project. The Group icon opens a short menu: project, state in attention order, agent, none.
   3. Rows: pin, state icon, the session's name (bot or PM name, else the first message) taking the free width, its code after it as a pair ([OR-22](../owner-rules.md)); the right zone: an open question in the attention tone, time since the last activity, the harness mark ([OR-37](../owner-rules.md)). The whole row opens the session ([OR-26](../owner-rules.md)).
 * **Work area, idle** ([useful idle work area](../patterns/list-detail.md)): what needs the person first (sessions waiting for an answer, as question cards answered in place, [OR-53](../owner-rules.md)), then a summary by project and state as counters ([OR-29](../owner-rules.md)), then the latest finished sessions with their outcome line. Never a second copy of the list.
 * **Work area, a session open:** the [session view](session.md) in its Conversations frame.
@@ -26,20 +26,24 @@ Three columns ([OR-24](../owner-rules.md)): navigation, control column, work are
 * **Archived:** the archive toggle in the list header, as built.
 * **Phone (390 px):** the list fills the screen; a row opens the session full screen; the bottom bar keeps Conversations highlighted ([OR-60](../owner-rules.md)).
 
-### Owner choices (target)
+### Owner decision (target)
 
-1. **Default grouping.** *Recommended:* by project, since a person thinks in projects and the PM leads each group. *Other:* by state in attention order (Waiting for you, Failed, Working, Queued, Done). Both are drawn on [screens/conversations.bl](../board/screens/conversations.bl).
+Grouping is not fixed by the design: grouping, sorting and saved views stay configurable per person, as they are today ([OR-33](../owner-rules.md), [OR-35](../owner-rules.md); owner, 2026-11-25). The default view is Waiting for you first, then by project.
+
+### Kept from the current build
+
+Everything in **Current build** below stays: the filter bar with query search and saved views, system presets Needs me and Running, Group and Sort with direction, the Archived toggle, pins and the Pinned group, selection mode with its bar, the row menu, `p` and `x` keys, and New conversation with the start picker.
 
 ### Blocks
 
 * [Navigation rail](../controls/nav-rail.md) and [shell header](../patterns/app-shell.md).
-* Catalogue row, list header, saved views and filter search (block list, PR C).
+* [Filter bar](../controls/filter-bar.md#board) with search, view chips, Group and Sort; [catalogue row and list group](../controls/data-list.md#board).
 * [State dot and word](../controls/state-badge.md#dot-and-word), [question card](../controls/decision-block.md#card), [group head](../controls/data-list.md).
 * [Session view](session.md#blocks) blocks in the work area.
 
 ### Design board
 
-Canvas [screens/conversations.bl](../board/screens/conversations.bl): idle, a session open, both groupings, and the phone list.
+Canvas [screens/conversations.bl](../board/screens/conversations.bl): idle with the default view, the Group menu open, a session open, and the phone list.
 
 ## Current build
 

@@ -51,6 +51,10 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New (`plus`, a 
 
 As each root's spec says: `catalogue`, `definition_get`, `definition_usage`, `pipeline_get`, `bot_list`, `bot_get`, `definition_take_repository`, `definition_export`. The tree reads one list per root and stays mounted while a definition loads ([OR-47](../owner-rules.md)).
 
+## Kept from the current build
+
+Everything the root specs describe stays ([catalogue](catalogue.md), [agents](agents.md), [pipelines](pipelines.md), [changes](changes.md)), and the bot pages of today: status, runs with causes, automations (trigger, state, next time, last outcome), questions, analytics, settings, New bot, enable, pause and Run now. The tree keeps search, pins, persisted folding and the filter words.
+
 ## Open
 
 * Bot definitions have no human code; `/library/bots/<name>` uses the bot's unique name.

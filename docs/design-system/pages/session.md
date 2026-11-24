@@ -7,7 +7,7 @@
 * `/conversations/C-FLT-12`: opened from Conversations, from a project's Sessions facet, from a link or from Spotlight; the rail highlights Conversations.
 * `/conversations/<uuid>` (the current route) redirects to the code URL ([OR-38](../owner-rules.md), UR-69).
 
-Both URLs render the same view; only the frame around it differs (see **Frames**). The frame is an [owner choice](#owner-choices).
+Both URLs render the same view; only the frame around it differs (see **Frames**). The frame is an [owner decision](#owner-decisions).
 
 **Purpose.** The one place where a person works with a bot, a project PM or a task run ([principles](../owner-rules.md#principles) 2). It answers "what is this session doing, what does it need from me, and what has it done?" in that order.
 
@@ -18,7 +18,7 @@ From top to bottom, then the context panel on the right:
 1. **Session head** (one line under the [shell header](../patterns/app-shell.md)):
    * the avatar (a bot's mark, or `P` in the project's colour for a PM), the session's name and its project chip;
    * the [state dot and word](../controls/state-badge.md#dot-and-word) (OR-55);
-   * on the right, as icons: Stop (only while a run works), Fork, the row menu (Archive, Copy link, Details) and the Context toggle ([OR-1](../owner-rules.md), [OR-15](../owner-rules.md)).
+   * on the right, as icons: Search in the transcript, Stop (only while a run works), Fork, the row menu (Archive, Copy link, Details) and the Context toggle ([OR-1](../owner-rules.md), [OR-15](../owner-rules.md)).
    * No model badge, tokens, cost or ids ([OR-54](../owner-rules.md)). Details opens them in place, folded under the head ([OR-19](../owner-rules.md)).
 2. **Open question** (only while one is open): the [question card](../controls/decision-block.md#card) pinned above the transcript, its choices as buttons and a free-text answer ([OR-53](../owner-rules.md)). A confirmation card for a risky action names its scope and the way back ([OR-61](../owner-rules.md)). The answer edits the card in place (UR-58); answered cards stay in the transcript at the point they were asked.
 3. **Transcript**, oldest at the top, the newest at the bottom:
@@ -72,10 +72,15 @@ From top to bottom, then the context panel on the right:
 | Details | `execution_totals`, scoped resource rollup |
 | Live updates | `changes_since` over the session, its messages, questions and executions |
 
-## Owner choices
+## Owner decisions
 
-1. **Frame from Home.** *Recommended:* two frames, `/home/C-…` full width and `/conversations/C-…` with the list (as above; [OR-27](../owner-rules.md) names both). *Other:* one URL, `/conversations/C-…` everywhere, so opening from Home moves the highlight to Conversations. Both are drawn on [screens/session.bl](../board/screens/session.bl).
-2. **Context panel place.** *Recommended:* a column right of the transcript. *Other:* a folded strip above the transcript (plan progress and the next timer on one line, opened on click), which leaves the transcript the full width. Both are drawn.
+Decided by the owner on 2026-11-25 ([decisions](../decisions.md)):
+1. **Frame from Home:** `/home/C-…`, full width, Home stays highlighted; from anywhere else `/conversations/C-…` with the list.
+2. **Context panel:** a column right of the transcript; on a phone, a sheet.
+
+## Kept from the current build
+
+Everything the current conversation page does stays ([product map](../product-map.md)): the transcript with paging and search (`thread_search`, a search icon in the session head), copy of a message or a selection, attachments in the composer, Fork and Start fresh with context, handoff to another agent or account, Stop, Archive and Unarchive, the start picker of `/conversations/new`. The metrics header and per-boundary resource rows move into Details ([OR-54](../owner-rules.md)); nothing in them is dropped.
 
 ## Open
 
@@ -95,4 +100,4 @@ From top to bottom, then the context panel on the right:
 
 ## Design board
 
-Canvas [screens/session.bl](../board/screens/session.bl): working at 1440 px in both frames, waiting for you, the two owner choices side by side, and the phone with the context sheet. Names are real; content is illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).
+Canvas [screens/session.bl](../board/screens/session.bl): working in the Conversations frame, waiting for you in the Home frame, failed, and the phone with the context sheet. Names are real; content is illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).
