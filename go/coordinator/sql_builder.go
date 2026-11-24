@@ -1033,11 +1033,18 @@ func taskWhere(f rowFilter, p *[]any, withState bool) ([]string, error) {
 	return c, nil
 }
 
+// sqlActiveExec: latest preparing/running execution for task t with its start time, observation, last contact, and stuck problem flag.
+var sqlActiveExec = `(SELECT e.state::text AS active_state,` + sqlJSONTime("e.started_at") + ` AS active_started_at,e.observation::text AS active_observation,` +
+	sqlJSONTime("e.last_seen_at") + ` AS active_last_seen_at,` +
+	`EXISTS (SELECT 1 FROM question q WHERE q.cause='problem:execution:'||e.id||':stuck' AND q.state='open') AS active_stalled ` +
+	`FROM execution e WHERE e.task_id=t.id AND e.state IN ('preparing','running') ORDER BY e.seq DESC LIMIT 1)`
+
 // sqlTaskListCols: the columns of taskListDBRow (tasks.go), then its group key g and sort key sk.
 var sqlTaskListCols = "t.id,t.code,t.project_id,t.title,t.state::text AS state,t.pause_reason,t.wait_reason,t.priority," +
 	sqlJSONTime("t.created_at") + " AS created_at," + sqlJSONTime("t.updated_at") + " AS updated_at,d.agent,d.host," +
 	sqlJSONTime("d.started_at") + " AS started_at,coalesce(d.open_questions,0)::bigint AS open_questions," + sqlJSONTime("t.state_at") +
-	" AS state_at,coalesce(d.executions,0)::bigint AS executions,d.last_agent"
+	" AS state_at,coalesce(d.executions,0)::bigint AS executions,d.last_agent," +
+	"ae.active_state,ae.active_started_at,ae.active_observation,ae.active_last_seen_at,coalesce(ae.active_stalled,false) AS active_stalled"
 
 // sqlTaskPage: one task_page page of at most limit rows after the sort key after (nil: the first page).
 func sqlTaskPage(f rowFilter, G taskGroup, S string, after []any, limit int) (string, []any, error) {
@@ -1063,11 +1070,11 @@ func sqlTaskPage(f rowFilter, G taskGroup, S string, after []any, limit int) (st
 		order, outer = "", ""
 	}
 	if G.derived {
-		return "SELECT " + sqlTaskListCols + "," + g + " AS g," + S + " AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id" + where(c) +
-			" ORDER BY " + order + S + ",t.id LIMIT " + lim, p, nil
+		return "SELECT " + sqlTaskListCols + ",t.g,t.sk FROM (SELECT t.*," + g + " AS g," + S + " AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id" + where(c) +
+			" ORDER BY " + order + S + ",t.id LIMIT " + lim + ") t LEFT JOIN task_derived d ON d.task_id=t.id LEFT JOIN LATERAL " + sqlActiveExec + " ae ON true ORDER BY t.g,t.sk,t.id", p, nil
 	}
 	return "SELECT " + sqlTaskListCols + ",t.g," + S + " AS sk FROM (SELECT t.*," + g + " AS g FROM task t" + where(c) + " ORDER BY " + order + S +
-		",t.id LIMIT " + lim + ") t LEFT JOIN task_derived d ON d.task_id=t.id ORDER BY " + outer + S + ",t.id", p, nil
+		",t.id LIMIT " + lim + ") t LEFT JOIN task_derived d ON d.task_id=t.id LEFT JOIN LATERAL " + sqlActiveExec + " ae ON true ORDER BY " + outer + S + ",t.id", p, nil
 }
 
 // sqlTaskRows: the rows of ids that the filtered list holds (list_membership), with their group and sort keys.
@@ -1079,7 +1086,7 @@ func sqlTaskRows(f rowFilter, G taskGroup, S string, ids []string) (string, []an
 	}
 	p = append(p, ids)
 	c = append(c, fmt.Sprintf("t.id=ANY($%d)", len(p)))
-	return "SELECT " + sqlTaskListCols + "," + G.sql + " AS g," + S + " AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id" + where(c), p, nil
+	return "SELECT " + sqlTaskListCols + "," + G.sql + " AS g," + S + " AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id LEFT JOIN LATERAL " + sqlActiveExec + " ae ON true" + where(c), p, nil
 }
 
 // sqlTaskStateCounts: the filtered tasks per state, without the state filter (listCount rows, g empty); by group too

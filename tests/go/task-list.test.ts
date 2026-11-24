@@ -25,6 +25,12 @@ test('TL1 task_page sorts recently changed first, reads key:value search terms a
   assert.deepEqual(await ids({filter: {search: 'beta state:queued'}}), [b]);
   const row = (await op('task_page', {group: 'none', filter: {search: 'alpha'}})).tasks[0];
   assert.equal(row.executions, 2); assert.equal(row.lastAgent, 'claude'); assert.equal(row.host, 'mac-mini'); assert.ok(row.stateAt);
+  assert.equal(row.activeState, 'running'); assert.ok(row.activeStartedAt); assert.equal(row.activeObservation, 'confirmed'); assert.equal(row.activeStalled, false);
+  const idleRow = (await op('task_page', {group: 'none', filter: {search: 'beta'}})).tasks[0];
+  assert.equal(idleRow.activeState ?? null, null); assert.equal(idleRow.activeStartedAt ?? null, null); assert.equal(idleRow.activeStalled, false);
+  c.sql(`INSERT INTO question(id,kind,task_id,text,options,asked_by,state,cause) VALUES ('q-stuck-tl2','operator_decision','${a}','Execution stuck','["investigate","dismiss"]'::jsonb,'fleet','open','problem:execution:tl-2:stuck')`);
+  const stalledRow = (await op('task_page', {group: 'none', filter: {search: 'alpha'}})).tasks[0];
+  assert.equal(stalledRow.activeStalled, true);
   assert.equal((await op('task_derived_check', {})).drifted.length, 0, 'row facts in task_derived match a fresh computation');
   // Each sort, with the priority grouping and with none, reads its own index (migration 47): no Sort node over the table.
   const pr = "(CASE t.priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END),";

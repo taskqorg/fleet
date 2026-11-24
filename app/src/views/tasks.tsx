@@ -5,7 +5,7 @@ import { useLocation } from 'wouter-preact';
 import {
   ListDetail, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, StageChip, AgeChip, Button,
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
-  OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar,
+  OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar, useTick,
   type TreeNode, type Harness, type Stage, type StateOf, type Stat, states as states_, stages,
   keyConnection, EntityCode, actor, fileLabel, viewOf, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
@@ -15,6 +15,7 @@ import { DEFAULT_TASK_SORT, DEFAULT_TASK_GROUP, type View } from '../../../packa
 import { usePins, prefs, setFocus } from '../prefs.ts';
 import { useListPage, ListPagePanel, type ListPage } from '../list-page.tsx';
 import { SYSTEM_VIEWS } from '../system-views.ts';
+import { describeTaskFacts, isUnconfirmedActiveTask, parseMs as ms, TERMINAL_TASK_STATES as TERMINAL } from '../task-facts.ts';
 import { ScopedRollupBar, buildExecTree } from './resources.tsx';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
 
@@ -22,9 +23,11 @@ const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Proje
 const SORTS = [['changed', 'Changed'], ['created', 'Created']] as const;
 /** The contract's task row; its state is a list state (held included). */
 type TaskRow = ContractTaskRow & { state: StateOf<'task'>; stage?: Stage | null };
-const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
-const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
 const isStage = (s: string | null | undefined): s is Stage => !!s && s in stages;
+const SYSTEM_PRESET_TIPS = {
+  Running: 'All unresolved tasks: queued, in progress, waiting, held, paused',
+  'Needs me': 'Tasks waiting on you or failed',
+};
 
 // System presets (P5): system-views.ts. Running: every non-terminal state.
 // Saved views from before the project default kept no group: they were grouped by priority.
@@ -41,18 +44,20 @@ export function Tasks({ id }: { id?: string }) {
     closedGroups: { state: ['7', '8'] }, groupsContext: v => v.state?.length && v.state.every(s => s === 'completed' || s === 'cancelled') ? 'done' : undefined,
   });
   const { view, set, list, chosen, off, rowsGroup, confirm } = page;
-  const canPause = (t: TaskRow) => !TERMINAL.includes(t.state) && t.state !== 'paused', canResume = (t: TaskRow) => t.state === 'paused';
+  const canPause = (t: TaskRow) => !TERMINAL.includes(t.state as (typeof TERMINAL)[number]) && t.state !== 'paused', canResume = (t: TaskRow) => t.state === 'paused';
   const bulk = (action: 'pause' | 'resume' | 'cancel', ts: TaskRow[]) => page.bulk(ts, t => op('task_update', { taskId: t.id, action }), `did not ${action}`);
+  useTick(30_000);
   const now = Date.now();
   // The empty text names the focus only when a focus is set: ignored projects alone are not a focus "Show all projects" could clear.
   const { filtered } = page, focused = !view.project?.length && prefs.value.focus.length > 0;
   const listPane = <>
     <ShellStatus><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></ShellStatus>
     <ListPagePanel page={page} noun="Tasks" placeholder="Search tasks, agent:claude host:mac" family="task" groups={GROUPS} sorts={SORTS} focused={id}
+      systemTips={SYSTEM_PRESET_TIPS}
       actions={() => [
         { label: 'Pause', icon: 'pause', onClick: () => bulk('pause', chosen.filter(canPause)), disabledReason: off ?? (chosen.some(canPause) ? undefined : 'None can pause') },
         { label: 'Continue', icon: 'rotate-cw', onClick: () => bulk('resume', chosen.filter(canResume)), disabledReason: off ?? (chosen.some(canResume) ? undefined : 'None paused') },
-        { label: 'Cancel', icon: 'circle-slash', danger: true, onClick: () => page.setConfirm(chosen.filter(t => !TERMINAL.includes(t.state))), disabledReason: off ?? (chosen.some(t => !TERMINAL.includes(t.state)) ? undefined : 'None can cancel') },
+        { label: 'Cancel', icon: 'circle-slash', danger: true, onClick: () => page.setConfirm(chosen.filter(t => !TERMINAL.includes(t.state as (typeof TERMINAL)[number]))), disabledReason: off ?? (chosen.some(t => !TERMINAL.includes(t.state as (typeof TERMINAL)[number])) ? undefined : 'None can cancel') },
       ]}
       menu={t => [
         ...(canResume(t) ? [{ label: t.pauseReason === 'held' ? 'Release' : 'Continue', icon: 'rotate-cw' as const, disabledReason: off, onClick: () => bulk('resume', [t]) }] : []),
@@ -62,15 +67,19 @@ export function Tasks({ id }: { id?: string }) {
         actions={[{ label: 'Yes, cancel', primary: true, onClick: () => { page.setConfirm(null); bulk('cancel', confirm); } }, { label: 'Keep', onClick: () => page.setConfirm(null) }]} />}
       empty={<Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={page.clearFilters} /> : focused ? <Button label="Show all projects" onClick={() => setFocus([])} /> : undefined} />}
       listLabel="Tasks" title={t => t.title} groupIcon={g => g === 'priority' ? 'list-ordered' : 'folder-open'}
-      state={t => <StateBadge family="task" state={t.pauseReason === 'held' ? 'held' : t.state} reason={t.waitReason ?? undefined} compact />}
+      state={t => {
+        const unconfirmed = isUnconfirmedActiveTask(t);
+        return <StateBadge family="task" state={t.pauseReason === 'held' ? 'held' : t.state} reason={t.waitReason ?? undefined}
+          unconfirmed={unconfirmed} lastSeen={unconfirmed ? (ms(t.activeLastSeenAt) ?? undefined) : undefined} compact />;
+      }}
       before={t => rowsGroup !== 'priority' && <PriorityChip p={t.priority} />}
-      facts={t => <TaskFacts t={t} />} />
+      facts={t => <TaskFacts t={t} now={now} />} />
   </>;
   return <ListDetail list={listPane} detail={id ? <TaskDetail id={id} onClose={() => set({ focus: undefined })} /> : undefined} idle={<TasksSummary page={page} filtered={filtered} focused={focused} />} detailKey={id} />;
 }
 
 function TasksSummary({ page, filtered, focused }: { page: ListPage<TaskRow>; filtered: boolean; focused: boolean }) {
-  const { list, view, set, rowsGroup } = page;
+  const { list, view, set, rowsGroup, activePreset } = page;
   const counts = list.counts as Partial<Record<StateOf<'task'>, number>>;
   const activeStats: Stat[] = ([
     { label: 'total', icon: 'list', value: { value: list.total, basis: 'measured' } },
@@ -87,6 +96,7 @@ function TasksSummary({ page, filtered, focused }: { page: ListPage<TaskRow>; fi
   return (
     <article class="detail" aria-label="Tasks summary">
       <OpsSummary>
+        {activePreset === 'Running' && <p class="muted">Unresolved tasks: queued, in progress, waiting, held, and paused.</p>}
         {list.pending && !list.total ? <Skeleton rows={3} /> : (
           <>
             {activeStats.length > 0 && <StatStrip label="Tasks" stats={activeStats} />}
@@ -126,19 +136,38 @@ function TasksSummary({ page, filtered, focused }: { page: ListPage<TaskRow>; fi
   );
 }
 
-const TERMINAL = ['completed', 'failed', 'cancelled'];
-/** Row facts of a task (OR-37): open questions, delivery stage, time since taken into work, executions from two, time in state, agent while running. */
-function TaskFacts({ t }: { t: TaskRow }) {
-  const taken = ms(t.startedAt), since = ms(t.stateAt), agent = t.lastAgent ?? t.agent, n = t.executions ?? 0, q = t.openQuestions ?? 0;
+/** Row facts of a task (OR-37): open questions, delivery stage, active execution state/duration, task age, executions from two, time in state, active harness. */
+function TaskFacts({ t, now }: { t: TaskRow; now: number }) {
+  const f = describeTaskFacts(t, now);
   const label = states_.task[t.pauseReason === 'held' ? 'held' : t.state].label;
   return <RowFacts>
-    {q > 0 && <span class="chip-age t-attention alert" data-tip={q === 1 ? '1 open question' : `${q} open questions`} aria-label={q === 1 ? '1 open question' : `${q} open questions`}>{q}</span>}
+    {f.openQuestions > 0 && <span class="chip-age t-attention alert" data-tip={f.openQuestions === 1 ? '1 open question' : `${f.openQuestions} open questions`} aria-label={f.openQuestions === 1 ? '1 open question' : `${f.openQuestions} open questions`}>{f.openQuestions}</span>}
     {isStage(t.stage) && <StageChip stage={t.stage} />}
-    {taken !== null && !TERMINAL.includes(t.state) && <Fact icon="clock" tip="Since taken into work"><AgeChip t={taken} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" /></Fact>}
+    {f.active.kind === 'active' && (
+      <Fact icon="activity" tip="Current run">
+        <AgeChip t={f.active.startedAt} alertAfter={f.active.warnAfterSeconds} alertLabel="running too long" />
+      </Fact>
+    )}
+    {f.active.kind === 'stale' && (
+      <Fact icon="history" tip="Run evidence stale">
+        <AgeChip t={f.active.lastSeenAt} alertAfter={0} tone="attention" alertLabel="run evidence stale" />
+      </Fact>
+    )}
+    {f.active.kind === 'stalled' && (
+      f.active.lastSeenAt !== null
+        ? <Fact icon="circle-pause" tip="Run stalled"><AgeChip t={f.active.lastSeenAt} alertAfter={0} tone="attention" alertLabel="run stalled" /></Fact>
+        : <span class="chip-age t-attention alert" data-tip="Run stalled" aria-label="Run stalled"><Icon name="triangle-alert" />stalled</span>
+    )}
+    {f.active.kind === 'unconfirmed' && (
+      f.active.lastSeenAt !== null
+        ? <Fact icon="circle-question-mark" tip="Run unconfirmed"><AgeChip t={f.active.lastSeenAt} alertAfter={0} tone="attention" alertLabel="run unconfirmed" /></Fact>
+        : <span class="chip-age t-attention alert" data-tip="Run unconfirmed" aria-label="Run unconfirmed"><Icon name="circle-question-mark" />unconfirmed</span>
+    )}
+    {f.showTaskAge && f.taskAgeAt !== null && <Fact icon="clock" tip="Task age since first run"><AgeChip t={f.taskAgeAt} /></Fact>}
     {/* One run is the usual case and says nothing (OR-17): the count shows from two; the host is in the detail. */}
-    {n > 1 && <Fact icon={actions.runs} text={String(n)} tip={`${n} executions`} />}
-    {since !== null && <Fact tip={`${label} for`}><AgeChip t={since} /></Fact>}
-    {t.state === 'in_progress' && isHarness(agent) && <HarnessMark h={agent} />}
+    {f.executions > 1 && <Fact icon={actions.runs} text={String(f.executions)} tip={`${f.executions} executions`} />}
+    {f.stateAgeAt !== null && <Fact tip={`${label} for`}><AgeChip t={f.stateAgeAt} /></Fact>}
+    {f.runningHarness && <HarnessMark h={f.runningHarness} />}
   </RowFacts>;
 }
 

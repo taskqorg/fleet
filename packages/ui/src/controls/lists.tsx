@@ -86,9 +86,11 @@ export function GroupHeader({ icon, label, count, open, onToggle, tone = 'neutra
 
 /* ---------- Saved views: system presets and the person's own (OR-33) ---------- */
 
-export function Presets({ system = [], presets, active, onPick, onSave, onUnpin, counted, onCount }: {
+export function Presets({ system = [], systemTips, presets, active, onPick, onSave, onUnpin, counted, onCount }: {
   /** Views every person has (Tasks "Running"); they cannot be removed. */
   system?: string[];
+  /** Optional tooltip and accessible description per system preset to clarify its scope. */
+  systemTips?: Record<string, string>;
   presets: string[]; active: string | null; onPick: (name: string) => void; onSave: (name: string) => void; onUnpin: (name: string) => void;
   /**
    * The view the section's navigation counter counts (nav-rail.md, Counters), null when the counter is off. With onCount,
@@ -111,8 +113,11 @@ export function Presets({ system = [], presets, active, onPick, onSave, onUnpin,
   };
   return (
     <div class="presets" data-ui="saved-views" role="group" aria-label="Views">
-      {system.map(n => <span key={'s:' + n} class={`preset${n === active ? ' on' : ''}`}>
-        <button type="button" aria-pressed={n === active} onClick={() => onPick(n)} {...menuOn(n)}>{n}</button></span>)}
+      {system.map(n => {
+        const tip = systemTips?.[n];
+        return <span key={'s:' + n} class={`preset${n === active ? ' on' : ''}`}>
+          <button type="button" aria-pressed={n === active} data-tip={tip} aria-description={tip} onClick={() => onPick(n)} {...menuOn(n)}>{n}</button></span>;
+      })}
       {presets.map(n => <span key={n} class={`preset${n === active ? ' on' : ''}`}>
         <button type="button" aria-pressed={n === active} onClick={() => onPick(n)} {...menuOn(n)}><Icon name="pin" />{n}</button>
         <button type="button" class="x" aria-label={`Remove view ${n}`} data-tip="Remove" onClick={() => onUnpin(n)}><Icon name="x" /></button></span>)}

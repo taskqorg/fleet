@@ -697,24 +697,29 @@ func (v SystemActivity) Valid() bool {
 
 // TaskRow: A row of task_page and list_membership (tasks.go taskListRow); sortKey: [group key, sort key, id]. state is a list state (held included).
 type TaskRow struct {
-	Agent         *string       `json:"agent"`
-	Code          *string       `json:"code"`
-	CreatedAt     string        `json:"createdAt"`
-	Executions    int64         `json:"executions"`
-	Host          *string       `json:"host"`
-	Id            string        `json:"id"`
-	LastAgent     *string       `json:"lastAgent"`
-	OpenQuestions int64         `json:"openQuestions"`
-	PauseReason   *string       `json:"pauseReason"`
-	Priority      string        `json:"priority"`
-	ProjectId     *string       `json:"projectId"`
-	SortKey       []SortKeyPart `json:"sortKey"`
-	StartedAt     *string       `json:"startedAt"`
-	State         string        `json:"state"`
-	StateAt       *string       `json:"stateAt"`
-	Title         string        `json:"title"`
-	UpdatedAt     string        `json:"updatedAt"`
-	WaitReason    *string       `json:"waitReason"`
+	ActiveLastSeenAt  *string       `json:"activeLastSeenAt,omitempty"`
+	ActiveObservation *string       `json:"activeObservation,omitempty"`
+	ActiveStalled     *bool         `json:"activeStalled,omitempty"`
+	ActiveStartedAt   *string       `json:"activeStartedAt,omitempty"`
+	ActiveState       *string       `json:"activeState,omitempty"`
+	Agent             *string       `json:"agent"`
+	Code              *string       `json:"code"`
+	CreatedAt         string        `json:"createdAt"`
+	Executions        int64         `json:"executions"`
+	Host              *string       `json:"host"`
+	Id                string        `json:"id"`
+	LastAgent         *string       `json:"lastAgent"`
+	OpenQuestions     int64         `json:"openQuestions"`
+	PauseReason       *string       `json:"pauseReason"`
+	Priority          string        `json:"priority"`
+	ProjectId         *string       `json:"projectId"`
+	SortKey           []SortKeyPart `json:"sortKey"`
+	StartedAt         *string       `json:"startedAt"`
+	State             string        `json:"state"`
+	StateAt           *string       `json:"stateAt"`
+	Title             string        `json:"title"`
+	UpdatedAt         string        `json:"updatedAt"`
+	WaitReason        *string       `json:"waitReason"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

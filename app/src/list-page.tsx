@@ -218,6 +218,8 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
   tools?: ComponentChildren;
   /** Filters applied from outside the query (Delivery: the picked pace day), each removable. */
   chips?: Chip[]; onRemoveChip?: (c: Chip) => void;
+  /** Optional tooltip / accessible description per system preset name. */
+  systemTips?: Record<string, string>;
   /** The state counters' accessible name; `<noun> by state` by default. */
   countersLabel?: string;
   /** Counts per state that are unknown (`?`, never 0): some source data did not load. */
@@ -254,7 +256,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
   ];
   return <section class="panel">
     <ListFrame pending={list.pending} bar={<FilterBar query={g.query} placeholder={p.placeholder} onQuery={g.setQuery} shown={g.shown} total={list.total} chips={p.chips} onRemove={p.onRemoveChip}
-      extra={<Presets system={views.list.filter(v => v.system).map(v => v.name)} presets={views.list.filter(v => !v.system).map(v => v.name)} active={g.activePreset} onPick={g.pick}
+      extra={<Presets system={views.list.filter(v => v.system).map(v => v.name)} systemTips={p.systemTips} presets={views.list.filter(v => !v.system).map(v => v.name)} active={g.activePreset} onPick={g.pick}
         onSave={g.save} onUnpin={views.remove} counted={navCounted(view.view, views.list.map(v => v.name))} onCount={view.view in NAV_COUNTER_DEFAULTS ? n => setNavCounter(view.view, n) : undefined} />}
       counters={<StateCounters family={p.family} label={p.countersLabel ?? `${p.noun} by state`} pending={list.pending} unknown={!g.isLocal && !list.at} counts={(p.countsUnknown ? Object.fromEntries(Object.keys(list.counts).map(k => [k, null])) : list.counts) as Partial<Record<StateOf<F>, number | null>>} active={g.states as StateOf<F>[]} onAll={() => set({ state: [], preset: undefined })}
         onToggle={(x: StateOf<F>) => { const s = String(x); set({ state: g.states.includes(s) ? g.states.filter(y => y !== s) : [...g.states, s], preset: undefined }); }} />}
