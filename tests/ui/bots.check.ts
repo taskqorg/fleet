@@ -197,7 +197,11 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
     await detail.getByLabel('Name', { exact: true }).fill('Review decisions');
     await detail.getByRole('button', { name: 'Needs you', exact: true }).click();
     await detail.getByRole('button', { name: 'Questions', exact: true }).click();
+    const eventSaved = p.waitForResponse(r => r.url().endsWith('/api/ops/bot_automation_save'));
     await detail.getByRole('button', { name: 'Create automation' }).click();
+    const eventResponse = await eventSaved;
+    assert.equal(eventResponse.status(), 200);
+    assert.equal((await eventResponse.json()).automation.settings.event, 'question');
     const event = detail.locator('section').filter({ has: p.getByRole('heading', { name: 'Review decisions', exact: true }) });
     await event.getByText('Questions', { exact: true }).waitFor();
     automationStep = 'edit the event automation';

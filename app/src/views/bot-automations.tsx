@@ -105,7 +105,7 @@ export function BotAutomations(props: {
                   <KvRow icon="folder-open" label="Project" value={props.projectName} />
                   <KvRow icon="bell" label="Trigger" value={triggerOptions.find(t => t.id === automation.settings.kind)?.label} />
                   <Show when={automation.settings.kind === 'needs_you'}>
-                    <KvRow icon="bell" label="Events" value={eventOptions.find(t => t.id === automation.settings.event)?.label} />
+                    <KvRow icon="bell" label="Events" value={<span>{eventOptions.find(t => t.id === automation.settings.event)?.label}</span>} />
                   </Show>
                   <Show when={automation.settings.kind === 'schedule'}>
                     <KvRow icon="clock" label="Daily time" value={`${automation.settings.scheduleTime} · ${automation.settings.scheduleZone}`} />
