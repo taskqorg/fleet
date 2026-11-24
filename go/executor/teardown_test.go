@@ -280,4 +280,9 @@ func TestWorktreeSetsAsideStaleDirectory(t *testing.T) {
 	if len(kept) != 1 {
 		t.Fatalf("the stale files were not kept aside: %v", kept)
 	}
+	// An accepted task's teardown (deleteBranch) removes the set-aside copy with the worktree.
+	teardown(dir, "s1", top, proj(M{}), true, false)
+	if left, _ := filepath.Glob(filepath.Join(dir, "worktree.stale-*")); len(left) != 0 {
+		t.Fatalf("stale copy left after acceptance: %v", left)
+	}
 }

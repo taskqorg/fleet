@@ -29,6 +29,15 @@ func setAsideStale(w string) error {
 	return os.Rename(w, w+".stale-"+strconv.FormatInt(time.Now().UnixMilli(), 10))
 }
 
+// removeStale deletes the <w>.stale-* copies setAsideStale made (links inside are removed, never followed).
+func removeStale(w string) {
+	stale, _ := filepath.Glob(w + ".stale-*")
+	for _, p := range stale {
+		makeTreeWritable(p)
+		os.RemoveAll(p)
+	}
+}
+
 func hardenedGit(args ...string) *exec.Cmd {
 	c := exec.Command("git", append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=never"}, args...)...)
 	c.Env = []string{"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
@@ -403,6 +412,9 @@ func keepReasons(project contract.ProjectContext) map[string]bool {
 func teardown(dir, session, top string, project contract.ProjectContext, deleteBranch, detached bool) contract.Teardown {
 	keep := keepReasons(project)
 	w := filepath.Join(dir, "worktree")
+	if deleteBranch { // the task was accepted: copies set aside by setAsideStale hold nothing more to keep
+		removeStale(w)
+	}
 	if !exists(filepath.Join(w, ".git")) {
 		return refusedTeardown("no-worktree")
 	}
