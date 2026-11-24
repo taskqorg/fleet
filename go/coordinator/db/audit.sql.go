@@ -128,3 +128,36 @@ func (q *Queries) AuditRecords(ctx context.Context, arg AuditRecordsParams) ([]A
 	}
 	return items, nil
 }
+
+const peopleCloudflareAudit = `-- name: PeopleCloudflareAudit :many
+SELECT DISTINCT ON (field) field, value
+FROM audit_log
+WHERE target = 'people' AND field LIKE 'cloudflare-access:%'
+ORDER BY field, seq DESC
+`
+
+type PeopleCloudflareAuditRow struct {
+	Field string
+	Value []byte
+}
+
+// Retain the latest sync intent or result for each managed email after it leaves the roster.
+func (q *Queries) PeopleCloudflareAudit(ctx context.Context) ([]PeopleCloudflareAuditRow, error) {
+	rows, err := q.db.Query(ctx, peopleCloudflareAudit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PeopleCloudflareAuditRow
+	for rows.Next() {
+		var i PeopleCloudflareAuditRow
+		if err := rows.Scan(&i.Field, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

@@ -53,6 +53,9 @@ type App struct {
 	hostID        string
 	stream        *Broadcast
 
+	peopleCloudflare            *peopleCloudflare
+	peopleCloudflareConfigError error
+
 	runtimeOnce         sync.Once
 	dispatchLoopStarted atomic.Bool
 	dispatchMu          sync.Mutex
@@ -215,6 +218,7 @@ func main() {
 		}
 	}()
 	a := &App{store: store, browserSecret: os.Getenv("FLEET_BROWSER_SECRET"), hostID: os.Getenv("FLEET_HOST_ID")}
+	a.peopleCloudflare, a.peopleCloudflareConfigError = cloudflarePeopleFromEnv()
 	a.ensureRuntime()
 	if a.hostID == "" {
 		a.hostID = "owner-mac"

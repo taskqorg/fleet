@@ -490,3 +490,8 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question:** when should the list show loading progress?
 * **Options:** show progress for every read, or for initial and operator-initiated reads.
 * **Choice:** show progress for initial and operator-initiated reads. Keep background updates quiet and surface failures with retry. Repeated feed changes with identical results had been flashing progress and dimming the list ([T-FLT-22](https://fleet.ufobe.com/tasks/486357fa-2fe2-4d31-95d9-14a90b005574)).
+
+## 2026-11-24: Cloudflare Access in Humans
+
+* **Choice:** show the current email rule alongside Fleet admission. Keep a revoked identity with unresolved edge removal available in the existing list and detail workspace. Use the shared error and action controls for retry.
+* **Reason:** the owner can identify and repair a failed edge change after Fleet access is revoked.
