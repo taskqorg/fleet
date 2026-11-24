@@ -23,3 +23,10 @@ SELECT target, (payload || jsonb_strip_nulls(jsonb_build_object('id', id, 'targe
  'onBehalfOf', on_behalf_of, 'holder', holder, 'projectId', project_id, 'at', (extract(epoch FROM at) * 1000)::bigint))
  || jsonb_build_object('previous', previous, 'value', value))::jsonb AS data
 FROM audit_log WHERE split_part(target, ':', 1) = @kind::text ORDER BY seq;
+
+-- name: PeopleCloudflareAudit :many
+-- Retain the latest sync intent or result for each managed email after it leaves the roster.
+SELECT DISTINCT ON (field) field, value
+FROM audit_log
+WHERE target = 'people' AND field LIKE 'cloudflare-access:%'
+ORDER BY field, seq DESC;

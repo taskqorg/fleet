@@ -237,7 +237,7 @@ func init() {
 	op("people_list", func(q *Request, r *contract.PeopleListRequest) (contract.PeopleListReply, error) {
 		out := contract.PeopleListReply{People: []map[string]json.RawMessage{}}
 		manage := valueOr(r.Manage)
-		if manage && !q.person.Owner {
+		if manage && (q.person == nil || !q.person.Owner) {
 			return out, fail(403, "Only the owner manages people")
 		}
 		people := q.peopleSnapshot().list()
@@ -260,8 +260,15 @@ func init() {
 				out.Roster = append(out.Roster, row)
 			}
 		}
+		if manage {
+			if err := cloudflareRoster(q, &out); err != nil {
+				return out, err
+			}
+			sort.Slice(out.CloudflareRemovals, func(i, j int) bool { return out.CloudflareRemovals[i].Email < out.CloudflareRemovals[j].Email })
+		}
 		return out, nil
 	})
+	op("people_access_sync", peopleAccessSync)
 	op("people_update", peopleUpdate)
 	// setting_changes: the audit of settings, newest first, optionally of one target (host:<id>, people, ...).
 	op("setting_changes", func(q *Request, r *contract.SettingChangesRequest) (contract.SettingChangesReply, error) {
@@ -307,6 +314,9 @@ func peopleRowVersion(p *Person) string {
 
 // Both writers and file reloads take the same lock. Recheck authority after its acquisition.
 func peopleOwner(q *Request) error {
+	if q.person == nil {
+		return fail(403, "Only the owner sets people")
+	}
 	p, err := q.app.resolveAccess(q.ctx(), q.person.Email)
 	if err != nil {
 		return err
@@ -322,6 +332,8 @@ func peopleSet(q *Request, people json.RawMessage) (int, error) {
 	if len(people) == 0 || people[0] != '[' {
 		return 0, fail(400, "Expected people: the whole people.json list")
 	}
+	cloudflarePeopleMu.Lock()
+	defer cloudflarePeopleMu.Unlock()
 	peopleMu.Lock()
 	defer peopleMu.Unlock()
 	if err := peopleOwner(q); err != nil {
@@ -331,7 +343,7 @@ func peopleSet(q *Request, people json.RawMessage) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	err = writePeople(q, previous, people, redactPeople(previous), redactPeople(people))
+	err = writePeople(q, previous, people, redactPeople(previous), redactPeople(people), nil)
 	return q.app.peopleSnapshot().count(), err
 }
 
@@ -353,20 +365,43 @@ func peopleUpdate(q *Request, r *contract.PeopleUpdateRequest) (contract.PeopleU
 	if !personEmail.MatchString(out.Email) {
 		return out, fail(400, "Enter a human sign-in email")
 	}
+	cloudflarePeopleMu.Lock()
+	defer cloudflarePeopleMu.Unlock()
+	intent := cloudflareIntent(q.app, !valueOr(r.Revoke))
+	if err := updatePeopleRoster(q, out.Email, r, intent); err != nil {
+		return out, err
+	}
+	state := finishCloudflareSync(q, out.Email, intent)
+	out.Cloudflare = &state
+	return out, nil
+}
+
+func updatePeopleRoster(q *Request, email string, r *contract.PeopleUpdateRequest, intent peopleCloudflareChange) error {
 	peopleMu.Lock()
 	defer peopleMu.Unlock()
 	if err := peopleOwner(q); err != nil {
-		return out, err
+		return err
 	}
 	raw, err := os.ReadFile(q.app.peopleFile)
 	if err != nil {
-		return out, err
+		return err
 	}
-	people, err := updateHuman(q.app.peopleSnapshot().person(out.Email), raw, out.Email, r)
+	people, err := updateHuman(q.app.peopleSnapshot().person(email), raw, email, r)
 	if err != nil {
-		return out, err
+		return err
 	}
-	return out, writePeople(q, raw, people, redactPeople(raw), redactPeople(people))
+	recordIntent := func(tx *Request) error {
+		return auditCloudflare(tx, email, nil, intent)
+	}
+	if !intent.Admit {
+		// The file is replaced before its database projection. Keep the removal visible if the
+		// coordinator stops between those writes and loads the new file on restart.
+		if err := q.app.store.Write(q.ctx(), q, nil, recordIntent); err != nil {
+			return err
+		}
+		recordIntent = nil
+	}
+	return writePeople(q, raw, people, redactPeople(raw), redactPeople(people), recordIntent)
 }
 
 func updateHuman(current *Person, raw []byte, email string, r *contract.PeopleUpdateRequest) ([]byte, error) {
@@ -431,7 +466,7 @@ func updateHuman(current *Person, raw []byte, email string, r *contract.PeopleUp
 	return jsonBytes(rows), nil
 }
 
-func writePeople(q *Request, previous, next []byte, before, after any) error {
+func writePeople(q *Request, previous, next []byte, before, after any, change func(*Request) error) error {
 	// A failed projection or audit rolls back the file as well as the transaction.
 	write := func(raw []byte) (string, error) {
 		f, err := os.CreateTemp(filepath.Dir(q.app.peopleFile), ".people-*")
@@ -453,7 +488,13 @@ func writePeople(q *Request, previous, next []byte, before, after any) error {
 	if _, err := q.app.setPeople(q.ctx(), next, true, func(req *Request) error {
 		a := *req
 		a.person, a.agent = q.person, q.agent
-		return audit(&a, "people", "people", before, after, auditExtra{})
+		if err := audit(&a, "people", "people", before, after, auditExtra{}); err != nil {
+			return err
+		}
+		if change != nil {
+			return change(&a)
+		}
+		return nil
 	}); err != nil {
 		if _, werr := write(previous); werr != nil {
 			return errors.Join(err, werr)
