@@ -1,5 +1,7 @@
 # Overview (operator)
 
+**Status.** Current. [Home](home.md) and [Live](live.md) replace it when they are built ([OR-50](../owner-rules.md)).
+
 **Mockup routes:** `#/overview`, `#/overview/q1`, `#/overview/p1` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 
 **Purpose.** Answers "what needs me and is the fleet healthy?" in the first screen.

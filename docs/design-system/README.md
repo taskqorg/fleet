@@ -8,6 +8,26 @@ This folder is the single knowledge base for Fleet's interface design. It plays 
 2. `packages/ui`: the shared parts (tokens, icons, formatter, virtual list, controls). Use them; do not write local variants.
 3. [book/index.html](book/index.html): the live demo of `packages/ui`. [pages/mockups.html](pages/mockups.html): page mockups built from it. Both are built by `pnpm run book` and not committed (parallel UI changes never conflict on them); CI uploads them in the `design-report` artifact; `pnpm run check:design` prints the warning report; its checks are listed in `packages/ui/scripts/check-design.mjs`. CI posts the report summary on every pull request.
 
+## Design board
+
+The board is the visual source of the interface: a [Brilliant](https://brilliant.design) project kept in [board/](board/) as plain-text canvases (`.bl`). Agents read and write it through the Brilliant MCP tools (`init` with the absolute path of `docs/design-system/board` in the checkout, then `read`, `edit` and `export`); the owner opens the same folder in the Brilliant app. Brilliant's caches, thumbnails and stock style file stay out of git (root `.gitignore`); Fleet's own style file joins the board when the tokens are imported.
+
+| Canvas | Holds | Changes when |
+|---|---|---|
+| [rules-v2](board/rules-v2.bl) | The principles and rules as one picture; the text of record is [owner-rules.md](owner-rules.md) | An owner rule changes |
+| [ia](board/ia.bl) | The sections, the question each answers, the journeys | The [information architecture](../designs/fleet-ia-and-journeys.md) changes |
+| `screens/<page>` ([home](board/screens/home.bl), [live](board/screens/live.bl)) | The approved states of one page: a row at 1440 px, then phone 390 px, then the parts it adds | The owner approves a state; the [page spec](pages/README.md) links its canvas |
+
+How a screen moves through the board:
+
+1. **Audit.** Capture what runs and mark the problems. Screenshots are working papers: they go into the pull request, not the tree.
+2. **Options.** When a question has more than one reasonable answer, draw up to three options on a local Brilliant board outside the repository. Options and audits are working papers.
+3. **Decision.** The owner picks. Record the choice in [decisions.md](decisions.md), the rules in [owner-rules.md](owner-rules.md) and the page in `pages/<page>.md`.
+4. **Screens.** Draw the approved states on `screens/<page>.bl` in this board, in the same pull request as the page spec.
+5. **Build.** Build from `packages/ui` and the book (OR-13). Compare the app at 1440 and 390 px with the canvas, and run `pnpm run check:design`.
+
+Board drawings use Fleet's tokens ([tokens.md](tokens.md)). A control the board needs and `packages/ui` lacks is a change to the book first (process step 3 below).
+
 ## Files
 
 | File | Holds | Changes when |

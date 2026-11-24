@@ -41,3 +41,12 @@ orca.yaml
 docs/design-system/book/index.html
 docs/design-system/pages/mockups.html
 docs/design-system/explorations/open-questions-01.html
+
+# Brilliant design board: app caches and thumbnails
+docs/design-system/board/.brilliant/
+docs/design-system/board/Styles/default.ds
+docs/design-system/board/Styles/.gen/
+docs/design-system/board/**/Assets/.thumbs/
+docs/design-system/board/Assets/.thumbs/
+docs/design-system/board/Exports/
+docs/design-system/board/.gitignore

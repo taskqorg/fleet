@@ -14,6 +14,8 @@ Every screen serves these three, in this order. A rule below that conflicts with
 2. **Work through conversation.** Every job, operator or architect, is done by talking to a session: a bot or a project PM. Sessions are the home of the product; Home lists them, and the same session is reached from the web app and from Telegram.
 3. **Details on demand.** Show what a person needs to understand and to talk. Ids, metrics, tool calls, cost and qualifiers fold away and open on click.
 
+The principles, the rail and the new rules are drawn on the design board: [rules-v2.bl](board/rules-v2.bl).
+
 A rule marked *Target* is approved and not built yet; until it is built, the current screens keep the behaviour the rule replaces.
 
 ## Rules

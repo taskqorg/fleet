@@ -22,6 +22,8 @@ Fleet is used by talking to sessions ([owner principles](../design-system/owner-
 
 Tasks, results and delivery are reached from the session that does the work or from its project; they have no rail item. A screen opened from another section highlights the section that owns it (`OR-57`).
 
+Drawn on the design board: [ia.bl](../design-system/board/ia.bl).
+
 Not built yet: the app still shows the earlier rail (Overview, Conversations, Projects, Tasks, Spend, Bots, Lab, Library, Infrastructure, and Humans for the owner); the map below says where each item goes.
 
 ### Route consolidation map
