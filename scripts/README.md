@@ -12,6 +12,7 @@ Build, CI, documentation, Lab import and delivery tools run from the repository 
 | [ci-failfast.ts](ci-failfast.ts) | `findSiblingFailure`, `shouldPoll`; CLI wraps heavy `merge_group` commands to abort sibling jobs on failure, `--self-check`. |
 | [test-selection.ts](test-selection.ts) | `comparison`, `changedPaths`, `select`, `execution`, `makePlan`, `run`, `previousResult`, `queueQualified`, `verifyEvidence`: exact-candidate family selection and evidence validation; CLI emits a plan or accepts `--verify`. |
 | [pds18-route.ts](pds18-route.ts) | `FAMILIES`, `plan`, `dead`; CLI emits runner matrices, `--watch` cancels stalled pool runs, `--self-check` checks routing fixtures. |
+| [design-report-comment.ts](design-report-comment.ts) | `diffReport`, `appNotRun`, `comment`: the PR design report comment against the latest `main` artifact (new, fixed, changed figures; standing report folded); `--self-check`. |
 | [docs-report.ts](docs-report.ts) | `kind`, `linkFixOnly`, `anchors`, `links`; CLI `--base <ref>` or `--self-check`. |
 | [test-rule-report.ts](test-rule-report.ts) | Static test metadata inventory; `--strict` fails missing requirement/risk annotations in outside tests; `--self-check`. |
 | [lab-drift.ts](lab-drift.ts) | `Source`, `Status`, `slug`, `section`, `hash`, `repoDir`, `current`, `check`, `registryDir`, `loadRegistry`, `run`; CLI can report, `--write`, or `--pin` registry sources. |
@@ -22,7 +23,7 @@ Build, CI, documentation, Lab import and delivery tools run from the repository 
 | [host-secret.sh](host-secret.sh) | Create a host-secret file without overwriting it; print only its SHA-256. |
 | [key-add.sh](key-add.sh) | Read one provider key from stdin and call `connections_key_add`; print the projected fingerprint/state reply. |
 | [delivery-latency.sh](delivery-latency.sh) | Report merged PR stage times from GitHub, current host updates and the PDS18 journal. |
-| [watch-landing.sh](watch-landing.sh), [watch-landings.sh](watch-landings.sh) | Observe one PR, or concurrent open/queued/recently merged PRs, through release and host/site installation. |
+| [watch-landing.sh](watch-landing.sh), [watch-landings.sh](watch-landings.sh) | Observe one PR, or concurrent open/queued/recently merged PRs, through release and host/site installation; after a landing, `watch-landings.sh` prints the J1–J5 walk report ([tests/journeys/walk.ts](../tests/journeys/walk.ts)) without changing its exit. |
 | [lab/](lab/README.md) | Shipped pipeline scripts and Blender artifact processing. |
 
 ## Invariants
@@ -32,6 +33,7 @@ Build, CI, documentation, Lab import and delivery tools run from the repository 
 - `pds18-route.ts:plan` gives no pool slots to untrusted events or an unavailable pool. Workflow admission remains a separate boundary; routing is not a security grant.
 - `lab-example-format.ts:parseExample` rejects unknown use cases, duplicate paths/check IDs and invalid relative paths. `lab-examples.ts:fileBytes` checks binary seed hashes.
 - `lab-examples.ts:checkExample` checks the reference and untouched input separately; examples with no script checks remain owner/judge-rated.
+- `design-report-comment.ts` and the J1–J5 walk report information only: a missing baseline, artifact or token becomes a line of text, never a failure.
 - `docs-report.ts` reports warnings without failing the build. Its scope and classification follow [docs governance](../docs/designs/fleet-docs-governance.md).
 
 ## Side Effects

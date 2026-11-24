@@ -641,38 +641,61 @@ jobs:
           retention-days: 7
           overwrite: true
           if-no-files-found: warn
+  # The PR comment leads with what this pull request changed against the latest main design-report artifact and folds the
+  # standing report (scripts/design-report-comment.ts). Every step is information: none fails the run.
   comment:
     needs: reports
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       pull-requests: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/design-report-comment.ts
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           name: design-report
+      - name: Comment builder self-check (warning only)
+        continue-on-error: true
+        run: node scripts/design-report-comment.ts --self-check
+      - name: Write the comment against the main baseline
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ISSUES: ${{ github.server_url }}/${{ github.repository }}/issues?q=is%3Aissue+is%3Aopen+label%3Adocs+fleet-docs-order
+        run: |
+          # Baseline: the newest unexpired design-report artifact of a main run.
+          label='no unexpired design-report artifact from a main run'
+          art=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=design-report&per_page=100" \
+            --jq '[.artifacts[] | select(.workflow_run.head_branch == "main" and (.expired | not))][0] | "\(.workflow_run.id) \(.workflow_run.head_sha)"' 2>/dev/null || true)
+          if [ -n "$art" ] && [ "$art" != "null null" ] && gh run download "${art% *}" -n design-report -D baseline 2>/dev/null; then
+            sha=${art#* }
+            label="main \`${sha:0:12}\` ([run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${art% *}))"
+          fi
+          # docs.drift lines drop when the current description has a ## Drift heading (read now, not at push).
+          drift=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json body --jq '.body // ""' | grep -qE '^## Drift[[:space:]]*$' && echo --drop-drift || true)
+          node scripts/design-report-comment.ts --pr design-report --base baseline/design-report --base-label "$label" \
+            --run "$RUN" --issues "$ISSUES" $drift --out comment.md
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
       - name: Comment report summary on the PR
         continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            let report = 'Design report not produced (see the job log).';
-            try { report = fs.readFileSync('design-report/report.txt', 'utf8'); } catch {}
-            const lines = report.split('\n');
-            const short = lines.length > 60 ? lines.slice(0, 60).join('\n') + '\n… (full report in the design-report artifact)' : report;
-            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            // Docs report: docs.drift lines drop when the current description has a ## Drift heading (read now, not at push).
-            let docs = 'Docs report not produced (see the job log).';
-            try { docs = fs.readFileSync('design-report/docs-report.txt', 'utf8'); } catch {}
-            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: context.issue.number });
-            const drift = /^## Drift\s*$/m.test(pr.body ?? '');
-            const docLines = docs.trimEnd().split('\n').filter(l => !(drift && / docs\.drift /.test(l)));
-            const docsShort = docLines.length > 40 ? docLines.slice(0, 40).join('\n') + '\n… (full report: design-report/docs-report.txt in the artifact)' : docLines.join('\n');
-            const issues = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/issues?q=is%3Aissue+is%3Aopen+label%3Adocs+fleet-docs-order`;
-            const body = `<!-- fleet-design-report -->\n**Design report** (warnings only, never blocks merge) · [run and artifacts](${run})\n\n\`\`\`\n${short}\n\`\`\`\n\n**Docs report** (warnings only) · [open docs-order issue](${issues})\n\n\`\`\`\n${docsShort}\n\`\`\``;
-            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number });
+            let body = '<!-- fleet-design-report -->\n**Design report** · comment not produced (see the job log).';
+            try { body = fs.readFileSync('comment.md', 'utf8'); } catch {}
+            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number, per_page: 100 });
             const old = comments.find(c => c.body.includes('<!-- fleet-design-report -->'));
             if (old) await github.rest.issues.updateComment({ ...context.repo, comment_id: old.id, body });
             else await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });

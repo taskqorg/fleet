@@ -93,8 +93,17 @@ let scroll;
 try { scroll = execFileSync('node', ['tests/ui/scroll.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { scroll = `not run (${String(e.message).split('\n')[0]})`; }
 let ux;
 try { ux = execFileSync('node', ['tests/ui/ux.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { ux = `- UX checks not run (${String(e.message).split('\n')[0]})`; }
+// A failed child's cause is its last stderr line (an exception message), not "Command failed: …"; the PR comment quotes it.
+const cause = e => {
+  if (e.signal === 'SIGTERM') return 'timed out after 300 s';
+  // Node prints an uncaught error as a source frame, a caret line, then the message; log lines come before it.
+  const lines = (e.stderr?.toString() ?? '').split('\n').map(l => l.trim());
+  const caret = lines.findIndex(l => /^\^+$/.test(l));
+  const message = lines.slice(caret + 1).find(l => l && !/^at |^node:internal|^\d{4}\/\d\d\/\d\d /.test(l));
+  return (message ?? String(e.message).split('\n')[0]).slice(0, 300);
+};
 let appCheck;
-try { appCheck = existsSync(join(root, 'dist/app/index.html')) ? execFileSync(process.execPath, ['tests/ui/app.check.ts'], { cwd: root, stdio: 'pipe', timeout: 300000 }).toString().trimEnd() : '    not run (run npm run build first)'; } catch (e) { appCheck = `    not run (${String(e.message).split('\n')[0]})`; }
+try { appCheck = existsSync(join(root, 'dist/app/index.html')) ? execFileSync(process.execPath, ['tests/ui/app.check.ts'], { cwd: root, stdio: 'pipe', timeout: 300000 }).toString().trimEnd() : '    not run (run npm run build first)'; } catch (e) { appCheck = `${e.stdout?.toString().trimEnd() ? e.stdout.toString().trimEnd() + '\n' : ''}    not run (${cause(e)})`; }
 let breaks;
 try { breaks = execFileSync('node', ['tests/ui/layout-break.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { breaks = (e.stdout?.toString().trim() || `not run (${String(e.message).split('\n')[0]})`); }
 let trace;
