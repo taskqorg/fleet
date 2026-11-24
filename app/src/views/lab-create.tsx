@@ -1,6 +1,6 @@
 // Lab draft creation uses the existing operation, never launch (laboratory.md, Create experiment).
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { useLocation, useSearch } from 'wouter-preact';
+import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from 'solid-js';
+import { useLocation, useSearch } from '../router.ts';
 import {
   StatusLine, Button, Choice, CodeEditor, DetailSection, Disclosure, EntityPicker,
   ProblemRow, TextField, harnesses, type CatalogueTreeNode, type StateOf,
@@ -152,39 +152,44 @@ function request(d: Draft): Ops['lab_experiment_create']['request'] {
   return out;
 }
 
-export function LabCreate({ onClose }: { onClose?: () => void } = {}) {
+export function LabCreate(props: { onClose?: () => void } = {}) {
   const [, go] = useLocation();
-  const close = onClose ?? (() => go('/lab'));
+  const close = () => (props.onClose ? props.onClose() : go('/lab'));
   const search = useSearch();
-  const requestedUseCase = new URLSearchParams(search).get('useCase')?.trim() ?? '';
-  const prefillPending = useRef({ registry: false, project: false, pipeline: false, examples: false });
+  const requestedUseCase = untrack(() => new URLSearchParams(search()).get('useCase')?.trim() ?? '');
+  let prefillPending = { registry: false, project: false, pipeline: false, examples: false };
   const resetPrefill = (on: boolean) => {
-    prefillPending.current = { registry: on, project: on, pipeline: on, examples: on };
+    prefillPending = { registry: on, project: on, pipeline: on, examples: on };
   };
-  const [receipt, setReceipt] = useState<Receipt>({ draft: blank(), state: 'editing' });
-  const [key, setKey] = useState(''), [error, setError] = useState(''), [storageWarning, setStorageWarning] = useState('');
-  const [proseKey, setProseKey] = useState(0), [proseOpen, setProseOpen] = useState(!requestedUseCase);
-  const generation = useRef(accessGeneration()).current;
-  const live = useRef(true), identity = useRef(''), current = useRef(receipt), busy = useRef(false);
-  current.current = receipt;
-  const seedDraft = (draft: Draft) => { if (!live.current || !isAccessCurrent(generation)) return; const next: Receipt = { draft, state: 'editing' }; current.current = next; setReceipt(next); };
-  const persist = (next: Receipt) => { if (!live.current || !isAccessCurrent(generation)) return; current.current = next; if (live.current) setReceipt(next); if (identity.current) try { sessionStorage.setItem(identity.current, JSON.stringify(next)); } catch { if (live.current) setStorageWarning('Browser storage is unavailable. Keep this page open until creation is resolved.'); } };
+  const [receipt, setReceipt] = createSignal<Receipt>({ draft: blank(), state: 'editing' }, { ownedWrite: true });
+  const [key, setKey] = createSignal('', { ownedWrite: true });
+  const [error, setError] = createSignal('', { ownedWrite: true });
+  const [storageWarning, setStorageWarning] = createSignal('', { ownedWrite: true });
+  const [proseKey, setProseKey] = createSignal(0);
+  const [proseOpen, setProseOpen] = createSignal(!requestedUseCase);
+  const generation = accessGeneration();
+  let live = true;
+  let identity = '';
+  let current: Receipt = untrack(receipt);
+  let busy = false;
+  const seedDraft = (draft: Draft) => { if (!live || !isAccessCurrent(generation)) return; const next: Receipt = { draft, state: 'editing' }; current = next; setReceipt(next); };
+  const persist = (next: Receipt) => { if (!live || !isAccessCurrent(generation)) return; current = next; if (live) setReceipt(next); if (identity) try { sessionStorage.setItem(identity, JSON.stringify(next)); } catch { if (live) setStorageWarning('Browser storage is unavailable. Keep this page open until creation is resolved.'); } };
   const clearAccess = () => {
     // Preserve authored input under its original actor; server receipts require fresh readback.
-    if (identity.current) try { sessionStorage.setItem(identity.current, JSON.stringify({ draft: current.current.draft, state: current.current.state === 'editing' ? 'editing' : 'uncertain', message: current.current.state === 'editing' ? undefined : 'Previous creation outcome requires review; do not resend.' })); } catch { /* input still existed in this view */ }
-    identity.current = ''; busy.current = true; resetPrefill(false); setKey('');
-    current.current = { draft: blank(), state: 'editing' }; setReceipt(current.current);
+    if (identity) try { sessionStorage.setItem(identity, JSON.stringify({ draft: current.draft, state: current.state === 'editing' ? 'editing' : 'uncertain', message: current.state === 'editing' ? undefined : 'Previous creation outcome requires review; do not resend.' })); } catch { /* input still existed in this view */ }
+    identity = ''; busy = true; resetPrefill(false); setKey('');
+    current = { draft: blank(), state: 'editing' }; setReceipt(current);
     setError('Access changed. Reload before creating a draft.');
   };
-  useEffect(() => {
-    live.current = true;
+  onSettled(() => {
+    live = true;
     const cleared = clearAccess;
     onClear.add(cleared);
-    (async () => {
+    void (async () => {
       try {
         const actor = access.value.identity?.identityKey;
         if (!actor || !isAccessCurrent(generation)) return;
-        const k = PREFIX + JSON.stringify([1, actor]); identity.current = k;
+        const k = PREFIX + JSON.stringify([1, actor]); identity = k;
         let saved: Receipt | null = null; try { saved = JSON.parse(sessionStorage.getItem(k) ?? 'null'); } catch { /* start an empty draft */ }
         const canRestoreSaved = !!saved?.draft && typeof saved.draft.projectId === 'string' && typeof saved.draft.pipelineId === 'string' && typeof saved.draft.repeats === 'string' && Array.isArray(saved.draft.examples) && Array.isArray(saved.draft.variants) && Array.isArray(saved.draft.evaluators) && Array.isArray(saved.draft.budgets) && ['editing', 'pending', 'uncertain', 'created'].includes(saved.state) && (saved.state !== 'editing' || !requestedUseCase || saved.draft.useCaseId === requestedUseCase);
         if (canRestoreSaved && saved) {
@@ -194,27 +199,27 @@ export function LabCreate({ onClose }: { onClose?: () => void } = {}) {
             try { await op('project_detail', { projectId: saved.draft.projectId }); }
             catch (e) { if (e instanceof OpError && [404, 503].includes(e.status)) await op('project_context', { projectId: saved.draft.projectId }); else throw e; }
           }
-          if (!isAccessCurrent(generation) || !live.current) return;
+          if (!isAccessCurrent(generation) || !live) return;
           persist({ draft: saved.draft, state: saved.state === 'editing' ? 'editing' : 'uncertain', ...(saved.state !== 'editing' ? { message: 'Previous creation outcome requires review; do not resend.' } : {}) });
         } else if (requestedUseCase) {
           resetPrefill(true);
           seedDraft(prefillForUseCase(requestedUseCase));
         }
-        busy.current = false; setKey(k); setError('');
-      } catch (e) { if (live.current) setError(message(e)); }
+        busy = false; setKey(k); setError('');
+      } catch (e) { if (live) setError(message(e)); }
     })();
-    return () => { live.current = false; identity.current = ''; onClear.delete(cleared); };
-  }, []);
-  const d = receipt.draft;
+    return () => { live = false; identity = ''; onClear.delete(cleared); };
+  });
+  const d = () => receipt().draft;
   // The choices: read once this person's draft is restored (key), the pipelines of the chosen project.
-  const projectList = useOp('project_list', key ? {} : null);
-  const exampleList = useOp('lab_examples_list', key ? { state: 'approved' } : null);
-  const registryList = useOp('lab_registry', key ? {} : null);
-  const agentList = useOp('definition_list', key ? { kind: 'agent' } : null);
-  const pipelineList = useOp('definition_list', key && d.projectId ? { kind: 'pipeline', projectId: d.projectId } : null);
+  const projectList = useOp('project_list', () => (key() ? {} : null));
+  const exampleList = useOp('lab_examples_list', () => (key() ? { state: 'approved' } : null));
+  const registryList = useOp('lab_registry', () => (key() ? {} : null));
+  const agentList = useOp('definition_list', () => (key() ? { kind: 'agent' } : null));
+  const pipelineList = useOp('definition_list', () => (key() && d().projectId ? { kind: 'pipeline', projectId: d().projectId } : null));
 
-  const projectNodes = useMemo<CatalogueTreeNode[]>(
-    () => (key ? (projectList.data?.projects ?? []) : []).map(p => {
+  const projectNodes = createMemo<CatalogueTreeNode[]>(
+    () => (key() ? (projectList.data?.projects ?? []) : []).map(p => {
       const pid = String(p.id);
       const pname = String(p.name ?? p.id);
       return {
@@ -225,24 +230,21 @@ export function LabCreate({ onClose }: { onClose?: () => void } = {}) {
         searchText: `${pid} ${pname}`,
       };
     }),
-    [key, projectList.data],
   );
-  const exampleNodes = useMemo<CatalogueTreeNode[]>(
-    () => (key ? (exampleList.data?.examples ?? []) : []).map(e => ({
+  const exampleNodes = createMemo<CatalogueTreeNode[]>(
+    () => (key() ? (exampleList.data?.examples ?? []) : []).map(e => ({
       id: e.artifactId,
       label: e.name,
       sub: e.useCaseId ?? e.artifactId,
       icon: 'file-text',
       searchText: `${e.name} ${e.artifactId} ${e.useCaseId ?? ''}`,
     })),
-    [key, exampleList.data],
   );
-  const pipelineItems = useMemo(
-    () => (key && d.projectId ? (pipelineList.data?.items ?? []).filter(p => p.revision > 0) : []),
-    [key, d.projectId, pipelineList.data],
+  const pipelineItems = createMemo(
+    () => (key() && d().projectId ? (pipelineList.data?.items ?? []).filter(p => p.revision > 0) : []),
   );
-  const pipelineNodes = useMemo<CatalogueTreeNode[]>(
-    () => pipelineItems.map(p => ({
+  const pipelineNodes = createMemo<CatalogueTreeNode[]>(
+    () => pipelineItems().map(p => ({
       id: p.id,
       label: p.name,
       sub: `${p.id} · r${p.revision}`,
@@ -250,95 +252,94 @@ export function LabCreate({ onClose }: { onClose?: () => void } = {}) {
       state: { family: 'definition', state: p.draft ? 'draft' : 'ready' },
       searchText: `${p.id} ${p.name}`,
     })),
-    [pipelineItems],
   );
-  const primaryEvaluatorNodes = useMemo<CatalogueTreeNode[]>(
-    () => d.evaluators.map(e => {
+  const primaryEvaluatorNodes = createMemo<CatalogueTreeNode[]>(
+    () => d().evaluators.map(e => {
       const n = nameOf(e);
       return { id: n, label: n, icon: 'sliders-horizontal', searchText: n };
     }),
-    [d.evaluators],
   );
 
-  const useCases: RegistryUseCase[] = useMemo(() => registryList.data?.useCases ?? [], [registryList.data]);
-  const agentItems = useMemo(() => agentList.data?.items ?? [], [agentList.data]);
-  const { nodes: useCaseNodes, archivedNodes: archivedUseCaseNodes } = useMemo(
-    () => buildUseCaseTree(useCases, { separateArchived: true, eligibleOnly: true }),
-    [useCases],
+  const useCases = createMemo<RegistryUseCase[]>(() => registryList.data?.useCases ?? []);
+  const agentItems = createMemo(() => agentList.data?.items ?? []);
+  const useCaseTree = createMemo(() => buildUseCaseTree(useCases(), { separateArchived: true, eligibleOnly: true }));
+  const agentTree = createMemo(() => buildAgentTree(agentItems()));
+
+  createEffect(
+    () => [key(), exampleList.data, registryList.data, projectList.data, pipelineList.data] as const,
+    ([k, exData, regData, projData, pipData]) => {
+      if (!k || busy || !live || !isAccessCurrent(generation)) return;
+      if (current.state !== 'editing') return;
+      const cur = current.draft;
+      const targetUseCase = cur.useCaseId || requestedUseCase;
+      if (!targetUseCase) return;
+      if (!prefillPending.registry && !prefillPending.project && !prefillPending.pipeline && !prefillPending.examples) return;
+      const patch: Partial<Draft> = {};
+      if (prefillPending.registry && regData) {
+        prefillPending.registry = false;
+        const u = regData.useCases.find(x => x.id === targetUseCase);
+        if (u && (!cur.goal || !cur.hypothesis || !cur.decisionRule)) {
+          const prose = defaultProseForUseCase(u);
+          const ev = defaultEvaluatorForUseCase(u);
+          if (!cur.goal) patch.goal = prose.goal;
+          if (!cur.hypothesis) patch.hypothesis = prose.hypothesis;
+          if (!cur.decisionRule) patch.decisionRule = prose.decisionRule;
+          patch.evaluators = [ev];
+          patch.primary = `${ev.kind}:${ev.ref}:${ev.form}`;
+        }
+      }
+      if (prefillPending.project && projData) {
+        prefillPending.project = false;
+        if (!cur.projectId) {
+          const ps = projData.projects;
+          const preferred = ps.find(p => String(p.id) === 'fleet') ? 'fleet' : (ps.length === 1 ? String(ps[0].id) : '');
+          if (preferred) patch.projectId = preferred;
+        }
+      }
+      if (prefillPending.pipeline && pipData && cur.projectId) {
+        prefillPending.pipeline = false;
+        if (!cur.pipelineId) {
+          const pips = pipData.items.filter(p => p.revision > 0);
+          const preferred = pips.find(p => p.id === 'coding-task')?.id ?? (pips.length === 1 ? pips[0].id : '');
+          if (preferred) patch.pipelineId = preferred;
+        }
+      }
+      if (prefillPending.examples && exData) {
+        prefillPending.examples = false;
+        if (cur.examples.length === 0) {
+          const matched = matchingExamplesForUseCase(exData.examples, targetUseCase).map(e => e.artifactId);
+          if (matched.length) patch.examples = matched;
+        }
+      }
+      if (!Object.keys(patch).length) return;
+      let hasSaved = false;
+      try { hasSaved = !!identity && sessionStorage.getItem(identity) !== null; } catch { /* ignore */ }
+      if (hasSaved) persist({ draft: { ...cur, ...patch }, state: 'editing' });
+      else seedDraft({ ...cur, ...patch });
+    },
   );
-  const { nodes: agentNodes, archivedNodes: archivedAgentNodes } = useMemo(() => buildAgentTree(agentItems), [agentItems]);
 
-  useEffect(() => {
-    if (!key || busy.current || !live.current || !isAccessCurrent(generation)) return;
-    if (current.current.state !== 'editing') return;
-    const cur = current.current.draft;
-    const targetUseCase = cur.useCaseId || requestedUseCase;
-    if (!targetUseCase) return;
-    const pending = prefillPending.current;
-    if (!pending.registry && !pending.project && !pending.pipeline && !pending.examples) return;
-    const patch: Partial<Draft> = {};
-    if (pending.registry && registryList.data) {
-      pending.registry = false;
-      const u = registryList.data.useCases.find(x => x.id === targetUseCase);
-      if (u && (!cur.goal || !cur.hypothesis || !cur.decisionRule)) {
-        const prose = defaultProseForUseCase(u);
-        const ev = defaultEvaluatorForUseCase(u);
-        if (!cur.goal) patch.goal = prose.goal;
-        if (!cur.hypothesis) patch.hypothesis = prose.hypothesis;
-        if (!cur.decisionRule) patch.decisionRule = prose.decisionRule;
-        patch.evaluators = [ev];
-        patch.primary = `${ev.kind}:${ev.ref}:${ev.form}`;
-      }
-    }
-    if (pending.project && projectList.data) {
-      pending.project = false;
-      if (!cur.projectId) {
-        const ps = projectList.data.projects;
-        const preferred = ps.find(p => String(p.id) === 'fleet') ? 'fleet' : (ps.length === 1 ? String(ps[0].id) : '');
-        if (preferred) patch.projectId = preferred;
-      }
-    }
-    if (pending.pipeline && pipelineList.data && cur.projectId) {
-      pending.pipeline = false;
-      if (!cur.pipelineId) {
-        const pips = pipelineList.data.items.filter(p => p.revision > 0);
-        const preferred = pips.find(p => p.id === 'coding-task')?.id ?? (pips.length === 1 ? pips[0].id : '');
-        if (preferred) patch.pipelineId = preferred;
-      }
-    }
-    if (pending.examples && exampleList.data) {
-      pending.examples = false;
-      if (cur.examples.length === 0) {
-        const matched = matchingExamplesForUseCase(exampleList.data.examples, targetUseCase).map(e => e.artifactId);
-        if (matched.length) patch.examples = matched;
-      }
-    }
-    if (!Object.keys(patch).length) return;
-    let hasSaved = false;
-    try { hasSaved = !!identity.current && sessionStorage.getItem(identity.current) !== null; } catch { /* ignore */ }
-    if (hasSaved) persist({ draft: { ...cur, ...patch }, state: 'editing' });
-    else seedDraft({ ...cur, ...patch });
-  }, [key, exampleList.data, registryList.data, projectList.data, pipelineList.data]);
-
-  const readError = projectList.error ?? exampleList.error ?? pipelineList.error ?? registryList.error ?? agentList.error;
-  const edit = (change: Partial<Draft>) => { if (busy.current || current.current.state !== 'editing') return; persist({ draft: { ...current.current.draft, ...change }, state: 'editing' }); setError(''); };
+  const readError = createMemo(() => projectList.error ?? exampleList.error ?? pipelineList.error ?? registryList.error ?? agentList.error);
+  const edit = (change: Partial<Draft>) => { if (busy || current.state !== 'editing') return; persist({ draft: { ...current.draft, ...change }, state: 'editing' }); setError(''); };
   const applyUseCase = (useCaseId: string | null) => {
     if (!useCaseId) {
       resetPrefill(false);
       edit({ useCaseId: '' });
       return;
     }
-    const u = useCases.find(x => x.id === useCaseId) ?? null;
+    const cur = d();
+    const u = useCases().find(x => x.id === useCaseId) ?? null;
     const slug = useCaseSlug(useCaseId);
     const ev = defaultEvaluatorForUseCase(u);
-    const prose = u ? defaultProseForUseCase(u) : { goal: d.goal, hypothesis: d.hypothesis, decisionRule: d.decisionRule };
+    const prose = u ? defaultProseForUseCase(u) : { goal: cur.goal, hypothesis: cur.hypothesis, decisionRule: cur.decisionRule };
     const matched = matchingExamplesForUseCase(exampleList.data?.examples ?? [], useCaseId).map(e => e.artifactId);
     const ps = projectList.data?.projects ?? [];
-    const nextProjectId = d.projectId || (ps.find(p => String(p.id) === 'fleet') ? 'fleet' : (ps.length === 1 ? String(ps[0].id) : ''));
-    const nextPipelineId = d.pipelineId || (nextProjectId === d.projectId ? (pipelineItems.find(p => p.id === 'coding-task')?.id ?? (pipelineItems.length === 1 ? pipelineItems[0].id : '')) : '');
-    if (nextProjectId && !nextPipelineId) prefillPending.current.pipeline = true;
-    const nextVariants = d.variants.length >= 2
-      ? d.variants
+    const nextProjectId = cur.projectId || (ps.find(p => String(p.id) === 'fleet') ? 'fleet' : (ps.length === 1 ? String(ps[0].id) : ''));
+    const pips = pipelineItems();
+    const nextPipelineId = cur.pipelineId || (nextProjectId === cur.projectId ? (pips.find(p => p.id === 'coding-task')?.id ?? (pips.length === 1 ? pips[0].id : '')) : '');
+    if (nextProjectId && !nextPipelineId) prefillPending.pipeline = true;
+    const nextVariants = cur.variants.length >= 2
+      ? cur.variants
       : [{ label: 'A', pipelineId: '', overrides: '{}' }, { label: 'B', pipelineId: '', overrides: '{}' }];
     edit({
       useCaseId,
@@ -347,7 +348,7 @@ export function LabCreate({ onClose }: { onClose?: () => void } = {}) {
       variants: nextVariants,
       evaluators: [ev],
       primary: `${ev.kind}:${ev.ref}:${ev.form}`,
-      ...(matched.length || d.useCaseId ? { examples: matched } : {}),
+      ...(matched.length || cur.useCaseId ? { examples: matched } : {}),
       ...(nextProjectId ? { projectId: nextProjectId } : {}),
       ...(nextPipelineId ? { pipelineId: nextPipelineId } : {}),
       ...prose,
@@ -356,48 +357,51 @@ export function LabCreate({ onClose }: { onClose?: () => void } = {}) {
     setProseKey(n => n + 1);
   };
 
-  const variants = (i: number, change: Partial<Variant>) => edit({ variants: current.current.draft.variants.map((v, j) => j === i ? { ...v, ...change } : v) });
-  const evaluators = (i: number, change: Partial<Evaluator>) => edit({ evaluators: current.current.draft.evaluators.map((v, j) => j === i ? { ...v, ...change } : v) });
-  const budgets = (i: number, change: Partial<Budget>) => edit({ budgets: current.current.draft.budgets.map((v, j) => j === i ? { ...v, ...change } : v) });
+  const variants = (i: number, change: Partial<Variant>) => edit({ variants: current.draft.variants.map((v, j) => j === i ? { ...v, ...change } : v) });
+  const evaluators = (i: number, change: Partial<Evaluator>) => edit({ evaluators: current.draft.evaluators.map((v, j) => j === i ? { ...v, ...change } : v) });
+  const budgets = (i: number, change: Partial<Budget>) => edit({ budgets: current.draft.budgets.map((v, j) => j === i ? { ...v, ...change } : v) });
   const readback = async (id: string, draft: Draft, k: string) => {
     try {
       const e = await op('lab_experiment_get', { experimentId: id });
       if (e.id !== id || e.projectId !== draft.projectId || e.pipelineId !== draft.pipelineId || e.state !== 'draft') throw Error('Created experiment readback differs. Review its retained record.');
-      if (!isAccessCurrent(generation) || identity.current !== k) return;
+      if (!isAccessCurrent(generation) || identity !== k) return;
       try { sessionStorage.removeItem(k); } catch { /* memory still keeps the receipt */ }
-      if (live.current) go('/lab/' + encodeURIComponent(id));
-    } catch (e) { if (isAccessCurrent(generation) && identity.current === k) persist({ draft, state: 'created', id, message: `Creation confirmed; details unavailable: ${message(e)}` }); }
+      if (live) go('/lab/' + encodeURIComponent(id));
+    } catch (e) { if (isAccessCurrent(generation) && identity === k) persist({ draft, state: 'created', id, message: `Creation confirmed; details unavailable: ${message(e)}` }); }
   };
   const create = async () => {
-    if (!key || busy.current || current.current.state !== 'editing' || !online.value || signedOut.value) return;
-    const draft = current.current.draft; let body: Ops['lab_experiment_create']['request'];
+    if (!key() || busy || current.state !== 'editing' || !online.value || signedOut.value) return;
+    const draft = current.draft; let body: Ops['lab_experiment_create']['request'];
     try { body = request(draft); } catch (e) { setError(message(e)); return; }
-    busy.current = true; const k = identity.current; persist({ draft, state: 'pending' }); setError('');
+    busy = true; const k = identity; persist({ draft, state: 'pending' }); setError('');
     try {
       const e = await op('lab_experiment_create', body);
       if (typeof e.id !== 'string' || !e.id) throw Error('The create reply did not identify the experiment.');
-      if (!isAccessCurrent(generation) || identity.current !== k) return;
+      if (!isAccessCurrent(generation) || identity !== k) return;
       persist({ draft, state: 'created', id: e.id }); await readback(e.id, draft, k);
     } catch (e) {
-      if (!isAccessCurrent(generation) || identity.current !== k) return;
+      if (!isAccessCurrent(generation) || identity !== k) return;
       if (e instanceof OpError && [400, 403, 404, 409].includes(e.status)) { persist({ draft, state: 'editing' }); setError(e.message); }
       else persist({ draft, state: 'uncertain', message: 'Creation could not be confirmed. Do not repeat this request; review experiments. ' + message(e) });
-    } finally { busy.current = false; }
+    } finally { busy = false; }
   };
-  let invalid = ''; try { request(d); } catch (e) { invalid = message(e); }
-  const disabled = !key ? 'Loading identity and access' : receipt.state !== 'editing' ? 'Resolve the previous creation first' : !online.value ? 'offline' : signedOut.value ? 'signed out' : undefined;
-  const field = (label: string, key: 'goal' | 'hypothesis' | 'decisionRule' | 'labGroup' | 'repeats' | 'max' | 'k', multiline = false) => <TextField label={label} value={d[key]} onChange={v => edit({ [key]: v })} multiline={multiline} type={['repeats', 'max', 'k'].includes(key) ? 'number' : 'text'} disabledReason={disabled} />;
+  const invalid = createMemo(() => {
+    try { request(d()); return ''; } catch (e) { return message(e); }
+  });
+  const disabled = createMemo(() => !key() ? 'Loading identity and access' : receipt().state !== 'editing' ? 'Resolve the previous creation first' : !online.value ? 'offline' : signedOut.value ? 'signed out' : undefined);
+  const field = (label: string, key: 'goal' | 'hypothesis' | 'decisionRule' | 'labGroup' | 'repeats' | 'max' | 'k', multiline = false) =>
+    <TextField label={label} value={d()[key]} onChange={v => edit({ [key]: v })} multiline={multiline} type={['repeats', 'max', 'k'].includes(key) ? 'number' : 'text'} disabledReason={disabled()} />;
   const options = (xs: string[]) => xs.map(id => ({ id, label: id }));
-  const advanced = (label: string, value: string, change: (value: string) => void, help: string) => {
-    let error = ''; try { object(value, label); } catch (e) { error = (e as Error).message; }
-    return <Disclosure open={error ? true : undefined} summary={label}><p class="muted">{help}</p>
-      <CodeEditor label={label} value={value} onChange={change} problems={error ? [{ path: '', message: error }] : []} disabledReason={disabled} /></Disclosure>;
+  const advanced = (label: string, value: () => string, change: (value: string) => void, help: string) => {
+    const err = () => { try { object(value(), label); return ''; } catch (e) { return (e as Error).message; } };
+    return <Disclosure open={err() ? true : undefined} summary={label}><p class="muted">{help}</p>
+      <CodeEditor label={label} value={value()} onChange={change} problems={err() ? [{ path: '', message: err() }] : []} disabledReason={disabled()} /></Disclosure>;
   };
 
-  const distinctHarnessAgents = useMemo(() => {
+  const distinctHarnessAgents = createMemo(() => {
     const seen = new Set<string>();
     const out: DefinitionListItem[] = [];
-    const preferred = agentItems.toSorted((a, b) => {
+    const preferred = agentItems().toSorted((a, b) => {
       const aWorker = a.agent?.category === 'worker' ? 0 : 1;
       const bWorker = b.agent?.category === 'worker' ? 0 : 1;
       return aWorker - bWorker || Number(!!a.agent?.variantOf) - Number(!!b.agent?.variantOf) || a.id.localeCompare(b.id);
@@ -409,8 +413,8 @@ export function LabCreate({ onClose }: { onClose?: () => void } = {}) {
       out.push(a);
     }
     return out;
-  }, [agentItems]);
-  const hasCodingPipelinePair = pipelineItems.some(p => p.id === 'coding-task') && pipelineItems.some(p => p.id === 'coding-task-reviewed');
+  });
+  const hasCodingPipelinePair = createMemo(() => pipelineItems().some(p => p.id === 'coding-task') && pipelineItems().some(p => p.id === 'coding-task-reviewed'));
   const applyAgentPairPreset = (pair: readonly DefinitionListItem[]) => {
     edit({
       kind: 'ab',
@@ -424,7 +428,7 @@ export function LabCreate({ onClose }: { onClose?: () => void } = {}) {
   const applyPipelinePairPreset = () => {
     edit({
       kind: 'ab',
-      pipelineId: d.pipelineId || 'coding-task',
+      pipelineId: d().pipelineId || 'coding-task',
       variants: [
         { label: '1-step', pipelineId: 'coding-task', overrides: '{}' },
         { label: '3-step-reviewed', pipelineId: 'coding-task-reviewed', overrides: '{}' },
@@ -432,33 +436,35 @@ export function LabCreate({ onClose }: { onClose?: () => void } = {}) {
     });
   };
 
-  return <article class="detail" data-ui="detail" aria-label="Create experiment" tabIndex={-1}>
+  return <article class="detail" data-ui="detail" aria-label="Create experiment" tabindex={-1}>
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={close} />
       <h2>New experiment</h2>
       <span class="grow" />
-      <Button label="Create draft" icon="plus" kind="primary" busy={receipt.state === 'pending'} disabledReason={disabled || invalid || undefined} onClick={create} />
+      <Button label="Create draft" icon="plus" kind="primary" busy={receipt().state === 'pending'} disabledReason={disabled() || invalid() || undefined} onClick={create} />
     </header>
-    <StatusLine>{receipt.state === 'pending' ? 'Creating draft…' : invalid && !error ? invalid : ''}</StatusLine>
-    {error && <ProblemRow title="Draft not created" facts={error} severity="failure" actions={[]} />}
-    {!error && readError && <ProblemRow title="Choices did not load" facts={readError} severity="failure" actions={[]} />}
-    {storageWarning && <ProblemRow title="Draft storage unavailable" facts={storageWarning} severity="warning" actions={[]} />}
-    {receipt.message && <ProblemRow title={receipt.state === 'created' ? 'Creation confirmed' : 'Creation unconfirmed'} facts={receipt.message} severity="warning" actions={[]} />}
-    {receipt.message && <div class="answers"><Button label="Review experiments" onClick={close} />{receipt.id && <Button label="Read details again" onClick={() => readback(receipt.id!, d, identity.current)} />}</div>}
-    <fieldset class="draft-fields" disabled={!!disabled}>
+    <StatusLine>{receipt().state === 'pending' ? 'Creating draft…' : invalid() && !error() ? invalid() : ''}</StatusLine>
+    <Show when={error()}>{err => <ProblemRow title="Draft not created" facts={err()} severity="failure" actions={[]} />}</Show>
+    <Show when={!error() && readError()}>{err => <ProblemRow title="Choices did not load" facts={err()} severity="failure" actions={[]} />}</Show>
+    <Show when={storageWarning()}>{w => <ProblemRow title="Draft storage unavailable" facts={w()} severity="warning" actions={[]} />}</Show>
+    <Show when={receipt().message}>{msg => <>
+      <ProblemRow title={receipt().state === 'created' ? 'Creation confirmed' : 'Creation unconfirmed'} facts={msg()} severity="warning" actions={[]} />
+      <div class="answers"><Button label="Review experiments" onClick={close} /><Show when={receipt().id}>{rid => <Button label="Read details again" onClick={() => readback(rid(), d(), identity)} />}</Show></div>
+    </>}</Show>
+    <fieldset class="draft-fields" disabled={!!disabled()}>
       <DetailSection title="Setup">
         <EntityPicker
           mode="single"
           label="Use case"
           placeholder="Optional: pick a benchmark or real-work suite"
           searchPlaceholder="Search use cases"
-          nodes={useCaseNodes}
-          archivedNodes={archivedUseCaseNodes}
-          value={d.useCaseId || null}
-          loading={!!key && !registryList.data && !registryList.error}
+          nodes={useCaseTree().nodes}
+          archivedNodes={useCaseTree().archivedNodes}
+          value={d().useCaseId || null}
+          loading={!!key() && !registryList.data && !registryList.error}
           error={registryList.error}
           onRetry={registryList.reload}
-          disabledReason={disabled}
+          disabledReason={disabled()}
           onChange={applyUseCase}
         />
         <EntityPicker
@@ -466,12 +472,12 @@ export function LabCreate({ onClose }: { onClose?: () => void } = {}) {
           label="Project"
           placeholder="Choose project"
           searchPlaceholder="Search projects"
-          nodes={projectNodes}
-          value={d.projectId || null}
-          loading={!!key && !projectList.data && !projectList.error}
+          nodes={projectNodes()}
+          value={d().projectId || null}
+          loading={!!key() && !projectList.data && !projectList.error}
           error={projectList.error}
           onRetry={projectList.reload}
-          disabledReason={disabled}
+          disabledReason={disabled()}
           onChange={projectId => edit({ projectId: projectId ?? '' })}
         />
         <EntityPicker
@@ -479,90 +485,92 @@ export function LabCreate({ onClose }: { onClose?: () => void } = {}) {
           label="Pipeline"
           placeholder="Choose pipeline"
           searchPlaceholder="Search pipelines"
-          nodes={pipelineNodes}
-          value={d.pipelineId || null}
-          loading={!!key && !!d.projectId && !pipelineList.data && !pipelineList.error}
+          nodes={pipelineNodes()}
+          value={d().pipelineId || null}
+          loading={!!key() && !!d().projectId && !pipelineList.data && !pipelineList.error}
           error={pipelineList.error}
           onRetry={pipelineList.reload}
-          disabledReason={disabled || (!d.projectId ? 'Choose a project first' : undefined)}
+          disabledReason={disabled() || (!d().projectId ? 'Choose a project first' : undefined)}
           onChange={pipelineId => edit({ pipelineId: pipelineId ?? '' })}
         />
-        <Choice label="Experiment kind" options={options(['single', 'ab', 'loop'])} value={d.kind} onChange={v => edit({ kind: v })} />
+        <Choice label="Experiment kind" options={options(['single', 'ab', 'loop'])} value={d().kind} onChange={v => edit({ kind: v })} />
         {field('Repeats', 'repeats')}
         <EntityPicker
           mode="multiple"
           label="Approved examples"
           placeholder="Choose approved examples"
           searchPlaceholder="Search approved examples"
-          nodes={exampleNodes}
-          value={d.examples}
-          loading={!!key && !exampleList.data && !exampleList.error}
+          nodes={exampleNodes()}
+          value={d().examples}
+          loading={!!key() && !exampleList.data && !exampleList.error}
           error={exampleList.error}
           onRetry={exampleList.reload}
-          disabledReason={disabled}
+          disabledReason={disabled()}
           onChange={examples => edit({ examples })}
         />
       </DetailSection>
       <DetailSection title="Record">
-        <Disclosure
-          key={proseKey}
-          open={proseOpen ? true : undefined}
-          summary={d.useCaseId ? 'Goal, hypothesis & decision rule (auto-filled)' : 'Goal, hypothesis & decision rule'}
-        >
-          {field('Goal', 'goal', true)}{field('Hypothesis', 'hypothesis', true)}{field('Decision rule', 'decisionRule', true)}{field('Group', 'labGroup')}
-        </Disclosure>
+        <Show when={String(proseKey())} keyed>{_k => (
+          <Disclosure
+            open={proseOpen() ? true : undefined}
+            summary={d().useCaseId ? 'Goal, hypothesis & decision rule (auto-filled)' : 'Goal, hypothesis & decision rule'}
+          >
+            {field('Goal', 'goal', true)}{field('Hypothesis', 'hypothesis', true)}{field('Decision rule', 'decisionRule', true)}{field('Group', 'labGroup')}
+          </Disclosure>
+        )}</Show>
       </DetailSection>
       <DetailSection title="Variants">
-        {(distinctHarnessAgents.length >= 2 || hasCodingPipelinePair) && (
+        <Show when={distinctHarnessAgents().length >= 2 || hasCodingPipelinePair()}>
           <div class="ep-presets" role="group" aria-label="Quick A/B presets">
-            {distinctHarnessAgents.length >= 2 && (
+            <Show when={distinctHarnessAgents().length >= 2}>
               <Button
-                label={`${distinctHarnessAgents[0].name} vs ${distinctHarnessAgents[1].name}`}
+                label={`${distinctHarnessAgents()[0].name} vs ${distinctHarnessAgents()[1].name}`}
                 kind="quiet"
                 icon="bot"
-                disabledReason={disabled}
-                onClick={() => applyAgentPairPreset([distinctHarnessAgents[0], distinctHarnessAgents[1]])}
+                disabledReason={disabled()}
+                onClick={() => applyAgentPairPreset([distinctHarnessAgents()[0], distinctHarnessAgents()[1]])}
               />
-            )}
-            {distinctHarnessAgents.length >= 3 && (
+            </Show>
+            <Show when={distinctHarnessAgents().length >= 3}>
               <Button
-                label={`${distinctHarnessAgents[0].name} vs ${distinctHarnessAgents[2].name}`}
+                label={`${distinctHarnessAgents()[0].name} vs ${distinctHarnessAgents()[2].name}`}
                 kind="quiet"
                 icon="bot"
-                disabledReason={disabled}
-                onClick={() => applyAgentPairPreset([distinctHarnessAgents[0], distinctHarnessAgents[2]])}
+                disabledReason={disabled()}
+                onClick={() => applyAgentPairPreset([distinctHarnessAgents()[0], distinctHarnessAgents()[2]])}
               />
-            )}
-            {hasCodingPipelinePair && (
+            </Show>
+            <Show when={hasCodingPipelinePair()}>
               <Button
                 label="1-step vs 3-step reviewed"
                 kind="quiet"
                 icon="network"
-                disabledReason={disabled}
+                disabledReason={disabled()}
                 onClick={applyPipelinePairPreset}
               />
-            )}
+            </Show>
           </div>
-        )}
-        {d.variants.map((v, i) => (
-          <section class="panel" key={i}>
-            <TextField label={`Variant ${i + 1} label`} value={v.label} onChange={label => variants(i, { label })} disabledReason={disabled} />
+        </Show>
+        <For each={d().variants} keyed={false}>{(v, i) => (
+          <section class="panel">
+            <TextField label={`Variant ${i + 1} label`} value={v().label} onChange={label => variants(i, { label })} disabledReason={disabled()} />
             <EntityPicker
               mode="single"
               label={`Variant ${i + 1} agent / profile`}
               placeholder="Pipeline default"
               searchPlaceholder="Search agents and models"
-              nodes={agentNodes}
-              archivedNodes={archivedAgentNodes}
-              value={profileIdOfParams(v.overrides)}
-              loading={!!key && !agentList.data && !agentList.error}
+              nodes={agentTree().nodes}
+              archivedNodes={agentTree().archivedNodes}
+              value={profileIdOfParams(v().overrides)}
+              loading={!!key() && !agentList.data && !agentList.error}
               error={agentList.error}
               onRetry={agentList.reload}
-              disabledReason={disabled}
+              disabledReason={disabled()}
               onChange={agentId => {
-                const agent = agentId ? agentItems.find(a => a.id === agentId) ?? null : null;
-                const nextLabel = (!v.label || v.label === 'A' || v.label === 'B') && agent ? agent.id : v.label;
-                variants(i, { label: nextLabel, overrides: withProfileParam(v.overrides, agent) });
+                const curV = v();
+                const agent = agentId ? agentItems().find(a => a.id === agentId) ?? null : null;
+                const nextLabel = (!curV.label || curV.label === 'A' || curV.label === 'B') && agent ? agent.id : curV.label;
+                variants(i, { label: nextLabel, overrides: withProfileParam(curV.overrides, agent) });
               }}
             />
             <EntityPicker
@@ -570,79 +578,79 @@ export function LabCreate({ onClose }: { onClose?: () => void } = {}) {
               label={`Variant ${i + 1} pipeline`}
               placeholder="Base pipeline"
               searchPlaceholder="Search pipelines"
-              nodes={pipelineNodes}
-              value={v.pipelineId || null}
-              loading={!!key && !!d.projectId && !pipelineList.data && !pipelineList.error}
+              nodes={pipelineNodes()}
+              value={v().pipelineId || null}
+              loading={!!key() && !!d().projectId && !pipelineList.data && !pipelineList.error}
               error={pipelineList.error}
               onRetry={pipelineList.reload}
-              disabledReason={disabled || (!d.projectId ? 'Choose a project first' : undefined)}
+              disabledReason={disabled() || (!d().projectId ? 'Choose a project first' : undefined)}
               onChange={pipelineId => variants(i, { pipelineId: pipelineId ?? '' })}
             />
-            {advanced(`Variant ${i + 1} changes from default`, v.overrides, overrides => variants(i, { overrides }), 'Optional model, skills, prompt, web_route, account, host, profile, arguments or bands. Server permissions still apply.')}
-            <Button label={`Remove variant ${i + 1}`} icon="x" disabledReason={disabled} onClick={() => edit({ variants: d.variants.filter((_, j) => i !== j) })} />
+            {advanced(`Variant ${i + 1} changes from default`, () => v().overrides, overrides => variants(i, { overrides }), 'Optional model, skills, prompt, web_route, account, host, profile, arguments or bands. Server permissions still apply.')}
+            <Button label={`Remove variant ${i + 1}`} icon="x" disabledReason={disabled()} onClick={() => edit({ variants: d().variants.filter((_, j) => i !== j) })} />
           </section>
-        ))}
-        <Button label="Add variant" icon="plus" disabledReason={disabled} onClick={() => edit({ variants: [...d.variants, { label: '', pipelineId: '', overrides: '{}' }] })} />
+        )}</For>
+        <Button label="Add variant" icon="plus" disabledReason={disabled()} onClick={() => edit({ variants: [...d().variants, { label: '', pipelineId: '', overrides: '{}' }] })} />
       </DetailSection>
       <DetailSection title="Evaluators">
-        {d.evaluators.map((e, i) => (
-          <section class="panel" key={i}>
-            <Choice label={`Evaluator ${i + 1} kind`} options={options(['script', 'judge', 'typed', 'human'])} value={e.kind} onChange={kind => evaluators(i, { kind, ref: kind === 'script' ? 'example.checks' : kind === 'typed' ? 'labels' : kind === 'human' ? 'owner' : '', form: kind === 'typed' ? 'typed' : 'pass_fail' })} />
-            {e.kind === 'judge' && (
+        <For each={d().evaluators} keyed={false}>{(e, i) => (
+          <section class="panel">
+            <Choice label={`Evaluator ${i + 1} kind`} options={options(['script', 'judge', 'typed', 'human'])} value={e().kind} onChange={kind => evaluators(i, { kind, ref: kind === 'script' ? 'example.checks' : kind === 'typed' ? 'labels' : kind === 'human' ? 'owner' : '', form: kind === 'typed' ? 'typed' : 'pass_fail' })} />
+            <Show when={e().kind === 'judge'}>
               <EntityPicker
                 mode="single"
                 label={`Judge ${i + 1} pipeline`}
                 placeholder="Choose judge pipeline"
                 searchPlaceholder="Search pipelines"
-                nodes={pipelineNodes}
-                value={e.ref || null}
-                loading={!!key && !!d.projectId && !pipelineList.data && !pipelineList.error}
+                nodes={pipelineNodes()}
+                value={e().ref || null}
+                loading={!!key() && !!d().projectId && !pipelineList.data && !pipelineList.error}
                 error={pipelineList.error}
                 onRetry={pipelineList.reload}
-                disabledReason={disabled || (!d.projectId ? 'Choose a project first' : undefined)}
+                disabledReason={disabled() || (!d().projectId ? 'Choose a project first' : undefined)}
                 onChange={ref => evaluators(i, { ref: ref ?? '' })}
               />
-            )}
-            <Choice label={`Evaluator ${i + 1} form`} options={options(e.kind === 'typed' ? ['typed'] : e.kind === 'script' ? ['pass_fail', 'metric'] : ['pass_fail', 'scale', 'pick_best'])} value={e.form} onChange={form => evaluators(i, { form })} />
-            {e.kind === 'judge' && advanced(`Judge ${i + 1} parameters`, e.overrides, overrides => evaluators(i, { overrides }), 'Optional pipeline parameters; host, account and profile require the server’s owner authority.')}
-            <Button label={`Remove evaluator ${i + 1}`} icon="x" disabledReason={disabled} onClick={() => edit({ evaluators: d.evaluators.filter((_, j) => i !== j) })} />
+            </Show>
+            <Choice label={`Evaluator ${i + 1} form`} options={options(e().kind === 'typed' ? ['typed'] : e().kind === 'script' ? ['pass_fail', 'metric'] : ['pass_fail', 'scale', 'pick_best'])} value={e().form} onChange={form => evaluators(i, { form })} />
+            <Show when={e().kind === 'judge'}>{advanced(`Judge ${i + 1} parameters`, () => e().overrides, overrides => evaluators(i, { overrides }), 'Optional pipeline parameters; host, account and profile require the server’s owner authority.')}</Show>
+            <Button label={`Remove evaluator ${i + 1}`} icon="x" disabledReason={disabled()} onClick={() => edit({ evaluators: d().evaluators.filter((_, j) => i !== j) })} />
           </section>
-        ))}
-        <Button label="Add evaluator" icon="plus" disabledReason={disabled} onClick={() => edit({ evaluators: [...d.evaluators, { kind: 'script', ref: 'example.checks', form: 'pass_fail', overrides: '{}' }] })} />
+        )}</For>
+        <Button label="Add evaluator" icon="plus" disabledReason={disabled()} onClick={() => edit({ evaluators: [...d().evaluators, { kind: 'script', ref: 'example.checks', form: 'pass_fail', overrides: '{}' }] })} />
         <EntityPicker
           mode="single"
           label="Primary evaluator"
           placeholder="None"
           searchPlaceholder="Search evaluators"
-          nodes={primaryEvaluatorNodes}
-          value={d.primary || null}
-          disabledReason={disabled}
+          nodes={primaryEvaluatorNodes()}
+          value={d().primary || null}
+          disabledReason={disabled()}
           onChange={primary => edit({ primary: primary ?? '' })}
         />
       </DetailSection>
-      {d.kind === 'loop' && (
+      <Show when={d().kind === 'loop'}>
         <DetailSection title="Loop strategy">
-          <Choice label="Generator" options={options(['list', 'grid', 'propose'])} value={d.generator} onChange={generator => edit({ generator })} />
-          {advanced('Generator parameters', d.params, params => edit({ params }), 'List uses a variants array; grid uses parameter axes; propose uses the existing agent-strategy parameters. No strategy runs on create.')}
+          <Choice label="Generator" options={options(['list', 'grid', 'propose'])} value={d().generator} onChange={generator => edit({ generator })} />
+          {advanced('Generator parameters', () => d().params, params => edit({ params }), 'List uses a variants array; grid uses parameter axes; propose uses the existing agent-strategy parameters. No strategy runs on create.')}
           <p>Allocator: full. Stop rules are optional and have no default ceiling.</p>
           {field('Maximum iterations (optional)', 'max')}{field('No gain iterations (optional)', 'k')}
         </DetailSection>
-      )}
+      </Show>
       <DetailSection title="Budgets">
-        {d.budgets.length === 0 && <p>No experiment budget configured. Project, account and provider limits still apply; cost is not estimated here.</p>}
-        {d.budgets.map((b, i) => (
-          <section class="panel" key={i}>
-            <Choice label={`Budget ${i + 1} unit`} options={options(['trials', 'wall_ms', 'calls', 'credits'])} value={b.unit} onChange={unit => budgets(i, { unit })} />
-            <TextField label={`Budget ${i + 1} limit`} type="number" value={b.limit} onChange={limit => budgets(i, { limit })} disabledReason={disabled} />
-            <Choice label={`Budget ${i + 1} action`} options={options(['warn', 'pause', 'stop'])} value={b.action} onChange={action => budgets(i, { action })} />
-            <Button label={`Remove budget ${i + 1}`} icon="x" disabledReason={disabled} onClick={() => edit({ budgets: d.budgets.filter((_, j) => i !== j) })} />
+        <Show when={d().budgets.length === 0}><p>No experiment budget configured. Project, account and provider limits still apply; cost is not estimated here.</p></Show>
+        <For each={d().budgets} keyed={false}>{(b, i) => (
+          <section class="panel">
+            <Choice label={`Budget ${i + 1} unit`} options={options(['trials', 'wall_ms', 'calls', 'credits'])} value={b().unit} onChange={unit => budgets(i, { unit })} />
+            <TextField label={`Budget ${i + 1} limit`} type="number" value={b().limit} onChange={limit => budgets(i, { limit })} disabledReason={disabled()} />
+            <Choice label={`Budget ${i + 1} action`} options={options(['warn', 'pause', 'stop'])} value={b().action} onChange={action => budgets(i, { action })} />
+            <Button label={`Remove budget ${i + 1}`} icon="x" disabledReason={disabled()} onClick={() => edit({ budgets: d().budgets.filter((_, j) => i !== j) })} />
           </section>
-        ))}
-        <Button label="Add budget" icon="plus" disabledReason={disabled} onClick={() => edit({ budgets: [...d.budgets, { unit: 'trials', limit: '', action: 'pause' }] })} />
+        )}</For>
+        <Button label="Add budget" icon="plus" disabledReason={disabled()} onClick={() => edit({ budgets: [...d().budgets, { unit: 'trials', limit: '', action: 'pause' }] })} />
       </DetailSection>
     </fieldset>
     <div class="answers">
-      <Button label="Discard local draft" disabledReason={receipt.state === 'pending' ? 'Creation is pending' : undefined} onClick={() => { busy.current = false; resetPrefill(false); setProseOpen(true); setProseKey(n => n + 1); persist({ draft: blank(), state: 'editing' }); setError(''); }} />
+      <Button label="Discard local draft" disabledReason={receipt().state === 'pending' ? 'Creation is pending' : undefined} onClick={() => { busy = false; resetPrefill(false); setProseOpen(true); setProseKey(n => n + 1); persist({ draft: blank(), state: 'editing' }); setError(''); }} />
     </div>
     <p class="muted">Closing or discarding a local draft does not cancel a request already sent. Launch remains a separate action.</p>
   </article>;

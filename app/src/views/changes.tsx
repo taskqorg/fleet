@@ -1,6 +1,6 @@
 // System Changes screen (FLT-7, docs/designs/fleet-system-management.md): drift across repository, store, releases, and hosts.
-import { useState } from 'preact/hooks';
-import { useLocation } from 'wouter-preact';
+import { createMemo, createSignal, For, Show } from 'solid-js';
+import { useLocation } from '../router.ts';
 import {
   Button, CopyButton, DataTable, DetailSection, DiffText, Empty, EntityCode, ErrorBanner, KvRow, Num, OfflineMarker,
   ProblemRow, ShellStatus, StateBadge, type StateOf,
@@ -22,15 +22,18 @@ const changeState = (s: DefinitionState): { state: StateOf<'source'>; reason?: s
   }
 };
 
-export function Changes({ onClose }: { onClose?: () => void } = {}) {
+export function Changes(props: { onClose?: () => void } = {}) {
   const [, go] = useLocation();
-  const { data, error, state, reload } = useOp('system_changes', {});
-  const [previewTake, setPreviewTake] = useState<DefinitionKey[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ severity: 'warning' | 'failure'; title: string; facts: string } | null>(null);
-  const [exportKeys, setExportKeys] = useState<DefinitionKey[] | null>(null);
+  const changesOp = useOp('system_changes', {});
+  const [previewTake, setPreviewTake] = createSignal<DefinitionKey[] | null>(null);
+  const [busy, setBusy] = createSignal(false);
+  const [notice, setNotice] = createSignal<{ severity: 'warning' | 'failure'; title: string; facts: string } | null>(null);
+  const [exportKeys, setExportKeys] = createSignal<DefinitionKey[] | null>(null);
 
-  const exportRead = useOp('definition_export', exportKeys ? { keys: exportKeys } : null);
+  const exportRead = useOp('definition_export', () => {
+    const keys = exportKeys();
+    return keys ? { keys } : null;
+  });
 
   const runTakeRepo = async (keys: DefinitionKey[], preview: boolean) => {
     setBusy(true);
@@ -44,7 +47,7 @@ export function Changes({ onClose }: { onClose?: () => void } = {}) {
       } else {
         setPreviewTake(null);
         setNotice({ severity: 'warning', title: `Applied ${r.applied} repository update${r.applied === 1 ? '' : 's'}`, facts: r.items.map(i => `${i.kind}/${i.id}: ${i.status}${i.revision ? ` r${i.revision}` : ''}`).join(' · ') });
-        await reload();
+        await changesOp.reload();
       }
     } catch (e) {
       setNotice({ severity: 'failure', title: 'Repository sync failed', facts: e instanceof Error ? e.message : String(e) });
@@ -53,163 +56,171 @@ export function Changes({ onClose }: { onClose?: () => void } = {}) {
     }
   };
 
-  const takeableKeys: DefinitionKey[] = (data?.repositoryChanged ?? [])
-    .filter(d => d.state === 'repository-changed')
-    .map(d => ({ kind: d.kind, id: d.id }));
-  const exportableKeys: DefinitionKey[] = data ? [...data.ahead, ...data.storeOnly].map(d => ({ kind: d.kind, id: d.id })) : [];
-  const behindHosts = data?.versions.hosts.filter(h => h.behind) ?? [];
-  const behindHarnesses = data?.harnessDrift.filter(h => h.behind) ?? [];
-  const driftParts = data ? [
-    data.repositoryChanged.length > 0 && `${data.repositoryChanged.length} repo changed`,
-    data.storeOnly.length > 0 && `${data.storeOnly.length} store-only`,
-    data.ahead.length > 0 && `${data.ahead.length} ahead`,
-    behindHosts.length > 0 && `${behindHosts.length} hosts behind`,
-    behindHarnesses.length > 0 && `${behindHarnesses.length} harness pins drifting`,
-  ].filter((x): x is string => !!x) : [];
+  const takeableKeys = createMemo<DefinitionKey[]>(() =>
+    (changesOp.data?.repositoryChanged ?? []).filter(d => d.state === 'repository-changed').map(d => ({ kind: d.kind, id: d.id })),
+  );
+  const exportableKeys = createMemo<DefinitionKey[]>(() =>
+    changesOp.data ? [...changesOp.data.ahead, ...changesOp.data.storeOnly].map(d => ({ kind: d.kind, id: d.id })) : [],
+  );
+  const behindHosts = createMemo(() => changesOp.data?.versions.hosts.filter(h => h.behind) ?? []);
+  const behindHarnesses = createMemo(() => changesOp.data?.harnessDrift.filter(h => h.behind) ?? []);
+  const driftParts = createMemo(() => {
+    const data = changesOp.data;
+    if (!data) return [];
+    return [
+      data.repositoryChanged.length > 0 && `${data.repositoryChanged.length} repo changed`,
+      data.storeOnly.length > 0 && `${data.storeOnly.length} store-only`,
+      data.ahead.length > 0 && `${data.ahead.length} ahead`,
+      behindHosts().length > 0 && `${behindHosts().length} hosts behind`,
+      behindHarnesses().length > 0 && `${behindHarnesses().length} harness pins drifting`,
+    ].filter((x): x is string => !!x);
+  });
 
   return (
-    <article class="detail stack" data-ui="detail" tabIndex={-1} aria-label="Changes">
-      <ShellStatus><OfflineMarker state={state} now={Date.now()} /></ShellStatus>
+    <article class="detail stack" data-ui="detail" tabindex={-1} aria-label="Changes">
+      <ShellStatus><OfflineMarker state={changesOp.state} now={Date.now()} /></ShellStatus>
       <header class="detail-h">
-        {onClose && <Button label="Close" icon="x" iconOnly onClick={onClose} />}
-        <span class="muted">{data ? (driftParts.length ? driftParts.join(' · ') : 'All aligned') : 'Checking repository and host drift…'}</span>
+        <Show when={props.onClose}>{onClose => <Button label="Close" icon="x" iconOnly onClick={onClose()} />}</Show>
+        <span class="muted">{changesOp.data ? (driftParts().length ? driftParts().join(' · ') : 'All aligned') : 'Checking repository and host drift…'}</span>
         <span class="grow" />
-        <Button label="Refresh" icon="rotate-ccw" iconOnly kind="quiet" onClick={reload} />
+        <Button label="Refresh" icon="rotate-ccw" iconOnly kind="quiet" onClick={changesOp.reload} />
       </header>
 
-      {error ? <ErrorBanner text={error} onRetry={reload} /> : !data ? <Empty text="Checking repository and host drift…" /> : <>
-        {notice && (
-          <ProblemRow
-            severity={notice.severity}
-            title={notice.title}
-            facts={notice.facts}
-            actions={previewTake
-              ? [
-                  { label: `Apply ${previewTake.length}`, primary: true, onClick: () => void runTakeRepo(previewTake, false) },
-                  { label: 'Dismiss', onClick: () => { setPreviewTake(null); setNotice(null); } },
-                ]
-              : [{ label: 'Dismiss', onClick: () => setNotice(null) }]}
-          />
-        )}
+      <Show when={changesOp.error} fallback={
+        <Show when={changesOp.data} fallback={<Empty text="Checking repository and host drift…" />}>{data => <>
+          <Show when={notice()}>{n => (
+            <ProblemRow
+              severity={n().severity}
+              title={n().title}
+              facts={n().facts}
+              actions={previewTake()
+                ? [
+                    { label: `Apply ${previewTake()!.length}`, primary: true, onClick: () => void runTakeRepo(previewTake()!, false) },
+                    { label: 'Dismiss', onClick: () => { setPreviewTake(null); setNotice(null); } },
+                  ]
+                : [{ label: 'Dismiss', onClick: () => setNotice(null) }]}
+            />
+          )}</Show>
 
-        <section class="panel">
-          <header class="panel-h">
-            <h2>Shipped definitions changed in repository</h2>
-            <span class="grow" />
-            {takeableKeys.length > 0 && (
-              <Button label={`Preview take all (${takeableKeys.length})`} icon="download" busy={busy} onClick={() => void runTakeRepo(takeableKeys, true)} />
-            )}
-          </header>
-          {data.repositoryChanged.length ? (
-            <DataTable
-              label="Repository changed definitions"
-              head={<tr><th scope="col">Kind</th><th scope="col">ID</th><th scope="col">State</th><th scope="col" class="num">Store rev</th><th scope="col" class="num">30d runs</th><th scope="col">Action</th></tr>}>
-              {data.repositoryChanged.map(d => {
-                const badge = changeState(d.state);
-                return (
-                  <tr key={`${d.kind}/${d.id}`}>
-                    <td>{d.kind}</td>
-                    <th scope="row">
-                      {d.kind === 'agent' || d.kind === 'pipeline'
-                        ? <EntityCode code={d.id} id={d.id} kind={d.kind} />
-                        : <a class="row-link" href={defRoute(d)} onClick={e => { e.preventDefault(); go(defRoute(d)); }}>{d.id}</a>}
-                    </th>
-                    <td><StateBadge family="source" state={badge.state} reason={badge.reason} /></td>
-                    <td class="num mono">r{d.head}</td>
-                    <td class="num"><Num m={{ value: d.runs30d, basis: 'measured' }} kind="count" /></td>
-                    <td>
-                      <span class="acts">
-                        <Button label="Open" icon="external-link" kind="quiet" onClick={() => go(defRoute(d))} />
-                        {d.state === 'repository-changed' && (
-                          <Button label="Take repo" icon="download" kind="quiet" busy={busy} onClick={() => void runTakeRepo([{ kind: d.kind, id: d.id }], true)} />
-                        )}
-                      </span>
-                    </td>
+          <section class="panel">
+            <header class="panel-h">
+              <h2>Shipped definitions changed in repository</h2>
+              <span class="grow" />
+              <Show when={takeableKeys().length > 0}>
+                <Button label={`Preview take all (${takeableKeys().length})`} icon="download" busy={busy()} onClick={() => void runTakeRepo(takeableKeys(), true)} />
+              </Show>
+            </header>
+            <Show when={data().repositoryChanged.length} fallback={<Empty text="All shipped definitions match the active store." />}>
+              <DataTable
+                label="Repository changed definitions"
+                head={<tr><th scope="col">Kind</th><th scope="col">ID</th><th scope="col">State</th><th scope="col" class="num">Store rev</th><th scope="col" class="num">30d runs</th><th scope="col">Action</th></tr>}>
+                <For each={data().repositoryChanged}>{d => {
+                  const badge = changeState(d.state);
+                  return (
+                    <tr>
+                      <td>{d.kind}</td>
+                      <th scope="row">
+                        {d.kind === 'agent' || d.kind === 'pipeline'
+                          ? <EntityCode code={d.id} id={d.id} kind={d.kind} />
+                          : <a class="row-link" href={defRoute(d)} onClick={e => { e.preventDefault(); go(defRoute(d)); }}>{d.id}</a>}
+                      </th>
+                      <td><StateBadge family="source" state={badge.state} reason={badge.reason} /></td>
+                      <td class="num mono">r{d.head}</td>
+                      <td class="num"><Num m={{ value: d.runs30d, basis: 'measured' }} kind="count" /></td>
+                      <td>
+                        <span class="acts">
+                          <Button label="Open" icon="external-link" kind="quiet" onClick={() => go(defRoute(d))} />
+                          {d.state === 'repository-changed' && (
+                            <Button label="Take repo" icon="download" kind="quiet" busy={busy()} onClick={() => void runTakeRepo([{ kind: d.kind, id: d.id }], true)} />
+                          )}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                }}</For>
+              </DataTable>
+            </Show>
+          </section>
+
+          <DetailSection title="Release versions">
+            <KvRow icon="panels-top-left" label="Coordinator" meta="running"
+              value={<span class="acts">
+                <span class="mono">{data().versions.coordinator.version}{data().versions.coordinator.offered ? ` (offered ${data().versions.coordinator.offered})` : ''}</span>
+                <Show when={data().versions.coordinator.commit}>{commit => <CopyButton label={`Copy commit ${commit()}`} value={commit()} iconOnly />}</Show>
+              </span>} />
+            <KvRow icon="panels-top-left" label="Web UI" meta={`backend ${data().versions.ui.backendVersion}`}
+              value={<span class="mono">{data().versions.ui.version} ({data().versions.ui.kind})</span>} />
+            <Show when={data().versions.gateway}>{gw => (
+              <KvRow icon="network" label="Gateway" meta={gw().state ?? 'running'}
+                value={<span class="mono">{gw().version ?? '—'}</span>} />
+            )}</Show>
+            <For each={data().versions.hosts}>{h => (
+              <KvRow icon="panels-top-left" label="Host"
+                meta={<span class="acts"><EntityCode code={h.id} id={h.id} kind="host" cls="inline" /><span>{h.pollError ? h.pollError.message : (h.behind ? 'behind offered release' : 'aligned')}</span></span>}
+                value={<span class="acts"><span class="mono">{h.version ?? '—'}</span>
+                  <StateBadge family="host" state={h.pollError ? 'failing' : h.behind ? 'offline' : 'online'} compact /></span>} />
+            )}</For>
+          </DetailSection>
+
+          <section class="panel">
+            <header class="panel-h"><h2>Harness CLI pins vs hosts</h2></header>
+            <Show when={data().harnessDrift.length} fallback={<Empty text="No harness CLI pins reported." />}>
+              <DataTable
+                label="Harness CLI pins"
+                head={<tr><th scope="col">Host</th><th scope="col">Harness</th><th scope="col">Pinned</th><th scope="col">Observed</th><th scope="col">Status</th></tr>}>
+                <For each={data().harnessDrift}>{r => (
+                  <tr>
+                    <th scope="row"><EntityCode code={r.hostId} id={r.hostId} kind="host" /></th>
+                    <td>{r.harness}</td>
+                    <td class="mono">{r.expected}</td>
+                    <td class="mono">{r.observed ?? '—'}</td>
+                    <td><StateBadge family="setting" state={r.behind ? 'apply_error' : 'applied'} reason={r.behind ? 'Drift' : 'Aligned'} /></td>
                   </tr>
-                );
-              })}
-            </DataTable>
-          ) : <Empty text="All shipped definitions match the active store." />}
-        </section>
+                )}</For>
+              </DataTable>
+            </Show>
+          </section>
 
-        <DetailSection title="Release versions">
-          <KvRow icon="panels-top-left" label="Coordinator" meta="running"
-            value={<span class="acts">
-              <span class="mono">{data.versions.coordinator.version}{data.versions.coordinator.offered ? ` (offered ${data.versions.coordinator.offered})` : ''}</span>
-              {data.versions.coordinator.commit && <CopyButton label={`Copy commit ${data.versions.coordinator.commit}`} value={data.versions.coordinator.commit} iconOnly />}
-            </span>} />
-          <KvRow icon="panels-top-left" label="Web UI" meta={`backend ${data.versions.ui.backendVersion}`}
-            value={<span class="mono">{data.versions.ui.version} ({data.versions.ui.kind})</span>} />
-          {data.versions.gateway && (
-            <KvRow icon="network" label="Gateway" meta={data.versions.gateway.state ?? 'running'}
-              value={<span class="mono">{data.versions.gateway.version ?? '—'}</span>} />
-          )}
-          {data.versions.hosts.map(h => (
-            <KvRow key={h.id} icon="panels-top-left" label="Host"
-              meta={<span class="acts"><EntityCode code={h.id} id={h.id} kind="host" cls="inline" /><span>{h.pollError ? h.pollError.message : (h.behind ? 'behind offered release' : 'aligned')}</span></span>}
-              value={<span class="acts"><span class="mono">{h.version ?? '—'}</span>
-                <StateBadge family="host" state={h.pollError ? 'failing' : h.behind ? 'offline' : 'online'} compact /></span>} />
-          ))}
-        </DetailSection>
-
-        <section class="panel">
-          <header class="panel-h"><h2>Harness CLI pins vs hosts</h2></header>
-          {data.harnessDrift.length ? (
-            <DataTable
-              label="Harness CLI pins"
-              head={<tr><th scope="col">Host</th><th scope="col">Harness</th><th scope="col">Pinned</th><th scope="col">Observed</th><th scope="col">Status</th></tr>}>
-              {data.harnessDrift.map(r => (
-                <tr key={`${r.hostId}/${r.harness}`}>
-                  <th scope="row"><EntityCode code={r.hostId} id={r.hostId} kind="host" /></th>
-                  <td>{r.harness}</td>
-                  <td class="mono">{r.expected}</td>
-                  <td class="mono">{r.observed ?? '—'}</td>
-                  <td><StateBadge family="setting" state={r.behind ? 'apply_error' : 'applied'} reason={r.behind ? 'Drift' : 'Aligned'} /></td>
-                </tr>
-              ))}
-            </DataTable>
-          ) : <Empty text="No harness CLI pins reported." />}
-        </section>
-
-        <section class="panel">
-          <header class="panel-h">
-            <h2>Made in Fleet, not in repository</h2>
-            <span class="grow" />
-            {exportableKeys.length > 0 && (
-              <span class="acts">
-                {exportKeys && <Button label="Refresh export patch" icon="rotate-cw" iconOnly kind="quiet" onClick={() => { setExportKeys(exportableKeys); exportRead.reload(); }} />}
-                <Button label={exportKeys ? 'Hide patch' : `Export patch (${exportableKeys.length})`} icon={exportKeys ? 'x' : 'download'} kind={exportKeys ? 'quiet' : 'default'}
-                  onClick={() => setExportKeys(exportKeys ? null : exportableKeys)} />
-              </span>
-            )}
-          </header>
-          {exportableKeys.length ? (
-            <DataTable
-              label="Ahead and store-only definitions"
-              head={<tr><th scope="col">Kind</th><th scope="col">ID</th><th scope="col">State</th><th scope="col" class="num">Store rev</th><th scope="col" class="num">30d runs</th><th scope="col">Path</th></tr>}>
-              {[...data.storeOnly, ...data.ahead].map(d => {
-                const badge = changeState(d.state);
-                return (
-                  <tr key={`${d.kind}/${d.id}`}>
-                    <td>{d.kind}</td>
-                    <th scope="row">
-                      {d.kind === 'agent' || d.kind === 'pipeline'
-                        ? <EntityCode code={d.id} id={d.id} kind={d.kind} />
-                        : <a class="row-link" href={defRoute(d)} onClick={e => { e.preventDefault(); go(defRoute(d)); }}>{d.id}</a>}
-                    </th>
-                    <td><StateBadge family="source" state={badge.state} reason={badge.reason} /></td>
-                    <td class="num mono">r{d.head}</td>
-                    <td class="num"><Num m={{ value: d.runs30d, basis: 'measured' }} kind="count" /></td>
-                    <td class="mono">{d.path}</td>
-                  </tr>
-                );
-              })}
-            </DataTable>
-          ) : <Empty text="No store-only or ahead definitions." />}
-          {exportRead.data && <DetailSection title={`Git patch (${exportRead.data.files.length} files)`}><DiffText label="Exported git patch" text={exportRead.data.patch || 'Empty patch'} /></DetailSection>}
-          {exportRead.error && <ErrorBanner text={exportRead.error} onRetry={exportRead.reload} />}
-        </section>
-      </>}
+          <section class="panel">
+            <header class="panel-h">
+              <h2>Made in Fleet, not in repository</h2>
+              <span class="grow" />
+              <Show when={exportableKeys().length > 0}>
+                <span class="acts">
+                  <Show when={exportKeys()}><Button label="Refresh export patch" icon="rotate-cw" iconOnly kind="quiet" onClick={() => { setExportKeys(exportableKeys()); exportRead.reload(); }} /></Show>
+                  <Button label={exportKeys() ? 'Hide patch' : `Export patch (${exportableKeys().length})`} icon={exportKeys() ? 'x' : 'download'} kind={exportKeys() ? 'quiet' : 'default'}
+                    onClick={() => setExportKeys(exportKeys() ? null : exportableKeys())} />
+                </span>
+              </Show>
+            </header>
+            <Show when={exportableKeys().length} fallback={<Empty text="No store-only or ahead definitions." />}>
+              <DataTable
+                label="Ahead and store-only definitions"
+                head={<tr><th scope="col">Kind</th><th scope="col">ID</th><th scope="col">State</th><th scope="col" class="num">Store rev</th><th scope="col" class="num">30d runs</th><th scope="col">Path</th></tr>}>
+                <For each={[...data().storeOnly, ...data().ahead]}>{d => {
+                  const badge = changeState(d.state);
+                  return (
+                    <tr>
+                      <td>{d.kind}</td>
+                      <th scope="row">
+                        {d.kind === 'agent' || d.kind === 'pipeline'
+                          ? <EntityCode code={d.id} id={d.id} kind={d.kind} />
+                          : <a class="row-link" href={defRoute(d)} onClick={e => { e.preventDefault(); go(defRoute(d)); }}>{d.id}</a>}
+                      </th>
+                      <td><StateBadge family="source" state={badge.state} reason={badge.reason} /></td>
+                      <td class="num mono">r{d.head}</td>
+                      <td class="num"><Num m={{ value: d.runs30d, basis: 'measured' }} kind="count" /></td>
+                      <td class="mono">{d.path}</td>
+                    </tr>
+                  );
+                }}</For>
+              </DataTable>
+            </Show>
+            <Show when={exportRead.data}>{exp => <DetailSection title={`Git patch (${exp().files.length} files)`}><DiffText label="Exported git patch" text={exp().patch || 'Empty patch'} /></DetailSection>}</Show>
+            <Show when={exportRead.error}>{err => <ErrorBanner text={err()} onRetry={exportRead.reload} />}</Show>
+          </section>
+        </>}</Show>
+      }>{err => <ErrorBanner text={err()} onRetry={changesOp.reload} />}</Show>
     </article>
   );
 }

@@ -1,6 +1,6 @@
 // Results (docs/design-system/pages/results.md): stored results and other artifacts with shared list-page controls,
 // cursor pagination, newest first, state icon first (OR-22); the focused one opens in the result viewer (OR-27).
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { createEffect, createMemo, createSignal, For, onSettled, Show } from 'solid-js';
 import {
   EntityCode, ListDetail, StateBadge, Button, ResultViewer, ArtifactView, Empty, ErrorBanner, Skeleton,
   AgeChip, ShellStatus, OfflineMarker, RowFacts, Fact, DetailSection, Totals, Icon, KvRow, Num,
@@ -60,80 +60,82 @@ function groupIcon(group: string, key: string): IconName {
   return 'folder-open';
 }
 
-export function Results({ id }: { id?: string }) {
-  const [bucket, setBucket] = useState(() => Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS);
-  useEffect(() => {
+function buildFilter(view: View, bucket: number) {
+  const statesFilter = (view.state ?? []) as StateOf<'artifact'>[];
+  const raw = splitTerms(view.q ?? '', ['media', 'since']);
+  const known = Object.fromEntries(Object.entries(raw.terms).filter(([k, v]) => k === 'media' ? Object.hasOwn(MEDIA, v.toLowerCase()) : Object.hasOwn(SINCE, v)));
+  const typed = { terms: known, text: [raw.text, ...Object.entries(raw.terms).filter(([k]) => !(k in known)).map(([k, v]) => `${k}:${v}`)].filter(Boolean).join(' ') };
+  const extra = { ...view.extra, ...typed.terms };
+  const media = extra.media?.toLowerCase();
+  const scoped = withFocus(view);
+  const since = extra.since && SINCE[extra.since] ? bucket - SINCE[extra.since] : undefined;
+  const filter = {
+    q: typed.text || undefined,
+    states: statesFilter.length ? statesFilter : undefined,
+    projectIds: scoped.project?.length ? scoped.project : undefined,
+    excludeProjectIds: scoped.exclude,
+    taskId: extra.task,
+    executionId: extra.execution,
+    mediaType: media ? MEDIA[media] : undefined,
+    since,
+  };
+  const fkey = JSON.stringify({ ...filter, sinceKey: extra.since ?? null });
+  return { statesFilter, typed, extra, filter, fkey };
+}
+
+export function Results(props: { id?: string }) {
+  const [bucket, setBucket] = createSignal(Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS);
+  onSettled(() => {
     const t = setInterval(() => setBucket(Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS), BUCKET_MS);
     return () => clearInterval(t);
-  }, []);
+  });
 
-  const [cursorState, setCursorState] = useState<{ key: string; before: number | null }>({ key: '', before: null });
-  const [appended, setAppended] = useState<{ key: string; rows: ArtifactRow[]; nextBefore: number | null; seen: number[] }>({ key: '', rows: [], nextBefore: null, seen: [] });
-  const [sel, setSel] = useState<string[]>([]);
+  const [cursorState, setCursorState] = createSignal<{ key: string; before: number | null }>({ key: '', before: null });
+  const [appended, setAppended] = createSignal<{ key: string; rows: ArtifactRow[]; nextBefore: number | null; seen: number[] }>({ key: '', rows: [], nextBefore: null, seen: [] }, { ownedWrite: true });
+  const [sel, setSel] = createSignal<string[]>([], { ownedWrite: true });
 
-  // Initial URL read for query/filter extraction before useListPage runs; useListPage owns the canonical URL hook.
-  // Compute filter params from the same view shape inside local() and here via a shared helper.
-  const buildFilter = (view: View) => {
-    const statesFilter = (view.state ?? []) as StateOf<'artifact'>[];
-    const raw = splitTerms(view.q ?? '', ['media', 'since']);
-    const known = Object.fromEntries(Object.entries(raw.terms).filter(([k, v]) => k === 'media' ? Object.hasOwn(MEDIA, v.toLowerCase()) : Object.hasOwn(SINCE, v)));
-    const typed = { terms: known, text: [raw.text, ...Object.entries(raw.terms).filter(([k]) => !(k in known)).map(([k, v]) => `${k}:${v}`)].filter(Boolean).join(' ') };
-    const extra = { ...view.extra, ...typed.terms };
-    const media = extra.media?.toLowerCase();
-    const scoped = withFocus(view);
-    const since = extra.since && SINCE[extra.since] ? bucket - SINCE[extra.since] : undefined;
-    const filter = {
-      q: typed.text || undefined,
-      states: statesFilter.length ? statesFilter : undefined,
-      projectIds: scoped.project?.length ? scoped.project : undefined,
-      excludeProjectIds: scoped.exclude,
-      taskId: extra.task,
-      executionId: extra.execution,
-      mediaType: media ? MEDIA[media] : undefined,
-      since,
-    };
-    const fkey = JSON.stringify({ ...filter, sinceKey: extra.since ?? null });
-    return { statesFilter, typed, extra, filter, fkey };
-  };
+  const url = useUrlView('results');
+  const built = createMemo(() => buildFilter(url.view, bucket()));
 
-  const { view: urlView } = useUrlView('results');
-  const { typed, extra, filter, fkey } = useMemo(() => buildFilter(urlView), [urlView, bucket]);
+  const firstPage = useOp('artifact_list', () => (prefsRead.value ? { ...built().filter, limit: PAGE } : null));
+  const activeBefore = createMemo(() => (cursorState().key === built().fkey ? cursorState().before : null));
+  const nextPage = useOp('artifact_list', () => (prefsRead.value && activeBefore() !== null ? { ...built().filter, limit: PAGE, before: activeBefore()! } : null));
 
-  const ready = prefsRead.value;
-  const firstPage = useOp('artifact_list', ready ? { ...filter, limit: PAGE } : null);
-  const activeBefore = cursorState.key === fkey ? cursorState.before : null;
-  const nextPage = useOp('artifact_list', ready && activeBefore !== null ? { ...filter, limit: PAGE, before: activeBefore } : null);
+  createEffect(
+    () => [built().fkey, activeBefore(), nextPage.data] as const,
+    ([fkey, before, data]) => {
+      if (before === null || !data) return;
+      setAppended(prev => {
+        const baseRows = prev.key === fkey ? prev.rows : [];
+        const seenCursors = prev.key === fkey ? prev.seen : [];
+        if (seenCursors.includes(before)) return prev;
+        const have = new Set(baseRows.map(r => r.id));
+        const add = data.artifacts.filter(r => !have.has(r.id));
+        return { key: fkey, rows: [...baseRows, ...add], nextBefore: data.nextBefore ?? null, seen: [...seenCursors, before] };
+      });
+    },
+  );
 
-  useEffect(() => {
-    if (activeBefore === null || !nextPage.data) return;
-    setAppended(prev => {
-      const baseRows = prev.key === fkey ? prev.rows : [];
-      const seenCursors = prev.key === fkey ? prev.seen : [];
-      if (seenCursors.includes(activeBefore)) return prev;
-      const have = new Set(baseRows.map(r => r.id));
-      const add = nextPage.data!.artifacts.filter(r => !have.has(r.id));
-      return { key: fkey, rows: [...baseRows, ...add], nextBefore: nextPage.data!.nextBefore ?? null, seen: [...seenCursors, activeBefore] };
-    });
-  }, [fkey, activeBefore, nextPage.data]);
+  const firstRows = createMemo(() => firstPage.data?.artifacts ?? []);
+  const tailRows = createMemo(() => (appended().key === built().fkey ? appended().rows : []));
+  const firstIds = createMemo(() => new Set(firstRows().map(r => r.id)));
+  const allRows = createMemo(() => [...firstRows(), ...tailRows().filter(r => !firstIds().has(r.id))]);
 
-  const firstRows = firstPage.data?.artifacts ?? [];
-  const tailRows = appended.key === fkey ? appended.rows : [];
-  const firstIds = useMemo(() => new Set(firstRows.map(r => r.id)), [firstRows]);
-  const allRows = useMemo(() => [...firstRows, ...tailRows.filter(r => !firstIds.has(r.id))], [firstRows, tailRows, firstIds]);
+  const tailNextBefore = createMemo<number | null | undefined>(() => activeBefore() !== null
+    ? (appended().key === built().fkey && appended().seen.includes(activeBefore()!) ? appended().nextBefore : undefined)
+    : (firstPage.data?.nextBefore ?? null));
 
-  const tailNextBefore: number | null | undefined = activeBefore !== null
-    ? (appended.key === fkey && appended.seen.includes(activeBefore) ? appended.nextBefore : undefined)
-    : (firstPage.data?.nextBefore ?? null);
-
-  const firstReply = firstPage.data as ReplyWithCounts | null;
-  const replyCounts = firstReply && 'counts' in firstReply && firstReply.counts ? firstReply.counts : undefined;
+  const replyCounts = createMemo(() => {
+    const firstReply = firstPage.data as ReplyWithCounts | null;
+    return firstReply && 'counts' in firstReply && firstReply.counts ? firstReply.counts : undefined;
+  });
 
   const groupFromView = (v: View): ResultGroup => isResultGroup(v.extra?.group) ? v.extra!.group : DEFAULT_GROUP;
   const sortFromView = (v: View): string => v.extra?.sort && ['created', '-created', 'size', '-size', 'name', '-name'].includes(v.extra.sort) ? v.extra.sort : DEFAULT_SORT;
 
-  const currentGroup = groupFromView(urlView);
-  const projects = useOp('project_list', currentGroup === 'project' ? {} : null);
-  const projectNames = useMemo(() => new Map<string, string>((projects.data?.projects ?? []).map(p => [String(p.id), String(p.name ?? p.id)])), [projects.data]);
+  const currentGroup = createMemo(() => groupFromView(url.view));
+  const projects = useOp('project_list', () => (currentGroup() === 'project' ? {} : null));
+  const projectNames = createMemo(() => new Map<string, string>((projects.data?.projects ?? []).map(p => [String(p.id), String(p.name ?? p.id)])));
 
   const local = (v: View): LocalList<ResultRow> => {
     const grp = groupFromView(v);
@@ -141,7 +143,7 @@ export function Results({ id }: { id?: string }) {
     const desc = srt.startsWith('-'), field = desc ? srt.slice(1) : srt;
     const gkey = (r: ArtifactRow) => grp === 'project' ? (r.projectId ?? '') : grp === 'state' ? r.state : grp === 'media' ? mediaKind(r.mediaType) : '';
     const glabel = (k: string) => {
-      if (grp === 'project') return k ? (projectNames.get(k) ?? k) : 'No project';
+      if (grp === 'project') return k ? (projectNames().get(k) ?? k) : 'No project';
       if (grp === 'state') return k in states.artifact ? states.artifact[k as StateOf<'artifact'>].label : k;
       if (grp === 'media') return mediaLabel(k);
       return '';
@@ -151,7 +153,8 @@ export function Results({ id }: { id?: string }) {
       if (field === 'name') return (fileLabel(a.name) || a.name).localeCompare(fileLabel(b.name) || b.name);
       return a.createdAt - b.createdAt;
     };
-    const rows: ResultRow[] = allRows.map(r => ({
+    const curRows = allRows();
+    const rows: ResultRow[] = curRows.map(r => ({
       ...r,
       code: null,
       sortKey: [gkey(r), field === 'name' ? (fileLabel(r.name) || r.name) : (desc ? -(field === 'size' ? r.size : r.createdAt) : (field === 'size' ? r.size : r.createdAt))],
@@ -165,14 +168,17 @@ export function Results({ id }: { id?: string }) {
       countsPerGroup.set(k, (countsPerGroup.get(k) ?? 0) + 1);
     }
     const groups = grp === 'none' ? [] : [...countsPerGroup.entries()].map(([k, n]) => ({ key: k, label: glabel(k), count: n }));
-    const counts = replyCounts ?? Object.fromEntries(ARTIFACT_STATES.map(s => [s, 0]));
-    const total = replyCounts ? Object.values(replyCounts).reduce((a, b) => a + b, 0) : allRows.length;
-    const pending = !ready || (!firstPage.data && !firstPage.error) || (activeBefore !== null && !nextPage.data && !nextPage.error);
+    const rc = replyCounts();
+    const counts = rc ?? Object.fromEntries(ARTIFACT_STATES.map(s => [s, 0]));
+    const total = rc ? Object.values(rc).reduce((a, b) => a + b, 0) : curRows.length;
+    const before = activeBefore();
+    const pending = !prefsRead.value || (!firstPage.data && !firstPage.error) || (before !== null && !nextPage.data && !nextPage.error);
     const error = firstPage.error ?? nextPage.error ?? null;
+    const fkey = built().fkey;
     const reload = () => {
       setCursorState({ key: fkey, before: null });
       setAppended({ key: fkey, rows: [], nextBefore: null, seen: [] });
-      firstPage.reload();
+      void firstPage.reload();
     };
     return { rows, all: rows, counts, groups, total, pending, error, reload };
   };
@@ -187,17 +193,18 @@ export function Results({ id }: { id?: string }) {
     groupLabel: (_g, l) => l ?? '',
     saveExtra: v => ({ ...v.extra }),
     pickExtra: sv => ({ extra: sv.extra }),
-    listId: () => fkey,
+    listId: () => built().fkey,
   });
 
-  useEffect(() => { setSel([]); }, [fkey]);
+  createEffect(() => built().fkey, () => { setSel([]); });
 
-  const group = groupFromView(basePage.view);
-  const sort = sortFromView(basePage.view);
+  const group = createMemo(() => groupFromView(basePage.view));
+  const sort = createMemo(() => sortFromView(basePage.view));
   const loadMore = () => {
-    if (tailNextBefore == null || tailNextBefore === activeBefore) return Promise.resolve();
+    const nextBefore = tailNextBefore();
+    if (nextBefore == null || nextBefore === activeBefore()) return Promise.resolve();
     if (nextPage.error) { nextPage.reload(); return Promise.resolve(); }
-    setCursorState({ key: fkey, before: tailNextBefore });
+    setCursorState({ key: built().fkey, before: nextBefore });
     return Promise.resolve();
   };
 
@@ -225,76 +232,128 @@ export function Results({ id }: { id?: string }) {
     setSel(prev => prev.includes(r.id) ? prev.filter(x => x !== r.id) : [...prev, r.id]);
   };
   const leave = () => { basePage.leave(); setSel([]); };
-  const chosen = basePage.displayed.filter(r => sel.includes(r.id));
-  const pinAll = (on: boolean) => { for (const r of chosen) if (basePage.pins.has(r.id) !== on) basePage.pins.toggle(r.id); };
+  const chosen = createMemo(() => {
+    const s = sel();
+    return basePage.displayed.filter(r => s.includes(r.id));
+  });
+  const pinAll = (on: boolean) => { for (const r of chosen()) if (basePage.pins.has(r.id) !== on) basePage.pins.toggle(r.id); };
 
-  const groupsList = `results:${group}`, pinList = 'results:pinned';
-  const closed = closedGroups([], listGroups(groupsList));
-  if (listGroups(pinList).includes('pinned')) closed.add(PINNED);
+  const groupsList = createMemo(() => `results:${group()}`);
+  const pinList = 'results:pinned';
+  const closed = createMemo(() => {
+    const c = closedGroups([], listGroups(groupsList()));
+    if (listGroups(pinList).includes('pinned')) c.add(PINNED);
+    return c;
+  });
   const toggleGroup = (key: string) => key === PINNED
     ? setListGroups(pinList, flipGroup(listGroups(pinList), 'pinned'))
-    : setListGroups(groupsList, flipGroup(listGroups(groupsList), key));
+    : setListGroups(groupsList(), flipGroup(listGroups(groupsList()), key));
 
-  const pinnedIds = new Set(basePage.pins.ids);
-  const pinnedRows = basePage.displayed.filter(r => pinnedIds.has(r.id));
-  const restRows = basePage.displayed.filter(r => !pinnedIds.has(r.id));
-  const items: ListItem<ResultRow>[] = [];
-  if (pinnedRows.length) {
-    items.push({ kind: 'group', key: PINNED, label: 'Pinned', count: pinnedRows.length, icon: 'pin' });
-    if (!closed.has(PINNED)) for (const r of pinnedRows) items.push({ kind: 'row', r, pinned: true });
-  }
-  let lastGroup: string | null = null;
-  for (const r of restRows) {
-    const g = String(r.sortKey[0]);
-    if (group !== 'none' && g !== lastGroup) {
-      const meta = basePage.list.groups.find(x => x.key === g);
-      items.push({ kind: 'group', key: g, label: meta?.label ?? (g || 'None'), count: meta?.count ?? 0 });
-      lastGroup = g;
+  const items = createMemo<ListItem<ResultRow>[]>(() => {
+    const pinnedIds = new Set(basePage.pins.ids);
+    const displayed = basePage.displayed;
+    const pinnedRows = displayed.filter(r => pinnedIds.has(r.id));
+    const restRows = displayed.filter(r => !pinnedIds.has(r.id));
+    const cl = closed(), grp = group();
+    const out: ListItem<ResultRow>[] = [];
+    if (pinnedRows.length) {
+      out.push({ kind: 'group', key: PINNED, label: 'Pinned', count: pinnedRows.length, icon: 'pin' });
+      if (!cl.has(PINNED)) for (const r of pinnedRows) out.push({ kind: 'row', r, pinned: true });
     }
-    if (!closed.has(g)) items.push({ kind: 'row', r });
-  }
+    let lastGroup: string | null = null;
+    for (const r of restRows) {
+      const g = String(r.sortKey[0]);
+      if (grp !== 'none' && g !== lastGroup) {
+        const meta = basePage.list.groups.find(x => x.key === g);
+        out.push({ kind: 'group', key: g, label: meta?.label ?? (g || 'None'), count: meta?.count ?? 0 });
+        lastGroup = g;
+      }
+      if (!cl.has(g)) out.push({ kind: 'row', r });
+    }
+    return out;
+  });
 
   const pick = (name: string) => {
     if (name === 'Last 24 h') {
-      const on = extra.since === '1d';
+      const on = built().extra.since === '1d';
       set({ extra: { ...basePage.view.extra, since: on ? undefined : '1d' } });
       return;
     }
     basePage.pick(name);
   };
-  const activePreset = extra.since === '1d' && !basePage.states.length && !basePage.view.q && !extra.media && !extra.task && !extra.execution
-    ? 'Last 24 h'
-    : basePage.activePreset;
+  const activePreset = createMemo(() => {
+    const extra = built().extra;
+    return extra.since === '1d' && !basePage.states.length && !basePage.view.q && !extra.media && !extra.task && !extra.execution
+      ? 'Last 24 h'
+      : basePage.activePreset;
+  });
 
   const page: ListPage<ResultRow> = {
-    ...basePage,
+    get view() { return basePage.view; },
     set,
-    group,
-    sort,
-    rowsGroup: group,
-    sel,
-    selecting: basePage.selecting || sel.length > 0,
+    href: basePage.href,
+    get query() { return basePage.query; },
+    setQuery: basePage.setQuery,
+    pins: basePage.pins,
+    views: basePage.views,
+    list: {
+      get rows() { return basePage.list.rows; },
+      get counts() { return basePage.list.counts; },
+      get total() { return basePage.list.total; },
+      get groups() { return basePage.list.groups; },
+      get at() { return basePage.list.at; },
+      get error() { return basePage.list.error; },
+      get pending() { return basePage.list.pending; },
+      get shownKey() { return basePage.list.shownKey; },
+      get shownView() { return basePage.list.shownView; },
+      more: loadMore,
+      reload: basePage.list.reload,
+      get state() { return firstPage.state; },
+    },
+    get group() { return group(); },
+    get sort() { return sort(); },
+    get states() { return basePage.states; },
+    get rowsGroup() { return group(); },
+    get rows() { return basePage.rows; },
+    get items() { return items(); },
+    get endKey() { return tailNextBefore() != null ? String(allRows().length) : ''; },
+    get displayed() { return basePage.displayed; },
+    get chosen() { return chosen(); },
+    get closed() { return closed(); },
+    toggleGroup,
+    get sel() { return sel(); },
+    get selecting() { return basePage.selecting || sel().length > 0; },
+    setSelectOn: basePage.setSelectOn,
     select,
     leave,
-    chosen,
+    get confirm() { return basePage.confirm; },
+    setConfirm: basePage.setConfirm,
+    get bulkError() { return basePage.bulkError; },
+    get busy() { return basePage.busy; },
+    bulk: basePage.bulk,
+    get off() { return basePage.off; },
     pinAll,
-    closed,
-    toggleGroup,
-    items,
-    endKey: tailNextBefore != null ? String(allRows.length) : '',
-    list: { ...basePage.list, more: loadMore, state: firstPage.state },
+    get menu() { return basePage.menu; },
+    setMenu: basePage.setMenu,
+    closeMenu: basePage.closeMenu,
+    pinnedDoc: basePage.pinnedDoc,
+    get activePreset() { return activePreset(); },
     pick,
-    activePreset,
+    save: basePage.save,
+    get filtered() { return basePage.filtered; },
+    clearFilters: basePage.clearFilters,
+    get shown() { return basePage.shown; },
+    isLocal: basePage.isLocal,
+    entity: basePage.entity,
   };
 
-  const chips: Chip[] = Object.entries(basePage.view.extra ?? {})
-    .filter(([k]) => !(k in typed.terms))
+  const chips = createMemo<Chip[]>(() => Object.entries(basePage.view.extra ?? {})
+    .filter(([k]) => !(k in built().typed.terms))
     .filter((e): e is [string, string] => ['media', 'since', 'task', 'execution'].includes(e[0]) && e[1] !== undefined)
-    .map(([field, value]) => ({ field, value }));
+    .map(([field, value]) => ({ field, value })));
 
-  const now = Date.now();
   const list = <>
-    <ShellStatus><OfflineMarker state={firstPage.state} now={now} /></ShellStatus>
+    <ShellStatus><OfflineMarker state={firstPage.state} now={Date.now()} /></ShellStatus>
     <ListPagePanel
       page={page}
       noun="Results"
@@ -302,9 +361,9 @@ export function Results({ id }: { id?: string }) {
       family="artifact"
       groups={GROUPS}
       sorts={SORTS}
-      focused={id}
-      countsUnknown={!replyCounts}
-      chips={chips}
+      focused={props.id}
+      countsUnknown={!replyCounts()}
+      chips={chips()}
       onRemoveChip={c => { const { [c.field]: _, ...rest } = basePage.view.extra ?? {}; set({ extra: rest }); }}
       listLabel="Results"
       title={r => fileLabel(r.name) || r.name}
@@ -317,8 +376,8 @@ export function Results({ id }: { id?: string }) {
         ...(r.taskId ? [{ label: 'Results of this task', icon: actions.filter, onClick: () => set({ extra: { ...basePage.view.extra, task: r.taskId! } }) }] : []),
         ...(r.executionId ? [{ label: 'Results of this run', icon: actions.runs, onClick: () => set({ extra: { ...basePage.view.extra, execution: r.executionId! } }) }] : []),
       ]}
-      empty={<Empty text={page.filtered || chips.length ? 'No results match.' : 'No results yet.'}
-        action={(page.filtered || chips.length) ? <Button label="Clear filters" onClick={() => { basePage.setQuery(''); set({ state: [], q: undefined, project: [], extra: { group: group !== DEFAULT_GROUP ? group : undefined, sort: sort !== DEFAULT_SORT ? sort : undefined } }); }} /> : undefined} />}
+      empty={<Empty text={page.filtered || chips().length ? 'No results match.' : 'No results yet.'}
+        action={(page.filtered || chips().length) ? <Button label="Clear filters" onClick={() => { basePage.setQuery(''); set({ state: [], q: undefined, project: [], extra: { group: group() !== DEFAULT_GROUP ? group() : undefined, sort: sort() !== DEFAULT_SORT ? sort() : undefined } }); }} /> : undefined} />}
       facts={r => <RowFacts>
         {r.taskId && <EntityCode code={r.taskCode} id={r.taskId} kind="task" />}
         {r.executionId && <EntityCode id={r.executionId} kind="execution" />}
@@ -332,78 +391,93 @@ export function Results({ id }: { id?: string }) {
 
   return <ListDetail
     list={list}
-    detailKey={id}
-    idle={<ResultsIdle rows={allRows} counts={replyCounts} hasMore={tailNextBefore != null} busy={page.list.pending && !allRows.length} />}
-    detail={id ? <Result key={id} id={id} onClose={() => set({ focus: undefined })} onFilter={(field, value) => set({ extra: { ...basePage.view.extra, [field]: value } })} /> : undefined}
+    detailKey={props.id}
+    idle={<ResultsIdle rows={allRows()} counts={replyCounts()} hasMore={tailNextBefore() != null} busy={page.list.pending && !allRows().length} />}
+    detail={<Show when={props.id} keyed>{id => <Result id={id} onClose={() => set({ focus: undefined })} onFilter={(field, value) => set({ extra: { ...basePage.view.extra, [field]: value } })} />}</Show>}
   />;
 }
 
-function ResultsIdle({ rows, counts, hasMore, busy }: { rows: ArtifactRow[]; counts?: Record<string, number>; hasMore: boolean; busy: boolean }) {
-  if (busy) return <article class="detail stack" data-ui="detail" aria-label="Results summary"><Skeleton rows={4} /></article>;
-  if (!rows.length) return <Empty text="Pick a result to open it here." />;
-  const totalBytes = rows.reduce((sum, r) => sum + (Number(r.size) || 0), 0);
-  const totalCount = counts ? Object.values(counts).reduce((a, b) => a + b, 0) : rows.length;
-  const storedCount = counts?.stored ?? rows.filter(r => r.state === 'stored').length;
-  const failedCount = counts?.failed ?? rows.filter(r => r.state === 'failed').length;
-  const pendingCount = counts?.pending ?? rows.filter(r => r.state === 'pending').length;
-  const partialNote = !counts && hasMore ? 'loaded window' : undefined;
-  const items: TotalItem[] = [
-    { label: 'Results', m: { value: totalCount, basis: 'measured', partial: partialNote }, kind: 'count' },
-    { label: 'Stored', m: { value: storedCount, basis: 'measured', partial: partialNote }, kind: 'count' },
-    ...(pendingCount > 0 ? [{ label: 'Uploading', m: { value: pendingCount, basis: 'measured' as const, partial: partialNote }, kind: 'count' as const }] : []),
-    ...(failedCount > 0 ? [{ label: 'Failed', m: { value: failedCount, basis: 'measured' as const, partial: partialNote }, kind: 'count' as const }] : []),
-    { label: 'Size', m: { value: totalBytes, basis: 'measured', partial: hasMore ? 'loaded window' : undefined }, kind: 'bytes' },
-  ];
-  const byKind = new Map<'image' | 'video' | 'text' | 'other', { count: number; bytes: number }>();
-  for (const r of rows) {
-    const k = mediaKind(r.mediaType);
-    const cur = byKind.get(k) ?? { count: 0, bytes: 0 };
-    cur.count++;
-    cur.bytes += Number(r.size) || 0;
-    byKind.set(k, cur);
-  }
+function ResultsIdle(props: { rows: ArtifactRow[]; counts?: Record<string, number>; hasMore: boolean; busy: boolean }) {
+  const summary = createMemo(() => {
+    const rows = props.rows, counts = props.counts, hasMore = props.hasMore;
+    const totalBytes = rows.reduce((sum, r) => sum + (Number(r.size) || 0), 0);
+    const totalCount = counts ? Object.values(counts).reduce((a, b) => a + b, 0) : rows.length;
+    const storedCount = counts?.stored ?? rows.filter(r => r.state === 'stored').length;
+    const failedCount = counts?.failed ?? rows.filter(r => r.state === 'failed').length;
+    const pendingCount = counts?.pending ?? rows.filter(r => r.state === 'pending').length;
+    const partialNote = !counts && hasMore ? 'loaded window' : undefined;
+    const items: TotalItem[] = [
+      { label: 'Results', m: { value: totalCount, basis: 'measured', partial: partialNote }, kind: 'count' },
+      { label: 'Stored', m: { value: storedCount, basis: 'measured', partial: partialNote }, kind: 'count' },
+      ...(pendingCount > 0 ? [{ label: 'Uploading', m: { value: pendingCount, basis: 'measured' as const, partial: partialNote }, kind: 'count' as const }] : []),
+      ...(failedCount > 0 ? [{ label: 'Failed', m: { value: failedCount, basis: 'measured' as const, partial: partialNote }, kind: 'count' as const }] : []),
+      { label: 'Size', m: { value: totalBytes, basis: 'measured', partial: hasMore ? 'loaded window' : undefined }, kind: 'bytes' },
+    ];
+    const byKind = new Map<'image' | 'video' | 'text' | 'other', { count: number; bytes: number }>();
+    for (const r of rows) {
+      const k = mediaKind(r.mediaType);
+      const cur = byKind.get(k) ?? { count: 0, bytes: 0 };
+      cur.count++;
+      cur.bytes += Number(r.size) || 0;
+      byKind.set(k, cur);
+    }
+    return { items, byKind };
+  });
   return (
-    <article class="detail stack" data-ui="detail" aria-label="Results summary">
-      <DetailSection title="Summary">
-        <Totals items={items} />
-      </DetailSection>
-      <DetailSection title="By type">
-        {(['image', 'video', 'text', 'other'] as const).map(k => {
-          const v = byKind.get(k);
-          if (!v) return null;
-          return (
-            <KvRow
-              key={k}
-              icon={k === 'image' ? 'panels-top-left' : k === 'video' ? 'play' : k === 'text' ? 'file-text' : 'archive'}
-              label={mediaLabel(k)}
-              meta={bytes(v.bytes).text}
-              value={<Num m={{ value: v.count, basis: 'measured' }} kind="count" />}
-            />
-          );
-        })}
-      </DetailSection>
-    </article>
+    <Show when={!props.busy} fallback={<article class="detail stack" data-ui="detail" aria-label="Results summary"><Skeleton rows={4} /></article>}>
+      <Show when={props.rows.length} fallback={<Empty text="Pick a result to open it here." />}>
+        <article class="detail stack" data-ui="detail" aria-label="Results summary">
+          <DetailSection title="Summary">
+            <Totals items={summary().items} />
+          </DetailSection>
+          <DetailSection title="By type">
+            <For each={['image', 'video', 'text', 'other'] as const}>{k => {
+              const v = createMemo(() => summary().byKind.get(k));
+              return (
+                <Show when={v()}>{item => (
+                  <KvRow
+                    icon={k === 'image' ? 'panels-top-left' : k === 'video' ? 'play' : k === 'text' ? 'file-text' : 'archive'}
+                    label={mediaLabel(k)}
+                    meta={bytes(item().bytes).text}
+                    value={<Num m={{ value: item().count, basis: 'measured' }} kind="count" />}
+                  />
+                )}</Show>
+              );
+            }}</For>
+          </DetailSection>
+        </article>
+      </Show>
+    </Show>
   );
 }
 
-function Result({ id, onClose, onFilter }: { id: string; onClose: () => void; onFilter: (field: string, value: string) => void }) {
-  const { data: a, error } = useOp('artifact_get', { artifactId: id });
-  const [tab, setTab] = useState('');
-  if (error && !a) return <article class="detail" data-ui="detail" tabIndex={-1}><ErrorBanner text={`Result did not load: ${error}`} /></article>;
-  if (!a) return <article class="detail" data-ui="detail" tabIndex={-1}><Skeleton rows={6} /></article>;
-  const src = `/api/results/${encodeURIComponent(a.id)}`, meta = { id: a.id, name: a.name, mediaType: a.mediaType, size: Number(a.size) || 0 };
-  return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={a.name}>
-    <header class="detail-h">
-      <Button label="Close" icon="x" iconOnly onClick={onClose} />
-      {a.projectId && <EntityCode code={a.projectId} id={a.projectId} kind="project" />}
-      {a.taskId && <EntityCode id={a.taskId} kind="task" />}
-      {a.executionId && <EntityCode id={a.executionId} kind="execution" />}
-      <span class="grow" />
-      {a.taskId && <Button label="Results of this task" icon="list-filter" iconOnly onClick={() => onFilter('task', a.taskId!)} />}
-    </header>
-    <ResultViewer name={a.name} type={a.mediaType} size={meta.size} source={a.executionId ? 'agent run' : 'no run'} href={a.state === 'stored' ? src : undefined}
-      copies={a.copies.map(c => ({ where: c.storeId, state: c.state === 'verified' ? 'stored' : ['failed', 'deleted', 'purge_pending'].includes(c.state) ? 'unavailable' : 'pending' }))} tabs={[]} tab={tab} onTab={setTab}>
-      {a.state === 'stored' ? <ArtifactView a={meta} src={src} /> : <Empty text={`This result is ${a.state}.`} />}
-    </ResultViewer>
-  </article>;
+function Result(props: { id: string; onClose: () => void; onFilter: (field: string, value: string) => void }) {
+  const artOp = useOp('artifact_get', () => ({ artifactId: props.id }));
+  const [tab, setTab] = createSignal('');
+  return (
+    <Show when={!(artOp.error && !artOp.data)} fallback={<article class="detail" data-ui="detail" tabindex={-1}><ErrorBanner text={`Result did not load: ${artOp.error}`} /></article>}>
+      <Show when={artOp.data} fallback={<article class="detail" data-ui="detail" tabindex={-1}><Skeleton rows={6} /></article>}>{a => {
+        const src = () => `/api/results/${encodeURIComponent(a().id)}`;
+        const meta = () => ({ id: a().id, name: a().name, mediaType: a().mediaType, size: Number(a().size) || 0 });
+        return (
+          <article class="detail" data-ui="detail" tabindex={-1} aria-label={a().name}>
+            <header class="detail-h">
+              <Button label="Close" icon="x" iconOnly onClick={() => props.onClose()} />
+              <Show when={a().projectId}>{pid => <EntityCode code={pid()} id={pid()} kind="project" />}</Show>
+              <Show when={a().taskId}>{tid => <EntityCode id={tid()} kind="task" />}</Show>
+              <Show when={a().executionId}>{eid => <EntityCode id={eid()} kind="execution" />}</Show>
+              <span class="grow" />
+              <Show when={a().taskId}>{tid => <Button label="Results of this task" icon="list-filter" iconOnly onClick={() => props.onFilter('task', tid())} />}</Show>
+            </header>
+            <ResultViewer name={a().name} type={a().mediaType} size={meta().size} source={a().executionId ? 'agent run' : 'no run'} href={a().state === 'stored' ? src() : undefined}
+              copies={a().copies.map(c => ({ where: c.storeId, state: c.state === 'verified' ? 'stored' : ['failed', 'deleted', 'purge_pending'].includes(c.state) ? 'unavailable' : 'pending' }))} tabs={[]} tab={tab()} onTab={setTab}>
+              <Show when={a().state === 'stored'} fallback={<Empty text={`This result is ${a().state}.`} />}>
+                <ArtifactView a={meta()} src={src()} />
+              </Show>
+            </ResultViewer>
+          </article>
+        );
+      }}</Show>
+    </Show>
+  );
 }

@@ -1,7 +1,7 @@
 // Runners (docs/design-system/pages/runners.md): everything that executes work, grouped by host, each run on a 24-hour
 // time strip with its time and resources; spend today and this month per host and kind. Data: executions_runners.
-import { useState } from 'preact/hooks';
-import { useLocation } from 'wouter-preact';
+import { createMemo, createSignal, For, Show } from 'solid-js';
+import { useLocation } from '../router.ts';
 import {
   AgeChip, Button, Choice, CostFigures, DataTable, Empty, EntityCode, ErrorBanner, Fact, HarnessMark, Icon, Num,
   OfflineMarker, ProblemRow, RowFacts, ShellStatus, Skeleton, StateBadge, TimeStrip, Totals, age, duration, harnesses,
@@ -40,119 +40,131 @@ function spendTotals(spend: RunnerSpend[]): TotalItem[] {
   return [...sumPeriod('today', 'Today'), ...sumPeriod('month', 'Month')];
 }
 
-export function Runners({ onClose }: { onClose?: () => void } = {}) {
+export function Runners(props: { onClose?: () => void } = {}) {
   const [, go] = useLocation();
-  const [period, setPeriod] = useState<'today' | 'month'>('today');
-  const runners = useOp('executions_runners', {}, { every: 15000 }), { data, state, error, reload } = runners; // timer only: gateway calls change executions many times a second
+  const [period, setPeriod] = createSignal<'today' | 'month'>('today');
+  const runners = useOp('executions_runners', {}, { every: 15000 }); // timer only: gateway calls change executions many times a second
   const clockOffsetMs = useClockOffset(runners);
 
-  if (!data) {
-    return (
-      <article class="detail stack" data-ui="detail" tabIndex={-1} aria-label="Runners">
-        <header class="detail-h">
-          {onClose && <Button label="Close" icon="x" iconOnly onClick={onClose} />}
-          <h2 class="detail-title">Runners</h2>
-        </header>
-        {error ? <ErrorBanner text={`Runners did not load: ${error}`} onRetry={reload} /> : <Skeleton rows={6} />}
-      </article>
-    );
-  }
-
-  const now = Date.now() + clockOffsetMs, from = now - DAY;
-  const hosts = [...new Set<string | null>([...data.runs.map(r => r.hostId), ...data.spend.map(s => s.hostId)])]
-    .sort((a, b) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)));
+  const now = createMemo(() => { void runners.data; return Date.now() + clockOffsetMs(); });
+  const from = createMemo(() => now() - DAY);
+  const hosts = createMemo(() => {
+    const data = runners.data;
+    if (!data) return [];
+    return [...new Set<string | null>([...data.runs.map(r => r.hostId), ...data.spend.map(s => s.hostId)])]
+      .sort((a, b) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)));
+  });
+  const spendRows = createMemo(() => {
+    const data = runners.data;
+    if (!data) return [];
+    return hosts().flatMap(h => [...new Set<string>(data.spend.filter(s => s.hostId === h).map(s => s.kind))].sort().map((k, i) => ({ hostId: h, kind: k, first: i === 0 })));
+  });
+  const summary = createMemo(() => runners.data ? spendTotals(runners.data.spend) : []);
   const cell = (s: RunnerSpend | undefined, k: Kind, v: (s: RunnerSpend) => number | null) =>
     <td class="num">{s ? <Num m={v === runsOf ? m(v(s)) : sum(s, v(s))} kind={k} /> : <span class="muted">—</span>}</td>;
   const money = (s: RunnerSpend | undefined) => <td class="num"><CostFigures cost={s?.cost} showUnavailable={false} empty="—" /></td>;
   const open = (r: RunnerRun) => r.taskId ? `/tasks/${r.taskId}` : r.sessionId ? `/conversations/${r.sessionId}` : null;
-  const summary = spendTotals(data.spend);
 
   return (
-    <article class="detail stack" data-ui="detail" tabIndex={-1} aria-label="Runners">
-      <ShellStatus><OfflineMarker state={state} now={now} /></ShellStatus>
-      <header class="detail-h">
-        {onClose && <Button label="Close" icon="x" iconOnly onClick={onClose} />}
-        <h2 class="detail-title">Runners</h2>
-      </header>
-      <section class="panel" aria-label="Spend">
-        <header class="panel-h">
-          <h2>Spend</h2>
-          <span class="muted">UTC</span>
-          <span class="grow" />
-          <Choice label="Spend period" options={[{ id: 'today', label: 'Today' }, { id: 'month', label: 'Month' }]} value={period} onChange={v => setPeriod(v as 'today' | 'month')} />
+    <Show when={runners.data} fallback={
+      <article class="detail stack" data-ui="detail" tabindex={-1} aria-label="Runners">
+        <header class="detail-h">
+          <Show when={props.onClose}>{onClose => <Button label="Close" icon="x" iconOnly onClick={onClose()} />}</Show>
+          <h2 class="detail-title">Runners</h2>
         </header>
-        {summary.length > 0 && <div class="stack-pad"><Totals items={summary} /></div>}
-        <DataTable label="Spend" head={<tr><th scope="col">Host</th><th scope="col">Kind</th><th scope="col" class="num">Runs</th><th scope="col" class="num">Time</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Cost</th></tr>}>
-          {hosts.flatMap(h => [...new Set<string>(data.spend.filter(s => s.hostId === h).map(s => s.kind))].sort().map((k, i) => {
-            const row = data.spend.find(s => s.hostId === h && s.kind === k && s.period === period);
-            return (
-              <tr key={`${h}:${k}`}>
-                <th scope="row">{i === 0 ? (h ? <EntityCode id={h} code={h} kind="host" cls="inline" /> : <span class="title">{hostName(h)}</span>) : ''}</th>
-                <td>{KINDS[k] ?? k}</td>
-                {cell(row, 'count', runsOf)}
-                {cell(row, 'duration', s => s.wallMs == null ? null : s.wallMs / 1000)}
-                {cell(row, 'count', s => s.tokens)}
-                {money(row)}
-              </tr>
-            );
-          }))}
-        </DataTable>
-      </section>
-      {hosts.map(h => {
-        const runs = data.runs.filter(r => r.hostId === h);
-        if (!runs.length) return null;
-        const live = runs.filter(isActive).length;
-        return (
-          <section key={hostName(h)} class="panel" aria-label={hostName(h)}>
-            <header class="panel-h">
-              <h2>{h ? <EntityCode id={h} code={h} kind="host" cls="inline" /> : hostName(h)}</h2>
-              {live > 0 && <span class="hc" data-tip="Running"><Icon name="activity" label="Running" /><Num m={m(live)} kind="count" /></span>}
-              <span class="grow" />
-              <span class="muted">24h</span>
-            </header>
-            <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,12rem) auto' }}>
-              {runs.map(r => {
-                // Gateway calls are one run per connection (`calls:/conn:<name>`): the connection names the row, not the kind (OR-17).
-                const conn = r.kind === 'tool_run' && typeof r.id === 'string' ? /^calls:\/conn:(.+)$/.exec(r.id)?.[1] : undefined;
-                const href = open(r), start = r.startedAt ?? r.endedAt ?? now, title = r.taskTitle ?? (conn ? `${conn} calls` : KINDS[r.kind] ?? r.kind);
-                // A finished run with no recorded end (a gateway call) ends at start plus its wall time, else at its start.
-                const active = isActive(r), end = active ? null : r.endedAt ?? start + (r.wallMs ?? 0);
-                // An abandoned run ended when given up: its length is unknown (the core leaves its wall time unavailable).
-                const secs = r.wallMs != null ? r.wallMs / 1000 : r.endedAt != null && r.problem !== 'unknown:abandoned' ? (r.endedAt - start) / 1000 : null;
-                return (
-                  <div key={r.id} role="row" class="vl-row static">
-                    <span class="lead"><StateBadge family="execution" state={r.state} compact /></span>
-                    <span class="tt">
-                      {href ? <a class="title row-link" href={href} onClick={e => { e.preventDefault(); go(href); }}>{title}</a> : <span class="title">{title}</span>}
-                      {!conn && <EntityCode id={r.id} kind="execution" />}
-                      {r.parentExecutionId && <EntityCode id={r.parentExecutionId} kind="execution" />}
-                      {r.harness && r.harness in harnesses && <HarnessMark h={r.harness as Harness} />}
-                      {r.problem && <span class="chip t-danger" data-tip={r.problem} role="img" aria-label={r.problem}><Icon name="triangle-alert" /></span>}
-                    </span>
-                    <TimeStrip from={from} to={now} start={start} end={end} now={now} state={r.state} label={`${r.state}, started ${age(start, now).long}`} />
-                    <span class="rz">
-                      <RowFacts>
-                        {r.calls != null && <Fact icon="terminal" tip="Tool calls"><Num m={m(r.calls)} kind="count" /></Fact>}
-                        {(r.failedCalls ?? 0) > 0 && <Fact icon="octagon-x" tip="Failed calls"><span class="t-danger"><Num m={m(r.failedCalls)} kind="count" /></span></Fact>}
-                        {r.tokens != null && <Fact icon="layers-2" tip="Tokens"><Num m={m(r.tokens)} kind="count" /></Fact>}
-                        {r.cpuMs != null && <Fact icon="gauge" tip="CPU"><Num m={m(r.cpuMs / 1000)} kind="duration" /></Fact>}
-                        {r.peakMemoryBytes != null && <Fact icon="save" tip="Peak memory"><Num m={m(r.peakMemoryBytes)} kind="bytes" /></Fact>}
-                        {r.cost.length > 0 && <Fact tip="Cost"><CostFigures cost={r.cost} /></Fact>}
-                        <Fact icon="clock" tip={active ? 'Running for' : 'Duration'}>
-                          {!active ? <Num m={m(secs)} kind="duration" /> : <AgeChip t={start} clockOffsetMs={clockOffsetMs} alertAfter={2 * 3600} tone="attention" alertLabel="running long" />}
-                        </Fact>
-                      </RowFacts>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        );
-      })}
-      {!data.runs.length && <Empty text="Nothing ran in the last 24 hours." />}
-      <Ci now={now} clockOffsetMs={clockOffsetMs} />
-    </article>
+        <Show when={runners.error} fallback={<Skeleton rows={6} />}>{err => <ErrorBanner text={`Runners did not load: ${err()}`} onRetry={runners.reload} />}</Show>
+      </article>
+    }>{data => (
+      <article class="detail stack" data-ui="detail" tabindex={-1} aria-label="Runners">
+        <ShellStatus><OfflineMarker state={runners.state} now={now()} /></ShellStatus>
+        <header class="detail-h">
+          <Show when={props.onClose}>{onClose => <Button label="Close" icon="x" iconOnly onClick={onClose()} />}</Show>
+          <h2 class="detail-title">Runners</h2>
+        </header>
+        <section class="panel" aria-label="Spend">
+          <header class="panel-h">
+            <h2>Spend</h2>
+            <span class="muted">UTC</span>
+            <span class="grow" />
+            <Choice label="Spend period" options={[{ id: 'today', label: 'Today' }, { id: 'month', label: 'Month' }]} value={period()} onChange={v => setPeriod(v as 'today' | 'month')} />
+          </header>
+          <Show when={summary().length > 0}><div class="stack-pad"><Totals items={summary()} /></div></Show>
+          <DataTable label="Spend" head={<tr><th scope="col">Host</th><th scope="col">Kind</th><th scope="col" class="num">Runs</th><th scope="col" class="num">Time</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Cost</th></tr>}>
+            <For each={spendRows()}>{item => {
+              const row = createMemo(() => data().spend.find(s => s.hostId === item.hostId && s.kind === item.kind && s.period === period()));
+              return (
+                <tr>
+                  <th scope="row">{item.first ? (item.hostId ? <EntityCode id={item.hostId} code={item.hostId} kind="host" cls="inline" /> : <span class="title">{hostName(item.hostId)}</span>) : ''}</th>
+                  <td>{KINDS[item.kind] ?? item.kind}</td>
+                  {cell(row(), 'count', runsOf)}
+                  {cell(row(), 'duration', s => s.wallMs == null ? null : s.wallMs / 1000)}
+                  {cell(row(), 'count', s => s.tokens)}
+                  {money(row())}
+                </tr>
+              );
+            }}</For>
+          </DataTable>
+        </section>
+        <For each={hosts()}>{h => {
+          const runs = createMemo(() => data().runs.filter(r => r.hostId === h));
+          const live = createMemo(() => runs().filter(isActive).length);
+          return (
+            <Show when={runs().length > 0}>
+              <section class="panel" aria-label={hostName(h)}>
+                <header class="panel-h">
+                  <h2>{h ? <EntityCode id={h} code={h} kind="host" cls="inline" /> : hostName(h)}</h2>
+                  <Show when={live() > 0}><span class="hc" data-tip="Running"><Icon name="activity" label="Running" /><Num m={m(live())} kind="count" /></span></Show>
+                  <span class="grow" />
+                  <span class="muted">24h</span>
+                </header>
+                <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,12rem) auto' }}>
+                  <For each={runs()}>{r => {
+                    // Gateway calls are one run per connection (`calls:/conn:<name>`): the connection names the row, not the kind (OR-17).
+                    const conn = r.kind === 'tool_run' && typeof r.id === 'string' ? /^calls:\/conn:(.+)$/.exec(r.id)?.[1] : undefined;
+                    const href = open(r);
+                    const title = r.taskTitle ?? (conn ? `${conn} calls` : KINDS[r.kind] ?? r.kind);
+                    const start = () => r.startedAt ?? r.endedAt ?? now();
+                    // A finished run with no recorded end (a gateway call) ends at start plus its wall time, else at its start.
+                    const active = isActive(r);
+                    const end = () => active ? null : r.endedAt ?? start() + (r.wallMs ?? 0);
+                    // An abandoned run ended when given up: its length is unknown (the core leaves its wall time unavailable).
+                    const secs = () => r.wallMs != null ? r.wallMs / 1000 : r.endedAt != null && r.problem !== 'unknown:abandoned' ? (r.endedAt - start()) / 1000 : null;
+                    return (
+                      <div role="row" class="vl-row static">
+                        <span class="lead"><StateBadge family="execution" state={r.state} compact /></span>
+                        <span class="tt">
+                          {href ? <a class="title row-link" href={href} onClick={e => { e.preventDefault(); go(href); }}>{title}</a> : <span class="title">{title}</span>}
+                          {!conn && <EntityCode id={r.id} kind="execution" />}
+                          {r.parentExecutionId && <EntityCode id={r.parentExecutionId} kind="execution" />}
+                          {r.harness && r.harness in harnesses && <HarnessMark h={r.harness as Harness} />}
+                          {r.problem && <span class="chip t-danger" data-tip={r.problem} role="img" aria-label={r.problem}><Icon name="triangle-alert" /></span>}
+                        </span>
+                        <TimeStrip from={from()} to={now()} start={start()} end={end()} now={now()} state={r.state} label={`${r.state}, started ${age(start(), now()).long}`} />
+                        <span class="rz">
+                          <RowFacts>
+                            {r.calls != null && <Fact icon="terminal" tip="Tool calls"><Num m={m(r.calls)} kind="count" /></Fact>}
+                            {(r.failedCalls ?? 0) > 0 && <Fact icon="octagon-x" tip="Failed calls"><span class="t-danger"><Num m={m(r.failedCalls)} kind="count" /></span></Fact>}
+                            {r.tokens != null && <Fact icon="layers-2" tip="Tokens"><Num m={m(r.tokens)} kind="count" /></Fact>}
+                            {r.cpuMs != null && <Fact icon="gauge" tip="CPU"><Num m={m(r.cpuMs / 1000)} kind="duration" /></Fact>}
+                            {r.peakMemoryBytes != null && <Fact icon="save" tip="Peak memory"><Num m={m(r.peakMemoryBytes)} kind="bytes" /></Fact>}
+                            {r.cost.length > 0 && <Fact tip="Cost"><CostFigures cost={r.cost} /></Fact>}
+                            <Fact icon="clock" tip={active ? 'Running for' : 'Duration'}>
+                              {!active ? <Num m={m(secs())} kind="duration" /> : <AgeChip t={start()} clockOffsetMs={clockOffsetMs()} alertAfter={2 * 3600} tone="attention" alertLabel="running long" />}
+                            </Fact>
+                          </RowFacts>
+                        </span>
+                      </div>
+                    );
+                  }}</For>
+                </div>
+              </section>
+            </Show>
+          );
+        }}</For>
+        <Show when={!data().runs.length}><Empty text="Nothing ran in the last 24 hours." /></Show>
+        <Ci now={now()} clockOffsetMs={clockOffsetMs()} />
+      </article>
+    )}</Show>
   );
 }
 
@@ -160,108 +172,112 @@ const JOB_STATE: Record<string, 'running' | 'preparing' | 'waiting'> = { in_prog
 
 /** GitHub Actions for taskqorg/fleet (executions_ci, cached on the coordinator): minutes today per runner type, the
  * self-hosted runners, and jobs in flight or queued on a 24-hour strip. */
-function Ci({ now, clockOffsetMs }: { now: number; clockOffsetMs: number }) {
-  const { data, error, reload } = useOp('executions_ci', {}, { every: 60000 });
-  const from = now - DAY;
-  if (!data) {
-    return (
+function Ci(props: { now: number; clockOffsetMs: number }) {
+  const ciOp = useOp('executions_ci', {}, { every: 60000 });
+  const from = createMemo(() => props.now - DAY);
+  const partial = createMemo(() => (ciOp.data?.runsUncounted ?? 0) > 0 ? `${ciOp.data!.runsUncounted} runs not read yet` : undefined);
+  // The finding first (2026-11-20 decision): GitHub-hosted minutes on a day the self-hosted runners stood free.
+  const hosted = createMemo(() => ciOp.data?.minutesToday.filter(x => x.hosted) ?? []);
+  const self = createMemo(() => ciOp.data?.minutesToday.filter(x => !x.hosted) ?? []);
+  const hostedJobs = createMemo(() => hosted().reduce((n, x) => n + x.jobs, 0));
+  const hostedMin = createMemo(() => hosted().reduce((n, x) => n + x.minutes, 0));
+  const selfJobs = createMemo(() => self().reduce((n, x) => n + x.jobs, 0));
+  const idleSelf = createMemo(() => (ciOp.data?.runners ?? []).filter(r => r.status === 'online' && !r.busy).length);
+  const idleRunners = createMemo(() => (ciOp.data?.runners ?? []).filter(r => !ciOp.data?.minutesToday.some(x => x.runner === r.name)));
+
+  return (
+    <Show when={ciOp.data} fallback={
       <section class="panel" aria-label="CI">
         <header class="panel-h"><h2>CI</h2></header>
-        {error ? <ErrorBanner text={`CI did not load: ${error}`} onRetry={reload} /> : <Skeleton rows={3} />}
+        <Show when={ciOp.error} fallback={<Skeleton rows={3} />}>{err => <ErrorBanner text={`CI did not load: ${err()}`} onRetry={ciOp.reload} />}</Show>
       </section>
-    );
-  }
-  const partial = data.runsUncounted > 0 ? `${data.runsUncounted} runs not read yet` : undefined;
-  // The finding first (2026-11-20 decision): GitHub-hosted minutes on a day the self-hosted runners stood free.
-  const hosted = data.minutesToday.filter(x => x.hosted), self = data.minutesToday.filter(x => !x.hosted);
-  const hostedJobs = hosted.reduce((n, x) => n + x.jobs, 0), hostedMin = hosted.reduce((n, x) => n + x.minutes, 0);
-  const selfJobs = self.reduce((n, x) => n + x.jobs, 0), idleSelf = (data.runners ?? []).filter(r => r.status === 'online' && !r.busy).length;
-  const idleRunners = (data.runners ?? []).filter(r => !data.minutesToday.some(x => x.runner === r.name));
-  return (
-    <section class="panel" aria-label="CI">
-      {hostedJobs > 0 && idleSelf > 0 && (
-        <ProblemRow
-          severity="warning"
-          title="CI ran on GitHub-hosted machines today"
-          facts={`${hostedJobs} of ${hostedJobs + selfJobs} jobs took ${duration(hostedMin * 60).text} on ${hosted.map(x => x.runner).join(', ')}; ${idleSelf} self-hosted ${idleSelf === 1 ? 'runner is' : 'runners are'} online and free`}
-          actions={[]}
-        />
-      )}
-      <header class="panel-h">
-        <h2>CI</h2>
-        <Icon name="github" label="GitHub Actions" />
-        <span class="id">taskqorg/fleet</span>
-        {!data.keyed && <span class="chip" data-tip="No GitHub key: public reads, refreshed every 5 minutes; self-hosted runner state unknown">public</span>}
-        {data.problems.length > 0 && <span class="chip t-danger" data-tip={data.problems.join('; ')} role="img" aria-label={data.problems.join('; ')}><Icon name="triangle-alert" /></span>}
-        <span class="grow" />
-        <span class="muted">today UTC</span>
-      </header>
-      {(data.minutesToday.length > 0 || idleRunners.length > 0) && (
-        <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
-          {data.minutesToday.map(x => {
-            const r = (data.runners ?? []).find(y => y.name === x.runner);
-            const lead = x.hosted
-              ? <Icon name="github" label="GitHub-hosted" />
-              : !data.runners
-                ? <StateBadge family="host" state="offline" unconfirmed reason="state unknown" compact />
-                : !r
-                  ? <StateBadge family="host" state="offline" reason="removed runner" compact />
-                  : r.busy
+    }>{data => (
+      <section class="panel" aria-label="CI">
+        <Show when={hostedJobs() > 0 && idleSelf() > 0}>
+          <ProblemRow
+            severity="warning"
+            title="CI ran on GitHub-hosted machines today"
+            facts={`${hostedJobs()} of ${hostedJobs() + selfJobs()} jobs took ${duration(hostedMin() * 60).text} on ${hosted().map(x => x.runner).join(', ')}; ${idleSelf()} self-hosted ${idleSelf() === 1 ? 'runner is' : 'runners are'} online and free`}
+            actions={[]}
+          />
+        </Show>
+        <header class="panel-h">
+          <h2>CI</h2>
+          <Icon name="github" label="GitHub Actions" />
+          <span class="id">taskqorg/fleet</span>
+          <Show when={!data().keyed}><span class="chip" data-tip="No GitHub key: public reads, refreshed every 5 minutes; self-hosted runner state unknown">public</span></Show>
+          <Show when={data().problems.length > 0}><span class="chip t-danger" data-tip={data().problems.join('; ')} role="img" aria-label={data().problems.join('; ')}><Icon name="triangle-alert" /></span></Show>
+          <span class="grow" />
+          <span class="muted">today UTC</span>
+        </header>
+        <Show when={data().minutesToday.length > 0 || idleRunners().length > 0}>
+          <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
+            <For each={data().minutesToday}>{x => {
+              const r = createMemo(() => (data().runners ?? []).find(y => y.name === x.runner));
+              const lead = () => {
+                if (x.hosted) return <Icon name="github" label="GitHub-hosted" />;
+                if (!data().runners) return <StateBadge family="host" state="offline" unconfirmed reason="state unknown" compact />;
+                const cur = r();
+                if (!cur) return <StateBadge family="host" state="offline" reason="removed runner" compact />;
+                return cur.busy
+                  ? <StateBadge family="execution" state="running" reason={`${cur.status}, busy`} compact />
+                  : <StateBadge family="host" state={cur.status === 'online' ? 'online' : 'offline'} compact />;
+              };
+              return (
+                <div role="row" class="vl-row static">
+                  <span class="lead">{lead()}</span>
+                  <span class="tt"><span class="title">{x.runner}</span></span>
+                  <span class="rz">
+                    <RowFacts>
+                      <Fact icon="repeat" tip="Jobs"><Num m={m(x.jobs)} kind="count" /></Fact>
+                      <Fact icon="clock" tip="Minutes"><Num m={{ ...m(x.minutes * 60), partial: partial() }} kind="duration" /></Fact>
+                    </RowFacts>
+                  </span>
+                </div>
+              );
+            }}</For>
+            <For each={idleRunners()}>{r => (
+              <div role="row" class="vl-row static">
+                <span class="lead">
+                  {r.busy
                     ? <StateBadge family="execution" state="running" reason={`${r.status}, busy`} compact />
-                    : <StateBadge family="host" state={r.status === 'online' ? 'online' : 'offline'} compact />;
-            return (
-              <div key={x.runner} role="row" class="vl-row static">
-                <span class="lead">{lead}</span>
-                <span class="tt"><span class="title">{x.runner}</span></span>
+                    : <StateBadge family="host" state={r.status === 'online' ? 'online' : 'offline'} compact />}
+                </span>
+                <span class="tt"><span class="title">{r.name}</span></span>
                 <span class="rz">
                   <RowFacts>
-                    <Fact icon="repeat" tip="Jobs"><Num m={m(x.jobs)} kind="count" /></Fact>
-                    <Fact icon="clock" tip="Minutes"><Num m={{ ...m(x.minutes * 60), partial }} kind="duration" /></Fact>
+                    <Fact icon="circle-dashed" tip="Idle today"><span class="muted">—</span></Fact>
                   </RowFacts>
                 </span>
               </div>
-            );
-          })}
-          {idleRunners.map(r => (
-            <div key={r.name} role="row" class="vl-row static">
-              <span class="lead">
-                {r.busy
-                  ? <StateBadge family="execution" state="running" reason={`${r.status}, busy`} compact />
-                  : <StateBadge family="host" state={r.status === 'online' ? 'online' : 'offline'} compact />}
-              </span>
-              <span class="tt"><span class="title">{r.name}</span></span>
-              <span class="rz">
-                <RowFacts>
-                  <Fact icon="circle-dashed" tip="Idle today"><span class="muted">—</span></Fact>
-                </RowFacts>
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-      {data.jobs.length > 0 && (
-        <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,12rem) auto' }}>
-          {data.jobs.map(j => {
-            const start = j.startedAt ?? j.createdAt ?? now, st = JOB_STATE[j.status] ?? 'waiting';
-            return (
-              <div key={j.id} role="row" class="vl-row static">
-                <span class="lead"><StateBadge family="execution" state={st} reason={j.status !== 'in_progress' ? j.status : undefined} compact /></span>
-                <span class="tt"><a class="title row-link" href={j.url} target="_blank" rel="noopener">{j.name}</a><span class="id">{j.workflow}</span></span>
-                <TimeStrip from={from} to={now} start={start} end={null} now={now} state={st} label={`${j.status}, since ${age(start, now).long}`} />
-                <span class="rz">
-                  <RowFacts>
-                    <Fact icon="panels-top-left" text={j.runner} tip="Runner" />
-                    <Fact icon="clock" tip={j.status === 'queued' ? 'Queued for' : 'Running for'}>
-                      <AgeChip t={start} clockOffsetMs={clockOffsetMs} alertAfter={3600} tone="attention" alertLabel="long" />
-                    </Fact>
-                  </RowFacts>
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {!data.jobs.length && !data.minutesToday.length && !idleRunners.length && <Empty text="No CI jobs today." />}
-    </section>
+            )}</For>
+          </div>
+        </Show>
+        <Show when={data().jobs.length > 0}>
+          <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,12rem) auto' }}>
+            <For each={data().jobs}>{j => {
+              const start = j.startedAt ?? j.createdAt ?? props.now;
+              const st = JOB_STATE[j.status] ?? 'waiting';
+              return (
+                <div role="row" class="vl-row static">
+                  <span class="lead"><StateBadge family="execution" state={st} reason={j.status !== 'in_progress' ? j.status : undefined} compact /></span>
+                  <span class="tt"><a class="title row-link" href={j.url} target="_blank" rel="noopener">{j.name}</a><span class="id">{j.workflow}</span></span>
+                  <TimeStrip from={from()} to={props.now} start={start} end={null} now={props.now} state={st} label={`${j.status}, since ${age(start, props.now).long}`} />
+                  <span class="rz">
+                    <RowFacts>
+                      <Fact icon="panels-top-left" text={j.runner} tip="Runner" />
+                      <Fact icon="clock" tip={j.status === 'queued' ? 'Queued for' : 'Running for'}>
+                        <AgeChip t={start} clockOffsetMs={props.clockOffsetMs} alertAfter={3600} tone="attention" alertLabel="long" />
+                      </Fact>
+                    </RowFacts>
+                  </span>
+                </div>
+              );
+            }}</For>
+          </div>
+        </Show>
+        <Show when={!data().jobs.length && !data().minutesToday.length && !idleRunners().length}><Empty text="No CI jobs today." /></Show>
+      </section>
+    )}</Show>
   );
 }
