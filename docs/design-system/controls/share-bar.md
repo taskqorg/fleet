@@ -18,4 +18,4 @@
 
 ## Board
 
-Master `Share bar` on [blocks.bl](../board/blocks.bl), board *Data*: `normal`, and `partial`, where the segments are hollow outlines because not every part was measured; the note says how many were, and the qualifier detail is in the tooltip ([OR-59](../owner-rules.md)). Text names: `legend`, `note`.
+Master `Share bar` on [blocks.bl](../board/blocks.bl), board *Data*: `normal`, and `partial` (built: `ShareBar` `partial`), where the segments are hollow outlines because not every part was measured; the note says how many were, and the qualifier detail is in the tooltip ([OR-59](../owner-rules.md)). Text names: `legend`, `note`.

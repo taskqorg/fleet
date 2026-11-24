@@ -1,6 +1,6 @@
 # Matrix cell
 
-**Code.** *Target*: a cell of the Lab experiment matrix, not built as a shared control yet. Board: [blocks.bl](../board/blocks.bl), master `Matrix cell`, board *Data*.
+**Code.** `MatrixCell` in `packages/ui` (`src/controls/matrix-cell.tsx`); Retry is a separate button beside the cell's open button. Demo: [book](../book/index.html#matrix-cell). Board: [blocks.bl](../board/blocks.bl), master `Matrix cell`, board *Data*.
 
 **Purpose.** One example × variant in a [Lab](../pages/laboratory.md) experiment: how its repeats went, at a glance (principle 1).
 

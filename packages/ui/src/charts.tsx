@@ -179,14 +179,15 @@ export function DayChart(p: DayChartProps) {
 export type SharePart = { label: string; v: number; tone: DataTone; tip?: string };
 /** A part narrower than this share of the bar carries no inline value; the legend under the bar always names every part with its value. */
 const INLINE = 0.09;
-export function ShareBar(p: { label: string; title?: JSX.Element; parts: SharePart[]; value: (v: number) => string; note?: JSX.Element }) {
+/** partial: not every part was measured; the segments are hollow outlines and the note says how many were (OR-59). */
+export function ShareBar(p: { label: string; title?: JSX.Element; parts: SharePart[]; value: (v: number) => string; note?: JSX.Element; partial?: boolean }) {
   const sum = createMemo(() => p.parts.reduce((s, x) => s + x.v, 0) || 1);
   const share = (v: number) => Math.round(v / sum() * 100);
   const positive = createMemo(() => p.parts.filter(x => x.v > 0));
   return (
-    <div class="sb" data-ui="share-bar">
+    <div class={['sb', { partial: !!p.partial }]} data-ui="share-bar">
       <Show when={p.title} keyed>{t => <b class="sb-title">{t}</b>}</Show>
-      <div class="sb-bar" role="img" aria-label={`${p.label}: ${p.parts.map(x => `${x.label} ${p.value(x.v)} (${share(x.v)}%)`).join(', ')}`}>
+      <div class="sb-bar" role="img" aria-label={`${p.label}${p.partial ? ', partly measured' : ''}: ${p.parts.map(x => `${x.label} ${p.value(x.v)} (${share(x.v)}%)`).join(', ')}`}>
         <For each={positive()}>
           {x => (
             <i class={x.tone} style={{ 'flex-grow': String(x.v) }} data-tip={x.tip ?? `${x.label}: ${p.value(x.v)}, ${share(x.v)}%`}>

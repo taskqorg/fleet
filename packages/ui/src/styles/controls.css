@@ -248,6 +248,11 @@
   .tabs button[aria-selected=true] { background: none; color: var(--accent); }
   .tabs button[aria-selected=true]::after { content: ""; position: absolute; inset: auto 0 0; border-block-end: 2px solid var(--accent); }
   .tabs .tab-n { font-size: var(--font-size-xs); color: var(--fg-muted); }
+  .tabs-fit { display: flex; align-items: center; gap: var(--space-4); min-width: 0; overflow: clip; overflow-clip-margin: var(--space-2); }
+  .tabs-fit > .tabs { min-width: 0; }
+  .tab-more { display: inline-flex; flex: none; align-items: center; gap: var(--space-1); height: var(--size-control); padding: 0; border: 0; background: none; color: var(--fg-muted); font: inherit; font-weight: var(--font-weight-medium); cursor: pointer; }
+  .tab-more:hover { color: var(--fg); }
+  .tab-more .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
   .monogram { display: inline-grid; place-items: center; min-width: var(--size-control); height: var(--size-control); padding: 0 var(--space-1); border-radius: var(--radius-md); background: var(--surface-sunken); color: var(--fg); font-family: var(--font-mono); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); }
   .tag-row { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; }
   .skill-body { margin: 0; padding: var(--space-3); border-radius: var(--radius-md); background: var(--surface-sunken); font-size: var(--font-size-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -278,12 +283,16 @@
   .setting .muted { font-size: var(--font-size-sm); }
   @media (max-width: 640px) { .setting { grid-template-columns: 1fr; } .setting .help { grid-column: 1; } }
 
-  .problem { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-3) var(--space-4); border-left: 3px solid var(--attention-fg); background: var(--attention-soft); border-radius: 0 var(--radius-md) var(--radius-md) 0; color: var(--attention-fg); }
-  .problem.failure { border-left-color: var(--danger-fg); color: var(--danger-fg); }
+  .problem { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-1) var(--space-3); padding: var(--space-3) var(--space-4); border-left: 3px solid var(--attention-fg); background: var(--attention-soft); border-radius: 0 var(--radius-md) var(--radius-md) 0; color: var(--attention-fg); }
+  .problem.failure { border-left-color: var(--danger-fg); background: var(--danger-bg); color: var(--danger-fg); }
   .problem.draft { border-left-color: var(--attention-fg); }
-  .problem b { color: var(--fg); }
-  .problem .facts { flex: 1 1 var(--size-search); color: var(--fg-muted); }
-  .problem .acts { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .problem b { grid-column: 2; color: var(--fg); }
+  .problem .pr-n { font-family: var(--font-mono); color: var(--attention-fg); }
+  .problem.failure .pr-n { color: var(--danger-fg); }
+  .problem > .btn { grid-column: 3; }
+  .problem .facts { grid-column: 2 / -1; color: var(--fg-muted); }
+  .problem .acts { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .problem .acts:empty { display: none; }
 
   .skeleton { padding: var(--space-2) 0; }
   .sk-row { display: flex; gap: var(--space-5); align-items: center; height: var(--size-row); padding: 0 var(--space-4); }
@@ -556,7 +565,7 @@
   @media (pointer: coarse) {
     .btn, .chip button, .seg, .pick-b, .pick-x, .tw, .cat-tw, .pill { min-height: var(--size-hit-phone); min-width: var(--size-hit-phone); }
     .ep-trigger, .ep-btn, .ep-arch { min-height: var(--size-hit-phone); }
-    .vl-row .btn.icon-only, .row-pin, .nav-i a, .rail-user-b, .nav-pin, .counter, .seg, .preset button, .saved-chip, .tabs button, .menu button, .spot-list [role=option] .btn.icon-only, .spot-terms button { min-height: var(--size-hit-phone); min-width: var(--size-hit-phone); }
+    .vl-row .btn.icon-only, .row-pin, .nav-i a, .rail-user-b, .nav-pin, .counter, .seg, .preset button, .saved-chip, .tabs button, .tab-more, .menu button, .spot-list [role=option] .btn.icon-only, .spot-terms button { min-height: var(--size-hit-phone); min-width: var(--size-hit-phone); }
     .spot-list [role=option] { height: auto; min-height: var(--size-hit-phone); }
     .row-link { display: inline-flex; align-items: center; min-height: var(--size-hit-phone); }
     .row-spend { min-height: var(--size-hit-phone); min-width: var(--size-hit-phone); }

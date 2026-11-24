@@ -28,7 +28,7 @@
 
 ## Diff row
 
-How a configuration shows only what differs from its base ([OR-45](../owner-rules.md)). Master `Diff row` on [blocks.bl](../board/blocks.bl), board *Data*:
+How a configuration shows only what differs from its base ([OR-45](../owner-rules.md)). Built: `DiffRow` and `InheritedRows` in `packages/ui` (`src/controls/diff-row.tsx`); demo: [book](../book/index.html#diff-row). Master `Diff row` on [blocks.bl](../board/blocks.bl), board *Data*:
 * `changed`: the field in mono and its value; the base default is in the tooltip only, never as a second value or an arrow on the row ([OR-7](../owner-rules.md), [OR-20](../owner-rules.md)).
 * `inherited`: the folded "Inherited defaults (N)" row, which opens the unchanged fields in place.
 

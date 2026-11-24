@@ -1,6 +1,6 @@
 # Worker slot
 
-**Code.** *Target*: `WorkerSlot` in `packages/ui`, not built yet. Board: [blocks.bl](../board/blocks.bl), master `Worker slot`.
+**Code.** `WorkerSlot` in `packages/ui` (`src/controls/worker-slot.tsx`); the project colour is one of the data tones. Demo: [book](../book/index.html#worker-slot). Board: [blocks.bl](../board/blocks.bl), master `Worker slot`.
 
 **Purpose.** One worker slot of a host on [Live](../pages/live.md): what runs in it, or that it is free or failing.
 

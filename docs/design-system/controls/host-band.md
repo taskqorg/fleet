@@ -1,6 +1,6 @@
 # Host band
 
-**Code.** *Target*: `HostBand` in `packages/ui`, not built yet; gauges are the [fill bar](fill-bar.md#gauge), the strip is the [time strip](time-strip.md#run-strip). Board: [blocks.bl](../board/blocks.bl), masters `Host band` and `Gauge`.
+**Code.** `HostBand` in `packages/ui` (`src/controls/host-band.tsx`), states `normal`, `problem`, `offline` and `loading`; at a band width of 640 px and less (a container query) the slots stack and the gauges move under the name. Demo: [book](../book/index.html#host-band). Gauges are the [fill bar](fill-bar.md#gauge), the strip is the [time strip](time-strip.md#run-strip). Board: [blocks.bl](../board/blocks.bl), masters `Host band` and `Gauge`.
 
 **Purpose.** One host on [Live](../pages/live.md): its health, what runs in each slot, and its last 24 hours of runs.
 

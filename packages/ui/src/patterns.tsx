@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import { createContext, createEffect, createMemo, createSignal, For, onSettled, Show, untrack, useContext, type Accessor } from 'solid-js';
 import { Portal, type JSX } from '@solidjs/web';
-import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, BottomBar, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, TabBar, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
+import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, BottomBar, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, TabBar, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem, DetailHead } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -754,13 +754,7 @@ export function DefinitionEditor(p: {
 }) {
   return (
     <article class="detail" data-ui="detail" tabindex={-1} aria-label={p.label}>
-      <header class="detail-h">
-        <Show when={p.onClose} keyed>{close => <Button label="Close" icon="x" iconOnly onClick={close} />}</Show>
-        <span class="muted mono">{p.crumb}</span>
-        <span class="grow" />
-        {p.actions}
-      </header>
-      <h2 class="detail-title">{p.title}</h2>
+      <DetailHead crumb={p.crumb} title={p.title} actions={p.actions} onClose={p.onClose} />
       <TabBar cls="detail-tabs" label={`${p.label} sections`} tabs={p.tabs.map(x => ({ id: x, label: x }))} value={p.tab} onChange={p.onTab} />
       <div class="stack" data-ui="definition-editor" role="tabpanel">{p.children}</div>
     </article>
