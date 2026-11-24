@@ -16,7 +16,7 @@
 | Scoped resource rollup (`own`, `delegated`, `spawned`, `total`, `elapsedMs` vs `executionWallMs`, `spawnedTasks` links, `hidden > 0`) | Inline summary (`ScopedResourceRollup`, `Totals`, `CostFigures`) with Related work opening scope rows and spawned tasks in the transcript area. The composer stays reachable and the transcript resumes at its reading position. |
 | Start a conversation: project, what it does (preset: agent, access, branch, starter) | `/conversations/new`: the [start picker](../controls/start-picker.md) and the composer (`session_presets`, `session_start`). |
 | Attach materials; assign work; create tasks | Not in this slice. |
-| Continue with another agent or account: hand off and fork | "Fork" is an icon in the detail head (`session_fork`). Handoff and profile switch are not in this slice. |
+| Fork or start fresh | The Actions menu offers **Fork** and **Start fresh with context** (`session_fork`). The child shows [routing and handoff details](../../execution-continuity.md#fresh-session-example). |
 | Steer or queue a message to a running agent | The composer (`message_send`), and Stop for the running execution (`execution_stop`). |
 
 **Message:** a head line with the author (the person, or the agent mark: harness, model, effort) and the age (OR-2, exact time on hover), then the body. Copy on one message, or Cmd+C on a selection, writes plain markdown and chat-safe HTML with a header line per message ([formats, Copy](../formats.md#copy)).

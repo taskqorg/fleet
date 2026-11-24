@@ -7,7 +7,7 @@ import {
   EntityCode, EntityPicker, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
   StateBadge, StateCounters, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection,
   OpsSummary, StatStrip, KvRow, Num, TabBar, type VirtualListHandle, type CatalogueTreeNode, type IconName, type Stat,
-  Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, TextField,
+  Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, TextField, Disclosure,
   writeClip, zone, DropZone, agentLabel, InlineForm, type ComposerChip,
   keyConnection, ShellStatus, ShellActions,
 } from '../../../packages/ui/src/index.ts';
@@ -328,7 +328,22 @@ function Conversation(props: { id: string; onClose: () => void }) {
     setAnswers(current => ({ ...current, [row.id]: row }));
     return row;
   }
-  const [panel, setPanel] = createSignal<'switch' | 'handoff' | 'rename' | null>(null);
+  const [panel, setPanel] = createSignal<'switch' | 'handoff' | 'rename' | 'fresh' | null>(null);
+  const [nextInstruction, setNextInstruction] = createSignal('');
+  const [forking, setForking] = createSignal(false);
+  const openConversation = (sessionId: string) => go(nextUrl(location.pathname + location.search, 'conversations', { focus: sessionId }));
+  const fork = (text?: string) => {
+    if (untrack(forking)) return;
+    const requestId = reqId(), sessionId = props.id;
+    run(async () => {
+      setForking(true);
+      try {
+        const f = await writeOnce('session_fork', { sessionId, requestId, ...(text ? { strategy: 'context', text } : {}) }, unknown, { signal: alive });
+        setPanel(null);
+        openConversation(f.sessionId);
+      } finally { setForking(false); }
+    });
+  };
   const [q, setQ] = createSignal('');
   const [hits, setHits] = createSignal<{ key: string; snippet: string }[] | null>(null);
   const [hit, setHit] = createSignal(0);
@@ -476,17 +491,8 @@ function Conversation(props: { id: string; onClose: () => void }) {
                 },
                 { label: 'Switch profile or model', icon: 'sliders-horizontal', onClick: () => setPanel('switch') },
                 { label: 'Hand off to another agent', icon: 'bot', onClick: () => setPanel('handoff') },
-                {
-                  label: 'Fork',
-                  icon: 'git-merge',
-                  onClick: () => {
-                    const requestId = reqId();
-                    run(async () => {
-                      const f = await writeOnce('session_fork', { sessionId: props.id, requestId }, unknown, { signal: alive });
-                      go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId }));
-                    });
-                  },
-                },
+                { label: 'Fork', icon: 'git-merge', onClick: () => fork() },
+                { label: 'Start fresh with context', icon: 'git-merge', disabledReason: latest() ? undefined : 'Send a message first', onClick: () => setPanel('fresh') },
               ]}
             />
           </header>
@@ -500,7 +506,18 @@ function Conversation(props: { id: string; onClose: () => void }) {
               onUnknown={() => { setFailure({ text: 'Rename outcome unknown. Check the current title.' }); sDoc.reload(); }}
             />
           </Show>
-          <Show when={panel() && panel() !== 'rename'}>
+          <Show when={panel() === 'fresh'}>
+            <DetailSection title="Start fresh with context">
+              <InlineForm cls="stack" onSubmit={e => { e.preventDefault(); const text = nextInstruction().trim(); if (!off() && text) fork(text); }}>
+                <TextField label="Next instruction" value={nextInstruction()} multiline onChange={setNextInstruction} />
+                <div class="answers">
+                  <Button label="Start fresh" kind="primary" busy={forking()} disabledReason={off() ? 'offline' : nextInstruction().trim() ? undefined : 'Enter the next instruction'} onClick={() => fork(nextInstruction().trim())} />
+                  <Button label="Cancel" kind="quiet" onClick={() => setPanel(null)} />
+                </div>
+              </InlineForm>
+            </DetailSection>
+          </Show>
+          <Show when={panel() === 'switch' || panel() === 'handoff'}>
             <SwitchPanel
               sessionId={props.id}
               handoff={panel() === 'handoff'}
@@ -531,6 +548,7 @@ function Conversation(props: { id: string; onClose: () => void }) {
             </Show>
           </div>
           <ScopedRollupBar rollup={s()!.resources} cost={s()!.cost} inlineDetails={false} />
+          <ForkDetails session={s()!} open={openConversation} />
           <Show when={hasSwarm()}>
             <TabBar
               cls="detail-tabs"
@@ -675,6 +693,64 @@ function Conversation(props: { id: string; onClose: () => void }) {
         <article class="detail" data-ui="detail" tabindex={-1}><Skeleton rows={6} /></article>
       </Match>
     </Switch>
+  );
+}
+
+const forkReasons: Record<string, string> = {
+  fresh_session_requested: 'Start fresh with context selected',
+  source_execution_open: 'Source execution still open',
+  native_context_missing: 'No native session recorded',
+  harness_fork_unsupported: 'Harness cannot fork the native session',
+  host_capability_missing: 'Host has not reported native fork support',
+  native_context_available: 'Native session and fork support available',
+};
+
+function ForkDetails(props: { session: SessionGetReply; open: (id: string) => void }) {
+  const source = () => rec(props.session.forkOf);
+  const parent = () => str(source().sessionId);
+  const strategy = () => str(source().strategy);
+  const reason = () => str(source().reason);
+  const packet = () => props.session.handoffs.find(h => h.strategy === 'fork_summary');
+  const recipient = () => props.session.executions.find(e => e.id === packet()?.executionId) ?? props.session.executions[0];
+  const child = () => str(props.session.forks.at(-1)?.sessionId);
+  const packetDoc = useOp('session_handoffs', () => packet() ? { sessionId: props.session.id } : null);
+  const text = () => str(packetDoc.data?.handoffs.find(h => h.id === packet()?.id)?.text);
+  return (
+    <>
+      <Show when={parent()} keyed>
+        {id => (
+          <DetailSection title="Session fork">
+            <KvRow icon="git-merge" label="Routing decision" value={strategy() === 'native' ? 'Native fork' : strategy() === 'context_transfer' ? 'Fresh session with context transfer' : 'Unknown'} />
+            <KvRow icon="activity" label="Trigger" value={forkReasons[reason() ?? ''] ?? 'Unknown'} />
+            <KvRow icon="messages-square" label="Source conversation" value={<Button label="Open source" kind="quiet" onClick={() => props.open(id)} />} />
+            <Show when={str(source().executionId)} keyed>
+              {executionId => <KvRow icon="activity" label="Source execution" value={<EntityCode id={executionId} kind="execution" />} />}
+            </Show>
+            <Show when={strategy() === 'context_transfer'}>
+              <KvRow icon="file-text" label="Handoff packet" value={packet() ? str(packet()?.state) ?? 'Unknown' : 'No retained turns'} />
+              <Show when={packet()}>
+                <Disclosure summary="Read the handoff packet">
+                  <Show when={packetDoc.error} keyed>
+                    {error => <ErrorBanner text={error} onRetry={packetDoc.reload} />}
+                  </Show>
+                  <Show when={text()} keyed fallback={<Show when={!packetDoc.error}><p>{packetDoc.data ? 'Packet text unavailable' : 'Loading packet…'}</p></Show>}>
+                    {body => <pre tabindex={0} role="region" aria-label="Handoff packet text" style={{ 'max-block-size': '35vh', overflow: 'auto', 'white-space': 'pre-wrap', 'overflow-wrap': 'anywhere' }}>{body}</pre>}
+                  </Show>
+                </Disclosure>
+              </Show>
+              <KvRow icon="activity" label="Fresh execution" value={
+                <Show when={recipient()} keyed fallback="Waiting for the first message">
+                  {e => <>{e.observation === 'unconfirmed' ? 'Unconfirmed' : e.state} <EntityCode id={e.id} kind="execution" /></>}
+                </Show>
+              } />
+            </Show>
+          </DetailSection>
+        )}
+      </Show>
+      <Show when={child()} keyed>
+        {id => <Button label="Open latest child conversation" icon="git-merge" kind="quiet" onClick={() => props.open(id)} />}
+      </Show>
+    </>
   );
 }
 

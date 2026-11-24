@@ -44,6 +44,14 @@ The system builds the handoff from retained data without requiring a response fr
 
 Coordinate access so handoff does not create conflicting writers to the same files. When the previous executor is unreachable, expose the uncertainty and establish safe access before continuing. Follow the [external-effect recovery rule](../fleet.md#system-requirements).
 
+## Fresh-session example
+
+1. In Conversations, send `Remember demo code ORCHID-42. Reply ready.` and wait for the turn to finish.
+2. In Actions, choose **Start fresh with context**. Enter `Reply with the demo code from the handoff.` and choose **Start fresh**.
+3. In the child, read **Routing decision** and **Trigger**, then open **Read the handoff packet**. The packet contains retained turns from the source conversation in its current project. **Fresh execution** shows the child run's state, and **Source conversation** and **Source execution** link back to the origin. The packet reads `delivered` when the host acknowledges the child start.
+
+The same path is available through `session_fork` with `strategy: "context"` and the next instruction in `text`. Ordinary Fork chooses a native fork when the source context and host support it and otherwise transfers context. The `session_fork` trace records the strategy, reason and IDs of the source, child and packet. Inspect the child with `telemetry_trace` by execution ID.
+
 ## Evidence for improvement
 
 Apply [system-wide observation](../fleet.md#observation-and-evaluation) to preparation, execution, cleanup and recovery, including operations that fail before an agent starts. Retain their history for later queries and comparison.

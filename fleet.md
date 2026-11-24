@@ -151,6 +151,8 @@ A session holds conversation and working context within a harness: messages, act
 
 An execution may start or continue a session according to harness capabilities. Task, execution and session lifecycles remain distinct. [Continuation and handoff](docs/execution-continuity.md#continuation-and-handoff) preserve work when accounts, agents or environments change.
 
+Conversations exposes a [manual fresh-session boundary](docs/execution-continuity.md#fresh-session-example) with a retained routing decision, handoff packet and execution lineage.
+
 Execution states are preparing, running, waiting, succeeded, failed and cancelled. Available controls depend on the harness or tool.
 
 Conversation status is the state of its latest visible agent run by execution sequence. A conversation with no visible agent run is idle. Detail, list rows, membership, status filters, group and navigation counts, entity cards and search use this rule under their existing visibility scope. Tool calls remain in conversation history and resource accounting and do not determine conversation status.
