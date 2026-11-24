@@ -191,13 +191,14 @@ type candidate struct {
 }
 
 type dispatchContext struct {
-	hostIDs  []string                        // the ids of hosts in host order
-	hosts    map[string]dispatchHost         // registered execution hosts (roles empty)
+	hostIDs  []string                // the ids of hosts in host order
+	hosts    map[string]dispatchHost // registered execution hosts (roles empty)
 	seen     map[string]float64
 	caps     map[string][]string
 	roots    map[string][]string
 	conns    map[string][]string             // git connection names each host reported; absent: unknown
 	loads    map[string]*hostLoadObservation // latest reported load/CPU/memory per host
+	updating map[string]string               // the release a host's executor drains for: it admits no new launch until then
 	running  map[string]int64                // active executions (preparing/running) per host, updated in-pass
 	accounts []dispatchAccountRec
 	readings map[string][]Reading
@@ -217,10 +218,21 @@ type dispatchHost struct {
 
 // hostSeen: the fields dispatch reads of a host observation.
 type hostSeen struct {
-	Capabilities   []string             `json:"capabilities"`
-	GitConnections *[]string            `json:"gitConnections"`
-	ProjectRoots   *[]string            `json:"projectRoots"`
-	Load           *hostLoadObservation `json:"load"`
+	Capabilities   []string               `json:"capabilities"`
+	GitConnections *[]string              `json:"gitConnections"`
+	ProjectRoots   *[]string              `json:"projectRoots"`
+	Load           *hostLoadObservation   `json:"load"`
+	Version        *string                `json:"version"`
+	Update         *contract.UpdateResult `json:"update"`
+}
+
+// drainTarget: the newer release a host's executor waits to install. While it waits, the executor admits no start
+// (executor_launch.go), so a run placed there stays preparing until the update lands.
+func (o hostSeen) drainTarget() string {
+	if o.Update == nil || o.Update.State != contract.UpdateStatePending || o.Version == nil || !versionLess(*o.Version, o.Update.Version) {
+		return ""
+	}
+	return o.Update.Version
 }
 
 // dispatchAccountRec: a subscription (managed_account) decoded once for dispatch.
@@ -241,7 +253,7 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	k := &dispatchContext{hosts: map[string]dispatchHost{}, caps: map[string][]string{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, loads: map[string]*hostLoadObservation{}, running: map[string]int64{}, orders: map[string]contract.DispatchOrder{}}
+	k := &dispatchContext{hosts: map[string]dispatchHost{}, caps: map[string][]string{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, loads: map[string]*hostLoadObservation{}, updating: map[string]string{}, running: map[string]int64{}, orders: map[string]contract.DispatchOrder{}}
 	for _, h := range hs {
 		if !h.executes() {
 			continue
@@ -270,6 +282,9 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 		}
 		if l := q.app.effectiveHostLoad(r.ID, o.Load); l != nil {
 			k.loads[r.ID] = l
+		}
+		if v := o.drainTarget(); v != "" {
+			k.updating[r.ID] = v
 		}
 	}
 	for id := range k.hosts {
@@ -500,29 +515,29 @@ type dispatchAgentProfile struct {
 
 // dispatchExecution: the execution record fields dispatch reads and writes; other fields stay in rest.
 type dispatchExecution struct {
-	ID                    string          `json:"id"`
-	SessionID             string          `json:"sessionId,omitempty"`
-	HostID                *string         `json:"hostId,omitempty"`
-	State                 string          `json:"state,omitempty"`
-	StopRequested         *bool           `json:"stopRequested,omitempty"`
-	StopDetail            string          `json:"stopDetail,omitempty"`
-	WaitReason            *string         `json:"waitReason,omitempty"`
-	WaitDetail            *string         `json:"waitDetail,omitempty"`
-	DeliveryID            string          `json:"deliveryId,omitempty"`
-	DirectedBy            *string         `json:"directedBy,omitempty"`
-	TakenFrom             json.RawMessage `json:"takenFrom,omitempty"`
-	Model                 string          `json:"model,omitempty"`
-	Effort                json.RawMessage `json:"effort,omitempty"`
-	AgentConfig           json.RawMessage `json:"agentConfig,omitempty"`
-	ProjectSnapshot       json.RawMessage `json:"projectSnapshot,omitempty"`
-	WorkspaceSnapshot     json.RawMessage `json:"workspaceSnapshot,omitempty"`
-	Dispatch              *dispatchSpec   `json:"dispatch,omitempty"`
-	PipelineRunID         *string         `json:"pipelineRunId,omitempty"`
-	PipelineStepID        *string         `json:"pipelineStepId,omitempty"`
-	ExperimentID          *string         `json:"experimentId,omitempty"`
-	RequestedAccount      json.RawMessage `json:"requestedAccount,omitempty"`
-	EffectiveAccount      json.RawMessage `json:"effectiveAccount,omitempty"`
-	ConnectionsRefused    []string        `json:"connectionsRefused,omitempty"`
+	ID                    string               `json:"id"`
+	SessionID             string               `json:"sessionId,omitempty"`
+	HostID                *string              `json:"hostId,omitempty"`
+	State                 string               `json:"state,omitempty"`
+	StopRequested         *bool                `json:"stopRequested,omitempty"`
+	StopDetail            string               `json:"stopDetail,omitempty"`
+	WaitReason            *string              `json:"waitReason,omitempty"`
+	WaitDetail            *string              `json:"waitDetail,omitempty"`
+	DeliveryID            string               `json:"deliveryId,omitempty"`
+	DirectedBy            *string              `json:"directedBy,omitempty"`
+	TakenFrom             json.RawMessage      `json:"takenFrom,omitempty"`
+	Model                 string               `json:"model,omitempty"`
+	Effort                json.RawMessage      `json:"effort,omitempty"`
+	AgentConfig           json.RawMessage      `json:"agentConfig,omitempty"`
+	ProjectSnapshot       json.RawMessage      `json:"projectSnapshot,omitempty"`
+	WorkspaceSnapshot     json.RawMessage      `json:"workspaceSnapshot,omitempty"`
+	Dispatch              *dispatchSpec        `json:"dispatch,omitempty"`
+	PipelineRunID         *string              `json:"pipelineRunId,omitempty"`
+	PipelineStepID        *string              `json:"pipelineStepId,omitempty"`
+	ExperimentID          *string              `json:"experimentId,omitempty"`
+	RequestedAccount      json.RawMessage      `json:"requestedAccount,omitempty"`
+	EffectiveAccount      json.RawMessage      `json:"effectiveAccount,omitempty"`
+	ConnectionsRefused    []string             `json:"connectionsRefused,omitempty"`
 	ContinuationKey       string               `json:"continuationKey,omitempty"`
 	ForkOfNativeSessionID string               `json:"forkOfNativeSessionId,omitempty"`
 	HandoffID             string               `json:"handoffId,omitempty"`
@@ -808,6 +823,10 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 			now := nowMs()
 			if !(float64(now)-k.seen[id] < onlineMs) {
 				skip(id+" is offline", "host:"+id+":offline")
+				continue
+			}
+			if v := k.updating[id]; v != "" {
+				skip(fmt.Sprintf("%s is updating to %s and starts no new work until then", id, v), "host:"+id+":updating")
 				continue
 			}
 			if reason := hostOverloadReason(id, k.loads[id], now); reason != "" {
@@ -1157,7 +1176,7 @@ func hostConcurrencyLimit(hv dispatchHost, load *hostLoadObservation, now int64)
 }
 
 func isBackpressureCause(cause string) bool {
-	return strings.HasSuffix(cause, ":overloaded") || strings.HasSuffix(cause, ":concurrency")
+	return strings.HasSuffix(cause, ":overloaded") || strings.HasSuffix(cause, ":concurrency") || strings.HasSuffix(cause, ":updating")
 }
 
 // dispatchStallCauses: the causes a dispatch pass raises and closes (problemsSet).

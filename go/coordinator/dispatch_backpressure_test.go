@@ -319,3 +319,56 @@ func TestDispatchHostConcurrencyLimit(t *testing.T) {
 		t.Fatalf("expected cpus=2 default cap to hold 3rd active execution, got %v", ex4)
 	}
 }
+
+// Requirement: fleet.md task states (a missing executor keeps work queued with the prerequisite visible) and
+// executor_launch.go (an executor waiting to install a newer release admits no start).
+// Risk: 2026-11-24 a PM conversation was placed on owner-mac while its executor drained for 1.261124.43; the start was
+// never admitted and the conversation stayed preparing while another host was idle.
+func TestDispatchSkipsHostDrainingForUpdate(t *testing.T) {
+	env := openTestCoordinator(t, true)
+	mac, pds := "upd-mac", "upd-pds"
+	macSecret, pdsSecret := env.registerHost(t, mac), env.registerHost(t, pds)
+	healthy := &contract.HostLoad{Load1: ptr(1.0), Cpus: ptr(int64(8)), MemFree: ptr(8e9), MemTotal: ptr(24e9)}
+	poll := func(host, secret, version string, update *contract.UpdateResult) []map[string]any {
+		t.Helper()
+		code, body := env.callJSON(t, "POST", "/api/hosts/poll", contract.PollRequest{
+			HostId: host, Platform: contract.Platform("darwin"), Capabilities: []string{"codex"}, Stores: []contract.StoreReport{},
+			Problems: []contract.EdgeProblem{}, ProjectRoots: []string{}, GitConnections: []string{}, ActiveExecutions: []string{},
+			Load: healthy, Version: &version, Update: update,
+		}, map[string]string{"Authorization": "Bearer " + secret})
+		if code != 200 {
+			t.Fatalf("poll(%s) = %d %v", host, code, body)
+		}
+		var out []map[string]any
+		for _, raw := range anys(body["commands"]) {
+			out = append(out, mapOf(raw))
+		}
+		return out
+	}
+	draining := &contract.UpdateResult{At: "2026-11-24T18:42:05Z", State: contract.UpdateStatePending, Version: "1.261124.43", Error: ptr("executor work is draining")}
+	poll(mac, macSecret, "1.261124.40", draining)
+	poll(pds, pdsSecret, "1.261124.43", &contract.UpdateResult{At: "2026-11-24T18:41:37Z", State: contract.UpdateStateOk, Version: "1.261124.43"})
+
+	// Unpinned work goes to the host that admits it.
+	sid1, eid1 := dispatchTestCreateQueued(t, env, "req-upd-1", nil)
+	_ = env.app.waitDispatchCaughtUp(env.ctx, env.app.triggerDispatch())
+	if ex := dispatchTestExecution(t, env, sid1, eid1); ex["hostId"] != pds {
+		t.Fatalf("unpinned run placed on %v, want %s", ex["hostId"], pds)
+	}
+
+	// Work pinned to the draining host waits with the reason, then starts once the update lands.
+	sid2, eid2 := dispatchTestCreateQueued(t, env, "req-upd-2", &mac)
+	_ = env.app.waitDispatchCaughtUp(env.ctx, env.app.triggerDispatch())
+	ex2 := dispatchTestExecution(t, env, sid2, eid2)
+	if ex2["hostId"] != nil || ex2["waitReason"] != "placement" || ex2["waitDetail"] != "upd-mac is updating to 1.261124.43 and starts no new work until then" {
+		t.Fatalf("pinned run on a draining host = hostId %v waitReason %v waitDetail %v", ex2["hostId"], ex2["waitReason"], ex2["waitDetail"])
+	}
+	// An update drain is transient, like load backpressure: no Needs you stall question.
+	if code, qs := env.callJSON(t, "POST", "/api/ops/questions_list", doc{"state": "open"}, env.ownerHeaders()); code != 200 || len(anys(qs["questions"])) != 0 {
+		t.Fatalf("open questions while a host updates = %d %v", code, qs["questions"])
+	}
+	cmds := poll(mac, macSecret, "1.261124.43", &contract.UpdateResult{At: "2026-11-24T18:51:00Z", State: contract.UpdateStateOk, Version: "1.261124.43"})
+	if len(cmds) != 1 || cmds[0]["executionId"] != eid2 {
+		t.Fatalf("updated host commands = %v, want start of %s", cmds, eid2)
+	}
+}
