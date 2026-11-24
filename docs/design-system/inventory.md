@@ -43,6 +43,8 @@ These apply to every workspace and are the main input for the controls:
 | Load and capacity by host and account, with placement reasons | View | `hosts.list`, executions, rate-limit measurements |
 | Account and quota state per subscription: measured window use, estimate, reset time | View | `rate_limit` measurements |
 | Change priority; pause or continue work | Action | `tasks.update` |
+| Problems aggregated by cause, with a count and the newest time | Signal | `executions_list` failures, `hosts_list` problems |
+| Worker slots per host: what runs in each, and the last 24 hours of runs | View | `hosts_list`, `executions_runners` |
 
 ### Projects
 
@@ -65,6 +67,7 @@ These apply to every workspace and are the main input for the controls:
 | Name, instructions, daily time and zone or Needs you filter under the bot's current grants | Setting | `bot_automation_save` |
 | Create, edit, enable, pause and run now | Action | `bot_automation_save`, `bot_run` |
 | Automation run history with causes, revisions and execution links | View | `bot_runs` |
+| Which bots are active and which sleep; wake one | View, Action | `bot_list`, `bot_run`, `message_send` |
 
 ### Conversations (sessions, including with the PM)
 
@@ -74,6 +77,7 @@ These apply to every workspace and are the main input for the controls:
 | Attach materials; assign work; create tasks for several projects | Action | session and task operations |
 | Continue with another agent or account: handoff and fork | Choice, Action | `session_transition`, `session_fork` |
 | Steer or queue a message to a running agent | Action | `message_send` |
+| Start a conversation with a project PM or a bot in one move | Action | `session_presets`, `session_start`, `message_send` |
 
 ### Tasks
 

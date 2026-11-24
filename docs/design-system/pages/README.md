@@ -4,7 +4,9 @@ Page specs map [inventory](../inventory.md) items to patterns and controls. The 
 
 | Page | Workspace | Spec |
 |---|---|---|
-| Overview | Operator | [overview.md](overview.md) |
+| Home (screen 1) | Operator | [home.md](home.md) (target; [board](../board/screens/home.bl)) |
+| Live (screen 2) | Operator, Architect | [live.md](live.md) (target; [board](../board/screens/live.bl)) |
+| Overview | Operator | [overview.md](overview.md) (until Home and Live are built) |
 | Tasks (list and detail) | Operator | [tasks.md](tasks.md) |
 | Results | Operator | [results.md](results.md) |
 | Hosts, environments and stores | Architect | [hosts.md](hosts.md) |
