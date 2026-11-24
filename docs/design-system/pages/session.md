@@ -64,11 +64,13 @@ From top to bottom, then the context panel on the right:
 | Part | Read or action |
 |---|---|
 | Head and state | the URL code resolves to the session ([D17](../decisions.md#2026-11-10-d17-human-entity-codes)), then `session_get`; state from the one vocabulary |
-| Transcript | `thread_entries` and `thread_blocks` with paging, `thread_search`; tool calls grouped by consecutive run |
+| Transcript | `thread_entries` and `thread_blocks` with paging, `thread_search`; tool calls folded by the rule in **Tool lines** below |
 | Question card | `questions_list` for the session; answered with `questions_answer` |
 | Composer | `thread_composer`, `message_send`; Stop is `execution_stop` |
 | Fork | `session_fork` |
-| Context panel | the session context read of [FLT-30](https://youtrack.ufobe.com/issue/FLT-30) (plan, timers, automations, swarm); timers with their own actions |
+| Context panel | `session_context {sessionId}`: `plan` (steps with `done`, from the session's work plan, else its task's), `timers`, `automations` (the session's bot), `swarm` (the other members of that board with their state) |
+| Timer actions | Edit: `watch_set` with a new `timerMs`. Cancel: `watch_set` without `timerMs` (the watch stays) or `watch_stop`. Pause: none yet |
+| Automation actions | `bot_automation_save` (enable, pause, edit) |
 | Details | `execution_totals`, scoped resource rollup |
 | Live updates | `changes_since` over the session, its messages, questions and executions |
 
@@ -85,10 +87,15 @@ Checked against the [product map](../product-map.md) rows for one conversation.
 * **Change:** decision blocks become the question card above the transcript; tool rows fold into one line per run of tools.
 * **Drop:** the metrics header and the inline resource summary (cost and tokens are not the question here, [OR-54](../owner-rules.md); they stay one click away in Details); per-boundary resource rows in the transcript (same reason); repeated attachments, heartbeats and internal notices ([OR-52](../owner-rules.md)).
 
+## Tool lines
+
+Decided in [FLT-46](https://youtrack.ufobe.com/issue/FLT-46): one folded tool line holds the tool and system blocks between two messages. A text block (a person's or an agent's), a question or a result ends the line, and so does the start of another execution. A long turn that talks between its tool calls shows several lines, each next to the words it explains; a turn that only works shows one.
+
+The rule reads only the order of the blocks that `thread_entries` already returns, so the transcript read has no grouped form: the view folds the blocks it shows, and pages join because they are contiguous. The line says the tools it holds and the time from the first block's `startedAt` to the last block's `endedAt`.
+
 ## Open
 
-* The context read of [FLT-30](https://youtrack.ufobe.com/issue/FLT-30) has no operation name yet.
-* Grouping tool calls into one line needs a boundary rule: by run, or by the gap between two agent messages.
+* **Timer pause:** a watch timer can be changed or cancelled, not paused. Pausing needs a paused state on the watch (`watch_set`), which the context panel then shows.
 
 ## Blocks
 

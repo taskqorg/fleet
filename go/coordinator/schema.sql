@@ -4776,3 +4776,16 @@ DO $$ DECLARE r record; BEGIN
 END $$;
 ALTER TABLE artifact ENABLE TRIGGER USER;
 ALTER TABLE bot ENABLE TRIGGER USER;
+
+-- migration 100: a person's last visit of a page (person_visit, FLT-46): Home's quiet summary counts what happened since.
+CREATE TABLE person_visit (
+ email text NOT NULL REFERENCES person(email) ON DELETE CASCADE,
+ page text NOT NULL,
+ visited_at timestamptz NOT NULL,
+ PRIMARY KEY (email, page)
+);
+
+-- migration 101: the events that hold an agent text block, newest first per session: the source of the now line of
+-- sessions_list (sql_builder.go sqlSessionNow, FLT-46), one index probe per listed session.
+CREATE INDEX event_agent_text ON event(session_id, seq)
+ WHERE NOT delta AND jsonb_path_exists(payload, '$.data.fleetNormalized.blocks[*] ? (@.kind == "text" && @.markdown != "" && (@.role == "agent" || !exists(@.role)))');

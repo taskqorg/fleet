@@ -639,6 +639,7 @@ type SessionRow struct {
 	Executions    int64         `json:"executions"`
 	Harness       *string       `json:"harness"`
 	Id            string        `json:"id"`
+	Now           *string       `json:"now,omitempty"`
 	OpenQuestions int64         `json:"openQuestions"`
 	ProfileId     *string       `json:"profileId"`
 	ProjectId     *string       `json:"projectId"`

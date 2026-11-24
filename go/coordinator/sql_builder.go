@@ -1142,7 +1142,7 @@ const sqlSessionState = `(SELECT state FROM fleet_conversation_state(d.id))`
 // end of its executions (the default sort). Not execution.updated_at: host receipts touch it on every observation,
 // which is not conversation activity. created_at and archived_at are the session record's (its columns, else its
 // payload, matching sessions.go).
-var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.seq, nullif(d.title,'') AS title,
+var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.task_id, d.seq, nullif(d.title,'') AS title,
  d.archived_at, d.actor, d.host_id, d.payload->'agentConfig'->>'harness' AS agent_harness, d.payload->'agentConfig'->>'id' AS profile_id,
  CASE WHEN d.created_at IS NOT NULL THEN (extract(epoch FROM d.created_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'createdAt')='number' THEN (d.payload->>'createdAt')::float8 END AS created_ms,
  CASE WHEN d.archived_at IS NOT NULL THEN (extract(epoch FROM d.archived_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'archivedAt')='number' THEN (d.payload->>'archivedAt')::float8 END AS archived_ms,
@@ -1160,9 +1160,22 @@ var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.seq, nulli
 var sqlSessionCountBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.archived_at, d.actor, ` + sqlSessionState + ` AS state
  FROM session d)`
 
+// sqlSessionNow: the source of a row's now line (sessions.go nowLine): the newest event of the session with an agent
+// text block (one probe of the partial index event_agent_text, migration 101, whose predicate this repeats), its last
+// such block, and the attached task's title. Only in the list columns: PostgreSQL evaluates them for the page's rows
+// after ORDER BY and LIMIT, never for the counts.
+const sqlSessionNow = `(SELECT (SELECT t.b->>'markdown' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(v.payload->'data'->'fleetNormalized'->'blocks')='array' THEN v.payload->'data'->'fleetNormalized'->'blocks' ELSE '[]'::jsonb END) WITH ORDINALITY AS t(b,i)
+  WHERE t.b->>'kind'='text' AND coalesce(t.b->>'role','agent')='agent' AND coalesce(t.b->>'markdown','')<>'' ORDER BY t.i DESC LIMIT 1)
+ FROM event v WHERE v.session_id=x.id AND NOT v.delta AND jsonb_path_exists(v.payload,'` + agentTextPath + `') ORDER BY v.seq DESC LIMIT 1) AS now_text,
+ (SELECT k.title FROM task k WHERE k.id=x.task_id) AS task_title`
+
+// agentTextPath: an event that holds an agent text block, the predicate of the index event_agent_text (migration 101;
+// TestAgentTextIndexPredicate keeps them equal).
+const agentTextPath = `$.data.fleetNormalized.blocks[*] ? (@.kind == "text" && @.markdown != "" && (@.role == "agent" || !exists(@.role)))`
+
 // sqlSessionListCols: the columns of sessionListDBRow (sessions.go) over x.
 var sqlSessionListCols = "x.id,x.code,x.title,x.first_message,x.state,x.harness,x.agent_harness,x.profile_id,x.project_id,x.created_ms,x.archived_ms," +
-	sqlJSONTime("x.activity_at") + " AS activity_at,x.executions,x.open_questions"
+	sqlJSONTime("x.activity_at") + " AS activity_at,x.executions,x.open_questions," + sqlSessionNow
 
 // sessionAgent: the harness of the last execution, else the configured one (the row's harness mark and the agent group).
 const sessionAgent = "coalesce(x.harness,x.agent_harness)"

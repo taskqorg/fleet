@@ -1160,6 +1160,12 @@ type PersonSetting struct {
 	TombstonedAt *time.Time
 }
 
+type PersonVisit struct {
+	Email     string
+	Page      string
+	VisitedAt time.Time
+}
+
 type PersonalLabDraft struct {
 	ID               string
 	Author           string

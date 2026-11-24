@@ -414,6 +414,58 @@ func (v *SessionArchiveRequest) Validate() error {
 	return nil
 }
 
+// SessionContextReply: session_context (session_context.go). plan absent: no work plan on the session or its task.
+type SessionContextReply struct {
+	Automations []BotAutomationRecord `json:"automations"`
+	Plan        *SessionPlan          `json:"plan,omitempty"`
+	SessionId   string                `json:"sessionId"`
+	Swarm       []SessionSwarmMember  `json:"swarm"`
+	Timers      []SessionTimer        `json:"timers"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionContextReply) Validate() error {
+	if v.Automations == nil {
+		return Missing("automations")
+	}
+	for i := range v.Automations {
+		if err := Check(&v.Automations[i], "automations"); err != nil {
+			return err
+		}
+	}
+	if v.Plan != nil {
+		if err := Check(v.Plan, "plan"); err != nil {
+			return err
+		}
+	}
+	if v.Swarm == nil {
+		return Missing("swarm")
+	}
+	for i := range v.Swarm {
+		if err := Check(&v.Swarm[i], "swarm"); err != nil {
+			return err
+		}
+	}
+	if v.Timers == nil {
+		return Missing("timers")
+	}
+	for i := range v.Timers {
+		if err := Check(&v.Timers[i], "timers"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type SessionContextRequest struct {
+	SessionId string `json:"sessionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionContextRequest) Validate() error {
+	return nil
+}
+
 // SessionCreateReply: The new session row, plus sessionId.
 type SessionCreateReply struct {
 	CreatedAt  int64           `json:"createdAt"`
@@ -710,6 +762,48 @@ func (v *SessionMessage) UnmarshalJSON(b []byte) error {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionMessage) Validate() error {
+	return nil
+}
+
+// SessionPlan: The work_plan's tasks in thread order, one step each.
+type SessionPlan struct {
+	Done      int64             `json:"done"`
+	ScopeId   string            `json:"scopeId"`
+	ScopeKind BoardScopeKind    `json:"scopeKind"`
+	Steps     []SessionPlanStep `json:"steps"`
+	Title     string            `json:"title"`
+	Total     int64             `json:"total"`
+	Version   int64             `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionPlan) Validate() error {
+	if err := Check(&v.ScopeKind, "scopeKind"); err != nil {
+		return err
+	}
+	if v.Steps == nil {
+		return Missing("steps")
+	}
+	for i := range v.Steps {
+		if err := Check(&v.Steps[i], "steps"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type SessionPlanStep struct {
+	Done   bool               `json:"done"`
+	Id     string             `json:"id"`
+	Status WorkPlanTaskStatus `json:"status"`
+	Title  string             `json:"title"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionPlanStep) Validate() error {
+	if err := Check(&v.Status, "status"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1013,6 +1107,19 @@ func (v *SessionStartRequest) Validate() error {
 	return nil
 }
 
+type SessionSwarmMember struct {
+	MemberName  string  `json:"memberName"`
+	Role        string  `json:"role"`
+	SessionCode *string `json:"sessionCode"`
+	SessionId   *string `json:"sessionId"`
+	State       *string `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionSwarmMember) Validate() error {
+	return nil
+}
+
 type SessionTaskAttachReply struct {
 	Existing  *bool  `json:"existing,omitempty"`
 	SessionId string `json:"sessionId"`
@@ -1049,6 +1156,18 @@ func (v *SessionTaskAttachRequest) UnmarshalJSON(b []byte) error {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionTaskAttachRequest) Validate() error {
+	return nil
+}
+
+// SessionTimer: A repeating wake of the session: the watch timer wakes it every everyMs.
+type SessionTimer struct {
+	EveryMs float64 `json:"everyMs"`
+	Id      string  `json:"id"`
+	NextAt  *int64  `json:"nextAt"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionTimer) Validate() error {
 	return nil
 }
 
@@ -1688,6 +1807,7 @@ func init() {
 		"recommendation_set":  {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Set the recommended method of a project's capability (projectId, methodId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"methodId\"],\"type\":\"object\"}")},
 		"reply":               {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Answer a question; delivered to the asker as its next message", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"answer\":{},\"questionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_archive":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Archive a session (sessionId): it leaves the lists and its worktree is torn down", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
+		"session_context":     {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "What a session (sessionId) plans and keeps running, for the context panel: plan (steps with done marks from its work_plan, else its task's), timers (its watch timer: change with watch_set timerMs, cancel with watch_set without timerMs or watch_stop; no pause yet), automations (its bot's, change with bot_automation_save) and swarm members (the plan's and board's other sessions with their state). Each part is empty when the session has none. Watch changes are not in the change feed: reread after your own watch_set", Changes: []string{"session", "board", "execution", "bot", "setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"session_create":      {Read: false, Long: false, Errors: []int{409}, Auth: "person", Agent: "tool", Description: "Create a session", InputSchema: json.RawMessage("{\"$comment\":\"No fields: the session's director, access and linkage come from the caller.\",\"additionalProperties\":false,\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"session_fork":        {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"strategy\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\"}")},
 		"session_get":         {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "A session (sessionId) with its executions and state", Changes: []string{"session", "execution", "question", "command", "artifact"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
