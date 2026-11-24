@@ -55,7 +55,9 @@ Tooltips follow [OR-20](owner-rules.md).
 | UX-18 | The full filter, grouping and sort live in the URL, so a copied URL reproduces the view. | Browser: set a filter, open the URL in a new context, compare rows. |
 | UX-19 | Search matches titles, codes and key text, highlights matches, and stays in the current list unless the person picks "everywhere" (the palette, [OR-32](owner-rules.md)). | Browser: search a known code, expect it first and highlighted. |
 
-Saved views and grouping follow [OR-33](owner-rules.md) and [OR-35](owner-rules.md).
+| UX-93 | The last filter set per list is remembered per person on the server, and saved views are one-click choices ([OR-33](owner-rules.md)). | Browser: set a filter, open another section, come back without the URL query, expect the filter. |
+
+Grouping and sort follow [OR-35](owner-rules.md).
 
 ## 5. Keyboard
 
@@ -64,8 +66,9 @@ Saved views and grouping follow [OR-33](owner-rules.md) and [OR-35](owner-rules.
 | UX-20 | Every action can be done without a mouse. | Review: walk the journey with the keyboard only. |
 | UX-21 | `/` focuses list search and `Esc` clears it, then leaves it; `⌘K` opens the palette ([OR-32](owner-rules.md)). | Browser: press the keys, check `document.activeElement`. |
 | UX-22 | `j` / `k` or the arrow keys move the row selection, `Enter` opens, and `Esc` closes the opened item and returns focus to its row. | Browser: open a row with `Enter`, press `Esc`, expect focus on that row. |
-| UX-23 | `g` and one letter open each rail section; the letters show in `?` and in the rail tooltips. | Browser: press `?`, expect one `g` shortcut per rail section. |
-| UX-24 | Decision shortcuts work only while the decision has focus, show in the button, and never fire while typing in a field. | Browser: type the shortcut letter in the composer, expect no action. |
+| UX-23 | `g` and one letter open each rail section, and `?` lists every shortcut; today `g o` Overview, `g t` Tasks, `g r` Results, `g h` Hosts, `g l` Laboratory, and the seven-section letters are set when that rail is built. | Browser: press `?`, expect one `g` shortcut per rail section. |
+| UX-24 | Decision shortcuts (for example `a` accept, `r` request rework) work only while the decision has focus and show in the button. | Browser: focus a decision, press its letter, expect the action; press it elsewhere, expect none. |
+| UX-92 | No shortcut fires while typing in a field. | Browser: type `j`, `g o` and `/` in the composer, expect only the text. |
 | UX-25 | Focus is always visible (2 px ring in the accent colour, 2 px offset) and trapped only in a modal dialog. | Browser: tab through the page and check each focused element's outline. |
 
 ## 6. Decisions inline
