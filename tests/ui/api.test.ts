@@ -269,11 +269,16 @@ test('scoped submissions retain original body/hash through edits and refuse stal
   (globalThis as any).localStorage = { getItem:(key:string)=>map.get(key)??null,setItem:(key:string,value:string)=>map.set(key,value),removeItem:(key:string)=>map.delete(key) };
   try {
     const scope=authorizedDraftScope({kind:'session',id:'frozen-submission'});
-    const original=await prepareSending(scope,'message_send',{sessionId:'frozen-submission',text:'original',delivery:'steer'});
+    const original=await prepareSending(scope,'message_send',{
+      sessionId:'original-destination',text:'original',delivery:'steer',
+      composer:{conversationId:'frozen-submission',executionId:'original-run'},
+    });
     const changed=await prepareSending(scope,'message_send',{sessionId:'frozen-submission',text:'new intent'});
     assert.notEqual(changed.requestId,original.requestId);
-    const retry=await prepareSending(scope,'message_send',{sessionId:'frozen-submission',text:'original'});
-    assert.deepEqual(retry,original,'explicit retry keeps original delivery, body and request identity');
+    const retry=await prepareSending(scope,'message_send',{
+      sessionId:'new-destination',text:'original',composer:{conversationId:'frozen-submission',executionId:null},
+    });
+    assert.deepEqual(retry,original,'explicit retry keeps the original destination, execution and request identity');
     await prepareSending(scope,'message_send',{sessionId:'frozen-submission',text:'other intent'});sendingId(scope,null,'original');
     assert.notEqual((await prepareSending(scope,'message_send',{sessionId:'frozen-submission',text:'original'})).requestId,original.requestId,'late confirmed success removes only its own unresolved identity');
     assert.ok([...map.values()].some(text=>JSON.parse(text).sending?.bodySha?.length===64));

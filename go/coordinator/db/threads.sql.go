@@ -34,6 +34,41 @@ func (q *Queries) ThreadArtifactExecution(ctx context.Context, id string) ([]*st
 	return items, nil
 }
 
+const threadComposerSessions = `-- name: ThreadComposerSessions :many
+SELECT s.id FROM session s
+WHERE s.project_id IS NOT DISTINCT FROM $1::text
+  AND s.archived_at IS NULL
+  AND (s.task_id = $2::text OR (s.task_id IS NULL AND s.id = ANY($3::text[])))
+ORDER BY s.created_at DESC NULLS LAST, s.id DESC
+`
+
+type ThreadComposerSessionsParams struct {
+	ProjectID  *string
+	TaskID     string
+	SessionIds []string
+}
+
+// Visible sessions still associated with the thread, including attached sessions without an execution.
+func (q *Queries) ThreadComposerSessions(ctx context.Context, arg ThreadComposerSessionsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, threadComposerSessions, arg.ProjectID, arg.TaskID, arg.SessionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const threadEventRows = `-- name: ThreadEventRows :many
 SELECT seq, CASE WHEN delta THEN 'event-delta' ELSE 'event' END::text AS src,
  jsonb_build_object('id',id,'executionId',execution_id,'type',type,'text',payload->'text','blocks',payload->'data'->'fleetNormalized'->'blocks','deltaOf',payload->'data'->'fleetNormalized'->'deltaOf','closes',payload->'data'->'fleetNormalized'->'closes','at',updated_at,'sentBy',payload->>'sentBy','attachments',payload->'attachments') AS v
@@ -68,20 +103,22 @@ func (q *Queries) ThreadEventRows(ctx context.Context, id string) ([]ThreadEvent
 }
 
 const threadMemberOf = `-- name: ThreadMemberOf :many
-SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.started_at, e.ended_at, e.seq
+SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq
 FROM execution e WHERE e.id=$1
 `
 
 type ThreadMemberOfRow struct {
-	ID        string
-	SessionID *string
-	Harness   *string
-	Model     *string
-	Effort    []byte
-	State     string
-	StartedAt *time.Time
-	EndedAt   *time.Time
-	Seq       int64
+	ID          string
+	SessionID   *string
+	Harness     *string
+	Model       *string
+	Effort      []byte
+	State       string
+	Observation Observation
+	ProjectID   *string
+	StartedAt   *time.Time
+	EndedAt     *time.Time
+	Seq         int64
 }
 
 // One execution as a thread member (its reply text), of any kind.
@@ -101,6 +138,8 @@ func (q *Queries) ThreadMemberOf(ctx context.Context, id string) ([]ThreadMember
 			&i.Model,
 			&i.Effort,
 			&i.State,
+			&i.Observation,
+			&i.ProjectID,
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.Seq,
@@ -116,20 +155,22 @@ func (q *Queries) ThreadMemberOf(ctx context.Context, id string) ([]ThreadMember
 }
 
 const threadMembersOfSession = `-- name: ThreadMembersOfSession :many
-SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.started_at, e.ended_at, e.seq
+SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq
 FROM execution e WHERE e.kind='agent_run' AND e.session_id=$1 ORDER BY e.seq
 `
 
 type ThreadMembersOfSessionRow struct {
-	ID        string
-	SessionID *string
-	Harness   *string
-	Model     *string
-	Effort    []byte
-	State     string
-	StartedAt *time.Time
-	EndedAt   *time.Time
-	Seq       int64
+	ID          string
+	SessionID   *string
+	Harness     *string
+	Model       *string
+	Effort      []byte
+	State       string
+	Observation Observation
+	ProjectID   *string
+	StartedAt   *time.Time
+	EndedAt     *time.Time
+	Seq         int64
 }
 
 func (q *Queries) ThreadMembersOfSession(ctx context.Context, sessionID *string) ([]ThreadMembersOfSessionRow, error) {
@@ -148,6 +189,8 @@ func (q *Queries) ThreadMembersOfSession(ctx context.Context, sessionID *string)
 			&i.Model,
 			&i.Effort,
 			&i.State,
+			&i.Observation,
+			&i.ProjectID,
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.Seq,
@@ -167,21 +210,23 @@ const threadMembersOfTask = `-- name: ThreadMembersOfTask :many
 WITH attached AS (SELECT s.id AS session_id FROM session s WHERE s.task_id= $1::text),
  first_task AS (SELECT DISTINCT ON (x.session_id) x.session_id, x.task_id FROM execution x WHERE x.task_id IS NOT NULL
   AND x.session_id IN (SELECT y.session_id FROM execution y WHERE y.task_id= $1::text) ORDER BY x.session_id, x.seq)
-SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.started_at, e.ended_at, e.seq
+SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq
 FROM execution e WHERE e.kind='agent_run' AND (e.task_id= $1::text OR (e.task_id IS NULL AND (e.session_id IN (SELECT f.session_id FROM first_task f WHERE f.task_id= $1::text)
  OR e.session_id IN (SELECT a.session_id FROM attached a)))) ORDER BY e.seq
 `
 
 type ThreadMembersOfTaskRow struct {
-	ID        string
-	SessionID *string
-	Harness   *string
-	Model     *string
-	Effort    []byte
-	State     string
-	StartedAt *time.Time
-	EndedAt   *time.Time
-	Seq       int64
+	ID          string
+	SessionID   *string
+	Harness     *string
+	Model       *string
+	Effort      []byte
+	State       string
+	Observation Observation
+	ProjectID   *string
+	StartedAt   *time.Time
+	EndedAt     *time.Time
+	Seq         int64
 }
 
 // Conversation threads (threads.go, docs/designs/fleet-conversations.md): a thread is the agent runs of a task (or of a
@@ -205,6 +250,8 @@ func (q *Queries) ThreadMembersOfTask(ctx context.Context, taskID string) ([]Thr
 			&i.Model,
 			&i.Effort,
 			&i.State,
+			&i.Observation,
+			&i.ProjectID,
 			&i.StartedAt,
 			&i.EndedAt,
 			&i.Seq,

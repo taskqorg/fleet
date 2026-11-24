@@ -66,6 +66,8 @@ The three independent fixed-header reads use one ordered batch under the same pr
 
 ## Invariants
 
+- [Conversations controls](../../docs/designs/fleet-conversations.md#controls) use `threads.go` to resolve the composer destination under the request's session and project visibility. `agent_turn.go` reconciles the original message receipt before checking the target of a new submission.
+
 - Pipeline steps persist their observed terminal `finishedAt` as `ended_at`; nonterminal/reopened steps clear it. Typed execution reads recover only valid retained terminal millisecond ends for older rows, without a database backfill or inference from duration/current time. Missing or malformed legacy timing stays unavailable. Pipeline containers remain excluded from leaf resource totals; reused-prefix timing keeps its original provenance.
 
 - [`accounts.go`](accounts.go) couples account-host connectivity to the actual inspection destination: a fresh eligible native execution host takes precedence, a configured inspector remains the permitted fallback, and observations must match the configured holder. Discovery inspects an existing registry without authenticating or moving credentials.
