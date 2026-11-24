@@ -16,6 +16,17 @@ export function exact(t: number): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+export function zonedTime(t: number, zone: string): string {
+  const options: Intl.DateTimeFormatOptions = {
+    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  };
+  try {
+    return new Intl.DateTimeFormat('en-GB', { ...options, timeZone: zone }).format(t) + ' · ' + zone;
+  } catch {
+    return new Intl.DateTimeFormat('en-GB', { ...options, timeZone: 'UTC' }).format(t) + ' · UTC';
+  }
+}
+
 /** Moment of a message in a copied or pasted text: "11 Nov 14:03", with the year when it is not this year (formats.md "Copy"). */
 export function stamp(t: number, now: number): string {
   const d = new Date(t);

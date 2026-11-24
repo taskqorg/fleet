@@ -4719,3 +4719,25 @@ SELECT set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', '
 UPDATE execution e SET bot_id = br.bot_id FROM bot_run br WHERE br.execution_id = e.id AND e.bot_id IS NULL;
 UPDATE execution e SET bot_id = s.bot_id FROM session s WHERE s.id = e.session_id AND s.bot_id IS NOT NULL AND e.bot_id IS NULL;
 UPDATE execution_spend sp SET bot_id = e.bot_id FROM execution e WHERE e.id = sp.execution_id AND e.bot_id IS NOT NULL AND sp.bot_id IS NULL;
+
+-- migration 97: independently configured bot wakes and durable per-automation cursors.
+CREATE TABLE bot_automation (
+ id text PRIMARY KEY,
+ bot_id text NOT NULL REFERENCES bot(id) ON DELETE CASCADE,
+ project_id text NOT NULL,
+ revision integer NOT NULL CHECK (revision > 0),
+ name text NOT NULL,
+ instructions text NOT NULL,
+ kind text NOT NULL CHECK (kind IN ('manual', 'schedule', 'needs_you')),
+ schedule_time text NOT NULL,
+ schedule_zone text NOT NULL,
+ event text NOT NULL CHECK (event IN ('none', 'all', 'question', 'execution')),
+ enabled boolean NOT NULL,
+ effective_since timestamptz NOT NULL,
+ event_cursor bigint NOT NULL,
+ last_schedule_date text NOT NULL DEFAULT ''
+);
+CREATE INDEX bot_automation_bot ON bot_automation(bot_id, id);
+ALTER TABLE bot_run ADD COLUMN automation_id text REFERENCES bot_automation(id) ON DELETE SET NULL;
+CREATE INDEX bot_run_automation_seq ON bot_run(automation_id, seq DESC)
+ WHERE automation_id IS NOT NULL AND tombstoned_at IS NULL;

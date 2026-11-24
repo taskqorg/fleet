@@ -151,6 +151,22 @@ CREATE TABLE bot (
   "paused_by" text,
   "resumed_at" timestamp with time zone
 );
+CREATE TABLE bot_automation (
+  "id" text NOT NULL,
+  "bot_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "revision" integer NOT NULL,
+  "name" text NOT NULL,
+  "instructions" text NOT NULL,
+  "kind" text NOT NULL,
+  "schedule_time" text NOT NULL,
+  "schedule_zone" text NOT NULL,
+  "event" text NOT NULL,
+  "enabled" boolean NOT NULL,
+  "effective_since" timestamp with time zone NOT NULL,
+  "event_cursor" bigint NOT NULL,
+  "last_schedule_date" text NOT NULL
+);
 CREATE TABLE bot_memory_revision (
   "bot_id" text NOT NULL,
   "revision" integer NOT NULL,
@@ -193,7 +209,8 @@ CREATE TABLE bot_run (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone,
   "payload" jsonb NOT NULL,
-  "seq" bigint NOT NULL
+  "seq" bigint NOT NULL,
+  "automation_id" text
 );
 CREATE TABLE bot_task (
   "bot_id" text NOT NULL,

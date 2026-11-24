@@ -135,22 +135,29 @@ func validateBotSettings(q *Request, settings contract.BotSettings) error {
 	if strings.TrimSpace(settings.Name) == "" {
 		return fail(400, "Enter a bot name")
 	}
-	if settings.ScheduleTime != "" {
-		t, err := time.Parse("15:04", settings.ScheduleTime)
-		if err != nil || t.Format("15:04") != settings.ScheduleTime {
-			return fail(400, "Enter the local schedule time as HH:MM")
-		}
-		if settings.ScheduleZone == "" || settings.ScheduleZone == "Local" {
-			return fail(400, "Enter a schedule time zone")
-		}
-		if _, err := time.LoadLocation(settings.ScheduleZone); err != nil {
-			return fail(400, "Unknown schedule time zone")
-		}
-	} else if settings.ScheduleZone != "" {
-		return fail(400, "Enter a schedule time with its time zone")
+	if err := validateBotSchedule(settings.ScheduleTime, settings.ScheduleZone); err != nil {
+		return err
 	}
 	_, err := readTrustedProfile(q, settings.ProfileId)
 	return err
+}
+
+func validateBotSchedule(scheduleTime, scheduleZone string) error {
+	if scheduleTime != "" {
+		t, err := time.Parse("15:04", scheduleTime)
+		if err != nil || t.Format("15:04") != scheduleTime {
+			return fail(400, "Enter the local schedule time as HH:MM")
+		}
+		if scheduleZone == "" || scheduleZone == "Local" {
+			return fail(400, "Enter a schedule time zone")
+		}
+		if _, err := time.LoadLocation(scheduleZone); err != nil {
+			return fail(400, "Unknown schedule time zone")
+		}
+	} else if scheduleZone != "" {
+		return fail(400, "Enter a schedule time with its time zone")
+	}
+	return nil
 }
 
 func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.BotSettingsSaveReply, error) {

@@ -304,6 +304,9 @@ var referenceMap = []objectRef{
 	{table: "bot", column: "project_id", kind: "project", mode: refOwn},
 	{table: "bot", column: "home_session_id", mode: refNone},
 	{table: "bot_revision", column: "profile_id", mode: refNone},
+	{table: "bot_automation", column: "id", mode: refNone},
+	{table: "bot_automation", column: "project_id", mode: refNone},
+	{table: "bot_run", column: "automation_id", mode: refNone},
 	{table: "bot_wake_cursor", column: "project_id", kind: "project", mode: refOwn},
 	{table: "bot_run", column: "id", mode: refNone},
 	{table: "bot_run", column: "project_id", kind: "project", mode: refOwn},
@@ -346,6 +349,7 @@ var tombstoned = append([]string{"execution", "task", "experiment", "question", 
 	"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done",
 	"host", "host_observation", "watch", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
 	"connection_key", "run_token", "person_setting", "upload", "problem_dismissal", "project_recommendation", "transport_conflict", "bot", "bot_run", "bot_task", "work_plan", "board_message"}, deliveryTables...)
+
 // keptRows: rows of a table that neither go with an object nor keep one. None now: the audit records that outlive what
 // they describe (the journal of M0) have their own tables without a refOwn column (migration 82).
 var keptRows = map[string]string{}

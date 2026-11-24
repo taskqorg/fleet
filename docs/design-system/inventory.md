@@ -57,6 +57,15 @@ These apply to every workspace and are the main input for the controls:
 | Repository publishing status, capabilities and actions (ready, request merge, cancel merge) | View, Action | `publishing_status`, `publishing_capabilities`, `publishing_mark_ready`, `publishing_request_merge`, `publishing_cancel_merge_request` |
 | Readiness checks and their results | View, Signal | `project_readiness` |
 
+### Bots
+
+| Item | Kind | Source |
+|---|---|---|
+| Automations by bot with trigger, project, status, next scheduled time and last outcome | View | `bot_automations` |
+| Name, instructions, daily time and zone or Needs you filter under the bot's current grants | Setting | `bot_automation_save` |
+| Create, edit, enable, pause and run now | Action | `bot_automation_save`, `bot_run` |
+| Automation run history with causes, revisions and execution links | View | `bot_runs` |
+
 ### Conversations (sessions, including with the PM)
 
 | Item | Kind | Source |

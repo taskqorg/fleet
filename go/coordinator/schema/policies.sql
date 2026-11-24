@@ -70,6 +70,13 @@ CREATE POLICY live ON bot AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show
 DROP POLICY IF EXISTS project_scope ON bot;
 CREATE POLICY project_scope ON bot FOR ALL TO public USING (fleet_visible(project_id));
 
+-- bot_automation
+ALTER TABLE bot_automation ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON bot_automation;
+CREATE POLICY project_scope ON bot_automation FOR ALL TO public USING ((EXISTS ( SELECT 1
+   FROM bot b
+  WHERE ((b.id = bot_automation.bot_id) AND (b.project_id = bot_automation.project_id)))));
+
 -- bot_memory_revision
 ALTER TABLE bot_memory_revision ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS project_scope ON bot_memory_revision;
