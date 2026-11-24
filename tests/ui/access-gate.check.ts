@@ -50,7 +50,7 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
   await p.route('**/api/ops/project_resources', async route => { if (summaryHeld) await summaryWait; await route.continue().catch(() => {}); });
   try {
     seed.sql(`INSERT INTO execution(id,kind,state,project_id,data) SELECT 'browser-resource-'||lpad(i::text,4,'0'),'tool_run','succeeded','desiign',jsonb_build_object('tool','browser-tool-'||lpad(i::text,4,'0')) FROM generate_series(1,207) i;`);
-    await p.goto(origin + '/projects/desiign');
+    await p.goto(origin + '/projects/desiign/rules');
     await p.getByRole('button', { name: 'Save project', exact: true }).waitFor();
     await botsLink.waitFor();
     assert.equal(await sidebar.getByRole('link', { name: 'People', exact: true }).count(), 0, 'People is in System, not on the rail');
@@ -323,7 +323,7 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     assert.equal(await p.locator('.shell').evaluate(element=>(element as HTMLElement).style.getPropertyValue('--size-ctl')),newWidth,'old preference reply cannot overwrite current actor geometry');
     // Creation input is actor-scoped, and its authored ID is never treated as an existing authorization grant.
     actor = 'owner@trial.test'; await p.goto(origin + '/projects');
-    const createProject = p.getByRole('button', { name: 'Create project', exact: true });
+    const createProject = p.getByRole('button', { name: 'New project', exact: true });
     await createProject.waitFor();
     // Bots and People open from their sections, and the rail marks the section that owns them (OR-57).
     assert.equal(await p.getByRole('button', { name: 'Bots', exact: true }).count(), 0);
@@ -340,11 +340,11 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     const creationRecord=await p.evaluate(()=>{const key='fleet-input:'+JSON.stringify([1,'owner@trial.test','project-create','',null]);return JSON.parse(JSON.parse(localStorage.getItem(key)!).text);});
     assert.equal(creationRecord.bundle.settings.name,'Unsent creation actor','creation input is retained before the validation fence');
     let draftIdReads=0;const createdIdRead=(request:import('playwright').Request)=>{if(request.url().endsWith('/api/ops/project_detail')&&request.postDataJSON()?.projectId==='browser-create-authored-only')draftIdReads++;};p.on('request',createdIdRead);
-    await focus();await p.getByRole('button',{name:'Create project',exact:true}).click();await p.getByRole('heading',{name:'Create project',exact:true}).waitFor();
+    await focus();await p.getByRole('button',{name:'New project',exact:true}).click();await p.getByRole('heading',{name:'Create project',exact:true}).waitFor();
     assert.equal(await p.getByLabel('Name',{exact:true}).inputValue(),'Unsent creation actor');
     const restoredCreation=await p.evaluate(()=>{const key='fleet-input:'+JSON.stringify([1,'owner@trial.test','project-create','',null]);return JSON.parse(JSON.parse(localStorage.getItem(key)!).text);});
     assert.equal(restoredCreation.requestId,creationRecord.requestId);assert.equal(draftIdReads,0);
-    actor='outsider@trial.test';await focus();await p.getByRole('button',{name:'Create project',exact:true}).click();
+    actor='outsider@trial.test';await focus();await p.getByRole('button',{name:'New project',exact:true}).click();
     assert.equal(await p.getByLabel('Project ID',{exact:true}).inputValue(),'','another actor never restores creation input');p.off('request',createdIdRead);
     // Lab authored input belongs to the original actor, while restored server receipt fields are quarantined.
     // Give the second Lab actor architect role (still grants: []) so /lab/new reads do not return 403 and trip signedOut.

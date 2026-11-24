@@ -26,7 +26,7 @@ export async function checkProjectEditor(browser: Browser, origin: string, host:
   try {
     const sendHost = await host(hostId);
     await call('project_create', { id, requestId: crypto.randomUUID(), content: { settings: { id, name: id, roles: { pm: 'pm' }, contextFiles: ['rules.md'], repos: [], environments: [{ hostId, checkoutPath: '/tmp/editor-race' }] }, contextFiles: [{ path: 'rules.md', text: '' }] } });
-    await p.goto(origin + '/projects/' + id);
+    await p.goto(origin + '/projects/' + id + '/rules');
     await p.getByRole('heading', { name: id, exact: true }).waitFor();
     // Hold an actual pre-save configuration response, while the real update and readback finish.
     let held!: () => void;

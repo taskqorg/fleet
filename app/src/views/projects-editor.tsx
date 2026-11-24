@@ -36,10 +36,13 @@ export function ProjectEditor(props: {
   renderWork?: (projectId: string, detail: Detail | null) => JSX.Element;
   /** Inside a project's Rules & methods facet: the project head above names it, so the editor shows no title of its own (OR-17). */
   embedded?: boolean;
+  /** The name as edited, before Save: the project head shows it while the editor is open. */
+  onName?: (name: string) => void;
 }) {
   const [, go] = useLocation();
   const editorGeneration = accessGeneration();
   const [bundle, applyBundle] = createSignal<Bundle>(fresh(), { ownedWrite: true });
+  createEffect(() => str(bundle().settings.name), name => { props.onName?.(name); });
   let baseline = JSON.stringify(untrack(bundle));
   let latest = untrack(bundle);
   type EditBase = { content: Bundle; revision: number; contentSha: string; repoSha: string | null };

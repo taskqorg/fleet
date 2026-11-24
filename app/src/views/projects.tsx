@@ -339,6 +339,9 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
     const roles = isRec(settings.roles) ? settings.roles : {};
     return str(roles.pm) || 'pm';
   });
+  // The name as edited in Rules & methods, before Save (the editor's draft), heads the project while it is open.
+  const [draftName, setDraftName] = createSignal('', { ownedWrite: true });
+  const title = () => (props.facet === 'rules' && draftName() ? draftName() : props.p?.name ?? props.id);
   // Talk to PM opens the project's PM session (OR-51); with none yet, a new conversation on the project's pm role.
   const pmSession = createMemo(() => (sessions.data?.sessions ?? []).find(s => s.profileId === pmProfile()));
   const talk = () => { const pm = pmSession(); go(pm ? sessionPath(pm) : '/conversations/new?in=' + encodeURIComponent(props.id) + '&role=pm'); };
@@ -346,7 +349,7 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
     <section class="pwork" data-ui="project-work" aria-label={props.p?.name ?? props.id}>
       <DetailHead
         crumb={`project · ${props.p?.code || props.id}`}
-        title={props.p?.name ?? props.id}
+        title={title()}
         onClose={props.onClose}
         actions={<Button label="Talk to PM" icon="messages-square" onClick={talk} />}
         state={
@@ -365,7 +368,7 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
             <SessionsFacet sessions={sessions.data?.sessions} error={sessions.error} reload={sessions.reload} questions={asks()} pm={pmProfile()} name={props.p?.name ?? props.id} onTalk={talk} />
           </Match>
           <Match when={props.facet === 'rules'}>
-            <ProjectEditor id={props.id} embedded onClose={undefined} onSaved={p => go('/projects/' + encodeURIComponent(p) + '?facet=rules')}
+            <ProjectEditor id={props.id} embedded onName={setDraftName} onClose={undefined} onSaved={p => go('/projects/' + encodeURIComponent(p) + '?facet=rules')}
               renderWork={(pid, detail) => <><ProjectSettingsDiff reply={detail} /><ProjectMethods projectId={pid} /></>} />
           </Match>
           <Match when={props.facet !== 'sessions' && props.facet !== 'rules'}>

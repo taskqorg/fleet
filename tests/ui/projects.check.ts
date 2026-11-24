@@ -9,7 +9,7 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
  const call=async(name:string,body:object)=>{const r=await fetch(origin+'/api/ops/'+name,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});assert.equal(r.status,200,await r.clone().text());return r.json() as Promise<any>;};
  const edit=async(label:string,text:string)=>{await p.getByLabel(label,{exact:true}).click();const input=p.getByLabel(label,{exact:true});await input.fill(text);await input.press('Enter');};
  try{
-  await p.goto(origin+'/projects');await p.getByRole('button',{name:'Create project',exact:true}).click();
+  await p.goto(origin+'/projects');await p.getByRole('button',{name:'New project',exact:true}).click();
   await edit('Project ID',id);await edit('Name','UI retained project');
   await p.getByRole('button',{name:'Save project',exact:true}).click();await p.waitForURL(u=>/^\/projects\/[^/]+$/.test(new URL(u).pathname));
   // A project opens on Sessions (its address names it by code once known); its editor is the Rules & methods facet
