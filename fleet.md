@@ -171,9 +171,17 @@ Pause blocks future wakes. Stop separately requests cancellation through the exe
 
 Show active, waiting and historical managed tasks, bot runs, triggers, questions and errors in Web. Reuse Fleet analytics for all-time and period totals by bot and recorded execution project, including wall time, active time, tokens and costs with source execution links.
 
-Bots → Automations manages independently named, versioned manual, daily and Needs you triggers. Each automation supplies its own instructions, runs in the bot's granted project, and inherits its Fleet profile and tools under current grants. The event filter selects questions, execution problems or both in that project. Add new trigger types through the shared operation contract and wake admission. The creation catalog lists only supported types.
+Bots → Automations manages independently named, versioned manual, daily and Needs you triggers. Each automation supplies its own instructions, runs in the bot's granted project, and inherits its Fleet profile and tools under current grants.
 
-Daily schedules use an explicit IANA time zone and fire at most once per local date. Recovery catches up today's eligible slot and skips earlier dates and nonexistent local times. A retained event cursor and per-automation deduplication identities prevent repeat delivery. An automation starts watching at enable time. Stable event identities survive edits, pauses and restarts. If a bot is busy, daily and manual wake attempts record a skip and eligible Needs you work waits for the bot to become free. An automation's pause suppresses its future automatic wakes. Run now is an explicit request, and Stop is the existing bot execution control. Retain the automation revision, cause, outcome and execution link in run history. Existing bot settings schedules and event wakes keep their saved behavior.
+The event filter selects questions, execution problems or both in that project. Add trigger types through the shared operation contract and wake admission. The creation catalog lists only supported types.
+
+Daily schedules use an explicit IANA time zone and fire at most once per local date. Recovery catches up today's eligible slot and skips earlier dates and nonexistent local times.
+
+A retained event cursor and per-automation deduplication identities prevent repeat delivery. An automation starts watching at enable time. Stable event identities survive edits, pauses and restarts.
+
+If a bot is busy, daily and manual wake attempts record a skip. Eligible Needs you work waits for the bot to become free. Pausing an automation suppresses future automatic wakes. Run now is an explicit request. Stop uses the existing execution control.
+
+Run history retains the automation revision, cause, outcome and execution link. Existing bot settings schedules and event wakes keep their saved behavior.
 
 Capture direct and delegated attribution when work is created. Count each execution once and preserve its attribution across reassignment and continuation. Retain cost basis, currency and unknown observations.
 
