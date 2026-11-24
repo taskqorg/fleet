@@ -411,7 +411,7 @@ func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply
 
 // heldPoll waits for the coordinator's held poll while this goroutine keeps ticking, so a process exit, its output,
 // a script deadline and resource samples never wait up to longPollWait for the answer. It ticks only while
-// executions are live; an idle host keeps one update drain and journal count per exchange. A tick failure cancels
+// executions are live; an idle host checks update drain once per exchange. A tick failure cancels
 // the poll, waits for its goroutine and drops any reply: the executor stops, and commands without a receipt stay
 // pending on the coordinator (host_poll.go selects status 'pending') for delivery again.
 func (e *executor) heldPoll() (*pollReply, error) {
@@ -446,6 +446,13 @@ func (e *executor) heldPoll() (*pollReply, error) {
 }
 
 func (e *executor) tick() error {
+	if err := e.tickProcesses(); err != nil {
+		return err
+	}
+	return e.drainUpdate()
+}
+
+func (e *executor) tickProcesses() error {
 	for execution, l := range e.live {
 		done, err := e.tickOne(execution, l)
 		if err != nil {
@@ -458,7 +465,7 @@ func (e *executor) tick() error {
 			delete(e.live, execution)
 		}
 	}
-	return e.drainUpdate()
+	return nil
 }
 
 func (e *executor) exchange() (err error) {
@@ -505,7 +512,9 @@ func (e *executor) exchange() (err error) {
 		if removed.Load() {
 			return errHostRemoved
 		}
-		if err := e.tick(); err != nil {
+		// The outer loop checks drain. Keep processes responsive between commands
+		// without rescanning the journal for each command deferred during an update.
+		if err := e.tickProcesses(); err != nil {
 			return err
 		}
 		if err := e.runOrFail(reply.bodies[index]); err != nil {

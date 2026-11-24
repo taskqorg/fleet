@@ -12,6 +12,14 @@ import (
 	"time"
 )
 
+func (e *executor) openActivityLock() (*os.File, error) {
+	dir := filepath.Join(e.root, "update")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(filepath.Join(dir, "activity.lock"), os.O_CREATE|os.O_RDWR, 0600)
+}
+
 // A shared activity lease survives preparation until retained terminal delivery drains.
 // The updater's exclusive lease closes the readiness/admission snapshot race. Queued span batches do not hold an update:
 // telemetry never blocks a release.
@@ -19,10 +27,7 @@ func (e *executor) activityLease() (bool, error) {
 	if e.activity != nil {
 		return true, nil
 	}
-	if err := os.MkdirAll(filepath.Join(e.root, "update"), 0700); err != nil {
-		return false, err
-	}
-	f, err := os.OpenFile(filepath.Join(e.root, "update", "activity.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	f, err := e.openActivityLock()
 	if err != nil {
 		return false, err
 	}
@@ -56,25 +61,40 @@ func (e *executor) drainUpdate() error {
 
 // idleUpdate releases the activity lease once nothing holds it and returns the pending update target, or nil.
 func (e *executor) idleUpdate() (*string, error) {
-	if ok, err := e.activityLease(); err != nil {
+	var busy bool
+	err := e.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM launches)
+		OR EXISTS(SELECT 1 FROM owned)
+		OR EXISTS(SELECT 1 FROM mcp_groups)
+		OR EXISTS(SELECT 1 FROM commands WHERE terminal=0)
+		OR EXISTS(SELECT 1 FROM outbox WHERE route<>?)
+		OR EXISTS(SELECT 1 FROM outbox_failed WHERE status=401)
+		OR EXISTS(SELECT 1 FROM transfers WHERE state IN ('queued','running'))`, contract.RouteSpans.Path).Scan(&busy)
+	if err != nil {
 		return nil, err
-	} else if !ok {
-		return nil, nil
 	}
-	var n int
-	if err := e.db.QueryRow(`SELECT (SELECT count(*) FROM launches)+(SELECT count(*) FROM owned)+(SELECT count(*) FROM mcp_groups)+(SELECT count(*) FROM commands WHERE terminal=0)+(SELECT count(*) FROM outbox WHERE route<>?)+(SELECT count(*) FROM outbox_failed WHERE status=401)+(SELECT count(*) FROM transfers WHERE state IN ('queued','running'))`, contract.RouteSpans.Path).Scan(&n); err != nil {
+	if busy || len(e.live) > 0 {
+		_, err := e.activityLease()
 		return nil, err
 	}
-	if len(e.live) > 0 || n > 0 {
-		return nil, nil
-	}
-	if e.activity != nil {
+	hadLease := e.activity != nil
+	if hadLease {
 		e.activity.Close()
 		e.activity = nil
 	}
 	signalMu.Lock()
 	defer signalMu.Unlock()
 	if updatePending(lastSignal) {
+		// An idle executor with no prior work still needs a lock file for the updater.
+		// Leave it unlocked so readiness stays valid while the updater holds LOCK_EX.
+		if !hadLease && e.updateReady.Load() == nil {
+			f, err := e.openActivityLock()
+			if err != nil {
+				return nil, err
+			}
+			if err := f.Close(); err != nil {
+				return nil, err
+			}
+		}
 		v := *lastSignal.Target
 		return &v, nil
 	}
