@@ -37,7 +37,8 @@ Board drawings use Fleet's tokens through the board's style file ([tokens](token
 | [inventory.md](inventory.md) | What the interface must let people see, configure, choose and decide. Grouped by workspace, with the data each item comes from. | The architecture adds, removes or changes something a person sees or controls. |
 | [owner-rules.md](owner-rules.md) | The owner's rules (the only list of them). | The owner changes a rule. |
 | [formats.md](formats.md) | One look per kind of value, the copy format, and what each screen answers. | A value kind or a screen's purpose is added or changed. |
-| `principles.md` | Usability rules that every screen follows: density, scrolling, filtering, keyboard, states, errors, empty states, motion, accessibility. | The owner approves a new rule. |
+| [principles.md](principles.md) | Usability rules that every screen follows, each with its check: density, scrolling, filtering, keyboard, states, errors, motion, accessibility, glance, conversation, details on demand, wayfinding, feedback, recovery, consistency, phone. | The owner approves a new rule. |
+| [product-map.md](product-map.md) | Every capability and app route: its rail section, screen, built state, whether it works on prod, and the operations it uses. | A route or capability is added, moved or fixed, or a prod check is run. |
 | `tokens.md` + `packages/ui/tokens.json` | Colour, type, spacing, radius, elevation, motion, in light and dark. | The owner approves a visual change. |
 | `controls/<control>.md` | One file per control: purpose, anatomy, states, behaviour, keyboard, accessibility, do and don't, and where it is used. | A control is added or changed. |
 | `patterns/<pattern>.md` | Compositions of controls for recurring jobs, including [navigation and columns](patterns/navigation-and-columns.md), the decision block, the result viewer or the problem row. | A pattern is added or changed. |

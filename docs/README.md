@@ -47,6 +47,7 @@
 | Design principles | [design-system/principles.md](design-system/principles.md) | Usability rules every screen follows. | none |
 | Tokens | [design-system/tokens.md](design-system/tokens.md) | Colour, type, spacing, radius, elevation, motion. | none |
 | Interface inventory | [design-system/inventory.md](design-system/inventory.md) | What people must see, configure, choose and decide. | none |
+| Product map | [design-system/product-map.md](design-system/product-map.md) | Each capability and route: rail section, screen, built state, prod state, operations. | none |
 | Design decisions | [design-system/decisions.md](design-system/decisions.md) | Owner design decisions with options and reasons. | none |
 | Controls | [design-system/controls/README.md](design-system/controls/README.md) | One file per control, for example [button](design-system/controls/button.md). | none |
 | Patterns | [design-system/patterns/README.md](design-system/patterns/README.md) | Compositions of controls for recurring jobs. | none |
