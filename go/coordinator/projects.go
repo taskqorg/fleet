@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -692,32 +693,66 @@ func init() {
 		}
 		return asT[contract.PipelineGetReply](run)
 	})
-	op("pipeline_history", func(q *Request, r *contract.PipelineHistoryRequest) (contract.PipelineHistoryReply, error) {
-		if _, err := projectContext(q, r.ProjectId); err != nil {
-			return contract.PipelineHistoryReply{}, err
-		}
-		ids, err := q.db().ProjectsPipelineRunIDs(q.ctx(), r.ProjectId)
-		if err != nil {
-			return contract.PipelineHistoryReply{}, err
-		}
-		out := contract.PipelineHistoryReply{Runs: []contract.PipelineGetReply{}}
-		for _, id := range ids {
-			run, err := pipelineRun(q, id)
-			if err != nil {
-				return contract.PipelineHistoryReply{}, err
-			}
-			v, err := asT[contract.PipelineGetReply](run)
-			if err != nil {
-				return contract.PipelineHistoryReply{}, err
-			}
-			out.Runs = append(out.Runs, v)
-		}
-		return out, nil
-	})
+	op("pipeline_history", pipelineHistory)
 	addProjectOps("project_detail", "project_resources", "project_resource_items", "project_list", "project_context", "catalogue",
 		"recommendation_set", "question_ask", "question_answer", "question_history", "pipeline_get", "pipeline_history",
 		"pipeline_run", "direct_search", "connections_key_request")
 	longRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps) })
+}
+
+func pipelineHistory(q *Request, r *contract.PipelineHistoryRequest) (contract.PipelineHistoryReply, error) {
+	var afterSeq int64
+	if r.Cursor != nil {
+		var err error
+		afterSeq, err = strconv.ParseInt(*r.Cursor, 10, 64)
+		if err != nil || afterSeq <= 0 || strconv.FormatInt(afterSeq, 10) != *r.Cursor {
+			return contract.PipelineHistoryReply{}, fail(400, "Invalid pipeline history cursor")
+		}
+	}
+	limit := int64(25)
+	if r.Limit != nil {
+		limit = *r.Limit
+	}
+	if limit < 1 || limit > 100 {
+		return contract.PipelineHistoryReply{}, fail(400, "Pipeline history limit must be between 1 and 100")
+	}
+	if _, err := projectContext(q, r.ProjectId); err != nil {
+		return contract.PipelineHistoryReply{}, err
+	}
+	rows, err := q.db().ProjectsPipelineRunPage(q.ctx(), db.ProjectsPipelineRunPageParams{
+		ProjectID: r.ProjectId, AfterSeq: afterSeq, PageSize: int32(limit + 1),
+	})
+	if err != nil {
+		return contract.PipelineHistoryReply{}, err
+	}
+
+	out := contract.PipelineHistoryReply{Runs: []contract.PipelineRunReply{}}
+	remaining := maxPipelineReplyBytes
+	for _, row := range rows {
+		if int64(len(out.Runs)) == limit {
+			break
+		}
+		run, err := replyAs[contract.PipelineRunReply](pipelineRun(q, row.ID))
+		if err != nil {
+			return contract.PipelineHistoryReply{}, err
+		}
+		run, size, err := boundPipelineReply(run)
+		if err != nil {
+			return contract.PipelineHistoryReply{}, err
+		}
+		// Count each item's MCP envelope. The reserved frame space also covers
+		// the page wrapper and cursor.
+		if size > remaining {
+			break
+		}
+		remaining -= size
+		out.Runs = append(out.Runs, run)
+		afterSeq = row.Seq
+	}
+	if len(out.Runs) < len(rows) {
+		out.NextCursor = ptr(strconv.FormatInt(afterSeq, 10))
+	}
+	return out, nil
 }
 
 // pipelineRun: a pipeline run as its readers get it (planRead).

@@ -153,24 +153,38 @@ func (q *Queries) ProjectsLiveDefinition(ctx context.Context, id string) (bool, 
 	return exists, err
 }
 
-const projectsPipelineRunIDs = `-- name: ProjectsPipelineRunIDs :many
-SELECT id FROM execution WHERE kind='pipeline_run' AND data ? 'pipelineId' AND data->>'projectId'=$1::text ORDER BY seq
+const projectsPipelineRunPage = `-- name: ProjectsPipelineRunPage :many
+SELECT id, seq FROM execution
+WHERE kind='pipeline_run' AND data ? 'pipelineId' AND data->>'projectId'=$1::text
+  AND seq > $2::bigint
+ORDER BY seq LIMIT $3::integer
 `
 
-// A project's pipeline runs (runRows in pipelines.go: a run record was written for it), oldest first.
-func (q *Queries) ProjectsPipelineRunIDs(ctx context.Context, projectID string) ([]string, error) {
-	rows, err := q.db.Query(ctx, projectsPipelineRunIDs, projectID)
+type ProjectsPipelineRunPageParams struct {
+	ProjectID string
+	AfterSeq  int64
+	PageSize  int32
+}
+
+type ProjectsPipelineRunPageRow struct {
+	ID  string
+	Seq int64
+}
+
+// A project's recorded pipeline runs, oldest first, with one lookahead row.
+func (q *Queries) ProjectsPipelineRunPage(ctx context.Context, arg ProjectsPipelineRunPageParams) ([]ProjectsPipelineRunPageRow, error) {
+	rows, err := q.db.Query(ctx, projectsPipelineRunPage, arg.ProjectID, arg.AfterSeq, arg.PageSize)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []ProjectsPipelineRunPageRow
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var i ProjectsPipelineRunPageRow
+		if err := rows.Scan(&i.ID, &i.Seq); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

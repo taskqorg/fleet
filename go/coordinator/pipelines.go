@@ -19,6 +19,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/mcpserve"
 )
 
 // runRecord: a pipeline run as the runner holds it (getRun reads it, put writes it): its pipeline_run execution's record
@@ -1019,9 +1020,45 @@ func projectIDPtr(v any) *string {
 	return nil
 }
 
+// Leave room below the 16 MiB frame limit for the request ID and transport
+// metadata. Measure the wrapped JSON because MCP quotes the response as text.
+const maxPipelineReplyBytes = 15 << 20
+
+func boundPipelineReply(run contract.PipelineRunReply) (contract.PipelineRunReply, int, error) {
+	wire, err := json.Marshal(mcpserve.Result(nil, run))
+	if err != nil {
+		return contract.PipelineRunReply{}, 0, err
+	}
+	if len(wire) <= maxPipelineReplyBytes {
+		return run, len(wire), nil
+	}
+	summary := contract.PipelineRunReply{
+		Id: run.Id, State: run.State, Observation: run.Observation, PlanVersion: run.PlanVersion,
+		PlanSummary: run.PlanSummary, ProjectId: run.ProjectId, PipelineId: run.PipelineId,
+		RequestId: run.RequestId, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt,
+		DurationMs: run.DurationMs, Truncated: ptr(true),
+	}
+	if run.CanonicalResult != nil {
+		summary.ResultArtifact = &run.CanonicalResult.Artifact
+	}
+	wire, err = json.Marshal(mcpserve.Result(nil, summary))
+	if err != nil {
+		return contract.PipelineRunReply{}, 0, err
+	}
+	if len(wire) > maxPipelineReplyBytes {
+		return contract.PipelineRunReply{}, 0, fail(413, "Pipeline run summary exceeds the response size limit")
+	}
+	return summary, len(wire), nil
+}
+
 func init() {
 	op("pipeline_run", func(q *Request, r *contract.PipelineRunRequest) (contract.PipelineRunReply, error) {
-		return replyAs[contract.PipelineRunReply](runPipeline(q, "pipeline", r.ProjectId, r.RequestId, r.Query, r.MethodId))
+		run, err := replyAs[contract.PipelineRunReply](runPipeline(q, "pipeline", r.ProjectId, r.RequestId, r.Query, r.MethodId))
+		if err != nil {
+			return contract.PipelineRunReply{}, err
+		}
+		run, _, err = boundPipelineReply(run)
+		return run, err
 	})
 	op("direct_search", func(q *Request, r *contract.DirectSearchRequest) (contract.DirectSearchReply, error) {
 		return replyAs[contract.DirectSearchReply](runPipeline(q, "direct", r.ProjectId, r.RequestId, r.Query, r.MethodId))

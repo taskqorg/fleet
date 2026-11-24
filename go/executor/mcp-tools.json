@@ -74,7 +74,7 @@
       "idempotentHint": true,
       "openWorldHint": true
     },
-    "description": "Start a pipeline search for query. Reuse requestId on retry: the same requestId returns the same run. A search may return a durable running run; read it with pipeline_get by runId, never redispatch after an uncertain response.",
+    "description": "Start a pipeline search for query. Reuse requestId on retry: the same requestId returns the same run. A search may return a durable running run; read it with pipeline_get by runId, never redispatch after an uncertain response. If truncated is true, use pipeline_get with the returned id for details.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -142,11 +142,24 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "The project's pipeline runs. No arguments.",
+    "description": "Page through this project's pipeline runs oldest first. Pass nextCursor as cursor to continue. Use pipeline_get for full run details.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {}
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 19,
+          "description": "nextCursor from the previous page."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 25
+        }
+      }
     }
   },
   {
