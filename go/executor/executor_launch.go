@@ -466,8 +466,8 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 			ReadOnly:         sp.ReadOnly != nil && *sp.ReadOnly,
 			ReportPublishing: true,
 		}
-		servers["project-publishing"] = M{"command": exe(), "args": []any{"mcp", "project-publishing", enc(context)}, "tools": []any{"capabilities", "publish_draft", "status", "record_code_review", "mark_ready", "request_merge", "cancel_merge_request"}}
-		servers["project-forge"] = M{"command": exe(), "args": []any{"mcp", "project-forge", enc(context)}, "tools": []any{"publish_draft", "delivery"}}
+		servers["project-publishing"] = M{"command": exe(), "args": []any{"mcp", "project-publishing", enc(context)}, "tools": []any{"capabilities", "publish_draft", "status", "ci_logs", "record_code_review", "mark_ready", "request_merge", "cancel_merge_request"}}
+		servers["project-forge"] = M{"command": exe(), "args": []any{"mcp", "project-forge", enc(context)}, "tools": []any{"publish_draft", "delivery", "ci_logs"}}
 	}
 	profiles := anyStrings(profile.DelegationProfiles)
 	fleetMCP := []any{}
