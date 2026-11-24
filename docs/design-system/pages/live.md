@@ -92,7 +92,8 @@ Every element opens its detail in the app: a host in System, a slot or event in 
 
 ## Blocks
 
-* [Status pill](../controls/status-pill.md): the fleet's state in the status bar.
+* [Status bar](../controls/status-pill.md#status-bar) with the [status pill](../controls/status-pill.md): the top line.
+* [Navigation rail](../controls/nav-rail.md#board): the frame outside wall mode.
 * [Figure tile](../controls/figure-tile.md): the six figures with sparklines.
 * [Host band](../controls/host-band.md): one band per host.
 * [Gauge](../controls/fill-bar.md#gauge): CPU, memory and disk in a band head.

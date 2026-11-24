@@ -105,7 +105,8 @@ Behaviour:
 * [Question card](../controls/decision-block.md#card): the open question on a card, answered in place.
 * [State dot and word](../controls/state-badge.md#dot-and-word): the state on cards and picker rows.
 * [Bot tile](../controls/bot-tile.md): the Asleep row.
-* [Navigation rail](../controls/nav-rail.md) and [shell header](../patterns/app-shell.md): the frame.
+* [Quiet summary](../controls/quiet-summary.md): replaces the empty groups when nothing needs the person.
+* [Navigation rail and phone bottom bar](../controls/nav-rail.md#board) and [shell header](../patterns/app-shell.md#board): the frame.
 
 ## Design board
 

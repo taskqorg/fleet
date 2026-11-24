@@ -57,6 +57,7 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [host-band](host-band.md) | One host: health, slots, runs |
 | [worker-slot](worker-slot.md) | What runs in one worker slot |
 | [live-row](live-row.md) | A project, pull request, runner or event on Live |
+| [quiet-summary](quiet-summary.md) | What happened while you were away, when nothing waits |
 
 ## Blocks of Home, Live and the session view
 
@@ -67,6 +68,7 @@ The screens of the conversation-first interface ([OR-50](../owner-rules.md) to [
 | Session card | [session-card](session-card.md) | New (`SessionCard`) | Home |
 | Question card | [decision block, card](decision-block.md#card) | `DecisionBlock`, new card form | Home, session view |
 | Bot tile | [bot-tile](bot-tile.md) | New (`BotTile`) | Home |
+| Quiet summary | [quiet-summary](quiet-summary.md) | New (`QuietSummary`) | Home |
 | Composer with target picker | [composer, target picker](composer.md#target-picker) | `Composer`, new picker | Home |
 | Pulse line, blocker chip | [pulse-line](pulse-line.md) | New (`PulseLine`, `BlockerChip`) | Home |
 | State dot and word | [state badge, dot and word](state-badge.md#dot-and-word) | `StateBadge`, new form | Home, Live, session view |
@@ -74,12 +76,12 @@ The screens of the conversation-first interface ([OR-50](../owner-rules.md) to [
 | Message | [transcript viewer](transcript-viewer.md) | `TextRow`, `MessageFiles` | Session view |
 | Folded tool line | [tool-line](tool-line.md) | `ToolRow`, new folded form | Session view |
 | Context panel | [context-panel](context-panel.md) | New (`ContextPanel`) | Session view |
-| Status pill | [status-pill](status-pill.md) | New (`StatusPill`) | Live |
+| Status pill, status bar | [status-pill](status-pill.md), [status bar](status-pill.md#status-bar) | New (`StatusPill`) | Live |
 | Figure tile with sparkline | [figure-tile](figure-tile.md) | New (`FigureTile`), value by `Num` | Live |
 | Host band | [host-band](host-band.md) | New (`HostBand`) | Live |
 | Gauge | [fill bar, gauge](fill-bar.md#gauge) | `FillBar`, new gauge form | Live |
 | Worker slot | [worker-slot](worker-slot.md) | New (`WorkerSlot`) | Live |
 | Run strip | [time strip, run strip](time-strip.md#run-strip) | `TimeStrip`, new run strip form | Live |
 | Live row | [live-row](live-row.md) | New (`LiveRow`), stage by `StageChip` | Live |
-| Navigation rail | [nav-rail](nav-rail.md) | `NavRail` | Every page |
-| Shell header | [app-shell](../patterns/app-shell.md) | `AppShell` | Every page except wall mode |
+| Navigation rail, phone bottom bar | [nav-rail](nav-rail.md#board) | `NavRail`, bottom bar new | Every page |
+| Shell header | [app-shell](../patterns/app-shell.md#board) | `AppShell` | Every page except wall mode |
