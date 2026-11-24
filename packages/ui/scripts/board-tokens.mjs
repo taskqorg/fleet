@@ -27,7 +27,8 @@ export function boardDs(t = JSON.parse(readFileSync(new URL('../tokens.json', im
   L.push('ds:v1');
   L.push('// Fleet design tokens for the design board. GENERATED from packages/ui/tokens.json by');
   L.push('// packages/ui/scripts/board-tokens.mjs (pnpm run board:tokens); edit tokens.json, never this file.');
-  L.push('// Dark first: the owner works in the dark theme. Each colour is one Fleet token with its light and dark value.');
+  L.push('// Each colour is one Fleet token with its light and dark value. An unstamped frame resolves light;');
+  L.push('// board frames start with ds(, theme(dark)), since the owner works in the dark theme.');
   L.push('');
   L.push('modes {');
   L.push('  theme: [dark, light]');

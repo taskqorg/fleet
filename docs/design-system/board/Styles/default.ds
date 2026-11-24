@@ -1,7 +1,8 @@
 ds:v1
 // Fleet design tokens for the design board. GENERATED from packages/ui/tokens.json by
 // packages/ui/scripts/board-tokens.mjs (pnpm run board:tokens); edit tokens.json, never this file.
-// Dark first: the owner works in the dark theme. Each colour is one Fleet token with its light and dark value.
+// Each colour is one Fleet token with its light and dark value. An unstamped frame resolves light;
+// board frames start with ds(, theme(dark)), since the owner works in the dark theme.
 
 modes {
   theme: [dark, light]

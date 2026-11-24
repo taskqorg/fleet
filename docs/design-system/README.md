@@ -27,7 +27,7 @@ How a screen moves through the board:
 4. **Screens.** Draw the approved states on `screens/<page>.bl` in this board, in the same pull request as the page spec.
 5. **Build.** Build from `packages/ui` and the book (OR-13). Compare the app at 1440 and 390 px with the canvas, and run `pnpm run check:design`.
 
-Board drawings use Fleet's tokens through the board's style file ([tokens](tokens.md#design-board)): `$color.*` roles and `$fleet.*` colours, never bare colours. A control the board needs and `packages/ui` lacks is a change to the book first (process step 3 below).
+Board drawings use Fleet's tokens through the board's style file ([tokens](tokens.md#design-board)): `$color.*` roles and `$fleet.*` colours, never bare colours. The canvases drawn before the tokens were imported (`rules-v2`, `ia`, `screens/home`, `screens/live`) still hold bare colours copied from `tokens.json`; they move to tokens when next redrawn. A control the board needs and `packages/ui` lacks is a change to the book first (process step 3 below).
 
 ## Files
 
