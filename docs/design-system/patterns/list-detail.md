@@ -29,4 +29,4 @@ The work area scrolls as a whole. A conversation is the exception: its transcrip
 
 ## Board
 
-The top of the work area is the `Detail head` master on [blocks.bl](../board/blocks.bl), board *Sections*: Close icon ([OR-15](../owner-rules.md)), `project · code` in mono, the primary action and Share, then the title and the state line ([OR-39](../owner-rules.md)). The opened item fills the work area ([OR-27](../owner-rules.md)). Facets of the item sit under it in the [tab bar](../controls/tab-bar.md); stacked areas use the [detail section](../controls/detail-section.md#board).
+The top of the work area is the `Detail head` master on [blocks.bl](../board/blocks.bl), board *Sections*: Close icon ([OR-15](../owner-rules.md)), `project · code` in mono, the primary action (the board shows one button; the built head uses the [split button](../controls/split-button.md)) and Share, then the title and the state line ([OR-39](../owner-rules.md)). The opened item fills the work area ([OR-27](../owner-rules.md)). Facets of the item sit under it in the [tab bar](../controls/tab-bar.md); stacked areas use the [detail section](../controls/detail-section.md#board).

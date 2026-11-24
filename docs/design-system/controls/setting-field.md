@@ -20,4 +20,4 @@
 
 ## Board
 
-Master `Setting field` on [blocks.bl](../board/blocks.bl), board *Sections*, variants `applied`, `editing`, `pending` and `error`; the apply status uses the [state dot and word](state-badge.md#dot-and-word). Text names `label`, `value`, `help`.
+Master `Setting field` on [blocks.bl](../board/blocks.bl), board *Sections*, variants `applied`, `editing`, `pending` and `error`; the apply status takes the dot-and-word form with the tones of the setting family in the [state badge](state-badge.md) mapping (Applied, Pending, Apply error), not the session words. Text names `label`, `value`, `help`.
