@@ -510,3 +510,9 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question (owner):** start composing interface rules and blocks, and build the interface from those blocks.
 * **Choice:** Home, Live and the session view are composed of named blocks. Each block has one spec in `controls/` (a new file, or a section of the control it extends), and one component on the design board, [blocks.bl](board/blocks.bl), with every state as a variant. Screen canvases place instances of those components, so a block change reaches every screen. The block list maps each block to its `packages/ui` control or marks it new: [blocks of Home, Live and the session view](controls/README.md#blocks-of-home-live-and-the-session-view).
 * **Reason:** the same element looked different on different screens; one master per block keeps one look, and one spec per block keeps one source per rule.
+
+## 2026-11-25: Usability rules v2 and the product map
+
+* **Question (owner, through the orchestrator session):** the usability rules were written for the list-and-detail app; the conversation-first direction needs rules every screen and every block can be checked against, and the later end-to-end variant needs a map of what exists today.
+* **Choice:** every rule in [principles](principles.md) is one testable sentence with an id (`UR-<n>`) and its check, a browser step or a review. New sections cover glance, conversation as the main mode, details on demand, wayfinding, feedback, error prevention and recovery, consistency and phone. The rules link the owner rules and never restate them; owner rules win. The [product map](product-map.md) lists every capability and route with its target section, built state, prod state and operations.
+* **Reason:** a rule without a check is kept only by reading it, and the rebuild needs one list of what works and what does not.

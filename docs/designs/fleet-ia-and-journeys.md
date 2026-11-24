@@ -24,7 +24,7 @@ Tasks, results and delivery are reached from the session that does the work or f
 
 Drawn on the design board: [ia.bl](../design-system/board/ia.bl).
 
-Not built yet: the app still shows the earlier rail (Overview, Conversations, Projects, Tasks, Spend, Bots, Lab, Library, Infrastructure, and Humans for the owner); the map below says where each item goes.
+Not built yet: the app still shows the earlier rail (Overview, Conversations, Projects, Tasks, Spend, Bots, Lab, Library, Infrastructure, and Humans for the owner); the map below says where each item goes. The [product map](../design-system/product-map.md) lists every current route and capability with its target section, built state and prod state.
 
 ### Route consolidation map
 
@@ -39,14 +39,6 @@ Earlier rails had 15, then 9 sections. Legacy routes remain reachable as deep li
 | `Catalogue`, `Agents`, `Pipelines`, `Changes` | `Library` (`CatalogueTree` roots) | Drift shows where the object lives. |
 | `Hosts`, `Runners`, `API keys`, `Spend`, `Humans` | `System` | Runners data also feeds `Live`. |
 
----|---|---|
-| `Overview`, `Tasks`, `Conversations`, `Projects`, `Spend` | Unchanged (5 top-level sections) | `Projects` and `Tasks` absorb project-scoped results and delivery tabs. |
-| `Results` | Embedded inside `Tasks` and `Projects` + reachable via `Spotlight (⌘K)` | Unlinked raw artifacts do not justify a standalone top-level rail item. |
-| `Delivery` | Embedded inside `Projects` (Delivery tab), `Tasks` (`StageChip`), and `Overview` pulse | Keeps release pipeline visibility alongside the work that produced it. |
-| `Lab` | `Lab` (redesigned around Use-case suites, Leaderboard, and fast launcher) | `Use-case registry` promotes from a buried idle tab to the main navigator. |
-| `Catalogue`, `Agents`, `Pipelines` | Unified inside `Library` (`CatalogueTree` roots) | Methods, pipelines, agents and skills share one workflow and promotion target. |
-| `Changes` | Surfaced inside `Library` (repository/store sync banner) and `Infrastructure` (host/pin drift) | Drift is an operational signal where the object lives, not a separate destination. |
-| `Hosts`, `Runners`, `API keys` | Unified inside `Infrastructure` | Hosts, per-account probed model lists, connections/keys and CI runners live together. |
 
 ---
 
