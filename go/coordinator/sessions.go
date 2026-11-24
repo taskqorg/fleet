@@ -58,9 +58,10 @@ func (x sessionListDBRow) row() contract.SessionRow {
 const nowLineRunes = 160
 
 var (
-	nowLink   = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
-	nowMarker = regexp.MustCompile(`^(>\s*|[-*+]\s+|\d+[.)]\s+)+`)
-	nowEnd    = regexp.MustCompile(`[.!?…](\s|$)`)
+	nowLink    = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
+	nowMarker  = regexp.MustCompile(`^(>\s*|[-*+]\s+|\d+[.)]\s+)+`)
+	nowHeading = regexp.MustCompile(`^#{1,6}(\s|$)`)
+	nowEnd     = regexp.MustCompile(`[.!?…](\s|$)`)
 )
 
 // nowLine: what a session does now, in one line (docs/design-system/pages/home.md "Session card"): the first sentence
@@ -86,7 +87,7 @@ func firstSentence(markdown string) string {
 			fence = !fence
 			continue
 		}
-		if fence || t == "" || strings.HasPrefix(t, "#") || strings.Trim(t, "-*_=|: ") == "" { // headings, rules and table separators say no sentence
+		if fence || t == "" || nowHeading.MatchString(t) || strings.Trim(t, "-*_=|: ") == "" { // headings, rules and table separators say no sentence
 			continue
 		}
 		t = nowMarker.ReplaceAllString(t, "")

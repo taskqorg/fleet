@@ -16,6 +16,7 @@ func TestNowLine(t *testing.T) {
 		{"I'll **rebase** on `main` first. Then push.", "", "I'll rebase on main first."},
 		{"```go\nx := 1\n```\n\n## Plan\n- Read [the spec](https://x/y) and fix it", "", "Read the spec and fix it"},
 		{"PR #812 passed v1.2.3 checks! Merged.", "", "PR #812 passed v1.2.3 checks!"},
+		{"#812 merged. Next.", "", "#812 merged."},
 		{"---\n| a | b |\n|---|---|", "Fix the build", "| a | b |"},
 		{"", "  Fix   the build ", "Fix the build"},
 		{"", "", ""},
