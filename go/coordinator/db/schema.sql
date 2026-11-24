@@ -488,7 +488,8 @@ CREATE TABLE execution (
   "pipeline_revision" bigint,
   "step_id" text,
   "tombstoned_at" timestamp with time zone,
-  "system_actor" text
+  "system_actor" text,
+  "bot_id" text
 );
 CREATE TABLE execution_spend (
   "execution_id" text NOT NULL,
@@ -525,7 +526,8 @@ CREATE TABLE execution_spend (
   "cost_unpriced" bigint NOT NULL,
   "cost_price_refs" text,
   "payload" jsonb,
-  "tombstoned_at" timestamp with time zone
+  "tombstoned_at" timestamp with time zone,
+  "bot_id" text
 );
 CREATE TABLE execution_totals (
   "execution_id" text NOT NULL,

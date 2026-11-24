@@ -978,8 +978,8 @@ func rawJSON(b []byte) json.RawMessage {
 }
 
 // questionsList: projects keeps those projects only, exclude leaves those out ('-' is no project in both; OR-34).
-func questionsList(q *Request, taskID, state, kind string, projects, exclude []string, limit *int64) ([]contract.QuestionRow, error) {
-	return questionRows(q, db.TaskQuestionsParams{TaskID: strPtr(taskID), State: strPtr(state), Kind: strPtr(kind), Lim: limit}, projects, exclude)
+func questionsList(q *Request, taskID, botID, state, kind string, projects, exclude []string, limit *int64) ([]contract.QuestionRow, error) {
+	return questionRows(q, db.TaskQuestionsParams{TaskID: strPtr(taskID), BotID: strPtr(botID), State: strPtr(state), Kind: strPtr(kind), Lim: limit}, projects, exclude)
 }
 
 func questionRows(q *Request, p db.TaskQuestionsParams, projects, exclude []string) ([]contract.QuestionRow, error) {
@@ -1173,7 +1173,7 @@ func executionsPage(q *Request, f contract.ExecutionsListRequest) (contract.Exec
 		return empty, err
 	}
 	p := db.TaskExecutionsPageParams{TaskID: strPtr(f.TaskId), ProjectID: strPtr(f.ProjectId), ParentExecutionID: strPtr(f.ParentExecutionId), SessionID: strPtr(f.SessionId),
-		Problem: f.Problem != nil && *f.Problem, NeedsYou: f.NeedsYou != nil && *f.NeedsYou}
+		BotID: strPtr(f.BotId), Problem: f.Problem != nil && *f.Problem, NeedsYou: f.NeedsYou != nil && *f.NeedsYou}
 	if s := systemOf(f.System, deref(f.ParentExecutionId) != ""); s != nil {
 		p.System = string(*s)
 	}
@@ -1347,7 +1347,7 @@ func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
 	for _, x := range deps {
 		d.Dependencies = append(d.Dependencies, contract.TaskDependency{Id: x.ID, Kind: x.Kind, Code: x.Code})
 	}
-	d.Questions, err = questionsList(q, id, "", "", nil, nil, nil)
+	d.Questions, err = questionsList(q, id, "", "", "", nil, nil, nil)
 	if err != nil {
 		return none, err
 	}
@@ -1743,7 +1743,7 @@ func init() {
 		if r.Limit != nil && *r.Limit <= 0 {
 			return contract.QuestionsListReply{}, fail(400, "Expected positive integer limit")
 		}
-		qs, err := questionsList(q, deref(r.TaskId), deref(r.State), deref(r.Kind), r.ProjectIds, r.ExcludeProjectIds, r.Limit)
+		qs, err := questionsList(q, deref(r.TaskId), deref(r.BotId), deref(r.State), deref(r.Kind), r.ProjectIds, r.ExcludeProjectIds, r.Limit)
 		return contract.QuestionsListReply{Questions: qs}, err
 	})
 	// questions_withdraw: the owner (or full access) withdraws open questions that no longer need anyone, with one

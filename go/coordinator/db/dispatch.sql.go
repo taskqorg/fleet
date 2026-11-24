@@ -412,13 +412,14 @@ func (q *Queries) DispExecLock(ctx context.Context, id string) error {
 }
 
 const dispExecParent = `-- name: DispExecParent :one
-SELECT project_id,task_id,session_id,host_id,harness,directed_by,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision
+SELECT project_id,task_id,bot_id,session_id,host_id,harness,directed_by,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision
 FROM execution WHERE id=$1
 `
 
 type DispExecParentRow struct {
 	ProjectID        *string
 	TaskID           *string
+	BotID            *string
 	SessionID        *string
 	HostID           *string
 	Harness          *string
@@ -437,6 +438,7 @@ func (q *Queries) DispExecParent(ctx context.Context, id string) (DispExecParent
 	err := row.Scan(
 		&i.ProjectID,
 		&i.TaskID,
+		&i.BotID,
 		&i.SessionID,
 		&i.HostID,
 		&i.Harness,

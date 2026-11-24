@@ -906,6 +906,7 @@ type Execution struct {
 	StepID            *string
 	TombstonedAt      *time.Time
 	SystemActor       *string
+	BotID             *string
 }
 
 type ExecutionSpend struct {
@@ -944,6 +945,7 @@ type ExecutionSpend struct {
 	CostPriceRefs *string
 	Payload       []byte
 	TombstonedAt  *time.Time
+	BotID         *string
 }
 
 type ExecutionTotal struct {

@@ -4704,3 +4704,18 @@ CREATE TABLE bot_task (
 CREATE INDEX bot_task_task_id ON bot_task(task_id) WHERE tombstoned_at IS NULL;
 CREATE INDEX bot_task_project_seq ON bot_task(project_id, seq DESC);
 CREATE INDEX bot_task_run_idx ON bot_task(bot_run_id) WHERE bot_run_id IS NOT NULL AND tombstoned_at IS NULL;
+
+-- migration 96: direct and delegated bot attribution on executions and spend cache.
+ALTER TABLE execution ADD COLUMN bot_id text NULL REFERENCES bot(id) ON DELETE SET NULL;
+CREATE INDEX execution_bot ON execution(bot_id) WHERE bot_id IS NOT NULL;
+
+ALTER TABLE execution_spend ADD COLUMN bot_id text NULL;
+DROP INDEX IF EXISTS execution_spend_fast;
+CREATE INDEX execution_spend_fast ON execution_spend(started_at)
+ INCLUDE (execution_id, project_id, bot_id, system_actor, purpose, profile_id, model, host_id, failed_i, tokens_input, tin_sub_i, tin_est_i, tin_exp_i, tokens_output, tout_sub_i, tout_est_i, tout_exp_i, cost_currency, cost_basis, cost_value, cost_unpriced, cost_price_refs, tombstoned_at)
+ WHERE NOT stale AND payload IS NULL;
+
+SELECT set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+UPDATE execution e SET bot_id = br.bot_id FROM bot_run br WHERE br.execution_id = e.id AND e.bot_id IS NULL;
+UPDATE execution e SET bot_id = s.bot_id FROM session s WHERE s.id = e.session_id AND s.bot_id IS NOT NULL AND e.bot_id IS NULL;
+UPDATE execution_spend sp SET bot_id = e.bot_id FROM execution e WHERE e.id = sp.execution_id AND e.bot_id IS NOT NULL AND sp.bot_id IS NULL;

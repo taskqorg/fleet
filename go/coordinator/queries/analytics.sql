@@ -432,6 +432,7 @@ stale_leaves AS MATERIALIZED (
   e.kind::text AS kind,
   e.state::text AS state,
   e.project_id,
+  e.bot_id,
   CASE
    WHEN e.system_actor IS NOT NULL THEN 'system'
    WHEN e.experiment_id IS NOT NULL THEN 'lab'
@@ -508,6 +509,7 @@ stale_cost_items AS (
    WHEN 'category' THEN coalesce(nullif(p.profile_id, ''), '')
    WHEN 'model' THEN coalesce(nullif(p.model, ''), 'unknown')
    WHEN 'host' THEN coalesce(nullif(p.host_id, ''), 'unknown')
+   WHEN 'bot' THEN coalesce(nullif(p.bot_id, ''), 'unknown')
   END AS dim_key,
   p.purpose,
   coalesce(p.project_id, '') AS proj_key,
@@ -551,6 +553,7 @@ spend_items AS (
    WHEN 'category' THEN coalesce(nullif(s.profile_id, ''), '')
    WHEN 'model' THEN coalesce(nullif(s.model, ''), 'unknown')
    WHEN 'host' THEN coalesce(nullif(s.host_id, ''), 'unknown')
+   WHEN 'bot' THEN coalesce(nullif(s.bot_id, ''), 'unknown')
   END AS dim_key,
   s.purpose,
   coalesce(s.project_id, '') AS proj_key,
@@ -596,6 +599,7 @@ spend_items AS (
    WHEN 'category' THEN coalesce(nullif(s.profile_id, ''), '')
    WHEN 'model' THEN coalesce(nullif(s.model, ''), 'unknown')
    WHEN 'host' THEN coalesce(nullif(s.host_id, ''), 'unknown')
+   WHEN 'bot' THEN coalesce(nullif(s.bot_id, ''), 'unknown')
   END AS dim_key,
   s.purpose,
   coalesce(s.project_id, '') AS proj_key,
@@ -689,3 +693,9 @@ SELECT
  sum(unpriced)::bigint AS unpriced
 FROM spend_items
 GROUP BY 1, 2, 3, 4, 5, 6;
+
+-- name: AnalyticsBotNames :many
+SELECT b.id, s.name
+FROM bot b
+JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+WHERE b.tombstoned_at IS NULL;

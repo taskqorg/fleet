@@ -130,6 +130,10 @@ SELECT id,code,kind,project_id,task_id,execution_id,session_id,text,options,aske
 FROM question
 WHERE (sqlc.narg(id)::text IS NULL OR id = sqlc.narg(id))
  AND (sqlc.narg(task_id)::text IS NULL OR task_id = sqlc.narg(task_id))
+ AND (sqlc.narg(bot_id)::text IS NULL
+  OR session_id = (SELECT b.home_session_id FROM bot b WHERE b.id = sqlc.narg(bot_id) AND b.tombstoned_at IS NULL)
+  OR execution_id IN (SELECT e.id FROM execution e WHERE e.bot_id = sqlc.narg(bot_id))
+  OR task_id IN (SELECT bt.task_id FROM bot_task bt WHERE bt.bot_id = sqlc.narg(bot_id) AND bt.tombstoned_at IS NULL))
  AND (sqlc.narg(state)::text IS NULL OR state::text = sqlc.narg(state))
  AND (sqlc.narg(kind)::text IS NULL OR kind::text = sqlc.narg(kind))
  AND (sqlc.narg(projects)::text[] IS NULL OR project_id = ANY(sqlc.narg(projects)::text[]) OR (@projects_null::boolean AND project_id IS NULL))
@@ -159,6 +163,7 @@ WHERE (sqlc.narg(id)::text IS NULL OR id = sqlc.narg(id))
  AND (sqlc.narg(project_id)::text IS NULL OR project_id = sqlc.narg(project_id))
  AND (sqlc.narg(parent_execution_id)::text IS NULL OR parent_execution_id = sqlc.narg(parent_execution_id))
  AND (sqlc.narg(session_id)::text IS NULL OR session_id = sqlc.narg(session_id))
+ AND (sqlc.narg(bot_id)::text IS NULL OR bot_id = sqlc.narg(bot_id))
  AND (CASE @system::text WHEN 'include' THEN true WHEN 'only' THEN system_actor IS NOT NULL ELSE system_actor IS NULL END)
  AND (NOT @problem::boolean OR problem IS NOT NULL)
  -- Needs you: tool calls are per-call gateway records (a dead key asks its own question). A step shows through its run

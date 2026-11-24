@@ -691,10 +691,10 @@ const pipelineRunUpdate = `-- name: PipelineRunUpdate :exec
 UPDATE execution SET observation=$1::observation,project_id=$2,started_at=$3,ended_at=$4,
  data=$5::jsonb || CASE WHEN data ? 'projectAssessments' THEN jsonb_build_object('projectAssessments',data->'projectAssessments') ELSE '{}'::jsonb END,
  config_ref=CASE WHEN variant IS NULL THEN $6::jsonb ELSE config_ref END,experiment_id=coalesce(experiment_id,$7),variant=coalesce(variant,$8),
- task_id=coalesce(task_id,$9),session_id=coalesce(session_id,$10),directed_by=coalesce($11,directed_by),
- pipeline_id=coalesce($12,pipeline_id),pipeline_revision=coalesce($13,pipeline_revision),
- parent_execution_id=coalesce(parent_execution_id,$14)
-WHERE id=$15
+ task_id=coalesce(task_id,$9),bot_id=coalesce(bot_id,$10),session_id=coalesce(session_id,$11),directed_by=coalesce($12,directed_by),
+ pipeline_id=coalesce($13,pipeline_id),pipeline_revision=coalesce($14,pipeline_revision),
+ parent_execution_id=coalesce(parent_execution_id,$15)
+WHERE id=$16
 `
 
 type PipelineRunUpdateParams struct {
@@ -707,6 +707,7 @@ type PipelineRunUpdateParams struct {
 	ExperimentID      *string
 	Variant           *string
 	TaskID            *string
+	BotID             *string
 	SessionID         *string
 	DirectedBy        *string
 	PipelineID        *string
@@ -729,6 +730,7 @@ func (q *Queries) PipelineRunUpdate(ctx context.Context, arg PipelineRunUpdatePa
 		arg.ExperimentID,
 		arg.Variant,
 		arg.TaskID,
+		arg.BotID,
 		arg.SessionID,
 		arg.DirectedBy,
 		arg.PipelineID,

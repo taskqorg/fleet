@@ -10,9 +10,20 @@ import (
 	"time"
 )
 
+const executionBotID = `-- name: ExecutionBotID :one
+SELECT coalesce(bot_id, '')::text FROM execution WHERE id=$1
+`
+
+func (q *Queries) ExecutionBotID(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, executionBotID, id)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const executionByID = `-- name: ExecutionByID :one
 
-SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor FROM execution WHERE id=$1 AND kind IN ('agent_run','host_job')
+SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor, bot_id FROM execution WHERE id=$1 AND kind IN ('agent_run','host_job')
 `
 
 // Execution record reads, updates and leaf totals (executions.go).
@@ -56,6 +67,7 @@ func (q *Queries) ExecutionByID(ctx context.Context, id string) (Execution, erro
 		&i.StepID,
 		&i.TombstonedAt,
 		&i.SystemActor,
+		&i.BotID,
 	)
 	return i, err
 }
@@ -114,13 +126,13 @@ func (q *Queries) ExecutionEnded(ctx context.Context, id string) error {
 
 const executionInsert = `-- name: ExecutionInsert :one
 
-INSERT INTO execution(id,kind,state,observation,project_id,task_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,
+INSERT INTO execution(id,kind,state,observation,project_id,task_id,bot_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,
  harness,model,config_ref,started_at,ended_at,data,directed_by,profile_id,profile_revision,pipeline_id,pipeline_revision,step_id,request_id,system_actor,definitions)
-VALUES($1,$2,$3,coalesce($4::observation,'confirmed'),$5,$6,
- $7,$8,$9,$10,$11,$12,
- $13,$14,$15,$16,$17,coalesce($18::jsonb,'{}'),
- $19,$20,$21,$22,$23,$24,
- $25,$26,coalesce($27::jsonb,'[]'))
+VALUES($1,$2,$3,coalesce($4::observation,'confirmed'),$5,$6,$7,
+ $8,$9,$10,$11,$12,$13,
+ $14,$15,$16,$17,$18,coalesce($19::jsonb,'{}'),
+ $20,$21,$22,$23,$24,$25,
+ $26,$27,coalesce($28::jsonb,'[]'))
 ON CONFLICT DO NOTHING RETURNING id
 `
 
@@ -131,6 +143,7 @@ type ExecutionInsertParams struct {
 	Observation       *Observation
 	ProjectID         *string
 	TaskID            *string
+	BotID             *string
 	ExperimentID      *string
 	Variant           *string
 	ParentExecutionID *string
@@ -165,6 +178,7 @@ func (q *Queries) ExecutionInsert(ctx context.Context, arg ExecutionInsertParams
 		arg.Observation,
 		arg.ProjectID,
 		arg.TaskID,
+		arg.BotID,
 		arg.ExperimentID,
 		arg.Variant,
 		arg.ParentExecutionID,
@@ -317,19 +331,20 @@ func (q *Queries) ExecutionTaskOf(ctx context.Context, id string) (*string, erro
 }
 
 const executionUpdate = `-- name: ExecutionUpdate :exec
-UPDATE execution SET observation= $1, project_id= $2, task_id=coalesce(task_id, $3), experiment_id= $4,
- variant= $5, parent_execution_id= $6, session_id= $7, account_id= $8,
- host_id= $9, harness= $10, model= $11, config_ref= $12, started_at= $13, ended_at= $14,
- data= $15::jsonb || jsonb_strip_nulls(jsonb_build_object('traceparent',data->'traceparent','traceActor',data->'traceActor')),
- directed_by=coalesce($16,directed_by), profile_id=coalesce($17,profile_id), profile_revision=coalesce($18,profile_revision),
- pipeline_id=coalesce($19,pipeline_id), pipeline_revision=coalesce($20,pipeline_revision), step_id=coalesce($21,step_id)
- WHERE id= $22
+UPDATE execution SET observation= $1, project_id= $2, task_id=coalesce(task_id, $3), bot_id=coalesce(bot_id, $4), experiment_id= $5,
+ variant= $6, parent_execution_id= $7, session_id= $8, account_id= $9,
+ host_id= $10, harness= $11, model= $12, config_ref= $13, started_at= $14, ended_at= $15,
+ data= $16::jsonb || jsonb_strip_nulls(jsonb_build_object('traceparent',data->'traceparent','traceActor',data->'traceActor')),
+ directed_by=coalesce($17,directed_by), profile_id=coalesce($18,profile_id), profile_revision=coalesce($19,profile_revision),
+ pipeline_id=coalesce($20,pipeline_id), pipeline_revision=coalesce($21,pipeline_revision), step_id=coalesce($22,step_id)
+ WHERE id= $23
 `
 
 type ExecutionUpdateParams struct {
 	Observation       Observation
 	ProjectID         *string
 	TaskID            *string
+	BotID             *string
 	ExperimentID      *string
 	Variant           *string
 	ParentExecutionID *string
@@ -357,6 +372,7 @@ func (q *Queries) ExecutionUpdate(ctx context.Context, arg ExecutionUpdateParams
 		arg.Observation,
 		arg.ProjectID,
 		arg.TaskID,
+		arg.BotID,
 		arg.ExperimentID,
 		arg.Variant,
 		arg.ParentExecutionID,
@@ -381,7 +397,7 @@ func (q *Queries) ExecutionUpdate(ctx context.Context, arg ExecutionUpdateParams
 }
 
 const executions = `-- name: Executions :many
-SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor FROM execution
+SELECT id, kind, state, observation, last_seen_at, project_id, task_id, experiment_id, variant, parent_execution_id, session_id, account_id, host_id, environment_id, harness, harness_version, model, config_ref, problem, started_at, ended_at, updated_at, delegation, data, seq, request_id, directed_by, wait_reason, definitions, profile_id, profile_revision, pipeline_id, pipeline_revision, step_id, tombstoned_at, system_actor, bot_id FROM execution
 WHERE kind IN ('agent_run','host_job')
  AND ($1::text IS NULL OR session_id=$1::text)
 ORDER BY seq
@@ -433,6 +449,7 @@ func (q *Queries) Executions(ctx context.Context, sessionID *string) ([]Executio
 			&i.StepID,
 			&i.TombstonedAt,
 			&i.SystemActor,
+			&i.BotID,
 		); err != nil {
 			return nil, err
 		}
@@ -442,6 +459,28 @@ func (q *Queries) Executions(ctx context.Context, sessionID *string) ([]Executio
 		return nil, err
 	}
 	return items, nil
+}
+
+const sessionBotID = `-- name: SessionBotID :one
+SELECT coalesce(bot_id, '')::text FROM session WHERE id=$1
+`
+
+func (q *Queries) SessionBotID(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, sessionBotID, id)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const sessionLatestExecutionBotID = `-- name: SessionLatestExecutionBotID :one
+SELECT coalesce(bot_id, '')::text FROM execution WHERE session_id=$1 AND bot_id IS NOT NULL ORDER BY seq DESC LIMIT 1
+`
+
+func (q *Queries) SessionLatestExecutionBotID(ctx context.Context, sessionID *string) (string, error) {
+	row := q.db.QueryRow(ctx, sessionLatestExecutionBotID, sessionID)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const totalsConfirmedUsage = `-- name: TotalsConfirmedUsage :exec

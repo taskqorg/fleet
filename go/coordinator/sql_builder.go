@@ -335,6 +335,7 @@ var analyticsDimExpr = map[contract.AnalyticsDimension]string{
 	contract.AnalyticsDimensionPerson:           `l.person`,
 	contract.AnalyticsDimensionPurpose:          `l.purpose`,
 	contract.AnalyticsDimensionCategory:         `l.category`,
+	contract.AnalyticsDimensionBot:              `l.bot_id`,
 }
 
 // analyticsBaseLeavesSelect builds the column projection over `execution e` + `execution_totals t` + `conn_meta`,
@@ -366,6 +367,7 @@ func analyticsBaseLeavesSelect(needCategory, needCalls bool) string {
   e.project_id,
   e.task_id,
   e.session_id,
+  e.bot_id,
   e.parent_execution_id,
   e.pipeline_id,
   e.pipeline_revision,

@@ -43,6 +43,38 @@ func (q *Queries) AnalyticsAgentCategories(ctx context.Context) ([]AnalyticsAgen
 	return items, nil
 }
 
+const analyticsBotNames = `-- name: AnalyticsBotNames :many
+SELECT b.id, s.name
+FROM bot b
+JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
+WHERE b.tombstoned_at IS NULL
+`
+
+type AnalyticsBotNamesRow struct {
+	ID   string
+	Name string
+}
+
+func (q *Queries) AnalyticsBotNames(ctx context.Context) ([]AnalyticsBotNamesRow, error) {
+	rows, err := q.db.Query(ctx, analyticsBotNames)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AnalyticsBotNamesRow
+	for rows.Next() {
+		var i AnalyticsBotNamesRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const analyticsBoundaryLineage = `-- name: AnalyticsBoundaryLineage :one
 WITH scoped_leaves AS (
   SELECT 'boundary'::text AS scope, e.id AS scope_key, e.id AS leaf_id
@@ -633,6 +665,7 @@ stale_leaves AS MATERIALIZED (
   e.kind::text AS kind,
   e.state::text AS state,
   e.project_id,
+  e.bot_id,
   CASE
    WHEN e.system_actor IS NOT NULL THEN 'system'
    WHEN e.experiment_id IS NOT NULL THEN 'lab'
@@ -686,7 +719,7 @@ stale_leaves AS MATERIALIZED (
 ),
 stale_priced AS (
  SELECT
-  l.id, l.kind, l.state, l.project_id, l.purpose, l.profile_id, l.model, l.host_id, l.leaf_at, l.is_sub, l.tokens_input, l.tokens_input_basis, l.tokens_output, l.tokens_output_basis, l.tokens_cache_read, l.tokens_cache_write, l.connection_cost, l.conn_subject, l.conn_unit, l.direct_currency, l.direct_amount, l.conn_amount,
+  l.id, l.kind, l.state, l.project_id, l.bot_id, l.purpose, l.profile_id, l.model, l.host_id, l.leaf_at, l.is_sub, l.tokens_input, l.tokens_input_basis, l.tokens_output, l.tokens_output_basis, l.tokens_cache_read, l.tokens_cache_write, l.connection_cost, l.conn_subject, l.conn_unit, l.direct_currency, l.direct_amount, l.conn_amount,
   pi.id AS pi_id, pi.price AS pi_price, pi.currency AS pi_currency, pi.obs_ms AS pi_obs,
   po.id AS po_id, po.price AS po_price, po.currency AS po_currency, po.obs_ms AS po_obs,
   pcr.id AS pcr_id, pcr.price AS pcr_price, pcr.currency AS pcr_currency, pcr.obs_ms AS pcr_obs,
@@ -709,6 +742,7 @@ stale_cost_items AS (
    WHEN 'category' THEN coalesce(nullif(p.profile_id, ''), '')
    WHEN 'model' THEN coalesce(nullif(p.model, ''), 'unknown')
    WHEN 'host' THEN coalesce(nullif(p.host_id, ''), 'unknown')
+   WHEN 'bot' THEN coalesce(nullif(p.bot_id, ''), 'unknown')
   END AS dim_key,
   p.purpose,
   coalesce(p.project_id, '') AS proj_key,
@@ -752,6 +786,7 @@ spend_items AS (
    WHEN 'category' THEN coalesce(nullif(s.profile_id, ''), '')
    WHEN 'model' THEN coalesce(nullif(s.model, ''), 'unknown')
    WHEN 'host' THEN coalesce(nullif(s.host_id, ''), 'unknown')
+   WHEN 'bot' THEN coalesce(nullif(s.bot_id, ''), 'unknown')
   END AS dim_key,
   s.purpose,
   coalesce(s.project_id, '') AS proj_key,
@@ -797,6 +832,7 @@ spend_items AS (
    WHEN 'category' THEN coalesce(nullif(s.profile_id, ''), '')
    WHEN 'model' THEN coalesce(nullif(s.model, ''), 'unknown')
    WHEN 'host' THEN coalesce(nullif(s.host_id, ''), 'unknown')
+   WHEN 'bot' THEN coalesce(nullif(s.bot_id, ''), 'unknown')
   END AS dim_key,
   s.purpose,
   coalesce(s.project_id, '') AS proj_key,

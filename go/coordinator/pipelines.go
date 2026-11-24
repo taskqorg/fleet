@@ -428,17 +428,22 @@ func (run *runRecord) put(q *Request) error {
 	}
 	project, dir, taskID, sessID := agentOpt(run.project()), agentOpt(run.director()), agentOpt(firstString(run.DeliveryID, run.TaskID)), agentOpt(run.SessionID)
 	pid, prev := strPtr(pipeID), nullInt(pipeRev)
+	botID, err := executionBotAttr(q, run.ParentExecutionID, run.SessionID)
+	if err != nil {
+		return err
+	}
+	botPtr := strPtr(botID)
 	o := db.Observation(obs)
 	inserted, err := executionInsert(q, db.ExecutionInsertParams{ID: run.ID, Kind: "pipeline_run", State: db.ExecutionState(state), Observation: &o, ProjectID: project,
 		StartedAt: msColumn(run.StartedAt), EndedAt: msColumn(run.FinishedAt), Data: jsonBytes(rest), ConfigRef: jsonBytes(cfg), ExperimentID: agentOpt(run.ExperimentID),
-		Variant: agentOpt(run.Variant), TaskID: taskID, SessionID: sessID, DirectedBy: dir, PipelineID: pid, PipelineRevision: prev, ParentExecutionID: agentOpt(run.ParentExecutionID)})
+		Variant: agentOpt(run.Variant), TaskID: taskID, BotID: botPtr, SessionID: sessID, DirectedBy: dir, PipelineID: pid, PipelineRevision: prev, ParentExecutionID: agentOpt(run.ParentExecutionID)})
 	if err != nil {
 		return err
 	}
 	if !inserted {
 		if err := q.db().PipelineRunUpdate(q.ctx(), db.PipelineRunUpdateParams{ID: run.ID, Observation: o, ProjectID: project,
 			StartedAt: msColumn(run.StartedAt), EndedAt: msColumn(run.FinishedAt), Data: jsonBytes(rest), ConfigRef: jsonBytes(cfg), ExperimentID: agentOpt(run.ExperimentID),
-			Variant: agentOpt(run.Variant), TaskID: taskID, SessionID: sessID, DirectedBy: dir, PipelineID: pid, PipelineRevision: prev,
+			Variant: agentOpt(run.Variant), TaskID: taskID, BotID: botPtr, SessionID: sessID, DirectedBy: dir, PipelineID: pid, PipelineRevision: prev,
 			ParentExecutionID: agentOpt(run.ParentExecutionID)}); err != nil {
 			return err
 		}
@@ -486,7 +491,7 @@ func (run *runRecord) put(q *Request) error {
 		row := run.row(i)
 		so := db.Observation(sobs)
 		inserted, err := executionInsert(q, db.ExecutionInsertParams{ID: row, Kind: "pipeline_step", State: db.ExecutionState(st), Observation: &so, ProjectID: project,
-			ParentExecutionID: &run.ID, StartedAt: msColumn(s.StartedAt), EndedAt: endedAt, Data: data, TaskID: taskID, SessionID: sessID, DirectedBy: dir, PipelineID: pid,
+			ParentExecutionID: &run.ID, StartedAt: msColumn(s.StartedAt), EndedAt: endedAt, Data: data, TaskID: taskID, BotID: botPtr, SessionID: sessID, DirectedBy: dir, PipelineID: pid,
 			PipelineRevision: prev, StepID: agentOpt(s.ID), ExperimentID: agentOpt(run.ExperimentID), Variant: agentOpt(run.Variant)})
 		if err != nil {
 			return err

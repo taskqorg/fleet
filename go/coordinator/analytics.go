@@ -443,6 +443,7 @@ func analyticsQuery(q *Request, r *contract.AnalyticsQueryRequest) (contract.Ana
 			{contract.AnalyticsDimensionVariant, f.Variant}, {contract.AnalyticsDimensionState, f.State},
 			{contract.AnalyticsDimensionOutcome, f.Outcome}, {contract.AnalyticsDimensionPerson, f.Person},
 			{contract.AnalyticsDimensionPurpose, f.Purpose}, {contract.AnalyticsDimensionCategory, f.Category},
+			{contract.AnalyticsDimensionBot, f.Bot},
 		}
 	}
 	needHidden := q.person != nil && !fullAccess(q.person)
@@ -1214,6 +1215,8 @@ func spendDimension(by contract.SpendGroupBy) (contract.AnalyticsDimension, erro
 		return contract.AnalyticsDimensionModel, nil
 	case contract.SpendGroupByHost:
 		return contract.AnalyticsDimensionHost, nil
+	case contract.SpendGroupByBot:
+		return contract.AnalyticsDimensionBot, nil
 	}
 	return "", fail(400, "Unknown spend group by: "+string(by))
 }
@@ -1614,10 +1617,29 @@ func spendSummary(q *Request, r *contract.SpendSummaryRequest) (contract.SpendSu
 		}
 	}
 
+	rows := spendRowsFromAcc(byDim, totalUsd)
+	if r.By == contract.SpendGroupByBot && len(rows) > 0 {
+		botRows, err := q.db().AnalyticsBotNames(q.ctx())
+		if err != nil {
+			return out, err
+		}
+		botNames := make(map[string]string, len(botRows))
+		for _, b := range botRows {
+			if b.Name != "" {
+				botNames[b.ID] = b.Name
+			}
+		}
+		for i := range rows {
+			if name := botNames[rows[i].Key]; name != "" {
+				rows[i].Label = name
+			}
+		}
+	}
+
 	out = contract.SpendSummaryReply{
 		By:        r.By,
 		Totals:    totals,
-		Rows:      spendRowsFromAcc(byDim, totalUsd),
+		Rows:      rows,
 		ByPurpose: spendRowsFromAcc(byPurposeAcc, totalUsd),
 		Bought:    bought,
 		Hidden:    hiddenCnt,
