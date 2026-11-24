@@ -38,7 +38,7 @@ export async function checkShellHeader(browser: Browser, origin: string, seed: R
   try {
     await call('person_settings_set', { focus: [], ignored: [] });
     await p.goto(origin + '/tasks'); await row('Alpha').waitFor();
-    assert.equal((await head.locator('h1').textContent())?.trim(), 'Tasks', 'the header shows the section title');
+    assert.equal((await head.locator('h1').textContent())?.trim(), 'Projects', 'the header shows the section that owns Tasks (OR-57)');
     assert.equal(await p.locator('.shell-main h1').count(), 0, 'the column has no heading of its own');
     // Search is the header icon (OR-31): it opens Spotlight, Escape closes it.
     const dialog = p.getByRole('dialog', { name: 'Search' });
