@@ -200,6 +200,25 @@ HAL0 uses Fleet questions for genuine owner decisions and continues or creates a
 
 Qualify those cases in isolation before any bounded live pilot and coordinate that pilot with the existing queue operator.
 
+##### Fleet project monitoring
+
+- **HAL0-MON-1.** Use a Fleet-scoped Needs you automation for new questions and execution problems, and a separate daily reconciliation in an explicit IANA time zone.
+  Coordinate ownership and the daily slot with the queue operator and keep the provider pricing automation independent.
+  Reconciliation covers active, waiting and stalled tasks, their executions, ordinary task progress, and missed signals since the last confirmed reconciliation. Retain the checked interval and any uncovered range.
+  Before acting, reread the task and current execution. Preserve active runs, explicit holds and dependencies.
+- **HAL0-MON-2.** Read both `telemetry_summary` and `telemetry_findings` under the [telemetry rules and freshness contract](docs/designs/fleet-telemetry.md#6-rules).
+  Use Fleet's cause and group keys and open `telemetry_trace` when it can resolve the diagnosis. A fresh empty finding set is a quiet observation.
+  Record stale, unavailable or incomplete results, unconfirmed executions, and missing usage or cost coverage as unknown with a reason.
+  Match each cause to its existing Fleet event, question or task before any write. Repeated signals, restarts and HAL0's own events must preserve that identity.
+- **HAL0-MON-3.** Answer a technical question through Fleet when an approved requirement resolves it. For a confirmed technical cause, continue the matching authorized task if eligible, or create one linked task and verify the fix on the affected surface.
+  Use the existing question for a pending owner decision or ask once through Fleet with context, evidence links, options and a recommendation. Link the task when one exists.
+  Record quiet passes in Runs. Close or dismiss a resolved, obsolete or duplicate entry only with confirmed evidence and Fleet's [audit trail](docs/designs/fleet-system-management.md#audit-journal).
+
+Isolated qualification covers task progress and stalls, new and repeated Needs you, common-cause findings, fresh empty and stale or unavailable telemetry, an owner decision routed to a test recipient, a technical answer, replay and restart, and preservation of an active run and an explicit hold.
+
+In the coordinated live pilot, read back both automation revisions and the next scheduled slot.
+Observe the scheduled reconciliation and an event-triggered run through terminal execution evidence. Retain their results, links to any affected tasks and questions, and the relevant audit entries.
+
 ### Environments
 
 An environment provides:
