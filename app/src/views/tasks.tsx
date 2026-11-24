@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 // Tasks list and detail (docs/design-system/pages/tasks.md). Server-ordered list with views, state counters, grouping and
 // search (list-view pattern, list-page.tsx); the detail shows outcome, totals, open decisions and the execution tree.
 import { useEffect, useState } from 'preact/hooks';
@@ -16,7 +17,7 @@ import { usePins, prefs, setFocus } from '../prefs.ts';
 import { useListPage, ListPagePanel, type ListPage } from '../list-page.tsx';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { describeTaskFacts, isUnconfirmedActiveTask, parseMs as ms, TERMINAL_TASK_STATES as TERMINAL } from '../task-facts.ts';
-import { ScopedRollupBar, buildExecTree } from './resources.tsx';
+import { RowSpend, useRowSpend, ScopedRollupBar, buildExecTree } from './resources.tsx';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
 import { TaskQuestionContext } from './task-question-context.tsx';
 
@@ -45,6 +46,7 @@ export function Tasks({ id }: { id?: string }) {
     closedGroups: { state: ['7', '8'] }, groupsContext: v => v.state?.length && v.state.every(s => s === 'completed' || s === 'cancelled') ? 'done' : undefined,
   });
   const { view, set, list, chosen, off, rowsGroup, confirm } = page;
+  const spend = useRowSpend('tasks', page.displayed);
   const canPause = (t: TaskRow) => !TERMINAL.includes(t.state as (typeof TERMINAL)[number]) && t.state !== 'paused', canResume = (t: TaskRow) => t.state === 'paused';
   const bulk = (action: 'pause' | 'resume' | 'cancel', ts: TaskRow[]) => page.bulk(ts, t => op('task_update', { taskId: t.id, action }), `did not ${action}`);
   useTick(30_000);
@@ -74,7 +76,8 @@ export function Tasks({ id }: { id?: string }) {
           unconfirmed={unconfirmed} lastSeen={unconfirmed ? (ms(t.activeLastSeenAt) ?? undefined) : undefined} compact />;
       }}
       before={t => rowsGroup !== 'priority' && <PriorityChip p={t.priority} />}
-      facts={t => <TaskFacts t={t} now={now} />} />
+      facts={t => <TaskFacts t={t} now={now} spend={<RowSpend cost={spend.cost.get(t.id)} stale={!!spend.error} name={t.code ?? t.title} href={page.href({ focus: t.id })}
+        open={extend => page.selecting || extend ? page.select(t) : set({ focus: t.id })} />} />} />
   </>;
   return <ListDetail list={listPane} detail={id ? <TaskDetail id={id} onClose={() => set({ focus: undefined })} /> : undefined} idle={<TasksSummary page={page} filtered={filtered} focused={focused} />} detailKey={id} />;
 }
@@ -137,8 +140,8 @@ function TasksSummary({ page, filtered, focused }: { page: ListPage<TaskRow>; fi
   );
 }
 
-/** Row facts of a task (OR-37): open questions, delivery stage, active execution state/duration, task age, executions from two, time in state, active harness. */
-function TaskFacts({ t, now }: { t: TaskRow; now: number }) {
+/** Row facts of a task (OR-37): open questions, delivery stage, active execution state/duration, task age, executions from two, time in state, active harness, cumulative spend. */
+function TaskFacts({ t, now, spend }: { t: TaskRow; now: number; spend: ComponentChildren }) {
   const f = describeTaskFacts(t, now);
   const label = states_.task[t.pauseReason === 'held' ? 'held' : t.state].label;
   return <RowFacts>
@@ -169,6 +172,7 @@ function TaskFacts({ t, now }: { t: TaskRow; now: number }) {
     {f.executions > 1 && <Fact icon={actions.runs} text={String(f.executions)} tip={`${f.executions} executions`} />}
     {f.stateAgeAt !== null && <Fact tip={`${label} for`}><AgeChip t={f.stateAgeAt} /></Fact>}
     {f.runningHarness && <HarnessMark h={f.runningHarness} />}
+    {spend}
   </RowFacts>;
 }
 

@@ -437,4 +437,30 @@ func TestSpendSummaryInvariant(t *testing.T) {
 		t.Fatal("expected backdated price_entry to mark execution_spend rows stale")
 	}
 	checkParity("after-backdated-price", nil, nil)
+	// Requirement: fleet.md list_spend matches canonical projectResources across stale execution_spend rows and enforces project RLS.
+	// Risk: stale cached spend rows or RLS bypass returns drifted or unauthorized list spend.
+	if err := e.app.store.Read(ctx, &Request{person: &member, r: httptest.NewRequest("POST", "/", nil)}, func(q *Request) error {
+		got, err := listSpend(q, &contract.ListSpendRequest{Kind: contract.ListSpendKindProjects, RowIds: []string{"p1", "p2", "p1"}})
+		if err != nil {
+			return err
+		}
+		if _, ok := got.Rows["p2"]; ok {
+			t.Fatalf("restricted member saw unauthorized project p2 in listSpend")
+		}
+		p1Res, err := projectResources(q, "p1")
+		if err != nil {
+			return err
+		}
+		gotJSON, _ := json.Marshal(got.Rows["p1"])
+		for i := range p1Res.Cost {
+			p1Res.Cost[i].Prices = nil
+		}
+		wantJSON, _ := json.Marshal(p1Res.Cost)
+		if string(gotJSON) != string(wantJSON) {
+			t.Fatalf("listSpend(p1) = %s, want %s", gotJSON, wantJSON)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }

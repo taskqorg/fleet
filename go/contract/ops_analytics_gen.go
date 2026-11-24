@@ -237,6 +237,55 @@ func (v *AnalyticsWindow) Validate() error {
 	return nil
 }
 
+type ListSpendKind string
+
+const (
+	ListSpendKindTasks    ListSpendKind = "tasks"
+	ListSpendKindSessions ListSpendKind = "sessions"
+	ListSpendKindProjects ListSpendKind = "projects"
+)
+
+// ListSpendKindValues lists every ListSpendKind in schema order.
+var ListSpendKindValues = []ListSpendKind{ListSpendKindTasks, ListSpendKindSessions, ListSpendKindProjects}
+
+// Valid: v is one of the schema's values.
+func (v ListSpendKind) Valid() bool {
+	for _, x := range ListSpendKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ListSpendReply struct {
+	Rows map[string][]CostFigure `json:"rows"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ListSpendReply) Validate() error {
+	if v.Rows == nil {
+		return Missing("rows")
+	}
+	return nil
+}
+
+type ListSpendRequest struct {
+	Kind   ListSpendKind `json:"kind"`
+	RowIds []string      `json:"rowIds"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ListSpendRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if v.RowIds == nil {
+		return Missing("rowIds")
+	}
+	return nil
+}
+
 type SpendBought struct {
 	ByProject        []SpendBoughtProject `json:"byProject"`
 	CompletedTasks   int64                `json:"completedTasks"`
@@ -411,6 +460,7 @@ func (v *SpendSummaryRequest) Validate() error {
 func init() {
 	for n, o := range map[string]Operation{
 		"analytics_query": {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:focus", Description: "Aggregate usage and outcome analytics: window, dimensions, measures, filters, optional projectId and system rows", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"dimensions\":{\"items\":{\"enum\":[\"day\",\"hour\",\"week\",\"project\",\"kind\",\"parent\",\"pipeline\",\"pipeline_revision\",\"step\",\"profile_id\",\"profile_revision\",\"harness\",\"model\",\"provider\",\"account\",\"host\",\"connection\",\"experiment\",\"variant\",\"state\",\"outcome\",\"person\",\"purpose\",\"category\"],\"type\":\"string\"},\"type\":\"array\"},\"filters\":{\"additionalProperties\":false,\"properties\":{\"account\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"category\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"connection\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"experiment\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"harness\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"host\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"kind\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"model\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"outcome\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"parent\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"person\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"pipeline\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"pipeline_revision\":{\"items\":{},\"type\":\"array\"},\"profile_id\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"profile_revision\":{\"items\":{},\"type\":\"array\"},\"project\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"provider\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"purpose\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"step\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"variant\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"measures\":{\"items\":{\"enum\":[\"executions\",\"count\",\"failed\",\"tokens_input\",\"tokens_output\",\"tokens_cache_read\",\"tokens_cache_write\",\"tokens_reasoning\",\"wall_ms\",\"wall_ms_p50\",\"wall_ms_p95\",\"active_ms\",\"api_ms\",\"cpu_ms\",\"peak_memory_bytes\",\"calls\",\"credits\",\"cost\"],\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"system\":{\"$comment\":\"Fleet's own background calls (execution systemActor set, such as the coordinator's GitHub and Bugsink reads): exclude leaves them out, include adds them, only keeps them alone. Unset is exclude, or include when the request names a parent (executions_list parentExecutionId, analytics_query filters.parent); a connection's full usage is system include (docs/designs/fleet-analytics.md, System activity).\",\"enum\":[\"exclude\",\"include\",\"only\"],\"type\":\"string\"},\"window\":{\"$comment\":\"Required [from, to) bounds: epoch milliseconds (integer) or RFC 3339 / YYYY-MM-DD strings.\",\"additionalProperties\":false,\"properties\":{\"from\":{},\"to\":{}},\"required\":[\"from\",\"to\"],\"type\":\"object\"}},\"required\":[\"window\"],\"type\":\"object\"}")},
+		"list_spend":      {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "no", Description: "Cumulative visible spend for a batch of task, conversation or project list rows", Changes: []string{"execution", "task", "session", "definition", "api-connection"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"tasks\",\"sessions\",\"projects\"],\"type\":\"string\"},\"rowIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"kind\",\"rowIds\"],\"type\":\"object\"}")},
 		"spend_summary":   {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:focus", Description: "Spend breakdown for a window (by purpose, project, category, profile, model, or host) and what it bought (completed tasks, conversation runs, per-project cost per task)", Changes: []string{"execution", "task"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"by\":{\"enum\":[\"purpose\",\"project\",\"category\",\"profile\",\"model\",\"host\"],\"type\":\"string\"},\"excludeProjectIds\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); '-' is no project (an empty id or null is a 400); applied after projectIds, so a project in both is left out.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"$comment\":\"keep rows of these projects only (the app passes the person's focus, OR-34); '-' is no project\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"system\":{\"$comment\":\"Fleet's own background calls (execution systemActor set, such as the coordinator's GitHub and Bugsink reads): exclude leaves them out, include adds them, only keeps them alone. Unset is exclude, or include when the request names a parent (executions_list parentExecutionId, analytics_query filters.parent); a connection's full usage is system include (docs/designs/fleet-analytics.md, System activity).\",\"enum\":[\"exclude\",\"include\",\"only\"],\"type\":\"string\"},\"window\":{\"$comment\":\"Required [from, to) bounds: epoch milliseconds (integer) or RFC 3339 / YYYY-MM-DD strings.\",\"additionalProperties\":false,\"properties\":{\"from\":{},\"to\":{}},\"required\":[\"from\",\"to\"],\"type\":\"object\"}},\"required\":[\"window\",\"by\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)

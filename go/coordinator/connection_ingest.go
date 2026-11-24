@@ -25,7 +25,7 @@ var ingestMu sync.Mutex
 // unrecorded line runs in its own transaction locked only by "usageKey:" + key (or NOLOCK when no usageKey), never
 // acquiring GLOBAL. A past day's file is deleted once its lines are committed; a file with a line that could not be
 // imported is kept.
-func connIngestPass(ctx context.Context, a *App) (int, error) {
+func connIngestPass(ctx context.Context, a *App) (added int, err error) {
 	if gatewayDir() == "" {
 		return 0, nil
 	}
@@ -36,7 +36,17 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 	if err != nil {
 		return 0, nil
 	}
-	added := 0
+	// A spool pass publishes one change per scope. Tool rows themselves remain silent.
+	var changed []string
+	defer func() {
+		if len(changed) == 0 {
+			return
+		}
+		publishErr := a.store.Write(ctx, nil, nil, func(q *Request) error {
+			return q.db().ListSpendWakeGateway(q.ctx(), changed)
+		})
+		err = errors.Join(err, publishErr)
+	}()
 	yesterday := time.Now().Add(-24 * time.Hour).UTC().Format("2006-01-02")
 	names := []string{}
 	for _, e := range entries {
@@ -107,6 +117,7 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 				if err := a.store.Write(ctx, nil, nil, func(q *Request) error { return connComplete(q, l) }); err != nil {
 					return added, err
 				}
+				changed = append(changed, "call:"+l.CallId)
 				continue
 			}
 			if recorded {
@@ -132,6 +143,7 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 			}
 			if ok {
 				added++
+				changed = append(changed, "call:"+l.CallId)
 			}
 		}
 		if past && unimported > 0 {

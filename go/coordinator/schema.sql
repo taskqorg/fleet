@@ -4593,3 +4593,7 @@ WHERE e.execution_id = x.id
 
 -- migration 91: conversation status can seek directly to the last agent run past any number of later tool calls.
 CREATE INDEX execution_session_agent_run ON execution(session_id, seq DESC) WHERE kind = 'agent_run';
+
+-- migration 92: scoped list spend and detail rollups walk indexed delegation links.
+CREATE INDEX execution_delegation_parent_execution ON execution ((delegation->>'parentExecutionId')) WHERE delegation IS NOT NULL;
+CREATE INDEX execution_delegation_parent_session ON execution ((delegation->>'parentSessionId')) WHERE delegation IS NOT NULL;
