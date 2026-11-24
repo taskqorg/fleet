@@ -1,23 +1,27 @@
-// Unified Library screen (docs/designs/fleet-ia-and-journeys.md, docs/design-system/pages/agents.md):
-// one 4-root CatalogueTree (Methods, Pipelines, Agents, Skills) in the control column, Library summary + drift banner
-// when idle, and DefinitionDetail / SkillDetail / Changes in the work area.
+// Library section (docs/design-system/pages/library.md): one CatalogueTree with the roots Methods, Pipelines, Agents,
+// Bots, Skills and Changes in the control column; what waits first when idle; a definition, skill, bot or Changes in the
+// work area. Library speaks its target routes (/library/<root>/<id>, routes.ts).
 import { createMemo, createSignal, For, Match, Show, Switch } from 'solid-js';
+import type { JSX } from '@solidjs/web';
 import { useLocation } from '../router.ts';
 import {
-  Button, CatalogueTree, Choice, ContextMenu, DetailSection, Empty, EntityCode, ErrorBanner, HarnessMark, Icon, KvRow,
-  ListDetail, Num, OfflineMarker, ProblemRow, SearchField, ShellActions, ShellStatus, Skeleton, StateBadge, Totals,
+  Ago, Button, CatalogueTree, Choice, ContextMenu, DetailSection, Empty, EntityCode, ErrorBanner, FigureTile, HarnessMark,
+  KvRow, ListDetail, OfflineMarker, ProblemRow, SearchField, ShellActions, ShellStatus, Skeleton, StateBadge,
   actions, copyText, harnesses, matchSearch,
-  type CatalogueTreeNode, type Harness, type IconName, type StateOf, type TotalItem,
+  type CatalogueTreeNode, type Harness, type IconName, type StateOf,
 } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { closedGroups, flipGroup } from '../lists.ts';
-import { listGroups, setListGroups, usePins } from '../prefs.ts';
+import { listGroups, prefs, prefsRead, scopeIds, setListGroups, usePins } from '../prefs.ts';
 import { useOp } from '../store.ts';
+import { parseMs as ms } from '../task-facts.ts';
 import { Changes } from './changes.tsx';
+import { BotCreateForm, BotDetail, botPath } from './bots.tsx';
 import { DefinitionDetail, baseAgentDefaults } from './definitions.tsx';
 import type { DefinitionKey, DefinitionListItem, SkillSummary } from '../../../contracts/generated/ops.ts';
+import type { BotListItem } from '../../../contracts/generated/ops-bots.ts';
 
-export type LibrarySection = 'agents' | 'pipelines' | 'catalogue' | 'changes';
+export type LibrarySection = 'idle' | 'agents' | 'pipelines' | 'methods' | 'bots' | 'skills' | 'changes';
 type AgentRoleGroup = 'core' | 'research-design' | 'assets-3d' | 'other' | 'lab-variants';
 
 const LIBRARY_PINS = 'library';
@@ -106,8 +110,23 @@ const rawNodeId = (nodeId: string): string => {
   return idx >= 0 ? nodeId.slice(idx + 1) : nodeId;
 };
 
-export function Agents(props: { section?: LibrarySection; id?: string }) {
-  const section = () => props.section ?? 'agents';
+const ROOT_BOTS_ID = 'root:bots';
+const CHANGES_ID = 'changes';
+
+/** A bot in the one state vocabulary (OR-55): paused is Stopped, an active run Working, a failed last run Failed. */
+const botLife = (b: BotListItem): StateOf<'life'> =>
+  b.paused ? 'stopped' : b.activeRunId ? 'working' : b.lastRunState === 'failed' ? 'failed' : 'asleep';
+
+/** A definition leaf's state: a newer repository version waits first, then the draft, then its own state. */
+const leafState = (d: DefinitionListItem, own: StateOf<'definition'>): StateOf<'definition'> =>
+  d.state === 'repository-changed' ? 'repository' : d.draft ? 'draft' : own;
+
+const runsRight = (runs: number) => runs > 0 ? <span class="mono muted" data-tip="Runs in 30 days">{runs}</span> : undefined;
+
+const plural = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+
+export function Library(props: { section?: LibrarySection; id?: string }) {
+  const section = () => props.section ?? 'idle';
   const [, go] = useLocation();
   const [q, setQ] = createSignal('');
   const [busy, setBusy] = createSignal(false);
@@ -122,12 +141,22 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
   const pipelinesOp = useOp('definition_list', { kind: 'pipeline' });
   const catalogueOp = useOp('definition_list', { kind: 'catalogue' });
   const skillsOp = useOp('skills_list', {});
-  const changesOp = useOp('system_changes', {});
+  const botsOp = useOp('bot_list', () => (prefsRead.value ? scopeIds() : null));
+  const projectsOp = useOp('project_list', {});
+  // Host observations touch system_changes every few seconds; reread it at most every 30 s (FLT-38).
+  const changesOp = useOp('system_changes', {}, { quiet: 30_000 });
 
   const agentItems = createMemo(() => agentsOp.data?.items ?? []);
   const pipelineItems = createMemo(() => pipelinesOp.data?.items ?? []);
   const catalogueItems = createMemo(() => catalogueOp.data?.items ?? []);
   const skillItems = createMemo(() => skillsOp.data?.skills ?? []);
+  const botItems = createMemo(() => botsOp.data?.bots ?? []);
+  const projectNodes = createMemo(() => {
+    const ignored = prefs.value.ignored;
+    return (projectsOp.data?.projects ?? []).filter(p => !ignored.includes(String(p.id)))
+      .map(p => ({ id: String(p.id), label: String(p.name ?? p.id), icon: 'folder-open' as const }));
+  });
+  const projectNames = createMemo(() => new Map(projectNodes().map(p => [p.id, p.label])));
 
   const categories = createMemo(
     () => [...new Set(agentItems().map(a => a.agent?.category).filter((x): x is string => !!x))].sort(),
@@ -135,65 +164,66 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
   const agentById = createMemo(() => new Map(agentItems().map(a => [a.id, a])));
   const baselineAgent = createMemo(() => agentById().get('baseline')?.agent);
 
-  const isSkillRoute = createMemo(() => section() === 'agents' && !!props.id && props.id.startsWith('skill:'));
-  const skillId = createMemo(() => (isSkillRoute() ? props.id!.slice('skill:'.length) : undefined));
+  // A bot opens by its D17 code (B-FLT-1), its id or its unique name; a code the list does not hold resolves on the server.
+  const botFromList = createMemo(() => {
+    const id = section() === 'bots' && props.id && props.id !== 'new' ? props.id : null;
+    if (!id) return null;
+    const low = id.toLowerCase();
+    return botItems().find(b => b.code?.toLowerCase() === low || b.id === id || b.name === id) ?? null;
+  });
+  const resolvedCode = useOp('entity_resolve', () => {
+    const id = section() === 'bots' ? props.id : undefined;
+    return id && /^B-/i.test(id) && botsOp.data && !botFromList() ? { code: id } : null;
+  });
+  const botId = createMemo(() => botFromList()?.id ?? resolvedCode.data?.id ?? (props.id && !/^B-/i.test(props.id) ? props.id : null));
+  const chosenBot = useOp('bot_get', () => (section() === 'bots' && props.id !== 'new' && botId() ? { botId: botId()! } : null));
+
   const selectedTreeId = createMemo(() => {
-    const sec = section(), id = props.id, sid = skillId();
-    return sec === 'catalogue' && id
-      ? `catalogue:${id}`
-      : sec === 'pipelines' && id
-        ? `pipeline:${id}`
-        : isSkillRoute() && sid
-          ? `skill:${sid}`
-          : sec === 'agents' && id
-            ? `agent:${id}`
-            : null;
+    const id = props.id;
+    switch (section()) {
+      case 'methods': return id ? `catalogue:${id}` : null;
+      case 'pipelines': return id ? `pipeline:${id}` : null;
+      case 'agents': return id ? `agent:${id}` : null;
+      case 'skills': return id ? `skill:${id}` : null;
+      case 'bots': return botId() ? `bot:${botId()}` : null;
+      case 'changes': return CHANGES_ID;
+      default: return null;
+    }
   });
 
   const treeQuery = createMemo(() => q().replace(/\b(?:agent|host|project):(\S+)/gi, '$1'));
 
   const sortDefs = (items: readonly DefinitionListItem[]) =>
-    items.toSorted((a, b) => Number(!!b.draft) - Number(!!a.draft) || b.last30.runs - a.last30.runs || a.name.localeCompare(b.name));
+    items.toSorted((a, b) => Number(b.state === 'repository-changed') - Number(a.state === 'repository-changed')
+      || Number(!!b.draft) - Number(!!a.draft) || b.last30.runs - a.last30.runs || a.name.localeCompare(b.name));
+
+  const driftCount = createMemo(() => {
+    const c = changesOp.data;
+    if (!c) return 0;
+    return c.repositoryChanged.length + c.storeOnly.length + c.ahead.length
+      + c.versions.hosts.filter(h => h.behind).length + c.harnessDrift.filter(h => h.behind).length;
+  });
 
   const libraryTreeNodes = createMemo<CatalogueTreeNode[]>(() => {
     const byId = agentById(), base = baselineAgent();
-    const methodLeaves: CatalogueTreeNode[] = sortDefs(catalogueItems()).map(d => {
-      const nodeId = `catalogue:${d.id}`;
-      return {
-        id: nodeId,
-        label: d.name,
-        sub: d.name !== d.id ? d.id : undefined,
-        state: { family: 'definition', state: d.draft ? 'draft' : 'ready' },
-        right: d.state === 'repository-changed' ? <Icon name="download" label="Repository update waiting" /> : undefined,
-        pinned: pins.has(nodeId),
-        href: `/catalogue/${encodeURIComponent(d.id)}`,
-        searchText: [d.id, d.name, d.scope, d.state].filter(Boolean).join(' '),
-      };
+    const defLeaf = (d: DefinitionListItem, prefix: string, route: string, own: StateOf<'definition'>, right?: JSX.Element, extra: Partial<CatalogueTreeNode> = {}): CatalogueTreeNode => ({
+      id: `${prefix}:${d.id}`,
+      label: d.name,
+      sub: d.state === 'store-only' ? 'store only' : d.name !== d.id ? d.id : undefined,
+      state: { family: 'definition', state: leafState(d, own) },
+      right,
+      pinned: pins.has(`${prefix}:${d.id}`),
+      href: `/library/${route}/${encodeURIComponent(d.id)}`,
+      searchText: [d.id, d.name, d.scope, `state:${d.state}`].filter(Boolean).join(' '),
+      ...extra,
     });
 
-    const pipelineLeaves: CatalogueTreeNode[] = sortDefs(pipelineItems()).map(d => {
-      const nodeId = `pipeline:${d.id}`;
-      const hasRight = d.state === 'repository-changed' || d.last30.runs > 0;
-      return {
-        id: nodeId,
-        label: d.name,
-        sub: d.name !== d.id ? d.id : undefined,
-        state: { family: 'definition', state: d.draft ? 'draft' : d.last30.runs > 0 ? 'ready' : 'never' },
-        right: hasRight ? (
-          <>
-            {d.state === 'repository-changed' && <Icon name="download" label="Repository update waiting" />}
-            {d.last30.runs > 0 && <Num m={{ value: d.last30.runs, basis: 'measured' }} kind="count" />}
-          </>
-        ) : undefined,
-        pinned: pins.has(nodeId),
-        href: `/pipelines/${encodeURIComponent(d.id)}`,
-        searchText: [d.id, d.name, d.scope, d.state].filter(Boolean).join(' '),
-      };
-    });
+    const methodLeaves = sortDefs(catalogueItems()).map(d => defLeaf(d, 'catalogue', 'methods', 'ready'));
+    const pipelineLeaves = sortDefs(pipelineItems()).map(d =>
+      defLeaf(d, 'pipeline', 'pipelines', d.last30.runs > 0 ? 'ready' : 'never', runsRight(d.last30.runs)));
 
     const buckets = new Map<AgentRoleGroup, DefinitionListItem[]>(ROLE_GROUPS.map(g => [g.key, []]));
     for (const a of agentItems()) buckets.get(agentRoleGroup(a))!.push(a);
-
     const agentFolders: CatalogueTreeNode[] = [];
     for (const group of ROLE_GROUPS) {
       const items = sortDefs(buckets.get(group.key) ?? []);
@@ -204,33 +234,41 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
         icon: group.icon,
         defaultCollapsed: group.defaultCollapsed,
         children: items.map(d => {
-          const nodeId = `agent:${d.id}`;
           const parent = d.agent?.variantOf ? byId.get(d.agent.variantOf)?.agent : undefined;
           const baseHarness = baseAgentDefaults(parent, base, d.agent?.harness).harness;
           const showHarness = !!(d.agent && d.agent.harness !== baseHarness && harnesses[d.agent.harness]);
-          const right = (d.state === 'repository-changed' || showHarness) ? (
+          const right = (showHarness || d.last30.runs > 0) ? (
             <>
-              {d.state === 'repository-changed' && <Icon name="download" label="Repository update waiting" />}
               {showHarness && <HarnessMark h={d.agent!.harness as Harness} />}
+              {runsRight(d.last30.runs)}
             </>
           ) : undefined;
-          return {
-            id: nodeId,
-            label: d.name,
-            sub: agentDeltaSub(d, byId, base),
-            state: {
-              family: 'definition',
-              state: d.draft ? 'draft' : compatibilityState(d.compatibility),
-            },
-            right,
-            pinned: pins.has(nodeId),
-            href: `/agents/${encodeURIComponent(d.id)}`,
-            searchText: agentSearchText(d),
+          return defLeaf(d, 'agent', 'agents', compatibilityState(d.compatibility), right, {
+            sub: d.state === 'store-only' ? 'store only' : agentDeltaSub(d, byId, base),
+            searchText: agentSearchText(d) + ` state:${d.state}`,
             problem: d.compatibility === 'failed',
-          };
+          });
         }),
       });
     }
+
+    const botLeaves: CatalogueTreeNode[] = botItems()
+      .toSorted((a, b) => Number(!!b.activeRunId) - Number(!!a.activeRunId) || a.name.localeCompare(b.name))
+      .map(b => {
+        const nodeId = `bot:${b.id}`;
+        const at = b.lastRunAt ? ms(b.lastRunAt) : null;
+        return {
+          id: nodeId,
+          label: b.name,
+          sub: b.code ?? undefined,
+          state: { family: 'life', state: botLife(b) },
+          right: at ? <Ago t={at} /> : undefined,
+          pinned: pins.has(nodeId),
+          href: botPath(b),
+          searchText: [b.code, b.name, b.purpose, projectNames().get(b.projectId), `project:${b.projectId}`].filter(Boolean).join(' '),
+          problem: botLife(b) === 'failed',
+        };
+      });
 
     const skillLeaves: CatalogueTreeNode[] = skillItems()
       .toSorted((a, b) => a.name.localeCompare(b.name))
@@ -243,7 +281,7 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
           state: { family: 'definition', state: s.agents.length ? 'ready' : 'never' },
           right: <span class="mono muted" data-tip="Enabled agents">{s.agents.length}/{s.totalAgents}</span>,
           pinned: pins.has(nodeId),
-          href: `/agents/skill:${encodeURIComponent(s.id)}`,
+          href: `/library/skills/${encodeURIComponent(s.id)}`,
           searchText: [s.id, s.name, s.description, ...s.agents.map(a => `agent:${a} ${a}`)].filter(Boolean).join(' '),
         };
       });
@@ -252,29 +290,29 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
       { id: ROOT_METHODS_ID, label: 'Methods', icon: 'rows-3', defaultCollapsed: false, children: methodLeaves },
       { id: ROOT_PIPELINES_ID, label: 'Pipelines', icon: 'network', defaultCollapsed: false, children: pipelineLeaves },
       { id: ROOT_AGENTS_ID, label: 'Agents', icon: 'bot', defaultCollapsed: false, children: agentFolders },
-      { id: ROOT_SKILLS_ID, label: 'Skills', icon: 'file-text', defaultCollapsed: false, children: skillLeaves },
-      // Bots are Library definitions (fleet-ia-and-journeys.md §1); their screen opens from here until wave 2 moves it.
-      { id: 'nav:bots', label: 'Bots', icon: 'bot', href: '/bots', searchText: 'bots automations' },
+      { id: ROOT_BOTS_ID, label: 'Bots', icon: 'bot', defaultCollapsed: false, children: botLeaves },
+      { id: ROOT_SKILLS_ID, label: 'Skills', icon: 'file-text', defaultCollapsed: true, children: skillLeaves },
+      // Changes is one page, not a folder: its drift count is the root's counter (OR-29, hidden at zero).
+      {
+        id: CHANGES_ID, label: 'Changes', icon: 'git-pull-request', href: '/library/changes', searchText: 'changes drift repository store hosts',
+        right: driftCount() > 0 ? <span class="badge t-attention" data-tip="Definitions, hosts and harness pins out of line">{driftCount()}</span> : undefined,
+      },
     ];
   });
 
   const selectedIsLabVariant = createMemo(() => {
-    if (section() !== 'agents' || !props.id || isSkillRoute()) return false;
+    if (section() !== 'agents' || !props.id) return false;
     const a = agentById().get(props.id);
     return !!a && agentRoleGroup(a) === 'lab-variants';
   });
 
-  const defaultClosed = createMemo(() => (selectedIsLabVariant() ? [] : ['group:lab-variants']));
+  const defaultClosed = createMemo(() => [ROOT_SKILLS_ID, ...(selectedIsLabVariant() ? [] : ['group:lab-variants'])]
+    .filter(id => !(section() === 'skills' && id === ROOT_SKILLS_ID)));
   const treeClosed = createMemo(() => closedGroups(defaultClosed(), treeFlipped()));
   const collapsedMap = createMemo<Record<string, boolean>>(() => {
     const closed = treeClosed();
-    const map: Record<string, boolean> = {
-      __pinned__: closed.has('__pinned__'),
-      [ROOT_METHODS_ID]: closed.has(ROOT_METHODS_ID),
-      [ROOT_PIPELINES_ID]: closed.has(ROOT_PIPELINES_ID),
-      [ROOT_AGENTS_ID]: closed.has(ROOT_AGENTS_ID),
-      [ROOT_SKILLS_ID]: closed.has(ROOT_SKILLS_ID),
-    };
+    const map: Record<string, boolean> = { __pinned__: closed.has('__pinned__') };
+    for (const id of [ROOT_METHODS_ID, ROOT_PIPELINES_ID, ROOT_AGENTS_ID, ROOT_BOTS_ID, ROOT_SKILLS_ID]) map[id] = closed.has(id);
     for (const g of ROLE_GROUPS) map[g.id] = closed.has(g.id);
     return map;
   });
@@ -289,42 +327,25 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
     for (const n of nodes) {
       if (Array.isArray(n.children)) {
         total += countMatchingLeaves(n.children);
-      } else if (!tq.trim() || matchSearch(tq, [n.label, n.id, n.sub, n.searchText].filter(Boolean).join(' '), n.state ? { state: n.state.state } : {})) {
+      } else if (n.id !== CHANGES_ID && (!tq.trim() || matchSearch(tq, [n.label, n.id, n.sub, n.searchText].filter(Boolean).join(' '), n.state ? { state: n.state.state } : {}))) {
         total++;
       }
     }
     return total;
   };
-  const totalCount = createMemo(() => catalogueItems().length + pipelineItems().length + agentItems().length + skillItems().length);
+  const totalCount = createMemo(() => catalogueItems().length + pipelineItems().length + agentItems().length + botItems().length + skillItems().length);
   const shownCount = createMemo(() => treeQuery().trim() ? countMatchingLeaves(libraryTreeNodes()) : totalCount());
 
-  const initialLoading = createMemo(() =>
-    !agentsOp.data && !pipelinesOp.data && !catalogueOp.data && !skillsOp.data
-    && !agentsOp.error && !pipelinesOp.error && !catalogueOp.error && !skillsOp.error,
-  );
-  const loadError = createMemo(() =>
-    (agentsOp.error && !agentsOp.data ? agentsOp.error : null)
-    ?? (pipelinesOp.error && !pipelinesOp.data ? pipelinesOp.error : null)
-    ?? (catalogueOp.error && !catalogueOp.data ? catalogueOp.error : null)
-    ?? (skillsOp.error && !skillsOp.data ? skillsOp.error : null),
-  );
-
-  const reloadAll = () => {
-    void Promise.all([agentsOp.reload(), pipelinesOp.reload(), catalogueOp.reload(), skillsOp.reload(), changesOp.reload()]);
-  };
+  const lists = [agentsOp, pipelinesOp, catalogueOp, skillsOp, botsOp] as const;
+  const initialLoading = createMemo(() => lists.every(o => !o.data && !o.error));
+  const loadError = createMemo(() => lists.map(o => (o.error && !o.data ? o.error : null)).find(Boolean) ?? null);
+  const reloadAll = () => { void Promise.all([...lists.map(o => o.reload()), changesOp.reload()]); };
 
   const listPane = (
     <>
       <ShellStatus><OfflineMarker state={agentsOp.state} now={Date.now()} /></ShellStatus>
       <ShellActions>
-        <Button
-          label="System changes"
-          icon="git-pull-request"
-          iconOnly
-          kind="quiet"
-          pressed={section() === 'changes'}
-          onClick={() => go(section() === 'changes' ? '/agents' : '/changes')}
-        />
+        <Button label="New bot" icon="plus" iconOnly onClick={() => go('/library/bots/new')} />
       </ShellActions>
       <header class="page-h">
         <SearchField label="Find in library" value={q()} onInput={setQ} onSearch={() => {}} />
@@ -346,15 +367,12 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
             emptyText="No matching items."
             onToggle={toggleTreeFolder}
             onSelect={node => {
-              if (Array.isArray(node.children)) {
-                toggleTreeFolder(node.id);
-              } else if (node.href) {
-                go(node.href);
-              }
+              if (Array.isArray(node.children)) toggleTreeFolder(node.id);
+              else if (node.href) go(node.href);
             }}
             onPin={node => pins.toggle(node.id)}
             onRowMenu={(node, at) => {
-              if (!Array.isArray(node.children)) setMenu({ node, at });
+              if (!Array.isArray(node.children) && node.id !== CHANGES_ID) setMenu({ node, at });
             }}
           />
         </Show>
@@ -366,7 +384,7 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
             items={[
               { label: 'Open', icon: actions.open, onClick: () => { const href = m().node.href; if (href) go(href); } },
               { label: pins.has(m().node.id) ? 'Unpin' : 'Pin', icon: pins.has(m().node.id) ? actions.unpin : actions.pin, onClick: () => pins.toggle(m().node.id) },
-              { label: 'Copy id', icon: actions.copy, onClick: () => copyText(rawNodeId(m().node.id)) },
+              { label: 'Copy id', icon: actions.copy, onClick: () => copyText(m().node.id.startsWith('bot:') ? (m().node.sub ?? rawNodeId(m().node.id)) : rawNodeId(m().node.id)) },
             ]}
           />
         )}</Show>
@@ -381,10 +399,10 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
       const r = await op('definition_take_repository', { keys, preview, message: 'Take repository version from Library' });
       if (preview) {
         setPreviewRepoKeys(keys);
-        setNotice({ severity: 'warning', title: `Preview: take repository version for ${r.items.filter(i => i.status === 'would-apply').length} definitions`, facts: r.items.map(i => `${i.kind}/${i.id}: ${i.status}`).join(' · ') });
+        setNotice({ severity: 'warning', title: `Preview: ${plural(r.items.filter(i => i.status === 'would-apply').length, 'definition')} take the repository version`, facts: r.items.map(i => `${i.kind}/${i.id}: ${i.status}`).join(' · ') });
       } else {
         setPreviewRepoKeys(null);
-        setNotice({ severity: 'warning', title: `Updated ${r.applied} definitions from repository`, facts: r.items.map(i => `${i.kind}/${i.id}: ${i.status}`).join(' · ') });
+        setNotice({ severity: 'warning', title: `${plural(r.applied, 'definition')} took the repository version`, facts: r.items.map(i => `${i.kind}/${i.id}: ${i.status}`).join(' · ') });
         await Promise.all([agentsOp.reload(), pipelinesOp.reload(), catalogueOp.reload(), changesOp.reload()]);
       }
     } catch (e) {
@@ -394,96 +412,21 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
     }
   };
 
-  const harnessSummary = createMemo(() =>
-    Object.entries(harnesses).map(([key, info]) => {
-      const items = agentItems().filter(a => a.agent?.harness === key);
-      return {
-        key,
-        label: info.label,
-        icon: info.icon,
-        count: items.length,
-        runs: items.reduce((s, a) => s + a.last30.runs, 0),
-        tokens: items.reduce((s, a) => s + a.last30.tokens, 0),
-      };
-    }).filter(x => x.count > 0),
-  );
+  const takeable = createMemo(() => (changesOp.data?.repositoryChanged ?? []).filter(d => d.state === 'repository-changed'));
+  const notInRepo = createMemo(() => changesOp.data ? [...changesOp.data.storeOnly, ...changesOp.data.ahead] : []);
+  const kindWord = (xs: readonly { kind: string }[]) => {
+    const kinds = new Set(xs.map(x => x.kind));
+    return kinds.size === 1 ? (kinds.has('agent') ? 'agent' : kinds.has('pipeline') ? 'pipeline' : 'definition') : 'definition';
+  };
+  const namesFact = (xs: readonly { name: string }[]) =>
+    xs.length ? xs[0].name + (xs.length > 1 ? ` and ${xs.length - 1} more` : '') : '';
 
-  const categorySummary = createMemo(() => {
-    const byCat = new Map<string, DefinitionListItem[]>();
-    for (const a of agentItems()) {
-      const cat = a.agent?.category;
-      if (!cat) continue;
-      const arr = byCat.get(cat);
-      if (arr) arr.push(a);
-      else byCat.set(cat, [a]);
-    }
-    return [...byCat.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([cat, items]) => ({
-        cat,
-        count: items.length,
-        runs: items.reduce((s, a) => s + a.last30.runs, 0),
-        tokens: items.reduce((s, a) => s + a.last30.tokens, 0),
-      }));
-  });
-
-  const summaryTotals = createMemo<TotalItem[]>(() => {
-    const agents = agentItems(), pipelines = pipelineItems(), cats = catalogueItems(), skills = skillItems();
-    const primaryAgents = agents.filter(a => !a.agent?.variantOf);
-    const variantAgents = agents.filter(a => !!a.agent?.variantOf);
-    const activePipelines = pipelines.filter(p => p.last30.runs > 0).length;
-    const activeSkills = skills.filter(s => s.agents.length > 0).length;
-    const totalRuns = agents.reduce((s, a) => s + a.last30.runs, 0) + pipelines.reduce((s, p) => s + p.last30.runs, 0);
-    const totalTokens = agents.reduce((s, a) => s + a.last30.tokens, 0) + pipelines.reduce((s, p) => s + p.last30.tokens, 0);
-    return [
-      { label: 'Methods', m: { value: cats.length, basis: 'measured' }, kind: 'count' },
-      {
-        label: 'Pipelines',
-        m: { value: pipelines.length, basis: 'measured' },
-        kind: 'count',
-        note: activePipelines > 0 ? `${activePipelines} active (30d)` : undefined,
-      },
-      {
-        label: 'Agents',
-        m: { value: agents.length, basis: 'measured' },
-        kind: 'count',
-        note: variantAgents.length ? `${primaryAgents.length} primary · ${variantAgents.length} variants` : undefined,
-      },
-      {
-        label: 'Skills',
-        m: { value: skills.length, basis: 'measured' },
-        kind: 'count',
-        note: activeSkills > 0 ? `${activeSkills} enabled` : undefined,
-      },
-      { label: '30d runs', m: { value: totalRuns, basis: 'measured' }, kind: 'count' },
-      { label: '30d tokens', m: { value: totalTokens, basis: 'measured' }, kind: 'count' },
-    ];
-  });
-
-  const takeableKeys = createMemo<DefinitionKey[]>(() => {
-    const changesData = changesOp.data;
-    return changesData
-      ? changesData.repositoryChanged.filter(d => d.state === 'repository-changed').map(d => ({ kind: d.kind, id: d.id }))
-      : [...agentItems(), ...pipelineItems(), ...catalogueItems()]
-          .filter(d => d.state === 'repository-changed')
-          .map(d => ({ kind: d.kind, id: d.id }));
-  });
-  const driftFacts = createMemo(() => {
-    const changesData = changesOp.data;
-    if (!changesData) return takeableKeys().length > 0 ? [`${takeableKeys().length} repo changed`] : [];
-    const behindHosts = changesData.versions.hosts.filter(h => h.behind);
-    const behindHarnesses = changesData.harnessDrift.filter(h => h.behind);
-    return [
-      changesData.repositoryChanged.length > 0 && `${changesData.repositoryChanged.length} repo changed`,
-      changesData.storeOnly.length > 0 && `${changesData.storeOnly.length} store-only`,
-      changesData.ahead.length > 0 && `${changesData.ahead.length} ahead`,
-      behindHosts.length > 0 && `${behindHosts.length} hosts behind`,
-      behindHarnesses.length > 0 && `${behindHarnesses.length} harness pins drifting`,
-    ].filter((x): x is string => !!x);
-  });
+  const agentsActive = createMemo(() => agentItems().filter(a => a.last30.runs > 0).length);
+  const pipelinesRan = createMemo(() => pipelineItems().filter(p => p.last30.runs > 0).length);
+  const botsAwake = createMemo(() => botItems().filter(b => !b.paused).length);
 
   const idleSummary = (
-    <article class="detail stack" aria-label="Library summary">
+    <article class="detail stack" data-ui="detail" aria-label="Library summary">
       <Show when={notice()}>{n => (
         <ProblemRow
           severity={n().severity}
@@ -491,93 +434,107 @@ export function Agents(props: { section?: LibrarySection; id?: string }) {
           facts={n().facts}
           actions={previewRepoKeys()
             ? [
-                { label: 'Apply repository versions', primary: true, onClick: () => void runTakeRepo(previewRepoKeys()!, false) },
+                { label: 'Take repository versions', icon: 'download', primary: true, onClick: () => void runTakeRepo(previewRepoKeys()!, false) },
                 { label: 'Dismiss', onClick: () => { setPreviewRepoKeys(null); setNotice(null); } },
               ]
             : [{ label: 'Dismiss', onClick: () => setNotice(null) }]}
         />
       )}</Show>
 
-      <Show when={driftFacts().length > 0}>
-        <ProblemRow
-          severity="warning"
-          title="System drift"
-          facts={driftFacts().join(' · ')}
-          actions={[
-            ...(takeableKeys().length > 0 ? [{ label: `Take repo (${takeableKeys().length})`, icon: 'download' as const, primary: true, onClick: () => void runTakeRepo(takeableKeys(), true) }] : []),
-            { label: 'Changes', icon: 'git-pull-request' as const, onClick: () => go('/changes') },
-          ]}
-        />
-      </Show>
-
-      <Totals items={summaryTotals()} />
-
-      <Show when={harnessSummary().length > 0}>
-        <DetailSection title="By harness">
-          <For each={harnessSummary()}>{h => (
-            <KvRow
-              icon={h.icon}
-              label={h.label}
-              meta={`${h.count} agent${h.count === 1 ? '' : 's'} · ${h.runs} runs (30d)`}
-              value={<Num m={{ value: h.tokens, basis: 'measured' }} kind="count" />}
+      <Show when={changesOp.error || takeable().length > 0 || notInRepo().length > 0}>
+        <DetailSection title="Needs a look">
+          <Show when={changesOp.error}>{err => (
+            <ProblemRow severity="failure" title="Changes could not be read" facts={err()}
+              actions={[{ label: 'Retry', icon: actions.retry, primary: true, onClick: () => void changesOp.reload() }]} />
+          )}</Show>
+          <Show when={takeable().length > 0}>
+            <ProblemRow
+              severity="warning"
+              title={`${plural(takeable().length, kindWord(takeable()))} wait for a repository version`}
+              facts={namesFact(takeable())}
+              actions={[
+                { label: 'Preview and take all', icon: 'download', primary: true, onClick: busy() ? undefined : () => void runTakeRepo(takeable().map(d => ({ kind: d.kind, id: d.id })), true) },
+                { label: 'Open Changes', icon: 'git-pull-request', onClick: () => go('/library/changes') },
+              ]}
             />
-          )}</For>
+          </Show>
+          <Show when={notInRepo().length > 0}>
+            <ProblemRow
+              severity="warning"
+              title={`${plural(notInRepo().length, kindWord(notInRepo()))} made in Fleet ${notInRepo().length === 1 ? 'is' : 'are'} not in the repository`}
+              facts={namesFact(notInRepo())}
+              actions={[{ label: 'Save to repository', icon: 'git-merge', onClick: () => go('/library/changes') }]}
+            />
+          </Show>
         </DetailSection>
       </Show>
 
-      <Show when={categorySummary().length > 0}>
-        <DetailSection title="By category">
-          <For each={categorySummary()}>{c => (
-            <KvRow
-              icon="layers-2"
-              label={c.cat}
-              meta={`${c.count} agent${c.count === 1 ? '' : 's'} · ${c.runs} runs (30d)`}
-              value={<Num m={{ value: c.tokens, basis: 'measured' }} kind="count" />}
-            />
-          )}</For>
-        </DetailSection>
-      </Show>
+      <div class="ftiles">
+        <FigureTile label="Agents active in 30 days" value={{ value: agentsActive(), basis: 'measured' }} of={agentItems().length}
+          trend={[]} trendLabel="Agents active in 30 days" onOpen={() => setQ('state:ready')} />
+        <FigureTile label="Pipelines that ran" value={{ value: pipelinesRan(), basis: 'measured' }} of={pipelineItems().length}
+          trend={[]} trendLabel="Pipelines that ran in 30 days" />
+        <FigureTile label="Bots awake" value={{ value: botsAwake(), basis: 'measured' }} of={botItems().length}
+          trend={[]} trendLabel="Bots awake" />
+      </div>
     </article>
   );
+
+  const close = () => go('/library');
+  const detail = createMemo(() => {
+    const sec = section(), id = props.id;
+    if (sec === 'changes') return 'changes';
+    if (!id) return null;
+    return sec;
+  });
 
   return (
     <ListDetail
       list={listPane}
-      detailKey={section() === 'changes' ? 'changes' : selectedTreeId() ?? undefined}
+      detailKey={detail() ? `${section()}:${props.id ?? ''}` : undefined}
       idle={idleSummary}
-      detail={
-        section() === 'changes' || (isSkillRoute() && skillId()) || (!!props.id && (section() === 'catalogue' || section() === 'pipelines' || section() === 'agents')) ? (
-          <Switch>
-            <Match when={section() === 'changes'}><Changes onClose={() => go('/agents')} /></Match>
-            <Match when={isSkillRoute() && skillId()}>
-              <Show when={skillId()} keyed>{sid => (
-                <SkillDetail
-                  skillId={sid}
-                  skills={skillItems()}
-                  loading={!skillsOp.data && !skillsOp.error}
-                  error={skillsOp.error}
-                  onRetry={skillsOp.reload}
-                  categories={categories()}
-                  agentItems={agentItems()}
-                  busy={busy()}
-                  setBusy={setBusy}
-                  onChanged={async () => { await Promise.all([skillsOp.reload(), agentsOp.reload()]); }}
-                  onClose={() => go('/agents')}
-                />
-              )}</Show>
-            </Match>
-            <Match when={section() === 'catalogue' && props.id}>
-              <Show when={props.id} keyed>{did => <DefinitionDetail kind="catalogue" id={did} agentById={agentById()} onClose={() => go('/catalogue')} />}</Show>
-            </Match>
-            <Match when={section() === 'pipelines' && props.id}>
-              <Show when={props.id} keyed>{did => <DefinitionDetail kind="pipeline" id={did} agentById={agentById()} onClose={() => go('/pipelines')} />}</Show>
-            </Match>
-            <Match when={section() === 'agents' && props.id}>
-              <Show when={props.id} keyed>{did => <DefinitionDetail kind="agent" id={did} agentById={agentById()} onClose={() => go('/agents')} />}</Show>
-            </Match>
-          </Switch>
-        ) : undefined
-      }
+      detail={detail() ? (
+        <Switch>
+          <Match when={detail() === 'changes'}><Changes onClose={close} /></Match>
+          <Match when={detail() === 'skills'}>
+            <Show when={props.id} keyed>{sid => (
+              <SkillDetail
+                skillId={sid}
+                skills={skillItems()}
+                loading={!skillsOp.data && !skillsOp.error}
+                error={skillsOp.error}
+                onRetry={skillsOp.reload}
+                categories={categories()}
+                agentItems={agentItems()}
+                busy={busy()}
+                setBusy={setBusy}
+                onChanged={async () => { await Promise.all([skillsOp.reload(), agentsOp.reload()]); }}
+                onClose={close}
+              />
+            )}</Show>
+          </Match>
+          <Match when={detail() === 'bots' && props.id === 'new'}>
+            <BotCreateForm onClose={close} onSaved={b => go(botPath(b))} projects={projectNodes()} />
+          </Match>
+          <Match when={detail() === 'bots'}>
+            <Switch fallback={<Skeleton rows={4} />}>
+              <Match when={chosenBot.data}>{d => (
+                <Show when={d().bot.id} keyed>{_id => <BotDetail bot={chosenBot.data!.bot} onClose={close} onReload={() => chosenBot.reload()} projectNames={projectNames()} projects={projectNodes()} />}</Show>
+              )}</Match>
+              <Match when={chosenBot.error ?? resolvedCode.error}>{err => <ErrorBanner text={err()} onRetry={() => { void resolvedCode.reload(); void chosenBot.reload(); }} />}</Match>
+            </Switch>
+          </Match>
+          <Match when={detail() === 'methods'}>
+            <Show when={props.id} keyed>{did => <DefinitionDetail kind="catalogue" id={did} agentById={agentById()} onClose={close} />}</Show>
+          </Match>
+          <Match when={detail() === 'pipelines'}>
+            <Show when={props.id} keyed>{did => <DefinitionDetail kind="pipeline" id={did} agentById={agentById()} onClose={close} />}</Show>
+          </Match>
+          <Match when={detail() === 'agents'}>
+            <Show when={props.id} keyed>{did => <DefinitionDetail kind="agent" id={did} agentById={agentById()} onClose={close} />}</Show>
+          </Match>
+        </Switch>
+      ) : undefined}
     />
   );
 }

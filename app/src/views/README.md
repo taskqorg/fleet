@@ -11,7 +11,7 @@ Each file exports one routed SolidJS 2.0 screen. `main.tsx:SCREENS` maps the reg
 - [`resources.tsx`](resources.tsx) provides shared `Totals`, `CostFigures`, scoped rollup (`own` / `delegated` / `spawned`), and recursive execution tree builders used by Tasks, Conversations, Projects, Definitions, and Runners.
 - [`projects.tsx`](projects.tsx) integrates `analytics_query` (`window`, `dimensions`, `measures`, `filters`) with interactive `AreaChart` time-bucket filtering and dimension breakdown beside project settings and PM chat.
 - [`live.tsx`](live.tsx) exports `Live`, the [Live](../../../docs/design-system/pages/live.md) page: status pill, six figures, host bands with worker slots in start order and 24-hour run strips, and the side column; `wall` (`/live?wall`) renders it with nothing to open.
-- [`definitions.tsx`](definitions.tsx) exports `Definitions` for the `agent`, `pipeline`, and `catalogue` routes.
+- [`agents.tsx`](agents.tsx) exports `Library`, the Library section (`/library`, `/library/<methods|pipelines|agents|bots|skills|changes>/<id>`): one tree over every root, what waits when idle, and the opened item. It opens [`definitions.tsx`](definitions.tsx) `DefinitionDetail` (differences from the base default as diff rows), [`bots.tsx`](bots.tsx) `BotDetail` and `BotCreateForm` (a bot by its `B-` code, `entity_resolve` when the list does not hold it), and [`changes.tsx`](changes.tsx) `Changes`.
 - [`lab-create.tsx`](lab-create.tsx) exports `LabCreate` for experiment-draft creation; [`lab.tsx`](lab.tsx) opens it.
 - [`limits.tsx`](limits.tsx) exports `Limits`, rendered from the Hosts screen.
 

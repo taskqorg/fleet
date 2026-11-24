@@ -1,6 +1,6 @@
 // Requirement: every earlier route lands on its target route of the seven-section rail, keeping the item
 // (docs/designs/fleet-ia-and-journeys.md §1, route consolidation map; UR-69), and each target route opens the view that
-// still speaks the earlier path. Unknown paths stay as they are, so the app's not-found page shows them.
+// still speaks the earlier path (Library speaks its target routes). Unknown paths stay as they are, so the app's not-found page shows them.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { toInternal, toTarget } from '../../app/src/routes.ts';
@@ -17,12 +17,14 @@ const table: [earlier: string, target: string, internal: string][] = [
   ['/publishing', '/projects/delivery', '/delivery'],
   ['/publishing/o~r~3', '/projects/delivery/o~r~3', '/delivery/o~r~3'],
   ['/personal-lab', '/lab/mine', '/personal-lab'],
-  ['/bots/new', '/library/bots/new', '/bots/new'],
-  ['/catalogue/c', '/library/methods/c', '/catalogue/c'],
-  ['/agents/a', '/library/agents/a', '/agents/a'],
-  ['/pipelines/p', '/library/pipelines/p', '/pipelines/p'],
-  ['/changes', '/library/changes', '/changes'],
-  ['/library', '/library/agents', '/agents'],
+  ['/bots/new', '/library/bots/new', '/library/bots/new'],
+  ['/bots/B-FLT-1', '/library/bots/B-FLT-1', '/library/bots/B-FLT-1'],
+  ['/catalogue/c', '/library/methods/c', '/library/methods/c'],
+  ['/agents/a', '/library/agents/a', '/library/agents/a'],
+  ['/pipelines/p', '/library/pipelines/p', '/library/pipelines/p'],
+  ['/changes', '/library/changes', '/library/changes'],
+  ['/skills/s', '/library/skills/s', '/library/skills/s'],
+  ['/library', '/library', '/library'],
   ['/hosts/pds18', '/system/hosts/pds18', '/hosts/pds18'],
   ['/hosts/limits', '/system/accounts', '/hosts/limits'],
   ['/runners', '/system/runners', '/runners'],

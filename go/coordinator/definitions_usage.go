@@ -67,6 +67,24 @@ func usageWindows(q *Request, kind, id string, days int64) (map[string]contract.
 	return totals, byRev, nil
 }
 
+// usageRuns: the 30-day-style run counts of every definition of kind, without the resource rollup usageWindows attaches.
+// The rollup resolves container lineage over the whole execution table (AnalyticsDefinitionLineage), seconds on
+// production data, so a caller that only shows run counts (system_changes) reads DefUsage alone (FLT-38).
+func usageRuns(q *Request, kind string, days int64) (map[string]int64, error) {
+	pin := map[string]string{"kind": kind}
+	rows, err := q.db().DefUsage(q.ctx(), db.DefUsageParams{Pin: jsonBytes([]map[string]string{pin}), Kind: kind, ID: "", Days: int32(days)})
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]int64{}
+	for _, r := range rows {
+		if r.Total == 1 {
+			out[r.ID] = r.Runs
+		}
+	}
+	return out, nil
+}
+
 // usedByDefinitions: the definitions that name kind/id: pipelines whose agent steps run the profile, the catalogue when one
 // of its methods names the pipeline or the profile.
 func usedByDefinitions(q *Request, kind, id string) ([]contract.DefinitionKey, error) {

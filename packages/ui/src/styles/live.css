@@ -12,6 +12,8 @@
   .spill[data-state=stale] .dot { background: none; box-shadow: inset 0 0 0 1px var(--tone-fg); }
   .sp-in { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 0 var(--space-4); border-radius: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+  /* A row of figure tiles that wraps by the space it has, not by the viewport (Library idle, Live). */
+  .ftiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--size-label)), 1fr)); gap: var(--space-3); }
   .ftile { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); }
   .ft-in { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-4); width: 100%; padding: var(--space-3) var(--space-4); border-radius: inherit; }
   .ft-text { display: flex; flex-direction: column; min-width: 0; }

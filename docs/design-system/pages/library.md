@@ -1,6 +1,6 @@
 # Library
 
-**Status.** Target, rail section Library ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)). Until it is built, the same content is the one page behind `/agents`, `/pipelines` and `/catalogue`, plus `/bots` and `/changes`. This spec is the section frame; the content of each root keeps its own spec: [Methods](catalogue.md), [Agents and Skills](agents.md), [Pipelines](pipelines.md), [Changes](changes.md).
+**Status.** Built, rail section Library ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)): `app/src/views/agents.tsx`. Not built yet: the New menu's agent and pipeline (New makes a bot), Compare in Lab and Recommend in the head, and recommendations that changed this week on the idle page. This spec is the section frame; the content of each root keeps its own spec: [Methods](catalogue.md), [Agents and Skills](agents.md), [Pipelines](pipelines.md), [Changes](changes.md).
 
 **Purpose.** What methods, pipelines, agents, bots and skills we have, which are recommended, and what has not reached the store or the hosts ([principles](../owner-rules.md#principles) 3: details on demand).
 
