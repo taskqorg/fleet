@@ -431,6 +431,10 @@ func botRunRowToContract(id string, botID string, projectID string, botRev, memR
 	if linkedTaskIDs == nil {
 		linkedTaskIDs = []string{}
 	}
+	var failure *contract.Failure
+	if state == "failed" || state == "cancelled" {
+		failure = contract.PlainCause(deref(problem), reason)
+	}
 	return contract.BotRunRecord{
 		Id:              id,
 		BotId:           botID,
@@ -450,7 +454,7 @@ func botRunRowToContract(id string, botID string, projectID string, botRev, memR
 		Source:          optStr(source),
 		HostId:          hostID,
 		Problem:         problem,
-		Failure:         contract.PlainCause(deref(problem), reason),
+		Failure:         failure,
 		CreatedAt:       createdAt.UTC().Format(time.RFC3339Nano),
 		StartedAt:       formatTimePtr(startedAt),
 		EndedAt:         formatTimePtr(endedAt),

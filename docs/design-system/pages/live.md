@@ -77,7 +77,7 @@ Every element opens its detail in the app: a host in System, a slot or event in 
 |---|---|
 | Host bands | `hosts_list`: `slotLimit`, `running`, `runningByHarness`, `queued`, `problems`, `pollError`, `lastSeenAt` |
 | Gauges | `hosts_list` `load`: CPU (`100 * load1 / cpus`), memory (`memFree` of `memTotal`) and free disk (`diskFree`), while the host polls and the reading is under 2 minutes old |
-| Slot tiles | `hosts_list` `runs` in slot order: tile *i* shows `runs[i]`; a band draws `max(slotLimit, running)` tiles, and tiles past the visible runs are busy with work the viewer cannot see |
+| Slot tiles | `hosts_list` `runs` in slot order: tile *i* shows `runs[i]`; a band draws `max(slotLimit, running)` tiles |
 | Failures | `failure` on `executions_list` rows and `bot_runs` records: `text` in plain words, `code` under Details, `cause` to group by |
 | Strips | `executions_runners` (the newest runs, per host, with time strips) |
 | Figures | `execution_totals` (via `executions_runners`), `task_page` counts, `spend_summary` |

@@ -396,7 +396,7 @@ func (v *ExperimentNote) Validate() error {
 	return nil
 }
 
-// Failure: A cause in plain words; the code goes under Details. One mapping (contracts/vocabulary.json causes) for bots, Home blocker chips and Live.
+// Failure: Why a failed or cancelled run ended, in plain words; the code goes under Details. One mapping (contracts/vocabulary.json causes) for bots, Home blocker chips and Live.
 type Failure struct {
 	Cause  string  `json:"cause"`
 	Code   string  `json:"code"`
