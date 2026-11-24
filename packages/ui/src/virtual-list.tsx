@@ -53,6 +53,7 @@ const coarse = () => typeof matchMedia !== 'undefined' && matchMedia('(pointer: 
 export function VirtualList<T>(props: VirtualListProps<T>) {
   const rowHeight = createMemo(() => coarse() ? Math.max(props.rowHeight, TOUCH_ROW) : props.rowHeight);
   let scroller: HTMLDivElement | undefined;
+  let spaceEl: HTMLDivElement | undefined;
   const [tick, setTick] = createSignal(0, { ownedWrite: true });
   const [unseen, setUnseen] = createSignal(0, { ownedWrite: true });
   // Anchor = first visible item and its distance from the viewport top, captured before each update.
@@ -131,8 +132,10 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     }
     const start = v.getOffsetForIndex(i, 'start')?.[0];
     if (start === undefined) return false;
+    if (spaceEl) spaceEl.style.height = `${v.getTotalSize()}px`;
     if (r.align) v.scrollToIndex(i, { align: r.align });
     else v.scrollToOffset(Math.max(0, start - (r.offsetPx ?? 0)));
+    v._willUpdate();
     anchor = { key: r.key, delta: start - scroller.scrollTop };
     prevAtEdge = false;
     setTick(n => n + 1);
@@ -205,6 +208,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
       }
       v.setOptions(opts);
       v._willUpdate();
+      if (spaceEl) spaceEl.style.height = `${v.getTotalSize()}px`;
 
       if (initialized && scroller && items !== prevItemsRef) {
         prevItemsRef = items;
@@ -322,7 +326,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
         tabindex={0}
         onScroll={() => { capture(); checkStart(); }}
       >
-        <div class="vl-space" style={{ height: `${totalSize()}px` }}>
+        <div ref={el => { spaceEl = el; }} class="vl-space" style={{ height: `${totalSize()}px` }}>
           <For each={virtualItems()} keyed={vi => String(vi.key)}>
             {vi => {
               const item = createMemo(() => props.items[vi().index]);

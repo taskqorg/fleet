@@ -165,9 +165,18 @@ function App() {
     return () => clearTimeout(t);
   });
   let lastGeometry = { widths: prefs.peek().widths, navCollapsed: prefs.peek().navCollapsed };
+  let lastActor: string | undefined;
   const geometry = createMemo(() => {
-    if (access.value.state === 'open' && prefsRead.value) {
-      lastGeometry = { widths: prefs.value.widths, navCollapsed: prefs.value.navCollapsed };
+    const cur = access.value;
+    if (cur.state === 'open') {
+      const actor = cur.identity?.identityKey;
+      if (actor && lastActor && actor !== lastActor && !prefsRead.value) {
+        lastGeometry = { widths: {}, navCollapsed: false };
+      }
+      if (actor) lastActor = actor;
+      if (prefsRead.value) {
+        lastGeometry = { widths: prefs.value.widths, navCollapsed: prefs.value.navCollapsed };
+      }
     }
     return lastGeometry;
   });
