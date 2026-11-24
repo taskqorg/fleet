@@ -1,7 +1,7 @@
-// Conversation detail (docs/designs/fleet-conversations.md, Titles; docs/design-system/controls/transcript-viewer.md): the
-// header shows the conversation's title first, then its code and profile muted, and Rename stores a new one; long result
-// names stay inside the transcript column (an ellipsis, the full name in the tooltip); copy tools show only on hover or
-// focus, and on a touch screen always. Called by conversations.check.ts.
+// The session view in the Conversations work area (docs/design-system/pages/session.md, OR-51, OR-54): the head shows the
+// session's name first, then its state, with no model badge, cost or ids, and Rename stores a new name; long result names
+// stay inside the transcript column (an ellipsis, the full name in the tooltip); code copy shows only on hover or focus.
+// Called by conversations.check.ts.
 // With CONV_SHOTS=<dir> it also saves dark screenshots of the detail at 1440 and 390 px (conv-detail-1440.png,
 // conv-detail-390.png) and of the list with titles (conv-titles.png).
 import type { Browser, Page } from 'playwright';
@@ -25,17 +25,17 @@ export async function checkConversationDetail(browser: Browser, origin: string, 
     const context = await browser.newContext({ colorScheme: 'dark', viewport: { width, height: 900 } }), p = await context.newPage();
     const errors: string[] = []; p.on('pageerror', e => errors.push(e.message));
     await p.goto(`${origin}/conversations/${S}`);
-    const title = p.locator('.detail-h .conv-title');
-    check(await until(async () => (await title.textContent()) === TITLE), `${width}: the header shows the conversation title`);
-    // Title first, then the code (the profile chip lives in the composer below).
-    const order = await p.locator('.detail-h').evaluate(h => [...h.children].map(c => c.classList.contains('conv-title') ? 'title' : c.matches('[data-ui="entity-code"], .ec-reference') ? 'code' : '').filter(Boolean).join(' '));
-    check(order === 'title code', `${width}: header order title, code (${order})`);
-    const overflow = await p.locator('.detail-h').evaluate(h => h.scrollWidth - h.clientWidth);
-    check(overflow <= 1, `${width}: the header fits its width (${overflow} px over)`);
+    const title = p.locator('.sv-head .sv-name');
+    check(await until(async () => (await title.textContent()) === TITLE), `${width}: the head shows the session name`);
+    // The name, then the state; no code, model badge or cost in the head (OR-54).
+    const order = await p.locator('.sv-head').evaluate(h => [...h.children].map(c => c.classList.contains('sv-name') ? 'name' : c.matches('[data-ui="state-dot"]') ? 'state' : c.matches('[data-ui="entity-code"], .agent-mark, [data-ui="resource-bar"]') ? 'extra' : '').filter(Boolean).join(' '));
+    check(order === 'name state', `${width}: head order name, state (${order})`);
+    const overflow = await p.locator('.sv-head').evaluate(h => h.scrollWidth - h.clientWidth);
+    check(overflow <= 1, `${width}: the head fits its width (${overflow} px over)`);
     if (width === 390) {
-      const close = (await p.locator('.detail-h').getByRole('button', { name: 'Close', exact: true }).boundingBox())!;
+      const close = (await p.locator('.sv-head').getByRole('button', { name: 'Close', exact: true }).boundingBox())!;
       check(close.height === close.width && close.height === 28, '390: a narrow mouse window keeps compact square icon buttons');
-      check(await p.locator('.conv-search-results').isHidden(), '390: inactive search stepping controls use no space');
+      check(await p.locator('.sv-hits').count() === 0, '390: inactive search stepping controls use no space');
     }
     // Result names: inside the row, each with its full name in the tooltip.
     const row = p.locator('.th-result');
@@ -49,24 +49,13 @@ export async function checkConversationDetail(browser: Browser, origin: string, 
     check(names.every((n, i) => tips[i]?.startsWith(n + ' · ')), `${width}: each result name has its full name in the tooltip`);
     const clipped = await row.locator('a').first().evaluate(a => a.scrollWidth > a.clientWidth);
     if (width === 390) check(clipped, '390: a long result name ends in an ellipsis');
-    const slots = await p.locator('.th-service').evaluateAll(rows => rows.map(row => ({
-      start: Math.round(row.getBoundingClientRect().left),
-      time: Math.round(row.querySelector('.th-time')!.getBoundingClientRect().left),
-      action: Math.round(row.querySelector('.th-action')!.getBoundingClientRect().left),
-    })));
-    check(slots.length >= 2 && new Set(slots.map(slot => JSON.stringify(slot))).size === 1 &&
-      slots.every(slot => slot.start === slot.action && slot.time > slot.action), `${width}: action and time share fixed slots at the left edge`);
-    const grouped = await p.locator('.th-text.agent').first().evaluate(row => {
-      const meta = row.querySelector('.th-service')!, content = row.querySelector('.th-main')!;
-      return !!meta.querySelector('.agent-mark') && meta.getBoundingClientRect().top >= content.getBoundingClientRect().bottom;
-    });
-    check(grouped, `${width}: model, time and action are grouped below the message`);
-    // Copy tools: hidden until the row is hovered or a tool is focused.
-    const reply = p.locator('.th-text.agent').first(), copy = reply.locator('.th-copy');
+    // Light chat (OR-54): a message is its words, with no service row of model, time and actions.
+    check(await p.locator('.th-text .th-service, .th-text .agent-mark').count() === 0, `${width}: messages carry no model badge or service row`);
+    // Code copy: hidden until its block is hovered or the copy is focused.
+    const reply = p.locator('.th-text.agent').first(), copy = reply.locator('.code-copy');
     await p.mouse.move(0, 0);
     const shown = () => copy.evaluate(e => getComputedStyle(e).opacity);
-    check(await shown() === '0', `${width}: message copy hidden while the row is not hovered`);
-    check(await reply.locator('.code-copy').evaluate(e => getComputedStyle(e).opacity) === '0', `${width}: code copy hidden while its block is not hovered`);
+    check(await shown() === '0', `${width}: code copy hidden while its block is not hovered`);
     const codeGeometry = await reply.locator('.code').evaluate(block => ({
       content: block.querySelector('pre')!.getBoundingClientRect().right,
       copy: block.querySelector('.code-copy')!.getBoundingClientRect().left,
@@ -77,12 +66,12 @@ export async function checkConversationDetail(browser: Browser, origin: string, 
       `${width}: copy is to the right of code within the column`);
     if (width === 1440) check(codeGeometry.width < codeGeometry.available, '1440: short code fits its contents');
     const box = (await reply.boundingBox())!;
-    await reply.hover();
-    check(await until(async () => await shown() === '1'), `${width}: hovering the row shows its copy`);
+    await reply.locator('.code').hover();
+    check(await until(async () => await shown() === '1'), `${width}: hovering the code block shows its copy`);
     check(Math.round((await reply.boundingBox())!.height) === Math.round(box.height), `${width}: showing the copy moves nothing`);
     if (shots) {
       await p.screenshot({ path: `${shots}/conv-detail-${width}.png` });
-      if (width === 1440) await p.locator('.detail.conversation').screenshot({ path: `${shots}/conv-work-area.png` });
+      if (width === 1440) await p.locator('.detail.session-view').screenshot({ path: `${shots}/conv-work-area.png` });
     }
     // The same long title keeps its natural tooltip width next to either viewport edge.
     const titleText = 'A long result title with enough words to fill a normal tooltip on a narrow window';
@@ -113,7 +102,7 @@ export async function checkConversationDetail(browser: Browser, origin: string, 
     await p.locator('[data-tooltip-probe]').evaluateAll(probes => probes.forEach(probe => probe.remove()));
     await p.mouse.move(0, 0);
     await p.keyboard.press('Escape');
-    await reply.getByRole('button', { name: 'Copy message' }).focus();
+    await copy.getByRole('button').first().focus();
     check(await shown() === '1', `${width}: focusing the copy shows it`);
     check(!errors.length, `${width}: no page errors${errors.length ? ': ' + errors.join('; ') : ''}`);
     await context.close();
@@ -122,8 +111,8 @@ export async function checkConversationDetail(browser: Browser, origin: string, 
   {
     const context = await browser.newContext({ colorScheme: 'dark', viewport: { width: 390, height: 900 }, hasTouch: true, isMobile: true }), p = await context.newPage();
     await p.goto(`${origin}/conversations/${S}`);
-    const copy = p.locator('.th-text.agent .th-copy').first();
-    check(await until(async () => await copy.count() === 1 && await copy.evaluate(e => getComputedStyle(e).opacity) === '1'), 'touch: message copy always shows');
+    const copy = p.locator('.th-text.agent .code-copy').first();
+    check(await until(async () => await copy.count() === 1 && await copy.evaluate(e => getComputedStyle(e).opacity) === '1'), 'touch: code copy always shows');
     const shell = (await p.locator('.shell-h').boundingBox())!, search = (await p.locator('.shell-search').boundingBox())!;
     check(search.width === 44 && search.height === 44 && search.y >= shell.y && search.y + search.height <= shell.y + shell.height,
       'touch: the full 44 px search target fits inside the shell header');
@@ -131,10 +120,10 @@ export async function checkConversationDetail(browser: Browser, origin: string, 
     check(tab.width >= 44 && tab.height >= 44 && tab.y >= bar.y && tab.y + tab.height <= bar.y + bar.height,
       'touch: the bottom bar contains the full navigation target');
     const detail = (await p.locator('.detail').boundingBox())!, composer = (await p.locator('.composer').boundingBox())!;
-    const heading = (await p.locator('.detail-h').boundingBox())!;
+    const heading = (await p.locator('.sv-head').boundingBox())!;
     const message = (await p.locator('.th-text.agent .th-main').first().boundingBox())!;
     check(heading.x === composer.x && heading.x === message.x && Math.round(composer.x - detail.x) === 8,
-      'touch: the heading, transcript and composer share one 8 px inset');
+      `touch: the head, transcript and composer share one 8 px inset (${heading.x}, ${message.x}, ${composer.x}, ${detail.x})`);
     const cdp = await context.newCDPSession(p);
     await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
     await p.waitForFunction(() => window.visualViewport!.width < 280);
@@ -160,7 +149,7 @@ export async function checkConversationDetail(browser: Browser, origin: string, 
   const context = await browser.newContext({ colorScheme: 'dark', viewport: { width: 1440, height: 900 } }), p = await context.newPage();
   await p.goto(`${origin}/conversations/${S}`);
   await rename(p, 'MCP startup exits');
-  check(await until(async () => (await p.locator('.detail-h .conv-title').textContent()) === 'MCP startup exits'), 'Rename shows the new title in the header');
+  check(await until(async () => (await p.locator('.sv-head .sv-name').textContent()) === 'MCP startup exits'), 'Rename shows the new name in the head');
   // The list row follows the change feed; a fresh read of the list shows the stored title either way.
   const listed = () => until(async () => await p.locator('.vl-row .row-link', { hasText: 'MCP startup exits' }).count() === 1);
   check(await listed() || (await p.reload(), await listed()), 'Rename shows in the list row');

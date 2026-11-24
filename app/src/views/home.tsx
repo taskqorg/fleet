@@ -6,7 +6,7 @@ import { For, Match, Show, Switch, createMemo, createSignal, lazy, onSettled, un
 import type { JSX } from '@solidjs/web';
 import {
   PulseLine, Composer, TargetPicker, SessionCard, SessionCardSkeleton, QuestionCard, BotTile, QuietSummary, GroupHeader, Ago,
-  OfflineMarker, ErrorBanner, Empty, Button, ShellStatus, actor, keyConnection, lifeOf, stamp, day, dayStart,
+  OfflineMarker, ErrorBanner, Button, ShellStatus, actor, keyConnection, lifeOf, stamp, day, dayStart,
   type Blocker, type Target, type Life, type AvatarMark, type QuestionChoice, type IconName, type Tone,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
@@ -17,7 +17,7 @@ import { scopeIds, noProject, prefsRead, prefs } from '../prefs.ts';
 import type { SessionRow, QuestionRow, ExecutionRow } from '../../../contracts/generated/ops.ts';
 import type { BotListItem } from '../../../contracts/generated/ops-bots.ts';
 
-const Conversations = lazy(() => import('./conversations.tsx'), { export: 'Conversations' });
+const SessionView = lazy(() => import('./session.tsx'), { export: 'SessionView' });
 
 /** Session states Home shows; idle sessions only feed the composer's targets. */
 const ACTIVE = ['waiting', 'failed', 'running', 'preparing', 'idle'];
@@ -95,20 +95,9 @@ export function Home(props: { id?: string }) {
   );
 }
 
-/**
- * The session a card opens, at /home/<code>. The one session view (OR-51) is FLT-49's; until it lands the conversation
- * view shows the session.
- */
+/** The session a card opens, at /home/<code>: the one session view (OR-51), full width with Home highlighted. */
 function HomeSession(props: { code: string }) {
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(props.code);
-  const res = useOp('entity_resolve', () => (uuid ? null : { code: props.code }));
-  const id = createMemo(() => (uuid ? props.code : res.data?.id ?? null));
-  return (
-    <Switch fallback={<Empty text="Opening the session…" />}>
-      <Match when={id()}>{sid => <Conversations id={sid()} />}</Match>
-      <Match when={res.error}>{err => <Empty text={`This session did not open: ${err()}`} />}</Match>
-    </Switch>
-  );
+  return <SessionView frame="home" id={props.code} />;
 }
 
 function greeting(now: Date) {

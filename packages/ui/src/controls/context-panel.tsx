@@ -1,6 +1,6 @@
 // Context panel beside a conversation: plan, timers, automations, swarm (controls/context-panel.md, OR-51, board masters
 // `Context panel`, `Plan item`, `Timer row`, `Swarm member`). Part of the work area, never a floating layer (OR-27).
-import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, createUniqueId, For, Show } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import type { Life } from '../registry.ts';
 import { Icon, Button, Skeleton } from './primitives.tsx';
@@ -45,9 +45,9 @@ export function TimerRow(p: { text: string; when: string; paused?: boolean; onPa
 }
 
 /** An agent of the session's swarm: avatar, role and target, state dot and word; it opens its own session view. */
-export function SwarmMember(p: { name: string; avatar: AvatarMark; state: Life; href: string }) {
+export function SwarmMember(p: { name: string; avatar: AvatarMark; state: Life; href: string; onOpen?: (href: string) => void }) {
   return (
-    <a class="swarm-member" data-ui="swarm-member" href={p.href}>
+    <a class="swarm-member" data-ui="swarm-member" href={p.href} onClick={e => { if (p.onOpen && !e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); p.onOpen(p.href); } }}>
       <Avatar {...p.avatar} size="sm" />
       <span class="swarm-name">{p.name}</span>
       <StateDot state={p.state} />
@@ -77,6 +77,8 @@ export type Member = { id: string; name: string; avatar: AvatarMark; state: Life
 export function ContextPanel(p: {
   plan?: PlanStep[]; timers?: Timer[]; automations?: Automation[]; swarm?: Member[]; loading?: boolean;
   onHide?: () => void; onTimer?: (id: string, action: 'pause' | 'edit' | 'cancel') => void;
+  /** Opens a swarm member's session in the app (a plain click); without it the link loads the page. */
+  onOpen?: (href: string) => void;
 }) {
   const plan = createMemo(() => p.plan ?? []);
   const swarm = createMemo(() => p.swarm ?? []);
@@ -106,11 +108,29 @@ export function ContextPanel(p: {
         </Show>
         <Show when={swarm().length > 0}>
           <Part title={`Swarm · ${swarm().filter(m => m.state === 'done').length} of ${swarm().length} done`}>
-            <For each={swarm()}>{m => <SwarmMember name={m.name} avatar={m.avatar} state={m.state} href={m.href} />}</For>
+            <For each={swarm()}>{m => <SwarmMember name={m.name} avatar={m.avatar} state={m.state} href={m.href} onOpen={p.onOpen} />}</For>
           </Part>
         </Show>
         <p class="ctx-details">Model, tokens, cost and ids: Details</p>
       </Show>
     </aside>
+  );
+}
+
+/**
+ * The context panel as a sheet at phone width (OR-51, OR-60): a native modal <dialog> from the bottom edge. Escape, the
+ * Back gesture and a tap outside close it; focus returns to the Context icon that opened it.
+ */
+export function ContextSheet(p: { open: boolean; onClose: () => void; children: JSX.Element }) {
+  let dialog: HTMLDialogElement | undefined;
+  createEffect(() => p.open, open => {
+    if (!dialog) return;
+    if (open && !dialog.open) dialog.showModal();
+    else if (!open && dialog.open) dialog.close();
+  });
+  return (
+    <dialog ref={el => { dialog = el; }} class="ctx-sheet" data-ui="context-sheet" closedby="any" aria-label="Session context" onClose={() => p.onClose()}>
+      {p.children}
+    </dialog>
   );
 }

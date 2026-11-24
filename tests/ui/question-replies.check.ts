@@ -1,4 +1,4 @@
-// Requirement: successful answers update both conversation surfaces without relying on the feed.
+// Requirement: a successful answer updates the question card in place (OR-53, UR-58) without relying on the feed.
 // Risk: stale controls permit a second conflicting reply, or a failed write falsely appears answered.
 import assert from 'node:assert/strict';
 import type {Browser} from 'playwright';
@@ -15,7 +15,7 @@ export async function checkQuestionReplies(browser: Browser, origin: string) {
     };
   });
   try {
-    for (const surface of [0, 1]) for (const mode of ['withheld', 'normal', 'resync', 'failed']) {
+    for (const mode of ['withheld', 'normal', 'resync', 'failed']) {
       let answered = false;
       const question = () => ({id: 'invented-q', kind: 'agent_question', state: answered ? 'answered' : 'open', text: 'Invented reply question', options: ['yes'], answer: answered ? 'yes' : null, askedAt: new Date().toISOString(), answeredAt: answered ? new Date().toISOString() : null});
       await page.route('**/api/ops/session_get', r => r.fulfill({json: {id: 'invented-session', questions: [question()], executions: [], messages: []}}));
@@ -28,24 +28,26 @@ export async function checkQuestionReplies(browser: Browser, origin: string) {
         answered = true; return r.fulfill({json: question()});
       });
       await page.goto(origin + '/conversations/invented-session');
-      const detail = page.locator('[data-ui=detail]'), inputs = detail.getByRole('textbox', {name: 'Typed answer'});
-      await inputs.nth(1).waitFor();
-      await inputs.nth(surface).fill('yes');
-      await inputs.nth(surface).press('Enter');
+      // The open question is one card above the transcript; answered, it shows as one line in the transcript.
+      const detail = page.locator('[data-ui=detail]'), inputs = detail.getByRole('textbox', {name: 'Answer: Invented reply question'});
+      await inputs.first().waitFor();
+      assert.equal(await inputs.count(), 1);
+      await inputs.first().fill('yes');
+      await inputs.first().press('Enter');
       if (mode === 'failed') {
         await detail.getByRole('alert').filter({hasText: 'Invented write rejected'}).waitFor();
-        assert.equal(await inputs.count(), 2);
+        assert.equal(await inputs.count(), 1);
       } else {
         await inputs.first().waitFor({state: 'detached'});
         assert.equal(await inputs.count(), 0);
-        await detail.locator('.decision.answered').waitFor();
+        await detail.locator('.qcard.answered').waitFor();
         if (mode !== 'withheld') {
           await page.evaluate(mode => {
             const f = (window as any).feed;
             if (mode === 'normal') f.onmessage({data: JSON.stringify({seq: 1, kind: 'question', id: 'invented-q', sessionId: 'invented-session'})});
             else f.handlers.resync({data: JSON.stringify({cursor: 1})});
           }, mode);
-          await detail.locator('.decision.answered').waitFor();
+          await detail.locator('.qcard.answered').waitFor();
           assert.equal(await inputs.count(), 0);
         }
       }

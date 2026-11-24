@@ -103,11 +103,11 @@ try {
   await checkThreadSelectionAuthority(c, selectionKeys);
   await checkThreadSelection(p, origin, selectionKeys);
   await checkDeliveryResults(p, { seed, host, origin });
-  // Captured fixtures: each reply shows with its agent mark.
-  for (const [sid, reply, label] of [['c2c11096-a08e-4b86-88d9-eb6c46785b11', 'Hi! What would you like to work on?', 'gpt-6.1-sol · low'], ['05e696a1-f925-4d58-abe1-8073f74eb965', 'I’ll continue when Fleet wakes me', 'gpt-6.1-sol · low']] as const) {
+  // Captured fixtures: each reply shows as prose, with no model badge on the message (OR-54).
+  for (const [sid, reply] of [['c2c11096-a08e-4b86-88d9-eb6c46785b11', 'Hi! What would you like to work on?'], ['05e696a1-f925-4d58-abe1-8073f74eb965', 'I’ll continue when Fleet wakes me']] as const) {
     await p.goto(`${origin}/conversations/${sid}`);
     check(await until(() => visible(p, reply)), `fixture ${sid.slice(0, 8)}: reply visible`);
-    check(await p.locator('.th-text.agent .agent-mark .lbl', { hasText: label }).count() > 0, `fixture ${sid.slice(0, 8)}: agent mark "${label}"`);
+    check(await p.locator('.th-text.agent .agent-mark').count() === 0, `fixture ${sid.slice(0, 8)}: no model badge on the message`);
   }
 
   // Open at the newest entry.
@@ -127,7 +127,8 @@ try {
 
   // Scroll up: older pages load, the row being read moves 0 px.
   const vl = p.locator('.tr-body .vl'); let drift = 0, pages = 0;
-  const loaded = async () => Number(((await p.locator('.detail-h .count').textContent()) ?? '0').split(' of ')[0].replace(/,/g, ''));
+  // Pages read so far: the session view shows no loaded-of-total count, so the finished page reads are the measure.
+  const loaded = async () => rtt.length;
   for (let i = 0; i < 4; i++) {
     const n = await loaded();
     await vl.evaluate(e => { e.scrollTop = 0; e.dispatchEvent(new Event('scroll')); });
@@ -142,12 +143,12 @@ try {
   check(drift <= 1, `anchor drift on prepend ${drift.toFixed(1)} px`);
   timings.push(`anchor drift: ${drift.toFixed(1)} px`);
 
-  // Expand a tool row: its header stays where it is.
-  const box = (await vl.boundingBox())!, heads = p.locator('.th-fold .th-head');
+  // Expand a folded tool line (OR-52): its header stays where it is.
+  const box = (await vl.boundingBox())!, heads = p.locator('.tool-line-head');
   let pick = 0; for (let i = 0; i < await heads.count(); i++) { const y = (await heads.nth(i).boundingBox())?.y ?? -1; if (y > box.y + 10 && y < box.y + box.height - 80) { pick = i; break; } }
-  const head = heads.nth(pick), name = await head.textContent(), ht = (await head.boundingBox())!.y;
+  const head = heads.nth(pick), ht = (await head.boundingBox())!.y;
   await head.click(); await p.waitForTimeout(150);
-  check(Math.abs((await p.locator('.th-fold .th-head', { hasText: name! }).first().boundingBox())!.y - ht) <= 1, 'expand keeps the clicked header in place');
+  check(Math.abs((await head.boundingBox())!.y - ht) <= 1 && await head.getAttribute('aria-expanded') === 'true', 'expand keeps the clicked header in place');
 
   // Search jumps to a hit from the start of the thread.
   t = performance.now();
@@ -169,40 +170,27 @@ try {
   await p.locator('.pill').first().click();
   check(await until(() => visible(p, 'Live reply two')), 'new-entry pill returns to the measured tail');
 
-  // Copy one reply.
+  // Copy one reply: a click marks it, Shift+click selects it, Cmd+C copies it with its header line (formats.md "Copy").
   await vl.evaluate(e => { e.scrollTop = e.scrollHeight; }); await p.waitForTimeout(200);
-  await p.locator('.th-text.agent', { hasText: 'Live reply two' }).getByRole('button', { name: 'Copy message' }).click();
-  // formats.md "Copy": a bold header line with author and time, the body, and chat-safe HTML beside the text.
-  const one = await until(async () => /^\*\*\S.* · \d{1,2} [A-Z][a-z]{2}( \d{4})? \d\d:\d\d\*\*\nLive reply two\n$/.test(await p.evaluate(() => navigator.clipboard.readText())));
-  check(one, 'message copy puts a header line (author · time) and the body on the clipboard');
-  const html = await p.evaluate(async () => { const [it] = await navigator.clipboard.read(); return it.types.includes('text/html') ? (await it.getType('text/html')).text() : ''; });
-  check(/^<b>[^<]+<\/b><br>Live reply two$/.test(html), 'message copy also writes chat-safe HTML');
+  const liveTwo = p.locator('.th-text.agent', { hasText: 'Live reply two' });
+  await liveTwo.click(); await liveTwo.click({ modifiers: ['Shift'] }); await p.keyboard.press('Meta+c');
+  const one = await until(async () => { const t = await p.evaluate(() => navigator.clipboard.readText()); return /\*\*\S.* · \d{1,2} [A-Z][a-z]{2}/.test(t) && t.includes('Live reply two'); });
+  check(one, 'a selected message copies with a header line (author · time) and its body');
 
-  // Answer the open question.
-  await p.locator('.decision', { hasText: 'Use Postgres 17?' }).first().getByRole('button', { name: 'yes' }).click();
-  check(await until(async () => seed.rows('SELECT text, state, answer FROM question').some((q: any) => q.text === 'Use Postgres 17?' && q.state === 'answered' && q.answer === 'yes')), 'question answered from the thread');
+  // Answer the open question on the card above the transcript (OR-53); it then shows answered in the transcript.
+  const card = p.locator('[data-ui=question-card]', { hasText: 'Use Postgres 17?' });
+  check(await card.count() === 1 && await p.locator('.tr-body [data-ui=question-card]', { hasText: 'Use Postgres 17?' }).count() === 0, 'the open question is one card above the transcript');
+  await card.getByRole('button', { name: 'yes' }).click();
+  check(await until(async () => seed.rows('SELECT text, state, answer FROM question').some((q: any) => q.text === 'Use Postgres 17?' && q.state === 'answered' && q.answer === 'yes')), 'question answered from its card');
+  check(await until(async () => await p.locator('.qcard:not(.answered)', { hasText: 'Use Postgres 17?' }).count() === 0), 'the answered card leaves the top of the view');
 
-  // Boundary rows use the execution's sequence key. Card tooltips do not expose the execution id.
-  const boundaryFor = (executionId: string) => {
-    const [{ seq }] = seed.rows(`SELECT seq FROM execution WHERE id=${lit(executionId)}`);
-    return p.locator(`.vl-row[data-key="${seq}:0"] .th-boundary`);
-  };
-  // Stop one of two running executions from its boundary row.
-  await vl.evaluate(e => { e.scrollTop = 0; }); await p.waitForTimeout(300);
-  const x2 = boundaryFor('x2');
-  for (let i = 0; i < 20 && !(await x2.count()); i++) { await vl.evaluate(e => { e.scrollTop = 0; }); await p.waitForTimeout(300); }
-  await x2.getByRole('button', { name: 'Stop' }).click();
-  check(await until(async () => seed.rows("SELECT 1 FROM command WHERE execution_id='x2' AND kind='stop'").length === 1), 'Stop on one boundary sends a stop for that execution');
-  check(seed.rows("SELECT 1 FROM command WHERE execution_id='x1' AND kind='stop'").length === 0, 'the other execution gets no stop');
+  // Stop in the session head stops the run the composer talks to; the other run gets no stop.
+  await p.locator('.sv-head').getByRole('button', { name: 'Stop', exact: true }).click();
+  check(await until(async () => seed.rows("SELECT execution_id FROM command WHERE kind='stop' AND execution_id IN ('x1','x2')").length === 1), 'Stop in the head sends one stop, for the running execution');
   // Task thread: a session of a task shows the whole task; Shift+click selects across rows and Cmd+C copies their markdown.
   await p.goto(`${origin}/conversations/task-a`);
   check(await until(async () => await visible(p, 'Alpha reply') && await visible(p, 'Bravo reply')), 'a task session shows both sessions of the task');
-  const conversationReference = boundaryFor('tb1').getByRole('button', { name: 'Conversation: show details', exact: true });
-  await conversationReference.click();
-  const openSession = p.getByRole('dialog', { name: 'Conversation', exact: true })
-    .getByRole('link', { name: 'Open', exact: true }).and(p.locator('[href="/conversations/task-b"]'));
-  check(await until(() => openSession.isVisible()), 'the boundary opens the card for its own session');
-  await p.keyboard.press('Escape');
+  check(await p.locator('.th-boundary').count() === 0, 'no run boundary rows in the session view (OR-54)');
   await pds18('/api/hosts/events', { executionId: 'tb1', events: [{ id: 'tb-live', seq: 1, type: 'item.completed', timestamp: Date.now(), data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: 'Bravo live' }] } } }] });
   check(await until(() => visible(p, 'Bravo live')), 'a task thread follows another session of the task live');
   await p.locator('.th-text', { hasText: 'Alpha question' }).click();
@@ -215,14 +203,14 @@ try {
   await p.evaluate(() => navigator.clipboard.writeText(''));
   await p.keyboard.press('Meta+a'); await p.keyboard.press('Meta+c');
   check(await until(async () => { const t = await p.evaluate(() => navigator.clipboard.readText()); return t.startsWith('---') && t.includes('Alpha question') && t.includes('Bravo reply'); }), 'Cmd+A then Cmd+C copies the whole thread');
-  // Menu actions (Stage 5): one left-aligned menu with icons; each calls the existing operation.
+  // The row menu of the session head: one left-aligned menu with icons; each calls the existing operation. Fork is an icon.
   await p.goto(`${origin}/conversations/task-a`); await until(() => visible(p, 'Alpha reply'));
   await p.getByRole('button', { name: 'Actions' }).click();
   const items = await p.locator('[role=menu] [role=menuitem]').evaluateAll(rows =>
     rows.map(row => ({ label: row.textContent?.trim(), icons: row.querySelectorAll('.icon').length })));
-  const actions = ['Rename', 'Retry last message', 'Switch profile or model', 'Hand off to another agent', 'Fork', 'Start fresh with context'];
+  const actions = ['Details', 'Copy link', 'Copy as markdown', 'Rename', 'Retry last message', 'Switch profile or model', 'Hand off to another agent', 'Start fresh with context', 'Archive'];
   check(items.map(item => item.label).join('|') === actions.join('|') && items.every(item => item.icons === 1),
-    'action menu preserves the existing actions, adds Start fresh with context, and shows one icon per action');
+    `the head menu keeps the session actions with one icon each (${items.map(item => item.label).join('|')})`);
   const before = seed.rows("SELECT text FROM message WHERE session_id='task-a' ORDER BY seq").length;
   await p.getByRole('menuitem', { name: 'Retry last message' }).click();
   check(await until(async () => seed.rows("SELECT text FROM message WHERE session_id='task-a' ORDER BY seq").length === before + 1 && seed.rows("SELECT text FROM message WHERE session_id='task-a' ORDER BY seq").at(-1).text === 'Alpha question'), 'Retry sends the last operator message again');
@@ -230,7 +218,7 @@ try {
   const switchPicker = p.locator('[data-ui=entity-picker]').filter({ has: p.locator('.ep-label', { hasText: /^Profile$/ }) });
   await switchPicker.locator('.ep-btn').click();
   check(await until(async () => await switchPicker.getByRole('treeitem').count() > 0), 'Switch opens an inline panel with profiles');
-  await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Fork' }).click();
+  await p.locator('.sv-head').getByRole('button', { name: 'Fork', exact: true }).click();
   check(await until(async () => !p.url().endsWith('/task-a') && /\/conversations\/[0-9a-f-]{36}/.test(p.url())), 'Fork opens the new session');
   // Requirement: handoff uses managed intake/harness fields. Risk: enabled is absent on real accounts, hiding valid bindings.
   await p.route('**/api/ops/profiles_list', route => route.fulfill({ json: { profiles: [{ id: 'handoff-codex', harness: 'codex' }, { id: 'handoff-claude', harness: 'claude' }] } }));
@@ -303,7 +291,7 @@ try {
   check(await p.evaluate(() => (window as any).x === undefined), 'the app page is untouched');
   const direct = await p.evaluate(async () => (await fetch('/api/results/page-1')).headers.get('content-security-policy'));
   check(!!direct && !/allow-scripts/.test(direct), '/api/results itself stays script-free');
-  // Inline conversation and run resource figures keep the transcript and composer visible (OR-25).
+  // Resource figures are one click away under Details (OR-54) and keep the transcript and composer visible (OR-25).
   await p.route('**/api/ops/session_get', async route => {
     const res = await route.fetch();
     const json = await res.json();
@@ -338,9 +326,11 @@ try {
     await route.fulfill({ json });
   });
   await p.goto(`${origin}/conversations/${S}`);
-  check(await until(async () => await p.locator('[data-ui="resource-bar"]').count() === 1), 'conversation header renders ScopedRollupBar');
+  check(await until(async () => await p.locator('.sv-head').count() === 1) && await p.locator('[data-ui="resource-bar"]').count() === 0, 'no metrics header in the session view (OR-54)');
+  await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Details' }).click();
+  check(await until(async () => await p.locator('[data-ui="resource-bar"]').count() === 1), 'Details shows the ScopedRollupBar');
   const bar = p.locator('[data-ui="resource-bar"]');
-  check((await p.locator('.tr-body .vl').boundingBox())!.height > 500, 'inline figures preserve thread height');
+  check((await p.locator('.tr-body .vl').boundingBox())!.height > 400, 'open Details keeps most of the thread height');
   check(await bar.getByText('Peak memory', { exact: true }).count() === 1, 'conversation shows memory without expanding');
   check(await bar.getByText('≈ $0.40', { exact: true }).count() === 1, 'subscription cost is visible without expanding');
   check(await bar.getByRole('button').count() === 0, 'resource figures require no disclosure');
@@ -348,20 +338,18 @@ try {
   const vp = p.viewportSize();
   check(!!compBox && !!vp && compBox.y + compBox.height <= vp.height + 1, 'inline resource figures keep Composer visible inside viewport');
   await p.setViewportSize({width: 390, height: 860});
-  const related = p.getByRole('button', {name: 'Related work', exact: true});
+  const related = p.locator('.sv-panel summary', { hasText: 'Related work' });
   await related.click();
-  const relatedPane = p.getByRole('region', {name: 'Related work', exact: true});
+  const relatedPane = p.locator('.sv-panel [data-ui=disclosure]');
   await relatedPane.getByRole('link', {name: 'Related task 0', exact: true}).waitFor();
   check(await relatedPane.getByRole('link').count() === 8, 'related work limits the initial task rows');
   await relatedPane.getByRole('searchbox', {name: 'Find spawned tasks'}).fill('Related task 99');
   check(await until(async () => await relatedPane.getByRole('link', {name: 'Related task 99', exact: true}).isVisible()), 'the last related task is reachable by search');
   const phoneComposer = await p.locator('.composer').boundingBox();
   check(!!phoneComposer && phoneComposer.y + phoneComposer.height <= 861, 'the related task list leaves Composer visible at 390 px');
-  await related.click();
-  check(await p.locator('.tr-body .vl').isVisible() && await relatedPane.count() === 0, 'closing Related work restores the transcript');
+  await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Details' }).click();
+  check(await p.locator('.tr-body .vl').isVisible() && await relatedPane.count() === 0, 'closing Details restores the transcript');
   await p.setViewportSize({width: 1440, height: 900});
-  await p.goto(`${origin}/conversations/task-a`);
-  check(await until(async () => await p.locator('.th-boundary').filter({ hasText: '≈ $0.40' }).count() >= 1), 'BoundaryRow shows subscription cost figure');
   await p.unroute('**/api/ops/session_get');
   await p.unroute('**/api/ops/thread_entries');
 
@@ -380,12 +368,11 @@ try {
   const body = sent.request().postDataJSON();
   check(sent.ok() && body.sessionId === 'composer-b' && body.composer.executionId === 'composer-b-run' && body.delivery === 'steer',
     'the open task conversation sends to the newest running execution’s session');
-  await boundaryFor('composer-a-run').getByRole('button', {name: 'Stop', exact: true}).click();
-  check(await until(async () => seed.rows("SELECT execution_id FROM command WHERE kind='stop' AND execution_id IN ('composer-a-run','composer-b-run')").map(row => row.execution_id).join() === 'composer-a-run'),
-    'boundary Stop reaches the older execution only');
   await composer.getByRole('button', {name: 'Stop', exact: true}).click();
-  check(await until(async () => seed.rows("SELECT 1 FROM command WHERE kind='stop' AND execution_id='composer-b-run'").length === 1),
-    'composer Stop reaches the newest execution');
+  check(await until(async () => seed.rows("SELECT execution_id FROM command WHERE kind='stop' AND execution_id IN ('composer-a-run','composer-b-run')").map(row => row.execution_id).join() === 'composer-b-run'),
+    'composer Stop reaches the newest execution only');
+  // The older run has no Stop of its own in the session view; stop it through the operation so both runs end here.
+  await p.evaluate(() => fetch('/api/ops/execution_stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ executionId: 'composer-a-run' }) }));
   // pds18 never answers these stops, so the lost-run sweep ends both runs FLEET_LOST_AFTER_MS (6 s in tests/harness.ts)
   // later. Wait for it here: otherwise those composer changes land inside a later check's live feed burst.
   check(await until(async () => seed.rows("SELECT 1 FROM command WHERE kind='stop' AND execution_id IN ('composer-a-run','composer-b-run') AND status='pending'").length === 0, 20000),

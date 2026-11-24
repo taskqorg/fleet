@@ -48,6 +48,44 @@
   .swarm-member:hover .swarm-name { text-decoration: underline; }
   .swarm-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ctx-details { margin: 0; color: var(--fg-faint); font-size: var(--font-size-xs); }
+  /* The one session view (pages/session.md, OR-51): the conversation, then the context panel as a right column. Below
+     600 px of its own width the column gives way to a sheet (the Context icon opens it). */
+  .detail.session-view { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0; padding: 0; overflow: hidden; container-type: inline-size; }
+  .session-view[data-frame=home] { block-size: 100%; }
+  .sv-main { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; min-height: 0; padding-block: var(--space-4); padding-inline: clamp(var(--space-3), calc(6% - var(--space-5)), var(--space-6)); }
+  .sv-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--size-control); }
+  .sv-name { flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); }
+  .sv-head .sdot { flex: none; }
+  .sv-hits { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--fg-muted); font-size: var(--font-size-sm); }
+  /* A panel under the head never pushes the composer out of view: it scrolls within half the column. */
+  .sv-panel { display: flex; flex-direction: column; gap: var(--space-2); flex: none; max-block-size: 50%; overflow-y: auto; padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .sv-packet { max-block-size: 35vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .sv-status:empty { display: none; }
+  .session-view .drop-zone { gap: var(--space-3); }
+  .sv-transcript { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .sv-transcript .transcript, .sv-transcript .tr-body { flex: 1; min-height: 0; }
+  .sv-transcript .tr-body .vl { flex: 1; height: auto; min-height: 0; }
+  .sv-transcript.related-work { overflow-y: auto; }
+  /* Messages, tool lines and the composer share the head's inset. */
+  .session-view .tr-body .vl-row, .session-view .th-row { padding-inline: 0; }
+  .session-view .tool-line { padding-block: var(--space-2); }
+  .session-view .composer { margin-inline: 0; }
+  .sv-ctx { display: flex; min-height: 0; overflow-y: auto; }
+  .sv-ctx[hidden] { display: none; }
+  .sv-ctx .ctx-panel { min-block-size: 100%; }
+  @container (max-width: 600px) {
+    .sv-ctx { display: none; }
+    /* The name keeps its line; avatar, state and the icons follow below it (OR-60). */
+    .sv-head { flex-wrap: wrap; row-gap: 0; }
+    .sv-name { order: -1; flex: 1 0 100%; }
+  }
+
+  /* The context sheet at phone width: a native modal <dialog> from the bottom edge (closes on Escape, Back, a tap outside). */
+  dialog.ctx-sheet { inset-block: auto 0; inline-size: 100%; max-inline-size: 100%; max-block-size: 80dvh; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: var(--float); color: var(--fg); box-shadow: var(--elevation-popover); overflow-y: auto; }
+  dialog.ctx-sheet:modal { overscroll-behavior: contain; }
+  dialog.ctx-sheet::backdrop { background: rgb(0 0 0 / 0.35); overflow: hidden; overscroll-behavior: contain; }
+  dialog.ctx-sheet .ctx-panel { inline-size: auto; border: 0; background: none; }
+
   @media (pointer: coarse) {
     .timer-acts .btn.icon-only { width: var(--size-hit-phone); height: var(--size-hit-phone); }
   }

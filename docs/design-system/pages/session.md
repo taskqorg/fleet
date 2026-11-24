@@ -1,6 +1,6 @@
 # Session view
 
-**Status.** Target ([OR-51](../owner-rules.md)). Until it is built, a session opens as the conversation page of [Conversations](conversations.md), with its metrics header and one row per tool call.
+**Status.** Built ([FLT-49](https://youtrack.ufobe.com/issue/FLT-49)): `SessionView` in [`app/src/views/session.tsx`](../../../app/src/views/session.tsx), its transcript is `Thread quiet`, folded by [`packages/ui/src/controls/tool-fold.ts`](../../../packages/ui/src/controls/tool-fold.ts). Home mounts it at `/home/C-…` ([FLT-48](https://youtrack.ufobe.com/issue/FLT-48)); Conversations mounts it in its work area. The `/conversations/<uuid>` redirect to the code URL comes with the Conversations rebuild.
 
 **App routes:**
 * `/home/C-FLT-12`: opened from Home; the rail keeps Home highlighted.
@@ -93,9 +93,11 @@ Decided in [FLT-46](https://youtrack.ufobe.com/issue/FLT-46): one folded tool li
 
 The rule reads only the order of the blocks that `thread_entries` already returns, so the transcript read has no grouped form: the view folds the blocks it shows, and pages join because they are contiguous. The line says the tools it holds and the time from the first block's `startedAt` to the last block's `endedAt`.
 
+Fleet's own notices to an agent (a watch timer, a wake or run request: an operator text block by `Fleet`) are system events and fold into the line, so a bot's transcript shows its answers, not every wake. Withdrawn and expired questions are internal notices and do not show.
+
 ## Open
 
-* **Timer pause:** a watch timer can be changed or cancelled, not paused. Pausing needs a paused state on the watch (`watch_set`), which the context panel then shows.
+* **Timer pause:** a watch timer can be changed or cancelled, not paused; the Pause icon says so. Pausing needs a paused state on the watch (`watch_set`), which the context panel then shows.
 
 ## Blocks
 
