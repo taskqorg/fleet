@@ -1,9 +1,9 @@
-// Requirement: fleet.md Persistent bots (FLT-20 PR 4/5): rendered Fleet Web (/bots) shows HAL0 across isolated
-// projects with managed tasks (active/waiting/historical), runs (quiet/skipped/queued/failed/unconfirmed),
-// open/answered questions (including question_ask), errors, analytics by recorded execution project, and
-// Run now / Pause / Resume / Stop / Home controls.
-// Risk: Bots Web view drops question_ask rows, leaks tasks/runs across same-named HAL0 instances, misrenders
-// SolidJS 2.0 controls, or breaks Run/Pause/Stop/answer flows in Chromium.
+// Requirement: fleet.md Persistent bots (FLT-20 PR 4/5) in Library's Bots root (pages/library.md): an earlier /bots link
+// lands in Library, both same-named HAL0 instances open by their code with managed tasks (active/waiting/historical),
+// runs (quiet/skipped/queued/failed/unconfirmed) and Run now / Pause / Resume / Stop / Talk to it controls. Questions
+// show on Home and cost on System > Spend, so the bot page has neither tab.
+// Risk: the bot view leaks tasks/runs across same-named HAL0 instances, misrenders SolidJS 2.0 controls, or breaks
+// Run/Pause/Stop flows in Chromium.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type { Browser } from 'playwright';
@@ -94,21 +94,23 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
       `);
     });
 
-    // 1. Open /bots and verify both HAL0 instances render with distinct project labels.
+    // 1. An earlier /bots link lands in Library; both HAL0 instances are leaves of its Bots root and open by code.
     await p.goto(`${origin}/bots`);
-    const tree = p.getByRole('tree', { name: 'Bots' });
-    await tree.getByRole('treeitem', { name: /HAL0.*Hello World · field notes/ }).waitFor();
-    const itemA = tree.locator(`[data-tree-key="${halA}"]`);
+    await p.waitForURL(`${origin}/library/bots`);
+    const tree = p.getByRole('tree', { name: 'Library' });
+    const itemA = tree.locator(`[data-tree-key="bot:${halA}"]`);
     await itemA.waitFor();
+    await tree.locator(`[data-tree-key="bot:${halB}"]`).waitFor();
     await itemA.click();
-    await p.waitForURL(`**/bots/${halA}`);
+    await p.waitForURL(/\/library\/bots\/B-/);
+    const pathA = new URL(p.url()).pathname;
 
     const detail = p.locator('[data-ui="detail"]');
     await detail.getByRole('heading', { name: 'HAL0', exact: true }).waitFor();
-    await detail.getByRole('button', { name: 'Home', exact: true }).waitFor();
+    await detail.getByRole('button', { name: 'Talk to it', exact: true }).waitFor();
     await detail.getByRole('button', { name: 'Run now', exact: true }).waitFor();
     await detail.getByRole('button', { name: 'Pause', exact: true }).waitFor();
-    await detail.getByText('HAL0 decision: apply hotfix now?', { exact: true }).waitFor();
+    assert.equal(await p.getByRole('tab', { name: /^(Analytics|Questions)/ }).count(), 0, 'no Analytics or Questions tab');
 
     // 2. Tasks tab: active, waiting, and historical buckets.
     const tabs = p.getByRole('tablist', { name: 'Bot sections' });
@@ -133,23 +135,6 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
     await runGroup.getByRole('button', { name: /^Unconfirmed/ }).click();
     await detail.locator('[data-ui="data-table"]').getByText('needs_you', { exact: true }).waitFor();
 
-    // 4. Questions & Errors tab: question_ask row appears, typed answer submits, and unconfirmed work shows.
-    await tabs.getByRole('tab', { name: /^Questions & Errors/ }).click();
-    await detail.getByText('HAL0 decision: apply hotfix now?', { exact: true }).waitFor();
-    await detail.getByText('Bot run (needs_you): unconfirmed outcome', { exact: true }).waitFor();
-    const answerBox = detail.getByLabel('Typed answer', { exact: true });
-    await answerBox.fill('Apply hotfix');
-    const ansReq = p.waitForResponse(r => r.url().endsWith('/api/ops/questions_answer') && r.status() === 200);
-    await answerBox.press('Enter');
-    await ansReq;
-    await detail.getByText('No open questions for this bot.', { exact: true }).waitFor();
-
-    // 5. Analytics tab: renders hello-world totals and attributed executions.
-    await tabs.getByRole('tab', { name: /^Analytics/ }).click();
-    await detail.getByText('Spend & Usage by Recorded Execution Project', { exact: true }).waitFor();
-    await detail.locator('[data-ui="data-table"][aria-label="Bot analytics by project"]').getByText('Hello World', { exact: true }).waitFor();
-    await detail.locator('[data-ui="data-table"][aria-label="Attributed executions"]').getByText('agent_run').first().waitFor();
-
     // 6. Pause & Resume control updates badge cleanly, then Run now + Stop exercises active run lifecycle.
     const pauseReq = p.waitForResponse(r => r.url().endsWith('/api/ops/bot_pause') && r.status() === 200);
     await detail.getByRole('button', { name: 'Pause', exact: true }).click();
@@ -172,8 +157,8 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
     await stopReq;
 
     // 7. Select HAL0-B and verify clean two-project isolation in Web UI.
-    await tree.locator(`[data-tree-key="${halB}"]`).click();
-    await p.waitForURL(`**/bots/${halB}`);
+    await tree.locator(`[data-tree-key="bot:${halB}"]`).click();
+    await p.waitForURL(u => u.pathname.startsWith('/library/bots/B-') && u.pathname !== pathA);
     await tabs.getByRole('tab', { name: /^Tasks/ }).click();
     await detail.getByText('HAL0 B isolated task', { exact: true }).waitFor();
     assert.equal(await detail.getByText('HAL0 A active fix', { exact: true }).count(), 0);
@@ -229,7 +214,7 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
 
     automationStep = 'check browser errors';
     assert.deepEqual(errors, [], `unexpected page errors: ${errors.join('; ')}`);
-    console.log('ok Bots Web UI (HAL0 two-project isolation, tasks, runs, questions_answer, errors, analytics, pause/resume)');
+    console.log('ok Library bots (HAL0 two-project isolation by code, tasks, runs, pause/resume, automations)');
   } catch (err) {
     if (automationStep && process.env.GITHUB_ACTIONS === 'true') {
       const line = err instanceof Error ? err.stack?.match(/\/tests\/ui\/bots\.check\.ts:(\d+):/)?.[1] : undefined;
