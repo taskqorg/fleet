@@ -174,18 +174,8 @@ func forgeCommand(ctx forgeContext, name string, args ...string) *exec.Cmd {
 			"GIT_CONFIG_NOSYSTEM=1",
 			"GIT_CONFIG_GLOBAL=/dev/null",
 		}
-		credential := exec.Command("glab", "config", "get", "token", "-h", host)
-		credential.Env = []string{
-			"PATH=" + os.Getenv("PATH"),
-			"HOME=" + ctx.CredentialHome,
-			"GLAB_CONFIG_DIR=" + glabDir,
-			"GITLAB_HOST=https://" + host,
-			"NO_PROMPT=1",
-		}
-		if token, err := boundedOutput(credential, probeWait); err == nil {
-			if tok := strings.TrimSpace(string(token)); tok != "" {
-				c.Env = append(c.Env, "GITLAB_TOKEN="+tok)
-			}
+		if token := forgeCredential(ctx, provider, host); token != "" {
+			c.Env = append(c.Env, "GITLAB_TOKEN="+token)
 		}
 		return c
 	}
@@ -205,17 +195,55 @@ func forgeCommand(ctx forgeContext, name string, args ...string) *exec.Cmd {
 	if host != "github.com" {
 		c.Env = append(c.Env, "GH_HOST="+host)
 	}
-	credential := exec.Command("gh", "auth", "token", "--hostname", host)
-	credential.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + ctx.CredentialHome, "GH_CONFIG_DIR=" + ctx.Store, "GH_PROMPT_DISABLED=1"}
-	if token, err := boundedOutput(credential, probeWait); err == nil {
-		if tok := strings.TrimSpace(string(token)); tok != "" {
-			c.Env = append(c.Env, "GH_TOKEN="+tok)
-		}
+	if token := forgeCredential(ctx, provider, host); token != "" {
+		c.Env = append(c.Env, "GH_TOKEN="+token)
 	}
 	return c
 }
 
+func forgeCredential(ctx forgeContext, provider, host string) string {
+	var credential *exec.Cmd
+	if provider == "gitlab" {
+		glabDir := ctx.GlabStore
+		if glabDir == "" {
+			glabDir = resolveGlabStore(ctx.Store)
+		}
+		credential = exec.Command("glab", "config", "get", "token", "-h", host)
+		credential.Env = []string{
+			"PATH=" + os.Getenv("PATH"),
+			"HOME=" + ctx.CredentialHome,
+			"GLAB_CONFIG_DIR=" + glabDir,
+			"GITLAB_HOST=https://" + host,
+			"NO_PROMPT=1",
+		}
+	} else {
+		credential = exec.Command("gh", "auth", "token", "--hostname", host)
+		credential.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + ctx.CredentialHome, "GH_CONFIG_DIR=" + ctx.Store, "GH_PROMPT_DISABLED=1"}
+	}
+	token, err := boundedOutput(credential, probeWait)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(token))
+}
+
+var ciLogsTool = M{
+	"name":        "ci_logs",
+	"description": "Read a bounded, credential-redacted excerpt from a failed CI job on the granted execution branch's live head.",
+	"inputSchema": M{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []any{"expectedHeadSha", "jobId"},
+		"properties": M{
+			"expectedHeadSha": M{"type": "string", "pattern": "^[0-9a-f]{40}$"},
+			"jobId":           M{"type": "integer", "minimum": 1},
+		},
+	},
+	"annotations": M{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true},
+}
+
 var forgeTools = []any{
+	ciLogsTool,
 	M{
 		"name":        "publish_draft",
 		"description": "Push this execution branch to its granted project repository and open or reuse a draft pull request or merge request. Accepts an explicit remote-head lease for rebased fleet/* branches. Never merges.",
@@ -248,6 +276,7 @@ var forgeTools = []any{
 }
 
 var publishingTools = []any{
+	ciLogsTool,
 	M{
 		"name":        "capabilities",
 		"description": "Read the bound repository publishing capabilities: provider (github or gitlab), host, repo, branch, baseBranch, mergeMethod, autoMerge, readOnly, and supported actions.",
@@ -1418,7 +1447,7 @@ func firstStr(a, b string) string {
 }
 
 func publishingCapabilitiesReply(ctx forgeContext, ref contract.RepoRef, adapter publishingAdapter) M {
-	actions := []string{"capabilities", "status"}
+	actions := []string{"capabilities", "status", "ci_logs"}
 	if !ctx.ReadOnly {
 		actions = append(actions, "publish_draft", "record_code_review", "mark_ready")
 		if ctx.AutoMerge {
@@ -1652,6 +1681,9 @@ func executePublishingAction(ctx forgeContext, action string, args publishingArg
 
 // publishingCall answers one tools/call of the unified project-publishing MCP server.
 func publishingCall(name string, arguments, context any) (any, error) {
+	if name == "ci_logs" {
+		return ciLogsCall(arguments, typed[forgeContext](context))
+	}
 	keys, ok := jClone(arguments).(M)
 	if !ok {
 		keys = M{}
@@ -1685,6 +1717,9 @@ func publishingCall(name string, arguments, context any) (any, error) {
 
 // forgeCall answers one tools/call of the legacy project-forge MCP server (additive compatibility alias).
 func forgeCall(name string, arguments, context any) (any, error) {
+	if name == "ci_logs" {
+		return ciLogsCall(arguments, typed[forgeContext](context))
+	}
 	keys, _ := jClone(arguments).(M)
 	a := typed[forgeArgs](keys)
 	validDelivery := (a.Action == "status" || a.Action == "ready" || a.Action == "auto_merge") && len(keys) == 1 ||
