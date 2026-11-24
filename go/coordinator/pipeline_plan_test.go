@@ -11,6 +11,39 @@ import (
 	"fleet/coordinator/db"
 )
 
+// Requirement: T-FLT-53 retains the person who authorized an agent's pipeline call.
+// Risk: taken work launches a pipeline with the account holder's project authority.
+func TestPipelineAgentInitiatingActor(t *testing.T) {
+	env := openTestCoordinator(t, false)
+	const member = "member@trial.test"
+	q := scopedRequest(env.ctx, env.app, env.app.peopleSnapshot().person(member))
+	q.agent = "execution:actor-parent"
+	err := env.app.store.Write(env.ctx, q, []string{GLOBAL}, func(q *Request) error {
+		if err := exec(q, `INSERT INTO execution(id,kind,state,project_id,directed_by)
+			VALUES ('actor-parent','agent_run','running','desiign',$1)`, testOwnerEmail); err != nil {
+			return err
+		}
+		run, err := startRun(q, pipelineStartOptions{File: "search-basic.json", ProjectID: ptr("desiign")})
+		if err != nil {
+			return err
+		}
+		if run.ParentExecutionID != "actor-parent" || run.actor() != member || run.director() != member {
+			t.Fatalf("parent=%q authority=%q director=%q", run.ParentExecutionID, run.actor(), run.director())
+		}
+		stored, err := getRun(q, run.ID)
+		if err != nil {
+			return err
+		}
+		if stored == nil || stored.actor() != member || stored.director() != member {
+			t.Fatal("run did not retain the authorized initiating actor")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func planFixture(t *testing.T, id string) doc {
 	t.Helper()
 	definition := doc{"version": float64(3), "id": "guard", "resultStep": "final", "steps": []any{

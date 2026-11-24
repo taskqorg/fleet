@@ -10,8 +10,9 @@
     {
       "id": "review",
       "kind": "agent",
+      "output": "review-reply",
       "profile": "claude-reviewer",
-      "prompt": "Review the implementation in $FLEET_INPUT_DIR/implement/ against the original inputs in $FLEET_INPUT_DIR/example/ and the task requirements:\n\n${example.prompt}\n\nCheck correctness, edge cases, contract adherence, code quality and missing deliverables. Do not edit source files. Write a structured review report to $FLEET_OUTPUT_DIR/review.md and $FLEET_OUTPUT_DIR/output.json (including verdict and concrete findings)."
+      "prompt": "Review the implementation in $FLEET_INPUT_DIR/implement/ against the original inputs in $FLEET_INPUT_DIR/example/ and the task requirements:\n\n${example.prompt}\n\nCheck correctness, edge cases, contract adherence, code quality and missing deliverables. Review the staged files without editing them. Return one JSON object as your final reply, without code fences. Include \"verdict\" as a nonempty string, \"findings\" as an array of concrete finding strings (empty if there are none), and \"report\" as the full Markdown report in a JSON string. Fleet retains the report and summary for the fix step."
     },
     {
       "id": "fix",

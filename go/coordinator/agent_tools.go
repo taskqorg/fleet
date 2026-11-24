@@ -255,6 +255,7 @@ func init() {
 		sessionProject, focused := "", false // the calling session's own project; whether it has any focus
 		prove := func() error {
 			var e agentExecution
+			var sessionDirector string
 			if executionID != "" {
 				var err error
 				if e, err = getExecution(q, executionID); err != nil {
@@ -276,6 +277,7 @@ func init() {
 					return err
 				} else if s != nil {
 					focus, sessionProject, focused = focusIDsOf(s.Focus), s.ProjectID, s.Focus != nil
+					sessionDirector = s.DirectedBy
 					if s.BotID != "" {
 						bot, err := unscoped(q, func() (botFull, error) {
 							return readBotFull(q, s.BotID)
@@ -297,7 +299,7 @@ func init() {
 			if q.host != nil {
 				holder = q.host.Holder
 			}
-			d := firstString(e.DirectedBy, holder)
+			d := firstString(e.DirectedBy, sessionDirector, holder)
 			if q.person = q.peopleSnapshot().person(d); q.person == nil {
 				return fail(403, "Director "+d+" is not a person of this Fleet")
 			}

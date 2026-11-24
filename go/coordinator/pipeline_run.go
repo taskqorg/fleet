@@ -103,6 +103,7 @@ func startRun(q *Request, o pipelineStartOptions) (*runRecord, error) {
 				return nil, fail(403, "Pipeline caller task project mismatch")
 			}
 		}
+		parentDirector := deref(parent.DirectedBy)
 		if parent.SessionID != nil {
 			session, e := sessionByID(q, *parent.SessionID)
 			if e != nil {
@@ -111,11 +112,14 @@ func startRun(q *Request, o pipelineStartOptions) (*runRecord, error) {
 			if session.ProjectID != run.project() || (session.TaskID != "" && session.TaskID != deref(parent.TaskID)) {
 				return nil, fail(403, "Pipeline caller session ownership mismatch")
 			}
+			parentDirector = firstString(parentDirector, session.DirectedBy)
 		}
-		if strings.TrimSpace(deref(parent.DirectedBy)) == "" {
+		if q.person == nil || q.person.Email == "" || strings.TrimSpace(parentDirector) == "" {
 			return nil, fail(403, "Pipeline caller has no initiating actor provenance")
 		}
-		run.ParentExecutionID, run.TaskID, run.SessionID, run.DirectedBy = source, deref(parent.TaskID), deref(parent.SessionID), deref(parent.DirectedBy)
+		// The agent tool route authorizes taken work as its original requester.
+		// The parent's dispatch director can be the subscription holder.
+		run.ParentExecutionID, run.TaskID, run.SessionID, run.DirectedBy = source, deref(parent.TaskID), deref(parent.SessionID), q.person.Email
 	}
 	run.ExperimentID, run.Variant = o.ExperimentID, o.Variant
 	if err := run.merge(o.Extra); err != nil {
