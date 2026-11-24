@@ -110,8 +110,8 @@ ON CONFLICT (bot_id) DO UPDATE SET
   updated_at = now();
 
 -- name: BotRunInsert :execrows
-INSERT INTO bot_run(id, bot_id, project_id, bot_revision, memory_revision, session_id, execution_id, queued_message_id, cause, dedup_key, state, observation, quiet, reason, sent_by, source, payload)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+INSERT INTO bot_run(id, bot_id, project_id, bot_revision, memory_revision, session_id, execution_id, queued_message_id, cause, dedup_key, state, observation, quiet, reason, sent_by, source, payload, automation_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 ON CONFLICT DO NOTHING;
 
 -- name: BotRunGet :one
@@ -134,7 +134,8 @@ LIMIT 1;
 -- name: BotHandledDedupPayloads :many
 SELECT dedup_key, payload
 FROM bot_run
-WHERE bot_id = $1 AND tombstoned_at IS NULL
+WHERE bot_id = $1 AND tombstoned_at IS NULL AND cause = 'needs_you'
+  AND automation_id IS NOT DISTINCT FROM sqlc.narg(automation_id)::text
   AND (state <> 'skipped' OR reason = 'paused');
 
 -- name: BotRunByExecution :one
@@ -203,6 +204,7 @@ FROM bot_run br
 LEFT JOIN execution e ON e.id = br.execution_id
 WHERE br.tombstoned_at IS NULL
   AND (sqlc.narg(bot_id)::text IS NULL OR br.bot_id = sqlc.narg(bot_id))
+  AND (sqlc.narg(automation_id)::text IS NULL OR br.automation_id = sqlc.narg(automation_id))
   AND (sqlc.narg(project_id)::text IS NULL OR br.project_id = sqlc.narg(project_id))
   AND (coalesce(cardinality(sqlc.arg(project_ids)::text[]), 0) = 0 OR br.project_id = ANY (sqlc.arg(project_ids)))
   AND NOT (br.project_id = ANY (coalesce(sqlc.arg(exclude_project_ids)::text[], ARRAY[]::text[])))
@@ -233,6 +235,7 @@ SELECT id, code, project_id, task_id, execution_id, session_id, text, asked_by
 FROM question
 WHERE project_id = @project_id::text
   AND state = 'open'
+  AND (sqlc.narg(enabled_since)::timestamptz IS NULL OR asked_at >= sqlc.narg(enabled_since))
   AND tombstoned_at IS NULL
   AND (sqlc.narg(ids)::text[] IS NULL OR id = ANY(sqlc.narg(ids)::text[]))
 ORDER BY seq;
@@ -243,6 +246,7 @@ FROM execution
 WHERE project_id = @project_id::text
   AND tombstoned_at IS NULL
   AND problem IS NOT NULL
+  AND (sqlc.narg(enabled_since)::timestamptz IS NULL OR updated_at >= sqlc.narg(enabled_since))
   AND problem NOT IN ('unknown:abandoned', 'cancelled')
   AND kind <> 'tool_run'
   AND NOT EXISTS (SELECT 1 FROM problem_dismissal x WHERE x.execution_id = execution.id)

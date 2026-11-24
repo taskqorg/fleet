@@ -540,6 +540,23 @@ type Bot struct {
 	ResumedAt      *time.Time
 }
 
+type BotAutomation struct {
+	ID               string
+	BotID            string
+	ProjectID        string
+	Revision         int32
+	Name             string
+	Instructions     string
+	Kind             string
+	ScheduleTime     string
+	ScheduleZone     string
+	Event            string
+	Enabled          bool
+	EffectiveSince   time.Time
+	EventCursor      int64
+	LastScheduleDate string
+}
+
 type BotMemoryRevision struct {
 	BotID     string
 	Revision  int32
@@ -585,6 +602,7 @@ type BotRun struct {
 	TombstonedAt    *time.Time
 	Payload         []byte
 	Seq             int64
+	AutomationID    *string
 }
 
 type BotTask struct {

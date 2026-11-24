@@ -4,7 +4,7 @@ import type { CostFigure, MeasuredNumber, ResourceBasis } from '../../contracts/
 import { msMeasured, numMeasured, type Measured } from '../../packages/ui/src/format.ts';
 import type { StateOf } from '../../packages/ui/src/registry.ts';
 
-export type BotTab = 'activity' | 'tasks' | 'runs' | 'questions' | 'analytics' | 'settings';
+export type BotTab = 'activity' | 'automations' | 'tasks' | 'runs' | 'questions' | 'analytics' | 'settings';
 export type BotTaskBucket = 'all' | 'active' | 'waiting' | 'history';
 export type BotRunFilter = 'all' | 'active' | 'quiet' | 'skipped' | 'queued' | 'failed' | 'unconfirmed';
 export type BotAnalyticsWindowId = 'all' | '24h' | '7d' | '30d';
@@ -13,6 +13,7 @@ const DAY_MS = 86_400_000;
 
 export const BOT_TABS: readonly { id: BotTab; label: string }[] = [
   { id: 'activity', label: 'Overview' },
+  { id: 'automations', label: 'Automations' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'runs', label: 'Runs' },
   { id: 'questions', label: 'Questions & Errors' },
