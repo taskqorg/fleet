@@ -200,5 +200,62 @@ export async function checkTaskStory(browser: Browser, origin: string) {
     assert.equal(await t33Page.locator('.vl-row[data-key="308"] .badge.unconf').count(), 1);
     await t33Page.unroute('**/api/ops/task_page');
     await t33Page.close();
+
+    // Requirement: Overview Needs you and Tasks Needs me distinguish blocking decisions (with how answering unblocks),
+    // system problems, acceptance tied to the eligible deliverable, unconfirmed runs, and missing completion reports.
+    // Risk: an operator mistakes a system alert, unconfirmed run, or incomplete checkpoint for an actionable deliverable.
+    await page.route('**/api/ops/task_get', route => route.fulfill({
+      json: {
+        id: 'story-waiting',
+        title: 'Waiting context story',
+        state: 'waiting',
+        waitReason: 'question',
+        completionReportMissing: true,
+        questions: [
+          { id: 'q-block', kind: 'operator_decision', state: 'open', text: 'Fail or accept earlier result?', options: ['fail task', 'accept earlier result'], askedAt: new Date().toISOString() },
+          { id: 'q-accept', kind: 'acceptance', state: 'open', executionId: 'exec-done', artifactIds: ['art-1'], text: 'Accept the result?', options: ['accepted', 'rejected'], askedAt: new Date().toISOString() },
+        ],
+        executions: [
+          { id: 'exec-done', kind: 'agent_run', state: 'running', observation: 'unconfirmed', sessionId: 'sess-unconf' },
+        ],
+        dependencies: [],
+      },
+    }));
+    await page.goto(origin + '/tasks/story-waiting');
+    const wDetail = page.locator('[data-ui=detail]');
+    await wDetail.getByRole('heading', { name: 'Waiting context story' }).waitFor();
+    await wDetail.getByText('Execution status is unconfirmed', { exact: true }).waitFor();
+    await wDetail.getByText('Blocking decision', { exact: true }).waitFor();
+    await wDetail.getByText(/Your answer unblocks this wait/).waitFor();
+    await wDetail.getByText('Result acceptance', { exact: true }).waitFor();
+    await wDetail.getByText('The latest run finished successfully. No completion report is available for that run.', { exact: true }).waitFor();
+    await page.unroute('**/api/ops/task_get');
+
+    const nowIso = new Date().toISOString();
+    await page.route('**/api/ops/questions_list', route => route.fulfill({
+      json: {
+        questions: [
+          { id: 'ov-accept', kind: 'acceptance', state: 'open', projectId: 'fleet', taskId: 't-1', executionId: 'exec-1', artifactIds: ['art-1'], text: 'Accept deliverable?', options: ['accepted', 'rejected'], askedAt: nowIso },
+          { id: 'ov-problem', kind: 'operator_decision', cause: 'problem:host:mac:silent', state: 'open', projectId: 'fleet', text: 'Host mac stopped polling.', options: ['investigate', 'dismiss'], askedAt: nowIso },
+          { id: 'ov-block', kind: 'agent_question', state: 'open', projectId: 'fleet', taskId: 't-2', sessionId: 'sess-2', text: 'Which branch?', options: ['main'], askedAt: nowIso },
+        ],
+      },
+    }));
+    await page.route('**/api/ops/executions_list', route => route.fulfill({ json: { executions: [] } }));
+    await page.route('**/api/ops/task_page', route => route.fulfill({ json: { tasks: [], nextAfter: null, counts: {}, total: 0, groups: [] } }));
+    await page.goto(origin + '/overview/ov-problem');
+    await page.locator('[data-ui=needs-you] .vl-row.grp .group-h b').first().waitFor();
+    const ovGroups = await page.locator('[data-ui=needs-you] .vl-row.grp .group-h b').allTextContents();
+    assert.deepEqual(ovGroups, ['Decisions', 'Hosts', 'Acceptance']);
+    const ovDetail = page.locator('[data-ui=detail]');
+    await ovDetail.getByText('System problem', { exact: true }).waitFor();
+    await ovDetail.getByText(/System alert\./).waitFor();
+    await page.goto(origin + '/overview/ov-accept');
+    await ovDetail.getByText('Result acceptance', { exact: true }).waitFor();
+    await ovDetail.getByText(/Accepting records this result/).waitFor();
+    await page.goto(origin + '/overview/ov-block');
+    await ovDetail.getByText('Blocking decision', { exact: true }).waitFor();
+    await ovDetail.getByText(/waiting conversation and unblocks execution/).waitFor();
+    await page.unrouteAll({ behavior: 'wait' });
   } finally { await context.close(); }
 }

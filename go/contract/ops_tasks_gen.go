@@ -1597,35 +1597,36 @@ func (v *TaskDerivedDrift) Validate() error {
 
 // TaskDetail: A task with its progress, cost, scoped resources, executions, dependencies and questions (taskGet).
 type TaskDetail struct {
-	AcceptedArtifactIds    []string              `json:"acceptedArtifactIds"`
-	AcceptedAt             *string               `json:"acceptedAt"`
-	AcceptedBy             *string               `json:"acceptedBy"`
-	Code                   *string               `json:"code"`
-	CompletionRequirements json.RawMessage       `json:"completionRequirements"`
-	Cost                   []CostFigure          `json:"cost"`
-	CreatedAt              string                `json:"createdAt"`
-	CreatedBy              *string               `json:"createdBy"`
-	DeliveryMethod         json.RawMessage       `json:"deliveryMethod"`
-	Dependencies           []TaskDependency      `json:"dependencies"`
-	DirectedBy             *string               `json:"directedBy"`
-	Executions             []ExecutionRow        `json:"executions"`
-	ExpectedOutcome        *string               `json:"expectedOutcome"`
-	Id                     string                `json:"id"`
-	LatestResult           json.RawMessage       `json:"latestResult"`
-	OpenQuestions          json.RawMessage       `json:"openQuestions"`
-	PauseReason            *string               `json:"pauseReason"`
-	Priority               string                `json:"priority"`
-	Progress               TaskProgress          `json:"progress"`
-	ProjectId              *string               `json:"projectId"`
-	Questions              []QuestionRow         `json:"questions"`
-	RequestedBy            *string               `json:"requestedBy"`
-	Resources              *ScopedResourceRollup `json:"resources,omitempty"`
-	ResultDestination      *string               `json:"resultDestination"`
-	State                  TaskState             `json:"state"`
-	TakenFrom              *string               `json:"takenFrom"`
-	Title                  string                `json:"title"`
-	UpdatedAt              string                `json:"updatedAt"`
-	WaitReason             *string               `json:"waitReason"`
+	AcceptedArtifactIds     []string              `json:"acceptedArtifactIds"`
+	AcceptedAt              *string               `json:"acceptedAt"`
+	AcceptedBy              *string               `json:"acceptedBy"`
+	Code                    *string               `json:"code"`
+	CompletionReportMissing *bool                 `json:"completionReportMissing,omitempty"`
+	CompletionRequirements  json.RawMessage       `json:"completionRequirements"`
+	Cost                    []CostFigure          `json:"cost"`
+	CreatedAt               string                `json:"createdAt"`
+	CreatedBy               *string               `json:"createdBy"`
+	DeliveryMethod          json.RawMessage       `json:"deliveryMethod"`
+	Dependencies            []TaskDependency      `json:"dependencies"`
+	DirectedBy              *string               `json:"directedBy"`
+	Executions              []ExecutionRow        `json:"executions"`
+	ExpectedOutcome         *string               `json:"expectedOutcome"`
+	Id                      string                `json:"id"`
+	LatestResult            json.RawMessage       `json:"latestResult"`
+	OpenQuestions           json.RawMessage       `json:"openQuestions"`
+	PauseReason             *string               `json:"pauseReason"`
+	Priority                string                `json:"priority"`
+	Progress                TaskProgress          `json:"progress"`
+	ProjectId               *string               `json:"projectId"`
+	Questions               []QuestionRow         `json:"questions"`
+	RequestedBy             *string               `json:"requestedBy"`
+	Resources               *ScopedResourceRollup `json:"resources,omitempty"`
+	ResultDestination       *string               `json:"resultDestination"`
+	State                   TaskState             `json:"state"`
+	TakenFrom               *string               `json:"takenFrom"`
+	Title                   string                `json:"title"`
+	UpdatedAt               string                `json:"updatedAt"`
+	WaitReason              *string               `json:"waitReason"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

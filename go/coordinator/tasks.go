@@ -38,7 +38,7 @@ type taskRule struct {
 var taskTransitions = map[string][]string{
 	"queued":      {"in_progress", "waiting", "paused", "cancelled"},
 	"in_progress": {"in_progress", "waiting", "paused", "completed", "failed", "cancelled"},
-	"waiting":     {"in_progress", "paused", "failed", "cancelled"},
+	"waiting":     {"in_progress", "waiting", "paused", "failed", "cancelled"},
 	"paused":      {"queued", "in_progress", "waiting", "cancelled"},
 	"completed":   nil,
 	"failed":      nil,
@@ -47,10 +47,9 @@ var taskTransitions = map[string][]string{
 
 var taskRules = map[string]taskRule{
 	"first_execution": {[]string{"queued"}, "in_progress"},
-	"blocked":         {[]string{"queued", "in_progress"}, "waiting"},
+	"blocked":         {[]string{"queued", "in_progress", "waiting"}, "waiting"},
 	"unblocked":       {[]string{"waiting"}, "in_progress"},
 	"accepted":        {[]string{"in_progress"}, "completed"},
-	"rejected":        {[]string{"in_progress"}, "in_progress"},
 	"operator_fail":   {[]string{"in_progress", "waiting"}, "failed"},
 	"pause":           {[]string{"queued", "in_progress", "waiting"}, "paused"},
 	"hold":            {[]string{"queued"}, "paused"},
@@ -275,7 +274,7 @@ func settleTask(q *Request, id, target string) (string, error) {
 		return state, err
 	}
 	if reason != "" || target == "waiting" {
-		if state != "waiting" {
+		if state != "waiting" || reason != "" && deref(t.WaitReason) != reason {
 			if reason == "" {
 				reason = "question"
 			}
@@ -354,21 +353,56 @@ func askQuestionAs(q *Request, a questionAsk) (string, error) {
 	return a.ID, nil
 }
 
-// settleIdleTask: no task stays in progress with nothing that can move it. When it is idle (TaskIdle): if the run that
-// ended last succeeded, its result goes to the operator for acceptance; otherwise the operator gets a decision that
-// blocks the task, so it shows in Needs you: fail the task, or (when an earlier run succeeded) accept that result. A
-// retry is a new run, which withdraws the decision (withdrawIdleDecision). Task 2273393d: its only run failed before it
-// started and the task sat in progress with nothing to show it. Data foundation §3 task states. Legacy delivery tasks
-// are included: nothing writes or reads delivery_method any more. Runs on every execution end, after an answer, on
-// resume, and for every task at coordinator start (settleIdleTasks). Reports whether it asked.
+// settleIdleTask reconciles offers and generated decisions against the task's current evidence.
+// Only eligible results and observed failures that need an operator can create an inbox item.
 func settleIdleTask(q *Request, id string) (bool, error) {
-	// A newer failed run supersedes an unanswered success prompt; history remains queryable.
-	superseded, err := q.db().TaskSupersededAcceptances(q.ctx(), &id)
+	pending, err := q.db().TaskHasPendingWork(q.ctx(), &id)
 	if err != nil {
 		return false, err
 	}
+	open, err := q.db().TaskOpenAcceptances(q.ctx(), &id)
+	if err != nil {
+		return false, err
+	}
+	var superseded []string
+	for _, question := range open {
+		var data questionData
+		if len(question.Data) > 0 {
+			if err := json.Unmarshal(question.Data, &data); err != nil {
+				superseded = append(superseded, question.ID)
+				continue
+			}
+		}
+		selected, err := acceptanceResult(q, id, data.EarlierResult, pending, deref(question.AskedBy) == "fleet")
+		var conflict *HTTPError
+		if err != nil && (!errors.As(err, &conflict) || conflict.Code != 409) {
+			return false, err
+		}
+		if err != nil || selected.id != deref(question.ExecutionID) || !selected.matches(data.ArtifactIds) {
+			superseded = append(superseded, question.ID)
+		}
+	}
 	if err := questionsWithdraw(q, superseded); err != nil {
 		return false, err
+	}
+	latest, err := q.db().TaskAcceptanceExecution(q.ctx(), db.TaskAcceptanceExecutionParams{TaskID: &id})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return false, err
+	}
+	abandoned := deref(latest.Problem) == "unknown:abandoned"
+	needsDecision := abandoned || latest.Observation == db.ObservationConfirmed &&
+		(latest.State == db.ExecutionStateFailed || latest.State == db.ExecutionStateCancelled ||
+			latest.State == db.ExecutionStateSucceeded && latest.Outcome == "failed")
+	if pending || !needsDecision {
+		if err := withdrawIdleDecision(q, id); err != nil {
+			return false, err
+		}
+	}
+	if _, err := settleTask(q, id, ""); err != nil || pending {
+		return false, err
+	}
+	if !needsDecision && (latest.State != db.ExecutionStateSucceeded || latest.Observation != db.ObservationConfirmed) {
+		return false, nil
 	}
 	t, err := q.db().TaskIdle(q.ctx(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -377,31 +411,40 @@ func settleIdleTask(q *Request, id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	var report struct {
-		Outcome string `json:"outcome"`
-		Summary string `json:"summary"`
-	}
-	if len(t.Report) > 0 {
-		_ = json.Unmarshal(t.Report, &report)
-	}
-	if t.Latest == "succeeded" && report.Outcome != "failed" {
+	if !needsDecision {
 		_, err = requestAcceptance(q, acceptTask{ID: t.ID, Title: t.Title, ProjectID: t.ProjectID}, nil, nil, "fleet")
+		var ineligible *HTTPError
+		if errors.As(err, &ineligible) && ineligible.Code == 409 {
+			return false, nil
+		}
 		return err == nil, err
 	}
 	options := []string{idleFail}
-	if t.Succeeded {
+	if _, err := acceptanceResult(q, id, true, false, true); err == nil {
 		options = append(options, idleAccept)
+	} else {
+		var conflict *HTTPError
+		if !errors.As(err, &conflict) || conflict.Code != 409 {
+			return false, err
+		}
 	}
 	what := "The last run of " + t.Title + " " + t.Latest
-	if report.Outcome == "failed" {
-		what = "Work was reported incomplete: " + report.Summary
+	switch {
+	case abandoned:
+		what = "The last run was abandoned. Its outcome is unknown"
+	case latest.Outcome == "failed":
+		what = "The worker reported that the task is incomplete"
 	}
-	if t.Latest == "" {
-		what = t.Title + " is in progress with no run"
+	next := ". Choose “fail task” to close the task without a result"
+	if t.LatestSession != nil {
+		next += ", or retry with a new message in its conversation"
+	}
+	if slices.Contains(options, idleAccept) {
+		next += ". Choose “accept earlier result” to review the earlier result"
 	}
 	_, err = askQuestionAs(q, questionAsk{Kind: "operator_decision", TaskID: id, ProjectID: deref(t.ProjectID), ExecutionID: strPtr(t.LatestID), SessionID: t.LatestSession,
 		AskedBy: strPtr("fleet"), Options: jsonBytes(options), Data: []byte(`{"idle":true}`),
-		Text: what + ". Retry it with a new message in its session, or answer."})
+		Text: what + next + "."})
 	return err == nil, err
 }
 
@@ -442,23 +485,69 @@ func withdrawIdleDecision(q *Request, id string) error {
 	return questionsWithdraw(q, idle)
 }
 
-// acceptanceExecution validates the selected work, independently of who requests or answers acceptance: the task's
-// latest run, or with earlier its latest successful one; nil when the task has no run.
-func acceptanceExecution(q *Request, taskID string, earlier bool) (*db.TaskAcceptanceExecutionRow, error) {
+type taskAcceptanceResult struct {
+	id        string
+	artifacts []string
+	required  []string
+}
+
+// acceptanceResult is shared by automatic and direct requests, stale-question settlement and answers.
+// When requireReport is true (automatic Fleet offers), an agent_run requires a successful work report;
+// explicit operator/agent requests still require confirmed success, no pending work, stored required artifacts,
+// and no failed work report.
+func acceptanceResult(q *Request, taskID string, earlier, pending, requireReport bool) (taskAcceptanceResult, error) {
+	var result taskAcceptanceResult
+	if pending {
+		return result, fail(409, "Task work or a queued continuation is still pending")
+	}
 	e, err := q.db().TaskAcceptanceExecution(q.ctx(), db.TaskAcceptanceExecutionParams{TaskID: &taskID, Earlier: earlier})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if earlier {
-			return nil, fail(409, "No successful earlier work result is available")
+			return result, fail(409, "No successful earlier work result is available")
 		}
-		return nil, nil // Results may be supplied without a Fleet execution.
+		// Results may be supplied without a Fleet execution.
+	} else {
+		if err != nil {
+			return result, err
+		}
+		if e.Outcome == "failed" {
+			return result, fail(409, "The worker reported that the task is incomplete")
+		}
+		if e.State != db.ExecutionStateSucceeded || e.Observation != db.ObservationConfirmed {
+			return result, fail(409, "Latest work has no confirmed successful result")
+		}
+		if requireReport && e.Kind == db.ExecutionKindAgentRun && e.Outcome != "succeeded" {
+			return result, fail(409, "The agent process finished without a successful work report")
+		}
+		requirements, err := artifactRequirement(withTx(q), q.app, e.ID, nil)
+		if err != nil {
+			return result, err
+		}
+		if len(requirements.Missing)+len(requirements.Failed)+len(requirements.Pending) > 0 {
+			return result, fail(409, "Required artifacts are unavailable for this execution")
+		}
+		result.id = e.ID
+		result.required = requirements.storedRequired
 	}
-	if err != nil {
-		return nil, err
+	result.artifacts, err = q.db().TaskAcceptanceArtifacts(q.ctx(), db.TaskAcceptanceArtifactsParams{TaskID: &taskID, ExecutionID: strPtr(result.id)})
+	if err == nil && !result.matches(result.artifacts) {
+		return taskAcceptanceResult{}, fail(409, "Required artifacts are unavailable for this execution")
 	}
-	if e.Outcome == "failed" || e.State == db.ExecutionStateFailed || e.State == db.ExecutionStateCancelled {
-		return nil, fail(409, "Latest work did not succeed; retry it or explicitly select an available earlier result")
+	return result, err
+}
+
+func (r taskAcceptanceResult) matches(selected []string) bool {
+	for _, id := range selected {
+		if !slices.Contains(r.artifacts, id) {
+			return false
+		}
 	}
-	return &e, nil
+	for _, id := range r.required {
+		if !slices.Contains(selected, id) {
+			return false
+		}
+	}
+	return true
 }
 
 // acceptTask: the task an acceptance is asked for; EarlierResult selects its latest successful run over its latest.
@@ -469,36 +558,43 @@ type acceptTask struct {
 }
 
 // requestAcceptance asks the task's acceptance question with the given artifacts (default: its stored originals). An open
-// acceptance question is reused and updated, so an explicit request after the automatic one never leaves a second open.
+// acceptance question matching the exact execution and artifacts is reused and updated; obsolete ones are withdrawn.
 func requestAcceptance(q *Request, t acceptTask, artifactIDs []string, text *string, askedBy string) (string, error) {
-	selected, err := acceptanceExecution(q, t.ID, t.EarlierResult)
+	pending, err := q.db().TaskHasPendingWork(q.ctx(), &t.ID)
 	if err != nil {
 		return "", err
 	}
-	var selectedID *string
-	if selected != nil {
-		selectedID = &selected.ID
+	selected, err := acceptanceResult(q, t.ID, t.EarlierResult, pending, askedBy == "fleet")
+	if err != nil {
+		return "", err
 	}
-	ids := []string{}
+	ids := append([]string{}, selected.artifacts...)
 	if artifactIDs != nil {
-		ids = append(ids, artifactIDs...)
-	} else {
-		rs, err := q.db().TaskAcceptanceArtifacts(q.ctx(), db.TaskAcceptanceArtifactsParams{TaskID: &t.ID, ExecutionID: selectedID})
-		if err != nil {
-			return "", err
+		if !selected.matches(artifactIDs) {
+			return "", fail(409, "Acceptance must select stored originals and include all required artifacts")
 		}
-		ids = append(ids, rs...)
+		ids = append([]string{}, artifactIDs...)
 	}
 	body := "Accept the result of: " + t.Title
 	if text != nil {
 		body = string([]rune(*text)[:min(len([]rune(*text)), 2000)])
 	}
-	open, err := q.db().TaskOpenAcceptance(q.ctx(), &t.ID)
-	if err == nil {
-		return open, q.db().TaskAcceptanceAskAgain(q.ctx(), db.TaskAcceptanceAskAgainParams{ID: open, Text: body, ArtifactIds: jsonBytes(ids), AskedBy: &askedBy})
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	open, err := q.db().TaskOpenAcceptances(q.ctx(), &t.ID)
+	if err != nil {
 		return "", err
+	}
+	for _, question := range open {
+		var data questionData
+		decodeErr := error(nil)
+		if len(question.Data) > 0 {
+			decodeErr = json.Unmarshal(question.Data, &data)
+		}
+		if decodeErr == nil && deref(question.ExecutionID) == selected.id && data.EarlierResult == t.EarlierResult && slices.Equal(data.ArtifactIds, ids) {
+			return question.ID, q.db().TaskAcceptanceAskAgain(q.ctx(), db.TaskAcceptanceAskAgainParams{ID: question.ID, Text: body, ArtifactIds: jsonBytes(ids), AskedBy: &askedBy})
+		}
+		if err := questionsWithdraw(q, []string{question.ID}); err != nil {
+			return "", err
+		}
 	}
 	data := struct {
 		ArtifactIds   []string `json:"artifactIds"`
@@ -508,14 +604,14 @@ func requestAcceptance(q *Request, t acceptTask, artifactIDs []string, text *str
 		data.EarlierResult = &t.EarlierResult
 	}
 	return askQuestionAs(q, questionAsk{Kind: "acceptance", TaskID: t.ID, ProjectID: deref(t.ProjectID), Text: body, Options: jsonBytes([]string{"accepted", "rejected"}),
-		AskedBy: &askedBy, ExecutionID: selectedID, Data: jsonBytes(data)})
+		AskedBy: &askedBy, ExecutionID: strPtr(selected.id), Data: jsonBytes(data)})
 }
 
 // questionData: the fields of a question's data the answer path reads.
 type questionData struct {
-	EarlierResult bool  `json:"earlierResult"`
-	Idle          bool  `json:"idle"`
-	ArtifactIds   []any `json:"artifactIds"`
+	EarlierResult bool     `json:"earlierResult"`
+	Idle          bool     `json:"idle"`
+	ArtifactIds   []string `json:"artifactIds"`
 }
 
 // answerQuestion: one answer wins; an acceptance completes (or keeps in progress) its task, other answers unblock it.
@@ -542,18 +638,44 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 		return nil, fail(409, "Question withdrawn")
 	}
 	var data questionData
+	var decodeErr error
 	if len(cur.Data) > 0 {
-		_ = json.Unmarshal(cur.Data, &data)
+		decodeErr = json.Unmarshal(cur.Data, &data)
 	}
-	if cur.Kind == db.QuestionKindAcceptance {
-		if _, err := acceptanceExecution(q, deref(cur.TaskID), data.EarlierResult); err != nil {
+	if cur.Kind == db.QuestionKindAcceptance && answer != "accepted" && answer != "rejected" {
+		return nil, fail(400, "Acceptance answer is accepted or rejected")
+	}
+	if cur.Kind == db.QuestionKindAcceptance && answer == "accepted" {
+		if decodeErr != nil {
+			return nil, fail(409, "The offer has invalid result data")
+		}
+		pending, err := q.db().TaskHasPendingWork(q.ctx(), cur.TaskID)
+		if err != nil {
 			return nil, err
 		}
-		if answer != "accepted" && answer != "rejected" {
-			return nil, fail(400, "Acceptance answer is accepted or rejected")
+		selected, err := acceptanceResult(q, deref(cur.TaskID), data.EarlierResult, pending, deref(cur.AskedBy) == "fleet")
+		if err != nil {
+			return nil, err
+		}
+		if selected.id != deref(cur.ExecutionID) || !selected.matches(data.ArtifactIds) {
+			return nil, fail(409, "The offer no longer matches the eligible result")
+		}
+		if artifactIDs != nil {
+			ids := make([]string, 0, len(artifactIDs))
+			for _, artifact := range artifactIDs {
+				id, ok := artifact.(string)
+				if !ok || !slices.Contains(data.ArtifactIds, id) {
+					return nil, fail(409, "Acceptance must select artifacts from the offer")
+				}
+				ids = append(ids, id)
+			}
+			if !selected.matches(ids) {
+				return nil, fail(409, "Acceptance must include all required artifacts")
+			}
+			data.ArtifactIds = ids
 		}
 	}
-	if data.Idle && answer != idleFail && answer != idleAccept {
+	if cur.Kind == db.QuestionKindOperatorDecision && data.Idle && answer != idleFail && answer != idleAccept {
 		return nil, fail(400, "Answer "+idleFail+", or "+idleAccept+" when offered; retry with a new message in the session")
 	}
 	qu, err := questionRecord(q, id)
@@ -587,23 +709,13 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (json.
 					return nil, err
 				}
 				ids := []string{}
-				src := artifactIDs
-				if src == nil {
-					src = data.ArtifactIds
-				}
-				for _, x := range src {
-					if s, ok := x.(string); ok {
-						ids = append(ids, s)
-					}
-				}
+				ids = append(ids, data.ArtifactIds...)
 				if err := q.db().TaskAccept(q.ctx(), db.TaskAcceptParams{ID: t, AcceptedBy: &by, ArtifactIds: ids}); err != nil {
 					return nil, err
 				}
 				if err := deliveredTeardown(q, t); err != nil {
 					return nil, err
 				}
-			} else if _, err := taskTransition(q, t, "rejected", ""); err != nil {
-				return nil, err
 			}
 		} else {
 			target := ""
@@ -860,6 +972,47 @@ func taskItem(t db.Task, count *int64, byState, open []byte) contract.TaskListIt
 		Progress: contract.TaskProgress{Executions: rawJSON(jsonBytes(count)), ByState: rawJSON(byState)}, OpenQuestions: rawJSON(open)}
 }
 
+// taskCompletionReportMissing is a read-only explanation of the latest agent run's evidence.
+func taskCompletionReportMissing(q *Request, t db.Task) (bool, error) {
+	if !openTask[string(t.State)] || t.AcceptedAt != nil {
+		return false, nil
+	}
+	latest, err := q.db().TaskAcceptanceExecution(q.ctx(), db.TaskAcceptanceExecutionParams{TaskID: &t.ID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil || latest.Kind != db.ExecutionKindAgentRun || latest.State != db.ExecutionStateSucceeded ||
+		latest.Observation != db.ObservationConfirmed || latest.Outcome != "" {
+		return false, err
+	}
+	pending, err := q.db().TaskHasPendingWork(q.ctx(), &t.ID)
+	if err != nil || pending {
+		return false, err
+	}
+	offers, err := q.db().TaskOpenAcceptances(q.ctx(), &t.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, offer := range offers {
+		var data questionData
+		if len(offer.Data) > 0 && json.Unmarshal(offer.Data, &data) != nil {
+			continue
+		}
+		if !data.EarlierResult && deref(offer.AskedBy) == "fleet" {
+			continue
+		}
+		selected, err := acceptanceResult(q, t.ID, data.EarlierResult, false, deref(offer.AskedBy) == "fleet")
+		var conflict *HTTPError
+		if errors.As(err, &conflict) && conflict.Code == 409 {
+			continue
+		}
+		if err != nil || selected.id == deref(offer.ExecutionID) && selected.matches(data.ArtifactIds) {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
 // taskDetail: task_get's task with its progress, latest (or accepted) result, resources, runs, dependencies and questions.
 func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
 	var none contract.TaskDetail
@@ -877,6 +1030,13 @@ func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
 		AcceptedBy: it.AcceptedBy, AcceptedAt: it.AcceptedAt, AcceptedArtifactIds: it.AcceptedArtifactIds, CreatedBy: it.CreatedBy, DirectedBy: it.DirectedBy,
 		RequestedBy: it.RequestedBy, TakenFrom: it.TakenFrom, CreatedAt: it.CreatedAt, UpdatedAt: it.UpdatedAt, PauseReason: it.PauseReason,
 		Progress: it.Progress, OpenQuestions: it.OpenQuestions, LatestResult: rawJSON(v.LatestResult)}
+	missingReport, err := taskCompletionReportMissing(q, t)
+	if err != nil {
+		return none, err
+	}
+	if missingReport {
+		d.CompletionReportMissing = ptr(true)
+	}
 	// A completed task presents its explicitly accepted collection in selection
 	// order. Missing/hidden/unretained selections cannot turn a later diagnostic
 	// into the accepted result. Unaccepted work keeps task_view version ordering.

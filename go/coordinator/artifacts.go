@@ -1564,9 +1564,10 @@ func glob(p string) *regexp.Regexp {
 // completion_requirements.artifacts (names or globs) plus artifacts saved or declared required; the outputs a completed
 // receipt declared are waited for while they upload.
 type ArtifactRequirement struct {
-	Pending []string          `json:"pending"`
-	Failed  []artifactFailure `json:"failed"`
-	Missing []string          `json:"missing"`
+	Pending        []string          `json:"pending"`
+	Failed         []artifactFailure `json:"failed"`
+	Missing        []string          `json:"missing"`
+	storedRequired []string
 }
 
 // artifactFailure: a required artifact that failed, with its reason.
@@ -1615,7 +1616,11 @@ func artifactRequirement(ctx context.Context, a *App, executionID string, declar
 	out := &ArtifactRequirement{Pending: []string{}, Failed: []artifactFailure{}, Missing: []string{}}
 	for _, r := range rows {
 		if r.Required || contains(named, r.Name) || match(r.Name) {
-			if r.State == "pending" {
+			if r.State == "stored" {
+				if r.Role == "original" && !strings.HasPrefix(r.Name, "mcp-lifecycle-") {
+					out.storedRequired = append(out.storedRequired, firstString(deref(r.LegacyID), r.ID))
+				}
+			} else if r.State == "pending" {
 				out.Pending = append(out.Pending, r.Name)
 			} else if r.State == "failed" {
 				out.Failed = append(out.Failed, artifactFailure{Name: r.Name, Error: r.LastError})

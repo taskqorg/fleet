@@ -71,9 +71,13 @@ UPDATE artifact SET session_id= @session_id WHERE id= @id AND (session_id= @sess
 -- name: DispExecLab :one
 SELECT experiment_id,variant FROM execution WHERE id = @id AND project_id IS NOT DISTINCT FROM sqlc.narg(project_id)::text;
 
--- name: DispMarkObservation :exec
-UPDATE execution SET observation = @observation::observation,
- last_seen_at=CASE WHEN @observation::text='confirmed' THEN now() ELSE last_seen_at END WHERE id = @id;
+-- name: DispMarkObservation :one
+WITH prior AS MATERIALIZED (SELECT id,state,observation,task_id FROM execution WHERE id=$1 FOR UPDATE)
+UPDATE execution e SET observation = $2::observation,
+ last_seen_at=CASE WHEN $2::text='confirmed' THEN now() ELSE e.last_seen_at END
+FROM prior WHERE e.id=$1 AND e.id=prior.id
+RETURNING coalesce(CASE WHEN prior.state IN ('succeeded','failed','cancelled')
+ AND prior.observation IS DISTINCT FROM $2::observation THEN (SELECT id FROM task WHERE id=prior.task_id) END,'')::text AS task_id;
 
 -- name: DispHarnessVersion :exec
 UPDATE execution SET harness_version = @version::text WHERE id = @id AND harness_version IS DISTINCT FROM @version::text;
@@ -210,7 +214,8 @@ UPDATE execution SET problem='unknown:abandoned' WHERE id=$1;
 UPDATE execution_totals SET wall_ms=NULL,wall_ms_basis='unavailable' WHERE execution_id=$1;
 
 -- name: DispOpenQuestions :many
-SELECT id FROM question WHERE execution_id=$1 AND state='open';
+-- Questions answered back into this execution lose their recipient on abandonment.
+SELECT id FROM question WHERE execution_id=$1 AND state='open' AND kind='agent_question';
 
 -- Dispatch (dispatch.go).
 
