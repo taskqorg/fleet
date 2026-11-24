@@ -173,6 +173,8 @@ Show active, waiting and historical managed tasks, bot runs, triggers, questions
 
 Capture direct and delegated attribution when work is created. Count each execution once and preserve its attribution across reassignment and continuation. Retain cost basis, currency and unknown observations.
 
+Refresh public standard API-equivalent model prices through the scoped, audited [provider pricing workflow](docs/designs/fleet-analytics.md#provider-pricing-refresh). Preserve historical tariff entries and distinguish subscription equivalents from billed amounts.
+
 The first Fleet operations pilot uses the display name HAL0 (digit zero). Fleet bot display names remain configurable. HAL0 wakes on new Needs you entries and a schedule. It checks tasks, executions, telemetry and rendered Fleet Web.
 
 HAL0 uses Fleet questions for genuine owner decisions and continues or creates authorized, deduplicated Fleet fixes for confirmed technical causes. It verifies those fixes on the affected surface, retains unconfirmed observations, and uses audited dismissal for proved obsolete or duplicate entries.
