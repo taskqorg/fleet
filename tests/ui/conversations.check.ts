@@ -386,6 +386,10 @@ try {
   await composer.getByRole('button', {name: 'Stop', exact: true}).click();
   check(await until(async () => seed.rows("SELECT 1 FROM command WHERE kind='stop' AND execution_id='composer-b-run'").length === 1),
     'composer Stop reaches the newest execution');
+  // pds18 never answers these stops, so the lost-run sweep ends both runs FLEET_LOST_AFTER_MS (6 s in tests/harness.ts)
+  // later. Wait for it here: otherwise those composer changes land inside a later check's live feed burst.
+  check(await until(async () => seed.rows("SELECT 1 FROM command WHERE kind='stop' AND execution_id IN ('composer-a-run','composer-b-run') AND status='pending'").length === 0, 20000),
+    'unanswered stops end both runs before the next check');
 
   check(!errors.length, `no page errors${errors.length ? ': ' + errors.join('; ') : ''}`);
   if (rtt.length) time('thread_entries page round trip (median)', [...rtt].sort((x, y) => x - y)[rtt.length >> 1]);
