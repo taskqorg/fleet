@@ -25,8 +25,9 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
   });
   const p = await context.newPage(), errors: string[] = [];
   const sidebar = p.getByRole('navigation', { name: 'Sections', exact: true });
-  const botsLink = sidebar.getByRole('list', { name: 'Work', exact: true }).getByRole('link', { name: 'Bots', exact: true });
-  const humansLink = sidebar.getByRole('list', { name: 'System', exact: true }).getByRole('link', { name: 'Humans', exact: true });
+  // The rail's seven sections (OR-46): Bots are in Library, People in System.
+  const botsLink = sidebar.getByRole('link', { name: 'Library', exact: true });
+  const humansLink = sidebar.getByRole('link', { name: 'System', exact: true });
   p.on('pageerror', error => errors.push(error.message));
   const call = async (name: string, body: object) => {
     const response = await fetch(coordinator.base + '/api/ops/' + name, { method: 'POST', headers: { authorization: 'Bearer ' + coordinator.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -52,7 +53,7 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     await p.goto(origin + '/projects/desiign');
     await p.getByRole('button', { name: 'Save project', exact: true }).waitFor();
     await botsLink.waitFor();
-    assert.equal(await sidebar.getByRole('link', { name: 'Humans', exact: true }).count(), 0);
+    assert.equal(await sidebar.getByRole('link', { name: 'People', exact: true }).count(), 0, 'People is in System, not on the rail');
     await edit('Name', 'Browser dirty project');
     await p.getByRole('heading', { name: 'Browser dirty project', exact: true }).waitFor();
     assert.equal(await p.locator('[data-resource-version]').first().getAttribute('data-resource-version'), '', 'editor works with genuinely delayed summary');
@@ -324,14 +325,16 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     actor = 'owner@trial.test'; await p.goto(origin + '/projects');
     const createProject = p.getByRole('button', { name: 'Create project', exact: true });
     await createProject.waitFor();
-    // The sidebar is the Projects entry point for Bots, and both new links mark their routes as current.
+    // Bots and People open from their sections, and the rail marks the section that owns them (OR-57).
     assert.equal(await p.getByRole('button', { name: 'Bots', exact: true }).count(), 0);
     await botsLink.click();
-    await p.waitForURL(origin + '/bots');
-    await p.waitForSelector('[data-ui="nav-rail"] [data-id="bots"] a[aria-current="page"]');
+    await p.waitForURL(origin + '/library/agents');
+    await p.goto(origin + '/bots'); await p.waitForURL(origin + '/library/bots');
+    await p.waitForSelector('[data-ui="nav-rail"] [data-id="library"] a[aria-current="page"]');
     await humansLink.click();
-    await p.waitForURL(origin + '/humans');
-    await p.waitForSelector('[data-ui="nav-rail"] [data-id="humans"] a[aria-current="page"]');
+    await p.waitForURL(origin + '/system/hosts');
+    await p.goto(origin + '/humans'); await p.waitForURL(origin + '/system/people');
+    await p.waitForSelector('[data-ui="nav-rail"] [data-id="system"] a[aria-current="page"]');
     await p.goto(origin + '/projects'); await createProject.click();
     await p.getByLabel('Project ID',{exact:true}).fill('browser-create-authored-only');await p.getByLabel('Name',{exact:true}).fill('Unsent creation actor');
     const creationRecord=await p.evaluate(()=>{const key='fleet-input:'+JSON.stringify([1,'owner@trial.test','project-create','',null]);return JSON.parse(JSON.parse(localStorage.getItem(key)!).text);});

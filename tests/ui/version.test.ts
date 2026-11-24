@@ -60,7 +60,7 @@ test('access invalidation clears private version data and rejects a late read', 
   const originalFetch = globalThis.fetch;
   Object.defineProperty(globalThis, 'document', { configurable: true, value: { head: { innerHTML: html } } });
   let release!: (value: Response) => void;
-  globalThis.fetch = async (url: any) => url === '/overview' ? new Response(html, { headers: { 'content-type': 'text/html' } }) : new Promise<Response>(resolve => { release = resolve; });
+  globalThis.fetch = async (url: any) => url === '/home' ? new Response(html, { headers: { 'content-type': 'text/html' } }) : new Promise<Response>(resolve => { release = resolve; });
   try {
     const read = v.loadVersions(); await tick();
     v.invalidateAccess('actor changed'); assert.equal(v.versions.value, null);
@@ -90,7 +90,7 @@ test('worker activation timeout remains retryable and does not reload', async ()
   }
 });
 
-test('narrow rail exposes Versions and a long overview stays within the viewport', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
+test('the phone bottom bar exposes Versions under More and a long overview stays within the viewport', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
   const { chromium } = await import('playwright');
   const { uiCss } = await import(new URL('../../packages/ui/scripts/tokens.mjs', import.meta.url).href) as { uiCss: () => string };
   const fixture = await buildSolid(`
@@ -103,6 +103,7 @@ test('narrow rail exposes Versions and a long overview stays within the viewport
   try {
     await page.setContent('<body></body>'); await page.addStyleTag({ content: uiCss() });
     await page.addScriptTag({ content: fixture.outputFiles[0].text });
+    await page.getByRole('button', { name: 'More', exact: true }).click();
     await page.getByRole('button', { name: 'Fixture person', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Versions', exact: true }).click();
     const panel = page.getByRole('group', { name: 'Versions', exact: true });

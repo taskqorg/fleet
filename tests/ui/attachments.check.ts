@@ -111,7 +111,7 @@ export async function checkAttachments(browser: Browser, origin: string, seed: R
     await shoot('transcript-attachments');
     // A click on a file opens the result viewer.
     await row.locator('.msg-files .att', { hasText: 'note.txt' }).click();
-    assert.ok(await until(async () => new URL(p.url()).pathname.startsWith('/results/')), 'a message file opens in the result viewer');
+    assert.ok(await until(async () => new URL(p.url()).pathname.startsWith('/projects/results/')), 'a message file opens in the result viewer');
 
     // The new-conversation page takes files the same way, and session_start carries them into the first message.
     await p.goto(`${origin}/conversations/new?in=cs`);

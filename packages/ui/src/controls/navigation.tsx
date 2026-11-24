@@ -249,7 +249,8 @@ export function FocusControl(p: {
  * A section of the rail. count: its counter (nav-rail.md, Counters): n in the person's focus (every item without one), and
  * outside, the rest outside the focus (undefined without a focus); label names what is counted ("running").
  */
-export type NavItem = { id: string; label: string; icon: IconName; group: string; count?: NavCount };
+/** A rail section. `group` puts it under a small heading; the app's seven sections have none (OR-46). */
+export type NavItem = { id: string; label: string; icon: IconName; group?: string; count?: NavCount };
 export type NavCount = { n: number; outside?: number; tone: Tone; label: string };
 /** The counter after a section name: `12·30` (in focus bright, outside dim), `·30` with none in focus, `12` without a focus; nothing at zero. */
 function NavCounter(p: { c: NavCount }) {
@@ -395,13 +396,80 @@ export function NavRail(p: {
       </Show>
       <For each={groups()}>
         {g => (
-          <ul class="rail-g" aria-label={g}>
-            <li class="rail-h">{g}</li>
+          <ul class="rail-g" aria-label={g ?? 'All sections'}>
+            <Show when={g}><li class="rail-h">{g}</li></Show>
             <For each={p.items.filter(i => i.group === g)}>{i => renderItem(i, false)}</For>
           </ul>
         )}
       </For>
       <Show when={p.foot} keyed>{f => <div class="rail-foot">{f}</div>}</Show>
+    </nav>
+  );
+}
+
+/**
+ * The phone navigation (OR-60): below 760 px a bottom bar of five replaces the rail. The first four sections are tabs, the
+ * fifth tab, More, opens a short menu above it (OR-14) with the other sections and `foot` (the user block). The tab of the
+ * current section, or More when the current one is in its menu, is marked. Counters show as the in-focus badge.
+ */
+export function BottomBar(p: { items: NavItem[]; current: string; onGo: (id: string) => void; foot?: JSX.Element }) {
+  const [open, setOpen] = createSignal(false);
+  const tabs = createMemo(() => p.items.slice(0, 4));
+  const more = createMemo(() => p.items.slice(4));
+  const inMore = createMemo(() => more().some(i => i.id === p.current));
+  let ref: HTMLElement | undefined;
+  createEffect(open, on => {
+    if (!on) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent) { if (e.key !== 'Escape') return; e.stopPropagation(); ref?.querySelector<HTMLElement>('.tab-more')?.focus(); }
+      else if (ref?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', close, true);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close, true); };
+  });
+  const go = (id: string) => { setOpen(false); p.onGo(id); };
+  return (
+    <nav class="bottom-bar" data-ui="bottom-bar" aria-label="Sections" ref={el => { ref = el; }}>
+      <For each={tabs()}>
+        {it => (
+          <a
+            class={['tab-i', { cur: it.id === p.current }]}
+            href={`#/${it.id}`}
+            aria-current={it.id === p.current ? 'page' : undefined}
+            onClick={e => { e.preventDefault(); go(it.id); }}
+          >
+            <span class="tab-ic"><Icon name={it.icon} /><Show when={it.count && it.count.n > 0 ? it.count : null} keyed>{c => <span class={['nav-count', 'tab-count', `t-${c.tone}`]} aria-label={`${c.n} ${c.label}`}>{c.n.toLocaleString('en')}</span>}</Show></span>
+            <span class="nm">{it.label}</span>
+          </a>
+        )}
+      </For>
+      <Show when={more().length > 0 || p.foot}>
+        <button
+          type="button"
+          class={['tab-i', 'tab-more', { cur: inMore() }]}
+          aria-haspopup="menu"
+          aria-expanded={open() ? 'true' : 'false'}
+          aria-current={inMore() ? 'page' : undefined}
+          onClick={() => setOpen(v => !v)}
+        >
+          <span class="tab-ic"><Icon name={actions.more} /></span>
+          <span class="nm">More</span>
+        </button>
+        <Show when={open()}>
+          <div class="menu tab-menu" role="menu" aria-label="More sections">
+            <For each={more()}>
+              {(it, i) => (
+                <button type="button" role="menuitem" class={{ cur: it.id === p.current }} aria-current={it.id === p.current ? 'page' : undefined} ref={el => { if (i() === 0) focusOnMount(el); }} onClick={() => go(it.id)}>
+                  <Icon name={it.icon} />{it.label}
+                </button>
+              )}
+            </For>
+            <Show when={p.foot}><div class="tab-foot">{p.foot}</div></Show>
+          </div>
+        </Show>
+      </Show>
     </nav>
   );
 }

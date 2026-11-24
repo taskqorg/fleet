@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -668,7 +669,7 @@ func appRoutes() {
 			w.Write(b)
 		}
 	}
-	publicRoute("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/overview", http.StatusFound) })
+	publicRoute("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/home", http.StatusFound) })
 	assets := http.StripPrefix("/assets/", http.FileServer(noDirs{http.Dir(filepath.Join(dir, "assets"))}))
 	publicRoute("GET /assets/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -709,33 +710,24 @@ func appRoutes() {
 		}
 		writeError(w, fail(404, "Unknown icon"))
 	})
+	// The app shell for every page path outside /api/: the app redirects earlier routes to their target routes and shows its
+	// own not-found page (app/src/routes.ts), so no page path answers the JSON 404. A path whose last segment names a file
+	// (a dot in it) is not a page and stays a 404.
 	appScreen = func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method != "GET" && r.Method != "HEAD" {
 			return false
 		}
-		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
-		if len(parts) > 2 || parts[0] == "api" {
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") || strings.Contains(path.Base(r.URL.Path), ".") {
 			return false
 		}
-		selected := appDir()
-		var screens []string
-		b, err := os.ReadFile(filepath.Join(selected, "screens.json"))
-		if err == nil {
-			json.Unmarshal(b, &screens)
+		b, err := os.ReadFile(filepath.Join(appDir(), "index.html"))
+		if err != nil {
+			return false
 		}
-		for _, screen := range append(screens, "lab") {
-			if screen == parts[0] {
-				b, err := os.ReadFile(filepath.Join(selected, "index.html"))
-				if err != nil {
-					return false
-				}
-				w.Header().Set("Cache-Control", "no-cache")
-				w.Header().Set("Content-Type", "text/html")
-				w.Write(b)
-				return true
-			}
-		}
-		return false
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Content-Type", "text/html")
+		w.Write(b)
+		return true
 	}
 
 }

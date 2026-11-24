@@ -1,7 +1,7 @@
 import type { NavItem, NavCount } from '../src/controls.tsx';
 import { workspaces } from '../src/registry.ts';
 
-// The book's nav: every registry workspace, with the counters of nav-rail.md (Counters) as the app shows them without a
+// The book's nav: the registry's seven rail sections, each counting its first screen, with the counters of nav-rail.md (Counters) as the app shows them without a
 // focus; NAV_FOCUS shows the same with a project focus: in focus, then the remainder outside it.
 const COUNTS: Record<string, NavCount> = {
   tasks: { n: 42, tone: 'neutral', label: 'running' },
@@ -17,5 +17,6 @@ const FOCUSED: Record<string, NavCount> = {
   delivery: { n: 5, outside: 0, tone: 'neutral', label: 'in flight' },
   hosts: { n: 1, tone: 'attention', label: 'offline' },
 };
-export const NAV: NavItem[] = workspaces.map(w => ({ ...w, count: COUNTS[w.id] }));
-export const NAV_FOCUS: NavItem[] = workspaces.map(w => ({ ...w, count: FOCUSED[w.id] }));
+const sections = workspaces.filter(w => w.nav).map(w => ({ id: w.id, label: w.label, icon: w.icon, root: (w as { root?: string }).root ?? w.id }));
+export const NAV: NavItem[] = sections.map(({ root, ...w }) => ({ ...w, count: COUNTS[root] }));
+export const NAV_FOCUS: NavItem[] = sections.map(({ root, ...w }) => ({ ...w, count: FOCUSED[root] }));

@@ -89,16 +89,17 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await step('click state counter', `document.querySelector('[data-ui=state-counters] .counter:not(.sigma)').click()`);
     await step('open group choices', `document.querySelector('[data-ui=group-control] button').click()`, false);
     await step('click group Agent', `[...document.querySelectorAll('[data-ui=group-control] [role=menuitemradio]')].find(b=>b.textContent==='Agent').click()`);
-    // The navigation returns to a section as it was left: Hosts and back to Tasks keeps the grouping (prefs.ts rememberView).
+    // The navigation returns to a section as it was left: System and back to Projects opens Tasks with its grouping (prefs.ts noteView).
     const grouped = await url();
-    await page.locator('.rail [data-id="hosts"] a').first().click(); await page.waitForURL('**/hosts**');
-    await page.locator('.rail [data-id="tasks"] a').first().click(); await page.waitForURL('**/tasks**');
+    await page.locator('.rail [data-id="system"] a').first().click(); await page.waitForURL('**/hosts**');
+    await page.locator('.rail [data-id="projects"] a').first().click(); await page.waitForURL('**/tasks**');
     rule(N, await url() === grouped, `back to Tasks lost the view: ${await url()} for ${grouped}`);
-    // It is stored for the person: after a reload, Hosts then Tasks from the rail still opens the grouped list.
-    await page.locator('.rail [data-id="hosts"] a').first().click(); await page.waitForURL('**/hosts**');
+    // It is stored for the person: after a reload, Tasks from Spotlight still opens the grouped list.
+    await page.locator('.rail [data-id="system"] a').first().click(); await page.waitForURL('**/hosts**');
     const prefsRead = page.waitForResponse(r => r.url().endsWith('/api/ops/person_settings_get'));
-    await page.reload(); await prefsRead; await page.waitForSelector('.rail [data-id="tasks"] a');
-    await page.locator('.rail [data-id="tasks"] a').first().click(); await page.waitForURL('**/tasks**');
+    await page.reload(); await prefsRead; await page.waitForSelector('.rail [data-id="projects"] a');
+    await page.keyboard.press('ControlOrMeta+k'); await page.getByRole('combobox', { name: 'Search' }).fill('Tasks');
+    await page.getByRole('option', { name: /^Tasks/ }).first().click(); await page.waitForURL('**/tasks**');
     rule(N, await url() === grouped, `after a reload Tasks lost the view: ${await url()} for ${grouped}`);
     // The reloaded list settles before the next step measures it (no skeleton, rows on screen, the same rows twice).
     await page.waitForSelector('[data-ui=data-list] .vl-row .row-link'); await page.waitForFunction(() => !document.querySelector('[data-ui=list-view] .skeleton, .skeleton'));
@@ -166,12 +167,12 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     console.log(`type "hero": requests=${reqs.length} [${reqs.join(',')}] url=${await url()}`);
     rule(N, pages === 1, `typing "hero" sent ${pages} task_page requests`);
     await page.goBack(); await page.waitForTimeout(300);
-    rule(N, (await url()) === '/tasks', `one Back after a search should return to /tasks, got ${await url()}`);
+    rule(N, (await url()) === '/projects/tasks', `one Back after a search should return to /projects/tasks, got ${await url()}`);
     // After Back, a new search starts a new history entry instead of replacing the one Back returned to.
     if (!await page.locator('.fbar input').count()) await page.locator('.fbar button[aria-label^="Search"]').first().click();
     await page.locator('.fbar input').first().fill(''); await page.locator('.fbar input').first().pressSequentially('copy', { delay: 60 }); await page.waitForTimeout(800);
     await page.goBack(); await page.waitForTimeout(300);
-    rule(N, (await url()) === '/tasks', `a search after Back replaced the entry Back returned to (Back now at ${await url()})`);
+    rule(N, (await url()) === '/projects/tasks', `a search after Back replaced the entry Back returned to (Back now at ${await url()})`);
     // A new search query ends the active preset (OR-33): the states stay, the preset leaves the URL.
     await page.goto(origin + '/tasks'); await page.waitForSelector('.vl-row .row-link');
     await page.locator('[data-ui=saved-views] button', { hasText: 'Running' }).click();
@@ -218,13 +219,13 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     // Every frame's headers 3, 4 and 7 (aria-expanded, - when not on screen), recorded from a start until the list settles.
     const RECORD = `window.__groups = []; const tick = () => { const s = ['3', '4', '7'].map(k => document.querySelector('.vl-row[data-key="g:' + k + '"] .group-h')?.getAttribute('aria-expanded') ?? '-').join(','); if (window.__groups.at(-1) !== s) window.__groups.push(s); requestAnimationFrame(tick); }; requestAnimationFrame(tick);`;
     const flashed = (seen: string[]) => seen.filter(s => s.split(',').some((x, i) => x !== '-' && x !== want.split(',')[i]));
-    await page.locator('.rail [data-id="hosts"] a').first().click(); await page.waitForURL('**/hosts**');
+    await page.locator('.rail [data-id="system"] a').first().click(); await page.waitForURL('**/hosts**');
     // Every toggle reached the server.
     const stored = () => page.evaluate(() => fetch('/api/ops/person_settings_get', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(r => r.json()).then(s => JSON.stringify(s.listGroups?.['tasks:state'] ?? [])));
     for (let i = 0; i < 100 && await stored() !== '["3","4","7"]'; i++) await page.waitForTimeout(50);
     rule(N, await stored() === '["3","4","7"]', `leaving the section did not store the toggles: ${await stored()}`);
     const returned = await page.evaluate(async rec => {
-      (0, eval)(rec); (document.querySelector('.rail [data-id="tasks"] a') as HTMLElement).click();
+      (0, eval)(rec); (document.querySelector('.rail [data-id="projects"] a') as HTMLElement).click();
       for (let f = 0; f < 300 && !(window as any).__groups.at(-1)?.endsWith('true'); f++) await new Promise(r => requestAnimationFrame(r));
       return (window as any).__groups as string[];
     }, RECORD);

@@ -150,31 +150,36 @@ export const states = {
 export type Family = keyof typeof states;
 export type StateOf<F extends Family> = keyof (typeof states)[F];
 
-/** Workspaces and their navigation anchors (OR-3), in nav order: the one list of screens. `app: true` marks a screen the
- * operator app has built; `nav: true` marks a top-level sidebar section (docs/designs/fleet-ia-and-journeys.md);
- * the app routes, the build (manifests, service worker) and the coordinator's app routes follow `app`, while the rail
- * renders `nav` entries available to the current person. */
+/** Workspaces and their navigation anchors (OR-3): the one list of screens. `nav: true` marks the seven rail sections in
+ * rail order (OR-46, docs/designs/fleet-ia-and-journeys.md §1); `root` is the screen a section opens. Every other entry is
+ * a screen owned by one `section`, which stays highlighted while it is open (OR-57). `app: true` marks a screen the operator
+ * app has built and routes to (app/src/main.tsx); the manifests are the sections' (app/build.mjs). The address bar shows
+ * target routes (app/src/routes.ts); screens keep their earlier paths inside the app until wave 2 moves them. */
 export const workspaces = [
-  { id: 'overview', label: 'Overview', icon: 'house', group: 'Work', app: true, nav: true },
-  { id: 'conversations', label: 'Conversations', icon: 'messages-square', group: 'Work', app: true, nav: true },
-  { id: 'projects', label: 'Projects', icon: 'folder-open', group: 'Work', app: true, nav: true },
-  { id: 'tasks', label: 'Tasks', icon: 'list', group: 'Work', app: true, nav: true },
-  { id: 'spend', label: 'Spend', icon: 'gauge', group: 'Work', app: true, nav: true },
-  { id: 'bots', label: 'Bots', icon: 'bot', group: 'Work', app: true, nav: true },
-  { id: 'results', label: 'Results', icon: 'file-text', group: 'Work', app: true, nav: false },
-  { id: 'delivery', label: 'Publishing', icon: 'git-merge', group: 'Work', app: true, nav: false },
-  { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', group: 'System', app: true, nav: true },
-  { id: 'agents', label: 'Library', icon: 'rows-3', group: 'System', app: true, nav: true },
-  { id: 'hosts', label: 'Infrastructure', icon: 'panels-top-left', group: 'System', app: true, nav: true },
-  { id: 'pipelines', label: 'Pipelines', icon: 'network', group: 'System', app: true, nav: false },
-  { id: 'catalogue', label: 'Catalogue', icon: 'rows-3', group: 'System', app: true, nav: false },
-  { id: 'changes', label: 'Changes', icon: 'git-pull-request', group: 'System', app: true, nav: false },
-  { id: 'runners', label: 'Runners', icon: 'play', group: 'System', app: true, nav: false },
-  { id: 'keys', label: 'API keys', icon: 'shield', group: 'System', app: true, nav: false },
-  { id: 'humans', label: 'Humans', icon: 'shield', group: 'System', app: true, nav: true },
-  { id: 'personal-lab', label: 'Personal Lab', icon: 'chart-no-axes-column', group: 'System', app: true, nav: false },
-  { id: 'access', label: 'Access', icon: 'shield', group: 'System', app: false, nav: false },
-] as const satisfies readonly { id: string; label: string; icon: IconName; group: string; app: boolean; nav: boolean }[];
+  { id: 'home', label: 'Home', icon: 'house', section: 'home', root: 'overview', app: false, nav: true },
+  { id: 'live', label: 'Live', icon: 'activity', section: 'live', root: 'live', app: true, nav: true },
+  { id: 'conversations', label: 'Conversations', icon: 'messages-square', section: 'conversations', root: 'conversations', app: true, nav: true },
+  { id: 'projects', label: 'Projects', icon: 'folder-open', section: 'projects', root: 'projects', app: true, nav: true },
+  { id: 'lab', label: 'Lab', icon: 'chart-no-axes-column', section: 'lab', root: 'lab', app: true, nav: true },
+  { id: 'library', label: 'Library', icon: 'rows-3', section: 'library', root: 'agents', app: false, nav: true },
+  { id: 'system', label: 'System', icon: 'settings', section: 'system', root: 'hosts', app: false, nav: true },
+  { id: 'overview', label: 'Overview', icon: 'house', section: 'home', app: true, nav: false },
+  { id: 'tasks', label: 'Tasks', icon: 'list', section: 'projects', app: true, nav: false },
+  { id: 'results', label: 'Results', icon: 'file-text', section: 'projects', app: true, nav: false },
+  { id: 'delivery', label: 'Delivery', icon: 'git-merge', section: 'projects', app: true, nav: false },
+  { id: 'personal-lab', label: 'Personal Lab', icon: 'chart-no-axes-column', section: 'lab', app: true, nav: false },
+  { id: 'agents', label: 'Agents', icon: 'bot', section: 'library', app: true, nav: false },
+  { id: 'bots', label: 'Bots', icon: 'bot', section: 'library', app: true, nav: false },
+  { id: 'pipelines', label: 'Pipelines', icon: 'network', section: 'library', app: true, nav: false },
+  { id: 'catalogue', label: 'Methods', icon: 'rows-3', section: 'library', app: true, nav: false },
+  { id: 'changes', label: 'Changes', icon: 'git-pull-request', section: 'library', app: true, nav: false },
+  { id: 'hosts', label: 'Hosts', icon: 'panels-top-left', section: 'system', app: true, nav: false },
+  { id: 'runners', label: 'Runners', icon: 'play', section: 'system', app: true, nav: false },
+  { id: 'keys', label: 'Connections and keys', icon: 'shield', section: 'system', app: true, nav: false },
+  { id: 'spend', label: 'Spend', icon: 'gauge', section: 'system', app: true, nav: false },
+  { id: 'humans', label: 'People', icon: 'shield', section: 'system', app: true, nav: false },
+  { id: 'access', label: 'Access', icon: 'shield', section: 'system', app: false, nav: false },
+] as const satisfies readonly { id: string; label: string; icon: IconName; section: string; root?: string; app: boolean; nav: boolean }[];
 export type AppScreen = Extract<(typeof workspaces)[number], { app: true }>['id'];
 
 /** What an entity reference names (EntityCode, EntityCard; the coordinator's EntityKind): its word, icon and the state

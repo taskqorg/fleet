@@ -128,7 +128,7 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     assert.equal(await list.locator('.vl-row', {hasText: 'UI release on site'}).getByText('UI 1.1.2', {exact: true}).count(), 1, 'a UI-only release shows its UI version');
     assert.equal(await list.locator('.vl-row', {hasText: 'Installed one'}).getByText('1.1.1', {exact: true}).count(), 1, 'a native release shows its version');
     const RECORD = `window.__inst = []; const tick = () => { const s = [...document.querySelectorAll('.group-h')].find(b => b.textContent.includes('Installed'))?.getAttribute('aria-expanded') ?? '-'; if (window.__inst.at(-1) !== s) window.__inst.push(s); requestAnimationFrame(tick); }; requestAnimationFrame(tick);`;
-    await page.locator('.rail [data-id="hosts"] a').first().click(); await page.waitForURL('**/hosts**');
+    await page.locator('.rail [data-id="system"] a').first().click(); await page.waitForURL('**/hosts**');
     const stored = () => page.evaluate(() => fetch('/api/ops/person_settings_get', {method: 'POST', headers: {'content-type': 'application/json'}, body: '{}'}).then(r => r.json()).then(s => s.listGroups?.['delivery:stage'] ?? []));
     for (let i = 0; i < 100 && !(await stored()).includes('installed'); i++) await page.waitForTimeout(50);
     assert.deepEqual(await stored(), ['installed'], 'leaving the section stored the opened Installed');

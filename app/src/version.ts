@@ -31,7 +31,7 @@ const own = () => assetsOf(document.head.innerHTML);
 /** A fresh copy of the page the site serves now; null when it cannot be read (offline, signed out, not the app). */
 async function servedAssets(): Promise<string | null> {
   try {
-    const r = await fetch('/overview', { cache: 'no-store', credentials: 'same-origin', headers: { accept: 'text/html' } });
+    const r = await fetch('/home', { cache: 'no-store', credentials: 'same-origin', headers: { accept: 'text/html' } });
     if (!r.ok || !r.headers.get('content-type')?.startsWith('text/html')) return null;
     return assetsOf(await r.text()) || null;
   } catch { return null; }

@@ -12,6 +12,7 @@ import { useList, useOp, type Kind } from './store.ts';
 import { compareKeys, closedGroups, flipGroup } from './lists.ts';
 import { listKey, formatView, parseView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from './url.ts';
+import { currentUrl } from './router.ts';
 import { usePins, useViews, listGroups, setListGroups, setNavCounter, type SavedView } from './prefs.ts';
 import { navCounted } from './nav-counts.ts';
 import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
@@ -72,7 +73,7 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   // stays: the commit reads the URL as it is then (url.ts) and leaves a different preset alone.
   let typedPreset: string | undefined;
   const [query, setText] = useSearchBox(() => url.view.q, q => {
-    const now = parseView(location.pathname + location.search)?.preset;
+    const now = parseView(currentUrl())?.preset;
     url.set({ q: q || undefined, ...(now === typedPreset ? { preset: undefined } : {}) }, 'type');
   });
   const setQuery = (t: string) => { typedPreset = untrack(() => url.view.preset); setText(t); };

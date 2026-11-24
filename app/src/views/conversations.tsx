@@ -2,7 +2,7 @@
 // Actions use the same operations agents use: session_start (conversation-new.tsx), message_send, execution_stop, session_fork.
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onSettled, untrack } from 'solid-js';
 import type { JSX } from '@solidjs/web';
-import { useLocation, useSearch } from '../router.ts';
+import { currentUrl, useLocation, useSearch } from '../router.ts';
 import {
   EntityCode, EntityPicker, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
   StateBadge, StateCounters, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection,
@@ -333,7 +333,7 @@ function Conversation(props: { id: string; onClose: () => void }) {
   const switchPanel = createMemo(() => { const current = panel(); return typeof current === 'object' ? current : null; });
   const [nextInstruction, setNextInstruction] = createSignal('');
   const [forking, setForking] = createSignal(false);
-  const openConversation = (sessionId: string) => go(nextUrl(location.pathname + location.search, 'conversations', { focus: sessionId }));
+  const openConversation = (sessionId: string) => go(nextUrl(currentUrl(), 'conversations', { focus: sessionId }));
   const fork = (text?: string) => {
     if (untrack(forking)) return;
     const requestId = reqId(), sessionId = props.id;

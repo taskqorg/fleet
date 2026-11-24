@@ -44,13 +44,13 @@ export async function checkEntityCard(browser: Browser, origin: string, seed: Re
     await p.getByRole('status').filter({ hasText: `${task.code} copied` }).waitFor();
     assert.equal(await p.evaluate(() => navigator.clipboard.readText()), task.code);
     assert.equal(await directCopy.locator('svg.lucide-check').count(), 1, 'copy shows a check after success');
-    assert.ok(!new URL(p.url()).pathname.startsWith('/tasks/'), 'direct copy does not open a task');
+    assert.ok(!new URL(p.url()).pathname.startsWith('/projects/tasks/'), 'direct copy does not open a task');
     await p.waitForTimeout(900);
     assert.equal(await card.count(), 0, 'hover opens no card');
     assert.equal(await code.getAttribute('aria-haspopup'), 'dialog');
     // A click opens the card, not the row; the card shows state, title and actions; no UUID is visible.
     await code.click(); await card.waitFor();
-    assert.ok(!new URL(p.url()).pathname.startsWith('/tasks/'), 'the code click did not open the row');
+    assert.ok(!new URL(p.url()).pathname.startsWith('/projects/tasks/'), 'the code click did not open the row');
     assert.equal(await code.getAttribute('aria-expanded'), 'true');
     await card.getByText('Entity card check task').waitFor();
     await card.getByRole('img', { name: 'Queued' }).waitFor();

@@ -92,7 +92,7 @@ test('Store registry: only an allowed endpoint host, and the free-space warning 
 
 test('The built app is public, the API is not (app.ts PUBLIC_ROUTES). Requirement: docs/designs/fleet-people-access.md public routes. Risk: the browser cannot load the app shell, or result bytes are served without credentials.', async () => {
   const root = await call('GET', '/');
-  assert.equal(root.status, 302); assert.equal(root.headers.get('location'), '/overview');
+  assert.equal(root.status, 302); assert.equal(root.headers.get('location'), '/home');
   assert.equal((await call('GET', '/api/results/anything')).status, 401);
 });
 

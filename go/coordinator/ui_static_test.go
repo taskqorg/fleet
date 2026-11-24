@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Requirement: UI switches preserve backend compatibility and old lazy assets.
+// Requirement: UI switches preserve backend compatibility and old lazy assets; every page path outside /api/ gets the app shell.
 // Risk: backend rollback serves incompatible UI or breaks already open tabs.
 func TestIndependentUIStatic(t *testing.T) {
 	root := t.TempDir()
@@ -67,12 +67,18 @@ func TestIndependentUIStatic(t *testing.T) {
 	request("/overview", "bundled")
 	// Bundled UI selected: /ui-release.json still names it.
 	request("/ui-release.json", `{"backendVersion":"`+version+`","kind":"bundled","version":"`+version+`"}`+"\n")
+	// Every page path gets the selected app's shell, which redirects earlier routes and shows its own not-found page.
+	request("/newscreen", "bundled")
+	request("/publishing/o~r~3", "bundled")
+	request("/projects/FLT/tasks/T-FLT-42", "bundled")
 	w := httptest.NewRecorder()
-	if appScreen(w, httptest.NewRequest("GET", "/newscreen", nil)) {
-		t.Fatal("retained incompatible screen")
+	for _, p := range []string{"/api/stream", "/api", "/favicon.ico"} {
+		if appScreen(w, httptest.NewRequest("GET", p, nil)) {
+			t.Fatalf("%s: served the app shell", p)
+		}
 	}
-	if appScreen(w, httptest.NewRequest("GET", "/api/stream", nil)) {
-		t.Fatal("intercepted API stream")
+	if appScreen(w, httptest.NewRequest("POST", "/home", nil)) {
+		t.Fatal("served the app shell to a POST")
 	}
 
 	request("/assets/old.js", "old chunk")

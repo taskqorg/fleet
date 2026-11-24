@@ -25,7 +25,7 @@ Fleet exists to run, evaluate and compare harnesses, models and coordination met
 
 Deliver the operator and architect interfaces on the web first, across all projects. Later desktop applications for Windows, macOS and Linux reuse the web UI and shared operations. Follow the [delivery order](docs/designs/fleet-stack.md#delivery-order-and-change-cycles).
 
-The main sidebar includes Bots under Work for every signed-in person and Humans under System for the owner. See [information architecture](docs/designs/fleet-ia-and-journeys.md#1-closed-information-architecture) for the full section map.
+The navigation has seven sections (Home, Live, Conversations, Projects, Lab, Library, System); Bots are in Library for every signed-in person, and the owner also sees System › People. See [information architecture](docs/designs/fleet-ia-and-journeys.md#1-closed-information-architecture) for the full section map.
 
 Chromium must be able to install each built workspace with its Fleet name and shared Fleet icon, launch its start URL standalone, and keep navigation between built workspaces in the installed window (manifest scope `/`). The page advertises the current workspace's manifest on direct entry and after in-app navigation, including browser Back and Forward.
 

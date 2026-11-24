@@ -67,7 +67,15 @@ function LabWorkspace(props: { id?: string }) {
   </Switch>;
 }
 
+/** Live (OR-56) until wave 1 builds it: where its facts are today. */
+function LivePending() {
+  const [, go] = useLocation();
+  return <Empty text="Live is being built: hosts, runs and delivery on one screen. Until then they are in System and Projects."
+    action={<><Button label="Hosts" icon="panels-top-left" onClick={() => go('/hosts')} /> <Button label="Runners" icon="play" onClick={() => go('/runners')} /> <Button label="Delivery" icon="git-merge" onClick={() => go('/delivery')} /></>} />;
+}
+
 const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => JSX.Element }> = {
+  live: { focus: false, view: () => <LivePending /> },
   bots: { focus: true, view: p => <Bots id={p.id} /> },
   projects: { focus: true, view: p => <Projects id={p.id} /> },
   overview: { focus: true, view: p => <Overview id={p.id} /> },
@@ -88,9 +96,11 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   spend: { focus: false, view: () => <Spend /> },
 };
 const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
-const NAV: NavItem[] = BUILT.filter(w => w.nav);
-const LIBRARY_SECTIONS = new Set(['agents', 'pipelines', 'catalogue', 'changes']);
-const INFRA_SECTIONS = new Set(['hosts', 'runners', 'keys']);
+// The rail's seven sections (OR-46); each screen highlights the section that owns it (OR-57).
+const NAV: NavItem[] = workspaces.filter(w => w.nav).map(w => ({ id: w.id, label: w.label, icon: w.icon }));
+const sectionOf = (screen: string): string => workspaces.find(w => w.id === screen)?.section ?? '';
+// A section's counter is its first screen's (Conversations, System from Hosts).
+const ROOT: Record<string, string> = Object.fromEntries(workspaces.filter(w => w.nav).map(w => [w.id, (w as { root?: string }).root ?? w.id]));
 // Each kind the server finds: its group label, icon, the registry state family of its hits, where a hit opens (a question
 // opens its task) and the list section that takes the same query (the "All N" row).
 type Hit = Ops['search']['reply']['hits'][number];
@@ -111,13 +121,9 @@ const KINDS: Record<Hit['kind'], { label: string; icon: IconName; family?: Famil
 const subPages = (go: (to: string) => void, show: (id: string) => boolean): SpotlightProvider => ({
   id: 'pages',
   label: 'Pages',
-  find: q => [
-    ...BUILT.filter(w => !w.nav).map(w => ({ id: w.id, label: w.label, icon: w.icon })),
-    { id: 'agents', label: 'Agents', icon: 'bot' as const },
-    { id: 'hosts', label: 'Hosts', icon: 'panels-top-left' as const },
-  ]
+  find: q => BUILT.filter(w => !w.nav).map(w => ({ id: w.id, label: w.label, icon: w.icon }))
     .filter(s => show(s.id) && matchSearch(q, s.label))
-    .map(s => ({ key: 'sub:' + s.id, icon: s.icon, label: s.label, run: () => go('/' + s.id) })),
+    .map(s => ({ key: 'sub:' + s.id, icon: s.icon, label: s.label, run: () => go(sectionPath(s.id)) })),
 });
 
 // The project focus (OR-34): '-' is work outside projects; an empty focus holds everything. The server marks hits outside it.
@@ -160,11 +166,8 @@ function App() {
   const [loc, go] = useLocation();
   const query = useSearch();
   const current = createMemo(() => loc().split('/')[1] || 'overview');
-  const activeNav = createMemo(() => {
-    const c = current();
-    return LIBRARY_SECTIONS.has(c) ? 'agents' : INFRA_SECTIONS.has(c) ? 'hosts' : c;
-  });
-  const shellTitle = createMemo(() => BUILT.find(w => w.id === activeNav())?.label ?? BUILT.find(w => w.id === current())?.label);
+  const activeNav = createMemo(() => sectionOf(current()));
+  const shellTitle = createMemo(() => NAV.find(w => w.id === activeNav())?.label ?? '');
   const me = useOp('me', {});
   const showPage = (id: string) => id === 'humans' ? me.data?.owner === true :
     id === 'personal-lab' ? !!me.data?.personalLab || me.data?.roles.includes('architect') === true : true;
@@ -247,11 +250,16 @@ function App() {
   // navigation returns to it (prefs.ts). The open item and checked rows are not part of it (view-url drops focus and sel).
   // Unsent list group toggles are sent on the same section leave.
   let left: string | null = null;
+  // A rail section opens the screen of it last open in this tab (Projects returns to its Tasks facet), else its first
+  // screen, each with its list as left (prefs.ts sectionPath).
+  const lastScreen = new Map<string, string>();
+  const openSection = (id: string) => go(sectionPath(lastScreen.get(id) ?? ROOT[id] ?? id));
   createEffect(() => [loc(), query(), access.value.state, prefsRead.value, current()] as const, ([l, q, st, pr, cur]) => {
     if (st !== 'open' || !pr || !BUILT.some(n => n.id === cur)) return;
     const parsed = (VIEWS as string[]).includes(cur) ? parseView(l + (q ? '?' + q : '')) : null;
     // The Overview keeps no view of its own: /overview?all (every project, from the outside-focus count) is never kept.
     noteView(cur, parsed && cur !== 'overview' ? formatView({ ...parsed, focus: undefined, sel: undefined }) : '/' + cur);
+    lastScreen.set(sectionOf(cur), cur);
     if (left && left !== cur) saveOnLeave(left, false);
     left = cur;
   });
@@ -267,12 +275,12 @@ function App() {
   const counts = useNavCounts(() => access.value.state === 'open');
   const nav = createMemo(() => {
     const c = counts();
-    return NAV.filter(w => showPage(w.id)).map(n => c[n.id] ? { ...n, count: c[n.id] } : n);
+    return NAV.map(n => c[ROOT[n.id]] ? { ...n, count: c[ROOT[n.id]] } : n);
   });
   // Entity cards (EntityCode) read entity_card through the store; their Open goes to the in-app path.
   const cards = entityCards(go);
   const isOpen = createMemo(() => access.value.state === 'open');
-  return <EntityCards value={cards}><AppShell privateReady={isOpen()} privateGeneration={access.value.generation} nav={nav()} current={activeNav()} title={shellTitle()} waiting={0} onGo={id => go(sectionPath(id))} pins={pins()} onPins={savePins} search={isOpen() ? search : []} ready={shown()}
+  return <EntityCards value={cards}><AppShell privateReady={isOpen()} privateGeneration={access.value.generation} nav={nav()} current={activeNav()} title={shellTitle()} waiting={0} onGo={openSection} pins={pins()} onPins={savePins} search={isOpen() ? search : []} ready={shown()}
     searchIdle={<FocusPresets icon value={prefs.value.focus.filter(p => !prefs.value.ignored.includes(p))} presets={prefs.value.focusPresets} ignored={prefs.value.ignored} onChange={setFocus} />}
     focus={isOpen() ? <Focus go={go} /> : undefined}
     widths={geometry().widths} onWidth={setWidth} collapsed={geometry().navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
@@ -291,10 +299,6 @@ const decodeSegment = (s: string): string => { try { return decodeURIComponent(s
 
 function PrivateRoutes(props: { go: (to: string) => void }) {
   const [loc] = useLocation();
-  createEffect(() => loc(), p => {
-    if (p === '/') props.go('/overview');
-    else if (p === '/publishing' || p.startsWith('/publishing/')) props.go('/delivery' + p.slice('/publishing'.length));
-  });
   const libMatch = createMemo(() => /^\/(agents|pipelines|catalogue)(?:\/([^/]+))?\/?$|^\/(changes)\/?$/.exec(loc()));
   const infraMatch = createMemo(() => /^\/(hosts|keys)(?:\/([^/]+))?\/?$|^\/(runners)\/?$/.exec(loc()));
   const libSection = createMemo(() => { const m = libMatch(); return m ? (m[1] ?? m[3]) as 'agents' | 'pipelines' | 'catalogue' | 'changes' : null; });
@@ -317,7 +321,7 @@ function PrivateRoutes(props: { go: (to: string) => void }) {
   const builtId = createMemo(() => builtMatch()?.id);
   return (
     <Loading fallback={<Empty text="Loading…" />}>
-      <Switch fallback={<Empty text="This page does not exist." action={<Button label="Overview" icon="house" onClick={() => props.go('/overview')} />} />}>
+      <Switch fallback={<Empty text="This page does not exist." action={<Button label="Home" icon="house" onClick={() => props.go('/home')} />} />}>
         <Match when={libSection()}>
           {sec => <Library section={sec()} id={libId()} />}
         </Match>
