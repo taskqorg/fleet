@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fleet/contract"
 	"fleet/coordinator/db"
 	"fmt"
 	"log"
@@ -18,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -293,15 +295,18 @@ func personRow(raw json.RawMessage) (*Person, error) {
 		return nil, errors.New("each person needs an e-mail (a service-token person: a name such as site-agents)")
 	}
 	if len(p.Roles) == 0 {
-		return nil, errors.New("roles of " + p.Email + " must be operator and/or architect")
+		return nil, errors.New("roles of " + p.Email + " must be operator and/or architect, or viewer alone")
 	}
 	for _, r := range p.Roles {
-		if r != "operator" && r != "architect" {
-			return nil, errors.New("roles of " + p.Email + " must be operator and/or architect")
+		if r != "operator" && r != "architect" && (r != "viewer" || len(p.Roles) > 1) {
+			return nil, errors.New("roles of " + p.Email + " must be operator and/or architect, or viewer alone")
 		}
 	}
+	if slices.Contains(p.Roles, "viewer") && (p.Owner || viewerGrantsWider(&p)) {
+		return nil, errors.New("a viewer (" + p.Email + ") has project grants only and is not the owner")
+	}
 	for _, g := range p.Grants {
-		if !((g.Kind == "project" && g.ID != "" && !strings.ContainsAny(g.ID, ",\r\n\t ") && (g.ID != "*" || hasRole(&p, "architect"))) ||
+		if !((g.Kind == "project" && g.ID != "" && !strings.ContainsAny(g.ID, ",\r\n\t ") && (g.ID != "*" || hasRole(&p, "architect") || isViewer(&p))) ||
 			(g.Kind == "lab" && g.ID == "personal" && p.AccessCommonName == "") || g.Kind == "*") {
 			return nil, errors.New("grants of " + p.Email + " must be [{kind, id}]")
 		}
@@ -610,7 +615,30 @@ func (a *App) authorize(q *Request) error {
 	if err != nil {
 		return err
 	}
+	if isViewer(q.person) && !viewerMay(q.r) {
+		return fail(403, "A viewer may only read")
+	}
 	return checkOrigin(q)
+}
+
+// viewerGrantsWider: the person has a grant a viewer may not hold (full access, personal Lab).
+func viewerGrantsWider(p *Person) bool {
+	for _, g := range p.Grants {
+		if g.Kind != "project" {
+			return true
+		}
+	}
+	return false
+}
+
+// viewerMay: the requests a viewer (the Live wall screen) may make: GET requests (pages, the change stream, downloads)
+// and the read operations (contract read: true). Every write, long-running or not, is refused before it runs.
+func viewerMay(r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return true
+	}
+	name, ok := strings.CutPrefix(r.URL.Path, "/api/ops/")
+	return ok && r.Method == http.MethodPost && contract.Operations[name].Read
 }
 
 // removedHostSecret: the secret belongs to a removed host.

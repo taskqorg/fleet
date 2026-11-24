@@ -216,7 +216,7 @@ func spanHostLoad(s *obs.Span, fallbackNow int64) *hostLoadObservation {
 	if t, err := time.Parse(obs.TimeFormat, s.Start); err == nil {
 		atMs = t.UnixMilli()
 	}
-	l := &hostLoadObservation{Load1: s.Load1, MemFree: s.MemFree, UpdatedAt: atMs}
+	l := &hostLoadObservation{Load1: s.Load1, MemFree: s.MemFree, DiskFree: s.DiskFree, UpdatedAt: atMs}
 	if raw := s.Attrs["fleet.cpus"]; raw != "" {
 		if n, err := strconv.ParseInt(raw, 10, 64); err == nil && n > 0 {
 			l.Cpus = &n
@@ -227,7 +227,7 @@ func spanHostLoad(s *obs.Span, fallbackNow int64) *hostLoadObservation {
 			l.MemTotal = &n
 		}
 	}
-	if l.Load1 == nil && l.Cpus == nil && l.MemFree == nil && l.MemTotal == nil {
+	if l.Load1 == nil && l.Cpus == nil && l.MemFree == nil && l.MemTotal == nil && l.DiskFree == nil {
 		return nil
 	}
 	return l

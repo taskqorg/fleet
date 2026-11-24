@@ -165,6 +165,7 @@ func (v *ArtifactPurgeRequest) Validate() error {
 }
 
 type ArtifactRow struct {
+	Code                  *string `json:"code,omitempty"`
 	CreatedAt             float64 `json:"createdAt"`
 	DerivedFromArtifactId *string `json:"derivedFromArtifactId"`
 	Error                 *string `json:"error"`

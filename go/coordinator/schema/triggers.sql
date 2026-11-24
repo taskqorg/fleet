@@ -14,6 +14,7 @@ CREATE OR REPLACE TRIGGER api_connection_spend AFTER INSERT OR DELETE OR UPDATE 
 CREATE OR REPLACE TRIGGER artifact_change AFTER INSERT OR DELETE OR UPDATE ON artifact FOR EACH ROW EXECUTE FUNCTION fleet_artifact_change();
 CREATE OR REPLACE TRIGGER artifact_tombstone BEFORE INSERT ON artifact FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
 CREATE OR REPLACE TRIGGER artifact_touch BEFORE UPDATE ON artifact FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+CREATE OR REPLACE TRIGGER artifact_zcode BEFORE INSERT OR UPDATE OF project_id, code ON artifact FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
 
 -- artifact_copy
 CREATE OR REPLACE TRIGGER artifact_copy_change AFTER INSERT OR DELETE OR UPDATE ON artifact_copy FOR EACH ROW EXECUTE FUNCTION fleet_artifact_change();
@@ -27,6 +28,7 @@ CREATE OR REPLACE TRIGGER board_message_change AFTER INSERT OR DELETE OR UPDATE 
 
 -- bot
 CREATE OR REPLACE TRIGGER bot_change AFTER INSERT OR DELETE OR UPDATE ON bot FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE OR REPLACE TRIGGER bot_zcode BEFORE INSERT OR UPDATE OF project_id, code ON bot FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
 
 -- bot_automation
 CREATE OR REPLACE TRIGGER bot_automation_change AFTER INSERT OR DELETE OR UPDATE OF revision ON bot_automation FOR EACH ROW EXECUTE FUNCTION fleet_change();

@@ -301,6 +301,7 @@ type ExecutionRow struct {
 	EndedAt           *string         `json:"endedAt"`
 	EnvironmentId     *string         `json:"environmentId"`
 	ExperimentId      *string         `json:"experimentId"`
+	Failure           *Failure        `json:"failure,omitempty"`
 	Harness           *string         `json:"harness"`
 	HarnessVersion    *string         `json:"harnessVersion"`
 	HostId            *string         `json:"hostId"`
@@ -331,6 +332,11 @@ func (v *ExecutionRow) Validate() error {
 	}
 	for i := range v.Definitions {
 		if err := Check(&v.Definitions[i], "definitions"); err != nil {
+			return err
+		}
+	}
+	if v.Failure != nil {
+		if err := Check(v.Failure, "failure"); err != nil {
 			return err
 		}
 	}
@@ -387,6 +393,19 @@ func (v *ExperimentNote) Validate() error {
 	if v.At == nil {
 		return Missing("at")
 	}
+	return nil
+}
+
+// Failure: A cause in plain words; the code goes under Details. One mapping (contracts/vocabulary.json causes) for bots, Home blocker chips and Live.
+type Failure struct {
+	Cause  string  `json:"cause"`
+	Code   string  `json:"code"`
+	Detail *string `json:"detail,omitempty"`
+	Text   string  `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *Failure) Validate() error {
 	return nil
 }
 

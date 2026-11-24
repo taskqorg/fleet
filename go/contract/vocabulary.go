@@ -5,6 +5,10 @@ import "encoding/json"
 // Vocabulary: contracts/vocabulary.json, the words the app and the coordinator share (harnesses, view grammar, system
 // presets). The app imports the same file; go generate copies it into vocabulary_gen.go.
 type VocabularyData struct {
+	Causes []struct {
+		ID, Text string
+		Match    []string
+	}
 	Harnesses []struct {
 		ID, Label, Icon, Login string
 		LoginArgv              []string
@@ -36,4 +40,25 @@ func HarnessIDs() []string {
 		out = append(out, h.ID)
 	}
 	return out
+}
+
+// PlainCause: a stored failure cause code (an execution's problem, such as unknown:abandoned or step:provider-429) in
+// plain words: the vocabulary's causes entry whose match the code starts with first. Bots, Home and Live read the same
+// sentence; the code goes under Details. Empty code: nil.
+func PlainCause(code, detail string) *Failure {
+	if code == "" {
+		return nil
+	}
+	for _, c := range Vocabulary.Causes {
+		for _, m := range c.Match {
+			if len(code) >= len(m) && code[:len(m)] == m {
+				f := &Failure{Cause: c.ID, Code: code, Text: c.Text}
+				if detail != "" && detail != code {
+					f.Detail = &detail
+				}
+				return f
+			}
+		}
+	}
+	panic("contract: vocabulary.json causes: the last entry must match every code")
 }

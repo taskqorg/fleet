@@ -509,6 +509,7 @@ type hostObservationPayload struct {
 	PollError       *contract.HostPollError       `json:"pollError"`
 	Stores          json.RawMessage               `json:"stores"`
 	Update          json.RawMessage               `json:"update"`
+	Load            *hostLoadObservation          `json:"load"`
 }
 
 type hostObservation struct {
@@ -628,6 +629,10 @@ func hostsListReply(q *Request, includeRemoved bool) (contract.HostsListReply, e
 	for _, r := range queued {
 		queuedByHost[r.HostID] = int64(r.N)
 	}
+	runs, err := hostRuns(q)
+	if err != nil {
+		return reply, err
+	}
 	now := nowMs()
 	out := make([]contract.HostRow, 0, len(ids))
 	for _, id := range ids {
@@ -680,10 +685,42 @@ func hostsListReply(q *Request, includeRemoved bool) (contract.HostsListReply, e
 			if polling && o.Problems != nil {
 				h.Problems = o.Problems
 			}
+			if l := q.app.effectiveHostLoad(id, o.Load); polling && l != nil && now-l.UpdatedAt < hostLoadStaleMs {
+				h.Load = &contract.HostLoadReading{Load1: l.Load1, Cpus: l.Cpus, MemFree: l.MemFree, MemTotal: l.MemTotal, DiskFree: l.DiskFree, At: float64(l.UpdatedAt)}
+			}
 		}
+		h.Runs = runs[id]
+		if h.Runs == nil {
+			h.Runs = []contract.HostRun{}
+		}
+		h.SlotLimit = hostSlotLimit(r.MaxConcurrent, configured, h.Load)
 		out = append(out, h)
 	}
 	return contract.HostsListReply{StaleAfterMs: hostStaleMs, ServerNow: now, Hosts: out}, nil
+}
+
+// hostRuns: the runs the caller may see per host, oldest start first. Slot identity is this order, not a stored slot:
+// executors run a host's work as one pool with a count limit and number no slots, so a stored slot would be a second
+// fact that could disagree with the pool. Live fills tile i with runs[i] (docs/design-system/pages/live.md).
+func hostRuns(q *Request) (map[string][]contract.HostRun, error) {
+	rs, err := q.db().HostRuns(q.ctx())
+	out := map[string][]contract.HostRun{}
+	for _, r := range rs {
+		out[r.HostID] = append(out[r.HostID], contract.HostRun{Id: r.ID, State: r.State, StartedAt: optTime(r.StartedAt)})
+	}
+	return out, err
+}
+
+// hostSlotLimit: how many runs the host takes at once, as dispatch counts it (hostConcurrencyLimit): the host's
+// maxConcurrent, else the CPU count of a fresh load reading; nil when neither is known.
+func hostSlotLimit(maxConcurrent *int64, configured bool, load *contract.HostLoadReading) *int64 {
+	if configured && maxConcurrent != nil && *maxConcurrent > 0 {
+		return maxConcurrent
+	}
+	if load != nil && load.Cpus != nil && *load.Cpus > 0 {
+		return load.Cpus
+	}
+	return nil
 }
 
 func routeDecisions(q *Request, r *contract.RouteDecisionsRequest) (contract.RouteDecisionsReply, error) {

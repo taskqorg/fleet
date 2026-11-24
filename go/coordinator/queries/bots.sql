@@ -1,5 +1,5 @@
 -- name: BotGet :one
-SELECT b.id, b.project_id, b.director, b.revision, b.memory_revision,
+SELECT b.id, b.code, b.project_id, b.director, b.revision, b.memory_revision,
        hs.id AS home_session_id,
        b.paused, b.paused_at, b.paused_by, b.resumed_at,
        s.name, s.purpose, s.profile_id, s.instructions, s.soul, s.schedule_time, s.schedule_zone, s.wake_on_needs_you,
@@ -24,7 +24,7 @@ LEFT JOIN bot_run lr ON lr.id = (
 WHERE b.id = $1;
 
 -- name: BotList :many
-SELECT b.id, b.project_id, b.revision,
+SELECT b.id, b.code, b.project_id, b.revision,
        hs.id AS home_session_id,
        b.paused, s.name, s.purpose,
        ar.id AS active_run_id, lr.state AS last_run_state, lr.created_at AS last_run_at

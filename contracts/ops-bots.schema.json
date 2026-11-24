@@ -272,6 +272,13 @@
             "string",
             "null"
           ]
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "$comment": "the bot's D17 code (B-FLT-1); open the bot by it (entity_resolve)"
         }
       }
     },
@@ -354,6 +361,13 @@
             "string",
             "null"
           ]
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "$comment": "the bot's D17 code (B-FLT-1); open the bot by it (entity_resolve)"
         }
       }
     },
@@ -656,6 +670,9 @@
         },
         "automation": {
           "$ref": "#/$defs/BotAutomationRef"
+        },
+        "failure": {
+          "$ref": "ops.schema.json#/$defs/Failure"
         }
       }
     },

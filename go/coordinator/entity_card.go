@@ -29,7 +29,8 @@ var cardReaders = map[contract.EntityKind]cardReader{
 }
 
 // codeKinds: the D17 type letters the card resolves (spec rules, S-, are not entities).
-var codeKinds = map[string]contract.EntityKind{"T": contract.EntityKindTask, "Q": contract.EntityKindQuestion, "C": contract.EntityKindConversation}
+// A bot (B) has no card kind yet: entity_resolve resolves its code.
+var codeKinds = map[string]contract.EntityKind{"T": contract.EntityKindTask, "Q": contract.EntityKindQuestion, "C": contract.EntityKindConversation, "R": contract.EntityKindResult}
 
 func init() {
 	op("entity_card", func(q *Request, r *contract.EntityCardRequest) (contract.EntityCardReply, error) {
@@ -207,7 +208,7 @@ func cardResult(q *Request, id string) (*contract.EntityCardReply, error) {
 	if r == nil || err != nil {
 		return nil, err
 	}
-	return &contract.EntityCardReply{Id: r.ID, Uuid: ptr(r.ID), Hash: optStr(r.ContentHash), Title: firstString(r.Name, "Result"), State: optStr(r.State),
+	return &contract.EntityCardReply{Id: r.ID, Uuid: ptr(r.ID), Code: optStr(deref(r.Code)), Hash: optStr(r.ContentHash), Title: firstString(r.Name, "Result"), State: optStr(r.State),
 		ProjectId: optStr(deref(r.ProjectID)), At: optStr(cardTime(&r.CreatedAt)), AtLabel: ptr("stored"), Path: itemPath("results", r.ID),
 		Facts: facts(fact("Task", contract.EntityFactTypeCode, deref(r.TaskCode)), fact("Type", contract.EntityFactTypeCode, r.MediaType),
 			fact("Size", contract.EntityFactTypeBytes, count(r.Size)))}, nil

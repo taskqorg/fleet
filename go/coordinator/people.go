@@ -138,7 +138,13 @@ func grantsVersion(p *Person) string {
 func hasRole(p *Person, r string) bool { return p != nil && slices.Contains(p.Roles, r) }
 
 func hasAllProjects(p *Person) bool {
-	return hasRole(p, "architect") && slices.Contains(p.Grants, personGrant{"project", "*"})
+	return (hasRole(p, "architect") || isViewer(p)) && slices.Contains(p.Grants, personGrant{"project", "*"})
+}
+
+// isViewer: a person with the viewer role only (docs/designs/fleet-people-access.md, Wall viewer): reads within the
+// project grants, and nothing else (viewerMay).
+func isViewer(p *Person) bool {
+	return p != nil && len(p.Roles) == 1 && p.Roles[0] == "viewer" && !p.Owner
 }
 
 func hasPersonalLab(p *Person) bool {

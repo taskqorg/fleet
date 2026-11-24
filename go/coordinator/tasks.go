@@ -1205,7 +1205,7 @@ func executionsPage(q *Request, f contract.ExecutionsListRequest) (contract.Exec
 		e := contract.ExecutionRow{Id: r.ID, Kind: string(r.Kind), State: contract.ExecutionState(r.State), Observation: string(r.Observation), LastSeenAt: optTime(r.LastSeenAt),
 			ProjectId: r.ProjectID, TaskId: r.TaskID, ExperimentId: r.ExperimentID, Variant: r.Variant, ParentExecutionId: r.ParentExecutionID, SessionId: r.SessionID,
 			AccountId: r.AccountID, HostId: r.HostID, EnvironmentId: r.EnvironmentID, Harness: r.Harness, HarnessVersion: r.HarnessVersion, Model: r.Model,
-			ConfigRef: rawJSON(r.ConfigRef), Problem: r.Problem, StartedAt: optTime(r.StartedAt), SystemActor: r.SystemActor}
+			ConfigRef: rawJSON(r.ConfigRef), Problem: r.Problem, Failure: contract.PlainCause(deref(r.Problem), ""), StartedAt: optTime(r.StartedAt), SystemActor: r.SystemActor}
 		if r.EndAt.Valid {
 			e.EndedAt = optTime(&r.EndAt.Time)
 		}

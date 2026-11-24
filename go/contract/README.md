@@ -8,6 +8,7 @@
 
 - Generated `*_gen.go` files define request, reply, event, profile, gateway, host-protocol, Lab, and operation-domain types. Every generated struct exposes `Validate`; generated enums expose `Valid`.
 - `Operations` registers every generated `ops-*.schema.json` operation with its read/long flags, permitted status codes, auth and agent rules, tool description, and input schema ([contract.go](contract.go)).
+- `Vocabulary` decodes `contracts/vocabulary.json`; `PlainCause(code, detail)` answers a stored failure cause code as a `Failure` (`cause` id, `code`, plain `text`, `detail`) from its `causes` ([vocabulary.go](vocabulary.go)).
 - `ParseProfile` and `ParseAntigravitySettings` strictly decode supported agent profiles and settings.
 - `ParseContextSources` and `ContextSources` validate immutable repository-rule references.
 - `GatewayCall` makes one JSON gateway call and returns a `CallLine`, including `ok`, `error`, or `unknown`; it does not return a Go error. `GatewayTarget` names the gateway URL, bearer, extra headers and the tool's `idempotent` flag.

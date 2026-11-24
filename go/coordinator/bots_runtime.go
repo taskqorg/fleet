@@ -450,6 +450,7 @@ func botRunRowToContract(id string, botID string, projectID string, botRev, memR
 		Source:          optStr(source),
 		HostId:          hostID,
 		Problem:         problem,
+		Failure:         contract.PlainCause(deref(problem), reason),
 		CreatedAt:       createdAt.UTC().Format(time.RFC3339Nano),
 		StartedAt:       formatTimePtr(startedAt),
 		EndedAt:         formatTimePtr(endedAt),

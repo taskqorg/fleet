@@ -414,6 +414,7 @@ func presignFor(s *StoreRow, hostID, method, key string, q map[string]string) (s
 type Artifact struct {
 	ID, Scope, ContentHash, MediaType, Name, Role, State                       string
 	ProjectID, ExecutionID, TaskID, LegacyID, DerivedFrom, Previous, LastError *string
+	Code                                                                       *string // D17 R code; originals only
 	Size                                                                       int64
 	Required                                                                   bool
 	Seq                                                                        int64
@@ -423,7 +424,7 @@ type Artifact struct {
 func artifactOf(r db.Artifact) Artifact {
 	return Artifact{ID: r.ID, Scope: r.Scope, ContentHash: r.ContentHash, MediaType: r.MediaType, Name: r.Name, Role: r.Role, State: r.State,
 		ProjectID: r.ProjectID, ExecutionID: r.ExecutionID, TaskID: r.TaskID, LegacyID: r.LegacyID, DerivedFrom: r.DerivedFromArtifactID,
-		Previous: r.PreviousArtifactID, LastError: r.LastError, Size: r.Size, Required: r.Required, Seq: r.Seq, Created: r.CreatedAt}
+		Previous: r.PreviousArtifactID, LastError: r.LastError, Size: r.Size, Required: r.Required, Seq: r.Seq, Created: r.CreatedAt, Code: r.Code}
 }
 
 func artRows(rs []db.Artifact) []Artifact {
@@ -469,7 +470,7 @@ func (x *Artifact) row() contract.ArtifactRow {
 	return contract.ArtifactRow{Id: x.ID, LegacyId: x.LegacyID, ProjectId: x.ProjectID, Scope: x.Scope, ExecutionId: x.ExecutionID, TaskId: x.TaskID,
 		Name: x.Name, MediaType: x.MediaType, Size: x.Size, Sha256: x.ContentHash, Required: x.Required, Role: x.Role,
 		DerivedFromArtifactId: x.DerivedFrom, PreviousArtifactId: x.Previous, State: x.State, Error: x.LastError,
-		Seq: x.Seq, CreatedAt: float64(x.Created.UnixMilli())}
+		Seq: x.Seq, CreatedAt: float64(x.Created.UnixMilli()), Code: x.Code}
 }
 
 // view: the artifact's facts (lab_retry.go's snapshot): the list row without its order and time.
@@ -478,6 +479,7 @@ func (x *Artifact) view() json.RawMessage {
 	v, _ := openObject(jsonBytes(r))
 	delete(v, "seq")
 	delete(v, "createdAt")
+	delete(v, "code")
 	return jsonBytes(v)
 }
 

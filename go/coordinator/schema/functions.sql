@@ -268,8 +268,13 @@ CREATE OR REPLACE FUNCTION public.fleet_entity_code()
  SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-DECLARE t text := CASE TG_TABLE_NAME WHEN 'task' THEN 'T' WHEN 'session' THEN 'C' ELSE 'Q' END; prev text;
+DECLARE t text := CASE TG_TABLE_NAME WHEN 'task' THEN 'T' WHEN 'session' THEN 'C' WHEN 'artifact' THEN 'R' WHEN 'bot' THEN 'B' ELSE 'Q' END; prev text;
 BEGIN
+ IF t = 'R' THEN
+  IF NEW.role <> 'original' THEN
+   RETURN NEW;
+  END IF;
+ END IF;
  IF TG_OP = 'INSERT' THEN
   prev := current_setting('fleet.project_ids', true);
   PERFORM set_config('fleet.project_ids', '*', true);
@@ -278,7 +283,9 @@ BEGIN
  ELSIF NEW.code IS NOT NULL AND NEW.code IS DISTINCT FROM OLD.code THEN
   RAISE EXCEPTION 'codes are issued, never written (set code to NULL to reissue)';
  ELSIF NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.code IS NULL THEN
-  IF NEW.project_id IS NOT DISTINCT FROM OLD.project_id THEN NEW.updated_at := OLD.updated_at; END IF; -- a reissue is not a change of the row
+  IF t <> 'B' AND NEW.project_id IS NOT DISTINCT FROM OLD.project_id THEN
+   NEW.updated_at := OLD.updated_at;
+  END IF;
   NEW.code := fleet_issue_code(t, NEW.project_id, NEW.id);
   prev := current_setting('fleet.project_ids', true);
   PERFORM set_config('fleet.project_ids', '*', true);
@@ -446,6 +453,8 @@ BEGIN
  FOR r IN SELECT id FROM task WHERE project_id=p_project ORDER BY created_at, id LOOP UPDATE task SET code=NULL WHERE id=r.id; END LOOP;
  FOR r IN SELECT id FROM question WHERE project_id=p_project ORDER BY asked_at, id LOOP UPDATE question SET code=NULL WHERE id=r.id; END LOOP;
  FOR r IN SELECT id FROM session WHERE project_id=p_project ORDER BY seq LOOP UPDATE session SET code=NULL WHERE id=r.id; END LOOP;
+ FOR r IN SELECT id FROM artifact WHERE project_id=p_project AND role='original' ORDER BY created_at, seq LOOP UPDATE artifact SET code=NULL WHERE id=r.id; END LOOP;
+ FOR r IN SELECT id FROM bot WHERE project_id=p_project ORDER BY id LOOP UPDATE bot SET code=NULL WHERE id=r.id; END LOOP;
  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
  RETURN p_code;
 END $function$;

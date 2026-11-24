@@ -60,7 +60,7 @@ Checked against the [product map](../product-map.md) rows for Library and Bots.
 
 ## Open
 
-* Bot definitions have no human code; `/library/bots/<name>` uses the bot's unique name.
+* None. Bots carry a D17 code (`B-FLT-1`, `code` on `bot_list` and `bot_get`); `/library/bots/<code>` resolves it with `entity_resolve`, and the bot's unique name and id still resolve.
 
 ## Blocks
 

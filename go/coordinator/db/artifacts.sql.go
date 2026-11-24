@@ -13,7 +13,7 @@ import (
 )
 
 const artByID = `-- name: ArtByID :one
-SELECT id, project_id, scope, content_hash, size, media_type, name, execution_id, task_id, required, previous_artifact_id, derived_from_artifact_id, role, state, last_error, deleted_at, deleted_by, legacy_id, created_at, updated_at, seq, approved_at, tombstoned_at, session_id FROM artifact WHERE (id=$1 OR legacy_id=$1) AND tombstoned_at IS NULL ORDER BY (id=$1) DESC LIMIT 1
+SELECT id, project_id, scope, content_hash, size, media_type, name, execution_id, task_id, required, previous_artifact_id, derived_from_artifact_id, role, state, last_error, deleted_at, deleted_by, legacy_id, created_at, updated_at, seq, approved_at, tombstoned_at, session_id, code FROM artifact WHERE (id=$1 OR legacy_id=$1) AND tombstoned_at IS NULL ORDER BY (id=$1) DESC LIMIT 1
 `
 
 // A deleted artifact is unknown, whoever asks.
@@ -45,6 +45,7 @@ func (q *Queries) ArtByID(ctx context.Context, id string) (Artifact, error) {
 		&i.ApprovedAt,
 		&i.TombstonedAt,
 		&i.SessionID,
+		&i.Code,
 	)
 	return i, err
 }
@@ -541,7 +542,7 @@ func (q *Queries) ArtLimitReadings(ctx context.Context) ([]ArtLimitReadingsRow, 
 }
 
 const artList = `-- name: ArtList :many
-SELECT id, project_id, scope, content_hash, size, media_type, name, execution_id, task_id, required, previous_artifact_id, derived_from_artifact_id, role, state, last_error, deleted_at, deleted_by, legacy_id, created_at, updated_at, seq, approved_at, tombstoned_at, session_id FROM artifact
+SELECT id, project_id, scope, content_hash, size, media_type, name, execution_id, task_id, required, previous_artifact_id, derived_from_artifact_id, role, state, last_error, deleted_at, deleted_by, legacy_id, created_at, updated_at, seq, approved_at, tombstoned_at, session_id, code FROM artifact
 WHERE tombstoned_at IS NULL
  AND ($1::text IS NULL OR execution_id=$1::text)
  AND ($2::text IS NULL OR task_id=$2::text)
@@ -639,6 +640,7 @@ func (q *Queries) ArtList(ctx context.Context, arg ArtListParams) ([]Artifact, e
 			&i.ApprovedAt,
 			&i.TombstonedAt,
 			&i.SessionID,
+			&i.Code,
 		); err != nil {
 			return nil, err
 		}
@@ -690,7 +692,7 @@ func (q *Queries) ArtMarkRequired(ctx context.Context, arg ArtMarkRequiredParams
 }
 
 const artOfContent = `-- name: ArtOfContent :many
-SELECT id, project_id, scope, content_hash, size, media_type, name, execution_id, task_id, required, previous_artifact_id, derived_from_artifact_id, role, state, last_error, deleted_at, deleted_by, legacy_id, created_at, updated_at, seq, approved_at, tombstoned_at, session_id FROM artifact WHERE content_hash= $1
+SELECT id, project_id, scope, content_hash, size, media_type, name, execution_id, task_id, required, previous_artifact_id, derived_from_artifact_id, role, state, last_error, deleted_at, deleted_by, legacy_id, created_at, updated_at, seq, approved_at, tombstoned_at, session_id, code FROM artifact WHERE content_hash= $1
  AND ($2::text IS NULL OR project_id IS NOT DISTINCT FROM $2::text)
  AND ($3::text IS NULL OR scope=$3::text) ORDER BY seq
 `
@@ -736,6 +738,7 @@ func (q *Queries) ArtOfContent(ctx context.Context, arg ArtOfContentParams) ([]A
 			&i.ApprovedAt,
 			&i.TombstonedAt,
 			&i.SessionID,
+			&i.Code,
 		); err != nil {
 			return nil, err
 		}
@@ -748,7 +751,7 @@ func (q *Queries) ArtOfContent(ctx context.Context, arg ArtOfContentParams) ([]A
 }
 
 const artOfExecution = `-- name: ArtOfExecution :many
-SELECT id, project_id, scope, content_hash, size, media_type, name, execution_id, task_id, required, previous_artifact_id, derived_from_artifact_id, role, state, last_error, deleted_at, deleted_by, legacy_id, created_at, updated_at, seq, approved_at, tombstoned_at, session_id FROM artifact WHERE execution_id= $1 AND role='original'
+SELECT id, project_id, scope, content_hash, size, media_type, name, execution_id, task_id, required, previous_artifact_id, derived_from_artifact_id, role, state, last_error, deleted_at, deleted_by, legacy_id, created_at, updated_at, seq, approved_at, tombstoned_at, session_id, code FROM artifact WHERE execution_id= $1 AND role='original'
  AND (CASE WHEN $2::boolean THEN state='stored' ELSE state<>'deleted' END) ORDER BY seq
 `
 
@@ -792,6 +795,7 @@ func (q *Queries) ArtOfExecution(ctx context.Context, arg ArtOfExecutionParams) 
 			&i.ApprovedAt,
 			&i.TombstonedAt,
 			&i.SessionID,
+			&i.Code,
 		); err != nil {
 			return nil, err
 		}
@@ -1119,7 +1123,7 @@ func (q *Queries) ArtStoreUpsert(ctx context.Context, arg ArtStoreUpsertParams) 
 }
 
 const artStoredAll = `-- name: ArtStoredAll :many
-SELECT id, project_id, scope, content_hash, size, media_type, name, execution_id, task_id, required, previous_artifact_id, derived_from_artifact_id, role, state, last_error, deleted_at, deleted_by, legacy_id, created_at, updated_at, seq, approved_at, tombstoned_at, session_id FROM artifact WHERE state='stored' ORDER BY seq
+SELECT id, project_id, scope, content_hash, size, media_type, name, execution_id, task_id, required, previous_artifact_id, derived_from_artifact_id, role, state, last_error, deleted_at, deleted_by, legacy_id, created_at, updated_at, seq, approved_at, tombstoned_at, session_id, code FROM artifact WHERE state='stored' ORDER BY seq
 `
 
 // Every stored artifact, for the placement pass (placement.go).
@@ -1157,6 +1161,7 @@ func (q *Queries) ArtStoredAll(ctx context.Context) ([]Artifact, error) {
 			&i.ApprovedAt,
 			&i.TombstonedAt,
 			&i.SessionID,
+			&i.Code,
 		); err != nil {
 			return nil, err
 		}

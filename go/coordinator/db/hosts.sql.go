@@ -442,6 +442,44 @@ func (q *Queries) HostRemovedSecretCount(ctx context.Context, removedSecretHash 
 	return count, err
 }
 
+const hostRuns = `-- name: HostRuns :many
+SELECT host_id::text AS host_id, id, state::text AS state, started_at FROM execution
+ WHERE state IN ('preparing','running') AND host_id IS NOT NULL ORDER BY host_id, started_at NULLS LAST, seq
+`
+
+type HostRunsRow struct {
+	HostID    string
+	ID        string
+	State     string
+	StartedAt *time.Time
+}
+
+// The runs on hosts the caller may see (row-level security), per host oldest start first: the order slot tiles fill.
+func (q *Queries) HostRuns(ctx context.Context) ([]HostRunsRow, error) {
+	rows, err := q.db.Query(ctx, hostRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HostRunsRow
+	for rows.Next() {
+		var i HostRunsRow
+		if err := rows.Scan(
+			&i.HostID,
+			&i.ID,
+			&i.State,
+			&i.StartedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const hostSetSecret = `-- name: HostSetSecret :exec
 UPDATE host SET secret_hash= $1, updated_at=now() WHERE id= $2
 `
