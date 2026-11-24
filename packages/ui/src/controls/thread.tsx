@@ -21,14 +21,22 @@ type DecisionProps = {
   question: string; askedBy: string; addressedTo: string; since: number; now: number; waits?: JSX.Element;
   context?: JSX.Element; timeInRow?: boolean; technicalAnswer?: boolean; options: { label: string; kbd?: string; primary?: boolean }[];
   answered?: { by: string; answer: string; at: number; delivered: boolean };
-  onAnswer?: (answer: string) => void;
+  /** false: only the option buttons answer (a decision the server accepts by option only); default true. */
+  typed?: boolean;
+  /** A returned promise that rejects shows its reason under the answers. */
+  onAnswer?: (answer: string) => void | Promise<unknown>;
   /** A key request: a write-only password field replaces the typed answer; the value goes to onSecret only, never to onAnswer. */
   onSecret?: (value: string) => Promise<unknown>;
 };
 export function DecisionBlock(p: DecisionProps) {
   const [text, setText] = createSignal('');
   const [failed, setFailed] = createSignal<string | null>(null);
-  const send = (s: string) => { if (s.trim()) p.onAnswer?.(s.trim()); };
+  const send = (s: string) => {
+    if (!s.trim()) return;
+    setFailed(null);
+    const r = p.onAnswer?.(s.trim());
+    if (r) r.catch(e => setFailed(String((e as Error | null)?.message ?? e)));
+  };
   // The field clears once the key is stored; a refusal shows its reason, never the value.
   const secret = () => {
     const v = text().trim();
@@ -66,13 +74,15 @@ export function DecisionBlock(p: DecisionProps) {
             <Show
               when={p.onSecret}
               fallback={
-                <input
-                  value={text()}
-                  placeholder="Answer"
-                  aria-label="Typed answer"
-                  onInput={e => setText(e.currentTarget.value)}
-                  onKeyDown={e => { if (isSubmitEnter(e)) send(text()); }}
-                />
+                <Show when={p.typed !== false}>
+                  <input
+                    value={text()}
+                    placeholder="Answer"
+                    aria-label="Typed answer"
+                    onInput={e => setText(e.currentTarget.value)}
+                    onKeyDown={e => { if (isSubmitEnter(e)) send(text()); }}
+                  />
+                </Show>
               }
             >
               <input

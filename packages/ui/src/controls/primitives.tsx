@@ -276,7 +276,9 @@ export function HarnessCounts(p: { counts: Partial<Record<Harness, number>>; lab
 
 /** Delivery stage as a compact chip: icon, plus the short name only where the icon is not enough. */
 export function StageChip(p: { stage: Stage }) {
-  const d = createMemo(() => stages[p.stage] as StateDef);
+  // A stage this build does not know (a newer server) shows a neutral chip with its own name instead of throwing
+  // (Bugsink 787ca22f: "Cannot read properties of undefined (reading 'tone')").
+  const d = createMemo((): StateDef => (stages[p.stage] as StateDef | undefined) ?? { label: String(p.stage), tone: 'neutral', icon: 'circle-dashed' });
   return (
     <span class={['badge', 'compact', `t-${d().tone}`]} data-ui="stage-chip" role="img" aria-label={d().label} data-tip={d().label}>
       <Icon name={d().icon} />

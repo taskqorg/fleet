@@ -20,7 +20,7 @@ import { SYSTEM_VIEWS } from '../system-views.ts';
 import { describeTaskFacts, isUnconfirmedActiveTask, parseMs as ms, TERMINAL_TASK_STATES as TERMINAL } from '../task-facts.ts';
 import { RowSpend, useRowSpend, ScopedRollupBar, buildExecTree } from './resources.tsx';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
-import { TaskQuestionContext } from './task-question-context.tsx';
+import { TaskQuestionContext, typedAnswer } from './task-question-context.tsx';
 
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
 const SORTS = [['changed', 'Changed'], ['created', 'Created']] as const;
@@ -397,6 +397,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
               since={ms(q.askedAt) ?? now()}
               now={now()}
               context={<TaskQuestionContext question={q} />}
+              typed={typedAnswer(q)}
               options={(Array.isArray(q.options) ? q.options as unknown[] : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
               onAnswer={a => { if (!off()) writeOnce('questions_answer', { questionId: q.id, answer: a }, () => setFailure('unknown, retrying'), { signal: alive }).then(() => setFailure(null), e => setFailure(e.message)); }}
               onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive) : undefined}

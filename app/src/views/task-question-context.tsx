@@ -2,6 +2,13 @@ import { For, Match, Show, Switch, createMemo } from 'solid-js';
 import { EntityCode } from '../../../packages/ui/src/index.ts';
 import type { QuestionRow } from '../../../contracts/generated/ops.ts';
 
+/** Whether a typed answer can be accepted: acceptance and a decision with options take their options only (the server
+ * refuses other text for a failed run's decision), so their field would only mislead. */
+export function typedAnswer(q: QuestionRow): boolean {
+  if (q.kind === 'acceptance') return false;
+  return !(q.kind === 'operator_decision' && Array.isArray(q.options) && q.options.length > 0);
+}
+
 export function TaskQuestionContext(props: { question: QuestionRow }) {
   const q = () => props.question;
   const artifacts = createMemo(() => {
@@ -24,6 +31,9 @@ export function TaskQuestionContext(props: { question: QuestionRow }) {
               ? 'Your answer unblocks this wait: fail the task, accept an eligible earlier result, or retry in the conversation.'
               : 'Your answer resolves this wait and unblocks the task.'}
           </p>
+          <Show when={isIdle() && q().sessionId} keyed>
+            {sessionId => <p>To retry, write in <EntityCode id={sessionId} kind="conversation" label cls="inline" />.</p>}
+          </Show>
         </>
       }
     >

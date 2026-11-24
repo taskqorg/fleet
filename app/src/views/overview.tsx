@@ -15,7 +15,7 @@ import { scopeIds, noProject, prefsRead, prefs } from '../prefs.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 import { idOf } from './delivery.tsx';
 import { useClockOffset } from './hosts.tsx';
-import { TaskQuestionContext } from './task-question-context.tsx';
+import { TaskQuestionContext, typedAnswer } from './task-question-context.tsx';
 
 /** The Overview's reads joined: open questions, runs that need a look, task counts and each project's counts. */
 type OverviewData = { questions: QuestionRow[]; problems: ExecutionRow[]; counts: Record<string, number>; projects: { id: string; project: string | null; counts: Record<string, number> }[] };
@@ -365,8 +365,9 @@ export function Overview(props: { id?: string }) {
                       now={now()}
                       waits={q.taskId ? <EntityCode id={q.taskId} kind="task" /> : undefined}
                       context={<TaskQuestionContext question={q} />}
+                      typed={typedAnswer(q)}
                       options={(Array.isArray(q.options) ? q.options as unknown[] : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-                      onAnswer={a => { if (online.value) writeOnce('questions_answer', { questionId: q.id, answer: a }, () => {}, { signal: alive }).then(() => open(null), () => { /* the question stays open */ }); }}
+                      onAnswer={a => online.value ? writeOnce('questions_answer', { questionId: q.id, answer: a }, () => {}, { signal: alive }).then(() => open(null)) : undefined}
                       onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive) : undefined}
                     />
                   )}
