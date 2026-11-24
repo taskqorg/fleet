@@ -595,20 +595,21 @@ WHERE ($1::text IS NULL OR id = $1)
  AND ($3::text IS NULL OR project_id = $3)
  AND ($4::text IS NULL OR parent_execution_id = $4)
  AND ($5::text IS NULL OR session_id = $5)
- AND (CASE $6::text WHEN 'include' THEN true WHEN 'only' THEN system_actor IS NOT NULL ELSE system_actor IS NULL END)
- AND (NOT $7::boolean OR problem IS NOT NULL)
+ AND ($6::text IS NULL OR bot_id = $6)
+ AND (CASE $7::text WHEN 'include' THEN true WHEN 'only' THEN system_actor IS NOT NULL ELSE system_actor IS NULL END)
+ AND (NOT $8::boolean OR problem IS NOT NULL)
  -- Needs you: tool calls are per-call gateway records (a dead key asks its own question). A step shows through its run
  -- when the run carries a problem. A binding problem holds only while the execution is open.
- AND (NOT $8::boolean OR (problem IS NOT NULL AND problem NOT IN ('unknown:abandoned','cancelled') AND kind<>'tool_run'
+ AND (NOT $9::boolean OR (problem IS NOT NULL AND problem NOT IN ('unknown:abandoned','cancelled') AND kind<>'tool_run'
   AND NOT EXISTS (SELECT 1 FROM problem_dismissal x WHERE x.execution_id=execution.id)
   AND NOT (state IN ('succeeded','failed','cancelled') AND (problem LIKE 'unregistered host %' OR problem LIKE 'unregistered account %' OR problem LIKE 'no registered environment of project %'))
   AND NOT (kind='pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.problem IS NOT NULL AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1))))
   AND (project_id IS NULL OR EXISTS (SELECT 1 FROM definition d WHERE d.kind='project' AND d.id=execution.project_id))))
- AND ($9::text[] IS NULL OR project_id = ANY($9::text[]) OR ($10::boolean AND project_id IS NULL))
- AND NOT coalesce(project_id = ANY($11::text[]), false) AND (NOT $12::boolean OR project_id IS NOT NULL)
- AND ($13::bigint IS NULL OR (seq,id) > ($13::bigint, $14::text))
+ AND ($10::text[] IS NULL OR project_id = ANY($10::text[]) OR ($11::boolean AND project_id IS NULL))
+ AND NOT coalesce(project_id = ANY($12::text[]), false) AND (NOT $13::boolean OR project_id IS NOT NULL)
+ AND ($14::bigint IS NULL OR (seq,id) > ($14::bigint, $15::text))
 ORDER BY seq,id
-LIMIT $15::int
+LIMIT $16::int
 `
 
 type TaskExecutionsPageParams struct {
@@ -617,6 +618,7 @@ type TaskExecutionsPageParams struct {
 	ProjectID         *string
 	ParentExecutionID *string
 	SessionID         *string
+	BotID             *string
 	System            string
 	Problem           bool
 	NeedsYou          bool
@@ -668,6 +670,7 @@ func (q *Queries) TaskExecutionsPage(ctx context.Context, arg TaskExecutionsPage
 		arg.ProjectID,
 		arg.ParentExecutionID,
 		arg.SessionID,
+		arg.BotID,
 		arg.System,
 		arg.Problem,
 		arg.NeedsYou,
@@ -1358,17 +1361,22 @@ SELECT id,code,kind,project_id,task_id,execution_id,session_id,text,options,aske
 FROM question
 WHERE ($1::text IS NULL OR id = $1)
  AND ($2::text IS NULL OR task_id = $2)
- AND ($3::text IS NULL OR state::text = $3)
- AND ($4::text IS NULL OR kind::text = $4)
- AND ($5::text[] IS NULL OR project_id = ANY($5::text[]) OR ($6::boolean AND project_id IS NULL))
- AND NOT coalesce(project_id = ANY($7::text[]), false) AND (NOT $8::boolean OR project_id IS NOT NULL)
+ AND ($3::text IS NULL
+  OR session_id = (SELECT b.home_session_id FROM bot b WHERE b.id = $3 AND b.tombstoned_at IS NULL)
+  OR execution_id IN (SELECT e.id FROM execution e WHERE e.bot_id = $3)
+  OR task_id IN (SELECT bt.task_id FROM bot_task bt WHERE bt.bot_id = $3 AND bt.tombstoned_at IS NULL))
+ AND ($4::text IS NULL OR state::text = $4)
+ AND ($5::text IS NULL OR kind::text = $5)
+ AND ($6::text[] IS NULL OR project_id = ANY($6::text[]) OR ($7::boolean AND project_id IS NULL))
+ AND NOT coalesce(project_id = ANY($8::text[]), false) AND (NOT $9::boolean OR project_id IS NOT NULL)
 ORDER BY seq
-LIMIT $9::bigint
+LIMIT $10::bigint
 `
 
 type TaskQuestionsParams struct {
 	ID           *string
 	TaskID       *string
+	BotID        *string
 	State        *string
 	Kind         *string
 	Projects     []string
@@ -1404,6 +1412,7 @@ func (q *Queries) TaskQuestions(ctx context.Context, arg TaskQuestionsParams) ([
 	rows, err := q.db.Query(ctx, taskQuestions,
 		arg.ID,
 		arg.TaskID,
+		arg.BotID,
 		arg.State,
 		arg.Kind,
 		arg.Projects,

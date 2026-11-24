@@ -602,7 +602,13 @@ func insertExecution(q *Request, v any) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	data, traceErr := executionTraceData(q, firstString(x.ParentExecutionID, x.PipelineStepID, x.PipelineRunID), x.Data)
+	parent := firstString(x.ParentExecutionID, x.PipelineStepID, x.PipelineRunID)
+	if x.BotID == "" {
+		if x.BotID, err = executionBotAttr(q, parent, x.SessionID); err != nil {
+			return false, err
+		}
+	}
+	data, traceErr := executionTraceData(q, parent, x.Data)
 	if traceErr != nil {
 		return false, traceErr
 	}

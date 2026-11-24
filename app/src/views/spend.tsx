@@ -24,6 +24,7 @@ const GROUP_OPTIONS: readonly (readonly [SpendGroupBy, string])[] = [
   ['profile', 'Agent'],
   ['model', 'Model'],
   ['host', 'Host'],
+  ['bot', 'Bot'],
 ];
 
 const PURPOSE_LABELS: Record<string, string> = {

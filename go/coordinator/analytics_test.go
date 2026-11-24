@@ -230,21 +230,23 @@ func TestSpendSummaryInvariant(t *testing.T) {
 		{`INSERT INTO api_connection(id,name,provider,payload) VALUES ('conn:gh','github','github','{}')`, nil},
 		{`INSERT INTO definition(kind,id,path,head,ever_shipped,access_version) VALUES ('agent','coder','agents/coder.json',1,true,1),('project','p1','projects/p1.json',1,true,1),('project','p2','projects/p2.json',1,true,1)`, nil},
 		{`INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message,at) VALUES ('agent','coder',1,'{"category":"engineering"}','sha1','editor','person','init',$1),('project','p1',1,'{"name":"P1"}','sha-p1','editor','person','init',$1),('project','p2',1,'{"name":"P2"}','sha-p2','editor','person','init',$1)`, []any{t0.Add(-5 * time.Minute)}},
+		{`INSERT INTO bot(id,project_id,director,revision,memory_revision) VALUES ('bot-inv','p1','owner@example.com',1,0)`, nil},
+		{`INSERT INTO bot_revision(bot_id,revision,name,purpose,profile_id,instructions,soul,schedule_time,schedule_zone,wake_on_needs_you) VALUES ('bot-inv',1,'InvariantBot','Watch','coder','Keep green','','','',false)`, nil},
 		{`INSERT INTO task(id,project_id,title,state,priority,completion_requirements,created_at,updated_at,state_at,accepted_at) VALUES ('t-done','p1','Done task','completed','normal','{}',$1,$1,$1,$1)`, []any{t0.Add(-5 * time.Minute)}},
 		{`INSERT INTO price_entry(id,subject,unit,price,currency,source,observed_at,effective_from) VALUES
 			('pr:m1:in','m1','input_tokens',0.000002,'USD','owner',$1,$2),
 			('pr:m1:out','m1','output_tokens',0.000010,'USD','owner',$1,$2),
 			('pr:m2:in','m2','input_tokens',0.000005,'EUR','owner',$1,$2),
 			('pr:gh:call','github','call',0.5,'USD','owner',$1,$2)`, []any{t0.Add(-5 * time.Minute), t0.Add(-time.Hour)}},
-		{`INSERT INTO execution(id,kind,state,project_id,task_id,session_id,profile_id,model,host_id,started_at,ended_at,system_actor,tombstoned_at,data) VALUES
-			('e-p1-task','agent_run','succeeded','p1','t-done',NULL,'coder','m1','h1',$1,$2,NULL,NULL,'{}'),
-			('e-p1-conv','agent_run','failed','p1',NULL,'s1','coder','m2','h1',$1,$2,NULL,NULL,'{"account":{"id":"acct-1"}}'),
-			('e-p1-tool','tool_run','succeeded','p1','t-done',NULL,'coder',NULL,'h1',$1,$2,NULL,NULL,'{"connection":"github"}'),
-			('e-p1-unpriced','agent_run','succeeded','p1',NULL,NULL,NULL,'unknown-model','h2',$1,$2,NULL,NULL,'{}'),
-			('e-p1-sys','tool_run','succeeded','p1',NULL,NULL,NULL,NULL,'h1',$1,$2,'coordinator',NULL,'{"connection":"github"}'),
-			('e-p1-tomb','agent_run','succeeded','p1','t-done',NULL,'coder','m1','h1',$1,$2,NULL,$1,'{}'),
-			('e-p2-other','agent_run','succeeded','p2',NULL,NULL,'coder','m1','h2',$1,$2,NULL,NULL,'{}'),
-			('e-directed','agent_run','succeeded',NULL,NULL,NULL,NULL,'m1','h1',$1,$2,NULL,NULL,'{}')`, []any{t0.Add(-5 * time.Minute), t0.Add(-4 * time.Minute)}},
+		{`INSERT INTO execution(id,kind,state,project_id,task_id,bot_id,session_id,profile_id,model,host_id,started_at,ended_at,system_actor,tombstoned_at,data) VALUES
+			('e-p1-task','agent_run','succeeded','p1','t-done','bot-inv',NULL,'coder','m1','h1',$1,$2,NULL,NULL,'{}'),
+			('e-p1-conv','agent_run','failed','p1',NULL,NULL,'s1','coder','m2','h1',$1,$2,NULL,NULL,'{"account":{"id":"acct-1"}}'),
+			('e-p1-tool','tool_run','succeeded','p1','t-done','bot-inv',NULL,'coder',NULL,'h1',$1,$2,NULL,NULL,'{"connection":"github"}'),
+			('e-p1-unpriced','agent_run','succeeded','p1',NULL,NULL,NULL,NULL,'unknown-model','h2',$1,$2,NULL,NULL,'{}'),
+			('e-p1-sys','tool_run','succeeded','p1',NULL,NULL,NULL,NULL,NULL,'h1',$1,$2,'coordinator',NULL,'{"connection":"github"}'),
+			('e-p1-tomb','agent_run','succeeded','p1','t-done','bot-inv',NULL,'coder','m1','h1',$1,$2,NULL,$1,'{}'),
+			('e-p2-other','agent_run','succeeded','p2',NULL,NULL,NULL,'coder','m1','h2',$1,$2,NULL,NULL,'{}'),
+			('e-directed','agent_run','succeeded',NULL,NULL,NULL,NULL,NULL,'m1','h1',$1,$2,NULL,NULL,'{}')`, []any{t0.Add(-5 * time.Minute), t0.Add(-4 * time.Minute)}},
 		{`INSERT INTO execution_totals(execution_id,project_id,tokens_input,tokens_input_basis,tokens_output,tokens_output_basis,connection_cost,connection_cost_basis,billing_basis,model) VALUES
 			('e-p1-task','p1',1000000,'measured',500000,'measured',NULL,'unavailable','api','m1'),
 			('e-p1-conv','p1',500000,'measured',0,'unavailable','{"unit":"call","amount":2,"currency":"EUR"}','measured','api','m2'),
@@ -282,6 +284,7 @@ func TestSpendSummaryInvariant(t *testing.T) {
 			contract.SpendGroupByProfile,
 			contract.SpendGroupByModel,
 			contract.SpendGroupByHost,
+			contract.SpendGroupByBot,
 		}
 		for _, by := range dims {
 			var sum contract.SpendSummaryReply

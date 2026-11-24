@@ -137,7 +137,7 @@ SELECT EXISTS(SELECT 1 FROM execution WHERE id=$1 AND state='cancelled')::bool;
 UPDATE execution SET observation=sqlc.arg(observation)::observation,project_id=sqlc.narg(project_id),started_at=sqlc.narg(started_at),ended_at=sqlc.narg(ended_at),
  data=sqlc.arg(data)::jsonb || CASE WHEN data ? 'projectAssessments' THEN jsonb_build_object('projectAssessments',data->'projectAssessments') ELSE '{}'::jsonb END,
  config_ref=CASE WHEN variant IS NULL THEN sqlc.arg(config_ref)::jsonb ELSE config_ref END,experiment_id=coalesce(experiment_id,sqlc.narg(experiment_id)),variant=coalesce(variant,sqlc.narg(variant)),
- task_id=coalesce(task_id,sqlc.narg(task_id)),session_id=coalesce(session_id,sqlc.narg(session_id)),directed_by=coalesce(sqlc.narg(directed_by),directed_by),
+ task_id=coalesce(task_id,sqlc.narg(task_id)),bot_id=coalesce(bot_id,sqlc.narg(bot_id)),session_id=coalesce(session_id,sqlc.narg(session_id)),directed_by=coalesce(sqlc.narg(directed_by),directed_by),
  pipeline_id=coalesce(sqlc.narg(pipeline_id),pipeline_id),pipeline_revision=coalesce(sqlc.narg(pipeline_revision),pipeline_revision),
  parent_execution_id=coalesce(parent_execution_id,sqlc.narg(parent_execution_id))
 WHERE id=sqlc.arg(id);

@@ -95,9 +95,9 @@ BEGIN
  SELECT array_agg(n.id) INTO eids
  FROM new_rows n
  JOIN old_rows o ON o.id = n.id
- WHERE (o.kind, o.state, o.project_id, o.task_id, o.session_id, o.experiment_id, o.system_actor, o.profile_id, o.model, o.host_id, o.account_id, o.harness, o.started_at, o.tombstoned_at, o.data->>'connection', o.data->>'tool')
+ WHERE (o.kind, o.state, o.project_id, o.task_id, o.session_id, o.bot_id, o.experiment_id, o.system_actor, o.profile_id, o.model, o.host_id, o.account_id, o.harness, o.started_at, o.tombstoned_at, o.data->>'connection', o.data->>'tool')
     IS DISTINCT FROM
-    (n.kind, n.state, n.project_id, n.task_id, n.session_id, n.experiment_id, n.system_actor, n.profile_id, n.model, n.host_id, n.account_id, n.harness, n.started_at, n.tombstoned_at, n.data->>'connection', n.data->>'tool');
+    (n.kind, n.state, n.project_id, n.task_id, n.session_id, n.bot_id, n.experiment_id, n.system_actor, n.profile_id, n.model, n.host_id, n.account_id, n.harness, n.started_at, n.tombstoned_at, n.data->>'connection', n.data->>'tool');
  IF eids IS NOT NULL THEN
   PERFORM fleet_refresh_execution_spend_ids(eids);
  END IF;
@@ -485,6 +485,7 @@ BEGIN
    SELECT
     e.id AS execution_id,
     e.project_id,
+    e.bot_id,
     e.started_at,
     e.kind,
     e.state,
@@ -618,13 +619,13 @@ BEGIN
    GROUP BY cg.execution_id
   )
   INSERT INTO execution_spend(
-   execution_id, project_id, started_at, kind, state, system_actor, purpose, profile_id, model, host_id,
+   execution_id, project_id, bot_id, started_at, kind, state, system_actor, purpose, profile_id, model, host_id,
    account_id, connection, conn_subject, conn_unit, conn_amount, has_conn_cost, has_direct_cost, is_sub,
    failed_i, tokens_input, tin_sub_i, tin_est_i, tin_exp_i, tokens_output, tout_sub_i, tout_est_i, tout_exp_i,
    stale, cost_currency, cost_basis, cost_value, cost_unpriced, cost_price_refs, payload, tombstoned_at
   )
   SELECT
-   l.execution_id, l.project_id, l.started_at, l.kind, l.state, l.system_actor, l.purpose, l.profile_id, l.model, l.host_id,
+   l.execution_id, l.project_id, l.bot_id, l.started_at, l.kind, l.state, l.system_actor, l.purpose, l.profile_id, l.model, l.host_id,
    l.account_id, l.connection, l.conn_subject, l.conn_unit, l.conn_amount, l.has_conn_cost, (l.direct_currency IS NOT NULL), l.is_sub,
    l.failed_i, l.tokens_input, l.tin_sub_i, l.tin_est_i, l.tin_exp_i, l.tokens_output, l.tout_sub_i, l.tout_est_i, l.tout_exp_i,
    false, cr.cost_currency, cr.cost_basis, cr.cost_value, coalesce(cr.cost_unpriced, 0), cr.cost_price_refs, cr.payload, l.tombstoned_at
@@ -632,6 +633,7 @@ BEGIN
   LEFT JOIN cost_rolled cr ON cr.execution_id = l.execution_id
   ON CONFLICT (execution_id) DO UPDATE SET
    project_id = excluded.project_id,
+   bot_id = excluded.bot_id,
    started_at = excluded.started_at,
    kind = excluded.kind,
    state = excluded.state,

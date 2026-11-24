@@ -92,7 +92,7 @@ UPDATE execution SET harness_version = @version::text WHERE id = @id AND harness
 
 -- name: DispExecParent :one
 -- The fields a child agent row inherits from its parent execution.
-SELECT project_id,task_id,session_id,host_id,harness,directed_by,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision
+SELECT project_id,task_id,bot_id,session_id,host_id,harness,directed_by,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision
 FROM execution WHERE id=$1;
 
 -- name: DispExecEnded :one

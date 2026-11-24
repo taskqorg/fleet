@@ -3,9 +3,9 @@
 
 -- name: ExecutionInsert :one
 -- A new execution in its first state; nothing when its id or request_id exists.
-INSERT INTO execution(id,kind,state,observation,project_id,task_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,
+INSERT INTO execution(id,kind,state,observation,project_id,task_id,bot_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,
  harness,model,config_ref,started_at,ended_at,data,directed_by,profile_id,profile_revision,pipeline_id,pipeline_revision,step_id,request_id,system_actor,definitions)
-VALUES(sqlc.arg(id),sqlc.arg(kind),sqlc.arg(state),coalesce(sqlc.narg(observation)::observation,'confirmed'),sqlc.narg(project_id),sqlc.narg(task_id),
+VALUES(sqlc.arg(id),sqlc.arg(kind),sqlc.arg(state),coalesce(sqlc.narg(observation)::observation,'confirmed'),sqlc.narg(project_id),sqlc.narg(task_id),sqlc.narg(bot_id),
  sqlc.narg(experiment_id),sqlc.narg(variant),sqlc.narg(parent_execution_id),sqlc.narg(session_id),sqlc.narg(account_id),sqlc.narg(host_id),
  sqlc.narg(harness),sqlc.narg(model),sqlc.narg(config_ref),sqlc.narg(started_at),sqlc.narg(ended_at),coalesce(sqlc.narg(data)::jsonb,'{}'),
  sqlc.narg(directed_by),sqlc.narg(profile_id),sqlc.narg(profile_revision),sqlc.narg(pipeline_id),sqlc.narg(pipeline_revision),sqlc.narg(step_id),
@@ -46,9 +46,18 @@ SELECT EXISTS (SELECT 1 FROM execution WHERE session_id= @session_id AND id<> @i
 -- name: ExecutionPipelineRef :one
 SELECT pipeline_id, pipeline_revision, step_id FROM execution WHERE id=$1;
 
+-- name: ExecutionBotID :one
+SELECT coalesce(bot_id, '')::text FROM execution WHERE id=$1;
+
+-- name: SessionBotID :one
+SELECT coalesce(bot_id, '')::text FROM session WHERE id=$1;
+
+-- name: SessionLatestExecutionBotID :one
+SELECT coalesce(bot_id, '')::text FROM execution WHERE session_id=$1 AND bot_id IS NOT NULL ORDER BY seq DESC LIMIT 1;
+
 -- name: ExecutionUpdate :exec
 -- executionPutRaw's write of an existing run: its columns and the open rest in data, keeping the trace of its first write.
-UPDATE execution SET observation= @observation, project_id= sqlc.narg(project_id), task_id=coalesce(task_id, sqlc.narg(task_id)), experiment_id= sqlc.narg(experiment_id),
+UPDATE execution SET observation= @observation, project_id= sqlc.narg(project_id), task_id=coalesce(task_id, sqlc.narg(task_id)), bot_id=coalesce(bot_id, sqlc.narg(bot_id)), experiment_id= sqlc.narg(experiment_id),
  variant= sqlc.narg(variant), parent_execution_id= sqlc.narg(parent_execution_id), session_id= sqlc.narg(session_id), account_id= sqlc.narg(account_id),
  host_id= sqlc.narg(host_id), harness= sqlc.narg(harness), model= sqlc.narg(model), config_ref= @config_ref, started_at= sqlc.narg(started_at), ended_at= sqlc.narg(ended_at),
  data= @data::jsonb || jsonb_strip_nulls(jsonb_build_object('traceparent',data->'traceparent','traceActor',data->'traceActor')),

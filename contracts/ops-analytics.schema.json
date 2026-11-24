@@ -71,7 +71,8 @@
         "outcome",
         "person",
         "purpose",
-        "category"
+        "category",
+        "bot"
       ]
     },
     "AnalyticsFilter": {
@@ -98,7 +99,8 @@
         "outcome": {"type": "array", "items": {"type": "string"}},
         "person": {"type": "array", "items": {"type": "string"}},
         "purpose": {"type": "array", "items": {"type": "string"}},
-        "category": {"type": "array", "items": {"type": "string"}}
+        "category": {"type": "array", "items": {"type": "string"}},
+        "bot": {"type": "array", "items": {"type": "string"}}
       },
       "additionalProperties": false
     },
@@ -176,7 +178,7 @@
     },
     "SpendGroupBy": {
       "type": "string",
-      "enum": ["purpose", "project", "category", "profile", "model", "host"]
+      "enum": ["purpose", "project", "category", "profile", "model", "host", "bot"]
     },
     "SpendSummaryRequest": {
       "type": "object",

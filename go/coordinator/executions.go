@@ -54,7 +54,7 @@ func executionLabContext(q *Request, parent, project string, experiment, variant
 // requestId, systemActor, definitions); JSON fields are encoded, nil is NULL.
 func executionRow(v executionNew) db.ExecutionInsertParams {
 	r := db.ExecutionInsertParams{ID: v.ID, Kind: db.ExecutionKind(v.Kind), State: db.ExecutionState(v.State),
-		ProjectID: strPtr(v.ProjectID), TaskID: strPtr(v.TaskID), ExperimentID: strPtr(v.ExperimentID), Variant: strPtr(v.Variant),
+		ProjectID: strPtr(v.ProjectID), TaskID: strPtr(v.TaskID), BotID: strPtr(v.BotID), ExperimentID: strPtr(v.ExperimentID), Variant: strPtr(v.Variant),
 		ParentExecutionID: strPtr(v.ParentExecutionID), SessionID: strPtr(v.SessionID), AccountID: strPtr(v.AccountID), HostID: strPtr(v.HostID),
 		Harness: strPtr(v.Harness), Model: strPtr(v.Model), StartedAt: msTimeOf(v.StartedAt), EndedAt: msTimeOf(v.EndedAt),
 		DirectedBy: strPtr(v.DirectedBy), ProfileID: strPtr(v.ProfileID), ProfileRevision: v.ProfileRevision, PipelineID: strPtr(v.PipelineID),
@@ -83,6 +83,7 @@ type executionNew struct {
 	Observation       string          `json:"observation"`
 	ProjectID         string          `json:"projectId"`
 	TaskID            string          `json:"taskId"`
+	BotID             string          `json:"botId"`
 	ExperimentID      string          `json:"experimentId"`
 	Variant           string          `json:"variant"`
 	ParentExecutionID string          `json:"parentExecutionId"`
@@ -200,7 +201,7 @@ func recordChildren(q *Request, parentID string, children []any) error {
 			return err
 		}
 		row := db.ExecutionInsertParams{ID: parentID + ":child:" + thread, Kind: db.ExecutionKindChildAgent, State: db.ExecutionStateRunning,
-			ProjectID: strPtr(p.ProjectID), TaskID: strPtr(p.TaskID), ExperimentID: strPtr(experiment), Variant: strPtr(variant), ParentExecutionID: &parentID,
+			ProjectID: strPtr(p.ProjectID), TaskID: strPtr(p.TaskID), BotID: strPtr(p.BotID), ExperimentID: strPtr(experiment), Variant: strPtr(variant), ParentExecutionID: &parentID,
 			SessionID: strPtr(p.SessionID), HostID: strPtr(p.HostID), Harness: strPtr(p.Harness), Model: strPtr(model), DirectedBy: strPtr(p.DirectedBy),
 			PipelineID: strPtr(p.PipelineID), PipelineRevision: p.PipelineRevision, StepID: strPtr(p.StepID), ProfileID: strPtr(p.ProfileID),
 			ProfileRevision: p.ProfileRevision, Data: jsonBytes(data)}
@@ -445,6 +446,61 @@ func executionWrite(q *Request, v any) error {
 	return executionPutRaw(q, r)
 }
 
+// executionBotAttr resolves bot attribution from an ancestor execution or originating session.
+func executionBotAttr(q *Request, parentID, sessionID string) (string, error) {
+	if parentID == "" && sessionID == "" {
+		return "", nil
+	}
+	return unscoped(q, func() (string, error) {
+		if parentID != "" {
+			id, err := q.db().ExecutionBotID(q.ctx(), parentID)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return "", err
+			}
+			if id != "" {
+				return id, nil
+			}
+		}
+		if sessionID != "" {
+			id, err := q.db().SessionBotID(q.ctx(), sessionID)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return "", err
+			}
+			if id != "" {
+				return id, nil
+			}
+			id, err = q.db().SessionLatestExecutionBotID(q.ctx(), &sessionID)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return "", err
+			}
+			if id != "" {
+				return id, nil
+			}
+		}
+		return "", nil
+	})
+}
+
+func resolveExecutionBotID(q *Request, e rawObject, sess *agentSession, handoff *agentHandoff, parent string) (string, error) {
+	if id := firstString(e.text("botId"), e.object("botContext").text("botId"), sess.BotID); id != "" {
+		return id, nil
+	}
+	if id, err := executionBotAttr(q, parent, sess.ID); err != nil || id != "" {
+		return id, err
+	}
+	if handoff != nil && handoff.ExecutionID != "" {
+		if id, err := executionBotAttr(q, handoff.ExecutionID, ""); err != nil || id != "" {
+			return id, err
+		}
+	}
+	if sess.ForkOf != nil {
+		if id, err := executionBotAttr(q, deref(sess.ForkOf.ExecutionID), sess.ForkOf.SessionID); err != nil || id != "" {
+			return id, err
+		}
+	}
+	return executionBotAttr(q, sess.CreatedByExecutionID, sess.CreatedBySessionID)
+}
+
 // executionPutRaw: the one writer of an execution record (kind agent_run or host_job). state is the typed execution state
 // (executionTransitions, moved by executionTransition); observation stays 'unconfirmed' only while the state does not move.
 // kind is fixed by the first write. Both live in their columns only, then the record's task settles.
@@ -540,11 +596,15 @@ func executionPutRaw(q *Request, e rawObject) error {
 		}
 	}
 	directed := firstString(e.text("directedBy"), sess.DirectedBy)
+	botID, err := resolveExecutionBotID(q, e, &sess, handoff, parent)
+	if err != nil {
+		return err
+	}
 	inserted := false
 	if prev == "" {
 		obs := db.Observation(observation)
 		inserted, err = executionInsert(q, db.ExecutionInsertParams{ID: id, Kind: db.ExecutionKind(kind), State: db.ExecutionState(state), Observation: &obs,
-			ProjectID: strPtr(project), TaskID: strPtr(task), ExperimentID: strPtr(experiment), Variant: strPtr(variant), ParentExecutionID: strPtr(parent),
+			ProjectID: strPtr(project), TaskID: strPtr(task), BotID: strPtr(botID), ExperimentID: strPtr(experiment), Variant: strPtr(variant), ParentExecutionID: strPtr(parent),
 			SessionID: strPtr(e.val("sessionId")), AccountID: strPtr(account), HostID: strPtr(e.val("hostId")), Harness: strPtr(harness), Model: strPtr(e.val("model")),
 			ConfigRef: cfg, StartedAt: nullTime(e.val("startedAt")), EndedAt: nullTime(e.val("finishedAt")), Data: jsonBytes(data), DirectedBy: strPtr(directed),
 			ProfileID: strPtr(profileID), ProfileRevision: nullInt(profileRev), PipelineID: strPtr(pipelineID), PipelineRevision: nullInt(pipelineRev), StepID: strPtr(stepID)})
@@ -554,7 +614,7 @@ func executionPutRaw(q *Request, e rawObject) error {
 	}
 	if !inserted {
 		if err := q.db().ExecutionUpdate(q.ctx(), db.ExecutionUpdateParams{ID: id, Observation: db.Observation(observation), ProjectID: strPtr(project),
-			TaskID: strPtr(task), ExperimentID: strPtr(experiment), Variant: strPtr(variant), ParentExecutionID: strPtr(parent), SessionID: e.ptr("sessionId"),
+			TaskID: strPtr(task), BotID: strPtr(botID), ExperimentID: strPtr(experiment), Variant: strPtr(variant), ParentExecutionID: strPtr(parent), SessionID: e.ptr("sessionId"),
 			AccountID: strPtr(account), HostID: e.ptr("hostId"), Harness: strPtr(harness), Model: e.ptr("model"), ConfigRef: cfg,
 			StartedAt: nullTime(e.val("startedAt")), EndedAt: nullTime(e.val("finishedAt")), Data: jsonBytes(data), DirectedBy: strPtr(directed), ProfileID: strPtr(profileID),
 			ProfileRevision: nullInt(profileRev), PipelineID: strPtr(pipelineID), PipelineRevision: nullInt(pipelineRev), StepID: strPtr(stepID)}); err != nil {

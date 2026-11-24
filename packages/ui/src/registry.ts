@@ -30,6 +30,15 @@ export const states = {
     failed: { label: 'Failed', tone: 'danger', icon: 'octagon-x' },
     cancelled: { label: 'Cancelled', tone: 'neutral', icon: 'circle-slash' },
   },
+  botRun: {
+    queued: { label: 'Queued', tone: 'neutral', icon: 'list-ordered' },
+    running: { label: 'Running', tone: 'running', icon: 'activity' },
+    waiting: { label: 'Waiting', tone: 'attention', icon: 'bell' },
+    succeeded: { label: 'Done', tone: 'success', icon: 'circle-check' },
+    failed: { label: 'Failed', tone: 'danger', icon: 'octagon-x' },
+    cancelled: { label: 'Stopped', tone: 'neutral', icon: 'circle-slash' },
+    skipped: { label: 'Skipped', tone: 'neutral', icon: 'circle-slash' },
+  },
   // Delivery stage of a pull request (delivery_status DeliveryStage, docs/designs/fleet-delivery-pipeline.md).
   delivery: {
     pr_open: { label: 'Open', tone: 'neutral', icon: 'git-pull-request' },

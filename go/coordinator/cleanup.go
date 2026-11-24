@@ -64,6 +64,7 @@ var referenceMap = []objectRef{
 	{table: "execution", column: "profile_id", mode: refNone},
 	{table: "execution", column: "pipeline_id", mode: refNone},
 	{table: "execution", column: "step_id", mode: refNone},
+	{table: "execution", column: "bot_id", mode: refNone},
 	// Hosts, subscriptions, connections and tokens (migration 78). A run token goes with its execution and with the run
 	// whose step it was minted for; an inspection with its execution; a watch with its session.
 	{table: "host", column: "id", mode: refNone},
@@ -169,6 +170,7 @@ var referenceMap = []objectRef{
 	{table: "execution_spend", column: "host_id", kind: "host", mode: refKeep},
 	{table: "execution_spend", column: "account_id", mode: refNone},
 	{table: "execution_spend", column: "profile_id", mode: refNone},
+	{table: "execution_spend", column: "bot_id", mode: refNone},
 	{table: "execution_totals", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "execution_totals", column: "project_id", kind: "project", mode: refOwn},
 	{table: "experiment", column: "id", kind: "experiment", mode: refOwn},
