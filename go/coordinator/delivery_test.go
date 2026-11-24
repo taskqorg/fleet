@@ -16,40 +16,24 @@ func TestDeliveryStages(t *testing.T) {
 	g := ghRepo{
 		open: []ghPull{
 			{Number: 1, CreatedAt: "2026-11-12T10:00:00Z"},
-			{Number: 2, CreatedAt: "2026-11-12T10:00:00Z", Head: struct {
-				SHA string `json:"sha"`
-			}{"h2"}},
+			{Number: 2, CreatedAt: "2026-11-12T10:00:00Z", Head: ghPullHead{SHA: "h2"}},
 			{Number: 3, CreatedAt: "2026-11-12T10:00:00Z"},
 			{Number: 4, CreatedAt: "2026-11-12T10:00:00Z"},
 			{Number: 5, CreatedAt: "2026-11-12T10:00:00Z", AutoMerge: map[string]any{}},
-			{Number: 6, CreatedAt: "2026-11-12T10:00:00Z", Head: struct {
-				SHA string `json:"sha"`
-			}{"h6"}},
-			{Number: 7, CreatedAt: "2026-11-12T10:00:00Z", Head: struct {
-				SHA string `json:"sha"`
-			}{"h7"}},
+			{Number: 6, CreatedAt: "2026-11-12T10:00:00Z", Head: ghPullHead{SHA: "h6"}},
+			{Number: 7, CreatedAt: "2026-11-12T10:00:00Z", Head: ghPullHead{SHA: "h7"}},
 			// #8 failed in the queue and was removed; #9 failed in the queue, then got a new head (fixed);
 			// #14 failed in the queue but is set to enter it again; #15 was only cancelled there; #16 passed there last;
 			// #17 failed in one workflow while another passed later; #18's unchanged head finished a slow check after the failure.
-			{Number: 8, CreatedAt: "2026-11-12T10:00:00Z", Head: struct {
-				SHA string `json:"sha"`
-			}{"h8"}},
-			{Number: 9, CreatedAt: "2026-11-12T10:00:00Z", Head: struct {
-				SHA string `json:"sha"`
-			}{"h9"}},
-			{Number: 14, CreatedAt: "2026-11-12T10:00:00Z", AutoMerge: map[string]any{}, Head: struct {
-				SHA string `json:"sha"`
-			}{"h14"}},
+			{Number: 8, CreatedAt: "2026-11-12T10:00:00Z", Head: ghPullHead{SHA: "h8"}},
+			{Number: 9, CreatedAt: "2026-11-12T10:00:00Z", Head: ghPullHead{SHA: "h9"}},
+			{Number: 14, CreatedAt: "2026-11-12T10:00:00Z", AutoMerge: map[string]any{}, Head: ghPullHead{SHA: "h14"}},
 			{Number: 15, CreatedAt: "2026-11-12T10:00:00Z"},
 			{Number: 16, CreatedAt: "2026-11-12T10:00:00Z"},
 			{Number: 17, CreatedAt: "2026-11-12T10:00:00Z"},
-			{Number: 18, CreatedAt: "2026-11-12T10:00:00Z", Head: struct {
-				SHA string `json:"sha"`
-			}{"h18"}},
+			{Number: 18, CreatedAt: "2026-11-12T10:00:00Z", Head: ghPullHead{SHA: "h18"}},
 			// #19: a new head pushed at 10:00 while a group of the old head ran; that group failed at 10:03.
-			{Number: 19, CreatedAt: "2026-11-12T09:00:00Z", Head: struct {
-				SHA string `json:"sha"`
-			}{"h19"}},
+			{Number: 19, CreatedAt: "2026-11-12T09:00:00Z", Head: ghPullHead{SHA: "h19"}},
 		},
 		queueDone: []ghRun{
 			{Event: "merge_group", Conclusion: "success", Branch: "gh-readonly-queue/main/pr-8-a", UpdatedAt: "2026-11-12T10:40:00Z"},

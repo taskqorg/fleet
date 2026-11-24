@@ -280,6 +280,216 @@ func (q *Queries) TaskDeleteWatches(ctx context.Context, taskID *string) error {
 	return err
 }
 
+const taskDeliveryCandidates = `-- name: TaskDeliveryCandidates :many
+SELECT id,coalesce(code,'')::text AS code,coalesce(project_id,'')::text AS project_id,title,
+ coalesce(expected_outcome,'')::text AS expected_outcome,state::text AS state,
+ completion_requirements,coalesce(result_destination,'')::text AS result_destination,created_at
+FROM task
+WHERE state IN ('queued','in_progress') AND accepted_at IS NULL AND tombstoned_at IS NULL
+ORDER BY created_at
+`
+
+type TaskDeliveryCandidatesRow struct {
+	ID                     string
+	Code                   string
+	ProjectID              string
+	Title                  string
+	ExpectedOutcome        string
+	State                  string
+	CompletionRequirements []byte
+	ResultDestination      string
+	CreatedAt              time.Time
+}
+
+// Open tasks eligible for delivery reconciliation (queued or in_progress, unaccepted).
+func (q *Queries) TaskDeliveryCandidates(ctx context.Context) ([]TaskDeliveryCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, taskDeliveryCandidates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskDeliveryCandidatesRow
+	for rows.Next() {
+		var i TaskDeliveryCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.ProjectID,
+			&i.Title,
+			&i.ExpectedOutcome,
+			&i.State,
+			&i.CompletionRequirements,
+			&i.ResultDestination,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const taskDeliveryEvidence = `-- name: TaskDeliveryEvidence :many
+SELECT 'execution'::text AS source,e.task_id::text AS task_id,
+ coalesce(e.data->'report'->>'outcome','')::text AS outcome,
+ coalesce(e.data->'report'->>'summary','')::text AS text,
+ coalesce(e.ended_at,e.started_at,e.updated_at)::timestamptz AS at
+FROM execution e
+WHERE e.task_id = ANY( $1::text[]) AND e.kind NOT IN ('child_agent','tool_run')
+ AND e.state='succeeded' AND e.observation='confirmed' AND coalesce(e.data->'report'->>'outcome','') <> 'failed'
+ AND (coalesce(e.data->'report'->>'outcome','')='succeeded' OR coalesce(e.data->'report'->>'summary','') <> '')
+UNION ALL
+SELECT 'board'::text AS source,b.scope_id::text AS task_id,''::text AS outcome,b.text,b.created_at AS at
+FROM board_message b
+WHERE b.scope_kind='task' AND b.scope_id = ANY( $1::text[]) AND b.kind='done' AND b.tombstoned_at IS NULL
+`
+
+type TaskDeliveryEvidenceRow struct {
+	Source  string
+	TaskID  string
+	Outcome string
+	Text    string
+	At      pgtype.Timestamptz
+}
+
+// Confirmed worker reports and done board posts referencing PRs or post-delivery verification.
+func (q *Queries) TaskDeliveryEvidence(ctx context.Context, taskIds []string) ([]TaskDeliveryEvidenceRow, error) {
+	rows, err := q.db.Query(ctx, taskDeliveryEvidence, taskIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskDeliveryEvidenceRow
+	for rows.Next() {
+		var i TaskDeliveryEvidenceRow
+		if err := rows.Scan(
+			&i.Source,
+			&i.TaskID,
+			&i.Outcome,
+			&i.Text,
+			&i.At,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const taskDeliveryForgeRefs = `-- name: TaskDeliveryForgeRefs :many
+SELECT (value->>'taskId')::text AS task_id,coalesce(value->>'repo','')::text AS repo,
+ coalesce(value->>'branch','')::text AS branch,coalesce(value->>'headSha','')::text AS head_sha
+FROM audit_log
+WHERE split_part(target,':',1)='forge' AND field='code-review' AND (value->>'taskId') = ANY( $1::text[])
+ORDER BY seq DESC
+`
+
+type TaskDeliveryForgeRefsRow struct {
+	TaskID  string
+	Repo    string
+	Branch  string
+	HeadSha string
+}
+
+// Forge code-review audit entries recording PR repo/branch/headSha for candidate tasks.
+func (q *Queries) TaskDeliveryForgeRefs(ctx context.Context, taskIds []string) ([]TaskDeliveryForgeRefsRow, error) {
+	rows, err := q.db.Query(ctx, taskDeliveryForgeRefs, taskIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskDeliveryForgeRefsRow
+	for rows.Next() {
+		var i TaskDeliveryForgeRefsRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.Repo,
+			&i.Branch,
+			&i.HeadSha,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const taskDeliveryRejections = `-- name: TaskDeliveryRejections :many
+SELECT coalesce(execution_id,'')::text AS execution_id,data
+FROM question
+WHERE task_id=$1 AND kind='acceptance' AND state='answered' AND answer='rejected'
+`
+
+type TaskDeliveryRejectionsRow struct {
+	ExecutionID string
+	Data        []byte
+}
+
+func (q *Queries) TaskDeliveryRejections(ctx context.Context, taskID *string) ([]TaskDeliveryRejectionsRow, error) {
+	rows, err := q.db.Query(ctx, taskDeliveryRejections, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskDeliveryRejectionsRow
+	for rows.Next() {
+		var i TaskDeliveryRejectionsRow
+		if err := rows.Scan(&i.ExecutionID, &i.Data); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const taskDeliverySessions = `-- name: TaskDeliverySessions :many
+SELECT s.id AS session_id,coalesce(s.task_id,'')::text AS task_id,
+ coalesce((SELECT array_agg(DISTINCT e.task_id) FROM execution e WHERE e.session_id=s.id AND e.task_id IS NOT NULL),'{}')::text[] AS exec_task_ids
+FROM session s
+WHERE s.tombstoned_at IS NULL
+ AND (s.task_id = ANY( $1::text[])
+  OR EXISTS (SELECT 1 FROM execution e WHERE e.session_id=s.id AND e.task_id = ANY( $1::text[])))
+`
+
+type TaskDeliverySessionsRow struct {
+	SessionID   string
+	TaskID      string
+	ExecTaskIds []string
+}
+
+// Sessions bound to candidate tasks, with all distinct task IDs of their executions.
+func (q *Queries) TaskDeliverySessions(ctx context.Context, taskIds []string) ([]TaskDeliverySessionsRow, error) {
+	rows, err := q.db.Query(ctx, taskDeliverySessions, taskIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskDeliverySessionsRow
+	for rows.Next() {
+		var i TaskDeliverySessionsRow
+		if err := rows.Scan(&i.SessionID, &i.TaskID, &i.ExecTaskIds); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const taskDependencies = `-- name: TaskDependencies :many
 SELECT d.depends_on_task_id AS id,d.kind,t.code FROM task_dependency d LEFT JOIN task t ON t.id=d.depends_on_task_id WHERE d.task_id=$1
 `
@@ -602,6 +812,17 @@ SELECT (
 
 func (q *Queries) TaskHasPendingWork(ctx context.Context, taskID *string) (bool, error) {
 	row := q.db.QueryRow(ctx, taskHasPendingWork, taskID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const taskHasPrimaryExecution = `-- name: TaskHasPrimaryExecution :one
+SELECT EXISTS (SELECT 1 FROM execution WHERE task_id=$1 AND kind NOT IN ('child_agent','tool_run'))::boolean
+`
+
+func (q *Queries) TaskHasPrimaryExecution(ctx context.Context, taskID *string) (bool, error) {
+	row := q.db.QueryRow(ctx, taskHasPrimaryExecution, taskID)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -1288,6 +1509,38 @@ func (q *Queries) TaskStateForShare(ctx context.Context, id string) (TaskState, 
 	var state TaskState
 	err := row.Scan(&state)
 	return state, err
+}
+
+const taskStoredArtifactNames = `-- name: TaskStoredArtifactNames :many
+SELECT coalesce(legacy_id,id)::text AS id,name
+FROM artifact
+WHERE task_id=$1 AND state='stored' AND role='original' AND name NOT LIKE 'mcp-lifecycle-%' AND tombstoned_at IS NULL
+ORDER BY seq
+`
+
+type TaskStoredArtifactNamesRow struct {
+	ID   string
+	Name string
+}
+
+func (q *Queries) TaskStoredArtifactNames(ctx context.Context, taskID *string) ([]TaskStoredArtifactNamesRow, error) {
+	rows, err := q.db.Query(ctx, taskStoredArtifactNames, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskStoredArtifactNamesRow
+	for rows.Next() {
+		var i TaskStoredArtifactNamesRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const taskTraceCommand = `-- name: TaskTraceCommand :one
