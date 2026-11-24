@@ -16,6 +16,8 @@
 | `running` | running border, `step k/n` and live time ([OR-6](../owner-rules.md)) |
 | `excluded` | dashed border, "not in this comparison" |
 
+**Comparison form.** In the Lab's Model × Pipeline comparison a cell sums the trials of one model and pipeline (`failRate` set): `k/n` counts succeeded of all trials, the line reads `median 4m · 2% failed`, and tokens and cost move to the tooltip ([OR-54](../owner-rules.md)). `partial` marks a failure rate of 10% or more, `fail` a pair with no succeeded trial.
+
 **Behaviour.** A click opens the cell's trials in the work area ([OR-26](../owner-rules.md), [OR-27](../owner-rules.md)). Confounders (host, harness, model) are in the tooltip ([OR-59](../owner-rules.md)). Values update in place.
 
 **Accessibility.** Each cell is a button named "Example 3, variant codeMode: pass, score 0.91, 3 of 3 repeats".

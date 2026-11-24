@@ -1,0 +1,24 @@
+/* Lab comparison and experiment matrix (pages/laboratory.md#target): the Model × Pipeline matrix and, at narrow width, the
+   ranked table (modern-web-guidance size-aware-styling, responsive-table: the section is the container). */
+@layer controls {
+  .lab-cmp { container-type: inline-size; }
+  .lab-cmp > .panel-h { flex-wrap: wrap; row-gap: var(--space-1); }
+  .lab-cmp > .panel-h h2 { font-size: var(--font-size-md); }
+  .lab-scope { font-size: var(--font-size-sm); white-space: nowrap; }
+  .lab-note { margin: 0; padding: var(--space-2) var(--space-4); font-size: var(--font-size-xs); }
+  .lab-mx .limit-table { border-collapse: separate; border-spacing: var(--space-2); }
+  .lab-mx :is(th, td) { vertical-align: middle; border: 0; padding: 0; }
+  .lab-mx thead th { font-size: var(--font-size-xs); font-weight: var(--font-weight-regular); color: var(--fg-muted); text-align: start; white-space: nowrap; }
+  .lab-mx tbody th { position: sticky; inset-inline-start: 0; z-index: 1; background: var(--surface); padding-inline-end: var(--space-3); font-weight: var(--font-weight-regular); white-space: nowrap; }
+  .lab-mx td { min-width: var(--size-label); }
+  .lab-mx-corner { color: var(--fg-faint); }
+  .lab-mx-none { display: block; padding: var(--space-2) var(--space-3); color: var(--fg-faint); }
+  .lab-rank { display: none; }
+  @container (width < 600px) {
+    .lab-mx { display: none; }
+    .lab-rank { display: block; }
+    .lab-cmp-meta { order: 9; flex-basis: 100%; }
+  }
+  .lab-trials { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-4); }
+  .lab-qs { display: flex; flex-direction: column; gap: var(--space-3); }
+}

@@ -13,6 +13,9 @@ const LOOK: Record<MatrixCellState, { icon: IconName; word: string }> = {
   excluded: { icon: 'circle-slash', word: 'excluded' },
 };
 
+// A share as a whole percent; a small non-zero share never reads as 0%.
+const percentText = (r: number) => r <= 0 ? '0%' : r < 0.01 ? '<1%' : `${Math.round(r * 100)}%`;
+
 export function MatrixCell(p: {
   state: MatrixCellState;
   /** "Example 3, variant codeMode": the start of the accessible name. */
@@ -24,6 +27,8 @@ export function MatrixCell(p: {
   /** Running: the step it is at, "3/6". */
   step?: string;
   time?: Measured; cost?: Measured;
+  /** A comparison cell (Lab idle matrix): the share of trials that failed, 0 to 1. The line then reads "median 4m · 2% failed" and cost moves to Details (OR-54). */
+  failRate?: number;
   /** Partial: why a repeat was left out. Fail: the reason. Excluded: defaults to "not in this comparison". */
   note?: string;
   /** Host, harness and model, in the tooltip (OR-59). */
@@ -33,7 +38,7 @@ export function MatrixCell(p: {
 }) {
   const look = () => LOOK[p.state];
   const head = createMemo(() => p.state === 'running' ? `step ${p.step ?? ''}`.trim() : p.state === 'fail' ? 'failed' : p.state === 'excluded' ? 'excluded' : p.score !== undefined ? score(p.score).text : '—');
-  const name = createMemo(() => `${p.label}: ${look().word}${p.score !== undefined && p.state !== 'fail' ? `, score ${score(p.score).text}` : ''}, ${p.k} of ${p.n} repeats${p.note ? `, ${p.note}` : ''}`);
+  const name = createMemo(() => `${p.label}: ${look().word}${p.score !== undefined && p.state !== 'fail' ? `, score ${score(p.score).text}` : ''}, ${p.k} of ${p.n} ${p.failRate !== undefined ? 'trials' : 'repeats'}${p.failRate !== undefined ? `, ${percentText(p.failRate)} failed` : ''}${p.note ? `, ${p.note}` : ''}`);
   return (
     <div class="mcell" data-state={p.state} data-ui="matrix-cell" data-tip={p.confounders}>
       <button type="button" class="mc-open" aria-label={name()} onClick={() => p.onOpen?.()}>
@@ -44,12 +49,17 @@ export function MatrixCell(p: {
         </span>
         <span class="mc-l2">
           <Show
-            when={p.state === 'pass' || p.state === 'running'}
+            when={p.state === 'pass' || p.state === 'running' || (p.failRate !== undefined && p.state === 'partial')}
             fallback={<span class="mc-note">{p.note ?? (p.state === 'excluded' ? 'not in this comparison' : '')}</span>}
           >
-            <Show when={p.time} keyed>{t => <Num m={t} kind="duration" />}</Show>
-            <Show when={p.time && p.cost}> · </Show>
-            <Show when={p.cost} keyed>{c => <Num m={c} kind="money" />}</Show>
+            <Show when={p.failRate !== undefined} fallback={<>
+              <Show when={p.time} keyed>{t => <Num m={t} kind="duration" />}</Show>
+              <Show when={p.time && p.cost}> · </Show>
+              <Show when={p.cost} keyed>{c => <Num m={c} kind="money" />}</Show>
+            </>}>
+              <Show when={p.time} keyed>{t => <>median <Num m={t} kind="duration" /> · </>}</Show>
+              <span class="mono">{percentText(p.failRate!)}</span> failed
+            </Show>
           </Show>
         </span>
       </button>
