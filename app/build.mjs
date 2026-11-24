@@ -82,13 +82,28 @@ const html = `<!doctype html>
 <link rel="stylesheet" href="/${cssName}">
 <link rel="icon" type="image/svg+xml" href="${brand['fleet.svg']}">
 <link rel="apple-touch-icon" sizes="180x180" href="${brand['fleet-180.png']}">
-<script>(function(){var v=location.pathname.split('/')[1];if(!${JSON.stringify(Object.keys(VIEWS))}.includes(v))v='overview';var l=document.createElement('link');l.rel='manifest';l.crossOrigin='use-credentials';l.href='/manifests/'+v+'.webmanifest';document.head.appendChild(l)})()</script>
+<script>
+(() => {
+  const workspaces = ${JSON.stringify(Object.keys(VIEWS))};
+  const manifest = document.createElement('link');
+  manifest.rel = 'manifest';
+  manifest.crossOrigin = 'use-credentials';
+  function updateManifest() {
+    const view = location.pathname.split('/')[1];
+    const href = '/manifests/' + (workspaces.includes(view) ? view : 'overview') + '.webmanifest';
+    if (manifest.getAttribute('href') !== href) manifest.href = href;
+  }
+  updateManifest();
+  document.head.appendChild(manifest);
+  navigation.addEventListener('currententrychange', updateManifest);
+})();
+</script>
 ${preloads}<script type="module" src="/${main}"></script>
 </head><body><div id="app"></div><noscript>Fleet needs JavaScript.</noscript></body></html>
 `;
 writeFileSync(new URL('index.html', out), html);
 
-const version = createHash('sha256').update([...files].sort().join() + css).digest('hex').slice(0, 10);
+const version = createHash('sha256').update([...files].sort().join()).update(html).digest('hex').slice(0, 10);
 const precache = ['/' + cssName, ...files.filter(f => f.startsWith('assets/')).map(f => '/' + f)];
 writeFileSync(new URL('sw.js', out), `// Fleet service worker ${version}: app shell only; /api is never cached (design §5).
 const CACHE='fleet-${version}',ASSETS=${JSON.stringify(precache)};
