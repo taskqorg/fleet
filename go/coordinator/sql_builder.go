@@ -1181,14 +1181,16 @@ var sqlSessionListCols = "x.id,x.code,x.title,x.first_message,x.state,x.harness,
 const sessionAgent = "coalesce(x.harness,x.agent_harness)"
 
 // sessionGroups: the first sort key (sessions_list group). Byte order (COLLATE "C") so the client's key comparison
-// (app/src/lists.ts compareKeys) places a live row where the server would. State groups follow attention order.
+// (app/src/lists.ts compareKeys) places a live row where the server would. State groups follow attention order. The
+// project grouping puts the sessions waiting for an answer first, as one group with the empty key and the label
+// "waiting" (pages/conversations.md, owner 2026-11-25: Waiting for you first, then by project).
 var sessionGroups = map[string]string{
 	"none":    `left(x.id,0)`,
-	"project": `(coalesce(x.project_id,'~') COLLATE "C")`,
+	"project": `(CASE WHEN x.state='waiting' THEN '' ELSE coalesce(x.project_id,'~') END COLLATE "C")`,
 	"agent":   `(coalesce(` + sessionAgent + `,'~') COLLATE "C")`,
 	"state":   `(CASE x.state WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'running' THEN '3' WHEN 'preparing' THEN '4' WHEN 'idle' THEN '5' WHEN 'succeeded' THEN '6' ELSE '7' END)`,
 }
-var sessionGroupLabels = map[string]string{"project": "x.project_id", "agent": sessionAgent, "state": "x.state"}
+var sessionGroupLabels = map[string]string{"project": "CASE WHEN x.state='waiting' THEN 'waiting' ELSE x.project_id END", "agent": sessionAgent, "state": "x.state"}
 
 // sessionSorts: the second sort key inside a group, ascending numbers; "-" before a name is descending.
 var sessionSorts = map[string]string{"activity": "(extract(epoch FROM x.activity_at)*1000)::float8", "created": "(x.seq::float8)"}
