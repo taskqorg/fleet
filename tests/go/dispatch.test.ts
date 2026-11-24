@@ -78,6 +78,63 @@ test('A3 a start receipt binds the native session; another native id for it is 4
   assert.equal(e.state, 'succeeded'); assert.equal(typeof e.finishedAt, 'number');
 });
 
+test('a fresh fork starts once with the retained handoff and source lineage (requirement: execution continuity and FLT-18; risk: a retried or falsely resumed fork loses or duplicates context)', {timeout: 30_000}, async () => {
+  const h = await host('trial-host');
+  const forkPoll = {...poll, capabilities: ['native-fork']};
+  const {sessionId, executionId} = await queued();
+  const source = await polled(h, forkPoll, c => c.executionId === executionId && c.kind === 'start');
+  assert.ok(source);
+  const nativeSessionId = randomUUID();
+  ok(await h('/api/hosts/receipts', {commandId: source.id, executionId, status: 'started', nativeSessionId}));
+  const automatic = ok(await op('session_fork', {sessionId, requestId: randomUUID()}));
+  assert.equal(automatic.reason, 'source_execution_open');
+  assert.equal(automatic.strategy, 'context_transfer');
+  ok(await h('/api/hosts/receipts', {commandId: source.id, executionId, status: 'completed', nativeSessionId}));
+  const native = ok(await op('session_fork', {sessionId, requestId: randomUUID()}));
+  assert.equal(native.reason, 'native_context_available');
+  assert.equal(native.strategy, 'native');
+
+  const body = {sessionId, requestId: randomUUID(), strategy: 'context', text: 'Continue the example'};
+  const traceId = randomUUID().replaceAll('-', '');
+  const freshFork = () => call('POST', '/api/ops/session_fork', body, {...owner, traceparent: `00-${traceId}-0123456789abcdef-01`});
+  const [first, retry] = await Promise.all([freshFork(), freshFork()]);
+  const fork = ok(first);
+  assert.deepEqual(ok(retry), fork);
+  assert.equal(fork.strategy, 'context_transfer');
+  assert.equal(fork.reason, 'fresh_session_requested');
+  assert.notEqual(fork.sessionId, sessionId);
+  const parent = ok(await op('session_get', {sessionId}));
+  assert.equal(parent.nativeSessionId, nativeSessionId);
+  assert.equal(parent.forks.find((f: any) => f.id === fork.id)?.reason, fork.reason);
+  const child = () => op('session_get', {sessionId: fork.sessionId}).then(ok);
+  const detail = await child();
+  assert.deepEqual(detail.forkOf, {sessionId, executionId, sourceState: 'succeeded', strategy: fork.strategy, reason: fork.reason});
+  assert.equal(detail.executions.length, 1);
+  const childId = detail.executions[0].id;
+  const next = await polled(h, forkPoll, c => c.executionId === childId && c.kind === 'start');
+  assert.ok(next);
+  const {handoffs: [packet]} = ok(await op('session_handoffs', {sessionId: fork.sessionId}));
+  assert.equal(packet.id, fork.handoffId);
+  assert.equal(packet.executionId, childId);
+  assert.equal(packet.state, 'sent');
+  assert.deepEqual(packet.turns, [executionId]);
+  assert.match(packet.text, /User: hello/);
+  assert.equal(next.payload.text, packet.text + '\n\nCurrent request:\n' + body.text);
+  assert.equal(next.payload.nativeSessionId ?? null, null);
+  assert.equal(next.payload.fork ?? null, null);
+  assert.match(next.traceparent, /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+  assert.equal(next.traceparent.split('-')[1], traceId);
+  const {executions} = ok(await op('executions_list', {parentExecutionId: executionId}));
+  assert.ok(executions.some((e: any) => e.id === childId && e.parentExecutionId === executionId));
+  const freshNative = randomUUID();
+  ok(await h('/api/hosts/receipts', {commandId: next.id, executionId: childId, status: 'started', nativeSessionId: freshNative}));
+  ok(await h('/api/hosts/receipts', {commandId: next.id, executionId: childId, status: 'completed', nativeSessionId: freshNative}));
+  const finished = await child();
+  assert.equal(finished.nativeSessionId, freshNative);
+  assert.equal(finished.handoffs[0].state, 'delivered');
+  assert.equal(finished.executions[0].state, 'succeeded');
+});
+
 test('A4 an event whose seq another event holds is retained as a blocked transport conflict, visible to transport_inspect (requirement: docs/execution-contract.md event transport; risk: a host resend overwrites or silently drops an event)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   const {executionId} = await queued();

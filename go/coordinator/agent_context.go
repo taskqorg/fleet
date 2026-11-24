@@ -12,6 +12,7 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+	"fleet/obs"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -499,13 +500,16 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 	if sid == "" {
 		return none, fail(400, "Expected sessionId")
 	}
-	source, err := sessionByID(q, sid)
+	source, err := sessionLocked(q, sid)
 	if err != nil {
 		return none, err
 	}
 	rid := r.RequestId
 	if rid == "" {
 		return none, fail(400, "Expected requestId")
+	}
+	if len([]rune(deref(r.Text))) > 32000 {
+		return none, fail(400, "Invalid text")
 	}
 	if old, err := sessionForks(q, sid, &rid); err != nil || len(old) > 0 {
 		if err != nil {
@@ -522,19 +526,32 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 		last = &es[len(es)-1]
 	}
 	native := source.NativeSessionID
-	nativeOK := native != "" && (last == nil || last.terminal()) && forkArgv(source.harness(), native) != nil
-	if nativeOK {
-		if nativeOK, err = capable(q, "native-fork"); err != nil {
+	strategy, reason := "context_transfer", "host_capability_missing"
+	switch {
+	case deref(r.Strategy) == "context":
+		reason = "fresh_session_requested"
+	case last != nil && !last.terminal():
+		reason = "source_execution_open"
+	case native == "":
+		reason = "native_context_missing"
+	case forkArgv(source.harness(), native) == nil:
+		reason = "harness_fork_unsupported"
+	default:
+		nativeOK, err := capable(q, "native-fork")
+		if err != nil {
 			return none, err
 		}
+		if nativeOK {
+			strategy, reason = "native", "native_context_available"
+		}
 	}
-	strategy := "native"
-	if deref(r.Strategy) == "context" || !nativeOK {
-		strategy = "context_transfer"
-	}
-	fo := agentForkOf{SessionID: sid}
-	if last != nil {
-		fo.ExecutionID, fo.SourceState = &last.ID, &last.State
+	fo := agentForkOf{SessionID: sid, Strategy: strategy, Reason: reason}
+	for i := len(es) - 1; i >= 0; i-- {
+		e := es[i]
+		if firstString(e.ProjectID, e.dispatchProject()) == source.ProjectID {
+			fo.ExecutionID, fo.SourceState = &e.ID, &e.State
+			break
+		}
 	}
 	// A fork keeps its source's profile, account, project, preset (presets.go), access, branch and starter.
 	s := agentSession{ID: newID(), CreatedAt: nowMs(), ForkOf: &fo, DirectedBy: source.DirectedBy, Account: source.Account, ProjectID: source.ProjectID, Preset: source.Preset,
@@ -551,7 +568,7 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 	if strategy == "native" {
 		s.ForkNativeSessionID = native
 	} else {
-		turns, err := transcript(q, sid)
+		turns, err := transcriptForProject(q, sid, s.ProjectID)
 		if err != nil {
 			return none, err
 		}
@@ -562,15 +579,30 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 	if err := sessionPut(q, &s); err != nil {
 		return none, err
 	}
-	f := agentForkRecord{ID: newID(), RequestID: rid, SourceSessionID: sid, SessionID: s.ID, Strategy: strategy, HandoffID: agentOpt(s.PendingHandoffID), At: nowMs()}
-	if err := sessionForkPut(q, &f); err != nil {
+	f := agentForkRecord{ID: newID(), RequestID: rid, SourceSessionID: sid, SessionID: s.ID, Strategy: strategy, Reason: reason, HandoffID: agentOpt(s.PendingHandoffID), At: nowMs()}
+	if err := sessionForkPut(q, &f, s.ProjectID); err != nil {
 		return none, err
 	}
+	span := obs.From(q.ctx())
 	if t := deref(r.Text); t != "" {
-		if _, err := agentSubmit(q, &contract.MessageSendRequest{SessionId: &s.ID, RequestId: ptr("fork:" + rid), Text: &t}, ""); err != nil {
+		submitted, err := agentSubmit(q, &contract.MessageSendRequest{SessionId: &s.ID, RequestId: ptr("fork:" + rid), Text: &t}, "")
+		if err != nil {
 			return none, err
 		}
+		if span != nil && submitted.execution != nil {
+			span.ExecutionID = agentOpt(submitted.execution.ID)
+		}
 	}
+	if span != nil {
+		span.ProjectID = agentOpt(s.ProjectID)
+	}
+	span.Set("fleet.fork.id", f.ID)
+	span.Set("fleet.fork.strategy", f.Strategy)
+	span.Set("fleet.fork.reason", f.Reason)
+	span.Set("fleet.fork.source_session_id", f.SourceSessionID)
+	span.Set("fleet.fork.session_id", f.SessionID)
+	span.Set("fleet.fork.parent_execution_id", deref(fo.ExecutionID))
+	span.Set("fleet.fork.handoff_id", deref(f.HandoffID))
 	return f, nil
 }
 

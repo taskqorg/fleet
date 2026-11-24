@@ -218,8 +218,11 @@ try {
   // Menu actions (Stage 5): one left-aligned menu with icons; each calls the existing operation.
   await p.goto(`${origin}/conversations/task-a`); await until(() => visible(p, 'Alpha reply'));
   await p.getByRole('button', { name: 'Actions' }).click();
-  const items = (await p.locator('[role=menu] [role=menuitem]').allTextContents()).map(t => t.trim());
-  check(items.join('|') === 'Rename|Retry last message|Switch profile or model|Hand off to another agent|Fork' && await p.locator('[role=menu] [role=menuitem] .icon').count() === 5, 'action menu includes Rename and preserves its existing actions and icons');
+  const items = await p.locator('[role=menu] [role=menuitem]').evaluateAll(rows =>
+    rows.map(row => ({ label: row.textContent?.trim(), icons: row.querySelectorAll('.icon').length })));
+  const actions = ['Rename', 'Retry last message', 'Switch profile or model', 'Hand off to another agent', 'Fork', 'Start fresh with context'];
+  check(items.map(item => item.label).join('|') === actions.join('|') && items.every(item => item.icons === 1),
+    'action menu preserves the existing actions, adds Start fresh with context, and shows one icon per action');
   const before = seed.rows("SELECT text FROM message WHERE session_id='task-a' ORDER BY seq").length;
   await p.getByRole('menuitem', { name: 'Retry last message' }).click();
   check(await until(async () => seed.rows("SELECT text FROM message WHERE session_id='task-a' ORDER BY seq").length === before + 1 && seed.rows("SELECT text FROM message WHERE session_id='task-a' ORDER BY seq").at(-1).text === 'Alpha question'), 'Retry sends the last operator message again');

@@ -223,6 +223,8 @@ type agentForkOf struct {
 	SessionID   string  `json:"sessionId"`
 	ExecutionID *string `json:"executionId"`
 	SourceState *string `json:"sourceState"`
+	Strategy    string  `json:"strategy,omitempty"`
+	Reason      string  `json:"reason,omitempty"`
 }
 
 // agentTransitionArgs: a session_transition request, and a transition queued behind an active execution
@@ -536,6 +538,7 @@ type agentForkRecord struct {
 	SourceSessionID string  `json:"sourceSessionId"`
 	SessionID       string  `json:"sessionId"`
 	Strategy        string  `json:"strategy"`
+	Reason          string  `json:"reason,omitempty"`
 	HandoffID       *string `json:"handoffId"`
 	At              int64   `json:"at"`
 }
@@ -767,6 +770,7 @@ func handoffPut(q *Request, h *agentHandoff) error {
 
 type sessionForkPayload struct {
 	Strategy  string  `json:"strategy"`
+	Reason    string  `json:"reason,omitempty"`
 	HandoffID *string `json:"handoffId"`
 	At        int64   `json:"at"`
 }
@@ -788,6 +792,7 @@ func sessionForks(q *Request, sourceSessionID string, requestID *string) ([]agen
 			SourceSessionID: r.SourceSessionID,
 			SessionID:       r.SessionID,
 			Strategy:        p.Strategy,
+			Reason:          p.Reason,
 			HandoffID:       p.HandoffID,
 			At:              p.At,
 		})
@@ -818,7 +823,7 @@ func sessionForkMaps(q *Request, sourceSessionID string) ([]map[string]json.RawM
 	return out, nil
 }
 
-func sessionForkPut(q *Request, f *agentForkRecord) error {
+func sessionForkPut(q *Request, f *agentForkRecord, projectID string) error {
 	if f.ID == "" {
 		return fmt.Errorf("session-fork record without an id")
 	}
@@ -827,7 +832,8 @@ func sessionForkPut(q *Request, f *agentForkRecord) error {
 		SessionID:       f.SessionID,
 		SourceSessionID: f.SourceSessionID,
 		RequestID:       strPtr(f.RequestID),
-		Payload:         jsonBytes(sessionForkPayload{Strategy: f.Strategy, HandoffID: f.HandoffID, At: f.At}),
+		ProjectID:       agentOpt(projectID),
+		Payload:         jsonBytes(sessionForkPayload{Strategy: f.Strategy, Reason: f.Reason, HandoffID: f.HandoffID, At: f.At}),
 	})
 }
 

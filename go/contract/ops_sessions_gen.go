@@ -462,6 +462,7 @@ type SessionForkReply struct {
 	At              *float64 `json:"at,omitempty"`
 	HandoffId       *string  `json:"handoffId,omitempty"`
 	Id              string   `json:"id"`
+	Reason          *string  `json:"reason,omitempty"`
 	RequestId       string   `json:"requestId"`
 	SessionId       string   `json:"sessionId"`
 	SourceSessionId string   `json:"sourceSessionId"`
