@@ -68,6 +68,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
 
   // Liveness comes from lastSeenAt, which polls move without a change row; re-read every 5 s (D11 CUJ 5) and judge age on the
   // server's clock (serverNow) so a skewed browser clock does not mark hosts offline.
+  const me = useOp('me', {});
   const hostsOp = useOp('hosts_list', {}, { every: 5000 });
   const connsOp = useOp('connections_list', {});
   const isLimits = createMemo(() => section() === 'hosts' && props.id === 'limits');
@@ -161,6 +162,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
       { id: NAV_LIMITS_ID, label: 'Accounts & Limits', icon: 'gauge', pinned: pins.has(NAV_LIMITS_ID), href: '/hosts/limits', searchText: 'accounts limits subscriptions quota' },
       { id: ROOT_KEYS_ID, label: 'Connections & API keys', icon: 'shield', sub: holder ? `held by ${person(holder)}` : undefined, defaultCollapsed: false, href: '/keys', children: keyLeaves },
       { id: NAV_RUNNERS_ID, label: 'Runners', icon: 'play', pinned: pins.has(NAV_RUNNERS_ID), href: '/runners', searchText: 'runners executions spend ci' },
+      ...(me.data?.owner ? [{ id: "nav:humans", label: "Humans", icon: "shield" as const, href: "/humans" }] : []),
     ];
   });
 
@@ -196,7 +198,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
     }
     return total;
   };
-  const totalCount = createMemo(() => hostRows().length + conns().length + 2);
+  const totalCount = createMemo(() => hostRows().length + conns().length + 2 + (me.data?.owner ? 1 : 0));
   const shownCount = createMemo(() => treeQuery().trim() ? countMatchingLeaves(infraNodes()) : totalCount());
 
   const initialLoading = createMemo(() => !hostsOp.data && !connsOp.data && !hostsOp.error && !connsOp.error);

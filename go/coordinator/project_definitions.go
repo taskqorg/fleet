@@ -108,7 +108,7 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) ([]byte, error) {
 			return nil, fail(409, "Project exists")
 		}
 		// Creation may publish change rows only for its freshly reserved identity.
-		if sc := scopeOf(q.person); sc != nil {
+		if sc := scopeOf(q.person); sc != nil && sc.ProjectIDs != "*" {
 			if err := q.db().DefSetProjectScope(q.ctx(), sc.ProjectIDs+","+id); err != nil {
 				return nil, err
 			}

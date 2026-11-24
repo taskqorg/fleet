@@ -171,6 +171,8 @@ export const workspaces = [
   { id: 'changes', label: 'Changes', icon: 'git-pull-request', group: 'System', app: true, nav: false },
   { id: 'runners', label: 'Runners', icon: 'play', group: 'System', app: true, nav: false },
   { id: 'keys', label: 'API keys', icon: 'shield', group: 'System', app: true, nav: false },
+  { id: 'humans', label: 'Humans', icon: 'shield', group: 'System', app: true, nav: false },
+  { id: 'personal-lab', label: 'Personal Lab', icon: 'chart-no-axes-column', group: 'System', app: true, nav: false },
   { id: 'access', label: 'Access', icon: 'shield', group: 'System', app: false, nav: false },
 ] as const satisfies readonly { id: string; label: string; icon: IconName; group: string; app: boolean; nav: boolean }[];
 export type AppScreen = Extract<(typeof workspaces)[number], { app: true }>['id'];

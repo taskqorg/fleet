@@ -257,6 +257,9 @@ func spanScope(p *Person, params map[string]string) string {
 	if fullAccess(p) {
 		return "1"
 	}
+	if hasAllProjects(p) {
+		return "project_id != ''"
+	}
 	ids := []string{}
 	for _, g := range p.Grants {
 		if g.Kind == "project" {

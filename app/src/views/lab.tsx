@@ -320,6 +320,7 @@ export function Lab(props: { id?: string }) {
     <ShellStatus><OfflineMarker state={experiments.state} now={now} /></ShellStatus>
     <ShellActions>
       <Button label="New experiment" icon="plus" iconOnly kind="primary" pressed={route().kind === 'new'} onClick={openNewExperiment} />
+      <Button label="Personal Lab and submissions" icon="shield" iconOnly onClick={() => go('/personal-lab')} />
     </ShellActions>
     <div class="fbar">
       <div class="fbar-line">

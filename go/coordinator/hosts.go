@@ -189,15 +189,7 @@ func (a *App) holderMaySee(holder, projectID string) bool {
 	if err != nil || p == nil {
 		return false
 	}
-	if fullAccess(p) {
-		return true
-	}
-	for _, g := range p.Grants {
-		if g.Kind == "project" && g.ID == projectID && projectID != "" {
-			return true
-		}
-	}
-	return false
+	return mayAccessProjectID(p, projectID)
 }
 
 // holderMayRun: projectless work may use its director's own host, never another ordinary holder's host.

@@ -661,7 +661,7 @@ func agentMay(p *Person, name string) bool {
 	if !resourceOperationAdvertised(name) {
 		return false
 	}
-	if agentDenied(name) {
+	if agentDenied(name) || ((name == "lab_promote" || name == "lab_personal_promote") && !hasRole(p, "architect")) {
 		return false
 	}
 	_, op := operations[name]

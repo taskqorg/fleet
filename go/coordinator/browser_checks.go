@@ -48,6 +48,10 @@ func checkOrigin(q *Request) error {
 var peopleMu sync.Mutex
 var peopleSeen string
 
+func peopleFileKey(st os.FileInfo) string {
+	return fmt.Sprint(st.ModTime().UnixNano(), ":", st.Size(), ":", inodeOf(st))
+}
+
 func (a *App) refreshPeople(ctx context.Context) error {
 	peopleMu.Lock()
 	defer peopleMu.Unlock()
@@ -56,7 +60,7 @@ func (a *App) refreshPeople(ctx context.Context) error {
 	if st, serr := os.Stat(a.peopleFile); serr != nil {
 		problem = "cannot read the file (" + serr.Error() + ")"
 	} else {
-		key = fmt.Sprint(st.ModTime().UnixNano(), ":", st.Size(), ":", inodeOf(st))
+		key = peopleFileKey(st)
 	}
 	if key == peopleSeen {
 		return nil
@@ -68,7 +72,7 @@ func (a *App) refreshPeople(ctx context.Context) error {
 	}
 	if problem == "" {
 		var skipped []string
-		skipped, err = a.setPeople(ctx, raw, false)
+		skipped, err = a.setPeople(ctx, raw, false, nil)
 		if err != nil && pgCode(err) != "" {
 			return err // a database failure is not a broken file: try again on the next request
 		}
