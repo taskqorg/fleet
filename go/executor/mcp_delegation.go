@@ -91,6 +91,9 @@ func contextOf(ctx any) *delegationContext {
 // toolSchema: the part of a tool's inputSchema in mcp-tools.json that a call is checked against.
 type toolSchema struct {
 	Properties map[string]struct {
+		Type      string   `json:"type"`
+		Minimum   *int64   `json:"minimum"`
+		Maximum   *int64   `json:"maximum"`
 		MinLength *float64 `json:"minLength"`
 		MaxLength *float64 `json:"maxLength"`
 	} `json:"properties"`
@@ -124,14 +127,22 @@ var toolSchemas = func() map[string]toolSchema {
 	return out
 }()
 
-// argumentsFit checks a project tool call against the tool's own inputSchema: only its properties, each a string within
-// minLength and maxLength (characters), the required ones present and not blank.
+// argumentsFit checks a project tool call against the tool's own inputSchema: only its declared properties,
+// type and bounds, with required strings present and not blank.
 func argumentsFit(name string, args M) error {
 	schema := toolSchemas[name]
 	for k, v := range args {
 		p, ok := schema.Properties[k]
 		if !ok {
 			return fmt.Errorf("Invalid project request: %s takes no %s", name, k)
+		}
+		if p.Type == "integer" {
+			number, _ := v.(json.Number)
+			n, err := number.Int64()
+			if err != nil || p.Minimum != nil && n < *p.Minimum || p.Maximum != nil && n > *p.Maximum {
+				return fmt.Errorf("Invalid project request: %s must be an integer within the allowed range", k)
+			}
+			continue
 		}
 		s, ok := v.(string)
 		n := float64(utf8.RuneCountInString(s))

@@ -14,9 +14,12 @@ SELECT * FROM question WHERE id=sqlc.arg(id) AND kind IN ('operator_decision','s
 -- name: ProjectsQuestionHistory :many
 SELECT * FROM question WHERE kind IN ('operator_decision','secret') AND request_id IS NOT NULL AND project_id=sqlc.arg(project_id)::text ORDER BY seq;
 
--- name: ProjectsPipelineRunIDs :many
--- A project's pipeline runs (runRows in pipelines.go: a run record was written for it), oldest first.
-SELECT id FROM execution WHERE kind='pipeline_run' AND data ? 'pipelineId' AND data->>'projectId'=sqlc.arg(project_id)::text ORDER BY seq;
+-- name: ProjectsPipelineRunPage :many
+-- A project's recorded pipeline runs, oldest first, with one lookahead row.
+SELECT id, seq FROM execution
+WHERE kind='pipeline_run' AND data ? 'pipelineId' AND data->>'projectId'=sqlc.arg(project_id)::text
+  AND seq > sqlc.arg(after_seq)::bigint
+ORDER BY seq LIMIT sqlc.arg(page_size)::integer;
 
 -- name: ProjectsLiveDefinition :one
 SELECT EXISTS(SELECT 1 FROM definition WHERE kind='project' AND id=sqlc.arg(id) AND retired_at IS NULL);

@@ -2094,7 +2094,8 @@ func (v *PipelineGetRequest) Validate() error {
 }
 
 type PipelineHistoryReply struct {
-	Runs []PipelineGetReply `json:"runs"`
+	NextCursor *string            `json:"nextCursor,omitempty"`
+	Runs       []PipelineRunReply `json:"runs"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2111,7 +2112,9 @@ func (v *PipelineHistoryReply) Validate() error {
 }
 
 type PipelineHistoryRequest struct {
-	ProjectId string `json:"projectId"`
+	Cursor    *string `json:"cursor,omitempty"`
+	Limit     *int64  `json:"limit,omitempty"`
+	ProjectId string  `json:"projectId"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }
@@ -2420,7 +2423,7 @@ func (v *PipelineRunCreateRequest) Validate() error {
 	return nil
 }
 
-// PipelineRunReply: One current-format pipeline plan with actual selected execution references and canonical result.
+// PipelineRunReply: One current-format pipeline run. When truncated is true, use pipeline_get with id to read the full plan.
 type PipelineRunReply struct {
 	Authority         json.RawMessage          `json:"authority,omitempty"`
 	CanonicalResult   *PipelineCanonicalResult `json:"canonicalResult,omitempty"`
@@ -2439,7 +2442,7 @@ type PipelineRunReply struct {
 	ParentExecutionId *string                  `json:"parentExecutionId,omitempty"`
 	Pipeline          *string                  `json:"pipeline,omitempty"`
 	PipelineId        *string                  `json:"pipelineId,omitempty"`
-	Plan              PipelinePlan             `json:"plan"`
+	Plan              *PipelinePlan            `json:"plan,omitempty"`
 	PlanSummary       PipelinePlanSummary      `json:"planSummary"`
 	PlanVersion       int64                    `json:"planVersion"`
 	ProjectId         *string                  `json:"projectId,omitempty"`
@@ -2448,6 +2451,7 @@ type PipelineRunReply struct {
 	RequestedBy       json.RawMessage          `json:"requestedBy,omitempty"`
 	RerunOf           *string                  `json:"rerunOf,omitempty"`
 	Result            json.RawMessage          `json:"result,omitempty"`
+	ResultArtifact    *PipelineArtifactRef     `json:"resultArtifact,omitempty"`
 	Reused            []string                 `json:"reused,omitempty"`
 	SelectedMethod    *string                  `json:"selectedMethod,omitempty"`
 	SelectionSource   *string                  `json:"selectionSource,omitempty"`
@@ -2455,6 +2459,7 @@ type PipelineRunReply struct {
 	StartedAt         *float64                 `json:"startedAt,omitempty"`
 	State             ExecutionState           `json:"state"`
 	TaskId            *string                  `json:"taskId,omitempty"`
+	Truncated         *bool                    `json:"truncated,omitempty"`
 	Usage             json.RawMessage          `json:"usage,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
@@ -2492,11 +2497,18 @@ func (v *PipelineRunReply) Validate() error {
 			return err
 		}
 	}
-	if err := Check(&v.Plan, "plan"); err != nil {
-		return err
+	if v.Plan != nil {
+		if err := Check(v.Plan, "plan"); err != nil {
+			return err
+		}
 	}
 	if err := Check(&v.PlanSummary, "planSummary"); err != nil {
 		return err
+	}
+	if v.ResultArtifact != nil {
+		if err := Check(v.ResultArtifact, "resultArtifact"); err != nil {
+			return err
+		}
 	}
 	if err := Check(&v.State, "state"); err != nil {
 		return err
@@ -2504,7 +2516,7 @@ func (v *PipelineRunReply) Validate() error {
 	return nil
 }
 
-// PipelineRunRequest: Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.
+// PipelineRunRequest: Runs the project's method for a capability; idempotent by requestId. If truncated is true, use pipeline_get with the returned id for details.
 type PipelineRunRequest struct {
 	MethodId  *string `json:"methodId,omitempty"`
 	ProjectId string  `json:"projectId"`
@@ -3043,9 +3055,9 @@ func init() {
 		"hosts_update":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:host", Agent: "tool", Description: "Owner, or the holder for their own host.", InputSchema: json.RawMessage("{\"$comment\":\"Owner, or the holder for their own host.\",\"additionalProperties\":true,\"properties\":{\"autoUpdate\":{},\"harnesses\":{},\"id\":{\"type\":\"string\"},\"intake\":{\"type\":\"string\"},\"maxConcurrent\":{}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"object_delete":         {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner only: delete a test project, a Lab experiment, a task or a session with everything that goes with it (kind project|experiment|task|session, id, preview); a task or session a live one depends on is refused with Kept by <reason>. Call preview: true first and read affected (counts per kind, artifact bytes) and running; preview: false stops its running work (stopDetail deleted), revokes run tokens, withdraws open questions, sends worktree teardowns and tombstones it: it leaves every list, detail, search, queue, dispatch and analytics read. One audit row; system_purge removes the rows later", InputSchema: json.RawMessage("{\"$comment\":\"A task another live task depends on (task_dependency), whose artifacts a live task accepted, or that a live session or task names as its creator stays (409 Kept by); a session that a live session forked or was created from, that created a live task, or whose executions belong to a live task stays too (delete the task first). Owner only (fleet-system-management.md, Archive, delete, purge). preview true changes nothing and returns what goes with the object; both refuse (409) while a live row outside the object keeps one of its objects (another experiment's score citing a trial). false tombstones it with its tasks, executions (and their child runs), sessions, experiments, questions and artifacts: running work is stopped (pipeline runs cancelled, agent runs stopped with stopDetail deleted), run tokens revoked, open questions withdrawn, worktrees of its sessions get a teardown; a project's connections no other project uses are removed as project_archive does. Deleted objects leave every list, detail, search, queue, dispatch and analytics read; system_purge removes their rows later.\",\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"Kinds object_delete deletes. A task takes its executions (with their child runs), questions and artifacts; a session takes its executions, messages and questions.\",\"enum\":[\"project\",\"experiment\",\"task\",\"session\"],\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"kind\",\"id\",\"preview\"],\"type\":\"object\"}")},
 		"pipeline_get":          {Read: true, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "A pipeline run (runId) with its steps, optionally checked against projectId", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\"],\"type\":\"object\"}")},
-		"pipeline_history":      {Read: true, Long: false, Errors: []int{404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Pipeline runs of a project (projectId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
+		"pipeline_history":      {Read: true, Long: false, Errors: []int{400, 404, 409, 413}, Auth: "project:projectId", Agent: "tool", Description: "Page through the project’s runs oldest first. Pass nextCursor as cursor to continue. Use pipeline_get for full run details.", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"cursor\":{\"$comment\":\"nextCursor from the previous page.\",\"type\":\"string\"},\"limit\":{\"$comment\":\"1–100 runs, default 25.\",\"minimum\":1,\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"pipeline_rerun":        {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Rerun a pipeline run (runId) in mode, optionally from its draft, with a requestId", InputSchema: json.RawMessage("{\"properties\":{\"draft\":{\"type\":\"boolean\"},\"mode\":{\"enum\":[\"failed\",\"all\"],\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\",\"mode\"],\"type\":\"object\"}")},
-		"pipeline_run":          {Read: false, Long: true, Errors: []int{}, Auth: "project:projectId", Agent: "tool", Description: "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.", InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":false,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"pipeline_run":          {Read: false, Long: true, Errors: []int{413}, Auth: "project:projectId", Agent: "tool", Description: "Runs the project's method for a capability; idempotent by requestId. If truncated is true, use pipeline_get with the returned id for details.", InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability; idempotent by requestId. If truncated is true, use pipeline_get with the returned id for details.\",\"additionalProperties\":false,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"pipeline_run_create":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Start a stored pipeline by pipelineId with projectId and a stable requestId; read its runId with pipeline_get.", InputSchema: json.RawMessage("{\"$comment\":\"Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha.\",\"properties\":{\"draft\":{\"type\":\"boolean\"},\"example\":{\"additionalProperties\":true,\"type\":\"object\"},\"exampleArtifactId\":{\"type\":\"string\"},\"overrides\":{\"additionalProperties\":true,\"type\":\"object\"},\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"pipelineId\",\"requestId\"],\"type\":\"object\"}")},
 		"queue_list":            {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "bound:session", Description: "Queued messages", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"route_decisions":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Why an execution (executionId) was routed to its host and account", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},

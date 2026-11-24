@@ -1007,7 +1007,10 @@
         "method": "tools/call",
         "params": {
           "name": "pipeline_history",
-          "arguments": {}
+          "arguments": {
+            "cursor": "12",
+            "limit": 5
+          }
         }
       },
       {
@@ -1559,7 +1562,7 @@
                   "openWorldHint": true,
                   "readOnlyHint": false
                 },
-                "description": "Start a pipeline search for query. Reuse requestId on retry: the same requestId returns the same run. A search may return a durable running run; read it with pipeline_get by runId, never redispatch after an uncertain response.",
+                "description": "Start a pipeline search for query. Reuse requestId on retry: the same requestId returns the same run. A search may return a durable running run; read it with pipeline_get by runId, never redispatch after an uncertain response. If truncated is true, use pipeline_get with the returned id for details.",
                 "inputSchema": {
                   "additionalProperties": false,
                   "properties": {
@@ -1627,10 +1630,23 @@
                   "openWorldHint": false,
                   "readOnlyHint": true
                 },
-                "description": "The project's pipeline runs. No arguments.",
+                "description": "Page through this project's pipeline runs oldest first. Pass nextCursor as cursor to continue. Use pipeline_get for full run details.",
                 "inputSchema": {
                   "additionalProperties": false,
-                  "properties": {},
+                  "properties": {
+                    "cursor": {
+                      "description": "nextCursor from the previous page.",
+                      "maxLength": 19,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "limit": {
+                      "default": 25,
+                      "maximum": 100,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
                   "type": "object"
                 },
                 "name": "pipeline_history"
@@ -3074,7 +3090,10 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {},
+              "arguments": {
+                "cursor": "12",
+                "limit": 5
+              },
               "operation": "pipeline_history",
               "projectId": "project",
               "requestId": "pipeline_history-<uuid>"
@@ -3381,7 +3400,10 @@
           {
             "commandId": "command",
             "delegation": {
-              "arguments": {},
+              "arguments": {
+                "cursor": "12",
+                "limit": 5
+              },
               "operation": "pipeline_history",
               "projectId": "project",
               "requestId": "pipeline_history-<uuid>"
