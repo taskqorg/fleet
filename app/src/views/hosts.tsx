@@ -7,7 +7,7 @@
 import { createMemo, createSignal, For, Match, onSettled, Show, Switch, type Accessor } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
-  AgeChip, Button, CatalogueTree, ContextMenu, DataTable, DetailHead, DetailSection, Empty, ErrorBanner, Fact, HostBand,
+  AgeChip, Button, CatalogueTree, ContextMenu, DataTable, DetailHead, DetailSection, Empty, EntityCode, ErrorBanner, Fact, HostBand,
   KvRow, ListDetail, Num, OfflineMarker, ProblemRow, QuestionCard, RowFacts, SearchField, ShellStatus, Skeleton, StateBadge,
   actions, bytes, copyText, duration, harnesses, matchSearch, money,
   type CatalogueTreeNode, type CostFigureLike, type GaugeProps, type WorkerSlotProps,
@@ -401,6 +401,8 @@ function HostDetail(props: { host: HostRow; live: boolean; now: number; clockOff
   const dayRuns = createMemo(() => (runners.data?.runs ?? []).filter(r => r.hostId === h().id && r.calls == null));
   const failures = createMemo(() => hostFailures(dayRuns(), props.now).get(h().id) ?? []);
   const findings = createMemo(() => (found.data?.findings ?? []).filter(f => f.hostId === h().id));
+  const RECENT = 10;
+  const recentRuns = createMemo(() => (tele.data?.runs ?? []).filter(r => r.hostId === h().id).slice(0, RECENT));
   const preview = () => {
     setErr('');
     void op('hosts_remove', { id: h().id, preview: true }).then(setConfirm, e => setErr(String(e.message ?? e)));
@@ -477,6 +479,25 @@ function HostDetail(props: { host: HostRow; live: boolean; now: number; clockOff
       )}</For>
       <Show when={h().version}>{v => <KvRow icon="info" label="Daemon version" meta={<span class="mono">{v()}</span>} />}</Show>
     </DetailSection>
+    {/* Run resources stay apart from the daemon's readings (hosts.md, Active Executions): the last hour's runs here. */}
+    <Show when={recentRuns().length > 0}>
+      <DetailSection title="Recent runs, last hour">
+        <For each={recentRuns()}>{run => (
+          <div class="kv-row">
+            <EntityCode id={run.executionId} kind="execution" />
+            {run.projectId && <EntityCode id={run.projectId} code={run.projectId} kind="project" cls="inline" />}
+            <span class="grow" />
+            <RowFacts>
+              {run.durationMs != null && <Fact icon="clock" tip="Duration"><Num m={m(run.durationMs / 1000)} kind="duration" /></Fact>}
+              <Fact icon="gauge" tip="CPU"><Num m={m(run.cpuSeconds)} kind="duration" /></Fact>
+              <Fact icon="save" tip="Peak memory"><Num m={m(run.peakRssBytes)} kind="bytes" /></Fact>
+              {(run.orphans ?? 0) > 0 && <span class="chip t-danger">{run.orphans} orphan</span>}
+              <Fact tip="Finished"><AgeChip t={ms(run.at)} clockOffsetMs={props.clockOffsetMs} /></Fact>
+            </RowFacts>
+          </div>
+        )}</For>
+      </DetailSection>
+    </Show>
     <DetailSection title="Capabilities">
       <Show when={h().capabilities.length} fallback={<span class="muted">none reported</span>}>
         <p class="sys-caps">{[...new Set(h().capabilities)].join(' · ')}</p>

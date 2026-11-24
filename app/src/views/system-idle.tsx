@@ -133,7 +133,8 @@ export function SystemIdle(props: {
     subs: limits.data?.subscriptions ?? [], accounts: (accounts.data?.accounts ?? []) as Record<string, unknown>[],
   }));
   const services = createMemo(() => (tele.data?.operations ?? []).filter(o => o.errors > 0).toSorted((a, b) => b.errors - a.errors));
-  const ready = createMemo(() => !props.loading && !!runners.data && !!limits.data && !!accounts.data);
+  // Host facts come from hosts_list alone: show what has arrived; a read that failed has its banner above.
+  const ready = createMemo(() => !props.loading && (!!runners.data || !!runners.error) && (!!limits.data || !!limits.error) && (!!accounts.data || !!accounts.error));
   const cost = (d: Ops['spend_summary']['reply'] | null) => d ? usdOf(d.totals.cost as CostFigureLike[]) : null;
   const perTask = createMemo(() => {
     const b = month.data?.bought;

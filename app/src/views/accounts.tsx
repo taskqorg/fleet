@@ -1,7 +1,7 @@
 // System › Accounts & limits: one subscription (docs/design-system/pages/system.md, /system/accounts/<id>) and the narrow
 // limits read the System tree and readiness share. J5 (docs/designs/fleet-ia-and-journeys.md §3): where the account can
 // run, per host, from the account's own inspections, so an account no host can start shows before work is routed to it.
-import { createMemo, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, onSettled, Show } from 'solid-js';
 import {
   AgeChip, Button, DetailHead, DetailSection, Empty, ErrorBanner, FillBar, HarnessMark, KvRow, Skeleton, StateBadge,
   countdown, exact, harnesses, type Harness,
@@ -14,8 +14,12 @@ const HOUR = 36e5;
 /** The limits read without chart history: the last hour only, so the tree and readiness stay light. The request changes
  *  once an hour, so every view in that hour shares one read. */
 export function useAccountLimits() {
-  const hour = Math.floor(Date.now() / HOUR) * HOUR;
-  return useOp('subscription_limits', { windowHours: 3, from: hour - HOUR, to: hour + HOUR }, { every: 60_000 });
+  const [hour, setHour] = createSignal(Math.floor(Date.now() / HOUR) * HOUR);
+  onSettled(() => {
+    const t = setInterval(() => setHour(Math.floor(Date.now() / HOUR) * HOUR), 60_000);
+    return () => clearInterval(t);
+  });
+  return useOp('subscription_limits', () => ({ windowHours: 3, from: hour() - HOUR, to: hour() + HOUR }), { every: 60_000 });
 }
 
 export const accountName = (s: LimitSubscription) => typeof s.name === 'string' && s.name ? s.name : s.id;
@@ -40,7 +44,11 @@ export function accountHosts(a: Account | undefined): Check[] {
   if (!a) return [];
   const latest = new Map<string, Check>();
   for (const b of a.bindings ?? []) latest.set(b.hostId, { hostId: b.hostId, binding: b.binding, readiness: b.readiness ?? 'unknown', observedAt: b.observedAt });
-  for (const c of (a.checks ?? []).toSorted((x, y) => (x.observedAt ?? 0) - (y.observedAt ?? 0))) latest.set(c.hostId, c);
+  // The newer observation wins: a check older than the binding's own reading does not override it.
+  for (const c of (a.checks ?? []).toSorted((x, y) => (x.observedAt ?? 0) - (y.observedAt ?? 0))) {
+    const cur = latest.get(c.hostId);
+    if (!cur || (c.observedAt ?? 0) >= (cur.observedAt ?? 0)) latest.set(c.hostId, c);
+  }
   return [...latest.values()];
 }
 
