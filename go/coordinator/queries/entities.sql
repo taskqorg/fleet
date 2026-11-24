@@ -6,11 +6,12 @@
 
 -- name: EntResolveCodes :many
 -- The entities codes name: a current code, or an alias superseded by a rename, with the entity's current code.
-SELECT e.code, e.entity_id, e.type, coalesce(t.code,x.code,d.code)::text AS current FROM entity_code e
+SELECT e.code, e.entity_id, e.type, coalesce(t.code,x.code,d.code,a.code,b.code)::text AS current FROM entity_code e
  LEFT JOIN task t ON e.type='T' AND t.id=e.entity_id LEFT JOIN question x ON e.type='Q' AND x.id=e.entity_id
  LEFT JOIN session d ON e.type='C' AND d.id=e.entity_id
- WHERE e.code=ANY(@codes::text[]) AND coalesce(t.code,x.code,d.code) IS NOT NULL
- AND (e.code=coalesce(t.code,x.code,d.code) OR e.superseded_by IS NOT NULL);
+ LEFT JOIN artifact a ON e.type='R' AND a.id=e.entity_id LEFT JOIN bot b ON e.type='B' AND b.id=e.entity_id
+ WHERE e.code=ANY(@codes::text[]) AND coalesce(t.code,x.code,d.code,a.code,b.code) IS NOT NULL
+ AND (e.code=coalesce(t.code,x.code,d.code,a.code,b.code) OR e.superseded_by IS NOT NULL);
 
 -- name: EntProjectLive :one
 SELECT EXISTS (SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL);
@@ -51,7 +52,7 @@ SELECT e.id, e.kind::text AS kind, e.state::text AS state, e.project_id, e.task_
 
 -- name: EntCardResult :one
 -- A result by its id or the id of the legacy record it replaced.
-SELECT a.id, a.name, a.state, a.project_id, a.media_type, a.size, a.content_hash, a.created_at, t.code AS task_code
+SELECT a.id, a.code, a.name, a.state, a.project_id, a.media_type, a.size, a.content_hash, a.created_at, t.code AS task_code
  FROM artifact a LEFT JOIN task t ON t.id=coalesce(a.task_id,(SELECT e.task_id FROM execution e WHERE e.id=a.execution_id)) WHERE a.id= @id OR a.legacy_id= @id
  LIMIT 1;
 

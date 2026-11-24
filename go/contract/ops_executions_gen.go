@@ -1247,6 +1247,21 @@ func (v *HostHarnessVersion) Validate() error {
 	return nil
 }
 
+// HostLoadReading: The host's latest load reading from its polls and heartbeat spans; only while the host polls and the reading is under 2 minutes old.
+type HostLoadReading struct {
+	At       float64  `json:"at"`
+	Cpus     *int64   `json:"cpus,omitempty"`
+	DiskFree *float64 `json:"diskFree,omitempty"`
+	Load1    *float64 `json:"load1,omitempty"`
+	MemFree  *float64 `json:"memFree,omitempty"`
+	MemTotal *float64 `json:"memTotal,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostLoadReading) Validate() error {
+	return nil
+}
+
 // HostPollError: The last failed poll of a host as the coordinator answered it (go/coordinator/host_poll_health.go); cleared by the next successful poll.
 type HostPollError struct {
 	At      *float64 `json:"at,omitempty"`
@@ -1323,6 +1338,7 @@ type HostRow struct {
 	HarnessVersions  []HostHarnessVersion `json:"harnessVersions,omitempty"`
 	Id               string               `json:"id"`
 	LastSeenAt       *float64             `json:"lastSeenAt"`
+	Load             *HostLoadReading     `json:"load,omitempty"`
 	Platform         *string              `json:"platform"`
 	PollError        *HostPollError       `json:"pollError,omitempty"`
 	Problems         []HostProblem        `json:"problems"`
@@ -1330,6 +1346,8 @@ type HostRow struct {
 	RemovedAt        *float64             `json:"removedAt,omitempty"`
 	Running          int64                `json:"running"`
 	RunningByHarness map[string]int64     `json:"runningByHarness"`
+	Runs             []HostRun            `json:"runs,omitempty"`
+	SlotLimit        *int64               `json:"slotLimit,omitempty"`
 	Slots            json.RawMessage      `json:"slots"`
 	Stores           string               `json:"stores"`
 	StoresReason     *string              `json:"storesReason,omitempty"`
@@ -1350,6 +1368,11 @@ func (v *HostRow) Validate() error {
 			return err
 		}
 	}
+	if v.Load != nil {
+		if err := Check(v.Load, "load"); err != nil {
+			return err
+		}
+	}
 	if v.PollError != nil {
 		if err := Check(v.PollError, "pollError"); err != nil {
 			return err
@@ -1366,12 +1389,29 @@ func (v *HostRow) Validate() error {
 	if v.RunningByHarness == nil {
 		return Missing("runningByHarness")
 	}
+	for i := range v.Runs {
+		if err := Check(&v.Runs[i], "runs"); err != nil {
+			return err
+		}
+	}
 	if v.Slots == nil {
 		return Missing("slots")
 	}
 	if v.Update == nil {
 		return Missing("update")
 	}
+	return nil
+}
+
+// HostRun: One run on a host, in the order slot tiles are filled (go/coordinator/hosts.go hostRuns).
+type HostRun struct {
+	Id        string  `json:"id"`
+	StartedAt *string `json:"startedAt"`
+	State     string  `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostRun) Validate() error {
 	return nil
 }
 

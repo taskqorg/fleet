@@ -37,6 +37,7 @@ type hostLoadObservation struct {
 	Cpus      *int64   `json:"cpus,omitempty"`
 	MemFree   *float64 `json:"memFree,omitempty"`
 	MemTotal  *float64 `json:"memTotal,omitempty"`
+	DiskFree  *float64 `json:"diskFree,omitempty"` // heartbeat spans only; a poll's load keeps the last one
 	UpdatedAt int64    `json:"updatedAt,omitempty"`
 }
 
@@ -264,6 +265,9 @@ func (a *App) recordHostLoad(hostID string, load *hostLoadObservation, overloade
 	prevKnown := hb.load != nil
 	prevOverloaded := hb.overloaded
 	cp := *load
+	if cp.DiskFree == nil && hb.load != nil {
+		cp.DiskFree = hb.load.DiskFree
+	}
 	hb.load = &cp
 	hb.overloaded = overloaded
 	return (!prevKnown && overloaded) || (prevKnown && prevOverloaded != overloaded)

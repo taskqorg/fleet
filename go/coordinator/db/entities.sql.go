@@ -213,13 +213,14 @@ func (q *Queries) EntCardQuestion(ctx context.Context, id string) (EntCardQuesti
 }
 
 const entCardResult = `-- name: EntCardResult :one
-SELECT a.id, a.name, a.state, a.project_id, a.media_type, a.size, a.content_hash, a.created_at, t.code AS task_code
+SELECT a.id, a.code, a.name, a.state, a.project_id, a.media_type, a.size, a.content_hash, a.created_at, t.code AS task_code
  FROM artifact a LEFT JOIN task t ON t.id=coalesce(a.task_id,(SELECT e.task_id FROM execution e WHERE e.id=a.execution_id)) WHERE a.id= $1 OR a.legacy_id= $1
  LIMIT 1
 `
 
 type EntCardResultRow struct {
 	ID          string
+	Code        *string
 	Name        string
 	State       string
 	ProjectID   *string
@@ -236,6 +237,7 @@ func (q *Queries) EntCardResult(ctx context.Context, id string) (EntCardResultRo
 	var i EntCardResultRow
 	err := row.Scan(
 		&i.ID,
+		&i.Code,
 		&i.Name,
 		&i.State,
 		&i.ProjectID,
@@ -484,11 +486,12 @@ func (q *Queries) EntProjectLive(ctx context.Context, id string) (bool, error) {
 
 const entResolveCodes = `-- name: EntResolveCodes :many
 
-SELECT e.code, e.entity_id, e.type, coalesce(t.code,x.code,d.code)::text AS current FROM entity_code e
+SELECT e.code, e.entity_id, e.type, coalesce(t.code,x.code,d.code,a.code,b.code)::text AS current FROM entity_code e
  LEFT JOIN task t ON e.type='T' AND t.id=e.entity_id LEFT JOIN question x ON e.type='Q' AND x.id=e.entity_id
  LEFT JOIN session d ON e.type='C' AND d.id=e.entity_id
- WHERE e.code=ANY($1::text[]) AND coalesce(t.code,x.code,d.code) IS NOT NULL
- AND (e.code=coalesce(t.code,x.code,d.code) OR e.superseded_by IS NOT NULL)
+ LEFT JOIN artifact a ON e.type='R' AND a.id=e.entity_id LEFT JOIN bot b ON e.type='B' AND b.id=e.entity_id
+ WHERE e.code=ANY($1::text[]) AND coalesce(t.code,x.code,d.code,a.code,b.code) IS NOT NULL
+ AND (e.code=coalesce(t.code,x.code,d.code,a.code,b.code) OR e.superseded_by IS NOT NULL)
 `
 
 type EntResolveCodesRow struct {

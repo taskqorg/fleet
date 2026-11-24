@@ -4754,3 +4754,25 @@ CREATE INDEX bot_automation_bot ON bot_automation(bot_id, id);
 ALTER TABLE bot_run ADD COLUMN automation_id text REFERENCES bot_automation(id) ON DELETE SET NULL;
 CREATE INDEX bot_run_automation_seq ON bot_run(automation_id, seq DESC)
  WHERE automation_id IS NOT NULL AND tombstoned_at IS NULL;
+
+-- migration 99: human codes for results and bots (D17 types R and B; docs/designs/fleet-data-foundation.md §2, Human
+-- codes). A result is an original artifact: thumbnails, posters, attachments and Lab examples get none. The trigger
+-- artifact_zcode and bot_zcode (schema/triggers.sql) issue the code on insert and on a project change, as for tasks.
+-- Backfill in creation order, filling only empty values, without a change row per row (as migration 39).
+ALTER TABLE artifact ADD COLUMN code text UNIQUE;
+ALTER TABLE bot ADD COLUMN code text UNIQUE;
+ALTER TABLE artifact DISABLE TRIGGER USER; -- change rows and touch; a fresh database has none yet (schema/triggers.sql)
+ALTER TABLE bot DISABLE TRIGGER USER;
+DO $$ DECLARE r record; BEGIN
+ PERFORM set_config('fleet.project_ids', '*', true);
+ PERFORM set_config('fleet.deleted', 'on', true);
+ FOR r IN SELECT id, project_id FROM artifact WHERE code IS NULL AND role = 'original' ORDER BY created_at, seq LOOP
+  UPDATE artifact SET code = fleet_issue_code('R', r.project_id, r.id) WHERE id = r.id;
+ END LOOP;
+ FOR r IN SELECT b.id, b.project_id FROM bot b WHERE b.code IS NULL
+  ORDER BY (SELECT min(v.created_at) FROM bot_revision v WHERE v.bot_id = b.id), b.id LOOP
+  UPDATE bot SET code = fleet_issue_code('B', r.project_id, r.id) WHERE id = r.id;
+ END LOOP;
+END $$;
+ALTER TABLE artifact ENABLE TRIGGER USER;
+ALTER TABLE bot ENABLE TRIGGER USER;

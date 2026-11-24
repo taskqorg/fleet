@@ -1209,6 +1209,9 @@ func executionsPage(q *Request, f contract.ExecutionsListRequest) (contract.Exec
 		if r.EndAt.Valid {
 			e.EndedAt = optTime(&r.EndAt.Time)
 		}
+		if e.State == contract.ExecutionStateFailed || e.State == contract.ExecutionStateCancelled {
+			e.Failure = contract.PlainCause(deref(r.Problem), "") // a succeeded run may carry a problem; it did not fail
+		}
 		if err := json.Unmarshal(rawJSON(r.Definitions), &e.Definitions); err != nil {
 			return empty, err
 		}

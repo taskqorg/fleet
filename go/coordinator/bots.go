@@ -59,6 +59,7 @@ func botList(q *Request, r *contract.BotListRequest) (contract.BotListReply, err
 	for _, row := range rows {
 		out.Bots = append(out.Bots, contract.BotListItem{
 			Id:            row.ID,
+			Code:          row.Code,
 			ProjectId:     row.ProjectID,
 			Name:          row.Name,
 			Purpose:       row.Purpose,
@@ -83,6 +84,7 @@ func readBotFull(q *Request, id string) (botFull, error) {
 	}
 	rec := contract.BotRecord{
 		Id:                row.ID,
+		Code:              row.Code,
 		ProjectId:         row.ProjectID,
 		Director:          row.Director,
 		Revision:          int64(row.Revision),

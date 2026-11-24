@@ -467,6 +467,7 @@ type Artifact struct {
 	ApprovedAt            *time.Time
 	TombstonedAt          *time.Time
 	SessionID             *string
+	Code                  *string
 }
 
 type ArtifactCopy struct {
@@ -538,6 +539,7 @@ type Bot struct {
 	PausedAt       *time.Time
 	PausedBy       *string
 	ResumedAt      *time.Time
+	Code           *string
 }
 
 type BotAutomation struct {

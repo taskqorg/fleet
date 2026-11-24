@@ -188,6 +188,7 @@ func (v *BotGetRequest) Validate() error {
 
 type BotListItem struct {
 	ActiveRunId   *string `json:"activeRunId"`
+	Code          *string `json:"code,omitempty"`
 	HomeSessionId *string `json:"homeSessionId"`
 	Id            string  `json:"id"`
 	LastRunAt     *string `json:"lastRunAt"`
@@ -281,6 +282,7 @@ func (v *BotPauseRequest) Validate() error {
 type BotRecord struct {
 	ActiveExecutionId *string     `json:"activeExecutionId"`
 	ActiveRunId       *string     `json:"activeRunId"`
+	Code              *string     `json:"code,omitempty"`
 	Director          string      `json:"director"`
 	HomeSessionId     *string     `json:"homeSessionId"`
 	Id                string      `json:"id"`
@@ -354,6 +356,7 @@ type BotRunRecord struct {
 	DedupKey        *string           `json:"dedupKey"`
 	EndedAt         *string           `json:"endedAt"`
 	ExecutionId     *string           `json:"executionId"`
+	Failure         *Failure          `json:"failure,omitempty"`
 	HostId          *string           `json:"hostId"`
 	Id              string            `json:"id"`
 	LinkedTaskIds   []string          `json:"linkedTaskIds"`
@@ -381,6 +384,11 @@ func (v *BotRunRecord) Validate() error {
 	}
 	if err := Check(&v.Cause, "cause"); err != nil {
 		return err
+	}
+	if v.Failure != nil {
+		if err := Check(v.Failure, "failure"); err != nil {
+			return err
+		}
 	}
 	if v.LinkedTaskIds == nil {
 		return Missing("linkedTaskIds")

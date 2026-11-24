@@ -1,5 +1,6 @@
 // Human entity codes (D17; docs/designs/fleet-data-foundation.md §2, Human codes): lookup by code and the project code.
-// Codes are issued by the task and question triggers of migration 39; this file only reads them and renames a project.
+// Codes are issued by the zcode triggers (schema/triggers.sql: tasks, questions, conversations, results, bots); this file
+// only reads them and renames a project.
 package main
 
 import (
@@ -12,7 +13,7 @@ import (
 )
 
 // codePattern: the D17 grammar, matched case-insensitively (lookup is case-insensitive).
-var codePattern = regexp.MustCompile(`(?i)\b(?:([TQEC])-([A-Z][A-Z0-9]{1,4})-([1-9][0-9]*)|S-([A-Z][A-Z0-9]{1,4})-([A-DF-PRU-Z])([1-9][0-9]*))\b`)
+var codePattern = regexp.MustCompile(`(?i)\b(?:([TQECRB])-([A-Z][A-Z0-9]{1,4})-([1-9][0-9]*)|S-([A-Z][A-Z0-9]{1,4})-([A-DF-PRU-Z])([1-9][0-9]*))\b`)
 
 var projectCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,4}$`)
 

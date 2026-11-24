@@ -83,7 +83,8 @@ CREATE TABLE artifact (
   "seq" bigint NOT NULL,
   "approved_at" timestamp with time zone,
   "tombstoned_at" timestamp with time zone,
-  "session_id" text
+  "session_id" text,
+  "code" text
 );
 CREATE TABLE artifact_copy (
   "artifact_id" text NOT NULL,
@@ -149,7 +150,8 @@ CREATE TABLE bot (
   "paused" boolean NOT NULL,
   "paused_at" timestamp with time zone,
   "paused_by" text,
-  "resumed_at" timestamp with time zone
+  "resumed_at" timestamp with time zone,
+  "code" text
 );
 CREATE TABLE bot_automation (
   "id" text NOT NULL,

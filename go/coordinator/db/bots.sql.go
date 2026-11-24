@@ -63,7 +63,7 @@ func (q *Queries) BotExecutionMutated(ctx context.Context, executionID string) (
 }
 
 const botGet = `-- name: BotGet :one
-SELECT b.id, b.project_id, b.director, b.revision, b.memory_revision,
+SELECT b.id, b.code, b.project_id, b.director, b.revision, b.memory_revision,
        hs.id AS home_session_id,
        b.paused, b.paused_at, b.paused_by, b.resumed_at,
        s.name, s.purpose, s.profile_id, s.instructions, s.soul, s.schedule_time, s.schedule_zone, s.wake_on_needs_you,
@@ -90,6 +90,7 @@ WHERE b.id = $1
 
 type BotGetRow struct {
 	ID                string
+	Code              *string
 	ProjectID         string
 	Director          string
 	Revision          int32
@@ -120,6 +121,7 @@ func (q *Queries) BotGet(ctx context.Context, id string) (BotGetRow, error) {
 	var i BotGetRow
 	err := row.Scan(
 		&i.ID,
+		&i.Code,
 		&i.ProjectID,
 		&i.Director,
 		&i.Revision,
@@ -236,7 +238,7 @@ func (q *Queries) BotLastSessionDispatch(ctx context.Context, arg BotLastSession
 }
 
 const botList = `-- name: BotList :many
-SELECT b.id, b.project_id, b.revision,
+SELECT b.id, b.code, b.project_id, b.revision,
        hs.id AS home_session_id,
        b.paused, s.name, s.purpose,
        ar.id AS active_run_id, lr.state AS last_run_state, lr.created_at AS last_run_at
@@ -267,6 +269,7 @@ type BotListParams struct {
 
 type BotListRow struct {
 	ID            string
+	Code          *string
 	ProjectID     string
 	Revision      int32
 	HomeSessionID *string
@@ -289,6 +292,7 @@ func (q *Queries) BotList(ctx context.Context, arg BotListParams) ([]BotListRow,
 		var i BotListRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Code,
 			&i.ProjectID,
 			&i.Revision,
 			&i.HomeSessionID,
