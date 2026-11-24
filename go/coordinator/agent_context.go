@@ -253,7 +253,7 @@ func makeHandoff(q *Request, s *agentSession, turns []agentTurn, strategy, sourc
 	for _, t := range turns {
 		ids = append(ids, t.executionID)
 	}
-	h := agentHandoff{ID: newID(), SessionID: s.ID, Strategy: strategy, Source: source, ToKey: s.continuationKey(), Turns: ids, Text: renderHandoff(turns, strategy, source), State: "pending", CreatedAt: nowMs()}
+	h := agentHandoff{ID: newID(), SessionID: s.ID, ProjectID: strPtr(s.ProjectID), Strategy: strategy, Source: source, ToKey: s.continuationKey(), Turns: ids, Text: renderHandoff(turns, strategy, source), State: "pending", CreatedAt: nowMs()}
 	s.PendingHandoffID = h.ID
 	return &h, handoffPut(q, &h)
 }
@@ -444,7 +444,7 @@ func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransit
 	if h != nil {
 		hid = &h.ID
 	}
-	t := agentTransitionRecord{ID: newID(), SessionID: sid, Type: typ, FromKey: fromKey, ToKey: toKey, ProfileID: target.ID, HandoffID: hid, At: nowMs()}
+	t := agentTransitionRecord{ID: newID(), SessionID: sid, ProjectID: strPtr(next.ProjectID), Type: typ, FromKey: fromKey, ToKey: toKey, ProfileID: target.ID, HandoffID: hid, At: nowMs()}
 	if err := sessionTransitionPut(q, &t); err != nil {
 		return none, err
 	}
@@ -663,6 +663,9 @@ func sessionAttach(q *Request, r *contract.SessionTaskAttachRequest) (contract.S
 	s, err := sessionLocked(q, sid)
 	if err != nil {
 		return none, err
+	}
+	if s.BotID != "" {
+		return none, fail(409, "Bot Home conversation cannot be attached to a single task")
 	}
 	bound := len(r.BoundProject) > 0
 	tid, err := taskFor(q, deref(r.TaskId), s.ProjectID, bound)

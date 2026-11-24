@@ -234,7 +234,7 @@ func (q *Queries) ReceiptOf(ctx context.Context, id string) (ReceiptOfRow, error
 }
 
 const sessionByID = `-- name: SessionByID :one
-SELECT id, code, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id, created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload, seq, updated_at, tombstoned_at FROM session WHERE id=$1
+SELECT id, code, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id, created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload, seq, updated_at, tombstoned_at, bot_id FROM session WHERE id=$1
 `
 
 func (q *Queries) SessionByID(ctx context.Context, id string) (Session, error) {
@@ -266,12 +266,13 @@ func (q *Queries) SessionByID(ctx context.Context, id string) (Session, error) {
 		&i.Seq,
 		&i.UpdatedAt,
 		&i.TombstonedAt,
+		&i.BotID,
 	)
 	return i, err
 }
 
 const sessionByIDLocked = `-- name: SessionByIDLocked :one
-SELECT id, code, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id, created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload, seq, updated_at, tombstoned_at FROM session WHERE id=$1 FOR UPDATE
+SELECT id, code, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id, created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload, seq, updated_at, tombstoned_at, bot_id FROM session WHERE id=$1 FOR UPDATE
 `
 
 func (q *Queries) SessionByIDLocked(ctx context.Context, id string) (Session, error) {
@@ -303,6 +304,7 @@ func (q *Queries) SessionByIDLocked(ctx context.Context, id string) (Session, er
 		&i.Seq,
 		&i.UpdatedAt,
 		&i.TombstonedAt,
+		&i.BotID,
 	)
 	return i, err
 }
@@ -352,12 +354,12 @@ func (q *Queries) SessionDelegations(ctx context.Context, sessionID string) ([][
 const sessionPut = `-- name: SessionPut :exec
 INSERT INTO session(id, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at,
  parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id,
- created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload)
+ bot_id, created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload)
 VALUES ($1, $2, $3, $4, $5, $6,
  $7, $8, $9,
  $10, $11, $12,
- $13, $14, $15, $16, $17,
- $18, $19, $20, $21)
+ $13, $14, $15, $16, $17, $18,
+ $19, $20, $21, $22)
 ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
  project_id=excluded.project_id,
  task_id=excluded.task_id,
@@ -370,6 +372,7 @@ ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
  created_by_session_id=excluded.created_by_session_id,
  source_session_id=excluded.source_session_id,
  pipeline_run_id=excluded.pipeline_run_id,
+ bot_id=coalesce(excluded.bot_id, session.bot_id),
  created_at=excluded.created_at,
  archived_at=excluded.archived_at,
  title=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title ELSE NULL END,
@@ -393,6 +396,7 @@ type SessionPutParams struct {
 	CreatedBySessionID      *string
 	SourceSessionID         *string
 	PipelineRunID           *string
+	BotID                   *string
 	CreatedAt               *time.Time
 	ArchivedAt              *time.Time
 	Title                   *string
@@ -418,6 +422,7 @@ func (q *Queries) SessionPut(ctx context.Context, arg SessionPutParams) error {
 		arg.CreatedBySessionID,
 		arg.SourceSessionID,
 		arg.PipelineRunID,
+		arg.BotID,
 		arg.CreatedAt,
 		arg.ArchivedAt,
 		arg.Title,
@@ -432,7 +437,7 @@ func (q *Queries) SessionPut(ctx context.Context, arg SessionPutParams) error {
 }
 
 const sessionsByStartRequest = `-- name: SessionsByStartRequest :many
-SELECT id, code, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id, created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload, seq, updated_at, tombstoned_at FROM session WHERE payload->>'startRequest' = $1::text ORDER BY seq
+SELECT id, code, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at, parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id, created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload, seq, updated_at, tombstoned_at, bot_id FROM session WHERE payload->>'startRequest' = $1::text ORDER BY seq
 `
 
 func (q *Queries) SessionsByStartRequest(ctx context.Context, startRequest string) ([]Session, error) {
@@ -470,6 +475,7 @@ func (q *Queries) SessionsByStartRequest(ctx context.Context, startRequest strin
 			&i.Seq,
 			&i.UpdatedAt,
 			&i.TombstonedAt,
+			&i.BotID,
 		); err != nil {
 			return nil, err
 		}

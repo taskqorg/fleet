@@ -48,11 +48,11 @@ SELECT * FROM session WHERE payload->>'startRequest' = @start_request::text ORDE
 -- name: SessionPut :exec
 INSERT INTO session(id, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at,
  parent_execution_id, created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id,
- created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload)
+ bot_id, created_at, archived_at, title, title_by, title_call, title_attempt_at, title_attempts, title_unknown_call, payload)
 VALUES (@id, sqlc.narg(project_id), sqlc.narg(task_id), sqlc.narg(host_id), sqlc.narg(actor), sqlc.narg(directed_by),
  sqlc.narg(director_access_revoked_at), sqlc.narg(parent_execution_id), sqlc.narg(created_by_execution_id),
  sqlc.narg(created_by_session_id), sqlc.narg(source_session_id), sqlc.narg(pipeline_run_id),
- sqlc.narg(created_at), sqlc.narg(archived_at), sqlc.narg(title), sqlc.narg(title_by), sqlc.narg(title_call),
+ sqlc.narg(bot_id), sqlc.narg(created_at), sqlc.narg(archived_at), sqlc.narg(title), sqlc.narg(title_by), sqlc.narg(title_call),
  sqlc.narg(title_attempt_at), @title_attempts, sqlc.narg(title_unknown_call), @payload)
 ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
  project_id=excluded.project_id,
@@ -66,6 +66,7 @@ ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
  created_by_session_id=excluded.created_by_session_id,
  source_session_id=excluded.source_session_id,
  pipeline_run_id=excluded.pipeline_run_id,
+ bot_id=coalesce(excluded.bot_id, session.bot_id),
  created_at=excluded.created_at,
  archived_at=excluded.archived_at,
  title=CASE WHEN session.project_id IS NOT DISTINCT FROM excluded.project_id THEN session.title ELSE NULL END,

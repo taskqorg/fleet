@@ -246,6 +246,7 @@ func sessionOf(r db.Session) (agentSession, error) {
 	s.CreatedBySessionID = deref(r.CreatedBySessionID)
 	s.SourceSessionID = deref(r.SourceSessionID)
 	s.PipelineRunID = deref(r.PipelineRunID)
+	s.BotID = deref(r.BotID)
 	s.CreatedAt = int64Ms(r.CreatedAt)
 	s.ArchivedAt = int64MsPtr(r.ArchivedAt)
 	return s, nil
@@ -323,6 +324,7 @@ func sessionRecordOf(r db.Session) (rawObject, error) {
 		"createdBySessionId":   r.CreatedBySessionID,
 		"sourceSessionId":      r.SourceSessionID,
 		"pipelineRunId":        r.PipelineRunID,
+		"botId":                r.BotID,
 		"title":                r.Title,
 		"titleBy":              r.TitleBy,
 		"titleCall":            r.TitleCall,
@@ -379,6 +381,7 @@ func sessionPutRow(q *Request, row db.Session, payload []byte) error {
 		CreatedBySessionID:      row.CreatedBySessionID,
 		SourceSessionID:         row.SourceSessionID,
 		PipelineRunID:           row.PipelineRunID,
+		BotID:                   row.BotID,
 		CreatedAt:               row.CreatedAt,
 		ArchivedAt:              row.ArchivedAt,
 		Title:                   row.Title,
@@ -432,6 +435,7 @@ func sessionPut(q *Request, s *agentSession) error {
 		CreatedBySessionID:      strPtr(s.CreatedBySessionID),
 		SourceSessionID:         strPtr(s.SourceSessionID),
 		PipelineRunID:           strPtr(s.PipelineRunID),
+		BotID:                   strPtr(s.BotID),
 		CreatedAt:               intMsPtr(s.CreatedAt),
 		ArchivedAt:              optMsPtr(s.ArchivedAt),
 	}, payload)
@@ -777,7 +781,7 @@ func teardownCommand(q *Request, s agentSession, last agentExecution, deleteBran
 	if s.Branch != nil && !*s.Branch { // a session started without a branch (presets.go): its worktree was detached
 		payload.Branch = s.Branch
 	}
-	c := agentCommand{ID: newID(), ExecutionID: last.ID, SessionID: sid, HostID: host, Kind: "teardown", Payload: jsonBytes(payload), Status: "pending"}
+	c := agentCommand{ID: newID(), ExecutionID: last.ID, SessionID: sid, HostID: host, ProjectID: firstString(last.ProjectID, s.ProjectID), Kind: "teardown", Payload: jsonBytes(payload), Status: "pending"}
 	err := commandPut(q, &c)
 	return c, err
 }

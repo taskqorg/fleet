@@ -84,6 +84,20 @@ CREATE POLICY project_scope ON bot_revision FOR ALL TO public USING ((EXISTS ( S
    FROM bot b
   WHERE (b.id = bot_revision.bot_id))));
 
+-- bot_run
+ALTER TABLE bot_run ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON bot_run;
+CREATE POLICY live ON bot_run AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND (NOT (project_id = ANY (fleet_deleted_projects()))))));
+DROP POLICY IF EXISTS project_scope ON bot_run;
+CREATE POLICY project_scope ON bot_run FOR ALL TO public USING (fleet_visible(project_id));
+
+-- bot_wake_cursor
+ALTER TABLE bot_wake_cursor ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON bot_wake_cursor;
+CREATE POLICY project_scope ON bot_wake_cursor FOR ALL TO public USING ((EXISTS ( SELECT 1
+   FROM bot b
+  WHERE (b.id = bot_wake_cursor.bot_id))));
+
 -- budget
 ALTER TABLE budget ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS project_scope ON budget;

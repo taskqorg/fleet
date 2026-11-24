@@ -144,7 +144,12 @@ CREATE TABLE bot (
   "director" text NOT NULL,
   "revision" integer NOT NULL,
   "memory_revision" integer NOT NULL,
-  "tombstoned_at" timestamp with time zone
+  "tombstoned_at" timestamp with time zone,
+  "home_session_id" text,
+  "paused" boolean NOT NULL,
+  "paused_at" timestamp with time zone,
+  "paused_by" text,
+  "resumed_at" timestamp with time zone
 );
 CREATE TABLE bot_memory_revision (
   "bot_id" text NOT NULL,
@@ -164,6 +169,39 @@ CREATE TABLE bot_revision (
   "schedule_zone" text NOT NULL,
   "wake_on_needs_you" boolean NOT NULL,
   "created_at" timestamp with time zone NOT NULL
+);
+CREATE TABLE bot_run (
+  "id" text NOT NULL,
+  "bot_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "bot_revision" integer NOT NULL,
+  "memory_revision" integer NOT NULL,
+  "session_id" text,
+  "execution_id" text,
+  "queued_message_id" text,
+  "cause" text NOT NULL,
+  "dedup_key" text,
+  "state" text NOT NULL,
+  "observation" text NOT NULL,
+  "quiet" boolean NOT NULL,
+  "reason" text NOT NULL,
+  "sent_by" text NOT NULL,
+  "source" text NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "started_at" timestamp with time zone,
+  "ended_at" timestamp with time zone,
+  "updated_at" timestamp with time zone NOT NULL,
+  "tombstoned_at" timestamp with time zone,
+  "payload" jsonb NOT NULL,
+  "seq" bigint NOT NULL
+);
+CREATE TABLE bot_wake_cursor (
+  "bot_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "needs_you_change_seq" bigint NOT NULL,
+  "last_schedule_key" text NOT NULL,
+  "last_schedule_at" timestamp with time zone,
+  "updated_at" timestamp with time zone NOT NULL
 );
 CREATE TABLE budget (
   "id" text NOT NULL,
@@ -1005,7 +1043,8 @@ CREATE TABLE session (
   "payload" jsonb NOT NULL,
   "seq" bigint NOT NULL,
   "updated_at" timestamp with time zone NOT NULL,
-  "tombstoned_at" timestamp with time zone
+  "tombstoned_at" timestamp with time zone,
+  "bot_id" text
 );
 CREATE TABLE session_fork (
   "id" text NOT NULL,

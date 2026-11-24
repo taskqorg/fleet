@@ -145,6 +145,9 @@ func markObservation(q *Request, id any, observation string) error {
 	if err == nil && taskID != "" {
 		_, err = settleIdleTask(q, taskID)
 	}
+	if err == nil {
+		err = syncBotRunFromExecution(q, sid)
+	}
 	return err
 }
 
@@ -580,6 +583,11 @@ func executionPutRaw(q *Request, e rawObject) error {
 			return err
 		}
 	}
+	if !inserted {
+		if err := syncBotRunFromExecution(q, id); err != nil {
+			return err
+		}
+	}
 	t, err := q.db().ExecutionTaskOf(q.ctx(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		t, err = nil, nil
@@ -746,7 +754,7 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 	if len(stops) > 0 {
 		c = stops[0]
 	} else {
-		c = agentCommand{ID: newID(), ExecutionID: e.ID, SessionID: e.SessionID, HostID: deref(e.HostID), Kind: stopKind, Payload: json.RawMessage("{}"), Status: pendingStatus}
+		c = agentCommand{ID: newID(), ExecutionID: e.ID, SessionID: e.SessionID, HostID: deref(e.HostID), ProjectID: firstString(e.ProjectID, e.dispatchProject()), Kind: stopKind, Payload: json.RawMessage("{}"), Status: pendingStatus}
 		if err := commandPut(q, &c); err != nil {
 			return rep, err
 		}

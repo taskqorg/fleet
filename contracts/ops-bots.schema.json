@@ -8,8 +8,10 @@
       ],
       "auth": "person",
       "agent": "no",
-      "description": "List bot settings visible in granted projects, optionally for one project.",
+      "description": "List bot settings and runtime status visible in granted projects, optionally for one project.",
       "changes": [
+        "bot",
+        "bot-run",
         "setting-change"
       ]
     },
@@ -20,8 +22,10 @@
       ],
       "auth": "person",
       "agent": "no",
-      "description": "Read the saved settings and scoped memory of a bot by id.",
+      "description": "Read the saved settings, scoped memory, Home conversation and runtime status of a bot by id.",
       "changes": [
+        "bot",
+        "bot-run",
         "setting-change"
       ]
     },
@@ -34,7 +38,7 @@
       ],
       "auth": "project:projectId",
       "agent": "no",
-      "description": "Save a new settings revision. A caller-generated botId and baseRevision 0 create a bot."
+      "description": "Save a new settings revision. A caller-generated botId and baseRevision 0 create a bot and its Home conversation."
     },
     "bot_memory_save": {
       "read": false,
@@ -46,6 +50,52 @@
       "auth": "person",
       "agent": "no",
       "description": "Save a new project-scoped bot memory revision."
+    },
+    "bot_run": {
+      "read": false,
+      "errors": [
+        400,
+        404,
+        409
+      ],
+      "auth": "person",
+      "agent": "no",
+      "description": "Run a bot now using the shared wake admission flow, enforcing single active run admission and pinning settings, memory and project."
+    },
+    "bot_pause": {
+      "read": false,
+      "errors": [
+        400,
+        404
+      ],
+      "auth": "person",
+      "agent": "no",
+      "description": "Pause or resume a bot's future scheduled and Needs-you wakes."
+    },
+    "bot_stop": {
+      "read": false,
+      "errors": [
+        400,
+        404
+      ],
+      "auth": "person",
+      "agent": "no",
+      "description": "Request cancellation of a bot's active execution through the execution lifecycle and report the observed stop outcome."
+    },
+    "bot_runs": {
+      "read": true,
+      "errors": [
+        400,
+        404
+      ],
+      "auth": "person",
+      "agent": "no",
+      "description": "List bot runs, including quiet wakes and skipped, queued, failed and unconfirmed work.",
+      "changes": [
+        "bot-run",
+        "execution",
+        "session"
+      ]
     }
   },
   "$defs": {
@@ -99,7 +149,14 @@
         "revision",
         "settings",
         "memory",
-        "memoryRevision"
+        "memoryRevision",
+        "homeSessionId",
+        "paused",
+        "pausedAt",
+        "activeRunId",
+        "activeExecutionId",
+        "lastRunAt",
+        "lastRunState"
       ],
       "properties": {
         "id": {
@@ -122,6 +179,45 @@
         },
         "memoryRevision": {
           "type": "integer"
+        },
+        "homeSessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "pausedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activeRunId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activeExecutionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastRunAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastRunState": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -155,7 +251,12 @@
         "projectId",
         "name",
         "purpose",
-        "revision"
+        "revision",
+        "paused",
+        "homeSessionId",
+        "activeRunId",
+        "lastRunState",
+        "lastRunAt"
       ],
       "properties": {
         "id": {
@@ -172,6 +273,33 @@
         },
         "revision": {
           "type": "integer"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "homeSessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activeRunId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastRunState": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastRunAt": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -279,6 +407,363 @@
       "properties": {
         "bot": {
           "$ref": "#/$defs/BotRecord"
+        }
+      }
+    },
+    "BotRunState": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "waiting",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "skipped"
+      ]
+    },
+    "BotRunCause": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "schedule",
+        "needs_you",
+        "message"
+      ]
+    },
+    "BotRunObservation": {
+      "type": "string",
+      "enum": [
+        "confirmed",
+        "unconfirmed"
+      ]
+    },
+    "BotRunWakeItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    },
+    "BotRunRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "botId",
+        "projectId",
+        "botRevision",
+        "memoryRevision",
+        "sessionId",
+        "executionId",
+        "queuedMessageId",
+        "cause",
+        "dedupKey",
+        "state",
+        "observation",
+        "quiet",
+        "reason",
+        "sentBy",
+        "source",
+        "hostId",
+        "problem",
+        "createdAt",
+        "startedAt",
+        "endedAt",
+        "triggers"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "botId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "botRevision": {
+          "type": "integer"
+        },
+        "memoryRevision": {
+          "type": "integer"
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "executionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "queuedMessageId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cause": {
+          "$ref": "#/$defs/BotRunCause"
+        },
+        "dedupKey": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/BotRunState"
+        },
+        "observation": {
+          "$ref": "#/$defs/BotRunObservation"
+        },
+        "quiet": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sentBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "problem": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "endedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "triggers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BotRunWakeItem"
+          }
+        }
+      }
+    },
+    "BotRunRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "BotRunReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot",
+        "run",
+        "admitted"
+      ],
+      "properties": {
+        "bot": {
+          "$ref": "#/$defs/BotRecord"
+        },
+        "run": {
+          "$ref": "#/$defs/BotRunRecord"
+        },
+        "admitted": {
+          "type": "boolean"
+        }
+      }
+    },
+    "BotPauseRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId",
+        "paused"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "BotPauseReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot"
+      ],
+      "properties": {
+        "bot": {
+          "$ref": "#/$defs/BotRecord"
+        }
+      }
+    },
+    "BotStopRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "BotStopReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId",
+        "stopped"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "stopped": {
+          "type": "boolean"
+        },
+        "run": {
+          "$ref": "#/$defs/BotRunRecord"
+        },
+        "stop": {
+          "$ref": "ops-executions.schema.json#/$defs/StopOutcome"
+        }
+      }
+    },
+    "BotRunsRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "projectIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "excludeProjectIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "state": {
+          "$ref": "#/$defs/BotRunState"
+        },
+        "cause": {
+          "$ref": "#/$defs/BotRunCause"
+        },
+        "observation": {
+          "$ref": "#/$defs/BotRunObservation"
+        },
+        "quiet": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "after": {
+          "type": "string"
+        }
+      }
+    },
+    "BotRunsReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runs",
+        "hasMore"
+      ],
+      "properties": {
+        "runs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BotRunRecord"
+          }
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "nextAfter": {
+          "type": "string"
         }
       }
     }

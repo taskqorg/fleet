@@ -252,6 +252,7 @@ type agentSession struct {
 	CreatedBySessionID      string                 `json:"createdBySessionId,omitempty"`
 	SourceSessionID         string                 `json:"-"`
 	PipelineRunID           string                 `json:"pipelineRunId,omitempty"`
+	BotID                   string                 `json:"botId,omitempty"`
 	AgentConfig             json.RawMessage        `json:"agentConfig,omitempty"`
 	StartRequest            string                 `json:"startRequest,omitempty"`
 	Role                    string                 `json:"role,omitempty"`
@@ -352,6 +353,7 @@ type agentExecution struct {
 	StopDetail            string                 `json:"stopDetail,omitempty"`
 	Error                 string                 `json:"error,omitempty"`
 	Problem               string                 `json:"problem,omitempty"`
+	BotContext            *botExecutionContext   `json:"botContext,omitempty"`
 	rest                  recordRest
 }
 
@@ -517,6 +519,7 @@ func (x agentQuestion) MarshalJSON() ([]byte, error) {
 type agentTransitionRecord struct {
 	ID        string  `json:"id"`
 	SessionID string  `json:"sessionId"`
+	ProjectID *string `json:"projectId,omitempty"`
 	Type      string  `json:"type"`
 	FromKey   string  `json:"fromKey"`
 	ToKey     string  `json:"toKey"`
@@ -863,6 +866,7 @@ func sessionTransitionPut(q *Request, t *agentTransitionRecord) error {
 	return q.db().SessionTransitionPut(q.ctx(), db.SessionTransitionPutParams{
 		ID:        t.ID,
 		SessionID: t.SessionID,
+		ProjectID: t.ProjectID,
 		Payload:   jsonBytes(sessionTransitionPayload{Type: t.Type, FromKey: t.FromKey, ToKey: t.ToKey, ProfileID: t.ProfileID, HandoffID: t.HandoffID, At: t.At}),
 	})
 }

@@ -120,5 +120,8 @@ func executionTransition(q *Request, id string, ev executionEvent) (bool, error)
 			}
 		}
 	}
+	if err := syncBotRunFromExecution(q, id); err != nil {
+		return false, err
+	}
 	return true, nil
 }

@@ -4631,3 +4631,56 @@ CREATE TABLE bot_memory_revision (
  created_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY (bot_id, revision)
 );
+
+-- migration 94: persistent bot runtime, home conversation link, wake cursors and run observability.
+ALTER TABLE bot
+ ADD COLUMN home_session_id text REFERENCES session(id) ON DELETE SET NULL,
+ ADD COLUMN paused boolean NOT NULL DEFAULT false,
+ ADD COLUMN paused_at timestamptz,
+ ADD COLUMN paused_by text,
+ ADD COLUMN resumed_at timestamptz;
+
+ALTER TABLE session
+ ADD COLUMN bot_id text REFERENCES bot(id) ON DELETE SET NULL;
+CREATE INDEX session_bot_id ON session(bot_id) WHERE bot_id IS NOT NULL;
+
+CREATE TABLE bot_wake_cursor (
+ bot_id text PRIMARY KEY REFERENCES bot(id) ON DELETE CASCADE,
+ project_id text NOT NULL,
+ needs_you_change_seq bigint NOT NULL DEFAULT 0,
+ last_schedule_key text NOT NULL DEFAULT '',
+ last_schedule_at timestamptz,
+ updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE bot_run (
+ id text PRIMARY KEY,
+ bot_id text NOT NULL REFERENCES bot(id) ON DELETE CASCADE,
+ project_id text NOT NULL,
+ bot_revision integer NOT NULL CHECK (bot_revision > 0),
+ memory_revision integer NOT NULL DEFAULT 0 CHECK (memory_revision >= 0),
+ session_id text REFERENCES session(id) ON DELETE SET NULL,
+ execution_id text REFERENCES execution(id) ON DELETE SET NULL,
+ queued_message_id text,
+ cause text NOT NULL CHECK (cause IN ('manual', 'schedule', 'needs_you', 'message')),
+ dedup_key text,
+ state text NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'running', 'waiting', 'succeeded', 'failed', 'cancelled', 'skipped')),
+ observation text NOT NULL DEFAULT 'confirmed' CHECK (observation IN ('confirmed', 'unconfirmed')),
+ quiet boolean NOT NULL DEFAULT false,
+ reason text NOT NULL DEFAULT '',
+ sent_by text NOT NULL DEFAULT '',
+ source text NOT NULL DEFAULT '',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ started_at timestamptz,
+ ended_at timestamptz,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz,
+ payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+ seq bigserial NOT NULL
+);
+CREATE INDEX bot_run_bot_seq ON bot_run(bot_id, seq DESC);
+CREATE INDEX bot_run_project_seq ON bot_run(project_id, seq DESC);
+CREATE UNIQUE INDEX bot_run_execution_uidx ON bot_run(execution_id) WHERE execution_id IS NOT NULL;
+CREATE UNIQUE INDEX bot_run_queued_message_uidx ON bot_run(queued_message_id) WHERE queued_message_id IS NOT NULL;
+CREATE UNIQUE INDEX bot_run_active_uidx ON bot_run(bot_id) WHERE tombstoned_at IS NULL AND execution_id IS NOT NULL AND state IN ('queued', 'running', 'waiting');
+CREATE UNIQUE INDEX bot_run_dedup_uidx ON bot_run(bot_id, dedup_key) WHERE tombstoned_at IS NULL AND dedup_key IS NOT NULL;

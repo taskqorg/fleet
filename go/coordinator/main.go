@@ -62,6 +62,7 @@ type App struct {
 	dispatchDoneGen     uint64
 	lostCh              chan struct{}
 	artifactWaitsCh     chan struct{}
+	botWakeCh           chan struct{}
 
 	envCacheGen  atomic.Uint64
 	envMu        sync.RWMutex
@@ -85,6 +86,7 @@ func (a *App) ensureRuntime() {
 		a.dispatchDoneCh = make(chan struct{})
 		a.lostCh = make(chan struct{}, 1)
 		a.artifactWaitsCh = make(chan struct{}, 1)
+		a.botWakeCh = make(chan struct{}, 1)
 		a.hostWake = map[string]*hostWakeEntry{}
 		a.heartbeats = map[string]*hostHeartbeat{}
 		a.stopCh = make(chan struct{})
@@ -231,6 +233,7 @@ func main() {
 	defer reqCancel()
 
 	a.stream = listen(bgCtx, database, store)
+	a.stream.setOnWake(a.wakeBots)
 	startTelemetry(bgCtx, a)
 	startAll(bgCtx, a)
 	port := os.Getenv("PORT")

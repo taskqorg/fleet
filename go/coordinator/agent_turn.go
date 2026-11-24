@@ -181,6 +181,12 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 	if prov != nil && validTraceparent(prov.Traceparent) {
 		e.Traceparent, e.TraceActor = prov.Traceparent, prov.TraceActor
 	}
+	if s.BotID != "" && e.BotContext == nil {
+		if b, err := unscoped(q, func() (botFull, error) { return readBotFull(q, s.BotID) }); err == nil {
+			e.BotContext = botContextOf(&b, "")
+			e.DirectedBy = b.Director
+		}
+	}
 	if err := executionPut(q, &e); err != nil {
 		return none, err
 	}
@@ -324,14 +330,33 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 	if source == "watch" || source == "wake" || source == "transition" {
 		sender = "Fleet"
 	}
+	var botForHome *botFull
+	if s.BotID != "" {
+		b, err := prepareBotSessionForTurn(q, &s)
+		if err != nil {
+			return none, err
+		}
+		botForHome = &b
+	}
 	if active == nil && len(waiting) == 0 {
 		if err := refreshProfile(q, &s); err != nil {
 			return none, err
 		}
 		payload := attachmentPayload(attachments, ids)
-		e, err := agentEnqueue(q, &s, text, requestID, payload, nil, "", &agentProvenance{SentBy: sender, Source: source})
+		var extra any
+		if botForHome != nil {
+			extra = struct {
+				BotContext *botExecutionContext `json:"botContext,omitempty"`
+			}{botContextOf(botForHome, "")}
+		}
+		e, err := agentEnqueue(q, &s, text, requestID, payload, extra, "", &agentProvenance{SentBy: sender, Source: source})
 		if err != nil {
 			return none, err
+		}
+		if botForHome != nil {
+			if err := recordHomeMessageRun(q, &s, botForHome, &e, nil, text, requestID, sender, source); err != nil {
+				return none, err
+			}
 		}
 		return agentSubmitted{execution: &e}, nil
 	}
@@ -359,6 +384,11 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 	}
 	if err := queuedMessagePut(q, &m); err != nil {
 		return none, err
+	}
+	if botForHome != nil {
+		if err := recordHomeMessageRun(q, &s, botForHome, nil, &m, text, requestID, sender, source); err != nil {
+			return none, err
+		}
 	}
 	if m.TaskID != "" {
 		if _, err := settleIdleTask(q, m.TaskID); err != nil {
@@ -427,6 +457,9 @@ func agentPromote(q *Request) error {
 			if err := queuedMessagePut(q, &m); err != nil {
 				return err
 			}
+			if err := transitionBotQueuedRun(q, m.ID, "cancelled", "cancelled before launch"); err != nil {
+				return err
+			}
 			continue
 		}
 		earlier := false
@@ -443,26 +476,52 @@ func agentPromote(q *Request) error {
 		} else if a != nil {
 			continue
 		}
+		var promotedBot *botFull
+		var isBotHome bool
 		e, err := func() (agentExecution, error) {
 			s, err := sessionLocked(q, sid)
 			if err != nil {
 				return agentExecution{}, err
 			}
-			if err := refreshProfile(q, &s); err != nil {
+			if s.BotID != "" {
+				isBotHome = true
+				b, err := prepareBotSessionForTurn(q, &s)
+				if err != nil {
+					return agentExecution{}, err
+				}
+				promotedBot = &b
+			} else if err := refreshProfile(q, &s); err != nil {
 				return agentExecution{}, err
 			}
 			var attachments []any
 			json.Unmarshal(m.Attachments, &attachments)
 			payload := attachmentPayload(attachments, m.AttachmentRequest)
-			return agentEnqueue(q, &s, m.Text, m.RequestID, payload, nil, "", &agentProvenance{SentBy: m.SentBy, Source: m.Source, Traceparent: m.Traceparent, TraceActor: m.TraceActor})
+			var extra any
+			if promotedBot != nil {
+				extra = struct {
+					BotContext *botExecutionContext `json:"botContext,omitempty"`
+				}{botContextOf(promotedBot, "")}
+			}
+			return agentEnqueue(q, &s, m.Text, m.RequestID, payload, extra, "", &agentProvenance{SentBy: m.SentBy, Source: m.Source, Traceparent: m.Traceparent, TraceActor: m.TraceActor})
 		}()
 		if err != nil {
 			if pgCode(err) != "" {
 				return err
 			}
 			m.Error = err.Error()
+			if isBotHome {
+				m.State = "failed"
+				if err := transitionBotQueuedRun(q, m.ID, "failed", err.Error()); err != nil {
+					return err
+				}
+			}
 		} else {
 			m.State, m.ExecutionID, m.Error = "started", e.ID, ""
+			if promotedBot != nil {
+				if err := attachBotRunExecution(q, m.ID, &e, promotedBot); err != nil {
+					return err
+				}
+			}
 		}
 		if err := queuedMessagePut(q, &m); err != nil {
 			return err

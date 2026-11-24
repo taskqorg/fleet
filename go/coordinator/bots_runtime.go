@@ -1,0 +1,1130 @@
+// Persistent bot runtime: shared wake admission, Home conversation lifecycle, daily schedule & Needs you triggers,
+// pause/stop lifecycle controls, and Runs observability.
+package main
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"strconv"
+	"strings"
+	"time"
+
+	"fleet/contract"
+	"fleet/coordinator/db"
+
+	"github.com/jackc/pgx/v5"
+)
+
+func (a *App) wakeBots() {
+	if a == nil {
+		return
+	}
+	a.ensureRuntime()
+	select {
+	case a.botWakeCh <- struct{}{}:
+	default:
+	}
+}
+
+// botExecutionContext is pinned onto each execution in a bot's Home conversation so dispatch uses the exact
+// settings revision, memory revision and execution project of that turn.
+type botExecutionContext struct {
+	BotID          string `json:"botId"`
+	BotRevision    int64  `json:"botRevision"`
+	MemoryRevision int64  `json:"memoryRevision"`
+	ProjectID      string `json:"projectId"`
+	Name           string `json:"name"`
+	Purpose        string `json:"purpose,omitempty"`
+	Instructions   string `json:"instructions,omitempty"`
+	Soul           string `json:"soul,omitempty"`
+	Memory         string `json:"memory,omitempty"`
+	BotRunID       string `json:"botRunId,omitempty"`
+}
+
+type botRunPayload struct {
+	Text      string                    `json:"text,omitempty"`
+	Triggers  []contract.BotRunWakeItem `json:"triggers,omitempty"`
+	DedupKeys []string                  `json:"dedupKeys,omitempty"`
+}
+
+func botContextOf(b *botFull, runID string) *botExecutionContext {
+	return &botExecutionContext{
+		BotID:          b.Id,
+		BotRevision:    b.Revision,
+		MemoryRevision: b.MemoryRevision,
+		ProjectID:      b.ProjectId,
+		Name:           b.Settings.Name,
+		Purpose:        b.Settings.Purpose,
+		Instructions:   b.Settings.Instructions,
+		Soul:           b.Settings.Soul,
+		Memory:         b.Memory,
+		BotRunID:       runID,
+	}
+}
+
+func formatBotInstructions(base string, bc *botExecutionContext) string {
+	if bc == nil {
+		return base
+	}
+	parts := []string{}
+	if s := strings.TrimSpace(base); s != "" {
+		parts = append(parts, s)
+	}
+	header := fmt.Sprintf("Bot %s (settings rev %d, memory rev %d, project %s)", bc.Name, bc.BotRevision, bc.MemoryRevision, bc.ProjectID)
+	if strings.TrimSpace(bc.Purpose) != "" {
+		header += ": " + strings.TrimSpace(bc.Purpose)
+	}
+	parts = append(parts, header)
+	if strings.TrimSpace(bc.Instructions) != "" {
+		parts = append(parts, "Bot instructions:\n"+strings.TrimSpace(bc.Instructions))
+	}
+	if strings.TrimSpace(bc.Soul) != "" {
+		parts = append(parts, "Bot SOUL:\n"+strings.TrimSpace(bc.Soul))
+	}
+	if strings.TrimSpace(bc.Memory) != "" {
+		parts = append(parts, fmt.Sprintf("Bot project memory (%s):\n%s", bc.ProjectID, strings.TrimSpace(bc.Memory)))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func botAuthorityCheck(q *Request, b *botFull) error {
+	dir := q.peopleSnapshot().person(b.Director)
+	if dir == nil {
+		return fail(403, "Bot director is no longer a person of this Fleet")
+	}
+	if !mayAccessProjectID(dir, b.ProjectId) {
+		return fail(403, "Bot director no longer has access to project "+b.ProjectId)
+	}
+	if _, err := readTrustedProfile(q, b.Settings.ProfileId); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureBotHomeSession ensures the bot has one stable, live, unarchived Home conversation in Conversations.
+func ensureBotHomeSession(q *Request, b *botFull) (agentSession, error) {
+	if sid := deref(b.HomeSessionId); sid != "" {
+		s, err := sessionMaybe(q, sid)
+		if err != nil {
+			return agentSession{}, err
+		}
+		if s != nil {
+			if s.ArchivedAt != nil {
+				s.ArchivedAt = nil
+				if err := sessionPut(q, s); err != nil {
+					return agentSession{}, err
+				}
+			}
+			return *s, nil
+		}
+	}
+	profile, err := readTrustedProfile(q, b.Settings.ProfileId)
+	if err != nil {
+		return agentSession{}, err
+	}
+	sid := newID()
+	branch := true
+	s := agentSession{
+		ID:          sid,
+		CreatedAt:   nowMs(),
+		AgentConfig: jsonBytes(profile),
+		Access:      "write",
+		Branch:      &branch,
+		ProjectID:   b.ProjectId,
+		DirectedBy:  b.Director,
+		BotID:       b.Id,
+	}
+	if err := sessionPut(q, &s); err != nil {
+		return agentSession{}, err
+	}
+	if _, err := q.db().TitleRename(q.ctx(), db.TitleRenameParams{ID: sid, Title: b.Settings.Name, TitleBy: "bot"}); err != nil {
+		return agentSession{}, err
+	}
+	if err := q.db().BotSetHomeSession(q.ctx(), db.BotSetHomeSessionParams{ID: b.Id, HomeSessionID: &sid}); err != nil {
+		return agentSession{}, err
+	}
+	b.HomeSessionId = &sid
+	return s, nil
+}
+
+// syncBotSessionCompatibility continues the native session when project, workspace, host, profile and account are
+// compatible, and otherwise creates a retained handoff scoped to the bot's execution project.
+func syncBotSessionCompatibility(q *Request, s *agentSession, b *botFull) error {
+	curProf, hasProf := s.profile()
+	if !hasProf || curProf.ID != b.Settings.ProfileId || s.ProjectID != b.ProjectId {
+		priorPerson := q.person
+		q.person = q.peopleSnapshot().person(b.Director)
+		if q.person == nil {
+			q.person = priorPerson
+			return fail(403, "Bot director is no longer a person of this Fleet")
+		}
+		_, err := agentTransition(q, agentTransitionArgs{
+			SessionID: s.ID,
+			ProfileID: b.Settings.ProfileId,
+			ProjectID: jsonBytes(b.ProjectId),
+		})
+		q.person = priorPerson
+		if err != nil {
+			return err
+		}
+		fresh, err := sessionLocked(q, s.ID)
+		if err != nil {
+			return err
+		}
+		*s = fresh
+		return nil
+	}
+	return refreshProfile(q, s)
+}
+
+// prepareBotSessionForTurn rechecks bot authority and aligns the Home session before queuing or launching a turn.
+func prepareBotSessionForTurn(q *Request, s *agentSession) (botFull, error) {
+	b, err := unscoped(q, func() (botFull, error) {
+		return readBotFull(q, s.BotID)
+	})
+	if err != nil {
+		return botFull{}, err
+	}
+	if err := botAuthorityCheck(q, &b); err != nil {
+		return b, err
+	}
+	if err := syncBotSessionCompatibility(q, s, &b); err != nil {
+		return b, err
+	}
+	return b, nil
+}
+
+// checkBotDispatchCompatibility verifies authority and native session host/account compatibility at dispatch time.
+func checkBotDispatchCompatibility(q *Request, e *dispatchExecution, liveSession *dispatchSession, host, effectiveAccount string, d dispatchSpec) error {
+	isBot := e.BotContext != nil || deref(liveSession.BotID) != ""
+	if !isBot {
+		return nil
+	}
+	pid := deref(d.ProjectID)
+	dir := q.peopleSnapshot().person(deref(e.DirectedBy))
+	if dir == nil || (pid != "" && !mayAccessProjectID(dir, pid)) {
+		return fail(403, "Bot director no longer has project access")
+	}
+	if deref(liveSession.NativeSessionID) == "" {
+		return nil
+	}
+	hostChanged := deref(d.Last) != "" && deref(d.Last) != host
+	accountChanged := false
+	if !hostChanged && effectiveAccount != "" {
+		last, err := q.db().BotLastSessionDispatch(q.ctx(), db.BotLastSessionDispatchParams{SessionID: &liveSession.ID, ID: e.ID})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err == nil && last.AccountBinding != "" && last.AccountBinding != effectiveAccount {
+			accountChanged = true
+		}
+	}
+	if !hostChanged && !accountChanged {
+		return nil
+	}
+	turns, err := transcript(q, liveSession.ID)
+	if err != nil {
+		return err
+	}
+	sess := agentSession{
+		ID:               liveSession.ID,
+		AgentConfig:      liveSession.AgentConfig,
+		Account:          deref(liveSession.Account),
+		ProjectID:        pid,
+		WorkingDirectory: deref(d.WorkingDirectory),
+		WorkspaceKey:     deref(d.WorkspaceKey),
+	}
+	source := "host " + deref(d.Last)
+	if accountChanged {
+		source = "account change"
+	}
+	h, err := makeHandoff(q, &sess, turns, "bot_compatibility_handoff", source)
+	if err != nil {
+		return err
+	}
+	liveSession.NativeSessionID = nil
+	delete(liveSession.rest, "nativeSessionId")
+	if h != nil {
+		liveSession.PendingHandoffID = h.ID
+	}
+	return dispatchSessionPut(q, liveSession)
+}
+
+func initBotWakeCursor(q *Request, botID, projectID string) error {
+	h, err := head(q.ctx(), q.tx)
+	if err != nil {
+		return err
+	}
+	cur, err := q.db().BotWakeCursorGet(q.ctx(), botID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return q.db().BotWakeCursorUpsert(q.ctx(), db.BotWakeCursorUpsertParams{
+			BotID:             botID,
+			ProjectID:         projectID,
+			NeedsYouChangeSeq: h,
+		})
+	}
+	if err != nil {
+		return err
+	}
+	return q.db().BotWakeCursorUpsert(q.ctx(), db.BotWakeCursorUpsertParams{
+		BotID:             botID,
+		ProjectID:         projectID,
+		NeedsYouChangeSeq: h,
+		LastScheduleKey:   cur.LastScheduleKey,
+		LastScheduleAt:    cur.LastScheduleAt,
+	})
+}
+
+func botRunRowToContract(id string, botID string, projectID string, botRev, memRev int32, sessionID, execID, qmsgID *string, cause string, dedupKey *string, state, obs string, quiet bool, reason, sentBy, source string, hostID, problem *string, createdAt time.Time, startedAt, endedAt *time.Time, payload []byte) contract.BotRunRecord {
+	var p botRunPayload
+	if len(payload) > 0 {
+		_ = json.Unmarshal(payload, &p)
+	}
+	triggers := p.Triggers
+	if triggers == nil {
+		triggers = []contract.BotRunWakeItem{}
+	}
+	return contract.BotRunRecord{
+		Id:              id,
+		BotId:           botID,
+		ProjectId:       projectID,
+		BotRevision:     int64(botRev),
+		MemoryRevision:  int64(memRev),
+		SessionId:       sessionID,
+		ExecutionId:     execID,
+		QueuedMessageId: qmsgID,
+		Cause:           contract.BotRunCause(cause),
+		DedupKey:        dedupKey,
+		State:           contract.BotRunState(state),
+		Observation:     contract.BotRunObservation(obs),
+		Quiet:           quiet,
+		Reason:          optStr(reason),
+		SentBy:          optStr(sentBy),
+		Source:          optStr(source),
+		HostId:          hostID,
+		Problem:         problem,
+		CreatedAt:       createdAt.UTC().Format(time.RFC3339Nano),
+		StartedAt:       formatTimePtr(startedAt),
+		EndedAt:         formatTimePtr(endedAt),
+		Triggers:        triggers,
+	}
+}
+
+func readBotRun(q *Request, id string) (contract.BotRunRecord, error) {
+	r, err := q.db().BotRunGet(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return contract.BotRunRecord{}, errNotFound
+	}
+	if err != nil {
+		return contract.BotRunRecord{}, err
+	}
+	return botRunRowToContract(r.ID, r.BotID, r.ProjectID, r.BotRevision, r.MemoryRevision, r.SessionID, r.ExecutionID, r.QueuedMessageID, r.Cause, r.DedupKey, r.State, r.Observation, r.Quiet, r.Reason, r.SentBy, r.Source, r.HostID, r.Problem, r.CreatedAt, r.StartedAt, r.EndedAt, r.Payload), nil
+}
+
+type botWakeReq struct {
+	Cause      string
+	DedupKey   string
+	DedupKeys  []string
+	Text       string
+	SentBy     string
+	Source     string
+	Triggers   []contract.BotRunWakeItem
+	CheckPause bool
+}
+
+// admitBotWake runs the shared admission flow for Run now, scheduled wakes and Needs you triggers.
+func admitBotWake(q *Request, b *botFull, req botWakeReq) (contract.BotRunRecord, bool, error) {
+	var none contract.BotRunRecord
+	if req.DedupKey != "" {
+		existingID, err := q.db().BotRunByDedup(q.ctx(), db.BotRunByDedupParams{BotID: b.Id, DedupKey: &req.DedupKey})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return none, false, err
+		}
+		if err == nil {
+			existingRow, err := q.db().BotRunGet(q.ctx(), existingID)
+			if err != nil {
+				return none, false, err
+			}
+			var p botRunPayload
+			if len(existingRow.Payload) > 0 {
+				_ = json.Unmarshal(existingRow.Payload, &p)
+			}
+			if req.Cause == "manual" && req.Text != "" && p.Text != "" && p.Text != req.Text {
+				return none, false, fail(409, "Request identity conflict")
+			}
+			rec := botRunRowToContract(existingRow.ID, existingRow.BotID, existingRow.ProjectID, existingRow.BotRevision, existingRow.MemoryRevision, existingRow.SessionID, existingRow.ExecutionID, existingRow.QueuedMessageID, existingRow.Cause, existingRow.DedupKey, existingRow.State, existingRow.Observation, existingRow.Quiet, existingRow.Reason, existingRow.SentBy, existingRow.Source, existingRow.HostID, existingRow.Problem, existingRow.CreatedAt, existingRow.StartedAt, existingRow.EndedAt, existingRow.Payload)
+			return rec, false, nil
+		}
+	}
+
+	s, err := ensureBotHomeSession(q, b)
+	if err != nil {
+		return none, false, err
+	}
+	if err := acquireTxLock(q, "session:"+s.ID); err != nil {
+		return none, false, err
+	}
+	if s, err = sessionLocked(q, s.ID); err != nil {
+		return none, false, err
+	}
+
+	runID := newID()
+	payloadBytes := jsonBytes(botRunPayload{Text: req.Text, Triggers: req.Triggers, DedupKeys: req.DedupKeys})
+
+	recordTerminalSkip := func(state, reason string, dedup *string) (contract.BotRunRecord, bool, error) {
+		inserted, err := botRunInsert(q, db.BotRunInsertParams{
+			ID:             runID,
+			BotID:          b.Id,
+			ProjectID:      b.ProjectId,
+			BotRevision:    int32(b.Revision),
+			MemoryRevision: int32(b.MemoryRevision),
+			SessionID:      &s.ID,
+			Cause:          req.Cause,
+			DedupKey:       dedup,
+			State:          state,
+			Observation:    "confirmed",
+			Reason:         reason,
+			SentBy:         req.SentBy,
+			Source:         req.Source,
+			Payload:        payloadBytes,
+		})
+		if err != nil {
+			return none, false, err
+		}
+		if !inserted && dedup != nil {
+			if id, err := q.db().BotRunByDedup(q.ctx(), db.BotRunByDedupParams{BotID: b.Id, DedupKey: dedup}); err == nil {
+				rec, err := readBotRun(q, id)
+				return rec, false, err
+			}
+		}
+		rec, err := readBotRun(q, runID)
+		return rec, false, err
+	}
+
+	if req.CheckPause && b.Paused {
+		return recordTerminalSkip("skipped", "paused", optStr(req.DedupKey))
+	}
+
+	activeRun, err := q.db().BotRunActiveForBot(q.ctx(), b.Id)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return none, false, err
+	}
+	hasActiveRun := err == nil && activeRun.ID != ""
+	activeExec, err := agentActive(q, s.ID)
+	if err != nil {
+		return none, false, err
+	}
+	if hasActiveRun || activeExec != nil {
+		return recordTerminalSkip("skipped", "active_run", optStr(req.DedupKey))
+	}
+
+	if err := botAuthorityCheck(q, b); err != nil {
+		return recordTerminalSkip("failed", err.Error(), optStr(req.DedupKey))
+	}
+	if err := syncBotSessionCompatibility(q, &s, b); err != nil {
+		return none, false, err
+	}
+
+	e, err := agentEnqueue(q, &s, req.Text, "bot:"+runID, nil, struct {
+		BotContext *botExecutionContext `json:"botContext,omitempty"`
+	}{botContextOf(b, runID)}, "", &agentProvenance{SentBy: req.SentBy, Source: req.Source})
+	if err != nil {
+		return none, false, err
+	}
+	inserted, err := botRunInsert(q, db.BotRunInsertParams{
+		ID:             runID,
+		BotID:          b.Id,
+		ProjectID:      b.ProjectId,
+		BotRevision:    int32(b.Revision),
+		MemoryRevision: int32(b.MemoryRevision),
+		SessionID:      &s.ID,
+		ExecutionID:    &e.ID,
+		Cause:          req.Cause,
+		DedupKey:       optStr(req.DedupKey),
+		State:          "queued",
+		Observation:    "confirmed",
+		SentBy:         req.SentBy,
+		Source:         req.Source,
+		Payload:        payloadBytes,
+	})
+	if err != nil {
+		return none, false, err
+	}
+	if !inserted {
+		return recordTerminalSkip("skipped", "active_run", nil)
+	}
+	if q.app != nil {
+		afterCommit(q, func() { q.app.wakeDispatch() })
+	}
+	rec, err := readBotRun(q, runID)
+	return rec, true, err
+}
+
+func recordHomeMessageRun(q *Request, s *agentSession, b *botFull, e *agentExecution, m *agentQueued, text, requestID, sentBy, source string) error {
+	runID := newID()
+	var execID, qmsgID *string
+	if e != nil {
+		execID = &e.ID
+	}
+	if m != nil {
+		qmsgID = &m.ID
+	}
+	dedup := "message:" + requestID
+	payloadBytes := jsonBytes(botRunPayload{Text: text})
+	_, err := botRunInsert(q, db.BotRunInsertParams{
+		ID:              runID,
+		BotID:           b.Id,
+		ProjectID:       b.ProjectId,
+		BotRevision:     int32(b.Revision),
+		MemoryRevision:  int32(b.MemoryRevision),
+		SessionID:       &s.ID,
+		ExecutionID:     execID,
+		QueuedMessageID: qmsgID,
+		Cause:           "message",
+		DedupKey:        &dedup,
+		State:           "queued",
+		Observation:     "confirmed",
+		SentBy:          sentBy,
+		Source:          source,
+		Payload:         payloadBytes,
+	})
+	return err
+}
+
+func attachBotRunExecution(q *Request, queuedMsgID string, e *agentExecution, b *botFull) error {
+	br, err := unscoped(q, func() (db.BotRunByQueuedMessageRow, error) {
+		return q.db().BotRunByQueuedMessage(q.ctx(), &queuedMsgID)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = unscoped(q, func() (struct{}, error) {
+		return struct{}{}, q.db().BotRunAttachExecution(q.ctx(), db.BotRunAttachExecutionParams{
+			ID:             br.ID,
+			ExecutionID:    &e.ID,
+			BotRevision:    int32(b.Revision),
+			MemoryRevision: int32(b.MemoryRevision),
+			ProjectID:      b.ProjectId,
+		})
+	})
+	return err
+}
+
+func transitionBotQueuedRun(q *Request, queuedMsgID, state, reason string) error {
+	br, err := unscoped(q, func() (db.BotRunByQueuedMessageRow, error) {
+		return q.db().BotRunByQueuedMessage(q.ctx(), &queuedMsgID)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if botRunEnds(br.State) {
+		return nil
+	}
+	_, err = unscoped(q, func() (bool, error) {
+		return botRunTransition(q, br.ID, botRunEvent{To: state, Reason: optStr(reason)})
+	})
+	return err
+}
+
+func botRunOp(q *Request, r *contract.BotRunRequest) (contract.BotRunReply, error) {
+	var out contract.BotRunReply
+	b, err := readBotFull(q, r.BotId)
+	if err != nil {
+		return out, err
+	}
+	if err := botDirects(q, b.BotRecord); err != nil {
+		return out, err
+	}
+	dedupKey := ""
+	if rid := strings.TrimSpace(deref(r.RequestId)); rid != "" {
+		dedupKey = "manual:" + rid
+	}
+	text := strings.TrimSpace(deref(r.Text))
+	if text == "" {
+		text = fmt.Sprintf("Fleet: manual run requested for %s (%s). Inspect your project state and handle any open work.", b.Settings.Name, b.ProjectId)
+	}
+	run, admitted, err := admitBotWake(q, &b, botWakeReq{
+		Cause:    "manual",
+		DedupKey: dedupKey,
+		Text:     text,
+		SentBy:   director(q),
+		Source:   "bot_run",
+	})
+	if err != nil {
+		return out, err
+	}
+	fresh, err := readBot(q, b.Id)
+	if err != nil {
+		return out, err
+	}
+	return contract.BotRunReply{Bot: fresh, Run: run, Admitted: admitted}, nil
+}
+
+func botPauseOp(q *Request, r *contract.BotPauseRequest) (contract.BotPauseReply, error) {
+	var out contract.BotPauseReply
+	b, err := readBotFull(q, r.BotId)
+	if err != nil {
+		return out, err
+	}
+	if err := botDirects(q, b.BotRecord); err != nil {
+		return out, err
+	}
+	prev := b.Paused
+	if prev != r.Paused {
+		by := actor(q, "fleet")
+		if err := q.db().BotSetPaused(q.ctx(), db.BotSetPausedParams{ID: b.Id, Paused: r.Paused, PausedBy: &by}); err != nil {
+			return out, err
+		}
+		if err := audit(q, "bot:"+b.Id, "paused", prev, r.Paused, auditExtra{ProjectID: &b.ProjectId, Reason: deref(r.Reason)}); err != nil {
+			return out, err
+		}
+		if !r.Paused && q.app != nil {
+			afterCommit(q, func() { q.app.wakeBots() })
+		}
+	}
+	fresh, err := readBot(q, b.Id)
+	return contract.BotPauseReply{Bot: fresh}, err
+}
+
+func botStopOp(q *Request, r *contract.BotStopRequest) (contract.BotStopReply, error) {
+	out := contract.BotStopReply{BotId: r.BotId}
+	b, err := readBotFull(q, r.BotId)
+	if err != nil {
+		return out, err
+	}
+	if err := botDirects(q, b.BotRecord); err != nil {
+		return out, err
+	}
+	active, err := q.db().BotRunActiveForBot(q.ctx(), b.Id)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return out, err
+	}
+	var execID string
+	var runID string
+	if err == nil {
+		runID = active.ID
+		execID = deref(active.ExecutionID)
+	}
+	if execID == "" && b.HomeSessionId != nil {
+		if ae, err := agentActive(q, *b.HomeSessionId); err != nil {
+			return out, err
+		} else if ae != nil {
+			execID = ae.ID
+		}
+	}
+	if execID == "" {
+		return out, nil
+	}
+	stopRep, err := requestExecutionStop(q, execID, false)
+	if err != nil {
+		return out, err
+	}
+	if err := syncBotRunFromExecution(q, execID); err != nil {
+		return out, err
+	}
+	out.Stopped = true
+	out.Stop = &stopRep.Stop
+	if runID != "" {
+		rec, err := readBotRun(q, runID)
+		if err != nil {
+			return out, err
+		}
+		out.Run = &rec
+	}
+	return out, nil
+}
+
+func botRunsOp(q *Request, r *contract.BotRunsRequest) (contract.BotRunsReply, error) {
+	out := contract.BotRunsReply{Runs: []contract.BotRunRecord{}}
+	if r.BotId != nil && *r.BotId != "" {
+		if _, err := readBot(q, *r.BotId); err != nil {
+			return out, err
+		}
+	}
+	if r.ProjectId != nil && *r.ProjectId != "" && projectSettingsOf(q, *r.ProjectId) == nil {
+		return out, errNotFound
+	}
+	var afterSeq *int64
+	var afterID *string
+	if r.After != nil && *r.After != "" {
+		parts := strings.SplitN(*r.After, ":", 2)
+		if len(parts) != 2 || parts[1] == "" {
+			return out, fail(400, "Invalid bot runs cursor")
+		}
+		seq, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			return out, fail(400, "Invalid bot runs cursor")
+		}
+		if _, err := q.db().BotRunGet(q.ctx(), parts[1]); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return out, fail(400, "Invalid bot runs cursor")
+			}
+			return out, err
+		}
+		afterSeq = &seq
+		afterID = &parts[1]
+	}
+	limit := int64(50)
+	if r.Limit != nil {
+		limit = *r.Limit
+		if limit < 1 {
+			return out, fail(400, "Expected limit >= 1")
+		}
+		if limit > 200 {
+			limit = 200
+		}
+	}
+	var state, cause, obs *string
+	if r.State != nil {
+		s := string(*r.State)
+		state = &s
+	}
+	if r.Cause != nil {
+		c := string(*r.Cause)
+		cause = &c
+	}
+	if r.Observation != nil {
+		o := string(*r.Observation)
+		obs = &o
+	}
+	rows, err := q.db().BotRunsList(q.ctx(), db.BotRunsListParams{
+		BotID:             r.BotId,
+		ProjectID:         r.ProjectId,
+		ProjectIds:        r.ProjectIds,
+		ExcludeProjectIds: r.ExcludeProjectIds,
+		State:             state,
+		Cause:             cause,
+		Observation:       obs,
+		Quiet:             r.Quiet,
+		AfterSeq:          afterSeq,
+		AfterID:           afterID,
+		Lim:               int32(limit + 1),
+	})
+	if err != nil {
+		return out, err
+	}
+	if int64(len(rows)) > limit {
+		out.HasMore = true
+		rows = rows[:limit]
+	}
+	for _, row := range rows {
+		if q.person != nil && !mayAccessProjectID(q.person, row.ProjectID) {
+			continue
+		}
+		out.Runs = append(out.Runs, botRunRowToContract(
+			row.ID, row.BotID, row.ProjectID, row.BotRevision, row.MemoryRevision,
+			row.SessionID, row.ExecutionID, row.QueuedMessageID, row.Cause, row.DedupKey,
+			row.State, row.Observation, row.Quiet, row.Reason, row.SentBy, row.Source,
+			row.HostID, row.Problem, row.CreatedAt, row.StartedAt, row.EndedAt, row.Payload,
+		))
+	}
+	if out.HasMore && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		next := fmt.Sprintf("%d:%s", last.Seq, last.ID)
+		out.NextAfter = &next
+	}
+	return out, nil
+}
+
+func scheduleDueSlot(b *botFull, lastKey string, now time.Time) (slotKey string, due bool) {
+	if b.Settings.ScheduleTime == "" || b.Settings.ScheduleZone == "" {
+		return "", false
+	}
+	loc, err := time.LoadLocation(b.Settings.ScheduleZone)
+	if err != nil {
+		return "", false
+	}
+	t, err := time.Parse("15:04", b.Settings.ScheduleTime)
+	if err != nil {
+		return "", false
+	}
+	localNow := now.In(loc)
+	scheduledAt := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), t.Hour(), t.Minute(), 0, 0, loc)
+	effectiveSince := b.RevisionCreatedAt.In(loc).Truncate(time.Minute)
+	if b.ResumedAt != nil {
+		if r := b.ResumedAt.In(loc).Truncate(time.Minute); r.After(effectiveSince) {
+			effectiveSince = r
+		}
+	}
+	slotKey = localNow.Format("2006-01-02") + "|" + b.Settings.ScheduleTime + "|" + b.Settings.ScheduleZone
+	if localNow.Before(scheduledAt) || scheduledAt.Before(effectiveSince) || lastKey == slotKey {
+		return slotKey, false
+	}
+	return slotKey, true
+}
+
+func problemDedupHash(problem string) string {
+	sum := sha256.Sum256([]byte(problem))
+	return hex.EncodeToString(sum[:6])
+}
+
+func botTriggerPass(ctx context.Context, a *App, now time.Time) error {
+	type botSnap struct {
+		bot    db.BotListForTriggersRow
+		cursor db.BotWakeCursor
+		head   int64
+	}
+	var snaps []botSnap
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
+		bots, err := q.db().BotListForTriggers(q.ctx())
+		if err != nil {
+			return err
+		}
+		if len(bots) == 0 {
+			return nil
+		}
+		h, err := head(q.ctx(), q.tx)
+		if err != nil {
+			return err
+		}
+		for _, b := range bots {
+			cur, err := q.db().BotWakeCursorGet(q.ctx(), b.ID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				cur = db.BotWakeCursor{BotID: b.ID, ProjectID: b.ProjectID}
+			} else if err != nil {
+				return err
+			}
+			snaps = append(snaps, botSnap{bot: b, cursor: cur, head: h})
+		}
+		return nil
+	}); err != nil {
+		log.Printf("bots trigger read: %v", err)
+		return err
+	}
+	for _, sn := range snaps {
+		full := botFull{
+			BotRecord: contract.BotRecord{
+				Id:             sn.bot.ID,
+				ProjectId:      sn.bot.ProjectID,
+				Director:       sn.bot.Director,
+				Revision:       int64(sn.bot.Revision),
+				MemoryRevision: int64(sn.bot.MemoryRevision),
+				HomeSessionId:  sn.bot.HomeSessionID,
+				Paused:         sn.bot.Paused,
+				PausedAt:       formatTimePtr(sn.bot.PausedAt),
+				Memory:         sn.bot.Memory,
+				Settings: contract.BotSettings{
+					Name:           sn.bot.Name,
+					Purpose:        sn.bot.Purpose,
+					ProfileId:      sn.bot.ProfileID,
+					Instructions:   sn.bot.Instructions,
+					Soul:           sn.bot.Soul,
+					ScheduleTime:   sn.bot.ScheduleTime,
+					ScheduleZone:   sn.bot.ScheduleZone,
+					WakeOnNeedsYou: sn.bot.WakeOnNeedsYou,
+				},
+			},
+			RevisionCreatedAt: sn.bot.RevisionCreatedAt,
+			ResumedAt:         sn.bot.ResumedAt,
+		}
+		_, dueSched := scheduleDueSlot(&full, sn.cursor.LastScheduleKey, now)
+		needsChangeCheck := sn.bot.WakeOnNeedsYou && sn.cursor.NeedsYouChangeSeq != sn.head
+		if !dueSched && !needsChangeCheck {
+			continue
+		}
+		if err := a.store.Write(ctx, nil, []string{"bot:" + sn.bot.ID}, func(q *Request) error {
+			return botProcessTriggersOne(q, sn.bot.ID, now)
+		}); err != nil {
+			log.Printf("bot %s trigger: %v", sn.bot.ID, err)
+		}
+	}
+	return nil
+}
+
+func botProcessTriggersOne(q *Request, botID string, now time.Time) error {
+	b, err := readBotFull(q, botID)
+	if errors.Is(err, errNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	cur, err := q.db().BotWakeCursorGet(q.ctx(), botID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		cur = db.BotWakeCursor{BotID: botID, ProjectID: b.ProjectId}
+	} else if err != nil {
+		return err
+	}
+
+	s, err := ensureBotHomeSession(q, &b)
+	if err != nil {
+		return err
+	}
+
+	// 1. Scheduled daily wake
+	if slotKey, due := scheduleDueSlot(&b, cur.LastScheduleKey, now); due {
+		cur.LastScheduleKey = slotKey
+		cur.LastScheduleAt = &now
+		if err := q.db().BotWakeCursorUpsert(q.ctx(), db.BotWakeCursorUpsertParams{
+			BotID:             b.Id,
+			ProjectID:         b.ProjectId,
+			NeedsYouChangeSeq: cur.NeedsYouChangeSeq,
+			LastScheduleKey:   cur.LastScheduleKey,
+			LastScheduleAt:    cur.LastScheduleAt,
+		}); err != nil {
+			return err
+		}
+		prompt := fmt.Sprintf("Fleet: scheduled daily wake (%s %s) for %s in project %s.", b.Settings.ScheduleTime, b.Settings.ScheduleZone, b.Settings.Name, b.ProjectId)
+		if _, _, err := admitBotWake(q, &b, botWakeReq{
+			Cause:      "schedule",
+			DedupKey:   "schedule:" + b.Id + ":" + slotKey,
+			Text:       prompt,
+			SentBy:     "Fleet",
+			Source:     "schedule",
+			CheckPause: true,
+		}); err != nil {
+			return err
+		}
+	}
+
+	// 2. Needs you trigger
+	if !b.Settings.WakeOnNeedsYou {
+		return nil
+	}
+	cursor := cur.NeedsYouChangeSeq
+	var qids, eids []string
+	qseen, eseen := map[string]bool{}, map[string]bool{}
+	resynced := false
+	held := false
+
+	ownActors := map[string]bool{}
+	ownExecIDs := map[string]bool{}
+	ownExecList, err := q.db().BotOwnExecutions(q.ctx(), &s.ID)
+	if err != nil {
+		return err
+	}
+	for _, eid := range ownExecList {
+		ownExecIDs[eid] = true
+		ownActors["execution:"+eid] = true
+	}
+	childSessions := map[string]bool{}
+	cs, err := q.db().ChildSessionIDs(q.ctx(), &s.ID)
+	if err != nil {
+		return err
+	}
+	for _, cid := range cs {
+		childSessions[cid] = true
+	}
+
+	for {
+		page, next, resync, pageHeld, err := since(q.ctx(), q.tx, cursor, 500)
+		if err != nil {
+			return err
+		}
+		if pageHeld {
+			held = true
+		}
+		if resync {
+			cursor = next
+			resynced = true
+			break
+		}
+		for _, c := range page {
+			if c.ProjectID == nil || *c.ProjectID != b.ProjectId {
+				continue
+			}
+			if (c.Actor != nil && ownActors[*c.Actor]) || (c.SessionId != nil && (*c.SessionId == s.ID || childSessions[*c.SessionId])) {
+				continue
+			}
+			switch c.Kind {
+			case "question":
+				if !qseen[c.Id] {
+					qseen[c.Id] = true
+					qids = append(qids, c.Id)
+				}
+			case "execution":
+				if !eseen[c.Id] {
+					eseen[c.Id] = true
+					eids = append(eids, c.Id)
+				}
+			}
+		}
+		cursor = next
+		if len(page) < 500 {
+			break
+		}
+	}
+
+	type triggerCandidate struct {
+		item     contract.BotRunWakeItem
+		dedupKey string
+	}
+	var candidates []triggerCandidate
+
+	handledRows, err := q.db().BotHandledDedupPayloads(q.ctx(), b.Id)
+	if err != nil {
+		return err
+	}
+	handled := map[string]bool{}
+	for _, hr := range handledRows {
+		if hr.DedupKey != nil && *hr.DedupKey != "" {
+			handled[*hr.DedupKey] = true
+		}
+		if len(hr.Payload) > 0 {
+			var p botRunPayload
+			if json.Unmarshal(hr.Payload, &p) == nil {
+				for _, dk := range p.DedupKeys {
+					if dk != "" {
+						handled[dk] = true
+					}
+				}
+			}
+		}
+	}
+
+	if resynced || len(qids) > 0 {
+		var argIDs []string
+		if !resynced {
+			argIDs = qids
+		}
+		qs, err := q.db().BotNeedsYouQuestions(q.ctx(), db.BotNeedsYouQuestionsParams{ProjectID: b.ProjectId, Ids: argIDs})
+		if err != nil {
+			return err
+		}
+		for _, qu := range qs {
+			if qu.SessionID != nil && (*qu.SessionID == s.ID || childSessions[*qu.SessionID]) {
+				continue
+			}
+			if qu.ExecutionID != nil && ownExecIDs[*qu.ExecutionID] {
+				continue
+			}
+			if qu.AskedBy != nil && (ownActors[*qu.AskedBy] || ownExecIDs[*qu.AskedBy]) {
+				continue
+			}
+			dk := "needs_you:question:" + qu.ID
+			if handled[dk] {
+				continue
+			}
+			candidates = append(candidates, triggerCandidate{
+				item: contract.BotRunWakeItem{
+					Kind:      "question",
+					Id:        qu.ID,
+					ProjectId: qu.ProjectID,
+					Summary:   &qu.Text,
+				},
+				dedupKey: dk,
+			})
+		}
+	}
+
+	if resynced || len(eids) > 0 {
+		var argIDs []string
+		if !resynced {
+			argIDs = eids
+		}
+		es, err := q.db().BotNeedsYouExecutions(q.ctx(), db.BotNeedsYouExecutionsParams{ProjectID: b.ProjectId, Ids: argIDs})
+		if err != nil {
+			return err
+		}
+		for _, ex := range es {
+			if ex.SessionID != nil && (*ex.SessionID == s.ID || childSessions[*ex.SessionID]) {
+				continue
+			}
+			if ownExecIDs[ex.ID] {
+				continue
+			}
+			prob := deref(ex.Problem)
+			dk := "needs_you:execution:" + ex.ID + ":" + problemDedupHash(prob)
+			if handled[dk] {
+				continue
+			}
+			candidates = append(candidates, triggerCandidate{
+				item: contract.BotRunWakeItem{
+					Kind:      "execution",
+					Id:        ex.ID,
+					ProjectId: ex.ProjectID,
+					Summary:   &prob,
+				},
+				dedupKey: dk,
+			})
+		}
+	}
+
+	if len(candidates) == 0 {
+		if cursor != cur.NeedsYouChangeSeq {
+			cur.NeedsYouChangeSeq = cursor
+			if err := q.db().BotWakeCursorUpsert(q.ctx(), db.BotWakeCursorUpsertParams{
+				BotID:             b.Id,
+				ProjectID:         b.ProjectId,
+				NeedsYouChangeSeq: cur.NeedsYouChangeSeq,
+				LastScheduleKey:   cur.LastScheduleKey,
+				LastScheduleAt:    cur.LastScheduleAt,
+			}); err != nil {
+				return err
+			}
+		}
+		if held && q.app != nil {
+			afterCommit(q, func() { q.app.wakeBots() })
+		}
+		return nil
+	}
+
+	triggers := make([]contract.BotRunWakeItem, 0, len(candidates))
+	dedupKeys := make([]string, 0, len(candidates))
+	summaries := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		triggers = append(triggers, c.item)
+		dedupKeys = append(dedupKeys, c.dedupKey)
+		summaries = append(summaries, fmt.Sprintf("%s %s: %s", c.item.Kind, c.item.Id, deref(c.item.Summary)))
+	}
+	primaryDedup := candidates[0].dedupKey
+	prompt := fmt.Sprintf("Fleet: %d new Needs you entry(s) in %s: %s", len(triggers), b.ProjectId, strings.Join(summaries, "; "))
+
+	// If a run is already active (and bot is not paused), keep the Needs-you cursor deferred so the item wakes
+	// as soon as the active run completes, while recording a single deduplicated skipped run for observability.
+	if !b.Paused {
+		activeRun, err := q.db().BotRunActiveForBot(q.ctx(), b.Id)
+		hasActive := err == nil && activeRun.ID != ""
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		activeExec, err := agentActive(q, s.ID)
+		if err != nil {
+			return err
+		}
+		if hasActive || activeExec != nil {
+			_, _, err := admitBotWake(q, &b, botWakeReq{
+				Cause:      "needs_you",
+				DedupKey:   "active_skip:" + primaryDedup,
+				Text:       prompt,
+				SentBy:     "Fleet",
+				Source:     "needs_you",
+				Triggers:   triggers,
+				CheckPause: true,
+			})
+			return err
+		}
+	}
+
+	if _, _, err := admitBotWake(q, &b, botWakeReq{
+		Cause:      "needs_you",
+		DedupKey:   primaryDedup,
+		DedupKeys:  dedupKeys,
+		Text:       prompt,
+		SentBy:     "Fleet",
+		Source:     "needs_you",
+		Triggers:   triggers,
+		CheckPause: true,
+	}); err != nil {
+		return err
+	}
+	cur.NeedsYouChangeSeq = cursor
+	return q.db().BotWakeCursorUpsert(q.ctx(), db.BotWakeCursorUpsertParams{
+		BotID:             b.Id,
+		ProjectID:         b.ProjectId,
+		NeedsYouChangeSeq: cur.NeedsYouChangeSeq,
+		LastScheduleKey:   cur.LastScheduleKey,
+		LastScheduleAt:    cur.LastScheduleAt,
+	})
+}

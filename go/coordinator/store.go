@@ -55,7 +55,7 @@ var deletedHostRoutes = map[string]bool{"/api/hosts/poll": true, "/api/hosts/rec
 // Canonical advisory-lock hierarchy. Within any transaction, requested locks are sorted and deduplicated by (rank, key),
 // and dynamic lock acquisition rejects any lock ordered before or equal to a lock already held in the transaction:
 //
-//	GLOBAL < DISPATCH < project:* < task:* < session:* < experiment:* < execution:* < host:* < usageKey:* < person-setting:* < budget:* < problems:* < board:*
+//	GLOBAL < DISPATCH < project:* < bot:* < task:* < session:* < experiment:* < execution:* < host:* < usageKey:* < person-setting:* < budget:* < problems:* < board:*
 const (
 	GLOBAL   = "fleet:write"
 	DISPATCH = "dispatch"
@@ -70,26 +70,28 @@ func lockRank(key string) (int, error) {
 		return 1, nil
 	case strings.HasPrefix(key, "project:") && len(key) > len("project:"):
 		return 2, nil
-	case strings.HasPrefix(key, "task:") && len(key) > len("task:"):
+	case strings.HasPrefix(key, "bot:") && len(key) > len("bot:"):
 		return 3, nil
-	case strings.HasPrefix(key, "session:") && len(key) > len("session:"):
+	case strings.HasPrefix(key, "task:") && len(key) > len("task:"):
 		return 4, nil
-	case strings.HasPrefix(key, "experiment:") && len(key) > len("experiment:"):
+	case strings.HasPrefix(key, "session:") && len(key) > len("session:"):
 		return 5, nil
-	case strings.HasPrefix(key, "execution:") && len(key) > len("execution:"):
+	case strings.HasPrefix(key, "experiment:") && len(key) > len("experiment:"):
 		return 6, nil
-	case strings.HasPrefix(key, "host:") && len(key) > len("host:"):
+	case strings.HasPrefix(key, "execution:") && len(key) > len("execution:"):
 		return 7, nil
-	case strings.HasPrefix(key, "usageKey:") && len(key) > len("usageKey:"):
+	case strings.HasPrefix(key, "host:") && len(key) > len("host:"):
 		return 8, nil
-	case strings.HasPrefix(key, "person-setting:") && len(key) > len("person-setting:"):
+	case strings.HasPrefix(key, "usageKey:") && len(key) > len("usageKey:"):
 		return 9, nil
-	case strings.HasPrefix(key, "budget:") && len(key) > len("budget:"):
+	case strings.HasPrefix(key, "person-setting:") && len(key) > len("person-setting:"):
 		return 10, nil
-	case strings.HasPrefix(key, "problems:") && len(key) > len("problems:"):
+	case strings.HasPrefix(key, "budget:") && len(key) > len("budget:"):
 		return 11, nil
-	case strings.HasPrefix(key, "board:") && len(key) > len("board:"):
+	case strings.HasPrefix(key, "problems:") && len(key) > len("problems:"):
 		return 12, nil
+	case strings.HasPrefix(key, "board:") && len(key) > len("board:"):
+		return 13, nil
 	default:
 		return -1, fmt.Errorf("unknown advisory lock scope %q", key)
 	}

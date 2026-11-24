@@ -1,7 +1,8 @@
-// Persistent bot settings and scoped memory. Fleet sessions and executions own runtime state.
+// Persistent bot settings, scoped memory, and runtime operations.
 package main
 
 import (
+	"context"
 	"errors"
 	"regexp"
 	"strings"
@@ -20,6 +21,31 @@ func init() {
 	op("bot_get", botGet)
 	op("bot_settings_save", botSettingsSave)
 	op("bot_memory_save", botMemorySave)
+	op("bot_run", botRunOp)
+	op("bot_pause", botPauseOp)
+	op("bot_stop", botStopOp)
+	op("bot_runs", botRunsOp)
+	onStart(func(ctx context.Context, a *App) {
+		a.ensureRuntime()
+		everyWake(ctx, "bots", envMs("FLEET_BOT_TICK_MS", 15000), a.botWakeCh, true, func(ctx context.Context, _ bool) error {
+			return botTriggerPass(ctx, a, time.Now())
+		})
+	})
+}
+
+type botFull struct {
+	contract.BotRecord
+	RevisionCreatedAt time.Time
+	PausedBy          *string
+	ResumedAt         *time.Time
+}
+
+func formatTimePtr(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := t.UTC().Format(time.RFC3339Nano)
+	return &s
 }
 
 func botList(q *Request, r *contract.BotListRequest) (contract.BotListReply, error) {
@@ -30,28 +56,65 @@ func botList(q *Request, r *contract.BotListRequest) (contract.BotListReply, err
 	rows, err := q.db().BotList(q.ctx(), db.BotListParams{ProjectID: r.ProjectId, ProjectIds: r.ProjectIds, ExcludeProjectIds: r.ExcludeProjectIds})
 	for _, row := range rows {
 		out.Bots = append(out.Bots, contract.BotListItem{
-			Id: row.ID, ProjectId: row.ProjectID, Name: row.Name, Purpose: row.Purpose, Revision: int64(row.Revision),
+			Id:            row.ID,
+			ProjectId:     row.ProjectID,
+			Name:          row.Name,
+			Purpose:       row.Purpose,
+			Revision:      int64(row.Revision),
+			Paused:        row.Paused,
+			HomeSessionId: row.HomeSessionID,
+			ActiveRunId:   row.ActiveRunID,
+			LastRunState:  row.LastRunState,
+			LastRunAt:     formatTimePtr(row.LastRunAt),
 		})
 	}
 	return out, err
 }
 
-func readBot(q *Request, id string) (contract.BotRecord, error) {
+func readBotFull(q *Request, id string) (botFull, error) {
 	row, err := q.db().BotGet(q.ctx(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return contract.BotRecord{}, errNotFound
+		return botFull{}, errNotFound
 	}
 	if err != nil {
-		return contract.BotRecord{}, err
+		return botFull{}, err
 	}
-	return contract.BotRecord{
-		Id: row.ID, ProjectId: row.ProjectID, Director: row.Director,
-		Revision: int64(row.Revision), Memory: row.Memory, MemoryRevision: int64(row.MemoryRevision),
+	rec := contract.BotRecord{
+		Id:                row.ID,
+		ProjectId:         row.ProjectID,
+		Director:          row.Director,
+		Revision:          int64(row.Revision),
+		Memory:            row.Memory,
+		MemoryRevision:    int64(row.MemoryRevision),
+		HomeSessionId:     row.HomeSessionID,
+		Paused:            row.Paused,
+		PausedAt:          formatTimePtr(row.PausedAt),
+		ActiveRunId:       row.ActiveRunID,
+		ActiveExecutionId: row.ActiveExecutionID,
+		LastRunAt:         formatTimePtr(row.LastRunAt),
+		LastRunState:      row.LastRunState,
 		Settings: contract.BotSettings{
-			Name: row.Name, Purpose: row.Purpose, ProfileId: row.ProfileID, Instructions: row.Instructions,
-			Soul: row.Soul, ScheduleTime: row.ScheduleTime, ScheduleZone: row.ScheduleZone, WakeOnNeedsYou: row.WakeOnNeedsYou,
+			Name:           row.Name,
+			Purpose:        row.Purpose,
+			ProfileId:      row.ProfileID,
+			Instructions:   row.Instructions,
+			Soul:           row.Soul,
+			ScheduleTime:   row.ScheduleTime,
+			ScheduleZone:   row.ScheduleZone,
+			WakeOnNeedsYou: row.WakeOnNeedsYou,
 		},
+	}
+	return botFull{
+		BotRecord:         rec,
+		RevisionCreatedAt: row.RevisionCreatedAt,
+		PausedBy:          row.PausedBy,
+		ResumedAt:         row.ResumedAt,
 	}, nil
+}
+
+func readBot(q *Request, id string) (contract.BotRecord, error) {
+	b, err := readBotFull(q, id)
+	return b.BotRecord, err
 }
 
 func botGet(q *Request, r *contract.BotGetRequest) (contract.BotGetReply, error) {
@@ -96,6 +159,8 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 	if projectSettingsOf(q, r.ProjectId) == nil {
 		return out, errNotFound
 	}
+	var prevWakeOnNeedsYou bool
+	var prevName string
 	bot, err := readBot(q, r.BotId)
 	switch {
 	case err == nil:
@@ -111,6 +176,8 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 		if bot.Revision != r.BaseRevision {
 			return out, fail(409, "Bot settings changed. Reload before saving")
 		}
+		prevWakeOnNeedsYou = bot.Settings.WakeOnNeedsYou
+		prevName = bot.Settings.Name
 	case errors.Is(err, errNotFound):
 		if r.BaseRevision != 0 {
 			return out, err
@@ -148,6 +215,28 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 	}
 	if err := audit(q, "bot:"+r.BotId, "settingsRevision", r.BaseRevision, revision, auditExtra{ProjectID: &r.ProjectId}); err != nil {
 		return out, err
+	}
+	saved, err := readBotFull(q, r.BotId)
+	if err != nil {
+		return out, err
+	}
+	if _, err := ensureBotHomeSession(q, &saved); err != nil {
+		return out, err
+	}
+	if r.BaseRevision > 0 && settings.Name != prevName && saved.HomeSessionId != nil {
+		if row, err := q.db().SessionByID(q.ctx(), *saved.HomeSessionId); err == nil && deref(row.TitleBy) == "bot" {
+			if _, err := q.db().TitleRename(q.ctx(), db.TitleRenameParams{ID: row.ID, Title: settings.Name, TitleBy: "bot"}); err != nil {
+				return out, err
+			}
+		}
+	}
+	if r.BaseRevision == 0 || (!prevWakeOnNeedsYou && settings.WakeOnNeedsYou) {
+		if err := initBotWakeCursor(q, saved.Id, saved.ProjectId); err != nil {
+			return out, err
+		}
+	}
+	if q.app != nil {
+		afterCommit(q, func() { q.app.wakeBots() })
 	}
 	bot, err = readBot(q, r.BotId)
 	return contract.BotSettingsSaveReply{Bot: bot}, err

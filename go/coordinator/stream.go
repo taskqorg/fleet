@@ -23,6 +23,7 @@ import (
 type Broadcast struct {
 	mu                  sync.Mutex
 	subs                map[chan struct{}]bool
+	onWake              func()
 	closed              bool
 	ctx                 context.Context
 	cancel              context.CancelFunc
@@ -89,14 +90,24 @@ func listen(parent context.Context, url string, store *Store) *Broadcast {
 	return b
 }
 
+func (b *Broadcast) setOnWake(fn func()) {
+	b.mu.Lock()
+	b.onWake = fn
+	b.mu.Unlock()
+}
+
 func (b *Broadcast) wake() {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	onWake := b.onWake
 	for c := range b.subs {
 		select {
 		case c <- struct{}{}:
 		default:
 		}
+	}
+	b.mu.Unlock()
+	if onWake != nil {
+		onWake()
 	}
 }
 
