@@ -368,7 +368,10 @@ export function LabCreate(props: { onClose?: () => void } = {}) {
       if (e.id !== id || e.projectId !== draft.projectId || e.pipelineId !== draft.pipelineId || e.state !== 'draft') throw Error('Created experiment readback differs. Review its retained record.');
       if (!isAccessCurrent(generation) || identity !== k) return;
       try { sessionStorage.removeItem(k); } catch { /* memory still keeps the receipt */ }
-      if (launch) await op('lab_experiment_action', { experimentId: id, action: 'launch' }).catch(() => { /* the draft stays; its page offers Launch */ });
+      if (launch) {
+        try { await op('lab_experiment_action', { experimentId: id, action: 'launch' }); }
+        catch (x) { persist({ draft, state: 'created', id, message: `Draft created; launch refused: ${message(x)} Read details again to open the draft and launch it there.` }); return; }
+      }
       if (live) go('/lab/' + encodeURIComponent(id));
     } catch (e) { if (isAccessCurrent(generation) && identity === k) persist({ draft, state: 'created', id, message: `Creation confirmed; details unavailable: ${message(e)}` }); }
   };

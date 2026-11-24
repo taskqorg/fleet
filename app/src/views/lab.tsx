@@ -893,7 +893,7 @@ function Experiment(props: { id: string; onClose: () => void }) {
         : state === 'partial' ? `${ts.length - counted.length} of ${ts.length} left out${failed.length ? `: ${problemText(failed[0].problem) ?? 'failed'}` : ''}`
           : state === 'excluded' ? (e.state === 'draft' ? 'not run yet' : undefined) : undefined,
       confounders: [...new Set(ts.flatMap(t => [...(t.confounders.hosts ?? []), ...(t.confounders.harnesses ?? []), ...(t.confounders.models ?? [])]))].join(' · ') || undefined,
-      retryKey: state === 'fail' ? (c?.trials ?? [])[0] : undefined,
+      retryKeys: state === 'fail' ? (c?.trials ?? []).filter(k => trial(k)?.state === 'failed') : [],
     };
   };
   /** The live step of the furthest running trial, for the head ("step 2/3"). */
@@ -1034,7 +1034,7 @@ function Experiment(props: { id: string; onClose: () => void }) {
                       <MatrixCell state={view().state} label={`Example ${p.id}, variant ${v.label}`} score={view().score} k={view().k} n={view().n}
                         step={view().step} time={view().time} cost={view().cost} note={view().note} confounders={view().confounders}
                         onOpen={() => setOpenCell(c => c === key ? null : key)}
-                        onRetry={view().retryKey ? () => act('lab_cell_action', { experimentId: props.id, cell: view().retryKey!, action: 'retry' }) : undefined} />
+                        onRetry={view().retryKeys.length ? () => { for (const cell of view().retryKeys) void act('lab_cell_action', { experimentId: props.id, cell, action: 'retry' }); } : undefined} />
                     </td>
                   );
                 }}</For>

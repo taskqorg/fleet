@@ -79,7 +79,7 @@ const failRate = (c: ComparisonCell) => c.trials ? c.failed / c.trials : 0;
 // Partial: some trials failed often enough to doubt the score (amber); fail: nothing succeeded (red, OR-56).
 const cellState = (c: ComparisonCell): MatrixCellState => c.succeeded === 0 ? 'fail' : failRate(c) >= 0.1 ? 'partial' : 'pass';
 const pct = (r: number) => r <= 0 ? '0%' : r < 0.01 ? '<1%' : `${Math.round(r * 100)}%`;
-const money = (v: number) => v < 0.01 ? '<$0.01' : `$${v.toFixed(2)}`;
+const money = (v: number) => v > 0 && v < 0.01 ? '<$0.01' : `$${v.toFixed(2)}`;
 
 /** Details of a cell, in its tooltip (OR-59): tokens, cost with basis, how many groups and use cases it joins. */
 function cellDetails(c: ComparisonCell, form: string | null): string {
@@ -146,7 +146,7 @@ export function LabComparison(props: {
             </span>
           )}</Show>
           <Button label={promoted() ? 'Promoted' : 'Promote best'} icon="check-check" kind="primary" busy={promoting()}
-            tip={`Promote ${w().row} · ${w().col} (${w().best.variantLabel || 'baseline'}) to the recommended method`} onClick={promote} />
+            tip={`Promote ${w().row} · ${w().col} (${w().best.variantLabel || 'baseline'}, use case ${w().best.useCaseId}) to the recommended method`} onClick={promote} />
         </>}</Show>
       </header>
       <Show when={props.error}>{err => <ErrorBanner text={err()} onRetry={() => props.onRetry()} />}</Show>
