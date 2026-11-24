@@ -779,6 +779,29 @@ func (q *Queries) TaskList(ctx context.Context, arg TaskListParams) ([]TaskListR
 	return items, nil
 }
 
+const taskNotFoundDiag = `-- name: TaskNotFoundDiag :one
+SELECT
+  coalesce(project_id, '')::text AS project_id,
+  (tombstoned_at IS NOT NULL)::boolean AS tombstoned,
+  (project_id IS NOT NULL AND project_id = ANY (fleet_deleted_projects()))::boolean AS project_deleted
+FROM task
+WHERE id = $1
+`
+
+type TaskNotFoundDiagRow struct {
+	ProjectID      string
+	Tombstoned     bool
+	ProjectDeleted bool
+}
+
+// Diagnostic visibility lookup for a task row after a 404 (called only with widened scope and fleet.deleted=on).
+func (q *Queries) TaskNotFoundDiag(ctx context.Context, id string) (TaskNotFoundDiagRow, error) {
+	row := q.db.QueryRow(ctx, taskNotFoundDiag, id)
+	var i TaskNotFoundDiagRow
+	err := row.Scan(&i.ProjectID, &i.Tombstoned, &i.ProjectDeleted)
+	return i, err
+}
+
 const taskOpenAcceptances = `-- name: TaskOpenAcceptances :many
 SELECT id,execution_id,asked_by,data FROM question WHERE task_id=$1 AND kind='acceptance' AND state='open'
 `

@@ -16,6 +16,11 @@ SELECT set_config('fleet.project_ids', @project_ids::text, true), set_config('fl
 SELECT coalesce(current_setting('fleet.project_ids', true), '')::text AS project_ids,
   coalesce(current_setting('fleet.person', true), '')::text AS person;
 
+-- name: TxVisibility :one
+SELECT coalesce(current_setting('fleet.project_ids', true), '')::text AS project_ids,
+  coalesce(current_setting('fleet.person', true), '')::text AS person,
+  coalesce(current_setting('fleet.deleted', true), '')::text AS deleted;
+
 -- name: TxShowDeleted :exec
 SELECT set_config('fleet.deleted', @shown::text, true);
 
