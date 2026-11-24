@@ -35,6 +35,7 @@ type forgeContext struct {
 	ConnectionsDir   string `json:"connectionsDir,omitempty"`
 	Base             string `json:"base"`
 	Branch           string `json:"branch"`
+	SessionBranch    string `json:"sessionBranch,omitempty"`
 	Prefix           string `json:"prefix"`
 	Number           int64  `json:"number,omitempty"`
 	AutoMerge        bool   `json:"autoMerge"`
@@ -217,14 +218,15 @@ func forgeCommand(ctx forgeContext, name string, args ...string) *exec.Cmd {
 var forgeTools = []any{
 	M{
 		"name":        "publish_draft",
-		"description": "Push this execution branch to its granted project repository and open or reuse a draft pull request or merge request. Never merges.",
+		"description": "Push this execution branch to its granted project repository and open or reuse a draft pull request or merge request. Accepts an explicit remote-head lease for rebased fleet/* branches. Never merges.",
 		"inputSchema": M{
 			"type":                 "object",
 			"additionalProperties": false,
 			"required":             []any{"title", "body"},
 			"properties": M{
-				"title": M{"type": "string"},
-				"body":  M{"type": "string"},
+				"title":            M{"type": "string"},
+				"body":             M{"type": "string"},
+				"force_with_lease": M{"type": "string", "pattern": "^[0-9a-f]{40}$", "description": "Expected current remote branch commit (40 lowercase hex characters). Omit for a regular push."},
 			},
 		},
 	},
@@ -344,12 +346,13 @@ var publishingTools = []any{
 
 // forgeArgs are the arguments of legacy project-forge calls.
 type forgeArgs struct {
-	Title       *string `json:"title"`
-	Body        *string `json:"body"`
-	Action      string  `json:"action"`
-	HeadSha     *string `json:"head_sha"`
-	ArtifactId  *string `json:"artifact_id"`
-	Description *string `json:"description"`
+	Title          *string `json:"title"`
+	Body           *string `json:"body"`
+	Action         string  `json:"action"`
+	HeadSha        *string `json:"head_sha"`
+	ArtifactId     *string `json:"artifact_id"`
+	Description    *string `json:"description"`
+	ForceWithLease *string `json:"force_with_lease"`
 }
 
 // publishingArgs are the unified arguments of project-publishing MCP tools.
@@ -362,6 +365,7 @@ type publishingArgs struct {
 	Description       *string `json:"description"`
 	MergeMethod       *string `json:"mergeMethod"`
 	SourceExecutionId *string `json:"sourceExecutionId"`
+	leaseSHA          string
 }
 
 // pubView normalizes a GitHub PR or GitLab MR for shared validation and replies.
@@ -545,7 +549,8 @@ func forgeVerifyBranchHead(ctx forgeContext, headSha string) error {
 }
 
 func checkCleanTransportConfig(ctx forgeContext) error {
-	rewrites, err := boundedOutput(forgeCommand(ctx, "git", "config", "--get-regexp", `^(url\.|http\.|https\.|core\.gitproxy$)`), probeWait)
+	// Git can resolve a literal URL as a configured remote name.
+	rewrites, err := boundedOutput(forgeCommand(ctx, "git", "config", "--get-regexp", `^(url\.|http\.|https\.|core\.gitproxy$|remote\.(https://|ssh://|git@))`), probeWait)
 	var absent *exec.ExitError
 	if err == nil || len(rewrites) > 0 || !errors.As(err, &absent) || absent.ExitCode() != 1 {
 		return errors.New("repository transport overrides absent check failed")
@@ -553,10 +558,21 @@ func checkCleanTransportConfig(ctx forgeContext) error {
 	return nil
 }
 
+func forgePushArgs(branch, remote, leaseSHA string) []string {
+	ref := "refs/heads/" + branch
+	args := []string{"-c", "push.pushOption=", "push", "--no-follow-tags", "--recurse-submodules=no"}
+	source := "HEAD"
+	if leaseSHA != "" {
+		args = append(args, "--force-with-lease="+ref+":"+leaseSHA)
+		source = ref
+	}
+	return append(args, "--", remote, source+":"+ref)
+}
+
 type publishingAdapter interface {
 	kind() string
 	verifyActorAndPush(ctx forgeContext) (string, error)
-	pushBranch(ctx forgeContext, ref contract.RepoRef) error
+	pushBranch(ctx forgeContext, ref contract.RepoRef, leaseSHA string) error
 	findOpen(ctx forgeContext) (pubView, bool, error)
 	createDraft(ctx forgeContext, title, body string) (pubView, error)
 	liveStatus(ctx forgeContext) (pubView, M, error)
@@ -621,11 +637,12 @@ func (a githubAdapter) verifyActorAndPush(ctx forgeContext) (string, error) {
 	return ghUser.Login, nil
 }
 
-func (a githubAdapter) pushBranch(ctx forgeContext, ref contract.RepoRef) error {
+func (a githubAdapter) pushBranch(ctx forgeContext, ref contract.RepoRef, leaseSHA string) error {
 	if err := checkCleanTransportConfig(ctx); err != nil {
 		return err
 	}
-	c := forgeCommand(ctx, "git", "-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "push", "https://"+a.ghHost()+"/"+ref.Slug+".git", "HEAD:refs/heads/"+ctx.Branch)
+	args := forgePushArgs(ctx.Branch, "https://"+a.ghHost()+"/"+ref.Slug+".git", leaseSHA)
+	c := forgeCommand(ctx, "git", append([]string{"-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"}, args...)...)
 	if _, err := boundedOutput(c, probeWait); err != nil {
 		return errors.New("project-push-failed; inspect remote branch before retry")
 	}
@@ -915,7 +932,7 @@ func (a gitlabAdapter) verifyActorAndPush(ctx forgeContext) (string, error) {
 	return glUser.Username, nil
 }
 
-func (a gitlabAdapter) pushBranch(ctx forgeContext, ref contract.RepoRef) error {
+func (a gitlabAdapter) pushBranch(ctx forgeContext, ref contract.RepoRef, leaseSHA string) error {
 	if err := checkCleanTransportConfig(ctx); err != nil {
 		return err
 	}
@@ -924,7 +941,7 @@ func (a gitlabAdapter) pushBranch(ctx forgeContext, ref contract.RepoRef) error 
 		proj := contract.ProjectContext{}
 		repo := contract.ProjectRepo{Remote: &ctx.Remote, Connection: &ctx.Connection}
 		if vars, err := gitEnv(proj, &repo, ctx.ConnectionsDir); err == nil {
-			c := forgeCommand(ctx, "git", "push", ctx.Remote, "HEAD:refs/heads/"+ctx.Branch)
+			c := forgeCommand(ctx, "git", forgePushArgs(ctx.Branch, ctx.Remote, leaseSHA)...)
 			gitApply(c, vars)
 			if _, err := boundedOutput(c, probeWait); err != nil {
 				return errors.New("project-push-failed; inspect remote branch before retry")
@@ -932,7 +949,8 @@ func (a gitlabAdapter) pushBranch(ctx forgeContext, ref contract.RepoRef) error 
 			return nil
 		}
 	}
-	c := forgeCommand(ctx, "git", "-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "-c", "credential.helper=!glab auth git-credential", "push", "https://"+a.glHost()+"/"+ref.Slug+".git", "HEAD:refs/heads/"+ctx.Branch)
+	args := forgePushArgs(ctx.Branch, "https://"+a.glHost()+"/"+ref.Slug+".git", leaseSHA)
+	c := forgeCommand(ctx, "git", append([]string{"-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "-c", "credential.helper=!glab auth git-credential"}, args...)...)
 	if _, err := boundedOutput(c, probeWait); err != nil {
 		return errors.New("project-push-failed; inspect remote branch before retry")
 	}
@@ -1478,12 +1496,18 @@ func executePublishingAction(ctx forgeContext, action string, args publishingArg
 		if args.Title == nil || args.Body == nil || strings.TrimSpace(*args.Title) == "" {
 			return nil, errors.New("invalid publication request")
 		}
+		if ctx.SkipWorktreeHead || ctx.Branch == "main" || ctx.Branch == strings.TrimPrefix(ctx.Base, "refs/heads/") {
+			return nil, errors.New("publication authority unavailable")
+		}
+		if args.leaseSHA != "" && (!strings.HasPrefix(ctx.Branch, "fleet/") || ctx.Branch != ctx.SessionBranch) {
+			return nil, errors.New("force_with_lease requires the granted fleet/* branch")
+		}
 		if expectedSha != "" {
 			if err := forgeVerifyBranchHead(ctx, expectedSha); err != nil {
 				return nil, err
 			}
 		}
-		if err := adapter.pushBranch(ctx, ref); err != nil {
+		if err := adapter.pushBranch(ctx, ref, args.leaseSHA); err != nil {
 			return nil, err
 		}
 		if existing, ok, err := adapter.findOpen(ctx); err != nil {
@@ -1665,12 +1689,21 @@ func forgeCall(name string, arguments, context any) (any, error) {
 	a := typed[forgeArgs](keys)
 	validDelivery := (a.Action == "status" || a.Action == "ready" || a.Action == "auto_merge") && len(keys) == 1 ||
 		a.Action == "code_review" && len(keys) == 4 && a.HeadSha != nil && a.ArtifactId != nil && a.Description != nil
-	if (name == "publish_draft" && (len(keys) != 2 || a.Title == nil || a.Body == nil || strings.TrimSpace(*a.Title) == "")) || (name == "delivery" && !validDelivery) || (name != "publish_draft" && name != "delivery") {
+	leaseSHA := ""
+	publishKeys := 2
+	if _, hasLease := keys["force_with_lease"]; name == "publish_draft" && hasLease {
+		leaseSHA = str0(a.ForceWithLease)
+		if !validForgeHex40(leaseSHA) {
+			return nil, errors.New("invalid force_with_lease: expected full 40-character lowercase remote commit sha")
+		}
+		publishKeys++
+	}
+	if (name == "publish_draft" && (len(keys) != publishKeys || a.Title == nil || a.Body == nil || strings.TrimSpace(*a.Title) == "")) || (name == "delivery" && !validDelivery) || (name != "publish_draft" && name != "delivery") {
 		return nil, errors.New("invalid publication request")
 	}
 	ctx := typed[forgeContext](context)
 	if name == "publish_draft" {
-		out, err := executePublishingAction(ctx, "publish_draft", publishingArgs{Title: a.Title, Body: a.Body})
+		out, err := executePublishingAction(ctx, "publish_draft", publishingArgs{Title: a.Title, Body: a.Body, leaseSHA: leaseSHA})
 		if err != nil {
 			return nil, err
 		}

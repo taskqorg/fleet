@@ -449,6 +449,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 			ConnectionsDir:   connectionsDir(),
 			Base:             base,
 			Branch:           strings.TrimSpace(string(branchBytes)),
+			SessionBranch:    sessionBranch(project, session),
 			Prefix:           prefix,
 			AutoMerge:        autoMerge,
 			MergeMethod:      mergeMethod,

@@ -47,8 +47,16 @@ func TestCodingToolMissing(t *testing.T) {
 func TestForgePublishDraft(t *testing.T) {
 	dir := t.TempDir()
 	for name, script := range map[string]string{
-		"git": "#!/bin/sh\ncase \"$*\" in *symbolic-ref*) echo fleet/fixture;; *push*|*check-ref-format*) exit 0;; *config*) if [ -f transport-error ]; then exit 2; else exit 1; fi;; *) exit 1;; esac\n",
-		"gh":  "#!/bin/sh\ncase \"$*\" in *'auth token'*) echo invented-token;; *'--method POST'*) echo '{\"html_url\":\"https://github.com/invented/project/pull/1\",\"number\":1}';; *api*) echo '[]';; *) exit 1;; esac\n",
+		"git": `#!/bin/sh
+case "$*" in
+  *symbolic-ref*) read -r branch < current-branch; echo "$branch";;
+  *push*) printf '%s\n' "$@" > push-args;;
+  *check-ref-format*) exit 0;;
+  *config*) if [ -f transport-error ]; then exit 2; else exit 1; fi;;
+  *) exit 1;;
+esac
+`,
+		"gh": "#!/bin/sh\ncase \"$*\" in *'auth token'*) echo invented-token;; *'--method POST'*) echo '{\"html_url\":\"https://github.com/invented/project/pull/1\",\"number\":1}';; *api*) echo '[]';; *) exit 1;; esac\n",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0700); err != nil {
 			t.Fatal(err)
@@ -57,14 +65,33 @@ func TestForgePublishDraft(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "hosts.yml"), []byte("invented fixture"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	setBranch := func(branch string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "current-branch"), []byte(branch+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setBranch("fleet/fixture")
 	t.Setenv("PATH", dir)
-	ctx := M{"repo": "invented/project", "repositories": "invented/project", "branch": "fleet/fixture", "prefix": "fleet", "base": "main", "store": dir, "workdir": dir, "home": dir, "credentialHome": dir}
+	ctx := M{"repo": "invented/project", "repositories": "invented/project", "branch": "fleet/fixture", "sessionBranch": "fleet/fixture", "prefix": "fleet", "base": "main", "store": dir, "workdir": dir, "home": dir, "credentialHome": dir}
 	result, err := forgeCall("publish_draft", M{"title": "fixture", "body": "fixture"}, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(enc(result), "/pull/1") || strings.Contains(enc(result), "invented-token") {
 		t.Fatal("invalid or leaking result")
+	}
+	pushLog := filepath.Join(dir, "push-args")
+	readPush := func() string {
+		t.Helper()
+		raw, err := os.ReadFile(pushLog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	if push := readPush(); strings.Contains(push, "--force") || !strings.HasSuffix(push, "\nHEAD:refs/heads/fleet/fixture\n") {
+		t.Fatalf("unexpected regular push: %q", push)
 	}
 	if _, err := forgeCall("delivery", M{"action": "auto_merge"}, ctx); err == nil || !strings.Contains(err.Error(), "not granted") {
 		t.Fatal("auto-merge widened project authority")
@@ -79,6 +106,113 @@ func TestForgePublishDraft(t *testing.T) {
 	ctx["branch"] = "fleet/other"
 	if _, err = forgeCall("publish_draft", M{"title": "fixture", "body": "fixture"}, ctx); err == nil {
 		t.Fatal("changed branch accepted")
+	}
+	ctx["branch"] = "fleet/fixture"
+	remoteHead := strings.Repeat("a", 40)
+	args := M{"title": "fixture", "body": "fixture", "force_with_lease": remoteHead}
+	if _, err := forgeCall("publish_draft", args, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if push := readPush(); !strings.Contains(push, "\n--force-with-lease=refs/heads/fleet/fixture:"+remoteHead+"\n") ||
+		!strings.HasSuffix(push, "\nrefs/heads/fleet/fixture:refs/heads/fleet/fixture\n") {
+		t.Fatalf("unexpected leased push: %q", push)
+	}
+	if err := os.Remove(pushLog); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []any{nil, true, "", "HEAD", strings.Repeat("A", 40)} {
+		args["force_with_lease"] = invalid
+		if _, err := forgeCall("publish_draft", args, ctx); err == nil {
+			t.Fatalf("accepted invalid lease %v", invalid)
+		}
+	}
+	args["force_with_lease"] = remoteHead
+	for _, tc := range []struct{ name, branch, grant, prefix, base string }{
+		{"main", "main", "main", "fleet", "release"},
+		{"base inside fleet", "fleet/release", "fleet/release", "fleet", "refs/heads/fleet/release"},
+		{"different session", "fleet/other", "fleet/fixture", "fleet", "main"},
+		{"outside fleet", "custom/fixture", "custom/fixture", "custom", "main"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setBranch(tc.branch)
+			ctx["branch"], ctx["sessionBranch"], ctx["prefix"], ctx["base"] = tc.branch, tc.grant, tc.prefix, tc.base
+			if _, err := forgeCall("publish_draft", args, ctx); err == nil {
+				t.Fatal("accepted a lease outside branch authority")
+			}
+		})
+	}
+	if _, err := os.Stat(pushLog); !os.IsNotExist(err) {
+		t.Fatalf("rejected lease reached git push: %v", err)
+	}
+}
+
+// requirement: replace a rebased task branch only at its expected remote commit.
+// risk: a stale lease overwrites newer work, or push configuration sends other refs.
+func TestForgePushLease(t *testing.T) {
+	local, remote := t.TempDir(), t.TempDir()
+	git := func(dir string, wantError bool, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "LC_ALL=C")
+		out, err := cmd.CombinedOutput()
+		if (err != nil) != wantError {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	const branch = "fleet/fixture"
+	git(local, false, "init", "--initial-branch=main")
+	git(local, false, "config", "user.name", "Fixture")
+	git(local, false, "config", "user.email", "fixture@example.test")
+	git(local, false, "config", "commit.gpgsign", "false")
+	git(local, false, "config", "push.followTags", "true")
+	git(remote, false, "init", "--bare", "--initial-branch=main")
+	git(local, false, "commit", "--allow-empty", "-m", "base")
+	base := git(local, false, "rev-parse", "HEAD")
+	git(local, false, "push", remote, "main")
+	git(local, false, "config", "push.pushOption", "fixture")
+	git(local, false, "checkout", "-b", branch)
+	git(local, false, "commit", "--allow-empty", "-m", "pre-rebase")
+	previous := git(local, false, "rev-parse", "HEAD")
+	git(local, false, forgePushArgs(branch, remote, "")...)
+	git(local, false, "checkout", "main")
+	git(local, false, "commit", "--allow-empty", "-m", "advance base")
+	git(local, false, "checkout", branch)
+	git(local, false, "rebase", "main")
+	rebased := git(local, false, "rev-parse", "HEAD")
+	git(local, false, "tag", "-a", "--no-sign", "fixture-tag", "-m", "fixture tag")
+	git(local, true, forgePushArgs(branch, remote, "")...)
+	if out := git(local, true, forgePushArgs(branch, remote, base)...); !strings.Contains(out, "stale info") {
+		t.Fatalf("expected stale lease rejection: %s", out)
+	}
+	if head := git(remote, false, "rev-parse", branch); head != previous {
+		t.Fatalf("stale lease changed remote head to %s", head)
+	}
+	git(local, false, forgePushArgs(branch, remote, previous)...)
+	if head := git(remote, false, "rev-parse", branch); head != rebased {
+		t.Fatalf("lease left remote head at %s", head)
+	}
+	if main, tags := git(remote, false, "rev-parse", "main"), git(remote, false, "tag"); main != base || tags != "" {
+		t.Fatalf("push changed unrelated refs: main=%s tags=%q", main, tags)
+	}
+}
+
+// requirement: push credentials and leased updates stay bound to the granted transport.
+// risk: a URL named as a local remote redirects the push.
+func TestForgeRejectsURLNamedRemote(t *testing.T) {
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "remote.https://github.com/invented/project.git.url", "https://example.test/other.git"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := checkCleanTransportConfig(forgeContext{Workdir: dir, Home: dir}); err == nil {
+		t.Fatal("accepted local remote override for a granted URL")
 	}
 }
 
