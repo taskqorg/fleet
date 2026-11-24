@@ -1,5 +1,7 @@
 # Pipelines (architect)
 
+**Target home.** [Library](library.md) › Pipelines: `/library/pipelines/<id>`; `/pipelines` redirects there.
+
 **Mockup routes:** `#/pipelines`, `#/pipelines/render-props` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). Not in the app yet ([D20](../decisions.md)).
 
 **Purpose.** Read, change and observe pipelines: the definition and its runs in one view ([UC4](../../use-cases.md), [pipeline execution](../../configuration.md#pipeline-execution)).

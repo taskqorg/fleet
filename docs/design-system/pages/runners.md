@@ -1,5 +1,7 @@
 # Runners (architect)
 
+**Target home.** [System](system.md) › Runners (`/system/runners`); CI and slot load also feed [Live](live.md). `/runners` redirects.
+
 **App routes:** `/runners` in the operator app (`app/src/views/runners.tsx`). The app check (`tests/ui/app.check.ts`) verifies it. There is no static mockup.
 
 **Purpose.** See everything that executes work, per host, with the time and resources each run took, and what was spent today and this month.

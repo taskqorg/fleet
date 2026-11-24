@@ -1,5 +1,48 @@
 # Conversations (operator)
 
+## Target
+
+**Status.** Target, rail section Conversations ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)). The sections after **Current build** describe the page as it runs today; they stay until the target is built.
+
+**Purpose.** Every session, past and present: find one and continue it. Home shows the sessions that are active now; Conversations keeps all of them ([OR-50](../owner-rules.md)).
+
+**Routes:** `/conversations` (idle), `/conversations/C-FLT-12` (one session in the [session view](session.md)), `/conversations/new` (start). Old `/conversations/<uuid>` links redirect (UR-69).
+
+### Layout
+
+Three columns ([OR-24](../owner-rules.md)): navigation, control column, work area. The shell header holds the title, New conversation (`plus`), the focus chip and search ([OR-43](../owner-rules.md)).
+
+* **Control column** (`ListPagePanel`, [OR-48](../owner-rules.md)):
+  1. List header: the count (`84 of 1,240`, [OR-11](../owner-rules.md)), the search icon ([OR-31](../owner-rules.md)) and the saved views: system presets Needs me, Running, and the person's own ([OR-33](../owner-rules.md)).
+  2. Group and Sort as icons ([OR-35](../owner-rules.md)); grouped by project by default ([owner choice](#owner-choices-target)).
+  3. Rows: pin, state icon, the session's name (bot or PM name, else the first message) taking the free width, its code after it as a pair ([OR-22](../owner-rules.md)); the right zone: an open question in the attention tone, time since the last activity, the harness mark ([OR-37](../owner-rules.md)). The whole row opens the session ([OR-26](../owner-rules.md)).
+* **Work area, idle** ([useful idle work area](../patterns/list-detail.md)): what needs the person first (sessions waiting for an answer, as question cards answered in place, [OR-53](../owner-rules.md)), then a summary by project and state as counters ([OR-29](../owner-rules.md)), then the latest finished sessions with their outcome line. Never a second copy of the list.
+* **Work area, a session open:** the [session view](session.md) in its Conversations frame.
+* **Work area, new:** the [start picker](../controls/start-picker.md) and the composer, as built today.
+
+### States
+
+* **Empty filter:** the list says what the filter hides and offers to clear it.
+* **Archived:** the archive toggle in the list header, as built.
+* **Phone (390 px):** the list fills the screen; a row opens the session full screen; the bottom bar keeps Conversations highlighted ([OR-60](../owner-rules.md)).
+
+### Owner choices (target)
+
+1. **Default grouping.** *Recommended:* by project, since a person thinks in projects and the PM leads each group. *Other:* by state in attention order (Waiting for you, Failed, Working, Queued, Done). Both are drawn on [screens/conversations.bl](../board/screens/conversations.bl).
+
+### Blocks
+
+* [Navigation rail](../controls/nav-rail.md) and [shell header](../patterns/app-shell.md).
+* Catalogue row, list header, saved views and filter search (block list, PR C).
+* [State dot and word](../controls/state-badge.md#dot-and-word), [question card](../controls/decision-block.md#card), [group head](../controls/data-list.md).
+* [Session view](session.md#blocks) blocks in the work area.
+
+### Design board
+
+Canvas [screens/conversations.bl](../board/screens/conversations.bl): idle, a session open, both groupings, and the phone list.
+
+## Current build
+
 **App routes:** `/conversations`, `/conversations/:id` and `/conversations/new` in the operator app (`app/src/views/conversations.tsx`, `app/src/views/conversation-new.tsx`). The app check (`tests/ui/app.check.ts`) verifies them; `tests/ui/conversation-new.check.ts` the new-conversation page. There is no static mockup.
 
 **Purpose.** Talk to agents and steer running work. This page replaces the removed legacy session page.

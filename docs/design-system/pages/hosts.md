@@ -1,5 +1,7 @@
 # Hosts, environments and stores (architect)
 
+**Target home.** [System](system.md) › Hosts (`/system/hosts/<name>`) and › Accounts & limits (`/system/accounts`); the live picture of hosts is [Live](live.md). `/hosts` and `/hosts/limits` redirect.
+
 **Mockup routes:** `#/hosts`, `#/hosts/limits` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 
 **Purpose.** See host health, worker load and store space, and change host settings.

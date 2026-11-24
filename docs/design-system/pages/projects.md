@@ -1,5 +1,66 @@
 # Projects
 
+## Target
+
+**Status.** Target, rail section Projects ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)). Tasks, Results and Delivery lose their own rail items and become facets of a project ([route consolidation map](../../designs/fleet-ia-and-journeys.md#route-consolidation-map)). The sections after **Current build** describe the page as it runs today.
+
+**Purpose.** What are our products, who works on each, what they produce and by which rules ([principles](../owner-rules.md#principles) 2: work is reached through who does it).
+
+**Routes** (section, kind and human code, [OR-57](../owner-rules.md), UR-69):
+
+| Route | Opens |
+|---|---|
+| `/projects` | Idle: cross-project summary |
+| `/projects/FLT` | Project FLT, facet Sessions |
+| `/projects/FLT/tasks`, `/projects/FLT/tasks/T-FLT-42` | Tasks facet; one task |
+| `/projects/FLT/delivery`, `/projects/FLT/delivery/1234` | Delivery facet; one pull request |
+| `/projects/FLT/results`, `/projects/FLT/results/<id>` | Results facet; one result |
+| `/projects/FLT/rules` | Rules & methods facet |
+| `/tasks/<uuid>`, `/results/<uuid>`, `/delivery/<id>`, `/publishing` | Redirect to the facet route of the item's project |
+| `/tasks`, `/results`, `/delivery` with no item | Redirect to `/projects` with the facet's cross-project view (see **Across projects**) |
+
+### Layout
+
+Three columns ([OR-24](../owner-rules.md)). Shell header: title, New project (`plus`), focus chip, search.
+
+* **Control column** (`ListPagePanel`): list header with count, search icon and saved views; one row per project: state icon (readiness), name and code (`FLT`), the PM's state dot, and on the right open questions (attention), sessions working, tasks in flight ([OR-22](../owner-rules.md), [OR-29](../owner-rules.md)). Pinned projects first ([OR-12](../owner-rules.md)).
+* **Work area, idle:** the cross-project summary: projects whose PM waits for the person, as question cards ([OR-53](../owner-rules.md)); then per project working, queued, done today and blocked as one counter line; then delivery in flight ([UR-52](../principles.md)).
+* **Work area, a project open:**
+  1. Project head: name, code, readiness, and "Talk to PM" (opens the PM session, [OR-51](../owner-rules.md)).
+  2. Facet tab bar ([OR-46](../owner-rules.md), [OR-49](../owner-rules.md)): **Sessions · Tasks · Delivery · Results · Rules & methods**. A tab never rebuilds the control column ([OR-47](../owner-rules.md)).
+  3. The facet:
+     * **Sessions** (default, [owner choice](#owner-choices-target)): the PM card first, then this project's active session cards as on Home, then the latest finished ones as rows. A card opens the [session view](session.md).
+     * **Tasks:** the task list with saved views (Running is every non-terminal state), rows as [Tasks](tasks.md) specifies; an opened task replaces the list inside the facet with the task detail ([OR-39](../owner-rules.md)) and a link to the session that does it; Close returns to the list ([OR-15](../owner-rules.md)).
+     * **Delivery:** the stage list and pace of [Delivery](delivery.md), filtered to the project.
+     * **Results:** the result list and viewer of [Results](results.md), filtered to the project.
+     * **Rules & methods:** purpose, context, repository, roles and environments as differences from the shared defaults, with "Inherited defaults (N)" folded ([OR-45](../owner-rules.md)); then the recommended method per capability with its Lab evidence and a link to [Library](library.md) and [Lab](laboratory.md).
+
+### Across projects
+
+Tasks, results and delivery of all projects in focus are one facet away: on `/projects` with nothing open, the same facet tab bar shows **Summary · Tasks · Delivery · Results** over every project in the focus ([OR-34](../owner-rules.md)). Spotlight finds a task, result or pull request by code and opens it in its project ([OR-32](../owner-rules.md)).
+
+### States
+
+* **Not ready:** the project head shows readiness reasons in the attention tone, with the fix action named; the project still opens.
+* **Phone (390 px):** project list; an opened project shows its facets as a scrollable tab bar inside the work area; a task opens full screen.
+
+### Owner choices (target)
+
+1. **Default facet.** *Recommended:* Sessions, since work is reached through who does it. *Other:* Tasks, the list operators use today. Both are drawn on [screens/projects.bl](../board/screens/projects.bl).
+
+### Blocks
+
+* [Navigation rail](../controls/nav-rail.md) and [shell header](../patterns/app-shell.md).
+* Catalogue row, list header, saved views, filter search, facet tab bar and detail pane frame (block list, PR C); [tab item](../controls/README.md).
+* [Session card](../controls/session-card.md), [question card](../controls/decision-block.md#card), [state dot and word](../controls/state-badge.md#dot-and-word).
+* [Live row](../controls/live-row.md) kind delivery for pull requests; diff rows for Rules & methods (stand-in until a master exists).
+
+### Design board
+
+Canvas [screens/projects.bl](../board/screens/projects.bl): idle, project open on Sessions, a task open in Tasks, Rules & methods, both default facets, phone.
+
+## Current build
+
 **App routes:** `/projects` and `/projects/:id` in the operator app (`app/src/views/projects.tsx`). The app checks (`tests/ui/projects.check.ts`, `tests/ui/app.check.ts`) verify them. There is no static mockup.
 
 Projects are the operator's configured work context. The control column lists authorized projects; create, analytics overview, and tabbed detail (`ProjectDetail`) open in the work area. Use only packages/ui controls. Creation, current saved revision and resource readiness are distinct facts.

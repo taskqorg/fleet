@@ -1,5 +1,7 @@
 # Publishing (operator)
 
+**Target home.** The Delivery facet of a project: `/projects/<code>/delivery` and `/projects/<code>/delivery/<n>` ([projects](projects.md#target)); across projects, the Delivery tab of `/projects`. In-flight pull requests also show on [Live](live.md). `/delivery` and `/publishing` redirect.
+
 **App routes:** `/delivery` (and `/publishing` alias) in the operator app (`app/src/views/delivery.tsx`, navigation label **Publishing**). **Mockup routes:** `#/delivery` in [mockups.html](mockups.html) (same composition with fixture data). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 
 **Purpose.** Answers, in this order: what in publishing needs a look, what is moving now, and what the pace is. Covers the GitHub pull requests and GitLab merge requests of all connected projects, from draft/open to merged, released and installed on hosts, with shared publishing actions (`mark_ready`, `request_merge`, `cancel_merge_request`) over the same contract agents use (`publishing_*` / `project-publishing`).

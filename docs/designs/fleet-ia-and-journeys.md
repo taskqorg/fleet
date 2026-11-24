@@ -30,15 +30,18 @@ Not built yet: the app still shows the earlier rail (Overview, Conversations, Pr
 
 Earlier rails had 15, then 9 sections. Legacy routes remain reachable as deep links and through Spotlight (`⌘K`); agents **must not** add a top-level navigation item, a `<nav class="sub-nav">` bar or a duplicate always-open search input (`OR-31`, `OR-32`, `OR-46`) without updating this specification first.
 
-| Earlier section (`registry.ts`) | Destination | Notes |
-|---|---|---|
-| `Overview` | `Home` (sessions and their questions) and `Live` (the technical picture) | The Needs-you inbox becomes questions on session cards (`OR-40`, `OR-53`). |
-| `Conversations`, `Projects`, `Lab` | Unchanged | Conversations open in the one session view (`OR-51`). |
-| `Tasks`, `Results`, `Delivery` | Facets of `Projects` and of the session that does the work; Spotlight finds them | Work is reached through who does it. |
-| `Bots` | Active bots on `Home`; definitions in `Library › Bots` | A bot is a session you talk to. |
-| `Catalogue`, `Agents`, `Pipelines`, `Changes` | `Library` (`CatalogueTree` roots) | Drift shows where the object lives. |
-| `Hosts`, `Runners`, `API keys`, `Spend`, `Humans` | `System` | Runners data also feeds `Live`. |
+| Earlier section (`registry.ts`) | Destination | Target route | Notes |
+|---|---|---|---|
+| `Overview` | `Home` (sessions and their questions) and `Live` (the technical picture) | `/home`, `/live` | The Needs-you inbox becomes questions on session cards (`OR-40`, `OR-53`). |
+| `Conversations` | `Conversations`; one session view everywhere | `/conversations/C-FLT-12`, from Home `/home/C-FLT-12` | [Session view](../design-system/pages/session.md) (`OR-51`). |
+| `Projects` | `Projects` with facets | `/projects/FLT` | Sessions · Tasks · Delivery · Results · Rules & methods. |
+| `Tasks`, `Results`, `Delivery` (and `/publishing`) | Facets of `Projects` and of the session that does the work; Spotlight finds them | `/projects/FLT/tasks/T-FLT-42`, `/projects/FLT/results/<id>`, `/projects/FLT/delivery/<n>` | Work is reached through who does it; across projects, the facet tabs of `/projects`. |
+| `Lab`, `Personal Lab` | `Lab` | `/lab`, `/lab/E-FLT-7` | `/personal-lab` becomes the saved view "Mine". |
+| `Bots` | Active bots on `Home`; definitions in `Library › Bots` | `/library/bots/<name>` | A bot is a session you talk to. |
+| `Catalogue`, `Agents`, `Pipelines`, `Changes` | `Library` (`CatalogueTree` roots) | `/library/methods/<id>`, `/library/agents/<id>`, `/library/pipelines/<id>`, `/library/changes` | Host and pin drift shows on the host in `System`. |
+| `Hosts`, `Runners`, `API keys`, `Spend`, `Humans` | `System` | `/system/hosts/<name>`, `/system/accounts`, `/system/connections/<id>`, `/system/runners`, `/system/spend`, `/system/people/<id>` | Runners data also feeds `Live`. |
 
+Every earlier route redirects to its target route, keeping the item and the query (UR-69). The whole variant, screen by screen, is in the [page specs](../design-system/pages/README.md) and on the [design board](../design-system/board/screens/flow.bl).
 
 ---
 
@@ -67,7 +70,7 @@ Every feature PR affecting operator or architect workflows validates the affecte
 - **J2 — Fast A/B or multi-step Lab run (`<= 3` clicks):** From any use case or collection, architect chooses `Run in Lab`, toggles 2+ models/pipelines via `EntityPicker`, and clicks `Launch` without writing JSON. Multi-step trials report live per-step state (`implement`, `review`, `fix`) and specific `problem` causes on failures.
 - **J3 — Promote winner to Recommended (`1` action + scope):** From an experiment or use-case comparison, architect promotes a winning variant to `Library → Methods` with lifecycle status (`experimental` → `recommended`) and project/system scope. `Library` and `Projects` reflect updated measured quality/cost evidence immediately without requiring manual `config/catalogue.json` edits.
 - **J4 — Real project execution with full attribution:** Operator (or PM session) creates a project task; system allocates a compatible host/account, executes using the project's recommended method (or explicit override), retains artifacts and delivery stage on the task/project, and attributes all tokens/cost/time to `Spend`.
-- **J5 — Proactive environment & account compatibility:** `Infrastructure` probes actual supported models per bound host account during inspection/startup and marks incompatible profiles before dispatch; router (`route_decisions`) skips accounts known to reject a requested model (`modelNotFound`) while keeping manual inspection visible.
+- **J5 — Proactive environment & account compatibility:** `System` probes actual supported models per bound host account during inspection/startup and marks incompatible profiles before dispatch; router (`route_decisions`) skips accounts known to reject a requested model (`modelNotFound`) while keeping manual inspection visible.
 
 ---
 
