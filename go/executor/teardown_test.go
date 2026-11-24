@@ -285,4 +285,10 @@ func TestWorktreeSetsAsideStaleDirectory(t *testing.T) {
 	if left, _ := filepath.Glob(filepath.Join(dir, "worktree.stale-*")); len(left) != 0 {
 		t.Fatalf("stale copy left after acceptance: %v", left)
 	}
+	// A detached conversation keeps no work: its release removes a set-aside copy too.
+	os.MkdirAll(filepath.Join(dir, "worktree.stale-1"), 0o700)
+	teardown(dir, "s2", top, proj(M{}), false, true)
+	if left, _ := filepath.Glob(filepath.Join(dir, "worktree.stale-*")); len(left) != 0 {
+		t.Fatalf("stale copy left after a detached teardown: %v", left)
+	}
 }

@@ -14,7 +14,7 @@ Track each area's associated work, active users, origin (system-created or user-
 
 Prepare, use, preserve required results and history, then release. A pause or handoff may retain the area; one agent finishing does not authorize its deletion.
 
-Automatically clean system-created temporary areas when no longer needed. A worktree directory an interrupted cleanup left without its `.git` link is renamed to `worktree.stale-<ms>` before the next start prepares a fresh one; the copy stays until the task is accepted, and that teardown removes it. Preserve existing user and project files. Check unfinished changes and uncertain executor state before cleanup; show retained or abandoned areas, why they remain and available cleanup actions.
+Automatically clean system-created temporary areas when no longer needed. A worktree directory an interrupted cleanup left without its `.git` link is renamed to `worktree.stale-<ms>` before the next start prepares a fresh one; the copy stays until the task is accepted (a detached conversation's or a Lab trial's at its own cleanup), and that teardown removes it. Preserve existing user and project files. Check unfinished changes and uncertain executor state before cleanup; show retained or abandoned areas, why they remain and available cleanup actions.
 
 Cleanup is an ordinary system operation using shared execution, retry and telemetry mechanisms. Trigger it from the area's release conditions after success, failure or cancellation, not solely as the pipeline's final step. Failed cleanup leaves occupied space and the failure visible; it does not invalidate a completed task result.
 

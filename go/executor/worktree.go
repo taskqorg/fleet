@@ -16,7 +16,6 @@ import (
 	"time"
 )
 
-// hardenedGit: cleared environment, no system or global config, hooks and fsmonitor off, file protocol refused.
 // setAsideStale renames a working-area directory that is no git worktree (no .git: an interrupted teardown removed
 // the link and left the files) to <dir>.stale-<unix ms>, so git worktree add gets an empty path. Nothing is deleted:
 // the files may hold the session's only copy of its work. 2026-11-24: such a leftover failed every start of a session.
@@ -38,6 +37,7 @@ func removeStale(w string) {
 	}
 }
 
+// hardenedGit: cleared environment, no system or global config, hooks and fsmonitor off, file protocol refused.
 func hardenedGit(args ...string) *exec.Cmd {
 	c := exec.Command("git", append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=never"}, args...)...)
 	c.Env = []string{"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
@@ -332,6 +332,7 @@ func trialWorktree(dir, repo, commit string, roots, forbidden []string) (string,
 }
 
 func removeTrial(top, w string) bool {
+	removeStale(w) // a trial checks out a fixed commit: its set-aside copies hold no work
 	makeTreeWritable(w)
 	return hardenedGit("-C", top, "worktree", "remove", "--force", w).Run() == nil
 }
@@ -412,7 +413,9 @@ func keepReasons(project contract.ProjectContext) map[string]bool {
 func teardown(dir, session, top string, project contract.ProjectContext, deleteBranch, detached bool) contract.Teardown {
 	keep := keepReasons(project)
 	w := filepath.Join(dir, "worktree")
-	if deleteBranch { // the task was accepted: copies set aside by setAsideStale hold nothing more to keep
+	// Copies set aside by setAsideStale go when the task was accepted, or when the session never had a branch of its own
+	// (a detached conversation keeps no work). A cancelled or failed task's copy stays: it may be the only copy of its work.
+	if deleteBranch || detached {
 		removeStale(w)
 	}
 	if !exists(filepath.Join(w, ".git")) {
