@@ -468,9 +468,17 @@ export function Spotlight(p: {
   // Focus returns to where it was only when the palette closes without opening an item.
   const back = document.activeElement;
   let opened = false;
+  let closed = false;
   let field: HTMLInputElement | undefined;
   let dialogRef: HTMLDialogElement | undefined;
   let inputText = mem.q;
+
+  // Guard against a late native `close` event from dialogRef.close() firing after a newer Spotlight opens while a lazy route transition holds unmount.
+  const notifyClose = () => {
+    if (closed) return;
+    closed = true;
+    p.onClose();
+  };
 
   onSettled(() => {
     const d = dialogRef;
@@ -485,9 +493,10 @@ export function Spotlight(p: {
         field.select();
       }
     });
-    const close = () => p.onClose();
+    const close = () => notifyClose();
     d.addEventListener('close', close);
     return () => {
+      closed = true;
       d.removeEventListener('close', close);
       if (d.open) d.close();
       if (!opened) (back as HTMLElement | null)?.focus?.();
@@ -553,6 +562,7 @@ export function Spotlight(p: {
     // A recent item is a way back, not a live row: its state and age at the time it was opened would be stale.
     if (!i.more) mem.recent = [{ ...i, outside: false, action: undefined, state: undefined, at: undefined, snippet: undefined }, ...mem.recent.filter(x => x.key !== i.key)].slice(0, RECENT);
     opened = true;
+    closed = true;
     if (dialogRef?.open) dialogRef.close();
     p.onClose();
     i.run();
@@ -591,7 +601,7 @@ export function Spotlight(p: {
 
   const key = (e: KeyboardEvent) => {
     const items = flat(), idx = cur();
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); p.onClose(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); notifyClose(); }
     else if (e.key === 'Tab') e.preventDefault(); // aria-modal: focus stays on the field
     else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (items.length) move((idx + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length); }
     else if (e.key === 'Enter' && e.altKey && !e.isComposing && items[idx]?.action) { e.preventDefault(); act(items[idx]); }
