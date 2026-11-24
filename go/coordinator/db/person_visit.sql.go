@@ -22,7 +22,7 @@ type PersonVisitGetParams struct {
 	Page  string
 }
 
-// Last page visits (person_visit.go; migration 99): one row per person and page.
+// Last page visits (person_visit.go; migration 100): one row per person and page.
 func (q *Queries) PersonVisitGet(ctx context.Context, arg PersonVisitGetParams) (time.Time, error) {
 	row := q.db.QueryRow(ctx, personVisitGet, arg.Email, arg.Page)
 	var visited_at time.Time

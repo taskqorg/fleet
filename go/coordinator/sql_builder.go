@@ -1161,7 +1161,7 @@ var sqlSessionCountBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.archi
  FROM session d)`
 
 // sqlSessionNow: the source of a row's now line (sessions.go nowLine): the newest event of the session with an agent
-// text block (one probe of the partial index event_agent_text, migration 100, whose predicate this repeats), its last
+// text block (one probe of the partial index event_agent_text, migration 101, whose predicate this repeats), its last
 // such block, and the attached task's title. Only in the list columns: PostgreSQL evaluates them for the page's rows
 // after ORDER BY and LIMIT, never for the counts.
 const sqlSessionNow = `(SELECT (SELECT t.b->>'markdown' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(v.payload->'data'->'fleetNormalized'->'blocks')='array' THEN v.payload->'data'->'fleetNormalized'->'blocks' ELSE '[]'::jsonb END) WITH ORDINALITY AS t(b,i)
@@ -1169,7 +1169,7 @@ const sqlSessionNow = `(SELECT (SELECT t.b->>'markdown' FROM jsonb_array_element
  FROM event v WHERE v.session_id=x.id AND NOT v.delta AND jsonb_path_exists(v.payload,'` + agentTextPath + `') ORDER BY v.seq DESC LIMIT 1) AS now_text,
  (SELECT k.title FROM task k WHERE k.id=x.task_id) AS task_title`
 
-// agentTextPath: an event that holds an agent text block, the predicate of the index event_agent_text (migration 100;
+// agentTextPath: an event that holds an agent text block, the predicate of the index event_agent_text (migration 101;
 // TestAgentTextIndexPredicate keeps them equal).
 const agentTextPath = `$.data.fleetNormalized.blocks[*] ? (@.kind == "text" && @.markdown != "" && (@.role == "agent" || !exists(@.role)))`
 

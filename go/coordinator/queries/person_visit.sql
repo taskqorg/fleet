@@ -1,4 +1,4 @@
--- Last page visits (person_visit.go; migration 99): one row per person and page.
+-- Last page visits (person_visit.go; migration 100): one row per person and page.
 
 -- name: PersonVisitGet :one
 SELECT visited_at FROM person_visit WHERE email = @email::text AND page = @page::text;

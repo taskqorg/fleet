@@ -1,7 +1,7 @@
 package main
 
 // Page visits (docs/design-system/pages/home.md "Quiet"): the last time a person opened a page, kept per person on the
-// server (person_visit, migration 99). Home's quiet summary counts what happened since the visit before this one.
+// server (person_visit, migration 100). Home's quiet summary counts what happened since the visit before this one.
 
 import (
 	"errors"
