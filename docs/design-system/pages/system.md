@@ -50,9 +50,9 @@ Checked against the [product map](../product-map.md) rows for System.
 ## Blocks
 
 * [Navigation rail](../controls/nav-rail.md), [shell header](../patterns/app-shell.md).
-* Catalogue rows (tree), list header, filter search, detail pane frame and form fields (block list, PR C).
+* [Filter bar](../controls/filter-bar.md#board), [catalogue row and list group](../controls/data-list.md#board), [detail head](../patterns/list-detail.md#board); [setting field](../controls/setting-field.md#board) for host settings.
 * [Gauge](../controls/fill-bar.md#gauge), [figure tile](../controls/figure-tile.md), [run strip](../controls/time-strip.md#run-strip), [worker slot](../controls/worker-slot.md) for a host; [question card](../controls/decision-block.md#card) for confirmations.
-* [Problem row](../controls/problem-row.md), table row ([data list](../controls/data-list.md)) and [share bar](../controls/share-bar.md); stand-ins on the board until their masters exist.
+* [Problem row](../controls/problem-row.md#board), [table row](../controls/data-list.md#table-row) and [share bar](../controls/share-bar.md#board).
 
 ## Design board
 

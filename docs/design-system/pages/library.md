@@ -65,9 +65,9 @@ Checked against the [product map](../product-map.md) rows for Library and Bots.
 ## Blocks
 
 * [Navigation rail](../controls/nav-rail.md), [shell header](../patterns/app-shell.md).
-* Catalogue rows (tree), list header, saved views, filter search, detail pane frame and form fields (block list, PR C); [tab item](../controls/README.md) for definition facets.
+* [Filter bar](../controls/filter-bar.md#board), [catalogue row and list group](../controls/data-list.md#board), [detail head](../patterns/list-detail.md#board); [tab bar](../controls/tab-bar.md) for definition facets; [setting field](../controls/setting-field.md#board) for edits.
 * [State dot and word](../controls/state-badge.md#dot-and-word), [button](../controls/button.md).
-* Diff row ([definition editor](../patterns/definition-editor.md)), [problem row](../controls/problem-row.md) and, for pipelines, step row ([step list](../controls/step-list.md)); stand-ins on the board until their masters exist.
+* [Diff row](../patterns/definition-editor.md#diff-row), [problem row](../controls/problem-row.md#board) and, for pipelines, [step row](../controls/step-list.md#board).
 
 ## Design board
 

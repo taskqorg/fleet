@@ -38,9 +38,9 @@ Checked against the [product map](../product-map.md) rows for Lab.
 ### Blocks
 
 * [Navigation rail](../controls/nav-rail.md), [shell header](../patterns/app-shell.md).
-* Catalogue rows (tree), list header, saved views, filter search, detail pane frame and form fields (block list, PR C).
+* [Filter bar](../controls/filter-bar.md#board), [catalogue row and list group](../controls/data-list.md#board), [detail head](../patterns/list-detail.md#board); [text field](../controls/text-field.md#board) for the create form.
 * [Question card](../controls/decision-block.md#card) for ratings and undecided series; [state dot and word](../controls/state-badge.md#dot-and-word); [button](../controls/button.md) for Promote and Run in Lab.
-* Table row ([data list](../controls/data-list.md)) and matrix cell (stand-ins on the board until their masters exist).
+* [Matrix cell](../controls/matrix-cell.md) for the matrix and the experiment; [table row](../controls/data-list.md#table-row) for the ranked list on a phone; [diff row](../patterns/definition-editor.md#diff-row) for variants.
 
 ### Design board
 

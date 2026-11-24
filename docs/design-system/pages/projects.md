@@ -62,9 +62,9 @@ Checked against the [product map](../product-map.md) rows for Projects, Tasks, R
 ### Blocks
 
 * [Navigation rail](../controls/nav-rail.md) and [shell header](../patterns/app-shell.md).
-* Catalogue row, list header, saved views, filter search, facet tab bar and detail pane frame (block list, PR C); [tab item](../controls/README.md).
+* [Filter bar](../controls/filter-bar.md#board), [catalogue row and list group](../controls/data-list.md#board), [detail head](../patterns/list-detail.md#board), [tab bar](../controls/tab-bar.md) for the facets (words only, no icons).
 * [Session card](../controls/session-card.md), [question card](../controls/decision-block.md#card), [state dot and word](../controls/state-badge.md#dot-and-word).
-* [Live row](../controls/live-row.md) kind delivery for pull requests; diff rows of the [definition editor](../patterns/definition-editor.md) for Rules & methods (stand-in on the board until the diff row master exists).
+* [Live row](../controls/live-row.md) kind delivery for pull requests; [diff row](../patterns/definition-editor.md#diff-row) for Rules & methods.
 
 ### Design board
 
