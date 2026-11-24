@@ -204,7 +204,8 @@ func TestBotRuntimeHomeConversationAndAdmission(t *testing.T) {
 		t.Fatalf("expected start command for %s, got %+v", exec1ID, poll1.Commands)
 	}
 	start1 := poll1.Commands[0].Start.Payload
-	if start1 == nil || !strings.Contains(deref(start1.Instructions), "Inspect open questions") ||
+	if start1 == nil || !strings.Contains(deref(start1.Instructions), "id "+botID) ||
+		!strings.Contains(deref(start1.Instructions), "Inspect open questions") ||
 		!strings.Contains(deref(start1.Instructions), "Report only confirmed evidence") ||
 		!strings.Contains(deref(start1.Instructions), "Remember: check release notes") {
 		t.Fatalf("pinned bot instructions/soul/memory missing from StartPayload: %+v", start1)

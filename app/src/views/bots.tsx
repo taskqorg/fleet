@@ -62,7 +62,7 @@ export function Bots(props: { id?: string }) {
     <Show when={bots.error}>{err => <ErrorBanner text={err()} onRetry={bots.reload} />}</Show>
     <ListFrame pending={!bots.data && !bots.error} bar={<FilterBar query={query()} onQuery={setQuery} placeholder="Find bot" shown={visible().length} total={rows().length} />}>
       <Show when={bots.data || bots.error} fallback={<Skeleton rows={4} />}>
-        <CatalogueTree label="Bots" selectedId={props.id}
+        <CatalogueTree fill label="Bots" selectedId={props.id}
           nodes={visible().map(b => {
             const st = botStatusBadge(b);
             const subParts = [names().get(b.projectId), b.paused ? 'Paused' : b.activeRunId ? 'Running' : st ? b.lastRunState : null].filter(Boolean);

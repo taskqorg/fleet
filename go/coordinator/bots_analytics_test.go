@@ -106,11 +106,13 @@ func TestBotAnalyticsAttribution(t *testing.T) {
 		"report": doc{"summary": "Delegated checks"},
 	})
 
-	// Ask a question on Home session (verifies questions_list({ botId })).
+	// Ask a question on Home session + a question_ask-style row (asked_by execution:<id> with null session/execution/task).
 	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", fmt.Sprintf(`
 		INSERT INTO question(id, kind, project_id, execution_id, session_id, text, options, asked_by)
-		VALUES ('%s', 'agent_question', 'desiign', '%s', '%s', 'Approve cleanup?', '["yes","no"]', 'bot');
-	`, newID(), homeExecID, homeSID))
+		VALUES
+			('%s', 'agent_question', 'desiign', '%s', '%s', 'Approve cleanup?', '["yes","no"]', 'bot'),
+			('%s', 'operator_decision', 'desiign', NULL, NULL, 'Confirm owner decision?', NULL, 'execution:%s');
+	`, newID(), homeExecID, homeSID, newID(), homeExecID))
 
 	// 2) Delegated child session started by homeExecID recording cross-project work in "specq"
 	//    with an unpriced model (tests recorded execution project attribution + unknown observation).
@@ -443,7 +445,7 @@ func TestBotAnalyticsAttribution(t *testing.T) {
 		}
 	}
 	c, qList := e.callJSON(t, "POST", "/api/ops/questions_list", doc{"botId": botID}, member)
-	if c != 200 || len(anys(qList["questions"])) != 1 {
-		t.Fatalf("expected 1 question from questions_list(botId), got %d %v", c, qList)
+	if c != 200 || len(anys(qList["questions"])) != 2 {
+		t.Fatalf("expected 2 questions from questions_list(botId), got %d %v", c, qList)
 	}
 }

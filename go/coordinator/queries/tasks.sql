@@ -133,6 +133,7 @@ WHERE (sqlc.narg(id)::text IS NULL OR id = sqlc.narg(id))
  AND (sqlc.narg(bot_id)::text IS NULL
   OR session_id = (SELECT b.home_session_id FROM bot b WHERE b.id = sqlc.narg(bot_id) AND b.tombstoned_at IS NULL)
   OR execution_id IN (SELECT e.id FROM execution e WHERE e.bot_id = sqlc.narg(bot_id))
+  OR EXISTS (SELECT 1 FROM execution e WHERE e.bot_id = sqlc.narg(bot_id) AND question.asked_by = 'execution:' || e.id)
   OR task_id IN (SELECT bt.task_id FROM bot_task bt WHERE bt.bot_id = sqlc.narg(bot_id) AND bt.tombstoned_at IS NULL))
  AND (sqlc.narg(state)::text IS NULL OR state::text = sqlc.narg(state))
  AND (sqlc.narg(kind)::text IS NULL OR kind::text = sqlc.narg(kind))
