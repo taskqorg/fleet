@@ -22,7 +22,7 @@ No bar spans the whole window (OR-24).
 * the search icon (`search`, tooltip "Search ⌘K", `aria-keyshortcuts` Meta+K and Control+K), which opens the [Spotlight palette](../controls/spotlight.md) (OR-31, OR-32) and puts the focus in its field;
 * reserved: a right-panel toggle goes last, after search, once a right panel exists. Until then nothing is rendered for it.
 
-At phone width (760 px and below) the toggle hides (the rail is always collapsed), the section actions, the focus chip and the indicator keep their icons (the indicator its count), and the title gives way first: nothing scrolls sideways.
+At phone width (760 px and below) the toggle hides (the rail is always collapsed), the section actions, the focus chip and the indicator keep their icons (the indicator its count), and the title gives way first: nothing scrolls sideways. *Target:* the rail becomes a bottom bar of five ([OR-60](../owner-rules.md)).
 
 **Outside focus.** The indicator counts the [Needs you](needs-you.md) items (open questions and Needs-you problems) whose project is outside the focus and not ignored (ignore is full silence); with All projects it shows nothing. A click opens `/overview?all`, the Overview without the focus (ignored projects stay hidden); its head says so, and the indicator hides there. It is never kept as the Overview's last view: the navigation, Back or its head's focus icon return to the focused Overview.
 
