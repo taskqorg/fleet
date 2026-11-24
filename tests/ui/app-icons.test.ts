@@ -1,6 +1,6 @@
 // Requirement: browser tabs and installed workspaces use the existing Fleet F.
 // Requirement: authenticated Chromium installation retains Fleet identity and standalone navigation.
-// Risk: credentialless manifest requests hit Access login; navigation leaves the installed scope.
+// Risk: credentialless manifest requests hit Access login; navigation leaves the installed scope or advertises the wrong workspace.
 // Risk: build emits missing assets, wrong PNG sizes, or divergent workspace branding.
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -18,15 +18,24 @@ test('built manifests and HTML reference the shared Fleet icons', () => {
   const manifestScript = html.match(/<script>([\s\S]*?)<\/script>/)![1];
   for (const path of ['/', '/lab', '/unknown', ...screens.flatMap((view: string) => [`/${view}`, `/${view}/invented-detail`])]) {
     const links: { rel?: string; crossOrigin?: string; href?: string }[] = [];
+    const link = { href: '', getAttribute(name: 'href') { return this[name]; } };
+    const location = { pathname: path };
+    const navigation = new EventTarget();
     runInNewContext(manifestScript, {
-      location: { pathname: path },
-      document: { createElement: () => ({}), head: { appendChild: (link: typeof links[number]) => links.push(link) } },
+      location, navigation,
+      document: { createElement: () => link, head: { appendChild: (element: typeof links[number]) => links.push(element) } },
     });
-    assert.equal(links.length, 1);
-    assert.equal(links[0].rel, 'manifest');
-    assert.equal(links[0].crossOrigin, 'use-credentials');
-    const view = path.split('/')[1];
-    assert.equal(links[0].href, `/manifests/${screens.includes(view) ? view : 'overview'}.webmanifest`);
+    for (const next of [path, '/tasks', '/tasks/invented-detail', '/conversations', path]) {
+      if (next !== location.pathname) {
+        location.pathname = next;
+        navigation.dispatchEvent(new Event('currententrychange'));
+      }
+      assert.equal(links.length, 1);
+      assert.equal(links[0].rel, 'manifest');
+      assert.equal(links[0].crossOrigin, 'use-credentials');
+      const view = next.split('/')[1];
+      assert.equal(links[0].href, `/manifests/${screens.includes(view) ? view : 'overview'}.webmanifest`);
+    }
   }
   let shared;
   for (const name of manifests) {
