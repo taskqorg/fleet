@@ -436,7 +436,7 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 			}
 		}
 	}
-	if hasLiveEvent && !(executionEnds(string(execution.State)) && execution.Observation == db.ObservationUnconfirmed) {
+	if hasLiveEvent && !(executionEnds(string(execution.State)) && deref(execution.Problem) == "unknown:abandoned") {
 		if err := markObservation(q, xid, "confirmed"); err != nil {
 			return none, err
 		}
