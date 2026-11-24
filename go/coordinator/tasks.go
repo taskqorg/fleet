@@ -927,32 +927,39 @@ func likePattern(s string) string {
 
 // taskListDBRow: a task_page and list_membership row (sqlTaskListCols) with its group and sort keys.
 type taskListDBRow struct {
-	ID            string  `db:"id"`
-	Code          *string `db:"code"`
-	ProjectID     *string `db:"project_id"`
-	Title         string  `db:"title"`
-	State         string  `db:"state"`
-	PauseReason   *string `db:"pause_reason"`
-	WaitReason    *string `db:"wait_reason"`
-	Priority      string  `db:"priority"`
-	CreatedAt     string  `db:"created_at"`
-	UpdatedAt     string  `db:"updated_at"`
-	Agent         *string `db:"agent"`
-	Host          *string `db:"host"`
-	StartedAt     *string `db:"started_at"`
-	OpenQuestions int64   `db:"open_questions"`
-	StateAt       *string `db:"state_at"`
-	Executions    int64   `db:"executions"`
-	LastAgent     *string `db:"last_agent"`
-	G             string  `db:"g"`
-	Sk            float64 `db:"sk"`
+	ID                string  `db:"id"`
+	Code              *string `db:"code"`
+	ProjectID         *string `db:"project_id"`
+	Title             string  `db:"title"`
+	State             string  `db:"state"`
+	PauseReason       *string `db:"pause_reason"`
+	WaitReason        *string `db:"wait_reason"`
+	Priority          string  `db:"priority"`
+	CreatedAt         string  `db:"created_at"`
+	UpdatedAt         string  `db:"updated_at"`
+	Agent             *string `db:"agent"`
+	Host              *string `db:"host"`
+	StartedAt         *string `db:"started_at"`
+	OpenQuestions     int64   `db:"open_questions"`
+	StateAt           *string `db:"state_at"`
+	Executions        int64   `db:"executions"`
+	LastAgent         *string `db:"last_agent"`
+	ActiveState       *string `db:"active_state"`
+	ActiveStartedAt   *string `db:"active_started_at"`
+	ActiveObservation *string `db:"active_observation"`
+	ActiveLastSeenAt  *string `db:"active_last_seen_at"`
+	ActiveStalled     bool    `db:"active_stalled"`
+	G                 string  `db:"g"`
+	Sk                float64 `db:"sk"`
 }
 
 func (x taskListDBRow) row() contract.TaskRow {
+	stalled := x.ActiveStalled
 	return contract.TaskRow{Id: x.ID, Code: x.Code, ProjectId: x.ProjectID, Title: x.Title, State: x.State, PauseReason: x.PauseReason,
 		WaitReason: x.WaitReason, Priority: x.Priority, Agent: x.Agent, Host: x.Host, StartedAt: x.StartedAt, CreatedAt: x.CreatedAt,
 		UpdatedAt: x.UpdatedAt, OpenQuestions: x.OpenQuestions, StateAt: x.StateAt, Executions: x.Executions, LastAgent: x.LastAgent,
-		SortKey: sortKey(x.G, x.Sk, x.ID)}
+		ActiveState: x.ActiveState, ActiveStartedAt: x.ActiveStartedAt, ActiveObservation: x.ActiveObservation,
+		ActiveLastSeenAt: x.ActiveLastSeenAt, ActiveStalled: &stalled, SortKey: sortKey(x.G, x.Sk, x.ID)}
 }
 
 // taskFilter: a task list's filter as sent (rowFilterOf).

@@ -118,5 +118,87 @@ export async function checkTaskStory(browser: Browser, origin: string) {
     await rDetail.getByText('2 hidden (restricted project)', { exact: true }).waitFor();
     await rDetail.locator('[data-ui="execution-tree"]').getByText('Tool calls · 2 · 1 failed', { exact: true }).waitFor();
     await page.unroute('**/api/ops/task_get');
+
+    // T-FLT-33: Tasks Running preset preserves unresolved filter and conveys scope; TaskFacts separates task age from
+    // credible active run duration and renders stale/stalled/unconfirmed separately without false running-too-long alerts.
+    const t33Clock = Date.parse('2026-11-23T18:00:00Z');
+    const firstStart = '2026-11-23T04:00:00Z';
+    const longStart = '2026-11-23T15:30:00Z';
+    const shortStart = '2026-11-23T17:45:00Z';
+    const recent = '2026-11-23T17:59:30Z';
+    const stale = '2026-11-23T16:30:00Z';
+    const mkRow = (id: string, title: string, extra: Record<string, unknown>) => ({
+      id,
+      code: `T-FLT-${id}`,
+      projectId: 'fleet',
+      title,
+      state: 'in_progress',
+      pauseReason: null,
+      waitReason: null,
+      priority: 'normal',
+      agent: 'codex',
+      host: 'owner-mac',
+      startedAt: firstStart,
+      createdAt: firstStart,
+      updatedAt: recent,
+      openQuestions: 0,
+      stateAt: firstStart,
+      executions: 2,
+      lastAgent: 'codex',
+      activeState: null,
+      activeStartedAt: null,
+      activeObservation: null,
+      activeLastSeenAt: null,
+      activeStalled: false,
+      sortKey: ['fleet', 0, id],
+      ...extra,
+    });
+    const t33Rows = [
+      mkRow('301', 'Paused old task', { state: 'paused', agent: null }),
+      mkRow('302', 'Waiting on owner', { state: 'waiting', waitReason: 'question', agent: null, openQuestions: 1 }),
+      mkRow('303', 'In progress no active run', { state: 'in_progress', agent: null }),
+      mkRow('304', 'Short active continuation', { activeState: 'running', activeStartedAt: shortStart, activeObservation: 'confirmed', activeLastSeenAt: recent }),
+      mkRow('305', 'Long active continuation', { activeState: 'running', activeStartedAt: longStart, activeObservation: 'confirmed', activeLastSeenAt: recent }),
+      mkRow('306', 'Stale running record', { activeState: 'running', activeStartedAt: longStart, activeObservation: 'confirmed', activeLastSeenAt: stale }),
+      mkRow('307', 'Stalled active continuation', { activeState: 'running', activeStartedAt: longStart, activeObservation: 'confirmed', activeLastSeenAt: stale, activeStalled: true }),
+      mkRow('308', 'Unconfirmed continuation', { activeState: 'running', activeStartedAt: longStart, activeObservation: 'unconfirmed', activeLastSeenAt: stale }),
+    ];
+    const t33Page = await context.newPage();
+    await t33Page.clock.install({ time: t33Clock });
+    await t33Page.route('**/api/ops/task_page', route => route.fulfill({
+      json: {
+        tasks: t33Rows,
+        nextAfter: null,
+        counts: { queued: 0, in_progress: 6, waiting: 1, held: 0, paused: 1, completed: 0, failed: 0, cancelled: 0 },
+        total: t33Rows.length,
+        groups: [{ key: 'fleet', label: 'fleet', count: t33Rows.length }],
+      },
+    }));
+    await t33Page.goto(origin + '/tasks?preset=Running&state=held,in_progress,paused,queued,waiting');
+    await t33Page.locator('.vl-row[data-key="305"]').waitFor();
+    await t33Page.clock.runFor(150);
+    const runningPreset = t33Page.locator('[data-ui=saved-views] button', { hasText: 'Running' });
+    assert.match(await runningPreset.getAttribute('data-tip') ?? '', /unresolved tasks/i);
+    assert.match(await runningPreset.getAttribute('aria-description') ?? '', /unresolved tasks/i);
+    await t33Page.getByText('Unresolved tasks: queued, in progress, waiting, held, and paused.', { exact: true }).waitFor();
+
+    for (const id of ['301', '302', '303', '304']) {
+      const row = t33Page.locator(`.vl-row[data-key="${id}"]`);
+      assert.equal(await row.locator('.chip-age.t-danger').count(), 0, `row ${id} must not show red duration warning`);
+      assert.equal(await row.locator('[aria-label*="running too long"]').count(), 0, `row ${id} must not say running too long`);
+    }
+    const longRow = t33Page.locator('.vl-row[data-key="305"]');
+    assert.equal(await longRow.locator('.chip-age.t-danger[aria-label*="running too long"]').count(), 1, 'genuinely active 2h30m run shows red running too long alert');
+    assert.equal(await longRow.locator('.row-facts [data-tip="Task age since first run"]').count(), 1, 'task age shown separately from current run');
+
+    assert.equal(await t33Page.locator('.vl-row[data-key="306"] .chip-age.t-danger').count(), 0);
+    assert.equal(await t33Page.locator('.vl-row[data-key="306"] .chip-age.t-attention[aria-label*="run evidence stale"]').count(), 1);
+    assert.equal(await t33Page.locator('.vl-row[data-key="307"] .chip-age.t-danger').count(), 0);
+    assert.equal(await t33Page.locator('.vl-row[data-key="307"] .chip-age.t-attention[aria-label*="run stalled"]').count(), 1);
+    assert.equal(await t33Page.locator('.vl-row[data-key="308"] .chip-age.t-danger').count(), 0);
+    assert.equal(await t33Page.locator('.vl-row[data-key="308"] .chip-age.t-attention[aria-label*="run unconfirmed"]').count(), 1);
+    assert.equal(await t33Page.locator('.vl-row[data-key="308"] .badge.unconf').count(), 1);
+    await t33Page.unroute('**/api/ops/task_page');
+    await t33Page.close();
   } finally { await context.close(); }
 }
