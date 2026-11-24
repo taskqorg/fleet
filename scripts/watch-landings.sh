@@ -4,6 +4,7 @@
 # every open pull request with auto-merge on or in the merge queue (gh pr merge --auto on a clean pull request enqueues it at once and clears autoMergeRequest), and every one merged in the last <minutes> (default 60), all at once.
 # Usage: scripts/watch-landings.sh [minutes] [timeout-minutes, default 45]
 # Prints "#<n> <last line of watch-landing.sh>" per pull request as each finishes; exit 1 if any did not end on hosts/site or as nothing to ship.
+# When one reached hosts or the site, it then prints the J1–J5 walk report on prod (tests/journeys/walk.ts); the walk never changes the exit.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 since=$(date -u -v-"${1:-60}"M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "-${1:-60} min" +%Y-%m-%dT%H:%M:%SZ)
@@ -18,4 +19,10 @@ for n in $prs; do
 done
 wait
 # Every line must be a success; anything else (timeout, not merged, no output) fails the run.
-[ -z "$(grep -L -E '^#[0-9]+ (on (hosts|site) |merged [0-9a-f]+, nothing to ship$)' "$out"/*)" ]
+[ -z "$(grep -L -E '^#[0-9]+ (on (hosts|site) |merged [0-9a-f]+, nothing to ship$)' "$out"/*)" ]; status=$?
+# After a landing reached the site or hosts, walk J1–J5 on prod once (tests/journeys/walk.ts): a report, never the exit status.
+if grep -q -E '^#[0-9]+ on (hosts|site) ' "$out"/* 2>/dev/null && [ -f tests/journeys/walk.ts ]; then
+  limit=; command -v timeout >/dev/null && limit="timeout 600"
+  echo; $limit node tests/journeys/walk.ts 2>/dev/null || echo "J1–J5 walk did not finish (run node tests/journeys/walk.ts)"
+fi
+exit $status
