@@ -68,19 +68,21 @@ func threadKeyOf(k contract.ThreadKey) (threadKey, error) {
 // member: an execution of the thread, as its boundary and its agent blocks show it. known: the execution is a member
 // (a row of another execution has none).
 type member struct {
-	id                                string
-	sessionID, harness, model, effort *string
-	state                             string
-	startedAt, endedAt                *time.Time
-	seq                               int64
-	known                             bool
+	id                     string
+	sessionID, projectID   *string
+	harness, model, effort *string
+	state                  string
+	observation            db.Observation
+	startedAt, endedAt     *time.Time
+	seq                    int64
+	known                  bool
 }
 
 // memberRow: the execution columns every member query selects.
 type memberRow = db.ThreadMemberOfRow
 
 func memberOf(r memberRow) member {
-	m := member{id: r.ID, sessionID: r.SessionID, harness: r.Harness, model: r.Model, state: r.State, startedAt: r.StartedAt, endedAt: r.EndedAt, seq: r.Seq, known: true}
+	m := member{id: r.ID, sessionID: r.SessionID, projectID: r.ProjectID, harness: r.Harness, model: r.Model, state: r.State, observation: r.Observation, startedAt: r.StartedAt, endedAt: r.EndedAt, seq: r.Seq, known: true}
 	json.Unmarshal(r.Effort, &m.effort)
 	return m
 }
@@ -527,6 +529,73 @@ func keyOfSession(q *Request, sid string) (threadKey, error) {
 		return threadKey{task: *ts[0]}, nil
 	}
 	return threadKey{session: sid}, nil
+}
+
+func threadComposer(q *Request, b *contract.ThreadComposerRequest) (contract.ThreadComposerReply, error) {
+	s, err := sessionByID(q, b.ConversationId)
+	if err != nil {
+		return contract.ThreadComposerReply{}, err
+	}
+	return composerTarget(q, &s)
+}
+
+func composerTarget(q *Request, s *agentSession) (contract.ThreadComposerReply, error) {
+	var out contract.ThreadComposerReply
+	key, err := keyOfSession(q, s.ID)
+	if err != nil {
+		return out, err
+	}
+	out.Key = key.view()
+	if key.task != "" {
+		visible, err := q.db().ThreadTaskExists(q.ctx(), key.task)
+		if err != nil {
+			return out, err
+		}
+		if !visible {
+			return out, errNotFound
+		}
+	}
+	m, ids, err := members(q, key)
+	if err != nil {
+		return out, err
+	}
+	sessions := []string{s.ID}
+	if key.task != "" {
+		memberSessions := []string{s.ID}
+		for _, id := range ids {
+			if sid := m[id].sessionID; sid != nil {
+				memberSessions = append(memberSessions, *sid)
+			}
+		}
+		sessions, err = q.db().ThreadComposerSessions(q.ctx(), db.ThreadComposerSessionsParams{
+			TaskID: key.task, ProjectID: agentOpt(s.ProjectID), SessionIds: memberSessions,
+		})
+		if err != nil {
+			return out, err
+		}
+	}
+	if len(sessions) == 0 {
+		return out, nil
+	}
+	out.SessionId = &sessions[0]
+	eligible := make(map[string]bool, len(sessions))
+	for _, sid := range sessions {
+		eligible[sid] = true
+	}
+	// members orders execution boundaries by creation sequence, independently of the transcript window.
+	for i := len(ids) - 1; i >= 0; i-- {
+		e := m[ids[i]]
+		if !eligible[deref(e.sessionID)] || e.observation != db.ObservationConfirmed || terminalState[e.state] {
+			continue
+		}
+		if key.task != "" && (e.state != "running" || deref(e.projectID) != s.ProjectID) {
+			continue
+		}
+		out.SessionId = e.sessionID
+		out.Active = &contract.SessionExecution{Id: e.id, State: e.state, Harness: e.harness, Model: e.model, Effort: e.effort}
+		break
+	}
+	return out, nil
 }
 
 func feedCursor(q *Request) (int64, error) { return head(q.ctx(), q.tx) }
@@ -1043,6 +1112,7 @@ func replyTextUpTo(q *Request, executionID string, maxRunes int) ([]string, erro
 }
 
 func init() {
+	op("thread_composer", threadComposer)
 	op("thread_entries", threadEntries)
 	op("thread_blocks", threadBlocks)
 	op("thread_search", threadSearch)

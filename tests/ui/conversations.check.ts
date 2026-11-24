@@ -360,6 +360,28 @@ try {
   await p.unroute('**/api/ops/session_get');
   await p.unroute('**/api/ops/thread_entries');
 
+  // Conversations Controls: loading another session or changing the transcript window must not misroute Send or Stop.
+  const composerTask = seed.task({title: 'Composer routing'});
+  for (const [id, executionId] of [['composer-a', 'composer-a-run'], ['composer-b', 'composer-b-run']]) {
+    seed.put('session', {id, taskId: composerTask, createdAt: Date.now()});
+    seed.put('execution', {id: executionId, sessionId: id, taskId: composerTask, hostId: 'pds18', state: 'running'});
+  }
+  await p.goto(`${origin}/conversations/composer-a`);
+  const composer = p.locator('[data-ui=composer]');
+  await composer.getByRole('textbox', {name: 'Steer'}).fill('A message for the newer run');
+  const sendResponse = p.waitForResponse(r => new URL(r.url()).pathname === '/api/ops/message_send');
+  await composer.getByRole('button', {name: 'Send', exact: true}).click();
+  const sent = await sendResponse;
+  const body = sent.request().postDataJSON();
+  check(sent.ok() && body.sessionId === 'composer-b' && body.composer.executionId === 'composer-b-run' && body.delivery === 'steer',
+    'the open task conversation sends to the newest running execution’s session');
+  await boundaryFor('composer-a-run').getByRole('button', {name: 'Stop', exact: true}).click();
+  check(await until(async () => seed.rows("SELECT execution_id FROM command WHERE kind='stop' AND execution_id IN ('composer-a-run','composer-b-run')").map(row => row.execution_id).join() === 'composer-a-run'),
+    'boundary Stop reaches the older execution only');
+  await composer.getByRole('button', {name: 'Stop', exact: true}).click();
+  check(await until(async () => seed.rows("SELECT 1 FROM command WHERE kind='stop' AND execution_id='composer-b-run'").length === 1),
+    'composer Stop reaches the newest execution');
+
   check(!errors.length, `no page errors${errors.length ? ': ' + errors.join('; ') : ''}`);
   if (rtt.length) time('thread_entries page round trip (median)', [...rtt].sort((x, y) => x - y)[rtt.length >> 1]);
   await checkConversationsList(b, origin, seed);

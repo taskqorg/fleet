@@ -246,13 +246,11 @@ Artifacts live in the `artifact` table. The thread, the viewer and the Results p
 
 ### Controls
 
-Not built: selecting the newest running execution across all sessions in a task. The current composer chooses from the selected session's executions; the task-wide target below remains required ([tracked gaps](https://github.com/taskqorg/fleet/issues/327)). Individual boundary Stop remains execution-specific.
-
 Stop, steer and answer are always visible. The rest are in one left-aligned menu with icons (OR-13), in reserved space (OR-23).
 
-*   **Composer target**: the newest running execution of the thread, named in the composer. When nothing runs, the composer sends a new message to the thread's newest session with `message_send`, which starts an execution, and steer is not shown. Each `boundary` row of a running execution has its own Stop.
+*   **Composer target**: `thread_composer` resolves the thread from the open conversation and selects its newest confirmed running execution, independent of the transcript window. A task target must belong to a visible session in the conversation's project that can still receive work for the thread. With no eligible run, the composer addresses the newest eligible session and offers Message. A standalone conversation keeps its own session and active turn controls. Each execution boundary keeps its own Stop.
 *   **Stop**: `execution_stop` on that execution. The composer's one button is Stop while the target runs and the composer is empty ([composer](../design-system/controls/composer.md)).
-*   **Steer**: `message_send` with `delivery: 'steer'` on the target execution's session; queued when the host cannot steer (`go/coordinator/agent.go`).
+*   **Steer**: `message_send` with `delivery: 'steer'` on the target execution's session. The coordinator checks the displayed target before a new submission and reconciles a known request ID against its original destination. A host without steer support queues the message. Task conversation uploads stay in the project until the message binds them to its destination session.
 
 Menu actions:
 

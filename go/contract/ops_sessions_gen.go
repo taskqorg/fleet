@@ -179,18 +179,24 @@ func (*DirectSearchRequest) Closed() bool { return true }
 type MessageSendReply = map[string]json.RawMessage
 
 type MessageSendRequest struct {
-	Attachments []string        `json:"attachments,omitempty"`
-	Delivery    *string         `json:"delivery,omitempty"`
-	RequestId   *string         `json:"requestId,omitempty"`
-	SentBy      json.RawMessage `json:"sentBy,omitempty"`
-	SessionId   *string         `json:"sessionId,omitempty"`
-	Setup       json.RawMessage `json:"setup,omitempty"`
-	Source      json.RawMessage `json:"source,omitempty"`
-	Text        *string         `json:"text,omitempty"`
+	Attachments []string                 `json:"attachments,omitempty"`
+	Composer    *ThreadComposerSelection `json:"composer,omitempty"`
+	Delivery    *string                  `json:"delivery,omitempty"`
+	RequestId   *string                  `json:"requestId,omitempty"`
+	SentBy      json.RawMessage          `json:"sentBy,omitempty"`
+	SessionId   *string                  `json:"sessionId,omitempty"`
+	Setup       json.RawMessage          `json:"setup,omitempty"`
+	Source      json.RawMessage          `json:"source,omitempty"`
+	Text        *string                  `json:"text,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *MessageSendRequest) Validate() error {
+	if v.Composer != nil {
+		if err := Check(v.Composer, "composer"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1235,6 +1241,45 @@ func (v *ThreadBlocksRequest) Validate() error {
 	return nil
 }
 
+type ThreadComposerReply struct {
+	Active    *SessionExecution `json:"active,omitempty"`
+	Key       ThreadKey         `json:"key"`
+	SessionId *string           `json:"sessionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadComposerReply) Validate() error {
+	if v.Active != nil {
+		if err := Check(v.Active, "active"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Key, "key"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ThreadComposerRequest struct {
+	ConversationId string `json:"conversationId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadComposerRequest) Validate() error {
+	return nil
+}
+
+// ThreadComposerSelection: The open conversation and displayed target execution (null for Message). A new write fails if the composer target changed. A retained requestId reconciles against the original destination.
+type ThreadComposerSelection struct {
+	ConversationId string  `json:"conversationId"`
+	ExecutionId    *string `json:"executionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadComposerSelection) Validate() error {
+	return nil
+}
+
 // ThreadEntriesReply: total: only with around. feedCursor: the change cursor of this read, to catch up from.
 type ThreadEntriesReply struct {
 	Entries    []Block   `json:"entries"`
@@ -1608,7 +1653,7 @@ func init() {
 		"ask":                 {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "bound:session", Description: "Ask a fresh question with question + requestId and taskId for an existing-task blocker (without attaching the PM session), or read its answer with resume=<questionId> alone; never combine these modes or put continuation prose in resume", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"question\":{\"$comment\":\"Fresh ask text. Requires requestId; do not combine with resume.\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"resume\":{\"$comment\":\"Existing question ID to read, never continuation prose. Do not combine with question or requestId.\",\"type\":\"string\"},\"taskId\":{\"$comment\":\"Fresh ask about this granted task; does not attach the PM session. Omit for a session-only question or bound-worker inference.\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"changes_since":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).", InputSchema: json.RawMessage("{\"$comment\":\"No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).\",\"additionalProperties\":true,\"properties\":{\"cursor\":{\"type\":\"integer\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
 		"direct_search":       {Read: false, Long: true, Errors: []int{}, Auth: "project:projectId", Agent: "tool", Description: "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.", InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":false,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
-		"message_send":        {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Send a message; starts a turn, or queues/steers it while the session is busy. attachments: artifact ids of the session's project (artifact_save output or an operator upload); the receiving agent gets them as files under FLEET_INPUT_DIR/attachments, listed in its turn. A message with attachments is queued, never steered", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"attachments\":{\"$comment\":\"Artifact ids (artifact_upload_begin, artifact_save) of the session project; the executor stages them under FLEET_INPUT_DIR/attachments and lists them in the turn.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"delivery\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sentBy\":{\"$comment\":\"Accepted and ignored: the sender is the caller (or Fleet for its own timer, change and wake inputs), never an argument.\"},\"sessionId\":{\"type\":\"string\"},\"setup\":{},\"source\":{\"$comment\":\"Accepted and ignored from a caller: Fleet sets it for its own inputs.\"},\"text\":{\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"message_send":        {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Send a message; starts a turn, or queues/steers it while the session is busy. attachments: artifact ids of the session's project (artifact_save output or an operator upload); the receiving agent gets them as files under FLEET_INPUT_DIR/attachments, listed in its turn. A message with attachments is queued, never steered", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"attachments\":{\"$comment\":\"Artifact ids (artifact_upload_begin, artifact_save) of the session project; the executor stages them under FLEET_INPUT_DIR/attachments and lists them in the turn.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"composer\":{\"$comment\":\"The open conversation and displayed target execution (null for Message). A new write fails if the composer target changed. A retained requestId reconciles against the original destination.\",\"additionalProperties\":false,\"properties\":{\"conversationId\":{\"type\":\"string\"},\"executionId\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"conversationId\",\"executionId\"],\"type\":\"object\"},\"delivery\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sentBy\":{\"$comment\":\"Accepted and ignored: the sender is the caller (or Fleet for its own timer, change and wake inputs), never an argument.\"},\"sessionId\":{\"type\":\"string\"},\"setup\":{},\"source\":{\"$comment\":\"Accepted and ignored from a caller: Fleet sets it for its own inputs.\"},\"text\":{\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"recommendation_set":  {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Set the recommended method of a project's capability (projectId, methodId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"methodId\"],\"type\":\"object\"}")},
 		"reply":               {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Answer a question; delivered to the asker as its next message", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"answer\":{},\"questionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_archive":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Archive a session (sessionId): it leaves the lists and its worktree is torn down", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
@@ -1626,6 +1671,7 @@ func init() {
 		"session_unarchive":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A worktree already torn down is not restored; the next start prepares a new one.", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A worktree already torn down is not restored; the next start prepares a new one.\",\"additionalProperties\":false,\"properties\":{\"reason\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"reason\"],\"type\":\"object\"}")},
 		"sessions_list":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "after: the nextAfter of the previous page.", InputSchema: json.RawMessage("{\"$comment\":\"after: the nextAfter of the previous page.\",\"additionalProperties\":true,\"properties\":{\"after\":{\"items\":{},\"type\":\"array\"},\"filter\":{\"$comment\":\"The list filter of packages/view-url toPageParams; a null projectId is work outside projects; an empty projectId list is refused; archived applies to sessions only. A field a list does not implement is a 400.\",\"additionalProperties\":false,\"properties\":{\"archived\":{\"type\":\"boolean\"},\"excludeProjectId\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); null (or '-', as in excludeProjectIds) is work outside projects; applied after projectId, so a project in both is left out. Agents see every project unless they pass it.\",\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"projectId\":{\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"search\":{\"$comment\":\"free text; tasks also take key:value terms agent:, host:, state:, project: (substring match)\",\"type\":\"string\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"group\":{\"$comment\":\"project, state, agent or none; default project; state groups in attention order (waiting, failed, running, preparing, idle, succeeded, cancelled)\",\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"sort\":{\"$comment\":\"order inside a group: last activity or creation, - before it is descending; default -activity (latest activity first)\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"thread_blocks":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "rows: changed records; the reply has their current blocks.", InputSchema: json.RawMessage("{\"$comment\":\"rows: changed records; the reply has their current blocks.\",\"properties\":{\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"rows\":{\"items\":{\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"The kinds the change triggers write (fleet_change and fleet_artifact_change in go/coordinator/schema/functions.sql); a go test checks the triggers against this list.\",\"enum\":[\"api-connection\",\"artifact\",\"board\",\"bot\",\"bot-run\",\"command\",\"connection-key\",\"definition\",\"delivery\",\"event\",\"execution\",\"experiment\",\"host\",\"managed-account\",\"project-recommendation\",\"question\",\"resource_summary\",\"score\",\"session\",\"setting-change\",\"task\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"key\",\"rows\"],\"type\":\"object\"}")},
+		"thread_composer":     {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Resolve the current message and Stop target from the open conversation, independent of the transcript page.", Changes: []string{"session", "execution", "task"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"conversationId\":{\"type\":\"string\"}},\"required\":[\"conversationId\"],\"type\":\"object\"}")},
 		"thread_entries":      {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Entries of a thread (key), paged with before, after or around and limit", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"after\":{\"type\":\"string\"},\"around\":{\"type\":\"string\"},\"before\":{\"type\":\"string\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"resolve\":{\"type\":\"boolean\"}},\"required\":[\"key\"],\"type\":\"object\"}")},
 		"thread_export":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "A thread (key) as text, optionally between from and to in timezone tz", InputSchema: json.RawMessage("{\"properties\":{\"from\":{\"properties\":{\"key\":{\"type\":\"string\"},\"offset\":{\"type\":\"integer\"}},\"required\":[\"key\"],\"type\":\"object\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"to\":{\"properties\":{\"key\":{\"type\":\"string\"},\"offset\":{\"type\":\"integer\"}},\"required\":[\"key\"],\"type\":\"object\"},\"tz\":{\"type\":\"string\"}},\"required\":[\"key\"],\"type\":\"object\"}")},
 		"thread_search":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Find text in a thread (key, q), paged with before and limit", InputSchema: json.RawMessage("{\"properties\":{\"before\":{\"type\":\"string\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"q\":{\"type\":\"string\"}},\"required\":[\"key\",\"q\"],\"type\":\"object\"}")},

@@ -8,18 +8,26 @@
 WITH attached AS (SELECT s.id AS session_id FROM session s WHERE s.task_id= @task_id::text),
  first_task AS (SELECT DISTINCT ON (x.session_id) x.session_id, x.task_id FROM execution x WHERE x.task_id IS NOT NULL
   AND x.session_id IN (SELECT y.session_id FROM execution y WHERE y.task_id= @task_id::text) ORDER BY x.session_id, x.seq)
-SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.started_at, e.ended_at, e.seq
+SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq
 FROM execution e WHERE e.kind='agent_run' AND (e.task_id= @task_id::text OR (e.task_id IS NULL AND (e.session_id IN (SELECT f.session_id FROM first_task f WHERE f.task_id= @task_id::text)
  OR e.session_id IN (SELECT a.session_id FROM attached a)))) ORDER BY e.seq;
 
 -- name: ThreadMembersOfSession :many
-SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.started_at, e.ended_at, e.seq
+SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq
 FROM execution e WHERE e.kind='agent_run' AND e.session_id=$1 ORDER BY e.seq;
 
 -- name: ThreadMemberOf :many
 -- One execution as a thread member (its reply text), of any kind.
-SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.started_at, e.ended_at, e.seq
+SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq
 FROM execution e WHERE e.id=$1;
+
+-- name: ThreadComposerSessions :many
+-- Visible sessions still associated with the thread, including attached sessions without an execution.
+SELECT s.id FROM session s
+WHERE s.project_id IS NOT DISTINCT FROM sqlc.narg(project_id)::text
+  AND s.archived_at IS NULL
+  AND (s.task_id = @task_id::text OR (s.task_id IS NULL AND s.id = ANY(@session_ids::text[])))
+ORDER BY s.created_at DESC NULLS LAST, s.id DESC;
 
 -- name: ThreadSessionExists :one
 SELECT EXISTS (SELECT 1 FROM session WHERE id=$1);
