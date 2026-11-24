@@ -249,19 +249,12 @@ export async function checkTaskStory(browser: Browser, origin: string) {
     }));
     await page.route('**/api/ops/executions_list', route => route.fulfill({ json: { executions: [] } }));
     await page.route('**/api/ops/task_page', route => route.fulfill({ json: { tasks: [], nextAfter: null, counts: {}, total: 0, groups: [] } }));
-    await page.goto(origin + '/overview/ov-problem');
-    await page.locator('[data-ui=needs-you] .vl-row.grp .group-h b').first().waitFor();
-    const ovGroups = await page.locator('[data-ui=needs-you] .vl-row.grp .group-h b').allTextContents();
-    assert.deepEqual(ovGroups, ['Decisions', 'Hosts', 'Acceptance']);
-    const ovDetail = page.locator('[data-ui=detail]');
-    await ovDetail.getByText('System problem', { exact: true }).waitFor();
-    await ovDetail.getByText(/System alert\./).waitFor();
-    await page.goto(origin + '/overview/ov-accept');
-    await ovDetail.getByText('Result acceptance', { exact: true }).waitFor();
-    await ovDetail.getByText(/Accepting records this result/).waitFor();
-    await page.goto(origin + '/overview/ov-block');
-    await ovDetail.getByText('Blocking decision', { exact: true }).waitFor();
-    await ovDetail.getByText(/waiting conversation and unblocks execution/).waitFor();
+    // Home (pages/home.md): a system problem is a blocker chip; acceptance and a session's question are cards with their
+    // choices in place (OR-53, OR-58).
+    await page.goto(origin + '/home');
+    await page.getByRole('link', { name: 'Blocker: Host mac stopped polling, 1 time' }).waitFor();
+    await page.getByRole('group', { name: 'Accept deliverable?' }).getByRole('button', { name: 'accepted' }).waitFor();
+    await page.getByRole('group', { name: 'Which branch?' }).getByRole('button', { name: 'main' }).waitFor();
     await page.unrouteAll({ behavior: 'wait' });
   } finally { await context.close(); }
 }

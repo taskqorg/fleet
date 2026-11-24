@@ -14,7 +14,7 @@ const out = { push: (l: string) => console.log('    ' + l) };
 const { c, origin, seed, close } = await checkServer();
 
 // Fixtures: a few hundred tasks across projects, states and priorities; sessions with a transcript; hosts; open questions.
-let waiting = '', running = '', slot = '';
+let waiting = '', running = '';
 seed.bulk(() => {
   for (let i = 0; i < 240; i++) {
     const p = ['cs', 'game', 'fleet'][i % 3];
@@ -22,7 +22,7 @@ seed.bulk(() => {
     if (i % 7 === 0) { seed.execution({ id: 'run-' + i, kind: 'agent_run', taskId: id, projectId: p, hostId: ['pds18', 'mac', 'windows'][i % 3], harness: ['codex', 'claude', 'antigravity'][i % 3], state: 'running' }); if (!running) running = id; }
     if (i === 3) { waiting = id; seed.question({ kind: 'acceptance', taskId: id, text: 'Accept this result?', options: ['accepted', 'rejected'] }); }
   }
-  for (let i = 0; i < 4; i++) { const q = seed.question({ kind: 'operator_decision', text: 'Pick a release slot ' + i, options: ['today', 'tomorrow'] }); if (!slot) slot = q; }
+  for (let i = 0; i < 4; i++) { seed.question({ kind: 'operator_decision', text: 'Pick a release slot ' + i, options: ['today', 'tomorrow'] }); }
   for (const [id, platform, ago] of [['pds18', 'linux', 2000], ['mac', 'darwin', 120000], ['windows', 'win32', 5000]] as const) seed.put('host-observation', { id, platform, lastSeenAt: Date.now() - ago, capabilities: ['codex'] });
   seed.put('session', { id: 'sess-1', createdAt: Date.now() - 600000, agentConfig: { id: 'baseline', harness: 'codex' } });
   seed.execution({ id: 'sx-1', kind: 'agent_run', sessionId: 'sess-1', hostId: 'pds18', harness: 'codex', state: 'succeeded' });
@@ -37,10 +37,8 @@ try {
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !(expectedCatalogueFailure && m.text().includes('503'))) errors.push(m.text()); });
   const ROUTES: [string, string[]][] = [
-    // Overview B (decisions.md 2026-11-20): the Needs-you inbox in the control column, the fleet in the idle work area,
-    // a picked question answered in the work area.
-    ['/overview', ['app-shell', 'nav-rail', 'list-detail', 'needs-you', 'data-list', 'ops-summary', 'stat-strip', 'state-counters']],
-    [`/overview/${slot}`, ['list-detail', 'needs-you', 'detail', 'decision-block']],
+    // Home (pages/home.md, OR-50): pulse line, composer with its target, session and question cards, answered in place.
+    ['/home', ['app-shell', 'nav-rail', 'home', 'pulse-line', 'target-picker', 'session-card', 'question-card']],
     ['/tasks', ['app-shell', 'nav-rail', 'list-view', 'filter-bar', 'state-counters', 'data-list', 'state-badge']],
     [`/tasks/${waiting}`, ['list-detail', 'detail', 'outcome-block', 'decision-block', 'number']],
     [`/tasks/${running}`, ['detail', 'execution-tree']],
@@ -88,18 +86,10 @@ try {
   await page.waitForURL(origin + '/humans');
   await page.getByText('Human UI fixture', { exact: true }).waitFor({ state: 'hidden' });
 
-  // OR-29, OR-40: Overview counters show no zero chip and start with the bold total; Needs you lists every item, one row
-  // each, grouped by cause, urgency first (an operator decision before an acceptance).
-  await page.goto(origin + '/overview'); await page.waitForSelector('[data-ui=needs-you] .vl-row .row-link');
-  const ov = await page.evaluate(() => {
-    const blocks = [...document.querySelectorAll('[data-ui=ops-summary] [data-ui=state-counters]')];
-    const shown = document.querySelectorAll('[data-ui=needs-you] .vl-row .row-link').length;
-    const causes = [...document.querySelectorAll('[data-ui=needs-you] .vl-row.grp .group-h b')].map(x => x.textContent);
-    return { zero: blocks.some(b => [...b.querySelectorAll('.counter')].some(n => /: 0$/.test(n.getAttribute('aria-label') ?? ''))), sigma: blocks.length > 0 && blocks.every(b => b.firstElementChild?.classList.contains('sigma')),
-      shown, causes, host0: [...document.querySelectorAll('[data-ui=ops-summary] .kv .num')].some(n => /^≥/.test(n.textContent ?? '')) };
-  });
-  out.push(`overview counters (OR-29): ${ov.zero ? 'ZERO CHIP SHOWN' : 'no zero chip'}, ${ov.sigma ? 'total first' : 'TOTAL NOT FIRST'}, ${ov.host0 ? 'HOST LOWER BOUND SHOWN' : 'no host lower bound'}`);
-  out.push(`needs you (OR-40): ${ov.shown} rows${ov.shown < 5 ? '  MISSING ROWS' : ''}, groups ${ov.causes.join(', ')}${ov.causes[0] === 'Decisions' ? '' : '  WRONG ORDER'}`);
+  // OR-50, OR-53: Home lists every open question as a card in Waiting for you, with its choices in place.
+  await page.goto(origin + '/home'); await page.waitForSelector('[data-ui=question-card]');
+  const asked = await page.locator('[data-ui=question-card]').count();
+  out.push(`home (OR-53): ${asked} question cards${asked < 5 ? '  MISSING QUESTIONS' : ''}`);
   // OR-39: the task detail shows no total that is unknown (no empty tokens or cost fields).
   await page.goto(origin + `/tasks/${running}`); await page.waitForSelector('[data-ui=detail] .detail-title');
   const empty = await page.$$eval('[data-ui=detail] .totals .b-unavailable', els => els.length);
@@ -134,7 +124,7 @@ try {
   let ms = -1; for (let i = 0; i < 100; i++) { if (await page.$(`.vl-row [aria-label^="Paused"]`)) { ms = Date.now() - t0; break; } await page.waitForTimeout(20); }
   out.push(`change-to-screen: ${ms < 0 ? 'NOT SEEN within 2 s' : ms + ' ms'} (target <= 1000 ms)${ms > 1000 ? '  OVER TARGET' : ''}`);
   // Pins (nav-rail.md): pin from the item, it stays in its group too; Alt+ArrowUp reorders; the order survives a reload (person settings).
-  await page.goto(origin + '/overview'); await page.waitForSelector('[data-ui=nav-rail]');
+  await page.goto(origin + '/home'); await page.waitForSelector('[data-ui=nav-rail]');
   for (const n of ['Projects', 'System']) { await page.locator('.rail-g:not(.pinned)').getByRole('button', { name: 'Pin ' + n, exact: true }).click(); await page.waitForTimeout(150); }
   const pinsOf = () => page.$$eval('.rail-g.pinned .nav-i', els => els.map(e => e.getAttribute('data-id')));
   const twice = await page.locator('.rail-g:not(.pinned) .nav-i.pinned[data-id=tasks]').count();

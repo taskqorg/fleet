@@ -25,7 +25,7 @@ declare global {
 
 const Bots = lazy(() => import('./views/bots.tsx'), { export: 'Bots' });
 const Projects = lazy(() => import('./views/projects.tsx'), { export: 'Projects' });
-const Overview = lazy(() => import('./views/overview.tsx'), { export: 'Overview' });
+const Home = lazy(() => import('./views/home.tsx'), { export: 'Home' });
 const Tasks = lazy(() => import('./views/tasks.tsx'), { export: 'Tasks' });
 const Conversations = lazy(() => import('./views/conversations.tsx'), { export: 'Conversations' });
 const Results = lazy(() => import('./views/results.tsx'), { export: 'Results' });
@@ -77,7 +77,7 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   live: { focus: false, view: () => <Live wall={isWall(useSearch()())} /> },
   bots: { focus: true, view: p => <Bots id={p.id} /> },
   projects: { focus: true, view: p => <Projects id={p.id} /> },
-  overview: { focus: true, view: p => <Overview id={p.id} /> },
+  overview: { focus: true, view: p => <Home id={p.id} /> },
   tasks: { focus: true, view: p => <Tasks id={p.id} /> },
   conversations: { focus: true, view: p => <Conversations id={p.id} /> },
   results: { focus: true, view: p => <Results id={p.id} /> },
@@ -262,7 +262,7 @@ function App() {
     // A viewer may only read: its views are not kept (person_settings_set answers 403).
     if (st !== 'open' || !pr || !BUILT.some(n => n.id === cur) || viewer()) return;
     const parsed = (VIEWS as string[]).includes(cur) ? parseView(l + (q ? '?' + q : '')) : null;
-    // The Overview keeps no view of its own: /overview?all (every project, from the outside-focus count) is never kept.
+    // Home keeps no view of its own: /overview?all (every project, from the outside-focus count) is never kept.
     noteView(cur, parsed && cur !== 'overview' ? formatView({ ...parsed, focus: undefined, sel: undefined }) : '/' + cur);
     lastScreen.set(sectionOf(cur), cur);
     if (left && left !== cur) saveOnLeave(left, false);
@@ -347,7 +347,7 @@ function PrivateRoutes(props: { go: (to: string) => void }) {
 function Focus(props: { go: (to: string) => void }) {
   const projects = useOp('project_list', {});
   const list = createMemo<{ id: string; name: string }[]>(() => (projects.data?.projects ?? []).map(p => ({ id: String(p.id), name: String(p.name ?? p.id) })));
-  // Not shown where it leads: the Overview without the focus.
+  // Not shown where it leads: Home without the focus.
   const [loc] = useLocation(), search = useSearch();
   const here = createMemo(() => loc() === '/overview' && new URLSearchParams(search()).has('all'));
   const outside = useOutside();
@@ -356,7 +356,7 @@ function Focus(props: { go: (to: string) => void }) {
 }
 
 /**
- * How many items need the person (open questions and Needs-you problems, the Overview's set) in projects outside the
+ * How many items need the person (open questions and Needs-you problems, Home's set) in projects outside the
  * focus that are not ignored (prefs.ts outsideFocus); 0 with no focus. Read only while a focus is set; a new problem
  * shows within a minute.
  */

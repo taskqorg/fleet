@@ -103,4 +103,33 @@
   @media (pointer: coarse) {
     .target-chip, .pick-row { min-height: var(--size-hit-phone); }
   }
+
+  /* Quiet summary (quiet-summary.md) */
+  .qsum { display: flex; flex-direction: column; gap: var(--space-3); min-height: calc(var(--size-thumb) * 1.75); padding: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
+  .qsum-title { margin: 0; font-size: var(--font-size-lg); font-weight: var(--font-weight-medium); }
+  .qsum-facts { margin: 0; color: var(--fg-muted); font-size: var(--font-size-md); }
+  .qsum-acts { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .qsum.skeleton { gap: var(--space-4); }
+  .qsum.skeleton i { display: block; height: var(--space-4); border-radius: var(--radius-sm); background: var(--neutral-bg); }
+  .qsum.skeleton i:nth-child(1) { width: 30%; }
+  .qsum.skeleton i:nth-child(2) { width: 80%; }
+  .qsum.skeleton i:nth-child(3) { width: 40%; }
+
+  /* Home page (pages/home.md): one column of blocks right of the navigation, its own scroller (OR-25). Groups lay their
+     cards in as many columns as fit; a card is never narrower than a phone column. */
+  .detail.home { gap: var(--space-6); padding-block: var(--space-6); background: var(--bg); container-type: inline-size; }
+  .home-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-3) var(--space-6); }
+  .home-hello { margin: 0; font-size: var(--font-size-lg); font-weight: var(--font-weight-medium); }
+  .home .composer.with-target { background: var(--surface); }
+  .home-group { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+  .home-group > .group-h { align-self: flex-start; width: auto; height: var(--size-chip); }
+  .home-group > .group-h .num { margin-left: 0; }
+  .home-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr)); gap: var(--space-4); align-items: start; }
+  .home-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap: var(--space-4); }
+  .home-more { align-self: flex-start; color: var(--fg-muted); font-size: var(--font-size-sm); text-decoration: none; }
+  .home-more:hover { color: var(--fg); }
+  .home .qsum { max-width: 48rem; }
+  @container (max-width: 40rem) {
+    .home-head { flex-direction: column; align-items: stretch; }
+  }
 }

@@ -19,7 +19,7 @@ The earlier specs keep the content of each screen as it runs today; each names i
 
 | Page today | Workspace | Spec |
 |---|---|---|
-| Overview | Operator | [overview.md](overview.md) (until Home and Live are built) |
+| Overview | Operator | [overview.md](overview.md) (retired: Home replaces it) |
 | Tasks (list and detail) | Operator | [tasks.md](tasks.md) |
 | Results | Operator | [results.md](results.md) |
 | Hosts, environments and stores | Architect | [hosts.md](hosts.md) |
