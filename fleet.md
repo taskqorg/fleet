@@ -132,6 +132,7 @@ Fleet models repository change publication through one shared **Publishing** con
 - **Distinct boundaries:** keep ordinary Git access (deploy keys), read-only provider facts (PR/MR, checks, releases) and publication support (`project-publishing` authority) separate.
 - **Authority and secret isolation:** publication authority is the intersection of host capability, project repo/profile grant and active execution branch; credentials stay inside host mediators and never reach harnesses or tool results.
 - **Policy and fencing:** mutations carry `requestId`, preserve `sourceExecutionId` provenance, fence against moved heads via `expectedHeadSha`, and enforce project review, CI and merge policy without admin bypass.
+- **Rebased task branches:** `project-forge publish_draft` defaults to a regular push. An explicit force-with-lease names the expected remote commit and may update only the active session's granted `fleet/*` branch. The base branch and `main` are excluded.
 
 ### Agent execution
 
