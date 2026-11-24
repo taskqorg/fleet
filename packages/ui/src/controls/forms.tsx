@@ -9,7 +9,7 @@ import { Icon, Button, StateBadge, Ago, SearchBox, HarnessMark } from './primiti
 
 /** An unsaved form value; it never claims that a setting was applied (controls/text-field.md). */
 export function TextField(p: {
-  label: string; value: string; onChange: (value: string) => void; multiline?: boolean; type?: 'text' | 'number';
+  label: string; value: string; onChange: (value: string) => void; multiline?: boolean; type?: 'text' | 'number' | 'email';
   help?: string; error?: string; disabledReason?: string;
 }) {
   const note = createMemo(() => p.error || p.disabledReason || p.help);
@@ -18,7 +18,7 @@ export function TextField(p: {
       <FieldLabel>{p.label}</FieldLabel>
       <Show
         when={p.multiline}
-        fallback={<Input type={p.type ?? 'text'} value={p.value} onValueChange={v => p.onChange(v)} />}
+        fallback={<Input type={p.type ?? 'text'} autocomplete={p.type === 'email' ? 'email' : undefined} value={p.value} onValueChange={v => p.onChange(v)} />}
       >
         <Textarea value={p.value} rows={3} onValueChange={v => p.onChange(v)} />
       </Show>

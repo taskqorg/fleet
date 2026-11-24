@@ -1270,13 +1270,5 @@ func resolveAccount(q *Request, selection *string, harness, host string, directo
 }
 
 func (p *Person) mayAccess(projectID string) bool {
-	if fullAccess(p) {
-		return true
-	}
-	for _, g := range p.Grants {
-		if g.Kind == "project" && g.ID == projectID && projectID != "" {
-			return true
-		}
-	}
-	return false
+	return mayAccessProjectID(p, projectID)
 }

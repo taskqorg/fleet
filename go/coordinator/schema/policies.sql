@@ -339,6 +339,15 @@ CREATE POLICY live ON person_setting AS RESTRICTIVE FOR SELECT TO public USING (
 DROP POLICY IF EXISTS project_scope ON person_setting;
 CREATE POLICY project_scope ON person_setting FOR ALL TO public USING (fleet_visible(project_id));
 
+-- personal_lab_draft
+ALTER TABLE personal_lab_draft ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS personal_lab_author ON personal_lab_draft;
+CREATE POLICY personal_lab_author ON personal_lab_draft FOR ALL TO public USING ((author = current_setting('fleet.lab_author'::text, true)));
+DROP POLICY IF EXISTS personal_lab_review_read ON personal_lab_draft;
+CREATE POLICY personal_lab_review_read ON personal_lab_draft FOR SELECT TO public USING (((pipeline_revision IS NOT NULL) AND (current_setting('fleet.lab_review'::text, true) = 'true'::text) AND fleet_visible(project)));
+DROP POLICY IF EXISTS personal_lab_review_write ON personal_lab_draft;
+CREATE POLICY personal_lab_review_write ON personal_lab_draft FOR UPDATE TO public USING (((pipeline_revision IS NOT NULL) AND (current_setting('fleet.lab_review'::text, true) = 'true'::text) AND fleet_visible(project)));
+
 -- pipeline_run
 ALTER TABLE pipeline_run ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS project_scope ON pipeline_run;

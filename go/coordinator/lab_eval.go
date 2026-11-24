@@ -544,11 +544,18 @@ func (m labMethod) overridesValue() any {
 // Promote: the variant as a catalogue method, saved as a catalogue revision (source lab) unless a method with its
 // config_ref exists; then the project recommendation is set to it (recommend: the recommendation_set operation).
 func expPromote(q *Request, id, label string) (contract.LabPromoteReply, error) {
-	var out contract.LabPromoteReply
+	if err := labPromotionAuthority(q); err != nil {
+		return contract.LabPromoteReply{}, err
+	}
 	exp, err := expRow(q, id)
 	if err != nil {
-		return out, err
+		return contract.LabPromoteReply{}, err
 	}
+	return promoteVariant(q, exp, label, id)
+}
+
+func promoteVariant(q *Request, exp *labExperiment, label, sourceID string) (contract.LabPromoteReply, error) {
+	var out contract.LabPromoteReply
 	v := exp.variant(label)
 	if v == nil {
 		return out, fail(400, "Unknown variant")
@@ -569,7 +576,7 @@ func expPromote(q *Request, id, label string) (contract.LabPromoteReply, error) 
 	}
 	pipeline := variantPipelineID(exp, v)
 	method := labMethod{ID: fmt.Sprintf("%v-%s", pipeline, slug), Name: fmt.Sprintf("%v %s", pipeline, label), Scope: exp.ProjectID, Pipeline: pipeline + ".json",
-		Overrides: jsonBytes(overrides), ConfigRef: identity, SourceExperiment: id}
+		Overrides: jsonBytes(overrides), ConfigRef: identity, SourceExperiment: sourceID}
 	digest := labConfigDigestOf(pipeline, rawValue(jsonBytes(overrides)))
 	// A method's config ref is its configRef, else the hash Lab gives a variant (pipeline id and overrides).
 	refOf := func(m labMethod) string {
@@ -633,7 +640,11 @@ func expPromote(q *Request, id, label string) (contract.LabPromoteReply, error) 
 		if ps := problems("catalogue", "catalogue", text); len(ps) > 0 {
 			return out, fail(400, "The promoted catalogue is invalid: "+ps[0].Message)
 		}
-		rev, err := appendRevision(q, "catalogue", "catalogue", head.Head, &text, head.RepoSha, "lab", fmt.Sprintf("Promote %s from %s", label, id))
+		message := "Promote Lab variant " + label
+		if sourceID != "" {
+			message = fmt.Sprintf("Promote %s from %s", label, sourceID)
+		}
+		rev, err := appendRevision(q, "catalogue", "catalogue", head.Head, &text, head.RepoSha, "lab", message)
 		if err != nil {
 			return out, err
 		}

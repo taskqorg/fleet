@@ -4719,3 +4719,16 @@ SELECT set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', '
 UPDATE execution e SET bot_id = br.bot_id FROM bot_run br WHERE br.execution_id = e.id AND e.bot_id IS NULL;
 UPDATE execution e SET bot_id = s.bot_id FROM session s WHERE s.id = e.session_id AND s.bot_id IS NOT NULL AND e.bot_id IS NULL;
 UPDATE execution_spend sp SET bot_id = e.bot_id FROM execution e WHERE e.id = sp.execution_id AND e.bot_id IS NOT NULL AND sp.bot_id IS NULL;
+
+-- migration 97: personal Lab drafts and explicitly submitted promotion requests.
+CREATE TABLE personal_lab_draft (
+ id text PRIMARY KEY,
+ author text NOT NULL REFERENCES person(email) ON DELETE CASCADE,
+ project text NOT NULL,
+ pipeline text NOT NULL,
+ variant text NOT NULL,
+ pipeline_revision bigint,
+ promoted_method text,
+ updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX personal_lab_draft_author ON personal_lab_draft(author, updated_at DESC, id);

@@ -297,7 +297,8 @@ func personRow(raw json.RawMessage) (*Person, error) {
 		}
 	}
 	for _, g := range p.Grants {
-		if (g.Kind != "project" && g.Kind != "*") || (g.Kind == "project" && g.ID == "") {
+		if !((g.Kind == "project" && g.ID != "" && !strings.ContainsAny(g.ID, ",\r\n\t ") && (g.ID != "*" || hasRole(&p, "architect"))) ||
+			(g.Kind == "lab" && g.ID == "personal" && p.AccessCommonName == "") || g.Kind == "*") {
 			return nil, errors.New("grants of " + p.Email + " must be [{kind, id}]")
 		}
 	}
@@ -307,8 +308,7 @@ func personRow(raw json.RawMessage) (*Person, error) {
 // setPeople parses and checks a people list, mirrors it into person and person_grant, then makes it current. Strict
 // (people_set) refuses any malformed entry; otherwise (the file) a malformed entry is left out and named in skipped, so
 // one bad row never locks out everyone else (site-agents included).
-// ponytail: the map swap is not synchronized with concurrent readers; a person edit is rare and owner-only.
-func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped []string, err error) {
+func (a *App) setPeople(ctx context.Context, raw []byte, strict bool, change func(*Request) error) (skipped []string, err error) {
 	var rows []json.RawMessage
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		return nil, errors.New("people.json must be a list")
@@ -391,6 +391,11 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 				}
 			}
 		}
+		if change != nil {
+			if err := change(req); err != nil {
+				return err
+			}
+		}
 		return q.PeopleChanged(ctx)
 	})
 	if err == nil {
@@ -406,6 +411,9 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 func scopeOf(p *Person) *Scope {
 	if p == nil || fullAccess(p) {
 		return nil
+	}
+	if hasAllProjects(p) {
+		return &Scope{ProjectIDs: "*", Person: p.Email}
 	}
 	ids := []string{}
 	for _, g := range p.Grants {

@@ -72,6 +72,22 @@ try {
     await page.emulateMedia({ colorScheme: 'light' });
     for (const f of await layoutFindings(page)) out.push(`  ${f}`);
   }
+  // Owners add and revoke a human without sending a replacement roster.
+  await page.goto(origin + '/humans');
+  await page.getByRole('button', { name: 'Add human', exact: true }).click();
+  await page.getByLabel('Sign-in email').fill('human-ui@trial.test');
+  await page.getByLabel('Name', { exact: true }).fill('Human UI fixture');
+  await page.getByRole('button', { name: 'Architect', exact: true }).click();
+  await page.getByLabel('Explicit project grants').fill('*');
+  await page.getByRole('button', { name: 'Personal Lab', exact: true }).click();
+  await page.locator('[data-ui=detail]').getByRole('button', { name: 'Add human', exact: true }).click();
+  await page.getByRole('heading', { name: 'Human UI fixture', exact: true }).waitFor();
+  assert.ok((await page.locator('[data-ui=detail]').innerText()).includes('All projects'));
+  await page.getByRole('button', { name: 'Revoke access', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirm revocation', exact: true }).click();
+  await page.waitForURL(origin + '/humans');
+  await page.getByText('Human UI fixture', { exact: true }).waitFor({ state: 'hidden' });
+
   // OR-29, OR-40: Overview counters show no zero chip and start with the bold total; Needs you lists every item, one row
   // each, grouped by cause, urgency first (an operator decision before an acceptance).
   await page.goto(origin + '/overview'); await page.waitForSelector('[data-ui=needs-you] .vl-row .row-link');

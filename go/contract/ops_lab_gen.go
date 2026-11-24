@@ -1342,6 +1342,93 @@ func (v *LabPairwise) Validate() error {
 	return nil
 }
 
+type LabPersonalDraft struct {
+	Author           string  `json:"author"`
+	Id               string  `json:"id"`
+	Pipeline         string  `json:"pipeline"`
+	PipelineRevision *int64  `json:"pipelineRevision,omitempty"`
+	Project          string  `json:"project"`
+	PromotedMethod   *string `json:"promotedMethod,omitempty"`
+	Variant          string  `json:"variant"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabPersonalDraft) Validate() error {
+	return nil
+}
+
+type LabPersonalListReply struct {
+	Drafts []LabPersonalDraft `json:"drafts"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabPersonalListReply) Validate() error {
+	if v.Drafts == nil {
+		return Missing("drafts")
+	}
+	for i := range v.Drafts {
+		if err := Check(&v.Drafts[i], "drafts"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type LabPersonalListRequest = map[string]json.RawMessage
+
+type LabPersonalPromoteReply struct {
+	Method string `json:"method"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabPersonalPromoteReply) Validate() error {
+	return nil
+}
+
+type LabPersonalPromoteRequest struct {
+	Confirm          bool   `json:"confirm"`
+	Id               string `json:"id"`
+	PipelineRevision int64  `json:"pipelineRevision"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabPersonalPromoteRequest) Validate() error {
+	return nil
+}
+
+type LabPersonalSaveReply = LabPersonalDraft
+
+type LabPersonalSaveRequest struct {
+	Id       string `json:"id"`
+	Pipeline string `json:"pipeline"`
+	Project  string `json:"project"`
+	Submit   *bool  `json:"submit,omitempty"`
+	Variant  string `json:"variant"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabPersonalSaveRequest) Validate() error {
+	return nil
+}
+
+type LabPersonalWithdrawReply struct {
+	Id string `json:"id"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabPersonalWithdrawReply) Validate() error {
+	return nil
+}
+
+type LabPersonalWithdrawRequest struct {
+	Id string `json:"id"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabPersonalWithdrawRequest) Validate() error {
+	return nil
+}
+
 type LabPriority struct {
 	Note  *string `json:"note,omitempty"`
 	Value *string `json:"value,omitempty"`
@@ -2277,7 +2364,11 @@ func init() {
 		"lab_experiment_note":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Add a note to a Lab experiment (experimentId, kind, text, optional field and value)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"field\":{\"$comment\":\"Amendment only: goal, hypothesis, decisionRule, labGroup or primaryEvaluator.\",\"type\":\"string\"},\"kind\":{\"enum\":[\"amendment\",\"note\"],\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"value\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"experimentId\",\"kind\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"lab_experiments_list":  {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Lab experiments", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"limit\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
 		"lab_leaderboard":       {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Aggregate Lab benchmark and real-work results across experiments by use case, pipeline, variant, model, profile and evaluator", Changes: []string{"experiment", "score", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"collection\":{\"type\":\"string\"},\"days\":{\"minimum\":1,\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"useCaseId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"lab_promote":           {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Promote a variant of a Lab experiment (experimentId, variant) to the catalogue recommendation", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"variant\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"variant\"],\"type\":\"object\"}")},
+		"lab_personal_list":     {Read: true, Long: false, Errors: []int{403}, Auth: "person", Agent: "tool", Description: "List your private Lab drafts and submitted drafts in your review scope", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}")},
+		"lab_personal_promote":  {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Confirm a reviewed personal Lab variant and promote it to the shared catalogue", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"confirm\":{\"type\":\"boolean\"},\"id\":{\"type\":\"string\"},\"pipelineRevision\":{\"type\":\"integer\"}},\"required\":[\"id\",\"pipelineRevision\",\"confirm\"],\"type\":\"object\"}")},
+		"lab_personal_save":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Save a private draft, or freeze its shared pipeline revision and submit for architect review", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"},\"pipeline\":{\"type\":\"string\"},\"project\":{\"type\":\"string\"},\"submit\":{\"type\":\"boolean\"},\"variant\":{\"type\":\"string\"}},\"required\":[\"id\",\"project\",\"pipeline\",\"variant\"],\"type\":\"object\"}")},
+		"lab_personal_withdraw": {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "Withdraw your unpublished personal Lab draft", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
+		"lab_promote":           {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Promote a variant of a Lab experiment (experimentId, variant) to the catalogue recommendation", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"variant\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"variant\"],\"type\":\"object\"}")},
 		"lab_rating_create":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask for a human rating of Lab trials (experimentId, form, trialIds)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"form\":{\"enum\":[\"pass_fail\",\"pick_best\",\"scale\"],\"type\":\"string\"},\"trialIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"experimentId\",\"form\",\"trialIds\"],\"type\":\"object\"}")},
 		"lab_rating_get":        {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "A Lab rating question with its answers (questionId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\"],\"type\":\"object\"}")},
 		"lab_rating_withdraw":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Withdraw an open Lab rating question (questionId, reason)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"questionId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"reason\"],\"type\":\"object\"}")},

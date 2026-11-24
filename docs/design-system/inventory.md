@@ -147,6 +147,7 @@ These apply to every workspace and are the main input for the controls:
 | Connections: service, accounts, limits, consuming projects; API cost per call | View, Setting | connections, `connection_cost` |
 | People and their roles and project grants (read-only; edited in `people.json`) | View | `person`, `person_grant` |
 | Shares: email, object, expiry; revoke | View, Action | `share` |
+| Humans roster, Fleet admission, roles, explicit and initial project access, personal Lab, and revocation | Owner workspace | `people_list`, `people_update` |
 | Access status: differences between Cloudflare and Fleet, and hand edits still needed | Signal | `access.status` |
 
 ### History and analysis

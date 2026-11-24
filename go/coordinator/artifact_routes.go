@@ -209,12 +209,7 @@ func mayAccessProject(p *Person, projectID *string) bool {
 	if projectID == nil {
 		return contains(p.Roles, "architect")
 	}
-	for _, g := range p.Grants {
-		if g.Kind == "project" && g.ID == *projectID {
-			return true
-		}
-	}
-	return false
+	return mayAccessProjectID(p, *projectID)
 }
 
 // hostMayRead: a host reads an artifact for its own open command that names it (delivery files, copies, verify), or for

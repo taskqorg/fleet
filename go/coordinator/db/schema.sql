@@ -708,6 +708,16 @@ CREATE TABLE person_setting (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE personal_lab_draft (
+  "id" text NOT NULL,
+  "author" text NOT NULL,
+  "project" text NOT NULL,
+  "pipeline" text NOT NULL,
+  "variant" text NOT NULL,
+  "pipeline_revision" bigint,
+  "promoted_method" text,
+  "updated_at" timestamp with time zone NOT NULL
+);
 CREATE TABLE pipeline_run (
   "run_id" text NOT NULL,
   "definition_sha256" text NOT NULL,

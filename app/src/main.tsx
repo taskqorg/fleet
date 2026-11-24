@@ -31,6 +31,8 @@ const Conversations = lazy(() => import('./views/conversations.tsx'), { export: 
 const Results = lazy(() => import('./views/results.tsx'), { export: 'Results' });
 const Delivery = lazy(() => import('./views/delivery.tsx'), { export: 'Delivery' });
 const Infrastructure = lazy(() => import('./views/hosts.tsx'), { export: 'Hosts' });
+const PersonalLab = lazy(() => import('./views/personal-lab.tsx'), { export: 'PersonalLab' });
+const Humans = lazy(() => import('./views/humans.tsx'), { export: 'Humans' });
 const Lab = lazy(() => import('./views/lab.tsx'), { export: 'Lab' });
 const Library = lazy(() => import('./views/agents.tsx'), { export: 'Agents' });
 const Spend = lazy(() => import('./views/spend.tsx'), { export: 'Spend' });
@@ -56,6 +58,15 @@ function RenderBoundary(props: { at: string; children: JSX.Element }) {
 
 // The view of each screen the registry marks `app: true` (the type requires every one). Nav and routes follow registry
 // order. A list screen takes an optional focus segment, so focusing a row never unmounts the list.
+function LabWorkspace(props: { id?: string }) {
+  const me = useOp('me', {});
+  return <Switch fallback={<Empty text="Loading access…" />}>
+    <Match when={me.data?.roles.includes('architect')}><Lab id={props.id} /></Match>
+    <Match when={me.data?.personalLab}><PersonalLab id={props.id} path="/lab" /></Match>
+    <Match when={me.data || me.error}><Empty text="Lab access is required." /></Match>
+  </Switch>;
+}
+
 const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => JSX.Element }> = {
   bots: { focus: true, view: p => <Bots id={p.id} /> },
   projects: { focus: true, view: p => <Projects id={p.id} /> },
@@ -66,7 +77,9 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   delivery: { focus: true, view: p => <Delivery id={p.id} /> },
   hosts: { focus: true, view: p => <Infrastructure section="hosts" id={p.id} /> },
   runners: { focus: false, view: () => <Infrastructure section="runners" /> },
-  lab: { focus: true, view: p => <Lab id={p.id} /> },
+  lab: { focus: true, view: p => <LabWorkspace id={p.id} /> },
+  humans: { focus: true, view: p => <Humans id={p.id} /> },
+  'personal-lab': { focus: true, view: p => <PersonalLab id={p.id} /> },
   keys: { focus: true, view: p => <Infrastructure section="keys" id={p.id} /> },
   agents: { focus: true, view: p => <Library section="agents" id={p.id} /> },
   pipelines: { focus: true, view: p => <Library section="pipelines" id={p.id} /> },
@@ -95,7 +108,7 @@ const KINDS: Record<Hit['kind'], { label: string; icon: IconName; family?: Famil
 };
 
 /** Spotlight provider for deep-linked workspaces and consolidated sub-pages not shown directly in the 8-section rail. */
-const subPages = (go: (to: string) => void): SpotlightProvider => ({
+const subPages = (go: (to: string) => void, show: (id: string) => boolean): SpotlightProvider => ({
   id: 'pages',
   label: 'Pages',
   find: q => [
@@ -103,7 +116,7 @@ const subPages = (go: (to: string) => void): SpotlightProvider => ({
     { id: 'agents', label: 'Agents', icon: 'bot' as const },
     { id: 'hosts', label: 'Hosts', icon: 'panels-top-left' as const },
   ]
-    .filter(s => matchSearch(q, s.label))
+    .filter(s => show(s.id) && matchSearch(q, s.label))
     .map(s => ({ key: 'sub:' + s.id, icon: s.icon, label: s.label, run: () => go('/' + s.id) })),
 });
 
@@ -152,7 +165,10 @@ function App() {
     return LIBRARY_SECTIONS.has(c) ? 'agents' : INFRA_SECTIONS.has(c) ? 'hosts' : c;
   });
   const shellTitle = createMemo(() => BUILT.find(w => w.id === activeNav())?.label ?? BUILT.find(w => w.id === current())?.label);
-  const search = [subPages(go), ...(Object.keys(KINDS) as Hit['kind'][]).map(k => found(k, go))];
+  const me = useOp('me', {});
+  const showPage = (id: string) => id === 'humans' ? me.data?.owner === true :
+    id === 'personal-lab' ? !!me.data?.personalLab || me.data?.roles.includes('architect') === true : true;
+  const search = [subPages(go, showPage), ...(Object.keys(KINDS) as Hit['kind'][]).map(k => found(k, go))];
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
   // Preferences load only after authorized baseline activation.
   // Focus and online check the person quietly (below); preferences changed elsewhere arrive as setting-change events.

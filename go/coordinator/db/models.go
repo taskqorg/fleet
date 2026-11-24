@@ -1140,6 +1140,17 @@ type PersonSetting struct {
 	TombstonedAt *time.Time
 }
 
+type PersonalLabDraft struct {
+	ID               string
+	Author           string
+	Project          string
+	Pipeline         string
+	Variant          string
+	PipelineRevision *int64
+	PromotedMethod   *string
+	UpdatedAt        time.Time
+}
+
 type PipelineRun struct {
 	RunID            string
 	DefinitionSha256 string

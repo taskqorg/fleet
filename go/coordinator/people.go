@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
@@ -61,7 +63,7 @@ func (s *peopleSnapshot) list() []*Person {
 }
 
 // fullAccess: nil (hosts, timers), the owner, or a person with grant {kind: "*"} (site-agents: owner-equivalent
-// visibility and operations, distinct actor; only people_set stays the owner's).
+// visibility and operations, distinct actor; people administration stays owner-only).
 func fullAccess(p *Person) bool {
 	if p == nil || p.Owner {
 		return true
@@ -85,7 +87,7 @@ func mayAccessProjectID(p *Person, projectID string) bool {
 		return false
 	}
 	for _, g := range p.Grants {
-		if g.Kind == "project" && g.ID == projectID {
+		if g.Kind == "project" && (g.ID == projectID || g.ID == "*" && hasAllProjects(p)) {
 			return true
 		}
 	}
@@ -133,7 +135,15 @@ func grantsVersion(p *Person) string {
 	return hex.EncodeToString(h[:])[:16]
 }
 
-func hasRole(p *Person, r string) bool { return slices.Contains(p.Roles, r) }
+func hasRole(p *Person, r string) bool { return p != nil && slices.Contains(p.Roles, r) }
+
+func hasAllProjects(p *Person) bool {
+	return hasRole(p, "architect") && slices.Contains(p.Grants, personGrant{"project", "*"})
+}
+
+func hasPersonalLab(p *Person) bool {
+	return p != nil && slices.Contains(p.Grants, personGrant{"lab", "personal"})
+}
 
 // projectDefinitionRead: a definition read that a project grant allows for kind project, without the architect role
 // (declaredAuth checks the grant and lets it past the declared architect rule).
@@ -217,25 +227,42 @@ func init() {
 			roles = []string{}
 		}
 		g := grantsVersion(p)
-		return contract.MeReply{Email: &p.Email, Name: &p.Name, Roles: roles, Owner: p.Owner, GrantsVersion: &g, ChangeLogRetentionDays: 7}, nil
+		return contract.MeReply{Email: &p.Email, Name: &p.Name, Roles: roles, Owner: p.Owner, PersonalLab: ptr(hasPersonalLab(p)), GrantsVersion: &g, ChangeLogRetentionDays: 7}, nil
 	})
 }
 
 // people_list and people_set: people.json as operations (docs/designs/fleet-pm-agent.md §8). A non-owner sees only
 // themself, as the person row-level policy does; only the owner sets the list, written atomically and reloaded.
 func init() {
-	op("people_list", func(q *Request, _ *contract.PeopleListRequest) (contract.PeopleListReply, error) {
-		out := []map[string]json.RawMessage{}
-		for _, p := range q.peopleSnapshot().list() {
+	op("people_list", func(q *Request, r *contract.PeopleListRequest) (contract.PeopleListReply, error) {
+		out := contract.PeopleListReply{People: []map[string]json.RawMessage{}}
+		manage := valueOr(r.Manage)
+		if manage && !q.person.Owner {
+			return out, fail(403, "Only the owner manages people")
+		}
+		people := q.peopleSnapshot().list()
+		sort.Slice(people, func(i, j int) bool { return people[i].Email < people[j].Email })
+		for _, p := range people {
 			if fullAccess(q.person) || p.Email == q.person.Email {
-				c := *p
-				c.AccessCommonName = "" // the service token's client ID stays in the deployed file
-				out = append(out, recOf(&c))
+				out.People = append(out.People, recOf(publicPerson(p)))
+			}
+			if manage {
+				initial, err := q.db().DefInitialMemberships(q.ctx(), &p.Email)
+				if err != nil {
+					return out, err
+				}
+				row := contract.HumanAccessRow{Email: p.Email, Name: p.Name, Roles: p.Roles, Owner: p.Owner,
+					Machine: p.AccessCommonName != "" || !personEmail.MatchString(p.Email), InitialProjects: orEmpty(initial), PersonalLab: hasPersonalLab(p),
+					Grants: []contract.HumanAccessGrant{}, Version: peopleRowVersion(p)}
+				for _, g := range p.Grants {
+					row.Grants = append(row.Grants, contract.HumanAccessGrant{Kind: g.Kind, Id: g.ID})
+				}
+				out.Roster = append(out.Roster, row)
 			}
 		}
-		sort.Slice(out, func(i, j int) bool { return string(out[i]["email"]) < string(out[j]["email"]) })
-		return contract.PeopleListReply{People: out}, nil
+		return out, nil
 	})
+	op("people_update", peopleUpdate)
 	// setting_changes: the audit of settings, newest first, optionally of one target (host:<id>, people, ...).
 	op("setting_changes", func(q *Request, r *contract.SettingChangesRequest) (contract.SettingChangesReply, error) {
 		// The people list is the owner's: its audit (with service-token client IDs) is not shown to architects or site-agents.
@@ -268,44 +295,175 @@ func init() {
 	})
 }
 
-func peopleSet(q *Request, people json.RawMessage) (int, error) {
-	if !q.person.Owner {
-		return 0, fail(403, "Only the owner sets people")
+func publicPerson(p *Person) *Person {
+	out := *p
+	out.AccessCommonName = ""
+	return &out
+}
+
+func peopleRowVersion(p *Person) string {
+	return sha256hex(jsonBytes(publicPerson(p)))
+}
+
+// Both writers and file reloads take the same lock. Recheck authority after its acquisition.
+func peopleOwner(q *Request) error {
+	p, err := q.app.resolveAccess(q.ctx(), q.person.Email)
+	if err != nil {
+		return err
 	}
-	b := struct{ People json.RawMessage }{bytes.TrimSpace(people)}
-	if len(b.People) == 0 || b.People[0] != '[' {
+	if !p.Owner {
+		return fail(403, "Only the owner sets people")
+	}
+	return nil
+}
+
+func peopleSet(q *Request, people json.RawMessage) (int, error) {
+	people = bytes.TrimSpace(people)
+	if len(people) == 0 || people[0] != '[' {
 		return 0, fail(400, "Expected people: the whole people.json list")
+	}
+	peopleMu.Lock()
+	defer peopleMu.Unlock()
+	if err := peopleOwner(q); err != nil {
+		return 0, err
 	}
 	previous, err := os.ReadFile(q.app.peopleFile)
 	if err != nil {
 		return 0, err
 	}
-	// The file first, so a failed write leaves Fleet on the old list; a failed apply puts the old file back.
-	write := func(raw []byte) error {
-		tmp := q.app.peopleFile + ".tmp"
-		if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-			return err
+	err = writePeople(q, previous, people, redactPeople(previous), redactPeople(people))
+	return q.app.peopleSnapshot().count(), err
+}
+
+func redactPeople(raw []byte) []map[string]json.RawMessage {
+	var people []map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &people)
+	for _, p := range people {
+		for field := range p {
+			if strings.EqualFold(field, "accessCommonName") {
+				delete(p, field)
+			}
 		}
-		return os.Rename(tmp, q.app.peopleFile)
 	}
-	if err := write(b.People); err != nil {
-		return 0, err
+	return people
+}
+
+func peopleUpdate(q *Request, r *contract.PeopleUpdateRequest) (contract.PeopleUpdateReply, error) {
+	out := contract.PeopleUpdateReply{Email: strings.ToLower(strings.TrimSpace(r.Email))}
+	if !personEmail.MatchString(out.Email) {
+		return out, fail(400, "Enter a human sign-in email")
 	}
-	if _, err := q.app.setPeople(q.ctx(), b.People, true); err != nil {
-		if werr := write(previous); werr != nil {
-			return 0, errors.Join(err, werr)
+	peopleMu.Lock()
+	defer peopleMu.Unlock()
+	if err := peopleOwner(q); err != nil {
+		return out, err
+	}
+	raw, err := os.ReadFile(q.app.peopleFile)
+	if err != nil {
+		return out, err
+	}
+	people, err := updateHuman(q.app.peopleSnapshot().person(out.Email), raw, out.Email, r)
+	if err != nil {
+		return out, err
+	}
+	return out, writePeople(q, raw, people, redactPeople(raw), redactPeople(people))
+}
+
+func updateHuman(current *Person, raw []byte, email string, r *contract.PeopleUpdateRequest) ([]byte, error) {
+	var rows []json.RawMessage
+	if err := json.Unmarshal(raw, &rows); err != nil || rows == nil {
+		return nil, fail(409, "Fix the people file before editing the roster")
+	}
+	index := -1
+	for i, row := range rows {
+		p, err := personRow(row)
+		if err != nil {
+			return nil, fail(409, "Fix the people file before editing the roster")
+		}
+		if strings.EqualFold(p.Email, email) {
+			if index >= 0 {
+				return nil, fail(409, "Email appears more than once in the people file")
+			}
+			if p.Owner || p.AccessCommonName != "" {
+				return nil, fail(403, "Owner and machine identities are managed separately")
+			}
+			p.Email = strings.ToLower(p.Email)
+			p.Name = firstString(p.Name, p.Email)
+			if current == nil || peopleRowVersion(p) != peopleRowVersion(current) || r.BaseVersion != peopleRowVersion(p) {
+				return nil, fail(409, "Access changed. Reopen the person before saving")
+			}
+			index = i
+		}
+	}
+	if index < 0 && (current != nil || r.BaseVersion != "" || valueOr(r.Revoke)) {
+		return nil, fail(409, "Access changed. Reopen the person before saving")
+	}
+	if valueOr(r.Revoke) {
+		return jsonBytes(slices.Delete(rows, index, index+1)), nil
+	}
+	p := Person{Email: email, Name: strings.TrimSpace(deref(r.Name)), Roles: unique(r.Roles), Grants: []personGrant{}}
+	if index >= 0 {
+		// Keep legacy full-access grants when editing other fields. This workspace never adds one.
+		for _, g := range current.Grants {
+			if g.Kind == "*" {
+				p.Grants = append(p.Grants, g)
+			}
+		}
+	}
+	for _, id := range unique(r.Projects) {
+		if strings.TrimSpace(id) != id || strings.ContainsAny(id, ",\r\n\t") {
+			return nil, fail(400, "Invalid project grant")
+		}
+		p.Grants = append(p.Grants, personGrant{"project", id})
+	}
+	if valueOr(r.PersonalLab) {
+		p.Grants = append(p.Grants, personGrant{"lab", "personal"})
+	}
+	next := json.RawMessage(jsonBytes(p))
+	if _, err := personRow(next); err != nil {
+		return nil, fail(400, err.Error())
+	}
+	if index < 0 {
+		rows = append(rows, next)
+	} else {
+		rows[index] = next
+	}
+	return jsonBytes(rows), nil
+}
+
+func writePeople(q *Request, previous, next []byte, before, after any) error {
+	// A failed projection or audit rolls back the file as well as the transaction.
+	write := func(raw []byte) (string, error) {
+		f, err := os.CreateTemp(filepath.Dir(q.app.peopleFile), ".people-*")
+		if err != nil {
+			return "", err
+		}
+		defer os.Remove(f.Name())
+		_, err = f.Write(raw)
+		info, statErr := f.Stat()
+		if err = errors.Join(err, statErr, f.Close()); err != nil {
+			return "", err
+		}
+		return peopleFileKey(info), os.Rename(f.Name(), q.app.peopleFile)
+	}
+	key, err := write(next)
+	if err != nil {
+		return err
+	}
+	if _, err := q.app.setPeople(q.ctx(), next, true, func(req *Request) error {
+		a := *req
+		a.person, a.agent = q.person, q.agent
+		return audit(&a, "people", "people", before, after, auditExtra{})
+	}); err != nil {
+		if _, werr := write(previous); werr != nil {
+			return errors.Join(err, werr)
 		}
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) {
-			return 0, err
+			return err
 		}
-		return 0, fail(400, err.Error())
+		return fail(400, err.Error())
 	}
-	var prev, next any
-	json.Unmarshal(previous, &prev)
-	json.Unmarshal(b.People, &next)
-	err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
-		return audit(q, "people", "people", prev, next, auditExtra{})
-	})
-	return q.app.peopleSnapshot().count(), err
+	peopleSeen = key
+	return nil
 }
