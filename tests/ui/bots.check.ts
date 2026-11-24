@@ -98,6 +98,9 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
     await p.goto(`${origin}/bots`);
     await p.waitForURL(`${origin}/library/bots`);
     const tree = p.getByRole('tree', { name: 'Library' });
+    // The tree is virtualized and long; the Library search narrows it to the two bots.
+    await p.getByRole('button', { name: 'Find in library', exact: true }).click();
+    await p.getByRole('searchbox', { name: 'Find in library', exact: true }).fill('HAL0');
     const itemA = tree.locator(`[data-tree-key="bot:${halA}"]`);
     await itemA.waitFor();
     await tree.locator(`[data-tree-key="bot:${halB}"]`).waitFor();
