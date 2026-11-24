@@ -95,6 +95,18 @@ Behaviour:
 * **Progress and plan steps:** these come from the session context panel ([FLT-30](https://youtrack.ufobe.com/issue/FLT-30)).
 * **Quiet summary:** the "since your last visit" summary needs the person's last-visit time.
 
+
+## Blocks
+
+* [Pulse line and blocker chip](../controls/pulse-line.md): the glance line under the greeting.
+* [Composer with target picker](../controls/composer.md#target-picker): picks who to talk to and sends the first message.
+* [Group head](../controls/data-list.md): the name and count of each session group.
+* [Session card](../controls/session-card.md): one card per active session.
+* [Question card](../controls/decision-block.md#card): the open question on a card, answered in place.
+* [State dot and word](../controls/state-badge.md#dot-and-word): the state on cards and picker rows.
+* [Bot tile](../controls/bot-tile.md): the Asleep row.
+* [Navigation rail](../controls/nav-rail.md) and [shell header](../patterns/app-shell.md): the frame.
+
 ## Design board
 
 The rendered states are on the [design board](../README.md#design-board), canvas [screens/home.bl](../board/screens/home.bl): normal, picker, session open with context panel, quiet, phone and card anatomy. Names are real; content is illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).

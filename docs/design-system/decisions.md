@@ -504,3 +504,9 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Choice (owner):** conversation first. Three principles: glance, work through conversation, details on demand. Screen 1 is Home with sessions; screen 2 is Live, a technical wall of everything that runs. The rail has seven sections: Home, Live, Conversations, Projects, Lab, Library, System. The host-centric Overview options were not taken.
 * **Recorded as:** [principles](owner-rules.md#principles), OR-50 to OR-61 and new wording of OR-19, OR-24, OR-27, OR-40, OR-43 and OR-46 in [owner rules](owner-rules.md); the seven sections in [information architecture](../designs/fleet-ia-and-journeys.md#1-closed-information-architecture); [navigation and columns](patterns/navigation-and-columns.md).
 * **Not decided:** the session context panel ([FLT-30](https://youtrack.ufobe.com/issue/FLT-30)); the Telegram channel's rooms and approval cards ([FLT-31](https://youtrack.ufobe.com/issue/FLT-31) and its subtasks); page specs for Home and Live; each new rule's automated check.
+
+## 2026-11-25: Screens built from blocks
+
+* **Question (owner):** start composing interface rules and blocks, and build the interface from those blocks.
+* **Choice:** Home, Live and the session view are composed of named blocks. Each block has one spec in `controls/` (a new file, or a section of the control it extends), and one component on the design board, [blocks.bl](board/blocks.bl), with every state as a variant. Screen canvases place instances of those components, so a block change reaches every screen. The block list maps each block to its `packages/ui` control or marks it new: [blocks of Home, Live and the session view](controls/README.md#blocks-of-home-live-and-the-session-view).
+* **Reason:** the same element looked different on different screens; one master per block keeps one look, and one spec per block keeps one source per rule.

@@ -17,6 +17,7 @@ The board is the visual source of the interface: a [Brilliant](https://brilliant
 | [styles](board/styles.bl) | Every Fleet colour in both themes and the type scale, drawn from the tokens | `tokens.json` changes (`pnpm run board:tokens`) |
 | [rules-v2](board/rules-v2.bl) | The principles and rules as one picture; the text of record is [owner-rules.md](owner-rules.md) | An owner rule changes |
 | [ia](board/ia.bl) | The sections, the question each answers, the journeys | The [information architecture](../designs/fleet-ia-and-journeys.md) changes |
+| [blocks](board/blocks.bl) | Every block of Home, Live and the session view as a component with all its states ([block list](controls/README.md#blocks-of-home-live-and-the-session-view)) | A block's spec changes; screens use its instances, so the change reaches them |
 | `screens/<page>` ([home](board/screens/home.bl), [live](board/screens/live.bl)) | The approved states of one page: a row at 1440 px, then phone 390 px, then the parts it adds | The owner approves a state; the [page spec](pages/README.md) links its canvas |
 
 How a screen moves through the board:
