@@ -74,7 +74,7 @@ export function context(page: string): string {
   const add = (g: string, item: string) => { const l = parts.get(g) ?? parts.set(g, []).get(g)!; if (!l.includes(item)) l.push(item); };
   // Blocks are the links in the spec's `## Blocks` section; a link with an anchor names one section of a control
   // spec, and only that section is read. Each block's own controls and patterns follow.
-  const blocks = /^## Blocks$/m.test(text) ? refs(section(text, 'Blocks'), spec) : [];
+  const blocks = (/^## Blocks$/m.test(text) ? refs(section(text, 'Blocks'), spec) : []).filter(([p]) => group(p) === 'Controls' || group(p) === 'Patterns');
   const queue: string[] = [];
   for (const [p, a] of blocks) {
     if (!existsSync(join(root, p))) continue;
@@ -88,7 +88,6 @@ export function context(page: string): string {
   for (const p of queue) {
     const g = group(p);
     if (!g || blockFiles.has(p) || !existsSync(join(root, p))) continue;
-    if (parts.get(g)?.includes(p)) continue;
     add(g, p);
     if (g !== 'Canvas') cite(read(p), relative(ds, p));
   }
