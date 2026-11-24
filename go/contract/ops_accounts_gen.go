@@ -1327,6 +1327,90 @@ func (v *PriceEntry) Validate() error {
 	return nil
 }
 
+type PriceRefreshChange struct {
+	Currency           string      `json:"currency"`
+	EffectiveFrom      *int64      `json:"effectiveFrom,omitempty"`
+	EffectiveSourceUrl *string     `json:"effectiveSourceUrl,omitempty"`
+	Previous           *PriceEntry `json:"previous,omitempty"`
+	Price              float64     `json:"price"`
+	Subject            string      `json:"subject"`
+	Unit               string      `json:"unit"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PriceRefreshChange) Validate() error {
+	if v.Previous != nil {
+		if err := Check(v.Previous, "previous"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type PriceRefreshProvider struct {
+	Changes    []PriceRefreshChange `json:"changes"`
+	Gaps       []string             `json:"gaps"`
+	ObservedAt int64                `json:"observedAt"`
+	Provider   string               `json:"provider"`
+	SourceUrl  string               `json:"sourceUrl"`
+	Unchanged  int64                `json:"unchanged"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PriceRefreshProvider) Validate() error {
+	if v.Changes == nil {
+		return Missing("changes")
+	}
+	for i := range v.Changes {
+		if err := Check(&v.Changes[i], "changes"); err != nil {
+			return err
+		}
+	}
+	if v.Gaps == nil {
+		return Missing("gaps")
+	}
+	return nil
+}
+
+type PriceRefreshReply struct {
+	Appended  []PriceEntry           `json:"appended"`
+	PlanId    string                 `json:"planId"`
+	Providers []PriceRefreshProvider `json:"providers"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PriceRefreshReply) Validate() error {
+	if v.Appended == nil {
+		return Missing("appended")
+	}
+	for i := range v.Appended {
+		if err := Check(&v.Appended[i], "appended"); err != nil {
+			return err
+		}
+	}
+	if v.Providers == nil {
+		return Missing("providers")
+	}
+	for i := range v.Providers {
+		if err := Check(&v.Providers[i], "providers"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type PriceRefreshRequest struct {
+	PlanId *string `json:"planId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PriceRefreshRequest) Validate() error {
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*PriceRefreshRequest) Closed() bool { return true }
+
 type PricesListReply struct {
 	Prices []PriceEntry `json:"prices"`
 }
@@ -1585,6 +1669,7 @@ func init() {
 		"connections_token_list":      {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Gateway tokens of connections: id, connection, created and revoked, never the token value", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_token_revoke":    {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner only.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only.\",\"additionalProperties\":true,\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"}")},
 		"price_add":                   {Read: false, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Record a price observation for a subject and unit (price, currency, source, optional sourceRef, observedAt, effectiveFrom)", InputSchema: json.RawMessage("{\"properties\":{\"currency\":{\"type\":\"string\"},\"effectiveFrom\":{\"type\":\"integer\"},\"observedAt\":{\"type\":\"integer\"},\"price\":{\"$comment\":\"Per one unit.\",\"type\":\"number\"},\"source\":{\"$comment\":\"vendor | snapshot | owner\",\"type\":\"string\"},\"sourceRef\":{\"type\":\"string\"},\"subject\":{\"$comment\":\"A resolved model ID or \\u003cconnection\\u003e/\\u003ctool\\u003e.\",\"type\":\"string\"},\"unit\":{\"type\":\"string\"}},\"required\":[\"subject\",\"unit\",\"price\",\"currency\",\"source\"],\"type\":\"object\"}")},
+		"price_refresh":               {Read: false, Long: true, Errors: []int{400, 403, 409}, Auth: "architect", Agent: "tool", Description: "Preview official standard provider API rate changes without writes. Apply a verified preview with its planId. Report provider gaps, proposed changes and appended IDs for prices_list and setting_changes readback.", InputSchema: json.RawMessage("{\"properties\":{\"planId\":{\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"prices_list":                 {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Recorded prices, optionally of one subject", InputSchema: json.RawMessage("{\"properties\":{\"subject\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"subscription_limits":         {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Subscription limit windows and usage per account: windowHours or from/to, paceMargin", Changes: []string{"managed-account", "setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"from\":{\"$comment\":\"history start, ms (default 7 days back)\",\"type\":\"integer\"},\"paceMargin\":{\"$comment\":\"pace margin in points (default 5)\",\"type\":\"number\"},\"to\":{\"$comment\":\"projection end, ms (default 7 days ahead)\",\"type\":\"integer\"},\"windowHours\":{\"$comment\":\"burn window, hours (screen: 1, 3 or 6; default 3)\",\"type\":\"number\"}},\"required\":[],\"type\":\"object\"}")},
 		"subscription_limits_refresh": {Read: false, Long: false, Errors: []int{403, 404}, Auth: "person", Agent: "tool", Description: "Read subscription limits now, without a run: one subscription (subscriptionId), or every one the caller holds (the owner: all)", InputSchema: json.RawMessage("{\"$comment\":\"fleet-people-access.md section 8 \\\"Read without a run\\\": one subscription, or every one the caller holds (the owner: all)\",\"additionalProperties\":false,\"properties\":{\"subscriptionId\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")},
