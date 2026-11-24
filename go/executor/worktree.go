@@ -11,10 +11,33 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // hardenedGit: cleared environment, no system or global config, hooks and fsmonitor off, file protocol refused.
+// setAsideStale renames a working-area directory that is no git worktree (no .git: an interrupted teardown removed
+// the link and left the files) to <dir>.stale-<unix ms>, so git worktree add gets an empty path. Nothing is deleted:
+// the files may hold the session's only copy of its work. 2026-11-24: such a leftover failed every start of a session.
+func setAsideStale(w string) error {
+	if _, err := os.Lstat(w); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return os.Rename(w, w+".stale-"+strconv.FormatInt(time.Now().UnixMilli(), 10))
+}
+
+// removeStale deletes the <w>.stale-* copies setAsideStale made (links inside are removed, never followed).
+func removeStale(w string) {
+	stale, _ := filepath.Glob(w + ".stale-*")
+	for _, p := range stale {
+		makeTreeWritable(p)
+		os.RemoveAll(p)
+	}
+}
+
 func hardenedGit(args ...string) *exec.Cmd {
 	c := exec.Command("git", append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=never"}, args...)...)
 	c.Env = []string{"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
@@ -187,6 +210,9 @@ func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string
 	if exists(filepath.Join(w, ".git")) {
 		return w, top, false, true, nil
 	}
+	if err = setAsideStale(w); err != nil {
+		return
+	}
 	wt := contract.ProjectWorktree{}
 	if project.Worktree != nil {
 		wt = *project.Worktree
@@ -296,6 +322,9 @@ func trialWorktree(dir, repo, commit string, roots, forbidden []string) (string,
 		}
 		return w, paths[0], nil
 	}
+	if err := setAsideStale(w); err != nil {
+		return "", "", err
+	}
 	if hardenedGit("-C", paths[0], "worktree", "add", "--detach", w, commit).Run() != nil {
 		return "", "", errors.New("git worktree add failed (commit missing?)")
 	}
@@ -383,6 +412,9 @@ func keepReasons(project contract.ProjectContext) map[string]bool {
 func teardown(dir, session, top string, project contract.ProjectContext, deleteBranch, detached bool) contract.Teardown {
 	keep := keepReasons(project)
 	w := filepath.Join(dir, "worktree")
+	if deleteBranch { // the task was accepted: copies set aside by setAsideStale hold nothing more to keep
+		removeStale(w)
+	}
 	if !exists(filepath.Join(w, ".git")) {
 		return refusedTeardown("no-worktree")
 	}

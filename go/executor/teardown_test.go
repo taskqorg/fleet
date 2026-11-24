@@ -256,3 +256,33 @@ func TestTeardownReadOnlyTree(t *testing.T) {
 		t.Fatal("external symlink target file missing")
 	}
 }
+
+// Requirement: a session's next start recovers from an interrupted teardown. Risk: 2026-11-24 a worktree directory
+// whose .git link was gone (files left behind) failed every later start with "git worktree add failed".
+func TestWorktreeSetsAsideStaleDirectory(t *testing.T) {
+	top, dir := t.TempDir(), t.TempDir()
+	top, _ = filepath.EvalSymlinks(top)
+	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"}} {
+		if out, err := exec.Command("git", append([]string{"-C", top}, args...)...).CombinedOutput(); err != nil {
+			t.Fatal(args, err, string(out))
+		}
+	}
+	stale := filepath.Join(dir, "worktree")
+	if err := os.MkdirAll(filepath.Join(stale, "app"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(stale, "app", "work.txt"), []byte("only copy"), 0o600)
+	w, _, created, ok, err := worktree(dir, "s1", top, true, []string{top}, nil, proj(M{"worktree": M{"startFromOrigin": false}}), false)
+	if err != nil || !ok || !created || !exists(filepath.Join(w, ".git")) {
+		t.Fatal(err, ok, created)
+	}
+	kept, _ := filepath.Glob(filepath.Join(dir, "worktree.stale-*", "app", "work.txt"))
+	if len(kept) != 1 {
+		t.Fatalf("the stale files were not kept aside: %v", kept)
+	}
+	// An accepted task's teardown (deleteBranch) removes the set-aside copy with the worktree.
+	teardown(dir, "s1", top, proj(M{}), true, false)
+	if left, _ := filepath.Glob(filepath.Join(dir, "worktree.stale-*")); len(left) != 0 {
+		t.Fatalf("stale copy left after acceptance: %v", left)
+	}
+}
