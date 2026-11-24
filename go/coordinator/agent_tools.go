@@ -239,6 +239,29 @@ func agentTable(name string) bool {
 	return ok && contract.Operations[name].Agent == "bound:session"
 }
 
+// hostAgentPerson checks whose grants a host can use for a native tool call.
+func hostAgentPerson(q *Request, director, takenFrom string) (*Person, error) {
+	person := q.peopleSnapshot().person(director)
+	if person == nil {
+		return nil, fail(403, "Director "+director+" is not a person of this Fleet")
+	}
+	var host authHost
+	if q.host != nil {
+		host = *q.host
+	}
+	if holder := q.peopleSnapshot().person(host.Holder); director != host.Holder && (holder == nil || !holder.Owner) {
+		return nil, fail(403, "Host "+host.HostID+" is held by "+host.Holder+", not the director "+director)
+	}
+	// Taken work uses the holder's subscription and the original requester's grants.
+	if takenFrom != "" {
+		person = q.peopleSnapshot().person(takenFrom)
+		if person == nil {
+			return nil, fail(403, "Requester "+takenFrom+" is not a person of this Fleet")
+		}
+	}
+	return person, nil
+}
+
 func init() {
 	// /api/hosts/agent-tools: an executor's agent calls a tool (mcpserve); every call is bound to the calling execution's
 	// session and runs through runOp, under the director's person gate.
@@ -299,24 +322,8 @@ func init() {
 			if q.host != nil {
 				holder = q.host.Holder
 			}
-			d := firstString(e.DirectedBy, sessionDirector, holder)
-			if q.person = q.peopleSnapshot().person(d); q.person == nil {
-				return fail(403, "Director "+d+" is not a person of this Fleet")
-			}
-			// A host acts with its director's rights only when its holder is that director or the owner (whose hosts
-			// run taken work, people-access §5); another holder's host never borrows a director's grants.
-			if hp := q.peopleSnapshot().person(holder); d != holder && (hp == nil || !hp.Owner) {
-				return fail(403, "Host "+b.HostId+" is held by "+holder+", not the director "+d)
-			}
-			// Taken work runs on the holder's subscription (dispatch sets directedBy to the holder), but its agent acts
-			// with the rights of the person it was taken from: otherwise a member's run would borrow the owner's rights,
-			// and its child sessions (director(q)) would inherit them.
-			if tf := e.TakenFrom; tf != "" {
-				if q.person = q.peopleSnapshot().person(tf); q.person == nil {
-					return fail(403, "Requester "+tf+" is not a person of this Fleet")
-				}
-			}
-			return nil
+			q.person, err = hostAgentPerson(q, firstString(e.DirectedBy, sessionDirector, holder), e.TakenFrom)
+			return err
 		}
 		if name := rpc.Params.Name; rpc.Method == "tools/call" && !agentTable(name) {
 			if agentDenied(name) {

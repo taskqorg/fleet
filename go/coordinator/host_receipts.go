@@ -67,7 +67,7 @@ var receiptRank = map[string]int{"pending": 0, string(contract.ReceiptStatusAcce
 // projectReceipt runs one project operation for a native agent (projects area: the operation, its native-agent actor
 // and the early return of a started pipeline run). Otherwise the registered operation runs in this transaction.
 // args: the operation's arguments, an open object that goes on to the named operation.
-func projectReceipt(q *Request, operation string, args map[string]json.RawMessage, executionID string) (any, error) {
+func projectReceipt(q *Request, operation string, args map[string]json.RawMessage, executionID string, session agentSession) (any, error) {
 	if operation == "account_list" {
 		project, _ := jsonText(args["projectId"])
 		return agentAccountList(q, project, executionID)
@@ -77,8 +77,37 @@ func projectReceipt(q *Request, operation string, args map[string]json.RawMessag
 		return nil, fail(404, "Unknown operation")
 	}
 	sub := &Request{app: q.app, r: q.r, tx: q.tx, host: q.host, body: []byte(js(jsonValue(jsonBytes(args))))}
-	if operation == "connections_key_request" { // its question shows in the asking agent's conversation
+	switch operation {
+	case "connections_key_request": // its question shows in the asking agent's conversation
 		sub.agent = "execution:" + executionID
+	case "pipeline_run", "direct_search":
+		if executionID == "" {
+			return nil, fail(403, "Execution rejected")
+		}
+		row, err := q.db().ExecutionByID(q.ctx(), executionID)
+		if err != nil {
+			return nil, err
+		}
+		if deref(row.SessionID) != session.ID {
+			return nil, fail(403, "Pipeline caller session ownership mismatch")
+		}
+		if deref(row.ProjectID) != session.ProjectID {
+			return nil, fail(403, "Pipeline caller project mismatch")
+		}
+		execution, err := executionAs[agentExecution](row)
+		if err != nil {
+			return nil, err
+		}
+		sub.agent = "execution:" + executionID
+		sub.person, err = hostAgentPerson(sub, firstString(deref(row.DirectedBy), session.DirectedBy), execution.TakenFrom)
+		if err != nil {
+			return nil, err
+		}
+		// Resolve current access and scope the receipt transaction before creating or returning the run.
+		if err := authorizeOp(sub, operation); err != nil {
+			return nil, err
+		}
+		return op.h(sub)
 	}
 	if g := opGates[operation]; g != nil {
 		if err := g(sub); err != nil {
@@ -198,7 +227,7 @@ func projectReceiptIn(q *Request, b *contract.ProjectReceipt) (any, error) {
 	}
 	args := recOf(d.Arguments)
 	args["projectId"] = jsonBytes(s.ProjectID)
-	return projectReceipt(q, string(d.Operation), args, b.ExecutionId)
+	return projectReceipt(q, string(d.Operation), args, b.ExecutionId, s)
 }
 
 // childReceiptIn: POST /api/hosts/delegations (contract.ChildReceipt), a child agent request.
