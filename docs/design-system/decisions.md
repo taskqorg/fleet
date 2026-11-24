@@ -516,3 +516,10 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question (owner, through the orchestrator session):** the usability rules were written for the list-and-detail app; the conversation-first direction needs rules every screen and every block can be checked against, and the later end-to-end variant needs a map of what exists today.
 * **Choice:** every rule in [principles](principles.md) is one testable sentence with an id (`UR-<n>`) and its check, a browser step or a review. New sections cover glance, conversation as the main mode, details on demand, wayfinding, feedback, error prevention and recovery, consistency and phone. The rules link the owner rules and never restate them; owner rules win. The [product map](product-map.md) lists every capability and route with its target section, built state, prod state and operations.
 * **Reason:** a rule without a check is kept only by reading it, and the rebuild needs one list of what works and what does not.
+## 2026-11-25: The design process helps, never blocks
+
+* **Question (owner):** what to add to the design and development process so that screens stop drifting apart and agents know how the interface is structured.
+* **Options:** blocking checks (a ratchet on the design report, no page change without its canvas, a required design-review status); or precise context for each agent plus reports people read.
+* **Choice (owner):** no new gates; CI is already slow and its failures say little, so a gate only adds a place where work stalls. Agents get exactly the information, instructions and tools their task needs. Five changes: a per-page context command; rules cited by ID with a weekly rules review; page specs that name their blocks; a product map with a page-by-rule view; a design report that leads with what a pull request changed, and a walk through journeys J1 to J5 on production after a release, as reports.
+* **Recorded as:** [Context for a UI task](README.md#context-for-a-ui-task), `scripts/ui-context.ts`, the design line in `AGENTS.md`.
+
