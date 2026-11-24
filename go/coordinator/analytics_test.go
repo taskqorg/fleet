@@ -409,7 +409,7 @@ func TestSpendSummaryInvariant(t *testing.T) {
 	_ = json.Unmarshal([]byte(`{"email":"m@x","roles":["operator"],"grants":[{"kind":"project","id":"p1"}]}`), &member)
 	checkParity("member-p1", &member, nil)
 	var memSum contract.SpendSummaryReply
-	if err := e.app.store.Read(ctx, &Request{person: &member, r: httptest.NewRequest("POST", "/", nil)}, func(q *Request) error {
+	if err := e.app.store.Read(ctx, &Request{app: e.app, person: &member, r: httptest.NewRequest("POST", "/", nil)}, func(q *Request) error {
 		var err error
 		memSum, err = spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByProject, Window: win})
 		return err
@@ -439,7 +439,7 @@ func TestSpendSummaryInvariant(t *testing.T) {
 	checkParity("after-backdated-price", nil, nil)
 	// Requirement: fleet.md list_spend matches canonical projectResources across stale execution_spend rows and enforces project RLS.
 	// Risk: stale cached spend rows or RLS bypass returns drifted or unauthorized list spend.
-	if err := e.app.store.Read(ctx, &Request{person: &member, r: httptest.NewRequest("POST", "/", nil)}, func(q *Request) error {
+	if err := e.app.store.Read(ctx, &Request{app: e.app, person: &member, r: httptest.NewRequest("POST", "/", nil)}, func(q *Request) error {
 		got, err := listSpend(q, &contract.ListSpendRequest{Kind: contract.ListSpendKindProjects, RowIds: []string{"p1", "p2", "p1"}})
 		if err != nil {
 			return err
