@@ -299,13 +299,27 @@ func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run *runRecord, i in
 	if pending > 0 {
 		return pipelineLater(q, runID) // uploads can finish after the completion receipt
 	}
-	arts, err := artifactsOf(q, s.ExecutionID)
-	if err != nil {
-		return err
+	var arts []db.PipelineStoredArtifactsRow
+	var review *pipelineReview
+	if mode, _ := jsonString(run.def(i).Output); mode == pipelineReviewReply {
+		replies, err := replyText(q, s.ExecutionID)
+		if err != nil {
+			return err
+		}
+		review = &pipelineReview{}
+		if len(replies) == 0 || json.Unmarshal([]byte(replies[len(replies)-1]), review) != nil ||
+			strings.TrimSpace(review.Verdict) == "" || review.Findings == nil || strings.TrimSpace(review.Report) == "" {
+			return run.failStep(q, i, "output_invalid", "Review reply must contain a verdict, a findings array and a Markdown report")
+		}
+	} else {
+		arts, err = artifactsOf(q, s.ExecutionID)
+		if err != nil {
+			return err
+		}
 	}
 	snapshot, revision := run, run.revision()
 	c.Call = func(ctx context.Context) any {
-		output, artifact, err := pipelineAgentOutput(ctx, a, snapshot, i, arts)
+		output, artifact, err := pipelineAgentOutput(ctx, a, snapshot, i, arts, review)
 		return pipelineRecord{revision: revision, apply: func(q *Request, run *runRecord) error {
 			if err != nil {
 				return err

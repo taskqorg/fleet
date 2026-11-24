@@ -23,6 +23,8 @@ var (
 	ownOutput      = regexp.MustCompile(`^(output/)?output\.json$`)
 )
 
+const pipelineReviewReply = "review-reply"
+
 // validatePipelineDef: a pipeline definition's text checked field by field (pipelineRule) and decoded.
 func validatePipelineDef(b []byte) (*pipelineDef, error) {
 	bad := func(m string) (*pipelineDef, error) { return nil, fail(500, "Invalid pipeline: "+m) }
@@ -42,7 +44,7 @@ func validatePipelineDef(b []byte) (*pipelineDef, error) {
 	if len(steps) == 0 {
 		return bad("steps")
 	}
-	allowed := map[string][]string{"api": {"id", "kind", "connection", "tool", "arguments", "mode", "output", "status_tool", "recent_tool"}, "agent": {"id", "kind", "profile", "prompt"}, "script": {"id", "kind", "command", "timeout_ms", "host"}}
+	allowed := map[string][]string{"api": {"id", "kind", "connection", "tool", "arguments", "mode", "output", "status_tool", "recent_tool"}, "agent": {"id", "kind", "profile", "prompt", "output"}, "script": {"id", "kind", "command", "timeout_ms", "host"}}
 	seen := map[string]bool{}
 	for _, x := range steps {
 		s := pipelineRuleOf(x)
@@ -100,6 +102,11 @@ func validatePipelineDef(b []byte) (*pipelineDef, error) {
 			}
 			if _, ok := jsonString(s["prompt"]); !ok {
 				return bad("agent step " + id)
+			}
+			if raw, has := s["output"]; has {
+				if mode, _ := jsonString(raw); mode != pipelineReviewReply {
+					return bad("agent step " + id + " output must be " + pipelineReviewReply)
+				}
 			}
 		case "script":
 			t, has := s["timeout_ms"]
@@ -479,44 +486,63 @@ func creditsOf(q *Request, executionID string) (json.RawMessage, error) {
 	return jsonBytes(pipelineCredits{Credits: r.Credits}), nil
 }
 
-// pipelineAgentOutput: a finished agent or script step's output (its output.json, else its file list), saved as the
-// step's output object. Outside any transaction.
-func pipelineAgentOutput(ctx context.Context, a *App, run *runRecord, i int, arts []db.PipelineStoredArtifactsRow) (json.RawMessage, string, error) {
+type pipelineReviewSummary struct {
+	Verdict  string   `json:"verdict"`
+	Findings []string `json:"findings"`
+}
+
+type pipelineReview struct {
+	pipelineReviewSummary
+	Report string `json:"report"`
+}
+
+// pipelineAgentOutput saves a finished agent or script step's output outside the plan transaction.
+func pipelineAgentOutput(ctx context.Context, a *App, run *runRecord, i int, arts []db.PipelineStoredArtifactsRow, review *pipelineReview) (json.RawMessage, string, error) {
 	if _, err := connIngestPass(ctx, a); err != nil {
 		return nil, "", err
 	}
 	var output json.RawMessage
-	for _, art := range arts {
-		if ownOutput.MatchString(art.Path) {
-			if b, err := artifactBytes(ctx, a, art.ID, 64<<20); err == nil {
-				var v any
-				if json.Unmarshal(b, &v) == nil && v != nil {
-					output = jsonBytes(v)
-				}
-			}
-			break
+	if review != nil {
+		if _, _, err := saveObject(ctx, a, run.ProjectID, run.scope(), run.row(i), "review.md", []byte(review.Report), "text/markdown"); err != nil {
+			return nil, "", err
 		}
-	}
-	if output == nil {
-		files := []string{}
-		for _, art := range arts {
-			p := strings.TrimPrefix(art.Path, "output/")
-			dot := false
-			for _, x := range strings.Split(p, "/") {
-				dot = dot || strings.HasPrefix(x, ".")
-			}
-			if !dot {
-				files = append(files, p)
-			}
-		}
-		output = jsonBytes(struct {
-			Files []string `json:"files"`
-		}{files})
+		output = jsonBytes(review.pipelineReviewSummary)
+	} else {
+		output = pipelineArtifactOutput(ctx, a, arts)
 	}
 	if err := materializePipelineOutput(ctx, a, run, i, output); err != nil {
 		return nil, "", err
 	}
 	return output, run.Steps[i].OutputArtifactID, nil
+}
+
+// pipelineArtifactOutput reads a native step's output.json or falls back to its file list.
+func pipelineArtifactOutput(ctx context.Context, a *App, arts []db.PipelineStoredArtifactsRow) json.RawMessage {
+	for _, art := range arts {
+		if ownOutput.MatchString(art.Path) {
+			if b, err := artifactBytes(ctx, a, art.ID, 64<<20); err == nil {
+				var v any
+				if json.Unmarshal(b, &v) == nil && v != nil {
+					return jsonBytes(v)
+				}
+			}
+			break
+		}
+	}
+	files := []string{}
+	for _, art := range arts {
+		p := strings.TrimPrefix(art.Path, "output/")
+		dot := false
+		for _, x := range strings.Split(p, "/") {
+			dot = dot || strings.HasPrefix(x, ".")
+		}
+		if !dot {
+			files = append(files, p)
+		}
+	}
+	return jsonBytes(struct {
+		Files []string `json:"files"`
+	}{files})
 }
 
 // pipelineSyncResult: a sync api step's answer read outside the transaction: its output (the mapping over the reply),
