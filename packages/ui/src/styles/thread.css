@@ -34,7 +34,10 @@
   .th-line .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .th-body { min-width: 0; padding-inline-start: var(--space-3); }
   .th-boundary { align-items: center; border-top: 1px solid var(--line); font-size: var(--font-size-sm); color: var(--fg-muted); }
-  .th-result { align-items: start; }
+  .th-result { grid-template-columns: auto minmax(0, 1fr); column-gap: var(--space-2); }
+  .th-result .th-svc:empty { display: none; }
+  .th-result .th-links { grid-column: 2; }
+  .th-result .th-svc:empty + .th-links { grid-column: 1 / -1; }
   .th-links { display: grid; gap: var(--space-1); min-width: 0; margin: 0; padding: 0; list-style: none; }
   .th-file, .th-boundary-info { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
   .th-file { max-width: 100%; }

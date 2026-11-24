@@ -338,7 +338,6 @@ func streamText(q *Request, executionID, id string) (string, bool, error) {
 }
 
 // expand: the blocks of one row, in index order.
-// ponytail: the delivery stage on the result block is dropped with delivery (dead code, owner 2026-11-11).
 func expand(q *Request, r trow, m map[string]member) ([]threadBlock, error) {
 	if r.src == "question" {
 		return []threadBlock{questionBlock(r.v, r.seq)}, nil
@@ -398,20 +397,39 @@ func expand(q *Request, r trow, m map[string]member) ([]threadBlock, error) {
 		own = append(own, b)
 	}
 	if rawText(v.Type) == "execution.ended" {
-		arts, err := q.db().ThreadStoredArtifacts(q.ctx(), v.ExecutionID)
+		publishing, err := q.db().ThreadPublishingResults(q.ctx(), db.ThreadPublishingResultsParams{Ids: []string{eid}, Changed: []string{}})
 		if err != nil {
 			return nil, err
 		}
-		if len(arts) > 0 {
-			r := contract.ResultBlock{Kind: "result", Key: at(len(own)), ExecutionId: nonEmpty(v.ExecutionID), ArtifactIds: []string{}}
-			for _, a := range arts {
-				r.ArtifactIds = append(r.ArtifactIds, a.ID)
-				r.Artifacts = append(r.Artifacts, contract.ResultArtifact{Id: a.ID, Name: a.Name, MediaType: a.MediaType, Size: a.Size})
+		var stage *contract.ThreadDeliveryStage
+		if len(publishing) > 0 {
+			stage, err = threadDeliveryStage(publishing[0].Value)
+			if err != nil {
+				return nil, err
 			}
-			own = append(own, blockOf(r))
+		}
+		result, err := threadResult(q, eid, at(len(own)), stage)
+		if err != nil {
+			return nil, err
+		}
+		if result != nil {
+			own = append(own, result)
 		}
 	}
 	return own, nil
+}
+
+func threadResult(q *Request, eid, key string, stage *contract.ThreadDeliveryStage) (threadBlock, error) {
+	arts, err := q.db().ThreadStoredArtifacts(q.ctx(), &eid)
+	if err != nil || (len(arts) == 0 && stage == nil) {
+		return nil, err
+	}
+	r := contract.ResultBlock{Kind: "result", Key: key, ExecutionId: &eid, ArtifactIds: []string{}, Artifacts: []contract.ResultArtifact{}, DeliveryStage: stage}
+	for _, a := range arts {
+		r.ArtifactIds = append(r.ArtifactIds, a.ID)
+		r.Artifacts = append(r.Artifacts, contract.ResultArtifact{Id: a.ID, Name: a.Name, MediaType: a.MediaType, Size: a.Size})
+	}
+	return blockOf(r), nil
 }
 
 func reverse(xs []threadBlock) []threadBlock {
@@ -681,6 +699,7 @@ func threadBlocks(q *Request, b *contract.ThreadBlocksRequest) (contract.ThreadB
 		}
 		return out, err
 	}
+	publishingChanges := []string{}
 	for _, c := range b.Rows {
 		id, kind := c.Id, string(c.Kind)
 		if id == "" || kind == "" {
@@ -718,6 +737,8 @@ func threadBlocks(q *Request, b *contract.ThreadBlocksRequest) (contract.ThreadB
 					}
 				}
 			}
+		case "setting-change":
+			publishingChanges = append(publishingChanges, id)
 		case "event":
 			rs, err := q.db().ThreadRowsByID(q.ctx(), db.ThreadRowsByIDParams{ID: id, Ids: ids})
 			if err != nil {
@@ -748,6 +769,30 @@ func threadBlocks(q *Request, b *contract.ThreadBlocksRequest) (contract.ThreadB
 				if err := add([]trow{d}); err != nil {
 					return none, err
 				}
+			}
+		}
+	}
+	if len(publishingChanges) > 0 {
+		results, err := q.db().ThreadPublishingResults(q.ctx(), db.ThreadPublishingResultsParams{Ids: ids, Changed: publishingChanges})
+		if err != nil {
+			return none, err
+		}
+		for _, result := range results {
+			stage, err := threadDeliveryStage(result.Value)
+			if err != nil {
+				return none, err
+			}
+			rows, err := q.db().ThreadEventRows(q.ctx(), "ended:"+result.ExecutionID)
+			if err != nil {
+				return none, err
+			}
+			for _, row := range rows {
+				key := bkey{row.Seq, int64(len((trow{v: row.V}).row().Blocks))}.String()
+				block, err := threadResult(q, result.ExecutionID, key, stage)
+				if err != nil {
+					return none, err
+				}
+				out = append(out, block)
 			}
 		}
 	}
@@ -992,7 +1037,11 @@ func markdownOf(b threadBlock, from, to *point, loc *time.Location) string {
 		}
 		return s + "\n"
 	case "result":
-		return "**Result:** " + strings.Join(strList(b.val("artifactIds")), ", ") + "\n"
+		parts := strList(b.val("artifactIds"))
+		if stage := b.text("deliveryStage"); stage != "" {
+			parts = append(parts, "Delivery "+strings.ReplaceAll(stage, "_", " "))
+		}
+		return "**Result:** " + strings.Join(parts, ", ") + "\n"
 	case "boundary":
 		parts := []string{}
 		for _, k := range []string{"harness", "model", "effort"} {

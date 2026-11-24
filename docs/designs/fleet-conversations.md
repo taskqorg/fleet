@@ -224,25 +224,14 @@ The thread renders `question` blocks with the existing `DecisionBlock` pattern. 
 
 Artifact storage provides stored artifact rows, stores and placement; `artifact_list` and `artifact_get` expose them (`go/coordinator/artifact_routes.go`).
 
-Not built: delivery-only result blocks, delivery-stage mapping and late delivery updates. Current result blocks contain stored artifacts; the delivery target below remains required ([tracked gaps](https://github.com/taskqorg/fleet/issues/327)).
-
-*   **Result block target**: one per execution end that has artifacts or a delivery, at the key of the `execution.ended` event. A delivery or artifact that arrives later updates this block in place; it does not move (OR-23). It shows artifact names, the delivery-stage chip and links each artifact to its Results page entry. Names wrap onto new lines inside the transcript column and a name longer than the column ends in an ellipsis; its tooltip has the full name, media type and size.
-*   **Delivery stage target**: the existing `stages` in `packages/ui/src/registry.ts`, rendered by `StageChip`. The coordinator maps the `delivery` record state to a stage key:
-
-    | Delivery state | Stage key |
-    |---|---|
-    | `pr-open` | `pr_open` |
-    | `integrating` | `merging` |
-    | `merged`, `published` | `merged` |
-    | any other state | no chip; the task state shows failures |
-
-    The target must not show `checks` or `checks_failed` until a delivery record actually supplies that state. Current thread results have no delivery record or stage; no check state is guessed.
+*   **Result block**: one per execution end with stored artifacts or a retained publishing observation, at the key of the `execution.ended` event. A late observation or artifact updates the same key. Artifact names wrap onto new lines inside the transcript column. A name longer than the column ends in an ellipsis and its tooltip has the full name, media type and size. Artifact links open their Results entries.
+*   **Delivery stage**: the coordinator links publishing observations by source execution and project. Later observations of the same provider, host, repository and request number update the linked result. The result uses the shared `StageChip` for an observed open request, running or failed checks, a merge in progress, or a confirmed merge. An unrecognized state reads “Delivery stage unknown”. Missing check observations supply no checks stage. Task state and delivery stage remain independent.
 
 *   **Viewer**: `ResultViewer` and `ArtifactView` (`packages/ui/src/controls.tsx`) open in the work area (OR-27). The [result-viewer control](../design-system/controls/result-viewer.md) owns the format table and Source/Preview choice. Renderable formats open rendered; copy/download take the source. Images and video use fixed-ratio frames; text loads through `Range` pages as the operator scrolls, without a cap. Unrecognised types are download-only. Raw bytes use `GET /api/results/:id`; interactive HTML uses the separate `GET /api/results/:id/preview` route. HTML scripts run on an opaque sandboxed origin, without same-origin app access; `connect-src 'none'` blocks fetch/XHR connections and the preview CSP explicitly lists permitted static-resource sources. SVG renders as an image, so its scripts do not run. Markdown has no raw HTML. These are the existing rendered-first viewer rules, not a new permission change.
 
 *   **Results page**: the app section listing `artifact` rows with task, project, execution, media type, state and time filters, using the Tasks list pattern (state icon first, OR-22). It uses the same `ResultViewer`. Conversations result cards link into it.
 
-Artifacts live in the `artifact` table. The thread, the viewer and the Results page read them only through `artifact_list` (`artifactList`, `go/coordinator/artifacts.go`) and `artifact_get`.
+Artifacts live in the `artifact` table. The coordinator projects stored artifacts into thread blocks. The Results page and viewer read artifacts through `artifact_list` and `artifact_get`.
 
 ### Controls
 

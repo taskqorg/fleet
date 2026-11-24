@@ -46,6 +46,19 @@ test('fed blocks: replaced in place, inserted inside the window by key, appended
 
 test('feed rows that can touch a session thread', () => {
   const s = new Set(['s1']), c = (kind: Change['kind'], sessionId: string | null) => ({ seq: 1, kind, id: 'x', taskId: null, sessionId, hostId: null, op: 'I', touches: [] });
+  assert.equal(touches({ ...c('setting-change', null), settingTarget: 'publishing:invented/repo' }, s), true);
+  assert.equal(touches({ ...c('setting-change', null), settingTarget: 'project:invented' }, s), false);
   assert.equal(touches(c('event', 's1'), s), true); assert.equal(touches(c('event', 's2'), s), false);
-  assert.equal(touches(c('question', null), s), true); assert.equal(touches(c('artifact', 's1'), s), true); assert.equal(touches(c('task', null), s), true); assert.equal(touches({ ...c('execution', 's9'), taskId: 'T' }, s, 'T'), true); assert.equal(touches(c('host', 's1'), s), false);
+  assert.equal(touches(c('question', null), s), true); assert.equal(touches(c('artifact', 's1'), s), true); assert.equal(touches({ ...c('execution', 's9'), taskId: 'T' }, s, 'T'), true); assert.equal(touches(c('host', 's1'), s), false);
+});
+
+
+test('late publishing replaces a delivery-only result at its execution end', () => {
+  const result: Extract<Block, { kind: 'result' }> = { kind: 'result', key: '11:0', artifacts: [], artifactIds: [], deliveryStage: 'unknown' };
+  const w = fromPage(page(['10:0', '12:0'], { total: 2 }));
+  const first = fed(w, [result]);
+  const merged = fed(first, [{ ...result, deliveryStage: 'merged' }]);
+  assert.deepEqual(keys(merged), ['10:0', '11:0', '12:0']);
+  assert.equal(merged.total, 3);
+  assert.equal(merged.blocks[1]?.kind === 'result' && merged.blocks[1].deliveryStage, 'merged');
 });
