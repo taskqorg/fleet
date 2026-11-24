@@ -24,6 +24,7 @@ const table: [earlier: string, target: string, internal: string][] = [
   ['/pipelines/p', '/library/pipelines/p', '/library/pipelines/p'],
   ['/changes', '/library/changes', '/library/changes'],
   ['/skills/s', '/library/skills/s', '/library/skills/s'],
+  ['/agents/skill:s', '/library/skills/s', '/library/skills/s'],
   ['/library', '/library', '/library'],
   ['/hosts/pds18', '/system/hosts/pds18', '/hosts/pds18'],
   ['/hosts/limits', '/system/accounts', '/hosts/limits'],

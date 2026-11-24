@@ -175,7 +175,9 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
     const id = section() === 'bots' ? props.id : undefined;
     return id && /^B-/i.test(id) && botsOp.data && !botFromList() ? { code: id } : null;
   });
-  const botId = createMemo(() => botFromList()?.id ?? resolvedCode.data?.id ?? (props.id && !/^B-/i.test(props.id) ? props.id : null));
+  // A raw segment is tried as an id only once the list is read and does not hold it as a code, id or name.
+  const botId = createMemo(() => botFromList()?.id ?? resolvedCode.data?.id
+    ?? (props.id && botsOp.data && !/^B-/i.test(props.id) ? props.id : null));
   const chosenBot = useOp('bot_get', () => (section() === 'bots' && props.id !== 'new' && botId() ? { botId: botId()! } : null));
 
   const selectedTreeId = createMemo(() => {
@@ -306,14 +308,15 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
     return !!a && agentRoleGroup(a) === 'lab-variants';
   });
 
-  const defaultClosed = createMemo(() => [ROOT_SKILLS_ID, ...(selectedIsLabVariant() ? [] : ['group:lab-variants'])]
-    .filter(id => !(section() === 'skills' && id === ROOT_SKILLS_ID)));
-  const treeClosed = createMemo(() => closedGroups(defaultClosed(), treeFlipped()));
+  // The defaults never depend on the route, so a stored flip keeps its meaning; the open item's folders show open.
+  const treeClosed = createMemo(() => closedGroups([ROOT_SKILLS_ID, 'group:lab-variants'], treeFlipped()));
   const collapsedMap = createMemo<Record<string, boolean>>(() => {
     const closed = treeClosed();
     const map: Record<string, boolean> = { __pinned__: closed.has('__pinned__') };
     for (const id of [ROOT_METHODS_ID, ROOT_PIPELINES_ID, ROOT_AGENTS_ID, ROOT_BOTS_ID, ROOT_SKILLS_ID]) map[id] = closed.has(id);
     for (const g of ROLE_GROUPS) map[g.id] = closed.has(g.id);
+    if (section() === 'skills' && props.id) map[ROOT_SKILLS_ID] = false;
+    if (selectedIsLabVariant()) { map[ROOT_AGENTS_ID] = false; map['group:lab-variants'] = false; }
     return map;
   });
 
@@ -471,7 +474,7 @@ export function Library(props: { section?: LibrarySection; id?: string }) {
 
       <div class="ftiles">
         <FigureTile label="Agents active in 30 days" value={{ value: agentsActive(), basis: 'measured' }} of={agentItems().length}
-          trend={[]} trendLabel="Agents active in 30 days" onOpen={() => setQ('state:ready')} />
+          trend={[]} trendLabel="Agents active in 30 days" />
         <FigureTile label="Pipelines that ran" value={{ value: pipelinesRan(), basis: 'measured' }} of={pipelineItems().length}
           trend={[]} trendLabel="Pipelines that ran in 30 days" />
         <FigureTile label="Bots awake" value={{ value: botsAwake(), basis: 'measured' }} of={botItems().length}

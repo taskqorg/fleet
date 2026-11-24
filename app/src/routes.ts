@@ -43,6 +43,9 @@ export function toInternal(path: string): string {
   const facet = /^\/projects\/[^/]+\/(tasks|results|delivery)(\/.*)?$/.exec(path);
   if (facet && !['tasks', 'results', 'delivery'].includes(path.split('/')[2])) return '/' + facet[1] + (facet[2] ?? '');
   if (ROOTS[path.replace(/\/$/, '')]) return ROOTS[path.replace(/\/$/, '')];
+  // A skill once opened as /agents/skill:<id>.
+  const skill = /^\/(?:library\/)?agents\/skill:([^/]+)\/?$/.exec(path);
+  if (skill) return '/library/skills/' + skill[1];
   for (const [earlier, target] of LIBRARY) if (under(path, earlier)) return swap(path, earlier, target);
   // `/publishing` is the oldest name of Delivery.
   if (under(path, '/publishing')) return swap(path, '/publishing', '/delivery');
