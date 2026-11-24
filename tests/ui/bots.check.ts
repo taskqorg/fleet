@@ -209,10 +209,10 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
     await updatedEvent.getByRole('button', { name: 'Pause automation' }).waitFor();
     await daily.getByRole('button', { name: 'Run history' }).click();
     await p.waitForURL(/tab=runs&automation=/);
-    const history = detail.getByRole('table', { name: 'Bot runs' });
+    const history = detail.getByRole('region', { name: 'Bot runs' });
     await history.getByText('HAL0 tariff refresh · revision 1', { exact: true }).waitFor();
-    await history.getByRole('button', { name: /Execution/ }).click();
-    await p.getByRole('button', { name: 'Open', exact: true }).waitFor();
+    await history.getByRole('button', { name: 'Run: show details', exact: true }).click();
+    await p.getByRole('link', { name: 'Open', exact: true }).and(p.locator('a[href]')).waitFor();
 
     assert.deepEqual(errors, [], `unexpected page errors: ${errors.join('; ')}`);
     console.log('ok Bots Web UI (HAL0 two-project isolation, tasks, runs, questions_answer, errors, analytics, pause/resume)');
