@@ -10,7 +10,7 @@ import {
   matchSearch, states, actions, ShellStatus,
 } from '../../../packages/ui/src/index.ts';
 import { useOp } from '../store.ts';
-import { useListPage, ListPagePanel, type LocalList } from '../list-page.tsx';
+import { useListPage, ListPagePanel, type LocalList, type Frame } from '../list-page.tsx';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { useUrlView } from '../url.ts';
 import { DEFAULT_DELIVERY_GROUP, DEFAULT_DELIVERY_SORT, type View } from '../../../packages/view-url/view-url.ts';
@@ -28,8 +28,9 @@ const GROUPS = [['stage', 'Stage'], ['project', 'Project'], ['none', 'None']] as
 const SORTS = [['since', 'In stage since'], ['opened', 'Opened']] as const;
 
 /** Delivery screen showing live pull request stages, release history, and pace analytics. */
-export function Delivery(props: { id?: string }) {
-  const scope = createMemo(() => scopeIds());
+export function Delivery(props: { id?: string; project?: string; frame?: Frame }) {
+  // A project's Delivery facet (docs/design-system/pages/projects.md) reads that project alone, whatever the focus.
+  const scope = createMemo(() => (props.project ? { projectIds: [props.project] } : scopeIds()));
   const focus = createMemo(() => scope().projectIds ?? []);
   const [tick, setTick] = createSignal(Date.now());
   onSettled(() => {
@@ -164,7 +165,8 @@ export function Delivery(props: { id?: string }) {
         <Fact tip={`${states.delivery[r.it.stage].label} for`}><AgeChip t={ms(r.it.since)} alertAfter={alertOf(norms(), r.it)} alertLabel="past the stage's P90" /></Fact>
       </RowFacts>} />
   </>;
-  return <ListDetail list={list} detailKey={props.id}
+  const Layout = props.frame ?? ListDetail;
+  return <Layout list={list} detailKey={props.id}
     idle={<Overview now={now()} items={items()} incomplete={incomplete()} norms={norms()} hist={hist()} regressions={regressions()} histError={failed(histDoc)} fleetShown={fleetShown() && !missing(histDoc)}
       range={pace().range} buckets={pace().buckets} picked={p()} href={it => page.href({ focus: idOf(it) })} onOpen={go}
       onRange={r => setPace({ range: r, at: undefined })} onPick={k => setPace({ at: pace().ex.at === k ? undefined : k })} />}

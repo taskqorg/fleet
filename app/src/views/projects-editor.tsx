@@ -34,7 +34,8 @@ export function ProjectEditor(props: {
   onClose?: () => void;
   onSaved: (id: string) => void;
   renderWork?: (projectId: string, detail: Detail | null) => JSX.Element;
-  renderAnalytics: (projectId: string) => JSX.Element;
+  /** Inside a project's Rules & methods facet: the project head above names it, so the editor shows no title of its own (OR-17). */
+  embedded?: boolean;
 }) {
   const [, go] = useLocation();
   const editorGeneration = accessGeneration();
@@ -284,7 +285,7 @@ export function ProjectEditor(props: {
         <article class="detail" data-ui="detail" tabindex={-1}>
           <header class="detail-h">
             <Show when={props.onClose}><Button label="Close" icon="x" iconOnly onClick={props.onClose!} /></Show>
-            <h2 class="detail-title">{props.id ? str(bundle().settings.name) : 'Create project'}</h2>
+            <Show when={!props.embedded}><h2 class="detail-title">{props.id ? str(bundle().settings.name) : 'Create project'}</h2></Show>
             <span class="grow" />
             <Button label={priorSave() && !busy() ? 'Retry original save' : 'Save project'} icon="save" busy={busy()} onClick={save} />
             <Show when={props.id}>
@@ -336,13 +337,6 @@ export function ProjectEditor(props: {
             <DetailSection title="Project resources">
               <PreparedProjectResources projectId={props.id!} summary={summary} onOpen={setBreakdown} />
             </DetailSection>
-          </Show>
-          <Show when={props.id} keyed>
-            {pid => (
-              <DetailSection title="Resource analytics">
-                {props.renderAnalytics(pid)}
-              </DetailSection>
-            )}
           </Show>
           <DetailSection title="Context">
             <Show when={!props.id}>{field('Project ID', str(bundle().settings.id), v => setting('id', v))}</Show>

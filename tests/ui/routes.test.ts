@@ -3,7 +3,7 @@
 // still speaks the earlier path (Library speaks its target routes). Unknown paths stay as they are, so the app's not-found page shows them.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { toInternal, toTarget } from '../../app/src/routes.ts';
+import { toInternal, toTarget, setProjectCodes } from '../../app/src/routes.ts';
 
 const table: [earlier: string, target: string, internal: string][] = [
   ['/', '/home', '/overview'],
@@ -11,7 +11,12 @@ const table: [earlier: string, target: string, internal: string][] = [
   ['/overview/Q-FLT-3', '/home/Q-FLT-3', '/overview/Q-FLT-3'],
   ['/tasks', '/projects/tasks', '/tasks'],
   ['/tasks/12', '/projects/tasks/12', '/tasks/12'],
-  ['/projects/FLT/tasks/T-FLT-42', '/projects/tasks/T-FLT-42', '/tasks/T-FLT-42'],
+  ['/projects/FLT/tasks/T-FLT-42', '/projects/FLT/tasks/T-FLT-42', '/tasks/T-FLT-42?project=FLT'],
+  ['/tasks?project=fleet&state=failed', '/projects/fleet/tasks?state=failed', '/tasks?state=failed&project=fleet'],
+  ['/tasks?project=a,b', '/projects/tasks?project=a,b', '/tasks?project=a,b'],
+  ['/projects/FLT/results/R-FLT-3', '/projects/FLT/results/R-FLT-3', '/results/R-FLT-3?project=FLT'],
+  ['/projects/FLT/delivery', '/projects/FLT/delivery', '/delivery?project=FLT'],
+  ['/projects/FLT/rules', '/projects/FLT/rules', '/projects/FLT?facet=rules'],
   ['/results/r1', '/projects/results/r1', '/results/r1'],
   ['/delivery/o~r~3', '/projects/delivery/o~r~3', '/delivery/o~r~3'],
   ['/publishing', '/projects/delivery', '/delivery'],
@@ -48,4 +53,14 @@ test('earlier routes redirect to their target route and open the same view', () 
     assert.equal(toInternal(target), internal, target);
     assert.equal(toTarget(target), target, `${target} is stable`);
   }
+});
+
+test('a project facet names the project by its code once codes are known; the id still opens it', () => {
+  setProjectCodes([{ id: 'fleet', code: 'FLT' }]);
+  assert.equal(toTarget('/tasks/T-FLT-42?project=fleet'), '/projects/FLT/tasks/T-FLT-42');
+  assert.equal(toInternal('/projects/flt/tasks/T-FLT-42'), '/tasks/T-FLT-42?project=fleet');
+  assert.equal(toTarget('/projects/fleet'), '/projects/FLT');
+  assert.equal(toTarget('/projects/fleet/rules'), '/projects/FLT/rules');
+  // The facet replaces a project filter the address carried in its query.
+  assert.equal(toInternal('/projects/FLT/tasks?project=other&q=x'), '/tasks?q=x&project=fleet');
 });

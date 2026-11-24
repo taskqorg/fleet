@@ -57,7 +57,7 @@ Checked against the [product map](../product-map.md) rows for Projects, Tasks, R
 
 ### Open (target)
 
-* Results have no human code yet, so a result route cannot avoid an id ([OR-38](../owner-rules.md), UR-69); a result code is needed before the Results facet is built.
+* A pull request route keeps its `owner~repo~number` id: pull requests have no D17 code.
 
 ### Blocks
 
@@ -72,30 +72,14 @@ Canvas [screens/projects.bl](../board/screens/projects.bl): idle, project open o
 
 ## Current build
 
-**App routes:** `/projects` and `/projects/:id` in the operator app (`app/src/views/projects.tsx`). The app checks (`tests/ui/projects.check.ts`, `tests/ui/app.check.ts`) verify them. There is no static mockup.
+**App routes:** the Target routes above, served by one view (`app/src/views/projects.tsx`) for the four internal screens `projects`, `tasks`, `results` and `delivery` (`app/src/routes.ts` maps `/projects/FLT/tasks/T-FLT-42` to the Tasks view filtered to the project, `/tasks/T-FLT-42?project=<id>`). Checks: `tests/ui/projects.check.ts` (CI) and `tests/ui/projects-facets.check.ts` (local: every state at 1440 and 390 px, the earlier routes, J4).
 
-Projects are the operator's configured work context. The control column lists authorized projects; create, analytics overview, and tabbed detail (`ProjectDetail`) open in the work area. Use only packages/ui controls. Creation, current saved revision and resource readiness are distinct facts.
-
-**Project detail tabs (`TabBar` in `ProjectDetail`).**
-When an existing project is opened at `/projects/:id`, `ProjectDetail` organizes the work area with a shared [`TabBar`](../patterns/navigation-and-columns.md) across four tabs (preserving a single vertical scroller per `OR-25`):
-* **Work & Rules** (default): Preserves the `ProjectEditor` sections (header save/reload, Context, Repository, Environment, Agent roles, Readiness with `Open PM conversation`, Initial access, Project resources, and Resource analytics), followed by active project tasks/executions (`task_page`, `executions_list`, and quick link to `/tasks?project=...`) and the `OR-45 Diff from default` settings overview.
-* **Methods**: Reads scoped `catalogue` evidence for the project (`recommendedMethod`, `recommendationSource`, `sharedDefault`, and `methods` list with lifecycle status, Lab assessment quality/time/cost, and `recommendation_set`), highlighting when the project overrides `sharedDefault`, plus links to `/catalogue` and `/lab`.
-* **Delivery**: Reads project-filtered pull requests via `delivery_status` (`projectIds: [projectId]`) with stage `StateCounters`, search, and `DataTable` rows linking to `/delivery/:id` and `/delivery?q=project%3A...`.
-* **Results**: Reads project-filtered stored results and artifacts via `artifact_list` (`projectIds: [projectId]`) with artifact `StateCounters`, search, `Latest` row list linking to `/results/:id`, and a quick link to `/results?project=...`.
-
-**Settings from defaults (`OR-45 Diff from default`).**
-Within `Work & Rules`, `ProjectSettingsDiff` compares the project's resolved and authored settings against shared project defaults (`worktree`, `scripts`, `setupStart`, `integration`, `cleanup`, `identity`, `subscriptions`, `execution`, `errors`, `presets`, `contextSources`, `artifact_locations`, `artifact_rules`, `roles`, `repos`, `environments`, `capability`, `recommendedMethod`). Customized settings appear prominently with `default → override` values and an `override` badge; unchanged inherited defaults stay collapsed inside a single `<Disclosure summary="Inherited defaults (N)">`.
-
-**Resource analytics (`analytics_query` and `ProjectContextReply.resources`).**
-* **Workspace overview (`/projects`) and project detail (`/projects/:id`):** Renders unified resource accounting for the selected project (or across authorized projects in the overview) via `analytics_query` (`window`, `dimensions`, `measures`, `filters`, optional `projectId`).
-* **Controls:** Summary metrics use [Totals and CostFigures](../controls/number.md) keeping every `(currency, basis)` separate (never summing metered spend with `'subscription'` list-price equivalents). Time-series trends use interactive CSS-only [AreaChart](../controls/area-chart.md) (`hour` / `day` / `week` grains) with `<button>` bucket selectors placed outside `role="img"` and hover/focus details via `data-tip` (`OR-20`). Selecting a bucket filters the dimension breakdown in place.
-* **Breakdowns & completeness:** Dimension selector supports `model`, `harness`, `pipeline_revision`, `project`, `profile_id`, `host`, `outcome`, and `state`. Surface `unknown` and `hidden` counters prominently whenever `> 0`. Provide drill-down links to filtered [Tasks](tasks.md), [Conversations](conversations.md), [Agents](agents.md), [Pipelines](pipelines.md), [Runners](runners.md), and [Hosts](hosts.md).
-
-Edit name, owned context, repository references, existing host environments and role configuration using the existing project field meanings. Save uses shared `project_create` or `project_update` with optimistic revision checking; readback confirms the current version. Conflicts preserve the edit for review. Do not register/rekey a host, add a credential or grant a connection as a side effect.
-
-Opening a PM conversation opens `/conversations/new?in=<project>&role=pm` with the project picked and the first preset on its pm role (Discuss with the system presets); Send starts it through `session_start`. "No project" is one choice there. Context and actual tools follow the directing person's rights; a role label is not an authority grant.
-
-Owner access administration distinguishes initial membership from explicit grants and offers revocation of initial membership. A saved project with an unavailable resource remains configured and shows its readiness reasons. No destructive project lifecycle action is required.
+* **Control column:** one row per project: readiness, name and code, then open questions, sessions working and tasks in flight. Search by name, id or code. Ignored projects are left out (OR-34). New project is the shell action.
+* **Idle:** the tab bar Summary · Tasks · Delivery · Results over the projects in focus. Summary: open questions as question cards, each project's sessions working and tasks in flight, delivery in flight.
+* **A project open:** detail head (`project · FLT`, name, waiting state, questions, sessions working, readiness reason; Talk to PM opens `/conversations/new?in=<project>&role=pm`), then the facets:
+  * **Sessions:** the newest session on the project's pm profile as the PM card (or Talk to PM when none), active sessions as session cards with their open question, finished ones as rows. A card opens `/conversations/<code>`, the session view.
+  * **Tasks, Results, Delivery:** the list views of [Tasks](tasks.md), [Results](results.md) and [Delivery](delivery.md), scoped to the project; an opened item replaces the list. A task opens by its code, a result by its code; an earlier link by id, or one outside its project, is replaced by the facet route of the item's project.
+  * **Rules & methods:** the project editor (Save, Reload, readiness, context, repositories, environments, roles, initial access, prepared resources) with the settings that differ from the shared defaults (`DiffRow`, `Inherited defaults (N)` folded) and the methods with their Lab evidence.
 
 ## Independent configuration and confirmed resources
 

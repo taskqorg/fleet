@@ -84,13 +84,13 @@ export function seeder(c: Coordinator, store?: {port: number, objects: Map<strin
   };
   // A stored artifact: its bytes in the fake store under the content key, the artifact row and its verified copy.
   let storeRow = false;
-  const artifact = (v: {id: string, executionId: string, name: string, mediaType: string, bytes: Buffer, state?: string}) => {
+  const artifact = (v: {id: string, executionId: string, name: string, mediaType: string, bytes: Buffer, state?: string, projectId?: string, taskId?: string}) => {
     if (!store) throw Error('checkServer({store: true}) for artifacts');
     if (!storeRow) { storeRow = true; writeFileSync(join(store.secrets, 'check-store.key'), JSON.stringify({accessKeyId: 'k', secretAccessKey: 's'}), {mode: 0o600});
       sql(`INSERT INTO store(id,host_id,bucket,endpoint,state,observed_at) VALUES('check-store','pds18','fleet','http://127.0.0.1:${store.port}','reachable',now())`); }
     const hash = createHash('sha256').update(v.bytes).digest('hex');
     store.objects.set(`/fleet/_/prod/${hash}`, v.bytes);
-    sql(`INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,state) VALUES(${lit(v.id)},'prod',${lit(hash)},${v.bytes.length},${lit(v.mediaType)},${lit(v.name)},${lit(v.executionId)},${lit(v.state ?? 'stored')})`);
+    sql(`INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,state,project_id,task_id) VALUES(${lit(v.id)},'prod',${lit(hash)},${v.bytes.length},${lit(v.mediaType)},${lit(v.name)},${lit(v.executionId)},${lit(v.state ?? 'stored')},${lit(v.projectId ?? null)},${lit(v.taskId ?? null)})`);
     if ((v.state ?? 'stored') === 'stored') sql(`INSERT INTO artifact_copy(artifact_id,store_id,state,verified_at) VALUES(${lit(v.id)},'check-store','verified',now())`);
   };
   // Rows as JSON objects.

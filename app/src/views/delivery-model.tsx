@@ -19,7 +19,8 @@ export type Regressions = Ops['delivery_regressions']['reply'];
 export type Row = { id: string; code: string; sortKey: (string | number)[]; it: Item };
 /** The norms are the fleet repository's history: other repositories' pull requests have none. */
 export type Norms = { stage: (it: Pick<Item, 'stage' | 'repo' | 'release'>) => [number, number] | null; total: [number, number] | null };
-export type DeliveryExtra = { range?: string; at?: string; release?: string };
+/** The link's own keys: the pace range, the picked bucket, a release, and the project of a project's Delivery facet (routes.ts). */
+export type DeliveryExtra = { range?: string; at?: string; release?: string; project?: string };
 export type Bucket = DayCol & { start: number; end: number; today: boolean };
 
 export const MIN = 6e4, DAY = 864e5;
@@ -60,6 +61,7 @@ export function deliveryExtra(x: Record<string, string | undefined> | undefined)
   if (x?.range && x.range !== '7d' && RANGES.some(r => r.id === x.range)) out.range = x.range;
   if (x?.at && /^\d{4}-\d{2}-\d{2}(T\d{2})?$/.test(x.at)) out.at = x.at;
   if (x?.release && (UI_TAG.test(x.release) || /^v[0-9]+(?:\.[0-9]+)*$/.test(x.release))) out.release = x.release;
+  if (x?.project) out.project = x.project;
   return out;
 }
 

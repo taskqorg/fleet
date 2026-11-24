@@ -11,11 +11,14 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
  try{
   await p.goto(origin+'/projects');await p.getByRole('button',{name:'Create project',exact:true}).click();
   await edit('Project ID',id);await edit('Name','UI retained project');
-  await p.getByRole('button',{name:'Save project',exact:true}).click();await p.waitForURL('**/projects/'+id);
+  await p.getByRole('button',{name:'Save project',exact:true}).click();await p.waitForURL(u=>/^\/projects\/[^/]+$/.test(new URL(u).pathname));
+  // A project opens on Sessions (its address names it by code once known); its editor is the Rules & methods facet
+  // (docs/design-system/pages/projects.md).
+  await p.getByRole('tab',{name:'Rules & methods',exact:true}).click();await p.waitForURL(u=>/^\/projects\/[^/]+\/rules$/.test(new URL(u).pathname));
   const first=await call('project_context',{projectId:id});assert.equal(first.revision,1);assert.equal(first.name,'UI retained project');
   // Creation changes the actor's project grants. Establish the new authorized feed baseline before the next write.
   await p.reload();await p.getByRole('heading',{name:'UI retained project',exact:true}).waitFor();
-  await edit('Name','UI edited project');await p.getByRole('heading',{name:'UI edited project',exact:true}).waitFor();
+  await edit('Name','UI edited project');
   const update=p.waitForResponse(r=>r.url().endsWith('/api/ops/project_update'));
   await p.getByRole('button',{name:'Save project',exact:true}).click();
   const updateResponse=await update;if(updateResponse.status()!==200)assert.fail(await updateResponse.text().catch(()=>'project_update '+updateResponse.status())); // the body only when it explains a failure: reading it eagerly can throw on its own
@@ -39,59 +42,6 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   await p.getByRole('group',{name:'Preset',exact:true}).locator('.preset-card[aria-pressed=true]',{hasText:'Discuss'}).waitFor();
   assert.equal(await p.getByRole('group',{name:'Project',exact:true}).getByRole('button',{name:'UI edited project',exact:true}).getAttribute('aria-pressed'),'true');
   assert.match(await p.locator('[data-ui=composer] [data-fact=agent]').getAttribute('data-tip')??'',/the project's pm role/);
-  // Analytics query & interactive AreaChart / multi-currency / unknown+hidden indicators on /projects/:id.
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
-  const queries: any[] = [];
-  const mkMeasures = (runs: number, tok: number) => ({
-    executions: { value: runs, basis: 'measured' }, failed: { value: 0, basis: 'measured' },
-    wall_ms: { value: runs * 12000, basis: 'measured' }, active_ms: { value: runs * 9000, basis: 'measured' }, cpu_ms: { value: runs * 1200, basis: 'measured' },
-    peak_memory_bytes: { value: 268435456, basis: 'measured' }, tokens_input: { value: tok, basis: 'measured' }, tokens_output: { value: Math.round(tok / 4), basis: 'measured' },
-    tokens_cache_read: { value: 0, basis: 'measured' }, tokens_cache_write: { value: 0, basis: 'measured' }, tokens_reasoning: { value: null, basis: 'unavailable' }, calls: { value: runs * 3, basis: 'measured' },
-  });
-  const costs = [
-    { value: 3.4, currency: 'USD', basis: 'measured' },
-    { value: 1.2, currency: 'EUR', basis: 'estimated', reason: 'tokens' },
-    { value: 1.1, currency: 'USD', basis: 'subscription', note: 'Claude Max' },
-  ];
-  await p.route('**/api/ops/analytics_query', route => {
-    const req = route.request().postDataJSON();
-    queries.push(req);
-    const dim = req.dimensions?.[0] ?? 'day';
-    const isBucket = (req.window?.to - req.window?.from) <= 90000e3;
-    const row = (val: string, runs: number, tok: number, c = costs) => ({ dimensions: { [dim]: val }, measures: mkMeasures(runs, tok), cost: c });
-    const rows = (dim === 'day' || dim === 'hour' || dim === 'week')
-      ? [row(yesterday, 4, 8000), row(today, 6, 12000)]
-      : [row(isBucket ? `${dim}-bucket` : `${dim}-primary`, 6, 12000)];
-    return route.fulfill({ json: { rows, totals: { measures: mkMeasures(10, 20000), cost: costs }, hidden: 1, unknown: 2 } });
-  });
-  await p.goto(origin + '/projects/' + id);
-  const chart = p.locator('[data-ui="area-chart"]');
-  await chart.waitFor();
-  assert.equal(await chart.locator('svg').count(), 0, 'OR-8: AreaChart must use zero <svg>');
-  assert.equal(await chart.locator('[role="img"] button').count(), 0, 'CA-09: interactive bucket buttons sit outside role="img"');
-  const bucketBtns = chart.locator('.ac-buckets button.ac-bucket');
-  assert.ok(await bucketBtns.count() >= 2, 'AreaChart renders bucket selector buttons');
-  const detail = p.locator('[data-ui="detail"]');
-  await detail.locator('.totals').getByText('25k', { exact: true }).waitFor();
-  await detail.locator('.totals').getByText('$3.40', { exact: true }).waitFor();
-  await detail.locator('.totals').getByText('≈ 1.20 EUR', { exact: true }).waitFor();
-  await detail.locator('.totals').getByText('≈ $1.10', { exact: true }).waitFor();
-  await detail.getByRole('button', { name: 'Cost', exact: true }).click();
-  const costAria = await chart.locator('[role="img"]').getAttribute('aria-label');
-  assert.ok(costAria && costAria.includes('USD metered') && costAria.includes('USD subscription equiv.'), `Cost chart keeps metered USD & subscription separate: ${costAria}`);
-  assert.ok(await detail.getByText('unknown', { exact: false }).count() >= 1, 'unknown count badge shown when > 0');
-  assert.ok(await detail.getByText('hidden', { exact: false }).count() >= 1, 'hidden count badge shown when > 0');
-  await bucketBtns.first().click();
-  assert.equal(await bucketBtns.first().getAttribute('aria-pressed'), 'true');
-  await detail.getByText('model-bucket', { exact: true }).waitFor();
-  await detail.getByRole('button', { name: 'Harness', exact: true }).click();
-  await detail.getByText('harness-bucket', { exact: true }).waitFor();
-  await detail.getByRole('button', { name: 'Pipeline rev', exact: true }).click();
-  const filterReq = p.waitForRequest(r => r.url().includes('/api/ops/analytics_query') && Array.isArray(r.postDataJSON()?.filters?.pipeline_revision) && r.postDataJSON().filters.pipeline_revision.includes('pipeline_revision-bucket'));
-  await detail.getByRole('button', { name: 'pipeline_revision-bucket', exact: true }).click();
-  await filterReq;
-  await p.unroute('**/api/ops/analytics_query');
-  assert.deepEqual(errors,[]);console.log('ok Projects create/edit/readback/readiness, explicit PM selection, and analytics_query UI');
+  assert.deepEqual(errors,[]);console.log('ok Projects create/edit/readback/readiness and explicit PM selection');
  }finally{await context.close();}
 }
