@@ -1,5 +1,6 @@
 // Requirement: independent Projects and universal access lifecycle in the mounted shipped app.
 // Risks: summaries block edits; stale private replies/drafts/receipts survive revoke; old cursors replay.
+// T-FLT-59: Bots stays discoverable for members, and the Humans sidebar link is restricted to the owner.
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -23,6 +24,9 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     window.EventSource = class extends Native { constructor(url: string | URL, config?: EventSourceInit) { super(url, config); (window as any).__streams.push(this); } };
   });
   const p = await context.newPage(), errors: string[] = [];
+  const sidebar = p.getByRole('navigation', { name: 'Sections', exact: true });
+  const botsLink = sidebar.getByRole('list', { name: 'Work', exact: true }).getByRole('link', { name: 'Bots', exact: true });
+  const humansLink = sidebar.getByRole('list', { name: 'System', exact: true }).getByRole('link', { name: 'Humans', exact: true });
   p.on('pageerror', error => errors.push(error.message));
   const call = async (name: string, body: object) => {
     const response = await fetch(coordinator.base + '/api/ops/' + name, { method: 'POST', headers: { authorization: 'Bearer ' + coordinator.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -47,6 +51,8 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     seed.sql(`INSERT INTO execution(id,kind,state,project_id,data) SELECT 'browser-resource-'||lpad(i::text,4,'0'),'tool_run','succeeded','desiign',jsonb_build_object('tool','browser-tool-'||lpad(i::text,4,'0')) FROM generate_series(1,207) i;`);
     await p.goto(origin + '/projects/desiign');
     await p.getByRole('button', { name: 'Save project', exact: true }).waitFor();
+    await botsLink.waitFor();
+    assert.equal(await sidebar.getByRole('link', { name: 'Humans', exact: true }).count(), 0);
     await edit('Name', 'Browser dirty project');
     await p.getByRole('heading', { name: 'Browser dirty project', exact: true }).waitFor();
     assert.equal(await p.locator('[data-resource-version]').first().getAttribute('data-resource-version'), '', 'editor works with genuinely delayed summary');
@@ -315,7 +321,18 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     releasePrefs();await p.unroute('**/api/ops/person_settings_set');await p.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>resolve())));
     assert.equal(await p.locator('.shell').evaluate(element=>(element as HTMLElement).style.getPropertyValue('--size-ctl')),newWidth,'old preference reply cannot overwrite current actor geometry');
     // Creation input is actor-scoped, and its authored ID is never treated as an existing authorization grant.
-    actor='owner@trial.test';await p.goto(origin+'/projects');await p.getByRole('button',{name:'Create project',exact:true}).click();
+    actor = 'owner@trial.test'; await p.goto(origin + '/projects');
+    const createProject = p.getByRole('button', { name: 'Create project', exact: true });
+    await createProject.waitFor();
+    // The sidebar is the Projects entry point for Bots, and both new links mark their routes as current.
+    assert.equal(await p.getByRole('button', { name: 'Bots', exact: true }).count(), 0);
+    await botsLink.click();
+    await p.waitForURL(origin + '/bots');
+    await p.waitForSelector('[data-ui="nav-rail"] [data-id="bots"] a[aria-current="page"]');
+    await humansLink.click();
+    await p.waitForURL(origin + '/humans');
+    await p.waitForSelector('[data-ui="nav-rail"] [data-id="humans"] a[aria-current="page"]');
+    await p.goto(origin + '/projects'); await createProject.click();
     await p.getByLabel('Project ID',{exact:true}).fill('browser-create-authored-only');await p.getByLabel('Name',{exact:true}).fill('Unsent creation actor');
     const creationRecord=await p.evaluate(()=>{const key='fleet-input:'+JSON.stringify([1,'owner@trial.test','project-create','',null]);return JSON.parse(JSON.parse(localStorage.getItem(key)!).text);});
     assert.equal(creationRecord.bundle.settings.name,'Unsent creation actor','creation input is retained before the validation fence');

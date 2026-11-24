@@ -22,9 +22,11 @@ Every screen follows one three-column structure (`OR-24`, `OR-41`, `OR-43`):
 * **Idle (no item selected):** shows a concise section summary or reference — operational/resource `Totals`, breakdowns by harness or category, pending bulk sync or rollout actions (`Take repo`, Skills rollout), or a section reference such as Lab's Use-case registry. Never duplicate the Control Column list as a second `DataTable` in the idle Work Area ([list-detail](list-detail.md)).
 * **Open (item selected, `/<section>/<id>`):** renders the item's detail view or editor (`DefinitionDetail`, `Experiment`, `TaskDetail`, `HostDetail`) in the `detail` slot of the same `ListDetail`, with an icon Close button (`OR-15`) returning to the section root.
 
-## 4. Closed 8-section IA and column causality
+<a id="4-closed-8-section-ia-and-column-causality"></a>
 
-Per the [target information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-8-section-information-architecture), the `NavRail` holds **8 top-level sections** in two groups (`Work`: `Overview`, `Conversations`, `Projects`, `Tasks`, `Spend`; `System`: `Lab`, `Library`, `Infrastructure`):
+## 4. Navigation and column causality
+
+The `NavRail` follows the Work and System groups in the [information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture).
 
 * **No second shell bar (`OR-46`):** Horizontal `<nav class="sub-nav">` bars above columns are forbidden. One `NavRail` and one `ShellHeader` serve every screen.
 * **No mode tabs in the Control Column (`OR-46`, `OR-48`):** Object navigation inside `Lab` (`Use Cases`, `Runs`), `Library` (`Methods`, `Pipelines`, `Agents`, `Skills`), and `Infrastructure` (`Hosts`, `Accounts`, `Connections & API keys`, `Runners`) lives in one unified `CatalogueTree` inside the Control Column (`ListPagePanel` serves `Overview`, `Conversations`, `Projects`, `Tasks`, and `Delivery`; `Spend` and `Runners` omit a catalogue).
