@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { boardDs, BOARD_DS } from '../../packages/ui/scripts/board-tokens.mjs';
+const { boardDs, BOARD_DS } = await import(new URL('../../packages/ui/scripts/board-tokens.mjs', import.meta.url).href) as { boardDs: () => string; BOARD_DS: URL };
 
 test('BT1 board style file matches tokens.json (requirement: tokens.md "Design board"; risk: board colours drift from packages/ui)', () => {
   assert.equal(readFileSync(BOARD_DS, 'utf8'), boardDs(), 'run pnpm run board:tokens and commit docs/design-system/board/Styles/default.ds');
