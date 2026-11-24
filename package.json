@@ -7,6 +7,7 @@
     "start": "go/bin/fleet-coordinator",
     "test": "node --test tests/ui/*.test.ts && tests/go/run.sh",
     "book": "node packages/ui/scripts/build-book.mjs",
+    "board:tokens": "node packages/ui/scripts/board-tokens.mjs",
     "check:design": "node packages/ui/scripts/build-book.mjs; node packages/ui/scripts/check-design.mjs",
     "app:build": "pnpm run typecheck && node app/build.mjs",
     "app:bundle": "node contracts/gen-ts.mjs && node app/build.mjs",
