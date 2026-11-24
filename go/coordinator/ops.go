@@ -130,6 +130,12 @@ var opLocks = map[string]func(b json.RawMessage) string{
 		}
 		return ""
 	},
+	"bot_task_link": func(b json.RawMessage) string {
+		if id := jsonPathString(b, "botId"); id != "" {
+			return "bot:" + id
+		}
+		return ""
+	},
 }
 
 // opGates: a check of an operation that runs after its auth and before its body is decoded (prepared reads off: 503).

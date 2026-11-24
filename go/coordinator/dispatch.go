@@ -959,6 +959,32 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				continue
 			}
 		}
+		if e.BotContext != nil {
+			botErr := verifyQueuedBotAuthority(q, e.BotContext.BotID, deref(e.projectID()), deref(e.DirectedBy))
+			var he *HTTPError
+			if botErr != nil && !asHTTP(botErr, &he) {
+				return botErr
+			}
+			if he != nil {
+				claimed, err := claimRow(q, id)
+				if err != nil {
+					return err
+				}
+				if claimed != nil {
+					claimed.WaitReason, claimed.WaitDetail = nil, nil
+					delete(claimed.rest, "waitReason")
+					delete(claimed.rest, "waitDetail")
+					claimed.State, claimed.StopDetail = "cancelled", "start refused: "+he.Msg
+					if err := executionPut(q, claimed); err != nil {
+						return err
+					}
+					if err := q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id}); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+		}
 		cs, err := a.rankCandidates(q, &e, k)
 		if err != nil {
 			return err

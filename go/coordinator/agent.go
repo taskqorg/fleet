@@ -228,11 +228,12 @@ type agentForkOf struct {
 // agentTransitionArgs: a session_transition request, and a transition queued behind an active execution
 // (pendingTransition). projectId and account are kept as sent: present (even null) selects or clears.
 type agentTransitionArgs struct {
-	SessionID       string          `json:"sessionId,omitempty"`
-	ProfileID       string          `json:"profileId,omitempty"`
-	ProjectID       json.RawMessage `json:"projectId,omitempty"`
-	Account         json.RawMessage `json:"account,omitempty"`
-	CallerSessionID string          `json:"callerSessionId,omitempty"`
+	SessionID        string          `json:"sessionId,omitempty"`
+	ProfileID        string          `json:"profileId,omitempty"`
+	ProjectID        json.RawMessage `json:"projectId,omitempty"`
+	Account          json.RawMessage `json:"account,omitempty"`
+	WorkingDirectory *string         `json:"workingDirectory,omitempty"`
+	CallerSessionID  string          `json:"callerSessionId,omitempty"`
 }
 
 // agentSession: the session row (session columns + payload).
@@ -1102,6 +1103,9 @@ func init() {
 	op("session_handoffs", func(q *Request, b *contract.SessionHandoffsRequest) (contract.SessionHandoffsReply, error) {
 		if b.SessionId == "" {
 			return contract.SessionHandoffsReply{}, fail(400, "Expected sessionId")
+		}
+		if _, err := sessionByID(q, b.SessionId); err != nil {
+			return contract.SessionHandoffsReply{}, err
 		}
 		hs, err := sessionHandoffs(q, b.SessionId, true)
 		return contract.SessionHandoffsReply{Handoffs: hs}, err

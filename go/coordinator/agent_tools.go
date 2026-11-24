@@ -275,6 +275,20 @@ func init() {
 					return err
 				} else if s != nil {
 					focus, sessionProject, focused = focusIDsOf(s.Focus), s.ProjectID, s.Focus != nil
+					if s.BotID != "" {
+						bot, err := unscoped(q, func() (botFull, error) {
+							return readBotFull(q, s.BotID)
+						})
+						if errors.Is(err, errNotFound) {
+							return fail(403, "Bot no longer exists")
+						}
+						if err != nil {
+							return err
+						}
+						if err := botAuthorityCheck(q, &bot); err != nil {
+							return err
+						}
+					}
 				}
 			}
 			// A call without an execution (initialize, tools/list) acts for the host's holder; never an implicit owner.

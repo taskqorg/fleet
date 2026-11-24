@@ -25,6 +25,8 @@ func init() {
 	op("bot_pause", botPauseOp)
 	op("bot_stop", botStopOp)
 	op("bot_runs", botRunsOp)
+	op("bot_tasks", botTasksOp)
+	op("bot_task_link", botTaskLinkOp)
 	onStart(func(ctx context.Context, a *App) {
 		a.ensureRuntime()
 		everyWake(ctx, "bots", envMs("FLEET_BOT_TICK_MS", 15000), a.botWakeCh, true, func(ctx context.Context, _ bool) error {

@@ -96,6 +96,34 @@
         "execution",
         "session"
       ]
+    },
+    "bot_tasks": {
+      "read": true,
+      "errors": [
+        400,
+        404
+      ],
+      "auth": "person",
+      "agent": "tool",
+      "description": "List managed Fleet tasks linked to a bot, keeping each task's own Fleet state and independent history.",
+      "changes": [
+        "bot",
+        "task",
+        "execution",
+        "question"
+      ]
+    },
+    "bot_task_link": {
+      "read": false,
+      "errors": [
+        400,
+        403,
+        404,
+        409
+      ],
+      "auth": "person",
+      "agent": "tool",
+      "description": "Link a Fleet task in the bot's project as a managed task of the bot without attaching the Home conversation."
     }
   },
   "$defs": {
@@ -488,7 +516,8 @@
         "createdAt",
         "startedAt",
         "endedAt",
-        "triggers"
+        "triggers",
+        "linkedTaskIds"
       ],
       "properties": {
         "id": {
@@ -591,6 +620,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/BotRunWakeItem"
+          }
+        },
+        "linkedTaskIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
           }
         }
       }
@@ -764,6 +799,272 @@
         },
         "nextAfter": {
           "type": "string"
+        }
+      }
+    },
+    "BotTaskLinkKind": {
+      "type": "string",
+      "enum": [
+        "created",
+        "continued",
+        "managed"
+      ]
+    },
+    "BotTaskLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId",
+        "botName",
+        "taskId",
+        "projectId",
+        "botRunId",
+        "sessionId",
+        "executionId",
+        "linkKind",
+        "createdBy",
+        "createdAt"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "botName": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "botRunId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "executionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "linkKind": {
+          "$ref": "#/$defs/BotTaskLinkKind"
+        },
+        "createdBy": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      }
+    },
+    "BotTaskRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId",
+        "botName",
+        "taskId",
+        "projectId",
+        "botRunId",
+        "sessionId",
+        "executionId",
+        "linkKind",
+        "createdBy",
+        "createdAt",
+        "taskCode",
+        "title",
+        "state",
+        "waitReason",
+        "pauseReason",
+        "priority",
+        "acceptedAt",
+        "acceptedBy",
+        "openQuestions",
+        "executionCount",
+        "executionsByState",
+        "updatedAt"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "botName": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "botRunId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "executionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "linkKind": {
+          "$ref": "#/$defs/BotTaskLinkKind"
+        },
+        "createdBy": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "taskCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "waitReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pauseReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "priority": {
+          "type": "string"
+        },
+        "acceptedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "acceptedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "openQuestions": {
+          "type": "integer"
+        },
+        "executionCount": {
+          "type": "integer"
+        },
+        "executionsByState": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      }
+    },
+    "BotTasksRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "after": {
+          "type": "string"
+        }
+      }
+    },
+    "BotTasksReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tasks",
+        "hasMore"
+      ],
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BotTaskRecord"
+          }
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "nextAfter": {
+          "type": "string"
+        }
+      }
+    },
+    "BotTaskLinkRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "botId",
+        "taskId"
+      ],
+      "properties": {
+        "botId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "botRunId": {
+          "type": "string"
+        },
+        "linkKind": {
+          "$ref": "#/$defs/BotTaskLinkKind"
+        }
+      }
+    },
+    "BotTaskLinkReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "link"
+      ],
+      "properties": {
+        "link": {
+          "$ref": "#/$defs/BotTaskLink"
         }
       }
     }

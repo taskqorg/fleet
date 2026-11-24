@@ -535,6 +535,25 @@ func sessionGet(q *Request, sid string) (rawObject, error) {
 	if err != nil {
 		return nil, err
 	}
+	if q.person != nil && !fullAccess(q.person) {
+		if raw, ok := s["nativeSessions"]; ok {
+			s["nativeSessions"] = filterNativeSessionsByAccess(q, raw)
+		}
+		if raw, ok := s["workspaceSnapshots"]; ok {
+			var ws map[string]json.RawMessage
+			if json.Unmarshal(raw, &ws) == nil && len(ws) > 0 {
+				filtered := map[string]json.RawMessage{}
+				for k, v := range ws {
+					parts := strings.SplitN(k, ":", 3)
+					if len(parts) >= 2 && parts[1] != "" && !mayAccessProjectID(q.person, parts[1]) {
+						continue
+					}
+					filtered[k] = v
+				}
+				s["workspaceSnapshots"] = jsonBytes(filtered)
+			}
+		}
+	}
 	v, err := sessionView(q, sid)
 	if err != nil {
 		return nil, err
@@ -596,13 +615,9 @@ func sessionProfile(q *Request, r *contract.SessionProfileRequest) (contract.Ses
 		if !strings.HasPrefix(*w, "/") || strings.Contains(*w, "..") {
 			return none, fail(400, "Invalid working directory")
 		}
-		s.WorkingDirectory = *w
-		if err := sessionPut(q, &s); err != nil {
-			return none, err
-		}
 	}
 	if s.NativeSessionID != "" {
-		args := agentTransitionArgs{SessionID: sid, ProfileID: pid}
+		args := agentTransitionArgs{SessionID: sid, ProfileID: pid, WorkingDirectory: r.WorkingDirectory}
 		if r.Account != nil {
 			args.Account = jsonBytes(*r.Account)
 		}
@@ -611,6 +626,9 @@ func sessionProfile(q *Request, r *contract.SessionProfileRequest) (contract.Ses
 			return none, err
 		}
 		return asT[contract.SessionProfileReply](t)
+	}
+	if w := r.WorkingDirectory; w != nil {
+		s.WorkingDirectory = *w
 	}
 	p, err := readTrustedProfile(q, pid)
 	if err != nil {

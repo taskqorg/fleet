@@ -4684,3 +4684,23 @@ CREATE UNIQUE INDEX bot_run_execution_uidx ON bot_run(execution_id) WHERE execut
 CREATE UNIQUE INDEX bot_run_queued_message_uidx ON bot_run(queued_message_id) WHERE queued_message_id IS NOT NULL;
 CREATE UNIQUE INDEX bot_run_active_uidx ON bot_run(bot_id) WHERE tombstoned_at IS NULL AND execution_id IS NOT NULL AND state IN ('queued', 'running', 'waiting');
 CREATE UNIQUE INDEX bot_run_dedup_uidx ON bot_run(bot_id, dedup_key) WHERE tombstoned_at IS NULL AND dedup_key IS NOT NULL;
+
+-- migration 95: managed Fleet task linkage for persistent bots.
+CREATE TABLE bot_task (
+ bot_id text NOT NULL REFERENCES bot(id) ON DELETE CASCADE,
+ task_id text NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+ project_id text NOT NULL,
+ bot_run_id text REFERENCES bot_run(id) ON DELETE SET NULL,
+ session_id text REFERENCES session(id) ON DELETE SET NULL,
+ execution_id text REFERENCES execution(id) ON DELETE SET NULL,
+ link_kind text NOT NULL DEFAULT 'managed' CHECK (link_kind IN ('created', 'continued', 'managed')),
+ created_by text NOT NULL DEFAULT '',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz,
+ seq bigserial NOT NULL,
+ PRIMARY KEY (bot_id, task_id)
+);
+CREATE INDEX bot_task_task_id ON bot_task(task_id) WHERE tombstoned_at IS NULL;
+CREATE INDEX bot_task_project_seq ON bot_task(project_id, seq DESC);
+CREATE INDEX bot_task_run_idx ON bot_task(bot_run_id) WHERE bot_run_id IS NOT NULL AND tombstoned_at IS NULL;
