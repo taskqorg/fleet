@@ -49,7 +49,7 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 | Page | Route today | Applies beyond the common set | Meets | Breaks | Not checked |
 |---|---|---|---|---|---|
 | [Home](pages/home.md) | none | OR-50, OR-53, OR-54, OR-55, OR-58, UR-51 to UR-61 | — | — | all: not built; `/home` shows the Overview until wave 1 |
-| [Live](pages/live.md) | none | OR-56, OR-58, OR-59, UR-51 to UR-55 | — | — | all: not built; `/live` points to System and Projects until wave 1 |
+| [Live](pages/live.md) | `/live`, `/live?wall` | OR-56, OR-58, OR-59, UR-51 to UR-55 | — | — | built (FLT-50); not yet measured on the deployed app |
 | [Overview](pages/overview.md) | `/overview` | OR-29, OR-30, OR-40 | UR-38 (no console error or failed read), UR-50 (no sideways scroll at 390 px), UR-71 (title matches the rail item) | UR-69, OR-38: 33 of 43 links carry a UUID | UR-51 (to be measured on Home) |
 | [Conversations](pages/conversations.md) | `/conversations`, `/conversations/<id>` | OR-51, OR-52, OR-53, OR-54, UR-56 to UR-61 | UR-38, UR-50, UR-71 | OR-54 (Target): a metrics header (elapsed, CPU, memory, tokens, cost) opens the conversation; UR-69, OR-38: the URL is a UUID | UR-57, UR-59, UR-81 |
 | [Projects](pages/projects.md) | `/projects`, `/projects/<id>` | OR-45, OR-46 (facets) | UR-38, UR-50, UR-69 (no UUID links), OR-45 (inherited defaults folded) | OR-59 (Target): `≈`, `≥` and "partial" fill the main view | UR-63 |
@@ -71,7 +71,7 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 |---|---|---|---|---|---|
 | Start screen | Home | `/`, redirects to `/home` (the Overview until wave 1) | partly: Home not built (OR-50) | checked | — |
 | Home: sessions, their questions, composer, pulse | Home | `/home`, none | not built | not checked: not built; the server answers 404 | target: `sessions_list`, `questions_list`, `bot_list`, `session_presets`, `session_start`, `message_send`, `nav_counts` ([home](pages/home.md#data)) |
-| Live: hosts, slots, delivery, CI, events | Live | `/live`, none | not built | not checked: not built; the server answers 404 | target: `hosts_list`, `telemetry_summary`, `executions_runners`, `executions_list`, `spend_summary`, `delivery_status`, `executions_ci` ([live](pages/live.md#data)) |
+| Live: hosts, slots, delivery, CI, events | Live | `/live`, Live | built | checked at 1440 and 390 px against production data | `hosts_list`, `executions_runners`, `executions_list`, `task_page`, `delivery_status`, `executions_ci`, `project_list` ([live](pages/live.md#data)) |
 | Overview: Needs you, hosts, delivery in flight | Home and Live | `/overview`, Overview | built | checked: ready in 2.5 s, 35 need you, 3 hosts | `questions_list`, `executions_list`, `hosts_list`, `publishing_status`, `task_page`, `questions_answer` |
 | Overview item | Home | `/overview/<id>`, Overview with the item | built | not checked: no item opened | as above |
 | Conversation list with summary | Conversations | `/conversations`, list and summary by project | built | checked: 539 conversations | `sessions_list`, `project_list`, `nav_counts` |
@@ -149,8 +149,8 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 |---|---|---|---|---|---|
 | Load and capacity by host and account, placement reasons | Live, System | `/hosts`, `/hosts/<id>`, `/overview` | partly: no placement reasons | checked | `hosts_list`, `telemetry_summary` |
 | Account and quota state per subscription | System | `/hosts/limits` | built | checked | `subscription_limits` |
-| Worker slots per host with 24 h of runs | Live | `/runners` (totals only) | not built: no slot tiles or strips | not checked: not built | `hosts_list`, `executions_runners` |
-| Wall mode for a TV | Live | none | not built | not checked: not built | — |
+| Worker slots per host with 24 h of runs | Live | `/live` host bands | built | checked | `hosts_list`, `executions_runners` |
+| Wall mode for a TV | Live | `/live?wall`; a viewer sees only Live | built | checked at 1920 and 390 px; the viewer path not checked: no viewer credential | `hosts_list` and the reads above |
 
 ### Projects
 

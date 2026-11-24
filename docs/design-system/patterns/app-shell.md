@@ -24,6 +24,8 @@ No bar spans the whole window (OR-24).
 
 At phone width (760 px and below) the toggle hides, the section actions, the focus chip and the indicator keep their icons (the indicator its count), and the title gives way first: nothing scrolls sideways.
 
+**Wall mode.** `AppShell.wall` (`data-wall`) hides the navigation, the bottom bar and the shell header, so the page fills the screen: [Live](../pages/live.md) on a TV at `/live?wall`. A viewer (Wall viewer in [people access](../../designs/fleet-people-access.md#wall-viewer)) gets a navigation of Live alone, no focus chip and no search.
+
 **Bottom bar (OR-60).** At phone width a bottom bar of five replaces the rail under the work area (`BottomBar`, `data-ui="bottom-bar"`): Home, Live, Conversations and Projects as tabs (icon over name, the in-focus counter as a badge), then More. More opens a short menu above it (OR-14) with Lab, Library and System and, under a line, the user block (Logout, versions). The tab of the current section, or More when the current one is in its menu, is marked. The rail's head is not shown there: the need-you count is Home's.
 
 **Outside focus.** The indicator counts the [Needs you](needs-you.md) items (open questions and Needs-you problems) whose project is outside the focus and not ignored (ignore is full silence); with All projects it shows nothing. A click opens `/home?all`, Home without the focus (ignored projects stay hidden); its head says so, and the indicator hides there. It is never kept as the Overview's last view: the navigation, Back or its head's focus icon return to the focused Overview.

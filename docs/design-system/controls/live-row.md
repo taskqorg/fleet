@@ -11,7 +11,7 @@
 | Project | name; under it running, queued and done counts in their tones ([OR-29](../owner-rules.md)) | a sparkline of runs |
 | Delivery | state dot, pull request [entity code](entity-card.md) and title | the [stage chip](stage-chip.md) |
 | Runner | state dot, runner name | jobs running and minutes today, in mono |
-| Event | age in mono ([OR-2](../owner-rules.md)), state dot, the event in words | nothing |
+| Event | age in mono ([OR-2](../owner-rules.md)), the shared [state dot](state-badge.md#dot-and-word) of the event's state (OR-55; the word for screen readers only), the event in words | nothing |
 
 **States.** *Normal*; *trouble* (the dot and the right-hand fact in `danger-fg`, [OR-56](../owner-rules.md)); *stale* (dimmed with the [offline marker](offline-marker.md)).
 

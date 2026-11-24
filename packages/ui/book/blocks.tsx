@@ -89,9 +89,9 @@ function LiveRowDemo() {
     <LiveRow kind="project" name="fleet" running={3} queued={4} done={23} trend={trend} trendLabel="runs, last 24 hours" onOpen={() => {}} />
     <LiveRow kind="delivery" tone="running" code={`#${827}`} title="retain initiating person" stage="merging" onOpen={() => {}} />
     <LiveRow kind="runner" name="ubuntu-latest" fact="3 jobs · 142 min today" onOpen={() => {}} />
-    <LiveRow kind="event" at={NOW - min} tone="success" text={`T-FLT-43 merged · #${828} rolling out`} onOpen={() => {}} />
+    <LiveRow kind="event" at={NOW - min} state="done" text={`T-FLT-43 merged · #${828} rolling out`} onOpen={() => {}} />
     <LiveRow kind="runner" name="self-hosted pds18" fact="offline 12m" trouble onOpen={() => {}} />
-    <LiveRow kind="event" at={NOW - 9 * min} tone="neutral" text="Stale row: last read 9m ago" stale />
+    <LiveRow kind="event" at={NOW - 9 * min} state="done" text="Stale row: last read 9m ago" stale />
   </ul>;
 }
 

@@ -320,6 +320,7 @@ export function AppShell(p: {
   privateReady?: boolean; privateGeneration?: number;
   widths?: Record<string, number>; onWidth?: (key: string, px: number) => void; collapsed?: boolean; onCollapsed?: (on: boolean) => void;
   /** False until those settings are read: the shell stays hidden, so nothing jumps when they arrive (OR-23). */ ready?: boolean;
+  /** Wall mode (Live on a TV, pages/live.md): no navigation and no shell header; the page fills the screen. */ wall?: boolean;
 }) {
   const [own, setOwn] = createSignal<string[]>([]);
   const pinned = createMemo(() => p.pins ?? own());
@@ -384,7 +385,7 @@ export function AppShell(p: {
 
   return (
     <Widths value={setWidth}>
-      <div class={['shell', { pending: !ready() }]} data-ui="app-shell" onClick={openRow} style={vars()}>
+      <div class={['shell', { pending: !ready() }]} data-ui="app-shell" data-wall={p.wall ? '' : undefined} onClick={openRow} style={vars()}>
         <a class="skip" href="#main" onClick={e => { e.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to content</a>
         <NavRail
           items={p.nav}

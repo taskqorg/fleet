@@ -11,15 +11,18 @@ export const toLife = (r: LifeRef): Life | undefined => {
   return s in states.life ? s : undefined;
 };
 
-/** A 6 px dot in the state's tone and the state word. Working pulses; Stopped is hollow; Asleep is a dashed ring. */
-export function StateDot(p: LifeRef & { reason?: string }) {
+/**
+ * A 6 px dot in the state's tone and the state word. Working pulses; Stopped is hollow; Asleep is a dashed ring.
+ * `bare` keeps the word for screen readers only: the dot alone where the row already says what it is (Live slots, events).
+ */
+export function StateDot(p: LifeRef & { reason?: string; bare?: boolean }) {
   const life = createMemo(() => toLife(p as LifeRef));
   // An unknown state shows its own word in the neutral tone, never a healthy one.
   const d = createMemo(() => { const l = life(); return l ? states.life[l] : { label: String(p.state), tone: 'neutral' as const }; });
   return (
     <span class={['sdot', `t-${d().tone}`]} data-ui="state-dot" data-state={life() ?? 'unknown'} aria-label={p.reason ? `${d().label}, ${p.reason}` : undefined}>
       <i aria-hidden="true" />
-      <span>{d().label}</span>
+      <span class={p.bare ? 'sr-only' : undefined}>{d().label}</span>
     </span>
   );
 }

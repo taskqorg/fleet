@@ -36,6 +36,7 @@ const Humans = lazy(() => import('./views/humans.tsx'), { export: 'Humans' });
 const Lab = lazy(() => import('./views/lab.tsx'), { export: 'Lab' });
 const Library = lazy(() => import('./views/agents.tsx'), { export: 'Agents' });
 const Spend = lazy(() => import('./views/spend.tsx'), { export: 'Spend' });
+const Live = lazy(() => import('./views/live.tsx'), { export: 'Live' });
 
 // Not reported: an operation's own failure (OpError) is in the coordinator's spans, and an access change aborts reads on
 // purpose. The release is the version this tab runs.
@@ -67,15 +68,13 @@ function LabWorkspace(props: { id?: string }) {
   </Switch>;
 }
 
-/** Live (OR-56) until wave 1 builds it: where its facts are today. */
-function LivePending() {
-  const [, go] = useLocation();
-  return <Empty text="Live is being built: hosts, runs and delivery on one screen. Until then they are in System and Projects."
-    action={<><Button label="Hosts" icon="panels-top-left" onClick={() => go('/hosts')} /> <Button label="Runners" icon="play" onClick={() => go('/runners')} /> <Button label="Delivery" icon="git-merge" onClick={() => go('/delivery')} /></>} />;
-}
+/** Wall mode (pages/live.md): `/live?wall` hides the navigation and the shell header for a TV, and nothing opens. */
+const isWall = (q: string) => new URLSearchParams(q).has('wall');
+/** A viewer (people access, Wall viewer) reads only: it sees Live and nothing else. */
+const viewerOnly = (roles: readonly string[] | undefined) => !!roles && roles.length > 0 && roles.every(r => r === 'viewer');
 
 const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => JSX.Element }> = {
-  live: { focus: false, view: () => <LivePending /> },
+  live: { focus: false, view: () => <Live wall={isWall(useSearch()())} /> },
   bots: { focus: true, view: p => <Bots id={p.id} /> },
   projects: { focus: true, view: p => <Projects id={p.id} /> },
   overview: { focus: true, view: p => <Overview id={p.id} /> },
@@ -173,6 +172,10 @@ function App() {
   const showPage = (id: string) => id === 'humans' ? me.data?.owner === true :
     id === 'personal-lab' ? !!me.data?.personalLab || me.data?.roles.includes('architect') === true : true;
   const search = [subPages(go, showPage), ...(Object.keys(KINDS) as Hit['kind'][]).map(k => found(k, go))];
+  const viewer = createMemo(() => viewerOnly(me.data?.roles));
+  const wall = createMemo(() => current() === 'live' && isWall(query()));
+  // A viewer sees only Live: any other address opens it.
+  createEffect(() => [viewer(), current()] as const, ([v, cur]) => { if (v && cur !== 'live') go('/live', { replace: true }); });
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
   // Preferences load only after authorized baseline activation.
   // Focus and online check the person quietly (below); preferences changed elsewhere arrive as setting-change events.
@@ -256,7 +259,8 @@ function App() {
   const lastScreen = new Map<string, string>();
   const openSection = (id: string) => go(sectionPath(lastScreen.get(id) ?? ROOT[id] ?? id));
   createEffect(() => [loc(), query(), access.value.state, prefsRead.value, current()] as const, ([l, q, st, pr, cur]) => {
-    if (st !== 'open' || !pr || !BUILT.some(n => n.id === cur)) return;
+    // A viewer may only read: its views are not kept (person_settings_set answers 403).
+    if (st !== 'open' || !pr || !BUILT.some(n => n.id === cur) || viewer()) return;
     const parsed = (VIEWS as string[]).includes(cur) ? parseView(l + (q ? '?' + q : '')) : null;
     // The Overview keeps no view of its own: /overview?all (every project, from the outside-focus count) is never kept.
     noteView(cur, parsed && cur !== 'overview' ? formatView({ ...parsed, focus: undefined, sel: undefined }) : '/' + cur);
@@ -267,8 +271,8 @@ function App() {
   onSettled(() => {
     // Unsent list group toggles go with them, in one keepalive request: a hidden tab may be closed without pagehide
     // (prefs.ts saveOnLeave; a section leave sends the same request without keepalive above).
-    const flush = () => { if (document.visibilityState === 'hidden') saveOnLeave(left); };
-    const leave = () => saveOnLeave(left);
+    const flush = () => { if (document.visibilityState === 'hidden' && !viewer()) saveOnLeave(left); };
+    const leave = () => { if (!viewer()) saveOnLeave(left); };
     document.addEventListener('visibilitychange', flush); addEventListener('pagehide', leave);
     return () => { document.removeEventListener('visibilitychange', flush); removeEventListener('pagehide', leave); };
   });
@@ -276,14 +280,14 @@ function App() {
   const counts = useNavCounts(() => access.value.state === 'open');
   const nav = createMemo(() => {
     const c = counts();
-    return NAV.map(n => c[COUNTER[n.id]] ? { ...n, count: c[COUNTER[n.id]] } : n);
+    return NAV.filter(n => !viewer() || n.id === 'live').map(n => c[COUNTER[n.id]] ? { ...n, count: c[COUNTER[n.id]] } : n);
   });
   // Entity cards (EntityCode) read entity_card through the store; their Open goes to the in-app path.
   const cards = entityCards(go);
   const isOpen = createMemo(() => access.value.state === 'open');
-  return <EntityCards value={cards}><AppShell privateReady={isOpen()} privateGeneration={access.value.generation} nav={nav()} current={activeNav()} title={shellTitle()} waiting={0} onGo={openSection} pins={pins()} onPins={savePins} search={isOpen() ? search : []} ready={shown()}
+  return <EntityCards value={cards}><AppShell privateReady={isOpen()} privateGeneration={access.value.generation} nav={nav()} current={activeNav()} title={shellTitle()} waiting={0} onGo={openSection} pins={pins()} onPins={savePins} search={isOpen() && !viewer() ? search : []} ready={shown()} wall={wall()}
     searchIdle={<FocusPresets icon value={prefs.value.focus.filter(p => !prefs.value.ignored.includes(p))} presets={prefs.value.focusPresets} ignored={prefs.value.ignored} onChange={setFocus} />}
-    focus={isOpen() ? <Focus go={go} /> : undefined}
+    focus={isOpen() && !viewer() ? <Focus go={go} /> : undefined}
     widths={geometry().widths} onWidth={setWidth} collapsed={geometry().navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={isOpen() && user() ? { name: user()!, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
