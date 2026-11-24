@@ -256,6 +256,7 @@ jobs:
     if: contains(fromJSON(needs.selection.outputs.executed), 'go') && needs.selection.outputs.go_pds18 != '[]'
     permissions:
       contents: read
+      actions: read
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
@@ -296,6 +297,7 @@ jobs:
     if: contains(fromJSON(needs.selection.outputs.executed), 'app') && needs.selection.outputs.app_pds18 != '[]'
     permissions:
       contents: read
+      actions: read
     uses: taskqorg/fleet/.github/workflows/pds18.yml@main
     with:
       pnpm: true
@@ -397,6 +399,7 @@ jobs:
     if: contains(fromJSON(needs.selection.outputs.executed), 'browser') && needs.selection.outputs.browser_pds18 != '[]'
     permissions:
       contents: read
+      actions: read
     strategy:
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
@@ -464,6 +467,7 @@ jobs:
     needs: selection
     permissions:
       contents: read
+      actions: read
     uses: taskqorg/fleet/.github/workflows/pds18.yml@main
     with:
       fetch-depth: 0
