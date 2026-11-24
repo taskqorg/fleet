@@ -54,7 +54,6 @@ Tooltips follow [OR-20](owner-rules.md).
 | UX-17 | Active filters show as removable terms with a count ("84 of 1,240") and one clear action ([OR-11](owner-rules.md), [OR-36](owner-rules.md)). | Browser: apply a filter, expect the count and the clear action. |
 | UX-18 | The full filter, grouping and sort live in the URL, so a copied URL reproduces the view. | Browser: set a filter, open the URL in a new context, compare rows. |
 | UX-19 | Search matches titles, codes and key text, highlights matches, and stays in the current list unless the person picks "everywhere" (the palette, [OR-32](owner-rules.md)). | Browser: search a known code, expect it first and highlighted. |
-
 | UX-93 | The last filter set per list is remembered per person on the server, and saved views are one-click choices ([OR-33](owner-rules.md)). | Browser: set a filter, open another section, come back without the URL query, expect the filter. |
 
 Grouping and sort follow [OR-35](owner-rules.md).
