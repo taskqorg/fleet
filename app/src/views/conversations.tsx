@@ -710,9 +710,9 @@ function ForkDetails(props: { session: SessionGetReply; open: (id: string) => vo
   const parent = () => str(source().sessionId);
   const strategy = () => str(source().strategy);
   const reason = () => str(source().reason);
-  const packet = () => props.session.handoffs.find(h => h.strategy === 'fork_summary');
+  const packet = () => props.session.handoffs?.find(h => h.strategy === 'fork_summary');
   const recipient = () => props.session.executions.find(e => e.id === packet()?.executionId) ?? props.session.executions[0];
-  const child = () => str(props.session.forks.at(-1)?.sessionId);
+  const child = () => str(props.session.forks?.at(-1)?.sessionId);
   const packetDoc = useOp('session_handoffs', () => packet() ? { sessionId: props.session.id } : null);
   const text = () => str(packetDoc.data?.handoffs.find(h => h.id === packet()?.id)?.text);
   return (
