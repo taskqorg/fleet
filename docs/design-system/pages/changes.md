@@ -1,5 +1,7 @@
 # Changes (architect)
 
+**Target home.** [Library](library.md) › Changes for definitions (`/library/changes`), and the drift line of each host in [System](system.md) › Hosts for release and harness pins. `/changes` redirects to Library.
+
 **App routes:** `/changes` in the operator app (`app/src/views/changes.tsx`). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). Requirements: [changes screen](../../designs/fleet-system-management.md#changes-screen). There is no static mockup.
 
 **Purpose.** Answer "is every host on the same setup, and what has not reached it": configuration changes, the release and the harness pins, from the repository to the active store and to each host.

@@ -1,5 +1,53 @@
 # Laboratory (architect)
 
+## Target
+
+**Status.** Target, rail section Lab ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)). It keeps the built Lab's content and changes its frame; the sections after **Current build** stay true for the content.
+
+**Purpose.** Which model, harness or pipeline is best for each use case right now, and how do I test a new one ([J1–J3](../../designs/fleet-ia-and-journeys.md#3-core-user-journeys-j1j5)).
+
+**Routes:** `/lab` (idle: leaderboard), `/lab/use-cases/<id>`, `/lab/suites/<key>`, `/lab/E-FLT-7` (one experiment, [D17](../decisions.md#2026-11-10-d17-human-entity-codes)), `/lab/new?useCase=<id>`. Old `/lab/<uuid>`, `/lab/use-case:<id>`, `/lab/suite:<key>` and `/personal-lab` redirect (`/personal-lab` to `/lab` with the saved view "Mine").
+
+### Layout
+
+Three columns ([OR-24](../owner-rules.md)). Shell header: title, New experiment (`plus`), focus chip, search.
+
+* **Control column** (`CatalogueTree`, [OR-48](../owner-rules.md)): two roots, **Use cases** (LLM Code Benchmarks, Real Work, Fleet & Projects, folded Archived) and **Runs** (Active, Drafts, Completed, folded Stopped); one tree, no mode switch ([OR-46](../owner-rules.md)). Above it the list header with search and saved views (Mine, Waiting for a decision). A leaf: state icon, name, code, best score on the right.
+* **Work area, idle** (J1, under 5 s): what waits for the person first (ratings and undecided series as question cards, [OR-53](../owner-rules.md)); then the comparison of the selected collection: **Model × Pipeline** with score, median wall time and failure rate in each cell ([owner decision](#owner-decision-target)); cost and tokens fold into the cell's Details ([OR-54](../owner-rules.md), [OR-59](../owner-rules.md)); a winning cell has Promote (J3).
+* **Work area, use case open:** goal and expected outcome, approved examples, the comparison scoped to this use case, and **Run in Lab** (J2).
+* **Work area, experiment open:** head (state, title, code, Launch, Stop, Promote), the matrix (examples × variants, cells with state and score, live step `2/3 · review`), variants as differences from the baseline ([OR-45](../owner-rules.md)), the decision gate, ratings.
+* **Work area, new:** the create form with EntityPicker choices; Launch in at most 3 clicks from a use case (J2).
+
+### States
+
+* **A run working:** cells update in place with fixed-width figures ([OR-6](../owner-rules.md)).
+* **A trial failed:** the cell is in the danger tone with its `problem` cause inline; one click opens the trial (UR-63).
+* **Phone (390 px):** the tree; an opened use case shows the ranked list of variants instead of the matrix.
+
+### Owner decision (target)
+
+The idle Lab screen shows the Model × Pipeline matrix (owner, 2026-11-25). On a phone a use case shows its variants as a ranked table.
+
+### Review of the current build
+
+Checked against the [product map](../product-map.md) rows for Lab.
+* **Keep:** the use-case card with Run in Lab, the leaderboard with Promote, the Runs questions view, ratings and example approvals, New experiment with its EntityPicker form and its uncertain-reply handling, the experiment page (spend, matrix, loops, variants, decision gate, ratings), trial plan inspection.
+* **Change:** Personal Lab becomes the saved view "Mine"; undecided experiments and ratings become question cards; the leaderboard table becomes the Model × Pipeline matrix on the idle screen.
+* **Drop:** the `Use cases | Runs` mode switch (two roots of one tree, [OR-46](../owner-rules.md)); the summary strip of counts (active use cases, approved examples, leaderboard entries, undecided series), which the matrix and the questions already answer ([OR-17](../owner-rules.md)); the "undecided experiments" warning banner (it is a question now).
+
+### Blocks
+
+* [Navigation rail](../controls/nav-rail.md), [shell header](../patterns/app-shell.md).
+* [Filter bar](../controls/filter-bar.md#board), [catalogue row and list group](../controls/data-list.md#board), [detail head](../patterns/list-detail.md#board); [text field](../controls/text-field.md#board) for the create form.
+* [Question card](../controls/decision-block.md#card) for ratings and undecided series; [state dot and word](../controls/state-badge.md#dot-and-word); [button](../controls/button.md) for Promote and Run in Lab.
+* [Matrix cell](../controls/matrix-cell.md) for the matrix and the experiment; [table row](../controls/data-list.md#table-row) for the ranked list on a phone; [diff row](../patterns/definition-editor.md#diff-row) for variants.
+
+### Design board
+
+Canvas [screens/lab.bl](../board/screens/lab.bl): idle with the matrix, an experiment open, phone.
+
+## Current build
+
 **App routes:** `/lab`, `/lab/<experiment id>` and `/lab/new` in the operator app (`app/src/views/lab.tsx`, `app/src/views/lab-create.tsx`, checked by `tests/ui/app.check.ts` and `tests/ui/lab-create.check.ts`); mockup `#/lab` in [mockups.html](mockups.html) shows the earlier one-page layout. Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). Built in Lab Stage 3 ([D18](../decisions.md), [fleet-lab.md](../../designs/fleet-lab.md#lab-screen)).
 
 **Purpose.** Compare variants of a pipeline over examples, inspect trials, rate outputs, decide and promote.

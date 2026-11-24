@@ -1,5 +1,7 @@
 # Spend (architect)
 
+**Target home.** [System](system.md) › Spend (`/system/spend`), the one screen where cost is the question ([OR-54](../owner-rules.md)). `/spend` redirects.
+
 **App routes:** `/spend` in the operator app (`app/src/views/spend.tsx`). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). Requirements: [spend view](../../designs/fleet-analytics.md#spend-view). There is no static mockup.
 
 **Purpose.** Answer "where did the agents' money go, and what did it buy" for the owner; agents read the same figures through `spend_summary`.

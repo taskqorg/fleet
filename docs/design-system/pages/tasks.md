@@ -1,5 +1,7 @@
 # Tasks (operator)
 
+**Target home.** The Tasks facet of a project: `/projects/<code>/tasks` and `/projects/<code>/tasks/T-FLT-42` ([projects](projects.md#target)); the rail item Tasks leaves ([OR-46](../owner-rules.md)). The list and detail below keep their rules inside the facet.
+
 **Mockup routes:** `#/tasks`, `#/tasks/9989` (waiting), `#/tasks/9978` (failed) in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 
 **Purpose.** Find, triage and control work. Accept or return results.
