@@ -363,6 +363,10 @@ func TestDispatchSkipsHostDrainingForUpdate(t *testing.T) {
 	if ex2["hostId"] != nil || ex2["waitReason"] != "placement" || ex2["waitDetail"] != "upd-mac is updating to 1.261124.43 and starts no new work until then" {
 		t.Fatalf("pinned run on a draining host = hostId %v waitReason %v waitDetail %v", ex2["hostId"], ex2["waitReason"], ex2["waitDetail"])
 	}
+	// An update drain is transient, like load backpressure: no Needs you stall question.
+	if code, qs := env.callJSON(t, "POST", "/api/ops/questions_list", doc{"state": "open"}, env.ownerHeaders()); code != 200 || len(anys(qs["questions"])) != 0 {
+		t.Fatalf("open questions while a host updates = %d %v", code, qs["questions"])
+	}
 	cmds := poll(mac, macSecret, "1.261124.43", &contract.UpdateResult{At: "2026-11-24T18:51:00Z", State: contract.UpdateStateOk, Version: "1.261124.43"})
 	if len(cmds) != 1 || cmds[0]["executionId"] != eid2 {
 		t.Fatalf("updated host commands = %v, want start of %s", cmds, eid2)

@@ -1176,7 +1176,7 @@ func hostConcurrencyLimit(hv dispatchHost, load *hostLoadObservation, now int64)
 }
 
 func isBackpressureCause(cause string) bool {
-	return strings.HasSuffix(cause, ":overloaded") || strings.HasSuffix(cause, ":concurrency")
+	return strings.HasSuffix(cause, ":overloaded") || strings.HasSuffix(cause, ":concurrency") || strings.HasSuffix(cause, ":updating")
 }
 
 // dispatchStallCauses: the causes a dispatch pass raises and closes (problemsSet).
