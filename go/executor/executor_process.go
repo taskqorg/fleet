@@ -753,8 +753,10 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		}
 		return true, e.finish(l.command, "failed", l.native)
 	}
-	// Diagnostic retention must not turn an original unknown/failure into another execution outcome.
-	if err := e.artifacts(dir, []string{execution + ".mcp"}, execution, &declared); err != nil {
+	// Diagnostic retention must not turn an original unknown/failure into another execution outcome
+	// or hold a clean exit in waiting behind optional diagnostic log uploads.
+	var diagnostics []string
+	if err := e.artifacts(dir, []string{execution + ".mcp"}, execution, &diagnostics); err != nil {
 		l.seq++
 		_ = e.event(l.command, l.seq, "mcp.diagnostics_unavailable", M{"reason": "safe receipt collection failed"})
 	}

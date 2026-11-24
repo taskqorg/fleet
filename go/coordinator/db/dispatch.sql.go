@@ -119,7 +119,10 @@ func (q *Queries) DispArtifactHeld(ctx context.Context, artifactID string) (bool
 }
 
 const dispArtifactWaits = `-- name: DispArtifactWaits :many
-SELECT id,(data->'declaredArtifacts')::jsonb AS declared,(coalesce((data->>'waitingSince')::bigint,0) < $1::bigint)::boolean AS expired
+SELECT id,(data->'declaredArtifacts')::jsonb AS declared,
+ ((coalesce((data->>'waitingSince')::bigint,0) < $1::bigint)
+  OR EXISTS (SELECT 1 FROM event ev WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='outbox.failed'
+   AND ev.payload->'data'->>'route'='/api/hosts/artifacts/failed'))::boolean AS expired
 FROM execution WHERE kind IN ('agent_run','host_job') AND state='waiting' AND data->>'waitReason'='artifacts'
 ORDER BY seq
 `
@@ -130,7 +133,7 @@ type DispArtifactWaitsRow struct {
 	Expired  bool
 }
 
-// The agent runs and host jobs waiting for their artifacts, with the names they declared; expired: waiting since before.
+// The agent runs and host jobs waiting for their artifacts, with the names they declared; expired: waiting since before or host upload failed before reserve.
 func (q *Queries) DispArtifactWaits(ctx context.Context, before int64) ([]DispArtifactWaitsRow, error) {
 	rows, err := q.db.Query(ctx, dispArtifactWaits, before)
 	if err != nil {
@@ -541,6 +544,9 @@ SELECT execution.id FROM execution WHERE state IN ('preparing','running','waitin
    AND h.payload ? 'activeExecutions' AND NOT (h.payload->'activeExecutions' ? execution.id)
    AND coalesce(execution.last_seen_at, execution.started_at, execution.updated_at) < h.last_seen_at - make_interval(secs => $2::float8)
    AND coalesce(execution.last_seen_at, execution.started_at, execution.updated_at) < now() - make_interval(secs => $2::float8)))
+ OR (kind IN ('agent_run','host_job') AND state='waiting' AND coalesce(data->>'waitReason','')<>'artifacts' AND EXISTS (
+  SELECT 1 FROM event ev WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='process.closed'
+   AND ev.updated_at < now() - make_interval(secs => $2::float8)))
  OR (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $1::float8)
   AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))))
 `
@@ -591,6 +597,9 @@ SELECT EXISTS(SELECT 1 FROM execution WHERE execution.id = $1 AND state IN ('pre
    AND h.payload ? 'activeExecutions' AND NOT (h.payload->'activeExecutions' ? execution.id)
    AND coalesce(execution.last_seen_at, execution.started_at, execution.updated_at) < h.last_seen_at - make_interval(secs => $3::float8)
    AND coalesce(execution.last_seen_at, execution.started_at, execution.updated_at) < now() - make_interval(secs => $3::float8)))
+ OR (kind IN ('agent_run','host_job') AND state='waiting' AND coalesce(data->>'waitReason','')<>'artifacts' AND EXISTS (
+  SELECT 1 FROM event ev WHERE NOT ev.delta AND ev.execution_id=execution.id AND ev.type='process.closed'
+   AND ev.updated_at < now() - make_interval(secs => $3::float8)))
  OR (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $2::float8)
   AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))))
  FOR UPDATE SKIP LOCKED)::boolean
