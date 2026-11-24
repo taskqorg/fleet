@@ -10,12 +10,14 @@ const root = join(import.meta.dirname, '..');
 const ds = 'docs/design-system';
 const read = (p: string) => readFileSync(join(root, p), 'utf8');
 
-// Rule texts by ID. Owner rules are table rows `| **OR-<n> Name** | text |`; usability rules open with a bold
-// `**UR-<n> ...**` lead and run to the end of the line.
+// Rule texts by ID. Owner rules are table rows `| **OR-<n> Name** | text |` in owner-rules.md; usability rules
+// are `UR-<n>` rows in principles.md.
 export function rules(owner: string, usability: string): Map<string, string> {
   const m = new Map<string, string>();
   for (const [, id, name, text] of owner.matchAll(/^\| \*\*(OR-\d+) ([^*]+)\*\* \| (.+?) \|\s*$/gm)) m.set(id, `${name}: ${text}`);
-  for (const [, id, rest] of usability.matchAll(/^\s*(?:[*-] )?\*\*(UR-\d+)[ .:]*([^\n]*)$/gm)) m.set(id, rest.replace(/\*\*/g, '').trim());
+  // principles.md keeps them as table rows `| **UR-<n>.** | rule | check |`; a bold lead in a bullet also counts.
+  for (const [, id, text] of usability.matchAll(/^\| \*\*(UR-\d+)\.?\*\* \| (.+?) \|/gm)) m.set(id, text.trim());
+  for (const [, id, rest] of usability.matchAll(/^[ \t]*(?:[*-] )?\*\*(UR-\d+)[ .:]*([^\n|]*)$/gm)) if (!m.has(id)) m.set(id, rest.replace(/\*\*/g, '').trim());
   return m;
 }
 

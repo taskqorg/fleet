@@ -7,6 +7,8 @@ test('UC1 rules parse OR table rows and UR leads', () => {
   const m = rules('| **OR-7 No added arrows** | Never add an arrow. |\n', '* **UR-3 One home.** Every screen has one home section.\n');
   assert.equal(m.get('OR-7'), 'No added arrows: Never add an arrow.');
   assert.equal(m.get('UR-3'), 'One home. Every screen has one home section.');
+  const t = rules('', '| **UR-70.** | An unknown route says so. | Browser: open `/x`. |\n');
+  assert.equal(t.get('UR-70'), 'An unknown route says so.');
 });
 
 test('UC2 links resolve relative to the file and drop anchors and URLs', () => {
