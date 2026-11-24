@@ -12,7 +12,7 @@ import (
 )
 
 // ExecutorMCPServers are the MCP server names the executor gives a launch itself; a granted connection may not take one.
-var ExecutorMCPServers = []string{"fleet", "code", "design-rules", "project-browser", "project-forge"}
+var ExecutorMCPServers = []string{"fleet", "code", "design-rules", "project-browser", "project-forge", "project-publishing"}
 
 // ParseProfile decodes an agent profile (contracts/profile.schema.json) and checks the rules the schema subset cannot
 // say. It is the one validator: the coordinator runs it on config/agents/*.json, the executor before any spawn, so a

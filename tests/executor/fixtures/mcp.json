@@ -2,7 +2,7 @@
   {
     "server": "design-rules",
     "context": {
-      "z": "Unicode: Ж",
+      "z": "Unicode: \u0416",
       "a": [
         1,
         true,
@@ -168,7 +168,7 @@
                     true,
                     null
                   ],
-                  "z": "Unicode: Ж"
+                  "z": "Unicode: \u0416"
                 },
                 "type": "text"
               }
@@ -452,22 +452,6 @@
                   "additionalProperties": false,
                   "properties": {}
                 }
-              },
-              {
-                "description": "Ask Fleet to open a PR from a project session branch (fleet/<sessionId>, already pushed) and merge it after checks. Call again with the same sessionId to read the state.",
-                "inputSchema": {
-                  "properties": {
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "sessionId": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [],
-                  "type": "object"
-                },
-                "name": "session_deliver"
               },
               {
                 "description": "Fleet agent session tool session_transition (bound to this session by the host)",
@@ -1128,15 +1112,6 @@
         "method": "tools/call",
         "params": {
           "name": "session_start",
-          "arguments": {}
-        }
-      },
-      {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
-          "name": "session_deliver",
           "arguments": {}
         }
       },
@@ -1934,22 +1909,6 @@
                 }
               },
               {
-                "description": "Ask Fleet to open a PR from a project session branch (fleet/<sessionId>, already pushed) and merge it after checks. Call again with the same sessionId to read the state.",
-                "inputSchema": {
-                  "properties": {
-                    "requestId": {
-                      "type": "string"
-                    },
-                    "sessionId": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [],
-                  "type": "object"
-                },
-                "name": "session_deliver"
-              },
-              {
                 "description": "Fleet agent session tool session_transition (bound to this session by the host)",
                 "inputSchema": {
                   "properties": {
@@ -2706,18 +2665,6 @@
           "result": {
             "content": [
               {
-                "text": "reply",
-                "type": "text"
-              }
-            ]
-          }
-        },
-        {
-          "id": 1,
-          "jsonrpc": "2.0",
-          "result": {
-            "content": [
-              {
                 "text": {
                   "error": "artifact tool refused: path must be a file inside your working area"
                 },
@@ -3210,21 +3157,6 @@
               "method": "tools/call",
               "params": {
                 "arguments": {},
-                "name": "session_deliver"
-              }
-            }
-          },
-          {
-            "agentToolKey": "command:agent:<uuid>",
-            "commandId": "command",
-            "executionId": "execution",
-            "hostId": "host",
-            "request": {
-              "id": 1,
-              "jsonrpc": "2.0",
-              "method": "tools/call",
-              "params": {
-                "arguments": {},
                 "name": "session_transition"
               }
             }
@@ -3518,21 +3450,6 @@
               "params": {
                 "arguments": {},
                 "name": "session_start"
-              }
-            }
-          },
-          {
-            "agentToolKey": "command:agent:<uuid>",
-            "commandId": "command",
-            "executionId": "execution",
-            "hostId": "host",
-            "request": {
-              "id": 1,
-              "jsonrpc": "2.0",
-              "method": "tools/call",
-              "params": {
-                "arguments": {},
-                "name": "session_deliver"
               }
             }
           },
@@ -3917,15 +3834,6 @@
         "id": 1,
         "method": "tools/call",
         "params": {
-          "name": "session_deliver",
-          "arguments": {}
-        }
-      },
-      {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
           "name": "session_transition",
           "arguments": {}
         }
@@ -4077,21 +3985,6 @@
                     "error": "rejected"
                   },
                   "status": "pending-or-rejected"
-                },
-                "type": "text"
-              }
-            ],
-            "isError": true
-          }
-        },
-        {
-          "id": 1,
-          "jsonrpc": "2.0",
-          "result": {
-            "content": [
-              {
-                "text": {
-                  "error": "rejected"
                 },
                 "type": "text"
               }
@@ -4698,21 +4591,6 @@
               "method": "tools/call",
               "params": {
                 "arguments": {},
-                "name": "session_deliver"
-              }
-            }
-          },
-          {
-            "agentToolKey": "command:agent:<uuid>",
-            "commandId": "command",
-            "executionId": "execution",
-            "hostId": "host",
-            "request": {
-              "id": 1,
-              "jsonrpc": "2.0",
-              "method": "tools/call",
-              "params": {
-                "arguments": {},
                 "name": "session_transition"
               }
             }
@@ -5001,21 +4879,6 @@
               "params": {
                 "arguments": {},
                 "name": "session_start"
-              }
-            }
-          },
-          {
-            "agentToolKey": "command:agent:<uuid>",
-            "commandId": "command",
-            "executionId": "execution",
-            "hostId": "host",
-            "request": {
-              "id": 1,
-              "jsonrpc": "2.0",
-              "method": "tools/call",
-              "params": {
-                "arguments": {},
-                "name": "session_deliver"
               }
             }
           },

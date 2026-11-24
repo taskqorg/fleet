@@ -25,6 +25,7 @@ import (
 //go:generate go run ../gen ../../contracts/ops-lab.schema.json contract ops_lab_gen.go
 //go:generate go run ../gen ../../contracts/lab-registry.schema.json contract lab_registry_gen.go
 //go:generate go run ../gen ../../contracts/ops-projects.schema.json contract ops_projects_gen.go
+//go:generate go run ../gen ../../contracts/ops-publishing.schema.json contract ops_publishing_gen.go
 //go:generate go run ../gen ../../contracts/ops-people.schema.json contract ops_people_gen.go
 //go:generate go run ../gen ../../contracts/ops-sessions.schema.json contract ops_sessions_gen.go
 //go:generate go run ../gen ../../contracts/ops-tasks.schema.json contract ops_tasks_gen.go
@@ -186,7 +187,7 @@ func MissingCapability(caps []string, n StartNeeds) (Capability, bool) {
 	return "", false
 }
 
-// HasCapability: caps holds c (a Capability or a prefixed one: ToolCapability, ForgeCapability).
+// HasCapability: caps holds c (a Capability or a prefixed one: ToolCapability, ForgeCapability, PublishingHostCapability).
 func HasCapability(caps []string, c string) bool {
 	for _, x := range caps {
 		if x == c {

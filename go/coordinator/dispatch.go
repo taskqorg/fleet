@@ -317,9 +317,12 @@ func nonNilStrings(xs []string) []string {
 
 // projectRepo and projectEnvironment: a project's repository and its environment on a host (project settings).
 type projectRepo struct {
-	ID         string `json:"id"`
-	Connection string `json:"connection"`
-	Remote     string `json:"remote"`
+	ID            string `json:"id"`
+	Connection    string `json:"connection"`
+	Remote        string `json:"remote"`
+	Forge         string `json:"forge,omitempty"`
+	Host          string `json:"host,omitempty"`
+	DefaultBranch string `json:"defaultBranch,omitempty"`
 }
 
 type projectEnvironment struct {
@@ -697,7 +700,7 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 				skip(id+" is offline", "host:"+id+":offline")
 				continue
 			}
-			if requirements != nil && requirements.Forge && (len(settings.Repos) == 0 || !contract.HasCapability(k.caps[id], contract.ForgeCapability(strings.TrimSuffix(strings.TrimPrefix(settings.Repos[0].Remote, "https://github.com/"), ".git")))) {
+			if requirements != nil && requirements.Forge && !hostHasProjectPublishingCapability(k.caps[id], settings, id) {
 				skip("project forge connection unavailable on "+id, "host:"+id+":forge")
 				continue
 			}

@@ -700,6 +700,7 @@ type Command struct {
 	ArtifactVerify   *ArtifactVerifyCommand
 	AccountInspect   *AccountInspectCommand
 	ConnectionRemove *ConnectionRemoveCommand
+	Publishing       *PublishingCommand
 	// Raw: the JSON this value was decoded from, written back unchanged (clear it after changing a member); alone when its kind is no member's.
 	Raw json.RawMessage
 }
@@ -732,6 +733,8 @@ func (v Command) MarshalJSON() ([]byte, error) {
 		return json.Marshal(v.AccountInspect)
 	case v.ConnectionRemove != nil:
 		return json.Marshal(v.ConnectionRemove)
+	case v.Publishing != nil:
+		return json.Marshal(v.Publishing)
 	}
 	return []byte("null"), nil
 }
@@ -763,6 +766,9 @@ func (v *Command) UnmarshalJSON(b []byte) error {
 	case "input":
 		v.Input = new(InputCommand)
 		return json.Unmarshal(b, v.Input)
+	case "publishing":
+		v.Publishing = new(PublishingCommand)
+		return json.Unmarshal(b, v.Publishing)
 	case "readiness":
 		v.Readiness = new(ReadinessCommand)
 		return json.Unmarshal(b, v.Readiness)
@@ -812,6 +818,8 @@ func (v *Command) Value() interface{ Validate() error } {
 		return v.AccountInspect
 	case v.ConnectionRemove != nil:
 		return v.ConnectionRemove
+	case v.Publishing != nil:
+		return v.Publishing
 	}
 	return nil
 }
@@ -854,6 +862,8 @@ func (v Command) ExecutionId() (out string) {
 		return v.AccountInspect.ExecutionId
 	case v.ConnectionRemove != nil:
 		return v.ConnectionRemove.ExecutionId
+	case v.Publishing != nil:
+		return v.Publishing.ExecutionId
 	}
 	return out
 }
@@ -885,6 +895,8 @@ func (v Command) HostId() (out *string) {
 		return v.AccountInspect.HostId
 	case v.ConnectionRemove != nil:
 		return v.ConnectionRemove.HostId
+	case v.Publishing != nil:
+		return v.Publishing.HostId
 	}
 	return out
 }
@@ -916,6 +928,8 @@ func (v Command) Id() (out string) {
 		return v.AccountInspect.Id
 	case v.ConnectionRemove != nil:
 		return v.ConnectionRemove.Id
+	case v.Publishing != nil:
+		return v.Publishing.Id
 	}
 	return out
 }
@@ -947,6 +961,8 @@ func (v Command) Kind() (out string) {
 		return v.AccountInspect.Kind
 	case v.ConnectionRemove != nil:
 		return v.ConnectionRemove.Kind
+	case v.Publishing != nil:
+		return v.Publishing.Kind
 	}
 	return out
 }
@@ -978,6 +994,8 @@ func (v Command) Run() (out *CommandRun) {
 		return v.AccountInspect.Run
 	case v.ConnectionRemove != nil:
 		return v.ConnectionRemove.Run
+	case v.Publishing != nil:
+		return v.Publishing.Run
 	}
 	return out
 }
@@ -1009,6 +1027,8 @@ func (v Command) SessionId() (out *string) {
 		return v.AccountInspect.SessionId
 	case v.ConnectionRemove != nil:
 		return v.ConnectionRemove.SessionId
+	case v.Publishing != nil:
+		return v.Publishing.SessionId
 	}
 	return out
 }
@@ -1040,6 +1060,8 @@ func (v Command) Traceparent() (out *string) {
 		return v.AccountInspect.Traceparent
 	case v.ConnectionRemove != nil:
 		return v.ConnectionRemove.Traceparent
+	case v.Publishing != nil:
+		return v.Publishing.Traceparent
 	}
 	return out
 }
@@ -1059,10 +1081,11 @@ const (
 	CommandKindArtifactVerify   CommandKind = "artifact-verify"
 	CommandKindAccountInspect   CommandKind = "account-inspect"
 	CommandKindConnectionRemove CommandKind = "connection-remove"
+	CommandKindPublishing       CommandKind = "publishing"
 )
 
 // CommandKindValues lists every CommandKind in schema order.
-var CommandKindValues = []CommandKind{CommandKindStart, CommandKindInput, CommandKindSteer, CommandKindStop, CommandKindScript, CommandKindReadiness, CommandKindBaseUpdated, CommandKindTeardown, CommandKindArtifactCopy, CommandKindArtifactVerify, CommandKindAccountInspect, CommandKindConnectionRemove}
+var CommandKindValues = []CommandKind{CommandKindStart, CommandKindInput, CommandKindSteer, CommandKindStop, CommandKindScript, CommandKindReadiness, CommandKindBaseUpdated, CommandKindTeardown, CommandKindArtifactCopy, CommandKindArtifactVerify, CommandKindAccountInspect, CommandKindConnectionRemove, CommandKindPublishing}
 
 // Valid: v is one of the schema's values.
 func (v CommandKind) Valid() bool {
@@ -1297,8 +1320,11 @@ type ForgeReviewReply struct {
 	ArtifactId        string  `json:"artifactId"`
 	ArtifactSha256    string  `json:"artifactSha256"`
 	ExecutionId       string  `json:"executionId"`
+	Host              *string `json:"host,omitempty"`
 	Independent       bool    `json:"independent"`
 	OnBehalfOf        *string `json:"onBehalfOf,omitempty"`
+	Provider          *string `json:"provider,omitempty"`
+	ProviderActor     *string `json:"providerActor,omitempty"`
 	ReviewExecutionId *string `json:"reviewExecutionId,omitempty"`
 	ReviewSessionId   *string `json:"reviewSessionId,omitempty"`
 	SessionId         string  `json:"sessionId"`
@@ -1313,16 +1339,21 @@ func (v *ForgeReviewReply) Validate() error {
 
 // ForgeReviewRequest: Verify auditable review evidence and permission before posting exact-SHA code-review status.
 type ForgeReviewRequest struct {
-	AgentToolKey string `json:"agentToolKey"`
-	ArtifactId   string `json:"artifactId"`
-	Branch       string `json:"branch"`
-	CommandId    string `json:"commandId"`
-	Description  string `json:"description"`
-	ExecutionId  string `json:"executionId"`
-	GithubActor  string `json:"githubActor"`
-	HeadSha      string `json:"headSha"`
-	HostId       string `json:"hostId"`
-	Repo         string `json:"repo"`
+	AgentToolKey      string  `json:"agentToolKey"`
+	ArtifactId        string  `json:"artifactId"`
+	Branch            string  `json:"branch"`
+	CommandId         string  `json:"commandId"`
+	Description       string  `json:"description"`
+	ExecutionId       string  `json:"executionId"`
+	GithubActor       string  `json:"githubActor"`
+	HeadSha           string  `json:"headSha"`
+	Host              *string `json:"host,omitempty"`
+	HostId            string  `json:"hostId"`
+	Provider          *string `json:"provider,omitempty"`
+	ProviderActor     *string `json:"providerActor,omitempty"`
+	Repo              string  `json:"repo"`
+	RequestId         *string `json:"requestId,omitempty"`
+	SourceExecutionId *string `json:"sourceExecutionId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2131,6 +2162,7 @@ type ProjectRepo struct {
 	Connection    *string `json:"connection,omitempty"`
 	DefaultBranch *string `json:"defaultBranch,omitempty"`
 	Forge         *string `json:"forge,omitempty"`
+	Host          *string `json:"host,omitempty"`
 	Id            *string `json:"id,omitempty"`
 	Path          *string `json:"path,omitempty"`
 	Remote        *string `json:"remote,omitempty"`
@@ -2275,6 +2307,118 @@ func (v *ProtocolFailed) UnmarshalJSON(b []byte) error {
 func (v *ProtocolFailed) Validate() error {
 	return nil
 }
+
+// PublishingCommand: kind publishing: execute a coordinator-dispatched publishing operation on a host holding the forge store
+type PublishingCommand struct {
+	ExecutionId string                    `json:"executionId"`
+	HostId      *string                   `json:"hostId,omitempty"`
+	Id          string                    `json:"id"`
+	Kind        string                    `json:"kind"`
+	Payload     *PublishingCommandPayload `json:"payload,omitempty"`
+	Run         *CommandRun               `json:"run,omitempty"`
+	SessionId   *string                   `json:"sessionId,omitempty"`
+	Traceparent *string                   `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v PublishingCommand) MarshalJSON() ([]byte, error) {
+	type plain PublishingCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *PublishingCommand) UnmarshalJSON(b []byte) error {
+	type plain PublishingCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCommand) Validate() error {
+	if v.Payload != nil {
+		if err := Check(v.Payload, "payload"); err != nil {
+			return err
+		}
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PublishingCommandPayload: Payload for kind=publishing host commands dispatched by publishing_* operations.
+type PublishingCommandPayload struct {
+	Action            string  `json:"action"`
+	ArtifactId        *string `json:"artifactId,omitempty"`
+	AutoMerge         bool    `json:"autoMerge"`
+	BaseBranch        string  `json:"baseBranch"`
+	Body              *string `json:"body,omitempty"`
+	Branch            *string `json:"branch,omitempty"`
+	Description       *string `json:"description,omitempty"`
+	ExpectedHeadSha   *string `json:"expectedHeadSha,omitempty"`
+	Host              string  `json:"host"`
+	MergeMethod       string  `json:"mergeMethod"`
+	Number            *int64  `json:"number,omitempty"`
+	Prefix            *string `json:"prefix,omitempty"`
+	ProjectId         string  `json:"projectId"`
+	Provider          string  `json:"provider"`
+	Remote            *string `json:"remote,omitempty"`
+	Repo              string  `json:"repo"`
+	RepoId            *string `json:"repoId,omitempty"`
+	RequestId         string  `json:"requestId"`
+	SourceExecutionId *string `json:"sourceExecutionId,omitempty"`
+	Title             *string `json:"title,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingCommandPayload) Validate() error {
+	return nil
+}
+
+// PublishingHostRecord: Host report of a confirmed publishing observation or command result.
+type PublishingHostRecord struct {
+	Action            *string         `json:"action,omitempty"`
+	AutoMergeEnabled  *bool           `json:"autoMergeEnabled,omitempty"`
+	BaseBranch        *string         `json:"baseBranch,omitempty"`
+	Branch            string          `json:"branch"`
+	ChecksState       *string         `json:"checksState,omitempty"`
+	CommandId         *string         `json:"commandId,omitempty"`
+	Error             *string         `json:"error,omitempty"`
+	ExecutionId       *string         `json:"executionId,omitempty"`
+	HeadSha           string          `json:"headSha"`
+	Host              string          `json:"host"`
+	HostId            string          `json:"hostId"`
+	IsDraft           bool            `json:"isDraft"`
+	Kind              string          `json:"kind"`
+	MergeMethod       *string         `json:"mergeMethod,omitempty"`
+	Mergeable         *string         `json:"mergeable,omitempty"`
+	Number            int64           `json:"number"`
+	ProjectId         *string         `json:"projectId,omitempty"`
+	Provider          string          `json:"provider"`
+	Repo              string          `json:"repo"`
+	RepoId            *string         `json:"repoId,omitempty"`
+	RequestId         *string         `json:"requestId,omitempty"`
+	Result            json.RawMessage `json:"result,omitempty"`
+	ReviewState       *string         `json:"reviewState,omitempty"`
+	SourceExecutionId *string         `json:"sourceExecutionId,omitempty"`
+	State             string          `json:"state"`
+	Title             string          `json:"title"`
+	Url               string          `json:"url"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PublishingHostRecord) Validate() error {
+	return nil
+}
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*PublishingHostRecord) Closed() bool { return true }
 
 // Readiness: data of a readiness event
 type Readiness struct {
@@ -3030,6 +3174,7 @@ var (
 	RouteForgeReview       = HostRoute[ForgeReviewRequest, ForgeReviewReply]{Path: "/api/hosts/forge/review", Long: true, Plain: false}
 	RoutePoll              = HostRoute[PollRequest, PollReply]{Path: "/api/hosts/poll", Long: true, Plain: true}
 	RouteProjectOperations = HostRoute[ProjectReceipt, any]{Path: "/api/hosts/project-operations", Long: true, Plain: false}
+	RoutePublishingRecord  = HostRoute[PublishingHostRecord, OkReply]{Path: "/api/hosts/publishing/record", Long: true, Plain: false}
 	RouteReceipts          = HostRoute[Receipt, ReceiptReply]{Path: "/api/hosts/receipts", Long: true, Plain: false}
 	RouteSpans             = HostRoute[SpanBatchRequest, SpanBatchReply]{Path: "/api/hosts/spans", Long: true, Plain: true}
 	RouteStores            = HostRoute[StoresRequest, StoresReply]{Path: "/api/hosts/stores", Long: true, Plain: false}
@@ -3055,6 +3200,7 @@ var HostRoutes = []string{
 	"/api/hosts/forge/review",
 	"/api/hosts/poll",
 	"/api/hosts/project-operations",
+	"/api/hosts/publishing/record",
 	"/api/hosts/receipts",
 	"/api/hosts/spans",
 	"/api/hosts/stores",

@@ -359,6 +359,12 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 			a.wakeDispatch()
 		})
 	}
+	if kind == string(contract.CommandKindPublishing) && (status == "completed" || status == "failed" || status == "stopped") {
+		cid, st, errMsg := c.ID, status, e.Error
+		afterCommit(q, func() {
+			publishingNotifyCommand(cid, st, errMsg)
+		})
+	}
 	ended := ""
 	if e.terminal() || lost {
 		ended = e.ID

@@ -423,22 +423,6 @@
     }
   },
   {
-    "name": "session_deliver",
-    "description": "Ask Fleet to open a PR from a project session branch (fleet/<sessionId>, already pushed) and merge it after checks. Call again with the same sessionId to read the state.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "sessionId": {
-          "type": "string"
-        },
-        "requestId": {
-          "type": "string"
-        }
-      },
-      "required": []
-    }
-  },
-  {
     "name": "session_transition",
     "description": "Fleet agent session tool session_transition (bound to this session by the host)",
     "inputSchema": {

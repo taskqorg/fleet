@@ -12,6 +12,7 @@ Agents choose operations according to their assignment and instructions. The gro
 | Execution | Launch agents or pipelines, observe state, request stop or continuation. |
 | Handoff | Prepare context, select a successor and transfer work and working area access. |
 | Communication | Send messages, ask questions, answer and deliver results. |
+| Project publishing | Inspect publishing capabilities and status; publish draft PRs/MRs, record exact-SHA code reviews, mark ready, and request or cancel provider merge. |
 | Environments and resources | Register execution hosts and environments, inspect capacity, allocate working areas, steer placement and harness use, adjust concurrency and release resources. |
 | Catalogue and history | Discover methods and recommendations; retrieve results, history and telemetry. |
 | Configuration and access | Manage agent configurations, skills, pipeline definitions, connections and grants within role permissions. |
@@ -34,6 +35,12 @@ The [shared execution contract](execution-contract.md) defines start, observatio
 [Orchestration](orchestration.md) coordinates delegation, dependencies and continuation without requiring an active caller session.
 
 Commands report acceptance separately from work starting and results becoming available. A lost response does not authorize duplicate work; callers must be able to determine the original operation's outcome.
+
+### Project publishing
+
+The unified publishing contract replaces `session_deliver` with `publishing_*` coordinator operations (`publishing_capabilities`, `publishing_status`, `publishing_publish_draft`, `publishing_record_code_review`, `publishing_mark_ready`, `publishing_request_merge`, `publishing_cancel_merge_request`) and the `project-publishing` host MCP tools (`capabilities`, `publish_draft`, `status`, `record_code_review`, `mark_ready`, `request_merge`, `cancel_merge_request`), while retaining `project-forge.*` as additive compatibility aliases.
+
+All publishing operations preserve repository, branch, host and profile authority across GitHub pull requests and GitLab merge requests (including self-hosted GitLab). Mutating operations accept `requestId` for idempotency, `sourceExecutionId` for provenance, and `expectedHeadSha` to fence against concurrent head movement. Unknown outcomes require inspecting `publishing_status` or `status` before retrying. Git access, read-only provider facts, publication actions, release and host landing remain distinct.
 
 ## Agent communication
 

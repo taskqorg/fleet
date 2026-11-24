@@ -1150,6 +1150,72 @@ const providersJSON = `
     "inputSchema": {"type": "object", "required": ["query", "issues"], "properties": {"query": {"type": "string"}, "issues": {"type": "array", "items": {"type": "object", "required": ["idReadable"], "properties": {"idReadable": {"type": "string"}}}}, "comment": {"type": "string"}}}
    }
   }
+ },
+ "gitlab": {
+  "baseUrl": "https://gitlab.com",
+  "instructions": "GitLab read-only provider (gitlab.com or self-hosted instance configured on the connection).",
+  "tools": {
+   "mrs_open": {
+    "method": "GET",
+    "path": "/api/v4/projects/{project_id}/merge_requests?state=opened&per_page=30&order_by=updated_at&sort=desc",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/json"},
+    "description": "Open merge requests of a GitLab project (URL-encoded path_with_namespace).",
+    "inputSchema": {"type": "object", "required": ["project_id"], "properties": {"project_id": {"type": "string"}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$"}
+   },
+   "mrs_merged": {
+    "method": "GET",
+    "path": "/api/v4/projects/{project_id}/merge_requests?state=merged&per_page=20&order_by=updated_at&sort=desc",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/json"},
+    "description": "Recently merged merge requests of a GitLab project.",
+    "inputSchema": {"type": "object", "required": ["project_id"], "properties": {"project_id": {"type": "string"}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$"}
+   },
+   "pipelines_running": {
+    "method": "GET",
+    "path": "/api/v4/projects/{project_id}/pipelines?status=running&per_page=20",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/json"},
+    "description": "Running pipelines of a GitLab project.",
+    "inputSchema": {"type": "object", "required": ["project_id"], "properties": {"project_id": {"type": "string"}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$"}
+   },
+   "pipelines_pending": {
+    "method": "GET",
+    "path": "/api/v4/projects/{project_id}/pipelines?status=pending&per_page=20",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/json"},
+    "description": "Pending pipelines of a GitLab project.",
+    "inputSchema": {"type": "object", "required": ["project_id"], "properties": {"project_id": {"type": "string"}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$"}
+   },
+   "pipelines_failed": {
+    "method": "GET",
+    "path": "/api/v4/projects/{project_id}/pipelines?status=failed&per_page=20",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/json"},
+    "description": "Recent failed pipelines of a GitLab project.",
+    "inputSchema": {"type": "object", "required": ["project_id"], "properties": {"project_id": {"type": "string"}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$"}
+   },
+   "releases": {
+    "method": "GET",
+    "path": "/api/v4/projects/{project_id}/releases?per_page=20",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/json"},
+    "description": "Latest releases of a GitLab project.",
+    "inputSchema": {"type": "object", "required": ["project_id"], "properties": {"project_id": {"type": "string"}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$"}
+   }
+  }
  }
 }
 `

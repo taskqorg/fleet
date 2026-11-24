@@ -1,8 +1,8 @@
-# Delivery (operator)
+# Publishing (operator)
 
-**App routes:** `/delivery` in the operator app (`app/src/views/delivery.tsx`). **Mockup routes:** `#/delivery` in [mockups.html](mockups.html) (same composition with fixture data). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
+**App routes:** `/delivery` (and `/publishing` alias) in the operator app (`app/src/views/delivery.tsx`, navigation label **Publishing**). **Mockup routes:** `#/delivery` in [mockups.html](mockups.html) (same composition with fixture data). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 
-**Purpose.** Answers, in this order: what in delivery needs a look, what is moving now, and what the pace is. Covers the pull requests of all connected projects, from open to installed on hosts.
+**Purpose.** Answers, in this order: what in publishing needs a look, what is moving now, and what the pace is. Covers the GitHub pull requests and GitLab merge requests of all connected projects, from draft/open to merged, released and installed on hosts, with shared publishing actions (`mark_ready`, `request_merge`, `cancel_merge_request`) over the same contract agents use (`publishing_*` / `project-publishing`).
 
 **Layout.** [List and detail](../patterns/list-detail.md), like Tasks ([D: owner, 2026-11-15](../decisions.md)).
 
@@ -23,7 +23,7 @@
 
 **Live.** Delivery reaches the page through the change stream: each pass that changes a project's pull requests writes `delivery-state:<project>`, and each history refresh writes `delivery-history`, both change kind `delivery`; the page re-reads on that change, and every 5 minutes as a fallback. With a key the coordinator reads GitHub every minute (pull requests, active and the latest finished workflow runs of pull requests and of the merge queue, releases); without one, the fleet repository every 6 minutes. Installed: every host seen in the last hour runs that release or newer. A UI-only release (`ui-<backend>-v<UI version>`, [independent UI publication](../../designs/fleet-delivery-pipeline.md#independent-web-ui-publication)) installs on no host: its pull requests are Installing until the site serves that UI or a newer one, then Installed. A row and the opened pull request name it by its UI version (`UI 1.261117.27`); the opened one shows the site in place of hosts, and its last stage is UI on site.
 
-**Data.** `delivery_status`, and for Pace, the norms and the opened pull request `delivery_history`, `delivery_baseline` (14 days) and `delivery_regressions` ([delivery health](../../designs/fleet-delivery-pipeline.md#delivery-health)). The view (stages, search, preset, group, sort, selection, range, picked bucket, opened pull request) is in the URL.
+**Data.** `publishing_status` (with `delivery_status` compatibility), `publishing_capabilities`, `publishing_mark_ready`, `publishing_request_merge`, `publishing_cancel_merge_request`, and for Pace, the norms and the opened pull request `delivery_history`, `delivery_baseline` (14 days) and `delivery_regressions` ([delivery health](../../designs/fleet-delivery-pipeline.md#delivery-health)). The view (stages, search, preset, group, sort, selection, range, picked bucket, opened pull or merge request) is in the URL.
 
 **Norms per stage** ([D: owner, 2026-11-17](../decisions.md)). Red means past the stage's P90 over the last 14 days, from `delivery_baseline`: PR checks (`pr_ci`), Waiting in queue and Queue checks (`queue`: both are time in the merge queue), Releasing (`release`), Installing (`install`; for a UI-only release `ui_install`, publication to the UI on site); the P50 and P90 rows under Open to installed use `total`. Open has no norm (people work there); Checks failed and Queue failed always need a look. The norms are the fleet repository's history, so they apply to its pull requests only; other repositories' times are never red. Without a baseline no time is red.
 

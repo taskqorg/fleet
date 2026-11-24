@@ -218,6 +218,8 @@ func (e *executor) run(c M) error {
 			return e.finish(cmd, "failed", "")
 		}
 		return e.finish(cmd, "completed", "")
+	case contract.CommandKindPublishing:
+		return e.runPublishingCommand(cmd, execution, cid)
 	case contract.CommandKindScript:
 		return e.script(cmd, execution, session)
 	case contract.CommandKindStart, contract.CommandKindInput:
@@ -406,17 +408,17 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		}
 	}
 	if requirements.Forge != nil && *requirements.Forge {
-		if reason := forgeReadiness(primaryRemote(project)); reason != "" {
-			return fail(1, reason)
-		}
 		repo := gitRepo(project, nil)
 		if repo == nil {
 			repo = &contract.ProjectRepo{}
 		}
-		remote := forgeRepo(str0(repo.Remote))
+		if reason := publishingReadiness(str0(repo.Remote), str0(repo.Forge), str0(repo.Host)); reason != "" {
+			return fail(1, reason)
+		}
+		ref, refOK := contract.ParseRepoRemote(str0(repo.Remote), str0(repo.Forge), str0(repo.Host))
 		store := os.Getenv("FLEET_FORGE_CONFIG_DIR")
 		branchBytes, err := exec.Command("git", "-C", work, "symbolic-ref", "--short", "HEAD").Output()
-		if err != nil || remote == "" || !forgeGranted(remote) || !filepath.IsAbs(store) {
+		if err != nil || !refOK || !forgeRepoGrantedRef(ref) || !filepath.IsAbs(store) {
 			return fail(1, "project-forge-unready")
 		}
 		prefix, mergeMethod := "fleet", "squash"
@@ -437,24 +439,33 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 			base = "main"
 		}
 		context := forgeContext{
-			Repositories:   os.Getenv("FLEET_FORGE_REPOSITORIES"),
-			CredentialHome: os.Getenv("HOME"),
-			Repo:           remote,
-			Base:           base,
-			Branch:         strings.TrimSpace(string(branchBytes)),
-			Prefix:         prefix,
-			AutoMerge:      autoMerge,
-			MergeMethod:    mergeMethod,
-			Workdir:        work,
-			Home:           commandHome(cmd),
-			Store:          store,
-			HostId:         e.host,
-			CommandId:      cid,
-			ExecutionId:    execution,
-			ProjectId:      str0(sp.ProjectId),
-			Journal:        filepath.Join(e.root, "journal.sqlite"),
-			ReadOnly:       sp.ReadOnly != nil && *sp.ReadOnly,
+			Repositories:     os.Getenv("FLEET_FORGE_REPOSITORIES"),
+			CredentialHome:   os.Getenv("HOME"),
+			Provider:         ref.Provider,
+			Host:             ref.Host,
+			Repo:             ref.Slug,
+			Remote:           str0(repo.Remote),
+			Connection:       str0(repo.Connection),
+			ConnectionsDir:   connectionsDir(),
+			Base:             base,
+			Branch:           strings.TrimSpace(string(branchBytes)),
+			Prefix:           prefix,
+			AutoMerge:        autoMerge,
+			MergeMethod:      mergeMethod,
+			Workdir:          work,
+			Home:             commandHome(cmd),
+			Store:            store,
+			GlabStore:        resolveGlabStore(store),
+			HostId:           e.host,
+			CommandId:        cid,
+			ExecutionId:      execution,
+			ProjectId:        str0(sp.ProjectId),
+			RepoId:           str0(repo.Id),
+			Journal:          filepath.Join(e.root, "journal.sqlite"),
+			ReadOnly:         sp.ReadOnly != nil && *sp.ReadOnly,
+			ReportPublishing: true,
 		}
+		servers["project-publishing"] = M{"command": exe(), "args": []any{"mcp", "project-publishing", enc(context)}, "tools": []any{"capabilities", "publish_draft", "status", "record_code_review", "mark_ready", "request_merge", "cancel_merge_request"}}
 		servers["project-forge"] = M{"command": exe(), "args": []any{"mcp", "project-forge", enc(context)}, "tools": []any{"publish_draft", "delivery"}}
 	}
 	profiles := anyStrings(profile.DelegationProfiles)

@@ -393,3 +393,78 @@ func githubGateway(ctx context.Context, a *App, connection, project, tool string
 	}
 	return line.Output, nil
 }
+
+// gitlabConnectionOf finds an active gateway API connection for a GitLab host/owner (gitlab-<host>, gitlab-<owner>, or gitlab).
+func gitlabConnectionOf(q *Request, host, owner, repoConn string) (name string, c *apiConnection, keyed bool, err error) {
+	serves := func(n string) (*apiConnection, bool, error) {
+		c, err := apiConnectionMaybe(q, "connection:"+n)
+		if err != nil || c == nil || c.Provider != "gitlab" || gatewayURL() == "" || c.Intake != "all" {
+			return c, false, err
+		}
+		active, err := q.db().ConnHasActiveKey(q.ctx(), n)
+		return c, active, err
+	}
+	var candidates []string
+	if repoConn != "" {
+		candidates = append(candidates, repoConn)
+	}
+	if host != "" {
+		h := strings.NewReplacer(".", "-", ":", "-").Replace(strings.ToLower(host))
+		candidates = append(candidates, "gitlab-"+h)
+	}
+	if owner != "" {
+		o := strings.NewReplacer("/", "-", ".", "-").Replace(strings.ToLower(owner))
+		candidates = append(candidates, "gitlab-"+o)
+	}
+	candidates = append(candidates, "gitlab")
+	for _, n := range candidates {
+		if !connName.MatchString(n) {
+			continue
+		}
+		if c, keyed, err = serves(n); err != nil || keyed {
+			return n, c, keyed, err
+		}
+	}
+	return "gitlab", nil, false, nil
+}
+
+func gitlabRead(ctx context.Context, a *App, project, host, owner, repoConn, tool string, args map[string]string) ([]byte, error) {
+	var connection string
+	var keyed bool
+	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
+		connection, _, keyed, err = gitlabConnectionOf(q, host, owner, repoConn)
+		return
+	}); err != nil {
+		return nil, fmt.Errorf("gitlab connection of %s: %w", host, err)
+	}
+	if !keyed {
+		return nil, fmt.Errorf("no gitlab key on connection %s", connection)
+	}
+	path := gatewayProviders["gitlab"].Tools[tool].Path
+	if path == "" {
+		return nil, fmt.Errorf("gitlab has no tool %s", tool)
+	}
+	pairs := []string{}
+	for k, v := range args {
+		pairs = append(pairs, "{"+k+"}", v)
+	}
+	path = strings.NewReplacer(pairs...).Replace(path)
+	if strings.Contains(path, "{") {
+		return nil, fmt.Errorf("gitlab %s: a path field is missing", tool)
+	}
+	return githubOnce("key "+connection+" "+project+" "+host+" "+path, 30*time.Second, func() ([]byte, error) {
+		if gatewayURL() == "" {
+			return nil, fmt.Errorf("gitlab %s: connection-unavailable", tool)
+		}
+		token, release, err := readTokenFor(ctx, a, connection, project)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+		line := gatewayCall(ctx, token, connection, tool, args, gatewayProviders["gitlab"].Tools[tool].Idempotent)
+		if line.Outcome != contract.CallOutcomeOk {
+			return nil, fmt.Errorf("gitlab %s: %s %d", tool, deref(line.ErrorCode), line.Status)
+		}
+		return line.Output, nil
+	}, func(err error) bool { return err == nil })
+}

@@ -294,18 +294,27 @@ func (v *DeliveryHistoryRequest) Validate() error {
 	return nil
 }
 
-// DeliveryItem: One pull request in its current delivery stage; since: when it entered it (RFC 3339). installed and merged are the last 24 hours only.
+// DeliveryItem: One pull request or merge request in its current delivery stage; since: when it entered it (RFC 3339). installed and merged are the last 24 hours only.
 type DeliveryItem struct {
-	Merged    *string       `json:"merged,omitempty"`
-	Number    int64         `json:"number"`
-	Opened    *string       `json:"opened,omitempty"`
-	ProjectId string        `json:"projectId"`
-	Release   *string       `json:"release,omitempty"`
-	Repo      string        `json:"repo"`
-	Since     string        `json:"since"`
-	Stage     DeliveryStage `json:"stage"`
-	Title     string        `json:"title"`
-	Url       string        `json:"url"`
+	AutoMergeEnabled *bool         `json:"autoMergeEnabled,omitempty"`
+	BaseBranch       *string       `json:"baseBranch,omitempty"`
+	Branch           *string       `json:"branch,omitempty"`
+	HeadSha          *string       `json:"headSha,omitempty"`
+	Host             *string       `json:"host,omitempty"`
+	IsDraft          *bool         `json:"isDraft,omitempty"`
+	Kind             *string       `json:"kind,omitempty"`
+	MergeMethod      *string       `json:"mergeMethod,omitempty"`
+	Merged           *string       `json:"merged,omitempty"`
+	Number           int64         `json:"number"`
+	Opened           *string       `json:"opened,omitempty"`
+	ProjectId        string        `json:"projectId"`
+	Provider         *string       `json:"provider,omitempty"`
+	Release          *string       `json:"release,omitempty"`
+	Repo             string        `json:"repo"`
+	Since            string        `json:"since"`
+	Stage            DeliveryStage `json:"stage"`
+	Title            string        `json:"title"`
+	Url              string        `json:"url"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

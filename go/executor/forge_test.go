@@ -8,9 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"fleet/contract"
 )
 
 // Requirement: publication stays in the configured GitHub repository; risk: an input URL redirects credentials.
@@ -620,5 +623,255 @@ func TestCodingWorkerIncludesCodeReviewSkill(t *testing.T) {
 	}
 	if !strings.Contains(string(profileBytes), `"code-review"`) {
 		t.Fatalf("coding-worker.json missing code-review in skills")
+	}
+}
+
+// Requirement: T-FLT-29 — ParseRepoRemote and ParseForgeRepoEntry detect GitHub and self-hosted GitLab (including nested subgroups) while rejecting mismatched or malformed hosts.
+// Risk: an untrusted remote or mismatched host hint redirects credentials or rejects valid self-hosted GitLab repositories.
+func TestPublishingProviderDetectionAndBoundary(t *testing.T) {
+	ref, ok := contract.ParseRepoRemote("git@gitlab.ufobe.com:gradus/cyprusbz.git", "gitlab", "")
+	if !ok || ref.Provider != "gitlab" || ref.Host != "gitlab.ufobe.com" || ref.Slug != "gradus/cyprusbz" {
+		t.Fatalf("unexpected self-hosted gitlab ref: %+v ok=%v", ref, ok)
+	}
+	subRef, ok := contract.ParseRepoRemote("https://gitlab.example.com/org/team/app.git", "", "")
+	if !ok || subRef.Provider != "gitlab" || subRef.Host != "gitlab.example.com" || subRef.Slug != "org/team/app" {
+		t.Fatalf("unexpected subgroup gitlab ref: %+v ok=%v", subRef, ok)
+	}
+	// Explicit forge: gitlab works even when hostname does not start with "gitlab."
+	customRef, ok := contract.ParseRepoRemote("https://code.internal.corp/platform/svc.git", "gitlab", "code.internal.corp")
+	if !ok || customRef.Provider != "gitlab" || customRef.Host != "code.internal.corp" || customRef.Slug != "platform/svc" {
+		t.Fatalf("unexpected explicit gitlab host ref: %+v ok=%v", customRef, ok)
+	}
+	if _, ok := contract.ParseRepoRemote("https://code.internal.corp/platform/svc.git", "gitlab", "other.corp"); ok {
+		t.Fatal("mismatched host hint accepted")
+	}
+	if _, ok := contract.ParseRepoRemote("https://code.internal.corp/platform/svc.git", "", ""); ok {
+		t.Fatal("ambiguous non-github/non-gitlab host accepted without explicit forge")
+	}
+	if !contract.ForgeRepoGranted("gitlab.ufobe.com/gradus/cyprusbz,taskqorg/fleet", ref) {
+		t.Fatal("expected granted self-hosted gitlab repo")
+	}
+	if contract.ForgeRepoGranted("gitlab.other.com/gradus/cyprusbz", ref) {
+		t.Fatal("grant on wrong host accepted")
+	}
+}
+
+// Requirement: T-FLT-29 — project-publishing supports full GitLab MR parity (including self-hosted GitLab): capabilities, publish_draft, record_code_review, mark_ready, request_merge, cancel_merge_request, expectedHeadSha fencing, and token scrubbing.
+// Risk: self-hosted GitLab MRs stall, leak glpat-* tokens, bypass expectedHeadSha fencing, or skip code-review readback verification.
+func TestPublishingGitLabSelfHostedParity(t *testing.T) {
+	dir := t.TempDir()
+	headA := strings.Repeat("a", 40)
+	headB := strings.Repeat("b", 40)
+	var seenRoute string
+	journalPath, _ := forgeReviewJournal(t, func(route, body string) string {
+		seenRoute = route
+		return enc(M{
+			"verified":       true,
+			"artifactId":     "art-gl-1",
+			"artifactSha256": strings.Repeat("d", 64),
+			"executionId":    "exec-gl-1",
+			"sessionId":      "sess-gl-1",
+			"actor":          "execution:exec-gl-1",
+			"independent":    true,
+			"provider":       "gitlab",
+			"host":           "gitlab.ufobe.com",
+			"providerActor":  "gradus-bot",
+		})
+	})
+
+	glabDir := filepath.Join(dir, "glab")
+	if err := os.MkdirAll(glabDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(glabDir, "config.yml"), []byte("hosts:\n  gitlab.ufobe.com:\n    token: glpat-secret-test-value\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	gitScript := `#!/bin/sh
+case "$*" in
+  *"check-ref-format"*) exit 0 ;;
+  *"symbolic-ref"*) echo "fleet-test/sess-gl-1" ;;
+  *"rev-parse HEAD"*) echo "` + headA + `" ;;
+  *"config --get-regexp"*) exit 1 ;;
+  *"push"*) echo "$*" >> "` + filepath.Join(dir, "git-push.log") + `"; exit 0 ;;
+  *) exit 1 ;;
+esac
+`
+	glabScript := `#!/bin/sh
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "token" ]; then
+  echo "glpat-secret-test-value"
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  echo "$*" >> "` + filepath.Join(dir, "glab-api.log") + `"
+  case "$*" in
+    *" user"*)
+      echo '{"username":"gradus-bot"}'
+      exit 0
+      ;;
+    *" projects/gradus%2Fcyprusbz/merge_requests?state=opened"*)
+      if [ ! -f "` + dir + `/mr-created" ]; then
+        echo '[]'
+        exit 0
+      fi
+      draft=true
+      title="Draft: Add GitLab publishing"
+      mwps=false
+      if [ -f "` + dir + `/mr-ready" ]; then
+        draft=false
+        title="Add GitLab publishing"
+      fi
+      if [ -f "` + dir + `/mr-automerge" ]; then
+        mwps=true
+      fi
+      echo '[{"iid":17,"web_url":"https://gitlab.ufobe.com/gradus/cyprusbz/-/merge_requests/17","title":"'"$title"'","draft":'"$draft"',"work_in_progress":false,"state":"opened","target_branch":"main","source_branch":"fleet-test/sess-gl-1","sha":"` + headA + `","merge_status":"can_be_merged","detailed_merge_status":"mergeable","merge_when_pipeline_succeeds":'"$mwps"',"head_pipeline":{"id":501,"status":"running","web_url":"https://gitlab.ufobe.com/gradus/cyprusbz/-/pipelines/501","sha":"` + headA + `"}}]'
+      exit 0
+      ;;
+    *"--method POST projects/gradus%2Fcyprusbz/merge_requests/17/cancel_merge_when_pipeline_succeeds"*)
+      rm -f "` + dir + `/mr-automerge"
+      echo '{"iid":17,"merge_when_pipeline_succeeds":false}'
+      exit 0
+      ;;
+    *"--method PUT projects/gradus%2Fcyprusbz/merge_requests/17/merge"*)
+      if [ -f "` + dir + `/fail-merge-secret" ]; then
+        echo "405 Method Not Allowed private-token glpat-secret-test-value" >&2
+        echo "MR pipeline still required" >&2
+        exit 1
+      fi
+      : > "` + dir + `/mr-automerge"
+      echo '{"iid":17,"merge_when_pipeline_succeeds":true}'
+      exit 0
+      ;;
+    *"--method PUT projects/gradus%2Fcyprusbz/merge_requests/17"*)
+      : > "` + dir + `/mr-ready"
+      echo '{"iid":17,"draft":false,"title":"Add GitLab publishing"}'
+      exit 0
+      ;;
+    *"--method POST projects/gradus%2Fcyprusbz/merge_requests "*)
+      : > "` + dir + `/mr-created"
+      echo '{"iid":17,"web_url":"https://gitlab.ufobe.com/gradus/cyprusbz/-/merge_requests/17","title":"Draft: Add GitLab publishing","draft":true,"work_in_progress":false,"state":"opened","target_branch":"main","source_branch":"fleet-test/sess-gl-1","sha":"` + headA + `"}'
+      exit 0
+      ;;
+    *"--method POST projects/gradus%2Fcyprusbz/statuses/` + headA + `"*)
+      echo '{"name":"code-review","status":"success"}'
+      exit 0
+      ;;
+    *"projects/gradus%2Fcyprusbz/repository/commits/` + headA + `/statuses"*)
+      echo '[{"name":"code-review","status":"success","description":"medium, 0 findings fixed","updated_at":"2026-11-24T10:00:00Z","author":{"username":"gradus-bot"}}]'
+      exit 0
+      ;;
+    *"projects/gradus%2Fcyprusbz"*)
+      echo '{"path_with_namespace":"gradus/cyprusbz","permissions":{"project_access":{"access_level":40}}}'
+      exit 0
+      ;;
+  esac
+fi
+exit 1
+`
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "git"), []byte(gitScript), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "glab"), []byte(glabScript), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	t.Setenv("FLEET_FORGE_CONFIG_DIR", dir)
+	t.Setenv("FLEET_FORGE_REPOSITORIES", "gitlab.ufobe.com/gradus/cyprusbz")
+
+	caps := capabilities()
+	if !slices.Contains(caps, contract.PublishingHostCapability("gitlab", "gitlab.ufobe.com", "gradus/cyprusbz")) {
+		t.Fatalf("expected gitlab publishing capability in %v", caps)
+	}
+
+	ctx := M{
+		"provider":       "gitlab",
+		"host":           "gitlab.ufobe.com",
+		"repo":           "gradus/cyprusbz",
+		"remote":         "https://gitlab.ufobe.com/gradus/cyprusbz.git",
+		"repositories":   "gitlab.ufobe.com/gradus/cyprusbz",
+		"branch":         "fleet-test/sess-gl-1",
+		"prefix":         "fleet-test",
+		"base":           "main",
+		"autoMerge":      true,
+		"mergeMethod":    "squash",
+		"store":          dir,
+		"glabStore":      glabDir,
+		"workdir":        dir,
+		"home":           dir,
+		"credentialHome": dir,
+		"hostId":         "host-1",
+		"commandId":      "cmd-gl-1",
+		"executionId":    "exec-gl-1",
+		"projectId":      "cs",
+		"journal":        journalPath,
+	}
+	textOf := func(v any) string {
+		if items := jArr(v, "content"); len(items) > 0 {
+			s, _ := jAt(items[0], "text").(string)
+			return s
+		}
+		return enc(v)
+	}
+
+	capRes, err := publishingCall("capabilities", M{}, ctx)
+	if err != nil || !strings.Contains(textOf(capRes), `"provider":"gitlab"`) || !strings.Contains(textOf(capRes), `"kind":"merge_request"`) {
+		t.Fatalf("capabilities failed: err=%v res=%v", err, capRes)
+	}
+	// expectedHeadSha mismatch fences publish_draft before push.
+	if _, err := publishingCall("publish_draft", M{"requestId": "req-1", "title": "Add GitLab publishing", "body": "desc", "expectedHeadSha": headB}, ctx); err == nil {
+		t.Fatal("expected head mismatch error on publish_draft")
+	}
+	pubRes, err := publishingCall("publish_draft", M{"requestId": "req-1", "title": "Add GitLab publishing", "body": "desc", "expectedHeadSha": headA, "sourceExecutionId": "exec-gl-1"}, ctx)
+	if err != nil || !strings.Contains(textOf(pubRes), `"kind":"merge_request"`) || !strings.Contains(textOf(pubRes), `merge_requests/17`) {
+		t.Fatalf("publish_draft failed: err=%v res=%v", err, pubRes)
+	}
+	if strings.Contains(enc(pubRes), "glpat-secret") {
+		t.Fatal("gitlab token leaked in publish_draft")
+	}
+
+	revRes, err := publishingCall("record_code_review", M{"requestId": "req-rev", "expectedHeadSha": headA, "artifactId": "art-gl-1", "description": "medium, 0 findings fixed", "sourceExecutionId": "exec-gl-1"}, ctx)
+	if err != nil || !strings.Contains(textOf(revRes), `"readbackVerified":true`) || !strings.Contains(textOf(revRes), `"providerActor":"gradus-bot"`) {
+		t.Fatalf("record_code_review failed: err=%v res=%v", err, revRes)
+	}
+	if seenRoute != "/api/hosts/forge/review" {
+		t.Fatalf("unexpected review route: %s", seenRoute)
+	}
+
+	// Draft MR refuses request_merge before mark_ready.
+	if _, err := publishingCall("request_merge", M{"requestId": "req-m0", "expectedHeadSha": headA}, ctx); err == nil || !strings.Contains(err.Error(), "still a draft") {
+		t.Fatalf("expected draft refusal, got %v", err)
+	}
+	// Stale expectedHeadSha fences mark_ready.
+	if _, err := publishingCall("mark_ready", M{"requestId": "req-r0", "expectedHeadSha": headB}, ctx); err == nil || !strings.Contains(err.Error(), "head changed") {
+		t.Fatalf("expected head-change fence on mark_ready, got %v", err)
+	}
+	readyRes, err := publishingCall("mark_ready", M{"requestId": "req-r1", "expectedHeadSha": headA}, ctx)
+	if err != nil || !strings.Contains(textOf(readyRes), `"alreadyReady":false`) {
+		t.Fatalf("mark_ready failed: err=%v res=%v", err, readyRes)
+	}
+	mergeRes, err := publishingCall("request_merge", M{"requestId": "req-m1", "expectedHeadSha": headA, "mergeMethod": "squash"}, ctx)
+	if err != nil || !strings.Contains(textOf(mergeRes), `"autoMergeEnabled":true`) {
+		t.Fatalf("request_merge failed: err=%v res=%v", err, mergeRes)
+	}
+	cancelRes, err := publishingCall("cancel_merge_request", M{"requestId": "req-c1", "expectedHeadSha": headA}, ctx)
+	if err != nil || !strings.Contains(textOf(cancelRes), `"cancelled":true`) {
+		t.Fatalf("cancel_merge_request failed: err=%v res=%v", err, cancelRes)
+	}
+	// Second cancel is idempotent with alreadyInactive:true.
+	cancelRes2, err := publishingCall("cancel_merge_request", M{"requestId": "req-c2", "expectedHeadSha": headA}, ctx)
+	if err != nil || !strings.Contains(textOf(cancelRes2), `"alreadyInactive":true`) {
+		t.Fatalf("second cancel_merge_request failed: err=%v res=%v", err, cancelRes2)
+	}
+	// Token scrubbing on GitLab failure stderr.
+	if err := os.WriteFile(filepath.Join(dir, "fail-merge-secret"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = publishingCall("request_merge", M{"requestId": "req-m2", "expectedHeadSha": headA}, ctx)
+	if err == nil || strings.Contains(err.Error(), "glpat-secret") || !strings.Contains(err.Error(), "MR pipeline still required") {
+		t.Fatalf("expected sanitized GitLab error without token, got %v", err)
 	}
 }

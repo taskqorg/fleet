@@ -23,6 +23,7 @@
     "/api/hosts/artifacts/read": {"$comment": "answers the artifact's bytes", "request": "HostArtifactGetRequest", "long": true, "decode": "checked"},
     "/api/hosts/artifacts/list": {"$comment": "answers HostArtifactListReply with the full artifact rows", "request": "HostArtifactListRequest", "long": true, "decode": "checked"},
     "/api/hosts/forge/review": {"request": "ForgeReviewRequest", "reply": "ForgeReviewReply", "long": true, "decode": "checked"},
+    "/api/hosts/publishing/record": {"request": "PublishingHostRecord", "reply": "OkReply", "long": true, "decode": "checked"},
     "/api/hosts/stores": {"request": "StoresRequest", "reply": "StoresReply", "long": true, "decode": "checked"}
   },
   "$defs": {
@@ -495,7 +496,8 @@
         {"$ref": "#/$defs/ArtifactCopyCommand"},
         {"$ref": "#/$defs/ArtifactVerifyCommand"},
         {"$ref": "#/$defs/AccountInspectCommand"},
-        {"$ref": "#/$defs/ConnectionRemoveCommand"}
+        {"$ref": "#/$defs/ConnectionRemoveCommand"},
+        {"$ref": "#/$defs/PublishingCommand"}
       ]
     },
     "StartCommand": {
@@ -581,6 +583,13 @@
       "additionalProperties": true,
       "required": ["id", "kind", "executionId"],
       "properties": {"id": {"type": "string"}, "kind": {"const": "connection-remove"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/ConnectionRemovePayload"}}
+    },
+    "PublishingCommand": {
+      "$comment": "kind publishing: execute a coordinator-dispatched publishing operation on a host holding the forge store",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "publishing"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/PublishingCommandPayload"}}
     },
     "Capability": {
       "$comment": "A capability a host reports in its poll (PollRequest.capabilities, strings so older and newer names pass). Besides these: tool:<name> (a coding tool on PATH, tool:browser), forge:<owner>/<repo> (a forge connection), ffmpeg:<version>. contract.MissingCapability is the one gate on them.",
@@ -784,7 +793,8 @@
         "artifact-copy",
         "artifact-verify",
         "account-inspect",
-        "connection-remove"
+        "connection-remove",
+        "publishing"
       ]
     },
     "StartPayload": {
@@ -1061,6 +1071,9 @@
           "type": "string"
         },
         "forge": {
+          "type": "string"
+        },
+        "host": {
           "type": "string"
         },
         "defaultBranch": {
@@ -2446,6 +2459,21 @@
         },
         "githubActor": {
           "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "providerActor": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "sourceExecutionId": {
+          "type": "string"
         }
       }
     },
@@ -2494,7 +2522,79 @@
         },
         "targetUrl": {
           "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "providerActor": {
+          "type": "string"
         }
+      }
+    },
+    "PublishingCommandPayload": {
+      "$comment": "Payload for kind=publishing host commands dispatched by publishing_* operations.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "action", "projectId", "provider", "host", "repo", "baseBranch", "mergeMethod", "autoMerge"],
+      "properties": {
+        "requestId": {"type": "string"},
+        "action": {"type": "string"},
+        "projectId": {"type": "string"},
+        "repoId": {"type": "string"},
+        "provider": {"type": "string"},
+        "host": {"type": "string"},
+        "repo": {"type": "string"},
+        "remote": {"type": "string"},
+        "branch": {"type": "string"},
+        "baseBranch": {"type": "string"},
+        "prefix": {"type": "string"},
+        "number": {"type": "integer"},
+        "expectedHeadSha": {"type": "string"},
+        "mergeMethod": {"type": "string"},
+        "autoMerge": {"type": "boolean"},
+        "sourceExecutionId": {"type": "string"},
+        "title": {"type": "string"},
+        "body": {"type": "string"},
+        "artifactId": {"type": "string"},
+        "description": {"type": "string"}
+      }
+    },
+    "PublishingHostRecord": {
+      "$comment": "Host report of a confirmed publishing observation or command result.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["hostId", "provider", "host", "repo", "kind", "number", "title", "url", "branch", "headSha", "isDraft", "state"],
+      "properties": {
+        "hostId": {"type": "string"},
+        "commandId": {"type": "string"},
+        "executionId": {"type": "string"},
+        "requestId": {"type": "string"},
+        "action": {"type": "string"},
+        "projectId": {"type": "string"},
+        "repoId": {"type": "string"},
+        "provider": {"type": "string"},
+        "host": {"type": "string"},
+        "repo": {"type": "string"},
+        "kind": {"type": "string"},
+        "number": {"type": "integer"},
+        "title": {"type": "string"},
+        "url": {"type": "string"},
+        "branch": {"type": "string"},
+        "baseBranch": {"type": "string"},
+        "headSha": {"type": "string"},
+        "isDraft": {"type": "boolean"},
+        "state": {"type": "string"},
+        "checksState": {"type": "string"},
+        "reviewState": {"type": "string"},
+        "mergeable": {"type": "string"},
+        "autoMergeEnabled": {"type": "boolean"},
+        "mergeMethod": {"type": "string"},
+        "sourceExecutionId": {"type": "string"},
+        "error": {"type": "string"},
+        "result": {}
       }
     }
   }

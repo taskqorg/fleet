@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/url"
 	"regexp"
 	"slices"
 	"sort"
@@ -160,11 +161,27 @@ type ghPull struct {
 	Title     string     `json:"title"`
 	Body      string     `json:"body"`
 	URL       string     `json:"html_url"`
+	Draft     bool       `json:"draft"`
 	CreatedAt string     `json:"created_at"`
 	MergedAt  *string    `json:"merged_at"`
 	MergeSHA  string     `json:"merge_commit_sha"`
 	AutoMerge any        `json:"auto_merge"`
 	Head      ghPullHead `json:"head"`
+	Base      ghPullHead `json:"base"`
+}
+
+func ghPullAutoMergeMethod(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	var m struct {
+		MergeMethod string `json:"merge_method"`
+	}
+	if json.Unmarshal(b, &m) == nil {
+		return strings.ToLower(m.MergeMethod)
+	}
+	return ""
 }
 type ghRun struct {
 	Event      string `json:"event"`
@@ -197,7 +214,11 @@ func deliveryPass(ctx context.Context, a *App) error {
 	noteUISeen(ui, time.Now())
 	type target struct {
 		projects    []string
+		provider    string
+		host        string
 		owner, repo string
+		slug        string
+		repoConn    string
 	}
 	var targets []string // keys of byKey in project order
 	byKey := map[string]*target{}
@@ -211,8 +232,33 @@ func deliveryPass(ctx context.Context, a *App) error {
 			return err
 		}
 		for _, id := range ids {
-			for _, remote := range projectRemotes(q, id) {
-				m := githubRemote.FindStringSubmatch(remote)
+			for _, spec := range projectRepoSpecs(q, id) {
+				if ref, rok := contract.ParseRepoRemote(spec.Remote, spec.Forge, spec.Host); rok && ref.Provider == "gitlab" {
+					owner := strings.Split(ref.Slug, "/")[0]
+					_, conn, k, cerr := gitlabConnectionOf(q, ref.Host, owner, spec.Connection)
+					if cerr != nil {
+						return cerr
+					}
+					if !k {
+						continue
+					}
+					if grant, ok := connGrantOf(conn); !(ok && connAllowedFor(grant, mintRun{ProjectID: &id})) {
+						continue
+					}
+					keyed = true
+					key := "gitlab:" + strings.ToLower(ref.Host+"/"+ref.Slug)
+					keyedRepo[key] = true
+					if t := byKey[key]; t != nil {
+						if !slices.Contains(t.projects, id) {
+							t.projects = append(t.projects, id)
+						}
+						continue
+					}
+					byKey[key] = &target{projects: []string{id}, provider: "gitlab", host: ref.Host, owner: owner, repo: ref.Slug, slug: ref.Slug, repoConn: spec.Connection}
+					targets = append(targets, key)
+					continue
+				}
+				m := githubRemote.FindStringSubmatch(spec.Remote)
 				if m == nil {
 					continue
 				}
@@ -234,7 +280,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 					}
 					continue
 				}
-				byKey[key] = &target{[]string{id}, m[1], m[2]}
+				byKey[key] = &target{projects: []string{id}, provider: "github", host: "github.com", owner: m[1], repo: m[2], slug: m[1] + "/" + m[2]}
 				targets = append(targets, key)
 			}
 		}
@@ -276,6 +322,50 @@ func deliveryPass(ctx context.Context, a *App) error {
 	repos, counts, failed := map[string]*deliveryRepo{}, map[string]map[string]int64{}, 0
 	for _, key := range targets {
 		t := byKey[key]
+		if t.provider == "gitlab" {
+			var gl glRepo
+			var err error
+			projParam := url.PathEscape(t.slug)
+			for _, r := range []struct {
+				tool string
+				into any
+			}{
+				{"mrs_open", &gl.open},
+				{"mrs_merged", &gl.merged},
+				{"pipelines_running", &gl.running},
+				{"pipelines_pending", &gl.pending},
+				{"pipelines_failed", &gl.failed},
+				{"releases", &gl.releases},
+			} {
+				var body []byte
+				if body, err = gitlabRead(ctx, a, t.projects[0], t.host, t.owner, t.repoConn, r.tool, map[string]string{"project_id": projParam}); err == nil {
+					err = json.Unmarshal(body, r.into)
+				}
+				if err != nil {
+					break
+				}
+			}
+			if err != nil {
+				failed++
+				r := &deliveryRepo{projects: t.projects, problem: t.slug + ": " + err.Error()}
+				if p := prev.repos[key]; p != nil {
+					r.items, r.landing, r.delivered = p.items, p.landing, p.delivered
+				}
+				repos[key] = r
+				continue
+			}
+			its, merged := gitlabDeliveryStages(t.projects[0], t.host, t.slug, gl)
+			repos[key] = &deliveryRepo{projects: t.projects, items: its, delivered: merged}
+			c := map[string]int64{}
+			for _, s := range contract.DeliveryStageValues {
+				c[string(s)] = 0
+			}
+			for _, it := range its {
+				c[string(it.Stage)]++
+			}
+			counts[t.projects[0]+" "+t.slug] = c
+			continue
+		}
 		if !keyedRepo[key] && !readKeyless {
 			if p := prev.repos[key]; p != nil {
 				repos[key] = &deliveryRepo{projects: t.projects, items: p.items, landing: p.landing, problem: p.problem, delivered: p.delivered}
@@ -431,7 +521,32 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, ui string
 
 func deliveryStagesWithMerged(project, repo string, g ghRepo, versions []string, ui string, now time.Time) ([]contract.DeliveryItem, int64, []deliveryMergedPR) {
 	item := func(p ghPull, s contract.DeliveryStage, since string) contract.DeliveryItem {
-		it := contract.DeliveryItem{ProjectId: project, Repo: repo, Number: p.Number, Title: p.Title, Url: p.URL, Stage: s, Since: since}
+		prov := string(contract.PublishingProviderGithub)
+		kind := string(contract.PublishingKindPullRequest)
+		host := "github.com"
+		auto := p.AutoMerge != nil
+		it := contract.DeliveryItem{
+			ProjectId:        project,
+			Repo:             repo,
+			Number:           p.Number,
+			Title:            p.Title,
+			Url:              p.URL,
+			Stage:            s,
+			Since:            since,
+			Provider:         &prov,
+			Host:             &host,
+			Kind:             &kind,
+			Branch:           optStr(p.Head.Ref),
+			BaseBranch:       optStr(p.Base.Ref),
+			HeadSha:          optStr(p.Head.SHA),
+			IsDraft:          ptr(p.Draft),
+			AutoMergeEnabled: ptr(auto),
+		}
+		if p.AutoMerge != nil {
+			if mm := ghPullAutoMergeMethod(p.AutoMerge); mm != "" {
+				it.MergeMethod = optStr(mm)
+			}
+		}
 		if p.CreatedAt != "" {
 			it.Opened = &p.CreatedAt
 		}
@@ -665,6 +780,15 @@ func liveHostVersions(q *Request) ([]string, error) {
 	return versions, err
 }
 
+// projectRepoSpecs: a project's configured repositories with forge/host metadata.
+func projectRepoSpecs(q *Request, id string) []projectRepo {
+	var settings struct {
+		Repos []projectRepo `json:"repos"`
+	}
+	jsonRoundTrip(projectSettingsOf(q, id), &settings)
+	return settings.Repos
+}
+
 // projectRemotes: the git remotes of a project's repositories (its settings' repos); one that is not a string is "".
 func projectRemotes(q *Request, id string) []string {
 	var settings struct {
@@ -680,6 +804,142 @@ func projectRemotes(q *Request, id string) []string {
 		out = append(out, remote)
 	}
 	return out
+}
+
+type glMRPipeline struct {
+	Status    string `json:"status"`
+	SHA       string `json:"sha"`
+	UpdatedAt string `json:"updated_at"`
+}
+type glMR struct {
+	IID                       int64         `json:"iid"`
+	Title                     string        `json:"title"`
+	Description               string        `json:"description"`
+	WebURL                    string        `json:"web_url"`
+	Draft                     bool          `json:"draft"`
+	WorkInProgress            bool          `json:"work_in_progress"`
+	CreatedAt                 string        `json:"created_at"`
+	UpdatedAt                 string        `json:"updated_at"`
+	MergedAt                  *string       `json:"merged_at"`
+	MergeCommitSHA            string        `json:"merge_commit_sha"`
+	SHA                       string        `json:"sha"`
+	SourceBranch              string        `json:"source_branch"`
+	TargetBranch              string        `json:"target_branch"`
+	MergeWhenPipelineSucceeds bool          `json:"merge_when_pipeline_succeeds"`
+	HeadPipeline              *glMRPipeline `json:"head_pipeline"`
+}
+type glPipeline struct {
+	ID        int64  `json:"id"`
+	Status    string `json:"status"`
+	SHA       string `json:"sha"`
+	Ref       string `json:"ref"`
+	UpdatedAt string `json:"updated_at"`
+}
+type glRelease struct {
+	TagName    string `json:"tag_name"`
+	ReleasedAt string `json:"released_at"`
+}
+type glRepo struct {
+	open, merged              []glMR
+	running, pending, failed  []glPipeline
+	releases                  []glRelease
+}
+
+func gitlabDeliveryStages(project, host, repo string, g glRepo) ([]contract.DeliveryItem, []deliveryMergedPR) {
+	items := []contract.DeliveryItem{}
+	delivered := []deliveryMergedPR{}
+	prov := string(contract.PublishingProviderGitlab)
+	kind := string(contract.PublishingKindMergeRequest)
+	mkItem := func(m glMR, st contract.DeliveryStage, since string) contract.DeliveryItem {
+		isDraft := m.Draft || m.WorkInProgress
+		it := contract.DeliveryItem{
+			ProjectId:        project,
+			Repo:             repo,
+			Number:           m.IID,
+			Title:            m.Title,
+			Url:              m.WebURL,
+			Stage:            st,
+			Since:            since,
+			Provider:         &prov,
+			Host:             &host,
+			Kind:             &kind,
+			Branch:           optStr(m.SourceBranch),
+			BaseBranch:       optStr(m.TargetBranch),
+			HeadSha:          optStr(m.SHA),
+			IsDraft:          ptr(isDraft),
+			AutoMergeEnabled: ptr(m.MergeWhenPipelineSucceeds),
+		}
+		if m.CreatedAt != "" {
+			it.Opened = &m.CreatedAt
+		}
+		it.Merged = m.MergedAt
+		return it
+	}
+	pipeBySHA := map[string]glPipeline{}
+	for _, list := range [][]glPipeline{g.failed, g.pending, g.running} {
+		for _, p := range list {
+			if prev, ok := pipeBySHA[p.SHA]; !ok || p.UpdatedAt > prev.UpdatedAt {
+				pipeBySHA[p.SHA] = p
+			}
+		}
+	}
+	for _, m := range g.open {
+		st := contract.DeliveryStagePrOpen
+		since := m.CreatedAt
+		if since == "" {
+			since = m.UpdatedAt
+		}
+		pStatus := ""
+		pSince := ""
+		if p, ok := pipeBySHA[m.SHA]; ok {
+			pStatus, pSince = p.Status, p.UpdatedAt
+		} else if m.HeadPipeline != nil {
+			pStatus, pSince = m.HeadPipeline.Status, m.HeadPipeline.UpdatedAt
+		}
+		switch pStatus {
+		case "running", "pending":
+			if m.MergeWhenPipelineSucceeds {
+				st = contract.DeliveryStageMqCi
+			} else {
+				st = contract.DeliveryStagePrCi
+			}
+			if pSince != "" {
+				since = pSince
+			}
+		case "failed", "canceled":
+			st = contract.DeliveryStagePrFailed
+			if pSince != "" {
+				since = pSince
+			}
+		default:
+			if m.MergeWhenPipelineSucceeds {
+				st = contract.DeliveryStageMqWait
+			}
+		}
+		items = append(items, mkItem(m, st, since))
+	}
+	for _, m := range g.merged {
+		mergedAt := deref(m.MergedAt)
+		if mergedAt == "" {
+			continue
+		}
+		items = append(items, mkItem(m, contract.DeliveryStageMerged, mergedAt))
+		delivered = append(delivered, deliveryMergedPR{
+			Repo:        repo,
+			Number:      m.IID,
+			Title:       m.Title,
+			Body:        m.Description,
+			URL:         m.WebURL,
+			Branch:      m.SourceBranch,
+			HeadSHA:     m.SHA,
+			MergeSHA:    m.MergeCommitSHA,
+			MergedAt:    mergedAt,
+			Stage:       string(contract.DeliveryStageMerged),
+			DeliveredAt: mergedAt,
+			Delivered:   true,
+		})
+	}
+	return items, delivered
 }
 
 // installed: every host runs version or newer (1.261112.31 compares part by part); no host known is not installed.

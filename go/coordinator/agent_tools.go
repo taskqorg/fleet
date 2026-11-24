@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
@@ -459,6 +460,42 @@ func init() {
 			if pid, _ := jsonText(a["projectId"]); isResourceRead(name) && pid != "" && !mayAccessProjectID(q.person, pid) {
 				return nil, fail(404, "Unknown project")
 			}
+			if name == "publishing_capabilities" || name == "publishing_status" {
+				if bound := focusBound(); bound != nil {
+					if len(bound) == 0 {
+						return nil, fail(403, "Project outside the session focus")
+					}
+					if jsonGiven(a["projectId"]) {
+						if err := checkBoundProjectID(bound, a["projectId"]); err != nil {
+							return nil, err
+						}
+					}
+					if jsonGiven(a["projectIds"]) {
+						var xs []json.RawMessage
+						if err := json.Unmarshal(a["projectIds"], &xs); err != nil {
+							return nil, fail(400, "Invalid projectIds")
+						}
+						pids := jsonStrings(a["projectIds"])
+						if len(pids) != len(xs) {
+							return nil, fail(400, "Invalid projectIds")
+						}
+						for _, pid := range pids {
+							if !slices.Contains(bound, pid) {
+								return nil, fail(403, "Project outside the session focus")
+							}
+						}
+					} else if !jsonGiven(a["projectId"]) && name == "publishing_status" {
+						a["projectIds"] = jsonBytes(bound)
+					}
+				}
+				if !jsonGiven(a["projectId"]) && !jsonGiven(a["projectIds"]) {
+					if len(focus) == 1 {
+						a["projectId"] = jsonBytes(focus[0])
+					} else if !focused && sessionProject != "" {
+						a["projectId"] = jsonBytes(sessionProject)
+					}
+				}
+			}
 			if name == "project_update" || name == "project_context" || name == "project_readiness" || isResourceRead(name) {
 				out, err := projectAgentArguments(q, a, executionID, isResourceRead(name))
 				if err != nil {
@@ -751,6 +788,24 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 		a["projectId"] = jsonBytes(p)
 		if name == "project_readiness" {
 			a["callerSessionId"] = jsonBytes(own)
+		}
+	case strings.HasPrefix(name, "publishing_"):
+		p, err := ownProject()
+		if err != nil {
+			return nil, err
+		}
+		a["projectId"] = jsonBytes(p)
+		if !jsonGiven(a["sourceExecutionId"]) && name != "publishing_capabilities" && name != "publishing_status" {
+			a["sourceExecutionId"] = jsonBytes(executionID)
+		}
+		if sid, ok := jsonText(a["sourceExecutionId"]); ok && sid != "" && sid != executionID {
+			se, err := getExecution(q, sid)
+			if err != nil {
+				return nil, err
+			}
+			if se.ProjectID != "" && se.ProjectID != p {
+				return nil, fail(403, "Source execution belongs to another project")
+			}
 		}
 	case name == "session_start":
 		p, err := ownProject()

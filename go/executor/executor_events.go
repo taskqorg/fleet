@@ -241,10 +241,38 @@ func capabilities() []string {
 			c = append(c, contract.ToolCapability(tool))
 		}
 	}
-	if store := os.Getenv("FLEET_FORGE_CONFIG_DIR"); filepath.IsAbs(store) && isFile(filepath.Join(store, "hosts.yml")) {
-		for _, repo := range strings.Split(os.Getenv("FLEET_FORGE_REPOSITORIES"), ",") {
-			if forgeRepo("https://github.com/"+repo) == repo && repo != "" {
-				c = append(c, contract.ForgeCapability(repo))
+	if store := os.Getenv("FLEET_FORGE_CONFIG_DIR"); filepath.IsAbs(store) {
+		hasGH := isFile(filepath.Join(store, "hosts.yml"))
+		glabHosts := glabConfiguredHosts(store)
+		hasGL := resolveGlabStore(store) != ""
+		for _, raw := range strings.Split(os.Getenv("FLEET_FORGE_REPOSITORIES"), ",") {
+			h, slug, ok := contract.ParseForgeRepoEntry(raw)
+			if !ok {
+				continue
+			}
+			if h == "" {
+				if hasGH {
+					c = append(c, contract.ForgeCapability(slug), contract.PublishingHostCapability("github", "github.com", slug))
+				}
+				if hasGL {
+					for _, gh := range glabHosts {
+						c = append(c, contract.PublishingHostCapability("gitlab", gh, slug))
+					}
+					if len(glabHosts) == 0 {
+						c = append(c, contract.PublishingHostCapability("gitlab", "gitlab.com", slug))
+					}
+					c = append(c, contract.ForgeCapability(slug))
+				}
+				continue
+			}
+			if h == "github.com" {
+				if hasGH {
+					c = append(c, contract.ForgeCapability(slug), contract.PublishingHostCapability("github", "github.com", slug))
+				}
+				continue
+			}
+			if hasGL {
+				c = append(c, contract.PublishingHostCapability("gitlab", h, slug), contract.ForgeCapability(h+"/"+slug))
 			}
 		}
 	}
