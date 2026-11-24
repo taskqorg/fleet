@@ -1,7 +1,6 @@
-import { createMemo, createSignal, Show } from 'solid-js';
+import { createMemo, createSignal, For, Show } from 'solid-js';
 import {
-  Button, CatalogueTree, Choice, DetailSection, Empty, ErrorBanner, KvRow, ListDetail, ShellActions, Skeleton, TextField,
-  type CatalogueTreeNode,
+  Button, Choice, DetailSection, Empty, ErrorBanner, KvRow, ShellActions, Skeleton, TextField,
 } from '../../../packages/ui/src/index.ts';
 import type { HumanAccessRow, PeopleCloudflareMode, PeopleCloudflareState, PeopleUpdateReply, PeopleUpdateRequest } from '../../../contracts/generated/ops.ts';
 import { op, unknownOutcome, useAlive } from '../api.ts';
@@ -35,19 +34,6 @@ export function Humans(props: { id?: string }) {
   const title = (id: string) => String(projects.data?.projects.find(p => p.id === id)?.name ?? id);
   const selected = createMemo(() => rows().find(p => p.email === props.id));
   const removal = createMemo(() => removals().find(p => p.email === props.id));
-  const nodes = createMemo<CatalogueTreeNode[]>(() => {
-    const groups = [false, true].map(machine => ({
-      id: machine ? 'machines' : 'humans', label: machine ? 'Machine identities' : 'People',
-      children: rows().filter(p => p.machine === machine).map(p => ({
-        id: p.email, label: p.name, sub: p.owner ? 'Owner' : machine ? 'Service identity' : p.email,
-      })),
-    }));
-    if (removals().length) groups.push({
-      id: 'cloudflare-removals', label: 'Cloudflare removals',
-      children: removals().map(p => ({ id: p.email, label: p.email, sub: 'Revoked in Fleet' })),
-    });
-    return groups;
-  });
   const close = () => go('/humans');
   const saved = (reply: PeopleUpdateReply, revoke: boolean, editing: boolean) => {
     roster.reload();
@@ -67,32 +53,22 @@ export function Humans(props: { id?: string }) {
   const canSync = () => canRead() && mode() === 'active';
   return <Show when={me.data?.owner} fallback={
     <Show when={me.data || me.error} fallback={<Skeleton rows={4} />}>
-      <Empty text="Only the Fleet owner can manage Humans." />
+      <Empty text="Only the Fleet owner manages people and access." />
     </Show>
   }>
     <ShellActions>
       <Show when={mode() === 'active' && !roster.data?.cloudflareError}>
         <Button label="Refresh Cloudflare access" onClick={roster.reload} />
       </Show>
-      <Button icon="plus" iconOnly label="Add human" onClick={() => { setMessage(''); go('/humans/new'); }} />
+      <Button icon="plus" iconOnly label="Invite person" onClick={() => { setMessage(''); go('/humans/new'); }} />
     </ShellActions>
-    <ListDetail
-      detailKey={props.id}
-      list={<>
-        <Show when={roster.error ?? roster.data?.cloudflareError}>
-          {error => <ErrorBanner text={error()} onRetry={roster.reload} />}
-        </Show>
-        <div role="status"><Show when={message()}>{notice => <p>{notice()}</p>}</Show></div>
-        <Show when={roster.data} fallback={<Skeleton rows={5} />}>
-          <CatalogueTree label="Humans and machine identities" fill nodes={nodes()} selectedId={props.id}
-            onSelect={n => { if (!n.children) go(humanPath(n.id)); }} />
-        </Show>
-      </>}
-      detail={props.id ? <section class="detail" data-ui="detail" tabindex={-1}>
+    <Show when={props.id} fallback={<PeopleIdle rows={rows()} removals={removals().length} mode={mode()} message={message()} error={roster.error ?? roster.data?.cloudflareError} onRetry={roster.reload} onOpen={id => go(humanPath(id))} />}>
+      <section class="detail" data-ui="detail" tabindex={-1}>
         <header class="detail-h">
-          <h2>{props.id === 'new' ? 'Add human' : selected()?.name ?? removal()?.email ?? 'Human access'}</h2>
           <Button icon="x" iconOnly label="Close" onClick={close} />
+          <h2 class="detail-title">{props.id === 'new' ? 'Add person' : selected()?.name ?? removal()?.email ?? 'Access'}</h2>
         </header>
+        <div role="status"><Show when={message()}>{notice => <p>{notice()}</p>}</Show></div>
         <Show when={props.id === 'new'} fallback={
           <Show when={selected()} fallback={
             <Show when={removal()} fallback={roster.data ? <Empty text="This identity is absent from the Fleet roster." /> : <Skeleton rows={4} />}>
@@ -116,10 +92,34 @@ export function Humans(props: { id?: string }) {
         }>
           <HumanEditor mode={mode()} onSave={saved} onRefresh={roster.reload} />
         </Show>
-      </section> : undefined}
-      idle={<Empty text="Choose an identity to see its Fleet access." />}
-    />
+      </section>
+    </Show>
   </Show>;
+}
+
+/** People idle (System › People): who has access, in one line each; a row opens the person. */
+function PeopleIdle(props: {
+  rows: readonly HumanAccessRow[]; removals: number; mode?: PeopleCloudflareMode; message: string;
+  error?: string; onRetry: () => void; onOpen: (id: string) => void;
+}) {
+  const humans = () => props.rows.filter(p => !p.machine);
+  const machines = () => props.rows.filter(p => p.machine);
+  const access = (p: HumanAccessRow) => p.owner ? 'Owner' : p.grants.some(g => g.kind === '*' || g.id === '*') ? 'All projects'
+    : `${p.roles.join(', ')} · ${p.grants.filter(g => g.kind === 'project').length || 'no'} projects`;
+  return <article class="detail" data-ui="detail" aria-label="People">
+    <Show when={props.error}>{error => <ErrorBanner text={error()} onRetry={props.onRetry} />}</Show>
+    <div role="status"><Show when={props.message}>{notice => <p>{notice()}</p>}</Show></div>
+    <DetailSection title="People">
+      <For each={humans()}>{p => <KvRow icon="shield" label={p.name} meta={p.email} value={<Button label={access(p)} kind="quiet" onClick={() => props.onOpen(p.email)} />} />}</For>
+    </DetailSection>
+    <Show when={machines().length > 0}>
+      <DetailSection title="Machine identities">
+        <For each={machines()}>{p => <KvRow icon="bot" label={p.name} value={<Button label={access(p)} kind="quiet" onClick={() => props.onOpen(p.email)} />} />}</For>
+      </DetailSection>
+    </Show>
+    <Show when={props.removals > 0}><KvRow icon="circle-slash" label="Cloudflare removals" value={String(props.removals)} /></Show>
+    <KvRow icon="shield" label="Cloudflare Access" value={props.mode === 'active' ? 'Synced by Fleet' : props.mode === 'manual' ? 'Managed in Cloudflare' : '—'} />
+  </article>;
 }
 
 function AccessFacts(props: {

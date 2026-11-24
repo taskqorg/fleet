@@ -1,6 +1,6 @@
 # System
 
-**Status.** Target, rail section System ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)). Until it is built, the same content is spread over `/hosts`, `/hosts/limits`, `/keys`, `/runners`, `/spend` and, for the owner, `/humans`. This spec is the section frame; the content of each root keeps its own spec: [Hosts and limits](hosts.md), [Runners](runners.md), [Spend](spend.md).
+**Status.** Built, rail section System ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)): one view (`app/src/views/hosts.tsx`) renders every System route; the earlier paths `/hosts`, `/hosts/limits`, `/keys`, `/runners`, `/spend` and `/humans` redirect. This spec is the section frame; the content of each root keeps its own spec: [Hosts and limits](hosts.md), [Runners](runners.md), [Spend](spend.md). Not built yet: the per-account model probe of J5 (the account page shows which hosts can run it, not which models), the spend sparklines (no per-day spend read), and the Add host and Add connection header actions.
 
 **Purpose.** Are hosts, accounts, connections and spend healthy, and who has access? [Live](live.md) answers "what runs now"; System is where the person configures and repairs.
 

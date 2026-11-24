@@ -45,8 +45,8 @@ try {
     ['/conversations', ['list-view', 'data-list', 'state-counters']],
     ['/conversations/sess-1', ['detail', 'transcript-viewer', 'composer']],
     ['/conversations/new', ['detail', 'project-pick', 'preset-pick', 'composer', 'drop-zone']],
-    ['/hosts', ['list-detail', 'harness-counts', 'state-badge']],
-    ['/hosts/mac', ['detail', 'detail-section', 'fill-bar']],
+    ['/hosts', ['list-detail', 'catalogue-tree', 'state-badge']],
+    ['/hosts/mac', ['detail', 'detail-section', 'host-band']],
     ['/projects', ['list-detail', 'area-chart']],
     ['/agents', ['list-detail', 'state-badge']],
     ['/pipelines', ['list-detail', 'state-badge']],
@@ -72,7 +72,7 @@ try {
   }
   // Owners add and revoke a human without sending a replacement roster.
   await page.goto(origin + '/humans');
-  await page.getByRole('button', { name: 'Add human', exact: true }).click();
+  await page.getByRole('button', { name: 'Invite person', exact: true }).click();
   await page.getByLabel('Sign-in email').fill('human-ui@trial.test');
   await page.getByLabel('Name', { exact: true }).fill('Human UI fixture');
   await page.getByRole('button', { name: 'Architect', exact: true }).click();

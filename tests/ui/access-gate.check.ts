@@ -332,7 +332,7 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     await p.goto(origin + '/bots'); await p.waitForURL(origin + '/library/bots');
     await p.waitForSelector('[data-ui="nav-rail"] [data-id="library"] a[aria-current="page"]');
     await humansLink.click();
-    await p.waitForURL(origin + '/system/hosts');
+    await p.waitForURL(origin + '/system');
     await p.goto(origin + '/humans'); await p.waitForURL(origin + '/system/people');
     await p.waitForSelector('[data-ui="nav-rail"] [data-id="system"] a[aria-current="page"]');
     await p.goto(origin + '/projects'); await createProject.click();

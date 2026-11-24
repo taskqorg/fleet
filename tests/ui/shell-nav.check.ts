@@ -16,7 +16,7 @@ const ROUTES: [string, string, string][] = [
   ['/publishing', '/projects/delivery', 'projects'], ['/projects/FLT/tasks/T-FLT-42', '/projects/tasks/T-FLT-42', 'projects'],
   ['/personal-lab', '/lab/mine', 'lab'], ['/bots', '/library/bots', 'library'], ['/agents', '/library/agents', 'library'],
   ['/pipelines', '/library/pipelines', 'library'], ['/catalogue', '/library/methods', 'library'], ['/changes', '/library/changes', 'library'],
-  ['/hosts', '/system/hosts', 'system'], ['/hosts/limits', '/system/accounts', 'system'], ['/runners', '/system/runners', 'system'],
+  ['/hosts', '/system', 'system'], ['/hosts/limits', '/system/accounts', 'system'], ['/runners', '/system/runners', 'system'],
   ['/keys', '/system/connections', 'system'], ['/spend', '/system/spend', 'system'], ['/humans', '/system/people', 'system'],
   ['/conversations', '/conversations', 'conversations'], ['/projects', '/projects', 'projects'], ['/lab', '/lab', 'lab'], ['/live', '/live', 'live'],
 ];
@@ -65,7 +65,7 @@ try {
   const more = (await phone.getByRole('menu', { name: 'More sections' }).getByRole('menuitem').allTextContents()).map(t => t.trim());
   check(JSON.stringify(more) === JSON.stringify(['Lab', 'Library', 'System']), `More holds ${more.join(', ')}`);
   if (shots) await phone.screenshot({ path: shots + '/more-390.png' });
-  await phone.getByRole('menuitem', { name: 'System' }).click(); await phone.waitForURL('**/system/hosts');
+  await phone.getByRole('menuitem', { name: 'System' }).click(); await phone.waitForURL('**/system');
   check(await current(phone, '[data-ui=bottom-bar]') === 'More', 'a System screen marks More');
   await phone.goto(origin + '/tasks'); await phone.waitForURL('**/projects/tasks');
   await phone.waitForSelector('[data-ui=bottom-bar] [aria-current=page]');

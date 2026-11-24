@@ -6,6 +6,7 @@ import { render, type JSX } from '@solidjs/web';
 import { createAgent, registerTools } from '@ui-sdk/core/agent';
 import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, type NavItem, type AppScreen, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
 import { useLocation, useSearch } from './router.ts';
+import type { InfraSection } from './views/hosts.tsx';
 import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
@@ -32,10 +33,8 @@ const Results = lazy(() => import('./views/results.tsx'), { export: 'Results' })
 const Delivery = lazy(() => import('./views/delivery.tsx'), { export: 'Delivery' });
 const Infrastructure = lazy(() => import('./views/hosts.tsx'), { export: 'Hosts' });
 const PersonalLab = lazy(() => import('./views/personal-lab.tsx'), { export: 'PersonalLab' });
-const Humans = lazy(() => import('./views/humans.tsx'), { export: 'Humans' });
 const Lab = lazy(() => import('./views/lab.tsx'), { export: 'Lab' });
 const Library = lazy(() => import('./views/agents.tsx'), { export: 'Library' });
-const Spend = lazy(() => import('./views/spend.tsx'), { export: 'Spend' });
 const Live = lazy(() => import('./views/live.tsx'), { export: 'Live' });
 
 // Not reported: an operation's own failure (OpError) is in the coordinator's spans, and an access change aborts reads on
@@ -86,14 +85,14 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   hosts: { focus: true, view: p => <Infrastructure section="hosts" id={p.id} /> },
   runners: { focus: false, view: () => <Infrastructure section="runners" /> },
   lab: { focus: true, view: p => <LabWorkspace id={p.id} /> },
-  humans: { focus: true, view: p => <Humans id={p.id} /> },
+  humans: { focus: true, view: p => <Infrastructure section="people" id={p.id} /> },
   'personal-lab': { focus: true, view: p => <PersonalLab id={p.id} /> },
   keys: { focus: true, view: p => <Infrastructure section="keys" id={p.id} /> },
   agents: { focus: true, view: p => <Library section="agents" id={p.id} /> },
   pipelines: { focus: true, view: p => <Library section="pipelines" id={p.id} /> },
   catalogue: { focus: true, view: p => <Library section="methods" id={p.id} /> },
   changes: { focus: false, view: () => <Library section="changes" /> },
-  spend: { focus: false, view: () => <Spend /> },
+  spend: { focus: false, view: () => <Infrastructure section="spend" /> },
 };
 const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
 // The rail's seven sections (OR-46); each screen highlights the section that owns it (OR-57).
@@ -307,11 +306,20 @@ function PrivateRoutes(props: { go: (to: string) => void }) {
   const [loc] = useLocation();
   // Library speaks its target routes (routes.ts): /library, /library/<root>, /library/<root>/<id>.
   const libMatch = createMemo(() => /^\/library(?:\/(agents|pipelines|methods|bots|skills|changes)(?:\/([^/]+))?)?\/?$/.exec(loc()));
-  const infraMatch = createMemo(() => /^\/(hosts|keys)(?:\/([^/]+))?\/?$|^\/(runners)\/?$/.exec(loc()));
+  // System (pages/system.md): every root and item renders in one view, so the tree stays mounted between them.
+  const infraRoute = createMemo<{ section: InfraSection; id?: string } | null>(() => {
+    const p = loc();
+    const one = (re: RegExp) => re.exec(p);
+    let x: RegExpExecArray | null;
+    if ((x = one(/^\/hosts\/limits(?:\/([^/]+))?\/?$/))) return { section: 'limits', id: x[1] ? decodeSegment(x[1]) : undefined };
+    if ((x = one(/^\/(hosts|keys|humans)(?:\/([^/]+))?\/?$/))) return { section: x[1] === 'humans' ? 'people' : x[1] as InfraSection, id: x[2] ? decodeSegment(x[2]) : undefined };
+    if ((x = one(/^\/(runners|spend)\/?$/))) return { section: x[1] as InfraSection };
+    return null;
+  });
   const libSection = createMemo(() => { const m = libMatch(); return m ? (m[1] ?? 'idle') as LibrarySection : null; });
   const libId = createMemo(() => { const m = libMatch(); return m?.[2] ? decodeSegment(m[2]) : undefined; });
-  const infraSection = createMemo(() => { const m = infraMatch(); return m ? (m[1] ?? m[3]) as 'hosts' | 'keys' | 'runners' : null; });
-  const infraId = createMemo(() => { const m = infraMatch(); return m?.[2] ? decodeSegment(m[2]) : undefined; });
+  const infraSection = createMemo(() => infraRoute()?.section ?? null);
+  const infraId = createMemo(() => infraRoute()?.id);
   const builtMatch = createMemo(() => {
     const p = loc();
     for (const s of BUILT) {

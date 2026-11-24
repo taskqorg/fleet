@@ -1,8 +1,8 @@
 // Spend breakdown and efficiency ("What it bought") screen (FLT-7, docs/designs/fleet-analytics.md).
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from 'solid-js';
 import {
-  Button, Choice, CostFigures, DataTable, DetailSection, Empty, EntityCode, ErrorBanner, GroupControl, KvRow, Num,
-  ShareBar, ShellStatus, OfflineMarker, Skeleton, SortColHead, Totals, count, measured, money, percent,
+  Button, Choice, CostFigures, DataTable, DetailSection, Empty, EntityCode, ErrorBanner, FigureTile, GroupControl, KvRow, Num,
+  ShareBar, ShellStatus, OfflineMarker, Skeleton, SortColHead, count, measured, money, percent,
   type CostFigureLike, type DataTone,
 } from '../../../packages/ui/src/index.ts';
 import { scopeIds, prefsRead } from '../prefs.ts';
@@ -44,7 +44,7 @@ type ShareBasis = typeof SHARE_BASES[number]['id'];
 
 type SortCol = 'label' | 'runs' | 'failed' | 'tokens' | 'usd' | 'unpriced';
 
-const usdOf = (cost: readonly CostFigureLike[]) =>
+export const usdOf = (cost: readonly CostFigureLike[]) =>
   cost.reduce((sum, c) => (c.basis !== 'unavailable' && c.currency === 'USD' && typeof c.value === 'number' ? sum + c.value : sum), 0);
 
 function matchesShareBasis(figure: CostFigureLike, basis: ShareBasis): boolean {
@@ -113,7 +113,7 @@ function CostCell(props: { cost: readonly CostFigureLike[]; label: string }) {
   );
 }
 
-function windowBounds(days: number): { from: string; to: string } {
+export function windowBounds(days: number): { from: string; to: string } {
   const now = new Date();
   const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
   const from = new Date(to.getTime() - days * 86_400_000);
@@ -123,6 +123,20 @@ function windowBounds(days: number): { from: string; to: string } {
 function measureNum(totals: Ops['spend_summary']['reply']['totals']['measures'], key: string): number {
   const m = totals[key];
   return m && typeof m.value === 'number' ? m.value : 0;
+}
+
+/** The spend_summary request Spend sends for a window, in the person's focus (System's idle figures send the same, so
+ *  they share one read with Spend). */
+export function spendRequest(days: number, by: SpendGroupBy = 'purpose'): Ops['spend_summary']['request'] {
+  const sc = scopeIds();
+  const sp = sc.projectIds?.length === 1 && sc.projectIds[0] !== '-' ? sc.projectIds[0] : undefined;
+  return {
+    window: windowBounds(days), by,
+    ...(sp ? { projectId: sp } : {
+      ...(sc.projectIds?.length ? { projectIds: sc.projectIds } : {}),
+      ...(sc.excludeProjectIds?.length ? { excludeProjectIds: sc.excludeProjectIds } : {}),
+    } as unknown as Partial<Ops['spend_summary']['request']>),
+  };
 }
 
 export function Spend() {
@@ -235,19 +249,21 @@ export function Spend() {
       <Show when={summary.data} keyed>
         {data => (
           <DetailSection title="Total spend">
-            <strong><CostFigures cost={totalCost()} empty="No priced usage" /></strong>
-            <p class="small-note">Amounts marked ≈ are estimates, including subscription list-price equivalents.</p>
-            <Totals
-              compact
-              items={[
-                { label: 'Runs', kind: 'count', m: { value: totalRuns(), basis: 'measured' } },
-                { label: 'Failed', kind: 'count', m: { value: totalFailed(), basis: 'measured' } },
-                { label: 'Tokens', kind: 'count', m: { value: totalTokens(), basis: 'measured' } },
-                ...(totalUnpriced() > 0 ? [{
-                  label: 'Unpriced usage', kind: 'count' as const, m: { value: totalUnpriced(), basis: 'measured' as const },
-                }] : []),
-              ]}
-            />
+            {/* Period and total first (spend.md; canvas board/screens/system.bl state 3): figures, then the breakdown. */}
+            <div class="sys-figures">
+              <FigureTile label={`Total, ${days() === '1' ? 'UTC day' : `${days()} days`}`} kind="money" value={{ value: usdOf(totalCost()), basis: 'measured' }}
+                sub={[shareAmount(totalCost(), 'billed') != null ? `billed ${money(shareAmount(totalCost(), 'billed')!).text}` : '', shareAmount(totalCost(), 'subscription') != null ? `subscription value ${money(shareAmount(totalCost(), 'subscription')!).text}` : ''].filter(Boolean).join(' · ') || undefined}
+                trend={[]} trendLabel="Spend by day" />
+              <FigureTile label="Runs" value={{ value: totalRuns(), basis: 'measured' }} sub={totalFailed() ? `${count(totalFailed()).text} failed · ${count(totalTokens()).text} tokens` : `${count(totalTokens()).text} tokens`}
+                trend={[]} trendLabel="Runs by day" />
+              <FigureTile label="Tasks done" value={{ value: data.bought.completedTasks, basis: 'measured' }}
+                sub={data.bought.completedTasks ? `${money(usdOf(data.bought.taskCost as CostFigureLike[]) / data.bought.completedTasks).text} each` : undefined}
+                trend={[]} trendLabel="Tasks done by day" />
+              <Show when={totalUnpriced() > 0}>
+                <FigureTile label="Unpriced usage" value={{ value: totalUnpriced(), basis: 'measured' }} sub="no price entry" alert trend={[]} trendLabel="Unpriced usage by day" />
+              </Show>
+            </div>
+            <p class="small-note">Amounts marked ≈ are estimates, including subscription list-price equivalents: <CostFigures cost={totalCost()} empty="no priced usage" /></p>
             <Show when={totalUnpriced() > 0}>
               <p class="small-note">Unpriced usage is excluded from dollar figures because a usage amount or price entry is missing.</p>
             </Show>
