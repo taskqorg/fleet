@@ -34,6 +34,9 @@ func TestPassAbsenceUsesLastCompletion(t *testing.T) {
 	passIntervals.Store("placement-fixture", time.Minute)
 	t.Cleanup(func() { passIntervals.Delete("placement-fixture") })
 
+	was := processStarted
+	processStarted = nowMs() - time.Hour.Milliseconds()
+	t.Cleanup(func() { processStarted = was })
 	findings, err := spanRules(context.Background())
 	if err != nil || len(findings) != 0 {
 		t.Fatalf("157 seconds since completion: findings=%+v err=%v", findings, err)
@@ -42,6 +45,11 @@ func TestPassAbsenceUsesLastCompletion(t *testing.T) {
 	findings, err = spanRules(context.Background())
 	if err != nil || len(findings) != 1 || findings[0].Value != 186 || len(findings[0].Exemplars) != 1 || findings[0].Exemplars[0] != trace {
 		t.Fatalf("186 seconds since completion: findings=%+v err=%v", findings, err)
+	}
+	// A coordinator that started 30 s ago (a release) has had no time to run the pass: no finding.
+	processStarted = nowMs() - 30_000
+	if findings, err = spanRules(context.Background()); err != nil || len(findings) != 0 {
+		t.Fatalf("30 s after a restart: findings=%+v err=%v", findings, err)
 	}
 }
 

@@ -54,3 +54,17 @@ func (q *Queries) BugsinkHeldProblems(ctx context.Context, prefix string) ([]Bug
 	}
 	return items, nil
 }
+
+const bugsinkIgnore = `-- name: BugsinkIgnore :one
+SELECT coalesce(r.content::jsonb #> '{settings,errors,ignore}', '[]'::jsonb)::jsonb AS ignore FROM definition d
+ JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
+ WHERE d.kind='project' AND d.id=$1::text AND d.retired_at IS NULL
+`
+
+// A live Fleet project's settings.errors.ignore: the title substrings of Bugsink issues that ask nothing.
+func (q *Queries) BugsinkIgnore(ctx context.Context, projectID string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, bugsinkIgnore, projectID)
+	var ignore []byte
+	err := row.Scan(&ignore)
+	return ignore, err
+}

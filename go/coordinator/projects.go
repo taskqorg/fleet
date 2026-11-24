@@ -119,11 +119,12 @@ var settingsDefaults = func() map[string]json.RawMessage {
 	"execution": {"tools": [], "forge": false, "profiles": []},
 	"integration": {"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "autoAccept": null, "syncCheckoutAfterMerge": true},
 	"cleanup": {"keepWhen": ["uncommitted", "unpushed", "teardown-failed"]}, "identity": null, "subscriptions": [],
-	"errors": {"bugsink": []},
+	"errors": {"bugsink": [], "ignore": []},
 	"presets": []}`), &d); err != nil {
 		panic(err)
 	}
-	// errors.bugsink: the Bugsink projects (names) holding this project's errors (docs/designs/fleet-error-tracking.md).
+	// errors.bugsink: the Bugsink projects (names) holding this project's errors (docs/designs/fleet-error-tracking.md);
+	// errors.ignore: title substrings of Bugsink issues that open no needs-you problem (the issue stays in Bugsink).
 	// presets: what a new conversation does (presets.go); empty: the system presets.
 	return d
 }()
@@ -153,7 +154,7 @@ func jsType(v json.RawMessage) string {
 func projectSettings(p any) (rawObject, []string, error) {
 	unknown := []string{}
 	bad := func(k string) error {
-		if k == "execution.profiles" || k == "errors.bugsink" {
+		if k == "execution.profiles" || k == "errors.bugsink" || k == "errors.ignore" {
 			return fail(400, "Invalid project setting "+k)
 		}
 		return fail(500, "Invalid project setting "+k)
@@ -297,6 +298,13 @@ func projectSettings(p any) (rawObject, []string, error) {
 							return nil, nil, bad("execution.profiles")
 						}
 						seen[id] = true
+					}
+				}
+				if k == "errors" && x == "ignore" {
+					for _, value := range jsonList(y) {
+						if s, ok := jsonString(value); !ok || strings.TrimSpace(s) == "" || len(s) > 200 {
+							return nil, nil, bad("errors.ignore")
+						}
 					}
 				}
 				if k == "errors" && x == "bugsink" {

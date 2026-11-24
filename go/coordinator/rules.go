@@ -191,7 +191,9 @@ func spanRules(ctx context.Context) ([]contract.Finding, error) {
 		if !ok || p.Name == "pass.rules" {
 			continue
 		}
-		silence := p.Age - p.Duration
+		// A restart stops every pass for a while: silence before this process started is the deploy, not a stuck pass
+		// (2026-11-24: each coordinator release opened pass.dispatch, pass.lost and pass.watch questions).
+		silence := min(p.Age-p.Duration, float64(nowMs()-processStarted)/1000)
 		if limit := d.(time.Duration) * time.Duration(rulePassMisses); silence >= limit.Seconds() && limit > 0 {
 			f := contract.Finding{Rule: "absence-pass", Subject: p.Name, Value: silence, Cause: "problem:absence:" + p.Name, Exemplars: []string{p.TraceID}}
 			text(&f, fmt.Sprintf("Coordinator pass %s last completed %d seconds ago.", p.Name, int(silence)))
