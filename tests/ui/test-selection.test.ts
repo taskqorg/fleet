@@ -110,6 +110,8 @@ test('known module execution retains HTTP consumers and shared fallback; Go test
   assert.match(ci, /\[ "\$GITHUB_EVENT_NAME" != merge_group \] \|\| \[ "\$RELEASE_BUILD" = success \]/);
   assert.match(ci, /fail-fast: \$\{\{ github\.event_name == 'merge_group' \}\}/);
   assert.match(ci, /scripts\/ci-failfast\.ts/);
+  for (const caller of ['go-tests-pds18', 'app-tests-pds18', 'browser-tests-pds18', 'release-build-pds18'])
+    assert.match(ci, new RegExp(`\\n  ${caller}:[\\s\\S]*?permissions:[\\s\\S]*?actions: read`));
   for (const path of ['app/src/views/hosts.tsx','packages/ui/src/button.tsx']) assert.deepEqual(execution([path],true,false),['app','browser']);
   for (const path of ['go/contract/base.go','go/go.mod','tests/ui/new.test.ts']) assert.deepEqual(execution([path],true,false),[...families]);
   assert.deepEqual(execution(['go/executor/main.go','app/src/views/hosts.tsx'],true,false),[...families]);
