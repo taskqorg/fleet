@@ -34,3 +34,14 @@ The app injects a scoped persistence adapter after validating the identity and t
 Send completion clears only the originally submitted text if unchanged. Newer input and newer-generation records survive late success. Unknown submission outcomes retain the original request identity and body; reopening never automatically resends them. Storage failure preserves the authorized in-memory input and exposes a warning.
 
 Submission metadata freezes the complete message/start body and SHA-256, including delivery mode and attachments. Explicit retries of unchanged authored text and files retain that exact body and request identity after fresh target authorization; the same text with other files, or files alone after other files, is a new submission (`api.ts:submissionKey`). A reload keeps the text but not the chips, so a resend there without the files is a new message. Editing another submission keeps unresolved metadata under the original scope; returning to its text reuses its original identity.
+
+## Target picker
+
+*Target* ([OR-50](../owner-rules.md)). Board: [blocks.bl](../board/blocks.bl), masters `Composer` and `Target picker`.
+
+On [Home](../pages/home.md) the composer starts with a target chip that picks who to talk to.
+
+* **Chip.** The target's avatar and name (`PM · fleet`) with a caret, first in the box, left of the text. It starts on the last session the person talked to from Home.
+* **Picker.** Opens under the chip as an informational floating list ([OR-14](../owner-rules.md), [OR-16](../owner-rules.md)) with a search field first. Groups in order: project PMs, bots with their [state](state-badge.md#dot-and-word), then "New session with a preset…" ([start picker](start-picker.md)). Typing filters by name and project; arrow keys move, `Enter` picks, `Escape` closes.
+* **Send.** `Enter` sends and opens that session. A message to an asleep bot wakes it with its memory; a message to a project PM without an open session starts one from the project's PM preset.
+* **Same as Telegram.** The picker is the one Telegram uses for `/pm` and `@bot` ([FLT-31](https://youtrack.ufobe.com/issue/FLT-31)).

@@ -47,3 +47,39 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [offline-marker](offline-marker.md) | Data freshness: offline, updating, signed out |
 | [problem-row](problem-row.md) | Signals with cause and actions |
 | [status-states](status-states.md) | Empty, loading, error and stale |
+| [session-card](session-card.md) | One active session: what it does now and what it needs from you |
+| [bot-tile](bot-tile.md) | An asleep bot and Wake |
+| [pulse-line](pulse-line.md) | Work in flight and blockers at a glance |
+| [tool-line](tool-line.md) | Tool calls folded into one quiet line |
+| [context-panel](context-panel.md) | A session's plan, timers, automations and swarm |
+| [status-pill](status-pill.md) | The fleet's state in words |
+| [figure-tile](figure-tile.md) | One headline figure with its trend |
+| [host-band](host-band.md) | One host: health, slots, runs |
+| [worker-slot](worker-slot.md) | What runs in one worker slot |
+| [live-row](live-row.md) | A project, pull request, runner or event on Live |
+
+## Blocks of Home, Live and the session view
+
+The screens of the conversation-first interface ([OR-50](../owner-rules.md) to [OR-61](../owner-rules.md)) are composed of these blocks. Each block is a component on the design board ([blocks.bl](../board/blocks.bl)) with all its states, and the screen canvases use its instances, so a block change reaches every screen. *New* means the block has no `packages/ui` code yet; it is built from its spec before the page that uses it (OR-13).
+
+| Block | Spec | `packages/ui` | Screens |
+|---|---|---|---|
+| Session card | [session-card](session-card.md) | New (`SessionCard`) | Home |
+| Question card | [decision block, card](decision-block.md#card) | `DecisionBlock`, new card form | Home, session view |
+| Bot tile | [bot-tile](bot-tile.md) | New (`BotTile`) | Home |
+| Composer with target picker | [composer, target picker](composer.md#target-picker) | `Composer`, new picker | Home |
+| Pulse line, blocker chip | [pulse-line](pulse-line.md) | New (`PulseLine`, `BlockerChip`) | Home |
+| State dot and word | [state badge, dot and word](state-badge.md#dot-and-word) | `StateBadge`, new form | Home, Live, session view |
+| Session group head | [data list](data-list.md) | `GroupHeader` | Home |
+| Message | [transcript viewer](transcript-viewer.md) | `TextRow`, `MessageFiles` | Session view |
+| Folded tool line | [tool-line](tool-line.md) | `ToolRow`, new folded form | Session view |
+| Context panel | [context-panel](context-panel.md) | New (`ContextPanel`) | Session view |
+| Status pill | [status-pill](status-pill.md) | New (`StatusPill`) | Live |
+| Figure tile with sparkline | [figure-tile](figure-tile.md) | New (`FigureTile`), value by `Num` | Live |
+| Host band | [host-band](host-band.md) | New (`HostBand`) | Live |
+| Gauge | [fill bar, gauge](fill-bar.md#gauge) | `FillBar`, new gauge form | Live |
+| Worker slot | [worker-slot](worker-slot.md) | New (`WorkerSlot`) | Live |
+| Run strip | [time strip, run strip](time-strip.md#run-strip) | `TimeStrip`, new run strip form | Live |
+| Live row | [live-row](live-row.md) | New (`LiveRow`), stage by `StageChip` | Live |
+| Navigation rail | [nav-rail](nav-rail.md) | `NavRail` | Every page |
+| Shell header | [app-shell](../patterns/app-shell.md) | `AppShell` | Every page except wall mode |

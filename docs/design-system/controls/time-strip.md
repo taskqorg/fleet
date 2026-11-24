@@ -15,3 +15,9 @@
 **Do.** Use one window for every strip on a page. **Don't.** Add axis labels to each strip: the panel head names the window.
 
 **Used in.** [Runners](../pages/runners.md); the stages of an opened pull request on [Delivery](../pages/delivery.md).
+
+## Run strip
+
+*Target*. Board: [blocks.bl](../board/blocks.bl), master `Run strip`.
+
+The 24-hour strip of one host on [Live](../pages/live.md): one tick per run window on one 8 px track, the running tone for runs and `danger-fg` for failures ([OR-56](../owner-rules.md)). Under the track, marks at −24 h, −18 h, −12 h, −6 h and now in `font-size-xs`, `fg-faint`. Ticks update in place as runs start and end ([OR-6](../owner-rules.md)). It is `role="img"` named "24 hours: 44 runs, 3 failed".

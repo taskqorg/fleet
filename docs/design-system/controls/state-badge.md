@@ -28,3 +28,21 @@
 **Do.** Show the reason in lists. **Don't.** Use icons alone; add new colours per state.
 
 **Used in.** All lists, task detail, execution tree, hosts, settings, result copies.
+
+## Dot and word
+
+*Target* ([OR-55](../owner-rules.md)). Board: [blocks.bl](../board/blocks.bl), master `State`.
+
+The form sessions, bots, tasks and runs share on cards, slots and the context panel: a 6 px dot and the state word in `font-size-sm`, both in the state's `-fg` tone, no fill. One word, icon and tone per state:
+
+| State | Tone | Dot |
+|---|---|---|
+| Working | running | pulses while live |
+| Waiting for you | attention | steady |
+| Queued | neutral | steady |
+| Done | success | steady |
+| Failed | danger | steady |
+| Stopped | neutral | hollow |
+| Asleep | neutral | dashed ring |
+
+Synonyms (Succeeded, Completed, Cancelled) map to this set and never show.
