@@ -1,0 +1,26 @@
+# Re-evaluates docs.drift in the existing PR report comment when a PR description is edited by a person, without
+# re-running CI (or reacting to bot PR body edits like the Proof footer). Checks out no PR code.
+name: pr-drift-comment
+on:
+  pull_request:
+    types: [edited]
+permissions: {}
+jobs:
+  update-comment:
+    if: github.event.sender.type != 'Bot'
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Re-evaluate docs.drift in PR comment
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: context.issue.number });
+            if (!/^## Drift\s*$/m.test(pr.body ?? '')) return;
+            const { data: comments } = await github.rest.issues.listComments({ ...context.repo, issue_number: context.issue.number });
+            const old = comments.find(c => c.body.includes('<!-- fleet-design-report -->'));
+            if (!old) return;
+            const updated = old.body.split('\n').filter(l => !/ docs\.drift /.test(l)).join('\n');
+            if (updated !== old.body) await github.rest.issues.updateComment({ ...context.repo, comment_id: old.id, body: updated });

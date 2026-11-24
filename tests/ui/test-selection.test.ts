@@ -41,7 +41,7 @@ test('unqualified history executes full suites even when impact selection propos
 
 test('release rejects missing, failed or mismatched candidate evidence', () => {
   const plan = makePlan('push', {before: base, after: head}, head, args => args[0] === 'rev-parse' ? head : args[0] === 'diff' ? 'M\0docs/example.md\0' : '');
-  const jobs: Record<string, {result: string}> = {...Object.fromEntries(['selection', ...families].map(f => [f, {result: 'success'}])), thin: {result: 'skipped'}};
+  const jobs: Record<string, {result: string}> = Object.fromEntries(['selection', ...families].map(f => [f, {result: 'success'}]));
   assert.doesNotThrow(() => verifyEvidence(plan, head, jobs));
   assert.throws(() => verifyEvidence(plan, base, jobs));
   assert.throws(() => verifyEvidence({...plan, policy: 'unknown'}, head, jobs));
@@ -54,7 +54,7 @@ test('release rejects missing, failed or mismatched candidate evidence', () => {
 test('qualified module unions preserve archive gates and prior failure or rollback restores full', () => {
   assert.deepEqual(execution(['docs/example.md'], true, false), []);
   assert.deepEqual(execution(['app/src/views/lab-create.tsx'], true, false), ['app', 'browser']);
-  for (const paths of [['go/obs/obs.go'], ['packages/view-url/view-url.ts'], ['app/src/views/lab-create.tsx', 'go/coordinator/access.go']])
+  for (const paths of [['packages/view-url/view-url.ts'], ['app/src/views/lab-create.tsx', 'go/coordinator/access.go']])
     assert.deepEqual(execution(paths, true, false), [...families]);
   assert.deepEqual(execution(['docs/example.md'], false, false), [...families]);
   assert.deepEqual(execution(['docs/example.md'], true, true), [...families]);
@@ -65,7 +65,7 @@ test('qualified module unions preserve archive gates and prior failure or rollba
 });
 test('qualified omitted families require actual skipped results and cannot hide selected failure', () => {
   const plan = makePlan('push', {before: base, after: head}, head, args => args[0] === 'rev-parse' ? head : args[0] === 'diff' ? 'M\0docs/example.md\0' : '', true);
-  const jobs = {selection: {result: 'success'}, thin: {result: 'skipped'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))};
+  const jobs = {selection: {result: 'success'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))};
   assert.doesNotThrow(() => verifyEvidence(plan, head, jobs));
   assert.throws(() => verifyEvidence({...plan, previousGreen: false}, head, jobs));
   assert.throws(() => verifyEvidence({...plan, paths: ['go/coordinator/access.go']}, head, jobs));
@@ -81,7 +81,7 @@ test('actual Git comparison accepts a qualified plan and rejects a corrupted omi
     mkdirSync(join(root, 'docs')); writeFileSync(join(root, 'docs/example.md'), 'prose'); const after = commit();
     const plan = makePlan('push', {before, after}, after, git, true);
     const path = join(root, 'plan.json'), results = join(root, 'results.json');
-    writeFileSync(results, JSON.stringify({selection: {result: 'success'}, thin: {result: 'skipped'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))}));
+    writeFileSync(results, JSON.stringify({selection: {result: 'success'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))}));
     const verify = () => execFileSync(process.execPath, [fileURLToPath(new URL('../../scripts/test-selection.ts', import.meta.url)), '--verify', path, results],
       {cwd: root, env: {...process.env, GITHUB_SHA: after}, stdio: 'pipe'});
     writeFileSync(path, JSON.stringify(plan)); assert.match(verify().toString(), /PASS/);
@@ -98,40 +98,48 @@ test('actual Git comparison accepts a qualified plan and rejects a corrupted omi
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
 
-test('known module execution retains HTTP consumers and shared fallback; archives are release-build\'s', () => {
-  for (const module of ['executor','gateway','update']) assert.deepEqual(execution([`go/${module}/main.go`],true,false),['go']);
+test('known module execution retains HTTP consumers and shared fallback; Go test-only and obs omit browser and app', () => {
+  for (const module of ['executor','gateway','update','obs']) assert.deepEqual(execution([`go/${module}/main.go`],true,false),['go']);
+  for (const testPath of ['go/coordinator/board_test.go','go/coordinator/testdata/case.json','go/executor/run_test.go'])
+    assert.deepEqual(execution([testPath],true,false),['go']);
   assert.deepEqual(execution(['go/coordinator/main.go'],true,false),[...families]);
-  // The archives' replacement guard: a merge group's app check requires release-build.
+  assert.deepEqual(execution(['go/coordinator/board_test.go','go/coordinator/board.go'],true,false),[...families]);
+  // The archives' replacement guard: a merge group's app check requires release-build, and merge_group uses fail-fast.
   const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
   assert.match(ci, /\n  app:\n    needs: \[[^\]]*\brelease-build\b/);
   assert.match(ci, /\[ "\$GITHUB_EVENT_NAME" != merge_group \] \|\| \[ "\$RELEASE_BUILD" = success \]/);
+  assert.match(ci, /fail-fast: \$\{\{ github\.event_name == 'merge_group' \}\}/);
+  assert.match(ci, /scripts\/ci-failfast\.ts/);
   for (const path of ['app/src/views/hosts.tsx','packages/ui/src/button.tsx']) assert.deepEqual(execution([path],true,false),['app','browser']);
-  for (const path of ['go/obs/obs.go','go/contract/base.go','go/go.mod','tests/ui/new.test.ts']) assert.deepEqual(execution([path],true,false),[...families]);
+  for (const path of ['go/contract/base.go','go/go.mod','tests/ui/new.test.ts']) assert.deepEqual(execution([path],true,false),[...families]);
   assert.deepEqual(execution(['go/executor/main.go','app/src/views/hosts.tsx'],true,false),[...families]);
 });
 
-test('pull request runs the thin check only and defers its heavy families to the merge queue', () => {
+test('pull request executes selected affected families directly before entering the merge queue', () => {
   const git = (args: string[]) => args[0] === 'rev-parse' ? head : args[0] === 'diff' ? 'M\0go/coordinator/access.go\0' : '';
   const plan = makePlan('pull_request', {pull_request: {base: {sha: base}}}, head, git);
-  assert.deepEqual(plan.executed, []);
-  assert.deepEqual(plan.deferred, [...families]);
-  const jobs = {selection: {result: 'success'}, thin: {result: 'success'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))};
-  assert.doesNotThrow(() => verifyEvidence(plan, head, jobs));
-  assert.throws(() => verifyEvidence(plan, head, {...jobs, thin: {result: 'failure'}}));
-  assert.throws(() => verifyEvidence({...plan, deferred: []}, head, jobs));
+  assert.deepEqual(plan.executed, [...families]);
+  assert.deepEqual(plan.deferred, []);
+  const full = Object.fromEntries(['selection', ...families].map(f => [f, {result: 'success'}]));
+  assert.doesNotThrow(() => verifyEvidence(plan, head, full));
+  assert.throws(() => verifyEvidence(plan, head, {...full, go: {result: 'failure'}}));
+  assert.throws(() => verifyEvidence({...plan, deferred: ['go']}, head, full));
+  const uiGit = (args: string[]) => args[0] === 'rev-parse' ? head : args[0] === 'diff' ? 'M\0app/src/views/hosts.tsx\0' : '';
+  const uiPlan = makePlan('pull_request', {pull_request: {base: {sha: base}}}, head, uiGit, true);
+  assert.deepEqual(uiPlan.executed, ['app', 'browser']);
+  assert.deepEqual(uiPlan.deferred, []);
+  assert.doesNotThrow(() => verifyEvidence(uiPlan, head, {selection: {result: 'success'}, go: {result: 'skipped'}, app: {result: 'success'}, browser: {result: 'success'}}));
   const group = makePlan('merge_group', {merge_group: {base_sha: base, head_sha: head}}, head, git);
   assert.deepEqual(group.executed, [...families]);
   assert.deepEqual(group.deferred, []);
-  const full = Object.fromEntries(['selection', ...families].map(f => [f, {result: 'success'}]));
-  assert.doesNotThrow(() => verifyEvidence(group, head, {...full, thin: {result: 'skipped'}}));
-  assert.throws(() => verifyEvidence(group, head, {...full, thin: {result: 'success'}}));
+  assert.doesNotThrow(() => verifyEvidence(group, head, full));
 });
 
 test('a push its merge queue run qualified executes nothing; queued is push-only', () => {
   const git = (args: string[]) => args[0] === 'rev-parse' ? head : args[0] === 'diff' ? 'M\0go/coordinator/access.go\0' : '';
   const plan = makePlan('push', {before: base, after: head}, head, git, false, false, true);
   assert.deepEqual(plan.executed, []);
-  const jobs = {selection: {result: 'success'}, thin: {result: 'skipped'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))};
+  const jobs = {selection: {result: 'success'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))};
   assert.doesNotThrow(() => verifyEvidence(plan, head, jobs));
   assert.throws(() => verifyEvidence({...plan, queued: false}, head, jobs));
   assert.equal(makePlan('push', {before: base, after: head}, head, git, false, true, true).executed.length, families.length, 'FLEET_TEST_FULL forces a full push');

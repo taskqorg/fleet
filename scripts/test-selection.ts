@@ -11,6 +11,7 @@ type Event = {pull_request?: {base: {sha: string}}; merge_group?: {base_sha: str
 export type Plan = {version: 1; mode: 'selected'; paths: string[] | null; previousGreen: boolean; forced: boolean; queued: boolean; policy: string; candidate: string; base: string | null; event: string; selected: Family[]; executed: readonly Family[]; deferred: readonly Family[]; reasons: string[]};
 const policy = () => createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
 const prose = (path: string) => /^docs\/.*\.md$/.test(path) || path === 'README.md';
+const goTestOnly = (path: string) => /^go\/(?:coordinator|executor|gateway|update|obs)\/(?:.*_test\.go|testdata\/.*)$/.test(path);
 const sha = (s: unknown): s is string => typeof s === 'string' && /^[a-f0-9]{40}$/.test(s) && !/^0+$/.test(s);
 
 export function comparison(event: string, payload: Event, candidate: string): string {
@@ -52,7 +53,9 @@ export function select(paths: string[]): {selected: Family[]; reasons: string[]}
   const reasons: string[] = [];
   for (const path of paths) {
     if (prose(path)) reasons.push(`prose: ${path}`);
-    else if (path.startsWith('go/coordinator/')) {
+    else if (goTestOnly(path)) {
+      chosen.add('go'); reasons.push(`Go test only: ${path}`);
+    } else if (path.startsWith('go/coordinator/')) {
       chosen.add('go'); chosen.add('browser'); reasons.push(`coordinator and HTTP consumers: ${path}`);
     } else if (/^go\/(executor|gateway|update|obs)\//.test(path)) {
       chosen.add('go'); reasons.push(`Go runtime: ${path}`);
@@ -68,12 +71,12 @@ export function select(paths: string[]): {selected: Family[]; reasons: string[]}
 
 export function execution(paths: string[] | null, previousGreen: boolean, forced: boolean): Family[] {
   if (!paths?.length || !previousGreen || forced) return [...families];
-  if (!paths.every(p => prose(p) || /^(go\/(coordinator|executor|gateway|update)\/|app\/src\/|packages\/ui\/)/.test(p))) return [...families];
+  if (!paths.every(p => prose(p) || /^(go\/(coordinator|executor|gateway|update|obs)\/|app\/src\/|packages\/ui\/)/.test(p))) return [...families];
   // No family for the release archives: the merge queue's release-build builds and selftests them for every candidate,
   // and the app check of a merge group requires it (docs/designs/fleet-delivery-pipeline.md#4-automatic-release).
   const chosen = new Set(select(paths).selected);
-  // The contract keeps coordinator changes on the full fallback (fleet.md, test selection).
-  if (paths.some(p => p.startsWith('go/coordinator/'))) families.forEach(f => chosen.add(f));
+  // Non-test coordinator changes stay on the full fallback (fleet.md, Verification).
+  if (paths.some(p => p.startsWith('go/coordinator/') && !goTestOnly(p))) families.forEach(f => chosen.add(f));
   return families.filter(f => chosen.has(f));
 }
 
@@ -93,12 +96,12 @@ export function makePlan(event: string, payload: Event, candidate: string, git: 
     queued: event === 'push' && queued && !forced, ...decision, ...run(event, execution(paths, previousGreen, forced), event === 'push' && queued && !forced)};
 }
 
-// A pull request runs only the thin check; its heavy families are deferred to the merge queue, which qualifies the candidate.
+// Pull requests execute their selected affected families directly before entering the merge queue.
 // A push of a commit its merge queue run already qualified (main fast-forwards to the group commit) repeats nothing:
 // the release gate reads that merge_group run first, so a full push run would only double the runner load per merge.
 // FLEET_TEST_FULL still forces a full push run, which also refreshes main's build caches.
 export function run(event: string, families: readonly Family[], queued = false): {executed: readonly Family[]; deferred: readonly Family[]} {
-  return event === 'pull_request' || (event === 'push' && queued) ? {executed: [], deferred: families} : {executed: families, deferred: []};
+  return event === 'push' && queued ? {executed: [], deferred: families} : {executed: families, deferred: []};
 }
 
 type Run = {databaseId: number; status: string; conclusion: string};
@@ -154,7 +157,6 @@ export function verifyEvidence(plan: Plan, candidate: string, jobs: Record<strin
   assert.deepEqual(plan.executed, expected.executed);
   assert.deepEqual(plan.deferred, expected.deferred);
   assert.equal(jobs.selection?.result, 'success', 'selection: failed or missing');
-  assert.equal(jobs.thin?.result, plan.event === 'pull_request' ? 'success' : 'skipped', 'thin: unexpected or missing execution');
   for (const family of families) assert.equal(jobs[family]?.result, plan.executed.includes(family) ? 'success' : 'skipped', `${family}: unexpected or missing execution`);
 }
 
