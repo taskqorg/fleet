@@ -164,7 +164,7 @@ func codexExec(dir, native, text, home, account, exe string) (*exec.Cmd, error) 
 	setEnv(c, "HOME", home)
 	setEnv(c, "CODEX_HOME", account)
 	c.Args = append(c.Args, "exec", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--json",
-		"-c", "project_doc_max_bytes=0", "-c", "skills.enabled=false", "-c", "skills.include_instructions=false", "-c", "mcp_servers={}",
+		"-c", "project_doc_max_bytes=0", "-c", "skills.include_instructions=false", "-c", "mcp_servers={}",
 		"--disable", "memories", "--disable", "hooks", "--enable", "skip_host_skill_discovery",
 		"-c", `forced_login_method="chatgpt"`, "-c", `approval_policy="never"`, "-c", `sandbox_mode="workspace-write"`,
 		"-c", "sandbox_workspace_write.network_access=false",

@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fleet/contract"
 	"fmt"
 	"os"
@@ -217,6 +218,9 @@ func TestRegistryCommand(t *testing.T) {
 	app := codexAppServer(c)
 	if app.Args[1] != "app-server" || slices.Contains(app.Args, "t") || !slices.Contains(app.Args, "--disable") {
 		t.Fatal(app.Args)
+	}
+	if slices.Contains(app.Args, "skills.enabled=false") || !slices.Contains(app.Args, "skills.include_instructions=false") || !slices.Contains(app.Args, "skip_host_skill_discovery") {
+		t.Fatalf("unexpected Codex skill controls: %v", app.Args)
 	}
 }
 
@@ -438,6 +442,62 @@ func TestReadOnlyStart(t *testing.T) {
 	}
 	if a := newACPSession("/w", "", M{"readOnly": true, "agentConfig": M{"settings": M{"mode": "accept-edits"}}}, nil); a.mode != "plan" {
 		t.Fatal(a.mode)
+	}
+}
+
+// Requirement: T-FLT-54 gives managed Codex commands writable Go caches.
+// Risk: a cache stays under the account home, is omitted from the native sandbox, or expands a read-only grant.
+func TestCodexGoCacheLaunch(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(dir, "go-cache")
+	cmd := newCmd("/bin/echo", dir)
+	readOnly := M{"readOnly": true}
+	if _, err := codexLaunchProfile(cmd, dir, readOnly, nil); err != nil || len(cmd.Env) != 0 {
+		t.Fatalf("read-only launch changed the environment: %v, %v", cmd.Env, err)
+	}
+	if _, err := os.Lstat(cache); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read-only launch created a cache: %v", err)
+	}
+
+	for _, gitNetwork := range []bool{false, true} {
+		var gitRoots []any
+		if gitNetwork {
+			gitRoots = []any{filepath.Join(dir, "project.git")}
+		}
+		input := M{"gitNetwork": gitNetwork}
+		profile, err := codexLaunchProfile(cmd, dir, input, gitRoots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if has(input, "writableRoots") {
+			t.Fatal("launch modified the input profile")
+		}
+		wantRoots := append([]any{cache}, gitRoots...)
+		for _, kv := range []string{"GOCACHE=" + filepath.Join(cache, "build"), "GOMODCACHE=" + filepath.Join(cache, "modules")} {
+			if !slices.Contains(codexAppServer(cmd).Env, kv) {
+				t.Fatalf("missing %q in app-server environment", kv)
+			}
+		}
+		s := &codexSession{profile: profile}
+		r, _, _, err := s.Receive(j(`{"id":1,"result":{}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		eq(t, jAt(r[1], "params", "config", "sandbox_workspace_write.writable_roots"), enc(wantRoots))
+		policy := M{"type": "workspaceWrite", "writableRoots": wantRoots, "networkAccess": gitNetwork}
+		eq(t, jAt(s.turnRequest(), "params", "sandboxPolicy"), enc(policy))
+	}
+	if err := os.Remove(cache); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), cache); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := codexLaunchProfile(newCmd("/bin/echo", dir), dir, M{}, nil); err == nil {
+		t.Fatal("accepted a cache symlink as a writable root")
 	}
 }
 

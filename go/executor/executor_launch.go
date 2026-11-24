@@ -685,9 +685,11 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		root = w
 	}
 	pp := p
-	if gitRoots != nil {
-		pp = maps.Clone(p) // a top-level key only
-		pp["writableRoots"] = gitRoots
+	if name == "codex" {
+		pp, err = codexLaunchProfile(cmd, dir, p, gitRoots)
+		if err != nil {
+			return fail(1, "Codex Go cache: "+err.Error())
+		}
 	}
 	cmd, sess := h.Protocol(cmd, root, native, pp, servers)
 	protocol := sess != nil
@@ -796,6 +798,33 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 		return err
 	}
 	return e.receipt(c, "started", native)
+}
+
+// codexLaunchProfile gives writable native turns a Go cache beside the worktree.
+func codexLaunchProfile(cmd *exec.Cmd, dir string, p M, gitRoots []any) (M, error) {
+	if jIsTrue(p, "readOnly") {
+		return p, nil
+	}
+	dir, err := canon(dir)
+	if err != nil {
+		return nil, err
+	}
+	cache := filepath.Join(dir, "go-cache")
+	if err := os.Mkdir(cache, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return nil, err
+	}
+	st, err := os.Lstat(cache)
+	if err != nil {
+		return nil, err
+	}
+	if !st.IsDir() || st.Mode().Perm() != 0o700 || owner(st) != os.Geteuid() {
+		return nil, errors.New("Go cache must be a real private directory owned by the executor user")
+	}
+	setEnv(cmd, "GOCACHE", filepath.Join(cache, "build"))
+	setEnv(cmd, "GOMODCACHE", filepath.Join(cache, "modules"))
+	profile := maps.Clone(p)
+	profile["writableRoots"] = append([]any{cache}, gitRoots...)
+	return profile, nil
 }
 
 // observeHarness: harness version and model-visible built-in tools, cached per executable and argument set.
