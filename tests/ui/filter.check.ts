@@ -58,24 +58,24 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
   try {
     const reqs: string[] = [];
     page.on('request', r => { if (r.url().includes('/api/ops/')) reqs.push(r.url().split('/api/ops/')[1]); });
-    await page.goto(origin + '/tasks'); await page.waitForSelector('.vl-row .row-link');
+    await page.goto(origin + '/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
     const url = () => page.evaluate(() => location.pathname + location.search);
     // Runs one action and watches every frame until the first rows stay the same for 10 frames.
     const watch = (p: Page, act: string) => p.evaluate(async act => {
-      const grid0 = document.querySelector('[data-ui=data-list]'), counters0 = document.querySelectorAll('[data-ui=state-counters] .counter').length;
+      const grid0 = document.querySelector('.pw-facet [data-ui=data-list]'), counters0 = document.querySelectorAll('[data-ui=state-counters] .counter').length;
       const seen = { countersGone: false, listSkeleton: false, listGone: false };
       const t0 = performance.now(); let settled = -1, stable = 0, last = '';
       (0, eval)(act);
       for (let f = 0; f < 600; f++) {
         await new Promise(r => requestAnimationFrame(r));
         if (document.querySelectorAll('[data-ui=state-counters] .counter').length < counters0) seen.countersGone = true;
-        if (document.querySelector('[data-ui=list-view] .skeleton')) seen.listSkeleton = true;
-        if (!document.querySelector('[data-ui=data-list]')) seen.listGone = true;
-        const now = [...document.querySelectorAll('.vl-row .row-link')].slice(0, 5).map(e => e.textContent).join('|') + (document.querySelector('[data-ui=list-view].pending') ? '…' : '');
+        if (document.querySelector('.pw-facet [data-ui=list-view] .skeleton')) seen.listSkeleton = true;
+        if (!document.querySelector('.pw-facet [data-ui=data-list]')) seen.listGone = true;
+        const now = [...document.querySelectorAll('.pw-facet .vl-row .row-link')].slice(0, 5).map(e => e.textContent).join('|') + (document.querySelector('.pw-facet [data-ui=list-view].pending') ? '…' : '');
         // Settled: no request pending and the first rows unchanged for 10 frames. Unsettled after 600 frames reports -1.
         if (now && now === last && !now.endsWith('…')) { if (++stable === 10) { settled = Math.max(0, performance.now() - t0 - 10 * 16.7); break; } } else { stable = 0; last = now; }
       }
-      return { ...seen, remounted: grid0 !== document.querySelector('[data-ui=data-list]'), settledMs: settled < 0 ? -1 : Math.max(0, Math.round(settled)) };
+      return { ...seen, remounted: grid0 !== document.querySelector('.pw-facet [data-ui=data-list]'), settledMs: settled < 0 ? -1 : Math.max(0, Math.round(settled)) };
     }, act);
     const step = async (name: string, act: string, settle = true) => {
       reqs.length = 0; const r = await watch(page, act); await page.waitForTimeout(200);
@@ -102,7 +102,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await page.getByRole('option', { name: /^Tasks/ }).first().click(); await page.waitForURL('**/tasks**');
     rule(N, await url() === grouped, `after a reload Tasks lost the view: ${await url()} for ${grouped}`);
     // The reloaded list settles before the next step measures it (no skeleton, rows on screen, the same rows twice).
-    await page.waitForSelector('[data-ui=data-list] .vl-row .row-link'); await page.waitForFunction(() => !document.querySelector('[data-ui=list-view] .skeleton, .skeleton'));
+    await page.waitForSelector('.pw-facet [data-ui=data-list] .vl-row .row-link'); await page.waitForFunction(() => !document.querySelector('.pw-facet [data-ui=list-view] .skeleton, .skeleton'));
     await page.waitForTimeout(500);
     await step('click All', `document.querySelector('.counter.sigma').click()`);
     // The sort chip's leading icon flips the direction: oldest first puts sort=changed in the URL, a second click removes it.
@@ -119,66 +119,61 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await step('pick preset', `[...document.querySelectorAll('[data-ui=saved-views] button')].find(b=>/Running/.test(b.textContent)).click()`);
     { const u = new URL(origin + await url()).searchParams; rule(N, u.get('group') === groupBefore && !!u.get('state'), `system preset changed the grouping: ${u}`); }
     rule(N, await page.$eval('[data-ui=saved-views] .preset.on', e => /Running/.test(e.textContent ?? '')).catch(() => false), 'Running is not shown active with another grouping');
-    const beforeFocus = await url();
-    await step('focus first row', `document.querySelector('.vl-row .row-link').click()`, false);
-    const focused = await url();
-    rule(N, new URL(origin + focused).searchParams.get('sel') === new URL(origin + beforeFocus).searchParams.get('sel'), 'focus changed sel');
+    const listed = await url();
     // OR-37: hovering a row moves nothing in it (no hover-only affordances over or beside the row facts).
     // Facts are right-aligned and their text changes with time (now, 1m), so the left edge moves by itself: compare the
     // right edge of the same rows (a hover affordance over or beside the facts would move or cover it).
-    const facts = async () => page.evaluate(() => [...document.querySelectorAll('.vl-row')].filter(r => r.querySelector('.row-facts')).slice(0, 3).map(r => `${r.getAttribute('data-key')}:${Math.round(r.querySelector('.row-facts')!.getBoundingClientRect().right)}`).join('|'));
-    const factsBefore = await facts(); await page.hover('.vl-row:has(.row-facts) .tt'); await page.waitForTimeout(100);
+    const facts = async () => page.evaluate(() => [...document.querySelectorAll('.pw-facet .vl-row')].filter(r => r.querySelector('.row-facts')).slice(0, 3).map(r => `${r.getAttribute('data-key')}:${Math.round(r.querySelector('.row-facts')!.getBoundingClientRect().right)}`).join('|'));
+    const factsBefore = await facts(); await page.hover('.pw-facet .vl-row:has(.row-facts) .tt'); await page.waitForTimeout(100);
     rule(N, factsBefore === await facts(), 'hovering a row moved its facts');
     // Selection mode: a shift click selects a row and shows the checkbox column; the checkbox is the view URL's sel.
-    await step('check a row', `document.querySelectorAll('.vl-row .row-link')[1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }))`, false);
-    rule(N, await page.evaluate(() => document.querySelectorAll('.vl-row .row-check:checked').length === 1 && !!document.querySelector('[data-ui=select-bar]')), 'shift click did not enter selection mode');
+    await step('check a row', `document.querySelectorAll('.pw-facet .vl-row .row-link')[1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }))`, false);
+    rule(N, await page.evaluate(() => document.querySelectorAll('.pw-facet .vl-row .row-check:checked').length === 1 && !!document.querySelector('[data-ui=select-bar]')), 'shift click did not enter selection mode');
     const checked = await url();
-    rule(N, checked.split('?')[0] === focused.split('?')[0], 'checking a row changed focus');
+    rule(N, checked.split('?')[0] === listed.split('?')[0], 'checking a row changed focus');
     rule(N, /[?&]sel=/.test(checked), 'checked row not in the URL');
     // A copied link reproduces focus, sel, filters and grouping in a second page.
     const other = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    await other.goto(origin + checked); await other.waitForSelector('[data-ui=detail] .detail-title');
-    // The list's page arrives after the detail at 20,000 tasks: wait for the focused row, up to 5 s, before reading the view.
-    await other.waitForSelector('.vl-row.sel', { timeout: 5000 }).catch(() => {});
-    const there = await other.evaluate(() => ({ url: location.pathname + location.search, checked: document.querySelectorAll('.vl-row .row-check:checked').length, focusedRow: !!document.querySelector('.vl-row.sel') }));
+    await other.goto(origin + checked); await other.waitForSelector('.pw-facet .vl-row .row-check:checked', { timeout: 15_000 }).catch(() => {});
+    const there = await other.evaluate(() => ({ url: location.pathname + location.search, checked: document.querySelectorAll('.pw-facet .vl-row .row-check:checked').length }));
     await other.close();
-    rule(N, there.url === checked && there.checked === 1 && there.focusedRow, `copied link did not reproduce the view: ${JSON.stringify(there)} for ${checked}`);
+    rule(N, there.url === checked && there.checked === 1, `copied link did not reproduce the view: ${JSON.stringify(there)} for ${checked}`);
     // Back: rows are on screen in the first frame after popstate.
-    const back = await page.evaluate(async () => { history.back(); await new Promise(r => addEventListener('popstate', r, { once: true })); await new Promise(r => requestAnimationFrame(r)); return document.querySelectorAll('.vl-row .row-link').length; });
+    const back = await page.evaluate(async () => { history.back(); await new Promise(r => addEventListener('popstate', r, { once: true })); await new Promise(r => requestAnimationFrame(r)); return document.querySelectorAll('.pw-facet .vl-row .row-link').length; });
     rule(N, back > 0, 'Back: no rows in the first frame');
     // Pinned rows stay whatever the filter (OR-12): pin the first task, search for nothing, the pinned task is still listed.
-    await page.goto(origin + '/tasks'); await page.waitForSelector('.vl-row .row-link');
-    const pinnedTitle = await page.locator('.vl-row .row-link').first().textContent();
-    await page.locator('.vl-row .row-link').first().focus(); await page.keyboard.press('p'); await page.waitForSelector('[data-ui=row-pin]');
+    await page.goto(origin + '/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+    const pinnedTitle = await page.locator('.pw-facet .vl-row .row-link').first().textContent();
+    await page.locator('.pw-facet .vl-row .row-link').first().focus(); await page.keyboard.press('p'); await page.waitForSelector('[data-ui=row-pin]');
     await page.goto(origin + '/tasks?q=no-such-task-anywhere'); await page.waitForSelector('[data-ui=row-pin]', { timeout: 10000 }).catch(() => {});
-    rule(N, await page.locator('.vl-row:has([data-ui=row-pin]) .row-link').first().textContent().catch(() => null) === pinnedTitle, 'a pinned task left the list under a search that does not match it');
+    rule(N, await page.locator('.pw-facet .vl-row:has([data-ui=row-pin]) .row-link').first().textContent().catch(() => null) === pinnedTitle, 'a pinned task left the list under a search that does not match it');
     // A pinned row outside the filtered page is still part of selection and its actions.
-    await page.locator('.vl-row:has([data-ui=row-pin]) .row-link').first().focus(); await page.keyboard.press('x');
+    await page.locator('.pw-facet .vl-row:has([data-ui=row-pin]) .row-link').first().focus(); await page.keyboard.press('x');
     await page.waitForFunction(() => document.querySelector('[data-ui=select-bar]')?.textContent?.includes('1 selected'));
     rule(N, await page.locator('[data-ui=select-bar] button[aria-label=Unpin]').isEnabled(), 'the visible pinned row was excluded from selection');
     await page.locator('[data-ui=select-bar] button[aria-label=Unpin]').click();
     await page.waitForFunction(() => !document.querySelector('[data-ui=row-pin]'));
     await page.getByRole('button', { name: 'Leave selection', exact: true }).click();
     // Search: one request per typing pause, one Back leaves the search.
-    await page.goto(origin + '/tasks'); await page.waitForSelector('.vl-row .row-link');
-    await page.locator('.fbar button[aria-label^="Search"]').first().click(); // search is an icon until used (OR-31)
-    reqs.length = 0; await page.locator('.fbar input').first().pressSequentially('hero', { delay: 60 }); await page.waitForTimeout(800);
+    await page.goto(origin + '/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+    await page.locator('.pw-facet .fbar button[aria-label^="Search"]').first().click(); // search is an icon until used (OR-31)
+    reqs.length = 0; await page.locator('.pw-facet .fbar input').first().pressSequentially('hero', { delay: 60 }); await page.waitForTimeout(800);
     const pages = reqs.filter(r => r === 'task_page').length;
     console.log(`type "hero": requests=${reqs.length} [${reqs.join(',')}] url=${await url()}`);
     rule(N, pages === 1, `typing "hero" sent ${pages} task_page requests`);
     await page.goBack(); await page.waitForTimeout(300);
     rule(N, (await url()) === '/projects/tasks', `one Back after a search should return to /projects/tasks, got ${await url()}`);
     // After Back, a new search starts a new history entry instead of replacing the one Back returned to.
-    if (!await page.locator('.fbar input').count()) await page.locator('.fbar button[aria-label^="Search"]').first().click();
-    await page.locator('.fbar input').first().fill(''); await page.locator('.fbar input').first().pressSequentially('copy', { delay: 60 }); await page.waitForTimeout(800);
+    if (!await page.locator('.pw-facet .fbar input').count()) await page.locator('.pw-facet .fbar button[aria-label^="Search"]').first().click();
+    await page.locator('.pw-facet .fbar input').first().fill(''); await page.locator('.pw-facet .fbar input').first().pressSequentially('copy', { delay: 60 }); await page.waitForTimeout(800);
     await page.goBack(); await page.waitForTimeout(300);
     rule(N, (await url()) === '/projects/tasks', `a search after Back replaced the entry Back returned to (Back now at ${await url()})`);
     // A new search query ends the active preset (OR-33): the states stay, the preset leaves the URL.
-    await page.goto(origin + '/tasks'); await page.waitForSelector('.vl-row .row-link');
+    await page.goto(origin + '/tasks'); await page.waitForSelector('.pw-facet .vl-row .row-link');
     await page.locator('[data-ui=saved-views] button', { hasText: 'Running' }).click();
     await page.waitForFunction(() => new URLSearchParams(location.search).get('preset') === 'Running');
-    if (!await page.locator('.fbar input').count()) await page.locator('.fbar button[aria-label^="Search"]').first().click();
-    await page.locator('.fbar input').first().pressSequentially('hero', { delay: 60 });
+    if (!await page.locator('.pw-facet .fbar input').count()) await page.locator('.pw-facet .fbar button[aria-label^="Search"]').first().click();
+    await page.locator('.pw-facet .fbar input').first().pressSequentially('hero', { delay: 60 });
     await page.waitForFunction(() => new URLSearchParams(location.search).get('q') === 'hero', null, { timeout: 5000 }).catch(() => {});
     { const u = new URL(origin + await url()).searchParams; rule(N, u.get('q') === 'hero' && !u.has('preset') && !!u.get('state'), `a search kept the preset or lost the states: ${u}`); }
     // The empty state's Clear filters clears states, search, projects and the preset.
@@ -191,15 +186,15 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     if (clearShown) { await clear.click(); await page.waitForFunction(() => !location.search.includes('q='), null, { timeout: 5000 }).catch(() => {}); }
     { const u = new URL(origin + await url()).searchParams; rule(N, !u.has('preset') && !u.has('q') && !u.has('state'), `Clear filters left filters or the preset: ${u}`); }
     // A bulk action that fails for one row: the rows that succeeded leave the selection, the failed row stays selected.
-    await page.goto(origin + '/tasks?group=none&state=queued'); await page.waitForSelector('.vl-row .row-link');
-    const [okId, badId] = await page.$$eval('.vl-row:not(.grp)', rs => rs.slice(0, 2).map(r => r.getAttribute('data-key')!));
+    await page.goto(origin + '/tasks?group=none&state=queued'); await page.waitForSelector('.pw-facet .vl-row .row-link');
+    const [okId, badId] = await page.$$eval('.pw-facet .vl-row:not(.grp)', rs => rs.slice(0, 2).map(r => r.getAttribute('data-key')!));
     await page.route('**/api/ops/task_update', route => JSON.parse(route.request().postData() ?? '{}').taskId === badId
       ? route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ message: 'forced failure' }) }) : route.continue());
-    for (const k of [okId, badId]) await page.locator(`.vl-row[data-key="${k}"] .row-link`).click({ modifiers: ['Shift'] });
+    for (const k of [okId, badId]) await page.locator(`.pw-facet .vl-row[data-key="${k}"] .row-link`).click({ modifiers: ['Shift'] });
     await page.waitForFunction(() => document.querySelector('[data-ui=select-bar]')?.textContent?.includes('2 selected'));
     await page.locator('[data-ui=select-bar] button[aria-label=Pause]').click();
-    const banner = await page.waitForFunction(() => /did not pause/.test(document.querySelector('[data-ui=list-view]')?.textContent ?? ''), null, { timeout: 10000 }).then(() => true, () => false);
-    const bulkText = await page.locator('[data-ui=list-view]').textContent() ?? '';
+    const banner = await page.waitForFunction(() => /did not pause/.test(document.querySelector('.pw-facet [data-ui=list-view]')?.textContent ?? ''), null, { timeout: 10000 }).then(() => true, () => false);
+    const bulkText = await page.locator('.pw-facet [data-ui=list-view]').textContent() ?? '';
     rule(N, banner && bulkText.includes('1 of 2 did not pause: forced failure'), `partial bulk failure: no "1 of 2 did not pause: forced failure" banner (banner shown: ${banner})`);
     await page.waitForFunction(b => new URLSearchParams(location.search).get('sel') === b, badId, { timeout: 5000 }).catch(() => {});
     { const sel = new URL(origin + await url()).searchParams.get('sel'); rule(N, sel === badId, `after a partial bulk failure sel should be only the failed row ${badId}, got ${sel}`); }
@@ -207,7 +202,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     // Collapsed groups are remembered per person (list-view.md, prefs listGroups), both ways: under state grouping In
     // progress (3) and Queued (4) are collapsed by the person, Completed (7, collapsed by default) is opened. Leaving the
     // section and coming back, and a reload, show them so from the first frame the headers are on screen.
-    const header = (k: string) => page.locator(`.vl-row[data-key="g:${k}"] .group-h`);
+    const header = (k: string) => page.locator(`.pw-facet .vl-row[data-key="g:${k}"] .group-h`);
     // The successful bulk pause introduced a Paused group. Limit this scenario to the three groups it verifies.
     await page.goto(origin + '/tasks?group=state&state=completed,in_progress,queued'); await header('3').waitFor();
     rule(N, await header('3').getAttribute('aria-expanded') === 'true', 'In progress is not open by default');
@@ -217,7 +212,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     rule(N, await header('7').getAttribute('aria-expanded') === 'true', 'Completed did not open');
     const want = 'false,false,true';
     // Every frame's headers 3, 4 and 7 (aria-expanded, - when not on screen), recorded from a start until the list settles.
-    const RECORD = `window.__groups = []; const tick = () => { const s = ['3', '4', '7'].map(k => document.querySelector('.vl-row[data-key="g:' + k + '"] .group-h')?.getAttribute('aria-expanded') ?? '-').join(','); if (window.__groups.at(-1) !== s) window.__groups.push(s); requestAnimationFrame(tick); }; requestAnimationFrame(tick);`;
+    const RECORD = `window.__groups = []; const tick = () => { const s = ['3', '4', '7'].map(k => document.querySelector('.pw-facet .vl-row[data-key="g:' + k + '"] .group-h')?.getAttribute('aria-expanded') ?? '-').join(','); if (window.__groups.at(-1) !== s) window.__groups.push(s); requestAnimationFrame(tick); }; requestAnimationFrame(tick);`;
     const flashed = (seen: string[]) => seen.filter(s => s.split(',').some((x, i) => x !== '-' && x !== want.split(',')[i]));
     await page.locator('.rail [data-id="system"] a').first().click(); await page.waitForURL('**/system');
     // Every toggle reached the server.
@@ -237,6 +232,17 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     console.log(`groups 3,4,7 per frame after a reload: ${reloaded.join(' > ')}`);
     rule(N, reloaded.at(-1) === want && !flashed(reloaded).length, `after a reload: groups not as left from the first frame: ${reloaded.join(' > ')}`);
     // Grouping by project and back to state keeps them too.
+    // Opening a task: inside the Tasks facet the task replaces the list (docs/design-system/pages/projects.md) under its
+    // project's facet route; Back returns to the list as it was.
+    await page.keyboard.press('Escape');
+    const beforeFocus = await url();
+    await page.locator('.pw-facet .vl-row .row-link').first().click();
+    await page.waitForSelector('[data-ui=detail] .detail-title');
+    await page.waitForFunction(() => /^\/projects\/(?:[^/]+\/)?tasks\/T-/.test(location.pathname), null, { timeout: 10_000 }).catch(() => {});
+    const focused = await url();
+    rule(N, /^\/projects\/(?:[^/]+\/)?tasks\/T-/.test(focused), `an opened task is not under its project's Tasks facet: ${focused}`);
+    rule(N, new URL(origin + focused).searchParams.get('sel') === new URL(origin + beforeFocus).searchParams.get('sel'), 'focus changed sel');
+    await page.goBack(); await page.waitForSelector('.pw-facet [data-ui=data-list] .vl-row .row-link');
     await page.locator('[data-ui=group-control] button').first().click();
     await page.locator('[data-ui=group-control] [role=menuitemradio]', { hasText: 'Project' }).click(); await page.waitForURL(u => !u.search.includes('group=state'));
     await page.locator('[data-ui=group-control] button').first().click();
