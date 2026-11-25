@@ -34,7 +34,11 @@ export function ToolLine(p: {
   const running = () => p.state === 'running';
   const now = useTick(1000, running);
   const time = createMemo(() => duration(running() && p.startedAt !== undefined ? Math.max(0, (now() - p.startedAt) / 1000) : p.secs ?? 0));
-  const toggle = (k: ToolKind) => { const next = openKind() === k ? null : k; setOpenKind(next); setOpenCall(null); p.onToggle?.(next !== null); };
+  const toggle = (k: ToolKind) => {
+    const was = openKind() !== null, next = openKind() === k ? null : k;
+    setOpenKind(next); setOpenCall(null);
+    if (was !== (next !== null)) p.onToggle?.(next !== null); // switching chips keeps the line open
+  };
   const shown = createMemo(() => chips().find(c => c.kind === openKind()));
   return (
     <div class={['tool-line', p.state ?? 'done', { open: !!shown() }]} data-ui="tool-line" role="group" aria-label={`${p.words}, ${time().long}`}>
