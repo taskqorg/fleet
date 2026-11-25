@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,6 +57,52 @@ func managedExecutable(name, fallback, model string) (path string, managed bool,
 		return "", true, fmt.Errorf("release-managed %s %s executable missing", name, a.Version)
 	}
 	return exe, true, nil
+}
+
+// useManagedTools puts the release's pinned host tools (config/tool-pins.json, docs/designs/fleet-host-updates.md)
+// first on this process's PATH, once at start. Every child inherits it: native runs, readiness, the tool:<name>
+// capability (exec.LookPath) and forge calls all find the same binary. A release without tool pins keeps the host's.
+func useManagedTools() error {
+	release := releaseHarnesses()
+	if release.err != nil {
+		return nil // the CLI manifest error is reported where a CLI is used (managedExecutable)
+	}
+	dirs, err := managedToolDirs(release.root)
+	if err != nil || len(dirs) == 0 {
+		return err
+	}
+	return os.Setenv("PATH", strings.Join(append(dirs, os.Getenv("PATH")), string(os.PathListSeparator)))
+}
+
+// managedToolDirs: the directory of each pinned tool's executable under the releases root, each checked present. A
+// missing one stops the executor, so the release fails its health check and rolls back.
+func managedToolDirs(root string) ([]string, error) {
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return nil, err
+	}
+	assets, err := harnessrelease.Tools.Read(filepath.Dir(exe), runtime.GOOS+"-"+runtime.GOARCH)
+	if err != nil {
+		return nil, fmt.Errorf("managed tool manifest: %w", err)
+	}
+	var dirs []string
+	for _, name := range harnessrelease.Tools.Names {
+		a, ok := assets[name]
+		if !ok {
+			continue
+		}
+		path := filepath.Join(root, a.Executable(name))
+		if !isFile(path) {
+			return nil, fmt.Errorf("release-managed tool %s %s executable missing", name, a.Version)
+		}
+		if d := filepath.Dir(path); !slices.Contains(dirs, d) {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs, nil
 }
 
 var cliSemver = regexp.MustCompile(`\b[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?\b`)

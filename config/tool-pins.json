@@ -1,0 +1,57 @@
+{
+  "enabled": false,
+  "targets": {
+    "linux-amd64": {
+      "node": {
+        "version": "26.13.1",
+        "url": "https://nodejs.org/dist/v26.13.1/node-v26.13.1-linux-x64.tar.gz",
+        "sha256": "518674de2b621728a5e4486f5fb3b7d2900bb3cc4aa97969edaa463db99f9778",
+        "entry": "node-v26.13.1-linux-x64/bin/node"
+      },
+      "pnpm": {
+        "version": "12.23.0",
+        "url": "https://github.com/pnpm/pnpm/releases/download/v12.23.0/pnpm-linux-x64.tar.gz",
+        "sha256": "b515e29f2ac1adc0fbe63173414a6682827baff24f17e7ad3476821bdef236ac",
+        "entry": "pnpm"
+      },
+      "gh": {
+        "version": "2.105.0",
+        "url": "https://github.com/cli/cli/releases/download/v2.105.0/gh_2.105.0_linux_amd64.tar.gz",
+        "sha256": "79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f",
+        "entry": "gh_2.105.0_linux_amd64/bin/gh"
+      },
+      "glab": {
+        "version": "1.133.0",
+        "url": "https://gitlab.com/gitlab-org/cli/-/releases/v1.133.0/downloads/glab_1.133.0_linux_amd64.tar.gz",
+        "sha256": "b17f858b8d700f1607f8ec02fe092a455da6a8dd18dac3eb6ccb09db1befd4bf",
+        "entry": "bin/glab"
+      }
+    },
+    "darwin-arm64": {
+      "node": {
+        "version": "26.13.1",
+        "url": "https://nodejs.org/dist/v26.13.1/node-v26.13.1-darwin-arm64.tar.gz",
+        "sha256": "aec2514ea1ceb2ba52455e9ec65986f6749a06dd759e5db2a72e6889668c9735",
+        "entry": "node-v26.13.1-darwin-arm64/bin/node"
+      },
+      "pnpm": {
+        "version": "12.23.0",
+        "url": "https://github.com/pnpm/pnpm/releases/download/v12.23.0/pnpm-darwin-arm64.tar.gz",
+        "sha256": "52bb314bf0d48928fc15126ccce42aa199275e29018bef112a04ae8acdcaaf14",
+        "entry": "pnpm"
+      },
+      "gh": {
+        "version": "2.105.0",
+        "url": "https://github.com/cli/cli/releases/download/v2.105.0/gh_2.105.0_macOS_arm64.zip",
+        "sha256": "2a5d03103ae444927383b93d9ffd65579a26e2eb900ce1cf11f55258d5319ded",
+        "entry": "gh_2.105.0_macOS_arm64/bin/gh"
+      },
+      "glab": {
+        "version": "1.133.0",
+        "url": "https://gitlab.com/gitlab-org/cli/-/releases/v1.133.0/downloads/glab_1.133.0_darwin_arm64.tar.gz",
+        "sha256": "d81ed2620b0d1374e2e0a8bfd90a3ef8945d177667d065a0945b301a1eada3e2",
+        "entry": "bin/glab"
+      }
+    }
+  }
+}

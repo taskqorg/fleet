@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/sha512"
 	"errors"
@@ -12,29 +13,37 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-var managedHarnesses = []string{"codex", "claude", "antigravity"}
+// kindLabel: how errors and logs name a kind ("managed CLI", "managed tool"); the coordinator asks on that prefix.
+func kindLabel(k harnessrelease.Kind) string {
+	return "managed " + map[string]string{"cli": "CLI", "tool": "tool"}[k.Name]
+}
 
-// prepareHarnesses installs verified payloads without disturbing the running release.
+// prepareHarnesses installs the verified payloads of every managed kind (agent CLIs, host tools) without disturbing
+// the running release (docs/designs/fleet-host-updates.md, step 8).
 func (u *updater) prepareHarnesses(p *part, release string) error {
-	assets, err := harnessrelease.Read(release, u.target)
-	if err != nil {
-		return fmt.Errorf("%w: managed CLI manifest: %v", refusal("harness-manifest"), err)
-	}
-	for _, name := range managedHarnesses {
-		a, ok := assets[name]
-		if !ok {
-			continue
+	for _, k := range harnessrelease.Kinds {
+		assets, err := k.Read(release, u.target)
+		if err != nil {
+			return fmt.Errorf("%w: %s manifest: %v", refusal("harness-manifest"), kindLabel(k), err)
 		}
-		if err := u.prepareHarness(p, name, a); err != nil {
-			var invalid refusal
-			if errors.As(err, &invalid) {
-				return fmt.Errorf("%w: %v", refusal(fmt.Sprintf("%s: %s %s", invalid, name, a.Version)), err)
+		for _, name := range k.Names {
+			a, ok := assets[name]
+			if !ok {
+				continue
 			}
-			return fmt.Errorf("managed CLI %s %s: %w", name, a.Version, err)
+			if err := u.prepareHarness(p, name, a); err != nil {
+				var invalid refusal
+				if errors.As(err, &invalid) {
+					return fmt.Errorf("%w: %v", refusal(fmt.Sprintf("%s: %s/%s %s", invalid, k.Name, name, a.Version)), err)
+				}
+				return fmt.Errorf("%s %s %s: %w", kindLabel(k), name, a.Version, err)
+			}
 		}
 	}
 	return nil
@@ -81,7 +90,7 @@ func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset) e
 	}
 	files := filepath.Join(stage, "files")
 	if a.Entry != "" {
-		if err := unpack(payload, files); err != nil {
+		if err := unpackPayload(payload, files, strings.HasSuffix(a.URL, ".zip")); err != nil {
 			return fmt.Errorf("%w: %v", refusal("harness-archive"), err)
 		}
 	} else {
@@ -101,6 +110,14 @@ func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset) e
 	}
 	if st, err := os.Stat(filepath.Join(files, entry)); err != nil || !executable(st) {
 		return fmt.Errorf("%w: executable %s is missing", refusal("harness-archive"), entry)
+	}
+	// Run the new component here before any switch (fleet-host-updates.md, step 8): a payload this host cannot run (its
+	// libc, its macOS) or that reports another version refuses the release, and the host stays on its current one.
+	// Root (PDS18) does not run vendor code; its target, linux-amd64, is qualified offline before the merge.
+	if os.Geteuid() != 0 {
+		if err := harnessVersionRuns(filepath.Join(files, entry), stage, a.Version); err != nil {
+			return err
+		}
 	}
 
 	tmp := dir + ".tmp"
@@ -139,6 +156,36 @@ func (u *updater) downloadHarness(a harnessrelease.Asset, path string, newHash f
 	}
 }
 
+// harnessVersionRuns: `<exe> --version` with a private home and no account names version. A wrong answer or a failed
+// start refuses; a timeout is transient (a busy host), so the next run tries again.
+func harnessVersionRuns(exe, stage, version string) error {
+	home, err := os.MkdirTemp(stage, "home-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(home)
+	ctx, cancel := context.WithTimeout(context.Background(), harnessVersionWait)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe, "--version")
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + home, "DISABLE_AUTOUPDATER=1"}
+	cmd.Dir = home
+	cmd.WaitDelay = time.Second
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return fmt.Errorf("%s --version did not answer within %s", filepath.Base(exe), harnessVersionWait)
+	}
+	if err != nil || !strings.Contains(string(out), version) {
+		answer := strings.TrimSpace(string(out))
+		if len(answer) > 200 {
+			answer = answer[:200]
+		}
+		return fmt.Errorf("%w: %s --version: %v %q", refusal("harness-version"), filepath.Base(exe), err, answer)
+	}
+	return nil
+}
+
+var harnessVersionWait = 30 * time.Second
+
 func executable(st fs.FileInfo) bool {
 	return st.Mode().IsRegular() && st.Mode().Perm()&0o111 != 0
 }
@@ -146,12 +193,14 @@ func executable(st fs.FileInfo) bool {
 func (u *updater) retainedHarnesses(p *part) (map[string]bool, error) {
 	keep := map[string]bool{}
 	for _, link := range []string{"current", "previous"} {
-		assets, err := harnessrelease.Read(filepath.Join(p.root, link), u.target)
-		if err != nil {
-			return nil, err
-		}
-		for name, asset := range assets {
-			keep[asset.Dir(name)] = true
+		for _, k := range harnessrelease.Kinds {
+			assets, err := k.Read(filepath.Join(p.root, link), u.target)
+			if err != nil {
+				return nil, err
+			}
+			for name, asset := range assets {
+				keep[asset.Dir(name)] = true
+			}
 		}
 	}
 	return keep, nil
@@ -160,17 +209,19 @@ func (u *updater) retainedHarnesses(p *part) (map[string]bool, error) {
 func (u *updater) pruneHarnesses(p *part) {
 	keep, err := u.retainedHarnesses(p)
 	if err != nil {
-		log.Print("prune managed CLIs: ", err)
+		log.Print("prune managed components: ", err)
 		return
 	}
-	for _, name := range managedHarnesses {
-		parent := filepath.Join("harnesses", name)
-		entries, _ := fs.ReadDir(p.r.FS(), parent)
-		for _, entry := range entries {
-			path := filepath.Join(parent, entry.Name())
-			if !keep[path] {
-				if err := p.r.RemoveAll(path); err != nil {
-					log.Printf("prune managed CLI %s: %v", path, err)
+	for _, k := range harnessrelease.Kinds {
+		for _, name := range k.Names {
+			parent := filepath.Join(k.Dir, name)
+			entries, _ := fs.ReadDir(p.r.FS(), parent)
+			for _, entry := range entries {
+				path := filepath.Join(parent, entry.Name())
+				if !keep[path] {
+					if err := p.r.RemoveAll(path); err != nil {
+						log.Printf("prune %s %s: %v", kindLabel(k), path, err)
+					}
 				}
 			}
 		}
@@ -190,6 +241,14 @@ func harnessChecksums(tree fs.FS, dir string) ([]byte, error) {
 		info, err := entry.Info()
 		if err != nil {
 			return err
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			target, err := fs.ReadLink(tree, path)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(&out, "link %q %q\n", target, rel)
+			return nil
 		}
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("%s is not a regular file", path)

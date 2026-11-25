@@ -163,6 +163,9 @@ func reproject() error {
 }
 
 func runExecutor() error {
+	if err := useManagedTools(); err != nil {
+		return err
+	}
 	root := envOr("FLEET_DATA_DIR", defaultDataDir())
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return err
