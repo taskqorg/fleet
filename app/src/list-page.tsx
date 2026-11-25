@@ -292,7 +292,7 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
     /** The view patch that opens a row: its focus, without the keys of the item open before. */
     opening: (r: ListRow): Partial<View> => {
       const focus = o.focusOf?.(r) ?? r.id, extra = url.view.extra;
-      if (!o.itemExtra?.length || !extra || focus === url.view.focus) return { focus };
+      if (!o.itemExtra?.length || !extra || focus === url.view.focus || r.id === url.view.focus) return { focus };
       return { focus, extra: Object.fromEntries(Object.entries(extra).filter(([k]) => !o.itemExtra!.includes(k))) };
     },
     scope: () => o.scope?.(),
