@@ -112,3 +112,53 @@ func TestStopCancelsUntakenSteer(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Risk: a follow-up queued behind a run before /stop runs after the stop and does the stopped request (F21 recheck,
+// 2026-11-26: "И ещё добавь к каждой дату создания." queued, /stop, then the follow-up produced the whole list).
+func TestStopCancelsQueuedBehind(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	if err := e.app.store.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		s := agentSession{ID: "queue-session", AgentConfig: []byte(`{"harness":"codex"}`)}
+		if err := sessionPut(q, &s); err != nil {
+			return err
+		}
+		x := agentExecution{ID: "run-1", ExecutionID: "run-1", SessionID: s.ID, State: "running", CreatedAt: nowMs()}
+		if err := executionPut(q, &x); err != nil {
+			return err
+		}
+		queue := func(id, thread string) {
+			m := agentQueued{ID: id, SessionID: s.ID, RequestID: "r-" + id, Text: id, State: "queued", Thread: thread, CreatedAt: nowMs()}
+			if err := queuedMessagePut(q, &m); err != nil {
+				t.Fatal(err)
+			}
+		}
+		state := func(id string) string {
+			ms, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: &s.ID, RequestID: ptr("r-" + id)})
+			if err != nil || len(ms) != 1 {
+				t.Fatalf("%s: %v %v", id, ms, err)
+			}
+			return ms[0].State
+		}
+		queue("follow-up", "")
+		queue("other-thread", "task:t1")
+		if _, err := requestExecutionStop(q, x.ID, false); err != nil {
+			return err
+		}
+		if got := state("follow-up"); got != "cancelled" {
+			t.Fatalf("a message queued behind the stopped run is cancelled with it, got %s", got)
+		}
+		if got := state("other-thread"); got != "queued" {
+			t.Fatalf("another thread's message keeps its place, got %s", got)
+		}
+		queue("after-stop", "")
+		if _, err := requestExecutionStop(q, x.ID, false); err != nil {
+			return err
+		}
+		if got := state("after-stop"); got != "queued" {
+			t.Fatalf("a message sent after the stop runs next; a repeated stop keeps it, got %s", got)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

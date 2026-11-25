@@ -825,6 +825,7 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 			return rep, err
 		}
 	}
+	firstStop := !isTrue(e.StopRequested) && !e.terminal() // a stop of a finished run cancels nothing queued
 	e.StopRequested = ptr(true)
 	if taskCancellation {
 		e.TaskStopRequested = ptr(true)
@@ -863,6 +864,11 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 	}
 	if err := executionPut(q, &e); err != nil {
 		return rep, err
+	}
+	if firstStop {
+		if err := cancelQueuedBehind(q, &e); err != nil {
+			return rep, err
+		}
 	}
 	out, err := agentStopOutcome(q, &e)
 	if err != nil {

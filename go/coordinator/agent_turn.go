@@ -421,7 +421,7 @@ func agentSubmitFrom(q *Request, r *contract.MessageSendRequest, source, trigger
 	}
 	// A message with attachments is queued, never steered: its files are staged before a turn starts.
 	// A steer reaches only the running turn of the same thread; a message for another thread waits for its own turn.
-	// A run asked to stop takes no steer: the message waits for the next turn (cancelSteerOfStopped).
+	// A run asked to stop takes no steer: the message waits for the next turn (cancelWithStop).
 	if deref(r.Delivery) == "steer" && active != nil && active.State == "running" && !isTrue(active.StopRequested) && len(attachments) == 0 && active.Thread == thread &&
 		(r.Composer == nil || r.Composer.ExecutionId != nil) {
 		// The steer goes to the host running the turn, whoever sends it (composer, MCP or agent).
@@ -606,7 +606,7 @@ func agentCommandReceipt(q *Request, c *agentCommand, e *agentExecution, status 
 		case "failed":
 			m.State, m.SteerCommandID = "queued", ""
 			if isTrue(e.StopRequested) {
-				return cancelSteerOfStopped(q, &m)
+				return cancelWithStop(q, &m)
 			}
 		case "unknown":
 			m.State = "steer_unknown"
@@ -764,14 +764,42 @@ func agentDecorateStart(q *Request, s *agentSession, e *agentExecution, payload 
 	return nil
 }
 
-// cancelSteerOfStopped: a steer the stopped run never took is part of the stopped request, sent before the stop (a run
-// asked to stop takes no new steer), so it is cancelled with it rather than requeued as the next turn (F21).
-func cancelSteerOfStopped(q *Request, m *agentQueued) error {
+// cancelWithStop: a message sent before a stop and not yet taken by a turn is part of the stopped request, so the stop
+// cancels it rather than letting it run as the next turn (F21): a steer the stopped run never took (a run asked to stop
+// takes no new steer) and a message queued behind that run (cancelQueuedBehind).
+func cancelWithStop(q *Request, m *agentQueued) error {
 	m.State = "cancelled"
 	if err := queuedMessagePut(q, m); err != nil {
 		return err
 	}
 	return transitionBotQueuedRun(q, m.ID, "cancelled", "stopped")
+}
+
+// cancelQueuedBehind: the first stop of a session's run cancels the messages queued behind it on its thread; a message
+// sent after the stop queues and runs as the next turn.
+func cancelQueuedBehind(q *Request, e *agentExecution) error {
+	if e.SessionID == "" {
+		return nil
+	}
+	// The session lock serializes with message_send and agentPromote where lock order allows; where it does not, the
+	// stopped run is still the session's active run, so no promote starts these messages meanwhile.
+	if k := "session:" + e.SessionID; canAcquireTxLock(q.tx, k) {
+		if err := acquireTxLock(q, k); err != nil {
+			return err
+		}
+	}
+	ms, err := queuedMessages(q, db.QueuedMessagesParams{SessionID: &e.SessionID, State: ptr("queued")})
+	if err != nil {
+		return err
+	}
+	for i := range ms {
+		if ms[i].Thread == e.Thread {
+			if err := cancelWithStop(q, &ms[i]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // stoppedRequestQuote: how much of a stopped request the next turn's note quotes.
@@ -925,7 +953,7 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 		}
 		if e.terminal() && c.Status == "pending" {
 			if isTrue(e.StopRequested) {
-				if err := cancelSteerOfStopped(q, &m); err != nil {
+				if err := cancelWithStop(q, &m); err != nil {
 					return nil, err
 				}
 				continue
