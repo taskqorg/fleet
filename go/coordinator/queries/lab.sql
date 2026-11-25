@@ -216,10 +216,17 @@ WITH RECURSIVE
   FROM trial_steps
   WHERE ref_mode = 'reused'
  ),
+ -- The trials' pipeline tool calls, read in one pass of the partial index: under row security a non-leakproof ->> is no
+ -- index condition, so a join per trial rescanned every pipeline tool call for each trial (seconds at 372 trials, FLT-41).
+ run_tools AS MATERIALIZED (
+  SELECT c.id, c.kind, c.parent_execution_id, c.data->>'pipelineRunId' AS trial_id
+  FROM execution c
+  WHERE c.data ? 'pipelineRunId' AND c.data->>'pipelineRunId' = ANY(sqlc.arg(trial_ids)::text[])
+ ),
  seed AS (
   SELECT t.trial_id, c.id AS exec_id, c.kind
   FROM trials t
-  JOIN execution c ON c.data ? 'pipelineRunId' AND c.data->>'pipelineRunId' = t.trial_id
+  JOIN run_tools c ON c.trial_id = t.trial_id
   LEFT JOIN reused_steps rs_self ON rs_self.trial_id = t.trial_id AND rs_self.step_exec_id = c.id
   LEFT JOIN reused_steps rs_par ON rs_par.trial_id = t.trial_id AND rs_par.step_exec_id = c.parent_execution_id
   WHERE rs_self.trial_id IS NULL AND rs_par.trial_id IS NULL
