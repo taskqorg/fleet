@@ -38,7 +38,7 @@ func dispatchTestExecution(t *testing.T, env *testCoordEnv, sessionID, execID st
 
 func dispatchTestRouteDecisions(t *testing.T, env *testCoordEnv, execID string) []map[string]any {
 	t.Helper()
-	code, body := env.callJSON(t, "POST", "/api/ops/route_decisions", contract.RouteDecisionsRequest{ExecutionId: execID}, env.ownerHeaders())
+	code, body := env.callJSON(t, "POST", "/api/ops/route_decisions", contract.RouteDecisionsRequest{ExecutionId: &execID}, env.ownerHeaders())
 	if code != 200 {
 		t.Fatalf("route_decisions(%s) = %d %v", execID, code, body)
 	}

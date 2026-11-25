@@ -148,3 +148,10 @@ INSERT INTO host_observation(id, holder, last_seen_at, project_id, payload)
 VALUES (@id, sqlc.narg(holder), sqlc.narg(last_seen_at), sqlc.narg(project_id), @payload)
 ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
  holder=excluded.holder, last_seen_at=excluded.last_seen_at, project_id=excluded.project_id;
+
+-- name: RouteDecisionsOfSubscription :many
+-- The newest route decisions since a time in which a candidate of the subscription was skipped.
+SELECT execution_id, at, host_id, candidates, winner FROM route_decision
+WHERE at >= sqlc.arg(since)::timestamptz
+  AND jsonb_path_exists(candidates, '$[*] ? (@.subscription.id == $sub && exists(@.skipped))', jsonb_build_object('sub', sqlc.arg(subscription_id)::text))
+ORDER BY at DESC LIMIT 50;

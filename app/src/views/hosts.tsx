@@ -8,7 +8,7 @@ import { createMemo, createSignal, For, Match, onSettled, Show, Switch, type Acc
 import { useLocation } from '../router.ts';
 import {
   AgeChip, Button, CatalogueTree, ContextMenu, DataTable, DetailHead, DetailSection, Empty, EntityCode, ErrorBanner, Fact, HostBand,
-  KvRow, ListDetail, Num, OfflineMarker, ProblemRow, QuestionCard, RowFacts, SearchField, ShellStatus, Skeleton, StateBadge,
+  KvRow, ListDetail, Num, OfflineMarker, ProblemRow, QuestionCard, RowFacts, SearchField, ShellActions, ShellStatus, Skeleton, StateBadge,
   actions, bytes, copyText, duration, harnesses, matchSearch, money,
   type CatalogueTreeNode, type CostFigureLike, type GaugeProps, type WorkerSlotProps,
 } from '../../../packages/ui/src/index.ts';
@@ -24,6 +24,9 @@ import { Runners } from './runners.tsx';
 import { Spend, spendRequest, usdOf } from './spend.tsx';
 import { Humans } from './humans.tsx';
 import { FINDING, SystemIdle, hostFailures } from './system-idle.tsx';
+import { modelsText, useCompatProfiles } from './accounts.tsx';
+import { ConnectionAdd, HostAdd } from './system-add.tsx';
+import { profileGaps, type CompatAccount } from '../compat.ts';
 
 export type InfraSection = 'hosts' | 'limits' | 'keys' | 'runners' | 'spend' | 'people';
 
@@ -254,6 +257,15 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
   const listPane = (
     <>
       <ShellStatus><OfflineMarker state={hostsOp.state} now={now()} /></ShellStatus>
+      {/* The open root's action (system.md, shell header): Add host on Hosts (hosts_register: the owner or a full-access
+          person, which me does not tell apart from an architect; a refusal shows on the form), Add connection on
+          Connections & keys. */}
+      <Show when={section() === 'hosts' && (me.data?.owner || me.data?.roles.includes('architect'))}>
+        <ShellActions><Button label="Add host" icon="plus" iconOnly pressed={props.id === 'new'} onClick={() => go('/hosts/new')} /></ShellActions>
+      </Show>
+      <Show when={section() === 'keys'}>
+        <ShellActions><Button label="Add connection" icon="plus" iconOnly pressed={props.id === 'new'} onClick={() => go('/keys/new')} /></ShellActions>
+      </Show>
       <header class="page-h">
         <SearchField label="Find in System" value={q()} onInput={setQ} onSearch={() => {}} />
         <span class="grow" />
@@ -334,6 +346,8 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
             <Match when={section() === 'limits' && props.id}>
               <Show when={props.id} keyed>{id => <AccountDetail id={id} onClose={() => go('/hosts/limits')} onOpen={go} />}</Show>
             </Match>
+            <Match when={section() === 'hosts' && props.id === 'new'}><HostAdd onClose={() => go('/hosts')} onOpen={go} /></Match>
+            <Match when={section() === 'keys' && props.id === 'new'}><ConnectionAdd onClose={() => go('/keys')} onOpen={go} /></Match>
             <Match when={section() === 'keys' && props.id}>
               <Show when={props.id} keyed>{keyId => (
                 <KeyDetail id={keyId} conn={selConn()} loading={!connsOp.data && !connsOp.error} error={connsOp.error} onRetry={connsOp.reload} onClose={() => go('/keys')} />
@@ -403,6 +417,12 @@ function HostDetail(props: { host: HostRow; live: boolean; now: number; clockOff
   const findings = createMemo(() => (found.data?.findings ?? []).filter(f => f.hostId === h().id));
   const RECENT = 10;
   const recentRuns = createMemo(() => (tele.data?.runs ?? []).filter(r => r.hostId === h().id).slice(0, RECENT));
+  // J5: the accounts bound on this host with the models its probe found, and the profiles no account here can serve.
+  const accountsOp = useOp('account_list', {});
+  const profiles = useCompatProfiles();
+  const accounts = createMemo(() => (accountsOp.data?.accounts ?? []) as CompatAccount[]);
+  const hostAccounts = createMemo(() => accounts().flatMap(a => (a.bindings ?? []).filter(b => b.hostId === h().id).map(b => ({ account: a, binding: b }))));
+  const gaps = createMemo(() => profileGaps(profiles(), accounts(), h().id));
   const preview = () => {
     setErr('');
     void op('hosts_remove', { id: h().id, preview: true }).then(setConfirm, e => setErr(String(e.message ?? e)));
@@ -446,6 +466,11 @@ function HostDetail(props: { host: HostRow; live: boolean; now: number; clockOff
       <ProblemRow title={`Edge answers ${p.route} with ${p.status}`} severity="failure" actions={[]} facts={p.detail || p.location || ''} />
     )}</For>
     <For each={findings()}>{f => <ProblemRow title={f.text ?? FINDING} code={f.cause} severity="warning" actions={[]} facts={<AgeChip t={ms(f.since)} clockOffsetMs={props.clockOffsetMs} />} />}</For>
+    <For each={gaps()}>{g => (
+      <ProblemRow title={`Profile ${g.profile.id} cannot run on ${h().id}`} severity="warning"
+        facts={<>{g.model}: no account bound here offers it{g.probedAt ? <> (probed <AgeChip t={g.probedAt} clockOffsetMs={props.clockOffsetMs} />)</> : ''} · the router skips this host for it</>}
+        actions={[{ label: 'Open profile', primary: true, onClick: () => props.onOpen(`/library/agents/${encodeURIComponent(g.profile.id)}`) }]} />
+    )}</For>
     <HostBand name={h().id}
       state={!props.live ? 'offline' : problemLine() ? 'problem' : 'normal'}
       facts={[h().platform, load()?.diskFree != null ? `${bytes(load()!.diskFree!).text} free` : ''].filter(Boolean).join(' · ')}
@@ -464,6 +489,15 @@ function HostDetail(props: { host: HostRow; live: boolean; now: number; clockOff
             </tr>
           )}</For>
         </DataTable>
+      </DetailSection>
+    </Show>
+    <Show when={hostAccounts().length}>
+      <DetailSection title={`Accounts and models ${hostAccounts().length}`}>
+        <For each={hostAccounts()}>{x => (
+          <KvRow icon="gauge" label={x.account.name ?? x.account.id} meta={modelsText(x.binding)}
+            value={x.binding.modelsObservedAt ? <AgeChip t={x.binding.modelsObservedAt} clockOffsetMs={props.clockOffsetMs} /> : <span class="muted">—</span>}
+          />
+        )}</For>
       </DetailSection>
     </Show>
     <DetailSection title="Readings">

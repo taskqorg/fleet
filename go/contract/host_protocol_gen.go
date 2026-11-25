@@ -129,6 +129,7 @@ func (v *AccountInspectPayload) Validate() error {
 type AccountObservation struct {
 	AccountId           string        `json:"accountId"`
 	Binding             string        `json:"binding"`
+	Models              []string      `json:"models,omitempty"`
 	NativeLoginObserved *bool         `json:"nativeLoginObserved"`
 	Platform            Platform      `json:"platform"`
 	Quota               string        `json:"quota"`

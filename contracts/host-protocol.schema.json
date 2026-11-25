@@ -197,6 +197,11 @@
         },
         "reason": {
           "type": "string"
+        },
+        "models": {
+          "$comment": "Models the vendor CLI on this host offers for this binding (probed at inspection). Absent: not probed (an older executor or a failed probe), never read as an empty list.",
+          "type": "array",
+          "items": {"type": "string"}
         }
       }
     },

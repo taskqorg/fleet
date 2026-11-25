@@ -17,8 +17,10 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
@@ -725,18 +727,36 @@ func hostSlotLimit(maxConcurrent *int64, configured bool, load *contract.HostLoa
 
 func routeDecisions(q *Request, r *contract.RouteDecisionsRequest) (contract.RouteDecisionsReply, error) {
 	out := contract.RouteDecisionsReply{Decisions: []contract.RouteDecision{}}
-	id := r.ExecutionId
+	add := func(executionID string, at time.Time, hostID *string, candidates, winner []byte) {
+		w := json.RawMessage(winner)
+		if w == nil {
+			w = json.RawMessage("null")
+		}
+		out.Decisions = append(out.Decisions, contract.RouteDecision{ExecutionId: executionID, At: timeText(at), HostId: hostID,
+			Candidates: candidates, Winner: w})
+	}
+	// A subscription's skips (J5): the newest decisions of the window that skipped it on some host.
+	if sub := deref(r.SubscriptionId); sub != "" {
+		if len(sub) > 200 || r.ExecutionId != nil {
+			return out, fail(400, "Expected executionId or subscriptionId")
+		}
+		since := time.Now().Add(-24 * time.Hour)
+		if r.Since != nil {
+			since = time.UnixMilli(*r.Since)
+		}
+		rs, err := q.db().RouteDecisionsOfSubscription(q.ctx(), db.RouteDecisionsOfSubscriptionParams{Since: pgtype.Timestamptz{Time: since, Valid: true}, SubscriptionID: sub})
+		for _, x := range rs {
+			add(x.ExecutionID, x.At, x.HostID, x.Candidates, x.Winner)
+		}
+		return out, err
+	}
+	id := deref(r.ExecutionId)
 	if id == "" || len(id) > 200 {
 		return out, fail(400, "Expected executionId")
 	}
 	rs, err := q.db().RouteDecisionsOf(q.ctx(), id)
 	for _, x := range rs {
-		winner := json.RawMessage(x.Winner)
-		if winner == nil {
-			winner = json.RawMessage("null")
-		}
-		out.Decisions = append(out.Decisions, contract.RouteDecision{ExecutionId: x.ExecutionID, At: timeText(x.At), HostId: x.HostID,
-			Candidates: x.Candidates, Winner: winner})
+		add(x.ExecutionID, x.At, x.HostID, x.Candidates, x.Winner)
 	}
 	return out, err
 }

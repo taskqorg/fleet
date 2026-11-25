@@ -268,7 +268,7 @@ The guard (`fleet-gateway guard`, `go/gateway/guard.go`) verifies the Cloudflare
 
 ## Hosts
 
-Each host has its own secret. Make it on the host with `scripts/host-secret.sh <file>` (0600, prints only the SHA-256) and register the hash as the owner: `hosts_register {id, name?, holder?, platform?, roles?, harnesses?, secretSha256}`; `hosts_rotate_secret {id, secretSha256}` replaces it and the old secret stops at once. Roles: `inspector-for:<hostId>` (account inspection and integration for that host), `publication` (delivery). The executor reads `FLEET_HOST_SECRET_FILE`; `FLEET_HOST_ID` is only a label: the coordinator derives the host from the secret and answers 403 to a different body `hostId`. The program worker config names `hostSecretFile`. The executor's project roots are `FLEET_PROJECT_ROOTS` (`:`-separated absolute paths).
+Each host has its own secret. Make it on the host with `scripts/host-secret.sh <file>` (0600, prints only the SHA-256) and register the hash as the owner: `hosts_register {id, name?, holder?, platform?, roles?, harnesses?, secretSha256}`; `hosts_rotate_secret {id, secretSha256}` replaces it and the old secret stops at once. System › Hosts › Add host in the web app sends the same `hosts_register`. Roles: `inspector-for:<hostId>` (account inspection and integration for that host), `publication` (delivery). The executor reads `FLEET_HOST_SECRET_FILE`; `FLEET_HOST_ID` is only a label: the coordinator derives the host from the secret and answers 403 to a different body `hostId`. The program worker config names `hostSecretFile`. The executor's project roots are `FLEET_PROJECT_ROOTS` (`:`-separated absolute paths).
 
 ## Example: csgo
 

@@ -4793,3 +4793,7 @@ CREATE INDEX event_agent_text ON event(session_id, seq)
 -- migration 102: an example artifact's Lab use case, copied from its content when stored (NULL: not read yet, '': none).
 -- Lab lists and leaderboards read it from the row instead of reading every example from the object store (FLT-41).
 ALTER TABLE artifact ADD COLUMN use_case_id text NULL;
+
+-- migration 104: route decisions by time, for a subscription's skips over the last day (route_decisions subscriptionId,
+-- J5 in docs/designs/fleet-ia-and-journeys.md section 3): a window scan instead of the whole table.
+CREATE INDEX route_decision_at ON route_decision(at);

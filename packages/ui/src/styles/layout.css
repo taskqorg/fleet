@@ -288,6 +288,7 @@
   .limit-card .area-chart { padding: 0 var(--space-4); }
   /* System idle (pages/system.md): problem rows, then figure tiles that wrap to the work area's width. */
   .sys-problems { display: flex; flex-direction: column; gap: var(--space-3); }
+  .sys-form { max-width: var(--size-detail); }
   .sys-figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--size-control) * 8), 1fr)); gap: var(--space-3); }
   .sys-healthy { display: flex; align-items: center; gap: var(--space-2); margin: 0; padding: var(--space-3) var(--space-4); color: var(--success-fg); }
   .sys-caps { margin: 0; font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--fg-muted); overflow-wrap: anywhere; }

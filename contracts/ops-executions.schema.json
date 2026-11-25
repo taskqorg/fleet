@@ -32,7 +32,7 @@
     "pipeline_run": {"read": false, "long": true, "errors": [413], "auth": "project:projectId", "agent": "tool", "description": "Runs the project's method for a capability; idempotent by requestId. If truncated is true, use pipeline_get with the returned id for details."},
     "pipeline_run_create": {"read": false, "long": true, "errors": [400,403,404,409], "auth": "person", "agent": "tool", "description": "Start a stored pipeline by pipelineId with projectId and a stable requestId; read its runId with pipeline_get."},
     "queue_list": {"read": true, "errors": [], "auth": "person", "agent": "bound:session", "description": "Queued messages"},
-    "route_decisions": {"read": true, "errors": [400], "auth": "person", "agent": "tool", "description": "Why an execution (executionId) was routed to its host and account"}
+    "route_decisions": {"read": true, "errors": [400], "auth": "person", "agent": "tool", "description": "Why an execution (executionId) was routed to its host and account; or, with subscriptionId, the newest 50 decisions since since (epoch ms, default the last 24 h) that skipped that subscription somewhere (J5 model skips carry cause subscription:<id>:model:<model>)"}
   },
   "planned": {},
   "$defs": {
@@ -163,7 +163,7 @@
     "DeliverySource": {"type": "string", "enum": ["key", "public", "none"]},
     "DeliverySample": {"type": "object", "required": ["at", "projectId", "counts"], "properties": {"at": {"type": "string"}, "projectId": {"type": "string"}, "repo": {"type": "string"}, "counts": {"type": "object", "additionalProperties": {"type": "integer"}}}, "$comment": "Pull requests per stage of one repository (repo, owner/name) at one read, the last 24 hours; a repository in several projects has one sample per project."},
     "RouteDecisionsReply": {"type": "object", "required": ["decisions"], "properties": {"decisions": {"type": "array", "items": {"$ref": "#/$defs/RouteDecision"}}}},
-    "RouteDecisionsRequest": {"type": "object", "required": ["executionId"], "properties": {"executionId": {"type": "string"}}, "additionalProperties": true},
+    "RouteDecisionsRequest": {"type": "object", "required": [], "$comment": "executionId, or subscriptionId with an optional since (epoch ms).", "properties": {"executionId": {"type": "string"}, "subscriptionId": {"type": "string"}, "since": {"type": "integer"}}, "additionalProperties": true},
     "StopCommandRef": {"type": "object", "required": ["id", "status"], "properties": {"id": {"type": "string"}, "status": {"type": "string"}}},
     "StopOutcome": {"type": "object", "required": ["outcome", "detail", "state"], "properties": {"outcome": {"type": "string"}, "detail": {"type": "string"}, "state": {"type": "string"}, "stopCommand": {"$ref": "#/$defs/StopCommandRef"}}, "$comment": "outcome proven (detail stopped or already_finished) or unknown (detail unconfirmed, with the stop command when one exists)."},
     "SystemChangesRequest": {"type": "object", "additionalProperties": true},

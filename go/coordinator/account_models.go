@@ -1,0 +1,68 @@
+package main
+
+// J5 account compatibility (docs/designs/fleet-ia-and-journeys.md section 3): each binding of a subscription carries the
+// models its host's vendor CLI offered at inspection (probe) and the models a run on it failed with as not found
+// (learned). The router skips a binding for a model it knows the binding does not serve; an unknown list never skips.
+
+import (
+	"regexp"
+	"strings"
+
+	"fleet/coordinator/db"
+)
+
+// modelOffered: whether a probed list names the model. Vendor lists mix full ids and aliases ("opus" for
+// "claude-opus-5-5"), so either name containing the other counts; a false skip costs a run, a false pass costs nothing new.
+func modelOffered(list []string, model string) bool {
+	m := modelKey(model)
+	for _, x := range list {
+		x = modelKey(x)
+		if x == "" {
+			continue
+		}
+		if x == m || strings.Contains(m, x) || strings.Contains(x, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// modelKey: a model name compared case-blind and without a context-size suffix ("sonnet[1m]" is "sonnet").
+func modelKey(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if i := strings.IndexByte(s, '['); i > 0 && strings.HasSuffix(s, "]") {
+		s = s[:i]
+	}
+	return s
+}
+
+// modelRefusal: why this binding cannot serve model, or "" when it can or nobody knows.
+func (b accountBinding) modelRefusal(model string) string {
+	if model == "" {
+		return ""
+	}
+	if _, ok := b.RejectedModels[model]; ok {
+		return "rejected " + model + " after start (modelNotFound)"
+	}
+	if b.Models != nil && !modelOffered(b.Models, model) {
+		return "does not offer " + model + " (probe)"
+	}
+	return ""
+}
+
+// rejectedModelText: a run failure that says the vendor does not know the requested model.
+var rejectedModelText = regexp.MustCompile(`(?i)model_?not_?found|unknown model|model[^\n]{0,80}(not found|does not exist)`)
+
+// noteModelRejected records, on the account's binding on host, that a run there failed because the vendor rejected
+// model. The next route decision skips that binding for the model until a fresh probe (account_connect) clears it.
+// One UPDATE of the binding's rejectedModels, so it never writes back a stale copy of the account's other settings.
+func noteModelRejected(q *Request, accountID, host, model, problem string) error {
+	if accountID == "" || host == "" || model == "" || !rejectedModelText.MatchString(problem) {
+		return nil
+	}
+	n, err := q.db().AccountBindingRejectModel(q.ctx(), db.AccountBindingRejectModelParams{ID: accountID, HostID: host, Model: model, AtMs: nowMs()})
+	if err == nil && n > 0 {
+		wakeDispatchAfter(q)
+	}
+	return err
+}

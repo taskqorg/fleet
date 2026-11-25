@@ -434,6 +434,9 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 			if err := q.db().EventsExecutionProblem(q.ctx(), db.EventsExecutionProblemParams{ID: xid, Problem: &problem}); err != nil {
 				return none, err
 			}
+			if err := noteModelRejected(q, deref(execution.AccountID), deref(execution.HostID), deref(execution.Model), problem); err != nil {
+				return none, err
+			}
 		}
 	}
 	if hasLiveEvent && !(executionEnds(string(execution.State)) && deref(execution.Problem) == "unknown:abandoned") {

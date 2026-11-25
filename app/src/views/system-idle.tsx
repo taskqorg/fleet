@@ -12,9 +12,10 @@ import type { HostRow, RunnerRun } from '../../../contracts/generated/ops.ts';
 import { op, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 import { prefsRead } from '../prefs.ts';
-import { accountHosts, accountName, nearLimit, readinessText, tightest, useAccountLimits } from './accounts.tsx';
+import { accountHosts, accountName, nearLimit, readinessText, tightest, useAccountLimits, useCompatProfiles } from './accounts.tsx';
 import type { Conn } from './keys.tsx';
-import { spendRequest, usdOf } from './spend.tsx';
+import { dailySeries, spendRequest, usdOf } from './spend.tsx';
+import { profileGaps, type CompatAccount, type CompatProfile } from '../compat.ts';
 
 const HOUR = 36e5;
 /** A telemetry finding without its sentence (every rule writes one): the generic words, never the cause code. */
@@ -54,7 +55,7 @@ export function readiness(input: {
   hosts: readonly HostRow[]; fresh: (h: HostRow) => boolean; now: number;
   findings: Ops['telemetry_findings']['reply']['findings']; runs: readonly RunnerRun[];
   subs: Ops['subscription_limits']['reply']['subscriptions']; accounts: readonly Record<string, unknown>[];
-  conns: readonly Conn[];
+  conns: readonly Conn[]; profiles?: readonly CompatProfile[];
 }): Problem[] {
   const out: Problem[] = [];
   const failures = hostFailures(input.runs, input.now);
@@ -98,6 +99,13 @@ export function readiness(input: {
       title: hosts.length ? `${name}: no host can run it` : `${name}: no host has a login`,
       facts: hosts.map(c => `${c.hostId}: ${readinessText(c)}`).join(' · ') || `${String(a.harness ?? '')} account without a host binding` });
   }
+  // J5: a profile whose model no ready binding is known to serve; its tasks wait and route decisions name the skips.
+  for (const g of profileGaps(input.profiles ?? [], input.accounts as CompatAccount[])) {
+    out.push({ key: `profile:${g.profile.id}:model`, severity: 'warning', count: 1, at: g.probedAt,
+      open: { label: 'Open profile', path: `/library/agents/${encodeURIComponent(g.profile.id)}` },
+      title: `Profile ${g.profile.id}: no account offers ${g.model}`,
+      facts: `probed on ${g.hosts.length} ${g.hosts.length === 1 ? 'host' : 'hosts'} · its tasks wait with this cause · route decisions name the skipped accounts` });
+  }
   for (const c of input.conns) {
     const bad = c.keys.filter(k => k.state === 'disabled' || !!k.problem);
     if (!bad.length) continue;
@@ -124,6 +132,9 @@ export function SystemIdle(props: {
   const accounts = useOp('account_list', {});
   const today = useOp('spend_summary', () => (prefsRead.value ? spendRequest(1) : null), { quiet: 30_000 });
   const month = useOp('spend_summary', () => (prefsRead.value ? spendRequest(30) : null), { quiet: 30_000 });
+  // 12 UTC days, one bar each, today last (canvas board/screens/system.bl state 1); Cost per task has no daily read.
+  const daily = useOp('spend_summary', () => (prefsRead.value ? spendRequest(12, 'day') : null), { quiet: 30_000 });
+  const profiles = useCompatProfiles();
   const [purge, setPurge] = createSignal<Ops['system_purge']['reply'] | null>(null);
   const [purgeErr, setPurgeErr] = createSignal('');
   const runPurge = (preview: boolean) => { setPurgeErr(''); void op('system_purge', { preview, kinds: ['host'] }).then(setPurge, e => setPurgeErr(String(e.message ?? e))); };
@@ -132,6 +143,7 @@ export function SystemIdle(props: {
     hosts: props.hosts, fresh: props.fresh, now: props.now, conns: props.conns,
     findings: found.data?.findings ?? [], runs: runners.data?.runs ?? [],
     subs: limits.data?.subscriptions ?? [], accounts: (accounts.data?.accounts ?? []) as Record<string, unknown>[],
+    profiles: profiles(),
   }));
   const services = createMemo(() => (tele.data?.operations ?? []).filter(o => o.errors > 0).toSorted((a, b) => b.errors - a.errors));
   // Host facts come from hosts_list alone: show what has arrived; a read that failed has its banner above.
@@ -165,13 +177,13 @@ export function SystemIdle(props: {
         <div class="sys-figures">
           <FigureTile label="Spend today" kind="money" value={{ value: cost(today.data), basis: today.data ? 'measured' : 'unavailable', reason: 'Loading' }}
             sub={cost(month.data) != null ? `${money(cost(month.data)!).text} in 30 days` : undefined}
-            trend={[]} trendLabel="Spend by day" onOpen={() => props.onOpen('/spend')} />
+            trend={dailySeries(daily.data, 12, r => usdOf(r.cost as CostFigureLike[]))} trendLabel="Spend by day, last 12 days" onOpen={() => props.onOpen('/spend')} />
           <FigureTile label="Cost per task done" kind="money" value={{ value: perTask(), basis: perTask() == null ? 'unavailable' : 'measured', reason: 'No task done in 30 days' }}
             sub={month.data ? `${month.data.bought.completedTasks} tasks, 30 days` : undefined}
             trend={[]} trendLabel="Cost per task by day" onOpen={() => props.onOpen('/spend')} />
           <Show when={(unpriced() ?? 0) > 0}>
             <FigureTile label="Unpriced runs" value={{ value: unpriced(), basis: 'measured' }} sub="no price entry" alert
-              trend={[]} trendLabel="Unpriced runs by day" onOpen={() => props.onOpen('/spend')} />
+              trend={dailySeries(daily.data, 12, r => r.unpriced)} trendLabel="Unpriced runs by day, last 12 days" onOpen={() => props.onOpen('/spend')} />
           </Show>
         </div>
       </DetailSection>

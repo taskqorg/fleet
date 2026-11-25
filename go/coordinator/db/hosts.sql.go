@@ -8,6 +8,8 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const addressQuestion = `-- name: AddressQuestion :exec
@@ -685,6 +687,53 @@ func (q *Queries) RouteDecisionsOf(ctx context.Context, executionID string) ([]R
 	var items []RouteDecisionsOfRow
 	for rows.Next() {
 		var i RouteDecisionsOfRow
+		if err := rows.Scan(
+			&i.ExecutionID,
+			&i.At,
+			&i.HostID,
+			&i.Candidates,
+			&i.Winner,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const routeDecisionsOfSubscription = `-- name: RouteDecisionsOfSubscription :many
+SELECT execution_id, at, host_id, candidates, winner FROM route_decision
+WHERE at >= $1::timestamptz
+  AND jsonb_path_exists(candidates, '$[*] ? (@.subscription.id == $sub && exists(@.skipped))', jsonb_build_object('sub', $2::text))
+ORDER BY at DESC LIMIT 50
+`
+
+type RouteDecisionsOfSubscriptionParams struct {
+	Since          pgtype.Timestamptz
+	SubscriptionID string
+}
+
+type RouteDecisionsOfSubscriptionRow struct {
+	ExecutionID string
+	At          time.Time
+	HostID      *string
+	Candidates  []byte
+	Winner      []byte
+}
+
+// The newest route decisions since a time in which a candidate of the subscription was skipped.
+func (q *Queries) RouteDecisionsOfSubscription(ctx context.Context, arg RouteDecisionsOfSubscriptionParams) ([]RouteDecisionsOfSubscriptionRow, error) {
+	rows, err := q.db.Query(ctx, routeDecisionsOfSubscription, arg.Since, arg.SubscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RouteDecisionsOfSubscriptionRow
+	for rows.Next() {
+		var i RouteDecisionsOfSubscriptionRow
 		if err := rows.Scan(
 			&i.ExecutionID,
 			&i.At,

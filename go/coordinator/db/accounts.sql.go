@@ -10,6 +10,38 @@ import (
 	"time"
 )
 
+const accountBindingRejectModel = `-- name: AccountBindingRejectModel :execrows
+UPDATE managed_account SET updated_at = now(), payload = jsonb_set(payload, '{bindings}', (
+  SELECT jsonb_agg(CASE WHEN b->>'hostId' = $1::text
+    THEN jsonb_set(b, '{rejectedModels}', CASE WHEN jsonb_typeof(b->'rejectedModels') = 'object' THEN b->'rejectedModels' ELSE '{}'::jsonb END || jsonb_build_object($2::text, $3::bigint))
+    ELSE b END ORDER BY ord)
+  FROM jsonb_array_elements(payload->'bindings') WITH ORDINALITY AS x(b, ord)))
+WHERE id = $4 AND jsonb_typeof(payload->'bindings') = 'array'
+  AND EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'bindings') b
+    WHERE b->>'hostId' = $1::text AND NOT coalesce(b->'rejectedModels' ? $2::text, false))
+`
+
+type AccountBindingRejectModelParams struct {
+	HostID string
+	Model  string
+	AtMs   int64
+	ID     string
+}
+
+// J5: marks model rejected on the account's binding on a host, in one statement (no read-modify-write of the account).
+func (q *Queries) AccountBindingRejectModel(ctx context.Context, arg AccountBindingRejectModelParams) (int64, error) {
+	result, err := q.db.Exec(ctx, accountBindingRejectModel,
+		arg.HostID,
+		arg.Model,
+		arg.AtMs,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const accountCataloguePut = `-- name: AccountCataloguePut :exec
 INSERT INTO account_catalogue(id, host_id, harness, project_id, payload)
 VALUES ($1, $2, $3, $4, $5)

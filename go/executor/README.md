@@ -47,7 +47,7 @@
 - Samples owned process trees on a 100 ms loop via `observe()`, records harness tool/turn metrics, and emits `ExecutionResourceSummary` on `process.closed` without periodic `resource.observation` events ([executor_process.go: `tickOne`, `observe`](executor_process.go), [executor_events.go: `buildExecutionResourceSummary`](executor_events.go), [harness_blocks.go: `runMetrics`](harness_blocks.go)).
 - Runs approved local Git, harness, project-script, browser, and account-limit commands; it queues coordinator receipts and events ([executor_events.go: `event`, `receipt`](executor_events.go), [accounts.go: `readLimits`](accounts.go)).
 - Connection file tools read caller-named local files and write downloaded files under the run's input folder or `FLEET_FILES_OUT` ([mcp_connection.go](mcp_connection.go)).
-- Readiness and account observation read host configuration and native CLI state without sending tokens or credential contents ([readiness.go: `readiness`](readiness.go), [accounts.go: `accountInspect`](accounts.go)).
+- Readiness and account observation read host configuration and native CLI state without sending tokens or credential contents ([readiness.go: `readiness`](readiness.go), [accounts.go: `accountInspect`](accounts.go)). A ready binding's observation also carries the models its vendor CLI offers (codex `model/list`, Claude Code `initialize`), absent when the probe fails ([accounts.go: `probeModels`](accounts.go)).
 
 ## Verification
 

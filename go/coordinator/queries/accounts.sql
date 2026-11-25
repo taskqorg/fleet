@@ -82,3 +82,14 @@ INSERT INTO account_catalogue(id, host_id, harness, project_id, payload)
 VALUES (@id, sqlc.narg(host_id), sqlc.narg(harness), sqlc.narg(project_id), @payload)
 ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
  host_id=excluded.host_id, harness=excluded.harness, project_id=excluded.project_id;
+
+-- name: AccountBindingRejectModel :execrows
+-- J5: marks model rejected on the account's binding on a host, in one statement (no read-modify-write of the account).
+UPDATE managed_account SET updated_at = now(), payload = jsonb_set(payload, '{bindings}', (
+  SELECT jsonb_agg(CASE WHEN b->>'hostId' = sqlc.arg(host_id)::text
+    THEN jsonb_set(b, '{rejectedModels}', CASE WHEN jsonb_typeof(b->'rejectedModels') = 'object' THEN b->'rejectedModels' ELSE '{}'::jsonb END || jsonb_build_object(sqlc.arg(model)::text, sqlc.arg(at_ms)::bigint))
+    ELSE b END ORDER BY ord)
+  FROM jsonb_array_elements(payload->'bindings') WITH ORDINALITY AS x(b, ord)))
+WHERE id = sqlc.arg(id) AND jsonb_typeof(payload->'bindings') = 'array'
+  AND EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'bindings') b
+    WHERE b->>'hostId' = sqlc.arg(host_id)::text AND NOT coalesce(b->'rejectedModels' ? sqlc.arg(model)::text, false));
