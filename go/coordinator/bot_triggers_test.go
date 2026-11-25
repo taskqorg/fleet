@@ -9,8 +9,8 @@ import (
 	"fleet/coordinator/db"
 )
 
-// FLT-26: one bot owns independent, durable triggers. Cover conflicting edits,
-// cross-project event leakage, restart replay, and pause leaving an execution live.
+// FLT-26: one bot owns independent, durable triggers (the bot page's automations, trigger_save and trigger_list).
+// Cover conflicting edits, cross-project event leakage, restart replay, and pause leaving an execution live.
 func TestBotAutomations(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	const project = "desiign"
@@ -30,26 +30,32 @@ func TestBotAutomations(t *testing.T) {
 	}, member, 200)
 
 	dailyID, eventID := newID(), newID()
-	daily := contract.BotAutomationSettings{
-		Name: "HAL0 tariff refresh", Instructions: "Compare official provider tariffs in dry-run mode.",
-		ProjectId: project, Kind: "schedule", ScheduleTime: "08:00", ScheduleZone: "Asia/Tokyo", Event: "none", Enabled: true,
+	// automation: a bot trigger's settings as the bot page edits them.
+	type automation struct {
+		Name, Text, When, Time, Zone string
+		EveryMs                      int64
+		Kinds                        []string
+		Enabled                      bool
 	}
-	event := contract.BotAutomationSettings{
-		Name: "Review operator decisions", Instructions: "Read the new question and summarize it.",
-		ProjectId: project, Kind: "needs_you", Event: "question", Enabled: true,
-	}
-	save := func(id string, revision int64, settings contract.BotAutomationSettings, headers map[string]string, status int) map[string]any {
+	daily := automation{Name: "HAL0 tariff refresh", Text: "Compare official provider tariffs in dry-run mode.",
+		When: "daily", Time: "08:00", Zone: "Asia/Tokyo", Kinds: []string{}, Enabled: true}
+	event := automation{Name: "Review operator decisions", Text: "Read the new question and summarize it.",
+		When: "every", EveryMs: triggerTickMs(), Kinds: []string{"question"}, Enabled: true}
+	save := func(id string, revision int64, a automation, headers map[string]string, status int) map[string]any {
 		t.Helper()
-		rep := call("bot_automation_save", contract.BotAutomationSaveRequest{BotId: botID, AutomationId: id, BaseRevision: revision, Settings: settings}, headers, status)
-		return mapOf(rep["automation"])
+		when := contract.TriggerWhen(a.When)
+		in := &contract.TriggerSettingsInput{Name: &a.Name, Text: &a.Text, When: &when, IfChanged: a.Kinds, Enabled: &a.Enabled}
+		if a.When == "daily" {
+			in.DailyTime, in.DailyZone = &a.Time, &a.Zone
+		} else {
+			in.EveryMs = &a.EveryMs
+		}
+		rep := call("trigger_save", contract.TriggerSaveRequest{Id: id, BaseRevision: revision, BotId: &botID, Settings: in}, headers, status)
+		return mapOf(rep["trigger"])
 	}
-	foreign := event
-	foreign.ProjectId = "specq"
-	save(newID(), 0, foreign, owner, 403)
-
 	day := save(dailyID, 0, daily, member, 200)
 	save(eventID, 0, event, member, 200)
-	due, err := time.Parse(time.RFC3339Nano, astr(day["nextRunAt"]))
+	due, err := time.Parse(time.RFC3339Nano, astr(day["nextAt"]))
 	if err != nil || due.UTC().Hour() != 23 {
 		t.Fatalf("08:00 Asia/Tokyo should be 23:00 UTC on the preceding date: %v (%v)", day, err)
 	}
@@ -89,7 +95,7 @@ func TestBotAutomations(t *testing.T) {
 	execID := astr(scheduledRun["executionId"])
 	executionText := runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres",
 		"SELECT text FROM message WHERE execution_id = '"+execID+"';")
-	if !strings.Contains(executionText, daily.Instructions) {
+	if !strings.Contains(executionText, daily.Text) {
 		t.Fatalf("schedule did not send the saved automation instructions: %q", executionText)
 	}
 
@@ -99,15 +105,15 @@ func TestBotAutomations(t *testing.T) {
 	changed := daily
 	changed.Name = "Stale edit"
 	save(dailyID, 1, changed, member, 409)
-	list := call("bot_automations", contract.BotAutomationsRequest{BotId: botID}, member, 200)
-	automations := anys(list["automations"])
+	list := call("trigger_list", contract.TriggerListRequest{BotId: &botID}, member, 200)
+	automations := anys(list["triggers"])
 	if len(automations) != 2 {
-		t.Fatalf("expected two automations, got %v", list)
+		t.Fatalf("expected two triggers, got %v", list)
 	}
 	for _, entry := range automations {
 		a := mapOf(entry)
 		s := mapOf(a["settings"])
-		if a["id"] == dailyID && (s["enabled"] != false || a["nextRunAt"] != nil || a["lastRunState"] != "queued") {
+		if a["id"] == dailyID && (s["enabled"] != false || a["nextAt"] != nil || mapOf(a["lastRun"])["state"] != "queued") {
 			t.Fatalf("paused automation lost its active run or still has a next run: %v", a)
 		}
 		if a["id"] == eventID && s["enabled"] != true {
@@ -168,7 +174,7 @@ func TestBotAutomations(t *testing.T) {
 	}
 
 	syncTestPersonGrant(t, e, "member@trial.test", project, false)
-	call("bot_automations", contract.BotAutomationsRequest{BotId: botID}, member, 404)
+	call("trigger_list", contract.TriggerListRequest{BotId: &botID}, member, 404)
 	manualReq.RequestId = ptr("run-after-revocation")
 	refused := mapOf(call("bot_run", manualReq, owner, 200)["run"])
 	if refused["state"] != "failed" || refused["executionId"] != nil {

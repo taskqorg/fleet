@@ -100,12 +100,6 @@ var opLocks = map[string]func(b json.RawMessage) string{
 		}
 		return ""
 	},
-	"bot_automation_save": func(b json.RawMessage) string {
-		if id := jsonPathString(b, "botId"); id != "" {
-			return "bot:" + id
-		}
-		return ""
-	},
 	"bot_settings_save": func(b json.RawMessage) string {
 		if id := jsonPathString(b, "botId"); id != "" {
 			return "bot:" + id

@@ -5,8 +5,33 @@ import {
 import { useAlive, writeOnce, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
 
-type Automation = Ops['bot_automations']['reply']['automations'][number];
-type Settings = Automation['settings'];
+// A bot's automations are its triggers (docs/designs/fleet-triggers.md): trigger_list {botId}, trigger_save.
+type Automation = Ops['trigger_list']['reply']['triggers'][number];
+/** The form's view of a trigger: manual, a daily schedule, or Needs you (a change check each pass). */
+type Settings = { name: string; instructions: string; kind: 'manual' | 'schedule' | 'needs_you'; scheduleTime: string; scheduleZone: string; event: 'none' | 'all' | 'question' | 'execution'; enabled: boolean };
+/** The trigger checks every pass on a change: the Needs you automation. */
+const PASS_MS = 15_000;
+
+function settingsOf(t: Automation): Settings {
+  const s = t.settings, kinds = [...s.ifChanged].sort().join(',');
+  const kind = s.when === 'daily' ? 'schedule' : s.when === 'manual' ? 'manual' : 'needs_you';
+  return {
+    name: s.name, instructions: s.text, kind, scheduleTime: s.dailyTime ?? '', scheduleZone: s.dailyZone ?? '', enabled: s.enabled,
+    event: kind !== 'needs_you' ? 'none' : kinds === 'question' ? 'question' : kinds === 'execution' ? 'execution' : 'all',
+  };
+}
+
+/** A trigger the form can show: daily, manual, or a change check on questions or execution problems (others are
+ *  changed through the API, trigger_save). */
+const shown = (t: Automation) => t.settings.when !== 'every' ||
+  (t.settings.ifChanged.length > 0 && t.settings.ifChanged.every(k => k === 'question' || k === 'execution'));
+
+function triggerOf(s: Settings): Ops['trigger_save']['request']['settings'] {
+  const base = { name: s.name, text: s.instructions, enabled: s.enabled };
+  if (s.kind === 'schedule') return { ...base, when: 'daily', dailyTime: s.scheduleTime, dailyZone: s.scheduleZone, ifChanged: [] };
+  if (s.kind === 'manual') return { ...base, when: 'manual', ifChanged: [] };
+  return { ...base, when: 'every', everyMs: PASS_MS, ifChanged: s.event === 'all' ? ['question', 'execution'] : [s.event] };
+}
 
 const triggerOptions = [
   { id: 'manual', label: 'Manual' },
@@ -27,12 +52,12 @@ export function BotAutomations(props: {
   onHistory: (id: string) => void;
   onRun: () => void;
 }) {
-  const read = useOp('bot_automations', () => ({ botId: props.bot.id }), { every: 30_000 });
+  const read = useOp('trigger_list', () => ({ botId: props.bot.id }), { every: 30_000 });
   const signal = useAlive();
   const [busy, setBusy] = createSignal<string | null>(null);
   const [error, setError] = createSignal('');
   const [note, setNote] = createSignal('');
-  const selected = createMemo(() => read.data?.automations.find(a => a.id === props.edit));
+  const selected = createMemo(() => read.data?.triggers.filter(shown).find(a => a.id === props.edit));
 
   const act = async (automation: Automation, action: 'enable' | 'pause' | 'run') => {
     if (busy()) return;
@@ -48,9 +73,8 @@ export function BotAutomations(props: {
         setNote(result.admitted ? 'Run queued.' : `Wake recorded (${result.run.reason ?? result.run.state}).`);
         props.onRun();
       } else {
-        await writeOnce('bot_automation_save', {
-          botId: props.bot.id, automationId: automation.id, baseRevision: automation.revision,
-          settings: { ...automation.settings, enabled: action === 'enable' },
+        await writeOnce('trigger_save', {
+          id: automation.id, baseRevision: automation.revision, settings: { enabled: action === 'enable' },
         }, pending, { signal });
         setNote(action === 'enable' ? 'Automation enabled.' : 'Automation paused.');
       }
@@ -99,29 +123,29 @@ export function BotAutomations(props: {
                 <Button label="New automation" icon="plus" kind="primary" onClick={() => props.onEdit('new')} />
               </div>
             </Show>
-            <Show when={read.data?.automations.length} fallback={<Empty text="No automations yet." />}>
-              <For each={read.data?.automations}>{automation => (
-                <DetailSection title={automation.settings.name}>
+            <Show when={read.data?.triggers.filter(shown).length} fallback={<Empty text="No automations yet." />}>
+              <For each={read.data?.triggers.filter(shown)}>{automation => (<Show when={settingsOf(automation)} keyed>{set => (
+                <DetailSection title={set.name}>
                   <KvRow icon="folder-open" label="Project" value={props.projectName} />
-                  <KvRow icon="bell" label="Trigger" value={triggerOptions.find(t => t.id === automation.settings.kind)?.label} />
-                  <Show when={automation.settings.kind === 'needs_you'}>
-                    <KvRow icon="bell" label="Events" value={<span>{eventOptions.find(t => t.id === automation.settings.event)?.label}</span>} />
+                  <KvRow icon="bell" label="Trigger" value={triggerOptions.find(t => t.id === set.kind)?.label} />
+                  <Show when={set.kind === 'needs_you'}>
+                    <KvRow icon="bell" label="Events" value={<span>{eventOptions.find(t => t.id === set.event)?.label}</span>} />
                   </Show>
-                  <Show when={automation.settings.kind === 'schedule'}>
-                    <KvRow icon="clock" label="Daily time" value={`${automation.settings.scheduleTime} · ${automation.settings.scheduleZone}`} />
+                  <Show when={set.kind === 'schedule'}>
+                    <KvRow icon="clock" label="Daily time" value={`${set.scheduleTime} · ${set.scheduleZone}`} />
                   </Show>
                   <KvRow icon="play" label="Status" value={
-                    !automation.settings.enabled ? 'Paused' : props.bot.paused ? 'Bot paused' : 'Enabled'
+                    !set.enabled ? 'Paused' : props.bot.paused ? 'Bot paused' : 'Enabled'
                   } />
-                  <Show when={automation.nextRunAt} keyed>{next => (
-                    <KvRow icon="clock" label="Next scheduled run" value={<time datetime={next}>{zonedTime(Date.parse(next), automation.settings.scheduleZone)}</time>} />
+                  <Show when={set.kind === 'schedule' && !props.bot.paused && automation.nextAt} keyed>{next => (
+                    <KvRow icon="clock" label="Next scheduled run" value={<time datetime={next}>{zonedTime(Date.parse(next), set.scheduleZone)}</time>} />
                   )}</Show>
                   <KvRow icon="clock" label="Last outcome" value={
-                    <Show when={automation.lastRunState} fallback={<span class="muted">No runs yet</span>}>{state => (
+                    <Show when={automation.lastRun} keyed fallback={<span class="muted">No runs yet</span>}>{run => (
                       <span class="row" style={{ 'flex-wrap': 'wrap', gap: 'var(--space-2)' }}>
-                        <StateBadge family="botRun" state={state()} reason={automation.lastRunReason}
-                          unconfirmed={automation.lastRunObservation === 'unconfirmed'} />
-                        <Show when={automation.lastRunAt} keyed>{at => <Ago t={Date.parse(at)} />}</Show>
+                        <StateBadge family="botRun" state={run.state} reason={run.reason}
+                          unconfirmed={run.observation === 'unconfirmed'} />
+                        <Ago t={Date.parse(run.at)} />
                       </span>
                     )}</Show>
                   } />
@@ -139,7 +163,7 @@ export function BotAutomations(props: {
                     </Show>
                   </div>
                 </DetailSection>
-              )}</For>
+              )}</Show>)}</For>
             </Show>
           </Match>
         </Switch>
@@ -157,9 +181,8 @@ function AutomationEditor(props: {
 }) {
   const initial = untrack(() => props.item);
   const id = initial?.id ?? crypto.randomUUID();
-  const [settings, setSettings] = createSignal<Settings>(initial?.settings ?? {
-    name: '', instructions: '', projectId: props.bot.projectId,
-    kind: 'manual', scheduleTime: '', scheduleZone: '', event: 'none', enabled: true,
+  const [settings, setSettings] = createSignal<Settings>(initial ? settingsOf(initial) : {
+    name: '', instructions: '', kind: 'manual', scheduleTime: '', scheduleZone: '', event: 'none', enabled: true,
   });
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal('');
@@ -189,9 +212,9 @@ function AutomationEditor(props: {
 
     setBusy(true);
     try {
-      await writeOnce('bot_automation_save', {
-        botId: props.bot.id, automationId: id, baseRevision: initial?.revision ?? 0,
-        settings: { ...s, name, scheduleTime, scheduleZone },
+      await writeOnce('trigger_save', {
+        id, baseRevision: initial?.revision ?? 0, botId: props.bot.id,
+        settings: triggerOf({ ...s, name, scheduleTime, scheduleZone }),
       }, () => setNote('Confirming save…'), { signal });
       if (!signal.aborted) props.onSaved();
     } catch (err) {

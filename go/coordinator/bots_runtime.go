@@ -1127,3 +1127,12 @@ func botTasksOp(q *Request, r *contract.BotTasksRequest) (contract.BotTasksReply
 	}
 	return out, nil
 }
+
+// getBotTrigger: the trigger id of the bot, errNotFound when it is another target's or absent.
+func getBotTrigger(q *Request, botID, id string) (db.Trigger, error) {
+	t, err := q.db().TriggerGet(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && deref(t.BotID) != botID) {
+		return t, errNotFound
+	}
+	return t, err
+}

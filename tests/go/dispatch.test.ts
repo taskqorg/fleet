@@ -300,13 +300,13 @@ test('task cancellation stays scoped to its project (requirement: Fleet task can
   const c = await polled(h, poll, (x: any) => x.kind === 'start' && x.executionId === active.executionId);
   assert.ok(c);
   ok(await receipt(c, 'started'));
-  const watch = {sessionId: active.sessionId, kinds: ['task'], timerMs: 60_000};
-  ok(await op('watch_set', watch));
+  const watch = () => ({id: randomUUID(), baseRevision: 0, sessionId: active.sessionId, presetId: 'conversation-check', settings: {everyMs: 60_000, ifChanged: ['task']}});
+  ok(await op('trigger_save', watch()));
   const foreign = await createTask('hello-world');
   assert.ok([403, 404].includes((await cancelAsMember(foreign)).status));
   assert.equal(ok(await cancelAsMember(taskId)).state, 'cancelled');
-  assert.equal(ok(await op('watch_get', {sessionId: active.sessionId})).watch ?? null, null);
-  assert.equal((await op('watch_set', watch)).status, 409);
+  assert.deepEqual(ok(await op('trigger_list', {sessionId: active.sessionId})).triggers, [], 'a cancelled task drops its session triggers');
+  assert.equal((await op('trigger_save', watch())).status, 409);
   const stop = await polled(h, poll, (x: any) => x.kind === 'stop' && x.executionId === active.executionId);
   assert.ok(stop);
   ok(await receipt(stop, 'stopped'));

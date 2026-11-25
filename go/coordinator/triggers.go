@@ -337,15 +337,13 @@ func normalizeTriggerSettings(s *contract.TriggerSettings) error {
 	return nil
 }
 
-// triggerSaveIn: one save, from trigger_save or a wrapper (watch_*, bot_automation_save).
+// triggerSaveIn: one save, from trigger_save or session_command.
 type triggerSaveIn struct {
 	id           string
 	baseRevision int64
 	target       triggerTarget
 	presetID     string // create: the preset its absent fields come from
 	input        *contract.TriggerSettingsInput
-	// replace: the whole settings value (wrappers); input is ignored.
-	replace *contract.TriggerSettings
 }
 
 // saveTrigger: create (baseRevision 0) or change one trigger. A change of when, the condition or enabling starts its
@@ -377,15 +375,7 @@ func saveTrigger(q *Request, in triggerSaveIn) (db.Trigger, error) {
 		applyTriggerInput(&s, &p.Settings)
 		s.PresetId = &p.Id
 	}
-	if in.replace != nil {
-		preset := s.PresetId
-		s = *in.replace
-		if s.PresetId == nil {
-			s.PresetId = preset
-		}
-	} else {
-		applyTriggerInput(&s, in.input)
-	}
+	applyTriggerInput(&s, in.input)
 	if err := normalizeTriggerSettings(&s); err != nil {
 		return none, err
 	}
@@ -474,7 +464,12 @@ func triggerList(q *Request, r *contract.TriggerListRequest) (contract.TriggerLi
 	}
 	now := time.Now()
 	for _, row := range rows {
-		out.Triggers = append(out.Triggers, triggerRecord(row.Trigger, now))
+		rec := triggerRecord(row.Trigger, now)
+		if row.LastState != "" { // a bot trigger that caused a run
+			rec.LastRun = &contract.TriggerLastRun{State: contract.BotRunState(row.LastState), Observation: contract.BotRunObservation(row.LastObservation),
+				Reason: optStr(row.LastReason), At: row.LastRunAt.UTC().Format(time.RFC3339Nano)}
+		}
+		out.Triggers = append(out.Triggers, rec)
 	}
 	if out.Presets, err = triggerPresets(); err != nil {
 		return out, err
