@@ -224,16 +224,7 @@ var holders = map[string]func(q *Request) (holder string, found bool, err error)
 
 func init() {
 	op("me", func(q *Request, _ *contract.MeRequest) (contract.MeReply, error) {
-		p := q.person
-		if p == nil {
-			return contract.MeReply{Roles: []string{}, ChangeLogRetentionDays: 7}, nil
-		}
-		roles := p.Roles
-		if roles == nil {
-			roles = []string{}
-		}
-		g := grantsVersion(p)
-		return contract.MeReply{Email: &p.Email, Name: &p.Name, Roles: roles, Owner: p.Owner, ManagesPeople: ptr(fullAccess(p)), PersonalLab: ptr(hasPersonalLab(p)), GrantsVersion: &g, ChangeLogRetentionDays: 7}, nil
+		return meReply(q), nil
 	})
 }
 
@@ -519,4 +510,18 @@ func writePeople(q *Request, previous, next []byte, before, after any, change fu
 	}
 	peopleSeen = key
 	return nil
+}
+
+// meReply: the calling person as me answers it (no person: no email and no roles).
+func meReply(q *Request) contract.MeReply {
+	p := q.person
+	if p == nil {
+		return contract.MeReply{Roles: []string{}, ChangeLogRetentionDays: 7}
+	}
+	roles := p.Roles
+	if roles == nil {
+		roles = []string{}
+	}
+	g := grantsVersion(p)
+	return contract.MeReply{Email: &p.Email, Name: &p.Name, Roles: roles, Owner: p.Owner, ManagesPeople: ptr(fullAccess(p)), PersonalLab: ptr(hasPersonalLab(p)), GrantsVersion: &g, ChangeLogRetentionDays: 7}
 }

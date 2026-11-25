@@ -12,12 +12,12 @@ import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS, type ViewName } from '../../packages/view-url/view-url.ts';
-import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setPanel, panelsOf, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus, scopeIds } from './prefs.ts';
+import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setPanel, panelsOf, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus, scopeIds, primePrefs } from './prefs.ts';
 import { useOp, touchedBy, setIdentity, startStore } from './store.ts';
 import { useNavCounts } from './nav-counts.ts';
 import { useRailPinned } from './rail-pinned.ts';
 import { entityCards } from './entity-cards.ts';
-import { startFeed, stopFeed, subscribe, setResyncHandler, rebaseFeed } from './feed.ts';
+import { startFeed, stopFeed, subscribe, setResyncHandler, rebaseFeed, offerBootCursor } from './feed.ts';
 import { adopt, forget, mirrored } from './persist.ts';
 import { clearAll } from './offline.ts';
 import type { LibrarySection } from './views/agents.tsx';
@@ -175,6 +175,8 @@ function App() {
   // Preferences load only after authorized baseline activation.
   // Focus and online check the person quietly (below); preferences changed elsewhere arrive as setting-change events.
   const [user, setUser] = createSignal<string | null>(null);
+  // A person Access signed in whom Fleet does not know (boot): their email, for the notice.
+  const [stranger, setStranger] = createSignal<string | null>(null);
   // OR-23: the shell shows once the first settings read answers, or after 1.5 s at most; a later store clear does not hide it again.
   const [shown, setShown] = createSignal(false, { ownedWrite: true });
   createEffect(() => prefsRead.value, r => { if (r) setShown(true); });
@@ -204,8 +206,12 @@ function App() {
     const unregister = registerAccessValidator(async ({ generation, signal }) => {
       last = null;
       const clear = clearAll();
-      const m = await accessControlOp('me', {}, { signal });
+      // One request answers who, the settings and the stream's cursor (boot); a person Access signed in but Fleet does not
+      // know is told so, not shown an expired session.
+      const boot = await accessControlOp('boot', {}, { signal }), m = boot.me;
       await clear; if (signal.aborted || generation !== accessGeneration()) throw Error('Access changed');
+      if (boot.person === 'unknown') { setStranger(m.email ?? ''); throw Error('Not in Fleet yet'); }
+      setStranger(null);
       if (!m.email) throw Error('Sign in to continue');
       setUser(m.name || m.email);
       const identity = { identityKey: m.email, grantsVersion: m.grantsVersion ?? '' };
@@ -213,6 +219,8 @@ function App() {
       // from it is cleared before the gate opens (persist.ts).
       if (adopt(identity)) await clearAll();
       if (signal.aborted || generation !== accessGeneration()) throw Error('Access changed');
+      if (boot.settings) primePrefs(boot.settings);
+      if (boot.cursor !== null) offerBootCursor(generation, boot.cursor);
       return identity;
     });
     startFeed(null); startStore();
@@ -319,6 +327,7 @@ function App() {
     widths={geometry().widths} onWidth={setWidth} panels={geometry().panels} onPanel={setPanel}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={isOpen() && user() ? { name: user()!, onLogout: () => { Promise.race([Promise.all([forget(), clearAll(true)]), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
+    {stranger() !== null && <div class="problem attention" role="alert"><b>Not in Fleet yet</b><span class="facts">{stranger() ? `Signed in as ${stranger()}. ` : ''}Ask the owner to add you to Fleet's people; nothing is shown until then.</span></div>}
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.assign(location.pathname + '?signin=' + Date.now())} /></span></div>}
     {showPrivate() ? (
       <RenderBoundary at={access.value.generation + ':' + loc() + '?' + query()}>

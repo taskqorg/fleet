@@ -176,6 +176,7 @@ test('a superseded baseline is disposed and cannot open a newer generation; fail
 test('control boundary allowlists me and no-option baseline only', async () => {
   assert.throws(() => accessControlOp('session_get' as any, {}), /Invalid access control/);
   assert.throws(() => accessControlOp('changes_since', { cursor: 2 }), /no cursor/);
+  assert.throws(() => accessControlOp('boot', { cursor: 2 } as any), /no cursor/);
 });
 // Requirement: authored input survives for its owner only, after fresh target authorization.
 // Risk: a stale clear erases newer text or restores another actor's private draft/request identity.

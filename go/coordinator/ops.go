@@ -184,7 +184,8 @@ func declaredAuth(q *Request, name string) error {
 	}
 	p := q.person
 	if p == nil {
-		if auth == "system" {
+		// boot answers a person Fleet does not know (authorize lets only that request through, with unknownEmail).
+		if auth == "system" || (name == "boot" && q.unknownEmail != "") {
 			return nil
 		}
 		return fail(403, "Person required for "+name)
