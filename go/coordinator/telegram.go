@@ -365,7 +365,32 @@ func telegramIntakeStep(q *Request, now time.Time, c *kitClaim) error {
 		EditMessageID: &m.MessageID, Payload: jsonBytes([]map[string]string{{"type": "emoji", "emoji": "👀"}})}); err != nil {
 		return err
 	}
+	// Shortcuts without a model, then answers to a question message, before any routing.
+	if handled, err := telegramCommand(q, now, &row, room, m, tp, text); err != nil {
+		return err
+	} else if handled {
+		return telegramDone(q, row.ID, "command", "")
+	}
+	if r := m.ReplyToMessage; r != nil {
+		qm, err := q.db().TelegramQuestionMessage(q.ctx(), db.TelegramQuestionMessageParams{ChatID: m.Chat.ID, TelegramMessageID: &r.MessageID})
+		if err == nil {
+			telegramAnswer(q, c, p, qm, text)
+			return nil
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+	}
 	if m.Chat.Type == "private" {
+		if isStatusPing(text) {
+			body, err := telegramGlance(q, now, room, tp)
+			if err != nil {
+				return err
+			}
+			if err := telegramOutbox(q, db.TelegramOutboxAddParams{ID: "so:" + row.ID, ChatID: room.ChatID, Kind: "text", ReplyTo: &m.MessageID, Text: body}); err != nil {
+				return err
+			}
+			return telegramDone(q, row.ID, "status", "")
+		}
 		if strings.TrimSpace(text) == "/new" {
 			if err := q.db().TelegramPersonSetHome(q.ctx(), db.TelegramPersonSetHomeParams{Email: tp.Email}); err != nil {
 				return err
@@ -501,11 +526,18 @@ func telegramDeliver(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 					if err := pq.db().TelegramWorkAdd(pq.ctx(), db.TelegramWorkAddParams{ID: t.workID, RoomID: room.ID, SessionID: sid, Title: t.newWork, CreatedBy: tp.Email}); err != nil {
 						return err
 					}
-					// The notice is the work item's status message, edited in place afterwards (telegramWorkStatus).
-					if err := telegramOutbox(pq, db.TelegramOutboxAddParams{ID: "notice:newwork:" + rid, ChatID: room.ChatID, ThreadID: room.ThreadID,
-						Kind: "text", Text: say(tp.Language, "newWork", t.newWork), WorkID: &t.workID, SessionID: &sid,
-						Payload: openMarkup(tp.Language, sid)}); err != nil {
+					// The notice is the work item's status message, edited in place afterwards (telegramWorkStatus). A room
+					// whose only work this is gets none: one conversation needs no announcement (owner-tester, 2026-11-25).
+					others, err := pq.db().TelegramWorkOpen(pq.ctx(), room.ID)
+					if err != nil {
 						return err
+					}
+					if len(others) > 1 {
+						if err := telegramOutbox(pq, db.TelegramOutboxAddParams{ID: "notice:newwork:" + rid, ChatID: room.ChatID, ThreadID: room.ThreadID,
+							Kind: "text", Text: say(tp.Language, "newWork", t.newWork), WorkID: &t.workID, SessionID: &sid,
+							Payload: openMarkup(tp.Language, sid)}); err != nil {
+							return err
+						}
 					}
 				}
 			} else if _, err := agentSubmit(pq, &contract.MessageSendRequest{SessionId: &sid, RequestId: &rid, Text: &text}, "telegram"); err != nil {
@@ -543,6 +575,7 @@ func telegramDeliver(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 type conductorDecision struct {
 	Choice string `json:"choice"` // a work item id, "new", or "ask"
 	Title  string `json:"title"`  // the new work item's title
+	Status bool   `json:"status"` // the message only asks how the chosen item stands
 	err    error
 }
 
@@ -565,6 +598,12 @@ func telegramConduct(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 		}
 		if work != "" {
 			if w, err := q.db().TelegramWorkGet(q.ctx(), work); err == nil && w.ClosedAt == nil && w.RoomID == room.ID {
+				if isStatusPing(messageText(m)) {
+					if err := telegramStatusAnswer(q, time.Now(), row, room, m, tp, &w); err != nil {
+						return err
+					}
+					return telegramDone(q, row.ID, "status", w.ID)
+				}
 				return telegramDeliver(q, c, row, room, m, tp, p, tgTarget{sessionID: w.SessionID, workID: w.ID})
 			}
 		}
@@ -572,6 +611,13 @@ func telegramConduct(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 	open, err := q.db().TelegramWorkOpen(q.ctx(), room.ID)
 	if err != nil {
 		return err
+	}
+	if isStatusPing(messageText(m)) {
+		// "So?" is answered from Fleet state without waking any work item (FLT-34).
+		if err := telegramStatusAnswer(q, time.Now(), row, room, m, tp, nil); err != nil {
+			return err
+		}
+		return telegramDone(q, row.ID, "status", "")
 	}
 	if len(open) == 0 {
 		return telegramDeliver(q, c, row, room, m, tp, p, tgTarget{newWork: workTitle(messageText(m))})
@@ -592,6 +638,12 @@ func telegramApply(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Tele
 	}
 	for _, w := range open {
 		if d.Choice == w.ID {
+			if d.Status {
+				if err := telegramStatusAnswer(q, time.Now(), row, room, m, tp, &w); err != nil {
+					return err
+				}
+				return telegramDone(q, row.ID, "status", w.ID)
+			}
 			return telegramDeliver(q, c, row, room, m, tp, p, tgTarget{sessionID: w.SessionID, workID: w.ID})
 		}
 	}
@@ -626,6 +678,9 @@ func telegramTap(q *Request, now time.Time, c *kitClaim, row *db.TelegramUpdate,
 		}
 	}
 	parts := strings.Split(cb.Data, ":")
+	if len(parts) == 3 && parts[0] == "q" {
+		return telegramQuestionTap(q, c, row, cb, parts[1], parts[2])
+	}
 	if len(parts) != 4 || parts[0] != "w" {
 		return telegramDone(q, row.ID, "tap-unknown", "")
 	}
@@ -747,7 +802,7 @@ func conductorCall(ctx context.Context, a *App, conn, model string, open []db.Te
 		fmt.Fprintf(&items, "- id %s: %s\n", w.ID, w.Title)
 	}
 	instructions := "You are the conductor of a team chat room. People write short messages about several pieces of work. " +
-		"Decide which open work item the new message belongs to. Answer only JSON {\"choice\": <work item id | \"new\" | \"ask\">, \"title\": <short title for new work, else \"\">}. " +
+		"Decide which open work item the new message belongs to. Answer only JSON {\"choice\": <work item id | \"new\" | \"ask\">, \"title\": <short title for new work, else \"\">, \"status\": <true when the message only asks how that item is going or whether it is done or live>}. " +
 		"Choose \"new\" only when the message clearly starts different work; choose \"ask\" when it could belong to more than one item or you are unsure. " +
 		"Short follow-ups (\"so?\", \"show mobile too\", \"ok go\") belong to the most recent item unless they name another."
 	input := "Open work items, most recent first:\n" + items.String() + "\nNew message from " + author + ":\n" + clip(text, 2000)
@@ -968,6 +1023,11 @@ func telegramMessageLink(chat, thread, message int64) string {
 // sender resolves the message once the opening notice is sent (telegramSendStep); a chat's items leave in order, so
 // the notice always goes first.
 func telegramWorkStatus(q *Request, workID, id, lang, line string) error {
+	if _, err := q.db().TelegramWorkStatusMessage(q.ctx(), &workID); errors.Is(err, pgx.ErrNoRows) {
+		return nil // the room's only work item opened without a notice: it has no status message
+	} else if err != nil {
+		return err
+	}
 	w, err := q.db().TelegramWorkGet(q.ctx(), workID)
 	if err != nil {
 		return err
@@ -976,8 +1036,12 @@ func telegramWorkStatus(q *Request, workID, id, lang, line string) error {
 	if err != nil {
 		return err
 	}
+	text, err := telegramWorkText(q, w, lang, line, time.Now())
+	if err != nil {
+		return err
+	}
 	return telegramOutbox(q, db.TelegramOutboxAddParams{ID: "status:" + workID + ":" + id, ChatID: room.ChatID, ThreadID: room.ThreadID, Kind: "edit",
-		Text: "**" + w.Title + "**\n" + line, WorkID: &workID, SessionID: &w.SessionID, Payload: openMarkup(lang, w.SessionID)})
+		Text: text, WorkID: &workID, SessionID: &w.SessionID, Payload: openMarkup(lang, w.SessionID)})
 }
 
 func conversationLink(sessionID string) string {
@@ -1079,7 +1143,7 @@ func telegramSendStep(q *Request, now time.Time, c *kitClaim) error {
 // tgFormatted: the item's text as Telegram HTML (tgHTML), or as plain text once Telegram refused its formatting.
 func tgFormatted(o db.TelegramOutbox, args *tgArgs) *string {
 	if deref(o.Error) == "html-refused" {
-		return &o.Text
+		return ptr(tgPlain(o.Text))
 	}
 	args.ParseMode = "HTML"
 	return ptr(tgHTML(o.Text))

@@ -40,6 +40,55 @@ func (q *Queries) TelegramLinkTake(ctx context.Context, code string) (string, er
 	return email, err
 }
 
+const telegramOpenQuestions = `-- name: TelegramOpenQuestions :many
+SELECT q.id, q.kind::text AS kind, q.text, q.session_id FROM question q
+WHERE q.state = 'open' AND q.session_id IN (
+  SELECT w.session_id FROM telegram_work w WHERE w.closed_at IS NULL
+    AND ((NOT $1::boolean AND w.room_id = $2) OR ($1::boolean AND w.created_by = $3))
+  UNION SELECT p.home_session_id FROM telegram_person p WHERE $1::boolean AND p.email = $3 AND p.home_session_id IS NOT NULL)
+ORDER BY q.asked_at LIMIT 10
+`
+
+type TelegramOpenQuestionsParams struct {
+	Private bool
+	RoomID  string
+	Email   string
+}
+
+type TelegramOpenQuestionsRow struct {
+	ID        string
+	Kind      string
+	Text      string
+	SessionID *string
+}
+
+// Open questions of a group room's work items, or (private) of the person's home conversation and the work items they
+// opened, oldest first (/needs).
+func (q *Queries) TelegramOpenQuestions(ctx context.Context, arg TelegramOpenQuestionsParams) ([]TelegramOpenQuestionsRow, error) {
+	rows, err := q.db.Query(ctx, telegramOpenQuestions, arg.Private, arg.RoomID, arg.Email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TelegramOpenQuestionsRow
+	for rows.Next() {
+		var i TelegramOpenQuestionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Text,
+			&i.SessionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const telegramOutboxAdd = `-- name: TelegramOutboxAdd :exec
 INSERT INTO telegram_outbox(id, chat_id, thread_id, kind, reply_to, edit_message_id, text, payload, work_id, session_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
@@ -375,6 +424,162 @@ func (q *Queries) TelegramPersonUnlinkUser(ctx context.Context, arg TelegramPers
 	return err
 }
 
+const telegramQuestionGet = `-- name: TelegramQuestionGet :one
+SELECT id, kind::text AS kind, state::text AS state, text, options, session_id, project_id FROM question WHERE id = $1
+`
+
+type TelegramQuestionGetRow struct {
+	ID        string
+	Kind      string
+	State     string
+	Text      string
+	Options   []byte
+	SessionID *string
+	ProjectID *string
+}
+
+func (q *Queries) TelegramQuestionGet(ctx context.Context, id string) (TelegramQuestionGetRow, error) {
+	row := q.db.QueryRow(ctx, telegramQuestionGet, id)
+	var i TelegramQuestionGetRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.State,
+		&i.Text,
+		&i.Options,
+		&i.SessionID,
+		&i.ProjectID,
+	)
+	return i, err
+}
+
+const telegramQuestionMessage = `-- name: TelegramQuestionMessage :one
+SELECT split_part(id, ':', 2)::text AS question_id FROM telegram_outbox WHERE chat_id = $1 AND telegram_message_id = $2
+  AND (id LIKE 'q:%' OR id LIKE 'qn:%') LIMIT 1
+`
+
+type TelegramQuestionMessageParams struct {
+	ChatID            int64
+	TelegramMessageID *int64
+}
+
+// The question a Fleet message in a chat asks (a Telegram reply to it answers the question).
+// Ids: q:<question> (the push) and qn:<question>:<update> (a /needs listing).
+func (q *Queries) TelegramQuestionMessage(ctx context.Context, arg TelegramQuestionMessageParams) (string, error) {
+	row := q.db.QueryRow(ctx, telegramQuestionMessage, arg.ChatID, arg.TelegramMessageID)
+	var question_id string
+	err := row.Scan(&question_id)
+	return question_id, err
+}
+
+const telegramQuestionsEnded = `-- name: TelegramQuestionsEnded :many
+SELECT q.id, q.state::text AS state, coalesce(q.answer, '')::text AS answer, coalesce(q.answered_by, '')::text AS answered_by, q.text,
+  o.chat_id, o.telegram_message_id
+FROM telegram_outbox o JOIN question q ON o.id = 'q:' || q.id
+WHERE o.state = 'sent' AND o.telegram_message_id IS NOT NULL AND q.state <> 'open'
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox e WHERE e.id = 'qend:' || q.id)
+LIMIT 50
+`
+
+type TelegramQuestionsEndedRow struct {
+	ID                string
+	State             string
+	Answer            string
+	AnsweredBy        string
+	Text              string
+	ChatID            int64
+	TelegramMessageID *int64
+}
+
+// Questions sent to Telegram that were answered or withdrawn since, whose message does not say so yet.
+func (q *Queries) TelegramQuestionsEnded(ctx context.Context) ([]TelegramQuestionsEndedRow, error) {
+	rows, err := q.db.Query(ctx, telegramQuestionsEnded)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TelegramQuestionsEndedRow
+	for rows.Next() {
+		var i TelegramQuestionsEndedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.State,
+			&i.Answer,
+			&i.AnsweredBy,
+			&i.Text,
+			&i.ChatID,
+			&i.TelegramMessageID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const telegramQuestionsToPush = `-- name: TelegramQuestionsToPush :many
+SELECT q.id, q.kind::text AS kind, q.text, q.options, q.session_id::text AS session_id, w.id AS work_id, r.chat_id, r.thread_id,
+  ''::text AS email
+FROM question q
+JOIN telegram_work w ON w.session_id = q.session_id AND w.closed_at IS NULL
+JOIN telegram_room r ON r.id = w.room_id
+WHERE q.state = 'open' AND q.asked_at > clock_timestamp() - interval '2 days'
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox o WHERE o.id = 'q:' || q.id)
+UNION ALL
+SELECT q.id, q.kind::text, q.text, q.options, q.session_id::text, ''::text, p.telegram_user_id, 0::bigint, p.email
+FROM question q
+JOIN telegram_person p ON p.home_session_id = q.session_id
+WHERE q.state = 'open' AND q.asked_at > clock_timestamp() - interval '2 days'
+  AND NOT EXISTS (SELECT 1 FROM telegram_outbox o WHERE o.id = 'q:' || q.id)
+LIMIT 50
+`
+
+type TelegramQuestionsToPushRow struct {
+	ID        string
+	Kind      string
+	Text      string
+	Options   []byte
+	SessionID string
+	WorkID    string
+	ChatID    int64
+	ThreadID  int64
+	Email     string
+}
+
+// Open questions of a work item's or a home conversation not yet sent to Telegram, with where they go.
+func (q *Queries) TelegramQuestionsToPush(ctx context.Context) ([]TelegramQuestionsToPushRow, error) {
+	rows, err := q.db.Query(ctx, telegramQuestionsToPush)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TelegramQuestionsToPushRow
+	for rows.Next() {
+		var i TelegramQuestionsToPushRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Text,
+			&i.Options,
+			&i.SessionID,
+			&i.WorkID,
+			&i.ChatID,
+			&i.ThreadID,
+			&i.Email,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const telegramRoomGet = `-- name: TelegramRoomGet :one
 SELECT id, chat_id, thread_id, kind, title, project_hint, created_at, seen_at FROM telegram_room WHERE id = $1
 `
@@ -479,6 +684,61 @@ func (q *Queries) TelegramRoomUpsert(ctx context.Context, arg TelegramRoomUpsert
 		&i.ProjectHint,
 		&i.CreatedAt,
 		&i.SeenAt,
+	)
+	return i, err
+}
+
+const telegramSessionRun = `-- name: TelegramSessionRun :one
+SELECT coalesce((SELECT e.state::text FROM execution e WHERE e.session_id = $1 ORDER BY e.seq DESC LIMIT 1), '')::text AS run_state,
+  (SELECT coalesce(e.ended_at, e.started_at, e.updated_at) FROM execution e WHERE e.session_id = $1 ORDER BY e.seq DESC LIMIT 1)::timestamptz AS run_at,
+  (SELECT count(*) FROM question q WHERE q.session_id = $1 AND q.state = 'open')::bigint AS open_questions,
+  coalesce((SELECT array_agg(r.id ORDER BY r.seq DESC) FROM (SELECT e.id, e.seq FROM execution e WHERE e.session_id = $1 ORDER BY e.seq DESC LIMIT 20) r), '{}')::text[] AS execution_ids
+`
+
+type TelegramSessionRunRow struct {
+	RunState      string
+	RunAt         pgtype.Timestamptz
+	OpenQuestions int64
+	ExecutionIds  []string
+}
+
+// Where a work item's conversation stands: its newest run, its open questions and its recent runs (for delivery).
+func (q *Queries) TelegramSessionRun(ctx context.Context, sessionID *string) (TelegramSessionRunRow, error) {
+	row := q.db.QueryRow(ctx, telegramSessionRun, sessionID)
+	var i TelegramSessionRunRow
+	err := row.Scan(
+		&i.RunState,
+		&i.RunAt,
+		&i.OpenQuestions,
+		&i.ExecutionIds,
+	)
+	return i, err
+}
+
+const telegramTaskByRef = `-- name: TelegramTaskByRef :one
+SELECT id, code, title, state::text AS state, wait_reason, project_id FROM task WHERE id = $1 OR code = upper($1) LIMIT 1
+`
+
+type TelegramTaskByRefRow struct {
+	ID         string
+	Code       *string
+	Title      string
+	State      string
+	WaitReason *string
+	ProjectID  *string
+}
+
+// A task by its code (FLT-12) or id, for /status and the milestone pass.
+func (q *Queries) TelegramTaskByRef(ctx context.Context, id string) (TelegramTaskByRefRow, error) {
+	row := q.db.QueryRow(ctx, telegramTaskByRef, id)
+	var i TelegramTaskByRefRow
+	err := row.Scan(
+		&i.ID,
+		&i.Code,
+		&i.Title,
+		&i.State,
+		&i.WaitReason,
+		&i.ProjectID,
 	)
 	return i, err
 }
@@ -822,6 +1082,40 @@ func (q *Queries) TelegramUpdatePending(ctx context.Context) (int64, error) {
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const telegramWorkActive = `-- name: TelegramWorkActive :many
+SELECT id, room_id, session_id, title, created_by, created_at, last_at, closed_at FROM telegram_work WHERE closed_at IS NULL AND last_at > clock_timestamp() - interval '7 days' ORDER BY last_at DESC LIMIT 200
+`
+
+// Open work items with activity in the last week: the milestone pass looks at their state.
+func (q *Queries) TelegramWorkActive(ctx context.Context) ([]TelegramWork, error) {
+	rows, err := q.db.Query(ctx, telegramWorkActive)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TelegramWork
+	for rows.Next() {
+		var i TelegramWork
+		if err := rows.Scan(
+			&i.ID,
+			&i.RoomID,
+			&i.SessionID,
+			&i.Title,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.LastAt,
+			&i.ClosedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const telegramWorkAdd = `-- name: TelegramWorkAdd :exec

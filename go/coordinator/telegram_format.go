@@ -85,3 +85,12 @@ func tgInline(s string) string {
 	})
 	return mdItalic.ReplaceAllString(s, "${1}<i>${2}</i>${3}")
 }
+
+// tgPlain: the text without its Markdown marks, for the plain resend after Telegram refused the HTML (a reply never
+// shows raw asterisks, owner-tester 2026-11-25).
+func tgPlain(md string) string {
+	s := mdLink.ReplaceAllString(md, "$1 ($2)")
+	s = mdBold.ReplaceAllString(s, "$1$2")
+	s = strings.ReplaceAll(s, "```", "")
+	return strings.ReplaceAll(s, "`", "")
+}
