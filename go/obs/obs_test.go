@@ -176,3 +176,18 @@ func TestClickHouseLive(t *testing.T) {
 		t.Fatal(n)
 	}
 }
+
+// Requirement: fleet-telemetry.md §1 "Client disconnect is cancelled", whatever status the handler wrote after it.
+// Risk: 2026-11-25 a coordinator restart's reconnects aborted definition_list calls; their 500s raised a false error-spike.
+func TestHandlerClientGoneIsCancelled(t *testing.T) {
+	var got *Span
+	SetSink(func(s *Span) { got = s })
+	defer SetSink(nil)
+	h := Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) }), func(*http.Request) string { return "POST /x" })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/x", nil).WithContext(ctx))
+	if got == nil || got.Outcome != Cancelled {
+		t.Fatalf("span after client left = %+v, want outcome %q", got, Cancelled)
+	}
+}

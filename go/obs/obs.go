@@ -402,7 +402,7 @@ func Handler(next http.Handler, name func(*http.Request) string) http.Handler {
 			s.Outcome, s.ErrorClass = HTTPOutcome(rec.Status, rec.refused)
 			if p != nil {
 				s.ErrorClass = "panic"
-			} else if r.Context().Err() != nil && rec.Status < 400 {
+			} else if r.Context().Err() != nil { // the client left: its 499 or a late failure is not an error
 				s.Outcome = Cancelled
 			}
 			s.End(nil)
