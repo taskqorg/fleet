@@ -128,6 +128,7 @@ type cooldownKey struct {
 
 type gateway struct {
 	config   *config
+	access   accessLinks // project access logins (access.go)
 	client   *http.Client
 	snapshot atomic.Pointer[snapshot]
 	seenLock sync.Mutex

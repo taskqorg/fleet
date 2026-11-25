@@ -92,6 +92,12 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 			tools = toolNames(telegramConn)
 		}
 		gc := contract.GatewayConnection{Provider: c.Provider, Tools: tools, Intake: c.Intake, Keys: keys, Blocked: bl}
+		if isAccessProvider(c.Provider) {
+			if gc.Access, err = accessGatewayAccess(q, c.Name); err != nil {
+				log.Printf("connection %s: access not published: %v", c.Name, err)
+				gc.Access = nil
+			}
+		}
 		// A value that does not decode leaves this connection at its defaults; it never blocks every other one.
 		if limits, err := c.limits(); err != nil {
 			log.Printf("connection %s: limits not published: %v", c.Name, err)

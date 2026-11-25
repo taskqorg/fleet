@@ -178,6 +178,7 @@ func (v AccessGrantState) Valid() bool {
 
 type AccessGrantView struct {
 	AskedBy    string             `json:"askedBy"`
+	Connection *string            `json:"connection,omitempty"`
 	CreatedAt  int64              `json:"createdAt"`
 	Credential *string            `json:"credential,omitempty"`
 	Error      *string            `json:"error,omitempty"`

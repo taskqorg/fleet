@@ -1,7 +1,8 @@
 {
   "connections": [
     "tavily",
-    "youtrack"
+    "youtrack",
+    "project-access"
   ],
   "effort": "medium",
   "id": "codex-researcher",

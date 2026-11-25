@@ -1,6 +1,7 @@
 {
   "connections": [
-    "youtrack"
+    "youtrack",
+    "project-access"
   ],
   "effort": "medium",
   "gitNetwork": true,

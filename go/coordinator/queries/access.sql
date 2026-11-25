@@ -72,3 +72,9 @@ SELECT grant_id, op, attempts FROM access_work WHERE grant_id = $1;
 
 -- name: AccessWorkDelete :exec
 DELETE FROM access_work WHERE grant_id = @grant_id AND op = @op;
+
+-- name: AccessGrantByConnection :one
+-- The ready grant a project access connection serves (payload.connection names it).
+SELECT id, project_id, server_id, kind, level, state, request_id, asked_by, question_id, credential, expires_at, payload, created_at, updated_at
+FROM access_grant WHERE payload->>'connection' = @connection::text AND state = 'ready' AND deleted_at IS NULL
+ORDER BY updated_at DESC LIMIT 1;

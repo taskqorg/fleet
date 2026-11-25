@@ -172,6 +172,7 @@ type callData struct {
 	Ms                      int64                  `json:"ms"`
 	Transfer                *contract.CallTransfer `json:"transfer,omitempty"`
 	Phase                   *contract.CallPhase    `json:"phase,omitempty"`
+	Detail                  *string                `json:"detail,omitempty"` // project access: what the call read (audit)
 	UploadAccounted         bool                   `json:"uploadAccounted,omitempty"`
 	TokenName               *string                `json:"tokenName,omitempty"`
 	PipelineRunID           *string                `json:"pipelineRunId,omitempty"`
@@ -215,7 +216,7 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 	}
 	data := callData{Tool: l.Tool, Connection: l.Connection, Outcome: l.Outcome, ErrorCode: l.ErrorCode, Status: l.Status,
 		KeyFingerprint: l.KeyFingerprint, Usage: l.Usage, DirectedBy: t.DirectedBy, StartedAt: l.StartedAt, Ms: l.Ms, Transfer: l.Transfer,
-		Phase: l.Phase, TokenName: t.Personal, PipelineRunID: t.PipelineRunID}
+		Phase: l.Phase, TokenName: t.Personal, PipelineRunID: t.PipelineRunID, Detail: l.Detail}
 	if l.Phase != nil && *l.Phase == contract.CallPhaseCompleted && isUpload(l) {
 		data.UploadAccounted = true
 	}

@@ -47,6 +47,8 @@ type answer struct {
 	attemptedAt int64
 	// A provider 403 on this key: the provider's message. Recorded, never disabling (one bad body must not take out keys).
 	problem *string
+	// What a project access call read (the SQL text, the file path): its spool line's detail.
+	detail string
 }
 
 func refusal(status int, outcome, code, reason string) *answer {
@@ -599,6 +601,9 @@ func (g *gateway) serveJSON(w http.ResponseWriter, r *http.Request, q *request, 
 	if readErr != nil || json.Unmarshal(raw, &args) != nil || args == nil {
 		return refusal(400, "error", "bad-request", "the body must be a JSON object of at most 1 MiB")
 	}
+	if q.p.Transport != nil {
+		return g.serveAccess(w, r.Context(), q, args, r.Header.Get("Accept"))
+	}
 	if t.UsageOnce != nil {
 		var v string
 		json.Unmarshal(args[*t.UsageOnce], &v)
@@ -639,6 +644,9 @@ func (g *gateway) line(q *request, a *answer) contract.CallLine {
 	}
 	if a.err != "" {
 		line.ErrorCode = &a.err
+	}
+	if a.detail != "" {
+		line.Detail = &a.detail
 	}
 	if a.usage != nil {
 		line.Usage = &contract.CallUsage{Unit: q.t.Unit, Amount: *a.usage}

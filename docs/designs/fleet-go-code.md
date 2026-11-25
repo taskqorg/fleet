@@ -28,6 +28,8 @@ Every module that Go code imports has a row here.
 | Module | Replaces | Why the standard library does not cover it |
 | --- | --- | --- |
 | `github.com/jackc/pgx/v5` (closure: `pgpassfile`, `pgservicefile`, `puddle/v2`, `x/crypto`, `x/sync`, `x/text`) | `pg` | The standard library has no Postgres driver. `database/sql` would still need a driver and hides LISTEN, connection startup options and the simple protocol for multi-statement migrations. |
+| `github.com/go-sql-driver/mysql` (closure: `filippo.io/edwards25519`) | none | `fleet-gateway`'s `project-mysql` connections run agents' read queries on project MySQL servers ([project access](fleet-project-access.md#how-agents-use-a-grant)); the standard library has no MySQL protocol. Dialed over the SSH login of the grant's OS user. |
+| `golang.org/x/crypto` (already in `pgx`'s closure) | `ssh`, `sftp` | Its `ssh` package logs the provisioner (coordinator) and project access connections (gateway) in to project servers with pinned host keys; the gateway's SFTP reads are a small client of its own in `go/gateway/sftp.go`. |
 | `github.com/getsentry/sentry-go` (closure: `x/text`, `x/sys`) | the Sentry SDK of the TypeScript services | The coordinator and the executor report unexpected errors and panics to Bugsink in the Sentry protocol: envelopes, stack frames of a panic and of an error, batching and rate-limit handling, kept current by the protocol's owner. A hand-written sender would track the protocol itself ([error tracking](fleet-error-tracking.md#3-server-errors)). Owner decision 2026-11-17. |
 
 Not added:

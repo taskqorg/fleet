@@ -31,6 +31,7 @@ func (v *CallKeyProblem) Validate() error {
 type CallLine struct {
 	CallId            string           `json:"callId"`
 	Connection        string           `json:"connection"`
+	Detail            *string          `json:"detail,omitempty"`
 	Disabled          *CallKeyDisabled `json:"disabled,omitempty"`
 	ErrorCode         *string          `json:"errorCode,omitempty"`
 	ExecutionId       *string          `json:"executionId,omitempty"`
@@ -171,7 +172,58 @@ func (v *CallUsage) Validate() error {
 	return nil
 }
 
+// GatewayAccess: The project access grant a transport connection serves: the way to the server (each hop's address and pinned host key; every hop but the last is passed as fleet-jump), the OS user, the credential files relative to the access directory (<FLEET_SECRET_DIR>/access, never values), and the scope.
+type GatewayAccess struct {
+	Database *string            `json:"database,omitempty"`
+	DbUser   *string            `json:"dbUser,omitempty"`
+	Grant    string             `json:"grant"`
+	Hops     []GatewayHop       `json:"hops"`
+	Key      string             `json:"key"`
+	Level    GatewayAccessLevel `json:"level"`
+	Password *string            `json:"password,omitempty"`
+	Paths    []string           `json:"paths,omitempty"`
+	Tables   []string           `json:"tables,omitempty"`
+	User     string             `json:"user"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayAccess) Validate() error {
+	if v.Hops == nil {
+		return Missing("hops")
+	}
+	for i := range v.Hops {
+		if err := Check(&v.Hops[i], "hops"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Level, "level"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type GatewayAccessLevel string
+
+const (
+	GatewayAccessLevelRead  GatewayAccessLevel = "read"
+	GatewayAccessLevelWrite GatewayAccessLevel = "write"
+)
+
+// GatewayAccessLevelValues lists every GatewayAccessLevel in schema order.
+var GatewayAccessLevelValues = []GatewayAccessLevel{GatewayAccessLevelRead, GatewayAccessLevelWrite}
+
+// Valid: v is one of the schema's values.
+func (v GatewayAccessLevel) Valid() bool {
+	for _, x := range GatewayAccessLevelValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type GatewayConnection struct {
+	Access    *GatewayAccess    `json:"access,omitempty"`
 	Blocked   []string          `json:"blocked"`
 	Intake    string            `json:"intake"`
 	KeyPolicy *GatewayKeyPolicy `json:"keyPolicy,omitempty"`
@@ -183,6 +235,11 @@ type GatewayConnection struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *GatewayConnection) Validate() error {
+	if v.Access != nil {
+		if err := Check(v.Access, "access"); err != nil {
+			return err
+		}
+	}
 	if v.Blocked == nil {
 		return Missing("blocked")
 	}
@@ -242,6 +299,16 @@ func (v GatewayFileMode) Valid() bool {
 		}
 	}
 	return false
+}
+
+type GatewayHop struct {
+	Address string `json:"address"`
+	HostKey string `json:"hostKey"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayHop) Validate() error {
+	return nil
 }
 
 type GatewayKey struct {
@@ -321,6 +388,7 @@ type GatewayProvider struct {
 	KeyHeader *string                `json:"keyHeader,omitempty"`
 	KeyPath   *string                `json:"keyPath,omitempty"`
 	Tools     map[string]GatewayTool `json:"tools"`
+	Transport *GatewayTransport      `json:"transport,omitempty"`
 	Usage     *GatewayUsageSource    `json:"usage,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
@@ -345,6 +413,11 @@ func (v *GatewayProvider) UnmarshalJSON(b []byte) error {
 func (v *GatewayProvider) Validate() error {
 	if v.Tools == nil {
 		return Missing("tools")
+	}
+	if v.Transport != nil {
+		if err := Check(v.Transport, "transport"); err != nil {
+			return err
+		}
 	}
 	if v.Usage != nil {
 		if err := Check(v.Usage, "usage"); err != nil {
@@ -454,6 +527,26 @@ func (v *GatewayTool) Validate() error {
 		}
 	}
 	return nil
+}
+
+type GatewayTransport string
+
+const (
+	GatewayTransportMysql GatewayTransport = "mysql"
+	GatewayTransportFiles GatewayTransport = "files"
+)
+
+// GatewayTransportValues lists every GatewayTransport in schema order.
+var GatewayTransportValues = []GatewayTransport{GatewayTransportMysql, GatewayTransportFiles}
+
+// Valid: v is one of the schema's values.
+func (v GatewayTransport) Valid() bool {
+	for _, x := range GatewayTransportValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // GatewayUsageSource: Per-key usage report (reconcile): GET path, and the dotted field holding the number.

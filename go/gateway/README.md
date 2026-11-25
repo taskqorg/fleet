@@ -10,6 +10,7 @@
 - [gateway.go](gateway.go): config loading, gateway initialization, HTTP routing (`/healthz`, `/v1/usage`, `/v1/call/...`), typed health/usage reports, and graceful drain loop.
 - [snapshot.go](snapshot.go): snapshot schema parsing, file polling and retention, key-value loading and verification, run-token authentication, and usable-key/budget checks.
 - [spool.go](spool.go): durable UTC-day JSONL call spool (`fsync` on file and new directory entries), atomic file replacement, and persistent `spool-lost` accounting.
+- [access.go](access.go), [sftp.go](sftp.go): project access connections (a provider with `transport`, [project access](../../docs/designs/fleet-project-access.md#how-agents-use-a-grant)): SSH login as the grant's OS user through pinned hops with the key and password files under `<FLEET_SECRET_DIR>/access` (sibling of `keys_dir`), MySQL reads in read-only transactions (`sql_query`, `sql_schema`), SFTP folder lists and file downloads (`files_list`, `files_get`), each call's spool `detail`.
 - [proxy.go](proxy.go): outbound provider transport, stall/answer timeouts, retry/failover rules, response key redaction, path templating, Anthropic validation/token counting, and single-request file upload/download streaming.
 - [upload_resume.go](upload_resume.go): resumable chunked upload staging, commit durability, discard recovery, and disk space reservations.
 - [guard.go](guard.go): Caddy forward-auth verifier (`/verify`) for Cloudflare Access RS256 assertions.
