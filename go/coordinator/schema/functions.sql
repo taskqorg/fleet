@@ -232,7 +232,13 @@ BEGIN
  ELSIF TG_TABLE_NAME = 'question' THEN
   IF TG_OP = 'UPDATE' AND OLD.state = r.state THEN RETURN NULL; END IF;
   k := 'question'; subj := 'question:' || r.id; gk := subj; tid := r.task_id; sid := r.session_id;
-  sec := CASE WHEN r.cause IS NOT NULL AND r.project_id IS NULL THEN 'system' ELSE 'work' END;
+  -- A coordinator problem question (a cause: stuck run, no host, failing resource) is system upkeep, one per run or
+  -- host: it groups by its rule, so a sweep that opens or withdraws fifty is one entry with ×50. Its cause is in data
+  -- at insert (problems.go sets the column after).
+  IF coalesce(r.cause, r.data->>'cause') IS NOT NULL THEN
+   sec := 'system';
+   gk := 'cause:' || coalesce(r.data->>'rule', regexp_replace(coalesce(r.cause, r.data->>'cause'), ':[^:]*[0-9][^:]*', ':*', 'g'));
+  ELSE sec := 'work'; END IF;
   IF TG_OP = 'INSERT' THEN v := 'asked'; o := 'waiting'; act := r.asked_by;
   ELSE v := r.state::text; o := CASE WHEN r.state = 'answered' THEN 'ok' WHEN r.state = 'open' THEN 'waiting' ELSE 'stopped' END; act := r.answered_by;
    det := jsonb_strip_nulls(jsonb_build_object('answer', left(r.answer, 2000)));

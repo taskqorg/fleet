@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -105,5 +106,22 @@ func TestHistoryView(t *testing.T) {
 	e.opInto(t, "history_view", map[string]any{"experimentId": "hs-x"}, e.ownerHeaders(), &x)
 	if x.ScopeTitle == nil || *x.ScopeTitle != "code-mode" {
 		t.Fatalf("experiment scope title: %v", x.ScopeTitle)
+	}
+
+	// Two stuck-run problem questions (cause in data at insert, as problems.go asks): system, one entry of two, out of work.
+	for _, id := range []string{"r1", "r2"} {
+		exec(`INSERT INTO question (id, kind, project_id, text, data) VALUES ($1, 'operator_decision', 'fleet', 'Execution has shown no activity.', $2)`,
+			"hs-p-"+id, `{"cause":"problem:execution:`+id+`:stuck","rule":"stuck"}`)
+	}
+	var sys, work contract.HistoryViewReply
+	e.opInto(t, "history_view", map[string]any{"section": "system", "kinds": []string{"question"}}, e.ownerHeaders(), &sys)
+	if len(sys.Entries) != 1 || sys.Entries[0].N != 2 {
+		t.Fatalf("problem questions: %+v", sys.Entries)
+	}
+	e.opInto(t, "history_view", map[string]any{"section": "work", "kinds": []string{"question"}}, e.ownerHeaders(), &work)
+	for _, x := range work.Entries {
+		if strings.HasPrefix(x.Subject, "question:hs-p-") {
+			t.Fatalf("a problem question in work: %+v", x)
+		}
 	}
 }
