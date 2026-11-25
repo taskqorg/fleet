@@ -199,7 +199,9 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 // publishingStatus merges delivery's items with the publishing records (a record without a merge time keeps the item's).
 func homeMerged(allowed map[string]bool, since time.Time) int64 {
 	merged := map[string]string{}
-	key := func(project, repo string, n int64) string { return project + "|" + strings.ToLower(repo) + "#" + itoa(int(n)) }
+	key := func(project, repo string, n int64) string {
+		return project + "|" + strings.ToLower(repo) + "#" + itoa(int(n))
+	}
 	deliveryMu.Lock()
 	last := deliveryLast
 	deliveryMu.Unlock()
@@ -226,18 +228,10 @@ func homeMerged(allowed map[string]bool, since time.Time) int64 {
 
 // homeDone: the succeeded sessions of the scope with activity since today and since since.
 func homeDone(q *Request, f rowFilter, today, since time.Time) (int64, int64, error) {
-	p := []any{}
-	f.States = []string{"succeeded"}
-	c, err := sessionWhere(f, &p, true)
+	sql, p, err := sqlSessionDone(f, today, since)
 	if err != nil {
 		return 0, 0, err
 	}
-	p = append(p, today, since)
-	n, m := len(p)-1, len(p)
-	c = append(c, "x.activity_at >= least($"+itoa(n)+"::timestamptz,$"+itoa(m)+"::timestamptz)")
-	sql := `WITH x AS (SELECT d.id, d.project_id, d.archived_at, d.actor, coalesce(ss.state,'idle') AS state, greatest(d.updated_at,ss.activity_at) AS activity_at
- FROM session d LEFT JOIN session_summary ss ON ss.session_id=d.id)
- SELECT count(*) FILTER (WHERE x.activity_at >= $` + itoa(n) + `::timestamptz) AS today, count(*) FILTER (WHERE x.activity_at >= $` + itoa(m) + `::timestamptz) AS since FROM x WHERE ` + strings.Join(c, " AND ")
 	type row struct {
 		Today int64 `db:"today"`
 		Since int64 `db:"since"`

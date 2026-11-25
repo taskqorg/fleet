@@ -1156,6 +1156,12 @@ var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.task_id, d
 var sqlSessionCountBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.pipeline_run_id, d.archived_at, d.actor, coalesce(ss.state,'idle') AS state
  FROM session d LEFT JOIN session_summary ss ON ss.session_id=d.id)`
 
+// sqlSessionDoneBase: sqlSessionCountBase with the latest activity, for Home's counts of sessions done since a time
+// (home_view.go homeDone).
+var sqlSessionDoneBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.pipeline_run_id, d.archived_at, d.actor, coalesce(ss.state,'idle') AS state,
+ greatest(d.updated_at,ss.activity_at) AS activity_at
+ FROM session d LEFT JOIN session_summary ss ON ss.session_id=d.id)`
+
 // sqlSessionNow: the source of a row's now line (sessions.go nowLine): the newest event of the session with an agent
 // text block (one probe of the partial index event_agent_text, migration 101, whose predicate this repeats), its last
 // such block, and the attached task's title. Only in the list columns: PostgreSQL evaluates them for the page's rows
@@ -1316,6 +1322,22 @@ func sqlSessionSummary(f rowFilter, o sessionOrder) (string, []any, error) {
 	}
 	return sqlSessionBase + " SELECT x.state," + o.g + " AS g,min(" + label + ") AS label,count(*) AS n,count(*) FILTER (WHERE " +
 		strings.Join(gc, " AND ") + ") AS ng FROM x WHERE " + strings.Join(cc, " AND ") + " GROUP BY 1,2 ORDER BY 2", p, nil
+}
+
+// sqlSessionDone: Home's counts (home_view.go homeDone): the filtered succeeded sessions with activity since today and
+// since since, as today and since.
+func sqlSessionDone(f rowFilter, today, since time.Time) (string, []any, error) {
+	p := []any{}
+	f.States = []string{"succeeded"}
+	c, err := sessionWhere(f, &p, true)
+	if err != nil {
+		return "", nil, err
+	}
+	p = append(p, today, since)
+	n, m := len(p)-1, len(p)
+	c = append(c, fmt.Sprintf("x.activity_at >= least($%d::timestamptz,$%d::timestamptz)", n, m))
+	return fmt.Sprintf("%s SELECT count(*) FILTER (WHERE x.activity_at >= $%d::timestamptz) AS today, count(*) FILTER (WHERE x.activity_at >= $%d::timestamptz) AS since FROM x WHERE %s",
+		sqlSessionDoneBase, n, m, strings.Join(c, " AND ")), p, nil
 }
 
 // sqlSessionCount: the counter of the nav: the filtered sessions in the focus (focus: the condition on x.project_id)
