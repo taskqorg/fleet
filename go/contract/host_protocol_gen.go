@@ -1437,6 +1437,20 @@ func (v *HostArtifactListRequest) Validate() error {
 	return nil
 }
 
+type HostConsumer struct {
+	AgeSeconds *float64 `json:"ageSeconds,omitempty"`
+	Command    string   `json:"command"`
+	Fleet      *bool    `json:"fleet,omitempty"`
+	MemBytes   float64  `json:"memBytes"`
+	Pid        int64    `json:"pid"`
+	User       *string  `json:"user,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostConsumer) Validate() error {
+	return nil
+}
+
 type HostEvent struct {
 	Data      json.RawMessage `json:"data"`
 	Id        string          `json:"id"`
@@ -1473,14 +1487,25 @@ func (v *HostEvents) Validate() error {
 }
 
 type HostLoad struct {
-	Cpus     *int64   `json:"cpus,omitempty"`
-	Load1    *float64 `json:"load1,omitempty"`
-	MemFree  *float64 `json:"memFree,omitempty"`
-	MemTotal *float64 `json:"memTotal,omitempty"`
+	Cpus          *int64         `json:"cpus,omitempty"`
+	Load1         *float64       `json:"load1,omitempty"`
+	MemCompressed *float64       `json:"memCompressed,omitempty"`
+	MemFree       *float64       `json:"memFree,omitempty"`
+	MemTotal      *float64       `json:"memTotal,omitempty"`
+	SwapTotal     *float64       `json:"swapTotal,omitempty"`
+	SwapUsed      *float64       `json:"swapUsed,omitempty"`
+	TmpTotal      *float64       `json:"tmpTotal,omitempty"`
+	TmpUsed       *float64       `json:"tmpUsed,omitempty"`
+	Top           []HostConsumer `json:"top,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *HostLoad) Validate() error {
+	for i := range v.Top {
+		if err := Check(&v.Top[i], "top"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
