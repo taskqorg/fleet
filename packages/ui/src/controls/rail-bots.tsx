@@ -3,21 +3,13 @@
 // the recent count are the person setting railBots, stored on the server (the app saves them).
 import { createSignal, For, Show } from 'solid-js';
 import { Icon, Ago, focusOnMount, popoverAttr, useAnchoredPopover } from './primitives.tsx';
+import { Avatar } from './avatar.tsx';
 
 import { railBotRows, type RailBot, type RailBotState, type RailBotsProps } from './rail-bot-rows.ts';
 export { railBotRows, type RailBot, type RailBotState, type RailBotsProps };
 
-const tone: Record<RailBotState, string> = { working: 'running', waiting: 'attention', failed: 'danger', stopped: 'neutral', asleep: '' };
-const words: Record<RailBotState, string> = { working: 'running', waiting: 'waiting for an answer', failed: 'failed', stopped: 'stopped', asleep: 'asleep' };
-
-/** The bot's mark: its initial, with a state dot unless asleep (the bot avatar block replaces it once it lands). */
-export function BotMark(p: { name: string; state: RailBotState }) {
-  return (
-    <span class={['bot-mark', tone[p.state] ? `dot t-${tone[p.state]}` : '']} aria-hidden="true">
-      {p.name.slice(0, 1).toUpperCase()}
-    </span>
-  );
-}
+const tone: Record<RailBotState, string> = { working: 'running', waiting: 'attention', failed: 'danger', paused: '', asleep: '' };
+const words: Record<RailBotState, string> = { working: 'running', waiting: 'waiting for an answer', failed: 'failed', paused: 'paused', asleep: 'asleep' };
 
 function BotAge(p: { b: RailBot }) {
   return (
@@ -72,7 +64,7 @@ export function RailBots(p: RailBotsProps) {
                 onClick={e => { e.preventDefault(); p.onOpen(b); }}
                 onKeyDown={ctx(b.id)}
               >
-                <span class="nav-ic" data-tip={b.name} data-tip-narrow><BotMark name={b.name} state={b.state} /></span>
+                <span class="nav-ic" data-tip={b.name} data-tip-narrow><Avatar letter={b.name} tone="success" size="sm" picture={b.picture} state={b.state} /></span>
                 <span class="nm">{b.name}</span>
                 <Show when={b.pinned}><span class="nm bot-pin"><Icon name="pin" /></span></Show>
                 <span class="nm"><BotAge b={b} /></span>
@@ -131,7 +123,7 @@ export function RailBotsStrip(p: RailBotsProps & { onDone?: () => void }) {
           <For each={rows()}>
             {b => (
               <button type="button" role="menuitem" class="bot-tile" aria-label={`${b.name}, ${words[b.state]}`} onClick={() => { p.onDone?.(); p.onOpen(b); }}>
-                <BotMark name={b.name} state={b.state} />
+                <Avatar letter={b.name} tone="success" size="md" picture={b.picture} state={b.state} />
                 <span class="nm">{b.name}</span>
               </button>
             )}

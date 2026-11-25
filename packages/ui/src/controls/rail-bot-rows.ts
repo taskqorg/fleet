@@ -1,9 +1,11 @@
 // The bots zone's data and its order (nav-rail.md, Bots); plain TypeScript so tests run it without a JSX transform.
 
-/** A bot's state in the one vocabulary (OR-55): running, waiting for an answer, failed, stopped (paused) or asleep. */
-export type RailBotState = 'working' | 'waiting' | 'failed' | 'stopped' | 'asleep';
-/** One bot of the zone. at: the start of its active run, or of its last run (ms); pinned: pinned in Library. */
-export type RailBot = { id: string; name: string; state: RailBotState; at?: number; pinned: boolean; href: string };
+/** A bot's activity as its avatar shows it (AvatarState in avatar.tsx): asleep, working, waiting for an answer, failed, paused. */
+export type RailBotState = 'asleep' | 'working' | 'waiting' | 'failed' | 'paused';
+/** A bot's picture for the Avatar block (AvatarPicture in avatar.tsx). */
+export type RailBotPicture = { src: string; still?: string; video?: boolean; glow?: string };
+/** One bot of the zone. at: the start of its last run (ms); pinned: pinned in Library; picture: its avatar, else its letter. */
+export type RailBot = { id: string; name: string; state: RailBotState; at?: number; pinned: boolean; href: string; picture?: RailBotPicture };
 export type RailBotsProps = {
   bots: RailBot[];
   /** How many bots that are neither pinned nor active the zone also shows. */ recent: number;

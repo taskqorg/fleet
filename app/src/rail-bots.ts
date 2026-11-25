@@ -5,12 +5,11 @@ import type { RailBot, RailBotsProps } from '../../packages/ui/src/index.ts';
 import type { BotListItem } from '../../contracts/generated/ops-bots.ts';
 import { prefs, savePrefs, scopeIds, prefsRead } from './prefs.ts';
 import { useOp } from './store.ts';
+import { botAvatarState, botPicture } from './bot-view.ts';
 
 const LIBRARY_PINS = 'library';
 const libraryPath = (b: BotListItem) => '/library/bots/' + encodeURIComponent(b.code || b.id);
 const ms = (t?: string | null) => (t ? Date.parse(t) : undefined);
-const state = (b: BotListItem): RailBot['state'] =>
-  b.paused ? 'stopped' : b.activeRunId ? (b.lastRunState === 'waiting' ? 'waiting' : 'working') : b.lastRunState === 'failed' ? 'failed' : 'asleep';
 
 /** The shell's bots prop: read only while the zone is on and access is open. */
 export function useRailBots(open: () => boolean, go: (to: string) => void) {
@@ -22,7 +21,7 @@ export function useRailBots(open: () => boolean, go: (to: string) => void) {
     const all = list.data?.bots ?? [];
     const pinned = pins().filter(id => id.startsWith('bot:')).map(id => byId().get(id.slice(4))).filter((b): b is BotListItem => !!b);
     const pinnedIds = new Set(pinned.map(b => b.id));
-    const row = (b: BotListItem, isPinned: boolean): RailBot => ({ id: b.id, name: b.name, state: state(b), at: ms(b.lastRunAt), pinned: isPinned, href: b.homeSessionId ? '/conversations/' + encodeURIComponent(b.homeSessionId) : libraryPath(b) });
+    const row = (b: BotListItem, isPinned: boolean): RailBot => ({ id: b.id, name: b.name, state: botAvatarState(b), picture: botPicture(b), at: ms(b.lastRunAt), pinned: isPinned, href: b.homeSessionId ? '/conversations/' + encodeURIComponent(b.homeSessionId) : libraryPath(b) });
     return [...pinned.map(b => row(b, true)), ...all.filter(b => !pinnedIds.has(b.id)).map(b => row(b, false))];
   });
   const setRail = (next: { on: boolean; recent: number }) => savePrefs(() => ({ railBots: next }), { railBots: next });

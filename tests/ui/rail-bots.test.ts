@@ -9,7 +9,7 @@ const bot = (id: string, state: RailBot['state'], at: number | undefined, pinned
 
 test('railBotRows: pinned in order, then active, then recent up to the count', () => {
   const bots = [bot('p2', 'asleep', 1, true), bot('p1', 'failed', 9, true), bot('old', 'asleep', 2), bot('run', 'working', 3),
-    bot('ask', 'waiting', 8), bot('new', 'asleep', 7), bot('never', 'asleep', undefined), bot('stop', 'stopped', 5)];
+    bot('ask', 'waiting', 8), bot('new', 'asleep', 7), bot('never', 'asleep', undefined), bot('stop', 'paused', 5)];
   assert.deepEqual(railBotRows(bots, 0).map(b => b.id), ['p2', 'p1', 'ask', 'run']);
   assert.deepEqual(railBotRows(bots, 2).map(b => b.id), ['p2', 'p1', 'ask', 'run', 'new', 'stop']);
   assert.deepEqual(railBotRows(bots, 99).map(b => b.id), ['p2', 'p1', 'ask', 'run', 'new', 'stop', 'old', 'never']);
