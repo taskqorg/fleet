@@ -72,7 +72,7 @@ The three independent fixed-header reads use one ordered batch under the same pr
 
 ## Invariants
 
-- [Conversations controls](../../docs/designs/fleet-conversations.md#controls) use `threads.go` to resolve the composer destination under the request's session and project visibility. `agent_turn.go` reconciles the original message receipt before checking the target of a new submission.
+- [Conversations controls](../../docs/designs/fleet-conversations.md#controls) use `threads.go` to resolve the composer destination under the request's session and project visibility. `agent_turn.go` reconciles the original message receipt before checking the target of a new submission. A run's start text begins with a note naming the request when a stop cancelled the run just before it in the same session and thread (`noteStoppedRequest`, query `StoppedRequestBefore`): the resumed native session or handoff transcript still holds that request unanswered, and the note tells the agent it is cancelled. The message record keeps the person's text.
 
 - Pipeline steps persist their observed terminal `finishedAt` as `ended_at`; nonterminal/reopened steps clear it. Typed execution reads recover only valid retained terminal millisecond ends for older rows, without a database backfill or inference from duration/current time. Missing or malformed legacy timing stays unavailable. Pipeline containers remain excluded from leaf resource totals; reused-prefix timing keeps its original provenance.
 

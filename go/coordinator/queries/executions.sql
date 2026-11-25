@@ -182,3 +182,14 @@ WHERE t.execution_id= @id::text;
 INSERT INTO event(id,execution_id,session_id,project_id,type,at,payload) SELECT 'ended:'||e.id,e.id,e.session_id,e.project_id,'execution.ended',
  coalesce(e.ended_at,now()),jsonb_build_object('data',jsonb_build_object('fleetNormalized',jsonb_build_object('blocks','[]'::jsonb)))
  FROM execution e WHERE e.id=$1 AND e.kind='agent_run' ON CONFLICT(id) DO NOTHING;
+
+-- name: StoppedRequestBefore :one
+-- The text of the request whose run came just before this one in its session and thread, when a stop cancelled that
+-- run; nothing otherwise. Its native session still holds that request unanswered (F21).
+SELECT coalesce(m.text,'')::text AS text
+FROM (SELECT p.id, p.state, p.data FROM execution p JOIN execution c ON c.id = @execution_id::text
+      WHERE p.kind = 'agent_run' AND p.session_id = c.session_id AND p.thread = c.thread AND p.seq < c.seq
+      ORDER BY p.seq DESC LIMIT 1) prev
+JOIN message m ON m.execution_id = prev.id
+WHERE prev.state = 'cancelled' AND prev.data->>'stopRequested' = 'true'
+ORDER BY m.seq LIMIT 1;

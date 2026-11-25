@@ -487,6 +487,25 @@ func (q *Queries) SessionLatestExecutionBotID(ctx context.Context, sessionID *st
 	return column_1, err
 }
 
+const stoppedRequestBefore = `-- name: StoppedRequestBefore :one
+SELECT coalesce(m.text,'')::text AS text
+FROM (SELECT p.id, p.state, p.data FROM execution p JOIN execution c ON c.id = $1::text
+      WHERE p.kind = 'agent_run' AND p.session_id = c.session_id AND p.thread = c.thread AND p.seq < c.seq
+      ORDER BY p.seq DESC LIMIT 1) prev
+JOIN message m ON m.execution_id = prev.id
+WHERE prev.state = 'cancelled' AND prev.data->>'stopRequested' = 'true'
+ORDER BY m.seq LIMIT 1
+`
+
+// The text of the request whose run came just before this one in its session and thread, when a stop cancelled that
+// run; nothing otherwise. Its native session still holds that request unanswered (F21).
+func (q *Queries) StoppedRequestBefore(ctx context.Context, executionID string) (string, error) {
+	row := q.db.QueryRow(ctx, stoppedRequestBefore, executionID)
+	var text string
+	err := row.Scan(&text)
+	return text, err
+}
+
 const totalsConfirmedUsage = `-- name: TotalsConfirmedUsage :exec
 INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,computed_at)
  SELECT id,project_id,directed_by,CASE

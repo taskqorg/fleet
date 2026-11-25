@@ -3,12 +3,15 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // agentExecutions: the executions of a session, in order.
@@ -716,6 +719,9 @@ func agentDecorateStart(q *Request, s *agentSession, e *agentExecution, payload 
 		}{f, forkArgv(s.harness(), f)})
 		e.ForkOfNativeSessionID = f
 	}
+	if err := noteStoppedRequest(q, e.ID, payload); err != nil {
+		return err
+	}
 	if hid := s.PendingHandoffID; hid != "" {
 		h, err := handoffGet(q, hid)
 		if err != nil {
@@ -751,6 +757,34 @@ func agentDecorateStart(q *Request, s *agentSession, e *agentExecution, payload 
 			return sessionPut(q, &fresh)
 		}
 	}
+	return nil
+}
+
+// stoppedRequestQuote: how much of a stopped request the next turn's note quotes.
+const stoppedRequestQuote = 300
+
+// noteStoppedRequest: when a stop cancelled the run just before this one in its thread, the turn's text says so first.
+// The native session (or a handoff transcript) still holds that request with no answer, and an agent resuming it took
+// the request as pending and did it alongside the new one (F21). Every channel's stop ends in the same cancelled run, so
+// the web app, Telegram and MCP all get the note. The message record keeps the person's own text.
+func noteStoppedRequest(q *Request, executionID string, payload *contract.StartPayload) error {
+	stopped, err := q.db().StoppedRequestBefore(q.ctx(), executionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	quote := strings.TrimSpace(stopped)
+	if r := []rune(quote); len(r) > stoppedRequestQuote {
+		quote = string(r[:stoppedRequestQuote]) + "…"
+	}
+	note := "[Fleet: the person stopped the previous request before it finished"
+	if quote != "" {
+		note += ": \"" + quote + "\""
+	}
+	note += ". It is cancelled: do not continue or answer it unless the message below asks for it again.]"
+	text := note + "\n\n" + deref(payload.Text)
+	payload.Text = &text
 	return nil
 }
 
