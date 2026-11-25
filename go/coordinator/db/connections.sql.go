@@ -254,7 +254,7 @@ func (q *Queries) ConnCallPhases(ctx context.Context, ids []string) ([]ConnCallP
 }
 
 const connCallProblem = `-- name: ConnCallProblem :exec
-UPDATE execution SET problem= $1::text WHERE id= $2::text AND problem IS NULL
+UPDATE execution SET problem= $1::text WHERE id= $2::text AND (problem IS NULL OR problem='unknown:unreported')
 `
 
 type ConnCallProblemParams struct {

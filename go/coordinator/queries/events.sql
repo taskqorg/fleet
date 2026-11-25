@@ -55,7 +55,7 @@ SELECT data, state::text AS state FROM execution WHERE id=$1 AND kind IN ('agent
 
 -- name: EventsExecutionProblem :exec
 -- The first cause wins: a later event does not replace the problem an execution already records.
-UPDATE execution SET problem= @problem WHERE id= @id AND problem IS NULL;
+UPDATE execution SET problem= @problem WHERE id= @id AND (problem IS NULL OR problem='unknown:unreported');
 
 -- Transport conflicts and their audit (migration 82): a record is the row as transport_inspect shows it.
 

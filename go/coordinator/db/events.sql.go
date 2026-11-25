@@ -310,7 +310,7 @@ func (q *Queries) EventsExecution(ctx context.Context, id string) (EventsExecuti
 }
 
 const eventsExecutionProblem = `-- name: EventsExecutionProblem :exec
-UPDATE execution SET problem= $1 WHERE id= $2 AND problem IS NULL
+UPDATE execution SET problem= $1 WHERE id= $2 AND (problem IS NULL OR problem='unknown:unreported')
 `
 
 type EventsExecutionProblemParams struct {
