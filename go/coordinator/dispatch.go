@@ -900,8 +900,21 @@ func (a *App) rankCandidates(q *Request, e *dispatchExecution, k *dispatchContex
 			}
 		}
 	}
-	// A spare host takes work only when no other host can: its candidates go after every other one.
-	sort.SliceStable(out, func(i, j int) bool { return !k.spare(out[i].Host) && k.spare(out[j].Host) })
+	// A continuation stays where its native session and worktree live: candidates on its last host come first, whatever
+	// the subscription order, so one skipped subscription does not move it to another host (C-FLT-592 moved 45 times in
+	// 14 h). It moves only when no candidate there is usable. A spare host takes work only when no other host can: its
+	// candidates go after every other one, a continuation's included.
+	last := deref(x.Last)
+	rank := func(c *candidate) int {
+		switch {
+		case k.spare(c.Host):
+			return 2
+		case last != "" && c.Host == last:
+			return 0
+		}
+		return 1
+	}
+	sort.SliceStable(out, func(i, j int) bool { return rank(out[i]) < rank(out[j]) })
 	// Held for its own host: no other host takes it now. It stays unplaced, so every pass ranks it again.
 	if holdFor != "" {
 		for _, c := range out {

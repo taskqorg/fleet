@@ -494,3 +494,74 @@ func TestDispatchSpareHostIsLast(t *testing.T) {
 		t.Fatalf("hosts_update intake later = %d, want 400", code)
 	}
 }
+
+// Requirement: a continuation stays on the host where its native session lives, whatever the subscription order; it
+// moves only when no candidate there is usable.
+// Risk: 2026-11-25 HAL0 (C-FLT-592) moved between owner-mac, pds18 and windows 45 times in 14 h: each Codex
+// subscription is bound to one host and dispatch tried subscriptions first, so one skipped subscription moved the
+// conversation to another host, a new native thread and a replayed handoff.
+func TestDispatchContinuationStaysOnItsHost(t *testing.T) {
+	env := openTestCoordinator(t, true)
+	mac, pds := "stay-mac", "stay-pds"
+	macSecret, pdsSecret := env.registerHost(t, mac), env.registerHost(t, pds)
+	healthy := &contract.HostLoad{Load1: ptr(1.0), Cpus: ptr(int64(8)), MemFree: ptr(8e9), MemTotal: ptr(24e9)}
+	poll := func(host, secret string) []map[string]any {
+		t.Helper()
+		v := "1.261125.1"
+		code, body := env.callJSON(t, "POST", "/api/hosts/poll", contract.PollRequest{
+			HostId: host, Platform: contract.Platform("darwin"), Capabilities: []string{"codex"}, Stores: []contract.StoreReport{},
+			Problems: []contract.EdgeProblem{}, ProjectRoots: []string{}, GitConnections: []string{}, ActiveExecutions: []string{},
+			Load: healthy, Version: &v,
+		}, map[string]string{"Authorization": "Bearer " + secret})
+		if code != 200 {
+			t.Fatalf("poll(%s) = %d %v", host, code, body)
+		}
+		var out []map[string]any
+		for _, raw := range anys(body["commands"]) {
+			out = append(out, mapOf(raw))
+		}
+		return out
+	}
+	poll(mac, macSecret)
+	poll(pds, pdsSecret)
+	// Two subscriptions, the first one bound to pds, the second to mac: subscription order alone prefers pds.
+	for _, a := range []struct{ name, host string }{{"stay-first", pds}, {"stay-second", mac}} {
+		code, acct := env.callJSON(t, "POST", "/api/ops/account_create", doc{"name": a.name, "harness": "codex"}, env.ownerHeaders())
+		if code != 200 {
+			t.Fatalf("account_create %s = %d %v", a.name, code, acct)
+		}
+		id := astr(acct["id"])
+		if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+			_, err := accountReport(q, &contract.AccountObservation{AccountId: id, Binding: a.name + "-b", NativeLoginObserved: ptr(true),
+				Platform: contract.Platform("darwin"), Quota: "ok", Readiness: "ready"}, a.host)
+			return err
+		}); err != nil {
+			t.Fatalf("accountReport %s = %v", a.name, err)
+		}
+	}
+
+	// The first run is pinned to mac; then the session is unpinned, so only its last host speaks for mac.
+	sid, eid := dispatchTestCreateQueued(t, env, "req-stay-1", &mac)
+	_ = env.app.waitDispatchCaughtUp(env.ctx, env.app.triggerDispatch())
+	cmds := poll(mac, macSecret)
+	if len(cmds) != 1 || cmds[0]["executionId"] != eid {
+		t.Fatalf("pinned first run commands on %s = %v", mac, cmds)
+	}
+	macHdr := map[string]string{"Authorization": "Bearer " + macSecret}
+	for _, st := range []contract.ReceiptStatus{contract.ReceiptStatusStarted, contract.ReceiptStatusCompleted} {
+		if code, body := env.callJSON(t, "POST", "/api/hosts/receipts", contract.Receipt{HostId: mac, CommandId: astr(cmds[0]["id"]), ExecutionId: eid, Status: st}, macHdr); code != 200 {
+			t.Fatalf("receipt %s = %d %v", st, code, body)
+		}
+	}
+	runTestPSQL(t, env.binDir, env.sockDir, env.pgPort, env.dbName, "postgres", `UPDATE session SET host_id=NULL WHERE id='`+sid+`'`)
+
+	code, msg := env.callJSON(t, "POST", "/api/ops/message_send", doc{"sessionId": sid, "requestId": "req-stay-2", "text": "continue"}, env.ownerHeaders())
+	if code != 200 {
+		t.Fatalf("message_send = %d %v", code, msg)
+	}
+	eid2 := astr(msg["id"])
+	_ = env.app.waitDispatchCaughtUp(env.ctx, env.app.triggerDispatch())
+	if ex := dispatchTestExecution(t, env, sid, eid2); ex["hostId"] != mac {
+		t.Fatalf("continuation placed on %v, want its last host %s; route %v", ex["hostId"], mac, dispatchTestRouteDecisions(t, env, eid2))
+	}
+}
