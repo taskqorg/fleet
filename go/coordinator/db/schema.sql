@@ -1140,6 +1140,15 @@ CREATE TABLE session_fork (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE session_summary (
+  "session_id" text NOT NULL,
+  "state" text NOT NULL,
+  "state_execution_id" text,
+  "harness" text,
+  "activity_at" timestamp with time zone,
+  "executions" bigint NOT NULL,
+  "open_questions" bigint NOT NULL
+);
 CREATE TABLE session_transition (
   "id" text NOT NULL,
   "session_id" text NOT NULL,
@@ -1443,6 +1452,7 @@ CREATE FUNCTION fleet_project_code_set(p_project text, p_code text) RETURNS text
 CREATE FUNCTION fleet_refresh_execution_spend_ids(eids text[]) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_session_hidden_lineage_count(sid text) RETURNS bigint LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_session_resource_lineage(row_id text, total_only boolean) RETURNS TABLE(scopes text[], scope_keys text[], leaf_ids text[], spawned_tasks jsonb) LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_session_summary_recount(sid text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_show_deleted() RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_task_derived(p_task text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_task_hidden_lineage_count(tid text) RETURNS bigint LANGUAGE sql AS $$ SELECT NULL $$;

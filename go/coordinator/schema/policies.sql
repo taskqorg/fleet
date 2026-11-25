@@ -527,6 +527,13 @@ CREATE POLICY live ON session_fork AS RESTRICTIVE FOR SELECT TO public USING ((f
 DROP POLICY IF EXISTS project_scope ON session_fork;
 CREATE POLICY project_scope ON session_fork FOR ALL TO public USING (fleet_visible(project_id));
 
+-- session_summary
+ALTER TABLE session_summary ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS visible ON session_summary;
+CREATE POLICY visible ON session_summary FOR SELECT TO public USING ((EXISTS ( SELECT 1
+   FROM session s
+  WHERE (s.id = session_summary.session_id))));
+
 -- session_transition
 ALTER TABLE session_transition ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS directed_session ON session_transition;

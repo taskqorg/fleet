@@ -1136,31 +1136,25 @@ func sqlTaskCount(f rowFilter, focus func(p *[]any, col string) string) (string,
 
 var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeeded", "failed", "cancelled"}
 
-// Keep the status subquery inlineable in PostgreSQL for list and counter scans.
-const sqlSessionState = `(SELECT state FROM fleet_conversation_state(d.id))`
-
-// sqlSessionBase: every session as a list row. The first message and the activity are read per session by its indexed
-// session_id (migration 77): activity_at is the latest change of the session, its messages and events, or the start or
-// end of its executions (the default sort). Not execution.updated_at: host receipts touch it on every observation,
+// sqlSessionBase: every session as a list row. Its state, activity, run count and open questions come from
+// session_summary (migration 116), which triggers keep in the same transaction as the writes; the first message is read
+// per session by its indexed session_id (migration 77). activity_at is the latest change of the session, its messages
+// and events, or the start or end of its executions (the default sort). Not execution.updated_at: host receipts touch it on every observation,
 // which is not conversation activity. created_at and archived_at are the session record's (its columns, else its
 // payload, matching sessions.go).
 var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.task_id, d.seq, nullif(d.title,'') AS title,
  d.archived_at, d.actor, d.host_id, d.payload->'agentConfig'->>'harness' AS agent_harness, d.payload->'agentConfig'->>'id' AS profile_id,
  CASE WHEN d.created_at IS NOT NULL THEN (extract(epoch FROM d.created_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'createdAt')='number' THEN (d.payload->>'createdAt')::float8 END AS created_ms,
  CASE WHEN d.archived_at IS NOT NULL THEN (extract(epoch FROM d.archived_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'archivedAt')='number' THEN (d.payload->>'archivedAt')::float8 END AS archived_ms,
- ` + sqlSessionState + ` AS state,
- (SELECT e.harness FROM execution e WHERE e.session_id=d.id AND e.kind='agent_run' ORDER BY e.seq DESC LIMIT 1) AS harness,
+ coalesce(ss.state,'idle') AS state, ss.harness,
  (SELECT m.text FROM message m WHERE m.session_id=d.id ORDER BY m.seq LIMIT 1) AS first_message,
- greatest(d.updated_at,ex.last_at,(SELECT max(m.updated_at) FROM message m WHERE m.session_id=d.id),(SELECT max(v.updated_at) FROM event v WHERE v.session_id=d.id AND NOT v.delta)) AS activity_at,
- coalesce(ex.n,0) AS executions,
- (SELECT count(*) FROM question q WHERE q.session_id=d.id AND q.state='open') AS open_questions
- FROM session d
- LEFT JOIN LATERAL (SELECT count(*) AS n,max(greatest(e.started_at,e.ended_at)) AS last_at FROM execution e WHERE e.session_id=d.id) ex ON true)`
+ greatest(d.updated_at,ss.activity_at) AS activity_at, coalesce(ss.executions,0) AS executions, coalesce(ss.open_questions,0) AS open_questions
+ FROM session d LEFT JOIN session_summary ss ON ss.session_id=d.id)`
 
 // sqlSessionCountBase: the sessions as sqlSessionBase gives them to sessionWhere without a search (id, code, project,
 // archive, actor and state): a counter repeated on execution changes skips the message and activity scans.
-var sqlSessionCountBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.archived_at, d.actor, ` + sqlSessionState + ` AS state
- FROM session d)`
+var sqlSessionCountBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.archived_at, d.actor, coalesce(ss.state,'idle') AS state
+ FROM session d LEFT JOIN session_summary ss ON ss.session_id=d.id)`
 
 // sqlSessionNow: the source of a row's now line (sessions.go nowLine): the newest event of the session with an agent
 // text block (one probe of the partial index event_agent_text, migration 101, whose predicate this repeats), its last

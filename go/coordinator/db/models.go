@@ -1610,6 +1610,16 @@ type SessionFork struct {
 	TombstonedAt    *time.Time
 }
 
+type SessionSummary struct {
+	SessionID        string
+	State            string
+	StateExecutionID *string
+	Harness          *string
+	ActivityAt       *time.Time
+	Executions       int64
+	OpenQuestions    int64
+}
+
 type SessionTransition struct {
 	ID           string
 	SessionID    string

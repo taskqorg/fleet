@@ -69,6 +69,8 @@ CREATE OR REPLACE TRIGGER delivery_state_change AFTER INSERT OR DELETE OR UPDATE
 -- event
 CREATE OR REPLACE TRIGGER event_change AFTER INSERT OR DELETE OR UPDATE ON event FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER event_tombstone BEFORE INSERT ON event FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+CREATE OR REPLACE TRIGGER session_summary_event_ins AFTER INSERT ON event REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION fleet_session_summary_event();
+CREATE OR REPLACE TRIGGER session_summary_event_upd AFTER UPDATE ON event REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION fleet_session_summary_event();
 
 -- execution
 CREATE OR REPLACE TRIGGER execution_change AFTER INSERT OR DELETE OR UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION fleet_change();
@@ -80,6 +82,7 @@ CREATE OR REPLACE TRIGGER execution_tombstone BEFORE INSERT ON execution FOR EAC
 CREATE OR REPLACE TRIGGER execution_touch BEFORE UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 CREATE OR REPLACE TRIGGER resource_align_totals_owner AFTER UPDATE OF project_id ON execution FOR EACH ROW EXECUTE FUNCTION resource_align_totals_owner();
 CREATE OR REPLACE TRIGGER resource_capture_execution AFTER INSERT OR DELETE OR UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION resource_capture_execution();
+CREATE OR REPLACE TRIGGER session_summary_execution AFTER INSERT OR DELETE OR UPDATE OF state, started_at, ended_at, session_id, kind ON execution FOR EACH ROW EXECUTE FUNCTION fleet_session_summary_execution();
 
 -- execution_totals
 CREATE OR REPLACE TRIGGER execution_spend_totals_del AFTER DELETE ON execution_totals REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION execution_spend_on_totals_del();
@@ -108,6 +111,8 @@ CREATE OR REPLACE TRIGGER managed_account_change AFTER INSERT OR DELETE OR UPDAT
 -- message
 CREATE OR REPLACE TRIGGER message_change AFTER INSERT OR DELETE OR UPDATE ON message FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER message_tombstone BEFORE INSERT ON message FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+CREATE OR REPLACE TRIGGER session_summary_message_ins AFTER INSERT ON message REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION fleet_session_summary_message();
+CREATE OR REPLACE TRIGGER session_summary_message_upd AFTER UPDATE ON message REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION fleet_session_summary_message();
 
 -- price_entry
 CREATE OR REPLACE TRIGGER price_entry_append_only BEFORE DELETE OR UPDATE ON price_entry FOR EACH ROW EXECUTE FUNCTION fleet_append_only();
@@ -125,6 +130,7 @@ CREATE OR REPLACE TRIGGER question_derived AFTER INSERT OR DELETE OR UPDATE OF t
 CREATE OR REPLACE TRIGGER question_tombstone BEFORE INSERT ON question FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
 CREATE OR REPLACE TRIGGER question_touch BEFORE UPDATE ON question FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 CREATE OR REPLACE TRIGGER question_zcode BEFORE INSERT OR UPDATE OF project_id, code ON question FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
+CREATE OR REPLACE TRIGGER session_summary_question AFTER INSERT OR DELETE OR UPDATE OF state, session_id ON question FOR EACH ROW EXECUTE FUNCTION fleet_session_summary_question();
 
 -- queued_message
 CREATE OR REPLACE TRIGGER queued_message_tombstone BEFORE INSERT ON queued_message FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
@@ -147,6 +153,7 @@ CREATE OR REPLACE TRIGGER score_change AFTER INSERT OR DELETE OR UPDATE ON score
 -- session
 CREATE OR REPLACE TRIGGER session_change AFTER INSERT OR DELETE OR UPDATE ON session FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER session_director_immutable BEFORE UPDATE ON session FOR EACH ROW EXECUTE FUNCTION fleet_session_director_immutable();
+CREATE OR REPLACE TRIGGER session_summary_session AFTER INSERT OR UPDATE ON session FOR EACH ROW EXECUTE FUNCTION fleet_session_summary_session();
 CREATE OR REPLACE TRIGGER session_zcode BEFORE INSERT OR UPDATE OF project_id, code ON session FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
 
 -- session_fork
