@@ -49,3 +49,5 @@ docs/design-system/board/**/Assets/.thumbs/
 docs/design-system/board/Assets/.thumbs/
 docs/design-system/board/Exports/
 docs/design-system/board/.gitignore
+# Board options are working papers (OR-62): drawn in the board home, never committed
+docs/design-system/board/drafts/

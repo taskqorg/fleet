@@ -98,7 +98,7 @@ export function context(page: string): string {
     const ps = parts.get(g);
     if (!ps) continue;
     L.push(`${g}:`, ...ps.map(p => `- ${p}`));
-    if (g === 'Canvas') L.push('  Read the canvas as plain text with your file tools; never call the Brilliant MCP tools from a task worktree; drawing happens only in ~/Projects/fleet-board (README.md#design-board).');
+    if (g === 'Canvas') L.push('  Read the canvas as plain text with your file tools; never call the Brilliant MCP tools from a task worktree; a visible change is drawn first in ~/Projects/fleet-board and approved by the owner (OR-62, README.md#design-board).');
     L.push('');
   }
   L.push('Principles (owner-rules.md):', ...principles(owner).map((p, i) => `${i + 1}. ${p}`), '');

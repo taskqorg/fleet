@@ -544,3 +544,9 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question:** every task worktree called the Brilliant MCP `init` on its own copy of the board (as `scripts/ui-context.ts` told it to), so the owner's Brilliant app registered a new project per worktree and filled with "Agent working in board" notifications.
 * **Options:** keep a board copy per worktree; or one persistent board worktree for drawing, with every other session reading the `.bl` files as text.
 * **Choice (owner):** one home. Drawing happens only in `~/Projects/fleet-board`, one design session at a time, delivered by pull request; build and review sessions read canvases as text and never call Brilliant. Recorded in [README](README.md#design-board).
+
+## 2026-11-25: Brilliant first
+
+* **Question:** UI work (most recently the Live list rows) went straight to code, with options as HTML mockups or none at all, so the owner first saw a design in the built app.
+* **Options:** design in code and review the result; or draw every visible change on the Brilliant board first and build only what the owner approved there.
+* **Choice (owner):** Brilliant first, as a rule ([OR-62](owner-rules.md)). Design sessions draw in the board home `~/Projects/fleet-board`, options on git-ignored `drafts/` canvases, several sessions at once on their own canvases; approved canvases are copied into the task branch and committed with the spec. Recorded in [README](README.md#design-board).
