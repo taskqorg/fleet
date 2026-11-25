@@ -109,6 +109,30 @@
   .ver-table th { display: flex; align-items: center; gap: var(--space-2); color: var(--fg-muted); }
   .ver-state { color: var(--tone-fg); }
   .rail-foot { margin-top: auto; padding-top: var(--space-3); border-top: 1px solid var(--line); }
+  /* The bots zone (nav-rail.md, Bots): at the bottom above the user block, growing up into free space, so no section moves. */
+  .rail-bots { margin-top: auto; padding-top: var(--space-3); border-top: 1px solid var(--line); }
+  .rail-bots + .rail-foot { margin-top: 0; }
+  .rail-bots-h a { color: var(--fg-muted); }
+  .rail-bots .nav-i .bot-go, .rail-bots .nav-i .bot-pin { flex: none; color: var(--fg-faint); line-height: 0; }
+  .rail-bots .bot-go .icon, .rail-bots .bot-pin .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  .rail-bots .nav-i a .nm:has(.bot-age) { flex: none; }
+  .bot-age { font-size: var(--font-size-sm); color: var(--fg-faint); }
+  .bot-age.t-attention, .bot-age.t-running, .bot-age.t-danger { color: var(--tone-fg); }
+  .bot-mark {
+    flex: none; display: inline-grid; place-items: center; position: relative;
+    width: var(--size-icon); height: var(--size-icon); border-radius: 50%;
+    background: var(--selected); color: var(--fg); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); line-height: 1;
+  }
+  .bot-mark.dot::after {
+    content: ''; position: absolute; right: -2px; bottom: -2px; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--tone-fg); box-shadow: 0 0 0 2px var(--rail);
+  }
+  .bots-strip { display: flex; flex-direction: column; }
+  .bots-marks { display: flex; gap: var(--space-2); overflow-x: auto; padding: var(--space-1) var(--space-2) var(--space-2); }
+  .bots-marks .bot-tile { flex-direction: column; height: auto; gap: var(--space-1); padding: var(--space-1); min-width: var(--size-hit-phone); }
+  .bots-marks .bot-tile .bot-mark { width: var(--size-chip); height: var(--size-chip); font-size: var(--font-size-sm); }
+  .bots-marks .bot-tile .bot-mark.dot::after { box-shadow: 0 0 0 2px var(--float); }
+  .bots-marks .bot-tile .nm { font-size: var(--font-size-xs); max-width: var(--size-thumb); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rail-user-b {
     flex: 1;
     display: flex;

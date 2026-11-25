@@ -2,7 +2,7 @@
 import { createContext, createEffect, createMemo, createSignal, For, onSettled, Show, untrack, useContext, type Accessor } from 'solid-js';
 import { Portal, type JSX } from '@solidjs/web';
 import { SidePanels, ownPanelStore, clampWidth, PanelToggle, ResizeDivider, type SidePanelStore } from './controls/side-panel.tsx';
-import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, BottomBar, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, TabBar, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem, DetailHead } from './controls.tsx';
+import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, BottomBar, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, TabBar, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem, DetailHead, RailBots, RailBotsStrip, type RailBotsProps } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -323,6 +323,8 @@ export function AppShell(p: {
   widths?: Record<string, number>; onWidth?: (key: string, px: number) => void; panels?: Record<string, boolean>; onPanel?: (key: string, open: boolean) => void;
   /** False until those settings are read: the shell stays hidden, so nothing jumps when they arrive (OR-23). */ ready?: boolean;
   /** Wall mode (Live on a TV, pages/live.md): no navigation and no shell header; the page fills the screen. */ wall?: boolean;
+  /** The bots zone (nav-rail.md, Bots): the person's switch and, while it is on, the zone's bots and actions. */
+  bots?: { on: boolean; set: (on: boolean) => void; zone: RailBotsProps };
 }) {
   const [own, setOwn] = createSignal<string[]>([]);
   const pinned = createMemo(() => p.pins ?? own());
@@ -409,9 +411,11 @@ export function AppShell(p: {
             </>
           }
           foot={<Show when={p.user}>{u => <UserBlock name={u().name} onLogout={u().onLogout} version={u().version} />}</Show>}
+          zone={<Show when={p.bots?.on}><RailBots {...p.bots!.zone} /></Show>}
+          bots={p.bots ? { on: p.bots.on, set: p.bots.set } : undefined}
         />
         {/* OR-60: below 760 px the bottom bar of five replaces the rail (CSS shows one of them). */}
-        <BottomBar items={p.nav} current={p.current} onGo={p.onGo} foot={<Show when={p.user}>{u => <UserBlock name={u().name} onLogout={u().onLogout} version={u().version} />}</Show>} />
+        <BottomBar items={p.nav} current={p.current} onGo={p.onGo} extra={p.bots?.on ? done => <RailBotsStrip {...p.bots!.zone} onDone={done} /> : undefined} foot={<Show when={p.user}>{u => <UserBlock name={u().name} onLogout={u().onLogout} version={u().version} />}</Show>} />
         <div class="shell-col">
           <Show when={!mini()}><Divider name="rail" /></Show>
           {/* OR-43: one header over the control column and the work area, whatever page is below: the collapse toggle (OR-42),
