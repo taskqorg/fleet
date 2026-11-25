@@ -514,7 +514,7 @@ func pipelineSubmitted(q *Request, c *kitClaim, run *runRecord, i int, line cont
 		return nil
 	}
 	if line.Outcome != contract.CallOutcomeOk {
-		return run.failStep(q, i, problemOf(string(line.Outcome), code), fmt.Sprintf("Connection call %s: %s", line.Outcome, code))
+		return run.failStepDetail(q, i, problemOf(string(line.Outcome), code), fmt.Sprintf("Connection call %s: %s", line.Outcome, code), callErrorDetail(line.Output))
 	}
 	if job {
 		return pipelineJobStarted(q, run, i, line)

@@ -379,6 +379,11 @@ func (run *runRecord) finish(q *Request, state, problem string) error {
 
 // failStep fails step i with problem and message, and the run with it.
 func (run *runRecord) failStep(q *Request, i int, problem, message string) error {
+	return run.failStepDetail(q, i, problem, message, "")
+}
+
+// failStepDetail: failStep keeping detail, the provider's reply to the failed call (callErrorDetail).
+func (run *runRecord) failStepDetail(q *Request, i int, problem, message, detail string) error {
 	s := &run.Steps[i]
 	s.State = "failed"
 	lost := strings.HasPrefix(problem, "unknown:") // the outcome is unknown: failed for Fleet, unconfirmed
@@ -386,7 +391,7 @@ func (run *runRecord) failStep(q *Request, i int, problem, message string) error
 		s.Observation, run.Observation = "unconfirmed", "unconfirmed"
 	}
 	now := nowMs()
-	s.Problem, s.Error, s.FinishedAt = problem, jsonBytes(pipelineStepError{Code: problem, Message: message}), &now
+	s.Problem, s.Error, s.FinishedAt = problem, jsonBytes(pipelineStepError{Code: problem, Message: message, Detail: detail}), &now
 	if err := run.put(q); err != nil {
 		return err
 	}
