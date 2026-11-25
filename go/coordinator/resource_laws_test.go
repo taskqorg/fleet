@@ -956,7 +956,10 @@ func TestLawMutants(t *testing.T) {
 	if os.Getenv("FLEET_LAW_MUTANT") != "" {
 		t.Skip("inside a mutant run")
 	}
-	ensureTestPostgres(t)
+	sock, port, bin := ensureTestPostgres(t)
+	// The children share this cluster; building one template here creates its cluster-wide roles before they start,
+	// so their own bootstraps do not race on CREATE ROLE.
+	lawTemplateDB(t)
 	files, err := filepathGlob("testdata/mutants/*.json")
 	if err != nil || len(files) == 0 {
 		t.Fatal("no mutants", err)
@@ -993,7 +996,7 @@ func TestLawMutants(t *testing.T) {
 		wg.Add(1)
 		go func(i int, m lawMutant) {
 			defer wg.Done()
-			out, err := runGoTest(overlay, m.ID)
+			out, err := runGoTest(overlay, m.ID, sock, port, bin)
 			switch {
 			case err == nil:
 				results[i] = fmt.Sprintf("%s survived (%s)", m.ID, m.Defect)
