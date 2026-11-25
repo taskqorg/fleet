@@ -159,6 +159,7 @@ type ghPullHead struct {
 }
 type ghPull struct {
 	Number    int64      `json:"number"`
+	NodeID    string     `json:"node_id"`
 	Title     string     `json:"title"`
 	Body      string     `json:"body"`
 	URL       string     `json:"html_url"`
