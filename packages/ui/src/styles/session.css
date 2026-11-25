@@ -108,11 +108,10 @@
   .detail.session-view.with-threads { grid-template-columns: calc(var(--size-rail) + var(--space-7) + var(--space-6)) minmax(0, 1fr) auto; }
   .session-view.with-threads > .thread-list { border-inline-end: 1px solid var(--line-soft); }
   .sv-threads-back { display: none; }
-  @media (max-width: 767px) { /* the container's own columns can not answer its container query */
-    .detail.session-view.with-threads { grid-template-columns: minmax(0, 1fr) auto; }
-    .session-view[data-threads=list] > .sv-main, .session-view[data-threads=thread] > .thread-list { display: none; }
-    .session-view[data-threads=thread] .sv-threads-back { display: inline-flex; }
-  }
+  /* Narrow (data-threads list or thread, set from the view's own width): the list and the thread take turns. */
+  .detail.session-view.with-threads:is([data-threads=list], [data-threads=thread]) { grid-template-columns: minmax(0, 1fr) auto; }
+  .session-view[data-threads=list] > .sv-main, .session-view[data-threads=thread] > .thread-list { display: none; }
+  .session-view[data-threads=thread] .sv-threads-back { display: inline-flex; }
   .sv-main { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; min-height: 0; padding-block: var(--space-4); padding-inline: clamp(var(--space-3), calc(6% - var(--space-5)), var(--space-6)); }
   .sv-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--size-control); }
   .sv-name { flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); }
