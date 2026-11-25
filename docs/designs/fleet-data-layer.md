@@ -37,18 +37,39 @@ Help, not block: the right path is the easy one, and rules exist only where a re
   - the update waits for the person.
 - `scripts/page-budget.ts <path>...` measures a deployed screen: reads, bytes and settle time on open, reload, Alt-Tab and Back. Data-layer pull requests quote it. After a deploy, the migrated page and its neighbours are walked on prod (dark, 1440 and 390) and compared with their canvas.
 
+## Stored facts
+
+A list that a screen rereads reads stored facts, not a recount:
+
+- `session_summary` (migration 116) holds a session's state, activity, run count and open questions. Triggers on execution, message, event, question and session keep it in the same transaction as those writes. A row is visible when its session is. It is a table of its own, so a session or thread redesign can re-key it.
+- `runner_call_hour` (migration 115) holds tool calls summed per closed hour. The `runner_call_hours` pass sums each closed hour once, the last two closed hours each minute, and the whole last day every 10 minutes (late ingest or pricing). The current hour and active calls are read live.
+- `execution_spend` holds each execution's cost, priced once and read index-only (`spend_summary`, runners spend).
+
+## Lessons
+
+- **Measure under RLS.** Run EXPLAIN as `fleet_app` with `fleet.project_ids` set and a `statement_timeout` ([standard S2a](fleet-standard.md)). As postgres, the runners' queries looked 3-5 times faster than the app's.
+- **Leakproof conditions reach an index; others do not.** Under RLS, an index serves a condition only when its functions are leakproof. Timestamps, numbers, text and `IS NULL` are; regular expressions, most casts and enum comparisons are not. So choose rows by such columns first, then join and build.
+- **Keep object identity.** A reread goes through `share(prev, next)` (`app/src/share.ts`). A screen that renders with `<For>` by reference otherwise rebuilds its rows and loses input text.
+- **Each request costs a round trip through Access** (~350 ms from the owner's network, even for a static file). Many parallel reads also contend, so a screen of 15 reads of ≤0.25 s each still settles in 1-1.5 s. One view operation per screen removes that. The mirror makes the cold open feel instant meanwhile.
+- **Ship summaries, not rows for counts.** A screen that counts or picks one item from hundreds of rows asks the server for the count or the item.
+
 ## Proof so far
 
 | Screen | Before | After |
 |---|---|---|
 | Reload (Tasks, Conversations) | 5.8-6.7 s, 16-23 reads | 0.5 s from the mirror, 0 answers before render |
+| Alt-Tab on a running HAL0 session | 29 reads, 248 KB | 1 read (`me`) |
 | HAL0 session screen | `session_get` 7.6 MB, 2-14 s; 9-12 reads | `session_view` 15.5 KB; 5 reads |
 | HAL0 thread page | 3.4 s server | ~1 s (rows by index, one publishing read per page) |
-| `executions_runners` | ~4 s server | ~2.5 s; the rest is summing 20000 calls a poll |
+| `executions_runners` | ~4 s server, TTFB 5.4 s | TTFB 1.8 s; tool-call groups 1.26 s → 69 ms under RLS |
+| `sessions_list` | 368 ms under RLS, p50 ~700 ms | 55 ms under RLS, p50 172 ms |
 
 ## Next
 
-- Move the remaining screens one per pull request: Home, Projects and Tasks, Library, Lab, the rest of Live and System.
-- Incremental call groups for Runners: sums kept by the gateway ingest, not recomputed per poll.
-- `ThreadTotal` counts blocks from each event's payload.
+- **Home: `home_view`.** Home now reads 15 operations. It ships 200 finished sessions only to count "done since", 500 failed runs only to pick each failed session's cause, and the delivery list only to count merges. The view returns the active sessions, open questions and blockers as rows, plus those counts and causes computed on the server, the bots and projects the cards need, and the visit time.
+- Then Projects and Tasks, Library, Lab, and the rest of Live and System, one per pull request, each proved with `scripts/page-budget.ts` and walked on prod against its canvas.
+- `RunnerRuns` (0.5 s under RLS): tool calls are left out only after the index, because `kind` is an enum. A leakproof way to tell runs from calls would let an index do it.
+- `ThreadTotal` counts blocks from each event's payload (~0.15 s on HAL0).
+- Prepared reads (project resources) still refresh on visibility and online.
+- `session_summary` keys follow the conversation model the owner picks (consilium, `session-model/synthesis.md`): unchanged for options A and C, keyed by line for B.
 - An EXPLAIN check of view queries under `fleet_app` with RLS on a seeded schema, once seeded data makes plans meaningful.
