@@ -15,6 +15,9 @@ import (
 // Documented owner exemptions for executor AST rules (S7/S10). Every entry must match an observed hit; new violations
 // outside these files fail TestDesignRules rather than growing silently.
 var designExecutorOwned = map[string]map[string]string{
+	"cleanup.go": {
+		"E-PROC": "listing and removing SysV shared memory of killed run processes via /usr/bin/ipcs and ipcrm",
+	},
 	"coding_tools.go": {
 		"E-PROC": "probing installed coding tool binaries (--version)",
 	},
@@ -32,6 +35,9 @@ var designExecutorOwned = map[string]map[string]string{
 	},
 	"host_readings_darwin.go": {
 		"E-PROC": "sampling macOS memory pressure via /usr/bin/vm_stat",
+	},
+	"host_consumers.go": {
+		"E-PROC": "sampling the top memory consumers via /bin/ps",
 	},
 	"httpclient.go": {
 		"E-HTTP": "sole owner of http.Client definitions (httpClient, streamClient) with NoRedirect and sharedTransport",

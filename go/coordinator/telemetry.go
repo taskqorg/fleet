@@ -227,7 +227,15 @@ func spanHostLoad(s *obs.Span, fallbackNow int64) *hostLoadObservation {
 			l.MemTotal = &n
 		}
 	}
-	if l.Load1 == nil && l.Cpus == nil && l.MemFree == nil && l.MemTotal == nil && l.DiskFree == nil {
+	// Host cleanup readings (docs/designs/fleet-host-cleanup.md#5-readings): bytes; absent when not collected.
+	for attr, dst := range map[string]**float64{"fleet.swap_used": &l.SwapUsed, "fleet.swap_total": &l.SwapTotal,
+		"fleet.mem_compressed": &l.MemCompressed, "fleet.tmp_used": &l.TmpUsed, "fleet.tmp_total": &l.TmpTotal} {
+		if n, err := strconv.ParseFloat(s.Attrs[attr], 64); err == nil && n >= 0 {
+			*dst = &n
+		}
+	}
+	l.Top = parseHostTop(s.Attrs["fleet.top"])
+	if l.Load1 == nil && l.Cpus == nil && l.MemFree == nil && l.MemTotal == nil && l.DiskFree == nil && l.SwapTotal == nil && l.Top == nil {
 		return nil
 	}
 	return l

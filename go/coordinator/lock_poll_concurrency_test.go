@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fleet/contract"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,8 +32,6 @@ var (
 	testPGPort int
 	testPGErr  error
 	testDBSeq  atomic.Int64
-	// testPGOwned: this process started the cluster and stops it; one inherited through testPGClusterEnv is not ours.
-	testPGOwned bool
 )
 
 // testPGClusterEnv hands a running test cluster ("sockdir|port|bindir") to a child go test (TestLawMutants), so the
@@ -42,13 +39,11 @@ var (
 // segments), and a child that cannot start one skips its tests and looks green.
 const testPGClusterEnv = "FLEET_TEST_PG_CLUSTER"
 
+// TestMain leaves the machine's test cluster running (pg_fixture_test.go); it drops this process's law template.
 func TestMain(m *testing.M) {
 	code := m.Run()
-	if testPGOwned && testPGDir != "" && testPGBin != "" {
-		cmd := osexec.Command(filepath.Join(testPGBin, "pg_ctl"), "-D", testPGDir, "-m", "immediate", "-w", "stop")
-		cmd.Env = pgChildEnv()
-		_ = cmd.Run()
-		_ = os.RemoveAll(testPGDir)
+	if lawTemplate.name != "" {
+		dropTestDB(lawTemplate.sock, lawTemplate.port, lawTemplate.name)
 	}
 	os.Exit(code)
 }
@@ -106,37 +101,21 @@ func ensureTestPostgres(t *testing.T) (sockDir string, port int, binDir string) 
 			testPGErr = err
 			return
 		}
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		dir, err := testPGDataDir()
 		if err != nil {
 			testPGErr = err
 			return
 		}
-		p := ln.Addr().(*net.TCPAddr).Port
-		_ = ln.Close()
-		dir, err := os.MkdirTemp("", "fleet-coord-pg-*")
+		p, err := testPGPortNumber()
 		if err != nil {
+			testPGErr = fmt.Errorf("FLEET_TEST_PGPORT: %v", err)
+			return
+		}
+		if err := startTestCluster(bin, dir, p); err != nil {
 			testPGErr = err
 			return
 		}
-		initCmd := osexec.Command(filepath.Join(bin, "initdb"), "-D", dir, "-U", "postgres", "-A", "trust", "-E", "UTF8", "--no-instructions", "--no-sync")
-		initCmd.Env = pgChildEnv()
-		if out, err := initCmd.CombinedOutput(); err != nil {
-			_ = os.RemoveAll(dir)
-			testPGErr = fmt.Errorf("initdb: %v: %s", err, out)
-			return
-		}
-		pgOpts := fmt.Sprintf("-k %s -p %d -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=200", dir, p)
-		startCmd := osexec.Command(filepath.Join(bin, "pg_ctl"), "-D", dir, "-l", filepath.Join(dir, "server.log"), "-w", "-o", pgOpts, "start")
-		startCmd.Env = pgChildEnv()
-		if out, err := startCmd.CombinedOutput(); err != nil {
-			_ = os.RemoveAll(dir)
-			testPGErr = fmt.Errorf("pg_ctl start: %v: %s", err, out)
-			return
-		}
-		testPGDir = dir
-		testPGOwned = true
-		testPGBin = bin
-		testPGPort = p
+		testPGDir, testPGBin, testPGPort = dir, bin, p
 	})
 	if testPGErr != nil {
 		pgUnavailable(t, "postgres unavailable: %v", testPGErr)
@@ -208,16 +187,7 @@ func openTestCoordinator(t *testing.T, withDispatchLoop bool) *testCoordEnv {
 	t.Helper()
 	sockDir, pgPort, binDir := ensureTestPostgres(t)
 	db := fmt.Sprintf("fleet_go_test_%d_%d", os.Getpid(), testDBSeq.Add(1))
-	rolesRaw, err := os.ReadFile(filepath.Join("..", "..", "deploy", "infrastructure", "fleet-postgres.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	rolesSQL := strings.NewReplacer(
-		"DATABASE fleet", "DATABASE "+db,
-		"datname = 'fleet'", "datname = '"+db+"'",
-		"\\connect fleet", "\\connect "+db,
-	).Replace(string(rolesRaw))
-	runTestPSQL(t, binDir, sockDir, pgPort, "postgres", "postgres", rolesSQL)
+	cloneTestDB(t, db) // migrated already; dropped when the test ends
 
 	root := filepath.Join("..", "..")
 	t.Setenv("FLEET_PROFILES_DIRECTORY", filepath.Join(root, "config", "agents"))
@@ -232,11 +202,6 @@ func openTestCoordinator(t *testing.T, withDispatchLoop bool) *testCoordEnv {
 	if err != nil {
 		cancel()
 		t.Fatalf("open owner store: %v", err)
-	}
-	if err := migrate(ctx, ownerURL); err != nil {
-		ownerStore.Close()
-		cancel()
-		t.Fatalf("migrate: %v", err)
 	}
 	appStore, err := openStore(ctx, appURL)
 	if err != nil {
@@ -293,7 +258,6 @@ func openTestCoordinator(t *testing.T, withDispatchLoop bool) *testCoordEnv {
 		srv.Close()
 		appStore.Close()
 		ownerStore.Close()
-		_, _ = osexec.Command(filepath.Join(binDir, "psql"), "-h", sockDir, "-p", fmt.Sprintf("%d", pgPort), "-U", "postgres", "-d", "postgres", "-c", fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", db)).CombinedOutput()
 	})
 	return env
 }

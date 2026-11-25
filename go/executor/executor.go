@@ -46,6 +46,7 @@ type executor struct {
 	loadMu       sync.Mutex
 	loadMemAt    time.Time
 	loadMemFree  float64
+	loadPressure contract.HostLoad // swap, compressor, tmpfs and top consumers, sampled with memory
 	loadMemTotal float64
 	loadMemOK    bool
 }
@@ -232,6 +233,7 @@ func runExecutor() error {
 	}
 	spawnOutbox(odb, url, token, host)
 	startTelemetry(root, odb, host)
+	startTmpSweep()
 	if err := os.MkdirAll(sessions, 0o700); err != nil {
 		return err
 	}
@@ -350,8 +352,12 @@ func (e *executor) sampleHostLoad() *contract.HostLoad {
 		free, total, ok := memory()
 		e.loadMemAt = time.Now()
 		e.loadMemFree, e.loadMemTotal, e.loadMemOK = free, total, ok
+		e.loadPressure = contract.HostLoad{}
+		hostPressure(&e.loadPressure)
 	}
 	free, total, ok := e.loadMemFree, e.loadMemTotal, e.loadMemOK
+	p := e.loadPressure
+	out.SwapUsed, out.SwapTotal, out.MemCompressed, out.TmpUsed, out.TmpTotal, out.Top = p.SwapUsed, p.SwapTotal, p.MemCompressed, p.TmpUsed, p.TmpTotal, p.Top
 	e.loadMu.Unlock()
 	if ok && total > 0 && free >= 0 {
 		out.MemFree = &free

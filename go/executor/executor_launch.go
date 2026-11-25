@@ -747,6 +747,12 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 			return err
 		}
 	}
+	if err := markRun(cmd, e.root, execution); err != nil {
+		pw.Close()
+		closeAll()
+		e.release(execution)
+		return fail(1, "run temporary directory: "+err.Error())
+	}
 	// The identity is read before the reap: a harness that exits at once is still a zombie then.
 	var ident string
 	var identErr error
@@ -1010,6 +1016,11 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	}
 	if _, err = e.db.Exec("UPDATE launches SET mcp_dir=? WHERE execution=?", mcp.dir, execution); err != nil {
 		return err
+	}
+	if err := markRun(cmd, e.root, execution); err != nil {
+		dropTrial()
+		e.release(execution)
+		return refuse("run temporary directory: " + err.Error())
 	}
 	// The identity is read before the reap: a script that exits at once is still a zombie then.
 	var ident string

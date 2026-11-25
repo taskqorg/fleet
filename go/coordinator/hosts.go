@@ -688,7 +688,8 @@ func hostsListReply(q *Request, includeRemoved bool) (contract.HostsListReply, e
 				h.Problems = o.Problems
 			}
 			if l := q.app.effectiveHostLoad(id, o.Load); polling && l != nil && now-l.UpdatedAt < hostLoadStaleMs {
-				h.Load = &contract.HostLoadReading{Load1: l.Load1, Cpus: l.Cpus, MemFree: l.MemFree, MemTotal: l.MemTotal, DiskFree: l.DiskFree, At: float64(l.UpdatedAt)}
+				h.Load = &contract.HostLoadReading{Load1: l.Load1, Cpus: l.Cpus, MemFree: l.MemFree, MemTotal: l.MemTotal, SwapUsed: l.SwapUsed, SwapTotal: l.SwapTotal,
+					MemCompressed: l.MemCompressed, TmpUsed: l.TmpUsed, TmpTotal: l.TmpTotal, Top: l.Top, DiskFree: l.DiskFree, At: float64(l.UpdatedAt)}
 			}
 		}
 		h.Runs = runs[id]

@@ -166,6 +166,8 @@ type live struct {
 	peakRSS uint64
 	cpu     map[int]float64
 	spanned bool // the execution span is written
+	swept   bool // cleanupRun ran
+	orphans int  // marked processes that escaped the owned tree, killed at run end (fleet.orphans)
 }
 
 // commandID and sessionID: the live command's identities, checked when it ran ("" for one that is not).
@@ -551,6 +553,7 @@ func (e *executor) reconcileProcesses() error {
 	}
 	specs, _ := filepath.Glob(filepath.Join(e.root, "runs", "*.code.json"))
 	contexts, _ := filepath.Glob(filepath.Join(e.root, "runs", "*.fleet.json"))
+	cleanupAtStart(e.root, unresolved)
 	for _, f := range append(append(files, specs...), contexts...) {
 		if !unresolved[strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(filepath.Base(f), ".env"), ".code.json"), ".fleet.json")] {
 			if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
@@ -623,6 +626,10 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		}
 		if l.cleanup() != nil {
 			l.cleanupUnknown = true
+		}
+		// What escaped the owned tree (double fork, setsid) still carries the run marker.
+		if !l.swept {
+			l.orphans, l.swept = cleanupRun(e.root, execution), true
 		}
 	}
 	name := commandHarness(l.command)

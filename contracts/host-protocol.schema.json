@@ -391,7 +391,29 @@
         "load1": { "type": "number", "minimum": 0 },
         "cpus": { "type": "integer", "minimum": 1 },
         "memFree": { "type": "number", "minimum": 0 },
-        "memTotal": { "type": "number", "minimum": 0 }
+        "memTotal": { "type": "number", "minimum": 0 },
+        "swapUsed": { "type": "number", "minimum": 0 },
+        "swapTotal": { "type": "number", "minimum": 0 },
+        "memCompressed": { "$comment": "macOS compressor bytes", "type": "number", "minimum": 0 },
+        "tmpUsed": { "$comment": "/tmp bytes used when it is tmpfs (Linux)", "type": "number", "minimum": 0 },
+        "tmpTotal": { "type": "number", "minimum": 0 },
+        "top": {
+          "$comment": "the host's top memory consumers, resident plus swapped bytes, largest first (docs/designs/fleet-host-cleanup.md#5-readings)",
+          "type": "array",
+          "items": { "$ref": "#/$defs/HostConsumer" }
+        }
+      }
+    },
+    "HostConsumer": {
+      "type": "object",
+      "required": ["pid", "command", "memBytes"],
+      "properties": {
+        "pid": { "type": "integer" },
+        "user": { "type": "string" },
+        "command": { "$comment": "program base name, no arguments or paths", "type": "string" },
+        "memBytes": { "type": "number", "minimum": 0 },
+        "ageSeconds": { "type": "number", "minimum": 0 },
+        "fleet": { "$comment": "carries a run marker or is a Fleet program", "type": "boolean" }
       }
     },
     "HarnessVersion": {

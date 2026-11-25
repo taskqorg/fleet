@@ -25,5 +25,6 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-self-update.md`: releases by tag on GitHub Releases with provenance, the `fleet-update` timer on every host, PDS18 order, rollback, `autoUpdate`, versions in `hosts_list`.
 * `fleet-delivery-pipeline.md`: merge queue and ruleset, stacked and flaky rules, automatic release per green `main` batch, faster host pickup, smoke in the host health probe.
 * `fleet-telemetry.md`: one span per operation across all services in ClickHouse, trace context, process CPU and memory, the rules pass, telemetry operations and the System screen read panels.
+* `fleet-host-cleanup.md`: the run marker and run temporary directory that let the executor remove everything a run leaves, the `/tmp` sweep, `mcp connection` lifetime, swap and top-consumer readings in `host-saturation`, and one test PostgreSQL per machine.
 * `fleet-error-tracking.md`: Bugsink as the error tracker: the browser tunnel, server errors through sentry-go, the `bugsink` connection, alerts into Needs you, source maps, onboarding.
 * `fleet-system-management.md`: host remove, archive, delete and purge with previews, worktree removal on delivery, problems as needs-you questions, Postgres backups and restore drill, the audit journal and the System screen.

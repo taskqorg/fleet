@@ -98,14 +98,15 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache: false
-      # Per-job PostgreSQL (tests/harness.ts) and ClickHouse: nothing is shared with another runner of the pool.
+      # Per-job PostgreSQL (tests/harness.ts and the Go tests share it) and ClickHouse: nothing is shared with another
+      # runner of the pool.
       - name: Job-local services
         env:
           CLICKHOUSE_PORT: ${{ job.services.clickhouse.ports['8123'] }}
           JOB_ENV: ${{ inputs.env }}
         run: |
           [ -z "$JOB_ENV" ] || printf '%s\n' "$JOB_ENV" >> "$GITHUB_ENV"
-          echo "FLEET_TRIAL_PGDATA=$RUNNER_TEMP/pg" >> "$GITHUB_ENV"
+          echo "FLEET_TEST_PGDATA=$RUNNER_TEMP/pg" >> "$GITHUB_ENV"
           [ -z "$CLICKHOUSE_PORT" ] || echo "FLEET_TEST_CLICKHOUSE_URL=http://127.0.0.1:$CLICKHOUSE_PORT" >> "$GITHUB_ENV"
       - name: Run
         env:
@@ -121,11 +122,9 @@ jobs:
           retention-days: ${{ inputs.artifact-retention }}
           overwrite: true
           if-no-files-found: error
-      # The runner kills the job's leftover processes; stopping PostgreSQL first frees its shared memory cleanly. The
-      # -<slot> servers are tests/go/run-files.ts's, one per file run at once.
+      # The runner kills the job's leftover processes; stopping PostgreSQL first frees its shared memory cleanly.
       - name: Stop job-local PostgreSQL
         if: always()
         run: |
-          for d in "$FLEET_TRIAL_PGDATA" "$FLEET_TRIAL_PGDATA"-*; do
-            [ ! -f "$d/postmaster.pid" ] || "$(ls -d /usr/lib/postgresql/*/bin | tail -1)/pg_ctl" -D "$d" -m immediate -w stop || true
-          done
+          d="$FLEET_TEST_PGDATA"
+          [ ! -f "$d/postmaster.pid" ] || "$(ls -d /usr/lib/postgresql/*/bin | tail -1)/pg_ctl" -D "$d" -m immediate -w stop || true
