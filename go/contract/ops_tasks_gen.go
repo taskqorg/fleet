@@ -411,6 +411,27 @@ func (v *ProjectContextRequest) Validate() error {
 	return nil
 }
 
+// ProjectDecision: A finished Lab experiment of the project that waits for a decision.
+type ProjectDecision struct {
+	At           string                `json:"at"`
+	Choices      []LabLeaderboardEntry `json:"choices"`
+	ExperimentId string                `json:"experimentId"`
+	Goal         string                `json:"goal"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectDecision) Validate() error {
+	if v.Choices == nil {
+		return Missing("choices")
+	}
+	for i := range v.Choices {
+		if err := Check(&v.Choices[i], "choices"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type ProjectDetailReply struct {
 	Content       ProjectBundle              `json:"content"`
 	ContentSha    string                     `json:"contentSha"`
@@ -485,6 +506,103 @@ func (v *ProjectListReply) Validate() error {
 }
 
 type ProjectListRequest = map[string]json.RawMessage
+
+type ProjectPipelineGroup struct {
+	Capability  string               `json:"capability"`
+	Experiments int64                `json:"experiments"`
+	InUse       *string              `json:"inUse"`
+	InUseSource *string              `json:"inUseSource"`
+	Pipelines   []ProjectPipelineRow `json:"pipelines"`
+	UseCaseId   *string              `json:"useCaseId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectPipelineGroup) Validate() error {
+	if v.Pipelines == nil {
+		return Missing("pipelines")
+	}
+	for i := range v.Pipelines {
+		if err := Check(&v.Pipelines[i], "pipelines"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProjectPipelineRow struct {
+	Best        *LabLeaderboardEntry `json:"best,omitempty"`
+	Description *string              `json:"description"`
+	LastAt      *string              `json:"lastAt"`
+	MethodId    *string              `json:"methodId"`
+	Name        *string              `json:"name"`
+	PipelineId  string               `json:"pipelineId"`
+	Status      *string              `json:"status"`
+	Trials      int64                `json:"trials"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectPipelineRow) Validate() error {
+	if v.Best != nil {
+		if err := Check(v.Best, "best"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProjectPipelineViewReply struct {
+	Capability  *string               `json:"capability"`
+	Description *string               `json:"description"`
+	Experiments []LabExperimentRecord `json:"experiments"`
+	InUse       bool                  `json:"inUse"`
+	Input       *string               `json:"input"`
+	Method      *string               `json:"method"`
+	Outline     []PipelineOutlineLine `json:"outline"`
+	Output      *string               `json:"output"`
+	PipelineId  string                `json:"pipelineId"`
+	Ranking     []LabLeaderboardEntry `json:"ranking"`
+	Revision    int64                 `json:"revision"`
+	UseCaseId   *string               `json:"useCaseId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectPipelineViewReply) Validate() error {
+	if v.Experiments == nil {
+		return Missing("experiments")
+	}
+	for i := range v.Experiments {
+		if err := Check(&v.Experiments[i], "experiments"); err != nil {
+			return err
+		}
+	}
+	if v.Outline == nil {
+		return Missing("outline")
+	}
+	for i := range v.Outline {
+		if err := Check(&v.Outline[i], "outline"); err != nil {
+			return err
+		}
+	}
+	if v.Ranking == nil {
+		return Missing("ranking")
+	}
+	for i := range v.Ranking {
+		if err := Check(&v.Ranking[i], "ranking"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProjectPipelineViewRequest struct {
+	PipelineId string `json:"pipelineId"`
+	ProjectId  string `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectPipelineViewRequest) Validate() error {
+	return nil
+}
 
 // ProjectQuestion: A project question to the operator; state waiting or answered.
 type ProjectQuestion struct {
@@ -625,6 +743,92 @@ type ProjectResourcesRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProjectResourcesRequest) Validate() error {
+	return nil
+}
+
+type ProjectViewReply struct {
+	Conversations      []SessionRow           `json:"conversations"`
+	ConversationsTotal int64                  `json:"conversationsTotal"`
+	Decisions          []ProjectDecision      `json:"decisions"`
+	Delivery           []DeliveryItem         `json:"delivery"`
+	InWork             []TaskRow              `json:"inWork"`
+	InWorkTotal        int64                  `json:"inWorkTotal"`
+	LastMergedAt       *string                `json:"lastMergedAt"`
+	Merged             int64                  `json:"merged"`
+	Pipelines          []ProjectPipelineGroup `json:"pipelines"`
+	Results            []ArtifactRow          `json:"results"`
+	ResultsTotal       int64                  `json:"resultsTotal"`
+	Waiting            []QuestionRow          `json:"waiting"`
+	WaitingTotal       int64                  `json:"waitingTotal"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectViewReply) Validate() error {
+	if v.Conversations == nil {
+		return Missing("conversations")
+	}
+	for i := range v.Conversations {
+		if err := Check(&v.Conversations[i], "conversations"); err != nil {
+			return err
+		}
+	}
+	if v.Decisions == nil {
+		return Missing("decisions")
+	}
+	for i := range v.Decisions {
+		if err := Check(&v.Decisions[i], "decisions"); err != nil {
+			return err
+		}
+	}
+	if v.Delivery == nil {
+		return Missing("delivery")
+	}
+	for i := range v.Delivery {
+		if err := Check(&v.Delivery[i], "delivery"); err != nil {
+			return err
+		}
+	}
+	if v.InWork == nil {
+		return Missing("inWork")
+	}
+	for i := range v.InWork {
+		if err := Check(&v.InWork[i], "inWork"); err != nil {
+			return err
+		}
+	}
+	if v.Pipelines == nil {
+		return Missing("pipelines")
+	}
+	for i := range v.Pipelines {
+		if err := Check(&v.Pipelines[i], "pipelines"); err != nil {
+			return err
+		}
+	}
+	if v.Results == nil {
+		return Missing("results")
+	}
+	for i := range v.Results {
+		if err := Check(&v.Results[i], "results"); err != nil {
+			return err
+		}
+	}
+	if v.Waiting == nil {
+		return Missing("waiting")
+	}
+	for i := range v.Waiting {
+		if err := Check(&v.Waiting[i], "waiting"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProjectViewRequest struct {
+	ProjectId string `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectViewRequest) Validate() error {
 	return nil
 }
 
@@ -2180,9 +2384,11 @@ func init() {
 		"project_context":         {Read: true, Long: false, Errors: []int{404}, Auth: "project:projectId", Agent: "bound:project", Description: "A project's definition, settings and context (projectId)", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_detail":          {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read a project definition and revision independently of resource statistics; requires projectId", Changes: []string{"definition", "task", "execution", "resource_summary"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_list":            {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Projects you can reach with their codes", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"project_pipeline_view":   {Read: true, Long: false, Errors: []int{400, 404}, Auth: "project:projectId", Agent: "tool", Description: "One pipeline as a project uses it, in one read (the pipeline page, docs/design-system/pages/projects.md): what it does (description, input, output), its steps as the plain-text outline, its catalogue method and whether it is the one in use, the comparison on the project's sample (every variant of the pipelines its experiments ran for the same job, best first, 90 days) and the project's experiments that ran it, newest first.", View: true, Changes: []string{"definition", "experiment", "score", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"pipelineId\"],\"type\":\"object\"}")},
 		"project_readiness":       {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"project_resource_items":  {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read a bounded prepared tools/costs/prices window with an epoch-bound cursor or surviving anchor; requires projectId", Changes: []string{"resource_summary"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"anchor\":{\"enum\":[\"start\",\"end\"],\"type\":\"string\"},\"around\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"atOrAfter\",\"atOrBefore\"],\"type\":\"string\"},\"key\":{\"oneOf\":[{\"$comment\":\"Preserve full admitted native tool names/connections, including values longer than 200 characters; positions remain subject to the HTTP body bound.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"tool\"},\"name\":{\"type\":\"string\"}},\"required\":[\"kind\",\"name\",\"connection\"],\"type\":\"object\"},{\"$comment\":\"tp1. plus base64url of one complete zlib stream containing {schemaVersion:1,key:ResourceToolKey}; a position, never authority.\",\"additionalProperties\":false,\"properties\":{\"encoded\":{\"type\":\"string\"},\"kind\":{\"const\":\"tool-position\"}},\"required\":[\"kind\",\"encoded\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"cost\"}},\"required\":[\"kind\",\"currency\",\"basis\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"price\"},\"observedAt\":{\"type\":\"integer\"},\"priceId\":{\"type\":\"string\"}},\"required\":[\"kind\",\"priceId\",\"observedAt\"],\"type\":\"object\"}]}},\"required\":[\"key\",\"direction\"],\"type\":\"object\"},\"category\":{\"enum\":[\"tools\",\"costs\",\"prices\"],\"type\":\"string\"},\"cursor\":{\"type\":\"string\"},\"group\":{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"currency\",\"basis\"],\"type\":\"object\"},\"knownVersion\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"category\"],\"type\":\"object\"}")},
 		"project_resources":       {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read prepared project resource figures/version and current progress; requires projectId", Changes: []string{"resource_summary"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"knownVersion\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
+		"project_view":            {Read: true, Long: false, Errors: []int{400, 404}, Auth: "project:projectId", Agent: "tool", Description: "One project's Overview in one read (docs/design-system/pages/projects.md): its open questions and the Lab decisions waiting for you (finished experiments without a decision, each variant with its score, trials, failures, median time and cost), tasks in flight, the pipelines it uses grouped by job (catalogue methods in use or scoped to it and the pipelines its Lab experiments ran, each with its best result on the project's sample), the latest results and conversations, and delivery (pull requests in flight, merged count, the last merge). Counted on the server.", View: true, Changes: []string{"session", "execution", "task", "question", "experiment", "artifact", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"projects_view":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "The Projects screen in one read: each visible project's open questions, sessions working and tasks in flight (the catalogue, every project), and the summary over the focus (projectIds or excludeProjectIds, '-' is work outside projects): the open questions waiting for you (the first 3 and how many), each project's sessions working and tasks in flight, and the pull requests in flight. Counted on the server.", View: true, Changes: []string{"session", "execution", "task", "question", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"$comment\":\"The summary leaves these projects out ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectIds\":{\"$comment\":\"The summary's focus: only these projects ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},
 		"question_answer":         {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "Answers a project question, or any other question by id.", InputSchema: json.RawMessage("{\"$comment\":\"Answers a project question, or any other question by id.\",\"additionalProperties\":true,\"properties\":{\"answer\":{\"type\":\"string\"},\"artifactIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"answer\"],\"type\":\"object\"}")},
 		"question_ask":            {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Ask a project question (projectId, requestId, text); read its answer with question_history", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"text\"],\"type\":\"object\"}")},

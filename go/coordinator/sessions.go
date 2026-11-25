@@ -195,13 +195,18 @@ func listAfter(after []json.RawMessage) ([]any, error) {
 }
 
 func sessionsPage(q *Request, r *contract.SessionsListRequest) (contract.SessionsListReply, error) {
-	var out contract.SessionsListReply
 	// Read as sent: a null projectId item means sessions outside projects, which the typed list cannot hold.
 	var raw struct {
 		Filter json.RawMessage `json:"filter"`
 	}
 	json.Unmarshal(q.body, &raw)
-	f, err := sessionFilter(raw.Filter)
+	return sessionsPageOf(q, r, raw.Filter)
+}
+
+// sessionsPageOf: sessions_list with the filter's text given (a view composing it passes its own).
+func sessionsPageOf(q *Request, r *contract.SessionsListRequest, filter json.RawMessage) (contract.SessionsListReply, error) {
+	var out contract.SessionsListReply
+	f, err := sessionFilter(filter)
 	if err != nil {
 		return out, err
 	}
