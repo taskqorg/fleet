@@ -1142,7 +1142,7 @@ var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeed
 // and events, or the start or end of its executions (the default sort). Not execution.updated_at: host receipts touch it on every observation,
 // which is not conversation activity. created_at and archived_at are the session record's (its columns, else its
 // payload, matching sessions.go).
-var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.task_id, d.pipeline_run_id, d.seq, nullif(d.title,'') AS title,
+var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.task_id, d.pipeline_run_id, d.bot_id, d.seq, nullif(d.title,'') AS title,
  d.archived_at, d.actor, d.host_id, d.payload->'agentConfig'->>'harness' AS agent_harness, d.payload->'agentConfig'->>'id' AS profile_id,
  CASE WHEN d.created_at IS NOT NULL THEN (extract(epoch FROM d.created_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'createdAt')='number' THEN (d.payload->>'createdAt')::float8 END AS created_ms,
  CASE WHEN d.archived_at IS NOT NULL THEN (extract(epoch FROM d.archived_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'archivedAt')='number' THEN (d.payload->>'archivedAt')::float8 END AS archived_ms,
@@ -1192,10 +1192,29 @@ const sessionAgent = "coalesce(x.harness,x.agent_harness)"
 var sessionGroups = map[string]string{
 	"none":    `left(x.id,0)`,
 	"project": `(CASE WHEN x.state='waiting' THEN '' ELSE coalesce(x.project_id,'~') END COLLATE "C")`,
-	"agent":   `(coalesce(` + sessionAgent + `,'~') COLLATE "C")`,
+	"agent":   `(` + sessionLine + ` COLLATE "C")`,
+	"room":    `(coalesce('r:' || (` + sessionRoom + `),'~') COLLATE "C")`,
 	"state":   `(CASE x.state WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'running' THEN '3' WHEN 'preparing' THEN '4' WHEN 'idle' THEN '5' WHEN 'succeeded' THEN '6' ELSE '7' END)`,
 }
-var sessionGroupLabels = map[string]string{"project": "CASE WHEN x.state='waiting' THEN 'waiting' ELSE x.project_id END", "agent": sessionAgent, "state": "x.state"}
+var sessionGroupLabels = map[string]string{"project": "CASE WHEN x.state='waiting' THEN 'waiting' ELSE x.project_id END", "agent": sessionLineLabel, "room": sessionRoomLabel, "state": "x.state"}
+
+// sessionRoom: the Telegram room a conversation is bound to (its open work item, else the private chat it is the
+// current conversation of).
+const sessionRoom = `coalesce((SELECT w.room_id FROM telegram_work w WHERE w.session_id=x.id ORDER BY w.closed_at NULLS FIRST LIMIT 1),
+ (SELECT 'dm:' || p.telegram_user_id FROM telegram_person p WHERE p.home_session_id=x.id LIMIT 1))`
+
+// sessionLine: the agent grouping of the conversation model (fleet-conversations.md#entities; board D1): the bot, else
+// the Telegram room, else the PM of the project, else none. Keys sort bots, PMs, rooms, none (b:, p:, r:, ~).
+const sessionLine = `(CASE WHEN x.bot_id IS NOT NULL THEN 'b:' || x.bot_id WHEN (` + sessionRoom + `) IS NOT NULL THEN 'r:' || (` + sessionRoom + `)
+ WHEN x.profile_id='pm' THEN 'p:' || coalesce(x.project_id,'') ELSE '~' END)`
+
+const sessionRoomTitle = `(SELECT CASE WHEN r.title<>'' THEN r.title ELSE 'room' END FROM telegram_room r WHERE r.id=(` + sessionRoom + `))`
+
+const sessionRoomLabel = `(CASE WHEN (` + sessionRoom + `) LIKE 'dm:%' THEN 'Telegram · private chat' ELSE 'Telegram · ' || coalesce(` + sessionRoomTitle + `,'room') END)`
+
+const sessionLineLabel = `(CASE WHEN x.bot_id IS NOT NULL THEN (SELECT r.name FROM bot_revision r WHERE r.bot_id=x.bot_id ORDER BY r.revision DESC LIMIT 1)
+ WHEN (` + sessionRoom + `) IS NOT NULL THEN ` + sessionRoomLabel + `
+ WHEN x.profile_id='pm' THEN 'PM · ' || coalesce(x.project_id,'outside projects') END)`
 
 // sessionSorts: the second sort key inside a group, ascending numbers; "-" before a name is descending.
 var sessionSorts = map[string]string{"activity": "(extract(epoch FROM x.activity_at)*1000)::float8", "created": "(x.seq::float8)"}
@@ -1212,7 +1231,7 @@ func sessionOrderOf(group, sort *string) (sessionOrder, error) {
 	}
 	G, found := sessionGroups[g]
 	if !found {
-		return sessionOrder{}, fail(400, "group must be project, state, agent or none")
+		return sessionOrder{}, fail(400, "group must be project, state, agent, room or none")
 	}
 	s := defaultSessionSort
 	if sort != nil {

@@ -22,7 +22,7 @@ import { prefs, prefsRead, scopeIds, noProject } from '../prefs.ts';
 import { useListPage, ListPagePanel, type ListPage } from '../list-page.tsx';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 
-const GROUPS = [['project', 'Project'], ['state', 'State'], ['agent', 'Agent'], ['none', 'None']] as const;
+const GROUPS = [['project', 'Project'], ['state', 'State'], ['agent', 'Agent'], ['room', 'Room'], ['none', 'None']] as const;
 const SORTS = [['activity', 'Activity'], ['created', 'Created']] as const;
 /** The contract's session row. */
 type SessionRow = ContractSessionRow & { state: StateOf<'session'> };
@@ -193,7 +193,7 @@ function BotThreads(props: { id: string; selected: string | null | undefined; on
 const isWaitingGroup = (group: string, key: string) => group === 'project' && key === '';
 function groupIcon(group: string, key: string): IconName {
   if (isWaitingGroup(group, key)) return states_.session.waiting.icon;
-  return group === 'state' ? 'activity' : group === 'agent' ? 'bot' : 'folder-open';
+  return group === 'state' ? 'activity' : group === 'agent' ? 'bot' : group === 'room' ? 'messages-square' : 'folder-open';
 }
 type QuestionRow = Ops['questions_list']['reply']['questions'][number];
 
@@ -361,7 +361,8 @@ function SessionFacts(props: { s: SessionRow; fences: SessionFences }) {
 }
 
 function groupLabel(group: string, label: string | null, key?: string) {
-  if (group === 'agent') return label && label in harnesses ? harnesses[label as Harness].label : label ?? 'No agent';
+  if (group === 'agent') return label ?? 'Other conversations';
+  if (group === 'room') return label ?? 'No room';
   if (group === 'state') return label && label in states_.session ? states_.session[label as StateOf<'session'>].label : label ?? '';
   if (key !== undefined && isWaitingGroup(group, key)) return 'Waiting for you';
   return label ?? 'No project';
