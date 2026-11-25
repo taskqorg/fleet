@@ -1,14 +1,14 @@
 // Project resource access in the app (docs/designs/fleet-project-access.md; board frames "System › Access: servers and
 // project grants" in screens/system.bl and "Project › Access: grants and approval card" in screens/projects.bl, both
 // approved 2026-11-26; "Project › Access · phone 390" and "System › Access · server not enrolled: enroll command",
-// approved 2026-11-26): the access servers on System › Access and a project's grants on its Access facet. Both read
+// approved 2026-11-26): the access servers on System › Access and a project's grants under Access on its Setup facet. Both read
 // access_grants, the operation agents call too, which the change stream rereads (kinds access-grant, access-server);
 // Check and Revoke are access_server_check, access_grant_check and access_grant_revoke. Credentials never reach the
 // browser: a grant carries its credential's fingerprint only. Both lists reflow to two-line rows when narrow
 // (ReflowTable) and never scroll sideways.
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import {
-  AgeChip, Button, DetailSection, EntityCode, ErrorBanner, Empty, KvRow, ReflowRow, ReflowTable, Skeleton, StateBadge, copyText,
+  AgeChip, Button, DetailSection, EntityCode, ErrorBanner, KvRow, ReflowRow, ReflowTable, Skeleton, StateBadge, copyText,
 } from '../../../packages/ui/src/index.ts';
 import { op, type Ops } from '../api.ts';
 import { useLocation, useSearch } from '../router.ts';
@@ -163,11 +163,11 @@ export function ProjectAccess(props: { projectId: string; data?: string }) {
     if (open() === id) q.delete('grant'); else q.set('grant', id);
     go(`/projects/${encodeURIComponent(props.projectId)}?${q}`);
   };
-  return <article class="detail" data-ui="project-access" aria-label="Access">
+  return <div class="stack" data-ui="project-access">
     <Show when={props.data}>{d => <p class={d() === 'personal' ? 't-attention' : 'muted'}>{d()} data</p>}</Show>
     <Show when={read.error && !read.data}><ErrorBanner text={read.error ?? ''} onRetry={read.reload} /></Show>
     <Show when={read.data} fallback={<Show when={!read.error}><Skeleton rows={3} /></Show>}>
-      <Show when={ids().length} fallback={<Empty text="This project has no access to servers yet. An agent asks for it with access_grant_ask; the owner approves it in Needs you." />}>
+      <Show when={ids().length} fallback={<p class="muted">Nothing granted yet.</p>}>
         <ReflowTable label="Project access" head={['Resource', 'Level', 'State', 'Last probe', 'Connection', 'When']}
           cols="minmax(8rem, 1fr) auto auto auto auto auto">
           <For each={ids()}>{id => <Show when={byId().get(id)}>{grant =>
@@ -184,11 +184,11 @@ export function ProjectAccess(props: { projectId: string; data?: string }) {
         </ReflowTable>
       </Show>
     </Show>
-  </article>;
+  </div>;
 }
 
-/** A grant opened on its project's Access facet (the path the views speak; toTarget gives the address bar's). */
-const grantPath = (g: AccessGrant) => `/projects/${encodeURIComponent(g.projectId)}?facet=access&grant=${encodeURIComponent(g.id)}`;
+/** A grant opened on its project's Setup facet, under Access (the path the views speak; toTarget gives the address bar's). */
+const grantPath = (g: AccessGrant) => `/projects/${encodeURIComponent(g.projectId)}?facet=setup&grant=${encodeURIComponent(g.id)}`;
 
 /** System › Access, group Servers: the access servers; a row opens its detail under it (`?server=<id>`). */
 export function AccessServers() {

@@ -34,7 +34,7 @@ export function ProjectEditor(props: {
   onClose?: () => void;
   onSaved: (id: string) => void;
   renderWork?: (projectId: string, detail: Detail | null) => JSX.Element;
-  /** Inside a project's Rules & methods facet: the project head above names it, so the editor shows no title of its own (OR-17). */
+  /** Inside a project's Setup facet: the project head above names it, so the editor shows no title of its own (OR-17). */
   embedded?: boolean;
   /** The name as edited, before Save: the project head shows it while the editor is open. */
   onName?: (name: string) => void;

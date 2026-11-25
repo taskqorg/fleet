@@ -16,8 +16,11 @@ const table: [earlier: string, target: string, internal: string][] = [
   ['/tasks?project=a,b', '/projects/tasks?project=a,b', '/tasks?project=a,b'],
   ['/projects/FLT/results/R-FLT-3', '/projects/FLT/results/R-FLT-3', '/results/R-FLT-3?project=FLT'],
   ['/projects/FLT/delivery', '/projects/FLT/delivery', '/delivery?project=FLT'],
-  ['/projects/FLT/rules', '/projects/FLT/rules', '/projects/FLT?facet=rules'],
-  ['/projects/FLT/access?grant=g1', '/projects/FLT/access?grant=g1', '/projects/FLT?grant=g1&facet=access'],
+  ['/projects/FLT/setup', '/projects/FLT/setup', '/projects/FLT?facet=setup'],
+  ['/projects/FLT/rules', '/projects/FLT/setup', '/projects/FLT?facet=setup'],
+  ['/projects/FLT/access?grant=g1', '/projects/FLT/setup?grant=g1', '/projects/FLT?grant=g1&facet=setup'],
+  ['/projects/FLT?facet=rules', '/projects/FLT/setup', '/projects/FLT?facet=setup'],
+  ['/projects/FLT?facet=access&grant=g1', '/projects/FLT/setup?grant=g1', '/projects/FLT?grant=g1&facet=setup'],
   ['/projects/DAM/pipelines', '/projects/DAM/pipelines', '/projects/DAM?facet=pipelines'],
   ['/projects/DAM/pipelines/doc-recognize-openai?tab=definition', '/projects/DAM/pipelines/doc-recognize-openai?tab=definition', '/projects/DAM?tab=definition&facet=pipelines&pipeline=doc-recognize-openai'],
   ['/projects/DAM/history', '/projects/DAM/history', '/projects/DAM?facet=history'],
@@ -64,7 +67,7 @@ test('a project facet names the project by its code once codes are known; the id
   assert.equal(toTarget('/tasks/T-FLT-42?project=fleet'), '/projects/FLT/tasks/T-FLT-42');
   assert.equal(toInternal('/projects/flt/tasks/T-FLT-42'), '/tasks/T-FLT-42?project=fleet');
   assert.equal(toTarget('/projects/fleet'), '/projects/FLT');
-  assert.equal(toTarget('/projects/fleet/rules'), '/projects/FLT/rules');
+  assert.equal(toTarget('/projects/fleet/rules'), '/projects/FLT/setup');
   // The facet replaces a project filter the address carried in its query.
   assert.equal(toInternal('/projects/FLT/tasks?project=other&q=x'), '/tasks?q=x&project=fleet');
 });

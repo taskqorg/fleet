@@ -5,10 +5,10 @@
 **Purpose.** Stacks the areas of an object's detail without tabs, so everything is visible at once (C3, [D11](../decisions.md)).
 
 **Anatomy.**
-* Section: a small muted heading over rows, separated by a hairline.
+* Section: a small muted heading over rows, separated by a hairline; an optional `action` (an icon button such as Edit) at the right end of the heading line.
 * Key row: icon, bold name, muted meta, and an optional right-aligned value (a number, an age chip, a state).
 
-**Used in.** Host detail (environments, account users, harnesses, store and tunnel).
+**Used in.** Host detail (environments, account users, harnesses, store and tunnel); a project's Setup (with Edit).
 
 ## Board
 
