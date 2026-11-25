@@ -119,10 +119,12 @@ export function startVersionChecks(): () => void {
   let last = 0;
   const run = () => { if (document.hidden || access.peek().state !== 'open' || Date.now() - last < 60_000) return; last = Date.now(); void checkUpdate(); void loadVersions(); };
   const opened = () => { last = 0; run(); };
+  // Access opening is one synchronous continuation with the baseline's activation (access.ts): the reads start after it.
+  const afterOpen = () => { setTimeout(opened, 0); };
   const first = setTimeout(opened, 0), every = setInterval(opened, 300_000);
-  onAccessOpen.add(opened);
+  onAccessOpen.add(afterOpen);
   addEventListener('focus', run);
-  return () => { clearTimeout(first); clearInterval(every); onAccessOpen.delete(opened); removeEventListener('focus', run); };
+  return () => { clearTimeout(first); clearInterval(every); onAccessOpen.delete(afterOpen); removeEventListener('focus', run); };
 }
 
 /** Only a confirmed problem tones the mark (nav-rail.md, Version): attention and danger rows; every other tone is the row's own. */
