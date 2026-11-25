@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"fleet/harnessrelease"
@@ -62,5 +64,23 @@ func TestPinsLiveVariants(t *testing.T) {
 	hosts["b"] = hostVersion{"1.261125.155", ""}
 	if _, ready := pinsLiveVariants(vs, hosts, "1.261125.186"); ready {
 		t.Fatal("an older executor would run its own CLI")
+	}
+}
+
+// TestPinsCandidateOf: the pins read raw (keyed) and as the keyless contents object with base64 both parse; an empty
+// file is an error, never an empty candidate that would run no trial.
+func TestPinsCandidateOf(t *testing.T) {
+	raw := `{"enabled":true,"targets":{"linux-amd64":{"codex":{"version":"0.172.0","url":"https://github.com/openai/codex/releases/download/rust-v0.172.0/c.tar.gz","sha256":"` + strings.Repeat("a", 64) + `","entry":"bin/codex"}}}}`
+	for name, b := range map[string]string{
+		"raw":      raw,
+		"contents": `{"encoding":"base64","content":"` + base64.StdEncoding.EncodeToString([]byte(raw))[:40] + `\n` + base64.StdEncoding.EncodeToString([]byte(raw))[40:] + `"}`,
+	} {
+		c, err := pinsCandidateOf([]byte(b), "x")
+		if err != nil || c["linux-amd64"]["codex"].Version != "0.172.0" {
+			t.Fatalf("%s: %v %v", name, c, err)
+		}
+	}
+	if _, err := pinsCandidateOf([]byte(`{"targets":{}}`), "x"); err == nil {
+		t.Fatal("empty pins parsed")
 	}
 }
