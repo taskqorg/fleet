@@ -10,7 +10,11 @@ SELECT id FROM execution WHERE session_id=$1;
 SELECT id FROM session WHERE created_by_session_id=$1;
 
 -- name: TaskWatchState :one
-SELECT state::text AS state, pause_reason FROM task WHERE id=$1;
+-- A task's state and whether change row seq recorded a change of it: state_at is the time of the task's latest state,
+-- pause or wait change, change.at the writing transaction's now(), so an edit that keeps the state (a title, a link, a
+-- dependency) has state_at before its change and wakes nobody.
+SELECT t.state::text AS state, t.pause_reason, (t.state_at >= c.at)::bool AS state_changed
+FROM task t JOIN change c ON c.seq = sqlc.arg(seq)::bigint WHERE t.id = sqlc.arg(id)::text;
 
 -- name: OpenQuestionTask :one
 SELECT coalesce(task_id, '')::text AS task_id FROM question WHERE id=$1 AND state='open';

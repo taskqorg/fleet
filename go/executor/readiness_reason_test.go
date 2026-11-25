@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"fleet/contract"
+	"testing"
+)
 
 func TestLsRemoteReason(t *testing.T) {
 	for _, c := range []struct {
@@ -18,5 +21,17 @@ func TestLsRemoteReason(t *testing.T) {
 		if got := lsRemoteReason(c.code, c.stderr); got != c.want {
 			t.Errorf("%q: got %s, want %s", c.stderr, got, c.want)
 		}
+	}
+}
+
+// Requirement: a failed readiness names the failed checks in its reason, so the run's cause tells which check failed
+// (2026-11-26: Live showed only "a tool or check it needs failed" for a missing checkout and a missing key).
+func TestReadinessFailureNamesChecks(t *testing.T) {
+	r := contract.Readiness{Checks: []contract.ReadinessCheck{check("instruction-sources", "h", ""), check("checkout", "/p", "checkout-missing"), check("remote", "main", "connection-missing")}}
+	if got, want := readinessFailure(r), "readiness-check-failed: checkout checkout-missing, remote connection-missing"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got := readinessFailure(contract.Readiness{}); got != "readiness-check-failed" {
+		t.Errorf("no failed check: got %q", got)
 	}
 }

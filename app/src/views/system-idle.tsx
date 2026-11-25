@@ -34,13 +34,27 @@ export type Problem = {
 /** First sentence of a plain cause: the row title; the rest is the fix. */
 export const firstSentence = (t: string) => { const i = t.indexOf('. '); return i < 0 ? [t.replace(/\.$/, ''), ''] : [t.slice(0, i), t.slice(i + 2)]; };
 
-/** Failed runs of the last hour by host and cause (OR-58): one problem per pair, with how many and the newest. */
+/**
+ * When each host last started a run that did not fail (ms, by host id). A failed start on a host before that moment is
+ * history, not a current problem: the host has started work since (a later run, or a later readiness check that passed).
+ */
+export function hostRecoveredAt(runs: readonly RunnerRun[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of runs) {
+    if (!r.hostId || r.startedAt == null || r.state === 'failed') continue;
+    if (r.startedAt > (out.get(r.hostId) ?? 0)) out.set(r.hostId, r.startedAt);
+  }
+  return out;
+}
+
+/** Failed runs of the last hour by host and cause (OR-58), after the host's latest good start: one problem per pair, with how many and the newest. */
 export function hostFailures(runs: readonly RunnerRun[], now: number): Map<string, { cause: string; text: string; n: number; at: number }[]> {
   const out = new Map<string, Map<string, { cause: string; text: string; n: number; at: number }>>();
+  const recovered = hostRecoveredAt(runs);
   for (const r of runs) {
     if (r.state !== 'failed' || !r.hostId || !r.problem) continue;
     const at = r.endedAt ?? r.lastSeenAt ?? r.startedAt ?? 0;
-    if (now - at > HOUR) continue;
+    if (now - at > HOUR || (r.startedAt ?? at) <= (recovered.get(r.hostId) ?? 0)) continue;
     const c = cause(r.problem);
     const byCause = out.get(r.hostId) ?? new Map();
     const cur = byCause.get(c.id) ?? { cause: c.id, text: c.text, n: 0, at: 0 };

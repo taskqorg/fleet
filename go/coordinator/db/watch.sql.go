@@ -99,18 +99,28 @@ func (q *Queries) TaskCancelled(ctx context.Context, id string) (bool, error) {
 }
 
 const taskWatchState = `-- name: TaskWatchState :one
-SELECT state::text AS state, pause_reason FROM task WHERE id=$1
+SELECT t.state::text AS state, t.pause_reason, (t.state_at >= c.at)::bool AS state_changed
+FROM task t JOIN change c ON c.seq = $1::bigint WHERE t.id = $2::text
 `
 
-type TaskWatchStateRow struct {
-	State       string
-	PauseReason *string
+type TaskWatchStateParams struct {
+	Seq int64
+	ID  string
 }
 
-func (q *Queries) TaskWatchState(ctx context.Context, id string) (TaskWatchStateRow, error) {
-	row := q.db.QueryRow(ctx, taskWatchState, id)
+type TaskWatchStateRow struct {
+	State        string
+	PauseReason  *string
+	StateChanged bool
+}
+
+// A task's state and whether change row seq recorded a change of it: state_at is the time of the task's latest state,
+// pause or wait change, change.at the writing transaction's now(), so an edit that keeps the state (a title, a link, a
+// dependency) has state_at before its change and wakes nobody.
+func (q *Queries) TaskWatchState(ctx context.Context, arg TaskWatchStateParams) (TaskWatchStateRow, error) {
+	row := q.db.QueryRow(ctx, taskWatchState, arg.Seq, arg.ID)
 	var i TaskWatchStateRow
-	err := row.Scan(&i.State, &i.PauseReason)
+	err := row.Scan(&i.State, &i.PauseReason, &i.StateChanged)
 	return i, err
 }
 

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fmt"
 	"slices"
 	"time"
@@ -93,9 +94,9 @@ func (s *watchSession) focus() []string {
 func classify(q *Request, c change) (string, error) {
 	switch c.Kind {
 	case "task":
-		t, err := q.db().TaskWatchState(q.ctx(), c.Id)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", nil
+		t, err := q.db().TaskWatchState(q.ctx(), db.TaskWatchStateParams{Seq: c.Seq, ID: c.Id})
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && !t.StateChanged {
+			return "", nil // an edit that kept the task's state is no change for a wake (2026-11-26: 23 of HAL0's 55 task wakes)
 		}
 		if err != nil {
 			return "", err

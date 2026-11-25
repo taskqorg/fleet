@@ -876,10 +876,16 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 				(!fullAccess(dir) && !mayAccessProjectID(dir, p) && (target.bot == nil || p != target.bot.ProjectId)) {
 				continue
 			}
-			seen[string(c.Kind)+c.Id] = true
-			if s, err := classify(q, c); err != nil {
+			// A task edit that kept its state classifies empty and leaves the task unseen: a later change of the same task
+			// in this pass may still change its state.
+			s, err := classify(q, c)
+			if err != nil {
 				return nil, t.ChangeCursor, t.LimitsSignaled, err
-			} else if s != "" {
+			}
+			if s != "" || c.Kind != "task" {
+				seen[string(c.Kind)+c.Id] = true
+			}
+			if s != "" {
 				parts = append(parts, threadPart{changeThread(c.Change), s})
 			}
 		}
