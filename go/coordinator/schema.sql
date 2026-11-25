@@ -5295,7 +5295,7 @@ SELECT * FROM (
  UNION ALL
  SELECT coalesce(q.answered_at, q.updated_at), 'question', q.state::text, CASE WHEN q.state = 'answered' THEN 'ok' ELSE 'stopped' END,
   CASE WHEN q.cause IS NOT NULL AND q.project_id IS NULL THEN 'system' ELSE 'work' END, 'question:' || q.id, q.text, q.answered_by,
-  q.project_id, q.task_id, q.session_id, NULL, NULL, NULL, NULL, 'question:' || q.id, jsonb_strip_nulls(jsonb_build_object('answer', q.answer))
+  q.project_id, q.task_id, q.session_id, NULL, NULL, NULL, NULL, 'question:' || q.id, jsonb_strip_nulls(jsonb_build_object('answer', left(q.answer, 2000)))
  FROM question q WHERE q.state::text <> 'open'
  UNION ALL
  SELECT x.created_at, 'lab', 'created', 'info', 'lab', 'experiment:' || x.id, coalesce(x.goal, x.lab_group, x.kind::text), x.requested_by,

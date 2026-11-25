@@ -33,14 +33,21 @@ func TestHistoryView(t *testing.T) {
 	exec(`INSERT INTO audit_log (id, target, field, value, actor) VALUES ('hs-a1', $1, 'pins', '["live"]', $2)`, "person:"+testOwnerEmail, testOwnerEmail)
 	exec(`INSERT INTO audit_log (id, target, field, value, actor) VALUES ('hs-a2', 'host:mac', 'paused', 'true', $1)`, testOwnerEmail)
 
+	// A question asked in the session and answered: two entries of one subject with different verbs.
+	exec(`INSERT INTO question (id, kind, session_id, text, asked_at) VALUES ('hs-q', 'agent_question', 'hs-s', 'Merge it?', $1)`, now.Add(7*time.Second))
+	exec(`UPDATE question SET state = 'answered', answer = 'yes', answered_by = $1, answered_at = $2 WHERE id = 'hs-q'`, testOwnerEmail, now.Add(8*time.Second))
+
 	var all contract.HistoryViewReply
 	e.opInto(t, "history_view", map[string]any{}, e.ownerHeaders(), &all)
 	got := map[string]contract.HistoryEntry{}
 	for _, x := range all.Entries {
 		got[x.Subject+" "+x.Verb] = x
 	}
-	if len(all.Entries) != 4 {
-		t.Fatalf("entries %+v, want 4: the host change, the run failed and started, three host jobs as one", all.Entries)
+	if len(all.Entries) != 6 {
+		t.Fatalf("entries %+v, want 6: the host change, the question answered and asked, the run failed and started, three host jobs as one", all.Entries)
+	}
+	if a := got["question:hs-q answered"]; a.Outcome != "ok" || string(a.Detail["answer"]) != `"yes"` || a.Actor == nil || *a.Actor != testOwnerEmail {
+		t.Fatalf("answer: %+v", a)
 	}
 	if j := got["execution:hs-job-c finished"]; j.N != 3 || j.Section != "system" || j.FirstAt >= j.At {
 		t.Fatalf("host jobs: %+v", j)
@@ -54,24 +61,24 @@ func TestHistoryView(t *testing.T) {
 	if a, ok := got["host:mac changed"]; !ok || a.Kind != "settings" || string(a.Detail["value"]) != "true" {
 		t.Fatalf("host change: %+v", a)
 	}
-	if all.Entries[0].Subject != "host:mac" {
+	if all.Entries[0].Subject != "question:hs-q" || all.Entries[2].Subject != "host:mac" {
 		t.Fatalf("newest first: %s", all.Entries[0].Subject)
 	}
 
 	// One object: the session's entries only.
 	var one contract.HistoryViewReply
 	e.opInto(t, "history_view", map[string]any{"sessionId": "hs-s"}, e.ownerHeaders(), &one)
-	if len(one.Entries) != 2 || one.NextCursor != nil {
+	if len(one.Entries) != 4 || one.NextCursor != nil {
 		t.Fatalf("session scope: %+v", one)
 	}
 	// A page of one, then the rest from its cursor.
 	var p1, p2 contract.HistoryViewReply
 	e.opInto(t, "history_view", map[string]any{"section": "work", "limit": 1}, e.ownerHeaders(), &p1)
-	if len(p1.Entries) != 1 || p1.Entries[0].Verb != "failed" || p1.NextCursor == nil {
+	if len(p1.Entries) != 1 || p1.Entries[0].Verb != "answered" || p1.NextCursor == nil {
 		t.Fatalf("first page: %+v", p1)
 	}
 	e.opInto(t, "history_view", map[string]any{"section": "work", "limit": 1, "before": *p1.NextCursor}, e.ownerHeaders(), &p2)
-	if len(p2.Entries) != 1 || p2.Entries[0].Verb != "started" {
+	if len(p2.Entries) != 1 || p2.Entries[0].Verb != "asked" {
 		t.Fatalf("second page: %+v", p2)
 	}
 }

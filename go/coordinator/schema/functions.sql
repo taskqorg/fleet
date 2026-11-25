@@ -235,7 +235,7 @@ BEGIN
   sec := CASE WHEN r.cause IS NOT NULL AND r.project_id IS NULL THEN 'system' ELSE 'work' END;
   IF TG_OP = 'INSERT' THEN v := 'asked'; o := 'waiting'; act := r.asked_by;
   ELSE v := r.state::text; o := CASE WHEN r.state = 'answered' THEN 'ok' WHEN r.state = 'open' THEN 'waiting' ELSE 'stopped' END; act := r.answered_by;
-   det := jsonb_strip_nulls(jsonb_build_object('answer', r.answer));
+   det := jsonb_strip_nulls(jsonb_build_object('answer', left(r.answer, 2000)));
   END IF;
  ELSIF TG_TABLE_NAME = 'experiment' THEN
   IF TG_OP = 'UPDATE' AND OLD.state = r.state AND OLD.decision IS NOT DISTINCT FROM r.decision THEN RETURN NULL; END IF;
