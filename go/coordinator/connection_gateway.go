@@ -185,6 +185,17 @@ func schedulePublish() {
 
 var publishSnapshot = coalesced("snapshot", writeSnapshot)
 
+// secretFilesHolder: whether files in the secret directory may register keys for a connection held by holder: the owner,
+// or a known person with full access (site-agents creates connections for the owner). Another holder's connection never
+// gets keys an operator placed on the host.
+func secretFilesHolder(q *Request, holder, owner string) bool {
+	if holder == owner {
+		return true
+	}
+	p := q.peopleSnapshot().person(holder)
+	return p != nil && fullAccess(p)
+}
+
 // connSync: key files without a row are registered; a directory without a connection becomes one (owner-held, every project).
 func connSync(q *Request) error {
 	if secretDir() == "" {
@@ -205,7 +216,7 @@ func connSync(q *Request) error {
 		if err != nil {
 			return err
 		}
-		if c != nil && c.Holder != owner {
+		if c != nil && !secretFilesHolder(q, c.Holder, owner) {
 			log.Printf("secret directory %s: connection is held by %v, files not registered", name, c.Holder)
 			continue
 		}
