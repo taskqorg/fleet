@@ -4,7 +4,7 @@ import { useLocation } from '../router.ts';
 import { readValue, type MaybeAccessor } from '../signal.ts';
 import {
   StatusLine, AgeChip, Button, DataTable, Disclosure, SearchBox, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals, CopyButton,
-  formatRowSpend, msMeasured, numMeasured, splitCostFigures,
+  cause, formatRowSpend, msMeasured, numMeasured, splitCostFigures,
   type CostFigureLike, type Measured, type StateOf, type TotalItem, type TreeNode,
 } from '../../../packages/ui/src/index.ts';
 import { op, OpError } from '../api.ts';
@@ -374,7 +374,7 @@ export function buildExecTree(executions: readonly ExecutionRow[]): TreeNode[] {
       return {
         id: e.id,
         name: labelOf(e),
-        note: e.problem ?? (e.configRef && typeof e.configRef === 'object' && 'publicationAuthority' in e.configRef ? `Publication authority: ${String(e.configRef.publicationAuthority)} (configured role)` : e.sessionId ? 'session' : undefined),
+        note: (e.problem ? cause(e.problem).text : undefined) ?? (e.configRef && typeof e.configRef === 'object' && 'publicationAuthority' in e.configRef ? `Publication authority: ${String(e.configRef.publicationAuthority)} (configured role)` : e.sessionId ? 'session' : undefined),
         state: execState(e.state),
         lastSeen: e.observation === 'unconfirmed' ? ms(e.lastSeenAt) ?? undefined : undefined,
         time: leafTime(e),
@@ -397,7 +397,7 @@ export function buildExecTree(executions: readonly ExecutionRow[]): TreeNode[] {
         return {
           id: e.id,
           name: labelOf(e),
-          note: e.problem ?? undefined,
+          note: e.problem ? cause(e.problem).text : undefined,
           state: st,
           lastSeen: e.observation === 'unconfirmed' ? ms(e.lastSeenAt) ?? undefined : undefined,
           time: leafTime(e),

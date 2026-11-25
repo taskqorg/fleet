@@ -584,11 +584,13 @@ export function ProblemRow(p: {
   count?: number;
   /** Opens the problem's details, on the right of the title line. */
   onDetails?: () => void;
+  /** The stored cause code behind a plain title: the title's tooltip only, never its text (formats.md, causes). */
+  code?: string;
 }) {
   return (
     <div data-ui="problem-row" class={['problem', p.severity]} role="group" aria-label={`${p.severity === 'failure' ? 'Failure' : 'Warning'}: ${p.title}${(p.count ?? 1) > 1 ? `, ${p.count} times` : ''}`}>
       <Icon name={p.severity === 'failure' ? 'octagon-x' : 'triangle-alert'} />
-      <b>{p.title}<Show when={(p.count ?? 1) > 1}> <span class="pr-n">×{p.count}</span></Show></b>
+      <b data-tip={p.code}>{p.title}<Show when={(p.count ?? 1) > 1}> <span class="pr-n">×{p.count}</span></Show></b>
       <Show when={p.onDetails} keyed>{d => <Button label="Details" kind="quiet" onClick={d} />}</Show>
       <span class="facts" data-important="">{p.facts}</span>
       <span class="acts">

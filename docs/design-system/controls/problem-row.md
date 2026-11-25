@@ -20,4 +20,4 @@
 
 ## Board
 
-Master `Problem row` on [blocks.bl](../board/blocks.bl), board *Data*, tones `attention` and `danger` ([OR-56](../owner-rules.md)); up to three action buttons, the recommended one primary, then Details. Repeats aggregate into one row with `×N` ([OR-58](../owner-rules.md)); built: `count` and `onDetails` on `ProblemRow`, demo: [book](../book/index.html#problem-blocks). Text names: `title`, `facts`, `details`; buttons take `label`.
+Master `Problem row` on [blocks.bl](../board/blocks.bl), board *Data*, tones `attention` and `danger` ([OR-56](../owner-rules.md)); up to three action buttons, the recommended one primary, then Details. Repeats aggregate into one row with `×N` ([OR-58](../owner-rules.md)); built: `count` and `onDetails` on `ProblemRow`, demo: [book](../book/index.html#problem-blocks). Text names: `title`, `facts`, `details`; buttons take `label`. A run failure's title is its plain cause; `code` puts the stored cause code in the title's tooltip, never in its text ([formats](../formats.md#values)).

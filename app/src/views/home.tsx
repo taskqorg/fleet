@@ -6,7 +6,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy,
 import type { JSX } from '@solidjs/web';
 import {
   PulseLine, Composer, TargetPicker, SessionCard, SessionCardSkeleton, QuestionCard, BotTile, QuietSummary, GroupHeader, Ago,
-  OfflineMarker, ErrorBanner, Button, ShellStatus, actor, keyConnection, lifeOf, stamp, day, dayStart,
+  OfflineMarker, ErrorBanner, Button, ShellStatus, actor, keyConnection, lifeOf, stamp, day, dayStart, causeOf,
   type Blocker, type Target, type Life, type AvatarMark, type QuestionChoice, type IconName, type Tone,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
@@ -16,6 +16,7 @@ import { useOp } from '../store.ts';
 import { scopeIds, noProject, prefsRead, prefs } from '../prefs.ts';
 import type { SessionRow, QuestionRow, ExecutionRow } from '../../../contracts/generated/ops.ts';
 import type { BotListItem } from '../../../contracts/generated/ops-bots.ts';
+import { reasonLabel } from '../bot-view.ts';
 
 const SessionView = lazy(() => import('./session.tsx'), { export: 'SessionView' });
 
@@ -63,10 +64,10 @@ function blockers(problems: ExecutionRow[], questions: QuestionRow[]): Blocker[]
     if (b) { b.n++; b.at = Math.max(b.at, at); } else by.set(key, { cause, n: 1, href, at });
   };
   for (const e of problems) {
-    const f = e.failure, host = e.hostId ?? '';
-    const what = f ? clause(f.text) : e.problem ?? 'A run needs a look';
-    add(`run:${f?.cause ?? e.problem}:${host}`, host && !what.includes(host) ? `${what} on ${host}` : what,
-      host ? `/live?host=${encodeURIComponent(host)}` : `/live?cause=${encodeURIComponent(f?.cause ?? 'run')}`, ms(e.lastSeenAt ?? e.startedAt));
+    const f = causeOf(e.failure, e.problem), host = e.hostId ?? '';
+    const what = f ? clause(f.text) : 'A run needs a look';
+    add(`run:${f?.id ?? 'run'}:${host}`, host && !what.includes(host) ? `${what} on ${host}` : what,
+      host ? `/live?host=${encodeURIComponent(host)}` : `/live?cause=${encodeURIComponent(f?.id ?? 'run')}`, ms(e.lastSeenAt ?? e.startedAt));
   }
   for (const q of questions) {
     const parts = String(q.cause).split(':'), family = parts[1] ?? 'unknown';
@@ -270,7 +271,7 @@ function HomePage() {
     const at = Date.now() - 5_000;
     setWaking(m => ({ ...m, [b.id]: { state: 'waking', at } }));
     op('bot_run', { botId: b.id, requestId: newRequestId() }, { signal: alive }).then(
-      r => { if (!r.admitted) setWaking(m => ({ ...m, [b.id]: { state: 'failed', reason: r.run.reason ?? r.run.problem ?? 'not admitted', at } })); },
+      r => { if (!r.admitted) setWaking(m => ({ ...m, [b.id]: { state: 'failed', reason: reasonLabel(r.run.reason) ?? causeOf(r.run.failure, r.run.problem)?.text ?? 'not admitted', at } })); },
       e => setWaking(m => ({ ...m, [b.id]: { state: 'failed', reason: e instanceof Error ? e.message : String(e), at } })),
     );
   };
@@ -391,7 +392,7 @@ function HomePage() {
         project={s().projectId ?? undefined}
         avatar={w().avatar}
         state={c().qs.length && s().state !== 'failed' ? 'waiting' : lifeOfSession(s().state)}
-        now={s().now || (w().name === s().title ? 'No message yet' : s().title || 'No message yet')}
+        now={(s().state === 'failed' ? failureOf().get(s().id)?.text : undefined) || s().now || (w().name === s().title ? 'No message yet' : s().title || 'No message yet')}
         meta={s().activityAt ? [<Ago t={ms(s().activityAt)} />] : []}
         question={question()}
         onOpen={() => go(sessionPath(s()))}

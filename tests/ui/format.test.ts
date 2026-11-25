@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   age, duration, bytes, count, money, measured, agentLabel, actor,
-  costMeasured, splitCostFigures, numMeasured, msMeasured,
+  costMeasured, splitCostFigures, numMeasured, msMeasured, cause, causeOf,
 } from '../../packages/ui/src/format.ts';
 
 const now = new Date(2026, 10, 9, 12, 0, 0).getTime();
@@ -113,4 +113,19 @@ test('msMeasured and numMeasured adapt contract measurements accurately', () => 
   assert.deepEqual(numMeasured({ value: null, basis: 'unavailable', reason: 'not recorded' }, 0.001), {
     value: null, basis: 'unavailable', reason: 'not recorded', partial: undefined, note: undefined,
   });
+});
+
+test('cause: a stored code reads as its plain sentence, the code only in long; the same entries as contract.PlainCause', () => {
+  for (const [code, id] of [
+    ['unknown:abandoned', 'abandoned'], ['unknown:caller-cancelled', 'stopped'], ['step:provider-429', 'provider-limit'],
+    ['preparation failed: coding-tool-unready: browser', 'host-not-ready'], ['step:failed', 'step'], ['something new', 'other'],
+  ] as const) {
+    const c = cause(code);
+    assert.equal(c.id, id, code);
+    assert.equal(c.long, code);
+    assert.ok(c.text.endsWith('.') && !c.text.includes(code), `${code}: ${c.text}`);
+  }
+  assert.equal(causeOf(undefined, null), undefined);
+  assert.deepEqual(causeOf({ cause: 'abandoned', text: 'Served.', code: 'unknown:abandoned' }, 'x'), { id: 'abandoned', text: 'Served.', long: 'unknown:abandoned' });
+  assert.equal(causeOf(null, 'unknown:abandoned')?.id, 'abandoned');
 });

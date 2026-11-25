@@ -4,7 +4,7 @@ import { createMemo, For, Show } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
   AgeChip, Button, CostFigures, Empty, EntityCode, ErrorBanner, Fact, HarnessMark, Icon, Num,
-  OfflineMarker, ProblemRow, RowFacts, ShellStatus, Skeleton, StateBadge, TimeStrip, age, duration, harnesses,
+  OfflineMarker, ProblemRow, RowFacts, ShellStatus, Skeleton, StateBadge, TimeStrip, age, cause, duration, harnesses,
   type Harness, type Measured,
 } from '../../../packages/ui/src/index.ts';
 import { useOp } from '../store.ts';
@@ -80,7 +80,7 @@ export function Runners(props: { onClose?: () => void } = {}) {
                           {!conn && <EntityCode id={r.id} kind="execution" />}
                           {r.parentExecutionId && <EntityCode id={r.parentExecutionId} kind="execution" />}
                           {r.harness && r.harness in harnesses && <HarnessMark h={r.harness as Harness} />}
-                          {r.problem && <span class="chip t-danger" data-tip={r.problem} role="img" aria-label={r.problem}><Icon name="triangle-alert" /></span>}
+                          {r.problem && <span class="chip t-danger" data-tip={`${cause(r.problem).text} Code: ${r.problem}`} role="img" aria-label={cause(r.problem).text}><Icon name="triangle-alert" /></span>}
                         </span>
                         <TimeStrip from={from()} to={now()} start={start()} end={end()} now={now()} state={r.state} label={`${r.state}, started ${age(start(), now()).long}`} />
                         <span class="rz">

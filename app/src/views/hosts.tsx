@@ -23,7 +23,7 @@ import { KeyDetail, KeysIdle, connectionScope, normalizeConnections, person } fr
 import { Runners } from './runners.tsx';
 import { Spend, spendRequest, usdOf } from './spend.tsx';
 import { Humans } from './humans.tsx';
-import { SystemIdle, hostFailures } from './system-idle.tsx';
+import { FINDING, SystemIdle, hostFailures } from './system-idle.tsx';
 
 export type InfraSection = 'hosts' | 'limits' | 'keys' | 'runners' | 'spend' | 'people';
 
@@ -445,7 +445,7 @@ function HostDetail(props: { host: HostRow; live: boolean; now: number; clockOff
     <For each={props.live ? h().problems : []}>{p => (
       <ProblemRow title={`Edge answers ${p.route} with ${p.status}`} severity="failure" actions={[]} facts={p.detail || p.location || ''} />
     )}</For>
-    <For each={findings()}>{f => <ProblemRow title={f.text ?? f.cause} severity="warning" actions={[]} facts={<AgeChip t={ms(f.since)} clockOffsetMs={props.clockOffsetMs} />} />}</For>
+    <For each={findings()}>{f => <ProblemRow title={f.text ?? FINDING} code={f.cause} severity="warning" actions={[]} facts={<AgeChip t={ms(f.since)} clockOffsetMs={props.clockOffsetMs} />} />}</For>
     <HostBand name={h().id}
       state={!props.live ? 'offline' : problemLine() ? 'problem' : 'normal'}
       facts={[h().platform, load()?.diskFree != null ? `${bytes(load()!.diskFree!).text} free` : ''].filter(Boolean).join(' · ')}
