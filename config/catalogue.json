@@ -83,6 +83,51 @@
       "pipeline": "lang-check-jev.json",
       "scope": "shared",
       "status": "experimental"
+    },
+    {
+      "capability": "document-recognition",
+      "description": "An agent on a subscription (Claude, Codex or Antigravity profile) looks at every file and answers in JSON.",
+      "id": "doc-recognize-agent",
+      "name": "Document recognition by an agent",
+      "pipeline": "doc-recognize-agent.json",
+      "scope": "dam",
+      "status": "experimental"
+    },
+    {
+      "capability": "document-recognition",
+      "description": "One OpenAI API call (gpt-6.2-sol) reads every file as an image.",
+      "id": "doc-recognize-openai",
+      "name": "Document recognition with GPT",
+      "pipeline": "doc-recognize-openai.json",
+      "scope": "dam",
+      "status": "experimental"
+    },
+    {
+      "capability": "document-recognition",
+      "description": "One Google AI call (gemini-3.8-flash) reads every file as an image.",
+      "id": "doc-recognize-gemini",
+      "name": "Document recognition with Gemini",
+      "pipeline": "doc-recognize-gemini.json",
+      "scope": "dam",
+      "status": "experimental"
+    },
+    {
+      "capability": "document-recognition",
+      "description": "One Anthropic API call (claude-sonnet-5.5) reads every file as an image.",
+      "id": "doc-recognize-anthropic",
+      "name": "Document recognition with Claude",
+      "pipeline": "doc-recognize-anthropic.json",
+      "scope": "dam",
+      "status": "experimental"
+    },
+    {
+      "capability": "document-recognition",
+      "description": "Gemini sorts the files by type, Claude reads only the identity and consent files; the answers merge.",
+      "id": "doc-recognize-two-step",
+      "name": "Document recognition in two passes",
+      "pipeline": "doc-recognize-two-step.json",
+      "scope": "dam",
+      "status": "experimental"
     }
   ],
   "sharedDefault": "search-basic"

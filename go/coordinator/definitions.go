@@ -568,8 +568,15 @@ func definitionGet(q *Request, r *contract.DefinitionGetRequest) (contract.Defin
 		}
 		state = hs[0].state()
 	}
-	return contract.DefinitionGetReply{Kind: r.Kind, Id: x.ID, Path: x.Path, Scope: "shared", Revision: x.Revision, Head: x.Head, State: state, RepoSha: x.RepoSha,
-		Text: string(x.Content), Content: content, Meta: x.revisionView(q)}, nil
+	out = contract.DefinitionGetReply{Kind: r.Kind, Id: x.ID, Path: x.Path, Scope: "shared", Revision: x.Revision, Head: x.Head, State: state, RepoSha: x.RepoSha,
+		Text: string(x.Content), Content: content, Meta: x.revisionView(q)}
+	if x.Kind == "pipeline" {
+		var d pipelineDef
+		if json.Unmarshal(x.Content, &d) == nil {
+			out.Outline = pipelineOutline(&d)
+		}
+	}
+	return out, nil
 }
 
 // headText: the head content of a live definition; an execution reads definitions only from the store (the repository

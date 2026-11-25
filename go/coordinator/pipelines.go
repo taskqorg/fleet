@@ -219,11 +219,14 @@ type pipelineSource struct {
 // pipelineDef: a pipeline definition (version 2 or 3, validatePipelineDef); raw is its text, which the run keeps and its
 // hashes read.
 type pipelineDef struct {
-	Version    float64           `json:"version"`
-	ID         string            `json:"id"`
-	Steps      []pipelineDefStep `json:"steps"`
-	ResultStep string            `json:"resultStep,omitempty"`
-	raw        json.RawMessage
+	Version     float64           `json:"version"`
+	ID          string            `json:"id"`
+	Description string            `json:"description,omitempty"`
+	Input       string            `json:"input,omitempty"`
+	Output      string            `json:"output,omitempty"`
+	Steps       []pipelineDefStep `json:"steps"`
+	ResultStep  string            `json:"resultStep,omitempty"`
+	raw         json.RawMessage
 }
 
 func (d *pipelineDef) UnmarshalJSON(b []byte) error {
@@ -245,22 +248,23 @@ func (d *pipelineDef) value() any { return rawAny(d.raw) }
 
 // pipelineDefStep: one step of a definition (contract.PipelineStep's fields); raw is its text.
 type pipelineDefStep struct {
-	ID         string          `json:"id"`
-	Kind       string          `json:"kind"`
-	Connection string          `json:"connection,omitempty"`
-	Tool       string          `json:"tool,omitempty"`
-	Arguments  json.RawMessage `json:"arguments,omitempty"`
-	Mode       string          `json:"mode,omitempty"`
-	Output     json.RawMessage `json:"output,omitempty"`
-	StatusTool string          `json:"status_tool,omitempty"`
-	RecentTool string          `json:"recent_tool,omitempty"`
-	Profile    string          `json:"profile,omitempty"`
-	Prompt     json.RawMessage `json:"prompt,omitempty"`
-	Command    json.RawMessage `json:"command,omitempty"`
-	TimeoutMs  json.RawMessage `json:"timeout_ms,omitempty"`
-	Host       string          `json:"host,omitempty"`
-	When       json.RawMessage `json:"when,omitempty"`
-	raw        json.RawMessage
+	ID          string          `json:"id"`
+	Kind        string          `json:"kind"`
+	Description string          `json:"description,omitempty"`
+	Connection  string          `json:"connection,omitempty"`
+	Tool        string          `json:"tool,omitempty"`
+	Arguments   json.RawMessage `json:"arguments,omitempty"`
+	Mode        string          `json:"mode,omitempty"`
+	Output      json.RawMessage `json:"output,omitempty"`
+	StatusTool  string          `json:"status_tool,omitempty"`
+	RecentTool  string          `json:"recent_tool,omitempty"`
+	Profile     string          `json:"profile,omitempty"`
+	Prompt      json.RawMessage `json:"prompt,omitempty"`
+	Command     json.RawMessage `json:"command,omitempty"`
+	TimeoutMs   json.RawMessage `json:"timeout_ms,omitempty"`
+	Host        string          `json:"host,omitempty"`
+	When        json.RawMessage `json:"when,omitempty"`
+	raw         json.RawMessage
 }
 
 func (s *pipelineDefStep) UnmarshalJSON(b []byte) error {

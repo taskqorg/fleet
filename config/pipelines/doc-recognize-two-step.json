@@ -1,8 +1,12 @@
 {
+  "description": "Two passes: a cheap model sorts the documents by type, a stronger one reads only the identity and consent files; the answers merge. Reads one model's documents and returns, per file, its type, alias, legal name, date of birth, site and whether it is signed; flags duplicates, name spelling variants and unreadable files.",
   "id": "doc-recognize-two-step",
+  "input": "a model's document set (jpg, png, pdf)",
+  "output": "output.json: the model, its aliases and one entry per file, with a one-line summary",
   "steps": [
     {
       "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py request --provider google",
+      "description": "builds the first-pass request with every file as an image",
       "host": "owner-mac",
       "id": "classify-request",
       "kind": "script"
@@ -14,18 +18,21 @@
         "model": "gemini-3.8-flash"
       },
       "connection": "google-ai",
+      "description": "sorts the files by type and reads what it can",
       "id": "classify",
       "kind": "api",
       "tool": "generate_content"
     },
     {
       "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py finish --from classify",
+      "description": "normalises the first pass",
       "host": "owner-mac",
       "id": "first",
       "kind": "script"
     },
     {
       "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py request --provider anthropic --only first",
+      "description": "builds the second request with only the identity and consent files",
       "host": "owner-mac",
       "id": "extract-request",
       "kind": "script"
@@ -37,12 +44,14 @@
         "model": "claude-sonnet-5-5"
       },
       "connection": "anthropic-cyprus",
+      "description": "reads those files closely",
       "id": "extract",
       "kind": "api",
       "tool": "create_message"
     },
     {
       "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py finish --from extract --merge classify",
+      "description": "merges both passes into output.json",
       "host": "owner-mac",
       "id": "result",
       "kind": "script"
