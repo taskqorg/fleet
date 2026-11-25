@@ -451,6 +451,19 @@ func accessCheck(q *Request, r *contract.AccessCheckRequest) (contract.AccessChe
 		if g.probe == "" {
 			return no, fail(409, "Fleet has no read-only check for "+c.Provider+"; its last call shows whether it works")
 		}
+		if !slices.Contains(c.Tools, g.probe) {
+			// A connection made before its provider gained the check tool lacks it: the holder or owner grants this
+			// read-only tool (recorded as a tools change, as connections_set_tools does); anyone else gets the reason.
+			if q.person != nil && !fullAccess(q.person) && q.person.Email != c.Holder {
+				return no, fail(409, c.Name+" does not grant its check tool "+g.probe+"; its holder adds it under Tools")
+			}
+			if err := q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
+				_, err := connectionsSetTools(q, &contract.ConnectionsSetToolsRequest{Connection: c.Name, Tools: append(slices.Clone(c.Tools), g.probe)})
+				return err
+			}); err != nil {
+				return no, err
+			}
+		}
 		project := ""
 		if !slices.Contains(c.Access.Projects, "*") && len(c.Access.Projects) > 0 {
 			project = c.Access.Projects[0]
