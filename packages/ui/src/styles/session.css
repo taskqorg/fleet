@@ -5,23 +5,41 @@
   .th-text.quiet .th-main { font-size: var(--font-size-md); }
   .th-text.quiet.operator .th-main { max-width: min(100%, var(--size-list)); padding: var(--space-3) var(--space-4); border: 0; border-radius: var(--radius-lg); background: var(--surface-sunken); }
 
-  /* Tool line (OR-52) */
-  .tool-line { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; font-size: var(--font-size-sm); color: var(--fg-muted); }
-  .tool-line-head { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
-  .tool-line-head:hover .tool-line-words { color: var(--fg); }
-  .tool-line-head .chev .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
-  .tool-line-words { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tool-line-time { flex: none; }
+  /* Tool line (OR-52): chips per kind of call (Conversations v2, owner pick c2) */
+  .tool-line { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; font-size: var(--font-size-sm); color: var(--fg-muted); }
+  .tool-line-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+  .tool-line-time { flex: none; color: var(--fg-faint); }
   .tool-line-dot { flex: none; width: 6px; height: 6px; margin-inline: 4px; border-radius: var(--radius-pill); background: var(--running-fg);
     @media (prefers-reduced-motion: no-preference) { animation: sdot-pulse 1.6s var(--motion-ease) infinite; }
   }
   .tool-line.running .tool-line-time { color: var(--running-fg); }
-  .tool-line.failed { color: var(--danger-fg); }
-  .tool-line.failed .tool-line-head:hover .tool-line-words { color: inherit; }
-  .tool-calls { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: var(--space-2) var(--space-3); list-style: none; border-radius: var(--radius-md); background: var(--surface-sunken); font-family: var(--font-mono); font-size: var(--font-size-xs); }
-  .tool-call { display: flex; gap: var(--space-2); min-width: 0; }
-  .tool-call-target { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
-  .tool-call.failed, .tool-call.failed .tool-call-target { color: var(--danger-fg); }
+  .tool-chip { display: inline-flex; align-items: center; gap: var(--space-2); height: var(--size-chip); padding: 0 var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-sunken); color: var(--fg); font: inherit; cursor: pointer; }
+  .tool-chip .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); color: var(--fg-muted); }
+  .tool-chip-label { font-weight: var(--font-weight-medium); }
+  .tool-chip .num { color: var(--fg-muted); }
+  .tool-chip .tool-chip-time { color: var(--fg-faint); font-size: var(--font-size-xs); }
+  .tool-chip-failed { color: var(--attention-fg); }
+  .tool-chip:hover, .tool-chip.on { border-color: var(--fg-muted); }
+  .tool-chip.on { background: var(--selected); }
+  .tool-chip.running { border-color: var(--running-fg); }
+  .tool-line.failed .tool-chip.failed { border-color: var(--danger-fg); }
+  .tool-line.failed .tool-chip-failed { color: var(--danger-fg); }
+  .tool-calls-box { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+  .tool-calls-head { display: flex; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--line-soft); }
+  .tool-calls-head b { color: var(--fg); font-weight: var(--font-weight-bold); }
+  .tool-calls { display: flex; flex-direction: column; margin: 0; padding: var(--space-1) 0; list-style: none; font-family: var(--font-mono); font-size: var(--font-size-xs); }
+  .tool-call { display: flex; flex-direction: column; min-width: 0; }
+  .tool-call-row { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; padding: var(--space-1) var(--space-3); border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+  .tool-call-row:disabled { cursor: default; }
+  .tool-call-row:not(:disabled):hover { background: var(--hover); }
+  .tool-call-name { flex: none; color: var(--fg); }
+  .tool-call-target { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool-call-error { flex: 2; min-width: 0; color: var(--danger-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool-call.failed .tool-call-name { color: var(--danger-fg); }
+  .tool-call-io { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-1) var(--space-3) var(--space-3) var(--space-6); }
+  .tool-call-io .label { color: var(--fg-faint); font-family: var(--font-sans); font-weight: var(--font-weight-bold); }
+  .tool-call-io pre { margin: 0; max-height: calc(var(--size-list) * 1.25); overflow: auto; padding: var(--space-2); border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--bg); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+  @media (pointer: coarse) { .tool-chip, .tool-call-row { min-height: var(--size-hit-phone); } }
 
   /* Context panel (OR-51) */
   .ctx-panel { display: flex; flex-direction: column; gap: var(--space-4); width: var(--size-search); min-width: 0; padding: var(--space-4); border-inline-start: 1px solid var(--line); background: var(--surface); color: var(--fg); }

@@ -936,7 +936,7 @@ export function Thread(p: {
   };
   const quietRow = (r: FoldedRow): JSX.Element => {
     switch (r.kind) {
-      case 'tools': return <ToolLine words={r.words} calls={r.calls} state={r.state} secs={r.secs} startedAt={r.startedAt} open={open().has(r.key) !== r.calls.some(c => c.failed)} onToggle={() => toggle(r.key)} />;
+      case 'tools': return <ToolLine words={r.words} calls={r.calls} state={r.state} secs={r.secs} startedAt={r.startedAt} open={open().has(r.key) !== (r.state === 'failed')} onToggle={() => toggle(r.key)} />;
       case 'question': {
         const answer = r.answer === undefined || typeof r.answer === 'string' ? r.answer : keyConnection(r.options) ? 'key given' : JSON.stringify(r.answer);
         return <div class="th-row th-q" data-ui="thread-row"><QuestionCard question={r.text} choices={[]} answered={{ answer: answer ?? r.state, at: r.answeredAt ?? r.askedAt ?? p.now }} /></div>;
