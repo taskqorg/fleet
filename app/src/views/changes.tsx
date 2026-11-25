@@ -70,7 +70,9 @@ export function Changes(props: { onClose?: () => void } = {}) {
   const behindHosts = createMemo(() => changesOp.data?.versions.hosts.filter(h => h.behind) ?? []);
   const behindHarnesses = createMemo(() => changesOp.data?.harnessDrift.filter(h => h.behind) ?? []);
   const failedProposals = createMemo(() => changesOp.data?.components.filter(k => k.proposal?.stage === 'failed').length ?? 0);
-  const installing = createMemo(() => (changesOp.data?.versions.hosts ?? []).filter(h => updateOf(h.update)?.state === 'pending'));
+  const offered = () => changesOp.data ? changesOp.data.versions.coordinator.offered ?? changesOp.data.versions.coordinator.version : '';
+  const installing = createMemo(() => (changesOp.data?.versions.hosts ?? []).filter(h => updateOf(h.update)?.state === 'pending' && updateOf(h.update)?.version === offered()));
+  const installingBehind = createMemo(() => behindHosts().filter(h => installing().includes(h)).length);
   const reverting = createMemo(() => changesOp.data?.components.filter(k => k.proposal?.stage === 'reverting').length ?? 0);
   // The summary line of frame 1A: what moves or is stuck first, in its tone; the definitions last, quiet.
   const driftParts = createMemo<{ text: string; tone: string }[]>(() => {
@@ -80,7 +82,7 @@ export function Changes(props: { onClose?: () => void } = {}) {
     const made = data.storeOnly.length + data.ahead.length;
     return [
       installing().length > 0 && { text: `${plural(installing().length, 'host', 'hosts')} installing`, tone: 't-running' },
-      behindHosts().length > 0 && { text: `${plural(behindHosts().length, 'host', 'hosts')} behind`, tone: 't-attention' },
+      behindHosts().length > installingBehind() && { text: `${plural(behindHosts().length - installingBehind(), 'host', 'hosts')} behind`, tone: 't-attention' },
       failedProposals() > 0 && { text: `${failedProposals()} qualification failed`, tone: 't-danger' },
       reverting() > 0 && { text: `${plural(reverting(), 'revert', 'reverts')} in flight`, tone: 't-attention' },
       behindHarnesses().length > 0 && { text: `${behindHarnesses().length} harness pins drifting`, tone: 't-attention' },
@@ -315,13 +317,14 @@ const names = (ids: string[]) => ids.length <= 2 ? ids.join(' and ') : `${ids.sl
 /** The Release row of frame 1A: the release hosts take, and where it stands on them; it opens the first host it waits on. */
 function ReleaseRow(p: { versions: SystemVersionsReply; onHost: (path: string) => void }) {
   const release = () => p.versions.coordinator.offered ?? p.versions.coordinator.version;
-  const pending = () => p.versions.hosts.filter(h => updateOf(h.update)?.state === 'pending');
-  const failing = () => p.versions.hosts.filter(h => ['refused', 'failed'].includes(updateOf(h.update)?.state ?? '') && updateOf(h.update)?.version === release());
+  const pending = () => p.versions.hosts.filter(h => updateOf(h.update)?.state === 'pending' && updateOf(h.update)?.version === release());
+  const failing = () => p.versions.hosts.filter(h => ['refused', 'failed', 'error'].includes(updateOf(h.update)?.state ?? '') && updateOf(h.update)?.version === release());
+  const why = (h: { update: unknown }) => updateOf(h.update)?.error ? ` · ${updateOf(h.update)!.error}` : '';
   const behind = () => p.versions.hosts.filter(h => h.behind && !pending().includes(h));
   const row = () => {
     const f = failing(), w = pending(), b = behind();
-    if (f.length) return { life: 'failed' as Life, tone: 't-danger', text: `${names(f.map(h => h.id))} refused · ${updateOf(f[0].update)?.error ?? ''}`, host: f[0], at: updateOf(f[0].update)?.at };
-    if (w.length) return { life: 'working' as Life, tone: 't-running', text: `${names(w.map(h => h.id))} installing${updateOf(w[0].update)?.error ? ` · ${updateOf(w[0].update)!.error}` : ''}`, host: w[0], at: updateOf(w[0].update)?.at };
+    if (f.length) return { life: 'failed' as Life, tone: 't-danger', text: `${names(f.map(h => h.id))} refused${why(f[0])}`, host: f[0], at: updateOf(f[0].update)?.at };
+    if (w.length) return { life: 'working' as Life, tone: 't-running', text: `${names(w.map(h => h.id))} installing${why(w[0])}`, host: w[0], at: updateOf(w[0].update)?.at };
     if (b.length) return { life: 'waiting' as Life, tone: 't-attention', text: `${names(b.map(h => h.id))} behind`, host: b[0], at: undefined };
     return { life: 'done' as Life, tone: 'muted', text: 'every host runs it', host: undefined, at: undefined };
   };

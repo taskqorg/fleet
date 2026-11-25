@@ -252,8 +252,8 @@ func probeVersion(path string, sample *cliObservation, re *regexp.Regexp, pathEn
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "--version")
 	cmd.Env = []string{}
-	if pathEnv != "" {
-		cmd.Env = []string{"PATH=" + pathEnv}
+	if pathEnv != "" { // a tool shim (corepack, mise, asdf) finds its cache and config under HOME
+		cmd.Env = []string{"PATH=" + pathEnv, "HOME=" + os.Getenv("HOME"), "USER=" + os.Getenv("USER")}
 	}
 	cmd.WaitDelay = time.Second
 	o, err := cmd.Output()

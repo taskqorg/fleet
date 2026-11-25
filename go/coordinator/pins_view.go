@@ -334,11 +334,16 @@ func systemComponents(hosts []contract.HostRow) []contract.SystemChangeKind {
 // componentHost: one host's cell of a component row.
 func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned string, h contract.HostRow, flagged pinsRegression) contract.SystemChangeComponentHost {
 	cell := contract.SystemChangeComponentHost{HostId: h.Id, State: contract.ComponentHostStateUnknown}
-	// The version the host reports: its CLI report, its host tools report (also while the kind's pins are off).
+	// The version the host reports: its CLI report, its host tools report (also while the kind's pins are off). With the
+	// kind's pins on, a tool the host reports without a pin is its own PATH tool, not the managed one: no drift to show.
 	if k.Name == harnessrelease.Tools.Name {
 		for _, tv := range h.ToolVersions {
 			if tv.Tool == name && tv.Observed != nil {
 				cell.Observed = tv.Observed
+				if enabled && tv.Expected == nil {
+					cell.State = contract.ComponentHostStateOwn
+					return cell
+				}
 			}
 		}
 	}
