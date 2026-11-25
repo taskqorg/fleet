@@ -609,6 +609,18 @@ func mcpRun(args []string) error {
 		return mcpStdio(args[1], spec, os.Stdin, os.Stdout, args[3], typed[mcpLaunchSpec](spec).PathPolicy)
 	}
 
+	if server == "project-env" {
+		if len(args) != 2 {
+			return errors.New("environment context required")
+		}
+		var cfg projectEnvConfig
+		if err := json.Unmarshal([]byte(args[1]), &cfg); err != nil {
+			return err
+		}
+		srv := mcpserve.Stdio{Name: "fleet-project-env", Version: "1", Tools: func() any { return projectEnvTools },
+			Call: func(name string, a json.RawMessage) (any, error) { return projectEnvCall(name, decRaw(a), cfg) }}
+		return srv.Serve(os.Stdin, os.Stdout)
+	}
 	if server == "project-browser" {
 		if len(args) != 2 {
 			return errors.New("browser context required")

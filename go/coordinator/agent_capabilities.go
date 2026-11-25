@@ -67,7 +67,7 @@ func hostGitConnections(q *Request) (map[string][]string, error) {
 }
 
 // sandboxInstruction: every agent's line about its native shell, so a sandbox error is not reported as a service's.
-const sandboxInstruction = "Your native shell is sandboxed and may have no network and no credentials: a DNS, connection, TLS, push or credential error there says nothing about GitLab, GitHub or any other service. Reach services through your Fleet tools: project-publishing for pushes and pull requests, connections for APIs."
+const sandboxInstruction = "Your native shell is sandboxed and may have no network and no credentials: a DNS, connection, TLS, push or credential error there says nothing about GitLab, GitHub or any other service. Reach services through your Fleet tools: project-publishing for pushes and pull requests, connections for APIs, project-env (env_exec) for the project toolchain and its services when the project declares a dev environment."
 
 // readerInstruction: every agent's line about where its replies are read, so file references stay useful there.
 const readerInstruction = "People read your replies in the Fleet web app and Telegram, not on your host: a link to a local file path (an absolute path, file://, your worktree) does not open there. Name a file as `path:line` relative to the repository root, in code; link it only with the forge's https URL at a pushed commit or the default branch."

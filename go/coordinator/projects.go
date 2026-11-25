@@ -116,7 +116,7 @@ var settingsDefaults = func() map[string]json.RawMessage {
 	if err := json.Unmarshal([]byte(`{"contextSources": [], "repos": [], "environments": [], "roles": {},
 	"worktree": {"envMode": "worktree", "baseRef": null, "startFromOrigin": true, "branchPrefix": "fleet", "linkPaths": [], "sharedDirectories": []},
 	"scripts": {"setup": null, "teardown": null}, "setupStart": "wait",
-	"execution": {"tools": [], "forge": false, "profiles": []},
+	"execution": {"tools": [], "forge": false, "profiles": [], "environment": null},
 	"integration": {"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "autoAccept": null, "syncCheckoutAfterMerge": true},
 	"cleanup": {"keepWhen": ["uncommitted", "unpushed", "teardown-failed"]}, "identity": null, "subscriptions": [],
 	"errors": {"bugsink": [], "ignore": []},
@@ -316,9 +316,14 @@ func projectSettings(p any) (rawObject, []string, error) {
 				}
 				if k == "execution" && x == "tools" {
 					for _, tool := range jsonList(y) {
-						if t, _ := jsonString(tool); !slices.Contains([]string{"node", "pnpm", "browser"}, t) {
+						if t, _ := jsonString(tool); !slices.Contains([]string{"node", "pnpm", "browser", "podman"}, t) {
 							return nil, nil, bad("execution.tools")
 						}
+					}
+				}
+				if k == "execution" && x == "environment" && !isNull(y) {
+					if err := checkDevEnvironment(y, o["tools"]); err != nil {
+						return nil, nil, err
 					}
 				}
 				if k == "integration" && x == "autoAccept" && !isNull(y) && jsType(y) != "boolean" {

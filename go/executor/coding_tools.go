@@ -13,6 +13,12 @@ func codingTool(tool, home string) error {
 	switch tool {
 	case "node", "pnpm":
 		c = exec.Command(tool, "--version")
+	case "podman": // rootless storage is the executor user's own, never the harness HOME
+		c = exec.Command("podman", "info", "--format", "{{.Host.Security.Rootless}}")
+		c.Env = podmanEnv(os.Getenv("HOME"), os.Getenv("XDG_RUNTIME_DIR"), os.Getenv("PATH"))
+		c.Dir = os.Getenv("HOME")
+		_, err := boundedOutput(c, probeWait)
+		return err
 	default:
 		return os.ErrInvalid
 	}

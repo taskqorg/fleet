@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -116,6 +117,8 @@ type mcpServerEntry struct {
 	Args    jsonValue `json:"args"`
 	Tools   []string  `json:"tools"`
 	Env     jsonValue `json:"env"`
+	// ToolTimeoutSec: a server whose calls run longer than the harness default (project-env).
+	ToolTimeoutSec int `json:"toolTimeoutSec"`
 }
 
 func (h harness) WireMCP(cmd *exec.Cmd, p map[string]any, servers map[string]any, extra []string) {
@@ -136,6 +139,9 @@ func (h harness) WireMCP(cmd *exec.Cmd, p map[string]any, servers map[string]any
 			}
 			if srv.Env.V != nil {
 				add("env_vars", enc(srv.Env.V))
+			}
+			if srv.ToolTimeoutSec > 0 {
+				add("tool_timeout_sec", strconv.Itoa(srv.ToolTimeoutSec))
 			}
 		}
 	case h.name == "claude":
