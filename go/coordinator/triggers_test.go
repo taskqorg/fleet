@@ -75,9 +75,15 @@ func TestTriggers(t *testing.T) {
 	if got := messages(); got != "0+0" {
 		t.Fatalf("a check without changes sent a message: %s", got)
 	}
+	changesBefore := psql("SELECT count(*) FROM change WHERE kind = 'trigger' AND id = '" + checkID + "';")
+	pass(now.Add(3 * time.Minute))
+	if after := psql("SELECT count(*) FROM change WHERE kind = 'trigger' AND id = '" + checkID + "';"); after == changesBefore {
+		t.Fatalf("a quiet check that moved the counter wrote no trigger change (%s)", after)
+	}
+	pass(now.Add(3 * time.Minute)) // not due again: no write, no change
 	quiet := psql("SELECT quiet_checks FROM trigger WHERE id = '" + checkID + "';")
-	if quiet != "1" {
-		t.Fatalf("quiet checks = %q, want 1", quiet)
+	if quiet != "2" {
+		t.Fatalf("quiet checks = %q, want 2", quiet)
 	}
 
 	psql(`INSERT INTO question(id, kind, project_id, text, state) VALUES ('trig-q1', 'operator_decision', 'desiign', 'Ship it?', 'open');`)
@@ -123,6 +129,9 @@ func TestTriggers(t *testing.T) {
 		t.Fatalf("triggers after delete = %d", n)
 	}
 	call("trigger_save", contract.TriggerSaveRequest{Id: newID(), SessionId: &sid, PresetId: ptr("needs-you")}, owner, 400)
+	huge := int64(1e15) // past what a time.Duration holds: it would wrap and fire every pass
+	call("trigger_save", contract.TriggerSaveRequest{Id: newID(), SessionId: &sid, PresetId: ptr("conversation-check"),
+		Settings: &contract.TriggerSettingsInput{EveryMs: &huge}}, owner, 400)
 	call("trigger_save", contract.TriggerSaveRequest{Id: newID(), SessionId: &sid, Settings: &contract.TriggerSettingsInput{
 		Name: ptr("x"), When: ptr(contract.TriggerWhen("every"))}}, owner, 400)
 }

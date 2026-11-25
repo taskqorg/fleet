@@ -34,6 +34,7 @@ test('Bot revisions survive restart and are isolated by project (requirement: fl
     await op('bot_get', { botId }, 'outsider@trial.test', 404);
     await op('bot_memory_save', { botId, baseRevision: 0, memory: 'Out of scope' }, 'outsider@trial.test', 404);
 
+    await op('bot_settings_save', { ...original, settings: { ...settings, scheduleZone: 'Etc/UTC' }, baseRevision: 1 }, 'owner@trial.test', 400); // moved to triggers
     const updated = { ...settings, soul: 'Keep only confirmed evidence' };
     assert.equal((await op('bot_settings_save', { ...original, settings: updated, baseRevision: 1 })).bot.revision, 2);
     await op('bot_settings_save', original, 'owner@trial.test', 409);

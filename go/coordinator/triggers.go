@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +25,9 @@ import (
 
 // triggerTickMs: the pass interval. A trigger every this often or less checks each pass, as the watch did.
 func triggerTickMs() int64 { return envMs("FLEET_TRIGGER_TICK_MS", 15000).Milliseconds() }
+
+// maxEveryMs: the longest interval a time.Duration holds (about 292 years); a longer one would wrap negative.
+const maxEveryMs = int64(math.MaxInt64 / int64(time.Millisecond))
 
 // triggerKinds: the change kinds a condition may name (the watch table in fleet-pm-agent.md section 5).
 var triggerKinds = []string{"task", "question", "execution", "host", "limits"}
@@ -310,8 +314,8 @@ func normalizeTriggerSettings(s *contract.TriggerSettings) error {
 	s.IfChanged = kinds
 	switch s.When {
 	case "every":
-		if s.EveryMs == nil || *s.EveryMs < 1 {
-			return fail(400, "Enter everyMs, a positive interval in milliseconds")
+		if s.EveryMs == nil || *s.EveryMs < 1 || *s.EveryMs > maxEveryMs {
+			return fail(400, "Enter everyMs, a positive interval in milliseconds of at most 292 years")
 		}
 		s.DailyTime, s.DailyZone = nil, nil
 	case "daily":

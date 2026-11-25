@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 func init() {
@@ -38,24 +39,39 @@ func sessionContext(q *Request, r *contract.SessionContextRequest) (contract.Ses
 		out.Plan = sessionPlan(board)
 		out.Swarm = sessionSwarm(board, sid)
 	}
-	_, timer, err := watchTriggers(q, sid)
+	// Every repeating trigger of the session slower than the pass (a per-pass change trigger is no timer); only the
+	// watch's conversation check is changed through watch_timer_set, the others through trigger_save.
+	triggers, err := q.db().TriggerList(q.ctx(), db.TriggerListParams{SessionID: &sid})
 	if err != nil {
 		return out, err
 	}
-	if rec := watchRecord(sid, nil, timer); rec != nil && rec.TimerMs != nil {
-		ws, err := watchSessionOf(q, sid)
-		if err != nil {
-			return out, err
+	_, watchTimerID := watchTriggerIDs(sid)
+	for _, row := range triggers {
+		t := row.Trigger
+		if t.WhenKind != "every" || ms(t.EveryMs) <= triggerTickMs() {
+			continue
 		}
-		can := ws != nil && ws.directs(q) == nil
-		if task := ws.taskOrEmpty(); can && task != "" {
-			cancelled, err := q.db().TaskCancelled(q.ctx(), task)
+		can := false
+		if t.ID == watchTimerID {
+			ws, err := watchSessionOf(q, sid)
 			if err != nil {
 				return out, err
 			}
-			can = !cancelled
+			can = ws != nil && ws.directs(q) == nil
+			if task := ws.taskOrEmpty(); can && task != "" {
+				cancelled, err := q.db().TaskCancelled(q.ctx(), task)
+				if err != nil {
+					return out, err
+				}
+				can = !cancelled
+			}
 		}
-		out.Timers = append(out.Timers, contract.SessionTimer{Id: timer.ID, EveryMs: *rec.TimerMs, NextAt: rec.NextWakeAt, Paused: *rec.TimerPaused, CanManage: can})
+		var next *int64
+		if t.Enabled && t.NextAt != nil {
+			at := t.NextAt.UnixMilli()
+			next = &at
+		}
+		out.Timers = append(out.Timers, contract.SessionTimer{Id: t.ID, EveryMs: float64(*t.EveryMs), NextAt: next, Paused: !t.Enabled, CanManage: can})
 	}
 	var botTasks []contract.BotTaskRecord
 	if s.BotID != "" {

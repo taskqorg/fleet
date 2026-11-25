@@ -4846,7 +4846,7 @@ CREATE INDEX trigger_bot ON trigger(bot_id, id) WHERE bot_id IS NOT NULL;
 INSERT INTO trigger(id, session_id, project_id, revision, name, preset_id, text, when_kind, every_ms, if_changed, enabled,
   change_cursor, limits_signaled, fires, last_fire_at)
 SELECT 'focus-changes:' || w.session_id, w.session_id, w.project_id, 1, 'Focus changes', 'focus-changes', '', 'every', 15000,
-  ARRAY(SELECT jsonb_array_elements_text(w.payload->'kinds')), true, coalesce((w.payload->>'cursor')::bigint, 0),
+  ARRAY(SELECT jsonb_array_elements_text(w.payload->'kinds')), true, coalesce((w.payload->>'cursor')::bigint, (SELECT coalesce(max(seq), 0) FROM change)),
   ARRAY(SELECT jsonb_array_elements_text(coalesce(w.payload->'limitsSignaled', '[]'))),
   coalesce((w.payload->>'wakes')::bigint, 0),
   CASE WHEN jsonb_typeof(w.payload->'lastWakeAt') = 'number' THEN to_timestamp((w.payload->>'lastWakeAt')::numeric / 1000) END
@@ -4858,7 +4858,7 @@ INSERT INTO trigger(id, session_id, project_id, revision, name, preset_id, text,
 SELECT 'conversation-check:' || w.session_id, w.session_id, w.project_id, 1, 'Conversation check', 'conversation-check',
   'Fleet: conversation check; review your focus with task_page and questions_list.', 'every',
   greatest(1, round(coalesce(w.payload->>'timerMs', w.payload->>'pausedTimerMs')::numeric))::bigint,
-  '{task,question,execution}', w.payload->'pausedTimerMs' IS NULL, coalesce((w.payload->>'cursor')::bigint, 0),
+  '{task,question,execution}', w.payload->'pausedTimerMs' IS NULL, coalesce((w.payload->>'cursor')::bigint, (SELECT coalesce(max(seq), 0) FROM change)),
   CASE WHEN jsonb_typeof(w.payload->'nextWakeAt') = 'number' THEN to_timestamp((w.payload->>'nextWakeAt')::numeric / 1000) END
 FROM watch w
 WHERE w.tombstoned_at IS NULL AND coalesce(w.payload->>'timerMs', w.payload->>'pausedTimerMs') IS NOT NULL;

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -155,6 +156,16 @@ func validateBotSchedule(scheduleTime, scheduleZone string) error {
 
 func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.BotSettingsSaveReply, error) {
 	var out contract.BotSettingsSaveReply
+	var sent struct {
+		Settings map[string]json.RawMessage `json:"settings"`
+	}
+	if json.Unmarshal(q.body, &sent) == nil {
+		for _, k := range []string{"scheduleTime", "scheduleZone", "wakeOnNeedsYou"} {
+			if _, ok := sent.Settings[k]; ok { // moved to triggers (docs/designs/fleet-triggers.md); never drop it silently
+				return out, fail(400, k+" moved to triggers: use trigger_save with botId and presetId daily-reconciliation or needs-you")
+			}
+		}
+	}
 	if !botIDPattern.MatchString(r.BotId) || r.BaseRevision < 0 {
 		return out, fail(400, "Expected a bot UUID and a nonnegative revision")
 	}
