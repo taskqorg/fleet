@@ -19,7 +19,7 @@ export type OpenQuestionRow = { id: string; text?: string | null; question?: str
  */
 export function answerLabels(q: Pick<OpenQuestionRow, 'kind' | 'options'>): string[] {
   if (keyConnection(q.options)) return ['decline'];
-  if (Array.isArray(q.options)) {
+  if (Array.isArray(q.options) && q.options.length) {
     return (q.options as unknown[]).map(o => {
       if (o && typeof o === 'object') {
         const r = o as { label?: unknown; value?: unknown };

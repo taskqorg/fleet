@@ -27,6 +27,8 @@ type DecisionProps = {
   question: string; askedBy: string; addressedTo: string; since: number; now: number; waits?: JSX.Element;
   context?: JSX.Element; timeInRow?: boolean; technicalAnswer?: boolean; options: { label: string; kbd?: string; primary?: boolean }[];
   answered?: { by: string; answer: string; at: number; delivered: boolean };
+  /** The chosen label while its answer is on the way: that button is busy, the others wait. */
+  answering?: string;
   /** false: only the option buttons answer (a decision the server accepts by option only); default true. */
   typed?: boolean;
   /** A returned promise that rejects shows its reason under the answers. */
@@ -38,7 +40,7 @@ export function DecisionBlock(p: DecisionProps) {
   const [text, setText] = createSignal('');
   const [failed, setFailed] = createSignal<string | null>(null);
   const send = (s: string) => {
-    if (!s.trim()) return;
+    if (!s.trim() || p.answering) return;
     setFailed(null);
     const r = p.onAnswer?.(s.trim());
     if (r) r.catch(e => setFailed(String((e as Error | null)?.message ?? e)));
@@ -75,7 +77,7 @@ export function DecisionBlock(p: DecisionProps) {
           <Show when={p.context} keyed>{ctx => <div class="ctx">{ctx}</div>}</Show>
           <div class="answers">
             <For each={p.options}>
-              {o => <Button label={o.label} kbd={o.kbd} kind={o.primary ? 'primary' : 'default'} onClick={() => send(o.label)} />}
+              {o => <Button label={o.label} kbd={o.kbd} kind={o.primary ? 'primary' : 'default'} busy={p.answering === o.label} disabledReason={p.answering && p.answering !== o.label ? 'Sending the answer' : undefined} onClick={() => send(o.label)} />}
             </For>
             <Show
               when={p.onSecret}

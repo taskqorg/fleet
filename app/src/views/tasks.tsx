@@ -409,6 +409,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
               typed={typedAnswer(q)}
               options={answerChoices(q).map((c, i) => ({ ...c, kbd: String(i + 1) }))}
               answered={answers.answered(q.id) ? { by: 'you', answer: answers.answered(q.id)!.answer, at: answers.answered(q.id)!.at, delivered: true } : undefined}
+              answering={answers.answering(q.id)}
               onAnswer={a => answers.send(q, a)}
               onSecret={keyConnection(q.options) ? v => answers.addKey(q, v) : undefined}
             />

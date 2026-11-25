@@ -715,7 +715,7 @@ function Rating(props: { r: LabRating; now: number }) {
     }>
       <div id={`rating-${props.r.id}`}>
         <DecisionBlock question={props.r.text} askedBy="lab" addressedTo="you" since={props.now} now={props.now} waits={busy() ? 'saving' : 'never blocks'} context={files()} options={opts()}
-          answered={props.r.state === 'answered' ? { by: 'you', answer: shown(String(props.r.answer)), at: props.now, delivered: true } : undefined}
+          answered={props.r.state === 'answered' ? { by: 'you', answer: shown(String(props.r.answer)), at: props.now, delivered: true } : answers.answered(props.r.id) ? { by: 'you', answer: shown(answers.answered(props.r.id)!.answer), at: answers.answered(props.r.id)!.at, delivered: true } : undefined}
           onAnswer={a => answers.send(props.r, toAnswer(a))} />
         <AnswerNote answers={answers} id={props.r.id} />
       </div>

@@ -21,7 +21,7 @@ export function QuestionCard(p: {
   const [text, setText] = createSignal('');
   const danger = () => p.tone === 'danger';
   const send = (s: string) => { if (s.trim() && !p.answering) p.onAnswer?.(s.trim()); };
-  const addKey = () => { const v = text().trim(); if (v && !p.answering) { p.onSecret?.(v); setText(''); } };
+  const addKey = () => { const v = text().trim(); if (v && !p.answering) p.onSecret?.(v); };
   return (
     <Show
       when={p.answered}

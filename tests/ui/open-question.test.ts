@@ -50,3 +50,7 @@ test('useAnswer: a key goes to addKey only, never to the answer write', async ()
   assert.deepEqual(sent, ['key:openai:sk-test']);
   assert.equal(a.answered('k')?.answer, 'key added');
 });
+
+test('answerLabels: an acceptance with an empty option list still has its two answers', () => {
+  assert.deepEqual(answerLabels({ kind: 'acceptance', options: [] }), ['accepted', 'rejected']);
+});
