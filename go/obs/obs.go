@@ -369,8 +369,17 @@ func (r *Recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 // MarkRefused marks the response a refusal by design, when w is a Recorder.
 func MarkRefused(w http.ResponseWriter) {
-	if r, ok := w.(*Recorder); ok {
-		r.refused = true
+	// A writer that wraps the Recorder (the operations' Server-Timing writer) is unwrapped down to it.
+	for w != nil {
+		if r, ok := w.(*Recorder); ok {
+			r.refused = true
+			return
+		}
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return
+		}
+		w = u.Unwrap()
 	}
 }
 

@@ -439,15 +439,21 @@ func limitsReply(q *Request, o limitOptions) (contract.SubscriptionLimitsReply, 
 	var none contract.SubscriptionLimitsReply
 	now := o.now
 	ctx := withTx(q)
+	done := phase(ctx, "limits.latest")
 	latest, err := latestReadings(ctx, q.app)
+	done()
 	if err != nil {
 		return none, err
 	}
+	done = phase(ctx, "limits.history")
 	hist, err := limitHistory(ctx, q.app, min(o.from, now-int64(o.windowHours*hourMs)))
+	done()
 	if err != nil {
 		return none, err
 	}
+	done = phase(ctx, "limits.accounts")
 	rows, err := accountsAll(q)
+	done()
 	if err != nil {
 		return none, err
 	}

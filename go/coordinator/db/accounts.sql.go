@@ -481,10 +481,14 @@ func (q *Queries) InflightLimitRead(ctx context.Context, arg InflightLimitReadPa
 }
 
 const limitReadingsSince = `-- name: LimitReadingsSince :many
-SELECT x.account_id::text AS account_id, r.value::jsonb AS reading, d.updated_at
- FROM event d JOIN execution x ON x.id = d.execution_id CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.payload->'data'->'readings','[]'::jsonb)) r(value)
- WHERE NOT d.delta AND d.type='limit_reading' AND x.account_id IS NOT NULL AND d.updated_at >= $1
- ORDER BY d.updated_at, d.seq
+WITH w AS MATERIALIZED (
+ SELECT d.execution_id, d.payload->'data'->'readings' AS readings, d.updated_at, d.seq FROM event d
+ WHERE NOT d.delta AND d.type = 'limit_reading' AND d.updated_at >= $1
+)
+SELECT x.account_id::text AS account_id, r.value::jsonb AS reading, w.updated_at
+ FROM w JOIN execution x ON x.id = w.execution_id CROSS JOIN LATERAL jsonb_array_elements(coalesce(w.readings,'[]'::jsonb)) r(value)
+ WHERE x.account_id IS NOT NULL
+ ORDER BY w.updated_at, w.seq
 `
 
 type LimitReadingsSinceRow struct {
@@ -493,7 +497,10 @@ type LimitReadingsSinceRow struct {
 	UpdatedAt time.Time
 }
 
-// Every limit_reading since a time, per subscription, oldest first.
+// Every limit_reading since a time, per subscription, oldest first. The window's reads are chosen first
+// (event_limit_reading: one walk of the limit reads with a timestamp filter, both leakproof under row level security), then their runs by
+// primary key; the planner otherwise started from every run that has a subscription and looked up its events (0.4 s
+// on 200k runs, 2026-11-26).
 func (q *Queries) LimitReadingsSince(ctx context.Context, updatedAt time.Time) ([]LimitReadingsSinceRow, error) {
 	rows, err := q.db.Query(ctx, limitReadingsSince, updatedAt)
 	if err != nil {

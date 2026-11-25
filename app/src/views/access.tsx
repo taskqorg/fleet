@@ -11,7 +11,7 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import { op, type Ops } from '../api.ts';
 import { useOp } from '../store.ts';
-import { AccessServers } from './access-grants.tsx';
+import { AccessServers, useAccessGrants } from './access-grants.tsx';
 
 type Status = Ops['access_status']['reply'];
 type Item = Status['items'][number];
@@ -36,6 +36,9 @@ type Flow =
 
 export function Access(props: { onOpen: (path: string) => void }) {
   const status = useOp('access_status', {});
+  // The Servers group's read starts with access_status, not after it: the group renders below the others, but its read
+  // is the same doc and is already on its way (or answered) when the group mounts.
+  useAccessGrants(() => undefined);
   const [flow, setFlow] = createSignal<Flow | null>(null);
   const [checking, setChecking] = createSignal<string | null>(null);
   const [err, setErr] = createSignal('');

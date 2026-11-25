@@ -156,3 +156,17 @@ func TestHandlerClientGoneIsCancelled(t *testing.T) {
 		t.Fatalf("span after client left = %+v, want outcome %q", got, Cancelled)
 	}
 }
+
+type wrapped struct{ http.ResponseWriter }
+
+func (w wrapped) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Requirement: a refusal is recorded as a refusal also when a writer wraps the Recorder (the operations' Server-Timing
+// writer). Risk: every refused operation counts as an error in telemetry.
+func TestMarkRefusedThroughWrapper(t *testing.T) {
+	r := &Recorder{ResponseWriter: httptest.NewRecorder()}
+	MarkRefused(wrapped{r})
+	if !r.refused {
+		t.Fatal("MarkRefused did not reach the Recorder under a wrapper")
+	}
+}
