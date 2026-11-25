@@ -46,6 +46,11 @@ const uiDesignOwned: Record<string, RuleOwnership> = {
       tool_output: 'S9: user-triggered open of one call in a tool line loads its input and output once (thread_entries sends summaries, full: false)',
     },
   },
+  'app/src/views/home.tsx': {
+    'UI-OP': {
+      session_presets: 'S9: user-triggered send to a PM with no open session reads the project presets once to start it (session_start); home_view carries no presets',
+    },
+  },
   'app/src/views/lab-create.tsx': {
     'UI-OP': {
       project_detail: 'S9: one-shot imperative access check on mount when restoring a persisted sessionStorage draft before enabling the form',
