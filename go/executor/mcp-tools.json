@@ -74,7 +74,7 @@
       "idempotentHint": true,
       "openWorldHint": true
     },
-    "description": "Start a pipeline search for query. Reuse requestId on retry: the same requestId returns the same run. A search may return a durable running run; read it with pipeline_get by runId, never redispatch after an uncertain response. If truncated is true, use pipeline_get with the returned id for details.",
+    "description": "Run the project's method for a capability on query, and on files: each input is a file you saved with artifact_save (a files_get download included), given to the method as example/<path>; call it once artifact_list shows the file stored. Reuse requestId on retry: the same requestId returns the same run. A search may return a durable running run; read it with pipeline_get by runId, never redispatch after an uncertain response. If truncated is true, use pipeline_get with the returned id for details.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -96,6 +96,26 @@
         "methodId": {
           "type": "string",
           "description": "A method id from catalogue; omitted, Fleet recommends one."
+        },
+        "inputs": {
+          "type": "array",
+          "description": "Files for the method: [{path, artifactId}], path a relative file name such as passport.jpg.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "artifactId"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "artifactId": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     }

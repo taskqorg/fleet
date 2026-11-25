@@ -45,8 +45,9 @@ func TestArgumentsFitObjects(t *testing.T) {
 
 // Requirement: a project tool's inputSchema (mcp-tools.json, what the agent sees and argumentsFit checks) and the
 // coordinator operation's request type (contracts/ops-*.schema.json, what decodes the call) agree: every tool argument
-// is a request property of the same JSON kind, and every required request property but the injected projectId is
-// required by the tool. Risk: the two drift and a documented call shape fails only at run time (DAM pilot, scope).
+// is a request property of the same JSON kind, every request property but the injected projectId is a tool argument,
+// and every required request property but projectId is required by the tool. Risk: the two drift and a documented
+// call shape fails only at run time (DAM pilot, scope; pipeline_run inputs).
 func TestProjectToolsMatchOperations(t *testing.T) {
 	defs := map[string]map[string]any{}
 	files, _ := filepath.Glob("../../contracts/ops*.schema.json")
@@ -106,6 +107,13 @@ func TestProjectToolsMatchOperations(t *testing.T) {
 			}
 			if want != "" && want != got {
 				t.Errorf("%s: %s is %s in the tool, %s in the operation", name, arg, got, want)
+			}
+		}
+		// The converse: every request property but the injected projectId is a tool argument, so an operation that
+		// gains one (pipeline_run inputs, DAM 2026-11-26) cannot ship with an agent tool that refuses it.
+		for arg := range props {
+			if _, ok := schema.Properties[arg]; !ok && arg != "projectId" {
+				t.Errorf("%s: the operation takes %s, the tool does not", name, arg)
 			}
 		}
 		required, _ := req["required"].([]any)
