@@ -948,6 +948,13 @@ AS $function$
 DECLARE prev text := current_setting('fleet.project_ids', true); r record; sid text;
 BEGIN
  PERFORM set_config('fleet.project_ids', '*', true);
+ IF TG_OP = 'UPDATE' AND OLD.session_id IS DISTINCT FROM NEW.session_id THEN
+  -- A run moved between sessions: both are counted again.
+  IF OLD.session_id IS NOT NULL THEN PERFORM fleet_session_summary_recount(OLD.session_id); END IF;
+  IF NEW.session_id IS NOT NULL THEN PERFORM fleet_session_summary_recount(NEW.session_id); END IF;
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+  RETURN NULL;
+ END IF;
  IF TG_OP = 'DELETE' THEN sid := OLD.session_id; ELSE sid := NEW.session_id; END IF;
  IF sid IS NOT NULL THEN
   INSERT INTO session_summary (session_id) SELECT sid WHERE EXISTS (SELECT 1 FROM session WHERE id = sid) ON CONFLICT (session_id) DO NOTHING;
@@ -1014,6 +1021,32 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.fleet_session_summary_recount(sid text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE prev text := current_setting('fleet.project_ids', true);
+BEGIN
+ PERFORM set_config('fleet.project_ids', '*', true);
+ INSERT INTO session_summary (session_id, state, state_execution_id, harness, activity_at, executions, open_questions)
+ SELECT d.id, coalesce(r.state::text, 'idle'), r.id, r.harness,
+  greatest(d.updated_at, ex.last_at, (SELECT max(m.updated_at) FROM message m WHERE m.session_id = d.id),
+   (SELECT max(v.updated_at) FROM event v WHERE v.session_id = d.id AND NOT v.delta)),
+  coalesce(ex.n, 0), (SELECT count(*) FROM question q WHERE q.session_id = d.id AND q.state = 'open')
+ FROM session d
+ LEFT JOIN LATERAL (SELECT e.id, e.state, e.harness FROM execution e WHERE e.session_id = d.id AND e.kind = 'agent_run' ORDER BY e.seq DESC LIMIT 1) r ON true
+ LEFT JOIN LATERAL (SELECT count(*) AS n, max(greatest(e.started_at, e.ended_at)) AS last_at FROM execution e WHERE e.session_id = d.id) ex ON true
+ WHERE d.id = sid
+ ON CONFLICT (session_id) DO UPDATE SET state = excluded.state, state_execution_id = excluded.state_execution_id, harness = excluded.harness,
+  activity_at = excluded.activity_at, executions = excluded.executions, open_questions = excluded.open_questions;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true); RAISE;
+END;
+$function$;
+
 CREATE OR REPLACE FUNCTION public.fleet_session_summary_session()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -1021,6 +1054,8 @@ CREATE OR REPLACE FUNCTION public.fleet_session_summary_session()
  SET search_path TO 'public'
 AS $function$
 BEGIN
+ -- A new session is counted in full: its runs may have been written before it in the same transaction.
+ IF TG_OP = 'INSERT' THEN PERFORM fleet_session_summary_recount(NEW.id); RETURN NULL; END IF;
  INSERT INTO session_summary (session_id, activity_at) VALUES (NEW.id, NEW.updated_at)
  ON CONFLICT (session_id) DO UPDATE SET activity_at = greatest(session_summary.activity_at, excluded.activity_at);
  RETURN NULL;

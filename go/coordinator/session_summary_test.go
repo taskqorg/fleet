@@ -62,4 +62,11 @@ func TestSessionSummaryMatchesRecount(t *testing.T) {
 	check("a second run fails")
 	exec(`DELETE FROM execution WHERE id = 'sum-r2'`)
 	check("the failed run is deleted")
+	exec(`INSERT INTO session (id, created_at) VALUES ('sum-s2', now())`)
+	exec(`UPDATE execution SET session_id = 'sum-s2' WHERE id = 'sum-r1'`)
+	check("a run moves to another session")
+	var moved int64
+	if err := e.ownerStore.pool.QueryRow(e.ctx, `SELECT executions FROM session_summary WHERE session_id = 'sum-s2'`).Scan(&moved); err != nil || moved != 1 {
+		t.Fatalf("the target session counts the moved run: %d, %v", moved, err)
+	}
 }

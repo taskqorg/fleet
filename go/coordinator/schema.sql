@@ -5092,6 +5092,8 @@ CREATE TABLE session_summary (
  executions bigint NOT NULL DEFAULT 0,
  open_questions bigint NOT NULL DEFAULT 0
 );
+-- The backfill reads every session and run (the owner is under FORCE ROW LEVEL SECURITY too).
+SELECT set_config('fleet.project_ids', '*', true);
 INSERT INTO session_summary (session_id, state, state_execution_id, harness, activity_at, executions, open_questions)
 SELECT d.id,
  coalesce(r.state::text, 'idle'), r.id, r.harness,
