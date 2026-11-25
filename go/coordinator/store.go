@@ -405,6 +405,17 @@ func onEnd(tx pgx.Tx, fn func(committed bool)) {
 
 var migrationSplit = regexp.MustCompile(`(?m)^-- migration (\d+)`)
 
+// latestMigration is the highest "-- migration N" of sqlText (0 when there is none).
+func latestMigration(sqlText string) int {
+	n := 0
+	for _, m := range migrationSplit.FindAllStringSubmatch(sqlText, -1) {
+		if v, _ := strconv.Atoi(m[1]); v > n {
+			n = v
+		}
+	}
+	return n
+}
+
 // migrate applies schema.sql as the owner role: each "-- migration N" section once, in order, in one transaction that takes
 // the migration lock before it checks schema_migration, so concurrent starts never run a section twice. Then
 // applySchemaFiles brings every function, trigger and policy to its one current definition in schema/*.sql.

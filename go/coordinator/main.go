@@ -185,6 +185,12 @@ func closeStoreWithTimeout(s *Store, timeout time.Duration) bool {
 }
 
 func main() {
+	// The newest numbered migration this build carries: fleet-update dumps the database before a release only when it is
+	// newer than the newest one applied (docs/designs/fleet-self-update.md, step 8).
+	if len(os.Args) == 2 && os.Args[1] == "migrations" {
+		fmt.Println(latestMigration(schemaSQL))
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "selftest" {
 		if err := selftest(); err != nil {
 			log.Fatal("selftest: ", err)
