@@ -312,7 +312,7 @@ func peopleAccessSync(q *Request, r *contract.PeopleAccessSyncRequest) (contract
 func prepareCloudflareRetry(q *Request, email string) (peopleCloudflareChange, error) {
 	peopleMu.Lock()
 	defer peopleMu.Unlock()
-	if err := peopleOwner(q); err != nil {
+	if err := peopleManager(q, false); err != nil {
 		return peopleCloudflareChange{}, err
 	}
 	p := q.app.peopleSnapshot().person(email)

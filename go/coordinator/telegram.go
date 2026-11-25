@@ -1152,8 +1152,13 @@ func telegramPersonSet(q *Request, r *contract.TelegramPersonSetRequest) (contra
 	if (email != director(q) || r.TelegramUserId != nil) && !owner {
 		return out, fail(403, "Only the owner links another person or a Telegram user id")
 	}
-	if q.app.peopleSnapshot().person(email) == nil {
+	target := q.app.peopleSnapshot().person(email)
+	if target == nil {
 		return out, errNotFound
+	}
+	// Full access manages other people's links, never the owner's.
+	if target.Owner && email != director(q) && (q.person == nil || !q.person.Owner) {
+		return out, fail(403, "Only the owner changes the owner's Telegram link")
 	}
 	if r.Unlink != nil && *r.Unlink {
 		n, err := q.db().TelegramPersonDelete(q.ctx(), email)

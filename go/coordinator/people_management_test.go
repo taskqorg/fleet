@@ -50,6 +50,12 @@ func TestHumanGrantAndPromotionAuthority(t *testing.T) {
 	if _, err := updateHuman(nil, raw, email, base); err == nil {
 		t.Fatal("accepted the wildcard project grant for an operator")
 	}
+	// Full access (site-agents) manages humans, never the owner's row.
+	ownerRow, _ := personRow(rows[0])
+	ownerEdit := &contract.PeopleUpdateRequest{Email: "owner@trial.test", Roles: []string{"operator"}, BaseVersion: peopleRowVersion(ownerRow)}
+	if _, err := updateHuman(ownerRow, raw, ownerEdit.Email, ownerEdit); err == nil || !strings.Contains(err.Error(), "managed separately") {
+		t.Fatalf("edited the owner's row: %v", err)
+	}
 }
 
 // Requirement FLT-29: the coordinator uses a private host token file. Risk: a partial or

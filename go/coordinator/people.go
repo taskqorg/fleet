@@ -63,7 +63,7 @@ func (s *peopleSnapshot) list() []*Person {
 }
 
 // fullAccess: nil (hosts, timers), the owner, or a person with grant {kind: "*"} (site-agents: owner-equivalent
-// visibility and operations, distinct actor; people administration stays owner-only).
+// visibility and operations, distinct actor; it manages people too, but never the owner's row or owner flag).
 func fullAccess(p *Person) bool {
 	if p == nil || p.Owner {
 		return true
@@ -238,13 +238,14 @@ func init() {
 }
 
 // people_list and people_set: people.json as operations (docs/designs/fleet-pm-agent.md §8). A non-owner sees only
-// themself, as the person row-level policy does; only the owner sets the list, written atomically and reloaded.
+// themself, as the person row-level policy does; full access manages humans row by row (people_update), and only the
+// owner sets the whole list, written atomically and reloaded.
 func init() {
 	op("people_list", func(q *Request, r *contract.PeopleListRequest) (contract.PeopleListReply, error) {
 		out := contract.PeopleListReply{People: []map[string]json.RawMessage{}}
 		manage := valueOr(r.Manage)
-		if manage && (q.person == nil || !q.person.Owner) {
-			return out, fail(403, "Only the owner manages people")
+		if manage && (q.person == nil || !fullAccess(q.person)) {
+			return out, fail(403, "Only the owner or a full-access person manages people")
 		}
 		people := q.peopleSnapshot().list()
 		sort.Slice(people, func(i, j int) bool { return people[i].Email < people[j].Email })
@@ -318,8 +319,10 @@ func peopleRowVersion(p *Person) string {
 	return sha256hex(jsonBytes(publicPerson(p)))
 }
 
-// Both writers and file reloads take the same lock. Recheck authority after its acquisition.
-func peopleOwner(q *Request) error {
+// Both writers and file reloads take the same lock. Recheck authority after its acquisition. The owner and full
+// access (site-agents) manage humans; updateHuman and prepareCloudflareRetry keep the owner's and machine rows out of
+// reach, and no request field grants owner or the full-access grant. people_set replaces every row, so it stays the owner's.
+func peopleManager(q *Request, ownerOnly bool) error {
 	if q.person == nil {
 		return fail(403, "Only the owner sets people")
 	}
@@ -327,10 +330,13 @@ func peopleOwner(q *Request) error {
 	if err != nil {
 		return err
 	}
-	if !p.Owner {
-		return fail(403, "Only the owner sets people")
+	if p.Owner || (!ownerOnly && fullAccess(p)) {
+		return nil
 	}
-	return nil
+	if ownerOnly {
+		return fail(403, "Only the owner sets the whole people list")
+	}
+	return fail(403, "Only the owner or a full-access person manages people")
 }
 
 func peopleSet(q *Request, people json.RawMessage) (int, error) {
@@ -342,7 +348,7 @@ func peopleSet(q *Request, people json.RawMessage) (int, error) {
 	defer cloudflarePeopleMu.Unlock()
 	peopleMu.Lock()
 	defer peopleMu.Unlock()
-	if err := peopleOwner(q); err != nil {
+	if err := peopleManager(q, true); err != nil {
 		return 0, err
 	}
 	previous, err := os.ReadFile(q.app.peopleFile)
@@ -385,7 +391,7 @@ func peopleUpdate(q *Request, r *contract.PeopleUpdateRequest) (contract.PeopleU
 func updatePeopleRoster(q *Request, email string, r *contract.PeopleUpdateRequest, intent peopleCloudflareChange) error {
 	peopleMu.Lock()
 	defer peopleMu.Unlock()
-	if err := peopleOwner(q); err != nil {
+	if err := peopleManager(q, false); err != nil {
 		return err
 	}
 	raw, err := os.ReadFile(q.app.peopleFile)
