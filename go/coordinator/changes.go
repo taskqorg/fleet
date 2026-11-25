@@ -13,6 +13,15 @@ func init() {
 }
 
 func systemChanges(q *Request, _ *contract.SystemChangesRequest) (contract.SystemChangesReply, error) {
+	usage, err := recentUsage(q, 30, "agent", "pipeline")
+	if err != nil {
+		return contract.SystemChangesReply{}, err
+	}
+	return systemChangesOf(q, usage)
+}
+
+// systemChangesOf: system_changes with the last 30 days' usage of agents and pipelines already read (recentUsage).
+func systemChangesOf(q *Request, usage map[string]map[string]contract.Window) (contract.SystemChangesReply, error) {
 	out := contract.SystemChangesReply{
 		RepositoryChanged: []contract.SystemChangeDefinition{},
 		Ahead:             []contract.SystemChangeDefinition{},
@@ -21,14 +30,6 @@ func systemChanges(q *Request, _ *contract.SystemChangesRequest) (contract.Syste
 	}
 
 	defs, err := definitionsOf(q.ctx(), q.db(), definitionFilter{current: true})
-	if err != nil {
-		return out, err
-	}
-	agentRuns, err := usageRuns(q, "agent", 30)
-	if err != nil {
-		return out, err
-	}
-	pipeRuns, err := usageRuns(q, "pipeline", 30)
 	if err != nil {
 		return out, err
 	}
@@ -41,9 +42,9 @@ func systemChanges(q *Request, _ *contract.SystemChangesRequest) (contract.Syste
 		var runs int64
 		switch d.Kind {
 		case "agent":
-			runs = agentRuns[d.ID]
+			runs = usage["agent"][d.ID].Runs
 		case "pipeline":
-			runs = pipeRuns[d.ID]
+			runs = usage["pipeline"][d.ID].Runs
 		}
 		item := contract.SystemChangeDefinition{
 			Kind:    contract.DefinitionKind(d.Kind),

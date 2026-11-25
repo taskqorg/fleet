@@ -17,23 +17,13 @@ import (
 // revision's runs; rows outside the caller's scope are not counted (row security). only, when not nil, narrows the
 // resource rollup to those ids (the run counts stay per definition of the kind).
 func usageWindows(q *Request, kind, id string, only []string, days int64) (map[string]contract.Window, map[string][]contract.RevisionWindow, error) {
-	return usageWindowsOf(q, kind, id, only, days, true)
-}
-
-// usageWindowsOf: usageWindows, with the resource rollup only when resources is true; without it each window has the
-// runs, successes, tokens and median wall time and an empty resource summary (Library's tree shows runs only).
-func usageWindowsOf(q *Request, kind, id string, only []string, days int64, resources bool) (map[string]contract.Window, map[string][]contract.RevisionWindow, error) {
 	pin := map[string]string{"kind": kind}
 	if id != "" {
 		pin["id"] = id
 	}
-	var totRes map[string]contract.ResourceSummary
-	var revRes map[string]map[int64]contract.ResourceSummary
-	if resources {
-		var err error
-		if totRes, revRes, err = definitionUsageResources(q, kind, id, only, days); err != nil {
-			return nil, nil, err
-		}
+	totRes, revRes, err := definitionUsageResources(q, kind, id, only, days)
+	if err != nil {
+		return nil, nil, err
 	}
 	totals, byRev := map[string]contract.Window{}, map[string][]contract.RevisionWindow{}
 	rows, err := q.db().DefUsage(q.ctx(), db.DefUsageParams{Pin: jsonBytes([]map[string]string{pin}), Kind: kind, ID: id, Days: int32(days)})
@@ -78,20 +68,27 @@ func usageWindowsOf(q *Request, kind, id string, only []string, days int64, reso
 	return totals, byRev, nil
 }
 
-// usageRuns: the 30-day-style run counts of every definition of kind, without the resource rollup usageWindows attaches.
-// The rollup resolves container lineage over the whole execution table (AnalyticsDefinitionLineage), seconds on
-// production data, so a caller that only shows run counts (system_changes) reads DefUsage alone (FLT-38).
-func usageRuns(q *Request, kind string, days int64) (map[string]int64, error) {
-	pin := map[string]string{"kind": kind}
-	rows, err := q.db().DefUsage(q.ctx(), db.DefUsageParams{Pin: jsonBytes([]map[string]string{pin}), Kind: kind, ID: "", Days: int32(days)})
+// recentUsage: the last days' runs, successes, median wall time and tokens of every definition of the kinds, by kind
+// and id, in one pass (DefUsageRecent) and without the resource rollup usageWindows attaches. The rollup resolves
+// container lineage over the whole execution table, seconds on production data, so a caller that shows run counts
+// (Library's tree, system_changes) reads this alone (FLT-38).
+func recentUsage(q *Request, days int64, kinds ...string) (map[string]map[string]contract.Window, error) {
+	rows, err := q.db().DefUsageRecent(q.ctx(), db.DefUsageRecentParams{Days: int32(days), Kinds: kinds})
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]int64{}
+	out := map[string]map[string]contract.Window{}
+	for _, k := range kinds {
+		out[k] = map[string]contract.Window{}
+	}
 	for _, r := range rows {
-		if r.Total == 1 {
-			out[r.ID] = r.Runs
+		w := contract.Window{CostBasis: ptr("tokens"), Runs: r.Runs, Succeeded: r.Succeeded, Tokens: r.Tokens, Cost: []contract.CostFigure{}}
+		if r.Median >= 0 {
+			w.WallMsMedian = ptr(r.Median)
 		}
+		empty := emptyResourceSummary()
+		w.Resources = &empty
+		out[r.Kind][r.ID] = w
 	}
 	return out, nil
 }

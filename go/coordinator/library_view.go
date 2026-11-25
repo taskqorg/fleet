@@ -31,10 +31,15 @@ func libraryView(q *Request, r *contract.LibraryViewRequest) (contract.LibraryVi
 	if !architect(q) {
 		return out, nil
 	}
+	// One pass over the last 30 days' runs for the three lists and the drift (recentUsage).
+	usage, err := recentUsage(q, 30, "agent", "pipeline", "catalogue")
+	if err != nil {
+		return out, err
+	}
 	for kind, dst := range map[contract.DefinitionKind]*[]contract.DefinitionListItem{
 		contract.DefinitionKindAgent: &out.Agents, contract.DefinitionKindPipeline: &out.Pipelines, contract.DefinitionKindCatalogue: &out.Methods,
 	} {
-		l, err := definitionListOf(q, &contract.DefinitionListRequest{Kind: kind}, false)
+		l, err := definitionListOf(q, &contract.DefinitionListRequest{Kind: kind}, usage[string(kind)])
 		if err != nil {
 			return out, err
 		}
@@ -45,7 +50,7 @@ func libraryView(q *Request, r *contract.LibraryViewRequest) (contract.LibraryVi
 		return out, err
 	}
 	out.Skills = skills.Skills
-	if out.Changes, err = systemChanges(q, &contract.SystemChangesRequest{}); err != nil {
+	if out.Changes, err = systemChangesOf(q, usage); err != nil {
 		return out, err
 	}
 	recs, err := recommendationChanges(q, &contract.RecommendationChangesRequest{})
