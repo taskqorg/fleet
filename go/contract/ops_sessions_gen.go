@@ -293,32 +293,24 @@ func (v *DirectSearchRequest) Validate() error {
 // Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*DirectSearchRequest) Closed() bool { return true }
 
+// ExecutionSummary: One turn as a row: no snapshots, dispatch or configuration; execution_get has the whole record and its spend.
 type ExecutionSummary struct {
-	Cost      []CostFigure `json:"cost"`
-	EndedAt   *int64       `json:"endedAt"`
-	Error     *string      `json:"error"`
-	Harness   *string      `json:"harness"`
-	HostId    *string      `json:"hostId"`
-	Id        string       `json:"id"`
-	Kind      string       `json:"kind"`
-	Model     *string      `json:"model"`
-	Seq       int64        `json:"seq"`
-	Source    *string      `json:"source,omitempty"`
-	StartedAt *int64       `json:"startedAt"`
-	State     string       `json:"state"`
-	ThreadKey string       `json:"threadKey"`
+	EndedAt   *int64  `json:"endedAt"`
+	Error     *string `json:"error"`
+	Harness   *string `json:"harness"`
+	HostId    *string `json:"hostId"`
+	Id        string  `json:"id"`
+	Kind      string  `json:"kind"`
+	Model     *string `json:"model"`
+	Seq       int64   `json:"seq"`
+	Source    *string `json:"source,omitempty"`
+	StartedAt *int64  `json:"startedAt"`
+	State     string  `json:"state"`
+	ThreadKey string  `json:"threadKey"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ExecutionSummary) Validate() error {
-	if v.Cost == nil {
-		return Missing("cost")
-	}
-	for i := range v.Cost {
-		if err := Check(&v.Cost[i], "cost"); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -1545,6 +1537,7 @@ func (v *SessionViewQuestion) Validate() error {
 }
 
 type SessionViewReply struct {
+	BotTriggers *TriggerListReply     `json:"botTriggers,omitempty"`
 	Composer    SessionComposer       `json:"composer"`
 	Context     SessionContextReply   `json:"context"`
 	Executions  ExecutionsPage        `json:"executions"`
@@ -1552,11 +1545,16 @@ type SessionViewReply struct {
 	LastMessage *SessionLastMessage   `json:"lastMessage,omitempty"`
 	Questions   []SessionViewQuestion `json:"questions"`
 	Threads     []SessionThread       `json:"threads"`
-	Triggers    []SessionViewTrigger  `json:"triggers"`
+	Triggers    TriggerListReply      `json:"triggers"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionViewReply) Validate() error {
+	if v.BotTriggers != nil {
+		if err := Check(v.BotTriggers, "botTriggers"); err != nil {
+			return err
+		}
+	}
 	if err := Check(&v.Composer, "composer"); err != nil {
 		return err
 	}
@@ -1590,13 +1588,8 @@ func (v *SessionViewReply) Validate() error {
 			return err
 		}
 	}
-	if v.Triggers == nil {
-		return Missing("triggers")
-	}
-	for i := range v.Triggers {
-		if err := Check(&v.Triggers[i], "triggers"); err != nil {
-			return err
-		}
+	if err := Check(&v.Triggers, "triggers"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1609,23 +1602,6 @@ type SessionViewRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionViewRequest) Validate() error {
-	return nil
-}
-
-type SessionViewTrigger struct {
-	BotId       *string `json:"botId"`
-	Enabled     bool    `json:"enabled"`
-	Id          string  `json:"id"`
-	Kind        string  `json:"kind"`
-	LastError   *string `json:"lastError"`
-	Name        string  `json:"name"`
-	NextAt      *int64  `json:"nextAt"`
-	QuietChecks int64   `json:"quietChecks"`
-	QuietSince  *int64  `json:"quietSince"`
-}
-
-// Validate: the schema's required fields and enums (see Check).
-func (v *SessionViewTrigger) Validate() error {
 	return nil
 }
 
@@ -1871,6 +1847,7 @@ type ThreadEntriesRequest struct {
 	After   *string   `json:"after,omitempty"`
 	Around  *string   `json:"around,omitempty"`
 	Before  *string   `json:"before,omitempty"`
+	Full    *bool     `json:"full,omitempty"`
 	Key     ThreadKey `json:"key"`
 	Limit   *int64    `json:"limit,omitempty"`
 	Resolve *bool     `json:"resolve,omitempty"`
@@ -1990,7 +1967,7 @@ func (v *ThreadSearchRequest) Validate() error {
 	return nil
 }
 
-// ToolBlock: A summary: input and output are absent unless thread_entries asks full; tool_output loads them for one call. Times in ms.
+// ToolBlock: input and output are the harness's own values, absent when thread_entries asks full: false (tool_output loads them for one call). callId, toolKind, target and errorLine are always set. Times in ms.
 type ToolBlock struct {
 	At          *int64          `json:"at,omitempty"`
 	CallId      *string         `json:"callId,omitempty"`
@@ -2428,7 +2405,7 @@ func init() {
 		"sessions_list":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "after: the nextAfter of the previous page.", InputSchema: json.RawMessage("{\"$comment\":\"after: the nextAfter of the previous page.\",\"additionalProperties\":true,\"properties\":{\"after\":{\"items\":{},\"type\":\"array\"},\"filter\":{\"$comment\":\"The list filter of packages/view-url toPageParams; a null projectId is work outside projects; an empty projectId list is refused; archived applies to sessions only. A field a list does not implement is a 400.\",\"additionalProperties\":false,\"properties\":{\"archived\":{\"type\":\"boolean\"},\"excludeProjectId\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); null (or '-', as in excludeProjectIds) is work outside projects; applied after projectId, so a project in both is left out. Agents see every project unless they pass it.\",\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"projectId\":{\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"search\":{\"$comment\":\"free text; tasks also take key:value terms agent:, host:, state:, project: (substring match)\",\"type\":\"string\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"group\":{\"$comment\":\"project, state, agent or none; default project, with the waiting sessions first as one group (key empty, label waiting); state groups in attention order (waiting, failed, running, preparing, idle, succeeded, cancelled)\",\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"sort\":{\"$comment\":\"order inside a group: last activity or creation, - before it is descending; default -activity (latest activity first)\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"thread_blocks":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "rows: changed records; the reply has their current blocks.", InputSchema: json.RawMessage("{\"$comment\":\"rows: changed records; the reply has their current blocks.\",\"properties\":{\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"},\"thread\":{\"$comment\":\"With session: only blocks whose execution or message has this work-item thread (\\\"\\\" the main thread).\",\"type\":\"string\"}},\"type\":\"object\"},\"rows\":{\"items\":{\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"The kinds the change triggers write (fleet_change and fleet_artifact_change in go/coordinator/schema/functions.sql); a go test checks the triggers against this list.\",\"enum\":[\"api-connection\",\"artifact\",\"board\",\"bot\",\"bot-run\",\"command\",\"connection-key\",\"definition\",\"delivery\",\"event\",\"execution\",\"experiment\",\"host\",\"managed-account\",\"project-recommendation\",\"question\",\"resource_summary\",\"score\",\"session\",\"setting-change\",\"task\",\"trigger\",\"watch\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"key\",\"rows\"],\"type\":\"object\"}")},
 		"thread_composer":         {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Resolve the current message and Stop target from the open conversation, independent of the transcript page.", Changes: []string{"session", "execution", "task"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"conversationId\":{\"type\":\"string\"}},\"required\":[\"conversationId\"],\"type\":\"object\"}")},
-		"thread_entries":          {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Entries of a thread (key), paged with before, after or around and limit", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"after\":{\"type\":\"string\"},\"around\":{\"type\":\"string\"},\"before\":{\"type\":\"string\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"},\"thread\":{\"$comment\":\"With session: only blocks whose execution or message has this work-item thread (\\\"\\\" the main thread).\",\"type\":\"string\"}},\"type\":\"object\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"resolve\":{\"type\":\"boolean\"}},\"required\":[\"key\"],\"type\":\"object\"}")},
+		"thread_entries":          {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Entries of a thread (key), paged with before, after or around and limit", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"after\":{\"type\":\"string\"},\"around\":{\"type\":\"string\"},\"before\":{\"type\":\"string\"},\"full\":{\"$comment\":\"Default true: tool blocks carry their input and output. false: summaries only (callId, toolKind, target, errorLine); tool_output loads one call when it is opened.\",\"type\":\"boolean\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"},\"thread\":{\"$comment\":\"With session: only blocks whose execution or message has this work-item thread (\\\"\\\" the main thread).\",\"type\":\"string\"}},\"type\":\"object\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"resolve\":{\"type\":\"boolean\"}},\"required\":[\"key\"],\"type\":\"object\"}")},
 		"thread_export":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "A thread (key) as text, optionally between from and to in timezone tz", InputSchema: json.RawMessage("{\"properties\":{\"from\":{\"properties\":{\"key\":{\"type\":\"string\"},\"offset\":{\"type\":\"integer\"}},\"required\":[\"key\"],\"type\":\"object\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"},\"thread\":{\"$comment\":\"With session: only blocks whose execution or message has this work-item thread (\\\"\\\" the main thread).\",\"type\":\"string\"}},\"type\":\"object\"},\"to\":{\"properties\":{\"key\":{\"type\":\"string\"},\"offset\":{\"type\":\"integer\"}},\"required\":[\"key\"],\"type\":\"object\"},\"tz\":{\"type\":\"string\"}},\"required\":[\"key\"],\"type\":\"object\"}")},
 		"thread_search":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Find text in a thread (key, q), paged with before and limit", InputSchema: json.RawMessage("{\"properties\":{\"before\":{\"type\":\"string\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"},\"thread\":{\"$comment\":\"With session: only blocks whose execution or message has this work-item thread (\\\"\\\" the main thread).\",\"type\":\"string\"}},\"type\":\"object\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"q\":{\"type\":\"string\"}},\"required\":[\"key\",\"q\"],\"type\":\"object\"}")},
 		"tool_output":             {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "The input and output of one tool call (callId from a thread_entries tool block), loaded when the call is opened.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"callId\":{\"type\":\"string\"}},\"required\":[\"callId\"],\"type\":\"object\"}")},

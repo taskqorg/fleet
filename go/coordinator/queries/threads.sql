@@ -16,6 +16,10 @@ FROM execution e WHERE e.kind='agent_run' AND (e.task_id= @task_id::text OR (e.t
 SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq
 FROM execution e WHERE e.kind='agent_run' AND e.session_id=$1 ORDER BY e.seq;
 
+-- name: ThreadMembersOfSessionThread :many
+-- A session's agent runs in one work-item thread ('' the main thread), over execution_thread (migration 109).
+SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq
+FROM execution e WHERE e.session_id= @session_id::text AND e.thread= @thread::text AND e.kind='agent_run' ORDER BY e.seq;
 -- name: ThreadMemberOf :many
 -- One execution as a thread member (its reply text), of any kind.
 SELECT e.id, e.session_id, e.harness, e.model, to_jsonb(e.config_ref->>'effort')::jsonb AS effort, e.state::text AS state, e.observation, e.project_id, e.started_at, e.ended_at, e.seq

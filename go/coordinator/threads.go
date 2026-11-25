@@ -46,13 +46,17 @@ func cmpKey(a, b bkey) int64 {
 var terminalState = map[string]bool{"succeeded": true, "failed": true, "cancelled": true}
 
 // threadKey: {task} or {session}.
-type threadKey struct{ task, session string }
+// thread: with session, one work-item thread of it (nil: all; "" the main thread).
+type threadKey struct {
+	task, session string
+	thread        *string
+}
 
 func (k threadKey) view() contract.ThreadKey {
 	if k.task != "" {
 		return contract.ThreadKey{Task: &k.task}
 	}
-	return contract.ThreadKey{Session: &k.session}
+	return contract.ThreadKey{Session: &k.session, Thread: k.thread}
 }
 
 func threadKeyOf(k contract.ThreadKey) (threadKey, error) {
@@ -60,7 +64,7 @@ func threadKeyOf(k contract.ThreadKey) (threadKey, error) {
 		return threadKey{task: t}, nil
 	}
 	if s := deref(k.Session); s != "" {
-		return threadKey{session: s}, nil
+		return threadKey{session: s, thread: k.Thread}, nil
 	}
 	return threadKey{}, fail(400, "Expected key {task} or {session}")
 }
@@ -92,6 +96,14 @@ func members(q *Request, key threadKey) (map[string]member, []string, error) {
 	var rs []memberRow
 	if key.task != "" {
 		xs, err := q.db().ThreadMembersOfTask(q.ctx(), key.task)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, x := range xs {
+			rs = append(rs, memberRow(x))
+		}
+	} else if key.thread != nil {
+		xs, err := q.db().ThreadMembersOfSessionThread(q.ctx(), db.ThreadMembersOfSessionThreadParams{SessionID: key.session, Thread: *key.thread})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -633,7 +645,7 @@ func threadEntries(q *Request, b *contract.ThreadEntriesRequest) (contract.Threa
 	if err != nil {
 		return none, err
 	}
-	if b.Resolve != nil && *b.Resolve && key.session != "" {
+	if b.Resolve != nil && *b.Resolve && key.session != "" && key.thread == nil {
 		if key, err = keyOfSession(q, key.session); err != nil {
 			return none, err
 		}
@@ -710,6 +722,10 @@ func threadEntries(q *Request, b *contract.ThreadEntriesRequest) (contract.Threa
 	}
 	if err := attachBoundaryResources(q, entries); err != nil {
 		return none, err
+	}
+	full := b.Full == nil || *b.Full
+	for _, e := range entries {
+		summarizeTool(e, full)
 	}
 	sessions, seen := []string{}, map[string]bool{}
 	for _, id := range ids {
