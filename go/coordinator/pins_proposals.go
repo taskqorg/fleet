@@ -37,7 +37,7 @@ func pinsProblems(open []ghPull) []Problem {
 	out := []Problem{}
 	for _, pr := range open {
 		kind := pinsKind(pr.Head.Ref)
-		if kind == "" || !strings.Contains(pr.Body, pinsFailed) {
+		if kind == "" || !strings.EqualFold(pr.Head.Repo.FullName, githubPublicRepo) || !strings.Contains(pr.Body, pinsFailed) {
 			continue
 		}
 		summary := pr.Body

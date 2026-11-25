@@ -983,6 +983,42 @@ const providersJSON = `
    }
   }
  },
+ "github-pins": {
+  "baseUrl": "https://api.github.com",
+  "instructions": "Coordinator-only writes on taskqorg/fleet component pin proposals (docs/designs/fleet-host-updates.md): commit statuses and auto-merge. The key is a fine-grained token for taskqorg/fleet with Commit statuses and Pull requests read and write and nothing else; the coordinator refuses every branch but automation/<kind>-pins.",
+  "tools": {
+   "commit_status": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/commits/{ref}/status",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "The combined commit status of a ref (the access check reads main's).",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "ref"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "ref": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "ref": "^[A-Za-z0-9_./-]+$"}
+   },
+   "status_create": {
+    "method": "POST",
+    "path": "/repos/{owner}/{repo}/statuses/{sha}",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Post a commit status on a pin proposal's head.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "sha", "state", "context"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "sha": {"type": "string"}, "state": {"type": "string", "enum": ["success", "failure", "pending"]}, "context": {"type": "string", "enum": ["qualify-hosts", "code-review"]}, "description": {"type": "string"}, "target_url": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "sha": "^[0-9a-f]{40}$"}
+   },
+   "auto_merge_enable": {
+    "method": "POST",
+    "path": "/graphql",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "inject": {"query": "mutation($id: ID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE}) { clientMutationId } }"},
+    "description": "Turn on auto-merge of one pull request (by its node id); the mutation is fixed.",
+    "inputSchema": {"type": "object", "required": ["variables"], "properties": {"variables": {"type": "object", "required": ["id"], "properties": {"id": {"type": "string"}}}}}
+   }
+  }
+ },
  "github": {
   "baseUrl": "https://api.github.com",
   "instructions": "Read-only GitHub REST reads of a repository (pull requests, workflow runs, releases). The key is a read-only fine-grained token. Find a repository with repos_search; its ssh_url is the remote for a Fleet project.",
