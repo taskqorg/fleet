@@ -6,6 +6,7 @@ import {
   StatusLine, AgeChip, Button, DataTable, Disclosure, SearchBox, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals, CopyButton,
   cause, formatRowSpend, msMeasured, numMeasured, splitCostFigures,
   type CostFigureLike, type Measured, type StateOf, type TotalItem, type TreeNode,
+  isFinished,
 } from '../../../packages/ui/src/index.ts';
 import { op, OpError } from '../api.ts';
 import { useOp, usePreparedOp, preparedKey } from '../store.ts';
@@ -352,7 +353,7 @@ export function buildExecTree(executions: readonly ExecutionRow[]): TreeNode[] {
   const seen = new Set<string>();
   const leafTime = (e: ExecutionRow) => {
     const a = ms(e.startedAt), b = ms(e.endedAt);
-    return a && b && b >= a ? { value: (b - a) / 1000, basis: 'measured' as const } : { value: null, basis: 'unavailable' as const, reason: ['succeeded', 'failed', 'cancelled'].includes(e.state) ? 'terminal timing unavailable' : 'not finished' };
+    return a && b && b >= a ? { value: (b - a) / 1000, basis: 'measured' as const } : { value: null, basis: 'unavailable' as const, reason: isFinished('execution', e.state) ? 'terminal timing unavailable' : 'not finished' };
   };
   const labelOf = (e: ExecutionRow) => {
     const cfg = e.configRef && typeof e.configRef === 'object' ? (e.configRef as Record<string, unknown>) : null;

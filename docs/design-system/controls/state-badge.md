@@ -46,3 +46,5 @@ The form sessions, bots, tasks and runs share on cards, slots and the context pa
 | Asleep | neutral | dashed ring |
 
 Synonyms map to this set and never show: Succeeded and Completed are Done, Cancelled is Stopped, Idle is Asleep, Preparing and Running are Working; a held task is Waiting for you, a paused task and a skipped bot run are Stopped. Until this form is built, the mapping table above stays what the app shows.
+
+Code reads a state's word only through the registry (`packages/ui/src/registry.ts`): `life(family, state)` (a state it does not know yet is Asleep, never Working), `statesOf(family, lives)` for a list filter of words, `finishedStates`, `isFinished` and `openStates` for open and finished work (a paused task is Stopped but open). Views keep no state lists of their own.

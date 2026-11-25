@@ -6,7 +6,7 @@ import {
   EntityCode, ListDetail, RowFacts, Fact, AgeChip, ProblemRow,
   StateBadge, StateCounters, Button, DetailSection,
   OpsSummary, KvRow, Num, type IconName,
-  Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_,
+  Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, finishedStates,
   OpenQuestion, Latest, StateDot, type Tone,
   ShellStatus, ShellActions,
 } from '../../../packages/ui/src/index.ts';
@@ -26,7 +26,7 @@ const GROUPS = [['project', 'Project'], ['state', 'State'], ['agent', 'Agent'], 
 const SORTS = [['activity', 'Activity'], ['created', 'Created']] as const;
 /** The contract's session row. */
 type SessionRow = ContractSessionRow & { state: StateOf<'session'> };
-const TERMINAL = ['succeeded', 'failed', 'cancelled'];
+const TERMINAL: readonly string[] = finishedStates.session;
 const titleOf = (s: SessionRow) => s.title ?? 'New conversation';
 
 export function Conversations(props: { id?: string }) {
@@ -146,7 +146,6 @@ function groupIcon(group: string, key: string): IconName {
   if (isWaitingGroup(group, key)) return states_.session.waiting.icon;
   return group === 'state' ? 'activity' : group === 'agent' ? 'bot' : 'folder-open';
 }
-const FINISHED = ['succeeded', 'failed', 'cancelled'];
 type QuestionRow = Ops['questions_list']['reply']['questions'][number];
 
 /**
@@ -164,7 +163,7 @@ function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolea
     const { projectIds, excludeProjectIds } = scopeIds();
     return {
       group: 'none', sort: '-activity', limit: 5,
-      filter: { state: FINISHED, ...(projectIds && { projectId: projectIds.map(noProject) }), ...(excludeProjectIds && { excludeProjectId: excludeProjectIds.map(noProject) }) },
+      filter: { state: [...finishedStates.session], ...(projectIds && { projectId: projectIds.map(noProject) }), ...(excludeProjectIds && { excludeProjectId: excludeProjectIds.map(noProject) }) },
     };
   }, { every: 30_000 }); // sessions_list names no change kinds, so the feed does not reread it
   const names = createMemo(() => new Map(props.page.displayed.map(r => [r.id, titleOf(r)])));

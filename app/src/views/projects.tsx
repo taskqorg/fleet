@@ -7,7 +7,7 @@ import { useLocation, useSearch } from '../router.ts';
 import {
   Avatar, Button, DetailHead, DetailSection, DiffRow, Empty, ErrorBanner, FilterBar, Icon, InheritedRows, KvRow, Latest, ListDetail, ListFrame,
   Num, OpenQuestion, RowFacts, Fact, SearchField, SessionCard, ShellActions, Skeleton, StateBadge, StateDot, TabBar, Ago, VirtualList,
-  catalogueRow, matchSearch, msMeasured, lifeOf,
+  catalogueRow, matchSearch, msMeasured, life, statesOf,
   harnesses, type Harness, type IconName, type Life, type StateOf,
 } from '../../../packages/ui/src/index.ts';
 import { op, type Ops } from '../api.ts';
@@ -38,7 +38,7 @@ const CROSS: { id: CrossFacet; label: string }[] = [
   { id: 'summary', label: 'Summary' }, { id: 'tasks', label: 'Tasks' }, { id: 'delivery', label: 'Delivery' }, { id: 'results', label: 'Results' },
 ];
 const RUNNING_TASK_STATES = SYSTEM_VIEWS.tasks.find(v => v.name === 'Running')?.view.state ?? ['in_progress', 'waiting'];
-const ACTIVE_SESSION = ['preparing', 'running', 'waiting'];
+const ACTIVE_SESSION: string[] = statesOf('session', ['working', 'waiting']);
 const IN_FLIGHT_STAGES = new Set(['pr_open', 'pr_ci', 'pr_failed', 'mq_wait', 'mq_ci', 'mq_failed', 'releasing', 'installing']);
 
 function isRec(v: unknown): v is Record<string, unknown> {
@@ -363,7 +363,7 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
   );
 }
 
-const lifeOfSession = (s: string): Life => (lifeOf.session as Record<string, Life>)[s] ?? 'asleep';
+const lifeOfSession = (s: string): Life => life('session', s);
 const sessionPath = (s: Session) => '/conversations/' + encodeURIComponent(s.code ?? s.id);
 
 /** Sessions facet: the PM first, then the project's active sessions as cards, then the others (finished or asleep) as rows, newest first (OR-50, OR-51). */

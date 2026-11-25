@@ -174,6 +174,26 @@ export const lifeOf = {
 } as const satisfies { [F in 'task' | 'execution' | 'botRun' | 'session']: Record<StateOf<F>, Life> };
 export type LifeFamily = keyof typeof lifeOf;
 
+/** A family's state in the one vocabulary (OR-55); a state the registry does not know yet is Asleep, never Working. */
+export const life = <F extends LifeFamily>(family: F, state: string | null | undefined): Life =>
+  ((lifeOf[family] as Record<string, Life>)[state ?? ''] ?? 'asleep');
+/** The states of a family that read as any of `lives`, in the registry's order (a filter for a list read). */
+export const statesOf = <F extends LifeFamily>(family: F, lives: readonly Life[]): StateOf<F>[] =>
+  (Object.entries(lifeOf[family]) as [StateOf<F>, Life][]).filter(([, l]) => lives.includes(l)).map(([s]) => s);
+/** The states a record of a family ends in: no further work happens on it. A paused task is Stopped but not finished. */
+export const finishedStates = {
+  task: ['completed', 'failed', 'cancelled'],
+  execution: ['succeeded', 'failed', 'cancelled'],
+  botRun: ['succeeded', 'failed', 'cancelled', 'skipped'],
+  session: ['succeeded', 'failed', 'cancelled'],
+  experiment: ['stopped', 'done'],
+} as const satisfies { [F in LifeFamily | 'experiment']: readonly StateOf<F>[] };
+export const isFinished = (family: keyof typeof finishedStates, state: string | null | undefined): boolean =>
+  (finishedStates[family] as readonly string[]).includes(state ?? '');
+/** The states of a family that are not finished: open work, including a paused task and an idle session. */
+export const openStates = <F extends LifeFamily>(family: F): StateOf<F>[] =>
+  (Object.keys(lifeOf[family]) as StateOf<F>[]).filter(s => !isFinished(family, s as string));
+
 /** Workspaces and their navigation anchors (OR-3): the one list of screens. `nav: true` marks the seven rail sections in
  * rail order (OR-46, docs/designs/fleet-ia-and-journeys.md §1); `root` is the screen a section opens. Every other entry is
  * a screen inside one `section` (its own page, a facet or a tree root), which stays highlighted while it is open (OR-57)

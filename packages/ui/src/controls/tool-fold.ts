@@ -3,6 +3,7 @@
 // thread_entries returns, so pages join because they are contiguous. `Thread quiet` renders these rows.
 import type { Block } from '../../../../contracts/generated/ops.ts';
 import type { ToolCall } from './tool-line.tsx';
+import { openStates } from '../registry.ts';
 
 type Of<K extends Block['kind']> = Extract<Block, { kind: K }>;
 export type ToolGroup = {
@@ -18,7 +19,7 @@ const noticeLine = (b: Of<'text'>) => (b.plain || b.markdown || '').split('\n')[
 const rec = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 const RUNNING = ['running', 'started', 'pending', 'preparing'];
 const FAILED = ['failed', 'error', 'unfinished'];
-const ACTIVE = ['preparing', 'running', 'waiting'];
+const ACTIVE: string[] = openStates('execution');
 
 /** The short name of a tool: an MCP tool `mcp__server__name` is `name`. */
 export const toolName = (name: string) => name.split('__').at(-1) || name;

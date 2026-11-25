@@ -8,6 +8,7 @@ import { useLocation } from '../router.ts';
 import {
   Button, Empty, ErrorBanner, FigureTile, HostBand, LiveRow, StatusPill, bytes, causeOf, clock, count, duration, money, states, useTick,
   type DataTone, type GaugeProps, type HostBandProps, type Measured, type Stage, type Tone, type WorkerSlotProps,
+  statesOf, openStates,
 } from '../../../packages/ui/src/index.ts';
 import { useOp } from '../store.ts';
 import { prefs, scopeIds, noProject } from '../prefs.ts';
@@ -26,8 +27,8 @@ const FEED = 5;
 const IDLE_TILES = 3;
 const TONES: DataTone[] = ['d1', 'd2', 'd3', 'd4'];
 const KINDS: Record<string, string> = { agent_run: 'run', child_agent: 'child run', host_job: 'host job' };
-const ACTIVE = new Set(['preparing', 'running', 'waiting']);
-const OPEN_TASK = ['queued', 'in_progress', 'waiting', 'held'];
+const ACTIVE = new Set<string>(statesOf('execution', ['working', 'waiting']));
+const OPEN_TASK = openStates('task');
 
 const m = (value: number | null | undefined, extra: Partial<Measured> = {}): Measured => ({ value: value ?? null, basis: value == null ? 'unavailable' : 'measured', ...extra });
 const usd = (cost: readonly CostFigure[] | undefined) => (cost ?? []).filter(c => (c.currency ?? 'USD') === 'USD' && c.value != null).reduce((n, c) => n + c.value!, 0);

@@ -1,5 +1,5 @@
 import type { BotListItem, BotRunRecord, BotRunState, BotSettings, BotTaskRecord } from '../../contracts/generated/ops-bots.ts';
-import type { StateOf } from '../../packages/ui/src/registry.ts';
+import { states, type StateOf } from '../../packages/ui/src/registry.ts';
 import type { AvatarPicture, AvatarState } from '../../packages/ui/src/controls/avatar.tsx';
 
 export type BotTab = 'activity' | 'automations' | 'tasks' | 'runs' | 'settings';
@@ -51,7 +51,7 @@ export function formatBotTriggers(s: Pick<BotSettings, 'scheduleTime' | 'schedul
   return parts.join(' · ');
 }
 
-const BOT_RUN_STATE_SET = new Set<BotRunState>(['queued', 'running', 'waiting', 'succeeded', 'failed', 'cancelled', 'skipped']);
+const BOT_RUN_STATE_SET = new Set(Object.keys(states.botRun));
 
 /** Resolve badge family and state for a bot summary or record. */
 export function botStatusBadge(bot: Pick<BotListItem, 'paused' | 'activeRunId' | 'lastRunState'>):
