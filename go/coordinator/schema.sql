@@ -5049,3 +5049,12 @@ CREATE INDEX event_thread_rows ON event(execution_id, seq)
 CREATE INDEX execution_ran_at ON execution ((coalesce(ended_at, started_at, CASE WHEN data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((data->>'startedAt')::bigint/1000.0) END, last_seen_at)));
 CREATE INDEX execution_active ON execution (seq) WHERE state IN ('preparing', 'running', 'waiting');
 
+-- migration 114: migration 113's indexes serve no reader under RLS: the policies run before a user condition with a
+-- function that is not leakproof (the ran-at expression's regex and casts, an enum comparison), so the planner cannot
+-- start from them. The runners' "active or in the last day" now starts from plain timestamp comparisons and IS NULL,
+-- which RLS lets an index serve: started_at (execution_started_at), ended_at, and the few rows without an end.
+DROP INDEX execution_ran_at;
+DROP INDEX execution_active;
+CREATE INDEX execution_ended_at ON execution (ended_at);
+CREATE INDEX execution_open ON execution (seq) WHERE ended_at IS NULL;
+
