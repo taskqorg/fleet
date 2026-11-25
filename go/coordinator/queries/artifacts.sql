@@ -67,8 +67,8 @@ VALUES(@id,sqlc.narg(project_id),@scope,@content_hash,@size,@media_type,@name,sq
 
 -- name: ArtInsertStored :exec
 -- An object the coordinator wrote itself for an execution.
-INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state)
-VALUES(@id,sqlc.narg(project_id),@scope,@content_hash,@size,@media_type,@name,@execution_id,'stored');
+INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state,summary)
+VALUES(@id,sqlc.narg(project_id),@scope,@content_hash,@size,@media_type,@name,@execution_id,'stored',sqlc.narg(summary));
 
 -- name: ArtCopyStateForUpdate :one
 SELECT state FROM artifact_copy WHERE artifact_id=$1 AND store_id=$2 FOR UPDATE;

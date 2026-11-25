@@ -141,7 +141,8 @@ CREATE TABLE artifact (
   "tombstoned_at" timestamp with time zone,
   "session_id" text,
   "code" text,
-  "use_case_id" text
+  "use_case_id" text,
+  "summary" text
 );
 CREATE TABLE artifact_copy (
   "artifact_id" text NOT NULL,

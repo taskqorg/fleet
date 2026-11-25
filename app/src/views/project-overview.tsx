@@ -154,7 +154,7 @@ export function ProjectOverview(props: { projectId: string }) {
                 <For each={v().results}>{r => (
                   <Go to={`/results/${enc(r.code ?? r.id)}?project=${enc(props.projectId)}`} cls="pw-line">
                     <Icon name="file-text" />
-                    <span class="pw-line-m"><span>{fileLabel(r.name) || r.name}</span><Show when={r.code}><span class="muted mono">{r.code}</span></Show></span>
+                    <span class="pw-line-m"><span>{r.summary || fileLabel(r.name) || r.name}</span><Show when={r.code}><span class="muted mono">{r.code}</span></Show></span>
                     <RowFacts><Ago t={r.createdAt} /></RowFacts>
                   </Go>
                 )}</For>

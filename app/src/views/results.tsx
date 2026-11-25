@@ -161,7 +161,7 @@ export function Results(props: { id?: string; project?: string; frame?: Frame })
     const rows: ResultRow[] = curRows.map(r => ({
       ...r,
       code: r.code ?? null,
-      sortKey: [gkey(r), field === 'name' ? (fileLabel(r.name) || r.name) : (desc ? -(field === 'size' ? r.size : r.createdAt) : (field === 'size' ? r.size : r.createdAt))],
+      sortKey: [gkey(r), field === 'name' ? (r.summary || fileLabel(r.name) || r.name) : (desc ? -(field === 'size' ? r.size : r.createdAt) : (field === 'size' ? r.size : r.createdAt))],
     })).sort((a, b) => {
       if (grp !== 'none' && a.sortKey[0] !== b.sortKey[0]) return String(a.sortKey[0]).localeCompare(String(b.sortKey[0]));
       return (desc ? -1 : 1) * cmpField(a, b) || a.id.localeCompare(b.id);
@@ -379,7 +379,7 @@ export function Results(props: { id?: string; project?: string; frame?: Frame })
       chips={chips()}
       onRemoveChip={c => { const { [c.field]: _, ...rest } = basePage.view.extra ?? {}; set({ extra: rest }); }}
       listLabel="Results"
-      title={r => fileLabel(r.name) || r.name}
+      title={r => r.summary || fileLabel(r.name) || r.name}
       groupIcon={groupIcon}
       before={r => <span class="lead"><Icon name={mediaIcon(r.mediaType)} label={r.mediaType} /></span>}
       state={r => <StateBadge family="artifact" state={(r.state in states.artifact ? r.state : 'stored') as StateOf<'artifact'>} compact />}
@@ -480,7 +480,7 @@ function Result(props: { id: string; onClose: () => void; onFilter: (field: stri
         const src = () => `/api/results/${encodeURIComponent(a().id)}`;
         const meta = () => ({ id: a().id, name: a().name, mediaType: a().mediaType, size: Number(a().size) || 0 });
         // The name as people read it (OR-38): no UUID or hash from the writer's file name; the code names it otherwise.
-        const label = () => fileLabel(a().name) || a().code || 'Result';
+        const label = () => a().summary || fileLabel(a().name) || a().code || 'Result';
         return (
           <article class="detail" data-ui="detail" tabindex={-1} aria-label={label()}>
             <header class="detail-h">

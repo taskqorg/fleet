@@ -184,6 +184,7 @@ type ArtifactRow struct {
 	Sha256                string  `json:"sha256"`
 	Size                  int64   `json:"size"`
 	State                 string  `json:"state"`
+	Summary               *string `json:"summary,omitempty"`
 	TaskAttempts          *int64  `json:"taskAttempts,omitempty"`
 	TaskCode              *string `json:"taskCode,omitempty"`
 	TaskId                *string `json:"taskId"`
@@ -346,6 +347,7 @@ type ArtifactView struct {
 	Sha256                string              `json:"sha256"`
 	Size                  int64               `json:"size"`
 	State                 string              `json:"state"`
+	Summary               *string             `json:"summary,omitempty"`
 	TaskCode              *string             `json:"taskCode,omitempty"`
 	TaskId                *string             `json:"taskId"`
 	Url                   *string             `json:"url,omitempty"`
