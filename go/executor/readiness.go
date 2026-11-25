@@ -49,6 +49,9 @@ func lsRemoteReason(code int, stderr string) string {
 	switch {
 	case anyIn(e, "could not resolve host", "network is unreachable", "connection timed out", "connection refused", "operation timed out", "temporary failure in name resolution"):
 		kind = "network-unreachable"
+	case anyIn(e, "could not be found or you don't have permission", "could not be found or you do not have permission"):
+		// GitLab's one answer for a missing project and for a key not added to it: the two cannot be told apart.
+		kind = "repo-missing-or-denied"
 	case anyIn(e, "permission denied", "authentication failed", "could not read username", "host key verification failed", "invalid username or password"):
 		kind = "auth-denied"
 	case anyIn(e, "repository not found", "does not appear to be a git repository", "not found"):

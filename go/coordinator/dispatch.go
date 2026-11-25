@@ -1502,11 +1502,14 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	}{liveSession.AgentConfig, d.ProjectID, liveSession.Role, snapSettings}) {
 		p.GitNetwork = ptr(true)
 	}
+	var opsDirector *Person // an agent with Fleet operations gets the generated capability section (agent_capabilities.go)
+	var opsList []agentOperation
 	if cfg != nil {
 		p.AgentConfig, p.Instructions = cfg, ptr("")
 		if prof.FleetOperations { // the profile opts in to every operation its director may call (fleet-pm-agent.md §1)
 			if dir := q.peopleSnapshot().person(firstString(deref(e.DirectedBy), ownerEmail(q))); dir != nil {
-				p.FleetOperations = rawList(fleetOperations(dir))
+				opsDirector, opsList = dir, fleetOperations(dir)
+				p.FleetOperations = rawList(opsList)
 			}
 		}
 	}
@@ -1618,6 +1621,7 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	} else {
 		liveSession.PendingHandoffID = sess.PendingHandoffID // a handoff made here (host_move) and not delivered stays linked
 	}
+	var runConns []connSpec
 	if granted := jsonStrings(prof.Connections); len(granted) > 0 && e.PipelineRunID == nil {
 		minted, err := mintGrantFor(q, mintRun{ExecutionID: &e.ID, DirectedBy: e.DirectedBy, ProjectID: d.ProjectID,
 			ExperimentID: e.ExperimentID, PipelineRunID: liveSession.PipelineRunID}, granted)
@@ -1626,10 +1630,20 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 		}
 		if minted.Token != nil {
 			p.RunToken, p.Connections = strPtr(minted.Token), rawList(minted.Connections)
+			runConns = minted.Connections
 		}
 		if len(minted.Refused) > 0 {
 			e.ConnectionsRefused = minted.Refused
 		}
+	}
+	if opsDirector != nil {
+		gitConns, err := hostGitConnections(q)
+		if err != nil {
+			return none, err
+		}
+		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\n" + capabilityInstruction(opsDirector, opsList, runConns, gitConns)))
+	} else if cfg != nil && e.PipelineRunID == nil && e.ExperimentID == nil { // pipeline and Lab runs keep their exact instructions
+		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\n" + sandboxInstruction))
 	}
 	command := dispatchStartCommand{
 		ID:          newID(),
