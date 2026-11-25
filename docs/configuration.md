@@ -172,6 +172,7 @@ Readiness runs on the hosts, so it is the evidence for repository access. A netw
 - `setup`: a setup script given as a path exists in the checkout.
 - `accounts`: each host account bound for a role harness is `ready`.
 - `claude-placement` and `claude-login` for projects with a Claude role ([Host settings: Claude placement](#host-settings-claude-placement)).
+- `harness:<harness>`, ok with reason `not-offered`, for a role's harness the host leaves off on purpose: no account of it in the host's registry, or Claude with no placement (PDS18). Dispatch never sends that harness there, so it is no failure and the harness gets no checks of its own.
 
 Not built: push dry-run or token permission check, `gh auth status`, registry and cloud whoami, toolchain versions, scratch worktree create and remove, coordinator-side checks that context files and role profiles resolve.
 
@@ -276,7 +277,7 @@ Claude runs only where the host allows it ([Lab](designs/fleet-lab.md)). The set
 | `windows-wsl` | Linux under WSL, detected from `/proc/sys/kernel/osrelease` naming Microsoft | windows (WSL user `alexk`) |
 | unset | nowhere: Claude is refused | PDS18 |
 
-A value that does not match the platform is refused (`claude-placement-platform-mismatch`). A WSL host with `windows-wsl` reports platform `win32`, so Claude gates treat it as Windows. Readiness reports `claude-placement` for projects with a Claude role.
+A value that does not match the platform is refused (`claude-placement-platform-mismatch`). A WSL host with `windows-wsl` reports platform `win32`, so Claude gates treat it as Windows. Readiness reports `claude-placement` for projects with a Claude role on a host that offers Claude.
 
 On WSL the Claude login lives under Fleet's config directory: the account's `nativeHome` (Claude's `CLAUDE_CONFIG_DIR`) is `~/.config/fleet/claude`, the login file `~/.config/fleet/claude/.credentials.json`. Readiness checks only that `<nativeHome>/.credentials.json` exists for each Claude account in the host's native registry (`claude-login`); it never reads it. The owner logs in once with `CLAUDE_CONFIG_DIR=~/.config/fleet/claude claude` as `alexk`. The coordinator learns the binding from one host observation `POST /api/hosts/accounts` with the host secret: `{accountId, hostId, binding: "fleet-claude", platform: "win32", readiness: "ready", reason: "ready"}`; on the public host this path is behind Access, so it is sent on loopback. An account keeps one binding per host; work goes to the first ready host in the order session host, `owner-mac`, native hosts, unless a pipeline run sets `host`.
 

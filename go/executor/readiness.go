@@ -21,6 +21,14 @@ func check(name, target string, failed string) contract.ReadinessCheck {
 	return contract.ReadinessCheck{Check: name, Target: target, Status: contract.CheckStatusFailed, Reason: &failed}
 }
 
+// notOffered: a role's harness this host does not offer on purpose (no account of it in the registry, or Claude with no
+// placement set: PDS18 runs no Claude). It is no failure: dispatch never sends that harness here. The check stays ok and
+// names the harness, so readiness still says what the host would not run.
+func notOffered(harness, target string) contract.ReadinessCheck {
+	r := "not-offered"
+	return contract.ReadinessCheck{Check: "harness:" + harness, Target: target, Status: contract.CheckStatusOk, Reason: &r}
+}
+
 // readinessFailure: the reason a failed readiness records, naming each failed check and its reason
 // ("readiness-check-failed: checkout checkout-missing, remote connection-missing"), so the run's cause says which check
 // failed and the plain sentence can be specific (contracts/vocabulary.json causes).
@@ -206,8 +214,36 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 			}
 		}
 	}
+	// A role's harness is offered here when the host's registry holds an account of it, and Claude also needs its
+	// placement set; a harness left off on purpose is reported once as not offered and gets no checks of its own.
+	offered := func(h string) bool {
+		if accounts == nil {
+			return true // unknown without the registry: its own failed check says so
+		}
+		if h == "claude" {
+			if _, err := claudePlacementHere(); err != nil && err.Error() == "claude-placement-unset" {
+				return false
+			}
+		}
+		for _, a := range accounts {
+			if ah, _ := valStr(a.Harness); ah == h {
+				return true
+			}
+		}
+		return false
+	}
+	var kept []string
+	for _, h := range sortedUnique(harnesses) {
+		if offered(h) {
+			kept = append(kept, h)
+		} else {
+			checks = append(checks, notOffered(h, host))
+		}
+	}
+	roleHarnesses := len(harnesses) > 0
+	harnesses = kept
 	has := func(h string, isStr bool) bool { return isStr && slices.Contains(harnesses, h) }
-	if len(harnesses) > 0 {
+	if roleHarnesses {
 		if accounts == nil {
 			checks = append(checks, check("accounts", host, "registry-unavailable"))
 		} else {
@@ -239,7 +275,7 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 	}
 	codingHarnesses := map[string]bool{}
 	for role, profile := range project.ProfileIds {
-		if projectRequirements(project, profile) != nil {
+		if projectRequirements(project, profile) != nil && has(project.Roles[role], true) {
 			codingHarnesses[project.Roles[role]] = true
 		}
 	}
@@ -326,4 +362,11 @@ func projectRequirements(project contract.ProjectContext, profile string) *contr
 		return project.Execution
 	}
 	return nil
+}
+
+// sortedUnique: xs without repeats, sorted.
+func sortedUnique(xs []string) []string {
+	out := slices.Clone(xs)
+	slices.Sort(out)
+	return slices.Compact(out)
 }
