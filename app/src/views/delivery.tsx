@@ -8,6 +8,7 @@ import { createEffect, createMemo, createSignal, onSettled, Show } from 'solid-j
 import {
   EntityCode, ListDetail, StateBadge, AgeChip, Empty, ErrorBanner, Fact, RowFacts,
   matchSearch, states, actions, ShellStatus,
+  useTick,
 } from '../../../packages/ui/src/index.ts';
 import { useOp } from '../store.ts';
 import { useListPage, ListPagePanel, type LocalList, type Frame } from '../list-page.tsx';
@@ -32,12 +33,7 @@ export function Delivery(props: { id?: string; project?: string; frame?: Frame }
   // A project's Delivery facet (docs/design-system/pages/projects.md) reads that project alone, whatever the focus.
   const scope = createMemo(() => (props.project ? { projectIds: [props.project] } : scopeIds()));
   const focus = createMemo(() => scope().projectIds ?? []);
-  const [tick, setTick] = createSignal(Date.now());
-  onSettled(() => {
-    const t = setInterval(() => setTick(Date.now()), 60_000);
-    return () => clearInterval(t);
-  });
-  const now = () => tick();
+  const now = useTick(60_000);
   const status = useOp('publishing_status', () => (prefsRead.value ? scope() : null), { every: 300000 });
   // The norms: every stage's P50 and P90 over the last 14 days (the fleet repository's history); 404 is no history kept.
   const baseDoc = useOp('delivery_baseline', () => (prefsRead.value ? { days: 14 } : null), { every: 600000 });

@@ -11,6 +11,8 @@ import {
   KvRow, ListDetail, Num, OfflineMarker, ProblemRow, QuestionCard, RowFacts, SearchField, ShellActions, ShellStatus, Skeleton, StateBadge,
   actions, bytes, copyText, duration, harnesses, matchSearch, money,
   type CatalogueTreeNode, type CostFigureLike, type GaugeProps, type WorkerSlotProps,
+  timeOf,
+  useTick,
 } from '../../../packages/ui/src/index.ts';
 import { op, type Ops } from '../api.ts';
 import { closedGroups, flipGroup } from '../lists.ts';
@@ -40,7 +42,7 @@ const NAV_RUNNERS_ID = 'nav:runners';
 const NAV_SPEND_ID = 'nav:spend';
 const DAY = 864e5;
 
-const ms = (s: string) => Date.parse(s);
+const ms = (s: string) => timeOf(s, 0);
 /**
  * The server's clock minus this browser's, from serverNow of the reply and the moment it arrived (judge ages on the server's
  * clock). A copy restored from the browser's store arrived at an unknown time: no offset, so its hosts age from then.
@@ -73,11 +75,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
   const [, go] = useLocation();
   const [q, setQ] = createSignal('');
   const [menu, setMenu] = createSignal<{ node: CatalogueTreeNode; at: { x: number; y: number } } | null>(null);
-  const [tick, setTick] = createSignal(Date.now());
-  onSettled(() => {
-    const t = setInterval(() => setTick(Date.now()), 5000);
-    return () => clearInterval(t);
-  });
+  const tick = useTick(5000);
 
   const pins = usePins(INFRA_PINS);
   const treeFlipped = createMemo(() => listGroups(INFRA_TREE_GROUPS));

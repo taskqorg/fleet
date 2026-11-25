@@ -7,6 +7,7 @@ import {
   StateBadge, Empty, SettingField, CodeEditor, CopyButton, DiffText, StepList, AgeChip, Choice, Button, DataTable,
   Totals, CostFigures, Num, Icon, duration, msMeasured, matchSearch, SearchField,
   type CostFigureLike, type IconName, type PickProject, type StateOf, type StepItem, type TotalItem,
+  basisOf,
 } from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type Ops } from '../api.ts';
 import { usePins } from '../prefs.ts';
@@ -860,9 +861,7 @@ function CatalogueMethods() {
   </>;
 }
 
-function costBasisOf(b: string | null | undefined): CostFigureLike['basis'] {
-  return b === 'measured' || b === 'estimated' || b === 'subscription' || b === 'unavailable' ? b : 'estimated';
-}
+const costBasisOf = basisOf;
 
 function UsageTab(props: { kind: 'agent' | 'pipeline'; id: string }) {
   const [, go] = useLocation();

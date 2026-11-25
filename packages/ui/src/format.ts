@@ -9,7 +9,20 @@ export type Formatted = { text: string; long: string };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const pad = (n: number) => String(n).padStart(2, '0');
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+/** A count with its word: "1 session", "3 sessions", "1,240 tasks"; `many` for an irregular plural. */
+export const plural = (n: number, one: string, many = one + 's') => `${n.toLocaleString('en')} ${n === 1 ? one : many}`;
+
+/**
+ * A stored time (ISO text or epoch ms) as epoch ms. Missing or unreadable is `missing`: null by default, never a silent
+ * 0 or NaN; a caller that sorts or compares passes the value that means "oldest" for it (formats.md, Time).
+ */
+export function timeOf(t: string | number | null | undefined): number | null;
+export function timeOf<M extends number | null | undefined>(t: string | number | null | undefined, missing: M): number | M;
+export function timeOf(t: string | number | null | undefined, missing: number | null | undefined = null): number | null | undefined {
+  if (typeof t === 'number') return Number.isFinite(t) ? t : missing;
+  const v = t ? Date.parse(t) : NaN;
+  return Number.isFinite(v) ? v : missing;
+}
 
 /** Exact local time, for tooltips: "12 Nov 2026 10:42". */
 export function exact(t: number): string {
@@ -174,6 +187,13 @@ export type CostFigureLike = {
   note?: string;
   usages?: number;
 };
+
+/** A stored cost basis. An unknown one is unavailable: Fleet never claims an estimate it cannot vouch for (formats.md, Money). */
+export const basisOf = (b: string | null | undefined): Basis =>
+  b === 'measured' || b === 'estimated' || b === 'subscription' || b === 'unavailable' ? b : 'unavailable';
+/** The USD total of cost figures: an unavailable figure or one without a currency is never summed, even with a value (formats.md, Money). */
+export const usdOf = (cost: readonly CostFigureLike[] | null | undefined): number =>
+  (cost ?? []).reduce((sum, c) => (c.basis !== 'unavailable' && c.currency === 'USD' && typeof c.value === 'number' ? sum + c.value : sum), 0);
 
 /** Converts one CostFigure into a money Measured entry without altering currency or basis. */
 export function costMeasured(c: CostFigureLike): Measured {

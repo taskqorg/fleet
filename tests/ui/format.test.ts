@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   age, duration, bytes, count, money, measured, agentLabel, actor,
-  costMeasured, splitCostFigures, numMeasured, msMeasured, cause, causeOf,
+  costMeasured, splitCostFigures, numMeasured, msMeasured, cause, causeOf, basisOf, usdOf, timeOf, plural,
 } from '../../packages/ui/src/format.ts';
 
 const now = new Date(2026, 10, 9, 12, 0, 0).getTime();
@@ -128,4 +128,35 @@ test('cause: a stored code reads as its plain sentence, the code only in long; t
   assert.equal(causeOf(undefined, null), undefined);
   assert.deepEqual(causeOf({ cause: 'abandoned', text: 'Served.', code: 'unknown:abandoned' }, 'x'), { id: 'abandoned', text: 'Served.', long: 'unknown:abandoned' });
   assert.equal(causeOf(null, 'unknown:abandoned')?.id, 'abandoned');
+});
+
+// Requirement: formats.md "Money" and "Time": one copy of each helper. Risk (the copies this replaced): an unknown cost
+// basis reads Estimated on one screen and Unavailable on another, Live's dollar total counts unavailable figures that
+// Spend skips, and a missing time is 0 on one page, NaN or null on the next.
+test('basisOf: an unknown basis is unavailable, never estimated', () => {
+  assert.equal(basisOf('measured'), 'measured');
+  assert.equal(basisOf('tokens'), 'unavailable');
+  assert.equal(basisOf(null), 'unavailable');
+});
+test('usdOf: unavailable figures and figures without a currency are not summed', () => {
+  assert.equal(usdOf([
+    { value: 1.5, currency: 'USD', basis: 'measured' }, { value: 0.5, currency: 'USD', basis: 'estimated' },
+    { value: 9, currency: 'USD', basis: 'unavailable' }, { value: 3, currency: null, basis: 'measured' },
+    { value: null, currency: 'USD', basis: 'measured' }, { value: 7, currency: 'EUR', basis: 'measured' },
+  ]), 2);
+  assert.equal(usdOf(undefined), 0);
+});
+test('timeOf: missing or unreadable is the fallback the caller names, null by default', () => {
+  assert.equal(timeOf('2026-11-25T10:00:00Z'), Date.UTC(2026, 10, 25, 10));
+  assert.equal(timeOf(42), 42);
+  assert.equal(timeOf(null), null);
+  assert.equal(timeOf('not a time'), null);
+  assert.equal(timeOf(undefined, 0), 0);
+  assert.equal(timeOf(NaN, 0), 0);
+});
+test('plural: grouped digits and irregular words', () => {
+  assert.equal(plural(1, 'session'), '1 session');
+  assert.equal(plural(1240, 'task'), '1,240 tasks');
+  assert.equal(plural(2, 'pull request'), '2 pull requests');
+  assert.equal(plural(3, 'child', 'children'), '3 children');
 });

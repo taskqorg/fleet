@@ -5,6 +5,7 @@ import { createMemo, createSignal, For, onSettled, Show } from 'solid-js';
 import {
   AgeChip, Button, DataTable, DetailHead, DetailSection, Empty, ErrorBanner, FillBar, HarnessMark, KvRow, Skeleton, StateBadge,
   countdown, exact, harnesses, type Harness,
+  useTick,
 } from '../../../packages/ui/src/index.ts';
 import type { LimitPeriod, LimitSubscription } from '../../../contracts/generated/ops.ts';
 import { useOp } from '../store.ts';
@@ -22,11 +23,8 @@ export function useCompatProfiles() {
 /** The limits read without chart history: the last hour only, so the tree and readiness stay light. The request changes
  *  once an hour, so every view in that hour shares one read. */
 export function useAccountLimits() {
-  const [hour, setHour] = createSignal(Math.floor(Date.now() / HOUR) * HOUR);
-  onSettled(() => {
-    const t = setInterval(() => setHour(Math.floor(Date.now() / HOUR) * HOUR), 60_000);
-    return () => clearInterval(t);
-  });
+  const tick = useTick(60_000);
+  const hour = createMemo(() => Math.floor(tick() / HOUR) * HOUR);
   return useOp('subscription_limits', () => ({ windowHours: 3, from: hour() - HOUR, to: hour() + HOUR }), { every: 60_000 });
 }
 
