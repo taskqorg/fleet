@@ -121,6 +121,26 @@ func TestArtifactSaveAbsolutePath(t *testing.T) {
 	if name != "square.png" {
 		t.Fatalf("a temporary file saves under its name below the directory, got %q", name)
 	}
+	// The run's input folder: a file a connection downloaded there (files_get) is saved without a copy into the worktree.
+	in := filepath.Join(base, "input")
+	noErr(t, os.MkdirAll(filepath.Join(in, "dam-files"), 0o755))
+	noErr(t, os.WriteFile(filepath.Join(in, "dam-files", "doc.jpg"), []byte("jpg"), 0o644))
+	noErr(t, os.Symlink(base, filepath.Join(in, "up")))
+	for _, c := range []struct {
+		path string
+		ok   bool
+	}{{filepath.Join(in, "dam-files", "doc.jpg"), true}, {filepath.Join(in, "up", "secret.txt"), false}, {in + "/../secret.txt", false}} {
+		ctx := M{"hostId": "h", "executionId": "e", "workdir": work, "tempDir": tmp, "inputDir": in, "spool": filepath.Join(base, "spool")}
+		r, err := artifactCall(ctx, "artifact_save", M{"path": c.path}, dbExec{db})
+		noErr(t, err)
+		if refused(r) == c.ok {
+			t.Fatalf("%s: want ok=%v, got %v", c.path, c.ok, r)
+		}
+	}
+	noErr(t, db.QueryRow("SELECT json_extract(body,'$.name') FROM transfers WHERE kind='upload' ORDER BY rowid DESC LIMIT 1").Scan(&name))
+	if name != "dam-files/doc.jpg" {
+		t.Fatalf("an input file saves under its name below the input folder, got %q", name)
+	}
 }
 
 // Risk: artifact_list without arguments returns every artifact of the project in one reply (Lab trial 2026-11-17:

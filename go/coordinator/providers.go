@@ -1540,7 +1540,7 @@ const providersJSON = `
  "project-files": {
   "baseUrl": "ssh://project-server",
   "transport": "files",
-  "instructions": "Read access to folders on a project's production server, granted by the owner (docs/designs/fleet-project-access.md). Paths are the server's own (for example /home/revilio/revilio.com/web/uploads/123) or /<granted folder name>/...; anything outside the granted folders is refused. files_list lists a folder; files_get saves one file into your input folder and answers its local path. Every read is recorded. The files can be personal (IDs, releases): keep them inside Fleet, never send them to an outside service (OCR, AI, search), and quote only what the task needs.",
+  "instructions": "Read access to folders on a project's production server, granted by the owner (docs/designs/fleet-project-access.md). Paths are the server's own (for example /home/revilio/revilio.com/web/uploads/123) or /<granted folder name>/...; anything outside the granted folders is refused. files_list lists a folder; files_get saves one file into your input folder and answers its local path; to pass it to a project pipeline, save it with artifact_save (that path works as is) and give the artifact id in pipeline_run inputs. Every read is recorded. The files can be personal (IDs, releases): keep them inside Fleet, its pipelines and the AI accounts the project's rules allow; never send them to any other outside service (OCR, AI, search), and quote only what the task needs.",
   "tools": {
    "files_list": {
     "path": "/files/list",
