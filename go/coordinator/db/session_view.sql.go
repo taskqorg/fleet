@@ -158,17 +158,25 @@ func (q *Queries) SessionViewOpenQuestions(ctx context.Context, sessionIds []str
 
 const sessionViewThreadItems = `-- name: SessionViewThreadItems :many
 SELECT ('task:' || t.id)::text AS thread, t.title::text AS title, t.state::text AS state,
- (SELECT c.code FROM entity_code c WHERE c.entity_id = t.id AND c.superseded_by IS NULL ORDER BY c.issued_at DESC LIMIT 1)::text AS code
+ coalesce((SELECT c.code FROM entity_code c WHERE c.entity_id = t.id AND c.superseded_by IS NULL ORDER BY c.issued_at DESC LIMIT 1), '')::text AS code
 FROM task t WHERE t.id = ANY ($1::text[])
 UNION ALL
 SELECT ('question:' || x.id)::text, x.text::text, x.state::text,
- (SELECT c.code FROM entity_code c WHERE c.entity_id = x.id AND c.superseded_by IS NULL ORDER BY c.issued_at DESC LIMIT 1)::text
+ coalesce((SELECT c.code FROM entity_code c WHERE c.entity_id = x.id AND c.superseded_by IS NULL ORDER BY c.issued_at DESC LIMIT 1), '')::text
 FROM question x WHERE x.id = ANY ($2::text[])
+UNION ALL
+SELECT ('execution:' || e.id)::text,
+ coalesce(nullif(t.title, ''), nullif(left(split_part(btrim((SELECT m.text FROM message m WHERE m.execution_id = e.id ORDER BY m.seq LIMIT 1)), E'\n', 1), 120), ''),
+  CASE e.kind WHEN 'host_job' THEN 'Host job' ELSE 'Run' END || coalesce(' on ' || e.host_id, '') || coalesce(' · ' || nullif(left(split_part(e.problem, E'\n', 1), 80), ''), ''))::text,
+ e.state::text,
+ coalesce((SELECT c.code FROM entity_code c WHERE c.entity_id = e.task_id AND c.superseded_by IS NULL ORDER BY c.issued_at DESC LIMIT 1), '')::text
+FROM execution e LEFT JOIN task t ON t.id = e.task_id WHERE e.id = ANY ($3::text[])
 `
 
 type SessionViewThreadItemsParams struct {
-	TaskIds     []string
-	QuestionIds []string
+	TaskIds      []string
+	QuestionIds  []string
+	ExecutionIds []string
 }
 
 type SessionViewThreadItemsRow struct {
@@ -178,9 +186,11 @@ type SessionViewThreadItemsRow struct {
 	Code   string
 }
 
-// The work items threads name (task:<id>, question:<id>): title, current code and state, visible under the caller's RLS.
+// The work items threads name (task:<id>, question:<id>, execution:<id>): title, current code and state, visible under
+// the caller's RLS. A run is named by its task (code and title), else by its first message line, else by its kind, host and
+// problem ("Host job on owner-mac · preparation failed: ...").
 func (q *Queries) SessionViewThreadItems(ctx context.Context, arg SessionViewThreadItemsParams) ([]SessionViewThreadItemsRow, error) {
-	rows, err := q.db.Query(ctx, sessionViewThreadItems, arg.TaskIds, arg.QuestionIds)
+	rows, err := q.db.Query(ctx, sessionViewThreadItems, arg.TaskIds, arg.QuestionIds, arg.ExecutionIds)
 	if err != nil {
 		return nil, err
 	}
