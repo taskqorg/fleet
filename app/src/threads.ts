@@ -105,7 +105,8 @@ export function useThread(keyInput: MaybeAccessor<ThreadKey | null>) {
     if (!currentKey) return;
     const g = gen;
     try {
-      const p = await op('thread_entries', { key: currentWin?.key ?? currentKey, resolve: true, limit: PAGE, ...args });
+      // full: false: tool blocks come as summaries; a call opened in a tool line loads its input and output (tool_output).
+      const p = await op('thread_entries', { key: currentWin?.key ?? currentKey, resolve: true, full: false, limit: PAGE, ...args });
       if (g !== gen) return;
       if (p.key) follow.task = 'task' in p.key ? p.key.task : undefined;
       for (const s of p.sessionIds ?? []) follow.sessions.add(s);

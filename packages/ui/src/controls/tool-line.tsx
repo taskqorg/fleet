@@ -10,7 +10,10 @@ import { toolChips, type ToolKind } from './tool-fold.ts';
 export type ToolCall = {
   name: string; target: string; secs: number; n?: number; failed?: boolean; running?: boolean;
   kind?: ToolKind; error?: string; input?: unknown; output?: unknown;
+  /** The call's id for tool_output: input and output load when the call opens. */
+  callId?: string;
 };
+export type ToolCallIO = { input: unknown; output: unknown };
 
 const raw = (v: unknown) => typeof v === 'string' ? v : JSON.stringify(v, null, 1) ?? '';
 
@@ -26,6 +29,8 @@ export function ToolLine(p: {
   secs?: number; startedAt?: number;
   /** Starts with a chip open: the failed kind, else the first (the book, a deep link to a call). */
   open?: boolean; onToggle?: (open: boolean) => void;
+  /** Loads an opened call's input and output by its callId (tool_output) when the line carries summaries only. */
+  loadCall?: (callId: string) => Promise<ToolCallIO>;
 }) {
   const chips = createMemo(() => toolChips(p.calls));
   const first = untrack(() => !p.open ? null : (chips().find(c => c.failed)?.kind ?? chips()[0]?.kind ?? null));
@@ -40,6 +45,17 @@ export function ToolLine(p: {
     if (was !== (next !== null)) p.onToggle?.(next !== null); // switching chips keeps the line open
   };
   const shown = createMemo(() => chips().find(c => c.kind === openKind()));
+  // Loaded input and output per callId; an error shows in place of them.
+  const [io, setIO] = createSignal<Record<string, ToolCallIO | { error: string } | 'loading'>>({});
+  const openOne = (call: ToolCall) => {
+    const next = openCall() === call ? null : call;
+    setOpenCall(next);
+    const id = next?.callId;
+    const had = id ? io()[id] : undefined; // a failed load is tried again on the next open
+    if (!next || !id || next.input != null || next.output != null || !p.loadCall || (had && (had === 'loading' || !('error' in had)))) return;
+    setIO(m => ({ ...m, [id]: 'loading' }));
+    p.loadCall(id).then(r => setIO(m => ({ ...m, [id]: r })), e => setIO(m => ({ ...m, [id]: { error: e instanceof Error ? e.message : String(e) } })));
+  };
   return (
     <div class={['tool-line', p.state ?? 'done', { open: !!shown() }]} data-ui="tool-line" role="group" aria-label={`${p.words}, ${time().long}`}>
       <div class="tool-line-head">
@@ -84,19 +100,23 @@ export function ToolLine(p: {
               <For each={c().calls}>
                 {call => {
                   const isOpen = () => openCall() === call;
-                  const hasIO = call.input != null || call.output != null;
+                  const hasIO = call.input != null || call.output != null || (!!call.callId && !!p.loadCall);
+                  const got = () => { const x = call.callId ? io()[call.callId] : undefined; return x && x !== 'loading' && !('error' in x) ? x : { input: call.input, output: call.output }; };
+                  const state = () => (call.callId ? io()[call.callId] : undefined);
                   return (
                     <li class={['tool-call', { failed: !!call.failed, open: isOpen() }]}>
-                      <button type="button" class="tool-call-row" disabled={!hasIO} aria-expanded={hasIO ? (isOpen() ? 'true' : 'false') : undefined} onClick={() => setOpenCall(isOpen() ? null : call)}>
+                      <button type="button" class="tool-call-row" disabled={!hasIO} aria-expanded={hasIO ? (isOpen() ? 'true' : 'false') : undefined} onClick={() => openOne(call)}>
                         <span class="tool-call-name">{call.name}</span>
                         <span class="tool-call-target">{call.target}{call.n && call.n > 1 ? ` ×${call.n}` : ''}</span>
                         <Show when={call.error}><span class="tool-call-error">{call.error}</span></Show>
                         <span class="num">{duration(call.secs).text}</span>
                       </button>
                       <Show when={isOpen()}>
-                        <div class="tool-call-io">
-                          <Show when={call.input != null}><span class="label">Input</span><pre>{raw(call.input)}</pre></Show>
-                          <Show when={call.output != null}><span class="label">Output</span><pre>{raw(call.output)}</pre></Show>
+                        <div class="tool-call-io" aria-busy={state() === 'loading' ? 'true' : undefined}>
+                          <Show when={state() === 'loading'}><span class="label">Loading…</span></Show>
+                          <Show when={(() => { const x = state(); return x && x !== 'loading' && 'error' in x ? x.error : null; })()}>{e => <span class="tool-call-error">Not loaded: {e()}</span>}</Show>
+                          <Show when={got().input != null}><span class="label">Input</span><pre>{raw(got().input)}</pre></Show>
+                          <Show when={got().output != null}><span class="label">Output</span><pre>{raw(got().output)}</pre></Show>
                         </div>
                       </Show>
                     </li>

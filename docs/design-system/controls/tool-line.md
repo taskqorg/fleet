@@ -8,7 +8,7 @@
 
 **States.**
 * *Folded:* the chips and the time.
-* *Open:* a chip opens its calls below the line on a `surface` block with a head ("Results · 4 calls · 2 failed · 850 ms"), one mono row each: tool, a readable target (a code or a name rather than a UUID, the last two parts of a path), the error line when it failed, time. A call opens its input and output (the harness's own values) below it. The block opens downward ([OR-23](../owner-rules.md)); one chip is open at a time.
+* *Open:* a chip opens its calls below the line on a `surface` block with a head ("Results · 4 calls · 2 failed · 850 ms"), one mono row each: tool, a readable target (a code or a name rather than a UUID, the last two parts of a path), the error line when it failed, time. A call opens its input and output (the harness's own values) below it, loaded when it opens (`tool_output {callId}`): the thread reads tool calls as summaries (`thread_entries full: false`: kind, target, error line, times), so a long session's transcript does not carry every output. The block opens downward ([OR-23](../owner-rules.md)); one chip is open at a time.
 * *Running:* a running dot leads, the running chip has a `running-fg` border, and the time ticks.
 * *Failed:* a call failed and the agent did not recover (no later call of the same kind worked): the failed chip's border and count turn `danger-fg` and the line starts with that chip open ([OR-56](../owner-rules.md)). A failure the agent recovered from only shows in its chip's count.
 
