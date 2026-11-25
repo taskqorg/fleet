@@ -337,6 +337,8 @@ function HomePage() {
     const wait = c.group === 'waiting' ? waitOf(c) : undefined, work = workOf(c), n = startsOf(c);
     const activity = c.s ? fin(ms(c.s.activityAt)) : undefined;
     const last = c.cause ? c.at : c.s?.state === 'failed' ? fin(ms(c.s.lastStartedAt)) : undefined;
+    // A card with no time and no repeats has no work facts: no empty meta line.
+    if (n < 2 && wait === undefined && work === undefined && last === undefined && activity === undefined) return undefined;
     return (
       <WorkFacts
         attempts={n > 1 ? n : undefined}
@@ -347,7 +349,7 @@ function HomePage() {
         workAt={wait === undefined ? work : undefined}
         workFence={fences().work}
         lastAt={wait === undefined && work === undefined ? last : undefined}
-        lastLabel="Latest failed start"
+        lastLabel={c.cause ? 'Latest failure' : 'Latest failed start'}
         time={wait === undefined && work === undefined && last === undefined && activity !== undefined ? <Fact tip="Last activity"><Ago t={activity} /></Fact> : undefined}
       />
     );

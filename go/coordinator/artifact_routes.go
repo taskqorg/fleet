@@ -364,6 +364,9 @@ func opArtifactList(q *Request, r *contract.ArtifactListRequest) (contract.Artif
 	if err == nil {
 		err = withTaskCodes(q, rows)
 	}
+	if err == nil {
+		err = artifactWorkFacts(ctx, q.app, rows)
+	}
 	if err != nil {
 		return contract.ArtifactListReply{}, err
 	}

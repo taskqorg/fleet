@@ -311,6 +311,7 @@ function SessionFacts(props: { s: SessionRow; fences: SessionFences }) {
       waitFence={props.fences.wait}
       workAt={fin(workAt())}
       workFence={props.fences.work}
+      workTip="The current run, running for"
       lastAt={failing() ? fin(timeOf(props.s.lastStartedAt)) : undefined}
       lastLabel="Latest failed start"
       agent={props.s.harness && props.s.harness in harnesses ? (props.s.harness as Harness) : null}

@@ -411,6 +411,8 @@ export type WorkFactsProps = {
   workAt?: number;
   /** The peers' fence for the time in work, in seconds (peerFence): at or above it the time takes the attention tone. */
   workFence?: number;
+  /** The tooltip of the time in work when it is not since the first attempt (a run: "Running for"). */
+  workTip?: string;
   /** The current state and since when: in the tooltip of the time in work ("<State> since …"). */
   state?: { label: string; at: number };
   /** The agent: its mark, the name in the tooltip. */
@@ -459,7 +461,7 @@ export function WorkFacts(p: WorkFactsProps) {
               <Fact icon={actions.runs} tip={p.lastLabel ?? 'Latest attempt'}><AgeChip t={p.lastAt!} clockOffsetMs={p.clockOffsetMs} /></Fact>
             </Show>
           }>
-            <Fact icon="clock" tip="In work since the first attempt">
+            <Fact icon="clock" tip={p.workTip ?? 'In work since the first attempt'}>
               <AgeChip t={p.workAt!} clockOffsetMs={p.clockOffsetMs} alertAfter={p.workFence} tone="attention" alertLabel="ten times longer in work than the usual row or more" note={note()} />
             </Fact>
           </Show>

@@ -106,6 +106,7 @@ export function Runners(props: { onClose?: () => void } = {}) {
                             agent={r.harness && r.harness in harnesses ? (r.harness as Harness) : null}
                             workAt={active ? start() : undefined}
                             workFence={fences().work}
+                            workTip="Running for"
                             clockOffsetMs={clockOffsetMs()}
                             time={active ? undefined : <Fact icon="clock" tip="Duration"><Num m={m(secs())} kind="duration" /></Fact>}
                           />

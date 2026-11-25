@@ -1438,17 +1438,18 @@ func artifactList(ctx context.Context, a *App, f listFilter) ([]contract.Artifac
 		x := artifactOf(r)
 		out = append(out, x.row())
 	}
-	return out, artifactWorkFacts(ctx, a, out)
+	return out, nil
 }
 
 // artifactWorkFacts: the page's work facts (controls/work-facts.md): the harness of the run that made each result and
-// its task's executions so far, two indexed lookups per page.
+// its task's executions so far, two indexed lookups per page. Only the operators' list (opArtifactList) reads them.
 func artifactWorkFacts(ctx context.Context, a *App, rows []contract.ArtifactRow) error {
 	var runs, tasks []string
 	for _, r := range rows {
 		if r.ExecutionId != nil {
 			runs = append(runs, *r.ExecutionId)
-		} else if r.TaskId != nil {
+		}
+		if r.TaskId != nil {
 			tasks = append(tasks, *r.TaskId)
 		}
 	}
@@ -1481,8 +1482,9 @@ func artifactWorkFacts(ctx context.Context, a *App, rows []contract.ArtifactRow)
 		if r.ExecutionId != nil {
 			f := byRun[*r.ExecutionId]
 			r.Harness, n = f.harness, f.attempts
-		} else if r.TaskId != nil {
-			n = byTask[*r.TaskId]
+		}
+		if r.TaskId != nil && n == 0 {
+			n = byTask[*r.TaskId] // the run is gone or hidden: the task still counts its attempts
 		}
 		if r.TaskId != nil && n > 0 {
 			r.TaskAttempts = ptr(n)
