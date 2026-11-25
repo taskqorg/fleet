@@ -5058,3 +5058,23 @@ DROP INDEX execution_active;
 CREATE INDEX execution_ended_at ON execution (ended_at);
 CREATE INDEX execution_open ON execution (seq) WHERE ended_at IS NULL;
 
+-- migration 115: tool calls per hour (runners.go RunnerCallGroups; Live, System, Runners). The screens sum the last
+-- day's tool calls per host and caller; tens of thousands a day were summed again on every poll. A closed hour's calls
+-- (by when they ended, so a closed hour no longer changes) are summed once by the runner_call_hours pass, which sums
+-- the last two closed hours again each minute for costs priced late; the current hour and active calls are read live.
+-- One row per hour, host, caller, project (and a projectless call's director), currency and basis.
+CREATE TABLE runner_call_hour (
+ hour timestamptz NOT NULL, host_id text NOT NULL, caller text NOT NULL, project_id text NULL, directed_by text NULL,
+ currency text NULL, basis text NULL,
+ calls bigint NOT NULL, failed bigint NOT NULL, started_min timestamptz NULL, ended_max timestamptz NULL, wall_ms bigint NULL,
+ value double precision NULL, unpriced bigint NOT NULL,
+ last_seq bigint NOT NULL, session_id text NULL, task_id text NULL, parent_execution_id text NULL,
+ problem text NULL, problem_seq bigint NULL
+);
+CREATE INDEX runner_call_hour_hour ON runner_call_hour(hour);
+CREATE TABLE runner_call_hour_done (hour timestamptz PRIMARY KEY, summed_at timestamptz NOT NULL);
+ALTER TABLE runner_call_hour ENABLE ROW LEVEL SECURITY;
+ALTER TABLE runner_call_hour FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON runner_call_hour USING (current_setting('fleet.project_ids', true) = '*' OR coalesce(project_id, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ',')));
+CREATE POLICY directed ON runner_call_hour USING (project_id IS NULL AND directed_by = current_setting('fleet.person', true));
+

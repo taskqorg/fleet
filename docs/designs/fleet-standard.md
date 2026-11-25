@@ -81,9 +81,21 @@ and reports. Files between processes (gateway snapshot, spool, update files) com
 **S8 MCP.** One `go/mcpserve` package (JSON-RPC loop, initialize, tools from the contract) used by all
 eight servers.
 
-**S9 App.** One data hook `useOp(name, request)`: cache key = operation + canonical request, invalidation
-from server-sent `touches`; lists stay on `useListPage`. No raw `op()` reads in views, no `any`.
-Contract list rows are closed types. One JSON source for presets, view grammar and harness lists.
+**S2a Query cost.** Measure a query as the app runs it: as role `fleet_app` with RLS
+(`SET ROLE fleet_app; SELECT set_config('fleet.project_ids','*',false), set_config('fleet.person','<email>',false);
+SET statement_timeout='20s'; EXPLAIN (ANALYZE) …`). As postgres, RLS is bypassed and the plan can be 3-5 times faster
+than the app's (runners, 2026-11-26). Under RLS an index serves a user condition only when its functions are
+leakproof. Plain comparisons of timestamps, numbers and text, and `IS NULL`, are leakproof. Regular expressions, most
+casts and enum comparisons are not. So a screen query chooses its rows by such columns (or reads an index-only
+summary such as `execution_spend`), and only then joins and builds what it returns. Sums that a screen rereads are
+kept by a pass or at ingest (`runner_call_hour`), not recomputed per read ([data layer](fleet-data-layer.md)).
+
+**S9 App.** A screen reads one view operation (`view: true` in its contract) through `useView(name, request)`.
+Other reads use `useOp(name, request)`: the cache key is the operation and its canonical request, and invalidation
+comes from server-sent `touches`. Lists stay on `useListPage`. Screens never reread on focus or visibility, and a
+hidden tab reads nothing. View replies carry no stored blobs (`go/contract/view_reply_test.go`). No raw `op()` reads
+in views, no `any`. Contract list rows are closed types. One JSON source for presets, view grammar and harness
+lists. See [data layer](fleet-data-layer.md).
 
 **S10 Enforcement.** `go/coordinator/DESIGN_RULES.md` lists S1–S10; `design_rules_test.go` scans the
 coordinator source (go/parser) and fails on SQL literals (`R-SQL`), map accessors and `map[string]any`

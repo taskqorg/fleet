@@ -495,6 +495,13 @@ CREATE POLICY live ON run_token AS RESTRICTIVE FOR SELECT TO public USING ((flee
 DROP POLICY IF EXISTS project_scope ON run_token;
 CREATE POLICY project_scope ON run_token FOR ALL TO public USING (fleet_visible(project_id));
 
+-- runner_call_hour
+ALTER TABLE runner_call_hour ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS directed ON runner_call_hour;
+CREATE POLICY directed ON runner_call_hour FOR ALL TO public USING (((project_id IS NULL) AND (directed_by = current_setting('fleet.person'::text, true))));
+DROP POLICY IF EXISTS project_scope ON runner_call_hour;
+CREATE POLICY project_scope ON runner_call_hour FOR ALL TO public USING (((current_setting('fleet.project_ids'::text, true) = '*'::text) OR (COALESCE(project_id, ''::text) = ANY (string_to_array(current_setting('fleet.project_ids'::text, true), ','::text)))));
+
 -- score
 ALTER TABLE score ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON score;

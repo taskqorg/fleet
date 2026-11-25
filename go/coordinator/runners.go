@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"strconv"
@@ -291,6 +292,39 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 
 func init() {
 	op("executions_runners", executionsRunners)
+	onStart(func(ctx context.Context, a *App) {
+		every(ctx, "runner_call_hours", time.Minute, func(ctx context.Context) error { return runnerCallHours(ctx, a) })
+	})
+}
+
+// runnerCallHours sums the tool calls of each closed hour of the last day that is not summed yet, and the last two
+// closed hours again (their calls' costs may be priced after the hour closed), into runner_call_hour (migration 115).
+func runnerCallHours(ctx context.Context, a *App) error {
+	return a.store.Write(ctx, nil, nil, func(q *Request) error {
+		due, err := q.db().RunnerCallHoursDue(q.ctx())
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC().Truncate(time.Hour)
+		from := now.Add(-2 * time.Hour)
+		if due.Valid && due.Time.Before(from) {
+			from = due.Time.UTC()
+		}
+		if !from.Before(now) {
+			return nil
+		}
+		hours := []pgtype.Timestamptz{}
+		for h := from; h.Before(now); h = h.Add(time.Hour) {
+			hours = append(hours, pgtype.Timestamptz{Time: h, Valid: true})
+		}
+		if err := q.db().RunnerCallHoursSum(q.ctx(), db.RunnerCallHoursSumParams{HourFrom: pgtype.Timestamptz{Time: from, Valid: true}, HourTo: pgtype.Timestamptz{Time: now, Valid: true}}); err != nil {
+			return err
+		}
+		if err := q.db().RunnerCallHourDone(q.ctx(), hours); err != nil {
+			return err
+		}
+		return q.db().RunnerCallHoursPrune(q.ctx())
+	})
 }
 
 func runnerTime(t *time.Time) time.Time {
