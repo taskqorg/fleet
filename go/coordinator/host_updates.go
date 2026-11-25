@@ -71,11 +71,12 @@ func hostUpdateComponents(r contract.UpdateResult, platform string, running *str
 	return nil
 }
 
-// componentsBrought: the components whose version differs from base (every one when there is no base).
+// componentsBrought: the components whose version differs from base, among those base knows (a row read from the
+// host's CLI report knows no tools). No base: nothing is known to have changed.
 func componentsBrought(components, base map[string]string) map[string]string {
 	out := map[string]string{}
 	for c, v := range components {
-		if base == nil || base[c] != v {
+		if b, ok := base[c]; ok && b != v {
 			out[c] = v
 		}
 	}

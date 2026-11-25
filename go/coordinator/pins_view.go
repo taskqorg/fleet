@@ -36,7 +36,7 @@ var (
 	pinsViewFiles   = map[string]map[string]string{} // kind + " " + head sha: the proposal's versions (a head never changes)
 )
 
-// pinsTargetVersions: one version per component of a pin file's targets, linux-amd64 first.
+// pinsTargetVersions: one version per component of a pin file's targets: linux-amd64's, else darwin-arm64's.
 func pinsTargetVersions(versions map[string]map[string]string) map[string]string {
 	out := map[string]string{}
 	for _, t := range []string{"darwin-arm64", "linux-amd64"} {
@@ -119,8 +119,12 @@ func pinsViewOf(ctx context.Context, a *App, k harnessrelease.Kind, open, closed
 	// What the proposal changes is read against its base, so a landed proposal still names its versions once this
 	// release pins them.
 	pinned, err := pinsProposedVersions(ctx, a, k, pr.Base.SHA)
-	if err != nil {
-		return pinsViewKind{}, err
+	if err != nil { // no pin file at the base (a kind's first proposal): this release's pins
+		_, current, perr := k.Pinned(releaseDir())
+		if perr != nil {
+			return pinsViewKind{}, perr
+		}
+		pinned = pinsTargetVersions(current)
 	}
 	changed := map[string]string{}
 	for name, v := range proposed {
@@ -152,8 +156,14 @@ func pinsViewOf(ctx context.Context, a *App, k harnessrelease.Kind, open, closed
 			if err != nil || !ok {
 				return err
 			}
-			p.Trials = &contract.SystemPinsTrials{Passed: int64(st.Ok), Failed: int64(len(st.Failures)), Total: int64(st.Trials)}
-			p.Failures = append(p.Failures, st.Failures...)
+			failed := len(st.Failures)
+			if !st.Done { // a succeeded trial whose check is not scored yet is pending, not failed
+				failed -= st.Unscored
+			}
+			p.Trials = &contract.SystemPinsTrials{Passed: int64(st.Ok), Failed: int64(failed), Total: int64(st.Trials)}
+			if st.Done || st.Unscored == 0 {
+				p.Failures = append(p.Failures, st.Failures...)
+			}
 			return nil
 		}); err != nil {
 			return pinsViewKind{}, err
@@ -289,8 +299,9 @@ func systemComponents(hosts []contract.HostRow) []contract.SystemChangeKind {
 	out := []contract.SystemChangeKind{}
 	for _, k := range harnessrelease.Kinds {
 		enabled, versions, err := k.Pinned(releaseDir())
-		if err != nil {
+		if err != nil { // an unreadable pin file is not "pins off": its cells stay unknown
 			log.Printf("system_changes %s pins: %v", k.Name, err)
+			enabled, versions = true, nil
 		}
 		view := kinds[k.Name]
 		row := contract.SystemChangeKind{Kind: contract.ComponentKind(k.Name), Enabled: enabled, Proposal: view.proposal, Components: []contract.SystemChangeComponent{}}
@@ -345,7 +356,7 @@ func componentHost(k harnessrelease.Kind, name string, enabled bool, pinned stri
 		cell.State, cell.Failed, cell.Total = contract.ComponentHostStateFailing, &flagged.Failed, &flagged.Total
 	case cell.Observed != nil && *cell.Observed == pinned:
 		cell.State = contract.ComponentHostStatePinned
-	case hasUpd && upd.State == contract.UpdateStatePending:
+	case hasUpd && upd.State == contract.UpdateStatePending && upd.Version == ownRelease().Version:
 		cell.State = contract.ComponentHostStateInstalling
 	case hasUpd && upd.Version == ownRelease().Version && (upd.State == contract.UpdateStateRefused || upd.State == contract.UpdateStateFailed || upd.State == contract.UpdateStateError):
 		cell.State = contract.ComponentHostStateRefused
