@@ -149,7 +149,7 @@ func pinsTrialOutcome(variants []string, runs []*labRun, scores []labScore) pins
 			last[*r.Variant] = r
 		}
 	}
-	st := pinsQualifyState{Done: true, Passed: true, Trials: len(variants)}
+	st := pinsQualifyState{Done: len(variants) > 0, Passed: len(variants) > 0, Trials: len(variants)} // no trial is never a pass
 	for _, v := range variants {
 		r := last[v]
 		switch {
@@ -370,11 +370,25 @@ func pinsHostPass(ctx context.Context, a *App, open []ghPull) map[string][]strin
 			log.Printf("pins qualification %s: candidate: %v", pr.URL, err)
 			continue
 		}
+		// The review of the diff (its code-review status): the proposal changes only its kind's pin file; every pin in it
+		// is from its vendor's origin with a well-formed digest (pinsCandidateAt). Findings fail it before any trial.
+		files, err := pinsFiles(ctx, a, pr.Number)
+		if err != nil {
+			log.Printf("pins qualification %s: files: %v", pr.URL, err)
+			continue
+		}
+		if findings := pinsReview(files, "cli"); len(findings) > 0 {
+			failed[pr.Head.SHA] = findings
+			if err := pinsPublish(ctx, a, pr, false, "review: "+strings.Join(findings, "; "), pr.URL+"/files"); err != nil {
+				failed[pr.Head.SHA] = append(failed[pr.Head.SHA], "could not record the result on the pull request: "+err.Error())
+			}
+			continue
+		}
 		st, err := pinsQualifyHead(ctx, a, pr, candidate)
 		if err != nil {
 			log.Printf("pins qualification %s: %v", pr.URL, err)
 		}
-		if err != nil || st == nil {
+		if err != nil || st == nil || st.Trials == 0 {
 			continue
 		}
 		desc := fmt.Sprintf("%d trials passed on the hosts", st.Trials)
@@ -387,6 +401,41 @@ func pinsHostPass(ctx context.Context, a *App, open []ghPull) map[string][]strin
 		}
 	}
 	return failed
+}
+
+// pinsFile: one changed file of a pull request.
+type pinsFile struct {
+	Filename string `json:"filename"`
+	Status   string `json:"status"`
+}
+
+// pinsFiles: the files a pull request changes (keyless or keyed read of the public repository).
+func pinsFiles(ctx context.Context, a *App, number int64) ([]pinsFile, error) {
+	b, _, err := githubRead(ctx, a, ciProject, "pull_files", map[string]string{"owner": ciOwner, "repo": ciRepo, "number": fmt.Sprint(number)})
+	if err != nil {
+		return nil, err
+	}
+	var files []pinsFile
+	return files, json.Unmarshal(b, &files)
+}
+
+// pinsReview: the findings of a proposal's diff: it may change exactly its kind's pin file, nothing else.
+func pinsReview(files []pinsFile, kind string) []string {
+	k, ok := harnessrelease.KindNamed(kind)
+	if !ok {
+		return []string{"unknown kind " + kind}
+	}
+	want := "config/" + k.File
+	findings := []string{}
+	for _, f := range files {
+		if f.Filename != want || f.Status != "modified" {
+			findings = append(findings, fmt.Sprintf("%s %s: a %s proposal changes only %s", f.Status, f.Filename, kind, want))
+		}
+	}
+	if len(files) == 0 {
+		findings = append(findings, "no change to "+want)
+	}
+	return findings
 }
 
 // pinsStatuses: the latest state per context of a commit (keyless or keyed read of the public repository).

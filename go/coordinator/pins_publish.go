@@ -38,8 +38,9 @@ func pinsWritable(pr ghPull) error {
 	return nil
 }
 
-// pinsPublish records the host qualification on the proposal's head: qualify-hosts, and when it passed code-review
-// (the proposal's review is its qualification) and auto-merge, so the merge queue takes it like any pull request.
+// pinsPublish records the host qualification on the proposal's head: qualify-hosts, and when it passed code-review and
+// auto-merge, so the merge queue takes it like any pull request. code-review stands for the mechanical review of the
+// diff (pinsReview, pinsCandidateAt) that every caller runs before the trials, not for a person's review.
 func pinsPublish(ctx context.Context, a *App, pr ghPull, passed bool, description, targetURL string) error {
 	if err := pinsWritable(pr); err != nil {
 		return err
@@ -74,7 +75,8 @@ func pinsPublish(ctx context.Context, a *App, pr ghPull, passed bool, descriptio
 	if err := status("qualify-hosts", state, description); err != nil || !passed {
 		return err
 	}
-	return errors.Join(status("code-review", "success", "qualify-hosts, 0 findings fixed"),
+	// Reached only after pinsReview found nothing in the diff and every host trial passed (pins_qualify.go).
+	return errors.Join(status("code-review", "success", "pins diff review (one pin file, vendor origins, digests) and host trials, 0 findings"),
 		call("auto_merge_enable", pinsAutoMerge{Variables: pinsNode{ID: pr.NodeID}}))
 }
 

@@ -84,3 +84,27 @@ func TestPinsCandidateOf(t *testing.T) {
 		t.Fatal("empty pins parsed")
 	}
 }
+
+// TestPinsNoTrialNoPass: an experiment without trials is never done and never passed.
+func TestPinsNoTrialNoPass(t *testing.T) {
+	if st := pinsTrialOutcome(nil, nil, nil); st.Done || st.Passed {
+		t.Fatalf("%+v", st)
+	}
+}
+
+// TestPinsReview: a CLI proposal may change only config/harness-pins.json.
+func TestPinsReview(t *testing.T) {
+	if f := pinsReview([]pinsFile{{"config/harness-pins.json", "modified"}}, "cli"); len(f) != 0 {
+		t.Fatal(f)
+	}
+	for name, files := range map[string][]pinsFile{
+		"extra file": {{"config/harness-pins.json", "modified"}, {"go/x.go", "added"}},
+		"other kind": {{"config/tool-pins.json", "modified"}},
+		"removed":    {{"config/harness-pins.json", "removed"}},
+		"empty":      nil,
+	} {
+		if f := pinsReview(files, "cli"); len(f) == 0 {
+			t.Errorf("%s: no finding", name)
+		}
+	}
+}
