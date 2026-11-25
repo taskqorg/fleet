@@ -114,6 +114,26 @@ func (q *Queries) APIConnections(ctx context.Context) ([]ApiConnection, error) {
 	return items, nil
 }
 
+const accessConnectionChecked = `-- name: AccessConnectionChecked :exec
+WITH published AS (
+ INSERT INTO change (kind, id, op, holder) VALUES ('api-connection', $1::text, 'U', $2::text)
+ RETURNING id
+)
+SELECT fleet_enqueue_wake('fleet_change', '') WHERE EXISTS (SELECT 1 FROM published)
+`
+
+type AccessConnectionCheckedParams struct {
+	ID     string
+	Holder *string
+}
+
+// A check's call is a tool_run, which publishes no change; this one change on the connection lets open access_status
+// reads show the check's outcome at once.
+func (q *Queries) AccessConnectionChecked(ctx context.Context, arg AccessConnectionCheckedParams) error {
+	_, err := q.db.Exec(ctx, accessConnectionChecked, arg.ID, arg.Holder)
+	return err
+}
+
 const accessLastCalls = `-- name: AccessLastCalls :many
 SELECT c.name::text AS connection,
  coalesce(l.id, '')::text AS last_id, coalesce(l.state, '')::text AS last_state, coalesce(l.problem, '')::text AS last_problem,

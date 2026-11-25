@@ -76,6 +76,7 @@ func connectionsKeyAdd(q *Request, r *contract.ConnectionsKeyAddRequest) (any, e
 			return nil, err
 		}
 	}
+	accessKeyAdded(q, c)
 	publish(q)
 	return k, nil
 }

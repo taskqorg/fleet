@@ -8,11 +8,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"fleet/contract"
@@ -472,7 +475,7 @@ func accessCheck(q *Request, r *contract.AccessCheckRequest) (contract.AccessChe
 		if !slices.Contains(c.Access.Projects, "*") && len(c.Access.Projects) > 0 {
 			project = c.Access.Projects[0]
 		}
-		if err := accessProbe(q, c.Name, project, g); err != nil {
+		if err := accessProbe(q, c, project, g); err != nil {
 			return no, err
 		}
 		err := read(func(q *Request) (err error) { it, err = accessItem(q, r.Id); return })
@@ -481,19 +484,67 @@ func accessCheck(q *Request, r *contract.AccessCheckRequest) (contract.AccessChe
 	return no, fail(400, "Expected an access_status item id (account:<id> or connection:<name>)")
 }
 
-// accessProbe: the provider's check call, outside the request's transaction (a gateway call must not hold it).
-func accessProbe(q *Request, connection, project string, g accessGuide) error {
+// accessProbe: the provider's check call, outside the request's transaction (a gateway call must not hold it). Its
+// outcome is a tool_run, which publishes no change, so a change on the connection then tells open access_status reads.
+func accessProbe(q *Request, c apiConnection, project string, g accessGuide) error {
 	ctx, cancel := context.WithTimeout(q.ctx(), time.Minute)
 	defer cancel()
-	token, release, err := readTokenFor(ctx, q.app, connection, project)
+	token, release, err := readTokenFor(ctx, q.app, c.Name, project)
 	if err != nil {
 		return fail(409, err.Error())
 	}
 	defer release()
-	gatewayCall(ctx, token, connection, g.probe, g.probeArgs, true)
-	_, err = connIngestPass(ctx, q.app)
-	return err
+	gatewayCall(ctx, token, c.Name, g.probe, g.probeArgs, true)
+	if _, err = connIngestPass(ctx, q.app); err != nil {
+		return err
+	}
+	return q.app.store.Write(ctx, nil, nil, func(q *Request) error {
+		return q.db().AccessConnectionChecked(q.ctx(), db.AccessConnectionCheckedParams{ID: c.ID, Holder: strPtr(c.Holder)})
+	})
 }
+
+// Keys added since the last pass of accessProbeAddedKeys (connections_key_add, by any path: Access, Keys, a key
+// request's answer): each is checked at once, so a pasted key shows works or its failure without a manual check.
+var addedKeys = struct {
+	sync.Mutex
+	names map[string]bool
+}{names: map[string]bool{}}
+
+// accessKeyAdded queues connection's check once the key's transaction committed; only the running coordinator
+// checks (tests and tools have no gateway to call).
+func accessKeyAdded(q *Request, c apiConnection) {
+	if accessGuides[c.Provider].probe == "" {
+		return
+	}
+	afterCommit(q, func() {
+		a := runningApp
+		if a == nil {
+			return
+		}
+		addedKeys.Lock()
+		addedKeys.names[c.Name] = true
+		addedKeys.Unlock()
+		accessProbeAddedKeys(a)
+	})
+}
+
+var accessProbeAddedKeys = coalesced("access.added-keys", func(ctx context.Context, a *App) error {
+	addedKeys.Lock()
+	names := slices.Sorted(maps.Keys(addedKeys.names))
+	clear(addedKeys.names)
+	addedKeys.Unlock()
+	// The gateway reads keys from the snapshot: write it now, not after the publish burst, so the check uses the new key.
+	if err := writeSnapshot(ctx, a); err != nil {
+		return err
+	}
+	var errs []error
+	for _, name := range names {
+		if _, err := accessCheck(backgroundRequest(ctx, a, nil), &contract.AccessCheckRequest{Id: "connection:" + name}); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
+})
 
 func accessItem(q *Request, id string) (contract.AccessItem, error) {
 	s, err := accessStatus(q)

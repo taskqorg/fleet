@@ -161,3 +161,12 @@ LEFT JOIN LATERAL (
  SELECT (e.data->>'startedAt')::bigint AS started_at
  FROM execution e WHERE (e.data->>'connection') = c.name AND e.kind = 'tool_run' AND e.state = 'succeeded'
  ORDER BY (e.data->>'connection'), e.id COLLATE "C" DESC LIMIT 1) o ON true;
+
+-- name: AccessConnectionChecked :exec
+-- A check's call is a tool_run, which publishes no change; this one change on the connection lets open access_status
+-- reads show the check's outcome at once.
+WITH published AS (
+ INSERT INTO change (kind, id, op, holder) VALUES ('api-connection', @id::text, 'U', sqlc.narg(holder)::text)
+ RETURNING id
+)
+SELECT fleet_enqueue_wake('fleet_change', '') WHERE EXISTS (SELECT 1 FROM published);
