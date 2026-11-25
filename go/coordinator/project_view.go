@@ -194,6 +194,13 @@ func projectPipelines(q *Request, id string, entries []contract.LabLeaderboardEn
 		return g
 	}
 	inUse := deref(cat.RecommendedMethod)
+	// A method Lab promoted names its pipeline but no capability: it does the job of the methods naming the same pipeline.
+	capOf := map[string]string{}
+	for _, m := range cat.Methods {
+		if m.Capability != "" && capOf[trimJSON(m.Pipeline)] == "" {
+			capOf[trimJSON(m.Pipeline)] = m.Capability
+		}
+	}
 	listed := map[string]bool{}
 	for _, m := range cat.Methods {
 		pipe := trimJSON(m.Pipeline)
@@ -201,7 +208,14 @@ func projectPipelines(q *Request, id string, entries []contract.LabLeaderboardEn
 		if m.ID != inUse && m.Scope != id && s == nil {
 			continue
 		}
-		g := group(m.Capability)
+		capability := m.Capability
+		if capability == "" {
+			capability = capOf[pipe]
+		}
+		if capability == "" && s != nil {
+			capability = s.useCas
+		}
+		g := group(capability)
 		if m.ID == inUse {
 			g.InUse, g.InUseSource = ptr(m.ID), cat.RecommendationSource
 		}
@@ -215,12 +229,26 @@ func projectPipelines(q *Request, id string, entries []contract.LabLeaderboardEn
 		g.Pipelines = append(g.Pipelines, row)
 		listed[pipe] = true
 	}
-	for pipe, s := range stats {
-		if listed[pipe] {
-			continue
+	unlisted := []string{}
+	for pipe := range stats {
+		if !listed[pipe] {
+			unlisted = append(unlisted, pipe)
 		}
-		g := group(s.useCas)
-		g.UseCaseId = ptr(s.useCas)
+	}
+	sort.Strings(unlisted)
+	for _, pipe := range unlisted {
+		s := stats[pipe]
+		// A pipeline no method names joins the job whose comparison (use case) it ran in, else forms one.
+		var g *contract.ProjectPipelineGroup
+		for _, k := range order {
+			if u := groups[k].UseCaseId; u != nil && *u == s.useCas {
+				g = groups[k]
+			}
+		}
+		if g == nil {
+			g = group(s.useCas)
+			g.UseCaseId = ptr(s.useCas)
+		}
 		g.Pipelines = append(g.Pipelines, contract.ProjectPipelineRow{PipelineId: pipe, Best: s.best, Trials: s.trials, LastAt: textPtr(s.lastAt)})
 	}
 	out := make([]contract.ProjectPipelineGroup, 0, len(order))
