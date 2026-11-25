@@ -785,13 +785,17 @@ WHERE e.kind = 'pipeline_run'
   AND e.state IN ('succeeded', 'failed')
   AND e.observation = 'confirmed'
   AND ($1::text IS NULL OR e.project_id = $1::text)
-  AND coalesce(e.ended_at, e.started_at, e.updated_at) >= now() - make_interval(days => $2::int)
+  AND ($2::text[] IS NULL OR e.project_id = ANY($2::text[]))
+  AND ($3::text[] IS NULL OR NOT (e.project_id = ANY($3::text[])))
+  AND coalesce(e.ended_at, e.started_at, e.updated_at) >= now() - make_interval(days => $4::int)
 ORDER BY coalesce(e.ended_at, e.started_at, e.updated_at) DESC, e.seq DESC
 `
 
 type LabLeaderboardTrialsParams struct {
-	ProjectID *string
-	Days      int32
+	ProjectID         *string
+	ProjectIds        []string
+	ExcludeProjectIds []string
+	Days              int32
 }
 
 type LabLeaderboardTrialsRow struct {
@@ -813,7 +817,12 @@ type LabLeaderboardTrialsRow struct {
 // Confirmed succeeded and failed trials within the last days, visible under caller RLS (lab_leaderboard.go).
 // The trial's facts from lab_trial, never the run's data (its snapshots would be detoasted for three fields).
 func (q *Queries) LabLeaderboardTrials(ctx context.Context, arg LabLeaderboardTrialsParams) ([]LabLeaderboardTrialsRow, error) {
-	rows, err := q.db.Query(ctx, labLeaderboardTrials, arg.ProjectID, arg.Days)
+	rows, err := q.db.Query(ctx, labLeaderboardTrials,
+		arg.ProjectID,
+		arg.ProjectIds,
+		arg.ExcludeProjectIds,
+		arg.Days,
+	)
 	if err != nil {
 		return nil, err
 	}
