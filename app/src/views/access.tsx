@@ -94,9 +94,9 @@ export function Access(props: { onOpen: (path: string) => void }) {
               <th>Account · kind</th><th>State</th><th>Limit · credits</th><th>Where · used by</th><th>Last check</th><th>Next step</th>
             </tr>}>
               <For each={rows()}>{it => <TableRow onOpen={() => open(it)}>
-                <td><div>{it.name}<Show when={it.note}>{n => <span class="muted"> · {n()}</span>}</Show></div>
+                <td><div data-tip={it.note}>{it.name}</div>
                   <div class="muted">{it.kind}{it.keys != null && it.keys > 0 ? ` · ${it.keys} key${it.keys > 1 ? 's' : ''}` : ''}</div></td>
-                <td><StateBadge family="access" state={it.state} /><div class="muted" data-tip={it.stateText}>{it.state === 'not-added' ? '' : it.stateText}</div></td>
+                <td><StateBadge family="access" state={it.state} /><Show when={it.state !== 'not-added' && it.state !== 'works'}><div class="muted">{it.stateText}</div></Show></td>
                 <td class="muted">{it.limit?.text ?? '—'}</td>
                 <td class="muted" data-tip={it.usedBy?.join(', ')}>{[it.where, it.usedBy?.length ? `${it.usedBy.length} profile${it.usedBy.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ') || '—'}</td>
                 <td><Show when={it.lastCheck} fallback={<span class="muted">—</span>}>{c =>

@@ -40,6 +40,10 @@
 
   .limit-table thead th:has(> .sort-btn) { padding: 0; }
 
+  /* System › Access: sentences wrap inside the work area instead of widening the table. */
+  .access-table td { white-space: normal; overflow-wrap: anywhere; }
+  .access-table td:last-child { white-space: nowrap; }
+
   .sort-btn {
     display: inline-flex;
     align-items: center;
