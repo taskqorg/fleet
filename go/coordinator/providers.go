@@ -1033,6 +1033,16 @@ const providersJSON = `
     "inputSchema": {"type": "object", "required": ["owner", "repo", "ref"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "ref": {"type": "string"}}},
     "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "ref": "^[A-Za-z0-9_./-]+$"}
    },
+   "pull_files": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/pulls/{number}/files?per_page=100",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "The files a pull request changes, with their status.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "number"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "number": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "number": "^[0-9]+$"}
+   },
    "file_at": {
     "method": "GET",
     "path": "/repos/{owner}/{repo}/contents/{path}?ref={ref}",
