@@ -156,7 +156,7 @@ A project whose toolchain the hosts do not carry (PHP, Composer, a database) dec
 *   **Services**: side containers of the same pod; each name resolves to `127.0.0.1` in every container, so a repository config that names the host `db` works unchanged. Their data lives in the containers: no production data, only what the spec and the worktree hold.
 *   **Tools**: `env_exec {command, timeoutSeconds}` runs `sh -lc` in the main container and answers the exit code and the last 64 KiB of output; the first call starts the pod and runs `setup`; a start that fails, setup included, removes the pod, and a pod with a stopped container starts again. Codex gets `tool_timeout_sec` 5400 for these calls. `env_reset` removes the pod; the next call starts it fresh. Teardown removes it too.
 *   **Placement and readiness**: `execution.environment` requires `podman` in `execution.tools`, which places the run on hosts reporting `tool:podman` and checks `podman info` as the executor user (its own HOME and `XDG_RUNTIME_DIR`, never a harness HOME) before the model starts.
-*   **Host setup**: rootless Podman for the executor user: `subuid`/`subgid` ranges, lingering on (`loginctl enable-linger`), cgroup v2 with the systemd cgroup manager, overlay storage. pds18-native: `fleet-agent` 493216:65536, Podman 5.7.
+*   **Host setup**: rootless Podman for the executor user: `subuid`/`subgid` ranges, lingering on (`loginctl enable-linger`), cgroup v2 with the systemd cgroup manager, overlay storage, and `unqualified-search-registries = ["docker.io"]` in the user's `~/.config/containers/registries.conf` so short image names in build files resolve. pds18-native: `fleet-agent` 493216:65536, Podman 5.7, set up 2026-11-26.
 
 ### Readiness
 
