@@ -63,6 +63,7 @@ WITH RECURSIVE
   FROM execution e
   CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d
   WHERE e.definitions @> sqlc.arg(pin)::jsonb AND d->>'kind' = sqlc.arg(kind)::text AND (sqlc.arg(id)::text = '' OR d->>'id' = sqlc.arg(id)::text)
+    AND (sqlc.narg(def_ids)::text[] IS NULL OR d->>'id' = ANY(sqlc.narg(def_ids)::text[]))
     AND coalesce((d->>'draft')::boolean, false) = false
     AND coalesce(d->>'revision', '') ~ '^[0-9]+$'
     AND coalesce(e.started_at, e.updated_at) >= now() - make_interval(days => sqlc.arg(days)::int)

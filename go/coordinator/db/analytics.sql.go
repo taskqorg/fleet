@@ -171,9 +171,10 @@ WITH RECURSIVE
   FROM execution e
   CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d
   WHERE e.definitions @> $1::jsonb AND d->>'kind' = $2::text AND ($3::text = '' OR d->>'id' = $3::text)
+    AND ($4::text[] IS NULL OR d->>'id' = ANY($4::text[]))
     AND coalesce((d->>'draft')::boolean, false) = false
     AND coalesce(d->>'revision', '') ~ '^[0-9]+$'
-    AND coalesce(e.started_at, e.updated_at) >= now() - make_interval(days => $4::int)
+    AND coalesce(e.started_at, e.updated_at) >= now() - make_interval(days => $5::int)
  ),
  -- The two links held in JSON (a delegation's parent, a pipeline tool call's run) are read once each from their
  -- partial indexes into one map from parent to children, read by key: under row security a non-leakproof ->> cannot be
@@ -223,10 +224,11 @@ SELECT
 `
 
 type AnalyticsDefinitionLineageParams struct {
-	Pin  []byte
-	Kind string
-	ID   string
-	Days int32
+	Pin    []byte
+	Kind   string
+	ID     string
+	DefIds []string
+	Days   int32
 }
 
 type AnalyticsDefinitionLineageRow struct {
@@ -245,6 +247,7 @@ func (q *Queries) AnalyticsDefinitionLineage(ctx context.Context, arg AnalyticsD
 		arg.Pin,
 		arg.Kind,
 		arg.ID,
+		arg.DefIds,
 		arg.Days,
 	)
 	var i AnalyticsDefinitionLineageRow

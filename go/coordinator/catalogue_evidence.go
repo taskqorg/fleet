@@ -56,7 +56,8 @@ func evidenceExperiments(rows []db.CatalogueExperimentsRow) ([]evidenceExperimen
 // project's experiments and, when a method has no terminal experiment, the 30-day usage of every pipeline (one lineage
 // read, not one per method: FLT-41).
 type catalogueEvidence struct {
-	project string
+	project   string
+	pipelines []string // the pipelines of the catalogue's methods
 	exps    []evidenceExperiment
 	usage   map[string]contract.Window // nil until a method needs it
 }
@@ -75,7 +76,7 @@ func newCatalogueEvidence(q *Request, project string) (*catalogueEvidence, error
 
 func (ev *catalogueEvidence) pipelineUsage(q *Request) (map[string]contract.Window, error) {
 	if ev.usage == nil {
-		totals, _, err := usageWindows(q, "pipeline", "", 30)
+		totals, _, err := usageWindows(q, "pipeline", "", ev.pipelines, 30)
 		if err != nil {
 			return nil, err
 		}
@@ -291,6 +292,12 @@ func enrichCatalogue(q *Request, c rawObject) error {
 	ev, err := newCatalogueEvidence(q, view.ProjectID)
 	if err != nil {
 		return err
+	}
+	ev.pipelines = []string{}
+	for _, raw := range view.Methods {
+		var method labMethod
+		json.Unmarshal(raw, &method)
+		ev.pipelines = append(ev.pipelines, strings.TrimSuffix(method.Pipeline, ".json"))
 	}
 	methods := []map[string]json.RawMessage{}
 	for _, raw := range view.Methods {

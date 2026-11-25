@@ -1127,12 +1127,13 @@ func boundaryResourcesMap(q *Request, ids []string) (map[string]contract.Resourc
 // definitionUsageResources materializes visible child/parent edges once. An OR
 // join inside the recursive term rescans every execution for every tree row and
 // spills wide session rows; the narrow edge relation preserves all four links.
-func definitionUsageResources(q *Request, kind, id string, days int64) (map[string]contract.ResourceSummary, map[string]map[int64]contract.ResourceSummary, error) {
+// only, when not nil, keeps the definitions of those ids (catalogue methods' pipelines).
+func definitionUsageResources(q *Request, kind, id string, only []string, days int64) (map[string]contract.ResourceSummary, map[string]map[int64]contract.ResourceSummary, error) {
 	pin := map[string]string{"kind": kind}
 	if id != "" {
 		pin["id"] = id
 	}
-	lineage, err := q.db().AnalyticsDefinitionLineage(q.ctx(), db.AnalyticsDefinitionLineageParams{Pin: jsonBytes([]map[string]string{pin}), Kind: kind, ID: id, Days: int32(days)})
+	lineage, err := q.db().AnalyticsDefinitionLineage(q.ctx(), db.AnalyticsDefinitionLineageParams{Pin: jsonBytes([]map[string]string{pin}), Kind: kind, ID: id, DefIds: only, Days: int32(days)})
 	if err != nil {
 		return nil, nil, err
 	}
