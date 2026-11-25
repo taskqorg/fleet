@@ -24,7 +24,7 @@ Tasks, results and delivery are reached from the session that does the work or f
 
 Drawn on the design board: [ia.bl](../design-system/board/ia.bl).
 
-Built: the rail of seven sections, the phone bottom bar and the redirects below (`app/src/routes.ts`). The screens keep their earlier paths inside the app until wave 2 moves them, so the address bar shows the target route while each view still reads its earlier one; Home renders the Overview and Live a pointer to System and Projects until wave 1 builds them. The [product map](../design-system/product-map.md) lists every current route and capability with its target section, built state and prod state.
+Built: the rail of seven sections, the phone bottom bar, every section and the redirects below (`app/src/routes.ts`). No earlier screen keeps a route of its own: each is a facet, a root or a saved view of its section. Inside the app the views still speak the earlier paths, which the coordinator's view links share (`contracts/vocabulary.json` views), so the router translates each address both ways. The [product map](../design-system/product-map.md) lists every current route and capability with its target section, built state and prod state.
 
 ### Route consolidation map
 

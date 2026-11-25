@@ -2,7 +2,7 @@
 
 ## Overview
 
-Each file exports one routed SolidJS 2.0 screen. `main.tsx:SCREENS` maps the registry's application workspaces to these components via `lazy`.
+Each file exports one routed SolidJS 2.0 screen or a part of one. `main.tsx` loads the section views (Home, Live, Conversations, Projects, Lab, Library, System) via `lazy`; Projects, Library and System each render every screen of their section.
 
 ## Interface
 

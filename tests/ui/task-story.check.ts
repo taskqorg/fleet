@@ -48,7 +48,7 @@ export async function checkTaskStory(browser: Browser, origin: string) {
   try {
     for (const [i, fixture] of cases.entries()) {
       await page.route('**/api/ops/task_get', route => route.fulfill({json: {id: 'story', title: 'Install Android app', expectedOutcome: 'Full original request. '.repeat(100), completionRequirements: { device: 'Verify on Android' }, latestResult: {id: 'patch', name: 'implementation.patch', mediaType: 'text/plain'}, dependencies: [], ...fixture}}));
-      await page.goto(origin + '/tasks/story');
+      await page.goto(origin + '/projects/tasks/story');
       const detail = page.locator('[data-ui=detail]');
       await detail.getByRole('heading', {name: 'Install Android app'}).waitFor();
       assert.equal(await detail.getByText('Accept obsolete result?', {exact: true}).count(), 0);
@@ -109,7 +109,7 @@ export async function checkTaskStory(browser: Browser, origin: string) {
         ],
       },
     }));
-    await page.goto(origin + '/tasks/story-resources');
+    await page.goto(origin + '/projects/tasks/story-resources');
     const rDetail = page.locator('[data-ui=detail]');
     await rDetail.getByRole('heading', { name: 'Unified resources story' }).waitFor();
     assert.equal(await rDetail.locator('.totals .b-unavailable').count(), 0, 'OR-39: zero unavailable totals in task detail');
@@ -181,7 +181,7 @@ export async function checkTaskStory(browser: Browser, origin: string) {
         groups: [{ key: 'fleet', label: 'fleet', count: t33Rows.length }],
       },
     }));
-    await t33Page.goto(origin + '/tasks?preset=Running&state=held,in_progress,paused,queued,waiting');
+    await t33Page.goto(origin + '/projects/tasks?preset=Running&state=held,in_progress,paused,queued,waiting');
     await t33Page.locator('.vl-row[data-key="305"]').waitFor();
     await t33Page.clock.runFor(150);
     const runningPreset = t33Page.locator('[data-ui=saved-views] button', { hasText: 'Running' });
@@ -228,7 +228,7 @@ export async function checkTaskStory(browser: Browser, origin: string) {
         dependencies: [],
       },
     }));
-    await page.goto(origin + '/tasks/story-waiting');
+    await page.goto(origin + '/projects/tasks/story-waiting');
     const wDetail = page.locator('[data-ui=detail]');
     await wDetail.getByRole('heading', { name: 'Waiting context story' }).waitFor();
     await wDetail.getByText('Execution status is unconfirmed', { exact: true }).waitFor();

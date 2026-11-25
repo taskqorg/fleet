@@ -18,7 +18,7 @@ export async function checkSpotlight(browser: Browser, origin: string) {
   // More bulk tasks than the palette shows (8 per kind), so the Tasks group ends with "All 10 in Tasks".
   for (let i = 0; i < 10; i++) await call('task_create', {title: `Spotlight bulk ${i}`});
   try {
-    await p.goto(origin + '/overview'); await p.getByRole('button', {name: 'Search', exact: true}).waitFor();
+    await p.goto(origin + '/home'); await p.getByRole('button', {name: 'Search', exact: true}).waitFor();
     const dialog = p.getByRole('dialog', {name: 'Search'});
     const open = async () => { for (let i = 0; i < 10 && !await dialog.isVisible(); i++) { await p.keyboard.press('ControlOrMeta+k'); await dialog.waitFor({timeout: 1000}).catch(() => {}); } };
     // The shortcut listener mounts after the first paint; press again until the palette shows (a race in the check, not the app).
@@ -34,7 +34,7 @@ export async function checkSpotlight(browser: Browser, origin: string) {
     await dialog.getByRole('option', {name: /Spotlight needle task/}).waitFor();
     await input.press('Enter'); await p.waitForURL('**/tasks/' + task);
     // Code jump (D17): the code finds the task, shown with its code; Enter opens it.
-    await p.goto(origin + '/overview'); await p.getByRole('button', {name: 'Search', exact: true}).waitFor();
+    await p.goto(origin + '/home'); await p.getByRole('button', {name: 'Search', exact: true}).waitFor();
     await open();
     await input.fill(created.code.toLowerCase());
     await dialog.getByRole('option', {name: new RegExp(created.code + '(?!\\d)')}).waitFor();

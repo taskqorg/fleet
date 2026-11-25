@@ -4,7 +4,7 @@ import { captureRender, configureErrors } from './errors.ts';
 import { createEffect, createMemo, createSignal, Errored, lazy, Loading, Match, onSettled, Show, Switch } from 'solid-js';
 import { render, type JSX } from '@solidjs/web';
 import { createAgent, registerTools } from '@ui-sdk/core/agent';
-import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, type NavItem, type AppScreen, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
+import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, matchSearch, FocusControl, FocusPresets, type NavItem, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
 import { useLocation, useSearch, syncLocation } from './router.ts';
 import { setProjectCodes } from './routes.ts';
 import type { InfraSection } from './views/hosts.tsx';
@@ -54,8 +54,7 @@ function RenderBoundary(props: { at: string; children: JSX.Element }) {
   );
 }
 
-// The view of each screen the registry marks `app: true` (the type requires every one). Nav and routes follow registry
-// order. A list screen takes an optional focus segment, so focusing a row never unmounts the list.
+// Lab shows the architect's Lab or, without that role, the person's own drafts (Personal Lab).
 function LabWorkspace(props: { id?: string }) {
   const me = useOp('me', {});
   return <Switch fallback={<Empty text="Loading access…" />}>
@@ -70,34 +69,21 @@ const isWall = (q: string) => new URLSearchParams(q).has('wall');
 /** A viewer (people access, Wall viewer) reads only: it sees Live and nothing else. */
 const viewerOnly = (roles: readonly string[] | undefined) => !!roles && roles.length > 0 && roles.every(r => r === 'viewer');
 
-const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => JSX.Element }> = {
-  live: { focus: false, view: () => <Live wall={isWall(useSearch()())} /> },
-  library: { focus: false, view: () => <Library /> },
-  bots: { focus: true, view: p => <Library section="bots" id={p.id} /> },
-  // Tasks, Results and Delivery are facets of a project (docs/design-system/pages/projects.md): one Projects view serves
-  // all four screens (PrivateRoutes), so moving between facets never rebuilds the project catalogue (OR-47).
-  projects: { focus: true, view: p => <Projects screen="projects" id={p.id} /> },
-  overview: { focus: true, view: p => <Home id={p.id} /> },
-  tasks: { focus: true, view: p => <Projects screen="tasks" id={p.id} /> },
-  conversations: { focus: true, view: p => <Conversations id={p.id} /> },
-  results: { focus: true, view: p => <Projects screen="results" id={p.id} /> },
-  delivery: { focus: true, view: p => <Projects screen="delivery" id={p.id} /> },
-  hosts: { focus: true, view: p => <Infrastructure section="hosts" id={p.id} /> },
-  runners: { focus: false, view: () => <Infrastructure section="runners" /> },
-  lab: { focus: true, view: p => <LabWorkspace id={p.id} /> },
-  humans: { focus: true, view: p => <Infrastructure section="people" id={p.id} /> },
-  'personal-lab': { focus: true, view: p => <PersonalLab id={p.id} /> },
-  keys: { focus: true, view: p => <Infrastructure section="keys" id={p.id} /> },
-  agents: { focus: true, view: p => <Library section="agents" id={p.id} /> },
-  pipelines: { focus: true, view: p => <Library section="pipelines" id={p.id} /> },
-  catalogue: { focus: true, view: p => <Library section="methods" id={p.id} /> },
-  changes: { focus: false, view: () => <Library section="changes" /> },
-  spend: { focus: false, view: () => <Infrastructure section="spend" /> },
-};
-const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
+// The screens rendered by their own view. Projects (with its facets Tasks, Results and Delivery), Library and System
+// render every screen of their section in one view (PrivateRoutes), so moving inside a section keeps its tree (OR-47).
+// A list screen takes an optional focus segment, so focusing a row never unmounts the list.
+const SCREENS = [
+  { id: 'live', focus: false, view: () => <Live wall={isWall(useSearch()())} /> },
+  { id: 'overview', focus: true, view: (p: { id?: string }) => <Home id={p.id} /> },
+  { id: 'conversations', focus: true, view: (p: { id?: string }) => <Conversations id={p.id} /> },
+  { id: 'lab', focus: true, view: (p: { id?: string }) => <LabWorkspace id={p.id} /> },
+  { id: 'personal-lab', focus: true, view: (p: { id?: string }) => <PersonalLab id={p.id} /> },
+] as const satisfies readonly { id: string; focus: boolean; view: (p: { id?: string }) => JSX.Element }[];
 // The rail's seven sections (OR-46); each screen highlights the section that owns it (OR-57).
 const NAV: NavItem[] = workspaces.filter(w => w.nav).map(w => ({ id: w.id, label: w.label, icon: w.icon }));
 const sectionOf = (screen: string): string => workspaces.find(w => w.id === screen)?.section ?? '';
+// The screens inside a section that Spotlight lists as pages (registry `nav: false`).
+const PAGES = workspaces.filter(w => !w.nav);
 const ROOT: Record<string, string> = Object.fromEntries(workspaces.filter(w => w.nav).map(w => [w.id, (w as { root?: string }).root ?? w.id]));
 // The counter each section shows (nav-rail.md, Counters): Projects its Tasks facet, System its Hosts.
 const COUNTER: Record<string, string> = { conversations: 'conversations', projects: 'tasks', system: 'hosts' };
@@ -121,7 +107,7 @@ const KINDS: Record<Hit['kind'], { label: string; icon: IconName; family?: Famil
 const subPages = (go: (to: string) => void, show: (id: string) => boolean): SpotlightProvider => ({
   id: 'pages',
   label: 'Pages',
-  find: q => BUILT.filter(w => !w.nav).map(w => ({ id: w.id, label: w.label, icon: w.icon }))
+  find: q => PAGES.map(w => ({ id: w.id, label: w.label, icon: w.icon }))
     .filter(s => show(s.id) && matchSearch(q, s.label))
     .map(s => ({ key: 'sub:' + s.id, icon: s.icon, label: s.label, run: () => go(sectionPath(s.id)) })),
 });
@@ -260,7 +246,7 @@ function App() {
   const openSection = (id: string) => go(sectionPath(lastScreen.get(id) ?? ROOT[id] ?? id));
   createEffect(() => [loc(), query(), access.value.state, prefsRead.value, current()] as const, ([l, q, st, pr, cur]) => {
     // A viewer may only read: its views are not kept (person_settings_set answers 403).
-    if (st !== 'open' || !pr || !BUILT.some(n => n.id === cur) || viewer()) return;
+    if (st !== 'open' || !pr || !sectionOf(cur) || viewer()) return;
     const parsed = (VIEWS as string[]).includes(cur) ? parseView(l + (q ? '?' + q : '')) : null;
     // Home keeps no view of its own: /overview?all (every project, from the outside-focus count) is never kept.
     noteView(cur, parsed && cur !== 'overview' ? formatView({ ...parsed, focus: undefined, sel: undefined }) : '/' + cur);
@@ -320,21 +306,19 @@ function PrivateRoutes(props: { go: (to: string) => void }) {
   const libId = createMemo(() => { const m = libMatch(); return m?.[2] ? decodeSegment(m[2]) : undefined; });
   const infraSection = createMemo(() => infraRoute()?.section ?? null);
   const infraId = createMemo(() => infraRoute()?.id);
-  const builtMatch = createMemo(() => {
+  // Projects (pages/projects.md): the catalogue and its facets render in one view.
+  const projectsMatch = createMemo(() => /^\/(projects|tasks|results|delivery)(?:\/([^/]+))?\/?$/.exec(loc()));
+  const projectsScreen = createMemo(() => (projectsMatch()?.[1] ?? null) as 'projects' | 'tasks' | 'results' | 'delivery' | null);
+  const screenMatch = createMemo(() => {
     const p = loc();
-    for (const s of BUILT) {
-      if (s.focus) {
-        const m = new RegExp(`^/${s.id}(?:/([^/]+))?/?$`).exec(p);
-        if (m) return { screen: s, id: m[1] ? decodeSegment(m[1]) : undefined };
-      } else if (p === `/${s.id}` || p === `/${s.id}/`) {
-        return { screen: s, id: undefined };
-      }
+    for (const s of SCREENS) {
+      const m = new RegExp(s.focus ? `^/${s.id}(?:/([^/]+))?/?$` : `^/${s.id}/?$`).exec(p);
+      if (m) return { screen: s, id: m[1] ? decodeSegment(m[1]) : undefined };
     }
     return null;
   });
-  const projectsScreen = createMemo(() => { const id = builtMatch()?.screen.id; return id === 'projects' || id === 'tasks' || id === 'results' || id === 'delivery' ? id : null; });
-  const builtScreen = createMemo(() => builtMatch()?.screen ?? null);
-  const builtId = createMemo(() => builtMatch()?.id);
+  const screen = createMemo(() => screenMatch()?.screen ?? null);
+  const itemId = createMemo(() => projectsMatch()?.[2] ? decodeSegment(projectsMatch()![2]) : screenMatch()?.id);
   return (
     <Loading fallback={<Empty text="Loading…" />}>
       <Switch fallback={<Empty text="This page does not exist." action={<Button label="Home" icon="house" onClick={() => props.go('/home')} />} />}>
@@ -345,11 +329,11 @@ function PrivateRoutes(props: { go: (to: string) => void }) {
           {sec => <Infrastructure section={sec()} id={infraId()} />}
         </Match>
         <Match when={projectsScreen() !== null}>
-          <Projects screen={projectsScreen()!} id={builtId()} />
+          <Projects screen={projectsScreen()!} id={itemId()} />
         </Match>
-        {BUILT.map(s => (
-          <Match when={builtScreen() === s}>
-            {s.view({ get id() { return builtId(); } })}
+        {SCREENS.map(s => (
+          <Match when={screen() === s}>
+            {s.view({ get id() { return itemId(); } })}
           </Match>
         ))}
       </Switch>

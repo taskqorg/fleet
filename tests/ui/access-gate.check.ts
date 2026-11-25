@@ -301,7 +301,7 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     actor = 'member@trial.test';
     seed.artifact({ id: 'browser-access-artifact', executionId: 'browser-access-run', name: 'Private result marker.txt', mediaType: 'text/plain', bytes: Buffer.from('private browser fixture') });
     seed.sql("UPDATE artifact SET project_id='desiign' WHERE id='browser-access-artifact'");
-    await p.goto(origin + '/results'); await p.getByText('Private result marker.txt', { exact: true }).waitFor();
+    await p.goto(origin + '/projects/results'); await p.getByText('Private result marker.txt', { exact: true }).waitFor();
     let releaseResults!: () => void, resultsStarted!: () => void;
     const resultsWait = new Promise<void>(resolve => { releaseResults = resolve; }), resultsPending = new Promise<void>(resolve => { resultsStarted = resolve; });
     await p.route('**/api/ops/artifact_list', async route => { const response = await route.fetch(); resultsStarted(); await resultsWait; await route.fulfill({ response }).catch(() => {}); });
