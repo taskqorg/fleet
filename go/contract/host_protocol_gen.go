@@ -1352,6 +1352,18 @@ func (v FleetEventType) Valid() bool {
 	return false
 }
 
+type ForgeLogin struct {
+	CheckedAt *int64 `json:"checkedAt,omitempty"`
+	Host      string `json:"host"`
+	Ok        bool   `json:"ok"`
+	Provider  string `json:"provider"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ForgeLogin) Validate() error {
+	return nil
+}
+
 type ForgeReviewReply struct {
 	Actor             string  `json:"actor"`
 	ArtifactId        string  `json:"artifactId"`
@@ -1803,6 +1815,7 @@ type PollRequest struct {
 	ActiveExecutions []string         `json:"activeExecutions"`
 	Capabilities     []string         `json:"capabilities"`
 	Drain            *DrainReport     `json:"drain,omitempty"`
+	ForgeLogins      []ForgeLogin     `json:"forgeLogins,omitempty"`
 	GitConnections   []string         `json:"gitConnections"`
 	HarnessVersions  []HarnessVersion `json:"harnessVersions,omitempty"`
 	HostId           string           `json:"hostId"`
@@ -1827,6 +1840,11 @@ func (v *PollRequest) Validate() error {
 	}
 	if v.Drain != nil {
 		if err := Check(v.Drain, "drain"); err != nil {
+			return err
+		}
+	}
+	for i := range v.ForgeLogins {
+		if err := Check(&v.ForgeLogins[i], "forgeLogins"); err != nil {
 			return err
 		}
 	}

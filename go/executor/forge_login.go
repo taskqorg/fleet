@@ -2,10 +2,12 @@ package main
 
 import (
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"fleet/contract"
 	"fleet/errtrack"
 )
 
@@ -59,4 +61,18 @@ func forgeLoginCheck(provider, host string) bool {
 	user := typedRaw[map[string]any](out)
 	v, _ := user[field].(string)
 	return strings.TrimSpace(v) != ""
+}
+
+// forgeLoginReport: every answered forge login check, for the poll (System › Access shows a missing login).
+func forgeLoginReport() []contract.ForgeLogin {
+	forgeLogins.Lock()
+	defer forgeLogins.Unlock()
+	out := []contract.ForgeLogin{}
+	for key, at := range forgeLogins.at {
+		provider, host, _ := strings.Cut(key, "|")
+		ms := at.UnixMilli()
+		out = append(out, contract.ForgeLogin{Provider: provider, Host: host, Ok: forgeLogins.ok[key], CheckedAt: &ms})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Provider+out[i].Host < out[j].Provider+out[j].Host })
+	return out
 }

@@ -95,7 +95,11 @@ func accessStatus(q *Request) (contract.AccessStatusReply, error) {
 	if err != nil {
 		return out, err
 	}
-	out.Items = append(subs, keys...)
+	forge, err := accessForgeLogins(q)
+	if err != nil {
+		return out, err
+	}
+	out.Items = append(append(subs, keys...), forge...)
 	for _, it := range out.Items {
 		switch it.State {
 		case contract.AccessStateWorks:
@@ -443,6 +447,10 @@ func accessCheck(q *Request, r *contract.AccessCheckRequest) (contract.AccessChe
 		var it contract.AccessItem
 		err := read(func(q *Request) (err error) { it, err = accessItem(q, r.Id); return })
 		return contract.AccessCheckReply{Item: it, Queued: queued}, err
+	case "forge": // the host checks its forge login itself (forge_login.go); this reads its latest answer
+		var it contract.AccessItem
+		err := read(func(q *Request) (err error) { it, err = accessItem(q, r.Id); return })
+		return contract.AccessCheckReply{Item: it}, err
 	case "connection":
 		var c apiConnection
 		var it contract.AccessItem

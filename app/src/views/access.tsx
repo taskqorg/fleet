@@ -68,6 +68,7 @@ export function Access(props: { onOpen: (path: string) => void }) {
     const [kind, id] = [it.id.slice(0, it.id.indexOf(':')), it.id.slice(it.id.indexOf(':') + 1)];
     if (kind === 'account') props.onOpen(`/hosts/limits/${encodeURIComponent(id)}`);
     else if (kind === 'connection') props.onOpen(`/keys/${encodeURIComponent(id)}`);
+    else if (kind === 'forge') check(it); // a host's forge login: its guide is the row's tip; the host re-checks it
     else setFlow({ kind: 'key', provider: it.provider });
   };
 
