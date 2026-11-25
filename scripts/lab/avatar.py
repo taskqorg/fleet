@@ -146,16 +146,20 @@ def animate(args):
     px = bmp_pixels(small)
     small.unlink()
     n = len(px)
-    luma = [[0.2126 * r + 0.7152 * g + 0.0722 * b for r, g, b in row] for row in px]
-    # Brightest 3x3 neighbourhood, so one bright pixel does not decide; ties keep the one nearest the centre.
-    def box(x, y): return sum(luma[j][i] for j in range(max(0, y - 1), min(n, y + 2)) for i in range(max(0, x - 1), min(n, x + 2)))
+    # The light is where the picture is both bright and coloured: luma weighted by saturation, so a grey highlight
+    # (a steel ring, a reflection) does not win over a glowing coloured core. Scored over 3x3 neighbourhoods, so one
+    # bright pixel does not decide; ties keep the one nearest the centre.
+    def sat(c): return (max(c) - min(c)) / max(c) if max(c) else 0
+    light = [[(0.2126 * r + 0.7152 * g + 0.0722 * b) * (0.25 + sat((r, g, b))) for r, g, b in row] for row in px]
+    def box(x, y): return sum(light[j][i] for j in range(max(0, y - 1), min(n, y + 2)) for i in range(max(0, x - 1), min(n, x + 2)))
     best = max(((box(i, j), -((i - n / 2 + .5) ** 2 + (j - n / 2 + .5) ** 2)), i, j) for j in range(n) for i in range(n))
     _, x, y = best
     cell = SIZE / n
     cx, cy = round((x + .5) * cell), round((y + .5) * cell)
     near = [px[j][i] for j in range(max(0, y - 1), min(n, y + 2)) for i in range(max(0, x - 1), min(n, x + 2))]
-    # The glow takes the region's own hue, lifted halfway to white.
-    colour = '#' + ''.join(f'{round((sum(c[k] for c in near) / len(near) + 255) / 2):02x}' for k in range(3))
+    # The glow takes the region's most coloured pixel's hue, lifted a third of the way to white.
+    hue = max(near, key=sat)
+    colour = '#' + ''.join(f'{round(hue[k] + (255 - hue[k]) / 3):02x}' for k in range(3))
     r = 150
     svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{SIZE}" height="{SIZE}" viewBox="0 0 {SIZE} {SIZE}">
 <defs>
