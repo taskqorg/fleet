@@ -39,6 +39,19 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall 
 
 Every element opens its detail in the app: a host in System, a slot or event in its session, a pull request in its project's delivery facet, a project in Projects. In wall mode nothing opens; the screen only shows.
 
+## Balance
+
+*Target* ([decision](../decisions.md#2026-11-25-balancing-lives-on-live-as-items), [work allocation and balancing](../../work-allocation.md#interface)). A Balance block answers "where may new work go, and why". One line per item, state first (OR-22):
+
+* host: In, Out until a time, or cap;
+* account: Preferred, Default, Avoid or Out, with what is left and when it resets; Only its holder for a personal one;
+* model class: its effective candidate order ("Antigravity first, then Codex, then Claude");
+* pinned project: the hosts and subscriptions it may use.
+
+Account lines list their logins (host and state: ready, not logged in, expired). Under the lines: the placement order in plain words, and the latest picks and moves, each with its reason.
+
+Each line says why in words: who set it, when, until, what it moved. A subscription with quota that will go unused carries the attention tone and the offered preference. The row menu (OR-37) offers In or Out, Prefer, Default or Avoid, Until and Undo; HAL0 makes the same changes by voice. An out host's band is dimmed with its state word. In wall mode the block only shows. Data: `balance_view`; writes: `balance_set`, `balance_undo`. Canvas: the frame "Live · Balance block (target)" on [screens/live.bl](../board/screens/live.bl). Not built.
+
 ## Behaviour
 
 * **Updates in place.** Values update in place with fixed-width figures (OR-6). A running slot's dot pulses, and its elapsed time ticks every second.
@@ -70,6 +83,7 @@ Every element opens its detail in the app: a host in System, a slot or event in 
 | Delivery stages in flight | Delivery list in the side column |
 | CI jobs and runners | CI runners list in the side column |
 | Problems that need a look | Status pill, host danger tone, failing slot, failed-starts figure |
+| Balance now, take out and put back, preferences, unused quota (target) | Balance block |
 
 ## Data
 

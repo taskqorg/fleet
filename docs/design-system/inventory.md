@@ -153,6 +153,23 @@ These apply to every workspace and are the main input for the controls:
 | Low space: raise capacity, change a project's locations, or add a retention rule | Signal, Action | problems |
 | Where each change has reached: definition changes, release and harness pins per host | View, Signal | [changes](../designs/fleet-system-management.md#changes-screen) |
 
+### Balancing
+
+Where and on what new work runs ([work allocation and balancing](../work-allocation.md)). Shown on Live as the Balance block.
+
+| Item | Kind | Source |
+|---|---|---|
+| Balance now: each host, subscription, model class and pinned project with its effective state, why, until and who set it | View | `balance_view` |
+| Take a host or subscription out of new work, with an optional return time; put it back | Action | `balance_set` intake, `balance_undo` |
+| Pin a project to hosts and subscriptions | Setting | `balance_set` only (project `placement`) |
+| Prefer, keep default or avoid a harness, model or subscription, with an optional until (a time or the next reset) | Setting | `balance_set` preference |
+| Model classes: ordered harness and model candidates that profiles name | View, Setting | `definition_*` kind `model-class` |
+| What a change would move before it applies: queued runs that move or wait, running work left as is | View | `balance_set` with `dryRun` |
+| Quota that will go unused before its reset, with the work it could take; the offered preference | Signal, Decision | `balance_view` suggestions |
+| Who may use a personal subscription | View | `balance_view` |
+| Accounts as real provider identities, each with its logins per host and their state | View | `balance_view` |
+| Placement order in plain words; latest picks and moves with their reasons | View | `balance_view`, `route_decisions` |
+
 ### Connections and access
 
 | Item | Kind | Source |

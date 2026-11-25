@@ -30,7 +30,7 @@
 | Swarm | [designs/fleet-swarm.md](designs/fleet-swarm.md) | [External-agent quickstart](designs/fleet-swarm.md#external-agent-quickstart), coordination strategies, shared board, Swarm views and Lab evaluation. | none |
 | Code mode | [designs/fleet-code-mode.md](designs/fleet-code-mode.md) | The `code` and `poll` executor MCP tools: JavaScript with Fleet tools and connections as functions, for every harness; profile `codeMode`. | none |
 | Orchestration | [orchestration.md](orchestration.md) | Coordination semantics over executions. | none |
-| Allocation | [work-allocation.md](work-allocation.md) | Which host, environment and agent configuration runs a task; balancing and operator steering. | none |
+| Allocation and balancing | [work-allocation.md](work-allocation.md) | Where and on what new work runs: hosts, subscriptions, model classes; intake, project pins, preferences, `balance_*` operations, the Live Balance block. | none |
 | Configuration | [configuration.md](configuration.md) | Where settings live and resolve: project settings and defaults, project setup and readiness, capabilities and pipelines, host settings. | none |
 | Deployment | [deployment.md](deployment.md) | Physical responsibility boundaries and hosts. | none |
 | Runtime integration | [runtime-integration.md](runtime-integration.md) | Responsibility boundaries for agent execution. | [runtime-boundary-review.md](runtime-boundary-review.md), [harness-session-comparison.md](harness-session-comparison.md), [agentq-reuse-boundary.md](agentq-reuse-boundary.md), [agent-tools-inventory.md](agent-tools-inventory.md), [component-reuse-review.md](component-reuse-review.md) |
