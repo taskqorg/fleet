@@ -21,7 +21,7 @@ var capabilityGroups = []struct {
 }{
 	{"projects", []string{"project_list", "project_detail", "project_create", "project_update", "project_readiness", "project_archive", "focus_set", "session_transition"}},
 	{"work", []string{"task_create", "task_release", "session_start", "execution_status", "search"}},
-	{"access and settings", []string{"hosts_list", "connections_list", "connections_set_tools", "connections_key_request", "people_list"}},
+	{"access and settings", []string{"hosts_list", "connections_list", "connections_set_tools", "connections_key_request", "access_grants", "access_grant_ask", "people_list"}},
 	{"people", []string{"ask", "approval_ask"}},
 }
 
