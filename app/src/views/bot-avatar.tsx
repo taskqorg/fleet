@@ -1,15 +1,16 @@
 // A bot's avatar in Settings & Memory (controls/avatar.md, board screens/library.bl section 4): the letter, an uploaded
 // file, or one made by the avatar-make pipeline (three candidates, pick one). Agents do the same with bot_avatar_set.
-import { Match, Show, Switch, createSignal } from 'solid-js';
+import { For, Match, Show, Switch, createEffect, createSignal } from 'solid-js';
 import { Avatar, AvatarChoices, Button, Choice, DetailSection, ErrorBanner, FileButton, TextField, type AvatarPicture } from '../../../packages/ui/src/index.ts';
-import { op, writeOnce, useAlive, type Ops } from '../api.ts';
+import { writeOnce, useAlive, type Ops } from '../api.ts';
+import { useOp } from '../store.ts';
 import { botAvatarState, botPicture } from '../bot-view.ts';
 import { uploadFile } from '../uploads.ts';
 
 type Bot = Ops['bot_get']['reply']['bot'];
 type Source = 'letter' | 'upload' | 'make';
 /** A made or uploaded avatar before it is set: the shown file, its still frame, its glow. */
-type Candidate = { artifactId: string; stillArtifactId?: string; mediaType: string; glow?: string; state: 'running' | 'ready' | 'failed'; note?: string };
+type Candidate = { runId?: string; artifactId: string; stillArtifactId?: string; mediaType: string; glow?: string; state: 'running' | 'ready' | 'failed'; note?: string };
 
 /** What avatar-make returns (scripts/lab/avatar.py result). */
 type MadeAvatar = { avatar: { artifactId: string; mediaType: string }; still?: { artifactId: string }; glow?: string };
@@ -89,7 +90,8 @@ export function BotAvatarField(props: { bot: Bot; onSaved: (bot: Bot) => void })
     setStatus('');
   });
 
-  /** One avatar-make run: started, then read until it ends; its result is the loop (animated) or the still. */
+  /** One avatar-make run: started here; its RunWatch reads it (live) until it ends. */
+  const update = (i: number, c: Partial<Candidate>) => setCandidates(cs => cs.map((x, k) => (k === i ? { ...x, ...c } : x)));
   const makeOne = async (i: number) => {
     const example: Record<string, unknown> = { description: describe(), animate: animate() };
     const ref = reference();
@@ -98,26 +100,11 @@ export function BotAvatarField(props: { bot: Bot; onSaved: (bot: Bot) => void })
       example.reference = path;
       example.inputs = [{ path, artifactId: ref.id }];
     }
-    const update = (c: Partial<Candidate>) => setCandidates(cs => cs.map((x, k) => (k === i ? { ...x, ...c } : x)));
     try {
-      const { runId } = await op('pipeline_run_create', { pipelineId: 'avatar-make', projectId: props.bot.projectId, requestId: crypto.randomUUID(), example }, { signal });
-      for (;;) {
-        await new Promise(ok => setTimeout(ok, 3000));
-        if (signal.aborted) return;
-        const run = await op('pipeline_get', { runId, projectId: props.bot.projectId }, { signal });
-        if (run.state === 'succeeded') {
-          // The result step's output: {projectResult: {avatar, still, glow}} (scripts/lab/avatar.py result).
-          const out = run.canonicalResult ? await fetch(result(run.canonicalResult.artifact.artifactId), { signal }).then(r => r.json()) as { projectResult?: MadeAvatar } : undefined;
-          const made = out?.projectResult;
-          if (!made?.avatar) { update({ state: 'failed', note: 'No picture came back' }); return; }
-          update({ state: 'ready', artifactId: made.avatar.artifactId, mediaType: made.avatar.mediaType, glow: made.glow || undefined,
-            stillArtifactId: made.still && made.still.artifactId !== made.avatar.artifactId ? made.still.artifactId : undefined });
-          return;
-        }
-        if (run.state === 'failed' || run.state === 'cancelled') { update({ state: 'failed', note: 'The run ' + run.state }); return; }
-      }
+      const { runId } = await writeOnce('pipeline_run_create', { pipelineId: 'avatar-make', projectId: props.bot.projectId, requestId: crypto.randomUUID(), example }, () => {}, { signal });
+      update(i, { runId });
     } catch (e) {
-      if (!signal.aborted) update({ state: 'failed', note: e instanceof Error ? e.message : String(e) });
+      if (!signal.aborted) update(i, { state: 'failed', note: e instanceof Error ? e.message : String(e) });
     }
   };
   const make = () => {
@@ -184,6 +171,38 @@ export function BotAvatarField(props: { bot: Bot; onSaved: (bot: Bot) => void })
           <p role="status" class="muted type-sm" style={{ margin: 0 }}>{status()}</p>
         </div>
       </div>
+      <For each={candidates()}>
+        {(c, i) => (
+          <Show when={c.state === 'running' && c.runId} keyed>
+            {runId => <RunWatch runId={runId} projectId={props.bot.projectId} onDone={r => update(i(), r)} />}
+          </Show>
+        )}
+      </For>
     </DetailSection>
   );
+}
+
+/** Reads one avatar-make run live (pipeline_get follows execution changes); when it ends, its result: the result step's
+ * output {projectResult: {avatar, still, glow}} (scripts/lab/avatar.py result). Renders nothing. */
+function RunWatch(props: { runId: string; projectId: string; onDone: (c: Partial<Candidate>) => void }) {
+  const run = useOp('pipeline_get', () => ({ runId: props.runId, projectId: props.projectId }));
+  let done = false;
+  createEffect(
+    () => run.data,
+    r => {
+      if (done || !r) return;
+      if (r.state === 'failed' || r.state === 'cancelled') { done = true; props.onDone({ state: 'failed', note: 'The run ' + r.state }); return; }
+      if (r.state !== 'succeeded') return;
+      done = true;
+      const id = r.canonicalResult?.artifact.artifactId;
+      if (!id) { props.onDone({ state: 'failed', note: 'No picture came back' }); return; }
+      void fetch(result(id)).then(x => x.json() as Promise<{ projectResult?: MadeAvatar }>).then(out => {
+        const made = out.projectResult;
+        if (!made?.avatar) { props.onDone({ state: 'failed', note: 'No picture came back' }); return; }
+        props.onDone({ state: 'ready', artifactId: made.avatar.artifactId, mediaType: made.avatar.mediaType, glow: made.glow || undefined,
+          stillArtifactId: made.still && made.still.artifactId !== made.avatar.artifactId ? made.still.artifactId : undefined });
+      }, e => props.onDone({ state: 'failed', note: e instanceof Error ? e.message : String(e) }));
+    },
+  );
+  return null;
 }

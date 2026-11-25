@@ -32,8 +32,13 @@ INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,state
 		{"botId": botID, "artifactId": "av-loop", "stillArtifactId": "av-text"},
 		{"botId": botID, "artifactId": "av-loop", "glow": "red"},
 	} {
-		if code, resp := e.callJSON(t, "POST", "/api/ops/bot_avatar_set", bad, member); code != 400 {
-			t.Fatalf("bot_avatar_set %v = %d %v, want 400", bad, code, resp)
+		// Another project's file is invisible to the member (404); the rest are refused (400).
+		want := 400
+		if bad["artifactId"] == "av-other" {
+			want = 404
+		}
+		if code, resp := e.callJSON(t, "POST", "/api/ops/bot_avatar_set", bad, member); code != want {
+			t.Fatalf("bot_avatar_set %v = %d %v, want %d", bad, code, resp, want)
 		}
 	}
 	code, resp = e.callJSON(t, "POST", "/api/ops/bot_avatar_set", doc{"botId": botID, "artifactId": "av-loop", "stillArtifactId": "av-still", "glow": "#FF2A1A"}, member)
