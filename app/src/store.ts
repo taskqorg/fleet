@@ -572,7 +572,8 @@ export function useOp<K extends OpName>(name: K, request: MaybeAccessor<Ops[K]['
       reloadFn = () => readDoc(k);
       const t = throttle(() => readDoc(k), quiet);
       const off = watch({ name, request: () => ({ ...(currentReq as Record<string, unknown>), ...readValue(opts.scope) }), read: t.read, key: k });
-      const timer = every ? setInterval(() => readDoc(k), every) : 0;
+      // A hidden tab polls nothing; the next tick after it shows again reads (no burst on return).
+      const timer = every ? setInterval(() => { if (typeof document === 'undefined' || document.visibilityState === 'visible') readDoc(k); }, every) : 0;
       return () => { reloadFn = () => {}; release(); off(); t.stop(); clearInterval(timer); };
     },
   );

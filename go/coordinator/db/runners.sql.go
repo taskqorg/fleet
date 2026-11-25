@@ -8,6 +8,8 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const runnerCalls = `-- name: RunnerCalls :many
@@ -202,65 +204,29 @@ func (q *Queries) RunnerRuns(ctx context.Context) ([]RunnerRunsRow, error) {
 	return items, nil
 }
 
-const runnerSpendRows = `-- name: RunnerSpendRows :many
-SELECT e.host_id,e.kind::text AS kind,(coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::boolean AS today,
- (x.execution_id IS NOT NULL)::boolean AS measured,x.wall_ms,x.cpu_ms,(coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool',''))::text AS subject,x.connection_cost,
- x.billing_basis,coalesce(x.model,e.model) AS model,e.account_id,
- CASE WHEN coalesce(x.billing_basis,'') IN ('','unavailable') AND e.account_id IS NOT NULL THEN coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('',e.account_id) m),false) ELSE false END AS is_api_conn,
- x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write,coalesce(e.started_at,coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at)) AS at
-FROM execution e LEFT JOIN execution_totals x ON x.execution_id=e.id
-WHERE e.kind NOT IN ('pipeline_run','pipeline_step') AND coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) >= date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+const runnerRunsByKind = `-- name: RunnerRunsByKind :many
+SELECT coalesce(s.host_id, '')::text AS host_id, s.kind::text AS kind, count(*)::bigint AS runs
+FROM execution_spend s WHERE s.started_at >= $1::timestamptz AND s.kind NOT IN ('pipeline_run', 'pipeline_step')
+GROUP BY 1, 2
 `
 
-type RunnerSpendRowsRow struct {
-	HostID           *string
-	Kind             string
-	Today            bool
-	Measured         bool
-	WallMs           *int64
-	CpuMs            *int64
-	Subject          string
-	ConnectionCost   []byte
-	BillingBasis     *string
-	Model            *string
-	AccountID        *string
-	IsApiConn        bool
-	TokensInput      *int64
-	TokensOutput     *int64
-	TokensCacheRead  *int64
-	TokensCacheWrite *int64
-	At               *time.Time
+type RunnerRunsByKindRow struct {
+	HostID string
+	Kind   string
+	Runs   int64
 }
 
-// Every execution this UTC month by when it ran; today: it ran this UTC day; measured: it has recorded totals.
-func (q *Queries) RunnerSpendRows(ctx context.Context) ([]RunnerSpendRowsRow, error) {
-	rows, err := q.db.Query(ctx, runnerSpendRows)
+// Today's executions per host and kind (execution_spend, by start).
+func (q *Queries) RunnerRunsByKind(ctx context.Context, since pgtype.Timestamptz) ([]RunnerRunsByKindRow, error) {
+	rows, err := q.db.Query(ctx, runnerRunsByKind, since)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RunnerSpendRowsRow
+	var items []RunnerRunsByKindRow
 	for rows.Next() {
-		var i RunnerSpendRowsRow
-		if err := rows.Scan(
-			&i.HostID,
-			&i.Kind,
-			&i.Today,
-			&i.Measured,
-			&i.WallMs,
-			&i.CpuMs,
-			&i.Subject,
-			&i.ConnectionCost,
-			&i.BillingBasis,
-			&i.Model,
-			&i.AccountID,
-			&i.IsApiConn,
-			&i.TokensInput,
-			&i.TokensOutput,
-			&i.TokensCacheRead,
-			&i.TokensCacheWrite,
-			&i.At,
-		); err != nil {
+		var i RunnerRunsByKindRow
+		if err := rows.Scan(&i.HostID, &i.Kind, &i.Runs); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

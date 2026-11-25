@@ -2783,7 +2783,7 @@ func (v *RunnerRun) Validate() error {
 	return nil
 }
 
-// RunnerSpend: One host and execution kind over a UTC period: today or month (month includes today), by when each run ran (end, else start). measured: runs with recorded totals; sums cover only those.
+// RunnerSpend: Spend per host and period (today, month: UTC). kind "all": the host's runs, tokens and cost from execution_spend (as spend_summary by host); kind of an execution (today only): that kind's run count, no tokens or cost. measured, wallMs and cpuMs are not summed (0, null).
 type RunnerSpend struct {
 	Cost     []CostFigure `json:"cost"`
 	CpuMs    *float64     `json:"cpuMs"`
