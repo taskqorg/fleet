@@ -43,7 +43,8 @@ FROM summary;
 
 -- name: ListSpendWakeGateway :exec
 -- The gateway commits calls independently. Wake spend readers once per project
--- or projectless conversation after the pass, keeping individual tool rows silent.
+-- or projectless conversation after the pass, keeping individual tool rows silent;
+-- and once per connection the pass saw a call of, so access_status shows its latest call.
 WITH published AS (
  INSERT INTO change (kind, id, project_id, session_id, op)
  SELECT DISTINCT 'execution', coalesce(e.project_id, e.session_id), e.project_id,
@@ -52,5 +53,11 @@ WITH published AS (
  WHERE e.id = ANY(sqlc.arg(call_ids)::text[]) AND e.system_actor IS NULL
    AND (e.project_id IS NOT NULL OR e.session_id IS NOT NULL)
  RETURNING id
+), connections AS (
+ INSERT INTO change (kind, id, op, holder)
+ SELECT DISTINCT 'api-connection', c.id, 'U', c.holder
+ FROM execution e JOIN api_connection c ON c.name = e.data->>'connection'
+ WHERE e.id = ANY(sqlc.arg(call_ids)::text[])
+ RETURNING id
 )
-SELECT fleet_enqueue_wake('fleet_change', '') WHERE EXISTS (SELECT 1 FROM published);
+SELECT fleet_enqueue_wake('fleet_change', '') WHERE EXISTS (SELECT 1 FROM published) OR EXISTS (SELECT 1 FROM connections);

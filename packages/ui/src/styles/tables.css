@@ -66,7 +66,7 @@
   .reflow { display: grid; grid-template-columns: var(--reflow-cols); font-size: var(--font-size-sm); }
   .reflow-head, .reflow-row, .reflow-detail { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; column-gap: var(--space-3); }
   .reflow-head { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--line); color: var(--fg-muted); font-weight: var(--font-weight-medium); }
-  .reflow-row { align-items: start; padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); }
+  .reflow-row { scroll-margin-block-start: var(--space-3); align-items: start; padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); }
   .reflow-head + .reflow-row { border-top: 0; }
   .reflow-row > * { min-inline-size: 0; overflow-wrap: anywhere; }
   .reflow-row.opens { cursor: pointer; }

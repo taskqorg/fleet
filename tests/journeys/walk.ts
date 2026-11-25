@@ -9,6 +9,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Page } from 'playwright';
+import { guardOutput, prodContext, redact } from '../../scripts/prod-browser.ts';
+
+guardOutput();
 
 const origin = new URL(process.argv[2] ?? 'https://fleet.ufobe.com').origin;
 const size = /^(\d+)x(\d+)$/.exec(process.argv[3] ?? '1440x900') ?? (console.error('viewport must be WIDTHxHEIGHT; using 1440x900'), ['', '1440', '900']);
@@ -183,8 +186,8 @@ type Outcome = { id: string; title: string; status: string; lines: string[]; err
 
 async function walk(page: Page, j: Journey): Promise<Outcome> {
   const errors: string[] = [], failed: string[] = [], lines: string[] = [], gaps: string[] = [];
-  const onConsole = (m: { type(): string; text(): string }) => { if (m.type() === 'error') errors.push(m.text().slice(0, 160)); };
-  const onPageError = (e: Error) => errors.push(e.message.slice(0, 160));
+  const onConsole = (m: { type(): string; text(): string }) => { if (m.type() === 'error') errors.push(redact(m.text()).slice(0, 160)); };
+  const onPageError = (e: Error) => errors.push(redact(e).slice(0, 160));
   const onFailed = (r: { url(): string; failure(): { errorText: string } | null }) => { if (r.url().startsWith(origin) && !r.url().includes('/api/stream') && !r.failure()?.errorText.includes('ERR_ABORTED')) failed.push(`${r.failure()?.errorText} ${new URL(r.url()).pathname}`); };
   const onResponse = (r: { status(): number; url(): string }) => { if (r.status() >= 400) failed.push(`${r.status()} ${new URL(r.url()).pathname}`); };
   page.on('console', onConsole); page.on('pageerror', onPageError); page.on('requestfailed', onFailed); page.on('response', onResponse);
@@ -198,7 +201,7 @@ async function walk(page: Page, j: Journey): Promise<Outcome> {
       const note = await run(ctx);
       lines.push(`- ok ${name}${note ? ` (${note})` : ''}${gaps.slice(before).map(g => `; gap: ${g}`).join('')}`);
     } catch (e) {
-      const s = e instanceof Stop ? e : new Stop(String((e as Error).message ?? e).split('\n')[0], 'broken');
+      const s = e instanceof Stop ? e : new Stop(redact(e), 'broken');
       lines.push(`- ${s.kind === 'write' ? 'stop' : 'no'} ${name}: ${s.message}${gaps.slice(before).map(g => `; gap: ${g}`).join('')}`);
       status = s.kind === 'write' ? (gaps.length ? `partly (read-only stop at ${name})` : `reached up to ${name} (read-only)`)
         : s.kind === 'missing' && i === 0 ? `not possible yet: ${s.message}` : `partly (stops at: ${name})`;
@@ -216,9 +219,8 @@ if (!cred) { out.push('', 'Not run: no Access service token (CF_ACCESS_CLIENT_ID
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 try {
   browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width, height }, extraHTTPHeaders: { 'CF-Access-Client-Id': cred.id, 'CF-Access-Client-Secret': cred.secret } });
   // The token goes only to this origin: other hosts are not opened.
-  await context.route(u => new URL(u).origin !== origin, r => r.abort());
+  const context = await prodContext(browser, cred, { viewport: { width, height } }, origin);
   const results: Outcome[] = [];
   let version = '';
   for (const j of JOURNEYS) {
@@ -238,7 +240,7 @@ try {
     if (r.failed.length) out.push(`- failed requests: ${uniq(r.failed).map(e => `\`${e}\``).join('; ')}`);
   }
 } catch (e) {
-  out.push('', `Walk stopped: ${String((e as Error).message ?? e).split('\n')[0]}`);
+  out.push('', `Walk stopped: ${redact(e)}`);
 } finally {
   await browser?.close().catch(() => {});
 }

@@ -1,5 +1,5 @@
 // Semantic data tables (OR-25, modern-web-guidance responsive-table & sortable-table), tabs, and disclosures.
-import { createEffect, createMemo, createSignal, For, onSettled, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import { Menu, MenuContent, MenuItem, MenuTrigger, Tabs, TabsList, TabsTab } from '@ui-sdk/solid';
 import { Icon } from './primitives.tsx';
@@ -215,6 +215,9 @@ export function Disclosure(p: {
   );
 }
 
+// The address whose open row was last scrolled into view (ReflowRow).
+let revealedAt = '';
+
 /** Where a ReflowRow cell goes in a narrow frame: beside the name (state), on the second line (meta), or last on it (time). */
 export type ReflowPart = 'state' | 'meta' | 'time';
 
@@ -235,14 +238,28 @@ export function ReflowTable(p: { label: string; head: string[]; cols: string; ch
   );
 }
 
-/** One row of a ReflowTable: the whole row opens it (OR-26) and its name is the row's button; while `selected`, `detail` shows under it at full width. */
+/** One row of a ReflowTable: the whole row opens it (OR-26) and its name is the row's button; while `selected`, `detail` shows under it at full width; a row selected when it appears scrolls into view and takes the focus. */
 export function ReflowRow(p: {
   name: string; lead?: JSX.Element; selected?: boolean; onOpen?: () => void;
   cells: { part: ReflowPart; el: JSX.Element }[]; detail?: JSX.Element;
 }) {
+  // A row that is open when it appears (a deep link such as /system/access?server=pds9, a reload) scrolls to the top of
+  // its column and takes the focus, so its detail is on screen at every width; a row opened by a click stays put.
+  let row: HTMLDivElement | undefined;
+  onSettled(() => {
+    // Once per address: a row that remounts on the same link (a facet switch and back) does not jump again.
+    const at = location.pathname + location.search;
+    if (!untrack(() => p.selected) || revealedAt === at) return;
+    revealedAt = at;
+    const frame = requestAnimationFrame(() => {
+      row?.scrollIntoView({ block: 'start' });
+      row?.querySelector<HTMLElement>('button.t-label')?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  });
   return (
     <>
-      <div class={['reflow-row', { sel: !!p.selected, opens: !!p.onOpen }]} role="row" onClick={() => p.onOpen?.()}>
+      <div ref={el => { row = el; }} class={['reflow-row', { sel: !!p.selected, opens: !!p.onOpen }]} role="row" onClick={() => p.onOpen?.()}>
         <span class="reflow-name" role="rowheader">
           {p.lead}
           <Show when={p.onOpen} keyed fallback={<span class="t-label">{p.name}</span>}>
