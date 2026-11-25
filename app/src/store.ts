@@ -326,7 +326,9 @@ export function startStore() {
   const reloadMounted = (retryOnly = false) => {
     for (const [key, e] of lists) {
       const s = e.state.peek();
-      if (e.mounted && !e.loading && (!retryOnly || !s || s.error)) {
+      // A hidden tab settles its lists when it shows again (the visibility handler below).
+      if (e.mounted && !retryOnly && hiddenTab()) e.dirty = true;
+      else if (e.mounted && !e.loading && (!retryOnly || !s || s.error)) {
         void loadList(e.kind, key, e.view, { quiet: !!s?.at });
       } else if (!e.mounted && !retryOnly) e.dirty = true;
     }
