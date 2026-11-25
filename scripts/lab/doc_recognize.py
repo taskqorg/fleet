@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Steps of the doc-recognize pipelines: classify and extract a model's documents (DAM, LBG2-124).
 
-The example's input files (one model's documents: images) are in FLEET_INPUT_DIR/example/. One prompt serves every
+The example's input files (one model's documents: images, or PDFs read as their first page) are in
+FLEET_INPUT_DIR/example/. One prompt serves every
 pipeline, so variants differ only in the model and the route (subscription agent, API key).
 
 request  --provider anthropic|openai|google [--only FROM]
          writes output.json {files, body}: the provider request body (without the model, which the api step names)
-         with the prompt and the images, each
-         scaled (sips) so the whole call stays under the gateway's 1 MiB. --only FROM keeps the files whose type in
+         with the prompt and the images, scaled
+         (sips) when needed so the whole call stays under the gateway's 1 MiB; a set too big at 400 px is refused. --only FROM keeps the files whose type in
          step FROM's result is an identity document (id_card, passport, selfie_with_id; every file when none is) and adds
          FROM's classification to the prompt (the second step of a two-step pipeline).
 prompt   writes output.json {prompt, files} for an agent step, which reads the images itself.
@@ -23,6 +24,7 @@ import argparse, base64, json, os, pathlib, re, subprocess, sys, tempfile
 TYPES = ('id_card', 'passport', 'selfie_with_id', 'model_release', '2257_form', 'other')
 IDS = ('id_card', 'passport', 'selfie_with_id')
 IMAGES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp'}
+DOCS = set(IMAGES) | {'.pdf'}  # a PDF is read as its first page, made a JPEG with sips
 BUDGET = 900_000  # base64 bytes of all images in one call; the gateway takes at most 1 MiB per call
 
 PROMPT = """You review the identity and consent documents of one adult model for a content library. The files are: {files}.
@@ -67,31 +69,39 @@ def write_output(value): (out() / 'output.json').write_text(json.dumps(value, en
 
 def files():
     root = inp() / 'example'
-    found = sorted(p for p in root.rglob('*') if p.is_file() and p.suffix.lower() in IMAGES) if root.is_dir() else []
+    found = sorted(p for p in root.rglob('*') if p.is_file() and p.suffix.lower() in DOCS) if root.is_dir() else []
     if not found:
-        sys.exit('the example has no image files')
+        sys.exit('the example has no image or PDF files')
     return root, found
 
 
+def jpeg(src, dst, side):
+    subprocess.run(['sips', '-s', 'format', 'jpeg', '-s', 'formatOptions', '70', '-Z', str(side), str(src), '--out', str(dst)],
+                   check=True, stdout=subprocess.DEVNULL)
+
+
 def scaled(paths):
-    """Each image as (media type, base64), scaled down until all fit in BUDGET."""
-    side = 1600
+    """Each file as (media type, base64): as it is while all fit in BUDGET, else every file a JPEG scaled down until they
+    do. A set that does not fit even at 400 px is refused: split it into several runs."""
+    side = None
     while True:
         res, total = [], 0
         for p in paths:
-            data, media = p.read_bytes(), IMAGES[p.suffix.lower()]
-            if len(data) * 4 // 3 > BUDGET // len(paths):
+            if side is None and p.suffix.lower() in IMAGES:
+                data, media = p.read_bytes(), IMAGES[p.suffix.lower()]
+            else:
                 with tempfile.TemporaryDirectory() as t:
                     small = pathlib.Path(t) / 'x.jpg'
-                    subprocess.run(['sips', '-s', 'format', 'jpeg', '-s', 'formatOptions', '70', '-Z', str(side), str(p), '--out', str(small)],
-                                   check=True, stdout=subprocess.DEVNULL)
+                    jpeg(p, small, side or 1600)
                     data, media = small.read_bytes(), 'image/jpeg'
             b = base64.b64encode(data).decode()
             res.append((media, b))
             total += len(b)
-        if total <= BUDGET or side <= 500:
+        if total <= BUDGET:
             return res
-        side = int(side * 0.75)
+        if side == 400:
+            sys.exit('%d files do not fit one call even at 400 px (%d bytes); split them into several runs' % (len(paths), total))
+        side = 1600 if side is None else max(400, int(side * 0.75))
 
 
 def answer_of(step):
@@ -113,10 +123,16 @@ def answer_of(step):
                 if isinstance(part, dict) and 'text' in part and not part.get('thought'):
                     texts.append(part['text'])
     text = '\n'.join(texts)
-    m = re.search(r'\{.*\}', text, re.S)
-    if not m:
-        sys.exit('the answer holds no JSON object: ' + text[:300])
-    return json.loads(m.group(0))
+    start = text.find('{')
+    while start >= 0:
+        try:
+            value, _ = json.JSONDecoder().raw_decode(text, start)
+            if isinstance(value, dict):
+                return value
+        except ValueError:
+            pass
+        start = text.find('{', start + 1)
+    sys.exit('the answer holds no JSON object: ' + text[:300])
 
 
 def norm_date(v):
@@ -170,7 +186,7 @@ def request(args):
         content = [{'type': 'input_text', 'text': prompt}]
         for n, (media, b) in zip(names, imgs):
             content += [{'type': 'input_text', 'text': 'File ' + n + ':'}, {'type': 'input_image', 'image_url': 'data:%s;base64,%s' % (media, b)}]
-        body = {'input': [{'role': 'user', 'content': content}], 'max_output_tokens': 6000}
+        body = {'input': [{'role': 'user', 'content': content}], 'max_output_tokens': 16000, 'reasoning': {'effort': 'low'}}
     else:
         parts = [{'text': prompt}]
         for n, (media, b) in zip(names, imgs):
@@ -186,6 +202,13 @@ def prompt(args):
     agent = ('The files are in $FLEET_INPUT_DIR/example/. Look at every image yourself (open each file with your image '
              'viewing tool); do not run OCR programs or send the files anywhere. Write the JSON object to '
              '$FLEET_OUTPUT_DIR/output.json and stop.\n\n')
+    pdfs = [p for p in paths if p.suffix.lower() == '.pdf']
+    if pdfs:
+        (out() / 'pages').mkdir(exist_ok=True)
+        for p in pdfs:
+            jpeg(p, out() / 'pages' / (p.name + '.jpg'), 2000)
+        agent += ('PDF files are given as JPEG images of their first page: $FLEET_INPUT_DIR/prompt/pages/<file>.jpg; '
+                  'answer with the original file name.\n\n')
     write_output({'files': names, 'prompt': agent + PROMPT.format(files=', '.join(names), extra='')})
 
 

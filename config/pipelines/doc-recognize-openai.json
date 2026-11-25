@@ -11,7 +11,8 @@
       "arguments": {
         "input": "${steps.request.output.body.input}",
         "max_output_tokens": "${steps.request.output.body.max_output_tokens}",
-        "model": "gpt-6.2-sol"
+        "model": "gpt-6.2-sol",
+        "reasoning": "${steps.request.output.body.reasoning}"
       },
       "connection": "openai-2",
       "id": "call",
