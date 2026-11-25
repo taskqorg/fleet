@@ -162,11 +162,10 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 		if e.State == db.ExecutionStateFailed && at >= since.UnixMilli() {
 			out.Counts.FailedSince++
 		}
+		// The plain cause of its problem whatever its state: an open run with a binding problem names it too.
 		b := contract.HomeBlocker{Kind: contract.HomeBlockerKindRun, Cause: "run", Text: "", HostId: e.HostID, At: at}
-		if e.State == db.ExecutionStateFailed || e.State == db.ExecutionStateCancelled {
-			if c := contract.PlainCause(deref(e.Problem), ""); c != nil {
-				b.Cause, b.Text = c.Cause, c.Text
-			}
+		if c := contract.PlainCause(deref(e.Problem), ""); c != nil {
+			b.Cause, b.Text = c.Cause, c.Text
 		}
 		add("run:"+b.Cause+":"+deref(e.HostID), b)
 	}
@@ -186,17 +185,43 @@ func homeView(q *Request, r *contract.HomeViewRequest) (contract.HomeViewReply, 
 	}
 	out.Bots = bots.Bots
 
-	// Pull requests merged since the visit: delivery's items, counted here.
-	pub, err := publishingStatus(q, &contract.PublishingStatusRequest{ProjectIds: r.ProjectIds, ExcludeProjectIds: r.ExcludeProjectIds})
+	// Pull requests merged since the visit: publishing_status's items (delivery's, then the publishing records), counted
+	// here from memory without building the projects' publishing capabilities.
+	_, allowed, err := publishingProjectFilter(q, nil, r.ProjectIds, r.ExcludeProjectIds)
 	if err != nil {
 		return out, err
 	}
-	for _, it := range pub.Items {
-		if it.Merged != nil && textMs(*it.Merged) >= since.UnixMilli() {
-			out.Counts.MergedSince++
+	out.Counts.MergedSince = homeMerged(allowed, since)
+	return out, nil
+}
+
+// homeMerged: the pull requests of allowed projects merged since since, one per project, repository and number, as
+// publishingStatus merges delivery's items with the publishing records (a record without a merge time keeps the item's).
+func homeMerged(allowed map[string]bool, since time.Time) int64 {
+	merged := map[string]string{}
+	key := func(project, repo string, n int64) string { return project + "|" + strings.ToLower(repo) + "#" + itoa(int(n)) }
+	deliveryMu.Lock()
+	last := deliveryLast
+	deliveryMu.Unlock()
+	for _, it := range deliveryReply(last, func(p string) bool { return allowed[p] }).Items {
+		if allowed[it.ProjectId] {
+			merged[key(it.ProjectId, it.Repo, it.Number)] = deref(it.Merged)
 		}
 	}
-	return out, nil
+	pubMu.Lock()
+	for _, rec := range pubRecords {
+		if allowed[rec.ProjectId] && rec.Merged != nil {
+			merged[key(rec.ProjectId, rec.Repo, rec.Number)] = *rec.Merged
+		}
+	}
+	pubMu.Unlock()
+	var n int64
+	for _, m := range merged {
+		if m != "" && textMs(m) >= since.UnixMilli() {
+			n++
+		}
+	}
+	return n
 }
 
 // homeDone: the succeeded sessions of the scope with activity since today and since since.

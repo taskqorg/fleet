@@ -46,6 +46,18 @@ func TestHomeView(t *testing.T) {
 	exec(`INSERT INTO question (id, kind, session_id, execution_id, text, asked_at) VALUES ('hv-q', 'agent_question', 'hv-run', 'hv-run-r', 'Merge it?', $1)`, now.Add(-5*time.Minute))
 	exec(`INSERT INTO question (id, kind, text, data) VALUES ('hv-prob', 'agent_question', 'Host mac is saturated.', '{"cause":"problem:host:mac:saturated:1"}')`)
 
+	// Two pull requests merged, one since the visit.
+	deliveryMu.Lock()
+	saved := deliveryLast
+	deliveryLast = deliveryState{source: contract.DeliverySourceKey, repos: map[string]*deliveryRepo{
+		"o/a": {projects: []string{"fleet"}, items: []contract.DeliveryItem{
+			{ProjectId: "fleet", Repo: "o/a", Number: 1, Merged: ptr(timeText(now.Add(-time.Hour)))},
+			{ProjectId: "fleet", Repo: "o/a", Number: 2, Merged: ptr(timeText(now.Add(-3 * time.Hour)))},
+		}},
+	}}
+	deliveryMu.Unlock()
+	t.Cleanup(func() { deliveryMu.Lock(); deliveryLast = saved; deliveryMu.Unlock() })
+
 	var got contract.HomeViewReply
 	e.opInto(t, "home_view", map[string]any{"dayStart": now.Add(-12 * time.Hour).UnixMilli()}, e.ownerHeaders(), &got)
 
@@ -61,6 +73,10 @@ func TestHomeView(t *testing.T) {
 	}
 	if got.Counts.DoneToday != 2 || got.Counts.DoneSince != 1 || got.Counts.VisitAt == nil || *got.Counts.VisitAt != visit.UnixMilli() {
 		t.Fatalf("counts: done today 2 and 1 since the visit: %+v", got.Counts)
+	}
+	// The test store has no project definitions, so the merged count is checked for an allowed project directly.
+	if n, other := homeMerged(map[string]bool{"fleet": true}, visit), homeMerged(map[string]bool{"cs": true}, visit); n != 1 || other != 0 {
+		t.Fatalf("merged since the visit: %d (want 1), other project %d (want 0)", n, other)
 	}
 	// The failed session's run needs a look too.
 	if got.Counts.FailedSince != 3 {
