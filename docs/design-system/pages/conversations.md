@@ -25,6 +25,8 @@ Three columns ([OR-24](../owner-rules.md)): navigation, control column, work are
 * **Empty filter:** the list says what the filter hides and offers to clear it.
 * **Archived:** the archive toggle in the list header, as built.
 * **Phone (390 px):** with nothing open, the Waiting for you question cards lead, answered in place, and the list follows under them (the work area is hidden at this width, so the cards move to the top of the list; board state 5). A row opens the session full screen; the bottom bar keeps Conversations highlighted ([OR-60](../owner-rules.md)).
+* **Phone row (owner "строка ок", 2026-11-26):** the title takes the row's width and wraps to two lines; the time stays rightmost on line 1 ([OR-64](../owner-rules.md)); line 2 holds the agent mark (under the state icon) and the now line; the code is not shown on the phone (it is in the session head and in search).
+* **A bot's threads (owner pick B, 2026-11-26):** a bot's Home conversation lists its work-item threads under its row: Open (an empty-state line when none), Idle, and "Archived · N" folded (idle 7+ days), each newest first, with the timer's quiet checks at the foot. A thread opens the conversation with `?thread=<key>` and "HAL0 › <thread>" in its head; on a phone it opens full screen. A bot with only its main thread lists none ([session view](session.md#layout), [fleet-conversations.md](../../designs/fleet-conversations.md#work-item-threads)).
 
 ### Owner decision (target)
 

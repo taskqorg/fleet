@@ -637,7 +637,16 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Owner's ask:** every HAL0 turn attached `mcp-lifecycle.jsonl` files, a bot's messages all ran in one stream, and tool calls said too little in short form. "Результаты — это картинки, видео"; technical JSON hidden or in a very short form.
 * **Choice:** "2 2 2" from the audit's options, drawn and approved as drawn ("ok").
   * **a2.** MCP receipts get role `diagnostic`: hidden from the thread and Results, deleted after 7 days. Pictures and videos show inline; files show as chips; no preview duplicates.
-  * **b2.** One Home session per bot, with a thread per work item. Each thread continues its own native session and is parked between events; empty ticks fold into a timer row.
+  * **b2.** One Home session per bot, with a thread per work item. Each thread continues its own native session and is idle between events; empty ticks fold into a timer row.
   * **c2.** Tool chips per kind of call.
 * **Where:** spec in [session.md](pages/session.md#layout), [tool-line.md](controls/tool-line.md), [transcript-viewer.md](controls/transcript-viewer.md) and [fleet-conversations.md](../designs/fleet-conversations.md#work-item-threads); canvas [screens/session.bl](board/screens/session.bl), frame "Conversations v2".
 * **Reads and writes:** `session_view` (threads, triggers), `thread_entries {session, thread}`, `message_send {thread}`, `tool_output`; agents use the same ops.
+
+## 2026-11-26: Bot threads under the bot in the Conversations list; the phone row; Idle, not Parked
+
+* **Owner's ask:** the thread-list column of the session view (#967) was rejected: no mockup first, the term "Parked" for threads that did nothing, the bot's name cut to "H…", the transcript squeezed beside the Conversations list. "Park" in Fleet means host stickiness only.
+* **Choice:** "B, строка ок". Two options were drawn from a prod walk on real data: A, a thread picker in the session head; B, threads nested under the bot in the Conversations list. B was picked, together with the phone list row.
+  * A bot's threads sit under its row: Open (with an empty-state line), Idle, and "Archived · N" (idle 7+ days, folded). The timer's quiet checks are at the foot. A thread opens with `?thread=<key>` and "HAL0 › <thread>" in the head. Without a pick, the newest Open thread shows, else Main. A bot with only its main thread lists none.
+  * Phone row: the title wraps to two lines and the time stays rightmost on line 1. Line 2 holds the agent mark and the now line. The code is hidden.
+* **Where:** [conversations.md](pages/conversations.md#layout), [session.md](pages/session.md#layout), [fleet-conversations.md](../designs/fleet-conversations.md#work-item-threads); canvas [screens/conversations.bl](board/screens/conversations.bl), frames "Thread list v2 under the bot" and "Phone list row".
+* **Process:** walk the live pages on real data before drawing and after each deploy ([design board](README.md#design-board), steps 2 and 5).

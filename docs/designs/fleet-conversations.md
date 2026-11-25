@@ -132,9 +132,9 @@ A session can hold several work-item threads (Conversations v2, owner pick b2, 2
 *   **Key.** A thread key names the work item: `task:<id>`, `question:<id>` (a question without a task), `execution:<id>` (a run without a task), `delivery:<id>`, `fleet` and `fleet:<kind>` (hosts, limits and other Fleet signals). A question or a run of a task belongs to its task's thread. The empty key is the session's main thread: person messages without a thread, timed wakes and Run now.
 *   **Where it lives.** The key is the column `thread` of `message` and `execution` (migration 109, `''` the main thread, indexed by `(session_id, thread, seq)`) and the field `thread` of the queued message. `message_send` takes an optional `thread`: a person continues a work-item thread.
 *   **Native session per thread.** A thread's turns continue their own native session: the continuation key is the session's plus `#<thread>`, kept in `nativeSessions`. A new thread starts fresh. The session's fork and pending handoff belong to the main thread.
-*   **Parked and resumed.** A thread with no new event has no turn: it is parked. The next event on its item resumes its native session.
+*   **Open, Idle, Archived.** A thread is Open while it has a queued or running turn or its item is unfinished, else Idle: it has no turn, and the next event on its item resumes its native session. An Idle thread with no activity for 7 days shows as Archived (folded into one row of the list) until a new event brings it back to Open. "Park" is not a thread state: in Fleet it means only host stickiness, a session keeping the host it started on.
 *   **One turn per item.** A trigger's changes are grouped by item in the order the items first changed. Several changes of one item in one check are one turn. A session target gets one queued message per item; a bot target gets an admitted wake for the first item and queued Home messages for the others, since a bot runs one turn at a time ([triggers, Pass](fleet-triggers.md#pass)).
-*   **Reading.** The session view lists the threads with their last activity, state (open or parked) and unread count, and shows one thread at a time. The data comes from the data layer's session view.
+*   **Reading.** The Conversations list shows a bot's threads under its row (owner pick B, 2026-11-26): Open (with an empty-state line when none), Idle, and Archived folded into one row; a thread opens the conversation with `?thread=<key>`, and the head reads "HAL0 › <thread>". Without a pick the conversation shows the newest Open thread, else Main. A bot with only its main thread lists none. The data comes from the data layer's session view.
 
 ### Read path: `thread_entries`
 
@@ -170,7 +170,7 @@ session_view({ sessionId, executionsLimit?, executionsBefore? })
 *   `head`: code, title (set or generated, else the first message's start), state and active run (the newest turns), project and its code, bot, archived, the agent profile as the composer chips show it, the latest run's error line and the session's cost.
 *   `composer`: the session that receives the next message (`thread_composer`'s rule), its running execution and agent, or why none can receive one.
 *   `questions`: open questions of the session and of the composer target.
-*   `threads`: each work-item thread with its item's title, code and state, its turns, last activity, open or parked, and the viewer's unread turns (since the viewer's `person_visit` of page `thread:<session>:<thread>`).
+*   `threads`: each work-item thread with its item's title, code and state, its turns, last activity, Open or Idle, and the viewer's unread turns (since the viewer's `person_visit` of page `thread:<session>:<thread>`).
 *   `triggers` and `botTriggers`: `trigger_list` of the session and of its bot. `context`: `session_context`.
 *   `executions`: the newest 20 turns (at most 200) as rows, paged with `executionsBefore`, over `execution_session_turns` (migration 111). A row holds no snapshot, dispatch or configuration; `execution_get` has the whole record.
 
