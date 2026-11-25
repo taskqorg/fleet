@@ -652,7 +652,7 @@ function VersionPanel(p: { v: VersionInfo; at: { left: number; bottom: number };
         <b>Versions</b>
         <span class="muted">
           <Show when={p.v.checkedAt != null} fallback={p.v.checkError ? `could not check: ${p.v.checkError}` : 'checking…'}>
-            {p.v.checkError ? 'could not check · last checked ' : 'checked '}<Ago t={p.v.checkedAt!} /> ago
+            {p.v.checkError ? 'could not check · last checked ' : 'checked '}<Ago t={p.v.checkedAt!} />
           </Show>
         </span>
       </div>
