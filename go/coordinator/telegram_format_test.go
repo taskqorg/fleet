@@ -28,6 +28,8 @@ func TestTelegramRich(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
 		{"**v `1.2`** ok", "**v `1.2`** ok"},
 		{"a <b> & `<c>`", "a &lt;b> &amp; `<c>`"},
+		{`already \$5`, `already \$5`},
+		{"fee $2,52 or **$0,05 via BEP20**, `$x`", `fee \$2,52 or **\$0,05 via BEP20**, ` + "`$x`"},
 		{"line one\nline two\n\n- item\n- item", "line one  \nline two\n\n- item\n- item"},
 		{"#89 stays open\n## Real", `\#89 stays open` + "\n## Real"},
 		{"see docs/designs/fleet-telegram.md, and fleet.md.", "see `docs/designs/fleet-telegram.md`, and `fleet.md`."},
