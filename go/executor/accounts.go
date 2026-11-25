@@ -298,7 +298,7 @@ func probeCmd(x registryEntry, args ...string) *exec.Cmd {
 	if x.ReleaseManaged && x.Harness == "claude" {
 		setEnv(c, "DISABLE_AUTOUPDATER", "1")
 	}
-	passEnv(c, "PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR")
+	passEnv(c, nativeEnvAllow...)
 	setEnv(c, "HOME", x.Home)
 	env := nativeEnv(x)
 	if env.CODEXHOME != nil {
@@ -323,8 +323,8 @@ func probeCmd(x registryEntry, args ...string) *exec.Cmd {
 
 // codexReadLimits: codex app-server, initialize, then account/rateLimits/read.
 func codexReadLimits(x registryEntry) (M, error) {
-	// Fleet's fixed isolation: no user MCP servers, hooks, plugins or apps start for a limits read.
-	r, err := rpcExchange(probeCmd(x, "app-server", "-c", "mcp_servers={}", "--disable", "hooks", "--disable", "plugins", "--disable", "apps", "--disable", "memories"), []M{
+	// Fleet's fixed isolation (codexIsolation), as for a run: no user MCP servers, hooks, plugins or apps start for a limits read.
+	r, err := rpcExchange(probeCmd(x, codexAppServerArgs()...), []M{
 		{"id": 1, "method": "initialize", "params": M{"clientInfo": M{"name": "fleet", "version": "0.1.0"}}},
 		{"method": "initialized"},
 		{"id": 2, "method": "account/rateLimits/read"},
@@ -463,7 +463,7 @@ func probeModels(x registryEntry) []string {
 	var list any
 	switch x.Harness {
 	case "codex":
-		r, err := rpcExchange(probeCmd(x, "app-server", "-c", "mcp_servers={}", "--disable", "hooks", "--disable", "plugins", "--disable", "apps", "--disable", "memories"), []M{
+		r, err := rpcExchange(probeCmd(x, codexAppServerArgs()...), []M{
 			{"id": 1, "method": "initialize", "params": M{"clientInfo": M{"name": "fleet", "version": "0.1.0"}}},
 			{"method": "initialized"},
 			{"id": 2, "method": "model/list", "params": M{}},

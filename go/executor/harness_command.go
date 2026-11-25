@@ -130,6 +130,32 @@ func (h harness) Command(dir, native string, p map[string]any) (*exec.Cmd, []byt
 	return commandRegistry(dir, native, p, registry)
 }
 
+// nativeEnvAllow: the host variables every native harness process (run, probe) inherits; everything else is dropped.
+var nativeEnvAllow = []string{"PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR"}
+
+// codexIsolation: Fleet's fixed Codex isolation, the one list for every codex launch (run and account probes). Only
+// -c/--enable/--disable pairs, which both `codex exec` and `codex app-server` accept, so codexAppServer keeps them all.
+var codexIsolation = []string{
+	"-c", "project_doc_max_bytes=0", "-c", "skills.include_instructions=false", "-c", "mcp_servers={}",
+	"--disable", "memories", "--disable", "hooks", "--enable", "skip_host_skill_discovery",
+	"-c", `forced_login_method="chatgpt"`, "-c", `approval_policy="never"`, "-c", `sandbox_mode="workspace-write"`,
+	"-c", "sandbox_workspace_write.network_access=false",
+	"--disable", "apps", "--disable", "plugins", "--disable", "browser_use", "--disable", "computer_use", "--disable", "image_generation",
+}
+
+// codexExecOnly: `codex exec` flags with no app-server form. Codex 0.172 `codex app-server` (and top-level `codex`)
+// refuses each one ("unexpected argument"), and none is a config key, so -c cannot carry it:
+//   - --skip-git-repo-check only lifts exec's own refusal to start outside a Git repository; app-server has no such
+//     check, so there is nothing to skip.
+//   - --ignore-user-config (skip $CODEX_HOME/config.toml): app-server loads that file as its "user" layer (config/read
+//     lists it). CODEX_HOME is the Fleet-owned private account home, and codexIsolation's -c values outrank that layer.
+//   - --ignore-rules (skip user and project execpolicy .rules): app-server has no switch; approval_policy="never"
+//     turns any rule that asks for approval into a refusal.
+var codexExecOnly = []string{"--ignore-user-config", "--ignore-rules", "--skip-git-repo-check"}
+
+// codexAppServerArgs: `app-server` with codexIsolation, for launches that start the app server directly (probes).
+func codexAppServerArgs() []string { return append([]string{"app-server"}, codexIsolation...) }
+
 // codexExec: `codex exec --json` with Fleet's fixed policy flags.
 func codexExec(dir, native, text, home, account, exe string) (*exec.Cmd, error) {
 	for _, p := range []string{home, account} {
@@ -160,15 +186,13 @@ func codexExec(dir, native, text, home, account, exe string) (*exec.Cmd, error) 
 		return nil, err
 	}
 	c := newCmd(exe, dir)
-	passEnv(c, "PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR")
+	passEnv(c, nativeEnvAllow...)
 	setEnv(c, "HOME", home)
 	setEnv(c, "CODEX_HOME", account)
-	c.Args = append(c.Args, "exec", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--json",
-		"-c", "project_doc_max_bytes=0", "-c", "skills.include_instructions=false", "-c", "mcp_servers={}",
-		"--disable", "memories", "--disable", "hooks", "--enable", "skip_host_skill_discovery",
-		"-c", `forced_login_method="chatgpt"`, "-c", `approval_policy="never"`, "-c", `sandbox_mode="workspace-write"`,
-		"-c", "sandbox_workspace_write.network_access=false",
-		"--disable", "apps", "--disable", "plugins", "--disable", "browser_use", "--disable", "computer_use", "--disable", "image_generation")
+	c.Args = append(c.Args, "exec")
+	c.Args = append(c.Args, codexExecOnly...)
+	c.Args = append(c.Args, "--json")
+	c.Args = append(c.Args, codexIsolation...)
 	if native != "" {
 		c.Args = append(c.Args, "resume", native)
 	}
@@ -340,7 +364,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		setEnv(c, "DISABLE_AUTOUPDATER", "1")
 	}
 	setEnv(c, "HOME", home)
-	passEnv(c, "PATH", "TMPDIR", "LANG", "SSL_CERT_FILE", "SSL_CERT_DIR")
+	passEnv(c, nativeEnvAllow...)
 	if !hasText {
 		return fail("missing text")
 	}
