@@ -1,0 +1,60 @@
+# Step 5 of the host update procedure (docs/designs/fleet-host-updates.md): merge a qualified component pin proposal.
+# The coordinator posts code-review on an automation/<kind>-pins head after its diff review and host trials passed
+# (github-pins, a token that may write statuses only). That status raises this event; this run checks the proposal
+# and its three statuses, turns on auto-merge with the workflow token and, because that token's enqueue starts no
+# merge_group run, dispatches ci and review-gate on the queue's group branch when none started there.
+name: Managed component pins (merge)
+on:
+  status:
+  # A head whose statuses were all posted before this workflow ran (or whose run timed out) is merged by hand dispatch.
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Head commit of the qualified proposal
+        required: true
+permissions: {}
+concurrency:
+  group: pins-merge-${{ github.event.sha || inputs.sha }}
+  cancel-in-progress: false
+jobs:
+  merge:
+    if: github.event_name == 'workflow_dispatch' || (github.event.context == 'code-review' && github.event.state == 'success')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+      statuses: read
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.sha || inputs.sha }}
+        run: |
+          set -euo pipefail
+          # Only an open proposal of this repository whose head is this commit.
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '[.[] | select(.state == "open" and (.head.ref | test("^automation/[a-z]+-pins$")) and .head.repo.full_name == env.GITHUB_REPOSITORY and .base.ref == "main" and .head.sha == env.SHA)][0].number // empty')
+          [ -n "$pr" ] || { echo "not a pin proposal head"; exit 0; }
+          states=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/status" --jq '[.statuses[] | {(.context): .state}] | reverse | add')
+          for c in qualify-offline qualify-hosts code-review; do
+            [ "$(jq -r --arg c "$c" '.[$c] // ""' <<< "$states")" = success ] || { echo "$c is not success"; exit 0; }
+          done
+          gh pr merge "$pr" -R "$GITHUB_REPOSITORY" --auto
+          declare -A dispatched=()
+          for _ in $(seq 170); do
+            state=$(gh pr view "$pr" -R "$GITHUB_REPOSITORY" --json state --jq .state)
+            [ "$state" = MERGED ] && exit 0
+            [ "$state" = CLOSED ] && { echo "pull request closed"; exit 1; }
+            while read -r qsha ref; do
+              [ -n "$ref" ] && [ -z "${dispatched[$qsha]:-}" ] || continue
+              sleep 60
+              if [ "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$qsha" --jq '.total_count')" = 0 ]; then
+                gh workflow run ci.yml -R "$GITHUB_REPOSITORY" --ref "${ref#refs/heads/}"
+                gh workflow run review-gate.yml -R "$GITHUB_REPOSITORY" --ref "${ref#refs/heads/}"
+              fi
+              dispatched[$qsha]=1
+            done < <(git ls-remote "https://github.com/$GITHUB_REPOSITORY" "refs/heads/gh-readonly-queue/main/pr-$pr-*")
+            sleep 30
+          done
+          echo "not merged within the wait"
+          exit 1

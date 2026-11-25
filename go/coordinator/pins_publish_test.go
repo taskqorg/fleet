@@ -42,25 +42,8 @@ func TestPinsPublishOnlyProposals(t *testing.T) {
 		t.Fatalf("failed qualification: %v %v", err, calls)
 	}
 	calls = nil
-	if err := pinsPublish(context.Background(), nil, pr("automation/cli-pins", "main"), true, "ok", "x"); err != nil || len(calls) != 3 ||
-		!strings.HasPrefix(calls[1], "status_create") || !strings.Contains(calls[1], `"context":"code-review"`) || !strings.HasPrefix(calls[2], "auto_merge_enable") {
+	if err := pinsPublish(context.Background(), nil, pr("automation/cli-pins", "main"), true, "ok", "x"); err != nil || len(calls) != 2 ||
+		!strings.HasPrefix(calls[1], "status_create") || !strings.Contains(calls[1], `"context":"code-review"`) {
 		t.Fatalf("passed qualification: %v %v", err, calls)
-	}
-}
-
-// TestPinsPublishGraphQLError: a GraphQL refusal (HTTP 200 with errors) is an error, not a merge.
-func TestPinsPublishGraphQLError(t *testing.T) {
-	old := pinsGatewayCall
-	pinsGatewayCall = func(_ context.Context, _ *App, tool string, _ any) contract.CallLine {
-		if tool == "auto_merge_enable" {
-			return contract.CallLine{Outcome: contract.CallOutcomeOk, Output: []byte(`{"errors":[{"message":"Pull request is in clean status"}]}`)}
-		}
-		return contract.CallLine{Outcome: contract.CallOutcomeOk}
-	}
-	t.Cleanup(func() { pinsGatewayCall = old })
-	p := ghPull{URL: "u", NodeID: "PR_1", Head: ghPullHead{Ref: "automation/cli-pins", SHA: strings.Repeat("b", 40)}, Base: ghPullHead{Ref: "main"}}
-	p.Head.Repo.FullName = githubPublicRepo
-	if err := pinsPublish(context.Background(), nil, p, true, "ok", ""); err == nil || !strings.Contains(err.Error(), "clean status") {
-		t.Fatalf("%v", err)
 	}
 }
