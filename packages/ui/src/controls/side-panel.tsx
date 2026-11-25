@@ -1,7 +1,7 @@
 // Side panel (controls/side-panel.md, OR-41, OR-42): the one implementation of every column that opens and closes beside the
 // page, the navigation rail on the left and the session's context panel on the right. Its toggle sits in the shell header at
 // a fixed place, its width is resized by a divider, and open or closed and the width are person settings by panel key.
-import { createContext, createEffect, createMemo, createSignal, onSettled, Show, useContext, type Accessor } from 'solid-js';
+import { createContext, createEffect, createMemo, createSignal, onSettled, Show, untrack, useContext, type Accessor } from 'solid-js';
 import { Portal, type JSX } from '@solidjs/web';
 import { Button } from './primitives.tsx';
 
@@ -117,6 +117,9 @@ export function SidePanel(p: {
   lo?: number; hi?: number; defaultOpen?: boolean;
   /** Before the column opens or closes: returns what to do once it has (the session keeps the row being read in place). */
   onLayout?: () => (() => void) | void;
+  /** Opens the panel (column or sheet) each time it changes: a chip elsewhere on the page shows a part of it (the session
+   *  head's timer chip opens Context at Timers). Closed stays closed until then. */
+  reveal?: number;
   /** The panel's contents, in the column or the sheet; `close` closes the sheet. */
   children: (where: 'column' | 'sheet', close: () => void) => JSX.Element;
 }) {
@@ -152,6 +155,10 @@ export function SidePanel(p: {
     if (after) requestAnimationFrame(() => requestAnimationFrame(after));
   };
   const shown = () => (mode() === 'sheet' ? sheet() : open());
+  createEffect(() => p.reveal, r => {
+    if (!r || untrack(shown)) return;
+    untrack(toggle);
+  });
   return (
     <>
       <Show when={store.slot()} keyed>

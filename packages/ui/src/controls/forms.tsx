@@ -119,7 +119,70 @@ export type ComposerProps = {
   longPaste?: number;
   /** Home: who to talk to (TargetPicker), first in the box; the box is then one line (composer.md#target-picker). */
   target?: JSX.Element;
+  /** Puts this text into the box, focused with the caret at its end, each time `seq` changes (Edit of a context item
+   *  drops its command here, composer.md#commands). The person's draft is replaced. */
+  fill?: { text: string; seq: number };
+  /** Every change of the text, for a live preview of a command. */
+  onInput?: (text: string) => void;
+  /** Shown inside the box above the text: the preview of a command or its conflict (composer.md#commands). */
+  above?: JSX.Element;
+  /** The text is a command: the box takes the command look and the one button applies it (its label, a check icon). */
+  command?: { label: string };
 };
+/** One changed field of a command preview: what it is now and what it becomes (equal: unchanged, shown plain). */
+export type CommandChange = { label: string; before?: string; after: string };
+
+/**
+ * What a composer command will change, before it is sent (composer.md#commands): a title, one line per field with the
+ * old value struck through and the new one beside it, and a note. A conflict (the item changed meanwhile, 409) shows
+ * its message and Load current, which puts the item's current command in the box; an error (the command does not parse)
+ * shows its message. Not a live region while typing; a conflict is announced once (role alert).
+ */
+export function CommandPreview(p:
+  | { kind: 'change'; title: string; icon?: IconName; changes: CommandChange[]; note?: string }
+  | { kind: 'conflict'; message: string; onLoad?: () => void }
+  | { kind: 'error'; message: string }) {
+  return (
+    <Show when={p.kind === 'change' ? p : null} keyed fallback={
+      <div class={['cmd-preview', p.kind]} data-ui="command-preview" role={p.kind === 'conflict' ? 'alert' : undefined}>
+        <span class="cmd-title">
+          <Icon name="triangle-alert" />
+          <span>{p.kind === 'conflict' ? 'Changed meanwhile' : 'Not a command'}</span>
+          <span class="grow" />
+          <Show when={p.kind === 'conflict' && p.onLoad} keyed>{load => <Button label="Load current" kind="quiet" onClick={load} />}</Show>
+        </span>
+        <span class="cmd-note">{(p as { message: string }).message}</span>
+      </div>
+    }>
+      {c => (
+        <div class="cmd-preview change" data-ui="command-preview">
+          <span class="cmd-title">
+            <Show when={c.icon} keyed>{n => <Icon name={n} />}</Show>
+            <span>{c.title}</span>
+            <span class="grow" />
+            <span class="cmd-keys">Enter applies</span>
+          </span>
+          <dl class="cmd-changes">
+            <For each={c.changes}>
+              {ch => (
+                <>
+                  <dt>{ch.label}</dt>
+                  <dd>
+                    <Show when={ch.before !== undefined && ch.before !== ch.after} fallback={<span>{ch.after}</span>}>
+                      <del>{ch.before}</del> <ins>{ch.after}</ins>
+                    </Show>
+                  </dd>
+                </>
+              )}
+            </For>
+          </dl>
+          <Show when={c.note}><span class="cmd-note">{c.note}</span></Show>
+        </div>
+      )}
+    </Show>
+  );
+}
+
 /** Pasted text longer than this many characters becomes a .txt attachment (controls/composer.md). */
 export const LONG_PASTE = 4000;
 
@@ -142,6 +205,10 @@ export function Composer(props: ComposerProps) {
           stopReason={props.stopReason}
           longPaste={props.longPaste}
           target={props.target}
+          fill={props.fill}
+          onInput={props.onInput}
+          above={props.above}
+          command={props.command}
         />
       )}
     </Show>
@@ -167,15 +234,30 @@ function ScopedComposer(p: ComposerProps) {
     }
   });
 
+  let box: HTMLDivElement | undefined;
   const keep = (value: string) => {
     currentText = value;
     setText(value);
+    p.onInput?.(value);
     try {
       p.draftPersistence?.write(value);
     } catch {
       setWarning('Draft storage unavailable; keep this page open.');
     }
   };
+
+  // A fill replaces the draft and focuses the box with the caret at the end, so Edit lands ready to type.
+  createEffect(() => p.fill?.seq, seq => {
+    const f = untrack(() => p.fill);
+    if (seq === undefined || !f) return;
+    keep(f.text);
+    queueMicrotask(() => {
+      const t = box?.querySelector('textarea');
+      if (!t) return;
+      t.focus();
+      t.setSelectionRange(f.text.length, f.text.length);
+    });
+  });
 
   const attachments = createMemo(() => p.attachments ?? []);
   const files = createMemo(() => attachments().length > 0);
@@ -219,7 +301,8 @@ function ScopedComposer(p: ComposerProps) {
   const stop = createMemo(() => !!p.onStop && !text().trim() && !files() && !busy());
 
   return (
-    <div class={['composer', { off: !!p.disabledReason, 'with-target': !!p.target }]} data-ui="composer">
+    <div ref={el => { box = el; }} class={['composer', { off: !!p.disabledReason, 'with-target': !!p.target, command: !!p.command }]} data-ui="composer">
+      <Show when={p.above} keyed>{a => <div class="composer-above">{a}</div>}</Show>
       <Show when={files()}>
         <div class="composer-files" role="list" aria-label="Attachments">
           <For each={attachments()}>
@@ -315,8 +398,8 @@ function ScopedComposer(p: ComposerProps) {
           when={stop()}
           fallback={
             <Button
-              label="Send"
-              icon="arrow-up"
+              label={p.command?.label ?? 'Send'}
+              icon={p.command ? 'check' : 'arrow-up'}
               iconOnly
               kind="primary"
               busy={busy()}

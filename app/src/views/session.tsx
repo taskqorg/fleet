@@ -5,7 +5,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onSettled, untrack } from 'solid-js';
 import { currentUrl, useLocation } from '../router.ts';
 import {
-  Avatar, ProjectChip, StateDot, QuestionCard, OpenQuestion, Thread, ContextPanel, SidePanel, Composer,
+  Avatar, ProjectChip, StateDot, QuestionCard, OpenQuestion, Thread, ContextPanel, SidePanel, Composer, TimerChip,
   Button, ActionMenu, SearchField, ErrorBanner, Skeleton, DropZone, InlineForm, TextField, DetailSection, Disclosure, KvRow,
   EntityCode, EntityPicker, agentLabel, harnesses, writeClip, zone, life as lifeIn, statesOf,
   type VirtualListHandle, type CatalogueTreeNode, type IconName, type Harness, type ComposerChip, type Life, type AvatarMark,
@@ -216,9 +216,11 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const ctx = () => ctxDoc.data;
   const plan = createMemo<PlanStep[]>(() => (ctx()?.plan?.steps ?? []).map(st => ({ text: st.title, done: st.done })));
   const timers = createMemo<Timer[]>(() => (ctx()?.timers ?? []).map(t => ({
-    id: t.id, text: `Check in every ${every(t.everyMs)}`, paused: t.paused, readOnly: !t.canManage,
-    when: t.paused ? `paused · every ${every(t.everyMs)}` : t.nextAt ? `${inTime(t.nextAt)} · every ${every(t.everyMs)}` : `every ${every(t.everyMs)}`,
+    id: t.id, schedule: `Every ${every(t.everyMs)}`, paused: t.paused, readOnly: !t.canManage, nextAt: t.nextAt ?? undefined,
   })));
+  // The head's timer chip (owner pick A): the first active timer, else the first paused one; a click opens Context.
+  const headTimer = createMemo(() => { const ts = ctx()?.timers ?? []; const t = ts.find(x => !x.paused) ?? ts[0]; return t ? { t, more: ts.length - 1 } : null; });
+  const [reveal, setReveal] = createSignal(0);
   const automations = createMemo<Automation[]>(() => (ctx()?.automations ?? []).map(a => {
     const set = rec(a.settings);
     const event = str(set.event);
@@ -333,6 +335,9 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
               <h2 class="sv-name" data-tip={title()}>{title()}</h2>
               <Show when={projectName()}>{n => <ProjectChip name={n()} />}</Show>
               <StateDot state={life()} />
+              <Show when={headTimer()} keyed>
+                {h => <TimerChip every={every(h.t.everyMs)} nextAt={h.t.nextAt ?? undefined} paused={h.t.paused} more={h.more || undefined} onOpen={() => setReveal(n => n + 1)} />}
+              </Show>
               <span class="grow" />
               <SearchField label="Search thread" value={q()} onInput={setQ} onSearch={search} />
               <Show when={hits()} keyed>
@@ -463,7 +468,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
               />
             </DropZone>
           </div>
-          <SidePanel setting="session-context" name="context" label="Session context" onLayout={keepRow}>{contextPanel}</SidePanel>
+          <SidePanel setting="session-context" name="context" label="Session context" onLayout={keepRow} reveal={reveal()}>{contextPanel}</SidePanel>
         </article>
       }
     >
@@ -478,7 +483,6 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
 }
 
 const every = (ms: number) => (ms % 3_600_000 === 0 ? `${ms / 3_600_000}h` : ms % 60_000 === 0 ? `${ms / 60_000}m` : `${Math.round(ms / 1000)}s`);
-const inTime = (at: number) => { const m = Math.round((at - Date.now()) / 60_000); return m < 1 ? 'due now' : m < 60 ? `in ${m}m` : `in ${Math.round(m / 60)}h`; };
 
 /** Edit a timer: its period in minutes (watch_timer_set edit). */
 function TimerPanel(p: { everyMs: number; onSave: (minutes: number) => void; onDone: () => void }) {

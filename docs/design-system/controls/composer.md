@@ -27,6 +27,17 @@
 
 **Do and don't.** Do keep one button for Send and Stop. Don't add a second Stop above the composer; a boundary row keeps its own Stop for that execution (CUJ 5). Don't upload when the message is sent: the files are already stored by then.
 
+## Commands
+
+A message that starts with a known command changes a context item of the session instead of being sent ([decision 2026-11-25](../decisions.md#2026-11-25-conversation-timers-are-visible-and-edited-in-the-composer)). Today the one command is `/trigger`, over the session's [triggers](../../designs/fleet-triggers.md) (the timers of the [context panel](context-panel.md)):
+
+* `/trigger <name> [every 5m | daily 09:00 [zone]] [if changed | if task,question | always] [: <message>]` changes what is named and keeps the rest; `/trigger <name> pause | resume | run | delete`; `/trigger new <preset> [as <name>] …` adds one.
+* **One parser, on the server.** `session_command {sessionId, text, apply}`: `apply: false` answers the preview (the trigger before and after) or why the text is not a command; `apply: true` runs it with the revision the preview read and answers 409 when the trigger changed meanwhile. Agents call the same operation (R7).
+* **Edit fills the box.** Edit on a timer row puts its current command in the box, focused with the caret at the end (`fill`); the person's draft is replaced.
+* **Preview before sending.** While the text is a command the box takes the command look (running tone, monospace) and the one button is Apply (a check). Above the text, the `CommandPreview` card lists each changed field with the old value struck through and the new one beside it; Enter applies.
+* **Conflict.** A 409 turns the card to the danger tone: what the trigger is now, that nothing was changed, and Load current, which puts the current command in the box. The card is announced once (`role="alert"`).
+* Text that does not start with a known command is an ordinary message; `/trigger` that does not parse shows the reason in the card and is not sent.
+
 ## Authorized persistence
 
 The app injects a scoped persistence adapter after validating the identity and target. The shared control has no storage access; without an adapter it is memory-only. Closing the access gate quarantines authored unsent text under its original identity and target. Restore requires the same validated identity and freshly authorized target, including after changed grants. Other actors never inspect it. Legacy unscoped drafts remain quarantined without attribution or deletion.

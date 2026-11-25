@@ -35,14 +35,26 @@
   .plan-item.done .plan-box { border-color: var(--success-fg); background: var(--success-fg); color: var(--on-accent); }
   .plan-box .icon { width: 10px; height: 10px; }
   .plan-item.done .plan-text { color: var(--fg-muted); }
-  .timer-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: var(--space-2) var(--space-1) var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); }
-  .timer-row.paused .timer-when { color: var(--attention-fg); }
-  .timer-text { display: flex; flex-direction: column; gap: var(--space-1); flex: 1; min-width: 0; }
-  .timer-what { font-size: var(--font-size-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .timer-when { color: var(--fg-muted); font-size: var(--font-size-xs); }
+  .timer-row { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); }
+  .timer-row.selected { border-color: var(--running-fg); background: var(--running-bg); }
+  .timer-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .timer-head .icon { flex: none; color: var(--running-fg); }
+  .timer-row.paused .timer-head .icon { color: var(--fg-faint); }
+  .timer-what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
+  .timer-row.paused .timer-what { color: var(--fg-muted); }
+  .timer-left { flex: none; color: var(--running-fg); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
+  .timer-text { color: var(--fg-muted); font-size: var(--font-size-xs); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+  .timer-foot { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .timer-quiet { flex: 1; min-width: 0; text-align: end; color: var(--fg-faint); font-size: var(--font-size-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .timer-acts { flex: none; display: inline-flex; align-items: center; }
   .timer-acts .btn.icon-only { width: var(--size-badge); height: var(--size-badge); }
   .timer-acts .btn:not(.icon-only) { height: var(--size-chip); }
+  /* The session head's timer chip: always visible while a timer exists; the figures keep their width (OR-6). */
+  .timer-chip { flex: none; display: inline-flex; align-items: center; gap: var(--space-2); height: var(--size-chip); padding: 0 var(--space-3); border: 1px solid var(--running-fg); border-radius: var(--radius-md); background: var(--running-bg); color: var(--running-fg); font: inherit; font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); cursor: pointer; }
+  .timer-chip .num { font-variant-numeric: tabular-nums; }
+  .timer-chip.paused { border-color: var(--line); background: var(--surface-sunken); color: var(--fg-muted); }
+  .timer-chip:hover { filter: brightness(1.1); }
+  .timer-more { color: var(--fg-muted); }
   .ctx-line { margin: 0; font-size: var(--font-size-sm); }
   .swarm-member { display: flex; align-items: center; gap: var(--space-3); min-width: 0; color: var(--fg); font-size: var(--font-size-sm); text-decoration: none; }
   .swarm-member:hover .swarm-name { text-decoration: underline; }
@@ -84,5 +96,6 @@
 
   @media (pointer: coarse) {
     .timer-acts .btn.icon-only { width: var(--size-hit-phone); height: var(--size-hit-phone); }
+    .timer-chip { height: var(--size-hit-phone); }
   }
 }

@@ -170,6 +170,22 @@
   .composer { display: flex; flex-direction: column; gap: var(--space-1); margin: var(--space-2) var(--space-4) var(--space-3); padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
   .composer:focus-within { border-color: var(--accent); }
   .composer.off { background: var(--surface-sunken); }
+  /* A command in the box (composer.md#commands): the running tone marks it; its preview or conflict sits above the text. */
+  .composer.command, .composer.command:focus-within { border-color: var(--running-fg); }
+  .composer.command textarea { font-family: var(--font-mono); font-size: var(--font-size-sm); }
+  .composer-above { display: block; }
+  .cmd-preview { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-sunken); font-size: var(--font-size-xs); }
+  .cmd-preview.conflict, .cmd-preview.error { border-color: var(--danger-fg); background: var(--danger-bg); }
+  .cmd-title { display: flex; align-items: center; gap: var(--space-2); min-height: var(--size-chip); font-weight: var(--font-weight-medium); color: var(--fg); }
+  .cmd-title .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); flex: none; color: var(--running-fg); }
+  .cmd-preview.conflict .cmd-title .icon, .cmd-preview.error .cmd-title .icon { color: var(--danger-fg); }
+  .cmd-keys { color: var(--fg-faint); font-weight: var(--font-weight-regular); }
+  .cmd-changes { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--space-1) var(--space-3); margin: 0; }
+  .cmd-changes dt { color: var(--fg-faint); }
+  .cmd-changes dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--fg); }
+  .cmd-changes del { color: var(--fg-muted); }
+  .cmd-changes ins { color: var(--success-fg); text-decoration: none; }
+  .cmd-note { color: var(--fg-muted); }
   .composer textarea { min-width: 0; min-height: var(--size-control); max-height: calc(var(--size-control) * 6); padding: var(--space-1) var(--space-2); border: 0; outline: 0; background: none; color: var(--fg); font: inherit; resize: none; field-sizing: content; }
   .composer-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
   .new-conversation .composer-row { flex-wrap: wrap; }

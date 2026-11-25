@@ -18,6 +18,7 @@ From top to bottom, then the context panel on the right:
 1. **Session head** (one line under the [shell header](../patterns/app-shell.md)):
    * the avatar (a bot's mark, or `P` in the project's colour for a PM), the session's name and its project chip;
    * the [state dot and word](../controls/state-badge.md#dot-and-word) (OR-55);
+   * while the session has a timer, the [timer chip](../controls/context-panel.md#timer-chip) (`5m · in 3m`, `paused · 5m`); a click opens Context (owner pick A, 2026-11-25);
    * on the right, as icons: Search in the transcript, Stop (only while a run works), Fork, the row menu (Archive, Copy link, Details) and Close in Conversations ([OR-1](../owner-rules.md), [OR-15](../owner-rules.md)). The Context toggle is in the shell header, after search ([side panel](../controls/side-panel.md)).
    * No model badge, tokens, cost or ids ([OR-54](../owner-rules.md)). Details opens them in place, folded under the head ([OR-19](../owner-rules.md)).
 2. **Open question** (only while one is open): the [question card](../controls/decision-block.md#card) pinned above the transcript, its choices as buttons and a free-text answer ([OR-53](../owner-rules.md)). A confirmation card for a risky action names its scope and the way back ([OR-61](../owner-rules.md)). The answer edits the card in place (UR-58); answered cards stay in the transcript at the point they were asked.
@@ -25,7 +26,7 @@ From top to bottom, then the context panel on the right:
    * a [message](../controls/transcript-viewer.md) per person or agent turn: author line and the age (OR-2), then the body as prose; codes become [entity cards](../controls/entity-card.md) ([OR-44](../owner-rules.md), UR-61);
    * consecutive tool calls and system events as one [folded tool line](../controls/tool-line.md): what was done and how long it took, opened on click ([OR-52](../owner-rules.md), UR-57);
    * heartbeats, repeated attachments and internal notices are never shown.
-4. **Composer** at the bottom, always reachable (UR-59). While a run works it says whether Enter queues the message or steers the run; Stop sits beside it.
+4. **Composer** at the bottom, always reachable (UR-59). While a run works it says whether Enter queues the message or steers the run; Stop sits beside it. A `/trigger` command in it shows its preview above the text and applies instead of sending ([commands](../controls/composer.md#commands)).
 
 **Context panel** ([context panel](../controls/context-panel.md), [FLT-30](https://youtrack.ufobe.com/issue/FLT-30)), a [side panel](../controls/side-panel.md) right of the transcript, its own scroller ([OR-25](../owner-rules.md)):
 * Plan with done items checked, Timers (pause or resume, edit, cancel), Automations, Swarm members with their steps done, related Tasks; each section hidden when empty ([OR-29](../owner-rules.md)).
@@ -69,7 +70,7 @@ From top to bottom, then the context panel on the right:
 | Composer | `thread_composer`, `message_send`; Stop is `execution_stop` |
 | Fork | `session_fork` |
 | Context panel | `session_context {sessionId}`: `plan` (steps with `done`, from the session's work plan, else its task's), `timers`, `automations` (the session's bot), `swarm` (the other members of that board with their state), `tasks` (its own task, the plan's, the spawned ones and its bot's), each timer's `paused` and `canManage` |
-| Timer actions | `watch_timer_set` with `edit` (new `timerMs`), `pause`, `resume` or `cancel` and the timer shown as its base (`baseTimerMs`, `basePaused`); it keeps the event subscriptions and answers 409 when the timer changed meanwhile |
+| Timer actions | Pause, Resume and Cancel: `trigger_save` (`enabled`) and `trigger_delete` with the revision shown; Edit fills the composer with the trigger's command, which `session_command` previews and applies ([composer commands](../controls/composer.md#commands)); 409 when the trigger changed meanwhile |
 | Automation actions | `bot_automation_save` (enable, pause, edit) |
 | Details | `execution_totals`, scoped resource rollup |
 | Live updates | `changes_since` over the session, its messages, questions and executions |
