@@ -369,8 +369,7 @@ func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler
 		if r, ok := out.(raw); ok {
 			err = r(w)
 		} else {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			err = json.NewEncoder(w).Encode(out)
+			err = writeJSONReply(w, hr, out)
 		}
 	}
 	var he *HTTPError
