@@ -90,6 +90,16 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   // At phone width the list and the thread take turns: the list first, a pick opens the thread, Threads goes back.
   const [threadsMode, setThreadsMode] = createSignal<'list' | 'thread'>('list');
   const pickThread = (k: string) => { setPicked(k); setThreadsMode('thread'); };
+  // The list is a column only when the view itself is wide enough for it and a readable transcript (Conversations shows
+  // the session beside its list at 1440); narrower, the list and the thread take turns, as on a phone.
+  const [stacked, setStacked] = createSignal(false);
+  let sizeWatch: ResizeObserver | undefined;
+  const watchWidth = (el: HTMLElement) => {
+    sizeWatch?.disconnect();
+    sizeWatch = new ResizeObserver(([e]) => setStacked(e.contentRect.width < STACK_BELOW));
+    sizeWatch.observe(el);
+  };
+  onSettled(() => () => sizeWatch?.disconnect());
   // The shown thread counts as read (person_visit page thread; it writes no change row, so session_view rereads after it)
   // once it has something unread; one mark per thread and unread count, so a failed mark is not repeated in a loop.
   let readMark = '';
@@ -391,7 +401,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   return (
     <Switch
       fallback={
-        <article class={['detail session-view', { 'with-threads': hasThreads() }]} data-ui="detail" data-frame={props.frame} data-threads={hasThreads() ? threadsMode() : undefined} tabindex={-1} aria-label={title()}>
+        <article class={['detail session-view', { 'with-threads': hasThreads() }]} data-ui="detail" data-frame={props.frame} data-threads={hasThreads() ? (stacked() ? threadsMode() : 'split') : undefined} ref={watchWidth} tabindex={-1} aria-label={title()}>
           <Show when={hasThreads()}>
             <ThreadList threads={threadItems()} selected={shownThread()} onSelect={pickThread} quiet={quietRow()} />
           </Show>
@@ -566,6 +576,8 @@ const whenOf = (t: { when: string; everyMs?: number; dailyTime?: string; dailyZo
 /** A composer text that is a command (composer.md#commands), not a message. */
 const commandText = (text: string) => /^\s*\/trigger(\s|$)/.test(text);
 
+// Below this width of the session view the thread list and the thread take turns (the list column plus a readable transcript).
+const STACK_BELOW = 1000;
 /** A trigger's schedule as the timer row shows it: Every 5m, Daily 09:00 UTC. */
 const scheduleOf = (t: { when: string; everyMs?: number; dailyTime?: string; dailyZone?: string }) =>
   t.when === 'every' ? `Every ${every(t.everyMs ?? 0)}` : t.when === 'daily' ? `Daily ${t.dailyTime ?? ''} ${t.dailyZone ?? ''}`.trim() : 'Manual';
