@@ -4,12 +4,16 @@ package main
 // methods WireMCP, Protocol and Normalize for every harness.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fleet/contract"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -220,12 +224,42 @@ func codexAppServer(old *exec.Cmd) *exec.Cmd {
 
 type codexSession struct {
 	thread, turn, resume, fork, root string
+	marks                            string // directory of the instructions each native thread already holds (instructionsMark)
 	stage                            int
 	profile                          M
 	steers                           map[float64]string
 	nextID                           float64
 	version                          any
 	turnStartedAtMs                  int64
+}
+
+// instructionsSum: the mark of one developer instructions text.
+func instructionsSum(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
+// instructionsMark: the mark of the instructions the native thread already holds, or "" when unknown (no marks
+// directory, a thread from before marks, an unreadable file): unknown injects, as before.
+func (s *codexSession) instructionsMark(thread string) string {
+	if s.marks == "" || thread == "" || strings.ContainsAny(thread, `/\`) {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(s.marks, thread))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// markInstructions records that the thread now holds this instructions text; a failed write only costs one injection.
+func (s *codexSession) markInstructions(thread, instructions string) {
+	if s.marks == "" || thread == "" || instructions == "" || strings.ContainsAny(thread, `/\`) {
+		return
+	}
+	if os.MkdirAll(s.marks, 0o700) == nil {
+		_ = os.WriteFile(filepath.Join(s.marks, thread), []byte(instructionsSum(instructions)), 0o600)
+	}
 }
 
 func (s *codexSession) Initialize() map[string]any {
@@ -313,14 +347,26 @@ func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]a
 		}
 		s.thread, s.stage = thread, 2
 		next := []M{s.turnRequest()}
-		if (s.resume != "" || s.fork != "") && instructions != "" {
+		held := s.resume
+		if held == "" {
+			held = s.fork // a fork copies its source thread's history
+		}
+		switch {
+		case held == "":
+			s.markInstructions(thread, instructions) // a new thread got them as its initial developer context
+		case instructions != "" && s.instructionsMark(held) != instructionsSum(instructions):
+			// A resumed thread keeps its recorded developer context; changed instructions are appended once. The same
+			// text is not appended again: every copy stays in the history and is re-read on every later turn.
 			s.stage = 4
 			next = []M{{"id": 4, "method": "thread/inject_items", "params": M{"threadId": thread,
 				"items": []any{M{"type": "message", "role": "developer", "content": []any{M{"type": "input_text", "text": instructions}}}}}}}
+		default:
+			s.markInstructions(thread, instructions)
 		}
 		return next, M{"type": "thread.started", "thread_id": thread, "harnessVersion": s.version, "native": v}, false, nil
 	case f.isID(4) && s.stage == 4:
 		s.stage = 2
+		s.markInstructions(s.thread, instructions)
 		return []M{s.turnRequest()}, nil, false, nil
 	case f.isID(3) && s.stage == 2:
 		s.turn = r.Turn.ID

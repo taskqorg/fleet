@@ -172,7 +172,7 @@ func profilePrepareParsed(profile contract.Profile, v any, account string, skill
 	return M{"capabilityReadiness": capabilityEvidence, "instructionSources": M{"profile": "explicit developer_instructions", "personalConfig": "not loaded", "personalHome": "not forwarded", "projectInstructions": "discovery disabled", "skills": "explicit resolved snapshots; native discovery disabled", "memories": "disabled", "hooks": "disabled", "nativeObservation": "pending rollout provenance check"},
 		"requested": v, "resolvedSkills": resolvedSkills, "profileSha256": profileHash(v), "instructionsSha256": sha([]byte(applied)), "grantsSha256": profileHash(o("mcpServers")),
 		"applied": M{"model": o("model"), "effort": o("effort"), "instructions": applied, "mcpServers": o("mcpServers"),
-			"mapping":             "developerInstructions on open; acknowledged developer-role thread/inject_items before resumed turn; native model-context application unqualified",
+			"mapping":             "developerInstructions on open; acknowledged developer-role thread/inject_items before a resumed turn when the text differs from what the thread holds; native model-context application unqualified",
 			"availability":        "unknown until native call/result",
 			"resumeCompatibility": "requested overrides supplied per invocation; actual changed settings unqualified; prior conversation context persists",
 			"mcpServerSha256":     sha(bin)}}, selected, nil
