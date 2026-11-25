@@ -129,7 +129,13 @@ export function SidePanel(p: {
   // around the panel changes size.
   const [mode, setMode] = createSignal<'column' | 'sheet'>('column', { ownedWrite: true });
   let column: HTMLDivElement | undefined;
-  const readMode = () => { if (column) setMode(getComputedStyle(column).getPropertyValue('--side-mode').trim() === 'sheet' ? 'sheet' : 'column'); };
+  // A sheet left open when the page widens into a column closes: the column shows the stored state again.
+  const readMode = () => {
+    if (!column) return;
+    const m = getComputedStyle(column).getPropertyValue('--side-mode').trim() === 'sheet' ? 'sheet' : 'column';
+    setMode(m);
+    if (m === 'column') setSheet(false);
+  };
   onSettled(() => {
     readMode();
     const host = column?.parentElement;

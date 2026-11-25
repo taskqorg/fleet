@@ -500,6 +500,9 @@ func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 		if !panelKey.MatchString(k) {
 			return fail(400, "panels: "+k+" is not a panel key (a lower-case slug)")
 		}
+		if k == "nav" {
+			return fail(400, "panels: the navigation is navCollapsed, not panels.nav")
+		}
 	}
 	// A last view is that section's own list: /<id> or /<id>?<query>, short, never another origin; section ids are short
 	// lower-case words and a request names at most 64 of them.

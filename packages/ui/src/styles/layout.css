@@ -241,8 +241,9 @@
   .divider-ctl::after { right: auto; left: 0; }
   .divider-rail { left: 0; }
   /* A right side panel (side-panel.md): a column at the person's width with its divider on the left edge. Where the page
-     is too narrow, a container query sets --side-mode: sheet and the toggle opens the sheet instead. */
-  .side-panel { --side-mode: column; position: relative; display: flex; flex-direction: column; inline-size: var(--size-side, var(--size-search)); min-block-size: 0; }
+     is too narrow, a container query sets --side-mode: sheet and the toggle opens the sheet instead. A stored width never
+     takes more than half of the page beside it (50cqi of the nearest container), whatever screen it was set on. */
+  .side-panel { --side-mode: column; position: relative; display: flex; flex-direction: column; inline-size: min(var(--size-side, var(--size-search)), 50cqi); min-block-size: 0; }
   .side-panel[hidden] { display: none; }
   .side-body { display: flex; flex-direction: column; flex: 1; min-block-size: 0; overflow-y: auto; scrollbar-width: thin; }
   .divider-right { margin-left: calc(-1 * var(--space-1)); }

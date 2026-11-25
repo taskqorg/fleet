@@ -43,7 +43,7 @@ test('P2 preferences (saved views, focus, focus presets, widths, side panels, ro
   s = await op('person_settings_set', {panels: {other: false}});
   assert.deepEqual(s.panels, {'session-context': false, other: false}); assert.equal(s.navCollapsed, true);
   assert.deepEqual((await op('person_settings_get', {})).panels, {'session-context': false, other: false});
-  for (const bad of [{panels: {'Bad Key': true}}, {panels: {'': true}}]) {
+  for (const bad of [{panels: {'Bad Key': true}}, {panels: {'': true}}, {panels: {nav: false}}]) {
     const b = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify(bad)});
     assert.equal(b.status, 400, JSON.stringify(bad));
   }
