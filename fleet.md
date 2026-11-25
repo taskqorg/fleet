@@ -31,7 +31,7 @@ Chromium must be able to install each built workspace with its Fleet name and sh
 
 Manifest requests include the existing sign-in credentials through Cloudflare Access; installation does not grant access or cache authenticated API data.
 
-Conversation with a product manager (PM) is the primary way to discuss and assign work. A PM is an ordinary session in a chosen agent with role-specific instructions, tools and project access. Sessions may span related projects; they are not permanent project channels. Conversation has no separate request object.
+Conversation with a product manager (PM) is the primary way to discuss and assign work. A PM is an ordinary conversation in a chosen agent with role-specific instructions, tools and project access. Conversations may span related projects; they are not permanent project channels. Conversation has no separate request object.
 
 - Projects and tasks: create and configure projects, describe work and set priorities.
 - Execution: balance work and track progress.
@@ -152,7 +152,7 @@ Resolve defaults from the selected agent and role, project settings, then explic
 
 Before launch, check environment compatibility and granted permissions. Resolve instructions, skills and configuration at execution start under the [source rules](#knowledge-and-rules); later repository edits affect only new executions. A run may pin one revision for all its steps; by default each step resolves current versions.
 
-A session holds conversation and working context within a harness: messages, actions and interaction history. It may exist without a task.
+A conversation is one line of work: one subject, one clean agent context and one native session in a harness, with messages, actions and interaction history. It may exist without a task. Bots, PM views, Telegram rooms, tasks and projects group conversations and hold none of their own ([conversation model](docs/designs/fleet-conversations.md#conversation-model)). Storage and operations call it a session.
 
 An execution may start or continue a session according to harness capabilities. Task, execution and session lifecycles remain distinct. [Continuation and handoff](docs/execution-continuity.md#continuation-and-handoff) preserve work when accounts, agents or environments change.
 
@@ -168,11 +168,11 @@ Conversation status is the state of its latest visible agent run by execution se
 
 A bot is a saved operator with a director, allowed projects, a Fleet profile, versioned instructions and SOUL, and durable project-scoped memory. Bot settings and memory grant no new authority. Use the profile and current project grants for placement, runtime, native tools and Code Mode. Pin the settings revision, memory revision and execution project for each turn.
 
-Give each bot one stable Home in Conversations. Use the standard input queue, sender provenance, transcript, questions and execution links. Keep managed tasks in Fleet with their own histories.
+A bot's work is its conversations, one per subject (a task, question, pull request, host or trigger). Each uses the standard input queue, sender provenance, transcript, questions and execution links. Keep managed tasks in Fleet with their own histories.
 
 Continue the native session when project, workspace, host, profile and account are compatible. Otherwise use the retained handoff with context scoped to the execution project. Recheck authority before launching queued work and before returning historical context or usage.
 
-Run now, scheduled wakes and new Needs you entries use the same execution flow. Retain the cause and deduplication identity of each wake and admit one active bot run at a time. Persist the schedule and wake state across coordinator restarts.
+Run now, scheduled wakes and new Needs you entries use the same execution flow. Retain the cause and deduplication identity of each wake. Each conversation runs one turn at a time; a bot's conversations run in parallel, with no per-bot limit. Persist the schedule and wake state across coordinator restarts.
 
 Pause blocks future wakes. Stop separately requests cancellation through the execution lifecycle and reports the observed outcome. Keep quiet wakes and skipped, queued, failed and unconfirmed work inspectable in Runs.
 

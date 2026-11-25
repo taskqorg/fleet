@@ -7,8 +7,8 @@ People work with Fleet from Telegram the same way as in the web app: by talking 
 - **Bot:** the one Fleet Telegram bot. Its token is the key of the `telegram` connection; only fleet-gateway holds it.
 - **Linked person:** a Fleet person with a Telegram user id. Only linked people reach Fleet.
 - **Room:** a private chat, a group or a forum topic the bot has seen. A room has a project hint, never a hard binding. People create and name topics; Fleet never creates or deletes them.
-- **Home conversation:** a person's own conversation for their private chat with the bot.
-- **Work item:** one piece of work in a group room; one Fleet conversation, usually with a task the conversation files.
+- **Current conversation:** the conversation a room's next unrouted message goes to. In a private chat it is the person's ongoing chat with the bot. Not built: today it is stored as the person's home conversation (`telegram_person.home_session_id`); [migration](fleet-conversations.md#migration-to-the-conversation-model) step 5 moves it to the room.
+- **Work item:** a room's binding to one Fleet conversation (`telegram_work`), usually with a task the conversation files. A room binds several conversations; a conversation keeps its own rights, and the binding grants none ([conversation model](fleet-conversations.md#conversation-model)).
 - **Conductor:** the part of the channel that attaches each group message to one work item.
 
 ## Requirements
@@ -79,6 +79,7 @@ Everything here is read from Fleet state; no worker turn runs.
 - **Overlap** (same pass): when another Fleet conversation, on any host, runs on one of a work item's tasks, the room hears once, with [Join it] (the work item moves to that conversation: later messages go there) and [Work separately]. A tap counts from a linked person who may see the room's project.
 - **Milestones** (same pass): a work item's room hears once when its pull request opens, fails its checks or merges, and when its task completes or fails (`ms:<work>:<event>`); the status message follows. Fleet knows delivery as pull request stages; a project's own DEV or LIVE deploys reach the chat as the worker's answers.
 
+<a id="approvals"></a>
 ### Approvals (`approvals.go`)
 
 Every action an agent takes has a risk level. The defaults are permissive, and a project's `settings.risks` overrides them per action:
