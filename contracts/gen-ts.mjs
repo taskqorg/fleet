@@ -53,7 +53,7 @@ const vocabStages = JSON.parse(readFileSync(new URL('vocabulary.json', dir), 'ut
 if (stages.join() !== vocabStages.join()) throw Error(`vocabulary.json lists.delivery.states must equal ops-executions DeliveryStage: ${stages.join(', ')}`);
 
 let imports = new Set();
-const domains = [];
+const domains = [], views = [];
 const seen = new Map(); // operation or planned name -> file: one name, one file across all ops files
 mkdirSync(new URL('generated/', dir), { recursive: true });
 for (const f of readdirSync(dir).filter((f) => f.endsWith('.schema.json'))) {
@@ -69,6 +69,7 @@ for (const f of readdirSync(dir).filter((f) => f.endsWith('.schema.json'))) {
     if (seen.has(n)) throw Error(`${f}: operation ${n} is also in ${seen.get(n)} (built or planned): keep one`);
     seen.set(n, f);
   }
+  for (const [n, o] of Object.entries(root.operations ?? {})) if (o.view) views.push(n);
   if (root.operations) { out.push(`export type ${opsName} = {\n${Object.keys(root.operations).map((n) => {
     const t = n.split(/[_.-]/).filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join('');
     for (const d of [t + 'Request', t + 'Reply']) if (!root.$defs[d]) throw Error(`${f}: operation ${n} has no $defs ${d}`);
@@ -91,5 +92,5 @@ if (domains.length) {
   const ops = new URL('generated/ops.ts', dir);
   const files = domains.map(([f]) => './' + f.replace('.schema.json', '.ts'));
   const built = domains.filter(([f]) => JSON.parse(readFileSync(new URL(f, dir), 'utf8')).operations);
-  writeFileSync(ops, readFileSync(ops, 'utf8') + `\n${files.map((m) => `export type * from '${m}';`).join('\n')}\n${built.map(([f, n]) => `import type { ${n} } from './${f.replace('.schema.json', '.ts')}';`).join('\n')}\n\nexport type Ops = ${built.map(([, n]) => n).join(' & ')};\n`);
+  writeFileSync(ops, readFileSync(ops, 'utf8') + `\n${files.map((m) => `export type * from '${m}';`).join('\n')}\n${built.map(([f, n]) => `import type { ${n} } from './${f.replace('.schema.json', '.ts')}';`).join('\n')}\n\nexport type Ops = ${built.map(([, n]) => n).join(' & ')};\n\n// View operations (contract view: true): one read per screen, composed on the server from summaries (docs/designs/fleet-data-layer.md).\nexport type ViewName = ${views.length ? views.sort().map((n) => JSON.stringify(n)).join(' | ') : 'never'};\n`);
 }

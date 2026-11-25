@@ -6,6 +6,7 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-operator-app.md`: operator and architect workflows, the operator web app, live change feed and surviving retirement requirements.
 * `fleet-ia-and-journeys.md`: top-level information architecture, Lab-first evaluation model, core user journeys `J1`–`J5`, and agentic product-development method.
 * `fleet-view-urls-and-list-path.md`: view URLs and the list path.
+* `fleet-data-layer.md`: instant screens by default: the read mirror, one view operation per screen, the change stream as the only reread, server queries that indexes serve under RLS, and what keeps it from drifting.
 * `fleet-analytics.md`: `analytics_query` over work records and the price table.
 * `fleet-lab.md`: the Fleet Lab (experiments, examples, evaluators, Promote) and work analysis.
 * `fleet-people-access.md`: people, identity, per-host secrets, holders, subscriptions and logins, isolation layers, take, dispatch, intake, readings and budgets.

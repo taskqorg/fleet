@@ -15,7 +15,7 @@ import { op, online, writeOnce, prepareSending, submissionKey, sendingId, author
 import { useAnswers } from '../answers.ts';
 import { access } from '../access.ts';
 import { useAttachments } from '../uploads.ts';
-import { useOp } from '../store.ts';
+import { useOp, useView } from '../store.ts';
 import type { SessionAgent, SessionGetReply } from '../../../contracts/generated/ops.ts';
 import { nextUrl } from '../url.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
@@ -66,7 +66,7 @@ function Session(props: { id: string; frame: SessionFrame; thread?: string; onCl
   // One read for the screen (session_view, docs/designs/fleet-conversations.md "Session view"): the head, the composer
   // target, open questions, threads, triggers, the context panel and the newest turns as summaries. quiet: a running
   // session's execution changes many times a second; the view rereads at most once a second.
-  const sDoc = useOp('session_view', () => ({ sessionId: props.id }), { quiet: 1000 });
+  const sDoc = useView('session_view', () => ({ sessionId: props.id }), { quiet: 1000 });
   const [verifiedTarget, setVerifiedTarget] = createSignal<string | null>(null, { ownedWrite: true });
   createEffect(() => [sDoc.data, sDoc.restored, props.id] as const, ([s, restored, id]) => { if (s && !restored) setVerifiedTarget(id); });
   const s = () => sDoc.data?.head;

@@ -77,6 +77,25 @@ try {
   page.off('request', any); await page.unroute('**/api/ops/me');
   claim(kept && reads === 0, `a failed person check keeps the page (${reads} reads, rows ${kept ? 'shown' : 'gone'})`);
 
+  // A hidden tab reads nothing while changes arrive; when it shows again it reads what changed, once.
+  let hiddenReads = 0, shownReads = 0, shown = false;
+  const hiddenOps: string[] = [];
+  // Writes are not reads: a hiding tab saves its list view (person_settings_set, keepalive) by design; me is the
+  // person check, which may still be retrying from the step above.
+  const tally = (r: { url(): string }) => { const p = new URL(r.url()).pathname; if (!p.startsWith('/api/ops/') || p.endsWith('_set') || p.endsWith('/me')) return; if (shown) shownReads++; else { hiddenReads++; hiddenOps.push(p.slice(9)); } };
+  page.on('request', tally);
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.waitForTimeout(300);
+  seed.task({ title: 'Mirror task hidden', projectId: 'cs', expectedOutcome: 'A result.' });
+  await page.waitForTimeout(3000);
+  shown = true;
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.getByText('Mirror task hidden', { exact: true }).first().waitFor({ timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+  page.off('request', tally);
+  const arrived = await page.getByText('Mirror task hidden', { exact: true }).first().isVisible().catch(() => false);
+  claim(hiddenReads === 0 && shownReads > 0 && arrived, `a hidden tab reads nothing on changes (${hiddenReads} hidden${hiddenOps.length ? ' ' + hiddenOps.join(',') : ''}, ${shownReads} on return, new row ${arrived ? 'shown' : 'missing'})`);
+
   // The app update (nav-rail.md, Update): a tab the person is away from never reloads; coming back when the last action
   // was 30 s or more ago reloads at once. The site is made to serve another app by answering the update check's page read.
   await page.route('**/home', async r => {

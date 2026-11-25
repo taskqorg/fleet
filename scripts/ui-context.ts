@@ -101,6 +101,11 @@ export function context(page: string): string {
     if (g === 'Canvas') L.push('  Read the canvas as plain text with your file tools; never call the Brilliant MCP tools from a task worktree; a visible change is drawn first in ~/Projects/fleet-board and approved by the owner (OR-62, README.md#design-board).');
     L.push('');
   }
+  // Data (docs/designs/fleet-data-layer.md): how this page gets its data, so a change keeps it instant.
+  L.push('Data (docs/designs/fleet-data-layer.md):',
+    '- Read the screen through one view operation with useView (contract `view: true`, composed on the server from summaries); add fields to the view, not new reads.',
+    '- No `every` timers and no reads on focus or visibility: the change stream rereads what it touches; a hidden tab reads nothing.',
+    '- Prove it: `node scripts/page-budget.ts <path>` on the deployed site (open, reload, Alt-Tab, Back) and quote the numbers in the pull request.', '');
   L.push('Principles (owner-rules.md):', ...principles(owner).map((p, i) => `${i + 1}. ${p}`), '');
   const ids = [...why.keys()].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
   L.push(`Rules cited (${ids.length}):`);

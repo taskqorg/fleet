@@ -4,6 +4,7 @@ import { AccessChanged, accessGeneration, ensureAccessGeneration, isAccessCurren
 import { createEffect, createMemo, createSignal, runWithOwner, untrack } from 'solid-js';
 import { cell, readValue, type Cell, type MaybeAccessor } from './signal.ts';
 import { op, online, signedOut, OpError, type Ops, type OpName } from './api.ts';
+import type { ViewName } from '../../contracts/generated/ops.ts';
 import { subscribe, feedState, type Change } from './feed.ts';
 import { compareKeys, type Row, type SortKey } from './lists.ts';
 import type { ListGroup, MembershipAnswer, TaskRow, SessionRow } from '../../contracts/generated/ops.ts';
@@ -312,7 +313,8 @@ export async function applyChanges(cs: Change[]) {
       e.affected.add(id);
       if (e.affected.size > MAX_MEMBERSHIP_IDS) { e.affected.clear(); e.dirty = true; }
     }
-    if (e.mounted) reads.push(settleChanges(key, e));
+    // A hidden tab settles its lists when it shows again (startStore).
+    if (e.mounted && !hiddenTab()) reads.push(settleChanges(key, e));
   }
   await Promise.all(reads);
 }
@@ -331,6 +333,10 @@ export function startStore() {
     if (!retryOnly) for (const [k, d] of docs) if (!flights.get(k)?.readers.size) { d.dirty = true; d.dirtySeq++; }
   };
   subscribe({ resync: () => reloadMounted(), changes: applyChanges });
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => {
+    if (hiddenTab()) return;
+    for (const [key, e] of lists) if (e.mounted && (e.dirty || e.affected.size)) void settleChanges(key, e);
+  });
   runWithOwner(null, () => createEffect(() => feedState.value, state => { if (state === 'live') reloadMounted(true); }));
 }
 
@@ -512,21 +518,35 @@ export function touchedBy(c: Change, name: OpName, request: unknown): boolean {
 type Mounted = { name: OpName; request: () => unknown; read: () => void; key?: string };
 const mounted = new Set<Mounted>();
 let opFeed: (() => void) | null = null;
+// A hidden tab reads nothing: a read the change stream asks for while the tab is hidden waits, and the tab reads each
+// such read once when it shows again (only what changed meanwhile). The stream itself keeps flowing, so nothing is missed.
+const hiddenTab = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+const deferred = new Set<Mounted>();
+let shownHook = false;
+function readOrDefer(x: Mounted) { if (hiddenTab()) deferred.add(x); else x.read(); }
 function watch(m: Mounted) {
   mounted.add(m);
+  if (!shownHook && typeof document !== 'undefined') {
+    shownHook = true;
+    document.addEventListener('visibilitychange', () => {
+      if (hiddenTab()) return;
+      const due = [...deferred]; deferred.clear();
+      for (const x of due) if (mounted.has(x)) x.read();
+    });
+  }
   opFeed ??= subscribe({
     resync: () => {
       // A read still on its way started after the new cursor (reads wait for the gate), so it is current already;
       // every other mounted read, a failed one included, reads again.
-      for (const x of mounted) { const f = x.key ? flights.get(x.key) : undefined; if (!f || f.started <= Math.max(f.shown, f.failed)) x.read(); }
+      for (const x of mounted) { const f = x.key ? flights.get(x.key) : undefined; if (!f || f.started <= Math.max(f.shown, f.failed)) readOrDefer(x); }
       for (const [k, d] of docs) if (!flights.get(k)?.readers.size) { d.dirty = true; d.dirtySeq++; }
     },
     changes: cs => {
-      for (const x of mounted) { const r = x.request(); if (cs.some(c => touchedBy(c, x.name, r))) x.read(); }
+      for (const x of mounted) { const r = x.request(); if (cs.some(c => touchedBy(c, x.name, r))) readOrDefer(x); }
       for (const [k, d] of docs) if (!flights.get(k)?.readers.size && d.name && d.request !== undefined && cs.some(c => touchedBy(c, d.name!, d.request))) { d.dirty = true; d.dirtySeq++; }
     },
   });
-  return () => { mounted.delete(m); };
+  return () => { mounted.delete(m); deferred.delete(m); };
 }
 function throttle(read: () => void, quiet = 0) {
   if (!quiet) return { read, stop: () => {} };
@@ -590,6 +610,16 @@ export function useOp<K extends OpName>(name: K, request: MaybeAccessor<Ops[K]['
     get state() { return freshness(!!s()?.value?.restored); },
     reload: () => reloadFn(),
   };
+}
+
+/**
+ * The read of a screen (docs/designs/fleet-data-layer.md): a view operation (contract view: true) composed on the server
+ * from summaries. It shows at once from the read mirror, rereads only when the change stream touches it (quiet: at most
+ * once per quiet ms), and never polls: a view has no `every`. A new screen adds a view operation to the contract and reads
+ * it here; useOp stays for the reads of screens not moved yet and for one-off detail reads.
+ */
+export function useView<K extends ViewName & OpName>(name: K, request: MaybeAccessor<Ops[K]['request'] | null>, opts: { quiet?: MaybeAccessor<number | undefined> } = {}): OpRead<Ops[K]['reply']> {
+  return useOp(name, request, { quiet: opts.quiet });
 }
 
 /** For tests: the stored list under key and a doc. */
