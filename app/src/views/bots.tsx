@@ -9,7 +9,7 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import { writeOnce, useAlive, type Ops } from '../api.ts';
 import {
-  BOT_TABS, botStatusBadge, classifyBotTaskBucket, filterBotRuns, filterBotTasks, formatBotTriggers, reasonLabel, wakeLabel,
+  BOT_TABS, botStatusBadge, classifyBotTaskBucket, filterBotRuns, filterBotTasks, formatBotTriggers, reasonLabel, sourceLabel, wakeLabel,
   type BotRunFilter, type BotTab, type BotTaskBucket,
 } from '../bot-view.ts';
 
@@ -443,7 +443,7 @@ function BotRunsTable(props: { runs: BotRun[]; projectNames: Map<string, string>
                 <For each={r.linkedTaskIds}>{tid => <EntityCode kind="task" id={tid} />}</For>
               </div>
             </td>
-            <td class="muted">{[r.hostId, r.sentBy, r.source].filter(Boolean).join(' · ') || '—'}</td>
+            <td class="muted">{[r.hostId, r.sentBy, sourceLabel(r.source)].filter(Boolean).join(' · ') || '—'}</td>
             <td><Ago t={ms(r.startedAt ?? r.createdAt)!} /></td>
           </tr>
         )}
