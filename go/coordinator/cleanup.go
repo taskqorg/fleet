@@ -326,27 +326,16 @@ var referenceMap = []objectRef{
 	// Swarm work board (migration 89): scoped to task, pipeline_run, or session; author/artifact links are ON DELETE SET NULL.
 	{table: "bot", column: "id", mode: refNone},
 	{table: "bot", column: "project_id", kind: "project", mode: refOwn},
-	{table: "bot", column: "home_session_id", mode: refNone},
 	{table: "bot_revision", column: "profile_id", mode: refNone},
 	// Triggers (migration 106, triggers.go) go with their session or bot, and with their project.
 	{table: "trigger", column: "id", mode: refNone},
 	{table: "trigger", column: "project_id", kind: "project", mode: refOwn},
 	{table: "trigger", column: "preset_id", mode: refNone},
-	{table: "bot_run", column: "trigger_id", mode: refNone},
-	// The tables triggers replaced (watch above, bot_automation, bot_wake_cursor) stay until older releases leave the
-	// rollback window; a later migration drops them.
-	{table: "bot_automation", column: "id", mode: refNone},
-	{table: "bot_automation", column: "project_id", mode: refNone},
-	{table: "bot_run", column: "automation_id", mode: refNone},
-	{table: "bot_wake_cursor", column: "project_id", kind: "project", mode: refOwn},
-	{table: "bot_run", column: "id", mode: refNone},
-	{table: "bot_run", column: "project_id", kind: "project", mode: refOwn},
-	{table: "bot_run", column: "session_id", mode: refNone},
-	{table: "bot_run", column: "execution_id", mode: refNone},
-	{table: "bot_run", column: "queued_message_id", mode: refNone},
+	{table: "trigger_log", column: "trigger_id", mode: refNone},
+	{table: "trigger_log", column: "request_id", mode: refNone},
+	{table: "trigger_log", column: "project_id", kind: "project", mode: refOwn},
 	{table: "bot_task", column: "project_id", kind: "project", mode: refOwn},
 	{table: "bot_task", column: "task_id", kind: "task", mode: refOwn},
-	{table: "bot_task", column: "bot_run_id", mode: refNone},
 	{table: "bot_task", column: "session_id", mode: refNone},
 	{table: "bot_task", column: "execution_id", mode: refNone},
 	{table: "work_plan", column: "id", mode: refNone},
@@ -379,14 +368,14 @@ var objectTables = []struct{ kind, table, filter string }{
 var tombstoned = append([]string{"execution", "task", "experiment", "question", "artifact", "score", "experiment_note",
 	"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done",
 	"host", "host_observation", "watch", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
-	"connection_key", "run_token", "person_setting", "upload", "problem_dismissal", "project_recommendation", "transport_conflict", "bot", "bot_run", "bot_task", "work_plan", "board_message"}, deliveryTables...)
+	"connection_key", "run_token", "person_setting", "upload", "problem_dismissal", "project_recommendation", "transport_conflict", "bot", "bot_task", "work_plan", "board_message"}, deliveryTables...)
 
 // keptRows: rows of a table that neither go with an object nor keep one. None now: the audit records that outlive what
 // they describe (the journal of M0) have their own tables without a refOwn column (migration 82).
 var keptRows = map[string]string{}
 
 // purgeOrder: the tables system_purge deletes from, referencing rows before the rows they reference (foreign keys).
-var purgeOrder = append([]string{"bot_task", "bot_run", "trigger", "bot_wake_cursor", "bot", "board_message", "work_plan", "score", "experiment_note", "artifact_copy", "artifact", "question", "execution_spend", "execution_totals", "route_decision",
+var purgeOrder = append([]string{"bot_task", "trigger_log", "trigger", "bot", "board_message", "work_plan", "score", "experiment_note", "artifact_copy", "artifact", "question", "execution_spend", "execution_totals", "route_decision",
 	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "problem_dismissal",
 	"transport_conflict", "upload", "project_recommendation", "watch", "run_token", "account_inspection", "account_check", "account_catalogue",
 	"connection_key", "api_connection", "managed_account", "host_observation", "host", "person_setting", "message", "event",

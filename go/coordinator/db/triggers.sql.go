@@ -8,6 +8,8 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const triggerCreate = `-- name: TriggerCreate :execrows
@@ -188,18 +190,22 @@ func (q *Queries) TriggerGet(ctx context.Context, id string) (Trigger, error) {
 
 const triggerList = `-- name: TriggerList :many
 SELECT t.id, t.session_id, t.bot_id, t.project_id, t.revision, t.name, t.preset_id, t.text, t.when_kind, t.every_ms, t.daily_time, t.daily_zone, t.if_changed, t.enabled, t.effective_since, t.change_cursor, t.next_at, t.last_slot, t.fires, t.last_fire_at, t.quiet_checks, t.quiet_since, t.last_error, t.limits_signaled, t.created_at,
-       coalesce(CASE WHEN e.state::text = 'preparing' THEN 'queued' ELSE e.state::text END, r.state, '')::text AS last_state,
-       coalesce(e.observation::text, r.observation, '')::text AS last_observation,
-       coalesce(e.problem, r.reason, '')::text AS last_reason,
-       coalesce(r.created_at, 'epoch'::timestamptz) AS last_run_at
+       coalesce(r.state, '')::text AS last_state,
+       coalesce(r.observation, '')::text AS last_observation,
+       coalesce(r.reason, '')::text AS last_reason,
+       coalesce(r.at, 'epoch'::timestamptz)::timestamptz AS last_run_at
 FROM trigger t
 LEFT JOIN LATERAL (
-  SELECT br.state, br.observation, br.reason, br.created_at, br.execution_id
-  FROM bot_run br
-  WHERE br.trigger_id = t.id AND br.tombstoned_at IS NULL
-  ORDER BY br.seq DESC LIMIT 1
+  SELECT x.state, x.observation, x.reason, x.at FROM (
+    (SELECT (CASE WHEN e.state = 'preparing' THEN 'queued' ELSE e.state::text END) AS state, e.observation::text AS observation,
+            coalesce(e.problem, '') AS reason, coalesce(e.started_at, e.updated_at) AS at
+     FROM session s JOIN message m ON m.session_id = s.id JOIN execution e ON e.id = m.execution_id
+     WHERE s.bot_id = t.bot_id AND m.payload->>'triggerId' = t.id
+     ORDER BY m.seq DESC LIMIT 1)
+    UNION ALL
+    (SELECT 'skipped', 'confirmed', l.reason, l.at FROM trigger_log l WHERE l.trigger_id = t.id ORDER BY l.at DESC LIMIT 1)
+  ) x ORDER BY x.at DESC LIMIT 1
 ) r ON t.bot_id IS NOT NULL
-LEFT JOIN execution e ON e.id = r.execution_id
 WHERE ($1::text IS NOT NULL AND t.session_id = $1)
    OR ($2::text IS NOT NULL AND t.bot_id = $2)
 ORDER BY lower(t.name), t.id
@@ -215,10 +221,11 @@ type TriggerListRow struct {
 	LastState       string
 	LastObservation string
 	LastReason      string
-	LastRunAt       time.Time
+	LastRunAt       pgtype.Timestamptz
 }
 
-// The triggers of one target with the last bot run each one caused (bot targets only).
+// The triggers of one target with the last wake each one caused (bot targets only): the run of its newest message in the
+// bot's conversations, or its newest skipped wake (trigger_log), whichever is later.
 func (q *Queries) TriggerList(ctx context.Context, arg TriggerListParams) ([]TriggerListRow, error) {
 	rows, err := q.db.Query(ctx, triggerList, arg.SessionID, arg.BotID)
 	if err != nil {
@@ -267,6 +274,29 @@ func (q *Queries) TriggerList(ctx context.Context, arg TriggerListParams) ([]Tri
 		return nil, err
 	}
 	return items, nil
+}
+
+const triggerLogSkip = `-- name: TriggerLogSkip :exec
+INSERT INTO trigger_log(trigger_id, request_id, project_id, reason) VALUES ($1, $2, $3, $4)
+ON CONFLICT (trigger_id, request_id) DO NOTHING
+`
+
+type TriggerLogSkipParams struct {
+	TriggerID string
+	RequestID string
+	ProjectID *string
+	Reason    string
+}
+
+// A bot wake of this trigger that did not run (the bot paused): the trigger's log, not a run.
+func (q *Queries) TriggerLogSkip(ctx context.Context, arg TriggerLogSkipParams) error {
+	_, err := q.db.Exec(ctx, triggerLogSkip,
+		arg.TriggerID,
+		arg.RequestID,
+		arg.ProjectID,
+		arg.Reason,
+	)
+	return err
 }
 
 const triggerSetError = `-- name: TriggerSetError :exec

@@ -4,20 +4,25 @@
 SELECT * FROM trigger WHERE id = $1;
 
 -- name: TriggerList :many
--- The triggers of one target with the last bot run each one caused (bot targets only).
+-- The triggers of one target with the last wake each one caused (bot targets only): the run of its newest message in the
+-- bot's conversations, or its newest skipped wake (trigger_log), whichever is later.
 SELECT sqlc.embed(t),
-       coalesce(CASE WHEN e.state::text = 'preparing' THEN 'queued' ELSE e.state::text END, r.state, '')::text AS last_state,
-       coalesce(e.observation::text, r.observation, '')::text AS last_observation,
-       coalesce(e.problem, r.reason, '')::text AS last_reason,
-       coalesce(r.created_at, 'epoch'::timestamptz) AS last_run_at
+       coalesce(r.state, '')::text AS last_state,
+       coalesce(r.observation, '')::text AS last_observation,
+       coalesce(r.reason, '')::text AS last_reason,
+       coalesce(r.at, 'epoch'::timestamptz)::timestamptz AS last_run_at
 FROM trigger t
 LEFT JOIN LATERAL (
-  SELECT br.state, br.observation, br.reason, br.created_at, br.execution_id
-  FROM bot_run br
-  WHERE br.trigger_id = t.id AND br.tombstoned_at IS NULL
-  ORDER BY br.seq DESC LIMIT 1
+  SELECT x.state, x.observation, x.reason, x.at FROM (
+    (SELECT (CASE WHEN e.state = 'preparing' THEN 'queued' ELSE e.state::text END) AS state, e.observation::text AS observation,
+            coalesce(e.problem, '') AS reason, coalesce(e.started_at, e.updated_at) AS at
+     FROM session s JOIN message m ON m.session_id = s.id JOIN execution e ON e.id = m.execution_id
+     WHERE s.bot_id = t.bot_id AND m.payload->>'triggerId' = t.id
+     ORDER BY m.seq DESC LIMIT 1)
+    UNION ALL
+    (SELECT 'skipped', 'confirmed', l.reason, l.at FROM trigger_log l WHERE l.trigger_id = t.id ORDER BY l.at DESC LIMIT 1)
+  ) x ORDER BY x.at DESC LIMIT 1
 ) r ON t.bot_id IS NOT NULL
-LEFT JOIN execution e ON e.id = r.execution_id
 WHERE (sqlc.narg(session_id)::text IS NOT NULL AND t.session_id = sqlc.narg(session_id))
    OR (sqlc.narg(bot_id)::text IS NOT NULL AND t.bot_id = sqlc.narg(bot_id))
 ORDER BY lower(t.name), t.id;
@@ -78,3 +83,8 @@ WHERE id <> @id
 -- A trigger message still queued for the session: when it starts, the session reads its focus anyway, and the next
 -- fire after it lists every change since.
 SELECT EXISTS (SELECT 1 FROM queued_message WHERE session_id = $1 AND state = 'queued' AND payload ? 'triggerId');
+
+-- name: TriggerLogSkip :exec
+-- A bot wake of this trigger that did not run (the bot paused): the trigger's log, not a run.
+INSERT INTO trigger_log(trigger_id, request_id, project_id, reason) VALUES (@trigger_id, @request_id, sqlc.narg(project_id), @reason)
+ON CONFLICT (trigger_id, request_id) DO NOTHING;

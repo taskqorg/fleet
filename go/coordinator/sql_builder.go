@@ -1176,7 +1176,7 @@ const sqlSessionNow = `(SELECT (SELECT t.b->>'markdown' FROM jsonb_array_element
 const agentTextPath = `$.data.fleetNormalized.blocks[*] ? (@.kind == "text" && @.markdown != "" && (@.role == "agent" || !exists(@.role)))`
 
 // sqlSessionListCols: the columns of sessionListDBRow (sessions.go) over x.
-var sqlSessionListCols = "x.id,x.code,x.title,x.first_message,x.state,x.harness,x.agent_harness,x.profile_id,x.project_id,x.created_ms,x.archived_ms," +
+var sqlSessionListCols = "x.id,x.code,x.title,x.first_message,x.state,x.harness,x.agent_harness,x.profile_id,x.project_id,x.bot_id,x.created_ms,x.archived_ms," +
 	sqlJSONTime("x.activity_at") + " AS activity_at,x.executions,x.open_questions," + sqlSessionNow + "," + sqlSessionWork
 
 // sqlSessionWork: a row's work facts (controls/work-facts.md), for the page's rows only like sqlSessionNow: since when

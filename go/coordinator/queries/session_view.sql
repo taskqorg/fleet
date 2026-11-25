@@ -37,8 +37,6 @@ FROM question x WHERE x.id = ANY (@question_ids::text[])
 UNION ALL
 SELECT ('execution:' || e.id)::text,
  coalesce(nullif(t.title, ''),
-  (SELECT coalesce(tr.name, au.name) FROM bot_run br LEFT JOIN trigger tr ON tr.id = br.trigger_id LEFT JOIN bot_automation au ON au.id = br.automation_id
-   WHERE br.execution_id = e.id ORDER BY br.seq DESC LIMIT 1),
   (SELECT tr.name FROM message m JOIN trigger tr ON tr.id = m.payload->>'triggerId' WHERE m.execution_id = e.id ORDER BY m.seq LIMIT 1),
   nullif(left(split_part(btrim((SELECT m.text FROM message m WHERE m.execution_id = e.id ORDER BY m.seq LIMIT 1)), E'\n', 1), 120), ''),
   CASE e.kind WHEN 'host_job' THEN 'Host job' ELSE 'Run' END || coalesce(' on ' || e.host_id, '') || coalesce(' · ' || nullif(left(split_part(e.problem, E'\n', 1), 80), ''), ''))::text,

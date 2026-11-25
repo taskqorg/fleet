@@ -147,7 +147,7 @@ func markObservation(q *Request, id any, observation string) error {
 		_, err = settleIdleTask(q, taskID)
 	}
 	if err == nil {
-		err = syncBotRunFromExecution(q, sid)
+		err = settleBotRun(q, sid)
 	}
 	return err
 }
@@ -649,7 +649,7 @@ func executionPutRaw(q *Request, e rawObject) error {
 		}
 	}
 	if !inserted {
-		if err := syncBotRunFromExecution(q, id); err != nil {
+		if err := settleBotRun(q, id); err != nil {
 			return err
 		}
 	}

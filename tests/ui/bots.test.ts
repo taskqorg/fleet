@@ -23,7 +23,7 @@ test('bot task classification separates active, waiting, and historical managed 
   assert.equal(classifyBotTaskBucket('cancelled'), 'history');
 
   const mkTask = (taskId: string, state: string): BotTaskRecord => ({
-    botId: 'b1', botName: 'HAL', taskId, projectId: 'p1', botRunId: null, sessionId: null,
+    botId: 'b1', botName: 'HAL', taskId, projectId: 'p1', sessionId: null,
     executionId: null, linkKind: 'created', createdBy: 'bot', createdAt: '2026-01-01T00:00:00Z',
     taskCode: 'T-1', title: taskId, state, waitReason: null, pauseReason: null, priority: 'normal',
     acceptedAt: null, acceptedBy: null, openQuestions: 0, executionCount: 1, executionsByState: {}, updatedAt: '2026-01-01T00:00:00Z',
@@ -38,10 +38,10 @@ test('bot task classification separates active, waiting, and historical managed 
 test('bot runs filtering isolates quiet, skipped, queued, failed, and unconfirmed wakes', () => {
   const mkRun = (id: string, over: Partial<BotRunRecord>): BotRunRecord => ({
     id, botId: 'b1', projectId: 'p1', botRevision: 1, memoryRevision: 0,
-    sessionId: 's1', executionId: 'e1', queuedMessageId: null, cause: 'manual',
-    dedupKey: null, state: 'succeeded', observation: 'confirmed', quiet: false,
+    sessionId: 's1', executionId: 'e1', cause: 'manual',
+    state: 'succeeded', observation: 'confirmed', quiet: false,
     reason: null, sentBy: 'user@test', source: 'web', hostId: 'h1', problem: null,
-    createdAt: '2026-01-01T00:00:00Z', startedAt: null, endedAt: null, triggers: [], linkedTaskIds: [],
+    createdAt: '2026-01-01T00:00:00Z', startedAt: null, endedAt: null, linkedTaskIds: [],
     ...over,
   });
   const runs = [

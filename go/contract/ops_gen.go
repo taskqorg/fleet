@@ -115,7 +115,6 @@ const (
 	ChangeKindArtifact              ChangeKind = "artifact"
 	ChangeKindBoard                 ChangeKind = "board"
 	ChangeKindBot                   ChangeKind = "bot"
-	ChangeKindBotRun                ChangeKind = "bot-run"
 	ChangeKindCommand               ChangeKind = "command"
 	ChangeKindConnectionKey         ChangeKind = "connection-key"
 	ChangeKindDefinition            ChangeKind = "definition"
@@ -137,7 +136,7 @@ const (
 )
 
 // ChangeKindValues lists every ChangeKind in schema order.
-var ChangeKindValues = []ChangeKind{ChangeKindAccessGrant, ChangeKindAccessServer, ChangeKindActivity, ChangeKindApiConnection, ChangeKindArtifact, ChangeKindBoard, ChangeKindBot, ChangeKindBotRun, ChangeKindCommand, ChangeKindConnectionKey, ChangeKindDefinition, ChangeKindDelivery, ChangeKindEvent, ChangeKindExecution, ChangeKindExperiment, ChangeKindHost, ChangeKindManagedAccount, ChangeKindProjectRecommendation, ChangeKindQuestion, ChangeKindResourceSummary, ChangeKindScore, ChangeKindSession, ChangeKindSettingChange, ChangeKindTask, ChangeKindTrigger, ChangeKindWatch}
+var ChangeKindValues = []ChangeKind{ChangeKindAccessGrant, ChangeKindAccessServer, ChangeKindActivity, ChangeKindApiConnection, ChangeKindArtifact, ChangeKindBoard, ChangeKindBot, ChangeKindCommand, ChangeKindConnectionKey, ChangeKindDefinition, ChangeKindDelivery, ChangeKindEvent, ChangeKindExecution, ChangeKindExperiment, ChangeKindHost, ChangeKindManagedAccount, ChangeKindProjectRecommendation, ChangeKindQuestion, ChangeKindResourceSummary, ChangeKindScore, ChangeKindSession, ChangeKindSettingChange, ChangeKindTask, ChangeKindTrigger, ChangeKindWatch}
 
 // Valid: v is one of the schema's values.
 func (v ChangeKind) Valid() bool {
@@ -668,6 +667,7 @@ func (v *ScopedResourceRollup) Validate() error {
 type SessionRow struct {
 	ActivityAt    *string       `json:"activityAt"`
 	ArchivedAt    *float64      `json:"archivedAt"`
+	BotId         *string       `json:"botId,omitempty"`
 	Code          *string       `json:"code"`
 	CreatedAt     *float64      `json:"createdAt"`
 	Executions    int64         `json:"executions"`

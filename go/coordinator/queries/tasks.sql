@@ -131,7 +131,7 @@ FROM question
 WHERE (sqlc.narg(id)::text IS NULL OR id = sqlc.narg(id))
  AND (sqlc.narg(task_id)::text IS NULL OR task_id = sqlc.narg(task_id))
  AND (sqlc.narg(bot_id)::text IS NULL
-  OR session_id = (SELECT b.home_session_id FROM bot b WHERE b.id = sqlc.narg(bot_id) AND b.tombstoned_at IS NULL)
+  OR session_id IN (SELECT s.id FROM session s WHERE s.bot_id = sqlc.narg(bot_id) AND s.tombstoned_at IS NULL)
   OR execution_id IN (SELECT e.id FROM execution e WHERE e.bot_id = sqlc.narg(bot_id))
   OR EXISTS (SELECT 1 FROM execution e WHERE e.bot_id = sqlc.narg(bot_id) AND question.asked_by = 'execution:' || e.id)
   OR task_id IN (SELECT bt.task_id FROM bot_task bt WHERE bt.bot_id = sqlc.narg(bot_id) AND bt.tombstoned_at IS NULL))

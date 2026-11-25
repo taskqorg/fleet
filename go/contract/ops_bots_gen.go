@@ -140,19 +140,19 @@ func (v *BotGetRequest) Validate() error {
 }
 
 type BotListItem struct {
-	ActiveRunId   *string    `json:"activeRunId"`
-	Avatar        *BotAvatar `json:"avatar,omitempty"`
-	Code          *string    `json:"code,omitempty"`
-	HomeSessionId *string    `json:"homeSessionId"`
-	Id            string     `json:"id"`
-	LastRunAt     *string    `json:"lastRunAt"`
-	LastRunState  *string    `json:"lastRunState"`
-	Name          string     `json:"name"`
-	NeedsYou      bool       `json:"needsYou"`
-	Paused        bool       `json:"paused"`
-	ProjectId     string     `json:"projectId"`
-	Purpose       string     `json:"purpose"`
-	Revision      int64      `json:"revision"`
+	ActiveRunId    *string    `json:"activeRunId"`
+	Avatar         *BotAvatar `json:"avatar,omitempty"`
+	Code           *string    `json:"code,omitempty"`
+	ConversationId *string    `json:"conversationId"`
+	Id             string     `json:"id"`
+	LastRunAt      *string    `json:"lastRunAt"`
+	LastRunState   *string    `json:"lastRunState"`
+	Name           string     `json:"name"`
+	NeedsYou       bool       `json:"needsYou"`
+	Paused         bool       `json:"paused"`
+	ProjectId      string     `json:"projectId"`
+	Purpose        string     `json:"purpose"`
+	Revision       int64      `json:"revision"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -240,23 +240,22 @@ func (v *BotPauseRequest) Validate() error {
 }
 
 type BotRecord struct {
-	ActiveExecutionId *string     `json:"activeExecutionId"`
-	ActiveRunId       *string     `json:"activeRunId"`
-	Avatar            *BotAvatar  `json:"avatar,omitempty"`
-	Code              *string     `json:"code,omitempty"`
-	Director          string      `json:"director"`
-	HomeSessionId     *string     `json:"homeSessionId"`
-	Id                string      `json:"id"`
-	LastRunAt         *string     `json:"lastRunAt"`
-	LastRunState      *string     `json:"lastRunState"`
-	Memory            string      `json:"memory"`
-	MemoryRevision    int64       `json:"memoryRevision"`
-	NeedsYou          bool        `json:"needsYou"`
-	Paused            bool        `json:"paused"`
-	PausedAt          *string     `json:"pausedAt"`
-	ProjectId         string      `json:"projectId"`
-	Revision          int64       `json:"revision"`
-	Settings          BotSettings `json:"settings"`
+	ActiveRunId    *string     `json:"activeRunId"`
+	Avatar         *BotAvatar  `json:"avatar,omitempty"`
+	Code           *string     `json:"code,omitempty"`
+	ConversationId *string     `json:"conversationId"`
+	Director       string      `json:"director"`
+	Id             string      `json:"id"`
+	LastRunAt      *string     `json:"lastRunAt"`
+	LastRunState   *string     `json:"lastRunState"`
+	Memory         string      `json:"memory"`
+	MemoryRevision int64       `json:"memoryRevision"`
+	NeedsYou       bool        `json:"needsYou"`
+	Paused         bool        `json:"paused"`
+	PausedAt       *string     `json:"pausedAt"`
+	ProjectId      string      `json:"projectId"`
+	Revision       int64       `json:"revision"`
+	Settings       BotSettings `json:"settings"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -315,31 +314,28 @@ func (v BotRunObservation) Valid() bool {
 }
 
 type BotRunRecord struct {
-	Automation      *BotAutomationRef `json:"automation,omitempty"`
-	BotId           string            `json:"botId"`
-	BotRevision     int64             `json:"botRevision"`
-	Cause           BotRunCause       `json:"cause"`
-	CreatedAt       string            `json:"createdAt"`
-	DedupKey        *string           `json:"dedupKey"`
-	EndedAt         *string           `json:"endedAt"`
-	ExecutionId     *string           `json:"executionId"`
-	Failure         *Failure          `json:"failure,omitempty"`
-	HostId          *string           `json:"hostId"`
-	Id              string            `json:"id"`
-	LinkedTaskIds   []string          `json:"linkedTaskIds"`
-	MemoryRevision  int64             `json:"memoryRevision"`
-	Observation     BotRunObservation `json:"observation"`
-	Problem         *string           `json:"problem"`
-	ProjectId       string            `json:"projectId"`
-	QueuedMessageId *string           `json:"queuedMessageId"`
-	Quiet           bool              `json:"quiet"`
-	Reason          *string           `json:"reason"`
-	SentBy          *string           `json:"sentBy"`
-	SessionId       *string           `json:"sessionId"`
-	Source          *string           `json:"source"`
-	StartedAt       *string           `json:"startedAt"`
-	State           BotRunState       `json:"state"`
-	Triggers        []BotRunWakeItem  `json:"triggers"`
+	Automation     *BotAutomationRef `json:"automation,omitempty"`
+	BotId          string            `json:"botId"`
+	BotRevision    int64             `json:"botRevision"`
+	Cause          BotRunCause       `json:"cause"`
+	CreatedAt      string            `json:"createdAt"`
+	EndedAt        *string           `json:"endedAt"`
+	ExecutionId    string            `json:"executionId"`
+	Failure        *Failure          `json:"failure,omitempty"`
+	HostId         *string           `json:"hostId"`
+	Id             string            `json:"id"`
+	LinkedTaskIds  []string          `json:"linkedTaskIds"`
+	MemoryRevision int64             `json:"memoryRevision"`
+	Observation    BotRunObservation `json:"observation"`
+	Problem        *string           `json:"problem"`
+	ProjectId      string            `json:"projectId"`
+	Quiet          bool              `json:"quiet"`
+	Reason         *string           `json:"reason"`
+	SentBy         *string           `json:"sentBy"`
+	SessionId      *string           `json:"sessionId"`
+	Source         *string           `json:"source"`
+	StartedAt      *string           `json:"startedAt"`
+	State          BotRunState       `json:"state"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -366,21 +362,14 @@ func (v *BotRunRecord) Validate() error {
 	if err := Check(&v.State, "state"); err != nil {
 		return err
 	}
-	if v.Triggers == nil {
-		return Missing("triggers")
-	}
-	for i := range v.Triggers {
-		if err := Check(&v.Triggers[i], "triggers"); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
 type BotRunReply struct {
-	Admitted bool         `json:"admitted"`
-	Bot      BotRecord    `json:"bot"`
-	Run      BotRunRecord `json:"run"`
+	Admitted  bool          `json:"admitted"`
+	Bot       BotRecord     `json:"bot"`
+	Run       *BotRunRecord `json:"run,omitempty"`
+	SessionId string        `json:"sessionId"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -388,8 +377,10 @@ func (v *BotRunReply) Validate() error {
 	if err := Check(&v.Bot, "bot"); err != nil {
 		return err
 	}
-	if err := Check(&v.Run, "run"); err != nil {
-		return err
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -429,18 +420,6 @@ func (v BotRunState) Valid() bool {
 		}
 	}
 	return false
-}
-
-type BotRunWakeItem struct {
-	Id        string  `json:"id"`
-	Kind      string  `json:"kind"`
-	ProjectId *string `json:"projectId,omitempty"`
-	Summary   *string `json:"summary,omitempty"`
-}
-
-// Validate: the schema's required fields and enums (see Check).
-func (v *BotRunWakeItem) Validate() error {
-	return nil
 }
 
 type BotRunsReply struct {
@@ -571,7 +550,6 @@ func (v *BotStopRequest) Validate() error {
 type BotTaskLink struct {
 	BotId       string          `json:"botId"`
 	BotName     string          `json:"botName"`
-	BotRunId    *string         `json:"botRunId"`
 	CreatedAt   string          `json:"createdAt"`
 	CreatedBy   string          `json:"createdBy"`
 	ExecutionId *string         `json:"executionId"`
@@ -623,10 +601,10 @@ func (v *BotTaskLinkReply) Validate() error {
 }
 
 type BotTaskLinkRequest struct {
-	BotId    string           `json:"botId"`
-	BotRunId *string          `json:"botRunId,omitempty"`
-	LinkKind *BotTaskLinkKind `json:"linkKind,omitempty"`
-	TaskId   string           `json:"taskId"`
+	BotId       string           `json:"botId"`
+	ExecutionId *string          `json:"executionId,omitempty"`
+	LinkKind    *BotTaskLinkKind `json:"linkKind,omitempty"`
+	TaskId      string           `json:"taskId"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -644,7 +622,6 @@ type BotTaskRecord struct {
 	AcceptedBy        *string          `json:"acceptedBy"`
 	BotId             string           `json:"botId"`
 	BotName           string           `json:"botName"`
-	BotRunId          *string          `json:"botRunId"`
 	CreatedAt         string           `json:"createdAt"`
 	CreatedBy         string           `json:"createdBy"`
 	ExecutionCount    int64            `json:"executionCount"`
@@ -710,15 +687,15 @@ func init() {
 	for n, o := range map[string]Operation{
 		"bot_avatar_clear":  {Read: false, Long: false, Errors: []int{403, 404}, Auth: "person", Agent: "tool", Description: "Clear a bot's avatar: the bot shows its letter again.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
 		"bot_avatar_set":    {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "Set a bot's avatar to a stored image or video artifact of the bot's project: any still or animated picture (PNG, JPEG, WebP, AVIF, GIF, APNG, SVG) or a muted loop (WebM, MP4). stillArtifactId is an optional still frame that lists show in place of an animated file; glow (#RRGGBB) colours the activity light. Make one with the avatar-make pipeline or upload it (artifact_upload_begin).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"artifactId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"glow\":{\"type\":\"string\"},\"stillArtifactId\":{\"type\":\"string\"}},\"required\":[\"botId\",\"artifactId\"],\"type\":\"object\"}")},
-		"bot_get":           {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Read the saved settings, scoped memory, Home conversation and runtime status of a bot by id.", Changes: []string{"bot", "bot-run", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
-		"bot_list":          {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "List bot settings and runtime status visible in granted projects, optionally for one project.", Changes: []string{"bot", "bot-run", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[],\"type\":\"object\"}")},
+		"bot_get":           {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Read the saved settings, scoped memory and runtime status of a bot by id.", Changes: []string{"bot", "execution", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
+		"bot_list":          {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "List bot settings and runtime status visible in granted projects, optionally for one project.", Changes: []string{"bot", "execution", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[],\"type\":\"object\"}")},
 		"bot_memory_save":   {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Save a new project-scoped bot memory revision.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"memory\":{\"type\":\"string\"}},\"required\":[\"botId\",\"baseRevision\",\"memory\"],\"type\":\"object\"}")},
 		"bot_pause":         {Read: false, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Pause or resume a bot's future scheduled and Needs-you wakes.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"paused\":{\"type\":\"boolean\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"botId\",\"paused\"],\"type\":\"object\"}")},
-		"bot_run":           {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Run a bot now using the shared wake admission flow, enforcing single active run admission and pinning settings, memory and project.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"automationId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
-		"bot_runs":          {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "List bot runs, including quiet wakes and skipped, queued, failed and unconfirmed work.", Changes: []string{"bot-run", "execution", "session"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"after\":{\"type\":\"string\"},\"automationId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"cause\":{\"enum\":[\"manual\",\"schedule\",\"needs_you\",\"message\"],\"type\":\"string\"},\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"observation\":{\"enum\":[\"confirmed\",\"unconfirmed\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"quiet\":{\"type\":\"boolean\"},\"state\":{\"enum\":[\"queued\",\"running\",\"waiting\",\"succeeded\",\"failed\",\"cancelled\",\"skipped\"],\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")},
-		"bot_settings_save": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Save a new settings revision. A caller-generated botId and baseRevision 0 create a bot and its Home conversation.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"settings\":{\"additionalProperties\":false,\"properties\":{\"instructions\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"purpose\":{\"type\":\"string\"},\"soul\":{\"type\":\"string\"}},\"required\":[\"name\",\"purpose\",\"profileId\",\"instructions\",\"soul\"],\"type\":\"object\"}},\"required\":[\"botId\",\"projectId\",\"baseRevision\",\"settings\"],\"type\":\"object\"}")},
+		"bot_run":           {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Run a bot now in its conversation without a subject (with automationId: the trigger's conversation), pinning settings, memory and project. A busy conversation queues the message as its next turn: the reply then has no run.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"automationId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
+		"bot_runs":          {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "List bot runs: the agent runs of the bot's conversations, including quiet wakes and queued, failed and unconfirmed work. A trigger wake that never ran is in the trigger's last run (trigger_list), not here.", Changes: []string{"execution", "session"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"after\":{\"type\":\"string\"},\"automationId\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"cause\":{\"enum\":[\"manual\",\"schedule\",\"needs_you\",\"message\"],\"type\":\"string\"},\"excludeProjectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"observation\":{\"enum\":[\"confirmed\",\"unconfirmed\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"quiet\":{\"type\":\"boolean\"},\"state\":{\"enum\":[\"queued\",\"running\",\"waiting\",\"succeeded\",\"failed\",\"cancelled\",\"skipped\"],\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")},
+		"bot_settings_save": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Save a new settings revision. A caller-generated botId and baseRevision 0 create a bot and its conversation without a subject.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"settings\":{\"additionalProperties\":false,\"properties\":{\"instructions\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"purpose\":{\"type\":\"string\"},\"soul\":{\"type\":\"string\"}},\"required\":[\"name\",\"purpose\",\"profileId\",\"instructions\",\"soul\"],\"type\":\"object\"}},\"required\":[\"botId\",\"projectId\",\"baseRevision\",\"settings\"],\"type\":\"object\"}")},
 		"bot_stop":          {Read: false, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Request cancellation of a bot's active execution through the execution lifecycle and report the observed stop outcome.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
-		"bot_task_link":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Link a Fleet task in the bot's project as a managed task of the bot without attaching the Home conversation.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"botRunId\":{\"type\":\"string\"},\"linkKind\":{\"enum\":[\"created\",\"continued\",\"managed\"],\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"required\":[\"botId\",\"taskId\"],\"type\":\"object\"}")},
+		"bot_task_link":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Link a Fleet task in the bot's project as a managed task of the bot without attaching the Home conversation.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"executionId\":{\"$comment\":\"the bot run (execution) the link names; default the calling run\",\"type\":\"string\"},\"linkKind\":{\"enum\":[\"created\",\"continued\",\"managed\"],\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"required\":[\"botId\",\"taskId\"],\"type\":\"object\"}")},
 		"bot_tasks":         {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "List managed Fleet tasks linked to a bot, keeping each task's own Fleet state and independent history.", Changes: []string{"bot", "task", "execution", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"after\":{\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"state\":{\"type\":\"string\"}},\"required\":[\"botId\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)

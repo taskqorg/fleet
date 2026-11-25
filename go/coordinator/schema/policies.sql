@@ -84,13 +84,6 @@ CREATE POLICY live ON bot AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show
 DROP POLICY IF EXISTS project_scope ON bot;
 CREATE POLICY project_scope ON bot FOR ALL TO public USING (fleet_visible(project_id));
 
--- bot_automation
-ALTER TABLE bot_automation ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS project_scope ON bot_automation;
-CREATE POLICY project_scope ON bot_automation FOR ALL TO public USING ((EXISTS ( SELECT 1
-   FROM bot b
-  WHERE ((b.id = bot_automation.bot_id) AND (b.project_id = bot_automation.project_id)))));
-
 -- bot_memory_revision
 ALTER TABLE bot_memory_revision ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS project_scope ON bot_memory_revision;
@@ -105,26 +98,12 @@ CREATE POLICY project_scope ON bot_revision FOR ALL TO public USING ((EXISTS ( S
    FROM bot b
   WHERE (b.id = bot_revision.bot_id))));
 
--- bot_run
-ALTER TABLE bot_run ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS live ON bot_run;
-CREATE POLICY live ON bot_run AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND (NOT (project_id = ANY (fleet_deleted_projects()))))));
-DROP POLICY IF EXISTS project_scope ON bot_run;
-CREATE POLICY project_scope ON bot_run FOR ALL TO public USING (fleet_visible(project_id));
-
 -- bot_task
 ALTER TABLE bot_task ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON bot_task;
 CREATE POLICY live ON bot_task AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND (NOT (project_id = ANY (fleet_deleted_projects()))))));
 DROP POLICY IF EXISTS project_scope ON bot_task;
 CREATE POLICY project_scope ON bot_task FOR ALL TO public USING (fleet_visible(project_id));
-
--- bot_wake_cursor
-ALTER TABLE bot_wake_cursor ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS project_scope ON bot_wake_cursor;
-CREATE POLICY project_scope ON bot_wake_cursor FOR ALL TO public USING ((EXISTS ( SELECT 1
-   FROM bot b
-  WHERE (b.id = bot_wake_cursor.bot_id))));
 
 -- budget
 ALTER TABLE budget ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
@@ -663,6 +642,11 @@ CREATE POLICY project_scope ON transport_conflict FOR ALL TO public USING (fleet
 ALTER TABLE trigger ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS project_scope ON trigger;
 CREATE POLICY project_scope ON trigger FOR ALL TO public USING (fleet_visible(project_id));
+
+-- trigger_log
+ALTER TABLE trigger_log ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON trigger_log;
+CREATE POLICY project_scope ON trigger_log FOR ALL TO public USING (fleet_visible(project_id));
 
 -- upload
 ALTER TABLE upload ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;

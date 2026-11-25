@@ -69,7 +69,7 @@ export function BotAutomations(props: {
         const result = await writeOnce('bot_run', {
           botId: props.bot.id, automationId: automation.id, requestId: crypto.randomUUID(),
         }, pending, { signal });
-        setNote(result.admitted ? 'Run queued.' : `Wake recorded (${result.run.reason ?? result.run.state}).`);
+        setNote(!result.admitted ? 'Already run.' : result.run ? 'Run queued.' : 'Message queued for the next turn.');
         props.onRun();
       } else {
         await writeOnce('trigger_save', {

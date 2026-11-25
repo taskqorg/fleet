@@ -402,11 +402,6 @@ func agentSubmitFrom(q *Request, r *contract.MessageSendRequest, source, trigger
 		if err != nil {
 			return none, err
 		}
-		if botForHome != nil {
-			if err := recordHomeMessageRun(q, &s, botForHome, &e, nil, text, requestID, sender, source); err != nil {
-				return none, err
-			}
-		}
 		return agentSubmitted{execution: &e}, nil
 	}
 	m := agentQueued{ID: newID(), SessionID: sid, ProjectID: s.ProjectID, TaskID: s.TaskID, RequestID: requestID, Text: text, State: "queued", CreatedAt: nowMs(), SentBy: sender, Source: source, TriggerID: triggerID}
@@ -436,11 +431,6 @@ func agentSubmitFrom(q *Request, r *contract.MessageSendRequest, source, trigger
 	}
 	if err := queuedMessagePut(q, &m); err != nil {
 		return none, err
-	}
-	if botForHome != nil {
-		if err := recordHomeMessageRun(q, &s, botForHome, nil, &m, text, requestID, sender, source); err != nil {
-			return none, err
-		}
 	}
 	if m.TaskID != "" {
 		if _, err := settleIdleTask(q, m.TaskID); err != nil {
@@ -509,9 +499,6 @@ func agentPromote(q *Request) error {
 			if err := queuedMessagePut(q, &m); err != nil {
 				return err
 			}
-			if err := transitionBotQueuedRun(q, m.ID, "cancelled", "cancelled before launch"); err != nil {
-				return err
-			}
 			continue
 		}
 		earlier := false
@@ -563,17 +550,9 @@ func agentPromote(q *Request) error {
 			m.Error = err.Error()
 			if isBotHome {
 				m.State = "failed"
-				if err := transitionBotQueuedRun(q, m.ID, "failed", err.Error()); err != nil {
-					return err
-				}
 			}
 		} else {
 			m.State, m.ExecutionID, m.Error = "started", e.ID, ""
-			if promotedBot != nil {
-				if err := attachBotRunExecution(q, m.ID, &e, promotedBot); err != nil {
-					return err
-				}
-			}
 		}
 		if err := queuedMessagePut(q, &m); err != nil {
 			return err
@@ -762,10 +741,7 @@ func agentDecorateStart(q *Request, s *agentSession, e *agentExecution, payload 
 // takes no new steer) and a message queued behind that run (cancelQueuedBehind).
 func cancelWithStop(q *Request, m *agentQueued) error {
 	m.State = "cancelled"
-	if err := queuedMessagePut(q, m); err != nil {
-		return err
-	}
-	return transitionBotQueuedRun(q, m.ID, "cancelled", "stopped")
+	return queuedMessagePut(q, m)
 }
 
 // cancelQueuedBehind: the first stop of a session's run cancels the messages queued behind it on its thread; a message

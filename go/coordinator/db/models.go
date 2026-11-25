@@ -595,7 +595,6 @@ type Bot struct {
 	Revision              int32
 	MemoryRevision        int32
 	TombstonedAt          *time.Time
-	HomeSessionID         *string
 	Paused                bool
 	PausedAt              *time.Time
 	PausedBy              *string
@@ -604,23 +603,6 @@ type Bot struct {
 	AvatarArtifactID      *string
 	AvatarStillArtifactID *string
 	AvatarGlow            string
-}
-
-type BotAutomation struct {
-	ID               string
-	BotID            string
-	ProjectID        string
-	Revision         int32
-	Name             string
-	Instructions     string
-	Kind             string
-	ScheduleTime     string
-	ScheduleZone     string
-	Event            string
-	Enabled          bool
-	EffectiveSince   time.Time
-	EventCursor      int64
-	LastScheduleDate string
 }
 
 type BotMemoryRevision struct {
@@ -644,39 +626,10 @@ type BotRevision struct {
 	CreatedAt      time.Time
 }
 
-type BotRun struct {
-	ID              string
-	BotID           string
-	ProjectID       string
-	BotRevision     int32
-	MemoryRevision  int32
-	SessionID       *string
-	ExecutionID     *string
-	QueuedMessageID *string
-	Cause           string
-	DedupKey        *string
-	State           string
-	Observation     string
-	Quiet           bool
-	Reason          string
-	SentBy          string
-	Source          string
-	CreatedAt       time.Time
-	StartedAt       *time.Time
-	EndedAt         *time.Time
-	UpdatedAt       time.Time
-	TombstonedAt    *time.Time
-	Payload         []byte
-	Seq             int64
-	AutomationID    *string
-	TriggerID       *string
-}
-
 type BotTask struct {
 	BotID        string
 	TaskID       string
 	ProjectID    string
-	BotRunID     *string
 	SessionID    *string
 	ExecutionID  *string
 	LinkKind     string
@@ -685,15 +638,6 @@ type BotTask struct {
 	UpdatedAt    time.Time
 	TombstonedAt *time.Time
 	Seq          int64
-}
-
-type BotWakeCursor struct {
-	BotID             string
-	ProjectID         string
-	NeedsYouChangeSeq int64
-	LastScheduleKey   string
-	LastScheduleAt    *time.Time
-	UpdatedAt         time.Time
 }
 
 type Budget struct {
@@ -1951,6 +1895,14 @@ type Trigger struct {
 	LastError      *string
 	LimitsSignaled []string
 	CreatedAt      time.Time
+}
+
+type TriggerLog struct {
+	TriggerID string
+	RequestID string
+	ProjectID *string
+	Reason    string
+	At        time.Time
 }
 
 type Upload struct {
