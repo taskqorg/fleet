@@ -5105,3 +5105,69 @@ FROM session d
 LEFT JOIN LATERAL (SELECT e.id, e.state, e.harness FROM execution e WHERE e.session_id = d.id AND e.kind = 'agent_run' ORDER BY e.seq DESC LIMIT 1) r ON true
 LEFT JOIN LATERAL (SELECT count(*) AS n, max(greatest(e.started_at, e.ended_at)) AS last_at FROM execution e WHERE e.session_id = d.id) ex ON true;
 
+
+-- migration 117: a conversation's subject (docs/designs/fleet-conversations.md#conversation-model): a bot keeps one
+-- conversation per subject (task:<id>, question:<id>, pr:<repo>#<n>, host:<id>, delivery:<id>, trigger:<id>), found
+-- by (bot_id, subject). The work-item threads of a bot's Home session (migration 109) become those conversations: each
+-- thread key's messages, runs, events, questions, artifacts, commands, queued messages and bot runs move to a new
+-- session with the thread's native session as its own; an execution:<id> thread folds into its host's subject.
+ALTER TABLE session ADD COLUMN subject text NULL;
+CREATE INDEX session_bot_subject ON session(bot_id, subject) WHERE bot_id IS NOT NULL AND subject IS NOT NULL;
+SELECT set_config('fleet.project_ids', '*', true);
+DO $$
+DECLARE h record; k record; sid text; subj text; ttl text; nat jsonb;
+BEGIN
+ FOR h IN SELECT s.* FROM session s JOIN bot b ON b.home_session_id = s.id LOOP
+  FOR k IN
+   SELECT DISTINCT t.thread FROM (
+    SELECT m.thread FROM message m WHERE m.session_id = h.id
+    UNION SELECT e.thread FROM execution e WHERE e.session_id = h.id
+    UNION SELECT coalesce(q.payload->>'thread', '') FROM queued_message q WHERE q.session_id = h.id) t
+   WHERE t.thread <> ''
+  LOOP
+   subj := k.thread;
+   IF subj LIKE 'execution:%' THEN
+    subj := 'host:' || coalesce((SELECT e.host_id FROM execution e WHERE e.id = substr(k.thread, 11)), 'unknown');
+   ELSIF subj = 'fleet:host' THEN
+    subj := 'fleet';
+   END IF;
+   SELECT s.id INTO sid FROM session s WHERE s.bot_id = h.bot_id AND s.subject = subj LIMIT 1;
+   IF sid IS NULL THEN
+    sid := gen_random_uuid()::text;
+    ttl := CASE
+     WHEN subj LIKE 'task:%' THEN (SELECT t.title FROM task t WHERE t.id = substr(subj, 6))
+     WHEN subj LIKE 'question:%' THEN (SELECT left(split_part(btrim(x.text), E'\n', 1), 120) FROM question x WHERE x.id = substr(subj, 10))
+     WHEN subj LIKE 'host:%' THEN 'Host ' || substr(subj, 6)
+     WHEN subj LIKE 'delivery:%' THEN 'Delivery ' || substr(subj, 10)
+     WHEN subj = 'fleet' THEN 'Fleet'
+     WHEN subj LIKE 'fleet:%' THEN 'Fleet · ' || substr(subj, 7)
+     END;
+    IF coalesce(ttl, '') = '' THEN
+     ttl := coalesce(nullif((SELECT left(split_part(btrim(m.text), E'\n', 1), 120) FROM message m WHERE m.session_id = h.id AND m.thread = k.thread
+      AND coalesce(m.source, '') NOT IN ('trigger', 'watch', 'wake', 'needs_you', 'schedule', 'bot_run') ORDER BY m.seq LIMIT 1), ''), 'Conversation');
+    END IF;
+    SELECT coalesce(jsonb_object_agg(left(n.key, length(n.key) - length('#' || k.thread)), n.value), '{}'::jsonb) INTO nat
+     FROM jsonb_each(coalesce(h.payload->'nativeSessions', '{}'::jsonb)) n WHERE n.key LIKE '%#' || k.thread;
+    INSERT INTO session(id, project_id, host_id, actor, directed_by, bot_id, created_at, title, title_by, title_attempts, payload, subject)
+    VALUES (sid, h.project_id, h.host_id, h.actor, h.directed_by, h.bot_id, now(), ttl, 'bot', 0,
+     (h.payload - 'nativeSessions' - 'nativeSessionId' - 'pendingHandoffId' - 'forkOf' - 'forkNativeSessionId' - 'pendingTransition' - 'transitionCleanup')
+      || jsonb_build_object('nativeSessions', nat), subj);
+   END IF;
+   UPDATE execution SET session_id = sid, thread = '' WHERE session_id = h.id AND thread = k.thread;
+   UPDATE message SET session_id = sid, thread = '' WHERE session_id = h.id AND thread = k.thread;
+   UPDATE queued_message SET session_id = sid, payload = payload - 'thread' WHERE session_id = h.id AND payload->>'thread' = k.thread;
+   UPDATE event SET session_id = sid WHERE session_id = h.id AND execution_id IN (SELECT e.id FROM execution e WHERE e.session_id = sid);
+   UPDATE question SET session_id = sid WHERE session_id = h.id AND execution_id IN (SELECT e.id FROM execution e WHERE e.session_id = sid);
+   UPDATE artifact SET session_id = sid WHERE session_id = h.id AND execution_id IN (SELECT e.id FROM execution e WHERE e.session_id = sid);
+   UPDATE command SET session_id = sid WHERE session_id = h.id AND execution_id IN (SELECT e.id FROM execution e WHERE e.session_id = sid);
+   UPDATE bot_run SET session_id = sid WHERE session_id = h.id AND (execution_id IN (SELECT e.id FROM execution e WHERE e.session_id = sid)
+    OR queued_message_id IN (SELECT q.id FROM queued_message q WHERE q.session_id = sid));
+   PERFORM fleet_session_summary_recount(sid);
+   sid := NULL;
+  END LOOP;
+  UPDATE session SET payload = jsonb_set(payload, '{nativeSessions}', coalesce((SELECT jsonb_object_agg(n.key, n.value)
+   FROM jsonb_each(coalesce(payload->'nativeSessions', '{}'::jsonb)) n WHERE position('#' IN n.key) = 0), '{}'::jsonb))
+   WHERE id = h.id AND payload ? 'nativeSessions';
+  PERFORM fleet_session_summary_recount(h.id);
+ END LOOP;
+END $$;

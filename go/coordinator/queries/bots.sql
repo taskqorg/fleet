@@ -294,3 +294,22 @@ ORDER BY seq;
 UPDATE bot SET avatar_artifact_id = sqlc.narg(avatar_artifact_id), avatar_still_artifact_id = sqlc.narg(avatar_still_artifact_id),
        avatar_glow = sqlc.arg(avatar_glow)
 WHERE id = sqlc.arg(id) AND tombstoned_at IS NULL;
+
+-- name: BotConversationBySubject :one
+-- A bot's conversation for one subject (fleet-conversations.md#rules), an open one before an archived one.
+SELECT id FROM session
+WHERE bot_id = $1 AND subject = $2 AND tombstoned_at IS NULL
+ORDER BY archived_at NULLS FIRST, seq DESC
+LIMIT 1;
+
+-- name: SessionSetSubject :exec
+UPDATE session SET subject = $2 WHERE id = $1;
+
+-- name: BotSessionIDs :many
+-- Every conversation of a bot: its Home and one per subject.
+SELECT id FROM session WHERE bot_id = $1 AND tombstoned_at IS NULL;
+
+-- name: BotTriggerWakeQueued :one
+-- A message of this trigger still queued in one of the bot's conversations.
+SELECT EXISTS (SELECT 1 FROM queued_message qm JOIN session s ON s.id = qm.session_id
+ WHERE s.bot_id = $1 AND qm.state = 'queued' AND qm.payload->>'triggerId' = $2::text);
