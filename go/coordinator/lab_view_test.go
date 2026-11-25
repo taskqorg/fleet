@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"fleet/contract"
 )
@@ -70,5 +71,53 @@ func TestLabTrialFacts(t *testing.T) {
 	exec(`UPDATE execution SET state = 'failed' WHERE id = 'lt-r'`)
 	if after := version(); after == before || !strings.HasPrefix(after, "failed|") {
 		t.Fatalf("a state change moves the trial's facts: %q then %q", before, after)
+	}
+}
+
+// Requirement: a settled trial's lineage is kept, an unsettled one is read again, so the comparison's recompute reads
+// only new trials. Risk: a running trial's leaves freeze, or a kept lineage is shared across scopes.
+func TestLabLineageCache(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := e.ownerStore.pool.Exec(e.ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	exec(`SELECT set_config('fleet.project_ids', '*', false)`)
+	exec(`INSERT INTO experiment (id, project_id, kind, pipeline_id) VALUES ('ll-x', 'fleet', 'single', 'p')`)
+	old := time.Now().Add(-time.Hour)
+	for _, id := range []string{"ll-done", "ll-live"} {
+		exec(`INSERT INTO execution (id, kind, state, experiment_id, variant, started_at, ended_at, data, observation, config_ref)
+		 VALUES ($1, 'pipeline_run', 'succeeded', 'll-x', 'v', $2, $2, '{}', 'confirmed', '{}')`, id, old)
+	}
+	child := func(id, parent string) {
+		exec(`INSERT INTO execution (id, kind, state, parent_execution_id, started_at, data, observation, config_ref) VALUES ($1, 'agent_run', 'succeeded', $2, now(), '{}', 'confirmed', '{}')`, id, parent)
+	}
+	child("ll-c1", "ll-done")
+	child("ll-c2", "ll-live")
+	read := func() map[string]int {
+		t.Helper()
+		var got map[string]int
+		err := e.app.store.Read(e.ctx, nil, func(q *Request) error {
+			l, err := labTrialsLineage(q, "test", []string{"ll-done", "ll-live"}, map[string]bool{"ll-done": true})
+			got = map[string]int{}
+			for _, k := range l.ScopeKeys {
+				got[k]++
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := read(); got["ll-done"] != 1 || got["ll-live"] != 1 {
+		t.Fatalf("first read: %v", got)
+	}
+	child("ll-c3", "ll-done")
+	child("ll-c4", "ll-live")
+	if got := read(); got["ll-done"] != 1 || got["ll-live"] != 2 {
+		t.Fatalf("the settled trial's lineage is kept, the other read again: %v", got)
 	}
 }
