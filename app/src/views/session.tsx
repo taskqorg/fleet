@@ -575,9 +575,9 @@ const whenOf = (t: { when: string; everyMs?: number; dailyTime?: string; dailyZo
 /** A composer text that is a command (composer.md#commands), not a message. */
 const commandText = (text: string) => /^\s*\/trigger(\s|$)/.test(text);
 
-/** A trigger's schedule as the timer row shows it: Every 5m, Daily 09:00 UTC. */
 // Below this width of the session view the thread list and the thread take turns (the list column plus a readable transcript).
 const STACK_BELOW = 1000;
+/** A trigger's schedule as the timer row shows it: Every 5m, Daily 09:00 UTC. */
 const scheduleOf = (t: { when: string; everyMs?: number; dailyTime?: string; dailyZone?: string }) =>
   t.when === 'every' ? `Every ${every(t.everyMs ?? 0)}` : t.when === 'daily' ? `Daily ${t.dailyTime ?? ''} ${t.dailyZone ?? ''}`.trim() : 'Manual';
 
