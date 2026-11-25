@@ -32,6 +32,11 @@ const Projects = lazy(() => import('./views/projects.tsx'), { export: 'Projects'
 const Home = lazy(() => import('./views/home.tsx'), { export: 'Home' });
 const Conversations = lazy(() => import('./views/conversations.tsx'), { export: 'Conversations' });
 const Infrastructure = lazy(() => import('./views/hosts.tsx'), { export: 'Hosts' });
+// Back from Access's sign-in (Sign in again opens ?signin so the service worker goes to the network): drop the marker.
+if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('signin')) {
+  const u = new URL(location.href); u.searchParams.delete('signin'); history.replaceState(history.state, '', u);
+}
+
 const PersonalLab = lazy(() => import('./views/personal-lab.tsx'), { export: 'PersonalLab' });
 const Lab = lazy(() => import('./views/lab.tsx'), { export: 'Lab' });
 const Library = lazy(() => import('./views/agents.tsx'), { export: 'Library' });
@@ -314,7 +319,7 @@ function App() {
     widths={geometry().widths} onWidth={setWidth} panels={geometry().panels} onPanel={setPanel}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={isOpen() && user() ? { name: user()!, onLogout: () => { Promise.race([Promise.all([forget(), clearAll(true)]), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
-    {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
+    {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.assign(location.pathname + '?signin=' + Date.now())} /></span></div>}
     {showPrivate() ? (
       <RenderBoundary at={access.value.generation + ':' + loc() + '?' + query()}>
         <Show when={access.value.generation} keyed>{_gen => <PrivateRoutes go={go} />}</Show>

@@ -119,7 +119,12 @@ self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.me
  if(u.pathname.startsWith('/assets/'))return e.respondWith(caches.match(e.request,{cacheName:CACHE}).then(r=>r||fetch(e.request).then(res=>{if(res.ok){const c=res.clone();caches.open(CACHE).then(x=>x.put(e.request,c))}return res})));
  // Only the app's own routes are cached (a section or an earlier screen, up to three segments deep), each under its own path; others are never cached.
  const app=/^\\/(${ROUTED.join('|')})(\\/[^/]+){0,3}$/.test(u.pathname);
- if(e.request.mode==='navigate'&&app)return e.respondWith(fetch(e.request).then(r=>{if(r.ok&&r.headers.get('content-type')?.startsWith('text/html')){const c=r.clone();caches.open(CACHE).then(x=>x.put(u.pathname,c))}return r}).catch(()=>caches.match(u.pathname).then(r=>r||caches.match('/home'))));});
+ // The shell is one page for every route: a visit opens this version's cached copy at once (the HTML through Access costs
+ // 300-400 ms) and refreshes it from the network behind. Data comes from the read mirror and the API, never from here;
+ // a new version arrives with its own worker (version.ts updates). Without a cached copy it is the network, as before.
+ // ?signin (the expired session's Sign in again) always goes to the network, where Access sends it to its sign-in.
+ if(e.request.mode==='navigate'&&app&&!u.searchParams.has('signin')){const net=fetch(e.request).then(r=>{if(r.ok&&r.headers.get('content-type')?.startsWith('text/html')){const c=r.clone();caches.open(CACHE).then(x=>x.put(u.pathname,c))}return r});
+  return e.respondWith(caches.open(CACHE).then(c=>c.match(u.pathname).then(r=>r||c.match('/home'))).then(r=>{if(r){e.waitUntil(net.catch(()=>{}));return r}return net.catch(()=>caches.match('/home'))}))}});
 `);
 
 let total = 0, totalGz = 0;
