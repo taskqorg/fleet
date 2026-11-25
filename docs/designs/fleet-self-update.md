@@ -410,4 +410,4 @@ Hosts report the expected and observed versions of the managed binaries. A missi
 
 Roll out the updater support to every host before enabling the manifest. The executor continues to use the host's existing paths while `enabled` is false. Once enabled, it requires the pinned binaries for managed harnesses.
 
-The daily Managed agent CLI releases workflow reads the official Codex, Claude Code and Antigravity release metadata and opens a pull request when both platform targets can advance. The pull request uses the normal review and release path. An older bundled catalogue can omit a server-advertised model, so catalogue absence does not establish incompatibility.
+Pin updates follow the [host update procedure](fleet-host-updates.md): the daily workflow proposes the vendors' newest releases, qualifies them offline in CI and on every host through the Lab before merge, and merges them with no person; a host that cannot run a new CLI refuses the release. An older bundled catalogue can omit a server-advertised model, so catalogue absence does not establish incompatibility.

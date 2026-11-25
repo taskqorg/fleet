@@ -2,7 +2,7 @@
 
 * **Author:** Alex Kirs
 * **Date:** 2026-11-26
-* **Status:** proposal for the owner's decision. Nothing here is built beyond what section 1 lists as existing. Once approved, it amends [self-update](fleet-self-update.md#managed-agent-clis), the [delivery pipeline](fleet-delivery-pipeline.md) and the [Changes screen](fleet-system-management.md#changes-screen) (section 6).
+* **Status:** approved by the owner on 2026-11-26 with options A1, B1 and C1 (section 4); being built in the order of section 5. Section 1 lists what existed before. It amends [self-update](fleet-self-update.md#managed-agent-clis), the [delivery pipeline](fleet-delivery-pipeline.md) and the [Changes screen](fleet-system-management.md#changes-screen) (section 6).
 
 A host runs more than Fleet's own binaries. It runs agent CLIs, the tools agent work needs, later project environments, and the operating system under them. Today only the Fleet release updates without a person. The agent CLI pins get a daily proposal that waits on a person. Host tools have no version, no owner and no update path. This design gives every updatable thing on a host one procedure with the same steps. A new kind adds rows to it, not a new mechanism.
 
@@ -111,7 +111,7 @@ ffmpeg, Podman itself and OS packages stay with the host's holder. They are syst
 
 ## 4. Options
 
-### A. Where model-level qualification of agent CLIs runs (step 4)
+### A. Where model-level qualification of agent CLIs runs (step 4): A1 chosen
 
 * **A1. Before merge, on hosts, through the Lab (recommended).**
   * How it works: the coordinator reads the open proposal and sends each host a qualification command with the candidate pins. The executor downloads and verifies the candidate payloads into a separate qualification cache, with the same verification code as `fleet-update`. It runs the checks of section 3 with its own accounts and reports the results as Lab trials. The coordinator posts `harness-qualify` on the proposal's head through the `github` connection.
@@ -124,12 +124,12 @@ ffmpeg, Podman itself and OS packages stay with the host's holder. They are syst
 
 Recommendation: A1. It fits "never block other pull requests" and "compatibility as facts". A2 is the smaller change and reuses the existing gate.
 
-### B. Whether host tools are pinned by Fleet
+### B. Whether host tools are pinned by Fleet: B1 chosen
 
 * **B1. Pinned by Fleet, like the CLIs (recommended for node, pnpm, Playwright with Chromium, gh and glab).** These are userland downloads with digests. Every host gets one version, a rollback includes the tools, and readiness and dispatch see the same binary.
 * **B2. Left to the holder; Fleet only reports versions and readiness.** Nothing new to install. But hosts drift, and a broken tool shows only as failed runs.
 
-### C. Rollout order (step 7)
+### C. Rollout order (step 7): C1 chosen
 
 * **C1. Keep today's order (recommended).** PDS18 goes first, then every executor at once. Step 4 already ran on every platform before the merge. Per-host refusal (step 8) and the watch (step 9) cover what is left. Staged rollouts stay a non-goal.
 * **C2. Add a canary executor.** After PDS18, one named executor host takes the release. The other hosts take it only after that host finishes one qualification run on the new release, or after 30 minutes healthy. The coordinator keeps this hold per release, and the Mac or WSL waits for it.
@@ -145,7 +145,7 @@ Recommendation: A1. It fits "never block other pull requests" and "compatibility
 
 ## 6. Drift
 
-| Spec | Now | After approval |
+| Spec | Before | With this design |
 |---|---|---|
 | [self-update, Managed agent CLIs](fleet-self-update.md#managed-agent-clis) | The pin pull request "uses the normal review and release path", so a person qualifies it. | It follows this procedure, and the section points here. |
 | [self-update, Non-Goals](fleet-self-update.md#non-goals) | Staged rollouts are out of scope. | Unchanged with C1. With C2, the canary hold becomes a goal. |

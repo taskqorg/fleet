@@ -187,7 +187,7 @@ Requirements for one answer to "is every host on the same setup, and what has no
   * a shipped definition change that is not active yet (`repository-changed`, [definition editors](fleet-definition-editors.md#library)), grouped by the commit or pull request that changed the files ("Skill modern-web-guidance for 9 agents · #672": merged, 0 of 9 active); action: take the repository version;
   * a definition whose repository version differs for another reason (one row each); action: see the change;
   * the release: published, coordinator version, and the version each host runs; action: open a host that is behind;
-  * the harness pins in `config/harness-pins.json`: pinned, and per host whether it reports the pinned versions.
+  * one row per pinned component ([host updates](fleet-host-updates.md#2-one-shape-for-every-kind): agent CLIs in `config/harness-pins.json`, host tools in `config/tool-pins.json`): pinned, the open proposal and its qualification state, and per host whether it reports the pinned version; a host opens its update history.
 * A cell is done, waiting, not reached (with the value it has, such as `1.261119.0`) or not needed. An offline host shows its last heartbeat.
 * **Made in Fleet, not in the repository:** counts of store-only agents and pipelines with the ones that ran this month named; action: save to the repository ([CUJ 8](fleet-definition-editors.md#cuj-8-save-what-was-made-in-fleet-to-the-repository)).
 * Data: `definition_list` states, `hosts_list` versions and harness reports, the release manifest. Grouping by commit needs the release to record, per shipped definition file, the commit that last changed it; until then a row names the files.
