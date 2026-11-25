@@ -429,7 +429,7 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 				return none, err
 			}
 		}
-		if problem := eventProblem(typ, d); problem != "" {
+		if problem := eventProblem(typ, d, execution.Kind == db.ExecutionKindHostJob); problem != "" {
 			// The first cause wins: a later process.closed does not hide the preparation failure that caused it.
 			if err := q.db().EventsExecutionProblem(q.ctx(), db.EventsExecutionProblemParams{ID: xid, Problem: &problem}); err != nil {
 				return none, err
@@ -508,9 +508,10 @@ func eventErrorDetail(raw json.RawMessage) string {
 	return compactProblemDetail(firstString(code, msg), 180)
 }
 
-// eventProblem: the cause an agent failure records on its execution: a preparation that failed, a protocol failure,
-// a harness that exited non-zero (with the last line of its stderr), or a failed native turn/result. Empty for every other event.
-func eventProblem(kind string, data any) string {
+// eventProblem: the cause a failure records on its execution: a preparation that failed, a protocol failure, a harness
+// (or, for a script host job, the script) that exited non-zero with the last line of its stderr, or a failed native
+// turn/result. Empty for every other event.
+func eventProblem(kind string, data any, script bool) string {
 	var d rawObject
 	jsonRoundTrip(data, &d)
 	switch contract.FleetEventType(kind) {
@@ -523,7 +524,11 @@ func eventProblem(kind string, data any) string {
 		if !ok || code == 0 {
 			return ""
 		}
-		p := fmt.Sprintf("harness exited %d", int(code))
+		what := "harness"
+		if script { // a pipeline script step: its own program failed, not an agent harness
+			what = "script"
+		}
+		p := fmt.Sprintf("%s exited %d", what, int(code))
 		if t := strings.TrimSpace(d.text("stderrTail")); t != "" {
 			lines := strings.Split(t, "\n")
 			p += ": " + lines[len(lines)-1]

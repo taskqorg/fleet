@@ -314,7 +314,7 @@ func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run *runRecord, i in
 				return err
 			}
 			for _, ev := range evs {
-				if p := eventProblem(ev.text("type"), ev.object("data")); p != "" {
+				if p := eventProblem(ev.text("type"), ev.object("data"), execRow.Kind == db.ExecutionKindHostJob); p != "" {
 					eventDetail = p
 					break
 				}

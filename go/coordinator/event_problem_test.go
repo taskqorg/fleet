@@ -17,8 +17,14 @@ func TestEventProblem(t *testing.T) {
 		{"process.closed", doc{"exitCode": 0.0}, ""},
 		{"setup", doc{"ok": true}, ""},
 	} {
-		if got := eventProblem(c.kind, c.data); got != c.want {
+		if got := eventProblem(c.kind, c.data, false); got != c.want {
 			t.Errorf("%s: got %q want %q", c.kind, got, c.want)
 		}
+	}
+	// A pipeline script step's exit is the script's own failure: never the agent-crash cause ("update the agent on the
+	// host"), and its stderr says why. Risk: 2026-11-25 three avatar-make request steps failed on a missing input file and
+	// Live told the owner the agent program crashed.
+	if got := eventProblem("process.closed", doc{"exitCode": 1.0, "stderrTail": "Traceback\nFileNotFoundError: binding.json\n"}, true); got != "script exited 1: FileNotFoundError: binding.json" {
+		t.Errorf("script exit: got %q", got)
 	}
 }
