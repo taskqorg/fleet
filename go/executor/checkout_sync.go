@@ -90,6 +90,7 @@ func checkoutSync(p any, host string, roots, forbidden []string) (contract.Check
 	if perr != nil || err != nil {
 		return contract.CheckoutSync{HostId: host, Checkouts: []contract.CheckoutResult{}}, false
 	}
+	roots = append(projectRootsFor(project, host), roots...) // the project's own checkouts on this host are allowed
 	rest := typed[struct {
 		Sha  string    `json:"sha"`
 		Repo jsonValue `json:"repo"`

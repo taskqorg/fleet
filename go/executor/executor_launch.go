@@ -178,7 +178,7 @@ func (e *executor) run(c M) error {
 		} else if e.insideDirs(dir) && exists(filepath.Join(dir, "worktree", ".git")) {
 			wd := typedRaw[*string](tp.Rest["workingDirectory"])
 			repo, hasRepo := repoPath(wd, project, e.host)
-			_, top, created, ok, err := worktree(dir, workspaceSession(session, key), repo, hasRepo, projectRoots(), e.forbidden(), project, false)
+			_, top, created, ok, err := worktree(dir, workspaceSession(session, key), repo, hasRepo, projectRootsFor(project, e.host), e.forbidden(), project, false)
 			switch {
 			case err != nil:
 				data = refusedTeardown(err.Error())
@@ -326,7 +326,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	}
 	repo, hasRepo := repoPath(sp.WorkingDirectory, project, e.host)
 	checkoutTop := ""
-	w, top, created, hasW, err := worktree(dir, workspaceSession(session, key), repo, hasRepo, projectRoots(), e.forbidden(), project, sp.Branch != nil && !*sp.Branch)
+	w, top, created, hasW, err := worktree(dir, workspaceSession(session, key), repo, hasRepo, projectRootsFor(project, e.host), e.forbidden(), project, sp.Branch != nil && !*sp.Branch)
 	if err != nil {
 		return fail(1, err.Error())
 	}
@@ -356,7 +356,7 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	if err := e.stageArtifactInputs(sp.Inputs, inputDir, execution); err != nil {
 		return fail(1, err.Error())
 	}
-	resolved, err := resolveAttemptContext(project, e.host, projectRoots(), e.forbidden(), inputDir)
+	resolved, err := resolveAttemptContext(project, e.host, projectRootsFor(project, e.host), e.forbidden(), inputDir)
 	if err != nil {
 		return fail(1, err.Error())
 	}
@@ -983,7 +983,7 @@ func (e *executor) script(c contract.Command, execution, session string) error {
 	var trial *[2]string
 	switch {
 	case hasRepo && sp.Commit != nil:
-		w, top, err := trialWorktree(dir, repo, *sp.Commit, projectRoots(), e.forbidden())
+		w, top, err := trialWorktree(dir, repo, *sp.Commit, projectRootsFor(project, e.host), e.forbidden())
 		if err != nil {
 			return refuse(err.Error())
 		}
