@@ -41,6 +41,10 @@ const telegramConn = "telegram"
 // telegramLongPoll: how long one getUpdates waits for an update (below the gateway's 30 s request timeout).
 const telegramLongPoll = 20 * time.Second
 
+// telegramSendAttempts: tries of one outbox item that fails before Telegram (gateway, key, tool) before it fails for
+// good, so it does not hold the chat's later items (head-of-line, owner-tester 2026-11-25).
+const telegramSendAttempts = 8
+
 // telegramChunk: Telegram's text limit is 4096 characters; the HTML form of a reply longer than this goes out in parts.
 const telegramChunk = 4000
 
@@ -1328,7 +1332,9 @@ func telegramSent(q *Request, now time.Time, o db.TelegramOutbox, line contract.
 		return kitSchedule(q, "telegram-send", o.ID, now.Add(time.Duration(r.Parameters.RetryAfter)*time.Second))
 	case o.Kind == "edit" && strings.Contains(r.Description, "message is not modified"):
 		return settle("sent", o.EditMessageID, nil)
-	case (code == "http-400" || code == "http-404") && o.Error == nil && (o.Kind == "text" || o.Kind == "edit"):
+	case (code == "http-400" || code == "http-404" || code == "unknown-tool" || code == "not-granted") && o.Error == nil && (o.Kind == "text" || o.Kind == "edit"):
+		// unknown-tool, not-granted: the gateway refused the rich tool itself (a connection without send_rich_message);
+		// the HTML form uses tools every connection has, so a chat never waits on a tool grant.
 		// Telegram refused the rich message (its Markdown, or an app or chat without rich messages): the HTML form, in
 		// parts of the HTML limit, at once (PilotQ's chain: rich, HTML, plain).
 		if err := telegramRichRefused(q, o); err != nil {
@@ -1342,6 +1348,10 @@ func telegramSent(q *Request, now time.Time, o db.TelegramOutbox, line contract.
 		}
 		return kitSchedule(q, "telegram-send", o.ID, now)
 	case strings.HasPrefix(code, "http-4"):
+		return settle("failed", nil, &cause)
+	case o.Attempts >= telegramSendAttempts:
+		// A chat's items leave one at a time: an item that keeps failing before Telegram would hold every later one.
+		// After this many tries it fails with its cause (telegram_status.delivery shows it) and the chat moves on.
 		return settle("failed", nil, &cause)
 	case line.Outcome == contract.CallOutcomeUnknown && o.Kind == "text":
 		return settle("unknown", nil, &cause)
