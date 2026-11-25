@@ -411,7 +411,7 @@ SELECT s.id, coalesce(s.code, '')::text AS code,
  coalesce(s.bot_id, '')::text AS bot_id,
  coalesce((SELECT r.name FROM bot_revision r WHERE r.bot_id = s.bot_id ORDER BY r.revision DESC LIMIT 1), '')::text AS bot_name,
  coalesce(ss.state, 'idle')::text AS state, coalesce(ss.executions, 0)::bigint AS turns, ss.activity_at,
- (s.id = t.created_by_session_id)::boolean AS created_task
+ coalesce(s.id = t.created_by_session_id, false)::boolean AS created_task
 FROM task t
 JOIN session s ON s.id = t.created_by_session_id OR s.task_id = t.id OR (s.bot_id IS NOT NULL AND s.subject = 'task:' || t.id)
  OR s.id IN (SELECT e.session_id FROM execution e WHERE e.task_id = t.id AND e.session_id IS NOT NULL)
