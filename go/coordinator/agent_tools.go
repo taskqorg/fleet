@@ -132,7 +132,8 @@ func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, er
 		}
 		qu.ProjectID = agentOpt(s.ProjectID)
 	}
-	qu.State, qu.Answer, qu.AnsweredAt = "answered", answer, nowMs()
+	// The answer is the answering person's, by email, as for every other question (not "operator").
+	qu.State, qu.Answer, qu.AnsweredAt, qu.AnsweredBy = "answered", answer, nowMs(), actor(q, "operator")
 	d, err := agentSubmit(q, &contract.MessageSendRequest{SessionId: &qu.SessionID, RequestId: ptr("reply:" + qid),
 		Text: ptr(fmt.Sprintf("Fleet reply to your question %s (\"%s\"):\n%s", qid, qu.Question, answer))}, "")
 	if err != nil {
