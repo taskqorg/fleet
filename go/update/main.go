@@ -219,9 +219,12 @@ func (u *updater) runPDS18() error {
 	exec := &part{r: execR, name: "executor", root: execRoot, stage: stage, bins: []string{"fleet-executor"},
 		activity: u.executorActivity(execSignal), restart: command("systemctl", "--user", "-M", "fleet-agent@", "restart", "fleet-executor"),
 		health: u.executorHealth(execSignal), st: &st.Executor}
+	// The host's autoUpdate holds its executor only. The coordinator side (coordinator, gateway, guard, UI) serves every
+	// host, so a hold on PDS18's work host must not freeze it: 2026-11-26 a hold set to let pds18-native's executor take
+	// work kept a coordinator fix from the hosts that needed it. FLEET_RELEASE_PAUSE stops new releases for all.
 	_, autoUpdate := u.coordinatorSelf()
 	save := func() error { return writeJSON(stateFile, st, 0o644) }
-	if r := u.cycle(coord, autoUpdate, u.latest); r != nil {
+	if r := u.cycle(coord, "on", u.latest); r != nil {
 		coord.st.Last = r
 		if err := save(); err != nil {
 			return err
@@ -234,8 +237,8 @@ func (u *updater) runPDS18() error {
 		}
 	}
 	// UI state is independent; native rollout and discovery retain their own versions.
-	backend, uiAuto := u.coordinatorSelf()
-	if err := u.cycleUI(backend, uiAuto, "/home/fleet/ui", stage, filepath.Join(s, "ui-state.json")); err != nil {
+	backend, _ := u.coordinatorSelf()
+	if err := u.cycleUI(backend, "on", "/home/fleet/ui", stage, filepath.Join(s, "ui-state.json")); err != nil {
 		log.Print(err)
 	}
 	// The PDS18 executor follows the coordinator side in the same run, to its healthy version only.
