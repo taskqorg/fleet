@@ -159,7 +159,7 @@ Releases root `R`: `~/releases` of the service user; on PDS18 `/home/fleet/relea
 *   `R/<ver>/starts`, `R/<ver>/healthy`: unhealthy start count, healthy marker (COREQ-R16).
 *   State directory `S`: executor hosts `<data dir>/update/`; PDS18 `/var/lib/fleet-update/` (root, 0755) with `stage/` (0700). `S/update-state.json` (PDS18: `S/pds18-state.json`, 0644, with keys `coordinator` and `executor`, one `last` each) holds `{refused: {"<ver>": "<reason>"}, last: {version, state, error, at}}`, written durably (COREQ-R22). `S/update.lock` is `flock`ed for the whole run.
 *   The running version is read from `R/current/release.json`, never from the link name.
-*   Prune at start: leftover `stage/` and `.tmp` entries; every `R/<ver>/` that is neither `current` nor `previous`; every `R/fleet-<sha12>-<os>-<arch>/` of the layout before self-update ([host cleanup, section 9](fleet-host-cleanup.md#9-retention-releases-and-session-directories)); on PDS18 every dump in `/backup/fleet/pre-deploy/` except those of `current`, `previous` and refused versions (a rolled-back release ran its migrations; its dump is the state before them).
+*   Prune at start: leftover `stage/` and `.tmp` entries; every `R/<ver>/` that is neither `current` nor `previous`; every `R/fleet-<sha12>-<os>-<arch>/` of the layout before self-update that neither link names ([host cleanup, section 9](fleet-host-cleanup.md#9-retention-releases-and-session-directories)); on PDS18 every dump in `/backup/fleet/pre-deploy/` except those of `current`, `previous` and refused versions (a rolled-back release ran its migrations; its dump is the state before them).
 
 #### 3.2 One run
 

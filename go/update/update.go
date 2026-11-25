@@ -832,7 +832,7 @@ func pruneReleases(r *os.Root) {
 	entries, _ := fs.ReadDir(r.FS(), ".")
 	for _, e := range entries {
 		n := e.Name()
-		if strings.Contains(n, ".tmp") || legacyRe.MatchString(n) || verRe.MatchString(n) && !keep[n] {
+		if strings.Contains(n, ".tmp") || (legacyRe.MatchString(n) || verRe.MatchString(n)) && !keep[n] {
 			r.RemoveAll(n)
 		}
 	}

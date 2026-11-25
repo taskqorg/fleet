@@ -164,6 +164,25 @@ func TestSweepSessions(t *testing.T) {
 	}
 }
 
+// Requirement: a session counts as busy while it has an open command (preparing) or a journaled launch. Risk: the sweep
+// removes the directory a new turn is preparing into.
+func TestSessionBusy(t *testing.T) {
+	db, err := openJournal(filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	e := &executor{db: db}
+	db.Exec(`INSERT INTO commands(id,body) VALUES('c1','{"sessionId":"prep"}'),('c2','{"sessionId":"done"}')`)
+	db.Exec(`UPDATE commands SET terminal=1 WHERE id='c2'`)
+	db.Exec(`INSERT INTO launches(execution,command,session) VALUES('x','c3','run')`)
+	for s, want := range map[string]bool{"prep": true, "run": true, "done": false, "none": false} {
+		if e.sessionBusy(s) != want {
+			t.Fatal(s)
+		}
+	}
+}
+
 // Requirement: host readings name swap and the top memory consumers, the test process among them as not Fleet's
 // unless marked. Risk: a saturated host is reported without what saturates it.
 func TestHostPressureReadings(t *testing.T) {

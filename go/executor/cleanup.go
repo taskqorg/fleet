@@ -259,10 +259,12 @@ func (e *executor) startSweep() {
 	})
 }
 
-// sessionBusy: the journal holds a launch of the session (a live run, or one whose end is not proven yet).
+// sessionBusy: the journal holds an open command of the session (accepted, so preparation may be writing into its
+// directory) or a launch of it (a live run, or one whose end is not proven yet).
 func (e *executor) sessionBusy(session string) bool {
 	var n int
-	err := e.db.QueryRow("SELECT count(*) FROM launches WHERE session=?", session).Scan(&n)
+	err := e.db.QueryRow(`SELECT (SELECT count(*) FROM launches WHERE session=?1) +
+		(SELECT count(*) FROM commands WHERE terminal=0 AND json_extract(body,'$.sessionId')=?1)`, session).Scan(&n)
 	return err != nil || n > 0
 }
 
@@ -292,11 +294,15 @@ func sweepSessions(roots []string, busy func(string) bool, age time.Duration, no
 			if newest, keep := recent(p, st, 2); keep || now.Sub(newest) < age {
 				continue
 			}
-			// The journal is asked last, just before removal: a run that started meanwhile keeps its directory.
+			// The journal is asked last, and the directory is first renamed away: a command accepted after that check
+			// prepares into a fresh directory instead of one being removed.
 			if busy(en.Name()) {
 				continue
 			}
-			c.removeDir(p)
+			gone := filepath.Join(root, ".sweep-"+en.Name())
+			if os.Rename(p, gone) == nil {
+				c.removeDir(gone)
+			}
 		}
 	}
 	return c

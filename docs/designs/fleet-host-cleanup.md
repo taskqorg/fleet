@@ -108,7 +108,7 @@ Audit of 2026-11-25: owner-mac `~/releases` 1.3 GB and its sessions root 1399 di
 *   **Session directories.** On owner-mac 1334 of the 1399 held no worktree (3.5 GB: per-session Go caches, raw native logs, inputs); 65 held one (1.3 GB). The hourly pass of section 3 runs on every host (not only with `FLEET_TMP_SWEEP`) and removes a directory under `FLEET_SESSIONS_ROOT` (and the legacy `<data>/sessions`) when all hold:
     *   no `worktree*` entry in it or under `workspaces/*`: a worktree, or a copy set aside by `setAsideStale`, stays until teardown on delivery or archive removes it under `keepWhen` ([system management](fleet-system-management.md));
     *   nothing in it changed within two levels for `FLEET_TMP_SWEEP_AGE_HOURS` (24), and it holds no socket;
-    *   the journal holds no launch of that session (asked last, just before removal).
+    *   the journal holds no open command (accepted, maybe preparing) and no launch of that session. It is asked last; the directory is then renamed to `.sweep-<session>` before removal, so a command accepted after the check prepares into a fresh directory.
 
     What goes is rebuilt by the next turn: per-run logs were already sent, inputs are fetched per run, caches refill. Native transcripts live in the native home, outside the session directory. The pass is one more source in the `host.cleanup` span (`trigger: sweep`).
 
