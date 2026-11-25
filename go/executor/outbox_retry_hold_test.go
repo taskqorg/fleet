@@ -196,3 +196,57 @@ func TestUnreachableCoordinatorStopsFlush(t *testing.T) {
 		}
 	}
 }
+
+// Requirement: a row the coordinator answers with a server error on every attempt is set aside after serverFailLimit,
+// so the rows behind it in its lane deliver. Risk (2026-11-26): a deterministic 500 on an agent tool result held a
+// finished run's completion receipt, and the host's update drain, for two hours.
+func TestServerErrorRowSetAsideAfterLimit(t *testing.T) {
+	resetRetryRows(t)
+	var mu sync.Mutex
+	receipts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		if r.URL.Path == "/api/hosts/agent-tools" {
+			w.WriteHeader(http.StatusInternalServerError)
+			io.WriteString(w, `{"message":"can't scan NULL"}`)
+			return
+		}
+		mu.Lock()
+		receipts++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, "{}")
+	}))
+	defer server.Close()
+	db := journal(t)
+	defer db.Close()
+	if err := queue(db, "/api/hosts/agent-tools", M{"executionId": "run", "commandId": "c", "agentToolKey": "c:agent:1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue(db, "/api/hosts/receipts", M{"executionId": "run", "commandId": "c", "status": "completed"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = flush(db, server.URL, "invented-token", "fixture-host")
+	if count(db, "outbox") != 2 || receipts != 0 {
+		t.Fatalf("pending=%d receipts=%d, want both held behind the failing row", count(db, "outbox"), receipts)
+	}
+	holdMu.Lock()
+	for _, h := range holds {
+		h.firstAt -= serverFailLimit
+		h.nextAt = 0
+	}
+	holdMu.Unlock()
+	for range 2 { // the second pass delivers the outbox.failed event the first one queued
+		if err := flush(db, server.URL, "invented-token", "fixture-host"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if count(db, "outbox") != 0 || receipts != 2 {
+		t.Fatalf("pending=%d receipts=%d, want the failing row set aside and the receipt delivered", count(db, "outbox"), receipts)
+	}
+	if count(db, "outbox_failed") != 1 {
+		t.Fatal("the set-aside row is not recorded for the owner")
+	}
+}
