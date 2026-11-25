@@ -99,6 +99,19 @@ func drainReport(now time.Time) *contract.DrainReport {
 	return r
 }
 
+// admittedWhileDraining: the command kinds a drain still admits. The fence holds back new work only. Stop and steer
+// act on running work; artifact-verify, artifact-copy and teardown serve other hosts and finish in seconds. A store
+// host that dropped artifact-verify left every upload to its store waiting, and those uploads held the drain of the
+// uploading host (2026-11-26: windows idle and "draining" for an hour behind 12 output.json uploads to pds18, whose
+// own drain dropped the verifications).
+func admittedWhileDraining(kind contract.CommandKind) bool {
+	switch kind {
+	case contract.CommandKindStop, contract.CommandKindSteer, contract.CommandKindArtifactVerify, contract.CommandKindArtifactCopy, contract.CommandKindTeardown:
+		return true
+	}
+	return false
+}
+
 func updatePending(s *updateSignal) bool {
 	if s == nil || s.Target == nil || !updateNewer(*s.Target, s.Running) || s.AutoUpdate == "off" {
 		return false

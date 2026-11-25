@@ -46,7 +46,7 @@ func (e *executor) run(c M) error {
 	signalMu.Lock()
 	draining := fencedLocked(time.Now())
 	signalMu.Unlock()
-	if draining && kind != contract.CommandKindStop && kind != contract.CommandKindSteer {
+	if draining && !admittedWhileDraining(kind) {
 		return nil
 	}
 	leased, leaseErr := e.activityLease()
