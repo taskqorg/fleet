@@ -470,7 +470,7 @@ func triggerList(q *Request, r *contract.TriggerListRequest) (contract.TriggerLi
 		rec := triggerRecord(row.Trigger, now)
 		if row.LastState != "" { // a bot trigger that caused a run
 			rec.LastRun = &contract.TriggerLastRun{State: contract.BotRunState(row.LastState), Observation: contract.BotRunObservation(row.LastObservation),
-				Reason: optStr(row.LastReason), At: row.LastRunAt.UTC().Format(time.RFC3339Nano)}
+				Reason: optStr(row.LastReason), At: row.LastRunAt.Time.UTC().Format(time.RFC3339Nano)}
 		}
 		out.Triggers = append(out.Triggers, rec)
 	}
@@ -696,7 +696,7 @@ func triggerCheck(q *Request, t db.Trigger, target triggerTarget, now time.Time,
 	if err != nil {
 		return false, err
 	}
-	if sent { // a bot wake skipped (paused, refused) shows in bot_runs, not as a fire
+	if sent { // a paused bot's skipped wake is in the trigger's log (trigger_log), not a fire
 		st.Fires, st.LastFireAt, st.QuietChecks, st.QuietSince = st.Fires+1, &now, 0, nil
 	}
 	if err := q.db().TriggerState(q.ctx(), st); err != nil {
@@ -795,10 +795,9 @@ func triggerSendOne(q *Request, t db.Trigger, target triggerTarget, slot string,
 	if subject == "" {
 		subject = "trigger:" + t.ID // a timed wake or Run now: the trigger's own conversation
 	}
-	run, admitted, err := admitBotWake(q, b, botWakeReq{Cause: cause, DedupKey: rid, Text: head, SentBy: "Fleet", Source: "trigger",
+	_, _, sent, err := admitBotWake(q, b, botWakeReq{Cause: cause, DedupKey: rid, Text: head, SentBy: "Fleet", Source: "trigger",
 		CheckPause: !manual, Trigger: &t, Thread: subject})
-	_ = run
-	return admitted, err
+	return sent, err
 }
 
 // triggerChanges: the changes after the trigger's cursor that its condition names, classified by their current rows
@@ -807,7 +806,7 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPar
 	var focus []string
 	var directedBy, self string
 	if target.bot != nil {
-		focus, directedBy, self = []string{target.bot.ProjectId}, target.bot.Director, deref(target.bot.HomeSessionId)
+		focus, directedBy = []string{target.bot.ProjectId}, target.bot.Director
 	} else {
 		focus, directedBy, self = target.session.focus(), deref(target.session.DirectedBy), target.sessionID
 	}

@@ -40,7 +40,7 @@ export function useRailPinned(open: () => boolean, go: (to: string) => void) {
     ? { ids: sessionIds().slice(0, 1000), lists: [{ name: 'sessions', filter: {}, group: 'none', sort: DEFAULT_SESSION_SORT }] }
     : null));
   const botById = createMemo(() => new Map((bots.data?.bots ?? []).map(b => [b.id, b])));
-  const botByHome = createMemo(() => new Map((bots.data?.bots ?? []).filter(b => b.homeSessionId).map(b => [b.homeSessionId!, b])));
+  const botByHome = createMemo(() => new Map((bots.data?.bots ?? []).filter(b => b.conversationId).map(b => [b.conversationId!, b])));
   const sessionById = createMemo(() => new Map(((sessions.data?.lists[0]?.rows ?? []) as SessionRow[]).map(s => [s.id, s])));
 
   const botPin = (key: string, b: BotListItem): RailPin => {
@@ -48,7 +48,7 @@ export function useRailPinned(open: () => boolean, go: (to: string) => void) {
     return {
       key, name: b.name, word: botWords[st], state: st, asks: st === 'waiting', at: ms(b.lastRunAt),
       mark: { letter: b.name, tone: 'success', picture: botPicture(b) },
-      href: b.homeSessionId ? '/conversations/' + encodeURIComponent(b.homeSessionId) : '/library/bots/' + encodeURIComponent(b.code || b.id),
+      href: b.conversationId ? '/conversations/' + encodeURIComponent(b.conversationId) : '/library/bots/' + encodeURIComponent(b.code || b.id),
     };
   };
   const pins = createMemo<RailPin[]>(() => {
@@ -61,7 +61,7 @@ export function useRailPinned(open: () => boolean, go: (to: string) => void) {
       const id = key.slice(SESSION.length), s = sessionById().get(id);
       if (!s) return [];
       const home = botByHome().get(id);
-      // A bot's Home conversation shows as the bot; once, when the bot is pinned too.
+      // A bot's conversation without a subject shows as the bot; once, when the bot is pinned too.
       if (home) return botIds().includes(home.id) ? [] : [{ ...botPin(key, home), href: '/conversations/' + encodeURIComponent(id) }];
       const st = sessionState(s);
       const h = s.harness && s.harness in harnesses ? (s.harness as Harness) : undefined;

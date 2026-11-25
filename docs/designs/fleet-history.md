@@ -4,7 +4,7 @@ Status: accepted (owner picked option A with the panel, 2026-11-26). Built: Tele
 
 ## Problem
 
-Fleet records what happens in many places: runs in `execution`, changes in `audit_log`, questions in `question`, experiments in `experiment`, trigger fires in `bot_run`, Telegram in its journal. On 2026-11-26:
+Fleet records what happens in many places: runs in `execution`, changes in `audit_log`, questions in `question`, experiments in `experiment`, trigger fires in the runs and messages they sent and in `trigger_log`, Telegram in its journal. On 2026-11-26:
 
 - The only record across kinds, the `change` log, is kept for 24 hours. It serves stream reconnects, not history.
 - No read covers more than one kind, and scope filters and cursors differ per operation.

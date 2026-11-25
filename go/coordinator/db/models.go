@@ -595,7 +595,6 @@ type Bot struct {
 	Revision              int32
 	MemoryRevision        int32
 	TombstonedAt          *time.Time
-	HomeSessionID         *string
 	Paused                bool
 	PausedAt              *time.Time
 	PausedBy              *string
@@ -676,7 +675,6 @@ type BotTask struct {
 	BotID        string
 	TaskID       string
 	ProjectID    string
-	BotRunID     *string
 	SessionID    *string
 	ExecutionID  *string
 	LinkKind     string
@@ -1951,6 +1949,14 @@ type Trigger struct {
 	LastError      *string
 	LimitsSignaled []string
 	CreatedAt      time.Time
+}
+
+type TriggerLog struct {
+	TriggerID string
+	RequestID string
+	ProjectID *string
+	Reason    string
+	At        time.Time
 }
 
 type Upload struct {

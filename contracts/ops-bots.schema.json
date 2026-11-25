@@ -11,7 +11,7 @@
       "description": "List bot settings and runtime status visible in granted projects, optionally for one project.",
       "changes": [
         "bot",
-        "bot-run",
+        "execution",
         "setting-change",
         "question"
       ]
@@ -23,10 +23,10 @@
       ],
       "auth": "person",
       "agent": "tool",
-      "description": "Read the saved settings, scoped memory, Home conversation and runtime status of a bot by id.",
+      "description": "Read the saved settings, scoped memory and runtime status of a bot by id.",
       "changes": [
         "bot",
-        "bot-run",
+        "execution",
         "setting-change",
         "question"
       ]
@@ -40,7 +40,7 @@
       ],
       "auth": "project:projectId",
       "agent": "tool",
-      "description": "Save a new settings revision. A caller-generated botId and baseRevision 0 create a bot and its Home conversation."
+      "description": "Save a new settings revision. A caller-generated botId and baseRevision 0 create a bot and its conversation without a subject."
     },
     "bot_memory_save": {
       "read": false,
@@ -83,7 +83,7 @@
       ],
       "auth": "person",
       "agent": "tool",
-      "description": "Run a bot now using the shared wake admission flow, enforcing single active run admission and pinning settings, memory and project."
+      "description": "Run a bot now in its conversation without a subject (with automationId: the trigger's conversation), pinning settings, memory and project. A busy conversation queues the message as its next turn: the reply then has no run."
     },
     "bot_pause": {
       "read": false,
@@ -113,9 +113,8 @@
       ],
       "auth": "person",
       "agent": "tool",
-      "description": "List bot runs, including quiet wakes and skipped, queued, failed and unconfirmed work.",
+      "description": "List bot runs: the agent runs of the bot's conversations, including quiet wakes and queued, failed and unconfirmed work. A trigger wake that never ran is in the trigger's last run (trigger_list), not here.",
       "changes": [
-        "bot-run",
         "execution",
         "session"
       ]
@@ -189,14 +188,13 @@
         "settings",
         "memory",
         "memoryRevision",
-        "homeSessionId",
         "paused",
         "pausedAt",
         "activeRunId",
-        "activeExecutionId",
         "lastRunAt",
         "lastRunState",
-        "needsYou"
+        "needsYou",
+        "conversationId"
       ],
       "properties": {
         "id": {
@@ -220,12 +218,6 @@
         "memoryRevision": {
           "type": "integer"
         },
-        "homeSessionId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "paused": {
           "type": "boolean"
         },
@@ -236,12 +228,6 @@
           ]
         },
         "activeRunId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "activeExecutionId": {
           "type": [
             "string",
             "null"
@@ -272,7 +258,14 @@
         },
         "needsYou": {
           "type": "boolean",
-          "$comment": "the active run waits, or an open question waits in its Home conversation or active run"
+          "$comment": "the active run waits, or an open question waits in one of its conversations"
+        },
+        "conversationId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "$comment": "the bot's newest conversation without a subject: where Talk to it and person messages go"
         }
       }
     },
@@ -308,11 +301,11 @@
         "purpose",
         "revision",
         "paused",
-        "homeSessionId",
         "activeRunId",
         "lastRunState",
         "lastRunAt",
-        "needsYou"
+        "needsYou",
+        "conversationId"
       ],
       "properties": {
         "id": {
@@ -332,12 +325,6 @@
         },
         "paused": {
           "type": "boolean"
-        },
-        "homeSessionId": {
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "activeRunId": {
           "type": [
@@ -370,7 +357,14 @@
         },
         "needsYou": {
           "type": "boolean",
-          "$comment": "the active run waits, or an open question waits in its Home conversation or active run"
+          "$comment": "the active run waits, or an open question waits in one of its conversations"
+        },
+        "conversationId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "$comment": "the bot's newest conversation without a subject: where Talk to it and person messages go"
         }
       }
     },
@@ -596,31 +590,6 @@
         "unconfirmed"
       ]
     },
-    "BotRunWakeItem": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "kind",
-        "id"
-      ],
-      "properties": {
-        "kind": {
-          "type": "string"
-        },
-        "id": {
-          "type": "string"
-        },
-        "projectId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "summary": {
-          "type": "string"
-        }
-      }
-    },
     "BotRunRecord": {
       "type": "object",
       "additionalProperties": false,
@@ -632,9 +601,7 @@
         "memoryRevision",
         "sessionId",
         "executionId",
-        "queuedMessageId",
         "cause",
-        "dedupKey",
         "state",
         "observation",
         "quiet",
@@ -646,12 +613,12 @@
         "createdAt",
         "startedAt",
         "endedAt",
-        "triggers",
         "linkedTaskIds"
       ],
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "$comment": "the run: the execution of the wake's turn"
         },
         "botId": {
           "type": "string"
@@ -672,25 +639,11 @@
           ]
         },
         "executionId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "queuedMessageId": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string",
+          "$comment": "the same as id"
         },
         "cause": {
           "$ref": "#/$defs/BotRunCause"
-        },
-        "dedupKey": {
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "state": {
           "$ref": "#/$defs/BotRunState"
@@ -746,12 +699,6 @@
             "null"
           ]
         },
-        "triggers": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/BotRunWakeItem"
-          }
-        },
         "linkedTaskIds": {
           "type": "array",
           "items": {
@@ -759,7 +706,8 @@
           }
         },
         "automation": {
-          "$ref": "#/$defs/BotAutomationRef"
+          "$ref": "#/$defs/BotAutomationRef",
+          "$comment": "the trigger that sent the wake"
         },
         "failure": {
           "$ref": "ops.schema.json#/$defs/Failure"
@@ -792,18 +740,23 @@
       "additionalProperties": false,
       "required": [
         "bot",
-        "run",
+        "sessionId",
         "admitted"
       ],
       "properties": {
         "bot": {
           "$ref": "#/$defs/BotRecord"
         },
-        "run": {
-          "$ref": "#/$defs/BotRunRecord"
-        },
         "admitted": {
           "type": "boolean"
+        },
+        "run": {
+          "$ref": "#/$defs/BotRunRecord",
+          "$comment": "absent: the conversation was busy and queued the message"
+        },
+        "sessionId": {
+          "type": "string",
+          "$comment": "the conversation the wake went to"
         }
       }
     },
@@ -960,7 +913,6 @@
         "botName",
         "taskId",
         "projectId",
-        "botRunId",
         "sessionId",
         "executionId",
         "linkKind",
@@ -979,12 +931,6 @@
         },
         "projectId": {
           "type": "string"
-        },
-        "botRunId": {
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "sessionId": {
           "type": [
@@ -1017,7 +963,6 @@
         "botName",
         "taskId",
         "projectId",
-        "botRunId",
         "sessionId",
         "executionId",
         "linkKind",
@@ -1048,12 +993,6 @@
         },
         "projectId": {
           "type": "string"
-        },
-        "botRunId": {
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "sessionId": {
           "type": [
@@ -1190,11 +1129,12 @@
         "taskId": {
           "type": "string"
         },
-        "botRunId": {
-          "type": "string"
-        },
         "linkKind": {
           "$ref": "#/$defs/BotTaskLinkKind"
+        },
+        "executionId": {
+          "type": "string",
+          "$comment": "the bot run (execution) the link names; default the calling run"
         }
       }
     },

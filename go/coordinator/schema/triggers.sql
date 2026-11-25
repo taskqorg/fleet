@@ -40,13 +40,6 @@ CREATE OR REPLACE TRIGGER board_message_change AFTER INSERT OR DELETE OR UPDATE 
 CREATE OR REPLACE TRIGGER bot_change AFTER INSERT OR DELETE OR UPDATE ON bot FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER bot_zcode BEFORE INSERT OR UPDATE OF project_id, code ON bot FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
 
--- bot_automation
-CREATE OR REPLACE TRIGGER bot_automation_change AFTER INSERT OR DELETE OR UPDATE OF revision ON bot_automation FOR EACH ROW EXECUTE FUNCTION fleet_change();
-
--- bot_run
-CREATE OR REPLACE TRIGGER bot_run_change AFTER INSERT OR DELETE OR UPDATE ON bot_run FOR EACH ROW EXECUTE FUNCTION fleet_change();
-CREATE OR REPLACE TRIGGER bot_run_touch BEFORE UPDATE ON bot_run FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
-
 -- bot_task
 CREATE OR REPLACE TRIGGER bot_task_change AFTER INSERT OR DELETE OR UPDATE ON bot_task FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER bot_task_touch BEFORE UPDATE ON bot_task FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
@@ -200,6 +193,9 @@ CREATE OR REPLACE TRIGGER transport_conflict_tombstone BEFORE INSERT ON transpor
 -- trigger
 CREATE OR REPLACE TRIGGER trigger_change AFTER INSERT OR DELETE ON trigger FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER trigger_update AFTER UPDATE ON trigger FOR EACH ROW WHEN (old.revision IS DISTINCT FROM new.revision OR old.fires IS DISTINCT FROM new.fires OR old.quiet_checks IS DISTINCT FROM new.quiet_checks OR old.last_error IS DISTINCT FROM new.last_error) EXECUTE FUNCTION fleet_change();
+
+-- trigger_log
+CREATE OR REPLACE TRIGGER trigger_log_change AFTER INSERT ON trigger_log FOR EACH ROW EXECUTE FUNCTION fleet_change();
 
 -- upload
 CREATE OR REPLACE TRIGGER upload_tombstone BEFORE INSERT ON upload FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');

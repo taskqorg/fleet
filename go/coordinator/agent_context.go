@@ -976,14 +976,7 @@ func sessionStart(q *Request, r *contract.SessionStartRequest) (contract.Session
 		if callerSess, err := sessionMaybe(q, s.CreatedBySessionID); err != nil {
 			return none, err
 		} else if callerSess != nil && callerSess.BotID != "" && callerSess.ProjectID == pid {
-			var botRunID *string
-			if s.CreatedByExecutionID != "" {
-				var err error
-				if botRunID, err = botRunIDForExecution(q, &s.CreatedByExecutionID); err != nil {
-					return none, err
-				}
-			}
-			if err := linkBotTask(q, callerSess.BotID, taskID, pid, "continued", actor(q, directedBy), botRunID, &callerSess.ID, strPtr(s.CreatedByExecutionID)); err != nil {
+			if err := linkBotTask(q, callerSess.BotID, taskID, pid, "continued", actor(q, directedBy), &callerSess.ID, strPtr(s.CreatedByExecutionID)); err != nil {
 				return none, err
 			}
 		}

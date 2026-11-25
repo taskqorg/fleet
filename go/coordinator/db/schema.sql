@@ -203,7 +203,6 @@ CREATE TABLE bot (
   "revision" integer NOT NULL,
   "memory_revision" integer NOT NULL,
   "tombstoned_at" timestamp with time zone,
-  "home_session_id" text,
   "paused" boolean NOT NULL,
   "paused_at" timestamp with time zone,
   "paused_by" text,
@@ -279,7 +278,6 @@ CREATE TABLE bot_task (
   "bot_id" text NOT NULL,
   "task_id" text NOT NULL,
   "project_id" text NOT NULL,
-  "bot_run_id" text,
   "session_id" text,
   "execution_id" text,
   "link_kind" text NOT NULL,
@@ -1459,6 +1457,13 @@ CREATE TABLE trigger (
   "last_error" text,
   "limits_signaled" text[] NOT NULL,
   "created_at" timestamp with time zone NOT NULL
+);
+CREATE TABLE trigger_log (
+  "trigger_id" text NOT NULL,
+  "request_id" text NOT NULL,
+  "project_id" text,
+  "reason" text NOT NULL,
+  "at" timestamp with time zone NOT NULL
 );
 CREATE TABLE upload (
   "id" text NOT NULL,

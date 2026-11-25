@@ -124,7 +124,7 @@ export function BotDetail(props: {
     try {
       if (kind === 'run') {
         const rep = await writeOnce('bot_run', { botId: props.bot.id, requestId: crypto.randomUUID() }, () => setActionNote('Queuing run…'), { signal });
-        setActionNote(rep.admitted ? 'Run queued.' : `Wake recorded (${reasonLabel(rep.run.reason) ?? rep.run.state}).`);
+        setActionNote(!rep.admitted ? 'Already run.' : rep.run ? 'Run queued.' : 'Message queued for the next turn.');
       } else if (kind === 'pause') {
         const nextPaused = !props.bot.paused;
         await writeOnce('bot_pause', { botId: props.bot.id, paused: nextPaused }, () => setActionNote(nextPaused ? 'Pausing…' : 'Resuming…'), { signal });
@@ -167,7 +167,7 @@ export function BotDetail(props: {
             </p>
           </div>
           <div class="row" style={{ gap: 'var(--space-2)', 'flex-wrap': 'wrap', 'align-items': 'center' }}>
-            <Show when={props.bot.homeSessionId}>
+            <Show when={props.bot.conversationId}>
               {sid => <Button label="Talk to it" icon="messages-square" onClick={() => go('/conversations/' + encodeURIComponent(sid()))} />}
             </Show>
             <Button label={tab() === 'automations' ? 'Run bot now' : 'Run now'} icon="play" kind="primary" busy={actionBusy()} onClick={() => void runAction('run')} />
@@ -255,10 +255,10 @@ function BotOverviewTab(props: {
         <KvRow icon="bot" label="Purpose" value={<span>{props.bot.settings.purpose || 'No purpose set'}</span>} />
         <KvRow
           icon="messages-square"
-          label="Home conversation"
+          label="Conversation"
           value={
-            props.bot.homeSessionId
-              ? <span class="row" style={{ gap: 'var(--space-2)' }}><EntityCode kind="conversation" id={props.bot.homeSessionId} /><Button label="Open Home" kind="quiet" onClick={() => go('/conversations/' + encodeURIComponent(props.bot.homeSessionId!))} /></span>
+            props.bot.conversationId
+              ? <span class="row" style={{ gap: 'var(--space-2)' }}><EntityCode kind="conversation" id={props.bot.conversationId} /><Button label="Open" kind="quiet" onClick={() => go('/conversations/' + encodeURIComponent(props.bot.conversationId!))} /></span>
               : <span class="muted">Not created</span>
           }
         />
@@ -442,9 +442,6 @@ function BotRunsTable(props: { runs: BotRun[]; projectNames: Map<string, string>
             <td>
               <div><strong>{wakeLabel(r.cause)}</strong></div>
               <Show when={r.automation}>{a => <div>{a().name} · revision {a().revision}</div>}</Show>
-              <Show when={r.triggers.length > 0}>
-                <div class="muted">{r.triggers.map(tr => tr.summary || tr.kind.replace(/_/g, ' ')).join(', ')}</div>
-              </Show>
             </td>
             <td>
               <Show when={runCause(r)} keyed>{c => <div><span class="badge t-danger" data-tip={c.long}>{c.text}</span></div>}</Show>

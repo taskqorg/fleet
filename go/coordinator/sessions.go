@@ -28,6 +28,7 @@ type sessionListDBRow struct {
 	AgentHarness  *string  `db:"agent_harness"`
 	ProfileID     *string  `db:"profile_id"`
 	ProjectID     *string  `db:"project_id"`
+	BotID         *string  `db:"bot_id"`
 	CreatedAt     *float64 `db:"created_ms"`
 	ArchivedAt    *float64 `db:"archived_ms"`
 	ActivityAt    *string  `db:"activity_at"`
@@ -53,7 +54,7 @@ func (x sessionListDBRow) row() contract.SessionRow {
 	if harness == nil {
 		harness = x.AgentHarness
 	}
-	return contract.SessionRow{Id: x.ID, Code: x.Code, Title: title, State: x.State, Harness: harness, ProfileId: x.ProfileID, ProjectId: x.ProjectID,
+	return contract.SessionRow{Id: x.ID, Code: x.Code, Title: title, State: x.State, Harness: harness, ProfileId: x.ProfileID, ProjectId: x.ProjectID, BotId: x.BotID,
 		CreatedAt: x.CreatedAt, ActivityAt: x.ActivityAt, Now: nowLine(deref(x.NowText), deref(x.TaskTitle)), Executions: x.Executions, OpenQuestions: x.OpenQuestions, ArchivedAt: x.ArchivedAt,
 		WaitingSince: x.WaitingSince, RunStartedAt: x.RunStartedAt, LastStartedAt: x.LastStartedAt, FailedStarts: &x.FailedStarts,
 		SortKey: sortKey(x.G, x.Sk, x.ID)}

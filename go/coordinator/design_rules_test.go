@@ -328,7 +328,6 @@ func designStateOwners() []designOwner {
 		{"access_grant", "access_states.go", []string{"state"}},
 		{"artifact_copy", "artifact_states.go", []string{"state"}},
 		{"store", "artifact_states.go", []string{"state"}},
-		{"bot_run", "bot_states.go", []string{"state"}},
 		{"audit_log", "audit.go", []string{"target"}}, // S4: the audit is written only through audit()
 	}
 	for _, q := range kitQueues {
@@ -777,7 +776,6 @@ func TestDesignTransitions(t *testing.T) {
 	check("artifact copy", artifactCopyTransitions, enum(`CREATE TABLE artifact_copy\([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), func(s string) bool { return s == "deleted" }, "pending", "copying", "verified")
 	check("store", storeTransitions, enum(`CREATE TABLE store\([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), func(s string) bool { return s == "unreachable" }, "reachable", "unreachable")
 	check("access grant", accessGrantTransitions, enum(`CREATE TABLE access_grant \([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), nil, "asked")
-	check("bot run", botRunTransitions, enum(`CREATE TABLE bot_run \([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), nil, "queued")
 	src, err := os.ReadFile("resource_states.go")
 	if err != nil {
 		t.Fatal(err)

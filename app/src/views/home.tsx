@@ -135,7 +135,8 @@ function HomePage() {
 
   const now = () => Date.now();
   const scopedBots = createMemo(() => view.data?.bots ?? []);
-  const botBySession = createMemo(() => new Map(scopedBots().filter(b => b.homeSessionId).map(b => [b.homeSessionId!, b])));
+  const botById = createMemo(() => new Map(scopedBots().map(b => [b.id, b])));
+  const botOf = (s: { botId?: string | null }) => (s.botId ? botById().get(s.botId) : undefined);
 
   // The newest failed run of each failed session, with its plain cause.
   const failureOf = createMemo(() => new Map((view.data?.failures ?? []).map(f => [f.sessionId, { cause: f.cause, text: f.text, hostId: f.hostId, at: f.at }])));
@@ -228,7 +229,7 @@ function HomePage() {
     const at = Date.now() - 5_000;
     setWaking(m => ({ ...m, [b.id]: { state: 'waking', at } }));
     op('bot_run', { botId: b.id, requestId: newRequestId() }, { signal: alive }).then(
-      r => { if (!r.admitted) setWaking(m => ({ ...m, [b.id]: { state: 'failed', reason: reasonLabel(r.run.reason) ?? causeOf(r.run.failure, r.run.problem)?.text ?? 'not admitted', at } })); },
+      r => { if (r.run && r.run.state === 'failed') { const run = r.run; setWaking(m => ({ ...m, [b.id]: { state: 'failed', reason: reasonLabel(run.reason) ?? causeOf(run.failure, run.problem)?.text ?? 'not admitted', at } })); } },
       e => setWaking(m => ({ ...m, [b.id]: { state: 'failed', reason: e instanceof Error ? e.message : String(e), at } })),
     );
   };
@@ -236,7 +237,7 @@ function HomePage() {
 
   // Composer targets: each project's PM, then the bots (target-picker); the last one talked to from Home first.
   const pmSession = (project: string) =>
-    rows().filter(s => s.profileId === 'pm' && s.projectId === project && !botBySession().has(s.id)).sort((a, b) => ms(b.activityAt) - ms(a.activityAt))[0];
+    rows().filter(s => s.profileId === 'pm' && s.projectId === project && !s.botId).sort((a, b) => ms(b.activityAt) - ms(a.activityAt))[0];
   const targets = createMemo<Target[]>(() => [
     ...(projects.data?.projects ?? []).map(p => String(p.id)).filter(p => inScope(p) && !prefs.value.ignored.includes(p)).map(p => {
       const s = pmSession(p);
@@ -256,15 +257,9 @@ function HomePage() {
       if (t.startsWith('bot:')) {
         const b = scopedBots().find(x => 'bot:' + x.id === t);
         if (!b) throw new Error('that bot is no longer listed');
-        // Asleep: bot_run with the text wakes it with its memory. Running: the message joins its Home conversation.
-        if (!b.activeRunId || !b.homeSessionId) {
-          const r = await op('bot_run', { botId: b.id, requestId: newRequestId(), text }, { signal: alive });
-          if (!r.admitted) throw new Error(r.run.reason ?? 'the bot did not take the message');
-          go(sessionPath({ id: r.run.sessionId ?? b.homeSessionId ?? '' }));
-        } else {
-          await op('message_send', { sessionId: b.homeSessionId, text, requestId: newRequestId() }, { signal: alive });
-          go(sessionPath({ id: b.homeSessionId }));
-        }
+        // bot_run with the text wakes it with its memory in its conversation without a subject; a busy one queues it.
+        const r = await op('bot_run', { botId: b.id, requestId: newRequestId(), text }, { signal: alive });
+        go(sessionPath({ id: r.sessionId }));
         return;
       }
       const project = t.slice('pm:'.length), open = pmSession(project);
@@ -375,7 +370,7 @@ function HomePage() {
         />
       );
     }
-    const s = () => c().s!, w = createMemo(() => who(s(), botBySession().get(s().id)));
+    const s = () => c().s!, w = createMemo(() => who(s(), botOf(s())));
     return (
       <SessionCard
         name={w().name}
@@ -476,7 +471,7 @@ function HomePage() {
                     state={wakeOf(b())?.state ?? 'asleep'}
                     reason={wakeOf(b())?.reason}
                     onWake={() => wake(b())}
-                    onOpen={b().homeSessionId ? () => go(sessionPath({ id: b().homeSessionId! })) : undefined}
+                    onOpen={b().conversationId ? () => go(sessionPath({ id: b().conversationId! })) : undefined}
                   />
                 )}
               </For>

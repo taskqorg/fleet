@@ -44,6 +44,35 @@ func formatTimePtr(t *time.Time) *string {
 	return &s
 }
 
+// botListRunState: bot_list's latest run state (empty: none; preparing reads as queued).
+func botListRunState(s string) *string {
+	if s == "preparing" {
+		return ptr("queued")
+	}
+	return optStr(s)
+}
+
+// botRunStateOf: a bot run's state from its execution's (a preparing run is queued); nil without a run.
+func botRunStateOf(s *db.ExecutionState) *string {
+	if s == nil {
+		return nil
+	}
+	if *s == "preparing" {
+		return ptr("queued")
+	}
+	return ptr(string(*s))
+}
+
+// firstTime: the first time given.
+func firstTime(ts ...*time.Time) *time.Time {
+	for _, t := range ts {
+		if t != nil {
+			return t
+		}
+	}
+	return nil
+}
+
 func botList(q *Request, r *contract.BotListRequest) (contract.BotListReply, error) {
 	out := contract.BotListReply{Bots: []contract.BotListItem{}}
 	if r.ProjectId != nil && projectSettingsOf(q, *r.ProjectId) == nil {
@@ -52,19 +81,19 @@ func botList(q *Request, r *contract.BotListRequest) (contract.BotListReply, err
 	rows, err := q.db().BotList(q.ctx(), db.BotListParams{ProjectID: r.ProjectId, ProjectIds: r.ProjectIds, ExcludeProjectIds: r.ExcludeProjectIds})
 	for _, row := range rows {
 		out.Bots = append(out.Bots, contract.BotListItem{
-			Id:            row.ID,
-			Code:          row.Code,
-			ProjectId:     row.ProjectID,
-			Name:          row.Name,
-			Purpose:       row.Purpose,
-			Revision:      int64(row.Revision),
-			Paused:        row.Paused,
-			HomeSessionId: row.HomeSessionID,
-			ActiveRunId:   optStr(row.ActiveRunID),
-			LastRunState:  optStr(row.LastRunState),
-			LastRunAt:     formatTimePtr(nonEpoch(row.LastRunAt.Time)),
-			Avatar:        botAvatarOf(row.AvatarArtifactID, row.AvatarMediaType, row.AvatarStillArtifactID, row.AvatarGlow),
-			NeedsYou:      row.NeedsYou,
+			Id:             row.ID,
+			Code:           row.Code,
+			ProjectId:      row.ProjectID,
+			Name:           row.Name,
+			Purpose:        row.Purpose,
+			Revision:       int64(row.Revision),
+			Paused:         row.Paused,
+			ConversationId: row.ConversationID,
+			ActiveRunId:    optStr(row.ActiveRunID),
+			LastRunState:   botListRunState(row.LastRunState),
+			LastRunAt:      formatTimePtr(nonEpoch(row.LastRunAt.Time)),
+			Avatar:         botAvatarOf(row.AvatarArtifactID, row.AvatarMediaType, row.AvatarStillArtifactID, row.AvatarGlow),
+			NeedsYou:       row.NeedsYou,
 		})
 	}
 	return out, err
@@ -79,22 +108,21 @@ func readBotFull(q *Request, id string) (botFull, error) {
 		return botFull{}, err
 	}
 	rec := contract.BotRecord{
-		Id:                row.ID,
-		Code:              row.Code,
-		ProjectId:         row.ProjectID,
-		Director:          row.Director,
-		Revision:          int64(row.Revision),
-		Memory:            row.Memory,
-		MemoryRevision:    int64(row.MemoryRevision),
-		HomeSessionId:     row.HomeSessionID,
-		Paused:            row.Paused,
-		PausedAt:          formatTimePtr(row.PausedAt),
-		ActiveRunId:       row.ActiveRunID,
-		ActiveExecutionId: row.ActiveExecutionID,
-		LastRunAt:         formatTimePtr(row.LastRunAt),
-		LastRunState:      row.LastRunState,
-		Avatar:            botAvatarOf(row.AvatarArtifactID, row.AvatarMediaType, row.AvatarStillArtifactID, row.AvatarGlow),
-		NeedsYou:          row.NeedsYou,
+		Id:             row.ID,
+		Code:           row.Code,
+		ProjectId:      row.ProjectID,
+		Director:       row.Director,
+		Revision:       int64(row.Revision),
+		Memory:         row.Memory,
+		MemoryRevision: int64(row.MemoryRevision),
+		Paused:         row.Paused,
+		ConversationId: row.ConversationID,
+		PausedAt:       formatTimePtr(row.PausedAt),
+		ActiveRunId:    row.ActiveRunID,
+		LastRunAt:      formatTimePtr(firstTime(row.LastRunStartedAt, row.LastRunAt)),
+		LastRunState:   botRunStateOf(row.LastRunState),
+		Avatar:         botAvatarOf(row.AvatarArtifactID, row.AvatarMediaType, row.AvatarStillArtifactID, row.AvatarGlow),
+		NeedsYou:       row.NeedsYou,
 		Settings: contract.BotSettings{
 			Name:         row.Name,
 			Purpose:      row.Purpose,
@@ -230,14 +258,12 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 	if err != nil {
 		return out, err
 	}
-	if _, err := ensureBotHomeSession(q, &saved); err != nil {
+	if _, err := botConversation(q, &saved, ""); err != nil {
 		return out, err
 	}
-	if r.BaseRevision > 0 && settings.Name != prevName && saved.HomeSessionId != nil {
-		if row, err := q.db().SessionByID(q.ctx(), *saved.HomeSessionId); err == nil && deref(row.TitleBy) == "bot" {
-			if _, err := q.db().TitleRename(q.ctx(), db.TitleRenameParams{ID: row.ID, Title: settings.Name, TitleBy: "bot"}); err != nil {
-				return out, err
-			}
+	if r.BaseRevision > 0 && settings.Name != prevName {
+		if err := q.db().BotRenameConversations(q.ctx(), db.BotRenameConversationsParams{BotID: saved.Id, Title: settings.Name}); err != nil {
+			return out, err
 		}
 	}
 	if q.app != nil {
