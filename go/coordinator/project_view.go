@@ -223,11 +223,29 @@ func projectPipelines(q *Request, id string, entries []contract.LabLeaderboardEn
 			capOf[trimJSON(m.Pipeline)] = m.Capability
 		}
 	}
+	// One row per pipeline: when several methods run it (a base method and the variant Lab promoted from it), the one in
+	// use, else the project's own, names the row.
+	rank := func(m string, scope string) int {
+		switch {
+		case m == inUse:
+			return 0
+		case scope == id:
+			return 1
+		}
+		return 2
+	}
+	pick := map[string]int{}
+	for i, m := range cat.Methods {
+		pipe := trimJSON(m.Pipeline)
+		if j, ok := pick[pipe]; !ok || rank(m.ID, m.Scope) < rank(cat.Methods[j].ID, cat.Methods[j].Scope) {
+			pick[pipe] = i
+		}
+	}
 	listed := map[string]bool{}
-	for _, m := range cat.Methods {
+	for i, m := range cat.Methods {
 		pipe := trimJSON(m.Pipeline)
 		s := stats[pipe]
-		if m.ID != inUse && m.Scope != id && s == nil {
+		if pick[pipe] != i || m.ID != inUse && m.Scope != id && s == nil {
 			continue
 		}
 		capability := m.Capability
