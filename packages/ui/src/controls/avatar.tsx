@@ -24,8 +24,8 @@ reduceQuery?.addEventListener('change', (e) => setReduced(e.matches));
 const px: Record<AvatarSize, number> = { sm: 16, md: 24, lg: 40, xl: 96 };
 
 /** Decorative by default: the name next to it carries the meaning. With `label` it is named on its own. A picture plays
- * at lg and xl, on hover and while the bot works; elsewhere and under reduced motion it shows its still frame. */
-/** `tip` is the tooltip of an avatar shown without its name (the collapsed rail); the dot's ring takes the colour of
+ * at lg and xl, on hover and while the bot works; elsewhere and under reduced motion it shows its still frame.
+ * `tip` is the tooltip of an avatar shown without its name (the collapsed rail); the dot's ring takes the colour of
  * `--avatar-ring` (default `surface`), set by the surface the avatar sits on (`rail`, `float`). */
 export function Avatar(p: AvatarMark & { size?: AvatarSize; label?: string; state?: AvatarState; tip?: string }) {
   const size = () => p.size ?? 'md';
