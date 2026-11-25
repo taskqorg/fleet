@@ -32,4 +32,4 @@ How a configuration shows only what differs from its base ([OR-45](../owner-rule
 * `changed`: the field in mono and its value; the base default is in the tooltip only, never as a second value or an arrow on the row ([OR-7](../owner-rules.md), [OR-20](../owner-rules.md)).
 * `inherited`: the folded "Inherited defaults (N)" row, which opens the unchanged fields in place.
 
-Text names: `field`, `value`, `label`. Used in the Library definition editor, a project's Rules & methods and a Lab variant.
+Text names: `field`, `value`, `label`. Used in the Library definition editor, a project's Setup and a Lab variant.

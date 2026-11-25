@@ -1,20 +1,19 @@
 // Projects (docs/design-system/pages/projects.md, Target): the project catalogue in the control column; the work area is
 // the cross-project summary, or an opened project with its facets Overview · Tasks · Pipelines · Results · Delivery ·
-// Rules & methods · Access · History (Overview, Pipelines, a pipeline page and History: project-overview.tsx).
+// Setup · History (Overview, Pipelines, a pipeline page and History: project-overview.tsx; Setup: below, board Approved P-A3).
 // Tasks, Results and Delivery are the same list views as before, laid out in one column inside the facet (routes.ts maps
 // `/projects/FLT/tasks/T-FLT-42` to the Tasks view filtered to the project).
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from 'solid-js';
 import { useLocation, useSearch } from '../router.ts';
 import {
-  Button, DetailHead, DetailSection, DiffRow, Empty, ErrorBanner, FilterBar, Icon, InheritedRows, KvRow, Preview, ListDetail, ListFrame,
-  Num, RowFacts, Fact, SearchField, ShellActions, Skeleton, StateBadge, StateDot, TabBar, VirtualList,
-  catalogueRow, matchSearch, msMeasured, statesOf, type IconName,
+  Button, DetailHead, DetailSection, DiffRow, Empty, ErrorBanner, FilterBar, InheritedRows, KvRow, Preview, ListDetail, ListFrame,
+  RowFacts, Fact, ShellActions, Skeleton, StateBadge, StateDot, TabBar, VirtualList,
+  catalogueRow, matchSearch, statesOf, type IconName,
 } from '../../../packages/ui/src/index.ts';
-import { op } from '../api.ts';
 import { useOp, useView } from '../store.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 import { prefs, prefsRead, scopeIds } from '../prefs.ts';
-import { projectIdOf, projectSegment, type ListFacet } from '../routes.ts';
+import { projectIdOf, projectSegment, toTarget, type ListFacet } from '../routes.ts';
 import type { Frame } from '../list-page.tsx';
 import { isCode } from '../codes.ts';
 import { idOf } from './delivery-model.tsx';
@@ -25,17 +24,19 @@ import { Delivery } from './delivery.tsx';
 import { ProjectAccess } from './access-grants.tsx';
 import { AskCard, PipelinePage, ProjectHistory, ProjectOverview, ProjectPipelines, projectFacetPath, useProjectView } from './project-overview.tsx';
 
-type Facet = 'overview' | ListFacet | 'pipelines' | 'rules' | 'access' | 'history';
+type Facet = 'overview' | ListFacet | 'pipelines' | 'setup' | 'history';
 type CrossFacet = 'summary' | ListFacet;
 type Screen = 'projects' | ListFacet;
 
 const FACETS: { id: Facet; label: string }[] = [
   { id: 'overview', label: 'Overview' }, { id: 'tasks', label: 'Tasks' }, { id: 'pipelines', label: 'Pipelines' },
-  { id: 'results', label: 'Results' }, { id: 'delivery', label: 'Delivery' }, { id: 'rules', label: 'Rules & methods' },
-  { id: 'access', label: 'Access' }, { id: 'history', label: 'History' },
+  { id: 'results', label: 'Results' }, { id: 'delivery', label: 'Delivery' }, { id: 'setup', label: 'Setup' },
+  { id: 'history', label: 'History' },
 ];
-/** Facets served by the projects view itself (`?facet=`); an earlier `?facet=sessions` opens Overview. */
-const OWN_FACETS: readonly Facet[] = ['pipelines', 'rules', 'access', 'history'];
+/** Facets served by the projects view itself (`?facet=`); an earlier `?facet=sessions` opens Overview, and the earlier
+ * `rules` and `access` open Setup, which replaced them. */
+const OWN_FACETS: readonly Facet[] = ['pipelines', 'setup', 'history'];
+const MOVED: Record<string, Facet> = { rules: 'setup', access: 'setup' };
 const CROSS: { id: CrossFacet; label: string }[] = [
   { id: 'summary', label: 'Summary' }, { id: 'tasks', label: 'Tasks' }, { id: 'delivery', label: 'Delivery' }, { id: 'results', label: 'Results' },
 ];
@@ -88,8 +89,9 @@ export function Projects(props: { screen: Screen; id?: string }) {
   });
   const facet = createMemo<Facet>(() => {
     if (props.screen !== 'projects') return props.screen;
-    const f = params().get('facet') as Facet | null;
-    return f && OWN_FACETS.includes(f) ? f : 'overview';
+    const raw = params().get('facet') ?? '';
+    const f = (MOVED[raw] ?? raw) as Facet;
+    return OWN_FACETS.includes(f) ? f : 'overview';
   });
   const pipeline = createMemo(() => (facet() === 'pipelines' ? params().get('pipeline') ?? undefined : undefined));
   const item = createMemo(() => (props.screen !== 'projects' ? props.id : undefined));
@@ -308,11 +310,9 @@ function ProjectWork(props: {
     const roles = isRec(settings.roles) ? settings.roles : {};
     return str(roles.pm) || 'pm';
   });
-  // The project's data class (settings data: public, internal or personal), shown on its Access facet when set.
-  const dataClass = createMemo(() => { const st = isRec(props.p?.raw.settings) ? props.p!.raw.settings : {}; return str(st.data) || undefined; });
-  // The name as edited in Rules & methods, before Save (the editor's draft), heads the project while it is open.
+  // The name as edited in Setup, before Save (the editor's draft), heads the project while the editor is open.
   const [draftName, setDraftName] = createSignal('', { ownedWrite: true });
-  const title = () => (props.facet === 'rules' && draftName() ? draftName() : props.p?.name ?? props.id);
+  const title = () => (props.facet === 'setup' && draftName() ? draftName() : props.p?.name ?? props.id);
   // Talk to PM opens the project's PM conversation (OR-51); with none yet, a new conversation on the project's pm role.
   const pmSession = createMemo(() => overview.data?.pm ?? (overview.data?.conversations ?? []).find(s => s.profileId === pmProfile()));
   const talk = () => {
@@ -331,7 +331,7 @@ function ProjectWork(props: {
             <Show when={asks() > 0}><StateDot state="waiting" /></Show>
             <Show when={asks() > 0}><span>{asks()} {asks() === 1 ? 'question' : 'questions'}</span></Show>
             <Show when={working() > 0}><span>{working()} {working() === 1 ? 'session' : 'sessions'} working</span></Show>
-            <Show when={ready()?.reason}>{r => <span class="t-attention" data-tip="Fix it in Rules & methods">{r()}</span>}</Show>
+            <Show when={ready()?.reason}>{r => <span class="t-attention" data-tip="Fix it in Setup">{r()}</span>}</Show>
           </>
         }
       />
@@ -350,12 +350,8 @@ function ProjectWork(props: {
           <Match when={props.facet === 'history'}>
             <ProjectHistory projectId={props.id} />
           </Match>
-          <Match when={props.facet === 'rules'}>
-            <ProjectEditor id={props.id} embedded onName={setDraftName} onClose={undefined} onSaved={p => go('/projects/' + encodeURIComponent(p) + '?facet=rules')}
-              renderWork={(pid, detail) => <><ProjectSettingsDiff reply={detail} /><ProjectMethods projectId={pid} /></>} />
-          </Match>
-          <Match when={props.facet === 'access'}>
-            <ProjectAccess projectId={props.id} data={dataClass()} />
+          <Match when={props.facet === 'setup'}>
+            <ProjectSetup projectId={props.id} name={props.p?.name ?? props.id} raw={props.p?.raw} onName={setDraftName} />
           </Match>
           <Match when={props.facet === 'tasks' || props.facet === 'results' || props.facet === 'delivery'}>
             <ListFacetView facet={props.facet as ListFacet} item={props.item} project={props.id} />
@@ -366,7 +362,139 @@ function ProjectWork(props: {
   );
 }
 
-/* ---------- Rules & methods: settings as differences from the shared defaults (OR-45), then methods ---------- */
+/* ---------- Setup (board Approved P-A3): the project's settings read as plain values; a pencil opens the editor ---------- */
+
+const recs = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v.filter(isRec) : []);
+
+/** A repository's host and `owner/repo` from its remote: `git@host:owner/repo.git`, `ssh://git@host:22/owner/repo.git` or an https URL. */
+function remoteParts(remote: string): { host: string; path: string } {
+  const r = remote.trim();
+  const scp = /^[^@/\s]+@([^:/\s]+):(.+)$/.exec(r);
+  let host = '', path = r;
+  if (scp) { host = scp[1]; path = scp[2]; } else {
+    try { const u = new URL(r); host = u.hostname; path = u.pathname; } catch { /* a bare path stays as it is */ }
+  }
+  return { host, path: path.replace(/^\/+/, '').replace(/\/+$/, '').replace(/\.git$/, '') };
+}
+
+const FORGE: Record<string, string> = { github: 'GitHub', gitlab: 'GitLab' };
+const MERGE: Record<string, string> = { squash: 'squash', merge: 'merge commit', rebase: 'rebase' };
+
+/** How a change lands, in words: "merge request, squash, merged automatically", or "pushed to the default branch". */
+function changesLine(integration: Record<string, unknown>, forges: string[]): string {
+  if (str(integration.mode) === 'direct') return 'pushed to the default branch';
+  const request = forges.length > 0 && forges.every(f => f === 'gitlab') ? 'merge request' : 'pull request';
+  const method = MERGE[str(integration.mergeMethod) || 'squash'] ?? str(integration.mergeMethod);
+  return [request, method, integration.autoMerge === false ? 'merged by hand' : 'merged automatically'].join(', ');
+}
+
+/** A role's name in words: `pm` is PM. */
+const roleName = (r: string) => (r.length <= 3 ? r.toUpperCase() : r[0].toUpperCase() + r.slice(1));
+
+/** Settings that Setup reads as its own sections (Code, Where agents work, Who works) or that the Pipelines facet shows. */
+const SHOWN = new Set(['repos', 'environments', 'roles', 'integration.mode', 'integration.mergeMethod', 'integration.autoMerge', 'capability', 'recommendedMethod']);
+
+/**
+ * Setup: About (the context text), Code, Where agents work, Who works, Access, Open questions, then what differs from the
+ * shared defaults with "Inherited defaults (N)" folded (OR-45). Each section's pencil opens the project editor in place of
+ * the reading; its Save is the one write, and Close (or a verified save) returns to the reading.
+ */
+function ProjectSetup(props: { projectId: string; name: string; raw?: Record<string, unknown>; onName: (name: string) => void }) {
+  const [editing, setEditing] = createSignal(false);
+  const doc = useOp('project_context', () => ({ projectId: props.projectId }));
+  const view = useProjectView(() => props.projectId);
+  const settings = createMemo(() => (isRec(doc.data?.settings) ? doc.data.settings : {}));
+  const ready = createMemo(() => (props.raw ? readiness(props.raw) : null));
+  const about = createMemo(() => {
+    const files = Array.isArray(doc.data?.context) ? doc.data.context : [];
+    const file = files.find(f => isRec(f) && f.path === 'rules.md') ?? files[0];
+    return str(isRec(file) ? file.text : '').split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+  });
+  const repos = createMemo(() => recs(settings().repos));
+  const envs = createMemo(() => recs(settings().environments));
+  const roles = createMemo(() => Object.entries(isRec(settings().roles) ? settings().roles as Record<string, unknown> : {}).filter(([, v]) => str(v)));
+  const integration = createMemo(() => (isRec(settings().integration) ? settings().integration as Record<string, unknown> : {}));
+  const dataClass = () => str(settings().data) || undefined;
+  const close = () => { props.onName(''); setEditing(false); };
+  const edit = () => <Button label="Edit" icon="pencil" iconOnly kind="quiet" onClick={() => setEditing(true)} />;
+  return (
+    <Show when={!editing()} fallback={
+      <ProjectEditor id={props.projectId} embedded onName={props.onName} onClose={close} onSaved={() => { doc.reload(); close(); }} />
+    }>
+      <article class="detail" data-ui="project-setup" tabindex={-1} aria-label="Setup">
+        <Show when={ready()?.reason}>{r => <p class="t-attention pw-tone pw-setup-alert">{r()}</p>}</Show>
+        <Switch>
+          <Match when={doc.error && !doc.data}><ErrorBanner text={`Setup did not load: ${doc.error}`} onRetry={doc.reload} /></Match>
+          <Match when={!doc.data}><Skeleton rows={6} /></Match>
+          <Match when={doc.data}>
+            <DetailSection title="About" action={edit()}>
+              <div class="pw-about">
+                <For each={about()} fallback={<p class="muted">Nothing written about {props.name} yet.</p>}>{p => <p>{p}</p>}</For>
+              </div>
+            </DetailSection>
+            <DetailSection title="Code" action={edit()}>
+              <div class="pw-list">
+                <For each={repos()} fallback={<div class="pw-line"><span class="muted">No repository.</span></div>}>
+                  {r => {
+                    const parts = remoteParts(str(r.remote));
+                    const where = [FORGE[str(r.forge)] ?? str(r.forge), str(r.host) || parts.host].filter(Boolean).join(' · ');
+                    return (
+                      <div class="pw-line">
+                        <span class="pw-k">Repository</span>
+                        <span class="pw-line-m"><span class="mono">{parts.path || str(r.id)}</span><Show when={where}><span class="muted">{where}</span></Show></span>
+                        <Show when={str(r.defaultBranch)}>{b => <span class="mono muted" data-tip="Default branch">{b()}</span>}</Show>
+                      </div>
+                    );
+                  }}
+                </For>
+                <div class="pw-line">
+                  <span class="pw-k">Changes</span>
+                  <span class="pw-line-m">{changesLine(integration(), repos().map(r => str(r.forge) || 'github'))}</span>
+                </div>
+              </div>
+            </DetailSection>
+            <DetailSection title="Where agents work" action={edit()}>
+              <Show when={envs().length > 0} fallback={<p class="muted">No environment yet.</p>}>
+                <div class="pw-list">
+                  <For each={envs()}>
+                    {e => (
+                      <div class="pw-line">
+                        <span class="pw-k">{str(e.hostId) || 'Any host'}</span>
+                        <span class="pw-line-m"><span class="mono">{str(e.checkoutPath)}</span><Show when={repos().length > 1 && str(e.repo)}>{r => <span class="muted">{r()}</span>}</Show></span>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </DetailSection>
+            <DetailSection title="Who works" action={edit()}>
+              <Show when={roles().length > 0} fallback={<p class="muted">Shared roles: PM and workers. Nothing set for {props.name}.</p>}>
+                <div class="pw-list">
+                  <For each={roles()}>
+                    {([role, profile]) => (
+                      <div class="pw-line"><span class="pw-k">{roleName(role)}</span><span class="pw-line-m"><span class="mono">{str(profile)}</span></span></div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </DetailSection>
+            <DetailSection title="Access">
+              <ProjectAccess projectId={props.projectId} data={dataClass()} />
+            </DetailSection>
+            <Show when={(view.data?.waiting.length ?? 0) > 0}>
+              <DetailSection title="Open questions">
+                <For each={view.data!.waiting}>{q => <AskCard q={q} />}</For>
+              </DetailSection>
+            </Show>
+            <ProjectSettingsDiff reply={doc.data ?? null} name={props.name} />
+          </Match>
+        </Switch>
+      </article>
+    </Show>
+  );
+}
+
+/* ---------- Setup's last block: settings as differences from the shared defaults (OR-45) ---------- */
 
 type DiffField = {
   key: string;
@@ -402,7 +530,9 @@ function fmtVal(v: unknown, emptyLabel = 'none'): string {
   return String(v);
 }
 
-function ProjectSettingsDiff(props: { reply: ProjectDetailData | null }) {
+/** The settings Setup does not read as a section: those that differ as diff rows, the rest folded; cost lives in System › Spend. */
+function ProjectSettingsDiff(props: { reply: ProjectDetailData | null; name: string }) {
+  const [, go] = useLocation();
   const computed = createMemo(() => {
     const reply = props.reply;
     if (!reply) return { diffs: [] as DiffField[], inherited: [] as DiffField[], unknownKeys: [] as string[] };
@@ -415,6 +545,7 @@ function ProjectSettingsDiff(props: { reply: ProjectDetailData | null }) {
     };
     const rows: DiffField[] = [];
     const check = (key: string, icon: IconName, label: string, def: unknown, curRaw: unknown, opts: { empty?: string; isCode?: boolean } = {}) => {
+      if (SHOWN.has(key)) return;
       const cur = curRaw === undefined ? def : curRaw;
       const isCode = opts.isCode ?? (typeof def === 'string' || typeof def === 'boolean' || typeof def === 'number');
       rows.push({
@@ -468,166 +599,22 @@ function ProjectSettingsDiff(props: { reply: ProjectDetailData | null }) {
 
   return (
     <Show when={props.reply}>
-      <DetailSection title={`Differs from defaults${computed().diffs.length ? ' · ' + computed().diffs.length : ''}`}>
-        <Show when={computed().diffs.length > 0} fallback={<p class="muted">Every setting is the shared default.</p>}>
+      <Show when={computed().diffs.length > 0 || computed().unknownKeys.length > 0}>
+        <DetailSection title="Differs from defaults" count={computed().diffs.length || undefined}>
           <For each={computed().diffs}>{f => <DiffRow field={f.label} value={f.currentText} base={f.baseText} />}</For>
-        </Show>
-        <Show when={computed().unknownKeys.length > 0}>
-          <KvRow icon="triangle-alert" label="Unknown keys" meta={computed().unknownKeys.join(', ')} />
-        </Show>
+          <Show when={computed().unknownKeys.length > 0}>
+            <KvRow icon="triangle-alert" label="Unknown keys" meta={computed().unknownKeys.join(', ')} />
+          </Show>
+        </DetailSection>
+      </Show>
+      <div class="pw-defaults">
         <Show when={computed().inherited.length > 0}>
           <InheritedRows count={computed().inherited.length}>
             <For each={computed().inherited}>{f => <DiffRow field={f.label} value={f.currentText} base={f.baseText} />}</For>
           </InheritedRows>
         </Show>
-      </DetailSection>
+        <a href={toTarget('/spend')} onClick={e => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); go('/spend'); } }}>Cost of {props.name} is in System › Spend</a>
+      </div>
     </Show>
-  );
-}
-
-/* ---------- Recommended methods with their Lab evidence ---------- */
-
-function methodStatusTone(s: string | undefined): 'success' | 'attention' | 'neutral' {
-  return s === 'recommended' ? 'success' : s === 'experimental' ? 'attention' : 'neutral';
-}
-
-function methodStatusIcon(s: string | undefined): IconName {
-  return s === 'recommended' ? 'circle-check' : s === 'experimental' ? 'activity' : 'circle-slash';
-}
-
-function ProjectMethods(props: { projectId: string }) {
-  const [, go] = useLocation();
-  const [search, setSearch] = createSignal('');
-  const [busy, setBusy] = createSignal<string | null>(null);
-  const [actionError, setActionError] = createSignal<string | null>(null);
-  const cat = useOp('catalogue', () => ({ projectId: props.projectId }));
-  const c = () => cat.data;
-
-  const recommend = async (methodId: string) => {
-    setBusy(methodId);
-    setActionError(null);
-    try {
-      await op('recommendation_set', { projectId: props.projectId, methodId });
-      cat.reload();
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const recommendedMethod = () => {
-    const data = c();
-    return data && typeof data.recommendedMethod === 'string' ? data.recommendedMethod : null;
-  };
-  const sharedDefault = () => {
-    const data = c();
-    return data && typeof data.sharedDefault === 'string' ? data.sharedDefault : null;
-  };
-  const source = () => {
-    const data = c();
-    return data && typeof data.recommendationSource === 'string' ? data.recommendationSource : 'shared';
-  };
-  const capability = () => {
-    const data = c();
-    return data && typeof data.capability === 'string' ? data.capability : null;
-  };
-  const filtered = createMemo(() => {
-    const data = c();
-    if (!data) return [];
-    const q = search();
-    return data.methods.filter(m =>
-      matchSearch(q, `${m.name} ${m.id} ${m.capability ?? ''} ${m.description ?? ''} ${m.status ?? ''} ${m.pipeline}`),
-    );
-  });
-
-  return (
-    <Switch
-      fallback={
-        <>
-          <div class="res-bar">
-            <SearchField label="Find method" value={search()} onInput={setSearch} onSearch={() => {}} />
-            <span class="grow" />
-          </div>
-          <Show when={actionError()}>{err => <ErrorBanner text={err()} />}</Show>
-          <DetailSection title="Current recommendation">
-            <KvRow
-              icon="circle-check"
-              label={recommendedMethod() ?? 'None'}
-              meta={
-                <span data-tip={sharedDefault() ? `Shared default: ${sharedDefault()}` : undefined}>
-                  source: <code>{source()}</code>
-                  <Show when={capability()}>{cap => <> · capability: <code>{cap()}</code></>}</Show>
-                </span>
-              }
-            />
-          </DetailSection>
-          <DetailSection title={`Methods (${filtered().length})`}>
-            <Show when={filtered().length > 0} fallback={<Empty text="No methods match." />}>
-              <For each={filtered()}>
-                {m => {
-                  const isCurrent = () => m.id === recommendedMethod();
-                  const a = m.assessment;
-                  return (
-                    <div class="stack">
-                      <KvRow
-                        icon={isCurrent() ? 'circle-check' : 'network'}
-                        label={m.name}
-                        meta={
-                          <span class="deps">
-                            <code>{m.id}</code>
-                            <span>{m.scope}</span>
-                            <a class="row-link" href={'/pipelines/' + encodeURIComponent(m.pipeline)} onClick={e => { e.preventDefault(); go('/pipelines/' + encodeURIComponent(m.pipeline)); }}>{m.pipeline}</a>
-                            <Show when={m.status}>
-                              <span class={`badge t-${methodStatusTone(m.status)}`}>
-                                <Icon name={methodStatusIcon(m.status)} /><span>{m.status}</span>
-                              </span>
-                            </Show>
-                          </span>
-                        }
-                        value={
-                          <span class="deps">
-                            <Show when={isCurrent()}><span class="badge t-success">Recommended</span></Show>
-                            <Button
-                              label={isCurrent() ? 'Selected' : 'Recommend'}
-                              icon="check"
-                              kind={isCurrent() ? 'quiet' : 'default'}
-                              busy={busy() === m.id}
-                              disabledReason={isCurrent() ? 'Already recommended for this project' : undefined}
-                              onClick={() => void recommend(m.id)}
-                            />
-                          </span>
-                        }
-                      />
-                      <Show when={m.description}><p class="muted">{m.description}</p></Show>
-                      <KvRow
-                        icon="chart-no-axes-column"
-                        label="Assessment"
-                        meta={
-                          <span class="deps">
-                            <span>{a.basis}</span>
-                            <Show when={a.score != null}><Num m={{ value: a.score!, basis: a.basis === 'none' ? 'unavailable' : 'measured' }} kind="score" /></Show>
-                            <Show when={a.wallMsMedian != null}><Num m={msMeasured(a.wallMsMedian!, 'measured')} kind="duration" /></Show>
-                            <Show when={a.costUsd != null}><Num m={{ value: a.costUsd!, basis: a.costBasis === 'subscription' ? 'subscription' : 'measured', currency: 'USD' }} kind="money" /></Show>
-                            <Show when={a.examples != null}><span>{a.examples} {a.examples === 1 ? 'example' : 'examples'}</span></Show>
-                          </span>
-                        }
-                        value={a.experimentId ? (
-                          <a class="row-link" href={'/lab/' + encodeURIComponent(a.experimentId)} onClick={e => { e.preventDefault(); go('/lab/' + encodeURIComponent(a.experimentId!)); }}>Experiment</a>
-                        ) : undefined}
-                      />
-                    </div>
-                  );
-                }}
-              </For>
-            </Show>
-          </DetailSection>
-        </>
-      }
-    >
-      <Match when={cat.status === 404}><Empty text="No method catalogue is configured." /></Match>
-      <Match when={cat.error && !c()}><ErrorBanner text={`Methods did not load: ${cat.error}`} onRetry={cat.reload} /></Match>
-      <Match when={!c()}><Skeleton rows={5} /></Match>
-    </Switch>
   );
 }

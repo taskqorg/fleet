@@ -158,7 +158,7 @@ function DetailDemo() {
         actions={<><SplitButton main={{ label: 'Pause' }} alternatives={[{ label: 'Stop' }]} /><Button label="Share" icon="link" iconOnly kind="quiet" /></>} />
     </div>
     <TabBar label="Project facets" value={tab()} onChange={setTab}
-      tabs={[{ id: 'sessions', label: 'Sessions' }, { id: 'tasks', label: 'Tasks', count: 3 }, { id: 'delivery', label: 'Delivery' }, { id: 'results', label: 'Results' }, { id: 'rules', label: 'Rules & methods' }]} />
+      tabs={[{ id: 'sessions', label: 'Sessions' }, { id: 'tasks', label: 'Tasks', count: 3 }, { id: 'delivery', label: 'Delivery' }, { id: 'results', label: 'Results' }, { id: 'setup', label: 'Setup' }]} />
     <DetailSection title="Harnesses">
       <KvRow icon="network" label="pds18-native" meta="linux · 8 slots" value={<span class="mono">44 runs</span>} />
       <KvRow icon="network" label="owner-mac" meta="darwin · 4 slots" value={<span class="mono">38 runs</span>} />

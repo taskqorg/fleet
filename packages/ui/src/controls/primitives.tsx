@@ -605,18 +605,22 @@ export function ProblemRow(p: {
 
 /* ---------- Detail sections (D11, C3) ---------- */
 
-/** A titled block of a detail. With `href`, the title (and its `count`) opens the full list the block previews (OR-65). */
-export function DetailSection(p: { title: string; count?: number; href?: string; onOpen?: () => void; children: JSX.Element }) {
+/** A titled block of a detail. With `href`, the title (and its `count`) opens the full list the block previews (OR-65);
+ * `action` (an icon button, such as Edit) sits at the right end of the title line. */
+export function DetailSection(p: { title: string; count?: number; href?: string; onOpen?: () => void; action?: JSX.Element; children: JSX.Element }) {
   const label = () => <>{p.title}<Show when={p.count !== undefined}> <span class="dsec-n">{p.count!.toLocaleString('en')}</span></Show></>;
+  const heading = () => (
+    <h3>
+      <Show when={p.href} keyed fallback={label()}>{href => (
+        <a class="dsec-open" href={href} onClick={e => { if (p.onOpen && !e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); p.onOpen(); } }}>
+          {label()}<Icon name="chevron-right" />
+        </a>
+      )}</Show>
+    </h3>
+  );
   return (
     <section class="dsec" data-ui="detail-section">
-      <h3>
-        <Show when={p.href} keyed fallback={label()}>{href => (
-          <a class="dsec-open" href={href} onClick={e => { if (p.onOpen && !e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); p.onOpen(); } }}>
-            {label()}<Icon name="chevron-right" />
-          </a>
-        )}</Show>
-      </h3>
+      <Show when={p.action} fallback={heading()}>{a => <div class="dsec-h">{heading()}{a()}</div>}</Show>
       {p.children}
     </section>
   );

@@ -86,6 +86,17 @@
   .pw-pipe-h > .grow { flex: 1; }
   .pw-pipe > p { margin: 0; overflow-wrap: anywhere; }
   .pw-pipe { display: flex; flex-direction: column; gap: var(--space-3); }
+  /* Setup (pages/projects.md, board Approved P-A3): settings read as plain lines; a long value wraps (OR-66). */
+  .pw-setup-alert { margin: 0; overflow-wrap: anywhere; }
+  .pw-about > p { margin: 0; max-inline-size: 80ch; text-wrap: pretty; overflow-wrap: anywhere; }
+  .pw-about > p + p { margin-block-start: var(--space-2); }
+  .pw-k { flex: 0 0 8rem; min-inline-size: 0; color: var(--fg-muted); overflow-wrap: anywhere; }
+  .pw-line-m > .mono { min-inline-size: 0; overflow-wrap: anywhere; }
+  .pw-defaults { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); padding-block-start: var(--space-2); border-block-start: 1px solid var(--line-soft); }
+  .pw-defaults > .diff-inherited { flex: 1 1 16rem; min-inline-size: 0; }
+  .pw-defaults > .diff-inherited:has(> [aria-expanded=true]) { flex-basis: 100%; }
+  .pw-defaults > a { margin-inline-start: auto; color: var(--fg-muted); font-size: var(--font-size-sm); text-decoration: none; overflow-wrap: anywhere; }
+  .pw-defaults > a:hover { color: var(--fg); }
 
   /* Pipeline outline (controls/pipeline-outline.md): numbered plain lines; a nested step indents, a condition is attention. */
   .p-outline { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-lg); list-style: none; font-size: var(--font-size-sm); }

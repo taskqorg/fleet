@@ -6,8 +6,9 @@
 // Projects (docs/design-system/pages/projects.md, Routes): a project's facet `/projects/FLT/tasks/T-FLT-42?state=x` is the
 // Tasks view `/tasks/T-FLT-42?state=x&project=<id>`: the project is the list's own project filter, so every list change
 // the view makes keeps it. Back to the address bar, a facet list filtered to exactly one project is that project's facet;
-// any other filter is the cross-project facet `/projects/tasks`. `/projects/FLT/rules` is `/projects/FLT?facet=rules`, and
-// so are access, pipelines and history; `/projects/FLT/pipelines/<id>` is `/projects/FLT?facet=pipelines&pipeline=<id>`.
+// any other filter is the cross-project facet `/projects/tasks`. `/projects/FLT/setup` is `/projects/FLT?facet=setup`, and
+// so are pipelines and history; `/projects/FLT/pipelines/<id>` is `/projects/FLT?facet=pipelines&pipeline=<id>`. Setup
+// replaced the facets Rules & methods and Access: `/projects/FLT/rules`, `/projects/FLT/access` and their `?facet=` open it.
 
 /** Earlier path prefix and its target route, most specific first. Each pair maps one way and back. */
 export const ROUTES: readonly (readonly [earlier: string, target: string])[] = [
@@ -94,7 +95,10 @@ export function toTarget(path: string): string {
 }
 
 /** The facets of an opened project addressed by a path segment (/projects/FLT/<facet>), served by the projects view. */
-const PATH_FACETS = ['rules', 'access', 'pipelines', 'history'];
+const PATH_FACETS = ['setup', 'pipelines', 'history'];
+/** Earlier facets of an opened project and the facet that replaced them. */
+const FACET_MOVED: Record<string, string> = { rules: 'setup', access: 'setup' };
+const facetOf = (f: string | undefined) => (f && FACET_MOVED[f]) || f;
 
 /** The path and query a view understands for an address-bar path and query. */
 export function internalUrl(url: string): string {
@@ -105,10 +109,14 @@ export function internalUrl(url: string): string {
     const id = projectIdOf(dec(seg[2]));
     // A project's list facet: the cross-project view filtered to that project (its own project filter is replaced).
     if (isListFacet(seg[3])) return join({ path: '/' + seg.slice(3).join('/'), query: [without(query, 'project'), 'project=' + enc(id)].filter(Boolean).join('&') });
-    if (PATH_FACETS.includes(seg[3]) && seg.length === 4) return join({ path: '/projects/' + enc(id), query: [without(query, 'facet'), 'facet=' + seg[3]].filter(Boolean).join('&') });
+    const f = facetOf(seg[3]);
+    if (f && PATH_FACETS.includes(f) && seg.length === 4) return join({ path: '/projects/' + enc(id), query: [without(query, 'facet'), 'facet=' + f].filter(Boolean).join('&') });
     // A pipeline of the project: /projects/DAM/pipelines/<pipeline id>.
     if (seg[3] === 'pipelines' && seg[4] && seg.length === 5) return join({ path: '/projects/' + enc(id), query: [without(without(query, 'facet'), 'pipeline'), 'facet=pipelines', 'pipeline=' + seg[4]].filter(Boolean).join('&') });
-    if (seg.length === 3 || (seg.length === 4 && seg[3] === '')) return join({ path: '/projects/' + enc(id), query });
+    if (seg.length === 3 || (seg.length === 4 && seg[3] === '')) {
+      const moved = FACET_MOVED[valueOf(query, 'facet') ?? ''];
+      return join({ path: '/projects/' + enc(id), query: moved ? [without(query, 'facet'), 'facet=' + moved].filter(Boolean).join('&') : query });
+    }
   }
   const root = ROOTS[path.replace(/\/$/, '')];
   if (root) return join({ path: root, query });
@@ -135,7 +143,7 @@ export function targetUrl(url: string): string {
   }
   if (seg[1] === 'projects' && seg[2] && seg.length === 3) {
     const at = '/projects/' + enc(projectSegment(dec(seg[2])));
-    const f = valueOf(query, 'facet');
+    const f = facetOf(valueOf(query, 'facet'));
     const pipe = valueOf(query, 'pipeline');
     if (f === 'pipelines' && pipe) return join({ path: at + '/pipelines/' + enc(pipe), query: without(without(query, 'facet'), 'pipeline') });
     return join({ path: f && PATH_FACETS.includes(f) ? at + '/' + f : at, query: without(query, 'facet') });
