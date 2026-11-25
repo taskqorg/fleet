@@ -1,5 +1,6 @@
 // Projects (docs/design-system/pages/projects.md, Target): the project catalogue in the control column; the work area is
-// the cross-project summary, or an opened project with its facets Sessions · Tasks · Delivery · Results · Rules & methods.
+// the cross-project summary, or an opened project with its facets Sessions · Tasks · Delivery · Results · Rules & methods
+// · Access.
 // Tasks, Results and Delivery are the same list views as before, laid out in one column inside the facet (routes.ts maps
 // `/projects/FLT/tasks/T-FLT-42` to the Tasks view filtered to the project).
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from 'solid-js';
@@ -24,8 +25,9 @@ import { ProjectEditor, str, type ProjectDetailData } from './projects-editor.ts
 import { Tasks } from './tasks.tsx';
 import { Results } from './results.tsx';
 import { Delivery } from './delivery.tsx';
+import { ProjectAccess } from './access-grants.tsx';
 
-type Facet = 'sessions' | ListFacet | 'rules';
+type Facet = 'sessions' | ListFacet | 'rules' | 'access';
 type CrossFacet = 'summary' | ListFacet;
 type Screen = 'projects' | ListFacet;
 type Session = Ops['sessions_list']['reply']['sessions'][number];
@@ -33,7 +35,7 @@ type Question = Ops['questions_list']['reply']['questions'][number];
 
 const FACETS: { id: Facet; label: string }[] = [
   { id: 'sessions', label: 'Sessions' }, { id: 'tasks', label: 'Tasks' }, { id: 'delivery', label: 'Delivery' },
-  { id: 'results', label: 'Results' }, { id: 'rules', label: 'Rules & methods' },
+  { id: 'results', label: 'Results' }, { id: 'rules', label: 'Rules & methods' }, { id: 'access', label: 'Access' },
 ];
 const CROSS: { id: CrossFacet; label: string }[] = [
   { id: 'summary', label: 'Summary' }, { id: 'tasks', label: 'Tasks' }, { id: 'delivery', label: 'Delivery' }, { id: 'results', label: 'Results' },
@@ -71,7 +73,7 @@ function ReadinessBadge(props: { p: Record<string, unknown> }) {
 /** The facet path of a project (the router writes the project's code in the address bar). */
 const facetPath = (projectId: string, facet: Facet): string =>
   facet === 'sessions' ? '/projects/' + encodeURIComponent(projectId)
-    : facet === 'rules' ? '/projects/' + encodeURIComponent(projectId) + '?facet=rules'
+    : facet === 'rules' || facet === 'access' ? '/projects/' + encodeURIComponent(projectId) + '?facet=' + facet
       : `/${facet}?project=${encodeURIComponent(projectId)}`;
 
 /**
@@ -91,7 +93,11 @@ export function Projects(props: { screen: Screen; id?: string }) {
     const ps = (params().get('project') ?? '').split(',').filter(Boolean);
     return ps.length === 1 && ps[0] !== '-' ? ps[0] : undefined;
   });
-  const facet = createMemo<Facet>(() => (props.screen !== 'projects' ? props.screen : params().get('facet') === 'rules' ? 'rules' : 'sessions'));
+  const facet = createMemo<Facet>(() => {
+    if (props.screen !== 'projects') return props.screen;
+    const f = params().get('facet');
+    return f === 'rules' || f === 'access' ? f : 'sessions';
+  });
   const item = createMemo(() => (props.screen !== 'projects' ? props.id : undefined));
   const open = createMemo(() => all().find(p => p.id === project()));
   // An opened task or result lives in its own project's facet under its code (UR-69): an earlier link by id, or one
@@ -319,6 +325,8 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
     const roles = isRec(settings.roles) ? settings.roles : {};
     return str(roles.pm) || 'pm';
   });
+  // The project's data class (settings data: public, internal or personal), shown on its Access facet when set.
+  const dataClass = createMemo(() => { const st = isRec(props.p?.raw.settings) ? props.p!.raw.settings : {}; return str(st.data) || undefined; });
   // The name as edited in Rules & methods, before Save (the editor's draft), heads the project while it is open.
   const [draftName, setDraftName] = createSignal('', { ownedWrite: true });
   const title = () => (props.facet === 'rules' && draftName() ? draftName() : props.p?.name ?? props.id);
@@ -351,7 +359,10 @@ function ProjectWork(props: { id: string; p?: { name: string; code: string; raw:
             <ProjectEditor id={props.id} embedded onName={setDraftName} onClose={undefined} onSaved={p => go('/projects/' + encodeURIComponent(p) + '?facet=rules')}
               renderWork={(pid, detail) => <><ProjectSettingsDiff reply={detail} /><ProjectMethods projectId={pid} /></>} />
           </Match>
-          <Match when={props.facet !== 'sessions' && props.facet !== 'rules'}>
+          <Match when={props.facet === 'access'}>
+            <ProjectAccess projectId={props.id} data={dataClass()} />
+          </Match>
+          <Match when={props.facet !== 'sessions' && props.facet !== 'rules' && props.facet !== 'access'}>
             <ListFacetView facet={props.facet as ListFacet} item={props.item} project={props.id} />
           </Match>
         </Switch>

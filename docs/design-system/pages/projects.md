@@ -16,6 +16,7 @@
 | `/projects/FLT/delivery`, `/projects/FLT/delivery/1234` | Delivery facet; one pull request |
 | `/projects/FLT/results`, `/projects/FLT/results/<id>` | Results facet; one result |
 | `/projects/FLT/rules` | Rules & methods facet |
+| `/projects/FLT/access`, `/projects/FLT/access?grant=<id>` | Access facet; one grant open |
 | `/tasks/<uuid>`, `/results/<uuid>`, `/delivery/<id>`, `/publishing` | Redirect to the facet route of the item's project |
 | `/tasks`, `/results`, `/delivery` with no item | Redirect to `/projects` with the facet's cross-project view (see **Across projects**) |
 
@@ -27,13 +28,14 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New project (`p
 * **Work area, idle:** the cross-project summary: projects whose PM waits for the person, as question cards ([OR-53](../owner-rules.md)); then per project working, queued, done today and blocked as one counter line; then delivery in flight ([UR-52](../principles.md)).
 * **Work area, a project open:**
   1. Project head: name, code, readiness, and "Talk to PM" (opens the PM session, [OR-51](../owner-rules.md)).
-  2. Facet tab bar ([OR-46](../owner-rules.md), [OR-49](../owner-rules.md)): **Sessions · Tasks · Delivery · Results · Rules & methods**. A tab never rebuilds the control column ([OR-47](../owner-rules.md)).
+  2. Facet tab bar ([OR-46](../owner-rules.md), [OR-49](../owner-rules.md)): **Sessions · Tasks · Delivery · Results · Rules & methods · Access**. A tab never rebuilds the control column ([OR-47](../owner-rules.md)).
   3. The facet:
      * **Sessions** (default, [owner decision](#owner-decision-target)): the PM card first, then this project's active session cards as on Home, then the latest finished ones as rows. A card opens the [session view](session.md).
      * **Tasks:** the task list with saved views (Running is every non-terminal state), rows as [Tasks](tasks.md) specifies; an opened task replaces the list inside the facet with the task detail ([OR-39](../owner-rules.md)) and a link to the session that does it; Close returns to the list ([OR-15](../owner-rules.md)).
      * **Delivery:** the stage list and pace of [Delivery](delivery.md), filtered to the project.
      * **Results:** the result list and viewer of [Results](results.md), filtered to the project.
      * **Rules & methods:** purpose, context, repository, roles and environments as differences from the shared defaults, with "Inherited defaults (N)" folded ([OR-45](../owner-rules.md)); then the recommended method per capability with its Lab evidence and a link to [Library](library.md) and [Lab](laboratory.md).
+     * **Access** (approved 2026-11-26, board frame "Project › Access: grants and approval card"): the project's data class when its settings name one (`data`), then its [resource grants](../../designs/fleet-project-access.md): resource (kind, the database or tables count or paths count, and server), level, state, the last probe (read works, write refused, or failed, with its age) and the gateway connection that serves it. A row opens its detail under it: scope, reason, the recipe lines, the probe steps, the error, the credential's fingerprint and the approval question, with **Check** (`access_grant_check`; **Provision again** on a failed grant, which the server provisions anew) and, for the owner, **Revoke** (`access_grant_revoke`; Withdraw for an asked grant, Retry revoke after a failed revoke), which confirms inline with its scope and the way back. The approval itself is the Needs-you question card.
 
 ### Across projects
 
@@ -84,6 +86,7 @@ Canvas [screens/projects.bl](../board/screens/projects.bl): idle, project open o
   * **Sessions:** the newest session on the project's pm profile as the PM card (or Talk to PM when none), active sessions as session cards with their open question, finished ones as rows. A card opens `/conversations/<code>`, the session view.
   * **Tasks, Results, Delivery:** the list views of [Tasks](tasks.md), [Results](results.md) and [Delivery](delivery.md), scoped to the project; an opened item replaces the list. A task opens by its code, a result by its code; an earlier link by id, or one outside its project, is replaced by the facet route of the item's project.
   * **Rules & methods:** the project editor (Save, Reload, readiness, context, repositories, environments, roles, initial access, prepared resources) with the settings that differ from the shared defaults (`DiffRow`, `Inherited defaults (N)` folded) and the methods with their Lab evidence.
+  * **Access:** `access_grants {projectId}` as the Target describes (`app/src/views/access-grants.tsx`); the read repeats every 3 s only while a grant provisions or revokes or a Check waits for its probe, since `access_grants` has no change kind.
 
 ## Independent configuration and confirmed resources
 

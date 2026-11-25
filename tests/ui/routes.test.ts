@@ -17,6 +17,7 @@ const table: [earlier: string, target: string, internal: string][] = [
   ['/projects/FLT/results/R-FLT-3', '/projects/FLT/results/R-FLT-3', '/results/R-FLT-3?project=FLT'],
   ['/projects/FLT/delivery', '/projects/FLT/delivery', '/delivery?project=FLT'],
   ['/projects/FLT/rules', '/projects/FLT/rules', '/projects/FLT?facet=rules'],
+  ['/projects/FLT/access?grant=g1', '/projects/FLT/access?grant=g1', '/projects/FLT?grant=g1&facet=access'],
   ['/results/r1', '/projects/results/r1', '/results/r1'],
   ['/delivery/o~r~3', '/projects/delivery/o~r~3', '/delivery/o~r~3'],
   ['/publishing', '/projects/delivery', '/delivery'],
