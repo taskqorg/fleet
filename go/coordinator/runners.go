@@ -209,7 +209,7 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 		if r.Attempt > 0 {
 			attempt = ptr(r.Attempt)
 		}
-		runs = append(runs, runnerRow{attempt: attempt, id: r.ID, kind: r.Kind, state: r.State, hostID: r.HostID, harness: r.Harness, taskID: r.TaskID, title: r.Title, sessionTitle: nonEmpty(r.SessionTitle),
+		runs = append(runs, runnerRow{attempt: attempt, id: r.ID, kind: r.Kind, state: r.State, hostID: r.HostID, harness: r.Harness, taskID: r.TaskID, title: optStr(r.Title), sessionTitle: nonEmpty(r.SessionTitle),
 			sessionID: r.SessionID, parentID: r.ParentExecutionID, problem: r.Problem, started: runnerMs(r.At), ended: runnerMs(r.EndedAt), seen: runnerMs(r.LastSeenAt),
 			wallMs: runnerF(r.WallMs), cpuMs: runnerF(r.CpuMs), peakMemoryBytes: runnerF(r.PeakMemoryBytes), tokens: runnerTokens(r.TokensInput, r.TokensOutput, r.TokensCacheRead, r.TokensCacheWrite),
 			subject: r.Subject, connectionCost: r.ConnectionCost, billingBasis: r.BillingBasis, model: r.Model, accountID: r.AccountID, isAPIConn: r.IsApiConn,

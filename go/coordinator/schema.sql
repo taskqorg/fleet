@@ -5042,3 +5042,10 @@ CREATE INDEX execution_session_turns ON execution(session_id, seq DESC) WHERE ki
 -- event's payload (HAL0's Home: 267 runs, 1.07 s per page before).
 CREATE INDEX event_thread_rows ON event(execution_id, seq)
  WHERE NOT delta AND (type = 'execution.ended' OR jsonb_array_length(coalesce(payload->'data'->'fleetNormalized'->'blocks', '[]'::jsonb)) > 0);
+
+-- migration 113: the runs of the last day (runners.go RunnerRuns and RunnerCallGroups, Live, System, Runners): when an
+-- execution ran (end, else start, else the start a gateway call carries, else last seen) and the active ones, so the
+-- screens' "active or in the last 24 hours" reads two indexes instead of every execution (a sequential scan under RLS).
+CREATE INDEX execution_ran_at ON execution ((coalesce(ended_at, started_at, CASE WHEN data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((data->>'startedAt')::bigint/1000.0) END, last_seen_at)));
+CREATE INDEX execution_active ON execution (seq) WHERE state IN ('preparing', 'running', 'waiting');
+
