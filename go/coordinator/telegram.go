@@ -380,6 +380,9 @@ func telegramIntakeStep(q *Request, now time.Time, c *kitClaim) error {
 			return err
 		}
 	}
+	if handled, err := telegramApprovalText(q, c, &row, room, m, tp, p); err != nil || handled {
+		return err
+	}
 	if m.Chat.Type == "private" {
 		if isStatusPing(text) {
 			body, err := telegramGlance(q, now, room, tp)

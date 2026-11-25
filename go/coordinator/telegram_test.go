@@ -70,3 +70,12 @@ func TestTelegramPlainHasNoMarks(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestTelegramApprovalText(t *testing.T) {
+	for text, want := range map[string]bool{"good u can live": true, "Go live": true, "live it, works": true, "use it i allow": true, "давай": true,
+		"выкатывай": true, "not now": false, "don't release it yet": false, "не выкатывай": false, "make mockup": false, "show mobile also": false} {
+		if isApprovalText(text) != want {
+			t.Errorf("%q: %v", text, !want)
+		}
+	}
+}

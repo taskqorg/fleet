@@ -112,6 +112,9 @@ func agentReplyTo(q *Request, r *contract.ReplyRequest) (contract.ReplyReply, er
 	if err != nil {
 		return nil, err
 	}
+	if err := approvalMayAnswer(q, qid); err != nil { // an approval card: approvers only, never an agent (approvals.go)
+		return nil, err
+	}
 	answer, _ := jsonText(r.Answer)
 	if answer == "" {
 		return nil, fail(400, "Expected answer")

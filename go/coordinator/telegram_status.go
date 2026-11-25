@@ -5,7 +5,7 @@
 //   - /help, /now, /needs: shortcuts without a model.
 //   - telegram-watch (everyWake): open questions of a work item's or a home conversation go to its chat with buttons;
 //     answered or withdrawn ones are edited to say by whom; delivery and task milestones go to the work item's room once.
-//   - A tap on a question's button or a Telegram reply to it answers through question_answer as the person.
+//   - A tap on a question's button or a Telegram reply to it answers through questions_answer as the person.
 package main
 
 import (
@@ -412,13 +412,25 @@ func telegramAnswer(q *Request, c *kitClaim, p *Person, questionID, answer strin
 			out.err = fail(403, "no access to project "+deref(qr.ProjectID))
 			return out
 		}
+		// An approval card takes Approve or Not now; free text maps onto them ("go live", "not now").
+		if isApprovalCard(qr.Options) && answer != approvalYes && answer != approvalNo {
+			switch {
+			case isApprovalText(answer):
+				answer = approvalYes
+			case isDeclineText(answer):
+				answer = approvalNo
+			default:
+				out.err = fail(400, "tap Approve or Not now")
+				return out
+			}
+		}
 		pq := scopedRequest(ctx, a, p)
 		out.err = a.store.Write(ctx, pq, []string{GLOBAL}, func(pq *Request) error {
 			if err := refreshRequestAccess(pq); err != nil {
 				return err
 			}
-			pq.body = jsonBytes(contract.QuestionAnswerRequest{QuestionId: questionID, Answer: answer})
-			_, err := operations["question_answer"].h(pq)
+			pq.body = jsonBytes(contract.QuestionsAnswerRequest{QuestionId: questionID, Answer: answer})
+			_, err := operations["questions_answer"].h(pq) // as the web app: an agent's question gets the reply delivered
 			return err
 		})
 		return out
@@ -628,4 +640,82 @@ func init() {
 			telegramWords[lang][k] = v
 		}
 	}
+}
+
+// isApprovalCard: a question whose options are exactly the approval card's.
+func isApprovalCard(options []byte) bool {
+	c := tgChoices(options)
+	return len(c) == 2 && c[0] == approvalYes && c[1] == approvalNo
+}
+
+var (
+	approvalWords = regexp.MustCompile(`go live|live it|can live|i allow|approve|ship it|release it|deploy it|выкатыв|одобр|разреш`)
+	approvalShort = regexp.MustCompile(`^(yes|y|ok|okay|go|go ahead|да|ок|давай|можно|согласен|поехали)$`)
+	negation      = regexp.MustCompile(`\bnot\b|n't|\bdont\b|\bwait\b|(^|\s)(не|нельзя|рано)(\s|$)`)
+	declineWords  = regexp.MustCompile(`^(no|not now|nope|stop|wait|cancel|нет|не сейчас|стоп|подожди|отмена)$`)
+)
+
+func approvalCore(text string) string {
+	return strings.TrimSpace(strings.TrimRight(strings.ToLower(strings.TrimSpace(text)), "!.?,… "))
+}
+
+// isApprovalText: free text that approves ("good u can live", "Go live", "live it, works", "давай").
+func isApprovalText(text string) bool {
+	t := approvalCore(text)
+	if len([]rune(t)) > 60 || declineWords.MatchString(t) || negation.MatchString(t) {
+		return false
+	}
+	return approvalShort.MatchString(t) || approvalWords.MatchString(t)
+}
+
+func isDeclineText(text string) bool { return declineWords.MatchString(approvalCore(text)) }
+
+// telegramApprovalText: free text that approves, while approval cards are open in the room's work (a group) or the
+// person's home conversation (a private chat). One card: answered as the author (Fleet checks they may). More: each is
+// listed with its buttons to choose. None: false, the message is routed as usual.
+func telegramApprovalText(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.TelegramRoom, m *tgMessage, tp db.TelegramPerson, p *Person) (bool, error) {
+	// Only explicit approval words count here; a bare "ok" or "yes" may be about any work, and approves only as a
+	// Telegram reply to the card itself (telegramAnswer).
+	if !isApprovalText(messageText(m)) || !approvalWords.MatchString(approvalCore(messageText(m))) {
+		return false, nil
+	}
+	sessions := []string{}
+	if room.Kind == "private" {
+		if tp.HomeSessionID != nil {
+			sessions = append(sessions, *tp.HomeSessionID)
+		}
+	} else {
+		open, err := q.db().TelegramWorkOpen(q.ctx(), room.ID)
+		if err != nil {
+			return false, err
+		}
+		for _, w := range open {
+			sessions = append(sessions, w.SessionID)
+		}
+	}
+	cards := []string{}
+	for _, s := range sessions {
+		ids, err := q.db().ApprovalOpenForSession(q.ctx(), &s)
+		if err != nil {
+			return false, err
+		}
+		cards = append(cards, ids...)
+	}
+	switch len(cards) {
+	case 0:
+		return false, nil
+	case 1:
+		telegramAnswer(q, c, p, cards[0], approvalYes)
+		return true, nil
+	}
+	for _, id := range cards {
+		qr, err := q.db().TelegramQuestionGet(q.ctx(), id)
+		if err != nil {
+			return false, err
+		}
+		if err := telegramQuestionMessage(q, "qn:"+id+":"+row.ID, id, qr.Kind, qr.Text, tp.Language, room.ChatID, room.ThreadID, "", deref(qr.SessionID), &m.MessageID); err != nil {
+			return false, err
+		}
+	}
+	return true, telegramDone(q, row.ID, "asked-approval", "")
 }

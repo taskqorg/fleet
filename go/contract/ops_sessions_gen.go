@@ -6,6 +6,124 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+// ApprovalAction: Action classes of approval_ask; settings.risks of a project may rate any of them free, reversible or radical.
+type ApprovalAction string
+
+const (
+	ApprovalActionRead           ApprovalAction = "read"
+	ApprovalActionAnalyze        ApprovalAction = "analyze"
+	ApprovalActionMockup         ApprovalAction = "mockup"
+	ApprovalActionTask           ApprovalAction = "task"
+	ApprovalActionDevBranch      ApprovalAction = "dev-branch"
+	ApprovalActionDevDeploy      ApprovalAction = "dev-deploy"
+	ApprovalActionTestData       ApprovalAction = "test-data"
+	ApprovalActionLiveDeploy     ApprovalAction = "live-deploy"
+	ApprovalActionDeleteAccounts ApprovalAction = "delete-accounts"
+	ApprovalActionBanAccounts    ApprovalAction = "ban-accounts"
+	ApprovalActionUserMessages   ApprovalAction = "user-messages"
+	ApprovalActionKeys           ApprovalAction = "keys"
+	ApprovalActionMoney          ApprovalAction = "money"
+	ApprovalActionDataDrop       ApprovalAction = "data-drop"
+	ApprovalActionOtherRadical   ApprovalAction = "other-radical"
+)
+
+// ApprovalActionValues lists every ApprovalAction in schema order.
+var ApprovalActionValues = []ApprovalAction{ApprovalActionRead, ApprovalActionAnalyze, ApprovalActionMockup, ApprovalActionTask, ApprovalActionDevBranch, ApprovalActionDevDeploy, ApprovalActionTestData, ApprovalActionLiveDeploy, ApprovalActionDeleteAccounts, ApprovalActionBanAccounts, ApprovalActionUserMessages, ApprovalActionKeys, ApprovalActionMoney, ApprovalActionDataDrop, ApprovalActionOtherRadical}
+
+// Valid: v is one of the schema's values.
+func (v ApprovalAction) Valid() bool {
+	for _, x := range ApprovalActionValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ApprovalAskReply struct {
+	AnsweredBy *string       `json:"answeredBy,omitempty"`
+	QuestionId *string       `json:"questionId,omitempty"`
+	Risk       ApprovalRisk  `json:"risk"`
+	State      ApprovalState `json:"state"`
+	WaitingFor []string      `json:"waitingFor"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ApprovalAskReply) Validate() error {
+	if err := Check(&v.Risk, "risk"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	if v.WaitingFor == nil {
+		return Missing("waitingFor")
+	}
+	return nil
+}
+
+type ApprovalAskRequest struct {
+	Action      ApprovalAction `json:"action"`
+	ExecutionId string         `json:"executionId"`
+	RequestId   string         `json:"requestId"`
+	Rollback    *string        `json:"rollback,omitempty"`
+	Version     *string        `json:"version,omitempty"`
+	What        string         `json:"what"`
+	Where       string         `json:"where"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ApprovalAskRequest) Validate() error {
+	if err := Check(&v.Action, "action"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ApprovalRisk string
+
+const (
+	ApprovalRiskFree       ApprovalRisk = "free"
+	ApprovalRiskReversible ApprovalRisk = "reversible"
+	ApprovalRiskRadical    ApprovalRisk = "radical"
+)
+
+// ApprovalRiskValues lists every ApprovalRisk in schema order.
+var ApprovalRiskValues = []ApprovalRisk{ApprovalRiskFree, ApprovalRiskReversible, ApprovalRiskRadical}
+
+// Valid: v is one of the schema's values.
+func (v ApprovalRisk) Valid() bool {
+	for _, x := range ApprovalRiskValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ApprovalState string
+
+const (
+	ApprovalStateNotNeeded ApprovalState = "not-needed"
+	ApprovalStateOpen      ApprovalState = "open"
+	ApprovalStateApproved  ApprovalState = "approved"
+	ApprovalStateDeclined  ApprovalState = "declined"
+	ApprovalStateWithdrawn ApprovalState = "withdrawn"
+)
+
+// ApprovalStateValues lists every ApprovalState in schema order.
+var ApprovalStateValues = []ApprovalState{ApprovalStateNotNeeded, ApprovalStateOpen, ApprovalStateApproved, ApprovalStateDeclined, ApprovalStateWithdrawn}
+
+// Valid: v is one of the schema's values.
+func (v ApprovalState) Valid() bool {
+	for _, x := range ApprovalStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 // AskReply: The agent question record.
 type AskReply = map[string]json.RawMessage
 
@@ -1993,6 +2111,7 @@ func (v *WorkerReport) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
+		"approval_ask":            {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Before a radical action (LIVE deploy, deleting or banning accounts, messages to real users, keys, money, dropping data) ask for approval and wait: Fleet rates the action by the project's risk rules (settings.risks, settings.approvals); a radical one becomes an approval card (a question with Approve / Not now, shown in its Telegram room and in Needs you) naming exactly what, where, version and rollback. Call again with the same requestId after the reply arrives to read the state; a changed scope withdraws the old card and asks again. Free and reversible actions answer not-needed: do them and report (reversible: say how to undo). Never take keys or secrets from chat: point to System > Access.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"action\":{\"$comment\":\"Action classes of approval_ask; settings.risks of a project may rate any of them free, reversible or radical.\",\"enum\":[\"read\",\"analyze\",\"mockup\",\"task\",\"dev-branch\",\"dev-deploy\",\"test-data\",\"live-deploy\",\"delete-accounts\",\"ban-accounts\",\"user-messages\",\"keys\",\"money\",\"data-drop\",\"other-radical\"],\"type\":\"string\"},\"executionId\":{\"type\":\"string\"},\"requestId\":{\"$comment\":\"One id per action; the same id reads the card's state.\",\"type\":\"string\"},\"rollback\":{\"$comment\":\"How to undo it.\",\"type\":\"string\"},\"version\":{\"$comment\":\"The exact commit, release or data set.\",\"type\":\"string\"},\"what\":{\"$comment\":\"Exactly what will change, as the asker understood it (ban 114 accounts of the Nov 23-24 campaign).\",\"type\":\"string\"},\"where\":{\"$comment\":\"The environment or target (LIVE P\\u0026H).\",\"type\":\"string\"}},\"required\":[\"executionId\",\"requestId\",\"action\",\"what\",\"where\"],\"type\":\"object\"}")},
 		"ask":                     {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "bound:session", Description: "Ask a fresh question with question + requestId and taskId for an existing-task blocker (without attaching the PM session), or read its answer with resume=<questionId> alone; never combine these modes or put continuation prose in resume", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"question\":{\"$comment\":\"Fresh ask text. Requires requestId; do not combine with resume.\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"resume\":{\"$comment\":\"Existing question ID to read, never continuation prose. Do not combine with question or requestId.\",\"type\":\"string\"},\"taskId\":{\"$comment\":\"Fresh ask about this granted task; does not attach the PM session. Omit for a session-only question or bound-worker inference.\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"changes_since":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).", InputSchema: json.RawMessage("{\"$comment\":\"No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).\",\"additionalProperties\":true,\"properties\":{\"cursor\":{\"type\":\"integer\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
 		"direct_search":           {Read: false, Long: true, Errors: []int{}, Auth: "project:projectId", Agent: "tool", Description: "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.", InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":false,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
