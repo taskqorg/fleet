@@ -265,10 +265,14 @@ func capabilities() []string {
 					for _, gh := range verified {
 						c = append(c, contract.PublishingHostCapability("gitlab", gh, slug))
 					}
+					anyGL := len(verified) > 0
 					if len(glabHosts) == 0 && forgeLoginVerified("gitlab", "gitlab.com") {
 						c = append(c, contract.PublishingHostCapability("gitlab", "gitlab.com", slug))
+						anyGL = true
 					}
-					c = append(c, contract.ForgeCapability(slug))
+					if anyGL {
+						c = append(c, contract.ForgeCapability(slug))
+					}
 				}
 				continue
 			}
