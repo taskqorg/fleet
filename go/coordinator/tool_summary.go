@@ -6,11 +6,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strings"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func init() {
@@ -167,8 +170,10 @@ func toolOutput(q *Request, r *contract.ToolOutputRequest) (contract.ToolOutputR
 		return out, fail(400, "Expected callId <executionId>/<seq>:<index>")
 	}
 	raw, err := q.db().ToolCallBlocks(q.ctx(), db.ToolCallBlocksParams{ExecutionID: &eid, Seq: k.seq})
-	if err != nil || raw == nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return out, errNotFound
+	} else if err != nil {
+		return out, err
 	}
 	var blocks []struct {
 		Kind   string          `json:"kind"`

@@ -71,7 +71,14 @@ func sessionViewOp(q *Request, r *contract.SessionViewRequest) (contract.Session
 		out.Executions.NextBefore = &rows[len(rows)-1].Seq
 	}
 
-	head, err := sessionViewHead(q, &s, rows)
+	// The head follows the newest turns whatever page is asked for.
+	newest := rows
+	if r.ExecutionsBefore != nil {
+		if newest, err = q.db().SessionViewExecutions(q.ctx(), db.SessionViewExecutionsParams{SessionID: &sid, Lim: sessionViewRows}); err != nil {
+			return out, err
+		}
+	}
+	head, err := sessionViewHead(q, &s, newest)
 	if err != nil {
 		return out, err
 	}
