@@ -12,6 +12,7 @@
     {"id": "draining", "match": ["step:draining"], "text": "The host was updating and took no new work. Run again: another host, or the updated one, takes it."},
     {"id": "download-cut", "match": ["step:download-cut"], "text": "A file download was cut off. Run again."},
     {"id": "secret", "match": ["step:secret-found"], "text": "The output contained a secret, so Fleet stopped the step. Remove the secret from the inputs or instructions, then run again."},
+    {"id": "unplaceable", "match": ["step:unplaceable", "step:start-refused"], "text": "No host and subscription the settings allow can run this step. Change the setting the detail names, such as a host's project roots, then run again."},
     {"id": "reference", "match": ["ref:"], "text": "A step input refers to something that does not exist. Fix the reference in the pipeline, then run again."},
     {"id": "host-checkout", "match": ["preparation failed: readiness-check-failed: checkout"], "text": "The project's checkout is missing on the host. Clone the repository to the path in the project's environments, then run again."},
     {"id": "host-remote", "match": ["preparation failed: readiness-check-failed: remote"], "text": "The host could not read the project's repository: its connection key is missing or refused. Fix the connection on that host, then run again."},

@@ -1123,6 +1123,10 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 					return err
 				}
 				queued.State, queued.StopDetail = "cancelled", "start refused: "+he.Msg
+				if deref(queued.ExperimentID) != "" { // a Lab trial reads a failed step with its cause, not a cancel
+					queued.State = "failed"
+					queued.rest["error"] = jsonBytes(map[string]string{"code": "start-refused", "message": queued.StopDetail})
+				}
 				if err := executionPut(q, &queued); err != nil {
 					return err
 				}
@@ -1153,6 +1157,34 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if first.Cause != "" {
 				cause = first.Cause
 			}
+		}
+		if deref(e.ExperimentID) != "" && settingsRefuse(cs) {
+			// A Lab trial's step that no setting lets any host or subscription run fails now with the first candidate's
+			// reason, so the trial reads why instead of waiting until someone cancels it without a cause (DAM Lab,
+			// 2026-11-25: the Claude variants waited on FLEET_PROJECT_ROOTS of owner-mac and ended cancelled).
+			claimed, err := claimRow(q, id)
+			if err != nil {
+				return err
+			}
+			if claimed == nil {
+				continue
+			}
+			msg := "no host and subscription the settings allow can run this step: " + reason
+			claimed.WaitReason, claimed.WaitDetail = nil, nil
+			delete(claimed.rest, "waitReason")
+			delete(claimed.rest, "waitDetail")
+			claimed.State, claimed.StopDetail = "failed", msg
+			claimed.rest["error"] = jsonBytes(map[string]string{"code": "unplaceable", "message": msg})
+			if err := executionPut(q, claimed); err != nil {
+				return err
+			}
+			if err := q.db().DispWaitReason(q.ctx(), db.DispWaitReasonParams{ID: id}); err != nil {
+				return err
+			}
+			if err := recordDecision(q, claimed, polling, cs, nil); err != nil {
+				return err
+			}
+			continue
 		}
 		if first != nil && first.Stop {
 			// As before a claim: a stop committed since the unlocked read wins.
@@ -1251,6 +1283,28 @@ func hostConcurrencyLimit(hv dispatchHost, load *hostLoadObservation, now int64)
 
 func isBackpressureCause(cause string) bool {
 	return strings.HasSuffix(cause, ":overloaded") || strings.HasSuffix(cause, ":concurrency") || strings.HasSuffix(cause, ":updating")
+}
+
+// passingCause: a skip that clears without anyone changing a setting: the host comes back, finishes its update or
+// load, a subscription limit resets, a budget or a paused host or subscription is resumed.
+func passingCause(cause string) bool {
+	for _, s := range []string{":offline", ":updating", ":overloaded", ":concurrency", ":paused", ":limit", ":reached"} {
+		if strings.HasSuffix(cause, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// settingsRefuse: no candidate can run the work and none waits on a passing cause, so only a changed setting
+// (environments, host project roots, forge, connections, subscriptions, harness or model) lets it start.
+func settingsRefuse(cs []*candidate) bool {
+	for _, c := range cs {
+		if c.Skipped == "" || passingCause(c.Cause) {
+			return false
+		}
+	}
+	return true
 }
 
 // dispatchStallCauses: the causes a dispatch pass raises and closes (problemsSet).

@@ -170,19 +170,26 @@ func methodAssessment(q *Request, ev *catalogueEvidence, method labMethod) (cont
 	cohort := scoredLatest(exp, trials, scores, func(sc labScore) bool {
 		return exp.primaryScore(sc) && sc.Form != "pick_best" && !sc.unscored()
 	})
-	// The cohort's evaluator version and form are those of its first score of this variant's pinned cells.
-	version, form, found := "", "", false
+	// The cohort's form is that of its first score of this variant's pinned cells; per example only its newest
+	// evaluator version counts (a script evaluator's version is the hash of the example's own checks, expComparison).
+	mine := []scoredTrial{}
 	for _, st := range cohort {
-		if st.variant == label && pins[st.example] && !found {
-			version, form, found = st.score.EvaluatorVersion, st.score.Form, true
+		if st.variant == label && pins[st.example] {
+			mine = append(mine, st)
 		}
 	}
+	form := ""
+	if len(mine) > 0 {
+		form = mine[0].score.Form
+	}
+	newest := newestVersions(mine)
+	version := versionLabel(newest)
 	out.Evaluator, out.EvaluatorVersion, out.ScoreForm = chosen.PrimaryEvaluator, &version, &form
 	sum := float64(0)
 	eligible := int64(0)
 	examples := map[string]bool{}
-	for _, st := range cohort {
-		if st.variant == label && pins[st.example] && st.score.EvaluatorVersion == version && st.score.Form == form {
+	for _, st := range mine {
+		if st.score.EvaluatorVersion == newest[st.example] && st.score.Form == form {
 			sum += scoreNumber(st.score)
 			eligible++
 			examples[st.example] = true

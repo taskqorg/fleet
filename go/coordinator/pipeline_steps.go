@@ -307,6 +307,9 @@ func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run *runRecord, i in
 		}
 		nativeProblem := deref(execRow.Problem)
 		errRaw := data["error"]
+		if eState == "cancelled" && isNull(errRaw) && data.text("stopDetail") != "" {
+			errRaw = data["stopDetail"] // who or what stopped it (a refused start, a deletion) is the step's message
+		}
 		var eventDetail string
 		if eState != "cancelled" && nativeProblem == "" && isNull(errRaw) {
 			evs, err := executionEventRecords(q, s.ExecutionID)
