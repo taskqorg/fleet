@@ -1,13 +1,18 @@
 {
+  "description": "Reads one model's documents and returns, per file, its type, alias, legal name, date of birth, site and whether it is signed; flags duplicates, name spelling variants and unreadable files.",
   "id": "doc-recognize-agent",
+  "input": "a model's document set (jpg, png, pdf)",
+  "output": "output.json: the model, its aliases and one entry per file, with a one-line summary",
   "steps": [
     {
       "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py prompt",
+      "description": "writes the reading instructions; PDF pages become images",
       "host": "owner-mac",
       "id": "prompt",
       "kind": "script"
     },
     {
+      "description": "looks at every file and answers in JSON",
       "id": "read",
       "kind": "agent",
       "profile": "doc-reader-claude",
@@ -15,6 +20,7 @@
     },
     {
       "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py finish --from read",
+      "description": "normalises the answer into output.json",
       "host": "owner-mac",
       "id": "result",
       "kind": "script"

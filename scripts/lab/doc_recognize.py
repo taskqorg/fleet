@@ -227,7 +227,22 @@ def finish(args):
         m['duplicates'] = [list(p) for p in sorted({tuple(p) for p in m['duplicates'] + fm['duplicates']})]
         m['unreadable'] = sorted(set(m['unreadable']) | set(fm['unreadable']) | {d['file'] for d in result['documents'] if not d['readable']})
     result['files'] = len(names)
+    result['summary'] = summary(result)
     write_output(result)
+
+
+def summary(result):
+    """One line naming what was recognised, the title of the result in Fleet: the model, the files and what needs a look."""
+    m = result['model']
+    n = result['files']
+    parts = [m['legal_name'] or 'Name not found', '%d file%s' % (n, '' if n == 1 else 's')]
+    if m['unreadable']:
+        parts.append('%d unreadable' % len(m['unreadable']))
+    if m['duplicates']:
+        parts.append('%d duplicate pair%s' % (len(m['duplicates']), '' if len(m['duplicates']) == 1 else 's'))
+    if m['name_variants']:
+        parts.append('name variants')
+    return ' · '.join(parts)
 
 
 def main():

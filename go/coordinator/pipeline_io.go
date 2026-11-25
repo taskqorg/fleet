@@ -34,8 +34,15 @@ func validatePipelineDef(b []byte) (*pipelineDef, error) {
 		return bad("version must be 2 or 3")
 	}
 	_, hasResultStep := d["resultStep"]
-	if !ruleKeysOnly(d, "version", "id", "steps", "resultStep") || version == 2 && hasResultStep {
+	if !ruleKeysOnly(d, "version", "id", "description", "input", "output", "steps", "resultStep") || version == 2 && hasResultStep {
 		return bad("root keys or resultStep version")
+	}
+	for _, key := range []string{"description", "input", "output"} {
+		if raw, has := d[key]; has {
+			if _, ok := jsonString(raw); !ok {
+				return bad(key + " must be text")
+			}
+		}
 	}
 	if id, _ := jsonString(d["id"]); !stepIDPattern.MatchString(id) {
 		return bad("id")
@@ -44,7 +51,7 @@ func validatePipelineDef(b []byte) (*pipelineDef, error) {
 	if len(steps) == 0 {
 		return bad("steps")
 	}
-	allowed := map[string][]string{"api": {"id", "kind", "connection", "tool", "arguments", "mode", "output", "status_tool", "recent_tool"}, "agent": {"id", "kind", "profile", "prompt", "output"}, "script": {"id", "kind", "command", "timeout_ms", "host"}}
+	allowed := map[string][]string{"api": {"id", "kind", "description", "connection", "tool", "arguments", "mode", "output", "status_tool", "recent_tool"}, "agent": {"id", "kind", "description", "profile", "prompt", "output"}, "script": {"id", "kind", "description", "command", "timeout_ms", "host"}}
 	seen := map[string]bool{}
 	for _, x := range steps {
 		s := pipelineRuleOf(x)
@@ -61,6 +68,11 @@ func validatePipelineDef(b []byte) (*pipelineDef, error) {
 			}
 		}
 		seen[id] = true
+		if raw, has := s["description"]; has {
+			if _, ok := jsonString(raw); !ok {
+				return bad("step " + id + " description must be text")
+			}
+		}
 		kind, _ := jsonString(s["kind"])
 		keys, ok := allowed[kind]
 		if !ok {

@@ -1,8 +1,12 @@
 {
+  "description": "Reads one model's documents and returns, per file, its type, alias, legal name, date of birth, site and whether it is signed; flags duplicates, name spelling variants and unreadable files.",
   "id": "doc-recognize-openai",
+  "input": "a model's document set (jpg, png, pdf)",
+  "output": "output.json: the model, its aliases and one entry per file, with a one-line summary",
   "steps": [
     {
       "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py request --provider openai",
+      "description": "builds the request with every file as an image",
       "host": "owner-mac",
       "id": "request",
       "kind": "script"
@@ -15,12 +19,14 @@
         "reasoning": "${steps.request.output.body.reasoning}"
       },
       "connection": "openai-2",
+      "description": "reads every file and answers in JSON",
       "id": "call",
       "kind": "api",
       "tool": "create_response"
     },
     {
       "command": "python3 \"$FLEET_LAB_SCRIPTS\"/doc_recognize.py finish --from call",
+      "description": "normalises the answer into output.json",
       "host": "owner-mac",
       "id": "result",
       "kind": "script"
