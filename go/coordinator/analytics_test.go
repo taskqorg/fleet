@@ -231,7 +231,7 @@ func TestSpendSummaryInvariant(t *testing.T) {
 		{`INSERT INTO definition(kind,id,path,head,ever_shipped,access_version) VALUES ('agent','coder','agents/coder.json',1,true,1),('project','p1','projects/p1.json',1,true,1),('project','p2','projects/p2.json',1,true,1)`, nil},
 		{`INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message,at) VALUES ('agent','coder',1,'{"category":"engineering"}','sha1','editor','person','init',$1),('project','p1',1,'{"name":"P1"}','sha-p1','editor','person','init',$1),('project','p2',1,'{"name":"P2"}','sha-p2','editor','person','init',$1)`, []any{t0.Add(-5 * time.Minute)}},
 		{`INSERT INTO bot(id,project_id,director,revision,memory_revision) VALUES ('bot-inv','p1','owner@example.com',1,0)`, nil},
-		{`INSERT INTO bot_revision(bot_id,revision,name,purpose,profile_id,instructions,soul,schedule_time,schedule_zone,wake_on_needs_you) VALUES ('bot-inv',1,'InvariantBot','Watch','coder','Keep green','','','',false)`, nil},
+		{`INSERT INTO bot_revision(bot_id,revision,name,purpose,profile_id,instructions,soul) VALUES ('bot-inv',1,'InvariantBot','Watch','coder','Keep green','')`, nil},
 		{`INSERT INTO task(id,project_id,title,state,priority,completion_requirements,created_at,updated_at,state_at,accepted_at) VALUES ('t-done','p1','Done task','completed','normal','{}',$1,$1,$1,$1)`, []any{t0.Add(-5 * time.Minute)}},
 		{`INSERT INTO price_entry(id,subject,unit,price,currency,source,observed_at,effective_from) VALUES
 			('pr:m1:in','m1','input_tokens',0.000002,'USD','owner',$1,$2),

@@ -32,6 +32,8 @@ type agentProvenance struct {
 	Source      string `json:"source,omitempty"`
 	Traceparent string `json:"traceparent,omitempty"`
 	TraceActor  string `json:"traceActor,omitempty"`
+	// TriggerID: the trigger that sent the message (triggers.go), kept on the queued and sent message.
+	TriggerID string `json:"triggerId,omitempty"`
 }
 
 // agentEnqueue: a queued execution and its message. Late choice: host and subscription are picked at dispatch.
@@ -209,6 +211,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 		if prov.Source != "" {
 			m.Source = prov.Source
 		}
+		m.TriggerID = prov.TriggerID
 	}
 	return e, messagePut(q, &m)
 }
@@ -266,6 +269,11 @@ func attachmentIDs(xs []string) ([]string, error) {
 // agentSubmit: a message starts a turn, or is queued (or steered) behind an active execution; nothing is refused for
 // being busy. source is internal provenance, never taken from the caller's arguments.
 func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (agentSubmitted, error) {
+	return agentSubmitFrom(q, r, source, "")
+}
+
+// agentSubmitFrom: agentSubmit for a message a trigger sends; triggerID marks the queued and the sent message.
+func agentSubmitFrom(q *Request, r *contract.MessageSendRequest, source, triggerID string) (agentSubmitted, error) {
 	const changedComposerTarget = "Composer target changed. Review the new target and send again."
 	var none agentSubmitted
 	sid := deref(r.SessionId)
@@ -365,7 +373,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 		return none, err
 	}
 	sender := director(q)
-	if source == "watch" || source == "wake" || source == "transition" {
+	if source == "trigger" || source == "wake" || source == "transition" {
 		sender = "Fleet"
 	}
 	var botForHome *botFull
@@ -387,7 +395,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 				BotContext *botExecutionContext `json:"botContext,omitempty"`
 			}{botContextOf(botForHome, "")}
 		}
-		e, err := agentEnqueue(q, &s, text, requestID, payload, extra, "", &agentProvenance{SentBy: sender, Source: source})
+		e, err := agentEnqueue(q, &s, text, requestID, payload, extra, "", &agentProvenance{SentBy: sender, Source: source, TriggerID: triggerID})
 		if err != nil {
 			return none, err
 		}
@@ -398,7 +406,7 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 		}
 		return agentSubmitted{execution: &e}, nil
 	}
-	m := agentQueued{ID: newID(), SessionID: sid, ProjectID: s.ProjectID, TaskID: s.TaskID, RequestID: requestID, Text: text, State: "queued", CreatedAt: nowMs(), SentBy: sender, Source: source}
+	m := agentQueued{ID: newID(), SessionID: sid, ProjectID: s.ProjectID, TaskID: s.TaskID, RequestID: requestID, Text: text, State: "queued", CreatedAt: nowMs(), SentBy: sender, Source: source, TriggerID: triggerID}
 	if len(attachments) > 0 {
 		m.Attachments, m.AttachmentRequest = jsonBytes(attachments), ids
 	}
@@ -542,7 +550,7 @@ func agentPromote(q *Request) error {
 					BotContext *botExecutionContext `json:"botContext,omitempty"`
 				}{botContextOf(promotedBot, "")}
 			}
-			return agentEnqueue(q, &s, m.Text, m.RequestID, payload, extra, "", &agentProvenance{SentBy: m.SentBy, Source: m.Source, Traceparent: m.Traceparent, TraceActor: m.TraceActor})
+			return agentEnqueue(q, &s, m.Text, m.RequestID, payload, extra, "", &agentProvenance{SentBy: m.SentBy, Source: m.Source, Traceparent: m.Traceparent, TraceActor: m.TraceActor, TriggerID: m.TriggerID})
 		}()
 		if err != nil {
 			if pgCode(err) != "" {

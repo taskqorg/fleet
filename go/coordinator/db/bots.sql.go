@@ -8,8 +8,6 @@ package db
 import (
 	"context"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const botAvatarSet = `-- name: BotAvatarSet :execrows
@@ -93,7 +91,7 @@ const botGet = `-- name: BotGet :one
 SELECT b.id, b.code, b.project_id, b.director, b.revision, b.memory_revision,
        hs.id AS home_session_id,
        b.paused, b.paused_at, b.paused_by, b.resumed_at,
-       s.name, s.purpose, s.profile_id, s.instructions, s.soul, s.schedule_time, s.schedule_zone, s.wake_on_needs_you,
+       s.name, s.purpose, s.profile_id, s.instructions, s.soul,
        s.created_at AS revision_created_at,
        coalesce(m.memory, '')::text AS memory,
        ar.id AS active_run_id, ar.execution_id AS active_execution_id,
@@ -138,9 +136,6 @@ type BotGetRow struct {
 	ProfileID             string
 	Instructions          string
 	Soul                  string
-	ScheduleTime          string
-	ScheduleZone          string
-	WakeOnNeedsYou        bool
 	RevisionCreatedAt     time.Time
 	Memory                string
 	ActiveRunID           *string
@@ -174,9 +169,6 @@ func (q *Queries) BotGet(ctx context.Context, id string) (BotGetRow, error) {
 		&i.ProfileID,
 		&i.Instructions,
 		&i.Soul,
-		&i.ScheduleTime,
-		&i.ScheduleZone,
-		&i.WakeOnNeedsYou,
 		&i.RevisionCreatedAt,
 		&i.Memory,
 		&i.ActiveRunID,
@@ -190,44 +182,6 @@ func (q *Queries) BotGet(ctx context.Context, id string) (BotGetRow, error) {
 		&i.NeedsYou,
 	)
 	return i, err
-}
-
-const botHandledDedupPayloads = `-- name: BotHandledDedupPayloads :many
-SELECT dedup_key, payload
-FROM bot_run
-WHERE bot_id = $1 AND tombstoned_at IS NULL AND cause = 'needs_you'
-  AND automation_id IS NOT DISTINCT FROM $2::text
-  AND (state <> 'skipped' OR reason = 'paused')
-`
-
-type BotHandledDedupPayloadsParams struct {
-	BotID        string
-	AutomationID *string
-}
-
-type BotHandledDedupPayloadsRow struct {
-	DedupKey *string
-	Payload  []byte
-}
-
-func (q *Queries) BotHandledDedupPayloads(ctx context.Context, arg BotHandledDedupPayloadsParams) ([]BotHandledDedupPayloadsRow, error) {
-	rows, err := q.db.Query(ctx, botHandledDedupPayloads, arg.BotID, arg.AutomationID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []BotHandledDedupPayloadsRow
-	for rows.Next() {
-		var i BotHandledDedupPayloadsRow
-		if err := rows.Scan(&i.DedupKey, &i.Payload); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const botLastSessionDispatch = `-- name: BotLastSessionDispatch :one
@@ -372,82 +326,6 @@ func (q *Queries) BotList(ctx context.Context, arg BotListParams) ([]BotListRow,
 	return items, nil
 }
 
-const botListForTriggers = `-- name: BotListForTriggers :many
-SELECT b.id, b.project_id, b.director, b.revision, b.memory_revision,
-       b.home_session_id, b.paused, b.paused_at, b.resumed_at,
-       s.name, s.purpose, s.profile_id, s.instructions, s.soul, s.schedule_time, s.schedule_zone, s.wake_on_needs_you,
-       s.created_at AS revision_created_at,
-       coalesce(m.memory, '') AS memory
-FROM bot b
-JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
-LEFT JOIN bot_memory_revision m ON m.bot_id = b.id AND m.revision = b.memory_revision
-WHERE b.tombstoned_at IS NULL
-  AND (s.schedule_time <> '' OR s.wake_on_needs_you)
-ORDER BY b.id
-`
-
-type BotListForTriggersRow struct {
-	ID                string
-	ProjectID         string
-	Director          string
-	Revision          int32
-	MemoryRevision    int32
-	HomeSessionID     *string
-	Paused            bool
-	PausedAt          *time.Time
-	ResumedAt         *time.Time
-	Name              string
-	Purpose           string
-	ProfileID         string
-	Instructions      string
-	Soul              string
-	ScheduleTime      string
-	ScheduleZone      string
-	WakeOnNeedsYou    bool
-	RevisionCreatedAt time.Time
-	Memory            string
-}
-
-func (q *Queries) BotListForTriggers(ctx context.Context) ([]BotListForTriggersRow, error) {
-	rows, err := q.db.Query(ctx, botListForTriggers)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []BotListForTriggersRow
-	for rows.Next() {
-		var i BotListForTriggersRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.ProjectID,
-			&i.Director,
-			&i.Revision,
-			&i.MemoryRevision,
-			&i.HomeSessionID,
-			&i.Paused,
-			&i.PausedAt,
-			&i.ResumedAt,
-			&i.Name,
-			&i.Purpose,
-			&i.ProfileID,
-			&i.Instructions,
-			&i.Soul,
-			&i.ScheduleTime,
-			&i.ScheduleZone,
-			&i.WakeOnNeedsYou,
-			&i.RevisionCreatedAt,
-			&i.Memory,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const botMemoryAdvance = `-- name: BotMemoryAdvance :execrows
 UPDATE bot SET memory_revision = memory_revision + 1 WHERE id = $1 AND memory_revision = $2
 `
@@ -478,122 +356,6 @@ type BotMemoryRevisionInsertParams struct {
 func (q *Queries) BotMemoryRevisionInsert(ctx context.Context, arg BotMemoryRevisionInsertParams) error {
 	_, err := q.db.Exec(ctx, botMemoryRevisionInsert, arg.BotID, arg.Revision, arg.Memory)
 	return err
-}
-
-const botNeedsYouExecutions = `-- name: BotNeedsYouExecutions :many
-SELECT id, project_id, task_id, session_id, state::text AS state, problem
-FROM execution
-WHERE project_id = $1::text
-  AND tombstoned_at IS NULL
-  AND problem IS NOT NULL
-  AND ($2::timestamptz IS NULL OR updated_at >= $2)
-  AND problem NOT IN ('unknown:abandoned', 'cancelled')
-  AND kind <> 'tool_run'
-  AND NOT EXISTS (SELECT 1 FROM problem_dismissal x WHERE x.execution_id = execution.id)
-  AND NOT (state IN ('succeeded', 'failed', 'cancelled') AND (problem LIKE 'unregistered host %' OR problem LIKE 'unregistered account %' OR problem LIKE 'no registered environment of project %'))
-  AND NOT (kind = 'pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind = 'pipeline_run' AND r.problem IS NOT NULL AND r.id = coalesce(execution.parent_execution_id, split_part(execution.id, ':step:', 1))))
-  AND EXISTS (SELECT 1 FROM definition d WHERE d.kind = 'project' AND d.id = execution.project_id)
-  AND ($3::text[] IS NULL OR id = ANY($3::text[]))
-ORDER BY seq
-`
-
-type BotNeedsYouExecutionsParams struct {
-	ProjectID    string
-	EnabledSince pgtype.Timestamptz
-	Ids          []string
-}
-
-type BotNeedsYouExecutionsRow struct {
-	ID        string
-	ProjectID *string
-	TaskID    *string
-	SessionID *string
-	State     string
-	Problem   *string
-}
-
-func (q *Queries) BotNeedsYouExecutions(ctx context.Context, arg BotNeedsYouExecutionsParams) ([]BotNeedsYouExecutionsRow, error) {
-	rows, err := q.db.Query(ctx, botNeedsYouExecutions, arg.ProjectID, arg.EnabledSince, arg.Ids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []BotNeedsYouExecutionsRow
-	for rows.Next() {
-		var i BotNeedsYouExecutionsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.ProjectID,
-			&i.TaskID,
-			&i.SessionID,
-			&i.State,
-			&i.Problem,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const botNeedsYouQuestions = `-- name: BotNeedsYouQuestions :many
-SELECT id, code, project_id, task_id, execution_id, session_id, text, asked_by
-FROM question
-WHERE project_id = $1::text
-  AND state = 'open'
-  AND ($2::timestamptz IS NULL OR asked_at >= $2)
-  AND tombstoned_at IS NULL
-  AND ($3::text[] IS NULL OR id = ANY($3::text[]))
-ORDER BY seq
-`
-
-type BotNeedsYouQuestionsParams struct {
-	ProjectID    string
-	EnabledSince pgtype.Timestamptz
-	Ids          []string
-}
-
-type BotNeedsYouQuestionsRow struct {
-	ID          string
-	Code        *string
-	ProjectID   *string
-	TaskID      *string
-	ExecutionID *string
-	SessionID   *string
-	Text        string
-	AskedBy     *string
-}
-
-func (q *Queries) BotNeedsYouQuestions(ctx context.Context, arg BotNeedsYouQuestionsParams) ([]BotNeedsYouQuestionsRow, error) {
-	rows, err := q.db.Query(ctx, botNeedsYouQuestions, arg.ProjectID, arg.EnabledSince, arg.Ids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []BotNeedsYouQuestionsRow
-	for rows.Next() {
-		var i BotNeedsYouQuestionsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Code,
-			&i.ProjectID,
-			&i.TaskID,
-			&i.ExecutionID,
-			&i.SessionID,
-			&i.Text,
-			&i.AskedBy,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const botOwnExecutions = `-- name: BotOwnExecutions :many
@@ -858,7 +620,7 @@ func (q *Queries) BotRunIDByExecution(ctx context.Context, executionID *string) 
 }
 
 const botRunInsert = `-- name: BotRunInsert :execrows
-INSERT INTO bot_run(id, bot_id, project_id, bot_revision, memory_revision, session_id, execution_id, queued_message_id, cause, dedup_key, state, observation, quiet, reason, sent_by, source, payload, automation_id)
+INSERT INTO bot_run(id, bot_id, project_id, bot_revision, memory_revision, session_id, execution_id, queued_message_id, cause, dedup_key, state, observation, quiet, reason, sent_by, source, payload, trigger_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 ON CONFLICT DO NOTHING
 `
@@ -881,7 +643,7 @@ type BotRunInsertParams struct {
 	SentBy          string
 	Source          string
 	Payload         []byte
-	AutomationID    *string
+	TriggerID       *string
 }
 
 func (q *Queries) BotRunInsert(ctx context.Context, arg BotRunInsertParams) (int64, error) {
@@ -903,7 +665,7 @@ func (q *Queries) BotRunInsert(ctx context.Context, arg BotRunInsertParams) (int
 		arg.SentBy,
 		arg.Source,
 		arg.Payload,
-		arg.AutomationID,
+		arg.TriggerID,
 	)
 	if err != nil {
 		return 0, err
@@ -1015,7 +777,7 @@ FROM bot_run br
 LEFT JOIN execution e ON e.id = br.execution_id
 WHERE br.tombstoned_at IS NULL
   AND ($1::text IS NULL OR br.bot_id = $1)
-  AND ($2::text IS NULL OR br.automation_id = $2)
+  AND ($2::text IS NULL OR br.trigger_id = $2)
   AND ($3::text IS NULL OR br.project_id = $3)
   AND (coalesce(cardinality($4::text[]), 0) = 0 OR br.project_id = ANY ($4))
   AND NOT (br.project_id = ANY (coalesce($5::text[], ARRAY[]::text[])))
@@ -1030,7 +792,7 @@ LIMIT $12::int
 
 type BotRunsListParams struct {
 	BotID             *string
-	AutomationID      *string
+	TriggerID         *string
 	ProjectID         *string
 	ProjectIds        []string
 	ExcludeProjectIds []string
@@ -1072,7 +834,7 @@ type BotRunsListRow struct {
 func (q *Queries) BotRunsList(ctx context.Context, arg BotRunsListParams) ([]BotRunsListRow, error) {
 	rows, err := q.db.Query(ctx, botRunsList,
 		arg.BotID,
-		arg.AutomationID,
+		arg.TriggerID,
 		arg.ProjectID,
 		arg.ProjectIds,
 		arg.ExcludeProjectIds,
@@ -1178,21 +940,18 @@ func (q *Queries) BotSettingsAdvance(ctx context.Context, arg BotSettingsAdvance
 }
 
 const botSettingsRevisionInsert = `-- name: BotSettingsRevisionInsert :exec
-INSERT INTO bot_revision(bot_id, revision, name, purpose, profile_id, instructions, soul, schedule_time, schedule_zone, wake_on_needs_you)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO bot_revision(bot_id, revision, name, purpose, profile_id, instructions, soul)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type BotSettingsRevisionInsertParams struct {
-	BotID          string
-	Revision       int32
-	Name           string
-	Purpose        string
-	ProfileID      string
-	Instructions   string
-	Soul           string
-	ScheduleTime   string
-	ScheduleZone   string
-	WakeOnNeedsYou bool
+	BotID        string
+	Revision     int32
+	Name         string
+	Purpose      string
+	ProfileID    string
+	Instructions string
+	Soul         string
 }
 
 func (q *Queries) BotSettingsRevisionInsert(ctx context.Context, arg BotSettingsRevisionInsertParams) error {
@@ -1204,9 +963,6 @@ func (q *Queries) BotSettingsRevisionInsert(ctx context.Context, arg BotSettings
 		arg.ProfileID,
 		arg.Instructions,
 		arg.Soul,
-		arg.ScheduleTime,
-		arg.ScheduleZone,
-		arg.WakeOnNeedsYou,
 	)
 	return err
 }
@@ -1502,54 +1258,4 @@ func (q *Queries) BotTasksList(ctx context.Context, arg BotTasksListParams) ([]B
 		return nil, err
 	}
 	return items, nil
-}
-
-const botWakeCursorGet = `-- name: BotWakeCursorGet :one
-SELECT bot_id, project_id, needs_you_change_seq, last_schedule_key, last_schedule_at, updated_at
-FROM bot_wake_cursor
-WHERE bot_id = $1
-`
-
-func (q *Queries) BotWakeCursorGet(ctx context.Context, botID string) (BotWakeCursor, error) {
-	row := q.db.QueryRow(ctx, botWakeCursorGet, botID)
-	var i BotWakeCursor
-	err := row.Scan(
-		&i.BotID,
-		&i.ProjectID,
-		&i.NeedsYouChangeSeq,
-		&i.LastScheduleKey,
-		&i.LastScheduleAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const botWakeCursorUpsert = `-- name: BotWakeCursorUpsert :exec
-INSERT INTO bot_wake_cursor(bot_id, project_id, needs_you_change_seq, last_schedule_key, last_schedule_at)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (bot_id) DO UPDATE SET
-  project_id = excluded.project_id,
-  needs_you_change_seq = excluded.needs_you_change_seq,
-  last_schedule_key = excluded.last_schedule_key,
-  last_schedule_at = excluded.last_schedule_at,
-  updated_at = now()
-`
-
-type BotWakeCursorUpsertParams struct {
-	BotID             string
-	ProjectID         string
-	NeedsYouChangeSeq int64
-	LastScheduleKey   string
-	LastScheduleAt    *time.Time
-}
-
-func (q *Queries) BotWakeCursorUpsert(ctx context.Context, arg BotWakeCursorUpsertParams) error {
-	_, err := q.db.Exec(ctx, botWakeCursorUpsert,
-		arg.BotID,
-		arg.ProjectID,
-		arg.NeedsYouChangeSeq,
-		arg.LastScheduleKey,
-		arg.LastScheduleAt,
-	)
-	return err
 }

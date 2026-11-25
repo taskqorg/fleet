@@ -66,14 +66,12 @@ var referenceMap = []objectRef{
 	{table: "execution", column: "step_id", mode: refNone},
 	{table: "execution", column: "bot_id", mode: refNone},
 	// Hosts, subscriptions, connections and tokens (migration 78). A run token goes with its execution and with the run
-	// whose step it was minted for; an inspection with its execution; a watch with its session.
+	// whose step it was minted for; an inspection with its execution.
 	{table: "host", column: "id", mode: refNone},
 	{table: "host", column: "host_id", mode: refNone}, // the host's own id; system_purge deletes a removed host (host_remove.go)
 	{table: "host", column: "project_id", kind: "project", mode: refOwn},
 	{table: "host_observation", column: "id", mode: refNone},
 	{table: "host_observation", column: "project_id", kind: "project", mode: refOwn},
-	{table: "watch", column: "id", mode: refNone},
-	{table: "watch", column: "project_id", kind: "project", mode: refOwn},
 	{table: "managed_account", column: "id", mode: refNone},
 	{table: "managed_account", column: "project_id", kind: "project", mode: refOwn},
 	{table: "account_inspection", column: "id", mode: refNone},
@@ -306,10 +304,11 @@ var referenceMap = []objectRef{
 	{table: "bot", column: "project_id", kind: "project", mode: refOwn},
 	{table: "bot", column: "home_session_id", mode: refNone},
 	{table: "bot_revision", column: "profile_id", mode: refNone},
-	{table: "bot_automation", column: "id", mode: refNone},
-	{table: "bot_automation", column: "project_id", mode: refNone},
-	{table: "bot_run", column: "automation_id", mode: refNone},
-	{table: "bot_wake_cursor", column: "project_id", kind: "project", mode: refOwn},
+	// Triggers (migration 106, triggers.go) go with their session or bot, and with their project.
+	{table: "trigger", column: "id", mode: refNone},
+	{table: "trigger", column: "project_id", kind: "project", mode: refOwn},
+	{table: "trigger", column: "preset_id", mode: refNone},
+	{table: "bot_run", column: "trigger_id", mode: refNone},
 	{table: "bot_run", column: "id", mode: refNone},
 	{table: "bot_run", column: "project_id", kind: "project", mode: refOwn},
 	{table: "bot_run", column: "session_id", mode: refNone},
@@ -349,7 +348,7 @@ var objectTables = []struct{ kind, table, filter string }{
 // tombstoned: the tables with a tombstoned_at column (migration 67).
 var tombstoned = append([]string{"execution", "task", "experiment", "question", "artifact", "score", "experiment_note",
 	"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done",
-	"host", "host_observation", "watch", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
+	"host", "host_observation", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
 	"connection_key", "run_token", "person_setting", "upload", "problem_dismissal", "project_recommendation", "transport_conflict", "bot", "bot_run", "bot_task", "work_plan", "board_message"}, deliveryTables...)
 
 // keptRows: rows of a table that neither go with an object nor keep one. None now: the audit records that outlive what
@@ -357,9 +356,9 @@ var tombstoned = append([]string{"execution", "task", "experiment", "question", 
 var keptRows = map[string]string{}
 
 // purgeOrder: the tables system_purge deletes from, referencing rows before the rows they reference (foreign keys).
-var purgeOrder = append([]string{"bot_task", "bot_run", "bot_wake_cursor", "bot", "board_message", "work_plan", "score", "experiment_note", "artifact_copy", "artifact", "question", "execution_spend", "execution_totals", "route_decision",
+var purgeOrder = append([]string{"bot_task", "bot_run", "trigger", "bot", "board_message", "work_plan", "score", "experiment_note", "artifact_copy", "artifact", "question", "execution_spend", "execution_totals", "route_decision",
 	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "problem_dismissal",
-	"transport_conflict", "upload", "project_recommendation", "watch", "run_token", "account_inspection", "account_check", "account_catalogue",
+	"transport_conflict", "upload", "project_recommendation", "run_token", "account_inspection", "account_check", "account_catalogue",
 	"connection_key", "api_connection", "managed_account", "host_observation", "host", "person_setting", "message", "event",
 	"queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done", "session", "execution",
 	"resource_work", "resource_work_scope", "task_dependency", "task_derived", "task", "entity_code", "experiment", "budget",
@@ -1220,7 +1219,7 @@ func objectLock(ctx context.Context, tx pgx.Tx, storeID, key string) error {
 // recordTables: tables whose rows follow Fleet's column/payload record convention: a reason names a column by its record field.
 var recordTables = []string{"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition",
 	"worker_done", "host", "host_observation", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
-	"connection_key", "run_token", "watch", "person_setting"}
+	"connection_key", "run_token", "person_setting"}
 
 // recordFieldOf: the record field a record table's column holds (project_id: projectId), else col.
 func recordFieldOf(table, col string) string {

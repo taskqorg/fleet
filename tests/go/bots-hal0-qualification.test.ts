@@ -67,7 +67,7 @@ test('HAL0 qualifies across two isolated projects: checks tasks/executions/telem
   const coordinator: Coordinator = await startCoordinator({
     name: 'hal0-qual',
     env: {
-      FLEET_BOT_TICK_MS: '200',
+      FLEET_TRIGGER_TICK_MS: '200',
       FLEET_LOST_AFTER_MS: '120000',
       FLEET_CLICKHOUSE_URL: ch.url,
     },
@@ -161,9 +161,6 @@ test('HAL0 qualifies across two isolated projects: checks tasks/executions/telem
       profileId: 'pm',
       instructions: 'Inspect Needs you entries, telemetry, and tasks; escalate owner decisions via question_ask; deduplicate technical fixes.',
       soul: 'Verify on the affected surface; retain unconfirmed observations; audit obsolete/duplicate dismissals.',
-      scheduleTime: '23:59',
-      scheduleZone: 'Etc/UTC',
-      wakeOnNeedsYou: true,
     });
 
     const createdA = (await op('bot_settings_save', { botId: halA, projectId: PROJ_A, baseRevision: 0, settings: baseSettings('Monitor Project A') })).bot;
@@ -171,6 +168,9 @@ test('HAL0 qualifies across two isolated projects: checks tasks/executions/telem
     assert.equal(createdA.settings.name, 'HAL0');
     assert.equal(createdB.settings.name, 'HAL0');
     assert.notEqual(createdA.homeSessionId, createdB.homeSessionId);
+    for (const botId of [halA, halB]) {
+      await op('trigger_save', { id: randomUUID(), baseRevision: 0, botId, presetId: 'needs-you', settings: { everyMs: 200 } });
+    }
 
     // 2. Seed Project A state BEFORE triggering Needs you:
     //    - An existing active fix task (tExistingA) + its earlier failed execution (eConfirmedA, with traceparent for telemetry_trace)

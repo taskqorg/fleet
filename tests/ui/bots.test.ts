@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   botStatusBadge, classifyBotTaskBucket,
-  filterBotRuns, filterBotTasks, formatBotTriggers,
+  filterBotRuns, filterBotTasks,
 } from '../../app/src/bot-view.ts';
 import type { BotRunRecord, BotTaskRecord } from '../../contracts/generated/ops-bots.ts';
 
@@ -59,15 +59,7 @@ test('bot runs filtering isolates quiet, skipped, queued, failed, and unconfirme
   assert.deepEqual(filterBotRuns(runs, 'active').map(r => r.id), ['r-queue', 'r-unconf']);
 });
 
-test('bot triggers and status badges preserve observation semantics', () => {
-  assert.equal(
-    formatBotTriggers({ scheduleTime: '09:30', scheduleZone: 'America/New_York', wakeOnNeedsYou: true }),
-    'Daily at 09:30 (America/New_York) · Wake on Needs you on',
-  );
-  assert.equal(
-    formatBotTriggers({ scheduleTime: '', scheduleZone: '', wakeOnNeedsYou: false }),
-    'No daily schedule · Wake on Needs you off',
-  );
+test('bot status badges preserve observation semantics', () => {
   assert.deepEqual(botStatusBadge({ paused: true, activeRunId: 'r1', lastRunState: 'failed' }), { family: 'task', state: 'paused' });
   assert.deepEqual(botStatusBadge({ paused: false, activeRunId: 'r1', lastRunState: 'failed' }), { family: 'botRun', state: 'running' });
   assert.deepEqual(botStatusBadge({ paused: false, activeRunId: null, lastRunState: 'skipped' }), { family: 'botRun', state: 'skipped' });

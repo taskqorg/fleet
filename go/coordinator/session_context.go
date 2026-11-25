@@ -3,7 +3,7 @@ package main
 // Session context (docs/design-system/pages/session.md "Context panel", FLT-30): what one session plans and keeps
 // running, in one read over the state that already holds it. No table of its own:
 //   - plan: the work_plan of the session, else of its task (board.go), one step per plan task;
-//   - timers: the session's watch timer, paused or not (watch.go; changed with watch_timer_set);
+//   - timers: the session's conversation-check trigger, paused or not (watch.go, triggers.go; changed with watch_timer_set);
 //   - automations: the automations of the session's bot (bot_automations.go);
 //   - swarm: the other members of that board (work_board_get's roster) with their state;
 //   - tasks: the session's own task, the plan's tasks, the tasks it spawned and its bot's tasks, as entity cards.
@@ -38,11 +38,11 @@ func sessionContext(q *Request, r *contract.SessionContextRequest) (contract.Ses
 		out.Plan = sessionPlan(board)
 		out.Swarm = sessionSwarm(board, sid)
 	}
-	w, err := watchOf(q, "watch:"+sid)
+	_, timer, err := watchTriggers(q, sid)
 	if err != nil {
 		return out, err
 	}
-	if rec := w.recordOrNil(); rec != nil && rec.TimerMs != nil {
+	if rec := watchRecord(sid, nil, timer); rec != nil && rec.TimerMs != nil {
 		ws, err := watchSessionOf(q, sid)
 		if err != nil {
 			return out, err
@@ -55,7 +55,7 @@ func sessionContext(q *Request, r *contract.SessionContextRequest) (contract.Ses
 			}
 			can = !cancelled
 		}
-		out.Timers = append(out.Timers, contract.SessionTimer{Id: rec.Id, EveryMs: *rec.TimerMs, NextAt: rec.NextWakeAt, Paused: *rec.TimerPaused, CanManage: can})
+		out.Timers = append(out.Timers, contract.SessionTimer{Id: timer.ID, EveryMs: *rec.TimerMs, NextAt: rec.NextWakeAt, Paused: *rec.TimerPaused, CanManage: can})
 	}
 	var botTasks []contract.BotTaskRecord
 	if s.BotID != "" {

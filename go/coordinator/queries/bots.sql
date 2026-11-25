@@ -2,7 +2,7 @@
 SELECT b.id, b.code, b.project_id, b.director, b.revision, b.memory_revision,
        hs.id AS home_session_id,
        b.paused, b.paused_at, b.paused_by, b.resumed_at,
-       s.name, s.purpose, s.profile_id, s.instructions, s.soul, s.schedule_time, s.schedule_zone, s.wake_on_needs_you,
+       s.name, s.purpose, s.profile_id, s.instructions, s.soul,
        s.created_at AS revision_created_at,
        coalesce(m.memory, '')::text AS memory,
        ar.id AS active_run_id, ar.execution_id AS active_execution_id,
@@ -58,27 +58,14 @@ WHERE (sqlc.narg(project_id)::text IS NULL OR b.project_id = sqlc.narg(project_i
   AND NOT (b.project_id = ANY (coalesce(sqlc.arg(exclude_project_ids)::text[], ARRAY[]::text[])))
 ORDER BY lower(s.name), b.id;
 
--- name: BotListForTriggers :many
-SELECT b.id, b.project_id, b.director, b.revision, b.memory_revision,
-       b.home_session_id, b.paused, b.paused_at, b.resumed_at,
-       s.name, s.purpose, s.profile_id, s.instructions, s.soul, s.schedule_time, s.schedule_zone, s.wake_on_needs_you,
-       s.created_at AS revision_created_at,
-       coalesce(m.memory, '') AS memory
-FROM bot b
-JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
-LEFT JOIN bot_memory_revision m ON m.bot_id = b.id AND m.revision = b.memory_revision
-WHERE b.tombstoned_at IS NULL
-  AND (s.schedule_time <> '' OR s.wake_on_needs_you)
-ORDER BY b.id;
-
 -- name: BotCreate :execrows
 INSERT INTO bot(id, project_id, director, revision)
 VALUES ($1, $2, $3, 1)
 ON CONFLICT (id) DO NOTHING;
 
 -- name: BotSettingsRevisionInsert :exec
-INSERT INTO bot_revision(bot_id, revision, name, purpose, profile_id, instructions, soul, schedule_time, schedule_zone, wake_on_needs_you)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+INSERT INTO bot_revision(bot_id, revision, name, purpose, profile_id, instructions, soul)
+VALUES ($1, $2, $3, $4, $5, $6, $7);
 
 -- name: BotSettingsAdvance :execrows
 UPDATE bot SET revision = revision + 1 WHERE id = $1 AND revision = $2;
@@ -106,23 +93,8 @@ FROM bot b
 WHERE b.home_session_id = $1 AND b.tombstoned_at IS NULL
 LIMIT 1;
 
--- name: BotWakeCursorGet :one
-SELECT bot_id, project_id, needs_you_change_seq, last_schedule_key, last_schedule_at, updated_at
-FROM bot_wake_cursor
-WHERE bot_id = $1;
-
--- name: BotWakeCursorUpsert :exec
-INSERT INTO bot_wake_cursor(bot_id, project_id, needs_you_change_seq, last_schedule_key, last_schedule_at)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (bot_id) DO UPDATE SET
-  project_id = excluded.project_id,
-  needs_you_change_seq = excluded.needs_you_change_seq,
-  last_schedule_key = excluded.last_schedule_key,
-  last_schedule_at = excluded.last_schedule_at,
-  updated_at = now();
-
 -- name: BotRunInsert :execrows
-INSERT INTO bot_run(id, bot_id, project_id, bot_revision, memory_revision, session_id, execution_id, queued_message_id, cause, dedup_key, state, observation, quiet, reason, sent_by, source, payload, automation_id)
+INSERT INTO bot_run(id, bot_id, project_id, bot_revision, memory_revision, session_id, execution_id, queued_message_id, cause, dedup_key, state, observation, quiet, reason, sent_by, source, payload, trigger_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 ON CONFLICT DO NOTHING;
 
@@ -142,13 +114,6 @@ WHERE br.id = $1;
 SELECT id FROM bot_run
 WHERE bot_id = $1 AND dedup_key = $2 AND tombstoned_at IS NULL
 LIMIT 1;
-
--- name: BotHandledDedupPayloads :many
-SELECT dedup_key, payload
-FROM bot_run
-WHERE bot_id = $1 AND tombstoned_at IS NULL AND cause = 'needs_you'
-  AND automation_id IS NOT DISTINCT FROM sqlc.narg(automation_id)::text
-  AND (state <> 'skipped' OR reason = 'paused');
 
 -- name: BotRunByExecution :one
 SELECT id, bot_id, state, observation, cause, quiet, reason, started_at, ended_at
@@ -216,7 +181,7 @@ FROM bot_run br
 LEFT JOIN execution e ON e.id = br.execution_id
 WHERE br.tombstoned_at IS NULL
   AND (sqlc.narg(bot_id)::text IS NULL OR br.bot_id = sqlc.narg(bot_id))
-  AND (sqlc.narg(automation_id)::text IS NULL OR br.automation_id = sqlc.narg(automation_id))
+  AND (sqlc.narg(trigger_id)::text IS NULL OR br.trigger_id = sqlc.narg(trigger_id))
   AND (sqlc.narg(project_id)::text IS NULL OR br.project_id = sqlc.narg(project_id))
   AND (coalesce(cardinality(sqlc.arg(project_ids)::text[]), 0) = 0 OR br.project_id = ANY (sqlc.arg(project_ids)))
   AND NOT (br.project_id = ANY (coalesce(sqlc.arg(exclude_project_ids)::text[], ARRAY[]::text[])))
@@ -241,32 +206,6 @@ SELECT e.id
 FROM execution e
 WHERE e.session_id = $1
    OR e.session_id IN (SELECT s.id FROM session s WHERE s.created_by_session_id = $1);
-
--- name: BotNeedsYouQuestions :many
-SELECT id, code, project_id, task_id, execution_id, session_id, text, asked_by
-FROM question
-WHERE project_id = @project_id::text
-  AND state = 'open'
-  AND (sqlc.narg(enabled_since)::timestamptz IS NULL OR asked_at >= sqlc.narg(enabled_since))
-  AND tombstoned_at IS NULL
-  AND (sqlc.narg(ids)::text[] IS NULL OR id = ANY(sqlc.narg(ids)::text[]))
-ORDER BY seq;
-
--- name: BotNeedsYouExecutions :many
-SELECT id, project_id, task_id, session_id, state::text AS state, problem
-FROM execution
-WHERE project_id = @project_id::text
-  AND tombstoned_at IS NULL
-  AND problem IS NOT NULL
-  AND (sqlc.narg(enabled_since)::timestamptz IS NULL OR updated_at >= sqlc.narg(enabled_since))
-  AND problem NOT IN ('unknown:abandoned', 'cancelled')
-  AND kind <> 'tool_run'
-  AND NOT EXISTS (SELECT 1 FROM problem_dismissal x WHERE x.execution_id = execution.id)
-  AND NOT (state IN ('succeeded', 'failed', 'cancelled') AND (problem LIKE 'unregistered host %' OR problem LIKE 'unregistered account %' OR problem LIKE 'no registered environment of project %'))
-  AND NOT (kind = 'pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind = 'pipeline_run' AND r.problem IS NOT NULL AND r.id = coalesce(execution.parent_execution_id, split_part(execution.id, ':step:', 1))))
-  AND EXISTS (SELECT 1 FROM definition d WHERE d.kind = 'project' AND d.id = execution.project_id)
-  AND (sqlc.narg(ids)::text[] IS NULL OR id = ANY(sqlc.narg(ids)::text[]))
-ORDER BY seq;
 
 -- name: BotLastSessionDispatch :one
 SELECT id,

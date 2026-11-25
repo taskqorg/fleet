@@ -21,7 +21,6 @@ test('Bot revisions survive restart and are isolated by project (requirement: fl
     const settings = {
       name: 'HAL0', purpose: 'Check fixture work', profileId: 'pm',
       instructions: 'Read current task state', soul: 'Use confirmed evidence',
-      scheduleTime: '09:00', scheduleZone: 'Asia/Bangkok', wakeOnNeedsYou: true,
     };
     const original = { botId, projectId: 'hello-world', baseRevision: 0, settings };
     const created = (await op('bot_settings_save', original)).bot;
@@ -34,7 +33,6 @@ test('Bot revisions survive restart and are isolated by project (requirement: fl
     assert.deepEqual((await op('bot_list', {}, 'outsider@trial.test')).bots, []);
     await op('bot_get', { botId }, 'outsider@trial.test', 404);
     await op('bot_memory_save', { botId, baseRevision: 0, memory: 'Out of scope' }, 'outsider@trial.test', 404);
-    await op('bot_settings_save', { ...original, settings: { ...settings, scheduleZone: 'Local' }, baseRevision: 1 }, 'owner@trial.test', 400);
 
     const updated = { ...settings, soul: 'Keep only confirmed evidence' };
     assert.equal((await op('bot_settings_save', { ...original, settings: updated, baseRevision: 1 })).bot.revision, 2);

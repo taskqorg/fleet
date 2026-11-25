@@ -1,9 +1,11 @@
+// Bot automations: the bot page's view of a bot's triggers (triggers.go, docs/designs/fleet-triggers.md). An automation
+// is a bot trigger: schedule is daily, needs_you is a change trigger on questions and failed runs, manual runs only on
+// request. Kept until the bot page reads trigger_list and writes trigger_save.
 package main
 
 import (
-	"context"
 	"errors"
-	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,28 +20,47 @@ func init() {
 	op("bot_automation_save", botAutomationSave)
 }
 
-func automationDedup(id, key string) string {
-	return "automation:" + id + ":" + key
+// getBotTrigger: the trigger id of the bot, errNotFound when it is another target's or absent.
+func getBotTrigger(q *Request, botID, id string) (db.Trigger, error) {
+	t, err := q.db().TriggerGet(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && deref(t.BotID) != botID) {
+		return t, errNotFound
+	}
+	return t, err
 }
 
-func getBotAutomation(q *Request, botID, id string) (db.BotAutomation, error) {
-	a, err := q.db().BotAutomationGet(q.ctx(), db.BotAutomationGetParams{BotID: botID, ID: id})
-	if errors.Is(err, pgx.ErrNoRows) {
-		err = errNotFound
+// automationOf: the automation settings of a bot trigger; false for a trigger the automation kinds cannot show
+// (an unconditional repeating wake, a condition on other kinds).
+func automationOf(t db.Trigger, projectID string) (contract.BotAutomationSettings, bool) {
+	s := contract.BotAutomationSettings{Name: t.Name, Instructions: t.Text, ProjectId: projectID, Enabled: t.Enabled, Event: "none"}
+	switch t.WhenKind {
+	case "daily":
+		s.Kind, s.ScheduleTime, s.ScheduleZone = "schedule", t.DailyTime, t.DailyZone
+	case "manual":
+		s.Kind = "manual"
+	default:
+		s.Kind = "needs_you"
+		switch k := slices.Sorted(slices.Values(t.IfChanged)); {
+		case slices.Equal(k, []string{"execution", "question"}):
+			s.Event = "all"
+		case slices.Equal(k, []string{"question"}):
+			s.Event = "question"
+		case slices.Equal(k, []string{"execution"}):
+			s.Event = "execution"
+		default:
+			return s, false
+		}
 	}
-	return a, err
+	return s, true
 }
 
-func botAutomationRecord(a db.BotAutomation, b *botFull, now time.Time) contract.BotAutomationRecord {
-	return contract.BotAutomationRecord{
-		Id: a.ID, Revision: int64(a.Revision),
-		Settings: contract.BotAutomationSettings{
-			Name: a.Name, Instructions: a.Instructions, ProjectId: a.ProjectID,
-			Kind: contract.BotAutomationKind(a.Kind), ScheduleTime: a.ScheduleTime,
-			ScheduleZone: a.ScheduleZone, Event: contract.BotAutomationEvent(a.Event), Enabled: a.Enabled,
-		},
-		NextRunAt: formatTimePtr(nextAutomationSchedule(a, b, now)),
+func botAutomationRecord(t db.Trigger, b *botFull, now time.Time) (contract.BotAutomationRecord, bool) {
+	s, ok := automationOf(t, b.ProjectId)
+	r := contract.BotAutomationRecord{Id: t.ID, Revision: int64(t.Revision), Settings: s}
+	if t.WhenKind == "daily" && !b.Paused {
+		r.NextRunAt = formatTimePtr(triggerNext(t, now))
 	}
+	return r, ok
 }
 
 func botAutomations(q *Request, r *contract.BotAutomationsRequest) (contract.BotAutomationsReply, error) {
@@ -49,13 +70,16 @@ func botAutomations(q *Request, r *contract.BotAutomationsRequest) (contract.Bot
 		return out, err
 	}
 	out.CanManage = botDirects(q, b.BotRecord) == nil
-	rows, err := q.db().BotAutomationList(q.ctx(), b.Id)
+	rows, err := q.db().TriggerList(q.ctx(), db.TriggerListParams{BotID: &b.Id})
 	if err != nil {
 		return out, err
 	}
 	now := time.Now()
 	for _, row := range rows {
-		record := botAutomationRecord(row.BotAutomation, &b, now)
+		record, ok := botAutomationRecord(row.Trigger, &b, now)
+		if !ok {
+			continue
+		}
 		if row.LastState != "" {
 			state := contract.BotRunState(row.LastState)
 			record.LastRunState = &state
@@ -92,9 +116,32 @@ func validateBotAutomation(b *botFull, s contract.BotAutomationSettings) error {
 	return nil
 }
 
+// triggerOfAutomation: the trigger settings an automation's settings mean.
+func triggerOfAutomation(s contract.BotAutomationSettings) contract.TriggerSettings {
+	t := contract.TriggerSettings{Name: s.Name, Text: s.Instructions, Enabled: s.Enabled, IfChanged: []string{}}
+	switch s.Kind {
+	case "schedule":
+		t.When, t.DailyTime, t.DailyZone = "daily", &s.ScheduleTime, &s.ScheduleZone
+	case "manual":
+		t.When = "manual"
+	default:
+		every := triggerTickMs() // a check each pass, as the bot pass had
+		t.When, t.EveryMs = "every", &every
+		switch s.Event {
+		case "question":
+			t.IfChanged = []string{"question"}
+		case "execution":
+			t.IfChanged = []string{"execution"}
+		default:
+			t.IfChanged = []string{"question", "execution"}
+		}
+	}
+	return t
+}
+
 func botAutomationSave(q *Request, r *contract.BotAutomationSaveRequest) (contract.BotAutomationSaveReply, error) {
 	var out contract.BotAutomationSaveReply
-	if !botIDPattern.MatchString(r.AutomationId) {
+	if r.BaseRevision == 0 && !botIDPattern.MatchString(r.AutomationId) {
 		return out, fail(400, "Expected an automation UUID")
 	}
 	b, err := readBotFull(q, r.BotId)
@@ -104,198 +151,22 @@ func botAutomationSave(q *Request, r *contract.BotAutomationSaveRequest) (contra
 	if err := botDirects(q, b.BotRecord); err != nil {
 		return out, err
 	}
-	settings := r.Settings
-	if err := validateBotAutomation(&b, settings); err != nil {
+	if err := validateBotAutomation(&b, r.Settings); err != nil {
 		return out, err
 	}
-	now := time.Now()
-	a, err := getBotAutomation(q, b.Id, r.AutomationId)
-	switch {
-	case err == nil:
-		current := botAutomationRecord(a, &b, now)
-		if current.Settings == settings && (current.Revision == r.BaseRevision || current.Revision-1 == r.BaseRevision) {
-			return contract.BotAutomationSaveReply{Automation: current}, nil
-		}
-		if current.Revision != r.BaseRevision {
+	settings := triggerOfAutomation(r.Settings)
+	if current, err := getBotTrigger(q, b.Id, r.AutomationId); err == nil {
+		settings.PresetId = optStr(current.PresetID)
+	}
+	saved, err := saveTrigger(q, triggerSaveIn{id: r.AutomationId, baseRevision: r.BaseRevision,
+		target: triggerTarget{botID: b.Id, projectID: &b.ProjectId, bot: &b}, replace: &settings})
+	if err != nil {
+		var f *HTTPError
+		if errors.As(err, &f) && f.Code == 409 {
 			return out, fail(409, "Automation changed. Reload before saving")
 		}
-	case errors.Is(err, errNotFound) && r.BaseRevision == 0:
-	default:
 		return out, err
 	}
-
-	// Changes to the trigger or enabling it establish a new baseline.
-	// Edits to its name and instructions preserve waiting work and today's slot.
-	effectiveSince, eventCursor := a.EffectiveSince, a.EventCursor
-	if r.BaseRevision == 0 || a.Enabled != settings.Enabled || a.Kind != string(settings.Kind) ||
-		a.Event != string(settings.Event) || a.ScheduleTime != settings.ScheduleTime || a.ScheduleZone != settings.ScheduleZone {
-		effectiveSince = now
-		if settings.Kind == "needs_you" && settings.Enabled {
-			eventCursor, err = head(q.ctx(), q.tx)
-			if err != nil {
-				return out, err
-			}
-		}
-	}
-	var changed int64
-	if r.BaseRevision == 0 {
-		changed, err = q.db().BotAutomationCreate(q.ctx(), db.BotAutomationCreateParams{
-			ID: r.AutomationId, BotID: b.Id, ProjectID: b.ProjectId, Name: settings.Name,
-			Instructions: settings.Instructions, Kind: string(settings.Kind), ScheduleTime: settings.ScheduleTime,
-			ScheduleZone: settings.ScheduleZone, Event: string(settings.Event), Enabled: settings.Enabled,
-			EffectiveSince: effectiveSince, EventCursor: eventCursor,
-		})
-	} else {
-		changed, err = q.db().BotAutomationUpdate(q.ctx(), db.BotAutomationUpdateParams{
-			ID: a.ID, BotID: b.Id, Revision: a.Revision, Name: settings.Name, Instructions: settings.Instructions,
-			Kind: string(settings.Kind), ScheduleTime: settings.ScheduleTime, ScheduleZone: settings.ScheduleZone,
-			Event: string(settings.Event), Enabled: settings.Enabled, EffectiveSince: effectiveSince, EventCursor: eventCursor,
-		})
-	}
-	if err != nil {
-		return out, err
-	}
-	if changed != 1 {
-		// A UUID already in use outside this bot is indistinguishable from an inaccessible automation.
-		return out, errNotFound
-	}
-	if err := audit(q, "bot-automation:"+r.AutomationId, "revision", r.BaseRevision, r.BaseRevision+1, auditExtra{ProjectID: &b.ProjectId}); err != nil {
-		return out, err
-	}
-	if q.app != nil {
-		afterCommit(q, q.app.wakeBots)
-	}
-	saved, err := getBotAutomation(q, b.Id, r.AutomationId)
-	return contract.BotAutomationSaveReply{Automation: botAutomationRecord(saved, &b, now)}, err
-}
-
-const automationDate = "2006-01-02"
-
-func automationScheduleSlot(day, clock time.Time) time.Time {
-	slot := time.Date(day.Year(), day.Month(), day.Day(), clock.Hour(), clock.Minute(), 0, 0, day.Location())
-	if slot.Day() != day.Day() || slot.Hour() != clock.Hour() || slot.Minute() != clock.Minute() {
-		// A forward clock change can remove the requested local time.
-		return time.Time{}
-	}
-	return slot
-}
-
-func automationSchedule(a db.BotAutomation, now time.Time) (local, clock time.Time, ok bool) {
-	loc, err := time.LoadLocation(a.ScheduleZone)
-	if err != nil {
-		return time.Time{}, time.Time{}, false
-	}
-	clock, err = time.Parse("15:04", a.ScheduleTime)
-	return now.In(loc), clock, err == nil
-}
-
-func dueAutomationSchedule(a db.BotAutomation, now time.Time) (string, bool) {
-	local, clock, ok := automationSchedule(a, now)
-	if !ok {
-		return "", false
-	}
-	date := local.Format(automationDate)
-	slot := automationScheduleSlot(local, clock)
-	return date, !slot.IsZero() && !slot.Before(a.EffectiveSince) && !now.Before(slot) && date > a.LastScheduleDate
-}
-
-func nextAutomationSchedule(a db.BotAutomation, b *botFull, now time.Time) *time.Time {
-	if !a.Enabled || a.Kind != "schedule" || b.Paused {
-		return nil
-	}
-	local, clock, ok := automationSchedule(a, now)
-	if !ok {
-		return nil
-	}
-	// Advance a calendar date at noon so transitions at the current clock time
-	// cannot move an iteration back into the same date.
-	day := time.Date(local.Year(), local.Month(), local.Day(), 12, 0, 0, 0, local.Location())
-	if last, err := time.ParseInLocation(automationDate, a.LastScheduleDate, local.Location()); err == nil && last.After(day) {
-		day = time.Date(last.Year(), last.Month(), last.Day(), 12, 0, 0, 0, local.Location())
-	}
-	for ; ; day = day.AddDate(0, 0, 1) {
-		slot := automationScheduleSlot(day, clock)
-		if !slot.IsZero() && !slot.Before(now) && !slot.Before(a.EffectiveSince) && day.Format(automationDate) > a.LastScheduleDate {
-			return &slot
-		}
-	}
-}
-
-func botAutomationTriggerPass(ctx context.Context, app *App, now time.Time) error {
-	var due []db.BotAutomation
-	err := app.store.Read(ctx, nil, func(q *Request) error {
-		rows, err := q.db().BotAutomationTriggers(q.ctx())
-		if err != nil || len(rows) == 0 {
-			return err
-		}
-		h, err := head(q.ctx(), q.tx)
-		if err != nil {
-			return err
-		}
-		for _, row := range rows {
-			switch row.Kind {
-			case "schedule":
-				if _, ready := dueAutomationSchedule(row, now); ready {
-					due = append(due, row)
-				}
-			case "needs_you":
-				if row.EventCursor != h {
-					due = append(due, row)
-				}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	for _, row := range due {
-		runErr := app.store.Write(ctx, nil, []string{"bot:" + row.BotID}, func(q *Request) error {
-			return botAutomationProcess(q, row.BotID, row.ID, now)
-		})
-		if runErr != nil {
-			err = errors.Join(err, fmt.Errorf("automation %s: %w", row.ID, runErr))
-		}
-	}
-	return err
-}
-
-func botAutomationProcess(q *Request, botID, id string, now time.Time) error {
-	b, err := readBotFull(q, botID)
-	if errors.Is(err, errNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	a, err := getBotAutomation(q, botID, id)
-	if errors.Is(err, errNotFound) {
-		return nil
-	}
-	if err != nil || !a.Enabled {
-		return err
-	}
-	switch a.Kind {
-	case "schedule":
-		date, due := dueAutomationSchedule(a, now)
-		if !due {
-			return nil
-		}
-		prompt := fmt.Sprintf("Fleet: scheduled daily wake (%s %s) in project %s.", a.ScheduleTime, a.ScheduleZone, b.ProjectId)
-		if _, _, err := admitBotWake(q, &b, botWakeReq{
-			Cause: "schedule", DedupKey: automationDedup(a.ID, "schedule:"+date),
-			Text: prompt, SentBy: "Fleet", Source: "schedule", CheckPause: true, Automation: &a,
-		}); err != nil {
-			return err
-		}
-		return q.db().BotAutomationScheduleAdvance(q.ctx(), db.BotAutomationScheduleAdvanceParams{ID: a.ID, LastScheduleDate: date})
-	case "needs_you":
-		s, err := ensureBotHomeSession(q, &b)
-		if err != nil {
-			return err
-		}
-		return botProcessNeedsYou(q, &b, s, db.BotWakeCursor{NeedsYouChangeSeq: a.EventCursor}, &a)
-	default:
-		return nil
-	}
+	record, _ := botAutomationRecord(saved, &b, time.Now())
+	return contract.BotAutomationSaveReply{Automation: record}, nil
 }

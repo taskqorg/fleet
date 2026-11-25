@@ -1183,7 +1183,7 @@ func (v *SessionTaskAttachRequest) Validate() error {
 	return nil
 }
 
-// SessionTimer: A repeating wake of the session: the watch timer wakes it every everyMs.
+// SessionTimer: A repeating wake of the session: its conversation-check trigger checks it every everyMs.
 type SessionTimer struct {
 	CanManage bool    `json:"canManage"`
 	EveryMs   float64 `json:"everyMs"`
@@ -1629,6 +1629,245 @@ func (v *ToolBlock) Validate() error {
 	return nil
 }
 
+type TriggerDeleteReply struct {
+	Deleted bool   `json:"deleted"`
+	Id      string `json:"id"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TriggerDeleteReply) Validate() error {
+	return nil
+}
+
+type TriggerDeleteRequest struct {
+	BaseRevision int64  `json:"baseRevision"`
+	Id           string `json:"id"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TriggerDeleteRequest) Validate() error {
+	return nil
+}
+
+type TriggerListReply struct {
+	CanManage bool            `json:"canManage"`
+	Presets   []TriggerPreset `json:"presets"`
+	Triggers  []TriggerRecord `json:"triggers"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TriggerListReply) Validate() error {
+	if v.Presets == nil {
+		return Missing("presets")
+	}
+	for i := range v.Presets {
+		if err := Check(&v.Presets[i], "presets"); err != nil {
+			return err
+		}
+	}
+	if v.Triggers == nil {
+		return Missing("triggers")
+	}
+	for i := range v.Triggers {
+		if err := Check(&v.Triggers[i], "triggers"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type TriggerListRequest struct {
+	BotId     *string `json:"botId,omitempty"`
+	SessionId *string `json:"sessionId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TriggerListRequest) Validate() error {
+	return nil
+}
+
+// TriggerPreset: config/triggers/<id>.json: the values trigger_save copies into a new trigger.
+type TriggerPreset struct {
+	Description string               `json:"description"`
+	Id          string               `json:"id"`
+	Name        string               `json:"name"`
+	Settings    TriggerSettingsInput `json:"settings"`
+	Target      TriggerTarget        `json:"target"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TriggerPreset) Validate() error {
+	if err := Check(&v.Settings, "settings"); err != nil {
+		return err
+	}
+	if err := Check(&v.Target, "target"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type TriggerRecord struct {
+	BotId       *string         `json:"botId,omitempty"`
+	Fires       int64           `json:"fires"`
+	Id          string          `json:"id"`
+	LastError   *string         `json:"lastError,omitempty"`
+	LastFireAt  *string         `json:"lastFireAt,omitempty"`
+	NextAt      *string         `json:"nextAt,omitempty"`
+	ProjectId   *string         `json:"projectId,omitempty"`
+	QuietChecks int64           `json:"quietChecks"`
+	QuietSince  *string         `json:"quietSince,omitempty"`
+	Revision    int64           `json:"revision"`
+	SessionId   *string         `json:"sessionId,omitempty"`
+	Settings    TriggerSettings `json:"settings"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TriggerRecord) Validate() error {
+	if err := Check(&v.Settings, "settings"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type TriggerRunReply struct {
+	Sent    bool          `json:"sent"`
+	Trigger TriggerRecord `json:"trigger"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TriggerRunReply) Validate() error {
+	if err := Check(&v.Trigger, "trigger"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type TriggerRunRequest struct {
+	Id string `json:"id"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TriggerRunRequest) Validate() error {
+	return nil
+}
+
+type TriggerSaveReply struct {
+	Trigger TriggerRecord `json:"trigger"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TriggerSaveReply) Validate() error {
+	if err := Check(&v.Trigger, "trigger"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type TriggerSaveRequest struct {
+	BaseRevision int64                 `json:"baseRevision"`
+	BotId        *string               `json:"botId,omitempty"`
+	Id           string                `json:"id"`
+	PresetId     *string               `json:"presetId,omitempty"`
+	SessionId    *string               `json:"sessionId,omitempty"`
+	Settings     *TriggerSettingsInput `json:"settings,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TriggerSaveRequest) Validate() error {
+	if v.Settings != nil {
+		if err := Check(v.Settings, "settings"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type TriggerSettings struct {
+	DailyTime *string     `json:"dailyTime,omitempty"`
+	DailyZone *string     `json:"dailyZone,omitempty"`
+	Enabled   bool        `json:"enabled"`
+	EveryMs   *int64      `json:"everyMs,omitempty"`
+	IfChanged []string    `json:"ifChanged"`
+	Name      string      `json:"name"`
+	PresetId  *string     `json:"presetId,omitempty"`
+	Text      string      `json:"text"`
+	When      TriggerWhen `json:"when"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TriggerSettings) Validate() error {
+	if v.IfChanged == nil {
+		return Missing("ifChanged")
+	}
+	if err := Check(&v.When, "when"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// TriggerSettingsInput: A field left out comes from the preset on create, else keeps its value.
+type TriggerSettingsInput struct {
+	DailyTime *string      `json:"dailyTime,omitempty"`
+	DailyZone *string      `json:"dailyZone,omitempty"`
+	Enabled   *bool        `json:"enabled,omitempty"`
+	EveryMs   *int64       `json:"everyMs,omitempty"`
+	IfChanged []string     `json:"ifChanged,omitempty"`
+	Name      *string      `json:"name,omitempty"`
+	Text      *string      `json:"text,omitempty"`
+	When      *TriggerWhen `json:"when,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TriggerSettingsInput) Validate() error {
+	if v.When != nil {
+		if err := Check(v.When, "when"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type TriggerTarget string
+
+const (
+	TriggerTargetSession TriggerTarget = "session"
+	TriggerTargetBot     TriggerTarget = "bot"
+)
+
+// TriggerTargetValues lists every TriggerTarget in schema order.
+var TriggerTargetValues = []TriggerTarget{TriggerTargetSession, TriggerTargetBot}
+
+// Valid: v is one of the schema's values.
+func (v TriggerTarget) Valid() bool {
+	for _, x := range TriggerTargetValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type TriggerWhen string
+
+const (
+	TriggerWhenEvery  TriggerWhen = "every"
+	TriggerWhenDaily  TriggerWhen = "daily"
+	TriggerWhenManual TriggerWhen = "manual"
+)
+
+// TriggerWhenValues lists every TriggerWhen in schema order.
+var TriggerWhenValues = []TriggerWhen{TriggerWhenEvery, TriggerWhenDaily, TriggerWhenManual}
+
+// Valid: v is one of the schema's values.
+func (v TriggerWhen) Valid() bool {
+	for _, x := range TriggerWhenValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 // WatchGetReply: No watch: watch is absent.
 type WatchGetReply struct {
 	CanManageTimer *bool        `json:"canManageTimer,omitempty"`
@@ -1875,7 +2114,7 @@ func init() {
 		"recommendation_set":  {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Set the recommended method of a project's capability (projectId, methodId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"methodId\"],\"type\":\"object\"}")},
 		"reply":               {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Answer a question; delivered to the asker as its next message", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"answer\":{},\"questionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_archive":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Archive a session (sessionId): it leaves the lists and its worktree is torn down", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
-		"session_context":     {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "What a session (sessionId) plans and keeps running, for the context panel: plan (steps with done marks, owner and task from its work_plan, else its task's), timers (its watch timer, paused or not: edit, pause, resume or cancel it with watch_timer_set, which keeps the event subscriptions), automations (its bot's, change with bot_automation_save), swarm members (the plan's and board's other sessions with their state) and tasks (its own task, the plan's tasks, the tasks it spawned and its bot's tasks; a task's own change does not reread it). Each part is empty when the session has none", Changes: []string{"session", "board", "execution", "bot", "setting-change", "watch"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
+		"session_context":     {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "What a session (sessionId) plans and keeps running, for the context panel: plan (steps with done marks, owner and task from its work_plan, else its task's), timers (its watch timer, paused or not: edit, pause, resume or cancel it with watch_timer_set, which keeps the event subscriptions), automations (its bot's, change with bot_automation_save), swarm members (the plan's and board's other sessions with their state) and tasks (its own task, the plan's tasks, the tasks it spawned and its bot's tasks; a task's own change does not reread it). Each part is empty when the session has none", Changes: []string{"session", "board", "execution", "bot", "setting-change", "trigger"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"session_create":      {Read: false, Long: false, Errors: []int{409}, Auth: "person", Agent: "tool", Description: "Create a session", InputSchema: json.RawMessage("{\"$comment\":\"No fields: the session's director, access and linkage come from the caller.\",\"additionalProperties\":false,\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"session_fork":        {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"strategy\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\"}")},
 		"session_get":         {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "A session (sessionId) with its executions and state", Changes: []string{"session", "execution", "question", "command", "artifact"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
@@ -1889,12 +2128,16 @@ func init() {
 		"session_transition":  {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Select this session’s granted project checkout with projectId, or switch profileId/account (profileId defaults to current). A changed project selection during an active execution returns queued: end this turn; Fleet applies it and automatically starts the next execution to continue the request with frozen context. Focus is separate (focus_set). Other transitions return reuse|switch_model_in_session|restart_and_resume|create_with_handoff", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"account\":{\"type\":\"string\"},\"callerSessionId\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"session_unarchive":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A worktree already torn down is not restored; the next start prepares a new one.", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A worktree already torn down is not restored; the next start prepares a new one.\",\"additionalProperties\":false,\"properties\":{\"reason\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"reason\"],\"type\":\"object\"}")},
 		"sessions_list":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "after: the nextAfter of the previous page.", InputSchema: json.RawMessage("{\"$comment\":\"after: the nextAfter of the previous page.\",\"additionalProperties\":true,\"properties\":{\"after\":{\"items\":{},\"type\":\"array\"},\"filter\":{\"$comment\":\"The list filter of packages/view-url toPageParams; a null projectId is work outside projects; an empty projectId list is refused; archived applies to sessions only. A field a list does not implement is a 400.\",\"additionalProperties\":false,\"properties\":{\"archived\":{\"type\":\"boolean\"},\"excludeProjectId\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); null (or '-', as in excludeProjectIds) is work outside projects; applied after projectId, so a project in both is left out. Agents see every project unless they pass it.\",\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"projectId\":{\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"search\":{\"$comment\":\"free text; tasks also take key:value terms agent:, host:, state:, project: (substring match)\",\"type\":\"string\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"group\":{\"$comment\":\"project, state, agent or none; default project, with the waiting sessions first as one group (key empty, label waiting); state groups in attention order (waiting, failed, running, preparing, idle, succeeded, cancelled)\",\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"sort\":{\"$comment\":\"order inside a group: last activity or creation, - before it is descending; default -activity (latest activity first)\",\"type\":\"string\"}},\"type\":\"object\"}")},
-		"thread_blocks":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "rows: changed records; the reply has their current blocks.", InputSchema: json.RawMessage("{\"$comment\":\"rows: changed records; the reply has their current blocks.\",\"properties\":{\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"rows\":{\"items\":{\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"The kinds the change triggers write (fleet_change and fleet_artifact_change in go/coordinator/schema/functions.sql); a go test checks the triggers against this list.\",\"enum\":[\"api-connection\",\"artifact\",\"board\",\"bot\",\"bot-run\",\"command\",\"connection-key\",\"definition\",\"delivery\",\"event\",\"execution\",\"experiment\",\"host\",\"managed-account\",\"project-recommendation\",\"question\",\"resource_summary\",\"score\",\"session\",\"setting-change\",\"task\",\"watch\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"key\",\"rows\"],\"type\":\"object\"}")},
+		"thread_blocks":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "rows: changed records; the reply has their current blocks.", InputSchema: json.RawMessage("{\"$comment\":\"rows: changed records; the reply has their current blocks.\",\"properties\":{\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"rows\":{\"items\":{\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"The kinds the change triggers write (fleet_change and fleet_artifact_change in go/coordinator/schema/functions.sql); a go test checks the triggers against this list.\",\"enum\":[\"api-connection\",\"artifact\",\"board\",\"bot\",\"bot-run\",\"command\",\"connection-key\",\"definition\",\"delivery\",\"event\",\"execution\",\"experiment\",\"host\",\"managed-account\",\"project-recommendation\",\"question\",\"resource_summary\",\"score\",\"session\",\"setting-change\",\"task\",\"trigger\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"key\",\"rows\"],\"type\":\"object\"}")},
 		"thread_composer":     {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Resolve the current message and Stop target from the open conversation, independent of the transcript page.", Changes: []string{"session", "execution", "task"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"conversationId\":{\"type\":\"string\"}},\"required\":[\"conversationId\"],\"type\":\"object\"}")},
 		"thread_entries":      {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Entries of a thread (key), paged with before, after or around and limit", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"after\":{\"type\":\"string\"},\"around\":{\"type\":\"string\"},\"before\":{\"type\":\"string\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"resolve\":{\"type\":\"boolean\"}},\"required\":[\"key\"],\"type\":\"object\"}")},
 		"thread_export":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "A thread (key) as text, optionally between from and to in timezone tz", InputSchema: json.RawMessage("{\"properties\":{\"from\":{\"properties\":{\"key\":{\"type\":\"string\"},\"offset\":{\"type\":\"integer\"}},\"required\":[\"key\"],\"type\":\"object\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"to\":{\"properties\":{\"key\":{\"type\":\"string\"},\"offset\":{\"type\":\"integer\"}},\"required\":[\"key\"],\"type\":\"object\"},\"tz\":{\"type\":\"string\"}},\"required\":[\"key\"],\"type\":\"object\"}")},
 		"thread_search":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Find text in a thread (key, q), paged with before and limit", InputSchema: json.RawMessage("{\"properties\":{\"before\":{\"type\":\"string\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"q\":{\"type\":\"string\"}},\"required\":[\"key\",\"q\"],\"type\":\"object\"}")},
-		"watch_get":           {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "bound:session", Description: "Your watch: kinds, timer, wakes, last wake, last error and timer management permission", Changes: []string{"watch", "session"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
+		"trigger_delete":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Delete a trigger (id) at its current revision (baseRevision).", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"minimum\":1,\"type\":\"integer\"},\"id\":{\"type\":\"string\"}},\"required\":[\"id\",\"baseRevision\"],\"type\":\"object\"}")},
+		"trigger_list":        {Read: true, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "The triggers of a session (sessionId) or a bot (botId): what each sends, when (every, daily, manual), its change condition (ifChanged), state (next time, fires, quiet checks since the last fire, last error), whether you may manage them, and the presets (config/triggers).", Changes: []string{"trigger", "bot-run"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"botId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"trigger_run":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Fire a trigger (id) now, whatever its time and change condition say.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
+		"trigger_save":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Create (baseRevision 0, a new UUID id, sessionId or botId) or change a trigger. settings fields left out come from the preset (presetId) on create, else stay. A trigger puts its text into the session, or wakes the bot, at its time (when: every everyMs, daily dailyTime dailyZone, manual); with ifChanged (task, question, execution, host, limits) it fires only when something in its focus changed since it last fired and otherwise only counts a quiet check. Pause: enabled false.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseRevision\":{\"minimum\":0,\"type\":\"integer\"},\"botId\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"presetId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"settings\":{\"$comment\":\"A field left out comes from the preset on create, else keeps its value.\",\"additionalProperties\":false,\"properties\":{\"dailyTime\":{\"type\":\"string\"},\"dailyZone\":{\"type\":\"string\"},\"enabled\":{\"type\":\"boolean\"},\"everyMs\":{\"minimum\":1,\"type\":\"integer\"},\"ifChanged\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"name\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"when\":{\"enum\":[\"every\",\"daily\",\"manual\"],\"type\":\"string\"}},\"type\":\"object\"}},\"required\":[\"id\",\"baseRevision\"],\"type\":\"object\"}")},
+		"watch_get":           {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "bound:session", Description: "Your watch (its triggers, docs/designs/fleet-triggers.md; kept until the app reads trigger_list): kinds, timer, wakes, last wake, last error and timer management permission", Changes: []string{"trigger", "session"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"watch_set":           {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "bound:session", Description: "Watch your focus: kinds (task, question, execution, host, limits) and optional timerMs; Fleet sends you one message per batch of foreign changes and on the timer; limits: a pool of your subscriptions projected empty before its next reset", InputSchema: json.RawMessage("{\"$comment\":\"kinds: task, question, execution, host.\",\"additionalProperties\":true,\"properties\":{\"kinds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"sessionId\":{\"type\":\"string\"},\"timerMs\":{\"type\":[\"number\",\"null\"]}},\"required\":[\"sessionId\",\"kinds\"],\"type\":\"object\"}")},
 		"watch_stop":          {Read: false, Long: false, Errors: []int{400, 403}, Auth: "person", Agent: "bound:session", Description: "Stop watching", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"watch_timer_set":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Edit, pause, resume or cancel only the timer of an existing watch, preserving event subscriptions. Compare the supplied timer interval and pause state with the saved settings.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"action\":{\"enum\":[\"edit\",\"pause\",\"resume\",\"cancel\"],\"type\":\"string\"},\"basePaused\":{\"type\":\"boolean\"},\"baseTimerMs\":{\"type\":\"number\"},\"sessionId\":{\"type\":\"string\"},\"timerMs\":{\"type\":\"number\"}},\"required\":[\"sessionId\",\"action\",\"baseTimerMs\",\"basePaused\"],\"type\":\"object\"}")},

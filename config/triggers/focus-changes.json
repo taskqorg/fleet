@@ -1,0 +1,14 @@
+{
+  "id": "focus-changes",
+  "name": "Focus changes",
+  "description": "Within one pass of a change in the focus (tasks, questions, failed runs), one message listing the changes.",
+  "target": "session",
+  "settings": {
+    "name": "Focus changes",
+    "text": "",
+    "when": "every",
+    "everyMs": 15000,
+    "ifChanged": ["task", "question", "execution"],
+    "enabled": true
+  }
+}

@@ -2,7 +2,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"regexp"
 	"strings"
@@ -27,12 +26,6 @@ func init() {
 	op("bot_runs", botRunsOp)
 	op("bot_tasks", botTasksOp)
 	op("bot_task_link", botTaskLinkOp)
-	onStart(func(ctx context.Context, a *App) {
-		a.ensureRuntime()
-		everyWake(ctx, "bots", envMs("FLEET_BOT_TICK_MS", 15000), a.botWakeCh, true, func(ctx context.Context, _ bool) error {
-			return botTriggerPass(ctx, a, time.Now())
-		})
-	})
 }
 
 type botFull struct {
@@ -102,14 +95,11 @@ func readBotFull(q *Request, id string) (botFull, error) {
 		Avatar:            botAvatarOf(row.AvatarArtifactID, row.AvatarMediaType, row.AvatarStillArtifactID, row.AvatarGlow),
 		NeedsYou:          row.NeedsYou,
 		Settings: contract.BotSettings{
-			Name:           row.Name,
-			Purpose:        row.Purpose,
-			ProfileId:      row.ProfileID,
-			Instructions:   row.Instructions,
-			Soul:           row.Soul,
-			ScheduleTime:   row.ScheduleTime,
-			ScheduleZone:   row.ScheduleZone,
-			WakeOnNeedsYou: row.WakeOnNeedsYou,
+			Name:         row.Name,
+			Purpose:      row.Purpose,
+			ProfileId:    row.ProfileID,
+			Instructions: row.Instructions,
+			Soul:         row.Soul,
 		},
 	}
 	return botFull{
@@ -141,9 +131,6 @@ func validateBotSettings(q *Request, settings contract.BotSettings) error {
 	if strings.TrimSpace(settings.Name) == "" {
 		return fail(400, "Enter a bot name")
 	}
-	if err := validateBotSchedule(settings.ScheduleTime, settings.ScheduleZone); err != nil {
-		return err
-	}
 	_, err := readTrustedProfile(q, settings.ProfileId)
 	return err
 }
@@ -174,7 +161,6 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 	if projectSettingsOf(q, r.ProjectId) == nil {
 		return out, errNotFound
 	}
-	var prevWakeOnNeedsYou bool
 	var prevName string
 	bot, err := readBot(q, r.BotId)
 	switch {
@@ -191,7 +177,6 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 		if bot.Revision != r.BaseRevision {
 			return out, fail(409, "Bot settings changed. Reload before saving")
 		}
-		prevWakeOnNeedsYou = bot.Settings.WakeOnNeedsYou
 		prevName = bot.Settings.Name
 	case errors.Is(err, errNotFound):
 		if r.BaseRevision != 0 {
@@ -223,7 +208,6 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 	err = q.db().BotSettingsRevisionInsert(q.ctx(), db.BotSettingsRevisionInsertParams{
 		BotID: r.BotId, Revision: int32(revision), Name: settings.Name, Purpose: settings.Purpose,
 		ProfileID: settings.ProfileId, Instructions: settings.Instructions, Soul: settings.Soul,
-		ScheduleTime: settings.ScheduleTime, ScheduleZone: settings.ScheduleZone, WakeOnNeedsYou: settings.WakeOnNeedsYou,
 	})
 	if err != nil {
 		return out, err
@@ -243,11 +227,6 @@ func botSettingsSave(q *Request, r *contract.BotSettingsSaveRequest) (contract.B
 			if _, err := q.db().TitleRename(q.ctx(), db.TitleRenameParams{ID: row.ID, Title: settings.Name, TitleBy: "bot"}); err != nil {
 				return out, err
 			}
-		}
-	}
-	if r.BaseRevision == 0 || (!prevWakeOnNeedsYou && settings.WakeOnNeedsYou) {
-		if err := initBotWakeCursor(q, saved.Id, saved.ProjectId); err != nil {
-			return out, err
 		}
 	}
 	if q.app != nil {

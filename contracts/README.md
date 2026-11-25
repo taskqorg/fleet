@@ -35,7 +35,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   | `ops-executions` | `execution`, `executions`, `pipeline`, `queue`, `route`, `hosts`, `system`, `object` |
   | `ops-lab` | `lab` |
   | `ops-people` | `me`, `people`, `person`, `focus`, `view`, `list`, `search`, `nav` |
-  | `ops-sessions` | `session`, `sessions`, `thread`, `message`, `reply`, `ask`, `direct`, `watch`, `worker`, `changes`, `recommendation` |
+  | `ops-sessions` | `session`, `sessions`, `thread`, `message`, `reply`, `ask`, `direct`, `watch`, `trigger`, `worker`, `changes`, `recommendation` |
   | `ops-projects` | `project_create`, `project_update`, `project_initial_access_revoke` (shared versioned writes) |
   | `ops-publishing` | `publishing` (`publishing_capabilities`, `publishing_status`, `publishing_publish_draft`, `publishing_record_code_review`, `publishing_mark_ready`, `publishing_request_merge`, `publishing_cancel_merge_request`) |
   | `ops-tasks` | `task`, `question`, `questions`, remaining `project` reads |

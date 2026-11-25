@@ -386,7 +386,7 @@ func cancelTaskWork(q *Request, id string) error {
 	if err := q.db().TaskCancelQueuedMessages(q.ctx(), &id); err != nil {
 		return err
 	}
-	return q.db().TaskDeleteWatches(q.ctx(), &id)
+	return q.db().TaskDeleteTriggers(q.ctx(), &id)
 }
 
 // settleTask moves an open task toward target through the transitions whose guards hold now.

@@ -11,15 +11,31 @@ import (
 
 func testBotSettings(profileID string) contract.BotSettings {
 	return contract.BotSettings{
-		Name:           "HAL0",
-		Purpose:        "Watch project health and Needs you",
-		ProfileId:      profileID,
-		Instructions:   "Inspect open questions and failed runs first.",
-		Soul:           "Report only confirmed evidence.",
-		ScheduleTime:   "",
-		ScheduleZone:   "",
-		WakeOnNeedsYou: false,
+		Name:         "HAL0",
+		Purpose:      "Watch project health and Needs you",
+		ProfileId:    profileID,
+		Instructions: "Inspect open questions and failed runs first.",
+		Soul:         "Report only confirmed evidence.",
 	}
+}
+
+// testBotWakeTriggers: a daily trigger at the given UTC minute and a Needs you trigger on the bot, from the presets.
+func testBotWakeTriggers(t *testing.T, e *testCoordEnv, botID string, at time.Time, headers map[string]string) {
+	t.Helper()
+	for _, in := range []contract.TriggerSaveRequest{
+		{Id: newID(), BotId: &botID, PresetId: ptr("daily-reconciliation"), Settings: &contract.TriggerSettingsInput{DailyTime: ptr(at.Format("15:04")), DailyZone: ptr("Etc/UTC")}},
+		{Id: newID(), BotId: &botID, PresetId: ptr("needs-you")},
+	} {
+		if code, rep := e.callJSON(t, "POST", "/api/ops/trigger_save", in, headers); code != 200 {
+			t.Fatalf("trigger_save = %d %v", code, rep)
+		}
+	}
+}
+
+// testExecutionText: the message text of an execution.
+func testExecutionText(t *testing.T, e *testCoordEnv, execID string) string {
+	t.Helper()
+	return runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", "SELECT text FROM message WHERE execution_id = '"+execID+"';")
 }
 
 func testRegisterHostFor(t *testing.T, e *testCoordEnv, hostID, holder string) string {
@@ -326,7 +342,7 @@ func TestBotRuntimeHomeConversationAndAdmission(t *testing.T) {
 	}, hostHdrB)
 }
 
-// Requirement: fleet.md Persistent bots: daily scheduled wakes (schedule_time, schedule_zone) and wake_on_needs_you
+// Requirement: fleet.md Persistent bots: daily scheduled wakes and Needs you wakes (bot triggers, fleet-triggers.md)
 // triggers persist wake state & deduplication across coordinator restarts and exclude self-originated items.
 // Risk: restart replays duplicate schedule/Needs-you wakes, self-originated questions/problems trigger infinite loops,
 // or other projects' Needs-you items wake a scoped bot.
@@ -336,12 +352,9 @@ func TestBotRuntimeScheduleNeedsYouDedupAndSelfExclusion(t *testing.T) {
 	member := map[string]string{"Authorization": "Bearer " + e.browserSecret, "X-Fleet-Person": "member@trial.test"}
 	_ = e.registerHost(t, "h-sched")
 
-	now := time.Now().UTC().Truncate(time.Minute)
+	now := time.Now().UTC().Truncate(time.Minute).Add(time.Minute) // a daily time after the triggers' creation
 	botID := newID()
 	settings := testBotSettings("pm")
-	settings.ScheduleTime = now.Format("15:04")
-	settings.ScheduleZone = "Etc/UTC"
-	settings.WakeOnNeedsYou = true
 
 	code, saveResp := e.callJSON(t, "POST", "/api/ops/bot_settings_save", contract.BotSettingsSaveRequest{
 		BotId: botID, ProjectId: "desiign", BaseRevision: 0, Settings: settings,
@@ -350,10 +363,11 @@ func TestBotRuntimeScheduleNeedsYouDedupAndSelfExclusion(t *testing.T) {
 		t.Fatalf("bot_settings_save = %d %v", code, saveResp)
 	}
 	homeSID := astr(mapOf(saveResp["bot"])["homeSessionId"])
+	testBotWakeTriggers(t, e, botID, now, member)
 
 	// 1. Trigger scheduled daily wake at `now`.
-	if err := botTriggerPass(e.ctx, e.app, now); err != nil {
-		t.Fatalf("botTriggerPass schedule: %v", err)
+	if err := triggerPass(e.ctx, e.app, now); err != nil {
+		t.Fatalf("triggerPass schedule: %v", err)
 	}
 	code, runs := e.callJSON(t, "POST", "/api/ops/bot_runs", contract.BotRunsRequest{
 		BotId: &botID, Cause: ptr(contract.BotRunCauseSchedule),
@@ -368,8 +382,8 @@ func TestBotRuntimeScheduleNeedsYouDedupAndSelfExclusion(t *testing.T) {
 	restartedApp := &App{store: e.appStore, browserSecret: e.browserSecret, hostID: "test-coord"}
 	restartedApp.ensureRuntime()
 	restartedApp.people.Store(e.app.people.Load())
-	if err := botTriggerPass(e.ctx, restartedApp, now.Add(2*time.Minute)); err != nil {
-		t.Fatalf("botTriggerPass after restart: %v", err)
+	if err := triggerPass(e.ctx, restartedApp, now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("triggerPass after restart: %v", err)
 	}
 	code, runsAfterRestart := e.callJSON(t, "POST", "/api/ops/bot_runs", contract.BotRunsRequest{
 		BotId: &botID, Cause: ptr(contract.BotRunCauseSchedule),
@@ -402,8 +416,8 @@ func TestBotRuntimeScheduleNeedsYouDedupAndSelfExclusion(t *testing.T) {
 		 ('q-foreign-ny','operator_decision','desiign',NULL,'s-foreign-same','Approve foreign deploy?','["yes","no"]','owner@trial.test','open');
 	`)
 
-	if err := botTriggerPass(e.ctx, restartedApp, now.Add(3*time.Minute)); err != nil {
-		t.Fatalf("botTriggerPass needs_you: %v", err)
+	if err := triggerPass(e.ctx, restartedApp, now.Add(3*time.Minute)); err != nil {
+		t.Fatalf("triggerPass needs_you: %v", err)
 	}
 	code, nyRuns := e.callJSON(t, "POST", "/api/ops/bot_runs", contract.BotRunsRequest{
 		BotId: &botID, Cause: ptr(contract.BotRunCauseNeedsYou),
@@ -412,21 +426,17 @@ func TestBotRuntimeScheduleNeedsYouDedupAndSelfExclusion(t *testing.T) {
 		t.Fatalf("expected exactly 1 needs_you run, got %d %v", code, nyRuns)
 	}
 	nyRun := mapOf(anys(nyRuns["runs"])[0])
-	triggers := anys(nyRun["triggers"])
-	if len(triggers) != 2 {
-		t.Fatalf("expected 2 foreign in-project triggers (q-foreign-ny and e-foreign-prob), got %v", triggers)
+	nyText := testExecutionText(t, e, astr(nyRun["executionId"]))
+	if !strings.Contains(nyText, "question q-foreign-ny") || !strings.Contains(nyText, "execution e-foreign-prob failed") {
+		t.Fatalf("expected the foreign in-project question and failure (q-foreign-ny and e-foreign-prob), got %q", nyText)
 	}
-	for _, tr := range triggers {
-		id := astr(mapOf(tr)["id"])
-		if id == "q-self-ask" || id == "e-self-prob" || id == "e-child-prob" || id == "q-other-proj" {
-			t.Fatalf("self-origin or out-of-project item leaked into Needs you wake: %v", tr)
+	for _, id := range []string{"q-self-ask", "e-self-prob", "e-child-prob", "q-other-proj"} {
+		if strings.Contains(nyText, id) {
+			t.Fatalf("self-origin or out-of-project item %s leaked into Needs you wake: %q", id, nyText)
 		}
 	}
 
-	// Even if change cursor is rewound (e.g. cursor loss / resync after restart), dedup_key prevents duplicate wake.
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
-		UPDATE bot_wake_cursor SET needs_you_change_seq = 0 WHERE bot_id = '`+botID+`';
-	`)
+	// A later pass with no new change in the focus sends nothing: the cursor moved past what the wake reported.
 	nyExecID := astr(nyRun["executionId"])
 	if err := e.app.store.Write(e.ctx, nil, []string{"execution:" + nyExecID}, func(q *Request) error {
 		_, err := executionTransition(q, nyExecID, executionEvent{To: "succeeded"})
@@ -434,14 +444,14 @@ func TestBotRuntimeScheduleNeedsYouDedupAndSelfExclusion(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("finish nyExec: %v", err)
 	}
-	if err := botTriggerPass(e.ctx, restartedApp, now.Add(4*time.Minute)); err != nil {
-		t.Fatalf("botTriggerPass after cursor rewind: %v", err)
+	if err := triggerPass(e.ctx, restartedApp, now.Add(4*time.Minute)); err != nil {
+		t.Fatalf("triggerPass after cursor rewind: %v", err)
 	}
 	code, nyRunsAfter := e.callJSON(t, "POST", "/api/ops/bot_runs", contract.BotRunsRequest{
 		BotId: &botID, Cause: ptr(contract.BotRunCauseNeedsYou),
 	}, owner)
 	if code != 200 || len(anys(nyRunsAfter["runs"])) != 1 {
-		t.Fatalf("expected dedup to prevent duplicate needs_you wake after cursor rewind, got %d %v", code, nyRunsAfter)
+		t.Fatalf("expected no second needs_you wake without a new change, got %d %v", code, nyRunsAfter)
 	}
 }
 
@@ -457,12 +467,9 @@ func TestBotRuntimePauseStopAuthorityAndRunsObservability(t *testing.T) {
 	sec := testRegisterHostFor(t, e, "h-ctrl", "member@trial.test")
 	hostHdr := map[string]string{"Authorization": "Bearer " + sec}
 
-	now := time.Now().UTC().Truncate(time.Minute)
+	now := time.Now().UTC().Truncate(time.Minute).Add(time.Minute) // a daily time after the triggers' creation
 	botID := newID()
 	settings := testBotSettings("pm")
-	settings.ScheduleTime = now.Format("15:04")
-	settings.ScheduleZone = "Etc/UTC"
-	settings.WakeOnNeedsYou = true
 
 	code, saveResp := e.callJSON(t, "POST", "/api/ops/bot_settings_save", contract.BotSettingsSaveRequest{
 		BotId: botID, ProjectId: "desiign", BaseRevision: 0, Settings: settings,
@@ -471,6 +478,7 @@ func TestBotRuntimePauseStopAuthorityAndRunsObservability(t *testing.T) {
 		t.Fatalf("bot_settings_save = %d %v", code, saveResp)
 	}
 	homeSID := astr(mapOf(saveResp["bot"])["homeSessionId"])
+	testBotWakeTriggers(t, e, botID, now, member)
 
 	// 1. Pause blocks future scheduled and Needs-you wakes (recorded as skipped reason=paused).
 	code, pauseResp := e.callJSON(t, "POST", "/api/ops/bot_pause", contract.BotPauseRequest{
@@ -483,8 +491,9 @@ func TestBotRuntimePauseStopAuthorityAndRunsObservability(t *testing.T) {
 		INSERT INTO question(id,kind,project_id,text,options,asked_by,state)
 		VALUES ('q-while-paused','operator_decision','desiign','Paused wake check?','["ok"]','owner@trial.test','open');
 	`)
-	if err := botTriggerPass(e.ctx, e.app, now); err != nil {
-		t.Fatalf("botTriggerPass while paused: %v", err)
+	// After the Needs you trigger's first interval (15 s from its creation) and the daily minute.
+	if err := triggerPass(e.ctx, e.app, now.Add(30*time.Second)); err != nil {
+		t.Fatalf("triggerPass while paused: %v", err)
 	}
 	code, skippedRuns := e.callJSON(t, "POST", "/api/ops/bot_runs", contract.BotRunsRequest{
 		BotId: &botID, State: ptr(contract.BotRunStateSkipped),

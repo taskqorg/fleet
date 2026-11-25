@@ -410,6 +410,7 @@ type agentMessage struct {
 	Text              string          `json:"text"`
 	SentBy            string          `json:"sentBy,omitempty"`
 	Source            string          `json:"source,omitempty"`
+	TriggerID         string          `json:"triggerId,omitempty"`
 	Attachments       json.RawMessage `json:"attachments,omitempty"`
 	AttachmentRequest []string        `json:"attachmentRequest,omitempty"`
 	rest              recordRest
@@ -441,6 +442,7 @@ type agentQueued struct {
 	Source            string          `json:"source,omitempty"`
 	Traceparent       string          `json:"traceparent,omitempty"`
 	TraceActor        string          `json:"traceActor,omitempty"`
+	TriggerID         string          `json:"triggerId,omitempty"`
 	Attachments       json.RawMessage `json:"attachments,omitempty"`
 	AttachmentRequest []string        `json:"attachmentRequest,omitempty"`
 	Error             string          `json:"error,omitempty"`
@@ -593,6 +595,7 @@ type sessionQueues struct {
 type queuedMessagePayload struct {
 	Traceparent       string          `json:"traceparent,omitempty"`
 	TraceActor        string          `json:"traceActor,omitempty"`
+	TriggerID         string          `json:"triggerId,omitempty"`
 	Attachments       json.RawMessage `json:"attachments,omitempty"`
 	AttachmentRequest []string        `json:"attachmentRequest,omitempty"`
 	Error             string          `json:"error,omitempty"`
@@ -646,6 +649,7 @@ func queuedMessagePut(q *Request, m *agentQueued) error {
 	p := queuedMessagePayload{
 		Traceparent:       m.Traceparent,
 		TraceActor:        m.TraceActor,
+		TriggerID:         m.TriggerID,
 		Attachments:       m.Attachments,
 		AttachmentRequest: m.AttachmentRequest,
 		Error:             m.Error,

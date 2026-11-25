@@ -1,4 +1,4 @@
-import type { BotListItem, BotRunRecord, BotRunState, BotSettings, BotTaskRecord } from '../../contracts/generated/ops-bots.ts';
+import type { BotListItem, BotRunRecord, BotRunState, BotTaskRecord } from '../../contracts/generated/ops-bots.ts';
 import { states, type StateOf } from '../../packages/ui/src/states.ts';
 import type { AvatarPicture, AvatarState } from '../../packages/ui/src/controls/avatar.tsx';
 
@@ -37,18 +37,6 @@ export function filterBotRuns(runs: readonly BotRunRecord[], filter: BotRunFilte
     case 'failed': return runs.filter(r => r.state === 'failed');
     case 'unconfirmed': return runs.filter(r => r.observation === 'unconfirmed');
   }
-}
-
-/** Format configured bot wake triggers for header and overview display. */
-export function formatBotTriggers(s: Pick<BotSettings, 'scheduleTime' | 'scheduleZone' | 'wakeOnNeedsYou'>): string {
-  const parts: string[] = [];
-  if (s.scheduleTime) {
-    parts.push(`Daily at ${s.scheduleTime}${s.scheduleZone ? ` (${s.scheduleZone})` : ''}`);
-  } else {
-    parts.push('No daily schedule');
-  }
-  parts.push(s.wakeOnNeedsYou ? 'Wake on Needs you on' : 'Wake on Needs you off');
-  return parts.join(' · ');
 }
 
 const BOT_RUN_STATE_SET = new Set(Object.keys(states.botRun));
