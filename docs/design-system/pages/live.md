@@ -48,7 +48,7 @@ Every element opens its detail in the app: a host in System, a slot or event in 
 * model class: its effective candidate order ("Antigravity first, then Codex, then Claude");
 * pinned project: the hosts and subscriptions it may use.
 
-Each line says why in words: who set it, when, until, what it moved. A subscription with quota that will go unused carries the attention tone and the offered preference. The row menu (OR-37) offers In or Out, Prefer, Default or Avoid, Until and Undo; HAL0 makes the same changes by voice. An out host's band is dimmed with its state word. In wall mode the block only shows. Data: `balance_view`; writes: `balance_set`, `balance_undo`. Not built.
+Each line says why in words: who set it, when, until, what it moved. A subscription with quota that will go unused carries the attention tone and the offered preference. The row menu (OR-37) offers In or Out, Prefer, Default or Avoid, Until and Undo; HAL0 makes the same changes by voice. An out host's band is dimmed with its state word. In wall mode the block only shows. Data: `balance_view`; writes: `balance_set`, `balance_undo`. Canvas: the frame "Live · Balance block (target)" on [screens/live.bl](../board/screens/live.bl). Not built.
 
 ## Behaviour
 
