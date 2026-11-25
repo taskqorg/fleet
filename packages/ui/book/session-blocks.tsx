@@ -1,6 +1,7 @@
+import { createSignal } from 'solid-js';
 // Book demos of the session-view blocks (board: docs/design-system/board/blocks.bl, Blocks · Session view).
 import type { JSX } from '@solidjs/web';
-import { TextRow, ToolLine, PlanItem, TimerRow, TimerChip, SwarmMember, ContextPanel, Composer, CommandPreview, type ToolCall } from '../src/index.ts';
+import { TextRow, ToolLine, ThreadList, type ThreadItem, PlanItem, TimerRow, TimerChip, SwarmMember, ContextPanel, Composer, CommandPreview, type ToolCall } from '../src/index.ts';
 import { NOW, min } from './fixtures.ts';
 
 type BookSection = [string, string, string | undefined, () => JSX.Element, (() => JSX.Element)?];
@@ -25,6 +26,20 @@ function ToolLineDemo() {
     <ToolLine words="Ran a command, saved 3 results, used Fleet" secs={20} calls={CALLS} open />
     <ToolLine words="Exporting the Live canvas" state="running" startedAt={NOW - 4000} calls={[{ name: 'export', kind: 'other', target: 'live.bl', secs: 0, running: true }]} />
     <ToolLine words="Push to origin failed: permission denied" state="failed" secs={2} calls={[{ name: 'bash', kind: 'shell', target: 'git push origin', error: 'permission denied', secs: 2, failed: true }]} open />
+  </div>;
+}
+
+const THREADS: ThreadItem[] = [
+  { key: 'topic:a1', title: 'Аудит UI', code: null, itemState: null, lastActivityAt: NOW - 2 * min, turns: 3, open: true, unread: 0 },
+  { key: 'question:q432', title: 'P90 выпуска вырос до 2:56', code: 'Q-FLT-432', itemState: 'open', lastActivityAt: NOW - 5 * min, turns: 2, open: true, unread: 1 },
+  { key: 'task:t63', title: 'Форматирование Go-файлов', code: 'T-FLT-63', itemState: 'queued', lastActivityAt: NOW - 120 * min, turns: 1, open: true, unread: 0 },
+  { key: 'task:t64', title: 'Ответ Telegram на /help', code: 'T-FLT-64', itemState: 'held', lastActivityAt: NOW - 60 * min, turns: 4, open: false, unread: 0 },
+  { key: '', title: 'Main thread', code: null, itemState: null, lastActivityAt: NOW - 180 * min, turns: 9, open: false, unread: 0 },
+];
+function ThreadListDemo() {
+  const [sel, setSel] = createSignal('topic:a1');
+  return <div style={{ width: 'calc(var(--size-rail) + var(--space-7) + var(--space-6))', border: '1px solid var(--line)' }}>
+    <ThreadList threads={THREADS} selected={sel()} onSelect={setSel} quiet={{ schedule: 'Every 5m · quiet checks', text: '14 quiet checks since 13:05 · nothing changed' }} />
   </div>;
 }
 
@@ -80,6 +95,7 @@ function CommandDemo() {
 export const SESSION_BLOCKS: BookSection[] = [
   ['message', 'Message in the session view', 'transcript-viewer', () => <MessageDemo />, () => <>OR-54: <span class="mono">TextRow quiet</span>, no service row; the agent's words as text, the person's in a bubble on the right.</>],
   ['tool-line', 'Tool line', 'tool-line', () => <ToolLineDemo />, () => <>OR-52, Conversations v2 (c2): chips per kind of call with count, failures and time; a chip opens its calls (a call opens its input and output); running (the time ticks) and failed. A failure the agent recovered from only counts in its chip.</>],
+  ['thread-list', 'Thread list', 'context-panel', () => <ThreadListDemo />, () => <>Conversations v2 (b2): work-item threads, Open then Parked, newest first; unread as “1 new”; the timers' quiet checks fold into the foot row.</>],
   ['context-parts', 'Plan item, timer row, swarm member', 'context-panel', () => <PartsDemo />, () => <>Todo and done steps; a timer with its schedule, live time to the next check, its message, quiet checks, Pause, Edit and Cancel (Cancel confirms in place); a paused one; one the person may not change; a swarm member opens its own session.</>],
   ['timer-chip', 'Timer chip', 'context-panel', () => <TimerChipDemo />, () => <>Owner pick A: in the session head while a timer exists; the interval and the live time to the next check, paused, and +1 for more timers. A click opens Context.</>],
   ['composer-command', 'Composer command with preview', 'composer', () => <CommandDemo />, () => <>Edit of a timer fills the composer with its command; the preview shows what changes before Apply, and a conflict (409) says what the timer is now with Load current.</>],

@@ -41,6 +41,27 @@
   .tool-call-io pre { margin: 0; max-height: calc(var(--size-list) * 1.25); overflow: auto; padding: var(--space-2); border: 1px solid var(--line-soft); border-radius: var(--radius-md); background: var(--bg); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
   @media (pointer: coarse) { .tool-chip, .tool-call-row { min-height: var(--size-hit-phone); } }
 
+  /* Thread list (Conversations v2, owner pick b2): work-item threads of a conversation */
+  .thread-list { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); color: var(--fg); }
+  .thread-list-body { flex: 1; min-height: 0; overflow-y: auto; padding-block: var(--space-2); }
+  .thread-list h3 { margin: 0; padding: var(--space-3) var(--space-4) var(--space-1); color: var(--fg-faint); font-size: var(--font-size-xs); font-weight: var(--font-weight-bold); text-transform: uppercase; letter-spacing: .04em; }
+  .thread-list ul { margin: 0; padding: 0; list-style: none; }
+  .thread-item { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; padding: var(--space-2) var(--space-4); border: 0; border-inline-start: 2px solid transparent; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+  .thread-item:hover { background: var(--hover); }
+  .thread-item.on { border-inline-start-color: var(--accent); background: var(--selected); }
+  .thread-item-top, .thread-item-foot { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .thread-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-md); font-weight: var(--font-weight-medium); }
+  .thread-item.parked .thread-item-title { color: var(--fg-muted); }
+  .thread-item-top .when { flex: none; color: var(--fg-faint); font-size: var(--font-size-xs); }
+  .thread-item-new { flex: none; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--attention-bg); color: var(--attention-fg); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
+  .thread-item-code { color: var(--fg-muted); font-family: var(--font-mono); font-size: var(--font-size-xs); }
+  .thread-list-quiet { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line-soft); background: var(--surface); font-size: var(--font-size-sm); }
+  .thread-list-quiet .icon { flex: none; width: var(--size-icon-sm); height: var(--size-icon-sm); color: var(--running-fg); }
+  .thread-list-quiet > span { display: flex; flex-direction: column; min-width: 0; }
+  .thread-list-quiet b { font-weight: var(--font-weight-medium); }
+  .thread-list-quiet span span { color: var(--fg-muted); font-size: var(--font-size-xs); }
+  @media (pointer: coarse) { .thread-item { min-height: var(--size-hit-phone); } }
+
   /* Context panel (OR-51) */
   .ctx-panel { display: flex; flex-direction: column; gap: var(--space-4); width: var(--size-search); min-width: 0; padding: var(--space-4); border-inline-start: 1px solid var(--line); background: var(--surface); color: var(--fg); }
   .ctx-head { display: flex; align-items: center; justify-content: space-between; min-height: var(--size-chip); }
@@ -83,6 +104,15 @@
      600 px of its own width the column gives way to a sheet (the Context icon opens it). */
   .detail.session-view { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0; padding: 0; overflow: hidden; container-type: inline-size; }
   .session-view[data-frame=home] { block-size: 100%; }
+  /* Work-item threads (owner pick b2): the thread list as the first column; at phone width the list and the thread take turns. */
+  .detail.session-view.with-threads { grid-template-columns: calc(var(--size-rail) + var(--space-7) + var(--space-6)) minmax(0, 1fr) auto; }
+  .session-view.with-threads > .thread-list { border-inline-end: 1px solid var(--line-soft); }
+  .sv-threads-back { display: none; }
+  @media (max-width: 767px) { /* the container's own columns can not answer its container query */
+    .detail.session-view.with-threads { grid-template-columns: minmax(0, 1fr) auto; }
+    .session-view[data-threads=list] > .sv-main, .session-view[data-threads=thread] > .thread-list { display: none; }
+    .session-view[data-threads=thread] .sv-threads-back { display: inline-flex; }
+  }
   .sv-main { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; min-height: 0; padding-block: var(--space-4); padding-inline: clamp(var(--space-3), calc(6% - var(--space-5)), var(--space-6)); }
   .sv-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; min-height: var(--size-control); }
   .sv-name { flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); }

@@ -5,7 +5,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onSettled, untrack } from 'solid-js';
 import { currentUrl, useLocation } from '../router.ts';
 import {
-  Avatar, ProjectChip, StateDot, QuestionCard, OpenQuestion, Thread, ContextPanel, SidePanel, Composer, TimerChip, CommandPreview,
+  Avatar, ProjectChip, StateDot, QuestionCard, OpenQuestion, Thread, ThreadList, type ThreadItem, ContextPanel, SidePanel, Composer, TimerChip, CommandPreview,
   Button, ActionMenu, SearchField, ErrorBanner, Skeleton, DropZone, InlineForm, TextField, DetailSection, Disclosure, KvRow,
   EntityCode, EntityPicker, agentLabel, harnesses, writeClip, zone, life as lifeIn, statesOf, timeOf, plural, clock,
   type VirtualListHandle, type CatalogueTreeNode, type IconName, type Harness, type ComposerChip, type Life, type AvatarMark,
@@ -74,8 +74,22 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const projects = useOp('project_list', () => (s()?.projectId ? {} : null));
   const project = createMemo(() => projects.data?.projects.find(p => rec(p).id === s()?.projectId));
 
+  // Work-item threads (fleet-conversations.md#work-item-threads; Conversations v2, owner pick b2): a session with more than
+  // its main thread lists them and shows one at a time, the newest by default; the composer writes into the shown one.
+  const threadItems = createMemo<ThreadItem[]>(() => (view()?.threads ?? []).map(t => ({ key: t.threadKey, title: t.title, code: t.code,
+    itemState: t.itemState, lastActivityAt: t.lastActivityAt, turns: t.turns, open: t.open, unread: t.unread })));
+  const hasThreads = createMemo(() => threadItems().length > 1);
+  const [picked, setPicked] = createSignal<string | null>(null);
+  const shownThread = createMemo(() => {
+    const ts = threadItems(), p = picked();
+    if (p !== null && ts.some(t => t.key === p)) return p;
+    return [...ts].sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))[0]?.key ?? '';
+  });
+  // At phone width the list and the thread take turns: the list first, a pick opens the thread, Threads goes back.
+  const [threadsMode, setThreadsMode] = createSignal<'list' | 'thread'>('list');
+  const pickThread = (k: string) => { setPicked(k); setThreadsMode('thread'); };
   // Thread: a session that got a task shows the task's thread; Thread quiet folds its blocks (tool-fold.ts).
-  const thread = useThread(() => ({ session: props.id }));
+  const thread = useThread(() => (hasThreads() ? { session: props.id, thread: shownThread() } : { session: props.id }));
   const key = createMemo<ThreadKey>(() => thread.win?.key ?? { session: props.id });
   const answers = useAnswers();
   const execStates = createMemo(() => new Map((view()?.executions.rows ?? []).map(e => [e.id, e.state])));
@@ -219,6 +233,11 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
     nextAt: timeOf(t.nextAt) ?? undefined, selected: editing()?.id === t.id,
     quiet: t.quietChecks > 0 ? `${plural(t.quietChecks, 'quiet check')}${t.quietSince ? ` since ${clock(Date.parse(t.quietSince))}` : ''}` : undefined,
   })));
+  // The thread list's foot: the timer's quiet checks folded into one row (owner pick b2).
+  const quietRow = createMemo(() => {
+    const t = timed().find(x => x.quietChecks > 0 && x.settings.enabled);
+    return t ? { schedule: `${scheduleOf(t.settings)} · quiet checks`, text: `${plural(t.quietChecks, 'quiet check')}${t.quietSince ? ` since ${clock(Date.parse(t.quietSince))}` : ''} · nothing changed` } : undefined;
+  });
   // The head's timer chip (owner pick A): the first active timer, else the first paused one; a click opens Context.
   const headTimer = createMemo(() => { const ts = timed(); const t = ts.find(x => x.settings.enabled) ?? ts[0]; return t ? { t, more: ts.length - 1 } : null; });
   const [reveal, setReveal] = createSignal(0);
@@ -322,7 +341,8 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
     // One requestId per draft text and files until it is sent (prepareSending): a resend after a failure or a reload is the
     // same write. A message with files is queued while the agent runs; without files it steers the run.
     const dScope = authorizedDraftScope({ kind: 'session', id: props.id });
-    const body = { sessionId: sid, text, composer: { conversationId: props.id, executionId }, ...(attachments.length ? { attachments } : executionId ? { delivery: 'steer' } : {}) };
+    const th = untrack(hasThreads) ? untrack(shownThread) : '';
+    const body = { sessionId: sid, text, composer: { conversationId: props.id, executionId }, ...(th ? { thread: th } : {}), ...(attachments.length ? { attachments } : executionId ? { delivery: 'steer' } : {}) };
     const request = await prepareSending(dScope, 'message_send', body), sKey = submissionKey(body);
     setFailure(null);
     try {
@@ -360,9 +380,13 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   return (
     <Switch
       fallback={
-        <article class="detail session-view" data-ui="detail" data-frame={props.frame} tabindex={-1} aria-label={title()}>
+        <article class={['detail session-view', { 'with-threads': hasThreads() }]} data-ui="detail" data-frame={props.frame} data-threads={hasThreads() ? threadsMode() : undefined} tabindex={-1} aria-label={title()}>
+          <Show when={hasThreads()}>
+            <ThreadList threads={threadItems()} selected={shownThread()} onSelect={pickThread} quiet={quietRow()} />
+          </Show>
           <div class="sv-main">
             <header class="sv-head">
+              <Show when={hasThreads()}><span class="sv-threads-back"><Button label="Threads" icon="arrow-left" kind="quiet" onClick={() => setThreadsMode('list')} /></span></Show>
               <Avatar {...avatar()} />
               <h2 class="sv-name" data-tip={title()}>{title()}</h2>
               <Show when={projectName()}>{n => <ProjectChip name={n()} />}</Show>

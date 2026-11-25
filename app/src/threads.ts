@@ -8,7 +8,7 @@ import { subscribe, type Change } from './feed.ts';
 import type { Block, ThreadEntriesReply } from '../../contracts/generated/ops.ts';
 
 export type { Block };
-export type ThreadKey = { task: string } | { session: string };
+export type ThreadKey = { task: string } | { session: string; thread?: string };
 export type Page = Omit<ThreadEntriesReply, 'key' | 'sessionIds'> & { key?: ThreadKey; sessionIds?: string[] };
 /** fresh: entries fed past `last` while newer history is not loaded (after a jump); the pill counts them. */
 export type Win = { blocks: Block[]; first: string | null; last: string | null; hasBefore: boolean; hasAfter: boolean; total: number; fresh: number; freshKeys?: string[]; sessionIds?: string[]; key?: ThreadKey };
