@@ -132,7 +132,17 @@ function KeyFlow(props: { flow: Flow & { kind: 'key' }; onDone: () => void; onCh
   const [value, setValue] = createSignal('');
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal('');
-  const [result, setResult] = createSignal<Item | null>(null);
+  // added: the new key's addedAt (server ms). The server checks every added key at once (connections_key_add, by any
+  // path) and its change rereads access_status; the first check after addedAt is this key's result.
+  // late: no check came within 30 s (the server could not run one); the item shows as it is, with its Check button.
+  const [added, setAdded] = createSignal<number | null>(null);
+  const [late, setLate] = createSignal(false);
+  const live = useOp('access_status', () => (added() !== null ? {} : null), { every: 5000 });
+  const item = () => live.data?.items.find(i => i.id === `connection:${guide()?.connection}`) ?? null;
+  const result = createMemo(() => {
+    const at = added(), it = item();
+    return at !== null && it && (late() || (it.lastCheck && it.lastCheck.at >= at)) ? it : null;
+  });
   const prepare = () => {
     setBusy(true); setErr('');
     void op('access_onboard', { kind: 'key', provider: provider(), ...(name().trim() ? { connection: name().trim() } : {}) })
@@ -144,8 +154,7 @@ function KeyFlow(props: { flow: Flow & { kind: 'key' }; onDone: () => void; onCh
     setBusy(true); setErr('');
     // The value goes once to connections_key_add and is dropped here; only its fingerprint comes back.
     void op('connections_key_add', { connection: g.connection, value: v })
-      .then(() => { setValue(''); return op('access_check', { id: `connection:${g.connection}` }); })
-      .then(r => { setBusy(false); setResult(r.item); }, e => { setBusy(false); setValue(''); setErr(String(e.message ?? e)); });
+      .then(k => { setValue(''); setAdded(typeof k.addedAt === 'number' ? k.addedAt : 0); setTimeout(() => setLate(true), 30_000); }, e => { setBusy(false); setValue(''); setErr(String(e.message ?? e)); });
   };
   return <DetailSection title="Add an API key">
     <div class="stack sys-form">
@@ -159,6 +168,7 @@ function KeyFlow(props: { flow: Flow & { kind: 'key' }; onDone: () => void; onCh
           <Button label="Add and check" kind="primary" disabledReason={busy() ? 'Checking' : !value().trim() ? 'Paste a key' : undefined} onClick={add} />
           <Button label="Cancel" kind="quiet" onClick={props.onDone} />
         </div>
+        <Show when={added() !== null && !result()}><span class="t-running">Key added. Fleet is checking it…</span></Show>
       </>}>
         <Choice label="Provider" options={PROVIDERS} value={provider()} onChange={setProvider} />
         <TextField label="Connection name" value={name()} onChange={setName} help={`Empty: ${provider()}. A second account of one provider takes its own name (openai-work).`} />
