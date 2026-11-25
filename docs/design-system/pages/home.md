@@ -80,17 +80,19 @@ Behaviour:
 
 ## Data
 
+One read: `home_view` (a view operation, [data layer](../../designs/fleet-data-layer.md)) with the focus and the person's local midnight. The server counts; only the cards' rows travel.
+
 | Part | Read or action |
 |---|---|
-| Groups and cards | `sessions_list` of the open session states and `failed` (`openStates('session')`), grouped by `life('session', state)` in attention order; rows carry `activityAt` and `now` |
-| Now line | `now` on each `sessions_list` row: the first sentence of the latest agent message as plain text, else the attached task's title, at most 160 characters |
-| Quiet summary | `person_visit {page: "home"}` on each Home open: it records the visit and answers `previousAt`, the visit before; the summary counts from there |
-| Questions on cards | `questions_list` (open, in the focus), matched to the asking session; a question no listed session asks (a task's acceptance) is a card of its own. A problem question (`cause` `problem:…`) is a blocker chip instead. Answered in place with `OpenQuestion` ([decision block](../controls/decision-block.md#open-question)); a key request takes the key on the card |
-| Asleep bots | `bot_list` rows with no `activeRunId`; Wake is `bot_run`; a message to a bot's Home is `message_send`, or `bot_run` with the text when it sleeps |
-| Composer | Project PMs from `project_list` and their open `pm` sessions (`message_send`); a PM with none starts from the project's PM preset (`session_presets`, `session_start`); bots from `bot_list`. The last target picked stays in this browser |
-| Failed cards by cause | `executions_list` `problem` (up to 500, in the focus): the newest failed run of each failed session names its `failure.cause` |
-| Pulse line | Working and queued sessions (by `life`) from the groups' read; done today: `sessions_list` succeeded since midnight; blockers: `executions_list` `needsYou` failures grouped by `failure.cause` and host, plus problem questions grouped by what they are about |
-| Live updates | `changes_since` over sessions, questions, bot runs and executions |
+| Groups and cards | `home_view.sessions`: the open session states and `failed` (`openStates('session')`), at most 200 by latest activity, grouped by `life('session', state)` in attention order; rows carry `activityAt` and `now` |
+| Now line | `now` on each session row: the first sentence of the latest agent message as plain text, else the attached task's title, at most 160 characters |
+| Quiet summary | `home_view.counts`: sessions done, pull requests merged and failed runs that need a look since `visitAt`, the person's last Home visit (else since midnight). Leaving Home records the visit (`person_visit {page: "home"}`, also on page hide), so it stays put while Home is open |
+| Questions on cards | `home_view.questions` (open, in the focus, oldest first), matched to the asking session; a question no listed session asks (a task's acceptance) is a card of its own. A problem question (`cause` `problem:…`) arrives as a blocker instead. Answered in place with `OpenQuestion` ([decision block](../controls/decision-block.md#open-question)); a key request takes the key on the card |
+| Asleep bots | `home_view.bots` with no `activeRunId`; Wake is `bot_run`; a message to a bot's Home is `message_send`, or `bot_run` with the text when it sleeps |
+| Composer | Project PMs from `project_list` (the shell's read) and their open `pm` sessions (`message_send`); a PM with none starts from the project's PM preset (`session_presets` when sent, `session_start`); bots from `home_view.bots`. The last target picked stays in this browser |
+| Failed cards by cause | `home_view.failures`: the plain cause of each failed session's newest failed run |
+| Pulse line | Working and queued sessions (by `life`) from the cards' rows; done today: `home_view.counts.doneToday`; blockers: `home_view.blockers`, failed runs that need a look grouped by plain cause and host, plus problem questions grouped by what they are about |
+| Live updates | The change stream rereads `home_view` when sessions, executions, questions, bots, bot runs or delivery change, at most once a second |
 
 ## Open
 

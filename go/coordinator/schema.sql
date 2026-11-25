@@ -5221,3 +5221,8 @@ SELECT set_config('fleet.project_ids', '*', true);
 UPDATE person_setting
 SET payload = (payload - 'railBots') || jsonb_build_object('railPinned', coalesce((payload->'railBots'->>'on')::boolean, false))
 WHERE payload ? 'railBots';
+
+-- migration 120: the runs with a problem (Home's blockers and failures, home_view; executions_list problem and
+-- needsYou): a few hundred of all runs, read on every Home reread. problem IS NOT NULL is a plain null test,
+-- which RLS lets an index serve, so the reads start from this index instead of scanning every execution.
+CREATE INDEX execution_problem ON execution (seq) WHERE problem IS NOT NULL;
