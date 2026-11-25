@@ -37,7 +37,15 @@ try {
   await page.goto(site + '/projects/tasks');
   await row.waitFor({ timeout: 30000 }).catch(async e => { await page.screenshot({ path: process.env.SHOT ?? 'design-report/mirror-cold.png' }); console.log(errors, (await page.textContent('body'))?.slice(0, 600)); throw e; });
   const cold = Date.now() - t;
-  await page.waitForTimeout(1500); // the mirror writes after a second of quiet
+  // The mirror writes a read after a second of quiet; the Tasks list settles (its spend, membership) a little later, so
+  // wait until the list is in the mirror rather than a fixed time (a fixed 1.5 s made the next claim flaky).
+  const mirroredList = () => page.evaluate(() => new Promise<boolean>(res => {
+    const r = indexedDB.open('fleet-data');
+    r.onsuccess = () => { const t = r.result.transaction('reads').objectStore('reads').getAllKeys(); t.onsuccess = () => res((t.result as IDBValidKey[]).some(k => String(k).includes('\u0000list:'))); t.onerror = () => res(false); };
+    r.onerror = () => res(false);
+  }));
+  for (let waited = 0; waited < 10_000 && !(await mirroredList()); waited += 250) await page.waitForTimeout(250);
+  await page.waitForTimeout(1200); // and the views read with it
 
   // Reload: rows from the mirror before the first API answer could arrive.
   let answered = 0; const count = (r: { url(): string }) => { if (new URL(r.url()).pathname.startsWith('/api/ops/')) answered++; };
@@ -48,6 +56,20 @@ try {
   const warm = Date.now() - t, before = answered;
   claim(before === 0, `reload shows the rows before any read answers (${before} answered, ${warm} ms; cold ${cold} ms, RTT ${RTT} ms)`);
   page.off('requestfinished', count);
+
+  // A screen mounted before the person check (Lab waits for the person's role) shows from the mirror too: the check
+  // clears memory at every load, and what stays mounted takes the mirror's copy again (store.ts clearMemory).
+  {
+    const lab = page.getByText('Use cases', { exact: true }).first();
+    await page.goto(site + '/lab'); await lab.waitFor({ timeout: 30000 });
+    for (let waited = 0; waited < 6000; waited += 250) await page.waitForTimeout(250);
+    let labAnswered = 0; const countLab = (r: { url(): string }) => { if (new URL(r.url()).pathname.startsWith('/api/ops/')) labAnswered++; };
+    page.on('requestfinished', countLab);
+    const t0 = Date.now(); await page.reload(); await lab.waitFor({ timeout: 30000 });
+    page.off('requestfinished', countLab);
+    claim(labAnswered === 0, `a screen that waits for the person check shows from the mirror (Lab: ${labAnswered} answered, ${Date.now() - t0} ms)`);
+    await page.goto(site + '/projects/tasks'); await row.waitFor({ timeout: 30000 });
+  }
   // After the reload the page reads each thing once (prod read me x4, person_settings_get x3, most reads x2).
   const sent = new Map<string, number>();
   const note = (r: { url(): string; postData(): string | null }) => { const u = new URL(r.url()); if (u.pathname.startsWith('/api/ops/')) { const k = u.pathname.slice(9) + ' ' + (r.postData() ?? ''); sent.set(k, (sent.get(k) ?? 0) + 1); } };

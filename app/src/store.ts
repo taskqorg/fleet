@@ -86,6 +86,11 @@ export function clearMemory() {
     if (!flights.get(key)?.readers.size) docs.delete(key);
   }
   generation.value++;
+  // What stays mounted shows the mirror's copy again until its read answers, as at load: the access check every load
+  // starts with clears memory, and a screen mounted before it (Lab's role check) waited for the network otherwise. The
+  // mirror is the validated owner's only (persist.ts): another person or changed grants purge it before it is read.
+  for (const [key, e] of lists) restoreList(key, e);
+  for (const [key, d] of docs) restoreDoc(key, d);
 }
 onClear.add(clearMemory);
 
@@ -95,13 +100,16 @@ function entry(kind: Kind, key: string, view: View): Entry {
     const made: Entry = e = { kind, view, params: toPageParams(view), state: cell<ListState | null>(null), busy: cell(false), started: 0, mounted: 0, loading: false, dirty: false, paging: false, cursorReset: false, pageError: false, fetchedAt: 0, affected: new Set(), lastMembershipAt: 0 };
     lists.set(key, made);
     evictLists();
-    // The mirror's copy shows until the first read of this page answers; a read that answered first wins.
-    const cleared = generation.peek();
-    void restore('list:' + key).then(v => {
-      if (v && cleared === generation.peek() && lists.get(key) === made && !made.state.peek()) made.state.value = { ...(v.data as ListState), error: null, restored: true };
-    });
+    restoreList(key, made);
   }
   return e;
+}
+/** The mirror's copy of a list shows until the first read of this page answers; a read that answered first wins. */
+function restoreList(key: string, made: Entry) {
+  const cleared = generation.peek();
+  void restore('list:' + key).then(v => {
+    if (v && cleared === generation.peek() && lists.get(key) === made && !made.state.peek()) made.state.value = { ...(v.data as ListState), error: null, restored: true };
+  });
 }
 const rowsOf = (r: Ops['task_page']['reply'] | Ops['sessions_list']['reply']): Row[] => 'tasks' in r ? r.tasks : r.sessions;
 const opName = (k: Kind) => k === 'tasks' ? 'task_page' : 'sessions_list';
@@ -412,13 +420,16 @@ function docEntry(name: string): DocEntry {
   if (!e) {
     const made: DocEntry = e = { signal: cell<Doc | null>(null), fetchedAt: 0, dirty: false, dirtySeq: 0 };
     docs.set(name, made); evictDocs();
-    // The mirror's copy shows until the first read of this page answers; a read that answered first wins.
-    const cleared = generation.peek();
-    void restore(name).then(v => {
-      if (v && cleared === generation.peek() && docs.get(name) === made && !made.signal.peek()) made.signal.value = { data: v.data, error: null, restored: true };
-    });
+    restoreDoc(name, made);
   }
   return e;
+}
+/** The mirror's copy of a read shows until the first read of this page answers; a read that answered first wins. */
+function restoreDoc(name: string, made: DocEntry) {
+  const cleared = generation.peek();
+  void restore(name).then(v => {
+    if (v && cleared === generation.peek() && docs.get(name) === made && !made.signal.peek()) made.signal.value = { data: v.data, error: null, restored: true };
+  });
 }
 function docSignal(name: string) { return docEntry(name).signal; }
 async function startDoc(name: string, f: DocFlight) {
