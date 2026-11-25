@@ -42,7 +42,24 @@
 
   /* System › Access: sentences wrap inside the work area instead of widening the table. */
   .access-table td { white-space: normal; overflow-wrap: anywhere; }
-  .access-table td:last-child { white-space: nowrap; }
+  .access-table td:last-child, .access-table td.keep { white-space: nowrap; overflow-wrap: normal; }
+  /* An opened row's detail sits under it, on the selected row's surface (System › Access servers, Project › Access). */
+  .limit-table .t-detail > td { border-top: 0; background: var(--selected); white-space: normal; }
+  /* The detail stays in the visible part of a table that scrolls sideways: as wide as its frame (the container). */
+  .access-detail { position: sticky; inset-inline-start: var(--space-3); max-inline-size: calc(100cqi - 2 * var(--space-3)); padding: var(--space-1) 0; }
+  .access-detail .mono { min-inline-size: 0; overflow-wrap: anywhere; }
+  .access-lines {
+    margin: var(--space-1) 0 0;
+    padding: var(--space-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface-sunken);
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
 
   .sort-btn {
     display: inline-flex;

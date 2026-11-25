@@ -125,6 +125,23 @@ export const states = {
     paused: { label: 'Paused', tone: 'neutral', icon: 'circle-pause' },
     unknown: { label: 'Not checked', tone: 'neutral', icon: 'circle-dashed' },
   },
+  /** A project server Fleet's provisioner reaches (access_grants servers, docs/designs/fleet-project-access.md). */
+  accessServer: {
+    enrolled: { label: 'Enrolled', tone: 'success', icon: 'circle-check' },
+    'not-enrolled': { label: 'Not enrolled', tone: 'attention', icon: 'circle-dashed' },
+    failing: { label: 'Failing', tone: 'danger', icon: 'octagon-x' },
+  },
+  /** A project resource grant (access_grants grants): asked, provisioned and probed, or ended. */
+  accessGrant: {
+    asked: { label: 'Asked', tone: 'attention', icon: 'message-circle-question' },
+    provisioning: { label: 'Provisioning', tone: 'running', icon: 'history' },
+    ready: { label: 'Ready', tone: 'success', icon: 'circle-check' },
+    failed: { label: 'Failed', tone: 'danger', icon: 'octagon-x' },
+    declined: { label: 'Declined', tone: 'neutral', icon: 'circle-slash' },
+    withdrawn: { label: 'Withdrawn', tone: 'neutral', icon: 'circle-slash' },
+    revoking: { label: 'Revoking', tone: 'running', icon: 'history' },
+    revoked: { label: 'Revoked', tone: 'neutral', icon: 'circle-dashed' },
+  },
   intake: {
     all: { label: 'Open', tone: 'success', icon: 'circle-check' },
     paused: { label: 'Paused', tone: 'attention', icon: 'circle-pause' },
