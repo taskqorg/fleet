@@ -158,7 +158,7 @@ def animate(args):
     cx, cy = round((x + .5) * cell), round((y + .5) * cell)
     near = [px[j][i] for j in range(max(0, y - 1), min(n, y + 2)) for i in range(max(0, x - 1), min(n, x + 2))]
     # The glow takes the region's most coloured pixel's hue, lifted a third of the way to white.
-    hue = max(near, key=sat)
+    hue = max(near, key=lambda c: sat(c) * max(c))
     colour = '#' + ''.join(f'{round(hue[k] + (255 - hue[k]) / 3):02x}' for k in range(3))
     r = 150
     svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{SIZE}" height="{SIZE}" viewBox="0 0 {SIZE} {SIZE}">
