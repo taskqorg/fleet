@@ -74,13 +74,17 @@ export const IDLE_MS = 30_000;
 const ACTIVE_STEP = 250, RELOADED_KEY = 'fleet-update:reloaded', SCROLL_KEY = 'fleet-update:scroll';
 let lastActive = Date.now(), timer: ReturnType<typeof setInterval> | undefined;
 
-/** Fields a person typed into, with the value they had before the first keystroke: a field whose value differs is a draft. */
+/**
+ * Fields a person typed into, with the value they had before the first keystroke: a field whose value differs and is not
+ * empty is a draft (a composer emptied by its send is not). Search and filter fields hold no work, so they are not kept.
+ */
 const edited = new Map<HTMLElement, string>();
 const valueOf = (el: HTMLElement) => el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement ? el.value : el.isContentEditable ? el.textContent ?? '' : '';
 function holdReason(): UpdateHold | null {
   for (const [el, before] of edited) {
     if (!el.isConnected) { edited.delete(el); continue; }
-    if (valueOf(el) !== before) return 'draft';
+    const now = valueOf(el);
+    if (now.trim() && now !== before) return 'draft';
   }
   // A side sheet is the phone's detail view, not a dialog with state of its own.
   if (document.querySelector(':modal:not(.side-sheet)')) return 'dialog';
@@ -217,7 +221,11 @@ export function startVersionChecks(): () => void {
   onAccessOpen.add(afterOpen);
   addEventListener('focus', run);
   // Activity for the idle update: passive and captured, so a handler that stops the event still counts it.
-  const opts = { capture: true, passive: true } as const, typed = (e: Event) => { const t = e.target; if (t instanceof HTMLElement && !edited.has(t)) edited.set(t, valueOf(t)); };
+  const opts = { capture: true, passive: true } as const, typed = (e: Event) => {
+    const t = e.target;
+    if (!(t instanceof HTMLElement) || edited.has(t) || t.matches('input[type=search], [role=searchbox], [role=combobox]') || t.closest('[role=search], .spotlight')) return;
+    edited.set(t, valueOf(t));
+  };
   const shown = () => { if (document.visibilityState === 'visible') lastActive = Date.now(); };
   // Scrolling counts through its input (wheel, keys, touch, the scrollbar's pointer); a scroll event alone may be the page's own.
   const ACTIVITY = ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart', 'focusin'];
