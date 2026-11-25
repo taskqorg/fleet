@@ -225,6 +225,10 @@ test('SL12 session_view reads the conversation screen as summaries; thread_entri
   assert.equal(full.output, tool.output);
   assert.deepEqual(full.input, tool.input);
   assert.equal(ok(await browser('POST', '/api/ops/thread_entries', {key: {session: sessionId, thread: 'task:none'}, full: false, limit: 50})).entries.filter((b: any) => b.kind === 'tool').length, 0, 'another thread has none of its calls');
+  ok(await browser('POST', '/api/ops/person_visit', {page: 'thread', thread: {sessionId, thread: ''}}));
+  const seen = ok(await browser('POST', '/api/ops/session_view', {sessionId})).threads.find((t: any) => t.threadKey === '');
+  assert.equal(seen.unread, 0, 'a visited thread has no unread turns');
+  assert.equal((await browser('POST', '/api/ops/person_visit', {page: 'thread', thread: {sessionId, thread: ''}}, OUTSIDER)).status, 404, 'no visit of a session one cannot see');
   assert.equal((await browser('POST', '/api/ops/session_view', {sessionId}, OUTSIDER)).status, 404, 'an outsider sees no session');
   assert.equal((await browser('POST', '/api/ops/tool_output', {callId: call.callId}, OUTSIDER)).status, 404, 'nor its calls');
 });

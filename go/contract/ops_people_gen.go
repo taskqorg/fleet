@@ -744,14 +744,20 @@ func (v *PersonVisitReply) Validate() error {
 }
 
 type PersonVisitRequest struct {
-	Page   VisitPage `json:"page"`
-	Record *bool     `json:"record,omitempty"`
+	Page   VisitPage    `json:"page"`
+	Record *bool        `json:"record,omitempty"`
+	Thread *ThreadVisit `json:"thread,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PersonVisitRequest) Validate() error {
 	if err := Check(&v.Page, "page"); err != nil {
 		return err
+	}
+	if v.Thread != nil {
+		if err := Check(v.Thread, "thread"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -834,6 +840,16 @@ func (v *SearchRequest) Validate() error {
 	return nil
 }
 
+type ThreadVisit struct {
+	SessionId string `json:"sessionId"`
+	Thread    string `json:"thread"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ThreadVisit) Validate() error {
+	return nil
+}
+
 // ViewLinkReply: For view: url and path; for url: the parsed view.
 type ViewLinkReply struct {
 	Path *string         `json:"path,omitempty"`
@@ -884,15 +900,16 @@ func (v *ViewRef) Validate() error {
 	return nil
 }
 
-// VisitPage: A page whose last visit Fleet keeps per person (person_visit).
+// VisitPage: A page whose last visit Fleet keeps per person (person_visit); thread: one work-item thread of a session (request thread), whose turns since are its unread count in session_view.
 type VisitPage string
 
 const (
-	VisitPageHome VisitPage = "home"
+	VisitPageHome   VisitPage = "home"
+	VisitPageThread VisitPage = "thread"
 )
 
 // VisitPageValues lists every VisitPage in schema order.
-var VisitPageValues = []VisitPage{VisitPageHome}
+var VisitPageValues = []VisitPage{VisitPageHome, VisitPageThread}
 
 // Valid: v is one of the schema's values.
 func (v VisitPage) Valid() bool {
@@ -916,7 +933,7 @@ func init() {
 		"people_update":       {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full access (site-agents): add, edit or revoke a human without replacing other entries; the owner's and machine rows are refused. Pass baseVersion from people_list (empty for a new entry). The Cloudflare result is reported separately from the committed Fleet edit.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"baseVersion\":{\"type\":\"string\"},\"email\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"personalLab\":{\"type\":\"boolean\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"revoke\":{\"type\":\"boolean\"},\"roles\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"email\",\"baseVersion\"],\"type\":\"object\"}")},
 		"person_settings_get": {Read: true, Long: false, Errors: []int{403}, Auth: "person", Agent: "tool", Description: "Your person settings (or another person's, owner only): navigation, views, pins, focus presets, ignored projects", Changes: []string{"setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"$comment\":\"default: the caller; another person: the owner only\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"person_settings_set": {Read: false, Long: false, Errors: []int{400, 403}, Auth: "person", Agent: "tool", Description: "Change your person settings: navigation counters, views, pins, focus presets, ignored projects, widths, list groups", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"$comment\":\"default: the caller; another person: the owner only\",\"type\":\"string\"},\"focus\":{\"$comment\":\"omitted: unchanged; [] clears the focus\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"focusPresetDelete\":{\"$comment\":\"remove one focus preset by name\",\"type\":\"string\"},\"focusPresetPut\":{\"additionalProperties\":false,\"properties\":{\"name\":{\"type\":\"string\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"name\",\"projects\"],\"type\":\"object\"},\"focusPresets\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one\",\"items\":{\"additionalProperties\":false,\"properties\":{\"name\":{\"type\":\"string\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"name\",\"projects\"],\"type\":\"object\"},\"type\":\"array\"},\"ignore\":{\"additionalProperties\":false,\"properties\":{\"ignored\":{\"type\":\"boolean\"},\"project\":{\"type\":\"string\"}},\"required\":[\"project\",\"ignored\"],\"type\":\"object\"},\"ignored\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one; a newly ignored project leaves the focus\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"lastViews\":{\"$comment\":\"omitted: unchanged; merged by section id; an empty string removes it; each value is that section's app path (/\\u003cid\\u003e...)\",\"additionalProperties\":{\"type\":\"string\"},\"type\":\"object\"},\"listGroups\":{\"$comment\":\"omitted: unchanged; merged by \\u003csection\\u003e:\\u003cgrouping\\u003e; [] removes it; the whole group key list of that list replaces the stored one\",\"additionalProperties\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"type\":\"object\"},\"navCollapsed\":{\"$comment\":\"omitted: unchanged\",\"type\":\"boolean\"},\"navCounters\":{\"$comment\":\"omitted: unchanged; merged by section; an empty string removes it (the default view counts again); - turns that counter off; otherwise a view name nav_counts offers for that section\",\"additionalProperties\":{\"type\":\"string\"},\"type\":\"object\"},\"order\":{\"$comment\":\"list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)\",\"enum\":[\"list\",\"soonest_reset\"],\"type\":\"string\"},\"panels\":{\"$comment\":\"omitted: unchanged; merged by panel key (a lower-case slug, e.g. session-context; not nav, which is navCollapsed); true open, false closed\",\"additionalProperties\":{\"type\":\"boolean\"},\"type\":\"object\"},\"pins\":{\"$comment\":\"omitted: unchanged; the full ordered list replaces the previous one\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"railBots\":{\"additionalProperties\":false,\"properties\":{\"on\":{\"$comment\":\"the navigation shows the bots zone: the bots pinned in Library (rowPins library, bot:\\u003cid\\u003e), then the active ones\",\"type\":\"boolean\"},\"recent\":{\"$comment\":\"how many bots that are neither pinned nor active the zone also shows, most recently run first; 0 shows only pinned and active bots\",\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"on\",\"recent\"],\"type\":\"object\"},\"rowPin\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"},\"list\":{\"type\":\"string\"},\"pinned\":{\"type\":\"boolean\"}},\"required\":[\"list\",\"id\",\"pinned\"],\"type\":\"object\"},\"rowPins\":{\"$comment\":\"omitted: unchanged; merged by list name; [] clears that list\",\"additionalProperties\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"type\":\"object\"},\"timezone\":{\"$comment\":\"omitted: unchanged; an IANA time zone name; an empty string clears it\",\"type\":\"string\"},\"viewDelete\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"}},\"required\":[\"list\",\"name\"],\"type\":\"object\"},\"viewPut\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"$comment\":\"the list the view belongs to, e.g. tasks\",\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"view\":{\"$comment\":\"the view state (packages/view-url View: state, group, project, q, ...)\",\"type\":\"object\"}},\"required\":[\"list\",\"name\",\"view\"],\"type\":\"object\"},\"views\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one; names are unique per list\",\"items\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"$comment\":\"the list the view belongs to, e.g. tasks\",\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"view\":{\"$comment\":\"the view state (packages/view-url View: state, group, project, q, ...)\",\"type\":\"object\"}},\"required\":[\"list\",\"name\",\"view\"],\"type\":\"object\"},\"type\":\"array\"},\"widths\":{\"$comment\":\"omitted: unchanged; merged by key; a value of 0 removes the key (double-click reset)\",\"additionalProperties\":{\"type\":\"integer\"},\"type\":\"object\"}},\"type\":\"object\"}")},
-		"person_visit":        {Read: false, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Your last visit of a page (page: home): previousAt, the time of the visit before this one (null: none). A person's call records this visit (recordedAt) unless record is false; an agent's call only reads its director's last visit", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"page\":{\"$comment\":\"A page whose last visit Fleet keeps per person (person_visit).\",\"enum\":[\"home\"],\"type\":\"string\"},\"record\":{\"$comment\":\"default true; false reads without recording\",\"type\":\"boolean\"}},\"required\":[\"page\"],\"type\":\"object\"}")},
+		"person_visit":        {Read: false, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Your last visit of a page (page: home): previousAt, the time of the visit before this one (null: none). A person's call records this visit (recordedAt) unless record is false; an agent's call only reads its director's last visit", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"page\":{\"$comment\":\"A page whose last visit Fleet keeps per person (person_visit); thread: one work-item thread of a session (request thread), whose turns since are its unread count in session_view.\",\"enum\":[\"home\",\"thread\"],\"type\":\"string\"},\"record\":{\"$comment\":\"default true; false reads without recording\",\"type\":\"boolean\"},\"thread\":{\"additionalProperties\":false,\"properties\":{\"sessionId\":{\"type\":\"string\"},\"thread\":{\"$comment\":\"\\\"\\\" the main thread\",\"type\":\"string\"}},\"required\":[\"sessionId\",\"thread\"],\"type\":\"object\"}},\"required\":[\"page\"],\"type\":\"object\"}")},
 		"search":              {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Find tasks, questions, conversations, results, projects, hosts, agents and pipelines by text, id or code (T-FLT-42, old codes too); field:value terms agent, host, state, project (e.g. `agent:claude host:mac flaky`). projectIds (a focus) puts hits in those projects first and counts only them. Hits list ids with state and last change; a conversation found by words deep in its first message carries a snippet of them; a person's ignored projects are left out unless the query names the project; counts give each list's total for the query", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"limit\":{\"$comment\":\"Per provider; default 8, at most 50.\",\"minimum\":1,\"type\":\"integer\"},\"projectIds\":{\"$comment\":\"At most 1000. The caller's project focus (OR-34; '-' is work outside projects): hits in it come first and counts count only them. Absent or empty: every project.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"query\":{\"$comment\":\"Free text plus field:value terms (agent, host, state, project), the list search syntax; a provider that cannot apply a term finds nothing.\",\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}")},
 		"view_link":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:session", Description: "The operator-app link for a view ({view:{view:'tasks',state:['failed'],project:['fleet']}}), or the view of a link ({url}); returns {url, path} or {view}", InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of view (a view state to link) or url (a Fleet URL to read back).\",\"additionalProperties\":true,\"properties\":{\"url\":{},\"view\":{}},\"type\":\"object\"}")},
 	} {
