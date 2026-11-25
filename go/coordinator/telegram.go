@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"log/slog"
 	"os"
 	"slices"
 	"strconv"
@@ -39,7 +41,7 @@ const telegramConn = "telegram"
 // telegramLongPoll: how long one getUpdates waits for an update (below the gateway's 30 s request timeout).
 const telegramLongPoll = 20 * time.Second
 
-// telegramChunk: Telegram's text limit is 4096 characters; a reply longer than this goes out in parts.
+// telegramChunk: Telegram's text limit is 4096 characters; the HTML form of a reply longer than this goes out in parts.
 const telegramChunk = 4000
 
 func init() {
@@ -133,6 +135,8 @@ var telegramHealth struct {
 	botID       int64
 	botUsername string
 	readsGroups bool
+	menuSet     bool                            // the command menu is set (telegramMenu), once per start
+	menuTried   time.Time                       // the last attempt to set it
 	conductor   *contract.TelegramConductorCall // the last model call
 }
 
@@ -216,6 +220,19 @@ func telegramPoll(ctx context.Context, a *App) error {
 		telegramHealth.botID, telegramHealth.botUsername, telegramHealth.readsGroups = me.ID, me.Username, me.ReadsGroups
 		telegramHealth.Unlock()
 	}
+	telegramHealth.Lock()
+	menu, tried := telegramHealth.menuSet, telegramHealth.menuTried
+	telegramHealth.Unlock()
+	if !menu && time.Since(tried) > 10*time.Minute {
+		// The menu follows the registry of this build; a refusal is logged and tried again later, never stopping intake.
+		err := telegramMenu(ctx, a)
+		if err != nil {
+			slog.Warn("telegram command menu not set", "err", err.Error())
+		}
+		telegramHealth.Lock()
+		telegramHealth.menuSet, telegramHealth.menuTried = err == nil, time.Now()
+		telegramHealth.Unlock()
+	}
 	var offset int64
 	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
 		offset, err = q.db().TelegramUpdateNext(q.ctx())
@@ -282,6 +299,7 @@ func telegramIntakeDue(q *Request, now time.Time, limit int) ([]*kitClaim, error
 type tgDelivered struct {
 	err    error
 	workID string
+	notice string // a notice key to answer once done (a command's confirmation)
 }
 
 // tgDecided: what the conductor's model call reports back to its step.
@@ -349,6 +367,12 @@ func telegramIntakeStep(q *Request, now time.Time, c *kitClaim) error {
 			}
 			return telegramDone(q, row.ID, "failed", "")
 		}
+		if res.notice != "" {
+			if err := telegramNotice(q, room, m.MessageID, "done:"+row.ID, tp.Language, res.notice, ""); err != nil {
+				return err
+			}
+			return telegramDone(q, row.ID, "command", "")
+		}
 		return telegramDone(q, row.ID, "delivered", res.workID)
 	case tgDecided:
 		return telegramApply(q, c, &row, room, m, tp, p, res.decision)
@@ -366,9 +390,12 @@ func telegramIntakeStep(q *Request, now time.Time, c *kitClaim) error {
 		return err
 	}
 	// Shortcuts without a model, then answers to a question message, before any routing.
-	if handled, err := telegramCommand(q, now, &row, room, m, tp, text); err != nil {
+	if handled, err := telegramCommand(q, now, c, &row, room, m, tp, p, text); err != nil {
 		return err
 	} else if handled {
+		if c.Call != nil {
+			return nil // the command acts as the person (/stop); its result comes back to this step
+		}
 		return telegramDone(q, row.ID, "command", "")
 	}
 	if r := m.ReplyToMessage; r != nil {
@@ -393,15 +420,6 @@ func telegramIntakeStep(q *Request, now time.Time, c *kitClaim) error {
 				return err
 			}
 			return telegramDone(q, row.ID, "status", "")
-		}
-		if strings.TrimSpace(text) == "/new" {
-			if err := q.db().TelegramPersonSetHome(q.ctx(), db.TelegramPersonSetHomeParams{Email: tp.Email}); err != nil {
-				return err
-			}
-			if err := telegramNotice(q, room, m.MessageID, "new:"+row.ID, tp.Language, "newHome", ""); err != nil {
-				return err
-			}
-			return telegramDone(q, row.ID, "new-home", "")
 		}
 		t := tgTarget{newHome: true}
 		if tp.HomeSessionID != nil {
@@ -886,6 +904,7 @@ func telegramReplyStep(q *Request, now time.Time, c *kitClaim) error {
 		return err
 	}
 	if c.Result != nil {
+		telegramDraftResult(t.ID, c.Result)
 		if err := q.db().TelegramTurnTyped(q.ctx(), t.ID); err != nil {
 			return err
 		}
@@ -908,17 +927,19 @@ func telegramReplyStep(q *Request, now time.Time, c *kitClaim) error {
 					return err
 				}
 			}
+			telegramDrafts.Delete(t.ID)
 			return q.db().TelegramTurnDelete(q.ctx(), t.ID)
 		}
-		return telegramTyping(q, now, c, t)
+		return telegramTyping(q, now, c, t, nil)
 	}
 	e, err := getExecution(q, ms[0].ExecutionID)
 	if err != nil {
 		return err
 	}
 	if !e.terminal() {
-		return telegramTyping(q, now, c, t)
+		return telegramTyping(q, now, c, t, &e)
 	}
+	telegramDrafts.Delete(t.ID)
 	tp, err := q.db().TelegramPersonGet(q.ctx(), t.Email)
 	lang := ""
 	if err == nil {
@@ -960,7 +981,7 @@ func telegramReplyStep(q *Request, now time.Time, c *kitClaim) error {
 			return err
 		}
 	}
-	parts := chunks(final, telegramChunk)
+	parts := chunks(final, telegramRichLimit)
 	for i, part := range parts {
 		p := db.TelegramOutboxAddParams{ID: fmt.Sprintf("reply:%s:%d", e.ID, i), ChatID: t.ChatID, ThreadID: t.ThreadID, Kind: "text", Text: part,
 			WorkID: t.WorkID, SessionID: &t.SessionID}
@@ -977,18 +998,77 @@ func telegramReplyStep(q *Request, now time.Time, c *kitClaim) error {
 	return q.db().TelegramTurnDelete(q.ctx(), t.ID)
 }
 
-// telegramTyping: typing at most every 4 s while the run works (Telegram shows it about 5 s), then look again.
-func telegramTyping(q *Request, now time.Time, c *kitClaim, t db.TelegramTurn) error {
+// telegramTyping: typing at most every 4 s while the run works (Telegram shows it about 5 s), then look again. In a
+// private chat a run that has written text shows it as a draft instead (sendRichMessageDraft, PilotQ's preview): the
+// person reads what the agent is saying while it works; the draft passes, and the reply is sent as usual when the run
+// ends. Groups have no drafts, so they keep typing (Quiet chat).
+func telegramTyping(q *Request, now time.Time, c *kitClaim, t db.TelegramTurn, e *agentExecution) error {
 	if t.TypingAt != nil && now.Sub(*t.TypingAt) < 4*time.Second {
 		return kitSchedule(q, "telegram-reply", t.ID, now.Add(2*time.Second))
 	}
 	a := q.app
+	if e != nil && t.ChatID > 0 {
+		d, _ := telegramDrafts.LoadOrStore(t.ID, &tgDraft{})
+		draft := d.(*tgDraft)
+		if !draft.off {
+			texts, err := replyText(q, e.ID)
+			if err != nil {
+				return err
+			}
+			last := ""
+			for i := len(texts) - 1; i >= 0 && last == ""; i-- {
+				last = strings.TrimSpace(texts[i])
+			}
+			if last != "" && last != draft.shown {
+				draft.shown, draft.trying = last, true
+				rich := []rune(last)
+				if len(rich) > telegramRichLimit {
+					rich = rich[:telegramRichLimit]
+				}
+				args := tgArgs{ChatID: t.ChatID, DraftID: tgDraftID(t.ID), RichMessage: &tgRichMessage{Markdown: tgRich(string(rich), now)}}
+				c.Call = func(ctx context.Context) any { return telegramCall(ctx, a, "send_rich_message_draft", args) }
+				return nil
+			}
+		}
+	}
 	args := tgArgs{ChatID: t.ChatID, Action: "typing"}
 	if t.ThreadID != 0 {
 		args.MessageThreadID = &t.ThreadID
 	}
 	c.Call = func(ctx context.Context) any { return telegramCall(ctx, a, "send_chat_action", args) }
 	return nil
+}
+
+// telegramDrafts: the draft each private-chat turn shows (in memory: one coordinator sends; a restart starts over).
+var telegramDrafts sync.Map // turn id -> *tgDraft
+
+type tgDraft struct {
+	shown  string // the text last sent as the draft
+	trying bool   // a draft call is out
+	off    bool   // Telegram refused a draft: this turn keeps typing
+}
+
+// telegramDraftResult: a refused draft turns drafts off for the turn; a failed one shows again with the next text.
+func telegramDraftResult(turn string, result any) {
+	d, ok := telegramDrafts.Load(turn)
+	if !ok || !d.(*tgDraft).trying {
+		return
+	}
+	draft := d.(*tgDraft)
+	draft.trying = false
+	if line, ok := result.(contract.CallLine); ok {
+		if _, err := tgParse(line); err != nil {
+			draft.shown = ""
+			draft.off = strings.HasPrefix(deref(line.ErrorCode), "http-4")
+		}
+	}
+}
+
+// tgDraftID: a turn's draft id, non-zero and stable, so its updates animate as one draft.
+func tgDraftID(turn string) int64 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(turn))
+	return int64(h.Sum32() | 1)
 }
 
 // telegramWorkEnded: one of a work item's messages is done; when it is the last one waiting, the status message says so.
@@ -1105,7 +1185,11 @@ func telegramSendStep(q *Request, now time.Time, c *kitClaim) error {
 	tool, args := "send_message", tgArgs{ChatID: o.ChatID}
 	switch o.Kind {
 	case "text":
-		args.Text, args.LinkPreview = tgFormatted(o, &args), map[string]bool{"is_disabled": true}
+		if rich := tgRichFormatted(o, now); rich != nil {
+			tool, args.RichMessage = "send_rich_message", rich
+		} else {
+			args.Text, args.LinkPreview = tgFormatted(o, &args), map[string]bool{"is_disabled": true}
+		}
 		if o.ThreadID != 0 {
 			args.MessageThreadID = &o.ThreadID
 		}
@@ -1128,7 +1212,11 @@ func telegramSendStep(q *Request, now time.Time, c *kitClaim) error {
 			}
 			args.MessageID = sm.TelegramMessageID
 		}
-		args.Text = tgFormatted(o, &args)
+		if rich := tgRichFormatted(o, now); rich != nil {
+			args.RichMessage = rich
+		} else {
+			args.Text = tgFormatted(o, &args)
+		}
 		if len(o.Payload) > 0 {
 			args.ReplyMarkup = json.RawMessage(o.Payload) // an edit without its buttons would drop them
 		}
@@ -1146,6 +1234,19 @@ func telegramSendStep(q *Request, now time.Time, c *kitClaim) error {
 	return nil
 }
 
+// tgRichFormatted: the item's text as a rich message (tgRich), the first form every text and edit tries; nil once
+// Telegram refused it.
+func tgRichFormatted(o db.TelegramOutbox, now time.Time) *tgRichMessage {
+	if o.Error != nil {
+		return nil
+	}
+	return &tgRichMessage{Markdown: tgRich(o.Text, now)}
+}
+
+type tgRichMessage struct {
+	Markdown string `json:"markdown"`
+}
+
 // tgFormatted: the item's text as Telegram HTML (tgHTML), or as plain text once Telegram refused its formatting.
 func tgFormatted(o db.TelegramOutbox, args *tgArgs) *string {
 	if deref(o.Error) == "html-refused" {
@@ -1161,6 +1262,7 @@ type tgArgs struct {
 	MessageThreadID *int64          `json:"message_thread_id,omitempty"`
 	MessageID       *int64          `json:"message_id,omitempty"`
 	Text            *string         `json:"text,omitempty"`
+	RichMessage     *tgRichMessage  `json:"rich_message,omitempty"`
 	ParseMode       string          `json:"parse_mode,omitempty"`
 	ReplyParameters *tgReplyTo      `json:"reply_parameters,omitempty"`
 	ReplyMarkup     json.RawMessage `json:"reply_markup,omitempty"`
@@ -1171,6 +1273,10 @@ type tgArgs struct {
 	Offset          *int64          `json:"offset,omitempty"`
 	Timeout         *int64          `json:"timeout,omitempty"`
 	AllowedUpdates  []string        `json:"allowed_updates,omitempty"`
+	DraftID         int64           `json:"draft_id,omitempty"`
+	Commands        any             `json:"commands,omitempty"`
+	Scope           any             `json:"scope,omitempty"`
+	LanguageCode    string          `json:"language_code,omitempty"`
 }
 
 type tgReplyTo struct {
@@ -1208,20 +1314,53 @@ func telegramSent(q *Request, now time.Time, o db.TelegramOutbox, line contract.
 	switch {
 	case code == "http-429" && r.Parameters.RetryAfter > 0:
 		return kitSchedule(q, "telegram-send", o.ID, now.Add(time.Duration(r.Parameters.RetryAfter)*time.Second))
+	case o.Kind == "edit" && strings.Contains(r.Description, "message is not modified"):
+		return settle("sent", o.EditMessageID, nil)
+	case (code == "http-400" || code == "http-404") && o.Error == nil && (o.Kind == "text" || o.Kind == "edit"):
+		// Telegram refused the rich message (its Markdown, or an app or chat without rich messages): the HTML form, in
+		// parts of the HTML limit, at once (PilotQ's chain: rich, HTML, plain).
+		if err := telegramRichRefused(q, o); err != nil {
+			return err
+		}
+		return kitSchedule(q, "telegram-send", o.ID, now)
 	case code == "http-400" && strings.Contains(r.Description, "can't parse entities") && deref(o.Error) != "html-refused":
 		// Formatting Telegram refuses: the same text again, plain, at once.
 		if err := q.db().TelegramOutboxMarkPlain(q.ctx(), o.ID); err != nil {
 			return err
 		}
 		return kitSchedule(q, "telegram-send", o.ID, now)
-	case o.Kind == "edit" && strings.Contains(r.Description, "message is not modified"):
-		return settle("sent", o.EditMessageID, nil)
 	case strings.HasPrefix(code, "http-4"):
 		return settle("failed", nil, &cause)
 	case line.Outcome == contract.CallOutcomeUnknown && o.Kind == "text":
 		return settle("unknown", nil, &cause)
 	}
 	return err
+}
+
+// telegramRichRefused moves an item to its HTML form. A text longer than one HTML message becomes parts that follow it
+// in the chat's order (same created_at, ids after it); the buttons go with the last part. An edit keeps one message.
+func telegramRichRefused(q *Request, o db.TelegramOutbox) error {
+	parts := []string{o.Text}
+	if o.Kind == "text" {
+		parts = chunks(o.Text, telegramChunk)
+	}
+	payload := o.Payload
+	if len(parts) > 1 {
+		payload = nil
+	}
+	if err := q.db().TelegramOutboxMarkRichRefused(q.ctx(), db.TelegramOutboxMarkRichRefusedParams{ID: o.ID, Text: parts[0], Payload: payload}); err != nil {
+		return err
+	}
+	for i := 1; i < len(parts); i++ {
+		p := db.TelegramOutboxAddPartParams{ID: o.ID, PartID: fmt.Sprintf("%s:%d", o.ID, i), Text: parts[i]}
+		if i == len(parts)-1 {
+			p.Payload = o.Payload
+		}
+		if err := q.db().TelegramOutboxAddPart(q.ctx(), p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // --- Fleet's own notices, in the person's language ---

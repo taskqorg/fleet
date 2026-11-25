@@ -2,7 +2,7 @@
 // docs/designs/fleet-telegram.md): everything here is read from Fleet state, never from a worker turn.
 //
 //   - "So?", "??", /status: the conductor answers where a room's work stands (telegramFacts) without waking its session.
-//   - /help, /now, /needs: shortcuts without a model.
+//   - /now, /needs, /status: commands of the registry (telegram_commands.go) without a model.
 //   - telegram-watch (everyWake): open questions of a work item's or a home conversation go to its chat with buttons;
 //     answered or withdrawn ones are edited to say by whom; delivery and task milestones go to the work item's room once.
 //   - A tap on a question's button or a Telegram reply to it answers through questions_answer as the person.
@@ -173,54 +173,6 @@ func isStatusPing(text string) bool {
 		return strings.Contains(t, "?")
 	}
 	return statusPing.MatchString(core)
-}
-
-// telegramCommand: /help, /now, /needs, /status [task]; false when the text is no command of the channel.
-func telegramCommand(q *Request, now time.Time, row *db.TelegramUpdate, room db.TelegramRoom, m *tgMessage, tp db.TelegramPerson, text string) (bool, error) {
-	fields := strings.Fields(text)
-	if len(fields) == 0 || !strings.HasPrefix(fields[0], "/") {
-		return false, nil
-	}
-	cmd, bot, _ := strings.Cut(strings.TrimPrefix(fields[0], "/"), "@")
-	telegramHealth.Lock()
-	me := telegramHealth.botUsername
-	telegramHealth.Unlock()
-	if bot != "" && !strings.EqualFold(bot, me) {
-		return false, nil
-	}
-	lang := tp.Language
-	reply := func(body string) error {
-		return telegramOutbox(q, db.TelegramOutboxAddParams{ID: "cmd:" + row.ID, ChatID: room.ChatID, ThreadID: room.ThreadID, Kind: "text", ReplyTo: &m.MessageID, Text: body})
-	}
-	switch cmd {
-	case "help", "start":
-		return true, reply(say(lang, "help", ""))
-	case "now":
-		body, err := telegramGlance(q, now, room, tp)
-		if err != nil {
-			return true, err
-		}
-		return true, reply(body)
-	case "needs":
-		n, err := telegramNeeds(q, row, room, tp)
-		if err != nil {
-			return true, err
-		}
-		if n == 0 {
-			return true, reply(say(lang, "noNeeds", ""))
-		}
-		return true, nil
-	case "status":
-		if len(fields) > 1 {
-			body, err := telegramTaskStatus(q, tp, fields[1])
-			if err != nil {
-				return true, err
-			}
-			return true, reply(body)
-		}
-		return true, telegramStatusAnswer(q, now, row, room, m, tp, nil)
-	}
-	return false, nil
 }
 
 // telegramStatusAnswer answers where a room's work stands: one work item (a reply target) or every open one.
@@ -708,7 +660,6 @@ func init() {
 			"task_paused": "paused", "task_completed": "completed", "task_failed": "failed", "task_cancelled": "cancelled",
 			"stage_pr_open": "open", "stage_checks": "checks running", "stage_checks_failed": "checks failed",
 			"stage_merging": "merging", "stage_merged": "merged", "stage_unknown": "state unknown",
-			"help":          "Write as usual: each message goes to its piece of work. Shortcuts:\n/now: where the work here stands\n/needs: open questions, with buttons\n/status <task>: one task\nSo? or ?? answers from Fleet without waking anyone. Reply to a question to answer it.",
 			"noNeeds":       "No open questions here.",
 			"noWork":        "No open work here.",
 			"home":          "Your conversation",
@@ -740,7 +691,6 @@ func init() {
 			"task_paused": "на паузе", "task_completed": "готова", "task_failed": "упала", "task_cancelled": "отменена",
 			"stage_pr_open": "открыт", "stage_checks": "идут проверки", "stage_checks_failed": "проверки упали",
 			"stage_merging": "вливается", "stage_merged": "влит", "stage_unknown": "состояние неизвестно",
-			"help":          "Пишите как обычно: каждое сообщение попадает в свою работу. Быстрые команды:\n/now: как дела у работы здесь\n/needs: открытые вопросы с кнопками\n/status <задача>: одна задача\n«Ну?» или «??» отвечаются из Fleet, никого не будя. Ответьте на вопрос реплаем, чтобы ответить.",
 			"noNeeds":       "Открытых вопросов здесь нет.",
 			"noWork":        "Открытой работы здесь нет.",
 			"home":          "Ваш разговор",
