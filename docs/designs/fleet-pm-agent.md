@@ -222,7 +222,7 @@ An agent whose profile has `fleetOperations` gets one more instruction section a
 *   that the native shell is sandboxed, so its network errors are no evidence about external services, and that repository access is checked with `project_readiness` on the hosts;
 *   that a question to a person comes after the agent's own tools and names what it tried and what each returned.
 
-The section changes with grants, tools and hosts and is rebuilt on every turn. Every other agent run outside pipelines and Lab gets the sandbox line alone, naming `project-publishing` for pushes and pull requests; pipeline and Lab runs keep their exact instructions. The PM profile also grants the `github` connection, whose `repos_search` and GitLab's `projects_search` find a repository by name ([connections](fleet-connections.md)); the `pm-fleet` skill gives the steps to connect a repository: find, `project_create`, `project_readiness`, then one question for what only a person can do.
+The section changes with grants, tools and hosts and is rebuilt on every turn. Every other agent run outside pipelines and Lab gets the sandbox line alone, naming `project-publishing` for pushes and pull requests; pipeline and Lab runs keep their exact instructions. The PM profile also grants the `github` and `bugsink` connections (the PM triages error signals itself); GitHub's `repos_search` and GitLab's `projects_search` find a repository by name ([connections](fleet-connections.md)); the `pm-fleet` skill gives the steps to connect a repository: find, `project_create`, `project_readiness`, then one question for what only a person can do.
 
 ## Alternatives Considered
 

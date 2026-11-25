@@ -1,7 +1,8 @@
 {
   "connections": [
     "youtrack",
-    "github"
+    "github",
+    "bugsink"
   ],
   "effort": "medium",
   "fleetOperations": true,
