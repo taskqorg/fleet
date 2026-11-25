@@ -91,10 +91,15 @@ func TestHistoryView(t *testing.T) {
 	for _, id := range []string{"hs-t1", "hs-t2"} {
 		exec(`INSERT INTO execution (id, kind, state, project_id, experiment_id, started_at, data, observation, config_ref) VALUES ($1, 'agent_run', 'running', 'fleet', 'hs-x', $2, '{}', 'confirmed', '{}')`, id, now.Add(9*time.Second))
 	}
+	// One trial ends: its start and end are one trial, still one entry for the experiment.
+	exec(`UPDATE execution SET state = 'succeeded', ended_at = $1 WHERE id = 'hs-t1'`, now.Add(10*time.Second))
 	var lab contract.HistoryViewReply
 	e.opInto(t, "history_view", map[string]any{"section": "lab", "kinds": []string{"run"}}, e.ownerHeaders(), &lab)
 	if len(lab.Entries) != 1 || lab.Entries[0].N != 2 || lab.Entries[0].Title != "code-mode trial" {
 		t.Fatalf("trials: %+v", lab.Entries)
+	}
+	if d := lab.Entries[0].Detail; string(d["finished"]) != "1" || string(d["running"]) != "1" || lab.Entries[0].Verb != "trials" {
+		t.Fatalf("trial counts: %+v", lab.Entries[0])
 	}
 	// Leaving the project out leaves its trials out.
 	var out contract.HistoryViewReply
