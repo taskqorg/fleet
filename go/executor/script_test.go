@@ -338,7 +338,9 @@ func TestAccountInspectStatusAndLimits(t *testing.T) {
 	must(os.MkdirAll(home, 0o700))
 	must(os.MkdirAll(native, 0o700))
 	cli := filepath.Join(root, "codex")
-	must(os.WriteFile(cli, []byte("#!/bin/sh\nwhile read l; do case \"$l\" in *rateLimits/read*) echo '{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":42,\"windowDurationMins\":300,\"resetsAt\":1794400000}}}}';; esac; done\n"), 0o700))
+	// The status read also probes model/list (probeModels); this CLI offers none and ends, so the probe fails at once
+	// instead of waiting out probeWait (60 s) for an answer that never comes.
+	must(os.WriteFile(cli, []byte("#!/bin/sh\nwhile read l; do case \"$l\" in *rateLimits/read*) echo '{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":42,\"windowDurationMins\":300,\"resetsAt\":1794400000}}}}';; *model/list*) exit 0;; esac; done\n"), 0o700))
 	reg := filepath.Join(root, "accounts.json")
 	must(os.WriteFile(reg, []byte(enc(M{"work": M{"harness": "codex", "home": home, "nativeHome": native, "executable": cli, "readiness": "ready"}})), 0o600))
 	t.Setenv("FLEET_NATIVE_ACCOUNTS", reg)
