@@ -19,9 +19,9 @@ import (
 
 func defaultHost() string { return firstString(os.Getenv("FLEET_HOST_ID"), "owner-mac") }
 
-// capable: the default host reported the capability in its last poll.
-func capable(q *Request, name string) (bool, error) {
-	return q.db().ObservationHasCapability(q.ctx(), db.ObservationHasCapabilityParams{HostID: defaultHost(), Capability: name})
+// capable: the host reported the capability in its last poll; an empty host is the default host.
+func capable(q *Request, host, name string) (bool, error) {
+	return q.db().ObservationHasCapability(q.ctx(), db.ObservationHasCapabilityParams{HostID: firstString(host, defaultHost()), Capability: name})
 }
 
 // knownHost: configured (the default or a registered host) or has polled once.
@@ -555,7 +555,12 @@ func sessionFork(q *Request, r *contract.SessionForkRequest) (agentForkRecord, e
 	case forkArgv(source.harness(), native) == nil:
 		reason = "harness_fork_unsupported"
 	default:
-		nativeOK, err := capable(q, "native-fork")
+		// A native fork runs where the source's native session lives: the host of its last run, not the default host.
+		host := ""
+		if last != nil {
+			host = deref(last.HostID)
+		}
+		nativeOK, err := capable(q, host, "native-fork")
 		if err != nil {
 			return none, err
 		}

@@ -405,15 +405,12 @@ func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (age
 	// A message with attachments is queued, never steered: its files are staged before a turn starts.
 	if deref(r.Delivery) == "steer" && active != nil && active.State == "running" && len(attachments) == 0 &&
 		(r.Composer == nil || r.Composer.ExecutionId != nil) {
-		hostID := defaultHost()
-		if r.Composer != nil {
-			hostID = deref(active.HostID)
-		}
-		ok, err := q.db().ObservationHasCapability(q.ctx(), db.ObservationHasCapabilityParams{HostID: hostID, Capability: "steer"})
+		// The steer goes to the host running the turn, whoever sends it (composer, MCP or agent).
+		ok, err := capable(q, deref(active.HostID), "steer")
 		if err != nil {
 			return none, err
 		}
-		if ok && hostID != "" {
+		if ok && deref(active.HostID) != "" {
 			payload := struct {
 				Text            string `json:"text"`
 				NativeSessionID string `json:"nativeSessionId,omitempty"`
