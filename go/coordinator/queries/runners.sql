@@ -18,17 +18,39 @@ WHERE (e.state IN ('preparing','running','waiting') OR coalesce(e.ended_at,e.sta
  AND e.kind NOT IN ('pipeline_run','pipeline_step','tool_run')
 ORDER BY (e.state IN ('preparing','running','waiting')) DESC,e.seq DESC LIMIT 500;
 
--- name: RunnerCalls :many
--- Tool calls of the same window with the caller run when it exists. ponytail: the newest 20000 calls of the day.
-SELECT p.id AS caller_run,e.id,e.kind::text AS kind,e.state::text AS state,e.host_id,e.harness,e.task_id,t.title,e.session_id,e.parent_execution_id,e.problem,
- e.ended_at,e.last_seen_at,x.wall_ms,x.cpu_ms,x.peak_memory_bytes,
- (coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool',''))::text AS subject,x.connection_cost,
- x.billing_basis,coalesce(x.model,e.model) AS model,e.account_id,
- CASE WHEN coalesce(x.billing_basis,'') IN ('','unavailable') AND e.account_id IS NOT NULL THEN coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('',e.account_id) m),false) ELSE false END AS is_api_conn,
- x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write,coalesce(e.started_at,coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at)) AS at
-FROM execution e LEFT JOIN execution_totals x ON x.execution_id=e.id LEFT JOIN task t ON t.id=e.task_id LEFT JOIN execution p ON p.id=e.parent_execution_id
-WHERE (e.state IN ('preparing','running','waiting') OR coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) > now()-interval '24 hours')
- AND e.kind='tool_run' ORDER BY e.seq DESC LIMIT 20000;
+-- name: RunnerCallGroups :many
+-- Tool calls of the last 24 hours and every active one (newest 20000), summed per host and caller: the caller run when
+-- it exists, else the task, else the connection (the coordinator's own reads carry a fresh session per call). Cost
+-- comes per currency and basis from execution_spend, where each call is priced once; a call whose spend row is stale
+-- or multi-currency counts as unpriced here (spend_summary prices it).
+WITH c AS MATERIALIZED (
+ SELECT e.id, e.seq, coalesce(e.host_id, '')::text AS host,
+  coalesce(p.id, e.task_id, 'conn:' || coalesce(e.data->>'connection', ''))::text AS caller,
+  e.state::text AS state, e.session_id, e.task_id, t.title, e.parent_execution_id, e.problem,
+  coalesce(e.started_at, coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at)) AS at, e.ended_at, x.wall_ms,
+  CASE WHEN s.stale OR s.payload IS NOT NULL THEN NULL ELSE s.cost_currency END AS currency,
+  CASE WHEN s.stale OR s.payload IS NOT NULL THEN NULL ELSE s.cost_basis END AS basis,
+  CASE WHEN s.stale OR s.payload IS NOT NULL THEN NULL ELSE s.cost_value END AS value,
+  CASE WHEN s.execution_id IS NULL OR s.stale OR s.payload IS NOT NULL THEN 1 ELSE s.cost_unpriced END AS unpriced
+ FROM execution e LEFT JOIN execution p ON p.id=e.parent_execution_id LEFT JOIN task t ON t.id=e.task_id
+  LEFT JOIN execution_totals x ON x.execution_id=e.id LEFT JOIN execution_spend s ON s.execution_id=e.id
+ WHERE e.kind='tool_run' AND (e.state IN ('preparing','running','waiting') OR coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) > now()-interval '24 hours')
+ ORDER BY e.seq DESC LIMIT 20000
+), costs AS (
+ SELECT z.host, z.caller, jsonb_agg(jsonb_build_object('currency', z.currency, 'basis', z.basis, 'value', z.value, 'unpriced', z.unpriced)) AS j
+ FROM (SELECT host, caller, currency, basis, sum(value)::float8 AS value, sum(unpriced)::bigint AS unpriced FROM c GROUP BY 1, 2, 3, 4) z
+ GROUP BY z.host, z.caller
+)
+SELECT g.host, g.caller, count(*)::bigint AS calls,
+ count(*) FILTER (WHERE g.state IN ('failed','cancelled'))::bigint AS failed,
+ bool_or(g.state IN ('preparing','running','waiting'))::boolean AS running,
+ min(g.at)::timestamptz AS started_at, max(g.ended_at)::timestamptz AS ended_at, coalesce(sum(g.wall_ms), -1)::bigint AS wall_ms,
+ coalesce((array_agg(g.problem ORDER BY g.seq DESC) FILTER (WHERE g.problem IS NOT NULL))[1], '')::text AS problem,
+ coalesce((array_agg(g.session_id ORDER BY g.seq DESC))[1], '')::text AS session_id, coalesce((array_agg(g.task_id ORDER BY g.seq DESC))[1], '')::text AS task_id,
+ coalesce((array_agg(g.title ORDER BY g.seq DESC))[1], '')::text AS title, coalesce((array_agg(g.parent_execution_id ORDER BY g.seq DESC))[1], '')::text AS parent_execution_id,
+ coalesce(min(k.j::text), '[]')::jsonb AS costs
+FROM c g LEFT JOIN costs k ON k.host = g.host AND k.caller = g.caller
+GROUP BY g.host, g.caller ORDER BY max(g.seq) DESC;
 
 -- name: RunnerRunsByKind :many
 -- Today's executions per host and kind (execution_spend, by start).
