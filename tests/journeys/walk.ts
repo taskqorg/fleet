@@ -4,13 +4,15 @@
 // Opens https://fleet.ufobe.com as site-agents (AGENTS.md "Opening the deployed web app"): the Access service token comes
 // from CF_ACCESS_CLIENT_ID/CF_ACCESS_CLIENT_SECRET or ~/.config/ufobe-agents/site-access.env, is set only on a browser
 // context that opens this origin, and is never printed.
-// Run: node tests/journeys/walk.ts [origin]
+// Run: node tests/journeys/walk.ts [origin] [WIDTHxHEIGHT], 1440x900 by default (390x844 for the phone).
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Page } from 'playwright';
 
 const origin = new URL(process.argv[2] ?? 'https://fleet.ufobe.com').origin;
+const size = /^(\d+)x(\d+)$/.exec(process.argv[3] ?? '1440x900') ?? (console.error('viewport must be WIDTHxHEIGHT; using 1440x900'), ['', '1440', '900']);
+const [width, height] = [Number(size[1]), Number(size[2])];
 
 function access(): { id: string; secret: string } | null {
   let id = process.env.CF_ACCESS_CLIENT_ID, secret = process.env.CF_ACCESS_CLIENT_SECRET;
@@ -31,7 +33,8 @@ type Step = [name: string, run: (c: Ctx) => Promise<string | void>];
 type Journey = { id: string; title: string; steps: Step[] };
 
 const T = 15000;
-const visible = async (l: ReturnType<Page['locator']>, ms = T) => { try { await l.first().waitFor({ state: 'visible', timeout: ms }); return true; } catch { return false; } };
+// The phone keeps desktop-only parts in the DOM, hidden; only a shown element counts.
+const visible = async (l: ReturnType<Page['locator']>, ms = T) => { try { await l.filter({ visible: true }).first().waitFor({ state: 'visible', timeout: ms }); return true; } catch { return false; } };
 const open = async (page: Page, path: string) => { await page.goto(origin + path, { waitUntil: 'domcontentloaded' }); };
 const RAW_ID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{12,40}\b/;
 
@@ -49,6 +52,7 @@ async function labCollection(c: Ctx, name: string) {
   if (!await visible(treeItem(c.page, name), 5000)) missing(`collection "${name}" in Lab › Use cases`);
   await c.click(treeItem(c.page, name).locator('.cat-label'));
 }
+const taskRows = (page: Page) => page.locator('[data-ui=project-work] .vl-row');
 const leaderboard = (page: Page) => page.locator('section[aria-label^="Suite leaderboard"]');
 
 const JOURNEYS: Journey[] = [
@@ -57,7 +61,7 @@ const JOURNEYS: Journey[] = [
     ['Comparison matrix shows', async c => {
       if (!await visible(leaderboard(c.page))) missing('collection leaderboard');
       if (!await visible(leaderboard(c.page).locator('tbody tr'))) throw new Stop('leaderboard has no rows', 'broken');
-      const rows = await leaderboard(c.page).locator('tbody tr').count();
+      const rows = await leaderboard(c.page).locator('tbody tr').filter({ visible: true }).count();
       return `${rows} rows`;
     }],
     ['Cells: score, median wall time, failure rate; tokens/cost in Details', async c => {
@@ -75,7 +79,11 @@ const JOURNEYS: Journey[] = [
   ] },
   { id: 'J2', title: 'Fast A/B or multi-step Lab run (≤ 3 clicks)', steps: [
     ['Open a use case from LLM Code Benchmarks', async c => {
-      await labCollection(c, 'LLM Code Benchmarks');
+      // Expanded, not selected: on the phone a selected collection replaces the tree with its leaderboard.
+      await open(c.page, '/lab');
+      if (!await visible(treeItem(c.page, 'Use cases'))) missing('Lab › Use cases');
+      await expand(c, 'Use cases');
+      if (!await visible(treeItem(c.page, 'LLM Code Benchmarks'), 5000)) missing('collection "LLM Code Benchmarks" in Lab › Use cases');
       await expand(c, 'LLM Code Benchmarks');
       const uc = c.page.locator('[role=treeitem]').filter({ hasText: /bench:/ });
       if (!await visible(uc)) missing('use case under LLM Code Benchmarks');
@@ -110,7 +118,7 @@ const JOURNEYS: Journey[] = [
       return 'Promote present (not pressed: the walk never writes)';
     }],
     ['Library › Methods shows lifecycle status', async c => {
-      await open(c.page, '/agents');
+      await open(c.page, '/library/methods');
       if (!await visible(c.page.locator('[data-ui=catalogue-tree]'))) missing('Library catalogue tree');
       if (!await visible(treeItem(c.page, 'Methods'), 5000)) missing('Library › Methods');
       await expand(c, 'Methods');
@@ -125,15 +133,16 @@ const JOURNEYS: Journey[] = [
     }],
   ] },
   { id: 'J4', title: 'Real project execution with full attribution', steps: [
-    ['Tasks list', async c => {
-      await open(c.page, '/tasks');
-      if (!await visible(c.page.locator('.vl-row .row-link'))) missing('Tasks list');
+    ['Tasks facet of the Fleet project', async c => {
+      // Tasks are a facet of their project (pages/projects.md, Routes); `/projects/tasks` lists projects first.
+      await open(c.page, '/projects/FLT/tasks');
+      if (!await visible(taskRows(c.page).locator('.row-link'))) missing('Tasks facet of a project');
       if (!await visible(c.page.getByRole('button', { name: /New task/ }), 2000)) c.gap('no "New task" action on Tasks (tasks are created from a conversation)');
     }],
     ['Open a task that ran', async c => {
       // A row with recorded spend has run; otherwise the first task.
-      const spent = c.page.locator('.vl-row').filter({ has: c.page.locator('.row-link') }).filter({ hasNotText: /Spend —/ });
-      await c.click((await spent.count() ? spent : c.page.locator('.vl-row').filter({ has: c.page.locator('.row-link') })).locator('.row-link'));
+      const rows = taskRows(c.page).filter({ has: c.page.locator('.row-link') }), spent = rows.filter({ hasNotText: /Spend —/ });
+      await c.click((await spent.count() ? spent : rows).locator('.row-link').filter({ visible: true }));
       if (!await visible(c.page.locator('[data-ui=detail] .detail-title'))) throw new Stop('task detail did not open', 'broken');
       await c.page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
     }],
@@ -144,14 +153,14 @@ const JOURNEYS: Journey[] = [
       if (absent.length) c.gap(`task detail lacks ${absent.join(', ')}`);
     }],
     ['Spend attributes the work', async c => {
-      await open(c.page, '/spend');
+      await open(c.page, '/system/spend');
       if (!await visible(c.page.locator('[data-ui=data-list], [data-ui=data-table], table'))) missing('Spend breakdown');
     }],
   ] },
   { id: 'J5', title: 'Proactive environment & account compatibility', steps: [
-    ['Infrastructure host list', async c => {
-      await open(c.page, '/hosts');
-      if (!await visible(treeItem(c.page, 'Hosts'))) missing('Infrastructure › Hosts');
+    ['System host list', async c => {
+      await open(c.page, '/system/hosts');
+      if (!await visible(treeItem(c.page, 'Hosts'))) missing('System › Hosts');
       await expand(c, 'Hosts');
       if (!await visible(c.page.locator('[role=treeitem][aria-level="2"]'), 5000)) throw new Stop('no host under Hosts', 'broken');
     }],
@@ -207,7 +216,7 @@ if (!cred) { out.push('', 'Not run: no Access service token (CF_ACCESS_CLIENT_ID
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 try {
   browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, extraHTTPHeaders: { 'CF-Access-Client-Id': cred.id, 'CF-Access-Client-Secret': cred.secret } });
+  const context = await browser.newContext({ viewport: { width, height }, extraHTTPHeaders: { 'CF-Access-Client-Id': cred.id, 'CF-Access-Client-Secret': cred.secret } });
   // The token goes only to this origin: other hosts are not opened.
   await context.route(u => new URL(u).origin !== origin, r => r.abort());
   const results: Outcome[] = [];
@@ -218,7 +227,7 @@ try {
     version ||= (await page.locator('body').innerText().catch(() => '')).match(/\b\d+\.\d{6}\.\d+\b/)?.[0] ?? '';
     await page.close();
   }
-  out[0] += `${version ? ` (v${version})` : ''}, ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+  out[0] += `${version ? ` (v${version})` : ''} at ${width} × ${height}, ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`;
   out.push('', 'Read-only walk of docs/designs/fleet-ia-and-journeys.md §3; information, never a gate.', '',
     '| Journey | Result | Console errors | Failed requests | Time |', '|---|---|---|---|---|',
     ...results.map(r => `| ${r.id} | ${r.status} | ${r.errors.length} | ${r.failed.length} | ${(r.ms / 1000).toFixed(1)} s |`));
