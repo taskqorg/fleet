@@ -66,6 +66,47 @@ func (v *CoordinatorVersion) Validate() error {
 	return nil
 }
 
+type DbExplainReply struct {
+	HandlerMs  int64                `json:"handlerMs"`
+	Statements []DbExplainStatement `json:"statements"`
+	View       string               `json:"view"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DbExplainReply) Validate() error {
+	if v.Statements == nil {
+		return Missing("statements")
+	}
+	for i := range v.Statements {
+		if err := Check(&v.Statements[i], "statements"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type DbExplainRequest struct {
+	Args map[string]json.RawMessage `json:"args,omitempty"`
+	View string                     `json:"view"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DbExplainRequest) Validate() error {
+	return nil
+}
+
+type DbExplainStatement struct {
+	Calls int64   `json:"calls"`
+	Error *string `json:"error,omitempty"`
+	Plan  string  `json:"plan"`
+	Sql   string  `json:"sql"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DbExplainStatement) Validate() error {
+	return nil
+}
+
 // DeleteKind: Kinds object_delete deletes. A task takes its executions (with their child runs), questions and artifacts; a session takes its executions, messages and questions.
 type DeleteKind string
 
@@ -3063,6 +3104,7 @@ func (v *UiVersion) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
+		"db_explain":            {Read: true, Long: false, Errors: []int{400}, Auth: "owner", Agent: "tool", Description: "Owner or full access: verify a screen under RLS. Runs the view operation view (contract view: true) with args as you, records each database statement it sends, then runs EXPLAIN (ANALYZE, BUFFERS) of each in the same read-only transaction, under row level security as the app reads (20 s timeout per statement). Answers the handler's own time and each distinct statement with its calls, its plan text (planning and execution times) or its error. Never takes SQL from the caller.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"args\":{\"$comment\":\"Its request; default {}.\",\"additionalProperties\":true,\"type\":\"object\"},\"view\":{\"$comment\":\"A view operation's name (session_view, home_view, ...).\",\"type\":\"string\"}},\"required\":[\"view\"],\"type\":\"object\"}")},
 		"delivery_baseline":     {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Delivery check durations and failure rates over the last days", Changes: []string{"delivery:delivery-pr:", "delivery:delivery-run:", "delivery:delivery-release:", "delivery:delivery-check:"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"days\":{\"$comment\":\"trend length in days, default 7, at most 60; the rolling baseline is always 7 days\",\"type\":\"integer\"}},\"type\":\"object\"}")},
 		"delivery_baseline_set": {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "tool", Description: "Owner or full access.", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access.\",\"additionalProperties\":true,\"properties\":{\"remove\":{\"$comment\":\"delete the snapshot of this name\",\"type\":\"string\"},\"settings\":{\"properties\":{\"baseline\":{\"$comment\":\"the snapshot name compared with; empty: the 7 days before the last 24 h\",\"type\":\"string\"},\"minDeltaMs\":{\"$comment\":\"and the difference at least this (default 60000)\",\"type\":\"integer\"},\"minSamples\":{\"$comment\":\"both windows need this many values (default 5)\",\"type\":\"integer\"},\"ratio\":{\"$comment\":\"a P50 or P90 of the last 24 h this many times the baseline's is a regression (default 1.5)\",\"type\":\"number\"}},\"required\":[\"ratio\",\"minSamples\",\"minDeltaMs\",\"baseline\"],\"type\":\"object\"},\"snapshot\":{\"$comment\":\"store the rolling 7-day baseline now under this name (replaces one of the same name)\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"delivery_history":      {Read: true, Long: false, Errors: []int{404}, Auth: "person", Agent: "tool", Description: "Delivered pull requests and releases with their checks, optionally of one number or release or a time range", Changes: []string{"delivery:delivery-pr:", "delivery:delivery-run:", "delivery:delivery-release:", "delivery:delivery-check:"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"number\":{\"$comment\":\"one pull request and its merge-queue runs\",\"type\":\"integer\"},\"release\":{\"$comment\":\"exact release tag; selects its pull requests regardless of the date window\",\"type\":\"string\"},\"since\":{\"$comment\":\"RFC 3339 time or YYYY-MM-DD; default 7 days ago. Pull requests by merge time, runs by creation, releases by publication\",\"type\":\"string\"},\"until\":{\"type\":\"string\"}},\"type\":\"object\"}")},

@@ -81,7 +81,9 @@ and reports. Files between processes (gateway snapshot, spool, update files) com
 **S8 MCP.** One `go/mcpserve` package (JSON-RPC loop, initialize, tools from the contract) used by all
 eight servers.
 
-**S2a Query cost.** Measure a query as the app runs it: as role `fleet_app` with RLS
+**S2a Query cost.** Measure a query as the app runs it. For a screen, call `db_explain {view, args}` (owner or full
+access): it runs the view as the caller under RLS, records its statements and answers each one's EXPLAIN (ANALYZE,
+BUFFERS), with no shell on the database host. For any other query, as role `fleet_app` with RLS
 (`SET ROLE fleet_app; SELECT set_config('fleet.project_ids','*',false), set_config('fleet.person','<email>',false);
 SET statement_timeout='20s'; EXPLAIN (ANALYZE) …`). As postgres, RLS is bypassed and the plan can be 3-5 times faster
 than the app's (runners, 2026-11-26). Under RLS an index serves a user condition only when its functions are

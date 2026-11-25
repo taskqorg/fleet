@@ -40,7 +40,9 @@ import (
 // it (Agent: no, tool, or bound:<binder> when the coordinator binds its arguments to the calling session, project or focus)
 // and the tool description agents read.
 type Operation struct {
-	Read, Long               bool
+	Read, Long bool
+	// View: one screen's read (contract view: true, docs/designs/fleet-data-layer.md); db_explain explains its queries.
+	View                     bool
 	Errors                   []int
 	Auth, Agent, Description string
 	// Changes: the change kinds that can alter its reply, "<kind>" or "<kind>:<id prefix>"; each change row the feed
