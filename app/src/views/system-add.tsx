@@ -8,7 +8,9 @@ import { op } from '../api.ts';
 import { useOp } from '../store.ts';
 
 const list = (v: string) => v.split(',').map(x => x.trim()).filter(Boolean);
-const HOST_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
+// The coordinator's rules (hosts.go hostID, connections.go connName); `new` names the form's own route.
+const HOST_ID = /^[a-z][a-z0-9-]{0,79}$/;
+const CONN_NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 
 /** Add host: hosts_register with the host's own secret hash, or a minted secret shown here once. */
@@ -22,7 +24,7 @@ export function HostAdd(props: { onClose: () => void; onOpen: (path: string) => 
   const [err, setErr] = createSignal('');
   // The minted secret lives only in this view: never stored, gone when the person leaves.
   const [minted, setMinted] = createSignal<{ id: string; secret: string } | null>(null);
-  const idError = () => id() && !HOST_ID.test(id()) ? 'Lowercase letters, digits and dashes.' : undefined;
+  const idError = () => !id() ? undefined : !HOST_ID.test(id()) ? 'A lowercase letter, then letters, digits and dashes.' : id() === 'new' ? 'Pick another name.' : undefined;
   const hashError = () => hash().trim() && !HEX64.test(hash().trim().toLowerCase()) ? 'Expected 64 hex characters.' : undefined;
   const submit = () => {
     if (!id() || idError() || hashError()) return;
@@ -85,7 +87,7 @@ export function ConnectionAdd(props: { onClose: () => void; onOpen: (path: strin
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal('');
   const providers = () => Object.keys(conns.data?.providers ?? {}).toSorted().map(p => ({ id: p, label: p }));
-  const nameError = () => name() && !HOST_ID.test(name()) ? 'Lowercase letters, digits and dashes.' : undefined;
+  const nameError = () => !name() ? undefined : !CONN_NAME.test(name()) ? 'A lowercase letter, then letters, digits and dashes.' : name() === 'new' ? 'Pick another name.' : undefined;
   const submit = () => {
     if (!name() || nameError() || !provider()) return;
     setBusy(true); setErr('');

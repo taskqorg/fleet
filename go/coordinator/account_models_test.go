@@ -1,9 +1,11 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 func TestModelRefusal(t *testing.T) {
@@ -31,7 +33,8 @@ func TestRejectedModelText(t *testing.T) {
 	for p, want := range map[string]bool{
 		"turn.failed: model_not_found: The model `gpt-9` does not exist": true,
 		"harness exited 1: Error: model claude-opus-9 not found":         true,
-		"turn.failed: invalid model: foo":                                true,
+		"turn.failed: unknown model: foo":                                true,
+		"turn.failed: the model is not available right now (overloaded)": false,
 		"harness exited 1: rate limit reached":                           false,
 		"preparation failed: no usable key":                              false,
 	} {
@@ -58,6 +61,23 @@ func TestSubscriptionSkipsAndSpendByDay(t *testing.T) {
 	}
 	if ds := anys(body["decisions"]); len(ds) != 1 || mapOf(ds[0])["executionId"] != "e-skip" {
 		t.Fatalf("decisions = %v, want only e-skip (s1 skipped within 24 h)", body["decisions"])
+	}
+	if _, err := env.ownerStore.pool.Exec(env.ctx, `INSERT INTO managed_account(id, name, harness, payload) VALUES ('acc-j5', 'max', 'claude',
+		'{"bindings":[{"hostId":"pds18","binding":"b","readiness":"ready"},{"hostId":"mac","binding":"c","readiness":"ready"}],"comment":"keep"}')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.app.store.Write(env.ctx, nil, nil, func(q *Request) error {
+		return noteModelRejected(q, "acc-j5", "pds18", "claude-opus-5-5", "turn.failed: model_not_found")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var payload string
+	if err := env.ownerStore.pool.QueryRow(env.ctx, `SELECT payload::text FROM managed_account WHERE id='acc-j5'`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	a := accountOf(db.ManagedAccount{ID: "acc-j5", Payload: []byte(payload)})
+	if len(a.Bindings) != 2 || a.Bindings[0].modelRefusal("claude-opus-5-5") == "" || a.Bindings[1].modelRefusal("claude-opus-5-5") != "" || !strings.Contains(payload, `"comment": "keep"`) {
+		t.Fatalf("after a learned rejection the payload is %s", payload)
 	}
 	code, body = env.callJSON(t, "POST", "/api/ops/spend_summary", map[string]any{"by": "day", "window": map[string]any{"from": "2026-01-01", "to": "2027-01-01"}}, env.ownerHeaders())
 	if code != 200 || body["by"] != "day" {

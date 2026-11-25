@@ -1142,15 +1142,14 @@ func accountReport(q *Request, b *contract.AccountObservation, host string) (any
 		LastCheck: last, ReadinessBasis: basis, Authority: "host-owned native registry; no credentials transferred"}
 	switch {
 	case b.Models != nil:
+		// A malformed name is dropped, never the observation: readiness still counts.
+		kept := []string{}
 		for _, m := range b.Models {
-			if m == "" || len(m) > 200 {
-				return nil, fail(400, "Invalid host account observation: models")
+			if m != "" && len(m) <= 200 && len(kept) < 200 {
+				kept = append(kept, m)
 			}
 		}
-		if len(b.Models) > 200 {
-			return nil, fail(400, "Invalid host account observation: models")
-		}
-		binding.Models, binding.ModelsObservedAt = b.Models, &observedAt
+		binding.Models, binding.ModelsObservedAt = kept, &observedAt
 	case previous != nil:
 		binding.Models, binding.ModelsObservedAt, binding.RejectedModels = previous.Models, previous.ModelsObservedAt, previous.RejectedModels
 	}

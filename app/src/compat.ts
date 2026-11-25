@@ -11,9 +11,12 @@ export type CompatProfile = { id: string; harness: string; model?: string };
 
 /** Vendor lists mix full ids and aliases ("opus" for "claude-opus-5-5"): either name containing the other counts. */
 export function modelOffered(list: readonly string[], model: string): boolean {
-  const m = model.toLowerCase();
-  return list.some(x => { const l = x.toLowerCase(); return l === m || m.includes(l) || l.includes(m); });
+  const m = modelKey(model);
+  return list.some(x => { const l = modelKey(x); return !!l && (l === m || m.includes(l) || l.includes(m)); });
 }
+
+/** A model name compared case-blind and without a context-size suffix ("sonnet[1m]" is "sonnet"), as the router does. */
+const modelKey = (s: string) => s.trim().toLowerCase().replace(/(.)\[[^\]]*\]$/, '$1');
 
 /** Why a binding cannot serve model, or undefined when it can or nobody knows. */
 export function bindingRefusal(b: ModelBinding, model: string | undefined): string | undefined {

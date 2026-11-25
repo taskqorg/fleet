@@ -11,6 +11,7 @@ const acct = (bindings: CompatAccount['bindings'], harness = 'claude'): CompatAc
 test('bindingRefusal: unknown never refuses; aliases count; learned rejection wins', () => {
   assert.equal(bindingRefusal({ hostId: 'h', binding: 'b' }, 'claude-opus-5-5'), undefined);
   assert.equal(bindingRefusal({ hostId: 'h', binding: 'b', models: ['opus'] }, 'claude-opus-5-5'), undefined);
+  assert.equal(bindingRefusal({ hostId: 'h', binding: 'b', models: ['sonnet[1m]'] }, 'claude-sonnet-5-5'), undefined);
   assert.match(bindingRefusal({ hostId: 'h', binding: 'b', models: ['sonnet'] }, 'claude-opus-5-5') ?? '', /probe/);
   assert.match(bindingRefusal({ hostId: 'h', binding: 'b', models: ['opus'], rejectedModels: { 'claude-opus-5-5': 1 } }, 'claude-opus-5-5') ?? '', /modelNotFound/);
 });

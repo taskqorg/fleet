@@ -5,22 +5,35 @@ package main
 // (learned). The router skips a binding for a model it knows the binding does not serve; an unknown list never skips.
 
 import (
-	"encoding/json"
 	"regexp"
 	"strings"
+
+	"fleet/coordinator/db"
 )
 
 // modelOffered: whether a probed list names the model. Vendor lists mix full ids and aliases ("opus" for
 // "claude-opus-5-5"), so either name containing the other counts; a false skip costs a run, a false pass costs nothing new.
 func modelOffered(list []string, model string) bool {
-	m := strings.ToLower(model)
+	m := modelKey(model)
 	for _, x := range list {
-		x = strings.ToLower(x)
+		x = modelKey(x)
+		if x == "" {
+			continue
+		}
 		if x == m || strings.Contains(m, x) || strings.Contains(x, m) {
 			return true
 		}
 	}
 	return false
+}
+
+// modelKey: a model name compared case-blind and without a context-size suffix ("sonnet[1m]" is "sonnet").
+func modelKey(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if i := strings.IndexByte(s, '['); i > 0 && strings.HasSuffix(s, "]") {
+		s = s[:i]
+	}
+	return s
 }
 
 // modelRefusal: why this binding cannot serve model, or "" when it can or nobody knows.
@@ -38,40 +51,18 @@ func (b accountBinding) modelRefusal(model string) string {
 }
 
 // rejectedModelText: a run failure that says the vendor does not know the requested model.
-var rejectedModelText = regexp.MustCompile(`(?i)model_?not_?found|modelNotFound|(unknown|invalid|unsupported) model|model[^\n]{0,80}(not found|does not exist|not available|not supported|is not supported|unsupported)`)
+var rejectedModelText = regexp.MustCompile(`(?i)model_?not_?found|unknown model|model[^\n]{0,80}(not found|does not exist)`)
 
 // noteModelRejected records, on the account's binding on host, that a run there failed because the vendor rejected
 // model. The next route decision skips that binding for the model until a fresh probe (account_connect) clears it.
+// One UPDATE of the binding's rejectedModels, so it never writes back a stale copy of the account's other settings.
 func noteModelRejected(q *Request, accountID, host, model, problem string) error {
 	if accountID == "" || host == "" || model == "" || !rejectedModelText.MatchString(problem) {
 		return nil
 	}
-	a, err := accountGet(q, accountID)
-	if err != nil {
-		return nil // the account was removed; nothing to learn
+	n, err := q.db().AccountBindingRejectModel(q.ctx(), db.AccountBindingRejectModelParams{ID: accountID, HostID: host, Model: model, AtMs: nowMs()})
+	if err == nil && n > 0 {
+		wakeDispatchAfter(q)
 	}
-	changed := false
-	for i, raw := range a.Bindings {
-		var m map[string]json.RawMessage
-		if json.Unmarshal(raw, &m) != nil {
-			continue
-		}
-		var h string
-		if json.Unmarshal(m["hostId"], &h) != nil || h != host {
-			continue
-		}
-		rejected := map[string]int64{}
-		_ = json.Unmarshal(m["rejectedModels"], &rejected)
-		if _, ok := rejected[model]; ok {
-			return nil
-		}
-		rejected[model] = nowMs()
-		m["rejectedModels"] = jsonBytes(rejected)
-		a.Bindings[i] = jsonBytes(m)
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	return accountPut(q, a)
+	return err
 }
