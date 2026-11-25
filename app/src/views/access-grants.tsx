@@ -1,11 +1,14 @@
 // Project resource access in the app (docs/designs/fleet-project-access.md; board frames "System › Access: servers and
 // project grants" in screens/system.bl and "Project › Access: grants and approval card" in screens/projects.bl, both
+// approved 2026-11-26; "Project › Access · phone 390" and "System › Access · server not enrolled: enroll command",
 // approved 2026-11-26): the access servers on System › Access and a project's grants on its Access facet. Both read
-// access_grants, the operation agents call too; Check and Revoke are access_server_check, access_grant_check and
-// access_grant_revoke. Credentials never reach the browser: a grant carries its credential's fingerprint only.
+// access_grants, the operation agents call too, which the change stream rereads (kinds access-grant, access-server);
+// Check and Revoke are access_server_check, access_grant_check and access_grant_revoke. Credentials never reach the
+// browser: a grant carries its credential's fingerprint only. Both lists reflow to two-line rows when narrow
+// (ReflowTable) and never scroll sideways.
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import {
-  AgeChip, Button, DataTable, DetailSection, EntityCode, ErrorBanner, Empty, KvRow, Skeleton, StateBadge, TableName, TableRow, copyText,
+  AgeChip, Button, DetailSection, EntityCode, ErrorBanner, Empty, KvRow, ReflowRow, ReflowTable, Skeleton, StateBadge, copyText,
 } from '../../../packages/ui/src/index.ts';
 import { op, type Ops } from '../api.ts';
 import { useLocation, useSearch } from '../router.ts';
@@ -16,21 +19,11 @@ type Reply = Ops['access_grants']['reply'];
 export type AccessServer = Reply['servers'][number];
 export type AccessGrant = Reply['grants'][number];
 
-// A grant the provisioner works on now; a revoke that failed (revoking with an error) waits for Retry revoke.
-const busyGrant = (g: AccessGrant) => g.state === 'provisioning' || (g.state === 'revoking' && !g.error);
 const ENDED = new Set<AccessGrant['state']>(['declined', 'withdrawn', 'revoked']);
 
-/**
- * access_grants for a project (or every grant the caller sees). The operation has no change kind of its own, so the
- * read repeats every 3 s only while a grant is provisioning or revoking, or a check this page started has not
- * answered yet; otherwise it reads once and after each action.
- */
+/** access_grants for a project, or every grant the caller sees; the change stream rereads it (no timer). */
 export function useAccessGrants(projectId: () => string | undefined) {
-  const [waiting, setWaiting] = createSignal(false);
-  const [every, setEvery] = createSignal(0, { ownedWrite: true });
-  const read = useOp('access_grants', () => { const p = projectId(); return p ? { projectId: p } : {}; }, { every });
-  createEffect(() => waiting() || !!read.data?.grants.some(busyGrant), busy => { setEvery(busy ? 3000 : 0); });
-  return { read, setWaiting };
+  return useOp('access_grants', () => { const p = projectId(); return p ? { projectId: p } : {}; });
 }
 
 /** A server's state: failing once enrolled and its last check failed; enrolled with the provisioner's version; else not enrolled. */
@@ -80,12 +73,12 @@ function probeText(g: AccessGrant): string {
   const p = g.probe;
   if (!p) return g.state === 'asked' ? 'waits for approval' : '—';
   if (!p.ok) return 'failed';
-  return g.level === 'read' ? 'read ok · write refused' : 'read ok · write ok';
+  return g.level === 'read' ? 'read ok, write refused' : 'read ok, write ok';
 }
 
-function GrantProbe(props: { g: AccessGrant }) {
-  return <span class={props.g.probe && !props.g.probe.ok ? 't-danger' : 'muted'} data-tip={props.g.probe?.error}>
-    {probeText(props.g)}<Show when={props.g.probe}>{p => <> · <AgeChip t={p().at} /></>}</Show>
+function GrantProbe(props: { g: AccessGrant; age?: boolean }) {
+  return <span class={props.g.probe && !props.g.probe.ok ? 't-danger' : undefined} data-tip={props.g.probe?.error}>
+    {probeText(props.g)}<Show when={props.age && props.g.probe}>{p => <> · <AgeChip t={p().at} /></>}</Show>
   </span>;
 }
 
@@ -97,7 +90,7 @@ function Lines(props: { lines?: string[] }) {
 }
 
 /** One grant opened: scope, recipe, probe steps, error, credential fingerprint and the question, with Check and Revoke. */
-function GrantDetail(props: { g: AccessGrant; onChanged: () => void; onWaiting: (on: boolean) => void }) {
+function GrantDetail(props: { g: AccessGrant; onChanged: () => void }) {
   const [err, setErr] = createSignal('');
   const [confirm, setConfirm] = createSignal(false);
   const [busy, setBusy] = createSignal('');
@@ -105,9 +98,9 @@ function GrantDetail(props: { g: AccessGrant; onChanged: () => void; onWaiting: 
   // after: the probe time before this page's Check (null: no check waits); a newer probe is its answer.
   const [after, setAfter] = createSignal<number | null>(null);
   const g = () => props.g;
-  const settle = () => { setAfter(null); setBusy(''); props.onWaiting(false); };
+  const settle = () => { setAfter(null); setBusy(''); };
   let timer = 0;
-  onCleanup(() => { clearTimeout(timer); if (after() !== null) props.onWaiting(false); });
+  onCleanup(() => clearTimeout(timer));
   createEffect(() => [after(), g().probe?.at ?? 0] as const, ([before, at]) => { if (before !== null && at > before) { clearTimeout(timer); settle(); } });
   const scope = createMemo(() => {
     const s = g().scope;
@@ -119,12 +112,12 @@ function GrantDetail(props: { g: AccessGrant; onChanged: () => void; onWaiting: 
   // Revoke is the owner's (access_grant_revoke); a revoke that failed runs again.
   const canRevoke = () => !!me.data?.owner && !ENDED.has(g().state) && (g().state !== 'revoking' || !!g().error);
   const revokeLabel = () => (g().state === 'asked' ? 'Withdraw' : g().state === 'revoking' ? 'Retry revoke' : 'Revoke');
-  // A check probes in the background: the read repeats until a newer probe shows, or for 60 s.
+  // A check probes in the background; its probe arrives through the change stream. The label waits for it, 60 s at most.
   const check = () => {
     setErr(''); setBusy('check');
     const before = g().probe?.at ?? 0;
     void op('access_grant_check', { grant: g().id }).then(() => {
-      setAfter(before); props.onWaiting(true); props.onChanged();
+      setAfter(before); props.onChanged();
       timer = window.setTimeout(settle, 60_000);
     }, e => { setBusy(''); setErr(String(e.message ?? e)); });
   };
@@ -136,7 +129,7 @@ function GrantDetail(props: { g: AccessGrant; onChanged: () => void; onWaiting: 
     <KvRow icon="shield" label="Scope" meta={`${g().level} · OS user ${g().user}`} value={<span class="mono">{scope()}</span>} />
     <Show when={g().reason}><KvRow icon="message-circle-question" label="Reason" value={<span>{g().reason}</span>} /></Show>
     <div><b>Recipe</b><Lines lines={g().recipe} /></div>
-    <div><b>Probe</b> <GrantProbe g={g()} /><Show when={g().probe?.steps?.length}><Lines lines={g().probe?.steps} /></Show></div>
+    <div><b>Probe</b> <GrantProbe g={g()} age /><Show when={g().probe?.steps?.length}><Lines lines={g().probe?.steps} /></Show></div>
     <Show when={g().error ?? g().probe?.error}>{e => <ErrorBanner text={e()} />}</Show>
     <Show when={g().credential}>{c => <KvRow icon="shield" label="Credential" meta="fingerprint" value={<span class="mono">{c()}</span>} />}</Show>
     <Show when={g().questionId}>{q => <KvRow icon="message-circle-question" label="Approval" meta={`asked by ${g().askedBy}`} value={<EntityCode kind="question" id={q()} label />} />}</Show>
@@ -160,7 +153,7 @@ function GrantDetail(props: { g: AccessGrant; onChanged: () => void; onWaiting: 
 export function ProjectAccess(props: { projectId: string; data?: string }) {
   const [, go] = useLocation();
   const search = useSearch();
-  const { read, setWaiting } = useAccessGrants(() => props.projectId);
+  const read = useAccessGrants(() => props.projectId);
   // Rows are keyed by id: a reread that changes a grant keeps its open detail (a confirmation, a Check in flight).
   const byId = createMemo(() => new Map((read.data?.grants ?? []).map(g => [g.id, g])));
   const ids = createMemo(() => (read.data?.grants ?? []).toSorted((a, b) => b.createdAt - a.createdAt).map(g => g.id));
@@ -175,22 +168,20 @@ export function ProjectAccess(props: { projectId: string; data?: string }) {
     <Show when={read.error && !read.data}><ErrorBanner text={read.error ?? ''} onRetry={read.reload} /></Show>
     <Show when={read.data} fallback={<Show when={!read.error}><Skeleton rows={3} /></Show>}>
       <Show when={ids().length} fallback={<Empty text="This project has no access to servers yet. An agent asks for it with access_grant_ask; the owner approves it in Needs you." />}>
-        <DataTable label="Project access" cls="access-table" head={<tr>
-          <th scope="col">Resource</th><th scope="col">Level</th><th scope="col">State</th><th scope="col">Last probe</th><th scope="col">Connection</th>
-        </tr>}>
-          <For each={ids()}>{id => <Show when={byId().get(id)}>{grant => <>
-            <TableRow selected={open() === id} onOpen={() => toggle(id)}>
-              <TableName label={grantResource(grant())} current={open() === id} onOpen={() => toggle(id)} />
-              <td class="muted keep">{grant().level}</td>
-              <td class="keep"><StateBadge family="accessGrant" state={grant().state} /></td>
-              <td class="keep"><GrantProbe g={grant()} /></td>
-              <td><Show when={grant().connection} fallback={<span class="muted">—</span>}>{c => <span class="mono">{c()}</span>}</Show></td>
-            </TableRow>
-            <Show when={open() === id}>
-              <tr class="t-detail"><td colspan="5"><GrantDetail g={grant()} onChanged={read.reload} onWaiting={setWaiting} /></td></tr>
-            </Show>
-          </>}</Show>}</For>
-        </DataTable>
+        <ReflowTable label="Project access" head={['Resource', 'Level', 'State', 'Last probe', 'Connection', 'When']}
+          cols="minmax(8rem, 1fr) auto auto auto auto auto">
+          <For each={ids()}>{id => <Show when={byId().get(id)}>{grant =>
+            <ReflowRow name={grantResource(grant())} selected={open() === id} onOpen={() => toggle(id)}
+              cells={[
+                { part: 'meta', el: grant().level },
+                { part: 'state', el: <StateBadge family="accessGrant" state={grant().state} /> },
+                { part: 'meta', el: <GrantProbe g={grant()} /> },
+                { part: 'meta', el: grant().connection ? <span class="mono">{grant().connection}</span> : undefined },
+                { part: 'time', el: <AgeChip t={grant().probe?.at ?? grant().createdAt} /> },
+              ]}
+              detail={<GrantDetail g={grant()} onChanged={read.reload} />} />
+          }</Show>}</For>
+        </ReflowTable>
       </Show>
     </Show>
   </article>;
@@ -203,7 +194,7 @@ const grantPath = (g: AccessGrant) => `/projects/${encodeURIComponent(g.projectI
 export function AccessServers() {
   const [, go] = useLocation();
   const search = useSearch();
-  const { read } = useAccessGrants(() => undefined);
+  const read = useAccessGrants(() => undefined);
   const [checking, setChecking] = createSignal('');
   const [err, setErr] = createSignal('');
   const open = () => new URLSearchParams(search()).get('server') ?? '';
@@ -212,49 +203,73 @@ export function AccessServers() {
     setChecking(id); setErr('');
     void op('access_server_check', { id }).then(() => { setChecking(''); read.reload(); }, e => { setChecking(''); setErr(String(e.message ?? e)); });
   };
+  const server = (id?: string) => read.data?.servers.find(x => x.id === id);
+  const serverIds = createMemo(() => (read.data?.servers ?? []).map(x => x.id));
   return <Show when={read.data?.servers.length}><DetailSection title="Servers">
     <Show when={err()}>{e => <ErrorBanner text={e()} />}</Show>
-    <DataTable label="Servers" cls="access-table" head={<tr>
-      <th scope="col">Server</th><th scope="col">Address</th><th scope="col">Via</th><th scope="col">State</th><th scope="col">Host key</th>
-    </tr>}>
-      <For each={read.data!.servers}>{s => {
-        const st = createMemo(() => serverState(s));
-        const grants = createMemo(() => (read.data?.grants ?? []).filter(g => g.server === s.id && !ENDED.has(g.state)));
-        return <>
-          <TableRow selected={open() === s.id} onOpen={() => toggle(s.id)}>
-            <TableName label={s.id} current={open() === s.id} onOpen={() => toggle(s.id)} />
-            <td class="muted keep">{s.address}</td>
-            <td class="muted keep">{s.via ?? '—'}</td>
-            <td><StateBadge family="accessServer" state={st().state} reason={st().reason} /></td>
-            <td><HostKey line={s.hostKey} /></td>
-          </TableRow>
-          <Show when={open() === s.id}>
-            <tr class="t-detail"><td colspan="5"><div class="stack access-detail">
-              <KvRow icon="shield" label="Host key" meta="pinned" value={<HostKey line={s.hostKey} full />} />
-              <KvRow icon="history" label="Last check" meta={s.checked ? (s.checked.ok ? `fleet-provision ${s.checked.version ?? ''}`.trim() : 'failed') : 'never checked'}
-                value={<Show when={s.checked}>{c => <span class={c().ok ? 'muted' : 't-danger'}><AgeChip t={c().at} /></span>}</Show>} />
-              <Show when={s.checked && !s.checked.ok && s.checked.error}>{e => <ErrorBanner text={e()} />}</Show>
-              <Show when={s.checked?.steps?.length}><Lines lines={s.checked!.steps} /></Show>
-              <Show when={!s.enrolledAt}>
-                <span>Not enrolled: run <code>access_server_add</code> again to get the enroll command, run it once on {s.id} as root, then Check.</span>
+    <ReflowTable label="Servers" head={['Server', 'Address', 'Via', 'State', 'Host key', 'Checked']} cols="minmax(6rem, 1fr) auto auto minmax(8rem, 2fr) auto auto">
+      <For each={serverIds()}>{id => <Show when={server(id)}>{srv => {
+        // Keyed by id: a reread keeps the open detail (the fingerprint, a selection in the command).
+        const st = createMemo(() => serverState(srv()));
+        const grants = createMemo(() => (read.data?.grants ?? []).filter(g => g.server === srv().id && !ENDED.has(g.state)));
+        return <ReflowRow name={srv().id} selected={open() === srv().id} onOpen={() => toggle(srv().id)}
+          cells={[
+            { part: 'meta', el: srv().address },
+            { part: 'meta', el: srv().via ? `via ${srv().via}` : undefined },
+            { part: 'state', el: <StateBadge family="accessServer" state={st().state} reason={st().reason} /> },
+            { part: 'meta', el: <HostKey line={srv().hostKey} /> },
+            { part: 'time', el: srv().checked ? <span class={srv().checked?.ok ? undefined : 't-danger'}><AgeChip t={srv().checked!.at} /></span> : undefined },
+          ]}
+          detail={<div class="stack access-detail">
+            <KvRow icon="shield" label="Host key" meta="pinned" value={<HostKey line={srv().hostKey} full />} />
+            <KvRow icon="history" label="Last check" meta={srv().checked ? (srv().checked?.ok ? `fleet-provision ${srv().checked?.version ?? ''}`.trim() : 'failed') : 'never checked'}
+              value={<Show when={srv().checked}>{c => <span class={c().ok ? 'muted' : 't-danger'}><AgeChip t={c().at} /></span>}</Show>} />
+            <Show when={srv().checked && !srv().checked?.ok && srv().checked?.error}>{e => <ErrorBanner text={e()} />}</Show>
+            <Show when={srv().checked?.steps?.length}><Lines lines={srv().checked!.steps} /></Show>
+            <Show when={srv().enroll} fallback={<Show when={!srv().enrolledAt}><span class="muted">Not enrolled. The enroll command shows here to full-access people once Fleet's provisioner key exists (access_server_add makes it).</span></Show>}>{cmd =>
+              <Enroll server={srv()} via={server(srv().via)} command={cmd()} />}</Show>
+            <div class="res-bar">
+              <Show when={srv().enroll}>{cmd => <Button label="Copy command" icon="copy" kind="primary" onClick={() => void copyText(cmd())} />}</Show>
+              <Button label={checking() === srv().id ? 'Checking' : 'Check'} icon="rotate-cw" disabledReason={checking() ? 'Checking' : undefined} onClick={() => check(srv().id)} />
+              <Show when={srv().enroll}>{cmd => <span class="muted">{Math.max(1, Math.round(cmd().length / 1024))} KB, one line</span>}</Show>
+            </div>
+            <div>
+              <b>Grants on {srv().id}</b>
+              <Show when={grants().length} fallback={<p class="muted">No live grants.</p>}>
+                <For each={grants()}>{g =>
+                  <KvRow icon="shield" label={grantResource(g)} meta={`${g.projectId} · ${g.level}`}
+                    value={<a href={toTarget(grantPath(g))} onClick={e => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); go(grantPath(g)); } }}>
+                      <StateBadge family="accessGrant" state={g.state} /></a>} />}</For>
               </Show>
-              <div class="res-bar">
-                <Button label={checking() === s.id ? 'Checking' : 'Check'} icon="rotate-cw" disabledReason={checking() ? 'Checking' : undefined} onClick={() => check(s.id)} />
-              </div>
-              <div>
-                <b>Grants on {s.id}</b>
-                <Show when={grants().length} fallback={<p class="muted">No live grants.</p>}>
-                  <For each={grants()}>{g =>
-                    <KvRow icon="shield" label={grantResource(g)} meta={`${g.projectId} · ${g.level}`}
-                      value={<a href={toTarget(grantPath(g))} onClick={e => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); go(grantPath(g)); } }}>
-                        <StateBadge family="accessGrant" state={g.state} /></a>} />}</For>
-                </Show>
-              </div>
-            </div></td></tr>
-          </Show>
-        </>;
-      }}</For>
-    </DataTable>
+            </div>
+          </div>} />;
+      }}</Show>}</For>
+    </ReflowTable>
   </DetailSection></Show>;
 }
 
+/** host[:port] as ssh takes it: the host, and -p for a port. */
+const sshTarget = (address: string) => {
+  const m = /^(.*):(\d+)$/.exec(address);
+  return m ? `-p ${m[2]} root@${m[1]}` : `root@${address}`;
+};
+
+/**
+ * The enroll command for a server to enroll (access_grants answers it to full-access people): where to run it, then
+ * the command in two lines with an ellipsis; Copy command copies it whole.
+ */
+function Enroll(props: { server: AccessServer; via?: AccessServer; command: string }) {
+  const s = () => props.server;
+  const lead = () => {
+    const c = s().checked;
+    if (!s().enrolledAt) return '';
+    if (c && !c.ok) return `The last check failed; if fleet-provision is missing or too old on ${s().id}, run the command again. `;
+    return `${s().id} runs fleet-provision ${c?.version ?? '?'}: run the command again to update it. `;
+  };
+  return <>
+    <span>{lead()}Run once as root on {s().address}
+      <Show when={props.via}>{v => <> (reach it through {v().id}: <code>ssh -J root@{v().address} {sshTarget(s().address)}</code>)</>}</Show>
+      , then Check. It installs fleet-provision and lets Fleet's provisioner key run only its recipes.</span>
+    <div class="access-lines" role="group" aria-label="Enroll command"><div class="clamp">{props.command}</div></div>
+  </>;
+}

@@ -51,19 +51,32 @@ func accessSecretRoot() (string, error) {
 	return filepath.Join(secretDir(), "access"), nil
 }
 
+// accessKeyLoad loads the ed25519 key at <access>/<name>/id_ed25519 and never creates it (os.ErrNotExist when
+// missing): reads use it, so two reads at once never race to write two keys.
+func accessKeyLoad(name string) (ssh.Signer, error) {
+	root, err := accessSecretRoot()
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(filepath.Join(root, name, "id_ed25519"))
+	if err != nil {
+		return nil, err
+	}
+	return ssh.ParsePrivateKey(b)
+}
+
 // accessKey loads the ed25519 key at <access>/<name>/id_ed25519, creating it (0600 in a 0700 folder) when missing.
 func accessKey(name string) (ssh.Signer, error) {
+	s, err := accessKeyLoad(name)
+	if s != nil || !errors.Is(err, os.ErrNotExist) {
+		return s, err
+	}
 	root, err := accessSecretRoot()
 	if err != nil {
 		return nil, err
 	}
 	dir := filepath.Join(root, name)
 	path := filepath.Join(dir, "id_ed25519")
-	if b, err := os.ReadFile(path); err == nil {
-		return ssh.ParsePrivateKey(b)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, err

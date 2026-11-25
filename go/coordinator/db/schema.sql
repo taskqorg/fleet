@@ -33,7 +33,8 @@ CREATE TABLE access_server (
   "payload" jsonb NOT NULL,
   "created_at" timestamp with time zone NOT NULL,
   "updated_at" timestamp with time zone NOT NULL,
-  "deleted_at" timestamp with time zone
+  "deleted_at" timestamp with time zone,
+  "project_id" text
 );
 CREATE TABLE access_work (
   "grant_id" text NOT NULL,

@@ -57,11 +57,41 @@
 
   /* System › Access: sentences wrap inside the work area instead of widening the table. */
   .access-table td { white-space: normal; overflow-wrap: anywhere; }
-  .access-table td:last-child, .access-table td.keep { white-space: nowrap; overflow-wrap: normal; }
-  /* An opened row's detail sits under it, on the selected row's surface (System › Access servers, Project › Access). */
-  .limit-table .t-detail > td { border-top: 0; background: var(--selected); white-space: normal; }
-  /* The detail stays in the visible part of a table that scrolls sideways: as wide as its frame (the container). */
-  .access-detail { position: sticky; inset-inline-start: var(--space-3); max-inline-size: calc(100cqi - 2 * var(--space-3)); padding: var(--space-1) 0; }
+  .access-table td:last-child { white-space: nowrap; overflow-wrap: normal; }
+  /* Reflow table (ReflowTable): columns while wide, two lines per row while narrow; never a sideways scroll. */
+  .reflow-frame { container-type: inline-size; min-inline-size: 0; }
+  .reflow { display: grid; grid-template-columns: var(--reflow-cols); font-size: var(--font-size-sm); }
+  .reflow-head, .reflow-row, .reflow-detail { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; column-gap: var(--space-3); }
+  .reflow-head { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--line); color: var(--fg-muted); font-weight: var(--font-weight-medium); }
+  .reflow-row { align-items: start; padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); }
+  .reflow-head + .reflow-row { border-top: 0; }
+  .reflow-row > * { min-inline-size: 0; overflow-wrap: anywhere; }
+  .reflow-row.opens { cursor: pointer; }
+  .reflow-row.opens:hover { background: var(--hover); }
+  .reflow-row.sel { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
+  .reflow-name { display: flex; align-items: center; gap: var(--space-2); color: var(--fg); }
+  .reflow-meta, .reflow-time { color: var(--fg-muted); }
+  .reflow-meta.reflow-empty::before { content: '—'; }
+  /* A state's reason ends in an ellipsis inside its column; the opened row shows it whole. */
+  .reflow-state .state { display: flex; max-inline-size: 100%; }
+  .reflow-detail { padding: 0 var(--space-3) var(--space-3); background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
+  .reflow-detail > [role=cell] { grid-column: 1 / -1; min-inline-size: 0; }
+  @container (inline-size < 38rem) {
+    .reflow { display: block; }
+    .reflow-head { display: none; }
+    .reflow-row { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0; row-gap: var(--space-1); min-block-size: var(--size-control); }
+    .reflow-row::after { content: ''; order: 2; flex-basis: 100%; }
+    .reflow-name { order: 0; flex: 1 1 0; font-size: var(--font-size-md); }
+    .reflow-name .t-label { white-space: normal; }
+    .reflow-state { order: 1; flex: none; margin-inline-start: var(--space-2); }
+    .reflow-meta { order: 3; font-size: var(--font-size-xs); }
+    .reflow-meta.reflow-empty { display: none; }
+    .reflow-meta:not(.reflow-empty) ~ .reflow-meta:not(.reflow-empty)::before { content: '·'; padding-inline: var(--space-1); }
+    .reflow-state .reason { display: none; }
+    .reflow-time { order: 4; margin-inline-start: auto; padding-inline-start: var(--space-2); font-size: var(--font-size-xs); }
+    .reflow-detail { display: block; }
+  }
+  .access-detail { padding: var(--space-1) 0; }
   .access-detail .mono { min-inline-size: 0; overflow-wrap: anywhere; }
   .access-lines {
     margin: var(--space-1) 0 0;
@@ -75,6 +105,8 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
+  /* A one-line command too long to read (the ~18 KB enroll command): two lines, then an ellipsis; Copy copies it whole. */
+  .access-lines > .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; word-break: break-all; }
 
   .sort-btn {
     display: inline-flex;

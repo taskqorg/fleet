@@ -2,6 +2,12 @@
 -- (store.go) whenever the file changes. Edit here, never in a migration; TestMigrationSchemaFiles keeps the file in
 -- the database's deparsed form (FLEET_UPDATE_SCHEMA_FILES=1 go test ./coordinator -run TestMigrationSchemaFiles).
 
+-- access_grant
+CREATE OR REPLACE TRIGGER access_grant_change AFTER INSERT OR DELETE OR UPDATE ON access_grant FOR EACH ROW EXECUTE FUNCTION fleet_change();
+
+-- access_server
+CREATE OR REPLACE TRIGGER access_server_change AFTER INSERT OR DELETE OR UPDATE ON access_server FOR EACH ROW EXECUTE FUNCTION fleet_change();
+
 -- account_inspection
 CREATE OR REPLACE TRIGGER account_inspection_tombstone BEFORE INSERT ON account_inspection FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
 

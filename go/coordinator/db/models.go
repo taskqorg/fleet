@@ -413,6 +413,7 @@ type AccessServer struct {
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	DeletedAt  *time.Time
+	ProjectID  *string
 }
 
 type AccessWork struct {
