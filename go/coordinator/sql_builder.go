@@ -1450,3 +1450,47 @@ func has(q *Request, sql string, args ...any) (bool, error) {
 	err := q.tx.QueryRow(q.ctx(), "SELECT EXISTS("+sql+")", args...).Scan(&ok)
 	return ok, err
 }
+
+// sqlHistoryPage: a page of activity (history_view) under the request's scope, newest first, below seq before (0: from
+// the newest). Every condition is a plain comparison of a column the indexes of migration 122 lead with, so under RLS a
+// scoped page starts from its index.
+func sqlHistoryPage(r *contract.HistoryViewRequest, before int64, limit int) (string, []any) {
+	var c []string
+	var p []any
+	arg := func(v any) string { p = append(p, v); return "$" + strconv.Itoa(len(p)) }
+	eq := map[string]*string{"task_id": r.TaskId, "session_id": r.SessionId, "host_id": r.HostId, "bot_id": r.BotId, "experiment_id": r.ExperimentId, "actor": r.Actor}
+	for _, col := range []string{"task_id", "session_id", "host_id", "bot_id", "experiment_id", "actor"} {
+		if v := eq[col]; v != nil {
+			c = append(c, col+" = "+arg(*v))
+		}
+	}
+	if r.Section != nil {
+		c = append(c, "section = "+arg(string(*r.Section)))
+	}
+	if r.Outcome != nil {
+		c = append(c, "outcome = "+arg(string(*r.Outcome)))
+	}
+	if len(r.Kinds) > 0 {
+		ks := make([]string, len(r.Kinds))
+		for i, k := range r.Kinds {
+			ks[i] = string(k)
+		}
+		c = append(c, "kind = ANY("+arg(ks)+"::text[])")
+	}
+	if len(r.ProjectIds) > 0 {
+		ids, none := projectSplit(r.ProjectIds)
+		var or []string
+		if len(ids) > 0 {
+			or = append(or, "project_id = ANY("+arg(ids)+"::text[])")
+		}
+		if none {
+			or = append(or, "project_id IS NULL")
+		}
+		c = append(c, "("+strings.Join(or, " OR ")+")")
+	}
+	if before > 0 {
+		c = append(c, "seq < "+arg(before))
+	}
+	return `SELECT seq, (extract(epoch FROM at) * 1000)::float8, kind, verb, outcome, section, subject, title, actor, project_id, task_id,
+	 session_id, host_id, bot_id, experiment_id, group_key, detail FROM activity` + where(c) + " ORDER BY seq DESC LIMIT " + arg(limit), p
+}

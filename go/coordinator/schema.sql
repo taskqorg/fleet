@@ -5233,3 +5233,82 @@ SELECT set_config('fleet.project_ids', '*', true);
 UPDATE audit_log a SET project_id = g.project_id
 FROM access_grant g
 WHERE a.target = 'access-grant:' || g.id AND a.project_id IS NULL;
+
+-- migration 122: history (docs/designs/fleet-history.md): one activity entry per thing that happened, written by
+-- fleet_activity() (schema/functions.sql) in the same transaction as the write it records: a run starting or ending, a
+-- task created or moving state, a question asked, answered or withdrawn, an experiment created or moving state, and
+-- every audit row except a person's own preferences. history_view reads it with scope filters; the change stream
+-- carries it (kind activity). The backfill records what the source tables still hold, oldest first.
+CREATE TABLE activity (
+ seq bigserial PRIMARY KEY,
+ at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ kind text NOT NULL CHECK (kind IN ('run', 'task', 'question', 'lab', 'settings', 'access')),
+ verb text NOT NULL,
+ outcome text NOT NULL CHECK (outcome IN ('ok', 'failed', 'stopped', 'waiting', 'running', 'info')),
+ section text NOT NULL CHECK (section IN ('work', 'lab', 'system')),
+ subject text NOT NULL,
+ title text NOT NULL DEFAULT '',
+ actor text NULL,
+ project_id text NULL,
+ task_id text NULL,
+ session_id text NULL,
+ host_id text NULL,
+ bot_id text NULL,
+ experiment_id text NULL,
+ holder text NULL,
+ group_key text NOT NULL,
+ detail jsonb NULL
+);
+CREATE INDEX activity_project ON activity(project_id, seq);
+CREATE INDEX activity_section ON activity(section, seq);
+CREATE INDEX activity_task ON activity(task_id, seq) WHERE task_id IS NOT NULL;
+CREATE INDEX activity_session ON activity(session_id, seq) WHERE session_id IS NOT NULL;
+CREATE INDEX activity_host ON activity(host_id, seq) WHERE host_id IS NOT NULL;
+CREATE INDEX activity_bot ON activity(bot_id, seq) WHERE bot_id IS NOT NULL;
+CREATE INDEX activity_experiment ON activity(experiment_id, seq) WHERE experiment_id IS NOT NULL;
+SELECT set_config('fleet.project_ids', '*', true);
+SELECT set_config('fleet.deleted', 'on', true);
+INSERT INTO activity (at, kind, verb, outcome, section, subject, title, actor, project_id, task_id, session_id, host_id, bot_id, experiment_id, holder, group_key, detail)
+SELECT * FROM (
+ -- Runs: their end, or their start while they still run.
+ SELECT coalesce(e.ended_at, e.started_at) AS at, 'run', CASE WHEN e.ended_at IS NULL THEN 'started' WHEN e.state = 'failed' THEN 'failed' WHEN e.state = 'cancelled' THEN 'stopped' ELSE 'finished' END,
+  CASE WHEN e.ended_at IS NULL THEN 'running' WHEN e.state = 'failed' THEN 'failed' WHEN e.state = 'cancelled' THEN 'stopped' ELSE 'ok' END,
+  CASE WHEN e.experiment_id IS NOT NULL THEN 'lab' WHEN e.kind = 'host_job' AND e.task_id IS NULL THEN 'system' ELSE 'work' END,
+  'execution:' || e.id,
+  coalesce((SELECT coalesce(t.code || ' ', '') || t.title FROM task t WHERE t.id = e.task_id), (SELECT s.title FROM session s WHERE s.id = e.session_id), ''),
+  coalesce(e.bot_id, e.harness, e.system_actor, e.directed_by), e.project_id, e.task_id, e.session_id, e.host_id, e.bot_id, e.experiment_id, NULL::text,
+  coalesce('task:' || e.task_id, CASE WHEN e.kind = 'host_job' THEN 'host_job:' || coalesce(e.host_id, '') END, 'session:' || e.session_id, 'execution:' || e.id),
+  jsonb_strip_nulls(jsonb_build_object('executionKind', e.kind, 'harness', e.harness, 'model', e.model, 'startedAt', e.started_at, 'problem', e.problem))
+ FROM execution e WHERE e.kind IN ('agent_run', 'pipeline_run', 'host_job') AND e.started_at IS NOT NULL
+ UNION ALL
+ SELECT t.created_at, 'task', 'created', 'info', 'work', 'task:' || t.id, coalesce(t.code || ' ', '') || t.title, coalesce(t.created_by, t.requested_by),
+  t.project_id, t.id, t.created_by_session_id, NULL, NULL, NULL, NULL, 'task:' || t.id, NULL
+ FROM task t
+ UNION ALL
+ SELECT t.state_at, 'task', t.state::text, CASE t.state WHEN 'completed' THEN 'ok' WHEN 'failed' THEN 'failed' WHEN 'cancelled' THEN 'stopped' WHEN 'paused' THEN 'stopped' WHEN 'waiting' THEN 'waiting' WHEN 'in_progress' THEN 'running' ELSE 'info' END,
+  'work', 'task:' || t.id, coalesce(t.code || ' ', '') || t.title, NULL, t.project_id, t.id, NULL, NULL, NULL, NULL, NULL, 'task:' || t.id, NULL
+ FROM task t WHERE t.state <> 'queued' AND t.state_at IS NOT NULL
+ UNION ALL
+ SELECT q.asked_at, 'question', 'asked', 'waiting', CASE WHEN q.cause IS NOT NULL AND q.project_id IS NULL THEN 'system' ELSE 'work' END, 'question:' || q.id, q.text, q.asked_by,
+  q.project_id, q.task_id, q.session_id, NULL, NULL, NULL, NULL, 'question:' || q.id, NULL
+ FROM question q
+ UNION ALL
+ SELECT coalesce(q.answered_at, q.updated_at), 'question', q.state::text, CASE WHEN q.state = 'answered' THEN 'ok' ELSE 'stopped' END,
+  CASE WHEN q.cause IS NOT NULL AND q.project_id IS NULL THEN 'system' ELSE 'work' END, 'question:' || q.id, q.text, q.answered_by,
+  q.project_id, q.task_id, q.session_id, NULL, NULL, NULL, NULL, 'question:' || q.id, jsonb_strip_nulls(jsonb_build_object('answer', left(q.answer, 2000)))
+ FROM question q WHERE q.state::text <> 'open'
+ UNION ALL
+ SELECT x.created_at, 'lab', 'created', 'info', 'lab', 'experiment:' || x.id, coalesce(x.goal, x.lab_group, x.kind::text), x.requested_by,
+  x.project_id, NULL, NULL, NULL, NULL, x.id, NULL, 'experiment:' || x.id, jsonb_strip_nulls(jsonb_build_object('labGroup', x.lab_group))
+ FROM experiment x
+ UNION ALL
+ SELECT coalesce(x.decided_at, x.launched_at, x.created_at), 'lab', x.state::text, CASE x.state WHEN 'done' THEN CASE WHEN x.decision = 'pending' THEN 'waiting' ELSE 'ok' END WHEN 'running' THEN 'running' WHEN 'draft' THEN 'info' ELSE 'stopped' END,
+  'lab', 'experiment:' || x.id, coalesce(x.goal, x.lab_group, x.kind::text), x.decided_by,
+  x.project_id, NULL, NULL, NULL, NULL, x.id, NULL, 'experiment:' || x.id, jsonb_strip_nulls(jsonb_build_object('labGroup', x.lab_group, 'decision', x.decision))
+ FROM experiment x WHERE x.state <> 'draft'
+ UNION ALL
+ SELECT a.at, CASE WHEN a.target LIKE 'access-grant:%' OR a.target LIKE 'person:%' THEN 'access' ELSE 'settings' END, 'changed', 'info', 'system',
+  a.target, a.target || ' ' || a.field, a.actor, a.project_id, NULL, NULL, NULL, NULL, NULL, a.holder, a.target || ':' || a.field,
+  jsonb_strip_nulls(jsonb_build_object('field', a.field, 'previous', CASE WHEN length(a.previous::text) <= 2000 THEN a.previous END, 'value', CASE WHEN length(a.value::text) <= 2000 THEN a.value END))
+ FROM audit_log a WHERE a.target <> 'person:' || coalesce(a.actor, '')
+) h ORDER BY 1;

@@ -30,6 +30,13 @@ CREATE POLICY live ON account_inspection AS RESTRICTIVE FOR SELECT TO public USI
 DROP POLICY IF EXISTS project_scope ON account_inspection;
 CREATE POLICY project_scope ON account_inspection FOR ALL TO public USING (fleet_visible(project_id));
 
+-- activity
+ALTER TABLE activity ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON activity;
+CREATE POLICY project_scope ON activity FOR ALL TO public USING ((fleet_visible(project_id) OR ((project_id IS NULL) AND (session_id IS NOT NULL) AND (EXISTS ( SELECT 1
+   FROM session s
+  WHERE (s.id = activity.session_id)))) OR ((project_id IS NULL) AND (holder = current_setting('fleet.person'::text, true)))));
+
 -- api_connection
 ALTER TABLE api_connection ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON api_connection;

@@ -5,6 +5,9 @@
 -- account_inspection
 CREATE OR REPLACE TRIGGER account_inspection_tombstone BEFORE INSERT ON account_inspection FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
 
+-- activity
+CREATE OR REPLACE TRIGGER activity_change AFTER INSERT ON activity FOR EACH ROW EXECUTE FUNCTION fleet_change();
+
 -- api_connection
 CREATE OR REPLACE TRIGGER api_connection_capture_metadata AFTER INSERT OR DELETE OR UPDATE ON api_connection FOR EACH ROW EXECUTE FUNCTION resource_capture_metadata();
 CREATE OR REPLACE TRIGGER api_connection_change AFTER INSERT OR DELETE OR UPDATE ON api_connection FOR EACH ROW EXECUTE FUNCTION fleet_change();
@@ -21,6 +24,7 @@ CREATE OR REPLACE TRIGGER artifact_copy_change AFTER INSERT OR DELETE OR UPDATE 
 CREATE OR REPLACE TRIGGER artifact_copy_touch BEFORE UPDATE ON artifact_copy FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
 -- audit_log
+CREATE OR REPLACE TRIGGER audit_log_activity AFTER INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION fleet_activity();
 CREATE OR REPLACE TRIGGER audit_log_change AFTER INSERT OR DELETE OR UPDATE ON audit_log FOR EACH ROW EXECUTE FUNCTION fleet_change();
 
 -- board_message
@@ -73,6 +77,7 @@ CREATE OR REPLACE TRIGGER session_summary_event_ins AFTER INSERT ON event REFERE
 CREATE OR REPLACE TRIGGER session_summary_event_upd AFTER UPDATE ON event REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION fleet_session_summary_event();
 
 -- execution
+CREATE OR REPLACE TRIGGER execution_activity AFTER INSERT OR UPDATE OF started_at, ended_at, state ON execution FOR EACH ROW EXECUTE FUNCTION fleet_activity();
 CREATE OR REPLACE TRIGGER execution_change AFTER INSERT OR DELETE OR UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER execution_derived AFTER INSERT OR DELETE OR UPDATE OF task_id, state, host_id, harness, started_at, seq ON execution FOR EACH ROW EXECUTE FUNCTION fleet_task_derived_touch();
 CREATE OR REPLACE TRIGGER execution_spend_exec_del AFTER DELETE ON execution REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION execution_spend_on_exec_del();
@@ -92,6 +97,7 @@ CREATE OR REPLACE TRIGGER execution_totals_change AFTER INSERT OR DELETE OR UPDA
 CREATE OR REPLACE TRIGGER resource_capture_totals AFTER INSERT OR DELETE OR UPDATE ON execution_totals FOR EACH ROW EXECUTE FUNCTION resource_capture_totals();
 
 -- experiment
+CREATE OR REPLACE TRIGGER experiment_activity AFTER INSERT OR UPDATE OF state, decision ON experiment FOR EACH ROW EXECUTE FUNCTION fleet_activity();
 CREATE OR REPLACE TRIGGER experiment_change AFTER INSERT OR DELETE OR UPDATE ON experiment FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER experiment_record BEFORE UPDATE ON experiment FOR EACH ROW EXECUTE FUNCTION fleet_experiment_record();
 
@@ -125,6 +131,7 @@ CREATE OR REPLACE TRIGGER problem_dismissal_tombstone BEFORE INSERT ON problem_d
 CREATE OR REPLACE TRIGGER project_recommendation_change AFTER INSERT OR DELETE OR UPDATE ON project_recommendation FOR EACH ROW EXECUTE FUNCTION fleet_change();
 
 -- question
+CREATE OR REPLACE TRIGGER question_activity AFTER INSERT OR UPDATE OF state ON question FOR EACH ROW EXECUTE FUNCTION fleet_activity();
 CREATE OR REPLACE TRIGGER question_change AFTER INSERT OR DELETE OR UPDATE ON question FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER question_derived AFTER INSERT OR DELETE OR UPDATE OF task_id, state ON question FOR EACH ROW EXECUTE FUNCTION fleet_task_derived_touch();
 CREATE OR REPLACE TRIGGER question_tombstone BEFORE INSERT ON question FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
@@ -167,6 +174,7 @@ CREATE OR REPLACE TRIGGER store_change AFTER INSERT OR DELETE OR UPDATE ON store
 CREATE OR REPLACE TRIGGER store_touch BEFORE UPDATE ON store FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
 -- task
+CREATE OR REPLACE TRIGGER task_activity AFTER INSERT OR UPDATE OF state ON task FOR EACH ROW EXECUTE FUNCTION fleet_activity();
 CREATE OR REPLACE TRIGGER task_change AFTER INSERT OR DELETE OR UPDATE ON task FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER task_derived_project AFTER INSERT OR UPDATE OF project_id ON task FOR EACH ROW EXECUTE FUNCTION fleet_task_derived_touch();
 CREATE OR REPLACE TRIGGER task_state_at BEFORE UPDATE OF state, pause_reason, wait_reason ON task FOR EACH ROW EXECUTE FUNCTION fleet_task_state_at();

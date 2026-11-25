@@ -74,6 +74,26 @@ CREATE TABLE account_inspection (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE activity (
+  "seq" bigint NOT NULL,
+  "at" timestamp with time zone NOT NULL,
+  "kind" text NOT NULL,
+  "verb" text NOT NULL,
+  "outcome" text NOT NULL,
+  "section" text NOT NULL,
+  "subject" text NOT NULL,
+  "title" text NOT NULL,
+  "actor" text,
+  "project_id" text,
+  "task_id" text,
+  "session_id" text,
+  "host_id" text,
+  "bot_id" text,
+  "experiment_id" text,
+  "holder" text,
+  "group_key" text NOT NULL,
+  "detail" jsonb
+);
 CREATE TABLE agent_tool_receipt (
   "id" text NOT NULL,
   "execution_id" text NOT NULL,
