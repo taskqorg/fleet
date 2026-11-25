@@ -27,7 +27,9 @@ function digest(value, length) {
   return value;
 }
 
-function keepNewer(current, next) {
+// A version the watch reverted (pins.skip, deploy/pins-revert.mjs) is never proposed again.
+function keepNewer(current, next, name) {
+  if (pins.skip?.[name]?.includes(next.version)) return current;
   const old = version(current.version).split('.').map(Number);
   const candidate = version(next.version).split('.').map(Number);
   const first = candidate.findIndex((part, i) => part !== old[i]);
@@ -54,11 +56,11 @@ for (const [index, [target, [triple, claudeTarget]]] of Object.entries(platform)
   if (asset?.browser_download_url !== codexUrl) throw Error(`Missing Codex target ${target}`);
   current.codex = keepNewer(current.codex, {
     version: codexVersion, url: codexUrl, sha256: digest(asset.digest?.replace(/^sha256:/, ''), 64), entry: 'bin/codex',
-  });
+  }, 'codex');
   current.claude = keepNewer(current.claude, {
     version: claudeVersion, url: `${claude}/${claudeVersion}/${claudeTarget}/claude`,
     sha256: digest(claudeRelease.platforms[claudeTarget]?.checksum, 64),
-  });
+  }, 'claude');
   // The vendor can roll out manifests separately. Keep both targets on the same release.
   if (antigravity[0].version === antigravity[1].version) {
     const a = antigravity[index];
@@ -67,7 +69,7 @@ for (const [index, [target, [triple, claudeTarget]]] of Object.entries(platform)
     }
     current.antigravity = keepNewer(current.antigravity, {
       version: a.version, url: a.url, sha512: digest(a.sha512, 128), entry: 'antigravity',
-    });
+    }, 'antigravity');
   }
 }
 

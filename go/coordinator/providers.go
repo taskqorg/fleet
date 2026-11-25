@@ -1004,7 +1004,7 @@ const providersJSON = `
     "idempotent": true,
     "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
     "description": "Post a commit status on a pin proposal's head.",
-    "inputSchema": {"type": "object", "required": ["owner", "repo", "sha", "state", "context"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "sha": {"type": "string"}, "state": {"type": "string", "enum": ["success", "failure", "pending"]}, "context": {"type": "string", "enum": ["qualify-hosts", "code-review"]}, "description": {"type": "string"}, "target_url": {"type": "string"}}},
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "sha", "state", "context"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "sha": {"type": "string"}, "state": {"type": "string", "enum": ["success", "failure", "pending"]}, "context": {"type": "string", "enum": ["qualify-hosts", "code-review", "pins-watch"]}, "description": {"type": "string"}, "target_url": {"type": "string"}}},
     "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "sha": "^[0-9a-f]{40}$"}
    },
    "auto_merge_enable": {

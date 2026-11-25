@@ -85,7 +85,7 @@ func pinsPass(ctx context.Context, a *App, open []ghPull) error {
 		return nil
 	}
 	if err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
-		return problemsSet(q, "pins", "^pins:", current)
+		return problemsSet(q, "pins", "^pins:[a-z]+:[0-9a-f]+$", current)
 	}); err != nil {
 		return err
 	}
