@@ -91,18 +91,22 @@ func init() {
 	}
 	for lang, words := range map[string]map[string]string{
 		"en": {
-			"helpIntro": "Write as usual: each message goes to its piece of work, and an agent answers here.",
-			"helpTail":  "So? or ?? answers from Fleet without waking anyone. Reply to a question to answer it.",
-			"version":   "Fleet `%s`",
-			"noRun":     "Nothing is running for this chat.",
-			"stopped":   "Stop requested.",
+			"helpIntro":       "Write as usual: each message goes to its piece of work, and an agent answers here.",
+			"helpTail":        "So? or ?? answers from Fleet without waking anyone. Reply to a question to answer it.",
+			"version":         "Fleet `%s`",
+			"noRun":           "Nothing is running for this chat.",
+			"stopped":         "Stop requested.",
+			"runStoppedReply": "Stopped.",
+			"statusStopped":   "■ Stopped",
 		},
 		"ru": {
-			"helpIntro": "Пишите как обычно: каждое сообщение попадает в свою работу, агент отвечает здесь.",
-			"helpTail":  "«Ну?» или «??» отвечаются из Fleet, никого не будя. Ответьте на вопрос реплаем, чтобы ответить.",
-			"version":   "Fleet `%s`",
-			"noRun":     "Для этого чата ничего не запущено.",
-			"stopped":   "Остановка запрошена.",
+			"helpIntro":       "Пишите как обычно: каждое сообщение попадает в свою работу, агент отвечает здесь.",
+			"helpTail":        "«Ну?» или «??» отвечаются из Fleet, никого не будя. Ответьте на вопрос реплаем, чтобы ответить.",
+			"version":         "Fleet `%s`",
+			"noRun":           "Для этого чата ничего не запущено.",
+			"stopped":         "Остановка запрошена.",
+			"runStoppedReply": "Остановлено.",
+			"statusStopped":   "■ Остановлено",
 		},
 	} {
 		for k, v := range words {
@@ -236,9 +240,78 @@ func telegramStop(x *tgCommandCall) error {
 	return nil
 }
 
+// telegramMenuStale: the menu is set again with the next poll (a person linked or changed language).
+func telegramMenuStale() {
+	telegramHealth.Lock()
+	telegramHealth.menuSet, telegramHealth.menuTried = false, time.Time{}
+	telegramHealth.Unlock()
+}
+
+// tgMenuCommands: the menu of a chat kind in a language.
+func tgMenuCommands(kind, lang string) []map[string]string {
+	commands := []map[string]string{}
+	for i := range telegramCommands {
+		c := &telegramCommands[i]
+		if c.hidden || !tgCommandIn(c, kind) {
+			continue
+		}
+		commands = append(commands, map[string]string{"command": c.name, "description": tgWordsOf(c, lang).does})
+	}
+	return commands
+}
+
 // telegramMenu sets the bot's command menu from the registry: for private chats and for groups, in each language
-// Fleet speaks (English also as the default for other languages). Once per coordinator start, after getMe.
+// Fleet speaks (English also as the default for other languages). Telegram picks those by the app's language, so each
+// linked person also gets their Fleet language's menu in their private chat and, as a member, in every group room
+// Fleet knows (owner-tester: a Russian person with an English app saw English). Once per coordinator start, after
+// getMe, and again after a link or language change.
 func telegramMenu(ctx context.Context, a *App) error {
+	var people []db.TelegramPerson
+	var rooms []db.TelegramRoom
+	if err := a.store.Read(ctx, nil, func(q *Request) (err error) {
+		if people, err = q.db().TelegramPersonList(q.ctx()); err != nil {
+			return err
+		}
+		rooms, err = q.db().TelegramRoomList(q.ctx())
+		return err
+	}); err != nil {
+		return err
+	}
+	groups := map[int64]bool{}
+	for _, r := range rooms {
+		if r.Kind != "private" {
+			groups[r.ChatID] = true
+		}
+	}
+	set := func(kind, lang string, scope tgScope, code string) error {
+		_, err := tgParse(telegramCall(ctx, a, "set_my_commands", tgArgs{Commands: tgMenuCommands(kind, lang), Scope: scope, LanguageCode: code}))
+		return err
+	}
+	for _, p := range people {
+		if p.TelegramUserID == 0 {
+			continue
+		}
+		lang := or(p.Language, "en")
+		if err := set("private", lang, tgScope{Type: "chat", ChatID: p.TelegramUserID}, ""); err != nil {
+			return err
+		}
+		for g := range groups {
+			// A group the person is not in refuses the scope; that is no reason to stop the menu.
+			_ = set("group", lang, tgScope{Type: "chat_member", ChatID: g, UserID: p.TelegramUserID}, "")
+		}
+	}
+	return telegramMenuDefaults(ctx, a)
+}
+
+// tgScope: a BotCommandScope.
+type tgScope struct {
+	Type   string `json:"type"`
+	ChatID int64  `json:"chat_id,omitempty"`
+	UserID int64  `json:"user_id,omitempty"`
+}
+
+// telegramMenuDefaults: the menus by chat kind and app language.
+func telegramMenuDefaults(ctx context.Context, a *App) error {
 	langs := make([]string, 0, len(telegramWords))
 	for lang := range telegramWords {
 		langs = append(langs, lang)
@@ -250,16 +323,7 @@ func telegramMenu(ctx context.Context, a *App) error {
 			scope["type"] = "all_group_chats"
 		}
 		for _, lang := range append([]string{""}, langs...) {
-			commands := []map[string]string{}
-			for i := range telegramCommands {
-				c := &telegramCommands[i]
-				if c.hidden || !tgCommandIn(c, kind) {
-					continue
-				}
-				w := tgWordsOf(c, or(lang, "en"))
-				commands = append(commands, map[string]string{"command": c.name, "description": w.does})
-			}
-			args := tgArgs{Commands: commands, Scope: scope, LanguageCode: lang}
+			args := tgArgs{Commands: tgMenuCommands(kind, or(lang, "en")), Scope: scope, LanguageCode: lang}
 			if _, err := tgParse(telegramCall(ctx, a, "set_my_commands", args)); err != nil {
 				return err
 			}

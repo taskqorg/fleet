@@ -100,7 +100,7 @@ func TestTelegramCommandRegistry(t *testing.T) {
 		}
 	}
 	for lang := range telegramWords {
-		for _, key := range []string{"helpIntro", "helpTail", "noRun", "stopped", "version", "newHome", "noNeeds"} {
+		for _, key := range []string{"helpIntro", "helpTail", "noRun", "stopped", "runStoppedReply", "statusStopped", "version", "newHome", "noNeeds"} {
 			if telegramWords[lang][key] == "" {
 				t.Errorf("%s: no word %s", lang, key)
 			}

@@ -501,6 +501,7 @@ func telegramStart(q *Request, row *db.TelegramUpdate, m *tgMessage, code string
 	if err := q.db().TelegramPersonLink(q.ctx(), db.TelegramPersonLinkParams{Email: email, TelegramUserID: m.From.ID, Username: m.From.Username, Language: lang}); err != nil {
 		return err
 	}
+	telegramMenuStale()
 	if err := audit(q, "telegram-person:"+email, "telegramUserId", nil, m.From.ID, auditExtra{Holder: email, Reason: "linked by /start code"}); err != nil {
 		return err
 	}
@@ -973,6 +974,9 @@ func telegramReplyStep(q *Request, now time.Time, c *kitClaim) error {
 		key := "noReply"
 		if e.State != "succeeded" {
 			key = "runFailed"
+			if stoppedOnRequest(e) {
+				key = "runStoppedReply" // a person's /stop is no failure
+			}
 		}
 		final = say(lang, key, "")
 	}
@@ -985,6 +989,9 @@ func telegramReplyStep(q *Request, now time.Time, c *kitClaim) error {
 		key := "statusAnswered"
 		if e.State != "succeeded" {
 			key = "statusFailed"
+			if stoppedOnRequest(e) {
+				key = "statusStopped"
+			}
 		}
 		if err := telegramWorkEnded(q, t, lang, key); err != nil {
 			return err
@@ -1012,6 +1019,12 @@ func telegramReplyStep(q *Request, now time.Time, c *kitClaim) error {
 		}
 	}
 	return q.db().TelegramTurnDelete(q.ctx(), t.ID)
+}
+
+// stoppedOnRequest: the run ended because someone asked it to stop, not because its host was lost (an abandoned run
+// is marked stop-requested too).
+func stoppedOnRequest(e agentExecution) bool {
+	return e.StopRequested != nil && *e.StopRequested && e.StopDetail != "abandoned"
 }
 
 // telegramTyping: typing at most every 4 s while the run works (Telegram shows it about 5 s), then look again. In a
@@ -1542,6 +1555,7 @@ func telegramPersonSet(q *Request, r *contract.TelegramPersonSetRequest) (contra
 	if target == nil {
 		return out, errNotFound
 	}
+	telegramMenuStale() // a link or language changes the person's own menu
 	// Full access manages other people's links, never the owner's.
 	if target.Owner && email != director(q) && (q.person == nil || !q.person.Owner) {
 		return out, fail(403, "Only the owner changes the owner's Telegram link")
