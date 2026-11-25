@@ -63,9 +63,9 @@ These apply to every workspace and are the main input for the controls:
 
 | Item | Kind | Source |
 |---|---|---|
-| Automations by bot with trigger, project, status, next scheduled time and last outcome | View | `bot_automations` |
-| Name, instructions, daily time and zone or Needs you filter under the bot's current grants | Setting | `bot_automation_save` |
-| Create, edit, enable, pause and run now | Action | `bot_automation_save`, `bot_run` |
+| Automations by bot with trigger, project, status, next scheduled time and last outcome | View | `trigger_list`, `trigger_save` |
+| Name, instructions, daily time and zone or Needs you filter under the bot's current grants | Setting | `trigger_save` |
+| Create, edit, enable, pause and run now | Action | `trigger_save`, `bot_run` |
 | Automation run history with causes, revisions and execution links | View | `bot_runs` |
 | Which bots are active and which sleep; wake one | View, Action | `bot_list`, `bot_run`, `message_send` |
 

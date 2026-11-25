@@ -228,11 +228,11 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   // The head's timer chip (owner pick A): the first active timer, else the first paused one; a click opens Context.
   const headTimer = createMemo(() => { const ts = timed(); const t = ts.find(x => x.settings.enabled) ?? ts[0]; return t ? { t, more: ts.length - 1 } : null; });
   const [reveal, setReveal] = createSignal(0);
-  const automations = createMemo<Automation[]>(() => (ctx()?.automations ?? []).map(a => {
-    const set = rec(a.settings);
-    const event = str(set.event);
-    return { rule: str(set.name) ?? 'Automation', when: set.enabled === false ? 'paused' : str(set.scheduleTime) || (event && event !== 'none' ? `on ${event}` : 'on request') };
-  }));
+  // The automations of the session's bot: its triggers, one line each (name and when).
+  const botTrigDoc = useOp('trigger_list', () => (ctx()?.botId ? { botId: ctx()!.botId } : null));
+  const automations = createMemo<Automation[]>(() => (botTrigDoc.data?.triggers ?? []).map(t => ({
+    rule: t.settings.name, when: !t.settings.enabled ? 'paused' : whenOf(t.settings),
+  })));
   // A member's progress: the plan steps assigned to it that are done.
   const progress = (member: string) => {
     const mine = (ctx()?.plan?.steps ?? []).filter(st => member && st.owner === member);
@@ -523,6 +523,10 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
 }
 
 const every = (ms: number) => (ms % 3_600_000 === 0 ? `${ms / 3_600_000}h` : ms % 60_000 === 0 ? `${ms / 60_000}m` : `${Math.round(ms / 1000)}s`);
+
+/** When a trigger wakes, in a line: on a change it checks every pass, on request, else its schedule. */
+const whenOf = (t: { when: string; everyMs?: number; dailyTime?: string; dailyZone?: string; ifChanged: string[] }) =>
+  t.when === 'manual' ? 'on request' : t.ifChanged.length && t.when === 'every' && (t.everyMs ?? 0) <= 15_000 ? `on ${t.ifChanged.join(', ')}` : scheduleOf(t).toLowerCase();
 
 /** A composer text that is a command (composer.md#commands), not a message. */
 const commandText = (text: string) => /^\s*\/trigger(\s|$)/.test(text);

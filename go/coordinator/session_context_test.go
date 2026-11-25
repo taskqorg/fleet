@@ -66,9 +66,9 @@ func TestPersonVisit(t *testing.T) {
 }
 
 // Requirement: FLT-46 / FLT-30. session_context gives one session's plan with done marks (its own board, else its
-// task's), its watch timer, its bot's automations and the other swarm members with their state; sessions_list rows
-// carry the now line. Risk: the context panel shows another session's plan, lists the session among its own swarm,
-// or misses a timer; a card has no now line although the agent spoke.
+// task's) and the other swarm members with their state; sessions_list rows carry the now line (timers and automations
+// are triggers, TestTriggers). Risk: the context panel shows another session's plan or lists the session among its own
+// swarm; a card has no now line although the agent spoke.
 func TestSessionContext(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	owner := e.ownerHeaders()
@@ -100,7 +100,6 @@ INSERT INTO event(id,execution_id,session_id,project_id,type,payload) VALUES
 			doc{"id": "c", "title": "Test it"},
 		}},
 	}}, 200)
-	call("watch_set", doc{"sessionId": "s-ctx", "kinds": []string{"task"}, "timerMs": 60000}, 200)
 
 	var ctx contract.SessionContextReply
 	asJSON(t, call("session_context", doc{"sessionId": "s-ctx"}, 200), &ctx)
@@ -111,33 +110,16 @@ INSERT INTO event(id,execution_id,session_id,project_id,type,payload) VALUES
 	if len(ctx.Swarm) != 1 || ctx.Swarm[0].MemberName != "worker" || deref(ctx.Swarm[0].SessionId) != "s-ctx-w" || deref(ctx.Swarm[0].SessionCode) == "" || deref(ctx.Swarm[0].State) != "idle" {
 		t.Fatalf("swarm = %s", jsonBytes(ctx.Swarm))
 	}
-	if len(ctx.Timers) != 1 || ctx.Timers[0].EveryMs != 60000 || ctx.Timers[0].NextAt == nil {
-		t.Fatalf("timers = %+v", ctx.Timers)
-	}
-	if deref(p.Steps[0].Owner) != "lead" || !ctx.Timers[0].CanManage || ctx.Timers[0].Paused {
-		t.Fatalf("plan owner or timer permission: %s %+v", jsonBytes(p.Steps[0]), ctx.Timers[0])
+	if deref(p.Steps[0].Owner) != "lead" {
+		t.Fatalf("plan owner: %s", jsonBytes(p.Steps[0]))
 	}
 	if len(ctx.Tasks) == 0 || ctx.Tasks[0].Id != "t-ctx" || ctx.Tasks[0].Title == "" {
 		t.Fatalf("tasks = %s", jsonBytes(ctx.Tasks))
 	}
-	call("watch_timer_set", contract.WatchTimerSetRequest{SessionId: "s-ctx", Action: "pause", BaseTimerMs: 60000}, 200)
-	asJSON(t, call("session_context", doc{"sessionId": "s-ctx"}, 200), &ctx)
-	if len(ctx.Timers) != 1 || !ctx.Timers[0].Paused || ctx.Timers[0].EveryMs != 60000 || ctx.Timers[0].NextAt != nil {
-		t.Fatalf("paused timer = %+v", ctx.Timers)
-	}
 	var solo contract.SessionContextReply
 	asJSON(t, call("session_context", doc{"sessionId": "s-ctx-solo"}, 200), &solo)
-	if solo.Plan != nil || len(solo.Swarm) != 0 || len(solo.Timers) != 0 || len(solo.Automations) != 0 {
+	if solo.Plan != nil || len(solo.Swarm) != 0 {
 		t.Fatalf("solo session context = %s", jsonBytes(solo))
-	}
-	botID := newID()
-	home := astr(mapOf(call("bot_settings_save", contract.BotSettingsSaveRequest{BotId: botID, ProjectId: "desiign", Settings: testBotSettings("pm")}, 200)["bot"])["homeSessionId"])
-	call("bot_automation_save", contract.BotAutomationSaveRequest{BotId: botID, AutomationId: newID(), Settings: contract.BotAutomationSettings{
-		Name: "Morning check", Instructions: "Read Needs you.", ProjectId: "desiign", Kind: "schedule", ScheduleTime: "08:00", ScheduleZone: "UTC", Event: "none", Enabled: true}}, 200)
-	var bot contract.SessionContextReply
-	asJSON(t, call("session_context", doc{"sessionId": home}, 200), &bot)
-	if len(bot.Automations) != 1 || bot.Automations[0].Settings.Name != "Morning check" || bot.Automations[0].NextRunAt == nil {
-		t.Fatalf("bot session automations = %s", jsonBytes(bot.Automations))
 	}
 	call("session_context", doc{"sessionId": "s-unknown"}, 404)
 

@@ -1,10 +1,9 @@
 package main
 
 // Session context (docs/design-system/pages/session.md "Context panel", FLT-30): what one session plans and keeps
-// running, in one read over the state that already holds it. No table of its own:
+// running, in one read over the state that already holds it (its timers and its bot's automations are triggers: the
+// panel reads trigger_list). No table of its own:
 //   - plan: the work_plan of the session, else of its task (board.go), one step per plan task;
-//   - timers: the session's conversation-check trigger, paused or not (watch.go, triggers.go; changed with watch_timer_set);
-//   - automations: the automations of the session's bot (bot_automations.go);
 //   - swarm: the other members of that board (work_board_get's roster) with their state;
 //   - tasks: the session's own task, the plan's tasks, the tasks it spawned and its bot's tasks, as entity cards.
 
@@ -13,7 +12,6 @@ import (
 	"strings"
 
 	"fleet/contract"
-	"fleet/coordinator/db"
 )
 
 func init() {
@@ -21,8 +19,7 @@ func init() {
 }
 
 func sessionContext(q *Request, r *contract.SessionContextRequest) (contract.SessionContextReply, error) {
-	out := contract.SessionContextReply{SessionId: r.SessionId, Timers: []contract.SessionTimer{},
-		Automations: []contract.BotAutomationRecord{}, Swarm: []contract.SessionSwarmMember{}, Tasks: []contract.SessionTask{}}
+	out := contract.SessionContextReply{SessionId: r.SessionId, Swarm: []contract.SessionSwarmMember{}, Tasks: []contract.SessionTask{}}
 	sid, err := sessionArg(r.SessionId)
 	if err != nil {
 		return out, err
@@ -39,47 +36,9 @@ func sessionContext(q *Request, r *contract.SessionContextRequest) (contract.Ses
 		out.Plan = sessionPlan(board)
 		out.Swarm = sessionSwarm(board, sid)
 	}
-	// Every repeating trigger of the session slower than the pass (a per-pass change trigger is no timer); only the
-	// watch's conversation check is changed through watch_timer_set, the others through trigger_save.
-	triggers, err := q.db().TriggerList(q.ctx(), db.TriggerListParams{SessionID: &sid})
-	if err != nil {
-		return out, err
-	}
-	_, watchTimerID := watchTriggerIDs(sid)
-	for _, row := range triggers {
-		t := row.Trigger
-		if t.WhenKind != "every" || ms(t.EveryMs) <= triggerTickMs() {
-			continue
-		}
-		can := false
-		if t.ID == watchTimerID {
-			ws, err := watchSessionOf(q, sid)
-			if err != nil {
-				return out, err
-			}
-			can = ws != nil && ws.directs(q) == nil
-			if task := ws.taskOrEmpty(); can && task != "" {
-				cancelled, err := q.db().TaskCancelled(q.ctx(), task)
-				if err != nil {
-					return out, err
-				}
-				can = !cancelled
-			}
-		}
-		var next *int64
-		if t.Enabled && t.NextAt != nil {
-			at := t.NextAt.UnixMilli()
-			next = &at
-		}
-		out.Timers = append(out.Timers, contract.SessionTimer{Id: t.ID, EveryMs: float64(*t.EveryMs), NextAt: next, Paused: !t.Enabled, CanManage: can})
-	}
 	var botTasks []contract.BotTaskRecord
 	if s.BotID != "" {
-		a, err := botAutomations(q, &contract.BotAutomationsRequest{BotId: s.BotID})
-		if err != nil && !errors.Is(err, errNotFound) { // a bot the caller cannot see has no automations here
-			return out, err
-		}
-		out.Automations = a.Automations
+		out.BotId = &s.BotID
 		bt, err := botTasksOp(q, &contract.BotTasksRequest{BotId: s.BotID, Limit: ptr(int64(sessionContextTasks))})
 		if err != nil && !errors.Is(err, errNotFound) {
 			return out, err

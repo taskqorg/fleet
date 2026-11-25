@@ -142,13 +142,22 @@ test('PM6 audit: an agent setting change records the execution as actor and its 
 });
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+// A session trigger from a preset (fleet-triggers.md): focus-changes wakes on the kinds, conversation-check on a timer.
+const watchWith = async (tool: (name: string, args: any) => Promise<any>, sessionId: string, presetId: string, settings: any) => {
+  const id = randomUUID();
+  // focus-changes checks each pass: the preset's 15 s is the production pass, run-files.ts sets FLEET_TRIGGER_TICK_MS 200.
+  ok(await tool('trigger_save', {id, baseRevision: 0, sessionId, presetId, settings: presetId === 'focus-changes' ? {everyMs: 200, ...settings} : settings}));
+  return id;
+};
+const firesOf = async (tool: (name: string, args: any) => Promise<any>, sessionId: string) =>
+  ok(await tool('trigger_list', {sessionId})).triggers.reduce((n: number, t: any) => n + t.fires, 0);
 const queuedTexts = async (sessionId: string) => ok(await call('POST', '/api/ops/session_get', {sessionId: sessionId}, as(OWNER))).queued.map((m: any) => m.text as string);
 
 test('PM7 watch: foreign changes in focus wake the PM with one message, its own changes never do, and the timer wakes it (requirement: docs/designs/fleet-pm-agent.md; risk: a PM misses a question, or loops on its own edits)', {timeout: 30_000}, async () => {
   const pm = await agent(OWNER, {});
   ok(await pm.tool('focus_set', {projectIds: [PROJECT]}));
-  ok(await pm.tool('watch_set', {kinds: ['task', 'question']}));
-  assert.ok([403, 404].includes((await op('watch_stop', {sessionId: pm.sessionId}, MEMBER)).status), 'only its director changes a watch');
+  const pmWatch = await watchWith(pm.tool, pm.sessionId, 'focus-changes', {ifChanged: ['task', 'question']});
+  assert.ok([403, 404].includes((await op('trigger_delete', {id: pmWatch, baseRevision: 1}, MEMBER)).status), 'only its director changes a trigger');
   ok(await pm.tool('task_create', {title: 'PM7 own ' + randomUUID()}));
   await sleep(800);
   assert.deepEqual(await queuedTexts(pm.sessionId), [], 'own changes do not wake');
@@ -156,7 +165,7 @@ test('PM7 watch: foreign changes in focus wake the PM with one message, its own 
   const worker = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
   const taskWatch = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
   ok(await taskWatch.tool('focus_set', {projectIds: [PROJECT]}));
-  ok(await taskWatch.tool('watch_set', {kinds: ['task']}));
+  await watchWith(taskWatch.tool, taskWatch.sessionId, 'focus-changes', {ifChanged: ['task']});
   const asked = ok(await worker.tool('ask', {requestId: randomUUID(), question: 'Which README?'}));
   const foreign = ok(await op('task_create', {projectId: PROJECT, title: 'PM7 foreign ' + randomUUID()}));
   const outside = ok(await op('task_create', {projectId: OTHER, title: 'PM7 outside focus ' + randomUUID()}));
@@ -171,12 +180,11 @@ test('PM7 watch: foreign changes in focus wake the PM with one message, its own 
   ok(await op('task_create', {projectId: PROJECT, title: 'PM7 while busy ' + randomUUID()}));
   await sleep(800);
   assert.equal((await queuedTexts(pm.sessionId)).length, 1, 'a queued wake covers later changes');
-  const w = ok(await pm.tool('watch_get')).watch;
-  assert.equal(w.wakes, 1);
-  ok(await pm.tool('watch_set', {kinds: ['task'], timerMs: 300}));
+  assert.equal(await firesOf(pm.tool, pm.sessionId), 1);
+  await watchWith(pm.tool, pm.sessionId, 'conversation-check', {everyMs: 300, ifChanged: ['task']});
   await sleep(1000);
-  assert.equal(ok(await pm.tool('watch_get')).watch.wakes, 1, 'no timer wake while a wake is queued');
-  ok(await worker.tool('watch_set', {kinds: ['execution'], timerMs: 300}));
+  assert.equal(await firesOf(pm.tool, pm.sessionId), 1, 'no timer wake while a wake is queued');
+  await watchWith(worker.tool, worker.sessionId, 'conversation-check', {everyMs: 300, ifChanged: ['execution']});
   await sleep(1000);
   assert.deepEqual((await queuedTexts(worker.sessionId)).filter(t => /conversation check/.test(t)).length, 0, 'a timer with a change condition sends nothing while nothing changed (fleet-triggers.md)');
 });
@@ -187,11 +195,11 @@ test('PM8 profile: a PM session carries its skills and sees the task tools (requ
   const c = await hostCommand(async q => ok(await hostCall(OWNER, '/api/hosts/poll' + q, poll)), (x: any) => x.executionId === s.executionId && x.kind === 'start');
   assert.deepEqual(JSON.stringify(c).match(/"id":"pm-(tasks|watch|fleet)"/g)?.length, 3, 'three skills in the start command');
   const offered = (c.payload.fleetOperations ?? []).map((x: any) => x.name);
-  for (const n of ['task_create', 'task_release', 'people_set', 'focus_set', 'watch_set']) assert.ok(offered.includes(n), 'the start command offers ' + n);
+  for (const n of ['task_create', 'task_release', 'people_set', 'focus_set', 'trigger_save']) assert.ok(offered.includes(n), 'the start command offers ' + n);
   assert.ok(!offered.includes('task_take'), 'never a person-only tool');
   const pm = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
   const names = await pm.list();
-  for (const n of ['task_create', 'task_release', 'watch_set', 'focus_set', 'people_set', 'setting_changes']) assert.ok(names.includes(n), n);
+  for (const n of ['task_create', 'task_release', 'trigger_save', 'focus_set', 'people_set', 'setting_changes']) assert.ok(names.includes(n), n);
 });
 
 test('PM9 definitions: an architect\'s PM saves a definition and the revision names its execution and director; an operator\'s PM may not (requirement: fleet-definition-editors.md Rights, who saved; risk: an agent change looks like the person did it, or an operator\'s agent edits definitions)', async () => {
@@ -300,9 +308,9 @@ test('PM provenance: internal timer/change/wake inputs keep Fleet sender through
       ok(await pm.tool('trigger_save', {id: timerId, baseRevision: 0, sessionId: pm.sessionId, presetId: 'conversation-check', settings: {everyMs: 800, ifChanged: [], text: 'Fleet: watch timer; review your focus'}}));
     } else {
       ok(await pm.tool('focus_set', {projectIds: [PROJECT]}));
-      ok(await pm.tool('watch_set', {kinds: ['task']}));
+      timerId = await watchWith(pm.tool, pm.sessionId, 'focus-changes', {ifChanged: ['task']});
     }
-    const stop = async () => kind === 'timer' ? ok(await op('trigger_delete', {id: timerId, baseRevision: 1}, MEMBER)) : ok(await op('watch_stop', {sessionId: pm.sessionId}, MEMBER));
+    const stop = async () => ok(await op('trigger_delete', {id: timerId, baseRevision: 1}, MEMBER));
     if (idle) await finish(pm.executionId, pm.commandId);
     if (kind === 'change') ok(await op('task_create', {projectId: PROJECT, title: 'foreign provenance change ' + randomUUID()}));
     if (kind === 'wake') {

@@ -111,7 +111,7 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 | One pull request | Projects (facet) | `/projects/<code>/delivery/<owner~repo~n>`, stage, head, merge actions | built | checked: `#878`; actions not clicked | `publishing_status`, `publishing_mark_ready`, `publishing_request_merge`, `publishing_cancel_merge_request`, `delivery_history` |
 | Old delivery route | Projects | `/publishing`, redirects to `/projects/delivery` | built | checked: lands on `/projects/delivery` | — |
 | Bot list | Home and Library › Bots | `/library/bots`, bots with state | built | checked: HAL0 listed | `bot_list`, `project_list` |
-| One bot | Home and Library › Bots | `/library/bots/<code>`, status, runs, automations, tasks, settings | built: code URL | checked: `B-FLT-1`, 100 runs, causes in plain words (FLT-40) | `bot_get`, `bot_runs`, `bot_tasks`, `bot_run`, `bot_pause`, `bot_stop`, `bot_settings_save`, `bot_memory_save`, `bot_automations`, `bot_automation_save`, `questions_list`, `questions_answer`, `executions_list`, `analytics_query`, `session_presets` |
+| One bot | Home and Library › Bots | `/library/bots/<code>`, status, runs, automations, tasks, settings | built: code URL | checked: `B-FLT-1`, 100 runs, causes in plain words (FLT-40) | `bot_get`, `bot_runs`, `bot_tasks`, `bot_run`, `bot_pause`, `bot_stop`, `bot_settings_save`, `bot_memory_save`, `trigger_list`, `trigger_save`, `questions_list`, `questions_answer`, `executions_list`, `analytics_query`, `session_presets` |
 | New bot | Library › Bots | `/library/bots/new`, create form | built | checked: form shown, not submitted | `bot_settings_save`, `project_list`, `session_presets` |
 | Lab: use cases, runs, decisions waiting | Lab | `/lab`, catalogue and leaderboard | built | checked: 75 use cases, 49 runs wait for a decision | `lab_registry`, `lab_experiments_list`, `lab_leaderboard`, `lab_examples_list`, `lab_ratings_list` |
 | New experiment | Lab | `/lab/new`, draft form | built | checked: form shown, not submitted | `lab_experiment_create`, `lab_registry`, `lab_examples_list`, `definition_list`, `project_list`, `project_detail`, `project_context` |
@@ -217,9 +217,9 @@ The earlier screens have no route of their own: each is a facet, a root or a sav
 
 | Capability | Section | Route and screen | Built | Prod | Read or action |
 |---|---|---|---|---|---|
-| Automations by bot with trigger, status, next time, last outcome | Library › Bots | `/library/bots/<id>` Automations | built | checked: tab shown | `bot_automations` |
-| Bot name, instructions, schedule under its grants | Library › Bots | `/library/bots/<id>` Settings | built | not checked: action | `bot_automation_save`, `bot_settings_save` |
-| Create, edit, enable, pause, run now | Home, Library › Bots | `/library/bots/<id>`, `/library/bots/new` | built | not checked: actions | `bot_run`, `bot_pause`, `bot_stop`, `bot_automation_save` |
+| Automations by bot with trigger, status, next time, last outcome | Library › Bots | `/library/bots/<id>` Automations | built | checked: tab shown | `trigger_list`, `trigger_save`, `bot_run` |
+| Bot name, instructions, schedule under its grants | Library › Bots | `/library/bots/<id>` Settings | built | not checked: action | `trigger_save`, `bot_settings_save` |
+| Create, edit, enable, pause, run now | Home, Library › Bots | `/library/bots/<id>`, `/library/bots/new` | built | not checked: actions | `bot_run`, `bot_pause`, `bot_stop`, `trigger_save` |
 | Run history with causes and links | Library › Bots | `/library/bots/<id>` Runs | built | checked: causes in plain words (FLT-40) | `bot_runs` |
 | Active and asleep bots; wake one | Home | `/home` Asleep row, `/library/bots` | built | checked: fixtures | `bot_list`, `bot_run`, `message_send` |
 
