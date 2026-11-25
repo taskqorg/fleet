@@ -166,24 +166,43 @@ func accessSubscriptions(q *Request, profiles []accessProfile) ([]contract.Acces
 	from := limitsDefaults(now).from
 	left := map[string]contract.LimitPeriod{}
 	for id, rs := range latest {
-		for _, r := range rs {
-			if r.Pct == nil || r.State != "known" || r.At < from {
-				continue
-			}
-			if cur := left[id]; cur.Pct == nil || *r.Pct < *cur.Pct {
-				pct, name := *r.Pct, r.Period
-				if name == "" {
-					name = "unknown" // as limitHistory names it
-				}
-				left[id] = contract.LimitPeriod{Period: name, Pct: &pct}
-			}
-		}
+		left[id] = bindingPeriod(rs, from)
 	}
 	out := []contract.AccessItem{}
 	for _, a := range as {
 		out = append(out, accessSubscription(a, left[a.ID], profiles))
 	}
 	return out, nil
+}
+
+// bindingPeriod: the window closest to exhaustion among a subscription's current readings (percent used; a reading of
+// the default window whose period has not reset): the highest percent used, and of equal ones the one that resets
+// first. A fresh 5-hour window never hides a nearly full weekly one. Empty when no reading counts.
+func bindingPeriod(rs []Reading, from int64) contract.LimitPeriod {
+	var best *Reading
+	for i := range rs {
+		r := &rs[i]
+		if r.Pct == nil || r.State != "known" || r.At < from {
+			continue
+		}
+		resets := func(x *Reading) float64 {
+			if x.ResetsAt == nil {
+				return 1e18
+			}
+			return *x.ResetsAt
+		}
+		if best == nil || *r.Pct > *best.Pct || *r.Pct == *best.Pct && resets(r) < resets(best) {
+			best = r
+		}
+	}
+	if best == nil {
+		return contract.LimitPeriod{}
+	}
+	pct, name := *best.Pct, best.Period
+	if name == "" {
+		name = "unknown" // as limitHistory names it
+	}
+	return contract.LimitPeriod{Period: name, Pct: &pct}
 }
 
 func accessSubscription(a accountRec, period contract.LimitPeriod, profiles []accessProfile) contract.AccessItem {
@@ -261,6 +280,7 @@ func accessSubscription(a accountRec, period contract.LimitPeriod, profiles []ac
 		if pct < 0 {
 			pct = 0
 		}
+		// The binding window by name and what is left of it ("week 6% left", as the approved System canvas words it).
 		it.Limit = &contract.AccessLimit{Text: fmt.Sprintf("%s %.0f%% left", period.Period, pct), LeftPct: &pct}
 	} else {
 		it.Limit = &contract.AccessLimit{Text: "unknown"}

@@ -9,8 +9,9 @@ import (
 )
 
 // Requirement: access_status shows a subscription's limit as subscription_limits' periods would: the latest reading per
-// period of the default window whose period has not reset, the period with the lowest percent used. Risk: the
-// Access screen's limit column disagrees with Accounts & limits after access_status stopped reading the history.
+// period of the default window whose period has not reset, and the binding one of them: the highest percent used
+// (bindingPeriod). Risk: the Access screen's limit column disagrees with Accounts & limits after access_status stopped
+// reading the history, or a fresh 5-hour window hides a nearly full weekly one.
 func TestAccessStatusLimitFromLatestReadings(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	exec := func(sql string, args ...any) {
@@ -44,8 +45,8 @@ func TestAccessStatusLimitFromLatestReadings(t *testing.T) {
 	for _, it := range st.Items {
 		limits[it.Id] = it.Limit
 	}
-	if lim := limits["account:acct-l"]; lim == nil || lim.Text != "5h 60% left" {
-		t.Fatalf("limit %+v, want 5h 60%% left (latest 5h reading 40%%, the lowest percent of the periods not reset)", lim)
+	if lim := limits["account:acct-l"]; lim == nil || lim.Text != "week 30% left" || lim.LeftPct == nil || *lim.LeftPct != 30 {
+		t.Fatalf("limit %+v, want week 30%% left (5h is at 40%% used, week at 70%%: the week binds)", lim)
 	}
 	if lim := limits["account:acct-o"]; lim == nil || lim.Text != "unknown" {
 		t.Fatalf("acct-o limit %+v, want unknown (its only reading is older than the window)", lim)
@@ -65,5 +66,32 @@ func TestAccessStatusLimitFromLatestReadings(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("subscription_limits has no 5h period for acct-l")
+	}
+}
+
+// Requirement: the limit column names the window closest to exhaustion: the highest percent used, of equal ones the one
+// that resets first; readings that reset, are unknown or are older than the window never count. Risk (2026-11-26): the
+// lowest percent was shown, so a fresh 5-hour window hid a nearly full weekly one.
+func TestBindingPeriod(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	from := int64(1000)
+	got := bindingPeriod([]Reading{
+		{Period: "5h", Pct: f(3), ResetsAt: f(5e12), At: 2000, State: "known"},
+		{Period: "week", Pct: f(94), ResetsAt: f(9e12), At: 2000, State: "known"},
+		{Period: "month", Pct: f(99), At: 2000, State: "unknown"}, // reset: not shown
+		{Period: "day", Pct: f(98), At: 500, State: "known"},      // older than the window
+	}, from)
+	if got.Period != "week" || *got.Pct != 94 {
+		t.Fatalf("binding %+v, want week 94", got)
+	}
+	got = bindingPeriod([]Reading{
+		{Period: "week", Pct: f(80), ResetsAt: f(9e12), At: 2000, State: "known"},
+		{Period: "5h", Pct: f(80), ResetsAt: f(5e12), At: 2000, State: "known"},
+	}, from)
+	if got.Period != "5h" {
+		t.Fatalf("equal percent: %+v, want 5h (resets first)", got)
+	}
+	if got = bindingPeriod(nil, from); got.Pct != nil {
+		t.Fatalf("no readings: %+v", got)
 	}
 }
