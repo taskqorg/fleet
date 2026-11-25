@@ -70,6 +70,9 @@ func projectView(q *Request, r *contract.ProjectViewRequest) (contract.ProjectVi
 				d.Choices = append(d.Choices, e)
 			}
 		}
+		if len(d.Choices) == 0 { // a later experiment re-ran every variant: there is nothing of this one to choose from
+			continue
+		}
 		sort.SliceStable(d.Choices, func(i, j int) bool { return betterEntry(d.Choices[i], d.Choices[j]) })
 		out.Decisions = append(out.Decisions, d)
 	}
