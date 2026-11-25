@@ -514,7 +514,7 @@ func pipelineSubmitted(q *Request, c *kitClaim, run *runRecord, i int, line cont
 		return nil
 	}
 	if line.Outcome != contract.CallOutcomeOk {
-		return run.failStep(q, i, problemOf(string(line.Outcome), code), fmt.Sprintf("Connection call %s: %s", line.Outcome, code))
+		return run.failStepDetail(q, i, problemOf(string(line.Outcome), code), fmt.Sprintf("Connection call %s: %s", line.Outcome, code), callErrorDetail(line.Output))
 	}
 	if job {
 		return pipelineJobStarted(q, run, i, line)
@@ -694,7 +694,7 @@ func pipelinePollRecord(q *Request, now time.Time, run *runRecord, i int, line c
 			return pipelineLater(q, runID)
 		}
 		code := deref(line.ErrorCode)
-		return run.failStep(q, i, problemOf(string(line.Outcome), code), "Job poll failed: "+code)
+		return run.failStepDetail(q, i, problemOf(string(line.Outcome), code), "Job poll failed: "+code, callErrorDetail(line.Output))
 	}
 	var polls int64
 	if s.Polls != nil {

@@ -147,6 +147,9 @@ type pipelineCall struct {
 type pipelineStepError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Detail: the provider's own error reply to a failed connection call, bounded and redacted (callErrorDetail), so a
+	// person or agent sees why (a quota name, a retry delay) without the gateway's log.
+	Detail string `json:"detail,omitempty"`
 }
 
 // pipelineRequester: who asked for a run (a person, the operator, a Lab experiment's requester).

@@ -256,7 +256,7 @@ On WSL the Claude login lives under Fleet's config directory: the account's `nat
 
 ## Host settings: connections
 
-A host needs no connection files. A run granted an API key connection gets its token and tools in the start command; the executor needs `FLEET_GATEWAY_URL` (PDS18: `http://127.0.0.1:8742`; other hosts: `https://fleet.ufobe.com` with the Access service token in `FLEET_CF_ACCESS_FILE`, default `~/.config/fleet/cf-access-machine.env`). The coordinator needs the same `FLEET_GATEWAY_URL` for pipeline api steps. Git keys of repo connections live in `FLEET_CONNECTIONS_DIR` ([Repository access](#repository-access)).
+A host needs no connection files. A run granted an API key connection gets its token and tools in the start command; the executor needs `FLEET_GATEWAY_URL` (PDS18: `http://127.0.0.1:8742`; other hosts: `https://fleet.ufobe.com` with the Access service token in `FLEET_CF_ACCESS_FILE`, default `~/.config/fleet/cf-access-machine.env`). The coordinator needs the same `FLEET_GATEWAY_URL` for pipeline api steps. A failed api step keeps the provider's own error reply in its error's `detail` (compact, credential-like values redacted, at most 2 KiB), so `pipeline_get` shows why a call failed, such as a quota name or a retry delay. Git keys of repo connections live in `FLEET_CONNECTIONS_DIR` ([Repository access](#repository-access)).
 
 ## Coordinator settings: API keys
 
