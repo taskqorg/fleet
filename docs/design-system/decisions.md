@@ -576,3 +576,10 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Reason:** the owner reads the balance per item on the technical screen; fields on items keep one fact in one place, with no rule engine.
 * **Added by the owner the same day:** accounts become understandable on the same block (one real account with its logins per host, the placement order in plain words, the latest picks), and a conversation stays on its host and login unless forced, every move shown with its reason.
 * **Recorded in:** [work allocation and balancing](../work-allocation.md), [Live](pages/live.md#balance), [inventory](inventory.md#balancing).
+
+## 2026-11-25: Conversation timers are visible and edited in the composer
+
+* **Question (owner, about HAL0's 5-minute timer):** it should be visible that a conversation has a timer and that Fleet supports it; today only the interval is editable, not the message; the inline edit form and the context panel look temporary. Edit should drop a prefilled command into the composer, which the operator edits and sends.
+* **Options** (drawn on the board home's `drafts/session-timers.bl`): A, a chip in the session head plus the timer row in the context panel; B, a strip above the composer plus the row; C, the row in the context panel only.
+* **Choice (owner):** A. Edit fills the composer with `/trigger <name> every 5m if changed: <message>`; one server parser previews (`session_command_preview`) and applies (`session_command`) it, agents call the same operation; a 409 shows what the timer is now with Load current. Timers are [triggers](../designs/fleet-triggers.md).
+* **Recorded in:** [context panel](controls/context-panel.md#timer-chip), [composer commands](controls/composer.md#commands), [session view](pages/session.md), board [screens/session.bl](board/screens/session.bl) (*Session timers (approved A)*).

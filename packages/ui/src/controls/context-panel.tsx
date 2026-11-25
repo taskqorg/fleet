@@ -3,7 +3,8 @@
 import { createMemo, createSignal, createUniqueId, For, Show } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import type { Life } from '../registry.ts';
-import { Icon, Button, Skeleton } from './primitives.tsx';
+import { Icon, Button, Skeleton, useTick } from './primitives.tsx';
+import { countdown, exact } from '../format.ts';
 import { Avatar, type AvatarMark } from './avatar.tsx';
 import { StateDot } from './state-dot.tsx';
 
@@ -19,28 +20,71 @@ export function PlanItem(p: { text: string; done?: boolean }) {
   );
 }
 
-/** A timer: what it does, when it fires (`in 42m · once`), and Pause, Edit and Cancel; Cancel confirms in place. */
-export function TimerRow(p: { text: string; when: string; paused?: boolean; readOnly?: boolean; onPause?: () => void; onEdit?: () => void; onCancel?: () => void }) {
+/** Time left to a timer's next check, live (OR-2 compact, the long form as the accessible name); "due" once it passed. */
+function Countdown(p: { at: number; now?: number }) {
+  const tick = useTick(1000, () => p.now === undefined);
+  const left = createMemo(() => countdown(p.at, p.now ?? tick()));
+  return <time class="timer-left num" datetime={new Date(p.at).toISOString()} data-tip={exact(p.at)} aria-label={left().long}>{left().text === 'now' ? 'due' : `in ${left().text}`}</time>;
+}
+
+/**
+ * A timer of the session (a trigger that puts a message into this conversation): its schedule and the live time to the
+ * next check, the message it sends, Pause or Resume, Edit and Cancel, and the quiet checks since it last fired. Edit
+ * fills the composer with the timer's command (controls/context-panel.md); Cancel confirms in place.
+ */
+export function TimerRow(p: {
+  schedule: string; text?: string; nextAt?: number; paused?: boolean; quiet?: string; readOnly?: boolean; selected?: boolean; now?: number;
+  onPause?: () => void; onEdit?: () => void; onCancel?: () => void;
+}) {
   const [confirm, setConfirm] = createSignal(false);
   return (
-    <div class={['timer-row', { paused: !!p.paused }]} data-ui="timer-row">
-      <span class="timer-text"><span class="timer-what">{p.text}</span><span class="timer-when">{p.when}</span></span>
-      <Show when={!p.readOnly}><Show
-        when={confirm()}
-        fallback={
-          <span class="timer-acts">
-            <Button label={p.paused ? 'Resume timer' : 'Pause timer'} icon={p.paused ? 'play' : 'pause'} iconOnly kind="quiet" onClick={() => p.onPause?.()} />
-            <Button label="Edit timer" icon="pencil" iconOnly kind="quiet" onClick={() => p.onEdit?.()} />
-            <Button label="Cancel timer" icon="x" iconOnly kind="quiet" onClick={() => setConfirm(true)} />
-          </span>
-        }
-      >
-        <span class="timer-acts">
-          <Button label="Cancel timer" kind="danger" onClick={() => { setConfirm(false); p.onCancel?.(); }} />
-          <Button label="Keep" kind="quiet" onClick={() => setConfirm(false)} />
+    <div class={['timer-row', { paused: !!p.paused, selected: !!p.selected }]} data-ui="timer-row">
+      <span class="timer-head">
+        <Icon name={p.paused ? 'pause' : 'clock'} />
+        <span class="timer-what">{p.paused ? `Paused · ${p.schedule}` : p.schedule}</span>
+        <Show when={!p.paused && p.nextAt !== undefined}><Countdown at={p.nextAt!} now={p.now} /></Show>
+      </span>
+      <Show when={p.text}><span class="timer-text">{p.text}</span></Show>
+      <Show when={!p.readOnly || p.quiet}>
+        <span class="timer-foot">
+          <Show when={!p.readOnly}><Show
+            when={confirm()}
+            fallback={
+              <span class="timer-acts">
+                <Button label={p.paused ? 'Resume timer' : 'Pause timer'} icon={p.paused ? 'play' : 'pause'} iconOnly kind="quiet" onClick={() => p.onPause?.()} />
+                <Button label="Edit timer in the composer" icon="pencil" iconOnly kind="quiet" onClick={() => p.onEdit?.()} />
+                <Button label="Cancel timer" icon="x" iconOnly kind="quiet" onClick={() => setConfirm(true)} />
+              </span>
+            }
+          >
+            <span class="timer-acts">
+              <Button label="Cancel timer" kind="danger" onClick={() => { setConfirm(false); p.onCancel?.(); }} />
+              <Button label="Keep" kind="quiet" onClick={() => setConfirm(false)} />
+            </span>
+          </Show></Show>
+          <Show when={p.quiet}><span class="timer-quiet">{p.quiet}</span></Show>
         </span>
-      </Show></Show>
+      </Show>
     </div>
+  );
+}
+
+/**
+ * The session head's timer chip (owner pick A, 2026-11-25): while the session has a timer it is always visible, with the
+ * interval and the live time to the next check (`5m · in 3m`), or `paused · 5m`. More timers add `+1`. A click opens
+ * the context panel at Timers.
+ */
+export function TimerChip(p: { every: string; nextAt?: number; paused?: boolean; more?: number; now?: number; onOpen?: () => void }) {
+  const tick = useTick(1000, () => p.now === undefined && !p.paused && p.nextAt !== undefined);
+  const left = createMemo(() => (p.paused || p.nextAt === undefined ? null : countdown(p.nextAt, p.now ?? tick())));
+  const text = () => (p.paused ? `paused · ${p.every}` : left() ? `${p.every} · ${left()!.text === 'now' ? 'due' : `in ${left()!.text}`}` : p.every);
+  const name = () => `Timer every ${p.every}${p.paused ? ', paused' : left() ? `, next check ${left()!.long}` : ''}${p.more ? `, and ${p.more} more` : ''}: open in Context`;
+  return (
+    <button type="button" class={['timer-chip', { paused: !!p.paused }]} data-ui="timer-chip" aria-label={name()} data-tip={p.nextAt !== undefined && !p.paused ? exact(p.nextAt) : undefined} onClick={() => p.onOpen?.()}>
+      <Icon name={p.paused ? 'pause' : 'clock'} />
+      <span class="num">{text()}</span>
+      <Show when={p.more}><span class="timer-more">+{p.more}</span></Show>
+    </button>
   );
 }
 
@@ -82,7 +126,7 @@ function Part(p: { title: string; children: JSX.Element }) {
 }
 
 export type PlanStep = { text: string; done?: boolean };
-export type Timer = { id: string; text: string; when: string; paused?: boolean; readOnly?: boolean };
+export type Timer = { id: string; schedule: string; text?: string; nextAt?: number; paused?: boolean; quiet?: string; readOnly?: boolean; selected?: boolean };
 export type Automation = { rule: string; when: string };
 export type Member = { id: string; name: string; avatar: AvatarMark; state: Life; href: string; progress?: string };
 export type RelatedTask = { id: string; code?: string; title: string; state: Life; href: string };
@@ -114,7 +158,7 @@ export function ContextPanel(p: {
         <Show when={(p.timers ?? []).length > 0}>
           <Part title="Timers">
             <For each={p.timers}>
-              {t => <TimerRow text={t.text} when={t.when} paused={t.paused} readOnly={t.readOnly} onPause={() => p.onTimer?.(t.id, 'pause')} onEdit={() => p.onTimer?.(t.id, 'edit')} onCancel={() => p.onTimer?.(t.id, 'cancel')} />}
+              {t => <TimerRow schedule={t.schedule} text={t.text} nextAt={t.nextAt} paused={t.paused} quiet={t.quiet} readOnly={t.readOnly} selected={t.selected} onPause={() => p.onTimer?.(t.id, 'pause')} onEdit={() => p.onTimer?.(t.id, 'edit')} onCancel={() => p.onTimer?.(t.id, 'cancel')} />}
             </For>
           </Part>
         </Show>
