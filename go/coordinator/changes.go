@@ -1,5 +1,6 @@
 // System changes overview (docs/designs/fleet-system-management.md): drift across repository files, active store
-// definitions, Coordinator/UI/host release versions, and pinned vs observed harness CLIs.
+// definitions, Coordinator/UI/host release versions, pinned vs observed harness CLIs, and the release-managed components
+// per kind with their proposal and host states (pins_view.go).
 package main
 
 import (
@@ -27,6 +28,7 @@ func systemChangesOf(q *Request, usage map[string]map[string]contract.Window) (c
 		Ahead:             []contract.SystemChangeDefinition{},
 		StoreOnly:         []contract.SystemChangeDefinition{},
 		HarnessDrift:      []contract.SystemChangeHostHarness{},
+		Components:        []contract.SystemChangeKind{},
 	}
 
 	defs, err := definitionsOf(q.ctx(), q.db(), definitionFilter{current: true})
@@ -78,6 +80,7 @@ func systemChangesOf(q *Request, usage map[string]map[string]contract.Window) (c
 		return out, err
 	}
 	out.Versions = systemVersionsFromHosts(hosts)
+	out.Components = systemComponents(hosts.Hosts)
 	for _, h := range hosts.Hosts {
 		for _, hv := range h.HarnessVersions {
 			if hv.Expected == "" {

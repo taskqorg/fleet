@@ -29,6 +29,7 @@ import { Access } from './access.tsx';
 import { FINDING, SystemIdle, hostFailures } from './system-idle.tsx';
 import { modelsText, useCompatProfiles } from './accounts.tsx';
 import { ConnectionAdd, HostAdd } from './system-add.tsx';
+import { HostUpdates } from './host-updates.tsx';
 import { profileGaps, type CompatAccount } from '../compat.ts';
 
 export type InfraSection = 'hosts' | 'limits' | 'keys' | 'runners' | 'spend' | 'people' | 'access';
@@ -495,6 +496,7 @@ function HostDetail(props: { host: HostRow; live: boolean; now: number; clockOff
         </DataTable>
       </DetailSection>
     </Show>
+    <HostUpdates hostId={h().id} />
     <Show when={hostAccounts().length}>
       <DetailSection title={`Accounts and models ${hostAccounts().length}`}>
         <For each={hostAccounts()}>{x => (

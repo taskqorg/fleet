@@ -53,6 +53,61 @@ func (v *CiRunner) Validate() error {
 	return nil
 }
 
+type ComponentHostState string
+
+const (
+	ComponentHostStatePinned     ComponentHostState = "pinned"
+	ComponentHostStateBehind     ComponentHostState = "behind"
+	ComponentHostStateInstalling ComponentHostState = "installing"
+	ComponentHostStateRefused    ComponentHostState = "refused"
+	ComponentHostStateFailing    ComponentHostState = "failing"
+	ComponentHostStateOwn        ComponentHostState = "own"
+	ComponentHostStateUnknown    ComponentHostState = "unknown"
+)
+
+// ComponentHostStateValues lists every ComponentHostState in schema order.
+var ComponentHostStateValues = []ComponentHostState{ComponentHostStatePinned, ComponentHostStateBehind, ComponentHostStateInstalling, ComponentHostStateRefused, ComponentHostStateFailing, ComponentHostStateOwn, ComponentHostStateUnknown}
+
+// Valid: v is one of the schema's values.
+func (v ComponentHostState) Valid() bool {
+	for _, x := range ComponentHostStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ComponentKind string
+
+const (
+	ComponentKindCli  ComponentKind = "cli"
+	ComponentKindTool ComponentKind = "tool"
+)
+
+// ComponentKindValues lists every ComponentKind in schema order.
+var ComponentKindValues = []ComponentKind{ComponentKindCli, ComponentKindTool}
+
+// Valid: v is one of the schema's values.
+func (v ComponentKind) Valid() bool {
+	for _, x := range ComponentKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ComponentVersion struct {
+	Component string `json:"component"`
+	Version   string `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ComponentVersion) Validate() error {
+	return nil
+}
+
 type CoordinatorVersion struct {
 	Commit   *string `json:"commit,omitempty"`
 	Offered  *string `json:"offered,omitempty"`
@@ -1446,6 +1501,69 @@ func (v *HostRun) Validate() error {
 	return nil
 }
 
+type HostUpdateEntry struct {
+	At         string             `json:"at"`
+	Brought    []ComponentVersion `json:"brought"`
+	Components []ComponentVersion `json:"components"`
+	Reason     *string            `json:"reason,omitempty"`
+	Seq        int64              `json:"seq"`
+	State      UpdateState        `json:"state"`
+	Version    string             `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostUpdateEntry) Validate() error {
+	if v.Brought == nil {
+		return Missing("brought")
+	}
+	for i := range v.Brought {
+		if err := Check(&v.Brought[i], "brought"); err != nil {
+			return err
+		}
+	}
+	if v.Components == nil {
+		return Missing("components")
+	}
+	for i := range v.Components {
+		if err := Check(&v.Components[i], "components"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type HostUpdateHistoryReply struct {
+	Entries    []HostUpdateEntry `json:"entries"`
+	NextCursor *int64            `json:"nextCursor"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostUpdateHistoryReply) Validate() error {
+	if v.Entries == nil {
+		return Missing("entries")
+	}
+	for i := range v.Entries {
+		if err := Check(&v.Entries[i], "entries"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type HostUpdateHistoryRequest struct {
+	Before *int64 `json:"before,omitempty"`
+	HostId string `json:"hostId"`
+	Limit  *int64 `json:"limit,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostUpdateHistoryRequest) Validate() error {
+	return nil
+}
+
 // HostUpdatePacing: How the coordinator paces this host's next install, from its last poll (docs/designs/fleet-host-updates.md section 7); absent before the host's first poll under pacing.
 type HostUpdatePacing struct {
 	Class   UpdatePacingClass `json:"class"`
@@ -1762,6 +1880,30 @@ var ObjectKindValues = []ObjectKind{ObjectKindHost, ObjectKindProject, ObjectKin
 // Valid: v is one of the schema's values.
 func (v ObjectKind) Valid() bool {
 	for _, x := range ObjectKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type PinsStage string
+
+const (
+	PinsStageOffline   PinsStage = "offline"
+	PinsStageHosts     PinsStage = "hosts"
+	PinsStageMerging   PinsStage = "merging"
+	PinsStageLanded    PinsStage = "landed"
+	PinsStageReverting PinsStage = "reverting"
+	PinsStageFailed    PinsStage = "failed"
+)
+
+// PinsStageValues lists every PinsStage in schema order.
+var PinsStageValues = []PinsStage{PinsStageOffline, PinsStageHosts, PinsStageMerging, PinsStageLanded, PinsStageReverting, PinsStageFailed}
+
+// Valid: v is one of the schema's values.
+func (v PinsStage) Valid() bool {
+	for _, x := range PinsStageValues {
 		if v == x {
 			return true
 		}
@@ -2903,6 +3045,48 @@ func (v *StopOutcome) Validate() error {
 	return nil
 }
 
+type SystemChangeComponent struct {
+	Failures []string                    `json:"failures"`
+	Hosts    []SystemChangeComponentHost `json:"hosts"`
+	Name     string                      `json:"name"`
+	Pinned   *string                     `json:"pinned"`
+	Proposed *string                     `json:"proposed"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemChangeComponent) Validate() error {
+	if v.Failures == nil {
+		return Missing("failures")
+	}
+	if v.Hosts == nil {
+		return Missing("hosts")
+	}
+	for i := range v.Hosts {
+		if err := Check(&v.Hosts[i], "hosts"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type SystemChangeComponentHost struct {
+	Failed   *int64             `json:"failed,omitempty"`
+	HostId   string             `json:"hostId"`
+	Observed *string            `json:"observed"`
+	Pinned   *string            `json:"pinned,omitempty"`
+	Reason   *string            `json:"reason,omitempty"`
+	State    ComponentHostState `json:"state"`
+	Total    *int64             `json:"total,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemChangeComponentHost) Validate() error {
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type SystemChangeDefinition struct {
 	Head    int64           `json:"head"`
 	Id      string          `json:"id"`
@@ -2939,8 +3123,37 @@ func (v *SystemChangeHostHarness) Validate() error {
 	return nil
 }
 
+type SystemChangeKind struct {
+	Components []SystemChangeComponent `json:"components"`
+	Enabled    bool                    `json:"enabled"`
+	Kind       ComponentKind           `json:"kind"`
+	Proposal   *SystemPinsProposal     `json:"proposal,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemChangeKind) Validate() error {
+	if v.Components == nil {
+		return Missing("components")
+	}
+	for i := range v.Components {
+		if err := Check(&v.Components[i], "components"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if v.Proposal != nil {
+		if err := Check(v.Proposal, "proposal"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type SystemChangesReply struct {
 	Ahead             []SystemChangeDefinition  `json:"ahead"`
+	Components        []SystemChangeKind        `json:"components"`
 	HarnessDrift      []SystemChangeHostHarness `json:"harnessDrift"`
 	RepositoryChanged []SystemChangeDefinition  `json:"repositoryChanged"`
 	StoreOnly         []SystemChangeDefinition  `json:"storeOnly"`
@@ -2954,6 +3167,14 @@ func (v *SystemChangesReply) Validate() error {
 	}
 	for i := range v.Ahead {
 		if err := Check(&v.Ahead[i], "ahead"); err != nil {
+			return err
+		}
+	}
+	if v.Components == nil {
+		return Missing("components")
+	}
+	for i := range v.Components {
+		if err := Check(&v.Components[i], "components"); err != nil {
 			return err
 		}
 	}
@@ -2988,6 +3209,43 @@ func (v *SystemChangesReply) Validate() error {
 }
 
 type SystemChangesRequest = map[string]json.RawMessage
+
+// SystemPinsProposal: The kind's open pull request automation/<kind>-pins, or the one merged in the last day (landed), as the delivery pass last read it.
+type SystemPinsProposal struct {
+	At       string            `json:"at"`
+	Failures []string          `json:"failures"`
+	Number   int64             `json:"number"`
+	Stage    PinsStage         `json:"stage"`
+	Trials   *SystemPinsTrials `json:"trials,omitempty"`
+	Url      string            `json:"url"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemPinsProposal) Validate() error {
+	if v.Failures == nil {
+		return Missing("failures")
+	}
+	if err := Check(&v.Stage, "stage"); err != nil {
+		return err
+	}
+	if v.Trials != nil {
+		if err := Check(v.Trials, "trials"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type SystemPinsTrials struct {
+	Failed int64 `json:"failed"`
+	Passed int64 `json:"passed"`
+	Total  int64 `json:"total"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemPinsTrials) Validate() error {
+	return nil
+}
 
 // SystemPurgeReply: more: the call stopped at its time budget (60 s, under the 100 s of the site proxy) with objects left unchecked (deferred, in random order per call); run it again; a preview with more is partial. removed and kept: one entry per requested kind, host first; kept are tombstoned objects a live row still references, they stay. rows: what goes with the removed projects and experiments, per kind. retryLater: store object and span deletions not done yet; the next purge retries them.
 type SystemPurgeReply struct {
@@ -3186,6 +3444,7 @@ func init() {
 		"executions_list":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Read executions with optional project/task/session/parent/problem/needsYou filters; projectIds keeps those projects, excludeProjectIds leaves those out ('-' is no project). Fleet's own background calls (systemActor set) are left out unless system is include or only, or parentExecutionId names their parent. For bounded enumeration set limit (1..1000); reply has executions and hasMore, plus nextAfter when more rows exist. Repeat identical filters with after=nextAfter until hasMore=false. Order is seq,id; pages use fresh snapshots. Without limit returns the complete legacy executions wrapper, without paging metadata. after requires limit; inaccessible, unknown or filter-mismatched cursors return 400.", Changes: []string{"execution"}, InputSchema: json.RawMessage("{\"$comment\":\"Filters; problem true keeps executions with a problem; needsYou true keeps the problems that still need someone (Needs you): not dismissed, not abandoned or cancelled, no tool calls or steps of a listed run, project still defined. Paging is opt-in with limit (1..1000); repeat identical filters and pass nextAfter as after until hasMore is false. Order is (seq,id). Each page is a fresh read snapshot; concurrent updates can move rows. Unknown, inaccessible or filter-mismatched cursors return 400. Without limit the complete legacy list is returned and nextAfter is omitted. system (default exclude) leaves out Fleet's own background calls (systemActor set), include adds them, only keeps them alone.\",\"additionalProperties\":true,\"properties\":{\"after\":{\"$comment\":\"nextAfter from the preceding page with identical filters; requires limit.\",\"type\":\"string\"},\"botId\":{\"type\":\"string\"},\"excludeProjectIds\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); '-' is no project (an empty id or null is a 400); applied after projectIds, so a project in both is left out. Agents see every project unless they pass it.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"limit\":{\"$comment\":\"Opt in to paging: 1..1000 rows. Omit for the legacy complete list.\",\"minimum\":1,\"type\":\"integer\"},\"needsYou\":{\"type\":\"boolean\"},\"parentExecutionId\":{\"type\":\"string\"},\"problem\":{\"type\":\"boolean\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"$comment\":\"keep rows of these projects only (the app passes the person's focus, OR-34); '-' is no project\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"sessionId\":{\"type\":\"string\"},\"system\":{\"$comment\":\"Fleet's own background calls (execution systemActor set, such as the coordinator's GitHub and Bugsink reads): exclude leaves them out, include adds them, only keeps them alone. Unset is exclude, or include when the request names a parent (executions_list parentExecutionId, analytics_query filters.parent); a connection's full usage is system include (docs/designs/fleet-analytics.md, System activity).\",\"enum\":[\"exclude\",\"include\",\"only\"],\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"executions_reconcile":  {Read: false, Long: false, Errors: []int{400, 403}, Auth: "owner", Agent: "tool", Description: "Owner or full access: preview or reconcile stuck executions with no live worker process, leaving active runs untouched; writes one audit row each", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: preview or reconcile stuck executions with no live worker process, leaving active runs untouched.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"preview\":{\"type\":\"boolean\"},\"reason\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"executions_runners":    {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "CI runners and the executions they ran", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
+		"host_update_history":   {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "A host's update history, newest first, one page per request (before: the previous reply's nextCursor): each change of the update result the host reported (version, state, reason, when), the component versions that release pins for the host (cli/codex, tool/node) and those it changed against the release the host last switched to.", Changes: []string{"host"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"before\":{\"$comment\":\"Page: entries with seq below this (the previous reply's nextCursor).\",\"type\":\"integer\"},\"hostId\":{\"type\":\"string\"},\"limit\":{\"$comment\":\"Entries per page (default 30, at most 100).\",\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"hostId\"],\"type\":\"object\"}")},
 		"hosts_list":            {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "includeRemoved: also hosts removed by hosts_remove (state removed).", Changes: []string{"host", "execution", "command"}, InputSchema: json.RawMessage("{\"$comment\":\"includeRemoved: also hosts removed by hosts_remove (state removed).\",\"additionalProperties\":true,\"properties\":{\"includeRemoved\":{\"type\":\"boolean\"}},\"type\":\"object\"}")},
 		"hosts_register":        {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "owner", Agent: "no", Description: "Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.\",\"additionalProperties\":true,\"properties\":{\"harnesses\":{},\"holder\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"maxConcurrent\":{\"minimum\":1,\"type\":[\"integer\",\"null\"]},\"name\":{\"type\":\"string\"},\"platform\":{\"type\":\"string\"},\"roles\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"secretSha256\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"hosts_remove":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:host", Agent: "tool", Description: "Owner, or the holder of the host: remove a host (id, preview). Preview first: running executions, open sessions, artifacts with no other copy; confirm cancels its running work and drops its secret and settings; the record stays for history until system_purge", InputSchema: json.RawMessage("{\"$comment\":\"Owner, or the holder for their own host (fleet-system-management.md, Hosts). preview true changes nothing and returns the counts; false removes: running work is cancelled, the secret and settings are dropped, the host record stays as a tombstone (state removed) for history.\",\"properties\":{\"id\":{\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"id\",\"preview\"],\"type\":\"object\"}")},
@@ -3199,7 +3458,7 @@ func init() {
 		"pipeline_run_create":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Start a stored pipeline by pipelineId with projectId and a stable requestId; read its runId with pipeline_get.", InputSchema: json.RawMessage("{\"$comment\":\"Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha.\",\"properties\":{\"draft\":{\"type\":\"boolean\"},\"example\":{\"additionalProperties\":true,\"type\":\"object\"},\"exampleArtifactId\":{\"type\":\"string\"},\"overrides\":{\"additionalProperties\":true,\"type\":\"object\"},\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"pipelineId\",\"requestId\"],\"type\":\"object\"}")},
 		"queue_list":            {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "bound:session", Description: "Queued messages", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"route_decisions":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Why an execution (executionId) was routed to its host and account; or, with subscriptionId, the newest 50 decisions since since (epoch ms, default the last 24 h) that skipped that subscription somewhere (J5 model skips carry cause subscription:<id>:model:<model>)", InputSchema: json.RawMessage("{\"$comment\":\"executionId, or subscriptionId with an optional since (epoch ms).\",\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"since\":{\"type\":\"integer\"},\"subscriptionId\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")},
-		"system_changes":        {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Drift across repository, active store and hosts: repository-changed and store-only definitions, release version alignment, and harness CLI pin drift", Changes: []string{"definition", "host"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"system_changes":        {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Drift across repository, active store and hosts: repository-changed and store-only definitions, release version alignment, harness CLI pin drift, and the release-managed components by kind (agent CLIs, host tools): pinned version, the open pin proposal with its stage and Lab trials, and each host's state", Changes: []string{"definition", "host"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"system_purge":          {Read: false, Long: true, Errors: []int{400, 403}, Auth: "owner", Agent: "tool", Description: "Owner only: remove tombstoned objects nothing live references (preview, kinds host|project|experiment|task|session, default all): rows, then store objects and spans. Call preview: true first; removed and kept list ids per kind, rows the counts that go with them, retryLater the store/span deletions still pending. A purged project keeps its id reserved", InputSchema: json.RawMessage("{\"$comment\":\"Owner only. Removes tombstoned objects (kinds, default all) that no live row references, with every row that goes with them (the reference map in go/coordinator/cleanup.go): a removed host with no execution, session, command, store or artifact copy naming it; a deleted experiment or project whose rows no row outside it names. A purged project keeps its definition row, so its id is never reused. preview true counts them and changes nothing; the confirm recomputes with the same queries, deletes the rows, then the store objects no remaining artifact shares and the ClickHouse spans of the removed executions.\",\"properties\":{\"kinds\":{\"items\":{\"$comment\":\"Tombstoned objects system_purge removes: hosts removed by hosts_remove, projects, experiments, tasks and sessions deleted by object_delete.\",\"enum\":[\"host\",\"project\",\"experiment\",\"task\",\"session\"],\"type\":\"string\"},\"type\":\"array\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"preview\"],\"type\":\"object\"}")},
 		"system_versions":       {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Versions of the coordinator, the app and every host's executor", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 	} {

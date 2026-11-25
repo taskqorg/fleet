@@ -435,6 +435,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 			if err := pinsWatchPass(ctx, a, g.closed); err != nil {
 				log.Printf("pins watch: %v", err)
 			}
+			pinsViewPass(ctx, a, g.open, g.closed)
 		}
 		its, l, merged := deliveryStagesWithMerged(t.projects[0], name, g, versions, ui, now)
 		repos[key] = &deliveryRepo{projects: t.projects, items: its, landing: l, delivered: merged}

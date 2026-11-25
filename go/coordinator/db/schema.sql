@@ -735,6 +735,17 @@ CREATE TABLE host_setting (
   "applied_at" timestamp with time zone,
   "apply_error" text
 );
+CREATE TABLE host_update (
+  "seq" bigint NOT NULL,
+  "host_id" text NOT NULL,
+  "holder" text,
+  "project_id" text,
+  "version" text NOT NULL,
+  "update_state" text NOT NULL,
+  "reason" text NOT NULL,
+  "at" timestamp with time zone NOT NULL,
+  "payload" jsonb NOT NULL
+);
 CREATE TABLE lab_trial (
   "execution_id" text NOT NULL,
   "cell_example" text NOT NULL,
