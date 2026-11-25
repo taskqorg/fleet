@@ -11,6 +11,8 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // runnerRow: one execution as the Runners screen reads it (queries/runners.sql), or a group of tool calls.
@@ -248,59 +250,37 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 			WallMs: r.wallMs, CpuMs: r.cpuMs, PeakMemoryBytes: r.peakMemoryBytes, Tokens: r.tokens, Calls: r.calls, FailedCalls: r.failedCalls,
 			ParentExecutionId: r.parentID, Attempt: r.attempt, Cost: runnerCost(prices, isRunnerSubscription(r), runnerUsages(r))})
 	}
-	// Spend: every execution this UTC month, by when it ran (end, else start), summed per host, kind and period in Go so
-	// costs are priced per usage. ponytail: a full-month scan per call; aggregate closed days in SQL when months grow large.
-	rows, err := q.db().RunnerSpendRows(q.ctx())
+	// Spend today and this month per host, from execution_spend (spend_summary by host: the cost priced once per
+	// execution, read index-only), as rows of kind "all"; today's runs per host and kind come as rows of their kind
+	// without tokens or cost. Wall and CPU time per period are not summed here (pages/runners.md shows them per run).
+	now := time.Now().UTC()
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := day.Add(24 * time.Hour)
+	for _, p := range []struct {
+		name     string
+		from, to time.Time
+	}{{"today", day, end}, {"month", month, end}} {
+		sp, err := spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByHost,
+			Window: contract.AnalyticsWindow{From: jsonBytes(p.from.Format(time.RFC3339)), To: jsonBytes(p.to.Format(time.RFC3339))}})
+		if err != nil {
+			return contract.ExecutionsRunnersReply{}, err
+		}
+		for _, r := range sp.Rows {
+			host := r.Key
+			if host == "unknown" {
+				host = ""
+			}
+			tokens := float64(r.Tokens)
+			out.Spend = append(out.Spend, contract.RunnerSpend{HostId: optStr(host), Kind: "all", Period: p.name, Runs: r.Runs, Tokens: &tokens, Cost: r.Cost})
+		}
+	}
+	kinds, err := q.db().RunnerRunsByKind(q.ctx(), pgtype.Timestamptz{Time: day, Valid: true})
 	if err != nil {
 		return contract.ExecutionsRunnersReply{}, err
 	}
-	type key struct{ host, kind, period string }
-	type acc struct {
-		runs, measured    int64
-		wall, cpu, tokens *float64
-		us, subUs         []usage // metered, and on a subscription login
-	}
-	sums, order := map[key]*acc{}, []key{}
-	add := func(p **float64, v *float64) {
-		if v != nil {
-			if *p == nil {
-				*p = new(float64)
-			}
-			**p += *v
-		}
-	}
-	for _, s := range rows {
-		r := &runnerRow{kind: s.Kind, hostID: s.HostID, subject: s.Subject, connectionCost: s.ConnectionCost, billingBasis: s.BillingBasis, model: s.Model, accountID: s.AccountID,
-			isAPIConn: s.IsApiConn, tokensInput: s.TokensInput, tokensOutput: s.TokensOutput, tokensCacheRead: s.TokensCacheRead, tokensCacheWrite: s.TokensCacheWrite, at: runnerTime(s.At)}
-		periods := []string{"month"}
-		if s.Today {
-			periods = append(periods, "today")
-		}
-		for _, p := range periods {
-			k := key{deref(s.HostID), s.Kind, p}
-			a := sums[k]
-			if a == nil {
-				a = &acc{}
-				sums[k], order = a, append(order, k)
-			}
-			a.runs++
-			if s.Measured {
-				a.measured++
-			}
-			add(&a.wall, runnerF(s.WallMs))
-			add(&a.cpu, runnerF(s.CpuMs))
-			add(&a.tokens, runnerTokens(s.TokensInput, s.TokensOutput, s.TokensCacheRead, s.TokensCacheWrite))
-			if isRunnerSubscription(r) {
-				a.subUs = append(a.subUs, runnerUsages(r)...)
-			} else {
-				a.us = append(a.us, runnerUsages(r)...)
-			}
-		}
-	}
-	for _, k := range order {
-		a := sums[k]
-		out.Spend = append(out.Spend, contract.RunnerSpend{HostId: optStr(k.host), Kind: k.kind, Period: k.period, Runs: a.runs, Measured: a.measured, WallMs: a.wall, CpuMs: a.cpu,
-			Tokens: a.tokens, Cost: append(runnerCost(prices, false, a.us), runnerCost(prices, true, a.subUs)...)})
+	for _, k := range kinds {
+		out.Spend = append(out.Spend, contract.RunnerSpend{HostId: optStr(k.HostID), Kind: k.Kind, Period: "today", Runs: k.Runs, Cost: []contract.CostFigure{}})
 	}
 	return out, nil
 }

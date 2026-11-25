@@ -30,12 +30,8 @@ FROM execution e LEFT JOIN execution_totals x ON x.execution_id=e.id LEFT JOIN t
 WHERE (e.state IN ('preparing','running','waiting') OR coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) > now()-interval '24 hours')
  AND e.kind='tool_run' ORDER BY e.seq DESC LIMIT 20000;
 
--- name: RunnerSpendRows :many
--- Every execution this UTC month by when it ran; today: it ran this UTC day; measured: it has recorded totals.
-SELECT e.host_id,e.kind::text AS kind,(coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::boolean AS today,
- (x.execution_id IS NOT NULL)::boolean AS measured,x.wall_ms,x.cpu_ms,(coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool',''))::text AS subject,x.connection_cost,
- x.billing_basis,coalesce(x.model,e.model) AS model,e.account_id,
- CASE WHEN coalesce(x.billing_basis,'') IN ('','unavailable') AND e.account_id IS NOT NULL THEN coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('',e.account_id) m),false) ELSE false END AS is_api_conn,
- x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write,coalesce(e.started_at,coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at)) AS at
-FROM execution e LEFT JOIN execution_totals x ON x.execution_id=e.id
-WHERE e.kind NOT IN ('pipeline_run','pipeline_step') AND coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) >= date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC';
+-- name: RunnerRunsByKind :many
+-- Today's executions per host and kind (execution_spend, by start).
+SELECT coalesce(s.host_id, '')::text AS host_id, s.kind::text AS kind, count(*)::bigint AS runs
+FROM execution_spend s WHERE s.started_at >= @since::timestamptz AND s.kind NOT IN ('pipeline_run', 'pipeline_step')
+GROUP BY 1, 2;
