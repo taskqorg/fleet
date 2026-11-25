@@ -5058,3 +5058,7 @@ DROP INDEX execution_active;
 CREATE INDEX execution_ended_at ON execution (ended_at);
 CREATE INDEX execution_open ON execution (seq) WHERE ended_at IS NULL;
 
+-- migration 115: project codes may hold I and O (owner, 2026-11-26: desiign is DSI). The other rules stay: 2 to 5
+-- characters, a letter first, not hex-only, not ALL; codes are never reused (project_code's key).
+ALTER TABLE project_code DROP CONSTRAINT project_code_code_check;
+ALTER TABLE project_code ADD CONSTRAINT project_code_code_check CHECK (code ~ '^[A-Z][A-Z0-9]{1,4}$' AND code !~ '^[A-F0-9]+$' AND code <> 'ALL');

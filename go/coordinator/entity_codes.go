@@ -64,8 +64,8 @@ func init() {
 			return contract.ProjectCodeSetReply{}, fail(404, "Unknown project")
 		}
 		code := strings.ToUpper(strings.TrimSpace(r.Code))
-		if !projectCodePattern.MatchString(code) || strings.ContainsAny(code, "IO") || strings.Trim(code, "0123456789ABCDEF") == "" || code == "ALL" {
-			return contract.ProjectCodeSetReply{}, fail(400, "Expected a project code: 2 to 5 letters or digits, a letter first, not hex-only, no I or O")
+		if !projectCodePattern.MatchString(code) || strings.Trim(code, "0123456789ABCDEF") == "" || code == "ALL" {
+			return contract.ProjectCodeSetReply{}, fail(400, "Expected a project code: 2 to 5 letters or digits, a letter first, not hex-only")
 		}
 		if ok, err := q.db().EntProjectLive(q.ctx(), r.ProjectId); err != nil || !ok {
 			if err == nil {
