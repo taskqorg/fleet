@@ -78,7 +78,7 @@ func projectReceipt(q *Request, operation string, args map[string]json.RawMessag
 	}
 	sub := &Request{app: q.app, r: q.r, tx: q.tx, host: q.host, body: []byte(js(jsonValue(jsonBytes(args))))}
 	switch operation {
-	case "connections_key_request": // its question shows in the asking agent's conversation
+	case "connections_key_request", "access_grant_ask": // its question shows in the asking agent's conversation
 		sub.agent = "execution:" + executionID
 	case "pipeline_run", "direct_search":
 		if executionID == "" {

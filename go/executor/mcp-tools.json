@@ -283,6 +283,96 @@
     }
   },
   {
+    "name": "access_grants",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "This project's access to its own servers (docs/designs/fleet-project-access.md): the access servers (state, the MySQL database names a check found) and the project's grants with state (asked, provisioning, ready, failed, declined, withdrawn, revoking, revoked), scope, recipe, last probe and, once ready, the connection whose tools read the resource (<project>-mysql: sql_schema, sql_query; <project>-files: files_list, files_get). Never a credential.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    }
+  },
+  {
+    "name": "access_grant_ask",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "Ask the owner for access to one resource of this project on an access server: a MySQL database's tables (kind mysql, scope {database, tables}) or folders (kind files, scope {paths}), level read (write only when the work needs it). The owner gets an approval card with the exact recipe; after Approve Fleet provisions it, probes that reading works and writing is refused, and opens a connection whose tools you get on your next turn. Read the state with access_grants by requestId. Reuse requestId on retry. Ask only for what the task needs.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "server",
+        "kind",
+        "level",
+        "scope",
+        "reason"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "server": {
+          "type": "string",
+          "description": "The access server's id, from access_grants servers."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "mysql",
+            "files"
+          ]
+        },
+        "level": {
+          "type": "string",
+          "enum": [
+            "read",
+            "write"
+          ]
+        },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "database": {
+              "type": "string"
+            },
+            "tables": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "mysql: database and tables (or [\"*\"]); files: absolute folder paths on the server."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "Why the work needs it; the owner reads it on the card."
+        }
+      }
+    }
+  },
+  {
     "name": "artifact_save",
     "description": "Store a file of your working area, or of your temporary directory $TMPDIR (absolute path), as an artifact of this execution now (otherwise FLEET_OUTPUT_DIR is collected when the run ends). required=true makes this run wait for it.",
     "annotations": {
