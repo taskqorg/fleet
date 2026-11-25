@@ -54,6 +54,7 @@ func TestAccessChrootPath(t *testing.T) {
 		{"/home/revilio/revilio.com/config/db.php", "", false},
 		{"/uploads/../etc/passwd", "", false},
 		{"/home/revilio/revilio.com/web/uploadsx/1", "", false},
+		{"/uploads/12/scan..v2.pdf", "/uploads/12/scan..v2.pdf", true},
 	} {
 		got, err := chrootPath(granted, c.in)
 		if (err == nil) != c.ok || got != c.want {

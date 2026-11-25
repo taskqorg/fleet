@@ -71,22 +71,29 @@ func accessIdent(a *contract.GatewayAccess) string {
 func (g *gateway) link(ctx context.Context, name string, a *contract.GatewayAccess) (*accessLink, error) {
 	ident := accessIdent(a)
 	g.access.mu.Lock()
-	defer g.access.mu.Unlock()
-	if g.access.links == nil {
-		g.access.links = map[string]*accessLink{}
+	if l := g.access.links[name]; l != nil && l.ident == ident {
+		g.access.mu.Unlock()
+		return l, nil
 	}
-	if l := g.access.links[name]; l != nil {
-		if l.ident == ident {
-			return l, nil
-		}
-		l.close()
-		delete(g.access.links, name)
-	}
+	g.access.mu.Unlock()
+	// The login runs without the lock: one slow server never holds up another connection's calls.
 	l, err := g.dialAccess(ctx, a)
 	if err != nil {
 		return nil, err
 	}
 	l.ident = ident
+	g.access.mu.Lock()
+	defer g.access.mu.Unlock()
+	if g.access.links == nil {
+		g.access.links = map[string]*accessLink{}
+	}
+	if cur := g.access.links[name]; cur != nil {
+		if cur.ident == ident { // another call logged in meanwhile: keep that one
+			l.close()
+			return cur, nil
+		}
+		cur.close()
+	}
 	g.access.links[name] = l
 	return l, nil
 }
@@ -397,10 +404,12 @@ func (g *gateway) serveAccess(w httpWriter, ctx context.Context, q *request, arg
 // chrootPath maps a path the agent gives (a server path under a granted folder, or /<folder>/... inside the grant's
 // chroot) to the chroot path; anything else is refused.
 func chrootPath(granted []string, given string) (string, error) {
-	p := path.Clean("/" + strings.TrimSpace(given))
-	if strings.Contains(given, "..") {
-		return "", errors.New("path may not contain ..")
+	for _, part := range strings.Split(given, "/") {
+		if part == ".." {
+			return "", errors.New("path may not contain ..")
+		}
 	}
+	p := path.Clean("/" + strings.TrimSpace(given))
 	if p == "/" {
 		return "/", nil
 	}
