@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // Requirement (docs/designs/fleet-triggers.md): a conversation trigger with a change condition checks without a model
@@ -67,7 +68,7 @@ func TestTriggers(t *testing.T) {
 		}
 	}
 	messages := func() string {
-		return psql("SELECT count(*) FROM message WHERE session_id = '" + sid + "' AND payload->>'triggerId' IS NOT NULL;") +
+		return psql("SELECT count(*) FROM message WHERE session_id = '"+sid+"' AND payload->>'triggerId' IS NOT NULL;") +
 			"+" + psql("SELECT count(*) FROM queued_message WHERE session_id = '"+sid+"' AND payload->>'triggerId' IS NOT NULL;")
 	}
 	now := time.Now()
@@ -217,5 +218,22 @@ func TestTriggerMigration(t *testing.T) {
 	var runTrigger string
 	if err := s.pool.QueryRow(ctx, "SELECT trigger_id FROM bot_run WHERE id = 'r1'").Scan(&runTrigger); err != nil || runTrigger != "a-daily" {
 		t.Fatalf("bot_run trigger_id = %q (%v)", runTrigger, err)
+	}
+}
+
+// Requirement (docs/designs/fleet-triggers.md, Pass): a trigger every pass checks on each pass. Risk: its next time
+// falls a moment after the next pass, so it waits two passes (30 s instead of 15 s on prod).
+func TestTriggerDueWithinHalfPass(t *testing.T) {
+	now := time.Now()
+	tick := time.Duration(triggerTickMs()) * time.Millisecond
+	every := triggerTickMs()
+	for _, c := range []struct {
+		next time.Duration
+		due  bool
+	}{{0, true}, {tick/2 - time.Millisecond, true}, {tick/2 + time.Millisecond, false}, {tick, false}} {
+		next := now.Add(c.next)
+		if _, due := triggerDue(db.Trigger{Enabled: true, WhenKind: "every", EveryMs: &every, NextAt: &next}, now); due != c.due {
+			t.Fatalf("next in %v: due %v, want %v", c.next, due, c.due)
+		}
 	}
 }

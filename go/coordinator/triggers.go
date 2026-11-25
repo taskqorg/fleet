@@ -166,7 +166,10 @@ func triggerDue(t db.Trigger, now time.Time) (slot string, due bool) {
 		if t.NextAt == nil {
 			return fmt.Sprint(now.UnixMilli()), true
 		}
-		return fmt.Sprint(t.NextAt.UnixMilli()), !now.Before(*t.NextAt)
+		// Due within half a pass: a time just after this pass would otherwise wait a whole extra pass, so a trigger
+		// every pass checked every second pass (30 s at the 15 s default).
+		early := time.Duration(triggerTickMs()/2) * time.Millisecond
+		return fmt.Sprint(t.NextAt.UnixMilli()), !now.Add(early).Before(*t.NextAt)
 	case "daily":
 		return dueDaily(t, now)
 	}
