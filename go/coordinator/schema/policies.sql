@@ -2,6 +2,13 @@
 -- (store.go) whenever the file changes. Edit here, never in a migration; TestMigrationSchemaFiles keeps the file in
 -- the database's deparsed form (FLEET_UPDATE_SCHEMA_FILES=1 go test ./coordinator -run TestMigrationSchemaFiles).
 
+-- access_grant
+ALTER TABLE access_grant ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON access_grant;
+CREATE POLICY live ON access_grant AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((deleted_at IS NULL) AND (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[]))))));
+DROP POLICY IF EXISTS project_scope ON access_grant;
+CREATE POLICY project_scope ON access_grant FOR ALL TO public USING (fleet_visible(project_id));
+
 -- account_catalogue
 ALTER TABLE account_catalogue ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON account_catalogue;

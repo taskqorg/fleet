@@ -7,6 +7,41 @@ CREATE TYPE question_kind AS ENUM ('operator_decision', 'agent_question', 'accep
 CREATE TYPE question_state AS ENUM ('open', 'answered', 'withdrawn');
 CREATE TYPE resource_metric_name AS ENUM ('input', 'output', 'cacheRead', 'cacheWrite', 'reasoning', 'wallMs', 'activeMs', 'apiMs', 'cpuMs', 'peakMemoryBytes', 'credits', 'turns', 'toolCalls', 'toolErrors', 'tokenActors', 'processActors', 'toolActors');
 CREATE TYPE task_state AS ENUM ('queued', 'in_progress', 'waiting', 'paused', 'completed', 'failed', 'cancelled');
+CREATE TABLE access_grant (
+  "id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "server_id" text NOT NULL,
+  "kind" text NOT NULL,
+  "level" text NOT NULL,
+  "state" text NOT NULL,
+  "request_id" text NOT NULL,
+  "asked_by" text NOT NULL,
+  "question_id" text,
+  "credential" text,
+  "expires_at" timestamp with time zone,
+  "payload" jsonb NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "deleted_at" timestamp with time zone
+);
+CREATE TABLE access_server (
+  "id" text NOT NULL,
+  "address" text NOT NULL,
+  "via" text,
+  "host_key" text,
+  "enrolled_at" timestamp with time zone,
+  "payload" jsonb NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL,
+  "deleted_at" timestamp with time zone
+);
+CREATE TABLE access_work (
+  "grant_id" text NOT NULL,
+  "op" text NOT NULL,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text
+);
 CREATE TABLE account_catalogue (
   "id" text NOT NULL,
   "host_id" text,
