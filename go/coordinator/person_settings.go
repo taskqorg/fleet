@@ -115,6 +115,7 @@ type personSettingPayload struct {
 	Widths       map[string]int64       `json:"widths"`
 	RowPins      map[string][]string    `json:"rowPins"`
 	NavCollapsed bool                   `json:"navCollapsed"`
+	RailBots     contract.RailBots      `json:"railBots"`
 	NavCounters  map[string]string      `json:"navCounters"`
 	LastViews    map[string]string      `json:"lastViews"`
 	ListGroups   map[string][]string    `json:"listGroups"`
@@ -305,6 +306,12 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if r.NavCollapsed != nil {
 		next.NavCollapsed = *r.NavCollapsed
 	}
+	if r.RailBots != nil {
+		if r.RailBots.Recent < 0 {
+			return contract.PersonSettings{}, fail(400, "railBots.recent: 0 or more")
+		}
+		next.RailBots = *r.RailBots
+	}
 	// Side panels (side-panel.md): open or closed by panel key, merged.
 	if r.Panels != nil {
 		next.Panels = maps.Clone(prev.Panels)
@@ -363,7 +370,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	}
 	_, err = unscoped(q, func() (struct{}, error) {
 		payload := personSettingPayload{Order: next.Order, Pins: next.Pins, Views: next.Views, Focus: next.Focus, FocusPresets: next.FocusPresets,
-			Ignored: next.Ignored, Widths: next.Widths, RowPins: next.RowPins, NavCollapsed: next.NavCollapsed, NavCounters: next.NavCounters,
+			Ignored: next.Ignored, Widths: next.Widths, RowPins: next.RowPins, NavCollapsed: next.NavCollapsed, RailBots: next.RailBots, NavCounters: next.NavCounters,
 			LastViews: next.LastViews, ListGroups: next.ListGroups, Panels: next.Panels}
 		if err := q.db().PersonSettingPut(q.ctx(), db.PersonSettingPutParams{ID: "person-setting:" + email, Email: email, Payload: jsonBytes(payload)}); err != nil {
 			return struct{}{}, err
@@ -380,7 +387,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			name            string
 			previous, value any
 		}{{"pins", prev.Pins, next.Pins}, {"views", prev.Views, next.Views}, {"focus", prev.Focus, next.Focus},
-			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"ignored", prev.Ignored, next.Ignored}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}, {"panels", prev.Panels, next.Panels}, {"navCounters", prev.NavCounters, next.NavCounters}} {
+			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"ignored", prev.Ignored, next.Ignored}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}, {"railBots", prev.RailBots, next.RailBots}, {"panels", prev.Panels, next.Panels}, {"navCounters", prev.NavCounters, next.NavCounters}} {
 			// lastViews is where the person was and listGroups which groups they folded, not settings: they change as the person
 			// moves around a list and are not audited.
 			a, _ := json.Marshal(f.previous)

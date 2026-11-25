@@ -158,3 +158,16 @@ test('P6 ignored projects are a person setting: ignored and restored one at a ti
   assert.deepEqual((await op('person_settings_get')).ignored, ['ign-b']);
   await op('person_settings_set', {ignored: [], focus: []});
 });
+
+test('P7 railBots is a person setting: off with no recent bots by default, replaced whole, audited, and recent is never negative (requirement: nav-rail.md "Bots" zone stored on the server per person, agents set it; risk: the zone setting lives in the browser or resets other preferences)', async () => {
+  assert.deepEqual((await op('person_settings_get')).railBots, {on: false, recent: 0});
+  let s = await op('person_settings_set', {railBots: {on: true, recent: 3}, navCollapsed: false});
+  assert.deepEqual(s.railBots, {on: true, recent: 3});
+  s = await op('person_settings_set', {pins: ['tasks']});
+  assert.deepEqual(s.railBots, {on: true, recent: 3});
+  assert.deepEqual((await op('person_settings_get')).railBots, {on: true, recent: 3});
+  const b = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify({railBots: {on: true, recent: -1}})});
+  assert.equal(b.status, 400);
+  const changes = (await op('setting_changes', {target: 'person:' + s.email})).changes.map((c: any) => c.field);
+  assert.ok(changes.includes('railBots'));
+});
