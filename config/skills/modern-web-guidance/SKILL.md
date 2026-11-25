@@ -9,7 +9,7 @@ Adapted for Fleet from GoogleChrome/modern-web-guidance 1.0.1 (Apache-2.0, https
 
 ## Precedence
 
-The project contract wins. In Fleet that means `docs/design-system/owner-rules.md` (OR-1 … OR-44), then `packages/ui` (build screens only from it; one icon registry, OR-8; no floating forms, OR-14), then these guides. Apply a guide's platform technique inside those rules; never replace a `packages/ui` control with a hand-written one because a guide shows one. Another project follows its own contract the same way.
+The project contract wins. In Fleet that means `docs/design-system/owner-rules.md` (its principles card first, then OR-1 … OR-70), then `packages/ui` (build screens only from it; one icon registry, OR-8; no floating forms, OR-14), then these guides. Apply a guide's platform technique inside those rules; never replace a `packages/ui` control with a hand-written one because a guide shows one. Another project follows its own contract the same way.
 
 ## Browser support
 

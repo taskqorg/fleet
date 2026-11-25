@@ -2,7 +2,7 @@
 
 Usability rules that every Fleet screen follows. Controls and pages link here instead of restating a rule. A page that breaks a rule is a defect. A rule that does not fit a real need is changed here first, with a [decisions](decisions.md) entry.
 
-The [owner rules](owner-rules.md) come first and win on conflict. This file does not restate them: it says how a screen meets them and how a reviewer or a browser check proves it. The three owner principles set the order of work: glance, work through conversation, details on demand ([owner principles](owner-rules.md#principles)). Sections 12 to 14 carry them; sections 1 to 11 and 15 to 19 apply to every screen.
+The [owner rules](owner-rules.md) come first and win on conflict. This file does not restate them: it says how a screen meets them and how a reviewer or a browser check proves it. The three owner principles set the order of work: glance, work through conversation, details on demand ([owner principles](owner-rules.md#principles-card)). Sections 12 to 14 carry them; sections 1 to 11 and 15 to 19 apply to every screen.
 
 People work by talking to sessions: bots and project PMs. They come back many times a day, often from a phone, to see what happens and to answer what waits for them. Architects also compare Lab runs and keep hosts healthy. Screens must be quick to read, calm and predictable.
 
@@ -126,7 +126,7 @@ Confirmation of risky actions is [section 17](#17-error-prevention-and-recovery)
 |---|---|---|
 | **UR-48.** | Light and dark are equal; the default follows the system, the person's choice is stored, and a screen is reviewed in dark first. | Browser: emulate each colour scheme and compare screenshots. |
 | **UR-49.** | Desktop layouts serve 1280 to 1920 px: catalogue sections in three columns ([OR-24](owner-rules.md)), Home and Live full width right of the navigation. | Browser: at 1280 and 1920 px, expect the section's columns and no page scroll sideways. |
-| **UR-50.** | No page scroll in either direction; code and wide tables scroll inside their own frame ([OR-25](owner-rules.md)). | Browser: `scrollWidth` equals `clientWidth` on the document at 1440 and 390 px. |
+| **UR-50.** | No page scroll in either direction, and nothing scrolls sideways inside it: code and tables wrap or stack ([OR-66](owner-rules.md)). | Browser: `scrollWidth` equals `clientWidth` on the document at 1440 and 390 px. |
 
 Phone rules are [section 19](#19-phone).
 

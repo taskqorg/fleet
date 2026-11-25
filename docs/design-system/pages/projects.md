@@ -4,7 +4,7 @@
 
 **Status.** Target, rail section Projects ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)). Tasks, Results and Delivery lose their own rail items and become facets of a project ([route consolidation map](../../designs/fleet-ia-and-journeys.md#route-consolidation-map)). The sections after **Current build** describe the page as it runs today.
 
-**Purpose.** What are our products, who works on each, what they produce and by which rules ([principles](../owner-rules.md#principles) 2: work is reached through who does it).
+**Purpose.** What are our products, who works on each, what they produce and by which rules ([principles](../owner-rules.md#principles-card) 2: work is reached through who does it).
 
 **Routes** (section, kind and human code, [OR-57](../owner-rules.md), UR-69):
 

@@ -8,7 +8,7 @@ This specification establishes the closed top-level navigation map, column contr
 
 ## 1. Closed Information Architecture
 
-Fleet is used by talking to sessions ([owner principles](../design-system/owner-rules.md#principles)). The rail has eight sections; the owner also sees System › People. Home, Live and History are full-width pages; the other five are catalogue sections with `CatalogueTree` or `ListPagePanel` in the control column (`OR-24`, `OR-46`, `OR-48`). The shell header keeps the focus chip and Spotlight (`OR-32`, `OR-34`, `OR-43`).
+Fleet is used by talking to sessions ([owner principles](../design-system/owner-rules.md#principles-card)). The rail has eight sections; the owner also sees System › People. Home, Live and History are full-width pages; the other five are catalogue sections with `CatalogueTree` or `ListPagePanel` in the control column (`OR-24`, `OR-46`, `OR-48`). The shell header keeps the focus chip and Spotlight (`OR-32`, `OR-34`, `OR-43`).
 
 | Section | Core question answered | Control column | Work area (idle) | Work area (open item) |
 |---|---|---|---|---|

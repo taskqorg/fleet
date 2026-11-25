@@ -4,7 +4,7 @@
 
 **App route:** `/live`. A wall mode, `/live?wall`, hides the navigation and the shell header for a TV.
 
-**Purpose.** Answers "what runs where right now, and what is broken?" ([principles](../owner-rules.md#principles) 1). It is the technical picture of the whole fleet: hosts, worker slots, projects, delivery and CI. It is built to watch from across a room: it moves while work runs, and when something breaks that is the loudest thing on the screen.
+**Purpose.** Answers "what runs where right now, and what is broken?" ([principles](../owner-rules.md#principles-card) 1). It is the technical picture of the whole fleet: hosts, worker slots, projects, delivery and CI. It is built to watch from across a room: it moves while work runs, and when something breaks that is the loudest thing on the screen.
 
 ## Layout
 

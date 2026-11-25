@@ -4,7 +4,7 @@
 
 **App route:** `/home`, and `/` opens it. Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 
-**Purpose.** Answers "who works for me, and what do they need from me?" ([principles](../owner-rules.md#principles) 2, then 1). Work is done by talking to sessions; Home is where every session starts and where its questions are answered.
+**Purpose.** Answers "who works for me, and what do they need from me?" ([principles](../owner-rules.md#principles-card) 2, then 1). Work is done by talking to sessions; Home is where every session starts and where its questions are answered.
 
 ## Layout
 

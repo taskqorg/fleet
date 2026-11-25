@@ -6,13 +6,28 @@ Source wording: [specq owner preferences P1–P16](https://github.com/taskqorg/s
 
 If an owner rule conflicts with common practice, the owner rule wins. Two exceptions always hold: touch targets are at least 44 px on touch devices, and contrast meets the WCAG minimums.
 
-## Principles
+## Principles card
+
+The owner's standing principles on one screen. Every design or UI session, and every Fleet agent doing design work, reads this card first; `node scripts/ui-context.ts <page>` prints it. Each line links its detailed rule, which stays the one source. Engineering principles: [Fleet standard](../designs/fleet-standard.md#engineering-principles).
 
 Every screen serves these three, in this order. A rule below that conflicts with them is changed, not worked around.
 
 1. **Glance.** Open Fleet and see at once who works, how much work is in flight and what is stuck. Detail is one click away, never in the way.
 2. **Work through conversation.** Every job, operator or architect, is done by talking to a session: a bot or a project PM. Sessions are the home of the product; Home lists them, and the same session is reached from the web app and from Telegram.
 3. **Details on demand.** Show what a person needs to understand and to talk. Ids, metrics, tool calls, cost and qualifiers fold away and open on click.
+
+Standing principles:
+
+- **Useful empty pane.** An idle detail pane shows the page summary, findings or recent history, never "Pick a row" (UR-35).
+- **Infinite lists.** No Show more or less, no `+N` toggles, no page buttons; one request per page; a card preview shows a fixed count and its title opens the full list (OR-65, OR-30).
+- **Row facts.** Time is the rightmost fact (OR-64); work facts in the quiet form (OR-63); repeats fold into `×N` (OR-58).
+- **Dark first.** Review dark before light, at 1440 and 390 px (UR-48).
+- **Plain words.** No UUIDs, raw keys, host paths or JSON; only real results show as results (OR-38, OR-67).
+- **No filler.** Every element answers a question the owner has; no repeated labels, no empty sections (OR-68, OR-17).
+- **Brilliant first.** Every visible change is drawn on the board and approved by the owner before code; options are board frames, never text (OR-62).
+- **Walk the live site.** Before drawing and after each deploy, walk the section and its neighbours on real data and compare with the canvas (OR-69).
+- **No sideways scroll.** Nothing scrolls horizontally, at any width: rows wrap, tables stack at narrow widths, long values wrap or truncate with the full text on click (OR-66).
+- **Terms.** Inactive things are Idle, then Archived; "park" means host stickiness only; the product word is conversation (разговор) (OR-70).
 
 The principles, the rail and the new rules are drawn on the design board: [rules-v2.bl](board/rules-v2.bl).
 
@@ -46,7 +61,7 @@ A rule marked *Target* is approved and not built yet; until it is built, the cur
 | **OR-22 State first in every list** | In every list (tasks, results, hosts, executions, artifacts, variants and others) the leftmost column is the item's state icon; it marks both the row and its state. The item's ID sits directly after its name, as a pair. A task row also shows lifecycle facts that matter: the harness mark while it runs, and the delivery stage (PR open, checks, merging, merged) as a compact chip. Service fields stay in the right zone. |
 | **OR-23 Nothing jumps** | An element that appears or disappears (a loading bar, a status line, a badge) never moves the content around it. Reserve its space and change only its look, or overlay it. Example: the list loading bar keeps its height and is transparent when idle. |
 | **OR-24 Three columns** | Catalogue sections (Conversations, Projects, Lab, Library, System) have three columns: navigation (collapses to icons), the control column (the section's catalogue with search, filters and counters) and the work area (the opened item, or the section's page). Home and Live are full-width pages right of the navigation; an open session is the conversation with an optional context panel (OR-51). No bar spans the whole window: the product name and the "need you" count sit in the navigation, and the area right of it has one shell header (OR-43). *Target* for Home and Live; until then the Overview's catalogue is the Needs-you inbox, and Runners and Spend have no control column. |
-| **OR-25 One scroll per column** | A column has at most one vertical scroller, and it is a plain browser scroller. A scroller never sits inside another one, and the page itself does not scroll. Only code and wide tables scroll sideways, inside their own frame. |
+| **OR-25 One scroll per column** | A column has at most one vertical scroller, and it is a plain browser scroller. A scroller never sits inside another one, and the page itself does not scroll. Nothing scrolls sideways (OR-66). |
 | **OR-26 The whole row opens** | A click anywhere on a list row opens the item. Controls inside the row (pin, checkbox, menu) act on their own. Never make the person aim at the title. |
 | **OR-27 Open in the work area** | A task, conversation, result, host or any other opened item fills the work area; a session opened from Home fills the area right of the navigation. It is never a floating, sticky or overlaid panel, at any width. Narrow work areas follow the [device rules](principles.md#narrow-work-areas). |
 | **OR-28 One format per value** | Each kind of value (code, time, duration, count, money, score, state, person, agent, path, hash) has one look everywhere, listed in [formats](formats.md). Mono is for codes and numbers, never for sentences. Each screen shows first what the owner comes to it for ([what each screen answers](formats.md#what-each-screen-answers)). |
@@ -88,6 +103,10 @@ A rule marked *Target* is approved and not built yet; until it is built, the cur
 | **OR-64 Time last** | In every row and card the time is the rightmost fact: a waiting time, a time in work, a latest attempt, an age or a duration comes after every other fact and chip, so the times line up in one column down a list and are read at a glance. A row's other facts, its stage and its agent mark come before it ([work facts](controls/work-facts.md)). |
 | **OR-65 Lists load on scroll** | No list has Show more, Show less, `+K more`, Older and Newer buttons, page numbers or a fixed row cap with no way to the rest. A list loads its next page as its end scrolls within a few rows of view, through one shared primitive ([infinite list](patterns/infinite-list.md)): a quiet loading row while a page is in flight, one danger row with Retry when it fails, nothing after the last row. It stays efficient: cursor pages from the operation, one request in flight, an abort when the list closes, loaded pages never read again, new rows merged at the top, and rows past the first screen skip layout until they scroll near. A short preview inside a card follows OR-30. |
 | **OR-66 No horizontal scroll** | Nothing scrolls sideways: not the page, a column, a table, a code block, a chip row or a tab bar, at any window width. A sideways trackpad swipe over a scroller turns into browser Back or Forward. Wide content reflows by its [pattern](patterns/no-horizontal-scroll.md): a table that does not fit stacks its rows, key-value pairs and long values wrap, code soft-wraps with its line numbers, chips and tabs wrap or fold, a matrix that does not fit becomes a ranked list. `overscroll-behavior-x: none` on the page is a safety net, not the fix. |
+| **OR-67 Only real results show** | The interface speaks in plain words: it never shows a UUID, a raw key, a host path or raw JSON. Technical artifacts (logs, tool output, payloads, internal files) are hidden or folded under Details; only real results a person asked for (images, video, documents, files) show as results. |
+| **OR-68 Every element answers a question** | Each element on a screen answers a question the owner has. A label that repeats what the position or a heading already says goes (OR-17), and a section with nothing to show is hidden, not drawn empty. |
+| **OR-69 Walk the live site** | Before drawing a change and after each deploy of it, walk the live section and its neighbours on real data (dark, 1440 and 390 px: long names, many items, empty states) and compare them with the approved canvas; the comparison goes into the pull request description ([design board](README.md#design-board)). |
+| **OR-70 One word per idea** | Inactive conversations, sessions and items are Idle, then Archived. "Park" means host stickiness only, never inactivity; pinning is OR-12. The product word for a session a person talks to is conversation (разговор). |
 
 ## How each rule is checked
 
@@ -110,6 +129,6 @@ A rule without a check is kept only by reading it, so each rule names its check.
 | Live check | OR-33, OR-34, OR-41 and OR-42 (widths, the collapsed navigation and the collapsed list groups stored on the server per person, never in the browser; agents write them; focus and ignored projects filter lists that name no project, ignored ones as the server-side exclusion of each list operation; an ignored project leaves the focus and the person's `search`; system presets fixed), OR-35 (sort, recently changed first), OR-36 (query terms), OR-37 (row facts in the list page; hovering a row moves no fact; Shift-click enters selection mode) | A live check on the deployed site; the reviewer |
 | Rendered page (built app and deployed site) | OR-66 (no element overflows sideways at 1440, 1100, 768 and 390 px: the page, a scroller whose content is wider, content past the viewport; each case is a design report line) | `tests/ui/hscroll.ts` from `tests/ui/app.check.ts`; `scripts/hscroll.ts` walks the deployed site |
 | Unit tests | OR-63 (the outlier fence: `×500` among ordinary rows stands out, `×2` and `×3` do not; no fence below three peers) | `tests/ui/work-facts.test.ts`; the rest by reading |
-| Reading only | OR-1, OR-3 to OR-6, OR-10 to OR-13, OR-16, the rest of OR-20, OR-21, OR-23, the rest of OR-28, the rest of OR-29, OR-30, OR-39 and OR-40, the rest of OR-31, the rest of OR-33 to OR-37, the rest of OR-45 and OR-46, OR-47, the rest of OR-48 and OR-49, OR-50 to OR-61, the rest of OR-63 and OR-64, the rest of OR-65 (until each gets its check), OR-62 (the pull request links its approved canvas) | The reviewer and the owner. |
+| Reading only | OR-1, OR-3 to OR-6, OR-10 to OR-13, OR-16, the rest of OR-20, OR-21, OR-23, the rest of OR-28, the rest of OR-29, OR-30, OR-39 and OR-40, the rest of OR-31, the rest of OR-33 to OR-37, the rest of OR-45 and OR-46, OR-47, the rest of OR-48 and OR-49, OR-50 to OR-61, the rest of OR-63 and OR-64, the rest of OR-65 (until each gets its check), OR-67 to OR-70, OR-62 (the pull request links its approved canvas) | The reviewer and the owner. |
 
 A new rule is added together with its check, or with a row in "Reading only".

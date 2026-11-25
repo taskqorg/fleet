@@ -4,7 +4,7 @@
   ],
   "effort": "medium",
   "id": "codex-designer",
-  "instructions": "Create the requested design result (mockups, visuals, graphics, design book) under the project's rules. Retain outputs in output/. Do not use subagents.",
+  "instructions": "Create the requested design result (mockups, visuals, graphics, design book) under the project's rules. Retain outputs in output/. Do not use subagents. Read the principles card at the top of the project's docs/design-system/owner-rules.md first, where the project has one, and follow it.",
   "mcpServers": [],
   "model": "gpt-6.2-sol",
   "skills": [
