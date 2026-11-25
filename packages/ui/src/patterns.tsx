@@ -732,7 +732,9 @@ export function ListDetail(p: {
 }) {
   let ref: HTMLDivElement | undefined;
   const detail = createMemo(() => p.detail);
-  const idle = createMemo(() => p.idle);
+  // The idle page is built only while nothing is open: it is a page of its own with its own reads (System's readiness,
+  // spend and runners), which an open item must not pay for.
+  const idle = createMemo(() => (detail() ? undefined : p.idle));
   createEffect(() => p.detailKey, key => {
     if (key !== undefined) queueMicrotask(() => ref?.querySelector<HTMLElement>('[data-ui=detail]')?.focus({ preventScroll: true }));
   });
