@@ -526,7 +526,7 @@ export function TextRow(p: {
   selectable?: boolean; bounds?: TextBounds; who: 'operator' | 'agent'; markdown: string; mark?: Mark; by?: string | null; at?: number | null; now?: number; onCopyFail?: (e: unknown) => void;
   /** The files the message carried; images show a thumbnail from src, every one opens in the result viewer. */
   attachments?: ArtifactMeta[]; onOpen?: (id: string) => void; src?: (id: string) => string;
-  /** The one session view (OR-51, OR-54): no service row; the operator's words sit in a bubble on the right. */
+  /** The one session view (OR-51, OR-54): no service row; the operator's words carry the accent stripe on the left. */
   quiet?: boolean;
 }) {
   const name = createMemo(() => author({ role: p.who, by: p.by, ...(p.mark ?? {}) }));
