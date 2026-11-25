@@ -15,8 +15,8 @@ The board is the visual source of the interface: a [Brilliant](https://brilliant
 The board has one home, like a shared design file: the persistent board worktree `~/Projects/fleet-board`, which the owner keeps open in the Brilliant app. Every Brilliant MCP `init` on a new path registers a new project in that app and shows a notification, so:
 
 * **Reading the board** (building, reviewing, comparing a page with its canvas): read the `.bl` files as plain text with file tools, in any checkout. Never call the Brilliant MCP tools from a task worktree.
-* **Drawing on the board** (a design task): work in `~/Projects/fleet-board`, one design session at a time. First check `git -C ~/Projects/fleet-board status` is clean and no unpushed work sits there, then bring it to `origin/main` on a branch of your own (`git -C ~/Projects/fleet-board switch -c <your-branch> origin/main`), then `init` with its `docs/design-system/board` and use `read`, `edit` and `export`. Deliver the canvases through a normal pull request from a branch there. The owner watches the work live in the one open project.
-* **A rendered picture** for a pull request or a comparison comes from that worktree's `export`, asked of the design session; other sessions do not render the board themselves.
+* **Drawing on the board** (design first, [OR-62](owner-rules.md)): work in `~/Projects/fleet-board`, which stays on `main` and is never committed in. Bring it up to date first (`git -C ~/Projects/fleet-board pull --ff-only origin main`), then `init` with its `docs/design-system/board` and use `read`, `edit` and `export`. Several design sessions may draw at once, each on its own canvases (each `init` has its own cursor), and the owner watches all of them live in the one open project. Options go on canvases under `drafts/` (git ignores them), named after the task. When the owner approves, copy the changed approved canvases into your task branch and commit them there with the page spec; delete your drafts when the pull request merges.
+* **A rendered picture** for a pull request or a comparison comes from `export` in that worktree; build sessions ask the design session (or the orchestrator) for it and never render the board themselves.
 
 | Canvas | Holds | Changes when |
 |---|---|---|
@@ -30,9 +30,9 @@ The board has one home, like a shared design file: the persistent board worktree
 How a screen moves through the board:
 
 1. **Audit.** Capture what runs and mark the problems. Screenshots are working papers: they go into the pull request, not the tree.
-2. **Options.** When a question has more than one reasonable answer, draw up to three options on a local Brilliant board outside the repository. Options and audits are working papers.
-3. **Decision.** The owner picks. Record the choice in [decisions.md](decisions.md), the rules in [owner-rules.md](owner-rules.md) and the page in `pages/<page>.md`.
-4. **Screens.** Draw the approved states on `screens/<page>.bl` in this board, in the same pull request as the page spec.
+2. **Options.** Draw the change on the board before any code ([OR-62](owner-rules.md)). When a question has more than one reasonable answer, draw up to three options. Options go on `drafts/` canvases in the board home; they and audits are working papers.
+3. **Decision.** The owner picks on the board. Record the choice in [decisions.md](decisions.md), the rules in [owner-rules.md](owner-rules.md) and the page in `pages/<page>.md`.
+4. **Screens.** Draw the approved states on `screens/<page>.bl` (and blocks on `blocks.bl`), and commit them in the same pull request as the page spec, before or with the code.
 5. **Build.** Build from `packages/ui` and the book (OR-13). Compare the app at 1440 and 390 px with the canvas, and run `pnpm run check:design`.
 
 Board drawings use Fleet's tokens through the board's style file ([tokens](tokens.md#design-board)): `$color.*` roles and `$fleet.*` colours, never bare colours. The canvases drawn before the tokens were imported (`rules-v2`, `ia`) still hold bare colours copied from `tokens.json`; they move to tokens when next redrawn. A control the board needs and `packages/ui` lacks is a change to the book first (process step 3 below).
