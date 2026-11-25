@@ -28,6 +28,7 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-executor-delivery.md`: executor release files built in CI and how a host fetches them.
 * `fleet-self-update.md`: releases by tag on GitHub Releases with provenance, the `fleet-update` timer on every host, PDS18 order, rollback, `autoUpdate`, versions in `hosts_list`.
 * `fleet-delivery-pipeline.md`: merge queue and ruleset, stacked and flaky rules, automatic release per green `main` batch, faster host pickup, smoke in the host health probe.
+* `fleet-host-updates.md`: one update procedure for every component a host runs, and release pacing: hosts install only changed parts, by urgency class, idle or in a daily window.
 * `fleet-host-updates.md`: one procedure for every updatable thing on a host (Fleet release, agent CLIs, host tools, project environments, OS packages): discover, propose, qualify offline and on hosts, merge, roll out, verify, watch, recover.
 * `fleet-telemetry.md`: one span per operation across all services in ClickHouse, trace context, process CPU and memory, the rules pass, telemetry operations and the System screen read panels.
 * `fleet-host-cleanup.md`: the run marker and run temporary directory that let the executor remove everything a run leaves, the hourly sweep of session directories and `/tmp`, release retention, `mcp connection` lifetime, swap and top-consumer readings in `host-saturation`, and one test PostgreSQL per machine.

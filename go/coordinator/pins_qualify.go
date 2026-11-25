@@ -81,8 +81,9 @@ func pinsHostVariants(accounts []accountRec, current, candidate pinsCandidate, m
 }
 
 // pinsLiveVariants keeps the trials on hosts seen in the last hour, and is not ready while one of them runs an executor
-// older than this coordinator: an older executor ignores the candidate and would run its release's CLI, so the trial
-// would qualify the current pin, not the proposed one.
+// older than this coordinator's executor: an older executor ignores the candidate and would run its release's CLI, so
+// the trial would qualify the current pin, not the proposed one. coordinator is the release the executor last changed
+// in (release pacing: hosts skip releases that leave it unchanged), else the coordinator's own version.
 func pinsLiveVariants(variants []pinsVariant, hosts map[string]hostVersion, coordinator string) ([]pinsVariant, bool) {
 	out := []pinsVariant{}
 	for _, v := range variants {
@@ -211,7 +212,7 @@ func pinsQualifyHead(ctx context.Context, a *App, pr ghPull, candidate pinsCandi
 		if err != nil {
 			return err
 		}
-		variants, ready := pinsLiveVariants(pinsHostVariants(accounts, current, candidate, models), deliveryHostVersions(seen, time.Now()), version)
+		variants, ready := pinsLiveVariants(pinsHostVariants(accounts, current, candidate, models), deliveryHostVersions(seen, time.Now()), executorRelease())
 		if !ready || len(variants) == 0 {
 			return nil // wait: a host still runs an executor without candidate runs, or no host can run a trial now
 		}

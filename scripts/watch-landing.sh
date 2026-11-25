@@ -150,8 +150,13 @@ def on(a):
   try: return datetime.fromisoformat(a.replace("Z", "+00:00")).timestamp() < time.time()
   except (AttributeError, ValueError): return False
 hosts = [h for h in d["hosts"] if live(h) and rel(h["version"]) and on(h["autoUpdate"])]
+# Release pacing (docs/designs/fleet-host-updates.md section 7): a host whose executor this release (or a newer one) does
+# not change has nothing to install and counts as landed.
+def current(h):
+  p = h.get("pacing") or {}
+  return p.get("state") == "current" and rel(p.get("release", "")) and v(p["release"]) >= want
 # No live host to check is not "on hosts": keep waiting and name it.
-print(" ".join(h["id"] + "@" + h["version"] for h in hosts if v(h["version"]) < want) if hosts else "no live auto-update host")') || behind="(hosts_list failed)"
+print(" ".join(h["id"] + "@" + h["version"] for h in hosts if v(h["version"]) < want and not current(h)) if hosts else "no live auto-update host")') || behind="(hosts_list failed)"
   [ -z "$behind" ] && break
   wait_step "hosts, behind: $behind"
 done

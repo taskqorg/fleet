@@ -371,7 +371,9 @@ func (e *executor) sampleHostLoad() *contract.HostLoad {
 
 func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply, error) {
 	v, roots := version, reportedRoots()
-	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
+	_, offset := time.Now().Zone() // seconds east of UTC: the coordinator's daily update window is in local time
+	offsetMinutes := int64(offset / 60)
+	body := contract.PollRequest{UtcOffsetMinutes: &offsetMinutes, HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
 		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, HarnessVersions: managedVersions(), Update: lastUpdate(e.root),
 		GitConnections: gitConnections(connectionsDir()), ActiveExecutions: e.activeExecutions(), Load: e.sampleHostLoad(), Drain: drainReport(time.Now())}
 	var a answer

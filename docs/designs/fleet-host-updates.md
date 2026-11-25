@@ -2,7 +2,7 @@
 
 * **Author:** Alex Kirs
 * **Date:** 2026-11-26
-* **Status:** approved by the owner on 2026-11-26 with options A1, B1 and C1 (section 4); being built in the order of section 5. Section 1 lists what existed before. It amends [self-update](fleet-self-update.md#managed-agent-clis), the [delivery pipeline](fleet-delivery-pipeline.md) and the [Changes screen](fleet-system-management.md#changes-screen) (section 6).
+* **Status:** approved by the owner on 2026-11-26 with options A1, B1 and C1 (section 4); being built in the order of section 5. Release pacing (section 7) approved by the owner on 2026-11-26. Section 1 lists what existed before. It amends [self-update](fleet-self-update.md#managed-agent-clis), the [delivery pipeline](fleet-delivery-pipeline.md) and the [Changes screen](fleet-system-management.md#changes-screen) (section 6).
 
 A host runs more than Fleet's own binaries. It runs agent CLIs, the tools agent work needs, later project environments, and the operating system under them. Today only the Fleet release updates without a person. The agent CLI pins get a daily proposal that waits on a person. Host tools have no version, no owner and no update path. This design gives every updatable thing on a host one procedure with the same steps. A new kind adds rows to it, not a new mechanism.
 
@@ -12,7 +12,7 @@ A host runs more than Fleet's own binaries. It runs agent CLIs, the tools agent 
 
 | Topic | Decision | Where |
 |---|---|---|
-| Release | Every green `main` batch releases by itself. The pipeline computes the version. `FLEET_RELEASE_PAUSE` pauses releasing. | [delivery pipeline §4](fleet-delivery-pipeline.md#4-automatic-release) |
+| Release | Every green `main` batch releases by itself. The pipeline computes the version. `FLEET_RELEASE_PAUSE` pauses releasing. Hosts pace what they install (section 7). | [delivery pipeline §4](fleet-delivery-pipeline.md#4-automatic-release) |
 | Order | PDS18 installs first. The coordinator offers executors a target only after PDS18 marked it healthy. | [self-update §3](fleet-self-update.md#3-fleet-update), [delivery §6](fleet-delivery-pipeline.md#6-faster-pickup-on-hosts) |
 | Host verification | Signature, digest and `selftest` run before the switch. Health must answer within 30 s. Three unhealthy starts roll back to `previous` and refuse the version. | [self-update §3.2, §3.4](fleet-self-update.md#34-health-and-rollback) |
 | Smoke | PDS18's health check waits for its executor's poll against the new coordinator. No smoke or rollback runs from a GitHub runner. | [delivery §7](fleet-delivery-pipeline.md#7-smoke-and-rollback-on-the-host), Non-Goals |
@@ -62,7 +62,7 @@ Every component goes through the same ten steps:
 | 4. Qualify on hosts | The coordinator sees the proposal and runs the kind's Lab qualification on each host of the target, with real accounts and the configured models or projects (section 3). The result is stored as compatibility facts: component, version, host, model or project, check and outcome. For agent CLIs (`go/coordinator/pins_qualify.go`): when the head's `qualify-offline` passed, the Lab experiment `pins:cli:<sha>` (pipeline `pins-qualify`, example `pins-qualify-cli`, profiles `pins-qualify-<cli>`) runs one trial per changed CLI, host with a ready account binding, and configured model, requested in the owner's name. Each trial's override `candidate` makes the executor stage the proposed payload into its candidate cache (`fleet-update stage-candidate`: vendor origin, digest, unpack, `--version`) and run it. The trials are the compatibility facts; the example's check reads the shell call's output and the Fleet tool's answer from the run's result file. Host tools have no host trial yet; their proposals wait at this step while `config/tool-pins.json` stays disabled. | Coordinator and executors (Lab) |
 | 5. Merge | Step 3 posts the status `qualify-offline` on the proposal's head and dispatches `ci` there (the workflow token's push starts no workflow). When step 4 passes, the coordinator posts `qualify-hosts` and `code-review` and turns on auto-merge through the connection `github-pins`, whose events start the merge queue's checks. Its key is a fine-grained token for taskqorg/fleet only, with Commit statuses and Pull requests read and write and nothing else; the provider grants three tools (`commit_status` for the access check, `status_create`, and `auto_merge_enable` with a fixed mutation), and `pinsPublish` (`go/coordinator/pins_publish.go`) refuses every branch but `automation/<kind>-pins` to `main`. It passes the merge queue like any pull request. | Workflow and coordinator |
 | 6. Release | The normal automatic release, with nothing kind-specific. | Release workflow |
-| 7. Roll out | PDS18 first, then every executor host with auto-update on, as today. | `fleet-update` |
+| 7. Roll out | PDS18 first, then every executor host with auto-update on, paced by section 7. | `fleet-update` |
 | 8. Verify on the host | Before the switch: digest, unpack and executable, then one run of the component as the executor user (`--version` for a CLI or tool, the image digest for an environment). A failure refuses the release on that host, and the host stays on its current release. After the switch: the existing health check. | `fleet-update` |
 | 9. Watch | For 24 hours after a version first runs on a host, the coordinator compares that host's failure share of agent runs on the version with its share on the other versions over the week before (`go/coordinator/pins_watch.go`, every 10 minutes from the delivery pass; `execution.harness_version`). It flags a version with at least 5 runs and 3 failures there whose share is 25 points or more above the other versions'. It then marks the merged proposal that pinned the version with the failed status `pins-watch` (`revert <component> <version>: ...`). | Coordinator |
 | 10. Recover | A refused or rolled-back release is handled as today. A component that passed qualification but fails in step 9 gets a revert proposal: the next pins run (`deploy/pins-revert.mjs`) puts its pin back to the marked proposal's base version and adds the version to the pin file's `skip`, which discovery honours, so step 1 does not propose it again. The revert then goes through steps 3 to 7 like any proposal. | Coordinator and workflow |
@@ -155,3 +155,78 @@ Recommendation: A1. It fits "never block other pull requests" and "compatibility
 | [fleet.md, Observation and evaluation](../../fleet.md#observation-and-evaluation) | Compatibility as versioned facts, with no implementation. | Qualification writes those facts, and `harnessrelease.ModelError` becomes one of them. |
 | [data foundation P3-D4](fleet-data-foundation.md) | A host without ffmpeg "reports it". | A missing system tool is a capability shown as missing, with its reason. |
 | [pds-codex-environment](../pds-codex-environment.md) | Hand-installed CLI runtime directories. | Removed; the managed pins replace them. |
+
+## 7. Release pacing
+
+Owner decision of 2026-11-26. Releases are still built per merge batch, every few minutes. The pacing is at host install: a host installs a release only when the release changes what that host runs, and then at a time its urgency class allows. No model decides; every step below is a fixed rule. (Before: every executor installed every native release, drained for releases that changed only the web app or the coordinator, and the orchestrator paused releases by hand with `FLEET_RELEASE_PAUSE` so a busy host could catch up.)
+
+### Parts by content digest
+
+Each native release carries one digest per part. `deploy/release-parts.sh <commit>` computes them in the release `build` job: a part's digest is the SHA-256 of the sorted lines `<git blob id> <path>` of its files at the commit, without `*_test.go`, `*.md` and `testdata/`.
+
+| Part | Files | Installed by |
+|---|---|---|
+| `executor` | every file of each package of the module that `fleet-executor` or `fleet-update` imports (`go list -deps`, for linux and darwin; embedded files included), `go/go.mod`, `go/go.sum`, `config/executor-defaults.json`, `deploy/hosts/`, `scripts/lab/` | every executor host |
+| `cliPins` | `config/harness-pins.json` | every executor host |
+| `toolPins` | `config/tool-pins.json` | every executor host |
+| `coordinator` | the packages of `fleet-coordinator` and `fleet-gateway`, `go/go.mod`, `go/go.sum`, `config/`, `deploy/` | PDS18, coordinator side |
+| `web` | `app/`, `packages/`, `package.json`, `pnpm-lock.yaml` | PDS18, coordinator side (UI-only changes keep their own UI release, [delivery pipeline](fleet-delivery-pipeline.md#independent-web-ui-publication)) |
+
+The **host part** is `executor`, `cliPins` and `toolPins`: everything an executor host runs. `release.json` in the tarball and the release's `latest.json` carry `parts` (the five digests) and `executor`:
+
+* `changedIn`: the newest release whose host part differs from its predecessor's. It is this release's version when the host part differs from the previous native release's, or when that release carries no digests; otherwise the previous release's `changedIn`.
+* `urgentIn`: the newest release whose host part change was immediate. It is this release's version when the host part changed and the batch is immediate (below); otherwise the previous release's `urgentIn`, or empty.
+
+A host that runs version `v` therefore runs the current host part when `v` is not older than `changedIn`, and it misses an immediate change when `v` is older than `urgentIn`, however many releases it skipped.
+
+### Urgency classes
+
+The release `gate` job classifies the batch (`deploy/release-urgency.sh`): all commits from the previous native release to the released commit.
+
+* **Immediate** when any of these holds:
+  * a pull request merged in the batch has the label `release:now` (a fix for broken work, or anything the author wants out now);
+  * a pull request merged in the batch has the label `security`;
+  * `contracts/host-protocol.schema.json` or `contracts/host-files.schema.json` changed (a host protocol change).
+* **Normal** otherwise.
+
+The class matters only for the host part. The coordinator side on PDS18 installs every native release at once, as before: its restart takes seconds and drains nothing. Later, a model may suggest the `release:now` label from the pull request text when these rules are unsure; it never decides ship or hold.
+
+### When a host is offered a release
+
+The coordinator offers a target in each poll reply, as before ([self-update section 4](fleet-self-update.md#4-coordinator-and-executor-changes)). It now decides per host and per poll, for host `H` running `v`, with `R` the healthy release it would offer (`go/coordinator/update_pacing.go`):
+
+1. No `R`, or `v` is not older than `R`: offer `R` (nothing to install).
+2. `R` carries no `executor.changedIn` (built before pacing): offer `R`.
+3. `v` is not older than `R`'s `changedIn`: offer nothing. `H` runs the current host part; this release does not touch it. State `current`.
+4. `v` is older than `urgentIn`: offer `R`. Class `immediate`, state `offered`.
+5. `H` reports a drain episode in its poll: keep offering `R`, so an episode is never withdrawn half way. State `offered`.
+6. `H` is idle: its poll lists no active execution. Offer `R`. State `offered`.
+7. `H`'s local time is inside the daily window: offer `R`, even while `H` is busy. State `offered`.
+8. Otherwise offer nothing. Class `normal`, state `deferred`, until `H` is idle or the window opens.
+
+The daily window is `03:00-05:00` in the host's local time. The coordinator setting `FLEET_UPDATE_WINDOW` (`HH:MM-HH:MM`) changes it for every host. The executor sends its UTC offset in each poll (`utcOffsetMinutes`); an executor that sends none is treated as UTC.
+
+Once offered, the release installs as before: the executor drains, `fleet-update` installs once the executor is drained, and the bounded drain (10 minutes fenced, then 30 minutes open, [self-update section 3.3](fleet-self-update.md#33-restarts)) caps how long a busy host refuses new starts. The per-host `autoUpdate` hold still wins over every rule above.
+
+`fleet-update` installs only what it is offered:
+
+* The PDS18 executor follows the coordinator's offer to it (the target in its `update.json`), not the coordinator side's version. A web or coordinator release leaves it running.
+* For an executor part, `fleet-update` takes the activity lease before it downloads. While the executor is not drained, nothing is downloaded and the result is `pending`. (Before, PDS18's updater downloaded the release every 10 seconds while its executor drained.)
+
+### What is shown
+
+* `hosts_list` adds `pacing` to each host row: `release` (the coordinator's release), `state` (`current`, `offered`, `deferred`), `class` (`immediate`, `normal`) and `reason` in words, such as "executor unchanged since 1.261126.4" or "waits for idle or 03:00-05:00 local".
+* `version-behind` is raised only when the host is older than `previous` and also older than `changedIn`: a host that skipped web and coordinator releases is not behind.
+* The landing watcher (`scripts/watch-landing.sh`) counts a host whose pacing state is `current` as landed: the release does not change it. A `deferred` host is still waited for, so a worker whose live check needs its executor change on every host now labels the pull request `release:now`.
+
+### Compatibility
+
+* `utcOffsetMinutes` is an optional poll field; `pacing` an added `hosts_list` field. An older executor sends no offset (UTC window) and ignores nothing new.
+* An older `fleet-update pds18` still follows the coordinator side's version. While it is not offered a target it records `pending` and installs nothing; the first healthy PDS18 install of this release replaces it (`/opt/fleet/update/fleet-update`).
+* An older executor that reports no drain is fenced only when it is offered a release (`hostDrain`), so a deferred host takes work.
+
+### What this removes
+
+* Executors draining for releases that change only the web app, the coordinator or documents.
+* The updater chasing releases: a busy host with a normal change is not offered each new release; it installs once, when idle or in the window.
+* `FLEET_RELEASE_PAUSE` for pacing. The variable stays to stop all releasing in an emergency.

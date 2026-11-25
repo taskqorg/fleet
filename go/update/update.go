@@ -190,6 +190,19 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 	if !newer(cand, running) || p.st.Refused[cand] != "" {
 		return resumed
 	}
+	// The activity lease comes before the download (release pacing, docs/designs/fleet-host-updates.md section 7): while
+	// the executor is not drained nothing is fetched. PDS18 downloaded the release every 10 seconds while its executor
+	// drained. The executor holds new commands while the lease is taken, so they wait for the download and install.
+	if p.activity != nil {
+		release, err := p.activity(cand)
+		if err != nil {
+			return u.result(cand, "error", err.Error())
+		}
+		if release == nil {
+			return u.result(cand, "pending", "executor work is draining")
+		}
+		defer release()
+	}
 	log.Printf("%s: %s -> %s", p.name, running, cand)
 	dir, err := u.fetch(p, cand)
 	if err == nil && p.name == "executor" {
@@ -201,16 +214,6 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 	}
 	if err != nil {
 		return u.result(cand, "error", err.Error())
-	}
-	if p.activity != nil {
-		release, err := p.activity(cand)
-		if err != nil {
-			return u.result(cand, "error", err.Error())
-		}
-		if release == nil {
-			return u.result(cand, "pending", "executor work is draining")
-		}
-		defer release()
 	}
 	if err := u.install(p, cand, dir); err != nil {
 		return u.result(cand, "error", err.Error())

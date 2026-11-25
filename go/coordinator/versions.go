@@ -39,6 +39,8 @@ func systemVersionsFromHosts(list contract.HostsListReply) contract.SystemVersio
 	for _, h := range list.Hosts {
 		row := contract.HostVersion{Id: h.Id, Version: h.Version, AutoUpdate: h.AutoUpdate, Update: h.Update, LastSeenAt: h.LastSeenAt, PollError: h.PollError}
 		if b, ok := versionBehindTarget(valueOr(h.Version), target).(bool); ok {
+			// A host whose executor this release does not change is not behind (release pacing).
+			b = b && (h.Pacing == nil || h.Pacing.State != contract.UpdatePacingStateCurrent)
 			row.Behind = &b
 		}
 		// The same rule that opens the host's poll problem (notePollFailure), read from the record itself: the problem

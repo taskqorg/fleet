@@ -27,6 +27,7 @@ jobs:
       contents: read
       actions: read
       checks: read
+      pull-requests: read
     outputs:
       release: ${{ steps.check.outputs.release }}
       sha: ${{ steps.check.outputs.sha }}
@@ -36,6 +37,7 @@ jobs:
       digests: ${{ steps.check.outputs.digests }}
       ui: ${{ steps.check.outputs.ui }}
       ui_run: ${{ steps.qualify.outputs.ui_run }}
+      urgency: ${{ steps.check.outputs.urgency }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -71,6 +73,13 @@ jobs:
             done
           fi
           echo "ui=$ui" >> "$GITHUB_OUTPUT"
+          # Host pacing class of the batch (docs/designs/fleet-host-updates.md section 7): immediate or normal.
+          urgency=normal
+          if [ "$ui" != true ] && [ -n "$latest" ]; then
+            urgency=$(deploy/release-urgency.sh "$latest^{commit}" "$sha")
+            echo "urgency: $urgency" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "urgency=${urgency%% *}" >> "$GITHUB_OUTPUT"
           # The commit's own version (deploy/release-version.sh), which its merge queue run already built, when it is newer
           # than every tag; otherwise (a rollback drill of an older commit, an admin push) one more than today's highest.
           version=$(deploy/release-version.sh "$sha")
@@ -173,9 +182,18 @@ jobs:
           VERSION: ${{ needs.gate.outputs.version }}
           PREVIOUS: ${{ needs.gate.outputs.previous }}
           SHA: ${{ needs.gate.outputs.sha }}
+          URGENCY: ${{ needs.gate.outputs.urgency }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           mkdir out
+          # Part digests and the host part's pacing marker (docs/designs/fleet-host-updates.md section 7), in
+          # release.json and, through out/pacing.json, in latest.json.
+          RELEASE_PACING=$(.release/deploy/release-pacing.sh "$SHA" "$VERSION" "$PREVIOUS" "${URGENCY:-normal}")
+          export RELEASE_PACING
+          echo "pacing: $RELEASE_PACING" | tee -a "$GITHUB_STEP_SUMMARY"
           deploy/build-release.sh "$SHA" out "$VERSION" "$PREVIOUS" linux/amd64 darwin/arm64
+          printf '%s\n' "$RELEASE_PACING" > out/pacing.json
       - name: Selftest linux binaries
         run: |
           .release/deploy/verify-release.sh out new
@@ -294,6 +312,10 @@ jobs:
           checked=$(jq -nc '$ARGS.positional' --args $RECENT)
           printf '{"version":"%s","files":{"linux-amd64":"fleet-%s-linux-amd64.tgz","darwin-arm64":"fleet-%s-darwin-arm64.tgz"},"checkedWith":%s}\n' \
             "$VERSION" "$VERSION" "$VERSION" "$checked" > latest.json
+          # parts and executor (release pacing): the next release's build reads them from this asset.
+          if [ -f pacing.json ]; then
+            jq -c --slurpfile p pacing.json '. + $p[0]' latest.json > latest.json.tmp && mv latest.json.tmp latest.json
+          fi
       - id: attest
         uses: actions/attest-build-provenance@v2
         with:

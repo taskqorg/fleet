@@ -1812,6 +1812,7 @@ type PollRequest struct {
 	ProjectRoots     []string         `json:"projectRoots"`
 	Stores           []StoreReport    `json:"stores"`
 	Update           *UpdateResult    `json:"update,omitempty"`
+	UtcOffsetMinutes *int64           `json:"utcOffsetMinutes,omitempty"`
 	Version          *string          `json:"version,omitempty"`
 }
 

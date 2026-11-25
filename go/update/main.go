@@ -241,15 +241,17 @@ func (u *updater) runPDS18() error {
 	if err := u.cycleUI(backend, "on", "/home/fleet/ui", stage, filepath.Join(s, "ui-state.json")); err != nil {
 		log.Print(err)
 	}
-	// The PDS18 executor follows the coordinator side in the same run, to its healthy version only.
-	healthy := func() string {
-		v := rootVersion(coordR, "current")
-		if _, err := coordR.Stat("current/healthy"); v == "" || err != nil {
+	// The PDS18 executor follows the coordinator's offer to it (the target in its update.json), in the same run: the
+	// coordinator offers only a healthy release, and none when the release leaves the executor unchanged or a normal
+	// change waits for an idle executor (release pacing, docs/designs/fleet-host-updates.md section 7).
+	offered := func() string {
+		var s signalFile
+		if !readJSON(execSignal, &s) {
 			return ""
 		}
-		return v
+		return str(s.Target)
 	}
-	if r := u.cycle(exec, autoUpdate, healthy); r != nil {
+	if r := u.cycle(exec, autoUpdate, offered); r != nil {
 		exec.st.Last = r
 		return save()
 	}

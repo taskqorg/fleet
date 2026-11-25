@@ -54,10 +54,17 @@ var releaseDir = func() string {
 	return filepath.Dir(exe)
 }
 
-// ownRelease: release.json of the running binary's release, read once (it does not change under a running binary).
-var ownRelease = sync.OnceValue(func() struct{ Version, Previous string } { return releaseJSON(releaseDir()) })
+// releaseInfo: the parts of a release.json the coordinator reads. Executor is the host part's pacing marker
+// (docs/designs/fleet-host-updates.md section 7); empty in releases built before pacing.
+type releaseInfo struct {
+	Version, Previous string
+	Executor          struct{ ChangedIn, UrgentIn string }
+}
 
-func releaseJSON(dir string) (r struct{ Version, Previous string }) {
+// ownRelease: release.json of the running binary's release, read once (it does not change under a running binary).
+var ownRelease = sync.OnceValue(func() releaseInfo { return releaseJSON(releaseDir()) })
+
+func releaseJSON(dir string) (r releaseInfo) {
 	if b, err := os.ReadFile(filepath.Join(dir, "release.json")); err == nil {
 		json.Unmarshal(b, &r)
 	}
@@ -67,18 +74,24 @@ func releaseJSON(dir string) (r struct{ Version, Previous string }) {
 // healthyTarget: the coordinator's own version when its release has the healthy marker, else the version of
 // releases/previous when that has one, else nil (no update offered). Two stat calls per request.
 func healthyTarget() *string {
+	v, _ := healthyRelease()
+	return v
+}
+
+// healthyRelease: healthyTarget with that release's release.json.
+func healthyRelease() (*string, releaseInfo) {
 	dir := releaseDir()
 	if _, err := os.Stat(filepath.Join(dir, "healthy")); err == nil && releaseVersionRe.MatchString(version) {
 		v := version
-		return &v
+		return &v, ownRelease()
 	}
 	prev := filepath.Join(filepath.Dir(dir), "previous")
 	if _, err := os.Stat(filepath.Join(prev, "healthy")); err == nil {
-		if v := releaseJSON(prev).Version; releaseVersionRe.MatchString(v) {
-			return &v
+		if r := releaseJSON(prev); releaseVersionRe.MatchString(r.Version) {
+			return &r.Version, r
 		}
 	}
-	return nil
+	return nil, releaseInfo{}
 }
 
 // validAutoUpdate: "on", "off", or an RFC 3339 time ending in Z (hold until then; a past time means on).

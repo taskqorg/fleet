@@ -518,6 +518,7 @@ type hostObservationPayload struct {
 	Stores          json.RawMessage               `json:"stores"`
 	Update          json.RawMessage               `json:"update"`
 	Load            *hostLoadObservation          `json:"load"`
+	Pacing          *contract.HostUpdatePacing    `json:"pacing"`
 }
 
 type hostObservation struct {
@@ -692,6 +693,9 @@ func hostsListReply(q *Request, includeRemoved bool) (contract.HostsListReply, e
 			// A host that stopped polling shows no problems: its staleness is the signal.
 			if polling && o.Problems != nil {
 				h.Problems = o.Problems
+			}
+			if polling {
+				h.Pacing = o.Pacing
 			}
 			if l := q.app.effectiveHostLoad(id, o.Load); polling && l != nil && now-l.UpdatedAt < hostLoadStaleMs {
 				h.Load = &contract.HostLoadReading{Load1: l.Load1, Cpus: l.Cpus, MemFree: l.MemFree, MemTotal: l.MemTotal, SwapUsed: l.SwapUsed, SwapTotal: l.SwapTotal,
