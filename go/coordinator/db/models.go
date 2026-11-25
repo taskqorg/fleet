@@ -1166,6 +1166,18 @@ type HostSetting struct {
 	ApplyError *string
 }
 
+type HostUpdate struct {
+	Seq         int64
+	HostID      string
+	Holder      *string
+	ProjectID   *string
+	Version     string
+	UpdateState string
+	Reason      string
+	At          time.Time
+	Payload     []byte
+}
+
 type LabTrial struct {
 	ExecutionID      string
 	CellExample      string

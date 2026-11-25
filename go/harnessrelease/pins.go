@@ -104,6 +104,39 @@ func (a Asset) Executable(name string) string {
 	return filepath.Join(a.Dir(name), entry)
 }
 
+// Pinned answers the kind's pin file of a release as written, enabled or not, without the checks Read makes: what the
+// coordinator shows (Changes), not what a host installs. No file: not enabled, no versions.
+func (k Kind) Pinned(release string) (enabled bool, versions map[string]map[string]string, err error) {
+	data, err := os.ReadFile(filepath.Join(release, "config", k.File))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil, nil
+	}
+	if err != nil {
+		return false, nil, err
+	}
+	return k.PinnedIn(data)
+}
+
+// PinnedIn reads a pin file's contents (a proposal's, read from its head): enabled and the version per target and
+// component.
+func (k Kind) PinnedIn(data []byte) (enabled bool, versions map[string]map[string]string, err error) {
+	var manifest struct {
+		Enabled bool                        `json:"enabled"`
+		Targets map[string]map[string]Asset `json:"targets"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return false, nil, err
+	}
+	versions = map[string]map[string]string{}
+	for target, assets := range manifest.Targets {
+		versions[target] = map[string]string{}
+		for name, a := range assets {
+			versions[target][name] = a.Version
+		}
+	}
+	return manifest.Enabled, versions, nil
+}
+
 // Read returns the managed agent CLIs for target, or nil when this release leaves them to the host.
 func Read(release, target string) (map[string]Asset, error) { return CLIs.Read(release, target) }
 

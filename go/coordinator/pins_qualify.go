@@ -124,6 +124,7 @@ type pinsQualifyState struct {
 	Passed   bool
 	Failures []string
 	Trials   int
+	Ok       int // trials that succeeded and passed their check
 }
 
 // pinsTrialOutcome: the verdict of the experiment's trials: done when every variant has a terminal trial; passed when each
@@ -155,6 +156,8 @@ func pinsTrialOutcome(variants []string, runs []*labRun, scores []labScore) pins
 		case !passed[r.ID]:
 			st.Passed = false
 			st.Failures = append(st.Failures, v+": shell, Fleet tool or result check failed")
+		default:
+			st.Ok++
 		}
 	}
 	if !st.Done {
@@ -232,9 +235,19 @@ func pinsQualifyHead(ctx context.Context, a *App, pr ghPull, candidate pinsCandi
 
 // pinsExperimentState: the outcome of the experiment of group (nil while its trials run); ok when it exists.
 func pinsExperimentState(q *Request, group string) (*pinsQualifyState, bool, error) {
+	st, ok, err := pinsExperimentProgress(q, group)
+	if err != nil || !ok || !st.Done {
+		return nil, ok, err
+	}
+	return &st, true, nil
+}
+
+// pinsExperimentProgress: the trials of the experiment of group so far, done when they all ended or the experiment
+// stopped or failed; ok when it exists (Changes shows the counts while it runs).
+func pinsExperimentProgress(q *Request, group string) (pinsQualifyState, bool, error) {
 	exps, err := labExperimentsList(q, nil)
 	if err != nil {
-		return nil, false, err
+		return pinsQualifyState{}, false, err
 	}
 	for _, e := range exps.Experiments {
 		if deref(e.LabGroup) != group {
@@ -242,24 +255,23 @@ func pinsExperimentState(q *Request, group string) (*pinsQualifyState, bool, err
 		}
 		runs, err := expRuns(q, e.Id)
 		if err != nil {
-			return nil, true, err
+			return pinsQualifyState{}, true, err
 		}
 		scores, err := scoresCurrent(q, e.Id)
 		if err != nil {
-			return nil, true, err
+			return pinsQualifyState{}, true, err
 		}
 		labels := []string{}
 		for _, v := range e.Variants {
 			labels = append(labels, deref(v.Label))
 		}
 		st := pinsTrialOutcome(labels, expTrials(runs), scores)
-		if st.Done || e.State == "stopped" || e.State == "failed" {
+		if e.State == "stopped" || e.State == "failed" {
 			st.Done = true
-			return &st, true, nil
 		}
-		return nil, true, nil
+		return st, true, nil
 	}
-	return nil, false, nil
+	return pinsQualifyState{}, false, nil
 }
 
 // pinsExperimentRequest: the Lab experiment of one proposal head.

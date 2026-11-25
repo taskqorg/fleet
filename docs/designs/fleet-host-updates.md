@@ -138,7 +138,7 @@ Recommendation: A1. It fits "never block other pull requests" and "compatibility
 
 1. The CLI proposal, with offline qualification and automatic merge, renamed to this procedure's names and statuses (taskqorg/fleet#1033 holds a draft).
 2. A1: the host qualification command, the Lab trials, and the status on the proposal.
-3. The update history and journal entries for host switches, and the Changes rows per component.
+3. The update history and journal entries for host switches, and the Changes rows per component (built: `host_update` rows written by the poll, `host_update_history`, the `components` of `system_changes`; [Changes](../design-system/pages/changes.md), [Hosts](../design-system/pages/hosts.md)).
 4. The step 9 watch and the revert proposal.
 5. Host tools (B1), the same way.
 6. Project environments, once the environment work defines `execution.environment`.

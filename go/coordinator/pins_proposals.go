@@ -40,19 +40,7 @@ func pinsProblems(open []ghPull) []Problem {
 		if kind == "" || !strings.EqualFold(pr.Head.Repo.FullName, githubPublicRepo) || !strings.Contains(pr.Body, pinsFailed) {
 			continue
 		}
-		summary := pr.Body
-		if i := strings.Index(summary, pinsSummary); i >= 0 {
-			summary = summary[i+len(pinsSummary):]
-		}
-		if i := strings.Index(summary, pinsSummaryEnd); i >= 0 {
-			summary = summary[:i]
-		}
-		var failures []string
-		for _, line := range strings.Split(summary, "\n") {
-			if f, ok := strings.CutPrefix(strings.TrimSpace(line), "- "); ok && strings.TrimSpace(f) != "" {
-				failures = append(failures, strings.TrimSpace(f))
-			}
-		}
+		failures := pinsBodyFailures(pr.Body)
 		if len(failures) > 3 {
 			failures = append(failures[:3], "and more in the pull request")
 		}
@@ -60,6 +48,24 @@ func pinsProblems(open []ghPull) []Problem {
 		out = append(out, Problem{Cause: "pins:" + kind + ":" + pr.Head.SHA, Text: text, Options: []any{"ok"}})
 	}
 	return out
+}
+
+// pinsBodyFailures: the failure lines of a proposal body's qualification summary ("- <failure>").
+func pinsBodyFailures(body string) []string {
+	summary := body
+	if i := strings.Index(summary, pinsSummary); i >= 0 {
+		summary = summary[i+len(pinsSummary):]
+	}
+	if i := strings.Index(summary, pinsSummaryEnd); i >= 0 {
+		summary = summary[:i]
+	}
+	var failures []string
+	for _, line := range strings.Split(summary, "\n") {
+		if f, ok := strings.CutPrefix(strings.TrimSpace(line), "- "); ok && strings.TrimSpace(f) != "" {
+			failures = append(failures, strings.TrimSpace(f))
+		}
+	}
+	return failures
 }
 
 // pinsPass writes the question set when it changed since the last pass.

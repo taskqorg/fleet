@@ -3,11 +3,14 @@ import { createMemo, createSignal, For, Show } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
   Button, CopyButton, DataTable, DetailSection, DiffText, Empty, EntityCode, ErrorBanner, KvRow, Num, OfflineMarker,
-  ProblemRow, ShellStatus, StateBadge, type StateOf,
+  Icon, LiveRow, ProblemRow, ShellStatus, StateBadge, timeOf, type IconName, type Life, type StateOf,
 } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useOp } from '../store.ts';
-import type { DefinitionKey, DefinitionState, SystemChangeDefinition } from '../../../contracts/generated/ops.ts';
+import type {
+  ComponentKind, DefinitionKey, DefinitionState, PinsStage, SystemChangeComponent, SystemChangeComponentHost, SystemChangeDefinition,
+  SystemChangeKind, SystemPinsProposal,
+} from '../../../contracts/generated/ops.ts';
 
 const defRoute = (d: SystemChangeDefinition) =>
   `/library/${d.kind === 'agent' ? 'agents' : d.kind === 'pipeline' ? 'pipelines' : 'methods'}/${encodeURIComponent(d.id)}`;
@@ -65,6 +68,7 @@ export function Changes(props: { onClose?: () => void } = {}) {
   );
   const behindHosts = createMemo(() => changesOp.data?.versions.hosts.filter(h => h.behind) ?? []);
   const behindHarnesses = createMemo(() => changesOp.data?.harnessDrift.filter(h => h.behind) ?? []);
+  const failedProposals = createMemo(() => changesOp.data?.components.filter(k => k.proposal?.stage === 'failed').length ?? 0);
   const driftParts = createMemo(() => {
     const data = changesOp.data;
     if (!data) return [];
@@ -74,6 +78,7 @@ export function Changes(props: { onClose?: () => void } = {}) {
       data.ahead.length > 0 && `${data.ahead.length} ahead`,
       behindHosts().length > 0 && `${behindHosts().length} hosts behind`,
       behindHarnesses().length > 0 && `${behindHarnesses().length} harness pins drifting`,
+      failedProposals() > 0 && `${failedProposals()} qualification failed`,
     ].filter((x): x is string => !!x);
   });
 
@@ -163,24 +168,7 @@ export function Changes(props: { onClose?: () => void } = {}) {
             )}</For>
           </DetailSection>
 
-          <section class="panel">
-            <header class="panel-h"><h2>Harness CLI pins vs hosts</h2></header>
-            <Show when={data().harnessDrift.length} fallback={<Empty text="No harness CLI pins reported." />}>
-              <DataTable
-                label="Harness CLI pins"
-                head={<tr><th scope="col">Host</th><th scope="col">Harness</th><th scope="col">Pinned</th><th scope="col">Observed</th><th scope="col">Status</th></tr>}>
-                <For each={data().harnessDrift}>{r => (
-                  <tr>
-                    <th scope="row"><EntityCode code={r.hostId} id={r.hostId} kind="host" /></th>
-                    <td>{r.harness}</td>
-                    <td class="mono">{r.expected}</td>
-                    <td class="mono">{r.observed ?? '—'}</td>
-                    <td><StateBadge family="setting" state={r.behind ? 'apply_error' : 'applied'} reason={r.behind ? 'Drift' : 'Aligned'} /></td>
-                  </tr>
-                )}</For>
-              </DataTable>
-            </Show>
-          </section>
+          <For each={data().components}>{k => <ComponentGroup group={k} onHost={go} />}</For>
 
           <section class="panel">
             <header class="panel-h">
@@ -224,4 +212,102 @@ export function Changes(props: { onClose?: () => void } = {}) {
       }>{err => <ErrorBanner text={`Changes could not be read: ${err()}`} onRetry={changesOp.reload} />}</Show>
     </article>
   );
+}
+
+// Release-managed components (docs/designs/fleet-host-updates.md, frame 1A of board/drafts/host-updates.bl): one group per
+// kind, its open pin proposal above, a row per component with the pin, the proposal and a cell per host.
+const hostPath = (id: string) => `/hosts/${encodeURIComponent(id)}`;
+const KIND_TITLE: Record<ComponentKind, string> = { cli: 'Agent CLIs', tool: 'Host tools' };
+const STAGE: Record<PinsStage, { life: Life; text: string; tone: string }> = {
+  offline: { life: 'working', text: 'offline checks', tone: 't-running' },
+  hosts: { life: 'working', text: 'on hosts', tone: 't-running' },
+  merging: { life: 'working', text: 'merging', tone: 't-running' },
+  landed: { life: 'done', text: 'landed', tone: 't-success' },
+  reverting: { life: 'waiting', text: 'reverting', tone: 't-attention' },
+  failed: { life: 'failed', text: 'failed', tone: 't-danger' },
+};
+
+/** "codex 0.170.0, claude 2.1.331": what the proposal changes. */
+const proposalTitle = (g: SystemChangeKind) =>
+  g.components.filter(c => c.proposed).map(c => `${c.name} ${c.proposed}`).join(', ') || 'pin proposal';
+
+function ProposalRow(p: { group: SystemChangeKind; proposal: SystemPinsProposal }) {
+  const stage = () => STAGE[p.proposal.stage];
+  const trials = () => {
+    const t = p.proposal.trials;
+    if (!t || t.total === 0) return '';
+    return t.failed > 0 ? `${t.passed} of ${t.total} trials · ${t.failed} failed` : `${t.passed} of ${t.total} trials passed`;
+  };
+  return <LiveRow kind="event" state={stage().life} at={timeOf(p.proposal.at, Date.now())}
+    text={`#${p.proposal.number} ${proposalTitle(p.group)}`}
+    facts={<span class={['lr-fact', 'pins-tone', stage().tone]} data-tip={p.proposal.failures.join('; ') || undefined}>{[stage().text, trials()].filter(Boolean).join(' · ')}</span>}
+    onOpen={() => window.open(p.proposal.url, '_blank', 'noopener')} />;
+}
+
+const CELL: Record<SystemChangeComponentHost['state'], { icon?: IconName; tone: string }> = {
+  pinned: { icon: 'check', tone: 't-success' },
+  behind: { tone: 't-attention' },
+  installing: { icon: 'circle-dashed', tone: 't-running' },
+  refused: { icon: 'circle-slash', tone: 't-danger' },
+  failing: { icon: 'triangle-alert', tone: 't-danger' },
+  own: { tone: 'muted' },
+  unknown: { tone: 'muted' },
+};
+
+/** One host's cell: on the pin, behind <version>, installing <pin>, refused <reason>, N of M runs failed, own. */
+function HostCell(p: { cell: SystemChangeComponentHost; pinned: string | null; href: string; onOpen: () => void }) {
+  const text = () => {
+    const c = p.cell;
+    switch (c.state) {
+      case 'pinned': return '';
+      case 'behind': return `behind ${c.observed ?? ''}`;
+      case 'installing': return `installing ${p.pinned ?? ''}`;
+      case 'refused': return `refused ${(c.reason ?? '').split(':')[0]}`;
+      case 'failing': return `${c.failed} of ${c.total} runs failed`;
+      case 'own': return 'own';
+      case 'unknown': return '—';
+    }
+  };
+  const label = () => text() || `on ${p.pinned ?? 'the pin'}`;
+  return <a class={['pins-cell', CELL[p.cell.state].tone]} href={p.href} aria-label={`${p.cell.hostId}: ${label()}, open its updates`}
+    data-tip={p.cell.reason} onClick={e => { if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); p.onOpen(); } }}>
+    <Show when={CELL[p.cell.state].icon}>{i => <Icon name={i()} />}</Show>
+    <span>{text()}</span>
+  </a>;
+}
+
+function ProposalCell(p: { c: SystemChangeComponent; proposal?: SystemPinsProposal }) {
+  const failed = () => p.c.failures.length > 0;
+  const tone = (stage: PinsStage) => failed() ? 't-danger' : stage === 'reverting' ? 't-attention' : stage === 'landed' || stage === 'merging' ? 't-success' : 'muted';
+  return <Show when={p.c.proposed} fallback={<span class="muted">—</span>}>{v => <>
+    <span class="mono">{v()}</span>
+    <Show when={p.proposal}>{pr => (
+      <span class={['pins-sub', tone(pr().stage)]} data-tip={p.c.failures.join('; ') || undefined}>
+        {failed() ? p.c.failures[0] : STAGE[pr().stage].text}
+      </span>
+    )}</Show>
+  </>}</Show>;
+}
+
+function ComponentGroup(p: { group: SystemChangeKind; onHost: (path: string) => void }) {
+  const hosts = createMemo(() => p.group.components[0]?.hosts.map(h => h.hostId) ?? []);
+  return <section class={['panel', { 'pins-off': !p.group.enabled }]} data-ui="component-group" aria-label={KIND_TITLE[p.group.kind]}>
+    <header class="panel-h">
+      <h2>{KIND_TITLE[p.group.kind]} <span class="dsec-n">{p.group.components.length}</span></h2>
+      <Show when={!p.group.enabled}><span class="muted">pins off · hosts keep their own</span></Show>
+    </header>
+    <Show when={p.group.proposal}>{pr => <ul class="live-list"><ProposalRow group={p.group} proposal={pr()} /></ul>}</Show>
+    <DataTable label={`${KIND_TITLE[p.group.kind]} pins and hosts`}
+      head={<tr><th scope="col">{p.group.kind === 'cli' ? 'CLI' : 'Tool'}</th><th scope="col">Pinned</th><th scope="col">Proposal</th>
+        <For each={hosts()}>{h => <th scope="col">{h}</th>}</For></tr>}>
+      <For each={p.group.components}>{c => (
+        <tr>
+          <th scope="row">{c.name}</th>
+          <td class="mono">{c.pinned ?? '—'}</td>
+          <td><ProposalCell c={c} proposal={p.group.proposal} /></td>
+          <For each={c.hosts}>{cell => <td><HostCell cell={cell} pinned={c.pinned} href={hostPath(cell.hostId)} onOpen={() => p.onHost(hostPath(cell.hostId))} /></td>}</For>
+        </tr>
+      )}</For>
+    </DataTable>
+  </section>;
 }

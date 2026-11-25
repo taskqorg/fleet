@@ -93,4 +93,13 @@
   .po-n { color: var(--fg-muted); font-family: var(--font-mono); }
   .po-step { font-family: var(--font-mono); font-weight: var(--font-weight-medium); }
   .po-line.cond { color: var(--attention-fg); }
+
+  /* Changes, component rows (pages/changes.md): a host cell opens that host's updates; a disabled kind is dimmed. */
+  .pins-cell { display: inline-flex; align-items: center; gap: var(--space-2); min-height: var(--size-control); padding: 0; border: 0; background: none; color: var(--tone-fg, var(--fg-muted)); font-size: var(--font-size-sm); text-decoration: none; }
+  .pins-cell:hover { text-decoration: underline; }
+  .pins-cell.muted { color: var(--fg-faint); }
+  .pins-sub { display: block; font-size: var(--font-size-sm); color: var(--tone-fg, var(--fg-muted)); }
+  .pins-tone { color: var(--tone-fg); }
+  .pins-off :is(th, td) { color: var(--fg-muted); }
+  @media (pointer: coarse) { .pins-cell { min-height: var(--size-row-phone); } }
 }

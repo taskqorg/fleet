@@ -1017,6 +1017,13 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 						return err
 					}
 				}
+				// The update history (host_updates.go): a row per changed result, compared with the host's newest row, so
+				// the first flush after a coordinator start records a host's current result once.
+				if hasUpd {
+					if err := hostUpdateRecord(wq, host, q.host.Holder, obs.Platform, b.Version, b.HarnessVersions, updResult); err != nil {
+						return err
+					}
+				}
 				if err := wq.db().HostObservationPut(wq.ctx(), db.HostObservationPutParams{
 					ID:         row.ID,
 					Holder:     &row.Holder,
