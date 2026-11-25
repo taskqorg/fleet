@@ -7,6 +7,7 @@ package main
 import (
 	"html"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -48,13 +49,15 @@ func tgHTML(md string) string {
 	return out.String()
 }
 
-// tgLine converts one line outside code blocks: code spans stay literal, the rest gets inline formatting.
+// tgLine converts one line outside code blocks. Code spans stay literal: they are set aside as placeholders, the whole
+// line gets inline formatting (so bold may wrap a code span), then they come back as <code>.
 func tgLine(line string) string {
 	if m := mdHeading.FindStringSubmatch(line); m != nil {
-		return "<b>" + tgInline(m[1]) + "</b>"
+		line = "**" + m[1] + "**"
 	}
 	line = mdBullet.ReplaceAllString(line, "${1}• ")
-	var out strings.Builder
+	var spans []string
+	var kept strings.Builder
 	for {
 		start := strings.IndexByte(line, '`')
 		if start < 0 {
@@ -64,12 +67,17 @@ func tgLine(line string) string {
 		if end < 0 {
 			break
 		}
-		out.WriteString(tgInline(line[:start]))
-		out.WriteString("<code>" + html.EscapeString(line[start+1:start+1+end]) + "</code>")
+		kept.WriteString(line[:start])
+		kept.WriteString("\x00" + strconv.Itoa(len(spans)) + "\x00")
+		spans = append(spans, line[start+1:start+1+end])
 		line = line[start+end+2:]
 	}
-	out.WriteString(tgInline(line))
-	return out.String()
+	kept.WriteString(line)
+	out := tgInline(kept.String())
+	for i, sp := range spans {
+		out = strings.Replace(out, "\x00"+strconv.Itoa(i)+"\x00", "<code>"+html.EscapeString(sp)+"</code>", 1)
+	}
+	return out
 }
 
 // tgInline: escaped text with links, bold and italic.
