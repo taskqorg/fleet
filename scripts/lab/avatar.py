@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Steps of the avatar-make pipeline: a bot avatar from a description and an optional reference image.
 
-request  builds the Gemini generateContent contents from the example (description, optional reference image)
-check    decodes the reply's image, checks it is square-ish, writes the 512 px square avatar-still.png
+request  builds the image prompt and the Gemini generateContent contents from the example (description, optional
+         reference image) and picks the image source: example source "subscription" (default: Codex's built-in image
+         generation, step image-sub, paid by the ChatGPT subscription) or "api" (the google-ai key, step image)
+check    reads the image (the Gemini reply, or the subscription step's avatar.png), checks it is square-ish, writes the
+         512 px square avatar-still.png
 animate  writes avatar.svg: the still embedded as a data: image under CSS-animated glow layers on its brightest region
 result   the version 3 finalizer: result lineage over the selected avatar files
 
@@ -15,6 +18,7 @@ IMAGE_TYPES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
 PROMPT = ('A bot avatar for an app: {description}. Square 1:1 image, the subject centred and filling most of the '
           'frame, on a dark background, clean soft lighting, readable at small sizes. No text, no letters, no '
           'watermark, no border, no frame.')
+SOURCES = ('subscription', 'api')
 REFERENCE = 'Keep the look of the subject in the attached reference image.'
 
 
@@ -40,6 +44,9 @@ def request(args):
     animate = example.get('animate', False)
     if not isinstance(animate, bool):
         sys.exit('example animate must be true or false')
+    source = example.get('source', 'subscription')
+    if source not in SOURCES:
+        sys.exit('example source must be one of: ' + ', '.join(SOURCES))
     root = (inp() / 'example').resolve()
     name, ref = example.get('reference'), None
     if name is not None:
@@ -50,7 +57,8 @@ def request(args):
             sys.exit('example reference is not an example input file')
     elif root.is_dir():
         ref = next((p for p in sorted(root.rglob('*')) if p.is_file() and p.suffix.lower() in IMAGE_TYPES), None)
-    parts = [{'text': PROMPT.format(description=description.strip().rstrip('.'))}]
+    prompt = PROMPT.format(description=description.strip().rstrip('.'))
+    parts = [{'text': prompt}]
     if ref is not None:
         media = IMAGE_TYPES.get(ref.suffix.lower())
         if media is None:
@@ -64,19 +72,37 @@ def request(args):
             data, media = small.read_bytes(), 'image/png'
             small.unlink()
         parts += [{'text': REFERENCE}, {'inlineData': {'mimeType': media, 'data': base64.b64encode(data).decode()}}]
-    write_output({'animate': animate, 'reference': ref is not None, 'contents': [{'role': 'user', 'parts': parts}]})
+    write_output({'animate': animate, 'reference': ref is not None, 'source': source, 'prompt': prompt,
+                  'contents': [{'role': 'user', 'parts': parts}]})
 
 
-def check(args):
+def generated(args):
+    """The generated image as (bytes, media type): the subscription step's file when it ran, else the Gemini reply."""
+    alternate = inp() / args.alternate if args.alternate else None
+    if alternate is not None and (alternate / 'output.json').is_file():
+        name = json.loads((alternate / 'output.json').read_text()).get('image')
+        root = alternate.resolve()
+        path = (root / name).resolve() if isinstance(name, str) and name else None
+        if path is None or not path.is_relative_to(root) or not path.is_file():
+            sys.exit('the subscription step did not write its image')
+        media = IMAGE_TYPES.get(path.suffix.lower())
+        if media is None:
+            sys.exit('unsupported image media type')
+        return path.read_bytes(), media
     reply = json.loads((inp() / args.source / 'output.json').read_text())
     images = [p['inlineData'] for c in reply.get('candidates', []) for p in c.get('content', {}).get('parts', []) if 'inlineData' in p]
     if not images:
         sys.exit('the reply has no image')
-    ext = {v: k for k, v in IMAGE_TYPES.items() if k != '.jpeg'}.get(images[0].get('mimeType'))
+    return base64.b64decode(images[0]['data'], validate=True), images[0].get('mimeType')
+
+
+def check(args):
+    data, media = generated(args)
+    ext = {v: k for k, v in IMAGE_TYPES.items() if k != '.jpeg'}.get(media)
     if ext is None:
         sys.exit('unsupported image media type')
     raw = out() / ('.generated' + ext)
-    raw.write_bytes(base64.b64decode(images[0]['data'], validate=True))
+    raw.write_bytes(data)
     w, h = sips_size(raw)
     if max(w, h) > 1.1 * min(w, h):
         sys.exit(f'the image is not square: {w}x{h}')
@@ -93,7 +119,7 @@ def check(args):
     if not isinstance(animate, bool):
         sys.exit('the request step did not record animate')
     write_output({'animate': animate, 'still': still.name, 'media_type': 'image/png', 'width': SIZE, 'height': SIZE,
-                  'sha256': hashlib.sha256(data).hexdigest(), 'source': {'width': w, 'height': h, 'media_type': images[0]['mimeType']}})
+                  'sha256': hashlib.sha256(data).hexdigest(), 'source': {'width': w, 'height': h, 'media_type': media}})
 
 
 def bmp_pixels(path):
@@ -183,7 +209,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     sub = p.add_subparsers(dest='step', required=True)
     s = sub.add_parser('request'); s.add_argument('--example', required=True); s.set_defaults(run=request)
-    s = sub.add_parser('check'); s.add_argument('--source', default='image'); s.add_argument('--request', default='request'); s.set_defaults(run=check)
+    s = sub.add_parser('check'); s.add_argument('--source', default='image'); s.add_argument('--alternate', default='')
+    s.add_argument('--request', default='request'); s.set_defaults(run=check)
     s = sub.add_parser('animate'); s.add_argument('--source', default='check'); s.set_defaults(run=animate)
     s = sub.add_parser('result'); s.add_argument('--still', default='check'); s.add_argument('--animated', default='animate'); s.set_defaults(run=result)
     args = p.parse_args()

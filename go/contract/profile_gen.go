@@ -102,6 +102,7 @@ type Profile struct {
 	Harness            *ProfileHarness      `json:"harness,omitempty"`
 	Icon               *string              `json:"icon,omitempty"`
 	Id                 string               `json:"id"`
+	ImageGeneration    *bool                `json:"imageGeneration,omitempty"`
 	InstructionRole    *string              `json:"instructionRole,omitempty"`
 	Instructions       string               `json:"instructions"`
 	McpServers         []ProfileMcpGrant    `json:"mcpServers"`

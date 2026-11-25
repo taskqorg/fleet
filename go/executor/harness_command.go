@@ -120,7 +120,7 @@ func (h harness) Command(dir, native string, p map[string]any) (*exec.Cmd, []byt
 		if err != nil {
 			return nil, nil, err
 		}
-		c, err := codexExec(dir, native, text, home, account, exe)
+		c, err := codexExec(dir, native, text, home, account, exe, codexImages(p))
 		return c, nil, err
 	}
 	registry := os.Getenv("FLEET_NATIVE_ACCOUNTS")
@@ -156,8 +156,26 @@ var codexExecOnly = []string{"--ignore-user-config", "--ignore-rules", "--skip-g
 // codexAppServerArgs: `app-server` with codexIsolation, for launches that start the app server directly (probes).
 func codexAppServerArgs() []string { return append([]string{"app-server"}, codexIsolation...) }
 
-// codexExec: `codex exec --json` with Fleet's fixed policy flags.
-func codexExec(dir, native, text, home, account, exe string) (*exec.Cmd, error) {
+// codexImages: the profile turns on Codex's built-in image generation (imageGeneration), which the run's ChatGPT
+// subscription pays for; off otherwise.
+func codexImages(p M) bool {
+	return jAt(p, "imageGeneration") == true || jAt(p, "agentConfig", "imageGeneration") == true
+}
+
+// codexRunIsolation: codexIsolation for one run; images turns built-in image generation on in place of its
+// --disable image_generation pair.
+func codexRunIsolation(images bool) []string {
+	out := slices.Clone(codexIsolation)
+	for i := 0; images && i+1 < len(out); i++ {
+		if out[i] == "--disable" && out[i+1] == "image_generation" {
+			out[i] = "--enable"
+		}
+	}
+	return out
+}
+
+// codexExec: `codex exec --json` with Fleet's fixed policy flags; images turns built-in image generation on.
+func codexExec(dir, native, text, home, account, exe string, images bool) (*exec.Cmd, error) {
 	for _, p := range []string{home, account} {
 		st, err := os.Lstat(p)
 		if err != nil {
@@ -192,7 +210,7 @@ func codexExec(dir, native, text, home, account, exe string) (*exec.Cmd, error) 
 	c.Args = append(c.Args, "exec")
 	c.Args = append(c.Args, codexExecOnly...)
 	c.Args = append(c.Args, "--json")
-	c.Args = append(c.Args, codexIsolation...)
+	c.Args = append(c.Args, codexRunIsolation(images)...)
 	if native != "" {
 		c.Args = append(c.Args, "resume", native)
 	}
@@ -342,7 +360,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		if !hasText {
 			return fail("missing text")
 		}
-		c, err := codexExec(dir, native, text, home, nh, exe)
+		c, err := codexExec(dir, native, text, home, nh, exe, codexImages(p))
 		return c, nil, err
 	}
 	if (h != "antigravity" && has(p, "settings")) || has(p, "environment") {
