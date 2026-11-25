@@ -1511,6 +1511,25 @@ func (v *TaskCancelRequest) Validate() error {
 	return nil
 }
 
+// TaskConversation: A conversation of a task's history (docs/designs/fleet-conversations.md#entities): it created the task, runs on it, or is a bot's conversation for subject task:<id>.
+type TaskConversation struct {
+	ActivityAt  *int64  `json:"activityAt,omitempty"`
+	BotId       string  `json:"botId"`
+	BotName     *string `json:"botName,omitempty"`
+	Code        string  `json:"code"`
+	CreatedTask bool    `json:"createdTask"`
+	Role        string  `json:"role"`
+	SessionId   string  `json:"sessionId"`
+	State       string  `json:"state"`
+	Title       string  `json:"title"`
+	Turns       int64   `json:"turns"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskConversation) Validate() error {
+	return nil
+}
+
 type TaskCreateReply = TaskDetail
 
 // TaskCreateRequest: held: the task waits for task_release (always for an agent).
@@ -1615,6 +1634,7 @@ type TaskDetail struct {
 	DirectedBy              *string               `json:"directedBy"`
 	Executions              []ExecutionRow        `json:"executions"`
 	ExpectedOutcome         *string               `json:"expectedOutcome"`
+	History                 []TaskConversation    `json:"history,omitempty"`
 	Id                      string                `json:"id"`
 	LatestResult            json.RawMessage       `json:"latestResult"`
 	OpenQuestions           json.RawMessage       `json:"openQuestions"`
@@ -1667,6 +1687,11 @@ func (v *TaskDetail) Validate() error {
 	}
 	for i := range v.Executions {
 		if err := Check(&v.Executions[i], "executions"); err != nil {
+			return err
+		}
+	}
+	for i := range v.History {
+		if err := Check(&v.History[i], "history"); err != nil {
 			return err
 		}
 	}

@@ -13,6 +13,7 @@
 | Expected outcome, inputs, requirements, dependencies | Detail: [outcome block](../controls/outcome-block.md) above the tabs (B2) |
 | State with reason and release condition | [State icon](../controls/state-badge.md) in the list (reason in tooltip); badge with word and reason in the detail |
 | Executions and steps as a recursive tree (`parentExecutionId`) with summarized `tool_run` children, agent, host, account, time and multi-currency/`subscription` cost with basis | Detail, Executions tab: [execution tree](../controls/execution-tree.md) and [number](../controls/number.md) |
+| The task's conversations: the one that created it, its workers and reviewers, a bot's conversation about it ([conversation model](../../designs/fleet-conversations.md#entities)) | Detail, History tab (the first tab; board D3, [`screens/conversation-model.bl`](../board/screens/conversation-model.bl)): one row per conversation, oldest first, role, title, state and age; a row opens the conversation |
 | Live transcript with paging and search | Detail, Transcript tab: [transcript viewer](../controls/transcript-viewer.md), relative times |
 | Results and their checks | Detail, Results tab: [result viewer shell](../controls/result-viewer.md) |
 | Accept, request rework, pause, continue, cancel, retry, change account, hand off | [Decision block](../controls/decision-block.md) (accept or rework); [split button](../controls/split-button.md) Pause with Cancel, Change account and Hand off; [problem row](../controls/problem-row.md) Retry |

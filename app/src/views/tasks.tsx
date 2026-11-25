@@ -8,12 +8,12 @@ import {
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar, useTick,
   type TreeNode, type Harness, type StateOf, type Stat, states as states_, isFinished, openStates,
-  type Tone, keyConnection, answerChoices, AnswerNote, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
+  type Tone, life, keyConnection, answerChoices, AnswerNote, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
 } from '../../../packages/ui/src/index.ts';
 import { op, online } from '../api.ts';
 import { useAnswers } from '../answers.ts';
 import { useOp } from '../store.ts';
-import type { TaskRow as ContractTaskRow } from '../../../contracts/generated/ops.ts';
+import type { TaskRow as ContractTaskRow, TaskConversation } from '../../../contracts/generated/ops.ts';
 import { DEFAULT_TASK_SORT, DEFAULT_TASK_GROUP, type View } from '../../../packages/view-url/view-url.ts';
 import { usePins, prefs, setFocus } from '../prefs.ts';
 import { useListPage, ListPagePanel, type ListPage, type Frame } from '../list-page.tsx';
@@ -332,7 +332,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
   const tDoc = useOp('task_get', () => ({ taskId: props.id }));
   const board = useSwarmBoard('task', () => props.id);
   const hasSwarm = createMemo(() => hasSwarmBoard(board.data));
-  const [tab, setTab] = createSignal<'details' | 'swarm'>('details', { ownedWrite: true });
+  const [tab, setTab] = createSignal<'history' | 'details' | 'swarm'>('history', { ownedWrite: true });
   const [busy, setBusy] = createSignal<string | null>(null, { ownedWrite: true });
   const [failure, setFailure] = createSignal<string | null>(null, { ownedWrite: true });
   const answers = useAnswers();
@@ -341,7 +341,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
   createEffect(
     () => props.id,
     () => {
-      setTab('details');
+      setTab('history');
       setBusy(null);
       setFailure(null);
       setConfirming(false);
@@ -359,7 +359,8 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
   };
 
   const t = () => tDoc.data;
-  const activeTab = () => (hasSwarm() ? tab() : 'details');
+  const activeTab = () => (tab() === 'swarm' && !hasSwarm() ? 'history' : tab());
+  const history = createMemo(() => t()?.history ?? []);
   const swarmCount = createMemo(() => (board.data ? (board.data.summary.messagesTotal || board.data.roster.length || undefined) : undefined));
   const result = createMemo(() => latestResult(t()?.latestResult));
   const req = createMemo(() => {
@@ -536,22 +537,23 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
               </p>
             )}
           </Show>
-          <Show when={hasSwarm()}>
-            <TabBar
-              cls="detail-tabs"
-              label="Task views"
-              tabs={[{ id: 'details', label: 'Details' }, { id: 'swarm', label: 'Swarm', count: swarmCount() }]}
-              value={activeTab()}
-              onChange={setTab}
-            />
-          </Show>
-          <Show when={hasSwarm()} fallback={renderDetailsBody()}>
-            <div role="tabpanel" aria-label={activeTab() === 'swarm' ? 'Swarm' : 'Details'} class="stack">
-              <Show when={activeTab() === 'swarm'} fallback={renderDetailsBody()}>
-                <SwarmPanel scopeKind="task" scopeId={props.id} board={board} />
-              </Show>
-            </div>
-          </Show>
+          <TabBar
+            cls="detail-tabs"
+            label="Task views"
+            tabs={[
+              { id: 'history', label: 'History', count: history().length || undefined },
+              { id: 'details', label: 'Details' },
+              ...(hasSwarm() ? [{ id: 'swarm' as const, label: 'Swarm', count: swarmCount() }] : []),
+            ]}
+            value={activeTab()}
+            onChange={setTab}
+          />
+          <div role="tabpanel" aria-label={activeTab() === 'swarm' ? 'Swarm' : activeTab() === 'history' ? 'History' : 'Details'} class="stack">
+            <Switch fallback={renderDetailsBody()}>
+              <Match when={activeTab() === 'swarm'}><SwarmPanel scopeKind="task" scopeId={props.id} board={board} /></Match>
+              <Match when={activeTab() === 'history'}><TaskHistory items={history()} onOpen={id => go(`/conversations/${encodeURIComponent(id)}`)} /></Match>
+            </Switch>
+          </div>
         </article>
       }
     >
@@ -562,5 +564,23 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
         <article class="detail" data-ui="detail" tabindex={-1}><Skeleton rows={6} /></article>
       </Match>
     </Switch>
+  );
+}
+
+/** Task history (fleet-conversations.md#entities; board D3): the task's conversations, oldest first: the one that
+ * created it, its workers and reviewers, a bot's conversation about it. Each opens on its own. */
+function TaskHistory(props: { items: TaskConversation[]; onOpen: (id: string) => void }) {
+  const role = (c: TaskConversation) => c.botName || (c.createdTask && !c.role ? 'created' : c.role === 'pm' ? 'PM' : c.role || 'conversation');
+  return (
+    <Show when={props.items.length > 0} fallback={<Empty text="No conversation has worked on this task yet." />}>
+      <ul class="live-list" aria-label="Task history">
+        <For each={props.items}>{c => (
+          <LiveRow kind="task" state={life('session', c.state)} code={role(c)} title={c.createdTask ? `${c.title} · created the task` : c.title}
+            trouble={c.state === 'failed'}
+            facts={<Show when={c.activityAt}>{at => <AgeChip t={at()} />}</Show>}
+            onOpen={() => props.onOpen(c.code || c.sessionId)} />
+        )}</For>
+      </ul>
+    </Show>
   );
 }
