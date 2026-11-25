@@ -24,9 +24,12 @@ From top to bottom, then the context panel on the right:
 2. **Open question** (only while one is open): the [question card](../controls/decision-block.md#card) pinned above the transcript, its choices as buttons and a free-text answer ([OR-53](../owner-rules.md)). A confirmation card for a risky action names its scope and the way back ([OR-61](../owner-rules.md)). The answer edits the card in place (UR-58); answered cards stay in the transcript at the point they were asked.
 3. **Transcript**, oldest at the top, the newest at the bottom:
    * a [message](../controls/transcript-viewer.md) per person or agent turn: author line and the age (OR-2), then the body as prose; codes become [entity cards](../controls/entity-card.md) ([OR-44](../owner-rules.md), UR-61);
-   * consecutive tool calls and system events as one [folded tool line](../controls/tool-line.md): what was done and how long it took, opened on click ([OR-52](../owner-rules.md), UR-57);
+   * consecutive tool calls and system events as one [tool line](../controls/tool-line.md): one chip per kind of call with its count, failures and time; a chip opens its calls, a call its input and output ([OR-52](../owner-rules.md), UR-57; Conversations v2, owner pick c2);
+   * a run's results: pictures and videos as tiles with their preview, other files as chips; previews and diagnostic files never show ([transcript viewer](../controls/transcript-viewer.md); owner pick a2);
    * heartbeats, repeated attachments and internal notices are never shown.
 4. **Composer** at the bottom, always reachable (UR-59). While a run works it says whether Enter queues the message or steers the run; Stop sits beside it. A `/trigger` command in it shows its preview above the text and applies instead of sending ([commands](../controls/composer.md#commands)).
+
+**Work-item threads** (Conversations v2, owner pick b2, 2026-11-25; [fleet-conversations.md](../../designs/fleet-conversations.md#work-item-threads)). A session with more than its main thread, such as a bot's Home, shows a [thread list](../../../packages/ui/src/controls/thread-list.tsx) as its first column: Open threads, then Parked, newest first, each with its item's title, code, state and "N new". The timers' quiet checks fold into its foot row. The transcript shows the selected thread (the newest by default), and the composer writes into it. At phone width the list comes first; a pick opens the thread and Threads in the head goes back.
 
 **Context panel** ([context panel](../controls/context-panel.md), [FLT-30](https://youtrack.ufobe.com/issue/FLT-30)), a [side panel](../controls/side-panel.md) right of the transcript, its own scroller ([OR-25](../owner-rules.md)):
 * Plan with done items checked, Timers (pause or resume, edit, cancel), Automations, Swarm members with their steps done, related Tasks; each section hidden when empty ([OR-29](../owner-rules.md)).
@@ -80,6 +83,7 @@ From top to bottom, then the context panel on the right:
 Decided by the owner on 2026-11-25 ([decisions](../decisions.md)):
 1. **Frame from Home:** `/home/C-…`, full width, Home stays highlighted; from anywhere else `/conversations/C-…` with the list.
 2. **Context panel:** a column right of the transcript; on a phone, a sheet.
+3. **Conversations v2** (picks a2 b2 c2): results show only real outputs; MCP receipts are diagnostic, hidden and deleted after 7 days; work-item threads in one Home session per bot; tool chips per kind.
 
 ## Review of the current build
 
@@ -109,4 +113,4 @@ Fleet's own notices to an agent (a watch timer, a wake or run request: an operat
 
 ## Design board
 
-Canvas [screens/session.bl](../board/screens/session.bl): working in the Conversations frame, waiting for you in the Home frame, failed, and the phone with the context sheet. Names are real; content is illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).
+Canvas [screens/session.bl](../board/screens/session.bl): working in the Conversations frame, waiting for you in the Home frame, failed, and the phone with the context sheet; the frame "Conversations v2" holds the approved thread list, tool chips and results at 1440 and 390. Names are real; content is illustrative. An approved state is rebuilt from `packages/ui` and the book (OR-13).

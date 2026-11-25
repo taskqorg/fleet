@@ -631,3 +631,13 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Owner's ask:** "Телеграм id его добавь - добавь такую возможность": set a person's Telegram id in Fleet, not only through an op.
 * **Choice:** one option drawn, approved as drawn ("ok"). System › People › person gets a Telegram section: a pick among the Telegram users who wrote to the bot without a link, or a typed id, with the language; once linked, the state, the user, the language, when it was linked and Unlink. The People list shows the @username. Spec: [system.md](pages/system.md#states); canvas [screens/people.bl](board/screens/people.bl).
 * **Reads and writes:** `telegram_people` and `telegram_person_set`, unchanged; agents use the same ops.
+
+## 2026-11-25: Conversations v2: results, bot threads, tool chips
+
+* **Owner's ask:** every HAL0 turn attached `mcp-lifecycle.jsonl` files, a bot's messages all ran in one stream, and tool calls said too little in short form. "Результаты — это картинки, видео"; technical JSON hidden or in a very short form.
+* **Choice:** "2 2 2" from the audit's options, drawn and approved as drawn ("ok").
+  * **a2.** MCP receipts get role `diagnostic`: hidden from the thread and Results, deleted after 7 days. Pictures and videos show inline; files show as chips; no preview duplicates.
+  * **b2.** One Home session per bot, with a thread per work item. Each thread continues its own native session and is parked between events; empty ticks fold into a timer row.
+  * **c2.** Tool chips per kind of call.
+* **Where:** spec in [session.md](pages/session.md#layout), [tool-line.md](controls/tool-line.md), [transcript-viewer.md](controls/transcript-viewer.md) and [fleet-conversations.md](../designs/fleet-conversations.md#work-item-threads); canvas [screens/session.bl](board/screens/session.bl), frame "Conversations v2".
+* **Reads and writes:** `session_view` (threads, triggers), `thread_entries {session, thread}`, `message_send {thread}`, `tool_output`; agents use the same ops.
