@@ -64,6 +64,9 @@ Every setting is per project; absent key means the default below. The coordinato
 | `identity` | `null` | `{name, email}` for `GIT_AUTHOR_*`/`GIT_COMMITTER_*` of agent and delivery commits. |
 | `errors.bugsink` | `[]` | Names of the Bugsink projects holding this project's errors (`^[a-z0-9][a-z0-9_-]{0,63}$`, else 400 `Invalid project setting errors.bugsink`); a Bugsink alert's problem belongs to the project that names its Bugsink project ([error tracking](designs/fleet-error-tracking.md#4-agent-read-access)). |
 | `errors.ignore` | `[]` | Substrings of a Bugsink issue's title (non-empty, at most 200 characters, else 400 `Invalid project setting errors.ignore`); a matching issue opens no needs-you problem and stays in Bugsink ([error tracking](designs/fleet-error-tracking.md#5-owner-needs-you)). |
+| `data` | `"internal"` | The project's data class, `public`, `internal` or `personal` (else 400 `Invalid project setting data`); the access approval card states it ([project access](designs/fleet-project-access.md#personal-data)). |
+| `risks` | `{}` | Risk per action for approval cards, `{action: free\|reversible\|radical}` (else 400); unnamed actions keep the defaults ([approvals](designs/fleet-telegram.md#approvals-approvalsgo)). |
+| `approvals` | `{}` | Approvers per action, `{action: [person e-mail]}` (else 400); unnamed actions keep the default approvers ([approvals](designs/fleet-telegram.md#approvals-approvalsgo)). |
 | `artifact_locations`, `artifact_rules` | `null`, `[]` | Hosts that must hold the project's artifacts and retention rules ([data foundation](designs/fleet-data-foundation.md)). |
 
 Not built: `integration.mode: direct` for agent sessions (publication tools always open a PR or MR; `direct` applies to artifact delivery only); a merge method read from the repository default.
