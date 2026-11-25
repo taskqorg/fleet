@@ -319,6 +319,7 @@ func (*GatewayLimits) Closed() bool { return true }
 type GatewayProvider struct {
 	BaseUrl   string                 `json:"baseUrl"`
 	KeyHeader *string                `json:"keyHeader,omitempty"`
+	KeyPath   *string                `json:"keyPath,omitempty"`
 	Tools     map[string]GatewayTool `json:"tools"`
 	Usage     *GatewayUsageSource    `json:"usage,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.

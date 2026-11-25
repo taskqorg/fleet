@@ -242,6 +242,28 @@ var referenceMap = []objectRef{
 	{table: "lab_work", column: "experiment_id", mode: refNone},
 	{table: "delegation_source_work", column: "delegation_id", mode: refNone},
 	{table: "upload_finish_work", column: "upload_id", mode: refNone}, // goes with its upload (foreign key)
+	// The Telegram channel (migration 107): Telegram's own ids and the channel's rows; sessions are foreign keys.
+	{table: "telegram_outbox", column: "chat_id", mode: refNone},
+	{table: "telegram_outbox", column: "edit_message_id", mode: refNone},
+	{table: "telegram_outbox", column: "id", mode: refNone},
+	{table: "telegram_outbox", column: "telegram_message_id", mode: refNone},
+	{table: "telegram_outbox", column: "thread_id", mode: refNone},
+	{table: "telegram_person", column: "telegram_user_id", mode: refNone},
+	{table: "telegram_room", column: "chat_id", mode: refNone},
+	{table: "telegram_room", column: "id", mode: refNone},
+	{table: "telegram_room", column: "thread_id", mode: refNone},
+	{table: "telegram_turn", column: "chat_id", mode: refNone},
+	{table: "telegram_turn", column: "id", mode: refNone},
+	{table: "telegram_turn", column: "message_id", mode: refNone},
+	{table: "telegram_turn", column: "request_id", mode: refNone},
+	{table: "telegram_turn", column: "thread_id", mode: refNone},
+	{table: "telegram_update", column: "chat_id", mode: refNone},
+	{table: "telegram_update", column: "from_id", mode: refNone},
+	{table: "telegram_update", column: "id", mode: refNone},
+	{table: "telegram_update", column: "message_id", mode: refNone},
+	{table: "telegram_update", column: "update_id", mode: refNone},
+	{table: "telegram_update", column: "work_id", mode: refNone},
+	{table: "telegram_work", column: "id", mode: refNone},
 	// A pipeline run's plan (migration 81, pipelines.go): it goes with its run by foreign key; the ids an entry names
 	// (its step, the executions, command, host and claim of its dispatch, its step's native execution, output artifact
 	// and provider job) are evidence of the run, not references.
@@ -368,7 +390,7 @@ var purgeOrder = append([]string{"bot_task", "bot_run", "trigger", "bot_wake_cur
 	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "problem_dismissal",
 	"transport_conflict", "upload", "project_recommendation", "watch", "run_token", "account_inspection", "account_check", "account_catalogue",
 	"connection_key", "api_connection", "managed_account", "host_observation", "host", "person_setting", "message", "event",
-	"queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done", "session", "execution",
+	"queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done", "telegram_turn", "telegram_work", "session", "execution",
 	"resource_work", "resource_work_scope", "task_dependency", "task_derived", "task", "entity_code", "experiment", "budget",
 	"project_write_request", "purged_hash", "artifact_rule_confirmation", "resource_project_summary", "resource_metric",
 	"resource_extreme", "resource_tool", "resource_cost", "resource_price_ref", "resource_build", "resource_repair_scope"}, deliveryTables...)

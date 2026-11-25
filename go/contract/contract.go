@@ -30,6 +30,7 @@ import (
 //go:generate go run ../gen ../../contracts/ops-sessions.schema.json contract ops_sessions_gen.go
 //go:generate go run ../gen ../../contracts/ops-tasks.schema.json contract ops_tasks_gen.go
 //go:generate go run ../gen ../../contracts/ops-telemetry.schema.json contract ops_telemetry_gen.go
+//go:generate go run ../gen ../../contracts/ops-telegram.schema.json contract ops_telegram_gen.go
 //go:generate go run ../gen ../../contracts/profile.schema.json contract profile_gen.go
 //go:generate go run ../gen ../../contracts/vocabulary.json contract vocabulary_gen.go
 

@@ -26,6 +26,7 @@
 
 - Listeners must be loopback TCP sockets, including systemd-activated sockets ([main.go](main.go)).
 - A snapshot is adopted only when valid; the last valid copy remains usable after an invalid coordinator snapshot ([snapshot.go](snapshot.go)).
+- A provider with `keyPath` (Telegram's `/bot`) carries the key in the URL path and sends no key header ([proxy.go](proxy.go) `providerURL`); transport errors, which hold that URL, are never logged or returned.
 - Key files are selected by snapshot fingerprint and their values must hash to that fingerprint. Values are not returned to callers and are redacted from provider replies ([snapshot.go](snapshot.go), [proxy.go](proxy.go)).
 - A `textReply` tool's 2xx reply that is not JSON reaches the caller as `{"text": ...}` after key redaction (Bugsink's Markdown stacktrace) ([proxy.go](proxy.go)).
 - Redirects are not followed. A non-idempotent call with no provider answer is not retried; the outcome is `unknown` when a provider-side charge may have happened ([gateway.go](gateway.go), [proxy.go](proxy.go)).

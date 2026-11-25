@@ -23,7 +23,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   run mixed versions during a self-update, so their shapes change only compatibly. No app code reads them.
 * `gateway.schema.json`: the fleet-gateway seam (docs/designs/fleet-connections.md section 3): the snapshot the
   coordinator writes and the gateway reads, and the call line the gateway spools and the coordinator ingests.
-* `ops-<domain>.schema.json` (accounts, analytics, artifacts, definitions, executions, lab, people, projects, sessions, tasks, telemetry) and `ops.schema.json`: the coordinator operations (`POST /api/ops/<name>`, and the agents' MCP tools of the same names), split by domain so lanes that change different domains edit different files. A type that only one domain's operations reach lives in that domain's file; `OpError`, `ChangeKind`, types two domains share and types no operation reaches live in `ops.schema.json`; a reference across files is `<file>.schema.json#/$defs/<Name>`. A name is in one file only (built or planned); `gen-ts.mjs` fails otherwise. A new operation goes into the file of its name's first word:
+* `ops-<domain>.schema.json` (accounts, analytics, artifacts, definitions, executions, lab, people, projects, sessions, tasks, telegram, telemetry) and `ops.schema.json`: the coordinator operations (`POST /api/ops/<name>`, and the agents' MCP tools of the same names), split by domain so lanes that change different domains edit different files. A type that only one domain's operations reach lives in that domain's file; `OpError`, `ChangeKind`, types two domains share and types no operation reaches live in `ops.schema.json`; a reference across files is `<file>.schema.json#/$defs/<Name>`. A name is in one file only (built or planned); `gen-ts.mjs` fails otherwise. A new operation goes into the file of its name's first word:
 
   | File | First words of operation names |
   | --- | --- |
@@ -39,6 +39,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   | `ops-projects` | `project_create`, `project_update`, `project_initial_access_revoke` (shared versioned writes) |
   | `ops-publishing` | `publishing` (`publishing_capabilities`, `publishing_status`, `publishing_publish_draft`, `publishing_record_code_review`, `publishing_mark_ready`, `publishing_request_merge`, `publishing_cancel_merge_request`) |
   | `ops-tasks` | `task`, `question`, `questions`, remaining `project` reads |
+  | `ops-telegram` | `telegram` |
   | `ops-telemetry` | `telemetry` |
 
   A new first word joins the closest row here. A new domain file also needs its `go:generate` line in `go/contract/contract.go`.
