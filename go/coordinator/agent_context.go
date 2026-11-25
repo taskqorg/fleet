@@ -326,7 +326,7 @@ func sideOf(key string, cfg json.RawMessage) [4]string {
 	if ok {
 		effort = js(jsonValue(p.Effort))
 	}
-	return [4]string{key, firstString(p.Model, "gpt-6.1-sol"), effort, canonical(jsonValue(jsonBytes(rest)))}
+	return [4]string{key, firstString(p.Model, contract.HarnessDefaultModel(harnessOfProfile(cfg))), effort, canonical(jsonValue(jsonBytes(rest)))}
 }
 
 func agentTransition(q *Request, b agentTransitionArgs) (contract.SessionTransitionReply, error) {

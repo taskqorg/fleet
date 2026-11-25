@@ -172,7 +172,8 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 
 const onlineMs = 30000
 
-const defaultInstructions = "Follow the user request and its scope. Discuss, answer questions, or review existing results when requested; do not create or modify a website unless requested. When creating a static website, deliver output/index.html and retain all source assets. Do not spawn subagents."
+// defaultInstructions: the developer instructions of a start without profile instructions; only what holds for any start.
+const defaultInstructions = "Follow the user request and its scope. Discuss, answer questions, or review existing results when requested."
 
 type candidateSubscription struct {
 	ID     string  `json:"id"`

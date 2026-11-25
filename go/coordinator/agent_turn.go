@@ -124,11 +124,11 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 		payloadRaw = jsonBytes(payload)
 	}
 	id := newID()
-	e := agentExecution{ID: id, ExecutionID: id, SessionID: s.ID, State: "preparing", CreatedAt: nowMs(), DirectedBy: s.DirectedBy, Model: "gpt-6.1-sol", Effort: jsonBytes("low"),
+	e := agentExecution{ID: id, ExecutionID: id, SessionID: s.ID, State: "preparing", CreatedAt: nowMs(), DirectedBy: s.DirectedBy, Model: contract.HarnessDefaultModel(s.harness()), Effort: jsonBytes("low"),
 		Dispatch: &agentDispatch{Harness: s.harness(), ProjectID: agentOpt(s.ProjectID), WorkingDirectory: agentOpt(s.WorkingDirectory), WorkspaceKey: agentOpt(s.WorkspaceKey), Account: agentOpt(s.Account),
 			Access: agentOpt(s.Access), Branch: s.Branch, Host: agentOpt(host), Last: agentOpt(last), Input: input, Payload: payloadRaw}}
 	if hasProfile {
-		e.AgentConfig, e.ProfileSha256, e.Model, e.Effort = s.AgentConfig, frameHash(jsonValue(s.AgentConfig)), firstString(ac.Model, "gpt-6.1-sol"), ac.Effort
+		e.AgentConfig, e.ProfileSha256, e.Model, e.Effort = s.AgentConfig, frameHash(jsonValue(s.AgentConfig)), firstString(ac.Model, contract.HarnessDefaultModel(s.harness())), ac.Effort
 		ref, err := definitionRef(q, "agent", ac.ID, jsonValue(s.AgentConfig))
 		if err != nil {
 			return none, err

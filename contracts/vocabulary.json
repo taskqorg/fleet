@@ -1,5 +1,5 @@
 {
-  "$comment": "Fixed words the app and the coordinator share (docs/designs/fleet-standard.md S9): harnesses, the operator-app view grammar and the system presets of the lists with saved views (OR-33), and the plain sentences of run failure causes (causes: the first entry with a match that the stored cause code starts with; the last matches everything). The app imports this file (packages/view-url, app/src/system-views.ts, packages/ui registry); go/gen copies it into go/contract/vocabulary_gen.go and go/contract/vocabulary.go decodes it. One source: edit here only.",
+  "$comment": "Fixed words the app and the coordinator share (docs/designs/fleet-standard.md S9): harnesses (model: the model a start without a profile model records; none or an unknown harness takes codex's), the operator-app view grammar and the system presets of the lists with saved views (OR-33), and the plain sentences of run failure causes (causes: the first entry with a match that the stored cause code starts with; the last matches everything). The app imports this file (packages/view-url, app/src/system-views.ts, packages/ui registry); go/gen copies it into go/contract/vocabulary_gen.go and go/contract/vocabulary.go decodes it. One source: edit here only.",
   "causes": [
     {"id": "abandoned", "match": ["unknown:abandoned"], "text": "The run stopped without reporting how it ended: its host lost the process or restarted. Run it again; if it keeps happening, check the host."},
     {"id": "stopped", "match": ["unknown:caller-cancelled", "step:cancelled", "cancelled"], "text": "The run was stopped before it finished. Nothing is broken; run it again if the work is still needed."},
@@ -24,9 +24,9 @@
     {"id": "other", "match": [""], "text": "The run failed. Read the detail."}
   ],
   "harnesses": [
-    {"id": "codex", "label": "Codex", "icon": "openai", "login": "codex login --device-auth", "loginArgv": ["login", "--device-auth"], "assets": true},
-    {"id": "claude", "label": "Claude", "icon": "claude", "login": "claude auth login --claudeai", "loginArgv": ["auth", "login", "--claudeai"], "assets": true},
-    {"id": "antigravity", "label": "Antigravity", "icon": "antigravity", "login": "agy acp --login (may replace the shared native principal; explicit review required)", "loginArgv": ["acp", "--login"], "assets": true},
+    {"id": "codex", "model": "gpt-6.1-sol", "label": "Codex", "icon": "openai", "login": "codex login --device-auth", "loginArgv": ["login", "--device-auth"], "assets": true},
+    {"id": "claude", "model": "sonnet", "label": "Claude", "icon": "claude", "login": "claude auth login --claudeai", "loginArgv": ["auth", "login", "--claudeai"], "assets": true},
+    {"id": "antigravity", "model": "gemini-3.8-flash-low", "label": "Antigravity", "icon": "antigravity", "login": "agy acp --login (may replace the shared native principal; explicit review required)", "loginArgv": ["acp", "--login"], "assets": true},
     {"id": "acp", "label": "ACP agent", "icon": "bot", "login": "the bound agent's own login command", "loginArgv": null, "assets": false}
   ],
   "views": ["tasks", "conversations", "hosts", "overview", "results", "projects", "delivery"],
