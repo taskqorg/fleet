@@ -134,7 +134,11 @@
   .side-panel .ctx-panel { inline-size: auto; min-block-size: 100%; }
   @container (max-width: 600px) {
     .session-view > .side-panel { display: none; --side-mode: sheet; }
-    /* The name keeps its line; avatar, state and the icons follow below it (OR-60). */
+  }
+  /* The name is never cut to a letter: when the conversation column itself is narrow (a phone, Conversations beside its
+     list, a thread list beside it), the name keeps its own line and avatar, state and the icons follow below it (OR-60). */
+  .sv-main { container: sv-main / inline-size; }
+  @container sv-main (max-width: 600px) {
     .sv-head { flex-wrap: wrap; row-gap: 0; }
     .sv-name { order: -1; flex: 1 0 100%; }
   }
