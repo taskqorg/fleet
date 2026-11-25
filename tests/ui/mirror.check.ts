@@ -2,7 +2,6 @@
 // answers, and a different person's copy never shows.
 // Every API answer is held back by RTT ms (default 400, as through Cloudflare Access) so the order is visible.
 // Prints a report; exits 1 when a claim fails. Run: pnpm run app:bundle && node tests/ui/mirror.check.ts
-import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { chromium } from 'playwright';

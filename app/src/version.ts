@@ -76,7 +76,8 @@ export const IDLE_MS = 30_000;
 const ACTIVE_STEP = 250, RELOADED_KEY = 'fleet-update:reloaded', SCROLL_KEY = 'fleet-update:scroll';
 let lastActive = Date.now(), timer: ReturnType<typeof setInterval> | undefined, left = false;
 /** The person is away: the tab is hidden or its window has no focus. */
-const away = () => document.visibilityState !== 'visible' || !document.hasFocus();
+// A wall display (/live?wall, a TV nobody clicks) is away only while hidden.
+const away = () => document.visibilityState !== 'visible' || (!document.hasFocus() && !new URLSearchParams(location.search).has('wall'));
 
 /**
  * Fields a person typed into, with the value they had before the first keystroke: a field whose value differs and is not

@@ -511,8 +511,9 @@ function watch(m: Mounted) {
   mounted.add(m);
   opFeed ??= subscribe({
     resync: () => {
-      // A read that has not answered yet started after the new cursor (reads wait for the gate), so it is current already.
-      for (const x of mounted) if (!x.key || (docs.get(x.key)?.fetchedAt ?? 0) > 0) x.read();
+      // A read still on its way started after the new cursor (reads wait for the gate), so it is current already;
+      // every other mounted read, a failed one included, reads again.
+      for (const x of mounted) { const f = x.key ? flights.get(x.key) : undefined; if (!f || f.started <= Math.max(f.shown, f.failed)) x.read(); }
       for (const [k, d] of docs) if (!flights.get(k)?.readers.size) { d.dirty = true; d.dirtySeq++; }
     },
     changes: cs => {

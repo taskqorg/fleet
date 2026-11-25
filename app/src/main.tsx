@@ -224,7 +224,7 @@ function App() {
       // from the mirror); a closed gate, or one validating longer, validates anew.
       if (s.state === 'validating' && Date.now() - validatedAt < 10_000) return;
       // A person validated moments ago (the focus that comes with a load) needs no second check.
-      if (s.state === 'open' && Date.now() - validatedAt < 5_000) return;
+      if (s.state === 'open' && !rebaseWanted && Date.now() - validatedAt < 5_000) return;
       if (s.state !== 'open' || !s.identity) return validate();
       // A focus during a quiet check is checked right after it, so a change in between is never missed.
       if (checking) { again = true; return; }
