@@ -893,6 +893,10 @@ func threadBlocks(q *Request, b *contract.ThreadBlocksRequest) (contract.ThreadB
 	if err := attachBoundaryResources(q, entries); err != nil {
 		return none, err
 	}
+	full := b.Full == nil || *b.Full
+	for _, e := range entries {
+		summarizeTool(e, full)
+	}
 	return contract.ThreadBlocksReply{Removed: removed, Entries: blocksJSON(entries)}, nil
 }
 

@@ -494,26 +494,32 @@ func (q *Queries) ThreadQuestionsSearch(ctx context.Context, arg ThreadQuestions
 }
 
 const threadRowsAfter = `-- name: ThreadRowsAfter :many
-SELECT x.seq, x.src, x.v FROM (
- SELECT d.seq, d.src, d.v FROM unnest($1::text[]) AS m(id), LATERAL (
-  SELECT mm.seq, 'message'::text AS src, jsonb_build_object('id',mm.id,'executionId',mm.execution_id,'type',NULL,'text',to_jsonb(mm.text),'blocks',NULL,'deltaOf',NULL,'closes',NULL,'at',mm.updated_at,'sentBy',mm.sent_by,'attachments',mm.payload->'attachments') AS v
-  FROM message mm WHERE mm.execution_id=m.id AND mm.seq >= $2::bigint ORDER BY mm.seq ASC LIMIT $3::int) d
- UNION ALL
- SELECT d.seq, d.src, d.v FROM unnest($1::text[]) AS m(id), LATERAL (
-  SELECT ev.seq, 'event'::text AS src, jsonb_build_object('id',ev.id,'executionId',ev.execution_id,'type',ev.type,'text',ev.payload->'text','blocks',ev.payload->'data'->'fleetNormalized'->'blocks','deltaOf',ev.payload->'data'->'fleetNormalized'->'deltaOf','closes',ev.payload->'data'->'fleetNormalized'->'closes','at',ev.updated_at,'sentBy',ev.payload->>'sentBy','attachments',ev.payload->'attachments') AS v
-  FROM event ev WHERE ev.execution_id=m.id AND ev.seq >= $2::bigint AND NOT ev.delta
+WITH pick AS (
+ SELECT x.seq, x.src, x.rid FROM (
+  SELECT d.seq, 'message'::text AS src, d.id AS rid FROM unnest($1::text[]) AS m(id), LATERAL (
+   SELECT mm.seq, mm.id FROM message mm WHERE mm.execution_id=m.id AND mm.seq >= $2::bigint ORDER BY mm.seq ASC LIMIT $3::int) d
+  UNION ALL
+  SELECT d.seq, 'event'::text, d.id FROM unnest($1::text[]) AS m(id), LATERAL (
+   SELECT ev.seq, ev.id FROM event ev WHERE ev.execution_id=m.id AND ev.seq >= $2::bigint AND NOT ev.delta
    AND (ev.type='execution.ended' OR jsonb_array_length(coalesce(ev.payload->'data'->'fleetNormalized'->'blocks','[]'::jsonb))>0)
-  ORDER BY ev.seq ASC LIMIT $3::int) d
- UNION ALL
- SELECT d.seq, d.src, d.v FROM unnest($1::text[]) AS m(id), LATERAL (
-  SELECT ev.seq, 'event-delta'::text AS src, jsonb_build_object('id',ev.id,'executionId',ev.execution_id,'type',ev.type,'text',ev.payload->'text','blocks',ev.payload->'data'->'fleetNormalized'->'blocks','deltaOf',ev.payload->'data'->'fleetNormalized'->'deltaOf','closes',ev.payload->'data'->'fleetNormalized'->'closes','at',ev.updated_at,'sentBy',ev.payload->>'sentBy','attachments',ev.payload->'attachments') AS v
-  FROM event ev WHERE ev.execution_id=m.id AND ev.seq >= $2::bigint AND ev.delta AND ev.payload->'data'->'fleetNormalized'->>'opens'='true'
-  ORDER BY ev.seq ASC LIMIT $3::int) d
- UNION ALL
- SELECT q.seq, 'question'::text, to_jsonb(q)-'data' FROM question q WHERE q.execution_id = ANY ($1::text[]) AND q.seq >= $2::bigint
- UNION ALL
- SELECT e.seq, 'execution'::text, jsonb_build_object('id',e.id) FROM execution e WHERE e.id = ANY ($1::text[]) AND e.seq >= $2::bigint
-) x ORDER BY x.seq ASC LIMIT $3::int
+   ORDER BY ev.seq ASC LIMIT $3::int) d
+  UNION ALL
+  SELECT d.seq, 'event-delta'::text, d.id FROM unnest($1::text[]) AS m(id), LATERAL (
+   SELECT ev.seq, ev.id FROM event ev WHERE ev.execution_id=m.id AND ev.seq >= $2::bigint AND ev.delta AND ev.payload->'data'->'fleetNormalized'->>'opens'='true'
+   ORDER BY ev.seq ASC LIMIT $3::int) d
+  UNION ALL
+  SELECT q.seq, 'question'::text, q.id FROM question q WHERE q.execution_id = ANY ($1::text[]) AND q.seq >= $2::bigint
+  UNION ALL
+  SELECT e.seq, 'execution'::text, e.id FROM execution e WHERE e.id = ANY ($1::text[]) AND e.seq >= $2::bigint
+ ) x ORDER BY x.seq ASC LIMIT $3::int
+)
+SELECT p.seq, p.src, (CASE p.src
+  WHEN 'message' THEN (SELECT jsonb_build_object('id',mm.id,'executionId',mm.execution_id,'type',NULL,'text',to_jsonb(mm.text),'blocks',NULL,'deltaOf',NULL,'closes',NULL,'at',mm.updated_at,'sentBy',mm.sent_by,'attachments',mm.payload->'attachments') FROM message mm WHERE mm.id=p.rid)
+  WHEN 'event' THEN (SELECT jsonb_build_object('id',ev.id,'executionId',ev.execution_id,'type',ev.type,'text',ev.payload->'text','blocks',ev.payload->'data'->'fleetNormalized'->'blocks','deltaOf',ev.payload->'data'->'fleetNormalized'->'deltaOf','closes',ev.payload->'data'->'fleetNormalized'->'closes','at',ev.updated_at,'sentBy',ev.payload->>'sentBy','attachments',ev.payload->'attachments') FROM event ev WHERE ev.id=p.rid)
+  WHEN 'event-delta' THEN (SELECT jsonb_build_object('id',ev.id,'executionId',ev.execution_id,'type',ev.type,'text',ev.payload->'text','blocks',ev.payload->'data'->'fleetNormalized'->'blocks','deltaOf',ev.payload->'data'->'fleetNormalized'->'deltaOf','closes',ev.payload->'data'->'fleetNormalized'->'closes','at',ev.updated_at,'sentBy',ev.payload->>'sentBy','attachments',ev.payload->'attachments') FROM event ev WHERE ev.id=p.rid)
+  WHEN 'question' THEN (SELECT to_jsonb(q)-'data' FROM question q WHERE q.id=p.rid)
+  ELSE jsonb_build_object('id',p.rid) END)::jsonb AS v
+FROM pick p ORDER BY p.seq ASC
 `
 
 type ThreadRowsAfterParams struct {
@@ -529,6 +535,8 @@ type ThreadRowsAfterRow struct {
 }
 
 // The rows of executions @ids from seq @from_seq up, nearest first, at most @lim per kind and execution and @lim in all.
+// Two steps: the page's rows are chosen by seq alone, then only those are built (a session of 250 runs built every
+// run's rows before the limit; event_thread_rows serves the event filter from the index).
 func (q *Queries) ThreadRowsAfter(ctx context.Context, arg ThreadRowsAfterParams) ([]ThreadRowsAfterRow, error) {
 	rows, err := q.db.Query(ctx, threadRowsAfter, arg.Ids, arg.FromSeq, arg.Lim)
 	if err != nil {
@@ -550,26 +558,32 @@ func (q *Queries) ThreadRowsAfter(ctx context.Context, arg ThreadRowsAfterParams
 }
 
 const threadRowsBefore = `-- name: ThreadRowsBefore :many
-SELECT x.seq, x.src, x.v FROM (
- SELECT d.seq, d.src, d.v FROM unnest($1::text[]) AS m(id), LATERAL (
-  SELECT mm.seq, 'message'::text AS src, jsonb_build_object('id',mm.id,'executionId',mm.execution_id,'type',NULL,'text',to_jsonb(mm.text),'blocks',NULL,'deltaOf',NULL,'closes',NULL,'at',mm.updated_at,'sentBy',mm.sent_by,'attachments',mm.payload->'attachments') AS v
-  FROM message mm WHERE mm.execution_id=m.id AND mm.seq <= $2::bigint ORDER BY mm.seq DESC LIMIT $3::int) d
- UNION ALL
- SELECT d.seq, d.src, d.v FROM unnest($1::text[]) AS m(id), LATERAL (
-  SELECT ev.seq, 'event'::text AS src, jsonb_build_object('id',ev.id,'executionId',ev.execution_id,'type',ev.type,'text',ev.payload->'text','blocks',ev.payload->'data'->'fleetNormalized'->'blocks','deltaOf',ev.payload->'data'->'fleetNormalized'->'deltaOf','closes',ev.payload->'data'->'fleetNormalized'->'closes','at',ev.updated_at,'sentBy',ev.payload->>'sentBy','attachments',ev.payload->'attachments') AS v
-  FROM event ev WHERE ev.execution_id=m.id AND ev.seq <= $2::bigint AND NOT ev.delta
+WITH pick AS (
+ SELECT x.seq, x.src, x.rid FROM (
+  SELECT d.seq, 'message'::text AS src, d.id AS rid FROM unnest($1::text[]) AS m(id), LATERAL (
+   SELECT mm.seq, mm.id FROM message mm WHERE mm.execution_id=m.id AND mm.seq <= $2::bigint ORDER BY mm.seq DESC LIMIT $3::int) d
+  UNION ALL
+  SELECT d.seq, 'event'::text, d.id FROM unnest($1::text[]) AS m(id), LATERAL (
+   SELECT ev.seq, ev.id FROM event ev WHERE ev.execution_id=m.id AND ev.seq <= $2::bigint AND NOT ev.delta
    AND (ev.type='execution.ended' OR jsonb_array_length(coalesce(ev.payload->'data'->'fleetNormalized'->'blocks','[]'::jsonb))>0)
-  ORDER BY ev.seq DESC LIMIT $3::int) d
- UNION ALL
- SELECT d.seq, d.src, d.v FROM unnest($1::text[]) AS m(id), LATERAL (
-  SELECT ev.seq, 'event-delta'::text AS src, jsonb_build_object('id',ev.id,'executionId',ev.execution_id,'type',ev.type,'text',ev.payload->'text','blocks',ev.payload->'data'->'fleetNormalized'->'blocks','deltaOf',ev.payload->'data'->'fleetNormalized'->'deltaOf','closes',ev.payload->'data'->'fleetNormalized'->'closes','at',ev.updated_at,'sentBy',ev.payload->>'sentBy','attachments',ev.payload->'attachments') AS v
-  FROM event ev WHERE ev.execution_id=m.id AND ev.seq <= $2::bigint AND ev.delta AND ev.payload->'data'->'fleetNormalized'->>'opens'='true'
-  ORDER BY ev.seq DESC LIMIT $3::int) d
- UNION ALL
- SELECT q.seq, 'question'::text, to_jsonb(q)-'data' FROM question q WHERE q.execution_id = ANY ($1::text[]) AND q.seq <= $2::bigint
- UNION ALL
- SELECT e.seq, 'execution'::text, jsonb_build_object('id',e.id) FROM execution e WHERE e.id = ANY ($1::text[]) AND e.seq <= $2::bigint
-) x ORDER BY x.seq DESC LIMIT $3::int
+   ORDER BY ev.seq DESC LIMIT $3::int) d
+  UNION ALL
+  SELECT d.seq, 'event-delta'::text, d.id FROM unnest($1::text[]) AS m(id), LATERAL (
+   SELECT ev.seq, ev.id FROM event ev WHERE ev.execution_id=m.id AND ev.seq <= $2::bigint AND ev.delta AND ev.payload->'data'->'fleetNormalized'->>'opens'='true'
+   ORDER BY ev.seq DESC LIMIT $3::int) d
+  UNION ALL
+  SELECT q.seq, 'question'::text, q.id FROM question q WHERE q.execution_id = ANY ($1::text[]) AND q.seq <= $2::bigint
+  UNION ALL
+  SELECT e.seq, 'execution'::text, e.id FROM execution e WHERE e.id = ANY ($1::text[]) AND e.seq <= $2::bigint
+ ) x ORDER BY x.seq DESC LIMIT $3::int
+)
+SELECT p.seq, p.src, (CASE p.src
+  WHEN 'message' THEN (SELECT jsonb_build_object('id',mm.id,'executionId',mm.execution_id,'type',NULL,'text',to_jsonb(mm.text),'blocks',NULL,'deltaOf',NULL,'closes',NULL,'at',mm.updated_at,'sentBy',mm.sent_by,'attachments',mm.payload->'attachments') FROM message mm WHERE mm.id=p.rid)
+  WHEN 'event' THEN (SELECT jsonb_build_object('id',ev.id,'executionId',ev.execution_id,'type',ev.type,'text',ev.payload->'text','blocks',ev.payload->'data'->'fleetNormalized'->'blocks','deltaOf',ev.payload->'data'->'fleetNormalized'->'deltaOf','closes',ev.payload->'data'->'fleetNormalized'->'closes','at',ev.updated_at,'sentBy',ev.payload->>'sentBy','attachments',ev.payload->'attachments') FROM event ev WHERE ev.id=p.rid)
+  WHEN 'event-delta' THEN (SELECT jsonb_build_object('id',ev.id,'executionId',ev.execution_id,'type',ev.type,'text',ev.payload->'text','blocks',ev.payload->'data'->'fleetNormalized'->'blocks','deltaOf',ev.payload->'data'->'fleetNormalized'->'deltaOf','closes',ev.payload->'data'->'fleetNormalized'->'closes','at',ev.updated_at,'sentBy',ev.payload->>'sentBy','attachments',ev.payload->'attachments') FROM event ev WHERE ev.id=p.rid)
+  WHEN 'question' THEN (SELECT to_jsonb(q)-'data' FROM question q WHERE q.id=p.rid)
+  ELSE jsonb_build_object('id',p.rid) END)::jsonb AS v
+FROM pick p ORDER BY p.seq DESC
 `
 
 type ThreadRowsBeforeParams struct {
@@ -585,6 +599,8 @@ type ThreadRowsBeforeRow struct {
 }
 
 // The rows of executions @ids from seq @from_seq down, nearest first, at most @lim per kind and execution and @lim in all.
+// Two steps: the page's rows are chosen by seq alone, then only those are built (a session of 250 runs built every
+// run's rows before the limit; event_thread_rows serves the event filter from the index).
 func (q *Queries) ThreadRowsBefore(ctx context.Context, arg ThreadRowsBeforeParams) ([]ThreadRowsBeforeRow, error) {
 	rows, err := q.db.Query(ctx, threadRowsBefore, arg.Ids, arg.FromSeq, arg.Lim)
 	if err != nil {
