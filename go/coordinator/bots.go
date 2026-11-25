@@ -60,9 +60,9 @@ func botList(q *Request, r *contract.BotListRequest) (contract.BotListReply, err
 			Revision:      int64(row.Revision),
 			Paused:        row.Paused,
 			HomeSessionId: row.HomeSessionID,
-			ActiveRunId:   row.ActiveRunID,
-			LastRunState:  row.LastRunState,
-			LastRunAt:     formatTimePtr(row.LastRunAt),
+			ActiveRunId:   optStr(row.ActiveRunID),
+			LastRunState:  optStr(row.LastRunState),
+			LastRunAt:     formatTimePtr(nonEpoch(row.LastRunAt.Time)),
 			Avatar:        botAvatarOf(row.AvatarArtifactID, row.AvatarMediaType, row.AvatarStillArtifactID, row.AvatarGlow),
 			NeedsYou:      row.NeedsYou,
 		})
@@ -281,4 +281,12 @@ func botMemorySave(q *Request, r *contract.BotMemorySaveRequest) (contract.BotMe
 	}
 	bot, err = readBot(q, r.BotId)
 	return contract.BotMemorySaveReply{Bot: bot}, err
+}
+
+// nonEpoch: a time a query gives as the epoch when there is none (BotList's LATERAL runs) as nil.
+func nonEpoch(t time.Time) *time.Time {
+	if t.Unix() == 0 {
+		return nil
+	}
+	return &t
 }

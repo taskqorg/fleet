@@ -33,7 +33,7 @@ WHERE b.id = $1;
 SELECT b.id, b.code, b.project_id, b.revision,
        hs.id AS home_session_id,
        b.paused, s.name, s.purpose,
-       ar.id AS active_run_id, lr.state AS last_run_state, lr.created_at AS last_run_at,
+       coalesce(ar.id, '')::text AS active_run_id, coalesce(lr.state::text, '')::text AS last_run_state, coalesce(lr.created_at, 'epoch'::timestamptz)::timestamptz AS last_run_at,
        av.id AS avatar_artifact_id, av.media_type AS avatar_media_type, b.avatar_still_artifact_id, b.avatar_glow,
        (coalesce(ar.state = 'waiting', false) OR EXISTS (
          SELECT 1 FROM question q WHERE q.state = 'open'
@@ -43,16 +43,19 @@ FROM bot b
 JOIN bot_revision s ON s.bot_id = b.id AND s.revision = b.revision
 LEFT JOIN artifact av ON av.id = b.avatar_artifact_id AND av.state = 'stored'
 LEFT JOIN session hs ON hs.id = b.home_session_id AND hs.tombstoned_at IS NULL
-LEFT JOIN bot_run ar ON ar.id = (
-  SELECT r.id FROM bot_run r
+-- Each bot's active and latest run read in place (LATERAL over bot_run_bot_seq): joining bot_run by an id subquery
+-- made the planner hash every run of every bot, each through bot_run's row policies (2 x 21 ms for 287 runs, prod
+-- db_explain 2026-11-26). LATERAL columns read as not null to sqlc, so the missing ones come as '' and the epoch.
+LEFT JOIN LATERAL (
+  SELECT r.id, r.state, r.execution_id FROM bot_run r
   WHERE r.bot_id = b.id AND r.tombstoned_at IS NULL AND r.execution_id IS NOT NULL AND r.state IN ('queued', 'running', 'waiting')
   ORDER BY r.seq DESC LIMIT 1
-)
-LEFT JOIN bot_run lr ON lr.id = (
-  SELECT r.id FROM bot_run r
+) ar ON true
+LEFT JOIN LATERAL (
+  SELECT r.state, r.created_at FROM bot_run r
   WHERE r.bot_id = b.id AND r.tombstoned_at IS NULL
   ORDER BY r.seq DESC LIMIT 1
-)
+) lr ON true
 WHERE (sqlc.narg(project_id)::text IS NULL OR b.project_id = sqlc.narg(project_id))
   AND (coalesce(cardinality(sqlc.arg(project_ids)::text[]), 0) = 0 OR b.project_id = ANY (sqlc.arg(project_ids)))
   AND NOT (b.project_id = ANY (coalesce(sqlc.arg(exclude_project_ids)::text[], ARRAY[]::text[])))
