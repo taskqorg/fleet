@@ -90,7 +90,7 @@ Bugsink alerts (new issue, regression, unmute; [alerts](https://www.bugsink.com/
 
 ## Verification
 
-`go test ./coordinator -run 'TestBugsink|TestErrorsSetting|TestClientErrorStoreDropped'` (tunnel DSN check, size, forwarding and actor; webhook secret, fixed text, regression and the resolution pass; the setting; migration 66), `go test ./gateway -run 'TestBugsinkCatalogue|TestTextReply'` (each catalogue tool's path, bearer and id checks against a fake Bugsink), `go test ./errtrack` (no DSN no events; pass errors and panics as events), `go test ./update -run TestUploadSourcemaps` (the artifact bundle against a fake Bugsink; no settings, no upload; a refusal is a warning), and the browser check `node tests/ui/errors.check.ts` (a thrown error and a render crash reach a fake Bugsink through `/api/errors` for the configured DSN, with the person and the debug ID).
+`go test ./coordinator -run TestErrorsSetting` (the setting), `go test ./gateway -run 'TestBugsinkCatalogue|TestTextReply'` (each catalogue tool's path, bearer and id checks against a fake Bugsink) and `go test ./errtrack` (no DSN no events; pass errors and panics as events). The tunnel, the alert webhook, source maps and browser errors reaching Bugsink are checked live on the deployed site.
 
 ## Not built
 

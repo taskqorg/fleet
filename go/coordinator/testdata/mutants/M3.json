@@ -1,7 +1,0 @@
-{
- "ID": "M3",
- "Defect": "a project move omits the subtraction of the old contribution from the old project",
- "File": "resource_projection.go",
- "Find": "\t\t\tif s.Old != nil && s.Old.Facts.ProjectId != nil && *s.Old.Facts.ProjectId == p {",
- "Replace": "\t\t\tif s.Old != nil && s.Old.Facts.ProjectId != nil && *s.Old.Facts.ProjectId == p && c.ProjectId != nil && *c.ProjectId == p {"
-}

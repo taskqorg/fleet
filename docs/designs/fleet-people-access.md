@@ -272,7 +272,7 @@ Slices 1-4 land before any non-owner host joins.
 | 7 Readings | `limit_reading`, limits view | not built |
 | 8 Simon's PC | WSL2 executor with Claude allowed | not built |
 
-Tests: the outside tests in `tests/go` and `tests/trial`.
+Tests: the smoke in `tests/trial`.
 
 ## Provider terms
 

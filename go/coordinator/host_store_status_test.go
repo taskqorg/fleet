@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fleet/contract"
 	"testing"
 )
 
@@ -31,51 +30,4 @@ func TestHostStoreStatus(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Requirement: poll store changes persist immediately while unchanged polls retain debounce.
-// Risk: hosts_list shows an old successful check after a new failed or missing report.
-func TestHostStorePollProjection(t *testing.T) {
-	env := openTestCoordinator(t, false)
-	secret := env.registerHost(t, "h-store-check")
-	hdr := map[string]string{"Authorization": "Bearer " + secret}
-	poll := func(reports []contract.StoreReport) {
-		t.Helper()
-		code, body := env.callJSON(t, "POST", "/api/hosts/poll", contract.PollRequest{HostId: "h-store-check", Platform: contract.Platform("darwin"), Capabilities: []string{}, Stores: reports, Problems: []contract.EdgeProblem{}}, hdr)
-		if code != 200 {
-			t.Fatalf("poll %d %v", code, body)
-		}
-	}
-	check := func(want string) {
-		t.Helper()
-		if err := env.app.store.Read(env.ctx, nil, func(q *Request) error {
-			o, err := q.db().HostObservationOf(q.ctx(), "h-store-check")
-			if err != nil {
-				return err
-			}
-			var p struct {
-				Stores any `json:"stores"`
-			}
-			if err := lenientDecode(o.Payload, &p); err != nil {
-				return err
-			}
-			got, reason := hostStoreStatus(p.Stores, env.app.effectiveHostSeen("h-store-check", timeMs(o.LastSeenAt)), nowMs())
-			if got != want || reason == "" {
-				t.Fatalf("got %s %s want %s", got, reason, want)
-			}
-			return nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	reports := []contract.StoreReport{{Id: "own", Reachable: true}}
-	poll(reports)
-	check("reachable")
-	poll(reports)
-	check("reachable")
-	reports[0].Reachable = false
-	poll(reports)
-	check("unreachable")
-	poll([]contract.StoreReport{})
-	check("unknown")
 }

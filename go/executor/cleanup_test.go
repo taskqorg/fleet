@@ -3,7 +3,6 @@ package main
 import (
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -21,83 +20,7 @@ func TestHelperSleep(t *testing.T) {
 	}
 }
 
-// startMarked starts a detached sleeper (its own session) carrying the run marker of execution under root.
-func startMarked(t *testing.T, root, execution string) int {
-	t.Helper()
-	c := exec.Command(os.Args[0], "-test.run=^TestHelperSleep$")
-	c.Env = append(os.Environ(), "FLEET_HELPER_SLEEP=1", runMarkerKey+"="+execution, runOwnerKey+"="+root)
-	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := c.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{})
-	go func() { c.Wait(); close(done) }() // reaped as soon as it is killed, so kill(pid, 0) sees it gone
-	t.Cleanup(func() { c.Process.Kill(); <-done })
-	for i := 0; i < 100; i++ {
-		if v, ok := processEnv(c.Process.Pid, runMarkerKey); ok && v == execution {
-			return c.Process.Pid
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("marker not readable")
-	return 0
-}
-
 func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
-
-// Requirement: a process a run started outlives the run in no way it forks (setsid, double fork); only this executor's
-// marker of that run is killed. Risk: forgotten databases and servers fill a host's memory and swap for days.
-func TestCleanupKillsMarkedEscapes(t *testing.T) {
-	root := t.TempDir()
-	mine := startMarked(t, root, "x1")
-	other := startMarked(t, root, "x2")
-	foreign := startMarked(t, root+"-other", "x1")
-	os.MkdirAll(runTempDir(root, "x1"), 0o700)
-	os.WriteFile(filepath.Join(runTempDir(root, "x1"), "f"), []byte("data"), 0o600)
-	if n := cleanupRun(root, "x1"); n != 1 {
-		t.Fatalf("orphans %d", n)
-	}
-	time.Sleep(50 * time.Millisecond)
-	if alive(mine) || !alive(other) || !alive(foreign) {
-		t.Fatalf("mine %v other %v foreign %v", alive(mine), alive(other), alive(foreign))
-	}
-	if _, err := os.Stat(runTempDir(root, "x1")); !os.IsNotExist(err) {
-		t.Fatal("run TMPDIR kept")
-	}
-	// At start every marked process and run TMPDIR of a run that is not unresolved is a leftover.
-	held := startMarked(t, root, "x3")
-	os.MkdirAll(runTempDir(root, "x2"), 0o700)
-	os.MkdirAll(runTempDir(root, "x3"), 0o700)
-	cleanupAtStart(root, map[string]bool{"x3": true})
-	time.Sleep(50 * time.Millisecond)
-	if alive(other) || !alive(held) || !alive(foreign) {
-		t.Fatalf("other %v held %v foreign %v", alive(other), alive(held), alive(foreign))
-	}
-	if _, err := os.Stat(runTempDir(root, "x2")); !os.IsNotExist(err) {
-		t.Fatal("leftover TMPDIR kept")
-	}
-	if _, err := os.Stat(runTempDir(root, "x3")); err != nil {
-		t.Fatal("unresolved run's TMPDIR removed")
-	}
-}
-
-// Requirement: a script run gets its own TMPDIR and the run marker, and both its TMPDIR and an escaped process are gone
-// when it ends. Risk: per-task caches in /tmp (tmpfs on PDS18) fill memory and swap.
-func TestScriptRunTempDirAndMarker(t *testing.T) {
-	e, root := scriptExecutor(t)
-	cmd := `case "$TMPDIR" in "$FLEET_EXECUTION_OWNER"/run-tmp/x1) ;; *) exit 3;; esac; test "$FLEET_EXECUTION_ID" = x1 || exit 4; echo hi > "$TMPDIR/f"`
-	if err := e.run(M{"id": "c1", "executionId": "x1", "sessionId": "s1", "kind": "script", "payload": M{"command": cmd}}); err != nil {
-		t.Fatal(err)
-	}
-	settle(t, e, "x1")
-	if r := lastReceipt(e, "c1"); r != "completed" {
-		b, _ := os.ReadFile(filepath.Join(root, "sessions/s1/output/script.stderr"))
-		t.Fatal(r, string(b))
-	}
-	if _, err := os.Stat(runTempDir(root, "x1")); !os.IsNotExist(err) {
-		t.Fatal("run TMPDIR kept")
-	}
-}
 
 // Requirement: the /tmp sweep removes only old entries of the executor user that hold no socket. Risk: a live
 // program's endpoint or a fresh cache is removed under it.

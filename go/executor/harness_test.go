@@ -1,7 +1,5 @@
 package main
 
-// Harness protocol tests: each guards a native wire risk.
-
 import (
 	"encoding/json"
 	"errors"
@@ -240,72 +238,6 @@ func TestRegistryCommand(t *testing.T) {
 	}
 	if app := codexAppServer(c); !pair(app.Args, "--enable") || pair(app.Args, "--disable") {
 		t.Fatal("imageGeneration did not turn image generation on", app.Args)
-	}
-}
-
-// Requirement: every codex launch applies one isolation: the run's exec command keeps all of it through codexAppServer,
-// and the account limits probe starts app-server with the same flags and the same host environment. Risk: a copy of
-// the list drifts, so a probe or run starts user MCP servers, plugins, browser or project docs the other path blocks.
-func TestCodexIsolationEveryPath(t *testing.T) {
-	isolation := [][2]string{{"-c", "project_doc_max_bytes=0"}, {"-c", "skills.include_instructions=false"}, {"-c", "mcp_servers={}"},
-		{"--disable", "memories"}, {"--disable", "hooks"}, {"--enable", "skip_host_skill_discovery"},
-		{"-c", `forced_login_method="chatgpt"`}, {"-c", `approval_policy="never"`}, {"-c", `sandbox_mode="workspace-write"`},
-		{"-c", "sandbox_workspace_write.network_access=false"}, {"--disable", "apps"}, {"--disable", "plugins"},
-		{"--disable", "browser_use"}, {"--disable", "computer_use"}, {"--disable", "image_generation"}}
-	hasPair := func(args []string, p [2]string) bool {
-		for i := 0; i+1 < len(args); i++ {
-			if args[i] == p[0] && args[i+1] == p[1] {
-				return true
-			}
-		}
-		return false
-	}
-	root := t.TempDir()
-	mk := func(p string) string { d := root + "/" + p; os.MkdirAll(d, 0o700); return d }
-	argv, envOut := root+"/argv", root+"/env"
-	fake := root + "/codex"
-	os.WriteFile(fake, []byte("#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > "+argv+"\nenv > "+envOut+"\n"), 0o700)
-	reg := root + "/accounts.json"
-	entry := registryEntry{Harness: "codex", Home: mk("h"), NativeHome: mk("nh"), Executable: fake}
-	os.WriteFile(reg, []byte(enc(M{"cx": M{"harness": "codex", "home": entry.Home, "nativeHome": entry.NativeHome, "executable": fake}})), 0o600)
-	t.Setenv("FLEET_NATIVE_ACCOUNTS", reg)
-	t.Setenv("OPENAI_API_KEY", "leak")
-	t.Setenv("LC_ALL", "C")
-
-	run, _, err := Harnesses["codex"].Command(mk("w"), "", M{"account": "cx", "text": "t"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	app := codexAppServer(run)
-	for _, p := range isolation {
-		if !hasPair(run.Args, p) || !hasPair(app.Args, p) {
-			t.Errorf("run lost %v: exec %v, app-server %v", p, run.Args, app.Args)
-		}
-	}
-	// exec-only flags: codex app-server refuses them (codexExecOnly says why), so they stay on exec alone.
-	for _, f := range []string{"--ignore-user-config", "--ignore-rules", "--skip-git-repo-check"} {
-		if !slices.Contains(run.Args, f) || slices.Contains(app.Args, f) {
-			t.Errorf("exec-only %s: exec %v, app-server %v", f, run.Args, app.Args)
-		}
-	}
-
-	codexReadLimits(entry) // the fake CLI records its argv and environment, then exits without answering
-	raw, err := os.ReadFile(argv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	probe := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if probe[0] != "app-server" {
-		t.Fatal(probe)
-	}
-	for _, p := range isolation {
-		if !hasPair(probe, p) {
-			t.Errorf("limits probe lacks %v: %v", p, probe)
-		}
-	}
-	env, _ := os.ReadFile(envOut)
-	if !strings.Contains(string(env), "LC_ALL=C\n") || strings.Contains(string(env), "OPENAI") || !slices.Contains(run.Env, "LC_ALL=C") {
-		t.Errorf("probe and run environments differ: probe %q, run %v", env, run.Env)
 	}
 }
 

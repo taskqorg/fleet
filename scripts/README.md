@@ -8,14 +8,10 @@ Build, CI, documentation, Lab import and delivery tools run from the repository 
 
 | Source | Entry or exported boundary |
 |---|---|
-| [ci-job.sh](ci-job.sh), [ci-part.sh](ci-part.sh) | Shared workflow commands: app/browser/release jobs and Go build/test parts; workflow setup remains in `.github/workflows/`. |
-| [ci-failfast.ts](ci-failfast.ts) | `findSiblingFailure`, `shouldPoll`; CLI wraps heavy `merge_group` commands to abort sibling jobs on failure, `--self-check`. |
-| [test-selection.ts](test-selection.ts) | `comparison`, `changedPaths`, `select`, `execution`, `makePlan`, `run`, `previousResult`, `queueQualified`, `verifyEvidence`: exact-candidate family selection and evidence validation; CLI emits a plan or accepts `--verify`. |
-| [pds18-route.ts](pds18-route.ts) | `FAMILIES`, `plan`, `dead`; CLI emits runner matrices, `--watch` cancels stalled pool runs, `--self-check` checks routing fixtures. |
+| [check.sh](check.sh) | Every check of a change, the same in CI (jobs `go` and `app`) and locally: `scripts/check.sh [go|app]` ([checks per change](../docs/designs/fleet-delivery-pipeline.md#checks-per-change)). |
 | [design-report-comment.ts](design-report-comment.ts) | `diffReport`, `appNotRun`, `comment`: the PR design report comment against the latest `main` artifact (new, fixed, changed figures; standing report folded); `--self-check`. |
 | [docs-report.ts](docs-report.ts) | `kind`, `linkFixOnly`, `anchors`, `links`; CLI `--base <ref>` or `--self-check`. |
 | [ui-context.ts](ui-context.ts) | `rules`, `principles`, `cited`, `refs`, `links`, `section`, `context`; CLI `<page>` prints the minimal reading for one page (spec, canvas, blocks, controls, patterns, cited rule texts). |
-| [test-rule-report.ts](test-rule-report.ts) | Static test metadata inventory; `--strict` fails missing requirement/risk annotations in outside tests; `--self-check`. |
 | [lab-drift.ts](lab-drift.ts) | `Source`, `Status`, `slug`, `section`, `hash`, `repoDir`, `current`, `check`, `registryDir`, `loadRegistry`, `run`; CLI can report, `--write`, or `--pin` registry sources. |
 | [lab-example-format.ts](lab-example-format.ts) | `ExampleFile`, `Example`, `useCaseIds`, `parseExample`: validated canonical Lab inputs. |
 | [lab-export.ts](lab-export.ts) | `parseExport`, `examplesFromExport`: version-1 project exports to inline examples. |
@@ -29,9 +25,6 @@ Build, CI, documentation, Lab import and delivery tools run from the repository 
 
 ## Invariants
 
-- `test-selection.ts:makePlan` falls back to all families on unknown comparison/history; `verifyEvidence` checks the candidate, policy and executed jobs. `run` executes selected families on `pull_request` and `merge_group`, deferring only `merge_group`-qualified `push` runs.
-- `ci-failfast.ts` polls workflow jobs only on `merge_group` when `GH_TOKEN` is set, ignoring transient API errors and 401/403 responses while terminating the wrapped process group on sibling failure.
-- `pds18-route.ts:plan` gives no pool slots to untrusted events or an unavailable pool. Workflow admission remains a separate boundary; routing is not a security grant.
 - `lab-example-format.ts:parseExample` rejects unknown use cases, duplicate paths/check IDs and invalid relative paths. `lab-examples.ts:fileBytes` checks binary seed hashes.
 - `lab-examples.ts:checkExample` checks the reference and untouched input separately; examples with no script checks remain owner/judge-rated.
 - `design-report-comment.ts` and the J1–J5 walk report information only: a missing baseline, artifact or token becomes a line of text, never a failure.
@@ -39,10 +32,9 @@ Build, CI, documentation, Lab import and delivery tools run from the repository 
 
 ## Side Effects
 
-CI commands install dependencies, build binaries, start test databases/containers and run checks. Lab example checks execute shell commands in temporary directories; import sends approved examples to the coordinator. Registry `--write` and `--pin` edit configuration. Key tools write secret files or call the deployed app. Delivery tools read GitHub/site/journal data and fetch Git refs; the pool watchdog can cancel its workflow run and `ci-failfast.ts` can terminate its wrapped child process group on sibling failure. Do not run mutating commands merely to inspect their interface.
+`check.sh` installs dependencies, builds binaries, starts a test database and runs checks. Lab example checks execute shell commands in temporary directories; import sends approved examples to the coordinator. Registry `--write` and `--pin` edit configuration. Key tools write secret files or call the deployed app. Delivery tools read GitHub/site/journal data and fetch Git refs. Do not run mutating commands merely to inspect their interface.
 
 ## Verification
 
 Documentation changes: `node scripts/docs-report.ts --base origin/main` and `git diff --check`.
-Existing focused checks: `node scripts/ci-failfast.ts --self-check`, `node scripts/docs-report.ts --self-check`, `node scripts/pds18-route.ts --self-check`, `node scripts/test-rule-report.ts --self-check`, `node --test tests/ui/test-selection.test.ts`.
-The full CI gate belongs on CI, not the owner's Mac; see [fleet.md](../fleet.md).
+Every change: `scripts/check.sh` (about a minute; [fleet.md](../fleet.md#verification)).

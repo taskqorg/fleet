@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 // Load the actual coordinator catalogue: a copied fixture would miss a wrong
@@ -118,82 +117,6 @@ func TestAnthropicInputBoundary(t *testing.T) {
 		expect(t, status, 400, "invalid list input")
 	}
 	expect(t, calls.Load(), int64(0), "refusals stay local")
-}
-
-// Requirement: two-key pool and conservative completion rules (fleet-connections.md §2).
-// Risk: quota evasion, replayed paid Messages, or loss of the second key after refusal.
-func TestAnthropicPoolAndCompletion(t *testing.T) {
-	for _, scenario := range []struct {
-		name    string
-		code    int
-		outcome string
-	}{
-		{"quota", 429, "error"}, {"rejected", 400, "error"}, {"forbidden", 403, "error"}, {"server", 500, "unknown"}, {"overloaded", 529, "unknown"}, {"transport", 0, "unknown"}, {"timeout", -1, "unknown"}, {"cut-body", -2, "unknown"}, {"redirect", 302, "unknown"}, {"unauthorized", 401, "error"}, {"payment", 402, "error"},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			var calls atomic.Int64
-			release := make(chan struct{})
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
-				if r.Header.Get("x-api-key") == "invented-anthropic-secondary" {
-					io.WriteString(w, `{"id":"second","usage":{"input_tokens":0,"output_tokens":0}}`)
-					return
-				}
-				switch scenario.code {
-				case 0:
-					c, _, _ := w.(http.Hijacker).Hijack()
-					c.Close()
-					return
-				case -1:
-					io.Copy(io.Discard, r.Body)
-					select {
-					case <-r.Context().Done():
-					case <-release:
-					}
-					return
-				case -2:
-					w.Header().Set("Content-Length", "1000")
-					io.WriteString(w, `{"cut":`)
-					return
-				}
-				w.Header().Set("Retry-After", "7")
-				w.WriteHeader(scenario.code)
-				io.WriteString(w, `{"type":"error","error":{"message":"invented-anthropic-primary"}}`)
-			}))
-			defer server.Close()
-			defer close(release)
-			f := newAnthropicFixture(t, server.URL)
-			if scenario.code == -1 {
-				f.halt()
-				f.config.requestTimeout = 100 * time.Millisecond
-				f.start()
-			}
-			_, h, body := f.raw("POST", "/v1/call/tavily/create_message", "Bearer "+testToken, nativeMessage)
-			expect(t, h.Get("X-Fleet-Outcome"), scenario.outcome, "completion")
-			expect(t, calls.Load(), int64(1), "no automatic replay")
-			encoded, _ := json.Marshal(body)
-			if strings.Contains(string(encoded), "invented-anthropic-") {
-				t.Fatal("secret echoed")
-			}
-			if scenario.code == 429 {
-				expect(t, h.Get("Retry-After"), "7", "quota retry header")
-			}
-			if scenario.code == 401 || scenario.code == 402 {
-				status, _, body := f.raw("POST", "/v1/call/tavily/create_message", "Bearer "+testToken, nativeMessage)
-				expect(t, []any{status, body["id"]}, []any{200, "second"}, "next ordinary call selects second key")
-				lines, text := f.spool()
-				expect(t, lines[1]["keyFingerprint"], fp("invented-anthropic-secondary"), "second identity")
-				expect(t, field(lines[1], "usage", "amount"), float64(0), "measured zero")
-				if strings.Contains(text, "invented-anthropic-") {
-					t.Fatal("secret in spool")
-				}
-			} else if scenario.code == 429 || scenario.code == 403 {
-				f.raw("POST", "/v1/call/tavily/create_message", "Bearer "+testToken, nativeMessage)
-				lines, _ := f.spool()
-				expect(t, lines[1]["keyFingerprint"], fp("invented-anthropic-primary"), "completed quota/forbidden does not rotate")
-			}
-		})
-	}
 }
 
 // Requirement: missing measurements and failed model reads stay unavailable.

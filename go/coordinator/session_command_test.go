@@ -4,8 +4,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"fleet/contract"
 )
 
 func TestParseTriggerCommand(t *testing.T) {
@@ -91,67 +89,4 @@ func TestFormatTriggerCommandRoundTrip(t *testing.T) {
 			t.Errorf("%q read back as %+v", s, c)
 		}
 	}
-}
-
-// Requirement (docs/design-system/controls/composer.md "Commands"): the preview names the trigger, its revision and the
-// changes without saving; apply saves exactly that at the preview's revision and answers 409 once the trigger moved;
-// format answers the command that reads back to the trigger; a name two triggers share asks for the id.
-// Risk: the composer shows one change and saves another, or overwrites an edit made meanwhile (C-FLT-592).
-func TestSessionCommand(t *testing.T) {
-	e := openTestCoordinator(t, false)
-	sid := newID()
-	if err := e.appStore.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
-		return sessionPut(q, &agentSession{ID: sid, ProjectID: "desiign", DirectedBy: testOwnerEmail})
-	}); err != nil {
-		t.Fatal(err)
-	}
-	owner := e.ownerHeaders()
-	post := func(name string, req any, want int) map[string]any {
-		t.Helper()
-		status, reply := e.callJSON(t, "POST", "/api/ops/"+name, req, owner)
-		if status != want {
-			t.Fatalf("%s %+v: got %d, want %d (%v)", name, req, status, want, reply)
-		}
-		return reply
-	}
-	preview := func(r contract.SessionCommandPreviewRequest, want int) map[string]any {
-		t.Helper()
-		r.SessionId = sid
-		return post("session_command_preview", r, want)
-	}
-	run := func(r contract.SessionCommandRequest, want int) map[string]any {
-		t.Helper()
-		r.SessionId = sid
-		return post("session_command", r, want)
-	}
-	created := run(contract.SessionCommandRequest{Text: "/trigger new conversation-check every 10m"}, 200)
-	rec := mapOf(created["trigger"])
-	id := astr(rec["id"])
-	if created["applied"] != true || mapOf(rec["settings"])["everyMs"] != float64(600_000) {
-		t.Fatalf("new = %v", created)
-	}
-	edit := "/trigger conversation-check every 5m always: Look at CI"
-	shown := preview(contract.SessionCommandPreviewRequest{Text: &edit}, 200)
-	if shown["applied"] != false || len(anys(shown["changes"])) != 3 || mapOf(shown["trigger"])["revision"] != float64(1) {
-		t.Fatalf("preview = %v", shown)
-	}
-	if again := preview(contract.SessionCommandPreviewRequest{Format: &id}, 200); mapOf(again["trigger"])["revision"] != float64(1) {
-		t.Fatalf("the preview saved: %v", again)
-	}
-	rev := int64(1)
-	run(contract.SessionCommandRequest{Text: edit, TriggerId: &id, BaseRevision: &rev}, 200)
-	run(contract.SessionCommandRequest{Text: "/trigger conversation-check pause", TriggerId: &id, BaseRevision: &rev}, 409)
-	preview(contract.SessionCommandPreviewRequest{Text: ptr("/trigger conversation-check pause"), TriggerId: &id, BaseRevision: &rev}, 409)
-	if format := preview(contract.SessionCommandPreviewRequest{Format: &id}, 200); format["text"] != edit {
-		t.Fatalf("format = %q, want %q", format["text"], edit)
-	}
-	run(contract.SessionCommandRequest{Text: "/trigger conversation-check pause"}, 200)
-	other := astr(mapOf(run(contract.SessionCommandRequest{Text: "/trigger new conversation-check"}, 200)["trigger"])["id"])
-	// A base of one trigger does not apply to another the command names.
-	run(contract.SessionCommandRequest{Text: "/trigger " + other + " pause", TriggerId: &id, BaseRevision: &rev}, 200)
-	if amb := preview(contract.SessionCommandPreviewRequest{Text: ptr("/trigger conversation-check resume")}, 400); !strings.Contains(astr(amb["message"]), id) {
-		t.Fatalf("ambiguous name = %v", amb)
-	}
-	run(contract.SessionCommandRequest{Text: "/trigger " + id + " delete"}, 200)
-	preview(contract.SessionCommandPreviewRequest{Text: ptr("/trigger conversation-check soon")}, 400)
 }

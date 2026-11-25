@@ -337,35 +337,19 @@ Go rules:
 - One Go module (`go/`), one `go.sum`; builds use `-mod=readonly`; the default checksum database stays on; `govulncheck` runs in CI as a warning.
 - Contract types are generated from `contracts/*.schema.json` by `go/gen`; the Go files (`go/contract/*_gen.go`) are committed and CI fails when `go generate` changes them. A conflict in a generated file is resolved by running `go generate`, never by hand.
 - Release binaries are built with `-trimpath` in one Linux CI job, each with a SHA-256 file: the coordinator for linux/amd64, darwin/arm64 and windows/amd64; the executor and the gateway for linux/amd64 and darwin/arm64. No macOS runner.
-- Tests are outside tests over HTTP against a real Postgres (`tests/trial/`, `tests/go/`, the app checks in `tests/ui/`, all through `tests/harness.ts`); each names its requirement and risk.
+- Checks per change: build, static checks, fast Go and app unit tests and one smoke of the real coordinator binary over HTTP (`tests/trial/slice.test.ts` through `tests/harness.ts`) ([checks per change](docs/designs/fleet-delivery-pipeline.md#checks-per-change)).
 
 ## Verification
 
 Pull requests reach `main` only through the GitHub merge queue. A worker runs `/code-review` before it opens its pull request and enables auto-merge on it after the `code-review` status; the orchestrator can take any pull request out of the queue. Branches are rebased on `main`, never merged with it, and are not stacked ([delivery pipeline](docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests)).
 
-The full fallback merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && (cd go && go generate ./... && test -z "$(git status --porcelain)" && go vet ./... && FLEET_REQUIRE_PG=1 FLEET_PG_FIXTURES=outside CGO_ENABLED=1 go test -race ./...) && pnpm test`. CI splits it into the jobs `go`, `app` and `browser` and builds the outside-test coordinator with `-race`.
+Every change passes `scripts/check.sh` (`pnpm run check`), the same in CI and locally: `go generate` leaves no diff, `go vet`, the four binaries built with `CGO_ENABLED=0`, `go test ./...` (design rules, pure logic, the schema drift checks), the smoke `node tests/trial/run.ts` (the coordinator binary on a fresh database, 11 checks over HTTP and SSE), typecheck and bundle, the app unit tests. The `go` part needs the PostgreSQL server programs on `PATH` or under `/usr/lib/postgresql` (the smoke and the schema drift checks start the machine's test server). CI runs it as the two required jobs `go` and `app` on every pull request and merge group, about a minute each, with no test selection and no race build ([checks per change](docs/designs/fleet-delivery-pipeline.md#checks-per-change)). The release builds the archives, runs the Linux selftests and the migration check after the merge.
 
-`FLEET_REQUIRE_PG=1` fails a PostgreSQL Go test that would skip; `FLEET_PG_FIXTURES=outside` leaves the Go halves of outside tests to `pnpm test` ([coordinator verification](go/coordinator/README.md#verification)).
+`pnpm run build` runs `app:build` (typecheck and bundle) and `go:build` (the four Go binaries in `go/bin/`).
 
-`pnpm run build` runs `app:build` (typecheck and bundle) and `go:build` (the four Go binaries in `go/bin/`). `pnpm test` runs the app unit tests and `tests/go/run.sh`: the binary on a fresh database of a local PostgreSQL server (server programs on `PATH`, `tests/harness.ts`), with `tests/trial` and `tests/go` over HTTP.
+A behavior change proves itself on the deployed site: its task names the live check (`Landing: wait — live check: <what>`) and the worker runs it on `https://fleet.ufobe.com` after the release lands.
 
-CI records an exact-candidate impact plan from `scripts/test-selection.ts`. The core runs contract lint, test metadata/self-checks, selector fixtures and documentation checks; candidates that execute app tests also run the pure view-URL check. Required `go`, `app` and `browser` statuses validate the plan and actual results before release.
-
-After successful exact-base CI, prose uses the core; app/src and packages/ui use app and browser checks; executor, gateway, updater, obs and Go test-only edits use go; the merge queue's release build keeps native archive builds, selftests and migration checks.
-
-Non-test coordinator changes, shared Go/runtime/contracts/config, new tests, selector changes and unknown history, impact, paths or comparisons run the full fallback. Mixed known changes use their union. Nonempty `FLEET_TEST_FULL` restores full execution.
-
-Pull requests execute their selected families directly before entering the queue. Merge-queue runs enable matrix fail-fast and abort sibling heavy jobs as soon as any required family fails.
-
-[Selected-gate qualification](docs/designs/fleet-delivery-pipeline.md#selected-gate-qualification) defines the narrow rollout and rollback. Native archives, migrations, provenance and signing remain checked before publication.
-
-The full gate runs in CI on the pull request, never on the owner’s Mac: several agents work there at once, and each full run takes about 1.5 cores and 1 GB per test file. Locally run only the build and the checks the task names, each set once ([owner directive](AGENTS.md)); push and read the CI result for everything else.
-
-The full gate has a diagnostic elapsed-time budget of 180 s on an idle Mac (arm64), including setup, build and tests. Exceeding it calls for diagnosis; it is never a timeout or a skip rule.
-
-Each persistent test names the requirement and the risk it protects; follow [specq Testing](https://github.com/taskqorg/specq/blob/1fc3716cc0971f8ca11f313d383db09751ffc132/engineering/testing.md).
-
-A worker adds a test only when its task asks for one; otherwise at most one invariant check where a check is needed. This project rule takes precedence over the specq rule to keep a regression check for non-trivial logic. CI fails on an outside test in `tests/go/` that misses either name and reports other tests as warnings.
+A worker adds a test only when its task asks for one; without such a task it adds none, of any kind. A requested test is a design rule, pure logic or one more smoke step, and keeps the check within its minute. A test that failed once and passed on the same head is deleted in the next change. This project rule takes precedence over the specq testing rule.
 
 ## Linked detail
 

@@ -1,6 +1,6 @@
 # Side panel
 
-**Code.** `SidePanel`, `PanelToggle`, `ResizeDivider`, `PanelSheet` and the `SidePanels` store in `packages/ui/src/controls/side-panel.tsx`. `AppShell` provides the store and builds the navigation rail from the same parts. Check: `tests/ui/side-panel.check.ts`.
+**Code.** `SidePanel`, `PanelToggle`, `ResizeDivider`, `PanelSheet` and the `SidePanels` store in `packages/ui/src/controls/side-panel.tsx`. `AppShell` provides the store and builds the navigation rail from the same parts.
 
 **Purpose.** Every column that opens and closes beside the page is one side panel, so all of them behave the same way. Today there are two: the navigation rail on the left and the session's [context panel](context-panel.md) on the right ([OR-41](../owner-rules.md), [OR-42](../owner-rules.md)).
 

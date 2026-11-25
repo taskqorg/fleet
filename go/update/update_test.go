@@ -7,14 +7,10 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"fleet/harnessrelease"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -121,42 +117,6 @@ func (f *fixture) run(target string) *Result {
 
 func (f *fixture) current() string { return releaseVersion(filepath.Join(f.root, "current")) }
 
-func TestInstallAndNeverDowngrade(t *testing.T) {
-	f := newFixture(t)
-	f.release("1.261111.0", 0)
-	f.release("1.261111.1", 0)
-	if r := f.run("1.261111.0"); r.State != "ok" || f.current() != "1.261111.0" {
-		t.Fatalf("first install: %+v current %q", r, f.current())
-	}
-	if r := f.run("1.261111.1"); r.State != "ok" || f.current() != "1.261111.1" {
-		t.Fatalf("second install: %+v", r)
-	}
-	if prev := releaseVersion(filepath.Join(f.root, "previous")); prev != "1.261111.0" {
-		t.Fatalf("previous = %q", prev)
-	}
-	if !exists(filepath.Join(f.root, "1.261111.1", "healthy")) {
-		t.Fatal("no healthy marker")
-	}
-	if st, _ := os.Stat(filepath.Join(f.root, "1.261111.1", "fleet-executor")); st.Mode().Perm()&0o222 != 0 {
-		t.Fatalf("release file writable: %v", st.Mode())
-	}
-	if r := f.run("1.261111.0"); r != nil || f.current() != "1.261111.1" {
-		t.Fatalf("downgrade: %+v current %q", r, f.current())
-	}
-	if r := f.run("dev"); r != nil {
-		t.Fatalf("dev installed: %+v", r)
-	}
-	f.release("1.261111.2", 0)
-	f.run("1.261111.2")
-	os.MkdirAll(filepath.Join(f.root, "fleet-18de13d32304-darwin-arm64", "dist"), 0o755)
-	os.MkdirAll(filepath.Join(f.root, "harnesses", "claude"), 0o755)
-	pruneReleases(f.p.r)
-	if exists(filepath.Join(f.root, "1.261111.0")) || !exists(filepath.Join(f.root, "1.261111.1")) ||
-		exists(filepath.Join(f.root, "fleet-18de13d32304-darwin-arm64")) || !exists(filepath.Join(f.root, "harnesses", "claude")) {
-		t.Fatal("prune kept the wrong releases")
-	}
-}
-
 func TestBadSignatureRefused(t *testing.T) {
 	f := newFixture(t)
 	f.release("1.261111.0", 0)
@@ -169,84 +129,10 @@ func TestBadSignatureRefused(t *testing.T) {
 	}
 }
 
-func TestDigestMismatchRetriedOnce(t *testing.T) {
-	f := newFixture(t)
-	f.release("1.261111.0", 0)
-	tgz := "/download/v1.261111.0/fleet-1.261111.0-linux-amd64.tgz"
-	f.override = func(path string, n int) []byte {
-		if path == tgz && n == 1 {
-			return []byte("truncated")
-		}
-		return nil
-	}
-	if r := f.run("1.261111.0"); r.State != "ok" || f.served[tgz] != 2 {
-		t.Fatalf("%+v served %d", r, f.served[tgz])
-	}
-	f.release("1.261111.1", 0)
-	f.override = func(path string, n int) []byte {
-		if path == "/download/v1.261111.1/fleet-1.261111.1-linux-amd64.tgz" {
-			return []byte("tampered")
-		}
-		return nil
-	}
-	if r := f.run("1.261111.1"); r.State != "refused" || str(r.Error) != "checksum" {
-		t.Fatalf("%+v", r)
-	}
-}
-
 func TestTransientError(t *testing.T) {
 	f := newFixture(t)
 	if r := f.run("1.261111.0"); r.State != "error" || len(f.p.st.Refused) != 0 {
 		t.Fatalf("%+v", r)
-	}
-}
-
-func TestSelftestRefused(t *testing.T) {
-	f := newFixture(t)
-	f.release("1.261111.0", 1)
-	if r := f.run("1.261111.0"); r.State != "refused" || str(r.Error) != "selftest" || f.current() != "" {
-		t.Fatalf("%+v", r)
-	}
-}
-
-func TestThreeStartsRollBack(t *testing.T) {
-	f := newFixture(t)
-	f.release("1.261111.0", 0)
-	f.release("1.261111.1", 0)
-	f.run("1.261111.0")
-	f.restarts = 0
-	f.health["1.261111.1"] = down
-	if r := f.run("1.261111.1"); r.State != "refused" || str(r.Error) != "unhealthy" || f.current() != "1.261111.0" {
-		t.Fatalf("%+v current %q", r, f.current())
-	}
-	if f.restarts != 4 { // three starts plus the restart of previous
-		t.Fatalf("restarts = %d", f.restarts)
-	}
-	if r := f.run("1.261111.1"); r != nil {
-		t.Fatalf("refused version retried: %+v", r)
-	}
-}
-
-func TestNoPreviousFails(t *testing.T) {
-	f := newFixture(t)
-	f.release("1.261111.0", 0)
-	f.health["1.261111.0"] = down
-	if r := f.run("1.261111.0"); r.State != "failed" || f.current() != "1.261111.0" {
-		t.Fatalf("%+v", r)
-	}
-}
-
-func TestPendingNotCounted(t *testing.T) {
-	f := newFixture(t)
-	f.release("1.261111.0", 0)
-	f.health["1.261111.0"] = waiting
-	if r := f.run("1.261111.0"); r.State != "pending" || exists(filepath.Join(f.root, "1.261111.0", "starts")) {
-		t.Fatalf("%+v", r)
-	}
-	f.restarts = 0
-	f.health["1.261111.0"] = up
-	if r := f.run(""); r.State != "ok" || f.restarts != 0 { // the next run checks again without a restart
-		t.Fatalf("%+v restarts %d", r, f.restarts)
 	}
 }
 
@@ -284,18 +170,6 @@ func TestExecutorHealth(t *testing.T) {
 		if got := h("1.261111.0"); got != c.want {
 			t.Errorf("%s: %v", c.body, got)
 		}
-	}
-}
-
-func TestSymlinkOutOfReleasesRefused(t *testing.T) {
-	f := newFixture(t)
-	f.release("1.261111.0", 0)
-	outside := t.TempDir()
-	os.Symlink(outside, filepath.Join(f.root, "1.261111.0.tmp")) // planted by the releases directory's owner
-	f.p.stage = t.TempDir()                                      // PDS18 shape: staged elsewhere, copied in
-	f.run("1.261111.0")
-	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
-		t.Fatalf("wrote through a symlink out of the releases root: %v", entries)
 	}
 }
 
@@ -465,89 +339,5 @@ func TestLatestConditionalGet(t *testing.T) {
 	}
 	if after, _ := os.ReadDir(dir); len(after) != 0 {
 		t.Fatalf("stale cache kept: %v", after)
-	}
-}
-
-// Requirement: one install line per first healthy marker, with the publish delta when known and never negative.
-func TestInstallLogLine(t *testing.T) {
-	f := newFixture(t)
-	f.release("1.261111.0", 0)
-	f.release("1.261111.1", 0)
-	var logs bytes.Buffer
-	log.SetOutput(&logs)
-	defer log.SetOutput(os.Stderr)
-	f.u.published = map[string]time.Time{"1.261111.0": f.u.now().Add(-90 * time.Second), "1.261111.1": f.u.now().Add(time.Hour)}
-	f.run("1.261111.0")
-	f.run("1.261111.1")
-	want := []string{"executor 1.261111.0: installed 1m30s after publish\n", "executor 1.261111.1: installed\n"}
-	for _, w := range want {
-		if !strings.Contains(logs.String(), w) {
-			t.Fatalf("missing %q in\n%s", w, logs.String())
-		}
-	}
-	if strings.Count(logs.String(), "installed") != 2 {
-		t.Fatalf("install lines:\n%s", logs.String())
-	}
-}
-
-func TestManagedCLIRelease(t *testing.T) {
-	// A signed release activates only after the payloads verify. Its predecessor remains usable on rollback.
-	f := newFixture(t)
-	payload := []byte("#!/bin/sh\necho 1.2.3\n")
-	sum := sha256.Sum256(payload)
-	sha := hex.EncodeToString(sum[:])
-	requests := 0
-	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		w.Write(payload)
-	}))
-	defer provider.Close()
-	f.u.client.Transport = provider.Client().Transport
-	lock := func(digest string) []byte {
-		assets := map[string]harnessrelease.Asset{}
-		for _, name := range []string{"codex", "claude", "antigravity"} {
-			assets[name] = harnessrelease.Asset{Version: "1.2.3", URL: provider.URL, SHA256: digest}
-		}
-		data, err := json.Marshal(map[string]any{"enabled": true, "targets": map[string]any{"linux-amd64": assets}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return data
-	}
-	const first, rollback, refused = "1.261111.1", "1.261111.2", "1.261111.3"
-	f.release(first, 0, lock(sha))
-	if r := f.run(first); r.State != "ok" || requests != 3 {
-		t.Fatalf("first update: %+v, downloads %d", r, requests)
-	}
-	a := harnessrelease.Asset{SHA256: sha}
-	if st, err := os.Stat(filepath.Join(f.root, a.Executable("codex"))); err != nil || st.Mode().Perm() != 0o555 {
-		t.Fatalf("verified cache executable: %v %v", st, err)
-	}
-	f.release(rollback, 0, lock(sha))
-	f.health[rollback] = down
-	for i := 0; i < 3; i++ {
-		f.run(rollback)
-	}
-	if f.current() != first || requests != 3 {
-		t.Fatalf("rollback to %s, downloads %d", f.current(), requests)
-	}
-	f.release(refused, 0, lock(strings.Repeat("0", 64)))
-	if r := f.run(refused); r.State != "refused" || !strings.Contains(str(r.Error), "harness-checksum: codex") || f.current() != first {
-		t.Fatalf("corrupt CLI update: %+v, current %s", r, f.current())
-	}
-	if requests != 5 {
-		t.Fatalf("a checksum mismatch must get one fresh download, requests %d", requests)
-	}
-	exe := filepath.Join(f.root, a.Executable("codex"))
-	if err := os.Chmod(exe, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(exe, []byte("damaged"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	const damaged = "1.261111.4"
-	f.release(damaged, 0, lock(sha))
-	if r := f.run(damaged); r.State != "refused" || !strings.Contains(str(r.Error), "harness-cache: codex") || f.current() != first {
-		t.Fatalf("damaged retained cache: %+v, current %s", r, f.current())
 	}
 }

@@ -653,15 +653,15 @@ Stage 1:
 
 ### Tests
 
-Go unit tests, next to the code (`go test -race`):
+Go unit tests, next to the code (`go test`):
 
 * `go/coordinator/definitions_test.go`: canonical JSON is stable and round-trips; every shipped definition file is canonical; git blob sha equals `git hash-object` for a fixture; the state decision list for each of the five states; field walk matches arrays by `id`; reconcile rule 3's three branches, retire and un-retire, and a non-profile file skipped.
 * `go/coordinator/textdiff_test.go`: unified diff applies with `git apply --check` to the fixture (skipped when git is absent).
 * `go/coordinator/pipelines_test.go`: rerun reuse walk: unchanged steps reused, a changed step and every step after it rerun, a step reading a rerun step reruns, an agent step whose profile was saved in between reruns.
 
-Outside tests against a real coordinator and Postgres (the existing `tests/go` runner, named by domain):
+Live checks on the deployed site (the outside tests in `tests/go` were deleted on 2026-11-25):
 
-* `tests/go/definitions.test.ts`:
+* Definitions:
   * save from the head creates revision n+1 and the next `pipeline_run_create` records it (goal 2, 7);
   * two saves from the same base: second is 409 `base-moved` with the head (goal 4);
   * restart with a changed shipped file under an editor revision: state `repository-changed`, executions keep the head, save without `repoSha` is 409, with it succeeds (goal 5);
@@ -674,16 +674,16 @@ Outside tests against a real coordinator and Postgres (the existing `tests/go` r
   * operator calls `definition_save`, `agent_test`, or `pipeline_rerun` with `draft`: 403; operator calls `catalogue`: 200 with assessments and the three recommendation fields;
   * the PM agent of an architect saves a revision (`actor.kind` agent); of an operator: 403;
   * `agent_effective.result` equals the profile the session start sends for the same project.
-* `tests/go/lab.test.ts` (Modify): Promote saves a catalogue revision and sets the recommendation for a new method; `vsBaseline` over a fixture experiment; `lab_compare_methods` over two methods with different pipelines runs each trial on its own pipeline.
+* Lab: Promote saves a catalogue revision and sets the recommendation for a new method; `vsBaseline` over a fixture experiment; `lab_compare_methods` over two methods with different pipelines runs each trial on its own pipeline.
 * Non-owner scope file (quality plan S7): add every new operation to the role matrix.
 
-Mirror, stage 2 (outside test with a local bare repository as the remote):
+Mirror, stage 2 (live check):
 
-* `tests/go/definitions.test.ts`: a save produces one commit with the person as author, the message and the `Fleet-Revision` trailer, and the file equals `definition_get.text`; with the remote unreachable the save succeeds, `mirror` is `pending`, and after the remote returns the commit arrives in order; a commit pushed to the remote from outside stops the loop with the divergence question and no force-push; `definition_mirror_reset` by a non-owner is 403.
+* A save produces one commit with the person as author, the message and the `Fleet-Revision` trailer, and the file equals `definition_get.text`; with the remote unreachable the save succeeds, `mirror` is `pending`, and after the remote returns the commit arrives in order; a commit pushed to the remote from outside stops the loop with the divergence question and no force-push; `definition_mirror_reset` by a non-owner is 403.
 
 ### Done when
 
-All operations above are in the `ops` contract with generated Go and TypeScript types and no untyped handler body; the tests above pass; `go generate` shows no drift; a coordinator started on a fresh database behaves as today until a definition is saved.
+All operations above are in the `ops` contract with generated Go and TypeScript types and no untyped handler body; the tests and checks above pass; `go generate` shows no drift; a coordinator started on a fresh database behaves as today until a definition is saved.
 
 ## Open Questions
 

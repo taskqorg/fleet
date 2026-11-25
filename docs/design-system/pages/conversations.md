@@ -50,7 +50,7 @@ Canvas [screens/conversations.bl](../board/screens/conversations.bl): idle with 
 
 ## Current build
 
-**App routes:** `/conversations`, `/conversations/:id` and `/conversations/new` in the operator app (`app/src/views/conversations.tsx`, `app/src/views/conversation-new.tsx`). The app check (`tests/ui/app.check.ts`) verifies them; `tests/ui/conversation-new.check.ts` the new-conversation page. There is no static mockup.
+**App routes:** `/conversations`, `/conversations/:id` and `/conversations/new` in the operator app (`app/src/views/conversations.tsx`, `app/src/views/conversation-new.tsx`). The app check (`tests/ui/app.check.ts`) verifies them. There is no static mockup.
 
 **Purpose.** Talk to agents and steer running work. This page replaces the removed legacy session page.
 

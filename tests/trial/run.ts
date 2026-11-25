@@ -21,7 +21,7 @@ import {root, startCoordinator} from '../harness.ts';
 
 const t0 = performance.now();
 const sh = (cmd: string, args: string[]) => execFileSync(cmd, args, {encoding: 'utf8'});
-// FLEET_TRIAL_NAME: a database of its own when several runs share one checkout (tests/go/run-files.ts).
+// FLEET_TRIAL_NAME: a database of its own when several runs share one checkout.
 const c = await startCoordinator({name: process.env.FLEET_TRIAL_NAME || undefined});
 const {base, secret} = c, server = {pid: c.pid};
 

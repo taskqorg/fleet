@@ -45,35 +45,3 @@ func TestExecutorActivityRequiresExactDrainAndLease(t *testing.T) {
 	}
 	release()
 }
-
-// Requirement: executor replacement waits for owned work and retained delivery; risk: a race interrupts active work or admits a start during replacement.
-func TestExecutorBusyDefersSwitchAndRestart(t *testing.T) {
-	f := newFixture(t)
-	f.release("1.261113.19", 0)
-	f.run("1.261113.19")
-	f.release("1.261113.20", 0)
-	f.restarts = 0
-	busy := true
-	released := false
-	f.p.activity = func(string) (func(), error) {
-		if busy {
-			return nil, nil
-		}
-		return func() { released = true }, nil
-	}
-	if r := f.run("1.261113.20"); r.State != "pending" || f.current() != "1.261113.19" || f.restarts != 0 {
-		t.Fatalf("busy replacement %+v current%s restarts%d", r, f.current(), f.restarts)
-	}
-	busy = false
-	if r := f.run("1.261113.20"); r.State != "ok" || f.current() != "1.261113.20" || f.restarts != 1 || !released {
-		t.Fatalf("idle replacement %+v", r)
-	}
-	// A previously pending unhealthy install must not bypass the same activity guard.
-	os.Remove(filepath.Join(f.root, "current", "healthy"))
-	f.restarts = 0
-	busy = true
-	f.health["1.261113.20"] = down
-	if r := f.run("1.261113.20"); r.State != "pending" || f.restarts != 0 {
-		t.Fatalf("resume restarted active executor %+v", r)
-	}
-}

@@ -1,7 +1,8 @@
 # Release (docs/designs/fleet-delivery-pipeline.md#4-automatic-release, docs/designs/fleet-self-update.md section 1): every
 # green main batch publishes one tarball per target, SHA256SUMS signed with the release key (Ed25519, checked by
 # fleet-update), latest.json and GitHub build provenance. The version 1.<UTC yymmdd>.<M> comes from the commit
-# (deploy/release-version.sh), so the merge queue run already built it; nobody tags.
+# (deploy/release-version.sh); nobody tags. The build, Linux selftests and migration check run here, after the merge
+# (docs/designs/fleet-delivery-pipeline.md#checks-per-change).
 # Every host's fleet-update installs it by itself. Least privilege: each job gets only what it writes.
 name: release
 on:
@@ -35,9 +36,6 @@ jobs:
       digests: ${{ steps.check.outputs.digests }}
       ui: ${{ steps.check.outputs.ui }}
       ui_run: ${{ steps.qualify.outputs.ui_run }}
-      spec_run: ${{ steps.qualify.outputs.spec_run }}
-      stale: ${{ steps.qualify.outputs.stale }}
-      sums: ${{ steps.qualify.outputs.sums }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -107,12 +105,15 @@ jobs:
             id=$(gh run list --workflow ci --commit "$SHA" --event push --json databaseId -q '.[0].databaseId')
             [ -n "$id" ] || { echo "no ci run for $SHA yet"; sleep 30; }
           done
-          # Diagnostic jobs may still be running; only required behavioral conclusions authorize release. The required go
-          # and browser checks are statuses the app job posts from its own validation, so app's conclusion carries them.
+          # Diagnostic jobs may still be running; only the required go and app checks authorize release
+          # (docs/designs/fleet-delivery-pipeline.md#checks-per-change).
           while :; do
             jobs=$(gh run view "$id" --json jobs)
             pending=false
-            for job in app; do
+            # A run from before 2026-11-25 (a rollback drill of an older commit) has no go job: its app job posted go.
+            old=$(jq -r 'any(.jobs[]; .name == "selection")' <<< "$jobs")
+            for job in go app; do
+              [ "$job" = go ] && [ "$old" = true ] && continue
               result=$(jq -r --arg name "$job" '[.jobs[] | select(.name == $name)] | if length == 1 then .[0].conclusion // "" else "missing" end' <<< "$jobs")
               if [ -z "$result" ] || [ "$result" = missing ]; then pending=true
               elif [ "$result" != success ]; then
@@ -122,53 +123,15 @@ jobs:
             "$pending" || break
             sleep 30
           done
-          gh run download "$id" --name test-qualification --dir "$RUNNER_TEMP/qualification"
-          git show "$SHA:scripts/test-selection.ts" > "$RUNNER_TEMP/verify-selection.ts"
-          GITHUB_SHA="$SHA" node "$RUNNER_TEMP/verify-selection.ts" --verify "$RUNNER_TEMP/qualification/test-selection.json" "$RUNNER_TEMP/qualification/test-results.json"
-          # UI-only: the browser checks of this exact commit ran against a coordinator built from the Go sources of the
-          # released backend (the UI-only diff leaves them unchanged), so they are the pair check; publish signs the tree
-          # they served. The gate accepts merge_group and push runs only, never a pull_request context.
+          # UI-only: the app job of this exact commit built the tree (fleet-ui) and the go job ran the smoke on a coordinator
+          # built from the Go sources of the released backend (the UI-only diff leaves them unchanged); publish signs that
+          # tree. The gate accepts merge_group and push runs only, never a pull_request context.
           if [ "$UI" = true ]; then
-            jq -e '.executed | index("browser")' "$RUNNER_TEMP/qualification/test-selection.json" >/dev/null || { echo "::error::browser checks omitted for $SHA"; exit 1; }
             echo "ui_run=$id" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # The merge queue run's speculative build of this exact commit and version (ci.yml release-build): when it
-          # passed, publish signs those bytes; stale: the migration check window moved in a way that check does not cover
-          # (deploy/window-covered.sh), so migrate runs it again on the same bytes. Anything else: build here, as before.
-          # The required app check waits for release-build, so it has normally concluded; the wait covers API errors,
-          # at most 10 minutes and never past 25 minutes of this step, then falls back to building here.
-          deadline=$((SECONDS + 600)); [ "$deadline" -le 1500 ] || deadline=1500
-          while :; do
-            jobs=$(gh run view "$id" --json jobs) || { [ "$SECONDS" -lt "$deadline" ] || { b=timeout; break; }; sleep 10; continue; }
-            b=$(jq -r '[.jobs[] | select(.name == "release-build" or .name == "release-build-pds18 / run") | select(.conclusion != "skipped")][0].conclusion // "missing"' <<< "$jobs")
-            [ "$b" = missing ] && break
-            [ "$SECONDS" -lt "$deadline" ] || { b=timeout; break; }
-            [ -z "$b" ] || break
-            sleep 10
-          done
-          [ "$b" != success ] || gh run download "$id" --name release --dir "$RUNNER_TEMP/spec" || true
-          spec=$RUNNER_TEMP/spec/speculative.json
-          # The digest release-build announced in its own annotation: an artifact another job of that run uploaded under
-          # the same name does not match it.
-          announced=
-          if [ "$b" = success ]; then
-            job=$(jq -r '[.jobs[] | select(.name == "release-build" or .name == "release-build-pds18 / run") | select(.conclusion != "skipped")][0].databaseId' <<< "$jobs")
-            announced=$(gh api --paginate "repos/$GH_REPO/check-runs/$job/annotations" --jq '.[] | select(.title == "release SHA256SUMS") | .message' | awk 'NR == 1') || announced=
-          fi
-          if [ -n "$RECENT" ] && [ "$b" = success ] && [ -f "$spec" ] && [ -n "$announced" ] \
-            && [ "$(sha256sum < "$RUNNER_TEMP/spec/SHA256SUMS" | cut -d' ' -f1)" = "$announced" ] && jq -e --arg v "$VERSION" --arg c "$SHA" '.version == $v and .commit == $c' "$spec" >/dev/null; then
-            stale=false; RECENT=$RECENT DIGESTS=$DIGESTS deploy/window-covered.sh "$spec" || stale=true
-            (cd "$RUNNER_TEMP/spec" && sha256sum -c --quiet SHA256SUMS) || { echo "::error::ci run $id: tarballs do not match SHA256SUMS"; exit 1; }
-            # migrate and publish download the artifact again and take it only with these exact SHA256SUMS.
-            { echo "spec_run=$id"; echo "stale=$stale"; echo "sums=$(sha256sum < "$RUNNER_TEMP/spec/SHA256SUMS" | cut -d' ' -f1)"; } >> "$GITHUB_OUTPUT"
-            echo "signing the bytes ci run $id built (window moved: $stale)" | tee -a "$GITHUB_STEP_SUMMARY"
-          else
-            echo "no usable speculative build in ci run $id (release-build: $b); building here" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
   build:
     needs: gate
-    if: needs.gate.outputs.release == 'true' && needs.gate.outputs.ui != 'true' && needs.gate.outputs.spec_run == ''
+    if: needs.gate.outputs.release == 'true' && needs.gate.outputs.ui != 'true'
     # Signing/publishing and native qualification remain on GitHub-hosted runners.
     runs-on: ${{ github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
@@ -234,48 +197,13 @@ jobs:
           retention-days: 1
           overwrite: true
           if-no-files-found: error
-  # The speculative build's migration check ran against an older window (a release published since): run it again on
-  # the same bytes against the current window. Hosted, like the queue run that built them (about 30 s with downloads);
-  # the persistent PDS18 runner runs only what it built itself.
-  migrate:
-    needs: gate
-    if: needs.gate.outputs.spec_run != '' && needs.gate.outputs.stale == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      actions: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      VERSION: ${{ needs.gate.outputs.version }}
-      RECENT: ${{ needs.gate.outputs.recent }}
-      DIGESTS: ${{ needs.gate.outputs.digests }}
-      SUMS: ${{ needs.gate.outputs.sums }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.gate.outputs.sha }}
-          persist-credentials: false
-      # The same check script as the fallback build: this workflow's commit.
-      - uses: actions/checkout@v4
-        with:
-          path: .release
-          sparse-checkout: deploy
-          persist-credentials: false
-      - run: |
-          gh run download "${{ needs.gate.outputs.spec_run }}" --name release --dir out
-          [ -n "$SUMS" ] && [ "$(sha256sum < out/SHA256SUMS | cut -d' ' -f1)" = "$SUMS" ] || { echo "::error::SHA256SUMS changed since the gate"; exit 1; }
-          (cd out && sha256sum -c --quiet SHA256SUMS)
-          mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
-          .release/deploy/migrate-check.sh new out
   # GitHub refuses the workflow token (it cannot hold the workflows permission) a new tag on a commit whose
   # .github/workflows differ from the head of main: HTTP 403 "Resource not accessible by integration" (run 43237511138,
   # 2026-11-12: main had moved on to a merge that changed workflows). That head contains this commit and its push started
   # the next release run, which publishes a release containing it; this run then publishes nothing and ends green.
   # Push runs only: a dispatched older commit (rollback drill) is meant to be released as it is.
   supersede:
-    needs: [gate, build, migrate]
+    needs: [gate, build]
     if: always() && github.event_name == 'push' && needs.gate.result == 'success' && needs.gate.outputs.release == 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -300,10 +228,9 @@ jobs:
             echo skip=true >> "$GITHUB_OUTPUT"
           fi
   publish:
-    needs: [gate, build, migrate, supersede]
+    needs: [gate, build, supersede]
     if: >-
       always() && needs.gate.result == 'success' && needs.supersede.outputs.skip != 'true' && needs.gate.outputs.release == 'true' && (needs.gate.outputs.ui == 'true'
-      || (needs.gate.outputs.spec_run != '' && (needs.migrate.result == 'success' || needs.migrate.result == 'skipped' && needs.gate.outputs.stale != 'true'))
       || needs.build.result == 'success')
     runs-on: ubuntu-24.04
     environment: release
@@ -321,8 +248,6 @@ jobs:
       UI: ${{ needs.gate.outputs.ui }}
       BACKEND: ${{ needs.gate.outputs.previous }}
       UI_RUN: ${{ needs.gate.outputs.ui_run }}
-      SPEC_RUN: ${{ needs.gate.outputs.spec_run }}
-      SUMS: ${{ needs.gate.outputs.sums }}
     steps:
       # deploy/ of this workflow's commit: the supersede check.
       - uses: actions/checkout@v4
@@ -331,18 +256,10 @@ jobs:
           sparse-checkout: deploy
           persist-credentials: false
       - uses: actions/download-artifact@v4
-        if: env.UI != 'true' && env.SPEC_RUN == ''
+        if: env.UI != 'true'
         with:
           name: release
-      # The bytes the merge queue run built, selftested and migration-checked (gate); signing covers exactly these.
-      - name: Speculative build
-        if: env.UI != 'true' && env.SPEC_RUN != ''
-        run: |
-          gh run download "$SPEC_RUN" --name release --dir .
-          rm speculative.json
-          [ -n "$SUMS" ] && [ "$(sha256sum < SHA256SUMS | cut -d' ' -f1)" = "$SUMS" ] || { echo "::error::SHA256SUMS changed since the gate"; exit 1; }
-          sha256sum -c SHA256SUMS
-      # The tree the qualifying ci run browser-checked (gate); release.json binds it to version, backend and source.
+      # The tree the qualifying ci run's app job built (gate); release.json binds it to version, backend and source.
       - name: UI archive
         if: env.UI == 'true'
         run: |

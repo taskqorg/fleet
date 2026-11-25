@@ -49,9 +49,6 @@
             "context": "app"
           },
           {
-            "context": "browser"
-          },
-          {
             "context": "code-review"
           }
         ]

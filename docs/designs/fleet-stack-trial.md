@@ -6,7 +6,7 @@ The trial that chose Go: the slice, its requirements and the measurement protoco
 
 The language was chosen by porting one coordinator slice to Go and to Rust and measuring both against the TypeScript coordinator with the same outside tests and script. Go and TypeScript tied on edit-to-green; Rust's one-line rebuild was about 14 times slower; Go has 11 packages in `go.sum` against 156 (TypeScript) and 172 (Rust) in the whole lockfile; both ports reached green inside the time box with at most one build-fix cycle. Numbers: [evidence](../../evidence/fleet-stack.md#language-trial). The Go port is `go/coordinator`; the Rust port was not merged.
 
-The slice and the protocol are the template for the coordinator's outside tests.
+The slice is now the smoke run on every change ([checks per change](fleet-delivery-pipeline.md#checks-per-change)).
 
 ### Trial slice (L1)
 
@@ -70,7 +70,7 @@ Requirements SL1-SL11 are the slice's own. Each has one outside test in `tests/t
 | P16 | SSE served as `text/plain` | SL8 |
 | P17 | LISTEN on the wrong channel | SL8 |
 
-Not covered by an outside test: the advisory lock alone (it matters only for a second process; the slice runs one), the `held` re-read (a Go test covers it: `TestSharedFeedHeldWaitAndPruning`, and `TestStreamHorizonIgnoresOtherDatabases` for a transaction in another database), and removing only the message route's own `store.tx` (the per-route transaction already covers it).
+Not covered by an outside test: the advisory lock alone (it matters only for a second process; the slice runs one), the `held` re-read, and removing only the message route's own `store.tx` (the per-route transaction already covers it).
 
 Covered only by old tests: everything out of the slice above; PGlite as a store; nested transactions and savepoints; serialization and deadlock retry with backoff; data moves of migrations 1-17; change-log pruning; profiles, accounts, projects, tasks, delegation, pipelines, artifacts, lab, threads and the agent tools.
 

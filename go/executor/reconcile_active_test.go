@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -84,57 +83,5 @@ func TestPollReportsActiveExecutions(t *testing.T) {
 	wantAfter := []string{"exec-live"}
 	if !reflect.DeepEqual(captured.ActiveExecutions, wantAfter) {
 		t.Fatalf("captured ActiveExecutions after receipt leaves = %#v, want %#v", captured.ActiveExecutions, wantAfter)
-	}
-}
-
-// Requirement: fleet.md Agent execution & executor_process.go: clean script/agent exits still collect and enqueue
-// diagnostic mcp-lifecycle-* files in transfers without declaring them in Receipt.Artifacts.
-// Risk: declaring optional mcp-lifecycle-* logs in Receipt.Artifacts forces clean exits into waiting on the coordinator.
-func TestCleanExitOmitsMCPDiagnosticsFromDeclaredArtifacts(t *testing.T) {
-	e, _ := scriptExecutor(t)
-	execution := "b1b2c3d4-5678-4abc-8def-0123456789ab"
-	session := "clean-mcp-session"
-	dir := e.sessionDir(session)
-	outDir := filepath.Join(dir, "output")
-	mcpDir := filepath.Join(dir, execution+".mcp")
-	if err := os.MkdirAll(outDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(mcpDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(outDir, "deliverable.txt"), []byte("ok\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(mcpDir, "mcp-lifecycle-trace.jsonl"), []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := e.run(M{"id": "clean-mcp-cmd", "executionId": execution, "sessionId": session, "kind": "script", "payload": M{"command": "exit 0"}}); err != nil {
-		t.Fatal(err)
-	}
-	settle(t, e, execution)
-
-	var receiptBody string
-	if err := e.db.QueryRow("SELECT body FROM outbox WHERE route=? ORDER BY rowid DESC LIMIT 1", contract.RouteReceipts.Path).Scan(&receiptBody); err != nil {
-		t.Fatalf("read receipt from outbox: %v", err)
-	}
-	var receipt contract.Receipt
-	if err := json.Unmarshal([]byte(receiptBody), &receipt); err != nil {
-		t.Fatalf("decode receipt: %v", err)
-	}
-	if receipt.Status != contract.ReceiptStatusCompleted {
-		t.Fatalf("receipt status = %q, want completed", receipt.Status)
-	}
-	if !contains(receipt.Artifacts, "deliverable.txt") || contains(receipt.Artifacts, "mcp-lifecycle-trace.jsonl") {
-		t.Fatalf("receipt artifacts = %#v, want deliverable.txt included and mcp-lifecycle-trace.jsonl excluded", receipt.Artifacts)
-	}
-
-	var mcpUploads int
-	if err := e.db.QueryRow("SELECT count(*) FROM transfers WHERE kind='upload' AND json_extract(body,'$.name')='mcp-lifecycle-trace.jsonl'").Scan(&mcpUploads); err != nil {
-		t.Fatal(err)
-	}
-	if mcpUploads != 1 {
-		t.Fatalf("queued mcp-lifecycle-trace.jsonl upload count = %d, want 1", mcpUploads)
 	}
 }

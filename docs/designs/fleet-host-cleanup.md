@@ -96,8 +96,8 @@ Each pass (run end, start, hourly sweep of sessions and `/tmp`) that removed som
 
 ### 8. Test PostgreSQL
 
-*   **One cluster per machine.** Go tests and `tests/harness.ts` use one data directory, `~/.cache/fleet-test/pg` (`FLEET_TEST_PGDATA`), started on first use and left running. `initdb` runs only when the directory is empty. Go tests stop making `$TMPDIR/fleet-coord-pg-*` clusters. `tests/go/run.sh` slots stop making clusters of their own: each slot uses its own database on the one cluster.
-*   **One template per schema version.** The first test that needs a database migrates `fleet_tmpl_<hash of schema.sql>` once. Each Go test gets `CREATE DATABASE ... TEMPLATE` (a file copy taking milliseconds) and drops it at test end. At start a test process drops test databases older than a day, so one killed run does not leave databases behind.
+*   **One cluster per machine.** The Go schema drift checks and `tests/harness.ts` (the smoke `tests/trial/run.ts`) use one data directory, `~/.cache/fleet-test/pg` (`FLEET_TEST_PGDATA`), started on first use and left running. `initdb` runs only when the directory is empty ([checks per change](fleet-delivery-pipeline.md#checks-per-change)).
+*   **One template per schema version.** The first Go test that needs a database migrates `fleet_tmpl_<hash of schema.sql>` once. Each Go test gets `CREATE DATABASE ... TEMPLATE` (a file copy taking milliseconds) and drops it at test end. At start a test process drops test databases older than a day, so one killed run does not leave databases behind.
 *   **Later:** tests isolated by their own ids in one shared database, in a separate task.
 
 ### 9. Retention: releases and session directories
