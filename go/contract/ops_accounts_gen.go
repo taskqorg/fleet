@@ -124,16 +124,22 @@ func (v *AccessGuide) Validate() error {
 }
 
 type AccessHost struct {
-	Binding    string  `json:"binding"`
-	HostId     string  `json:"hostId"`
-	Models     *int64  `json:"models,omitempty"`
-	ObservedAt *int64  `json:"observedAt,omitempty"`
-	Readiness  string  `json:"readiness"`
-	Reason     *string `json:"reason,omitempty"`
+	Binding    string              `json:"binding"`
+	HostId     string              `json:"hostId"`
+	Login      *AccountLoginPrompt `json:"login,omitempty"`
+	Models     *int64              `json:"models,omitempty"`
+	ObservedAt *int64              `json:"observedAt,omitempty"`
+	Readiness  string              `json:"readiness"`
+	Reason     *string             `json:"reason,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AccessHost) Validate() error {
+	if v.Login != nil {
+		if err := Check(v.Login, "login"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -266,6 +272,7 @@ type AccessOnboardReply struct {
 	Guide      *AccessGuide `json:"guide,omitempty"`
 	Kind       string       `json:"kind"`
 	QuestionId *string      `json:"questionId,omitempty"`
+	Started    *bool        `json:"started,omitempty"`
 	Steps      []string     `json:"steps"`
 }
 
@@ -293,6 +300,7 @@ type AccessOnboardRequest struct {
 	Provider   *string           `json:"provider,omitempty"`
 	Reason     *string           `json:"reason,omitempty"`
 	RequestId  *string           `json:"requestId,omitempty"`
+	Start      *bool             `json:"start,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2016,7 +2024,7 @@ func (v *TransportInspectRequest) Validate() error {
 func init() {
 	for n, o := range map[string]Operation{
 		"access_check":                {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Checks one access item now, read-only, never starting a login: a connection with one cheap provider call (its reply's reason on failure), a subscription by re-inspecting each host login. id: an access_status item id. The reply is the item as access_status shows it after the check.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
-		"access_onboard":              {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Starts adding access. kind key: provider (and connection, default the provider's name); creates the connection when missing (owner) and answers where the key comes from; with projectId and requestId it asks the owner for the key under Needs you (the agent path). kind login: accountId, hostId, binding; answers the host login steps and, with projectId and requestId, asks the owner to sign in under Needs you. kind limit: connection and limit {amount, unit, period}: the monthly limit Fleet counts the connection's spend against (a warn budget). Never takes a key value or a login code.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"accountId\":{\"type\":\"string\"},\"binding\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"key\",\"login\",\"limit\"],\"type\":\"string\"},\"limit\":{\"additionalProperties\":false,\"properties\":{\"amount\":{\"type\":\"number\"},\"period\":{\"type\":\"string\"},\"unit\":{\"type\":\"string\"}},\"required\":[\"amount\",\"unit\"],\"type\":\"object\"},\"projectId\":{\"type\":\"string\"},\"provider\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"kind\"],\"type\":\"object\"}")},
+		"access_onboard":              {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Starts adding access. kind key: provider (and connection, default the provider's name); creates the connection when missing (owner) and answers where the key comes from; with projectId and requestId it asks the owner for the key under Needs you (the agent path). kind login: accountId, hostId, binding; answers the host login steps and, with projectId and requestId, asks the owner to sign in under Needs you. kind limit: connection and limit {amount, unit, period}: the monthly limit Fleet counts the connection's spend against (a warn budget). Never takes a key value or a login code.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"accountId\":{\"type\":\"string\"},\"binding\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"key\",\"login\",\"limit\"],\"type\":\"string\"},\"limit\":{\"additionalProperties\":false,\"properties\":{\"amount\":{\"type\":\"number\"},\"period\":{\"type\":\"string\"},\"unit\":{\"type\":\"string\"}},\"required\":[\"amount\",\"unit\"],\"type\":\"object\"},\"projectId\":{\"type\":\"string\"},\"provider\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"start\":{\"$comment\":\"kind login: start the login on the host now (holder or owner, never an agent); the sign-in link and code appear on the host in access_status.\",\"type\":\"boolean\"}},\"required\":[\"kind\"],\"type\":\"object\"}")},
 		"access_status":               {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Every subscription, model API key and service key Fleet has or offers, one item each: kind, state in plain words (works, failing, needs login on a host, needs a key, not added), limit or credits where known, hosts and users, the last check and the next step with its link. Never key values.", Changes: []string{"api-connection", "connection-key", "managed-account", "host", "setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
 		"account_connect":             {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "holder:account", Agent: "tool", Description: "Inspects one native login. hostId: default the caller's host; binding: the native login name.", InputSchema: json.RawMessage("{\"$comment\":\"Inspects one native login. hostId: default the caller's host; binding: the native login name.\",\"additionalProperties\":false,\"properties\":{\"accountId\":{\"type\":\"string\"},\"binding\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"}},\"required\":[\"accountId\",\"binding\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"account_create":              {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "harness codex, claude, antigravity or acp; holder: the owner may create one for another person.", InputSchema: json.RawMessage("{\"$comment\":\"harness codex, claude, antigravity or acp; holder: the owner may create one for another person.\",\"additionalProperties\":false,\"properties\":{\"comment\":{\"type\":\"string\"},\"harness\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"plan\":{\"type\":\"string\"}},\"required\":[\"name\",\"harness\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},

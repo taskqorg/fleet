@@ -202,7 +202,20 @@
           "$comment": "Models the vendor CLI on this host offers for this binding (probed at inspection). Absent: not probed (an older executor or a failed probe), never read as an empty list.",
           "type": "array",
           "items": {"type": "string"}
-        }
+        },
+        "login": {"$ref": "#/$defs/AccountLoginPrompt"}
+      }
+    },
+    "AccountLoginPrompt": {
+      "$comment": "A login the owner started on this host (inspection mode login): the vendor CLI's sign-in link and code as it printed them, for the owner to open; the CLI keeps waiting on the host until the sign-in completes or 15 minutes pass. Fleet never sees the password; the code is the CLI's one-time device code.",
+      "type": "object",
+      "required": ["state", "startedAt"],
+      "properties": {
+        "state": {"type": "string", "$comment": "waiting (link shown, CLI waiting), signed-in (the CLI ended without an error), failed"},
+        "url": {"type": "string"},
+        "code": {"type": "string"},
+        "text": {"type": "string", "$comment": "The CLI's last lines, at most 500 characters, without terminal escapes."},
+        "startedAt": {"type": "integer"}
       }
     },
     "AccountEnvironment": {

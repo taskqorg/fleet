@@ -115,6 +115,16 @@ export const states = {
     disabled: { label: 'Disabled', tone: 'danger', icon: 'circle-slash' },
     retired: { label: 'Retired', tone: 'neutral', icon: 'circle-dashed' },
   },
+  /** An account or key on System › Access (access_status): whether it works and what it needs from its owner. */
+  access: {
+    works: { label: 'Works', tone: 'success', icon: 'circle-check' },
+    failing: { label: 'Failing', tone: 'danger', icon: 'octagon-x' },
+    'needs-login': { label: 'Needs a login', tone: 'attention', icon: 'log-out' },
+    'needs-key': { label: 'Needs a key', tone: 'attention', icon: 'shield' },
+    'not-added': { label: 'Not added', tone: 'attention', icon: 'plus' },
+    paused: { label: 'Paused', tone: 'neutral', icon: 'circle-pause' },
+    unknown: { label: 'Not checked', tone: 'neutral', icon: 'circle-dashed' },
+  },
   intake: {
     all: { label: 'Open', tone: 'success', icon: 'circle-check' },
     paused: { label: 'Paused', tone: 'attention', icon: 'circle-pause' },

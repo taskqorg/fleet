@@ -25,12 +25,13 @@ import { KeyDetail, KeysIdle, connectionScope, normalizeConnections, person } fr
 import { Runners } from './runners.tsx';
 import { Spend, spendRequest, usdOf } from './spend.tsx';
 import { Humans } from './humans.tsx';
+import { Access } from './access.tsx';
 import { FINDING, SystemIdle, hostFailures } from './system-idle.tsx';
 import { modelsText, useCompatProfiles } from './accounts.tsx';
 import { ConnectionAdd, HostAdd } from './system-add.tsx';
 import { profileGaps, type CompatAccount } from '../compat.ts';
 
-export type InfraSection = 'hosts' | 'limits' | 'keys' | 'runners' | 'spend' | 'people';
+export type InfraSection = 'hosts' | 'limits' | 'keys' | 'runners' | 'spend' | 'people' | 'access';
 
 const INFRA_PINS = 'infrastructure';
 const INFRA_TREE_GROUPS = 'infrastructure:tree';
@@ -39,6 +40,7 @@ const ROOT_ACCOUNTS_ID = 'root:accounts';
 const ROOT_KEYS_ID = 'root:keys';
 const ROOT_PEOPLE_ID = 'root:people';
 const NAV_RUNNERS_ID = 'nav:runners';
+const NAV_ACCESS_ID = 'nav:access';
 const NAV_SPEND_ID = 'nav:spend';
 const DAY = 864e5;
 
@@ -200,6 +202,8 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
     const spendToday = today.data ? usdOf(today.data.totals.cost as CostFigureLike[]) : null;
 
     return [
+      // Access (approved 2026-11-25): every subscription and key with its state and next step; a root without children.
+      { id: NAV_ACCESS_ID, label: 'Access', icon: 'shield', root: true, href: '/access', searchText: 'access accounts keys subscriptions onboarding login' },
       { id: ROOT_HOSTS_ID, label: 'Hosts', icon: 'panels-top-left', defaultCollapsed: false, href: '/hosts', children: hostLeaves },
       { id: ROOT_ACCOUNTS_ID, label: 'Accounts & limits', icon: 'gauge', defaultCollapsed: false, href: '/hosts/limits', children: accountLeaves },
       { id: ROOT_KEYS_ID, label: 'Connections & keys', icon: 'shield', sub: holder ? `held by ${person(holder)}` : undefined, defaultCollapsed: true, href: '/keys', children: keyLeaves },
@@ -215,6 +219,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
     const sec = section();
     if (sec === 'runners') return NAV_RUNNERS_ID;
     if (sec === 'spend') return NAV_SPEND_ID;
+    if (sec === 'access') return NAV_ACCESS_ID;
     if (sec === 'keys') return props.id ? `key:${props.id}` : ROOT_KEYS_ID;
     if (sec === 'limits') return props.id ? `account:${props.id}` : ROOT_ACCOUNTS_ID;
     if (sec === 'people') return props.id ? `person:${props.id}` : ROOT_PEOPLE_ID;
@@ -323,7 +328,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
   // The work area: Runners, Spend, Limits and People are pages of their own; a host, account or connection is an item.
   const detailKey = createMemo(() => {
     const sec = section();
-    if (sec === 'runners' || sec === 'spend') return sec;
+    if (sec === 'runners' || sec === 'spend' || sec === 'access') return sec;
     if (sec === 'people') return `people:${props.id ?? ''}`;
     if (sec === 'limits') return props.id ? `account:${props.id}` : 'limits';
     if (sec === 'keys') return props.id ? `key:${props.id}` : undefined;
@@ -339,6 +344,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
           <Switch>
             <Match when={section() === 'runners'}><Runners onClose={() => go('/hosts')} /></Match>
             <Match when={section() === 'spend'}><Spend /></Match>
+            <Match when={section() === 'access'}><Access onOpen={go} /></Match>
             <Match when={section() === 'people'}><Humans id={props.id} /></Match>
             <Match when={section() === 'limits' && !props.id}><Limits onClose={() => go('/hosts')} /></Match>
             <Match when={section() === 'limits' && props.id}>

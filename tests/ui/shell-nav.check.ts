@@ -17,7 +17,7 @@ const ROUTES: [string, string, string][] = [
   ['/personal-lab', '/lab/mine', 'lab'], ['/bots', '/library/bots', 'library'], ['/agents', '/library/agents', 'library'],
   ['/pipelines', '/library/pipelines', 'library'], ['/catalogue', '/library/methods', 'library'], ['/changes', '/library/changes', 'library'],
   ['/hosts', '/system', 'system'], ['/hosts/limits', '/system/accounts', 'system'], ['/runners', '/system/runners', 'system'],
-  ['/keys', '/system/connections', 'system'], ['/spend', '/system/spend', 'system'], ['/humans', '/system/people', 'system'],
+  ['/keys', '/system/connections', 'system'], ['/access', '/system/access', 'system'], ['/spend', '/system/spend', 'system'], ['/humans', '/system/people', 'system'],
   ['/conversations', '/conversations', 'conversations'], ['/projects', '/projects', 'projects'], ['/lab', '/lab', 'lab'], ['/live', '/live', 'live'],
 ];
 

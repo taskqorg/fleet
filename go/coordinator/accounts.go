@@ -79,10 +79,11 @@ type accountBinding struct {
 	Readiness  *string         `json:"readiness"`
 	Roots      json.RawMessage `json:"roots"`
 	// J5: the models the host's probe found (nil: not probed) and the models a run proved it rejects (model -> ms).
-	Models           []string         `json:"models"`
-	ModelsObservedAt *int64           `json:"modelsObservedAt"`
-	RejectedModels   map[string]int64 `json:"rejectedModels"`
-	raw              json.RawMessage  // the binding as stored
+	Models           []string                     `json:"models"`
+	ModelsObservedAt *int64                       `json:"modelsObservedAt"`
+	RejectedModels   map[string]int64             `json:"rejectedModels"`
+	Login            *contract.AccountLoginPrompt `json:"login"`
+	raw              json.RawMessage              // the binding as stored
 }
 
 // accountOf decodes a row's payload; a binding that is not an object is left out.
@@ -689,6 +690,12 @@ func accountBound(q *Request, a accountRec, host string, name *string) error {
 // accountInspect: a read-only inspection command to the selected host or its inspector; the native catalogue when
 // binding is nil (account_discover), else the status of that binding (account_connect). host "" is the default host.
 func accountInspect(q *Request, accountID, host string, wanted *string) (any, error) {
+	return accountInspectMode(q, accountID, host, wanted, "")
+}
+
+// accountInspectMode: accountInspect, or with mode "login" the start of the binding's login on the host (the owner's
+// Sign in on System › Access): the host reports the CLI's sign-in link and code.
+func accountInspectMode(q *Request, accountID, host string, wanted *string, login string) (any, error) {
 	catalogue := wanted == nil
 	a, err := accountGet(q, accountID)
 	if err != nil {
@@ -731,7 +738,7 @@ func accountInspect(q *Request, accountID, host string, wanted *string) (any, er
 		return nil, err
 	}
 	for _, x := range olds {
-		if x.AccountID == a.ID && x.HostID == host && sameText(x.Binding, binding) {
+		if login == "" && x.AccountID == a.ID && x.HostID == host && sameText(x.Binding, binding) {
 			e, err := accountInspectionExecution(q, x.ID)
 			if err != nil {
 				return nil, err
@@ -744,6 +751,9 @@ func accountInspect(q *Request, accountID, host string, wanted *string) (any, er
 	mode := "status"
 	if catalogue {
 		mode = "catalogue"
+	}
+	if login != "" {
+		mode = login
 	}
 	id, err := accountInspectionJob(q, integ, contract.AccountInspectPayload{AccountId: a.ID, Harness: a.Harness, Binding: binding, NativeHostId: &host, Mode: &mode})
 	if err != nil {
@@ -1048,7 +1058,7 @@ func accountUpdate(q *Request, r *contract.AccountUpdateRequest) (any, error) {
 	return a, accountPut(q, a)
 }
 
-var checkReasons = []string{"ready", "login-absent", "executable-missing", "binding-unprovisioned", "binding-absent", "status-unknown", "catalogue-only", "configuration-error"}
+var checkReasons = []string{"ready", "login-started", "login-absent", "executable-missing", "binding-unprovisioned", "binding-absent", "status-unknown", "catalogue-only", "configuration-error"}
 
 // accountLastCheck: a binding's last check as accountReport writes it.
 type accountLastCheck struct {
@@ -1075,6 +1085,9 @@ type accountBindingOut struct {
 	Models           []string         `json:"models,omitempty"`
 	ModelsObservedAt *int64           `json:"modelsObservedAt,omitempty"`
 	RejectedModels   map[string]int64 `json:"rejectedModels,omitempty"`
+	// The sign-in link and code of a login the owner started on this host (System › Access); the next status inspection
+	// drops it.
+	Login *contract.AccountLoginPrompt `json:"login,omitempty"`
 }
 
 // accountReport: a host's observation of one binding of a subscription.
@@ -1139,7 +1152,7 @@ func accountReport(q *Request, b *contract.AccountObservation, host string) (any
 	}
 	last := accountLastCheck{Readiness: b.Readiness, Reason: reason, NativeLoginObserved: b.NativeLoginObserved, Quota: "unknown", ObservedAt: observedAt}
 	binding := accountBindingOut{HostID: host, Binding: b.Binding, Platform: b.Platform, Readiness: readiness, ObservedAt: observedAt, Roots: roots,
-		LastCheck: last, ReadinessBasis: basis, Authority: "host-owned native registry; no credentials transferred"}
+		LastCheck: last, ReadinessBasis: basis, Authority: "host-owned native registry; no credentials transferred", Login: b.Login}
 	switch {
 	case b.Models != nil:
 		// A malformed name is dropped, never the observation: readiness still counts.
