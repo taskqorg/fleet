@@ -76,6 +76,20 @@
   .upd-text b { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); color: var(--fg); }
   .upd-text > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .upd-strip.failed .upd-text b { color: var(--attention-fg); }
+  /* The idle count: a bar along the strip's foot that empties with the seconds left (--upd-left, 1 to 0). */
+  .upd-strip.counting { position: relative; overflow: hidden; }
+  .upd-strip.counting::after {
+    content: '';
+    position: absolute;
+    inset: auto auto 0 0;
+    inline-size: calc(var(--upd-left, 1) * 100%);
+    block-size: 2px;
+    background: var(--fg-muted);
+    transition: inline-size 1s linear;
+  }
+  .upd-count { font-family: var(--font-mono); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
+  .rail.mini .rail-user > .upd-strip.counting::after { display: none; }
+  @media (prefers-reduced-motion: reduce) { .upd-strip.counting::after { transition: none; } }
   .upd-icon, .rail-prob { display: none; }
   /* Collapsed: the strip keeps its row with only the icon button over the avatar column; the problem floats above the block. */
   .rail.mini .rail-user > .upd-strip { padding: 0; background: none; }

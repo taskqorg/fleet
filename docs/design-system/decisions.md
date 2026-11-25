@@ -557,6 +557,11 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Causes:** the rail avatar took the Home avatar style (transparent with a dark letter on dark, an amber disc when toned); the user block was re-created on every versions read, closing its overview; Update cleared its busy state before the reload landed; warnings came from one momentary read (the tab "unknown" for 3 s on every load, a gateway probe older than a minute, one failed read).
 * **Options (board):** A, an icon button after the version, as built; B, an update strip above the person naming the new version, with Reload.
 * **Choice (owner):** B and the rules: the avatar never changes; the version is toned only by a confirmed problem that is true now; an offline host does not tone it. Recorded in [nav rail](controls/nav-rail.md) (Version, Update) and drawn on [screens/shell](board/screens/shell.bl).
+## 2026-11-25: The app update installs itself when idle
+
+* **Question (owner):** Fleet ships many releases a day, so the "New app ready" strip needs a click many times a day; an update should install itself when the person is not using the app, with a visible countdown that resets on activity, and never lose work.
+* **Options:** hold the countdown while unsent input, an open dialog or a save in flight would be lost; or reload anyway and restore drafts afterwards.
+* **Choice (owner, "ok"):** as drawn: the strip counts down 30 s without activity ("Updating in 24s" and a bar that empties), any activity puts it back to 30, a hidden tab updates in the background, Update still reloads at once; the count holds ("Waits for your draft", "Waits for the open dialog", "Waits for a save"), chosen over restoring drafts because holding cannot lose what a page did not save. Recorded in [nav rail](controls/nav-rail.md) (Update) and drawn on [screens/shell](board/screens/shell.bl), frame "Shell · app update installs itself when idle".
 ## 2026-11-25: Bot avatars
 
 * **Question:** bots showed only a letter; the owner wanted a configurable avatar, animated ones included, made through Fleet's own pipelines, and the minimal way to show a bot's activity.

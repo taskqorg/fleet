@@ -31,7 +31,7 @@ function useHashLocation() {
   return [hashLoc, go] as const;
 }
 
-const BOOK_VERSION = { current: '1.261115.6', tone: 'attention' as const, summary: '1 part needs a look', updateReady: true, newVersion: '1.261115.7', checkedAt: Date.now() - 12_000, onUpdate: () => {}, rows: [
+const BOOK_VERSION = { current: '1.261115.6', tone: 'attention' as const, summary: '1 part needs a look', updateReady: true, newVersion: '1.261115.7', updateIn: 24, checkedAt: Date.now() - 12_000, onUpdate: () => {}, rows: [
   { key: 'tab', part: 'This tab', icon: 'panels-top-left' as const, version: '1.261115.5', state: 'older than the site', tone: 'running' as const },
   { key: 'ui', part: 'Site app', icon: 'house' as const, version: '1.261115.6', state: 'bundled', tone: 'neutral' as const },
   { key: 'coordinator', part: 'Coordinator', icon: 'network' as const, version: '1.261115.6', state: 'running', tone: 'success' as const, times: [{ label: 'started', at: Date.now() - 2 * 3600_000 }] },
