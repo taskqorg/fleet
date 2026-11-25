@@ -25,7 +25,7 @@ func TestServerTimingPhases(t *testing.T) {
 		t.Fatalf("access_status %d", resp.StatusCode)
 	}
 	st := resp.Header.Get("Server-Timing")
-	for _, want := range []string{"profiles;dur=", "limits.history;dur=", "subscriptions;dur=", "lastcalls;dur=", "connections;dur=", "total;dur="} {
+	for _, want := range []string{"profiles;dur=", "readings;dur=", "subscriptions;dur=", "lastcalls;dur=", "connections;dur=", "total;dur="} {
 		if !strings.Contains(st, want) {
 			t.Fatalf("Server-Timing %q lacks %s", st, want)
 		}

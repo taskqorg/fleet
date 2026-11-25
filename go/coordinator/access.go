@@ -152,15 +152,30 @@ func accessSubscriptions(q *Request, profiles []accessProfile) ([]contract.Acces
 	if q.person != nil && !fullAccess(q.person) {
 		as = slices.DeleteFunc(as, func(a accountRec) bool { return a.Holder != q.person.Email })
 	}
-	limits, err := subscriptionLimits(q, &contract.SubscriptionLimitsRequest{})
+	// The limit column needs each subscription's latest percent per period, not subscription_limits' history, burn
+	// and projection: the latest readings (limit_reading_latest) answer it in a millisecond instead of reading a week
+	// of limit reads. Same rule as subscription_limits' periods: a reading of the default window (limitsDefaults) whose
+	// period has not reset. Latest is by event order (limit_reading_latest), as everywhere latestReadings is read.
+	done = phase(q.baseCtx(), "readings")
+	latest, err := latestReadings(withTx(q), q.app)
+	done()
 	if err != nil {
 		return nil, err
 	}
+	now := nowMs()
+	from := limitsDefaults(now).from
 	left := map[string]contract.LimitPeriod{}
-	for _, s := range limits.Subscriptions {
-		for _, p := range s.Periods {
-			if p.Pct != nil && (left[s.Id].Pct == nil || *p.Pct < *left[s.Id].Pct) {
-				left[s.Id] = p
+	for id, rs := range latest {
+		for _, r := range rs {
+			if r.Pct == nil || r.State != "known" || r.At < from {
+				continue
+			}
+			if cur := left[id]; cur.Pct == nil || *r.Pct < *cur.Pct {
+				pct, name := *r.Pct, r.Period
+				if name == "" {
+					name = "unknown" // as limitHistory names it
+				}
+				left[id] = contract.LimitPeriod{Period: name, Pct: &pct}
 			}
 		}
 	}
