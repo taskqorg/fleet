@@ -68,7 +68,7 @@ export function Runners(props: { onClose?: () => void } = {}) {
                   <span class="grow" />
                   <span class="muted">24h</span>
                 </header>
-                <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,12rem) auto' }}>
+                <div class="vl-wrap runner-rows" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,12rem) auto' }}>
                   <For each={runs()}>{r => {
                     // Gateway calls are one run per connection (`calls:/conn:<name>`): the connection names the row, not the kind (OR-17).
                     const conn = r.kind === 'tool_run' && typeof r.id === 'string' ? /^calls:\/conn:(.+)$/.exec(r.id)?.[1] : undefined;
@@ -212,7 +212,7 @@ function Ci(props: { now: number; clockOffsetMs: number }) {
           </div>
         </Show>
         <Show when={data().jobs.length > 0}>
-          <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,12rem) auto' }}>
+          <div class="vl-wrap runner-rows" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,12rem) auto' }}>
             <For each={data().jobs}>{j => {
               const start = j.startedAt ?? j.createdAt ?? props.now;
               const st = JOB_STATE[j.status] ?? 'waiting';
