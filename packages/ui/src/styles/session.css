@@ -67,6 +67,8 @@
   .thread-list-quiet b { font-weight: var(--font-weight-medium); color: var(--fg); }
   @media (pointer: coarse) { .thread-item, .thread-list-archived { min-height: var(--size-hit-phone); } }
   /* Conversations list (owner pick B, 2026-11-26): a bot's threads under its row; rows measure themselves. */
+  /* Measured rows (VirtualList dynamic) are block by default; the Conversations rows keep the list's grid and rule. */
+  .conv-list .vl-row.dyn { display: grid; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
   .conv-list .vl-row:not(.grp) { min-height: var(--size-row); }
   .conv-list .vl-row > .row-sub { grid-column: 1 / -1; min-width: 0; margin-inline: calc(-1 * var(--space-4)); white-space: normal; border-top: 1px solid var(--line-soft); }
   /* The phone row (approved "строка ок"): the title takes the width and wraps to two lines, the time stays rightmost on
