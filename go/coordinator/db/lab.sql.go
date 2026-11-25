@@ -739,11 +739,12 @@ SELECT
  e.started_at,
  e.ended_at,
  coalesce(e.ended_at, e.started_at, e.updated_at)::timestamptz AS trial_at,
- coalesce(e.data->'cell'->>'example', '')::text AS cell_example,
- coalesce(e.data->'example'->>'use_case_id', '')::text AS example_use_case_id,
- coalesce(CASE WHEN (e.data->>'durationMs') ~ '^([0-9]+(\.[0-9]*)?|\.[0-9]+)$' THEN (e.data->>'durationMs')::float8 END, -1)::float8 AS data_duration_ms
+ coalesce(t.cell_example, '')::text AS cell_example,
+ coalesce(t.example_use_case_id, '')::text AS example_use_case_id,
+ coalesce(t.duration_ms, -1)::float8 AS data_duration_ms
 FROM execution e
 JOIN experiment x ON x.id = e.experiment_id
+LEFT JOIN lab_trial t ON t.execution_id = e.id
 WHERE e.kind = 'pipeline_run'
   AND e.variant IS NOT NULL
   AND e.experiment_id IS NOT NULL
@@ -776,6 +777,7 @@ type LabLeaderboardTrialsRow struct {
 }
 
 // Confirmed succeeded and failed trials within the last days, visible under caller RLS (lab_leaderboard.go).
+// The trial's facts from lab_trial, never the run's data (its snapshots would be detoasted for three fields).
 func (q *Queries) LabLeaderboardTrials(ctx context.Context, arg LabLeaderboardTrialsParams) ([]LabLeaderboardTrialsRow, error) {
 	rows, err := q.db.Query(ctx, labLeaderboardTrials, arg.ProjectID, arg.Days)
 	if err != nil {

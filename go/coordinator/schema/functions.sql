@@ -439,6 +439,24 @@ BEGIN
  RETURN c;
 END $function$;
 
+CREATE OR REPLACE FUNCTION public.fleet_lab_trial_execution()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+BEGIN
+ INSERT INTO lab_trial (execution_id, cell_example, example_use_case_id, duration_ms)
+ VALUES (NEW.id, coalesce(NEW.data->'cell'->>'example', ''), coalesce(NEW.data->'example'->>'use_case_id', ''),
+  coalesce(CASE WHEN (NEW.data->>'durationMs') ~ '^([0-9]+(\.[0-9]*)?|\.[0-9]+)$' THEN (NEW.data->>'durationMs')::float8 END, -1))
+ ON CONFLICT (execution_id) DO UPDATE SET cell_example = EXCLUDED.cell_example, example_use_case_id = EXCLUDED.example_use_case_id,
+  duration_ms = EXCLUDED.duration_ms
+ WHERE (lab_trial.cell_example, lab_trial.example_use_case_id, lab_trial.duration_ms)
+  IS DISTINCT FROM (EXCLUDED.cell_example, EXCLUDED.example_use_case_id, EXCLUDED.duration_ms);
+ RETURN NULL;
+END;
+$function$;
+
 CREATE OR REPLACE FUNCTION public.fleet_note_append_only()
  RETURNS trigger
  LANGUAGE plpgsql

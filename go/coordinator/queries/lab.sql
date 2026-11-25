@@ -339,11 +339,13 @@ SELECT
  e.started_at,
  e.ended_at,
  coalesce(e.ended_at, e.started_at, e.updated_at)::timestamptz AS trial_at,
- coalesce(e.data->'cell'->>'example', '')::text AS cell_example,
- coalesce(e.data->'example'->>'use_case_id', '')::text AS example_use_case_id,
- coalesce(CASE WHEN (e.data->>'durationMs') ~ '^([0-9]+(\.[0-9]*)?|\.[0-9]+)$' THEN (e.data->>'durationMs')::float8 END, -1)::float8 AS data_duration_ms
+ coalesce(t.cell_example, '')::text AS cell_example,
+ coalesce(t.example_use_case_id, '')::text AS example_use_case_id,
+ coalesce(t.duration_ms, -1)::float8 AS data_duration_ms
 FROM execution e
 JOIN experiment x ON x.id = e.experiment_id
+-- The trial's facts from lab_trial, never the run's data (its snapshots would be detoasted for three fields).
+LEFT JOIN lab_trial t ON t.execution_id = e.id
 WHERE e.kind = 'pipeline_run'
   AND e.variant IS NOT NULL
   AND e.experiment_id IS NOT NULL

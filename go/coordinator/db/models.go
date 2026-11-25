@@ -1166,6 +1166,13 @@ type HostSetting struct {
 	ApplyError *string
 }
 
+type LabTrial struct {
+	ExecutionID      string
+	CellExample      string
+	ExampleUseCaseID string
+	DurationMs       float64
+}
+
 type LabWork struct {
 	ExperimentID  string
 	Attempts      int32

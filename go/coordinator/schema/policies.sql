@@ -329,6 +329,13 @@ ALTER TABLE host_setting ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS operator_scope ON host_setting;
 CREATE POLICY operator_scope ON host_setting FOR ALL TO public USING ((current_setting('fleet.project_ids'::text, true) = '*'::text));
 
+-- lab_trial
+ALTER TABLE lab_trial ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS visible ON lab_trial;
+CREATE POLICY visible ON lab_trial FOR SELECT TO public USING ((EXISTS ( SELECT 1
+   FROM execution e
+  WHERE (e.id = lab_trial.execution_id))));
+
 -- managed_account
 ALTER TABLE managed_account ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON managed_account;

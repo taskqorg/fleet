@@ -23,3 +23,36 @@ func TestLabView(t *testing.T) {
 		t.Fatalf("parts: %+v", got)
 	}
 }
+
+// Requirement: lab_trial keeps each Lab trial's leaderboard facts equal to its run's data, so the leaderboard never
+// reads the run's data (its snapshots). Risk: the facts drift after a run's data changes and the comparison shows an
+// old duration or misses a use case.
+func TestLabTrialFacts(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := e.ownerStore.pool.Exec(e.ctx, sql, args...); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	exec(`SELECT set_config('fleet.project_ids', '*', false)`)
+	exec(`INSERT INTO experiment (id, project_id, kind, pipeline_id) VALUES ('lt-x', 'fleet', 'single', 'p')`)
+	exec(`INSERT INTO execution (id, kind, state, experiment_id, variant, started_at, data, observation, config_ref)
+	 VALUES ('lt-r', 'pipeline_run', 'running', 'lt-x', 'v1', now(), '{"cell":{"example":"ex-1"},"example":{"use_case_id":"uc-1"}}', 'confirmed', '{}')`)
+	check := func(step, example, useCase string, ms float64) {
+		t.Helper()
+		var a, b string
+		var d float64
+		if err := e.ownerStore.pool.QueryRow(e.ctx, `SELECT cell_example, example_use_case_id, duration_ms FROM lab_trial WHERE execution_id = 'lt-r'`).Scan(&a, &b, &d); err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+		if a != example || b != useCase || d != ms {
+			t.Fatalf("%s: %q %q %v, want %q %q %v", step, a, b, d, example, useCase, ms)
+		}
+	}
+	check("insert", "ex-1", "uc-1", -1)
+	exec(`UPDATE execution SET state = 'succeeded', data = data || '{"durationMs": 1234.5}' WHERE id = 'lt-r'`)
+	check("the run ends with its duration", "ex-1", "uc-1", 1234.5)
+	exec(`UPDATE execution SET data = jsonb_set(data, '{cell,example}', '"ex-2"') WHERE id = 'lt-r'`)
+	check("the cell's example changes", "ex-2", "uc-1", 1234.5)
+}
