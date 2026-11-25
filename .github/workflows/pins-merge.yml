@@ -46,7 +46,7 @@ jobs:
           [ "$files" = "modified $file" ] || { echo "the proposal changes more than $file: $files"; exit 1; }
           # 3. On the current head: qualify-offline by this workflow's bot, qualify-hosts and code-review by the github-pins
           #    key's user (the coordinator), each success.
-          statuses=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$SHA/statuses")
+          statuses=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$SHA/statuses?per_page=100" --jq '.[]' | jq -s .)
           check() {
             got=$(jq -r --arg c "$1" 'map(select(.context == $c)) | sort_by(.created_at) | last | "\(.state) \(.creator.login)"' <<< "$statuses")
             [ "$got" = "success $2" ] || { echo "$1 is '$got', expected 'success $2'"; exit 1; }
