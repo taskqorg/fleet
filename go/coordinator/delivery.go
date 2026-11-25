@@ -184,6 +184,7 @@ func ghPullAutoMergeMethod(v any) string {
 	}
 	return ""
 }
+
 type ghRun struct {
 	Event      string `json:"event"`
 	Status     string `json:"status"`
@@ -841,9 +842,9 @@ type glRelease struct {
 	ReleasedAt string `json:"released_at"`
 }
 type glRepo struct {
-	open, merged              []glMR
-	running, pending, failed  []glPipeline
-	releases                  []glRelease
+	open, merged             []glMR
+	running, pending, failed []glPipeline
+	releases                 []glRelease
 }
 
 func gitlabDeliveryStages(project, host, repo string, g glRepo) ([]contract.DeliveryItem, []deliveryMergedPR) {

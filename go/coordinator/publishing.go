@@ -34,9 +34,9 @@ type publishingProjectSettings struct {
 		BranchPrefix string `json:"branchPrefix"`
 	} `json:"worktree"`
 	Integration *struct {
-		Mode       string `json:"mode"`
-		AutoMerge  bool   `json:"autoMerge"`
-		AutoAccept *bool  `json:"autoAccept"`
+		Mode        string `json:"mode"`
+		AutoMerge   bool   `json:"autoMerge"`
+		AutoAccept  *bool  `json:"autoAccept"`
 		MergeMethod string `json:"mergeMethod"`
 	} `json:"integration"`
 }
@@ -48,11 +48,11 @@ type publishingCmdOutcome struct {
 }
 
 var (
-	pubMu           sync.Mutex
-	pubRecords      = map[string]contract.PublishingRecord{}
-	pubCmdOutcomes  = map[string]publishingCmdOutcome{}
-	pubCmdWaiters   = map[string]chan struct{}{}
-	pubIdempotent   = map[string]json.RawMessage{}
+	pubMu          sync.Mutex
+	pubRecords     = map[string]contract.PublishingRecord{}
+	pubCmdOutcomes = map[string]publishingCmdOutcome{}
+	pubCmdWaiters  = map[string]chan struct{}{}
+	pubIdempotent  = map[string]json.RawMessage{}
 )
 
 func publishingRecordKey(projectID string, r contract.PublishingRecord) string {
