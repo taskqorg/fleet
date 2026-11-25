@@ -57,7 +57,7 @@ export function BotAutomations(props: {
   const [busy, setBusy] = createSignal<string | null>(null);
   const [error, setError] = createSignal('');
   const [note, setNote] = createSignal('');
-  const selected = createMemo(() => read.data?.triggers.find(a => a.id === props.edit));
+  const selected = createMemo(() => read.data?.triggers.filter(shown).find(a => a.id === props.edit));
 
   const act = async (automation: Automation, action: 'enable' | 'pause' | 'run') => {
     if (busy()) return;
