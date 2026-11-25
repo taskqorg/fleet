@@ -1151,6 +1151,82 @@ func (v *HarnessModelsRequest) Validate() error {
 	return nil
 }
 
+type LibraryViewReply struct {
+	Agents          []DefinitionListItem   `json:"agents"`
+	Bots            []BotListItem          `json:"bots"`
+	Changes         SystemChangesReply     `json:"changes"`
+	Methods         []DefinitionListItem   `json:"methods"`
+	Pipelines       []DefinitionListItem   `json:"pipelines"`
+	Recommendations []RecommendationChange `json:"recommendations"`
+	Skills          []SkillSummary         `json:"skills"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LibraryViewReply) Validate() error {
+	if v.Agents == nil {
+		return Missing("agents")
+	}
+	for i := range v.Agents {
+		if err := Check(&v.Agents[i], "agents"); err != nil {
+			return err
+		}
+	}
+	if v.Bots == nil {
+		return Missing("bots")
+	}
+	for i := range v.Bots {
+		if err := Check(&v.Bots[i], "bots"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Changes, "changes"); err != nil {
+		return err
+	}
+	if v.Methods == nil {
+		return Missing("methods")
+	}
+	for i := range v.Methods {
+		if err := Check(&v.Methods[i], "methods"); err != nil {
+			return err
+		}
+	}
+	if v.Pipelines == nil {
+		return Missing("pipelines")
+	}
+	for i := range v.Pipelines {
+		if err := Check(&v.Pipelines[i], "pipelines"); err != nil {
+			return err
+		}
+	}
+	if v.Recommendations == nil {
+		return Missing("recommendations")
+	}
+	for i := range v.Recommendations {
+		if err := Check(&v.Recommendations[i], "recommendations"); err != nil {
+			return err
+		}
+	}
+	if v.Skills == nil {
+		return Missing("skills")
+	}
+	for i := range v.Skills {
+		if err := Check(&v.Skills[i], "skills"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type LibraryViewRequest struct {
+	ExcludeProjectIds []string `json:"excludeProjectIds,omitempty"`
+	ProjectIds        []string `json:"projectIds,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LibraryViewRequest) Validate() error {
+	return nil
+}
+
 // MirrorState: Stage 2 only; the mirror and definition_mirror_reset fields and operation are added with it.
 type MirrorState string
 
@@ -1570,6 +1646,7 @@ func init() {
 		"definition_take_repository": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Take the repository version for one or more repository-changed definitions (keys[], message, preview)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"keys\":{\"items\":{\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"agent\",\"pipeline\",\"catalogue\",\"project\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"},\"type\":\"array\"},\"message\":{\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"keys\",\"preview\"],\"type\":\"object\"}")},
 		"definition_usage":           {Read: true, Long: false, Errors: []int{400, 403, 404}, Auth: "architect", Agent: "tool", Description: "Where a definition (kind, id) is used and how it ran in the last days", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"properties\":{\"days\":{\"minimum\":1,\"type\":\"integer\"},\"id\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"agent\",\"pipeline\",\"catalogue\",\"project\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"}")},
 		"harness_models":             {Read: true, Long: false, Errors: []int{400, 403, 404}, Auth: "architect", Agent: "tool", Description: "Models a harness offers", InputSchema: json.RawMessage("{\"properties\":{\"harness\":{\"type\":\"string\"}},\"required\":[\"harness\"],\"type\":\"object\"}")},
+		"library_view":               {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "The Library tree in one read: the agents, pipelines and methods (last30 with runs, successes, tokens and median wall time, without the resource rollup: definition_usage has it), the skills, the bots of the focus (projectIds or excludeProjectIds), the drift Changes shows (system_changes; host observations do not reread it, so hosts behind show on the next read) and the recommendations projects chose in the last 7 days.", Changes: []string{"definition", "project-recommendation", "bot", "bot-run", "setting-change", "question"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"$comment\":\"Leave these projects' bots out.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectIds\":{\"$comment\":\"The bots of these projects only.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},
 		"profiles_list":              {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Agent profiles", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"recommendation_changes":     {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Recommended methods that projects selected in the last days (days, default 7, at most 90), newest first: project, method id and name, the Lab experiment it was promoted from, when and by whom", Changes: []string{"project-recommendation", "definition"}, InputSchema: json.RawMessage("{\"properties\":{\"days\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
 		"reconcile":                  {Read: false, Long: false, Errors: []int{400, 409}, Auth: "architect", Agent: "bound:session", Description: "Settle coordinator-owned queue/handoff state and report unproven executions", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},

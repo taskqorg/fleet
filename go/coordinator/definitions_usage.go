@@ -17,13 +17,23 @@ import (
 // revision's runs; rows outside the caller's scope are not counted (row security). only, when not nil, narrows the
 // resource rollup to those ids (the run counts stay per definition of the kind).
 func usageWindows(q *Request, kind, id string, only []string, days int64) (map[string]contract.Window, map[string][]contract.RevisionWindow, error) {
+	return usageWindowsOf(q, kind, id, only, days, true)
+}
+
+// usageWindowsOf: usageWindows, with the resource rollup only when resources is true; without it each window has the
+// runs, successes, tokens and median wall time and an empty resource summary (Library's tree shows runs only).
+func usageWindowsOf(q *Request, kind, id string, only []string, days int64, resources bool) (map[string]contract.Window, map[string][]contract.RevisionWindow, error) {
 	pin := map[string]string{"kind": kind}
 	if id != "" {
 		pin["id"] = id
 	}
-	totRes, revRes, err := definitionUsageResources(q, kind, id, only, days)
-	if err != nil {
-		return nil, nil, err
+	var totRes map[string]contract.ResourceSummary
+	var revRes map[string]map[int64]contract.ResourceSummary
+	if resources {
+		var err error
+		if totRes, revRes, err = definitionUsageResources(q, kind, id, only, days); err != nil {
+			return nil, nil, err
+		}
 	}
 	totals, byRev := map[string]contract.Window{}, map[string][]contract.RevisionWindow{}
 	rows, err := q.db().DefUsage(q.ctx(), db.DefUsageParams{Pin: jsonBytes([]map[string]string{pin}), Kind: kind, ID: id, Days: int32(days)})

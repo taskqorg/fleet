@@ -49,7 +49,7 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New (`plus`, a 
 
 ## Data
 
-As each root's spec says, plus `recommendation_changes` for the idle page: `catalogue`, `definition_get`, `definition_usage`, `pipeline_get`, `bot_list`, `bot_get`, `definition_take_repository`, `definition_export`. The tree reads one list per root and stays mounted while a definition loads ([OR-47](../owner-rules.md)).
+The tree and the idle page read one view, `library_view` ([data layer](../../designs/fleet-data-layer.md)): the agents, pipelines and methods with their 30-day runs (no resource rollup; an opened definition reads `definition_usage`), the skills, the focus's bots, the drift of Changes (`system_changes`) and this week's recommendations. It rereads on definition, recommendation, bot and question changes, at most once in 2 s; host observations do not reread it. An opened item reads as its root's spec says: `catalogue`, `definition_get`, `definition_usage`, `pipeline_get`, `bot_get`, `definition_take_repository`, `definition_export`. The tree stays mounted while a definition loads ([OR-47](../owner-rules.md)).
 
 ## Review of the current build
 

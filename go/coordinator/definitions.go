@@ -456,6 +456,12 @@ func profileNamed(raw json.RawMessage) string {
 }
 
 func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.DefinitionListReply, error) {
+	return definitionListOf(q, r, true)
+}
+
+// definitionListOf: definition_list, with each item's 30-day resources only when resources is true (the rollup resolves
+// container lineage over every execution); without them last30 carries runs, successes, tokens and median wall time.
+func definitionListOf(q *Request, r *contract.DefinitionListRequest, resources bool) (contract.DefinitionListReply, error) {
 	out := contract.DefinitionListReply{Items: []contract.DefinitionListItem{}}
 	if err := definitionKind(r.Kind); err != nil {
 		return out, err
@@ -480,7 +486,7 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 			return out, err
 		}
 	}
-	windows, _, err := usageWindows(q, string(r.Kind), "", nil, 30) // one grouped read for the whole list
+	windows, _, err := usageWindowsOf(q, string(r.Kind), "", nil, 30, resources) // one grouped read for the whole list
 	if err != nil {
 		return out, err
 	}
