@@ -47,6 +47,12 @@ export function stamp(t: number, now: number): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}${d.getFullYear() === new Date(now).getFullYear() ? '' : ' ' + d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** When something ran, in the viewer's zone: "22:14" today, else with its day: "11 Nov 14:03" (stamp). */
+export function moment(t: number, now = Date.now()): string {
+  const d = new Date(t);
+  return dayStart(t) === dayStart(now) ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : stamp(t, now);
+}
+
 /** Calendar day in the viewer's zone: "16 Nov" (the year when it is not the year of `now`). */
 export function day(t: number, now = Date.now()): string {
   const d = new Date(t);

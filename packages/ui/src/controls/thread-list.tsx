@@ -3,7 +3,7 @@
 // docs/designs/fleet-conversations.md#work-item-threads). Open, then Idle, then Archived (folded into one row), each
 // newest first; the timers' quiet checks fold into one row at the foot.
 import { createMemo, createSignal, For, Show, type Accessor } from 'solid-js';
-import { clock } from '../format.ts';
+import { moment } from '../format.ts';
 import { Ago, Icon, StateBadge } from './primitives.tsx';
 import { states, type Family } from '../registry.ts';
 
@@ -13,10 +13,10 @@ export type ThreadItem = {
   lastActivityAt?: number | null; turns: number; open: boolean; unread: number;
 };
 
-/** A run's thread (a wake named by its trigger, a host job) adds when it ran, in the viewer's zone: "Conversation check · 22:14". */
+/** A run's thread (a wake named by its trigger, a host job) adds when it ran, in the viewer's zone: "Conversation check · 22:14" (with its day when not today). */
 const runTitle = (t: ThreadItem) => {
   const title = t.title || t.key;
-  return t.key.startsWith('execution:') && t.lastActivityAt ? `${title} · ${clock(t.lastActivityAt)}` : title;
+  return t.key.startsWith('execution:') && t.lastActivityAt ? `${title} · ${moment(t.lastActivityAt)}` : title;
 };
 
 /** The item's family by its key, for its state badge; none for Fleet threads and the main thread. */
