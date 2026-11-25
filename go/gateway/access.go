@@ -165,6 +165,8 @@ func (g *gateway) dialAccess(ctx context.Context, a *contract.GatewayAccess) (*a
 
 // accessDB: the grant's MySQL pool over the login's forwarding (the server's 127.0.0.1:3306).
 func (g *gateway) accessDB(name string, l *accessLink, a *contract.GatewayAccess) (*sql.DB, error) {
+	g.access.mu.Lock() // concurrent calls of one connection share one pool
+	defer g.access.mu.Unlock()
 	if l.db != nil {
 		return l.db, nil
 	}
@@ -178,7 +180,7 @@ func (g *gateway) accessDB(name string, l *accessLink, a *contract.GatewayAccess
 	netName := "fleet-ssh-" + name
 	if _, loaded := accessDialers.LoadOrStore(netName, true); !loaded {
 		mysql.RegisterDialContext(netName, func(ctx context.Context, addr string) (net.Conn, error) {
-			g.access.mu.Lock()
+			g.access.mu.Lock() // the pool dials outside accessDB, so this never runs under the lock
 			cur := g.access.links[name]
 			g.access.mu.Unlock()
 			if cur == nil {
