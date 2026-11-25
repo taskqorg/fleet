@@ -735,6 +735,12 @@ CREATE TABLE host_setting (
   "applied_at" timestamp with time zone,
   "apply_error" text
 );
+CREATE TABLE lab_trial (
+  "execution_id" text NOT NULL,
+  "cell_example" text NOT NULL,
+  "example_use_case_id" text NOT NULL,
+  "duration_ms" double precision NOT NULL
+);
 CREATE TABLE lab_work (
   "experiment_id" text NOT NULL,
   "attempts" integer NOT NULL,
