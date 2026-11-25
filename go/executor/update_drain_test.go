@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fleet/contract"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -257,5 +258,17 @@ func TestUpdateDrainFenceIsBounded(t *testing.T) {
 	lastSignal.AutoUpdate = "off"
 	if fencedLocked(now) || drainReport(now) != nil {
 		t.Fatal("no pending update still fenced or reported")
+	}
+}
+
+// Requirement: a drain holds back new work only; risk: a store host draining drops artifact-verify, so uploads to its
+// store never finish and the uploading host never drains either (2026-11-26, windows behind pds18-native).
+func TestUpdateDrainAdmitsServiceCommands(t *testing.T) {
+	for kind, want := range map[contract.CommandKind]bool{contract.CommandKindArtifactVerify: true, contract.CommandKindArtifactCopy: true,
+		contract.CommandKindTeardown: true, contract.CommandKindStop: true, contract.CommandKindSteer: true,
+		contract.CommandKindStart: false, contract.CommandKindInput: false, contract.CommandKindScript: false} {
+		if admittedWhileDraining(kind) != want {
+			t.Fatalf("%s admitted %v", kind, !want)
+		}
 	}
 }
