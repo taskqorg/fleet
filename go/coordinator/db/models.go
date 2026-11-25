@@ -529,6 +529,7 @@ type Artifact struct {
 	SessionID             *string
 	Code                  *string
 	UseCaseID             *string
+	Summary               *string
 }
 
 type ArtifactCopy struct {

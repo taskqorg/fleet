@@ -415,6 +415,7 @@ type Artifact struct {
 	ID, Scope, ContentHash, MediaType, Name, Role, State                       string
 	ProjectID, ExecutionID, TaskID, LegacyID, DerivedFrom, Previous, LastError *string
 	Code                                                                       *string // D17 R code; originals only
+	Summary                                                                    *string // output.json's summary line
 	Size                                                                       int64
 	Required                                                                   bool
 	Seq                                                                        int64
@@ -424,7 +425,7 @@ type Artifact struct {
 func artifactOf(r db.Artifact) Artifact {
 	return Artifact{ID: r.ID, Scope: r.Scope, ContentHash: r.ContentHash, MediaType: r.MediaType, Name: r.Name, Role: r.Role, State: r.State,
 		ProjectID: r.ProjectID, ExecutionID: r.ExecutionID, TaskID: r.TaskID, LegacyID: r.LegacyID, DerivedFrom: r.DerivedFromArtifactID,
-		Previous: r.PreviousArtifactID, LastError: r.LastError, Size: r.Size, Required: r.Required, Seq: r.Seq, Created: r.CreatedAt, Code: r.Code}
+		Previous: r.PreviousArtifactID, LastError: r.LastError, Size: r.Size, Required: r.Required, Seq: r.Seq, Created: r.CreatedAt, Code: r.Code, Summary: r.Summary}
 }
 
 func artRows(rs []db.Artifact) []Artifact {
@@ -478,7 +479,7 @@ func (x *Artifact) row() contract.ArtifactRow {
 	return contract.ArtifactRow{Id: x.ID, LegacyId: x.LegacyID, ProjectId: x.ProjectID, Scope: x.Scope, ExecutionId: x.ExecutionID, TaskId: x.TaskID,
 		Name: x.Name, MediaType: x.MediaType, Size: x.Size, Sha256: x.ContentHash, Required: x.Required, Role: x.Role,
 		DerivedFromArtifactId: x.DerivedFrom, PreviousArtifactId: x.Previous, State: x.State, Error: x.LastError,
-		Seq: x.Seq, CreatedAt: float64(x.Created.UnixMilli()), Code: x.Code}
+		Seq: x.Seq, CreatedAt: float64(x.Created.UnixMilli()), Code: x.Code, Summary: x.Summary}
 }
 
 // view: the artifact's facts (lab_retry.go's snapshot): the list row without its order and time.
@@ -1354,7 +1355,7 @@ func artifactView(ctx context.Context, a *App, id, hostID string) (contract.Arti
 	if err != nil {
 		return contract.ArtifactView{}, err
 	}
-	v := contract.ArtifactView{Id: x.ID, LegacyId: x.LegacyID, ProjectId: x.ProjectID, Scope: x.Scope, ExecutionId: x.ExecutionID, TaskId: x.TaskID,
+	v := contract.ArtifactView{Summary: x.Summary, Id: x.ID, LegacyId: x.LegacyID, ProjectId: x.ProjectID, Scope: x.Scope, ExecutionId: x.ExecutionID, TaskId: x.TaskID,
 		Name: x.Name, MediaType: x.MediaType, Size: x.Size, Sha256: x.ContentHash, Required: x.Required, Role: x.Role,
 		DerivedFromArtifactId: x.DerivedFrom, PreviousArtifactId: x.Previous, State: x.State, Error: x.LastError,
 		Copies: make([]contract.ArtifactCopyState, 0, len(cs)), Availability: x.State, Code: x.Code}
@@ -1823,6 +1824,28 @@ func writeObject(ctx context.Context, a *App, projectID *string, scope string, d
 	return target, hash, nil
 }
 
+// outputSummary: the one-line summary an output.json carries at its top level (a pipeline's result names what it holds,
+// such as doc_recognize.py's "KATARZYNA NOWAK · 5 files · 1 unreadable"); nil for anything else. Kept to 200 characters.
+func outputSummary(name string, data []byte) *string {
+	if name != "output.json" || len(data) > 4<<20 {
+		return nil
+	}
+	var o struct {
+		Summary json.RawMessage `json:"summary"`
+	}
+	if json.Unmarshal(data, &o) != nil {
+		return nil
+	}
+	s, ok := jsonString(o.Summary)
+	if s = strings.TrimSpace(strings.Join(strings.Fields(s), " ")); !ok || s == "" {
+		return nil
+	}
+	if r := []rune(s); len(r) > 200 {
+		s = string(r[:199]) + "…"
+	}
+	return &s
+}
+
 // saveObject: an output the coordinator writes for an execution (pipeline step output.json, example inputs), stored and
 // verified at once.
 func saveObject(ctx context.Context, a *App, projectID *string, scope, executionID, name string, data []byte, media string) (string, string, error) {
@@ -1837,7 +1860,7 @@ func saveObject(ctx context.Context, a *App, projectID *string, scope, execution
 		id, hash = newID(), h
 		d := db.New(tx)
 		if err := d.ArtInsertStored(ctx, db.ArtInsertStoredParams{ID: id, ProjectID: projectID, Scope: scope, ContentHash: hash, Size: int64(len(data)), MediaType: media,
-			Name: name, ExecutionID: &executionID}); err != nil {
+			Name: name, ExecutionID: &executionID, Summary: outputSummary(name, data)}); err != nil {
 			return err
 		}
 		return artifactCopyInsertVerified(ctx, d, id, target.ID, projectID)
