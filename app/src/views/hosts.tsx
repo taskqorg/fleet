@@ -88,7 +88,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
   const hostsOp = useOp('hosts_list', {}, { every: 5000 });
   const connsOp = useOp('connections_list', {});
   const limits = useAccountLimits();
-  const people = useOp('people_list', () => (me.data?.owner ? { manage: true } : null));
+  const people = useOp('people_list', () => (me.data?.owner || me.data?.managesPeople ? { manage: true } : null));
   const today = useOp('spend_summary', () => (prefsRead.value ? spendRequest(1) : null), { quiet: 30_000 });
 
   const clockOffsetMs = useClockOffset(hostsOp);
@@ -211,7 +211,7 @@ export function Hosts(props: { section?: InfraSection; id?: string }) {
       { id: NAV_RUNNERS_ID, label: 'Runners', icon: 'play', root: true, href: '/runners', searchText: 'runners executions ci' },
       { id: NAV_SPEND_ID, label: 'Spend', icon: 'chart-no-axes-column', root: true, href: '/spend', searchText: 'spend cost money',
         right: spendToday != null ? <Fact tip="Spend today (UTC)"><span class="muted">{money(spendToday).text} today</span></Fact> : undefined },
-      ...(me.data?.owner ? [{ id: ROOT_PEOPLE_ID, label: 'People', icon: 'shield' as const, defaultCollapsed: true, href: '/humans', children: personLeaves }] : []),
+      ...(me.data?.owner || me.data?.managesPeople ? [{ id: ROOT_PEOPLE_ID, label: 'People', icon: 'shield' as const, defaultCollapsed: true, href: '/humans', children: personLeaves }] : []),
     ];
   });
 

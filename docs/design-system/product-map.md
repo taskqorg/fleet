@@ -130,7 +130,7 @@ Every page follows the common set: UR-1 to UR-50, UR-62 to UR-93, and the owner 
 | Connections and keys | System | `/system/connections`, connections with keys and limits | built | checked | `connections_list` |
 | One connection | System | `/system/connections/<name>`, keys, access, intake, balancing, limits | built | checked: `tavily` | `connections_key_add`, `connections_key_state`, `connections_set_access`, `connections_set_intake`, `connections_set_key_policy`, `connections_set_limits` |
 | Spend | System | `/system/spend`, totals and breakdown by purpose | built | checked | `spend_summary` |
-| People and access | System › People | `/system/people`, `/system/people/<id>`, `/system/people/new` | built | not checked: `site-agents` sees "Only the Fleet owner manages people and access." | `people_list`, `people_update`, `people_access_sync`, `project_list`, `me` |
+| People and access | System › People | `/system/people`, `/system/people/<id>`, `/system/people/new` | built | not checked: opens for the owner and full access (`me.managesPeople`); a person card has Telegram | `people_list`, `people_update`, `people_access_sync`, `project_list`, `me`, `telegram_people`, `telegram_person_set` |
 | Unknown route | — | any other path | built: the server serves the app shell, which shows "This page does not exist" (UR-70) | checked: "This page does not exist." with no rail item | — |
 | Phone width | all | every route above at 390 × 844 | built: the bottom bar of five (OR-60) | checked: no route scrolls sideways; More holds Lab, Library, System | — |
 | Palette | all | ⌘K over any route | built | not checked in this run | `search` |

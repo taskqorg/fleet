@@ -233,7 +233,7 @@ func init() {
 			roles = []string{}
 		}
 		g := grantsVersion(p)
-		return contract.MeReply{Email: &p.Email, Name: &p.Name, Roles: roles, Owner: p.Owner, PersonalLab: ptr(hasPersonalLab(p)), GrantsVersion: &g, ChangeLogRetentionDays: 7}, nil
+		return contract.MeReply{Email: &p.Email, Name: &p.Name, Roles: roles, Owner: p.Owner, ManagesPeople: ptr(fullAccess(p)), PersonalLab: ptr(hasPersonalLab(p)), GrantsVersion: &g, ChangeLogRetentionDays: 7}, nil
 	})
 }
 
