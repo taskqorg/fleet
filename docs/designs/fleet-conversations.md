@@ -1,10 +1,10 @@
 # Fleet Conversations
 
-One thread shows the history of a task across its sessions and executions: operator messages, agent replies, tool calls, reasoning, questions and results in one order. A taskless session is its own thread; attaching it to a task joins the history without copying it. The thread opens at the newest entry, pages upward and supports a jump with entries on both sides, without a thread-size cap.
+Fleet organizes conversational work as conversations: one conversation is one line of work with its own subject, clean context and native session ([conversation model](#conversation-model)). The conversation screen shows one conversation, or the history of a task across its conversations and executions: operator messages, agent replies, tool calls, reasoning, questions and results in one order. It opens at the newest entry, pages upward and supports a jump with entries on both sides, without a size cap.
 
 The executor produces one typed transcript projection; server reads, rendering, search and copy consume that projection instead of interpreting native harness records independently. This prevents a harness-specific raw-event shape from hiding an agent reply. Receipts remain durable across authentication/edge failures; a missing final receipt does not establish that an execution exited. In `go/executor/outbox.go`, a host-token 401 is a credential/edge condition: receipts remain queued and earlier failed 401 rows are requeued at startup. [Execution continuity](../execution-continuity.md) preserves prior evidence before continuation.
 
-Thread membership is derived from tasks and sessions rather than stored as a second thread entity. `VirtualList` keeps the anchor while rows change; app selection state supports copying across rows outside its rendered window. Behaviour is checked live, without numeric speed budgets.
+Task history is derived from tasks and conversations rather than stored as a second entity. `VirtualList` keeps the anchor while rows change; app selection state supports copying across rows outside its rendered window. Behaviour is checked live, without numeric speed budgets.
 
 ## Terms
 
@@ -13,9 +13,106 @@ Thread membership is derived from tasks and sessions rather than stored as a sec
 - **Block key:** `(seq, index)`, the row sequence and position in its blocks array; one event may contain several blocks. Cursors, search hits and selection points use the block key, not `seq` alone.
 - **`execution_totals`:** per-execution wall time, tokens and cost.
 
+## Conversation model
+
+A conversation is one line of work: one subject, one clean agent context and one native session. Bots, PM views, Telegram rooms, tasks and projects group conversations. None of them is a container of its own (owner decision, 2026-11-26).
+
+Why: before this model, a person met about 14 containers. "Thread" had four meanings and "Home" had two. A Telegram work item was a whole session, but a bot's work item was a tag inside one session. Five models proposed designs independently. All five promoted the work-item thread to a real unit with its own title, state, rights and native session. Four of the five made that unit the conversation itself.
+
+### Words
+
+| Word | Meaning |
+|---|---|
+| Conversation | One line of work (table `session`). The product, docs and UI use "conversation". Storage and operation names keep `session` (`session_start`, `session_view`); a rename would change contracts and the host protocol and gain nothing. |
+| Subject | The durable thing a conversation is about: `task:<id>`, `question:<id>` (a question without a task), `pr:<repo>#<n>`, `host:<id>`, `delivery:<id>`, `trigger:<id>`, or none. A run is never a subject. |
+| Task history | The read view over every conversation and run of one task (formerly "the task thread"). |
+| Topic | A Telegram forum topic (`telegram_room.thread_id`). |
+| Park | A continuation prefers the host and the account of the conversation's native session. Nothing else. |
+
+"Thread" and "Home" leave the product language. Swarm board threads keep their own meaning inside the board.
+
+### Entities
+
+**Conversation** (`session`)
+
+- `title`, `title_by`: always stored, never a raw key. A conversation with a subject is titled from it at creation, for example "T-FLT-63 · Fix the pricing sync" or "Host pds18-native · readiness". A trigger subject takes the trigger's name. Without a subject, the [title pass](#titles) titles the conversation after the first reply. A person or an agent can rename it at any time.
+- Agent: `bot_id`, or the profile and role (pm, worker, reviewer, discuss).
+- `subject`: kind and id, nullable. At most one non-archived conversation exists per (agent, subject).
+- Projects: a set of zero or more projects, changed while the conversation lives. The first project is the default for new tasks. The PM's `focus.projectIds` becomes this set.
+- `origin`: person, trigger, task, telegram, fork, pipeline or lab.
+- `listed`: false for pipeline and Lab agent steps. These conversations appear on their run and trial pages, not in the Conversations list.
+- Native session: harness, account, host and resume id. Earlier native sessions stay as handoff events on the timeline.
+- `forkOf` with the fork point, the people with access, and `archived_at`.
+
+States:
+- **Open:** a turn is queued or running, or the subject is unfinished.
+- **Idle:** otherwise. The next message resumes the native session.
+- **Archived:** after 7 days Idle. A new message opens the conversation again.
+
+The list shows an activity badge on top of the state: Running, Queued, Waiting on you or Failed.
+
+**Message.** A person's text, a Telegram message or a trigger wake addressed to one conversation, with `source` and `sent_by`. Queued messages keep their delivery states (queued, steering, steered, delivered, cancelled, superseded, steer_unknown).
+
+**Run** (`execution`). The kinds stay. `session_id` is set only on runs that belong to a conversation. A `host_job` belongs to the conversation of the pipeline step it serves, if any. A failed host job is a failed run on Live and on the host page, not a conversation. A wake's cause and `trigger_id` are fields of the run and the message.
+
+**Groupings** (read views, not stored containers):
+
+| Grouping | Contents |
+|---|---|
+| Bot | The bot's conversations, Open first, each with its subject. |
+| PM of a project | Conversations with role pm whose project set holds the project, newest first. "New" starts another one. |
+| Telegram room | The room's bound conversations (`telegram_work`) and the room's current conversation. A private chat is a room with one person. |
+| Task history | Every conversation and run of the task. |
+| Project | Conversations whose project set holds it. |
+
+### Rules
+
+- **Turns.** A conversation runs one turn at a time. A message that arrives during a turn waits in the queue or steers the running turn. A bot's conversations run in parallel; there is no per-bot limit. When two conversations of one bot touch the same task or pull request, shared-core state settles it: the task claim and the PR owner, not the scheduler.
+- **Native session.** A conversation owns exactly one current native session. A continuation prefers that session's host and account (park). Fleet changes the account only for a new conversation, or when the account cannot serve (quota, auth, not installed on the host). A move is a handoff inside the same conversation: a fresh native session starts from a summary, and the timeline shows a quiet "moved to …" marker.
+- **Fork.** Any conversation can be forked from any point. The fork is a new conversation with `forkOf`. It uses a native fork where the harness supports one, else a summary.
+- **Triggers.** A firing groups its changes by subject. For each subject, the trigger finds the target's open conversation for that subject, or creates one. It then sends one message there. A session target always gets the message in that session. A subjectless timer of a bot goes to that bot's `trigger:<id>` conversation. A skipped firing is recorded in the trigger's log, not as a run.
+- **Visibility.** Rights are the conversation's own: its director, the people with access, and agents in their own conversations. A Telegram binding grants nothing.
+
+### Use cases
+
+1. **A bot works.** HAL0's "Needs you" trigger sees three changes in one pass: a question on task T1, PR 990 failing its checks, and a readiness failure on host H2. It finds or creates HAL0's conversations for `task:T1`, `pr:fleet#990` and `host:H2`, and sends one message to each. The three run in parallel, each in its own context and native session. A second readiness failure on H2 goes to the same "Host H2 · readiness" conversation. The owner opens HAL0 under Conversations, sees its three Open conversations, and answers inside the T1 conversation. To talk to HAL0 about something new, the owner starts a conversation with HAL0 without a subject.
+2. **A pipeline works.** A pipeline run and its steps are runs. Each agent step has a hidden conversation (`origin: pipeline`), read from the run page. Script and host steps have none. "Continue" on a step forks its conversation into a listed one.
+3. **Lab.** A trial is a pipeline run with experiment and variant. Its agent steps have hidden conversations (`origin: lab`). The experiment page opens a trial's transcript, and "Continue" forks it. Trials do not appear in the Conversations list.
+4. **PM.** "PM · fleet" shows the PM conversations with fleet in their project set and starts a new one. The PM creates tasks. Autostart gives each task a worker conversation with subject `task:<id>`. A review gets its own reviewer conversation with the same subject, so its context starts clean. Rework continues the worker conversation. Task history shows them all, with the PM conversation that created the task.
+5. **Telegram.** A message in a room is routed by the [conductor](fleet-telegram.md#conductor-group-rooms):
+   - a reply goes to the conversation of the message it replies to;
+   - otherwise the conductor picks one of the room's bound conversations, or opens a new one.
+
+   Work on a second project adds that project to the conversation's set. A separate line of work becomes another conversation bound to the same room. A private chat routes the same way; its long chat is the room's current conversation. On the web each one is an ordinary conversation marked with its room, and a reply typed there goes back to the room. [Join it] binds the room to the other conversation.
+
+### Agent operations
+
+Agents get the model first, through the existing operations:
+- `session_start` takes an optional `subject`, `projects` and `listed`;
+- `message_send` addresses a conversation by its id, and its free `thread` string is removed;
+- `session_rename` changes the title, and a new `session_update` changes the project set and the people with access;
+- `session_fork` forks at an execution;
+- `sessions_list` filters by bot, subject, project, room, origin and `listed`.
+
+Not built: everything in this section beyond today's `session_start {taskId}`, `session_rename` and `session_fork`. The [PR series](#migration-to-the-conversation-model) builds it.
+
+### Migration to the conversation model
+
+The data is small (about 1,400 sessions and 10,000 runs), so each step rewrites it in place. The dispatcher is drained before steps that move native sessions.
+
+1. **Park by host and account.** Dispatch prefers the last account as well as the last host, and changes the account only when the account cannot serve. HAL0's 45 handoffs were all account rotations.
+2. **Subjects and host jobs.** Trigger changes use subject keys: a host job without a task becomes `host:<id>`, never `execution:<id>`. Every subject kind gets a stored title. A host job no longer creates a hidden session; about 754 such sessions are deleted, and their runs keep `session_id` null.
+3. **Conversation fields.** Add `subject`, `origin`, `listed` and the project set, and backfill them. Pipeline and Lab agent-step sessions (about 427) become hidden conversations.
+<a id="work-item-threads"></a>
+4. **Bot conversations.** Today a bot works in one Home session holding work-item threads: the `thread` column of `message` and `execution` (migration 109), one native session per thread in `nativeSessions[<key>#<thread>]`, fork and handoff for the main thread only. Bot wakes instead find or create conversations by subject, and the per-bot limit becomes the per-conversation turn rule. `bot_run` merges into the run and the trigger log. HAL0's Home splits by thread key into one conversation per key, each with its native session unchanged. The three `execution:` threads fold into one `host:` conversation per host. The main thread (269 turns) becomes the archived conversation "HAL0 · before conversations". `bot.home_session_id`, the `thread` columns and `nativeSessions` keyed by thread are dropped.
+5. **Telegram.** `telegram_person.home_session_id` becomes the private room's current conversation. `telegram_work` is the room-conversation binding.
+6. **Task history.** The task thread view is renamed Task history and lists the task's conversations.
+
+Steps 3, 4 and 6 change the screen. They are drawn on the [board](../design-system/README.md#design-board) and approved before UI code (OR-62).
+
 ## Goals
 
-*   One thread per task; a taskless session is its own thread. A taskless session that later gets a task joins that task's thread, and nothing is copied.
+*   One conversation per line of work. A task's history spans its conversations; a taskless conversation that later gets a task joins that history, and nothing is copied.
 *   The thread opens at the newest entry, loads older entries upward, and a jump to any entry loads entries on both sides of it. No size cap.
 *   The row being read moves 0 px when rows load above, rows stream in, a row expands, or media finishes loading.
 *   One typed block model (text, tool call, reasoning, question, result, boundary) produced by one normalizer. The screen only renders blocks.
@@ -33,7 +130,7 @@ Thread membership is derived from tasks and sessions rather than stored as a sec
 ## Non-Goals
 
 *   Numeric speed budgets or thread size limits. The check measures and reports; it asserts behaviour only.
-*   A stored thread entity. The thread is derived from `task_id` or from the session.
+*   A stored task-history entity. Task history is derived from `task_id`.
 *   A new windowing engine. `VirtualList` is extended.
 *   Keeping the old view behind a flag.
 *   New agent operations. Retry, fork, hand off and switch use the existing agent tool operations (`go/coordinator/agent.go`).
@@ -110,12 +207,12 @@ Every row the thread needs already has one shared ordering number. `document.seq
 *   The client follows the feed from `feedCursor`. For a fed change in the thread, the client fetches that row's blocks with `thread_blocks` by the change's kind and id (a change row names the document id, not its `seq`) and places them by block key.
 *   A row from a slow transaction can therefore arrive with a key lower than the client's newest loaded key. It is still placed by key, and `VirtualList` anchor keeping holds the row being read in place (OR-6). Nothing is skipped and nothing on screen moves.
 
-### Thread scope
+### Task history scope
 
-A thread key is `{ task: id }` or `{ session: id }`; the routes are `/api/threads/task/:id/...` and `/api/threads/session/:id/...`.
+A read key is `{ task: id }` or `{ session: id }`; the routes are `/api/threads/task/:id/...` and `/api/threads/session/:id/...`.
 
-*   **Task thread**: all executions with `execution.task_id = <task>` (indexed by `execution_task_seq`). Their sessions are the set of `session_id` values. This includes a taskless session that got the task later, because its later executions carry the `task_id`; its earlier executions join through the session (see below).
-*   **Session thread**: one session that has no task. Once the session gets a task, its URL opens the task thread.
+*   **Task history**: all executions with `execution.task_id = <task>` (indexed by `execution_task_seq`). Their sessions are the set of `session_id` values. This includes a taskless session that got the task later, because its later executions carry the `task_id`; its earlier executions join through the session (see below).
+*   **Conversation**: one conversation that has no task. Once the session gets a task, its URL opens the task thread.
 
 Membership rule: an entry belongs to task T's thread if its execution has `task_id = T`, or if its execution has no `task_id` and T is the first task its session got (the session's lowest-`seq` execution with a `task_id`). This keeps a session's early taskless history in the task thread once the session joins the task (the thread membership rule), and nothing is copied. The two-task case uses the first-task default described above; it does not duplicate the earlier history into both threads.
 
@@ -124,17 +221,6 @@ As a query: the session set is `SELECT DISTINCT session_id FROM execution WHERE 
 Joining a task: `session_start` takes an optional `taskId` (a task of the same project); the session records it and every execution it starts carries that `task_id`. `session_task_attach({ sessionId, taskId })` attaches a taskless session: the session records the task, its next executions carry it, and its earlier taskless executions join the task thread by the membership rule; nothing is copied or rewritten. A session that already belongs to another task gets 409; the same call again returns `existing: true`. The attached task counts as the session's first task (D2). Both are agent tools as well (the PM agent and people-access use them); host agents may call them only for their own sessions and project.
 
 Access: the thread operations run under the same project scope as every other read operation. A task's executions belong to the task's project, so plain scope filtering is enough.
-
-### Work-item threads
-
-A session can hold several work-item threads (Conversations v2, owner pick b2, 2026-11-25). A bot's Home session uses them: one thread per work item, so a turn about one item never carries another item's context.
-
-*   **Key.** A thread key names the work item: `task:<id>`, `question:<id>` (a question without a task), `execution:<id>` (a run without a task), `delivery:<id>`, `fleet` and `fleet:<kind>` (hosts, limits and other Fleet signals). A question or a run of a task belongs to its task's thread. The empty key is the session's main thread: person messages without a thread, timed wakes and Run now.
-*   **Where it lives.** The key is the column `thread` of `message` and `execution` (migration 109, `''` the main thread, indexed by `(session_id, thread, seq)`) and the field `thread` of the queued message. `message_send` takes an optional `thread`: a person continues a work-item thread.
-*   **Native session per thread.** A thread's turns continue their own native session: the continuation key is the session's plus `#<thread>`, kept in `nativeSessions`. A new thread starts fresh. The session's fork and pending handoff belong to the main thread.
-*   **Open, Idle, Archived.** A thread is Open while it has a queued or running turn or its item is unfinished, else Idle: it has no turn, and the next event on its item resumes its native session. An Idle thread with no activity for 7 days shows as Archived (folded into one row of the list) until a new event brings it back to Open. "Park" is not a thread state: in Fleet it means only host stickiness, a session keeping the host it started on.
-*   **One turn per item.** A trigger's changes are grouped by item in the order the items first changed. Several changes of one item in one check are one turn. A session target gets one queued message per item; a bot target gets an admitted wake for the first item and queued Home messages for the others, since a bot runs one turn at a time ([triggers, Pass](fleet-triggers.md#pass)).
-*   **Reading.** The Conversations list shows a bot's threads under its row (owner pick B, 2026-11-26): Open (with an empty-state line when none), Idle, and Archived folded into one row; a thread opens the conversation with `?thread=<key>`, and the head reads "HAL0 › <thread>". Without a pick the conversation shows the newest Open thread, else Main. A bot with only its main thread lists none. The data comes from the data layer's session view.
 
 ### Read path: `thread_entries`
 
@@ -156,7 +242,7 @@ The query finds the thread's member executions (the membership rule), then reads
 
 Live entries arrive through the existing change feed (`app/src/feed.ts`) from `feedCursor`. The client inserts a fed entry whose key falls inside its loaded window `[first, last]`, or after `last` when `hasAfter = false`; it ignores other fed entries, because a later page read returns them. The "N new" pill counts only entries past `last`.
 
-`key` may be `{session, thread}`: only the entries of that work-item thread of the session (`''` the main thread), read over `execution_thread`. `full: false` keeps every tool block to its summary: `callId` (`<executionId>/<seq>:<index>`), `toolKind` (classified on the server with the rules of `packages/ui/src/controls/tool-fold.ts` `toolKind()`), a short `target` and, for a failed call, `errorLine`. `tool_output {callId}` loads that call's input and output when it is opened. The default (`full` absent or true) keeps input and output in the block for agents that read a transcript.
+`key` may be `{session, thread}`: only the entries of that work-item thread of the session (`''` the main thread), read over `execution_thread`; [migration](#migration-to-the-conversation-model) step 4 removes this key. `full: false` keeps every tool block to its summary: `callId` (`<executionId>/<seq>:<index>`), `toolKind` (classified on the server with the rules of `packages/ui/src/controls/tool-fold.ts` `toolKind()`), a short `target` and, for a failed call, `errorLine`. `tool_output {callId}` loads that call's input and output when it is opened. The default (`full` absent or true) keeps input and output in the block for agents that read a transcript.
 
 ### Session view: `session_view`
 
@@ -170,7 +256,7 @@ session_view({ sessionId, executionsLimit?, executionsBefore? })
 *   `head`: code, title (set or generated, else the first message's start), state and active run (the newest turns), project and its code, bot, archived, the agent profile as the composer chips show it, the latest run's error line and the session's cost.
 *   `composer`: the session that receives the next message (`thread_composer`'s rule), its running execution and agent, or why none can receive one.
 *   `questions`: open questions of the session and of the composer target.
-*   `threads`: each work-item thread with its item's title, code and state, its turns, last activity, Open or Idle, and the viewer's unread turns (since the viewer's `person_visit` of page `thread:<session>:<thread>`).
+*   `threads`: each work-item thread with its item's title, code and state, its turns, last activity, Open or Idle, and the viewer's unread turns (since the viewer's `person_visit` of page `thread:<session>:<thread>`). Step 4 of the [migration](#migration-to-the-conversation-model) removes this field: a bot's conversations come from `sessions_list`.
 *   `triggers` and `botTriggers`: `trigger_list` of the session and of its bot. `context`: `session_context`.
 *   `executions`: the newest 20 turns (at most 200) as rows, paged with `executionsBefore`, over `execution_session_turns` (migration 111). A row holds no snapshot, dispatch or configuration; `execution_get` has the whole record.
 
