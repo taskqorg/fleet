@@ -82,7 +82,9 @@
         "question_ask",
         "question_history",
         "account_list",
-        "connections_key_request"
+        "connections_key_request",
+        "access_grants",
+        "access_grant_ask"
       ]
     },
     "ProjectArguments": {

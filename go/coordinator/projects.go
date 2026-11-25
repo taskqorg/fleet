@@ -705,7 +705,7 @@ func init() {
 	op("pipeline_history", pipelineHistory)
 	addProjectOps("project_detail", "project_resources", "project_resource_items", "project_list", "project_context", "catalogue",
 		"recommendation_set", "question_ask", "question_answer", "question_history", "pipeline_get", "pipeline_history",
-		"pipeline_run", "direct_search", "connections_key_request")
+		"pipeline_run", "direct_search", "connections_key_request", "access_grants", "access_grant_ask")
 	longRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps) })
 }
 
