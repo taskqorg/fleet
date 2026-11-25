@@ -609,3 +609,10 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Reads:** `sessions_list` adds `waitingSince`, `runStartedAt`, `lastStartedAt` and `failedStarts`; `executions_runners` adds `attempt`; `artifact_list` adds `taskAttempts` and `harness`. Agents read them through ops and MCP.
 * **Rule:** [OR-64](owner-rules.md), next to [OR-63](owner-rules.md).
 * **Board (OR-62):** the approved frames are on [screens/conversations.bl](board/screens/conversations.bl), [screens/projects.bl](board/screens/projects.bl) (Results), [screens/system.bl](board/screens/system.bl) (Runners) and [screens/home.bl](board/screens/home.bl); the `Work facts` block and the Live rows frame are reordered to the time-last order.
+
+## 2026-11-25: Lists load on scroll
+
+* **Owner's answer:** pagination that shows some rows, then `+K` and Show less, is out; every list loads on scroll and wastes nothing. Loading row: A, three faint skeleton rows.
+* **Rule:** [OR-65](owner-rules.md); [OR-30](owner-rules.md) now means a fixed preview whose title opens the full list.
+* **Pattern:** [infinite list](patterns/infinite-list.md): one sentinel per list, cursor pages, one request in flight, an abort on close, a danger row with Retry, nothing after the last row.
+* **Board (OR-62):** [infinite-lists.bl](board/infinite-lists.bl), 1440 and 390.

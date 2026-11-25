@@ -1,6 +1,6 @@
 # Infinite list
 
-A list loads its next page as its end scrolls near; there are no Show more, Show less, `+K more`, Older or Newer buttons and no page numbers ([OR-65](../owner-rules.md)). A short preview inside a card shows a fixed number of rows and its title opens the full list ([OR-30](../owner-rules.md)). Code: `packages/ui/src/infinite.tsx`; the app's operation pages: `app/src/op-pages.ts`. Board: `drafts/infinite-lists.bl` until the owner's pick moves it to `blocks.bl`.
+A list loads its next page as its end scrolls near; there are no Show more, Show less, `+K more`, Older or Newer buttons and no page numbers ([OR-65](../owner-rules.md)). A short preview inside a card shows a fixed number of rows and its title opens the full list ([OR-30](../owner-rules.md)). Code: `packages/ui/src/infinite.tsx`; the app's operation pages: `app/src/op-pages.ts`. Board: [infinite-lists.bl](../board/infinite-lists.bl), approved 2026-11-25 with loading row A (three faint skeleton rows).
 
 ## Parts
 
