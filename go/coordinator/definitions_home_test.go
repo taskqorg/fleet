@@ -98,6 +98,10 @@ func TestDecidedExperimentRetiresItsVariants(t *testing.T) {
 	 '[{"label":"a","overrides":{"profile":"lv-dropped"}},{"label":"b","overrides":{"profile":"lv-adopted"}},{"label":"c","overrides":{"profile":"lv-shared"}}]')`)
 	exec(`INSERT INTO experiment (id, project_id, kind, pipeline_id, state, variants) VALUES ('lv-y', 'fleet', 'single', 'search-basic', 'draft',
 	 '[{"label":"c","overrides":{"profile":"lv-shared"}}]')`)
+	// The trial sessions of a finished experiment stay open (not archived); they hold no variant.
+	exec(`INSERT INTO session (id, payload, created_at, updated_at) VALUES ('lv-s', '{"agentConfig":{"id":"lv-dropped"}}', now(), now())`)
+	exec(`INSERT INTO execution (id, kind, state, experiment_id, variant, session_id, started_at, data, observation, config_ref)
+	 VALUES ('lv-r', 'agent_run', 'succeeded', 'lv-x', 'a', 'lv-s', now(), '{}', 'confirmed', '{}')`)
 	status := func(kind, id string) int {
 		t.Helper()
 		code, _ := e.callJSON(t, "POST", "/api/ops/definition_get", map[string]any{"kind": kind, "id": id}, e.ownerHeaders())

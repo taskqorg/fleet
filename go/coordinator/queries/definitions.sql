@@ -116,8 +116,11 @@ SELECT id FROM experiment WHERE state IN ('draft','running','paused') AND tombst
  OR jsonb_path_exists(evaluators, '$.** ? (@ == $id)', jsonb_build_object('id',sqlc.arg(id)::text))) ORDER BY id;
 
 -- name: DefSessionsUsing :one
--- Open sessions whose profile it is.
-SELECT count(*)::bigint FROM session WHERE payload->'agentConfig'->>'id'=sqlc.arg(id)::text AND archived_at IS NULL AND tombstoned_at IS NULL;
+-- Open sessions whose profile it is. A Lab trial's session of an experiment that is no longer live (its executions carry
+-- the experiment) takes no further turn, so it holds nothing (labRetireVariants).
+SELECT count(*)::bigint FROM session s WHERE s.payload->'agentConfig'->>'id'=sqlc.arg(id)::text AND s.archived_at IS NULL AND s.tombstoned_at IS NULL
+ AND NOT EXISTS (SELECT 1 FROM execution x JOIN experiment ex ON ex.id=x.experiment_id
+  WHERE x.session_id=s.id AND ex.state NOT IN ('draft','running','paused'));
 
 -- name: DefUsage :many
 -- Runs, successes, median wall time and tokens of the executions that pinned a saved revision of kind/id (id '' for every

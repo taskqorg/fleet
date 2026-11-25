@@ -930,10 +930,13 @@ func (q *Queries) DefRunning(ctx context.Context, arg DefRunningParams) (int64, 
 }
 
 const defSessionsUsing = `-- name: DefSessionsUsing :one
-SELECT count(*)::bigint FROM session WHERE payload->'agentConfig'->>'id'=$1::text AND archived_at IS NULL AND tombstoned_at IS NULL
+SELECT count(*)::bigint FROM session s WHERE s.payload->'agentConfig'->>'id'=$1::text AND s.archived_at IS NULL AND s.tombstoned_at IS NULL
+ AND NOT EXISTS (SELECT 1 FROM execution x JOIN experiment ex ON ex.id=x.experiment_id
+  WHERE x.session_id=s.id AND ex.state NOT IN ('draft','running','paused'))
 `
 
-// Open sessions whose profile it is.
+// Open sessions whose profile it is. A Lab trial's session of an experiment that is no longer live (its executions carry
+// the experiment) takes no further turn, so it holds nothing (labRetireVariants).
 func (q *Queries) DefSessionsUsing(ctx context.Context, id string) (int64, error) {
 	row := q.db.QueryRow(ctx, defSessionsUsing, id)
 	var column_1 int64

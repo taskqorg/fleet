@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"sort"
 
@@ -29,9 +30,7 @@ func labRetireVariants(q *Request, e db.Experiment, adopted string) ([]contract.
 		if adopted != "" && label.Label == adopted {
 			into = keep
 		}
-		var v any
-		_ = json.Unmarshal(raw, &v)
-		stringsIn(v, into)
+		stringsIn(raw, into)
 	}
 	// A changed decision that adopts a variant an earlier decision deleted brings it back, revisions and all.
 	for id := range keep {
@@ -74,18 +73,16 @@ func labRetireVariants(q *Request, e db.Experiment, adopted string) ([]contract.
 	return out, nil
 }
 
-// stringsIn: every string value in v, into set.
-func stringsIn(v any, set map[string]bool) {
-	switch x := v.(type) {
-	case string:
-		set[x] = true
-	case []any:
-		for _, y := range x {
-			stringsIn(y, set)
+// stringsIn: every string token of a JSON document (values and keys), into set.
+func stringsIn(raw []byte, set map[string]bool) {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	for {
+		t, err := d.Token()
+		if err != nil {
+			return
 		}
-	case map[string]any:
-		for _, y := range x {
-			stringsIn(y, set)
+		if s, ok := t.(string); ok {
+			set[s] = true
 		}
 	}
 }
