@@ -5036,3 +5036,9 @@ CREATE INDEX telegram_history_room ON telegram_history(room_id, at DESC);
 -- migration 111: the session view's turns (session_view, queries/session_view.sql): a session's newest agent runs and
 -- host jobs in seq order, so a page of 20 reads 20 rows instead of every turn of the session.
 CREATE INDEX execution_session_turns ON execution(session_id, seq DESC) WHERE kind IN ('agent_run', 'host_job');
+
+-- migration 112: a thread's rows (thread_entries, queries/threads.sql ThreadRowsBefore and ThreadRowsAfter): an
+-- execution's events that show in a thread, in seq order, so a page is chosen from the index without reading each
+-- event's payload (HAL0's Home: 267 runs, 1.07 s per page before).
+CREATE INDEX event_thread_rows ON event(execution_id, seq)
+ WHERE NOT delta AND (type = 'execution.ended' OR jsonb_array_length(coalesce(payload->'data'->'fleetNormalized'->'blocks', '[]'::jsonb)) > 0);
