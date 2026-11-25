@@ -7,6 +7,8 @@
 //
 //   ( . ~/.config/ufobe-agents/site-access.env; export CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET;
 //     node scripts/page-budget.ts /conversations /live )
+//
+// PAGE_BUDGET_OPS=1 also lists every read with its time and size.
 import { chromium, type Page, type Request } from 'playwright';
 
 const ORIGIN = process.env.FLEET_ORIGIN ?? 'https://fleet.ufobe.com';
@@ -42,6 +44,7 @@ function line(label: string, path: string, settled: number) {
   const n = reads.length, kb = Math.round(reads.reduce((a, r) => a + (r.bytes ?? 0), 0) / 1024);
   const slow = [...reads].sort((a, b) => (b.ms ?? 0) - (a.ms ?? 0)).slice(0, 3).map(r => `${r.op} ${r.ms ?? '?'}ms`).join(', ');
   console.log(`${path.padEnd(28)} ${label.padEnd(8)} ${String(n).padStart(3)} reads ${String(kb).padStart(6)} KB  settled ${settled} ms${slow ? '  slowest: ' + slow : ''}`);
+  if (process.env.PAGE_BUDGET_OPS) console.log('  ' + reads.map(r => `${r.op} ${r.ms ?? '?'}ms ${Math.round((r.bytes ?? 0) / 1024)}KB`).join(', '));
   reads = [];
 }
 async function hideAndReturn(p: Page) {

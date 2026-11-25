@@ -2,11 +2,12 @@
 // line, a composer that picks who to talk to, the active sessions as cards in attention order (Waiting for you, Failed,
 // Working, Queued) with their questions answered in place, and the asleep bots with Wake. A quiet Home says what happened
 // since the last visit. A card opens the session at /home/<code>. Replaces the Overview (2026-11-25, FLT-48).
+// One read, home_view (docs/designs/fleet-data-layer.md): the server counts and groups; only the cards' rows arrive.
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onSettled, untrack, type Accessor } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import {
   PulseLine, Composer, TargetPicker, SessionCard, SessionCardSkeleton, QuestionCard, OpenQuestion, BotTile, QuietSummary, GroupHeader, Ago,
-  OfflineMarker, ErrorBanner, Button, ShellStatus, actor, life, statesOf, openStates, states, stamp, day, dayStart, causeOf,
+  OfflineMarker, ErrorBanner, Button, ShellStatus, actor, life, statesOf, states, stamp, day, dayStart, causeOf,
   type Blocker, type Target, type Life, type AvatarMark,
   timeOf, plural, WorkFacts, peerFence, Fact,
 } from '../../../packages/ui/src/index.ts';
@@ -14,16 +15,17 @@ import { formatView } from '../../../packages/view-url/view-url.ts';
 import { useLocation, useSearch } from '../router.ts';
 import { op, useAlive } from '../api.ts';
 import { useAnswers } from '../answers.ts';
-import { useOp } from '../store.ts';
-import { scopeIds, noProject, prefsRead, prefs } from '../prefs.ts';
-import type { SessionRow, QuestionRow, ExecutionRow } from '../../../contracts/generated/ops.ts';
+import { useOp, useView } from '../store.ts';
+import { scopeIds, prefsRead, prefs } from '../prefs.ts';
+import type { SessionRow, QuestionRow, HomeBlocker } from '../../../contracts/generated/ops.ts';
 import type { BotListItem } from '../../../contracts/generated/ops-bots.ts';
 import { botPicture, reasonLabel } from '../bot-view.ts';
 
+/** Chromium's deferred fetch (Fetch spec, deferred fetching): the browser sends it when the page goes away. Not in TypeScript's DOM lib yet. */
+declare function fetchLater(input: string, init?: RequestInit & { activateAfter?: number }): { readonly activated: boolean };
+
 const SessionView = lazy(() => import('./session.tsx'), { export: 'SessionView' });
 
-/** Session states Home shows: open ones and failed; idle sessions only feed the composer's targets. */
-const ACTIVE = [...openStates('session'), 'failed'];
 const TARGET_KEY = 'fleet:home-target';
 
 /** The card groups in attention order: a session is in the group of its state's word (registry `life`, OR-55). */
@@ -39,7 +41,6 @@ type Card = { key: string; group: Group; at: number; s: SessionRow | null; qs: Q
 
 /** Times for sorting and comparing: a missing time is the oldest. */
 const ms = (t: string | number | null | undefined) => timeOf(t, 0);
-const isProblem = (q: QuestionRow) => typeof q.cause === 'string' && q.cause.startsWith('problem:');
 /** A question's first sentence without links, for a card's "now" line and a blocker chip. */
 function headline(text: string): string {
   const t = String(text ?? '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
@@ -47,30 +48,21 @@ function headline(text: string): string {
   return (m ? m[1] : t).replace(/[.:]\s*$/, '') || 'Question';
 }
 
-// Blocker chips (OR-56, OR-58): failed runs that need a look, grouped by plain cause and host (contracts/vocabulary.json
-// `causes`, served as `failure`), and the coordinator's problem questions grouped by what they are about.
+// Blocker chips (OR-56, OR-58): home_view groups failed runs that need a look by plain cause and host (contracts/
+// vocabulary.json `causes`) and the coordinator's problem questions by what they are about; here they get their words.
 const FAMILY: Record<string, string> = { bugsink: 'New errors in Bugsink', 'error-spike': 'Errors spiked', 'client-error': 'Browser errors', delivery: 'Delivery got slower', store: 'A store needs a look' };
 const clause = (text: string) => (/^[^:.]+/.exec(text)?.[0] ?? text).trim();
-function blockers(problems: ExecutionRow[], questions: QuestionRow[]): Blocker[] {
-  const by = new Map<string, Blocker & { at: number }>();
-  const add = (key: string, cause: string, href: string, at: number) => {
-    const b = by.get(key);
-    if (b) { b.n++; b.at = Math.max(b.at, at); } else by.set(key, { cause, n: 1, href, at });
-  };
-  for (const e of problems) {
-    const f = causeOf(e.failure, e.problem), host = e.hostId ?? '';
-    const what = f ? clause(f.text) : 'A run needs a look';
-    add(`run:${f?.id ?? 'run'}:${host}`, host && !what.includes(host) ? `${what} on ${host}` : what,
-      host ? `/live?host=${encodeURIComponent(host)}` : `/live?cause=${encodeURIComponent(f?.id ?? 'run')}`, ms(e.lastSeenAt ?? e.startedAt));
-  }
-  for (const q of questions) {
-    const parts = String(q.cause).split(':'), family = parts[1] ?? 'unknown';
-    // A host problem names its host and kind (problem:host:owner-mac:saturated); the others group by family.
-    const key = family === 'host' ? parts.slice(0, 4).join(':') : `problem:${family}`;
-    const href = family === 'host' && parts[2] ? `/live?host=${encodeURIComponent(parts[2])}` : `/live?cause=${encodeURIComponent(family)}`;
-    add(key, FAMILY[family] ?? headline(q.text), href, ms(q.askedAt));
-  }
-  return [...by.values()].sort((a, b) => b.at - a.at).map(({ at: _, ...b }) => b);
+function blockers(groups: HomeBlocker[]): Blocker[] {
+  return groups.map(g => {
+    const host = g.hostId ?? '';
+    if (g.kind === 'run') {
+      const what = g.text ? clause(g.text) : 'A run needs a look';
+      return { cause: host && !what.includes(host) ? `${what} on ${host}` : what, n: g.n,
+        href: host ? `/live?host=${encodeURIComponent(host)}` : `/live?cause=${encodeURIComponent(g.cause)}` };
+    }
+    const family = g.cause.split(':')[1] ?? 'unknown';
+    return { cause: FAMILY[family] ?? headline(g.text), n: g.n, href: host ? `/live?host=${encodeURIComponent(host)}` : `/live?cause=${encodeURIComponent(family)}` };
+  });
 }
 
 /** Who a session is: its bot, its project's PM, or the work it does. */
@@ -118,51 +110,39 @@ function HomePage() {
   // ?all: the focus not applied; the header's "need you outside focus" opens it. Ignore is full silence (OR-34).
   const all = createMemo(() => new URLSearchParams(search()).has('all'));
   const scope = createMemo(() => scopeIds(!all()));
-  const listScope = createMemo(() => {
-    const { projectIds, excludeProjectIds } = scope();
-    return { ...(projectIds && { projectId: projectIds.map(noProject) }), ...(excludeProjectIds && { excludeProjectId: excludeProjectIds.map(noProject) }) };
-  });
   const inScope = (project: string | null | undefined) => {
     const { projectIds, excludeProjectIds } = scope(), p = project ?? '-';
     return projectIds ? projectIds.includes(p) : !excludeProjectIds?.includes(p);
   };
 
   const me = useOp('me', {});
-  const active = useOp('sessions_list', () => (prefsRead.value ? { filter: { state: ACTIVE, ...listScope() }, sort: '-activity', limit: 200 } : null));
-  const finished = useOp('sessions_list', () => (prefsRead.value ? { filter: { state: ['succeeded'], ...listScope() }, sort: '-activity', limit: 200 } : null), { quiet: 30_000 });
-  const questions = useOp('questions_list', () => (prefsRead.value ? { state: 'open', ...scope() } : null));
-  const problems = useOp('executions_list', () => (prefsRead.value ? { needsYou: true, ...scope() } : null), { quiet: 30_000 });
-  // Failed runs with their plain cause (failure, contracts/vocabulary.json): the newest one of each failed session names
-  // the cause its card collapses by.
-  const failedRuns = useOp('executions_list', () => (prefsRead.value ? { problem: true, limit: 500, ...scope() } : null), { quiet: 30_000 });
-  const bots = useOp('bot_list', {});
+  // The day's start for "done today", fixed for this visit (a new day reads anew on the next open).
+  const today = dayStart(Date.now());
+  const view = useView('home_view', () => (prefsRead.value ? { ...scope(), dayStart: today } : null), { quiet: 1000 });
   const projects = useOp('project_list', {});
-  const delivery = useOp('publishing_status', () => (prefsRead.value ? scope() : null), { every: 300_000 });
 
-  // The visit before this one (person_visit records this one). Read once per mount: a reread would move it to now.
-  const [since, setSince] = createSignal<number | null | undefined>(undefined);
+  // The last visit (home_view counts from it) is recorded when the person leaves Home, so it stays put while Home is
+  // open. Leaving for another page records it at once; closing or reloading the tab sends the record the browser holds
+  // (fetchLater, sent when the page goes away, bfcache-safe unlike an unload handler).
   onSettled(() => {
-    op('person_visit', { page: 'home' }, { signal: alive }).then(r => setSince(r.previousAt ?? null), () => setSince(null));
+    const later = new AbortController();
+    try {
+      fetchLater('/api/ops/person_visit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ page: 'home' }), signal: later.signal });
+    } catch { /* over the deferred-fetch quota: the in-app leave still records */ }
+    return () => { later.abort(); void op('person_visit', { page: 'home' }).catch(() => {}); };
   });
+  const since = (): number | null | undefined => (view.data ? view.data.counts.visitAt : undefined);
 
   const now = () => Date.now();
-  const botBySession = createMemo(() => new Map((bots.data?.bots ?? []).filter(b => b.homeSessionId).map(b => [b.homeSessionId!, b])));
-  const scopedBots = createMemo(() => (bots.data?.bots ?? []).filter(b => inScope(b.projectId)));
+  const scopedBots = createMemo(() => view.data?.bots ?? []);
+  const botBySession = createMemo(() => new Map(scopedBots().filter(b => b.homeSessionId).map(b => [b.homeSessionId!, b])));
 
-  // The newest failed run of each session, with its plain cause.
-  const failureOf = createMemo(() => {
-    const by = new Map<string, { cause: string; text: string; hostId: string | null; at: number }>();
-    for (const e of failedRuns.data?.executions ?? []) {
-      if (!e.sessionId || !e.failure) continue;
-      const at = ms(e.endedAt ?? e.lastSeenAt ?? e.startedAt), had = by.get(e.sessionId);
-      if (!had || at > had.at) by.set(e.sessionId, { cause: e.failure.cause, text: e.failure.text, hostId: e.hostId, at });
-    }
-    return by;
-  });
-  // Questions to the person: a problem is a blocker chip; any other one sits on its session's card, oldest first.
-  const asked = createMemo(() => (questions.data?.questions ?? []).filter(q => !isProblem(q)).sort((a, b) => ms(a.askedAt) - ms(b.askedAt)));
+  // The newest failed run of each failed session, with its plain cause.
+  const failureOf = createMemo(() => new Map((view.data?.failures ?? []).map(f => [f.sessionId, { cause: f.cause, text: f.text, hostId: f.hostId, at: f.at }])));
+  // Questions to the person, oldest first (problem questions are blockers): each sits on its session's card.
+  const asked = createMemo<QuestionRow[]>(() => view.data?.questions ?? []);
   const cards = createMemo<Card[]>(() => {
-    const rows = active.data?.sessions ?? [], byId = new Map(rows.map(s => [s.id, s]));
+    const rows = view.data?.sessions ?? [], byId = new Map(rows.map(s => [s.id, s]));
     const qs = new Map<string, QuestionRow[]>();
     const loose: Card[] = [];
     for (const q of asked()) {
@@ -217,28 +197,21 @@ function HomePage() {
   // Waiting shows every card: a question no session asks is answered only here. The other groups preview one row of
   // cards and link to their Conversations filter (OR-65).
   const shown = (g: { id: Group; cards: Card[] }) => (g.id === 'waiting' ? g.cards : g.cards.slice(0, cols().cards));
-  const loaded = () => !!active.data && !!questions.data;
+  const loaded = () => !!view.data;
   // A grid that appears later (the first cards, the asleep row) is measured once it is in the page.
-  createEffect(() => [loaded(), bots.data] as const, () => { requestAnimationFrame(measure); });
+  createEffect(() => [loaded(), view.data?.bots] as const, () => { requestAnimationFrame(measure); });
   const quiet = createMemo(() => loaded() && !grouped().some(g => (g.id === 'waiting' || g.id === 'failed') && g.cards.length > 0));
 
   // Pulse: working and queued sessions, sessions done today, then blockers.
-  const today = () => dayStart(Date.now());
-  const rows = () => active.data?.sessions ?? [];
-  // At most one page (200 rows, newest first): a day with more finished sessions shows 200.
-  const doneSince = (t: number) => (finished.data?.sessions ?? []).filter(s => ms(s.activityAt) >= t).length;
-  const chips = createMemo(() => blockers(problems.data?.executions ?? [], (questions.data?.questions ?? []).filter(isProblem)));
+  const rows = () => view.data?.sessions ?? [];
+  const chips = createMemo(() => blockers(view.data?.blockers ?? []));
   const stateHref = (l: Life) => formatView({ view: 'conversations', state: statesOf('session', [l]) });
 
-  // Quiet summary: since the last visit, or today on a first one.
+  // Quiet summary: since the last visit, or today on a first one (home_view counts).
   const quietFacts = createMemo(() => {
-    const s = since();
-    const from = s ?? today();
-    const done = doneSince(from);
-    const merged = (delivery.data?.items ?? []).filter(i => i.merged && ms(i.merged) >= from).length;
-    // Failed runs that still need a look; failed sessions would show as cards, so a quiet Home has none of those.
-    const failures = (problems.data?.executions ?? []).filter(e => e.state === 'failed' && ms(e.lastSeenAt ?? e.startedAt) >= from).length;
-    return [plural(done, 'session') + ' done', plural(merged, 'pull request') + ' merged', plural(failures, 'failure')].join(', ');
+    const c = view.data?.counts;
+    if (!c) return '';
+    return [plural(c.doneSince, 'session') + ' done', plural(c.mergedSince, 'pull request') + ' merged', plural(c.failedSince, 'failure')].join(', ');
   });
   // The bot that keeps watch: one running now (the most recent). An asleep bot watches nothing, so none is named.
   const watcher = createMemo(() => scopedBots().filter(b => b.activeRunId).sort((a, b) => ms(b.lastRunAt) - ms(a.lastRunAt))[0]);
@@ -274,8 +247,6 @@ function HomePage() {
   const [picked, setPicked] = createSignal<string | null>(typeof localStorage === 'undefined' ? null : localStorage.getItem(TARGET_KEY));
   const target = createMemo(() => targets().find(t => t.id === picked())?.id ?? targets()[0]?.id ?? '');
   const pick = (id: string) => { setPicked(id); try { localStorage.setItem(TARGET_KEY, id); } catch { /* private mode: the pick lasts this visit */ } };
-  // The picked PM's project presets, read ahead: a PM with no open session starts from the project's PM preset.
-  const presets = useOp('session_presets', () => (target().startsWith('pm:') && !pmSession(target().slice(3)) ? { projectId: target().slice(3) } : null));
   const [sendError, setSendError] = createSignal<string | null>(null);
   /** Sends the first message and opens that session: a bot's Home (waking it when asleep), or the project's PM session. */
   const send = async (text: string, to = target()) => {
@@ -302,7 +273,8 @@ function HomePage() {
         go(sessionPath(open));
         return;
       }
-      const preset = presets.data?.presets.find(p => p.role === 'pm' && !p.unavailable);
+      // A PM with no open session starts from the project's PM preset, read when the message is sent.
+      const preset = (await op('session_presets', { projectId: project }, { signal: alive })).presets.find(p => p.role === 'pm' && !p.unavailable);
       const r = await op('session_start', { projectId: project, requestId: newRequestId(), text, ...(preset ? { preset: preset.id } : { role: 'pm' }) }, { signal: alive });
       go(sessionPath({ id: r.sessionId }));
     } catch (e) {
@@ -318,7 +290,7 @@ function HomePage() {
   };
 
   const name = createMemo(() => (me.data?.name ?? '').split(/\s+/)[0]);
-  const state = createMemo(() => [active.state, questions.state].find(s => s !== 'current') ?? 'current');
+  const state = createMemo(() => view.state);
 
   // Work facts (controls/work-facts.md): the time a card waits, is in work or failed, against the cards of its group
   // (peerFence), never a fixed number. No agent mark on Home: the avatar and the name say who.
@@ -430,7 +402,7 @@ function HomePage() {
         <PulseLine
           working={rows().filter(s => lifeOfSession(s.state) === 'working').length}
           queued={rows().filter(s => lifeOfSession(s.state) === 'queued').length}
-          done={doneSince(today())}
+          done={view.data?.counts.doneToday ?? 0}
           blockers={chips()}
           countHref={stateHref}
           liveHref="/live"
@@ -445,8 +417,8 @@ function HomePage() {
       />
       <Show when={sendError()}>{e => <ErrorBanner text={e()} />}</Show>
       <Switch>
-        <Match when={active.error && !active.data}>
-          <ErrorBanner text={`Sessions did not load: ${active.error}`} onRetry={() => active.reload()} />
+        <Match when={view.error && !view.data}>
+          <ErrorBanner text={`Home did not load: ${view.error}`} onRetry={() => view.reload()} />
         </Match>
         <Match when={!loaded()}>
           <section class="home-group" aria-busy="true" aria-label="Loading sessions">

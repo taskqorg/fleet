@@ -147,6 +147,137 @@ func (v FoundKind) Valid() bool {
 	return false
 }
 
+type HomeBlocker struct {
+	At     int64           `json:"at"`
+	Cause  string          `json:"cause"`
+	HostId *string         `json:"hostId"`
+	Kind   HomeBlockerKind `json:"kind"`
+	N      int64           `json:"n"`
+	Text   string          `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HomeBlocker) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type HomeBlockerKind string
+
+const (
+	HomeBlockerKindRun     HomeBlockerKind = "run"
+	HomeBlockerKindProblem HomeBlockerKind = "problem"
+)
+
+// HomeBlockerKindValues lists every HomeBlockerKind in schema order.
+var HomeBlockerKindValues = []HomeBlockerKind{HomeBlockerKindRun, HomeBlockerKindProblem}
+
+// Valid: v is one of the schema's values.
+func (v HomeBlockerKind) Valid() bool {
+	for _, x := range HomeBlockerKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type HomeCounts struct {
+	DoneSince   int64  `json:"doneSince"`
+	DoneToday   int64  `json:"doneToday"`
+	FailedSince int64  `json:"failedSince"`
+	MergedSince int64  `json:"mergedSince"`
+	VisitAt     *int64 `json:"visitAt"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HomeCounts) Validate() error {
+	return nil
+}
+
+type HomeFailure struct {
+	At        int64   `json:"at"`
+	Cause     string  `json:"cause"`
+	HostId    *string `json:"hostId"`
+	SessionId string  `json:"sessionId"`
+	Text      string  `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HomeFailure) Validate() error {
+	return nil
+}
+
+type HomeViewReply struct {
+	Blockers  []HomeBlocker `json:"blockers"`
+	Bots      []BotListItem `json:"bots"`
+	Counts    HomeCounts    `json:"counts"`
+	Failures  []HomeFailure `json:"failures"`
+	Questions []QuestionRow `json:"questions"`
+	Sessions  []SessionRow  `json:"sessions"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HomeViewReply) Validate() error {
+	if v.Blockers == nil {
+		return Missing("blockers")
+	}
+	for i := range v.Blockers {
+		if err := Check(&v.Blockers[i], "blockers"); err != nil {
+			return err
+		}
+	}
+	if v.Bots == nil {
+		return Missing("bots")
+	}
+	for i := range v.Bots {
+		if err := Check(&v.Bots[i], "bots"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Counts, "counts"); err != nil {
+		return err
+	}
+	if v.Failures == nil {
+		return Missing("failures")
+	}
+	for i := range v.Failures {
+		if err := Check(&v.Failures[i], "failures"); err != nil {
+			return err
+		}
+	}
+	if v.Questions == nil {
+		return Missing("questions")
+	}
+	for i := range v.Questions {
+		if err := Check(&v.Questions[i], "questions"); err != nil {
+			return err
+		}
+	}
+	if v.Sessions == nil {
+		return Missing("sessions")
+	}
+	for i := range v.Sessions {
+		if err := Check(&v.Sessions[i], "sessions"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type HomeViewRequest struct {
+	DayStart          *int64   `json:"dayStart,omitempty"`
+	ExcludeProjectIds []string `json:"excludeProjectIds,omitempty"`
+	ProjectIds        []string `json:"projectIds,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HomeViewRequest) Validate() error {
+	return nil
+}
+
 type HumanAccessGrant struct {
 	Id   string `json:"id"`
 	Kind string `json:"kind"`
@@ -906,6 +1037,7 @@ func (v VisitPage) Valid() bool {
 func init() {
 	for n, o := range map[string]Operation{
 		"focus_set":           {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Set a session's focus: projectIds (list in your grants) or \"*\"; with one project it is the default projectId of task_create and session_start, and task_page lists only the focus. Focus does not bind a repository checkout; use session_transition with projectId for that. Configure focus for the user’s intended granted project before project context reads", InputSchema: json.RawMessage("{\"$comment\":\"projectIds: a list of project ids in the caller's grants, or \\\"*\\\".\",\"additionalProperties\":true,\"properties\":{\"projectIds\":{},\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"projectIds\"],\"type\":\"object\"}")},
+		"home_view":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Your Home screen in one read (projectIds or excludeProjectIds: the focus, '-' is work outside projects; dayStart: your local midnight in ms, default UTC): the active and failed sessions (up to 200, newest activity first) with the plain cause of each failed one, the open questions for people, the blockers grouped by cause and host (failed runs that need a look and the coordinator's problem questions), the bots, and the counts of the pulse and the quiet summary (sessions done today, and done, merged and failed since your last Home visit). It counts on the server and returns no finished sessions or runs.", Changes: []string{"session", "execution", "question", "bot", "bot-run", "setting-change", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"dayStart\":{\"$comment\":\"ms: the start of the caller's day, which doneToday counts from; default the UTC midnight.\",\"minimum\":0,\"type\":\"integer\"},\"excludeProjectIds\":{\"$comment\":\"Leave these projects out ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectIds\":{\"$comment\":\"Only these projects ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},
 		"list_membership":     {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "At most 1000 ids and one or two lists.", Changes: []string{"task", "session", "execution", "question", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"$comment\":\"At most 1000 ids and one or two lists.\",\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"lists\":{\"items\":{\"$comment\":\"name: tasks or sessions.\",\"additionalProperties\":true,\"properties\":{\"filter\":{\"$comment\":\"The list filter of packages/view-url toPageParams; a null projectId is work outside projects; an empty projectId list is refused; archived applies to sessions only. A field a list does not implement is a 400.\",\"additionalProperties\":false,\"properties\":{\"archived\":{\"type\":\"boolean\"},\"excludeProjectId\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); null (or '-', as in excludeProjectIds) is work outside projects; applied after projectId, so a project in both is left out. Agents see every project unless they pass it.\",\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"projectId\":{\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"search\":{\"$comment\":\"free text; tasks also take key:value terms agent:, host:, state:, project: (substring match)\",\"type\":\"string\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"group\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"sort\":{\"$comment\":\"as the list's own page operation: task_page or sessions_list group and sort\",\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"ids\",\"lists\"],\"type\":\"object\"}")},
 		"me":                  {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "The calling person: email, name, roles, owner flag and grants version", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"nav_counts":          {Read: true, Long: false, Errors: []int{400, 403}, Auth: "person", Agent: "tool", Description: "Your director's navigation counters in one call: per section (tasks, conversations, delivery, results, hosts) the view counted (person setting navCounters, set with person_settings_set; defaults Running, Running, In flight, Last 24 h, Offline), inFocus (in the director's project focus; everything without one) and outside (other projects that are not ignored); ignored projects are never counted", Changes: []string{"task", "session", "artifact", "host", "delivery:delivery-state:", "execution", "question", "setting-change"}, InputSchema: json.RawMessage("{\"$comment\":\"The navigation counters of the caller (an agent: its director) in one call: each section counts its counter view (person setting navCounters; defaults Tasks and Conversations Running, Delivery In flight, Results Last 24 h, Hosts Offline) with its list's own filters, split by the person's focus; ignored projects are never counted.\",\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
