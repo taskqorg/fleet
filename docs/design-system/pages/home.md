@@ -1,6 +1,6 @@
 # Home (screen 1)
 
-**Status.** Built ([OR-50](../owner-rules.md), [FLT-48](https://youtrack.ufobe.com/issue/FLT-48)): `app/src/views/home.tsx`. It replaces the [Overview](overview.md). A card opens the session at `/home/<code>`; until the one session view ([FLT-49](https://youtrack.ufobe.com/issue/FLT-49)) lands there, that address shows the conversation view.
+**Status.** Built ([OR-50](../owner-rules.md), [FLT-48](https://youtrack.ufobe.com/issue/FLT-48)): `app/src/views/home.tsx`. It replaces the [Overview](overview.md). A card opens the session at `/home/<code>` in the one [session view](session.md) ([FLT-49](https://youtrack.ufobe.com/issue/FLT-49)), full width with Home highlighted.
 
 **App route:** `/home`, and `/` opens it. Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 

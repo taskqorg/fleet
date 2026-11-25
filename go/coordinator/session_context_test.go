@@ -114,6 +114,17 @@ INSERT INTO event(id,execution_id,session_id,project_id,type,payload) VALUES
 	if len(ctx.Timers) != 1 || ctx.Timers[0].EveryMs != 60000 || ctx.Timers[0].NextAt == nil {
 		t.Fatalf("timers = %+v", ctx.Timers)
 	}
+	if deref(p.Steps[0].Owner) != "lead" || !ctx.Timers[0].CanManage || ctx.Timers[0].Paused {
+		t.Fatalf("plan owner or timer permission: %s %+v", jsonBytes(p.Steps[0]), ctx.Timers[0])
+	}
+	if len(ctx.Tasks) == 0 || ctx.Tasks[0].Id != "t-ctx" || ctx.Tasks[0].Title == "" {
+		t.Fatalf("tasks = %s", jsonBytes(ctx.Tasks))
+	}
+	call("watch_timer_set", contract.WatchTimerSetRequest{SessionId: "s-ctx", Action: "pause", BaseTimerMs: 60000}, 200)
+	asJSON(t, call("session_context", doc{"sessionId": "s-ctx"}, 200), &ctx)
+	if len(ctx.Timers) != 1 || !ctx.Timers[0].Paused || ctx.Timers[0].EveryMs != 60000 || ctx.Timers[0].NextAt != nil {
+		t.Fatalf("paused timer = %+v", ctx.Timers)
+	}
 	var solo contract.SessionContextReply
 	asJSON(t, call("session_context", doc{"sessionId": "s-ctx-solo"}, 200), &solo)
 	if solo.Plan != nil || len(solo.Swarm) != 0 || len(solo.Timers) != 0 || len(solo.Automations) != 0 {

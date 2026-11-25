@@ -12,6 +12,9 @@ import tokens from '../../tokens.json';
 import { Icon, Button, StateBadge, StageChip, Num, CostFigures, Ago, AgeChip, HarnessMark, Empty, ErrorBanner, copyText, SearchBox } from './primitives.tsx';
 import { EntityCode, linkCodes } from './overlays.tsx';
 import { TabBar } from './tables.tsx';
+import { ToolLine } from './tool-line.tsx';
+import { QuestionCard } from './question-card.tsx';
+import { foldBlocks, type FoldedRow } from './tool-fold.ts';
 
 const ROW = parseInt(tokens.size.row);
 
@@ -706,6 +709,11 @@ export function Thread(p: {
   onAnswer?: (questionId: string, answer: string) => void; onCopyFail?: (e: unknown) => void;
   /** A key request row (its options name a connection): the owner's value goes here, never to onAnswer. */
   onSecret?: (questionId: string, connection: string, value: string) => Promise<unknown>;
+  /** The one session view (OR-51, OR-52, OR-54): messages as prose, tool and system blocks folded into one line per run
+   *  (tool-fold.ts), answered questions as one line, no boundary rows. Open questions belong to the card above. */
+  quiet?: boolean;
+  /** With `quiet`: each execution's state, so the last line of a failed run is failed and a working run's newest line runs. */
+  executions?: ReadonlyMap<string, string>;
 }) {
   const [open, setOpen] = createSignal<Set<string>>(new Set());
   const toggle = (k: string) => setOpen(o => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; });
@@ -769,6 +777,37 @@ export function Thread(p: {
     };
   });
 
+  type Item = ThreadBlock | FoldedRow;
+  const items = createMemo<Item[]>(() => (p.quiet ? foldBlocks(p.blocks, p.executions) : p.blocks));
+  // A key inside a folded line (a search hit, a jump) stands for the line that holds it.
+  const rowOf = (k: string | null | undefined) => {
+    if (!k || !p.quiet) return k;
+    const pos = (x: string) => x.split(':').map(Number), [ks, kp] = pos(k);
+    let at: string | undefined;
+    for (const r of items()) { const [s0, p0] = pos(r.key); if (s0 > ks || (s0 === ks && p0 > kp)) break; at = r.key; }
+    return at ?? k;
+  };
+  const markedRow = createMemo(() => rowOf(p.marked));
+  // A failed line starts open (UR-63): the toggle set holds the lines whose state differs from their default.
+  // Jumps name block keys; in a quiet thread they scroll to the line that holds the block.
+  const listHandle: { current: VirtualListHandle | null } = {
+    get current() { return p.handle?.current ?? null; },
+    set current(h) { if (p.handle) p.handle.current = h && p.quiet ? { ...h, scrollToKey: (k, a) => h.scrollToKey(rowOf(k)!, a) } : h; },
+  };
+  const quietRow = (r: FoldedRow): JSX.Element => {
+    switch (r.kind) {
+      case 'tools': return <ToolLine words={r.words} calls={r.calls} state={r.state} secs={r.secs} startedAt={r.startedAt} open={open().has(r.key) !== r.calls.some(c => c.failed)} onToggle={() => toggle(r.key)} />;
+      case 'question': {
+        const answer = r.answer === undefined || typeof r.answer === 'string' ? r.answer : keyConnection(r.options) ? 'key given' : JSON.stringify(r.answer);
+        return <div class="th-row th-q" data-ui="thread-row"><QuestionCard question={r.text} choices={[]} answered={{ answer: answer ?? r.state, at: r.answeredAt ?? r.askedAt ?? p.now }} /></div>;
+      }
+      case 'text': {
+        const selectable = canSelectText() && (!r.plain || r.plain === r.markdown);
+        return <TextRow quiet who={r.role === 'operator' ? 'operator' : 'agent'} markdown={r.markdown ?? ''} selectable={selectable} bounds={p.textBounds?.(r.key)} by={r.by} at={r.at} now={p.now} onCopyFail={p.onCopyFail} attachments={r.attachments} onOpen={p.onOpenResult} src={p.resultSrc} />;
+      }
+      default: return row(r);
+    }
+  };
   const row = (b: ThreadBlock): JSX.Element => {
     // The current projection exposes its Markdown as plain source. Keep full-row copy available for other projections.
     const selectable = canSelectText() && (b.kind === 'text' || b.kind === 'reasoning') &&
@@ -829,17 +868,17 @@ export function Thread(p: {
     >
       <VirtualList
         class="tr-body"
-        items={p.blocks}
+        items={items()}
         getKey={b => b.key}
         rowHeight={ROW}
         dynamic
         follow="bottom"
         label={p.label}
-        handle={p.handle}
+        handle={listHandle}
         pending={p.pending}
         onStart={p.onStart}
         onEnd={p.onEnd}
-        rowClass={b => [b.key === p.marked ? 'marked' : '', p.selected?.(b.key) ? 'picked' : ''].join(' ')}
+        rowClass={b => [b.key === markedRow() ? 'marked' : '', p.selected?.(b.key) ? 'picked' : ''].join(' ')}
         render={b => (
           <div
             class="th-pick"
@@ -851,7 +890,7 @@ export function Thread(p: {
               p.onRowClick(b.key, e.shiftKey);
             }}
           >
-            {row(b)}
+            {p.quiet ? quietRow(b as FoldedRow) : row(b as ThreadBlock)}
           </div>
         )}
       />

@@ -38,7 +38,7 @@ type RuleOwnership = {
 
 // Narrow, explicit S9 exemptions with written reasons (mirroring designRulesOwned in go/coordinator/design_rules_test.go).
 const uiDesignOwned: Record<string, RuleOwnership> = {
-  'app/src/views/conversations.tsx': {
+  'app/src/views/session.tsx': {
     'UI-OP': {
       thread_export: 'S9: user-triggered Cmd+C / Copy action starts the export promise synchronously inside the gesture handler for writeClip',
       thread_search: 'S9: user-triggered SearchField submit runs once and imperatively jumps the thread window to the first hit',
