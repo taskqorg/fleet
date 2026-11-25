@@ -1171,6 +1171,11 @@ type LabTrial struct {
 	CellExample      string
 	ExampleUseCaseID string
 	DurationMs       float64
+	State            string
+	EndedAt          *time.Time
+	Observation      string
+	Variant          *string
+	ChangedAt        time.Time
 }
 
 type LabWork struct {

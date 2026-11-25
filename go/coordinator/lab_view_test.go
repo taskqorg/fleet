@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"fleet/contract"
@@ -55,4 +56,19 @@ func TestLabTrialFacts(t *testing.T) {
 	check("the run ends with its duration", "ex-1", "uc-1", 1234.5)
 	exec(`UPDATE execution SET data = jsonb_set(data, '{cell,example}', '"ex-2"') WHERE id = 'lt-r'`)
 	check("the cell's example changes", "ex-2", "uc-1", 1234.5)
+
+	// The trial's state is a fact too, and its change moves the version the comparison's cache is kept by.
+	version := func() string {
+		t.Helper()
+		var v string
+		if err := e.ownerStore.pool.QueryRow(e.ctx, `SELECT state||'|'||(SELECT count(*) FROM lab_trial)||'|'||(SELECT max(changed_at) FROM lab_trial)::text FROM lab_trial WHERE execution_id = 'lt-r'`).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	before := version()
+	exec(`UPDATE execution SET state = 'failed' WHERE id = 'lt-r'`)
+	if after := version(); after == before || !strings.HasPrefix(after, "failed|") {
+		t.Fatalf("a state change moves the trial's facts: %q then %q", before, after)
+	}
 }

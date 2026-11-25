@@ -363,3 +363,13 @@ SELECT * FROM score s
 WHERE s.experiment_id = ANY(sqlc.arg(experiment_ids)::text[])
   AND NOT EXISTS (SELECT 1 FROM score r WHERE r.replaces_score_id = s.id)
 ORDER BY s.seq;
+
+-- name: LabDataVersion :one
+-- What Lab's comparison is computed from, as counts and last changes (lab_leaderboard.go): its cached reply stays while
+-- these stay. Trials by lab_trial (state, end and facts), scores and experiments by their seq.
+SELECT (SELECT count(*) FROM lab_trial)::bigint AS trials,
+ (SELECT coalesce(max(changed_at), 'epoch'::timestamptz) FROM lab_trial)::timestamptz AS trials_at,
+ (SELECT count(*) FROM score)::bigint AS scores,
+ (SELECT coalesce(max(seq), 0) FROM score)::bigint AS score_seq,
+ (SELECT count(*) FROM experiment)::bigint AS experiments,
+ (SELECT coalesce(max(seq), 0) FROM experiment)::bigint AS experiment_seq;

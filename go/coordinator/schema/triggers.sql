@@ -91,7 +91,7 @@ CREATE OR REPLACE TRIGGER execution_spend_exec_ins AFTER INSERT ON execution REF
 CREATE OR REPLACE TRIGGER execution_spend_exec_upd AFTER UPDATE ON execution REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION execution_spend_on_exec_upd();
 CREATE OR REPLACE TRIGGER execution_tombstone BEFORE INSERT ON execution FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('parent_execution_id');
 CREATE OR REPLACE TRIGGER execution_touch BEFORE UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
-CREATE OR REPLACE TRIGGER lab_trial_execution AFTER INSERT OR UPDATE OF data, kind, experiment_id ON execution FOR EACH ROW WHEN (new.kind = 'pipeline_run'::execution_kind AND new.experiment_id IS NOT NULL) EXECUTE FUNCTION fleet_lab_trial_execution();
+CREATE OR REPLACE TRIGGER lab_trial_execution AFTER INSERT OR UPDATE OF data, kind, experiment_id, state, ended_at, observation, variant ON execution FOR EACH ROW WHEN (new.kind = 'pipeline_run'::execution_kind AND new.experiment_id IS NOT NULL) EXECUTE FUNCTION fleet_lab_trial_execution();
 CREATE OR REPLACE TRIGGER resource_align_totals_owner AFTER UPDATE OF project_id ON execution FOR EACH ROW EXECUTE FUNCTION resource_align_totals_owner();
 CREATE OR REPLACE TRIGGER resource_capture_execution AFTER INSERT OR DELETE OR UPDATE ON execution FOR EACH ROW EXECUTE FUNCTION resource_capture_execution();
 CREATE OR REPLACE TRIGGER session_summary_execution AFTER INSERT OR DELETE OR UPDATE OF state, started_at, ended_at, session_id, kind ON execution FOR EACH ROW EXECUTE FUNCTION fleet_session_summary_execution();
