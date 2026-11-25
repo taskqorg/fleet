@@ -1416,13 +1416,14 @@ func (v *HostRun) Validate() error {
 }
 
 type HostVersion struct {
-	AutoUpdate json.RawMessage `json:"autoUpdate"`
-	Behind     *bool           `json:"behind"`
-	Id         string          `json:"id"`
-	LastSeenAt *float64        `json:"lastSeenAt"`
-	PollError  *HostPollError  `json:"pollError,omitempty"`
-	Update     json.RawMessage `json:"update"`
-	Version    *string         `json:"version"`
+	AutoUpdate  json.RawMessage `json:"autoUpdate"`
+	Behind      *bool           `json:"behind"`
+	Id          string          `json:"id"`
+	LastSeenAt  *float64        `json:"lastSeenAt"`
+	PollError   *HostPollError  `json:"pollError,omitempty"`
+	PollProblem *bool           `json:"pollProblem,omitempty"`
+	Update      json.RawMessage `json:"update"`
+	Version     *string         `json:"version"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

@@ -550,3 +550,10 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question:** UI work (most recently the Live list rows) went straight to code, with options as HTML mockups or none at all, so the owner first saw a design in the built app.
 * **Options:** design in code and review the result; or draw every visible change on the Brilliant board first and build only what the owner approved there.
 * **Choice (owner):** Brilliant first, as a rule ([OR-62](owner-rules.md)). Design sessions draw in the board home `~/Projects/fleet-board`, options on git-ignored `drafts/` canvases, several sessions at once on their own canvases; approved canvases are copied into the task branch and committed with the spec. Recorded in [README](README.md#design-board).
+
+## 2026-11-25: The user block and the app update
+
+* **Question (owner):** the badge by the person changed colour or vanished on dark; the versions overview closed by itself; Update reloaded, came back, then went; a version warning appeared after navigation and was gone when opened.
+* **Causes:** the rail avatar took the Home avatar style (transparent with a dark letter on dark, an amber disc when toned); the user block was re-created on every versions read, closing its overview; Update cleared its busy state before the reload landed; warnings came from one momentary read (the tab "unknown" for 3 s on every load, a gateway probe older than a minute, one failed read).
+* **Options (board):** A, an icon button after the version, as built; B, an update strip above the person naming the new version, with Reload.
+* **Choice (owner):** B and the rules: the avatar never changes; the version is toned only by a confirmed problem that is true now; an offline host does not tone it. Recorded in [nav rail](controls/nav-rail.md) (Version, Update) and drawn on [screens/shell](board/screens/shell.bl).

@@ -39,9 +39,16 @@
   .rail.mini { width: calc(2 * var(--space-2) + 2 * var(--space-3) + var(--size-icon) + 1px); }
   .rail.mini .nm, .rail.mini .nav-pin, .rail.mini .rail-menu:not(.up), .rail.mini .brand, .rail.mini .waiting { display: none; }
   .rail.mini .rail-h { visibility: hidden; width: 0; padding: var(--space-1) 0; overflow: hidden; white-space: nowrap; }
-  .rail-user { position: relative; display: flex; align-items: center; gap: var(--space-1); }
+  /* The user block (board screens/shell): update strip, then avatar, name and version; collapsed, icon buttons above the avatar. */
+  .rail-user { position: relative; display: flex; flex-direction: column; gap: var(--space-1); }
+  .rail-user-row { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
   .rail-ver {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-1);
+    min-width: calc(10ch + 2 * var(--space-2)); /* the slot is there from the first paint: no jump when the version arrives */
     height: var(--size-control);
     padding: 0 var(--space-2);
     border: 0;
@@ -53,31 +60,50 @@
     font-variant-numeric: tabular-nums;
     cursor: pointer;
   }
+  .rail-ver .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
   .rail-ver:hover, .rail-ver[aria-expanded=true] { background: var(--hover); color: var(--fg); }
-  .rail-ver:not(.t-neutral) { color: var(--tone-fg); }
-  .rail.mini .rail-ver, .rail.mini .rail-upd { display: none; }
-  .rail:not(.mini) .menu-ver { display: none; }
-  .avatar.dot { position: relative; }
-  .avatar.dot::after {
-    content: '';
-    position: absolute;
-    top: -2px;
-    right: -2px;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--tone-fg);
-    box-shadow: 0 0 0 2px var(--bg);
-  }
-  .ver-update {
+  .rail-ver:not(.t-neutral), .rail-ver:not(.t-neutral):hover { color: var(--tone-fg); }
+  .upd-strip {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    padding: 0 var(--space-2) var(--space-2);
-    margin-bottom: var(--space-1);
-    border-bottom: 1px solid var(--line);
+    gap: var(--space-2);
+    height: calc(var(--size-control) + 2 * var(--space-1)); /* one height expanded and collapsed (OR-42) */
+    padding: 0 var(--space-2) 0 var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--surface-sunken);
   }
+  .upd-text { flex: 1; display: flex; flex-direction: column; min-width: 0; font-size: var(--font-size-xs); line-height: 1.2; color: var(--fg-muted); }
+  .upd-text b { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); color: var(--fg); }
+  .upd-text > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .upd-strip.failed .upd-text b { color: var(--attention-fg); }
+  .upd-icon, .rail-prob { display: none; }
+  /* Collapsed: the strip keeps its row with only the icon button over the avatar column; the problem floats above the block. */
+  .rail.mini .rail-user > .upd-strip { padding: 0; background: none; }
+  .rail.mini .rail-user > .upd-strip > :is(.upd-text, .upd-full), .rail.mini .rail-ver { display: none; }
+  .rail.mini .rail-user > .upd-strip > .upd-icon { display: flex; margin-left: calc(var(--space-3) + (var(--size-icon) - var(--size-control)) / 2); }
+  .rail-prob {
+    position: absolute;
+    bottom: calc(100% + var(--space-1));
+    left: calc(var(--space-3) + (var(--size-icon) - var(--size-control)) / 2);
+    place-items: center;
+    width: var(--size-control);
+    height: var(--size-control);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--rail);
+    color: var(--tone-fg);
+    cursor: pointer;
+  }
+  .rail-prob:hover { background: var(--hover); }
+  .rail.mini .rail-prob { display: inline-grid; }
+  .rail:not(.mini) .menu-ver { display: none; }
+  .ver-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); padding: 0 var(--space-2) var(--space-2); font-size: var(--font-size-sm); }
+  .ver-head .muted { font-size: var(--font-size-xs); }
+  .ver-panel .upd-strip { margin: 0 0 var(--space-2); }
+  .ver-open { text-align: right; }
+  .ver-open button { display: inline-flex; align-items: center; gap: var(--space-1); padding: 0; border: 0; background: none; color: var(--fg); font-size: var(--font-size-xs); cursor: pointer; }
+  .ver-open button:hover { text-decoration: underline; }
+  .ver-open .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
   .ver-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
   .ver-table th, .ver-table td { padding: var(--space-1) var(--space-2); text-align: left; white-space: nowrap; font-weight: normal; }
   .ver-table th { display: flex; align-items: center; gap: var(--space-2); color: var(--fg-muted); }
@@ -100,7 +126,8 @@
   }
   .rail-user-b:hover, .rail-user-b[aria-expanded=true] { background: var(--hover); color: var(--fg); }
   .rail-user-b .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .avatar {
+  /* The person's avatar never changes (board screens/shell): selected surface, fg letter, in every state and theme. */
+  .rail-av {
     flex: none;
     display: inline-grid;
     place-items: center;
@@ -323,7 +350,7 @@
     .nav-toggle, .divider { display: none; }
     .shell-h { padding-left: var(--space-3); }
     .rail .nm, .rail .rail-h, .rail .nav-pin, .rail .rail-menu:not(.up), .rail .rail-g:not(.pinned) .nav-i.pinned, .rail .brand, .rail .waiting, .rail-head { display: none; }
-    .rail .rail-ver, .rail .rail-upd { display: none; }
+    .rail .rail-ver, .rail .rail-prob, .rail .upd-strip { display: none; }
     .rail:not(.mini) .menu-ver { display: flex; }
     .rail .nav-i a { padding: 0 var(--space-2); position: relative; }
     .rail .nav-count { position: absolute; top: calc(-1 * var(--space-1)); right: calc(-1 * var(--space-1)); padding: 0 var(--space-1); }

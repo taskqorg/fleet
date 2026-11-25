@@ -261,6 +261,22 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 	if q := question(); q != nil {
 		t.Fatal("problem opened before two minutes:", q)
 	}
+	pollProblem := func() any {
+		t.Helper()
+		code, body := env.callJSON(t, "POST", "/api/ops/system_versions", doc{}, env.ownerHeaders())
+		if code != 200 {
+			t.Fatalf("system_versions %d %v", code, body)
+		}
+		for _, h := range anys(body["hosts"]) {
+			if mapOf(h)["id"] == "sick-host" {
+				return mapOf(h)["pollProblem"]
+			}
+		}
+		return nil
+	}
+	if p := pollProblem(); p != nil {
+		t.Fatalf("system_versions marks a fresh failure as a problem: %v", p)
+	}
 	// An observation flush (here a poll's own part, before its commands) keeps the record.
 	env.app.clearHostCache("sick-host")
 	body, _ := json.Marshal(good)
@@ -287,6 +303,9 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 		return rq.tx.QueryRow(rq.ctx(), "SELECT count(*) FROM question WHERE data->>'cause'=$1 AND state='open'", hostPollCause("sick-host")).Scan(&open)
 	}); err != nil || open != 1 {
 		t.Fatalf("open problems %d %v, want one", open, err)
+	}
+	if p := pollProblem(); p != true {
+		t.Fatalf("system_versions pollProblem %v with the problem open", p)
 	}
 
 	// The next successful poll clears the record and withdraws the problem.
