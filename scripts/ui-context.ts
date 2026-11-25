@@ -98,7 +98,7 @@ export function context(page: string): string {
     const ps = parts.get(g);
     if (!ps) continue;
     L.push(`${g}:`, ...ps.map(p => `- ${p}`));
-    if (g === 'Canvas') L.push(`  Brilliant MCP: \`init\` with ${join(root, ds, 'board')}, then \`read\` with paths ${ps.map(p => relative(`${ds}/board`, p)).join(', ')}.`);
+    if (g === 'Canvas') L.push('  Read the canvas as plain text with your file tools; never call the Brilliant MCP tools from a worktree (README.md#design-board).');
     L.push('');
   }
   L.push('Principles (owner-rules.md):', ...principles(owner).map((p, i) => `${i + 1}. ${p}`), '');

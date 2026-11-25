@@ -538,3 +538,9 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question:** the end-to-end variant proposed a fixed grouping for Conversations, while the app already lets each person choose grouping, sorting and saved views.
 * **Options:** a target keeps every current capability unless a decision removes it; or a target reviews each current capability and keeps, changes or drops it, listing the drops.
 * **Choice (owner):** review, not keep-all: much of the current build is clutter to clean out; the point is that useful tools are not lost by accident. Recorded as process step 7 in [README](README.md#process-spec-driven-design).
+
+## 2026-11-25: The board has one home
+
+* **Question:** every task worktree called the Brilliant MCP `init` on its own copy of the board (as `scripts/ui-context.ts` told it to), so the owner's Brilliant app registered a new project per worktree and filled with "Agent working in board" notifications.
+* **Options:** keep a board copy per worktree; or one persistent board worktree for drawing, with every other session reading the `.bl` files as text.
+* **Choice (owner):** one home. Drawing happens only in `~/Projects/fleet-board`, one design session at a time, delivered by pull request; build and review sessions read canvases as text and never call Brilliant. Recorded in [README](README.md#design-board).

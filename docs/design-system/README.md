@@ -10,7 +10,13 @@ This folder is the single knowledge base for Fleet's interface design. It plays 
 
 ## Design board
 
-The board is the visual source of the interface: a [Brilliant](https://brilliant.design) project kept in [board/](board/) as plain-text canvases (`.bl`). Agents read and write it through the Brilliant MCP tools (`init` with the absolute path of `docs/design-system/board` in the checkout, then `read`, `edit` and `export`); the owner opens the same folder in the Brilliant app. The board's style file is generated from `packages/ui/tokens.json` ([tokens](tokens.md#design-board)); Brilliant's caches and thumbnails stay out of git (root `.gitignore`).
+The board is the visual source of the interface: a [Brilliant](https://brilliant.design) project kept in [board/](board/) as plain-text canvases (`.bl`). The board's style file is generated from `packages/ui/tokens.json` ([tokens](tokens.md#design-board)); Brilliant's caches and thumbnails stay out of git (root `.gitignore`).
+
+The board has one home, like a shared design file: the persistent board worktree `~/Projects/fleet-board`, which the owner keeps open in the Brilliant app. Every Brilliant MCP `init` on a new path registers a new project in that app and shows a notification, so:
+
+* **Reading the board** (building, reviewing, comparing a page with its canvas): read the `.bl` files as plain text with file tools, in any checkout. Never call the Brilliant MCP tools from a task worktree.
+* **Drawing on the board** (a design task): work in `~/Projects/fleet-board`, one design session at a time. First bring it to `origin/main` (`git -C ~/Projects/fleet-board switch -C board origin/main`), then `init` with its `docs/design-system/board` and use `read`, `edit` and `export`. Deliver the canvases through a normal pull request from a branch there. The owner watches the work live in the one open project.
+* **A rendered picture** for a pull request or a comparison comes from that worktree's `export`, asked of the design session; other sessions do not render the board themselves.
 
 | Canvas | Holds | Changes when |
 |---|---|---|
