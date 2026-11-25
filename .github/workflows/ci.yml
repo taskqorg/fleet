@@ -16,6 +16,9 @@ on:
   merge_group:
   push:
     branches: [main]
+  # The managed CLI update (harness-pins.yml) writes with its GITHUB_TOKEN, which starts no workflow: it dispatches this
+  # one on its pull request's head and, when needed, on the queue's group branch, so go and app report there.
+  workflow_dispatch:
 permissions: {}
 # A newer push of a pull request supersedes its running check; queue and main runs are never cancelled.
 concurrency:
@@ -91,7 +94,7 @@ jobs:
           overwrite: true
           if-no-files-found: error
   reports:
-    if: github.event_name != 'merge_group'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-24.04
     permissions:
       contents: read

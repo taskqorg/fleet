@@ -1,0 +1,189 @@
+# One kind of release-managed components (docs/designs/fleet-host-updates.md), called by pins.yml: steps 1 to 3 of the
+# host update procedure. Discover the vendors' newest releases, propose them as the pull request automation/<kind>-pins
+# rebuilt from main, and qualify them offline against the current pins on both targets. The result is the commit
+# status qualify-offline on the proposal's head and the proposal's body. Step 4 (hosts, through the Lab) and the merge
+# belong to the coordinator, which reads the open proposal; a failure in the body becomes its one owner question.
+#
+# Every write uses this run's GITHUB_TOKEN. Events it causes start no workflow, so the run dispatches ci on the head.
+name: Managed component pins (one kind)
+on:
+  workflow_call:
+    inputs:
+      kind:
+        type: string
+        required: true
+      requalify:
+        type: boolean
+        default: false
+permissions: {}
+concurrency:
+  group: pins-${{ inputs.kind }}
+  cancel-in-progress: false
+env:
+  BRANCH: automation/${{ inputs.kind }}-pins
+  KIND: ${{ inputs.kind }}
+  PINS: config/${{ inputs.kind == 'cli' && 'harness' || 'tool' }}-pins.json
+  REFRESH: deploy/refresh-${{ inputs.kind == 'cli' && 'harness' || 'tool' }}-pins.mjs
+  TITLE: Update managed ${{ inputs.kind == 'cli' && 'agent CLI' || 'host tool' }} pins
+jobs:
+  propose:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: read
+    outputs:
+      pr: ${{ steps.propose.outputs.pr }}
+      sha: ${{ steps.propose.outputs.sha }}
+      qualify: ${{ steps.propose.outputs.qualify }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: propose
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUALIFY: ${{ inputs.requalify }}
+          RUN: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          node "$REFRESH"
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if git diff --quiet -- "$PINS"; then
+            [ -z "$pr" ] || gh pr close "$pr" --delete-branch --comment 'main already pins these releases.'
+            echo "qualify=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          remote=$(git ls-remote --heads origin "refs/heads/$BRANCH" | cut -f1)
+          same=false
+          if [ -n "$pr" ] && [ -n "$remote" ]; then
+            git fetch origin "$remote"
+            git diff --quiet "$remote" -- "$PINS" && git merge-base --is-ancestor "$remote^" origin/main && same=true
+          fi
+          if [ "$same" = true ]; then
+            sha=$remote
+            state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/status" --jq '[.statuses[] | select(.context == "qualify-offline")][0].state // ""')
+            qualify=$([ -z "$state" ] || [ "$state" = pending ] || [ "$REQUALIFY" = true ] && echo true || echo false)
+          else
+            # A new proposal starts from the current main: one commit, never a merge.
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git switch -c "$BRANCH"
+            git add "$PINS"
+            git commit -m "chore(deploy): update managed $KIND pins"
+            git push --force-with-lease="refs/heads/$BRANCH:$remote" origin "$BRANCH"
+            sha=$(git rev-parse HEAD)
+            # An earlier head's failed body must not stand for this head (the coordinator asks on that marker).
+            if [ -n "$pr" ]; then
+              gh pr edit "$pr" --body "Offline qualification is running: $RUN"
+            else
+              gh pr create --head "$BRANCH" --base main --title "$TITLE" --body "Offline qualification is running: $RUN"
+              pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
+            fi
+            qualify=true
+          fi
+          { echo "pr=$pr"; echo "sha=$sha"; echo "qualify=$qualify"; } >> "$GITHUB_OUTPUT"
+
+  qualify:
+    needs: propose
+    if: needs.propose.outputs.qualify == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, target: linux-amd64 }
+          - { runner: macos-15, target: darwin-arm64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      # The qualifier and its models come from this workflow's commit; only the two pin files come from the proposal.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - env:
+          SHA: ${{ needs.propose.outputs.sha }}
+        run: |
+          git fetch --depth=2 origin "$SHA"
+          git show "$SHA^:$PINS" > "$RUNNER_TEMP/current.json"
+          git show "$SHA:$PINS" > "$RUNNER_TEMP/candidate.json"
+          node deploy/qualify-pins.mjs "$KIND" "$RUNNER_TEMP/current.json" "$RUNNER_TEMP/candidate.json" ${{ matrix.target }} "$RUNNER_TEMP/${{ matrix.target }}.json"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qualification-${{ inputs.kind }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/${{ matrix.target }}.json
+          if-no-files-found: ignore
+
+  decide:
+    needs: [propose, qualify]
+    if: always() && needs.qualify.result != 'skipped' && needs.propose.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: qualification-${{ inputs.kind }}-*
+          merge-multiple: true
+          path: results
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.propose.outputs.pr }}
+          SHA: ${{ needs.propose.outputs.sha }}
+          RUN: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'JS' > body.md
+          import { readFileSync, readdirSync, existsSync } from 'node:fs';
+          const targets = ['linux-amd64', 'darwin-arm64'];
+          const results = Object.fromEntries((existsSync('results') ? readdirSync('results') : []).map(f => [f.replace(/\.json$/, ''), JSON.parse(readFileSync(`results/${f}`))]));
+          const failed = [];
+          for (const t of targets) {
+            const r = results[t];
+            if (!r) { failed.push(`${t}: offline qualification did not finish (see the run)`); continue; }
+            for (const [name, h] of Object.entries(r.harnesses)) for (const f of h.failures) failed.push(`${process.env.KIND}/${name} ${h.to} on ${t}: ${f}`);
+          }
+          const any = Object.values(results)[0]?.harnesses ?? {};
+          const changelog = {
+            codex: v => `https://github.com/openai/codex/releases/tag/rust-v${v}`,
+            claude: () => 'https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md',
+            antigravity: () => 'no public changelog; release metadata only',
+            node: v => `https://github.com/nodejs/node/releases/tag/v${v}`,
+            pnpm: v => `https://github.com/pnpm/pnpm/releases/tag/v${v}`,
+            gh: v => `https://github.com/cli/cli/releases/tag/v${v}`,
+            glab: v => `https://gitlab.com/gitlab-org/cli/-/releases/v${v}`,
+          };
+          const lines = [failed.length ? '<!-- fleet-pins-qualification:failed -->' : '<!-- fleet-pins-qualification:offline-passed -->'];
+          lines.push(`Update the release-managed ${process.env.KIND} components from vendor release metadata ([host update procedure](https://github.com/${process.env.GITHUB_REPOSITORY}/blob/main/docs/designs/fleet-host-updates.md)). Every host verifies each payload before switching; a host that cannot run one keeps its current release.`, '');
+          lines.push('| Component | From | To | Changes |', '|---|---|---|---|');
+          for (const [name, h] of Object.entries(any)) if (h.from !== h.to) lines.push(`| ${process.env.KIND}/${name} | ${h.from ?? 'not pinned'} | ${h.to} | ${changelog[name](h.to)} |`);
+          lines.push('');
+          if (failed.length) {
+            lines.push('**Offline qualification failed.** The proposal stays open; the next vendor release is proposed and qualified by itself.', '');
+            lines.push('<!-- fleet-pins-qualification-summary -->');
+            for (const f of failed) lines.push(`- ${f}`);
+            lines.push('<!-- /fleet-pins-qualification-summary -->', '');
+          } else {
+            lines.push('**Offline qualification passed** against the current pins on linux-amd64 and darwin-arm64. Next: qualification on the hosts with real accounts (step 4); the coordinator merges the proposal when that passes.', '');
+          }
+          lines.push(`Run: ${process.env.RUN}`);
+          console.log(lines.join('\n'));
+          JS
+          gh pr edit "$PR" -R "$GITHUB_REPOSITORY" --body-file body.md
+          if grep -q 'fleet-pins-qualification:offline-passed' body.md; then
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=success -f context=qualify-offline -f target_url="$RUN" -f description='Qualified against the current pins'
+            gh workflow run ci.yml -R "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          else
+            gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=failure -f context=qualify-offline -f target_url="$RUN" -f description="$(sed -n 's/^- //p' body.md | head -1 | cut -c1-130)"
+          fi
