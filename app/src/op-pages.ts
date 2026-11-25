@@ -1,4 +1,4 @@
-// Cursor pages of one operation (OR-64): the first page is an ordinary live read (useOp rereads it on change rows, so new
+// Cursor pages of one operation (OR-65): the first page is an ordinary live read (useOp rereads it on change rows, so new
 // rows arrive at the top); older pages are read once each through createPages, one in flight, aborted on unmount.
 import { op, type Ops } from './api.ts';
 import { useOp, canonical, type OpOptions, type OpRead } from './store.ts';

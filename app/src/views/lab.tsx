@@ -525,7 +525,7 @@ function Waiting(props: {
   };
   return <Show when={count() > 0}>
     <section class="panel" aria-label="Waiting for you">
-      {/* The first question is a preview (OR-64); the heading opens every finished run waiting for a decision. */}
+      {/* The first question is a preview (OR-65); the heading opens every finished run waiting for a decision. */}
       <header class="panel-h"><Icon name="bell" /><h2>
         <Show when={props.experiments.length > QUESTIONS_SHOWN} fallback="Waiting for you">
           <a class="dsec-open" href="/lab" onClick={e => { e.preventDefault(); props.onAll(); }}>Waiting for you<Icon name="chevron-right" /></a>

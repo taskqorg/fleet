@@ -280,7 +280,7 @@ export function Live(props: { wall: boolean }) {
     return [...by.values()].toSorted((a, b) => b.at - a.at);
   });
   const eventFence = createMemo(() => peerFence(events().map(e => e.n)));
-  // Feeds are previews of their latest FEED rows, no toggle (OR-30, OR-64): the heading opens the full list where one exists.
+  // Feeds are previews of their latest FEED rows, no toggle (OR-30, OR-65): the heading opens the full list where one exists.
   const feed = <T,>(xs: readonly T[]) => xs.slice(0, FEED);
   const head = (label: string, n: number, to?: string): JSX.Element => (
     <h2 class="live-h">

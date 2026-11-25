@@ -318,7 +318,7 @@ function AskCard(props: { q: Question; label?: string }) {
 function ProjectWork(props: { id: string; p?: { name: string; code: string; raw: Record<string, unknown> }; facet: Facet; item?: string; onClose: () => void }) {
   const [, go] = useLocation();
   const questions = useOp('questions_list', () => ({ projectIds: [props.id], state: 'open', limit: 200 }));
-  // The project's sessions, newest first, a page at a time as the facet scrolls (OR-64).
+  // The project's sessions, newest first, a page at a time as the facet scrolls (OR-65).
   const paged = useOpPages('sessions_list', () => ({ filter: { projectId: [props.id], archived: false }, sort: '-activity', limit: 60 }), {
     page: r => ({ rows: r.sessions, next: (r.nextAfter as unknown[] | null) ?? null }), after: after => ({ after }), key: s => s.id,
   });

@@ -340,7 +340,7 @@ export function ArtifactView(p: { a: ArtifactMeta; src: string }) {
 
 /** JSON as key/value records (result-viewer.md): keys left, values right, objects and arrays folded under their key, null as "none". */
 function KvRecords(p: { records: KvNode[]; lines: boolean }) {
-  // Records are built 200 at a time as the view scrolls near the end (OR-64): a long log never builds every row at once.
+  // Records are built 200 at a time as the view scrolls near the end (OR-65): a long log never builds every row at once.
   // Appended records (a log read as it scrolls) only grow the window; it never resets.
   const recs = createWindow(() => p.records, 200);
   return (

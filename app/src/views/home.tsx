@@ -215,7 +215,7 @@ function HomePage() {
   });
   // Waiting opened past its row by its +K (OR-30 expander); the other groups stay one row.
   // Waiting shows every card: a question no session asks is answered only here. The other groups preview one row of
-  // cards and link to their Conversations filter (OR-64).
+  // cards and link to their Conversations filter (OR-65).
   const shown = (g: { id: Group; cards: Card[] }) => (g.id === 'waiting' ? g.cards : g.cards.slice(0, cols().cards));
   const loaded = () => !!active.data && !!questions.data;
   // A grid that appears later (the first cards, the asleep row) is measured once it is in the page.
@@ -474,7 +474,7 @@ function HomePage() {
                       <For each={shown(g)} keyed={c => c.key}>{c => renderCard(c)}</For>
                     </div>
                     <Show when={g.cards.length > shown(g).length}>
-                      {/* A preview, no toggle (OR-64): the rest is in Conversations under the group's filter. */}
+                      {/* A preview, no toggle (OR-65): the rest is in Conversations under the group's filter. */}
                       <a class="home-more" href={formatView({ view: 'conversations', state: g.states })}
                         onClick={e => { e.preventDefault(); go(formatView({ view: 'conversations', state: g.states })); }}>
                         All {g.cards.length} in Conversations ›

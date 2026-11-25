@@ -605,7 +605,7 @@ export function ProblemRow(p: {
 
 /* ---------- Detail sections (D11, C3) ---------- */
 
-/** A titled block of a detail. With `href`, the title (and its `count`) opens the full list the block previews (OR-64). */
+/** A titled block of a detail. With `href`, the title (and its `count`) opens the full list the block previews (OR-65). */
 export function DetailSection(p: { title: string; count?: number; href?: string; onOpen?: () => void; children: JSX.Element }) {
   const label = () => <>{p.title}<Show when={p.count !== undefined}> <span class="dsec-n">{p.count!.toLocaleString('en')}</span></Show></>;
   return (

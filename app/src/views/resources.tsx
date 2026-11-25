@@ -207,7 +207,7 @@ export function ScopedRollupDetails(props: { rollup: ScopedResourceRollup; foldT
     const term = taskQuery().trim().toLowerCase();
     return props.rollup.spawnedTasks.filter(task => !term || task.title.toLowerCase().includes(term) || task.code?.toLowerCase().includes(term));
   });
-  // Spawned tasks build 20 at a time as the list scrolls (OR-64); a new search starts from the top.
+  // Spawned tasks build 20 at a time as the list scrolls (OR-65); a new search starts from the top.
   const shown = createWindow(tasks, 20, taskQuery);
   const rows = createMemo(() => {
     const r = props.rollup;

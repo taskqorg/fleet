@@ -1,4 +1,4 @@
-// Infinite lists (OR-64): a list loads its next page as its end scrolls near, with no Show more / Show less toggle.
+// Infinite lists (OR-65): a list loads its next page as its end scrolls near, with no Show more / Show less toggle.
 // One shape everywhere: cursor pages behind a live first page, one request in flight, an abort on unmount,
 // a quiet loading row, an error row with Retry, and nothing after the last row. Spec: patterns/infinite-list.md.
 import { createEffect, createMemo, createSignal, onCleanup, Show, untrack } from 'solid-js';

@@ -723,7 +723,7 @@ export function NeedsYou(p: { children: JSX.Element }) {
   return <section data-ui="needs-you" class="panel wide"><header class="panel-h"><h2>Needs you</h2></header><div class="stack">{p.children}</div></section>;
 }
 
-/** A short preview inside a card (OR-30, OR-64): the first `n` items and nothing else, no toggle. The section title
+/** A short preview inside a card (OR-30, OR-65): the first `n` items and nothing else, no toggle. The section title
  *  (DetailSection with `onOpen`) opens the full list, which loads on scroll. Items arrive already ordered. */
 export function Preview(p: { items: JSX.Element[]; n?: number }) {
   return <>{p.items.slice(0, p.n ?? 3)}</>;

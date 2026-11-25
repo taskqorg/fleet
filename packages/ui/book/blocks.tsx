@@ -219,7 +219,7 @@ function ProblemBlocksDemo() {
   </div>;
 }
 
-/** OR-64: a list that loads on scroll inside its card (fake pages of 20, 400 ms each, the third page fails once),
+/** OR-65: a list that loads on scroll inside its card (fake pages of 20, 400 ms each, the third page fails once),
  *  then a preview whose title opens the full list. */
 function InfiniteDemo() {
   const rows = Array.from({ length: 70 }, (_, i) => ({ id: 'r' + i, t: `Session ${70 - i}`, state: (i % 7 === 3 ? 'failed' : 'done') as StateOf<'session'> }));
@@ -249,7 +249,7 @@ function InfiniteDemo() {
 type Entry = [string, string, string | undefined, () => JSX.Element, (() => JSX.Element)?];
 /** Appended to the book's SECTIONS. */
 export const BLOCK_SECTIONS: Entry[] = [
-  ['infinite-list', 'Lists: infinite list and card preview', undefined, () => <InfiniteDemo />, () => <>OR-64. The left list loads its next page as its end scrolls within about five rows (one request in flight); the third page fails once and shows the danger row with Retry; after the last row there is nothing. The right card previews five rows; its title with the count opens the full list.</>],
+  ['infinite-list', 'Lists: infinite list and card preview', undefined, () => <InfiniteDemo />, () => <>OR-65. The left list loads its next page as its end scrolls within about five rows (one request in flight); the third page fails once and shows the danger row with Retry; after the last row there is nothing. The right card previews five rows; its title with the count opens the full list.</>],
   ['status-pill', 'Live: status pill', 'status-pill', () => <StatusPillDemo />, () => <>Working, problem (opens the cause, "· N more"), connecting, stale. role="status": the words change in place and are announced politely.</>],
   ['figure-tile', 'Live: figure tile with sparkline', 'figure-tile', () => <FigureDemo />, () => <>Normal, alert (the value and the latest bars turn danger, the sub-line names the cause), unknown (?, never 0), stale (dimmed, opens nothing). A dot on the base is a bar with no reading.</>],
   ['gauge', 'Live: gauge', 'fill-bar', () => <GaugeDemo />, () => <>The fill bar's one-value form. Attention past the host's warning threshold, danger past its critical one; both are host settings. Unknown is ?.</>],

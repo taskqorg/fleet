@@ -553,7 +553,7 @@ function SwarmBoardTab(props: {
       });
     });
   });
-  // Posts are built 25 at a time as the board scrolls (OR-64); a new filter starts from the top.
+  // Posts are built 25 at a time as the board scrolls (OR-65); a new filter starts from the top.
   const posts = createWindow(filtered, 25, () => [props.threadFilter, props.kindFilter, props.search]);
 
   return (

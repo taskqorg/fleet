@@ -77,7 +77,7 @@ export function BotDetail(props: {
   const [actionError, setActionError] = createSignal('');
   const signal = useAlive();
 
-  // Runs and tasks load a page at a time as their tables scroll near the end (OR-64); the overview previews the first page.
+  // Runs and tasks load a page at a time as their tables scroll near the end (OR-65); the overview previews the first page.
   const runsPaged = useOpPages('bot_runs', () => ({ botId: props.bot.id, limit: 50 }), {
     page: r => ({ rows: r.runs, next: r.nextAfter ?? null }), after: after => ({ after }), key: r => r.id,
   });
@@ -108,7 +108,7 @@ export function BotDetail(props: {
   }));
 
   const tabsWithCounts = createMemo(() => BOT_TABS.map(t => {
-    // Counts only for a complete list: a list that loads on scroll knows no total (OR-64).
+    // Counts only for a complete list: a list that loads on scroll knows no total (OR-65).
     if (t.id === 'tasks' && tasks().length > 0 && tasksPaged.pages.done) return { ...t, count: tasks().length };
     if (t.id === 'runs' && runs().length > 0 && runsPaged.pages.done) return { ...t, count: runs().length };
     return t;
@@ -286,7 +286,7 @@ function BotOverviewTab(props: {
         </DetailSection>
       </Show>
 
-      {/* Previews of the first rows; the title opens the tab, which loads the rest on scroll (OR-64). */}
+      {/* Previews of the first rows; the title opens the tab, which loads the rest on scroll (OR-65). */}
       <DetailSection title="Active & waiting tasks" href={props.tabHref('tasks')} onOpen={() => props.onSelectTab('tasks')}>
         <Show when={activeOrWaitingTasks().length > 0} fallback={<Empty text="No active or waiting tasks." />}>
           <BotTasksTable tasks={activeOrWaitingTasks().slice(0, 8)} projectNames={props.projectNames} />
