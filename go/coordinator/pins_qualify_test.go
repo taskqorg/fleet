@@ -1,0 +1,53 @@
+package main
+
+import (
+	"encoding/json"
+	"testing"
+
+	"fleet/harnessrelease"
+)
+
+// TestPinsHostVariants: one trial per changed CLI, host with a ready binding and configured model; unchanged CLIs,
+// unready bindings and unknown platforms run nothing; WSL (win32) runs the linux pin.
+func TestPinsHostVariants(t *testing.T) {
+	asset := func(d string) harnessrelease.Asset { return harnessrelease.Asset{Version: "1.0.0", SHA256: d} }
+	current := pinsCandidate{"linux-amd64": {"codex": asset("a"), "claude": asset("c")}, "darwin-arm64": {"codex": asset("a")}}
+	candidate := pinsCandidate{"linux-amd64": {"codex": asset("b"), "claude": asset("c")}, "darwin-arm64": {"codex": asset("b")}}
+	binding := func(host, platform, readiness string) json.RawMessage {
+		return jsonBytes(map[string]string{"hostId": host, "platform": platform, "readiness": readiness})
+	}
+	accounts := []accountRec{
+		{ID: "x", Harness: "codex", accountPayload: accountPayload{Bindings: []json.RawMessage{binding("pds18", "linux", "ready"), binding("mac", "darwin", "ready"), binding("off", "linux", "needs-login")}}},
+		{ID: "y", Harness: "codex", accountPayload: accountPayload{Bindings: []json.RawMessage{binding("pds18", "linux", "ready"), binding("win", "win32", "ready")}}},
+		{ID: "z", Harness: "claude", accountPayload: accountPayload{Bindings: []json.RawMessage{binding("pds18", "linux", "ready")}}},
+	}
+	vs := pinsHostVariants(accounts, current, candidate, map[string][]string{"codex": {"m1", "m2"}, "claude": {"s"}})
+	labels := []string{}
+	for _, v := range vs {
+		labels = append(labels, v.label())
+	}
+	want := []string{"mac codex m1", "mac codex m2", "pds18 codex m1", "pds18 codex m2", "win codex m1", "win codex m2"}
+	if string(jsonBytes(labels)) != string(jsonBytes(want)) || vs[2].Account != "x" || vs[2].Asset.SHA256 != "b" {
+		t.Fatalf("%v %+v", labels, vs)
+	}
+}
+
+// TestPinsTrialOutcome: done when every variant has a terminal trial; passed only when each succeeded and its check passed.
+func TestPinsTrialOutcome(t *testing.T) {
+	v := func(s string) *string { return &s }
+	runs := []*labRun{{ID: "1", Variant: v("a"), State: "succeeded"}, {ID: "2", Variant: v("b"), State: "succeeded"}}
+	pass := []labScore{{Form: "pass_fail", Value: json.RawMessage("true"), TrialIDs: []string{"1"}}, {Form: "pass_fail", Value: json.RawMessage("true"), TrialIDs: []string{"2"}}}
+	if st := pinsTrialOutcome([]string{"a", "b"}, runs, pass); !st.Done || !st.Passed {
+		t.Fatalf("%+v", st)
+	}
+	if st := pinsTrialOutcome([]string{"a", "b", "c"}, runs, pass); st.Done || st.Passed {
+		t.Fatalf("missing trial: %+v", st)
+	}
+	if st := pinsTrialOutcome([]string{"a", "b"}, runs, pass[:1]); !st.Done || st.Passed || len(st.Failures) != 1 {
+		t.Fatalf("failed check: %+v", st)
+	}
+	runs[0].State = "failed"
+	if st := pinsTrialOutcome([]string{"a", "b"}, runs, pass); !st.Done || st.Passed {
+		t.Fatalf("failed run: %+v", st)
+	}
+}

@@ -116,7 +116,7 @@ func (h harness) Command(dir, native string, p map[string]any) (*exec.Cmd, []byt
 		if exe == "" {
 			exe = "codex"
 		}
-		exe, _, err := managedExecutable(n, exe, launchOf(p).Model)
+		exe, _, err := runExecutable(n, exe, p)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -305,7 +305,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		return fail("unsupported credential authority")
 	}
 	legacy, _ := str(jAt(a, "executable"))
-	exe, managed, err := managedExecutable(h, legacy, launchOf(p).Model)
+	exe, managed, err := runExecutable(h, legacy, p)
 	if err != nil {
 		return nil, nil, err
 	}

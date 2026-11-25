@@ -1023,6 +1023,26 @@ const providersJSON = `
   "baseUrl": "https://api.github.com",
   "instructions": "Read-only GitHub REST reads of a repository (pull requests, workflow runs, releases). The key is a read-only fine-grained token. Find a repository with repos_search; its ssh_url is the remote for a Fleet project.",
   "tools": {
+   "commit_status": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/commits/{ref}/status",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "The combined commit status of a ref, newest status of each context first.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "ref"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "ref": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "ref": "^[A-Za-z0-9_./-]+$"}
+   },
+   "file_at": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/contents/{path}?ref={ref}",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github.raw+json", "User-Agent": "fleet-gateway"},
+    "description": "A file of the repository's config/ directory at a commit, as its raw bytes.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "path", "ref"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "path": {"type": "string"}, "ref": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "path": "^config/[a-z-]+\\.json$", "ref": "^[0-9a-f]{40}$"}
+   },
    "repos_search": {
     "method": "GET",
     "path": "/search/repositories?q={q}&per_page=50",

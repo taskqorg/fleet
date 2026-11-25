@@ -360,5 +360,32 @@
    "image"
   ],
   "maturity": "indexed"
+ },
+ {
+  "id": "fleet:pins-qualification",
+  "source": {
+   "repo": "fleet",
+   "path": "docs/designs/fleet-host-updates.md",
+   "anchor": "2-one-shape-for-every-kind",
+   "commit": "e0f777df373a4acac1a41c682158bd4082de36ac",
+   "sha256": "12fca1be19e8d2331e7773e262dfdac9db4670158ccd4381223216bf95746041"
+  },
+  "source_status": "current",
+  "actor": "architect",
+  "goal": "Qualify a proposed agent CLI pin on a host with a real account and a configured model",
+  "expected_outcome": "The run on the candidate CLI makes one shell tool call and one Fleet MCP call and writes the structured result file the check reads.",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "fleet",
+   "pins"
+  ],
+  "maturity": "synthetic ready"
  }
 ]
