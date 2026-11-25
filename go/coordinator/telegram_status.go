@@ -309,22 +309,32 @@ func tgChoices(options []byte) []string {
 
 // telegramQuestionMessage queues one question with its buttons. A key request only links to Fleet: keys are never
 // typed in chat.
+// telegramQuestionBody: a question as Telegram shows it. An approval card is in the reader's language: the scope as the
+// agent wrote it, Fleet's labels translated; the edit after an answer keeps it so (owner-tester F13b).
+func telegramQuestionBody(q *Request, questionID, text, lang string) (string, error) {
+	a, err := q.db().ApprovalOf(q.ctx(), questionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "❓ " + text, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var sc approvalScope
+	_ = json.Unmarshal(a.Approval, &sc)
+	body := "⚠️ " + say(lang, "approvalNeeded", sc.What) + "\n" + say(lang, "approvalWhere", sc.Where)
+	if sc.Version != "" {
+		body += "\n" + say(lang, "approvalVersion", sc.Version)
+	}
+	if sc.Rollback != "" {
+		body += "\n" + say(lang, "approvalRollback", sc.Rollback)
+	}
+	return body + "\n" + say(lang, "approvalWaiting", strings.Join(approverNames(approvers(q, a.ProjectID, sc.Action)), ", ")), nil
+}
+
 func telegramQuestionMessage(q *Request, id, questionID, kind, text, lang string, chat, thread int64, workID, sessionID string, replyTo *int64) error {
 	rows := [][]map[string]string{}
-	body := "❓ " + text
-	if a, err := q.db().ApprovalOf(q.ctx(), questionID); err == nil {
-		// An approval card in the reader's language: the scope as the agent wrote it, Fleet's labels translated.
-		var sc approvalScope
-		_ = json.Unmarshal(a.Approval, &sc)
-		body = "⚠️ " + say(lang, "approvalNeeded", sc.What) + "\n" + say(lang, "approvalWhere", sc.Where)
-		if sc.Version != "" {
-			body += "\n" + say(lang, "approvalVersion", sc.Version)
-		}
-		if sc.Rollback != "" {
-			body += "\n" + say(lang, "approvalRollback", sc.Rollback)
-		}
-		body += "\n" + say(lang, "approvalWaiting", strings.Join(approverNames(approvers(q, a.ProjectID, sc.Action)), ", "))
-	} else if !errors.Is(err, pgx.ErrNoRows) {
+	body, err := telegramQuestionBody(q, questionID, text, lang)
+	if err != nil {
 		return err
 	}
 	if kind == "secret" {
@@ -505,16 +515,29 @@ func telegramWatch(ctx context.Context, a *App) error {
 			return err
 		}
 		for _, x := range ended {
-			line := "— " + say("", "withdrawn", "")
+			// The answerer reads the edit first: their language; a withdrawn question keeps the default.
+			lang := ""
+			if tp, err := q.db().TelegramPersonGet(q.ctx(), x.AnsweredBy); err == nil {
+				lang = tp.Language
+			}
+			body, err := telegramQuestionBody(q, x.ID, x.Text, lang)
+			if err != nil {
+				return err
+			}
+			line := "— " + say(lang, "withdrawn", "")
 			if x.State == "answered" {
 				who := x.AnsweredBy
 				if pp := q.app.peopleSnapshot().person(who); pp != nil && pp.Name != "" {
 					who = pp.Name
 				}
-				line = "✓ " + who + ": " + clip(x.Answer, 300)
+				answer := x.Answer
+				if answer == approvalYes || answer == approvalNo {
+					answer = say(lang, "btn"+strings.ReplaceAll(answer, " ", ""), "")
+				}
+				line = "✓ " + who + ": " + clip(answer, 300)
 			}
 			if err := telegramOutbox(q, db.TelegramOutboxAddParams{ID: "qend:" + x.ID, ChatID: x.ChatID, Kind: "edit", EditMessageID: x.TelegramMessageID,
-				Text: "❓ " + x.Text + "\n" + line}); err != nil {
+				Text: body + "\n" + line}); err != nil {
 				return err
 			}
 		}
