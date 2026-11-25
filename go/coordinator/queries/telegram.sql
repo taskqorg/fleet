@@ -285,3 +285,12 @@ FROM telegram_outbox WHERE created_at > clock_timestamp() - interval '1 day';
 SELECT count(*)::bigint AS updates, count(*) FILTER (WHERE outcome = 'unknown-sender')::bigint AS strangers,
   count(*) FILTER (WHERE outcome = 'failed')::bigint AS failed, max(received_at)::timestamptz AS last_at
 FROM telegram_update WHERE received_at > clock_timestamp() - interval '1 day';
+
+-- name: TelegramSessionTitle :one
+-- A conversation's own short title (set as it works); a work item shows it once there is one.
+SELECT coalesce(title, '')::text FROM session WHERE id = $1;
+
+-- name: TelegramNeedsAll :many
+-- Every open question, newest first, for a person's /needs in a private chat (filtered by their projects in Go).
+SELECT id, kind::text AS kind, text, session_id, coalesce(project_id, '')::text AS project_id FROM question
+WHERE state = 'open' ORDER BY asked_at DESC LIMIT 100;

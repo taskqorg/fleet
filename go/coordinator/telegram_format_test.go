@@ -13,6 +13,9 @@ func TestTelegramHTML(t *testing.T) {
 		{"see [FLT-31](https://youtrack.ufobe.com/issue/FLT-31)", `see <a href="https://youtrack.ufobe.com/issue/FLT-31">FLT-31</a>`},
 		{"snake_case_name stays", "snake_case_name stays"},
 		{"```\ncut off", "<pre>\ncut off</pre>"},
+		{"**команда `/new`**", "<b>команда <code>/new</code></b>"},
+		{"Fleet **`1.261125.63`** is running", "Fleet <b><code>1.261125.63</code></b> is running"},
+		{"`a*b*c` and *x*", "<code>a*b*c</code> and <i>x</i>"},
 	} {
 		if got := tgHTML(c.in); got != c.want {
 			t.Errorf("tgHTML(%q) = %q, want %q", c.in, got, c.want)

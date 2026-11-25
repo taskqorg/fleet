@@ -438,6 +438,13 @@ func roomTitle(m *tgMessage) string {
 	if m.ForumTopicNew != nil {
 		return m.ForumTopicNew.Name
 	}
+	if m.thread() != 0 {
+		// A topic's messages point at the topic's creation, which carries its name; the group's title is not the room's.
+		if r := m.ReplyToMessage; r != nil && r.ForumTopicNew != nil {
+			return r.ForumTopicNew.Name
+		}
+		return ""
+	}
 	if m.Chat.Type == "private" {
 		return ""
 	}
@@ -528,7 +535,8 @@ func telegramDeliver(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 			}
 			sid, request := t.sessionID, rid
 			if t.newHome || t.newWork != "" {
-				r := contract.SessionStartRequest{RequestId: &rid, Preset: ptr("discuss"), Text: &text}
+				// The first message is sent like every later one, so it too carries source telegram.
+				r := contract.SessionStartRequest{RequestId: &rid, Preset: ptr("discuss")}
 				if room.ProjectHint != "" && !t.newHome {
 					r.ProjectId = &room.ProjectHint
 				}
@@ -537,7 +545,10 @@ func telegramDeliver(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 				if err != nil {
 					return err
 				}
-				sid, request = started.SessionId, "start:"+rid
+				sid = started.SessionId
+				if _, err := agentSubmit(pq, &contract.MessageSendRequest{SessionId: &sid, RequestId: &rid, Text: &text}, "telegram"); err != nil {
+					return err
+				}
 				if t.newHome {
 					if err := pq.db().TelegramPersonSetHome(pq.ctx(), db.TelegramPersonSetHomeParams{Email: tp.Email, SessionID: &sid}); err != nil {
 						return err
@@ -681,7 +692,7 @@ func telegramApply(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Tele
 		if i == 4 {
 			break
 		}
-		buttons = append(buttons, []map[string]string{{"text": clip(w.Title, 40), "callback_data": "w:" + row.ID + ":" + strconv.Itoa(i)}})
+		buttons = append(buttons, []map[string]string{{"text": clip(workLabel(q, w), 40), "callback_data": "w:" + row.ID + ":" + strconv.Itoa(i)}})
 	}
 	buttons = append(buttons, []map[string]string{{"text": say(tp.Language, "newButton", ""), "callback_data": "w:" + row.ID + ":new"}})
 	if err := telegramOutbox(q, db.TelegramOutboxAddParams{ID: "ask:" + row.ID, ChatID: m.Chat.ID, ThreadID: m.thread(), Kind: "text",
@@ -829,7 +840,8 @@ func conductorCall(ctx context.Context, a *App, conn, model string, open []db.Te
 		"Decide which open work item the new message belongs to. Answer only JSON {\"choice\": <work item id | \"new\" | \"ask\">, \"title\": <short title for new work, else \"\">, \"status\": <true when the message only asks how that item is going or whether it is done or live>}. " +
 		"Choose \"new\" only when the message clearly starts different work; choose \"ask\" when it could belong to more than one item or you are unsure. " +
 		"Short follow-ups (\"so?\", \"show mobile too\", \"ok go\") belong to the most recent item unless they name another."
-	input := "Open work items, most recent first:\n" + items.String() + "\nNew message from " + author + ":\n" + clip(text, 2000)
+	// The Responses API's json_object format wants the word JSON in the input itself, not only in the instructions.
+	input := "Open work items, most recent first:\n" + items.String() + "\nNew message from " + author + ":\n" + clip(text, 2000) + "\n\nAnswer with the JSON object."
 	token, release, err := readTokenFor(ctx, a, conn, "")
 	if err != nil {
 		return conductorDecision{Choice: "ask", err: err}

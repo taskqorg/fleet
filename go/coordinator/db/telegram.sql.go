@@ -96,6 +96,46 @@ func (q *Queries) TelegramLinkTake(ctx context.Context, code string) (string, er
 	return email, err
 }
 
+const telegramNeedsAll = `-- name: TelegramNeedsAll :many
+SELECT id, kind::text AS kind, text, session_id, coalesce(project_id, '')::text AS project_id FROM question
+WHERE state = 'open' ORDER BY asked_at DESC LIMIT 100
+`
+
+type TelegramNeedsAllRow struct {
+	ID        string
+	Kind      string
+	Text      string
+	SessionID *string
+	ProjectID string
+}
+
+// Every open question, newest first, for a person's /needs in a private chat (filtered by their projects in Go).
+func (q *Queries) TelegramNeedsAll(ctx context.Context) ([]TelegramNeedsAllRow, error) {
+	rows, err := q.db.Query(ctx, telegramNeedsAll)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TelegramNeedsAllRow
+	for rows.Next() {
+		var i TelegramNeedsAllRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Text,
+			&i.SessionID,
+			&i.ProjectID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const telegramOpenQuestions = `-- name: TelegramOpenQuestions :many
 SELECT q.id, q.kind::text AS kind, q.text, q.session_id FROM question q
 WHERE q.state = 'open' AND q.session_id IN (
@@ -861,6 +901,18 @@ func (q *Queries) TelegramSessionRun(ctx context.Context, sessionID *string) (Te
 		&i.ExecutionIds,
 	)
 	return i, err
+}
+
+const telegramSessionTitle = `-- name: TelegramSessionTitle :one
+SELECT coalesce(title, '')::text FROM session WHERE id = $1
+`
+
+// A conversation's own short title (set as it works); a work item shows it once there is one.
+func (q *Queries) TelegramSessionTitle(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, telegramSessionTitle, id)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const telegramTaskByRef = `-- name: TelegramTaskByRef :one

@@ -155,7 +155,15 @@ func telegramWorkText(q *Request, w db.TelegramWork, lang, first string, now tim
 	if first != "" {
 		run = first
 	}
-	return "**" + w.Title + "**\n" + strings.Join(append([]string{run}, rest...), "\n"), nil
+	return "**" + workLabel(q, w) + "**\n" + strings.Join(append([]string{run}, rest...), "\n"), nil
+}
+
+// workLabel: the conversation's own short title once it has one, else the work item's first line (owner-tester F7).
+func workLabel(q *Request, w db.TelegramWork) string {
+	if t, err := q.db().TelegramSessionTitle(q.ctx(), w.SessionID); err == nil && strings.TrimSpace(t) != "" {
+		return clip(strings.TrimSpace(t), 60)
+	}
+	return w.Title
 }
 
 // --- "So?" and commands ---
@@ -232,15 +240,28 @@ func telegramGlance(q *Request, now time.Time, room db.TelegramRoom, tp db.Teleg
 			}
 		}
 	}
-	for i, w := range works {
-		if i == 6 {
-			break
+	// What runs or waits leads; finished work is one line (owner-tester F10).
+	done := []string{}
+	for _, w := range works {
+		r, err := q.db().TelegramSessionRun(q.ctx(), &w.SessionID)
+		if err != nil {
+			return "", err
+		}
+		if r.RunState != "running" && r.RunState != "preparing" && r.RunState != "waiting" && r.RunState != "queued" && r.OpenQuestions == 0 {
+			done = append(done, workLabel(q, w))
+			continue
+		}
+		if len(parts) == 6 {
+			continue
 		}
 		t, err := telegramWorkText(q, w, tp.Language, "", now)
 		if err != nil {
 			return "", err
 		}
 		parts = append(parts, t)
+	}
+	if len(done) > 0 {
+		parts = append(parts, say(tp.Language, "finished", strconv.Itoa(len(done)))+": "+clip(strings.Join(done, "; "), 300))
 	}
 	if len(parts) == 0 {
 		return say(tp.Language, "noWork", ""), nil
@@ -333,7 +354,29 @@ func telegramQuestionMessage(q *Request, id, questionID, kind, text, lang string
 // telegramNeeds (/needs): the open questions of the room's work (a group) or of the person's home conversation and
 // work items (a private chat), each as its own message that a reply or a tap answers.
 func telegramNeeds(q *Request, row *db.TelegramUpdate, room db.TelegramRoom, tp db.TelegramPerson) (int, error) {
-	qs, err := q.db().TelegramOpenQuestions(q.ctx(), db.TelegramOpenQuestionsParams{RoomID: room.ID, Email: tp.Email, Private: room.Kind == "private"})
+	if room.Kind == "private" {
+		// A private chat shows the person's whole Needs you: every open question of their projects (owner-tester F9).
+		p := q.app.peopleSnapshot().person(tp.Email)
+		all, err := q.db().TelegramNeedsAll(q.ctx())
+		if err != nil {
+			return 0, err
+		}
+		n := 0
+		for _, x := range all {
+			if n == 10 || p == nil {
+				break
+			}
+			if x.ProjectID == "" && !fullAccess(p) || x.ProjectID != "" && !mayAccessProjectID(p, x.ProjectID) {
+				continue
+			}
+			if err := telegramQuestionMessage(q, "qn:"+x.ID+":"+row.ID, x.ID, x.Kind, x.Text, tp.Language, room.ChatID, 0, "", deref(x.SessionID), nil); err != nil {
+				return 0, err
+			}
+			n++
+		}
+		return n, nil
+	}
+	qs, err := q.db().TelegramOpenQuestions(q.ctx(), db.TelegramOpenQuestionsParams{RoomID: room.ID, Email: tp.Email, Private: false})
 	if err != nil {
 		return 0, err
 	}
@@ -667,6 +710,7 @@ func init() {
 			"keyInFleet":    "Keys are never typed in chat: add it in Fleet (Open in Fleet).",
 			"replyToAnswer": "Reply to this message to answer.",
 			"withdrawn":     "withdrawn",
+			"finished":      "Finished (%s)",
 			"overlap":       "Another Fleet conversation works on the same task: %s",
 			"join":          "Join it",
 			"separate":      "Work separately",
@@ -698,6 +742,7 @@ func init() {
 			"keyInFleet":    "Ключи не вводятся в чат: добавьте его во Fleet (Открыть во Fleet).",
 			"replyToAnswer": "Ответьте на это сообщение, чтобы ответить.",
 			"withdrawn":     "отозван",
+			"finished":      "Завершено (%s)",
 			"overlap":       "Над той же задачей работает другой разговор Fleet: %s",
 			"join":          "Присоединиться",
 			"separate":      "Работать отдельно",
