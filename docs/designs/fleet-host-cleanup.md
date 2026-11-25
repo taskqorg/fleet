@@ -88,7 +88,7 @@ The poll's `load` and the `host.heartbeat` span carry the same readings. The hea
 
 ### 6. `host-saturation`
 
-The existing rule, and `hostOverloadReason` in dispatch placement, also fire when swap use is above `ruleSwapUsedShare` (default 0.8) of swap total. The finding's subject stays the host. Its text names the top three consumers, for example `owner-mac: swap 37/38 GB; top: com.apple.Virtualization.VirtualMachine 20 GB, postgres 2 GB (fleet), ...`. No new rule is added.
+The existing rule also fires when swap use is above `ruleSwapUsedShare` (default 0.8) of swap total. Dispatch placement (`hostOverloadReason`) still refuses a host only on load or low free memory, because macOS keeps swap long after pressure passes; its reason names swap and the top consumers. The finding's subject stays the host. Its text names the top three consumers, for example `owner-mac: swap 37/38 GB; top: com.apple.Virtualization.VirtualMachine 20 GB, postgres 2 GB (fleet), ...`. No new rule is added.
 
 ### 7. Cleanup ledger
 

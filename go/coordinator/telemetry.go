@@ -235,7 +235,7 @@ func spanHostLoad(s *obs.Span, fallbackNow int64) *hostLoadObservation {
 		}
 	}
 	l.Top = parseHostTop(s.Attrs["fleet.top"])
-	if l.Load1 == nil && l.Cpus == nil && l.MemFree == nil && l.MemTotal == nil && l.DiskFree == nil {
+	if l.Load1 == nil && l.Cpus == nil && l.MemFree == nil && l.MemTotal == nil && l.DiskFree == nil && l.SwapTotal == nil && l.Top == nil {
 		return nil
 	}
 	return l

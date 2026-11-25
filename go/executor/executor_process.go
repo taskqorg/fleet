@@ -166,6 +166,7 @@ type live struct {
 	peakRSS uint64
 	cpu     map[int]float64
 	spanned bool // the execution span is written
+	swept   bool // cleanupRun ran
 	orphans int  // marked processes that escaped the owned tree, killed at run end (fleet.orphans)
 }
 
@@ -627,7 +628,9 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			l.cleanupUnknown = true
 		}
 		// What escaped the owned tree (double fork, setsid) still carries the run marker.
-		l.orphans += cleanupRun(e.root, execution)
+		if !l.swept {
+			l.orphans, l.swept = cleanupRun(e.root, execution), true
+		}
 	}
 	name := commandHarness(l.command)
 	h := Harnesses[name]

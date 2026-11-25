@@ -67,10 +67,10 @@ func hostLoadFromContract(l *contract.HostLoad, now int64) *hostLoadObservation 
 	}
 }
 
-// hostOverloadReason: why dispatch places no new run on the host, or "" (rules.go host-saturation is the same test
-// over heartbeat spans): load above the CPU count, swap use above ruleSwapUsedShare of swap total, or free memory below
-// ruleMemFreeShare (docs/designs/fleet-host-cleanup.md#6-host-saturation). The reason names the top three memory
-// consumers when the host reports them.
+// hostOverloadReason: why dispatch places no new run on the host, or "": load above the CPU count or free memory below
+// ruleMemFreeShare. Swap alone does not refuse placement: macOS keeps swap long after pressure passes, so a host with
+// free memory would stay refused; swap above ruleSwapUsedShare is named in the reason and fires host-saturation
+// (docs/designs/fleet-host-cleanup.md#6-host-saturation). The reason names the top three memory consumers.
 func hostOverloadReason(hostID string, load *hostLoadObservation, now int64) string {
 	if load == nil {
 		return ""
@@ -78,20 +78,17 @@ func hostOverloadReason(hostID string, load *hostLoadObservation, now int64) str
 	if load.UpdatedAt > 0 && now-load.UpdatedAt >= hostLoadStaleMs {
 		return ""
 	}
-	memKnown := load.MemTotal != nil && *load.MemTotal > 0 && load.MemFree != nil
 	var why string
 	switch {
 	case load.Cpus != nil && *load.Cpus > 0 && load.Load1 != nil && *load.Load1 > float64(*load.Cpus):
 		why = fmt.Sprintf("load %.2f on %d cores", *load.Load1, *load.Cpus)
-	case load.SwapTotal != nil && *load.SwapTotal > 0 && load.SwapUsed != nil && *load.SwapUsed > ruleSwapUsedShare*(*load.SwapTotal):
-		why = fmt.Sprintf("swap %s/%s GB", gb(*load.SwapUsed), gb(*load.SwapTotal))
-		if memKnown {
-			why += fmt.Sprintf(", free memory %.0f%%", 100*(*load.MemFree)/(*load.MemTotal))
-		}
-	case memKnown && *load.MemFree < ruleMemFreeShare*(*load.MemTotal):
+	case load.MemTotal != nil && *load.MemTotal > 0 && load.MemFree != nil && *load.MemFree < ruleMemFreeShare*(*load.MemTotal):
 		why = fmt.Sprintf("free memory %.0f%% below %.0f%%", 100*(*load.MemFree)/(*load.MemTotal), 100*ruleMemFreeShare)
 	default:
 		return ""
+	}
+	if load.SwapTotal != nil && *load.SwapTotal > 0 && load.SwapUsed != nil && *load.SwapUsed > ruleSwapUsedShare*(*load.SwapTotal) {
+		why += fmt.Sprintf(", swap %s/%s GB", gb(*load.SwapUsed), gb(*load.SwapTotal))
 	}
 	reason := fmt.Sprintf("%s is overloaded (%s)", hostID, why)
 	if top := topConsumers(load.Top, 3); top != "" {
