@@ -5,7 +5,7 @@
 # refuses anything else. Secrets (a database password) come on standard input, never as arguments.
 set -euo pipefail
 umask 022
-FLEET_PROVISION_VERSION=1
+FLEET_PROVISION_VERSION=2
 SELF=/usr/local/sbin/fleet-provision
 KEYS=/etc/ssh/fleet-keys
 ROOTS=/srv/fleet
@@ -152,6 +152,13 @@ r_mysql_user() {
 	echo "ok mysql-user $u"
 }
 
+# mysql-databases: the server's database names (no schema or data), so a grant can name its database without a person
+# reading the application's configuration.
+r_mysql_databases() {
+	command -v mysql >/dev/null || { echo "no mysql client"; return 0; }
+	mysql_root -N -B -e "SHOW DATABASES" | grep -Ev '^(information_schema|performance_schema|mysql|sys)$' | sed 's/^/database /'
+}
+
 r_revoke_mysql() {
 	local u=$1
 	want "$u" "$P_DBUSER" "database user"
@@ -274,6 +281,7 @@ case "${cmd[0]}" in
 	os-user) [[ ${#cmd[@]} == 4 ]] || die "os-user <user> <key> <paths>"; r_os_user "${cmd[1]}" "${cmd[2]}" "${cmd[3]}" ;;
 	revoke-os-user) [[ ${#cmd[@]} == 2 ]] || die "revoke-os-user <user>"; r_revoke_os_user "${cmd[1]}" ;;
 	mysql-user) [[ ${#cmd[@]} == 5 ]] || die "mysql-user <dbuser> <database> <tables> <level>"; r_mysql_user "${cmd[1]}" "${cmd[2]}" "${cmd[3]}" "${cmd[4]}" ;;
+	mysql-databases) [[ ${#cmd[@]} == 1 ]] || die "mysql-databases"; r_mysql_databases ;;
 	revoke-mysql) [[ ${#cmd[@]} == 2 ]] || die "revoke-mysql <dbuser>"; r_revoke_mysql "${cmd[1]}" ;;
 	probe-mysql) [[ ${#cmd[@]} == 5 ]] || die "probe-mysql <dbuser> <database> <table> <level>"; r_probe_mysql "${cmd[1]}" "${cmd[2]}" "${cmd[3]}" "${cmd[4]}" ;;
 	probe-files) [[ ${#cmd[@]} == 3 ]] || die "probe-files <user> <mode:path>"; r_probe_files "${cmd[1]}" "${cmd[2]}" ;;

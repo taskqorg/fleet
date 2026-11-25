@@ -33,7 +33,7 @@ API connections ([connections](fleet-connections.md)) reach HTTP providers with 
 ## Operations
 
 - `access_server_add {id, address, via?}` (owner or full access): records the server, learns and pins its host key (through `via` when set) and answers the enrollment command for the owner. A server behind `via` is allowed on the jump server first (recipe `jump-allow`). A changed host key is never accepted silently: re-adding with a different key is 409.
-- `access_server_check {id}` (person): runs `version` over the provisioner key and records the result; the first success sets `enrolled_at`.
+- `access_server_check {id}` (person): runs `version` and `mysql-databases` over the provisioner key and records the result (the version, the database names); the first success sets `enrolled_at`.
 - `access_grant_ask {projectId, requestId, server, kind, level, scope, reason}` (person or agent tool): creates the grant `asked` and an approval card (an `operator_decision` question, or the agent's own question in its conversation, with `data.approval` action `access`, owner-only like `keys`) that states the exact recipe: the OS user, the database user, the GRANT statement, the paths and the level. Idempotent by `requestId`; a changed scope withdraws the old card. Answering Approve moves the grant to `provisioning` and queues the work; Not now declines it.
 - `access_grants {projectId?}` (person or agent tool): servers and grants with state, probe and expiry; never a credential value.
 - `access_grant_check {grant}` (person or agent tool): queues a probe of a ready grant, or provisioning again of a failed one.
@@ -48,6 +48,7 @@ The provisioner key is installed as `restrict,command="/usr/local/sbin/fleet-pro
 | Recipe | Effect |
 |---|---|
 | `version` | Prints the installed version. |
+| `mysql-databases` | The server's MySQL database names, nothing else (`access_server_check` shows them), so a grant can name its database without anyone reading the application's configuration. |
 | `os-user <user> <pubkey> <paths>` | A system user without a shell; SFTP only (`ForceCommand internal-sftp`), chrooted to `/srv/fleet/<user>`, each path bind-mounted read-only (`files` read) or read-write (`files` write) under it; TCP forwarding only to `127.0.0.1:3306` and `127.0.0.1:5432`. Keys in `/etc/ssh/fleet-keys/<user>`. |
 | `mysql-user <user> <database> <tables> <level>` | `CREATE USER` for `127.0.0.1` and `localhost` with the password from stdin; `SELECT` on each table (`read`), plus `INSERT, UPDATE, DELETE` (`write`). Revokes every other privilege of that user. |
 | `probe-mysql <user> <database> <table>` | As the user: `SELECT 1 FROM <table> LIMIT 1` must work; `INSERT INTO <table> SELECT * FROM <table> WHERE 1=0` (inserts nothing even when allowed) must be refused for `read`. |
