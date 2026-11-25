@@ -6,7 +6,7 @@
 import { cell } from './signal.ts';
 import type { Tone, VersionInfo, VersionRow } from '../../packages/ui/src/index.ts';
 import { op, type Ops } from './api.ts';
-import { accessGeneration, isAccessCurrent, onAccessInvalidated } from './access.ts';
+import { access, accessGeneration, isAccessCurrent, onAccessInvalidated, onAccessOpen } from './access.ts';
 import { navigate } from './router.ts';
 
 type Versions = Ops['system_versions']['reply'];
@@ -110,13 +110,21 @@ export async function applyUpdate() {
   }
 }
 
-/** Starts the checks: at load, when the tab gets focus (at most once a minute), and every 5 minutes. */
+/**
+ * Starts the checks: as soon as access opens (at load, and again after access was validated anew, which clears the
+ * versions), when the tab gets focus (at most once a minute), and every 5 minutes. A read before access is open would be
+ * discarded, so none is made.
+ */
 export function startVersionChecks(): () => void {
   let last = 0;
-  const run = () => { if (document.hidden || Date.now() - last < 60_000) return; last = Date.now(); void checkUpdate(); void loadVersions(); };
-  const first = setTimeout(run, 0), every = setInterval(() => { last = 0; run(); }, 300_000);
+  const run = () => { if (document.hidden || access.peek().state !== 'open' || Date.now() - last < 60_000) return; last = Date.now(); void checkUpdate(); void loadVersions(); };
+  const opened = () => { last = 0; run(); };
+  // Access opening is one synchronous continuation with the baseline's activation (access.ts): the reads start after it.
+  const afterOpen = () => { setTimeout(opened, 0); };
+  const first = setTimeout(opened, 0), every = setInterval(opened, 300_000);
+  onAccessOpen.add(afterOpen);
   addEventListener('focus', run);
-  return () => { clearTimeout(first); clearInterval(every); removeEventListener('focus', run); };
+  return () => { clearTimeout(first); clearInterval(every); onAccessOpen.delete(afterOpen); removeEventListener('focus', run); };
 }
 
 /** Only a confirmed problem tones the mark (nav-rail.md, Version): attention and danger rows; every other tone is the row's own. */

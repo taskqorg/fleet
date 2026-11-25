@@ -121,6 +121,28 @@ test('a started update stays busy until the page unloads and reloads once', asyn
   }
 });
 
+test('the version checks wait for access to open and run again each time it opens', async () => {
+  const originalFetch = globalThis.fetch, calls: string[] = [];
+  const saved = (['document', 'addEventListener', 'removeEventListener'] as const).map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)] as const);
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { hidden: false, head: { innerHTML: html } } });
+  Object.defineProperty(globalThis, 'addEventListener', { configurable: true, value: () => {} });
+  Object.defineProperty(globalThis, 'removeEventListener', { configurable: true, value: () => {} });
+  globalThis.fetch = async (url: any) => { calls.push(String(url)); return String(url) === '/home' ? new Response(html, { headers: { 'content-type': 'text/html' } }) : Response.json(snapshot()); };
+  v.invalidateAccess('fixture');
+  const stop = v.startVersionChecks();
+  try {
+    await new Promise(r => setTimeout(r, 5)); await tick();
+    assert.equal(calls.length, 0, 'no read while access is not open: it would be discarded');
+    await v.ensureAccessGeneration(); await new Promise(r => setTimeout(r, 20));
+    assert.ok(calls.includes('/home'), 'the update check runs once access opens');
+    await new Promise(r => setTimeout(r, 20));
+    assert.ok(v.versions.value, 'the versions read lands once access opens');
+  } finally {
+    stop(); globalThis.fetch = originalFetch;
+    for (const [k, d] of saved) if (d) Object.defineProperty(globalThis, k, d); else delete (globalThis as any)[k];
+  }
+});
+
 test('the phone bottom bar exposes Versions under More and a long overview stays within the viewport', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
   const { chromium } = await import('playwright');
   const { uiCss } = await import(new URL('../../packages/ui/scripts/tokens.mjs', import.meta.url).href) as { uiCss: () => string };
