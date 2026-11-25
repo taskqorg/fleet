@@ -1255,6 +1255,64 @@
         },
         "forge": {
           "type": "boolean"
+        },
+        "environment": {
+          "$ref": "#/$defs/ProjectDevEnvironment"
+        }
+      }
+    },
+    "ProjectDevEnvironment": {
+      "$comment": "The project's dev environment (docs/configuration.md#project-environment): a rootless Podman pod outside the agent sandbox, reached through the project-env MCP tools. Needs execution.tools podman.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "$comment": "Image of the main container, when build is absent.",
+          "type": "string"
+        },
+        "build": {
+          "$comment": "Containerfile path relative to the worktree root; the image is built from the worktree and cached by the file's hash.",
+          "type": "string"
+        },
+        "workdir": {
+          "$comment": "Where the worktree is mounted in the main container; default /workspace.",
+          "type": "string"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "setup": {
+          "$comment": "Shell command run once in the main container after the pod starts (dependencies, schema).",
+          "type": "string"
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectDevService"
+          }
+        }
+      }
+    },
+    "ProjectDevService": {
+      "$comment": "A side container of the pod; its name resolves to 127.0.0.1 in every container of the pod.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "image"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     },

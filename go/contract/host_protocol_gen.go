@@ -2016,6 +2016,38 @@ func (v *ProjectContext) Validate() error {
 	return nil
 }
 
+// ProjectDevEnvironment: The project's dev environment (docs/configuration.md#project-environment): a rootless Podman pod outside the agent sandbox, reached through the project-env MCP tools. Needs execution.tools podman.
+type ProjectDevEnvironment struct {
+	Build    *string             `json:"build,omitempty"`
+	Env      map[string]string   `json:"env,omitempty"`
+	Image    *string             `json:"image,omitempty"`
+	Services []ProjectDevService `json:"services,omitempty"`
+	Setup    *string             `json:"setup,omitempty"`
+	Workdir  *string             `json:"workdir,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectDevEnvironment) Validate() error {
+	for i := range v.Services {
+		if err := Check(&v.Services[i], "services"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ProjectDevService: A side container of the pod; its name resolves to 127.0.0.1 in every container of the pod.
+type ProjectDevService struct {
+	Env   map[string]string `json:"env,omitempty"`
+	Image string            `json:"image"`
+	Name  string            `json:"name"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectDevService) Validate() error {
+	return nil
+}
+
 type ProjectEnvironment struct {
 	CheckoutPath *string `json:"checkoutPath,omitempty"`
 	HostId       *string `json:"hostId,omitempty"`
@@ -2045,9 +2077,10 @@ func (v *ProjectEnvironment) Validate() error {
 }
 
 type ProjectExecution struct {
-	Forge    *bool    `json:"forge,omitempty"`
-	Profiles []string `json:"profiles,omitempty"`
-	Tools    []string `json:"tools,omitempty"`
+	Environment *ProjectDevEnvironment `json:"environment,omitempty"`
+	Forge       *bool                  `json:"forge,omitempty"`
+	Profiles    []string               `json:"profiles,omitempty"`
+	Tools       []string               `json:"tools,omitempty"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }
@@ -2069,6 +2102,11 @@ func (v *ProjectExecution) UnmarshalJSON(b []byte) error {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProjectExecution) Validate() error {
+	if v.Environment != nil {
+		if err := Check(v.Environment, "environment"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

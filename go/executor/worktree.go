@@ -413,6 +413,7 @@ func keepReasons(project contract.ProjectContext) map[string]bool {
 func teardown(dir, session, top string, project contract.ProjectContext, deleteBranch, detached bool) contract.Teardown {
 	keep := keepReasons(project)
 	w := filepath.Join(dir, "worktree")
+	removeProjectEnv(session) // the dev environment is disposable; env_exec starts it again for a kept worktree
 	// Copies set aside by setAsideStale go when the task was accepted, or when the session never had a branch of its own
 	// (a detached conversation keeps no work). A cancelled or failed task's copy stays: it may be the only copy of its work.
 	if deleteBranch || detached {

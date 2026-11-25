@@ -24,6 +24,9 @@ var designExecutorOwned = map[string]map[string]string{
 	"executor_launch.go": {
 		"E-PROC": "harness --version/tools capability probes and git symbolic-ref for forge branch context",
 	},
+	"project_env.go": {
+		"E-PROC": "running bounded podman commands of the project dev environment (context deadlines; the pod is the owned lifecycle)",
+	},
 	"forge.go": {
 		"E-PROC": "running git/gh forge CLI helpers and reading gh auth token",
 	},

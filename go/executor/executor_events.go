@@ -236,7 +236,7 @@ func capabilities() []string {
 	if v := ffmpegVersion(); v != "" {
 		c = append(c, contract.FfmpegCapability(v))
 	}
-	for _, tool := range []string{"node", "pnpm"} {
+	for _, tool := range []string{"node", "pnpm", "podman"} {
 		if _, err := exec.LookPath(tool); err == nil {
 			c = append(c, contract.ToolCapability(tool))
 		}

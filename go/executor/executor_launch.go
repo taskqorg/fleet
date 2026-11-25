@@ -407,6 +407,12 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 			servers["project-browser"] = M{"command": exe(), "args": []any{"mcp", "project-browser", enc(cfg)}, "tools": []any{"navigate", "read", "evaluate", "click", "fill", "close"}, "dependencies": M{"fleet-browser-chromium": os.Getenv("FLEET_BROWSER_EXECUTABLE")}, "ownedDependencies": []any{"fleet-browser-chromium"}}
 		}
 	}
+	if env := requirements.Environment; env != nil {
+		if !hasW {
+			return fail(1, "project-env-unready: no worktree")
+		}
+		servers["project-env"] = projectEnvServer(str0(sp.ProjectId), env, workspaceSession(session, key), w)
+	}
 	if requirements.Forge != nil && *requirements.Forge {
 		repo := gitRepo(project, nil)
 		if repo == nil {
