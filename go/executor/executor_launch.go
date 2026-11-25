@@ -257,6 +257,10 @@ func (e *executor) start(c contract.Command, cid, execution, session string, p M
 	var profile contract.Profile
 	if hasCfg {
 		if profile, err = contract.ParseProfile([]byte(enc(cfg))); err != nil {
+			// The run fails with the validation message as its problem, never as an unreported end.
+			if err := e.event(c, 1, contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: "invalid profile: " + err.Error()}); err != nil {
+				return err
+			}
 			return e.finish(c, "failed", "")
 		}
 	}

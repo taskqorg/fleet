@@ -54,16 +54,21 @@ func TestPinsTrialOutcome(t *testing.T) {
 	}
 }
 
-// TestPinsLiveVariants: trials go only to hosts seen lately, and wait while one of them runs an older executor.
+// TestPinsLiveVariants: trials go to hosts that polled lately, whatever their update state; an older executor makes
+// the qualification wait while its update is on its way and is skipped by name when its update is held or refused.
 func TestPinsLiveVariants(t *testing.T) {
 	vs := []pinsVariant{{Host: "a"}, {Host: "b"}, {Host: "gone"}}
-	hosts := map[string]hostVersion{"a": {"1.261125.186", ""}, "b": {"1.261125.190", ""}}
-	if got, ready := pinsLiveVariants(vs, hosts, "1.261125.186"); !ready || len(got) != 2 {
-		t.Fatalf("%v %v", got, ready)
+	hosts := map[string]pinsHost{"a": {version: "1.261125.227", live: true}, "b": {version: "1.261125.230", live: true}}
+	if got, skipped, ready := pinsLiveVariants(vs, hosts, "1.261125.227"); !ready || len(got) != 2 || len(skipped) != 1 {
+		t.Fatalf("%v %v %v", got, skipped, ready)
 	}
-	hosts["b"] = hostVersion{"1.261125.155", ""}
-	if _, ready := pinsLiveVariants(vs, hosts, "1.261125.186"); ready {
-		t.Fatal("an older executor would run its own CLI")
+	hosts["b"] = pinsHost{version: "1.261125.155", live: true}
+	if _, _, ready := pinsLiveVariants(vs, hosts, "1.261125.227"); ready {
+		t.Fatal("an updating older executor would run its own CLI")
+	}
+	hosts["b"] = pinsHost{version: "1.261125.155", live: true, stuck: true}
+	if got, skipped, ready := pinsLiveVariants(vs, hosts, "1.261125.227"); !ready || len(got) != 1 || len(skipped) != 2 {
+		t.Fatalf("held host: %v %v %v", got, skipped, ready)
 	}
 }
 

@@ -237,3 +237,24 @@ func TestStderrTailOfScript(t *testing.T) {
 		t.Fatalf("script stderr tail = %v", got)
 	}
 }
+
+// Requirement: a start whose profile fails validation fails with the validation message as its preparation problem
+// (owner, 2026-11-25: a refused profile ended as unknown:unreported).
+func TestInvalidProfileReported(t *testing.T) {
+	e, _ := scriptExecutor(t)
+	e.run(M{"id": "c11", "executionId": "x11", "sessionId": "s11", "kind": "start", "payload": M{"instructions": "x", "agentConfig": M{"id": "p", "model": "m", "instructions": "i", "mcpServers": []any{}, "unknownField": true}}})
+	if lastReceipt(e, "c11") != "failed" {
+		t.Fatal(lastReceipt(e, "c11"))
+	}
+	rs, _ := e.db.Query("SELECT body FROM outbox WHERE route='/api/hosts/events'")
+	var all strings.Builder
+	for rs.Next() {
+		var b string
+		rs.Scan(&b)
+		all.WriteString(b)
+	}
+	rs.Close()
+	if !strings.Contains(all.String(), "invalid profile") || !strings.Contains(all.String(), "unknownField") {
+		t.Fatal("profile refusal reason missing:", all.String())
+	}
+}

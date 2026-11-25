@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fleet/harnessrelease"
 )
 
@@ -24,6 +25,7 @@ import (
 // trials are the compatibility facts. When every trial ends, pinsPublish posts qualify-hosts and, on a pass,
 // code-review and auto-merge; a failure becomes the proposal's owner question.
 const (
+	pinsSkippedMark     = "; skipped: " // in the experiment's goal; the published result repeats it
 	pinsQualifyPipeline = "pins-qualify"
 	pinsQualifyExample  = "pins-qualify-cli"
 )
@@ -80,23 +82,51 @@ func pinsHostVariants(accounts []accountRec, current, candidate pinsCandidate, m
 	return out
 }
 
-// pinsLiveVariants keeps the trials on hosts seen in the last hour, and is not ready while one of them runs an executor
-// older than this coordinator's executor: an older executor ignores the candidate and would run its release's CLI, so
-// the trial would qualify the current pin, not the proposed one. coordinator is the release the executor last changed
-// in (release pacing: hosts skip releases that leave it unchanged), else the coordinator's own version.
-func pinsLiveVariants(variants []pinsVariant, hosts map[string]hostVersion, coordinator string) ([]pinsVariant, bool) {
-	out := []pinsVariant{}
-	for _, v := range variants {
-		h, live := hosts[v.Host]
-		if !live {
-			continue
-		}
-		if olderVersion(h.version, coordinator) {
-			return nil, false
-		}
-		out = append(out, v)
+// pinsHost: a host as host qualification sees it: its running executor, whether it polled in the last hour, and
+// whether its update is stuck (held, refused or failed) rather than on its way.
+type pinsHost struct {
+	version     string
+	live, stuck bool
+}
+
+// pinsHostsOf: every host's executor version from its last observation, whatever its update state: a host in the middle
+// of an update is still a host that must run the trials.
+func pinsHostsOf(rows []db.DeliveryHostsSeenRow, now time.Time) map[string]pinsHost {
+	out := map[string]pinsHost{}
+	for _, o := range rows {
+		u, _ := decodeUpdate(json.RawMessage(o.Update))
+		stuck := u.State == contract.UpdateStateHeld || u.State == contract.UpdateStateRefused || u.State == contract.UpdateStateFailed
+		out[o.ID] = pinsHost{version: o.Version, live: o.Version != "" && now.UnixMilli()-int64(o.LastSeenMs) <= 3600_000, stuck: stuck}
 	}
-	return out, true
+	return out
+}
+
+// pinsLiveVariants keeps the trials on hosts that polled in the last hour. A host whose executor is older than since
+// ignores the candidate and would run its release's CLI, so its trial would qualify the current pin: while its update is
+// on its way the qualification waits for it; when its update is held, refused or failed it is skipped and named.
+func pinsLiveVariants(variants []pinsVariant, hosts map[string]pinsHost, since string) (out []pinsVariant, skipped []string, ready bool) {
+	out = []pinsVariant{}
+	named := map[string]bool{}
+	for _, v := range variants {
+		h := hosts[v.Host]
+		switch {
+		case !h.live:
+			if !named[v.Host] {
+				named[v.Host] = true
+				skipped = append(skipped, v.Host+" (offline)")
+			}
+		case olderVersion(h.version, since) && !h.stuck:
+			return nil, nil, false
+		case olderVersion(h.version, since):
+			if !named[v.Host] {
+				named[v.Host] = true
+				skipped = append(skipped, v.Host+" (executor "+h.version+" cannot run a candidate; its update is held or refused)")
+			}
+		default:
+			out = append(out, v)
+		}
+	}
+	return out, skipped, true
 }
 
 // pinsConfiguredModels: the model ids of config/harness-models.json per harness.
@@ -126,6 +156,7 @@ type pinsQualifyState struct {
 	Trials   int
 	Ok       int      // trials that succeeded and passed their check
 	Unscored []string // of Failures: trials that succeeded with no pass_fail score yet (pending while the experiment runs)
+	Skipped  string   // hosts the experiment left out and why (pinsLiveVariants), from its goal
 }
 
 // pinsTrialOutcome: the verdict of the experiment's trials: done when every variant has a terminal trial; passed when each
@@ -223,7 +254,7 @@ func pinsQualifyHead(ctx context.Context, a *App, pr ghPull, candidate pinsCandi
 		if err != nil {
 			return err
 		}
-		variants, ready := pinsLiveVariants(pinsHostVariants(accounts, current, candidate, models), deliveryHostVersions(seen, time.Now()), executorRelease())
+		variants, skipped, ready := pinsLiveVariants(pinsHostVariants(accounts, current, candidate, models), pinsHostsOf(seen, time.Now()), executorRelease())
 		if !ready || len(variants) == 0 {
 			return nil // wait: a host still runs an executor without candidate runs, or no host can run a trial now
 		}
@@ -231,7 +262,7 @@ func pinsQualifyHead(ctx context.Context, a *App, pr ghPull, candidate pinsCandi
 		if err != nil {
 			return err
 		}
-		req := pinsExperimentRequest(group, pr, example, variants)
+		req := pinsExperimentRequest(group, pr, example, variants, skipped)
 		v, err := expCreate(q, &req, false)
 		if err != nil {
 			return err
@@ -277,13 +308,16 @@ func pinsExperimentProgress(q *Request, group string) (pinsQualifyState, bool, e
 		if e.State == "stopped" || e.State == "failed" {
 			st.Done = true
 		}
+		if _, skipped, ok := strings.Cut(deref(e.Goal), pinsSkippedMark); ok {
+			st.Skipped = skipped
+		}
 		return st, true, nil
 	}
 	return pinsQualifyState{}, false, nil
 }
 
 // pinsExperimentRequest: the Lab experiment of one proposal head.
-func pinsExperimentRequest(group string, pr ghPull, example string, variants []pinsVariant) contract.LabExperimentCreateRequest {
+func pinsExperimentRequest(group string, pr ghPull, example string, variants []pinsVariant, skipped []string) contract.LabExperimentCreateRequest {
 	type overrides struct {
 		Host      string `json:"host"`
 		Account   string `json:"account"`
@@ -309,6 +343,9 @@ func pinsExperimentRequest(group string, pr ghPull, example string, variants []p
 		kind = "single"
 	}
 	goal := "Qualify the agent CLI proposal " + pr.URL + " on the hosts (head " + pr.Head.SHA[:12] + ")"
+	if len(skipped) > 0 {
+		goal += pinsSkippedMark + strings.Join(skipped, ", ")
+	}
 	hypothesis := "Every changed CLI runs every configured model on every host with a ready account: one shell call, one Fleet MCP call and the result file."
 	project := ciProject
 	return contract.LabExperimentCreateRequest{ProjectId: &project, PipelineId: ptr(pinsQualifyPipeline), Kind: &kind,
@@ -395,6 +432,9 @@ func pinsHostPass(ctx context.Context, a *App, open []ghPull) map[string][]strin
 		if !st.Passed {
 			desc = strings.Join(st.Failures, "; ")
 			failed[pr.Head.SHA] = st.Failures
+		}
+		if st.Skipped != "" {
+			desc += "; skipped " + st.Skipped
 		}
 		if err := pinsPublish(ctx, a, pr, st.Passed, desc, "https://fleet.ufobe.com/lab"); err != nil {
 			failed[pr.Head.SHA] = append(failed[pr.Head.SHA], "could not record the result on the pull request: "+err.Error())
