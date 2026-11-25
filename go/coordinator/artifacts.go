@@ -1060,7 +1060,30 @@ func artifactRenew(q *Request, b *contract.ArtifactLeaseRequest) (any, error) {
 	if err := allowedHost(ctx, a, x, s, b.HostId); err != nil {
 		return nil, err
 	}
+	if err := reverify(ctx, a, x, s, c, b.HostId); err != nil {
+		return nil, err
+	}
 	return contract.ArtifactStateReply{State: c.State}, lease(ctx, a, x.ID, s.ID, false, true)
+}
+
+// reverify queues the store host's verification again for a committed upload that no open verification covers. The
+// verification carries a presigned GET, so one that waited past its signature (a drain held it) or failed on the host
+// left the copy pending and the uploader renewing forever (2026-11-26: 12 windows uploads to pds18 after the store's
+// verify jobs failed with "Date is too old"). Each renew while none is open queues one with a fresh URL.
+func reverify(ctx context.Context, a *App, x *Artifact, s *StoreRow, c *copyRow, uploader string) error {
+	if c.State != "pending" || c.UploadID != nil || c.StagingKey == nil || uploader == s.HostID {
+		return nil
+	}
+	open, err := connDB(ctx, a).ArtVerifyQueued(ctx, db.ArtVerifyQueuedParams{HostID: &s.HostID, ArtifactID: x.ID, StoreID: s.ID})
+	if err != nil || open {
+		return err
+	}
+	v, err := s3For(s, s.LocalEndpoint != nil)
+	if err != nil {
+		return err
+	}
+	verify := contract.ArtifactVerify{ArtifactId: x.ID, StoreId: s.ID, Url: v.Presign("GET", s.Bucket, *c.StagingKey, urlSeconds, nil)}
+	return queueCommand(ctx, a, s.HostID, "artifact-verify", verify.ArtifactId, verify)
 }
 
 // reject: the staging object goes, the copy fails with a retry backoff (1 minute doubling, up to the retry window), the
