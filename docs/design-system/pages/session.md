@@ -28,7 +28,7 @@ From top to bottom, then the context panel on the right:
 4. **Composer** at the bottom, always reachable (UR-59). While a run works it says whether Enter queues the message or steers the run; Stop sits beside it.
 
 **Context panel** ([context panel](../controls/context-panel.md), [FLT-30](https://youtrack.ufobe.com/issue/FLT-30)), right of the transcript, its own scroller ([OR-25](../owner-rules.md)):
-* Plan with done items checked, Timers (pause, edit, cancel), Automations, Swarm members; each section hidden when empty ([OR-29](../owner-rules.md)).
+* Plan with done items checked, Timers (pause or resume, edit, cancel), Automations, Swarm members with their steps done, related Tasks; each section hidden when empty ([OR-29](../owner-rules.md)).
 * A quiet last line: "Model, tokens, cost and ids: Details".
 * Hidden when every section is empty; the Context icon in the session head shows it again. Open or hidden is stored per person ([OR-41](../owner-rules.md)).
 
@@ -68,8 +68,8 @@ From top to bottom, then the context panel on the right:
 | Question card | `questions_list` for the session; answered with `questions_answer` |
 | Composer | `thread_composer`, `message_send`; Stop is `execution_stop` |
 | Fork | `session_fork` |
-| Context panel | `session_context {sessionId}`: `plan` (steps with `done`, from the session's work plan, else its task's), `timers`, `automations` (the session's bot), `swarm` (the other members of that board with their state) |
-| Timer actions | Edit: `watch_set` with a new `timerMs`. Cancel: `watch_set` without `timerMs` (the watch stays) or `watch_stop`. Pause: none yet |
+| Context panel | `session_context {sessionId}`: `plan` (steps with `done`, from the session's work plan, else its task's), `timers`, `automations` (the session's bot), `swarm` (the other members of that board with their state), `tasks` (its own task, the plan's, the spawned ones and its bot's), each timer's `paused` and `canManage` |
+| Timer actions | `watch_timer_set` with `edit` (new `timerMs`), `pause`, `resume` or `cancel` and the timer shown as its base (`baseTimerMs`, `basePaused`); it keeps the event subscriptions and answers 409 when the timer changed meanwhile |
 | Automation actions | `bot_automation_save` (enable, pause, edit) |
 | Details | `execution_totals`, scoped resource rollup |
 | Live updates | `changes_since` over the session, its messages, questions and executions |
@@ -94,10 +94,6 @@ Decided in [FLT-46](https://youtrack.ufobe.com/issue/FLT-46): one folded tool li
 The rule reads only the order of the blocks that `thread_entries` already returns, so the transcript read has no grouped form: the view folds the blocks it shows, and pages join because they are contiguous. The line says the tools it holds and the time from the first block's `startedAt` to the last block's `endedAt`.
 
 Fleet's own notices to an agent (a watch timer, a wake or run request: an operator text block by `Fleet`) are system events and fold into the line, so a bot's transcript shows its answers, not every wake. Withdrawn and expired questions are internal notices and do not show.
-
-## Open
-
-* **Timer pause:** a watch timer can be changed or cancelled, not paused; the Pause icon says so. Pausing needs a paused state on the watch (`watch_set`), which the context panel then shows.
 
 ## Blocks
 

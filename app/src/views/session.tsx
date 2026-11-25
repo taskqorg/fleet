@@ -9,7 +9,7 @@ import {
   Button, ActionMenu, SearchField, ErrorBanner, Skeleton, DropZone, InlineForm, TextField, DetailSection, Disclosure, KvRow,
   EntityCode, EntityPicker, DecisionBlock, keyConnection, agentLabel, harnesses, writeClip, zone, lifeOf,
   type VirtualListHandle, type CatalogueTreeNode, type IconName, type Harness, type ComposerChip, type Life, type AvatarMark,
-  type Timer, type Member, type PlanStep, type Automation,
+  type Timer, type Member, type PlanStep, type Automation, type RelatedTask,
 } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, prepareSending, submissionKey, sendingId, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
 import { useAttachments } from '../uploads.ts';
@@ -220,51 +220,71 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   });
   const copyLink = () => { const c = s()?.code; writeClip(location.origin + here(c ?? props.id)).catch(e => setFailure({ text: `Copy failed: ${errText(e)}` })); };
 
-  // Context panel (session_context): plan, timers, automations, swarm; hidden when all are empty. Open or hidden is the
+  // Context panel (session_context): plan, timers, automations, swarm, tasks; hidden when all are empty. Open or hidden is the
   // person's choice; at phone width the Context icon opens it as a sheet.
   const ctx = () => ctxDoc.data;
   const plan = createMemo<PlanStep[]>(() => (ctx()?.plan?.steps ?? []).map(st => ({ text: st.title, done: st.done })));
-  const timers = createMemo<Timer[]>(() => (ctx()?.timers ?? []).map(t => ({ id: t.id, text: `Check in every ${every(t.everyMs)}`, when: t.nextAt ? `${inTime(t.nextAt)} · every ${every(t.everyMs)}` : `every ${every(t.everyMs)}` })));
+  const timers = createMemo<Timer[]>(() => (ctx()?.timers ?? []).map(t => ({
+    id: t.id, text: `Check in every ${every(t.everyMs)}`, paused: t.paused, readOnly: !t.canManage,
+    when: t.paused ? `paused · every ${every(t.everyMs)}` : t.nextAt ? `${inTime(t.nextAt)} · every ${every(t.everyMs)}` : `every ${every(t.everyMs)}`,
+  })));
   const automations = createMemo<Automation[]>(() => (ctx()?.automations ?? []).map(a => {
     const set = rec(a.settings);
     const event = str(set.event);
     return { rule: str(set.name) ?? 'Automation', when: set.enabled === false ? 'paused' : str(set.scheduleTime) || (event && event !== 'none' ? `on ${event}` : 'on request') };
   }));
+  // A member's progress: the plan steps assigned to it that are done.
+  const progress = (member: string) => {
+    const mine = (ctx()?.plan?.steps ?? []).filter(st => member && st.owner === member);
+    return mine.length ? `${mine.filter(st => st.done).length} of ${mine.length} steps` : undefined;
+  };
   const swarm = createMemo<Member[]>(() => (ctx()?.swarm ?? []).flatMap(m => !m.sessionId ? [] : [{
-    id: m.sessionId, name: [m.memberName, m.role].filter(Boolean).join(' · ') || m.sessionCode || 'Member',
+    id: m.sessionId, name: [m.memberName, m.role].filter(Boolean).join(' · ') || m.sessionCode || 'Member', progress: progress(m.memberName),
     avatar: { letter: (m.memberName || m.role || '?').slice(0, 1).toUpperCase(), tone: lifeOfSession(String(m.state)) === 'done' ? 'success' : 'running' },
     state: lifeOfSession(String(m.state)), href: here(m.sessionCode ?? m.sessionId),
   }]));
-  const ctxEmpty = () => (!!ctx() || !!ctxDoc.error) && !plan().length && !timers().length && !automations().length && !swarm().length;
+  const tasks = createMemo<RelatedTask[]>(() => (ctx()?.tasks ?? []).map(t => ({
+    id: t.id, code: t.code, title: t.title, state: (lifeOf.task as Record<string, Life>)[t.state] ?? 'queued', href: `/tasks/${encodeURIComponent(t.id)}`,
+  })));
+  const ctxEmpty = () => (!!ctx() || !!ctxDoc.error) && !plan().length && !timers().length && !automations().length && !swarm().length && !tasks().length;
   const [ctxHidden, setCtxHidden] = createSignal(false);
   const showCtx = () => !ctxHidden() && !ctxEmpty();
   const [sheetOpen, setSheetOpen] = createSignal(false);
   let column: HTMLDivElement | undefined;
+  // Showing or hiding the column changes the transcript's width and so its wrapped rows: keep the row being read where it
+  // was (a list at its newest row keeps following). The composer and its draft stay mounted.
+  const setColumn = (hidden: boolean) => {
+    const view = handle.current, anchor = view && !view.isAtEdge() ? view.getAnchor() : null;
+    setCtxHidden(hidden);
+    if (anchor) requestAnimationFrame(() => requestAnimationFrame(() => handle.current?.restoreAnchor(anchor.key, anchor.offsetPx)));
+  };
   const toggleCtx = () => {
     // At phone width the column is not shown (session.css): the panel opens as a sheet.
     if (column && getComputedStyle(column).display === 'none') { setSheetOpen(true); return; }
-    setCtxHidden(h => !h);
+    setColumn(!ctxHidden());
+  };
+  // Timer changes (watch_timer_set) touch only the timer: the watch's event subscriptions and cursor stay. The base is
+  // the timer on screen; a timer changed meanwhile answers 409 and the panel rereads.
+  // A failure has no Retry: after a reread the base may differ, so the person acts again on what the panel shows.
+  const timerChange = async (t: { everyMs: number; paused: boolean }, action: 'edit' | 'pause' | 'resume' | 'cancel', timerMs?: number) => {
+    setFailure(null);
+    try {
+      await op('watch_timer_set', { sessionId: props.id, action, baseTimerMs: t.everyMs, basePaused: t.paused, ...(timerMs ? { timerMs } : {}) });
+      setPanel(null);
+    } catch (e) { setFailure({ text: errText(e) }); } finally { ctxDoc.reload(); }
   };
   const onTimer = (id: string, action: 'pause' | 'edit' | 'cancel') => {
     const t = ctx()?.timers.find(x => x.id === id);
     if (!t) return;
-    if (action === 'pause') { setFailure({ text: 'A timer cannot be paused yet; edit or cancel it.' }); return; }
     if (action === 'edit') { setSheetOpen(false); setPanel({ timer: t.everyMs }); return; }
-    run(async () => {
-      // Cancel drops the timer and keeps the watch; a watch with nothing else to watch stops.
-      const kinds = watchKinds(await op('watch_get', { sessionId: props.id }));
-      await (kinds.length ? op('watch_set', { sessionId: props.id, kinds }) : op('watch_stop', { sessionId: props.id }));
-      ctxDoc.reload();
-    });
+    void timerChange(t, action === 'pause' ? (t.paused ? 'resume' : 'pause') : 'cancel');
   };
-  const saveTimer = (minutes: number) => run(async () => {
-    const w = await op('watch_get', { sessionId: props.id });
-    await op('watch_set', { sessionId: props.id, kinds: watchKinds(w), timerMs: Math.round(minutes * 60_000) });
-    setPanel(null);
-    ctxDoc.reload();
-  });
+  const saveTimer = (minutes: number) => {
+    const t = ctx()?.timers[0];
+    if (t) void timerChange(t, 'edit', Math.round(minutes * 60_000));
+  };
   const contextPanel = (onHide?: () => void) => (
-    <ContextPanel loading={!ctx() && !ctxDoc.error} plan={plan()} timers={timers()} automations={automations()} swarm={swarm()} onHide={onHide} onTimer={onTimer} onOpen={href => { setSheetOpen(false); go(href); }} />
+    <ContextPanel loading={!ctx() && !ctxDoc.error} plan={plan()} timers={timers()} automations={automations()} swarm={swarm()} tasks={tasks()} onHide={onHide} onTimer={onTimer} onOpen={href => { setSheetOpen(false); go(href); }} />
   );
 
   // Files for the next message: uploaded as they are added (picker, paste, drop over the session).
@@ -481,7 +501,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
               />
             </DropZone>
           </div>
-          <div class="sv-ctx" ref={el => { column = el; }} hidden={!showCtx()}>{contextPanel(() => setCtxHidden(true))}</div>
+          <div class="sv-ctx" ref={el => { column = el; }} hidden={!showCtx()}>{contextPanel(() => setColumn(true))}</div>
           <ContextSheet open={sheetOpen()} onClose={() => setSheetOpen(false)}>{contextPanel(() => setSheetOpen(false))}</ContextSheet>
         </article>
       }
@@ -496,11 +516,10 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   );
 }
 
-const watchKinds = (w: unknown): string[] => { const k = rec(w).kinds; return Array.isArray(k) ? k.filter((x): x is string => typeof x === 'string') : []; };
 const every = (ms: number) => (ms % 3_600_000 === 0 ? `${ms / 3_600_000}h` : ms % 60_000 === 0 ? `${ms / 60_000}m` : `${Math.round(ms / 1000)}s`);
 const inTime = (at: number) => { const m = Math.round((at - Date.now()) / 60_000); return m < 1 ? 'due now' : m < 60 ? `in ${m}m` : `in ${Math.round(m / 60)}h`; };
 
-/** Edit a timer: its period in minutes (watch_set timerMs). */
+/** Edit a timer: its period in minutes (watch_timer_set edit). */
 function TimerPanel(p: { everyMs: number; onSave: (minutes: number) => void; onDone: () => void }) {
   const [v, setV] = createSignal(String(Math.max(1, Math.round(untrack(() => p.everyMs) / 60_000))));
   const n = () => Number(v());

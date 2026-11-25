@@ -47,6 +47,7 @@
   .swarm-member { display: flex; align-items: center; gap: var(--space-3); min-width: 0; color: var(--fg); font-size: var(--font-size-sm); text-decoration: none; }
   .swarm-member:hover .swarm-name { text-decoration: underline; }
   .swarm-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .swarm-progress, .ctx-code { flex: none; color: var(--fg-muted); font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
   .ctx-details { margin: 0; color: var(--fg-faint); font-size: var(--font-size-xs); }
   /* The one session view (pages/session.md, OR-51): the conversation, then the context panel as a right column. Below
      600 px of its own width the column gives way to a sheet (the Context icon opens it). */
