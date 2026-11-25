@@ -20,12 +20,16 @@ func TestPinsPublishOnlyProposals(t *testing.T) {
 	t.Cleanup(func() { pinsGatewayCall = old })
 	sha := strings.Repeat("a", 40)
 	pr := func(head, base string) ghPull {
-		return ghPull{URL: "u", NodeID: "PR_1", Head: ghPullHead{Ref: head, SHA: sha}, Base: ghPullHead{Ref: base}}
+		p := ghPull{URL: "u", NodeID: "PR_1", Head: ghPullHead{Ref: head, SHA: sha}, Base: ghPullHead{Ref: base}}
+		p.Head.Repo.FullName = githubPublicRepo
+		return p
 	}
+	fork := pr("automation/cli-pins", "main")
+	fork.Head.Repo.FullName = "someone/fleet"
 	for _, refused := range []ghPull{
 		pr("feature", "main"), pr("automation/harness", "main"), pr("automation/cli-pins/x", "main"),
 		pr("automation/-pins", "main"), pr("claude/automation/cli-pins", "main"), pr("automation/cli-pins", "release"),
-		{URL: "u", NodeID: "PR_1", Head: ghPullHead{Ref: "automation/cli-pins", SHA: "abc"}, Base: ghPullHead{Ref: "main"}},
+		{URL: "u", NodeID: "PR_1", Head: ghPullHead{Ref: "automation/cli-pins", SHA: "abc"}, Base: ghPullHead{Ref: "main"}}, fork,
 	} {
 		if err := pinsPublish(context.Background(), nil, refused, true, "ok", ""); err == nil {
 			t.Errorf("%s -> %s: written", refused.Head.Ref, refused.Base.Ref)
@@ -41,5 +45,22 @@ func TestPinsPublishOnlyProposals(t *testing.T) {
 	if err := pinsPublish(context.Background(), nil, pr("automation/cli-pins", "main"), true, "ok", "x"); err != nil || len(calls) != 3 ||
 		!strings.HasPrefix(calls[1], "status_create") || !strings.Contains(calls[1], `"context":"code-review"`) || !strings.HasPrefix(calls[2], "auto_merge_enable") {
 		t.Fatalf("passed qualification: %v %v", err, calls)
+	}
+}
+
+// TestPinsPublishGraphQLError: a GraphQL refusal (HTTP 200 with errors) is an error, not a merge.
+func TestPinsPublishGraphQLError(t *testing.T) {
+	old := pinsGatewayCall
+	pinsGatewayCall = func(_ context.Context, _ *App, tool string, _ any) contract.CallLine {
+		if tool == "auto_merge_enable" {
+			return contract.CallLine{Outcome: contract.CallOutcomeOk, Output: []byte(`{"errors":[{"message":"Pull request is in clean status"}]}`)}
+		}
+		return contract.CallLine{Outcome: contract.CallOutcomeOk}
+	}
+	t.Cleanup(func() { pinsGatewayCall = old })
+	p := ghPull{URL: "u", NodeID: "PR_1", Head: ghPullHead{Ref: "automation/cli-pins", SHA: strings.Repeat("b", 40)}, Base: ghPullHead{Ref: "main"}}
+	p.Head.Repo.FullName = githubPublicRepo
+	if err := pinsPublish(context.Background(), nil, p, true, "ok", ""); err == nil || !strings.Contains(err.Error(), "clean status") {
+		t.Fatalf("%v", err)
 	}
 }

@@ -13,6 +13,12 @@ func TestPinsProblems(t *testing.T) {
 		{Body: body, URL: "https://github.com/taskqorg/fleet/pull/669", Head: ghPullHead{Ref: "automation/cli-pins", SHA: "b"}},
 		{Body: strings.Replace(body, "qualification:failed", "qualification:offline-passed", 1), Head: ghPullHead{Ref: "automation/tool-pins", SHA: "d"}},
 	}
+	for i := range open {
+		open[i].Head.Repo.FullName = githubPublicRepo
+	}
+	fork := ghPull{Body: body, Head: ghPullHead{Ref: "automation/cli-pins", SHA: "e"}}
+	fork.Head.Repo.FullName = "someone/fleet"
+	open = append(open, fork)
 	ps := pinsProblems(open)
 	if len(ps) != 1 || ps[0].Cause != "pins:cli:b" || !strings.Contains(ps[0].Text, "pull/669") ||
 		!strings.Contains(ps[0].Text, "cli/codex 0.172.0 on linux-amd64: version: 0.171.0; cli/claude 2.1.332") || strings.Contains(ps[0].Text, "Run:") {

@@ -154,8 +154,11 @@ func deliveryReply(last deliveryState, may func(project string) bool) contract.D
 
 // ghPull, ghRun and ghRelease: the fields of the GitHub REST replies the stages need.
 type ghPullHead struct {
-	SHA string `json:"sha"`
-	Ref string `json:"ref"`
+	SHA  string `json:"sha"`
+	Ref  string `json:"ref"`
+	Repo struct {
+		FullName string `json:"full_name"`
+	} `json:"repo"`
 }
 type ghPull struct {
 	Number    int64      `json:"number"`

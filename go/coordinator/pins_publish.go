@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"fleet/contract"
 )
@@ -30,8 +32,8 @@ var pinsGatewayCall = func(ctx context.Context, a *App, tool string, args any) c
 // pinsWritable refuses every pull request but an open proposal of taskqorg/fleet: head automation/<kind>-pins in the
 // same repository, base main, a full head SHA.
 func pinsWritable(pr ghPull) error {
-	if pinsKind(pr.Head.Ref) == "" || pr.Base.Ref != "main" || !pinsSHA.MatchString(pr.Head.SHA) || pr.NodeID == "" {
-		return fmt.Errorf("pins write refused for %q (head %q, base %q): only automation/<kind>-pins proposals to main", pr.URL, pr.Head.Ref, pr.Base.Ref)
+	if pinsKind(pr.Head.Ref) == "" || !strings.EqualFold(pr.Head.Repo.FullName, githubPublicRepo) || pr.Base.Ref != "main" || !pinsSHA.MatchString(pr.Head.SHA) || pr.NodeID == "" {
+		return fmt.Errorf("pins write refused for %q (head %s:%s, base %q): only %s automation/<kind>-pins proposals to main", pr.URL, pr.Head.Repo.FullName, pr.Head.Ref, pr.Base.Ref, githubPublicRepo)
 	}
 	return nil
 }
@@ -53,6 +55,15 @@ func pinsPublish(ctx context.Context, a *App, pr ghPull, passed bool, descriptio
 		line := pinsGatewayCall(ctx, a, tool, args)
 		if line.Outcome != contract.CallOutcomeOk {
 			return fmt.Errorf("%s %s: %s %d", pinsWriteConn, tool, deref(line.ErrorCode), line.Status)
+		}
+		// GraphQL refuses with HTTP 200 and an errors list.
+		var reply struct {
+			Errors []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
+		}
+		if json.Unmarshal(line.Output, &reply) == nil && len(reply.Errors) > 0 {
+			return fmt.Errorf("%s %s: %s", pinsWriteConn, tool, reply.Errors[0].Message)
 		}
 		return nil
 	}
