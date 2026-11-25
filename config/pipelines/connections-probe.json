@@ -1,0 +1,111 @@
+{
+  "id": "connections-probe",
+  "steps": [
+    {
+      "arguments": {},
+      "connection": "typesafe",
+      "id": "typesafe",
+      "kind": "api",
+      "tool": "list_models"
+    },
+    {
+      "arguments": {},
+      "connection": "meshy",
+      "id": "meshy",
+      "kind": "api",
+      "tool": "recent_tasks"
+    },
+    {
+      "arguments": {
+        "owner": "taskqorg",
+        "repo": "fleet"
+      },
+      "connection": "github",
+      "id": "github",
+      "kind": "api",
+      "tool": "pulls_open"
+    },
+    {
+      "arguments": {},
+      "connection": "youtrack",
+      "id": "youtrack",
+      "kind": "api",
+      "tool": "projects"
+    },
+    {
+      "arguments": {},
+      "connection": "bugsink",
+      "id": "bugsink",
+      "kind": "api",
+      "tool": "projects"
+    },
+    {
+      "arguments": {
+        "max_results": 1,
+        "query": "fleet connection probe"
+      },
+      "connection": "tavily",
+      "id": "tavily",
+      "kind": "api",
+      "tool": "web_search"
+    },
+    {
+      "arguments": {
+        "contents": [
+          {
+            "parts": [
+              {
+                "text": "Say ok."
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "maxOutputTokens": 8,
+          "responseModalities": [
+            "TEXT"
+          ]
+        },
+        "model": "gemini-flash-lite-latest"
+      },
+      "connection": "google-ai",
+      "id": "google-ai-text",
+      "kind": "api",
+      "tool": "generate_content"
+    },
+    {
+      "arguments": {
+        "inputs": "ok",
+        "model": "distilbert/distilbert-base-uncased-finetuned-sst-2-english"
+      },
+      "connection": "huggingface",
+      "id": "huggingface",
+      "kind": "api",
+      "tool": "inference"
+    },
+    {
+      "arguments": {
+        "contents": [
+          {
+            "parts": [
+              {
+                "text": "A small red dot."
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "responseModalities": [
+            "IMAGE"
+          ]
+        },
+        "model": "gemini-3.1-flash-image-preview"
+      },
+      "connection": "google-ai",
+      "id": "google-ai-image",
+      "kind": "api",
+      "tool": "generate_content"
+    }
+  ],
+  "version": 2
+}

@@ -215,7 +215,8 @@ func definitionTakeRepository(q *Request, r *contract.DefinitionTakeRepositoryRe
 			})
 			continue
 		}
-		rev, err := appendRevision(q, string(k.Kind), k.Id, head.Head, &repoText, head.RepoSha, "editor", msg)
+		// source repo: the head is the repository's content again, so the next release moves it (reconcileDefinitions).
+		rev, err := appendRevision(q, string(k.Kind), k.Id, head.Head, &repoText, head.RepoSha, "repo", msg)
 		if err != nil {
 			return out, err
 		}

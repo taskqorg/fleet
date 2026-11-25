@@ -1,0 +1,12 @@
+{
+  "id": "research-agent",
+  "steps": [
+    {
+      "id": "answer",
+      "kind": "agent",
+      "profile": "codex-researcher",
+      "prompt": "Research task: ${example.prompt}\nUse the web_search and web_extract tools of the tavily connection. Write every result file to output/."
+    }
+  ],
+  "version": 2
+}

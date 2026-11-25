@@ -3,6 +3,7 @@
 *   **Author:** Alex Kirs
 *   **Status:** Proposed; storage decided by the owner
 *   **Owner decision (2026-11-11):** the coordinator store is the single source of truth, with append-only revisions. A git mirror is only a later, optional stage. The six rules in "Failure modes and their rules" are binding.
+*   **Decision (2026-11-26, consilium of three vendors for the owner):** [one home per kind](#one-home-per-kind) replaces "the store is the single source of truth". Agents, pipelines and the catalogue live in the repository; a Fleet save of one is a hotfix that goes to the repository by a pull request. Projects, bots and settings live in the store. A Lab variant belongs to its experiment.
 *   **Date:** 2026-11-11 (main `23cc517`, redesign #153 merged)
 *   **Depends on:** [fleet-contracts.md](fleet-contracts.md) and the quality round's wave 1 (one router, files by domain, `go/contract`, committed `schema.sql`) and wave 2 lane F (the `ops` contract and typed `op<'name'>` in the app). [fleet-people-access.md](fleet-people-access.md) roles, director and `people.json`. [fleet-lab.md](fleet-lab.md) experiments and Promote.
 *   **Screens:** [D20](../design-system/decisions.md), the [definition editor](../design-system/patterns/definition-editor.md) pattern, page specs [agents](../design-system/pages/agents.md), [pipelines](../design-system/pages/pipelines.md), [catalogue](../design-system/pages/catalogue.md), mockup routes `#/agents`, `#/pipelines`, `#/pipelines/render-props`, `#/catalogue` in `docs/design-system/pages/mockups.html`, and "what each screen answers" in [formats.md](../design-system/formats.md). UI choices are decided there and are not reopened here.
@@ -13,7 +14,7 @@
 
 The Agents, Pipelines and Catalogue screens edit **definitions**: an agent profile (`config/agents/<id>.json`), a pipeline (`config/pipelines/<id>.json`) and a capability's catalogue entry (`config/catalogue.json`). Today the coordinator only reads these files, from the `config/` directory that ships inside each release tarball (`deploy/build-release.sh` copies `config/`). Nothing reads or writes a definition through an operation, holds a draft, or keeps revisions.
 
-This design adds those operations. Saved definitions live in the coordinator's database as append-only **revisions**, and take effect at once. The store is the one source of truth; git never is. `config/` in the release is a **seed**: a definition is imported from it only when the store has nothing for it, and after that the store wins (a changed shipped file only shows a "repository changed" note). Executions pin the revision they started with. Definitions live in Postgres, so the database backups cover them. An export to a patch for the code repository is the git path in stage 1. A one-way **mirror** to a private git repository (`taskqorg/fleet-config`) is a later, optional stage 2, designed here so stage 1 does not block it. The design also covers the operations the screens need around definitions: draft test runs, reruns, effective layers, compatibility, models, usage, per-method assessments, comparing methods in Lab, the Lab baseline delta and person names.
+This design adds those operations. Saved definitions live in the coordinator's database as append-only **revisions**, and take effect at once. Each kind has [one home](#one-home-per-kind): agents, pipelines and the catalogue live in the repository and the release activates them (a Fleet save is a hotfix on its way to a pull request); projects, bots and settings live in the store; a Lab variant lives with its experiment. Executions pin the revision they started with. Definitions live in Postgres, so the database backups cover them. An export to a patch for the code repository is the git path in stage 1. A one-way **mirror** to a private git repository (`taskqorg/fleet-config`) is a later, optional stage 2, designed here so stage 1 does not block it. The design also covers the operations the screens need around definitions: draft test runs, reruns, effective layers, compatibility, models, usage, per-method assessments, comparing methods in Lab, the Lab baseline delta and person names.
 
 ## The Problem
 
@@ -103,6 +104,35 @@ This design adds those operations. Saved definitions live in the coordinator's d
 
 ## Technical Plan (Architecture)
 
+### One home per kind
+
+Each kind of definition has exactly one home, and one way to change it. Nobody copies a change between the repository and the store by hand.
+
+| Kind | Home | The store holds |
+|---|---|---|
+| Agents, pipelines, the catalogue (product definitions) | The repository (`config/`), changed by a pull request: review, CI, auto-merge | The released content as revisions, drafts, and hotfixes on their way to a pull request |
+| Skills, triggers | The repository; the release reads the files | Nothing |
+| Projects, bots, system settings, connections and keys (installation state) | The store; changed by `project_update`, `bot_settings_save` and the settings operations | Everything; `config/projects/*` only seeds a fresh database |
+| Lab variants | Their experiment | The variant until the experiment is decided |
+
+**Why (prod, 2026-11-26).** Library › Changes held 9 definitions "changed in the repository" and 31 "made in Fleet". Every one of the 9 heads was an older git version of its file, with no Fleet-only edit. Their histories held about 25 revisions that copied merged pull requests by hand, and the few real Fleet edits had been made twice, once as a save and once as a commit. A merged fix (#1041, c0edf421) was released and never ran. The 31 store-only definitions were made by agents: about 24 Lab variants of finished experiments and 4 reusable definitions nobody exported. The store-wins rule turned every merged change into a chore, two write paths for the same object let edits drift, and Lab variants had no end.
+
+**Release.** The release activates product definitions. At start, reconcile gives every product definition without a Fleet-only edit the shipped content as its next revision: a head equal to the last shipped content, or one the repository wrote (`source: repo`, a release or a person who took the repository version). Running executions keep their pinned revisions.
+
+**Hotfix.** A save of a product definition in Fleet (editor, an agent's `definition_save`, Lab Promote) takes effect at once, so an urgent change does not wait for a release. It is not finished until a pull request carries it to the repository: `definition_export` gives the patch, and the person or agent who saved it opens the pull request (an agent in a checkout commits the file itself; otherwise a worker task gets the patch). When a release ships the same content, the definition is `synced` again and follows the repository from then on. While the two differ, Library › Changes lists the definition as `ahead` (waiting for its pull request) or `repository-changed` (the repository moved under the hotfix); both are open work with a named next step, never drift.
+
+**Lab variant.** A Lab variant is a store-only agent or pipeline that an experiment names. Deciding the experiment (`lab_experiment_decide`) deletes its variants as `definition_delete` does: their revisions stay for the trials that ran them. The variant a decision adopts is kept until its pull request ships, and so is any variant that something else still uses, such as another live experiment, a project role or a pipeline step.
+
+**Rule for people and agents.** Change a definition only in its home. Agents, pipelines and the catalogue change by a pull request to the repository, even when you saved them first in Fleet. Projects, bots and settings change in Fleet. Never copy a change by hand between the repository and the store. (Owner rule: [engineering principles](fleet-standard.md#engineering-principles), 8.)
+
+**Rejected.** The consilium (Claude Opus 5.5, GPT-6.2 Sol, Gemini; independent proposals and one round of critique) agreed on the split. It rejected these options:
+
+* The repository with no live edit (a pull request before any effect): no fix during an incident. Two of the four real Fleet edits in 15 days were urgent (a broken Codex default).
+* The store as the truth: prod falsified it. Its only lasting content was hand copies.
+* Periodic pull requests from store tuning: two write paths for one object, so drift returns between runs.
+* Activating definitions from `main` on merge: a second deploy path, and code and definitions out of step. #1041 had already been released.
+* A global model or harness remap in settings: broader than the evidence; the hotfix covers it.
+
 ### Where definitions live
 
 ```
@@ -157,7 +187,7 @@ git: definition_export  ──▶  unified diff of every ahead definition agains
 
 ### Failure modes and their rules
 
-1. **Upgrades never clobber edits.** `config/` in the release is a seed. A definition is imported only when the store has no row for it. After first boot an edit in Fleet wins: a release that changes a shipped file whose head was changed in Fleet (a save, a Lab promote) only updates the row's repository fields, and the definition shows `repository-changed`; taking the shipped version is then an explicit save ("take repository"). A head nobody changed in Fleet (`synced`) follows the repository: the release's content becomes its next revision (owner decision 2026-11-26: a merged change must reach the store, as the doc-recognize descriptions of #1041 did not).
+1. **Upgrades never clobber edits.** A definition is imported when the store has no row for it. A release that changes a shipped file whose head is a Fleet edit (a hotfix save, a Lab promote) only updates the row's repository fields, and the definition shows `repository-changed`; taking the shipped version is an explicit save ("take repository", recorded as `source: repo`). A head with no Fleet-only edit (`synced`, or written by the repository) follows the repository: the release's content becomes its next revision ([one home per kind](#one-home-per-kind)). Projects move only by their own save.
 2. **Pinned revisions.** An execution resolves each definition once, when it is created, records `{kind, id, revision, contentSha}`, and every later use reads that revision by id, never the head: the start command built at claim, each turn of the session's execution, every agent step of a pipeline run and every delegation child that names a profile. A save during a run affects only executions created after it. A new turn in an existing session is a new execution and resolves the head at its creation; the session shows when its profile revision changed between turns.
 3. **Skills as files.** See Non-Goals: `(revision, path, content)` rows when skills become definitions.
 4. **Readable history.** `source` (`repo`, `editor`, `lab`, `agent`) is shown on each History row with its link: Lab revisions name the experiment and variant, agent revisions the execution and its director. A filter hides Lab and agent revisions.

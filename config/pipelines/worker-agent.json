@@ -1,0 +1,12 @@
+{
+  "id": "worker-agent",
+  "steps": [
+    {
+      "id": "work",
+      "kind": "agent",
+      "profile": "claude-worker",
+      "prompt": "Task: ${example.prompt}\nWrite every result file to output/."
+    }
+  ],
+  "version": 2
+}

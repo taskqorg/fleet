@@ -189,16 +189,19 @@ func reconcileDefinitions(q *Request, files []definitionFile, broken map[string]
 		if st.RepoSha != nil && *st.RepoSha == blob && st.RetiredAt == nil {
 			continue
 		}
-		// A head nobody changed in Fleet (synced: it is the repository's last content) follows the repository: the new
-		// content becomes its next revision. A head edited in Fleet (a save, a Lab promote) stays, and the definition shows
-		// repository-changed until a person takes one side. Projects move only by their own save.
+		// The repository is the home of agents, pipelines and the catalogue (fleet-definition-editors.md, One home per
+		// kind): a head with no Fleet-only edit follows it, and the new content becomes its next revision. That is a head
+		// equal to the repository's last content (synced) or one the repository wrote (source repo: a release, or a
+		// person who took the repository version), so a head left behind by an invalid release catches up with the next
+		// valid one. A head edited in Fleet (a save, a Lab promote) stays until its pull request ships, and the definition
+		// shows repository-changed while the two differ. Projects live in the store and move only by their own save.
 		var follow *definitionRow
 		if f.kind != "project" && st.RetiredAt == nil {
 			h, err := headOf(q, f.kind, f.id, false)
 			if err != nil {
 				return err
 			}
-			if h != nil && h.state() == contract.DefinitionStateSynced && string(h.Content) != text && len(problems(f.kind, f.id, text)) == 0 {
+			if h != nil && (h.state() == contract.DefinitionStateSynced || h.Source == "repo") && string(h.Content) != text && len(problems(f.kind, f.id, text)) == 0 {
 				follow = h
 			}
 		}
