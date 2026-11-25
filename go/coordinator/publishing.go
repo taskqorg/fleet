@@ -438,7 +438,6 @@ func publishingCapabilities(q *Request, r *contract.PublishingCapabilitiesReques
 func publishingStatus(q *Request, r *contract.PublishingStatusRequest) (contract.PublishingStatusReply, error) {
 	var none contract.PublishingStatusReply
 	projID := r.ProjectId
-	branchFilter := deref(r.Branch)
 	if deref(projID) == "" && deref(r.ExecutionId) != "" {
 		e, err := getExecution(q, *r.ExecutionId)
 		if err != nil {
@@ -477,6 +476,27 @@ func publishingStatus(q *Request, r *contract.PublishingStatusRequest) (contract
 			repoByProjAndSlug[pid+"|"+strings.ToLower(c.Repo)] = c
 		}
 	}
+	base, items, recs, err := publishingItems(q, r, allowed, repoByProjAndSlug)
+	if err != nil {
+		return none, err
+	}
+	return contract.PublishingStatusReply{
+		Capabilities: caps,
+		Error:        base.Error,
+		Items:        items,
+		Landing:      base.Landing,
+		Records:      recs,
+		RefreshedAt:  base.RefreshedAt,
+		Samples:      base.Samples,
+		Source:       base.Source,
+	}, nil
+}
+
+// publishingItems: publishing_status's pull requests of the allowed projects: delivery's items merged with the
+// publishing records, linked to their tasks and sessions, filtered by r's branch, repoId (repos: the capabilities by
+// project and repository slug, needed only with repoId) and taskId; with delivery's reply and the kept records.
+func publishingItems(q *Request, r *contract.PublishingStatusRequest, allowed map[string]bool, repoByProjAndSlug map[string]contract.PublishingCapability) (contract.DeliveryStatusReply, []contract.DeliveryItem, []contract.PublishingRecord, error) {
+	branchFilter := deref(r.Branch)
 	deliveryMu.Lock()
 	last := deliveryLast
 	deliveryMu.Unlock()
@@ -583,7 +603,7 @@ func publishingStatus(q *Request, r *contract.PublishingStatusRequest) (contract
 	}
 
 	if err := linkDeliveryItems(q, items); err != nil {
-		return none, err
+		return base, nil, nil, err
 	}
 	// A project-forge record names its source execution: that links a pull request whose branch names no session.
 	srcByKey, srcs := map[string]string{}, []string{}
@@ -595,7 +615,7 @@ func publishingStatus(q *Request, r *contract.PublishingStatusRequest) (contract
 	}
 	bySource, err := sourceTasks(q, srcs)
 	if err != nil {
-		return none, err
+		return base, nil, nil, err
 	}
 	for i, it := range items {
 		if st, ok := bySource[srcByKey[fmt.Sprintf("%s|%s#%d", it.ProjectId, strings.ToLower(it.Repo), it.Number)]]; ok && it.TaskId == nil {
@@ -616,16 +636,7 @@ func publishingStatus(q *Request, r *contract.PublishingStatusRequest) (contract
 			return !kept[fmt.Sprintf("%s|%s#%d", rec.ProjectId, strings.ToLower(rec.Repo), rec.Number)]
 		})
 	}
-	return contract.PublishingStatusReply{
-		Capabilities: caps,
-		Error:        base.Error,
-		Items:        items,
-		Landing:      base.Landing,
-		Records:      recs,
-		RefreshedAt:  base.RefreshedAt,
-		Samples:      base.Samples,
-		Source:       base.Source,
-	}, nil
+	return base, items, recs, nil
 }
 
 func publishingRecordToContract(b *contract.PublishingHostRecord, now string) contract.PublishingRecord {

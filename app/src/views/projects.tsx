@@ -12,11 +12,10 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import { op, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
-import { useOp } from '../store.ts';
+import { useOp, useView } from '../store.ts';
 import { useOpPages } from '../op-pages.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
-import { prefs, scopeIds } from '../prefs.ts';
-import { SYSTEM_VIEWS } from '../system-views.ts';
+import { prefs, prefsRead, scopeIds } from '../prefs.ts';
 import { projectIdOf, projectSegment, type ListFacet } from '../routes.ts';
 import type { Frame } from '../list-page.tsx';
 import { isCode } from '../codes.ts';
@@ -39,10 +38,8 @@ const FACETS: { id: Facet; label: string }[] = [
 const CROSS: { id: CrossFacet; label: string }[] = [
   { id: 'summary', label: 'Summary' }, { id: 'tasks', label: 'Tasks' }, { id: 'delivery', label: 'Delivery' }, { id: 'results', label: 'Results' },
 ];
-const RUNNING_TASK_STATES = SYSTEM_VIEWS.tasks.find(v => v.name === 'Running')?.view.state ?? ['in_progress', 'waiting'];
 const ACTIVE_SESSION: string[] = statesOf('session', ['working', 'waiting']);
 const WAITING_HREF = formatView({ view: 'conversations', state: statesOf('session', ['waiting']) });
-const IN_FLIGHT_STAGES = new Set(['pr_open', 'pr_ci', 'pr_failed', 'mq_wait', 'mq_ci', 'mq_failed', 'releasing', 'installing']);
 
 function isRec(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -70,7 +67,6 @@ function ReadinessBadge(props: { p: Record<string, unknown> }) {
 }
 
 /** Counts per project of a list read grouped by project (sessions_list, task_page). */
-const perProject = (groups: { key: string; count: number }[] | undefined) => new Map((groups ?? []).map(g => [g.key, g.count]));
 
 /** The facet path of a project (the router writes the project's code in the address bar). */
 const facetPath = (projectId: string, facet: Facet): string =>
@@ -131,6 +127,12 @@ export function Projects(props: { screen: Screen; id?: string }) {
   );
 }
 
+/**
+ * The Projects screen's one read (projects_view): the catalogue's facts per project and the summary over the focus. The
+ * catalogue and the summary ask with the same request, so they share it.
+ */
+const useProjectsView = () => useView('projects_view', () => (prefsRead.value ? scopeIds() : null), { quiet: 2000 });
+
 /** The control column: one row per project with readiness, name and code, and its live facts (OR-22, OR-29). */
 function Catalogue(props: {
   rows: { id: string; name: string; code: string; raw: Record<string, unknown> }[]; pending: boolean; error: string | null; reload: () => void;
@@ -139,16 +141,11 @@ function Catalogue(props: {
   const [query, setQuery] = createSignal('');
   // Ignored projects are hidden everywhere for this person (OR-34); a project the URL names still opens.
   const shown = createMemo(() => props.rows.filter(p => !prefs.value.ignored.includes(p.id) && matchSearch(query(), `${p.name} ${p.id} ${p.code}`, { project: p.id })));
-  const sessions = useOp('sessions_list', { filter: { state: ACTIVE_SESSION, archived: false }, group: 'project', limit: 1 });
-  const tasks = useOp('task_page', { filter: { state: RUNNING_TASK_STATES }, group: 'project', sort: '-changed', limit: 1 });
-  const questions = useOp('questions_list', { state: 'open', limit: 500 });
-  const working = createMemo(() => perProject(sessions.data?.groups));
-  const inFlight = createMemo(() => perProject(tasks.data?.groups));
-  const asks = createMemo(() => {
-    const m = new Map<string, number>();
-    for (const q of questions.data?.questions ?? []) if (q.projectId) m.set(q.projectId, (m.get(q.projectId) ?? 0) + 1);
-    return m;
-  });
+  const view = useProjectsView();
+  const counts = createMemo(() => new Map((view.data?.catalogue ?? []).filter(c => c.projectId).map(c => [c.projectId!, c])));
+  const working = createMemo(() => new Map([...counts()].map(([p, c]) => [p, c.working])));
+  const inFlight = createMemo(() => new Map([...counts()].map(([p, c]) => [p, c.inFlight])));
+  const asks = createMemo(() => new Map([...counts()].map(([p, c]) => [p, c.questions])));
   return (
     <>
       <ShellActions>
@@ -180,7 +177,7 @@ function Catalogue(props: {
                         <Show when={asks().get(p.id)}>{n => <Fact tip="Open questions"><span class="t-attention">{n()} {n() === 1 ? 'question' : 'questions'}</span></Fact>}</Show>
                         <Show when={working().get(p.id)}>{n => <Fact tip="Sessions working"><span class="t-running">{n()} working</span></Fact>}</Show>
                         <Show when={inFlight().get(p.id)}>{n => <Fact text={`${n()} in flight`} tip="Tasks not finished" />}</Show>
-                        <Show when={sessions.data && tasks.data && questions.data && !asks().get(p.id) && !working().get(p.id) && !inFlight().get(p.id)}><span class="muted">nothing in flight</span></Show>
+                        <Show when={view.data && !asks().get(p.id) && !working().get(p.id) && !inFlight().get(p.id)}><span class="muted">nothing in flight</span></Show>
                       </RowFacts>
                     </span>
                   </>
@@ -230,27 +227,20 @@ function CrossWork(props: { facet: CrossFacet; item?: string; names?: Map<string
 /** The cross-project glance (UR-52): what waits for the person, then each project's work in one line, then delivery in flight. */
 function Summary(props: { names: Map<string, string> }) {
   const [, go] = useLocation();
-  const scope = createMemo(() => scopeIds());
-  const questions = useOp('questions_list', () => ({ state: 'open', limit: 200, ...scope() }));
-  const tasks = useOp('task_page', () => ({ filter: { state: RUNNING_TASK_STATES, projectId: scope().projectIds, excludeProjectId: scope().excludeProjectIds }, group: 'project', sort: '-changed', limit: 1 }));
-  const sessions = useOp('sessions_list', () => ({ filter: { state: ACTIVE_SESSION, archived: false, projectId: scope().projectIds, excludeProjectId: scope().excludeProjectIds }, group: 'project', limit: 1 }));
-  const delivery = useOp('publishing_status', () => scope(), { every: 300000 });
-  const working = createMemo(() => perProject(sessions.data?.groups));
+  const view = useProjectsView();
   const name = (id: string | null) => (id ? props.names.get(id) ?? id : 'No project');
   // Every project with sessions working or tasks in flight, in name order.
-  const lines = createMemo(() => {
-    const t = perProject(tasks.data?.groups), ids = [...new Set([...t.keys(), ...working().keys()])].filter(Boolean);
-    return ids.map(id => ({ id, tasks: t.get(id) ?? 0, working: working().get(id) ?? 0 })).sort((a, b) => name(a.id).localeCompare(name(b.id)));
-  });
-  const flight = createMemo(() => (delivery.data?.items ?? []).filter(it => IN_FLIGHT_STAGES.has(it.stage)));
+  const lines = createMemo(() => (view.data?.lines ?? []).filter(l => l.projectId).map(l => ({ id: l.projectId!, tasks: l.inFlight, working: l.working }))
+    .sort((a, b) => name(a.id).localeCompare(name(b.id))));
+  const flight = createMemo(() => view.data?.delivery ?? []);
   return (
     <article class="detail" data-ui="detail" tabindex={-1} aria-label="Projects summary">
-      <DetailSection title="Waiting for you" count={questions.data?.questions.length || undefined}
+      <DetailSection title="Waiting for you" count={view.data?.waitingTotal || undefined}
         href={WAITING_HREF} onOpen={() => go(WAITING_HREF)}>
-        <Switch fallback={<Preview n={3} items={(questions.data?.questions ?? []).slice(0, 3).map(q => <AskCard q={q} label={name(q.projectId)} />)} />}>
-          <Match when={questions.error}><ErrorBanner text={`Questions did not load: ${questions.error}`} onRetry={questions.reload} /></Match>
-          <Match when={!questions.data}><Skeleton rows={2} /></Match>
-          <Match when={questions.data!.questions.length === 0}><p class="muted">Nothing waits for you.</p></Match>
+        <Switch fallback={<Preview n={3} items={(view.data?.waiting ?? []).map(q => <AskCard q={q} label={name(q.projectId)} />)} />}>
+          <Match when={view.error && !view.data}><ErrorBanner text={`Projects did not load: ${view.error}`} onRetry={view.reload} /></Match>
+          <Match when={!view.data}><Skeleton rows={2} /></Match>
+          <Match when={view.data!.waitingTotal === 0}><p class="muted">Nothing waits for you.</p></Match>
         </Switch>
       </DetailSection>
       <DetailSection title="In flight">
@@ -266,8 +256,7 @@ function Summary(props: { names: Map<string, string> }) {
             )}
           </For>
         }>
-          <Match when={tasks.error}><ErrorBanner text={`Tasks did not load: ${tasks.error}`} onRetry={tasks.reload} /></Match>
-          <Match when={!tasks.data}><Skeleton rows={3} /></Match>
+          <Match when={!view.data}><Skeleton rows={3} /></Match>
           <Match when={lines().length === 0}><p class="muted">No work in the focused projects.</p></Match>
         </Switch>
       </DetailSection>
@@ -284,8 +273,7 @@ function Summary(props: { names: Map<string, string> }) {
             )}
           </For>
         }>
-          <Match when={delivery.error && !delivery.data}><ErrorBanner text={`Delivery did not load: ${delivery.error}`} onRetry={delivery.reload} /></Match>
-          <Match when={!delivery.data}><Skeleton rows={2} /></Match>
+          <Match when={!view.data}><Skeleton rows={2} /></Match>
           <Match when={flight().length === 0}><p class="muted">No pull requests in flight.</p></Match>
         </Switch>
       </DetailSection>

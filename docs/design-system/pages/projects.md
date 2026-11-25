@@ -39,6 +39,10 @@ Three columns ([OR-24](../owner-rules.md)). Shell header: title, New project (`p
 
 Tasks, results and delivery of all projects in focus are one facet away: on `/projects` with nothing open, the same facet tab bar shows **Summary · Tasks · Delivery · Results** over every project in the focus ([OR-34](../owner-rules.md)). Spotlight finds a task, result or pull request by code and opens it in its project ([OR-32](../owner-rules.md)).
 
+### Data
+
+One read for the catalogue and the Summary: `projects_view` (a view operation, [data layer](../../designs/fleet-data-layer.md)) with the focus. The server counts each project's open questions, sessions working (preparing or running) and tasks in flight (the Tasks Running view's states); the catalogue gets every project's counts, the Summary the focus's, its first three open questions with their total, and the pull requests in flight. The project list is the shell's `project_list`; the facets keep their list reads (Tasks: `task_page` and `list_spend`). The change stream rereads `projects_view` on session, execution, task, question and delivery changes, at most once in 2 s.
+
 ### States
 
 * **Not ready:** the project head shows readiness reasons in the attention tone, with the fix action named; the project still opens.

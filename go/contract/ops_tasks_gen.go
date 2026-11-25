@@ -628,6 +628,73 @@ func (v *ProjectResourcesRequest) Validate() error {
 	return nil
 }
 
+type ProjectWorkCounts struct {
+	InFlight  int64   `json:"inFlight"`
+	ProjectId *string `json:"projectId"`
+	Questions int64   `json:"questions"`
+	Working   int64   `json:"working"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectWorkCounts) Validate() error {
+	return nil
+}
+
+type ProjectsViewReply struct {
+	Catalogue    []ProjectWorkCounts `json:"catalogue"`
+	Delivery     []DeliveryItem      `json:"delivery"`
+	Lines        []ProjectWorkCounts `json:"lines"`
+	Waiting      []QuestionRow       `json:"waiting"`
+	WaitingTotal int64               `json:"waitingTotal"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectsViewReply) Validate() error {
+	if v.Catalogue == nil {
+		return Missing("catalogue")
+	}
+	for i := range v.Catalogue {
+		if err := Check(&v.Catalogue[i], "catalogue"); err != nil {
+			return err
+		}
+	}
+	if v.Delivery == nil {
+		return Missing("delivery")
+	}
+	for i := range v.Delivery {
+		if err := Check(&v.Delivery[i], "delivery"); err != nil {
+			return err
+		}
+	}
+	if v.Lines == nil {
+		return Missing("lines")
+	}
+	for i := range v.Lines {
+		if err := Check(&v.Lines[i], "lines"); err != nil {
+			return err
+		}
+	}
+	if v.Waiting == nil {
+		return Missing("waiting")
+	}
+	for i := range v.Waiting {
+		if err := Check(&v.Waiting[i], "waiting"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProjectsViewRequest struct {
+	ExcludeProjectIds []string `json:"excludeProjectIds,omitempty"`
+	ProjectIds        []string `json:"projectIds,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectsViewRequest) Validate() error {
+	return nil
+}
+
 // QuestionAnswerReply: A project question (ProjectQuestion), or the answered question row for any other question.
 type QuestionAnswerReply = map[string]json.RawMessage
 
@@ -2116,6 +2183,7 @@ func init() {
 		"project_readiness":       {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"project_resource_items":  {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read a bounded prepared tools/costs/prices window with an epoch-bound cursor or surviving anchor; requires projectId", Changes: []string{"resource_summary"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"anchor\":{\"enum\":[\"start\",\"end\"],\"type\":\"string\"},\"around\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"atOrAfter\",\"atOrBefore\"],\"type\":\"string\"},\"key\":{\"oneOf\":[{\"$comment\":\"Preserve full admitted native tool names/connections, including values longer than 200 characters; positions remain subject to the HTTP body bound.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"tool\"},\"name\":{\"type\":\"string\"}},\"required\":[\"kind\",\"name\",\"connection\"],\"type\":\"object\"},{\"$comment\":\"tp1. plus base64url of one complete zlib stream containing {schemaVersion:1,key:ResourceToolKey}; a position, never authority.\",\"additionalProperties\":false,\"properties\":{\"encoded\":{\"type\":\"string\"},\"kind\":{\"const\":\"tool-position\"}},\"required\":[\"kind\",\"encoded\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"cost\"}},\"required\":[\"kind\",\"currency\",\"basis\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"price\"},\"observedAt\":{\"type\":\"integer\"},\"priceId\":{\"type\":\"string\"}},\"required\":[\"kind\",\"priceId\",\"observedAt\"],\"type\":\"object\"}]}},\"required\":[\"key\",\"direction\"],\"type\":\"object\"},\"category\":{\"enum\":[\"tools\",\"costs\",\"prices\"],\"type\":\"string\"},\"cursor\":{\"type\":\"string\"},\"group\":{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"currency\",\"basis\"],\"type\":\"object\"},\"knownVersion\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"category\"],\"type\":\"object\"}")},
 		"project_resources":       {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "project:projectId", Agent: "bound:project", Description: "Read prepared project resource figures/version and current progress; requires projectId", Changes: []string{"resource_summary"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"knownVersion\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
+		"projects_view":           {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "The Projects screen in one read: each visible project's open questions, sessions working and tasks in flight (the catalogue, every project), and the summary over the focus (projectIds or excludeProjectIds, '-' is work outside projects): the open questions waiting for you (the first 3 and how many), each project's sessions working and tasks in flight, and the pull requests in flight. Counted on the server.", Changes: []string{"session", "execution", "task", "question", "delivery:delivery-state:"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"excludeProjectIds\":{\"$comment\":\"The summary leaves these projects out ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectIds\":{\"$comment\":\"The summary's focus: only these projects ('-': work outside projects).\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},
 		"question_answer":         {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "Answers a project question, or any other question by id.", InputSchema: json.RawMessage("{\"$comment\":\"Answers a project question, or any other question by id.\",\"additionalProperties\":true,\"properties\":{\"answer\":{\"type\":\"string\"},\"artifactIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"answer\"],\"type\":\"object\"}")},
 		"question_ask":            {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Ask a project question (projectId, requestId, text); read its answer with question_history", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"text\"],\"type\":\"object\"}")},
 		"question_history":        {Read: true, Long: false, Errors: []int{404}, Auth: "project:projectId", Agent: "tool", Description: "Questions asked in a project (projectId) with their answers", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
