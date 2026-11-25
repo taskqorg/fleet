@@ -50,8 +50,10 @@ In order:
 
 1. A Telegram reply to a Fleet message or to a routed human message goes to that message's work item (no model).
 2. A room with no open work item: the message opens one, titled by its first line; the room gets "New: <title>".
-3. Otherwise one model call (the first OpenAI connection open to all projects, or `FLEET_TELEGRAM_CONDUCTOR=<connection>/<model>`) answers `{choice: <work item> | new | ask, title}` from the open items' titles and the message.
+3. Otherwise one model call (the first OpenAI connection open to all projects with model `gpt-6.2-sol`, or `FLEET_TELEGRAM_CONDUCTOR=<connection>/<model>`; Responses API, `text.format` `json_object`) answers `{choice: <work item> | new | ask, title}` from the open items' titles and the message. `telegram_status.conductor` shows the last call: connection, model, choice and why it gave no usable answer.
 4. `ask`, a failed call or no model: one message "Is this about: [A] [B] [Something new]". Only the author's tap counts; the tap edits the question to "→ <title>" and delivers the message.
+
+**Status message.** The "New: <title>" notice is the work item's status message, with an [Open in Fleet] button. Fleet edits it in place: the title and one line of where the work stands ("Working on a message from Simon", "Answered", "The run failed"). It stays "working" while any of the item's messages waits for its reply. Every answer in a room carries a [Status] button that opens the status message (supergroups only: `t.me/c/...` links). An edit resolves the message at send time; the chat's order sends the notice first.
 
 A new work item is a `discuss` conversation in the room's project hint (`telegram_room_set`; none: outside projects). Messages of different people are never merged: each is its own `message_send` by its author (L14). Nothing falls back to a wider chat: a reply goes to the room and topic the message came from (L13).
 
@@ -67,7 +69,7 @@ Kit queue `telegram-send`: the oldest pending item of each chat, one at a time, 
 
 | Operation | Who | Does |
 |---|---|---|
-| `telegram_status` | person | bot username, last poll and its error, waiting intake, replies and outbox, the caller's link |
+| `telegram_status` | person | bot username, whether the bot reads every group message (`groupReads`: privacy mode off), last poll and its error, the conductor's last model call, waiting intake, replies and outbox, the caller's link |
 | `telegram_link_code` | person, not agents | one-time `/start` code and a `t.me` link that opens it |
 | `telegram_person_set` | person; owner or full access (agents acting for them included) for others and for links | language, unlink, link a Telegram user id; the bot confirms each link in the user's private chat |
 | `telegram_people` | owner | linked people and the Telegram users who wrote without a link |
@@ -77,7 +79,7 @@ Kit queue `telegram-send`: the oldest pending item of each chat, one at a time, 
 
 ## Setup
 
-1. Create a bot with @BotFather (`/newbot`). For groups, turn off its privacy mode there (`/setprivacy`) so it reads every message, and add it to the group.
+1. Create a bot with @BotFather (`/newbot`). For groups, turn off its privacy mode there (`/setprivacy`) so it reads every message, and add it to the group after that (Telegram applies the mode when the bot joins), or make the bot a group admin. `telegram_status.groupReads` shows the mode.
 2. System › Access › Telegram: paste the token once. Fleet checks it with `getMe`.
 3. Each person runs `telegram_link_code` (or asks their PM) and opens the link, or the owner links a user id from `telegram_people`.
 
@@ -93,7 +95,6 @@ Kit queue `telegram-send`: the oldest pending item of each chat, one at a time, 
 - Status answers from Fleet state, milestone pushes, Needs you questions in chat (FLT-34).
 - Risk levels and approval cards for radical actions (FLT-35).
 - Overlap warnings, attachments and albums, edits, channel health on the System screen, moving the Hermes rooms (FLT-36).
-- One status message per work item, edited in place (FLT-33 follow-up).
 - Learning a room's project hint from use; the owner sets it with `telegram_room_set`.
 
 ## Verification

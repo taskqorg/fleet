@@ -40,3 +40,18 @@ func TestTelegramChunksKeepEveryRune(t *testing.T) {
 		t.Fatal("runes lost")
 	}
 }
+
+func TestTelegramMessageLink(t *testing.T) {
+	for _, c := range []struct {
+		chat, thread, msg int64
+		want              string
+	}{
+		{-1003995096980, 3, 42, "https://t.me/c/3995096980/3/42"},
+		{-1003995096980, 0, 42, "https://t.me/c/3995096980/42"},
+		{134142744, 0, 42, ""},
+	} {
+		if got := telegramMessageLink(c.chat, c.thread, c.msg); got != c.want {
+			t.Errorf("%d/%d/%d: %q, want %q", c.chat, c.thread, c.msg, got, c.want)
+		}
+	}
+}

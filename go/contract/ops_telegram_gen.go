@@ -6,6 +6,20 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+// TelegramConductorCall: the conductor's last model call since the coordinator started
+type TelegramConductorCall struct {
+	At         int64   `json:"at"`
+	Choice     *string `json:"choice,omitempty"`
+	Connection string  `json:"connection"`
+	Error      *string `json:"error,omitempty"`
+	Model      string  `json:"model"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TelegramConductorCall) Validate() error {
+	return nil
+}
+
 type TelegramLinkCodeReply struct {
 	Code      string  `json:"code"`
 	Command   string  `json:"command"`
@@ -184,17 +198,24 @@ func (v *TelegramRoomsReply) Validate() error {
 type TelegramRoomsRequest = map[string]json.RawMessage
 
 type TelegramStatusReply struct {
-	BotId       *int64          `json:"botId,omitempty"`
-	BotUsername *string         `json:"botUsername,omitempty"`
-	Connected   bool            `json:"connected"`
-	Me          TelegramMe      `json:"me"`
-	Pending     TelegramPending `json:"pending"`
-	PollError   *string         `json:"pollError,omitempty"`
-	PolledAt    *int64          `json:"polledAt,omitempty"`
+	BotId       *int64                 `json:"botId,omitempty"`
+	BotUsername *string                `json:"botUsername,omitempty"`
+	Conductor   *TelegramConductorCall `json:"conductor,omitempty"`
+	Connected   bool                   `json:"connected"`
+	GroupReads  *bool                  `json:"groupReads,omitempty"`
+	Me          TelegramMe             `json:"me"`
+	Pending     TelegramPending        `json:"pending"`
+	PollError   *string                `json:"pollError,omitempty"`
+	PolledAt    *int64                 `json:"polledAt,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TelegramStatusReply) Validate() error {
+	if v.Conductor != nil {
+		if err := Check(v.Conductor, "conductor"); err != nil {
+			return err
+		}
+	}
 	if err := Check(&v.Me, "me"); err != nil {
 		return err
 	}
