@@ -550,6 +550,18 @@ function watch(m: Mounted) {
   });
   return () => { mounted.delete(m); deferred.delete(m); };
 }
+// One throttle per read and quiet window, shared by every mount of that read: two screens' parts that ask the same view
+// (Projects' catalogue and summary) reread it once per window, not once per mount in different phases.
+const sharedThrottles = new Map<string, { t: ReturnType<typeof throttle>; users: number }>();
+export function sharedThrottle(key: string, read: () => void, quiet = 0) {
+  if (!quiet) return { read, stop: () => {} };
+  const k = key + '|' + quiet;
+  let e = sharedThrottles.get(k);
+  if (!e) sharedThrottles.set(k, e = { t: throttle(read, quiet), users: 0 });
+  e.users++;
+  const entry = e;
+  return { read: () => entry.t.read(), stop: () => { if (--entry.users === 0) { entry.t.stop(); sharedThrottles.delete(k); } } };
+}
 function throttle(read: () => void, quiet = 0) {
   if (!quiet) return { read, stop: () => {} };
   let last = 0, timer: ReturnType<typeof setTimeout> | undefined;
@@ -597,7 +609,7 @@ export function useOp<K extends OpName>(name: K, request: MaybeAccessor<Ops[K]['
       const maxAge = every ? Math.min(FRESH_MS, every) : FRESH_MS;
       const release = holdDoc(k, () => op(name, currentReq!), { name, request: currentReq, maxAge });
       reloadFn = () => readDoc(k);
-      const t = throttle(() => readDoc(k), quiet);
+      const t = sharedThrottle(k, () => readDoc(k), quiet);
       const off = watch({ name, request: () => ({ ...(currentReq as Record<string, unknown>), ...readValue(opts.scope) }), read: t.read, key: k });
       // A hidden tab polls nothing; the next tick after it shows again reads (no burst on return).
       const timer = every ? setInterval(() => { if (typeof document === 'undefined' || document.visibilityState === 'visible') readDoc(k); }, every) : 0;

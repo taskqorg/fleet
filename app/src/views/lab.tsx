@@ -138,7 +138,7 @@ export function Lab(props: { id?: string }) {
   const me = useOp('me', {});
   // One read for the screen (lab_view, docs/designs/fleet-data-layer.md): experiments, registry, open ratings and the
   // last 30 days' leaderboard; an opened use case or suite reads its own leaderboard.
-  const view = useView('lab_view', {}, { quiet: 2000 });
+  const view = useView('lab_view', {}, { quiet: 5000 });
   const part = <T,>(of: (d: NonNullable<typeof view.data>) => T) => ({
     get data() { return view.data ? of(view.data) : null; },
     get error() { return view.error; },

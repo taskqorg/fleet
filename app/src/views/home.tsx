@@ -118,7 +118,7 @@ function HomePage() {
   const me = useOp('me', {});
   // The day's start for "done today", fixed for this visit (a new day reads anew on the next open).
   const today = dayStart(Date.now());
-  const view = useView('home_view', () => (prefsRead.value ? { ...scope(), dayStart: today } : null), { quiet: 1000 });
+  const view = useView('home_view', () => (prefsRead.value ? { ...scope(), dayStart: today } : null), { quiet: 2000 });
   const projects = useOp('project_list', {});
 
   // The last visit (home_view counts from it) is recorded when the person leaves Home, so it stays put while Home is
