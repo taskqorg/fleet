@@ -14,9 +14,22 @@ func init() {
 }
 
 func libraryView(q *Request, r *contract.LibraryViewRequest) (contract.LibraryViewReply, error) {
-	var out contract.LibraryViewReply
+	out := contract.LibraryViewReply{Agents: []contract.DefinitionListItem{}, Pipelines: []contract.DefinitionListItem{}, Methods: []contract.DefinitionListItem{},
+		Skills: []contract.SkillSummary{}, Recommendations: []contract.RecommendationChange{},
+		Changes: contract.SystemChangesReply{RepositoryChanged: []contract.SystemChangeDefinition{}, Ahead: []contract.SystemChangeDefinition{}, StoreOnly: []contract.SystemChangeDefinition{},
+			HarnessDrift: []contract.SystemChangeHostHarness{}, Versions: contract.SystemVersionsReply{Hosts: []contract.HostVersion{}}}}
 	if err := excludeCheck(r.ExcludeProjectIds); err != nil {
 		return out, err
+	}
+	// Bots are every person's; definitions, skills, drift and recommendations are the architect's (their own
+	// operations' auth), so another person's view holds the bots only.
+	bots, err := botList(q, &contract.BotListRequest{ProjectIds: r.ProjectIds, ExcludeProjectIds: r.ExcludeProjectIds})
+	if err != nil {
+		return out, err
+	}
+	out.Bots = bots.Bots
+	if !architect(q) {
+		return out, nil
 	}
 	for kind, dst := range map[contract.DefinitionKind]*[]contract.DefinitionListItem{
 		contract.DefinitionKindAgent: &out.Agents, contract.DefinitionKindPipeline: &out.Pipelines, contract.DefinitionKindCatalogue: &out.Methods,
@@ -32,11 +45,6 @@ func libraryView(q *Request, r *contract.LibraryViewRequest) (contract.LibraryVi
 		return out, err
 	}
 	out.Skills = skills.Skills
-	bots, err := botList(q, &contract.BotListRequest{ProjectIds: r.ProjectIds, ExcludeProjectIds: r.ExcludeProjectIds})
-	if err != nil {
-		return out, err
-	}
-	out.Bots = bots.Bots
 	if out.Changes, err = systemChanges(q, &contract.SystemChangesRequest{}); err != nil {
 		return out, err
 	}
