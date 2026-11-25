@@ -450,8 +450,7 @@ func claudePeriod(t string) string {
 
 // probeModels (J5, docs/designs/fleet-ia-and-journeys.md section 3): the models the vendor CLI offers this binding,
 // read at inspection: codex app-server model/list, Claude Code's stream-json initialize answer, Antigravity's ACP
-// session/new answer. Nil when the CLI cannot
-// answer, so the coordinator reads "not probed", not "offers nothing".
+// session/new answer. Nil when the CLI cannot answer, so the coordinator reads "not probed", not "offers nothing".
 func probeModels(x registryEntry) []string {
 	if runnable(x) != nil {
 		return nil
@@ -493,6 +492,9 @@ func probeModels(x registryEntry) []string {
 		// The run's argv (harness_command.go) and its GEMINI_HOME; the session's folder is the binding's own home.
 		cmd := probeCmd(x, "acp", "--gemini-dir", x.NativeHome, "--app-data-dir", "antigravity-cli", "--include-default-customizations=false")
 		setEnv(cmd, "GEMINI_HOME", x.NativeHome)
+		if x.CredentialAuthority == "native-current" {
+			setEnv(cmd, "HOME", x.CredentialHome) // as the start path: the login is read from its own HOME
+		}
 		r, err := rpcExchange(cmd, []M{
 			acpRequest(1, "initialize", M{"protocolVersion": 1, "clientCapabilities": M{}, "clientInfo": M{"name": "fleet", "version": "0.1.0"}}),
 			acpRequest(2, "session/new", M{"cwd": x.Home, "mcpServers": []any{}}),
