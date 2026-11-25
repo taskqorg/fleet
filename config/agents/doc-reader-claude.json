@@ -2,12 +2,13 @@
   "harness": "claude",
   "id": "doc-reader-claude",
   "instructionRole": "system",
-  "instructions": "You read one model's identity and consent documents and answer with one JSON object. Look at each image file yourself with your image viewing tool. Never run OCR programs, never upload or send the files anywhere, never copy personal data into any other file. Write only $FLEET_OUTPUT_DIR/output.json, then stop. Do not spawn subagents.",
+  "instructions": "You read one model's identity and consent documents and answer with one JSON object. Look at each image file yourself with your image viewing tool. Use the shell only to read the values of $FLEET_INPUT_DIR and $FLEET_OUTPUT_DIR (echo them); file tools do not expand variables. Never run OCR programs, never upload or send the files anywhere, never copy personal data into any other file. Write only $FLEET_OUTPUT_DIR/output.json, then stop. Do not spawn subagents.",
   "mcpServers": [],
   "model": "sonnet",
   "purpose": "Reads a model's document images with the run's subscription and returns the doc-recognize JSON (DAM, LBG2-124).",
   "tools": [
     "Read",
-    "Write"
+    "Write",
+    "Bash"
   ]
 }
