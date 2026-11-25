@@ -16,10 +16,11 @@ export type RailBotsProps = {
 export function railBotRows(bots: RailBot[], recent: number): RailBot[] {
   const active = (b: RailBot) => b.state === 'working' || b.state === 'waiting';
   const at = (b: RailBot) => b.at ?? -Infinity;
+  const newest = (a: RailBot, b: RailBot) => (at(b) - at(a)) || 0; // two never-run bots tie (-Infinity - -Infinity is NaN)
   const rest = bots.filter(b => !b.pinned);
   return [
     ...bots.filter(b => b.pinned),
-    ...rest.filter(active).sort((a, b) => at(b) - at(a)),
-    ...rest.filter(b => !active(b)).sort((a, b) => at(b) - at(a)).slice(0, Math.max(0, recent)),
+    ...rest.filter(active).sort(newest),
+    ...rest.filter(b => !active(b)).sort(newest).slice(0, Math.max(0, recent)),
   ];
 }

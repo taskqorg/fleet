@@ -85,9 +85,11 @@ export function RailBots(p: RailBotsProps) {
         <Show when={menu.at()} keyed>
         {m => {
           const b = rows().find(x => x.id === m.key);
+          // The bot left the zone (unpinned, past the count) while its menu was open: close it rather than show another menu.
+          if (m.key !== 'h' && !b) queueMicrotask(() => menu.setAt(null));
           return (
             <>
-              <Show when={b} fallback={
+              <Show when={m.key === 'h' ? null : b} fallback={m.key !== 'h' ? undefined : 
                 <>
                   <button type="button" role="menuitem" ref={focusOnMount} onClick={act(p.onAll)}><Icon name="bot" />All bots</button>
                   <button type="button" role="menuitem" onClick={act(() => p.onRecent(p.recent + 1))}><Icon name="plus" />More recent bots ({p.recent})</button>
