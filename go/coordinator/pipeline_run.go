@@ -32,6 +32,7 @@ type pipelineStartOptions struct {
 	Extra        recordRest         `json:"extra,omitempty"`
 	RerunOf      string             `json:"rerunOf,omitempty"`
 	Reuse        []json.RawMessage  `json:"reuse,omitempty"`
+	Inputs       []fileRef          `json:"inputs,omitempty"` // stored project artifacts staged as example/<path> (pipeline_run inputs)
 	draft        *pipelineDef
 	draftBase    int64
 	hasDraftBase bool
@@ -122,6 +123,10 @@ func startRun(q *Request, o pipelineStartOptions) (*runRecord, error) {
 		run.ParentExecutionID, run.TaskID, run.SessionID, run.DirectedBy = source, deref(parent.TaskID), deref(parent.SessionID), q.person.Email
 	}
 	run.ExperimentID, run.Variant = o.ExperimentID, o.Variant
+	if len(o.Inputs) > 0 {
+		inputs := append([]fileRef{}, o.Inputs...)
+		run.ExampleInputs = &inputs
+	}
 	if err := run.merge(o.Extra); err != nil {
 		return nil, err
 	}
@@ -685,10 +690,35 @@ func pipelineRunFrom(q *Request, pipelineID string, b pipelineRule, draft *pipel
 
 // pipelineSignature: the identity of a pipeline_run or direct_search request (fields in key order).
 type pipelineSignature struct {
-	Invocation string  `json:"invocation"`
-	MethodID   *string `json:"methodId"`
-	ProjectID  string  `json:"projectId"`
-	Query      string  `json:"query"`
+	Inputs     []fileRef `json:"inputs,omitempty"`
+	Invocation string    `json:"invocation"`
+	MethodID   *string   `json:"methodId"`
+	ProjectID  string    `json:"projectId"`
+	Query      string    `json:"query"`
+}
+
+// pipelineRunInputs: a pipeline_run's input files, each a stored artifact of the project (an agent saves its files with
+// artifact_save first), staged for every step as example/<path>, as a Lab example's input files are.
+func pipelineRunInputs(q *Request, projectID string, inputs []contract.PipelineRunInput) ([]fileRef, error) {
+	seen := map[string]bool{}
+	for _, in := range inputs {
+		if !pipelineInputPath(in.Path) || pipelineReservedInput(in.Path) || seen[in.Path] {
+			return nil, fail(400, "inputs: each path must be a distinct relative file path")
+		}
+		seen[in.Path] = true
+	}
+	out := []fileRef{}
+	for _, in := range inputs {
+		a, err := artifactRow(q.ctx(), q.app, in.ArtifactId)
+		if err != nil {
+			return nil, err
+		}
+		if a.State != "stored" || deref(a.ProjectID) != projectID {
+			return nil, fail(400, "inputs: artifact "+in.ArtifactId+" is not a stored artifact of project "+projectID)
+		}
+		out = append(out, fileRef{ArtifactID: in.ArtifactId, Path: "example/" + in.Path})
+	}
+	return out, nil
 }
 
 // pipelineCatalogue: the methods of a project's catalogue and its recommendation.
@@ -696,21 +726,26 @@ type pipelineCatalogue struct {
 	RecommendationSource json.RawMessage `json:"recommendationSource"`
 	RecommendedMethod    string          `json:"recommendedMethod"`
 	Methods              []struct {
-		ID       json.RawMessage `json:"id"`
-		Pipeline json.RawMessage `json:"pipeline"`
+		ID        json.RawMessage `json:"id"`
+		Pipeline  json.RawMessage `json:"pipeline"`
+		Overrides json.RawMessage `json:"overrides"`
 	} `json:"methods"`
 }
 
 // runPipeline: the selected method's v2 pipeline with the query as the example ({query, prompt}); waits for the run.
 // inv is pipeline (pipeline_run) or direct (direct_search); methodID nil selects the project's recommended method.
-func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string) (recordRest, error) {
+func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string, inputs []contract.PipelineRunInput) (recordRest, error) {
 	if rid == "" || len(rid) > 200 || strings.TrimSpace(query) == "" || utf8.RuneCountInString(query) > 2000 {
 		return nil, fail(400, "Expected projectId, requestId, query and optional methodId")
 	}
+	staged, err := pipelineRunInputs(q, projectID, inputs)
+	if err != nil {
+		return nil, err
+	}
 	var run *runRecord
 	old := false
-	err := q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
-		signature := sha256hex([]byte(canonical(pipelineSignature{ProjectID: projectID, Query: query, MethodID: methodID, Invocation: inv})))
+	err = q.app.store.Write(q.ctx(), q, []string{GLOBAL}, func(q *Request) error {
+		signature := sha256hex([]byte(canonical(pipelineSignature{ProjectID: projectID, Query: query, MethodID: methodID, Invocation: inv, Inputs: staged})))
 		prev, err := runsOf(q)(q.db().PipelineRunsByProjectRequest(q.ctx(), db.PipelineRunsByProjectRequestParams{ProjectID: projectID, RequestID: rid}))
 		if err != nil {
 			return err
@@ -739,11 +774,11 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 			source = jsonBytes("explicit")
 		}
 		found := false
-		var methodRaw json.RawMessage
+		var methodRaw, overrides json.RawMessage
 		var file string
 		for _, m := range c.Methods {
 			if id, ok := jsonString(m.ID); ok && id == want {
-				found, methodRaw = true, m.ID
+				found, methodRaw, overrides = true, m.ID, m.Overrides
 				file, _ = jsonString(m.Pipeline)
 			}
 		}
@@ -755,8 +790,9 @@ func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string
 			Query  string `json:"query"`
 		}{query, query})
 		reqBy := requester(q)
+		// The method runs as adopted: its overrides (a promoted Lab variant's profile, model or arguments) are part of it.
 		run, err = startRun(q, pipelineStartOptions{File: file, ProjectID: &projectID, RequestID: rid, Example: example, RequestedBy: &reqBy,
-			Extra: recordRest{"signature": jsonBytes(signature), "invocation": jsonBytes(inv), "selectedMethod": methodRaw, "selectionSource": orNull(source), "context": jsonBytes(p)}})
+			Overrides: overrides, Inputs: staged, Extra: recordRest{"signature": jsonBytes(signature), "invocation": jsonBytes(inv), "selectedMethod": methodRaw, "selectionSource": orNull(source), "context": jsonBytes(p)}})
 		return err
 	})
 	if err != nil {

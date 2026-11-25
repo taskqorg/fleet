@@ -59,11 +59,12 @@ func TestSettingsRefuse(t *testing.T) {
 	}
 }
 
-// A Lab trial or a read-only start does not publish: its project settings go out with execution.forge off.
+// A Lab trial, a pipeline agent step or a read-only start does not publish: its project settings go out with execution.forge off.
 func TestPublishesAndWithoutForge(t *testing.T) {
 	exp, read := "e1", "read"
-	if publishes(&dispatchExecution{ExperimentID: &exp}) || publishes(&dispatchExecution{Dispatch: &dispatchSpec{Access: &read}}) {
-		t.Fatal("a Lab trial and a read-only start must not publish")
+	step := "run:step:0"
+	if publishes(&dispatchExecution{ExperimentID: &exp}) || publishes(&dispatchExecution{Dispatch: &dispatchSpec{Access: &read}}) || publishes(&dispatchExecution{PipelineStepID: &step}) {
+		t.Fatal("a Lab trial, a pipeline agent step and a read-only start must not publish")
 	}
 	if !publishes(&dispatchExecution{}) {
 		t.Fatal("a write start outside Lab publishes")
