@@ -51,3 +51,16 @@ func TestPinsTrialOutcome(t *testing.T) {
 		t.Fatalf("failed run: %+v", st)
 	}
 }
+
+// TestPinsLiveVariants: trials go only to hosts seen lately, and wait while one of them runs an older executor.
+func TestPinsLiveVariants(t *testing.T) {
+	vs := []pinsVariant{{Host: "a"}, {Host: "b"}, {Host: "gone"}}
+	hosts := map[string]hostVersion{"a": {"1.261125.186", ""}, "b": {"1.261125.190", ""}}
+	if got, ready := pinsLiveVariants(vs, hosts, "1.261125.186"); !ready || len(got) != 2 {
+		t.Fatalf("%v %v", got, ready)
+	}
+	hosts["b"] = hostVersion{"1.261125.155", ""}
+	if _, ready := pinsLiveVariants(vs, hosts, "1.261125.186"); ready {
+		t.Fatal("an older executor would run its own CLI")
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"fleet/contract"
 	"fleet/harnessrelease"
@@ -77,6 +78,24 @@ func pinsHostVariants(accounts []accountRec, current, candidate pinsCandidate, m
 	return out
 }
 
+// pinsLiveVariants keeps the trials on hosts seen in the last hour, and is not ready while one of them runs an executor
+// older than this coordinator: an older executor ignores the candidate and would run its release's CLI, so the trial
+// would qualify the current pin, not the proposed one.
+func pinsLiveVariants(variants []pinsVariant, hosts map[string]hostVersion, coordinator string) ([]pinsVariant, bool) {
+	out := []pinsVariant{}
+	for _, v := range variants {
+		h, live := hosts[v.Host]
+		if !live {
+			continue
+		}
+		if olderVersion(h.version, coordinator) {
+			return nil, false
+		}
+		out = append(out, v)
+	}
+	return out, true
+}
+
 // pinsConfiguredModels: the model ids of config/harness-models.json per harness.
 func pinsConfiguredModels() (map[string][]string, error) {
 	b, err := os.ReadFile(filepath.Join(configDir(), "harness-models.json"))
@@ -142,8 +161,7 @@ func pinsTrialOutcome(variants []string, runs []*labRun, scores []labScore) pins
 }
 
 // pinsQualifyHead runs step 4 for one proposal head: starts the experiment when there is none, reads it otherwise.
-// Answers nil until the experiment is done. A head that changes no CLI on any host with a ready account qualifies with
-// no trial.
+// Answers nil until the experiment is done. Without a live host that can run a trial, it waits.
 func pinsQualifyHead(ctx context.Context, a *App, pr ghPull, candidate pinsCandidate) (*pinsQualifyState, error) {
 	group := "pins:cli:" + pr.Head.SHA
 	var state *pinsQualifyState
@@ -187,10 +205,13 @@ func pinsQualifyHead(ctx context.Context, a *App, pr ghPull, candidate pinsCandi
 		for _, t := range []string{"linux-amd64", "darwin-arm64"} {
 			current[t], _ = harnessrelease.Read(releaseDir(), t)
 		}
-		variants := pinsHostVariants(accounts, current, candidate, models)
-		if len(variants) == 0 {
-			state = &pinsQualifyState{Done: true, Passed: true}
-			return nil
+		seen, err := deliveryHostsSeen(q)
+		if err != nil {
+			return err
+		}
+		variants, ready := pinsLiveVariants(pinsHostVariants(accounts, current, candidate, models), deliveryHostVersions(seen, time.Now()), version)
+		if !ready || len(variants) == 0 {
+			return nil // wait: a host still runs an executor without candidate runs, or no host can run a trial now
 		}
 		example, err := pinsQualifyExampleID(q)
 		if err != nil {
