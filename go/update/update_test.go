@@ -148,8 +148,11 @@ func TestInstallAndNeverDowngrade(t *testing.T) {
 	}
 	f.release("1.261111.2", 0)
 	f.run("1.261111.2")
+	os.MkdirAll(filepath.Join(f.root, "fleet-18de13d32304-darwin-arm64", "dist"), 0o755)
+	os.MkdirAll(filepath.Join(f.root, "harnesses", "claude"), 0o755)
 	pruneReleases(f.p.r)
-	if exists(filepath.Join(f.root, "1.261111.0")) || !exists(filepath.Join(f.root, "1.261111.1")) {
+	if exists(filepath.Join(f.root, "1.261111.0")) || !exists(filepath.Join(f.root, "1.261111.1")) ||
+		exists(filepath.Join(f.root, "fleet-18de13d32304-darwin-arm64")) || !exists(filepath.Join(f.root, "harnesses", "claude")) {
 		t.Fatal("prune kept the wrong releases")
 	}
 }

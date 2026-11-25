@@ -233,7 +233,6 @@ func runExecutor() error {
 	}
 	spawnOutbox(odb, url, token, host)
 	startTelemetry(root, odb, host)
-	startTmpSweep()
 	if err := os.MkdirAll(sessions, 0o700); err != nil {
 		return err
 	}
@@ -249,6 +248,7 @@ func runExecutor() error {
 	if err := e.reconcile(); err != nil {
 		return err
 	}
+	e.startSweep() // after reconcile: the journal's launches are the runs that may still need their session directory
 	status("working", "")
 	var failingSince time.Time
 	for {
