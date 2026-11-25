@@ -214,7 +214,7 @@ export function Live(props: { wall: boolean }) {
     const hostJobs = kindRuns('host_job'), toolCalls = kindRuns('tool_run');
     const tokToday = tokensOf(today()), tokMonth = tokensOf(month());
     const usdToday = usdOf(today().flatMap(s => s.cost)), usdMonth = usdOf(month().flatMap(s => s.cost));
-    const fs = failedStarts(), cause = problems()[0];
+    const fs = failedStarts(), cause = problems().find(p => p.host);
     // Concurrency per bucket: runs active at the bucket's end.
     const working = Array.from({ length: 12 }, (_, i) => { const at = t - (11 - i) * 2 * HOUR; return agentRuns().filter(r => r.startedAt != null && r.startedAt <= at && (ACTIVE.has(r.state) || (r.endedAt ?? 0) >= at)).length; });
     return [
