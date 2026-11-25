@@ -2,7 +2,7 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import {
   EntityCode, StateBadge, AgeChip, Ago, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button,
-  Choice, Empty, ErrorBanner, Skeleton, Latest, DayChart, ShareBar, NormBar, VirtualList, catalogueRow, count, states, capOf, day,
+  Choice, Empty, ErrorBanner, Skeleton, DayChart, ShareBar, NormBar, VirtualList, catalogueRow, count, states, capOf, day,
   type DayMark, type SharePart,
 } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
@@ -72,7 +72,7 @@ export function Overview(props: {
   });
   const rowH = catalogueRow();
   return <div class="stack-pad" data-ui="delivery-overview">
-    <Show when={look().length > 0}><DetailSection title="Needs a look"><Latest items={look()} n={3} /></DetailSection></Show>
+    <Show when={look().length > 0}><DetailSection title="Needs a look">{look()}</DetailSection></Show>
     <DetailSection title="Moving now">
       <Show when={moving().length} fallback={<Empty text={props.incomplete ? 'Unavailable. GitHub data is incomplete.' : 'Nothing in flight.'} />}>
         <div style={{ '--list-height': `calc(${moving().length} * ${rowH > 32 ? 'var(--size-row-phone)' : 'var(--size-row)'})` }}>

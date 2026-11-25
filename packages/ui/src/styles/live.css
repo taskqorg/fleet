@@ -113,7 +113,9 @@
   .live-h .mono { margin-inline-start: var(--space-2); }
   .live-list { display: flex; flex-direction: column; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; }
   .live-list > .lrow:last-child { border-bottom: 0; }
-  .live-more { margin: 0; font-size: var(--font-size-sm); }
+  .live-open { display: inline-flex; align-items: center; gap: var(--space-1); color: inherit; text-decoration: none; }
+  .live-open:hover { color: var(--fg); }
+  .live-open .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
   /* Stale or offline: the last picture stays, dimmed, and nothing pulses (offline-marker.md). */
   .live[data-stale] :is(.live-figures, .live-cols) { opacity: .55; }
   .live[data-stale] .sdot > i { animation: none; }

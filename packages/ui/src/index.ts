@@ -10,3 +10,4 @@ export * from './answer.ts';
 export * from './search.ts';
 export * from './charts.tsx';
 export * from './result-formats.ts';
+export * from './infinite.tsx';

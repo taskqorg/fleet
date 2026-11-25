@@ -6,6 +6,7 @@ import {
   StatusPill, FigureTile, Gauge, RunStrip, WorkerSlot, HostBand, LiveRow, DetailHead, DiffRow, InheritedRows, MatrixCell,
   CatalogueTree, FilterBar, StateCounters, Presets, SearchBox, GroupControl, SortControl, DetailSection, KvRow, TabBar,
   DataTable, TableRow, TableName, StateBadge, ShareBar, ProblemRow, Button, SplitButton, WorkFacts, peerFence,
+  InfiniteList, Preview, StateDot, createPages, type Page,
   type StripRun, type GaugeProps, type WorkerSlotProps, type CatalogueTreeNode, type StateOf,
 } from '../src/index.ts';
 import { NOW, min, hr } from './fixtures.ts';
@@ -218,9 +219,37 @@ function ProblemBlocksDemo() {
   </div>;
 }
 
+/** OR-65: a list that loads on scroll inside its card (fake pages of 20, 400 ms each, the third page fails once),
+ *  then a preview whose title opens the full list. */
+function InfiniteDemo() {
+  const rows = Array.from({ length: 70 }, (_, i) => ({ id: 'r' + i, t: `Session ${70 - i}`, state: (i % 7 === 3 ? 'failed' : 'done') as StateOf<'session'> }));
+  const page = (from: number): Page<typeof rows[number], number> => ({ rows: rows.slice(from, from + 20), next: from + 20 < rows.length ? from + 20 : null });
+  let failed = false;
+  const pages = createPages({
+    first: () => page(0),
+    fetch: (from, signal) => new Promise((ok, no) => {
+      const t = setTimeout(() => { if (from === 40 && !failed) { failed = true; no(new Error('network error')); } else ok(page(from)); }, 400);
+      signal.addEventListener('abort', () => clearTimeout(t));
+    }),
+    key: r => r.id,
+  });
+  const row = (r: typeof rows[number]) => <div class="kv-row"><StateDot family="session" state={r.state} /><span class="kv-line">{r.t}</span></div>;
+  return <div style={{ display: 'grid', 'grid-template-columns': 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-5)' }}>
+    <div class="panel" style={{ height: '320px', overflow: 'auto' }}>
+      <InfiniteList pages={pages} label="Sessions" endLabel="Older sessions"><For each={pages.rows}>{row}</For></InfiniteList>
+    </div>
+    <div class="panel">
+      <DetailSection title="Latest finished" count={549} href="#latest" onOpen={() => {}}>
+        <Preview n={5} items={rows.map(row)} />
+      </DetailSection>
+    </div>
+  </div>;
+}
+
 type Entry = [string, string, string | undefined, () => JSX.Element, (() => JSX.Element)?];
 /** Appended to the book's SECTIONS. */
 export const BLOCK_SECTIONS: Entry[] = [
+  ['infinite-list', 'Lists: infinite list and card preview', undefined, () => <InfiniteDemo />, () => <>OR-65. The left list loads its next page as its end scrolls within about five rows (one request in flight); the third page fails once and shows the danger row with Retry; after the last row there is nothing. The right card previews five rows; its title with the count opens the full list.</>],
   ['status-pill', 'Live: status pill', 'status-pill', () => <StatusPillDemo />, () => <>Working, problem (opens the cause, "· N more"), connecting, stale. role="status": the words change in place and are announced politely.</>],
   ['figure-tile', 'Live: figure tile with sparkline', 'figure-tile', () => <FigureDemo />, () => <>Normal, alert (the value and the latest bars turn danger, the sub-line names the cause), unknown (?, never 0), stale (dimmed, opens nothing). A dot on the base is a bar with no reading.</>],
   ['gauge', 'Live: gauge', 'fill-bar', () => <GaugeDemo />, () => <>The fill bar's one-value form. Attention past the host's warning threshold, danger past its critical one; both are host settings. Unknown is ?.</>],

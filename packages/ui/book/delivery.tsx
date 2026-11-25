@@ -5,7 +5,7 @@ import { createMemo, createSignal, For, Show } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import {
   ListDetail, ListFrame, FilterBar, StateCounters, GroupHeader, GroupControl, SortControl, SelectToggle, StateBadge, AgeChip, Num, Totals,
-  TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Stale, Fact, RowFacts, Presets, Latest, DayChart, ShareBar, NormBar,
+  TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Stale, Fact, RowFacts, Presets, DayChart, ShareBar, NormBar,
   capOf, quantile, day, dayStart, slotStart, hourLabel, duration, DELIVERY_ORDER, states, type StateOf, type DayCol, type DayMark, type SharePart,
 } from '../src/index.ts';
 import { NOW, min, hr } from './fixtures.ts';
@@ -239,7 +239,7 @@ function IdleA(props: PaceProps) {
   const d = createMemo(() => usePace(props.range, props.at));
   const pick = pickOf(props);
   return <div class="stack-pad">
-    <DetailSection title="Needs a look"><Latest items={look()} n={3} /></DetailSection>
+    <DetailSection title="Needs a look">{look()}</DetailSection>
     <DetailSection title="Moving now"><Moving /></DetailSection>
     <DetailSection title="Pace"><Gap>
       <RangeLine range={props.range} onRange={props.onRange} at={props.at} onAt={props.onAt} />

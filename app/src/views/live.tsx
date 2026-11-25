@@ -3,11 +3,11 @@
 // runners, just now). Wall mode (`/live?wall`) shows the same page with nothing to open. Reads: hosts_list (bands,
 // gauges, slots in start order), executions_runners (strips, figures, slot details), executions_list (failures in
 // plain words), task_page (task codes and projects, done today), delivery_status, executions_ci, project_list.
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createMemo, For, Show } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import { useLocation } from '../router.ts';
 import {
-  Button, Empty, ErrorBanner, FigureTile, HostBand, LiveRow, StatusPill, WorkFacts, bytes, causeOf, clock, count, duration, lifeOf, money, states, peerFence, useTick,
+  Button, Empty, Icon, ErrorBanner, FigureTile, HostBand, LiveRow, StatusPill, WorkFacts, bytes, causeOf, clock, count, duration, lifeOf, money, states, peerFence, useTick,
   type DataTone, type Life, type GaugeProps, type HostBandProps, type Measured, type Tone, type WorkerSlotProps,
   statesOf, openStates,
   timeOf, usdOf,
@@ -280,15 +280,14 @@ export function Live(props: { wall: boolean }) {
     return [...by.values()].toSorted((a, b) => b.at - a.at);
   });
   const eventFence = createMemo(() => peerFence(events().map(e => e.n)));
-  // Feeds show their latest FEED, then +K (OR-30); +K opens the rest in place. In wall mode nothing opens.
-  const [all, setAll] = createSignal<ReadonlySet<string>>(new Set());
-  const feed = <T,>(id: string, xs: readonly T[]) => (all().has(id) ? xs : xs.slice(0, FEED));
-  const more = (id: string, total: number): JSX.Element => (
-    <Show when={total > FEED && !all().has(id)}>
-      <Show when={!props.wall} fallback={<p class="live-more muted">+{total - FEED}</p>}>
-        <Button label={`+${total - FEED} more`} kind="quiet" onClick={() => setAll(s => new Set([...s, id]))} />
+  // Feeds are previews of their latest FEED rows, no toggle (OR-30, OR-65): the heading opens the full list where one exists.
+  const feed = <T,>(xs: readonly T[]) => xs.slice(0, FEED);
+  const head = (label: string, n: number, to?: string): JSX.Element => (
+    <h2 class="live-h">
+      <Show when={to && !props.wall} fallback={<>{label} <span class="mono">{n}</span></>}>
+        <a class="live-open" href={to} onClick={e => { if (!e.metaKey && !e.ctrlKey) { e.preventDefault(); go(to!); } }}>{label} <span class="mono">{n}</span><Icon name="chevron-right" /></a>
       </Show>
-    </Show>
+    </h2>
   );
 
   const focus = createMemo(() => {
@@ -327,35 +326,32 @@ export function Live(props: { wall: boolean }) {
         <aside class="live-side" aria-label="Now">
           <Show when={projectRows().length}>
             <section aria-label="Projects now">
-              <h2 class="live-h">Projects · now <span class="mono">{projectRows().length}</span></h2>
+              {head('Projects · now', projectRows().length, '/projects')}
               <ul class="live-list">
-                <For each={feed('projects', projectRows())}>{p => <LiveRow kind="project" name={p.name} running={p.running} queued={p.queued} done={p.done} trend={p.trend} trendLabel="tasks done, last 24 hours" stale={stale()} onOpen={p.id ? open(`/projects/${encodeURIComponent(p.id)}`) : undefined} />}</For>
+                <For each={feed(projectRows())}>{p => <LiveRow kind="project" name={p.name} running={p.running} queued={p.queued} done={p.done} trend={p.trend} trendLabel="tasks done, last 24 hours" stale={stale()} onOpen={p.id ? open(`/projects/${encodeURIComponent(p.id)}`) : undefined} />}</For>
               </ul>
-              {more('projects', projectRows().length)}
             </section>
           </Show>
           <Show when={work().length}>
             <section aria-label="In work">
-              <h2 class="live-h">In work <span class="mono">{work().length}</span></h2>
+              {head('In work', work().length, '/tasks')}
               <ul class="live-list">
-                <For each={feed('work', work())} keyed={t => t.id}>{t => (
+                <For each={feed(work())} keyed={t => t.id}>{t => (
                   <LiveRow kind="task" state={lifeOfTask(t().state)} code={t().code ?? undefined} title={t().title} stale={stale()} onOpen={open(`/tasks/${t().code ?? t().id}`)}
                     facts={<WorkFacts attempts={t().executions} attemptsFence={attemptsFence()} lastAt={timeAt(t().lastStartedAt ?? t().activeStartedAt) - offset()}
                       workAt={timeAt(t().startedAt) - offset()} workFence={workFence()} agent={t().agent ?? t().lastAgent}
                       state={{ label: states.task[t().state as keyof typeof states.task]?.label ?? t().state, at: timeAt(t().stateAt) - offset() }} />} />
                 )}</For>
               </ul>
-              {more('work', work().length)}
             </section>
           </Show>
           <Show when={delivery().length}>
             <section aria-label="Delivery">
-              <h2 class="live-h">Delivery <span class="mono">{delivery().length}</span></h2>
+              {head('Delivery', delivery().length, '/delivery')}
               <ul class="live-list">
-                <For each={feed('delivery', delivery())} keyed={d => `${d.repo}#${d.number}`}>{dd => { const d = dd(); return <LiveRow kind="delivery" tone={(states.delivery[d.stage]?.tone ?? 'neutral') as Tone} code={`#${d.number}`} title={d.title} stage={STAGE[d.stage] ?? 'pr_open'} trouble={d.stage.endsWith('failed')} stale={stale()} onOpen={open(`/delivery/${encodeURIComponent(`${d.repo.replace('/', '~')}~${d.number}`)}`)}
+                <For each={feed(delivery())} keyed={d => `${d.repo}#${d.number}`}>{dd => { const d = dd(); return <LiveRow kind="delivery" tone={(states.delivery[d.stage]?.tone ?? 'neutral') as Tone} code={`#${d.number}`} title={d.title} stage={STAGE[d.stage] ?? 'pr_open'} trouble={d.stage.endsWith('failed')} stale={stale()} onOpen={open(`/delivery/${encodeURIComponent(`${d.repo.replace('/', '~')}~${d.number}`)}`)}
                   facts={<WorkFacts workAt={timeAt(d.opened) - offset()} state={{ label: states.delivery[d.stage]?.label ?? d.stage, at: timeAt(d.since) - offset() }} />} />; }}</For>
               </ul>
-              {more('delivery', delivery().length)}
             </section>
           </Show>
           <Show when={ci().length}>
@@ -368,12 +364,11 @@ export function Live(props: { wall: boolean }) {
           </Show>
           <Show when={events().length}>
             <section aria-label="Just now">
-              <h2 class="live-h">Just now <span class="mono">{events().length}</span></h2>
+              {head('Just now', events().length)}
               <ul class="live-list">
-                <For each={feed('events', events())} keyed={e => e.id}>{ee => { const e = ee(); return <LiveRow kind="event" at={e.at} state={e.state} text={e.text} stale={stale()} onOpen={e.to ? open(e.to) : undefined}
+                <For each={feed(events())} keyed={e => e.id}>{ee => { const e = ee(); return <LiveRow kind="event" at={e.at} state={e.state} text={e.text} stale={stale()} onOpen={e.to ? open(e.to) : undefined}
                   facts={<WorkFacts attempts={e.n} attemptsFence={eventFence()} agent={e.agent} />} />; }}</For>
               </ul>
-              {more('events', events().length)}
             </section>
           </Show>
         </aside>

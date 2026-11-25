@@ -23,7 +23,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)). The shel
    4. **Queued:** sessions whose state reads Queued; no session state does today (a preparing session is Working).
 4. **Asleep.** Bots with no active run, as one row of dashed tiles: name, what the bot is for, when it was last used, and a Wake button.
 
-A group longer than one row shows its latest cards and `+K` (OR-30); `+K · Conversations ›` opens [Conversations](conversations.md) with the same filter. Waiting for you expands in place instead (`+K more`): a question no session asks is answered only on Home. One row is as many cards as the page width holds. Failed sessions whose newest run failed for the same plain cause (`failure.cause`) are one card with `×N`, the cause in words and their hosts; it opens Conversations with the Failed filter (OR-58). A failed session with a cause of its own, or none known, keeps its own card. A finished session leaves Home and stays in Conversations.
+A group longer than one row shows its latest cards and `All N in Conversations ›`, which opens [Conversations](conversations.md) with the same filter (OR-30, OR-65). Waiting for you shows every card: a question no session asks is answered only on Home. One row is as many cards as the page width holds. Failed sessions whose newest run failed for the same plain cause (`failure.cause`) are one card with `×N`, the cause in words and their hosts; it opens Conversations with the Failed filter (OR-58). A failed session with a cause of its own, or none known, keeps its own card. A finished session leaves Home and stays in Conversations.
 
 The focus (OR-34) narrows every group. Ignored projects never show.
 

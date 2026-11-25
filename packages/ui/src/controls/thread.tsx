@@ -5,6 +5,7 @@ import { type IconName, type StateOf, type Harness, actions, harnesses, openStat
 import { bytes, exact, duration, agentLabel, actor, fileLabel } from '../format.ts';
 import type { Block as ThreadBlock, ResourceSummary, ThreadDeliveryStage } from '../../../../contracts/generated/ops.ts';
 import { VirtualList, type VirtualListHandle } from '../virtual-list.tsx';
+import { createWindow, ListEnd } from '../infinite.tsx';
 import { parse, renderBlocks, type TextHook } from '../markdown.tsx';
 import { author, clipMessage, writeClip } from '../clip.ts';
 import { isSubmitEnter } from '../keys.ts';
@@ -339,19 +340,18 @@ export function ArtifactView(p: { a: ArtifactMeta; src: string }) {
 
 /** JSON as key/value records (result-viewer.md): keys left, values right, objects and arrays folded under their key, null as "none". */
 function KvRecords(p: { records: KvNode[]; lines: boolean }) {
-  const STEP = 200; // the first records, then "+K" (OR-30): a long log never builds every row at once
-  const [shown, setShown] = createSignal(STEP, { ownedWrite: true });
+  // Records are built 200 at a time as the view scrolls near the end (OR-65): a long log never builds every row at once.
+  // Appended records (a log read as it scrolls) only grow the window; it never resets.
+  const recs = createWindow(() => p.records, 200);
   return (
-    <div class="kv-view" data-ui="kv-view">
-      <For each={p.records.slice(0, shown())}>{(r, i) => (
+    <div class="kv-view infinite-list" data-ui="kv-view">
+      <For each={recs.rows}>{(r, i) => (
         <section class="kv-rec" aria-label={p.lines ? `Record ${i() + 1} of ${p.records.length}` : undefined}>
           <Show when={p.lines}><div class="kv-rec-h muted type-sm">Record {i() + 1} of {p.records.length}</div></Show>
           <KvNodeView node={r} />
         </section>
       )}</For>
-      <Show when={p.records.length > shown()}>
-        <Button label={`+${p.records.length - shown()}`} kind="quiet" onClick={() => setShown(n => n + STEP)} />
-      </Show>
+      <ListEnd pages={recs} />
     </div>
   );
 }

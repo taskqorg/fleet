@@ -18,7 +18,7 @@
 
 **Behaviour.**
 * The whole row opens its item ([OR-26](../owner-rules.md)): a project in Projects, a pull request in its project's delivery facet, a runner in System, an event in its session. In wall mode nothing opens.
-* Each list shows its latest five, then `+K more`, which opens the rest in place ([OR-30](../owner-rules.md)); in wall mode `+K` is a plain count. A new event enters at the top without moving a row being hovered ([OR-6](../owner-rules.md)).
+* Each list shows its latest five; its heading, with the count, opens the full list ([OR-30](../owner-rules.md), [OR-65](../owner-rules.md)); in wall mode the heading is plain text. A new event enters at the top without moving a row being hovered ([OR-6](../owner-rules.md)).
 * Repeats aggregate ([OR-58](../owner-rules.md)): runs of one subject (a task, else a conversation) in one state are one event with `×N` and the newest time; failed and started runs also by host.
 * With work facts the title keeps at least 60% of the row; facts that do not fit wrap under it ([OR-60](../owner-rules.md)).
 
