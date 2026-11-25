@@ -57,7 +57,8 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [figure-tile](figure-tile.md) | One headline figure with its trend |
 | [host-band](host-band.md) | One host: health, slots, runs |
 | [worker-slot](worker-slot.md) | What runs in one worker slot |
-| [live-row](live-row.md) | A project, pull request, runner or event on Live |
+| [live-row](live-row.md) | A project, task in work, pull request, runner or event on Live |
+| [work-facts](work-facts.md) | Attempts, time in work and agent; latest attempt and time in state on hover: one row anatomy for work |
 | [matrix-cell](matrix-cell.md) | One example × variant of a Lab experiment |
 | [tab-bar](tab-bar.md) | Facets of one opened entity |
 | [quiet-summary](quiet-summary.md) | What happened while you were away, when nothing waits |
@@ -87,6 +88,7 @@ The screens of the conversation-first interface, and the catalogues and opened i
 | Worker slot | [worker-slot](worker-slot.md) | `WorkerSlot` | Live |
 | Run strip | [time strip, run strip](time-strip.md#run-strip) | `RunStrip` (the time strip's run strip form) | Live |
 | Live row | [live-row](live-row.md) | `LiveRow`, stage by `StageChip` | Live |
+| Work facts | [work-facts](work-facts.md) | `WorkFacts`, `peerFence` | Live; next Tasks, Conversations, Results, Runners |
 | Catalogue row, state icon, list group | [data list](data-list.md#board) | `CatalogueTree` leaf and folder rows | Catalogues in the control column |
 | Filter bar, search, view chip, state counters | [filter bar](filter-bar.md#board) | `FilterBar`, `SearchBox`, `Presets`, `StateCounters` | Catalogues in the control column |
 | Detail head | [list and detail](../patterns/list-detail.md#board) | `DetailHead` | Every opened item |

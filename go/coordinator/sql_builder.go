@@ -1041,11 +1041,13 @@ var sqlActiveExec = `(SELECT e.state::text AS active_state,` + sqlJSONTime("e.st
 	`EXISTS (SELECT 1 FROM question q WHERE q.cause='problem:execution:'||e.id||':stuck' AND q.state='open') AS active_stalled ` +
 	`FROM execution e WHERE e.task_id=t.id AND e.state IN ('preparing','running') ORDER BY e.seq DESC LIMIT 1)`
 
-// sqlTaskListCols: the columns of taskListDBRow (tasks.go), then its group key g and sort key sk.
+// sqlTaskListCols: the columns of taskListDBRow (tasks.go), then its group key g and sort key sk. last_started_at: the
+// latest execution's start (index execution_task_seq), so a row shows the time since the latest attempt.
 var sqlTaskListCols = "t.id,t.code,t.project_id,t.title,t.state::text AS state,t.pause_reason,t.wait_reason,t.priority," +
 	sqlJSONTime("t.created_at") + " AS created_at," + sqlJSONTime("t.updated_at") + " AS updated_at,d.agent,d.host," +
 	sqlJSONTime("d.started_at") + " AS started_at,coalesce(d.open_questions,0)::bigint AS open_questions," + sqlJSONTime("t.state_at") +
 	" AS state_at,coalesce(d.executions,0)::bigint AS executions,d.last_agent," +
+	"(SELECT " + sqlJSONTime("le.started_at") + " FROM execution le WHERE le.task_id=t.id AND le.started_at IS NOT NULL ORDER BY le.seq DESC LIMIT 1) AS last_started_at," +
 	"ae.active_state,ae.active_started_at,ae.active_observation,ae.active_last_seen_at,coalesce(ae.active_stalled,false) AS active_stalled"
 
 // sqlTaskPage: one task_page page of at most limit rows after the sort key after (nil: the first page).

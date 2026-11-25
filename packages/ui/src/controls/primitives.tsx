@@ -209,7 +209,8 @@ function useAgeClock(t: Accessor<number>, alertAfter: Accessor<number | undefine
   return now;
 }
 
-type AgeProps = { t: number; clockOffsetMs?: number; alertAfter?: number; tone?: Tone; alertLabel?: string };
+/** note: more facts for the tooltip after the exact time (work facts: the latest attempt, the time in state). */
+type AgeProps = { t: number; clockOffsetMs?: number; alertAfter?: number; tone?: Tone; alertLabel?: string; note?: string };
 
 /** Compact live age with the original timestamp available on hover. */
 export function Ago(p: AgeProps & { chip?: boolean }) {
@@ -230,7 +231,7 @@ export function Ago(p: AgeProps & { chip?: boolean }) {
             class={[cls(), alert() ? `t-${tone()} alert` : '']}
             data-ui={p.chip ? 'number' : undefined}
             datetime={new Date(p.t).toISOString()}
-            data-tip={alert() ? `${alertLabel()} · ${exact(p.t)}` : exact(p.t)}
+            data-tip={(alert() ? `${alertLabel()} · ${exact(p.t)}` : exact(p.t)) + (p.note ? ` · ${p.note}` : '')}
             aria-label={alert() ? `${a().long}, ${alertLabel()}` : a().long}
           >
             <Show when={alert()}><Icon name="triangle-alert" /></Show>
@@ -243,7 +244,7 @@ export function Ago(p: AgeProps & { chip?: boolean }) {
 }
 
 export function AgeChip(props: AgeProps) {
-  return <Ago t={props.t} clockOffsetMs={props.clockOffsetMs} alertAfter={props.alertAfter} tone={props.tone} alertLabel={props.alertLabel} chip />;
+  return <Ago t={props.t} clockOffsetMs={props.clockOffsetMs} alertAfter={props.alertAfter} tone={props.tone} alertLabel={props.alertLabel} note={props.note} chip />;
 }
 
 /* ---------- Harness mark, harness counts, stage chip (D11) ---------- */

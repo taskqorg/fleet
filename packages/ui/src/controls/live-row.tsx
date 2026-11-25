@@ -1,4 +1,5 @@
-// Live row: one compact row of the Live side column, a project, a pull request, a CI runner or an event (controls/live-row.md).
+// Live row: one compact row of the Live side column, a project, a task in work, a pull request, a CI runner or an event
+// (controls/live-row.md). Work rows carry the shared work facts (controls/work-facts.md) on the right.
 import { Show } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import type { Tone, Stage, Life } from '../registry.ts';
@@ -8,6 +9,8 @@ import { StateDot } from './state-dot.tsx';
 
 export type LiveRowProps = (
   | { kind: 'project'; name: string; running: number; queued: number; done: number; trend: readonly (number | null)[]; trendLabel: string }
+  /** A task in work: its state in the one vocabulary (OR-55), code and title. */
+  | { kind: 'task'; state: Life; code?: string; title: string }
   | { kind: 'delivery'; tone: Tone; code: string; title: string; stage: Stage }
   | { kind: 'runner'; name: string; fact: string }
   /** An event's state in the one vocabulary (OR-55): Done, Failed, Working. */
@@ -15,6 +18,8 @@ export type LiveRowProps = (
 ) & {
   /** The dot and the right-hand fact in the danger tone. */
   trouble?: boolean;
+  /** Task, delivery and event rows: the shared work facts (WorkFacts) on the right, before the stage chip. */
+  facts?: JSX.Element;
   stale?: boolean;
   /** Opens the item. Omit in wall mode. */
   onOpen?: () => void;
@@ -39,9 +44,10 @@ export function LiveRow(p: LiveRowProps) {
         <Sparkline values={r.trend} label={r.trendLabel} />
       </>
     );
-    if (r.kind === 'delivery') return <><i class="dot" aria-hidden="true" /><span class="lr-main"><span class="mono lr-code">{r.code}</span> <span class="lr-text">{r.title}</span></span><StageChip stage={r.stage} /></>;
+    if (r.kind === 'task') return <><StateDot state={r.trouble ? 'failed' : r.state} bare /><span class="lr-main"><Show when={r.code}><span class="mono lr-code">{r.code}</span> </Show><span class="lr-text">{r.title}</span></span>{r.facts}</>;
+    if (r.kind === 'delivery') return <><i class="dot" aria-hidden="true" /><span class="lr-main"><span class="mono lr-code">{r.code}</span> <span class="lr-text">{r.title}</span></span>{r.facts}<StageChip stage={r.stage} /></>;
     if (r.kind === 'runner') return <><i class="dot" aria-hidden="true" /><span class="lr-main lr-text">{r.name}</span><span class="lr-fact mono">{r.fact}</span></>;
-    return <><span class="lr-age"><Ago t={r.at} /></span><StateDot state={r.trouble ? 'failed' : r.state} bare /><span class="lr-main lr-text">{r.text}</span></>;
+    return <><span class="lr-age"><Ago t={r.at} /></span><StateDot state={r.trouble ? 'failed' : r.state} bare /><span class="lr-main lr-text">{r.text}</span>{r.facts}</>;
   };
   return (
     <li class={['lrow', `t-${tone()}`]} data-kind={p.kind} data-state={p.stale ? 'stale' : p.trouble ? 'trouble' : 'normal'} data-ui="live-row">

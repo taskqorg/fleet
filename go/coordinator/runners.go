@@ -15,18 +15,18 @@ import (
 
 // runnerRow: one execution as the Runners screen reads it (queries/runners.sql), or a group of tool calls.
 type runnerRow struct {
-	id, kind, state                                              string
-	hostID, harness, taskID, title, sessionID, parentID, problem *string
-	callerRun, model, accountID, billingBasis                    *string
-	started, ended, seen, wallMs, cpuMs, peakMemoryBytes, tokens *float64
-	subject                                                      string
-	connectionCost                                               []byte
-	isAPIConn                                                    bool
-	tokensInput, tokensOutput, tokensCacheRead, tokensCacheWrite *int64
-	at                                                           time.Time
-	calls, failedCalls                                           *int64
-	usages                                                       []usage // a tool-call group, priced already per call
-	grouped                                                      bool
+	id, kind, state                                                            string
+	hostID, harness, taskID, title, sessionTitle, sessionID, parentID, problem *string
+	callerRun, model, accountID, billingBasis                                  *string
+	started, ended, seen, wallMs, cpuMs, peakMemoryBytes, tokens               *float64
+	subject                                                                    string
+	connectionCost                                                             []byte
+	isAPIConn                                                                  bool
+	tokensInput, tokensOutput, tokensCacheRead, tokensCacheWrite               *int64
+	at                                                                         time.Time
+	calls, failedCalls                                                         *int64
+	usages                                                                     []usage // a tool-call group, priced already per call
+	grouped                                                                    bool
 }
 
 // runnerMs: a time as Unix milliseconds, rounded as PostgreSQL rounds (extract(epoch)*1000)::bigint.
@@ -215,7 +215,7 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 	}
 	runs := make([]runnerRow, 0, len(rs))
 	for _, r := range rs {
-		runs = append(runs, runnerRow{id: r.ID, kind: r.Kind, state: r.State, hostID: r.HostID, harness: r.Harness, taskID: r.TaskID, title: r.Title,
+		runs = append(runs, runnerRow{id: r.ID, kind: r.Kind, state: r.State, hostID: r.HostID, harness: r.Harness, taskID: r.TaskID, title: r.Title, sessionTitle: nonEmpty(r.SessionTitle),
 			sessionID: r.SessionID, parentID: r.ParentExecutionID, problem: r.Problem, started: runnerMs(r.At), ended: runnerMs(r.EndedAt), seen: runnerMs(r.LastSeenAt),
 			wallMs: runnerF(r.WallMs), cpuMs: runnerF(r.CpuMs), peakMemoryBytes: runnerF(r.PeakMemoryBytes), tokens: runnerTokens(r.TokensInput, r.TokensOutput, r.TokensCacheRead, r.TokensCacheWrite),
 			subject: r.Subject, connectionCost: r.ConnectionCost, billingBasis: r.BillingBasis, model: r.Model, accountID: r.AccountID, isAPIConn: r.IsApiConn,
@@ -239,7 +239,7 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 	for i := range runs {
 		r := &runs[i]
 		out.Runs = append(out.Runs, contract.RunnerRun{Id: r.id, Kind: r.kind, State: contract.ExecutionState(r.state), HostId: r.hostID, Harness: r.harness, Model: r.model,
-			TaskId: r.taskID, TaskTitle: r.title, SessionId: r.sessionID, Problem: r.problem, StartedAt: r.started, EndedAt: r.ended, LastSeenAt: r.seen,
+			TaskId: r.taskID, TaskTitle: r.title, SessionTitle: r.sessionTitle, SessionId: r.sessionID, Problem: r.problem, StartedAt: r.started, EndedAt: r.ended, LastSeenAt: r.seen,
 			WallMs: r.wallMs, CpuMs: r.cpuMs, PeakMemoryBytes: r.peakMemoryBytes, Tokens: r.tokens, Calls: r.calls, FailedCalls: r.failedCalls,
 			ParentExecutionId: r.parentID, Cost: runnerCost(prices, isRunnerSubscription(r), runnerUsages(r))})
 	}

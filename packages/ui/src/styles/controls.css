@@ -156,6 +156,7 @@
   .row-facts .fact { display: inline-flex; align-items: center; gap: 2px; }
   .row-facts .icon { width: var(--size-icon-sm); height: var(--size-icon-sm); }
   .row-facts .chip-age { padding: 0; }
+  .row-facts .attempts.alert { padding: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--tone-bg); color: var(--tone-fg); font-weight: var(--font-weight-bold); }
   /* The now line of a session row (pages/conversations.md): a sentence, so sans (OR-28). One line cut by CSS only (full
      text in the DOM and its tooltip), at most a quarter of the row so the title keeps the most space (OR-21); hidden on a
      row narrower than 480 px, where the title keeps 60% (OR-60). */

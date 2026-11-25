@@ -1387,6 +1387,7 @@ type taskListDBRow struct {
 	StateAt           *string `db:"state_at"`
 	Executions        int64   `db:"executions"`
 	LastAgent         *string `db:"last_agent"`
+	LastStartedAt     *string `db:"last_started_at"`
 	ActiveState       *string `db:"active_state"`
 	ActiveStartedAt   *string `db:"active_started_at"`
 	ActiveObservation *string `db:"active_observation"`
@@ -1400,7 +1401,7 @@ func (x taskListDBRow) row() contract.TaskRow {
 	stalled := x.ActiveStalled
 	return contract.TaskRow{Id: x.ID, Code: x.Code, ProjectId: x.ProjectID, Title: x.Title, State: x.State, PauseReason: x.PauseReason,
 		WaitReason: x.WaitReason, Priority: x.Priority, Agent: x.Agent, Host: x.Host, StartedAt: x.StartedAt, CreatedAt: x.CreatedAt,
-		UpdatedAt: x.UpdatedAt, OpenQuestions: x.OpenQuestions, StateAt: x.StateAt, Executions: x.Executions, LastAgent: x.LastAgent,
+		UpdatedAt: x.UpdatedAt, OpenQuestions: x.OpenQuestions, StateAt: x.StateAt, Executions: x.Executions, LastAgent: x.LastAgent, LastStartedAt: x.LastStartedAt,
 		ActiveState: x.ActiveState, ActiveStartedAt: x.ActiveStartedAt, ActiveObservation: x.ActiveObservation,
 		ActiveLastSeenAt: x.ActiveLastSeenAt, ActiveStalled: &stalled, SortKey: sortKey(x.G, x.Sk, x.ID)}
 }
