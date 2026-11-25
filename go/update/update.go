@@ -116,9 +116,10 @@ type updater struct {
 	gatewayURL   string
 	guardURL     string // Access origin guard /verify on PDS18; "" skips the smoke
 	dumpCmd      func(ver, file string) error
-	cacheDir     string               // conditional GET cache (ETag and body per URL); "" caches nothing
-	bugsinkDir   string               // Bugsink upload settings (ci-token, ingest-url, sentry-org); none: no upload
-	published    map[string]time.Time // release version -> publish time, when a fetch learned it cheaply (lazily made)
+	migrates     func(staged string) (bool, error) // whether the staged coordinator carries a migration the database lacks
+	cacheDir     string                            // conditional GET cache (ETag and body per URL); "" caches nothing
+	bugsinkDir   string                            // Bugsink upload settings (ci-token, ingest-url, sentry-org); none: no upload
+	published    map[string]time.Time              // release version -> publish time, when a fetch learned it cheaply (lazily made)
 }
 
 func newUpdater(key ed25519.PublicKey) *updater {
@@ -126,7 +127,7 @@ func newUpdater(key ed25519.PublicKey) *updater {
 		client: httpClient(10 * time.Minute), now: time.Now, window: 30 * time.Second, tick: time.Second,
 		coordURL: "http://127.0.0.1:9470/api/health", gatewayURL: "http://127.0.0.1:8742/healthz",
 		guardURL: "http://127.0.0.1:9471/verify", bugsinkDir: "/etc/fleet/bugsink",
-		dumpCmd: pgDump}
+		dumpCmd: pgDump, migrates: stagedMigrates}
 }
 
 func (u *updater) result(ver string, state contract.UpdateState, msg string) *Result {
@@ -425,10 +426,16 @@ func writeFrom(path string, r io.Reader, mode fs.FileMode) error {
 
 // install puts the staged tree at <root>/<ver> (read-only files) and switches current and previous.
 func (u *updater) install(p *part, ver, staged string) error {
+	// The dump guards the database against the release's migrations; a release without one leaves the schema as it is,
+	// and a full dump on every release slowed every read for its duration. When it cannot be told, it dumps.
 	if p.dump {
-		file := "/backup/fleet/pre-deploy/fleet-pre-" + ver + ".dump"
-		if err := u.dumpCmd(ver, file); err != nil {
-			return fmt.Errorf("pg_dump: %w", err)
+		if need, err := u.migrates(staged); err != nil || need {
+			file := "/backup/fleet/pre-deploy/fleet-pre-" + ver + ".dump"
+			if err := u.dumpCmd(ver, file); err != nil {
+				return fmt.Errorf("pg_dump: %w", err)
+			}
+		} else {
+			log.Printf("%s: no new migration, no pre-deploy dump", ver)
 		}
 	}
 	tmp := ver + ".tmp"
@@ -685,6 +692,27 @@ func (u *updater) getCached(url string, check func([]byte) error) (cached, error
 		}
 		return c, nil
 	}
+}
+
+// stagedMigrates compares the staged coordinator's newest migration with the newest one the database applied.
+func stagedMigrates(staged string) (bool, error) {
+	out, err := exec.Command(filepath.Join(staged, "fleet-coordinator"), "migrations").Output()
+	if err != nil {
+		return true, err
+	}
+	carried, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return true, err
+	}
+	out, err = exec.Command("runuser", "-u", "postgres", "--", "psql", "-d", "fleet", "-Atc", "SELECT coalesce(max(version),0) FROM schema_migration").Output()
+	if err != nil {
+		return true, err
+	}
+	applied, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return true, err
+	}
+	return carried > applied, nil
 }
 
 // pgDump runs pg_dump as postgres; root writes the file (postgres cannot write /backup/fleet/pre-deploy).

@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -339,5 +340,24 @@ func TestLatestConditionalGet(t *testing.T) {
 	}
 	if after, _ := os.ReadDir(dir); len(after) != 0 {
 		t.Fatalf("stale cache kept: %v", after)
+	}
+}
+
+// The pre-deploy dump runs only for a release that carries a migration the database lacks, or when that cannot be told.
+func TestDumpOnlyForMigrations(t *testing.T) {
+	for i, c := range []struct {
+		need  bool
+		err   error
+		dumps int
+	}{{false, nil, 0}, {true, nil, 1}, {false, errors.New("psql unavailable"), 1}} {
+		f := newFixture(t)
+		f.p.dump = true
+		dumps := 0
+		f.u.dumpCmd = func(string, string) error { dumps++; return nil }
+		f.u.migrates = func(string) (bool, error) { return c.need, c.err }
+		f.release("1.261111.0", 0)
+		if r := f.run("1.261111.0"); r.State != "ok" || dumps != c.dumps {
+			t.Fatalf("case %d: %+v, %d dumps", i, r, dumps)
+		}
 	}
 }
