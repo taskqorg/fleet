@@ -145,3 +145,10 @@ SELECT id, task_id::text AS task_id FROM session WHERE id = ANY(@ids::text[]) AN
 SELECT e.id, coalesce(e.session_id, '')::text AS session_id, coalesce(e.task_id, s.task_id)::text AS task_id
 FROM execution e LEFT JOIN session s ON s.id = e.session_id
 WHERE e.id = ANY(@ids::text[]) AND coalesce(e.task_id, s.task_id) IS NOT NULL;
+
+-- name: DeliverySnapshotPut :exec
+-- The pass's last state (deliverySnapshot), kept across restarts.
+INSERT INTO delivery_snapshot(id, state) VALUES ('last', @state) ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = now();
+
+-- name: DeliverySnapshotGet :one
+SELECT state FROM delivery_snapshot WHERE id = 'last';

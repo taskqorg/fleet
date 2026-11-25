@@ -74,10 +74,10 @@ var (
 func init() {
 	onStart(func(ctx context.Context, a *App) {
 		// Keyless the five reads each pass use 50 of the 60 an hour; with a key the period can be much shorter.
-		// ponytail: the cache is in memory, so each start reads once more; keep the last pass in a row if deploys
-		// exhaust the keyless budget.
 		// With a key a pass runs every minute (GitHub allows 5000 reads an hour); keyless ones keep FLEET_DELIVERY_KEYLESS_MS apart.
 		d := envMs("FLEET_DELIVERY_TICK_MS", 60*1000)
+		// The last pass's state until this process's first pass (delivery_snapshot.go).
+		deliveryRestore(ctx, a)
 		if d > 0 { // the first read at start: a deploy every few minutes must not blank the page
 			untilDone(ctx, "delivery-first", d, func(ctx context.Context) error { deliveryPass(ctx, a); return nil })
 		}
@@ -493,6 +493,10 @@ func deliveryPass(ctx context.Context, a *App) error {
 		}); err != nil {
 			log.Printf("delivery state: %v", err)
 		}
+	}
+	// Every pass: a restart then answers this pass with its real age (one row, no change event, no lock).
+	if err := a.store.Write(ctx, nil, nil, func(q *Request) error { return deliverySave(q, next) }); err != nil {
+		log.Printf("delivery snapshot: %v", err)
 	}
 	var delivered []deliveryMergedPR
 	for _, r := range repos {

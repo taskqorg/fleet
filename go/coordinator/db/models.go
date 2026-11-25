@@ -922,6 +922,12 @@ type DeliverySetting struct {
 	TombstonedAt *time.Time
 }
 
+type DeliverySnapshot struct {
+	ID        string
+	State     []byte
+	UpdatedAt time.Time
+}
+
 type DeliveryState struct {
 	ID           string
 	ProjectID    string
