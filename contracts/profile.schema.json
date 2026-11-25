@@ -27,7 +27,12 @@
       "icon": {"$comment": "Optional library icon identifier.", "type": "string"},
       "monogram": {"$comment": "Optional 1-4 character monogram for card avatars.", "type": "string"},
       "variantOf": {"$comment": "Base profile id when created as a Lab variant.", "type": "string"},
-      "experiment": {"$comment": "Lab experiment id that created this variant.", "type": "string"}}},
+      "experiment": {"$comment": "Lab experiment id that created this variant.", "type": "string"},
+      "harnessCandidate": {"$comment": "Host qualification of a proposed CLI pin (docs/designs/fleet-host-updates.md, step 4): the Lab override candidate puts it here; the executor stages and runs it instead of its release's pin.", "$ref": "#/$defs/HarnessCandidate"}}},
+    "HarnessCandidate": {"type": "object", "additionalProperties": false, "required": ["name", "asset"], "properties": {
+      "name": {"$ref": "#/$defs/ProfileHarness"},
+      "asset": {"$ref": "#/$defs/HarnessCandidateAsset"}}},
+    "HarnessCandidateAsset": {"type": "object", "additionalProperties": false, "required": ["version", "url"], "properties": {"version": {"type": "string"}, "url": {"type": "string"}, "sha256": {"type": "string"}, "sha512": {"type": "string"}, "entry": {"type": "string"}}},
     "CodeMode": {"type": "string", "enum": ["add", "only"]},
     "ProfileHarness": {"type": "string", "enum": ["codex", "claude", "antigravity", "acp"]},
     "ClaudeTool": {"type": "string", "enum": ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "TaskStop"]},

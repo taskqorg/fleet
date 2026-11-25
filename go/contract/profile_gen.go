@@ -88,6 +88,35 @@ func (v CodeMode) Valid() bool {
 	return false
 }
 
+type HarnessCandidate struct {
+	Asset HarnessCandidateAsset `json:"asset"`
+	Name  ProfileHarness        `json:"name"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HarnessCandidate) Validate() error {
+	if err := Check(&v.Asset, "asset"); err != nil {
+		return err
+	}
+	if err := Check(&v.Name, "name"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type HarnessCandidateAsset struct {
+	Entry   *string `json:"entry,omitempty"`
+	Sha256  *string `json:"sha256,omitempty"`
+	Sha512  *string `json:"sha512,omitempty"`
+	Url     string  `json:"url"`
+	Version string  `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HarnessCandidateAsset) Validate() error {
+	return nil
+}
+
 type Profile struct {
 	Category           *string              `json:"category,omitempty"`
 	CodeMode           *CodeMode            `json:"codeMode,omitempty"`
@@ -100,6 +129,7 @@ type Profile struct {
 	FleetTools         *bool                `json:"fleetTools,omitempty"`
 	GitNetwork         *bool                `json:"gitNetwork,omitempty"`
 	Harness            *ProfileHarness      `json:"harness,omitempty"`
+	HarnessCandidate   *HarnessCandidate    `json:"harnessCandidate,omitempty"`
 	Icon               *string              `json:"icon,omitempty"`
 	Id                 string               `json:"id"`
 	ImageGeneration    *bool                `json:"imageGeneration,omitempty"`
@@ -125,6 +155,11 @@ func (v *Profile) Validate() error {
 	}
 	if v.Harness != nil {
 		if err := Check(v.Harness, "harness"); err != nil {
+			return err
+		}
+	}
+	if v.HarnessCandidate != nil {
+		if err := Check(v.HarnessCandidate, "harnessCandidate"); err != nil {
 			return err
 		}
 	}
