@@ -133,15 +133,22 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 	if !needsSweep {
 		return nil
 	}
+	var tasksStartable bool
 	if err := a.store.Read(ctx, nil, func(q *Request) error {
 		var err error
-		pipelinePending, err = q.db().DispPipelinePending(q.ctx())
+		if pipelinePending, err = q.db().DispPipelinePending(q.ctx()); err != nil {
+			return err
+		}
+		ts, err := q.db().DispStartableTasks(q.ctx())
+		tasksStartable = len(ts) > 0
 		return err
 	}); err != nil {
 		return err
 	}
 	locks := make([]string, 0, 2+len(sessionIDs))
-	if pipelinePending {
+	// A pipeline start and a task's worker session (taskAutoStart) create sessions: GLOBAL serializes them with
+	// task_create, session_start and project_archive.
+	if pipelinePending || tasksStartable {
 		locks = append(locks, GLOBAL)
 	}
 	locks = append(locks, DISPATCH)
@@ -165,6 +172,11 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 		}
 		if err := agentPromote(q); err != nil {
 			return err
+		}
+		if tasksStartable {
+			if err := taskAutoStart(q); err != nil {
+				return err
+			}
 		}
 		return a.dispatchRun(q, "")
 	})
@@ -390,7 +402,7 @@ func accountHarness(a dispatchAccountRec) string {
 // Wait reasons, one list for tasks and executions (waitReason; the free text is waitDetail). The first three are the
 // "waits for a person" kinds of OSC 7501 blocked (go/executor/status.go): a grant or decision (permission), an answer
 // (question), a login or subscription (auth). The others wait on Fleet itself.
-var waitReasons = []string{"permission", "question", "auth", "dependency", "artifacts", "placement"}
+var waitReasons = []string{"permission", "question", "auth", "dependency", "artifacts", "placement", noWorkerRole, workerStartRefused}
 
 // waitKindOf: the wait reason of a dispatch stall cause (dispatch causes, causeOf).
 func waitKindOf(cause string) string {

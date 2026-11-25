@@ -735,10 +735,17 @@ func (q *Queries) DispMarkObservation(ctx context.Context, arg DispMarkObservati
 const dispNeedsSweep = `-- name: DispNeedsSweep :one
 SELECT (EXISTS(SELECT 1 FROM execution WHERE delegation IS NOT NULL AND coalesce(delegation->>'continuationExecutionId','')='' AND coalesce(delegation->>'state','')<>'suppressed')
  OR EXISTS(SELECT 1 FROM question WHERE state IN ('open','answered') AND cause ~ $1::text)
- OR EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','running','waiting')))::boolean
+ OR EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','running','waiting'))
+ OR EXISTS(SELECT 1 FROM task t WHERE t.state='queued' AND t.project_id IS NOT NULL AND t.tombstoned_at IS NULL AND t.accepted_at IS NULL
+  AND coalesce(t.wait_reason,'') NOT IN ('no worker role','worker start refused')
+  AND NOT EXISTS(SELECT 1 FROM execution e WHERE e.task_id=t.id AND e.kind NOT IN ('child_agent','tool_run'))
+  AND NOT EXISTS(SELECT 1 FROM session s WHERE s.task_id=t.id AND s.tombstoned_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM bot_task bt WHERE bt.task_id=t.id AND bt.link_kind='managed')
+  AND NOT EXISTS(SELECT 1 FROM task_dependency d JOIN task b ON b.id=d.depends_on_task_id WHERE d.task_id=t.id AND d.kind='blocks' AND b.state<>'completed')))::boolean
 `
 
-// Open delegations, open stall questions (causes matching the pattern) or unfinished executions.
+// Open delegations, open stall questions (causes matching the pattern), unfinished executions or a queued task nothing
+// has started (one waiting for a worker role is rechecked on the next explicit pass).
 func (q *Queries) DispNeedsSweep(ctx context.Context, pattern string) (bool, error) {
 	row := q.db.QueryRow(ctx, dispNeedsSweep, pattern)
 	var column_1 bool
@@ -1093,6 +1100,60 @@ func (q *Queries) DispStartNeverHandedOut(ctx context.Context, executionID *stri
 	return column_1, err
 }
 
+const dispStartableTasks = `-- name: DispStartableTasks :many
+SELECT t.id, coalesce(t.code,'')::text AS code, t.project_id::text AS project_id, t.title,
+ coalesce(t.expected_outcome,'')::text AS expected_outcome, coalesce(t.directed_by,'')::text AS directed_by,
+ coalesce(t.wait_reason,'')::text AS wait_reason
+FROM task t
+WHERE t.state='queued' AND t.project_id IS NOT NULL AND t.tombstoned_at IS NULL AND t.accepted_at IS NULL
+ AND NOT EXISTS(SELECT 1 FROM execution e WHERE e.task_id=t.id AND e.kind NOT IN ('child_agent','tool_run'))
+ AND NOT EXISTS(SELECT 1 FROM session s WHERE s.task_id=t.id AND s.tombstoned_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM bot_task bt WHERE bt.task_id=t.id AND bt.link_kind='managed')
+ AND NOT EXISTS(SELECT 1 FROM task_dependency d JOIN task b ON b.id=d.depends_on_task_id WHERE d.task_id=t.id AND d.kind='blocks' AND b.state<>'completed')
+ORDER BY t.priority DESC, t.created_at
+`
+
+type DispStartableTasksRow struct {
+	ID              string
+	Code            string
+	ProjectID       string
+	Title           string
+	ExpectedOutcome string
+	DirectedBy      string
+	WaitReason      string
+}
+
+// Queued tasks of a project that nothing has started: no primary execution, no session on the task, no open blocking
+// dependency, not managed by a bot (its bot starts it) (fleet.md: the queue advances automatically). Held tasks are
+// paused, so never listed.
+func (q *Queries) DispStartableTasks(ctx context.Context) ([]DispStartableTasksRow, error) {
+	rows, err := q.db.Query(ctx, dispStartableTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DispStartableTasksRow
+	for rows.Next() {
+		var i DispStartableTasksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.ProjectID,
+			&i.Title,
+			&i.ExpectedOutcome,
+			&i.DirectedBy,
+			&i.WaitReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const dispStoredArtifactCopies = `-- name: DispStoredArtifactCopies :many
 SELECT c.artifact_id,c.store_id,c.state,c.last_error,c.attempts,c.next_attempt_at,(c.next_attempt_at IS NULL OR c.next_attempt_at<=now())::boolean AS due
 FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id
@@ -1135,6 +1196,20 @@ func (q *Queries) DispStoredArtifactCopies(ctx context.Context) ([]DispStoredArt
 		return nil, err
 	}
 	return items, nil
+}
+
+const dispTaskSetWaitReason = `-- name: DispTaskSetWaitReason :exec
+UPDATE task SET wait_reason=$1, updated_at=now() WHERE id= $2 AND state='queued' AND wait_reason IS DISTINCT FROM $1
+`
+
+type DispTaskSetWaitReasonParams struct {
+	WaitReason *string
+	ID         string
+}
+
+func (q *Queries) DispTaskSetWaitReason(ctx context.Context, arg DispTaskSetWaitReasonParams) error {
+	_, err := q.db.Exec(ctx, dispTaskSetWaitReason, arg.WaitReason, arg.ID)
+	return err
 }
 
 const dispTotalsWallUnknown = `-- name: DispTotalsWallUnknown :exec

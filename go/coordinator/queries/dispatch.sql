@@ -286,10 +286,17 @@ SELECT DISTINCT sid::text FROM (
 ) x WHERE coalesce(sid,'')<>'';
 
 -- name: DispNeedsSweep :one
--- Open delegations, open stall questions (causes matching the pattern) or unfinished executions.
+-- Open delegations, open stall questions (causes matching the pattern), unfinished executions or a queued task nothing
+-- has started (one waiting for a worker role is rechecked on the next explicit pass).
 SELECT (EXISTS(SELECT 1 FROM execution WHERE delegation IS NOT NULL AND coalesce(delegation->>'continuationExecutionId','')='' AND coalesce(delegation->>'state','')<>'suppressed')
  OR EXISTS(SELECT 1 FROM question WHERE state IN ('open','answered') AND cause ~ @pattern::text)
- OR EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','running','waiting')))::boolean;
+ OR EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','running','waiting'))
+ OR EXISTS(SELECT 1 FROM task t WHERE t.state='queued' AND t.project_id IS NOT NULL AND t.tombstoned_at IS NULL AND t.accepted_at IS NULL
+  AND coalesce(t.wait_reason,'') NOT IN ('no worker role','worker start refused')
+  AND NOT EXISTS(SELECT 1 FROM execution e WHERE e.task_id=t.id AND e.kind NOT IN ('child_agent','tool_run'))
+  AND NOT EXISTS(SELECT 1 FROM session s WHERE s.task_id=t.id AND s.tombstoned_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM bot_task bt WHERE bt.task_id=t.id AND bt.link_kind='managed')
+  AND NOT EXISTS(SELECT 1 FROM task_dependency d JOIN task b ON b.id=d.depends_on_task_id WHERE d.task_id=t.id AND d.kind='blocks' AND b.state<>'completed')))::boolean;
 
 -- name: DispPipelinePending :one
 SELECT EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','waiting') AND kind='agent_run' AND host_id IS NULL AND data ? 'pipelineRunId')::boolean;
@@ -311,3 +318,21 @@ SELECT task_id FROM execution WHERE id=$1;
 SELECT host_id::text AS host_id, count(*)::int AS n FROM execution
 WHERE host_id IS NOT NULL AND kind IN ('agent_run','host_job') AND state IN ('preparing','running')
 GROUP BY 1;
+
+-- name: DispStartableTasks :many
+-- Queued tasks of a project that nothing has started: no primary execution, no session on the task, no open blocking
+-- dependency, not managed by a bot (its bot starts it) (fleet.md: the queue advances automatically). Held tasks are
+-- paused, so never listed.
+SELECT t.id, coalesce(t.code,'')::text AS code, t.project_id::text AS project_id, t.title,
+ coalesce(t.expected_outcome,'')::text AS expected_outcome, coalesce(t.directed_by,'')::text AS directed_by,
+ coalesce(t.wait_reason,'')::text AS wait_reason
+FROM task t
+WHERE t.state='queued' AND t.project_id IS NOT NULL AND t.tombstoned_at IS NULL AND t.accepted_at IS NULL
+ AND NOT EXISTS(SELECT 1 FROM execution e WHERE e.task_id=t.id AND e.kind NOT IN ('child_agent','tool_run'))
+ AND NOT EXISTS(SELECT 1 FROM session s WHERE s.task_id=t.id AND s.tombstoned_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM bot_task bt WHERE bt.task_id=t.id AND bt.link_kind='managed')
+ AND NOT EXISTS(SELECT 1 FROM task_dependency d JOIN task b ON b.id=d.depends_on_task_id WHERE d.task_id=t.id AND d.kind='blocks' AND b.state<>'completed')
+ORDER BY t.priority DESC, t.created_at;
+
+-- name: DispTaskSetWaitReason :exec
+UPDATE task SET wait_reason=sqlc.narg(wait_reason), updated_at=now() WHERE id= @id AND state='queued' AND wait_reason IS DISTINCT FROM sqlc.narg(wait_reason);
