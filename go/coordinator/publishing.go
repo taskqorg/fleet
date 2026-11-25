@@ -155,6 +155,13 @@ func hostCapsHaveRepo(caps []string, ref contract.RepoRef) bool {
 	if contract.HasCapability(caps, contract.ForgeCapability(ref.Host+"/"+ref.Slug)) {
 		return true
 	}
+	if ref.Provider == "gitlab" {
+		for _, g := range contract.SlugGroupGrants(ref.Slug) {
+			if contract.HasCapability(caps, contract.PublishingHostCapability(ref.Provider, ref.Host, g)) {
+				return true
+			}
+		}
+	}
 	return false
 }
 

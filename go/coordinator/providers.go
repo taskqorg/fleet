@@ -1334,8 +1334,8 @@ const providersJSON = `
   }
  },
  "gitlab": {
-  "baseUrl": "https://gitlab.com",
-  "instructions": "GitLab read-only provider (gitlab.com or self-hosted instance configured on the connection). Find a project by name or group path with projects_search; its path_with_namespace is the project_id of the other tools and ssh_url_to_repo is the remote for a Fleet project.",
+  "baseUrl": "https://gitlab.ufobe.com",
+  "instructions": "GitLab of gitlab.ufobe.com as the connection's account (fleet-gradus: Developer on the group gradus): merge requests, pipelines, job logs and retries. Find a project by name or group path with projects_search; its path_with_namespace is the project_id of the other tools and ssh_url_to_repo is the remote for a Fleet project.",
   "tools": {
    "projects_search": {
     "method": "GET",
@@ -1346,6 +1346,57 @@ const providersJSON = `
     "description": "Projects the connection's account is a member of whose name or group path matches search (for example dam or gradus/dam), last active first, up to 50: id, path_with_namespace, default_branch, ssh_url_to_repo, http_url_to_repo, web_url.",
     "inputSchema": {"type": "object", "required": ["search"], "properties": {"search": {"type": "string", "description": "a project name or group/project path"}}},
     "pathPatterns": {"search": "^[^\\x00-\\x1f]{1,200}$"}
+   },
+   "pipelines_recent": {
+    "method": "GET",
+    "path": "/api/v4/projects/{project_id}/pipelines?ref={ref}&per_page=20",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/json"},
+    "description": "Latest pipelines of a branch of a GitLab project.",
+    "inputSchema": {"type": "object", "required": ["project_id", "ref"], "properties": {"project_id": {"type": "string"}, "ref": {"type": "string"}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$", "ref": "^[A-Za-z0-9_./-]{1,200}$"}
+   },
+   "pipeline_jobs": {
+    "method": "GET",
+    "path": "/api/v4/projects/{project_id}/pipelines/{pipeline_id}/jobs?per_page=100",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/json"},
+    "description": "Jobs of a pipeline: stage, status, failure reason.",
+    "inputSchema": {"type": "object", "required": ["project_id", "pipeline_id"], "properties": {"project_id": {"type": "string"}, "pipeline_id": {"type": "string"}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$", "pipeline_id": "^[0-9]{1,12}$"}
+   },
+   "job_log": {
+    "method": "GET",
+    "path": "/api/v4/projects/{project_id}/jobs/{job_id}/trace",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "text/plain"},
+    "textReply": true,
+    "description": "Log of a CI job as text.",
+    "inputSchema": {"type": "object", "required": ["project_id", "job_id"], "properties": {"project_id": {"type": "string"}, "job_id": {"type": "string"}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$", "job_id": "^[0-9]{1,12}$"}
+   },
+   "pipeline_retry": {
+    "method": "POST",
+    "path": "/api/v4/projects/{project_id}/pipelines/{pipeline_id}/retry",
+    "unit": "requests",
+    "idempotent": false,
+    "headers": {"Accept": "application/json"},
+    "description": "Retry the failed and canceled jobs of a pipeline.",
+    "inputSchema": {"type": "object", "required": ["project_id", "pipeline_id"], "properties": {"project_id": {"type": "string"}, "pipeline_id": {"type": "string"}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$", "pipeline_id": "^[0-9]{1,12}$"}
+   },
+   "job_retry": {
+    "method": "POST",
+    "path": "/api/v4/projects/{project_id}/jobs/{job_id}/retry",
+    "unit": "requests",
+    "idempotent": false,
+    "headers": {"Accept": "application/json"},
+    "description": "Retry one CI job.",
+    "inputSchema": {"type": "object", "required": ["project_id", "job_id"], "properties": {"project_id": {"type": "string"}, "job_id": {"type": "string"}}},
+    "pathPatterns": {"project_id": "^[A-Za-z0-9_.%-]{1,200}$", "job_id": "^[0-9]{1,12}$"}
    },
    "mrs_open": {
     "method": "GET",

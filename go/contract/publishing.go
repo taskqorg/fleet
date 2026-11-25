@@ -3,6 +3,7 @@ package contract
 import (
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -162,12 +163,26 @@ func ParseForgeRepoEntry(entry string) (host, slug string, ok bool) {
 	if len(parts) >= 3 && strings.Contains(parts[0], ".") {
 		h, hok := validForgeHost(parts[0])
 		s := strings.Join(parts[1:], "/")
+		// "<host>/<group>/*" grants every project under the group, today's and future ones.
+		if g, wild := strings.CutSuffix(s, "/*"); wild && hok && !strings.Contains(g, "*") && validRepoSlug(g+"/x", "gitlab") {
+			return h, s, true
+		}
 		if !hok || !validRepoSlug(s, "gitlab") {
 			return "", "", false
 		}
 		return h, s, true
 	}
 	return "", "", false
+}
+
+// SlugGroupGrants: the group grants ("<group>/*", for each enclosing group and subgroup) that cover a GitLab slug.
+func SlugGroupGrants(slug string) []string {
+	parts := strings.Split(slug, "/")
+	out := make([]string, 0, len(parts))
+	for i := 1; i < len(parts); i++ {
+		out = append(out, strings.Join(parts[:i], "/")+"/*")
+	}
+	return out
 }
 
 // ForgeRepoGranted reports whether repositoriesEnv grants publishing to ref.
@@ -180,7 +195,7 @@ func ForgeRepoGranted(repositoriesEnv string, ref RepoRef) bool {
 		if !ok {
 			continue
 		}
-		if h != "" && strings.EqualFold(h, ref.Host) && s == ref.Slug {
+		if h != "" && strings.EqualFold(h, ref.Host) && (s == ref.Slug || slices.Contains(SlugGroupGrants(ref.Slug), s)) {
 			return true
 		}
 		if h == "" && s == ref.Slug {
