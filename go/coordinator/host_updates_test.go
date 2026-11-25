@@ -86,8 +86,12 @@ func TestComponentHostCell(t *testing.T) {
 	if c := componentHost(harnessrelease.CLIs, "codex", true, "0.169.0", h, pinsRegression{}); c.State != contract.ComponentHostStateBehind {
 		t.Fatalf("pending another release is not installing this pin: %+v", c)
 	}
-	if b := componentsBrought(map[string]string{"cli/codex": "2", "tool/node": "1", "cli/uv": "1"}, map[string]string{"cli/codex": "1"}); len(b) != 2 || b["tool/node"] != "" {
-		t.Fatalf("brought %v: codex changed, uv is new to the CLIs, tools are unknown to a CLI-only base", b)
+	next := map[string]string{"cli/codex": "2", "tool/node": "1", "cli/uv": "1"}
+	if b := componentsBrought(next, map[string]string{"cli/codex": "1"}, false); len(b) != 2 || b["tool/node"] != "" {
+		t.Fatalf("brought %v: codex changed, uv is new to the pinned CLIs, tools are unknown to the base", b)
+	}
+	if b := componentsBrought(next, map[string]string{"cli/codex": "1"}, true); len(b) != 1 || b["cli/codex"] != "2" {
+		t.Fatalf("brought %v: a reported base compares only what it names", b)
 	}
 	// Installing: a pending update to the release that pins the version (this coordinator's).
 	h.Update = []byte(`{"version":"` + ownRelease().Version + `","state":"pending","at":"2026-11-26T10:00:00Z"}`)

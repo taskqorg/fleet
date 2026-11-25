@@ -29,6 +29,7 @@ func init() {
 type hostUpdatePayload struct {
 	Components map[string]string `json:"components,omitempty"` // kind/name to version, as the release pins it
 	Brought    map[string]string `json:"brought,omitempty"`    // those that differ from the host's last switched release
+	Reported   bool              `json:"reported,omitempty"`   // components from the host's CLI report: partial
 }
 
 // releaseComponents: the component versions (cli/codex, tool/node) this coordinator's release pins for a target, enabled
@@ -53,10 +54,10 @@ func releaseComponents(target string) map[string]string {
 // hostUpdateComponents: what the reported release pins for the host. The coordinator knows its own release's pins (the
 // release hosts install after PDS18); a host running the reported release states its CLI pins itself (harnessVersions
 // expected). Otherwise unknown (nil).
-func hostUpdateComponents(r contract.UpdateResult, platform string, running *string, harnesses []contract.HarnessVersion) map[string]string {
+func hostUpdateComponents(r contract.UpdateResult, platform string, running *string, harnesses []contract.HarnessVersion) (components map[string]string, reported bool) {
 	if r.Version != "" && r.Version == ownRelease().Version {
 		if c := releaseComponents(pinsTargetOf(platform)); len(c) > 0 {
-			return c
+			return c, false
 		}
 	}
 	if running != nil && *running == r.Version && len(harnesses) > 0 {
@@ -66,21 +67,23 @@ func hostUpdateComponents(r contract.UpdateResult, platform string, running *str
 				out["cli/"+h.Harness] = h.Expected
 			}
 		}
-		return out
+		return out, true
 	}
-	return nil
+	return nil, false
 }
 
-// componentsBrought: the components whose version differs from base, among the kinds base knows (a row read from the
-// host's CLI report knows no tools); a component new to a known kind is brought. No base: nothing is known to have changed.
-func componentsBrought(components, base map[string]string) map[string]string {
+// componentsBrought: the components whose version differs from base. A base the release pinned is whole for its kinds,
+// so a component new to one of them is brought; a base from the host's CLI report (partial) compares only the
+// components it names. No base: nothing is known to have changed.
+func componentsBrought(components, base map[string]string, partial bool) map[string]string {
 	kinds := map[string]bool{}
 	for c := range base {
 		kinds[strings.SplitN(c, "/", 2)[0]] = true
 	}
 	out := map[string]string{}
 	for c, v := range components {
-		if kinds[strings.SplitN(c, "/", 2)[0]] && base[c] != v {
+		b, ok := base[c]
+		if ok && b != v || !ok && !partial && kinds[strings.SplitN(c, "/", 2)[0]] {
 			out[c] = v
 		}
 	}
@@ -109,18 +112,20 @@ func hostUpdateRecord(q *Request, host, holder, platform string, running *string
 	}
 	// The base is the newest switch whose components are known: a switch with unknown components says nothing changed.
 	var base map[string]string
+	partial := false
 	if b, err := q.db().HostUpdateLastPins(q.ctx(), host); err == nil {
 		var p hostUpdatePayload
 		if err := lenientDecode(b, &p); err != nil {
 			return err
 		}
-		base = p.Components
+		base, partial = p.Components, p.Reported
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	p := hostUpdatePayload{Components: hostUpdateComponents(r, platform, running, harnesses)}
+	var p hostUpdatePayload
+	p.Components, p.Reported = hostUpdateComponents(r, platform, running, harnesses)
 	if len(p.Components) > 0 {
-		p.Brought = componentsBrought(p.Components, base)
+		p.Brought = componentsBrought(p.Components, base, partial)
 	}
 	at, err := time.Parse(time.RFC3339, r.At)
 	if err != nil {
