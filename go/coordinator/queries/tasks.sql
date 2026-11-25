@@ -401,3 +401,20 @@ SELECT coalesce(legacy_id,id)::text AS id,name
 FROM artifact
 WHERE task_id=$1 AND state='stored' AND role='original' AND name NOT LIKE 'mcp-lifecycle-%' AND tombstoned_at IS NULL
 ORDER BY seq;
+
+-- name: TaskHistory :many
+-- Task history (fleet-conversations.md#entities): the conversations that created the task, run on it, or are a bot's
+-- conversation for subject task:<id>, oldest first; host command sessions are not conversations.
+SELECT s.id, coalesce(s.code, '')::text AS code,
+ coalesce(nullif(s.title, ''), nullif(left(split_part(btrim((SELECT m.text FROM message m WHERE m.session_id = s.id ORDER BY m.seq LIMIT 1)), E'\n', 1), 120), ''), 'Conversation')::text AS title,
+ coalesce(nullif(s.payload->>'role', ''), s.payload->'agentConfig'->>'id', '')::text AS role,
+ coalesce(s.bot_id, '')::text AS bot_id,
+ coalesce((SELECT r.name FROM bot_revision r WHERE r.bot_id = s.bot_id ORDER BY r.revision DESC LIMIT 1), '')::text AS bot_name,
+ coalesce(ss.state, 'idle')::text AS state, coalesce(ss.executions, 0)::bigint AS turns, ss.activity_at,
+ (s.id = t.created_by_session_id)::boolean AS created_task
+FROM task t
+JOIN session s ON s.id = t.created_by_session_id OR s.task_id = t.id OR (s.bot_id IS NOT NULL AND s.subject = 'task:' || t.id)
+ OR s.id IN (SELECT e.session_id FROM execution e WHERE e.task_id = t.id AND e.session_id IS NOT NULL)
+LEFT JOIN session_summary ss ON ss.session_id = s.id
+WHERE t.id = $1 AND s.tombstoned_at IS NULL AND coalesce(s.actor, '') <> 'program-worker'
+ORDER BY s.seq;

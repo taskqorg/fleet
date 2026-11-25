@@ -842,6 +842,68 @@ func (q *Queries) TaskHasStartedExecution(ctx context.Context, taskID *string) (
 	return column_1, err
 }
 
+const taskHistory = `-- name: TaskHistory :many
+SELECT s.id, coalesce(s.code, '')::text AS code,
+ coalesce(nullif(s.title, ''), nullif(left(split_part(btrim((SELECT m.text FROM message m WHERE m.session_id = s.id ORDER BY m.seq LIMIT 1)), E'\n', 1), 120), ''), 'Conversation')::text AS title,
+ coalesce(nullif(s.payload->>'role', ''), s.payload->'agentConfig'->>'id', '')::text AS role,
+ coalesce(s.bot_id, '')::text AS bot_id,
+ coalesce((SELECT r.name FROM bot_revision r WHERE r.bot_id = s.bot_id ORDER BY r.revision DESC LIMIT 1), '')::text AS bot_name,
+ coalesce(ss.state, 'idle')::text AS state, coalesce(ss.executions, 0)::bigint AS turns, ss.activity_at,
+ (s.id = t.created_by_session_id)::boolean AS created_task
+FROM task t
+JOIN session s ON s.id = t.created_by_session_id OR s.task_id = t.id OR (s.bot_id IS NOT NULL AND s.subject = 'task:' || t.id)
+ OR s.id IN (SELECT e.session_id FROM execution e WHERE e.task_id = t.id AND e.session_id IS NOT NULL)
+LEFT JOIN session_summary ss ON ss.session_id = s.id
+WHERE t.id = $1 AND s.tombstoned_at IS NULL AND coalesce(s.actor, '') <> 'program-worker'
+ORDER BY s.seq
+`
+
+type TaskHistoryRow struct {
+	ID          string
+	Code        string
+	Title       string
+	Role        string
+	BotID       string
+	BotName     string
+	State       string
+	Turns       int64
+	ActivityAt  *time.Time
+	CreatedTask bool
+}
+
+// Task history (fleet-conversations.md#entities): the conversations that created the task, run on it, or are a bot's
+// conversation for subject task:<id>, oldest first; host command sessions are not conversations.
+func (q *Queries) TaskHistory(ctx context.Context, id string) ([]TaskHistoryRow, error) {
+	rows, err := q.db.Query(ctx, taskHistory, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskHistoryRow
+	for rows.Next() {
+		var i TaskHistoryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Title,
+			&i.Role,
+			&i.BotID,
+			&i.BotName,
+			&i.State,
+			&i.Turns,
+			&i.ActivityAt,
+			&i.CreatedTask,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const taskIdle = `-- name: TaskIdle :one
 SELECT t.id,t.title,t.project_id,coalesce(l.id,'')::text AS latest_id,coalesce(l.state::text,'')::text AS latest,l.session_id AS latest_session
 FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.session_id FROM execution x

@@ -1357,6 +1357,21 @@ func taskDetail(q *Request, id string) (contract.TaskDetail, error) {
 	if err != nil {
 		return none, err
 	}
+	hist, err := q.db().TaskHistory(q.ctx(), id)
+	if err != nil {
+		return none, err
+	}
+	d.History = make([]contract.TaskConversation, 0, len(hist))
+	for _, h := range hist {
+		c := contract.TaskConversation{SessionId: h.ID, Code: h.Code, Title: h.Title, Role: h.Role, BotId: h.BotID, State: h.State, Turns: h.Turns, CreatedTask: h.CreatedTask}
+		if h.BotName != "" {
+			c.BotName = &h.BotName
+		}
+		if h.ActivityAt != nil {
+			c.ActivityAt = ptr(h.ActivityAt.UnixMilli())
+		}
+		d.History = append(d.History, c)
+	}
 	if bl, err := q.db().BotTaskGetByTask(q.ctx(), id); err == nil {
 		link := botTaskLinkToContract(bl.BotID, bl.BotName, bl.TaskID, bl.ProjectID, bl.BotRunID, bl.SessionID, bl.ExecutionID, bl.LinkKind, bl.CreatedBy, bl.CreatedAt)
 		d.BotLink = &link
