@@ -594,6 +594,7 @@ func messagePut(q *Request, m *agentMessage) error {
 		ID:          m.ID,
 		SessionID:   m.SessionID,
 		ExecutionID: strPtr(m.ExecutionID),
+		Thread:      m.Thread,
 		ProjectID:   strPtr(m.ProjectID),
 		RequestID:   strPtr(m.RequestID),
 		Text:        &m.Text,

@@ -83,8 +83,8 @@ WHERE session_id = @session_id
 ORDER BY seq;
 
 -- name: MessagePut :exec
-INSERT INTO message(id, session_id, execution_id, project_id, request_id, text, sent_by, source, payload)
-VALUES (@id, @session_id, sqlc.narg(execution_id), sqlc.narg(project_id), sqlc.narg(request_id), sqlc.narg(text), sqlc.narg(sent_by), sqlc.narg(source), @payload)
-ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(),
+INSERT INTO message(id, session_id, execution_id, project_id, request_id, text, sent_by, source, payload, thread)
+VALUES (@id, @session_id, sqlc.narg(execution_id), sqlc.narg(project_id), sqlc.narg(request_id), sqlc.narg(text), sqlc.narg(sent_by), sqlc.narg(source), @payload, @thread)
+ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=now(), thread=excluded.thread,
  session_id=excluded.session_id, execution_id=excluded.execution_id, project_id=excluded.project_id,
  request_id=excluded.request_id, text=excluded.text, sent_by=excluded.sent_by, source=excluded.source;
