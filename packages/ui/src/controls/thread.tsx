@@ -14,7 +14,7 @@ import { Icon, Button, StateBadge, StageChip, Num, CostFigures, Ago, AgeChip, Ha
 import { EntityCode, linkCodes } from './overlays.tsx';
 import { TabBar } from './tables.tsx';
 import { Choice } from './forms.tsx';
-import { ToolLine } from './tool-line.tsx';
+import { ToolLine, type ToolCallIO } from './tool-line.tsx';
 import { QuestionCard } from './question-card.tsx';
 import { keyConnection } from '../answer.ts';
 import { foldBlocks, type FoldedRow } from './tool-fold.ts';
@@ -844,6 +844,7 @@ export function Thread(p: {
   onTextRange?: (anchor: ThreadTextPoint, focus: ThreadTextPoint) => void;
   onRowClick?: (key: string, shift: boolean) => void; showSession?: boolean; onOpenResult?: (id: string) => void;
   /** The bytes URL of a result, for message image thumbnails. */ resultSrc?: (id: string) => string;
+  /** Loads a tool call's input and output (tool_output) for a folded tool line that carries summaries. */ loadToolCall?: (callId: string) => Promise<ToolCallIO>;
   handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
   onStart?: () => void; onEnd?: () => void; onStop?: (executionId: string) => void; stopReason?: string;
   onAnswer?: (questionId: string, answer: string) => void; onCopyFail?: (e: unknown) => void;
@@ -936,7 +937,7 @@ export function Thread(p: {
   };
   const quietRow = (r: FoldedRow): JSX.Element => {
     switch (r.kind) {
-      case 'tools': return <ToolLine words={r.words} calls={r.calls} state={r.state} secs={r.secs} startedAt={r.startedAt} open={open().has(r.key) !== (r.state === 'failed')} onToggle={() => toggle(r.key)} />;
+      case 'tools': return <ToolLine words={r.words} calls={r.calls} state={r.state} secs={r.secs} startedAt={r.startedAt} open={open().has(r.key) !== (r.state === 'failed')} onToggle={() => toggle(r.key)} loadCall={p.loadToolCall} />;
       case 'question': {
         const answer = r.answer === undefined || typeof r.answer === 'string' ? r.answer : keyConnection(r.options) ? 'key given' : JSON.stringify(r.answer);
         return <div class="th-row th-q" data-ui="thread-row"><QuestionCard question={r.text} choices={[]} answered={{ answer: answer ?? r.state, at: r.answeredAt ?? r.askedAt ?? p.now }} /></div>;

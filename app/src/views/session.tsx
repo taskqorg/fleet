@@ -511,6 +511,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
                       showSession={'task' in key()}
                       onOpenResult={r => go('/results/' + encodeURIComponent(r))}
                       resultSrc={r => '/api/results/' + encodeURIComponent(r)}
+                      loadToolCall={callId => op('tool_output', { callId }, { signal: alive })}
                       handle={handle}
                       onStart={thread.older}
                       onEnd={thread.newer}

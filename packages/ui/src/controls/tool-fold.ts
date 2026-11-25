@@ -115,11 +115,13 @@ export function toolWords(names: string[]): string {
 function callsOf(tools: Of<'tool'>[]): ToolCall[] {
   const out: ToolCall[] = [];
   for (const t of tools) {
-    const name = toolName(t.name), target = callTarget(t.input), failed = FAILED.includes(t.state);
+    // The server's summary (toolKind, target, errorLine, callId) wins; a full block (input present) is summarised here.
+    const name = toolName(t.name), target = t.target ?? callTarget(t.input), failed = FAILED.includes(t.state);
     const secs = t.startedAt != null && t.endedAt != null ? Math.max(0, (t.endedAt - t.startedAt) / 1000) : 0;
     const prev = out.at(-1);
     if (prev && prev.name === name && prev.target === target && !!prev.failed === failed) { prev.n = (prev.n ?? 1) + 1; prev.secs += secs; continue; }
-    out.push({ name, kind: toolKind(t.name), target, error: failed ? errorOf(t) || undefined : undefined, secs, failed, input: t.input, output: t.output, running: RUNNING.includes(t.state) });
+    out.push({ name, kind: t.toolKind ?? toolKind(t.name), target, error: failed ? t.errorLine || errorOf(t) || undefined : undefined, secs, failed,
+      input: t.input, output: t.output, callId: t.callId, running: RUNNING.includes(t.state) });
   }
   return out;
 }
