@@ -811,7 +811,7 @@ const providersJSON = `
     "unit": "tokens",
     "idempotent": false,
     "usageField": "usage.total_tokens",
-    "description": "Create a Gemini interaction (Interactions API). Body {model | agent, input, response_format?, generation_config?, agent_config?, system_instruction?, tools?, previous_interaction_id?, background?, store?}. With background true the reply is {id, status: in_progress}; read it with interaction_get. Video (gemini-omni-1.2-flash) and agents (deep-research-preview-04-2026) should run in the background.",
+    "description": "Create a Gemini interaction (Interactions API). Body {model | agent, input, response_format?, generation_config?, agent_config?, system_instruction?, tools?, previous_interaction_id?, background?, store?}. With background true the reply is {id, status: in_progress}; read it with interaction_get. Video (gemini-omni-1.2-flash) and agents (deep-research-preview-04-2026) should run in the background. A call without background is charged here; reading it again with interaction_get charges it again, so read only background interactions. A finished video is base64 in the reply, which is capped at 16 MiB: keep clips short (720p, up to about 8 s).",
     "inputSchema": {
      "type": "object",
      "required": [

@@ -14,7 +14,7 @@ func TestGeminiInteractionPoll(t *testing.T) {
 	}{
 		{`{"object":"interaction","id":"v1_a","status":"in_progress"}`, "running", ""},
 		{`{"object":"interaction","id":"v1_a","status":"requires_action"}`, "running", ""},
-		{`{"object":"interaction","id":"v1_a","status":"completed","steps":[]}`, "succeeded", ""},
+		{`{"object":"interaction","id":"v1_a","status":"completed","steps":[],"usage":{"total_tokens":1200}}`, "succeeded", ""},
 		{`{"object":"interaction","id":"v1_a","status":"cancelled"}`, "failed", `"interaction-cancelled"`},
 		{`{"object":"interaction","id":"v1_a","status":"failed","error":{"code":400,"message":"blocked"}}`, "failed", `{"code":400,"message":"blocked"}`},
 	}
@@ -23,8 +23,8 @@ func TestGeminiInteractionPoll(t *testing.T) {
 		if got == nil || got.State != c.state || string(got.Error) != c.problem {
 			t.Fatalf("%s: got %+v", c.reply, got)
 		}
-		if c.state == "succeeded" && string(got.Output) != c.reply {
-			t.Fatalf("output is not the reply: %s", got.Output)
+		if c.state == "succeeded" && (string(got.Output) != c.reply || string(got.Usage) != `{"unit":"tokens","amount":1200}`) {
+			t.Fatalf("output or usage: %s %s", got.Output, got.Usage)
 		}
 	}
 	for _, other := range []string{`{"status":"SUCCEEDED"}`, `[]`, `{"object":"interaction"}`} {

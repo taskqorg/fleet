@@ -640,6 +640,9 @@ type geminiInteraction struct {
 	Object string          `json:"object"`
 	Status string          `json:"status"`
 	Error  json.RawMessage `json:"error"`
+	Usage  struct {
+		TotalTokens *float64 `json:"total_tokens"`
+	} `json:"usage"`
 }
 
 // geminiInteractionPoll maps a Gemini interaction to a job poll's answer (the whole reply is the output); nil when the
@@ -664,7 +667,11 @@ func geminiInteractionPoll(raw json.RawMessage) *pipelinePoll {
 			problem = g.Error
 		}
 	}
-	return &pipelinePoll{State: state, Output: raw, Error: problem}
+	var usage json.RawMessage
+	if state == "succeeded" && g.Usage.TotalTokens != nil {
+		usage = jsonBytes(pipelineUnits{Unit: "tokens", Amount: *g.Usage.TotalTokens})
+	}
+	return &pipelinePoll{State: state, Output: raw, Usage: usage, Error: problem}
 }
 
 // meshyOutput: a Meshy job's output as the step keeps it.
