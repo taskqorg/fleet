@@ -603,7 +603,9 @@ CREATE POLICY person_scope ON telegram_person FOR ALL TO public USING (((current
 -- telegram_room
 ALTER TABLE telegram_room ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS project_scope ON telegram_room;
-CREATE POLICY project_scope ON telegram_room FOR ALL TO public USING (((current_setting('fleet.project_ids'::text, true) = '*'::text) OR ((project_hint <> ''::text) AND fleet_visible(project_hint))));
+CREATE POLICY project_scope ON telegram_room FOR ALL TO public USING (((current_setting('fleet.project_ids'::text, true) = '*'::text) OR ((project_hint <> ''::text) AND fleet_visible(project_hint)) OR (EXISTS ( SELECT 1
+   FROM telegram_work w
+  WHERE (w.room_id = telegram_room.id)))));
 
 -- telegram_turn
 ALTER TABLE telegram_turn ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
