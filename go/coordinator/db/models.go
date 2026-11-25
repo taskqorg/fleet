@@ -1203,6 +1203,18 @@ type LabWork struct {
 	LastError     *string
 }
 
+type LimitReadingLatest struct {
+	AccountID string
+	Period    string
+	Scope     string
+	ProjectID *string
+	SessionID *string
+	HostID    *string
+	EventSeq  int64
+	UpdatedAt time.Time
+	Payload   []byte
+}
+
 type ManagedAccount struct {
 	ID           string
 	Name         *string

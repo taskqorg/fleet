@@ -320,6 +320,15 @@ CREATE POLICY visible ON lab_trial FOR SELECT TO public USING ((EXISTS ( SELECT 
    FROM execution e
   WHERE (e.id = lab_trial.execution_id))));
 
+-- limit_reading_latest
+ALTER TABLE limit_reading_latest ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS directed_session ON limit_reading_latest;
+CREATE POLICY directed_session ON limit_reading_latest FOR ALL TO public USING (((project_id IS NULL) AND fleet_own_projectless_session(session_id)));
+DROP POLICY IF EXISTS live ON limit_reading_latest;
+CREATE POLICY live ON limit_reading_latest AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR (project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))));
+DROP POLICY IF EXISTS project_scope ON limit_reading_latest;
+CREATE POLICY project_scope ON limit_reading_latest FOR ALL TO public USING (fleet_visible(project_id));
+
 -- managed_account
 ALTER TABLE managed_account ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON managed_account;

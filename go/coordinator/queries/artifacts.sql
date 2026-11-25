@@ -226,12 +226,11 @@ SELECT coalesce(payload->'payload','{}'::jsonb)::jsonb AS payload FROM command
 WHERE execution_id= @execution_id AND host_id= @host_id AND kind IN ('start','script') ORDER BY seq;
 
 -- name: ArtLimitReadings :many
--- The latest limit reading per subscription and period.
-SELECT DISTINCT ON (x.account_id, r.value->>'period') x.account_id::text AS account_id, x.host_id, r.value::jsonb AS reading, d.updated_at
-FROM event d JOIN execution x ON x.id=d.execution_id
- CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.payload->'data'->'readings','[]'::jsonb)) AS r(value)
-WHERE NOT d.delta AND d.type='limit_reading' AND x.account_id IS NOT NULL
-ORDER BY x.account_id, r.value->>'period', d.seq DESC;
+-- The latest visible limit reading per subscription and period, at any age (limit_reading_latest holds the latest per
+-- visibility scope; row-level security leaves the caller's).
+SELECT DISTINCT ON (l.account_id, l.period) l.account_id::text AS account_id, l.host_id, l.payload::jsonb AS reading, l.updated_at
+FROM limit_reading_latest l
+ORDER BY l.account_id, l.period, l.event_seq DESC;
 
 -- name: ArtStoredAll :many
 -- Every stored artifact, for the placement pass (placement.go).
