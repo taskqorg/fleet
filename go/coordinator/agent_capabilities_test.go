@@ -20,6 +20,7 @@ func TestCapabilityInstruction(t *testing.T) {
 		"API connections of this turn: youtrack (issues_search).",
 		"Git connections (deploy keys) on hosts: owner-mac: cs-gitlab, pipe-read; pds18-native: none.",
 		"says nothing about GitLab",
+		"Name a file as `path:line` relative to the repository root",
 		"names what you tried",
 	} {
 		if !strings.Contains(got, want) {
