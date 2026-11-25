@@ -862,11 +862,14 @@ func executionStatus(q *Request, r *contract.ExecutionStatusRequest) (contract.E
 		}
 		rep.Stop = &stop
 	}
-	resume, err := sessionResume(q, deref(rep.SessionId))
-	if err != nil {
-		return rep, err
+	rep.Resume = map[string]json.RawMessage{}
+	if sid := deref(rep.SessionId); sid != "" { // a host job (readiness) has no session to resume
+		resume, err := sessionResume(q, sid)
+		if err != nil {
+			return rep, err
+		}
+		rep.Resume = recOf(resume)
 	}
-	rep.Resume = recOf(resume)
 	for _, d := range readiness {
 		r, err := sortedJSON(d)
 		if err != nil {
