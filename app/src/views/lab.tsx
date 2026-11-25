@@ -37,15 +37,15 @@ const decodeSafe = (s: string): string => { try { return decodeURIComponent(s); 
 const TERMINAL_STATES = new Set(['done', 'stopped', 'succeeded', 'failed', 'cancelled']);
 
 /**
- * A trial or strategy problem in words (formats.md, causes): a stored `code` or `code: detail` reads as the cause's first
+ * A trial or strategy problem in words (formats.md, causes): a stored `code` or `code: detail` reads as its cause's first
  * sentence and the detail; an object reads its message, else its code the same way. The code itself is never the text.
  */
 const problemText = (p: unknown): string | undefined => {
   if (p == null) return undefined;
   const coded = (v: string) => {
-    const i = v.indexOf(': '), code = (i < 0 ? v : v.slice(0, i)).trim(), detail = i < 0 ? '' : v.slice(i + 2).trim();
-    if (!code) return undefined;
-    const head = cause(code).text.split('. ')[0].replace(/\.$/, '');
+    const t = v.trim(), i = t.indexOf(': '), detail = i < 0 ? '' : t.slice(i + 2).trim();
+    if (!t) return undefined;
+    const head = cause(t).text.split('. ')[0].replace(/\.$/, ''); // the whole string: some matches span ': '
     return detail ? `${head}: ${detail}` : head;
   };
   if (typeof p === 'string') return coded(p);

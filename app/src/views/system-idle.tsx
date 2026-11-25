@@ -31,7 +31,7 @@ export type Problem = {
 };
 
 /** First sentence of a plain cause: the row title; the rest is the fix. */
-const firstSentence = (t: string) => { const i = t.indexOf('. '); return i < 0 ? [t.replace(/\.$/, ''), ''] : [t.slice(0, i), t.slice(i + 2)]; };
+export const firstSentence = (t: string) => { const i = t.indexOf('. '); return i < 0 ? [t.replace(/\.$/, ''), ''] : [t.slice(0, i), t.slice(i + 2)]; };
 
 /** Failed runs of the last hour by host and cause (OR-58): one problem per pair, with how many and the newest. */
 export function hostFailures(runs: readonly RunnerRun[], now: number): Map<string, { cause: string; text: string; n: number; at: number }[]> {

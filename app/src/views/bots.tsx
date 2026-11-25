@@ -26,6 +26,8 @@ import { BotAutomations } from './bot-automations.tsx';
 type Bot = Ops['bot_get']['reply']['bot'];
 type Settings = Bot['settings'];
 type BotRun = Ops['bot_runs']['reply']['runs'][number];
+/** A failed or cancelled run's cause in words (formats.md); a finished run that carries a problem did not fail. */
+const runCause = (r: BotRun) => r.state === 'failed' || r.state === 'cancelled' ? causeOf(r.failure, r.problem) : undefined;
 type BotTask = Ops['bot_tasks']['reply']['tasks'][number];
 
 const blank: Settings = { name: '', purpose: '', profileId: '', instructions: '', soul: '', scheduleTime: '', scheduleZone: '', wakeOnNeedsYou: false };
@@ -261,8 +263,8 @@ function BotOverviewTab(props: {
             {r => (
               <ProblemRow
                 severity={r.state === 'failed' || r.problem ? 'failure' : 'warning'}
-                title={causeOf(r.failure, r.problem)?.text ?? (r.observation === 'unconfirmed' ? 'Run outcome unconfirmed' : `Run ${r.state}`)}
-                code={causeOf(r.failure, r.problem)?.long}
+                title={runCause(r)?.text ?? (r.observation === 'unconfirmed' ? 'Run outcome unconfirmed' : `Run ${r.state}`)}
+                code={runCause(r)?.long}
                 facts={<>{wakeLabel(r.cause)} · <Ago t={ms(r.createdAt)!} /></>}
                 actions={r.sessionId ? [{ label: 'Open conversation', onClick: () => go('/conversations/' + encodeURIComponent(r.sessionId!)) }] : []}
               />
@@ -426,13 +428,13 @@ function BotRunsTable(props: { runs: BotRun[]; projectNames: Map<string, string>
               <div><strong>{wakeLabel(r.cause)}</strong></div>
               <Show when={r.automation}>{a => <div>{a().name} · revision {a().revision}</div>}</Show>
               <Show when={r.triggers.length > 0}>
-                <div class="muted">{r.triggers.map(tr => tr.summary || `${tr.kind}:${tr.id}`).join(', ')}</div>
+                <div class="muted">{r.triggers.map(tr => tr.summary || tr.kind.replace(/_/g, ' ')).join(', ')}</div>
               </Show>
             </td>
             <td>
-              <Show when={causeOf(r.failure, r.problem)} keyed>{c => <div><span class="badge t-danger" data-tip={c.long}>{c.text}</span></div>}</Show>
-              <Show when={!r.problem && r.reason}><span class="muted">{reasonLabel(r.reason)}</span></Show>
-              <Show when={!r.problem && !r.reason}><span class="muted">{props.projectNames.get(r.projectId) ?? 'Project not in view'}</span></Show>
+              <Show when={runCause(r)} keyed>{c => <div><span class="badge t-danger" data-tip={c.long}>{c.text}</span></div>}</Show>
+              <Show when={!runCause(r) && r.reason}><span class="muted">{reasonLabel(r.reason)}</span></Show>
+              <Show when={!runCause(r) && !r.reason}><span class="muted">{props.projectNames.get(r.projectId) ?? 'Project not in view'}</span></Show>
             </td>
             <td>
               <div class="row" style={{ gap: 'var(--space-1)', 'flex-wrap': 'wrap' }}>
