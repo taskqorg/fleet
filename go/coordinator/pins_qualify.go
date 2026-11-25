@@ -147,38 +147,33 @@ func pinsTrialOutcome(variants []string, runs []*labRun, scores []labScore) pins
 func pinsQualifyHead(ctx context.Context, a *App, pr ghPull, candidate pinsCandidate) (*pinsQualifyState, error) {
 	group := "pins:cli:" + pr.Head.SHA
 	var state *pinsQualifyState
-	err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
+	found := false
+	asOwner := func(q *Request) error {
 		owner := q.peopleSnapshot().person(ownerEmail(q))
 		if owner == nil {
 			return fmt.Errorf("pins qualification: no owner")
 		}
 		q.person = owner // the owner approved the procedure (2026-11-26); the experiment is requested in their name
-		exps, err := labExperimentsList(q, nil)
-		if err != nil {
+		return nil
+	}
+	// Read the experiment of this head; a GLOBAL write only when it must be created.
+	if err := a.store.Read(ctx, nil, func(q *Request) error {
+		if err := asOwner(q); err != nil {
 			return err
 		}
-		for _, e := range exps.Experiments {
-			if deref(e.LabGroup) != group {
-				continue
-			}
-			runs, err := expRuns(q, e.Id)
-			if err != nil {
-				return err
-			}
-			scores, err := scoresCurrent(q, e.Id)
-			if err != nil {
-				return err
-			}
-			labels := []string{}
-			for _, v := range e.Variants {
-				labels = append(labels, deref(v.Label))
-			}
-			st := pinsTrialOutcome(labels, expTrials(runs), scores)
-			if st.Done || e.State == "stopped" || e.State == "failed" {
-				st.Done = true
-				state = &st
-			}
-			return nil
+		st, ok, err := pinsExperimentState(q, group)
+		state, found = st, ok
+		return err
+	}); err != nil || found {
+		return state, err
+	}
+	err := a.store.Write(ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		if err := asOwner(q); err != nil {
+			return err
+		}
+		if st, ok, err := pinsExperimentState(q, group); err != nil || ok {
+			state = st
+			return err
 		}
 		accounts, err := accountRecs(q)
 		if err != nil {
@@ -209,6 +204,38 @@ func pinsQualifyHead(ctx context.Context, a *App, pr ghPull, candidate pinsCandi
 		return expLaunch(q, v.Id)
 	})
 	return state, err
+}
+
+// pinsExperimentState: the outcome of the experiment of group (nil while its trials run); ok when it exists.
+func pinsExperimentState(q *Request, group string) (*pinsQualifyState, bool, error) {
+	exps, err := labExperimentsList(q, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, e := range exps.Experiments {
+		if deref(e.LabGroup) != group {
+			continue
+		}
+		runs, err := expRuns(q, e.Id)
+		if err != nil {
+			return nil, true, err
+		}
+		scores, err := scoresCurrent(q, e.Id)
+		if err != nil {
+			return nil, true, err
+		}
+		labels := []string{}
+		for _, v := range e.Variants {
+			labels = append(labels, deref(v.Label))
+		}
+		st := pinsTrialOutcome(labels, expTrials(runs), scores)
+		if st.Done || e.State == "stopped" || e.State == "failed" {
+			st.Done = true
+			return &st, true, nil
+		}
+		return nil, true, nil
+	}
+	return nil, false, nil
 }
 
 // pinsExperimentRequest: the Lab experiment of one proposal head.
@@ -254,7 +281,7 @@ func pinsQualifyExampleID(q *Request) (string, error) {
 		return "", err
 	}
 	for _, e := range list.Examples {
-		if e.Name == pinsQualifyExample {
+		if strings.HasPrefix(e.Name, "examples/"+pinsQualifyExample) {
 			return e.ArtifactId, nil
 		}
 	}

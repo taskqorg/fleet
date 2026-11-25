@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // stageCandidate installs one proposed component (a pin under host qualification, docs/designs/fleet-host-updates.md
@@ -36,12 +37,20 @@ func (u *updater) stageCandidate(kindName, name, dir string, raw []byte) (string
 		return "", err
 	}
 	defer root.Close()
-	unlock, ok, err := lockReleases(root)
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", errors.New("another candidate is being staged")
+	// Trials on one host start together and stage the same candidate: wait for the one staging it, then reuse its cache.
+	var unlock func()
+	for deadline := time.Now().Add(10 * time.Minute); ; {
+		var ok bool
+		if unlock, ok, err = lockReleases(root); err != nil {
+			return "", err
+		}
+		if ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			return "", errors.New("another candidate is being staged")
+		}
+		time.Sleep(time.Second)
 	}
 	defer unlock()
 	p := &part{r: root, root: dir, stage: filepath.Join(dir, ".stage")}
