@@ -1438,7 +1438,57 @@ func artifactList(ctx context.Context, a *App, f listFilter) ([]contract.Artifac
 		x := artifactOf(r)
 		out = append(out, x.row())
 	}
-	return out, nil
+	return out, artifactWorkFacts(ctx, a, out)
+}
+
+// artifactWorkFacts: the page's work facts (controls/work-facts.md): the harness of the run that made each result and
+// its task's executions so far, two indexed lookups per page.
+func artifactWorkFacts(ctx context.Context, a *App, rows []contract.ArtifactRow) error {
+	var runs, tasks []string
+	for _, r := range rows {
+		if r.ExecutionId != nil {
+			runs = append(runs, *r.ExecutionId)
+		} else if r.TaskId != nil {
+			tasks = append(tasks, *r.TaskId)
+		}
+	}
+	type facts struct {
+		harness  *string
+		attempts int64
+	}
+	byRun, byTask := map[string]facts{}, map[string]int64{}
+	if len(runs) > 0 {
+		rs, err := connDB(ctx, a).ArtWorkFacts(ctx, runs)
+		if err != nil {
+			return err
+		}
+		for _, r := range rs {
+			byRun[r.ID] = facts{r.Harness, r.TaskAttempts}
+		}
+	}
+	if len(tasks) > 0 {
+		ts, err := connDB(ctx, a).ArtTaskAttempts(ctx, tasks)
+		if err != nil {
+			return err
+		}
+		for _, t := range ts {
+			byTask[t.TaskID] = t.TaskAttempts
+		}
+	}
+	for i := range rows {
+		r := &rows[i]
+		var n int64
+		if r.ExecutionId != nil {
+			f := byRun[*r.ExecutionId]
+			r.Harness, n = f.harness, f.attempts
+		} else if r.TaskId != nil {
+			n = byTask[*r.TaskId]
+		}
+		if r.TaskId != nil && n > 0 {
+			r.TaskAttempts = ptr(n)
+		}
+	}
+	return nil
 }
 
 // artifactCounts: rows per state matching f without states, before or limit.

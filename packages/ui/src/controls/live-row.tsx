@@ -18,7 +18,7 @@ export type LiveRowProps = (
 ) & {
   /** The dot and the right-hand fact in the danger tone. */
   trouble?: boolean;
-  /** Task, delivery and event rows: the shared work facts (WorkFacts) on the right, before the stage chip. */
+  /** Task, delivery and event rows: the shared work facts (WorkFacts) on the right, after the stage chip; the time is always the last fact (an event's age after its facts). */
   facts?: JSX.Element;
   stale?: boolean;
   /** Opens the item. Omit in wall mode. */
@@ -45,9 +45,9 @@ export function LiveRow(p: LiveRowProps) {
       </>
     );
     if (r.kind === 'task') return <><StateDot state={r.trouble ? 'failed' : r.state} bare /><span class="lr-main"><Show when={r.code}><span class="mono lr-code">{r.code}</span> </Show><span class="lr-text">{r.title}</span></span>{r.facts}</>;
-    if (r.kind === 'delivery') return <><i class="dot" aria-hidden="true" /><span class="lr-main"><span class="mono lr-code">{r.code}</span> <span class="lr-text">{r.title}</span></span>{r.facts}<StageChip stage={r.stage} /></>;
+    if (r.kind === 'delivery') return <><i class="dot" aria-hidden="true" /><span class="lr-main"><span class="mono lr-code">{r.code}</span> <span class="lr-text">{r.title}</span></span><StageChip stage={r.stage} />{r.facts}</>;
     if (r.kind === 'runner') return <><i class="dot" aria-hidden="true" /><span class="lr-main lr-text">{r.name}</span><span class="lr-fact mono">{r.fact}</span></>;
-    return <><span class="lr-age"><Ago t={r.at} /></span><StateDot state={r.trouble ? 'failed' : r.state} bare /><span class="lr-main lr-text">{r.text}</span>{r.facts}</>;
+    return <><StateDot state={r.trouble ? 'failed' : r.state} bare /><span class="lr-main lr-text">{r.text}</span>{r.facts}<span class="lr-age"><Ago t={r.at} /></span></>;
   };
   return (
     <li class={['lrow', `t-${tone()}`]} data-kind={p.kind} data-state={p.stale ? 'stale' : p.trouble ? 'trouble' : 'normal'} data-ui="live-row">

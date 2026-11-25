@@ -5,7 +5,9 @@
 -- name: RunnerRuns :many
 -- Runs of the last 24 hours and every active run, tool calls apart; active first. ponytail: newest 500.
 -- session_title: the session's stored or generated title, naming a run without a task.
+-- attempt: the run's place among its task's executions (execution_task_seq), 0 without a task (work facts' ×N).
 SELECT e.id,e.kind::text AS kind,e.state::text AS state,e.host_id,e.harness,e.task_id,t.title,s.title AS session_title,e.session_id,e.parent_execution_id,e.problem,
+ (SELECT count(*) FROM execution a WHERE e.task_id IS NOT NULL AND a.task_id=e.task_id AND a.seq<=e.seq)::bigint AS attempt,
  e.ended_at,e.last_seen_at,x.wall_ms,x.cpu_ms,x.peak_memory_bytes,
  (coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool',''))::text AS subject,x.connection_cost,
  x.billing_basis,coalesce(x.model,e.model) AS model,e.account_id,

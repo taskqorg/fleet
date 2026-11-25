@@ -1252,6 +1252,36 @@ func (q *Queries) ArtTaskArtifactRules(ctx context.Context, id string) ([]byte, 
 	return artifacts, err
 }
 
+const artTaskAttempts = `-- name: ArtTaskAttempts :many
+SELECT d.task_id,d.executions::bigint AS task_attempts FROM task_derived d WHERE d.task_id=ANY($1::text[])
+`
+
+type ArtTaskAttemptsRow struct {
+	TaskID       string
+	TaskAttempts int64
+}
+
+// Executions so far of the tasks of a results page whose rows have no run.
+func (q *Queries) ArtTaskAttempts(ctx context.Context, ids []string) ([]ArtTaskAttemptsRow, error) {
+	rows, err := q.db.Query(ctx, artTaskAttempts, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ArtTaskAttemptsRow
+	for rows.Next() {
+		var i ArtTaskAttemptsRow
+		if err := rows.Scan(&i.TaskID, &i.TaskAttempts); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const artTaskCodes = `-- name: ArtTaskCodes :many
 SELECT id,code FROM task WHERE id=ANY($1::text[])
 `
@@ -1322,4 +1352,36 @@ func (q *Queries) ArtVerifyQueued(ctx context.Context, arg ArtVerifyQueuedParams
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const artWorkFacts = `-- name: ArtWorkFacts :many
+SELECT e.id,e.harness,coalesce(d.executions,0)::bigint AS task_attempts FROM execution e LEFT JOIN task_derived d ON d.task_id=e.task_id
+WHERE e.id=ANY($1::text[])
+`
+
+type ArtWorkFactsRow struct {
+	ID           string
+	Harness      *string
+	TaskAttempts int64
+}
+
+// The work facts of a results page (controls/work-facts.md): per run, its harness and its task's executions so far.
+func (q *Queries) ArtWorkFacts(ctx context.Context, ids []string) ([]ArtWorkFactsRow, error) {
+	rows, err := q.db.Query(ctx, artWorkFacts, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ArtWorkFactsRow
+	for rows.Next() {
+		var i ArtWorkFactsRow
+		if err := rows.Scan(&i.ID, &i.Harness, &i.TaskAttempts); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

@@ -20,6 +20,7 @@ type runnerRow struct {
 	callerRun, model, accountID, billingBasis                                  *string
 	started, ended, seen, wallMs, cpuMs, peakMemoryBytes, tokens               *float64
 	subject                                                                    string
+	attempt                                                                    *int64 // the run's place among its task's executions (work facts)
 	connectionCost                                                             []byte
 	isAPIConn                                                                  bool
 	tokensInput, tokensOutput, tokensCacheRead, tokensCacheWrite               *int64
@@ -215,7 +216,11 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 	}
 	runs := make([]runnerRow, 0, len(rs))
 	for _, r := range rs {
-		runs = append(runs, runnerRow{id: r.ID, kind: r.Kind, state: r.State, hostID: r.HostID, harness: r.Harness, taskID: r.TaskID, title: r.Title, sessionTitle: nonEmpty(r.SessionTitle),
+		var attempt *int64
+		if r.Attempt > 0 {
+			attempt = ptr(r.Attempt)
+		}
+		runs = append(runs, runnerRow{attempt: attempt, id: r.ID, kind: r.Kind, state: r.State, hostID: r.HostID, harness: r.Harness, taskID: r.TaskID, title: r.Title, sessionTitle: nonEmpty(r.SessionTitle),
 			sessionID: r.SessionID, parentID: r.ParentExecutionID, problem: r.Problem, started: runnerMs(r.At), ended: runnerMs(r.EndedAt), seen: runnerMs(r.LastSeenAt),
 			wallMs: runnerF(r.WallMs), cpuMs: runnerF(r.CpuMs), peakMemoryBytes: runnerF(r.PeakMemoryBytes), tokens: runnerTokens(r.TokensInput, r.TokensOutput, r.TokensCacheRead, r.TokensCacheWrite),
 			subject: r.Subject, connectionCost: r.ConnectionCost, billingBasis: r.BillingBasis, model: r.Model, accountID: r.AccountID, isAPIConn: r.IsApiConn,
@@ -241,7 +246,7 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 		out.Runs = append(out.Runs, contract.RunnerRun{Id: r.id, Kind: r.kind, State: contract.ExecutionState(r.state), HostId: r.hostID, Harness: r.harness, Model: r.model,
 			TaskId: r.taskID, TaskTitle: r.title, SessionTitle: r.sessionTitle, SessionId: r.sessionID, Problem: r.problem, StartedAt: r.started, EndedAt: r.ended, LastSeenAt: r.seen,
 			WallMs: r.wallMs, CpuMs: r.cpuMs, PeakMemoryBytes: r.peakMemoryBytes, Tokens: r.tokens, Calls: r.calls, FailedCalls: r.failedCalls,
-			ParentExecutionId: r.parentID, Cost: runnerCost(prices, isRunnerSubscription(r), runnerUsages(r))})
+			ParentExecutionId: r.parentID, Attempt: r.attempt, Cost: runnerCost(prices, isRunnerSubscription(r), runnerUsages(r))})
 	}
 	// Spend: every execution this UTC month, by when it ran (end, else start), summed per host, kind and period in Go so
 	// costs are priced per usage. ponytail: a full-month scan per call; aggregate closed days in SQL when months grow large.

@@ -9,10 +9,10 @@
 | Kind | Left | Right |
 |---|---|---|
 | Project | name; under it running, queued and done counts in their tones ([OR-29](../owner-rules.md)) | a sparkline of runs |
-| Task | the shared [state dot](state-badge.md#dot-and-word) of the task's state (OR-55), task [entity code](entity-card.md) and title | [work facts](work-facts.md): `×N`, time in work, agent; latest attempt and time in state on hover |
-| Delivery | state dot, pull request [entity code](entity-card.md) and title | [work facts](work-facts.md) (time since opened; time in the stage on hover), then the [stage chip](stage-chip.md) |
+| Task | the shared [state dot](state-badge.md#dot-and-word) of the task's state (OR-55), task [entity code](entity-card.md) and title | [work facts](work-facts.md): `×N`, agent, time in work last; latest attempt and time in state on hover |
+| Delivery | state dot, pull request [entity code](entity-card.md) and title | the [stage chip](stage-chip.md), then the [work facts](work-facts.md) (time since opened, last; time in the stage on hover) |
 | Runner | state dot, runner name | jobs running and minutes today, in mono |
-| Event | age in mono ([OR-2](../owner-rules.md)), the shared [state dot](state-badge.md#dot-and-word) of the event's state (OR-55; the word for screen readers only), the event in words: the task's code and title, else the conversation's title | [work facts](work-facts.md): `×N` repeats and the agent |
+| Event | the shared [state dot](state-badge.md#dot-and-word) of the event's state (OR-55; the word for screen readers only), the event in words: the task's code and title, else the conversation's title | [work facts](work-facts.md): `×N` repeats and the agent, then the age in mono, last ([OR-2](../owner-rules.md), [OR-64](../owner-rules.md)) |
 
 **States.** *Normal*; *trouble* (the dot and the right-hand fact in `danger-fg`, [OR-56](../owner-rules.md)); *stale* (dimmed with the [offline marker](offline-marker.md)).
 

@@ -221,8 +221,8 @@ function TasksSummary(props: { page: ListPage<TaskRow>; filtered: boolean; focus
 
 /**
  * Row facts of a task (OR-37, OR-63): open questions, delivery stage, run evidence that needs a look (stale, stalled,
- * unconfirmed), then the shared work facts (controls/work-facts.md: attempts, time in work, agent; the latest attempt and
- * the time in state in its tooltip), cumulative spend. A finished task shows how long ago it reached its state instead
+ * unconfirmed), cumulative spend, then the shared work facts last (controls/work-facts.md: attempts, agent, time in work, the
+ * time always the rightmost fact; the latest attempt and the time in state in its tooltip). A finished task shows how long ago it reached its state instead
  * of a time in work. Outliers stand out against the page's open tasks (peerFence), never against a fixed limit.
  */
 function TaskFacts(props: { t: TaskRow; now: number; spend: JSX.Element; fences: { attempts?: number; work?: number } }) {
@@ -278,6 +278,7 @@ function TaskFacts(props: { t: TaskRow; now: number; spend: JSX.Element; fences:
           }}
         </Match>
       </Switch>
+      {props.spend}
       <WorkFacts
         attempts={f().executions}
         attemptsFence={f().terminal ? undefined : props.fences.attempts}
@@ -287,7 +288,6 @@ function TaskFacts(props: { t: TaskRow; now: number; spend: JSX.Element; fences:
         state={f().stateAgeAt !== null ? { label: label(), at: f().stateAgeAt! } : undefined}
         agent={props.t.agent ?? props.t.lastAgent}
       />
-      {props.spend}
     </RowFacts>
   );
 }

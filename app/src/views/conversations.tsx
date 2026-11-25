@@ -3,12 +3,12 @@
 import { For, Match, Show, Switch, createMemo, createSignal, onSettled, untrack } from 'solid-js';
 import { currentUrl, useLocation, useSearch } from '../router.ts';
 import {
-  EntityCode, ListDetail, RowFacts, Fact, AgeChip, ProblemRow,
+  EntityCode, ListDetail, Fact, AgeChip, ProblemRow,
   StateBadge, StateCounters, Button, DetailSection,
   OpsSummary, KvRow, Num, type IconName,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, finishedStates,
   OpenQuestion, Latest, StateDot, type Tone,
-  ShellStatus, ShellActions,
+  ShellStatus, ShellActions, WorkFacts, peerFence, useTick,
 } from '../../../packages/ui/src/index.ts';
 import { op, online, type Ops } from '../api.ts';
 import { useAnswers } from '../answers.ts';
@@ -53,6 +53,17 @@ export function Conversations(props: { id?: string }) {
   const unarchive = (ss: SessionRow[]) => page.bulk(ss, s => op('session_unarchive', { sessionId: s.id, reason: 'Unarchived from the Conversations list' }), 'not unarchived');
   const toggleArchived = () => set({ archived: archived() ? undefined : true, sel: undefined, preset: undefined });
   const now = () => Date.now();
+  // Work facts' outliers stand out against the loaded conversations (peerFence), never against a fixed number.
+  const tick = useTick(30_000);
+  const fences = createMemo((): SessionFences => {
+    const rows = page.rows as SessionRow[];
+    const since = (v: string | null | undefined) => (tick() - timeOf(v)) / 1000;
+    return {
+      wait: peerFence(rows.filter(r => r.openQuestions > 0).map(r => since(r.waitingSince))),
+      work: peerFence(rows.filter(isRunning).map(r => since(r.runStartedAt))),
+      starts: peerFence(rows.filter(r => r.state === 'failed').map(r => r.failedStarts ?? 0)),
+    };
+  });
   // New conversation (fleet-conversations.md "Start a conversation") is its own URL in the work area, /conversations/new,
   // with the list view kept; ?in=<project> preselects a project. The old ?new=<project> link opens it once.
   const isNew = () => props.id === 'new';
@@ -114,7 +125,7 @@ export function Conversations(props: { id?: string }) {
         groupIcon={(g, key) => groupIcon(g, key)}
         groupTone={(g, key): Tone => (isWaitingGroup(g, key) ? 'attention' : 'neutral')}
         state={s => <StateBadge family="session" state={s.state} compact />}
-        facts={s => <SessionFacts s={s} />}
+        facts={s => <SessionFacts s={s} fences={fences()} />}
       />
     </>
   );
@@ -263,26 +274,48 @@ function ConversationsIdle(props: { page: ListPage<SessionRow>; filtered: boolea
   );
 }
 
+type SessionFences = { wait?: number; work?: number; starts?: number };
+
+const timeOf = (v: string | null | undefined) => (v ? Date.parse(v) : NaN);
+const isRunning = (s: SessionRow) => s.state === 'running' || s.state === 'preparing';
+
 /**
- * Row facts of a conversation (OR-37, pages/conversations.md): the now line, the open questions in the attention tone,
- * time since the last activity. The harness mark, the executions and the spend are dropped (OR-54): they stay in the
- * session's details.
+ * Row facts of a conversation (OR-37, OR-63, pages/conversations.md): the now line and the open questions, then the work
+ * facts with the time last: the agent mark, then how long it waits for the person (the oldest open question), else the
+ * current run's time in work, else for a failing start its failed starts (×N) and the latest one, else the time since
+ * the last activity. A conversation is not one task, so its runs are no ×N. Executions and spend stay in the session's
+ * details (OR-54).
  */
-function SessionFacts(props: { s: SessionRow }) {
-  const at = () => (props.s.activityAt ? Date.parse(props.s.activityAt) : NaN);
+function SessionFacts(props: { s: SessionRow; fences: SessionFences }) {
   const q = () => props.s.openQuestions ?? 0;
+  const waitAt = () => (q() > 0 ? timeOf(props.s.waitingSince) : NaN);
+  const workAt = () => (isRunning(props.s) ? timeOf(props.s.runStartedAt) : NaN);
+  const failing = () => props.s.state === 'failed' && (props.s.failedStarts ?? 0) > 0;
+  const activity = () => timeOf(props.s.activityAt);
+  const fin = (t: number) => (Number.isFinite(t) ? t : undefined);
+  const quiet = () => !fin(waitAt()) && !fin(workAt()) && !failing();
   return (
-    <RowFacts>
-      <Show when={props.s.now} keyed>
-        {now => <span class="row-now" data-tip={now}>{now}</span>}
-      </Show>
-      <Show when={q() > 0}>
-        <span class="chip-age t-attention alert">{q() === 1 ? '1 question' : `${q()} questions`}</span>
-      </Show>
-      <Show when={!isNaN(at())}>
-        <Fact tip="Last activity"><AgeChip t={at()} /></Fact>
-      </Show>
-    </RowFacts>
+    <WorkFacts
+      before={<>
+        <Show when={props.s.now} keyed>
+          {now => <span class="row-now" data-tip={now}>{now}</span>}
+        </Show>
+        <Show when={q() > 0}>
+          <span class="chip-age t-attention alert">{q() === 1 ? '1 question' : `${q()} questions`}</span>
+        </Show>
+      </>}
+      attempts={failing() ? props.s.failedStarts : undefined}
+      attemptsFence={props.fences.starts}
+      attemptsTip={`${(props.s.failedStarts ?? 0).toLocaleString('en')} failed starts`}
+      waitAt={fin(waitAt())}
+      waitFence={props.fences.wait}
+      workAt={fin(workAt())}
+      workFence={props.fences.work}
+      lastAt={failing() ? fin(timeOf(props.s.lastStartedAt)) : undefined}
+      lastLabel="Latest failed start"
+      agent={props.s.harness && props.s.harness in harnesses ? (props.s.harness as Harness) : null}
+      time={quiet() && fin(activity()) ? <Fact tip="Last activity"><AgeChip t={activity()} /></Fact> : undefined}
+    />
   );
 }
 

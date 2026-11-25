@@ -71,7 +71,9 @@
   .scard-progress::-webkit-progress-bar { background: transparent; }
   .scard-progress::-webkit-progress-value { background: var(--running-fg); transition: inline-size var(--motion-fast); }
   .scard-progress::-moz-progress-bar { background: var(--running-fg); }
-  .scard-meta { margin: 0; color: var(--fg-muted); font-size: var(--font-size-sm); }
+  .scard-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--space-3); margin: 0; color: var(--fg-muted); font-size: var(--font-size-sm); }
+  .scard-meta-text { min-width: 0; }
+  .scard-meta > .row-facts { margin-inline-start: auto; }
   .scard-q { cursor: default; }
   .scard.skeleton { gap: var(--space-4); height: calc(var(--size-thumb) * 2); cursor: default; }
   .scard.skeleton i { display: block; height: var(--space-4); border-radius: var(--radius-sm); background: var(--neutral-bg); }

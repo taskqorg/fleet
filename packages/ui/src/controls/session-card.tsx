@@ -12,14 +12,17 @@ const BORDER: Partial<Record<Life, string>> = { waiting: 'attention', failed: 'd
 
 /**
  * Head (avatar, name, project chip, state dot and word), the "now" line in the person's words, a 2 px progress bar when
- * the session has a plan, the meta facts (a missing fact is left out) and at most one question. The whole card opens
+ * the session has a plan, the meta line (its facts, a missing one left out, then the work facts at its right end with
+ * the time last) and at most one question. The whole card opens
  * the session (OR-26); the question acts in place. No model, tokens, cost or ids (OR-54).
  */
 export function SessionCard(p: {
   name: string; project?: string; avatar: AvatarMark; state: Life; now: string;
   progress?: { step: number; of: number };
-  /** Facts in order: step, elapsed (a live Ago), host, next timer. */
+  /** Facts in order: step, host, next timer. */
   meta?: JSX.Element[];
+  /** The work facts (WorkFacts) at the right end of the meta line, the time last (controls/work-facts.md). */
+  facts?: JSX.Element;
   /** The oldest open question, as a QuestionCard. */
   question?: JSX.Element;
   /** Last confirmed time when the card's data is not current: the card dims and shows the offline marker age. */
@@ -54,8 +57,11 @@ export function SessionCard(p: {
       <Show when={p.progress} keyed>
         {g => <progress class="scard-progress" max={g.of} value={g.step} aria-label={`Step ${g.step} of ${g.of}`} />}
       </Show>
-      <Show when={meta().length > 0}>
-        <p class="scard-meta"><For each={meta()}>{(m, i) => <>{i() > 0 ? ' · ' : ''}{m}</>}</For></p>
+      <Show when={meta().length > 0 || p.facts}>
+        <div class="scard-meta">
+          <span class="scard-meta-text"><For each={meta()}>{(m, i) => <>{i() > 0 ? ' · ' : ''}{m}</>}</For></span>
+          {p.facts}
+        </div>
       </Show>
       <Show when={p.question} keyed>{q => <div class="scard-q">{q}</div>}</Show>
     </article>

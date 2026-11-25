@@ -1177,7 +1177,16 @@ const agentTextPath = `$.data.fleetNormalized.blocks[*] ? (@.kind == "text" && @
 
 // sqlSessionListCols: the columns of sessionListDBRow (sessions.go) over x.
 var sqlSessionListCols = "x.id,x.code,x.title,x.first_message,x.state,x.harness,x.agent_harness,x.profile_id,x.project_id,x.created_ms,x.archived_ms," +
-	sqlJSONTime("x.activity_at") + " AS activity_at,x.executions,x.open_questions," + sqlSessionNow
+	sqlJSONTime("x.activity_at") + " AS activity_at,x.executions,x.open_questions," + sqlSessionNow + "," + sqlSessionWork
+
+// sqlSessionWork: a row's work facts (controls/work-facts.md), for the page's rows only like sqlSessionNow: since when
+// the oldest open question waits (question_session), the start of the current and of the latest run, and the failed
+// runs after the latest run that did not fail (execution_session). Tool calls are not runs of the conversation.
+var sqlSessionWork = sqlJSONTime("(SELECT min(q.asked_at) FROM question q WHERE q.session_id=x.id AND q.state='open')") + ` AS waiting_since,` +
+	sqlJSONTime("(SELECT e.started_at FROM execution e WHERE e.session_id=x.id AND e.kind<>'tool_run' AND e.state IN ('preparing','running') ORDER BY e.seq DESC LIMIT 1)") + ` AS run_started_at,` +
+	sqlJSONTime("(SELECT e.started_at FROM execution e WHERE e.session_id=x.id AND e.kind<>'tool_run' ORDER BY e.seq DESC LIMIT 1)") + ` AS last_started_at,
+ (SELECT count(*) FROM execution e WHERE e.session_id=x.id AND e.kind<>'tool_run' AND e.state='failed'
+  AND e.seq>coalesce((SELECT max(o.seq) FROM execution o WHERE o.session_id=x.id AND o.kind<>'tool_run' AND o.state<>'failed'),-1)) AS failed_starts`
 
 // sessionAgent: the harness of the last execution, else the configured one (the row's harness mark and the agent group).
 const sessionAgent = "coalesce(x.harness,x.agent_harness)"

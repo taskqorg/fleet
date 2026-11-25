@@ -3,8 +3,8 @@
 import { createMemo, For, Show } from 'solid-js';
 import { useLocation } from '../router.ts';
 import {
-  AgeChip, Button, CostFigures, Empty, EntityCode, ErrorBanner, Fact, HarnessMark, Icon, Num,
-  OfflineMarker, ProblemRow, RowFacts, ShellStatus, Skeleton, StateBadge, TimeStrip, age, cause, duration, harnesses,
+  AgeChip, Button, CostFigures, Empty, EntityCode, ErrorBanner, Fact, Icon, Num,
+  OfflineMarker, ProblemRow, RowFacts, ShellStatus, Skeleton, StateBadge, TimeStrip, WorkFacts, age, cause, duration, harnesses, peerFence,
   type Harness, type Measured,
 } from '../../../packages/ui/src/index.ts';
 import { useOp } from '../store.ts';
@@ -29,6 +29,14 @@ export function Runners(props: { onClose?: () => void } = {}) {
     if (!data) return [];
     return [...new Set<string | null>(data.runs.map(r => r.hostId))]
       .sort((a, b) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)));
+  });
+  // Work facts: a long run or a much-tried task stands out against the page's runs (peerFence), never a fixed limit.
+  const fences = createMemo(() => {
+    const runs = runners.data?.runs ?? [];
+    return {
+      attempts: peerFence(runs.map(r => r.attempt ?? 0)),
+      work: peerFence(runs.filter(isActive).map(r => (now() - (r.startedAt ?? r.endedAt ?? now())) / 1000)),
+    };
   });
   const open = (r: RunnerRun) => r.taskId ? `/tasks/${r.taskId}` : r.sessionId ? `/conversations/${r.sessionId}` : null;
 
@@ -79,22 +87,28 @@ export function Runners(props: { onClose?: () => void } = {}) {
                           {href ? <a class="title row-link" href={href} onClick={e => { e.preventDefault(); go(href); }}>{title}</a> : <span class="title">{title}</span>}
                           {!conn && <EntityCode id={r.id} kind="execution" />}
                           {r.parentExecutionId && <EntityCode id={r.parentExecutionId} kind="execution" />}
-                          {r.harness && r.harness in harnesses && <HarnessMark h={r.harness as Harness} />}
                           {r.problem && <span class="chip t-danger" data-tip={`${cause(r.problem).text} Code: ${r.problem}`} role="img" aria-label={cause(r.problem).text}><Icon name="triangle-alert" /></span>}
                         </span>
                         <TimeStrip from={from()} to={now()} start={start()} end={end()} now={now()} state={r.state} label={`${r.state}, started ${age(start(), now()).long}`} />
                         <span class="rz">
-                          <RowFacts>
-                            {r.calls != null && <Fact icon="terminal" tip="Tool calls"><Num m={m(r.calls)} kind="count" /></Fact>}
-                            {(r.failedCalls ?? 0) > 0 && <Fact icon="octagon-x" tip="Failed calls"><span class="t-danger"><Num m={m(r.failedCalls)} kind="count" /></span></Fact>}
-                            {r.tokens != null && <Fact icon="layers-2" tip="Tokens"><Num m={m(r.tokens)} kind="count" /></Fact>}
-                            {r.cpuMs != null && <Fact icon="gauge" tip="CPU"><Num m={m(r.cpuMs / 1000)} kind="duration" /></Fact>}
-                            {r.peakMemoryBytes != null && <Fact icon="save" tip="Peak memory"><Num m={m(r.peakMemoryBytes)} kind="bytes" /></Fact>}
-                            {r.cost.length > 0 && <Fact tip="Cost"><CostFigures cost={r.cost} /></Fact>}
-                            <Fact icon="clock" tip={active ? 'Running for' : 'Duration'}>
-                              {!active ? <Num m={m(secs())} kind="duration" /> : <AgeChip t={start()} clockOffsetMs={clockOffsetMs()} alertAfter={2 * 3600} tone="attention" alertLabel="running long" />}
-                            </Fact>
-                          </RowFacts>
+                          <WorkFacts
+                            before={<>
+                              {r.calls != null && <Fact icon="terminal" tip="Tool calls"><Num m={m(r.calls)} kind="count" /></Fact>}
+                              {(r.failedCalls ?? 0) > 0 && <Fact icon="octagon-x" tip="Failed calls"><span class="t-danger"><Num m={m(r.failedCalls)} kind="count" /></span></Fact>}
+                              {r.tokens != null && <Fact icon="layers-2" tip="Tokens"><Num m={m(r.tokens)} kind="count" /></Fact>}
+                              {r.cpuMs != null && <Fact icon="gauge" tip="CPU"><Num m={m(r.cpuMs / 1000)} kind="duration" /></Fact>}
+                              {r.peakMemoryBytes != null && <Fact icon="save" tip="Peak memory"><Num m={m(r.peakMemoryBytes)} kind="bytes" /></Fact>}
+                              {r.cost.length > 0 && <Fact tip="Cost"><CostFigures cost={r.cost} /></Fact>}
+                            </>}
+                            attempts={r.attempt ?? undefined}
+                            attemptsFence={fences().attempts}
+                            attemptsTip={`Attempt ${(r.attempt ?? 0).toLocaleString('en')} of its task`}
+                            agent={r.harness && r.harness in harnesses ? (r.harness as Harness) : null}
+                            workAt={active ? start() : undefined}
+                            workFence={fences().work}
+                            clockOffsetMs={clockOffsetMs()}
+                            time={active ? undefined : <Fact icon="clock" tip="Duration"><Num m={m(secs())} kind="duration" /></Fact>}
+                          />
                         </span>
                       </div>
                     );

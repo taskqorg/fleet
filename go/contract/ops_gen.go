@@ -668,15 +668,19 @@ type SessionRow struct {
 	Code          *string       `json:"code"`
 	CreatedAt     *float64      `json:"createdAt"`
 	Executions    int64         `json:"executions"`
+	FailedStarts  *int64        `json:"failedStarts,omitempty"`
 	Harness       *string       `json:"harness"`
 	Id            string        `json:"id"`
+	LastStartedAt *string       `json:"lastStartedAt,omitempty"`
 	Now           *string       `json:"now,omitempty"`
 	OpenQuestions int64         `json:"openQuestions"`
 	ProfileId     *string       `json:"profileId"`
 	ProjectId     *string       `json:"projectId"`
+	RunStartedAt  *string       `json:"runStartedAt,omitempty"`
 	SortKey       []SortKeyPart `json:"sortKey"`
 	State         string        `json:"state"`
 	Title         *string       `json:"title"`
+	WaitingSince  *string       `json:"waitingSince,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

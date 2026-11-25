@@ -2742,6 +2742,7 @@ func (v *RouteDecisionsRequest) Validate() error {
 
 // RunnerRun: Tool calls come as one row per caller (id calls:<parent, session or host:id>) with calls and failedCalls; other runs have them null. Times in ms since epoch; resource fields null when not measured. tokens: input + output + cache. cost: CostFigure figures (prices table), empty when nothing was used.
 type RunnerRun struct {
+	Attempt           *int64         `json:"attempt,omitempty"`
 	Calls             *int64         `json:"calls,omitempty"`
 	Cost              []CostFigure   `json:"cost"`
 	CpuMs             *float64       `json:"cpuMs"`

@@ -6,7 +6,7 @@ import {
   AgeChip, ShellStatus, OfflineMarker, RowFacts, Fact, DetailSection, Totals, Icon, KvRow, Num,
   bytes, fileLabel, formatLabel, splitTerms, viewOf, states, actions, ARTIFACT_STATES,
   type StateOf, type Chip, type IconName, type SortField, type TotalItem,
-  useTick,
+  useTick, WorkFacts, peerFence, harnesses, type Harness,
 } from '../../../packages/ui/src/index.ts';
 import type { ArtifactRow } from '../../../contracts/generated/ops.ts';
 import { withFocus, prefsRead, listGroups, setListGroups } from '../prefs.ts';
@@ -293,6 +293,9 @@ export function Results(props: { id?: string; project?: string; frame?: Frame })
       : basePage.activePreset;
   });
 
+  // Work facts: a result whose task took ten times the usual attempts stands out against the page (peerFence).
+  const attemptsFence = createMemo(() => peerFence((basePage.rows as ResultRow[]).map(r => r.taskAttempts ?? 0)));
+
   const page: ListPage<ResultRow> = {
     get view() { return basePage.view; },
     set,
@@ -385,14 +388,20 @@ export function Results(props: { id?: string; project?: string; frame?: Frame })
       ]}
       empty={<Empty text={page.filtered || chips().length ? 'No results match.' : 'No results yet.'}
         action={(page.filtered || chips().length) ? <Button label="Clear filters" onClick={() => { basePage.setQuery(''); set({ state: [], q: undefined, project: props.project ? [props.project] : [], extra: { group: group() !== DEFAULT_GROUP ? group() : undefined, sort: sort() !== DEFAULT_SORT ? sort() : undefined } }); }} /> : undefined} />}
-      facts={r => <RowFacts>
-        {r.taskId && <EntityCode code={r.taskCode} id={r.taskId} kind="task" />}
-        {r.executionId && <EntityCode id={r.executionId} kind="execution" />}
-        {r.projectId && <EntityCode code={r.projectId} id={r.projectId} kind="project" />}
-        {r.scope === 'lab' && !r.taskId && <Fact text="Lab" tip="Lab experiment result" />}
-        <Fact text={bytes(r.size).text} tip={`${bytes(r.size).long} · ${r.mediaType}`} />
-        <Fact tip="Created"><AgeChip t={r.createdAt} /></Fact>
-      </RowFacts>}
+      facts={r => <WorkFacts
+        before={<>
+          {r.taskId && <EntityCode code={r.taskCode} id={r.taskId} kind="task" />}
+          {r.executionId && <EntityCode id={r.executionId} kind="execution" />}
+          {r.projectId && <EntityCode code={r.projectId} id={r.projectId} kind="project" />}
+          {r.scope === 'lab' && !r.taskId && <Fact text="Lab" tip="Lab experiment result" />}
+          <Fact text={bytes(r.size).text} tip={`${bytes(r.size).long} · ${r.mediaType}`} />
+        </>}
+        attempts={r.taskAttempts ?? undefined}
+        attemptsFence={attemptsFence()}
+        attemptsTip={`Its task took ${(r.taskAttempts ?? 0).toLocaleString('en')} attempts`}
+        agent={r.harness && r.harness in harnesses ? (r.harness as Harness) : null}
+        time={<Fact tip="Created"><AgeChip t={r.createdAt} /></Fact>}
+      />}
     />
   </>;
 
