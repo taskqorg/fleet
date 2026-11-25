@@ -2047,7 +2047,7 @@ func (v *TaskTakeRequest) Validate() error {
 
 type TaskUpdateReply = TaskDetail
 
-// TaskUpdateRequest: action pause, resume, cancel or fail (people only); the other fields replace the stored value when present.
+// TaskUpdateRequest: action pause, resume, cancel or fail; the other fields replace the stored value when present.
 type TaskUpdateRequest struct {
 	Action            *string `json:"action,omitempty"`
 	ExpectedOutcome   *string `json:"expectedOutcome,omitempty"`
@@ -2108,7 +2108,7 @@ func init() {
 		"task_release":            {Read: false, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Release a held task (taskId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 		"task_request_acceptance": {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "No artifactIds: the task's stored originals.", InputSchema: json.RawMessage("{\"$comment\":\"No artifactIds: the task's stored originals.\",\"additionalProperties\":true,\"properties\":{\"artifactIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"taskId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 		"task_take":               {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "Take a task (taskId) onto your own subscription", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
-		"task_update":             {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "action pause, resume, cancel or fail (people only); the other fields replace the stored value when present.", InputSchema: json.RawMessage("{\"$comment\":\"action pause, resume, cancel or fail (people only); the other fields replace the stored value when present.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"type\":\"string\"},\"expectedOutcome\":{\"type\":\"string\"},\"priority\":{\"type\":\"string\"},\"resultDestination\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
+		"task_update":             {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "action pause, resume, cancel or fail; the other fields replace the stored value when present.", InputSchema: json.RawMessage("{\"$comment\":\"action pause, resume, cancel or fail; the other fields replace the stored value when present.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"type\":\"string\"},\"expectedOutcome\":{\"type\":\"string\"},\"priority\":{\"type\":\"string\"},\"resultDestination\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}
