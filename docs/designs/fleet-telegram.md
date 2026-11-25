@@ -13,7 +13,7 @@ People work with Fleet from Telegram the same way as in the web app: by talking 
 
 ## Requirements
 
-- **Identity.** A message is sent by its author's Fleet person, never by a relay identity. A message from an unlinked Telegram user gets no reply; its update is kept with outcome `unknown-sender` and an audit row (`telegram-user:<id>`).
+- **Identity.** A sender counts only when a Fleet person carries their Telegram id; what they may do comes only from that person's Fleet roles and grants. A message is sent by its author's Fleet person, never by a relay identity. Anyone else is ignored: no reply, no session, no question; the journal keeps the update with outcome `unknown-sender` for channel health only.
 - **Lossless intake.** Every Telegram update is committed to the journal before Telegram is told it was received; a restart neither loses nor repeats one (pilotq L15, L16).
 - **Verbatim delivery.** The text a person wrote reaches the session unchanged. The conductor chooses where it goes and never rewrites it.
 - **Quiet chat.** Only replies, questions and Fleet's short notices reach Telegram. Tool output, progress, heartbeats and subagent results stay in Fleet. No footers.
@@ -38,7 +38,7 @@ The `telegram` catalogue entry (`go/coordinator/providers.go`) sets `keyPath: "/
 - **Poll** (`telegram-poll`, every 2 s): while the connection takes calls, a `getUpdates` long poll (20 s) with `offset` one past the highest journal row. New updates are inserted (`ON CONFLICT DO NOTHING` on `update_id`) in one transaction; the next poll's offset confirms them.
 - **Route** (kit queue `telegram-intake`, one row per update, in `update_id` order):
   1. `/start <code>` links the sender to the person who made the code (`telegram_link_code`, one use, one day).
-  2. Unlinked sender: silence, outcome `unknown-sender`.
+  2. Unlinked sender: ignored, outcome `unknown-sender`.
   3. The room row is created or refreshed; a 👀 reaction is queued as the receipt (L01).
   4. Private chat: the message goes to the person's home conversation; the first message starts it (`session_start`, preset `discuss`, outside projects). `/new` starts a fresh one with the next message.
   5. Group or topic: the conductor (below).
@@ -69,7 +69,7 @@ Kit queue `telegram-send`: the oldest pending item of each chat, one at a time, 
 |---|---|---|
 | `telegram_status` | person | bot username, last poll and its error, waiting intake, replies and outbox, the caller's link |
 | `telegram_link_code` | person, not agents | one-time `/start` code and a `t.me` link that opens it |
-| `telegram_person_set` | person, not agents; owner for others | language, unlink; the owner links a Telegram user id directly |
+| `telegram_person_set` | person; owner or full access (agents acting for them included) for others and for links | language, unlink, link a Telegram user id; the bot confirms each link in the user's private chat |
 | `telegram_people` | owner | linked people and the Telegram users who wrote without a link |
 | `telegram_rooms` | owner | rooms, project hints, open work items |
 | `telegram_room_set` | owner | a room's project hint; with `chatId` (and `threadId`) it creates the room ahead of its first message |

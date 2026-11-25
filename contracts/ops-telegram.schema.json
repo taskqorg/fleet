@@ -25,8 +25,8 @@
         404
       ],
       "auth": "person",
-      "agent": "no",
-      "description": "Set a person's Telegram language (en, ru, ...; Fleet's own notices use it), or unlink them. Linking a person to a Telegram user id directly, or changing another person, is the owner's."
+      "agent": "tool",
+      "description": "Set a person's Telegram language (en, ru, ...; Fleet's own notices use it), or unlink them. Linking a person to a Telegram user id, or changing another person, needs the owner or a full-access person (or an agent acting for one); the bot confirms each link in the user's private chat. Only Telegram users linked to a Fleet person reach Fleet; what they may do comes from their Fleet roles and grants."
     },
     "telegram_people": {
       "read": true,

@@ -322,10 +322,8 @@ func telegramIntakeStep(q *Request, now time.Time, c *kitClaim) error {
 	}
 	tp, err := q.db().TelegramPersonByUser(q.ctx(), m.From.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Silence and an audit row: an unlinked sender learns nothing from the bot (FLT-32).
-		if err := audit(q, "telegram-user:"+strconv.FormatInt(m.From.ID, 10), "telegram-message", nil, m.Chat.Type, auditExtra{Reason: "unknown sender"}); err != nil {
-			return err
-		}
+		// Ignored: no reply, no session, no question (owner's rule, 2026-11-25). The journal keeps the outcome for the
+		// channel's health and telegram_people.unknown, nothing else.
 		return telegramDone(q, row.ID, "unknown-sender", "")
 	}
 	if err != nil {
@@ -1160,6 +1158,12 @@ func telegramPersonSet(q *Request, r *contract.TelegramPersonSetRequest) (contra
 	if target.Owner && email != director(q) && (q.person == nil || !q.person.Owner) {
 		return out, fail(403, "Only the owner changes the owner's Telegram link")
 	}
+	// Linking lives on the person record and is set through Fleet: the owner, a full-access person, or an agent acting
+	// for one (owner's rule, 2026-11-25). The bot confirms a link in the user's private chat.
+	confirmChat := int64(0)
+	if r.TelegramUserId != nil {
+		confirmChat = *r.TelegramUserId // Telegram refuses it until the user has started the bot
+	}
 	if r.Unlink != nil && *r.Unlink {
 		n, err := q.db().TelegramPersonDelete(q.ctx(), email)
 		if err == nil && n > 0 {
@@ -1185,6 +1189,18 @@ func telegramPersonSet(q *Request, r *contract.TelegramPersonSetRequest) (contra
 			return out, err
 		}
 		if err := audit(q, "telegram-person:"+email, "telegramUserId", nil, *r.TelegramUserId, auditExtra{Holder: email}); err != nil {
+			return out, err
+		}
+		// The bot says in chat who the Telegram user now speaks as, so a wrong link is seen at once.
+		tp, err := q.db().TelegramPersonGet(q.ctx(), email)
+		if err != nil {
+			return out, err
+		}
+		name := target.Name
+		if name == "" {
+			name = email
+		}
+		if err := telegramNotice(q, db.TelegramRoom{ChatID: confirmChat}, 0, "linked:"+email+":"+strconv.FormatInt(tp.LinkedAt.UnixMilli(), 10), tp.Language, "linked", name); err != nil {
 			return out, err
 		}
 	} else if lang != "" {
