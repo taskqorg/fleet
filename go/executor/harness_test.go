@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -729,6 +730,46 @@ func TestACPSandboxRunCommandPermission(t *testing.T) {
 			r, ev, _, err := s.Receive(j(tc.request))
 			if err != nil || jStr(r[0], "result", "outcome", "optionId") != tc.want ||
 				(ev["type"] == "permission.granted") != (tc.want != "") {
+				t.Fatal(r, ev, err)
+			}
+		})
+	}
+}
+
+// Requirement: an Antigravity pipeline step reads its staged inputs in FLEET_INPUT_DIR, outside its workspace (DAM
+// document recognition, T-DAM-1: every read_file of an example image was refused, so the agent answered nothing).
+// Risk: refusing them leaves Antigravity blind to its inputs; granting any path, a ".." path or a link out of the input
+// folder lets the agent read other runs' files and host secrets.
+func TestACPReadInputPermission(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "input")
+	os.MkdirAll(filepath.Join(input, "example"), 0o755)
+	os.WriteFile(filepath.Join(input, "example", "a.jpg"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(dir, "secret"), []byte("x"), 0o644)
+	os.Symlink(filepath.Join(dir, "secret"), filepath.Join(input, "link"))
+	req := func(path string) string {
+		return `{"jsonrpc":"2.0","id":9,"method":"session/request_permission","params":{"sessionId":"s","toolCall":{"toolCallId":"c","name":"read_file","kind":"read","status":"pending","rawInput":{"Path":` + strconv.Quote(path) + `}},"options":[{"kind":"allow_once","optionId":"once"},{"kind":"reject_once","optionId":"no"}]}}`
+	}
+	profile := M{"harness": "antigravity", "agentConfig": M{"settings": M{"mode": "accept-edits", "sandbox": true}}}
+	for _, tc := range []struct {
+		name, request string
+		roots         []string
+		want          string
+	}{
+		{"input file granted", req(filepath.Join(input, "example", "a.jpg")), []string{input}, "once"},
+		{"no read roots refused", req(filepath.Join(input, "example", "a.jpg")), nil, ""},
+		{"outside refused", req(filepath.Join(dir, "secret")), []string{input}, ""},
+		{"dot-dot refused", req(filepath.Join(input, "..", "secret")), []string{input}, ""},
+		{"link out refused", req(filepath.Join(input, "link")), []string{input}, ""},
+		{"relative refused", req("example/a.jpg"), []string{input}, ""},
+		{"missing refused", req(filepath.Join(input, "none.jpg")), []string{input}, ""},
+		{"other tool refused", strings.Replace(req(filepath.Join(input, "example", "a.jpg")), `"read_file"`, `"write_to_file"`, 1), []string{input}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newACPSession("/work", "", profile, M{})
+			s.session, s.stage, s.readRoots = "s", 5, tc.roots
+			r, ev, _, err := s.Receive(j(tc.request))
+			if err != nil || jStr(r[0], "result", "outcome", "optionId") != tc.want || (ev["type"] == "permission.granted") != (tc.want != "") {
 				t.Fatal(r, ev, err)
 			}
 		})
