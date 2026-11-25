@@ -148,8 +148,10 @@ export function History() {
   const kind = createMemo<KindTab>(() => (KINDS.find(k => k.id === q().get('kind'))?.id ?? 'all'));
   const failed = createMemo(() => q().get('outcome') === 'failed');
   const request = createMemo<Req>(() => {
-    // The header focus, as Live and every cross-project screen apply it (prefs scopeIds).
-    const r: Req = { ...scopeIds() };
+    // The header focus, as Live and every cross-project screen apply it (prefs scopeIds); one object's history is that
+    // object's, whatever the focus.
+    const object = SCOPES.some(s => s.key !== 'section' && q().get(s.key));
+    const r: Req = object ? {} : { ...scopeIds() };
     for (const s of SCOPES) { const v = q().get(s.key); if (v) (r as Record<string, string>)[s.key] = v; }
     if (kind() !== 'all') r.kinds = [kind() as Exclude<KindTab, 'all'>];
     if (failed()) r.outcome = 'failed';
