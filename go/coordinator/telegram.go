@@ -684,6 +684,9 @@ func telegramTap(q *Request, now time.Time, c *kitClaim, row *db.TelegramUpdate,
 	if len(parts) == 3 && parts[0] == "q" {
 		return telegramQuestionTap(q, c, row, cb, parts[1], parts[2])
 	}
+	if len(parts) == 3 && (parts[0] == "j" || parts[0] == "sep") {
+		return telegramOverlapTap(q, row, cb, parts[0] == "j", parts[1], parts[2])
+	}
 	if len(parts) != 4 || parts[0] != "w" {
 		return telegramDone(q, row.ID, "tap-unknown", "")
 	}
@@ -1309,6 +1312,26 @@ func telegramStatus(q *Request, _ *contract.TelegramStatusRequest) (contract.Tel
 	}
 	if out.Pending.Outbox, err = q.db().TelegramOutboxPending(q.ctx()); err != nil {
 		return out, err
+	}
+	// Health per part (pilotq L18): intake and delivery over the last day; the Telegram API is the poll above.
+	dh, err := q.db().TelegramDeliveryHealth(q.ctx())
+	if err != nil {
+		return out, err
+	}
+	out.Delivery = &contract.TelegramDeliveryHealth{Sent: dh.Sent, Failed: dh.Failed, Unknown: dh.Unknown}
+	if dh.LastError != "" {
+		out.Delivery.LastError = ptr(dh.LastError)
+	}
+	if dh.LastSentAt.Valid {
+		out.Delivery.LastSentAt = ptr(dh.LastSentAt.Time.UnixMilli())
+	}
+	ih, err := q.db().TelegramIntakeHealth(q.ctx())
+	if err != nil {
+		return out, err
+	}
+	out.Intake = &contract.TelegramIntakeHealth{Updates: ih.Updates, Strangers: ih.Strangers, Failed: ih.Failed}
+	if ih.LastAt.Valid {
+		out.Intake.LastAt = ptr(ih.LastAt.Time.UnixMilli())
 	}
 	tp, err := q.db().TelegramPersonGet(q.ctx(), director(q))
 	if errors.Is(err, pgx.ErrNoRows) {

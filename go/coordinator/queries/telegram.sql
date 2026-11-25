@@ -239,3 +239,30 @@ WHERE q.state = 'open' AND q.session_id IN (
     AND ((NOT @private::boolean AND w.room_id = @room_id) OR (@private::boolean AND w.created_by = @email))
   UNION SELECT p.home_session_id FROM telegram_person p WHERE @private::boolean AND p.email = @email AND p.home_session_id IS NOT NULL)
 ORDER BY q.asked_at LIMIT 10;
+
+-- name: TelegramOverlaps :many
+-- Other conversations running on one of these tasks now: a work item's room hears of them once (FLT-36).
+SELECT DISTINCT ON (e.session_id) e.session_id::text AS session_id, coalesce(s.title, '')::text AS title, coalesce(e.host_id, '')::text AS host_id,
+  e.task_id::text AS task_id
+FROM execution e JOIN session s ON s.id = e.session_id
+WHERE e.task_id = ANY(@task_ids::text[]) AND e.session_id <> @session_id AND e.state IN ('preparing', 'running', 'waiting')
+  AND s.archived_at IS NULL
+ORDER BY e.session_id, e.seq DESC LIMIT 5;
+
+-- name: TelegramWorkJoin :execrows
+-- A work item moves to another conversation (join): later messages go there.
+UPDATE telegram_work SET session_id = @session_id, last_at = clock_timestamp() WHERE id = @id AND closed_at IS NULL;
+
+-- name: TelegramDeliveryHealth :one
+-- The outbox in the last day: sends refused or of unknown outcome, and the newest refusal (telegram_status.delivery).
+SELECT count(*) FILTER (WHERE state = 'sent')::bigint AS sent, count(*) FILTER (WHERE state = 'failed')::bigint AS failed,
+  count(*) FILTER (WHERE state = 'unknown')::bigint AS unknown,
+  coalesce((SELECT o.error FROM telegram_outbox o WHERE o.state = 'failed' AND o.error <> 'no status message' ORDER BY o.sent_at DESC LIMIT 1), '')::text AS last_error,
+  (SELECT max(o.sent_at) FROM telegram_outbox o WHERE o.state = 'sent')::timestamptz AS last_sent_at
+FROM telegram_outbox WHERE created_at > clock_timestamp() - interval '1 day';
+
+-- name: TelegramIntakeHealth :one
+-- The intake in the last day: updates routed, from unknown senders, and failed deliveries.
+SELECT count(*)::bigint AS updates, count(*) FILTER (WHERE outcome = 'unknown-sender')::bigint AS strangers,
+  count(*) FILTER (WHERE outcome = 'failed')::bigint AS failed, max(received_at)::timestamptz AS last_at
+FROM telegram_update WHERE received_at > clock_timestamp() - interval '1 day';
