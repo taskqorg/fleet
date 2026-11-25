@@ -40,7 +40,7 @@
     "worker_done": {"read": false, "errors": [400,409], "auth": "person", "agent": "bound:session", "description": "Report the current execution done (checked against the current execution; captures native session)"}
   },
   "$defs": {
-    "ToolKind": {"type": "string", "enum": ["shell", "files", "fleet", "results", "web", "context", "other"], "$comment": "What a tool call works on, for its icon and fold."},
+    "ToolKind": {"type": "string", "enum": ["shell", "files", "edits", "search", "web", "results", "context", "fleet", "other"], "$comment": "What a tool call works on, for its chip and fold; the server classifies with the rules of packages/ui/src/controls/tool-fold.ts toolKind()."},
     "SessionComposer": {"type": "object", "additionalProperties": false, "required": ["sessionId", "activeExecutionId", "reason"], "properties": {"sessionId": {"type": ["string", "null"]}, "activeExecutionId": {"type": ["string", "null"]}, "reason": {"type": ["string", "null"], "$comment": "Why no message can be sent now; null when one can."}}, "$comment": "The session that receives the next message and the run Stop stops (thread_composer's answer)."},
     "SessionLastMessage": {"type": "object", "additionalProperties": false, "required": ["id", "text", "attachments"], "properties": {"id": {"type": "string"}, "text": {"type": "string"}, "attachments": {"type": "array", "items": {"type": "string"}, "$comment": "artifact ids"}}},
     "ExecutionsPage": {"type": "object", "additionalProperties": false, "required": ["rows", "total", "nextBefore"], "properties": {"rows": {"type": "array", "items": {"$ref": "#/$defs/ExecutionSummary"}, "$comment": "Newest first."}, "total": {"type": "integer"}, "nextBefore": {"type": ["integer", "null"]}}},

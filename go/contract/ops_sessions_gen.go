@@ -2018,21 +2018,23 @@ func (v *ToolBlock) Validate() error {
 	return nil
 }
 
-// ToolKind: What a tool call works on, for its icon and fold.
+// ToolKind: What a tool call works on, for its chip and fold; the server classifies with the rules of packages/ui/src/controls/tool-fold.ts toolKind().
 type ToolKind string
 
 const (
 	ToolKindShell   ToolKind = "shell"
 	ToolKindFiles   ToolKind = "files"
-	ToolKindFleet   ToolKind = "fleet"
-	ToolKindResults ToolKind = "results"
+	ToolKindEdits   ToolKind = "edits"
+	ToolKindSearch  ToolKind = "search"
 	ToolKindWeb     ToolKind = "web"
+	ToolKindResults ToolKind = "results"
 	ToolKindContext ToolKind = "context"
+	ToolKindFleet   ToolKind = "fleet"
 	ToolKindOther   ToolKind = "other"
 )
 
 // ToolKindValues lists every ToolKind in schema order.
-var ToolKindValues = []ToolKind{ToolKindShell, ToolKindFiles, ToolKindFleet, ToolKindResults, ToolKindWeb, ToolKindContext, ToolKindOther}
+var ToolKindValues = []ToolKind{ToolKindShell, ToolKindFiles, ToolKindEdits, ToolKindSearch, ToolKindWeb, ToolKindResults, ToolKindContext, ToolKindFleet, ToolKindOther}
 
 // Valid: v is one of the schema's values.
 func (v ToolKind) Valid() bool {
