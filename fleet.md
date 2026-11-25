@@ -343,7 +343,13 @@ Go rules:
 
 Pull requests reach `main` only through the GitHub merge queue. A worker runs `/code-review` before it opens its pull request and enables auto-merge on it after the `code-review` status; the orchestrator can take any pull request out of the queue. Branches are rebased on `main`, never merged with it, and are not stacked ([delivery pipeline](docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests)).
 
-Every change passes `scripts/check.sh` (`pnpm run check`), the same in CI and locally: `go generate` leaves no diff, `go vet`, the four binaries built with `CGO_ENABLED=0`, `go test ./...` (design rules, pure logic, the schema drift checks), the smoke `node tests/trial/run.ts` (the coordinator binary on a fresh database, 11 checks over HTTP and SSE), typecheck and bundle, the app unit tests. The `go` part needs the PostgreSQL server programs on `PATH` or under `/usr/lib/postgresql` (the smoke and the schema drift checks start the machine's test server). CI runs it as the two required jobs `go` and `app` on every pull request and merge group, about a minute each, with no test selection and no race build ([checks per change](docs/designs/fleet-delivery-pipeline.md#checks-per-change)). The release builds the archives, runs the Linux selftests and the migration check after the merge.
+Every change passes `scripts/check.sh` (`pnpm run check`), the same in CI and locally ([checks per change](docs/designs/fleet-delivery-pipeline.md#checks-per-change)).
+
+Its `go` part: `go generate` leaves no diff, `go vet`, the four binaries built with `CGO_ENABLED=0`, `go test ./...` (design rules, pure logic, the schema drift checks) and the smoke `node tests/trial/run.ts` (the coordinator binary on a fresh database, 11 checks over HTTP and SSE). Its `app` part: typecheck and bundle, the app unit tests.
+
+The `go` part needs the PostgreSQL server programs on `PATH` or under `/usr/lib/postgresql`: the smoke and the schema drift checks start the machine's test server.
+
+CI runs the two parts as the required jobs `go` and `app` on every pull request and merge group, about a minute each, with no test selection and no race build. The release builds the archives, runs the Linux selftests and the migration check after the merge.
 
 `pnpm run build` runs `app:build` (typecheck and bundle) and `go:build` (the four Go binaries in `go/bin/`).
 
