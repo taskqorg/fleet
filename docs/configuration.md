@@ -99,7 +99,7 @@ Needs seen in the owner's repositories with no setting yet: submodules (pilotq);
 
 1. Write `config/projects/<id>/project.json` and `rules.md`: goal, context files, roles, repos, environments, identity, integration.
 2. Bind each repo to a connection; ask an architect for a missing one (missing access is a question).
-   A GitHub connection needs these read tools: for the Delivery page `pulls_open`, `pulls_closed`, `runs_in_progress`, `runs_queued`, `runs_completed_pr`, `runs_completed_mq` and `releases`; for delivery history (fleet repository) also `pulls_closed_page`, `releases_page`, `workflow_runs_day`, `workflow_runs_sha` and `run_jobs`; for CI runners `org_runners` and `runs_recent`. A new connection gets every provider tool. An existing connection does not get a tool that a later release adds to the provider: grant it with `connections_set_tools`. For example, without `runs_completed_pr` Delivery never shows a failed pull request, and without `runs_completed_mq` never one removed from the merge queue.
+   A GitHub connection needs these read tools: for the Delivery page `pulls_open`, `pulls_closed`, `runs_in_progress`, `runs_queued`, `runs_completed_pr`, `runs_completed_mq` and `releases`; for delivery history (fleet repository) also `pulls_closed_page`, `releases_page`, `workflow_runs_day`, `workflow_runs_sha` and `run_jobs`; for CI runners `org_runners` and `runs_recent`. To find a repository, a GitHub connection has `repos_search` and a GitLab connection `projects_search`. A new connection gets every provider tool. An existing connection does not get a tool that a later release adds to the provider: grant it with `connections_set_tools`. For example, without `runs_completed_pr` Delivery never shows a failed pull request, and without `runs_completed_mq` never one removed from the merge queue.
 3. Prepare each environment in its own terminal: clone the repo to `checkoutPath`, install toolchains, place the connection credential. Fleet never accepts the secret.
 4. Bind harness accounts per role on the chosen hosts (`account_*` operations; a missing binding is a login handoff).
 5. Create the project's Bugsink projects (team `fleet`), put their DSNs in the project's runtime config, map them in `project.json` `errors.bugsink`, and grant the `bugsink` connection to the project ([error tracking](designs/fleet-error-tracking.md#7-onboarding-a-project)).
@@ -144,7 +144,9 @@ Configuration isolation shares the executor UID; it is not protection against ho
 `project_readiness` sends one read-only `readiness` command to each environment host (`go/executor/readiness.go`). Each check is `ok | failed` with a reason code; no raw stderr or secret leaves the host.
 
 - `checkout`: `checkoutPath/.git` exists.
-- `remote`: `git ls-remote --exit-code <remote> HEAD` with the connection's credential; reasons `ls-remote-{network|auth-denied|repo-missing|head-missing|unclassified}-exit-<code>`, `invalid-remote`.
+- `remote`: `git ls-remote --exit-code <remote> HEAD` with the connection's credential; reasons `ls-remote-{network-unreachable|repo-missing-or-denied|auth-denied|repo-missing|head-missing|unclassified}-exit-<code>`, `invalid-remote`, and the connection's own `connection-missing` (the host holds no key of that name) or `known-hosts-missing`. `repo-missing-or-denied` is GitLab's single answer for a project that does not exist and for a deploy key not added to it.
+
+Readiness runs on the hosts, so it is the evidence for repository access. A network error in an agent's native shell is not: that shell is sandboxed and may have no network.
 - `setup`: a setup script given as a path exists in the checkout.
 - `accounts`: each host account bound for a role harness is `ready`.
 - `claude-placement` and `claude-login` for projects with a Claude role ([Host settings: Claude placement](#host-settings-claude-placement)).

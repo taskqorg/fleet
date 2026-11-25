@@ -66,7 +66,7 @@ func projectBundle(id string, bundle any) (rawObject, error) {
 	}
 	names, ok := jsonArray(st.ContextFiles)
 	if !ok {
-		return nil, fail(400, "Expected contextFiles paths")
+		return nil, fail(400, "Expected contextFiles paths: settings.contextFiles lists the path of each content.contextFiles entry, such as [\"rules.md\"]")
 	}
 	files, ok := jsonArray(b.ContextFiles)
 	if !ok {

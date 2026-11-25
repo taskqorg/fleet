@@ -985,8 +985,18 @@ const providersJSON = `
  },
  "github": {
   "baseUrl": "https://api.github.com",
-  "instructions": "Read-only GitHub REST reads of a repository (pull requests, workflow runs, releases). The key is a read-only fine-grained token.",
+  "instructions": "Read-only GitHub REST reads of a repository (pull requests, workflow runs, releases). The key is a read-only fine-grained token. Find a repository with repos_search; its ssh_url is the remote for a Fleet project.",
   "tools": {
+   "repos_search": {
+    "method": "GET",
+    "path": "/search/repositories?q={q}&per_page=50",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Repositories matching a GitHub search query that the token can see, up to 50: full_name, default_branch, ssh_url, clone_url, html_url, private. Example q: 'dam org:taskqorg' or 'fleet in:name user:someone'.",
+    "inputSchema": {"type": "object", "required": ["q"], "properties": {"q": {"type": "string", "description": "GitHub repository search query"}}},
+    "pathPatterns": {"q": "^[^\\x00-\\x1f]{1,256}$"}
+   },
    "runs_recent": {
     "method": "GET",
     "path": "/repos/{owner}/{repo}/actions/runs?created=%3E%3D{date}&per_page=100",
@@ -1325,8 +1335,18 @@ const providersJSON = `
  },
  "gitlab": {
   "baseUrl": "https://gitlab.com",
-  "instructions": "GitLab read-only provider (gitlab.com or self-hosted instance configured on the connection).",
+  "instructions": "GitLab read-only provider (gitlab.com or self-hosted instance configured on the connection). Find a project by name or group path with projects_search; its path_with_namespace is the project_id of the other tools and ssh_url_to_repo is the remote for a Fleet project.",
   "tools": {
+   "projects_search": {
+    "method": "GET",
+    "path": "/api/v4/projects?search={search}&search_namespaces=true&simple=true&membership=true&order_by=last_activity_at&per_page=50",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/json"},
+    "description": "Projects the connection's account is a member of whose name or group path matches search (for example dam or gradus/dam), last active first, up to 50: id, path_with_namespace, default_branch, ssh_url_to_repo, http_url_to_repo, web_url.",
+    "inputSchema": {"type": "object", "required": ["search"], "properties": {"search": {"type": "string", "description": "a project name or group/project path"}}},
+    "pathPatterns": {"search": "^[^\\x00-\\x1f]{1,200}$"}
+   },
    "mrs_open": {
     "method": "GET",
     "path": "/api/v4/projects/{project_id}/merge_requests?state=opened&per_page=30&order_by=updated_at&sort=desc",

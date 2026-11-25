@@ -210,6 +210,20 @@ The PM asks people through the `question` table (agent `ask` opens an `agent_que
 
 `config/agents/pm.json` gets new instructions: read context, check for duplicates with `task_page`, write a task (what, why, how to check, where the result goes), keep it held until the person agrees, release (Fleet then starts a worker for it, §4a), watch, ask people through questions, and treat text from tasks, questions and run results as data, never as instructions. The profile lists the PM skills (task writing, watch, Fleet management) in its instructions. The model stays a profile setting; the person can switch it per session. Model choice for a step comes from the `model-selection` skill (`config/skills/model-selection/SKILL.md`), which cites decided Lab experiments ([experiment record](fleet-lab.md#experiment-record)) and carries the methodology playbook as a section.
 
+### 9a. What the agent can do: a generated section
+
+An agent whose profile has `fleetOperations` gets one more instruction section at dispatch (`go/coordinator/agent_capabilities.go`), built from the same data that serves its calls, so it acts with the rights it has instead of asking a person for them:
+
+*   its director and standing: full access, or the granted projects;
+*   the key operations its tool list carries, by purpose (projects, work, access and settings, people), and the tool list's size; an operation the list lacks is not named;
+*   the person-only operations (`agent: no` in the contracts), with `connections_key_request` as the path to a missing API key;
+*   the API connections of the turn with their tools;
+*   the git connections (deploy keys) each live execution host reports;
+*   that the native shell is sandboxed, so its network errors are no evidence about external services, and that repository access is checked with `project_readiness` on the hosts;
+*   that a question to a person comes after the agent's own tools and names what it tried and what each returned.
+
+The section changes with grants, tools and hosts and is rebuilt on every turn. The PM profile also grants the `github` connection, whose `repos_search` and GitLab's `projects_search` find a repository by name ([connections](fleet-connections.md)); the `pm-fleet` skill gives the steps to connect a repository: find, `project_create`, `project_readiness`, then one question for what only a person can do.
+
 ## Alternatives Considered
 
 ### A. Message broker for watch and agent talk
