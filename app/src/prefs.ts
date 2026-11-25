@@ -9,7 +9,7 @@ import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
 
 type Settings = Ops['person_settings_get']['reply'];
 type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
-const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], ignored: [], widths: {}, rowPins: {}, navCollapsed: false, railBots: { on: false, recent: 0 }, lastViews: {}, listGroups: {}, navCounters: {}, panels: {} };
+const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], ignored: [], widths: {}, rowPins: {}, navCollapsed: false, railBots: { on: false, recent: 0 }, lastViews: {}, listGroups: {}, navCounters: {}, panels: {}, timezone: '' };
 export const prefs = cell<Settings>(empty);
 /**
  * The person's preferences are known: read (or the read failed, so lists still load). Focus-dependent loads (useList, the
