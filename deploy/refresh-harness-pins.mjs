@@ -7,8 +7,10 @@ const claude = 'https://downloads.claude.ai/claude-code-releases';
 const agy = 'https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests';
 const github = 'https://api.github.com/repos/openai/codex/releases/latest';
 
+// A GitHub API read carries the workflow's token when there is one: a runner's address shares the keyless limit.
 async function get(url) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+  const headers = url.startsWith('https://api.github.com/') && process.env.GH_TOKEN ? { authorization: `Bearer ${process.env.GH_TOKEN}` } : {};
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(30000) });
   if (!response.ok) throw Error(`${url}: HTTP ${response.status}`);
   return response;
 }
