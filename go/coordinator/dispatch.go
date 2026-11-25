@@ -565,6 +565,7 @@ type dispatchExecution struct {
 	EffectiveAccount      json.RawMessage      `json:"effectiveAccount,omitempty"`
 	ConnectionsRefused    []string             `json:"connectionsRefused,omitempty"`
 	ContinuationKey       string               `json:"continuationKey,omitempty"`
+	Thread                string               `json:"thread,omitempty"` // the work item (threads_bot.go)
 	ForkOfNativeSessionID string               `json:"forkOfNativeSessionId,omitempty"`
 	HandoffID             string               `json:"handoffId,omitempty"`
 	BotContext            *botExecutionContext `json:"botContext,omitempty"`
@@ -1568,8 +1569,15 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	if err := checkBotDispatchCompatibility(q, e, &liveSession, host, deref(p.Account), d); err != nil {
 		return none, err
 	}
-	p.NativeSessionId = nativeFor(liveSession.NativeSessionID, d.Last, host)
-	moved := deref(liveSession.NativeSessionID) != "" && deref(p.NativeSessionId) == ""
+	// A work-item thread continues its own native session (threads_bot.go); the main thread keeps the session's.
+	native := liveSession.NativeSessionID
+	if e.Thread != "" {
+		base := agentSession{AgentConfig: liveSession.AgentConfig, Account: deref(liveSession.Account), ProjectID: deref(d.ProjectID),
+			WorkingDirectory: deref(d.WorkingDirectory), WorkspaceKey: deref(d.WorkspaceKey)}
+		native = liveSession.threadNative(threadContinuation(base.continuationKey(), e.Thread))
+	}
+	p.NativeSessionId = nativeFor(native, d.Last, host)
+	moved := e.Thread == "" && deref(liveSession.NativeSessionID) != "" && deref(p.NativeSessionId) == ""
 	if e.BotContext != nil {
 		p.Instructions = ptr(formatBotInstructions(deref(p.Instructions), e.BotContext))
 	}
@@ -1577,6 +1585,9 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	sess := agentSession{ID: liveSession.ID, AgentConfig: liveSession.AgentConfig, Account: deref(liveSession.Account),
 		ProjectID: deref(d.ProjectID), WorkingDirectory: deref(d.WorkingDirectory), WorkspaceKey: deref(d.WorkspaceKey),
 		NativeSessionID: deref(p.NativeSessionId), ForkNativeSessionID: liveSession.ForkNativeSessionID, PendingHandoffID: liveSession.PendingHandoffID}
+	if e.Thread != "" { // the session's fork and handoff belong to its main thread
+		sess.ForkNativeSessionID, sess.PendingHandoffID = "", ""
+	}
 	// Off the native session's host the new native session knows nothing: hand it the earlier turns, as a fork without
 	// a native fork does.
 	if moved && sess.PendingHandoffID == "" {
@@ -1588,7 +1599,7 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 			return none, err
 		}
 	}
-	ex := agentExecution{ID: e.ID}
+	ex := agentExecution{ID: e.ID, Thread: e.Thread}
 	if err := agentDecorateStart(q, &sess, &ex, p); err != nil {
 		return none, err
 	}
@@ -1599,7 +1610,9 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	if ex.HandoffID != "" {
 		e.HandoffID = ex.HandoffID
 	}
-	if sess.PendingHandoffID == "" {
+	if e.Thread != "" {
+		// a thread's turn leaves the main thread's pending handoff for its next turn
+	} else if sess.PendingHandoffID == "" {
 		liveSession.PendingHandoffID = ""
 		delete(liveSession.rest, "pendingHandoffId")
 	} else {

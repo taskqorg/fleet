@@ -932,6 +932,7 @@ type Execution struct {
 	TombstonedAt      *time.Time
 	SystemActor       *string
 	BotID             *string
+	Thread            string
 }
 
 type ExecutionSpend struct {
@@ -1139,6 +1140,7 @@ type Message struct {
 	Seq          int64
 	UpdatedAt    time.Time
 	TombstonedAt *time.Time
+	Thread       string
 }
 
 type Person struct {

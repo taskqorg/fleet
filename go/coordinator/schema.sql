@@ -5010,3 +5010,11 @@ ALTER TABLE artifact ADD CONSTRAINT artifact_role_check CHECK (role IN ('origina
 SELECT set_config('fleet.project_ids', '*', true);
 SELECT set_config('fleet.deleted', 'on', true);
 UPDATE artifact SET role = 'diagnostic' WHERE role = 'original' AND name LIKE 'mcp-lifecycle-%';
+
+-- migration 109: work-item threads (docs/designs/fleet-conversations.md#work-item-threads). A message and an execution
+-- name the thread of their session they belong to ('' the main thread); the session view reads a thread and its
+-- aggregates through these indexes. Rows before threads are in the main thread.
+ALTER TABLE message ADD COLUMN thread text NOT NULL DEFAULT '';
+ALTER TABLE execution ADD COLUMN thread text NOT NULL DEFAULT '';
+CREATE INDEX message_thread ON message(session_id, thread, seq);
+CREATE INDEX execution_thread ON execution(session_id, thread, seq);

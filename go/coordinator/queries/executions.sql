@@ -4,12 +4,12 @@
 -- name: ExecutionInsert :one
 -- A new execution in its first state; nothing when its id or request_id exists.
 INSERT INTO execution(id,kind,state,observation,project_id,task_id,bot_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,
- harness,model,config_ref,started_at,ended_at,data,directed_by,profile_id,profile_revision,pipeline_id,pipeline_revision,step_id,request_id,system_actor,definitions)
+ harness,model,config_ref,started_at,ended_at,data,directed_by,profile_id,profile_revision,pipeline_id,pipeline_revision,step_id,request_id,system_actor,definitions,thread)
 VALUES(sqlc.arg(id),sqlc.arg(kind),sqlc.arg(state),coalesce(sqlc.narg(observation)::observation,'confirmed'),sqlc.narg(project_id),sqlc.narg(task_id),sqlc.narg(bot_id),
  sqlc.narg(experiment_id),sqlc.narg(variant),sqlc.narg(parent_execution_id),sqlc.narg(session_id),sqlc.narg(account_id),sqlc.narg(host_id),
  sqlc.narg(harness),sqlc.narg(model),sqlc.narg(config_ref),sqlc.narg(started_at),sqlc.narg(ended_at),coalesce(sqlc.narg(data)::jsonb,'{}'),
  sqlc.narg(directed_by),sqlc.narg(profile_id),sqlc.narg(profile_revision),sqlc.narg(pipeline_id),sqlc.narg(pipeline_revision),sqlc.narg(step_id),
- sqlc.narg(request_id),sqlc.narg(system_actor),coalesce(sqlc.narg(definitions)::jsonb,'[]'))
+ sqlc.narg(request_id),sqlc.narg(system_actor),coalesce(sqlc.narg(definitions)::jsonb,'[]'),coalesce(sqlc.narg(thread)::text,''))
 ON CONFLICT DO NOTHING RETURNING id;
 
 -- name: ExecutionLockState :one
