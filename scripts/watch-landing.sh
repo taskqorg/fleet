@@ -16,12 +16,18 @@ wait_step() { [ "$(date +%s)" -lt "$deadline" ] || { echo "timeout at: $1"; exit
 
 q='query($n:Int!){repository(owner:"taskqorg",name:"fleet"){pullRequest(number:$n){state mergeStateStatus mergeable headRefOid potentialMergeCommit{parents(first:2){nodes{oid}}} mergeCommit{oid} autoMergeRequest{enabledAt} mergeQueueEntry{state}
   commits(last:1){nodes{commit{statusCheckRollup{contexts(last:100){nodes{... on CheckRun{name conclusion at:startedAt isRequired(pullRequestNumber:$n)} ... on StatusContext{name:context state at:createdAt isRequired(pullRequestNumber:$n)}}}}}}}
-  timelineItems(last:1,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT,AUTO_MERGE_DISABLED_EVENT]){nodes{__typename ... on RemovedFromMergeQueueEvent{reason} ... on AutoMergeDisabledEvent{reasonCode actor{__typename}}}}}}}'
+  timelineItems(last:1,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,AUTO_MERGE_ENABLED_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT,AUTO_MERGE_DISABLED_EVENT]){nodes{__typename ... on RemovedFromMergeQueueEvent{reason} ... on AutoMergeDisabledEvent{reasonCode actor{__typename}}}}}}}'
 dirty_head=
 while :; do
   # A failed gh call (network, rate limit) is retried, never read as "not merged".
   line=$(gh api graphql -f query="$q" -F n="$pr" -q '.data.repository.pullRequest | .headRefOid as $head | [.state, .mergeStateStatus, (.mergeCommit.oid // "-"),
-    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (.mergeQueueEntry.state // "-"), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired)] | group_by(.name) | map(max_by(.at // (if .conclusion == null then "~" else "" end)) | (.conclusion // .state)) | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "STARTUP_FAILURE" or . == "CANCELLED" or . == "STALE" or . == "ACTION_REQUIRED") then "red" else "-" end),
+    # GitHub clears autoMergeRequest when it enqueues the pull request, and the entry can show up a poll later; at the merge
+    # the entry goes before the state turns MERGED. In those windows the newest queue event (added, auto-merge enabled, or
+    # removed as merged) says it is still landing: "landing", never a veto.
+    (if .autoMergeRequest or .mergeQueueEntry then "waiting"
+      elif .state == "OPEN" and (.timelineItems.nodes[0] | .__typename == "AddedToMergeQueueEvent" or .__typename == "AutoMergeEnabledEvent"
+        or (.__typename == "RemovedFromMergeQueueEvent" and ((.reason // "") | ascii_downcase) == "merged")) then "landing"
+      else "-" end), (.mergeQueueEntry.state // "-"), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired)] | group_by(.name) | map(max_by(.at // (if .conclusion == null then "~" else "" end)) | (.conclusion // .state)) | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "STARTUP_FAILURE" or . == "CANCELLED" or . == "STALE" or . == "ACTION_REQUIRED") then "red" else "-" end),
     (.headRefOid // "-"),
     # fresh: GitHub has computed a conflict for this head: mergeable CONFLICTING (it is reset to UNKNOWN on a push, and a
     # DIRTY next to MERGEABLE is the stale field), and a test merge, when there is one, is of this head.
@@ -36,6 +42,7 @@ while :; do
     || { wait_step "queue (gh failed)"; continue; }  # observes nothing: the DIRTY count stays
   read -r state merge_state sha waiting queue_state checks head fresh reason <<<"$line"
   [ "$state" = MERGED ] && break
+  [ "$waiting" = landing ] && { dirty_head=; wait_step "queue (entering or leaving the merge queue)"; continue; }
   # A conflict with main before the queue takes the entry: auto-merge stays on and nothing is removed, so name it here. It
   # counts only when GitHub computed it for the current head (fresh: right after a push it may still report the old head's
   # DIRTY) and saw it on two polls of that same head. Inside the queue the queue decides (PR #451: DIRTY one second after
