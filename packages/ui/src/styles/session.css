@@ -75,13 +75,16 @@
      line 1 (OR-64), the agent mark and the newest line go to line 2, the code stays in the head and in search. */
   @media (max-width: 767px) {
     .conv-list .vl-row:not(.grp) { grid-template-rows: auto auto; align-items: start; row-gap: var(--space-1); padding-block: var(--space-2); white-space: normal; }
-    .conv-list .vl-row:not(.grp) > .tt { grid-row: 1; }
+    /* Explicit columns, counted from the end (a selection column may lead): leads auto-place in row 1, the title sits
+       in the free column, line 2 puts the agent mark under the state icon and the now line under the title. */
+    .conv-list .vl-row:not(.grp) > .lead { grid-row: 1; }
+    .conv-list .vl-row:not(.grp) > .tt { grid-row: 1; grid-column: -3 / -2; }
     .conv-list .vl-row .tt .title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; }
     .conv-list .vl-row .tt > :not(.title) { display: none; }
     .conv-list .vl-row > .rz, .conv-list .vl-row > .rz > .row-facts { display: contents; }
     .conv-list .row-facts > * { grid-row: 2; grid-column: -2; }
-    .conv-list .row-facts > .row-now { display: block; grid-column: 2; max-inline-size: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); font-family: var(--font-sans); font-size: var(--font-size-sm); }
-    .conv-list .row-facts > .harness { grid-column: 1; justify-self: center; }
+    .conv-list .row-facts > .row-now { display: block; grid-column: -3 / -2; max-inline-size: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); font-family: var(--font-sans); font-size: var(--font-size-sm); }
+    .conv-list .row-facts > .harness { grid-column: -4 / -3; justify-self: center; }
     .conv-list .row-facts > :last-child:not(.row-now):not(.harness) { grid-row: 1; grid-column: -2; font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--fg-muted); }
     .conv-list .vl-row > .row-sub { grid-row: 3; }
   }
