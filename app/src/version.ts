@@ -51,8 +51,9 @@ export async function checkUpdate() {
   // A newly served app: read its version now, so the strip names it.
   if (updateReady.value && !was) void loadVersions();
   if (!updateReady.value) return;
-  // Newly offered to a person looking at the tab: the full count shows first. A hidden tab updates without waiting.
-  if (!was && document.visibilityState === 'visible') lastActive = Date.now();
+  // Newly offered to a person looking at the tab: the full count shows first. A tab the person is away from waits for
+  // their return (countdown).
+  if (!was && !away()) lastActive = Date.now();
   // A reload this tab made itself that brought back the same old app (a cache in between): no second automatic reload.
   if (!updating.value && reloadedInto() === mine) { updateError.value = 'The reload kept the old app. Retry.'; return; }
   // A failed update counts down again at the next check, from a full count.
@@ -63,8 +64,9 @@ export async function checkUpdate() {
 /*
  * The idle update (nav-rail.md, Update; board screens/shell). While a new app is ready, the tab reloads into it after
  * IDLE_MS with no activity: a pointer move, key, wheel, touch or focus change in this tab sets the one timestamp
- * back (passive listeners, written at most every ACTIVE_STEP). A hidden tab has no activity, so it updates in the
- * background. One 1 s timer runs only while a new app is ready. Work is never lost: input a person typed and did not send,
+ * back (passive listeners, written at most every ACTIVE_STEP). A tab the person is away from (hidden, or its window
+ * without focus) never reloads: it waits for the person to come back, then updates at once when their last action was
+ * IDLE_MS or more ago, and otherwise counts down the rest. Coming back is not activity. One 1 s timer runs only while a new app is ready. Work is never lost: input a person typed and did not send,
  * an open modal dialog, or a request still in flight hold the count (holding was chosen over restoring drafts after the
  * reload: it cannot lose what a page did not save). The reload keeps the route (location.reload) and the scroll of the
  * page's scroll areas.
@@ -72,7 +74,9 @@ export async function checkUpdate() {
 export type UpdateHold = 'draft' | 'dialog' | 'save';
 export const IDLE_MS = 30_000;
 const ACTIVE_STEP = 250, RELOADED_KEY = 'fleet-update:reloaded', SCROLL_KEY = 'fleet-update:scroll';
-let lastActive = Date.now(), timer: ReturnType<typeof setInterval> | undefined;
+let lastActive = Date.now(), timer: ReturnType<typeof setInterval> | undefined, left = false;
+/** The person is away: the tab is hidden or its window has no focus. */
+const away = () => document.visibilityState !== 'visible' || !document.hasFocus();
 
 /**
  * Fields a person typed into, with the value they had before the first keystroke: a field whose value differs and is not
@@ -94,6 +98,7 @@ function holdReason(): UpdateHold | null {
 function countdown() {
   if (!timer) timer = setInterval(countdown, 1000);
   if (!updateReady.peek() || updating.peek() || updateError.peek()) { clearInterval(timer); timer = undefined; updateIn.value = null; updateHold.value = null; return; }
+  if (away()) { updateIn.value = null; updateHold.value = null; return; }
   const now = Date.now(), hold = holdReason();
   if (hold) { lastActive = now; updateIn.value = null; updateHold.value = hold; return; }
   const left = Math.max(0, Math.ceil((IDLE_MS - (now - lastActive)) / 1000));
@@ -108,6 +113,9 @@ function active(e: Event) {
   // A pointer that did not move (the page moved under a resting pointer) is not activity.
   if (e instanceof PointerEvent && e.type === 'pointermove' && !e.movementX && !e.movementY) return;
   const now = Date.now();
+  // The focus that comes back with the window or the tab is the return, not an action.
+  if (e.type === 'focusin' && left) { left = false; return; }
+  left = false;
   if (now - lastActive >= ACTIVE_STEP) lastActive = now;
 }
 
@@ -219,24 +227,26 @@ export function startVersionChecks(): () => void {
   const afterOpen = () => { setTimeout(opened, 0); };
   const first = setTimeout(opened, 0), every = setInterval(opened, 300_000);
   onAccessOpen.add(afterOpen);
-  addEventListener('focus', run);
+  // The person comes back: an update ready since their last action IDLE_MS ago installs now, else the count goes on.
+  const leave = () => { left = true; };
+  const back = () => { if (away()) { left = true; return; } if (updateReady.peek()) countdown(); };
+  addEventListener('focus', run); addEventListener('focus', back); addEventListener('blur', leave);
   // Activity for the idle update: passive and captured, so a handler that stops the event still counts it.
   const opts = { capture: true, passive: true } as const, typed = (e: Event) => {
     const t = e.target;
     if (!(t instanceof HTMLElement) || edited.has(t) || t.matches('input[type=search], [role=searchbox], [role=combobox]') || t.closest('[role=search], .spotlight')) return;
     edited.set(t, valueOf(t));
   };
-  const shown = () => { if (document.visibilityState === 'visible') lastActive = Date.now(); };
   // Scrolling counts through its input (wheel, keys, touch, the scrollbar's pointer); a scroll event alone may be the page's own.
   const ACTIVITY = ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart', 'focusin'];
   for (const t of ACTIVITY) addEventListener(t, active, opts);
   addEventListener('beforeinput', typed, opts);
-  document.addEventListener('visibilitychange', shown);
+  document.addEventListener('visibilitychange', back);
   restoreScroll();
   return () => {
-    clearTimeout(first); clearInterval(every); onAccessOpen.delete(afterOpen); removeEventListener('focus', run);
+    clearTimeout(first); clearInterval(every); onAccessOpen.delete(afterOpen); removeEventListener('focus', run); removeEventListener('focus', back); removeEventListener('blur', leave);
     for (const t of ACTIVITY) removeEventListener(t, active, opts);
-    removeEventListener('beforeinput', typed, opts); document.removeEventListener('visibilitychange', shown);
+    removeEventListener('beforeinput', typed, opts); document.removeEventListener('visibilitychange', back);
     clearInterval(timer); timer = undefined;
   };
 }

@@ -19,6 +19,7 @@
 - [`lists.ts`](lists.ts), [`threads.ts`](threads.ts), [`selection.ts`](selection.ts), and [`url.ts`](url.ts) hold pure list/thread/selection logic and URL hooks.
 - [`list-page.tsx`](list-page.tsx) exports `useListPage` and `ListPagePanel`, the list-view pattern Tasks, Conversations and Delivery share: saved views and system presets, pins read by id, grouping with collapse remembered per person (`listGroups`), selection mode with bulk actions, and the row menu. A page that reads its whole list itself (Delivery) passes `local` in place of a server list kind.
 - [`uploads.ts`](uploads.ts) exports `uploadFile` (`artifact_upload_begin`, then `PUT` parts with `Content-Range`, resuming at the server's `received`) and `useAttachments`, the composer's files for one target: upload on add with progress, remove, `ready()` before a send, clear after it ([Attachments](../../docs/designs/fleet-conversations.md#attachments)).
+- [`persist.ts`](persist.ts) is the read mirror ([operator app D3](../../docs/designs/fleet-operator-app.md#indexeddb-mirror)): `restore` and `persist` keep the last answer of each read in IndexedDB under the validated person and grants (`adopt`), so a reload renders at once; `purge` and `forget` drop it (another person, changed grants, sign-out). Without IndexedDB every call is a no-op.
 - [`offline.ts`](offline.ts) owns the synchronous in-memory store reset bus (`onClear`, `clearAll`); [`prefs.ts`](prefs.ts) reads and patches per-person settings and turns the focus and ignored projects into the scope of lists that name no project (`scopeIds`, `withFocus`): the focus as the project filter, otherwise the ignored projects as the server-side exclusion; focus-dependent loads wait for `prefsRead`.
 - [`system-views.ts`](system-views.ts) turns the system presets and navigation counter defaults of [`contracts/vocabulary.json`](../../contracts/vocabulary.json) into views; the coordinator's `nav_counts` reads the same file. [`nav-counts.ts`](nav-counts.ts) `useNavCounts` reads `nav_counts` for the rail counters ([nav rail](../../docs/design-system/controls/nav-rail.md)) through `useOp`: again when a change touches it (this person's settings included) at most once per 5 s, and every 30 s; `navCounted` names the counted view as the server resolved it, and `prefs.ts` `setNavCounter` chooses it.
 - [`views`](views/README.md) exports the routed screen components.
@@ -32,12 +33,15 @@
 - A doc name identifies its read: every request for one name within one task (a feed batch reaching all its readers, mounts in one render) sends one request. Reads never wait for a running one, and an answer is shown only when it started after the answer on screen, so a stalled request neither blocks nor overwrites newer data; clearing memory discards running reads (`store.ts:readDoc`).
 - Invalidation has one rule, `store.ts:touchedBy`: the change's `touches` names the operation, and the change names no other task, session, host, artifact, execution, experiment, question or project than the request (a definition other than `project/<id>` touches every project); a setting-change of another known person touches nothing. Views write no predicates.
 - Stored in-memory app state is cleared on identity/grant invalidation or sign-out (`offline.ts:clearAll`, `main.tsx:App`).
+- A read's mirrored answer shows (`restored`, freshness `updating`) only until the first read of this page answers, and never after a clear that began after its restore started (`store.ts:docEntry`, `entry`). A newly mounted reader joins a read already on its way; a resync rereads only what has answered before (`store.ts:holdDoc`, `watch`).
+- A focus or resync that cannot confirm the person keeps the page and asks again; only another person or changed grants clear it (`main.tsx:recheck`, `feed.ts:rebaseFeed`).
 
 ## Side Effects
 
 - `errors.ts` sends Sentry envelopes to the same-origin tunnel `POST /api/errors` (the SDK's own fetch, outside `op()`).
 - `uploads.ts` sends same-origin `PUT /api/uploads/:id` parts with `XMLHttpRequest` (for upload progress).
 - `api.ts` sends same-origin `POST /api/ops/:name` requests; `feed.ts` opens `EventSource('/api/stream…')` and polls `changes_since` after repeated failures.
+- `persist.ts` reads and writes the IndexedDB database `fleet-data` and the `localStorage` key `fleet-data-owner`.
 - `offline.ts` clears in-memory stores on access invalidation; `prefs.ts` writes person settings through coordinator operations.
 - `main.tsx` registers `/sw.js`, changes browser history, and can redirect to Cloudflare Access logout.
 
@@ -47,6 +51,7 @@
 - Build: `pnpm run app:build`
 - S9 AST design rules (`UI-ANY`, `UI-OP`, `UI-VOCAB`): `node --test tests/ui/design-rules.test.ts` ([`design-rules.test.ts`](../../tests/ui/design-rules.test.ts), part of `node --test tests/ui/*.test.ts`)
 - Design warnings: `pnpm run check:design`
+- Read mirror, person check and idle update: `pnpm run app:bundle && node tests/ui/mirror.check.ts` ([`mirror.check.ts`](../../tests/ui/mirror.check.ts); every API answer held back 400 ms)
 
 ## Authorized prepared reads
 

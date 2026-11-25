@@ -1,7 +1,7 @@
 // Authorized commit feed. Every transport callback belongs to one access generation.
 import { cell } from './signal.ts';
 import { op, accessControlOp } from './api.ts';
-import { accessGeneration, ensureAccessGeneration, invalidateAccess, isAccessCurrent, onAccessInvalidated, registerAccessBaseline, type AccessBaseline } from './access.ts';
+import { access, accessGeneration, ensureAccessGeneration, invalidateAccess, isAccessCurrent, onAccessInvalidated, registerAccessBaseline, type AccessBaseline } from './access.ts';
 import type { Change, StreamCursor } from '../../contracts/generated/ops.ts';
 export type { Change };
 type Sub = { changes: (c: Change[]) => void; resync: () => void };
@@ -32,7 +32,30 @@ function retry() {
   if (!started) return;
   clearTimeout(timer); timer = setTimeout(() => { void ensureAccessGeneration('feed retry').catch(retry); }, 1000);
 }
-function resync() { invalidateAccess('feed resync'); void ensureAccessGeneration('feed resync').catch(retry); }
+// A resync (a gap in the cursor, or the server saw this person's grants change) goes to main.tsx, which checks the
+// person quietly: the same person and grants rebase the feed and keep everything shown (rebaseFeed); another person or
+// changed grants fence and validate anew. Without a handler (tests) it fences, as at start.
+let resyncHandler: (() => void) | null = null;
+export function setResyncHandler(fn: (() => void) | null) { resyncHandler = fn; }
+function resync() {
+  if (resyncHandler && access.peek().state === 'open') { source?.close(); source = null; clearTimeout(timer); feedState.value = 'connecting'; resyncHandler(); return; }
+  invalidateAccess('feed resync'); void ensureAccessGeneration('feed resync').catch(retry);
+}
+/**
+ * A fresh cursor for the same person and grants: readers reread quietly what they hold (their resync), and the stream
+ * continues from the new cursor. Nothing is cleared, so the page keeps its data while it catches up.
+ */
+export async function rebaseFeed() {
+  const generation = accessGeneration();
+  if (!isAccessCurrent(generation)) return;
+  try {
+    const r = await op('changes_since', {});
+    if (!isAccessCurrent(generation)) return;
+    cursor = r.cursor; pending = []; seen.clear();
+    for (const s of subs) s.resync();
+    connect(generation);
+  } catch { if (isAccessCurrent(generation)) reconnect(generation); }
+}
 async function catchUp(generation: number) {
   for (;;) {
     if (!isAccessCurrent(generation)) return;

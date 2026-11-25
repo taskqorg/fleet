@@ -8,6 +8,7 @@ import { subscribe, feedState, type Change } from './feed.ts';
 import { compareKeys, type Row, type SortKey } from './lists.ts';
 import type { ListGroup, MembershipAnswer, TaskRow, SessionRow } from '../../contracts/generated/ops.ts';
 import { onClear } from './offline.ts';
+import { persist, restore } from './persist.ts';
 import { listKey, toPageParams, type View } from '../../packages/view-url/view-url.ts';
 import { withFocus, prefsRead } from './prefs.ts';
 
@@ -18,14 +19,15 @@ export const freshness = (restored: boolean): Freshness => signedOut.value ? 'si
 export type Kind = 'tasks' | 'sessions';
 type Params = ReturnType<typeof toPageParams>;
 type Group = ListGroup;
-export type ListState = { rows: Row[]; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; error: string | null };
+/** restored: the state came from the read mirror (persist.ts) and no read of this page has replaced it yet. */
+export type ListState = { rows: Row[]; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; error: string | null; restored?: boolean };
 type Entry = {
   kind: Kind; view: View; params: Params; state: Cell<ListState | null>; busy: Cell<boolean>;
   started: number; mounted: number; loading: boolean; dirty: boolean; paging: boolean; cursorReset: boolean;
   pageError: boolean; fetchedAt: number; affected: Set<string>; lastMembershipAt: number;
   reconciling?: Promise<void>; throttleTimer?: ReturnType<typeof setTimeout>;
 };
-type Doc = { data: unknown; error: string | null; status?: number | null };
+type Doc = { data: unknown; error: string | null; status?: number | null; restored?: boolean };
 type DocEntry = { signal: Cell<Doc | null>; fetchedAt: number; dirty: boolean; dirtySeq: number; name?: OpName; request?: unknown };
 
 const FRESH_MS = 30_000;
@@ -88,8 +90,14 @@ onClear.add(clearMemory);
 function entry(kind: Kind, key: string, view: View): Entry {
   let e = lists.get(key);
   if (!e) {
-    lists.set(key, e = { kind, view, params: toPageParams(view), state: cell<ListState | null>(null), busy: cell(false), started: 0, mounted: 0, loading: false, dirty: false, paging: false, cursorReset: false, pageError: false, fetchedAt: 0, affected: new Set(), lastMembershipAt: 0 });
+    const made: Entry = e = { kind, view, params: toPageParams(view), state: cell<ListState | null>(null), busy: cell(false), started: 0, mounted: 0, loading: false, dirty: false, paging: false, cursorReset: false, pageError: false, fetchedAt: 0, affected: new Set(), lastMembershipAt: 0 };
+    lists.set(key, made);
     evictLists();
+    // The mirror's copy shows until the first read of this page answers; a read that answered first wins.
+    const cleared = generation.peek();
+    void restore('list:' + key).then(v => {
+      if (v && cleared === generation.peek() && lists.get(key) === made && !made.state.peek()) made.state.value = { ...(v.data as ListState), error: null, restored: true };
+    });
   }
   return e;
 }
@@ -126,6 +134,7 @@ export async function loadList(kind: Kind, key: string, view: View, opts: ListRe
     if (!current()) return;
     const now = Date.now();
     e.state.value = { rows, counts: first.counts, total: first.total, groups: first.groups ?? [], nextAfter, at: now, error: null };
+    persist('list:' + key, e.state.peek());
     e.fetchedAt = now;
     e.pageError = false;
     touchList(key, e);
@@ -168,6 +177,7 @@ export async function nextPage(key: string) {
     if (!current() || !now) return;
     const have = new Set(now.rows.map(x => x.id)), add = rowsOf(r).filter(x => !have.has(x.id));
     e.state.value = { ...now, rows: [...now.rows, ...add], nextAfter: r.nextAfter, error: e.pageError ? null : now.error };
+    persist('list:' + key, e.state.peek());
     e.pageError = false;
   } catch (err) {
     const now = e.state.peek();
@@ -247,7 +257,7 @@ async function reconcileList(key: string, e: Entry, s: ListState, ids: Set<strin
     if (!current()) return;
     const next = answer && reconcileRows(s, ids, answer, e.kind);
     if (next) {
-      if (next !== s) e.state.value = next;
+      if (next !== s) { e.state.value = next; persist('list:' + key, next); }
       e.fetchedAt = Date.now();
       return;
     }
@@ -326,7 +336,8 @@ export type RowOf<K extends Kind> = K extends 'tasks' ? TaskRow : SessionRow;
 export function useList<K extends Kind>(kind: K, urlViewInput: MaybeAccessor<View>) {
   const view = createMemo(() => withFocus(readValue(urlViewInput)));
   const key = createMemo(() => listKey(view()));
-  const currentEntry = createMemo(() => entry(kind, key(), view()));
+  // A clear (generation) may drop an entry whose view was between mounts: both memos then take the new one.
+  const currentEntry = createMemo(() => (generation.value, entry(kind, key(), view())));
   const [last, setLast] = createSignal<string | null>(untrack(() => (currentEntry().state.peek() ? key() : null)), { ownedWrite: true });
   let previousKey: string | undefined;
   const shown = createMemo(() => (currentEntry().state.value ? key() : last()));
@@ -358,7 +369,7 @@ export function useList<K extends Kind>(kind: K, urlViewInput: MaybeAccessor<Vie
     },
   );
   const shownEntry = createMemo(() => {
-    const s = shown();
+    const s = shown(); void generation.value;
     return s ? lists.get(s) : undefined;
   });
   const cur = createMemo(() => shownEntry()?.state.value ?? null);
@@ -374,7 +385,7 @@ export function useList<K extends Kind>(kind: K, urlViewInput: MaybeAccessor<Vie
     get shownView() { return shownEntry()?.view ?? view(); },
     more: () => prefsRead.peek() && untrack(shown) ? nextPage(untrack(shown)!) : Promise.resolve(),
     reload: () => prefsRead.peek() ? loadList(kind, untrack(key), untrack(view), { preserveExtent: true }) : Promise.resolve(),
-    get state() { return freshness(false); },
+    get state() { return freshness(!!cur()?.restored); },
   };
 }
 
@@ -387,7 +398,15 @@ type DocFlight = { readers: Set<DocReader>; started: number; shown: number; fail
 const flights = new Map<string, DocFlight>();
 function docEntry(name: string): DocEntry {
   let e = docs.get(name);
-  if (!e) { docs.set(name, e = { signal: cell<Doc | null>(null), fetchedAt: 0, dirty: false, dirtySeq: 0 }); evictDocs(); }
+  if (!e) {
+    const made: DocEntry = e = { signal: cell<Doc | null>(null), fetchedAt: 0, dirty: false, dirtySeq: 0 };
+    docs.set(name, made); evictDocs();
+    // The mirror's copy shows until the first read of this page answers; a read that answered first wins.
+    const cleared = generation.peek();
+    void restore(name).then(v => {
+      if (v && cleared === generation.peek() && docs.get(name) === made && !made.signal.peek()) made.signal.value = { data: v.data, error: null, restored: true };
+    });
+  }
   return e;
 }
 function docSignal(name: string) { return docEntry(name).signal; }
@@ -401,6 +420,7 @@ async function startDoc(name: string, f: DocFlight) {
     if (newest()) {
       f.shown = read;
       s.value = { data: d, error: f.failed > read ? s.value?.error ?? null : null };
+      persist(name, d);
       if (f.failed <= read) { entry.fetchedAt = Date.now(); if (entry.dirtySeq === dirtyAtStart) entry.dirty = false; }
       touchDoc(name, entry);
     }
@@ -408,7 +428,7 @@ async function startDoc(name: string, f: DocFlight) {
     if (!newest() || read < f.failed) return;
     f.failed = read;
     entry.fetchedAt = 0;
-    s.value = { data: s.value?.data ?? null, error: errMsg(e), status: e instanceof OpError ? e.status : null };
+    s.value = { data: s.value?.data ?? null, error: errMsg(e), status: e instanceof OpError ? e.status : null, restored: s.value?.restored };
   }
 }
 /** Ask for a fresh read of a mounted doc; every ask in the same task sends one request. */
@@ -426,7 +446,9 @@ export function holdDoc(name: string, fetch: () => Promise<unknown>, opts?: { na
   touchDoc(name, entry);
   const v = entry.signal.value, maxAge = opts?.maxAge ?? FRESH_MS;
   const fresh = feedState.value === 'live' && !!v && v.data !== null && !v.error && !entry.dirty && entry.fetchedAt > 0 && (Date.now() - entry.fetchedAt < maxAge);
-  if (!fresh) readDoc(name);
+  // Another reader's read already on its way (started after any change this entry saw) answers this one too.
+  const onItsWay = flight.scheduled || (flight.started > Math.max(flight.shown, flight.failed) && !entry.dirty);
+  if (!fresh && !onItsWay) readDoc(name);
   return () => { flight.readers.delete(reader); queueMicrotask(() => { if (!flight.readers.size && flights.get(name) === flight) { flights.delete(name); evictDocs(); } }); };
 }
 function discardDocReads() { for (const f of flights.values()) { f.shown = f.failed = f.started; f.cleared++; } }
@@ -482,14 +504,15 @@ export function touchedBy(c: Change, name: OpName, request: unknown): boolean {
   return true;
 }
 
-type Mounted = { name: OpName; request: () => unknown; read: () => void };
+type Mounted = { name: OpName; request: () => unknown; read: () => void; key?: string };
 const mounted = new Set<Mounted>();
 let opFeed: (() => void) | null = null;
 function watch(m: Mounted) {
   mounted.add(m);
   opFeed ??= subscribe({
     resync: () => {
-      for (const x of mounted) x.read();
+      // A read that has not answered yet started after the new cursor (reads wait for the gate), so it is current already.
+      for (const x of mounted) if (!x.key || (docs.get(x.key)?.fetchedAt ?? 0) > 0) x.read();
       for (const [k, d] of docs) if (!flights.get(k)?.readers.size) { d.dirty = true; d.dirtySeq++; }
     },
     changes: cs => {
@@ -547,17 +570,17 @@ export function useOp<K extends OpName>(name: K, request: MaybeAccessor<Ops[K]['
       const release = holdDoc(k, () => op(name, currentReq!), { name, request: currentReq, maxAge });
       reloadFn = () => readDoc(k);
       const t = throttle(() => readDoc(k), quiet);
-      const off = watch({ name, request: () => ({ ...(currentReq as Record<string, unknown>), ...readValue(opts.scope) }), read: t.read });
+      const off = watch({ name, request: () => ({ ...(currentReq as Record<string, unknown>), ...readValue(opts.scope) }), read: t.read, key: k });
       const timer = every ? setInterval(() => readDoc(k), every) : 0;
       return () => { reloadFn = () => {}; release(); off(); t.stop(); clearInterval(timer); };
     },
   );
   return {
     get data() { return (s()?.value?.data ?? null) as Ops[K]['reply'] | null; },
-    get restored() { return false; },
+    get restored() { return !!s()?.value?.restored; },
     get error() { return s()?.value?.error ?? null; },
     get status() { return s()?.value?.status ?? null; },
-    get state() { return freshness(false); },
+    get state() { return freshness(!!s()?.value?.restored); },
     reload: () => reloadFn(),
   };
 }

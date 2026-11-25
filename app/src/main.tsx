@@ -17,7 +17,8 @@ import { useOp, touchedBy, setIdentity, startStore } from './store.ts';
 import { useNavCounts } from './nav-counts.ts';
 import { useRailBots } from './rail-bots.ts';
 import { entityCards } from './entity-cards.ts';
-import { startFeed, stopFeed, subscribe } from './feed.ts';
+import { startFeed, stopFeed, subscribe, setResyncHandler, rebaseFeed } from './feed.ts';
+import { adopt, forget, mirrored } from './persist.ts';
 import { clearAll } from './offline.ts';
 import type { LibrarySection } from './views/agents.tsx';
 
@@ -200,17 +201,30 @@ function App() {
       await clear; if (signal.aborted || generation !== accessGeneration()) throw Error('Access changed');
       if (!m.email) throw Error('Sign in to continue');
       setUser(m.name || m.email);
-      return { identityKey: m.email, grantsVersion: m.grantsVersion ?? '' };
+      const identity = { identityKey: m.email, grantsVersion: m.grantsVersion ?? '' };
+      // The read mirror belongs to this person and these grants: another owner's copy is purged, and what this page showed
+      // from it is cleared before the gate opens (persist.ts).
+      if (adopt(identity)) await clearAll();
+      if (signal.aborted || generation !== accessGeneration()) throw Error('Access changed');
+      return identity;
     });
     startFeed(null); startStore();
-    const validate = () => { invalidateAccess('focus'); last = null; void ensureAccessGeneration('focus').then(() => loadPrefs()).catch(() => {}); };
+    let validatedAt = 0;
+    const validate = () => { validatedAt = Date.now(); invalidateAccess('focus'); last = null; void ensureAccessGeneration('focus').then(() => loadPrefs()).catch(() => {}); };
     // Focus and online check the person quietly: the same identity and grants keep everything on screen (the change
     // stream brings what happened meanwhile); a different person, changed grants or a closed gate fence and validate as
     // at start (docs/designs/fleet-analytics.md, the access gate). Offline keeps what is shown; signed out has its own path.
-    let checking = false, again = false;
+    // A check that got no answer (a timeout, a 5xx: the coordinator restarts on every release) keeps the page and tries
+    // again after 1 s, doubling up to 30 s, until the person is confirmed; it never clears what is shown.
+    let checking = false, again = false, rebaseWanted = false, retryMs = 0, retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const retryLater = () => { clearTimeout(retryTimer); retryMs = Math.min(Math.max(retryMs * 2, 1000), 30_000); retryTimer = setTimeout(() => { void recheck(); }, retryMs); };
     const recheck = async (): Promise<void> => {
       const s = access.peek();
-      // Not open (closed, or a validation still running): validate as before, which restarts a running one.
+      // A validation running for less than 10 s will answer by itself (restarting it would throw away the page it shows
+      // from the mirror); a closed gate, or one validating longer, validates anew.
+      if (s.state === 'validating' && Date.now() - validatedAt < 10_000) return;
+      // A person validated moments ago (the focus that comes with a load) needs no second check.
+      if (s.state === 'open' && Date.now() - validatedAt < 5_000) return;
       if (s.state !== 'open' || !s.identity) return validate();
       // A focus during a quiet check is checked right after it, so a change in between is never missed.
       if (checking) { again = true; return; }
@@ -219,24 +233,28 @@ function App() {
         const m = await accessControlOp('me', {}, { signal: AbortSignal.any([accessSignal(s.generation), AbortSignal.timeout(10000)]) });
         const cur = access.peek();
         if (cur.generation !== s.generation || cur.state !== 'open') return;
-        // The same person: nothing to redo; preferences and data stay, and the change stream brings what changed.
-        if (m.email !== s.identity.identityKey || (m.grantsVersion ?? '') !== s.identity.grantsVersion) validate();
+        clearTimeout(retryTimer); retryMs = 0;
+        // Another person or changed grants: fence and validate as at start.
+        if (m.email !== s.identity.identityKey || (m.grantsVersion ?? '') !== s.identity.grantsVersion) { rebaseWanted = false; validate(); return; }
+        // The same person: preferences and data stay, and the change stream brings what changed (from a new cursor after a resync).
+        if (rebaseWanted) { rebaseWanted = false; void rebaseFeed(); }
       } catch (e) {
         if (access.peek().generation !== s.generation || access.peek().state !== 'open') return;
-        // Offline keeps what is shown, and signed out has its own path; any other failure (a timeout, a 5xx, an
-        // incomplete reply) leaves the person unverified, so the gate validates as at start.
-        if (!(e instanceof OpError && (e.status === 0 && e.message === 'offline' || e.status === 401 || e.status === 403))) validate();
+        // Offline waits for online, and signed out has its own path; any other failure (a timeout, a 5xx, an incomplete
+        // reply) keeps the page as it is and asks again later.
+        if (!(e instanceof OpError && (e.status === 0 && e.message === 'offline' || e.status === 401 || e.status === 403))) retryLater();
       } finally { checking = false; if (again) { again = false; void recheck(); } }
     };
     // Preferences changed on another device or by an agent (person_settings_set writes a setting-change for this person).
     setIdentity(() => access.peek().identity?.identityKey);
     const offPrefs = subscribe({ resync: () => { void loadPrefs(); }, changes: cs => { if (cs.some(c => touchedBy(c, 'person_settings_get', {}))) void loadPrefs(); } });
+    setResyncHandler(() => { rebaseWanted = true; void recheck(); });
     validate(); addEventListener('focus', recheck); addEventListener('online', recheck);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const stopChecks = startVersionChecks();
-    return () => { unregister(); stopFeed(); offPrefs(); stopChecks(); removeEventListener('focus', recheck); removeEventListener('online', recheck); };
+    return () => { unregister(); setResyncHandler(null); clearTimeout(retryTimer); stopFeed(); offPrefs(); stopChecks(); removeEventListener('focus', recheck); removeEventListener('online', recheck); };
   });
-  createEffect(() => signedOut.value, out => { if (out) { invalidateAccess('signed out'); void clearAll(true); } });
+  createEffect(() => signedOut.value, out => { if (out) { invalidateAccess('signed out'); void forget(); void clearAll(true); } });
   // Each section's list view is noted as it changes and saved when the person leaves the section or the tab hides, so the
   // navigation returns to it (prefs.ts). The open item and checked rows are not part of it (view-url drops focus and sel).
   // Unsent list group toggles are sent on the same section leave.
@@ -282,15 +300,18 @@ function App() {
   // Entity cards (EntityCode) read entity_card through the store; their Open goes to the in-app path.
   const cards = entityCards(go);
   const isOpen = createMemo(() => access.value.state === 'open');
+  // While the person is validated, a tab that kept a read mirror shows its pages from it at once (operator-app D3);
+  // their reads wait for the gate, and another person's copy is cleared before it opens.
+  const showPrivate = createMemo(() => isOpen() || (access.value.state === 'validating' && mirrored()));
   const railBots = useRailBots(isOpen, go);
   return <EntityCards value={cards}><AppShell privateReady={isOpen()} privateGeneration={access.value.generation} nav={nav()} current={activeNav()} title={shellTitle()} waiting={0} onGo={openSection} pins={pins()} onPins={savePins} search={isOpen() && !viewer() ? search : []} ready={shown()} wall={wall()} bots={isOpen() ? railBots : undefined}
     searchIdle={<FocusPresets icon value={prefs.value.focus.filter(p => !prefs.value.ignored.includes(p))} presets={prefs.value.focusPresets} ignored={prefs.value.ignored} onChange={setFocus} />}
     focus={isOpen() && !viewer() ? <Focus go={go} /> : undefined}
     widths={geometry().widths} onWidth={setWidth} panels={geometry().panels} onPanel={setPanel}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
-    user={isOpen() && user() ? { name: user()!, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
+    user={isOpen() && user() ? { name: user()!, onLogout: () => { Promise.race([Promise.all([forget(), clearAll(true)]), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
-    {isOpen() ? (
+    {showPrivate() ? (
       <RenderBoundary at={access.value.generation + ':' + loc() + '?' + query()}>
         <Show when={access.value.generation} keyed>{_gen => <PrivateRoutes go={go} />}</Show>
       </RenderBoundary>
