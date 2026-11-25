@@ -20,6 +20,7 @@
 * A blocker chip opens [Live](../pages/live.md) at that host or cause.
 * Values update in place with fixed-width figures ([OR-6](../owner-rules.md)); a new chip never moves the counts ([OR-23](../owner-rules.md)).
 * At phone width the line wraps; chips keep the cause and fold `×N` into the tooltip.
+* The line never runs past its column: a cause longer than the line ends in an ellipsis inside its chip, and the chip's tooltip holds the full cause ([OR-20](../owner-rules.md)).
 
 **Keyboard.** Each count and chip is a link in reading order.
 

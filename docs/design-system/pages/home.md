@@ -23,7 +23,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)). The shel
    4. **Queued:** sessions waiting for a slot.
 4. **Asleep.** Bots with no active run, as one row of dashed tiles: name, what the bot is for, when it was last used, and a Wake button.
 
-A group longer than one row shows its latest cards and `+K` (OR-30); `All conversations ›` opens [Conversations](conversations.md) with the same filter. A finished session leaves Home and stays in Conversations.
+A group longer than one row shows its latest cards and `+K` (OR-30); `+K · Conversations ›` opens [Conversations](conversations.md) with the same filter. Waiting for you expands in place instead (`+K more`): a question no session asks is answered only on Home. One row is as many cards as the page width holds. Failed sessions whose newest run failed for the same plain cause (`failure.cause`) are one card with `×N`, the cause in words and their hosts; it opens Conversations with the Failed filter (OR-58). A failed session with a cause of its own, or none known, keeps its own card. A finished session leaves Home and stays in Conversations.
 
 The focus (OR-34) narrows every group. Ignored projects never show.
 
@@ -88,6 +88,7 @@ Behaviour:
 | Questions on cards | `questions_list` (open, in the focus), matched to the asking session; a question no listed session asks (a task's acceptance) is a card of its own. A problem question (`cause` `problem:…`) is a blocker chip instead. Answered with `questions_answer`; a key request opens Connections |
 | Asleep bots | `bot_list` rows with no `activeRunId`; Wake is `bot_run`; a message to a bot's Home is `message_send`, or `bot_run` with the text when it sleeps |
 | Composer | Project PMs from `project_list` and their open `pm` sessions (`message_send`); a PM with none starts from the project's PM preset (`session_presets`, `session_start`); bots from `bot_list`. The last target picked stays in this browser |
+| Failed cards by cause | `executions_list` `problem` (up to 500, in the focus): the newest failed run of each failed session names its `failure.cause` |
 | Pulse line | Working (`running`) and queued (`preparing`) sessions from the groups' read; done today: `sessions_list` succeeded since midnight; blockers: `executions_list` `needsYou` failures grouped by `failure.cause` and host, plus problem questions grouped by what they are about |
 | Live updates | `changes_since` over sessions, questions, bot runs and executions |
 

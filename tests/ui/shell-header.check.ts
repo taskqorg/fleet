@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import type { Browser } from 'playwright';
 import type { seeder } from './seed.ts';
+import { homeCard } from './home-card.ts';
 
 const until = async (f: () => Promise<boolean>, ms = 8000) => { const s = Date.now(); while (Date.now() - s < ms) { if (await f()) return true; await new Promise(r => setTimeout(r, 50)); } return false; };
 
@@ -97,7 +98,7 @@ export async function checkShellHeader(browser: Browser, origin: string, seed: R
     const n = async () => await outside.count() ? Number((await outside.getAttribute('aria-label'))?.split(' ')[0]) : 0;
     const before = await n();
     await outside.click(); await p.waitForURL('**/home?all');
-    await p.getByText('Ship Charlie today?').waitFor();
+    await homeCard(p, 'Ship Charlie today?');
     assert.ok(await p.getByText('Focus not applied').count() === 1, 'its head says the focus is off');
     // Ignore is full silence: an ignored project's question is not counted outside the focus.
     await call('person_settings_set', { ignore: { project: 'hdr-charlie', ignored: true } });

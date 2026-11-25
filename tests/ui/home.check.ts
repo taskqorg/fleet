@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { checkServer } from './seed.ts';
+import { homeCard } from './home-card.ts';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : 'design-report/home';
 mkdirSync(shots, { recursive: true });
@@ -34,6 +35,16 @@ seed.bulk(() => {
 });
 seed.question({ kind: 'operator_decision', sessionId: 's-design', text: 'Keep the compact card or the wide card with progress?', options: ['Compact', 'Wide'], askedBy: 'agent' });
 seed.sql(`UPDATE question SET project_id='hello-world' WHERE session_id='s-design'`);
+// A system problem with a long cause: a blocker chip that must end in an ellipsis on a phone, never past the edge.
+const longCause = seed.question({ kind: 'operator_decision', text: 'Host build-runner-with-a-very-long-name-in-the-lab-cluster is saturated: CPU load above its cores.', options: ['investigate', 'dismiss'] });
+seed.sql(`UPDATE question SET cause='problem:host:build-runner-with-a-very-long-name-in-the-lab-cluster:saturated', data=coalesce(data,'{}'::jsonb) || '{"cause":"problem:host:build-runner-with-a-very-long-name-in-the-lab-cluster:saturated"}'::jsonb WHERE id='${longCause}'`);
+// Failed sessions of one cause collapse into one card (OR-58).
+seed.bulk(() => {
+  for (const i of [1, 2, 3]) {
+    session('s-abandoned-' + i, { project: 'hello-world', title: 'Abandoned run ' + i, profile: 'coding-worker', state: 'failed', now: 'Working on step ' + i + '.', ago: (20 + i) * min });
+    seed.sql(`UPDATE execution SET problem='unknown:abandoned' WHERE id='x-s-abandoned-${i}'`);
+  }
+});
 for (const [name, purpose, project] of [['Release manager', 'delivery, rollouts', 'hello-world'], ['Fleet setup', 'settings, hosts, accounts', 'hello-world'], ['Spend auditor', 'costs, limits', 'hello-world-alt']])
   await call('bot_settings_save', { botId: randomUUID(), projectId: project, baseRevision: 0, settings: { name, purpose, profileId: 'pm', instructions: 'Watch', soul: '', scheduleTime: '', scheduleZone: '', wakeOnNeedsYou: false } });
 
@@ -49,10 +60,12 @@ try {
   assert.equal(new URL(page.url()).pathname, '/home', '/ opens Home');
   const groups = await page.locator('.home-group').evaluateAll(els => els.map(e => e.getAttribute('aria-label')));
   assert.deepEqual(groups, ['Waiting for you', 'Failed', 'Working', 'Queued', 'Asleep'], 'groups in attention order');
-  await page.getByRole('group', { name: 'Keep the compact card or the wide card with progress?' }).waitFor();
+  await homeCard(page, 'Keep the compact card or the wide card with progress?');
   await page.locator('[data-ui=bot-tile]').first().waitFor();
   await page.screenshot({ path: `${shots}/home-1440-normal.png` });
   report.push(`normal: groups ${groups.join(' · ')}`);
+  const failed = await page.locator('.home-group[aria-label=Failed] [data-ui=session-card]').allInnerTexts();
+  report.push(`failed cards: ${failed.map(t => t.split('\n')[0]).join(' | ')}`);
 
   await page.locator('.target-chip').click();
   await page.locator('.target-panel').waitFor();
@@ -68,22 +81,27 @@ try {
   report.push('answered in place');
 
   // A card opens the session at /home/<code>.
-  await page.locator('[data-ui=session-card]', { hasText: 'Fix receipt factory' }).click();
+  await (await homeCard(page, 'Fix receipt factory')).click();
   await page.waitForURL(/\/home\/[^/]+$/);
   report.push(`card opens ${new URL(page.url()).pathname}`);
 
   // Quiet: nothing waits and nothing failed.
-  seed.sql(`UPDATE question SET state='answered', answer='Compact', answered_at=now() WHERE state='open'; UPDATE execution SET state='cancelled' WHERE id='x-s-failed'; UPDATE execution SET state='running' WHERE id='x-s-design'`);
+  seed.sql(`UPDATE question SET state='answered', answer='Compact', answered_at=now() WHERE state='open'; UPDATE execution SET state='cancelled' WHERE id='x-s-failed' OR id LIKE 'x-s-abandoned-%'; UPDATE execution SET state='running' WHERE id='x-s-design'`);
   await page.goto(origin + '/home');
   await page.locator('[data-ui=quiet-summary] .qsum-title').waitFor({ timeout: 10000 }).catch(async e => { await page.screenshot({ path: `${shots}/home-fail.png` }); console.log((await call('sessions_list', { limit: 20 })).sessions.map((x: any) => x.id + ' ' + x.state), (await call('questions_list', { state: 'open' })).questions.length); throw e; });
   await page.screenshot({ path: `${shots}/home-1440-quiet.png` });
   report.push('quiet summary shown');
 
+  // The long-cause problem is open again for the phone: its chip must stay inside the screen.
+  seed.sql(`UPDATE question SET state='open', answer=NULL, answered_at=NULL WHERE id='${longCause}'`);
   const phone = await b.newContext({ viewport: { width: 390, height: 844 }, colorScheme: 'dark', isMobile: true, hasTouch: true });
   const p2 = await phone.newPage();
   await p2.goto(origin + '/home');
   await p2.waitForSelector('[data-ui=session-card]:not(.skeleton)');
   const wide = await p2.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+  const chipEdge = await p2.locator('[data-ui=blocker-chip]').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().right)));
+  assert.ok(chipEdge.every(r => r <= 390), `blocker chips stay inside the screen (${chipEdge.join(', ')})`);
+  report.push(`phone chips end at ${chipEdge.join(', ')} px`);
   assert.equal(wide, false, 'no sideways scroll at 390 px');
   await p2.screenshot({ path: `${shots}/home-390.png` });
   report.push(`phone: no sideways scroll; console errors: ${errors.length ? errors.join(' | ') : 'none'}`);
