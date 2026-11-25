@@ -35,6 +35,10 @@ type sessionListDBRow struct {
 	OpenQuestions int64    `db:"open_questions"`
 	NowText       *string  `db:"now_text"`
 	TaskTitle     *string  `db:"task_title"`
+	WaitingSince  *string  `db:"waiting_since"`
+	RunStartedAt  *string  `db:"run_started_at"`
+	LastStartedAt *string  `db:"last_started_at"`
+	FailedStarts  int64    `db:"failed_starts"`
 	G             string   `db:"g"`
 	Sk            float64  `db:"sk"`
 }
@@ -51,6 +55,7 @@ func (x sessionListDBRow) row() contract.SessionRow {
 	}
 	return contract.SessionRow{Id: x.ID, Code: x.Code, Title: title, State: x.State, Harness: harness, ProfileId: x.ProfileID, ProjectId: x.ProjectID,
 		CreatedAt: x.CreatedAt, ActivityAt: x.ActivityAt, Now: nowLine(deref(x.NowText), deref(x.TaskTitle)), Executions: x.Executions, OpenQuestions: x.OpenQuestions, ArchivedAt: x.ArchivedAt,
+		WaitingSince: x.WaitingSince, RunStartedAt: x.RunStartedAt, LastStartedAt: x.LastStartedAt, FailedStarts: &x.FailedStarts,
 		SortKey: sortKey(x.G, x.Sk, x.ID)}
 }
 

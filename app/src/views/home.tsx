@@ -8,7 +8,7 @@ import {
   PulseLine, Composer, TargetPicker, SessionCard, SessionCardSkeleton, QuestionCard, OpenQuestion, BotTile, QuietSummary, GroupHeader, Ago,
   OfflineMarker, ErrorBanner, Button, ShellStatus, actor, life, statesOf, openStates, states, stamp, day, dayStart, causeOf,
   type Blocker, type Target, type Life, type AvatarMark,
-  timeOf, plural,
+  timeOf, plural, WorkFacts, peerFence, Fact,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 import { useLocation, useSearch } from '../router.ts';
@@ -319,6 +319,42 @@ function HomePage() {
   const name = createMemo(() => (me.data?.name ?? '').split(/\s+/)[0]);
   const state = createMemo(() => [active.state, questions.state].find(s => s !== 'current') ?? 'current');
 
+  // Work facts (controls/work-facts.md): the time a card waits, is in work or failed, against the cards of its group
+  // (peerFence), never a fixed number. No agent mark on Home: the avatar and the name say who.
+  const fin = (t: number) => (t > 0 ? t : undefined);
+  const waitOf = (c: Card) => fin(c.s ? (c.qs.length ? ms(c.qs[0].askedAt) : ms(c.s.waitingSince)) : ms(c.qs[0]?.askedAt));
+  const workOf = (c: Card) => (c.s && (c.s.state === 'running' || c.s.state === 'preparing') ? fin(ms(c.s.runStartedAt)) : undefined);
+  const startsOf = (c: Card) => (c.cause ? c.cause.n : c.s?.state === 'failed' ? c.s.failedStarts ?? 0 : 0);
+  const fences = createMemo(() => {
+    const t = now(), all = cards(), secs = (v: number | undefined) => (v === undefined ? NaN : (t - v) / 1000);
+    return {
+      wait: peerFence(all.filter(c => c.group === 'waiting').map(c => secs(waitOf(c)))),
+      work: peerFence(all.map(c => secs(workOf(c))).filter(Number.isFinite)),
+      starts: peerFence(all.filter(c => c.group === 'failed').map(startsOf)),
+    };
+  });
+  const cardFacts = (c: Card) => {
+    const wait = c.group === 'waiting' ? waitOf(c) : undefined, work = workOf(c), n = startsOf(c);
+    const activity = c.s ? fin(ms(c.s.activityAt)) : undefined;
+    const last = c.cause ? c.at : c.s?.state === 'failed' ? fin(ms(c.s.lastStartedAt)) : undefined;
+    // A card with no time and no repeats has no work facts: no empty meta line.
+    if (n < 2 && wait === undefined && work === undefined && last === undefined && activity === undefined) return undefined;
+    return (
+      <WorkFacts
+        attempts={n > 1 ? n : undefined}
+        attemptsFence={fences().starts}
+        attemptsTip={c.cause ? `${n} sessions failed this way` : `${n} failed starts`}
+        waitAt={wait}
+        waitFence={fences().wait}
+        workAt={wait === undefined ? work : undefined}
+        workFence={fences().work}
+        lastAt={wait === undefined && work === undefined ? last : undefined}
+        lastLabel={c.cause ? 'Latest failure' : 'Latest failed start'}
+        time={wait === undefined && work === undefined && last === undefined && activity !== undefined ? <Fact tip="Last activity"><Ago t={activity} /></Fact> : undefined}
+      />
+    );
+  };
+
   /** One card; `c` follows its row as reads update, so a typed answer survives them (keyed by session or question). */
   const renderCard = (c: Accessor<Card>): JSX.Element => {
     const q = createMemo(() => c().qs.find(x => !answers.answered(x.id)) ?? null);
@@ -340,7 +376,8 @@ function HomePage() {
           avatar={{ letter: '!', tone: 'danger' }}
           state="failed"
           now={f().text}
-          meta={[<b class="num">×{f().n}</b>, ...(f().hosts.length ? [f().hosts.join(', ')] : []), <Ago t={c().at} />]}
+          meta={f().hosts.length ? [f().hosts.join(', ')] : []}
+          facts={cardFacts(c())}
           onOpen={() => go(formatView({ view: 'conversations', state: ['failed'] }))}
         />
       );
@@ -355,7 +392,7 @@ function HomePage() {
           avatar={{ letter: x().kind === 'acceptance' ? 'A' : 'Q', tone: 'attention' }}
           state="waiting"
           now={x().kind === 'acceptance' ? 'Asks you to accept a result.' : 'Asks you to decide.'}
-          meta={[<Ago t={ms(x().askedAt)} />]}
+          facts={cardFacts(c())}
           question={question()}
           onOpen={() => {
             const y = x();
@@ -373,7 +410,7 @@ function HomePage() {
         avatar={w().avatar}
         state={c().qs.length && s().state !== 'failed' ? 'waiting' : lifeOfSession(s().state)}
         now={(s().state === 'failed' ? failureOf().get(s().id)?.text : undefined) || s().now || (w().name === s().title ? 'No message yet' : s().title || 'No message yet')}
-        meta={s().activityAt ? [<Ago t={ms(s().activityAt)} />] : []}
+        facts={cardFacts(c())}
         question={question()}
         onOpen={() => go(sessionPath(s()))}
       />

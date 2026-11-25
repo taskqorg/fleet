@@ -10,7 +10,7 @@
 2. **State.** The dot and word of the [state badge](state-badge.md#dot-and-word), from the one vocabulary ([OR-55](../owner-rules.md)).
 3. **Now.** One line, at most two, saying what the session does now. It never shows a raw id or a tool call.
 4. **Progress.** A 2 px bar in the running tone, only when the session has a plan with steps.
-5. **Meta line.** `font-size-sm` in `fg-muted`: step, elapsed time ([OR-2](../owner-rules.md)), host, the next timer. A missing fact is left out, never shown as a dash.
+5. **Meta line.** `font-size-sm` in `fg-muted`: step, host, the next timer, then at its right end the [work facts](work-facts.md) (`facts`), the time last ([OR-2](../owner-rules.md), [OR-64](../owner-rules.md)). A missing fact is left out, never shown as a dash.
 6. **Question.** At most one, the oldest open one, as the card form of the [decision block](decision-block.md#card).
 
 **States.** One variant per state of the vocabulary; the border and the question carry the tone ([OR-56](../owner-rules.md)):

@@ -234,3 +234,12 @@ ORDER BY x.account_id, r.value->>'period', d.seq DESC;
 -- name: ArtStoredAll :many
 -- Every stored artifact, for the placement pass (placement.go).
 SELECT * FROM artifact WHERE state='stored' ORDER BY seq;
+
+-- name: ArtWorkFacts :many
+-- The work facts of a results page (controls/work-facts.md): per run, its harness and its task's executions so far.
+SELECT e.id,e.harness,coalesce(d.executions,0)::bigint AS task_attempts FROM execution e LEFT JOIN task_derived d ON d.task_id=e.task_id
+WHERE e.id=ANY(@ids::text[]);
+
+-- name: ArtTaskAttempts :many
+-- Executions so far of the tasks of a results page whose rows have no run.
+SELECT d.task_id,d.executions::bigint AS task_attempts FROM task_derived d WHERE d.task_id=ANY(@ids::text[]);

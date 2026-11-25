@@ -391,10 +391,18 @@ export function Fact(p: { icon?: IconName; text?: string; tip: string; label?: s
 const SAME_MOMENT_MS = 60_000;
 
 export type WorkFactsProps = {
+  /** Facts of the row that are not work facts (codes, size, resources): before the work facts, so the time stays last. */
+  before?: JSX.Element;
   /** Attempts so far (executions of a task, starts of a failing cause). `×N` from two: one attempt says nothing. */
   attempts?: number;
   /** The peers' fence for attempts (peerFence in format.ts): at or above it `×N` takes the attention tone. */
   attemptsFence?: number;
+  /** The tooltip of `×N` when it is not "N attempts" (a run: "Attempt N of its task"). */
+  attemptsTip?: string;
+  /** Since when the item waits for the person (the oldest open question): the time on the row, before any other time. */
+  waitAt?: number;
+  /** The peers' fence for the waiting time, in seconds (peerFence). */
+  waitFence?: number;
   /** Start of the latest attempt. In the tooltip of the time in work; on the row only when there is no time in work. */
   lastAt?: number;
   /** What the latest attempt is called: "Latest attempt" by default, "Latest failed start" for a failing slot. */
@@ -403,21 +411,26 @@ export type WorkFactsProps = {
   workAt?: number;
   /** The peers' fence for the time in work, in seconds (peerFence): at or above it the time takes the attention tone. */
   workFence?: number;
+  /** The tooltip of the time in work when it is not since the first attempt (a run: "Running for"). */
+  workTip?: string;
   /** The current state and since when: in the tooltip of the time in work ("<State> since …"). */
   state?: { label: string; at: number };
   /** The agent: its mark, the name in the tooltip. */
   agent?: Harness | null;
+  /** A time the row shows in place of the work facts' own (an ended run's duration); still the last fact. */
+  time?: JSX.Element;
   /** Server clock minus local clock, for ages read from the server. */
   clockOffsetMs?: number;
 };
 
 /**
- * Work facts in the row's right zone, quiet form (owner pick B, 25 Nov): `×N` attempts, time in work (clock), agent
- * mark. The latest attempt and the time in the current state are in the tooltip of the time in work and in the item's
- * detail; a row with no time in work shows the latest attempt instead (a failing slot), else the time in its state (a
- * finished task). `×N` from two attempts; a
- * moment equal to the start of work (within a minute) is left out of the tooltip. Outliers stand out against their
- * peers, never against a fixed number (peerFence).
+ * Work facts in the row's right zone, quiet form (owner pick B, 25 Nov): `×N` attempts, the agent mark, then the time,
+ * always the rightmost fact so times line up in one column down the list (owner, 25 Nov). The time is the wait for the
+ * person when the item waits (hourglass), else the time in work (clock); the latest attempt and the time in the current
+ * state are in its tooltip and in the item's detail. A row with no time in work shows the latest attempt instead (a
+ * failing slot), else the time in its state (a finished task). `×N` from two attempts; a moment equal to the start of
+ * work (within a minute) is left out of the tooltip. Outliers stand out against their peers, never against a fixed
+ * number (peerFence).
  */
 export function WorkFacts(p: WorkFactsProps) {
   const fin = (t: number | undefined): t is number => t !== undefined && Number.isFinite(t);
@@ -428,26 +441,36 @@ export function WorkFacts(p: WorkFactsProps) {
     fin(p.lastAt) && !same(p.lastAt, p.workAt) ? `${(p.lastLabel ?? 'Latest attempt').toLowerCase()} ${exact(p.lastAt)}` : '',
     p.state && fin(p.state.at) && !same(p.state.at, p.workAt) ? `${p.state.label} since ${exact(p.state.at)}` : '',
   ].filter(Boolean).join(' · ') || undefined;
+  const nTip = () => p.attemptsTip ?? `${n().toLocaleString('en')} attempts`;
   return (
     <RowFacts>
+      {p.before}
       <Show when={n() > 1}>
-        <span class={['fact', 'attempts', nOut() ? 't-attention alert' : '']} data-tip={`${n().toLocaleString('en')} attempts${nOut() ? ', ten times the usual row or more' : ''}`}
-          aria-label={`${n().toLocaleString('en')} attempts`}>×{n().toLocaleString('en')}</span>
-      </Show>
-      <Show when={fin(p.workAt)} fallback={
-        <Show when={fin(p.lastAt)} fallback={
-          <Show when={p.state && fin(p.state.at)}>
-            <Fact tip={`${p.state!.label} for`}><AgeChip t={p.state!.at} clockOffsetMs={p.clockOffsetMs} /></Fact>
-          </Show>
-        }>
-          <Fact icon={actions.runs} tip={p.lastLabel ?? 'Latest attempt'}><AgeChip t={p.lastAt!} clockOffsetMs={p.clockOffsetMs} /></Fact>
-        </Show>
-      }>
-        <Fact icon="clock" tip="In work since the first attempt">
-          <AgeChip t={p.workAt!} clockOffsetMs={p.clockOffsetMs} alertAfter={p.workFence} tone="attention" alertLabel="ten times longer in work than the usual row or more" note={note()} />
-        </Fact>
+        <span class={['fact', 'attempts', nOut() ? 't-attention alert' : '']} data-tip={`${nTip()}${nOut() ? ', ten times the usual row or more' : ''}`}
+          aria-label={nTip()}>×{n().toLocaleString('en')}</span>
       </Show>
       <Show when={p.agent && p.agent in harnesses}><HarnessMark h={p.agent!} /></Show>
+      <Show when={!p.time} fallback={p.time}>
+        <Show when={fin(p.waitAt)} fallback={
+          <Show when={fin(p.workAt)} fallback={
+            <Show when={fin(p.lastAt)} fallback={
+              <Show when={p.state && fin(p.state.at)}>
+                <Fact tip={`${p.state!.label} for`}><AgeChip t={p.state!.at} clockOffsetMs={p.clockOffsetMs} /></Fact>
+              </Show>
+            }>
+              <Fact icon={actions.runs} tip={p.lastLabel ?? 'Latest attempt'}><AgeChip t={p.lastAt!} clockOffsetMs={p.clockOffsetMs} /></Fact>
+            </Show>
+          }>
+            <Fact icon="clock" tip={p.workTip ?? 'In work since the first attempt'}>
+              <AgeChip t={p.workAt!} clockOffsetMs={p.clockOffsetMs} alertAfter={p.workFence} tone="attention" alertLabel="ten times longer in work than the usual row or more" note={note()} />
+            </Fact>
+          </Show>
+        }>
+          <Fact icon="hourglass" tip="Waiting for you">
+            <AgeChip t={p.waitAt!} clockOffsetMs={p.clockOffsetMs} alertAfter={p.waitFence} tone="attention" alertLabel="waiting ten times longer than the usual row or more" />
+          </Fact>
+        </Show>
+      </Show>
     </RowFacts>
   );
 }

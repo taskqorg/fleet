@@ -84,6 +84,7 @@
   /* With work facts the title keeps at least 60% of the row; facts that do not fit beside it wrap under it, right-aligned (OR-60). */
   .lr-in:has(> .row-facts) > .lr-main { flex: 1 1 60%; }
   .lr-in > .row-facts { margin-left: auto; }
+  .lr-in > .lr-age:last-child { margin-inline-start: auto; }
   .lr-two { display: flex; flex-direction: column; }
   .lr-two .lr-text { overflow: hidden; text-overflow: ellipsis; }
   .lr-counts { display: flex; gap: var(--space-3); font-size: var(--font-size-xs); }

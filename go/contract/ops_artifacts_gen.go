@@ -170,6 +170,7 @@ type ArtifactRow struct {
 	DerivedFromArtifactId *string `json:"derivedFromArtifactId"`
 	Error                 *string `json:"error"`
 	ExecutionId           *string `json:"executionId"`
+	Harness               *string `json:"harness,omitempty"`
 	Id                    string  `json:"id"`
 	LegacyId              *string `json:"legacyId"`
 	MediaType             string  `json:"mediaType"`
@@ -183,6 +184,7 @@ type ArtifactRow struct {
 	Sha256                string  `json:"sha256"`
 	Size                  int64   `json:"size"`
 	State                 string  `json:"state"`
+	TaskAttempts          *int64  `json:"taskAttempts,omitempty"`
 	TaskCode              *string `json:"taskCode,omitempty"`
 	TaskId                *string `json:"taskId"`
 }
