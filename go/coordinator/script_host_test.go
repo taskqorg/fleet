@@ -35,7 +35,7 @@ func TestScriptStepHostChoice(t *testing.T) {
 		var got string
 		if err := env.app.store.Write(env.ctx, nil, []string{GLOBAL}, func(q *Request) error {
 			var err error
-			got, err = scriptHost(q)
+			got, err = scriptHost(q, "", testOwnerEmail)
 			return err
 		}); err != nil {
 			t.Fatal(err)

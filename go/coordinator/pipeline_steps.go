@@ -65,10 +65,10 @@ type pipelineScriptPayload struct {
 	TimeoutMs json.RawMessage `json:"timeout_ms,omitempty"`
 }
 
-// scriptHost: the host for a script step that names none, chosen as dispatch chooses for agent work: online, accepting
-// work, able to run scripts, not updating and not overloaded, in host order with the default host first; a spare host
+// scriptHost: the host for a script step that names none, chosen as dispatch chooses for agent work: held by someone
+// who may run the project's work, online, accepting work, able to run scripts, not updating, not overloaded or full, in host order with the default host first; a spare host
 // only when no other host qualifies (fleet-people-access.md §7). With none, the default host, as before.
-func scriptHost(q *Request) (string, error) {
+func scriptHost(q *Request, projectID, director string) (string, error) {
 	k, err := loadDispatchContext(q)
 	if err != nil {
 		return "", err
@@ -80,8 +80,10 @@ func scriptHost(q *Request) (string, error) {
 			h, ok := k.hosts[id]
 			switch {
 			case !ok || k.spare(id) != spare || deref(h.Intake) == "paused":
+			case !q.app.holderMayRun(deref(h.Holder), projectID, director): // the same trust gate as dispatch
 			case !(float64(now)-k.seen[id] < onlineMs) || !inList(k.caps[id], "script") || k.updating[id] != "":
 			case hostOverloadReason(id, k.loads[id], now) != "":
+			case hostConcurrencyLimit(h, k.loads[id], now) > 0 && k.running[id] >= hostConcurrencyLimit(h, k.loads[id], now):
 			default:
 				return id, nil
 			}
@@ -100,7 +102,7 @@ func (run *runRecord) startScript(q *Request, stepExecutionID, command string, t
 		return "", err
 	}
 	if hostID == "" {
-		h, err := scriptHost(q)
+		h, err := scriptHost(q, run.project(), dir)
 		if err != nil {
 			return "", err
 		}
