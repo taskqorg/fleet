@@ -36,16 +36,10 @@ export async function checkBots(browser: Browser, origin: string, seed: ReturnTy
       profileId: 'pm',
       instructions: 'Inspect tasks and telemetry',
       soul: 'Retain unconfirmed observations',
-      scheduleTime: '09:00',
-      scheduleZone: 'Etc/UTC',
-      wakeOnNeedsYou: true,
     };
     const settingsB = {
       ...settingsA,
       purpose: 'Check Project B field notes',
-      scheduleTime: '',
-      scheduleZone: '',
-      wakeOnNeedsYou: false,
     };
 
     const botA = (await call('bot_settings_save', { botId: halA, projectId: 'hello-world', baseRevision: 0, settings: settingsA })).bot;

@@ -508,6 +508,7 @@ func sessionPut(q *Request, s *agentSession) error {
 }
 
 type messagePayload struct {
+	TriggerID         string          `json:"triggerId,omitempty"`
 	Attachments       json.RawMessage `json:"attachments,omitempty"`
 	AttachmentRequest []string        `json:"attachmentRequest,omitempty"`
 }
@@ -579,7 +580,7 @@ func messagePut(q *Request, m *agentMessage) error {
 	if m.ID == "" {
 		return fmt.Errorf("message record without an id")
 	}
-	payload, err := restEncode(messagePayload{Attachments: m.Attachments, AttachmentRequest: m.AttachmentRequest}, m.rest)
+	payload, err := restEncode(messagePayload{TriggerID: m.TriggerID, Attachments: m.Attachments, AttachmentRequest: m.AttachmentRequest}, m.rest)
 	if err != nil {
 		return err
 	}

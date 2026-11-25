@@ -567,6 +567,11 @@ CREATE POLICY live ON transport_conflict AS RESTRICTIVE FOR SELECT TO public USI
 DROP POLICY IF EXISTS project_scope ON transport_conflict;
 CREATE POLICY project_scope ON transport_conflict FOR ALL TO public USING (fleet_visible(NULL::text));
 
+-- trigger
+ALTER TABLE trigger ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON trigger;
+CREATE POLICY project_scope ON trigger FOR ALL TO public USING (fleet_visible(project_id));
+
 -- upload
 ALTER TABLE upload ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON upload;

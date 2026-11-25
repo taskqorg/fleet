@@ -4804,3 +4804,97 @@ ALTER TABLE bot
  ADD COLUMN avatar_artifact_id text NULL REFERENCES artifact(id),
  ADD COLUMN avatar_still_artifact_id text NULL REFERENCES artifact(id),
  ADD COLUMN avatar_glow text NOT NULL DEFAULT '';
+
+-- migration 106: triggers (docs/designs/fleet-triggers.md): one table for timed and change wakes of a conversation or a
+-- bot. The session watch (kinds and timer), bot automations and the bot settings' own daily wake and Needs you switch
+-- become trigger rows; their tables and fields stay unused until a later migration drops them. A trigger's id is the caller's; migrated watch triggers take
+-- '<preset>:<session>', migrated bot settings '<preset>:<bot>', automations keep their ids.
+SELECT set_config('fleet.project_ids', '*', true);
+CREATE TABLE trigger (
+ id text PRIMARY KEY,
+ session_id text NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ bot_id text NULL REFERENCES bot(id) ON DELETE CASCADE,
+ project_id text NULL,
+ revision integer NOT NULL CHECK (revision > 0),
+ name text NOT NULL,
+ preset_id text NOT NULL DEFAULT '',
+ text text NOT NULL,
+ when_kind text NOT NULL CHECK (when_kind IN ('every', 'daily', 'manual')),
+ every_ms bigint NULL CHECK (every_ms > 0),
+ daily_time text NOT NULL DEFAULT '',
+ daily_zone text NOT NULL DEFAULT '',
+ if_changed text[] NOT NULL DEFAULT '{}',
+ enabled boolean NOT NULL,
+ effective_since timestamptz NOT NULL DEFAULT now(),
+ change_cursor bigint NOT NULL DEFAULT 0,
+ next_at timestamptz NULL,
+ last_slot text NOT NULL DEFAULT '',
+ fires bigint NOT NULL DEFAULT 0,
+ last_fire_at timestamptz NULL,
+ quiet_checks bigint NOT NULL DEFAULT 0,
+ quiet_since timestamptz NULL,
+ last_error text NULL,
+ limits_signaled text[] NOT NULL DEFAULT '{}',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ CHECK ((session_id IS NULL) <> (bot_id IS NULL)),
+ CHECK ((when_kind = 'every') = (every_ms IS NOT NULL)),
+ CHECK ((when_kind = 'daily') = (daily_time <> ''))
+);
+CREATE INDEX trigger_session ON trigger(session_id, id) WHERE session_id IS NOT NULL;
+CREATE INDEX trigger_bot ON trigger(bot_id, id) WHERE bot_id IS NOT NULL;
+
+INSERT INTO trigger(id, session_id, project_id, revision, name, preset_id, text, when_kind, every_ms, if_changed, enabled,
+  change_cursor, limits_signaled, fires, last_fire_at)
+SELECT 'focus-changes:' || w.session_id, w.session_id, w.project_id, 1, 'Focus changes', 'focus-changes', '', 'every', 15000,
+  ARRAY(SELECT jsonb_array_elements_text(w.payload->'kinds')), true, coalesce((w.payload->>'cursor')::bigint, (SELECT coalesce(max(seq), 0) FROM change)),
+  ARRAY(SELECT jsonb_array_elements_text(coalesce(w.payload->'limitsSignaled', '[]'))),
+  coalesce((w.payload->>'wakes')::bigint, 0),
+  CASE WHEN jsonb_typeof(w.payload->'lastWakeAt') = 'number' THEN to_timestamp((w.payload->>'lastWakeAt')::numeric / 1000) END
+FROM watch w
+WHERE w.tombstoned_at IS NULL AND jsonb_typeof(w.payload->'kinds') = 'array' AND jsonb_array_length(w.payload->'kinds') > 0;
+
+INSERT INTO trigger(id, session_id, project_id, revision, name, preset_id, text, when_kind, every_ms, if_changed, enabled,
+  change_cursor, next_at)
+SELECT 'conversation-check:' || w.session_id, w.session_id, w.project_id, 1, 'Conversation check', 'conversation-check',
+  'Fleet: conversation check; review your focus with task_page and questions_list.', 'every',
+  greatest(1, round(coalesce(w.payload->>'timerMs', w.payload->>'pausedTimerMs')::numeric))::bigint,
+  '{task,question,execution}', w.payload->'pausedTimerMs' IS NULL, coalesce((w.payload->>'cursor')::bigint, (SELECT coalesce(max(seq), 0) FROM change)),
+  CASE WHEN jsonb_typeof(w.payload->'nextWakeAt') = 'number' THEN to_timestamp((w.payload->>'nextWakeAt')::numeric / 1000) END
+FROM watch w
+WHERE w.tombstoned_at IS NULL AND coalesce(w.payload->>'timerMs', w.payload->>'pausedTimerMs') IS NOT NULL;
+
+INSERT INTO trigger(id, bot_id, project_id, revision, name, text, when_kind, every_ms, daily_time, daily_zone, if_changed,
+  enabled, effective_since, change_cursor, last_slot)
+SELECT a.id, a.bot_id, a.project_id, a.revision, a.name, a.instructions,
+  CASE a.kind WHEN 'schedule' THEN 'daily' WHEN 'needs_you' THEN 'every' ELSE 'manual' END,
+  CASE WHEN a.kind = 'needs_you' THEN 15000 END,
+  CASE WHEN a.kind = 'schedule' THEN a.schedule_time ELSE '' END, CASE WHEN a.kind = 'schedule' THEN a.schedule_zone ELSE '' END,
+  CASE WHEN a.kind <> 'needs_you' THEN '{}'::text[] WHEN a.event = 'question' THEN '{question}' WHEN a.event = 'execution' THEN '{execution}' ELSE '{question,execution}' END,
+  a.enabled, a.effective_since, a.event_cursor, a.last_schedule_date
+FROM bot_automation a;
+
+INSERT INTO trigger(id, bot_id, project_id, revision, name, preset_id, text, when_kind, daily_time, daily_zone, enabled, last_slot)
+SELECT 'daily-reconciliation:' || b.id, b.id, b.project_id, 1, 'Daily wake', 'daily-reconciliation', '', 'daily', r.schedule_time,
+  r.schedule_zone, true,
+  CASE WHEN c.last_schedule_key = '' OR c.last_schedule_key IS NULL THEN '' ELSE split_part(c.last_schedule_key, '|', 1) END
+FROM bot b
+JOIN bot_revision r ON r.bot_id = b.id AND r.revision = b.revision
+LEFT JOIN bot_wake_cursor c ON c.bot_id = b.id
+WHERE b.tombstoned_at IS NULL AND r.schedule_time <> '' AND r.schedule_zone <> '';
+
+INSERT INTO trigger(id, bot_id, project_id, revision, name, preset_id, text, when_kind, every_ms, if_changed, enabled, change_cursor)
+SELECT 'needs-you:' || b.id, b.id, b.project_id, 1, 'Needs you', 'needs-you', '', 'every', 15000, '{question,execution}', true,
+  coalesce(c.needs_you_change_seq, (SELECT coalesce(max(seq), 0) FROM change))
+FROM bot b
+JOIN bot_revision r ON r.bot_id = b.id AND r.revision = b.revision
+LEFT JOIN bot_wake_cursor c ON c.bot_id = b.id
+WHERE b.tombstoned_at IS NULL AND r.wake_on_needs_you;
+
+ALTER TABLE bot_run ADD COLUMN trigger_id text NULL REFERENCES trigger(id) ON DELETE SET NULL;
+UPDATE bot_run SET trigger_id = automation_id WHERE automation_id IS NOT NULL;
+CREATE INDEX bot_run_trigger_seq ON bot_run(trigger_id, seq DESC) WHERE trigger_id IS NOT NULL AND tombstoned_at IS NULL;
+-- Expand only: the replaced tables and columns stay for the releases a rollback may still start (deploy/migrate-check.sh);
+-- this release neither reads nor writes them, and a later migration drops them. New bot revisions leave the old
+-- schedule fields empty.
+ALTER TABLE bot_revision ALTER COLUMN schedule_time SET DEFAULT '', ALTER COLUMN schedule_zone SET DEFAULT '',
+ ALTER COLUMN wake_on_needs_you SET DEFAULT false;

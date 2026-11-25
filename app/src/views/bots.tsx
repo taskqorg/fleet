@@ -9,7 +9,7 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import { writeOnce, useAlive, type Ops } from '../api.ts';
 import {
-  BOT_TABS, botAvatarState, botPicture, botStatusBadge, classifyBotTaskBucket, filterBotRuns, filterBotTasks, formatBotTriggers, reasonLabel, sourceLabel, wakeLabel,
+  BOT_TABS, botAvatarState, botPicture, botStatusBadge, classifyBotTaskBucket, filterBotRuns, filterBotTasks, reasonLabel, sourceLabel, wakeLabel,
   type BotRunFilter, type BotTab, type BotTaskBucket,
 } from '../bot-view.ts';
 
@@ -34,7 +34,7 @@ type BotTask = Ops['bot_tasks']['reply']['tasks'][number];
 /** The Overview hero's state line, in the words of the avatar's light (controls/avatar.md). */
 const botAvatarWords = { asleep: 'Asleep', working: 'Working now', waiting: 'Waiting for you', failed: 'Last run failed', paused: 'Paused' } as const;
 
-const blank: Settings = { name: '', purpose: '', profileId: '', instructions: '', soul: '', scheduleTime: '', scheduleZone: '', wakeOnNeedsYou: false };
+const blank: Settings = { name: '', purpose: '', profileId: '', instructions: '', soul: '' };
 /** A bot's Library route: its D17 code (B-FLT-1), else its id. */
 export const botPath = (b: { id: string; code?: string | null }) => '/library/bots/' + encodeURIComponent(b.code || b.id);
 const path = (b: { id: string; code?: string | null }) => botPath(b);
@@ -244,9 +244,6 @@ function BotOverviewTab(props: {
       </div>
       <DetailSection title="Status">
         <KvRow icon="bot" label="Purpose" value={<span>{props.bot.settings.purpose || 'No purpose set'}</span>} />
-        <Show when={props.bot.settings.scheduleTime || props.bot.settings.wakeOnNeedsYou}>
-          <KvRow icon="clock" label="Bot settings triggers" value={formatBotTriggers(props.bot.settings)} />
-        </Show>
         <KvRow
           icon="messages-square"
           label="Home conversation"
@@ -495,7 +492,7 @@ function BotSettingsForm(props: {
     }
     return [...map.values()];
   });
-  const field = (key: keyof Omit<Settings, 'wakeOnNeedsYou'>, value: string) => setSettings(s => ({ ...s, [key]: value }));
+  const field = (key: keyof Settings, value: string) => setSettings(s => ({ ...s, [key]: value }));
 
   const save = async (kind: 'settings' | 'memory') => {
     if (busy()) return;
@@ -528,12 +525,6 @@ function BotSettingsForm(props: {
           disabledReason={projectId() ? undefined : 'Select a project first'} loading={!!projectId() && !presets.data && !presets.error} error={presets.error} onRetry={presets.reload} />
         <TextField label="Instructions" multiline value={settings().instructions} onChange={v => field('instructions', v)} />
         <TextField label="SOUL" multiline value={settings().soul} onChange={v => field('soul', v)} />
-        <Show when={initial && (initial.settings.scheduleTime || initial.settings.wakeOnNeedsYou)}>
-          <TextField label="Bot daily wake time" value={settings().scheduleTime} onChange={v => field('scheduleTime', v)} help="Use HH:MM in the selected time zone. Leave blank to omit a schedule." />
-          <TextField label="Bot schedule time zone" value={settings().scheduleZone} onChange={v => field('scheduleZone', v)} help="Use an IANA time zone, such as Etc/UTC." />
-          <Choice label="Wake on new Needs you entries" value={settings().wakeOnNeedsYou ? 'on' : 'off'} options={[{ id: 'off', label: 'Needs you off' }, { id: 'on', label: 'Needs you on' }]}
-            onChange={v => setSettings(s => ({ ...s, wakeOnNeedsYou: v === 'on' }))} />
-        </Show>
         <Button label={props.bot ? 'Save settings' : 'Create bot'} kind="primary" busy={busy()} disabledReason={projectId() ? undefined : 'Select a project first'} onClick={() => void save('settings')} />
       </DetailSection>
       <Show when={props.bot}>{bot => <BotAvatarField bot={bot()} onSaved={props.onSaved} />}</Show>

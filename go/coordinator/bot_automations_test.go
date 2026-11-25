@@ -60,7 +60,7 @@ func TestBotAutomations(t *testing.T) {
 	}
 	pass := func(app *App, at time.Time) {
 		t.Helper()
-		if err := botTriggerPass(e.ctx, app, at); err != nil {
+		if err := triggerPass(e.ctx, app, at); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -123,8 +123,8 @@ func TestBotAutomations(t *testing.T) {
 		VALUES ('automation-problem', 'agent_run', 'failed', 'desiign', 'Filtered execution problem');
 	`)
 	pass(e.app, due.Add(2*time.Minute))
-	if runs := read(eventID); len(runs) != 1 || mapOf(runs[0])["reason"] != "active_run" {
-		t.Fatalf("expected event deferral while the paused schedule still has a live run: %v", runs)
+	if runs := read(eventID); len(runs) != 0 {
+		t.Fatalf("expected the event to wait while the paused schedule still has a live run: %v", runs)
 	}
 
 	finish(execID)
@@ -134,16 +134,16 @@ func TestBotAutomations(t *testing.T) {
 	pass(restarted, due.Add(3*time.Minute))
 	eventRuns := read(eventID)
 	head := mapOf(eventRuns[0])
-	items := anys(head["triggers"])
-	if len(eventRuns) != 2 || head["cause"] != "needs_you" || len(items) != 1 || mapOf(items[0])["id"] != "automation-q" {
-		t.Fatalf("event filter or overlap recovery failed: %v", eventRuns)
+	eventText := runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres",
+		"SELECT text FROM message WHERE execution_id = '"+astr(head["executionId"])+"';")
+	if len(eventRuns) != 1 || head["cause"] != "needs_you" || !strings.Contains(eventText, "question automation-q") ||
+		strings.Contains(eventText, "foreign-automation-q") || strings.Contains(eventText, "automation-problem") {
+		t.Fatalf("event filter or overlap recovery failed: %v %q", eventRuns, eventText)
 	}
 	finish(astr(head["executionId"]))
 
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres",
-		"UPDATE bot_automation SET event_cursor = 0 WHERE id = '"+eventID+"';")
 	pass(restarted, due.Add(4*time.Minute))
-	if runs := read(eventID); len(runs) != 2 {
+	if runs := read(eventID); len(runs) != 1 {
 		t.Fatalf("event replay duplicated a wake after restart: %v", runs)
 	}
 
@@ -191,22 +191,22 @@ func TestBotAutomations(t *testing.T) {
 func TestBotAutomationScheduleClockChanges(t *testing.T) {
 	// FLT-26: repeated local times must not repeat a wake and nonexistent local
 	// times must not silently move to a different clock time.
-	a := db.BotAutomation{Kind: "schedule", Enabled: true, ScheduleTime: "02:30", ScheduleZone: "Europe/Paris"}
+	a := db.Trigger{WhenKind: "daily", Enabled: true, DailyTime: "02:30", DailyZone: "Europe/Paris"}
 	spring := time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC)
-	if _, due := dueAutomationSchedule(a, spring); due {
+	if _, due := dueDaily(a, spring); due {
 		t.Fatal("woke on a nonexistent local slot")
 	}
-	next := nextAutomationSchedule(a, &botFull{}, spring)
+	next := nextDaily(a, spring)
 	if next == nil || !next.Equal(time.Date(2026, 3, 30, 0, 30, 0, 0, time.UTC)) {
 		t.Fatalf("expected next valid local date, got %v", next)
 	}
 	fall := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
-	date, due := dueAutomationSchedule(a, fall)
+	date, due := dueDaily(a, fall)
 	if !due {
 		t.Fatal("no wake after repeated local hour")
 	}
-	a.LastScheduleDate = date
-	if _, due := dueAutomationSchedule(a, fall.Add(time.Minute)); due {
+	a.LastSlot = date
+	if _, due := dueDaily(a, fall.Add(time.Minute)); due {
 		t.Fatal("repeated local date woke twice")
 	}
 }

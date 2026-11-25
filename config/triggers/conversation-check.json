@@ -1,0 +1,14 @@
+{
+  "id": "conversation-check",
+  "name": "Conversation check",
+  "description": "Every 5 minutes, only when something in the conversation's focus changed: a reminder to review it.",
+  "target": "session",
+  "settings": {
+    "name": "Conversation check",
+    "text": "Fleet: conversation check; review your focus with task_page and questions_list.",
+    "when": "every",
+    "everyMs": 300000,
+    "ifChanged": ["task", "question", "execution"],
+    "enabled": true
+  }
+}

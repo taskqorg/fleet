@@ -306,6 +306,13 @@ var referenceMap = []objectRef{
 	{table: "bot", column: "project_id", kind: "project", mode: refOwn},
 	{table: "bot", column: "home_session_id", mode: refNone},
 	{table: "bot_revision", column: "profile_id", mode: refNone},
+	// Triggers (migration 106, triggers.go) go with their session or bot, and with their project.
+	{table: "trigger", column: "id", mode: refNone},
+	{table: "trigger", column: "project_id", kind: "project", mode: refOwn},
+	{table: "trigger", column: "preset_id", mode: refNone},
+	{table: "bot_run", column: "trigger_id", mode: refNone},
+	// The tables triggers replaced (watch above, bot_automation, bot_wake_cursor) stay until older releases leave the
+	// rollback window; a later migration drops them.
 	{table: "bot_automation", column: "id", mode: refNone},
 	{table: "bot_automation", column: "project_id", mode: refNone},
 	{table: "bot_run", column: "automation_id", mode: refNone},
@@ -357,7 +364,7 @@ var tombstoned = append([]string{"execution", "task", "experiment", "question", 
 var keptRows = map[string]string{}
 
 // purgeOrder: the tables system_purge deletes from, referencing rows before the rows they reference (foreign keys).
-var purgeOrder = append([]string{"bot_task", "bot_run", "bot_wake_cursor", "bot", "board_message", "work_plan", "score", "experiment_note", "artifact_copy", "artifact", "question", "execution_spend", "execution_totals", "route_decision",
+var purgeOrder = append([]string{"bot_task", "bot_run", "trigger", "bot_wake_cursor", "bot", "board_message", "work_plan", "score", "experiment_note", "artifact_copy", "artifact", "question", "execution_spend", "execution_totals", "route_decision",
 	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "problem_dismissal",
 	"transport_conflict", "upload", "project_recommendation", "watch", "run_token", "account_inspection", "account_check", "account_catalogue",
 	"connection_key", "api_connection", "managed_account", "host_observation", "host", "person_setting", "message", "event",

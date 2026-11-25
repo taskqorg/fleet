@@ -175,6 +175,10 @@ CREATE OR REPLACE TRIGGER task_derived_change AFTER INSERT OR DELETE OR UPDATE O
 -- transport_conflict
 CREATE OR REPLACE TRIGGER transport_conflict_tombstone BEFORE INSERT ON transport_conflict FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
 
+-- trigger
+CREATE OR REPLACE TRIGGER trigger_change AFTER INSERT OR DELETE ON trigger FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE OR REPLACE TRIGGER trigger_update AFTER UPDATE ON trigger FOR EACH ROW WHEN (old.revision IS DISTINCT FROM new.revision OR old.fires IS DISTINCT FROM new.fires OR old.quiet_checks IS DISTINCT FROM new.quiet_checks OR old.last_error IS DISTINCT FROM new.last_error) EXECUTE FUNCTION fleet_change();
+
 -- upload
 CREATE OR REPLACE TRIGGER upload_tombstone BEFORE INSERT ON upload FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
 

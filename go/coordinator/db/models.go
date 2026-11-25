@@ -609,6 +609,7 @@ type BotRun struct {
 	Payload         []byte
 	Seq             int64
 	AutomationID    *string
+	TriggerID       *string
 }
 
 type BotTask struct {
@@ -1699,6 +1700,34 @@ type TransportConflict struct {
 	Seq              int64
 	UpdatedAt        time.Time
 	TombstonedAt     *time.Time
+}
+
+type Trigger struct {
+	ID             string
+	SessionID      *string
+	BotID          *string
+	ProjectID      *string
+	Revision       int32
+	Name           string
+	PresetID       string
+	Text           string
+	WhenKind       string
+	EveryMs        *int64
+	DailyTime      string
+	DailyZone      string
+	IfChanged      []string
+	Enabled        bool
+	EffectiveSince time.Time
+	ChangeCursor   int64
+	NextAt         *time.Time
+	LastSlot       string
+	Fires          int64
+	LastFireAt     *time.Time
+	QuietChecks    int64
+	QuietSince     *time.Time
+	LastError      *string
+	LimitsSignaled []string
+	CreatedAt      time.Time
 }
 
 type Upload struct {

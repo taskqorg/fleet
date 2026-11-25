@@ -46,7 +46,7 @@ seed.bulk(() => {
   }
 });
 for (const [name, purpose, project] of [['Release manager', 'delivery, rollouts', 'hello-world'], ['Fleet setup', 'settings, hosts, accounts', 'hello-world'], ['Spend auditor', 'costs, limits', 'hello-world-alt']])
-  await call('bot_settings_save', { botId: randomUUID(), projectId: project, baseRevision: 0, settings: { name, purpose, profileId: 'pm', instructions: 'Watch', soul: '', scheduleTime: '', scheduleZone: '', wakeOnNeedsYou: false } });
+  await call('bot_settings_save', { botId: randomUUID(), projectId: project, baseRevision: 0, settings: { name, purpose, profileId: 'pm', instructions: 'Watch', soul: '' } });
 
 const b = await chromium.launch();
 const report: string[] = [];

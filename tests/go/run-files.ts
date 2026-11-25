@@ -25,7 +25,7 @@ const one = async (f: string) => {
       FLEET_TRIAL_TESTS: f, FLEET_TRIAL_SERVER: 'go/bin/fleet-coordinator', FLEET_TRIAL_NAME: 'file-' + basename(f, '.test.ts'),
       FLEET_STORE_SECRETS: dir, FLEET_STORE_ENDPOINT_HOSTS: '127.0.0.1', FLEET_DEFAULT_ARTIFACT_LOCATIONS: 'trial-host',
       FLEET_SECRET_DIR: join(dir, 'secret'), FLEET_GATEWAY_DIR: join(dir, 'gateway'), FLEET_GATEWAY_URL: `http://127.0.0.1:${gateway}`,
-      FLEET_CONNECTION_TICK_MS: '200', FLEET_PIPELINE_TICK_MS: '200', FLEET_STREAM_PING_MS: '300', FLEET_WATCH_TICK_MS: '200'}});
+      FLEET_CONNECTION_TICK_MS: '200', FLEET_PIPELINE_TICK_MS: '200', FLEET_STREAM_PING_MS: '300', FLEET_TRIGGER_TICK_MS: '200'}});
     child.stdout.on('data', b => out.push(b)); child.stderr.on('data', b => out.push(b));
     // Close, once the output is all read; a leftover grandchild (a test's own coordinator) may hold the pipes open, so
     // 5 s after exit take what arrived.

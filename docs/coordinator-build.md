@@ -35,7 +35,7 @@ The coordinator is one Go binary, `fleet-coordinator`, built from `go/coordinato
 | `FLEET_GATEWAY_DIR` | empty | Where the gateway snapshot (`snapshot.json`, no key values) is published. |
 | `FLEET_GATEWAY_URL` | empty | Gateway base URL. |
 | `FLEET_CF_ACCESS_FILE` | `~/.config/fleet/cf-access-machine.env` | Cloudflare Access service token for machine calls. |
-| `FLEET_CONNECTION_TICK_MS`, `FLEET_PIPELINE_TICK_MS`, `FLEET_WATCH_TICK_MS`, `FLEET_RECONCILE_MS`, `FLEET_STREAM_PING_MS` | 3000, 5000, 15000, 600000, 25000 | Loop periods; test seams. `FLEET_CONNECTION_TICK_MS=0` turns the connection loop off. `FLEET_PIPELINE_TICK_MS` is how often a waiting pipeline step (a job poll, an agent's uploads) and a running experiment look again on the work kit; `0` leaves them to their wakes. |
+| `FLEET_CONNECTION_TICK_MS`, `FLEET_PIPELINE_TICK_MS`, `FLEET_TRIGGER_TICK_MS`, `FLEET_RECONCILE_MS`, `FLEET_STREAM_PING_MS` | 3000, 5000, 15000, 600000, 25000 | Loop periods; test seams. `FLEET_CONNECTION_TICK_MS=0` turns the connection loop off. `FLEET_PIPELINE_TICK_MS` is how often a waiting pipeline step (a job poll, an agent's uploads) and a running experiment look again on the work kit; `0` leaves them to their wakes. |
 | `FLEET_CLICKHOUSE_URL` | `http://127.0.0.1:9480` when the env file below exists, else empty | ClickHouse HTTP interface of the span store ([telemetry](designs/fleet-telemetry.md)); `off` turns telemetry off. Without a store, spans are dropped and `telemetry_summary` answers `enabled: false`. |
 | `FLEET_CLICKHOUSE_ENV` | `~/.config/fleet/clickhouse.env` | The ClickHouse Quadlet's env file; the coordinator reads `CLICKHOUSE_DB`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` from it. |
 

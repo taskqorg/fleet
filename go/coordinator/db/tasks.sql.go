@@ -271,12 +271,12 @@ func (q *Queries) TaskCount(ctx context.Context) (int64, error) {
 	return column_1, err
 }
 
-const taskDeleteWatches = `-- name: TaskDeleteWatches :exec
-DELETE FROM watch w USING session s WHERE s.id=w.session_id AND s.task_id=$1
+const taskDeleteTriggers = `-- name: TaskDeleteTriggers :exec
+DELETE FROM trigger t USING session s WHERE s.id=t.session_id AND s.task_id=$1
 `
 
-func (q *Queries) TaskDeleteWatches(ctx context.Context, taskID *string) error {
-	_, err := q.db.Exec(ctx, taskDeleteWatches, taskID)
+func (q *Queries) TaskDeleteTriggers(ctx context.Context, taskID *string) error {
+	_, err := q.db.Exec(ctx, taskDeleteTriggers, taskID)
 	return err
 }
 

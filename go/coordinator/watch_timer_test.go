@@ -47,8 +47,8 @@ func TestWatchTimerChangesPreserveSubscriptions(t *testing.T) {
 		t.Fatalf("paused timer = %v", paused)
 	}
 	if err := e.appStore.Read(e.ctx, nil, func(q *Request) error {
-		row, err := watchOf(q, "watch:"+sid)
-		if err == nil && (row == nil || row.TimerMs != nil) {
+		_, timer, err := watchTriggers(q, sid)
+		if err == nil && (timer == nil || timer.Enabled) {
 			t.Fatal("paused timer remains visible to the scheduler")
 		}
 		return err

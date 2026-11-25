@@ -155,12 +155,13 @@
       ],
       "auth": "person",
       "agent": "no",
-      "description": "List a bot's automations and their next scheduled time and last outcome.",
+      "description": "List a bot's automations (its triggers, docs/designs/fleet-triggers.md) and their next scheduled time and last outcome. Kept for the bot page until it reads trigger_list.",
       "changes": [
         "bot",
         "bot-run",
         "execution",
-        "setting-change"
+        "setting-change",
+        "trigger"
       ]
     },
     "bot_automation_save": {
@@ -172,7 +173,7 @@
       ],
       "auth": "person",
       "agent": "no",
-      "description": "Create or update one bot automation with an optimistic revision. Enable and pause are settings changes."
+      "description": "Create or update one bot automation (a bot trigger) with an optimistic revision. Enable and pause are settings changes. Kept for the bot page until it writes trigger_save."
     }
   },
   "$defs": {
@@ -184,10 +185,7 @@
         "purpose",
         "profileId",
         "instructions",
-        "soul",
-        "scheduleTime",
-        "scheduleZone",
-        "wakeOnNeedsYou"
+        "soul"
       ],
       "properties": {
         "name": {
@@ -204,15 +202,6 @@
         },
         "soul": {
           "type": "string"
-        },
-        "scheduleTime": {
-          "type": "string"
-        },
-        "scheduleZone": {
-          "type": "string"
-        },
-        "wakeOnNeedsYou": {
-          "type": "boolean"
         }
       }
     },

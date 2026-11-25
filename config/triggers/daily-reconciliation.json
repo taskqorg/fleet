@@ -1,0 +1,15 @@
+{
+  "id": "daily-reconciliation",
+  "name": "Daily reconciliation",
+  "description": "Once a day at a set time: the bot reconciles its project.",
+  "target": "bot",
+  "settings": {
+    "name": "Daily reconciliation",
+    "text": "Fleet: daily reconciliation. Read the project's open tasks, Needs you and the runs since your last reconciliation; handle what needs you and report what changed.",
+    "when": "daily",
+    "dailyTime": "09:00",
+    "dailyZone": "UTC",
+    "ifChanged": [],
+    "enabled": true
+  }
+}

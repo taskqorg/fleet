@@ -216,7 +216,8 @@ CREATE TABLE bot_run (
   "tombstoned_at" timestamp with time zone,
   "payload" jsonb NOT NULL,
   "seq" bigint NOT NULL,
-  "automation_id" text
+  "automation_id" text,
+  "trigger_id" text
 );
 CREATE TABLE bot_task (
   "bot_id" text NOT NULL,
@@ -1225,6 +1226,33 @@ CREATE TABLE transport_conflict (
   "seq" bigint NOT NULL,
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
+);
+CREATE TABLE trigger (
+  "id" text NOT NULL,
+  "session_id" text,
+  "bot_id" text,
+  "project_id" text,
+  "revision" integer NOT NULL,
+  "name" text NOT NULL,
+  "preset_id" text NOT NULL,
+  "text" text NOT NULL,
+  "when_kind" text NOT NULL,
+  "every_ms" bigint,
+  "daily_time" text NOT NULL,
+  "daily_zone" text NOT NULL,
+  "if_changed" text[] NOT NULL,
+  "enabled" boolean NOT NULL,
+  "effective_since" timestamp with time zone NOT NULL,
+  "change_cursor" bigint NOT NULL,
+  "next_at" timestamp with time zone,
+  "last_slot" text NOT NULL,
+  "fires" bigint NOT NULL,
+  "last_fire_at" timestamp with time zone,
+  "quiet_checks" bigint NOT NULL,
+  "quiet_since" timestamp with time zone,
+  "last_error" text,
+  "limits_signaled" text[] NOT NULL,
+  "created_at" timestamp with time zone NOT NULL
 );
 CREATE TABLE upload (
   "id" text NOT NULL,

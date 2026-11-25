@@ -178,7 +178,7 @@ test('PM7 watch: foreign changes in focus wake the PM with one message, its own 
   assert.equal(ok(await pm.tool('watch_get')).watch.wakes, 1, 'no timer wake while a wake is queued');
   ok(await worker.tool('watch_set', {kinds: ['execution'], timerMs: 300}));
   await sleep(1000);
-  assert.deepEqual((await queuedTexts(worker.sessionId)).filter(t => /watch timer/.test(t)).length, 1, 'the stored timer wakes an idle watch once per queued wake');
+  assert.deepEqual((await queuedTexts(worker.sessionId)).filter(t => /conversation check/.test(t)).length, 0, 'a timer with a change condition sends nothing while nothing changed (fleet-triggers.md)');
 });
 
 test('PM8 profile: a PM session carries its skills and sees the task tools (requirement: docs/designs/fleet-pm-agent.md; risk: the PM profile loses its instructions outside pipelines)', {timeout: 30_000}, async () => {
@@ -287,6 +287,7 @@ test('PM provenance: internal timer/change/wake inputs keep Fleet sender through
     ok(await hostCall(MEMBER, '/api/hosts/receipts', {executionId, commandId, status: 'completed'}));
   };
   for (const kind of ['timer', 'change', 'wake']) for (const idle of [false, true]) {
+    let timerId = '';
     console.log('provenance case', kind, idle ? 'idle' : 'queued');
     const pm = await agent(MEMBER, {projectId: PROJECT, role: 'pm'});
     assert.equal((await view(pm.sessionId)).messages[0].sentBy, MEMBER, 'ordinary immediate input retains its human sender');
@@ -294,10 +295,14 @@ test('PM provenance: internal timer/change/wake inputs keep Fleet sender through
     let child: any;
     if (kind === 'wake') {
       child = ok(await pm.tool('session_start', {projectId: PROJECT, role: 'worker', profileId: 'pm', requestId: randomUUID(), text: 'child provenance control'}));
+    } else if (kind === 'timer') { // a timer without a change condition (fleet-triggers.md)
+      timerId = randomUUID();
+      ok(await pm.tool('trigger_save', {id: timerId, baseRevision: 0, sessionId: pm.sessionId, presetId: 'conversation-check', settings: {everyMs: 800, ifChanged: [], text: 'Fleet: watch timer; review your focus'}}));
     } else {
       ok(await pm.tool('focus_set', {projectIds: [PROJECT]}));
-      ok(await pm.tool('watch_set', {kinds: kind === 'change' ? ['task'] : ['question'], ...(kind === 'timer' ? {timerMs: 800} : {})}));
+      ok(await pm.tool('watch_set', {kinds: ['task']}));
     }
+    const stop = async () => kind === 'timer' ? ok(await op('trigger_delete', {id: timerId, baseRevision: 1}, MEMBER)) : ok(await op('watch_stop', {sessionId: pm.sessionId}, MEMBER));
     if (idle) await finish(pm.executionId, pm.commandId);
     if (kind === 'change') ok(await op('task_create', {projectId: PROJECT, title: 'foreign provenance change ' + randomUUID()}));
     if (kind === 'wake') {
@@ -307,13 +312,13 @@ test('PM provenance: internal timer/change/wake inputs keep Fleet sender through
     const matches = (text: string) => kind === 'timer' ? text.startsWith('Fleet: watch timer') : kind === 'change' ? text.startsWith('Fleet:') && text.includes('changes in your focus') : text.startsWith('Fleet: your session');
     if (!idle) {
       const queued = await eventually(async () => (await view(pm.sessionId)).queued.find((m: any) => m.state === 'queued' && matches(m.text)));
-      assert.equal(queued.sentBy, 'Fleet'); assert.equal(queued.source, kind === 'wake' ? 'wake' : 'watch');
+      assert.equal(queued.sentBy, 'Fleet'); assert.equal(queued.source, kind === 'wake' ? 'wake' : 'trigger');
     }
-    if (!idle && kind !== 'wake') ok(await op('watch_stop', {sessionId: pm.sessionId}, MEMBER));
+    if (!idle && kind !== 'wake') await stop();
     if (!idle) await finish(pm.executionId, pm.commandId);
     const message = await eventually(async () => (await view(pm.sessionId)).messages.find((m: any) => matches(m.text)));
-    if (idle && kind !== 'wake') ok(await op('watch_stop', {sessionId: pm.sessionId}, MEMBER));
-    assert.equal(message.sentBy, 'Fleet'); assert.equal(message.source, kind === 'wake' ? 'wake' : 'watch');
+    if (idle && kind !== 'wake') await stop();
+    assert.equal(message.sentBy, 'Fleet'); assert.equal(message.source, kind === 'wake' ? 'wake' : 'trigger');
     const session = await view(pm.sessionId);
     assert.equal(session.executions.find((e: any) => e.id === message.executionId).directedBy, MEMBER, 'system sender never replaces execution director');
     const thread = ok(await op('thread_entries', {key: {session: pm.sessionId}, limit: 100}, MEMBER));

@@ -33,19 +33,16 @@ func (q *Queries) ChildSessionIDs(ctx context.Context, createdBySessionID *strin
 	return items, nil
 }
 
-const deleteWatch = `-- name: DeleteWatch :exec
-DELETE FROM watch WHERE id=$1
-`
-
-func (q *Queries) DeleteWatch(ctx context.Context, id string) error {
-	_, err := q.db.Exec(ctx, deleteWatch, id)
-	return err
-}
-
 const executionWatchState = `-- name: ExecutionWatchState :one
-SELECT (CASE WHEN state='failed' THEN 'failed' ELSE 'unknown' END)::text AS s FROM execution WHERE id=$1 AND (state='failed' OR observation='unconfirmed')
+SELECT (CASE WHEN state='failed' THEN 'failed' ELSE 'unknown' END)::text AS s FROM execution WHERE execution.id=$1 AND (state='failed' OR observation='unconfirmed')
+ AND kind <> 'tool_run' AND coalesce(problem, '') NOT IN ('unknown:abandoned', 'cancelled')
+ AND NOT EXISTS (SELECT 1 FROM problem_dismissal x WHERE x.execution_id = execution.id)
+ AND NOT (kind = 'pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind = 'pipeline_run' AND r.problem IS NOT NULL
+   AND r.id = coalesce(execution.parent_execution_id, split_part(execution.id, ':step:', 1))))
 `
 
+// A failed or unconfirmed run, as the Needs you list counts it: not dismissed, not cancelled or abandoned, and not a
+// pipeline step whose run failed already (the run is the one entry).
 func (q *Queries) ExecutionWatchState(ctx context.Context, id string) (string, error) {
 	row := q.db.QueryRow(ctx, executionWatchState, id)
 	var s string
@@ -89,9 +86,11 @@ func (q *Queries) SessionExecutionIDs(ctx context.Context, sessionID *string) ([
 }
 
 const taskCancelled = `-- name: TaskCancelled :one
+
 SELECT EXISTS (SELECT 1 FROM task WHERE id=$1 AND state='cancelled')
 `
 
+// The reads of a trigger's change check (watch.go, triggers.go).
 func (q *Queries) TaskCancelled(ctx context.Context, id string) (bool, error) {
 	row := q.db.QueryRow(ctx, taskCancelled, id)
 	var exists bool
@@ -112,72 +111,6 @@ func (q *Queries) TaskWatchState(ctx context.Context, id string) (TaskWatchState
 	row := q.db.QueryRow(ctx, taskWatchState, id)
 	var i TaskWatchStateRow
 	err := row.Scan(&i.State, &i.PauseReason)
-	return i, err
-}
-
-const watchIDs = `-- name: WatchIDs :many
-
-SELECT id FROM watch ORDER BY seq
-`
-
-// Watches (watch.go; migration 78): a session's wake subscription and the reads of one watch pass.
-func (q *Queries) WatchIDs(ctx context.Context) ([]string, error) {
-	rows, err := q.db.Query(ctx, watchIDs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const watchPut = `-- name: WatchPut :exec
-INSERT INTO watch(id, session_id, project_id, payload) VALUES($1::text, $2::text, $3::text, $4::jsonb)
- ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, project_id=excluded.project_id, payload=excluded.payload, updated_at=now()
-`
-
-type WatchPutParams struct {
-	ID        string
-	SessionID string
-	ProjectID *string
-	Payload   []byte
-}
-
-func (q *Queries) WatchPut(ctx context.Context, arg WatchPutParams) error {
-	_, err := q.db.Exec(ctx, watchPut,
-		arg.ID,
-		arg.SessionID,
-		arg.ProjectID,
-		arg.Payload,
-	)
-	return err
-}
-
-const watchRecordOf = `-- name: WatchRecordOf :one
-SELECT session_id, project_id, payload FROM watch WHERE id=$1
-`
-
-type WatchRecordOfRow struct {
-	SessionID string
-	ProjectID *string
-	Payload   []byte
-}
-
-// A watch row: session and project are columns, payload the other record fields (typed_records.go).
-func (q *Queries) WatchRecordOf(ctx context.Context, id string) (WatchRecordOfRow, error) {
-	row := q.db.QueryRow(ctx, watchRecordOf, id)
-	var i WatchRecordOfRow
-	err := row.Scan(&i.SessionID, &i.ProjectID, &i.Payload)
 	return i, err
 }
 
@@ -203,30 +136,4 @@ func (q *Queries) WatchSession(ctx context.Context, id string) (WatchSessionRow,
 		&i.Payload,
 	)
 	return i, err
-}
-
-const watchSetError = `-- name: WatchSetError :exec
-UPDATE watch SET payload = payload || jsonb_build_object('lastError', $1::text) WHERE id = $2::text
-`
-
-type WatchSetErrorParams struct {
-	Error string
-	ID    string
-}
-
-func (q *Queries) WatchSetError(ctx context.Context, arg WatchSetErrorParams) error {
-	_, err := q.db.Exec(ctx, watchSetError, arg.Error, arg.ID)
-	return err
-}
-
-const watchWakeQueued = `-- name: WatchWakeQueued :one
-SELECT EXISTS (SELECT 1 FROM queued_message WHERE session_id=$1 AND state='queued' AND (request_id LIKE 'watch:%' OR request_id LIKE 'timer:%'))
-`
-
-// A watch or timer wake of the session still queued.
-func (q *Queries) WatchWakeQueued(ctx context.Context, sessionID string) (bool, error) {
-	row := q.db.QueryRow(ctx, watchWakeQueued, sessionID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
 }

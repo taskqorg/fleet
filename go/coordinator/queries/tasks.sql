@@ -50,8 +50,8 @@ UPDATE queued_message m SET state='cancelled',updated_at=now()
 WHERE m.state IN ('queued','steering') AND m.tombstoned_at IS NULL
 AND (m.task_id= @task_id OR (m.task_id IS NULL AND EXISTS (SELECT 1 FROM session s WHERE s.id=m.session_id AND s.task_id= @task_id)));
 
--- name: TaskDeleteWatches :exec
-DELETE FROM watch w USING session s WHERE s.id=w.session_id AND s.task_id=$1;
+-- name: TaskDeleteTriggers :exec
+DELETE FROM trigger t USING session s WHERE s.id=t.session_id AND s.task_id=$1;
 
 -- name: TaskSetDirector :exec
 UPDATE task SET directed_by= @directed_by,taken_from=sqlc.narg(taken_from),updated_at=now() WHERE id= @id;
