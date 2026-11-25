@@ -264,10 +264,10 @@ function App() {
     return () => { document.removeEventListener('visibilitychange', flush); removeEventListener('pagehide', leave); };
   });
   // The person's time zone, from this browser (Intl): agents and Telegram write times in it (person settings timezone).
-  // Saved when it differs from the stored one, so a trip abroad follows the device in use. A viewer's set is refused.
+  // Saved when it differs from the stored one, so a trip abroad follows the device in use. A viewer's set is refused, so it waits for the roles.
   // One try per zone and tab: a refused save (a zone the server does not know) is not repeated.
   let zoneSent = '';
-  createEffect(() => [access.value.state, prefsRead.value, prefs.value.timezone, viewer()] as const, ([st, pr, tz, v]) => {
+  createEffect(() => [access.value.state, prefsRead.value, prefs.value.timezone, me.data ? viewer() : true] as const, ([st, pr, tz, v]) => {
     const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (st !== 'open' || !pr || v || !here || here === tz || here === zoneSent) return;
     zoneSent = here;

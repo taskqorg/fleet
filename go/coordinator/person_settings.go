@@ -595,7 +595,7 @@ func soonestReset(cs []*candidate, readings map[string][]Reading) {
 	}
 }
 
-// knownZone: empty (unknown) or an IANA zone name; "Local" and "UTC"-like aliases Go accepts stay valid names.
+// knownZone: empty (unknown) or a zone name time.LoadLocation loads; "Local" (the coordinator's own zone) is refused.
 func knownZone(tz string) bool {
 	if tz == "" {
 		return true
@@ -609,13 +609,16 @@ func knownZone(tz string) bool {
 
 // zoneInstruction: the line an agent gets about its director's time zone, so the times it writes for them are theirs;
 // UTC, said as UTC, when the zone is unknown. Empty for work no person directs.
-func zoneInstruction(q *Request, email string) string {
+func zoneInstruction(q *Request, email string) (string, error) {
 	if email == "" {
-		return ""
+		return "", nil
 	}
 	ps, err := personSettings(q, email)
-	if err != nil || ps.Timezone == "" || !knownZone(ps.Timezone) {
-		return "The time zone of the person you work for is unknown: write times in UTC and mark them UTC."
+	if err != nil {
+		return "", err
 	}
-	return "The person you work for is in time zone " + ps.Timezone + ": write times for them in that zone, without naming it unless asked; tool and log times are usually UTC, convert them."
+	if ps.Timezone == "" || !knownZone(ps.Timezone) {
+		return "The time zone of the person you work for is unknown: write times in UTC and mark them UTC.", nil
+	}
+	return "The person you work for is in time zone " + ps.Timezone + ": write times for them in that zone, without naming it unless asked; tool and log times are usually UTC, convert them.", nil
 }

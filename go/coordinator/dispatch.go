@@ -1548,7 +1548,9 @@ func (a *App) startCommand(q *Request, e *dispatchExecution, host string, bindin
 	if st := liveSession.Starter; st != "" {
 		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\nThis conversation's preset. " + st))
 	}
-	if line := zoneInstruction(q, deref(e.DirectedBy)); line != "" {
+	if line, err := zoneInstruction(q, deref(e.DirectedBy)); err != nil {
+		return none, err
+	} else if line != "" {
 		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\n" + line))
 	}
 	if err := checkBotDispatchCompatibility(q, e, &liveSession, host, deref(p.Account), d); err != nil {
