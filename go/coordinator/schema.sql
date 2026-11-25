@@ -5151,7 +5151,7 @@ BEGIN
     INSERT INTO session(id, project_id, host_id, actor, directed_by, bot_id, created_at, title, title_by, title_attempts, payload, subject)
     VALUES (sid, h.project_id, h.host_id, h.actor, h.directed_by, h.bot_id, now(), ttl, 'bot', 0,
      (h.payload - 'nativeSessions' - 'nativeSessionId' - 'pendingHandoffId' - 'forkOf' - 'forkNativeSessionId' - 'pendingTransition' - 'transitionCleanup')
-      || jsonb_build_object('nativeSessions', nat), subj);
+      || jsonb_build_object('nativeSessions', nat, 'nativeSessionId', (SELECT n.value->>'nativeSessionId' FROM jsonb_each(nat) n LIMIT 1)), subj);
    END IF;
    UPDATE execution SET session_id = sid, thread = '' WHERE session_id = h.id AND thread = k.thread;
    UPDATE message SET session_id = sid, thread = '' WHERE session_id = h.id AND thread = k.thread;

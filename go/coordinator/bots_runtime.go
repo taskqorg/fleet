@@ -251,6 +251,9 @@ func botConversation(q *Request, b *botFull, subject string) (agentSession, erro
 	if subject == "" {
 		return ensureBotHomeSession(q, b)
 	}
+	if err := acquireTxLock(q, "bot-subject:"+b.Id+":"+subject); err != nil { // one conversation per (bot, subject)
+		return agentSession{}, err
+	}
 	id, err := q.db().BotConversationBySubject(q.ctx(), db.BotConversationBySubjectParams{BotID: &b.Id, Subject: &subject})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return agentSession{}, err
