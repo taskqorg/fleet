@@ -2,7 +2,8 @@
 // (Conversations v2, owner pick B, 2026-11-26; board screens/conversations.bl "Thread list v2";
 // docs/designs/fleet-conversations.md#work-item-threads). Open, then Idle, then Archived (folded into one row), each
 // newest first; the timers' quiet checks fold into one row at the foot.
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, Show, type Accessor } from 'solid-js';
+import { clock } from '../format.ts';
 import { Ago, Icon, StateBadge } from './primitives.tsx';
 import { states, type Family } from '../registry.ts';
 
@@ -10,6 +11,12 @@ export type ThreadItem = {
   /** task:<id> | question:<id> | execution:<id> | delivery:<id> | fleet | fleet:<kind>; "" is the main thread. */
   key: string; title: string; code?: string | null; itemState?: string | null;
   lastActivityAt?: number | null; turns: number; open: boolean; unread: number;
+};
+
+/** A run's thread (a wake named by its trigger, a host job) adds when it ran, in the viewer's zone: "Conversation check · 22:14". */
+const runTitle = (t: ThreadItem) => {
+  const title = t.title || t.key;
+  return t.key.startsWith('execution:') && t.lastActivityAt ? `${title} · ${clock(t.lastActivityAt)}` : title;
 };
 
 /** The item's family by its key, for its state badge; none for Fleet threads and the main thread. */
@@ -25,7 +32,7 @@ function Row(p: { t: ThreadItem; selected: boolean; onSelect: (key: string) => v
     <li>
       <button type="button" class={['thread-item', { on: p.selected, idle: !p.t.open }]} aria-current={p.selected ? 'true' : undefined} onClick={() => p.onSelect(p.t.key)}>
         <span class="thread-item-top">
-          <span class="thread-item-title">{p.t.key === '' ? 'Main · all turns before threads' : p.t.title || p.t.key}</span>
+          <span class="thread-item-title">{p.t.key === '' ? 'Main · all turns before threads' : runTitle(p.t)}</span>
           <Show when={p.t.unread > 0}><span class="thread-item-new">{p.t.unread} new</span></Show>
           <Show when={p.t.lastActivityAt}>{at => <Ago t={at()} />}</Show>
         </span>
@@ -58,22 +65,24 @@ export function ThreadList(p: {
   const idle = createMemo(() => p.threads.filter(t => !t.open && !old(t)).sort(byTime));
   const archived = createMemo(() => p.threads.filter(old).sort(byTime));
   const [showArchived, setShowArchived] = createSignal(false);
-  const row = (t: ThreadItem) => <Row t={t} selected={t.key === p.selected} onSelect={p.onSelect} />;
+  // Keyed by the thread key: a live reread of the list keeps the rows (and a focused row) in place.
+  const row = (t: Accessor<ThreadItem>) => <Row t={t()} selected={t().key === p.selected} onSelect={p.onSelect} />;
+  const key = (t: ThreadItem) => t.key;
   return (
     <nav class="thread-list" data-ui="thread-list" aria-label="Threads">
       <h3>Open</h3>
       <Show when={open().length} fallback={<p class="thread-list-empty">No open threads: nothing queued or running</p>}>
-        <ul><For each={open()}>{row}</For></ul>
+        <ul><For each={open()} keyed={key}>{row}</For></ul>
       </Show>
       <Show when={idle().length}>
         <h3>Idle</h3>
-        <ul><For each={idle()}>{row}</For></ul>
+        <ul><For each={idle()} keyed={key}>{row}</For></ul>
       </Show>
       <Show when={archived().length}>
         <button type="button" class="thread-list-archived" aria-expanded={showArchived() ? 'true' : 'false'} onClick={() => setShowArchived(v => !v)}>
           <Icon name="archive" /><span>Archived · {archived().length}</span><span class="muted">idle 7+ days, back to Open on a new event</span>
         </button>
-        <Show when={showArchived()}><ul><For each={archived()}>{row}</For></ul></Show>
+        <Show when={showArchived()}><ul><For each={archived()} keyed={key}>{row}</For></ul></Show>
       </Show>
       <Show when={p.quiet}>
         {q => (

@@ -19,6 +19,7 @@ import { useOp } from '../store.ts';
 import type { SessionAgent, SessionGetReply } from '../../../contracts/generated/ops.ts';
 import { nextUrl } from '../url.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
+import { botAvatarState, botPicture } from '../bot-view.ts';
 import { click, all, drag, inside, range, textBounds, type Selection } from '../selection.ts';
 import { ScopedRollupBar, ScopedRollupDetails } from './resources.tsx';
 import { SwarmPanel, hasSwarmBoard, useSwarmBoard } from './swarm-panel.tsx';
@@ -150,10 +151,17 @@ function Session(props: { id: string; frame: SessionFrame; thread?: string; onCl
   const title = createMemo(() => (s() ? s()!.title.replace(new RegExp(titleUUID.source, 'gi'), '').trim() || 'New conversation' : 'Session'));
   createEffect(() => (s() ? title() : null), t => { if (t) props.onTitle?.(t); });
   onSettled(() => () => props.onTitle?.(''));
+  // A bot's conversation shows the bot itself as the speaker: its own avatar (picture or letter) with its activity state, as
+  // the rail and Home do (owner, 2026-11-26); the harness mark belongs to agent runs.
+  const bots = useOp('bot_list', () => (s()?.botId ? {} : null));
+  const bot = createMemo(() => (bots.data?.bots ?? []).find(b => b.id === s()?.botId));
   const avatar = createMemo<AvatarMark>(() => {
+    const b = bot();
+    if (b) return { letter: b.name.slice(0, 1).toUpperCase(), picture: botPicture(b) };
     const h = s()?.agent.harness ?? latest()?.harness ?? undefined;
     return s()?.role === 'pm' ? { letter: 'P' } : isHarness(h) ? { harness: h } : { letter: title().slice(0, 1).toUpperCase() };
   });
+  const avatarState = createMemo(() => { const b = bot(); return b ? botAvatarState(b) : undefined; });
   const projectName = () => str(rec(project()).name) ?? s()?.projectCode ?? undefined;
   const stop = createMemo(() => { const x = active(); return x ? () => run(() => op('execution_stop', { executionId: x })) : undefined; });
 
@@ -387,7 +395,7 @@ function Session(props: { id: string; frame: SessionFrame; thread?: string; onCl
         <article class="detail session-view" data-ui="detail" data-frame={props.frame} tabindex={-1} aria-label={title()}>
           <div class="sv-main">
             <header class="sv-head">
-              <Avatar {...avatar()} />
+              <Avatar {...avatar()} state={avatarState()} tip={bot()?.name} />
               <h2 class="sv-name" data-tip={title()}>{title()}<Show when={hasThreads()}> <span class="sv-crumb-sep" aria-hidden="true">›</span> <span class="sv-crumb" data-tip={shownTitle()}>{shownTitle()}</span></Show></h2>
               <Show when={projectName()}>{n => <ProjectChip name={n()} />}</Show>
               <StateDot state={life()} />
