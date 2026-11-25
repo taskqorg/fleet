@@ -63,7 +63,9 @@
   .bot-tile .btn { height: var(--size-chip); background: none; }
 
   /* Pulse line and blocker chip */
-  .pulse { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); min-width: 0; font-size: var(--font-size-sm); }
+  /* The line never runs past its column, whatever its parent's alignment: a long cause ends in an ellipsis inside its
+     chip (the full cause is the chip's tooltip, OR-20) and the line wraps (pulse-line.md, phone). */
+  .pulse { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); min-width: 0; max-width: 100%; font-size: var(--font-size-sm); }
   .pulse a { color: inherit; text-decoration: none; }
   .pulse-count { display: inline-flex; align-items: center; gap: var(--space-2); }
   .pulse-count > i, .blocker > i { flex: none; width: 6px; height: 6px; border-radius: var(--radius-pill); background: var(--tone-fg); }
@@ -128,6 +130,7 @@
   .home-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap: var(--space-4); }
   .home-more { align-self: flex-start; color: var(--fg-muted); font-size: var(--font-size-sm); text-decoration: none; }
   .home-more:hover { color: var(--fg); }
+  .home-group > .btn { align-self: flex-start; }
   .home .qsum { max-width: 48rem; }
   @container (max-width: 40rem) {
     .home-head { flex-direction: column; align-items: stretch; }

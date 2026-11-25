@@ -2,7 +2,7 @@
 // line, a composer that picks who to talk to, the active sessions as cards in attention order (Waiting for you, Failed,
 // Working, Queued) with their questions answered in place, and the asleep bots with Wake. A quiet Home says what happened
 // since the last visit. A card opens the session at /home/<code>. Replaces the Overview (2026-11-25, FLT-48).
-import { For, Match, Show, Switch, createMemo, createSignal, lazy, onSettled, untrack, type Accessor } from 'solid-js';
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onSettled, untrack, type Accessor } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import {
   PulseLine, Composer, TargetPicker, SessionCard, SessionCardSkeleton, QuestionCard, BotTile, QuietSummary, GroupHeader, Ago,
@@ -21,8 +21,6 @@ const SessionView = lazy(() => import('./session.tsx'), { export: 'SessionView' 
 
 /** Session states Home shows; idle sessions only feed the composer's targets. */
 const ACTIVE = ['waiting', 'failed', 'running', 'preparing', 'idle'];
-/** Cards a group shows before `+K` (OR-30); asleep tiles in their row. */
-const CARDS = 6, TILES = 4;
 const TARGET_KEY = 'fleet:home-target';
 
 type Group = 'waiting' | 'failed' | 'working' | 'queued';
@@ -32,8 +30,13 @@ const GROUPS: { id: Group; label: string; icon: IconName; tone: Tone; states: st
   { id: 'working', label: 'Working', icon: 'activity', tone: 'running', states: ['running'] },
   { id: 'queued', label: 'Queued', icon: 'list-ordered', tone: 'neutral', states: ['preparing'] },
 ];
-/** One card: a session (with its oldest open question), or a question no listed session asks (a task's acceptance). */
-type Card = { key: string; group: Group; at: number; s: SessionRow | null; qs: QuestionRow[] };
+/** Failed sessions that share a plain cause (OR-58): the cause, how many, their hosts. */
+type Cause = { id: string; text: string; n: number; hosts: string[] };
+/**
+ * One card: a session (with its oldest open question), a question no listed session asks (a task's acceptance), or
+ * failed sessions of one cause collapsed into one card with `×N`.
+ */
+type Card = { key: string; group: Group; at: number; s: SessionRow | null; qs: QuestionRow[]; cause?: Cause };
 
 const ms = (t: string | number | null | undefined) => (typeof t === 'number' ? t : t ? Date.parse(t) || 0 : 0);
 const isProblem = (q: QuestionRow) => typeof q.cause === 'string' && q.cause.startsWith('problem:');
@@ -136,6 +139,9 @@ function HomePage() {
   const finished = useOp('sessions_list', () => (prefsRead.value ? { filter: { state: ['succeeded'], ...listScope() }, sort: '-activity', limit: 200 } : null), { quiet: 30_000 });
   const questions = useOp('questions_list', () => (prefsRead.value ? { state: 'open', ...scope() } : null));
   const problems = useOp('executions_list', () => (prefsRead.value ? { needsYou: true, ...scope() } : null), { quiet: 30_000 });
+  // Failed runs with their plain cause (failure, contracts/vocabulary.json): the newest one of each failed session names
+  // the cause its card collapses by.
+  const failedRuns = useOp('executions_list', () => (prefsRead.value ? { problem: true, limit: 500, ...scope() } : null), { quiet: 30_000 });
   const bots = useOp('bot_list', {});
   const projects = useOp('project_list', {});
   const delivery = useOp('publishing_status', () => (prefsRead.value ? scope() : null), { every: 300_000 });
@@ -150,6 +156,16 @@ function HomePage() {
   const botBySession = createMemo(() => new Map((bots.data?.bots ?? []).filter(b => b.homeSessionId).map(b => [b.homeSessionId!, b])));
   const scopedBots = createMemo(() => (bots.data?.bots ?? []).filter(b => inScope(b.projectId)));
 
+  // The newest failed run of each session, with its plain cause.
+  const failureOf = createMemo(() => {
+    const by = new Map<string, { cause: string; text: string; hostId: string | null; at: number }>();
+    for (const e of failedRuns.data?.executions ?? []) {
+      if (!e.sessionId || !e.failure) continue;
+      const at = ms(e.endedAt ?? e.lastSeenAt ?? e.startedAt), had = by.get(e.sessionId);
+      if (!had || at > had.at) by.set(e.sessionId, { cause: e.failure.cause, text: e.failure.text, hostId: e.hostId, at });
+    }
+    return by;
+  });
   // Questions to the person: a problem is a blocker chip; any other one sits on its session's card, oldest first.
   const asked = createMemo(() => (questions.data?.questions ?? []).filter(q => !isProblem(q)).sort((a, b) => ms(a.askedAt) - ms(b.askedAt)));
   const cards = createMemo<Card[]>(() => {
@@ -161,11 +177,22 @@ function HomePage() {
       else loose.push({ key: 'q:' + q.id, group: 'waiting', at: ms(q.askedAt), s: null, qs: [q] });
     }
     const out: Card[] = [...loose];
+    const failedBy = new Map<string, Card[]>();
     for (const s of rows) {
       const mine = qs.get(s.id) ?? [];
       const group = mine.length || s.state === 'waiting' ? 'waiting' : GROUPS.find(g => g.states.includes(s.state))?.id;
       if (!group) continue;
-      out.push({ key: s.id, group, at: group === 'waiting' && mine.length ? ms(mine[0].askedAt) : ms(s.activityAt), s, qs: mine });
+      const card: Card = { key: s.id, group, at: group === 'waiting' && mine.length ? ms(mine[0].askedAt) : ms(s.activityAt), s, qs: mine };
+      const f = group === 'failed' ? failureOf().get(s.id) : undefined;
+      if (f) failedBy.set(f.cause, [...(failedBy.get(f.cause) ?? []), card]);
+      else out.push(card);
+    }
+    // Repeats aggregate (OR-58): failed sessions of one known cause are one card with ×N; a lone one stays itself.
+    for (const [id, xs] of failedBy) {
+      if (xs.length === 1) { out.push(xs[0]); continue; }
+      const f = failureOf().get(xs[0].s!.id)!;
+      const hosts = [...new Set(xs.map(c => failureOf().get(c.s!.id)?.hostId).filter((h): h is string => !!h))];
+      out.push({ key: 'cause:' + id, group: 'failed', at: Math.max(...xs.map(c => c.at)), s: null, qs: [], cause: { id, text: f.text, n: xs.length, hosts } });
     }
     return out;
   });
@@ -178,7 +205,26 @@ function HomePage() {
     }),
   );
   const [closed, setClosed] = createSignal<(Group | 'asleep')[]>([]);
+  // One row per group (OR-30): as many cards (or tiles) as the grid's columns hold at this width, then +K. The grids
+  // lay out with auto-fill, so their column count is the row's capacity whatever the number of items.
+  let page: HTMLElement | undefined;
+  const [cols, setCols] = createSignal({ cards: 3, tiles: 4 });
+  const measure = () => {
+    const count = (sel: string) => { const g = page?.querySelector(sel); return g ? getComputedStyle(g).gridTemplateColumns.split(' ').filter(Boolean).length : 0; };
+    const next = { cards: count('.home-cards') || untrack(cols).cards, tiles: count('.home-tiles') || untrack(cols).tiles };
+    if (next.cards !== untrack(cols).cards || next.tiles !== untrack(cols).tiles) setCols(next);
+  };
+  onSettled(() => {
+    const ro = new ResizeObserver(measure);
+    if (page) ro.observe(page);
+    return () => ro.disconnect();
+  });
+  // Waiting opened past its row by its +K (OR-30 expander); the other groups stay one row.
+  const [openWaiting, setOpenWaiting] = createSignal(false);
+  const shown = (g: { id: Group; cards: Card[] }) => (g.id === 'waiting' && openWaiting() ? g.cards : g.cards.slice(0, cols().cards));
   const loaded = () => !!active.data && !!questions.data;
+  // A grid that appears later (the first cards, the asleep row) is measured once it is in the page.
+  createEffect(() => [loaded(), bots.data] as const, () => { requestAnimationFrame(measure); });
   const quiet = createMemo(() => loaded() && !grouped().some(g => (g.id === 'waiting' || g.id === 'failed') && g.cards.length > 0));
 
   // Pulse: working and queued sessions, sessions done today, then blockers.
@@ -304,6 +350,20 @@ function HomePage() {
       if (conn) return <QuestionCard question={x.text} choices={[{ label: 'Open Connections', primary: true }]} onAnswer={() => go(`/keys/${encodeURIComponent(conn)}`)} />;
       return <QuestionCard question={x.text} choices={choices(x)} answering={answering()[x.id]} onAnswer={a => answer(x, a)} />;
     };
+    if (untrack(c).cause) {
+      // Failed sessions of one cause (OR-58): the cause in words, how many, where; it opens Conversations' Failed list.
+      const f = () => c().cause!;
+      return (
+        <SessionCard
+          name={clause(f().text)}
+          avatar={{ letter: '!', tone: 'danger' }}
+          state="failed"
+          now={f().text}
+          meta={[<b class="num">×{f().n}</b>, ...(f().hosts.length ? [f().hosts.join(', ')] : []), <Ago t={c().at} />]}
+          onOpen={() => go(formatView({ view: 'conversations', state: ['failed'] }))}
+        />
+      );
+    }
     if (!untrack(c).s) {
       // A question no active session asks: the task it is about, or the asker.
       const x = () => c().qs[0];
@@ -340,7 +400,7 @@ function HomePage() {
   };
 
   return (
-    <article class="detail home" data-ui="home" aria-label="Home">
+    <article ref={el => { page = el; }} class="detail home" data-ui="home" aria-label="Home">
       <ShellStatus><OfflineMarker state={state()} now={now()} /></ShellStatus>
       <header class="home-head">
         <h2 class="home-hello">{greeting(new Date())}{name() ? `, ${name()}` : ''}</h2>
@@ -393,13 +453,19 @@ function HomePage() {
                     onToggle={() => setClosed(c => (c.includes(g.id) ? c.filter(x => x !== g.id) : [...c, g.id]))} />
                   <Show when={!closed().includes(g.id)}>
                     <div class="home-cards">
-                      <For each={g.cards.slice(0, CARDS)} keyed={c => c.key}>{c => renderCard(c)}</For>
+                      <For each={shown(g)} keyed={c => c.key}>{c => renderCard(c)}</For>
                     </div>
-                    <Show when={g.cards.length > CARDS}>
-                      <a class="home-more" href={formatView({ view: 'conversations', state: g.states })}
-                        onClick={e => { e.preventDefault(); go(formatView({ view: 'conversations', state: g.states })); }}>
-                        +{g.cards.length - CARDS} · Conversations ›
-                      </a>
+                    <Show when={g.cards.length > shown(g).length}>
+                      {/* Waiting expands in place: a question no session asks is answered only here, so its +K never
+                          leaves Home. The other groups link to their Conversations filter. */}
+                      <Show when={g.id === 'waiting'} fallback={
+                        <a class="home-more" href={formatView({ view: 'conversations', state: g.states })}
+                          onClick={e => { e.preventDefault(); go(formatView({ view: 'conversations', state: g.states })); }}>
+                          +{g.cards.length - cols().cards} · Conversations ›
+                        </a>
+                      }>
+                        <Button label={`+${g.cards.length - cols().cards} more`} kind="quiet" onClick={() => setOpenWaiting(true)} />
+                      </Show>
                     </Show>
                   </Show>
                 </section>
@@ -414,7 +480,7 @@ function HomePage() {
             onToggle={() => setClosed(c => (c.includes('asleep') ? c.filter(x => x !== 'asleep') : [...c, 'asleep']))} />
           <Show when={!closed().includes('asleep')}>
             <div class="home-tiles">
-              <For each={asleep().slice(0, TILES)} keyed={b => b.id}>
+              <For each={asleep().slice(0, cols().tiles)} keyed={b => b.id}>
                 {b => (
                   <BotTile
                     name={b().name}
@@ -429,8 +495,8 @@ function HomePage() {
                 )}
               </For>
             </div>
-            <Show when={asleep().length > TILES}>
-              <a class="home-more" href="/bots" onClick={e => { e.preventDefault(); go('/bots'); }}>+{asleep().length - TILES} · All bots ›</a>
+            <Show when={asleep().length > cols().tiles}>
+              <a class="home-more" href="/bots" onClick={e => { e.preventDefault(); go('/bots'); }}>+{asleep().length - cols().tiles} · All bots ›</a>
             </Show>
           </Show>
         </section>

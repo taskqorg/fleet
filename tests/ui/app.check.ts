@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { checkServer } from './seed.ts';
 import { layoutFindings } from './layout.check.ts';
+import { openWaiting } from './home-card.ts';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : 'design-report/app';
 mkdirSync(shots, { recursive: true });
@@ -88,6 +89,7 @@ try {
 
   // OR-50, OR-53: Home lists every open question as a card in Waiting for you, with its choices in place.
   await page.goto(origin + '/home'); await page.waitForSelector('[data-ui=question-card]');
+  await openWaiting(page);
   const asked = await page.locator('[data-ui=question-card]').count();
   out.push(`home (OR-53): ${asked} question cards${asked < 5 ? '  MISSING QUESTIONS' : ''}`);
   // OR-39: the task detail shows no total that is unknown (no empty tokens or cost fields).

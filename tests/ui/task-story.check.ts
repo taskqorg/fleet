@@ -6,6 +6,7 @@ import {transform} from '@solidjs/compiler';
 // @ts-expect-error ESM helper module
 import {solidEsbuildPlugin} from '../../packages/ui/scripts/solid-esbuild.mjs';
 import type {Browser} from 'playwright';
+import { homeCard } from './home-card.ts';
 export async function checkTaskStory(browser: Browser, origin: string) {
   const context = await browser.newContext(), page = await context.newPage();
   // Shared error contract: read-only errors retain alert text without an inert action; supplied retries invoke the caller.
@@ -253,8 +254,8 @@ export async function checkTaskStory(browser: Browser, origin: string) {
     // choices in place (OR-53, OR-58).
     await page.goto(origin + '/home');
     await page.getByRole('link', { name: 'Blocker: Host mac stopped polling, 1 time' }).waitFor();
-    await page.getByRole('group', { name: 'Accept deliverable?' }).getByRole('button', { name: 'accepted' }).waitFor();
-    await page.getByRole('group', { name: 'Which branch?' }).getByRole('button', { name: 'main' }).waitFor();
+    await (await homeCard(page, 'Accept deliverable?')).getByRole('button', { name: 'accepted' }).waitFor();
+    await (await homeCard(page, 'Which branch?')).getByRole('button', { name: 'main' }).waitFor();
     await page.unrouteAll({ behavior: 'wait' });
   } finally { await context.close(); }
 }
