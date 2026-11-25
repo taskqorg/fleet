@@ -25,7 +25,9 @@ const px: Record<AvatarSize, number> = { sm: 16, md: 24, lg: 40, xl: 96 };
 
 /** Decorative by default: the name next to it carries the meaning. With `label` it is named on its own. A picture plays
  * at lg and xl, on hover and while the bot works; elsewhere and under reduced motion it shows its still frame. */
-export function Avatar(p: AvatarMark & { size?: AvatarSize; label?: string; state?: AvatarState }) {
+/** `tip` is the tooltip of an avatar shown without its name (the collapsed rail); the dot's ring takes the colour of
+ * `--avatar-ring` (default `surface`), set by the surface the avatar sits on (`rail`, `float`). */
+export function Avatar(p: AvatarMark & { size?: AvatarSize; label?: string; state?: AvatarState; tip?: string }) {
   const size = () => p.size ?? 'md';
   const mark = () => !p.picture && !!p.harness && p.harness in harnesses;
   const [hover, setHover] = createSignal(false);
@@ -36,6 +38,7 @@ export function Avatar(p: AvatarMark & { size?: AvatarSize; label?: string; stat
       class={['avatar', size(), `t-${p.tone ?? 'running'}`, { mark: mark(), pic: !!p.picture }]}
       data-ui="avatar"
       data-state={p.state}
+      data-tip={p.tip}
       style={p.picture?.glow ? { '--avatar-glow': p.picture.glow } : undefined}
       role={p.label ? 'img' : undefined}
       aria-label={p.label}

@@ -18,7 +18,7 @@
 * *Failed:* the picture dim, a red `danger-fg` dot.
 * *Paused:* dimmest (35%), no glow.
 
-The state comes from `bot_list`/`bot_get`: `paused`, the active run, `needsYou` and the last run's state. The row's words say the same thing; the dot is the only colour signal.
+The state comes from `bot_list`/`bot_get`: `paused`, the active run, `needsYou` and the last run's state. The row's words say the same thing; the dot is the only colour signal. The dot's ring is `--avatar-ring` (default `surface`): a surface sets it to its own colour (`rail`, `float`). `tip` gives an avatar without its name (the collapsed rail) a tooltip.
 
 **Accessibility.** Decorative by default (the name next to it carries the meaning); with `label` it is an image with that name. The dot is decorative: the state word is in the row.
 
