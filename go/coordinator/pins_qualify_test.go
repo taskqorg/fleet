@@ -54,21 +54,30 @@ func TestPinsTrialOutcome(t *testing.T) {
 	}
 }
 
-// TestPinsLiveVariants: trials go to hosts that polled lately, whatever their update state; an older executor makes
-// the qualification wait while its update is on its way and is skipped by name when its update is held or refused.
+// TestPinsLiveVariants: trials go to hosts that polled lately, whatever their update state. An older executor makes
+// the qualification wait while its update is on its way. A held or offline host is skipped only when another host of
+// its target runs the same CLI and model; otherwise the qualification waits.
 func TestPinsLiveVariants(t *testing.T) {
-	vs := []pinsVariant{{Host: "a"}, {Host: "b"}, {Host: "gone"}}
-	hosts := map[string]pinsHost{"a": {version: "1.261125.227", live: true}, "b": {version: "1.261125.230", live: true}}
-	if got, skipped, ready := pinsLiveVariants(vs, hosts, "1.261125.227"); !ready || len(got) != 2 || len(skipped) != 1 {
+	linux := func(host string) pinsVariant {
+		return pinsVariant{Host: host, Harness: "codex", Model: "m", Target: "linux-amd64"}
+	}
+	mac := pinsVariant{Host: "mac", Harness: "codex", Model: "m", Target: "darwin-arm64"}
+	vs := []pinsVariant{linux("pds18"), linux("win"), mac}
+	hosts := map[string]pinsHost{"pds18": {version: "1.261125.227", live: true}, "win": {version: "1.261125.230", live: true}, "mac": {version: "1.261125.230", live: true}}
+	if got, skipped, ready := pinsLiveVariants(vs, hosts, "1.261125.227"); !ready || len(got) != 3 || len(skipped) != 0 {
 		t.Fatalf("%v %v %v", got, skipped, ready)
 	}
-	hosts["b"] = pinsHost{version: "1.261125.155", live: true}
+	hosts["pds18"] = pinsHost{version: "1.261125.155", live: true}
 	if _, _, ready := pinsLiveVariants(vs, hosts, "1.261125.227"); ready {
 		t.Fatal("an updating older executor would run its own CLI")
 	}
-	hosts["b"] = pinsHost{version: "1.261125.155", live: true, stuck: true}
-	if got, skipped, ready := pinsLiveVariants(vs, hosts, "1.261125.227"); !ready || len(got) != 1 || len(skipped) != 2 {
-		t.Fatalf("held host: %v %v %v", got, skipped, ready)
+	hosts["pds18"] = pinsHost{version: "1.261125.155", live: true, stuck: true}
+	if got, skipped, ready := pinsLiveVariants(vs, hosts, "1.261125.227"); !ready || len(got) != 2 || len(skipped) != 1 {
+		t.Fatalf("held linux host covered by another linux host: %v %v %v", got, skipped, ready)
+	}
+	delete(hosts, "mac") // offline: the only darwin host
+	if _, _, ready := pinsLiveVariants(vs, hosts, "1.261125.227"); ready {
+		t.Fatal("darwin went unqualified")
 	}
 }
 
