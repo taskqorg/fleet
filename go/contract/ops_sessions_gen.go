@@ -414,6 +414,58 @@ func (v *SessionArchiveRequest) Validate() error {
 	return nil
 }
 
+type SessionCommandChange struct {
+	Field string  `json:"field"`
+	From  *string `json:"from,omitempty"`
+	To    string  `json:"to"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionCommandChange) Validate() error {
+	return nil
+}
+
+type SessionCommandReply struct {
+	Action  string                 `json:"action"`
+	Applied bool                   `json:"applied"`
+	Changes []SessionCommandChange `json:"changes"`
+	Sent    *bool                  `json:"sent,omitempty"`
+	Text    string                 `json:"text"`
+	Title   *string                `json:"title,omitempty"`
+	Trigger *TriggerRecord         `json:"trigger,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionCommandReply) Validate() error {
+	if v.Changes == nil {
+		return Missing("changes")
+	}
+	for i := range v.Changes {
+		if err := Check(&v.Changes[i], "changes"); err != nil {
+			return err
+		}
+	}
+	if v.Trigger != nil {
+		if err := Check(v.Trigger, "trigger"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type SessionCommandRequest struct {
+	Apply        *bool   `json:"apply,omitempty"`
+	BaseRevision *int64  `json:"baseRevision,omitempty"`
+	Format       *string `json:"format,omitempty"`
+	SessionId    string  `json:"sessionId"`
+	Text         *string `json:"text,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionCommandRequest) Validate() error {
+	return nil
+}
+
 // SessionContextReply: session_context (session_context.go). plan absent: no work plan on the session or its task.
 type SessionContextReply struct {
 	Automations []BotAutomationRecord `json:"automations"`
@@ -2114,6 +2166,7 @@ func init() {
 		"recommendation_set":  {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Set the recommended method of a project's capability (projectId, methodId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"methodId\"],\"type\":\"object\"}")},
 		"reply":               {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Answer a question; delivered to the asker as its next message", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"answer\":{},\"questionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_archive":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Archive a session (sessionId): it leaves the lists and its worktree is torn down", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
+		"session_command":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Read or run a composer command for a session (sessionId): text is what the composer holds, such as `/trigger conversation-check every 10m if changed: <message>` (also pause, resume, run, delete, and `/trigger new <preset> [as <name>] ...`). apply false answers the preview: the trigger it names, its revision and the changes, nothing saved. apply true runs it through trigger_save, trigger_delete or trigger_run at baseRevision (the preview's; left out, the current one) and answers 409 when the trigger changed since. A trigger is named by its name in the session, else by its id; a name two triggers share asks for the id. format answers the command that sets a trigger (id) to what it is now, for Edit.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"apply\":{\"type\":\"boolean\"},\"baseRevision\":{\"minimum\":1,\"type\":\"integer\"},\"format\":{\"$comment\":\"a trigger id: answer its command in text instead of reading one\",\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"session_context":     {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "What a session (sessionId) plans and keeps running, for the context panel: plan (steps with done marks, owner and task from its work_plan, else its task's), timers (its watch timer, paused or not: edit, pause, resume or cancel it with watch_timer_set, which keeps the event subscriptions), automations (its bot's, change with bot_automation_save), swarm members (the plan's and board's other sessions with their state) and tasks (its own task, the plan's tasks, the tasks it spawned and its bot's tasks; a task's own change does not reread it). Each part is empty when the session has none", Changes: []string{"session", "board", "execution", "bot", "setting-change", "trigger"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"session_create":      {Read: false, Long: false, Errors: []int{409}, Auth: "person", Agent: "tool", Description: "Create a session", InputSchema: json.RawMessage("{\"$comment\":\"No fields: the session's director, access and linkage come from the caller.\",\"additionalProperties\":false,\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"session_fork":        {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"strategy\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\"}")},

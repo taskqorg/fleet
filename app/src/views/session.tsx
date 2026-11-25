@@ -5,9 +5,9 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onSettled, untrack } from 'solid-js';
 import { currentUrl, useLocation } from '../router.ts';
 import {
-  Avatar, ProjectChip, StateDot, QuestionCard, OpenQuestion, Thread, ContextPanel, SidePanel, Composer, TimerChip,
+  Avatar, ProjectChip, StateDot, QuestionCard, OpenQuestion, Thread, ContextPanel, SidePanel, Composer, TimerChip, CommandPreview,
   Button, ActionMenu, SearchField, ErrorBanner, Skeleton, DropZone, InlineForm, TextField, DetailSection, Disclosure, KvRow,
-  EntityCode, EntityPicker, agentLabel, harnesses, writeClip, zone, life as lifeIn, statesOf,
+  EntityCode, EntityPicker, agentLabel, harnesses, writeClip, zone, life as lifeIn, statesOf, timeOf, plural, clock,
   type VirtualListHandle, type CatalogueTreeNode, type IconName, type Harness, type ComposerChip, type Life, type AvatarMark,
   type Timer, type Member, type PlanStep, type Automation, type RelatedTask,
 } from '../../../packages/ui/src/index.ts';
@@ -66,6 +66,8 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const targetDoc = useOp('thread_composer', () => ({ conversationId: props.id }));
   // quiet: a running session's execution changes many times a second; the panel rereads at most once a second.
   const ctxDoc = useOp('session_context', () => ({ sessionId: props.id }), { quiet: 1000 });
+  // The session's triggers (fleet-triggers.md): the timers of the context panel and the head chip; a trigger change rereads.
+  const trigDoc = useOp('trigger_list', () => ({ sessionId: props.id }));
   const projects = useOp('project_list', () => (sDoc.data?.projectId ? {} : null));
   const [verifiedTarget, setVerifiedTarget] = createSignal<string | null>(null, { ownedWrite: true });
   createEffect(() => [sDoc.data, sDoc.restored, props.id] as const, ([s, restored, id]) => { if (s && !restored) setVerifiedTarget(id); });
@@ -184,10 +186,9 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   };
   const copyThread = () => copySel(all()!);
 
-  // Panels that open in place under the head (OR-14): rename, start fresh, switch or hand off, details, timer edit, swarm board.
-  const [panel, setPanel] = createSignal<'rename' | 'fresh' | 'details' | 'swarm' | { timer: number; paused: boolean } | { session: SessionGetReply; handoff: boolean } | null>(null);
+  // Panels that open in place under the head (OR-14): rename, start fresh, switch or hand off, details, swarm board.
+  const [panel, setPanel] = createSignal<'rename' | 'fresh' | 'details' | 'swarm' | { session: SessionGetReply; handoff: boolean } | null>(null);
   const switchPanel = createMemo(() => { const p = panel(); return p && typeof p === 'object' && 'session' in p ? p : null; });
-  const timerPanel = createMemo(() => { const p = panel(); return p && typeof p === 'object' && 'timer' in p ? p : null; });
   const [nextInstruction, setNextInstruction] = createSignal('');
   const [forking, setForking] = createSignal(false);
   const fork = (text?: string) => {
@@ -215,11 +216,17 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   // its width are the person's settings (session-context), the same for every session; at phone width it opens as a sheet.
   const ctx = () => ctxDoc.data;
   const plan = createMemo<PlanStep[]>(() => (ctx()?.plan?.steps ?? []).map(st => ({ text: st.title, done: st.done })));
-  const timers = createMemo<Timer[]>(() => (ctx()?.timers ?? []).map(t => ({
-    id: t.id, schedule: `Every ${every(t.everyMs)}`, paused: t.paused, readOnly: !t.canManage, nextAt: t.nextAt ?? undefined,
+  // Timers: the session's timed triggers. One that checks every pass (15 s or less) follows changes, not the clock, and
+  // is not shown, as in session_context.
+  const timed = createMemo(() => (trigDoc.data?.triggers ?? []).filter(t => t.settings.when === 'daily' || (t.settings.when === 'every' && (t.settings.everyMs ?? 0) > 15_000)));
+  const [editing, setEditing] = createSignal<{ id: string; revision: number } | null>(null);
+  const timers = createMemo<Timer[]>(() => timed().map(t => ({
+    id: t.id, schedule: scheduleOf(t.settings), text: t.settings.text, paused: !t.settings.enabled, readOnly: !trigDoc.data?.canManage,
+    nextAt: timeOf(t.nextAt) ?? undefined, selected: editing()?.id === t.id,
+    quiet: t.quietChecks > 0 ? `${plural(t.quietChecks, 'quiet check')}${t.quietSince ? ` since ${clock(Date.parse(t.quietSince))}` : ''}` : undefined,
   })));
   // The head's timer chip (owner pick A): the first active timer, else the first paused one; a click opens Context.
-  const headTimer = createMemo(() => { const ts = ctx()?.timers ?? []; const t = ts.find(x => !x.paused) ?? ts[0]; return t ? { t, more: ts.length - 1 } : null; });
+  const headTimer = createMemo(() => { const ts = timed(); const t = ts.find(x => x.settings.enabled) ?? ts[0]; return t ? { t, more: ts.length - 1 } : null; });
   const [reveal, setReveal] = createSignal(0);
   const automations = createMemo<Automation[]>(() => (ctx()?.automations ?? []).map(a => {
     const set = rec(a.settings);
@@ -245,27 +252,53 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
     const view = handle.current, anchor = view && !view.isAtEdge() ? view.getAnchor() : null;
     return anchor ? () => handle.current?.restoreAnchor(anchor.key, anchor.offsetPx) : undefined;
   };
-  // Timer changes (watch_timer_set) touch only the timer: the watch's event subscriptions and cursor stay. The base is
-  // the timer on screen; a timer changed meanwhile answers 409 and the panel rereads.
-  // A failure has no Retry: after a reread the base may differ, so the person acts again on what the panel shows.
-  const timerChange = async (t: { everyMs: number; paused: boolean }, action: 'edit' | 'pause' | 'resume' | 'cancel', timerMs?: number) => {
-    setFailure(null);
-    try {
-      await op('watch_timer_set', { sessionId: props.id, action, baseTimerMs: t.everyMs, basePaused: t.paused, ...(timerMs ? { timerMs } : {}) });
-      setPanel(null);
-    } catch (e) { setFailure({ text: errText(e) }); } finally { ctxDoc.reload(); }
+  // Pause, Resume and Cancel act at the revision on screen: a trigger changed meanwhile answers 409 and the list rereads.
+  // Edit puts the trigger's own command in the composer (composer.md#commands); the composer previews and applies it.
+  const [fill, setFill] = createSignal<{ text: string; seq: number } | undefined>(undefined);
+  const editTimer = async (id: string) => {
+    const r = await op('session_command', { sessionId: props.id, format: id });
+    setEditing(r.trigger ? { id, revision: r.trigger.revision } : null);
+    setFill(f => ({ text: r.text, seq: (f?.seq ?? 0) + 1 }));
   };
   const onTimer = (id: string, action: 'pause' | 'edit' | 'cancel', closeSheet: () => void) => {
-    const t = ctx()?.timers.find(x => x.id === id);
+    const t = timed().find(x => x.id === id);
     if (!t) return;
-    if (action === 'edit') { closeSheet(); setPanel({ timer: t.everyMs, paused: t.paused }); return; }
-    void timerChange(t, action === 'pause' ? (t.paused ? 'resume' : 'pause') : 'cancel');
+    setFailure(null);
+    if (action === 'edit') closeSheet();
+    const act: Promise<unknown> = action === 'edit' ? editTimer(id)
+      : action === 'pause' ? op('trigger_save', { id, baseRevision: t.revision, settings: { enabled: !t.settings.enabled } })
+      : op('trigger_delete', { id, baseRevision: t.revision });
+    act.catch(e => setFailure({ text: errText(e) })).finally(() => { if (action !== 'edit') trigDoc.reload(); });
   };
-  // The base is the timer the panel opened on, so a timer changed meanwhile answers 409 instead of being overwritten.
-  const saveTimer = (minutes: number) => {
-    const t = timerPanel();
-    if (t) void timerChange({ everyMs: t.timer, paused: t.paused }, 'edit', Math.round(minutes * 60_000));
+  // A composer text that starts with /trigger is a command: previewed (session_command apply false) a moment after typing
+  // stops, applied on send at the revision Edit opened, so a trigger changed meanwhile shows the conflict, not a save.
+  const [draft, setDraft] = createSignal('');
+  const isCommand = createMemo(() => /^\s*\/trigger(\s|$)/.test(draft()));
+  const [preview, setPreview] = createSignal<{ kind: 'change'; reply: Ops['session_command']['reply'] } | { kind: 'conflict' | 'error'; message: string } | null>(null);
+  const base = () => { const e = untrack(editing); return e ? { baseRevision: e.revision } : {}; };
+  const commandError = (e: unknown) => setPreview(e instanceof OpError && e.status === 409 ? { kind: 'conflict', message: e.message } : { kind: 'error', message: errText(e) });
+  createEffect(() => (isCommand() ? draft() : null), text => {
+    if (text === null) { setPreview(null); setEditing(null); return; }
+    let live = true;
+    const t = setTimeout(() => {
+      op('session_command', { sessionId: props.id, text, ...base() }).then(reply => { if (live) setPreview({ kind: 'change', reply }); }, e => { if (live) commandError(e); });
+    }, 300);
+    return () => { live = false; clearTimeout(t); };
+  });
+  const loadCurrent = () => { const e = untrack(editing); if (e) editTimer(e.id).catch(commandError); };
+  const applyCommand = async (text: string) => {
+    try {
+      await op('session_command', { sessionId: props.id, text, apply: true, ...base() });
+    } catch (e) { commandError(e); throw e; }
+    setEditing(null); setPreview(null); trigDoc.reload();
   };
+  const commandAbove = createMemo(() => {
+    const p = preview();
+    if (!isCommand() || !p) return undefined;
+    if (p.kind !== 'change') return <CommandPreview kind={p.kind} message={p.message} onLoad={p.kind === 'conflict' && editing() ? loadCurrent : undefined} />;
+    const changes = p.reply.changes.map(c => ({ label: c.field, before: c.from, after: c.to }));
+    return <CommandPreview kind="change" icon="clock" title={p.reply.title ?? 'Command'} changes={changes} note={changes.length ? undefined : 'Nothing changes'} />;
+  });
   // In the sheet the panel has its own Hide; the column is toggled from the shell header only, like the navigation.
   const contextPanel = (where: 'column' | 'sheet', close: () => void) => (
     <ContextPanel loading={!ctx() && !ctxDoc.error} plan={plan()} timers={timers()} automations={automations()} swarm={swarm()} tasks={tasks()}
@@ -336,7 +369,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
               <Show when={projectName()}>{n => <ProjectChip name={n()} />}</Show>
               <StateDot state={life()} />
               <Show when={headTimer()} keyed>
-                {h => <TimerChip every={every(h.t.everyMs)} nextAt={h.t.nextAt ?? undefined} paused={h.t.paused} more={h.more || undefined} onOpen={() => setReveal(n => n + 1)} />}
+                {h => <TimerChip every={scheduleOf(h.t.settings).replace(/^Every /, '')} nextAt={timeOf(h.t.nextAt) ?? undefined} paused={!h.t.settings.enabled} more={h.more || undefined} onOpen={() => setReveal(n => n + 1)} />}
               </Show>
               <span class="grow" />
               <SearchField label="Search thread" value={q()} onInput={setQ} onSearch={search} />
@@ -399,7 +432,6 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
             <Show when={switchPanel()} keyed>
               {a => <SwitchPanel sessionId={a.session.sessionId} handoff={a.handoff} current={str(rec(a.session.agentConfig).id)} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
             </Show>
-            <Show when={timerPanel()} keyed>{t => <TimerPanel everyMs={t.timer} onSave={saveTimer} onDone={() => setPanel(null)} />}</Show>
 
             {/* The open question, pinned above the transcript (OR-53); a failed run asks to retry (UR-63). */}
             <For each={openQs()}>
@@ -464,7 +496,11 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
                 chips={chips()}
                 onStop={stop()}
                 stopReason={composerReason()}
-                onSend={send}
+                onSend={text => (isCommand() ? applyCommand(text) : send(text))}
+                fill={fill()}
+                onInput={setDraft}
+                above={commandAbove()}
+                command={isCommand() ? { label: 'Apply' } : undefined}
               />
             </DropZone>
           </div>
@@ -484,21 +520,9 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
 
 const every = (ms: number) => (ms % 3_600_000 === 0 ? `${ms / 3_600_000}h` : ms % 60_000 === 0 ? `${ms / 60_000}m` : `${Math.round(ms / 1000)}s`);
 
-/** Edit a timer: its period in minutes (watch_timer_set edit). */
-function TimerPanel(p: { everyMs: number; onSave: (minutes: number) => void; onDone: () => void }) {
-  const [v, setV] = createSignal(String(Math.max(1, Math.round(untrack(() => p.everyMs) / 60_000))));
-  const n = () => Number(v());
-  const reason = () => (!online.value ? 'offline' : !(n() >= 1) ? 'at least 1 minute' : undefined);
-  return (
-    <DetailSection title="Timer">
-      <InlineForm cls="answers" onSubmit={e => { e.preventDefault(); if (!reason()) p.onSave(n()); }}>
-        <TextField label="Every, minutes" value={v()} onChange={setV} />
-        <Button label="Save" kind="primary" disabledReason={reason()} onClick={() => p.onSave(n())} />
-        <Button label="Cancel" kind="quiet" onClick={p.onDone} />
-      </InlineForm>
-    </DetailSection>
-  );
-}
+/** A trigger's schedule as the timer row shows it: Every 5m, Daily 09:00 UTC. */
+const scheduleOf = (t: { when: string; everyMs?: number; dailyTime?: string; dailyZone?: string }) =>
+  t.when === 'every' ? `Every ${every(t.everyMs ?? 0)}` : t.when === 'daily' ? `Daily ${t.dailyTime ?? ''} ${t.dailyZone ?? ''}`.trim() : 'Manual';
 
 /**
  * The composer's facts (controls/composer.md): the agent profile with its model and effort (a click opens Switch profile

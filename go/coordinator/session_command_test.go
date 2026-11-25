@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"fleet/contract"
 )
 
 func TestParseTriggerCommand(t *testing.T) {
@@ -89,4 +91,56 @@ func TestFormatTriggerCommandRoundTrip(t *testing.T) {
 			t.Errorf("%q read back as %+v", s, c)
 		}
 	}
+}
+
+// Requirement (docs/design-system/controls/composer.md "Commands"): the preview names the trigger, its revision and the
+// changes without saving; apply saves exactly that at the preview's revision and answers 409 once the trigger moved;
+// format answers the command that reads back to the trigger; a name two triggers share asks for the id.
+// Risk: the composer shows one change and saves another, or overwrites an edit made meanwhile (C-FLT-592).
+func TestSessionCommand(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	sid := newID()
+	if err := e.appStore.Write(e.ctx, nil, []string{GLOBAL}, func(q *Request) error {
+		return sessionPut(q, &agentSession{ID: sid, ProjectID: "desiign", DirectedBy: testOwnerEmail})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	owner := e.ownerHeaders()
+	call := func(req contract.SessionCommandRequest, want int) map[string]any {
+		t.Helper()
+		status, reply := e.callJSON(t, "POST", "/api/ops/session_command", req, owner)
+		if status != want {
+			t.Fatalf("%s: got %d, want %d (%v)", deref(req.Text), status, want, reply)
+		}
+		return reply
+	}
+	yes := true
+	created := call(contract.SessionCommandRequest{SessionId: sid, Text: ptr("/trigger new conversation-check every 10m"), Apply: &yes}, 200)
+	rec := mapOf(created["trigger"])
+	id := astr(rec["id"])
+	if created["applied"] != true || mapOf(rec["settings"])["everyMs"] != float64(600_000) {
+		t.Fatalf("new = %v", created)
+	}
+	edit := "/trigger conversation-check every 5m always: Look at CI"
+	preview := call(contract.SessionCommandRequest{SessionId: sid, Text: &edit}, 200)
+	if preview["applied"] != false || len(anys(preview["changes"])) != 3 || mapOf(preview["trigger"])["revision"] != float64(1) {
+		t.Fatalf("preview = %v", preview)
+	}
+	if again := call(contract.SessionCommandRequest{SessionId: sid, Format: &id}, 200); mapOf(again["trigger"])["revision"] != float64(1) {
+		t.Fatalf("the preview saved: %v", again)
+	}
+	rev := int64(1)
+	call(contract.SessionCommandRequest{SessionId: sid, Text: &edit, Apply: &yes, BaseRevision: &rev}, 200)
+	call(contract.SessionCommandRequest{SessionId: sid, Text: ptr("/trigger conversation-check pause"), Apply: &yes, BaseRevision: &rev}, 409)
+	format := call(contract.SessionCommandRequest{SessionId: sid, Format: &id}, 200)
+	if format["text"] != edit {
+		t.Fatalf("format = %q, want %q", format["text"], edit)
+	}
+	call(contract.SessionCommandRequest{SessionId: sid, Text: ptr("/trigger conversation-check pause"), Apply: &yes}, 200)
+	call(contract.SessionCommandRequest{SessionId: sid, Text: ptr("/trigger new conversation-check"), Apply: &yes}, 200)
+	if amb := call(contract.SessionCommandRequest{SessionId: sid, Text: ptr("/trigger conversation-check resume")}, 400); !strings.Contains(astr(amb["message"]), id) {
+		t.Fatalf("ambiguous name = %v", amb)
+	}
+	call(contract.SessionCommandRequest{SessionId: sid, Text: ptr("/trigger " + id + " delete"), Apply: &yes}, 200)
+	call(contract.SessionCommandRequest{SessionId: sid, Text: ptr("/trigger conversation-check soon")}, 400)
 }

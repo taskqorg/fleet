@@ -5,11 +5,16 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
+
+	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // triggerChangeKinds: the change kinds a trigger condition may name (fleet-triggers.md "Trigger").
@@ -193,4 +198,273 @@ func formatCommandDuration(ms int64) string {
 		}
 	}
 	return strconv.FormatInt((ms+999)/1000, 10) + "s"
+}
+
+func init() { op("session_command", sessionCommandOp) }
+
+// triggerSlug: how a command names a trigger, its name in lower case with spaces and other signs as '-'
+// ("Conversation check" is conversation-check).
+func triggerSlug(name string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '_' {
+			if dash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			b.WriteRune(r)
+			dash = false
+		} else {
+			dash = true
+		}
+	}
+	return b.String()
+}
+
+// commandTrigger: the trigger of rows a command names: by its slug, else by its id. A slug two triggers share asks
+// for the id.
+func commandTrigger(rows []db.TriggerListRow, name string) (db.Trigger, error) {
+	var found []db.Trigger
+	for _, r := range rows {
+		if triggerSlug(r.Trigger.Name) == strings.ToLower(name) {
+			found = append(found, r.Trigger)
+		}
+	}
+	if len(found) > 1 {
+		ids := []string{}
+		for _, t := range found {
+			ids = append(ids, t.ID)
+		}
+		return db.Trigger{}, fail(400, fmt.Sprintf("%d triggers are named %s: write the id instead, one of %s", len(found), name, strings.Join(ids, ", ")))
+	}
+	if len(found) == 1 {
+		return found[0], nil
+	}
+	for _, r := range rows {
+		if r.Trigger.ID == name {
+			return r.Trigger, nil
+		}
+	}
+	return db.Trigger{}, fail(404, "No trigger "+name+" in this session: /trigger new conversation-check creates one")
+}
+
+// commandNameOf: the word a command names t by, its slug when no other trigger shares it, else its id.
+func commandNameOf(rows []db.TriggerListRow, t db.Trigger) string {
+	slug := triggerSlug(t.Name)
+	if slug == "" || !commandName.MatchString(slug) {
+		return t.ID
+	}
+	if _, err := commandTrigger(rows, slug); err != nil {
+		return t.ID
+	}
+	return slug
+}
+
+func commandFormat(rows []db.TriggerListRow, t db.Trigger) string {
+	s := triggerSettingsOf(t)
+	return formatTriggerCommand(commandNameOf(rows, t), ms(s.EveryMs), deref(s.DailyTime), deref(s.DailyZone), s.IfChanged, s.Text)
+}
+
+func describeWhen(s contract.TriggerSettings) string {
+	switch s.When {
+	case "every":
+		return "every " + formatCommandDuration(ms(s.EveryMs))
+	case "daily":
+		return strings.TrimSpace("daily " + deref(s.DailyTime) + " " + deref(s.DailyZone))
+	}
+	return "manual"
+}
+
+func describeCondition(kinds []string) string {
+	switch {
+	case len(kinds) == 0:
+		return "always"
+	case slices.Equal(kinds, triggerChangedDefault):
+		return "if changed (" + strings.Join(kinds, ", ") + ")"
+	}
+	return "if " + strings.Join(kinds, ", ") + " changed"
+}
+
+func describeState(enabled bool) string {
+	if enabled {
+		return "active"
+	}
+	return "paused"
+}
+
+// commandInput: the trigger_save settings a parsed edit or new command sets over base (the trigger's current
+// settings, or the preset's for new).
+func commandInput(c triggerCommand, base contract.TriggerSettings) *contract.TriggerSettingsInput {
+	in := &contract.TriggerSettingsInput{}
+	if c.EveryMs != nil {
+		w := contract.TriggerWhen("every")
+		in.When, in.EveryMs = &w, c.EveryMs
+	}
+	if c.Daily != nil {
+		w := contract.TriggerWhen("daily")
+		zone := deref(base.DailyZone)
+		if c.Zone != nil {
+			zone = *c.Zone
+		}
+		if zone == "" {
+			zone = "UTC"
+		}
+		in.When, in.DailyTime, in.DailyZone = &w, c.Daily, &zone
+	}
+	if c.IfChanged != nil {
+		in.IfChanged = *c.IfChanged
+	}
+	in.Text = c.Text
+	if c.Action == "new" && c.Name != "" {
+		in.Name = &c.Name
+	}
+	switch c.Action {
+	case "pause", "resume":
+		on := c.Action == "resume"
+		in.Enabled = &on
+	}
+	return in
+}
+
+// commandChanges: what the command changes, field by field, for the preview.
+func commandChanges(before *contract.TriggerSettings, after contract.TriggerSettings) []contract.SessionCommandChange {
+	out := []contract.SessionCommandChange{}
+	add := func(field, from, to string, hasFrom bool) {
+		if hasFrom && from == to {
+			return
+		}
+		c := contract.SessionCommandChange{Field: field, To: to}
+		if hasFrom {
+			c.From = &from
+		}
+		out = append(out, c)
+	}
+	var b contract.TriggerSettings
+	if before != nil {
+		b = *before
+	}
+	has := before != nil
+	if !has {
+		add("Name", "", after.Name, false)
+	}
+	add("When", describeWhen(b), describeWhen(after), has)
+	add("Condition", describeCondition(b.IfChanged), describeCondition(after.IfChanged), has)
+	add("Message", b.Text, after.Text, has)
+	add("State", describeState(b.Enabled), describeState(after.Enabled), has)
+	return out
+}
+
+// sessionCommandOp: one composer command, previewed (apply false) or run. The preview and the run read the command
+// with the same parser, so what the preview shows is what the run does.
+func sessionCommandOp(q *Request, r *contract.SessionCommandRequest) (contract.SessionCommandReply, error) {
+	out := contract.SessionCommandReply{Changes: []contract.SessionCommandChange{}}
+	target, err := triggerTargetOf(q, r.SessionId, "")
+	if err != nil {
+		return out, err
+	}
+	rows, err := q.db().TriggerList(q.ctx(), db.TriggerListParams{SessionID: &target.sessionID})
+	if err != nil {
+		return out, err
+	}
+	now := time.Now()
+	if id := deref(r.Format); id != "" {
+		for _, row := range rows {
+			if row.Trigger.ID == id {
+				rec := triggerRecord(row.Trigger, now)
+				out.Action, out.Text, out.Trigger = "format", commandFormat(rows, row.Trigger), &rec
+				return out, nil
+			}
+		}
+		return out, errNotFound
+	}
+	c, err := parseTriggerCommand(deref(r.Text))
+	if err != nil {
+		return out, fail(400, err.Error())
+	}
+	out.Text, out.Action = strings.TrimSpace(deref(r.Text)), c.Action
+	apply := r.Apply != nil && *r.Apply
+
+	if c.Action == "new" {
+		p, err := triggerPreset(c.Preset)
+		if err != nil {
+			return out, err
+		}
+		if p.Target != "session" {
+			return out, fail(400, "Preset "+p.Id+" is for a bot: change it on the bot's page")
+		}
+		in := commandInput(c, contract.TriggerSettings{})
+		var after contract.TriggerSettings
+		applyTriggerInput(&after, &p.Settings)
+		applyTriggerInput(&after, in)
+		if err := normalizeTriggerSettings(&after); err != nil {
+			return out, err
+		}
+		title := "Add trigger " + after.Name
+		out.Title, out.Changes = &title, commandChanges(nil, after)
+		if !apply {
+			return out, nil
+		}
+		saved, err := triggerSaveOp(q, &contract.TriggerSaveRequest{Id: newID(), SessionId: &target.sessionID, PresetId: &p.Id, Settings: in})
+		if err != nil {
+			return out, err
+		}
+		out.Applied, out.Trigger = true, &saved.Trigger
+		return out, nil
+	}
+
+	cur, err := commandTrigger(rows, c.Name)
+	if err != nil {
+		var he *HTTPError
+		if r.BaseRevision != nil && errors.As(err, &he) && he.Code == 404 {
+			return out, fail(409, "Trigger no longer exists")
+		}
+		return out, err
+	}
+	rec := triggerRecord(cur, now)
+	out.Trigger = &rec
+	if r.BaseRevision != nil && *r.BaseRevision != rec.Revision {
+		return out, fail(409, "Trigger changed since you opened it")
+	}
+	before := triggerSettingsOf(cur)
+	verb := map[string]string{"edit": "Change", "pause": "Pause", "resume": "Resume", "run": "Run", "delete": "Delete"}[c.Action]
+	title := verb + " trigger " + cur.Name
+	out.Title = &title
+	switch c.Action {
+	case "run":
+		out.Changes = append(out.Changes, contract.SessionCommandChange{Field: "Run", To: "now, whatever its time and condition say"})
+	case "delete":
+		state := describeState(before.Enabled)
+		out.Changes = append(out.Changes, contract.SessionCommandChange{Field: "State", From: &state, To: "deleted"})
+	default:
+		after := before
+		applyTriggerInput(&after, commandInput(c, before))
+		if err := normalizeTriggerSettings(&after); err != nil {
+			return out, err
+		}
+		out.Changes = commandChanges(&before, after)
+	}
+	if !apply {
+		return out, nil
+	}
+	switch c.Action {
+	case "run":
+		res, err := triggerRunOp(q, &contract.TriggerRunRequest{Id: cur.ID})
+		if err != nil {
+			return out, err
+		}
+		out.Trigger, out.Sent = &res.Trigger, &res.Sent
+	case "delete":
+		if _, err := triggerDeleteOp(q, &contract.TriggerDeleteRequest{Id: cur.ID, BaseRevision: rec.Revision}); err != nil {
+			return out, err
+		}
+		out.Trigger = nil
+	default:
+		saved, err := triggerSaveOp(q, &contract.TriggerSaveRequest{Id: cur.ID, BaseRevision: rec.Revision, Settings: commandInput(c, before)})
+		if err != nil {
+			return out, err
+		}
+		out.Trigger = &saved.Trigger
+	}
+	out.Applied = true
+	return out, nil
 }
