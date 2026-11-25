@@ -21,6 +21,9 @@ import type { SessionRow, QuestionRow, HomeBlocker } from '../../../contracts/ge
 import type { BotListItem } from '../../../contracts/generated/ops-bots.ts';
 import { botPicture, reasonLabel } from '../bot-view.ts';
 
+/** Chromium's deferred fetch (Fetch spec, deferred fetching): the browser sends it when the page goes away. Not in TypeScript's DOM lib yet. */
+declare function fetchLater(input: string, init?: RequestInit & { activateAfter?: number }): { readonly activated: boolean };
+
 const SessionView = lazy(() => import('./session.tsx'), { export: 'SessionView' });
 
 const TARGET_KEY = 'fleet:home-target';
@@ -119,11 +122,14 @@ function HomePage() {
   const projects = useOp('project_list', {});
 
   // The last visit (home_view counts from it) is recorded when the person leaves Home, so it stays put while Home is
-  // open; a hidden page may never come back, so page hide records it too.
+  // open. Leaving for another page records it at once; closing or reloading the tab sends the record the browser holds
+  // (fetchLater, sent when the page goes away, bfcache-safe unlike an unload handler).
   onSettled(() => {
-    const record = () => { void op('person_visit', { page: 'home' }, { keepalive: true }).catch(() => {}); };
-    addEventListener('pagehide', record);
-    return () => { removeEventListener('pagehide', record); record(); };
+    const later = new AbortController();
+    try {
+      fetchLater('/api/ops/person_visit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ page: 'home' }), signal: later.signal });
+    } catch { /* over the deferred-fetch quota: the in-app leave still records */ }
+    return () => { later.abort(); void op('person_visit', { page: 'home' }).catch(() => {}); };
   });
   const since = (): number | null | undefined => (view.data ? view.data.counts.visitAt : undefined);
 
