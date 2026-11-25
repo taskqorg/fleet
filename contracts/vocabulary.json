@@ -17,6 +17,7 @@
     {"id": "host-files", "match": ["preparation failed: git"], "text": "The host could not prepare the project's files. Check the host's copy of the repository, then run again."},
     {"id": "host-login", "match": ["preparation failed: native account"], "text": "The agent's subscription login on the host does not match the run. Sign the host in again under Accounts, then run again."},
     {"id": "preparation", "match": ["preparation failed"], "text": "The host could not prepare the run. Read the detail, fix the host, then run again."},
+    {"id": "script-failed", "match": ["script exited"], "text": "The step's script exited with an error. Its last stderr line is in the detail; fix the script or its inputs, then run again."},
     {"id": "agent-crashed", "match": ["harness exited", "harness protocol failed"], "text": "The agent program crashed or broke its protocol. Read the detail; if it repeats, update the agent on the host."},
     {"id": "agent-turn", "match": ["turn.failed"], "text": "The agent reported that its turn failed. Read the detail and the conversation, then answer or run again."},
     {"id": "unregistered", "match": ["unregistered host", "unregistered account", "no registered environment"], "text": "The run names a host, account or environment that Fleet does not know. Register it or change the project settings, then run again."},

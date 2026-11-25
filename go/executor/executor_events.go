@@ -403,7 +403,7 @@ func (e *executor) finish(c contract.Command, status, native string) error {
 	})
 }
 
-// stderrTail: the end of a run's stderr file when it exited non-zero; nil otherwise. Harness stderr carries no
+// stderrTail: the end of a run's stderr file (a script's output/script.stderr) when it exited non-zero; nil otherwise. Harness stderr carries no
 // credentials (they reach the harness through its own login files, never argv or stderr echo).
 func stderrTail(dir, execution string, code *int64) *string {
 	if code == nil || *code == 0 {
@@ -411,7 +411,10 @@ func stderrTail(dir, execution string, code *int64) *string {
 	}
 	b, err := os.ReadFile(filepath.Join(dir, execution+".stderr"))
 	if err != nil || len(b) == 0 {
-		return nil
+		// A pipeline script writes its stderr into the step's output (executor_launch.go startScript).
+		if b, err = os.ReadFile(filepath.Join(dir, "output", "script.stderr")); err != nil || len(b) == 0 {
+			return nil
+		}
 	}
 	t := tail(b[max(0, len(b)-2000):])
 	return &t

@@ -381,3 +381,19 @@ func TestSignalRaceWithExit(t *testing.T) {
 		t.Fatal("gone misjudged an exited, a reused or a live process")
 	}
 }
+
+// Requirement: a failed pipeline script reports the end of its stderr, as a failed harness does.
+// Risk: 2026-11-25 avatar-make's request step exited 1 on a missing input file; the cause carried no reason at all.
+func TestStderrTailOfScript(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "output"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "output", "script.stderr"), []byte("Traceback\nFileNotFoundError: binding.json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	one := int64(1)
+	if got := stderrTail(dir, "exec-1", &one); got == nil || !strings.Contains(*got, "FileNotFoundError: binding.json") {
+		t.Fatalf("script stderr tail = %v", got)
+	}
+}

@@ -20,7 +20,7 @@ func TestPlainCauseCoversStoredCodes(t *testing.T) {
 		"preparation failed: coding-tool-unready: browser": "host-not-ready", "preparation failed: git worktree add failed": "host-files",
 		"preparation failed: native account/session binding mismatch": "host-login", "turn.failed: other: timed out": "agent-turn",
 		"step:secret-found": "secret", "step:not-granted": "key", "step:download-cut": "download-cut", "step:failed": "step",
-		"harness exited 1: boom": "agent-crashed", "unknown:interrupted": "interrupted", "something new": "other",
+		"harness exited 1: boom": "agent-crashed", "script exited 1: boom": "script-failed", "unknown:interrupted": "interrupted", "something new": "other",
 	} {
 		f := PlainCause(code, "the message")
 		if f == nil || f.Cause != want || f.Code != code || f.Text == "" || strings.Contains(f.Text, code) || deref(f.Detail) != "the message" {
