@@ -131,10 +131,13 @@ function Pace(props: {
     const days = Math.max(1, (props.now - from) / DAY), base = props.norms.total;
     return { prs, total, merged, totals, removals, flakes, scope, done, share, days, base };
   });
+  // The panel reads the last computed stats, not Show's accessor: when stats turns null (history or
+  // buckets go empty), the charts' memos re-run once before Show removes them and would read null.
+  const st = createMemo<ReturnType<typeof stats>>(prev => stats() ?? prev ?? null) as () => NonNullable<ReturnType<typeof stats>>;
 
   return (
     <Show when={!(props.error && !props.hist)} fallback={<DetailSection title="Pace">{choice()}<ErrorBanner text={`Delivery history did not load: ${props.error}`} /></DetailSection>}>
-      <Show when={stats()} fallback={<DetailSection title="Pace">{choice()}<Skeleton rows={3} /></DetailSection>}>{st => (
+      <Show when={stats()} fallback={<DetailSection title="Pace">{choice()}<Skeleton rows={3} /></DetailSection>}>{_ => (
         <DetailSection title="Pace"><div style={{ display: 'grid', gap: 'var(--space-4)', 'min-width': 0 }}>
           {choice()}
           <Totals items={[
