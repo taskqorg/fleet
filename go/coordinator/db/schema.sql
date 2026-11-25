@@ -739,7 +739,12 @@ CREATE TABLE lab_trial (
   "execution_id" text NOT NULL,
   "cell_example" text NOT NULL,
   "example_use_case_id" text NOT NULL,
-  "duration_ms" double precision NOT NULL
+  "duration_ms" double precision NOT NULL,
+  "state" text NOT NULL,
+  "ended_at" timestamp with time zone,
+  "observation" text NOT NULL,
+  "variant" text,
+  "changed_at" timestamp with time zone NOT NULL
 );
 CREATE TABLE lab_work (
   "experiment_id" text NOT NULL,

@@ -48,6 +48,40 @@ func (q *Queries) LabArtifactHash(ctx context.Context, id string) (string, error
 	return content_hash, err
 }
 
+const labDataVersion = `-- name: LabDataVersion :one
+SELECT (SELECT count(*) FROM lab_trial)::bigint AS trials,
+ (SELECT coalesce(max(changed_at), 'epoch'::timestamptz) FROM lab_trial)::timestamptz AS trials_at,
+ (SELECT count(*) FROM score)::bigint AS scores,
+ (SELECT coalesce(max(seq), 0) FROM score)::bigint AS score_seq,
+ (SELECT count(*) FROM experiment)::bigint AS experiments,
+ (SELECT coalesce(max(seq), 0) FROM experiment)::bigint AS experiment_seq
+`
+
+type LabDataVersionRow struct {
+	Trials        int64
+	TrialsAt      pgtype.Timestamptz
+	Scores        int64
+	ScoreSeq      int64
+	Experiments   int64
+	ExperimentSeq int64
+}
+
+// What Lab's comparison is computed from, as counts and last changes (lab_leaderboard.go): its cached reply stays while
+// these stay. Trials by lab_trial (state, end and facts), scores and experiments by their seq.
+func (q *Queries) LabDataVersion(ctx context.Context) (LabDataVersionRow, error) {
+	row := q.db.QueryRow(ctx, labDataVersion)
+	var i LabDataVersionRow
+	err := row.Scan(
+		&i.Trials,
+		&i.TrialsAt,
+		&i.Scores,
+		&i.ScoreSeq,
+		&i.Experiments,
+		&i.ExperimentSeq,
+	)
+	return i, err
+}
+
 const labExample = `-- name: LabExample :one
 SELECT id,approved_at,project_id,content_hash FROM artifact WHERE id=$1 AND role='example'
 `

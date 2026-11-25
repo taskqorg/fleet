@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"slices"
 	"sort"
@@ -22,8 +23,10 @@ const (
 	labCollectionFleet      = "Fleet & Projects"
 	labCollectionArchived   = "Archived"
 	labLeaderboardDaysDef   = 90
-	labLeaderboardCacheTTL  = 30 * time.Second
-	labLeaderboardCacheMax  = 64
+	// labLeaderboardCacheTTL: the longest a reply stays while Lab data is unchanged (labLeaderboardVersion): costs priced
+	// late and trials aging out of the window move it without a version change.
+	labLeaderboardCacheTTL = 10 * time.Minute
+	labLeaderboardCacheMax = 64
 )
 
 type labLeaderboardCacheKey struct {
@@ -33,6 +36,8 @@ type labLeaderboardCacheKey struct {
 	useCaseID  string
 	collection string
 	days       int32
+	// version: Lab data the reply was computed from (labLeaderboardVersion); a change recomputes it.
+	version string
 }
 
 type labLeaderboardCacheEntry struct {
@@ -477,6 +482,13 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 		collection: collectionFilter,
 		days:       days,
 	}
+	if q != nil && q.tx != nil {
+		v, err := labLeaderboardVersion(q)
+		if err != nil {
+			return out, err
+		}
+		cacheKey.version = v
+	}
 	if cached, ok := labLeaderboardCacheGet(cacheKey); ok {
 		return cached, nil
 	}
@@ -862,4 +874,14 @@ func labLeaderboard(q *Request, r *contract.LabLeaderboardRequest) (contract.Lab
 
 	labLeaderboardCachePut(cacheKey, out)
 	return out, nil
+}
+
+// labLeaderboardVersion: Lab data's counts and last changes as the caller sees them (LabDataVersion: trials, scores,
+// experiments). The comparison's cached reply is kept while it stays the same, instead of recomputing every 30 s.
+func labLeaderboardVersion(q *Request) (string, error) {
+	v, err := q.db().LabDataVersion(q.ctx())
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d@%d|%d@%d|%d@%d", v.Trials, v.TrialsAt.Time.UnixMicro(), v.Scores, v.ScoreSeq, v.Experiments, v.ExperimentSeq), nil
 }
