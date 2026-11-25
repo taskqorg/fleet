@@ -2,7 +2,7 @@ package main
 
 // Person settings (fleet-people-access.md section 8 "Dispatch"): order list | soonest_reset on the director, default
 // list. The same document holds the person's app preferences: pins, saved views, focus and focus presets, ignored projects,
-// column widths, row pins and the navigation counter views (fleet-people-access.md section 8 "Preferences"). One person-setting document per email; each change writes setting-change.
+// column widths, open side panels, row pins and the navigation counter views (fleet-people-access.md section 8 "Preferences"). One person-setting document per email; each change writes setting-change.
 
 import (
 	"encoding/json"
@@ -97,6 +97,9 @@ func personSettings(q *Request, email string) (contract.PersonSettings, error) {
 	if ps.NavCounters == nil {
 		ps.NavCounters = map[string]string{}
 	}
+	if ps.Panels == nil {
+		ps.Panels = map[string]bool{}
+	}
 	return ps, nil
 }
 
@@ -115,6 +118,7 @@ type personSettingPayload struct {
 	NavCounters  map[string]string      `json:"navCounters"`
 	LastViews    map[string]string      `json:"lastViews"`
 	ListGroups   map[string][]string    `json:"listGroups"`
+	Panels       map[string]bool        `json:"panels"`
 }
 
 func orEmpty(xs []string) []string {
@@ -301,6 +305,14 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if r.NavCollapsed != nil {
 		next.NavCollapsed = *r.NavCollapsed
 	}
+	// Side panels (side-panel.md): open or closed by panel key, merged.
+	if r.Panels != nil {
+		next.Panels = maps.Clone(prev.Panels)
+		maps.Copy(next.Panels, r.Panels)
+		if len(next.Panels) > maxPanels {
+			return contract.PersonSettings{}, fail(400, "panels: at most 64 panels in all")
+		}
+	}
 	// The navigation counter views (nav_counts.go): merged by section; a saved view must be in the views after this change,
 	// and a removed one leaves its counter (the default counts again), so a later view of the same name is not counted
 	// unchosen.
@@ -352,7 +364,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	_, err = unscoped(q, func() (struct{}, error) {
 		payload := personSettingPayload{Order: next.Order, Pins: next.Pins, Views: next.Views, Focus: next.Focus, FocusPresets: next.FocusPresets,
 			Ignored: next.Ignored, Widths: next.Widths, RowPins: next.RowPins, NavCollapsed: next.NavCollapsed, NavCounters: next.NavCounters,
-			LastViews: next.LastViews, ListGroups: next.ListGroups}
+			LastViews: next.LastViews, ListGroups: next.ListGroups, Panels: next.Panels}
 		if err := q.db().PersonSettingPut(q.ctx(), db.PersonSettingPutParams{ID: "person-setting:" + email, Email: email, Payload: jsonBytes(payload)}); err != nil {
 			return struct{}{}, err
 		}
@@ -368,7 +380,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			name            string
 			previous, value any
 		}{{"pins", prev.Pins, next.Pins}, {"views", prev.Views, next.Views}, {"focus", prev.Focus, next.Focus},
-			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"ignored", prev.Ignored, next.Ignored}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}, {"navCounters", prev.NavCounters, next.NavCounters}} {
+			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"ignored", prev.Ignored, next.Ignored}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}, {"panels", prev.Panels, next.Panels}, {"navCounters", prev.NavCounters, next.NavCounters}} {
 			// lastViews is where the person was and listGroups which groups they folded, not settings: they change as the person
 			// moves around a list and are not audited.
 			a, _ := json.Marshal(f.previous)
@@ -411,6 +423,11 @@ var sectionID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 var listGroupsKey = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}:[a-z][a-z0-9_-]{0,31}$`)
 
 const maxListGroupLists, maxListGroupKeys, maxGroupKeyBytes = 64, 256, 256
+
+// panelKey: a side panel's key, a lower-case slug (session-context); at most maxPanels are stored.
+var panelKey = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
+
+const maxPanels = 64
 
 // checkPrefs: names are present and unique (views per list), each view is a valid view of its list (viewProblem, the
 // view_link check), widths are not negative.
@@ -474,6 +491,14 @@ func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 	for k, w := range r.Widths {
 		if w < 0 {
 			return fail(400, "widths: "+k+" is negative")
+		}
+	}
+	if len(r.Panels) > maxPanels {
+		return fail(400, "panels: at most 64 panels")
+	}
+	for k := range r.Panels {
+		if !panelKey.MatchString(k) {
+			return fail(400, "panels: "+k+" is not a panel key (a lower-case slug)")
 		}
 	}
 	// A last view is that section's own list: /<id> or /<id>?<query>, short, never another origin; section ids are short

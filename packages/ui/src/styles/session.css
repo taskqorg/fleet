@@ -71,21 +71,16 @@
   .session-view .tr-body .vl-row, .session-view .th-row { padding-inline: 0; }
   .session-view .tool-line { padding-block: var(--space-2); }
   .session-view .composer { margin-inline: 0; }
-  .sv-ctx { display: flex; min-height: 0; overflow-y: auto; }
-  .sv-ctx[hidden] { display: none; }
-  .sv-ctx .ctx-panel { min-block-size: 100%; }
+  /* The context panel is a side panel (side-panel.md): a column at the person's width, a sheet at phone width. */
+  .side-panel .ctx-panel { inline-size: auto; min-block-size: 100%; }
   @container (max-width: 600px) {
-    .sv-ctx { display: none; }
+    .session-view > .side-panel { display: none; --side-mode: sheet; }
     /* The name keeps its line; avatar, state and the icons follow below it (OR-60). */
     .sv-head { flex-wrap: wrap; row-gap: 0; }
     .sv-name { order: -1; flex: 1 0 100%; }
   }
 
-  /* The context sheet at phone width: a native modal <dialog> from the bottom edge (closes on Escape, Back, a tap outside). */
-  dialog.ctx-sheet { inset-block: auto 0; inline-size: 100%; max-inline-size: 100%; max-block-size: 80dvh; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: var(--float); color: var(--fg); box-shadow: var(--elevation-popover); overflow-y: auto; }
-  dialog.ctx-sheet:modal { overscroll-behavior: contain; }
-  dialog.ctx-sheet::backdrop { background: rgb(0 0 0 / 0.35); overflow: hidden; overscroll-behavior: contain; }
-  dialog.ctx-sheet .ctx-panel { inline-size: auto; border: 0; background: none; }
+  dialog.side-sheet .ctx-panel { inline-size: auto; border: 0; background: none; }
 
   @media (pointer: coarse) {
     .timer-acts .btn.icon-only { width: var(--size-hit-phone); height: var(--size-hit-phone); }

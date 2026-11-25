@@ -14,13 +14,13 @@
 No bar spans the whole window (OR-24).
 
 **Shell header (OR-43).** One header (`data-ui="shell-header"`) spans the control column and the work area, whatever page is below; the navigation sits beside it, not under it. Left to right:
-* the collapse toggle (OR-42), its first item;
+* the collapse toggle (OR-42), its first item: the navigation's [side-panel](../controls/side-panel.md) toggle;
 * the section title (`h1`, the current section's label; `AppShell.title` overrides it): the page's only top heading, so a control column or page has no heading of its own, only its tools (`page-h` without `h1`);
 * right after the title, the section's own actions (`ShellActions`), as icon buttons with tooltips (OR-1): Conversations puts New conversation (`plus`) here, so the control column needs no head row for it; the slot is empty and takes no space on other sections;
 * after them, the page's status (`ShellStatus`: its offline marker, a data-age chip), so a page needs no head row for it and nothing moves when it shows (OR-23);
 * on the right, the [focus chip](../controls/focus-control.md) (OR-34) with its "N need you outside focus" indicator;
 * the search icon (`search`, tooltip "Search ⌘K", `aria-keyshortcuts` Meta+K and Control+K), which opens the [Spotlight palette](../controls/spotlight.md) (OR-31, OR-32) and puts the focus in its field;
-* reserved: a right-panel toggle goes last, after search, once a right panel exists. Until then nothing is rendered for it.
+* last, after search, the toggles of right [side panels](../controls/side-panel.md) (the session's Context). The header keeps that place on every page, so search never moves when a page brings a toggle.
 
 At phone width (760 px and below) the toggle hides, the section actions, the focus chip and the indicator keep their icons (the indicator its count), and the title gives way first: nothing scrolls sideways.
 

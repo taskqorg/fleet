@@ -1,6 +1,6 @@
 // Per-person preferences, stored server-side in the person's settings (person_settings_get / person_settings_set,
 // docs/designs/fleet-people-access.md section 8 "Preferences"): section pins, row pins, saved views, focus, focus
-// presets and ignored projects, column widths, the collapsed navigation, the navigation counter views, the last list views and the folded list groups. Agents read and write the same fields through the same operations.
+// presets and ignored projects, column widths, the open side panels (the collapsed navigation among them), the navigation counter views, the last list views and the folded list groups. Agents read and write the same fields through the same operations.
 import { cell } from './signal.ts';
 import { op, type Ops } from './api.ts';
 import { onClear } from './offline.ts';
@@ -9,7 +9,7 @@ import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
 
 type Settings = Ops['person_settings_get']['reply'];
 type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
-const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], ignored: [], widths: {}, rowPins: {}, navCollapsed: false, lastViews: {}, listGroups: {}, navCounters: {} };
+const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], ignored: [], widths: {}, rowPins: {}, navCollapsed: false, lastViews: {}, listGroups: {}, navCounters: {}, panels: {} };
 export const prefs = cell<Settings>(empty);
 /**
  * The person's preferences are known: read (or the read failed, so lists still load). Focus-dependent loads (useList, the
@@ -146,7 +146,16 @@ export function setNavCounter(section: string, name: string | null) {
   savePrefs(s => { const c = { ...s.navCounters }; if (v) c[section] = v; else delete c[section]; return { navCounters: c }; }, { navCounters: { [section]: v } });
 }
 
-/** A column width in px by key (nav, control); 0 resets to the default. */
+/**
+ * Which side panels are open, by panel key (side-panel.md): `nav` is the navigation (stored as navCollapsed), every other
+ * panel is in panels. A key left out is open.
+ */
+export const panelsOf = (s: Settings): Record<string, boolean> => ({ ...s.panels, nav: !s.navCollapsed });
+export const setPanel = (key: string, open: boolean) => key === 'nav'
+  ? savePrefs(() => ({ navCollapsed: !open }), { navCollapsed: !open })
+  : savePrefs(s => ({ panels: { ...s.panels, [key]: open } }), { panels: { [key]: open } });
+
+/** A column or side-panel width in px by key (nav, control, session-context); 0 resets to the default. */
 export const setWidth = (key: string, px: number) =>
   savePrefs(s => { const w = { ...s.widths }; if (px) w[key] = Math.round(px); else delete w[key]; return { widths: w }; }, { widths: { [key]: Math.round(px) } });
 

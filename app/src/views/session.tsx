@@ -1,11 +1,11 @@
 // The one session view (docs/design-system/pages/session.md, OR-51): every bot, PM and task run opens here, from Home
 // (`/home/C-…`, full width) and from Conversations (`/conversations/C-…`, the work area). Light chat: messages as prose,
 // tool calls folded into one line each (OR-52), questions as cards answered in place (OR-53), no metrics header, model
-// badge or cost (OR-54); the context panel is a column on the right and a sheet on a phone.
+// badge or cost (OR-54); the context panel is a side panel (side-panel.md): a column on the right, a sheet on a phone.
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onSettled, untrack } from 'solid-js';
 import { currentUrl, useLocation } from '../router.ts';
 import {
-  Avatar, ProjectChip, StateDot, QuestionCard, Thread, ContextPanel, ContextSheet, Composer,
+  Avatar, ProjectChip, StateDot, QuestionCard, Thread, ContextPanel, SidePanel, Composer,
   Button, ActionMenu, SearchField, ErrorBanner, Skeleton, DropZone, InlineForm, TextField, DetailSection, Disclosure, KvRow,
   EntityCode, EntityPicker, DecisionBlock, keyConnection, agentLabel, harnesses, writeClip, zone, lifeOf,
   type VirtualListHandle, type CatalogueTreeNode, type IconName, type Harness, type ComposerChip, type Life, type AvatarMark,
@@ -221,8 +221,8 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   });
   const copyLink = () => { const c = s()?.code; writeClip(location.origin + here(c ?? props.id)).catch(e => setFailure({ text: `Copy failed: ${errText(e)}` })); };
 
-  // Context panel (session_context): plan, timers, automations, swarm, tasks; hidden when all are empty. Open or hidden is the
-  // person's choice; at phone width the Context icon opens it as a sheet.
+  // Context panel (session_context): plan, timers, automations, swarm, tasks. A side panel (side-panel.md): open or closed and
+  // its width are the person's settings (session-context), the same for every session; at phone width it opens as a sheet.
   const ctx = () => ctxDoc.data;
   const plan = createMemo<PlanStep[]>(() => (ctx()?.plan?.steps ?? []).map(st => ({ text: st.title, done: st.done })));
   const timers = createMemo<Timer[]>(() => (ctx()?.timers ?? []).map(t => ({
@@ -247,22 +247,11 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const tasks = createMemo<RelatedTask[]>(() => (ctx()?.tasks ?? []).map(t => ({
     id: t.id, code: t.code, title: t.title, state: (lifeOf.task as Record<string, Life>)[t.state] ?? 'queued', href: `/tasks/${encodeURIComponent(t.id)}`,
   })));
-  const ctxEmpty = () => (!!ctx() || !!ctxDoc.error) && !plan().length && !timers().length && !automations().length && !swarm().length && !tasks().length;
-  const [ctxHidden, setCtxHidden] = createSignal(false);
-  const showCtx = () => !ctxHidden() && !ctxEmpty();
-  const [sheetOpen, setSheetOpen] = createSignal(false);
-  let column: HTMLDivElement | undefined;
   // Showing or hiding the column changes the transcript's width and so its wrapped rows: keep the row being read where it
   // was (a list at its newest row keeps following). The composer and its draft stay mounted.
-  const setColumn = (hidden: boolean) => {
+  const keepRow = () => {
     const view = handle.current, anchor = view && !view.isAtEdge() ? view.getAnchor() : null;
-    setCtxHidden(hidden);
-    if (anchor) requestAnimationFrame(() => requestAnimationFrame(() => handle.current?.restoreAnchor(anchor.key, anchor.offsetPx)));
-  };
-  const toggleCtx = () => {
-    // At phone width the column is not shown (session.css): the panel opens as a sheet.
-    if (column && getComputedStyle(column).display === 'none') { setSheetOpen(true); return; }
-    setColumn(!ctxHidden());
+    return anchor ? () => handle.current?.restoreAnchor(anchor.key, anchor.offsetPx) : undefined;
   };
   // Timer changes (watch_timer_set) touch only the timer: the watch's event subscriptions and cursor stay. The base is
   // the timer on screen; a timer changed meanwhile answers 409 and the panel rereads.
@@ -274,10 +263,10 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
       setPanel(null);
     } catch (e) { setFailure({ text: errText(e) }); } finally { ctxDoc.reload(); }
   };
-  const onTimer = (id: string, action: 'pause' | 'edit' | 'cancel') => {
+  const onTimer = (id: string, action: 'pause' | 'edit' | 'cancel', closeSheet: () => void) => {
     const t = ctx()?.timers.find(x => x.id === id);
     if (!t) return;
-    if (action === 'edit') { setSheetOpen(false); setPanel({ timer: t.everyMs, paused: t.paused }); return; }
+    if (action === 'edit') { closeSheet(); setPanel({ timer: t.everyMs, paused: t.paused }); return; }
     void timerChange(t, action === 'pause' ? (t.paused ? 'resume' : 'pause') : 'cancel');
   };
   // The base is the timer the panel opened on, so a timer changed meanwhile answers 409 instead of being overwritten.
@@ -285,8 +274,10 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
     const t = timerPanel();
     if (t) void timerChange({ everyMs: t.timer, paused: t.paused }, 'edit', Math.round(minutes * 60_000));
   };
-  const contextPanel = (onHide?: () => void) => (
-    <ContextPanel loading={!ctx() && !ctxDoc.error} plan={plan()} timers={timers()} automations={automations()} swarm={swarm()} tasks={tasks()} onHide={onHide} onTimer={onTimer} onOpen={href => { setSheetOpen(false); go(href); }} />
+  // In the sheet the panel has its own Hide; the column is toggled from the shell header only, like the navigation.
+  const contextPanel = (where: 'column' | 'sheet', close: () => void) => (
+    <ContextPanel loading={!ctx() && !ctxDoc.error} plan={plan()} timers={timers()} automations={automations()} swarm={swarm()} tasks={tasks()}
+      onHide={where === 'sheet' ? close : undefined} onTimer={(id, a) => onTimer(id, a, close)} onOpen={href => { close(); go(href); }} />
   );
 
   // Files for the next message: uploaded as they are added (picker, paste, drop over the session).
@@ -329,7 +320,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   onSettled(() => {
     const on = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      // Escape in an open panel closes it; the sheet closes itself (ContextSheet).
+      // Escape in an open panel closes it; the sheet closes itself (PanelSheet).
       if (e.key === 'Escape' && untrack(panel) && !t?.closest?.('dialog')) { setPanel(null); return; }
       // Only inside the session (or with nothing focused); code, not key, so other keyboard layouts work too.
       if (!(e.metaKey || e.ctrlKey) || t?.closest?.('input,textarea,[contenteditable]') || !(t?.closest?.('.session-view') || t === document.body)) return;
@@ -383,9 +374,6 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
                     : { label: 'Archive', icon: 'archive' as IconName, disabledReason: canArchive() ? undefined : 'Execution active', onClick: archive },
                 ]}
               />
-              <Show when={!ctxEmpty()}>
-                <Button label="Context" icon="panel-right-close" iconOnly kind="quiet" pressed={showCtx()} onClick={toggleCtx} />
-              </Show>
               <Show when={props.onClose}><Button label="Close" icon="x" iconOnly kind="quiet" onClick={() => props.onClose?.()} /></Show>
             </header>
 
@@ -503,8 +491,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
               />
             </DropZone>
           </div>
-          <div class="sv-ctx" ref={el => { column = el; }} hidden={!showCtx()}>{contextPanel(() => setColumn(true))}</div>
-          <ContextSheet open={sheetOpen()} onClose={() => setSheetOpen(false)}>{contextPanel(() => setSheetOpen(false))}</ContextSheet>
+          <SidePanel setting="session-context" name="context" label="Session context" onLayout={keepRow}>{contextPanel}</SidePanel>
         </article>
       }
     >
