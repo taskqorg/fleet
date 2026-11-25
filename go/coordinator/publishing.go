@@ -1058,27 +1058,22 @@ func resolvePublishingTarget(q *Request, p publishingMutationParams) (projectID,
 		AutoMerge:         autoMerge,
 	}
 
-	sid, eid := newID(), newID()
+	eid := newID() // a host job: no session
 	cmdID = newID()
-	if err := sessionPut(q, &agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker", ProjectID: projectID}); err != nil {
-		return "", "", "", err
-	}
 	if err := executionWrite(q, struct {
 		ID          string `json:"id"`
 		ExecutionID string `json:"executionId"`
-		SessionID   string `json:"sessionId"`
 		HostID      string `json:"hostId"`
 		ProjectID   string `json:"projectId"`
 		State       string `json:"state"`
 		CreatedAt   int64  `json:"createdAt"`
 		Actor       string `json:"actor"`
-	}{ID: eid, ExecutionID: eid, SessionID: sid, HostID: targetHost, ProjectID: projectID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
+	}{ID: eid, ExecutionID: eid, HostID: targetHost, ProjectID: projectID, State: "preparing", CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
 		return "", "", "", err
 	}
 	if err := commandPut(q, &agentCommand{
 		ID:          cmdID,
 		ExecutionID: eid,
-		SessionID:   sid,
 		HostID:      targetHost,
 		ProjectID:   projectID,
 		Kind:        string(contract.CommandKindPublishing),

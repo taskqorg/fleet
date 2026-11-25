@@ -323,33 +323,35 @@ func (d agentDispatch) MarshalJSON() ([]byte, error) {
 
 // agentExecution: the execution record (agent_run, host_job; executionPutRaw writes it).
 type agentExecution struct {
-	ID                    string                 `json:"id"`
-	ExecutionID           string                 `json:"executionId,omitempty"`
-	SessionID             string                 `json:"sessionId,omitempty"`
-	HostID                *string                `json:"hostId"`
-	EffectiveAccount      json.RawMessage        `json:"effectiveAccount,omitempty"`
-	State                 string                 `json:"state,omitempty"`
-	Observation           string                 `json:"observation,omitempty"`
-	CreatedAt             int64                  `json:"createdAt,omitempty"`
-	UpdatedAt             int64                  `json:"updatedAt,omitempty"`
-	StartedAt             json.RawMessage        `json:"startedAt,omitempty"`
-	FinishedAt            json.RawMessage        `json:"finishedAt,omitempty"`
-	Actor                 string                 `json:"actor,omitempty"`
-	ProjectID             string                 `json:"projectId,omitempty"`
-	TaskID                string                 `json:"taskId,omitempty"`
-	DeliveryID            string                 `json:"deliveryId,omitempty"`
-	DirectedBy            string                 `json:"directedBy,omitempty"`
-	TakenFrom             string                 `json:"takenFrom,omitempty"`
-	Model                 string                 `json:"model,omitempty"`
-	Effort                json.RawMessage        `json:"effort,omitempty"`
-	AgentConfig           json.RawMessage        `json:"agentConfig,omitempty"`
-	ProfileSha256         string                 `json:"profileSha256,omitempty"`
-	Definitions           json.RawMessage        `json:"definitions,omitempty"`
-	ProjectSnapshot       json.RawMessage        `json:"projectSnapshot,omitempty"`
-	Dispatch              *agentDispatch         `json:"dispatch,omitempty"`
-	Traceparent           string                 `json:"traceparent,omitempty"`
-	TraceActor            string                 `json:"traceActor,omitempty"`
-	ContinuationKey       string                 `json:"continuationKey,omitempty"`
+	ID               string          `json:"id"`
+	ExecutionID      string          `json:"executionId,omitempty"`
+	SessionID        string          `json:"sessionId,omitempty"`
+	HostID           *string         `json:"hostId"`
+	EffectiveAccount json.RawMessage `json:"effectiveAccount,omitempty"`
+	State            string          `json:"state,omitempty"`
+	Observation      string          `json:"observation,omitempty"`
+	CreatedAt        int64           `json:"createdAt,omitempty"`
+	UpdatedAt        int64           `json:"updatedAt,omitempty"`
+	StartedAt        json.RawMessage `json:"startedAt,omitempty"`
+	FinishedAt       json.RawMessage `json:"finishedAt,omitempty"`
+	Actor            string          `json:"actor,omitempty"`
+	ProjectID        string          `json:"projectId,omitempty"`
+	TaskID           string          `json:"taskId,omitempty"`
+	DeliveryID       string          `json:"deliveryId,omitempty"`
+	DirectedBy       string          `json:"directedBy,omitempty"`
+	TakenFrom        string          `json:"takenFrom,omitempty"`
+	Model            string          `json:"model,omitempty"`
+	Effort           json.RawMessage `json:"effort,omitempty"`
+	AgentConfig      json.RawMessage `json:"agentConfig,omitempty"`
+	ProfileSha256    string          `json:"profileSha256,omitempty"`
+	Definitions      json.RawMessage `json:"definitions,omitempty"`
+	ProjectSnapshot  json.RawMessage `json:"projectSnapshot,omitempty"`
+	Dispatch         *agentDispatch  `json:"dispatch,omitempty"`
+	Traceparent      string          `json:"traceparent,omitempty"`
+	TraceActor       string          `json:"traceActor,omitempty"`
+	ContinuationKey  string          `json:"continuationKey,omitempty"`
+	// ReadinessOfSessionID: a readiness host job's caller session, which may read its result (execution_status).
+	ReadinessOfSessionID  string                 `json:"readinessOfSessionId,omitempty"`
 	ForkOfNativeSessionID string                 `json:"forkOfNativeSessionId,omitempty"`
 	HandoffID             string                 `json:"handoffId,omitempty"`
 	Report                *contract.WorkerReport `json:"report,omitempty"`

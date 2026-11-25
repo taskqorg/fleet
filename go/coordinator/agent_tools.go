@@ -776,6 +776,12 @@ func agentBoundArguments(q *Request, name string, a map[string]json.RawMessage, 
 		}
 		a["executionId"] = jsonBytes(es[len(es)-1].ID)
 		delete(a, "sessionId")
+	case name == "execution_status" && jsonGiven(a["executionId"]):
+		// A readiness check the caller started (project_readiness: a host job with no session); else the caller's own run.
+		xid, _ := jsonText(a["executionId"])
+		if x, err := getExecution(q, xid); err != nil || x.ReadinessOfSessionID == "" || x.ReadinessOfSessionID != own {
+			a["executionId"] = jsonBytes(executionID)
+		}
 	case name == "ask" || name == "worker_done" || name == "execution_status":
 		a["executionId"] = jsonBytes(executionID)
 	case name == "reply":

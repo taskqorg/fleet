@@ -559,22 +559,18 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 				}
 				continue
 			}
-			sid, xid := newID(), newID()
-			if err := sessionPut(q, &agentSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"}); err != nil {
-				return nil, err
-			}
+			xid := newID() // a host job: no session
 			if err := executionWrite(q, struct {
 				ID          string `json:"id"`
 				ExecutionID string `json:"executionId"`
-				SessionID   string `json:"sessionId"`
 				HostID      string `json:"hostId"`
 				State       string `json:"state"`
 				CreatedAt   int64  `json:"createdAt"`
 				Actor       string `json:"actor"`
-			}{xid, xid, sid, host, "preparing", nowMs(), "program-worker"}); err != nil {
+			}{xid, xid, host, "preparing", nowMs(), "program-worker"}); err != nil {
 				return nil, err
 			}
-			if err := commandPut(q, &agentCommand{ID: newID(), ExecutionID: xid, SessionID: sid, HostID: host, Kind: string(contract.CommandKindConnectionRemove), Status: "pending",
+			if err := commandPut(q, &agentCommand{ID: newID(), ExecutionID: xid, HostID: host, Kind: string(contract.CommandKindConnectionRemove), Status: "pending",
 				Payload: jsonBytes(contract.ConnectionRemovePayload{Connection: c})}); err != nil {
 				return nil, err
 			}
