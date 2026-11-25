@@ -5,13 +5,14 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onSettled, untrack } from 'solid-js';
 import { currentUrl, useLocation } from '../router.ts';
 import {
-  Avatar, ProjectChip, StateDot, QuestionCard, Thread, ContextPanel, SidePanel, Composer,
+  Avatar, ProjectChip, StateDot, QuestionCard, OpenQuestion, Thread, ContextPanel, SidePanel, Composer,
   Button, ActionMenu, SearchField, ErrorBanner, Skeleton, DropZone, InlineForm, TextField, DetailSection, Disclosure, KvRow,
-  EntityCode, EntityPicker, DecisionBlock, keyConnection, agentLabel, harnesses, writeClip, zone, lifeOf,
+  EntityCode, EntityPicker, agentLabel, harnesses, writeClip, zone, lifeOf,
   type VirtualListHandle, type CatalogueTreeNode, type IconName, type Harness, type ComposerChip, type Life, type AvatarMark,
   type Timer, type Member, type PlanStep, type Automation, type RelatedTask,
 } from '../../../packages/ui/src/index.ts';
-import { op, online, addRequestedKey, writeOnce, prepareSending, submissionKey, sendingId, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
+import { op, online, writeOnce, prepareSending, submissionKey, sendingId, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
+import { useAnswers } from '../answers.ts';
 import { useAttachments } from '../uploads.ts';
 import { useOp } from '../store.ts';
 import type { SessionGetReply } from '../../../contracts/generated/ops.ts';
@@ -76,14 +77,12 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   // Thread: a session that got a task shows the task's thread; Thread quiet folds its blocks (tool-fold.ts).
   const thread = useThread(() => ({ session: props.id }));
   const key = createMemo<ThreadKey>(() => thread.win?.key ?? { session: props.id });
-  const [answers, setAnswers] = createSignal<Record<string, Ops['questions_answer']['reply']>>({});
-  const [answering, setAnswering] = createSignal<Record<string, string>>({});
+  const answers = useAnswers();
   const execStates = createMemo(() => new Map((s()?.executions ?? []).map(e => [e.id, String(e.state)])));
   // An answer given here shows in its place in the transcript at once (UR-58).
   const blocks = createMemo(() => {
-    const ans = answers();
     return (thread.win?.blocks ?? []).map(b => {
-      const a = b.kind === 'question' ? ans[b.questionId] : undefined;
+      const a = b.kind === 'question' ? answers.answered(b.questionId)?.reply : undefined;
       return a && b.kind === 'question' ? { ...b, state: a.state, answer: a.answer, answeredBy: a.answeredBy ?? undefined, answeredAt: a.answeredAt ? Date.parse(a.answeredAt) : null } : b;
     });
   });
@@ -101,14 +100,6 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const run = async (fn: () => Promise<unknown>) => { setFailure(null); try { await fn(); } catch (e) { setFailure({ text: errText(e), retry: () => run(fn) }); } };
   const off = () => !online.value;
 
-  async function answerQuestion(questionId: string, answer: string) {
-    setAnswering(a => ({ ...a, [questionId]: answer }));
-    try {
-      const row = await writeOnce('questions_answer', { questionId, answer }, unknown, { signal: alive });
-      setAnswers(current => ({ ...current, [row.id]: row }));
-    } finally { setAnswering(a => { const n = { ...a }; delete n[questionId]; return n; }); }
-  }
-
   // Composer target (thread_composer): the session that receives the next message and its running execution.
   const active = createMemo(() => targetDoc.data?.active);
   const targetID = createMemo(() => targetDoc.data?.sessionId);
@@ -125,10 +116,9 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   const state = () => String(s()?.state ?? latest()?.state ?? 'idle');
   const life = () => lifeOfSession(state());
   const openQs = createMemo(() => {
-    const ans = answers();
     const qs = new Map((s()?.questions ?? []).map(q => [q.id, q]));
     for (const q of targetSession()?.questions ?? []) qs.set(q.id, q);
-    return [...qs.values()].filter(q => (ans[q.id] ?? q).state === 'open');
+    return [...qs.values()].filter(q => q.state === 'open' && !answers.answered(q.id));
   });
   // A question's choices: the stored record in session_get may not carry them; its thread block does.
   const blockOptions = createMemo(() => new Map((thread.win?.blocks ?? []).flatMap(b => (b.kind === 'question' ? [[b.questionId, b.options] as const] : []))));
@@ -407,26 +397,8 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
             <Show when={timerPanel()} keyed>{t => <TimerPanel everyMs={t.timer} onSave={saveTimer} onDone={() => setPanel(null)} />}</Show>
 
             {/* The open question, pinned above the transcript (OR-53); a failed run asks to retry (UR-63). */}
-            <For each={openQs().filter(oq => !keyConnection(optionsOf(oq)))}>
-              {oq => (
-                <QuestionCard
-                  question={oq.question ?? oq.text ?? ''}
-                  choices={(Array.isArray(optionsOf(oq)) ? (optionsOf(oq) as unknown[]) : []).map((o, i) => ({ label: String(o), primary: i === 0 }))}
-                  answering={answering()[oq.id]}
-                  onAnswer={a => run(() => answerQuestion(oq.id, a))}
-                />
-              )}
-            </For>
-            {/* A key request: the owner's value goes to the connection, never into the transcript. */}
-            <For each={openQs().filter(oq => keyConnection(optionsOf(oq)))}>
-              {oq => (
-                <DecisionBlock
-                  question={oq.question ?? oq.text ?? ''} askedBy="agent" addressedTo="you" since={oq.askedAt ? Date.parse(String(oq.askedAt)) || now() : now()} now={now()}
-                  options={[{ label: 'decline', kbd: '1' }]}
-                  onAnswer={a => run(() => answerQuestion(oq.id, a))}
-                  onSecret={v => addRequestedKey(oq.id, keyConnection(optionsOf(oq))!, v, alive)}
-                />
-              )}
+            <For each={openQs()}>
+              {oq => <OpenQuestion q={{ ...oq, options: optionsOf(oq) }} answers={answers} />}
             </For>
             <Show when={life() === 'failed' && !openQs().length}>
               <QuestionCard tone="danger" question={`The last run failed${runError() ? `: ${runError()}` : ''}`} choices={[{ label: 'Retry', primary: true }]} onAnswer={retryLast} />

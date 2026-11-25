@@ -2,8 +2,7 @@
 import { createSignal, For, Show } from 'solid-js';
 import { isSubmitEnter } from '../keys.ts';
 import { Button, Ago } from './primitives.tsx';
-
-export type QuestionChoice = { label: string; primary?: boolean };
+import type { QuestionChoice } from '../answer.ts';
 
 /**
  * Open: the question, its choices as buttons in the asker's order (the asker's default is primary), then a one-line
@@ -16,10 +15,13 @@ export function QuestionCard(p: {
   answering?: string;
   answered?: { answer: string; at: number };
   onAnswer?: (answer: string) => void;
+  /** A key request: the one-line field takes the key (write-only) and Add key sends it here, never to onAnswer. */
+  onSecret?: (value: string) => void;
 }) {
   const [text, setText] = createSignal('');
   const danger = () => p.tone === 'danger';
   const send = (s: string) => { if (s.trim() && !p.answering) p.onAnswer?.(s.trim()); };
+  const addKey = () => { const v = text().trim(); if (v && !p.answering) p.onSecret?.(v); };
   return (
     <Show
       when={p.answered}
@@ -40,7 +42,24 @@ export function QuestionCard(p: {
               )}
             </For>
           </div>
-          <Show when={!danger()}>
+          <Show when={p.onSecret}>
+            <div class="qcard-choices">
+              <input
+                class="qcard-answer"
+                type="password"
+                autocomplete="off"
+                spellcheck={false}
+                value={text()}
+                placeholder="Paste key…"
+                aria-label={`Key: ${p.question}`}
+                disabled={!!p.answering}
+                onInput={e => setText(e.currentTarget.value)}
+                onKeyDown={e => { if (isSubmitEnter(e)) { e.preventDefault(); addKey(); } }}
+              />
+              <Button label="Add key" icon="shield" kind="primary" busy={p.answering === 'key added'} disabledReason={text().trim() ? undefined : 'Paste the key first'} onClick={addKey} />
+            </div>
+          </Show>
+          <Show when={!danger() && !p.onSecret}>
             <input
               class="qcard-answer"
               value={text()}

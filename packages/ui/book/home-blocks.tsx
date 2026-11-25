@@ -2,7 +2,7 @@
 import { createSignal, For } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import {
-  StateDot, Avatar, ProjectChip, Button, QuestionCard, SessionCard, SessionCardSkeleton, BotTile, PulseLine, TargetPicker, Composer, QuietSummary, Ago,
+  StateDot, Avatar, ProjectChip, Button, QuestionCard, OpenQuestion, useAnswer, SessionCard, SessionCardSkeleton, BotTile, PulseLine, TargetPicker, Composer, QuietSummary, Ago,
   states, lifeOf, type Life, type LifeFamily, type LifeRef, type Target,
 } from '../src/index.ts';
 import { NOW, min, hr } from './fixtures.ts';
@@ -57,6 +57,20 @@ function QuestionDemo() {
     <QuestionCard question="Keep the compact card or the wide card with progress?" choices={CHOICES} answering="Compact" />
     <QuestionCard question="Keep the compact card or the wide card with progress?" choices={CHOICES} answered={{ answer: 'Compact', at: NOW - 2 * min }} />
     <QuestionCard question="Retry the rollout on windows?" tone="danger" choices={[{ label: 'Retry', primary: true }, { label: 'Open' }]} />
+  </div>;
+}
+
+/** The open question over a fake write: the answer lands after a second; the second card is offline, the third refused. */
+function OpenQuestionDemo() {
+  const later = <T,>(v: T) => new Promise<T>(r => setTimeout(() => r(v), 1000));
+  const ok = useAnswer({ online: () => true, answer: (_id, a) => later(a), addKey: () => later(null) });
+  const off = useAnswer({ online: () => false, answer: (_id, a) => later(a), addKey: () => later(null) });
+  const refused = useAnswer({ online: () => true, answer: () => Promise.reject(new Error('the question was withdrawn')), addKey: () => later(null) });
+  return <div class="cards">
+    <OpenQuestion q={{ id: 'b1', text: 'Keep the compact card or the wide card?', options: [{ label: 'Compact' }, { label: 'Wide' }] }} answers={ok} />
+    <OpenQuestion q={{ id: 'b2', text: 'Accept the result of T-FLT-51?', kind: 'acceptance' }} answers={off} />
+    <OpenQuestion q={{ id: 'b3', text: 'Retry the rollout on windows?', options: ['retry', 'skip'] }} answers={refused} />
+    <OpenQuestion q={{ id: 'b4', text: 'The PM needs an OpenAI key to run the eval.', kind: 'secret', options: { connection: 'openai' } }} answers={ok} />
   </div>;
 }
 
@@ -124,6 +138,7 @@ export const HOME_BLOCKS: BookSection[] = [
   ['avatar', 'Avatar, project chip, button kinds', 'session-card', () => <AtomsDemo />, () => <>A letter in a tone (P for a project PM) or the bot's harness mark; md and sm. The attention kind is a question's other choice.</>],
   ['bot-avatar', 'Bot avatar', 'avatar', () => <BotAvatarDemo />, () => <>The letter is the default; a picture (still, animated image or SVG, or a muted loop) replaces it. sm 16, md 24, lg 40, xl 96: lg and xl play, sm and md show the still frame until hover or while the bot works. Activity: asleep dim, working breathes its glow, waiting an amber dot, failed dim with a red dot, paused dimmest. Reduced motion: no breathing, still frames.</>],
   ['question-card', 'Question card', 'decision-block', () => <QuestionDemo />, () => <>OR-53: open (click a choice or type and press Enter), answering, answered, and the failed recovery question.</>],
+  ['open-question', 'Open question', 'decision-block', () => <OpenQuestionDemo />, () => <>OR-53: the question card every screen answers with (Home, Conversations, Projects, the session view). Options as given (objects by label), an acceptance's two answers, a key request as a password field with Add key and decline; offline, outcome unknown and a refusal show under the card.</>],
   ['session-card', 'Session card', 'session-card', () => <SessionCardDemo />, () => <>OR-50: working with progress, waiting for you with its question, queued, failed with the recovery question, done (leaves Home), stale and loading. The whole card opens the session; the question acts in place.</>],
   ['bot-tile', 'Bot tile', 'bot-tile', () => <BotTileDemo />, () => <>Asleep, waking and wake failed. Wake on the first tile runs the sequence.</>],
   ['pulse-line', 'Pulse line and blocker chip', 'pulse-line', () => <PulseDemo />, () => <>Normal, blocked (two chips, then +K; a zero count is hidden) and stale.</>],

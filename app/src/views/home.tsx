@@ -5,13 +5,14 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, lazy, onSettled, untrack, type Accessor } from 'solid-js';
 import type { JSX } from '@solidjs/web';
 import {
-  PulseLine, Composer, TargetPicker, SessionCard, SessionCardSkeleton, QuestionCard, BotTile, QuietSummary, GroupHeader, Ago,
-  OfflineMarker, ErrorBanner, Button, ShellStatus, actor, keyConnection, lifeOf, stamp, day, dayStart, causeOf,
-  type Blocker, type Target, type Life, type AvatarMark, type QuestionChoice, type IconName, type Tone,
+  PulseLine, Composer, TargetPicker, SessionCard, SessionCardSkeleton, QuestionCard, OpenQuestion, BotTile, QuietSummary, GroupHeader, Ago,
+  OfflineMarker, ErrorBanner, Button, ShellStatus, actor, lifeOf, stamp, day, dayStart, causeOf,
+  type Blocker, type Target, type Life, type AvatarMark, type IconName, type Tone,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 import { useLocation, useSearch } from '../router.ts';
-import { op, online, writeOnce, useAlive } from '../api.ts';
+import { op, useAlive } from '../api.ts';
+import { useAnswers } from '../answers.ts';
 import { useOp } from '../store.ts';
 import { scopeIds, noProject, prefsRead, prefs } from '../prefs.ts';
 import type { SessionRow, QuestionRow, ExecutionRow } from '../../../contracts/generated/ops.ts';
@@ -46,11 +47,6 @@ function headline(text: string): string {
   const t = String(text ?? '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
   const m = /^(.+?[.!?])(\s|$)/.exec(t);
   return (m ? m[1] : t).replace(/[.:]\s*$/, '') || 'Question';
-}
-/** The answer buttons of a question: its options, acceptance's two, or none (a typed answer only). */
-function choices(q: QuestionRow): QuestionChoice[] {
-  const opts = Array.isArray(q.options) ? (q.options as unknown[]).map(String) : q.kind === 'acceptance' ? ['accepted', 'rejected'] : [];
-  return opts.map((label, i) => ({ label, primary: i === 0 }));
 }
 
 // Blocker chips (OR-56, OR-58): failed runs that need a look, grouped by plain cause and host (contracts/vocabulary.json
@@ -249,19 +245,9 @@ function HomePage() {
   // The bot that keeps watch: one running now (the most recent). An asleep bot watches nothing, so none is named.
   const watcher = createMemo(() => scopedBots().filter(b => b.activeRunId).sort((a, b) => ms(b.lastRunAt) - ms(a.lastRunAt))[0]);
 
-  // Answers in place (OR-53): the chosen label is busy until the write returns; then the card shows the answered line
-  // until the question leaves the read, and the next open question of that session takes its place.
-  const [answering, setAnswering] = createSignal<Record<string, string>>({});
-  const [answered, setAnswered] = createSignal<Record<string, { answer: string; at: number }>>({});
-  const [answerError, setAnswerError] = createSignal<string | null>(null);
-  const answer = (q: QuestionRow, a: string) => {
-    if (!online.value) { setAnswerError('Offline: the answer was not sent.'); return; }
-    setAnswering(m => ({ ...m, [q.id]: a }));
-    setAnswerError(null);
-    writeOnce('questions_answer', { questionId: q.id, answer: a }, () => {}, { signal: alive })
-      .then(() => setAnswered(m => ({ ...m, [q.id]: { answer: a, at: Date.now() } })), e => setAnswerError(`The answer was not sent: ${e instanceof Error ? e.message : e}`))
-      .finally(() => setAnswering(m => { const { [q.id]: _, ...rest } = m; return rest; }));
-  };
+  // Answers in place (OR-53, OpenQuestion): the chosen label is busy until the write returns; then the card shows the
+  // answered line until the question leaves the read, and the next open question of that session takes its place.
+  const answers = useAnswers();
 
   // Wake: busy until the bot's run shows in the read; a refusal shows its reason and Retry.
   const [waking, setWaking] = createSignal<Record<string, { state: 'waking' | 'failed'; reason?: string; at: number }>>({});
@@ -338,18 +324,15 @@ function HomePage() {
 
   /** One card; `c` follows its row as reads update, so a typed answer survives them (keyed by session or question). */
   const renderCard = (c: Accessor<Card>): JSX.Element => {
-    const q = createMemo(() => c().qs.find(x => !answered()[x.id]) ?? null);
-    const lastAnswered = createMemo(() => c().qs.map(x => answered()[x.id]).filter(Boolean).at(-1));
+    const q = createMemo(() => c().qs.find(x => !answers.answered(x.id)) ?? null);
+    const lastAnswered = createMemo(() => c().qs.map(x => answers.answered(x.id)).filter(Boolean).at(-1));
     const question = () => {
       const x = q();
       if (!x) {
         const a = lastAnswered();
         return a ? <QuestionCard question="" choices={[]} answered={a} /> : undefined;
       }
-      const conn = keyConnection(x.options);
-      // A key request is answered in Connections, where the key is typed (never on a card).
-      if (conn) return <QuestionCard question={x.text} choices={[{ label: 'Open Connections', primary: true }]} onAnswer={() => go(`/keys/${encodeURIComponent(conn)}`)} />;
-      return <QuestionCard question={x.text} choices={choices(x)} answering={answering()[x.id]} onAnswer={a => answer(x, a)} />;
+      return <OpenQuestion q={x} answers={answers} />;
     };
     if (untrack(c).cause) {
       // Failed sessions of one cause (OR-58): the cause in words, how many, where; it opens Conversations' Failed list.
@@ -425,7 +408,6 @@ function HomePage() {
         target={<TargetPicker targets={targets()} value={target()} onPick={pick} onNew={() => go('/conversations/new')} />}
       />
       <Show when={sendError()}>{e => <ErrorBanner text={e()} />}</Show>
-      <Show when={answerError()}>{e => <ErrorBanner text={e()} />}</Show>
       <Switch>
         <Match when={active.error && !active.data}>
           <ErrorBanner text={`Sessions did not load: ${active.error}`} onRetry={() => active.reload()} />

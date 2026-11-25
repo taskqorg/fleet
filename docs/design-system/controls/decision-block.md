@@ -34,3 +34,14 @@ The form a question takes on a [session card](session-card.md), in the conversat
 * **States.** Open; answering (the chosen button busy); answered (one line in `fg-muted`: "Answered · Compact · 2m", then it leaves the card); failed recovery (the danger tone, with Retry and Open, on a Failed card).
 * **Confirmation.** A risky action asks through this card: it names its exact scope and the way back, and only a person allowed to approve that scope sees active buttons ([OR-61](../owner-rules.md)).
 * **Do.** Keep the choices the asker gave, in their order. **Don't.** Show more than one question per card; the next one takes its place after the answer.
+
+## Open question
+
+`OpenQuestion` and `useAnswer` in `packages/ui` (`controls/open-question.tsx`, `answer.ts`); the app's writes come from `app/src/answers.ts:useAnswers`. Demo: [book](../book/index.html#open-question).
+
+One open question answered in place, the same way on every screen: Home cards, Conversations, Projects and the session view show it as a [card](#card); the task detail and the Lab's ratings keep the full block with the same choices and answer state.
+
+* **Choices.** `answerLabels`: the asker's options in their order (a string, or an object by its `label`, else its `value`), an acceptance's `accepted` and `rejected`, a key request's `decline`; the first is primary, except `decline`.
+* **Key request.** A password field with Add key and decline, on every screen ([connections](../../designs/fleet-connections.md)): the value goes to `connections_key_add`, never to `questions_answer`.
+* **Outcome.** Offline, the answer is not sent and the card says so; an unknown outcome says "retrying" while `writeOnce` resends it; a refusal shows its reason under the card. Only a returned write makes the question answered.
+

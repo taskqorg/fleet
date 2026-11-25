@@ -8,9 +8,10 @@ import {
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar, useTick,
   type TreeNode, type Harness, type Stage, type StateOf, type Stat, states as states_, stages,
-  keyConnection, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
+  keyConnection, answerChoices, AnswerNote, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
 } from '../../../packages/ui/src/index.ts';
-import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
+import { op, online } from '../api.ts';
+import { useAnswers } from '../answers.ts';
 import { useOp } from '../store.ts';
 import type { TaskRow as ContractTaskRow } from '../../../contracts/generated/ops.ts';
 import { DEFAULT_TASK_SORT, DEFAULT_TASK_GROUP, type View } from '../../../packages/view-url/view-url.ts';
@@ -331,7 +332,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
   const [tab, setTab] = createSignal<'details' | 'swarm'>('details', { ownedWrite: true });
   const [busy, setBusy] = createSignal<string | null>(null, { ownedWrite: true });
   const [failure, setFailure] = createSignal<string | null>(null, { ownedWrite: true });
-  const alive = useAlive();
+  const answers = useAnswers();
   const [confirming, setConfirming] = createSignal(false, { ownedWrite: true });
   const pins = usePins('tasks');
   createEffect(
@@ -397,7 +398,7 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
           />
         </Show>
         <For each={openQs()}>
-          {q => (
+          {q => (<>
             <DecisionBlock
               question={q.text}
               askedBy={actor(q.askedBy) || q.kind}
@@ -406,11 +407,14 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
               now={now()}
               context={<TaskQuestionContext question={q} />}
               typed={typedAnswer(q)}
-              options={(Array.isArray(q.options) ? q.options as unknown[] : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-              onAnswer={a => { if (!off()) writeOnce('questions_answer', { questionId: q.id, answer: a }, () => setFailure('unknown, retrying'), { signal: alive }).then(() => setFailure(null), e => setFailure(e.message)); }}
-              onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive) : undefined}
+              options={answerChoices(q).map((c, i) => ({ ...c, kbd: String(i + 1) }))}
+              answered={answers.answered(q.id) ? { by: 'you', answer: answers.answered(q.id)!.answer, at: answers.answered(q.id)!.at, delivered: true } : undefined}
+              answering={answers.answering(q.id)}
+              onAnswer={a => answers.send(q, a)}
+              onSecret={keyConnection(q.options) ? v => answers.addKey(q, v) : undefined}
             />
-          )}
+            <AnswerNote answers={answers} id={q.id} />
+          </>)}
         </For>
         <Show when={causeOf(latestExecution()?.failure, latestExecution()?.problem)} keyed>
           {c => (

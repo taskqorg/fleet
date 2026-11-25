@@ -6,11 +6,12 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from
 import { useLocation, useSearch } from '../router.ts';
 import {
   Avatar, Button, DetailHead, DetailSection, DiffRow, Empty, ErrorBanner, FilterBar, Icon, InheritedRows, KvRow, Latest, ListDetail, ListFrame,
-  Num, QuestionCard, RowFacts, Fact, SearchField, SessionCard, ShellActions, Skeleton, StateBadge, StateDot, TabBar, Ago, VirtualList,
-  catalogueRow, keyConnection, matchSearch, msMeasured, lifeOf,
+  Num, OpenQuestion, RowFacts, Fact, SearchField, SessionCard, ShellActions, Skeleton, StateBadge, StateDot, TabBar, Ago, VirtualList,
+  catalogueRow, matchSearch, msMeasured, lifeOf,
   harnesses, type Harness, type IconName, type Life, type StateOf,
 } from '../../../packages/ui/src/index.ts';
-import { op, online, writeOnce, useAlive, type Ops } from '../api.ts';
+import { op, type Ops } from '../api.ts';
+import { useAnswers } from '../answers.ts';
 import { useOp } from '../store.ts';
 import { prefs, scopeIds } from '../prefs.ts';
 import { SYSTEM_VIEWS } from '../system-views.ts';
@@ -297,32 +298,13 @@ function WorkLine(props: { working: number; tasks: number }) {
   );
 }
 
-/** An open question as a card (OR-53): its choices as buttons and a typed answer; a key request opens its task instead. */
+/** An open question as a card (OR-53, OpenQuestion), under the name of the project that asks it. */
 function AskCard(props: { q: Question; label?: string }) {
-  const [, go] = useLocation();
-  const alive = useAlive();
-  const [answering, setAnswering] = createSignal<string | undefined>(undefined);
-  const [failed, setFailed] = createSignal<string | null>(null);
-  const choices = createMemo(() => {
-    const o = props.q.options;
-    const xs = Array.isArray(o) ? o.map(x => (isRec(x) ? str(x.label) || str(x.value) : String(x))).filter(Boolean) : props.q.kind === 'acceptance' ? ['accepted', 'rejected'] : [];
-    return xs.map((label, i) => ({ label, primary: i === 0 }));
-  });
-  const answer = (a: string) => {
-    if (!online.value) { setFailed('Offline: the answer was not sent'); return; }
-    setAnswering(a); setFailed(null);
-    writeOnce('questions_answer', { questionId: props.q.id, answer: a }, () => {}, { signal: alive })
-      .catch(e => setFailed(e instanceof Error ? e.message : String(e)))
-      .finally(() => setAnswering(undefined));
-  };
-  const where = () => (props.q.taskId ? '/tasks/' + encodeURIComponent(props.q.taskId) : props.q.sessionId ? '/conversations/' + encodeURIComponent(props.q.sessionId) : null);
+  const answers = useAnswers();
   return (
     <div class="pw-ask">
       <Show when={props.label}><span class="muted type-sm">{props.label}{props.q.code ? ' · ' + props.q.code : ''}</span></Show>
-      <Show when={!keyConnection(props.q.options)} fallback={<KvRow icon="shield" label={props.q.text} value={where() ? <Button label="Open" onClick={() => go(where()!)} /> : undefined} />}>
-        <QuestionCard question={props.q.text} choices={choices()} answering={answering()} onAnswer={answer} />
-      </Show>
-      <Show when={failed()}>{f => <ErrorBanner text={`Answer not sent: ${f()}`} />}</Show>
+      <OpenQuestion q={props.q} answers={answers} />
     </div>
   );
 }
