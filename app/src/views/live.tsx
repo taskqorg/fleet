@@ -130,6 +130,9 @@ export function Live(props: { wall: boolean }) {
       const failing = problems().filter(p => p.host === h.id);
       const hostProblem = h.pollError ? `Polls failing: ${h.pollError.reason}` : h.problems[0] ? h.problems[0].detail || h.problems[0].kind : null;
       const busy = h.running, limit = Math.max(h.slotLimit ?? 0, busy, (h.runs ?? []).length);
+      // A host updating takes no new start (fleet-self-update.md, Executor drain): its free slots are not idle, and a
+      // start handed to it before the drain began waits for the update.
+      const updating = h.problems.find(p => p.kind === 'updating');
       // Slot tile i shows runs[i] (start order); a failure takes the first free tile, outlined (worker-slot.md).
       const slots: WorkerSlotProps[] = (h.runs ?? []).map((hr, i): WorkerSlotProps => {
         const r = runById().get(hr.id), task = r?.taskId ? taskById().get(r.taskId) : undefined;
@@ -138,7 +141,7 @@ export function Live(props: { wall: boolean }) {
         // The tile's own time is this attempt; the facts add the attempts and the time in work since the first one.
         const work = task ? timeAt(task.startedAt) - offset() : NaN, runStart = started != null ? started - offset() : NaN;
         return {
-          slot: i + 1, state: 'busy', title: task?.title ?? r?.taskTitle ?? r?.sessionTitle ?? 'Starting…', code: task?.code ?? undefined,
+          slot: i + 1, state: 'busy', title: task?.title ?? r?.taskTitle ?? r?.sessionTitle ?? (updating && hr.state === 'preparing' ? 'Waits for the update' : 'Starting…'), code: task?.code ?? undefined,
           project: task?.projectId ? projectName().get(task.projectId) ?? task.projectId : undefined,
           color: projectTone(task?.projectId), tokens: r?.tokens != null ? m(r.tokens) : undefined,
           work: { attempts: task?.executions, attemptsFence: attemptsFence(), agent: r?.harness ?? task?.agent,
@@ -149,7 +152,9 @@ export function Live(props: { wall: boolean }) {
       });
       // Free slots: one tile each up to IDLE_TILES, else one tile that counts them, so a 24-slot host stays one glance.
       const free = limit - slots.length;
-      if (free > IDLE_TILES) slots.push({ slot: slots.length + 1, state: 'idle', free });
+      if (updating && free > 0) slots.push({ slot: slots.length + 1, state: 'failing', title: `${free} slot${free === 1 ? '' : 's'} take no new start`,
+        cause: firstSentence(updating.detail)[0], onOpen: open(`/hosts/${encodeURIComponent(h.id)}`) });
+      else if (free > IDLE_TILES) slots.push({ slot: slots.length + 1, state: 'idle', free });
       else for (let i = slots.length; i < limit; i++) slots.push({ slot: i + 1, state: 'idle' });
       const f = failing[0];
       if (f) {
@@ -267,15 +272,16 @@ export function Live(props: { wall: boolean }) {
   const events = createMemo(() => {
     const by = new Map<string, Event>();
     for (const r of runs()) {
-      if (r.kind === 'tool_run' || (r.endedAt ?? r.startedAt) == null) continue;
+      // A host job without a task (account probes, cleanup) is the host's own upkeep: it belongs in the host's
+      // conversation and history, not in the top feed, where one job every few minutes buried the work (×144).
+      if (r.kind === 'tool_run' || (r.kind === 'host_job' && !r.taskId) || (r.endedAt ?? r.startedAt) == null) continue;
       const at = (ACTIVE.has(r.state) ? r.startedAt : r.endedAt ?? r.startedAt)! - offset();
       const task = r.taskId ? taskById().get(r.taskId) : undefined;
       const what = task ? `${task.code ? task.code + ' ' : ''}${task.title}` : r.taskTitle ?? r.sessionTitle ?? `${r.harness ? r.harness + ' ' : ''}${KINDS[r.kind] ?? 'run'}`;
       const where = r.hostId ?? 'coordinator';
-      const verb = ACTIVE.has(r.state) ? `started on ${where}` : r.state === 'failed' ? `failed on ${where}` : r.state === 'cancelled' ? 'stopped' : r.kind === 'host_job' && !r.taskId ? `finished on ${where}` : 'finished';
+      const verb = ACTIVE.has(r.state) ? `started on ${where}` : r.state === 'failed' ? `failed on ${where}` : r.state === 'cancelled' ? 'stopped' : 'finished';
       const life: Life = ACTIVE.has(r.state) ? 'working' : r.state === 'failed' ? 'failed' : r.state === 'cancelled' ? 'stopped' : 'done';
-      // A host job without a task opens a session of its own each time: its subject is the host's jobs.
-      const subject = r.taskId ?? (r.kind === 'host_job' ? `host_job:${where}` : r.sessionId ?? r.id);
+      const subject = r.taskId ?? r.sessionId ?? r.id;
       const key = `${subject}\0${life}\0${ACTIVE.has(r.state) || r.state === 'failed' ? where : ''}`;
       const e = by.get(key);
       if (e) { e.n++; if (at > e.at) Object.assign(e, { at, agent: r.harness ?? e.agent }); continue; }

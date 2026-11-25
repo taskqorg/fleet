@@ -1187,6 +1187,22 @@ func (v *ConnectionRemovePayload) Validate() error {
 	return nil
 }
 
+type DrainReport struct {
+	Fenced   bool     `json:"fenced"`
+	ReopenAt *string  `json:"reopenAt,omitempty"`
+	Since    string   `json:"since"`
+	Target   string   `json:"target"`
+	WaitsFor []string `json:"waitsFor"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DrainReport) Validate() error {
+	if v.WaitsFor == nil {
+		return Missing("waitsFor")
+	}
+	return nil
+}
+
 type EdgeProblem struct {
 	Detail   string      `json:"detail"`
 	Kind     ProblemKind `json:"kind"`
@@ -1786,6 +1802,7 @@ func (v *PollReply) Validate() error {
 type PollRequest struct {
 	ActiveExecutions []string         `json:"activeExecutions"`
 	Capabilities     []string         `json:"capabilities"`
+	Drain            *DrainReport     `json:"drain,omitempty"`
 	GitConnections   []string         `json:"gitConnections"`
 	HarnessVersions  []HarnessVersion `json:"harnessVersions,omitempty"`
 	HostId           string           `json:"hostId"`
@@ -1805,6 +1822,11 @@ func (v *PollRequest) Validate() error {
 	}
 	if v.Capabilities == nil {
 		return Missing("capabilities")
+	}
+	if v.Drain != nil {
+		if err := Check(v.Drain, "drain"); err != nil {
+			return err
+		}
 	}
 	if v.GitConnections == nil {
 		return Missing("gitConnections")

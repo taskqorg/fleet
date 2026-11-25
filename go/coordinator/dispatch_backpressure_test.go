@@ -92,3 +92,23 @@ func TestHostOverloadReasonSwapAndTopConsumers(t *testing.T) {
 		t.Fatalf("memory reason = %q", got)
 	}
 }
+
+// Requirement: dispatch places no start on a host whose executor fences starts for an update, and places again once
+// the fence opens; risk: starts wait preparing behind a long run while other hosts idle (2026-11-26, pds18-native).
+func TestHostDrainMirrorsExecutorFence(t *testing.T) {
+	old, newer, now := "1.261125.155", "1.261125.165", time.Now()
+	if d := hostDrain(nil, &old, &newer, "on", now); d == nil || !d.Fenced || d.Target != newer || (hostSeen{Drain: d}).drainTarget() != newer {
+		t.Fatalf("an older executor with a newer offer is not fenced: %+v", d)
+	}
+	if hostDrain(nil, &newer, &newer, "on", now) != nil || hostDrain(nil, &old, &newer, "off", now) != nil ||
+		hostDrain(nil, &old, &newer, now.Add(time.Hour).UTC().Format(time.RFC3339), now) != nil || hostDrain(nil, &old, nil, "on", now) != nil {
+		t.Fatal("fenced without a pending update")
+	}
+	open := &contract.DrainReport{Target: newer, Fenced: false, WaitsFor: []string{"1 run"}}
+	if d := hostDrain(open, &old, &newer, "on", now); (hostSeen{Drain: d}).drainTarget() != "" {
+		t.Fatal("an open fence still kept work away")
+	}
+	if got := drainDetail(&contract.DrainReport{Target: newer, Fenced: true, WaitsFor: []string{"1 run"}}); got != "updating to 1.261125.165: takes no new start; waits for 1 run" {
+		t.Fatal(got)
+	}
+}

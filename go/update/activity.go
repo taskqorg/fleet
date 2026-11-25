@@ -24,8 +24,14 @@ func (u *updater) executorActivity(signal string) func(string) (func(), error) {
 			}
 			return nil, err
 		}
+		// The executor is drained when it marked its current target ready. The release staged here may be older than that
+		// target: a newer one landed while this run downloaded. It still installs (cycle checked it is newer than the
+		// running one); requiring the two to match left a host chasing releases that land faster than it downloads
+		// (2026-11-26, windows: "executor work is draining" with nothing running, for every release).
 		var s signalFile
-		if !readJSON(signal, &s) || (s.Running != target && (str(s.Target) != target || str(s.RestartTarget) != target)) || u.held(s.AutoUpdate) {
+		ok := readJSON(signal, &s)
+		drained := str(s.RestartTarget) != "" && str(s.RestartTarget) == str(s.Target)
+		if !ok || (s.Running != target && !drained) || u.held(s.AutoUpdate) {
 			f.Close()
 			return nil, nil
 		}

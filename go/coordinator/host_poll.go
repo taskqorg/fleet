@@ -930,6 +930,19 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 			ps = append(ps, hostProblem{Kind: string(contract.ProblemKindVersionBehind), Detail: "executor " + v + ", coordinator serves " + prev + " and newer"})
 		}
 	}
+	if d := hostDrain(b.Drain, b.Version, healthyTarget(), autoUpdateOf(q.host), time.Now()); d != nil {
+		obs.Drain = d
+		if d.Fenced {
+			// Updating explains the lag while it lasts, and it is what blocks new work: it replaces version-behind.
+			kept := []hostProblem{{Kind: "updating", Detail: drainDetail(d)}}
+			for _, p := range ps {
+				if p.Kind != string(contract.ProblemKindVersionBehind) {
+					kept = append(kept, p)
+				}
+			}
+			ps = kept
+		}
+	}
 	obs.Problems = ps
 	upd := rawAny(open.Update)
 	if host != "" && host == pds18Host() {
@@ -1193,7 +1206,33 @@ type hostPollObservationPayload struct {
 	Update           any                        `json:"update,omitempty"`
 	Stores           any                        `json:"stores"`
 	Load             *hostLoadObservation       `json:"load,omitempty"`
+	Drain            *contract.DrainReport      `json:"drain,omitempty"`
 	PollError        json.RawMessage            `json:"pollError,omitempty"`
+}
+
+// hostDrain: the drain of a host's executor as dispatch and Live read it; nil while it drains for nothing. An executor
+// that reports its drain is taken at its word. An older one fences every new start, unbounded, from the first poll that
+// offers it a newer release (autoUpdate on): dispatch must place nothing there, or the start waits for the whole drain
+// (2026-11-26: 13 starts sat preparing on pds18-native behind one long run).
+func hostDrain(reported *contract.DrainReport, running, offered *string, autoUpdate string, now time.Time) *contract.DrainReport {
+	if reported != nil {
+		return reported
+	}
+	if running == nil || offered == nil || !olderVersion(*running, *offered) || autoUpdate == "off" {
+		return nil
+	}
+	if t, err := time.Parse(time.RFC3339, autoUpdate); err == nil && t.After(now) {
+		return nil
+	}
+	return &contract.DrainReport{Target: *offered, Fenced: true, WaitsFor: []string{"its runs"}}
+}
+
+// drainDetail: the updating problem in words.
+func drainDetail(d *contract.DrainReport) string {
+	if len(d.WaitsFor) == 0 {
+		return "updating to " + d.Target + ": its work has drained, the update installs within minutes"
+	}
+	return "updating to " + d.Target + ": takes no new start; waits for " + strings.Join(d.WaitsFor, ", ")
 }
 
 // hostPollObservation: what a poll observes of its host (the host-observation record): its platform, capabilities,

@@ -384,6 +384,25 @@
         "load": {
           "$comment": "latest host load, CPU count and memory readings sampled by the executor; omitted by older hosts",
           "$ref": "#/$defs/HostLoad"
+        },
+        "drain": {
+          "$comment": "the executor's drain for a pending update (docs/designs/fleet-self-update.md, Executor drain); absent when no update is pending or on older hosts",
+          "$ref": "#/$defs/DrainReport"
+        }
+      }
+    },
+    "DrainReport": {
+      "type": "object",
+      "required": ["target", "since", "fenced", "waitsFor"],
+      "properties": {
+        "target": { "$comment": "the release the executor drains for", "type": "string" },
+        "since": { "$comment": "RFC 3339 UTC time the drain began", "type": "string" },
+        "fenced": { "$comment": "true: the executor admits no new start; false: the drain window passed with work still running, so starts are admitted again until reopenAt and the update waits for an idle moment", "type": "boolean" },
+        "reopenAt": { "$comment": "RFC 3339 UTC time the executor fences again; set while fenced is false", "type": "string" },
+        "waitsFor": {
+          "$comment": "what still holds the drain, in words (\"2 runs\", \"receipts to deliver\"); empty: drained, the update installs on fleet-update's next run",
+          "type": "array",
+          "items": { "type": "string" }
         }
       }
     },
