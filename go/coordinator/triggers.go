@@ -454,7 +454,7 @@ func triggerSettingsEqual(a, b contract.TriggerSettings) bool {
 // Operations.
 
 func triggerList(q *Request, r *contract.TriggerListRequest) (contract.TriggerListReply, error) {
-	out := contract.TriggerListReply{Triggers: []contract.TriggerRecord{}}
+	out := contract.TriggerListReply{Triggers: []contract.TriggerRecord{}, PassMs: triggerTickMs()}
 	t, err := triggerTargetOf(q, deref(r.SessionId), deref(r.BotId))
 	if err != nil {
 		return out, err

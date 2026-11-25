@@ -44,7 +44,7 @@ func TestTriggers(t *testing.T) {
 		return strings.TrimSpace(runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", sql))
 	}
 	list := call("trigger_list", contract.TriggerListRequest{SessionId: &sid}, owner, 200)
-	if len(anys(list["presets"])) < 4 || list["canManage"] != true || len(anys(list["triggers"])) != 0 {
+	if len(anys(list["presets"])) < 4 || list["canManage"] != true || len(anys(list["triggers"])) != 0 || list["passMs"] != float64(triggerTickMs()) {
 		t.Fatalf("trigger_list before any trigger = %v", list)
 	}
 	checkID, changesID := newID(), newID()

@@ -1704,6 +1704,7 @@ func (v *TriggerLastRun) Validate() error {
 
 type TriggerListReply struct {
 	CanManage bool            `json:"canManage"`
+	PassMs    int64           `json:"passMs"`
 	Presets   []TriggerPreset `json:"presets"`
 	Triggers  []TriggerRecord `json:"triggers"`
 }

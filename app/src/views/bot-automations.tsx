@@ -9,8 +9,6 @@ import { useOp } from '../store.ts';
 type Automation = Ops['trigger_list']['reply']['triggers'][number];
 /** The form's view of a trigger: manual, a daily schedule, or Needs you (a change check each pass). */
 type Settings = { name: string; instructions: string; kind: 'manual' | 'schedule' | 'needs_you'; scheduleTime: string; scheduleZone: string; event: 'none' | 'all' | 'question' | 'execution'; enabled: boolean };
-/** The trigger checks every pass on a change: the Needs you automation. */
-const PASS_MS = 15_000;
 
 function settingsOf(t: Automation): Settings {
   const s = t.settings, kinds = [...s.ifChanged].sort().join(',');
@@ -21,16 +19,17 @@ function settingsOf(t: Automation): Settings {
   };
 }
 
-/** A trigger the form can show: daily, manual, or a change check on questions or execution problems (others are
- *  changed through the API, trigger_save). */
-const shown = (t: Automation) => t.settings.when !== 'every' ||
-  (t.settings.ifChanged.length > 0 && t.settings.ifChanged.every(k => k === 'question' || k === 'execution'));
+/** A trigger the form can show: daily, manual, or a check each pass (every passMs, the server's pass, or less) on
+ *  questions or execution problems (others are changed through the API, trigger_save). */
+const shown = (passMs: number) => (t: Automation) => t.settings.when !== 'every' || ((t.settings.everyMs ?? 0) <= passMs &&
+  t.settings.ifChanged.length > 0 && t.settings.ifChanged.every(k => k === 'question' || k === 'execution'));
 
-function triggerOf(s: Settings): Ops['trigger_save']['request']['settings'] {
+/** The trigger settings of the form; Needs you checks every pass (passMs, from trigger_list). */
+function triggerOf(s: Settings, passMs: number): Ops['trigger_save']['request']['settings'] {
   const base = { name: s.name, text: s.instructions, enabled: s.enabled };
   if (s.kind === 'schedule') return { ...base, when: 'daily', dailyTime: s.scheduleTime, dailyZone: s.scheduleZone, ifChanged: [] };
   if (s.kind === 'manual') return { ...base, when: 'manual', ifChanged: [] };
-  return { ...base, when: 'every', everyMs: PASS_MS, ifChanged: s.event === 'all' ? ['question', 'execution'] : [s.event] };
+  return { ...base, when: 'every', everyMs: passMs, ifChanged: s.event === 'all' ? ['question', 'execution'] : [s.event] };
 }
 
 const triggerOptions = [
@@ -57,7 +56,7 @@ export function BotAutomations(props: {
   const [busy, setBusy] = createSignal<string | null>(null);
   const [error, setError] = createSignal('');
   const [note, setNote] = createSignal('');
-  const selected = createMemo(() => read.data?.triggers.filter(shown).find(a => a.id === props.edit));
+  const selected = createMemo(() => read.data?.triggers.filter(shown(read.data.passMs)).find(a => a.id === props.edit));
 
   const act = async (automation: Automation, action: 'enable' | 'pause' | 'run') => {
     if (busy()) return;
@@ -106,7 +105,7 @@ export function BotAutomations(props: {
                   <Button label="Automations" icon="arrow-left" iconOnly onClick={() => props.onEdit(null)} />
                 </div>
               }>
-                <AutomationEditor bot={props.bot} projectName={props.projectName}
+                <AutomationEditor bot={props.bot} projectName={props.projectName} passMs={read.data!.passMs}
                   item={edit === 'new' ? undefined : selected()}
                   onClose={() => props.onEdit(null)}
                   onSaved={() => {
@@ -123,8 +122,8 @@ export function BotAutomations(props: {
                 <Button label="New automation" icon="plus" kind="primary" onClick={() => props.onEdit('new')} />
               </div>
             </Show>
-            <Show when={read.data?.triggers.filter(shown).length} fallback={<Empty text="No automations yet." />}>
-              <For each={read.data?.triggers.filter(shown)}>{automation => (<Show when={settingsOf(automation)} keyed>{set => (
+            <Show when={read.data?.triggers.filter(shown(read.data.passMs)).length} fallback={<Empty text="No automations yet." />}>
+              <For each={read.data?.triggers.filter(shown(read.data.passMs))}>{automation => (<Show when={settingsOf(automation)} keyed>{set => (
                 <DetailSection title={set.name}>
                   <KvRow icon="folder-open" label="Project" value={props.projectName} />
                   <KvRow icon="bell" label="Trigger" value={triggerOptions.find(t => t.id === set.kind)?.label} />
@@ -173,6 +172,7 @@ export function BotAutomations(props: {
 }
 
 function AutomationEditor(props: {
+  passMs: number;
   bot: Ops['bot_get']['reply']['bot'];
   projectName: string;
   item?: Automation;
@@ -214,7 +214,7 @@ function AutomationEditor(props: {
     try {
       await writeOnce('trigger_save', {
         id, baseRevision: initial?.revision ?? 0, botId: props.bot.id,
-        settings: triggerOf({ ...s, name, scheduleTime, scheduleZone }),
+        settings: triggerOf({ ...s, name, scheduleTime, scheduleZone }, props.passMs),
       }, () => setNote('Confirming save…'), { signal });
       if (!signal.aborted) props.onSaved();
     } catch (err) {

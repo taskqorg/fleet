@@ -216,9 +216,9 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   // its width are the person's settings (session-context), the same for every session; at phone width it opens as a sheet.
   const ctx = () => ctxDoc.data;
   const plan = createMemo<PlanStep[]>(() => (ctx()?.plan?.steps ?? []).map(st => ({ text: st.title, done: st.done })));
-  // Timers: the session's timed triggers. One that checks every pass (15 s or less) follows changes, not the clock, and
+  // Timers: the session's timed triggers. One that checks every pass (passMs, the server's FLEET_TRIGGER_TICK_MS, or less) follows changes, not the clock, and
   // is not shown, as in session_context.
-  const timed = createMemo(() => (trigDoc.data?.triggers ?? []).filter(t => t.settings.when === 'daily' || (t.settings.when === 'every' && (t.settings.everyMs ?? 0) > 15_000)));
+  const timed = createMemo(() => { const pass = trigDoc.data?.passMs ?? 0; return (trigDoc.data?.triggers ?? []).filter(t => t.settings.when === 'daily' || (t.settings.when === 'every' && (t.settings.everyMs ?? 0) > pass)); });
   const [editing, setEditing] = createSignal<{ id: string; revision: number } | null>(null);
   const timers = createMemo<Timer[]>(() => timed().map(t => ({
     id: t.id, schedule: scheduleOf(t.settings), text: t.settings.text, paused: !t.settings.enabled, readOnly: !trigDoc.data?.canManage,
@@ -231,7 +231,7 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
   // The automations of the session's bot: its triggers, one line each (name and when).
   const botTrigDoc = useOp('trigger_list', () => (ctx()?.botId ? { botId: ctx()!.botId } : null));
   const automations = createMemo<Automation[]>(() => (botTrigDoc.data?.triggers ?? []).map(t => ({
-    rule: t.settings.name, when: !t.settings.enabled ? 'paused' : whenOf(t.settings),
+    rule: t.settings.name, when: !t.settings.enabled ? 'paused' : whenOf(t.settings, botTrigDoc.data!.passMs),
   })));
   // A member's progress: the plan steps assigned to it that are done.
   const progress = (member: string) => {
@@ -525,8 +525,8 @@ function Session(props: { id: string; frame: SessionFrame; onClose?: () => void;
 const every = (ms: number) => (ms % 3_600_000 === 0 ? `${ms / 3_600_000}h` : ms % 60_000 === 0 ? `${ms / 60_000}m` : `${Math.round(ms / 1000)}s`);
 
 /** When a trigger wakes, in a line: on a change it checks every pass, on request, else its schedule. */
-const whenOf = (t: { when: string; everyMs?: number; dailyTime?: string; dailyZone?: string; ifChanged: string[] }) =>
-  t.when === 'manual' ? 'on request' : t.ifChanged.length && t.when === 'every' && (t.everyMs ?? 0) <= 15_000 ? `on ${t.ifChanged.join(', ')}` : scheduleOf(t).toLowerCase();
+const whenOf = (t: { when: string; everyMs?: number; dailyTime?: string; dailyZone?: string; ifChanged: string[] }, passMs: number) =>
+  t.when === 'manual' ? 'on request' : t.ifChanged.length && t.when === 'every' && (t.everyMs ?? 0) <= passMs ? `on ${t.ifChanged.join(', ')}` : scheduleOf(t).toLowerCase();
 
 /** A composer text that is a command (composer.md#commands), not a message. */
 const commandText = (text: string) => /^\s*\/trigger(\s|$)/.test(text);
