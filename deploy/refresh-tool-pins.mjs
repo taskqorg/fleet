@@ -24,7 +24,9 @@ function digest(value) {
   return value;
 }
 
-function keepNewer(current, next) {
+// A version the watch reverted (pins.skip, deploy/pins-revert.mjs) is never proposed again.
+function keepNewer(current, next, name) {
+  if (pins.skip?.[name]?.includes(next.version)) return current;
   if (!current) return next;
   const old = version(current.version).split('.').map(Number);
   const candidate = version(next.version).split('.').map(Number);
@@ -66,14 +68,14 @@ for (const [target, p] of Object.entries(platform)) {
   current.node = keepNewer(current.node, {
     version: nodeVersion, url: `https://nodejs.org/dist/v${nodeVersion}/${nodeFile}`,
     sha256: digest(sums(nodeSums)[nodeFile]), entry: `node-v${nodeVersion}-${p.node}/bin/node`,
-  });
-  current.pnpm = keepNewer(current.pnpm, { version: pnpmVersion, ...githubAsset(pnpm, `pnpm-${p.pnpm}.tar.gz`), entry: 'pnpm' });
+  }, 'node');
+  current.pnpm = keepNewer(current.pnpm, { version: pnpmVersion, ...githubAsset(pnpm, `pnpm-${p.pnpm}.tar.gz`), entry: 'pnpm' }, 'pnpm');
   const ghDir = `gh_${ghVersion}_${p.gh[0]}`;
-  current.gh = keepNewer(current.gh, { version: ghVersion, ...githubAsset(gh, `${ghDir}.${p.gh[1]}`), entry: `${ghDir}/bin/gh` });
+  current.gh = keepNewer(current.gh, { version: ghVersion, ...githubAsset(gh, `${ghDir}.${p.gh[1]}`), entry: `${ghDir}/bin/gh` }, 'gh');
   const glabFile = `glab_${glabVersion}_${p.glab}.tar.gz`;
   const glabUrl = glabLink(glabFile);
   if (!glabUrl?.startsWith('https://gitlab.com/gitlab-org/cli/-/releases/')) throw Error(`Missing glab target ${target}`);
-  current.glab = keepNewer(current.glab, { version: glabVersion, url: glabUrl, sha256: digest(glabSums[glabFile]), entry: 'bin/glab' });
+  current.glab = keepNewer(current.glab, { version: glabVersion, url: glabUrl, sha256: digest(glabSums[glabFile]), entry: 'bin/glab' }, 'glab');
 }
 
 await writeFile(path, JSON.stringify(pins, null, 2) + '\n');

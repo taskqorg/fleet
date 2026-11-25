@@ -51,6 +51,8 @@ jobs:
           RUN: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+          # Step 10: a landed version the coordinator's watch marked (status pins-watch) goes back and is skipped.
+          node deploy/pins-revert.mjs "$KIND" "$PINS"
           node "$REFRESH"
           pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
           if git diff --quiet -- "$PINS"; then
