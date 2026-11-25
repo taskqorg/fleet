@@ -261,7 +261,8 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 		name     string
 		from, to time.Time
 	}{{"today", day, end}, {"month", month, end}} {
-		sp, err := spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByHost,
+		include := contract.SystemActivityInclude // the coordinator's own work runs on hosts too
+		sp, err := spendSummary(q, &contract.SpendSummaryRequest{By: contract.SpendGroupByHost, System: &include,
 			Window: contract.AnalyticsWindow{From: jsonBytes(p.from.Format(time.RFC3339)), To: jsonBytes(p.to.Format(time.RFC3339))}})
 		if err != nil {
 			return contract.ExecutionsRunnersReply{}, err
