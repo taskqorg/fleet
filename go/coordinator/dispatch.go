@@ -1292,10 +1292,11 @@ func isBackpressureCause(cause string) bool {
 }
 
 // publishes: the run may publish to the project's forge (push its branch, open a pull or merge request): any start
-// with write access outside Lab. A Lab trial measures a method and never publishes, nor does a read-only start, so
-// they need no forge login (DAM Lab, 2026-11-25: Claude trials failed forge-actor-auth-unready on owner-mac).
+// with write access outside Lab and outside a pipeline. A Lab trial measures a method and never publishes; a pipeline
+// agent step answers with its output files and never publishes; nor does a read-only start. They need no forge login
+// (DAM Lab, 2026-11-25: Claude trials failed forge-actor-auth-unready on owner-mac).
 func publishes(e *dispatchExecution) bool {
-	return deref(e.ExperimentID) == "" && (e.Dispatch == nil || deref(e.Dispatch.Access) != "read")
+	return deref(e.ExperimentID) == "" && deref(e.PipelineStepID) == "" && (e.Dispatch == nil || deref(e.Dispatch.Access) != "read")
 }
 
 // withoutForge: the project settings a run that does not publish receives: execution.forge off, so the executor sets up

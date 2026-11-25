@@ -1063,7 +1063,7 @@ func boundPipelineReply(run contract.PipelineRunReply) (contract.PipelineRunRepl
 
 func init() {
 	op("pipeline_run", func(q *Request, r *contract.PipelineRunRequest) (contract.PipelineRunReply, error) {
-		run, err := replyAs[contract.PipelineRunReply](runPipeline(q, "pipeline", r.ProjectId, r.RequestId, r.Query, r.MethodId))
+		run, err := replyAs[contract.PipelineRunReply](runPipeline(q, "pipeline", r.ProjectId, r.RequestId, r.Query, r.MethodId, r.Inputs))
 		if err != nil {
 			return contract.PipelineRunReply{}, err
 		}
@@ -1071,7 +1071,7 @@ func init() {
 		return run, err
 	})
 	op("direct_search", func(q *Request, r *contract.DirectSearchRequest) (contract.DirectSearchReply, error) {
-		return replyAs[contract.DirectSearchReply](runPipeline(q, "direct", r.ProjectId, r.RequestId, r.Query, r.MethodId))
+		return replyAs[contract.DirectSearchReply](runPipeline(q, "direct", r.ProjectId, r.RequestId, r.Query, r.MethodId, nil))
 	})
 }
 
