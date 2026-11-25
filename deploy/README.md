@@ -70,6 +70,7 @@ Proves the three-start rollback on the live hosts. It needs a breakage on `main`
 - [verify-release.sh](verify-release.sh): extracts archives, checks static build metadata and runs Linux binary selftests.
 - [migrate-check.sh](migrate-check.sh): starts a temporary PostgreSQL database, upgrades from the latest release and checks recent coordinators against the new schema.
 - [workflows-moved.sh](workflows-moved.sh): reports workflow changes between a candidate and main for tag publication.
+- [publish-release.sh](publish-release.sh) `<tag> <latest> <title> <notes> <file>...`: the `publish` job's GitHub release; idempotent per commit and retried on GitHub API errors ([delivery pipeline](../docs/designs/fleet-delivery-pipeline.md#4-automatic-release)). `publish-release-test.sh` checks it by hand against a fake `gh` (reused and foreign drafts, 5xx, 422, 429, network errors, the superseded 403); not in CI.
 - [Infrastructure](infrastructure/README.md): service definitions, access checks and backup scripts. Linux and macOS host service files remain under `hosts/`.
 
 ## Invariants
