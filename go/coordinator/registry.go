@@ -296,6 +296,7 @@ func (a *App) registered() *http.ServeMux {
 		// Every operation, long or not, through the one dispatcher (runOp opens its transaction).
 		mux.HandleFunc("POST /api/ops/{name}", func(w http.ResponseWriter, hr *http.Request) {
 			name := hr.PathValue("name")
+			w, hr = withPhases(w, hr) // Server-Timing: the operation's marked phases (server_timing.go)
 			a.serve(w, hr, txNone, func(q *Request) (any, error) { return a.runOp(q, name, q.body, nil) })
 		})
 	}

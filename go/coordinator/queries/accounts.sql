@@ -11,11 +11,18 @@ SELECT (e.data || jsonb_build_object('state', e.state, 'observation', e.observat
  AND e.data->>'accountId'=i.account_id AND e.project_id IS NOT DISTINCT FROM i.project_id;
 
 -- name: LimitReadingsSince :many
--- Every limit_reading since a time, per subscription, oldest first.
-SELECT x.account_id::text AS account_id, r.value::jsonb AS reading, d.updated_at
- FROM event d JOIN execution x ON x.id = d.execution_id CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.payload->'data'->'readings','[]'::jsonb)) r(value)
- WHERE NOT d.delta AND d.type='limit_reading' AND x.account_id IS NOT NULL AND d.updated_at >= $1
- ORDER BY d.updated_at, d.seq;
+-- Every limit_reading since a time, per subscription, oldest first. The window's reads are chosen first
+-- (event_limit_reading: one walk of the limit reads with a timestamp filter, both leakproof under row level security), then their runs by
+-- primary key; the planner otherwise started from every run that has a subscription and looked up its events (0.4 s
+-- on 200k runs, 2026-11-26).
+WITH w AS MATERIALIZED (
+ SELECT d.execution_id, d.payload->'data'->'readings' AS readings, d.updated_at, d.seq FROM event d
+ WHERE NOT d.delta AND d.type = 'limit_reading' AND d.updated_at >= $1
+)
+SELECT x.account_id::text AS account_id, r.value::jsonb AS reading, w.updated_at
+ FROM w JOIN execution x ON x.id = w.execution_id CROSS JOIN LATERAL jsonb_array_elements(coalesce(w.readings,'[]'::jsonb)) r(value)
+ WHERE x.account_id IS NOT NULL
+ ORDER BY w.updated_at, w.seq;
 
 -- name: InflightLimitRead :one
 -- A limits read already on its way for a subscription.

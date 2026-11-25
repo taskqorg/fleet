@@ -83,15 +83,21 @@ var harnessLogin = map[string]string{"codex": "ChatGPT login", "claude": "Claude
 
 func accessStatus(q *Request) (contract.AccessStatusReply, error) {
 	out := contract.AccessStatusReply{CheckedAt: nowMs(), Items: []contract.AccessItem{}}
+	done := phase(q.baseCtx(), "profiles")
 	profiles, err := accessProfiles(q)
+	done()
 	if err != nil {
 		return out, err
 	}
+	done = phase(q.baseCtx(), "subscriptions")
 	subs, err := accessSubscriptions(q, profiles)
+	done()
 	if err != nil {
 		return out, err
 	}
+	done = phase(q.baseCtx(), "connections")
 	keys, err := accessConnections(q, profiles)
+	done()
 	if err != nil {
 		return out, err
 	}
@@ -133,7 +139,9 @@ func accessProfiles(q *Request) ([]accessProfile, error) {
 }
 
 func accessSubscriptions(q *Request, profiles []accessProfile) ([]contract.AccessItem, error) {
+	done := phase(q.baseCtx(), "accounts")
 	as, err := accountRecs(q)
+	done()
 	if err != nil {
 		return nil, err
 	}
@@ -251,11 +259,15 @@ func accessSubscription(a accountRec, period contract.LimitPeriod, profiles []ac
 }
 
 func accessConnections(q *Request, profiles []accessProfile) ([]contract.AccessItem, error) {
+	done := phase(q.baseCtx(), "conns")
 	conns, err := apiConnectionAll(q)
+	done()
 	if err != nil {
 		return nil, err
 	}
+	done = phase(q.baseCtx(), "keys")
 	keys, err := connKeysList(q, nil)
+	done()
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +275,9 @@ func accessConnections(q *Request, profiles []accessProfile) ([]contract.AccessI
 	for _, c := range conns {
 		names = append(names, c.Name)
 	}
+	done = phase(q.baseCtx(), "lastcalls")
 	calls, err := q.db().AccessLastCalls(q.ctx(), names)
+	done()
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +285,9 @@ func accessConnections(q *Request, profiles []accessProfile) ([]contract.AccessI
 	for _, c := range calls {
 		last[c.Connection] = c
 	}
+	done = phase(q.baseCtx(), "budgets")
 	budgets, err := budgetsList(q, &contract.BudgetsListRequest{})
+	done()
 	if err != nil {
 		return nil, err
 	}
