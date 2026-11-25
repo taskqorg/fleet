@@ -78,11 +78,32 @@ func historyView(q *Request, r *contract.HistoryViewRequest) (contract.HistoryVi
 	}
 	// Fold: an entry joins the previous one (newer) when both are of one group with one verb and outcome. A page ends
 	// at a group boundary once it holds limit entries, so a group is never split by the page's own end.
+	// An experiment's trial runs are one entry per experiment in the page, whatever their order: their starts and ends
+	// alternate for hours, so consecutive folding would keep them apart. The entry counts trials by their latest state.
 	last := -1
+	trials := map[string]*historyTrials{}
 	for i, s := range all {
+		if s.e.Kind == "run" && s.e.ExperimentId != nil {
+			if t := trials[*s.e.ExperimentId]; t != nil {
+				t.add(s.e)
+				last = i
+				continue
+			}
+			if len(out.Entries) == limit {
+				break
+			}
+			t := &historyTrials{index: len(out.Entries), seen: map[string]bool{}}
+			trials[*s.e.ExperimentId] = t
+			e := s.e
+			e.Verb, e.N, e.Detail = "trials", 0, nil
+			out.Entries = append(out.Entries, e)
+			t.add(s.e)
+			last = i
+			continue
+		}
 		if n := len(out.Entries); n > 0 {
 			p := &out.Entries[n-1]
-			if all[i-1].group == s.group && p.Verb == s.e.Verb && p.Outcome == s.e.Outcome {
+			if i > 0 && all[i-1].group == s.group && p.Verb == s.e.Verb && p.Outcome == s.e.Outcome {
 				p.N++
 				p.FirstAt = s.e.At
 				last = i
@@ -95,9 +116,58 @@ func historyView(q *Request, r *contract.HistoryViewRequest) (contract.HistoryVi
 		out.Entries = append(out.Entries, s.e)
 		last = i
 	}
+	for _, t := range trials {
+		t.finish(&out.Entries[t.index])
+	}
 	if len(all) == raw || last < len(all)-1 {
 		c := all[last].e.Seq
 		out.NextCursor = &c
 	}
 	return out, nil
+}
+
+// historyTrials: one experiment's trial runs in a page. Entries come newest first, so a trial's first entry is its
+// latest state: a finished, failed or stopped run, or a start not yet ended.
+type historyTrials struct {
+	index                              int
+	seen                               map[string]bool
+	oldest                             float64
+	finished, failed, stopped, running int64
+}
+
+func (t *historyTrials) add(e contract.HistoryEntry) {
+	t.oldest = e.At
+	if t.seen[e.Subject] {
+		return
+	}
+	t.seen[e.Subject] = true
+	switch e.Verb {
+	case "finished":
+		t.finished++
+	case "failed":
+		t.failed++
+	case "stopped":
+		t.stopped++
+	default:
+		t.running++
+	}
+}
+
+// finish writes the counts on the experiment's entry: n trials, the outcome of the worst news (running while any run,
+// else failed while any failed) and the counts in detail.
+func (t *historyTrials) finish(e *contract.HistoryEntry) {
+	e.N = int64(len(t.seen))
+	e.FirstAt = t.oldest
+	switch {
+	case t.running > 0:
+		e.Outcome = "running"
+	case t.failed > 0:
+		e.Outcome = "failed"
+	case t.finished == 0:
+		e.Outcome = "stopped"
+	default:
+		e.Outcome = "ok"
+	}
+	e.Detail = map[string]json.RawMessage{"trials": jsonBytes(e.N), "finished": jsonBytes(t.finished), "failed": jsonBytes(t.failed),
+		"stopped": jsonBytes(t.stopped), "running": jsonBytes(t.running)}
 }

@@ -37,6 +37,12 @@ export function historyText(e: Entry): string {
   if (e.kind === 'task' && e.verb !== 'created') return `${what} ${TASK_WORDS[e.verb] ?? e.verb}`;
   if (e.kind === 'question') return `Question ${e.verb}: ${what}`;
   if (e.kind === 'lab') return `${what} ${e.verb === 'decided' ? 'decided' : e.verb}`;
+  if (e.kind === 'run' && e.verb === 'trials') {
+    // An experiment's trials in one entry (history_view folds them): how many, and how they stand.
+    const d = e.detail ?? {}, c = (k: string) => (typeof d[k] === 'number' ? d[k] as number : 0);
+    const parts = [`${e.n} ${e.n === 1 ? 'trial' : 'trials'}`, ...(['running', 'finished', 'failed', 'stopped'] as const).filter(k => c(k) > 0).map(k => `${c(k)} ${k}`)];
+    return `${e.title.replace(/ trial$/, '')}: ${parts.join(', ')}`;
+  }
   if (e.kind === 'run') {
     // A host job names its host; an untitled run (written before fleet_activity named it) its harness.
     if (e.detail?.executionKind === 'host_job') {
@@ -66,7 +72,7 @@ const dayLabel = (t: number, now: number) => t >= dayStart(now) ? 'Today' : t >=
  *  changes; still (Live's wall) opens nothing. */
 export function HistoryRows(p: { entries: readonly Entry[]; inside?: 'task'; days?: boolean; still?: boolean }) {
   const [, go] = useLocation();
-  const fence = createMemo(() => peerFence(p.entries.map(e => e.n)));
+  const fence = createMemo(() => peerFence(p.entries.map(e => e.verb === 'trials' ? 1 : e.n)));
   const now = Date.now();
   return <For each={p.entries}>{(e, i) => {
     const to = historyPath(e, p.inside);
@@ -78,7 +84,7 @@ export function HistoryRows(p: { entries: readonly Entry[]; inside?: 'task'; day
         facts={<>
           {/* A harness shows as its mark in the work facts; a person, bot or system actor as a quiet name. */}
           <Show when={e.actor && !(e.actor in harnesses)}><span class="lr-fact muted">{shortActor(e.actor!)}</span></Show>
-          <WorkFacts attempts={e.n} attemptsFence={fence()} agent={e.actor} />
+          <WorkFacts attempts={e.verb === 'trials' ? 1 : e.n} attemptsFence={fence()} agent={e.actor} />
         </>} />
     </>;
   }}</For>;

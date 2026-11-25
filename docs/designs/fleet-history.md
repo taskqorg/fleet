@@ -49,7 +49,7 @@ Migration 122 backfills from what the source tables still hold. Entries have no 
 - Filter with `kinds`, `actor` and `outcome`.
 - Page older entries with `before` set to the reply's `nextCursor`.
 
-Every condition compares a column that an index of migration 122 leads with, so under RLS a scoped page starts from its index ([data layer](fleet-data-layer.md)). Consecutive entries of one group with the same verb and outcome come back as one entry with `n` and the oldest `firstAt` (OR-58).
+Every condition compares a column that an index of migration 122 leads with, so under RLS a scoped page starts from its index ([data layer](fleet-data-layer.md)). Consecutive entries of one group with the same verb and outcome come back as one entry with `n` and the oldest `firstAt` (OR-58). An experiment's trial runs come back as one entry per experiment in a page (verb `trials`, `n` trials, their latest states counted in `detail`), since their starts and ends alternate for hours.
 
 **Live tail.** Each entry is a change of kind `activity`. A mounted history rereads its first page when one arrives. The first page is small, and entries are far fewer than execution changes.
 
