@@ -709,12 +709,16 @@ func pipelineRunInputs(q *Request, projectID string, inputs []contract.PipelineR
 	}
 	out := []fileRef{}
 	for _, in := range inputs {
-		a, err := artifactRow(q.ctx(), q.app, in.ArtifactId)
+		a, err := artifactRow(withTx(q), q.app, in.ArtifactId)
 		if err != nil {
 			return nil, err
 		}
-		if a.State != "stored" || deref(a.ProjectID) != projectID {
-			return nil, fail(400, "inputs: artifact "+in.ArtifactId+" is not a stored artifact of project "+projectID)
+		if deref(a.ProjectID) != projectID {
+			return nil, fail(400, "inputs: artifact "+in.ArtifactId+" is not an artifact of project "+projectID)
+		}
+		if a.State != "stored" {
+			// artifact_save answers pending; the upload finishes in the background.
+			return nil, fail(409, "inputs: artifact "+in.ArtifactId+" is "+a.State+", not stored yet; call pipeline_run again once artifact_list shows it stored")
 		}
 		out = append(out, fileRef{ArtifactID: in.ArtifactId, Path: "example/" + in.Path})
 	}
@@ -872,6 +876,10 @@ func pipelineRerun(q *Request, r *contract.PipelineRerunRequest) (*runRecord, er
 	}
 	o := pipelineStartOptions{File: pid + ".json", ProjectID: old.ProjectID, RequestID: rid, Example: old.Example, Overrides: jsonBytes(old.Overrides), RerunOf: r.RunId,
 		Reuse: make([]json.RawMessage, len(reuse)), Extra: extra}
+	// A pipeline_run's input files are not in its example: the rerun reads the same stored artifacts.
+	if old.ExampleInputs != nil && len(old.exampleInputs()) == 0 {
+		o.Inputs = *old.ExampleInputs
+	}
 	if draft {
 		o.draft, o.draftBase, o.hasDraftBase = def, base, true
 	}
