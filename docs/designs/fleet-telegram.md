@@ -94,6 +94,10 @@ Every action an agent takes has a risk level. The defaults are permissive, and a
 - **Free text.** Explicit approval words ("go live", "live it", "good u can live", "выкатывай") approve the card when exactly one is open in the room's work (a private chat: the home conversation), as the author. A bare "ok", "yes" or "давай" approves only as a Telegram reply to the card, which maps free text onto Approve or Not now. With several open, each card is listed with its buttons. Negations ("not now", "не выкатывай") never approve.
 - **Keys.** A key request in chat only links to Fleet; agents point to System › Access and never accept a key in chat.
 
+### Room history (`telegram_history.go`)
+
+A new work item of a group room starts knowing what was said in the room before. Its session gets the room's newest messages (at most 60, about 24,000 characters, the newest kept) as a pending context handoff (strategy `telegram_room`). The handoff goes with the first run, ahead of the person's message, which itself stays verbatim. The history joins three sources: people's delivered messages from the journal, Fleet's sent replies, and messages imported with `telegram_history_import` (table `telegram_history`, migration 110). The import is for the time before Fleet saw a room. The Bot API cannot read past messages, so an import comes from a Telegram export (the PilotQ TEST topics, 2026-11-25). Private chats need none: the home conversation is the history.
+
 ## Operations
 
 | Operation | Who | Does |
@@ -105,6 +109,8 @@ Every action an agent takes has a risk level. The defaults are permissive, and a
 | `telegram_rooms` | owner | rooms, project hints, open work items |
 | `telegram_room_set` | owner | a room's project hint; with `chatId` (and `threadId`) it creates the room ahead of its first message |
 | `telegram_work_close` | owner | close a work item; its conversation stays |
+| `telegram_history` | owner | a room's newest messages, oldest first: imported history, people's delivered messages, Fleet's replies |
+| `telegram_history_import` | owner | import a room's messages from before Fleet saw it (a Telegram export); creates the room when needed |
 
 ## Setup
 

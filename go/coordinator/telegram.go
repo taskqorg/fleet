@@ -563,6 +563,12 @@ func telegramDeliver(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 					return err
 				}
 				sid = started.SessionId
+				// A new work item of a group room starts knowing what was said in the room before (Room history).
+				if !t.newHome {
+					if err := roomHistoryHandoff(pq, room, sid, rid); err != nil {
+						return err
+					}
+				}
 				if _, err := agentSubmit(pq, &contract.MessageSendRequest{SessionId: &sid, RequestId: &rid, Text: &text}, "telegram"); err != nil {
 					return err
 				}
