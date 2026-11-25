@@ -414,18 +414,24 @@ func pinsCandidateAt(ctx context.Context, a *App, sha string) (pinsCandidate, er
 	return pinsCandidateOf(b, sha)
 }
 
-// pinsCandidateOf: the CLI pins in a file_at reply, every target validated as a candidate.
-func pinsCandidateOf(b []byte, sha string) (pinsCandidate, error) {
-	var err error
-	// The keyed read answers the raw file; the keyless one the contents object with the file in base64.
+// pinsFileOf: the file in a file_at reply. The keyed read answers the raw file; the keyless one the contents object
+// with the file in base64.
+func pinsFileOf(b []byte) ([]byte, error) {
 	var wrapped struct {
 		Content  string `json:"content"`
 		Encoding string `json:"encoding"`
 	}
 	if json.Unmarshal(b, &wrapped) == nil && wrapped.Encoding == "base64" {
-		if b, err = base64.StdEncoding.DecodeString(strings.ReplaceAll(wrapped.Content, "\n", "")); err != nil {
-			return nil, err
-		}
+		return base64.StdEncoding.DecodeString(strings.ReplaceAll(wrapped.Content, "\n", ""))
+	}
+	return b, nil
+}
+
+// pinsCandidateOf: the CLI pins in a file_at reply, every target validated as a candidate.
+func pinsCandidateOf(b []byte, sha string) (pinsCandidate, error) {
+	b, err := pinsFileOf(b)
+	if err != nil {
+		return nil, err
 	}
 	var m struct {
 		Targets pinsCandidate `json:"targets"`

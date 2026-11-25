@@ -228,6 +228,9 @@ func pinsProposedVersions(ctx context.Context, a *App, k harnessrelease.Kind, sh
 	if err != nil {
 		return nil, err
 	}
+	if b, err = pinsFileOf(b); err != nil {
+		return nil, err
+	}
 	_, versions, err := k.PinnedIn(b)
 	if err != nil {
 		return nil, fmt.Errorf("%s at %s: %w", k.File, sha, err)
