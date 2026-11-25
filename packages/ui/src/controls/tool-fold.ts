@@ -152,7 +152,8 @@ export function foldBlocks(blocks: Block[], executions: ReadonlyMap<string, stri
     const endedAt = ends.length ? Math.max(...ends) : undefined;
     const running = tools.some(t => RUNNING.includes(t.state));
     // A failure the agent recovered from (a later call of the same kind worked) stays quiet; its chip counts it.
-    const failed = tools.some((t, i) => FAILED.includes(t.state) && !tools.slice(i + 1).some(u => toolKind(u.name) === toolKind(t.name) && !FAILED.includes(u.state)));
+    const kindOf = (t: Of<'tool'>) => t.toolKind ?? toolKind(t.name);
+    const failed = tools.some((t, i) => FAILED.includes(t.state) && !tools.slice(i + 1).some(u => kindOf(u) === kindOf(t) && !FAILED.includes(u.state)));
     const calls: ToolCall[] = [...notices.map(n => ({ name: 'Fleet', kind: 'notice' as const, target: noticeLine(n), secs: 0 })), ...callsOf(tools)];
     const failedCall = failed ? calls.findLast(c => c.failed) : undefined;
     const words = failedCall ? `${failedCall.name} failed${failedCall.error || failedCall.target ? `: ${failedCall.error || failedCall.target}` : ''}` : tools.length ? toolWords(tools.map(t => t.name)) : notices.length ? `Fleet: ${noticeLine(notices.at(-1)!)}` : 'Thought it over';

@@ -51,7 +51,8 @@ export function ToolLine(p: {
     const next = openCall() === call ? null : call;
     setOpenCall(next);
     const id = next?.callId;
-    if (!next || !id || next.input != null || next.output != null || !p.loadCall || io()[id]) return;
+    const had = id ? io()[id] : undefined; // a failed load is tried again on the next open
+    if (!next || !id || next.input != null || next.output != null || !p.loadCall || (had && (had === 'loading' || !('error' in had)))) return;
     setIO(m => ({ ...m, [id]: 'loading' }));
     p.loadCall(id).then(r => setIO(m => ({ ...m, [id]: r })), e => setIO(m => ({ ...m, [id]: { error: e instanceof Error ? e.message : String(e) } })));
   };
