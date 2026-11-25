@@ -3,16 +3,7 @@
 // Asleep elsewhere, and Live's open tasks leave out a paused one.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { build } from 'esbuild';
-import type * as Registry from '../../packages/ui/src/registry.ts';
-
-// The registry imports its icon JSON; esbuild bundles it for Node.
-const bundle = await build({
-  stdin: { contents: "export * from './packages/ui/src/registry.ts';", resolveDir: process.cwd(), loader: 'ts' },
-  bundle: true, write: false, platform: 'node', format: 'esm', loader: { '.json': 'json' },
-});
-const { life, statesOf, openStates, finishedStates, isFinished, lifeOf } =
-  await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0]!.text).toString('base64')) as typeof Registry;
+import { life, statesOf, openStates, finishedStates, isFinished, lifeOf } from '../../packages/ui/src/states.ts';
 
 test('life: one word per state, the same on Home and in the session view', () => {
   assert.equal(life('session', 'preparing'), 'working');

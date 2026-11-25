@@ -1,5 +1,5 @@
 import type { ExecutionState, Ops } from '../../../contracts/generated/ops.ts';
-import { openStates } from '../../../packages/ui/src/registry.ts';
+import { openStates } from '../../../packages/ui/src/states.ts';
 
 type LabExperiment = Ops['lab_experiment_get']['reply'];
 

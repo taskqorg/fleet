@@ -21,7 +21,7 @@
 - `charts.tsx` exports the day charts for pace pages: `DayChart`, `ShareBar`, `NormBar` and the scale helper `capOf`.
 - `patterns.tsx` exports assembled layouts including `AppShell` (navigation rail plus the shell header: collapse toggle, section title, focus chip slot, search icon), `ListDetail`, `ListFrame`, `TaskListView`, and `DefinitionEditor`. `controls/navigation.tsx:FocusControl` is the header's focus chip with presets, ignore and the outside-focus count.
 - `virtual-list.tsx:VirtualList` exports keyed virtual rendering and `VirtualListHandle`.
-- `registry.ts` exports icons, state families (with the one vocabulary `states.life`, the OR-55 mapping `lifeOf` and its readers `life`, `statesOf`, `finishedStates`, `isFinished`, `openStates`), workspaces, actions, harnesses, and stages; `format.ts` exports compact value formatting (including calendar days in the viewer's zone: `day`, `dayStart`, `hourLabel`) and actor/file helpers.
+- `registry.ts` exports icons, state families (with the one vocabulary `states.life`, the OR-55 mapping `lifeOf` and its readers `life`, `statesOf`, `finishedStates`, `isFinished`, `openStates`, all defined in the JSON-free `states.ts`), workspaces, actions, harnesses, and stages; `format.ts` exports compact value formatting (including calendar days in the viewer's zone: `day`, `dayStart`, `hourLabel`) and actor/file helpers.
 - `markdown.ts`/`markdown.tsx` export parsing and SolidJS 2.0 markdown rendering; `clip.ts` exports clipboard message/HTML helpers; `search.ts:matchSearch` applies supported search fields.
 
 ## Invariants

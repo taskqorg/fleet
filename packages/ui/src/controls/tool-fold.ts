@@ -3,7 +3,7 @@
 // thread_entries returns, so pages join because they are contiguous. `Thread quiet` renders these rows.
 import type { Block } from '../../../../contracts/generated/ops.ts';
 import type { ToolCall } from './tool-line.tsx';
-import { openStates } from '../registry.ts';
+import { openStates } from '../states.ts';
 
 type Of<K extends Block['kind']> = Extract<Block, { kind: K }>;
 export type ToolGroup = {

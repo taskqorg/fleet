@@ -3,7 +3,8 @@
 // confirmed, non-stale, non-stalled running executions trigger a duration warning.
 import type { TaskRow as ContractTaskRow } from '../../contracts/generated/ops.ts';
 import vocabulary from '../../contracts/vocabulary.json' with { type: 'json' };
-import { finishedStates, type Harness } from '../../packages/ui/src/registry.ts';
+import type { Harness } from '../../packages/ui/src/registry.ts';
+import { finishedStates } from '../../packages/ui/src/states.ts';
 
 export const TERMINAL_TASK_STATES = finishedStates.task;
 /** Matches coordinator ruleStuck (30m) for judging whether active execution contact is stale. */
