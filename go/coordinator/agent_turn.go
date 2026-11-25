@@ -3,12 +3,15 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // agentExecutions: the executions of a session, in order.
@@ -418,7 +421,8 @@ func agentSubmitFrom(q *Request, r *contract.MessageSendRequest, source, trigger
 	}
 	// A message with attachments is queued, never steered: its files are staged before a turn starts.
 	// A steer reaches only the running turn of the same thread; a message for another thread waits for its own turn.
-	if deref(r.Delivery) == "steer" && active != nil && active.State == "running" && len(attachments) == 0 && active.Thread == thread &&
+	// A run asked to stop takes no steer: the message waits for the next turn (cancelSteerOfStopped).
+	if deref(r.Delivery) == "steer" && active != nil && active.State == "running" && !isTrue(active.StopRequested) && len(attachments) == 0 && active.Thread == thread &&
 		(r.Composer == nil || r.Composer.ExecutionId != nil) {
 		// The steer goes to the host running the turn, whoever sends it (composer, MCP or agent).
 		ok, err := capable(q, deref(active.HostID), "steer")
@@ -601,6 +605,9 @@ func agentCommandReceipt(q *Request, c *agentCommand, e *agentExecution, status 
 			m.State = "steered"
 		case "failed":
 			m.State, m.SteerCommandID = "queued", ""
+			if isTrue(e.StopRequested) {
+				return cancelSteerOfStopped(q, &m)
+			}
 		case "unknown":
 			m.State = "steer_unknown"
 		}
@@ -716,6 +723,9 @@ func agentDecorateStart(q *Request, s *agentSession, e *agentExecution, payload 
 		}{f, forkArgv(s.harness(), f)})
 		e.ForkOfNativeSessionID = f
 	}
+	if err := noteStoppedRequest(q, e.ID, payload); err != nil {
+		return err
+	}
 	if hid := s.PendingHandoffID; hid != "" {
 		h, err := handoffGet(q, hid)
 		if err != nil {
@@ -751,6 +761,44 @@ func agentDecorateStart(q *Request, s *agentSession, e *agentExecution, payload 
 			return sessionPut(q, &fresh)
 		}
 	}
+	return nil
+}
+
+// cancelSteerOfStopped: a steer the stopped run never took is part of the stopped request, sent before the stop (a run
+// asked to stop takes no new steer), so it is cancelled with it rather than requeued as the next turn (F21).
+func cancelSteerOfStopped(q *Request, m *agentQueued) error {
+	m.State = "cancelled"
+	if err := queuedMessagePut(q, m); err != nil {
+		return err
+	}
+	return transitionBotQueuedRun(q, m.ID, "cancelled", "stopped")
+}
+
+// stoppedRequestQuote: how much of a stopped request the next turn's note quotes.
+const stoppedRequestQuote = 300
+
+// noteStoppedRequest: when a stop cancelled the run just before this one in its thread, the turn's text says so first.
+// The native session (or a handoff transcript) still holds that request with no answer, and an agent resuming it took
+// the request as pending and did it alongside the new one (F21). Every channel's stop ends in the same cancelled run, so
+// the web app, Telegram and MCP all get the note. The message record keeps the person's own text.
+func noteStoppedRequest(q *Request, executionID string, payload *contract.StartPayload) error {
+	stopped, err := q.db().StoppedRequestBefore(q.ctx(), executionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	quote := strings.TrimSpace(stopped)
+	if r := []rune(quote); len(r) > stoppedRequestQuote {
+		quote = string(r[:stoppedRequestQuote]) + "…"
+	}
+	note := "[Fleet: the previous request was stopped before it finished"
+	if quote != "" {
+		note += ": \"" + quote + "\""
+	}
+	note += ". It is cancelled: do not continue or answer it unless the message below asks for it again.]"
+	text := note + "\n\n" + deref(payload.Text)
+	payload.Text = &text
 	return nil
 }
 
@@ -876,6 +924,12 @@ func agentReconcile(q *Request) (contract.ReconcileReply, error) {
 			return nil, err
 		}
 		if e.terminal() && c.Status == "pending" {
+			if isTrue(e.StopRequested) {
+				if err := cancelSteerOfStopped(q, &m); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			m.State, m.SteerCommandID = "queued", ""
 			if err := queuedMessagePut(q, &m); err != nil {
 				return nil, err
