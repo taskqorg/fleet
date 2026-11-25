@@ -4,7 +4,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from
 import type { JSX } from '@solidjs/web';
 import { useLocation } from '../router.ts';
 import {
-  ListDetail, LiveRow, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, StageChip, AgeChip, Button,
+  ListDetail, LiveRow, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, StageChip, AgeChip, Button, WorkFacts, peerFence,
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar, useTick,
   type TreeNode, type Harness, type Stage, type StateOf, type Stat, states as states_, stages, isFinished, openStates,
@@ -61,6 +61,14 @@ export function Tasks(props: { id?: string; project?: string; frame?: Frame }) {
   const canResume = (t: TaskRow) => t.state === 'paused';
   const bulk = (action: 'pause' | 'resume' | 'cancel', ts: TaskRow[]) => page.bulk(ts, t => op('task_update', { taskId: t.id, action }), `did not ${action}`);
   const now = useTick(30_000);
+  // Peers for the work-facts outliers (OR-63): the open tasks on this page, never a fixed limit.
+  const fences = createMemo(() => {
+    const open = (page.rows as TaskRow[]).filter(t => !TERMINAL.includes(t.state as (typeof TERMINAL)[number]));
+    return {
+      attempts: peerFence(open.map(t => t.executions)),
+      work: peerFence(open.map(t => (now() - (ms(t.startedAt) ?? NaN)) / 1000).filter(Number.isFinite)),
+    };
+  });
   // The empty text names the focus only when a focus is set: ignored projects alone are not a focus "Show all projects" could clear.
   const focused = createMemo(() => !page.view.project?.length && prefs.value.focus.length > 0);
   const listPane = (
@@ -122,6 +130,7 @@ export function Tasks(props: { id?: string; project?: string; frame?: Frame }) {
           <TaskFacts
             t={t}
             now={now()}
+            fences={fences()}
             spend={
               <RowSpend
                 cost={spend.cost.get(t.id)}
@@ -211,8 +220,13 @@ function TasksSummary(props: { page: ListPage<TaskRow>; filtered: boolean; focus
   );
 }
 
-/** Row facts of a task (OR-37): open questions, delivery stage, active execution state/duration, task age, executions from two, time in state, active harness, cumulative spend. */
-function TaskFacts(props: { t: TaskRow; now: number; spend: JSX.Element }) {
+/**
+ * Row facts of a task (OR-37, OR-63): open questions, delivery stage, run evidence that needs a look (stale, stalled,
+ * unconfirmed), then the shared work facts (controls/work-facts.md: attempts, time in work, agent; the latest attempt and
+ * the time in state in its tooltip), cumulative spend. A finished task shows how long ago it reached its state instead
+ * of a time in work. Outliers stand out against the page's open tasks (peerFence), never against a fixed limit.
+ */
+function TaskFacts(props: { t: TaskRow; now: number; spend: JSX.Element; fences: { attempts?: number; work?: number } }) {
   const f = createMemo(() => describeTaskFacts(props.t, props.now));
   const label = createMemo(() => states_.task[props.t.pauseReason === 'held' ? 'held' : props.t.state].label);
   return (
@@ -228,15 +242,6 @@ function TaskFacts(props: { t: TaskRow; now: number; spend: JSX.Element }) {
       </Show>
       <Show when={isStage(props.t.stage)}><StageChip stage={props.t.stage!} /></Show>
       <Switch>
-        <Match when={f().active.kind === 'active'}>
-          <Fact icon="activity" tip="Current run">
-            <AgeChip
-              t={(f().active as { kind: 'active'; startedAt: number; warnAfterSeconds: number }).startedAt}
-              alertAfter={(f().active as { kind: 'active'; startedAt: number; warnAfterSeconds: number }).warnAfterSeconds}
-              alertLabel="running too long"
-            />
-          </Fact>
-        </Match>
         <Match when={f().active.kind === 'stale'}>
           <Fact icon="history" tip="Run evidence stale">
             <AgeChip
@@ -274,17 +279,15 @@ function TaskFacts(props: { t: TaskRow; now: number; spend: JSX.Element }) {
           }}
         </Match>
       </Switch>
-      <Show when={f().showTaskAge && f().taskAgeAt !== null}>
-        <Fact icon="clock" tip="Task age since first run"><AgeChip t={f().taskAgeAt!} /></Fact>
-      </Show>
-      {/* One run is the usual case and says nothing (OR-17): the count shows from two; the host is in the detail. */}
-      <Show when={f().executions > 1}>
-        <Fact icon={actions.runs} text={String(f().executions)} tip={`${f().executions} executions`} />
-      </Show>
-      <Show when={f().stateAgeAt !== null}>
-        <Fact tip={`${label()} for`}><AgeChip t={f().stateAgeAt!} /></Fact>
-      </Show>
-      <Show when={f().runningHarness}><HarnessMark h={f().runningHarness!} /></Show>
+      <WorkFacts
+        attempts={f().executions}
+        attemptsFence={f().terminal ? undefined : props.fences.attempts}
+        workAt={f().terminal ? undefined : f().taskAgeAt ?? undefined}
+        workFence={props.fences.work}
+        lastAt={f().terminal ? undefined : ms(props.t.lastStartedAt ?? props.t.activeStartedAt) ?? undefined}
+        state={f().stateAgeAt !== null ? { label: label(), at: f().stateAgeAt! } : undefined}
+        agent={props.t.agent ?? props.t.lastAgent}
+      />
       {props.spend}
     </RowFacts>
   );

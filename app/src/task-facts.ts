@@ -1,6 +1,6 @@
 // Pure task row activity and duration-evidence derivation for Tasks (T-FLT-33).
-// Separates task age (first execution start) from current active execution evidence so only
-// confirmed, non-stale, non-stalled running executions trigger a duration warning.
+// Separates task age (first execution start) from current active execution evidence. A long run is judged against the
+// list's peers (work facts, peerFence), never against a fixed duration.
 import type { TaskRow as ContractTaskRow } from '../../contracts/generated/ops.ts';
 import vocabulary from '../../contracts/vocabulary.json' with { type: 'json' };
 import type { Harness } from '../../packages/ui/src/registry.ts';
@@ -9,8 +9,6 @@ import { finishedStates } from '../../packages/ui/src/states.ts';
 export const TERMINAL_TASK_STATES = finishedStates.task;
 /** Matches coordinator ruleStuck (30m) for judging whether active execution contact is stale. */
 export const ACTIVE_EXECUTION_STALE_MS = 30 * 60 * 1000;
-/** Threshold (2h) for warning that a credibly active execution is running too long. */
-export const ACTIVE_EXECUTION_WARN_SECONDS = 2 * 3600;
 
 export type TaskFactsInput = Pick<
   ContractTaskRow,
@@ -31,7 +29,7 @@ export type TaskFactsInput = Pick<
 export type ActiveRunStatus =
   | { kind: 'none' }
   | { kind: 'preparing'; startedAt: number | null }
-  | { kind: 'active'; startedAt: number; warnAfterSeconds: number }
+  | { kind: 'active'; startedAt: number }
   | { kind: 'stale'; startedAt: number | null; lastSeenAt: number }
   | { kind: 'stalled'; startedAt: number | null; lastSeenAt: number | null }
   | { kind: 'unconfirmed'; startedAt: number | null; lastSeenAt: number | null };
@@ -82,7 +80,7 @@ export function describeTaskFacts(t: TaskFactsInput, now: number): TaskFactsSumm
     } else if (lastSeenAt === null && startedAt !== null && now - startedAt >= ACTIVE_EXECUTION_STALE_MS) {
       active = { kind: 'stale', startedAt, lastSeenAt: startedAt };
     } else if (startedAt !== null && lastSeenAt !== null) {
-      active = { kind: 'active', startedAt, warnAfterSeconds: ACTIVE_EXECUTION_WARN_SECONDS };
+      active = { kind: 'active', startedAt };
     } else {
       active = { kind: 'preparing', startedAt };
     }

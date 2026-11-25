@@ -85,13 +85,12 @@ test('TaskFacts separates task age from credible active execution evidence acros
   }
 
   const short = byName['short confirmed continuation'];
-  assert.deepEqual(short.active, { kind: 'active', startedAt: Date.parse(shortStart), warnAfterSeconds: 7200 });
+  assert.deepEqual(short.active, { kind: 'active', startedAt: Date.parse(shortStart) });
   assert.equal(short.showTaskAge, true);
   assert.equal(short.runningHarness, 'codex');
 
   const long = byName['long confirmed continuation'];
-  assert.deepEqual(long.active, { kind: 'active', startedAt: Date.parse(longStart), warnAfterSeconds: 7200 });
-  assert.ok(nowMs - long.active.startedAt >= long.active.warnAfterSeconds * 1000);
+  assert.deepEqual(long.active, { kind: 'active', startedAt: Date.parse(longStart) });
   assert.equal(long.showTaskAge, true);
   assert.equal(long.runningHarness, 'codex');
 
