@@ -28,6 +28,7 @@ const (
 	pinsSkippedMark     = "; skipped: " // in the experiment's goal; the published result repeats it
 	pinsQualifyPipeline = "pins-qualify"
 	pinsQualifyExample  = "pins-qualify-cli"
+	pinsQualifyVersion  = 2 // the example's version in config/lab/examples; a changed example raises it
 )
 
 // pinsCandidate: the proposal's pins of one target, read from its head.
@@ -380,7 +381,7 @@ func pinsQualifyExampleID(q *Request) (string, error) {
 		return "", err
 	}
 	for _, e := range list.Examples {
-		if strings.HasPrefix(e.Name, "examples/"+pinsQualifyExample) {
+		if e.Name == "examples/"+exampleRef(pinsQualifyExample, pinsQualifyVersion)+".json" {
 			return e.ArtifactId, nil
 		}
 	}
