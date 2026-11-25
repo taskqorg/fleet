@@ -1512,6 +1512,34 @@ type RunToken struct {
 	TombstonedAt            *time.Time
 }
 
+type RunnerCallHour struct {
+	Hour              time.Time
+	HostID            string
+	Caller            string
+	ProjectID         *string
+	DirectedBy        *string
+	Currency          *string
+	Basis             *string
+	Calls             int64
+	Failed            int64
+	StartedMin        *time.Time
+	EndedMax          *time.Time
+	WallMs            *int64
+	Value             *float64
+	Unpriced          int64
+	LastSeq           int64
+	SessionID         *string
+	TaskID            *string
+	ParentExecutionID *string
+	Problem           *string
+	ProblemSeq        *int64
+}
+
+type RunnerCallHourDone struct {
+	Hour     time.Time
+	SummedAt time.Time
+}
+
 type SchemaFile struct {
 	Name      string
 	Sha256    string

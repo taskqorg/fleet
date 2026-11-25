@@ -1049,6 +1049,32 @@ CREATE TABLE run_token (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE runner_call_hour (
+  "hour" timestamp with time zone NOT NULL,
+  "host_id" text NOT NULL,
+  "caller" text NOT NULL,
+  "project_id" text,
+  "directed_by" text,
+  "currency" text,
+  "basis" text,
+  "calls" bigint NOT NULL,
+  "failed" bigint NOT NULL,
+  "started_min" timestamp with time zone,
+  "ended_max" timestamp with time zone,
+  "wall_ms" bigint,
+  "value" double precision,
+  "unpriced" bigint NOT NULL,
+  "last_seq" bigint NOT NULL,
+  "session_id" text,
+  "task_id" text,
+  "parent_execution_id" text,
+  "problem" text,
+  "problem_seq" bigint
+);
+CREATE TABLE runner_call_hour_done (
+  "hour" timestamp with time zone NOT NULL,
+  "summed_at" timestamp with time zone NOT NULL
+);
 CREATE TABLE schema_file (
   "name" text NOT NULL,
   "sha256" text NOT NULL,

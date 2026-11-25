@@ -13,40 +13,52 @@ import (
 )
 
 const runnerCallGroups = `-- name: RunnerCallGroups :many
-WITH pick AS (
- SELECT e.id FROM execution e WHERE e.started_at > now()-interval '24 hours'
- UNION SELECT e.id FROM execution e WHERE e.ended_at > now()-interval '24 hours'
+WITH live_from AS (
+ SELECT CASE WHEN EXISTS (SELECT 1 FROM runner_call_hour_done d WHERE d.hour = date_trunc('hour', now()) - interval '1 hour')
+  THEN date_trunc('hour', now()) ELSE date_trunc('hour', now() - interval '24 hours') END AS t
+), summed AS (
+ SELECT h.host_id AS host, h.caller, h.currency, h.basis, h.calls, h.failed, false AS running, h.started_min, h.ended_max, h.wall_ms,
+  h.value, h.unpriced, h.last_seq, h.session_id, h.task_id, h.parent_execution_id, h.problem, h.problem_seq
+ FROM runner_call_hour h, live_from l WHERE h.hour >= date_trunc('hour', now() - interval '24 hours') AND h.hour < l.t
+), pick AS (
+ SELECT e.id FROM execution e, live_from l WHERE e.ended_at >= l.t
  UNION SELECT e.id FROM execution e WHERE e.ended_at IS NULL
-), page AS MATERIALIZED (
- SELECT e.id FROM pick JOIN execution e ON e.id=pick.id
- WHERE e.kind='tool_run' AND (e.state IN ('preparing','running','waiting') OR coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at) > now()-interval '24 hours')
- ORDER BY e.seq DESC LIMIT 20000
-), c AS MATERIALIZED (
- SELECT e.id, e.seq, coalesce(e.host_id, '')::text AS host,
+), c AS (
+ SELECT  e.id, e.seq, coalesce(e.host_id, '')::text AS host,
   coalesce(p.id, e.task_id, 'conn:' || coalesce(e.data->>'connection', ''))::text AS caller,
-  e.state::text AS state, e.session_id, e.task_id, (SELECT t.title FROM task t WHERE t.id=e.task_id) AS title, e.parent_execution_id, e.problem,
+  e.project_id, CASE WHEN e.project_id IS NULL THEN e.directed_by END AS directed_by,
+  e.state::text AS state, e.session_id, e.task_id, e.parent_execution_id, e.problem,
   coalesce(e.started_at, coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at)) AS at, e.ended_at, x.wall_ms,
   CASE WHEN s.stale OR s.payload IS NOT NULL THEN NULL ELSE s.cost_currency END AS currency,
   CASE WHEN s.stale OR s.payload IS NOT NULL THEN NULL ELSE s.cost_basis END AS basis,
   CASE WHEN s.stale OR s.payload IS NOT NULL THEN NULL ELSE s.cost_value END AS value,
   CASE WHEN s.execution_id IS NULL OR s.stale OR s.payload IS NOT NULL THEN 1 ELSE s.cost_unpriced END AS unpriced
- FROM page JOIN execution e ON e.id = page.id LEFT JOIN execution p ON p.id=e.parent_execution_id
+ FROM execution e LEFT JOIN execution p ON p.id=e.parent_execution_id
   LEFT JOIN execution_totals x ON x.execution_id=e.id LEFT JOIN execution_spend s ON s.execution_id=e.id
-), costs AS (
+  JOIN pick ON pick.id = e.id
+ WHERE e.kind='tool_run'
+), live AS (
+ SELECT c.host, c.caller, c.currency, c.basis, 1::bigint AS calls, (c.state IN ('failed','cancelled'))::int::bigint AS failed,
+  c.state IN ('preparing','running','waiting') AS running, c.at AS started_min, c.ended_at AS ended_max, c.wall_ms,
+  c.value::float8 AS value, c.unpriced::bigint AS unpriced, c.seq AS last_seq, c.session_id, c.task_id, c.parent_execution_id, c.problem,
+  CASE WHEN c.problem IS NOT NULL THEN c.seq END AS problem_seq
+ FROM c
+), r AS (SELECT host, caller, currency, basis, calls, failed, running, started_min, ended_max, wall_ms, value, unpriced, last_seq, session_id, task_id, parent_execution_id, problem, problem_seq FROM summed UNION ALL SELECT host, caller, currency, basis, calls, failed, running, started_min, ended_max, wall_ms, value, unpriced, last_seq, session_id, task_id, parent_execution_id, problem, problem_seq FROM live),
+costs AS (
  SELECT z.host, z.caller, jsonb_agg(jsonb_build_object('currency', z.currency, 'basis', z.basis, 'value', z.value, 'unpriced', z.unpriced)) AS j
- FROM (SELECT host, caller, currency, basis, sum(value)::float8 AS value, sum(unpriced)::bigint AS unpriced FROM c GROUP BY 1, 2, 3, 4) z
+ FROM (SELECT host, caller, currency, basis, sum(value)::float8 AS value, sum(unpriced)::bigint AS unpriced FROM r GROUP BY 1, 2, 3, 4) z
  GROUP BY z.host, z.caller
 )
-SELECT g.host, g.caller, count(*)::bigint AS calls,
- count(*) FILTER (WHERE g.state IN ('failed','cancelled'))::bigint AS failed,
- bool_or(g.state IN ('preparing','running','waiting'))::boolean AS running,
- min(g.at)::timestamptz AS started_at, max(g.ended_at)::timestamptz AS ended_at, coalesce(sum(g.wall_ms), -1)::bigint AS wall_ms,
- coalesce((array_agg(g.problem ORDER BY g.seq DESC) FILTER (WHERE g.problem IS NOT NULL))[1], '')::text AS problem,
- coalesce((array_agg(g.session_id ORDER BY g.seq DESC))[1], '')::text AS session_id, coalesce((array_agg(g.task_id ORDER BY g.seq DESC))[1], '')::text AS task_id,
- coalesce((array_agg(g.title ORDER BY g.seq DESC))[1], '')::text AS title, coalesce((array_agg(g.parent_execution_id ORDER BY g.seq DESC))[1], '')::text AS parent_execution_id,
+SELECT r.host, r.caller, sum(r.calls)::bigint AS calls, sum(r.failed)::bigint AS failed, bool_or(r.running)::boolean AS running,
+ min(r.started_min)::timestamptz AS started_at, max(r.ended_max)::timestamptz AS ended_at, coalesce(sum(r.wall_ms), -1)::bigint AS wall_ms,
+ coalesce((array_agg(r.problem ORDER BY r.problem_seq DESC NULLS LAST) FILTER (WHERE r.problem IS NOT NULL))[1], '')::text AS problem,
+ coalesce((array_agg(r.session_id ORDER BY r.last_seq DESC))[1], '')::text AS session_id,
+ coalesce((array_agg(r.task_id ORDER BY r.last_seq DESC))[1], '')::text AS task_id,
+ coalesce((SELECT t.title FROM task t WHERE t.id = (array_agg(r.task_id ORDER BY r.last_seq DESC))[1]), '')::text AS title,
+ coalesce((array_agg(r.parent_execution_id ORDER BY r.last_seq DESC))[1], '')::text AS parent_execution_id,
  coalesce(min(k.j::text), '[]')::jsonb AS costs
-FROM c g LEFT JOIN costs k ON k.host = g.host AND k.caller = g.caller
-GROUP BY g.host, g.caller ORDER BY max(g.seq) DESC
+FROM r LEFT JOIN costs k ON k.host = r.host AND k.caller = r.caller
+GROUP BY r.host, r.caller ORDER BY max(r.last_seq) DESC
 `
 
 type RunnerCallGroupsRow struct {
@@ -66,11 +78,10 @@ type RunnerCallGroupsRow struct {
 	Costs             []byte
 }
 
-// Tool calls of the last 24 hours and every active one (newest 20000), summed per host and caller: the caller run when
-// it exists, else the task, else the connection (the coordinator's own reads carry a fresh session per call). Cost
-// comes per currency and basis from execution_spend, where each call is priced once; a call whose spend row is stale
-// or multi-currency counts as unpriced here (spend_summary prices it). The page of calls is chosen before the joins:
-// under RLS the planner otherwise joins every call of the day before the limit.
+// Tool calls of the last day and every active one, summed per host and caller: the caller run when it exists, else the
+// task, else the connection. Closed hours come from runner_call_hour (by when the calls ended); the hours the pass has
+// not summed yet, the current hour and active calls are read live from execution. Cost per currency and basis comes
+// from execution_spend, priced once per call; a stale or multi-currency spend row counts as unpriced here.
 func (q *Queries) RunnerCallGroups(ctx context.Context) ([]RunnerCallGroupsRow, error) {
 	rows, err := q.db.Query(ctx, runnerCallGroups)
 	if err != nil {
@@ -104,6 +115,77 @@ func (q *Queries) RunnerCallGroups(ctx context.Context) ([]RunnerCallGroupsRow, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const runnerCallHourDone = `-- name: RunnerCallHourDone :exec
+INSERT INTO runner_call_hour_done (hour, summed_at) SELECT h, now() FROM unnest($1::timestamptz[]) h
+ON CONFLICT (hour) DO UPDATE SET summed_at = now()
+`
+
+func (q *Queries) RunnerCallHourDone(ctx context.Context, hours []pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, runnerCallHourDone, hours)
+	return err
+}
+
+const runnerCallHoursDue = `-- name: RunnerCallHoursDue :one
+SELECT coalesce((SELECT min(h) FROM generate_series(date_trunc('hour', now() - interval '25 hours'), date_trunc('hour', now()) - interval '1 hour', interval '1 hour') h
+ WHERE NOT EXISTS (SELECT 1 FROM runner_call_hour_done d WHERE d.hour = h)), date_trunc('hour', now()))::timestamptz AS due
+`
+
+// The first hour of the last day that the pass has not summed (the last day's start when none is missing).
+func (q *Queries) RunnerCallHoursDue(ctx context.Context) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, runnerCallHoursDue)
+	var due pgtype.Timestamptz
+	err := row.Scan(&due)
+	return due, err
+}
+
+const runnerCallHoursPrune = `-- name: RunnerCallHoursPrune :exec
+WITH gone AS (DELETE FROM runner_call_hour WHERE hour < now() - interval '26 hours')
+DELETE FROM runner_call_hour_done WHERE hour < now() - interval '26 hours'
+`
+
+// Hours older than the screens' last day are dropped with their done marks.
+func (q *Queries) RunnerCallHoursPrune(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, runnerCallHoursPrune)
+	return err
+}
+
+const runnerCallHoursSum = `-- name: RunnerCallHoursSum :exec
+WITH gone AS (DELETE FROM runner_call_hour WHERE hour >= $1::timestamptz AND hour < $2::timestamptz),
+c AS (
+ SELECT date_trunc('hour', e.ended_at) AS hour, e.id, e.seq, coalesce(e.host_id, '')::text AS host,
+  coalesce(p.id, e.task_id, 'conn:' || coalesce(e.data->>'connection', ''))::text AS caller,
+  e.project_id, CASE WHEN e.project_id IS NULL THEN e.directed_by END AS directed_by,
+  e.state::text AS state, e.session_id, e.task_id, e.parent_execution_id, e.problem,
+  coalesce(e.started_at, coalesce(e.ended_at,e.started_at,CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint/1000.0) END,e.last_seen_at)) AS at, e.ended_at, x.wall_ms,
+  CASE WHEN s.stale OR s.payload IS NOT NULL THEN NULL ELSE s.cost_currency END AS currency,
+  CASE WHEN s.stale OR s.payload IS NOT NULL THEN NULL ELSE s.cost_basis END AS basis,
+  CASE WHEN s.stale OR s.payload IS NOT NULL THEN NULL ELSE s.cost_value END AS value,
+  CASE WHEN s.execution_id IS NULL OR s.stale OR s.payload IS NOT NULL THEN 1 ELSE s.cost_unpriced END AS unpriced
+ FROM execution e LEFT JOIN execution p ON p.id=e.parent_execution_id
+  LEFT JOIN execution_totals x ON x.execution_id=e.id LEFT JOIN execution_spend s ON s.execution_id=e.id
+ WHERE e.ended_at >= $1::timestamptz AND e.ended_at < $2::timestamptz AND e.kind='tool_run'
+)
+INSERT INTO runner_call_hour (hour, host_id, caller, project_id, directed_by, currency, basis, calls, failed, started_min, ended_max,
+ wall_ms, value, unpriced, last_seq, session_id, task_id, parent_execution_id, problem, problem_seq)
+SELECT c.hour, c.host, c.caller, c.project_id, c.directed_by, c.currency, c.basis, count(*)::bigint, count(*) FILTER (WHERE c.state IN ('failed','cancelled'))::bigint, min(c.at), max(c.ended_at), sum(c.wall_ms)::bigint,
+ sum(c.value)::float8, sum(c.unpriced)::bigint, max(c.seq),
+ (array_agg(c.session_id ORDER BY c.seq DESC))[1], (array_agg(c.task_id ORDER BY c.seq DESC))[1], (array_agg(c.parent_execution_id ORDER BY c.seq DESC))[1],
+ (array_agg(c.problem ORDER BY c.seq DESC) FILTER (WHERE c.problem IS NOT NULL))[1], max(c.seq) FILTER (WHERE c.problem IS NOT NULL)
+FROM c GROUP BY c.hour, c.host, c.caller, c.project_id, c.directed_by, c.currency, c.basis
+`
+
+type RunnerCallHoursSumParams struct {
+	HourFrom pgtype.Timestamptz
+	HourTo   pgtype.Timestamptz
+}
+
+// The runner_call_hours pass (system scope): the tool calls that ended in [@hour_from, @hour_to), summed per hour, host, caller,
+// project, director, currency and basis, replacing what those hours held (runner_call_hour, migration 115).
+func (q *Queries) RunnerCallHoursSum(ctx context.Context, arg RunnerCallHoursSumParams) error {
+	_, err := q.db.Exec(ctx, runnerCallHoursSum, arg.HourFrom, arg.HourTo)
+	return err
 }
 
 const runnerRuns = `-- name: RunnerRuns :many
