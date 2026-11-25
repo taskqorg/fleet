@@ -188,9 +188,12 @@ export type CostFigureLike = {
   usages?: number;
 };
 
-/** A stored cost basis. An unknown one is unavailable: Fleet never claims an estimate it cannot vouch for (formats.md, Money). */
+/**
+ * A stored cost basis. `tokens` (definition usage: tokens priced at list price) is an estimate; any other unknown basis
+ * is unavailable: Fleet never claims an estimate it cannot vouch for (formats.md, Money).
+ */
 export const basisOf = (b: string | null | undefined): Basis =>
-  b === 'measured' || b === 'estimated' || b === 'subscription' || b === 'unavailable' ? b : 'unavailable';
+  b === 'measured' || b === 'estimated' || b === 'subscription' || b === 'unavailable' ? b : b === 'tokens' ? 'estimated' : 'unavailable';
 /** The USD total of cost figures: an unavailable figure or one without a currency is never summed, even with a value (formats.md, Money). */
 export const usdOf = (cost: readonly CostFigureLike[] | null | undefined): number =>
   (cost ?? []).reduce((sum, c) => (c.basis !== 'unavailable' && c.currency === 'USD' && typeof c.value === 'number' ? sum + c.value : sum), 0);

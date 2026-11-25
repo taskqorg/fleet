@@ -135,7 +135,8 @@ test('cause: a stored code reads as its plain sentence, the code only in long; t
 // Spend skips, and a missing time is 0 on one page, NaN or null on the next.
 test('basisOf: an unknown basis is unavailable, never estimated', () => {
   assert.equal(basisOf('measured'), 'measured');
-  assert.equal(basisOf('tokens'), 'unavailable');
+  assert.equal(basisOf('tokens'), 'estimated');
+  assert.equal(basisOf('guess'), 'unavailable');
   assert.equal(basisOf(null), 'unavailable');
 });
 test('usdOf: unavailable figures and figures without a currency are not summed', () => {
