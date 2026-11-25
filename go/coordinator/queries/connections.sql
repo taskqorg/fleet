@@ -70,7 +70,7 @@ SELECT EXISTS (SELECT 1 FROM person WHERE email=$1);
 
 -- name: ConnCallProblem :exec
 -- A failed call's problem, unless one is recorded.
-UPDATE execution SET problem= @problem::text WHERE id= @id::text AND problem IS NULL;
+UPDATE execution SET problem= @problem::text WHERE id= @id::text AND (problem IS NULL OR problem='unknown:unreported');
 
 -- name: ConnUsageKeyCount :one
 -- Other call rows that already counted a usage key.

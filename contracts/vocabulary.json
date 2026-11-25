@@ -24,6 +24,7 @@
     {"id": "agent-crashed", "match": ["harness exited", "harness protocol failed"], "text": "The agent program crashed or broke its protocol. Read the detail; if it repeats, update the agent on the host."},
     {"id": "agent-turn", "match": ["turn.failed"], "text": "The agent reported that its turn failed. Read the detail and the conversation, then answer or run again."},
     {"id": "unregistered", "match": ["unregistered host", "unregistered account", "no registered environment"], "text": "The run names a host, account or environment that Fleet does not know. Register it or change the project settings, then run again."},
+    {"id": "unreported", "match": ["unknown:unreported"], "text": "The run failed without reporting a cause. The host's error is in the run's detail: read it, fix the cause, then run again."},
     {"id": "step", "match": ["step:", "unknown:", "infra:"], "text": "A step failed. Read the detail, fix the cause, then run again."},
     {"id": "other", "match": [""], "text": "The run failed. Read the detail."}
   ],

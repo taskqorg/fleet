@@ -240,7 +240,9 @@ func (q *Queries) ExecutionLockState(ctx context.Context, id string) (ExecutionL
 const executionMove = `-- name: ExecutionMove :exec
 UPDATE execution SET state=$1,
  observation=coalesce($2::observation,observation),
- problem=CASE WHEN $1::execution_state='succeeded' THEN NULL WHEN $3::boolean THEN $4::text ELSE problem END,
+ problem=CASE WHEN $1::execution_state='succeeded' THEN NULL
+  WHEN $1::execution_state='failed' THEN coalesce(CASE WHEN $3::boolean THEN $4::text ELSE problem END,'unknown:unreported')
+  WHEN $3::boolean THEN $4::text ELSE problem END,
  ended_at=CASE WHEN $5::boolean THEN coalesce(ended_at,now()) WHEN $6::boolean THEN NULL ELSE ended_at END
 WHERE id=$7
 `
@@ -255,7 +257,7 @@ type ExecutionMoveParams struct {
 	ID          string
 }
 
-// One move: a success clears the problem; an end keeps a known end time, else now; a reopened step loses its end.
+// One move: a success clears the problem; a failure without one records unknown:unreported (a later cause replaces it); an end keeps a known end time, else now; a reopened step loses its end.
 func (q *Queries) ExecutionMove(ctx context.Context, arg ExecutionMoveParams) error {
 	_, err := q.db.Exec(ctx, executionMove,
 		arg.State,
