@@ -3,7 +3,6 @@
 @layer controls {
   /* Message in the one session view (OR-54) */
   .th-text.quiet .th-main { font-size: var(--font-size-md); }
-  .th-text.quiet.operator .th-main { max-width: min(100%, var(--size-list)); padding: var(--space-3) var(--space-4); border: 0; border-radius: var(--radius-lg); background: var(--surface-sunken); }
 
   /* Tool line (OR-52): chips per kind of call (Conversations v2, owner pick c2) */
   .tool-line { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; font-size: var(--font-size-sm); color: var(--fg-muted); }

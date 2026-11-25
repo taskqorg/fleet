@@ -25,7 +25,8 @@
   .th-meta .agent-mark { max-width: 100%; }
   .th-meta .lbl, .th-meta .who { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .th-main, .th-question { min-width: 0; overflow-wrap: anywhere; }
-  .th-text.operator .th-main { justify-self: end; max-width: 100%; padding-inline-end: var(--space-3); border-inline-end: 2px solid var(--line); }
+  /* The viewer's side (operator, observer) reads full width on the left like every message; a contrasting stripe on the start edge marks it. */
+  .th-text.operator .th-main { padding-inline-start: var(--space-4); border-inline-start: 2px solid var(--accent); }
   .th-head { max-width: 100%; display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; border: 0; background: none; padding: 0; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
   .th-line { display: inline-flex; align-items: center; gap: var(--space-3); min-width: 0; }
   .th-line .svc:not(.ell) { flex: none; white-space: nowrap; }
