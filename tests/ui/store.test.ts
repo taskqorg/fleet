@@ -328,3 +328,21 @@ test('an effect re-run (release and mount in one task) keeps the running doc rea
     waiting[0]({ v: 'first' }); await turn(); assert.equal(docData(name).v, 'first', 'the read started before the re-run is still shown');
   } finally { release(); }
 });
+
+test('a doc reread keeps the objects it did not change, so rows, cards and their inputs on screen are not rebuilt', async () => {
+  const waiting: ((value: unknown) => void)[] = [];
+  const name = 'shared-parts-' + Math.random(), release = holdDoc(name, () => new Promise(ok => waiting.push(ok)));
+  const reply = (state: string) => ({ head: { id: 's', state }, questions: [{ id: 'q1', text: 'Ship?' }, { id: 'q2', text: 'Merge?' }] });
+  try {
+    await turn(); waiting[0](reply('idle')); await turn();
+    const first = docData(name);
+    readDoc(name); await turn(); waiting[1](reply('idle')); await turn();
+    assert.equal(docData(name), first, 'an equal reread keeps the reply object');
+    readDoc(name); await turn(); waiting[2](reply('working')); await turn();
+    const next = docData(name);
+    assert.notEqual(next.head, first.head, 'a changed part is new');
+    assert.equal(next.questions, first.questions, 'an unchanged part keeps its object');
+    readDoc(name); await turn(); waiting[3]({ ...reply('working'), questions: [{ id: 'q0', text: 'New' }, ...reply('working').questions] }); await turn();
+    assert.equal(docData(name).questions[1], first.questions[0], 'a row moved by an insert keeps its object (matched by id)');
+  } finally { release(); }
+});

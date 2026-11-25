@@ -6,7 +6,9 @@
 
 **Anatomy.** Visible label, controlled text or number input (multiline for prose), help/error or disabled reason. Use shared fonts, spacing, surfaces and focus tokens.
 
-**States.** Editable, invalid with retained value, disabled with a reason. The caller owns draft persistence, submission and readback; the control sends no requests and invents no bounds.
+**States.** Editable, invalid with retained value, disabled with a reason. The caller owns submission and readback; the control sends no requests and invents no bounds.
+
+**Drafts.** A form keeps each typed value in the draft store, `createDraft(key, initial)` from `packages/ui` (`drafts.ts`), keyed by the form and field (`system-add:host:id`), and clears it after a save. A remount, a route change or a reload brings the text back; a live update never erases it. A write-only value (`type="password"`, a key) is never kept. Design rule `UI-INPUT` keeps raw `<input>`/`<textarea>` out of app screens.
 
 **Keyboard and accessibility.** Native input keys; label associated with a unique id, help/error through aria-describedby, invalid through aria-invalid. Multiline Enter remains a newline; creating a record is an explicit form action.
 

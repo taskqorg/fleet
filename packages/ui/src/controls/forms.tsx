@@ -6,6 +6,7 @@ import { type IconName, type Harness, harnesses, actions } from '../registry.ts'
 import { bytes, exact } from '../format.ts';
 import { isSubmitEnter } from '../keys.ts';
 import { Icon, Button, StateBadge, Ago, SearchBox, HarnessMark } from './primitives.tsx';
+import { draftEpoch, draftPersistence } from '../drafts.ts';
 
 /** An unsaved form value; it never claims that a setting was applied (controls/text-field.md). */
 export function TextField(p: {
@@ -109,6 +110,8 @@ export type ComposerAttachment = { id: string; name: string; size: number; media
 export type ComposerChip = { key?: string; icon?: IconName; harness?: string | null; label: string; tip?: string; onClick?: () => void };
 export type ComposerProps = {
   onSend: (text: string) => Promise<void> | void; disabledReason?: string; placeholder?: string; draftPersistence?: ComposerPersistence;
+  /** Without app persistence, where the draft is kept in the draft store (drafts.ts), e.g. `home:talk`. */
+  draftKey?: string;
   /** Files from the "+" picker or a paste (images, files, and text longer than longPaste characters as a .txt file). */
   onAttach?: (files: File[]) => void; attachments?: ComposerAttachment[]; onRemoveAttachment?: (id: string) => void;
   chips?: ComposerChip[];
@@ -186,16 +189,29 @@ export function CommandPreview(p:
 /** Pasted text longer than this many characters becomes a .txt attachment (controls/composer.md). */
 export const LONG_PASTE = 4000;
 
-/** App-owned scoped persistence; a target change resets private input and busy state synchronously. */
+/**
+ * App-owned scoped persistence; a target change resets private input and busy state synchronously. Persistence that
+ * arrives after mount (the page validating its target) attaches to the mounted box: the box never remounts for it, and
+ * text typed meanwhile is kept and stored. Only a move from one stored target to another remounts.
+ */
 export function Composer(props: ComposerProps) {
+  let scope = 0, last: string | undefined;
+  const fallback = createMemo(() => (props.draftKey ? draftPersistence(props.draftKey) : undefined));
+  const persistence = () => props.draftPersistence ?? fallback();
+  const target = createMemo(() => {
+    const k = persistence()?.key;
+    if (k !== undefined && last !== undefined && k !== last) scope++;
+    if (k !== undefined) last = k;
+    return 'scope:' + scope;
+  });
   return (
-    <Show when={props.draftPersistence?.key ?? 'memory'} keyed>
+    <Show when={target()} keyed>
       {_ => (
         <ScopedComposer
           onSend={props.onSend}
           disabledReason={props.disabledReason}
           placeholder={props.placeholder}
-          draftPersistence={props.draftPersistence}
+          draftPersistence={persistence()}
           onAttach={props.onAttach}
           attachments={props.attachments}
           onRemoveAttachment={props.onRemoveAttachment}
@@ -219,13 +235,21 @@ function ScopedComposer(p: ComposerProps) {
   const [text, setText] = createSignal('', { ownedWrite: true });
   const [busy, setBusy] = createSignal(false);
   const [warning, setWarning] = createSignal('', { ownedWrite: true });
-  const currentKey = untrack(() => p.draftPersistence?.key);
+  let currentKey = untrack(() => p.draftPersistence?.key);
   let currentText = '';
   let picker: HTMLInputElement | undefined;
 
-  createEffect(() => p.draftPersistence?.key, () => {
+  createEffect(() => [p.draftPersistence?.key, draftEpoch()] as const, ([key]) => {
     try {
-      const value = untrack(() => p.draftPersistence?.read() ?? '');
+      // The store became able to answer (the person is known): keep what is typed and store it, else load the draft.
+      if (key !== undefined && key === currentKey && currentText) { untrack(() => p.draftPersistence)?.write(currentText); return; }
+      const adapter = untrack(() => p.draftPersistence);
+      // Persistence attached late: text typed before it stays in the box and is stored under it.
+      if (currentKey === undefined && key !== undefined && currentText) { currentKey = key; adapter?.write(currentText); setWarning(''); return; }
+      // Persistence gone for a moment (access revalidating): the box keeps what is typed.
+      if (key === undefined) { currentKey = undefined; return; }
+      currentKey = key;
+      const value = adapter?.read() ?? '';
       currentText = value;
       setText(value);
       setWarning('');

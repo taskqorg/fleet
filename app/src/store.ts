@@ -9,6 +9,7 @@ import { compareKeys, type Row, type SortKey } from './lists.ts';
 import type { ListGroup, MembershipAnswer, TaskRow, SessionRow } from '../../contracts/generated/ops.ts';
 import { onClear } from './offline.ts';
 import { persist, restore } from './persist.ts';
+import { share } from './share.ts';
 import { listKey, toPageParams, type View } from '../../packages/view-url/view-url.ts';
 import { withFocus, prefsRead } from './prefs.ts';
 
@@ -133,7 +134,9 @@ export async function loadList(kind: Kind, key: string, view: View, opts: ListRe
     }
     if (!current()) return;
     const now = Date.now();
-    e.state.value = { rows, counts: first.counts, total: first.total, groups: first.groups ?? [], nextAfter, at: now, error: null };
+    // A reread keeps the row objects that did not change (share.ts), so rows on screen are not rebuilt.
+    const was = e.state.peek();
+    e.state.value = { rows: share(was?.rows ?? rows, rows), counts: share(was?.counts ?? first.counts, first.counts), total: first.total, groups: share(was?.groups ?? first.groups ?? [], first.groups ?? []), nextAfter, at: now, error: null };
     persist('list:' + key, e.state.peek());
     e.fetchedAt = now;
     e.pageError = false;
@@ -419,7 +422,9 @@ async function startDoc(name: string, f: DocFlight) {
     const d = await reader.fetch();
     if (newest()) {
       f.shown = read;
-      s.value = { data: d, error: f.failed > read ? s.value?.error ?? null : null };
+      // Patch, not replace: parts equal to what is on screen keep their objects (share.ts), so a live reread never
+      // remounts the rows, cards and inputs it did not change.
+      s.value = { data: share(s.value?.data ?? d, d), error: f.failed > read ? s.value?.error ?? null : null };
       persist(name, d);
       if (f.failed <= read) { entry.fetchedAt = Date.now(); if (entry.dirtySeq === dirtyAtStart) entry.dirty = false; }
       touchDoc(name, entry);

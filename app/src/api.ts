@@ -5,6 +5,7 @@ import { cell } from './signal.ts';
 import { AccessChanged, access, accessGeneration, accessSignal, assertAccessGeneration, ensureAccessGeneration } from './access.ts';
 export { AccessChanged } from './access.ts';
 import type { Ops } from '../../contracts/generated/ops.ts';
+import { setDraftBackend } from '../../packages/ui/src/drafts.ts';
 
 export const online = cell(typeof navigator === 'undefined' ? true : navigator.onLine);
 export const signedOut = cell(false);
@@ -109,6 +110,19 @@ export function createDraftPersistence(scope: DraftScope): DraftPersistence {
     clearIfUnchanged: text => { const r = readInput(scope); if (r.text === text) writeInput(scope, { ...r, text: '' }); },
   };
 }
+/**
+ * The draft store's backend (packages/ui drafts.ts): drafts of answers and form fields, kept per person in localStorage
+ * under fleet-draft:[identity, key]. Before the person is known, drafts stay in memory (the backend throws).
+ */
+const draftItem = (key: string) => {
+  const id = access.peek().identity;
+  if (!id) throw new AccessChanged();
+  return 'fleet-draft:' + JSON.stringify([1, id.identityKey, key]);
+};
+setDraftBackend({
+  read: key => localStorage.getItem(draftItem(key)) ?? '',
+  write: (key, text) => { const k = draftItem(key); if (text) localStorage.setItem(k, text); else localStorage.removeItem(k); },
+});
 /** An explicit identical-body retry retains its original request identity; access reopening never sends. */
 export function sendingId(scope: DraftScope, text: string | null, expectedText?: string): string {
   const r = readInput(scope);

@@ -25,6 +25,7 @@ export function OpenQuestion(p: { q: OpenQuestionRow; answers: Answers<unknown>;
         answered={p.answers.answered(p.q.id)}
         onAnswer={a => void p.answers.send(p.q, a)}
         onSecret={keyConnection(p.q.options) ? v => void p.answers.addKey(p.q, v) : undefined}
+        draftKey={'question:' + p.q.id}
       />
       <AnswerNote answers={p.answers} id={p.q.id} />
     </>

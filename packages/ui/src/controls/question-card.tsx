@@ -1,5 +1,6 @@
 // Question card: the card form of a decision (controls/decision-block.md#card, OR-53, board master `Question card`).
-import { createSignal, For, Show } from 'solid-js';
+import { createEffect, createSignal, For, Show } from 'solid-js';
+import { createDraft } from '../drafts.ts';
 import { isSubmitEnter } from '../keys.ts';
 import { Button, Ago } from './primitives.tsx';
 import type { QuestionChoice } from '../answer.ts';
@@ -17,11 +18,16 @@ export function QuestionCard(p: {
   onAnswer?: (answer: string) => void;
   /** A key request: the one-line field takes the key (write-only) and Add key sends it here, never to onAnswer. */
   onSecret?: (value: string) => void;
+  /** Where the typed answer is kept (drafts.ts), e.g. `question:<id>`: a remount or reload keeps it. A key is never kept. */
+  draftKey?: string;
 }) {
-  const [text, setText] = createSignal('');
+  const [answer, setAnswer, clearAnswer] = createDraft(() => p.draftKey);
+  const [secret, setSecret] = createSignal('');
   const danger = () => p.tone === 'danger';
+  // An answered question has no draft left.
+  createEffect(() => !!p.answered, done => { if (done) clearAnswer(); });
   const send = (s: string) => { if (s.trim() && !p.answering) p.onAnswer?.(s.trim()); };
-  const addKey = () => { const v = text().trim(); if (v && !p.answering) p.onSecret?.(v); };
+  const addKey = () => { const v = secret().trim(); if (v && !p.answering) p.onSecret?.(v); };
   return (
     <Show
       when={p.answered}
@@ -49,25 +55,25 @@ export function QuestionCard(p: {
                 type="password"
                 autocomplete="off"
                 spellcheck={false}
-                value={text()}
+                value={secret()}
                 placeholder="Paste key…"
                 aria-label={`Key: ${p.question}`}
                 disabled={!!p.answering}
-                onInput={e => setText(e.currentTarget.value)}
+                onInput={e => setSecret(e.currentTarget.value)}
                 onKeyDown={e => { if (isSubmitEnter(e)) { e.preventDefault(); addKey(); } }}
               />
-              <Button label="Add key" icon="shield" kind="primary" busy={p.answering === 'key added'} disabledReason={text().trim() ? undefined : 'Paste the key first'} onClick={addKey} />
+              <Button label="Add key" icon="shield" kind="primary" busy={p.answering === 'key added'} disabledReason={secret().trim() ? undefined : 'Paste the key first'} onClick={addKey} />
             </div>
           </Show>
           <Show when={!danger() && !p.onSecret}>
             <input
               class="qcard-answer"
-              value={text()}
+              value={answer()}
               placeholder="Answer…"
               aria-label={`Answer: ${p.question}`}
               disabled={!!p.answering}
-              onInput={e => setText(e.currentTarget.value)}
-              onKeyDown={e => { if (isSubmitEnter(e)) { e.preventDefault(); send(text()); } }}
+              onInput={e => setAnswer(e.currentTarget.value)}
+              onKeyDown={e => { if (isSubmitEnter(e)) { e.preventDefault(); send(answer()); } }}
             />
           </Show>
         </div>

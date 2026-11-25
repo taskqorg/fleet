@@ -267,6 +267,26 @@ describe('UI design rules (S9)', () => {
     assert.deepEqual(errors, []);
   });
 
+  // Requirement: every text a person types in app screens lives in the draft store (packages/ui drafts.ts) through the
+  // packages/ui primitives (Composer, TextField, QuestionCard), keyed by its target.
+  // Risk: a raw <input>/<textarea> in a view keeps its text in the DOM or component state; a live reread or remount
+  // erases it and drops focus with no test failing (the 2026-11-26 bot page composer report).
+  test('UI-INPUT: no raw <input> or <textarea> in app/src', () => {
+    const errors: string[] = [];
+    for (const { relPath, sf } of files) {
+      if (!relPath.startsWith('app/src/')) continue;
+      const walk = (n: Node) => {
+        if (n.kind === SyntaxKind.JsxOpeningElement || n.kind === SyntaxKind.JsxSelfClosingElement) {
+          const tag = (n as unknown as { tagName: Node }).tagName.getText(sf);
+          if (tag === 'input' || tag === 'textarea') errors.push(`${posString(sf, relPath, n)}: breaks UI-INPUT; use TextField, Composer or QuestionCard from packages/ui (drafts.ts keeps the text)`);
+        }
+        n.forEachChild(walk);
+      };
+      sf.forEachChild(walk);
+    }
+    assert.deepEqual(errors, []);
+  });
+
   // Requirement: fleet-standard.md S9 requires views to read operations through useOp/usePreparedOp/useListPage rather than raw op() calls.
   // Risk: raw op() reads in views bypass canonical request caching, feed invalidation, and offline restoration.
   test('UI-OP: no unexempted raw op() reads in app/src/views', () => {

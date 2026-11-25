@@ -40,7 +40,7 @@ A message that starts with a known command changes a context item of the session
 
 ## Authorized persistence
 
-The app injects a scoped persistence adapter after validating the identity and target. The shared control has no storage access; without an adapter it is memory-only. Closing the access gate quarantines authored unsent text under its original identity and target. Restore requires the same validated identity and freshly authorized target, including after changed grants. Other actors never inspect it. Legacy unscoped drafts remain quarantined without attribution or deletion.
+The app injects a scoped persistence adapter once the identity is validated; the target may still be validating (sending waits for it). An adapter that arrives after mount attaches to the mounted box: it never remounts, and text typed meanwhile is kept and stored. Only a move to another stored target remounts the box. Without an app adapter, `draftKey` keeps the draft in the shared draft store (`drafts.ts`, the Home composer uses `home:talk`); with neither, it is memory-only. Closing the access gate quarantines authored unsent text under its original identity and target. Restore requires the same validated identity, including after changed grants. Other actors never inspect it. Legacy unscoped drafts remain quarantined without attribution or deletion.
 
 Send completion clears only the originally submitted text if unchanged. Newer input and newer-generation records survive late success. Unknown submission outcomes retain the original request identity and body; reopening never automatically resends them. Storage failure preserves the authorized in-memory input and exposes a warning.
 
