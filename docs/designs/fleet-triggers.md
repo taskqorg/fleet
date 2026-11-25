@@ -15,7 +15,7 @@ The three mechanisms do the same thing: at a time or on a change, they put a mes
 3. **Quiet checks show as one line.** A check that finds no change sends no message and makes no model call. The trigger counts quiet checks since its last fire. The conversation shows one collapsed line, updated in place, for example "Timer: 12 checks without changes since 14:05".
 4. **Presets are files.** `config/triggers/*.json`, reviewed by pull request like agent profiles. Project presets come later through definitions, if needed.
 5. **The condition is on by default.** Migrated watch timers (the HAL0 5-minute timer included) and the conversation-check preset get the condition "only if something changed". A timer without the condition stays available as an edit.
-6. **Old storage goes now.** The `watch`, `bot_automation` and `bot_wake_cursor` tables and the bot settings fields `scheduleTime`, `scheduleZone` and `wakeOnNeedsYou` are migrated and dropped. The operations `watch_get`, `watch_set`, `watch_timer_set`, `watch_stop`, `bot_automations` and `bot_automation_save` stay as thin wrappers over triggers until the UI moves to the trigger operations. Then they are deleted.
+6. **Old storage goes now.** The `watch`, `bot_automation` and `bot_wake_cursor` tables and the bot settings fields `scheduleTime`, `scheduleZone` and `wakeOnNeedsYou` are migrated; their storage is dropped by a later migration, once no release a rollback may start still reads it. The operations `watch_get`, `watch_set`, `watch_timer_set`, `watch_stop`, `bot_automations` and `bot_automation_save` stay as thin wrappers over triggers until the UI moves to the trigger operations. Then they are deleted.
 
 Unchanged defaults: no limits (no minimum interval, no trigger count cap); the same rights as today; the "child session finished" notice (`wake:<execution>`, `agent_turn.go`) and board wakes stay built-in notices, not triggers.
 
@@ -83,7 +83,7 @@ One schema migration:
 - Each `bot_automation` row becomes a bot trigger with the same id: `schedule` becomes `daily`, `needs_you` becomes every 15 s with `ifChanged` from its event (`all`: question and execution), and `manual` stays `manual`. `instructions` become `text`. The trigger keeps `event_cursor` and `last_schedule_date`.
 - A bot whose current settings have `scheduleTime` or `wakeOnNeedsYou` gets the matching bot triggers. Its `bot_wake_cursor` gives the cursor and the last daily slot.
 - `bot_run.automation_id` becomes `bot_run.trigger_id`.
-- The `watch`, `bot_automation` and `bot_wake_cursor` tables and the three bot settings fields are dropped. The bot editor stops showing the legacy schedule fields.
+- The `watch`, `bot_automation` and `bot_wake_cursor` tables, `bot_run.automation_id` and the three bot settings columns stay unused (expand only), so a rollback to a release up to five back still starts (`deploy/migrate-check.sh`); a later migration drops them. The settings fields leave the contract now, and the bot editor stops showing them.
 
 The wrappers read and write triggers: `watch_*` uses the session's `focus-changes` and `conversation-check` triggers, and `bot_automation*` uses the bot's triggers with the same ids.
 

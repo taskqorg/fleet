@@ -70,6 +70,13 @@ CREATE POLICY live ON bot AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show
 DROP POLICY IF EXISTS project_scope ON bot;
 CREATE POLICY project_scope ON bot FOR ALL TO public USING (fleet_visible(project_id));
 
+-- bot_automation
+ALTER TABLE bot_automation ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON bot_automation;
+CREATE POLICY project_scope ON bot_automation FOR ALL TO public USING ((EXISTS ( SELECT 1
+   FROM bot b
+  WHERE ((b.id = bot_automation.bot_id) AND (b.project_id = bot_automation.project_id)))));
+
 -- bot_memory_revision
 ALTER TABLE bot_memory_revision ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS project_scope ON bot_memory_revision;
@@ -97,6 +104,13 @@ DROP POLICY IF EXISTS live ON bot_task;
 CREATE POLICY live ON bot_task AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND (NOT (project_id = ANY (fleet_deleted_projects()))))));
 DROP POLICY IF EXISTS project_scope ON bot_task;
 CREATE POLICY project_scope ON bot_task FOR ALL TO public USING (fleet_visible(project_id));
+
+-- bot_wake_cursor
+ALTER TABLE bot_wake_cursor ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS project_scope ON bot_wake_cursor;
+CREATE POLICY project_scope ON bot_wake_cursor FOR ALL TO public USING ((EXISTS ( SELECT 1
+   FROM bot b
+  WHERE (b.id = bot_wake_cursor.bot_id))));
 
 -- budget
 ALTER TABLE budget ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
@@ -569,6 +583,13 @@ CREATE POLICY project_scope ON upload FOR ALL TO public USING (fleet_visible(pro
 ALTER TABLE wake_outbox ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS maintenance ON wake_outbox;
 CREATE POLICY maintenance ON wake_outbox FOR ALL TO public USING ((current_setting('fleet.project_ids'::text, true) = '*'::text));
+
+-- watch
+ALTER TABLE watch ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS live ON watch;
+CREATE POLICY live ON watch AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[])))))));
+DROP POLICY IF EXISTS project_scope ON watch;
+CREATE POLICY project_scope ON watch FOR ALL TO public USING (fleet_visible(project_id));
 
 -- work_plan
 ALTER TABLE work_plan ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;

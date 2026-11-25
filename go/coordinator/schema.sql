@@ -4807,7 +4807,7 @@ ALTER TABLE bot
 
 -- migration 106: triggers (docs/designs/fleet-triggers.md): one table for timed and change wakes of a conversation or a
 -- bot. The session watch (kinds and timer), bot automations and the bot settings' own daily wake and Needs you switch
--- become trigger rows; their tables and fields go. A trigger's id is the caller's; migrated watch triggers take
+-- become trigger rows; their tables and fields stay unused until a later migration drops them. A trigger's id is the caller's; migrated watch triggers take
 -- '<preset>:<session>', migrated bot settings '<preset>:<bot>', automations keep their ids.
 SELECT set_config('fleet.project_ids', '*', true);
 CREATE TABLE trigger (
@@ -4892,9 +4892,9 @@ WHERE b.tombstoned_at IS NULL AND r.wake_on_needs_you;
 
 ALTER TABLE bot_run ADD COLUMN trigger_id text NULL REFERENCES trigger(id) ON DELETE SET NULL;
 UPDATE bot_run SET trigger_id = automation_id WHERE automation_id IS NOT NULL;
-ALTER TABLE bot_run DROP COLUMN automation_id;
 CREATE INDEX bot_run_trigger_seq ON bot_run(trigger_id, seq DESC) WHERE trigger_id IS NOT NULL AND tombstoned_at IS NULL;
-DROP TABLE watch;
-DROP TABLE bot_automation;
-DROP TABLE bot_wake_cursor;
-ALTER TABLE bot_revision DROP COLUMN schedule_time, DROP COLUMN schedule_zone, DROP COLUMN wake_on_needs_you;
+-- Expand only: the replaced tables and columns stay for the releases a rollback may still start (deploy/migrate-check.sh);
+-- this release neither reads nor writes them, and a later migration drops them. New bot revisions leave the old
+-- schedule fields empty.
+ALTER TABLE bot_revision ALTER COLUMN schedule_time SET DEFAULT '', ALTER COLUMN schedule_zone SET DEFAULT '',
+ ALTER COLUMN wake_on_needs_you SET DEFAULT false;

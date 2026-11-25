@@ -30,6 +30,9 @@ CREATE OR REPLACE TRIGGER board_message_change AFTER INSERT OR DELETE OR UPDATE 
 CREATE OR REPLACE TRIGGER bot_change AFTER INSERT OR DELETE OR UPDATE ON bot FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER bot_zcode BEFORE INSERT OR UPDATE OF project_id, code ON bot FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
 
+-- bot_automation
+CREATE OR REPLACE TRIGGER bot_automation_change AFTER INSERT OR DELETE OR UPDATE OF revision ON bot_automation FOR EACH ROW EXECUTE FUNCTION fleet_change();
+
 -- bot_run
 CREATE OR REPLACE TRIGGER bot_run_change AFTER INSERT OR DELETE OR UPDATE ON bot_run FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER bot_run_touch BEFORE UPDATE ON bot_run FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
@@ -178,6 +181,11 @@ CREATE OR REPLACE TRIGGER trigger_update AFTER UPDATE ON trigger FOR EACH ROW WH
 
 -- upload
 CREATE OR REPLACE TRIGGER upload_tombstone BEFORE INSERT ON upload FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+
+-- watch
+CREATE OR REPLACE TRIGGER watch_change AFTER INSERT OR DELETE ON watch FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE OR REPLACE TRIGGER watch_tombstone BEFORE INSERT ON watch FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+CREATE OR REPLACE TRIGGER watch_update AFTER UPDATE ON watch FOR EACH ROW WHEN ((old.payload - '{cursor,limitsSignaled}'::text[]) IS DISTINCT FROM (new.payload - '{cursor,limitsSignaled}'::text[])) EXECUTE FUNCTION fleet_change();
 
 -- work_plan
 CREATE OR REPLACE TRIGGER work_plan_change AFTER INSERT OR DELETE OR UPDATE ON work_plan FOR EACH ROW EXECUTE FUNCTION fleet_change();

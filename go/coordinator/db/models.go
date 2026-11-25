@@ -546,6 +546,23 @@ type Bot struct {
 	AvatarGlow            string
 }
 
+type BotAutomation struct {
+	ID               string
+	BotID            string
+	ProjectID        string
+	Revision         int32
+	Name             string
+	Instructions     string
+	Kind             string
+	ScheduleTime     string
+	ScheduleZone     string
+	Event            string
+	Enabled          bool
+	EffectiveSince   time.Time
+	EventCursor      int64
+	LastScheduleDate string
+}
+
 type BotMemoryRevision struct {
 	BotID     string
 	Revision  int32
@@ -554,14 +571,17 @@ type BotMemoryRevision struct {
 }
 
 type BotRevision struct {
-	BotID        string
-	Revision     int32
-	Name         string
-	Purpose      string
-	ProfileID    string
-	Instructions string
-	Soul         string
-	CreatedAt    time.Time
+	BotID          string
+	Revision       int32
+	Name           string
+	Purpose        string
+	ProfileID      string
+	Instructions   string
+	Soul           string
+	ScheduleTime   string
+	ScheduleZone   string
+	WakeOnNeedsYou bool
+	CreatedAt      time.Time
 }
 
 type BotRun struct {
@@ -588,6 +608,7 @@ type BotRun struct {
 	TombstonedAt    *time.Time
 	Payload         []byte
 	Seq             int64
+	AutomationID    *string
 	TriggerID       *string
 }
 
@@ -604,6 +625,15 @@ type BotTask struct {
 	UpdatedAt    time.Time
 	TombstonedAt *time.Time
 	Seq          int64
+}
+
+type BotWakeCursor struct {
+	BotID             string
+	ProjectID         string
+	NeedsYouChangeSeq int64
+	LastScheduleKey   string
+	LastScheduleAt    *time.Time
+	UpdatedAt         time.Time
 }
 
 type Budget struct {
@@ -1726,6 +1756,16 @@ type WakeOutbox struct {
 	Channel   string
 	Payload   string
 	CreatedAt time.Time
+}
+
+type Watch struct {
+	ID           string
+	SessionID    string
+	ProjectID    *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
 }
 
 type WorkPlan struct {
