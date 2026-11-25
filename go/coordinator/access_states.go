@@ -35,13 +35,14 @@ func accessGrantInsert(q *Request, p db.AccessGrantInsertParams) error {
 // accessGrantTransition moves grant id to state to, locking its row; the same state is no move, a move the table does
 // not allow is 409.
 func accessGrantTransition(q *Request, id, to string) error {
-	from, err := q.db().AccessGrantLockState(q.ctx(), id)
+	row, err := q.db().AccessGrantLockState(q.ctx(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errNotFound
 	}
 	if err != nil {
 		return err
 	}
+	from := row.State
 	if from == to {
 		return nil
 	}
@@ -51,5 +52,6 @@ func accessGrantTransition(q *Request, id, to string) error {
 	if err := q.db().AccessGrantMove(q.ctx(), db.AccessGrantMoveParams{ID: id, State: to}); err != nil {
 		return err
 	}
-	return audit(q, "access-grant:"+id, "state", from, to, auditExtra{})
+	// The move is the grant's project's history, like its asked row: without the project only operators would see it.
+	return audit(q, "access-grant:"+id, "state", from, to, auditExtra{ProjectID: &row.ProjectID})
 }

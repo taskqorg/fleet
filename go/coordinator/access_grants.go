@@ -529,8 +529,8 @@ func accessQuestionEnded(q *Request, questionID string, ev questionEvent) error 
 	if err != nil {
 		return err
 	}
-	state, err := q.db().AccessGrantLockState(q.ctx(), id)
-	if err != nil || state != "asked" {
+	grant, err := q.db().AccessGrantLockState(q.ctx(), id)
+	if err != nil || grant.State != "asked" {
 		return err
 	}
 	switch {

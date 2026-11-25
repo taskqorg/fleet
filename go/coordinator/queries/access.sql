@@ -44,7 +44,7 @@ WHERE project_id = @project_id AND server_id = @server_id AND id <> @id AND dele
  AND state IN ('provisioning', 'ready', 'failed');
 
 -- name: AccessGrantLockState :one
-SELECT state FROM access_grant WHERE id = $1 FOR UPDATE;
+SELECT state, project_id FROM access_grant WHERE id = $1 FOR UPDATE;
 
 -- name: AccessGrantMove :exec
 UPDATE access_grant SET state = @state, updated_at = clock_timestamp() WHERE id = @id;
