@@ -276,6 +276,35 @@ func (v *DefinitionRef) Validate() error {
 	return nil
 }
 
+// DeliveryStage: pr_failed: open, no run active, and the last finished pull_request run on its head failed; mq_failed: open, not in the merge queue and not set to enter it, and the latest finished merge_group run of some workflow failed after its head was first checked (it was removed from the queue and no new commit followed); both read only with a GitHub key
+type DeliveryStage string
+
+const (
+	DeliveryStagePrOpen     DeliveryStage = "pr_open"
+	DeliveryStagePrCi       DeliveryStage = "pr_ci"
+	DeliveryStagePrFailed   DeliveryStage = "pr_failed"
+	DeliveryStageMqWait     DeliveryStage = "mq_wait"
+	DeliveryStageMqCi       DeliveryStage = "mq_ci"
+	DeliveryStageMqFailed   DeliveryStage = "mq_failed"
+	DeliveryStageReleasing  DeliveryStage = "releasing"
+	DeliveryStageInstalling DeliveryStage = "installing"
+	DeliveryStageInstalled  DeliveryStage = "installed"
+	DeliveryStageMerged     DeliveryStage = "merged"
+)
+
+// DeliveryStageValues lists every DeliveryStage in schema order.
+var DeliveryStageValues = []DeliveryStage{DeliveryStagePrOpen, DeliveryStagePrCi, DeliveryStagePrFailed, DeliveryStageMqWait, DeliveryStageMqCi, DeliveryStageMqFailed, DeliveryStageReleasing, DeliveryStageInstalling, DeliveryStageInstalled, DeliveryStageMerged}
+
+// Valid: v is one of the schema's values.
+func (v DeliveryStage) Valid() bool {
+	for _, x := range DeliveryStageValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type DurationBreakdown struct {
 	ActiveMs        *int64        `json:"activeMs"`
 	ApiMs           *int64        `json:"apiMs"`
@@ -721,30 +750,31 @@ func (v SystemActivity) Valid() bool {
 
 // TaskRow: A row of task_page and list_membership (tasks.go taskListRow); sortKey: [group key, sort key, id]. state is a list state (held included).
 type TaskRow struct {
-	ActiveLastSeenAt  *string       `json:"activeLastSeenAt,omitempty"`
-	ActiveObservation *string       `json:"activeObservation,omitempty"`
-	ActiveStalled     *bool         `json:"activeStalled,omitempty"`
-	ActiveStartedAt   *string       `json:"activeStartedAt,omitempty"`
-	ActiveState       *string       `json:"activeState,omitempty"`
-	Agent             *string       `json:"agent"`
-	Code              *string       `json:"code"`
-	CreatedAt         string        `json:"createdAt"`
-	Executions        int64         `json:"executions"`
-	Host              *string       `json:"host"`
-	Id                string        `json:"id"`
-	LastAgent         *string       `json:"lastAgent"`
-	LastStartedAt     *string       `json:"lastStartedAt,omitempty"`
-	OpenQuestions     int64         `json:"openQuestions"`
-	PauseReason       *string       `json:"pauseReason"`
-	Priority          string        `json:"priority"`
-	ProjectId         *string       `json:"projectId"`
-	SortKey           []SortKeyPart `json:"sortKey"`
-	StartedAt         *string       `json:"startedAt"`
-	State             string        `json:"state"`
-	StateAt           *string       `json:"stateAt"`
-	Title             string        `json:"title"`
-	UpdatedAt         string        `json:"updatedAt"`
-	WaitReason        *string       `json:"waitReason"`
+	ActiveLastSeenAt  *string        `json:"activeLastSeenAt,omitempty"`
+	ActiveObservation *string        `json:"activeObservation,omitempty"`
+	ActiveStalled     *bool          `json:"activeStalled,omitempty"`
+	ActiveStartedAt   *string        `json:"activeStartedAt,omitempty"`
+	ActiveState       *string        `json:"activeState,omitempty"`
+	Agent             *string        `json:"agent"`
+	Code              *string        `json:"code"`
+	CreatedAt         string         `json:"createdAt"`
+	Executions        int64          `json:"executions"`
+	Host              *string        `json:"host"`
+	Id                string         `json:"id"`
+	LastAgent         *string        `json:"lastAgent"`
+	LastStartedAt     *string        `json:"lastStartedAt,omitempty"`
+	OpenQuestions     int64          `json:"openQuestions"`
+	PauseReason       *string        `json:"pauseReason"`
+	Priority          string         `json:"priority"`
+	ProjectId         *string        `json:"projectId"`
+	SortKey           []SortKeyPart  `json:"sortKey"`
+	Stage             *DeliveryStage `json:"stage,omitempty"`
+	StartedAt         *string        `json:"startedAt"`
+	State             string         `json:"state"`
+	StateAt           *string        `json:"stateAt"`
+	Title             string         `json:"title"`
+	UpdatedAt         string         `json:"updatedAt"`
+	WaitReason        *string        `json:"waitReason"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -754,6 +784,11 @@ func (v *TaskRow) Validate() error {
 	}
 	for i := range v.SortKey {
 		if err := Check(&v.SortKey[i], "sortKey"); err != nil {
+			return err
+		}
+	}
+	if v.Stage != nil {
+		if err := Check(v.Stage, "stage"); err != nil {
 			return err
 		}
 	}

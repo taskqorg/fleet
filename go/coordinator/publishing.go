@@ -575,6 +575,20 @@ func publishingStatus(q *Request, r *contract.PublishingStatusRequest) (contract
 		}
 	}
 
+	if err := linkDeliveryItems(q, items); err != nil {
+		return none, err
+	}
+	if task := deref(r.TaskId); task != "" {
+		kept := map[string]bool{}
+		items = slices.DeleteFunc(items, func(it contract.DeliveryItem) bool {
+			mine := deref(it.TaskId) == task
+			kept[fmt.Sprintf("%s|%s#%d", it.ProjectId, strings.ToLower(it.Repo), it.Number)] = mine
+			return !mine
+		})
+		recs = slices.DeleteFunc(recs, func(rec contract.PublishingRecord) bool {
+			return !kept[fmt.Sprintf("%s|%s#%d", rec.ProjectId, strings.ToLower(rec.Repo), rec.Number)]
+		})
+	}
 	return contract.PublishingStatusReply{
 		Capabilities: caps,
 		Error:        base.Error,

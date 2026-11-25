@@ -137,7 +137,8 @@
         "repoId": {"type": "string"},
         "branch": {"type": "string"},
         "sessionId": {"type": "string"},
-        "executionId": {"type": "string"}
+        "executionId": {"type": "string"},
+        "taskId": {"$comment": "only the pull requests from branches of this task's sessions", "type": "string"}
       }
     },
     "PublishingRecord": {

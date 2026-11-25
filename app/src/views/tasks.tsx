@@ -7,7 +7,7 @@ import {
   ListDetail, LiveRow, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, StageChip, AgeChip, Button, WorkFacts, peerFence,
   SplitButton, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   OpsSummary, StatStrip, StateCounters, KvRow, Num, TabBar, useTick,
-  type TreeNode, type Harness, type Stage, type StateOf, type Stat, states as states_, stages, isFinished, openStates,
+  type TreeNode, type Harness, type StateOf, type Stat, states as states_, isFinished, openStates,
   type Tone, keyConnection, answerChoices, AnswerNote, EntityCode, actor, fileLabel, viewOf, ShellStatus, causeOf,
 } from '../../../packages/ui/src/index.ts';
 import { op, online } from '../api.ts';
@@ -28,8 +28,7 @@ import { CHIP_STAGE } from './delivery-model.tsx';
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
 const SORTS = [['changed', 'Changed'], ['created', 'Created']] as const;
 /** The contract's task row; its state is a list state (held included). */
-type TaskRow = ContractTaskRow & { state: StateOf<'task'>; stage?: Stage | null };
-const isStage = (s: string | null | undefined): s is Stage => !!s && s in stages;
+type TaskRow = ContractTaskRow & { state: StateOf<'task'> };
 const SYSTEM_PRESET_TIPS = {
   Running: 'All unresolved tasks: queued, in progress, waiting, held, paused',
   'Needs me': 'Tasks waiting on you or failed',
@@ -240,7 +239,7 @@ function TaskFacts(props: { t: TaskRow; now: number; spend: JSX.Element; fences:
           {f().openQuestions}
         </span>
       </Show>
-      <Show when={isStage(props.t.stage)}><StageChip stage={props.t.stage!} /></Show>
+      <Show when={props.t.stage}>{s => <StageChip stage={CHIP_STAGE[s()]} />}</Show>
       <Switch>
         <Match when={f().active.kind === 'stale'}>
           <Fact icon="history" tip="Run evidence stale">
@@ -382,14 +381,12 @@ function TaskDetail(props: { id: string; onClose: () => void }) {
       && !(TERMINAL as readonly string[]).includes(task.state) && task.state !== 'paused';
   });
   const conversation = () => latestExecution()?.sessionId;
-  // The task's pull requests: publishing records its executions opened, each in its current delivery stage (J4).
+  // The task's pull requests: those from branches of its sessions (items' taskId), each in its current delivery
+  // stage, the first (lowest number) first (J4).
+  // The project's read (not taskId): a delivery change names the project, so it rereads this one.
   const delivery = useOp('publishing_status', () => (t()?.projectId ? { projectId: t()!.projectId! } : null), { every: 300_000 });
-  const prs = createMemo(() => {
-    const ids = new Set((t()?.executions ?? []).map(e => e.id)), d = delivery.data;
-    if (!d) return [];
-    const mine = new Set(d.records.filter(r => r.sourceExecutionId && ids.has(r.sourceExecutionId)).map(r => `${r.repo}#${r.number}`));
-    return d.items.filter(it => mine.has(`${it.repo}#${it.number}`));
-  });
+  const prs = createMemo(() => (delivery.data?.items ?? []).filter(it => it.taskId === t()?.id)
+    .sort((a, b) => a.number - b.number || a.repo.localeCompare(b.repo)));
   const reported = createMemo(() =>
     (t()?.executions ?? []).flatMap(e => (e.report ? [e.report] : [])).sort((a, b) => b.at - a.at)[0],
   );
