@@ -769,6 +769,9 @@ func triggerSend(q *Request, t db.Trigger, target triggerTarget, slot string, al
 		if err != nil {
 			return sent, err
 		}
+		if i == 0 && !ok && target.bot != nil {
+			return false, nil // the bot's wake was refused (paused, busy, no authority): no item queues behind it
+		}
 		sent = sent || ok
 	}
 	return sent, nil
