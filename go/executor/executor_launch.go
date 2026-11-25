@@ -44,7 +44,7 @@ func (e *executor) run(c M) error {
 		cmd = contract.Command{Raw: json.RawMessage(body)} // receipts and events still read its identities
 	}
 	signalMu.Lock()
-	draining := updatePending(lastSignal)
+	draining := fencedLocked(time.Now())
 	signalMu.Unlock()
 	if draining && kind != contract.CommandKindStop && kind != contract.CommandKindSteer {
 		return nil

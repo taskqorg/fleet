@@ -234,21 +234,21 @@ type dispatchHost struct {
 
 // hostSeen: the fields dispatch reads of a host observation.
 type hostSeen struct {
-	Capabilities   []string               `json:"capabilities"`
-	GitConnections *[]string              `json:"gitConnections"`
-	ProjectRoots   *[]string              `json:"projectRoots"`
-	Load           *hostLoadObservation   `json:"load"`
-	Version        *string                `json:"version"`
-	Update         *contract.UpdateResult `json:"update"`
+	Capabilities   []string              `json:"capabilities"`
+	GitConnections *[]string             `json:"gitConnections"`
+	ProjectRoots   *[]string             `json:"projectRoots"`
+	Load           *hostLoadObservation  `json:"load"`
+	Version        *string               `json:"version"`
+	Drain          *contract.DrainReport `json:"drain"`
 }
 
-// drainTarget: the newer release a host's executor waits to install. While it waits, the executor admits no start
-// (executor_launch.go), so a run placed there stays preparing until the update lands.
+// drainTarget: the newer release a host's executor drains for while it admits no new start (executor_launch.go,
+// hostDrain), so a run placed there would stay preparing until the update lands.
 func (o hostSeen) drainTarget() string {
-	if o.Update == nil || o.Update.State != contract.UpdateStatePending || o.Version == nil || !versionLess(*o.Version, o.Update.Version) {
+	if o.Drain == nil || !o.Drain.Fenced {
 		return ""
 	}
-	return o.Update.Version
+	return o.Drain.Target
 }
 
 // dispatchAccountRec: a subscription (managed_account) decoded once for dispatch.

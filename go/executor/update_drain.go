@@ -42,6 +42,63 @@ func (e *executor) activityLease() (bool, error) {
 	return true, nil
 }
 
+// drainWindow bounds how long a drain refuses new starts; drainPause is how long the executor then admits them
+// before it fences again. A run can last hours, and releases land every few minutes: an unbounded fence left a busy
+// host taking no work (2026-11-26, pds18-native: one long run held 13 starts for the whole drain). While the fence is
+// open the update still installs at the first idle moment (idleUpdate), and the coordinator places work there again.
+const (
+	drainWindow = 10 * time.Minute
+	drainPause  = 30 * time.Minute
+)
+
+// drainState: the current drain episode, guarded by signalMu. since is zero while no update is pending.
+type drainState struct {
+	since, reopenAt time.Time
+	waitsFor        []string
+}
+
+var drain drainState
+
+// fencedLocked reports whether command admission refuses new starts now; the caller holds signalMu. One drain episode
+// lasts while an update is pending, across target changes: a newer release does not restart the window.
+func fencedLocked(now time.Time) bool {
+	if !updatePending(lastSignal) {
+		drain = drainState{}
+		return false
+	}
+	if drain.since.IsZero() {
+		drain.since = now
+	}
+	if !drain.reopenAt.IsZero() {
+		if now.Before(drain.reopenAt) {
+			return false
+		}
+		drain.since, drain.reopenAt = now, time.Time{} // the pause is over: a new window
+	}
+	if now.Sub(drain.since) >= drainWindow && len(drain.waitsFor) > 0 {
+		drain.reopenAt = now.Add(drainPause)
+		return false
+	}
+	return true
+}
+
+// drainReport is the poll's drain field; nil when no update is pending.
+func drainReport(now time.Time) *contract.DrainReport {
+	signalMu.Lock()
+	defer signalMu.Unlock()
+	fenced := fencedLocked(now)
+	if drain.since.IsZero() {
+		return nil
+	}
+	r := &contract.DrainReport{Target: *lastSignal.Target, Since: drain.since.UTC().Format(time.RFC3339), Fenced: fenced,
+		WaitsFor: append([]string{}, drain.waitsFor...)}
+	if !fenced {
+		t := drain.reopenAt.UTC().Format(time.RFC3339)
+		r.ReopenAt = &t
+	}
+	return r
+}
+
 func updatePending(s *updateSignal) bool {
 	if s == nil || s.Target == nil || !updateNewer(*s.Target, s.Running) || s.AutoUpdate == "off" {
 		return false
@@ -61,18 +118,34 @@ func (e *executor) drainUpdate() error {
 
 // idleUpdate releases the activity lease once nothing holds it and returns the pending update target, or nil.
 func (e *executor) idleUpdate() (*string, error) {
-	var busy bool
-	err := e.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM launches)
-		OR EXISTS(SELECT 1 FROM owned)
-		OR EXISTS(SELECT 1 FROM mcp_groups)
-		OR EXISTS(SELECT 1 FROM commands WHERE terminal=0)
-		OR EXISTS(SELECT 1 FROM outbox WHERE route<>?)
-		OR EXISTS(SELECT 1 FROM outbox_failed WHERE status=401)
-		OR EXISTS(SELECT 1 FROM transfers WHERE state IN ('queued','running'))`, contract.RouteSpans.Path).Scan(&busy)
+	var procs, cmds, receipts, unauth, transfers bool
+	err := e.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM launches) OR EXISTS(SELECT 1 FROM owned) OR EXISTS(SELECT 1 FROM mcp_groups),
+		EXISTS(SELECT 1 FROM commands WHERE terminal=0),
+		EXISTS(SELECT 1 FROM outbox WHERE route<>?),
+		EXISTS(SELECT 1 FROM outbox_failed WHERE status=401),
+		EXISTS(SELECT 1 FROM transfers WHERE state IN ('queued','running'))`, contract.RouteSpans.Path).Scan(&procs, &cmds, &receipts, &unauth, &transfers)
 	if err != nil {
 		return nil, err
 	}
-	if busy || len(e.live) > 0 {
+	var waits []string
+	if n := len(e.live); n == 1 {
+		waits = append(waits, "1 run")
+	} else if n > 1 {
+		waits = append(waits, strconv.Itoa(n)+" runs")
+	}
+	for _, w := range []struct {
+		on   bool
+		what string
+	}{{procs && len(e.live) == 0, "processes of a stopped run"}, {cmds, "open commands"}, {receipts, "receipts to deliver"},
+		{unauth, "receipts refused as unauthenticated"}, {transfers, "file transfers"}} {
+		if w.on {
+			waits = append(waits, w.what)
+		}
+	}
+	signalMu.Lock()
+	drain.waitsFor = waits
+	signalMu.Unlock()
+	if len(waits) > 0 {
 		_, err := e.activityLease()
 		return nil, err
 	}

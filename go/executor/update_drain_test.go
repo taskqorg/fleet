@@ -225,3 +225,37 @@ func TestUpdateDrainRetainsAuditButWaitsForRecoverableDelivery(t *testing.T) {
 		t.Fatal("terminal rejection archive was erased")
 	}
 }
+
+// Requirement: a drain refuses new starts for at most drainWindow while work still runs, then admits them for
+// drainPause; risk: one long run keeps a busy host taking no work for as long as it lasts (2026-11-26 pds18-native).
+func TestUpdateDrainFenceIsBounded(t *testing.T) {
+	target := "1.261113.20"
+	lastSignal = &updateSignal{Target: &target, Running: "1.261113.19", AutoUpdate: "on"}
+	t.Cleanup(func() { lastSignal, drain = nil, drainState{} })
+	now := time.Now()
+	drain = drainState{waitsFor: []string{"1 run"}}
+	if !fencedLocked(now) {
+		t.Fatal("a pending update did not fence")
+	}
+	if !fencedLocked(now.Add(drainWindow - time.Second)) {
+		t.Fatal("fence opened inside the window")
+	}
+	if fencedLocked(now.Add(drainWindow)) {
+		t.Fatal("fence held past the window with work running")
+	}
+	r := drainReport(now.Add(drainWindow + time.Minute))
+	if r == nil || r.Fenced || r.ReopenAt == nil || r.Target != target || len(r.WaitsFor) != 1 {
+		t.Fatalf("report while open: %+v", r)
+	}
+	if !fencedLocked(now.Add(drainWindow + drainPause)) {
+		t.Fatal("fence did not return after the pause")
+	}
+	drain.waitsFor = nil
+	if !fencedLocked(now.Add(2*drainWindow + drainPause)) {
+		t.Fatal("a drained host opened its fence instead of letting the update install")
+	}
+	lastSignal.AutoUpdate = "off"
+	if fencedLocked(now) || drainReport(now) != nil {
+		t.Fatal("no pending update still fenced or reported")
+	}
+}

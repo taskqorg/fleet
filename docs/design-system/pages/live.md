@@ -29,6 +29,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall 
    * One tile per worker slot:
      * A busy slot shows the task title, code, project colour on the left edge and this run's elapsed time, then the [work facts](../controls/work-facts.md): the task's attempts (`×N`), the agent mark and its time in work, last ([OR-64](../owner-rules.md)).
      * A free slot is a dashed "idle" tile; past three free slots, one tile counts them (`23 idle`).
+     * A host whose update waits for running work takes no new start (the `updating` host problem): its free slots are one failing tile (`10 slots take no new start`) with the reason, never "idle", and a start handed to it earlier shows `Waits for the update`.
      * A failing slot is outlined in the danger tone and says what fails, how many times (`×N`), how long ago the latest failed start was, and when it retries.
      * A failed start is a current problem only until the host starts a run that does not fail: after that it stays in the strip and the Failed starts figure, and the band is no longer red. Failed starts count runs on hosts only, never tool calls; tool calls are no Live problem either (a refused key shows on System).
    * A 24-hour strip of runs, one tick per run window, with failures in the danger tone; marks at −24 h, −18 h, −12 h, −6 h and now.
@@ -37,7 +38,7 @@ A full-width page right of the navigation ([OR-24](../owner-rules.md)); in wall 
    * In work: every open task (working, then waiting, then queued; longest in work first) with its work facts: attempts, the agent and the time in work, last; the latest attempt and the time in its state on hover. A task stuck in retries shows here between its attempts, when no slot shows it.
    * Delivery: pull requests moving through checks, merge, release and install, each with its time since opened (time in the stage on hover) and its stage chip.
    * CI runners: jobs running and minutes today; self-hosted runner state.
-   * Just now: the latest events, each with age, a state dot, the task or conversation it belongs to and the agent; repeats are one event with `×N` (OR-58).
+   * Just now: the latest events, each with age, a state dot, the task or conversation it belongs to and the agent; repeats are one event with `×N` (OR-58). Host jobs without a task (account probes, cleanup) are the host's upkeep and stay in the host's own conversation and history, not here.
    * Each side list shows its latest five; its heading, with the count, opens the full list (Projects, Tasks, Delivery), and in wall mode it is plain text (OR-30, OR-65).
 
 Every element opens its detail in the app: a host in System, a slot or event in its session, a pull request in its project's delivery facet, a project in Projects. In wall mode nothing opens; the screen only shows.
