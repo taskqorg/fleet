@@ -175,7 +175,7 @@ func TestDesignRules(t *testing.T) {
 
 // The S5/S6 checks of the work kit and its queues (DESIGN_RULES.md). designKitAreas: the file-name prefixes of the
 // areas whose item work runs on the kit; an area moving onto the kit adds its prefix.
-var designKitAreas = []string{"resource_", "pipeline_work", "delegation_work", "upload_work"}
+var designKitAreas = []string{"resource_", "pipeline_work", "delegation_work", "upload_work", "access_work"}
 
 func designKitArea(name string) bool {
 	for _, p := range designKitAreas {
@@ -325,6 +325,7 @@ func designStateOwners() []designOwner {
 		{"experiment", "experiment_states.go", []string{"state"}},
 		{"host", "host_states.go", []string{"state"}},
 		{"connection_key", "key_states.go", []string{"state"}},
+		{"access_grant", "access_states.go", []string{"state"}},
 		{"artifact_copy", "artifact_states.go", []string{"state"}},
 		{"store", "artifact_states.go", []string{"state"}},
 		{"bot_run", "bot_states.go", []string{"state"}},
@@ -778,6 +779,7 @@ func TestDesignTransitions(t *testing.T) {
 	check("connection key", connectionKeyTransitions, enum(`state text NOT NULL DEFAULT 'active' CHECK \(state IN \(('active', 'disabled', 'retired')\)\)`), nil, "active")
 	check("artifact copy", artifactCopyTransitions, enum(`CREATE TABLE artifact_copy\([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), func(s string) bool { return s == "deleted" }, "pending", "copying", "verified")
 	check("store", storeTransitions, enum(`CREATE TABLE store\([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), func(s string) bool { return s == "unreachable" }, "reachable", "unreachable")
+	check("access grant", accessGrantTransitions, enum(`CREATE TABLE access_grant \([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), nil, "asked")
 	check("bot run", botRunTransitions, enum(`CREATE TABLE bot_run \([\s\S]*?CHECK \(state IN \(([^)]*)\)\)`), nil, "queued")
 	src, err := os.ReadFile("resource_states.go")
 	if err != nil {

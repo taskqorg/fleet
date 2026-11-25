@@ -5171,3 +5171,46 @@ BEGIN
   PERFORM fleet_session_summary_recount(h.id);
  END LOOP;
 END $$;
+
+-- migration 118: project resource access (docs/designs/fleet-project-access.md): the servers Fleet's provisioner may
+-- reach (access_server, pinned host key, enrolled once by the owner), the grants of a project's resources on them
+-- (access_grant, state owned by access_states.go) and the provisioner's pending work on the work kit (access_work).
+-- No credential value is stored: only fingerprints.
+CREATE TABLE access_server (
+ id text PRIMARY KEY CHECK (id ~ '^[a-z0-9][a-z0-9.-]{0,62}$'),
+ address text NOT NULL,
+ via text NULL REFERENCES access_server(id),
+ host_key text NULL,
+ enrolled_at timestamptz NULL,
+ payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ deleted_at timestamptz NULL
+);
+CREATE TABLE access_grant (
+ id text PRIMARY KEY,
+ project_id text NOT NULL,
+ server_id text NOT NULL REFERENCES access_server(id),
+ kind text NOT NULL CHECK (kind IN ('mysql', 'files')),
+ level text NOT NULL CHECK (level IN ('read', 'write')),
+ state text NOT NULL DEFAULT 'asked' CHECK (state IN ('asked', 'provisioning', 'ready', 'failed', 'declined', 'withdrawn', 'revoking', 'revoked')),
+ request_id text NOT NULL,
+ asked_by text NOT NULL,
+ question_id text NULL REFERENCES question(id) ON DELETE SET NULL,
+ credential text NULL,
+ expires_at timestamptz NULL,
+ payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ deleted_at timestamptz NULL,
+ UNIQUE (project_id, request_id)
+);
+CREATE INDEX access_grant_question ON access_grant(question_id);
+CREATE TABLE access_work (
+ grant_id text PRIMARY KEY REFERENCES access_grant(id) ON DELETE CASCADE,
+ op text NOT NULL CHECK (op IN ('provision', 'probe', 'revoke')),
+ attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ last_error text NULL
+);
+CREATE INDEX access_work_due ON access_work(next_attempt_at);

@@ -1,4 +1,4 @@
-// Approval cards for radical actions (FLT-35, docs/designs/fleet-telegram.md#approvals). An agent calls approval_ask
+// Approval cards for radical actions (FLT-35, docs/designs/fleet-telegram.md#approvals-approvalsgo). An agent calls approval_ask
 // before an action; Fleet rates it by the project's risk rules. A radical action becomes a card: an agent question
 // with Approve / Not now whose data.approval holds the exact scope. Only an approver answers it (approvalMayAnswer,
 // checked in agentReplyTo for every path: the web app, Telegram, the reply tool); the answer reaches the asking session
@@ -26,11 +26,11 @@ var approvalRiskDefault = map[string]string{
 	"read": "free", "analyze": "free", "mockup": "free", "task": "free", "dev-branch": "free",
 	"dev-deploy": "reversible", "test-data": "reversible",
 	"live-deploy": "radical", "delete-accounts": "radical", "ban-accounts": "radical", "user-messages": "radical",
-	"keys": "radical", "money": "radical", "data-drop": "radical", "other-radical": "radical",
+	"keys": "radical", "access": "radical", "money": "radical", "data-drop": "radical", "other-radical": "radical",
 }
 
 // approvalOwnerOnly: actions only the owner approves unless settings.approvals names others.
-var approvalOwnerOnly = []string{"keys", "money"}
+var approvalOwnerOnly = []string{"keys", "access", "money"}
 
 const approvalYes, approvalNo = "Approve", "Not now"
 

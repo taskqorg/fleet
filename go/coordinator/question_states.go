@@ -52,6 +52,9 @@ func questionTransition(q *Request, id string, ev questionEvent) (bool, error) {
 			err = problemsLetGo(q, []string{id})
 		}
 	}
+	if err == nil { // an access card's answer moves its grant (access_grants.go)
+		err = accessQuestionEnded(q, id, ev)
+	}
 	return err == nil, err
 }
 
@@ -63,6 +66,11 @@ func questionsWithdraw(q *Request, ids []string) error {
 	withdrawn, err := q.db().QuestionsWithdrawOpen(q.ctx(), ids)
 	if err != nil || len(withdrawn) == 0 {
 		return err
+	}
+	for _, id := range withdrawn {
+		if err := accessQuestionEnded(q, id, questionEvent{To: "withdrawn"}); err != nil {
+			return err
+		}
 	}
 	return problemsLetGo(q, withdrawn)
 }

@@ -385,6 +385,44 @@ func (ns NullTaskState) Value() (driver.Value, error) {
 	return string(ns.TaskState), nil
 }
 
+type AccessGrant struct {
+	ID         string
+	ProjectID  string
+	ServerID   string
+	Kind       string
+	Level      string
+	State      string
+	RequestID  string
+	AskedBy    string
+	QuestionID *string
+	Credential *string
+	ExpiresAt  *time.Time
+	Payload    []byte
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	DeletedAt  *time.Time
+}
+
+type AccessServer struct {
+	ID         string
+	Address    string
+	Via        *string
+	HostKey    *string
+	EnrolledAt *time.Time
+	Payload    []byte
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	DeletedAt  *time.Time
+}
+
+type AccessWork struct {
+	GrantID       string
+	Op            string
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     *string
+}
+
 type AccountCatalogue struct {
 	ID           string
 	HostID       *string

@@ -16,6 +16,7 @@ Technical designs, briefs and their reviews. A design here is accepted direction
 * `fleet-swarm.md`: universal cross-harness Swarm coordination, configurable coordinator strategies, durable shared board, visual Swarm GUI and Lab evaluation.
 * `fleet-code-mode.md`: the `code` and `poll` executor MCP tools that run JavaScript with Fleet tools and granted connections as functions, in every harness.
 * `fleet-connections.md`: API key connections, the Fleet gateway copied from Pipe's read lane, per-run tokens, call methods, file transfer and deleting Pipe.
+* `fleet-project-access.md`: project resource access: access servers, grants, the owner's approval card, the provisioner, `fleet-provision` recipes and probes.
 * `fleet-conversations.md`: the conversation model (one conversation per line of work, grouped by bot, PM, room and task) and the Conversations screen: task history, paging both ways, typed transcript blocks, copy, question and result cards, the Results page.
 * `fleet-asset-pipelines.md`: provider keys from the Keychain into connections, deleting AssetQ, registry statuses and `maps_to`, Meshy and image pipelines with Blender on the Mac, per-use-case judges, `loop`, the character pipeline.
 * `fleet-stack.md`: Go for every service and the migration order, delivery order, rule delivery, toolchain, MCP subcommands.

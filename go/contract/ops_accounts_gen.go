@@ -78,6 +78,19 @@ func (v *AccessCheckRequest) Validate() error {
 	return nil
 }
 
+type AccessCheckResult struct {
+	At      int64    `json:"at"`
+	Error   *string  `json:"error,omitempty"`
+	Ok      bool     `json:"ok"`
+	Steps   []string `json:"steps,omitempty"`
+	Version *string  `json:"version,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessCheckResult) Validate() error {
+	return nil
+}
+
 type AccessCounts struct {
 	NeedYou  int64 `json:"needYou"`
 	NotAdded int64 `json:"notAdded"`
@@ -86,6 +99,161 @@ type AccessCounts struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *AccessCounts) Validate() error {
+	return nil
+}
+
+type AccessGrantAskReply = AccessGrantView
+
+type AccessGrantAskRequest struct {
+	Kind      AccessKind  `json:"kind"`
+	Level     AccessLevel `json:"level"`
+	ProjectId string      `json:"projectId"`
+	Reason    string      `json:"reason"`
+	RequestId string      `json:"requestId"`
+	Scope     AccessScope `json:"scope"`
+	Server    string      `json:"server"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessGrantAskRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if err := Check(&v.Level, "level"); err != nil {
+		return err
+	}
+	if err := Check(&v.Scope, "scope"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type AccessGrantCheckReply = AccessGrantView
+
+type AccessGrantCheckRequest struct {
+	Grant string `json:"grant"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessGrantCheckRequest) Validate() error {
+	return nil
+}
+
+type AccessGrantRevokeReply = AccessGrantView
+
+type AccessGrantRevokeRequest struct {
+	Grant string `json:"grant"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessGrantRevokeRequest) Validate() error {
+	return nil
+}
+
+type AccessGrantState string
+
+const (
+	AccessGrantStateAsked        AccessGrantState = "asked"
+	AccessGrantStateProvisioning AccessGrantState = "provisioning"
+	AccessGrantStateReady        AccessGrantState = "ready"
+	AccessGrantStateFailed       AccessGrantState = "failed"
+	AccessGrantStateDeclined     AccessGrantState = "declined"
+	AccessGrantStateWithdrawn    AccessGrantState = "withdrawn"
+	AccessGrantStateRevoking     AccessGrantState = "revoking"
+	AccessGrantStateRevoked      AccessGrantState = "revoked"
+)
+
+// AccessGrantStateValues lists every AccessGrantState in schema order.
+var AccessGrantStateValues = []AccessGrantState{AccessGrantStateAsked, AccessGrantStateProvisioning, AccessGrantStateReady, AccessGrantStateFailed, AccessGrantStateDeclined, AccessGrantStateWithdrawn, AccessGrantStateRevoking, AccessGrantStateRevoked}
+
+// Valid: v is one of the schema's values.
+func (v AccessGrantState) Valid() bool {
+	for _, x := range AccessGrantStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type AccessGrantView struct {
+	AskedBy    string             `json:"askedBy"`
+	CreatedAt  int64              `json:"createdAt"`
+	Credential *string            `json:"credential,omitempty"`
+	Error      *string            `json:"error,omitempty"`
+	ExpiresAt  *int64             `json:"expiresAt,omitempty"`
+	Id         string             `json:"id"`
+	Kind       AccessKind         `json:"kind"`
+	Level      AccessLevel        `json:"level"`
+	Probe      *AccessCheckResult `json:"probe,omitempty"`
+	ProjectId  string             `json:"projectId"`
+	QuestionId *string            `json:"questionId,omitempty"`
+	Reason     string             `json:"reason"`
+	Recipe     []string           `json:"recipe"`
+	RequestId  string             `json:"requestId"`
+	Scope      AccessScope        `json:"scope"`
+	Server     string             `json:"server"`
+	State      AccessGrantState   `json:"state"`
+	User       string             `json:"user"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessGrantView) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if err := Check(&v.Level, "level"); err != nil {
+		return err
+	}
+	if v.Probe != nil {
+		if err := Check(v.Probe, "probe"); err != nil {
+			return err
+		}
+	}
+	if v.Recipe == nil {
+		return Missing("recipe")
+	}
+	if err := Check(&v.Scope, "scope"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type AccessGrantsReply struct {
+	Grants  []AccessGrantView  `json:"grants"`
+	Servers []AccessServerView `json:"servers"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessGrantsReply) Validate() error {
+	if v.Grants == nil {
+		return Missing("grants")
+	}
+	for i := range v.Grants {
+		if err := Check(&v.Grants[i], "grants"); err != nil {
+			return err
+		}
+	}
+	if v.Servers == nil {
+		return Missing("servers")
+	}
+	for i := range v.Servers {
+		if err := Check(&v.Servers[i], "servers"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type AccessGrantsRequest struct {
+	ProjectId *string `json:"projectId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessGrantsRequest) Validate() error {
 	return nil
 }
 
@@ -201,6 +369,46 @@ func (v *AccessItem) Validate() error {
 	return nil
 }
 
+type AccessKind string
+
+const (
+	AccessKindMysql AccessKind = "mysql"
+	AccessKindFiles AccessKind = "files"
+)
+
+// AccessKindValues lists every AccessKind in schema order.
+var AccessKindValues = []AccessKind{AccessKindMysql, AccessKindFiles}
+
+// Valid: v is one of the schema's values.
+func (v AccessKind) Valid() bool {
+	for _, x := range AccessKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type AccessLevel string
+
+const (
+	AccessLevelRead  AccessLevel = "read"
+	AccessLevelWrite AccessLevel = "write"
+)
+
+// AccessLevelValues lists every AccessLevel in schema order.
+var AccessLevelValues = []AccessLevel{AccessLevelRead, AccessLevelWrite}
+
+// Valid: v is one of the schema's values.
+func (v AccessLevel) Valid() bool {
+	for _, x := range AccessLevelValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type AccessLimit struct {
 	Budget  *AccessBudget `json:"budget,omitempty"`
 	LeftPct *float64      `json:"leftPct,omitempty"`
@@ -310,6 +518,62 @@ func (v *AccessOnboardRequest) Validate() error {
 	}
 	if v.Limit != nil {
 		if err := Check(v.Limit, "limit"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AccessScope: mysql: database and tables; files: absolute paths on the server.
+type AccessScope struct {
+	Database *string  `json:"database,omitempty"`
+	Paths    []string `json:"paths,omitempty"`
+	Tables   []string `json:"tables,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessScope) Validate() error {
+	return nil
+}
+
+type AccessServerAddReply = AccessServerView
+
+type AccessServerAddRequest struct {
+	Address string  `json:"address"`
+	Id      string  `json:"id"`
+	Via     *string `json:"via,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessServerAddRequest) Validate() error {
+	return nil
+}
+
+type AccessServerCheckReply = AccessServerView
+
+type AccessServerCheckRequest struct {
+	Id string `json:"id"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessServerCheckRequest) Validate() error {
+	return nil
+}
+
+type AccessServerView struct {
+	Address    string             `json:"address"`
+	Checked    *AccessCheckResult `json:"checked,omitempty"`
+	Enroll     *string            `json:"enroll,omitempty"`
+	EnrolledAt *int64             `json:"enrolledAt,omitempty"`
+	HostKey    *string            `json:"hostKey,omitempty"`
+	Id         string             `json:"id"`
+	Via        *string            `json:"via,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessServerView) Validate() error {
+	if v.Checked != nil {
+		if err := Check(v.Checked, "checked"); err != nil {
 			return err
 		}
 	}
@@ -2024,7 +2288,13 @@ func (v *TransportInspectRequest) Validate() error {
 func init() {
 	for n, o := range map[string]Operation{
 		"access_check":                {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Checks one access item now, read-only, never starting a login: a connection with one cheap provider call (its reply's reason on failure), a subscription by re-inspecting each host login. id: an access_status item id. The reply is the item as access_status shows it after the check.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
+		"access_grant_ask":            {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Asks for access to one resource of a project on an access server (docs/designs/fleet-project-access.md): projectId, requestId (the same id reads the grant), server, kind (mysql: scope {database, tables}; files: scope {paths}), level (read; write only when the work needs it), reason. Creates an approval card for the owner that states the exact recipe; once approved Fleet provisions it and probes that read works and, for read, that write fails. Read the state with access_grants; the grant is usable when it is ready.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"mysql\",\"files\"],\"type\":\"string\"},\"level\":{\"enum\":[\"read\",\"write\"],\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"scope\":{\"$comment\":\"mysql: database and tables; files: absolute paths on the server.\",\"additionalProperties\":false,\"properties\":{\"database\":{\"type\":\"string\"},\"paths\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"tables\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"server\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"server\",\"kind\",\"level\",\"scope\",\"reason\"],\"type\":\"object\"}")},
+		"access_grant_check":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Probes a ready or failed grant again (grant: its id): read must work, write must fail for a read grant. The probe runs in the background; read the result with access_grants.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"grant\":{\"type\":\"string\"}},\"required\":[\"grant\"],\"type\":\"object\"}")},
+		"access_grant_revoke":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Revokes a grant (grant: its id): an asked grant is withdrawn with its card; a provisioned one has its database user, OS user and keys removed on the server and on PDS18, then is revoked.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"grant\":{\"type\":\"string\"}},\"required\":[\"grant\"],\"type\":\"object\"}")},
+		"access_grants":               {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "tool", Description: "Access servers and the project resource grants the caller sees (projectId optional): state (asked, provisioning, ready, failed, declined, withdrawn, revoking, revoked), level, scope, the recipe it runs, the last probe and error. Never a credential value.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"access_onboard":              {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Starts adding access. kind key: provider (and connection, default the provider's name); creates the connection when missing (owner) and answers where the key comes from; with projectId and requestId it asks the owner for the key under Needs you (the agent path). kind login: accountId, hostId, binding; answers the host login steps and, with projectId and requestId, asks the owner to sign in under Needs you. kind limit: connection and limit {amount, unit, period}: the monthly limit Fleet counts the connection's spend against (a warn budget). Never takes a key value or a login code.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"accountId\":{\"type\":\"string\"},\"binding\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"key\",\"login\",\"limit\"],\"type\":\"string\"},\"limit\":{\"additionalProperties\":false,\"properties\":{\"amount\":{\"type\":\"number\"},\"period\":{\"type\":\"string\"},\"unit\":{\"type\":\"string\"}},\"required\":[\"amount\",\"unit\"],\"type\":\"object\"},\"projectId\":{\"type\":\"string\"},\"provider\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"start\":{\"$comment\":\"kind login: start the login on the host now (holder or owner, never an agent); the sign-in link and code appear on the host in access_status.\",\"type\":\"boolean\"}},\"required\":[\"kind\"],\"type\":\"object\"}")},
+		"access_server_add":           {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Records a project server Fleet's provisioner may reach (docs/designs/fleet-project-access.md): id (a name such as pds9), address (host or host:port), via (the id of an enrolled jump server, optional). Learns and pins the server's SSH host key (a different key for a known id is 409) and answers enroll: the one command the owner runs as root on that server to install fleet-provision. Grants nothing.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"address\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"via\":{\"type\":\"string\"}},\"required\":[\"id\",\"address\"],\"type\":\"object\"}")},
+		"access_server_check":         {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Checks an access server now: the provisioner logs in and runs fleet-provision version. The first success marks it enrolled. The reply is the server with its check.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"access_status":               {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Every subscription, model API key and service key Fleet has or offers, one item each: kind, state in plain words (works, failing, needs login on a host, needs a key, not added), limit or credits where known, hosts and users, the last check and the next step with its link. Never key values.", Changes: []string{"api-connection", "connection-key", "managed-account", "host", "setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
 		"account_connect":             {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "holder:account", Agent: "tool", Description: "Inspects one native login. hostId: default the caller's host; binding: the native login name.", InputSchema: json.RawMessage("{\"$comment\":\"Inspects one native login. hostId: default the caller's host; binding: the native login name.\",\"additionalProperties\":false,\"properties\":{\"accountId\":{\"type\":\"string\"},\"binding\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"}},\"required\":[\"accountId\",\"binding\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"account_create":              {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "harness codex, claude, antigravity or acp; holder: the owner may create one for another person.", InputSchema: json.RawMessage("{\"$comment\":\"harness codex, claude, antigravity or acp; holder: the owner may create one for another person.\",\"additionalProperties\":false,\"properties\":{\"comment\":{\"type\":\"string\"},\"harness\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"plan\":{\"type\":\"string\"}},\"required\":[\"name\",\"harness\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
