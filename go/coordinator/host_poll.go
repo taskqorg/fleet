@@ -932,8 +932,9 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	}
 	if d := hostDrain(b.Drain, b.Version, healthyTarget(), autoUpdateOf(q.host), time.Now()); d != nil {
 		obs.Drain = d
-		if d.Fenced {
-			// Updating explains the lag while it lasts, and it is what blocks new work: it replaces version-behind.
+		if d.Fenced && len(d.WaitsFor) > 0 {
+			// Work holding a fenced drain is what blocks new starts: the problem explains it and replaces version-behind.
+			// A drained host installs within minutes and is no problem.
 			kept := []hostProblem{{Kind: "updating", Detail: drainDetail(d)}}
 			for _, p := range ps {
 				if p.Kind != string(contract.ProblemKindVersionBehind) {
@@ -1227,11 +1228,8 @@ func hostDrain(reported *contract.DrainReport, running, offered *string, autoUpd
 	return &contract.DrainReport{Target: *offered, Fenced: true, WaitsFor: []string{"its runs"}}
 }
 
-// drainDetail: the updating problem in words.
+// drainDetail: the updating problem in words (only while work holds the drain).
 func drainDetail(d *contract.DrainReport) string {
-	if len(d.WaitsFor) == 0 {
-		return "updating to " + d.Target + ": its work has drained, the update installs within minutes"
-	}
 	return "updating to " + d.Target + ": takes no new start; waits for " + strings.Join(d.WaitsFor, ", ")
 }
 

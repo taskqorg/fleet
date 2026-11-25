@@ -234,13 +234,12 @@ type dispatchHost struct {
 
 // hostSeen: the fields dispatch reads of a host observation.
 type hostSeen struct {
-	Capabilities   []string               `json:"capabilities"`
-	GitConnections *[]string              `json:"gitConnections"`
-	ProjectRoots   *[]string              `json:"projectRoots"`
-	Load           *hostLoadObservation   `json:"load"`
-	Version        *string                `json:"version"`
-	Update         *contract.UpdateResult `json:"update"`
-	Drain          *contract.DrainReport  `json:"drain"`
+	Capabilities   []string              `json:"capabilities"`
+	GitConnections *[]string             `json:"gitConnections"`
+	ProjectRoots   *[]string             `json:"projectRoots"`
+	Load           *hostLoadObservation  `json:"load"`
+	Version        *string               `json:"version"`
+	Drain          *contract.DrainReport `json:"drain"`
 }
 
 // drainTarget: the newer release a host's executor drains for while it admits no new start (executor_launch.go,
