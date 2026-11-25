@@ -109,6 +109,16 @@ func mintRunOf(run any) mintRun {
 		PipelineRunID: text(r.PipelineRunID), Personal: text(r.Personal), SystemActor: text(r.SystemActor), Step: step}
 }
 
+// coordinatorOnlyAllowed: the pin write connection (pins_publish.go) goes only to the coordinator's own read token,
+// never to an agent, a pipeline or a person's run, whatever its access lists (owner's restriction, 2026-11-26).
+func coordinatorOnlyAllowed(connection string, run mintRun) bool {
+	if connection != pinsWriteConn {
+		return true
+	}
+	return deref(run.SystemActor) == "coordinator" && strings.HasPrefix(deref(run.ExecutionID), pinsWriteConn+"-read:") &&
+		run.DirectedBy == nil && run.Personal == nil && run.PipelineRunID == nil && run.ExperimentID == nil
+}
+
 // Per-run tokens (§4): granted are the requested connections that exist, take intake and whose access names the run.
 // connGrantOf: the holder and access of a connection (delivery.go); false when there is none.
 func connGrantOf(c *apiConnection) (apiConnection, bool) {
@@ -183,7 +193,7 @@ func mintGrantFor(q *Request, run mintRun, requested []string) (mintGrant, error
 		if err != nil {
 			return mintGrant{}, err
 		}
-		if c != nil && c.Intake == "all" && connAllowedFor(*c, run) {
+		if c != nil && c.Intake == "all" && connAllowedFor(*c, run) && coordinatorOnlyAllowed(name, run) {
 			granted = append(granted, *c)
 		}
 	}
