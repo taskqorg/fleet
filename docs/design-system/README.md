@@ -15,7 +15,7 @@ The board is the visual source of the interface: a [Brilliant](https://brilliant
 The board has one home, like a shared design file: the persistent board worktree `~/Projects/fleet-board`, which the owner keeps open in the Brilliant app. Every Brilliant MCP `init` on a new path registers a new project in that app and shows a notification, so:
 
 * **Reading the board** (building, reviewing, comparing a page with its canvas): read the `.bl` files as plain text with file tools, in any checkout. Never call the Brilliant MCP tools from a task worktree.
-* **Drawing on the board** (a design task): work in `~/Projects/fleet-board`, one design session at a time. First bring it to `origin/main` (`git -C ~/Projects/fleet-board switch -C board origin/main`), then `init` with its `docs/design-system/board` and use `read`, `edit` and `export`. Deliver the canvases through a normal pull request from a branch there. The owner watches the work live in the one open project.
+* **Drawing on the board** (a design task): work in `~/Projects/fleet-board`, one design session at a time. First check `git -C ~/Projects/fleet-board status` is clean and no unpushed work sits there, then bring it to `origin/main` on a branch of your own (`git -C ~/Projects/fleet-board switch -c <your-branch> origin/main`), then `init` with its `docs/design-system/board` and use `read`, `edit` and `export`. Deliver the canvases through a normal pull request from a branch there. The owner watches the work live in the one open project.
 * **A rendered picture** for a pull request or a comparison comes from that worktree's `export`, asked of the design session; other sessions do not render the board themselves.
 
 | Canvas | Holds | Changes when |
