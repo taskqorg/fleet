@@ -4,7 +4,7 @@
 
 **Status.** Target, rail section Conversations ([information architecture](../../designs/fleet-ia-and-journeys.md#1-closed-information-architecture)). Built (FLT-51): the default view, the rows and the idle work area. Not yet: the [session view](session.md) in the work area (FLT-49; the current conversation detail stands in) and URLs by human code (UR-69). The sections after **Current build** describe the rest of the page as it runs today.
 
-**Purpose.** Every session, past and present: find one and continue it. Home shows the sessions that are active now; Conversations keeps all of them ([OR-50](../owner-rules.md)).
+**Purpose.** Every conversation, past and present: find one and continue it. Pipeline and Lab agent steps are hidden conversations ([conversation model](../../designs/fleet-conversations.md#entities)): their run and trial pages open them, the list and its counts leave them out. Approved board for the conversation model (owner "ok", 2026-11-26): [`screens/conversation-model.bl`](../board/screens/conversation-model.bl), D1 at 1440, D2 at 390, D3 task history. Home shows the sessions that are active now; Conversations keeps all of them ([OR-50](../owner-rules.md)).
 
 **Routes:** `/conversations` (idle), `/conversations/C-FLT-12` (one session in the [session view](session.md)), `/conversations/new` (start). Old `/conversations/<uuid>` links redirect (UR-69).
 
