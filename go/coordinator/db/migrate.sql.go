@@ -11,23 +11,23 @@ import (
 
 const migrationApplied = `-- name: MigrationApplied :one
 
-SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version = $1::int)
+SELECT EXISTS(SELECT 1 FROM schema_migration WHERE id = $1::text)
 `
 
-// The migration steps of store.go (migrateSQL, applySchemaFiles), each in one transaction under the migration lock.
-func (q *Queries) MigrationApplied(ctx context.Context, version int32) (bool, error) {
-	row := q.db.QueryRow(ctx, migrationApplied, version)
+// The migration steps of migrations.go (applyMigrations) and store.go (applySchemaFiles), each in one transaction under the migration lock.
+func (q *Queries) MigrationApplied(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, migrationApplied, id)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
 }
 
 const migrationRecord = `-- name: MigrationRecord :exec
-INSERT INTO schema_migration(version) VALUES ($1::int)
+INSERT INTO schema_migration(id) VALUES ($1::text)
 `
 
-func (q *Queries) MigrationRecord(ctx context.Context, version int32) error {
-	_, err := q.db.Exec(ctx, migrationRecord, version)
+func (q *Queries) MigrationRecord(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, migrationRecord, id)
 	return err
 }
 

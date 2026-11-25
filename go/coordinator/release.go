@@ -229,6 +229,9 @@ func ptr[T any](v T) *T { return &v }
 
 // selftest: no database, no network; the embedded schema and the release's shipped config parse.
 func selftest() error {
+	if _, err := migrations(); err != nil {
+		return err
+	}
 	if !strings.Contains(schemaSQL, "CREATE TABLE") {
 		return errors.New("embedded schema is empty")
 	}

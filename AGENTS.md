@@ -41,7 +41,7 @@ Every task brief names its stop condition and its time box, the allotted time of
     * `on hosts v<version>` or `on site <tag>`: run the live check your task names, then report done.
     * `timeout at: <stage>`: report the stage to the orchestrator. At `release`, include `gh run list -R taskqorg/fleet --workflow release -L 3`.
 5. A change that removes a host-protocol field merges only when `hosts_list` shows no host older than the release that added its replacement (section 5).
-6. A new migration in `go/coordinator/schema.sql` takes the next free number after rebasing on `main`.
+6. A new migration is a new file `go/coordinator/migrations/<yyyymmdd>T<hhmm>Z_<slug>.sql` (UTC time, `date -u +%Y%m%dT%H%MZ`), never a numbered section of `schema.sql`; there is no number to take, so parallel branches never clash ([migrations/README.md](go/coordinator/migrations/README.md)).
 
 ## Opening the deployed web app
 

@@ -361,3 +361,23 @@ func TestDumpOnlyForMigrations(t *testing.T) {
 		}
 	}
 }
+
+// Requirement: fleet-self-update.md step 8: the pre-deploy dump runs when the release carries a migration the database
+// lacks, also one named before an applied one (migration files land in any order).
+func TestMissingMigration(t *testing.T) {
+	for _, c := range []struct {
+		carried, applied string
+		want             bool
+	}{
+		{"1\n2\n20261126T0315Z_a", "1\n2\n20261126T0315Z_a\n", false},
+		{"1\n2\n20261126T0300Z_b\n20261126T0315Z_a", "1\n2\n20261126T0315Z_a\n", true},
+		{"1\n2", "1\n", true},
+	} {
+		if got, err := missingMigration(c.carried, c.applied); err != nil || got != c.want {
+			t.Errorf("missingMigration(%q, %q) = %v, %v", c.carried, c.applied, got, err)
+		}
+	}
+	if need, err := missingMigration("", "1"); !need || err == nil {
+		t.Error("an empty list must dump")
+	}
+}

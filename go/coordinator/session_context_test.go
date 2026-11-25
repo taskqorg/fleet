@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -33,10 +32,7 @@ func TestNowLine(t *testing.T) {
 // Requirement: the now-line read probes event_agent_text, so its predicate must be the index's. Risk: the two drift
 // and every sessions_list page scans all events of each listed session again.
 func TestAgentTextIndexPredicate(t *testing.T) {
-	raw, err := os.ReadFile("schema.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := []byte(migrationsText())
 	s := string(raw)
 	i := strings.Index(s, "CREATE INDEX event_agent_text")
 	if i < 0 || !strings.Contains(s[i:], "jsonb_path_exists(payload, '"+agentTextPath+"')") {

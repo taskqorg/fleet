@@ -1606,8 +1606,9 @@ type SchemaFile struct {
 }
 
 type SchemaMigration struct {
-	Version   int32
+	ID        string
 	AppliedAt time.Time
+	Version   *int32
 }
 
 type Score struct {
