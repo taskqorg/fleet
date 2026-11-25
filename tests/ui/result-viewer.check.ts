@@ -64,7 +64,7 @@ try {
     check(head.includes('mcp-lifecycle.jsonl') && head.includes('JSON lines') && /R-FLT-\d+/.test(head), `${tag}: the head names the result, its code and kind: ${head.replace(/\s+/g, ' ')}`);
     const page = await p.locator('main, body').first().innerText();
     check(!page.includes(UUID) && !page.includes('5e5e5e5e5e5e'), `${tag}: no UUID or hash anywhere on the page`);
-    check(await p.locator('.kv-row', { hasText: 'returnedError' }).locator('.kv-v.null').innerText() === 'none', `${tag}: null reads as none`);
+    check(await p.locator('.kvt-row', { hasText: 'returnedError' }).locator('.kv-v.null').innerText() === 'none', `${tag}: null reads as none`);
     check(await p.locator('.kv-branch > summary', { hasText: 'status' }).isVisible(), `${tag}: the nested object folds under its key`);
     check(await p.evaluate(() => document.scrollingElement!.scrollWidth <= innerWidth), `${tag}: nothing scrolls sideways`);
     await shot(p, `kv-${tag}`);

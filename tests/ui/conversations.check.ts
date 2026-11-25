@@ -269,7 +269,7 @@ try {
   await p.goto(`${origin}/results/md-1`);
   check(await until(async () => await p.locator('.av-text .md .md-h', { hasText: 'Notes' }).count() === 1), 'Markdown opens rendered');
   await p.goto(`${origin}/results/json-1`);
-  check(await until(async () => await p.locator('.kv-row', { hasText: 'a' }).locator('.kv-v.number', { hasText: '1' }).count() === 1 && await p.locator('.kv-branch > summary', { hasText: '2 items' }).count() === 1), 'JSON opens as keys and values (FLT-39)');
+  check(await until(async () => await p.locator('.kvt-row', { hasText: 'a' }).locator('.kv-v.number', { hasText: '1' }).count() === 1 && await p.locator('.kv-branch > summary', { hasText: '2 items' }).count() === 1), 'JSON opens as keys and values (FLT-39)');
   await p.goto(`${origin}/results/csv-1`);
   check(await until(async () => await p.locator('.av-table td', { hasText: 'a, "b"' }).count() === 1), 'CSV opens as a table');
   await p.getByRole('button', { name: 'Source', exact: true }).click();

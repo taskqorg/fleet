@@ -125,9 +125,9 @@
   .kv-rec + .kv-rec { margin-top: var(--space-4); }
   .kv-rec-h { padding-bottom: var(--space-1); }
   .kv-pairs { margin: 0; }
-  .kv-row { display: grid; grid-template-columns: var(--size-label) minmax(0, 1fr); gap: var(--space-3); padding: var(--space-1) 0; border-bottom: 1px solid var(--line-soft); }
-  .kv-row dt, .kv-k { font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--fg-muted); overflow-wrap: anywhere; }
-  .kv-row dd { margin: 0; min-width: 0; }
+  .kvt-row { display: grid; grid-template-columns: var(--size-label) minmax(0, 1fr); gap: var(--space-3); padding: var(--space-1) 0; border-bottom: 1px solid var(--line-soft); }
+  .kvt-row dt, .kv-k { font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--fg-muted); overflow-wrap: anywhere; }
+  .kvt-row dd { margin: 0; min-width: 0; }
   .kv-v { overflow-wrap: anywhere; white-space: pre-wrap; }
   .kv-v.number, .kv-v.boolean { font-family: var(--font-mono); font-size: var(--font-size-sm); }
   .kv-v.null { color: var(--fg-faint); font-style: italic; }
@@ -136,7 +136,7 @@
   .kv-branch > summary::before { content: '▸'; width: var(--size-icon-sm); color: var(--fg-faint); }
   .kv-branch[open] > summary::before { content: '▾'; }
   .kv-branch > .kv-tree { padding-left: var(--space-5); }
-  .kv-branch .kv-row:last-child, .kv-branch .kv-branch:last-child { border-bottom: 0; }
+  .kv-branch .kvt-row:last-child, .kv-branch .kv-branch:last-child { border-bottom: 0; }
   /* Unified diff (result-viewer.md): signs and words, not colour alone */
   .rd { display: grid; grid-template-columns: var(--size-search) minmax(0, 1fr); gap: var(--space-4); align-items: start; }
   .rd-files { display: flex; flex-direction: column; border-right: 1px solid var(--line); padding-right: var(--space-2); }
@@ -162,7 +162,7 @@
     .rd-files { display: none; }
     .rd-step { display: flex; }
     .rd-lines .ln { display: none; }
-    .kv-row { grid-template-columns: minmax(0, 40%) minmax(0, 1fr); }
+    .kvt-row { grid-template-columns: minmax(0, 40%) minmax(0, 1fr); }
     .kv-branch > .kv-tree { padding-left: var(--space-4); }
   }
 

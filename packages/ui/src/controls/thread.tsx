@@ -368,7 +368,7 @@ function KvNodeView(p: { node: KvNode }) {
   return (
     <div class="kv-tree">
       <For each={runs}>{r => Array.isArray(r)
-        ? <dl class="kv-pairs"><For each={r}>{e => <div class="kv-row"><dt>{e.key}</dt><dd><KvNodeView node={e.node} /></dd></div>}</For></dl>
+        ? <dl class="kv-pairs"><For each={r}>{e => <div class="kvt-row"><dt>{e.key}</dt><dd><KvNodeView node={e.node} /></dd></div>}</For></dl>
         : (
           <details class="kv-branch" open>
             <summary><span class="kv-k">{r.key}</span><span class="muted type-sm">{(() => { const b = r.node as Extract<KvNode, { entries: unknown }>; return `${b.entries.length} ${b.kind === 'array' ? 'items' : 'fields'}`; })()}</span></summary>
