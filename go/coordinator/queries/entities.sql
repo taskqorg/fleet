@@ -121,7 +121,7 @@ SELECT x.id, x.code, x.text, x.state::text AS state, x.project_id, x.task_id, x.
 WITH x AS (SELECT d.id, d.code, d.project_id, d.seq, nullif(d.title,'') AS title, d.archived_at, d.actor, d.host_id,
  d.payload->'agentConfig'->>'harness' AS agent_harness,
  (SELECT state FROM fleet_conversation_state(d.id))::text AS state,
- (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
+ (SELECT e.harness FROM execution e WHERE e.session_id=d.id AND e.kind='agent_run' ORDER BY e.seq DESC LIMIT 1) AS harness,
  (SELECT m.text FROM message m WHERE m.session_id=d.id ORDER BY m.seq LIMIT 1) AS first_message,
  greatest(d.updated_at,ex.last_at,(SELECT max(m.updated_at) FROM message m WHERE m.session_id=d.id),(SELECT max(v.updated_at) FROM event v WHERE v.session_id=d.id AND NOT v.delta)) AS activity_at
  FROM session d
@@ -145,7 +145,7 @@ SELECT x.id, x.code, coalesce(x.title,'')::text AS title, coalesce(x.first_messa
 WITH x AS (SELECT d.id, d.code, d.project_id, nullif(d.title,'') AS title, d.archived_at, d.actor, d.host_id,
  d.payload->'agentConfig'->>'harness' AS agent_harness,
  (SELECT state FROM fleet_conversation_state(d.id))::text AS state,
- (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
+ (SELECT e.harness FROM execution e WHERE e.session_id=d.id AND e.kind='agent_run' ORDER BY e.seq DESC LIMIT 1) AS harness,
  (SELECT m.text FROM message m WHERE m.session_id=d.id ORDER BY m.seq LIMIT 1) AS first_message
  FROM session d)
 SELECT count(*) FROM x
