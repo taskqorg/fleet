@@ -52,10 +52,24 @@ func shippedSkillsDir() string {
 }
 
 func skillsList(q *Request, _ *contract.SkillsListRequest) (contract.SkillsListReply, error) {
+	return skillsListOf(q, nil)
+}
+
+// skillsListOf: skills_list over current, every current definition already read (library_view); nil reads the agents.
+func skillsListOf(q *Request, current []definitionRow) (contract.SkillsListReply, error) {
 	out := contract.SkillsListReply{Skills: []contract.SkillSummary{}}
-	agents, err := definitionsOf(q.ctx(), q.db(), definitionFilter{kind: "agent", current: true})
-	if err != nil {
-		return out, err
+	var agents []definitionRow
+	var err error
+	if current != nil {
+		for _, x := range current {
+			if x.Kind == "agent" {
+				agents = append(agents, x)
+			}
+		}
+	} else {
+		if agents, err = definitionsOf(q.ctx(), q.db(), definitionFilter{kind: "agent", current: true}); err != nil {
+			return out, err
+		}
 	}
 	headBySkill := map[string][]string{}
 	for _, a := range agents {
