@@ -449,8 +449,8 @@ func claudePeriod(t string) string {
 }
 
 // probeModels (J5, docs/designs/fleet-ia-and-journeys.md section 3): the models the vendor CLI offers this binding,
-// read at inspection: codex app-server model/list, Claude Code's stream-json initialize answer. Nil when the CLI cannot
-// answer, so the coordinator reads "not probed", not "offers nothing".
+// read at inspection: codex app-server model/list, Claude Code's stream-json initialize answer, Antigravity's ACP
+// session/new answer. Nil when the CLI cannot answer, so the coordinator reads "not probed", not "offers nothing".
 func probeModels(x registryEntry) []string {
 	if runnable(x) != nil {
 		return nil
@@ -487,8 +487,45 @@ func probeModels(x registryEntry) []string {
 			return nil
 		}
 		list = jAt(r, "response", "response", "models")
+	case "antigravity":
+		// ACP: initialize, then session/new answers the models the login offers. No prompt is sent, so no quota is used.
+		// The run's argv (harness_command.go) and its GEMINI_HOME; the session's folder is the binding's own home.
+		cmd := probeCmd(x, "acp", "--gemini-dir", x.NativeHome, "--app-data-dir", "antigravity-cli", "--include-default-customizations=false")
+		setEnv(cmd, "GEMINI_HOME", x.NativeHome)
+		if x.CredentialAuthority == "native-current" {
+			setEnv(cmd, "HOME", x.CredentialHome) // as the start path: the login is read from its own HOME
+		}
+		r, err := rpcExchange(cmd, []M{
+			acpRequest(1, "initialize", M{"protocolVersion": 1, "clientCapabilities": M{}, "clientInfo": M{"name": "fleet", "version": "0.1.0"}}),
+			acpRequest(2, "session/new", M{"cwd": x.Home, "mcpServers": []any{}}),
+		}, func(v M) bool { return isID(v, 2) })
+		if err != nil || has(r, "error") {
+			return nil
+		}
+		list = acpModelList(typed[acpResult](jAt(r, "result")))
 	}
 	return modelNames(list)
+}
+
+// acpModelList: the model ids an ACP session/new answer offers: the legacy models.availableModels and the values of the
+// model select option (grouped values included), as the run path reads them (acpSelect). Nil when it names none.
+func acpModelList(r acpResult) []any {
+	var out []any
+	for _, m := range r.Models.AvailableModels {
+		if m.ModelID != nil {
+			out = append(out, *m.ModelID)
+		}
+	}
+	if opt := acpSelect(r, "model", "", ""); opt != nil {
+		for _, v := range opt.Options {
+			for _, x := range append([]acpOptionValue{v}, v.Options...) {
+				if x.Value != nil {
+					out = append(out, *x.Value)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // modelNames: the names in a vendor model list (strings, or objects naming value, id, model or name), at most 200,
