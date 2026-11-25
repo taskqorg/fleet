@@ -181,6 +181,38 @@ func (q *Queries) AccountChecks(ctx context.Context, arg AccountChecksParams) ([
 	return items, nil
 }
 
+const accountDelete = `-- name: AccountDelete :execrows
+DELETE FROM managed_account WHERE id = $1::text
+`
+
+func (q *Queries) AccountDelete(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, accountDelete, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const accountDeleteRefs = `-- name: AccountDeleteRefs :one
+SELECT (SELECT count(*) FROM account_inspection i WHERE i.account_id = $1::text)::bigint AS inspections,
+ (SELECT count(*) FROM account_check c WHERE c.account_id = $1::text)::bigint AS checks,
+ (SELECT count(*) FROM execution e WHERE e.account_id = $1::text)::bigint AS runs
+`
+
+type AccountDeleteRefsRow struct {
+	Inspections int64
+	Checks      int64
+	Runs        int64
+}
+
+// What still names a subscription: its inspections, its checks and the runs that used it (account_delete refuses then).
+func (q *Queries) AccountDeleteRefs(ctx context.Context, id string) (AccountDeleteRefsRow, error) {
+	row := q.db.QueryRow(ctx, accountDeleteRefs, id)
+	var i AccountDeleteRefsRow
+	err := row.Scan(&i.Inspections, &i.Checks, &i.Runs)
+	return i, err
+}
+
 const accountHostHarnessAllowed = `-- name: AccountHostHarnessAllowed :one
 SELECT coalesce(payload->'harnesses'->($1::text)->'allowed', 'true'::jsonb) <> 'false'::jsonb AS allowed
  FROM host WHERE host_id= $2::text AND state<>'removed' ORDER BY seq LIMIT 1

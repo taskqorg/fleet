@@ -114,6 +114,61 @@ func (q *Queries) APIConnections(ctx context.Context) ([]ApiConnection, error) {
 	return items, nil
 }
 
+const accessLastCalls = `-- name: AccessLastCalls :many
+SELECT c.name::text AS connection,
+ coalesce(l.id, '')::text AS last_id, coalesce(l.state, '')::text AS last_state, coalesce(l.problem, '')::text AS last_problem,
+ coalesce(l.tool, '')::text AS last_tool, coalesce(l.started_at, 0)::bigint AS last_started_at, coalesce(o.started_at, 0)::bigint AS ok_started_at
+FROM unnest($1::text[]) AS c(name)
+LEFT JOIN LATERAL (
+ SELECT e.id, e.state::text AS state, e.problem, e.data->>'tool' AS tool, (e.data->>'startedAt')::bigint AS started_at
+ FROM execution e WHERE (e.data->>'connection') = c.name AND e.kind = 'tool_run'
+ ORDER BY (e.data->>'connection'), e.id COLLATE "C" DESC LIMIT 1) l ON true
+LEFT JOIN LATERAL (
+ SELECT (e.data->>'startedAt')::bigint AS started_at
+ FROM execution e WHERE (e.data->>'connection') = c.name AND e.kind = 'tool_run' AND e.state = 'succeeded'
+ ORDER BY (e.data->>'connection'), e.id COLLATE "C" DESC LIMIT 1) o ON true
+`
+
+type AccessLastCallsRow struct {
+	Connection    string
+	LastID        string
+	LastState     string
+	LastProblem   string
+	LastTool      string
+	LastStartedAt int64
+	OkStartedAt   int64
+}
+
+// Per connection, its latest call and its latest call that succeeded (access_status). Call ids sort by time (call:<hex ms>),
+// so each is one backward walk of resource_execution_connection_page.
+func (q *Queries) AccessLastCalls(ctx context.Context, names []string) ([]AccessLastCallsRow, error) {
+	rows, err := q.db.Query(ctx, accessLastCalls, names)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AccessLastCallsRow
+	for rows.Next() {
+		var i AccessLastCallsRow
+		if err := rows.Scan(
+			&i.Connection,
+			&i.LastID,
+			&i.LastState,
+			&i.LastProblem,
+			&i.LastTool,
+			&i.LastStartedAt,
+			&i.OkStartedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const connCallParent = `-- name: ConnCallParent :one
 SELECT task_id, session_id, directed_by, pipeline_id, pipeline_revision, step_id, profile_id, profile_revision FROM execution WHERE id=$1
 `

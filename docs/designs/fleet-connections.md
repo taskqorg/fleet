@@ -149,6 +149,16 @@ What the owner's Google AI Ultra and Antigravity subscriptions give Fleet's agen
 
 The `google-ai` catalogue entry's instructions name these models, so an agent with the connection finds them without this page; `models_list` shows what the key can call. Usage of an interaction is counted once, when `interaction_get` first reads it `completed`.
 
+### 11. Access status and onboarding
+
+One read shows every subscription login, model API key and service key Fleet has or offers, and how to add what is missing (System › Access, approved on the board `screens/system.bl`). Agents use the same operations; a person never needs a shell or a checklist (`go/coordinator/access.go`).
+
+*   **`access_status`** (person): one item per subscription (`account:<id>`), connection (`connection:<name>`) and offered provider that has no connection yet (`provider:<id>`: Anthropic, OpenAI, Google AI, Tavily, Meshy, Tripo). An item has its group (subscription, model key, service), kind in plain words (ChatGPT login, Claude login, Google login, key), state (`works`, `failing`, `needs-login`, `needs-key`, `not-added`, `paused`, `unknown`) with a sentence, its hosts (readiness, models probed, reason), where it serves and which profiles use it, its limit (a subscription's lowest window left, or a connection budget with its spend), the last check (a subscription's latest host observation; a connection's latest call, with the latest successful one) and the next step with its link (key page, billing page). A connection whose latest call failed is `failing` with the plain cause; a 429 points at the provider's billing page. Never key values.
+*   **`access_check {id}`**: read-only, never a login. A connection makes its provider's cheapest call (models list, balance, or one search credit for Tavily) with a coordinator read token, recorded as a `tool_run`; a subscription queues a status inspection (`account_connect`) of each host binding. The reply is the item after the check (subscription results arrive when the hosts answer).
+*   **`access_onboard`**: `kind: key` creates the connection when missing (owner; access all projects) and answers where the key comes from; with `projectId` and `requestId` it asks the owner for the key under Needs you (`connections_key_request`). `kind: login` answers the host login steps (`account_login_handoff`) and, with `projectId` and `requestId`, asks the owner to sign in under Needs you. `kind: limit` sets the monthly limit Fleet counts a connection against (a `warn` connection budget, §6; one per connection and unit). It never takes a key value or a login code.
+*   **`account_delete {accountId, preview?}`** (owner): deletes a subscription nothing names (no host binding, inspection, check or run); otherwise 409 with the reason. An audit row `deleted-account:<id>` stays.
+*   **Providers** added for the owner's keys: `openai` (`list_models`, `create_response`, `generate_image`; a key bills its organization, not a ChatGPT subscription) and `tripo` (`balance`, `task_create`, `task_get`); `meshy` gains `balance`. Credits are read where the provider answers them for the key (Meshy, Tripo); otherwise the owner's limit counts calls.
+
 ## Failure and recovery
 
 - Gateway or PDS18 unavailable: calls fail; agent execution may continue without them. A separate gateway avoids coupling calls to coordinator restarts.

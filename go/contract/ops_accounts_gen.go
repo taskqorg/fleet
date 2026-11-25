@@ -6,6 +6,357 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+type AccessAction string
+
+const (
+	AccessActionLogin         AccessAction = "login"
+	AccessActionAddKey        AccessAction = "add-key"
+	AccessActionBilling       AccessAction = "billing"
+	AccessActionAddConnection AccessAction = "add-connection"
+	AccessActionCheck         AccessAction = "check"
+	AccessActionLimit         AccessAction = "limit"
+)
+
+// AccessActionValues lists every AccessAction in schema order.
+var AccessActionValues = []AccessAction{AccessActionLogin, AccessActionAddKey, AccessActionBilling, AccessActionAddConnection, AccessActionCheck, AccessActionLimit}
+
+// Valid: v is one of the schema's values.
+func (v AccessAction) Valid() bool {
+	for _, x := range AccessActionValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type AccessBudget struct {
+	Id     string   `json:"id"`
+	Limit  float64  `json:"limit"`
+	Period *string  `json:"period,omitempty"`
+	Spent  *float64 `json:"spent,omitempty"`
+	Unit   string   `json:"unit"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessBudget) Validate() error {
+	return nil
+}
+
+type AccessCheck struct {
+	At       int64   `json:"at"`
+	LastOkAt *int64  `json:"lastOkAt,omitempty"`
+	Ok       bool    `json:"ok"`
+	Text     string  `json:"text"`
+	Tool     *string `json:"tool,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessCheck) Validate() error {
+	return nil
+}
+
+type AccessCheckReply struct {
+	Item   AccessItem `json:"item"`
+	Queued bool       `json:"queued"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessCheckReply) Validate() error {
+	if err := Check(&v.Item, "item"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type AccessCheckRequest struct {
+	Id string `json:"id"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessCheckRequest) Validate() error {
+	return nil
+}
+
+type AccessCounts struct {
+	NeedYou  int64 `json:"needYou"`
+	NotAdded int64 `json:"notAdded"`
+	Works    int64 `json:"works"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessCounts) Validate() error {
+	return nil
+}
+
+type AccessGroup string
+
+const (
+	AccessGroupSubscription AccessGroup = "subscription"
+	AccessGroupModelKey     AccessGroup = "model-key"
+	AccessGroupService      AccessGroup = "service"
+)
+
+// AccessGroupValues lists every AccessGroup in schema order.
+var AccessGroupValues = []AccessGroup{AccessGroupSubscription, AccessGroupModelKey, AccessGroupService}
+
+// Valid: v is one of the schema's values.
+func (v AccessGroup) Valid() bool {
+	for _, x := range AccessGroupValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type AccessGuide struct {
+	BillingUrl *string `json:"billingUrl,omitempty"`
+	DocsUrl    *string `json:"docsUrl,omitempty"`
+	KeyUrl     *string `json:"keyUrl,omitempty"`
+	Login      *string `json:"login,omitempty"`
+	Note       *string `json:"note,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessGuide) Validate() error {
+	return nil
+}
+
+type AccessHost struct {
+	Binding    string  `json:"binding"`
+	HostId     string  `json:"hostId"`
+	Models     *int64  `json:"models,omitempty"`
+	ObservedAt *int64  `json:"observedAt,omitempty"`
+	Readiness  string  `json:"readiness"`
+	Reason     *string `json:"reason,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessHost) Validate() error {
+	return nil
+}
+
+// AccessItem: id: account:<id>, connection:<name> or provider:<id> (offered, not added).
+type AccessItem struct {
+	Group     AccessGroup  `json:"group"`
+	Guide     *AccessGuide `json:"guide,omitempty"`
+	Holder    *string      `json:"holder,omitempty"`
+	Hosts     []AccessHost `json:"hosts,omitempty"`
+	Id        string       `json:"id"`
+	Intake    *string      `json:"intake,omitempty"`
+	Keys      *int64       `json:"keys,omitempty"`
+	Kind      string       `json:"kind"`
+	LastCheck *AccessCheck `json:"lastCheck,omitempty"`
+	Limit     *AccessLimit `json:"limit,omitempty"`
+	Name      string       `json:"name"`
+	Next      *AccessNext  `json:"next,omitempty"`
+	Note      *string      `json:"note,omitempty"`
+	Provider  string       `json:"provider"`
+	State     AccessState  `json:"state"`
+	StateText string       `json:"stateText"`
+	UsedBy    []string     `json:"usedBy,omitempty"`
+	Where     *string      `json:"where,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessItem) Validate() error {
+	if err := Check(&v.Group, "group"); err != nil {
+		return err
+	}
+	if v.Guide != nil {
+		if err := Check(v.Guide, "guide"); err != nil {
+			return err
+		}
+	}
+	for i := range v.Hosts {
+		if err := Check(&v.Hosts[i], "hosts"); err != nil {
+			return err
+		}
+	}
+	if v.LastCheck != nil {
+		if err := Check(v.LastCheck, "lastCheck"); err != nil {
+			return err
+		}
+	}
+	if v.Limit != nil {
+		if err := Check(v.Limit, "limit"); err != nil {
+			return err
+		}
+	}
+	if v.Next != nil {
+		if err := Check(v.Next, "next"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type AccessLimit struct {
+	Budget  *AccessBudget `json:"budget,omitempty"`
+	LeftPct *float64      `json:"leftPct,omitempty"`
+	Text    string        `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessLimit) Validate() error {
+	if v.Budget != nil {
+		if err := Check(v.Budget, "budget"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type AccessLimitSet struct {
+	Amount float64 `json:"amount"`
+	Period *string `json:"period,omitempty"`
+	Unit   string  `json:"unit"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessLimitSet) Validate() error {
+	return nil
+}
+
+type AccessNext struct {
+	Action  AccessAction `json:"action"`
+	Binding *string      `json:"binding,omitempty"`
+	HostId  *string      `json:"hostId,omitempty"`
+	Label   string       `json:"label"`
+	Url     *string      `json:"url,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessNext) Validate() error {
+	if err := Check(&v.Action, "action"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type AccessOnboardKind string
+
+const (
+	AccessOnboardKindKey   AccessOnboardKind = "key"
+	AccessOnboardKindLogin AccessOnboardKind = "login"
+	AccessOnboardKindLimit AccessOnboardKind = "limit"
+)
+
+// AccessOnboardKindValues lists every AccessOnboardKind in schema order.
+var AccessOnboardKindValues = []AccessOnboardKind{AccessOnboardKindKey, AccessOnboardKindLogin, AccessOnboardKindLimit}
+
+// Valid: v is one of the schema's values.
+func (v AccessOnboardKind) Valid() bool {
+	for _, x := range AccessOnboardKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type AccessOnboardReply struct {
+	BudgetId   *string      `json:"budgetId,omitempty"`
+	Connection *string      `json:"connection,omitempty"`
+	Created    *bool        `json:"created,omitempty"`
+	Guide      *AccessGuide `json:"guide,omitempty"`
+	Kind       string       `json:"kind"`
+	QuestionId *string      `json:"questionId,omitempty"`
+	Steps      []string     `json:"steps"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessOnboardReply) Validate() error {
+	if v.Guide != nil {
+		if err := Check(v.Guide, "guide"); err != nil {
+			return err
+		}
+	}
+	if v.Steps == nil {
+		return Missing("steps")
+	}
+	return nil
+}
+
+type AccessOnboardRequest struct {
+	AccountId  *string           `json:"accountId,omitempty"`
+	Binding    *string           `json:"binding,omitempty"`
+	Connection *string           `json:"connection,omitempty"`
+	HostId     *string           `json:"hostId,omitempty"`
+	Kind       AccessOnboardKind `json:"kind"`
+	Limit      *AccessLimitSet   `json:"limit,omitempty"`
+	ProjectId  *string           `json:"projectId,omitempty"`
+	Provider   *string           `json:"provider,omitempty"`
+	Reason     *string           `json:"reason,omitempty"`
+	RequestId  *string           `json:"requestId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessOnboardRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if v.Limit != nil {
+		if err := Check(v.Limit, "limit"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type AccessState string
+
+const (
+	AccessStateWorks      AccessState = "works"
+	AccessStateFailing    AccessState = "failing"
+	AccessStateNeedsLogin AccessState = "needs-login"
+	AccessStateNeedsKey   AccessState = "needs-key"
+	AccessStateNotAdded   AccessState = "not-added"
+	AccessStatePaused     AccessState = "paused"
+	AccessStateUnknown    AccessState = "unknown"
+)
+
+// AccessStateValues lists every AccessState in schema order.
+var AccessStateValues = []AccessState{AccessStateWorks, AccessStateFailing, AccessStateNeedsLogin, AccessStateNeedsKey, AccessStateNotAdded, AccessStatePaused, AccessStateUnknown}
+
+// Valid: v is one of the schema's values.
+func (v AccessState) Valid() bool {
+	for _, x := range AccessStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type AccessStatusReply struct {
+	CheckedAt int64        `json:"checkedAt"`
+	Counts    AccessCounts `json:"counts"`
+	Items     []AccessItem `json:"items"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccessStatusReply) Validate() error {
+	if err := Check(&v.Counts, "counts"); err != nil {
+		return err
+	}
+	if v.Items == nil {
+		return Missing("items")
+	}
+	for i := range v.Items {
+		if err := Check(&v.Items[i], "items"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type AccessStatusRequest = map[string]json.RawMessage
+
 type AccountConnectReply = AccountInspection
 
 // AccountConnectRequest: Inspects one native login. hostId: default the caller's host; binding: the native login name.
@@ -42,6 +393,27 @@ func (v *AccountCreateRequest) Validate() error {
 
 // Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*AccountCreateRequest) Closed() bool { return true }
+
+type AccountDeleteReply struct {
+	AccountId string  `json:"accountId"`
+	Deleted   bool    `json:"deleted"`
+	Refused   *string `json:"refused,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountDeleteReply) Validate() error {
+	return nil
+}
+
+type AccountDeleteRequest struct {
+	AccountId string `json:"accountId"`
+	Preview   *bool  `json:"preview,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountDeleteRequest) Validate() error {
+	return nil
+}
 
 type AccountDiscoverReply = AccountInspection
 
@@ -1643,8 +2015,12 @@ func (v *TransportInspectRequest) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
+		"access_check":                {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Checks one access item now, read-only, never starting a login: a connection with one cheap provider call (its reply's reason on failure), a subscription by re-inspecting each host login. id: an access_status item id. The reply is the item as access_status shows it after the check.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
+		"access_onboard":              {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Starts adding access. kind key: provider (and connection, default the provider's name); creates the connection when missing (owner) and answers where the key comes from; with projectId and requestId it asks the owner for the key under Needs you (the agent path). kind login: accountId, hostId, binding; answers the host login steps and, with projectId and requestId, asks the owner to sign in under Needs you. kind limit: connection and limit {amount, unit, period}: the monthly limit Fleet counts the connection's spend against (a warn budget). Never takes a key value or a login code.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"accountId\":{\"type\":\"string\"},\"binding\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"key\",\"login\",\"limit\"],\"type\":\"string\"},\"limit\":{\"additionalProperties\":false,\"properties\":{\"amount\":{\"type\":\"number\"},\"period\":{\"type\":\"string\"},\"unit\":{\"type\":\"string\"}},\"required\":[\"amount\",\"unit\"],\"type\":\"object\"},\"projectId\":{\"type\":\"string\"},\"provider\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"kind\"],\"type\":\"object\"}")},
+		"access_status":               {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Every subscription, model API key and service key Fleet has or offers, one item each: kind, state in plain words (works, failing, needs login on a host, needs a key, not added), limit or credits where known, hosts and users, the last check and the next step with its link. Never key values.", Changes: []string{"api-connection", "connection-key", "managed-account", "host", "setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}")},
 		"account_connect":             {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "holder:account", Agent: "tool", Description: "Inspects one native login. hostId: default the caller's host; binding: the native login name.", InputSchema: json.RawMessage("{\"$comment\":\"Inspects one native login. hostId: default the caller's host; binding: the native login name.\",\"additionalProperties\":false,\"properties\":{\"accountId\":{\"type\":\"string\"},\"binding\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"}},\"required\":[\"accountId\",\"binding\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"account_create":              {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "harness codex, claude, antigravity or acp; holder: the owner may create one for another person.", InputSchema: json.RawMessage("{\"$comment\":\"harness codex, claude, antigravity or acp; holder: the owner may create one for another person.\",\"additionalProperties\":false,\"properties\":{\"comment\":{\"type\":\"string\"},\"harness\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"plan\":{\"type\":\"string\"}},\"required\":[\"name\",\"harness\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"account_delete":              {Read: false, Long: false, Errors: []int{403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner only. Deletes a subscription account that nothing uses: refused (409, with the reason) while it has a host binding, an inspection, a check or a run that names it. Its own setting history goes with it; an audit row stays. preview true changes nothing and answers whether it would be deleted.", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"accountId\":{\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"accountId\"],\"type\":\"object\"}")},
 		"account_discover":            {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "holder:account", Agent: "tool", Description: "Reads the host's native account catalogue. hostId: default the caller's host.", InputSchema: json.RawMessage("{\"$comment\":\"Reads the host's native account catalogue. hostId: default the caller's host.\",\"additionalProperties\":false,\"properties\":{\"accountId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"}},\"required\":[\"accountId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"account_hosts":               {Read: true, Long: false, Errors: []int{}, Auth: "holder:account", Agent: "tool", Description: "harness default codex; accountId takes the account's harness.", InputSchema: json.RawMessage("{\"$comment\":\"harness default codex; accountId takes the account's harness.\",\"additionalProperties\":true,\"properties\":{\"accountId\":{\"type\":\"string\"},\"harness\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"account_list":                {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Managed subscription accounts with their inspections, checks and setting history, and each host's native account catalogue", Changes: []string{"host", "managed-account"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
