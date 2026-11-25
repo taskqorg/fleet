@@ -2,6 +2,7 @@
 export * from './controls/primitives.tsx';
 export * from './controls/overlays.tsx';
 export * from './controls/navigation.tsx';
+export * from './controls/rail-bots.tsx';
 export * from './controls/lists.tsx';
 export * from './controls/tables.tsx';
 export * from './controls/forms.tsx';

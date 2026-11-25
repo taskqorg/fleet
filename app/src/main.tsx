@@ -15,6 +15,7 @@ import { parseView, formatView, VIEWS, type ViewName } from '../../packages/view
 import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setPanel, panelsOf, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus, scopeIds } from './prefs.ts';
 import { useOp, touchedBy, setIdentity, startStore } from './store.ts';
 import { useNavCounts } from './nav-counts.ts';
+import { useRailBots } from './rail-bots.ts';
 import { entityCards } from './entity-cards.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
 import { clearAll } from './offline.ts';
@@ -271,7 +272,8 @@ function App() {
   // Entity cards (EntityCode) read entity_card through the store; their Open goes to the in-app path.
   const cards = entityCards(go);
   const isOpen = createMemo(() => access.value.state === 'open');
-  return <EntityCards value={cards}><AppShell privateReady={isOpen()} privateGeneration={access.value.generation} nav={nav()} current={activeNav()} title={shellTitle()} waiting={0} onGo={openSection} pins={pins()} onPins={savePins} search={isOpen() && !viewer() ? search : []} ready={shown()} wall={wall()}
+  const railBots = useRailBots(isOpen, go);
+  return <EntityCards value={cards}><AppShell privateReady={isOpen()} privateGeneration={access.value.generation} nav={nav()} current={activeNav()} title={shellTitle()} waiting={0} onGo={openSection} pins={pins()} onPins={savePins} search={isOpen() && !viewer() ? search : []} ready={shown()} wall={wall()} bots={isOpen() ? railBots : undefined}
     searchIdle={<FocusPresets icon value={prefs.value.focus.filter(p => !prefs.value.ignored.includes(p))} presets={prefs.value.focusPresets} ignored={prefs.value.ignored} onChange={setFocus} />}
     focus={isOpen() && !viewer() ? <Focus go={go} /> : undefined}
     widths={geometry().widths} onWidth={setWidth} panels={geometry().panels} onPanel={setPanel}

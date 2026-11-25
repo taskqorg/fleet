@@ -562,3 +562,8 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question:** bots showed only a letter; the owner wanted a configurable avatar, animated ones included, made through Fleet's own pipelines, and the minimal way to show a bot's activity.
 * **Options:** activity as light (the avatar dims, glows while working, one dot for waiting or failed) or as a 2 px state ring; Lottie/TGS players or native formats only.
 * **Choice (owner, "Yes, all as drawn"):** light (A); native formats (still and animated images, animated SVG, muted WebM/MP4 loops; Lottie and TGS not shown); sizes sm 16, md 24, lg 40, xl 96; a still frame in lists, animation at lg/xl, on hover and while working; the picker in Settings & Memory; the `avatar-make` pipeline (image, check, optional animated SVG). Spec: [avatar](controls/avatar.md); board: `blocks.bl` (Blocks · Bot avatar) and `screens/library.bl` section 4.
+## 2026-11-25: Bots in the navigation
+
+* **Question (owner):** a button in the left menu shows bots, off by default; on, a zone shows the pinned bots and the recently active ones, with a configurable count and a link to all bots.
+* **Options:** the zone at the bottom of the rail, above the user block, growing into free space (A); or at the top under the head, with a fixed number of rows so the sections do not move with bot activity (B).
+* **Choice (owner):** A, bottom. Placement is therefore not a setting. The switch and the recent count are the person setting `railBots`; pins stay the Library pins. Recorded in [nav-rail](controls/nav-rail.md) (**Bots**), board [shell](board/screens/shell.bl), frame "Shell · rail bots zone".
