@@ -125,6 +125,17 @@ Joining a task: `session_start` takes an optional `taskId` (a task of the same p
 
 Access: the thread operations run under the same project scope as every other read operation. A task's executions belong to the task's project, so plain scope filtering is enough.
 
+### Work-item threads
+
+A session can hold several work-item threads (Conversations v2, owner pick b2, 2026-11-25). A bot's Home session uses them: one thread per work item, so a turn about one item never carries another item's context.
+
+*   **Key.** A thread key names the work item: `task:<id>`, `question:<id>` (a question without a task), `execution:<id>` (a run without a task), `delivery:<id>`, `fleet` and `fleet:<kind>` (hosts, limits and other Fleet signals). A question or a run of a task belongs to its task's thread. The empty key is the session's main thread: person messages without a thread, timed wakes and Run now.
+*   **Where it lives.** The key is the field `thread` of the queued message, the sent message and the execution. `message_send` takes an optional `thread`: a person continues a work-item thread.
+*   **Native session per thread.** A thread's turns continue their own native session: the continuation key is the session's plus `#<thread>`, kept in `nativeSessions`. A new thread starts fresh. The session's fork and pending handoff belong to the main thread.
+*   **Parked and resumed.** A thread with no new event has no turn: it is parked. The next event on its item resumes its native session.
+*   **One turn per item.** A trigger's changes are grouped by item in the order the items first changed. Several changes of one item in one check are one turn. A session target gets one queued message per item; a bot target gets an admitted wake for the first item and queued Home messages for the others, since a bot runs one turn at a time ([triggers, Pass](fleet-triggers.md#pass)).
+*   **Reading.** The session view lists the threads with their last activity, state (open or parked) and unread count, and shows one thread at a time. The data comes from the data layer's session view.
+
 ### Read path: `thread_entries`
 
 One coordinator operation, also served as `GET /api/threads/{task|session}/:id/entries`:

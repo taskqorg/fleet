@@ -654,7 +654,7 @@ func triggerCheck(q *Request, t db.Trigger, target triggerTarget, now time.Time,
 		slot = "run:" + fmt.Sprint(now.UnixMilli())
 	}
 	cursor, limits := t.ChangeCursor, t.LimitsSignaled
-	var parts []string
+	var parts []threadPart
 	if len(t.IfChanged) > 0 {
 		var err error
 		if parts, cursor, limits, err = triggerChanges(q, t, target); err != nil {
@@ -749,18 +749,59 @@ func triggerTargetChanges(q *Request, t db.Trigger, target triggerTarget) (db.Tr
 }
 
 // triggerSend: the trigger's message to its target.
-func triggerSend(q *Request, t db.Trigger, target triggerTarget, slot string, parts []string, manual bool) (bool, error) {
+// Changes go one turn per work item (threads_bot.go): each item's lines start a turn in its own thread, in the order
+// the items first changed; a check without changes (a timed wake, Run now) is one turn in the main thread.
+func triggerSend(q *Request, t db.Trigger, target triggerTarget, slot string, all []threadPart, manual bool) (bool, error) {
+	if len(all) == 0 {
+		return triggerSendOne(q, t, target, slot, nil, "", manual)
+	}
+	keys, lines := threadGroups(all)
+	sent := false
+	for i, k := range keys {
+		var ok bool
+		var err error
+		if i == 0 || target.bot == nil {
+			ok, err = triggerSendOne(q, t, target, slot, lines[k], k, manual)
+		} else {
+			// The bot runs one turn at a time: the next items queue in its Home session, each in its thread.
+			ok, err = triggerQueueThread(q, t, target, slot, lines[k], k)
+		}
+		if err != nil {
+			return sent, err
+		}
+		sent = sent || ok
+	}
+	return sent, nil
+}
+
+// triggerQueueThread: one item's changes as a queued message of the bot's Home session, in the item's thread.
+func triggerQueueThread(q *Request, t db.Trigger, target triggerTarget, slot string, parts []string, thread string) (bool, error) {
+	home := deref(target.bot.HomeSessionId)
+	if home == "" {
+		return false, nil
+	}
+	rid := "trigger:" + t.ID + ":" + slot + ":" + thread
+	text := fmt.Sprintf("Fleet: %d changes in project %s: %s", len(parts), target.bot.ProjectId, strings.Join(parts, "; "))
+	_, err := agentSubmitFrom(q, &contract.MessageSendRequest{SessionId: &home, RequestId: &rid, Text: &text}, "trigger", t.ID, thread)
+	return err == nil, err
+}
+
+// triggerSendOne: the trigger's message to its target for one thread ("" the main thread).
+func triggerSendOne(q *Request, t db.Trigger, target triggerTarget, slot string, parts []string, thread string, manual bool) (bool, error) {
 	changes := ""
 	if len(parts) > 0 {
 		changes = fmt.Sprintf("Fleet: %d changes in your focus: %s", len(parts), strings.Join(parts, "; "))
 	}
 	rid := "trigger:" + t.ID + ":" + slot
+	if thread != "" {
+		rid += ":" + thread
+	}
 	if target.bot == nil {
 		text := strings.TrimSpace(strings.Join(slices.DeleteFunc([]string{t.Text, changes}, func(s string) bool { return s == "" }), "\n"))
 		if text == "" {
 			text = "Fleet: trigger " + t.Name
 		}
-		_, err := agentSubmitFrom(q, &contract.MessageSendRequest{SessionId: &target.sessionID, RequestId: &rid, Text: &text}, "trigger", t.ID)
+		_, err := agentSubmitFrom(q, &contract.MessageSendRequest{SessionId: &target.sessionID, RequestId: &rid, Text: &text}, "trigger", t.ID, thread)
 		return err == nil, err
 	}
 	b := target.bot
@@ -774,14 +815,14 @@ func triggerSend(q *Request, t db.Trigger, target triggerTarget, slot string, pa
 		head = fmt.Sprintf("Fleet: scheduled daily wake (%s %s) in project %s.", t.DailyTime, t.DailyZone, b.ProjectId)
 	}
 	run, admitted, err := admitBotWake(q, b, botWakeReq{Cause: cause, DedupKey: rid, Text: head, SentBy: "Fleet", Source: "trigger",
-		CheckPause: !manual, Trigger: &t})
+		CheckPause: !manual, Trigger: &t, Thread: thread})
 	_ = run
 	return admitted, err
 }
 
 // triggerChanges: the changes after the trigger's cursor that its condition names, classified by their current rows
 // (watch.go classify), and the cursor and sent limits keys after them.
-func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]string, int64, []string, error) {
+func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]threadPart, int64, []string, error) {
 	var focus []string
 	var directedBy, self string
 	if target.bot != nil {
@@ -811,7 +852,7 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]string, i
 		}
 	}
 	cursor := t.ChangeCursor
-	parts, seen := []string{}, map[string]bool{}
+	parts, seen := []threadPart{}, map[string]bool{}
 	for {
 		page, next, resync, _, err := since(q.ctx(), q.tx, cursor, 500)
 		if err != nil {
@@ -819,7 +860,7 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]string, i
 		}
 		if resync {
 			cursor = next
-			parts = append(parts, "change history after the last check was pruned; re-read your focus with task_page")
+			parts = append(parts, threadPart{"fleet", "change history after the last check was pruned; re-read your focus with task_page"})
 			break
 		}
 		for _, c := range page {
@@ -836,7 +877,7 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]string, i
 			if s, err := classify(q, c); err != nil {
 				return nil, t.ChangeCursor, t.LimitsSignaled, err
 			} else if s != "" {
-				parts = append(parts, s)
+				parts = append(parts, threadPart{changeThread(c.Change), s})
 			}
 		}
 		cursor = next
@@ -850,7 +891,10 @@ func triggerChanges(q *Request, t db.Trigger, target triggerTarget) ([]string, i
 		if err != nil {
 			log.Printf("trigger %s: limits: %v", t.ID, err) // a limits read problem never blocks the other changes
 		} else if len(signals) > 0 {
-			parts, keys = append(parts, signals...), sent
+			for _, s := range signals {
+				parts = append(parts, threadPart{"fleet:limits", s})
+			}
+			keys = sent
 		}
 	}
 	return parts, cursor, keys, nil

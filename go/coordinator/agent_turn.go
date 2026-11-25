@@ -34,6 +34,8 @@ type agentProvenance struct {
 	TraceActor  string `json:"traceActor,omitempty"`
 	// TriggerID: the trigger that sent the message (triggers.go), kept on the queued and sent message.
 	TriggerID string `json:"triggerId,omitempty"`
+	// Thread: the work item the turn belongs to (threadKey, threads_bot.go); its turns continue one native session.
+	Thread string `json:"thread,omitempty"`
 }
 
 // agentEnqueue: a queued execution and its message. Late choice: host and subscription are picked at dispatch.
@@ -182,6 +184,9 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 		}{"project", pid, version.Revision, version.ContentSha}))
 		e.Definitions = jsonBytes(refs)
 	}
+	if prov != nil {
+		e.Thread = prov.Thread
+	}
 	if prov != nil && validTraceparent(prov.Traceparent) {
 		e.Traceparent, e.TraceActor = prov.Traceparent, prov.TraceActor
 	}
@@ -211,7 +216,7 @@ func agentEnqueue(q *Request, s *agentSession, input, requestID string, payload 
 		if prov.Source != "" {
 			m.Source = prov.Source
 		}
-		m.TriggerID = prov.TriggerID
+		m.TriggerID, m.Thread = prov.TriggerID, prov.Thread
 	}
 	return e, messagePut(q, &m)
 }
@@ -269,11 +274,12 @@ func attachmentIDs(xs []string) ([]string, error) {
 // agentSubmit: a message starts a turn, or is queued (or steered) behind an active execution; nothing is refused for
 // being busy. source is internal provenance, never taken from the caller's arguments.
 func agentSubmit(q *Request, r *contract.MessageSendRequest, source string) (agentSubmitted, error) {
-	return agentSubmitFrom(q, r, source, "")
+	return agentSubmitFrom(q, r, source, "", deref(r.Thread))
 }
 
-// agentSubmitFrom: agentSubmit for a message a trigger sends; triggerID marks the queued and the sent message.
-func agentSubmitFrom(q *Request, r *contract.MessageSendRequest, source, triggerID string) (agentSubmitted, error) {
+// agentSubmitFrom: agentSubmit for a message a trigger sends; triggerID marks the queued and the sent message, thread
+// the work item whose turn it starts (threads_bot.go; "" the session's main thread).
+func agentSubmitFrom(q *Request, r *contract.MessageSendRequest, source, triggerID, thread string) (agentSubmitted, error) {
 	const changedComposerTarget = "Composer target changed. Review the new target and send again."
 	var none agentSubmitted
 	sid := deref(r.SessionId)
@@ -395,7 +401,7 @@ func agentSubmitFrom(q *Request, r *contract.MessageSendRequest, source, trigger
 				BotContext *botExecutionContext `json:"botContext,omitempty"`
 			}{botContextOf(botForHome, "")}
 		}
-		e, err := agentEnqueue(q, &s, text, requestID, payload, extra, "", &agentProvenance{SentBy: sender, Source: source, TriggerID: triggerID})
+		e, err := agentEnqueue(q, &s, text, requestID, payload, extra, "", &agentProvenance{SentBy: sender, Source: source, TriggerID: triggerID, Thread: thread})
 		if err != nil {
 			return none, err
 		}
@@ -406,12 +412,13 @@ func agentSubmitFrom(q *Request, r *contract.MessageSendRequest, source, trigger
 		}
 		return agentSubmitted{execution: &e}, nil
 	}
-	m := agentQueued{ID: newID(), SessionID: sid, ProjectID: s.ProjectID, TaskID: s.TaskID, RequestID: requestID, Text: text, State: "queued", CreatedAt: nowMs(), SentBy: sender, Source: source, TriggerID: triggerID}
+	m := agentQueued{ID: newID(), SessionID: sid, ProjectID: s.ProjectID, TaskID: s.TaskID, RequestID: requestID, Text: text, State: "queued", CreatedAt: nowMs(), SentBy: sender, Source: source, TriggerID: triggerID, Thread: thread}
 	if len(attachments) > 0 {
 		m.Attachments, m.AttachmentRequest = jsonBytes(attachments), ids
 	}
 	// A message with attachments is queued, never steered: its files are staged before a turn starts.
-	if deref(r.Delivery) == "steer" && active != nil && active.State == "running" && len(attachments) == 0 &&
+	// A steer reaches only the running turn of the same thread; a message for another thread waits for its own turn.
+	if deref(r.Delivery) == "steer" && active != nil && active.State == "running" && len(attachments) == 0 && active.Thread == thread &&
 		(r.Composer == nil || r.Composer.ExecutionId != nil) {
 		// The steer goes to the host running the turn, whoever sends it (composer, MCP or agent).
 		ok, err := capable(q, deref(active.HostID), "steer")
@@ -550,7 +557,7 @@ func agentPromote(q *Request) error {
 					BotContext *botExecutionContext `json:"botContext,omitempty"`
 				}{botContextOf(promotedBot, "")}
 			}
-			return agentEnqueue(q, &s, m.Text, m.RequestID, payload, extra, "", &agentProvenance{SentBy: m.SentBy, Source: m.Source, Traceparent: m.Traceparent, TraceActor: m.TraceActor, TriggerID: m.TriggerID})
+			return agentEnqueue(q, &s, m.Text, m.RequestID, payload, extra, "", &agentProvenance{SentBy: m.SentBy, Source: m.Source, Traceparent: m.Traceparent, TraceActor: m.TraceActor, TriggerID: m.TriggerID, Thread: m.Thread})
 		}()
 		if err != nil {
 			if pgCode(err) != "" {
@@ -701,7 +708,7 @@ func agentDecorate(q *Request, s, e rawObject, payload *contract.StartPayload) e
 
 // agentDecorateStart: inline handoff delivery and the native fork request on a start command (call before storing it).
 func agentDecorateStart(q *Request, s *agentSession, e *agentExecution, payload *contract.StartPayload) error {
-	e.ContinuationKey = s.continuationKey()
+	e.ContinuationKey = threadContinuation(s.continuationKey(), e.Thread)
 	if f := s.ForkNativeSessionID; f != "" && s.NativeSessionID == "" {
 		payload.Fork = recOf(struct {
 			NativeSessionID string `json:"nativeSessionId"`

@@ -464,6 +464,7 @@ type botWakeReq struct {
 	CheckPause  bool
 	Trigger     *db.Trigger
 	ManualInput string
+	Thread      string // the work item the wake belongs to (threads_bot.go); "" the main thread
 }
 
 // admitBotWake runs the shared admission flow for Run now, scheduled wakes and Needs you triggers.
@@ -584,7 +585,7 @@ func admitBotWake(q *Request, b *botFull, req botWakeReq) (contract.BotRunRecord
 
 	e, err := agentEnqueue(q, &s, req.Text, "bot:"+runID, nil, struct {
 		BotContext *botExecutionContext `json:"botContext,omitempty"`
-	}{botContextOf(b, runID)}, "", &agentProvenance{SentBy: req.SentBy, Source: req.Source})
+	}{botContextOf(b, runID)}, "", &agentProvenance{SentBy: req.SentBy, Source: req.Source, Thread: req.Thread})
 	if err != nil {
 		return none, false, err
 	}
