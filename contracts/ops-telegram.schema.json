@@ -1,0 +1,439 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "operations": {
+    "telegram_status": {
+      "read": true,
+      "errors": [],
+      "auth": "person",
+      "agent": "tool",
+      "description": "The Telegram channel: whether the bot token works (bot username), the last poll and its error, the work waiting (intake, replies, outbox), and the caller's own Telegram link and language."
+    },
+    "telegram_link_code": {
+      "read": false,
+      "errors": [
+        409
+      ],
+      "auth": "person",
+      "agent": "no",
+      "description": "Make a one-time code (valid one day) that links the caller's Fleet person to the Telegram user who sends /start <code> to the bot; url opens that chat directly when the bot is known. A person's act: agents cannot call it, so no agent can hand out a link to someone's Fleet identity."
+    },
+    "telegram_person_set": {
+      "read": false,
+      "errors": [
+        400,
+        403,
+        404
+      ],
+      "auth": "person",
+      "agent": "no",
+      "description": "Set a person's Telegram language (en, ru, ...; Fleet's own notices use it), or unlink them. Linking a person to a Telegram user id directly, or changing another person, is the owner's."
+    },
+    "telegram_people": {
+      "read": true,
+      "errors": [],
+      "auth": "owner",
+      "agent": "tool",
+      "description": "Linked people (Telegram user id, username, language, home conversation) and the Telegram users who wrote without a link, newest first, to link with telegram_person_set."
+    },
+    "telegram_rooms": {
+      "read": true,
+      "errors": [],
+      "auth": "owner",
+      "agent": "tool",
+      "description": "Every Telegram chat and forum topic the bot has seen (a room), its project hint and its open work items (each a Fleet conversation)."
+    },
+    "telegram_room_set": {
+      "read": false,
+      "errors": [
+        400,
+        404
+      ],
+      "auth": "owner",
+      "agent": "tool",
+      "description": "Set a room's project hint: new work items of the room start in that project (empty: conversations outside projects)."
+    },
+    "telegram_work_close": {
+      "read": false,
+      "errors": [
+        404
+      ],
+      "auth": "owner",
+      "agent": "tool",
+      "description": "Close a room's work item: the conductor no longer attaches messages to it; its conversation stays."
+    }
+  },
+  "$defs": {
+    "TelegramMe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "linked": {
+          "type": "boolean"
+        },
+        "telegramUserId": {
+          "type": "integer"
+        },
+        "username": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "homeSessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "linked"
+      ]
+    },
+    "TelegramPerson": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "telegramUserId": {
+          "type": "integer"
+        },
+        "username": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "homeSessionId": {
+          "type": "string"
+        },
+        "linkedAt": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "email",
+        "telegramUserId",
+        "username",
+        "language",
+        "linkedAt"
+      ]
+    },
+    "TelegramUnknownSender": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "telegramUserId": {
+          "type": "integer"
+        },
+        "username": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "lastAt": {
+          "type": "integer"
+        },
+        "messages": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "telegramUserId",
+        "username",
+        "name",
+        "lastAt",
+        "messages"
+      ]
+    },
+    "TelegramWork": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "createdBy": {
+          "type": "string"
+        },
+        "lastAt": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "sessionId",
+        "createdBy",
+        "lastAt"
+      ]
+    },
+    "TelegramRoom": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "chatId": {
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "projectHint": {
+          "type": "string"
+        },
+        "seenAt": {
+          "type": "integer"
+        },
+        "works": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TelegramWork"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "chatId",
+        "threadId",
+        "kind",
+        "title",
+        "projectHint",
+        "seenAt",
+        "works"
+      ]
+    },
+    "TelegramStatusRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "TelegramStatusReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "connected": {
+          "type": "boolean",
+          "$comment": "the telegram connection takes calls (an active key)"
+        },
+        "botUsername": {
+          "type": "string"
+        },
+        "botId": {
+          "type": "integer"
+        },
+        "polledAt": {
+          "type": "integer"
+        },
+        "pollError": {
+          "type": "string"
+        },
+        "pending": {
+          "$ref": "#/$defs/TelegramPending"
+        },
+        "me": {
+          "$ref": "#/$defs/TelegramMe"
+        }
+      },
+      "required": [
+        "connected",
+        "pending",
+        "me"
+      ]
+    },
+    "TelegramLinkCodeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "TelegramLinkCodeReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code",
+        "command",
+        "expiresAt"
+      ]
+    },
+    "TelegramPersonSetRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "telegramUserId": {
+          "type": "integer"
+        },
+        "username": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "unlink": {
+          "type": "boolean"
+        }
+      }
+    },
+    "TelegramPersonSetReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "person": {
+          "$ref": "#/$defs/TelegramPerson"
+        },
+        "unlinked": {
+          "type": "boolean"
+        }
+      }
+    },
+    "TelegramPeopleRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "TelegramPeopleReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "people": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TelegramPerson"
+          }
+        },
+        "unknown": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TelegramUnknownSender"
+          }
+        }
+      },
+      "required": [
+        "people",
+        "unknown"
+      ]
+    },
+    "TelegramRoomsRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "TelegramRoomsReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rooms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TelegramRoom"
+          }
+        }
+      },
+      "required": [
+        "rooms"
+      ]
+    },
+    "TelegramRoomSetRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "roomId": {
+          "type": "string"
+        },
+        "projectHint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "roomId",
+        "projectHint"
+      ]
+    },
+    "TelegramRoomSetReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "room": {
+          "$ref": "#/$defs/TelegramRoom"
+        }
+      },
+      "required": [
+        "room"
+      ]
+    },
+    "TelegramWorkCloseRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workId"
+      ]
+    },
+    "TelegramWorkCloseReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "closed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "closed"
+      ]
+    },
+    "TelegramPending": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "intake": {
+          "type": "integer"
+        },
+        "replies": {
+          "type": "integer"
+        },
+        "outbox": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "intake",
+        "replies",
+        "outbox"
+      ]
+    }
+  }
+}

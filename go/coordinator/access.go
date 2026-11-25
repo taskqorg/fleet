@@ -65,10 +65,13 @@ var accessGuides = map[string]accessGuide{
 	"gitlab":   {group: contract.AccessGroupService, label: "GitLab", keyURL: "https://gitlab.com/-/user_settings/personal_access_tokens"},
 	"youtrack": {group: contract.AccessGroupService, label: "YouTrack", probe: "projects", probeArgs: json.RawMessage(`{}`)},
 	"bugsink":  {group: contract.AccessGroupService, label: "Bugsink", probe: "projects", probeArgs: json.RawMessage(`{}`)},
+	"telegram": {group: contract.AccessGroupService, label: "Telegram", keyURL: "https://t.me/BotFather", probe: "get_me", probeArgs: json.RawMessage(`{}`),
+		note: "A bot token from @BotFather (/newbot). For groups, turn off its privacy mode there (/setprivacy) so it reads every message."},
 }
 
-// accessOffered: providers a person adds keys for even when Fleet has none yet (owner's list, 2026-11-25).
-var accessOffered = []string{"anthropic", "openai", "google-ai", "tavily", "meshy", "tripo"}
+// accessOffered: providers a person adds keys for even when Fleet has none yet (owner's list, 2026-11-25; Telegram for
+// the Telegram channel, docs/designs/fleet-telegram.md).
+var accessOffered = []string{"anthropic", "openai", "google-ai", "tavily", "meshy", "tripo", "telegram"}
 
 var harnessLogin = map[string]string{"codex": "ChatGPT login", "claude": "Claude login", "antigravity": "Google login", "acp": "ACP login"}
 

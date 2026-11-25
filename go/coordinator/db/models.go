@@ -1669,6 +1669,95 @@ type TaskView struct {
 	OpenQuestions     []byte
 }
 
+type TelegramLink struct {
+	Code      string
+	Email     string
+	CreatedAt time.Time
+	UsedAt    *time.Time
+}
+
+type TelegramOutbox struct {
+	ID                string
+	ChatID            int64
+	ThreadID          int64
+	Kind              string
+	ReplyTo           *int64
+	EditMessageID     *int64
+	Text              string
+	Payload           []byte
+	WorkID            *string
+	SessionID         *string
+	TelegramMessageID *int64
+	State             string
+	CreatedAt         time.Time
+	SentAt            *time.Time
+	Error             *string
+	Attempts          int32
+	NextAttemptAt     time.Time
+	LastError         *string
+}
+
+type TelegramPerson struct {
+	Email          string
+	TelegramUserID int64
+	Username       string
+	Language       string
+	HomeSessionID  *string
+	LinkedAt       time.Time
+}
+
+type TelegramRoom struct {
+	ID          string
+	ChatID      int64
+	ThreadID    int64
+	Kind        string
+	Title       string
+	ProjectHint string
+	CreatedAt   time.Time
+	SeenAt      time.Time
+}
+
+type TelegramTurn struct {
+	ID            string
+	SessionID     string
+	RequestID     string
+	WorkID        *string
+	ChatID        int64
+	ThreadID      int64
+	MessageID     int64
+	Email         string
+	TypingAt      *time.Time
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     *string
+}
+
+type TelegramUpdate struct {
+	ID            string
+	UpdateID      int64
+	ReceivedAt    time.Time
+	Payload       []byte
+	ChatID        *int64
+	MessageID     *int64
+	FromID        *int64
+	Outcome       string
+	WorkID        *string
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     *string
+}
+
+type TelegramWork struct {
+	ID        string
+	RoomID    string
+	SessionID string
+	Title     string
+	CreatedBy string
+	CreatedAt time.Time
+	LastAt    time.Time
+	ClosedAt  *time.Time
+}
+
 type TransportAudit struct {
 	ID                   string
 	ExecutionID          *string

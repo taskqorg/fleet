@@ -1196,6 +1196,88 @@ CREATE TABLE task_view (
   "latest_result" jsonb,
   "open_questions" jsonb
 );
+CREATE TABLE telegram_link (
+  "code" text NOT NULL,
+  "email" text NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "used_at" timestamp with time zone
+);
+CREATE TABLE telegram_outbox (
+  "id" text NOT NULL,
+  "chat_id" bigint NOT NULL,
+  "thread_id" bigint NOT NULL,
+  "kind" text NOT NULL,
+  "reply_to" bigint,
+  "edit_message_id" bigint,
+  "text" text NOT NULL,
+  "payload" jsonb,
+  "work_id" text,
+  "session_id" text,
+  "telegram_message_id" bigint,
+  "state" text NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "sent_at" timestamp with time zone,
+  "error" text,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text
+);
+CREATE TABLE telegram_person (
+  "email" text NOT NULL,
+  "telegram_user_id" bigint NOT NULL,
+  "username" text NOT NULL,
+  "language" text NOT NULL,
+  "home_session_id" text,
+  "linked_at" timestamp with time zone NOT NULL
+);
+CREATE TABLE telegram_room (
+  "id" text NOT NULL,
+  "chat_id" bigint NOT NULL,
+  "thread_id" bigint NOT NULL,
+  "kind" text NOT NULL,
+  "title" text NOT NULL,
+  "project_hint" text NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "seen_at" timestamp with time zone NOT NULL
+);
+CREATE TABLE telegram_turn (
+  "id" text NOT NULL,
+  "session_id" text NOT NULL,
+  "request_id" text NOT NULL,
+  "work_id" text,
+  "chat_id" bigint NOT NULL,
+  "thread_id" bigint NOT NULL,
+  "message_id" bigint NOT NULL,
+  "email" text NOT NULL,
+  "typing_at" timestamp with time zone,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text
+);
+CREATE TABLE telegram_update (
+  "id" text NOT NULL,
+  "update_id" bigint NOT NULL,
+  "received_at" timestamp with time zone NOT NULL,
+  "payload" jsonb NOT NULL,
+  "chat_id" bigint,
+  "message_id" bigint,
+  "from_id" bigint,
+  "outcome" text NOT NULL,
+  "work_id" text,
+  "attempts" integer NOT NULL,
+  "next_attempt_at" timestamp with time zone NOT NULL,
+  "last_error" text
+);
+CREATE TABLE telegram_work (
+  "id" text NOT NULL,
+  "room_id" text NOT NULL,
+  "session_id" text NOT NULL,
+  "title" text NOT NULL,
+  "created_by" text NOT NULL,
+  "created_at" timestamp with time zone NOT NULL,
+  "last_at" timestamp with time zone NOT NULL,
+  "closed_at" timestamp with time zone
+);
 CREATE TABLE transport_audit (
   "id" text NOT NULL,
   "execution_id" text,

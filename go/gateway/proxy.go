@@ -125,6 +125,22 @@ func (p *progress) finish() bool {
 	return p.read
 }
 
+// providerURL: the request URL of a tool path; a keyPath provider (Telegram's /bot<key>) carries the key in it.
+func providerURL(p provider, value, path string) string {
+	if k := deref(p.KeyPath); k != "" {
+		return p.BaseUrl + k + value + path
+	}
+	return p.BaseUrl + path
+}
+
+// keyInHeader: the key value a header carries; none when the URL carries it.
+func keyInHeader(p provider, value string) string {
+	if deref(p.KeyPath) != "" {
+		return ""
+	}
+	return value
+}
+
 // send makes one provider request; the timeout covers the answer and, separately, reading its body.
 // Cancelling caller ends the request too; it does not undo what the provider already did.
 func (g *gateway) send(caller context.Context, method, url, keyHeader, value string, b body, headers map[string]string) (*http.Response, []byte, error) {
@@ -155,9 +171,11 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 	if err != nil {
 		return nil, nil, err
 	}
-	if keyHeader != "" {
+	switch {
+	case value == "": // the key rides in the URL path (keyPath): no key header
+	case keyHeader != "":
 		request.Header.Set(keyHeader, value)
-	} else {
+	default:
 		request.Header.Set("Authorization", "Bearer "+value)
 	}
 	request.Header.Set("Content-Type", "application/json")
@@ -368,7 +386,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 			continue
 		}
 		attemptedAt := nowMs()
-		response, data, err := g.send(ctx, t.Method, p.BaseUrl+path, deref(p.KeyHeader), value, b, t.Headers)
+		response, data, err := g.send(ctx, t.Method, providerURL(p, value, path), deref(p.KeyHeader), keyInHeader(p, value), b, t.Headers)
 		var cut errBody
 		switch {
 		case errors.Is(err, errNoBody) && ctx.Err() != nil:

@@ -221,6 +221,6 @@ An operator gives a brief (subject, size, style, references) and receives one im
 
 ## UC13. Telegram channel
 
-Status: to design. Source: this section and pilotq L01–L20; Lab registry entry `fleet:UC13`.
+Status: accepted, [design](designs/fleet-telegram.md) (owner's choice 2026-11-24, FLT-31). Source: this section and pilotq L01–L20; Lab registry entry `fleet:UC13`.
 
-A Telegram thread is a PM session with its own focus. The owner sends "look at this and do it"; agents act directly under agreed rules and answer in the thread.
+A person writes to the Fleet bot as they write to a colleague. In a private chat the message goes to their own conversation; in a group or topic (a room) the conductor attaches each message to one piece of work (a Fleet conversation), or asks with one tap when unsure. Messages arrive verbatim and as sent by their author; only answers, questions and short notices come back. Agents act under agreed rules and confirm radical actions first.

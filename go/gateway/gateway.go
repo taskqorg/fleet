@@ -248,7 +248,7 @@ func (g *gateway) usageReport(ctx context.Context) usageReportReply {
 				continue
 			}
 			row := usageReportRow{Connection: name, Key: k.Id}
-			response, data, err := g.send(ctx, "GET", p.BaseUrl+p.Usage.Path, deref(p.KeyHeader), value, body{}, nil)
+			response, data, err := g.send(ctx, "GET", providerURL(p, value, p.Usage.Path), deref(p.KeyHeader), keyInHeader(p, value), body{}, nil)
 			switch {
 			case errors.Is(err, context.DeadlineExceeded) && response == nil:
 				row.Unknown = "usage request timed out"

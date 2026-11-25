@@ -12,6 +12,7 @@
     "GatewayProvider": {"$comment": "A provider catalogue entry (go/coordinator/providers.go); the gateway reads only these fields.", "type": "object", "additionalProperties": true, "required": ["baseUrl", "tools"], "properties": {
       "baseUrl": {"type": "string"},
       "keyHeader": {"$comment": "Header that carries the key value as is (Google AI x-goog-api-key); absent: Authorization: Bearer <key>.", "type": "string"},
+      "keyPath": {"$comment": "URL path segment prefix that carries the key value instead of a header (Telegram Bot API /bot<key>): the URL is baseUrl + keyPath + key + the tool path, and no key header is sent.", "type": "string"},
       "tools": {"type": "object", "additionalProperties": {"$ref": "#/$defs/GatewayTool"}},
       "usage": {"$ref": "#/$defs/GatewayUsageSource"}}},
     "GatewayUsageSource": {"$comment": "Per-key usage report (reconcile): GET path, and the dotted field holding the number.", "type": "object", "required": ["path", "field"], "properties": {"path": {"type": "string"}, "field": {"type": "string"}}},

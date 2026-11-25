@@ -4898,3 +4898,106 @@ CREATE INDEX bot_run_trigger_seq ON bot_run(trigger_id, seq DESC) WHERE trigger_
 -- schedule fields empty.
 ALTER TABLE bot_revision ALTER COLUMN schedule_time SET DEFAULT '', ALTER COLUMN schedule_zone SET DEFAULT '',
  ALTER COLUMN wake_on_needs_you SET DEFAULT false;
+
+-- migration 107: the Telegram channel (docs/designs/fleet-telegram.md, telegram.go). telegram_update is the intake
+-- journal: one row per Telegram update_id, committed before the next getUpdates confirms it, so a restart neither loses
+-- nor repeats one; its kit columns run its routing (queue telegram-intake) until its outcome is set.
+-- telegram_person links a person to their Telegram user and language; telegram_link holds one-time /start codes.
+-- telegram_room is every chat or forum topic seen, telegram_work a work item of a room (a Fleet session).
+-- telegram_turn waits for the reply of one delivered message (queue telegram-reply); telegram_outbox is every message,
+-- edit and reaction Fleet sends, one at a time per chat in order (queue telegram-send).
+CREATE TABLE telegram_update (
+ id text PRIMARY KEY,
+ update_id bigint NOT NULL UNIQUE,
+ received_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ payload jsonb NOT NULL,
+ chat_id bigint NULL,
+ message_id bigint NULL,
+ from_id bigint NULL,
+ outcome text NOT NULL DEFAULT '',
+ work_id text NULL,
+ attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ last_error text NULL
+);
+CREATE INDEX telegram_update_due ON telegram_update(next_attempt_at) WHERE outcome = '';
+CREATE INDEX telegram_update_message ON telegram_update(chat_id, message_id);
+
+CREATE TABLE telegram_person (
+ email text PRIMARY KEY,
+ telegram_user_id bigint NOT NULL UNIQUE,
+ username text NOT NULL DEFAULT '',
+ language text NOT NULL DEFAULT '',
+ home_session_id text NULL REFERENCES session(id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED,
+ linked_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE TABLE telegram_link (
+ code text PRIMARY KEY,
+ email text NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ used_at timestamptz NULL
+);
+
+CREATE TABLE telegram_room (
+ id text PRIMARY KEY,
+ chat_id bigint NOT NULL,
+ thread_id bigint NOT NULL DEFAULT 0,
+ kind text NOT NULL,
+ title text NOT NULL DEFAULT '',
+ project_hint text NOT NULL DEFAULT '',
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ seen_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ UNIQUE (chat_id, thread_id)
+);
+
+CREATE TABLE telegram_work (
+ id text PRIMARY KEY,
+ room_id text NOT NULL REFERENCES telegram_room(id) ON DELETE CASCADE,
+ session_id text NOT NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ title text NOT NULL,
+ created_by text NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ last_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ closed_at timestamptz NULL
+);
+CREATE INDEX telegram_work_room ON telegram_work(room_id, last_at DESC);
+
+CREATE TABLE telegram_turn (
+ id text PRIMARY KEY,
+ session_id text NOT NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ request_id text NOT NULL,
+ work_id text NULL REFERENCES telegram_work(id) ON DELETE SET NULL,
+ chat_id bigint NOT NULL,
+ thread_id bigint NOT NULL DEFAULT 0,
+ message_id bigint NOT NULL,
+ email text NOT NULL,
+ typing_at timestamptz NULL,
+ attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ last_error text NULL
+);
+CREATE INDEX telegram_turn_due ON telegram_turn(next_attempt_at);
+
+CREATE TABLE telegram_outbox (
+ id text PRIMARY KEY,
+ chat_id bigint NOT NULL,
+ thread_id bigint NOT NULL DEFAULT 0,
+ kind text NOT NULL CHECK (kind IN ('text', 'edit', 'reaction', 'callback')),
+ reply_to bigint NULL,
+ edit_message_id bigint NULL,
+ text text NOT NULL DEFAULT '',
+ payload jsonb NULL,
+ work_id text NULL REFERENCES telegram_work(id) ON DELETE SET NULL,
+ session_id text NULL REFERENCES session(id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED,
+ telegram_message_id bigint NULL,
+ state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'sent', 'failed', 'unknown')),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ sent_at timestamptz NULL,
+ error text NULL,
+ attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ last_error text NULL
+);
+CREATE INDEX telegram_outbox_due ON telegram_outbox(chat_id, created_at, id) WHERE state = 'pending';
+CREATE INDEX telegram_outbox_message ON telegram_outbox(chat_id, telegram_message_id) WHERE telegram_message_id IS NOT NULL;
