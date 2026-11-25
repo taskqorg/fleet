@@ -106,3 +106,17 @@ func TestAccessGrantsScopeEnrollAndChanges(t *testing.T) {
 		t.Fatalf("an access-grant change touches %v, want access_grants", got)
 	}
 }
+
+// Requirement: every agent run asks for its project's access connections, also a session started before its profile
+// listed project-access (sessions keep their profile snapshot); risk: the DAM agent's approved grant never reached it.
+func TestRunConnectionsAddProjectAccess(t *testing.T) {
+	if got := runConnections([]string{"youtrack"}); strings.Join(got, ",") != "youtrack,project-access" {
+		t.Fatalf("old snapshot: %v", got)
+	}
+	if got := runConnections(nil); strings.Join(got, ",") != "project-access" {
+		t.Fatalf("no connections: %v", got)
+	}
+	if got := runConnections([]string{"project-access", "tavily"}); strings.Join(got, ",") != "project-access,tavily" {
+		t.Fatalf("already listed: %v", got)
+	}
+}
