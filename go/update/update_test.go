@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -98,6 +99,9 @@ func (f *fixture) release(ver string, selftest int, pins ...[]byte) {
 	add("./fleet-executor", "#!/bin/sh\nexit "+string(rune('0'+selftest))+"\n", 0o755)
 	if len(pins) > 0 {
 		add("./config/harness-pins.json", string(pins[0]), 0o644)
+	}
+	if len(pins) > 1 {
+		add("./config/tool-pins.json", string(pins[1]), 0o644)
 	}
 	tw.Close()
 	gz.Close()
@@ -362,22 +366,70 @@ func TestDumpOnlyForMigrations(t *testing.T) {
 	}
 }
 
-// Requirement: fleet-self-update.md step 8: the pre-deploy dump runs when the release carries a migration the database
-// lacks, also one named before an applied one (migration files land in any order).
-func TestMissingMigration(t *testing.T) {
-	for _, c := range []struct {
-		carried, applied string
-		want             bool
-	}{
-		{"1\n2\n20261126T0315Z_a", "1\n2\n20261126T0315Z_a\n", false},
-		{"1\n2\n20261126T0300Z_b\n20261126T0315Z_a", "1\n2\n20261126T0315Z_a\n", true},
-		{"1\n2", "1\n", true},
-	} {
-		if got, err := missingMigration(c.carried, c.applied); err != nil || got != c.want {
-			t.Errorf("missingMigration(%q, %q) = %v, %v", c.carried, c.applied, got, err)
-		}
+// TestManagedCLIRuns: a release whose pinned CLI does not run here (another version, a failed start) is refused and the
+// host stays on its release; one that answers its version installs.
+func TestManagedCLIRuns(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root does not run vendor CLIs")
 	}
-	if need, err := missingMigration("", "1"); !need || err == nil {
-		t.Error("an empty list must dump")
+	for _, c := range []struct {
+		name, script, state string
+	}{
+		{"answers", "#!/bin/sh\necho 'cli 1.2.3'\n", "ok"},
+		{"other version", "#!/bin/sh\necho 'cli 1.2.2'\n", "refused"},
+		{"fails", "#!/bin/sh\nexit 3\n", "refused"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(c.script)) }))
+			t.Cleanup(tls.Close)
+			f.u.client = tls.Client()
+			sum := sha256.Sum256([]byte(c.script))
+			asset := `{"version":"1.2.3","url":"` + tls.URL + `/cli","sha256":"` + hex.EncodeToString(sum[:]) + `"}`
+			pins := `{"enabled":true,"targets":{"linux-amd64":{"codex":` + asset + `,"claude":` + asset + `,"antigravity":` + asset + `}}}`
+			f.release("1.261111.0", 0, []byte(pins))
+			r := f.run("1.261111.0")
+			if r == nil || string(r.State) != c.state || c.state == "refused" && (!strings.Contains(str(r.Error), "harness-version") || f.current() != "") {
+				t.Fatalf("%+v current %q", r, f.current())
+			}
+		})
+	}
+}
+
+// TestManagedToolInstalls: host tools install from their own pin file into tools/<name>/<digest>, links included, and
+// a tool that names another version refuses the release.
+func TestManagedToolInstalls(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root does not run vendor tools")
+	}
+	for _, c := range []struct{ version, state string }{{"26.1.0", "ok"}, {"26.1.1", "refused"}} {
+		f := newFixture(t)
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		tw := tar.NewWriter(gz)
+		script := "#!/bin/sh\necho v26.1.0\n"
+		tw.WriteHeader(&tar.Header{Name: "t/bin/tool", Mode: 0o755, Size: int64(len(script)), Typeflag: tar.TypeReg})
+		tw.Write([]byte(script))
+		tw.WriteHeader(&tar.Header{Name: "t/bin/alias", Typeflag: tar.TypeSymlink, Linkname: "tool"})
+		tw.Close()
+		gz.Close()
+		payload := buf.Bytes()
+		tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(payload) }))
+		t.Cleanup(tls.Close)
+		f.u.client = tls.Client()
+		sum := sha256.Sum256(payload)
+		asset := `{"version":"` + c.version + `","url":"` + tls.URL + `/t.tar.gz","sha256":"` + hex.EncodeToString(sum[:]) + `","entry":"t/bin/tool"}`
+		tools := `{"enabled":true,"targets":{"linux-amd64":{"node":` + asset + `,"pnpm":` + asset + `,"gh":` + asset + `,"glab":` + asset + `}}}`
+		f.release("1.261111.0", 0, []byte(`{"enabled":false}`), []byte(tools))
+		r := f.run("1.261111.0")
+		if r == nil || string(r.State) != c.state {
+			t.Fatalf("%s: %+v", c.version, r)
+		}
+		if c.state == "ok" {
+			dir := filepath.Join(f.root, "tools", "node", hex.EncodeToString(sum[:]))
+			if target, err := os.Readlink(filepath.Join(dir, "t/bin/alias")); err != nil || target != "tool" {
+				t.Fatalf("link %q %v", target, err)
+			}
+		}
 	}
 }

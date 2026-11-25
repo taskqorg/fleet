@@ -1,4 +1,6 @@
-// Package harnessrelease defines the managed CLI files shared by fleet-update and fleet-executor.
+// Package harnessrelease defines the release-managed components shared by fleet-update and fleet-executor
+// (docs/designs/fleet-host-updates.md): agent CLIs in config/harness-pins.json and host tools in config/tool-pins.json.
+// Each component is a pinned payload per target, cached by digest under its kind's directory of the releases root.
 package harnessrelease
 
 import (
@@ -20,7 +22,22 @@ type Asset struct {
 	SHA256  string `json:"sha256,omitempty"`
 	SHA512  string `json:"sha512,omitempty"`
 	Entry   string `json:"entry,omitempty"` // empty for a standalone binary
+	kind    string // the cache directory of the component's kind, set by Kind.Read
 }
+
+// Kind is one kind of release-managed component: its pin file, cache directory and component names.
+type Kind struct {
+	Name  string // "cli" or "tool", the prefix of a component name (cli/codex)
+	File  string // under the release's config/
+	Dir   string // under the releases root
+	Names []string
+}
+
+var (
+	CLIs  = Kind{Name: "cli", File: "harness-pins.json", Dir: "harnesses", Names: []string{"codex", "claude", "antigravity"}}
+	Tools = Kind{Name: "tool", File: "tool-pins.json", Dir: "tools", Names: []string{"node", "pnpm", "gh", "glab"}}
+	Kinds = []Kind{CLIs, Tools}
+)
 
 func (a Asset) Digest() string {
 	if a.SHA256 != "" {
@@ -30,7 +47,7 @@ func (a Asset) Digest() string {
 }
 
 func (a Asset) Dir(name string) string {
-	return filepath.Join("harnesses", name, a.Digest())
+	return filepath.Join(cmp.Or(a.kind, CLIs.Dir), name, a.Digest())
 }
 
 func (a Asset) Executable(name string) string {
@@ -41,9 +58,13 @@ func (a Asset) Executable(name string) string {
 	return filepath.Join(a.Dir(name), entry)
 }
 
-// Read returns the managed assets for target, or nil when this release leaves CLI provisioning to the host.
-func Read(release, target string) (map[string]Asset, error) {
-	data, err := os.ReadFile(filepath.Join(release, "config", "harness-pins.json"))
+// Read returns the managed agent CLIs for target, or nil when this release leaves them to the host.
+func Read(release, target string) (map[string]Asset, error) { return CLIs.Read(release, target) }
+
+// Read returns the kind's assets for target, or nil when this release leaves the kind to the host (no file, or
+// enabled false). Every component of the kind must be pinned for the target.
+func (k Kind) Read(release, target string) (map[string]Asset, error) {
+	data, err := os.ReadFile(filepath.Join(release, "config", k.File))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -61,13 +82,17 @@ func Read(release, target string) (map[string]Asset, error) {
 		return nil, nil
 	}
 	assets := manifest.Targets[target]
-	for _, name := range []string{"codex", "claude", "antigravity"} {
+	for _, name := range k.Names {
 		if err := assets[name].validate(); err != nil {
 			return nil, fmt.Errorf("%s %s: %w", target, name, err)
 		}
 	}
-	if len(assets) != 3 {
-		return nil, fmt.Errorf("%s: unexpected managed harness", target)
+	if len(assets) != len(k.Names) {
+		return nil, fmt.Errorf("%s: unexpected managed %s", target, k.Name)
+	}
+	for name, a := range assets {
+		a.kind = k.Dir
+		assets[name] = a
 	}
 	return assets, nil
 }

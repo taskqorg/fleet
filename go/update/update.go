@@ -911,6 +911,13 @@ func copyTree(src string, r *os.Root, dst string) error {
 		if d.IsDir() {
 			return r.MkdirAll(to, 0o755)
 		}
+		if d.Type()&fs.ModeSymlink != 0 { // a component payload's link, checked local by unpackPayload
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return r.Symlink(target, to)
+		}
 		info, err := d.Info()
 		if err != nil {
 			return err
@@ -944,7 +951,7 @@ func copyFile(src, dst string, mode fs.FileMode) error {
 // chmodReadOnly clears write bits on every regular file under dir within r.
 func chmodReadOnly(r *os.Root, dir string) error {
 	return fs.WalkDir(r.FS(), dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
 			return err
 		}
 		info, err := d.Info()

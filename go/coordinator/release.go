@@ -206,7 +206,7 @@ func updateQuestion(q *Request, host string, holder any, r contract.UpdateResult
 		return problemsClosePrefix(q, "update:"+host+":")
 	case contract.UpdateStateRefused, contract.UpdateStateFailed:
 	case contract.UpdateStateError:
-		if r.Error == nil || !strings.HasPrefix(*r.Error, "managed CLI ") {
+		if r.Error == nil || !strings.HasPrefix(*r.Error, "managed CLI ") && !strings.HasPrefix(*r.Error, "managed tool ") {
 			return nil
 		}
 	default:
