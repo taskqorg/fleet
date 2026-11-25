@@ -925,12 +925,17 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 	ps := hostProblems(b.Problems)
 	if b.Version != nil {
 		v := *b.Version
-		// N-1 is served without a flag; N-2 and older show version-behind (work still runs).
-		if prev := ownRelease().Previous; olderVersion(v, prev) {
-			ps = append(ps, hostProblem{Kind: string(contract.ProblemKindVersionBehind), Detail: "executor " + v + ", coordinator serves " + prev + " and newer"})
+		// N-1 is served without a flag; N-2 and older show version-behind (work still runs), unless the executor has not
+		// changed since (release pacing).
+		if rel := ownRelease(); versionBehind(v, rel) {
+			ps = append(ps, hostProblem{Kind: string(contract.ProblemKindVersionBehind), Detail: "executor " + v + ", coordinator serves " + rel.Previous + " and newer"})
 		}
 	}
-	if d := hostDrain(b.Drain, b.Version, healthyTarget(), autoUpdateOf(q.host), time.Now()); d != nil {
+	// Release pacing (update_pacing.go): the target this poll offers, decided once for the observation and the reply.
+	offered, offeredRel := healthyRelease()
+	pace := paceUpdate(offered, offeredRel, b.Version, b.Drain != nil, len(b.ActiveExecutions) == 0, b.UtcOffsetMinutes, time.Now())
+	obs.Pacing = pace.view
+	if d := hostDrain(b.Drain, b.Version, pace.target, autoUpdateOf(q.host), time.Now()); d != nil {
 		obs.Drain = d
 		if d.Fenced && len(d.WaitsFor) > 0 {
 			// Work holding a fenced drain is what blocks new starts: the problem explains it and replaces version-behind.
@@ -1079,7 +1084,7 @@ func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply,
 		}
 	}
 replyNow:
-	return contract.PollReply{Commands: out, Target: healthyTarget(), AutoUpdate: ptr(autoUpdateOf(q.host))}, nil
+	return contract.PollReply{Commands: out, Target: pace.target, AutoUpdate: ptr(autoUpdateOf(q.host))}, nil
 }
 
 func (a *App) invalidateEnvCache() {
@@ -1208,6 +1213,7 @@ type hostPollObservationPayload struct {
 	Stores           any                        `json:"stores"`
 	Load             *hostLoadObservation       `json:"load,omitempty"`
 	Drain            *contract.DrainReport      `json:"drain,omitempty"`
+	Pacing           *contract.HostUpdatePacing `json:"pacing,omitempty"`
 	PollError        json.RawMessage            `json:"pollError,omitempty"`
 }
 

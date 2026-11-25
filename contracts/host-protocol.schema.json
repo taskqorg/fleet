@@ -388,6 +388,10 @@
         "drain": {
           "$comment": "the executor's drain for a pending update (docs/designs/fleet-self-update.md, Executor drain); absent when no update is pending or on older hosts",
           "$ref": "#/$defs/DrainReport"
+        },
+        "utcOffsetMinutes": {
+          "$comment": "the host's current offset from UTC in minutes, for its daily update window (docs/designs/fleet-host-updates.md section 7); absent on older hosts, read as UTC",
+          "type": "integer"
         }
       }
     },

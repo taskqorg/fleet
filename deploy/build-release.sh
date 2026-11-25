@@ -6,6 +6,7 @@
 # Layout inside (the same on every host):
 #   fleet-coordinator  fleet-gateway  fleet-executor  fleet-update  dist/app/  config/  deploy/  scripts/lab/  release.json
 # Binaries are static (CGO_ENABLED=0). PDS18 and WSL use linux/amd64, the Mac darwin/arm64. Windows is not built.
+# RELEASE_PACING, when set, is a JSON object (deploy/release-pacing.sh: parts and executor) merged into release.json.
 # COPYFILE_DISABLE=1 keeps macOS tar from adding AppleDouble ._* files.
 set -eu
 . "$(dirname "$0")/status.sh"
@@ -34,6 +35,10 @@ for target in "$@"; do
   cp -R dist/app "$stage/dist/" && cp -R config deploy "$stage/" && mkdir -p "$stage/scripts" && cp -R scripts/lab "$stage/scripts/"
   printf '{"version":"%s","previous":"%s","commit":"%s","target":"%s","builtAt":"%s"}\n' \
     "$version" "$previous" "$commit" "$os-$arch" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$stage/release.json"
+  if [ -n "${RELEASE_PACING:-}" ]; then
+    jq -c --argjson pacing "$RELEASE_PACING" '. + $pacing' "$stage/release.json" > "$stage/release.json.tmp"
+    mv "$stage/release.json.tmp" "$stage/release.json"
+  fi
   file="fleet-$version-$os-$arch.tgz"
   COPYFILE_DISABLE=1 tar --no-xattrs -czf "$out/$file" -C "$stage" .
   if tar -tzf "$out/$file" | grep -q '\(^\|/\)\._'; then echo "AppleDouble files in $file" >&2; exit 1; fi

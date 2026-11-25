@@ -1364,6 +1364,7 @@ type HostRow struct {
 	Id               string               `json:"id"`
 	LastSeenAt       *float64             `json:"lastSeenAt"`
 	Load             *HostLoadReading     `json:"load,omitempty"`
+	Pacing           *HostUpdatePacing    `json:"pacing,omitempty"`
 	Platform         *string              `json:"platform"`
 	PollError        *HostPollError       `json:"pollError,omitempty"`
 	Problems         []HostProblem        `json:"problems"`
@@ -1395,6 +1396,11 @@ func (v *HostRow) Validate() error {
 	}
 	if v.Load != nil {
 		if err := Check(v.Load, "load"); err != nil {
+			return err
+		}
+	}
+	if v.Pacing != nil {
+		if err := Check(v.Pacing, "pacing"); err != nil {
 			return err
 		}
 	}
@@ -1437,6 +1443,25 @@ type HostRun struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *HostRun) Validate() error {
+	return nil
+}
+
+// HostUpdatePacing: How the coordinator paces this host's next install, from its last poll (docs/designs/fleet-host-updates.md section 7); absent before the host's first poll under pacing.
+type HostUpdatePacing struct {
+	Class   UpdatePacingClass `json:"class"`
+	Reason  string            `json:"reason"`
+	Release string            `json:"release"`
+	State   UpdatePacingState `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostUpdatePacing) Validate() error {
+	if err := Check(&v.Class, "class"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -3100,6 +3125,47 @@ func (v *UiVersion) Validate() error {
 		return err
 	}
 	return nil
+}
+
+type UpdatePacingClass string
+
+const (
+	UpdatePacingClassImmediate UpdatePacingClass = "immediate"
+	UpdatePacingClassNormal    UpdatePacingClass = "normal"
+)
+
+// UpdatePacingClassValues lists every UpdatePacingClass in schema order.
+var UpdatePacingClassValues = []UpdatePacingClass{UpdatePacingClassImmediate, UpdatePacingClassNormal}
+
+// Valid: v is one of the schema's values.
+func (v UpdatePacingClass) Valid() bool {
+	for _, x := range UpdatePacingClassValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type UpdatePacingState string
+
+const (
+	UpdatePacingStateCurrent  UpdatePacingState = "current"
+	UpdatePacingStateOffered  UpdatePacingState = "offered"
+	UpdatePacingStateDeferred UpdatePacingState = "deferred"
+)
+
+// UpdatePacingStateValues lists every UpdatePacingState in schema order.
+var UpdatePacingStateValues = []UpdatePacingState{UpdatePacingStateCurrent, UpdatePacingStateOffered, UpdatePacingStateDeferred}
+
+// Valid: v is one of the schema's values.
+func (v UpdatePacingState) Valid() bool {
+	for _, x := range UpdatePacingStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {
