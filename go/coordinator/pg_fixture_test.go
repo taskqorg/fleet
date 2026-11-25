@@ -143,9 +143,9 @@ func outputTail(s string) string {
 // of fleet_tmpl_<schema hash>, migrated once per schema version.
 const (
 	testPGDefaultPort = 54339
-	// testPGOptions and testPGConf (written at initdb): tests/harness.ts starts the cluster the same way.
+	// testPGOptions: tests/harness.ts starts the cluster the same way. The cluster stays durable (an outside test checks
+	// fsync); each Go test database turns synchronous_commit off for itself.
 	testPGOptions = "-c listen_addresses= -c max_connections=400"
-	testPGConf    = "\nfsync = off\nsynchronous_commit = off\nfull_page_writes = off\n"
 	// testPGStaleAge: a test database this old is a killed run's leftover.
 	testPGStaleAge = 24 * time.Hour
 )
@@ -199,10 +199,6 @@ func startTestCluster(bin, dir string, port int) error {
 			_ = os.RemoveAll(tmp)
 			return fmt.Errorf("initdb: %v: %s", err, out)
 		}
-		if err := appendFile(filepath.Join(tmp, "postgresql.auto.conf"), testPGConf); err != nil {
-			_ = os.RemoveAll(tmp)
-			return err
-		}
 		if err := os.Rename(tmp, dir); err != nil {
 			_ = os.RemoveAll(tmp)
 			if _, statErr := os.Stat(filepath.Join(dir, "PG_VERSION")); statErr != nil {
@@ -223,18 +219,6 @@ func startTestCluster(bin, dir string, port int) error {
 		}
 	}
 	return fmt.Errorf("pg_ctl start: %v: %s", startErr, out)
-}
-
-func appendFile(path, text string) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(text); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
 }
 
 // testSchemaHash: what decides a migrated database's content (schema.sql, schema/*.sql and the roles script).
@@ -389,7 +373,8 @@ func testDBOwnerGone(name string) bool {
 	if err != nil || pid == os.Getpid() {
 		return false
 	}
-	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+	p, err := os.FindProcess(pid)
+	return err == nil && errors.Is(p.Signal(syscall.Signal(0)), os.ErrProcessDone)
 }
 
 // sweepTestDBs runs testPGSweep on its own connection, keeping the current template.
@@ -417,7 +402,8 @@ func cloneTestDB(t *testing.T, name string) {
 	}
 	defer admin.Close(ctx)
 	for _, s := range []string{`CREATE DATABASE ` + name + ` TEMPLATE ` + tmpl + ` OWNER fleet STRATEGY FILE_COPY`,
-		`REVOKE ALL ON DATABASE ` + name + ` FROM PUBLIC`, `GRANT CONNECT ON DATABASE ` + name + ` TO fleet_app`} {
+		`REVOKE ALL ON DATABASE ` + name + ` FROM PUBLIC`, `GRANT CONNECT ON DATABASE ` + name + ` TO fleet_app`,
+		`ALTER DATABASE ` + name + ` SET synchronous_commit = off`} {
 		if _, err := admin.Exec(ctx, s); err != nil {
 			t.Fatalf("%s: %v", s, err)
 		}

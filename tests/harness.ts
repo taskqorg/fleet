@@ -10,7 +10,7 @@
 // runs its own server); both pairs are set to the values in use, for tests and their children that read them.
 import {execFileSync, spawn} from 'node:child_process';
 import {createHash, randomBytes} from 'node:crypto';
-import {appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync} from 'node:fs';
+import {copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync} from 'node:fs';
 import {createServer} from 'node:net';
 import {homedir, tmpdir} from 'node:os';
 import {basename, dirname, join} from 'node:path';
@@ -24,13 +24,12 @@ const pgArgs = ['-h', pgdata, '-p', pgport, '-U', 'postgres'];
 const sh = (cmd: string, args: string[], input?: string) => execFileSync(cmd, args, {input, encoding: 'utf8', stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], env: {...process.env, LC_ALL: 'C.UTF-8', LANG: 'C.UTF-8'}});
 const ready = () => { try { sh('pg_isready', pgArgs); return true; } catch { return false; } };
 // startPostgres: the server ready, as the Go tests' startTestCluster (go/coordinator/pg_fixture_test.go) does it, with the
-// same options. Durability is off (testPGConf), written at initdb, so a server in another directory (such as
-// tests/performance/interface.ts's) keeps its own settings. initdb runs only without PG_VERSION, into a private directory
+// same options, durable (tests/go/interface-writer.test.ts checks fsync and synchronous_commit on; Go test databases
+// turn synchronous_commit off per database). initdb runs only without PG_VERSION, into a private directory
 // renamed into place: of two racing starters the loser uses the winner's. pg_ctl start runs only when the server does not
 // answer, and a lost start race waits for the winner's server. The server runs without the executor's run marker
 // (FLEET_EXECUTION_ID): it outlives the run that started it.
 // ponytail: max_connections 400 fits about 4 worktrees' coordinators and Go test processes at once; raise it for more.
-const testPGConf = '\nfsync = off\nsynchronous_commit = off\nfull_page_writes = off\n';
 function startPostgres() {
   if (ready()) return;
   if (!existsSync(join(pgdata, 'PG_VERSION'))) {
@@ -38,7 +37,6 @@ function startPostgres() {
     const tmp = `${pgdata}.init-${process.pid}`;
     rmSync(tmp, {recursive: true, force: true});
     sh('initdb', ['-D', tmp, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--no-instructions', '--no-sync']);
-    appendFileSync(join(tmp, 'postgresql.auto.conf'), testPGConf);
     try { renameSync(tmp, pgdata); } catch (e) { rmSync(tmp, {recursive: true, force: true}); if (!existsSync(join(pgdata, 'PG_VERSION'))) throw e; }
   }
   const {FLEET_EXECUTION_ID: _, ...env} = process.env;
