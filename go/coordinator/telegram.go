@@ -668,7 +668,8 @@ func telegramConduct(q *Request, c *kitClaim, row *db.TelegramUpdate, room db.Te
 	}
 	// A follow-up shortly after the author's last message goes to that message's work item, without a model, unless
 	// it says it starts something new (owner-tester F19: "А какая из этих трёх самая старая?" 30 s after an answer).
-	if !newWorkCue.MatchString(strings.ToLower(messageText(m))) {
+	// Only a short message: a long one may well be about other work, and the model sees each item's last answer.
+	if len([]rune(messageText(m))) <= 120 && !newWorkCue.MatchString(strings.ToLower(messageText(m))) {
 		recent, err := q.db().TelegramAuthorRecentWork(q.ctx(), db.TelegramAuthorRecentWorkParams{ChatID: &m.Chat.ID, FromID: &m.From.ID, RoomID: room.ID,
 			Since: pgtype.Timestamptz{Time: time.Now().Add(-telegramFollowUp), Valid: true}, ID: row.ID})
 		if err == nil {
